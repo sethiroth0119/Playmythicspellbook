@@ -39297,6 +39297,19 @@ const RESOURCES = [
   { id: 'wood',             name: 'Wood',             icon: '🪵', color: '#c08a4a' },
   { id: 'stone',            name: 'Stone',            icon: '🪨', color: '#a8a29a' },
   { id: 'cloth',            name: 'Cloth',            icon: '🧵', color: '#e0b8c8' },
+  /* 🔧 WEAPON SMITH RAWS. Both are additions, not retunes — nothing above moves.
+     ⚠ EVERY RESOURCE NEEDS A PRODUCER. The r12 note above is the reason: wood,
+     stone and cloth spent a release lootable, bankable and counted against the
+     stash cap while being produced by nothing and spendable on nothing, which
+     is strictly worse than not existing. So neither of these ships without a
+     source in the same change:
+       gunParts — OPS_ECON.weaponsmith yields it (the smith IS the industry)
+       gunOil   — OPS_ECON.oil yields it, which hands the Oil Company a real
+                  downstream customer instead of inventing a third op
+     ⚠ THE COUNT IS NOW 16. _resStashFloor() derives from RESOURCE_IDS.length,
+       so the stash ceiling rises on its own and no cap edit is needed. */
+  { id: 'gunParts',         name: 'Gun Parts',        icon: '⚙️', color: '#b9b2a4' },
+  { id: 'gunOil',           name: 'Gun Oil',          icon: '🛢', color: '#8fa07a' },
 ];
 // 🍞 Consumable resources — keyed by resource id. `effect(amount)` mutates
 // Profile state. The inventory modal renders a USE button for any resource
@@ -79731,7 +79744,11 @@ const NODE_ACCRUAL_CAP_H = 24 * 7;
 // supply squeeze is felt as reduced output rather than a dead business.
 const OPS_ECON = {
   mining:       { startup: 400000, ratePerWorkerHr: 900,  salaryPerWorkerHr: 220, maxWorkers: 12, yields: { metal: 2.2 } },
-  oil:          { startup: 500000, ratePerWorkerHr: 1300, salaryPerWorkerHr: 320, maxWorkers: 10, yields: { fuel: 2.6 } },
+  // 🛢 The gunOil line is ADDITIVE — the fuel rate is untouched. Refining fuel
+  // throws off a lubricant cut, and the Weapon Smith's cleaning station is the
+  // only thing that consumes it, so this is what stops gunOil being a resource
+  // with no producer (see the RESOURCES note).
+  oil:          { startup: 500000, ratePerWorkerHr: 1300, salaryPerWorkerHr: 320, maxWorkers: 10, yields: { fuel: 2.6, gunOil: 0.4 } },
   construction: { startup: 350000, ratePerWorkerHr: 800,  salaryPerWorkerHr: 200, maxWorkers: 12, yields: { metal: 2.0 }, inputs: { fuel: 0.5 } },
   medical:      { startup: 450000, ratePerWorkerHr: 1000, salaryPerWorkerHr: 260, maxWorkers: 10, yields: { medicine: 0.9 }, inputs: { food: 0.8 } },
   agri:         { startup: 300000, ratePerWorkerHr: 700,  salaryPerWorkerHr: 170, maxWorkers: 14, yields: { food: 2.4 } },
@@ -79769,6 +79786,17 @@ const OPS_ECON = {
   // yields {} on purpose — a bank earns Cinder interest, not resources, so it
   // must never be swept up by the production-pressure hook (cxProduce).
   bank:         { startup: 1000000, ratePerWorkerHr: 1500, salaryPerWorkerHr: 400, maxWorkers: 8,  yields: {} },
+  /* 🔧 WEAPON SMITH — the licence to run a BENCH, and the industry that feeds
+     it. Same two-jobs-on-purpose shape as genelab: owning it unlocks the
+     assembly bench, and staffing it is the only industrial source of gunParts.
+     A licence with no supply sells a locked door; a supply with no licence
+     leaves the bench free. Sized between genelab (550k) and research (700k) —
+     it gates a whole crafting loop, not a convenience.
+     ⚠ THE YIELD AND THE PART COSTS ARE ONE DIAL IN TWO PLACES, exactly like
+       genelab's dna line. Fully staffed this is 8 x 1.5 = 12 gunParts/hr, so a
+       mid-tier build should cost roughly one shift. Retune either number and
+       the other has to move with it. */
+  weaponsmith:  { startup: 650000, ratePerWorkerHr: 1300, salaryPerWorkerHr: 320, maxWorkers: 8,  yields: { gunParts: 1.5 }, inputs: { metal: 1.4, fuel: 0.3 } },
 };
 // 🏦 The bank is the ONE operation with an alternate price: 1,000,000 Cinder,
 // OR a $200 stake in Mythic Token. MT is $0.10 (the Bank of Ethos quote price),
@@ -79987,6 +80015,7 @@ const OP_LABELS = {
      so a new operation without a label here is buyable but shows up in the shop
      as "genelab". */
   genelab: 'Genetics Lab',
+  weaponsmith: 'Weapon Smith',
 };
 // 📦 Storage a staffed warehouse adds to the player's resource cap. Reads the
 // LIVE econ table via _opEcon, so an admin retune reaches this too. Counts the
@@ -80262,6 +80291,21 @@ function _opAfterFound(opId) {
       }
     } catch (_) {}
   }
+  /* 🔧 Weapon Smith → grants the per-player LICENCE to run a bench. Deliberately
+     the flag-only shape (dojo / cardshop) rather than the state-blob shape
+     (fishing / cars / oil / gas): Profile.weaponSmith and its bench state do
+     not exist yet, and seeding a blob from here before the module that owns
+     its shape is written is how the two drift apart. The blob arrives with the
+     module; this branch only opens the door. */
+  if (opId === 'weaponsmith') {
+    try {
+      if (!Profile.weaponSmithUnlocked) {
+        Profile.weaponSmithUnlocked = true;
+        try { saveProfile && saveProfile(); } catch (_) {}
+        showToast('🔧 WEAPON SMITH founded! The bench is yours — open it from Just Business → My Companies.', 7600);
+      }
+    } catch (_) {}
+  }
   // 🥋 Dojo → grants the per-player LICENCE to train and resell moves. It is
   // the gate on the Tutor Shop (wholesale) AND on opening a dojo storefront.
   if (opId === 'dojo') {
@@ -80297,6 +80341,24 @@ function _geneLabOwnsLicense() {
   } catch (e) {}
   return false;
 }
+/* 🔧 True once the player has founded the Weapon Smith operation (or is admin).
+   Deliberately the same shape as _dojoOwnsLicense / _geneLabOwnsLicense so
+   there is one recognisable way to ask "does this player hold that licence".
+   ⚠ Operations.list is the CLOUD-BACKED list, so the licence follows the
+     ACCOUNT rather than the device. Profile.weaponSmithUnlocked is the local
+     flag _opAfterFound sets and is accepted too, matching the other three —
+     but it is a convenience, never the source of truth. Nothing that costs
+     real money may ever be gated on it alone (see the Aza blueprint rule in
+     docs/weaponsmith-design.md §6.5). */
+function _wsOwnsLicense() {
+  try {
+    if (typeof isAdmin === 'function' && isAdmin()) return true;
+    if (Profile && Profile.weaponSmithUnlocked) return true;
+    if (typeof Operations !== 'undefined' && Operations.list && Operations.list.some(x => x && x.op_type === 'weaponsmith')) return true;
+  } catch (e) {}
+  return false;
+}
+try { window.__mg = window.__mg || {}; window.__mg.wsOwnsLicense = _wsOwnsLicense; } catch (e) {}
 // 🧹 CARD SHOP RESET (v118t1) — the storefront economy was wiped clean server
 // side (every shop, listing and sale removed) so everyone starts fresh. The
 // LICENCE lives only on the device (Profile.cardShopUnlocked is not cloud

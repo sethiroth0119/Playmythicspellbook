@@ -437,7 +437,7 @@ licence:   ownsWeaponSmith()
 
 | Phase | Ships | Notes |
 | --- | --- | --- |
-| 1 | `weaponsmith` in `OPS_ECON` + `OP_LABELS`, `_opAfterFound` branch, `_wsOwnsLicense()`, the two new resources | Small, self-contained, testable via Just Business |
+| ✅ 1 | `weaponsmith` in `OPS_ECON` + `OP_LABELS`, `_opAfterFound` branch, `_wsOwnsLicense()`, the two new resources | **Done.** `gunOil` is produced by `OPS_ECON.oil` (additive — the fuel rate is untouched) so neither new resource ships without a producer |
 | 2 | Bridge + module skeleton + `Profile.weaponSmith` + cloud-save whitelist | The riskiest plumbing, done while it is still cheap |
 | 3 | `getItemById` crafted source + `Profile.craftedItems` + `__craftedItems__` in the save whitelist | Mint a hardcoded weapon, equip it to a unit, verify it survives a reload **and a second device** |
 | 4 | Parts as stackable `slotType:'weaponPart'` items (condition in the id), vault footprints, strip-a-donor, cleaning station | The collectible layer. No minting here — parts are ordinary items |

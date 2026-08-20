@@ -228,10 +228,23 @@ export function renderFirm(d, lvl) {
   if (!d.rows.length) h.push('<div class="eco-empty">Nothing limiting it.</div>');
   for (const r of d.rows) h.push(bar(r.label, r.pct));
 
+  /* ⚡ A plant with a CHOICE of feedstocks and none of them names all of its
+     options here, above the fix line, because the fix line says "the list is
+     above". Without it the constraint bars name whichever leg's input happened
+     to sort first, which reads as an instruction to chase that one resource. */
+  if (d.noLeg && d.feedstocks.length) {
+    h.push('<div class="eco-fix"><b>🛢️ No feedstock at all</b><br>This plant can run on ' +
+           d.feedstocks.map(x => '<b>' + esc(niceId(x)) + '</b>').join(' or ') +
+           ' and the city has none of them. Any ONE of them starts it.</div>');
+  }
   if (d.bottleneck) {
     h.push('<div class="eco-fix"><b>' + esc(d.cause.ico) + ' ' + esc(d.cause.label) + '</b><br>' + esc(d.cause.fix) + '</div>');
   }
-  if (d.leg && d.leg !== 'default') {
+  /* ⚠ NOT when every leg is blocked. `Firms.produce()` reports the PRIMARY leg
+     in that case so the trace walks somewhere useful, and printing "Running the
+     raw process" beside "no feedstock at all" would be the panel contradicting
+     itself about a plant that is not running at all. */
+  if (d.leg && d.leg !== 'default' && !d.noLeg) {
     h.push('<div class="eco-tag" style="margin-top:5px">Running the <b>' + esc(d.leg) + '</b> process.</div>');
   }
 

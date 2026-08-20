@@ -873,21 +873,70 @@ export function advance(dtMin, host) {
 /* Availability map: for every input any firm needs, what fraction of the wanted
    quantity the city can actually supply out of inventory. Computed ONCE per day
    against a snapshot, so every firm is judged against the same city — the same
-   reasoning node-city's `cityOutputMultipliers()` documents for its own tick. */
+   reasoning node-city's `cityOutputMultipliers()` documents for its own tick.
+
+   🔴 IT MEASURES EVERY LEG, NOT ONLY THE ONE THE FIRM RAN LAST, AND THAT IS THE
+      WHOLE BUG THIS FUNCTION ONCE HAD.
+   `avail` is read back by `bestLeg()` and `Firms.produce()`, and BOTH of them
+   treat an id that is ABSENT from the map as fully available (`== null ? 1`) —
+   correctly, because a caller may legitimately pass no map at all. So an id
+   this function did not put in the map read as 100% supplied. Building `want`
+   from `f.lastLeg` alone meant the inputs of every OTHER leg were exactly that:
+   absent, therefore perfect, therefore always the cheapest leg to switch to.
+
+   Driven, on the shipped tree: a Purifier in a city with 0 rawWater and 0
+   reclaimedWater alternated `reclaimed, raw, reclaimed, raw…` day after day —
+   whichever leg it had NOT run was unmeasured and looked full — and made 92,880
+   units in 30 days at a reported 100% efficiency and rung HEALTHY. Five of the
+   seven ALT_FEEDSTOCK ids did it, `electricity` at 100% of a fully fuelled
+   plant's output from zero coal, zero gas, zero oil, zero biomass, zero
+   hydrogen, zero nuclear fuel and zero anomalous energy. `paper` and `glass`
+   were spared only by accident: both of their legs share one input
+   (industrialWater, industrialFuel), so that input was always in the map.
+
+   ⚠ THE CANDIDATE DEMAND IS DELIBERATELY NOT ADDED TO `want`, AND THE
+     DENOMINATORS ARE DELIBERATELY NOT SUMMED. Two rejected shapes:
+       · Fold every leg into `want`. `want` is returned and booked as the day's
+         OBSERVED DEMAND (`S.observed[id].demand`), which drives prices — a
+         coal-fired plant would post demand for gas, oil, hydrogen, nuclear fuel
+         and biomass it never buys, and the market would price six fuels off a
+         city that consumes one.
+       · Use `committed + candidate` as one denominator. Only ONE leg actually
+         runs, so counting the others' requirements against the same stock
+         understates availability for the leg that IS running: an aluminium
+         smelter on the secondary leg (0.5 electricity/unit) would be judged
+         against the primary leg's 4.2, and throttled for a shortage it does not
+         have.
+     So: committed demand where there is any, and the hypothetical requirement
+     ONLY as the denominator for an input nothing is currently committed to —
+     which is exactly the question "could I switch to that leg". */
 function availabilityMap(days) {
-  const want = {};
+  const want = {};                 // committed: the leg each firm is running
+  const cand = {};                 // hypothetical: what an alternate leg WOULD need
   for (const f of Firms.alive()) {
     if (DEPOSITS[f.out]) continue;           // extractors consume nothing
-    const leg = Firms.all().length ? (f.lastLeg || legsOf(f.out)[0]) : legsOf(f.out)[0];
-    if (!leg) continue;
+    const legs = legsOf(f.out);
+    if (!legs.length) continue;
+    const run = f.lastLeg || legs[0];
     const lvl = Firms.levelDef(f.level);
     const units = f.capacity * lvl.capMul * f.throttle * days;
-    for (const inp in (leg.in || {})) want[inp] = (want[inp] || 0) + leg.in[inp] * units;
+    for (const inp in (run.in || {})) want[inp] = (want[inp] || 0) + run.in[inp] * units;
+    for (const leg of legs) {
+      /* `legsOf()` returns fresh objects every call, so `f.lastLeg` is never
+         identity-equal to anything in this list — compare the tag, which is
+         what `legsOf` guarantees is present and unique per id. */
+      if (leg.tag === (run.tag || 'default')) continue;
+      for (const inp in (leg.in || {})) cand[inp] = (cand[inp] || 0) + leg.in[inp] * units;
+    }
   }
   const avail = {};
-  for (const id in want) {
+  for (const id in cand) {
     const have = S.INV[id] || 0;
-    avail[id] = want[id] > 0 ? Math.min(1, have / want[id]) : 1;
+    avail[id] = cand[id] > 0 ? Math.min(1, have / cand[id]) : 1;
+  }
+  for (const id in want) {         // committed demand wins wherever there is any
+    const have = S.INV[id] || 0;
+    avail[id] = want[id] > 0 ? Math.min(1, have / want[id]) : (avail[id] != null ? avail[id] : 1);
   }
   return { want, avail };
 }

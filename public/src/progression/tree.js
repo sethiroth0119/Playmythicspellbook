@@ -106,6 +106,14 @@ export const NODES = [
     name: 'Municipal Services',
     desc: 'A clinic, a fire station and a police station — the three buildings a city is measured by when something goes wrong.',
     buildings: ['clinic', 'firestation', 'police'] },
+  /* 🛡 THE TWO SEVERE-WEATHER DEFENCES. The fire station is already in
+     civ_services above and answers fire; these answer the other two fronts.
+     Behind Municipal Services on purpose — a city learns to run a fire station
+     before it builds against a tornado. */
+  { id: 'civ_shelter', cat: 'civ', row: 3, col: 2, cost: 2, req: ['civ_services'],
+    name: 'Storm Shelters',
+    desc: 'Reinforced civic shelters. Each one cuts the chance a tornado flattens a building anywhere in the city.',
+    buildings: ['stormshelter'] },
   { id: 'civ_parks', cat: 'civ', row: 0, col: 2, cost: 1, req: ['civ_services'],
     name: 'Parks & Recreation',
     desc: 'Planting, water features and the small green things that make a street worth walking down.',
@@ -284,6 +292,10 @@ export const NODES = [
     name: 'High-Rise Engineering',
     desc: 'Lifts, cores and foundations deep enough to stand on. Required before any land in this city may be built tall.',
     zones: [], buildings: [] },
+  { id: 'sci_containment', cat: 'sci', row: 0, col: 2, cost: 3, req: ['sci_lab'],
+    name: 'Rift Containment',
+    desc: 'Dampening pylons that hold a rift tear at arm\'s length. Each one cuts the chance an anomaly corrupts a building.',
+    buildings: ['containment'] },
   { id: 'sci_genetics', cat: 'sci', row: 2, col: 1, cost: 4, req: ['sci_lab'], licence: 'genelab',
     name: 'Applied Genetics',
     desc: 'The clinical end of the laboratory, and the only industrial source of DNA in the game.',

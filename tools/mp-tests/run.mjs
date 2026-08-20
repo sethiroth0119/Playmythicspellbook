@@ -22,7 +22,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..', '..');
 const INDEX = join(ROOT, 'public', 'index.html');
 
-const TESTS = ['perspective.mjs', 'private-zones.mjs', 'citytrade.mjs', 'trade-modal.mjs', 'move-merge.mjs', 'node-daycap.mjs', 'builtins.mjs', 'warpath-gate.mjs', 'storage.mjs', 'overlays.mjs', 'heroart.mjs'];
+const TESTS = ['perspective.mjs', 'private-zones.mjs', 'citytrade.mjs', 'trade-modal.mjs', 'move-merge.mjs', 'node-daycap.mjs', 'builtins.mjs', 'warpath-gate.mjs', 'storage.mjs', 'overlays.mjs', 'heroart.mjs', 'wxshield.mjs'];
 
 /* Mutations may target a file OTHER than index.html — /src/citytrade/plan.js is
    a real ES module, not an extracted function, so its proof works by swapping
@@ -115,6 +115,25 @@ const MUTATIONS = [
     name: 'hero art stops consulting getCardArt',
     find: "    if (id && typeof getCardArt === 'function') {",
     replace: '    if (false) {',
+  },
+  {
+    /* Remove the fire shield from the ember path. A protective building that
+       is researched, built, staffed and does NOTHING is worse than absent —
+       the player pays for it and never learns it is not wired. */
+    name: 'fire rain stops respecting fire cover',
+    file: 'public/node-city/index.html',
+    test: 'wxshield.mjs',
+    find: "        if (!_wxShield('fire')) damageTile(k, !!t.damaged && Math.random() < .5, '☄️ Fire rain');",
+    replace: "        damageTile(k, !!t.damaged && Math.random() < .5, '☄️ Fire rain');",
+  },
+  {
+    /* Let a damaged protector still protect. A fire station burned down by the
+       first ember must stop answering the second, or a long front is free. */
+    name: 'a damaged protector still protects',
+    file: 'public/node-city/index.html',
+    test: 'wxshield.mjs',
+    find: "      if (t && t.type === S.b && !t.damaged) n += Math.max(1, t.lvl | 0);",
+    replace: "      if (t && t.type === S.b) n += Math.max(1, t.lvl | 0);",
   },
   {
     /* Put the gate back to drawing the hero's emoji glyph. Six forged custom

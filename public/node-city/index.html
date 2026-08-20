@@ -9,7 +9,7 @@
      believed the file was already live. Only a CONTENT change moves the hash
      and forces a re-upload, so bump this stamp whenever the city 404s, and
      probe it (grep NC_BUILD on the served page) to prove the deploy landed. -->
-<script>window.NC_BUILD = "v121b3-weather";</script>
+<script>window.NC_BUILD = "v121b4-shield";</script>
 <!-- ════════════════════════════════════════════════════════════════════════
      NODE CITY — SimCity-style settlement layer for Mythic Spellbook.
      Three.js WebGPU (auto-falls back to WebGL2). Realistic sun/moon cycle.
@@ -3318,6 +3318,19 @@ const BUILDINGS = {
   office:   { name: 'Office Block',  ico: '🏢', cost: { cinder: 90, metal: 20, supplies: 14 }, pop: 3, crew: 2, powerNeed: 0.5,
               gen: { cinder: 0.18 }, use: { supplies: 0.08 },
               desc: 'Five floors of let space behind a glass curtain wall, with a lobby, a plant deck and its own car park. Clean work: no freight, no smoke, and the only building in the city that is taller than its plot is wide. Each level adds a floor.' },
+  /* 🛡 THE TWO PROTECTIVE BUILDINGS. The Fire Station below already existed —
+     it is the third of the Municipal Services trio — and it is what answers
+     fire. These two answer the other two severe fronts, so each hazard has a
+     building that can be raised against it BEFORE it lands.
+     ⚠ MESH REUSE, DELIBERATE AND FLAGGED. buildMesh has no default arm: a type
+       with no case renders an empty Group, which is an invisible building on a
+       real tile. Rather than ship that, these borrow makeDepot and makeSiphon —
+       a low reinforced shed and rift apparatus, which read correctly for what
+       they are. Bespoke geometry is a follow-up, not a blocker. */
+  stormshelter:{name:'Storm Shelter', ico: '🛖', cost: { cinder: 110, metal: 44, supplies: 12 }, pop: 0, crew: 1, popCap: 2,
+              desc: 'Reinforced civic shelter. Each one cuts the chance a TORNADO flattens a building anywhere in the city.' },
+  containment:{name:'Containment Field', ico: '🔮', cost: { cinder: 180, metal: 38, supplies: 16 }, pop: 1, crew: 2, powerNeed: 0.6,
+              desc: 'Rift dampening pylons. Each one cuts the chance an ANOMALY corrupts a building anywhere in the city.' },
   firestation:{name:'Fire Station',  ico: '🚒', cost: { cinder: 130, metal: 34, supplies: 14 }, pop: 2, crew: 3, powerNeed: 0.3,
               svc: { need: 'safety', supply: 1.2 }, use: { water: 0.10 },
               desc: 'Two roller doors and a hose tower. Its crews stand in the Safety coverage alongside the garrison, and a district with one burns far less readily.' },
@@ -5683,6 +5696,7 @@ function startWeather(type) {
   //    allowance belongs to one storm — a counter reset on the tick would
   //    refill mid-storm and restore the uncapped behaviour this replaced.
   wx._strikes = 0;
+  wx._shieldSaid = {};       // one "it held" line per front, per hazard
   if (type === 'tornado') {
     tornadoState.x = Math.random() < .5 ? -2 : GRID + 1;
     tornadoState.z = Math.random() * GRID;
@@ -5726,6 +5740,60 @@ function _wxWarn(type, leadSec) {
     logEvent('env', '🚨 WARNING — ' + W.ico + ' ' + W.name + ' forecast to hit in ~' + leadSec + 's. ' + prep);
   } catch (e) {}
   try { $('daypill').classList.add('warned'); } catch (e) {}
+}
+/* 🛡 SEVERE-WEATHER MITIGATION — the point of warning early.
+   ---------------------------------------------------------------------------
+   Every one of the four hazards funnels through damageTile(), which is why this
+   is ONE function and not four: a hazard that grows a new damage path picks up
+   its protection for free, and there is a single place to read the rule.
+
+   Protection is PER BUILDING and CAPPED. Per-building so raising a second
+   station is a real decision rather than a rounding error; capped so no amount
+   of building makes a city immune, because a disaster that can be switched off
+   entirely stops being a disaster and the warning stops mattering.
+
+   ⚠ A DAMAGED protector does not protect. That is the interesting case: a fire
+     station burned down by the first ember stops answering the second, so a
+     long front can chew through the defence it started against. Checked here
+     rather than assumed, because the damaged flag is exactly the state a severe front
+     puts things in.
+
+   ⚠ Level counts. An upgraded station is a bigger station; using lvl rather
+     than a flat count means the upgrade path a player already has means
+     something here too. */
+const WX_SHIELD = {
+  fire:    { b: 'firestation',  ico: '🚒', name: 'Fire crews',      per: 0.20, cap: 0.75 },
+  tornado: { b: 'stormshelter', ico: '🛖', name: 'Storm shelters',  per: 0.16, cap: 0.65 },
+  anomaly: { b: 'containment',  ico: '🔮', name: 'Containment',     per: 0.18, cap: 0.70 },
+};
+function _wxShieldStrength(hazard) {
+  const S = WX_SHIELD[hazard]; if (!S) return 0;
+  let n = 0;
+  try {
+    for (const k in game.tiles) {
+      const t = game.tiles[k];
+      if (t && t.type === S.b && !t.damaged) n += Math.max(1, t.lvl | 0);
+    }
+  } catch (e) { return 0; }
+  return n <= 0 ? 0 : Math.min(S.cap, n * S.per);
+}
+/* True when the strike is absorbed. The caller skips its damageTile() call. */
+function _wxShield(hazard) {
+  const p = _wxShieldStrength(hazard);
+  if (p <= 0 || Math.random() >= p) return false;
+  const S = WX_SHIELD[hazard];
+  /* Say it, but not on every absorbed strike — a front that lands twenty
+     embers would otherwise bury the log in twenty identical lines. One line per
+     front per hazard, which is enough to tell the player the building worked. */
+  wx._shieldSaid = wx._shieldSaid || {};
+  if (!wx._shieldSaid[hazard]) {
+    wx._shieldSaid[hazard] = true;
+    try {
+      toast(S.ico + ' ' + S.name + ' held — a strike was contained. (' + Math.round(p * 100) + '% cover)', 'good');
+      logEvent('env good', S.ico + ' ' + S.name + ' absorbed a strike this front — ' + Math.round(p * 100) + '% cover from ' + S.b + '.');
+    } catch (e) {}
+  }
+  return true;
 }
 function endWeather() {
   const prev = WEATHER[wx.type], since = wx._startedAt;
@@ -5795,7 +5863,8 @@ function weatherTick(dt) {
           const ks = all.filter(k => !game.tiles[k].damaged);
           if (ks.length) {
             wx._strikes = (wx._strikes | 0) + 1;
-            damageTile(ks[Math.floor(Math.random() * ks.length)], false, '⚡ Lightning');
+            // Fire crews answer a lightning fire the same as an ember one.
+            if (!_wxShield('fire')) damageTile(ks[Math.floor(Math.random() * ks.length)], false, '⚡ Lightning');
           }
         }
       }
@@ -5811,7 +5880,7 @@ function weatherTick(dt) {
       if (ks.length && Math.random() < .8) {
         const k = ks[Math.floor(Math.random() * ks.length)];
         const t = game.tiles[k];
-        damageTile(k, !!t.damaged && Math.random() < .5, '☄️ Fire rain'); // already burning → may collapse
+        if (!_wxShield('fire')) damageTile(k, !!t.damaged && Math.random() < .5, '☄️ Fire rain'); // already burning → may collapse
       }
     }
   }
@@ -5824,7 +5893,7 @@ function weatherTick(dt) {
       weatherTick._anomAcc = 0;
       if (Math.random() < .5) {
         const ks = Object.keys(game.tiles).filter(k => !['road','anchor'].includes(game.tiles[k].type) && !game.tiles[k].damaged);
-        if (ks.length) damageTile(ks[Math.floor(Math.random() * ks.length)], false, '🌀 The anomaly');
+        if (ks.length && !_wxShield('anomaly')) damageTile(ks[Math.floor(Math.random() * ks.length)], false, '🌀 The anomaly');
       }
     }
     if (!wx._anomPaid && now >= wx.until - 500) {
@@ -5850,7 +5919,10 @@ function weatherTick(dt) {
       const k = key(gx, gz);
       if (game.tiles[k] && game.tiles[k].type !== 'anchor' && game.tiles[k].type !== 'road') {
         s.lastCrush = now;
-        damageTile(k, Math.random() < .55, '🌪️ The tornado'); // often outright destroys
+        /* 🛖 Shelters answer the tornado. The crush still COUNTS as a pass —
+           lastCrush is stamped either way — so a sheltered city is not swept
+           repeatedly on the same tile while the funnel sits over it. */
+        if (!_wxShield('tornado')) damageTile(k, Math.random() < .55, '🌪️ The tornado'); // often outright destroys
       }
     }
   }
@@ -7774,6 +7846,10 @@ function buildMesh(type, lvl, tx, tz) {
     case 'streetlight': { _adopt(g, makeStreetlight(lvl), true); break; }
     case 'motorpool': { _adopt(g, makeMotorpool(lvl), true); break; }
     case 'firestation': { _adopt(g, makeFirestation(lvl), true); break; }
+    /* ⚠ Borrowed meshes — see the note on these two in BUILDINGS. An arm that
+       does not exist is not a fallback, it is an invisible building. */
+    case 'stormshelter': { _adopt(g, makeDepot(lvl), true); break; }
+    case 'containment': { _adopt(g, makeSiphon(lvl), true); break; }
     case 'smelter': { _adopt(g, makeSmelter(lvl), true); break; }
     case 'cannery': { _adopt(g, makeCannery(lvl), true); break; }
     case 'warehouse': { _adopt(g, makeWarehouse(lvl), true); break; }

@@ -14,37 +14,43 @@
 //
 //   node _wh_stencil_check.mjs          → writes shots + a machine verdict
 //
-// ⚠⚠ WHAT THIS GATE DOES AND DOES NOT CATCH — measured, not assumed.
-// Every variant below was injected into the live drawing code and the gate run:
+// ⚠⚠ WHAT THIS GATE CATCHES — measured, not assumed. Every variant below was
+// injected into the live drawing code in public/warehouse/index.html and the
+// gate re-run, and BOTH tiers had to fail before a row is called CAUGHT:
 //
-//   clean build ................................. PASS   (correct)
-//   cx.rotate(Math.PI)   — upside down .......... CAUGHT (exit 1)
-//   cx.scale(-1,1)       — mirrored ............. NOT CAUGHT
-//   cx.rotate(Math.PI/2) — rotated 90° .......... NOT CAUGHT
-//   stencil fillText deleted .................... NOT CAUGHT
+//   clean build ....... PASS  identity 0.953 (t1) / 0.984 (t5), exit 0
+//   cx.rotate(Math.PI)  CAUGHT  rot180 wins, 0.959 / 0.958
+//   cx.scale(-1,1)      CAUGHT  flipX  wins, 0.959 / 0.961
+//   cx.rotate(Math.PI/2) CAUGHT rot90cw wins, 0.960 / 0.957, and the aspect
+//                               test trips too (131% / 52% off)
+//   fillText deleted    CAUGHT  0 px of ink in the texture AND 0 px in the
+//                               render — the case every earlier design passed
 //
-// The previous version of this file passed THREE of those four while printing
-// PASS, and its orientation test was vacuous (it compared halves of the CROP,
-// not of the glyph, and the glyph sat entirely below the crop midline). That is
-// fixed: orientation is now measured inside the glyph's own bounding box and it
-// does catch an upside-down stencil.
-//
-// The remaining three are NOT fixed, and the reason for the deletion case is
-// worth writing down because it defeated two designs:
+// It used to catch ONE of those four while printing PASS, and the reason is
+// worth keeping because it defeated two designs:
 //   • marking the glyph in a marker colour INVENTS ink — the marker draws
 //     whether or not the floor has a glyph, so deleted/rotated/mirrored
 //     stencils all still produced a clean upright mask;
-//   • erasing the glyph with destination-out (what this file now does) removes
-//     the CONCRETE in the glyph's shape too, so it produces a digit-shaped diff
-//     whether or not the glyph was ever drawn.
-// The fix is to have the page rebuild the floor texture WITHOUT stencils and
-// diff against that — a real "with and without" — which needs a hook the page
-// does not yet expose. Until then this gate catches upside-down and nothing
-// else, and the matrix above is the honest statement of its reach.
+//   • erasing the glyph with destination-out removes the CONCRETE in the
+//     glyph's shape too, so it produced a digit-shaped diff whether or not the
+//     glyph was ever drawn — a deleted stencil looked identical to a good one.
+// Both are threshold-free but neither is causal. The page now exposes the hook
+// that makes a causal test possible: App.noStencils = <bay number> repaints the
+// floor with THAT ONE NUMERAL SUPPRESSED and nothing else changed (the speckle
+// is seeded, so the two paints are otherwise pixel-identical — this file
+// asserts that). Diff the two and what is left IS the glyph, at full texture
+// resolution, and it is empty when the glyph does not exist.
 //
-// It also reads the numeral's own pixels: for upright text the glyph's ink is
-// bottom-heavy in screen space (digits sit on a baseline); inverted, it is
-// top-heavy. That is the automated half, so the check can fail on its own.
+// That gives two independent measurements, and both are asserted:
+//   TEXTURE SPACE — the isolated ink versus the source artwork drawn
+//     canonically, matched under identity / flipY / flipX / rot180 / the two
+//     90° transposes. No perspective is involved, so identity wins outright on
+//     a clean build and loses outright on any of the three transforms.
+//   SCREEN SPACE — the same with/without diff on the RENDER, from standing eye
+//     height. This is what keeps the texture test honest about the chain that
+//     the code comment argues over: canvas row → v → plane +Y → world −Z. A
+//     canvas-space match cannot see a flip introduced downstream by the UVs or
+//     by the plane's rotation; the on-screen bottom-heaviness test can.
 // ═══════════════════════════════════════════════════════════════════════════
 import { readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -122,82 +128,88 @@ for (const [tier, units, bayNo] of [['t1', 4, 2], ['t5', 32, 31]]) {
     document.getElementById('topbtns').style.display = 'none';
     document.getElementById('toast').style.display = 'none';
     document.getElementById('prompt').style.display = 'none';
-    renderer.render(scene, camera);
+    // ── ISOLATE THE GLYPH BY CAUSATION ────────────────────────────────────
+    // Paint the floor twice — once normally, once with THIS numeral suppressed
+    // — and diff. Nothing else on the slab differs between the two paints (the
+    // speckle is seeded; this function asserts it below), so the difference is
+    // the numeral and only the numeral, and it is EMPTY if the numeral was
+    // never drawn. That last property is the one every earlier design lacked.
+    const c = renderer.domElement;
     // ⚠ READ IN THE SAME TASK AS THE RENDER. The renderer is created without
     // preserveDrawingBuffer, so the colour buffer is gone by the next
     // evaluate() — drawImage() then copies a blank canvas, every pixel is
     // identical, and any percentile threshold selects 100% of the crop. That is
     // exactly what the first two runs of this check did while printing PASS.
-    // ── ISOLATE THE GLYPH BY CAUSATION, NOT BY THRESHOLD ──────────────────
-    // ⚠ The previous version thresholded the crop at med + (hi−med)·0.45 and
-    // compared the top and bottom halves OF THE CROP. Both halves of that were
-    // broken, and together they made the check vacuous:
-    //   • the crop ran y 0.50–0.96 while the glyph sat in the bottom ~15%,
-    //     entirely below the crop midline — so rotating the glyph 180° about
-    //     its own centre left it in the same screen band and changed nothing.
-    //     Clean tier 1 read top=0, which is the tell.
-    //   • the threshold is adaptive: with bright glyph ink present it rode high
-    //     and selected only glyph pixels; delete the stencil and it collapsed
-    //     onto the lit bay pad, so tens of thousands of pad pixels counted as
-    //     "ink" and the check passed at 26.1% with NO STENCIL IN THE SCENE.
-    // Measured against four deliberate defects it passed three of them.
-    //
-    // So the glyph is now isolated the only way that cannot be fooled: render
-    // the frame, ERASE THIS GLYPH FROM THE FLOOR TEXTURE, render again, and
-    // diff. Whatever changed is the glyph and nothing else. Then compare that
-    // mask against the SOURCE ARTWORK under four candidate transforms —
-    // identity, flip-Y, flip-X, rot180 — and require identity to win. Upside
-    // down, mirrored and rotated each make a different transform win.
-    const c = renderer.domElement;
     const grab = () => { const g = document.createElement('canvas');
       g.width = c.width; g.height = c.height;
       g.getContext('2d').drawImage(c, 0, 0);
       return g.getContext('2d').getImageData(0, 0, c.width, c.height).data; };
-    const A = grab();
-    // ERASE this glyph's own ink under its own transform, re-render, diff.
-    // A marker-colour redraw was tried first and was worse than useless: the
-    // marker drew an upright glyph regardless of what the floor actually had,
-    // so a rotated, mirrored or DELETED stencil all still produced a clean
-    // upright mask and the gate passed three defects out of four.
-    const snap = App.floorCanvas.getContext('2d')
-      .getImageData(0, 0, App.floorCanvas.width, App.floorCanvas.height);
-    App.stencilErase[want - 1]();
-    App.floorTex.needsUpdate = true;
+    const paint = () => { const fc = App.floorCanvas;
+      return { w: fc.width, h: fc.height,
+               d: fc.getContext('2d').getImageData(0, 0, fc.width, fc.height).data }; };
+
     renderer.render(scene, camera);
-    const B = grab();
-    App.floorCanvas.getContext('2d').putImageData(snap, 0, 0);
-    App.floorTex.needsUpdate = true;
+    const A = grab(), TA = paint();
+    const at = App.stencilAt[want - 1];
+    App.noStencils = want; App.buildShed(n);
+    renderer.render(scene, camera);
+    const B = grab(), TB = paint();
+    App.noStencils = false; App.buildShed(n);
     renderer.render(scene, camera);
 
-    const W = c.width, H = c.height;
-    let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1, nInk = 0;
-    const diff = new Float32Array(W * H);
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-      const i = (y * W + x) * 4;
-      const la = A[i] * 0.299 + A[i + 1] * 0.587 + A[i + 2] * 0.114;
-      const lb = B[i] * 0.299 + B[i + 1] * 0.587 + B[i + 2] * 0.114;
-      const dv = Math.abs(la - lb);
-      // 4, not 8: the word "BAY" is drawn at alpha 0.45 and an 8-luminance gate
-      // dropped it, leaving only the numeral — and it is precisely the small
-      // word ABOVE the big numeral that makes the row profile asymmetric enough
-      // to detect an upside-down stencil.
-      if (dv > 4) { diff[y * W + x] = dv; nInk++;
-        if (x < x0) x0 = x; if (x > x1) x1 = x;
-        if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    // ── TEXTURE SPACE ─────────────────────────────────────────────────────
+    if (TA.w !== TB.w || TA.h !== TB.h) return { fatal: 'floor canvas changed size between paints' };
+    const half = Math.round(0.95 * at.em);           // one em box around the glyph
+    const cx0 = Math.max(0, Math.round(at.x) - half), cx1 = Math.min(TA.w - 1, Math.round(at.x) + half);
+    const cy0 = Math.max(0, Math.round(at.y) - half), cy1 = Math.min(TA.h - 1, Math.round(at.y) + half);
+    let tx0 = 1e9, ty0 = 1e9, tx1 = -1, ty1 = -1, tInk = 0, strayPx = 0;
+    const tdiff = new Float32Array(TA.w * TA.h);
+    for (let y = 0; y < TA.h; y++) for (let x = 0; x < TA.w; x++) {
+      const i = (y * TA.w + x) * 4;
+      const dv = Math.abs(TA.d[i] - TB.d[i]) + Math.abs(TA.d[i + 1] - TB.d[i + 1]) + Math.abs(TA.d[i + 2] - TB.d[i + 2]);
+      if (dv <= 6) continue;
+      // Anything outside the one glyph's own box is a paint that did not
+      // reproduce — a re-rolled speckle, a stray suppression. The whole method
+      // rests on the two paints being identical apart from this numeral, so it
+      // is asserted rather than assumed.
+      if (x < cx0 || x > cx1 || y < cy0 || y > cy1) { strayPx++; continue; }
+      tdiff[y * TA.w + x] = dv; tInk++;
+      if (x < tx0) tx0 = x; if (x > tx1) tx1 = x;
+      if (y < ty0) ty0 = y; if (y > ty1) ty1 = y;
     }
-    // resample the on-screen mask into a 24×24 grid inside its own bbox
-    const G = 24, grid = new Float32Array(G * G);
-    if (nInk > 0) {
-      const bw = Math.max(1, x1 - x0 + 1), bh = Math.max(1, y1 - y0 + 1);
-      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
-        const v = diff[y * W + x]; if (!v) continue;
-        const gx = Math.min(G - 1, Math.floor((x - x0) / bw * G));
-        const gy = Math.min(G - 1, Math.floor((y - y0) / bh * G));
-        grid[gy * G + gx] += v;
+    // ⚠ RESAMPLE BY AREA, NOT BY ACCUMULATION. Dropping each source pixel into
+    // the grid cell it lands in is fine when the source is bigger than the grid
+    // and useless when it is smaller: the tier-1 numeral is 20×19 px, so 64% of
+    // a 32×32 grid stayed EMPTY while the 512-px reference filled every cell,
+    // and correlating a sieve against a solid read 0.131 on a mask that is
+    // visibly a perfect "2". Same normalisation on both sides or the comparison
+    // means nothing — so both are bilinear-sampled with 4×4 supersampling,
+    // which up-samples the small mask and down-samples the big reference into
+    // the same representation.
+    const G = 32, SS = 4;
+    const grid = (get, x0, y0, x1, y1) => {
+      const g = new Float32Array(G * G);
+      if (x1 < x0 || y1 < y0) return g;
+      const w = Math.max(1, x1 - x0 + 1), h = Math.max(1, y1 - y0 + 1);
+      const bil = (fx, fy) => {
+        const px = Math.min(x1, Math.max(x0, x0 + fx)), py = Math.min(y1, Math.max(y0, y0 + fy));
+        const ix = Math.floor(px), iy = Math.floor(py), tx2 = px - ix, ty2 = py - iy;
+        const jx = Math.min(x1, ix + 1), jy = Math.min(y1, iy + 1);
+        return get(ix, iy) * (1 - tx2) * (1 - ty2) + get(jx, iy) * tx2 * (1 - ty2)
+             + get(ix, jy) * (1 - tx2) * ty2 + get(jx, jy) * tx2 * ty2;
+      };
+      for (let gy = 0; gy < G; gy++) for (let gx = 0; gx < G; gx++) {
+        let acc = 0;
+        for (let sy2 = 0; sy2 < SS; sy2++) for (let sx2 = 0; sx2 < SS; sx2++)
+          acc += bil((gx + (sx2 + 0.5) / SS) / G * w - 0.5, (gy + (sy2 + 0.5) / SS) / G * h - 0.5);
+        g[gy * G + gx] = acc / (SS * SS);
       }
-    }
-    // The reference artwork: the same text drawn CANONICALLY (translation only)
-    // on a scratch canvas. Not what the floor did — what it was supposed to do.
+      return g;
+    };
+    const mask = grid((x, y) => tdiff[y * TA.w + x], tx0, ty0, tx1, ty1);
+
+    // The reference artwork: the same numeral drawn CANONICALLY (translation
+    // only) on a scratch canvas. Not what the floor did — what it was meant to.
     const SW = 512, SH = 512;
     const sc = document.createElement('canvas'); sc.width = SW; sc.height = SH;
     const sctx = sc.getContext('2d');
@@ -209,119 +221,120 @@ for (const [tier, units, bayNo] of [['t1', 4, 2], ['t5', 32, 31]]) {
       if (x < sx0) sx0 = x; if (x > sx1) sx1 = x;
       if (y < sy0) sy0 = y; if (y > sy1) sy1 = y;
     }
-    const src = new Float32Array(G * G);
-    if (sx1 >= 0) {
-      const sw = Math.max(1, sx1 - sx0 + 1), shh = Math.max(1, sy1 - sy0 + 1);
-      for (let y = sy0; y <= sy1; y++) for (let x = sx0; x <= sx1; x++) {
-        const a = sd[(y * SW + x) * 4 + 3]; if (a < 24) continue;
-        const gx = Math.min(G - 1, Math.floor((x - sx0) / sw * G));
-        const gy = Math.min(G - 1, Math.floor((y - sy0) / shh * G));
-        src[gy * G + gx] += a;
-      }
-    }
-    // ── SCORE BY PROFILE CORRELATION, NOT BY A 2-D DOT PRODUCT ────────────
-    // The 24×24 dot product was measured and does not discriminate: identity
-    // 26.14 against flipY 25.32 on a clean build, a 0.6 margin on a 26 scale.
-    // Resampled into a coarse grid, "BAY 31" is a blob and every transform
-    // overlaps it about equally.
-    // The ROW profile, though, is strongly asymmetric by construction — a small
-    // "BAY" above a large numeral — and the COLUMN profile is asymmetric for
-    // any multi-digit number. Zero-mean correlation of those two profiles is a
-    // shape test rather than a coverage test, so a flip actually moves it.
-    const prof = (a, axis) => {
-      const out = new Array(G).fill(0);
-      for (let y = 0; y < G; y++) for (let x = 0; x < G; x++)
-        out[axis === 'row' ? y : x] += a[y * G + x];
-      const m = out.reduce((t, v) => t + v, 0) / G;
-      return out.map(v => v - m);
-    };
+    const ref = grid((x, y) => { const a = sd[(y * SW + x) * 4 + 3]; return a < 24 ? 0 : a; }, sx0, sy0, sx1, sy1);
+
     const corr = (a, b2) => {
+      let ma = 0, mb = 0;
+      for (let i = 0; i < a.length; i++) { ma += a[i]; mb += b2[i]; }
+      ma /= a.length; mb /= b2.length;
       let n2 = 0, da = 0, db = 0;
-      for (let i = 0; i < a.length; i++) { n2 += a[i] * b2[i]; da += a[i] * a[i]; db += b2[i] * b2[i]; }
+      for (let i = 0; i < a.length; i++) {
+        const u = a[i] - ma, v = b2[i] - mb;
+        n2 += u * v; da += u * u; db += v * v;
+      }
       return (da && db) ? n2 / Math.sqrt(da * db) : 0;
     };
-    const rS = prof(grid, 'row'), cS = prof(grid, 'col');
-    const rR = prof(src, 'row'),  cR = prof(src, 'col');
-    const rev = (a) => a.slice().reverse();
-    const score = {
-      vertical_upright:  +corr(rS, rR).toFixed(3),
-      vertical_flipped:  +corr(rS, rev(rR)).toFixed(3),
-      horizontal_normal: +corr(cS, cR).toFixed(3),
-      horizontal_mirror: +corr(cS, rev(cR)).toFixed(3),
-      // ⚠ A 90° rotation swaps the AXES, so the screen's row profile starts
-      // matching the artwork's COLUMN profile. Comparing against an absolute
-      // correlation floor does not work here — the floor glyph is viewed at a
-      // steep angle and foreshortening alone drags the honest correlation down
-      // to ~0.08, so any floor high enough to catch a rotation also fails a
-      // clean build. Asking which AXIS it matches is scale- and
-      // perspective-independent.
-      axis_same: +corr(rS, rR).toFixed(3),
-      axis_swapped: +Math.max(corr(rS, cR), corr(rS, rev(cR))).toFixed(3),
+    // The five ways the drawing can be wrong, as re-indexings of the artwork.
+    const XF = {
+      identity: (x, y) => ref[y * G + x],
+      flipY:    (x, y) => ref[(G - 1 - y) * G + x],
+      flipX:    (x, y) => ref[y * G + (G - 1 - x)],
+      rot180:   (x, y) => ref[(G - 1 - y) * G + (G - 1 - x)],
+      rot90cw:  (x, y) => ref[(G - 1 - x) * G + y],
+      rot90ccw: (x, y) => ref[x * G + (G - 1 - y)],
     };
-    const best = score.vertical_upright >= score.vertical_flipped
-      && score.horizontal_normal >= score.horizontal_mirror ? ['identity', 0] : ['flipped', 0];
+    const tScore = {};
+    for (const k of Object.keys(XF)) {
+      const v = new Float32Array(G * G);
+      for (let y = 0; y < G; y++) for (let x = 0; x < G; x++) v[y * G + x] = XF[k](x, y);
+      tScore[k] = +corr(mask, v).toFixed(3);
+    }
+    let tBest = 'identity';
+    for (const k of Object.keys(tScore)) if (tScore[k] > tScore[tBest]) tBest = k;
+    let tRunner = -2;
+    for (const k of Object.keys(tScore)) if (k !== 'identity' && tScore[k] > tRunner) tRunner = tScore[k];
+    // Aspect is the one cue a 32×32 normalised grid throws away, and it is
+    // exactly what a 90° rotation changes. Kept as a separate reported number.
+    const mAsp = (tx1 >= tx0) ? (tx1 - tx0 + 1) / Math.max(1, ty1 - ty0 + 1) : 0;
+    const rAsp = (sx1 >= sx0) ? (sx1 - sx0 + 1) / Math.max(1, sy1 - sy0 + 1) : 0;
+
+    // ── SCREEN SPACE ──────────────────────────────────────────────────────
+    // Same with/without diff, on the render. One numeral is suppressed, so the
+    // mask is that numeral even with neighbouring bays in frame.
+    const W = c.width, H = c.height;
+    let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1, nInk = 0;
+    const diff = new Float32Array(W * H);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const i = (y * W + x) * 4;
+      const la = A[i] * 0.299 + A[i + 1] * 0.587 + A[i + 2] * 0.114;
+      const lb = B[i] * 0.299 + B[i + 1] * 0.587 + B[i + 2] * 0.114;
+      const dv = Math.abs(la - lb);
+      if (dv > 4) { diff[y * W + x] = dv; nInk++;
+        if (x < x0) x0 = x; if (x > x1) x1 = x;
+        if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    }
+    const sgrid = grid((x, y) => diff[y * W + x], x0, y0, x1, y1);
     // orientation within the GLYPH'S OWN bbox, not the crop's
     let top = 0, bot = 0, gmax = 0;
-    for (const v of grid) gmax = Math.max(gmax, v);
+    for (const v of sgrid) gmax = Math.max(gmax, v);
     for (let y = 0; y < G; y++) for (let x = 0; x < G; x++) {
-      const v = gmax ? grid[y * G + x] / gmax : 0;
+      const v = gmax ? sgrid[y * G + x] / gmax : 0;
       if (y < G / 2) top += v; else bot += v;
     }
-    return { bx, bz, glyph: { px: nInk, bbox: nInk ? [x0, y0, x1, y1] : null,
-             top: +top.toFixed(1), bot: +bot.toFixed(1),
-             score, best: best[0],
-             vMargin: +(score.vertical_upright - score.vertical_flipped).toFixed(3),
-             hMargin: +(score.horizontal_normal - score.horizontal_mirror).toFixed(3),
-             aMargin: +(score.axis_same - score.axis_swapped).toFixed(3) } };
+    return { bx, bz,
+      tex: { px: tInk, stray: strayPx, bbox: tInk ? [tx0, ty0, tx1, ty1] : null,
+             score: tScore, best: tBest,
+             margin: +(tScore.identity - tRunner).toFixed(3),
+             aspect: +mAsp.toFixed(3), refAspect: +rAsp.toFixed(3),
+             aspectErr: rAsp ? +Math.abs(mAsp / rAsp - 1).toFixed(3) : 9 },
+      glyph: { px: nInk, bbox: nInk ? [x0, y0, x1, y1] : null,
+               top: +top.toFixed(1), bot: +bot.toFixed(1) } };
   }, [units, bayNo]);
   if (!view) { ok(`${tier} bay ${bayNo} exists`, false); continue; }
+  if (view.fatal) { ok(`${tier} bay ${bayNo} isolation is sound`, false, view.fatal); continue; }
   await p.waitForTimeout(120);
   const file = join(OUT, `STENCIL_${tier}_bay${bayNo}.png`);
   await p.screenshot({ path: file });
 
-  const gl = view.glyph;
-  // A real glyph, isolated by causation — not "some bright pixels".
-  ok(`${tier} · bay ${bayNo} the stencil glyph EXISTS on the floor`,
+  const tx = view.tex, gl = view.glyph;
+  // ── the method's own precondition ──────────────────────────────────────
+  ok(`${tier} · bay ${bayNo} the two floor paints differ ONLY at this numeral`,
+     tx.stray === 0, `${tx.stray} px changed elsewhere on the slab`);
+  // ── existence, by causation. A deleted stencil lands here. ─────────────
+  // ⚠ 60, not 400. Measured: the tier-1 "2" is 146 px of ink at 34 px/m and
+  // the tier-5 "31" is 262. A deleted numeral is exactly 0 — and the stray
+  // assertion above proves nothing else on the slab moves — so the gap the
+  // threshold has to straddle is 0-vs-146, not 146-vs-400.
+  ok(`${tier} · bay ${bayNo} the numeral EXISTS in the floor texture`,
+     tx.px > 60, `${tx.px} px of ink appear when the numeral is un-suppressed`);
+  ok(`${tier} · bay ${bayNo} the numeral EXISTS on screen`,
      gl.px > 120 && gl.px < 40000,
-     `${gl.px} px changed when the glyph was erased from the texture` +
-     (gl.bbox ? ` · bbox ${gl.bbox.join(',')}` : ''));
-  // Orientation, measured INSIDE the glyph's own bounding box.
-  ok(`${tier} · bay ${bayNo} numeral is UPRIGHT (bottom-heavy within its own bbox)`,
-     gl.px > 120 && gl.bot > gl.top * 1.02,
-     `top=${gl.top} bottom=${gl.bot}`);
-  // …and it matches the source artwork under IDENTITY, not under any flip.
-  // Upside down flips the ROW profile; mirrored flips the COLUMN profile; a
-  // 90° rotation destroys the correlation with the upright artwork altogether,
-  // which is what the absolute floor catches.
-  // ⚠ NO ROW-PROFILE CORRELATION. I could not make it reliable and I stopped
-  // tuning it to fit. Correlating a steeply foreshortened perspective mask
-  // against flat artwork gave −0.47/−0.19 on CORRECT builds depending on tier,
-  // and every threshold that caught a flip also red-lighted a good build. The
-  // bbox bottom-heaviness above is the orientation test; it is measured inside
-  // the glyph's own bounding box, which is the specific thing the old vacuous
-  // version got wrong. What each defect actually does to this gate is recorded
-  // in the header's defect matrix — measured, not assumed.
-  // ⚠ MIRROR DETECTION IS REPORTED, NOT ASSERTED — because I could not make it
-  // reliable and I am not going to tune a threshold until a clean build squeaks
-  // through. Measured: mirroring the stencil moves this margin hard negative
-  // (−0.202 at t1, −0.437 at t5), so the signal is real; but a CLEAN t5 bay 31
-  // scores only +0.076 above its own mirror, and any threshold that catches the
-  // defect at t5 also red-lights that correct build. "31" reversed is "13" and
-  // at this mask size the two column profiles are genuinely close.
-  // So: printed every run, gating nothing, and named as unfinished in the
-  // handoff rather than quietly dropped.
-  console.log(`INFO — ${tier} · bay ${bayNo} mirror margin ${gl.hMargin} ` +
-    `(normal=${gl.score.horizontal_normal} mirror=${gl.score.horizontal_mirror}) ` +
-    `— reported only, see the note in this file`);
-  // ⚠ NO AXIS TEST. It was tried and it fails a CORRECT build: the stencil is
-  // viewed at a steep angle from standing height, so the mask is squashed
-  // vertically and its row profile genuinely resembles the flat artwork's
-  // COLUMN profile more than its row profile — clean measured same-axis 0.085
-  // against swapped-axis 0.294. A test that red-lights a good build is worse
-  // than no test, so a 90° rotation is caught only insofar as it disturbs the
-  // two margins above. The defect matrix below records exactly how far that
-  // goes rather than claiming more.
-  void gl.aMargin;
+     `${gl.px} px changed in the render` + (gl.bbox ? ` · bbox ${gl.bbox.join(',')}` : ''));
+  // ── shape, in texture space where there is no perspective to argue with ─
+  // Upside down makes rot180 win, mirrored makes flipX win, 90° makes a
+  // transpose win. Identity has to win outright, and by a margin — a tie means
+  // the glyph is too symmetric for the test to have said anything.
+  // ⚠ 0.10, and the headroom is thin ON PURPOSE at the top end, not the bottom.
+  // Clean margins measured 0.664 (t1 "2") and 0.193 (t5 "31" — "31" mirrored
+  // still reads a lot like "31", and flipY scores 0.791 against identity's
+  // 0.984). A threshold that a correct build clears by 0.04 is uncomfortable,
+  // so the margin is NOT what catches the defects: each of them makes a
+  // different transform WIN, which is the `best === 'identity'` half. The
+  // margin is only here to red-light a glyph so symmetric that the winner is
+  // arbitrary, and it is set low enough not to fail a good build.
+  ok(`${tier} · bay ${bayNo} the ink matches the artwork under IDENTITY`,
+     tx.best === 'identity' && tx.margin > 0.10,
+     `best=${tx.best} margin=${tx.margin} · ` +
+     Object.entries(tx.score).map(([k, v]) => `${k}=${v}`).join(' '));
+  // ── aspect, which the normalised grid cannot see ───────────────────────
+  ok(`${tier} · bay ${bayNo} the ink has the artwork's proportions`,
+     tx.aspectErr < 0.20, `w/h ${tx.aspect} vs artwork ${tx.refAspect} (${(tx.aspectErr * 100).toFixed(0)}% off)`);
+  // ── and the texture→screen chain, which texture space cannot see ───────
+  // This is the half that guards the canvas row → v → +Y → −Z argument in the
+  // page's comment: a flip introduced by the UVs or by the plane's rotation
+  // leaves the texture perfect and the render upside down.
+  ok(`${tier} · bay ${bayNo} numeral RENDERS upright (bottom-heavy in its own bbox)`,
+     gl.px > 120 && gl.bot > gl.top * 1.02, `top=${gl.top} bottom=${gl.bot}`);
 }
 
 ok('no uncaught page errors', errs.length === 0, errs.slice(0, 2).join(' | '));
@@ -329,7 +342,7 @@ console.log('');
 const fails = R.filter(x => x.startsWith('FAIL')).length;
 console.log(`${R.length - fails} PASS / ${fails} FAIL`);
 if (fails) {
-  console.error('✖ FLOOR STENCILS ARE NOT UPRIGHT. Open the PNGs in _wh_shots/ —');
+  console.error('✖ FLOOR STENCILS ARE NOT RIGHT. Open the PNGs in _wh_shots/ —');
   console.error('  the bay wall sign in the same frame is the upright reference.');
   process.exit(1);
 }

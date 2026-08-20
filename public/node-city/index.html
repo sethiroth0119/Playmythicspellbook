@@ -9,7 +9,7 @@
      believed the file was already live. Only a CONTENT change moves the hash
      and forces a re-upload, so bump this stamp whenever the city 404s, and
      probe it (grep NC_BUILD on the served page) to prove the deploy landed. -->
-<script>window.NC_BUILD = "v121b2-viewpills";</script>
+<script>window.NC_BUILD = "v121b3-weather";</script>
 <!-- ════════════════════════════════════════════════════════════════════════
      NODE CITY — SimCity-style settlement layer for Mythic Spellbook.
      Three.js WebGPU (auto-falls back to WebGL2). Realistic sun/moon cycle.
@@ -684,6 +684,8 @@
   #esttag{color:#6a6482;font-size:9px;letter-spacing:.12em;}
   #wxname{color:var(--bone);}
   #daypill.severe{border-color:var(--invalid);animation:warnpulse 1s infinite;}
+  #daypill.warned{border-color:#ffb347;box-shadow:0 0 12px rgba(255,179,71,.45);
+    animation:warnpulse 2s infinite;}
 
   @media (max-width:820px){
     #leftcol{width:186px;} #rightcol{width:186px;}
@@ -4155,6 +4157,11 @@ const ARMY = {
    Damaged buildings stop producing until repaired. */
 const WEATHER = {
   clear:    { name: 'Clear',     ico: '🌤️', dur: [0, 0] },
+  /* ☁ CLOUDY IS NOT WEATHER, IT IS THE OTHER HALF OF NORMAL. It carries no
+     multiplier at all — it exists so the sky is not a binary between "clear"
+     and "something is happening to your city". Long duration on purpose: most
+     of a city's days should be one of these two states. */
+  cloudy:   { name: 'Cloudy',    ico: '☁️', dur: [420, 1100] },
   rain:     { name: 'Rain',      ico: '🌧️', dur: [240, 720],  farmMult: 1.3, waterMult: 1.35, outdoorMult: 1 },
   storm:    { name: 'Storm',     ico: '⛈️', dur: [180, 420],  farmMult: .7,  waterMult: 1.2,  outdoorMult: .7, severe: true, lightning: true },
   snow:     { name: 'Snow',      ico: '🌨️', dur: [300, 900],  farmMult: .45, waterMult: .8,   outdoorMult: .8, allMult: .88 },
@@ -4163,14 +4170,41 @@ const WEATHER = {
   anomaly:  { name: 'ANOMALY',   ico: '🌀', dur: [90, 160],   farmMult: .7,  outdoorMult: .7, severe: true, anomaly: true },
 };
 const WX_ROLL_EVERY = 150;             // seconds between weather dice rolls
+/* 🎲 THE ODDS, AND THE ARITHMETIC BEHIND THEM.
+   A roll happens every WX_ROLL_EVERY seconds and a city "day" is CITY_DAY_MIN
+   minutes, so at 150s and 20min that is EIGHT ROLLS PER CITY DAY. The old table
+   summed to 0.112 a roll, which is 1-(1-0.112)^8 = 61% of days carrying an
+   event — and with rain running 240-720s of a 1200s day, a city that rolled
+   one spent most of that day under it. That is why it read as constant weather
+   rather than as weather happening.
+
+   Retuned so the ORDINARY fronts are the thing that got rarer:
+     rain  0.050 → 0.022      snow 0.025 → 0.010      storm 0.020 → 0.010
+   Severe is deliberately UNCHANGED (0.006/0.006/0.005). It was already about
+   one in seven or eight days, which is the "every few days" cadence a disaster
+   wants; the complaint was never that tornadoes were common.
+
+   New total 0.059 → 39% of days carry a front, so most days are clear or
+   cloudy and a front is an event again. Severe stays 13% of days.
+   MEASURED against the live table, not asserted: any front ~1 every 2.6 city
+   days, severe ~1 every 7.8, cloudy ~1 every 1.9. rain 6.1 / storm 12.9 /
+   snow 12.9 / tornado 21.3 / firerain 21.3 / anomaly 25.4.
+   ⚠ If WX_ROLL_EVERY or CITY_DAY_MIN move, these per-day figures move with
+     them — the numbers above are only true at 150s and 20min. */
 const WX_CHANCES = [                   // one roll: first match wins
-  { type: 'tornado',  p: 0.006 },      // ~1 in 165 rolls — genuinely rare
+  { type: 'tornado',  p: 0.006 },      // unchanged — already ~1 per 7-8 city days
   { type: 'firerain', p: 0.006 },
   { type: 'anomaly',  p: 0.005 },      // a rift tear — corrupts, but pays in essence
-  { type: 'storm',    p: 0.020 },
-  { type: 'snow',     p: 0.025 },      // (snow slightly likelier Dec–Feb, see roll)
-  { type: 'rain',     p: 0.050 },
+  { type: 'storm',    p: 0.010 },
+  { type: 'snow',     p: 0.010 },      // (snow slightly likelier Dec–Feb, see roll)
+  { type: 'rain',     p: 0.022 },
+  { type: 'cloudy',   p: 0.090 },      // benign filler — overcast, no multipliers
 ];
+/* ⏳ HOW MUCH NOTICE A SEVERE FRONT GIVES, in seconds. A quarter to a half of a
+   city day, which is enough to actually do something and short enough that the
+   warning still feels like a warning. Ordinary fronts get NO lead time: they
+   arrive, and there is nothing to prepare against. */
+const WX_WARN_LEAD = [180, 320];
 /* ⚡ LIGHTNING — atmosphere first, demolition never.
    The header above states what each event does: "farmMult / outdoorMult scale
    production; tornado physically destroys tiles in its path; fire rain sets
@@ -5674,6 +5708,25 @@ function startWeather(type) {
       (fx.length ? ' — ' + fx.join(', ') + '.' : '.'));
   }
 }
+/* 🚨 Say it three ways, because the three reach different players: a toast for
+   whoever is looking at the city right now, the event log for whoever scrolls
+   back, and the day pill so the alert persists on screen for the whole notice
+   period. The phone's news feed is the fourth and it reads wx.warn itself —
+   see the broadcast ctx below. */
+function _wxWarn(type, leadSec) {
+  const W = WEATHER[type]; if (!W) return;
+  const mins = Math.max(1, Math.round(leadSec / 60));
+  const prep = type === 'firerain' ? 'Clear what will burn and get water on standby.'
+    : type === 'tornado' ? 'It flattens what it crosses — move nothing you cannot lose into its path.'
+    : 'Corruption is coming; expect buildings to turn before it pays out.';
+  try {
+    toast('🚨 ' + W.ico + ' ' + W.name + ' INBOUND — about ' + mins + ' min. ' + prep, 'bad');
+  } catch (e) {}
+  try {
+    logEvent('env', '🚨 WARNING — ' + W.ico + ' ' + W.name + ' forecast to hit in ~' + leadSec + 's. ' + prep);
+  } catch (e) {}
+  try { $('daypill').classList.add('warned'); } catch (e) {}
+}
 function endWeather() {
   const prev = WEATHER[wx.type], since = wx._startedAt;
   if (wx.type !== 'clear' && prev) {
@@ -5687,7 +5740,14 @@ function endWeather() {
 function weatherTick(dt) {
   const now = Date.now();
   // roll the dice — rarely
-  if (wx.type === 'clear' && now >= wx.nextRoll) {
+  /* The forecast front lands here. Checked before the roll so a warning can
+     never be overwritten by a second roll while it is still pending. */
+  if (wx.warn && now >= wx.warn.at) {
+    const t = wx.warn.type; wx.warn = null;
+    try { $('daypill').classList.remove('warned'); } catch (e) {}
+    startWeather(t);
+  }
+  if (wx.type === 'clear' && !wx.warn && now >= wx.nextRoll) {
     wx.nextRoll = now + WX_ROLL_EVERY * 1000 * (0.6 + Math.random() * 0.8); // jittered
     const r = Math.random();
     let acc = 0;
@@ -5695,7 +5755,20 @@ function weatherTick(dt) {
       let p = c.p;
       if (c.type === 'snow') { const m = estClock().month; p *= (m === 12 || m <= 2) ? 2.2 : (m >= 6 && m <= 8) ? .15 : 1; }
       acc += p;
-      if (r < acc) { startWeather(c.type); break; }
+      if (r < acc) {
+        /* 🚨 A SEVERE FRONT IS FORECAST, NOT SPRUNG. The roll decides WHAT and
+           WHEN; the front itself lands when its notice period runs out. That
+           gap is the whole point — a disaster you cannot see coming is not a
+           decision, it is a dice roll you watch. Ordinary fronts still start
+           immediately: there is nothing to prepare against rain. */
+        const Wc = WEATHER[c.type];
+        if (Wc && Wc.severe) {
+          const lead = WX_WARN_LEAD[0] + Math.random() * (WX_WARN_LEAD[1] - WX_WARN_LEAD[0]);
+          wx.warn = { type: c.type, at: now + lead * 1000, lead: Math.round(lead) };
+          _wxWarn(c.type, Math.round(lead));
+        } else startWeather(c.type);
+        break;
+      }
     }
   }
   if (wx.type !== 'clear' && now >= wx.until) { endWeather(); return; }
@@ -40263,7 +40336,17 @@ function animate() {
            top-level consts here. */
         weather: () => {
           const W = WEATHER[wx.type] || null;
-          return W ? { type: wx.type, name: W.name, ico: W.ico, severe: !!W.severe } : null;
+          if (!W) return null;
+          const out = { type: wx.type, name: W.name, ico: W.ico, severe: !!W.severe };
+          /* 🚨 The FORECAST, so a warning can go out BEFORE the front lands
+             rather than reporting it once it is overhead. Null whenever nothing
+             is inbound, which is most of the time. */
+          if (wx.warn && WEATHER[wx.warn.type]) {
+            const Fw = WEATHER[wx.warn.type];
+            out.warn = { type: wx.warn.type, name: Fw.name, ico: Fw.ico,
+                         inSec: Math.max(0, Math.round((wx.warn.at - Date.now()) / 1000)) };
+          }
+          return out;
         },
         hour: () => hourOf(),
         cycleMin: CITY_DAY_MIN,
@@ -40302,7 +40385,17 @@ function animate() {
         openCitizen: (id) => openCitTalk(id),
         weather: () => {
           const W = WEATHER[wx.type] || null;
-          return W ? { type: wx.type, name: W.name, ico: W.ico, severe: !!W.severe } : null;
+          if (!W) return null;
+          const out = { type: wx.type, name: W.name, ico: W.ico, severe: !!W.severe };
+          /* 🚨 The FORECAST, so a warning can go out BEFORE the front lands
+             rather than reporting it once it is overhead. Null whenever nothing
+             is inbound, which is most of the time. */
+          if (wx.warn && WEATHER[wx.warn.type]) {
+            const Fw = WEATHER[wx.warn.type];
+            out.warn = { type: wx.warn.type, name: Fw.name, ico: Fw.ico,
+                         inSec: Math.max(0, Math.round((wx.warn.at - Date.now()) / 1000)) };
+          }
+          return out;
         },
         hour: () => hourOf(),
       });

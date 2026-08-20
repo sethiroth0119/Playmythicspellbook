@@ -422,7 +422,20 @@ export const PHRASES = {
         ['I just love this {tag}! Not too hot, not too cold', 'perfect {tag}. Perfect day. Nothing to complain about']
       ),
     },
-    dept: { bad: B([], [], []), good: G([], []) },
+    /* ⚠ THIS WAS B([], [], []) — an empty register. Nothing spoke for the
+       weather desk because nothing ever posted as it; the forecast does, and an
+       empty tier renders an empty post. The severe tier is the one a warning
+       lands in (severity 0.9), and it is written to name the MITIGATION, which
+       is the whole reason to warn early rather than report late. */
+    dept: {
+      bad: B(
+        ['we are tracking a {w} off the city limits and will update as it turns'],
+        ['a {w} is forming and expected to reach us shortly. Secure what you can'],
+        ['EMERGENCY BROADCAST: a {w} is inbound. You have time to prepare — clear what will burn, '
+          + 'move what you cannot replace, and keep crews off the open ground until it passes']
+      ),
+      good: G([], []),
+    },
   },
 
   raid: {

@@ -510,6 +510,31 @@ function fromEconomy(ctx, pop) {
    makes the post a MEASUREMENT is the headcount, and for a contented post that
    is how many people are content enough for it to be true of them. In a
    struggling city that is four, which is the reading. */
+/* 🚨 THE FORECAST — the only source here that reports something that has NOT
+   happened yet, which is the entire point of it.
+
+   Every other post in this feed is a measurement of the city as it stands. This
+   one exists because a disaster nobody saw coming is not a decision a player
+   gets to make; it is a dice roll they watch land. node-city now warns a severe
+   front several minutes before it arrives (see WX_WARN_LEAD) and hands the
+   forecast over on ctx.weather().warn — this turns that into the story the
+   mayor actually reads.
+
+   Departmental voice, not a citizen's: the phrase table dept register is
+   "factual, names the shortfall and the mitigation", which is exactly what a
+   warning has to do. A resident saying "looks like rain" is not a warning.
+
+   ⚠ Keyed on the front's TYPE, so the warning posts ONCE per incoming front
+     rather than every tick of the notice period. */
+function fromForecast(ctx, pop) {
+  let w = null; try { w = ctx.weather(); } catch (e) { return []; }
+  if (!w || !w.warn || !w.warn.name) return [];
+  return [{ src: 'weather', key: 'wxwarn|' + w.warn.type,
+            subject: 'weather', pole: 'bad', dept: true, severity: 0.9,
+            affected: Math.round(pop), facts: { w: w.warn.name },
+            why: w.warn.name + ' forecast to make landfall' }];
+}
+
 function fromWeather(ctx, pop) {
   let w = null; try { w = ctx.weather(); } catch (e) { return []; }
   if (!w || !w.name) return [];
@@ -709,7 +734,7 @@ export function observe(ctx) {
   const out = [];
   for (const ev of consumeLog(ctx, 8)) out.push(ev);
   for (const fn of [fromCoverage, fromPower, fromWater, fromPollution,
-                    fromDemographics, fromEconomy, fromWeather, fromMood,
+                    fromDemographics, fromEconomy, fromForecast, fromWeather, fromMood,
                     fromStreets, fromRoster]) {
     for (const ev of safe(fn, ctx, pop)) out.push(ev);
   }

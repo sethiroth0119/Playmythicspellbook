@@ -91,6 +91,51 @@ export const BLUEPRINTS = {
   },
 };
 
+/* ── ⚔️ BLADES ────────────────────────────────────────────────────────────
+   Blades carry `forge` instead of `steps`. They are not assembled from parts,
+   they are MADE from a billet through a sequence of heat and shaping, which is
+   a genuinely different game — see bench.forge.js. Sharing one blueprint table
+   anyway, because everything downstream (the budget rule, ws_mint, the crafted
+   item book) treats a finished blade exactly like a finished gun. Only the
+   bench that produces it differs.
+
+   Budgets benchmarked the same way as the guns:
+     knife      4  — sw_autopistol (+4 ATK) / sw_combatKnife
+     sword     11  — pw_relicEdge (+10 ATK, +1 SPD)
+     greatsword 12 — pw_heavyMaul (+12 ATK) */
+const FORGE_STEPS = [
+  { id: 'heat',    name: 'Heat',    icon: '🔥', verb: 'Bring the billet up',   res: { fuel: 2 },  band: [0.58, 0.80], burn: 0.94 },
+  { id: 'hammer',  name: 'Hammer',  icon: '🔨', verb: 'Draw it out',           res: {},           band: [0.55, 0.85], burn: 0.97, reps: 3 },
+  { id: 'quench',  name: 'Quench',  icon: '💧', verb: 'Take it to the barrel', res: { water: 1 }, band: [0.62, 0.74], burn: 0.90 },
+  { id: 'temper',  name: 'Temper',  icon: '🌡', verb: 'Hold the colour',       res: { fuel: 1 },  band: [0.50, 0.78], burn: 0.95 },
+  { id: 'grind',   name: 'Grind',   icon: '🪨', verb: 'Take it to the wheel',  res: { stone: 2 }, band: [0.60, 0.86], burn: 0.98 },
+  { id: 'sharpen', name: 'Sharpen', icon: '✨', verb: 'Put an edge on it',     res: { gunOil: 1, cloth: 1 }, band: [0.66, 0.88], burn: 0.99 },
+];
+
+Object.assign(BLUEPRINTS, {
+  ws_bp_knife: {
+    id: 'ws_bp_knife', name: 'Field Knife', icon: '🔪', tier: 1,
+    slotType: 'secondaryWeapon', budget: 4, weapon: { range: 1 },
+    blurb: 'A short blade. Quick to forge and hard to ruin.',
+    forge: FORGE_STEPS, billet: { metal: 4, wood: 2, cloth: 1 },
+  },
+  ws_bp_sword: {
+    id: 'ws_bp_sword', name: 'Arming Sword', icon: '🗡️', tier: 2,
+    slotType: 'primeWeapon', budget: 11, weapon: { range: 1 },
+    blurb: 'Long enough to matter, light enough to carry all day.',
+    forge: FORGE_STEPS, billet: { metal: 10, wood: 3, cloth: 2, weaponParts: 2 },
+  },
+  ws_bp_greatsword: {
+    id: 'ws_bp_greatsword', name: 'Greatsword', icon: '⚔️', tier: 3,
+    slotType: 'primeWeapon', budget: 12, weapon: { range: 1 },
+    blurb: 'Two hands, and every ounce of the billet still in it.',
+    forge: FORGE_STEPS, billet: { metal: 16, wood: 4, cloth: 3, weaponParts: 3 },
+  },
+});
+
+export const isBlade = (bp) => !!(bp && bp.forge);
+export const FORGE = FORGE_STEPS;
+
 export const blueprint  = (id) => BLUEPRINTS[id] || null;
 export const blueprintIds = () => Object.keys(BLUEPRINTS);
 export const stepFor = (bp, slot) => (bp && bp.steps || []).find((s) => s.slot === slot) || null;

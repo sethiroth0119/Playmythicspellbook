@@ -32,6 +32,11 @@ const DEFAULTS = {
   // the assembly bench (phase 5) — held here only so a half-built weapon
   // survives a reload, which is the whole reason it is persisted at all.
   bench: null,
+  /* ⚔️ The in-progress BLADE. Separate from `bench` because the two are
+     different games and a smith may only have one thing in hand — startForge
+     refuses if either is set. Persisted for the same reason as `bench`: the
+     billet is already spent. */
+  forge: null,
   // 🏅 Server mirror — see the warning above. Never written except from a
   // server response.
   rep: 0,
@@ -56,6 +61,8 @@ const DEFAULTS = {
   built: 0,
   delivered: 0,
   stripped: 0,
+  forged: 0,
+  ruined: 0,
 };
 
 /* ⚠ NOTE ON WHAT IS *NOT* HERE.

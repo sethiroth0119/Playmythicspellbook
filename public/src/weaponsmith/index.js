@@ -16,6 +16,7 @@ import { mintLocal, composeDef, distribute, budgetPoints, SEED_BLUEPRINTS } from
 import { allItemDefs, CATALOG, DONOR_CATALOG, cleanPart, cleanCost, stripDonor, partDef, isPart, isDonor, TIERS } from './parts.js';
 import { BLUEPRINTS, blueprint, blueprintIds, canSeat, checkFit, requiredSlots } from './blueprints.js';
 import { startBuild, abandonBuild, seatPart, pullPart, tryFit, scoreBuild, finishBuild, torqueScore } from './bench.gun.js';
+import { startForge, workStep, currentStep, scoreForge, finishForge, abandonForge, stepScore } from './bench.forge.js';
 import { openBench, closeBench, benchOpen } from './render.js';
 import { syncState, mintServer, grantBlueprint, deliverContract, ownsBlueprint, online, rollBoard, claimRepBlueprint, repTier } from './server.js';
 import { SCHEMATICS, schematicCatalog, learnSchematic, dropSchematic, rollSchematic, unlearned, isSchematic, schematicId, blueprintOf } from './schematics.js';
@@ -108,6 +109,12 @@ try {
     board: () => rollBoard(),
     claim: (bpId) => claimRepBlueprint(bpId),
     tier: () => repTier(ensureWeaponSmith().rep),
+    // ⚔️ Phase-10 probes.
+    forge: (id) => startForge(id || 'ws_bp_knife'),
+    work: (v) => workStep(v == null ? 0.7 : v),
+    forgeScore: () => scoreForge(ensureWeaponSmith().forge),
+    forgeDone: () => finishForge(),
+    forgeAbandon: () => abandonForge(),
   };
   /* 🔧 The opener index.html calls. A plain window function rather than another
      bridge entry, because the flow is the OTHER direction: the bridge is what
@@ -138,3 +145,4 @@ export { syncState, mintServer, grantBlueprint, deliverContract, ownsBlueprint, 
 export { SCHEMATICS, learnSchematic, dropSchematic, rollSchematic, unlearned, isSchematic, schematicId, blueprintOf };
 export { forSale, storeBuy, priceOf, AZA_PRICE };
 export { rollBoard, claimRepBlueprint, repTier };
+export { startForge, workStep, currentStep, scoreForge, finishForge, abandonForge, stepScore };

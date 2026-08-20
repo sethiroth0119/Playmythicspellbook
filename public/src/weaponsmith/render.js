@@ -19,6 +19,8 @@ import { BLUEPRINTS, blueprint, blueprintIds, stepFor } from './blueprints.js';
 import { SCHEMATICS, learnSchematic, unlearned } from './schematics.js';
 import { ownsBlueprint, online, rollBoard, deliverContract, claimRepBlueprint, repTier } from './server.js';
 import { startBuild, abandonBuild, seatPart, pullPart, tryFit, scoreBuild, finishBuild, TORQUE_BAND, TORQUE_STRIP } from './bench.gun.js';
+import { startForge, workStep, currentStep, scoreForge, finishForge, abandonForge } from './bench.forge.js';
+import { isBlade } from './blueprints.js';
 
 const ID = 'ws-bench-overlay';
 let _tick = null, _torque = null;
@@ -122,6 +124,15 @@ function release() {
   if (!_sel || !_torque) return;
   const v = _torque.v, id = _sel;
   stopTorque(); _sel = null;
+  /* The bar is shared between the two benches, and the forge parks a sentinel
+     in _sel. Without this branch a bar that ran to the end on the forge would
+     be handed to seatPart as if '__forge' were a part id. */
+  if (id === '__forge') {
+    const fr = workStep(v);
+    _msg = fr.ok ? fr.note : fr.reason;
+    paint();
+    return;
+  }
   const r = seatPart(id, v);
   _msg = r.ok ? ((partDef(id) || {}).name + ' — ' + r.note) : r.reason;
   paint();
@@ -132,7 +143,7 @@ function paint() {
   const el = document.getElementById(ID);
   if (!el) return;
   const s = ensureWeaponSmith();
-  el.innerHTML = s.bench ? buildView(s) : pickerView(s);
+  el.innerHTML = s.bench ? buildView(s) : (s.forge ? forgeView(s) : pickerView(s));
   bind(s);
 }
 
@@ -310,13 +321,72 @@ function buildView(s) {
     </div></div>`;
 }
 
+/* ⚔️ The forge. A fixed sequence rather than a board of stations — there is no
+   order to learn, so the whole screen is the current step and the bar. */
+function forgeView(s) {
+  const f = s.forge, bp = blueprint(f.blueprintId);
+  const step = bp.forge[f.step];
+  const sc = scoreForge(f);
+  const done = !step;
+
+  const ladder = bp.forge.map((st, i) => {
+    const state = i < f.step ? 'filled' : (i === f.step ? 'ready' : 'locked');
+    const reps = st.reps || 1;
+    return `<div class="wsb-st ${state}" style="min-height:0;padding:.5rem">
+      <div class="nm">${esc(st.icon)} ${esc(st.name)}</div>
+      <div class="mt">${i === f.step && reps > 1 ? (f.rep + '/' + reps) : (i < f.step ? 'done' : '')}</div>
+    </div>`;
+  }).join('');
+
+  const band = step ? step.band : [0.6, 0.85];
+  const burn = step ? step.burn : 0.95;
+
+  return `<div class="wsb-wrap">
+    <div class="wsb-head"><div><h2>⚔️ ${esc(bp.icon)} ${esc(bp.name)}</h2>
+      <div class="wsb-sub">${esc(bp.blurb)} · budget ${bp.budget} pts</div></div>
+      <button class="wsb-x" id="${ID}-close">Close</button></div>
+    <div class="wsb-panel">
+      <h3>${done ? 'Finished' : esc(step.icon + ' ' + step.name)}</h3>
+      <div class="wsb-sub" style="margin-bottom:.5rem">${done
+        ? 'The blade is done. Proof it and take it.'
+        : esc(step.verb) + '. Hold, and release inside the band — past the red and the steel is ruined.'}</div>
+      <div class="wsb-stations" style="grid-template-columns:repeat(auto-fill,minmax(110px,1fr));margin-bottom:.7rem">${ladder}</div>
+      ${done ? '' : `<div class="wsb-bar">
+        <div class="wsb-fill" id="${ID}-fill"></div>
+        <div class="wsb-band" style="left:${band[0] * 100}%;width:${(band[1] - band[0]) * 100}%"></div>
+        <div class="wsb-danger" style="width:${(1 - burn) * 100}%"></div>
+      </div>`}
+      <div class="wsb-meter">
+        <span>quality <b>${Math.round(sc.quality * 100)}%</b></span>
+        <span>worst step <b>${Math.round((sc.worst || 0) * 100)}%</b></span>
+        <span>steps <b>${f.step}/${bp.forge.length}</b></span>
+      </div>
+      <div class="wsb-msg">${esc(_msg)}</div>
+      <div style="display:flex;gap:.5rem;margin-top:.6rem">
+        ${done ? `<button class="wsb-btn" id="${ID}-fdone">Proof &amp; Finish</button>`
+               : `<button class="wsb-btn" id="${ID}-fwork">${esc(step.verb)}</button>`}
+        <button class="wsb-btn" id="${ID}-fabandon">Abandon (the billet is lost)</button>
+      </div>
+    </div></div>`;
+}
+
 function bind(s) {
   const el = document.getElementById(ID);
   if (!el) return;
   const close = document.getElementById(ID + '-close');
   if (close) close.onclick = () => closeBench();
 
-  el.querySelectorAll('[data-bp]').forEach((b) => { b.onclick = () => { _msg = ''; startBuild(b.getAttribute('data-bp')); paint(); }; });
+  el.querySelectorAll('[data-bp]').forEach((b) => {
+    b.onclick = () => {
+      const id = b.getAttribute('data-bp');
+      _msg = '';
+      // A blade goes to the forge, a gun to the assembly bench. One picker,
+      // two games — the blueprint decides which, so the player never has to.
+      if (isBlade(BLUEPRINTS[id])) { const r = startForge(id); if (!r.ok) _msg = r.reason; }
+      else startBuild(id);
+      paint();
+    };
+  });
   el.querySelectorAll('[data-strip]').forEach((b) => {
     b.onclick = () => { const r = stripDonor(b.getAttribute('data-strip')); _msg = r ? ('Stripped — ' + r.parts.length + ' parts recovered.') : 'Could not strip that.'; paint(); };
   });
@@ -391,6 +461,33 @@ function bind(s) {
       const m = el.querySelector('.wsb-msg'); if (m) m.textContent = _msg;
     };
   });
+
+  /* ⚔️ Forge bar. Same hold-and-release as the torque bar, but a miss past the
+     burn threshold destroys the billet rather than costing a retry. */
+  const fwork = document.getElementById(ID + '-fwork');
+  if (fwork) fwork.onclick = () => {
+    if (_torque) {                              // second click — release
+      const v = _torque.v; stopTorque(); _sel = null;
+      const r = workStep(v);
+      _msg = r.ok ? r.note : r.reason;
+      paint();
+      return;
+    }
+    _msg = 'Working…  click again to stop.';
+    _sel = '__forge';
+    startTorque('__forge');
+    const m = el.querySelector('.wsb-msg'); if (m) m.textContent = _msg;
+  };
+  const fdone = document.getElementById(ID + '-fdone');
+  if (fdone) fdone.onclick = async () => {
+    fdone.disabled = true;
+    const r = await finishForge();
+    _msg = r.ok ? ('Forged ' + r.item.name + ' at ' + r.quality + '% (worst step ' + r.worst + '%).') : r.reason;
+    if (r.ok) { try { toast('⚔️ ' + r.item.name + ' finished (' + r.quality + '%).', 5200); } catch (e) {} }
+    paint();
+  };
+  const fab = document.getElementById(ID + '-fabandon');
+  if (fab) fab.onclick = () => { abandonForge(); _msg = 'Left it to go cold. The billet is scrap.'; paint(); };
 
   const fin = document.getElementById(ID + '-finish');
   if (fin) fin.onclick = async () => {

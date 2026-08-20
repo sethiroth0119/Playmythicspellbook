@@ -32,7 +32,7 @@
    consumes, and the audited Cinder payout. Nothing else crosses.
    ════════════════════════════════════════════════════════════════════════════ */
 
-import { ECON } from './tuning.js';
+import { ECON, taxRate } from './tuning.js';
 import { DEPOSITS, RECIPES, INDUSTRIES, legsOf, industryOf, bandOf, producible } from './recipes.js';
 import * as Prices from './prices.js';
 import * as Endow from './endowment.js';
@@ -1504,7 +1504,7 @@ function runGroundRent(days) {
   }
   if (collected <= 0) return;
 
-  const ptax = collected * ECON.tax.property;
+  const ptax = collected * taxRate('property');
   const net = collected - ptax;
   S.treasury += ptax;
   S.flow.tax += ptax;
@@ -1528,7 +1528,7 @@ function runShopping(days) {
        that slice out of nothing — the audit caught it on day one. The landlord
        receives the net; the city receives the tax; the two sum to what was
        actually paid. Every tax in this file follows that rule. */
-    const ptax = rent * ECON.tax.property;
+    const ptax = rent * taxRate('property');
     const net = rent - ptax;
     S.treasury += ptax;
     const landlords = Firms.byIndustry('landlord');

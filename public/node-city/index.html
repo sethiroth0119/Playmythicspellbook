@@ -30906,6 +30906,71 @@ function nodeXpTick(dtSec) {
     }
   }
 }
+
+/* ⬆ HOISTED OUT OF caravanTick(). Both of these were written inside it and
+   both were wrong there: serialize() calls _taxPolicyShelf() and could not
+   see it at all (a ReferenceError on every save), and window.ncTradeConvoy
+   was only assigned if a caravan ever dispatched — so a city that had never
+   run one silently had no trade convoy and fell back to the toast for ever.
+   Top level is where a function two other scopes call has to live. */
+/* 🏛 TAX POLICY — the save slice, and the flag that says it is worth saving.
+ ⚠ REGISTERED ONCE, LAZILY. window.MythicBudget and window.MythicEconomy both
+   land asynchronously; a registration at boot would capture nothing. The
+   shelf stashes a payload and replays it to whoever registers next, so
+   arriving late is the supported path and not a race.
+ ⚠ SAVES NOTHING WHEN THE MAYOR HAS SET NOTHING. taxPolicy() is null until a
+   slider moves, and writing `{}` into the save would turn "this city uses the
+   shipped rates" into a stored object that a future build has to interpret.
+   Absent means default, and that is a state worth keeping distinct. */
+let _taxPolicyShelved = false;
+function _taxPolicyShelf() {
+  if (_taxPolicyShelved) return true;
+  const shelf = window.MythicCitySave;
+  const B = window.MythicBudget;
+  if (!shelf || typeof shelf.register !== 'function' || !B) return false;
+  _taxPolicyShelved = !!shelf.register('taxpolicy', {
+    save: () => {
+      try {
+        const p = (typeof B.taxPolicy === 'function') ? B.taxPolicy() : null;
+        return (p && Object.keys(p).length) ? { rates: p } : null;
+      } catch (e) { return null; }
+    },
+    load: (payload) => {
+      try {
+        const r = payload && payload.rates;
+        if (!r || typeof r !== 'object') return;
+        const E = window.MythicEconomy;
+        // Straight to the economy: it owns the clamp, so a hand-edited save
+        // with payroll:5 lands at the ceiling rather than at 500%.
+        if (E && typeof E.setTaxPolicy === 'function') E.setTaxPolicy(r);
+      } catch (e) {}
+    },
+  });
+  return _taxPolicyShelved;
+}
+
+function ncTradeConvoy(label) {
+  try {
+    if (typeof allRoadKeys !== 'function' || typeof agentMesh !== 'function') return false;
+    const roads = allRoadKeys();
+    if (!roads || roads.length < 2) return false;
+    const from = roads[Math.floor(Math.random() * roads.length)];
+    const to = roads[Math.floor(Math.random() * roads.length)];
+    const path = bfsPath(from, to);
+    if (!path || path.length < 2) return false;
+    const mesh = agentMesh('truck');
+    // Gold banner so a trade run reads apart from an ordinary delivery van.
+    const banner = new THREE.Mesh(new THREE.BoxGeometry(.02, .1, .12), MAT.roadLine);
+    banner.position.set(-.16, .26, 0); mesh.add(banner);
+    const [sx2, sz2] = from.split(',').map(Number);
+    mesh.position.set(sx2 - HALF + .5, 0, sz2 - HALF + .5);
+    agentGroup.add(mesh);
+    agents.push({ kind: 'truck', mesh, path, i: 0, t: 0, speed: AGENTS.truckSpeed, dwell: 0, state: 'travel', lateral: 0, caravan: true });
+    if (label) toast('🚚 ' + label, 'good');
+    return true;
+  } catch (e) { return false; }
+}
+try { window.ncTradeConvoy = ncTradeConvoy; } catch (e) {}
 // Caravans — trucks that leave the map for other players' cities.
 let NEIGHBORS = [];
 function caravanTick(nowSec) {
@@ -30968,28 +31033,6 @@ function caravanTick(nowSec) {
      convoy the player never saw. This is why it answers rather than throwing.
    ⚠ NO GAMEPLAY HERE. It moves no goods and books no trip: the shipment was
      already settled by the parent before this was called. Purely the picture. */
-  function ncTradeConvoy(label) {
-    try {
-      if (typeof allRoadKeys !== 'function' || typeof agentMesh !== 'function') return false;
-      const roads = allRoadKeys();
-      if (!roads || roads.length < 2) return false;
-      const from = roads[Math.floor(Math.random() * roads.length)];
-      const to = roads[Math.floor(Math.random() * roads.length)];
-      const path = bfsPath(from, to);
-      if (!path || path.length < 2) return false;
-      const mesh = agentMesh('truck');
-      // Gold banner so a trade run reads apart from an ordinary delivery van.
-      const banner = new THREE.Mesh(new THREE.BoxGeometry(.02, .1, .12), MAT.roadLine);
-      banner.position.set(-.16, .26, 0); mesh.add(banner);
-      const [sx2, sz2] = from.split(',').map(Number);
-      mesh.position.set(sx2 - HALF + .5, 0, sz2 - HALF + .5);
-      agentGroup.add(mesh);
-      agents.push({ kind: 'truck', mesh, path, i: 0, t: 0, speed: AGENTS.truckSpeed, dwell: 0, state: 'travel', lateral: 0, caravan: true });
-      if (label) toast('🚚 ' + label, 'good');
-      return true;
-    } catch (e) { return false; }
-  }
-  try { window.ncTradeConvoy = ncTradeConvoy; } catch (e) {}
   for (let i = game.caravan.trips.length - 1; i >= 0; i--) {
     const tr = game.caravan.trips[i];
     if (nowSec < tr.until) continue;
@@ -32431,6 +32474,12 @@ function serialize() {
      ⚠ Both are OPTIONAL and both are guarded. A 404 on the module writes a save
        with neither key and loses nothing else, and loadState reads both with a
        default, so a save written before any of this shipped opens unchanged. */
+  /* 🏛 TAX POLICY rides the shelf like every other slice — registered lazily
+     here rather than at boot because window.MythicBudget lands asynchronously
+     and a registration that ran before it would silently save nothing. The
+     shelf REPLAYS a stashed payload to whoever registers next, so being late is
+     the documented, supported case (naming/save.js). */
+  try { _taxPolicyShelf(); } catch (e) {}
   try { if (window.MythicCitySave) payload.ext = window.MythicCitySave.collect(); } catch (e) { console.warn('[save-ext] collect', e); }
   try { if (window.MythicCitySave) payload.meta = window.MythicCitySave.describe(payload); } catch (e) {}
   return JSON.stringify(payload);
@@ -38074,6 +38123,22 @@ function animate() {
              not here, because #ecobody's innerHTML is replaced every 4 s and a
              flag kept on this side would have to be re-applied to markup this
              file does not build. */
+          /* 🎚 RESET ONE TAX to its shipped rate. Checked BEFORE the row select
+             below, because the button sits inside the selected row's panel and
+             the row handler would otherwise swallow the click and toggle the
+             selection instead. */
+          const tr = ev.target.closest('[data-budtaxreset]');
+          if (tr) {
+            try {
+              const B = window.MythicBudget;
+              if (B && typeof B.resetTax === 'function') {
+                B.resetTax(tr.dataset.budtaxreset);
+                try { saveSoon(); } catch (e) {}
+                renderEco._last = null; renderEco();
+              }
+            } catch (e) { console.warn('[budget] tax reset failed', e); }
+            return;
+          }
           const r = ev.target.closest('[data-budrow]');
           if (r) {
             try {
@@ -38087,6 +38152,34 @@ function animate() {
           ecoTab = b.dataset.ecotab;
           card.querySelectorAll('[data-ecotab]').forEach(x => x.classList.toggle('on', x === b));
           renderEco._last = null; renderEco();
+        });
+        /* 🎚 TAX SLIDERS. `input` for the live number, `change` for the commit.
+           ⚠ THE READOUT IS UPDATED IN PLACE AND THE PANEL IS NOT RE-RENDERED
+             ON `input`. #ecobody's innerHTML is replaced wholesale every 4s and
+             on every renderEco(); re-rendering mid-drag destroys the very
+             <input type="range"> the pointer is captured on, and the drag dies
+             after one pixel. So the drag only writes the number next to it, and
+             the full repaint waits for the commit.
+           ⚠ THE ECONOMY CLAMPS, NOT THIS FILE. setTax() returns what was
+             actually stored, and that is what gets printed — a slider showing a
+             rate the simulation is not charging is the whole defect the budget
+             panel exists to avoid. */
+        card.addEventListener('input', (ev) => {
+          const s = ev.target.closest('[data-budtax]');
+          if (!s) return;
+          try {
+            const B = window.MythicBudget;
+            if (!B || typeof B.setTax !== 'function') return;
+            const stored = B.setTax(s.dataset.budtax, s.value);
+            if (stored == null) return;
+            try { saveSoon(); } catch (e) {}   // a rate the player set must survive a reload
+            const out = card.querySelector('[data-budtaxval="' + s.dataset.budtax + '"]');
+            if (out) out.textContent = (Math.round(stored * 1000) / 10) + '%';
+          } catch (e) { console.warn('[budget] tax set failed', e); }
+        });
+        card.addEventListener('change', (ev) => {
+          if (!ev.target.closest('[data-budtax]')) return;
+          renderEco._last = null; renderEco();      // repaint once, on release
         });
       }
       /* 🔗 THE ROSTER SEAM. households.js exports bindRoster() and this is the

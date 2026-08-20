@@ -24,7 +24,7 @@
    to has the job the economy says exists. Nothing else crosses.
    ════════════════════════════════════════════════════════════════════════════ */
 
-import { ECON } from './tuning.js';
+import { ECON, taxRate } from './tuning.js';
 import { priceOf } from './prices.js';
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -545,7 +545,7 @@ export function spendDirect(amount) {
 }
 
 /* Sales tax, skimmed at purchase. Returns the amount for the treasury. */
-export function salesTax(spend) { return Math.max(0, spend) * ECON.tax.sales; }
+export function salesTax(spend) { return Math.max(0, spend) * taxRate('sales'); }
 
 /* ── WEALTH MOBILITY ────────────────────────────────────────────────────────
    Run once per economic day. A household holding well above the cost of its

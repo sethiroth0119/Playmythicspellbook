@@ -25,7 +25,7 @@
    a player's road network could default.
    ════════════════════════════════════════════════════════════════════════════ */
 
-import { ECON } from './tuning.js';
+import { ECON, taxRate } from './tuning.js';
 import { INDUSTRIES, DEPOSITS, RECIPES, legsOf, bandOf, industryOf } from './recipes.js';
 import { basePrice, priceOf, bestLeg } from './prices.js';
 import * as HH from './households.js';
@@ -404,7 +404,7 @@ export function runPayroll(f, days) {
      `paid * rate` without debiting the firm mints that Cinder — the treasury
      grows and nothing shrinks. The closed-loop audit in sim.js caught precisely
      this, which is the whole reason the audit exists. */
-  const tax = pay(f, paid * ECON.tax.payroll);
+  const tax = pay(f, paid * taxRate('payroll'));
 
   if (ratio < ECON.labor.minWagePct) {
     // Workers walk. Deterministic fraction rather than a per-worker dice roll:
@@ -513,7 +513,7 @@ export function closeDay(f) {
 
   let tax = 0;
   if (profit > 0) {
-    tax = profit * ECON.tax.corporate;
+    tax = profit * taxRate('corporate');
     tax = pay(f, tax);           // a firm can only pay tax it has
     f.profitStreak++;
   } else {

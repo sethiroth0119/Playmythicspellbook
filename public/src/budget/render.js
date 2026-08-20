@@ -321,9 +321,13 @@ export function renderTax(tm, sel) {
       '<span class="bs">' + esc(r.base) + '</span>' +
       '<span class="vl">' + esc(val) + '</span></button>');
   }
-  h.push('<div class="bud-note">These rates are fixed. There is no tax policy in this city — no ' +
-    'code anywhere sets any of them — so this tab states the rules rather than offering a ' +
-    'slider that would do nothing.</div>');
+  h.push('<div class="bud-note">The first four are <b>your policy</b> — move a slider and the ' +
+    'simulation charges the new rate from the next tick. A tax is a transfer inside the city: ' +
+    'it changes whose pocket the Cinder is in, never how much of it exists.</div>');
+  h.push('<div class="bud-note">The last three have no slider <b>on purpose</b>. Your share of the ' +
+    'surplus, the daily ceiling and the export tap govern what leaves the city for a real ' +
+    'wallet, not what moves around inside it. Those stay in the tuning table, where changing ' +
+    'them is a deploy and not a click.</div>');
   h.push('<div class="bud-note">What each tax actually YIELDED is not shown, and that is a real gap ' +
     'rather than a design choice: the simulation adds all four taxes and the expansion fee into a ' +
     'single counter at four different points in the day and keeps no per-tax total. A split here ' +
@@ -337,10 +341,34 @@ export function renderTax(tm, sel) {
       'economy’s one tuning table. Choose one to see what it is charged on and the rule it ' +
       'follows.</p></div>');
   } else {
+    /* 🎚 THE SLIDER, on the four rows that have a policy and no others.
+       `r.bounds` is present only for those — taxModel attaches it from
+       ECON.taxPolicy — so a row without one renders exactly as it always did.
+       That is the whole guard: the payout share, the daily ceiling and the
+       faucet cannot grow a control by accident, because there is nothing for
+       one to bind to. */
+    const b = r.bounds;
+    const slider = !b ? '' :
+      '<div class="bud-slider">' +
+        '<input type="range" data-budtax="' + esc(r.id) + '"' +
+          ' min="' + b.min + '" max="' + b.max + '" step="' + b.step + '" value="' + r.rate + '">' +
+        '<div class="bud-slider-row">' +
+          '<span>' + (Math.round(b.min * 1000) / 10) + '%</span>' +
+          '<b data-budtaxval="' + esc(r.id) + '">' + (Math.round(r.rate * 1000) / 10) + '%</b>' +
+          '<span>' + (Math.round(b.max * 1000) / 10) + '%</span>' +
+        '</div>' +
+        (r.rate === r.shipped ? '' :
+          '<button type="button" class="bud-reset" data-budtaxreset="' + esc(r.id) + '">' +
+          'Reset to ' + (Math.round(r.shipped * 1000) / 10) + '%</button>') +
+      '</div>';
     h.push('<div class="bud-ex"><h4>' + esc(r.label) + '</h4>' +
       '<div class="sub">charged on ' + esc(r.base) + ' · paid by ' + esc(r.payer) + '</div>' +
+      slider +
       prose(r.explain) +
-      '<div class="bud-src">Read from <code>' + esc(r.source) + '</code></div></div>');
+      '<div class="bud-src">Read from <code>' + esc(r.source) + '</code>' +
+        (b ? ' · your policy, clamped to ' + (Math.round(b.min * 1000) / 10) + '–'
+           + (Math.round(b.max * 1000) / 10) + '%' : ' · fixed') +
+      '</div></div>');
   }
   h.push('</div></div></div>');
   return h.join('');

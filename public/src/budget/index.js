@@ -91,10 +91,42 @@ const api = {
      player is most likely to be looking for a reason. */
   renderTax() {
     const eco = E();
-    const tm = eco && eco.ECON ? taxModel(eco.ECON) : null;
+    /* Hand the model the economy's LIVE view so a row shows what the simulation
+       is actually charging, not the shipped default. A slider that renders one
+       number while the tick uses another is worse than no slider — it is the
+       "panel with no model behind it" this file exists to prevent. */
+    const live = (eco && typeof eco.taxRate === 'function' && typeof eco.taxBounds === 'function')
+      ? { rate: (k) => eco.taxRate(k), bounds: eco.taxBounds() } : null;
+    const tm = eco && eco.ECON ? taxModel(eco.ECON, live) : null;
     if (!tm) return stalled(eco ? { waiting: true } : { absent: true });
     return renderTax(tm, selTax);
   },
+
+  /* 🎚 A SLIDER MOVED. Clamp through the economy (it owns the bounds), persist,
+     and hand back the stored value so the caller can re-render from truth
+     rather than from what the input said.
+     ⚠ Returns null when the economy is absent or the key is not policy — the
+       host must not write a save field for a rate nothing is charging. */
+  setTax(key, value) {
+    const eco = E();
+    if (!eco || typeof eco.setTaxPolicy !== 'function') return null;
+    const bounds = (typeof eco.taxBounds === 'function' && eco.taxBounds()) || {};
+    if (!bounds[key]) return null;
+    const cur = (typeof eco.taxPolicy === 'function' && eco.taxPolicy()) || {};
+    const stored = eco.setTaxPolicy({ ...cur, [key]: Number(value) });
+    return stored ? stored[key] : null;
+  },
+  /* Back to the shipped rate for ONE tax, leaving the others alone. */
+  resetTax(key) {
+    const eco = E();
+    if (!eco || typeof eco.setTaxPolicy !== 'function') return null;
+    const cur = (typeof eco.taxPolicy === 'function' && eco.taxPolicy()) || {};
+    if (!(key in cur)) return null;
+    const next = { ...cur }; delete next[key];
+    eco.setTaxPolicy(Object.keys(next).length ? next : null);
+    return (typeof eco.taxRate === 'function') ? eco.taxRate(key) : null;
+  },
+  taxPolicy() { const eco = E(); return (eco && typeof eco.taxPolicy === 'function') ? eco.taxPolicy() : null; },
 
   /* One click handler for both tabs. Clicking the selected row clears it, so a
      player can always get back to the "pick a line" state without a second

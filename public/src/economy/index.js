@@ -36,6 +36,7 @@
    ════════════════════════════════════════════════════════════════════════════ */
 
 import { ECON, econ } from './tuning.js';
+import * as Tuning from './tuning.js';
 import * as Recipes from './recipes.js';
 import * as Endow from './endowment.js';
 import * as Prices from './prices.js';
@@ -809,6 +810,16 @@ const api = {
      any surface that draws a rung, so the map, the economy panel and the tenant
      ledger cannot show one business in three different colours. */
   RUNGS: Firms.RUNGS, RUNG_META: Firms.RUNG_META,
+  /* 🏛 TAX POLICY — the four rates a mayor may set. See tuning.js for why the
+     payout share, the daily ceiling and the faucet are NOT among them: a tax
+     moves Cinder between pockets inside the city, those three govern what
+     leaves it for a real wallet. setTaxPolicy CLAMPS and returns what it
+     actually stored, so a panel can never show a rate the simulation is not
+     using. */
+  taxPolicy: () => Tuning.getTaxPolicy(),
+  taxBounds: () => Tuning.taxPolicyBounds(),
+  setTaxPolicy: (p) => Tuning.setTaxPolicy(p),
+  taxRate: (k) => Tuning.taxRate(k),
   inventory: () => Sim.inventory(),
   /* 🚚 CITY TRADE. The only sanctioned way for goods to leave this city to
      another player's, and the read that goes with it. `inventory()` above hands

@@ -1129,4 +1129,74 @@ export function econ(path, dflt) {
   } catch (e) { return dflt === undefined ? 0 : dflt; }
 }
 
+/* ════════════════════════════════════════════════════════════════════════════
+   🏛 TAX POLICY — the four rates a mayor may actually set
+   ----------------------------------------------------------------------------
+   The budget tab used to say, truthfully, "these rates are fixed; no code
+   anywhere sets any of them". These four now have a slider, and the other three
+   rows on that tab deliberately do NOT:
+
+     payroll · sales · corporate · property     ← policy, adjustable
+     payoutRate · payoutMaxPerDay · faucet.maxPerMin  ← NOT, and never
+
+   🔴 WHY THE LAST THREE ARE NOT NEGOTIABLE. A tax is a TRANSFER inside the
+      city: the payroll tax comes out of the payroll the firm was already
+      paying, the sales tax out of the money the shopper already spent. Move a
+      tax rate and the same Cinder lands in a different pocket — the closed loop
+      the tick audit checks is untouched, which is exactly why this is safe.
+      The other three are the guards on the way OUT: payoutRate and
+      payoutMaxPerDay bound what leaves the city into a real wallet, and
+      faucet.maxPerMin bounds the only Cinder that enters the economy at all.
+      A slider on those is a slider on how fast a player pays themselves, and
+      Aza settles at 1 ◈ = $1. They stay in this file, where changing them is a
+      deploy and not a click.
+
+   ⚠ BOUNDS ARE TUNING, SO THEY LIVE HERE. `_opEcon()`'s rule: no operation
+     number written down anywhere but this table. The ceilings are not there to
+     stop a rate being INTERESTING — they stop one being incoherent. A 100%
+     corporate tax means no firm ever books a profit, every business stalls, and
+     the resulting city is not a hard mode, it is a broken one.
+   ⚠ A POLICY IS PER CITY and rides that city's save. Nothing here is global:
+     setTaxPolicy() is called on mount with whatever the save held. */
+ECON.taxPolicy = {
+  payroll:   { min: 0, max: 0.25, step: 0.005, label: 'Payroll tax' },
+  sales:     { min: 0, max: 0.25, step: 0.005, label: 'Sales tax' },
+  corporate: { min: 0, max: 0.40, step: 0.005, label: 'Corporate tax' },
+  property:  { min: 0, max: 0.15, step: 0.005, label: 'Property tax' },
+};
+/* The live override. Null means "no policy set" — read the shipped default —
+   and that is NOT the same as a policy of 0, which is a mayor choosing to
+   charge nothing. Every read goes through taxRate() so the two never blur. */
+let _taxPolicy = null;
+
+export function taxPolicyBounds() { return ECON.taxPolicy; }
+
+/* Clamp and store. Returns the policy actually stored, which is what the panel
+   should render — a slider that shows a number the simulation is not using is
+   the whole problem this replaces. */
+export function setTaxPolicy(p) {
+  if (!p || typeof p !== 'object') { _taxPolicy = null; return null; }
+  const out = {};
+  for (const k in ECON.taxPolicy) {
+    const b = ECON.taxPolicy[k];
+    const v = Number(p[k]);
+    if (!Number.isFinite(v)) continue;              // absent key keeps the default
+    out[k] = Math.min(b.max, Math.max(b.min, v));
+  }
+  _taxPolicy = Object.keys(out).length ? out : null;
+  return _taxPolicy;
+}
+export function getTaxPolicy() { return _taxPolicy ? { ..._taxPolicy } : null; }
+
+/* THE ONE READ. Every site that used to say `ECON.tax.payroll` says
+   `taxRate('payroll')`, so a policy cannot be honoured in one place and ignored
+   in another — the shape that has bitten this project repeatedly (one seam that
+   knows the rule, another that writes the store). */
+export function taxRate(key) {
+  const dflt = (ECON.tax && ECON.tax[key]) || 0;
+  if (!_taxPolicy || !(key in _taxPolicy)) return dflt;
+  const v = _taxPolicy[key];
+  return Number.isFinite(v) ? v : dflt;
+}
+
 export default ECON;

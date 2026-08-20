@@ -425,28 +425,39 @@ export function buildModel(s) {
    Rates, read live out of ECON. There is no setter for any of them anywhere in
    the codebase, so this tab is a statement of the rules and not a control
    panel — and it says so rather than offering a slider that does nothing. */
-export function taxModel(ECON) {
+/* @param ECON   the tuning table
+   @param live   optional { rate(key), bounds } — the ECONOMY's live view, so a
+                 row shows the rate the simulation is ACTUALLY charging rather
+                 than the shipped default. Absent (a test, or an old caller) and
+                 every row reads exactly as it did before policy existed.
+   ⚠ `bounds` is what makes a row adjustable in the renderer, so it is attached
+     to the four policy taxes and to NOTHING else. The payout share, the daily
+     ceiling and the faucet must not grow a slider by accident — see the note in
+     tuning.js on why those three are not policy. */
+export function taxModel(ECON, live) {
   if (!ECON || !ECON.tax) return null;
   const T = ECON.tax, F = ECON.faucet || {};
+  const P = (live && live.bounds) || null;
+  const rateOf = (k, dflt) => (live && typeof live.rate === 'function') ? live.rate(k) : dflt;
   const rows = [
-    { id: 'payroll', label: 'Payroll tax', rate: T.payroll, unit: '%',
+    { id: 'payroll', label: 'Payroll tax', rate: rateOf('payroll', T.payroll), shipped: T.payroll, bounds: P && P.payroll, unit: '%',
       base: 'every wage a firm pays', payer: 'the business',
       source: 'ECON.tax.payroll',
       explain: 'Charged on wages when a business runs its payroll. It comes out of the ' +
         'payroll the firm was already paying — the worker’s wage and the city’s share ' +
         'sum to what the firm spent. Crediting the city on top of the wage minted about 6% ' +
         'of every wage in this city for a while, and it looked completely correct.' },
-    { id: 'sales', label: 'Sales tax', rate: T.sales, unit: '%',
+    { id: 'sales', label: 'Sales tax', rate: rateOf('sales', T.sales), shipped: T.sales, bounds: P && P.sales, unit: '%',
       base: 'household purchases', payer: 'the shopper, collected from the shop',
       source: 'ECON.tax.sales',
       explain: 'Charged on what residents spend in shops. The household pays the gross, the ' +
         'shop keeps the net, and the city takes the difference out of the middle.' },
-    { id: 'corporate', label: 'Corporate tax', rate: T.corporate, unit: '%',
+    { id: 'corporate', label: 'Corporate tax', rate: rateOf('corporate', T.corporate), shipped: T.corporate, bounds: P && P.corporate, unit: '%',
       base: 'business profit', payer: 'the business',
       source: 'ECON.tax.corporate',
       explain: 'Charged when a business closes its books for the day and shows a profit. A ' +
         'business making nothing pays nothing.' },
-    { id: 'property', label: 'Property tax', rate: T.property, unit: '%',
+    { id: 'property', label: 'Property tax', rate: rateOf('property', T.property), shipped: T.property, bounds: P && P.property, unit: '%',
       base: 'rent collected', payer: 'the landlord, out of the rent',
       source: 'ECON.tax.property',
       explain: 'Charged out of the rent, not on top of it. The tenant paid the rent and that ' +

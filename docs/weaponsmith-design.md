@@ -459,7 +459,7 @@ licence:   ownsWeaponSmith()
 | ✅ 10 | Forge bench (blades) | **Done.** `bench.forge.js` + `sql/040_weaponsmith_blades.sql` (knife 4 / sword 11 / greatsword 12, none for sale). Quality is the **worst** step, not the average; a ruined billet is gone |
 | ✅ 3D-1 | The workshop in 3D — bench, tools, lamp, camera, teardown | **Done.** `three.boot.js` (local vendored copy first, CDN fallback) + `scene.bench.js`. Degrades to the DOM bench with no WebGL |
 | ✅ 3D-2 | Parts land on the bench as you seat them | **Done.** 10 anchors driven by `bench.seated`; condition tier tints the metal. Rebuilt wholesale per change so 3D can't drift from the DOM |
-| 🔨 3D-3 | Hands + tool driven by the torque bar | This is the "I'm working" feeling — no rigged character needed |
+| ✅ 3D-3 | Hands + tool driven by the torque bar | **Done.** Gloved hands **parented to the camera** (viewer-relative, so re-framing can't lose them), tool spins about its own shaft, tremor grows with torque |
 | 🔨 3D-4 | The forge in 3D — anvil, quench barrel, billet that glows with the heat | Emissive colour tracks the heat bar |
 | ✅ 11 | Hero loadout parity + provenance UI | **Done.** Hero parity needed **no new equip code** — `itemSlotFit` reads `slotType` and a minted weapon carries it. `armoury.js` adds provenance: parts, condition ceiling, budget used, unverified flag |
 

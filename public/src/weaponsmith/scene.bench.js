@@ -209,9 +209,143 @@ function build(THREE, canvas) {
   gun.position.set(0, 0.965, 0.02);
   scene.add(gun);
 
+  /* ── 🧤 HANDS AND TOOL ────────────────────────────────────────────────
+     THIS is the "I am working" feeling, and it needs no rigged character —
+     two gloved hands and whatever tool the current step calls for, entering
+     from the bottom of frame the way your own hands do.
+
+     Built as a group pivoting at the WRIST rather than animating fingers: at
+     this camera distance the readable motion is the tool arcing and the hands
+     following it, and a knuckle nobody can see is wasted geometry. Same reason
+     the fingers are four boxes.
+
+     ⚠ Parked BELOW the frame by default. Hands permanently hovering over the
+       bench would block the weapon — the thing the player is actually here to
+       look at — so they rise only while a fastening is being driven. */
+  /* 🔴 HANDS ARE PARENTED TO THE CAMERA, NOT TO THE WORLD.
+     Three passes of world-space placement all failed the same way: raise them
+     and they slid along the bottom edge, push them in and they vanished under
+     the bench. That is not a tuning problem, it is the wrong parent. In a
+     first-person shot the hands are VIEWER-RELATIVE — they belong at a fixed
+     offset from the eye, so they hold the same place on screen no matter how
+     the camera is framed, and re-tuning the camera can never lose them again.
+     Standard practice for a first-person rig, and it should have been the
+     first thing tried. */
+  const hands = new THREE.Group();
+  scene.add(camera);                     // camera must be in the graph to parent to it
+  camera.add(hands);
+  // Camera-local: below the eye line, in front of it. -z is forward.
+  /* ⚠ THE OFFSET IS COMPUTED, NOT GUESSED. At fov 46° the frustum half-height
+     is depth·tan(23°) — so at 0.95 the bottom edge of frame sits at y = -0.40.
+     The previous pass parked the hands at exactly -0.40 and they rendered
+     perfectly, entirely off-screen. Placed at -0.26 they sit in the lower
+     third with room to rise, and the parked position is below the edge on
+     purpose. */
+  hands.position.set(0.02, -0.62, -0.95);
+  hands.rotation.x = 0.20;               // tip them onto the bench plane
+  hands.visible = false;
+
+  const SKIN = 0x8a6a4a, GLOVE = 0x3d3730;
+  function makeHand(side) {
+    const g = new THREE.Group();
+    const palm = box(0.13, 0.05, 0.10, GLOVE, { rough: 0.95 });
+    g.add(palm);
+    for (let i = 0; i < 4; i++) {
+      const f = box(0.075, 0.028, 0.019, GLOVE, { rough: 0.95 });
+      f.position.set(0.09, 0.004, -0.033 + i * 0.022);
+      f.rotation.z = -0.22;
+      g.add(f);
+    }
+    const thumb = box(0.055, 0.026, 0.024, GLOVE, { rough: 0.95 });
+    thumb.position.set(0.05, -0.012, side * 0.052);
+    thumb.rotation.y = side * 0.5;
+    g.add(thumb);
+    const cuff = box(0.055, 0.075, 0.105, 0x6a5238, { rough: 0.95 });
+    cuff.position.set(-0.085, 0, 0);
+    g.add(cuff);
+    /* ⚠ THE FOREARM RUNS TOWARD THE VIEWER, not sideways. The first pass laid
+       it along local -x, so with the hand turned to face the work the arm shot
+       off to the side of frame and read as a log lying on the bench rather than
+       as the player's own arm. In a first-person shot the arms have to leave
+       the BOTTOM of frame, which means +z and down. */
+    const arm = cyl(0.043, 0.055, 0.30, 10, SKIN, { rough: 0.9 });
+    arm.rotation.x = Math.PI / 2;
+    arm.position.set(-0.10, -0.04, 0.17);
+    arm.rotation.z = 0.16;
+    g.add(arm);
+    return g;
+  }
+
+  /* Both hands face INWARD toward the weapon's centreline; the y-rotations put
+     the fingers on the work while the forearms trail back and out of frame. */
+  const handL = makeHand(1);
+  handL.position.set(-0.34, 0, 0.02);
+  handL.rotation.set(-0.30, 0.34, 0);
+  hands.add(handL);
+
+  const handR = makeHand(-1);
+  handR.position.set(0.34, 0, 0.02);
+  handR.rotation.set(-0.30, Math.PI - 0.34, 0);
+  hands.add(handR);
+
+  /* The tool lives in the RIGHT hand and swaps by step. One group so a swap is
+     a visibility flip rather than a rebuild — swapping tools mid-build must not
+     allocate. */
+  const tools = {};
+  function addTool(key, g) { g.visible = false; tools[key] = g; handR.add(g); }
+
+  // 🔧 Torque wrench — the assembly-bench tool.
+  {
+    const g = new THREE.Group();
+    const shaft = box(0.30, 0.038, 0.038, 0x9aa0a8, { rough: 0.4, metal: 0.85 });
+    shaft.position.set(0.20, 0, 0);
+    g.add(shaft);
+    const head = cyl(0.055, 0.055, 0.042, 12, 0xd0d6de, { rough: 0.3, metal: 0.9 });
+    head.rotation.x = Math.PI / 2;
+    head.position.set(0.36, 0, 0);
+    g.add(head);
+    const grip = cyl(0.028, 0.028, 0.12, 10, 0xc8452f, { rough: 0.75 });
+    grip.rotation.z = Math.PI / 2;
+    grip.position.set(0.06, 0, 0);
+    g.add(grip);
+    addTool('wrench', g);
+  }
+  // 🔨 Hammer — the forge tool, kept here so both benches share one rig.
+  {
+    const g = new THREE.Group();
+    const haft = cyl(0.017, 0.021, 0.30, 8, 0x8a6534, { rough: 0.92 });
+    haft.rotation.z = Math.PI / 2;
+    haft.position.set(0.17, 0, 0);
+    g.add(haft);
+    const headM = box(0.075, 0.062, 0.062, 0x6a7078, { rough: 0.42, metal: 0.85 });
+    headM.position.set(0.33, 0, 0);
+    g.add(headM);
+    addTool('hammer', g);
+  }
+  // 🧽 Oil rag — cleaning.
+  {
+    const g = new THREE.Group();
+    const rag = box(0.11, 0.03, 0.10, 0xb9b2a4, { rough: 1 });
+    rag.position.set(0.10, 0, 0);
+    rag.rotation.z = 0.2;
+    g.add(rag);
+    addTool('rag', g);
+  }
+
   const api = {
-    THREE, scene, camera, renderer, gun, lamp, spot, bulb,
+    THREE, scene, camera, renderer, gun, lamp, spot, bulb, hands, tools,
     _raf: 0, _t0: Date.now(), _disposed: false, _reduced: reducedMotion(),
+    _work: null,          // { tool, value } while a fastening is being driven
+    _ease: 0,             // 0 = parked below frame, 1 = up at the bench
+  };
+
+  /* Drive the hands from the torque bar. `value` is 0..1 — the same number the
+     DOM bar is showing — so the two can never disagree about how far along a
+     fastening is. Called every frame while the player holds; `null` releases. */
+  api.setWork = function (tool, value) {
+    if (api._disposed) return;
+    api._work = (tool == null) ? null : { tool: tool, value: Math.max(0, Math.min(1, value || 0)) };
+    for (const k in tools) tools[k].visible = !!(api._work && api._work.tool === k);
   };
 
   /* Rebuild the weapon from `seated` — a map of slot -> { partId, tier }.
@@ -243,7 +377,9 @@ function build(THREE, canvas) {
   api.resize = function () {
     if (api._disposed || !canvas.parentElement) return;
     const w = canvas.clientWidth || canvas.parentElement.clientWidth || 640;
-    const h = Math.max(180, Math.round(w * 0.46));
+    // ⚠ 0.46 was too letterboxed once hands were in play: they entered at the
+    //   bottom edge and got cropped to a sliver. Taller frame, room to work.
+    const h = Math.max(200, Math.round(w * 0.56));
     canvas.style.height = h + 'px';
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
@@ -259,12 +395,55 @@ function build(THREE, canvas) {
   api.start = function () {
     if (api._disposed) return;
     if (api._reduced) { api.render(); return; }
+    let last = Date.now();
     const tick = () => {
       if (api._disposed) return;
-      const t = (Date.now() - api._t0) / 1000;
+      const now = Date.now();
+      const dt = Math.min(0.05, (now - last) / 1000); last = now;
+      const t = (now - api._t0) / 1000;
+
       const f = 1 + Math.sin(t * 2.1) * 0.035 + Math.sin(t * 7.3) * 0.014;
       lamp.intensity = 0.62 * f;
       spot.intensity = 2.2 * f;
+
+      /* Hands ease in and out rather than snapping. A hard cut reads as a
+         glitch; 180ms of travel reads as reaching for the work. */
+      const want = api._work ? 1 : 0;
+      api._ease += (want - api._ease) * Math.min(1, dt * 9);
+      // Camera-local now: they rise from below the frame into the work, and
+      // the numbers mean the same thing at any camera framing.
+      hands.position.y = -0.62 + api._ease * 0.62;    // -0.62 parked → 0.00 up
+      hands.visible = api._ease > 0.01;
+
+      if (api._work) {
+        const v = api._work.value;
+        /* The tool ARCS with the bar — a quarter turn across the whole travel,
+           plus a fine tremor that grows as the fastener tightens. The tremor is
+           the tell: it is what makes over-torquing FEEL like over-torquing
+           before the bar says so. */
+        const shake = v * v * 0.05;
+        /* 🔧 THE TOOL TURNS, THE HANDS BARELY MOVE — which is what tightening a
+           fastener actually looks like, and is the only version that stays in
+           frame. Driving the arc through the WRIST pitched the hands ~73° down
+           and out of shot by the top of the bar; a wrench rotates about its own
+           shaft, so the arc belongs on the tool's local x. Caught by
+           screenshotting the top of the arc rather than the middle. */
+        const spin = v * 2.6;
+        for (const k in tools) if (tools[k].visible) tools[k].rotation.x = spin;
+
+        handR.rotation.x = -0.30 - v * 0.16 + Math.sin(t * 34) * shake;
+        handR.position.y = 0.02 + Math.sin(t * 34) * shake * 0.4;
+        handL.rotation.x = -0.30 - v * 0.05;
+        handL.position.y = Math.sin(t * 21) * 0.004;
+        // Steady the gun under the work — the whole rig should feel loaded.
+        gun.rotation.z = Math.sin(t * 34) * shake * 0.09;
+      } else {
+        handR.rotation.x = -0.30; handL.rotation.x = -0.30;
+        handR.position.y = 0; handL.position.y = 0;
+        for (const k in tools) tools[k].rotation.x = 0;
+        gun.rotation.z = 0;
+      }
+
       api.render();
       api._raf = requestAnimationFrame(tick);
     };

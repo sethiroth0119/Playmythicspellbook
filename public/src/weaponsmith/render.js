@@ -144,10 +144,21 @@ function startTorque(partIdStr) {
     if (!_torque) return;
     _torque.v = Math.min(1, _torque.v + 0.016);
     if (fill) fill.style.width = (_torque.v * 100).toFixed(1) + '%';
+    /* 🧤 Hands follow the SAME number the bar is showing, so the two can never
+       disagree about how far along a fastening is. The forge sentinel picks
+       the hammer; everything else is the torque wrench. */
+    if (_scene && _scene.setWork) {
+      _scene.setWork(partIdStr === '__forge' ? 'hammer' : 'wrench', _torque.v);
+    }
     if (_torque.v >= 1) release();          // ran the fastener all the way out
   }, 16);
 }
-function stopTorque() { if (_tick) { clearInterval(_tick); _tick = null; } _torque = null; }
+function stopTorque() {
+  if (_tick) { clearInterval(_tick); _tick = null; }
+  _torque = null;
+  // Hands go back down the moment the fastener is released.
+  if (_scene && _scene.setWork) { try { _scene.setWork(null); } catch (e) {} }
+}
 
 function release() {
   if (!_sel || !_torque) return;
@@ -207,6 +218,10 @@ function sync3D(s) {
       _scene = sc;
       _scene.setSeated(seatedForScene());
       _scene.start();
+      // 🧪 Dev probe, same spirit as __mg elsewhere: the scene is otherwise
+      // module-private, so there is no way to pose the hands from a console
+      // (or a screenshot harness) to check the rig without it.
+      try { window.__wsScene = _scene; } catch (e) {}
     }).catch(() => markNo3D());
     return;
   }
@@ -235,6 +250,7 @@ function markNo3D() {
 }
 
 export function disposeScene() {
+  try { if (window.__wsScene === _scene) window.__wsScene = null; } catch (e) {}
   if (_scene) { try { _scene.dispose(); } catch (e) {} }
   _scene = null;
   _sceneFor = null;
@@ -617,7 +633,21 @@ function bind(s) {
     };
   });
   el.querySelectorAll('[data-clean]').forEach((b) => {
-    b.onclick = () => { const to = cleanPart(b.getAttribute('data-clean')); _msg = to ? ('Cleaned up to ' + (partDef(to) || {}).name + '.') : 'Not enough gun oil.'; paint(); };
+    b.onclick = () => {
+      const to = cleanPart(b.getAttribute('data-clean'));
+      _msg = to ? ('Cleaned up to ' + (partDef(to) || {}).name + '.') : 'Not enough gun oil.';
+      /* A short rag pass, so cleaning is a visible ACT rather than a number
+         changing. Guarded on the scene existing at all — cleaning lives on the
+         picker screen, which has no canvas, so this is usually a no-op and
+         must stay harmless when it is. */
+      if (to && _scene && _scene.setWork) {
+        try {
+          _scene.setWork('rag', 0.5);
+          setTimeout(() => { if (_scene && _scene.setWork) _scene.setWork(null); }, 700);
+        } catch (e) {}
+      }
+      paint();
+    };
   });
   el.querySelectorAll('[data-pull]').forEach((b) => {
     b.onclick = () => { const r = pullPart(b.getAttribute('data-pull')); _msg = (r && r.ok) ? 'Pulled.' : ((r && r.reason) || 'Could not pull that.'); paint(); };

@@ -152,6 +152,22 @@ create table if not exists public.city_trade_shipments (
 
 create index if not exists cts_agreement_idx on public.city_trade_shipments (agreement_id, cycle_index desc);
 
+/* 🔴 AND THE COLUMNS AGAIN, AS ALTERs. This is not belt-and-braces, it is the
+   only thing that makes this file re-runnable against a database that already
+   has an OLDER version of it.
+   `create table if not exists` is a no-op on an existing table — it does not
+   diff the columns. So when proposer_from / partner_from were added to this
+   file after a first draft had already been applied to production, re-running
+   039 reported success and added nothing, while the shipped client wrote both
+   on every shipment insert. MEASURED on the live database: tables 3, function
+   1, trigger 1, policies 7, RLS 3 — and from_cols 0.
+   Any future column added above must get a line here too, or the same silence
+   comes back. */
+alter table public.city_trade_shipments
+  add column if not exists proposer_from jsonb not null default '{}'::jsonb;
+alter table public.city_trade_shipments
+  add column if not exists partner_from  jsonb not null default '{}'::jsonb;
+
 -- ── city_trade_shipment_claims ──────────────────────────────────────────────
 -- A shipment ROW says the cycle fired. It does not say either player's local
 -- ledger has been touched — that happens in the browser. Each party claims its
@@ -323,4 +339,12 @@ select
      and tablename in ('city_trade_agreements','city_trade_shipments','city_trade_shipment_claims'))          as policies_expect_7,
   (select count(*) from pg_tables where schemaname = 'public'
      and tablename in ('city_trade_agreements','city_trade_shipments','city_trade_shipment_claims')
-     and rowsecurity)                                                                                        as rls_on_expect_3;
+     and rowsecurity)                                                                                        as rls_on_expect_3,
+  /* The column check is here because it is the one thing the counts above
+     cannot see: every other line was TRUE on production while the two cargo
+     columns were missing and every shipment insert would have failed. A verify
+     query that only counts objects will not notice a table that is the wrong
+     SHAPE. */
+  (select count(*) from information_schema.columns
+     where table_schema = 'public' and table_name = 'city_trade_shipments'
+       and column_name in ('proposer_from','partner_from'))                                                  as from_cols_expect_2;

@@ -13,11 +13,11 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 import { ensureWeaponSmith } from './state.js';
-import { itemCount, toast, ready } from './ws.bridge.js';
+import { itemCount, toast, ready, addGems, craftedBook as bridgeBook } from './ws.bridge.js';
 import { CATALOG, DONOR_CATALOG, partDef, cleanCost, cleanPart, stripDonor, tierOf } from './parts.js';
 import { BLUEPRINTS, blueprint, blueprintIds, stepFor } from './blueprints.js';
 import { SCHEMATICS, learnSchematic, unlearned } from './schematics.js';
-import { ownsBlueprint, online } from './server.js';
+import { ownsBlueprint, online, rollBoard, deliverContract, claimRepBlueprint, repTier } from './server.js';
 import { startBuild, abandonBuild, seatPart, pullPart, tryFit, scoreBuild, finishBuild, TORQUE_BAND, TORQUE_STRIP } from './bench.gun.js';
 
 const ID = 'ws-bench-overlay';
@@ -156,6 +156,7 @@ function pickerView(s) {
       <span><b>${esc(d.name)}</b><div class="wsb-sub">Learn it — this consumes the schematic</div></span>
       <span class="q">×${itemCount(sid)}</span></button>`;
   }).join('');
+  const board = boardView(s);
   const schemPanel = schem
     ? `<div class="wsb-panel" style="margin-top:.8rem"><h3>📜 Schematics</h3>
          <div class="wsb-sub" style="margin-bottom:.4rem">${online() ? 'Learning is recorded to your account, not this device.' : '⚠ Offline — learning needs a connection.'}</div>
@@ -168,7 +169,63 @@ function pickerView(s) {
     <div class="wsb-cols">
       <div class="wsb-panel"><h3>Blueprints</h3><div class="wsb-tray">${rows}</div></div>
       <div><div class="wsb-panel"><h3>Workshop</h3>${workshopView()}</div>${schemPanel}</div>
-    </div></div>`;
+    </div>
+    ${board}
+    </div>`;
+}
+
+/* 📋 THE ORDER BOARD. Contracts are SERVER-GENERATED (sql/039) — a client that
+   could author them would write itself "minAtk 1, pays 999999". This paints
+   what the server handed over and offers a delivery; it decides nothing. */
+function boardView(s) {
+  const rep = s.rep | 0;
+  const slots = s.slots | 1;
+  const claimable = (s.claimable || []).filter((id) => BLUEPRINTS[id] && !ownsBlueprint(id));
+
+  if (!online()) {
+    return `<div class="wsb-panel" style="margin-top:1rem"><h3>📋 Order Board</h3>
+      <div class="wsb-sub">Offline — contracts and reputation are recorded to your account, so the board needs a connection.</div></div>`;
+  }
+
+  const rows = (s.contracts || []).map((c) => {
+    const spec = c.spec || {};
+    const bits = [];
+    if (spec.minAtk)   bits.push('ATK ≥ ' + spec.minAtk);
+    if (spec.minSpd)   bits.push('SPD ≥ ' + spec.minSpd);
+    if (spec.minCrit)  bits.push('crit ≥ ' + spec.minCrit);
+    if (spec.minRange) bits.push('range ≥ ' + spec.minRange);
+    if (spec.blueprint && BLUEPRINTS[spec.blueprint]) bits.push(BLUEPRINTS[spec.blueprint].name + ' frame');
+    const due = c.dueAt ? new Date(c.dueAt) : null;
+    const late = due && due.getTime() < Date.now();
+    const left = due ? Math.max(0, Math.round((due.getTime() - Date.now()) / 3600000)) : null;
+    return `<div class="wsb-st filled" style="min-height:0;padding:.6rem">
+      <div class="nm">${esc(c.client || 'Client')}</div>
+      <div class="wsb-sub" style="margin:.15rem 0 .3rem">${esc(c.blurb || '')}</div>
+      <div class="pt">${esc(bits.join(' · ') || 'any weapon')}</div>
+      <div class="mt">${(c.pays && c.pays.cinder) ? c.pays.cinder.toLocaleString() + ' Cinder' : ''}${
+        due ? ' · ' + (late ? '<span style="color:#e8a09f">overdue</span>' : left + 'h left') : ''}</div>
+      <button class="wsb-btn" style="padding:.2rem .55rem;font-size:.72rem;margin-top:.35rem"
+              data-deliver="${esc(c.id)}">Deliver…</button>
+    </div>`;
+  }).join('') || '<div class="wsb-sub">No contracts on the board.</div>';
+
+  const claimRows = claimable.map((id) =>
+    `<button class="wsb-p" data-claim="${esc(id)}"><span>🏅</span>
+      <span><b>${esc(BLUEPRINTS[id].name)}</b><div class="wsb-sub">Earned through reputation — claim it free</div></span>
+      <span class="q">rep</span></button>`).join('');
+
+  return `<div class="wsb-panel" style="margin-top:1rem">
+    <h3>📋 Order Board</h3>
+    <div class="wsb-meter" style="margin:0 0 .6rem">
+      <span>rank <b>${esc(repTier(rep))}</b></span>
+      <span>reputation <b>${rep}</b>/100</span>
+      <span>slots <b>${(s.contracts || []).length}/${slots}</b></span>
+      <span>delivered <b>${s.delivered | 0}</b></span>
+    </div>
+    ${claimRows ? '<div class="wsb-tray" style="margin-bottom:.6rem">' + claimRows + '</div>' : ''}
+    <div class="wsb-stations">${rows}</div>
+    <div style="margin-top:.6rem"><button class="wsb-btn" id="${ID}-roll">Check the board</button></div>
+  </div>`;
 }
 
 function workshopView() {
@@ -262,6 +319,53 @@ function bind(s) {
   el.querySelectorAll('[data-bp]').forEach((b) => { b.onclick = () => { _msg = ''; startBuild(b.getAttribute('data-bp')); paint(); }; });
   el.querySelectorAll('[data-strip]').forEach((b) => {
     b.onclick = () => { const r = stripDonor(b.getAttribute('data-strip')); _msg = r ? ('Stripped — ' + r.parts.length + ' parts recovered.') : 'Could not strip that.'; paint(); };
+  });
+  const roll = document.getElementById(ID + '-roll');
+  if (roll) roll.onclick = async () => {
+    roll.disabled = true;
+    const r = await rollBoard();
+    _msg = !r ? 'Could not reach the board.'
+         : r.throttled ? 'Nothing new yet — check back shortly.'
+         : (((r.expired | 0) > 0 ? r.expired + ' contract(s) expired — reputation lost. ' : '') + 'Board refreshed.');
+    paint();
+  };
+  el.querySelectorAll('[data-claim]').forEach((b) => {
+    b.onclick = async () => {
+      b.disabled = true;
+      const id = b.getAttribute('data-claim');
+      const r = await claimRepBlueprint(id);
+      _msg = (r && r.ok) ? ('Claimed the ' + BLUEPRINTS[id].name + ' — your reputation earned it.')
+                         : 'Could not claim that blueprint.';
+      paint();
+    };
+  });
+  /* Delivery picks from the player's CRAFTED weapons. A prompt rather than a
+     modal because the list is short and the bench already carries enough
+     chrome; the server scores the match either way. */
+  el.querySelectorAll('[data-deliver]').forEach((b) => {
+    b.onclick = async () => {
+      const cid = b.getAttribute('data-deliver');
+      const book = [];
+      try {
+        const bk = bridgeBook();
+        for (const id in bk) book.push(id + ' — ' + (bk[id].desc || bk[id].name));
+      } catch (e) {}
+      if (!book.length) { _msg = 'You have no finished weapons to deliver.'; paint(); return; }
+      const pick = window.prompt('Deliver which weapon?\n\n' + book.join('\n') + '\n\nType the id:');
+      if (!pick) return;
+      b.disabled = true;
+      const r = await deliverContract(cid, pick.trim());
+      _msg = (r && r.ok)
+        ? ('Delivered. Reputation ' + r.rep + (r.late ? ' (late — no speed credit).' : '.'))
+        : ('Delivery refused: ' + ((r && r.error) || 'unknown weapon or contract') + '.');
+      /* 💰 Cinder is paid CLIENT-SIDE, like every other Cinder award in this
+         app — Profile.gems with a server mirror, not a canonical server
+         balance the way Aza is. Noted in sql/039: what the server protects
+         here is the contract's TERMS and the REPUTATION, both of which gate
+         content. Moving Cinder itself server-side is a far larger change. */
+      if (r && r.ok && r.pays && r.pays.cinder) { try { addGems(r.pays.cinder | 0); } catch (e) {} }
+      paint();
+    };
   });
   el.querySelectorAll('[data-learn]').forEach((b) => {
     b.onclick = async () => {

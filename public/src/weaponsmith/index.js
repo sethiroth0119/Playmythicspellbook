@@ -17,7 +17,7 @@ import { allItemDefs, CATALOG, DONOR_CATALOG, cleanPart, cleanCost, stripDonor, 
 import { BLUEPRINTS, blueprint, blueprintIds, canSeat, checkFit, requiredSlots } from './blueprints.js';
 import { startBuild, abandonBuild, seatPart, pullPart, tryFit, scoreBuild, finishBuild, torqueScore } from './bench.gun.js';
 import { openBench, closeBench, benchOpen } from './render.js';
-import { syncState, mintServer, grantBlueprint, deliverContract, ownsBlueprint, online } from './server.js';
+import { syncState, mintServer, grantBlueprint, deliverContract, ownsBlueprint, online, rollBoard, claimRepBlueprint, repTier } from './server.js';
 import { SCHEMATICS, schematicCatalog, learnSchematic, dropSchematic, rollSchematic, unlearned, isSchematic, schematicId, blueprintOf } from './schematics.js';
 import { forSale, buy as storeBuy, priceOf, AZA_PRICE } from './store.js';
 
@@ -104,6 +104,10 @@ try {
       tier: r.bp.tier, budget: r.bp.budget, price: r.price, owned: r.owned,
     })),
     storeBuy: (id) => storeBuy(id),
+    // 🏅 Phase-9 probes.
+    board: () => rollBoard(),
+    claim: (bpId) => claimRepBlueprint(bpId),
+    tier: () => repTier(ensureWeaponSmith().rep),
   };
   /* 🔧 The opener index.html calls. A plain window function rather than another
      bridge entry, because the flow is the OTHER direction: the bridge is what
@@ -133,3 +137,4 @@ export { openBench, closeBench, benchOpen };
 export { syncState, mintServer, grantBlueprint, deliverContract, ownsBlueprint, online };
 export { SCHEMATICS, learnSchematic, dropSchematic, rollSchematic, unlearned, isSchematic, schematicId, blueprintOf };
 export { forSale, storeBuy, priceOf, AZA_PRICE };
+export { rollBoard, claimRepBlueprint, repTier };

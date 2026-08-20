@@ -44,6 +44,8 @@ export async function syncState() {
 
   const s = ensureWeaponSmith();
   s.rep = d.rep | 0;
+  s.slots = d.slots | 0 || 1;
+  if (Array.isArray(d.claimable)) s.claimable = d.claimable;
   s.repQuality = d.repQuality | 0;
   s.repSpeed = d.repSpeed | 0;
   s.repSpec = d.repSpec | 0;
@@ -124,3 +126,35 @@ export function ownsBlueprint(blueprintId) {
     return (s.blueprints || []).indexOf(blueprintId) >= 0;
   } catch (e) { return false; }
 }
+
+/* Refill the order board. Server-generated, always — a client that could write
+   its own contracts would write itself "minAtk 1, pays 999999". `throttled`
+   is a normal answer, not a failure: it means the board is unchanged. */
+export async function rollBoard() {
+  if (!online()) return null;
+  const d = payload(await rpc('ws_roll_board', {}));
+  if (!d) return null;
+  const s = ensureWeaponSmith();
+  if (Array.isArray(d.contracts)) { s.contracts = d.contracts; s.contractsSyncedAt = Date.now(); }
+  if (typeof d.rep === 'number') s.rep = d.rep | 0;
+  if (typeof d.slots === 'number') s.slots = d.slots | 0;
+  wsSave();
+  return d;
+}
+
+/* Claim a blueprint the player has earned through reputation. The server
+   re-checks rep_required, so this cannot be talked into an early unlock. */
+export async function claimRepBlueprint(blueprintId) {
+  return grantBlueprint(blueprintId, 'rep');
+}
+
+/* The rep ladder's names, matching ws_contract_slots in sql/039. Presentation
+   only — the SLOT COUNT comes from the server, this just labels it. */
+export const REP_TIERS = [
+  { at: 90, name: 'Guild Master' },
+  { at: 70, name: 'Master Armorer' },
+  { at: 45, name: 'Registered Armorer' },
+  { at: 20, name: 'Jobbing Smith' },
+  { at: 0,  name: 'Unproven' },
+];
+export const repTier = (rep) => (REP_TIERS.find((t) => (rep | 0) >= t.at) || REP_TIERS[REP_TIERS.length - 1]).name;

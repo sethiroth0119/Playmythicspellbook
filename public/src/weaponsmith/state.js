@@ -42,6 +42,10 @@ const DEFAULTS = {
   // 📋 Order board mirror. Same rule.
   contracts: [],
   contractsSyncedAt: 0,
+  // Server-decided: how many contracts this smith may hold at once. Mirror.
+  slots: 1,
+  // Frames earned through reputation but not yet claimed. Mirror.
+  claimable: [],
   // 🔖 Blueprint-ownership mirror (ids only). Same rule — the server decides.
   blueprints: [],
   blueprintsSyncedAt: 0,

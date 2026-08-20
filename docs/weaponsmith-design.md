@@ -454,9 +454,14 @@ licence:   ownsWeaponSmith()
 | ✅ 6 | `sql/038_weaponsmith.sql` — `crafted_weapons`, `ws_blueprints_owned`, `ws_shop`, `ws_blueprints` + `ws_mint` / `ws_grant_blueprint` / `ws_deliver` / `ws_state` | **Done and verified against a real Postgres 16** — see the commit. `server.js` routes the bench mint through `ws_mint`; offline still mints `local: true` (untradeable). ⚠ **Not yet applied** — run it by hand in the SQL editor |
 | ✅ 7 | Loot-dropped blueprints (grant through `ws_grant_blueprint`, source `'loot'`) | **Done.** `schematics.js` — blueprints drop as TRADEABLE items consumed to grant the entitlement. Loot hook: `window.wsDropSchematic()`. ⚠ **Not wired into the battle drop table** — that arm is battle code, out of scope |
 | ✅ 8 | Ⓐ Blueprints tab in the Vendor Market | **Done.** `wsBuyBlueprintAza()` owns charge+refund together (the module is never handed a bare charge). Button disables on click — two clicks would be two charges for one frame. Verified: Aza restored on every failure path |
-| 9 | Order board + reputation + rep-gated blueprint tiers | Career mode. Scoring and rep writes are server-side |
+| ✅ 9 | Order board + reputation + rep-gated blueprint tiers | **Done.** `sql/039_weaponsmith_board.sql` — contracts are SERVER-generated from templates. Verified against Postgres 16; caught a real bug (a new smith's first roll was throttled to an empty board). ⚠ **Not yet applied** |
 | 10 | Forge bench (blades) | Second craft |
 | 11 | Hero loadout parity + provenance UI | Round two |
+
+⚠ **Two migrations to apply by hand**, in order: `sql/038_weaponsmith.sql` then
+`sql/039_weaponsmith_board.sql`. Until they are, the client keeps its mirror, the board
+stays empty, and every mint takes the local (untradeable) path — the intended degraded
+behaviour, not a breakage.
 
 **Verify with `node _synckcheck.mjs`, not `build.mjs`.** The Browser pane does not
 composite, so call renderers directly rather than relying on `render()`.

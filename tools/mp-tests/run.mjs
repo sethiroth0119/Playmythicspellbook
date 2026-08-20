@@ -172,9 +172,9 @@ const MUTATIONS = [
     /* Open the admin-only phase to everyone. Warpath ships before its migration
        is applied, so a player let in reaches a mode whose database does not
        exist — this gate is the only thing standing between them and that. */
-    name: 'the warpath admin-only phase is lifted',
-    find: 'const WARPATH_ADMIN_ONLY = true;',
-    replace: 'const WARPATH_ADMIN_ONLY = false;',
+    name: 'the warpath kill switch stops disabling the mode',
+    find: '  if (!warpathVisible()) return false;',
+    replace: '  if (false) return false;',
   },
   {
     /* Grey-but-clickable is worse than either state on its own: it LOOKS

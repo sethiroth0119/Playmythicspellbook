@@ -27,7 +27,8 @@ if (start < 0 || endAt < 0) {
 let body = src.slice(start, endAt + endMark.length);
 
 const mk = (killed, admin, adminOnly) => {
-  const b = adminOnly ? body : body.replace('const WARPATH_ADMIN_ONLY = true;', 'const WARPATH_ADMIN_ONLY = false;');
+  const b = body.replace(/const WARPATH_ADMIN_ONLY = (?:true|false);/,
+                         'const WARPATH_ADMIN_ONLY = ' + (adminOnly ? 'true' : 'false') + ';');
   return new Function(`
     const localStorage = { getItem: (k) => (${killed} && k === 'hg_warpath') ? '0' : null };
     const isAdmin = () => ${admin};

@@ -36564,7 +36564,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v121a2';
+  window.BUILD_VERSION = 'v121a3';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -107276,7 +107276,7 @@ const _BME_TORDER = Object.keys(_BME_TERRAIN);
 // and BB_VER may legitimately move on its own between releases (it sat at
 // v120x1 while the rest sat at v120x0). The release sweep then drags all nine
 // knobs back onto ONE string, which is why it reads v120x3 here today.
-const BB_VER = 'v121a2';
+const BB_VER = 'v121a3';
 // terrain key → board tile type. Anything unlisted is plain ground.
 const BB_TERRAIN_TYPE = { water:'hazard', lava:'hazard', blight:'hazard' };
 // editor prop key → the board's billboard prop vocabulary
@@ -117477,7 +117477,7 @@ function _mmMount() {
   } catch (e) {}
   const f = document.createElement('iframe');
   f.id = 'mm-frame';
-  f.src = 'main-menu/index.html?v=v121a2';
+  f.src = 'main-menu/index.html?v=v121a3';
   f.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;border:0;z-index:5;background:#0a0610';
   document.body.appendChild(f);
   App._mmReady = false;
@@ -117599,12 +117599,36 @@ function _heroArtIsSrc(a) {
 function _heroArtSrc(d) {
   if (!d) return '';
   try {
-    let a = '';
-    try { a = (typeof _cardFaceArt === 'function') ? _cardFaceArt(d, 'cover') : ''; } catch (e) {}
-    // _cardFaceArt hands back a CSS value, so unwrap url("…") before testing it.
-    if (typeof a === 'string' && a.indexOf('url(') === 0) { const m = a.match(/url\(["']?([^"')]+)["']?\)/); a = m ? m[1] : ''; }
-    if (_heroArtIsSrc(a)) return a;
-    for (const k of ['img', 'art', 'cover', 'image', 'portrait']) { if (_heroArtIsSrc(d[k])) return d[k]; }
+    const id = d.id;
+    /* 🖼 getCardArt() IS THE ART STORE. It resolves, in order: Forge.cardArtUrl,
+       the published Catalog artUrl, then the local thumbnail / IndexedDB
+       fallbacks — and it returns a URL STRING, which is what an <img src> needs.
+
+       ⚠ This lookup is why the resolver used to come back empty for every
+         forged hero. The original code asked _cardFaceArt() and tried to unwrap
+         a CSS url(…) from the answer — but _cardFaceArt returns MARKUP
+         ('<img src="…">'), never a url(…), so that branch could not match on any
+         input and the function silently fell through to the inline fields, which
+         custom heroes do not carry. Art existed; nothing looked where it lived.
+
+       Heroes are keyed BOTH bare and as 'h_<id>' — the sprite-key convention
+       _cardFaceArt itself uses — so both are tried. */
+    if (id && typeof getCardArt === 'function') {
+      for (const k of [id, 'h_' + id]) {
+        try { const u = getCardArt(k); if (_heroArtIsSrc(u)) return u; } catch (e) {}
+      }
+    }
+    for (const k of ['artUrl', 'img', 'art', 'cover', 'image', 'portrait']) { if (_heroArtIsSrc(d[k])) return d[k]; }
+    /* Last resort: pull the src back out of _cardFaceArt's markup. Kept because
+       it covers any path that reaches art through _forgeRowThumb rather than
+       getCardArt, and costs nothing when the two above already answered. */
+    try {
+      const h = (typeof _cardFaceArt === 'function') ? _cardFaceArt(d, 'cover') : '';
+      if (typeof h === 'string' && h) {
+        const m = h.match(/<img[^>]+src=["']([^"']+)["']/i) || h.match(/url\(["']?([^"')]+)["']?\)/);
+        if (m && _heroArtIsSrc(m[1])) return m[1];
+      }
+    } catch (e) {}
     return '';
   } catch (e) { return ''; }
 }
@@ -213123,7 +213147,7 @@ function _openNodeCity(nodeId, _resolved) {
      knob shipped stale. Rejected: "just remember to check this one". Every
      buster now carries the literal BUILD_VERSION text, so ONE grep for the
      version string finds all nine knobs. Keep the prefix. */
-  f.src = 'node-city/index.html?v=v121a2';
+  f.src = 'node-city/index.html?v=v121a3';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);
@@ -232376,8 +232400,8 @@ render();
      catches them. Rejected: dropping the ?v= and leaning on sw.js's /src/
      network-first branch — that only helps clients the SW already controls,
      and says nothing to the browser's own HTTP cache on a cold first load. -->
-<link rel="stylesheet" href="src/battle/hud.css?v=v121a2">
-<script type="module" src="src/battle/hud.js?v=v121a2"></script>
+<link rel="stylesheet" href="src/battle/hud.css?v=v121a3">
+<script type="module" src="src/battle/hud.js?v=v121a3"></script>
 <script src="src/battle/combat.js?v=120m4" defer></script>
 <script src="src/battle/targeting.js?v=120k6" defer></script>
 <link rel="stylesheet" href="src/sprites/frames.css?v=120k3">

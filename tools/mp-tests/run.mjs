@@ -109,6 +109,14 @@ const MUTATIONS = [
     replace: '    if (false) takeLocal = false;',
   },
   {
+    /* Skip the art store. This is the branch that fixed the unicorns: without
+       it a forged hero falls back to inline fields it does not carry, and the
+       glyph is all that is left. */
+    name: 'hero art stops consulting getCardArt',
+    find: "    if (id && typeof getCardArt === 'function') {",
+    replace: '    if (false) {',
+  },
+  {
     /* Put the gate back to drawing the hero's emoji glyph. Six forged custom
        heroes all carry 🦄, so the picker showed six identical unicorns. */
     name: 'the warpath gate goes back to emoji glyphs',

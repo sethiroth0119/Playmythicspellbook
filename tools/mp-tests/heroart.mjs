@@ -27,8 +27,9 @@ const endAt = src.indexOf(endMark, start);
 if (start < 0 || endAt < 0) { console.log('❌ could not extract _heroArtSrc from index.html'); process.exit(1); }
 const body = src.slice(start, endAt + endMark.length);
 
-const mk = (faceArt) => new Function(
+const mk = (faceArt, cardArt) => new Function(
   `const _cardFaceArt = ${faceArt};
+   const getCardArt = ${cardArt || '() => null'};
    ${body}
    return { _heroArtIsSrc, _heroArtSrc };`)();
 
@@ -67,6 +68,37 @@ ok('falls through to d.img', W._heroArtSrc({ img: 'assets/h/b.png' }) === 'asset
 ok('falls through to d.portrait', W._heroArtSrc({ portrait: 'https://x/c.jpg' }) === 'https://x/c.jpg');
 ok('an icon-only hero resolves to ""', W._heroArtSrc({ icon: '🦄', name: 'Vex' }) === '');
 ok('a missing def resolves to ""', W._heroArtSrc(null) === '');
+
+/* ── the real store ──────────────────────────────────────────────────────────
+   getCardArt() is where forged hero art actually lives (Forge.cardArtUrl → the
+   published Catalog artUrl → local thumb/IDB). It must be asked FIRST and it
+   must be asked under both key shapes: heroes are stored bare AND as 'h_<id>',
+   the sprite-key convention _cardFaceArt uses. Getting this wrong is what made
+   every custom hero fall back to its 🦄 glyph while its art sat in the store. */
+const bare = mk('() => ""', '(k) => k === "vex" ? "https://cdn/x/vex.png" : null');
+ok('getCardArt hit on the BARE id', bare._heroArtSrc({ id: 'vex', icon: '🦄' }) === 'https://cdn/x/vex.png');
+
+const pref = mk('() => ""', '(k) => k === "h_vex" ? "https://cdn/x/h.png" : null');
+ok('getCardArt hit on the h_ PREFIXED id', pref._heroArtSrc({ id: 'vex', icon: '🦄' }) === 'https://cdn/x/h.png');
+
+const wins = mk('() => ""', '() => "https://cdn/store.png"');
+ok('the store OUTRANKS an inline field',
+   wins._heroArtSrc({ id: 'v', img: 'assets/inline.png' }) === 'https://cdn/store.png');
+
+const supa = mk('() => ""', '() => "https://p.supabase.co/storage/v1/object/public/card-art/9f"');
+ok('an extensionless Supabase URL is accepted',
+   supa._heroArtSrc({ id: 'v' }) === 'https://p.supabase.co/storage/v1/object/public/card-art/9f');
+
+const junk = mk('() => ""', '() => "🦄"');
+ok('a glyph coming back from the store is still rejected', junk._heroArtSrc({ id: 'v', icon: '🦄' }) === '');
+
+const thrower = mk('() => ""', '() => { throw new Error("idb down"); }');
+ok('a throwing store does not take the resolver down', thrower._heroArtSrc({ id: 'v', img: 'assets/i.png' }) === 'assets/i.png');
+
+/* _cardFaceArt returns MARKUP, never a url(…). The original code unwrapped
+   url(…) and so could never match it — this is that path, done right. */
+const markup = mk('(d) => d.face ? \'<img src="\' + d.face + \'" alt="">\' : ""');
+ok('src is pulled out of _cardFaceArt markup', markup._heroArtSrc({ id: 'z', face: 'assets/h/m.png' }) === 'assets/h/m.png');
 
 // And the gate must actually call it.
 ok('the Warpath gate uses _heroArtSrc', /_heroArtSrc === 'function'\) \? _heroArtSrc\(h\)/.test(src));

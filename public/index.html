@@ -36564,7 +36564,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v121c6';
+  window.BUILD_VERSION = 'v121c7';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -213919,7 +213919,7 @@ function _openNodeCity(nodeId, _resolved) {
      knob shipped stale. Rejected: "just remember to check this one". Every
      buster now carries the literal BUILD_VERSION text, so ONE grep for the
      version string finds all nine knobs. Keep the prefix. */
-  f.src = 'node-city/index.html?v=v121c6';
+  f.src = 'node-city/index.html?v=v121c7';
   f.setAttribute('title', 'Node City');
   /* 🔴 THE HOST CHROME RUNS ON LOAD, AND THIS IS THE BUG IT FIXES.
      _ncHostGutter and _ncZonePill used to run synchronously right after this

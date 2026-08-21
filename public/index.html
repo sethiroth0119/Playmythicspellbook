@@ -224410,29 +224410,17 @@ function _twAddNodeContribution(nodeId, buildings, roads, civ) {
     try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
   } catch (e) {}
 }
-function _twRemoveNodeContribution(nodeId, keepCampSites) {
-  if (!nodeId) return;
-  try {
-    const c = _twCampNodeContrib();
-    const mine = c[nodeId];
-    if (mine) {
-      const t = _twForge();
-      const node = (t.nodes || []).find(n => n && n.id === nodeId);
-      if (node) {
-        const r = _twNodeReconEnsure(node);
-        r.buildingsRestored = Math.max(0, (r.buildingsRestored | 0) - (mine.buildings | 0));
-        r.roadsRepaired = Math.max(0, (r.roadsRepaired | 0) - (mine.roads | 0));
-        r.civiliansSaved = Math.max(0, (r.civiliansSaved | 0) - (mine.civ | 0));
-      }
-      delete c[nodeId];
-    }
-    // The player loses the buildings they reclaimed — their Rebuild-from-the-Rubble
-    // sites reset so they start fresh for the next node (unless caller says keep).
-    if (!keepCampSites) { try { const rs = _reconState(); rs.sites = {}; } catch (e) {} }
-    try { saveForge(); } catch (e) {}
-    try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
-  } catch (e) {}
-}
+/* 🪦 REMOVED — _twRemoveNodeContribution(nodeId, keepCampSites).
+   It stripped the caller's node ledger and, unless the flag said otherwise,
+   WIPED Profile.recon.sites — the whole Rebuild-from-the-Rubble board. It had
+   NO CALLERS: registerCampToNode was made non-destructive long ago (the note
+   just below says so) and nothing else ever reached it, so it sat as a loaded
+   gun one careless call away from deleting a settlement — which is very
+   nearly the bug the cloud-restore gates had.
+   ⚠ IF A "leave this node" FEATURE IS EVER WANTED, only the ledger half is
+     worth restoring. Reconstruction is PERMANENT — registerCampToNode makes
+     that promise in writing — so nothing new may clear `sites`.
+   Shortlisted by .gauntlet/deadcode-scan.mjs, confirmed by grep. */
 
 function registerCampToNode(nodeId) {
   let node = null;

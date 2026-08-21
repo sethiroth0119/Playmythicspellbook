@@ -1,901 +1,702 @@
 /* ============================================================================
-   hub-tiles.css — THE TILE.
-   One card component for every sub-hub (Battle Hall, Forge Sanctum, Ruin
-   Exchange, The Codex, The Camp, Arcanum). Owned by the hub-UI remodel.
+   hub-tiles.css — THE SUB-HUB TILE.
+   public/src/hubui/hub-tiles.css   (served as /src/hubui/hub-tiles.css)
 
-   SCOPE: every rule is scoped `.spellbook-hub.is-sub.hub-v2 …`.
-   The `.hub-v2` class is the opt-in switch; it also buys one extra class of
-   specificity, which is what lets this file beat the two legacy layers still
-   living inside index.html — the gothic block near line 2119 AND the much later
-   "modern" override near 113076 that flattens the tile back to a rounded blue
-   rect. Do not drop `.hub-v2` from a selector to "tidy up": the legacy rules win
-   the moment you do.
+   THE CLAUSE THIS FILE ANSWERS — docs/hub-ui-bar.md §3 "Tile grid", every
+   bullet of it:
+     · four across, then the remainder centred below, gap ~22px, ~300×330
+     · a notched 1px gold hairline frame with a soft outer shadow
+     · an ART PANEL filling the top ~55%, its own inset gold hairline, painted
+       art FILLING the panel — never an icon floating in an empty well
+     · gold Cinzel caps ~26px title, one line of italic gold-grey subtitle
+     · outlined badge pills — gold for neutral, violet for special
+     · one promoted tile per hub: violet frame + violet outer glow
+     · hover / active / focus-visible / disabled, ~160ms on the token easing
 
-   SIZE: this file NEVER picks its own dimensions. Everything comes from
-     --hub-tile-w      tile width
-     --hub-tile-min-h  tile min-height
-     --hub-art-h       art-panel height
-   (defined by the hub shell, overridable per-hub). The fallbacks below are the
-   values the Battle Hall reference shipped with, so the file also stands alone.
+   WHAT THIS FILE OWNS
+     `.spellbook-hub.is-sub .hub-portal-grid` and everything inside a tile.
+     Nothing else. The background plate, the top bar, the breadcrumb, the title
+     block and the footer belong to hub-keep.css / hub-chrome.css.
 
-   LAYERS (why the tile is built out of pseudo-elements):
-     .hub-portal          = THE FRAME. Its background IS the gold hairline; the
-                            octagon clip-path cuts all eight edges of it.
-     .hub-portal::before  = THE PAINTING. Inset by --frame-w, clipped to a
-                            slightly smaller octagon, carries the painted
-                            gradient + the --portal-accent top rail.
-     .hub-portal::after   = THE ENGRAVING. Four corner ticks, drawn as eight
-                            hairline background layers.
-   A plain `border` cannot do this: clip-path slices the corners off, so the
-   four diagonal bevel edges come out bare — which is exactly the "div with a
-   border" look this remodel exists to kill.
+   TOKENS
+     Consumes the `--keep-*` dictionary declared by hub-keep.css and declares
+     none of its own on :root. The handful of `--tile-*` customs below are
+     LOCAL, scoped to the grid, and exist so a hub can retune size in one place.
 
-   OUTER GLOW IS A FILTER, NOT A BOX-SHADOW. clip-path clips box-shadow, so
-   every outer shadow the legacy CSS declared was being thrown away (that is why
-   the old tiles read flat). drop-shadow() runs AFTER the clip, so it follows the
-   octagon silhouette. Keep the number of drop-shadow() functions identical in
-   every state or the filter will not interpolate.
+   ── FOUR THINGS THAT LOOK LIKE MISTAKES AND ARE NOT ──────────────────────
+   1. SCOPE IS `.spellbook-hub.is-sub.hub-v2 …`, always three classes deep.
+      index.html still carries the pre-remodel tile rules (~line 1372 and the
+      `portal-locked` pair at ~25734). `.hub-v2` is the opt-in switch AND the
+      extra specificity class that beats them. Dropping it to "tidy up" hands
+      the tile straight back to the legacy sheet.
+   2. THE OUTER SHADOW IS A `filter: drop-shadow()`, NOT `box-shadow`.
+      `clip-path` clips box-shadow, so every outer shadow the legacy CSS
+      declared was being thrown away — which is exactly why the old tiles read
+      flat. drop-shadow() runs after the clip and follows the octagon.
+      ⚠ Keep the NUMBER of drop-shadow() functions identical between a state
+      and the state it transitions to, or the filter snaps instead of easing.
+      Gold tiles use one; promoted (violet) tiles use two in every state.
+   3. THE FRAME IS A BACKGROUND, NOT A BORDER. `.hub-portal`'s own background
+      IS the 1px gold hairline; `::before` paints the stone face 1px inside it.
+      A real `border` cannot do this — clip-path slices the corners off and the
+      four diagonal bevel edges come out bare, which is the "div with a border"
+      look the remodel exists to kill.
+   4. NO `animation` IS DECLARED HERE, AND NO `animation:none !important`.
+      The tile-band entrance belongs to hub-transitions.css, including its
+      reduced-motion fallback. The previous version of this file killed tile
+      animation with `!important`, which silently ate that sheet's `reduce`
+      fade (its §"AND A SECOND RULE, ON THE GRID" comment documents the
+      collision). Transitions are ours; animations are theirs.
    ========================================================================== */
 
-/* --tick-len is animated (the corner brackets extend on hover, as they do on the
-   main menu's nav sigils). A custom property only interpolates once it has been
-   registered with a type — without this the ticks would snap. */
-@property --tick-len {
-  syntax: '<length>';
-  inherits: true;
-  initial-value: 15px;
+
+/* ════════════════════════════════════════════════════════════════════════════
+   1 · THE GRID  (§3 "Four across, then three centred below. Gap ~22px.")
+   Plain flex wrap, not CSS grid: wrapping flex centres a SHORT LAST ROW for
+   free, which is the comp's 4-then-3. `grid-template-columns` would leave the
+   remainder left-aligned and need a `nth-last-child` hack per tile count, and
+   the hubs run from 3 tiles (The Camp) to 13 (Ruin Exchange).
+
+   WIDTH IS PINNED TO EXACTLY FOUR COLUMNS — 4×300 + 3×22 = 1266px — so the
+   wrap point is a decision, not an accident of the viewport. Below ~1330px of
+   usable width it falls to three, then two, then one.
+
+   ⚠ THE RUIN EXCHANGE RENDERS 13 TILES AGAINST THE COMP'S 7. Four across puts
+   it in four rows (1386px of band) and the page scrolls. That is the deliberate
+   trade: the alternative — shrinking the tile until 13 fit one screen — breaks
+   the ~300×330 the bar specifies on every OTHER hub too, to fix one. So the
+   band is allowed to run past the fold and `.spellbook-hub` (overflow-y:auto)
+   scrolls it. A clipped bottom row would not be acceptable; a scrolled one is.
+   ════════════════════════════════════════════════════════════════════════════ */
+.spellbook-hub.is-sub.hub-v2 .hub-portal-grid {
+  /* Local size dictionary. A hub can retune all three by redeclaring them on
+     `.spellbook-hub.is-sub[data-hub="…"] .hub-portal-grid`. */
+  --tile-w: 300px;
+  --tile-h: 330px;
+  --tile-art-h: 178px;
+  --tile-gap: 22px;
+  --tile-notch: 10px;        /* the outer frame's corner cut */
+  --tile-notch-in: 9px;      /* the stone face, 1px inside it */
+  --tile-notch-art: 6px;     /* the art panel */
+
+  position: relative;
+  z-index: 3;
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-content: flex-start;
+  align-items: stretch;
+  gap: var(--tile-gap);
+  width: min(calc(var(--tile-w) * 4 + var(--tile-gap) * 3), 94vw);
+  max-width: none;
+  margin: 26px auto 0;
+  padding: 0;
+  list-style: none;
 }
 
-/* The grid element is NOT styled here at all — not even to seed the size tokens.
-   Seeding them on .hub-portal-grid would out-specify a per-hub override declared
-   on the hub shell, so the tile takes its defaults from the var() fallbacks
-   below instead and the grid file stays entirely someone else's. */
 
+/* ════════════════════════════════════════════════════════════════════════════
+   2 · THE TILE — the notched stone plaque
+   ════════════════════════════════════════════════════════════════════════════ */
 .spellbook-hub.is-sub.hub-v2 .hub-portal {
-  /* ---- tokens -------------------------------------------------------- */
-  --accent: var(--portal-accent, #c8a060);
-  --gold: #d2a44e;
-  --gold-hi: #f6dc95;
-  --gold-lo: #7d5f2a;
-  --parchment: #e9dab2;
-  --tile-bevel: 16px;
-  --tile-bevel-in: 15px;
-  --art-bevel: 10px;
-  --frame-w: 1px;
-  --frame-tint: color-mix(in srgb, var(--accent) 28%, #8a6a2c);
-  --lift: 0px;
-  --press: 1;
-
   position: relative;
   isolation: isolate;
   box-sizing: border-box;
-  width: var(--hub-tile-w, 272px);
-  min-height: var(--hub-tile-min-h, 340px);
-  padding: 18px 16px 20px;
-  margin: 0;
-  border: 0;
-  border-radius: 0;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
+  width: var(--tile-w, 300px);
+  height: var(--tile-h, 330px);
+  min-height: var(--tile-h, 330px);
+  flex: 0 0 auto;
 
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: flex-start;
+  align-items: stretch;
   text-align: center;
 
-  /* THE FRAME. A vertical gradient so the hairline catches light at the top and
-     sinks into shadow at the foot, like a struck metal edge. */
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--accent) 70%, var(--gold-hi)) 0%,
-      var(--frame-tint) 12%,
-      #6a5024 42%,
-      #33260f 78%,
-      #1c1409 100%
-    );
+  /* The frame is the padding: 1px of the element's own background shows all the
+     way round, on every one of the octagon's eight edges. */
+  padding: 1px;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  cursor: pointer;
+  overflow: visible;
+  -webkit-tap-highlight-color: transparent;
 
-  clip-path: polygon(
-    var(--tile-bevel) 0, calc(100% - var(--tile-bevel)) 0,
-    100% var(--tile-bevel), 100% calc(100% - var(--tile-bevel)),
-    calc(100% - var(--tile-bevel)) 100%, var(--tile-bevel) 100%,
-    0 calc(100% - var(--tile-bevel)), 0 var(--tile-bevel)
+  /* THE 1px GOLD HAIRLINE. A vertical ramp so the edge catches light at the top
+     and sinks into shadow at the foot, the way a struck metal edge does. */
+  background: linear-gradient(
+    180deg,
+    rgba(203, 170, 106, 0.78) 0%,
+    rgba(138, 111, 60, 0.46) 55%,
+    rgba(110, 86, 44, 0.55) 100%
   );
 
-  transform: translateY(var(--lift)) scale(var(--press));
-  filter:
-    drop-shadow(0 12px 22px rgba(0, 0, 0, 0.62))
-    drop-shadow(0 2px 4px rgba(0, 0, 0, 0.55))
-    drop-shadow(0 0 0 rgba(246, 220, 149, 0));
+  clip-path: polygon(
+    var(--tile-notch) 0, calc(100% - var(--tile-notch)) 0,
+    100% var(--tile-notch), 100% calc(100% - var(--tile-notch)),
+    calc(100% - var(--tile-notch)) 100%, var(--tile-notch) 100%,
+    0 calc(100% - var(--tile-notch)), 0 var(--tile-notch)
+  );
+
+  transform: translateY(0);
+  filter: drop-shadow(0 12px 22px rgba(0, 0, 0, 0.66));
+
   transition:
-    transform 0.32s cubic-bezier(0.2, 0.9, 0.3, 1.25),
-    filter 0.32s ease,
-    background 0.32s ease;
+    transform var(--keep-fast, 0.16s) var(--keep-ease, ease),
+    filter    var(--keep-fast, 0.16s) var(--keep-ease, ease),
+    background var(--keep-fast, 0.16s) var(--keep-ease, ease);
 }
 
-/* ---- THE PAINTING ------------------------------------------------------ */
+/* THE STONE FACE. Warm near-black vertical gradient, 1px inside the hairline,
+   carrying the §1 emboss + liner insets. */
 .spellbook-hub.is-sub.hub-v2 .hub-portal::before {
   content: '';
   position: absolute;
-  inset: var(--frame-w);
+  inset: 1px;
   z-index: 0;
-  pointer-events: none;
   border: 0;
-  width: auto; height: auto;
+  width: auto;
+  height: auto;
   clip-path: polygon(
-    var(--tile-bevel-in) 0, calc(100% - var(--tile-bevel-in)) 0,
-    100% var(--tile-bevel-in), 100% calc(100% - var(--tile-bevel-in)),
-    calc(100% - var(--tile-bevel-in)) 100%, var(--tile-bevel-in) 100%,
-    0 calc(100% - var(--tile-bevel-in)), 0 var(--tile-bevel-in)
+    var(--tile-notch-in) 0, calc(100% - var(--tile-notch-in)) 0,
+    100% var(--tile-notch-in), 100% calc(100% - var(--tile-notch-in)),
+    calc(100% - var(--tile-notch-in)) 100%, var(--tile-notch-in) 100%,
+    0 calc(100% - var(--tile-notch-in)), 0 var(--tile-notch-in)
   );
-  background:
-    /* the accent top rail — a painted chord between the two upper bevels */
-    linear-gradient(180deg,
-      color-mix(in srgb, var(--accent) 92%, white 10%) 0 2px,
-      color-mix(in srgb, var(--accent) 45%, transparent) 2px 3px,
-      transparent 3px),
-    /* its bloom, falling away into the card */
-    linear-gradient(180deg,
-      color-mix(in srgb, var(--accent) 22%, transparent) 0%,
-      transparent 26%),
-    /* THE PLINTH — the foot of the card is raised stone, so the badge has
-       something to stand on and the empty lower half is not dead space. */
-    linear-gradient(0deg,
-      rgba(198, 160, 96, 0.09) 0 46px,
-      rgba(210, 164, 78, 0.34) 46px 47px,
-      transparent 47px),
-    /* inner top light: the card is lit from above */
-    linear-gradient(180deg,
-      rgba(255, 236, 196, 0.1) 0 1px,
-      rgba(255, 236, 196, 0.03) 1px 6%,
-      transparent 34%),
-    radial-gradient(120% 78% at 50% 118%, rgba(0, 0, 0, 0.55), transparent 66%),
-    /* the painted body — near-opaque: at 0.96 the hub's own ambient artwork
-       bled through and every tile picked up a different smear. */
-    linear-gradient(168deg,
-      #241733 0%, #170e22 44%, #0b0711 100%);
-  transition: background 0.3s ease, opacity 0.3s ease;
-}
-
-/* ---- THE ENGRAVING: four corner ticks ---------------------------------- */
-.spellbook-hub.is-sub.hub-v2 .hub-portal::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: 3;
+  background: linear-gradient(
+    180deg,
+    var(--keep-stone-hi, #1a150e) 0%,
+    var(--keep-ground-1, #12100c) 46%,
+    var(--keep-ground-0, #0b0906) 100%
+  );
+  box-shadow: var(--keep-emboss), var(--keep-liner);
+  transition: box-shadow var(--keep-fast, 0.16s) var(--keep-ease, ease);
   pointer-events: none;
-  border: 0;
-  width: auto; height: auto;
-  --tick: color-mix(in srgb, var(--accent) 60%, var(--gold-hi));
-  --tick-len: 15px;
-  --tick-in: 13px;
-  background-image:
-    linear-gradient(var(--tick), var(--tick)), linear-gradient(var(--tick), var(--tick)),
-    linear-gradient(var(--tick), var(--tick)), linear-gradient(var(--tick), var(--tick)),
-    linear-gradient(var(--tick), var(--tick)), linear-gradient(var(--tick), var(--tick)),
-    linear-gradient(var(--tick), var(--tick)), linear-gradient(var(--tick), var(--tick));
-  background-repeat: no-repeat;
-  background-size:
-    var(--tick-len) 1px, 1px var(--tick-len),
-    var(--tick-len) 1px, 1px var(--tick-len),
-    var(--tick-len) 1px, 1px var(--tick-len),
-    var(--tick-len) 1px, 1px var(--tick-len);
-  background-position:
-    left var(--tick-in) top var(--tick-in), left var(--tick-in) top var(--tick-in),
-    right var(--tick-in) top var(--tick-in), right var(--tick-in) top var(--tick-in),
-    left var(--tick-in) bottom var(--tick-in), left var(--tick-in) bottom var(--tick-in),
-    right var(--tick-in) bottom var(--tick-in), right var(--tick-in) bottom var(--tick-in);
-  opacity: 0.6;
-  transition: opacity 0.3s ease, --tick-len 0.3s ease;
 }
 
-/* ============================ STATE: HOVER ==============================
-   `.sb-hover` / `.sb-active` / `.sb-focus` are DESIGN-QA HOOKS. Headless
-   screenshots cannot hover or focus, and a state nobody can look at is a state
-   that rots. Nothing in the app ever adds these classes; they exist so the
-   five states can be proved in a single PNG. Keep them paired with the real
-   pseudo-class in every rule below. */
-.spellbook-hub.is-sub.hub-v2 .hub-portal:not(.portal-locked):hover,
-.spellbook-hub.is-sub.hub-v2 .hub-portal:not(.portal-locked).sb-hover {
-  --lift: -7px;
-  --press: 1.015;
-  --frame-tint: color-mix(in srgb, var(--accent) 58%, var(--gold-hi));
-  filter:
-    drop-shadow(0 20px 34px rgba(0, 0, 0, 0.7))
-    drop-shadow(0 2px 4px rgba(0, 0, 0, 0.55))
-    drop-shadow(0 0 22px color-mix(in srgb, var(--accent) 62%, transparent));
-}
-.spellbook-hub.is-sub.hub-v2 .hub-portal:not(.portal-locked):hover::before,
-.spellbook-hub.is-sub.hub-v2 .hub-portal:not(.portal-locked).sb-hover::before {
-  background:
-    linear-gradient(180deg,
-      color-mix(in srgb, var(--accent) 100%, white 26%) 0 2px,
-      color-mix(in srgb, var(--accent) 65%, transparent) 2px 4px,
-      transparent 4px),
-    linear-gradient(180deg,
-      color-mix(in srgb, var(--accent) 38%, transparent) 0%,
-      transparent 32%),
-    linear-gradient(0deg,
-      rgba(214, 176, 110, 0.14) 0 46px,
-      rgba(246, 220, 149, 0.6) 46px 47px,
-      transparent 47px),
-    linear-gradient(180deg,
-      rgba(255, 240, 205, 0.16) 0 1px,
-      rgba(255, 240, 205, 0.05) 1px 8%,
-      transparent 38%),
-    radial-gradient(120% 78% at 50% 118%, rgba(0, 0, 0, 0.5), transparent 68%),
-    linear-gradient(168deg,
-      #2e1e42 0%, #1d1230 44%, #0e0916 100%);
-}
-.spellbook-hub.is-sub.hub-v2 .hub-portal:not(.portal-locked):hover::after,
-.spellbook-hub.is-sub.hub-v2 .hub-portal:not(.portal-locked).sb-hover::after {
-  opacity: 1;
-  --tick-len: 23px;
-  --tick: var(--gold-hi);
+/* The legacy sheet uses `::after` for a pair of corner brackets that belong to
+   the design being replaced. Retired rather than restyled — §1's ornaments are
+   "sparse and deliberate", and a bracket on all thirteen Exchange tiles is a
+   border of them. */
+.spellbook-hub.is-sub.hub-v2 .hub-portal::after {
+  content: none;
+  display: none;
 }
 
-/* ============================ STATE: ACTIVE =============================
-   A real press: the card drops INTO the page. Short, snappy transition so the
-   press is felt on the way down and eased on the way back up. */
-.spellbook-hub.is-sub.hub-v2 .hub-portal:not(.portal-locked):active,
-.spellbook-hub.is-sub.hub-v2 .hub-portal:not(.portal-locked).sb-active {
-  --lift: 2px;
-  --press: 0.978;
-  --frame-tint: color-mix(in srgb, var(--accent) 34%, #4a3617);
-  filter:
-    drop-shadow(0 3px 6px rgba(0, 0, 0, 0.8))
-    drop-shadow(0 1px 1px rgba(0, 0, 0, 0.7))
-    drop-shadow(0 0 10px color-mix(in srgb, var(--accent) 34%, transparent));
-  transition:
-    transform 0.07s cubic-bezier(0.4, 0, 0.6, 1),
-    filter 0.07s ease,
-    background 0.07s ease;
-}
-.spellbook-hub.is-sub.hub-v2 .hub-portal:not(.portal-locked):active::before,
-.spellbook-hub.is-sub.hub-v2 .hub-portal:not(.portal-locked).sb-active::before {
-  /* the painting darkens and the light rolls to the TOP INSIDE edge — the
-     card is now sitting below the surface, not above it. */
-  background:
-    linear-gradient(180deg,
-      color-mix(in srgb, var(--accent) 70%, black 26%) 0 2px,
-      color-mix(in srgb, var(--accent) 30%, transparent) 2px 3px,
-      transparent 3px),
-    linear-gradient(180deg, rgba(0, 0, 0, 0.6) 0%, transparent 22%),
-    linear-gradient(0deg,
-      rgba(150, 118, 66, 0.06) 0 46px,
-      rgba(150, 118, 66, 0.28) 46px 47px,
-      transparent 47px),
-    linear-gradient(180deg,
-      rgba(255, 236, 196, 0.02) 0 1px,
-      transparent 1px),
-    radial-gradient(120% 78% at 50% 118%, rgba(0, 0, 0, 0.42), transparent 70%),
-    linear-gradient(168deg,
-      #150d1f 0%, #0e0916 44%, #070409 100%);
-  transition: background 0.07s ease;
-}
-.spellbook-hub.is-sub.hub-v2 .hub-portal:not(.portal-locked):active .hub-portal-art,
-.spellbook-hub.is-sub.hub-v2 .hub-portal:not(.portal-locked).sb-active .hub-portal-art {
-  transform: translateY(1px);
-  filter: brightness(0.88);
-}
-
-/* ========================= STATE: FOCUS-VISIBLE =========================
-   The tiles are <div>s, so keyboard focus is imperfect here — style it anyway,
-   because the day markup grows a tabindex this must already be right, and
-   because a focus ring is free insurance for anyone driving the UI with a
-   controller-to-keyboard shim.
-
-   The ring is the FRAME ITSELF, widened to 3px and lit to gold-hi. An `outline`
-   would be a rectangle around a bevelled card (and clip-path clips outlines
-   anyway); growing the frame keeps the ring on the octagon, which is the only
-   version of this that survives a dark painted background. */
-.spellbook-hub.is-sub.hub-v2 .hub-portal:focus-visible,
-.spellbook-hub.is-sub.hub-v2 .hub-portal.sb-focus {
-  /* --accent is retargeted to gold-hi so the rail, the ticks, the medallion ring
-     and the name glow ALL swing to the focus colour together. A focus ring that
-     only touches one edge disappears against a painted background. */
-  --accent: #f6dc95;
-  --frame-w: 3px;
-  --lift: -3px;
-  outline: none;
-  background:
-    linear-gradient(180deg, #fff3cf 0%, var(--gold-hi) 40%, #e0b45f 100%);
-  filter:
-    drop-shadow(0 14px 26px rgba(0, 0, 0, 0.66))
-    drop-shadow(0 0 3px rgba(10, 6, 16, 0.95))
-    drop-shadow(0 0 18px rgba(246, 220, 149, 0.75));
-}
-.spellbook-hub.is-sub.hub-v2 .hub-portal:focus-visible::after,
-.spellbook-hub.is-sub.hub-v2 .hub-portal.sb-focus::after {
-  opacity: 1;
-  --tick: var(--gold-hi);
-}
-
-/* ============================= ART PANEL ================================ */
-.spellbook-hub.is-sub.hub-v2 .hub-portal-art {
+/* Every real child sits above the face. */
+.spellbook-hub.is-sub.hub-v2 .hub-portal > * {
   position: relative;
   z-index: 1;
-  isolation: isolate;
-  box-sizing: border-box;
-  width: 100%;
-  height: var(--hub-art-h, 168px);
-  margin: 0 0 14px;
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════════
+   3 · THE ART PANEL  (§3: "filling the top ~55% … Art fills the panel — it is
+   not an icon floating in an empty well.")
+   178 / 330 = 54%.
+   ════════════════════════════════════════════════════════════════════════════ */
+.spellbook-hub.is-sub.hub-v2 .hub-portal-art {
+  position: relative;
+  display: block;
+  flex: 0 0 auto;
+  width: auto;
+  height: var(--tile-art-h, 178px);
+  margin: 7px 7px 0;
   padding: 0;
   overflow: hidden;
-  display: grid;
-  place-items: center;
+  background:
+    radial-gradient(120% 100% at 50% 34%, #16110b 0%, #0c0906 62%, #080605 100%);
+  clip-path: polygon(
+    var(--tile-notch-art) 0, calc(100% - var(--tile-notch-art)) 0,
+    100% var(--tile-notch-art), 100% calc(100% - var(--tile-notch-art)),
+    calc(100% - var(--tile-notch-art)) 100%, var(--tile-notch-art) 100%,
+    0 calc(100% - var(--tile-notch-art)), 0 var(--tile-notch-art)
+  );
   border: 0;
   border-radius: 0;
-  /* the art panel's own hairline, same trick as the tile */
-  background: linear-gradient(180deg,
-    color-mix(in srgb, var(--accent) 40%, var(--gold-hi)) 0%,
-    color-mix(in srgb, var(--gold) 90%, var(--accent)) 34%,
-    #7d5f2a 72%,
-    #3a2b14 100%);
-  clip-path: polygon(
-    var(--art-bevel) 0, calc(100% - var(--art-bevel)) 0,
-    100% var(--art-bevel), 100% calc(100% - var(--art-bevel)),
-    calc(100% - var(--art-bevel)) 100%, var(--art-bevel) 100%,
-    0 calc(100% - var(--art-bevel)), 0 var(--art-bevel)
-  );
-  transition: transform 0.3s ease, filter 0.3s ease, background 0.3s ease;
+  box-shadow: none;
 }
 
-/* Painted interior + (when there is no photo) the SIGIL MEDALLION.
-   The medallion is drawn HERE, not on .hub-portal-icon, on purpose: the icon
-   carries a gold-tint filter for emoji, and a filter on the medallion's own
-   element would stain the ring along with the glyph. */
-.spellbook-hub.is-sub.hub-v2 .hub-portal-art::before {
-  content: '';
-  position: absolute;
-  inset: 1px;
-  z-index: 0;
-  pointer-events: none;
-  clip-path: polygon(
-    9px 0, calc(100% - 9px) 0, 100% 9px, 100% calc(100% - 9px),
-    calc(100% - 9px) 100%, 9px 100%, 0 calc(100% - 9px), 0 9px
-  );
-  background:
-    radial-gradient(78% 74% at 50% 34%,
-      color-mix(in srgb, var(--accent) 22%, transparent), transparent 72%),
-    repeating-linear-gradient(58deg,
-      rgba(255, 240, 210, 0.016) 0 2px, transparent 2px 5px),
-    radial-gradient(130% 110% at 50% 122%, rgba(0, 0, 0, 0.72), transparent 60%),
-    linear-gradient(180deg, #1d1329 0%, #120c1b 55%, #080510 100%);
-  transition: background 0.3s ease;
-}
-
-/* the medallion — three hard-stop radials: outer ring, inner keyline, disc */
-.spellbook-hub.is-sub.hub-v2 .hub-portal:not(.has-art) .hub-portal-art::before {
-  --med: 47px;
-  /* NOTE: every circle here is centred at 50% 50% and every stop is in px.
-     Offsetting the disc (circle at 40% 32%) put its stop-circles out of
-     register with the ring and painted a fat crescent across the whole panel —
-     that is the "swoosh" bug, do not reintroduce it. The off-centre light is a
-     separate, small layer that stays inside the disc. */
-  background:
-    /* outer dark keyline — the ring must read against a lit panel, exactly like
-       the main menu's nav sigil (inset 0 0 0 3px rgba(10,6,16,.9)). */
-    radial-gradient(circle at 50% 50%,
-      transparent 0 var(--med),
-      rgba(8, 5, 12, 0.85) var(--med) calc(var(--med) + 2px),
-      transparent calc(var(--med) + 2px)),
-    /* outer ring */
-    radial-gradient(circle at 50% 50%,
-      transparent 0 calc(var(--med) - 2px),
-      color-mix(in srgb, var(--gold) 88%, var(--accent)) calc(var(--med) - 2px) var(--med),
-      transparent var(--med)),
-    /* inner keyline */
-    radial-gradient(circle at 50% 50%,
-      transparent 0 calc(var(--med) - 5px),
-      rgba(210, 164, 78, 0.32) calc(var(--med) - 5px) calc(var(--med) - 4px),
-      transparent calc(var(--med) - 4px)),
-    /* raking light inside the disc */
-    radial-gradient(circle at 46% 40%,
-      rgba(126, 88, 182, 0.34) 0 6px,
-      rgba(96, 66, 140, 0.14) 20px,
-      transparent 30px),
-    /* the disc */
-    radial-gradient(circle at 50% 50%,
-      #241635 0 calc(var(--med) - 22px),
-      #170e25 calc(var(--med) - 8px),
-      #0a0612 calc(var(--med) - 1.5px),
-      transparent calc(var(--med) - 1.4px)),
-    /* its bloom on the panel — kept tight; a wide one reads as a spotlight blob */
-    radial-gradient(circle at 50% 50%,
-      color-mix(in srgb, var(--accent) 20%, transparent) 0 calc(var(--med) + 3px),
-      transparent calc(var(--med) + 20px)),
-    radial-gradient(78% 74% at 50% 34%,
-      color-mix(in srgb, var(--accent) 22%, transparent), transparent 72%),
-    /* canvas weave: the panel is a painting, not an empty div */
-    repeating-linear-gradient(58deg,
-      rgba(255, 240, 210, 0.016) 0 2px, transparent 2px 5px),
-    radial-gradient(130% 110% at 50% 122%, rgba(0, 0, 0, 0.72), transparent 60%),
-    linear-gradient(180deg, #1d1329 0%, #120c1b 55%, #080510 100%);
-}
-
-/* ---- THE SMUDGE PROBLEM ------------------------------------------------
-   Forge/Exchange thumbnails are small dark object renders on an already dark
-   panel and read as smudges at tile size. Grade them: lift contrast and mid
-   brightness, add a touch of warmth, and let ::after put a rim and a foot-scrim
-   over the top so the art is SEATED in the frame instead of floating in it. */
+/* THE PAINTING. `cover`, biased slightly above centre: most of the repo's
+   panel art is a 3:2 or square scene whose subject sits above the midline, and
+   a dead-centre crop of a 512×512 takes its feet and its sky in equal measure. */
 .spellbook-hub.is-sub.hub-v2 .hub-portal-photo {
   position: absolute;
-  inset: 1px;
-  z-index: 1;
-  width: calc(100% - 2px);
-  height: calc(100% - 2px);
-  object-fit: cover;
+  inset: 0;
   display: block;
-  clip-path: polygon(
-    9px 0, calc(100% - 9px) 0, 100% 9px, 100% calc(100% - 9px),
-    calc(100% - 9px) 100%, 9px 100%, 0 calc(100% - 9px), 0 9px
-  );
-  filter: contrast(1.16) brightness(1.14) saturate(1.08);
-  transform: scale(1.005);
-  transition: transform 0.45s ease, filter 0.35s ease;
-}
-.spellbook-hub.is-sub.hub-v2 .hub-portal:not(.portal-locked):hover .hub-portal-photo,
-.spellbook-hub.is-sub.hub-v2 .hub-portal:not(.portal-locked).sb-hover .hub-portal-photo {
-  transform: scale(1.07);
-  filter: contrast(1.2) brightness(1.24) saturate(1.14);
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 50% 42%;
+  border: 0;
+  border-radius: 0;
+  /* Darkened so the title below stays dominant (§3) — but only just. The comp's
+     panels are still READABLE paintings; taking them below ~0.8 turns the whole
+     band into seven dark rectangles and throws away the thing this unit exists
+     to add. The scrim below does the rest of the work, weighted at the foot
+     where the title needs the contrast. */
+  filter: brightness(0.80) saturate(0.90) contrast(1.05);
+  transform: scale(1.02);
+  transition:
+    filter    var(--keep-fast, 0.16s) var(--keep-ease, ease),
+    transform var(--keep-fast, 0.16s) var(--keep-ease, ease);
 }
 
-/* the glass over the painting: inner gold rim, vignette, foot scrim */
+/* THE INSET HAIRLINE + THE BOTTOM-WEIGHTED SCRIM.
+   The scrim is the piece that makes the title dominant: the art is at full
+   exposure through its top two thirds and falls into the plaque at its foot,
+   so the panel reads as painted INTO the stone rather than pasted onto it. */
 .spellbook-hub.is-sub.hub-v2 .hub-portal-art::after {
   content: '';
   position: absolute;
-  inset: 1px;
+  inset: 0;
   z-index: 2;
   pointer-events: none;
-  clip-path: polygon(
-    9px 0, calc(100% - 9px) 0, 100% 9px, 100% calc(100% - 9px),
-    calc(100% - 9px) 100%, 9px 100%, 0 calc(100% - 9px), 0 9px
-  );
   background:
-    linear-gradient(180deg, rgba(255, 240, 205, 0.16) 0 1px, transparent 1px),
-    linear-gradient(0deg, rgba(255, 240, 205, 0.07) 0 1px, transparent 1px),
-    radial-gradient(112% 96% at 50% 42%, transparent 52%, rgba(0, 0, 0, 0.5) 100%);
-  transition: opacity 0.3s ease;
-}
-/* a photo tile needs a real foot-scrim: the render's own dark bottom edge and
-   the frame below it otherwise merge into one muddy band. */
-.spellbook-hub.is-sub.hub-v2 .hub-portal.has-art .hub-portal-art::after {
-  background:
-    linear-gradient(180deg, rgba(255, 240, 205, 0.2) 0 1px, transparent 1px),
-    linear-gradient(0deg,
-      color-mix(in srgb, var(--accent) 30%, transparent) 0 1px, transparent 1px),
     linear-gradient(180deg,
-      rgba(6, 4, 10, 0.34) 0%, transparent 22%,
-      transparent 62%, rgba(6, 4, 10, 0.56) 100%),
-    radial-gradient(112% 96% at 50% 42%, transparent 46%, rgba(0, 0, 0, 0.56) 100%);
-}
-.spellbook-hub.is-sub.hub-v2 .hub-portal.has-art .hub-portal-icon { display: none; }
-
-/* ============================ THE ICON ==================================
-   Every icon — emoji or PNG — is seated in the medallion drawn above. Only the
-   emoji ones get the gold tint; :has(img) is the guard, because a filter on the
-   parent would also stain a real game-art PNG. */
-.spellbook-hub.is-sub.hub-v2 .hub-portal-icon {
-  position: relative;
-  z-index: 3;
-  margin: 0;
-  width: 94px;
-  height: 94px;
-  display: grid;
-  place-items: center;
-  font-size: 2.5rem;
-  line-height: 1;
-  transition: transform 0.35s cubic-bezier(0.3, 1.3, 0.5, 1), filter 0.3s ease;
-}
-.spellbook-hub.is-sub.hub-v2 .hub-portal-icon::before,
-.spellbook-hub.is-sub.hub-v2 .hub-portal-icon::after { display: none; content: none; }
-
-/* PNG game icons — untinted, just lit. */
-.spellbook-hub.is-sub.hub-v2 .hub-portal-icon img {
-  width: 60px !important;
-  height: 60px !important;
-  max-width: 60px !important;
-  object-fit: contain;
-  transform: none !important;
-  /* !important: the markup ships an inline style= on every icon <img> (size,
-     scale(1.8)-2.2, its own drop-shadow). Inline wins over a stylesheet, so the
-     tile can only take control of its own icons this way. */
-  /* same grading problem as the photos, one size down: several game icons are
-     dark object renders (Deck Builder's crate, the Forge anvil) that vanish
-     inside the medallion. A mild contrast/brightness lift, no hue shift — these
-     are real art and must not be tinted. */
-  filter: brightness(1.18) contrast(1.12)
-          drop-shadow(0 0 1px rgba(255, 240, 210, 0.5))
-          drop-shadow(0 2px 5px rgba(0, 0, 0, 0.85))
-          drop-shadow(0 0 12px color-mix(in srgb, var(--accent) 45%, transparent)) !important;
+      rgba(11, 9, 6, 0.22) 0%,
+      rgba(11, 9, 6, 0.00) 30%,
+      rgba(11, 9, 6, 0.20) 70%,
+      rgba(11, 9, 6, 0.70) 100%),
+    radial-gradient(94% 76% at 50% 40%,
+      rgba(0, 0, 0, 0) 44%,
+      rgba(0, 0, 0, 0.36) 100%);
+  box-shadow:
+    inset 0 0 0 1px var(--keep-gold-line, rgba(138, 111, 60, 0.55)),
+    inset 0 1px 0 rgba(246, 220, 149, 0.08);
 }
 
-/* Stock emoji (Friends 👥, Bank Row 🏦, Replays 📼, Card Shop 🛒) arrive at full
-   consumer saturation and fight the muted gold palette. Pull them into the
-   palette: strip the hue, re-tint gold, then re-light. */
-.spellbook-hub.is-sub.hub-v2 .hub-portal-icon:not(:has(img)) {
-  filter:
-    grayscale(1) sepia(0.9) saturate(1.75) hue-rotate(-12deg) brightness(0.94) contrast(1.05)
-    drop-shadow(0 2px 4px rgba(0, 0, 0, 0.85))
-    drop-shadow(0 0 9px color-mix(in srgb, var(--accent) 36%, transparent));
-  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+/* ── ART TONE: THREE EXPOSURE BUCKETS, CHOSEN BY MEASUREMENT ──────────────
+   The comp carries two modifiers on its art panel (`is-dim` / `is-bright`) and
+   they are not decoration: the repo's painted art runs from a mean luminance of
+   15 to 84 over the exact 284×178 crop a tile shows — a 5.6× spread. One flat
+   `brightness()` across that range leaves half the band as black rectangles and
+   the other half shouting over its own title.
+
+   So each mapped image was MEASURED (drawn into a canvas at the tile's crop,
+   mean of 0.2126R+0.7152G+0.0722B) and index.html tags the tile with the bucket
+   its art falls in. The three multipliers below pull every panel into roughly
+   the same 20–44 output band, which is where a painting reads as painted stone
+   and the gold title above it still wins.
+
+   An admin's override art is unmeasured and therefore lands in the default
+   bucket — deliberately, since guessing at an arbitrary URL would be worse.
+   ─────────────────────────────────────────────────────────────────────────── */
+.spellbook-hub.is-sub.hub-v2 .hub-portal.is-art-dim .hub-portal-photo {
+  filter: brightness(1.30) saturate(0.98) contrast(1.02);
+}
+.spellbook-hub.is-sub.hub-v2 .hub-portal.is-art-bright .hub-portal-photo {
+  filter: brightness(0.60) saturate(0.86) contrast(1.06);
+}
+/* The hover lift has to be restated per bucket: the generic hover rule is one
+   class less specific than these, so without this a toned panel would sit
+   perfectly still under the cursor while its neighbours brightened. */
+.spellbook-hub.is-sub.hub-v2 .hub-portal.is-art-dim:hover .hub-portal-photo {
+  filter: brightness(1.44) saturate(1.02) contrast(1.02);
+}
+.spellbook-hub.is-sub.hub-v2 .hub-portal.is-art-bright:hover .hub-portal-photo {
+  filter: brightness(0.67) saturate(0.92) contrast(1.06);
 }
 
-.spellbook-hub.is-sub.hub-v2 .hub-portal:not(.portal-locked):hover .hub-portal-icon,
-.spellbook-hub.is-sub.hub-v2 .hub-portal:not(.portal-locked).sb-hover .hub-portal-icon {
-  transform: scale(1.08) translateY(-2px);
+/* THE GLYPH IS THE FALLBACK, NEVER THE DESIGN.
+   Every sub-hub tile ships a default painting (index.html's HUB_TILE_ART), and
+   an admin override beats that. The icon only surfaces when a tile has no art
+   at all or its image 404s — `.has-art` is dropped by the <img>'s own onerror,
+   which is why this is keyed off the ABSENCE of the class rather than off the
+   img. When it does surface it gets a deliberate treatment: a warm forge-lit
+   well with a vignette and a gold under-glow, not a glyph on flat black. */
+.spellbook-hub.is-sub.hub-v2 .hub-portal.has-art .hub-portal-icon {
+  display: none;
 }
-/* the medallion ring itself brightens with the card */
-.spellbook-hub.is-sub.hub-v2 .hub-portal:not(.has-art):not(.portal-locked):hover .hub-portal-art::before,
-.spellbook-hub.is-sub.hub-v2 .hub-portal:not(.has-art):not(.portal-locked).sb-hover .hub-portal-art::before {
-  --med: 47px;
+.spellbook-hub.is-sub.hub-v2 .hub-portal:not(.has-art) .hub-portal-art {
   background:
-    radial-gradient(circle at 50% 50%,
-      transparent 0 var(--med),
-      rgba(8, 5, 12, 0.85) var(--med) calc(var(--med) + 2px),
-      transparent calc(var(--med) + 2px)),
-    radial-gradient(circle at 50% 50%,
-      transparent 0 calc(var(--med) - 2.2px),
-      var(--gold-hi) calc(var(--med) - 2.2px) var(--med),
-      transparent var(--med)),
-    radial-gradient(circle at 50% 50%,
-      transparent 0 calc(var(--med) - 5px),
-      rgba(246, 220, 149, 0.5) calc(var(--med) - 5px) calc(var(--med) - 4px),
-      transparent calc(var(--med) - 4px)),
-    radial-gradient(circle at 46% 40%,
-      rgba(154, 110, 218, 0.42) 0 6px,
-      rgba(116, 80, 168, 0.18) 20px,
-      transparent 30px),
-    radial-gradient(circle at 50% 50%,
-      #2d1c42 0 calc(var(--med) - 22px),
-      #1b1130 calc(var(--med) - 8px),
-      #0c0716 calc(var(--med) - 1.8px),
-      transparent calc(var(--med) - 1.7px)),
-    radial-gradient(circle at 50% 50%,
-      color-mix(in srgb, var(--accent) 32%, transparent) 0 calc(var(--med) + 3px),
-      transparent calc(var(--med) + 22px)),
-    radial-gradient(78% 74% at 50% 34%,
-      color-mix(in srgb, var(--accent) 34%, transparent), transparent 72%),
-    repeating-linear-gradient(58deg,
-      rgba(255, 240, 210, 0.022) 0 2px, transparent 2px 5px),
-    radial-gradient(130% 110% at 50% 122%, rgba(0, 0, 0, 0.66), transparent 62%),
-    linear-gradient(180deg, #22162f 0%, #150e20 55%, #0a0713 100%);
+    radial-gradient(78% 92% at 50% 108%, rgba(190, 142, 58, 0.30) 0%, rgba(120, 88, 36, 0.10) 44%, rgba(0, 0, 0, 0) 72%),
+    radial-gradient(120% 100% at 50% 30%, #1d1710 0%, #100c08 58%, #0a0806 100%);
+}
+.spellbook-hub.is-sub.hub-v2 .hub-portal-icon {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  width: auto;
+  height: auto;
+  font-size: 58px;
+  line-height: 1;
+  color: var(--keep-gold-hi, #e8c877);
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.85));
+  transition: filter var(--keep-fast, 0.16s) var(--keep-ease, ease);
+}
+/* The legacy rune ring around the glyph is part of the old design. */
+.spellbook-hub.is-sub.hub-v2 .hub-portal-icon::after,
+.spellbook-hub.is-sub.hub-v2 .hub-portal-icon::before {
+  content: none;
+  display: none;
+}
+/* Several portals ship their glyph as an <img> with inline width/height and a
+   `transform: scale(…)`. Those inline styles win over any width we could set,
+   so we do not fight them — we only cap the result so a scaled glyph cannot
+   spill out of the panel. */
+.spellbook-hub.is-sub.hub-v2 .hub-portal-icon img {
+  max-width: 62%;
+  max-height: 62%;
+  object-fit: contain;
 }
 
-/* ============================== TEXT ==================================== */
+
+/* ════════════════════════════════════════════════════════════════════════════
+   4 · TITLE + SUBTITLE  (§3: gold Cinzel caps ~26px; one line of italic serif
+   subtitle in muted gold-grey.)
+   ════════════════════════════════════════════════════════════════════════════ */
 .spellbook-hub.is-sub.hub-v2 .hub-portal-name {
-  position: relative;
-  z-index: 1;
-  font-family: 'Cinzel', serif;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 13px 12px 0;
+  font-family: var(--keep-cinzel, 'Cinzel', Georgia, serif);
+  font-size: 26px;
   font-weight: 700;
-  font-size: 1.28rem;
-  line-height: 1.16;
-  letter-spacing: 0.085em;
-  text-transform: none;
-  color: #f3e2b0;
-  -webkit-text-fill-color: #f3e2b0;
-  background: none;
-  -webkit-background-clip: border-box;
-  background-clip: border-box;
-  filter: none;
-  margin: 0 0 7px;
+  font-style: normal;
+  line-height: 1.05;
+  letter-spacing: 0.07em;
+  text-indent: 0.07em;          /* pay back the trailing letterspace */
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--keep-gold-hi, #e8c877);
+  /* Stamped metal. This one is a FLAT colour, not a background-clip gradient,
+     so `text-shadow` is safe and correct here — the drop-shadow-only rule in
+     hub-keep.css exists because Chromium paints text-shadow OVER a
+     background-clip:text fill. There is no fill to hollow out at 26px. */
   text-shadow:
-    0 1px 0 rgba(0, 0, 0, 0.9),
-    0 0 14px color-mix(in srgb, var(--accent) 40%, transparent),
-    0 2px 4px rgba(0, 0, 0, 0.85);
-  transition: color 0.25s ease, text-shadow 0.25s ease;
+    0 2px 0 rgba(0, 0, 0, 0.85),
+    0 0 14px rgba(232, 200, 119, 0.16);
+  transition: color var(--keep-fast, 0.16s) var(--keep-ease, ease);
 }
-.spellbook-hub.is-sub.hub-v2 .hub-portal:not(.portal-locked):hover .hub-portal-name,
-.spellbook-hub.is-sub.hub-v2 .hub-portal:not(.portal-locked).sb-hover .hub-portal-name {
-  color: #fff2c8;
-  -webkit-text-fill-color: #fff2c8;
-  text-shadow:
-    0 1px 0 rgba(0, 0, 0, 0.9),
-    0 0 20px color-mix(in srgb, var(--accent) 70%, transparent),
-    0 2px 4px rgba(0, 0, 0, 0.85);
-}
+/* Two steps down, chosen by name length in index.html. `Daily Challenge` (15)
+   is the comp's own `.long`; `Emergency Broadcast` (19) and `Foundation
+   Reserve` (18) need the second step to stay on one line inside 276px. */
+.spellbook-hub.is-sub.hub-v2 .hub-portal-name.is-long  { font-size: 23px; letter-spacing: 0.055em; text-indent: 0.055em; }
+.spellbook-hub.is-sub.hub-v2 .hub-portal-name.is-xlong { font-size: 19px; letter-spacing: 0.045em; text-indent: 0.045em; }
 
 .spellbook-hub.is-sub.hub-v2 .hub-portal-sub {
-  position: relative;
-  z-index: 1;
-  font-family: 'EB Garamond', Georgia, serif;
+  flex: 0 0 auto;
+  margin: 6px 0 0;
+  padding: 0 14px;
+  font-family: var(--keep-serif-it, Georgia, serif);
   font-style: italic;
-  font-size: 0.98rem;
-  line-height: 1.34;
-  letter-spacing: 0;
-  color: #cbbc95;
-  max-width: 100%;
-  margin: 0 auto 12px;
-  min-height: 2.7em;
-  text-wrap: balance;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+  font-weight: 400;
+  font-size: 13.5px;
+  line-height: 1.28;
+  letter-spacing: 0.015em;
+  text-transform: none;
+  color: var(--keep-gold-grey, #9a8d6c);
+  /* One line in the comp. Two is the honest ceiling for the sub-hubs, several
+     of which ship a genuinely two-clause subtitle ("Crack your unopened packs ·
+     build the deck to survive Ethos City"); past that it clamps rather than
+     pushing the badge row off the plaque. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  transition: color var(--keep-fast, 0.16s) var(--keep-ease, ease);
 }
 
-/* ============================= BADGES ===================================
-   These carry live counts — streaks, listings, trophies, pending payouts. They
-   are never hidden and never truncated. Three flavours: normal / .alert / .lock. */
+
+/* ════════════════════════════════════════════════════════════════════════════
+   5 · BADGE PILLS  (§3: "outlined rounded-rects. Gold outline for neutral,
+   purple outline for special.")
+
+   ⚠ THE VIOLET STATE IS KEYED OFF `.alert`, WHICH ALREADY EXISTS.
+   index.html sets `.alert` from each portal's `alertBadge`, and
+   `_refreshOnlinePresenceUi()` TOGGLES that class on the live Play Online tile
+   every few seconds. Inventing a new `.is-special` class would have left the
+   live tile permanently gold. The mapping is also exactly right: the comp's two
+   violet pills are `Completing` and `Resets at Midnight`, which are precisely
+   the two the data marks as alerts.
+
+   The pill is also the only rounded thing on the plaque, and deliberately so —
+   §3 asks for "rounded-rects" here while §4 bans rounded rectangles for panels.
+   ════════════════════════════════════════════════════════════════════════════ */
 .spellbook-hub.is-sub.hub-v2 .hub-portal-badge {
-  position: relative;
-  z-index: 1;
-  box-sizing: border-box;
+  /* `margin-top:auto` pins the pill row to the foot of the plaque, so tiles with
+     a one-line and a two-line subtitle still line their pills up across a row.
+     A tile with no badge renders a `visibility:hidden` placeholder (index.html),
+     which holds exactly this space — that is why it exists, do not delete it. */
+  flex: 0 0 auto;
+  align-self: center;
   margin: auto 0 0;
-  max-width: 100%;
-  min-height: 30px;
-  padding: 6px 15px;
+  padding: 0 11px;
+  height: auto;
+  min-height: 22px;
+  max-width: calc(100% - 20px);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  text-align: center;
-  border-radius: 999px;
-  font-family: 'Cinzel', serif;
+  gap: 5px;
+
+  border: 1px solid var(--keep-gold-line, rgba(138, 111, 60, 0.55));
+  border-radius: 11px;
+  background: rgba(138, 111, 60, 0.08);
+  box-shadow: none;
+
+  font-family: var(--keep-cinzel, 'Cinzel', Georgia, serif);
+  font-size: 11px;
   font-weight: 600;
-  font-size: 0.78rem;
-  line-height: 1.25;
-  letter-spacing: 0.055em;
-  color: #ffd98f;
-  border: 1px solid rgba(226, 180, 96, 0.55);
-  background:
-    linear-gradient(180deg, rgba(96, 68, 22, 0.5), rgba(38, 25, 8, 0.55));
-  box-shadow:
-    inset 0 1px 0 rgba(255, 226, 160, 0.18),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.5),
-    0 2px 6px rgba(0, 0, 0, 0.55);
-  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.8);
-  overflow-wrap: break-word;
-  transition: border-color 0.25s ease, color 0.25s ease, box-shadow 0.25s ease;
-}
-
-/* .alert = "look at this now". An ember capsule with a slow breathing ring —
-   the signal from the legacy pulse, without the strobe. */
-.spellbook-hub.is-sub.hub-v2 .hub-portal-badge.alert {
-  color: #ffdca4;
-  border-color: rgba(255, 168, 74, 0.7);
-  background: linear-gradient(180deg, rgba(140, 68, 12, 0.55), rgba(58, 24, 6, 0.6));
-  box-shadow:
-    inset 0 1px 0 rgba(255, 216, 160, 0.22),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.55),
-    0 2px 8px rgba(0, 0, 0, 0.55),
-    0 0 0 0 rgba(255, 150, 50, 0.42);
-  animation: hubV2BadgeBreathe 2.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
-}
-@keyframes hubV2BadgeBreathe {
-  0%, 100% { box-shadow:
-      inset 0 1px 0 rgba(255, 216, 160, 0.22), inset 0 -1px 0 rgba(0, 0, 0, 0.55),
-      0 2px 8px rgba(0, 0, 0, 0.55), 0 0 0 0 rgba(255, 150, 50, 0.45); }
-  55%      { box-shadow:
-      inset 0 1px 0 rgba(255, 216, 160, 0.22), inset 0 -1px 0 rgba(0, 0, 0, 0.55),
-      0 2px 8px rgba(0, 0, 0, 0.55), 0 0 0 6px rgba(255, 150, 50, 0); }
-}
-
-/* ---------------------------- .lock ------------------------------------
-   The lock badge is a SEALED NOTICE, not a greyed-out pill. An engraved brass
-   padlock sits in a left gutter; the requirement text wraps beside it, up to two
-   lines, inside the capsule. Worst case in the game today is The Camp's
-   "Reach Hero Lv 3 (max 1) — or own a node"; that string is the sizing case.
-   The 🔒 glyph was stripped from the source strings, so this padlock is drawn
-   entirely in CSS: ::before is the shackle, ::after is the body + keyhole. */
-.spellbook-hub.is-sub.hub-v2 .hub-portal-badge.lock {
-  --lock-brass: #e3c184;
-  --lock-brass-lo: #8a6524;
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  text-align: left;
-  gap: 0;
-  padding: 7px 14px 7px 40px;
-  max-width: 100%;
-  min-height: 34px;
-  border-radius: 17px;
-  font-size: 0.73rem;
-  letter-spacing: 0.045em;
-  line-height: 1.24;
-  color: #f0c9bd;
-  border-color: rgba(168, 68, 60, 0.75);
-  background:
-    linear-gradient(180deg, rgba(74, 20, 18, 0.72), rgba(34, 10, 10, 0.8));
-  box-shadow:
-    inset 0 1px 0 rgba(255, 190, 170, 0.14),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.6),
-    inset 34px 0 22px -26px rgba(0, 0, 0, 0.75),
-    0 2px 6px rgba(0, 0, 0, 0.6);
-  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.9);
+  font-style: normal;
+  letter-spacing: 0.09em;
+  line-height: 1.35;
+  text-transform: none;
+  /* WRAPS, DOES NOT CLIP. The comp's pills are all short ("Online · 4"), so
+     `white-space:nowrap` + `text-overflow:ellipsis` is the obvious rule — and
+     it is wrong here: ellipsis does not apply to the anonymous flex item a
+     text node becomes inside an inline-flex, so a long badge came out sliced
+     mid-word at BOTH ends with no ellipsis to explain it. The Ruin Exchange's
+     gate badges are whole sentences ("Train a hero to Lv 15 (max 1) — or own a
+     node"), so the pill wraps and grows instead, capped at three lines so a
+     freak badge can never push the plaque's contents past its foot. A short
+     badge still measures exactly 22px tall — identical to the comp. */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  overflow: hidden;
+  max-height: calc(1.35em * 3);
+  color: var(--keep-gold-body, #c9ab72);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.8);
   animation: none;
-  hyphens: auto;
+  transition:
+    border-color var(--keep-fast, 0.16s) var(--keep-ease, ease),
+    color        var(--keep-fast, 0.16s) var(--keep-ease, ease);
 }
-/* shackle */
-.spellbook-hub.is-sub.hub-v2 .hub-portal-badge.lock::before {
-  content: '';
-  position: absolute;
-  left: 14px;
-  top: calc(50% - 8px);
-  width: 12px;
-  height: 9px;
-  box-sizing: border-box;
-  border: 2px solid var(--lock-brass-lo);
-  border-bottom: 0;
-  border-radius: 6px 6px 0 0;
-  border-top-color: var(--lock-brass);
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.55);
-}
-/* body + keyhole, engraved: light on the top edge, shadow under the foot */
-.spellbook-hub.is-sub.hub-v2 .hub-portal-badge.lock::after {
-  content: '';
-  position: absolute;
-  left: 11px;
-  top: calc(50% - 1px);
-  width: 18px;
-  height: 12px;
-  border-radius: 3px;
-  background:
-    radial-gradient(circle at 50% 38%, rgba(46, 14, 12, 0.95) 0 1.9px, transparent 2px),
-    linear-gradient(180deg, transparent 46%, rgba(46, 14, 12, 0.9) 46% 66%, transparent 66%)
-      no-repeat 50% 0 / 1.8px 100%,
-    linear-gradient(180deg, #f4dcae 0%, var(--lock-brass) 34%, var(--lock-brass-lo) 100%);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 246, 220, 0.7),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.55),
-    0 1px 0 rgba(0, 0, 0, 0.7),
-    0 0 8px rgba(227, 193, 132, 0.28);
+/* The pill row sits inside the plaque, clear of the bottom notch. */
+.spellbook-hub.is-sub.hub-v2 .hub-portal-badge:last-child { margin-bottom: 14px; }
+
+/* SPECIAL — violet outline. §1: purple is an accent, never a fill. */
+.spellbook-hub.is-sub.hub-v2 .hub-portal-badge.alert {
+  border-color: rgba(154, 122, 208, 0.72);
+  color: #c3a9ea;
+  background: rgba(107, 79, 160, 0.14);
+  box-shadow: 0 0 10px rgba(107, 79, 160, 0.22);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.85);
 }
 
-/* ========================= STATE: LOCKED (disabled) =====================
-   Sealed and deliberate — NOT `grayscale(.5); opacity:.55`. The frame oxidises
-   to blackened bronze, the accent rail becomes oxblood, the art panel is drained
-   and barred with a portcullis, and a hairline sheen still crosses the card so
-   it reads as an object under glass. The tile stays a pointer and keeps a real
-   (smaller) hover + press, because the click handler still fires the toast that
-   tells the player how to unlock it. */
-.spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked {
-  --accent: #7d2f2a;
-  --frame-tint: #4a3a2c;
-  opacity: 1;
+/* LOCKED — the pill on a gated tile. Reads as cold stone, not as an alert. */
+.spellbook-hub.is-sub.hub-v2 .hub-portal-badge.lock {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  padding: 3px 10px;
+  border-color: rgba(138, 111, 60, 0.34);
+  background: rgba(0, 0, 0, 0.34);
+  color: rgba(201, 171, 114, 0.55);
+  box-shadow: none;
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════════
+   6 · THE PROMOTED TILE  (§3: "violet frame and a violet outer glow instead of
+   gold. Exactly one per hub at most.")
+   index.html enforces the "at most one" — the class comes from a per-hub map,
+   and a locked tile never gets it.
+   ════════════════════════════════════════════════════════════════════════════ */
+.spellbook-hub.is-sub.hub-v2 .hub-portal.is-promoted {
+  background: linear-gradient(
+    180deg,
+    rgba(154, 122, 208, 0.92) 0%,
+    rgba(107, 79, 160, 0.62) 55%,
+    rgba(78, 56, 120, 0.66) 100%
+  );
+  /* TWO drop-shadows here and in every promoted state below — see header note 2. */
   filter:
-    drop-shadow(0 8px 16px rgba(0, 0, 0, 0.62))
-    drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5))
-    drop-shadow(0 0 0 rgba(0, 0, 0, 0));
-  background: linear-gradient(180deg, #6d5a3c 0%, #4a3a2c 30%, #2c2419 72%, #1a150f 100%);
-  cursor: pointer;
+    drop-shadow(0 0 26px rgba(138, 100, 214, 0.62))
+    drop-shadow(0 12px 22px rgba(0, 0, 0, 0.62));
+}
+.spellbook-hub.is-sub.hub-v2 .hub-portal.is-promoted::before {
+  background: linear-gradient(180deg, #181125 0%, #110e15 48%, var(--keep-ground-0, #0b0906) 100%);
+}
+.spellbook-hub.is-sub.hub-v2 .hub-portal.is-promoted .hub-portal-art::after {
+  box-shadow:
+    inset 0 0 0 1px rgba(154, 122, 208, 0.52),
+    inset 0 1px 0 rgba(220, 205, 246, 0.08);
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════════
+   7 · STATES  (§3 + §4 "Every state earns its keep")
+   ~160ms on the token easing. Never linear.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* ── HOVER — the frame brightens to highlight gold, the art lifts its exposure
+      a few percent, the tile rises ~3px into a deeper shadow. ── */
+.spellbook-hub.is-sub.hub-v2 .hub-portal:hover {
+  transform: translateY(-3px);
+  background: linear-gradient(180deg,
+    var(--keep-gold-hi-2, #f2dda2) 0%,
+    var(--keep-gold-hi, #e8c877) 55%,
+    #b08b45 100%);
+  filter: drop-shadow(0 18px 30px rgba(0, 0, 0, 0.75));
+}
+.spellbook-hub.is-sub.hub-v2 .hub-portal:hover .hub-portal-photo {
+  filter: brightness(0.79) saturate(0.94) contrast(1.05);
+  transform: scale(1.045);
+}
+.spellbook-hub.is-sub.hub-v2 .hub-portal:hover .hub-portal-name {
+  color: var(--keep-gold-hi-2, #f2dda2);
+}
+.spellbook-hub.is-sub.hub-v2 .hub-portal:hover .hub-portal-icon {
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.85)) brightness(1.12);
+}
+.spellbook-hub.is-sub.hub-v2 .hub-portal.is-promoted:hover {
+  background: linear-gradient(180deg, #c3a9ea 0%, var(--keep-violet-hi, #9a7ad0) 55%, var(--keep-violet, #6b4fa0) 100%);
+  filter:
+    drop-shadow(0 0 30px rgba(140, 102, 214, 0.62))
+    drop-shadow(0 18px 30px rgba(0, 0, 0, 0.70));
+}
+
+/* ── ACTIVE / PRESS — drops back to 0 and the inner shadow deepens. A physical
+      press, not a scale-down. ── */
+.spellbook-hub.is-sub.hub-v2 .hub-portal:active {
+  transform: translateY(0);
+  filter: drop-shadow(0 5px 10px rgba(0, 0, 0, 0.72));
+}
+.spellbook-hub.is-sub.hub-v2 .hub-portal.is-promoted:active {
+  filter:
+    drop-shadow(0 0 14px rgba(122, 88, 190, 0.42))
+    drop-shadow(0 5px 10px rgba(0, 0, 0, 0.72));
+}
+.spellbook-hub.is-sub.hub-v2 .hub-portal:active::before {
+  box-shadow: inset 0 3px 9px rgba(0, 0, 0, 0.85), var(--keep-liner);
+}
+
+/* ── FOCUS-VISIBLE — a 2px highlight-gold ring offset INSIDE the notched
+      corners. An `outline` would draw a rectangle around the octagon, so the
+      ring is an inset shadow on the stone face, which is already clipped. ── */
+.spellbook-hub.is-sub.hub-v2 .hub-portal:focus { outline: none; }
+.spellbook-hub.is-sub.hub-v2 .hub-portal:focus-visible { outline: none; }
+.spellbook-hub.is-sub.hub-v2 .hub-portal:focus-visible::before {
+  box-shadow:
+    inset 0 0 0 2px var(--keep-gold-hi, #e8c877),
+    inset 0 0 0 4px rgba(0, 0, 0, 0.75),
+    var(--keep-liner);
+}
+.spellbook-hub.is-sub.hub-v2 .hub-portal.is-promoted:focus-visible::before {
+  box-shadow:
+    inset 0 0 0 2px var(--keep-violet-hi, #9a7ad0),
+    inset 0 0 0 4px rgba(0, 0, 0, 0.75),
+    var(--keep-liner);
+}
+
+/* ── DISABLED (`.portal-locked`) — §4: "desaturated gold at 40% with the frame
+      dropped to hairline-only — never just opacity:.5".
+      The tile stays CLICKABLE on purpose: index.html's handler fires and toasts
+      the unlock requirement, so `pointer-events:none` would be a regression.
+      It simply stops responding visually like a live tile. ── */
+.spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked {
+  opacity: 1;                                  /* out-shouts the legacy .65 */
+  background: rgba(138, 111, 60, 0.28);        /* hairline only — no ramp */
+  filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.55));
+  cursor: not-allowed;
 }
 .spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked::before {
-  background:
-    linear-gradient(180deg,
-      #8f3a33 0 2px, rgba(143, 58, 51, 0.45) 2px 3px, transparent 3px),
-    linear-gradient(180deg, rgba(143, 58, 51, 0.16) 0%, transparent 26%),
-    linear-gradient(0deg,
-      rgba(150, 126, 92, 0.07) 0 46px,
-      rgba(176, 146, 104, 0.3) 46px 47px,
-      transparent 47px),
-    /* a faint diagonal sheen: light across a sealed surface */
-    linear-gradient(118deg,
-      transparent 34%, rgba(232, 214, 180, 0.05) 46%,
-      rgba(232, 214, 180, 0.02) 52%, transparent 60%),
-    radial-gradient(120% 78% at 50% 118%, rgba(0, 0, 0, 0.62), transparent 66%),
-    linear-gradient(168deg, #1b171f 0%, #121016 50%, #08060a 100%);
+  background: linear-gradient(180deg, #141210 0%, #0b0a08 100%);
 }
-.spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked::after {
-  --tick: rgba(190, 160, 118, 0.55);
-  opacity: 0.5;
-}
-/* drained painting + portcullis bars */
-.spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked .hub-portal-art {
-  background: linear-gradient(180deg, #6a5638 0%, #3d3123 45%, #1c1710 100%);
-}
-.spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked .hub-portal-art::before {
-  --med: 47px;
-  background:
-    radial-gradient(circle at 50% 50%,
-      transparent 0 var(--med),
-      rgba(6, 4, 8, 0.85) var(--med) calc(var(--med) + 2px),
-      transparent calc(var(--med) + 2px)),
-    radial-gradient(circle at 50% 50%,
-      transparent 0 calc(var(--med) - 2px),
-      rgba(176, 148, 108, 0.6) calc(var(--med) - 2px) var(--med),
-      transparent var(--med)),
-    radial-gradient(circle at 50% 50%,
-      transparent 0 calc(var(--med) - 5px),
-      rgba(176, 148, 108, 0.2) calc(var(--med) - 5px) calc(var(--med) - 4px),
-      transparent calc(var(--med) - 4px)),
-    radial-gradient(circle at 50% 50%,
-      #2b2530 0 calc(var(--med) - 22px),
-      #1b1722 calc(var(--med) - 8px),
-      #0d0a12 calc(var(--med) - 1.5px),
-      transparent calc(var(--med) - 1.4px)),
-    radial-gradient(130% 110% at 50% 122%, rgba(0, 0, 0, 0.6), transparent 60%),
-    repeating-linear-gradient(58deg,
-      rgba(255, 240, 210, 0.02) 0 2px, transparent 2px 5px),
-    linear-gradient(180deg, #2a222c 0%, #1a151f 52%, #0d0a12 100%);
-}
-.spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked .hub-portal-icon,
 .spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked .hub-portal-photo {
-  filter: grayscale(0.92) sepia(0.3) brightness(0.8) contrast(0.92)
-          drop-shadow(0 2px 3px rgba(0, 0, 0, 0.8));
+  filter: brightness(0.42) saturate(0.15);
 }
-.spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked .hub-portal-art::after {
-  background:
-    /* the portcullis: hairline bars, lit on one side, over the whole panel */
-    repeating-linear-gradient(90deg,
-      transparent 0 15px,
-      rgba(206, 178, 130, 0.26) 15px 16px,
-      rgba(0, 0, 0, 0.62) 16px 19px,
-      rgba(0, 0, 0, 0.28) 19px 20px,
-      transparent 20px 33px),
-    linear-gradient(180deg, rgba(206, 178, 130, 0.2) 0 1px, transparent 1px),
-    linear-gradient(180deg, rgba(8, 5, 10, 0.2) 0%, transparent 34%,
-      transparent 66%, rgba(8, 5, 10, 0.3) 100%),
-    radial-gradient(112% 96% at 50% 42%, transparent 44%, rgba(0, 0, 0, 0.5) 100%);
+.spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked .hub-portal-icon {
+  color: rgba(201, 171, 114, 0.40);
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.85)) saturate(0.2);
 }
 .spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked .hub-portal-name {
-  color: #cbbb96;
-  -webkit-text-fill-color: #cbbb96;
-  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.9), 0 2px 4px rgba(0, 0, 0, 0.85);
+  color: rgba(201, 171, 114, 0.40);
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.8);
 }
-.spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked .hub-portal-sub { color: #9d907a; }
-
-/* locked hover — acknowledged, not invited */
-.spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked:hover,
-.spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked.sb-hover {
-  --lift: -2px;
-  --frame-tint: #6b5540;
-  filter:
-    drop-shadow(0 12px 20px rgba(0, 0, 0, 0.66))
-    drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5))
-    drop-shadow(0 0 16px rgba(143, 58, 51, 0.5));
+.spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked .hub-portal-sub {
+  color: rgba(154, 141, 108, 0.40);
 }
-.spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked:hover .hub-portal-badge.lock,
-.spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked.sb-hover .hub-portal-badge.lock {
-  border-color: rgba(210, 96, 84, 0.9);
-  color: #ffdccf;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 190, 170, 0.18),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.6),
-    inset 34px 0 22px -26px rgba(0, 0, 0, 0.75),
-    0 2px 10px rgba(0, 0, 0, 0.6),
-    0 0 14px rgba(180, 70, 60, 0.35);
+/* Hover on a locked tile: acknowledged, but it does not rise and it does not
+   light up. The frame warms by a hair so the click still feels received. */
+.spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked:hover {
+  transform: none;
+  background: rgba(138, 111, 60, 0.40);
+  filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.55));
 }
-.spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked:active,
-.spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked.sb-active {
-  --lift: 1px;
-  --press: 0.985;
-  transition: transform 0.07s ease, filter 0.07s ease;
+.spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked:hover .hub-portal-photo {
+  filter: brightness(0.42) saturate(0.15);
+  transform: scale(1.02);
+}
+.spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked:hover .hub-portal-name {
+  color: rgba(201, 171, 114, 0.40);
+}
+.spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked:active {
+  transform: none;
+  filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.55));
 }
 
-/* ============================ RESPONSIVE ================================ */
-@media (max-width: 700px) {
+
+/* ════════════════════════════════════════════════════════════════════════════
+   8 · NARROWER VIEWPORTS
+   The tile keeps its proportions and the column count drops. Nothing here
+   changes what a tile IS — only how many fit.
+   ════════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 1360px) {
+  .spellbook-hub.is-sub.hub-v2 .hub-portal-grid {
+    width: min(calc(var(--tile-w) * 3 + var(--tile-gap) * 2), 94vw);
+  }
+}
+@media (max-width: 1040px) {
+  .spellbook-hub.is-sub.hub-v2 .hub-portal-grid {
+    --tile-w: 278px;
+    --tile-h: 314px;
+    --tile-art-h: 166px;
+    width: min(calc(var(--tile-w) * 2 + var(--tile-gap)), 94vw);
+  }
+}
+@media (max-width: 640px) {
+  .spellbook-hub.is-sub.hub-v2 .hub-portal-grid {
+    --tile-w: min(300px, 88vw);
+    --tile-h: auto;
+    --tile-art-h: 150px;
+    width: min(300px, 88vw);
+  }
   .spellbook-hub.is-sub.hub-v2 .hub-portal {
-    width: min(var(--hub-tile-w, 272px), 88vw);
+    height: auto;
+    min-height: 300px;
   }
 }
 
-/* ========================= REDUCED MOTION ===============================
-   No lift, no scale, no breathing, no photo push-in. The states stay fully
-   distinguishable because they were never carried by motion alone — the frame
-   colour, the rail, the tick length and the drop-shadow all still change. */
+
+/* ════════════════════════════════════════════════════════════════════════════
+   9 · REDUCED MOTION  (§4)
+   Everything drops to a plain state change. NOTHING is disabled with
+   `!important`, and `animation` is not touched at all — the tile-band entrance
+   and its own `reduce` fallback belong to hub-transitions.css, and the
+   `animation:none !important` this file used to carry was silently eating it.
+   ════════════════════════════════════════════════════════════════════════════ */
 @media (prefers-reduced-motion: reduce) {
   .spellbook-hub.is-sub.hub-v2 .hub-portal,
   .spellbook-hub.is-sub.hub-v2 .hub-portal::before,
-  .spellbook-hub.is-sub.hub-v2 .hub-portal::after,
-  .spellbook-hub.is-sub.hub-v2 .hub-portal-art,
-  .spellbook-hub.is-sub.hub-v2 .hub-portal-art::before,
-  .spellbook-hub.is-sub.hub-v2 .hub-portal-art::after,
   .spellbook-hub.is-sub.hub-v2 .hub-portal-photo,
   .spellbook-hub.is-sub.hub-v2 .hub-portal-icon,
   .spellbook-hub.is-sub.hub-v2 .hub-portal-name,
+  .spellbook-hub.is-sub.hub-v2 .hub-portal-sub,
   .spellbook-hub.is-sub.hub-v2 .hub-portal-badge {
-    transition-duration: 0.01ms !important;
-    animation: none !important;
+    transition: none;
   }
-  /* !important rather than re-zeroing --lift / --press per state: the hover
-     rules carry an extra :not(.portal-locked), so a same-shape selector here
-     would lose the specificity race and the lift would survive. */
-  .spellbook-hub.is-sub.hub-v2 .hub-portal,
-  .spellbook-hub.is-sub.hub-v2 .hub-portal-icon,
-  .spellbook-hub.is-sub.hub-v2 .hub-portal-art {
-    transform: none !important;
+  /* The lift and the art's push-in are the two motions; both go, the colour
+     changes stay so hover is still legible. */
+  .spellbook-hub.is-sub.hub-v2 .hub-portal:hover,
+  .spellbook-hub.is-sub.hub-v2 .hub-portal:active {
+    transform: none;
   }
-  .spellbook-hub.is-sub.hub-v2 .hub-portal-photo {
-    transform: scale(1.005) !important;
+  .spellbook-hub.is-sub.hub-v2 .hub-portal:hover .hub-portal-photo {
+    transform: scale(1.02);
   }
 }

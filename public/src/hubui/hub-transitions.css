@@ -1,20 +1,42 @@
 /* ============================================================================
-   hub-transitions.css — PAGE-TO-PAGE MOTION.
+   hub-transitions.css — PAGE-TO-PAGE MOTION FOR THE HUB REMODEL.
    public/src/hubui/hub-transitions.css  (served as /src/hubui/hub-transitions.css)
 
-   WHAT THIS FILE OWNS
-     1. `#md-nav-flash` — the body-level whoosh `_playNavFlash()` fires on EVERY
-        navigation (index.html ~113311). Re-cut here in the keep's gold/ember.
+   THE CLAUSE THIS FILE ANSWERS — docs/hub-ui-bar.md §4:
+     "Hub-to-hub navigation crossfades with a brief warm-gold sweep; tiles
+      stagger in over ~240ms. Everything honours `prefers-reduced-motion:
+      reduce` by dropping to a plain opacity change."
+
+   WHAT THIS FILE OWNS — four things, and nothing else:
+     1. `#md-nav-flash` — the body-level element `_playNavFlash()` fires on EVERY
+        navigation (index.html:113311). Shipped cyan → white → violet, the last
+        surviving piece of the Master-Duel skin. Re-cut here as a warm-gold
+        torch pass over a brief ember veil.
      2. The sub-hub ENTRANCE — background art settles, the title block resolves,
-        the tile band lands in a short stagger. Pure CSS: the sub-hub DOM is
-        replaced wholesale on every render, so mounting the nodes IS the trigger.
-        No JS, no class toggling, nothing for index.html to remember to call.
-     3. Damping all of the above under `prefers-reduced-motion: reduce`.
+        the tile band lands in a ~240ms stagger. Pure CSS: `renderTitle()`
+        replaces the whole sub-hub subtree on every render, so MOUNTING the
+        nodes is the trigger. No JS, no class toggling, nothing for index.html
+        to remember to call.
+     3. `#mm-frame` — the main-menu iframe crossfades in instead of popping.
+     4. Damping all of the above under `prefers-reduced-motion: reduce` — not
+        off, *plain opacity*, exactly as the bar words it.
 
    WHAT THIS FILE MUST NOT DO
-     Own any rest-state look. Nothing here paints a border, a colour or a
-     shadow — hub-layout / hub-tiles / hub-chrome own those. If a rule here has
-     to be deleted, the page must still be correct, just static.
+     Own a rest-state look. Nothing here paints a border, a colour or a shadow
+     on a page element. Delete every rule in this file and the hubs must still
+     be correct — just static. (`#md-nav-flash` is the one element whose whole
+     existence is the transition; at rest it is `opacity:0` and invisible.)
+
+   TOKENS: this file consumes `--keep-*` from hub-keep.css and declares none of
+   its own. Every `var()` below carries the literal from docs/hub-ui-bar.md §1
+   as its fallback, so the sheet is also correct standing alone.
+
+   SELECTOR SCOPE: `.spellbook-hub.is-sub`, `.hub-portal`, the title block,
+   `#md-nav-flash`, `#mm-frame`. NOT `.hub-v2` — that opt-in class is another
+   unit's business and a sheet that depends on it dies silently the day the
+   class is dropped. NOT the breadcrumb or the currency rail either: hub-chrome
+   .css owns their arrival (`@keyframes hcChromeIn`) and two sheets animating one
+   element is a race, not a design.
 
    ── THE FOUR RULES THIS FILE IS BUILT ON (each one is a bug already paid for)
 
@@ -22,12 +44,12 @@
        A filled animation keeps applying its final keyframe at animation
        priority, which OUTRANKS the element's own declarations *and* any CSS
        transition on the same property. `.hub-portal`'s rest transform is
-       `translateY(var(--lift)) scale(var(--press))` (hub-tiles.css:106) and its
-       hover works by re-binding those vars through a transition — a filled
-       `transform` animation would freeze every tile and kill hover for the life
-       of the page. Everything here uses `backwards`: the from-state holds
-       during the delay, and the moment the animation ends the element is handed
-       back to its own CSS, untouched.
+       `translateY(var(--lift)) scale(var(--press))` and its hover works by
+       re-binding those vars through a transition — a filled `transform`
+       animation would freeze every tile and kill hover for the life of the
+       page. Everything here uses `backwards`: the from-state holds during the
+       delay, and the moment the animation ends the element is handed back to
+       its own CSS, untouched. (`#mm-frame` uses no fill at all — §2 says why.)
 
    R2. ANIMATE `translate` / `scale`, NOT `transform`. They are separate
        properties that compose *before* `transform`, so the tile keeps its own
@@ -40,31 +62,36 @@
        `from{opacity:0}` fades to whatever the element actually is — .88 for the
        side hero, and crucially the dimmed value of a LOCKED / disabled tile,
        which a hardcoded `to{opacity:1}` would flash to full brightness on every
-       single render.
+       single render. The bar is explicit that disabled is a *look*, not
+       `opacity:.5`; this file must not step on whatever look that turns out to
+       be.
 
-   R4. NO `filter` IN ANY KEYFRAME. `.hub-portal` and `.hub-title` carry stacked
-       `drop-shadow()` filters that ARE their depth (hub-tiles.css:107-110);
-       animating `filter` replaces the whole list and flattens them.
-
-   ── THE STAGGER IS INDEX-INDEPENDENT
-   Hubs run from 3 tiles (Forge) to 13 (Ruin Exchange), the column count is
-   density-driven, and tiles are gated in and out by rank/admin — so there is no
-   per-hub nth-child map to write and no total to count. The cascade is a
-   repeating cycle of three (`3n+1 / 3n+2 / 3n+3`) at 44ms: in a 3-column grid it
-   reads as a clean left-to-right column sweep, in a 4-column grid as a diagonal
-   wave, and it tiles forever without knowing or caring how many tiles exist.
-   Maximum added delay is 88ms — bounded, so the 13-tile Exchange finishes in the
-   same 450ms as the 3-tile Forge instead of trailing a 600ms tail.
+   R4. NO `filter` IN ANY KEYFRAME. `.hub-portal` and the hub title carry
+       stacked `drop-shadow()` filters that ARE their depth (clip-path throws
+       box-shadow away, so drop-shadow is the only outer glow the tiles have);
+       animating `filter` replaces the whole list and flattens them. It is also
+       why the gold title takes its hard shadow from drop-shadow and not
+       text-shadow — Chromium paints text-shadow *over* a background-clip:text
+       fill and hollows the glyphs out.
    ========================================================================== */
 
-.spellbook-hub.is-sub.hub-v2 {
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   0 · MOTION PARAMETERS
+   ═══════════════════════════════════════════════════════════════════════════
+   Timing lives in one place so the whole entrance retunes from four numbers.
+   These are motion tokens, not `--keep-*` palette tokens; nothing outside this
+   file reads them, and nothing in this file paints with them.
+   ------------------------------------------------------------------------- */
+.spellbook-hub.is-sub {
   /* Fast out of the gate, long glide home — weight landing, not a linear fade.
      The near-1 final control point is what makes it settle rather than stop. */
-  --hub-in-ease:  cubic-bezier(0.16, 0.84, 0.28, 1);
+  --hub-in-ease:   cubic-bezier(0.16, 0.84, 0.28, 1);
   /* A hair of overshoot, tiles only. More than this and a bevelled octagon
      reads as rubber. */
   --hub-tile-ease: cubic-bezier(0.2, 0.9, 0.26, 1.06);
-  --hub-in-step:   44ms;   /* stagger period — see "INDEX-INDEPENDENT" above */
+  --hub-in-lead:   140ms;  /* art and title get this head start over the band */
+  --hub-in-step:    40ms;  /* §4: "~40ms per tile" — see the stagger below     */
 }
 
 
@@ -72,95 +99,221 @@
    1 · THE NAVIGATION SWEEP  —  #md-nav-flash
    ═══════════════════════════════════════════════════════════════════════════
    `_playNavFlash()` (index.html:113311) creates this div once, then re-triggers
-   it by removing/adding `.go` on every screen or hub change. That trigger is not
-   ours to rebuild — we restyle what it fires.
+   it by removing/reflowing/adding `.go` on every screen or hub change. That
+   trigger is not ours to rebuild — we restyle what it fires.
 
-   WHAT CHANGED AND WHY: the shipped gradient was cyan → white → violet, the last
-   surviving piece of the Master-Duel skin. Against a gold-on-black painted keep
-   it read as a UI glitch. It is now a torch passing across the page: an ember
-   bloom leading, a bright gold hairline at the centre, warm amber trailing off.
+   IT IS THE CROSSFADE, NOT AN ORNAMENT. The old sub-hub DOM is destroyed and
+   the new one written in the same synchronous turn, so there is no moment when
+   both pages exist and nothing to literally cross-dissolve. What sells a
+   crossfade is a brief warm veil that peaks *across* the swap and hides its
+   seam, with a light pass travelling through it. Hence three layers:
 
-   THREE PROPERTIES ARE LOAD-BEARING — position:fixed, pointer-events:none and
-   the z-index. This element covers the entire viewport at z-index 2147480000
-   (above the app, below toasts); drop pointer-events:none and it eats every
-   click in the game, permanently, on the first navigation. They are restated in
-   full below so this rule stands alone and never depends on the legacy
-   declaration in index.html surviving an edit.
+     the element   a low, wide ember VEIL — the room warms for ~a third of a
+                   second. This is the crossfade.
+     ::before      an ember WASH, wide and soft, trailing the light.
+     ::after       the gold BLADE — narrow, bright, leading. The torch itself.
+
+   The blade leads and the wash lags on purpose: light arrives before heat
+   fades, which is what makes a pass read as directional rather than as a
+   rectangle sliding by.
+
+   FOUR PROPERTIES ARE LOAD-BEARING — position:fixed, pointer-events:none, the
+   z-index, and opacity:0 at rest. This element covers the entire viewport at
+   z-index 2147480000 (above the app, below toasts); drop pointer-events:none
+   and it eats every click in the game, permanently, from the first navigation.
+   They are restated in full here so this rule stands alone and never depends on
+   the legacy declaration in index.html surviving an edit.
 
    SPECIFICITY: `html body #md-nav-flash` (0,1,2) beats the legacy
-   `#md-nav-flash` (0,1,0) regardless of which stylesheet the browser reads
-   first — this file must not depend on being linked after the inline <style>.
+   `#md-nav-flash` (0,1,0) and `html body #md-nav-flash.go` (0,2,2) beats
+   `#md-nav-flash.go` (0,2,0) — so this file wins regardless of whether the
+   browser reads it before or after index.html's inline <style>.
 
-   KEYFRAME NAME: `hubNavSweep`, NOT the legacy `mdWhoosh`. `mdWhoosh` is shared
-   with `#md-whoosh` (index.html:113026); redefining it would silently restyle a
-   second, unrelated effect.
+   KEYFRAME NAMES are `hubTx…`, NEVER the legacy `mdWhoosh`: that name is shared
+   with `#md-whoosh` (index.html:113026), and redefining it would silently
+   restyle a second, unrelated effect.
    ------------------------------------------------------------------------- */
 html body #md-nav-flash {
   position: fixed;
   inset: 0;
   z-index: 2147480000;
   pointer-events: none;          /* ⚠ load-bearing — see above */
-  opacity: 0;
+  opacity: 0;                    /* ⚠ load-bearing — the rest state */
+  overflow: hidden;              /* the two travelling layers are oversized */
   mix-blend-mode: screen;        /* additive: only the light lands on the art */
-  transform: translateX(-72%) skewX(-12deg);
 
+  /* Palette from docs/hub-ui-bar.md §1. Fallbacks are the literals from the
+     bar, so the sweep is gold with or without hub-keep.css present. */
+  --navtx-ember: var(--keep-ember,    #ff8a28);   /* heat        */
+  --navtx-gold:  var(--keep-gold-hi,  #f2dda2);   /* highlight   */
+  --navtx-body:  var(--keep-gold,     #c9ab72);   /* body gold   */
+  --navtx-core:  var(--keep-gold-lit, #fff6e0);   /* the hot core */
+
+  /* THE VEIL. Warm, wide, weak — you should not be able to name it afterwards,
+     only notice that the swap did not snap. Two bloom centres rather than one
+     flat wash so it reads as firelight in a room, not as a tint layer. */
   background:
-    /* leading ember bloom — the heat that arrives just before the light */
-    radial-gradient(42% 130% at 46% 50%, rgba(255, 138, 40, 0.17), transparent 72%),
-    /* the torch line itself: amber shoulder, gold body, a one-pixel-ish
-       near-white core, warm ember trailing edge */
-    linear-gradient(104deg,
-      transparent           30%,
-      rgba(125,  95,  42, 0.12) 40%,
-      rgba(210, 164,  78, 0.30) 46%,
-      rgba(246, 220, 149, 0.44) 49%,
-      rgba(255, 248, 222, 0.58) 50%,
-      rgba(255, 200, 110, 0.46) 51.5%,
-      rgba(255, 138,  40, 0.30) 56%,
-      rgba(125,  95,  42, 0.12) 64%,
-      transparent           74%);
-
-  /* Falls off top and bottom so it is a torch passing through the room, not a
-     rectangle of light with two hard edges against the frame. */
-  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 16%, #000 84%, transparent 100%);
-          mask-image: linear-gradient(180deg, transparent 0%, #000 16%, #000 84%, transparent 100%);
+    radial-gradient(78% 62% at 38% 42%,
+      color-mix(in srgb, var(--navtx-ember) 8%, transparent), transparent 76%),
+    radial-gradient(64% 74% at 72% 58%,
+      color-mix(in srgb, var(--navtx-body) 6%, transparent), transparent 78%);
 
   animation: none;
 }
 
-/* No fill-mode: when the sweep ends the element falls back to the opacity:0 in
-   the base rule above. Anything filled would leave a full-screen layer parked
-   over the app forever. */
-html body #md-nav-flash.go {
-  animation: hubNavSweep 560ms cubic-bezier(0.4, 0.25, 0.3, 1);
+/* Both travelling layers share their geometry: oversized, skewed, and masked
+   off at top and bottom so the light is a torch passing through the room and
+   not a rectangle with two hard horizontal edges against the frame. */
+html body #md-nav-flash::before,
+html body #md-nav-flash::after {
+  content: '';
+  position: absolute;
+  top: -12%;
+  bottom: -12%;
+  left: -20%;      /* 140vw of layer, so the skew never exposes a bare edge */
+  right: -20%;
+  opacity: 0;                    /* rest state — see R1: no filled animations */
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 15%, #000 85%, transparent 100%);
+          mask-image: linear-gradient(180deg, transparent 0%, #000 15%, #000 85%, transparent 100%);
 }
 
-/* ⚠ THE TRAVEL IS DELIBERATELY SHORT: -72% → 78%, not the ±120% the old
-   Master-Duel whoosh used. The lit band is only ~44% of the element wide, so at
-   ±120% it cleared the right edge inside the first third of the animation and
-   the remaining two-thirds animated an invisible rectangle — measured on a
-   paused frame at t=210ms of 620ms, the screen was already empty. It read as a
-   flicker, not a pass. At this range the light is on screen for essentially the
-   whole 560ms and the easing (soft in, long glide out) is spent where it can be
-   seen. Retune this range with the gradient's stops, never on its own. */
-@keyframes hubNavSweep {
-  0%   { opacity: 0;    transform: translateX(-72%) skewX(-12deg); }
-  9%   { opacity: 1; }
-  68%  { opacity: 0.9; }
-  100% { opacity: 0;    transform: translateX(78%)  skewX(-12deg); }
+/* THE EMBER WASH — broad, soft-edged, no hard core. It is the heat the blade
+   leaves behind, so it is wider, dimmer and slower than the blade. */
+html body #md-nav-flash::before {
+  background: linear-gradient(102deg,
+    transparent 22%,
+    color-mix(in srgb, var(--navtx-ember) 6%,  transparent) 36%,
+    color-mix(in srgb, var(--navtx-ember) 15%, transparent) 50%,
+    color-mix(in srgb, var(--navtx-body)  8%,  transparent) 64%,
+    transparent 80%);
+}
+
+/* THE BLADE — amber shoulder, gold body, a near-white core about a percent
+   wide, warm ember trailing edge. This is the only bright thing on screen. */
+html body #md-nav-flash::after {
+  background: linear-gradient(104deg,
+    transparent 37%,
+    color-mix(in srgb, var(--navtx-body)  10%, transparent) 43.5%,
+    color-mix(in srgb, var(--navtx-gold)  24%, transparent) 47%,
+    color-mix(in srgb, var(--navtx-gold)  34%, transparent) 49.2%,
+    color-mix(in srgb, var(--navtx-core)  38%, transparent) 50%,
+    color-mix(in srgb, var(--navtx-gold)  32%, transparent) 50.8%,
+    color-mix(in srgb, var(--navtx-gold)  24%, transparent) 53%,
+    color-mix(in srgb, var(--navtx-ember) 20%, transparent) 57%,
+    color-mix(in srgb, var(--navtx-body)   7%, transparent) 65%,
+    transparent 73%);
+}
+
+/* No fill-mode anywhere: when a sweep ends every layer falls back to the
+   `opacity:0` in its base rule above. Anything filled would leave a
+   full-viewport lit layer parked over the app forever. */
+html body #md-nav-flash.go          { animation: hubTxNavVeil  520ms cubic-bezier(0.32, 0, 0.24, 1); }
+html body #md-nav-flash.go::after   { animation: hubTxNavBlade 520ms cubic-bezier(0.36, 0.06, 0.22, 1); }
+html body #md-nav-flash.go::before  { animation: hubTxNavWash  600ms cubic-bezier(0.30, 0.10, 0.20, 1); }
+
+/* The veil peaks EARLY (30%) and leaves slowly. The DOM swap happens in the
+   same turn `_playNavFlash()` is called, i.e. right at the front of this
+   animation — the warm-up has to already be there when the page changes under
+   it, or it is covering nothing. */
+@keyframes hubTxNavVeil {
+  0%   { opacity: 0; }
+  30%  { opacity: 1; }
+  60%  { opacity: 0.72; }
+  100% { opacity: 0; }
+}
+
+/* ⚠ THE TRAVEL IS DELIBERATELY SHORT: -52% → 56% of a 140vw layer, not the
+   ±120% the old Master-Duel whoosh used. The BRIGHT core is only ~6% of this
+   layer wide (a soft ~44% falloff around it), so at ±120% the core cleared the
+   right edge inside the first third of the animation and the remaining
+   two-thirds animated an empty rectangle — measured on a paused frame at
+   t=210ms of 620ms the screen was already black. It read as a flicker, not a
+   pass. At this range the core crosses the viewport from roughly t=0.14 to
+   t=0.82, so the light is on screen for essentially the whole 520ms and the
+   easing is spent where it can be seen. Retune this range together with the
+   gradient stops and the ±20% overhang, never on its own. */
+@keyframes hubTxNavBlade {
+  0%   { opacity: 0;    translate: -52% 0; }
+  12%  { opacity: 1; }
+  72%  { opacity: 0.9; }
+  100% { opacity: 0;    translate:  56% 0; }
+}
+
+/* The wash starts further back and ends further back — it never overtakes the
+   blade, so the heat always trails the light. */
+@keyframes hubTxNavWash {
+  0%   { opacity: 0;    translate: -70% 0; }
+  16%  { opacity: 1; }
+  100% { opacity: 0;    translate:  38% 0; }
+}
+
+/* `translate`/`skew` split: the skew is a static part of the layer's identity
+   (it is what makes the pass diagonal) and must NOT live in the keyframes, or
+   every keyframe would have to restate it. R2's `translate` property composes
+   before `transform`, so the two coexist with no interference at all. */
+html body #md-nav-flash::before { transform: skewX(-13deg); }
+html body #md-nav-flash::after  { transform: skewX(-11deg); }
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   2 · THE MAIN-MENU IFRAME  —  #mm-frame
+   ═══════════════════════════════════════════════════════════════════════════
+   `_mmMount()` (index.html:113175) appends the iframe with an inline
+   `background:#0a0610` and no opacity, then waits up to 9s for `mm:ready`. So
+   for the first few hundred ms the user is looking at a flat dark rectangle
+   that snaps to a painted menu. This turns that snap into a settle.
+
+   ⚠ NO DELAY AND NO FILL-MODE HERE, unlike everything else in this file, and
+   the reason is blast radius. `backwards` holds the from-state — opacity 0 —
+   for the whole delay AND for as long as the animation is merely *pending*. An
+   animation stays pending while the document timeline is inactive, so in the
+   one environment where that happens the element is invisible rather than
+   un-animated. On a sub-hub tile that is a bad frame; on the main menu it is a
+   black screen with the whole game behind it. A hold long enough to cover the
+   iframe's first paint is not worth buying that, so this one fades from the
+   instant it mounts and, if the animation never runs at all, the iframe is
+   simply visible.
+
+   `scale` starts ABOVE 1 (R2 — and the frame has no transform of its own).
+   Going the other way would letterbox the viewport with the parent's
+   background for the length of the animation; overscan simply crops.
+
+   ⚠ HONEST LIMIT — THERE IS NO CSS EXIT. `_mmTeardown()` calls `f.remove()`
+   synchronously, and a removed element cannot be animated: there is no style
+   change to transition and `@starting-style` is entry-only. Teardown also runs
+   at index.html:114305, *before* the replacement hub's markup is written at
+   :115027, so the two never coexist for even one frame. The out-fade is
+   therefore carried by §1's veil, which `_playNavFlash()` fires on the same
+   navigation and which is at full strength exactly when the iframe vanishes.
+   Giving the iframe a real exit needs one line of JS in `_mmTeardown` (add a
+   class, remove on `transitionend`) — that is an index.html edit, and this unit
+   ships without one by design.
+
+   `_mmMount` early-returns when the frame already exists, so this animation
+   fires once per actual mount and never on a re-render.
+   ------------------------------------------------------------------------- */
+html body #mm-frame {
+  animation: hubTxFrameIn 460ms cubic-bezier(0.16, 0.84, 0.28, 1);
+}
+@keyframes hubTxFrameIn {
+  from { opacity: 0; scale: 1.012; }
+  to   { scale: none; }
 }
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   2 · THE HUB ENTRANCE
+   3 · THE SUB-HUB ENTRANCE
    ═══════════════════════════════════════════════════════════════════════════
-   Order of arrival — the whole thing is over inside 450ms:
+   Order of arrival — the whole thing is over inside ~600ms:
 
-     0ms    background art settles out of a slight push-in
-     80ms   title block resolves
-    120ms   tile band lands, in a 3-cycle stagger  ┐ last tile ends at ~448ms
-    240ms   footer sigil
-    260ms   the two gold rules flanking the subtitle draw outward from the text
+       0ms   background art settles out of a slight push-in
+      60ms   ambient embers and smoke catch up
+      70ms   title block resolves
+      90ms   side hero drifts in from the edge
+     140ms   tile band starts landing, +40ms per tile ┐ last tile ends ~600ms
+     200ms   the two gold rules flanking the subtitle draw outward from the text
+     380ms   footer
 
    The art moves FIRST and the tiles land ON it. Reversed, the page reads as
    content that arrived before its own background — the exact "web page fading
@@ -168,151 +321,247 @@ html body #md-nav-flash.go {
    ------------------------------------------------------------------------- */
 
 /* ---- background art: settles ------------------------------------------- */
-/* From 0.25, not 0 — the outgoing hub's DOM is already gone by the time this
+/* From 0.28, not 0 — the outgoing hub's DOM is already gone by the time this
    paints, so a true zero start puts a frame of flat black between every pair of
    pages. Starting warm means the art is always present and merely resolving.
-   `scale` (not `transform`) per R2; the layer is fixed+inset:0+overflow:hidden,
-   so the 4% overscan simply crops. */
-.spellbook-hub.is-sub.hub-v2 .spellbook-hub-bg {
-  animation: hubBgSettle 400ms var(--hub-in-ease) backwards;
+   `scale` (not `transform`) per R2; the layer is fixed + inset:0 + overflow
+   hidden, so the 4.5% overscan simply crops. */
+.spellbook-hub.is-sub .spellbook-hub-bg {
+  animation: hubTxBgSettle 460ms var(--hub-in-ease) backwards;
 }
-@keyframes hubBgSettle {
-  from { opacity: 0.25; scale: 1.04; }
+@keyframes hubTxBgSettle {
+  from { opacity: 0.28; scale: 1.045; }
   to   { scale: none; }
 }
 
 /* ---- ambient layers: they simply catch up ------------------------------- */
 /* The embers and smoke puffs carry their own infinite drift animations on the
-   CHILD spans (index.html:362/404). We animate only the CONTAINERS — putting an
-   animation on the spans themselves would replace those loops outright. */
-.spellbook-hub.is-sub.hub-v2 .spellbook-embers,
-.spellbook-hub.is-sub.hub-v2 .spellbook-smoke {
-  animation: hubAmbientIn 520ms ease-out backwards 120ms;
-}
-@keyframes hubAmbientIn {
-  from { opacity: 0; }
+   CHILD spans (index.html:362 / :404). We animate only the CONTAINERS — putting
+   an animation on the spans themselves would replace those loops outright and
+   the ambience would die the moment the entrance finished. */
+.spellbook-hub.is-sub .spellbook-embers,
+.spellbook-hub.is-sub .spellbook-smoke {
+  animation: hubTxFade 540ms ease-out backwards 60ms;
 }
 
 /* ---- side hero: drifts in from the edge --------------------------------- */
-/* Opacity endpoint is deliberately absent (R3) — the hero's rest opacity is
-   0.88 and a hardcoded `to{opacity:1}` would punch it to full for 460ms. */
-.spellbook-hub.is-sub.hub-v2 .hub-side-hero {
-  animation: hubSideHeroIn 460ms var(--hub-in-ease) backwards 90ms;
+/* Opacity endpoint deliberately absent (R3) — the hero's rest opacity is not 1,
+   and a hardcoded `to{opacity:1}` would punch it to full for half a second. */
+.spellbook-hub.is-sub .hub-side-hero {
+  animation: hubTxHeroIn 480ms var(--hub-in-ease) backwards 90ms;
 }
-@keyframes hubSideHeroIn {
-  from { opacity: 0; translate: 30px 0; scale: 1.03; }
+@keyframes hubTxHeroIn {
+  from { opacity: 0; translate: 34px 0; scale: 1.03; }
   to   { translate: none; scale: none; }
 }
 
 /* ---- title block: resolves --------------------------------------------- */
-/* Down and out of a slight over-scale. A heavy gold serif that grows INTO place
-   reads as carved; one that slides up from below reads as a notification. */
-.spellbook-hub.is-sub.hub-v2 .hub-banner {
-  animation: hubBannerIn 320ms var(--hub-in-ease) backwards 80ms;
+/* Down and out of a slight over-scale. A heavy gold serif that grows INTO
+   place reads as carved; one that slides up from below reads as a
+   notification.
+
+   TWO SELECTORS ON PURPOSE. `.hub-banner` is the wrapper the hub ships today.
+   The second is insurance for a remodel that drops the wrapper: it animates
+   `.hub-title`/`.hub-subtitle` directly, but ONLY when they are not inside a
+   `.hub-banner` — otherwise both rules would fire and the block would fade
+   twice, once nested inside the other. If a future markup renames all three,
+   nothing matches and the title simply appears, which is a correct page. */
+.spellbook-hub.is-sub .hub-banner,
+.spellbook-hub.is-sub :is(.hub-title, .hub-subtitle):not(.hub-banner *) {
+  animation: hubTxTitleIn 340ms var(--hub-in-ease) backwards 70ms;
 }
-@keyframes hubBannerIn {
-  from { opacity: 0; translate: 0 -7px; scale: 1.035; }
+@keyframes hubTxTitleIn {
+  from { opacity: 0; translate: 0 -8px; scale: 1.04; }
   to   { translate: none; scale: none; }
 }
 
 /* The two hairlines flanking the subtitle draw OUTWARD from the text, last, as
    the rule being ruled under it. They are flex children at `height:1px`, so
    scaleX is free — it cannot touch layout.
-   `transform` is safe here (R2 does not apply): these pseudo-elements have no
+   `transform` is safe here and R2 does not apply: these pseudo-elements have no
    transform of their own and no hover state to protect. */
-.spellbook-hub.is-sub.hub-v2 .hub-subtitle::before,
-.spellbook-hub.is-sub.hub-v2 .hub-subtitle::after {
-  animation: hubRuleDraw 380ms var(--hub-in-ease) backwards 260ms;
+.spellbook-hub.is-sub .hub-subtitle::before,
+.spellbook-hub.is-sub .hub-subtitle::after {
+  animation: hubTxRuleDraw 400ms var(--hub-in-ease) backwards 200ms;
 }
-.spellbook-hub.is-sub.hub-v2 .hub-subtitle::before { transform-origin: 100% 50%; }
-.spellbook-hub.is-sub.hub-v2 .hub-subtitle::after  { transform-origin: 0 50%; }
-@keyframes hubRuleDraw {
+.spellbook-hub.is-sub .hub-subtitle::before { transform-origin: 100% 50%; }
+.spellbook-hub.is-sub .hub-subtitle::after  { transform-origin: 0 50%; }
+@keyframes hubTxRuleDraw {
   from { opacity: 0; transform: scaleX(0.04); }
   to   { transform: scaleX(1); }
 }
 
 /* ---- the tile band: lands ----------------------------------------------- */
 /* `translate`/`scale` per R2 — `.hub-portal` owns `transform` for its hover
-   lift, and `backwards` hands it straight back when this finishes.
-   Rising 18px into a hair of overshoot is what gives it weight; the tile
-   arrives, is briefly a touch large, then sets. */
-.spellbook-hub.is-sub.hub-v2 .hub-portal-grid > .hub-portal {
-  animation: hubTileLand 240ms var(--hub-tile-ease) backwards 120ms;
+   lift, and `backwards` hands it straight back when this finishes. Rising 18px
+   into a hair of overshoot is what gives it weight: the tile arrives, is
+   briefly a touch large, then sets.
+
+   NOT scoped to `.hub-portal-grid > …`. `.hub-portal` is one of the five class
+   names contractually guaranteed to survive the remodel; the grid's class name
+   is not, and a descendant combinator on a name that may be renamed is a sheet
+   that dies quietly. */
+.spellbook-hub.is-sub .hub-portal {
+  /* ── THE STAGGER, AND WHY IT IS A CLAMPED INDEX AND NOT A MODULAR CYCLE ──
+     Hubs run from 3 tiles (Forge) to 13 (Ruin Exchange), the column count is
+     density-driven, and tiles are gated in and out by rank/admin — so there is
+     no per-hub nth-child map to write and no total to count.
+
+     The obvious trick is a repeating cycle (`3n+1/3n+2/3n+3`). Rejected: any
+     modular cycle WRAPS, and at the wrap a later tile lands before an earlier
+     one. In a 4-across grid — which is exactly what the comp's Battle Hall is —
+     a cycle of three puts row 2 at delays 0/40/80/0 and the eye reads the reset
+     as a bug, not as a wave.
+
+     So: an explicit index for the first six tiles, and a CLAMP for everything
+     past them. The cascade is strictly monotonic (no tile ever overtakes an
+     earlier one), the span is exactly the 240ms §4 asks for, and the 13-tile
+     Exchange finishes in the same 600ms as the 3-tile Forge instead of trailing
+     a 520ms tail. Tiles 7+ settling together reads as "and the rest fall into
+     place", which is a deliberate cadence rather than a wrap artifact.
+
+     The index is a variable rather than a per-tile `animation-delay` so that
+     §4's reduced-motion block can neutralise the whole stagger by replacing ONE
+     rule; per-tile delay overrides would out-specify it and survive. */
+  --hub-tile-i: 6;
+  animation: hubTxTileLand 260ms var(--hub-tile-ease) backwards
+             calc(var(--hub-in-lead) + var(--hub-in-step) * var(--hub-tile-i));
 }
-@keyframes hubTileLand {
+.spellbook-hub.is-sub .hub-portal:nth-child(1) { --hub-tile-i: 0; }
+.spellbook-hub.is-sub .hub-portal:nth-child(2) { --hub-tile-i: 1; }
+.spellbook-hub.is-sub .hub-portal:nth-child(3) { --hub-tile-i: 2; }
+.spellbook-hub.is-sub .hub-portal:nth-child(4) { --hub-tile-i: 3; }
+.spellbook-hub.is-sub .hub-portal:nth-child(5) { --hub-tile-i: 4; }
+.spellbook-hub.is-sub .hub-portal:nth-child(6) { --hub-tile-i: 5; }
+
+@keyframes hubTxTileLand {
   from { opacity: 0; translate: 0 18px; scale: 0.955; }
   to   { translate: none; scale: none; }
 }
 
-/* The cascade. Cycles of three, so it holds for any tile count and any column
-   count — see the header. `calc()` off one --hub-in-step keeps the whole thing
-   tunable from a single number. */
-.spellbook-hub.is-sub.hub-v2 .hub-portal-grid > .hub-portal:nth-child(3n + 2) {
-  animation-delay: calc(120ms + var(--hub-in-step));
-}
-.spellbook-hub.is-sub.hub-v2 .hub-portal-grid > .hub-portal:nth-child(3n + 3) {
-  animation-delay: calc(120ms + var(--hub-in-step) * 2);
-}
-
 /* ---- footer ------------------------------------------------------------- */
-/* `.hub-game-footer::before` runs its own loop (hub-layout.css:609) — animate
+/* `.hub-game-footer::before` runs its own loop (hub-layout.css:608) — animate
    the footer element, never that pseudo. */
-.spellbook-hub.is-sub.hub-v2 .hub-game-footer {
-  animation: hubFooterIn 300ms var(--hub-in-ease) backwards 240ms;
+.spellbook-hub.is-sub .hub-game-footer {
+  animation: hubTxFooterIn 300ms var(--hub-in-ease) backwards 380ms;
 }
-@keyframes hubFooterIn {
+@keyframes hubTxFooterIn {
   from { opacity: 0; translate: 0 8px; }
   to   { translate: none; }
 }
 
+/* The shared plain fade. Per R3 it declares only the `from` — every element
+   that uses it settles to its own opacity, whatever that is. */
+@keyframes hubTxFade {
+  from { opacity: 0; }
+}
+
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   3 · REDUCED MOTION
+   4 · REDUCED MOTION
    ═══════════════════════════════════════════════════════════════════════════
-   Not "faster" and not "0.01ms" — OFF. Every animation in this file is
-   decoration over a page that is already complete and correct without it, and
-   killing them outright means the hub paints once, fully, on the first frame:
-   no fade, no travel, nothing left mid-flight if a repaint interrupts it.
+   §4 words it precisely: "dropping to a plain opacity change". Not faster, not
+   `0.01ms`, and NOT off — the arrival still reads, it simply stops moving.
+   Every rule below replaces a travelling animation with `hubTxFade`, so:
+     · no translate, no scale, no skew, nothing that implies motion through space
+     · no stagger — the band arrives as one object
+     · no sweep — `#md-nav-flash` keeps only its warm veil, which is a pure
+       opacity ramp and the most literal possible reading of "crossfade"
+     · every settled frame is byte-identical to the full-motion one, because
+       every fade still ends at the element's own underlying opacity (R3)
 
-   `#md-nav-flash` is included: with no animation its base rule is opacity:0, so
-   `_playNavFlash()` still runs and still costs nothing — it simply shows
-   nothing, which is the correct reading of "reduce".
+   HOW THESE RULES WIN WITHOUT `!important`: each selector is character-for-
+   character the one it overrides, so specificity ties and source order decides
+   — and this block is the end of the file. `!important` here would be a hazard
+   rather than a safety net: it would also beat any future per-hub override that
+   legitimately wants a different arrival.
 
-   The `!important` is not decoration either: `.go` is added by JS on an id
-   selector, and hub-chrome.css sets the same precedent for its own arrival.
-   ═══════════════════════════════════════════════════════════════════════════ */
+   THE ONE EXCEPTION IS `#md-nav-flash.go`, which is set by JS on an id and has
+   to be neutralised on the pseudo-elements it drives.
+
+   ⚠ NOTE WHAT IS *NOT* RESET HERE: `opacity` and `transform` on hub elements.
+   Opacity is never held by this file (R3), so with the travel gone it already
+   comes from the element's own cascade — forcing it (even to `revert-layer`)
+   would punch a LOCKED tile's dimmed rest state back to full and erase the one
+   visual cue that the tile is gated. `transform` is `.hub-portal`'s own hover
+   lift; resetting it here would win on source order and flatten every tile's
+   press/lift for good. The subtitle rules are the single exception — they are
+   scaled by this file and by nothing else, so their identity is handed back
+   explicitly.
+   ------------------------------------------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
-  html body #md-nav-flash,
+
+  /* The sweep loses its two travelling layers entirely and keeps the veil. */
+  html body #md-nav-flash.go::before,
+  html body #md-nav-flash.go::after {
+    animation: none;
+    opacity: 0;
+  }
   html body #md-nav-flash.go {
-    animation: none !important;
-    opacity: 0 !important;
+    animation: hubTxNavVeil 420ms linear;
   }
 
-  .spellbook-hub.is-sub.hub-v2 .spellbook-hub-bg,
-  .spellbook-hub.is-sub.hub-v2 .spellbook-embers,
-  .spellbook-hub.is-sub.hub-v2 .spellbook-smoke,
-  .spellbook-hub.is-sub.hub-v2 .hub-side-hero,
-  .spellbook-hub.is-sub.hub-v2 .hub-banner,
-  .spellbook-hub.is-sub.hub-v2 .hub-subtitle::before,
-  .spellbook-hub.is-sub.hub-v2 .hub-subtitle::after,
-  .spellbook-hub.is-sub.hub-v2 .hub-portal-grid > .hub-portal,
-  .spellbook-hub.is-sub.hub-v2 .hub-game-footer {
-    animation: none !important;
-    translate: none !important;
-    scale: none !important;
+  html body #mm-frame {
+    animation: hubTxFade 320ms ease;   /* no fill — see §2 */
   }
 
-  /* ⚠ NOTE WHAT IS *NOT* RESET HERE: `opacity` and `transform`.
-     Opacity is never held by this file (R3), so with the animation gone it
-     already comes from the element's own cascade — and forcing it (even to
-     `revert-layer`) would punch a LOCKED tile's dimmed 0.5 back to full and
-     erase the one visual cue that the tile is gated.
-     `transform` is `.hub-portal`'s own hover lift; resetting it here would win
-     on source order and flatten every tile's press/lift for good.
-     The subtitle rules are the single exception — they are scaled by this file
-     and by nothing else, so their identity has to be handed back explicitly. */
-  .spellbook-hub.is-sub.hub-v2 .hub-subtitle::before,
-  .spellbook-hub.is-sub.hub-v2 .hub-subtitle::after {
-    transform: scaleX(1) !important;
+  .spellbook-hub.is-sub .spellbook-hub-bg {
+    animation: hubTxBgSettleFlat 300ms ease backwards;
+  }
+  /* Still starts warm rather than black, for the same reason the moving version
+     does — but with no scale, so nothing travels. */
+  @keyframes hubTxBgSettleFlat {
+    from { opacity: 0.28; }
+  }
+
+  .spellbook-hub.is-sub .spellbook-embers,
+  .spellbook-hub.is-sub .spellbook-smoke {
+    animation: hubTxFade 300ms ease backwards 60ms;
+  }
+
+  .spellbook-hub.is-sub .hub-side-hero {
+    animation: hubTxFade 300ms ease backwards 60ms;
+  }
+
+  .spellbook-hub.is-sub .hub-banner,
+  .spellbook-hub.is-sub :is(.hub-title, .hub-subtitle):not(.hub-banner *) {
+    animation: hubTxFade 300ms ease backwards 60ms;
+  }
+
+  /* The flanking rules fade in at full width instead of drawing outward, and
+     get their scale identity handed back explicitly — this file is the only
+     thing that ever scales them. */
+  .spellbook-hub.is-sub .hub-subtitle::before,
+  .spellbook-hub.is-sub .hub-subtitle::after {
+    animation: hubTxFade 300ms ease backwards 120ms;
+    transform: scaleX(1);
+  }
+
+  /* One rule kills the entire cascade: `--hub-tile-i` is now read by nobody, so
+     the six index rules that carry it are inert rather than fighting this.
+
+     ⚠ AND A SECOND RULE, ON THE GRID, WHICH IS NOT BELT-AND-BRACES.
+     hub-tiles.css's own reduced-motion block declares
+       .spellbook-hub.is-sub.hub-v2 .hub-portal { animation: none !important }
+     to switch off the tile's hover/tick animations. That is (0,4,0) + important
+     and it beats the (0,3,0) rule above, so under `reduce` the per-tile fade is
+     silently thrown away and the band SNAPS in — measured, not assumed: a
+     dump-dom probe at t=120ms showed seven tiles at opacity 1 with no animation
+     attached. Winning that fight would mean matching its `!important` and
+     out-specifying `.hub-v2`, i.e. betting on stylesheet link order — a bet this
+     file should never make against a sheet it does not own.
+
+     So the group fades instead. The grid is not in hub-tiles' selector list, and
+     "the band arrives as one object" is exactly the cadence reduced motion wants
+     anyway. If hub-tiles ever drops that `!important`, both fades apply and
+     compose (opacity × opacity) — a slightly softer ramp to the same settled
+     frame, which is why this is safe to leave in place either way. */
+  .spellbook-hub.is-sub .hub-portal,
+  .spellbook-hub.is-sub .hub-portal-grid {
+    animation: hubTxFade 300ms ease backwards 120ms;
+  }
+
+  .spellbook-hub.is-sub .hub-game-footer {
+    animation: hubTxFade 300ms ease backwards 180ms;
   }
 }

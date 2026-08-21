@@ -41,23 +41,32 @@ at the stall, but a script in a loop can tell the difference.
 
 ## 🏷 AS-SHIPPED vs TARGET-STATE — read this before judging any capture
 
-A fixture is only trustworthy as far as the game's real *sender* can produce it, and
-for the `map` payload it currently cannot. `_bbMapFromEditor` (`index.html:103208`) is
-the sole producer of the battle stage's map, and:
+A fixture is only trustworthy as far as the game's real *sender* can produce it. The
+sole producer of the battle stage's map is `_bbMapFromEditor` (grep it — the line
+number has moved twice), and **what it produces changed in the terrain wave**.
 
-- it emits tiles as `{x, z, type}` plus an optional `prop` — **`elev` appears nowhere in
-  the function**;
-- `BB_TERRAIN_TYPE` (`:103200`) is `{water, lava, blight} → 'hazard'`, so `'objective'`
-  and `'blocked'` are **unreachable from the sender**;
-- with the shipped default, `_b3dActiveMap()` (`:102835`) returns `terrain: null,
-  models: []`, so both conversion loops run zero times and it returns **`tiles: []`** —
-  and `board:init` does `Object.assign(MAP, msg.map)`, which *replaces* the board's own
-  demo tiles with that empty array.
+**As of the terrain wave, the shipped default is NOT bare ground.** `_bbMapFromEditor`
+now calls `_bbGenTerrain(cols, rows, _bbMapSeed())` unconditionally and returns all
+168 tiles with `surf`, `elev` and `deco` on them, admin battlemap or none. So the
+`gamemap` scene — the control capture — really is a relief map with materials and
+props, and judging elevation, cliff faces or props from it is judging the real game.
 
-**A real match today therefore has no props, no hazards, no objective tiles and no
-elevation.** `BAR.md` R1 is judged almost entirely on elevation and cliff faces, so
-validating raised-tile side walls or hex cliff-face lighting against a green capture
-from a terrain-rich scene would validate work that is **invisible in a real match**.
+What that fixed, recorded here because it is the reason the label exists at all:
+
+- it used to emit tiles as `{x, z, type}` plus an optional `prop`, and **the word
+  `elev` appeared nowhere in the function**;
+- with the shipped default, `_b3dActiveMap()` returned `terrain: null, models: []`, so
+  both conversion loops ran zero times and it returned **`tiles: []`** — and
+  `board:init` does `Object.assign(MAP, msg.map)`, which *replaced* the board's own
+  demo tiles with that empty array. A real match had no props, no hazards and no
+  elevation, while every terrain-rich capture in this folder implied it did.
+
+**Still not reachable from the sender**, and still target-state wherever a scene uses
+them: `BB_TERRAIN_TYPE` is `{water, lava, blight} → 'hazard'`, so `type:'objective'`
+and `type:'blocked'` cannot be sent; and the battle stage is never sent `events` at
+all (see *Known caveats*). The generator deliberately emits neither — its header says
+why: the canvas stage's idea of "blocked" is not the game's, and the game's walkable
+rules stay authoritative.
 
 So every scene is labelled. The label is in the chrome panel, in this table, and burned
 into the corner of every `?shot=1` PNG as a watermark, because a PNG outlives the URL
@@ -67,7 +76,7 @@ that made it.
 
 | `?scene=` | Provenance | What it shows |
 |---|---|---|
-| `gamemap` | ◆ **as-shipped** | **The control capture.** `_bbMapFromEditor()`'s literal output for the shipped default — `tiles: []`, bare ground. Units, defs (`h:1.05`), graves and surfaces are all verbatim-real. Same layout as `skirmish` so the two diff cleanly. |
+| `gamemap` | ◆ **as-shipped** | **The control capture.** `_bbMapFromEditor()`'s literal output for the shipped default: all 168 tiles carrying `surf`, `elev` and `deco` from `_bbGenTerrain`, i.e. the seeded post-apocalyptic relief a real match is fought on. Units, defs (`h:1.05`), graves and surfaces are all verbatim-real. Same layout as `skirmish` so the two diff cleanly. Add `&seed=<n>` to build the same map family on a different seed — the default seed is what every A/B uses and must not change. |
 | `empty` | ◇ target-state | Terrain, props, horizon and lighting with no units in front of them. |
 | `skirmish` | ◇ target-state | Both sides deployed, mixed unit types, three graves in three states, three painted surfaces. |
 | `moverange` | ◇ target-state | One unit selected: blue move set, red attack set, gold selection ring. Paint is real; terrain is not. |
@@ -120,6 +129,7 @@ function copied from `public/index.html` and named for its original:
 | `bridgeSurfaces` | `_bbStagePushSurfaces` (`:104008`) | `board:surfaces` |
 | `bridgeEvents` | `_bbEvents` (`:103646`) | `board:events` |
 | `shippedMap` | `_bbMapFromEditor` (`:103208`) | the `map` inside `board:init` |
+| `_bbGenTerrain` | `_bbGenTerrain` (byte-for-byte) | the tiles inside that `map` |
 
 Line numbers drift when `public/index.html` is edited — re-grep the function name.
 

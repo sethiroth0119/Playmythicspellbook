@@ -12364,6 +12364,25 @@
     50%     { box-shadow: 0 0 22px rgba(255,200,80,0.95); }
   }
 
+  /* ====== 🚚 SCP control-point tile markers (DOM board) ======
+     Ownership colour language matches the tracker in the rail and the node
+     array the stage paints on the truck itself, so the same three colours mean
+     the same three things wherever the player looks: green ours, red theirs,
+     gold unheld/contested — the amber-in-progress / green-complete convention
+     the oil tower established just below.
+     ⚠ inset box-shadow only, never `filter` and never a background on `.tile`
+       that could fight the surface overlay: board.css / alive.css / units.css
+       state as an explicit contract that the word `filter` does not appear in
+       them (CONTRACT §6.10), and the tile's own surface art has to stay
+       readable underneath. The RING is deliberately much fainter than the
+       truck's tile — it is a boundary, not an objective. */
+  .tile.cp-ring { box-shadow: inset 0 0 0 1px rgba(246,220,149,0.20); }
+  .tile.cp-ring.cp-you  { box-shadow: inset 0 0 0 1px rgba(99,217,122,0.34), inset 0 0 14px rgba(99,217,122,0.13); }
+  .tile.cp-ring.cp-them { box-shadow: inset 0 0 0 1px rgba(224,85,60,0.34),  inset 0 0 14px rgba(224,85,60,0.13); }
+  .tile.cp-tile { box-shadow: inset 0 0 20px rgba(140,120,60,0.45), inset 0 0 0 2px rgba(246,220,149,0.70); }
+  .tile.cp-tile.cp-you  { box-shadow: inset 0 0 22px rgba(60,150,90,0.45), inset 0 0 0 2px rgba(99,217,122,0.9); }
+  .tile.cp-tile.cp-them { box-shadow: inset 0 0 22px rgba(150,50,40,0.45), inset 0 0 0 2px rgba(224,85,60,0.9); }
+
   /* ====== 🛢 Territory Wars: Oil Extraction tile markers ====== */
   .tile.tw-oil-tower {
     box-shadow: inset 0 0 18px rgba(120,90,60,0.6), inset 0 0 0 2px rgba(200,140,60,0.65);
@@ -27290,6 +27309,151 @@
     color: #ffe9a8;
   }
 
+  /* ════════════════════════════════════════════════════════════════
+     🚚 SCP CONTROL POINTS — the persistent objective banner and the
+     three-truck tracker, both mounted at the top of the battle rail.
+     ⚠ CLASS NAMES ARE THEIR OWN, not `.bcp .envcard`. The tracker tile is
+       a copy of `.bcp .envcard`'s TOKENS (CONTRACT §6.5 — the stated
+       template for exactly this) rather than a reuse of its selector,
+       because chrome.css is appended LAST and carries 53 `!important`
+       declarations answering index.html's PANEL-FIT compression passes.
+       A rule added here that targeted `.bcp .envcard` would lose to them
+       silently and the tracker would inherit a compression meant for the
+       weather card.
+     ⚠ `.tw-objective-banner` is used for the banner because it was ALREADY
+       styled here and already carries its narrow-rail rule at :7017
+       (`flex: 1 1 100%`) — it was simply never emitted by any JS. Using it
+       keeps the rail's mobile reflow correct for free.
+     Palette is §6.2/§6.3 only: gold for chrome, --bc-rp green for ours,
+     --bc-ember red for theirs, amber for in-progress (matching the oil
+     tower's active/complete language at :12203+). Every label is Cinzel.
+     Nothing here out-shouts `.bcp .endturn` (§6.8) — no animation on the
+     tiles themselves, only on the one-turn-from-losing warning.
+     ================================================================ */
+  .tw-objective-banner {
+    display: flex; align-items: center; gap: 0.5rem;
+    padding: 0.45rem 0.65rem;
+    border-radius: 6px;
+    border: 1px solid rgba(255,209,102,0.55);
+    background: linear-gradient(180deg, rgba(212,175,55,0.16), rgba(80,40,20,0.45));
+    box-shadow: 0 0 14px -4px rgba(255,209,102,0.45);
+    color: #ffeec0;
+    font-size: 0.82rem;
+    line-height: 1.25;
+  }
+  .tw-objective-banner .cpb-ic { font-size: 1.05rem; flex: 0 0 auto; }
+  .tw-objective-banner .cpb-lab {
+    font-family: "Cinzel", serif; font-weight: 700; font-size: 9.5px;
+    letter-spacing: .18em; color: #f6dc95; flex: 0 0 auto;
+  }
+  .tw-objective-banner .cpb-txt { min-width: 0; color: #ffeec0; }
+  .tw-objective-banner .cpb-txt b { color: #f6dc95; font-weight: 700; }
+
+  /* The tracker shell. Double-gradient border per §6.4, at the panel's own
+     2px weight, so it sits with the rail instead of on top of it. */
+  .cp-track {
+    display: flex; flex-direction: column; gap: 7px;
+    padding: 9px 10px 10px;
+    border: 2px solid transparent; border-radius: 10px;
+    background:
+      linear-gradient(180deg, #171625, #12121e) padding-box,
+      linear-gradient(155deg,#f4d47c 0%,#c29a3a 22%,#7a5f24 50%,#c29a3a 78%,#f6d780 100%) border-box;
+    box-shadow: 0 7px 24px rgba(0,0,0,.6),
+                inset 0 0 0 1px rgba(0,0,0,.55),
+                inset 0 0 26px rgba(0,0,0,.5),
+                inset 0 1px 0 rgba(255,240,200,.13);
+  }
+  .cp-track .cp-head { display: flex; align-items: baseline; gap: 8px; }
+  .cp-track .cp-title {
+    font-family: "Cinzel", serif; font-weight: 700; font-size: 9.5px;
+    letter-spacing: .18em; color: #a2957a; flex: 1 1 auto;
+  }
+  .cp-track .cp-tally { font-family: "Cinzel", serif; font-weight: 900; font-size: 12.5px; letter-spacing: .06em; }
+  .cp-track .cp-tally .you  { color: #63d97a; }
+  .cp-track .cp-tally .them { color: #e0553c; }
+  .cp-track .cp-tally .sep  { color: #7a7466; margin: 0 4px; }
+
+  .cp-track .cp-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+  /* §6.5's chip treatment, token for token. */
+  .cp-card {
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+    padding: 6px 4px 5px; min-width: 0; text-align: center;
+    border: 1.5px solid rgba(210,164,78,.55); border-radius: 10px;
+    background: linear-gradient(180deg, rgba(20,17,26,.9), rgba(10,9,15,.95));
+    box-shadow: inset 0 0 20px rgba(0,0,0,.55);
+    transition: box-shadow .25s, border-color .2s;
+  }
+  .cp-card .cp-truck { font-size: 1.05rem; line-height: 1; filter: grayscale(1) opacity(.6); }
+  .cp-card .cp-name {
+    font-family: "Cinzel", serif; font-weight: 700; font-size: 8.5px;
+    letter-spacing: .16em; color: #a2957a; white-space: nowrap;
+  }
+  .cp-card .cp-who {
+    font-family: "Cinzel", serif; font-weight: 900; font-size: 11px;
+    letter-spacing: .08em; color: #7a7466; white-space: nowrap;
+  }
+  /* The node array — three pips on the truck's roof, the same read the stage
+     paints on the vehicle itself so the rail and the field agree. */
+  .cp-card .cp-nodes { display: flex; gap: 3px; }
+  .cp-card .cp-nodes i {
+    width: 5px; height: 5px; border-radius: 50%;
+    background: rgba(122,116,102,.55);
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,.6);
+  }
+  .cp-card.held-you  { border-color: rgba(99,217,122,.75); box-shadow: inset 0 0 20px rgba(0,0,0,.55), 0 0 14px rgba(99,217,122,.20); }
+  .cp-card.held-them { border-color: rgba(224,85,60,.75);  box-shadow: inset 0 0 20px rgba(0,0,0,.55), 0 0 14px rgba(224,85,60,.20); }
+  .cp-card.held-you  .cp-truck  { filter: none; }
+  .cp-card.held-them .cp-truck  { filter: none; }
+  .cp-card.held-you  .cp-who    { color: #63d97a; }
+  .cp-card.held-them .cp-who    { color: #e0553c; }
+  .cp-card.held-you  .cp-nodes i { background: #63d97a; box-shadow: 0 0 6px rgba(99,217,122,.9); }
+  .cp-card.held-them .cp-nodes i { background: #e0553c; box-shadow: 0 0 6px rgba(224,85,60,.9); }
+  /* Contested is its own state, not "unheld with a different border": the
+     player has to be able to tell "nobody is there" from "we are both there
+     and cancelling out", because only one of those is fixed by walking in. */
+  .cp-card.contested { border-color: rgba(246,220,149,.8); }
+  .cp-card.contested .cp-who   { color: #f6dc95; }
+  .cp-card.contested .cp-truck { filter: none; }
+  .cp-card.contested .cp-nodes i { background: #f6dc95; box-shadow: 0 0 6px rgba(246,220,149,.8); }
+
+  /* The streak line. This is the row the requirement is really about — a
+     player must be able to see they are one turn from losing. */
+  .cp-track .cp-streaks { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .cp-streak {
+    display: flex; align-items: center; gap: 6px; min-width: 0;
+    padding: 4px 7px; border-radius: 8px;
+    border: 1px solid rgba(210,164,78,.35);
+    background: rgba(8,10,16,.75);
+  }
+  .cp-streak .cp-sl {
+    font-family: "Cinzel", serif; font-weight: 700; font-size: 8.5px;
+    letter-spacing: .16em; color: #a2957a;
+  }
+  .cp-streak .cp-pips { display: flex; gap: 3px; margin-left: auto; }
+  .cp-streak .cp-pips i {
+    width: 9px; height: 9px; border-radius: 2px;
+    background: rgba(122,116,102,.35); box-shadow: inset 0 0 0 1px rgba(0,0,0,.55);
+  }
+  .cp-streak.you  .cp-pips i.on { background: #63d97a; box-shadow: 0 0 7px rgba(99,217,122,.85); }
+  .cp-streak.them .cp-pips i.on { background: #e0553c; box-shadow: 0 0 7px rgba(224,85,60,.85); }
+  .cp-streak.you  .cp-sl { color: #63d97a; }
+  .cp-streak.them .cp-sl { color: #e0553c; }
+  .cp-streak .cp-sub { font-size: 10.5px; color: #9a8d6c; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* One turn from the match ending. The ONLY animated thing in the tracker. */
+  .cp-streak.brink { border-color: rgba(224,85,60,.9); animation: cp-brink 1.4s ease-in-out infinite; }
+  .cp-streak.brink.you { border-color: rgba(99,217,122,.9); }
+  @keyframes cp-brink {
+    0%,100% { box-shadow: 0 0 0 rgba(224,85,60,0); }
+    50%     { box-shadow: 0 0 16px -2px rgba(224,85,60,.75); }
+  }
+  @media (max-width: 820px) {
+    /* Match the rail's wrap-row reflow at :7005 — the tracker is a full-width
+       row like every other banner up there. */
+    .bc-rail > .cp-track { flex: 1 1 100%; }
+    .cp-track .cp-row { gap: 4px; }
+    .cp-card { padding: 5px 3px 4px; }
+  }
+
   /* ================================================================
      🗺 WAR MAP VISUAL CHROME — design language from standalone app
      ================================================================ */
@@ -36604,7 +36768,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120w6';
+  window.BUILD_VERSION = 'v120x0';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -70690,6 +70854,20 @@ function _hoverButtonsFor(u, s) {
   let canLoot = false;
   try { canLoot = (typeof _unitCanLoot === 'function') && _unitCanLoot(u); } catch (e) {}
   if (canLoot) btns.push({ act: 'loot', lbl: 'Loot', c: '#e08a2a', icon: 'bag', sub: 'Search this tile' });
+  // 🏚 SEARCH — the ruin equivalent, and a separate row from Loot on purpose: a
+  // tile can hold both a body and a building, and collapsing them into one row
+  // would make which container you opened depend on lookup order.
+  let canSearch = false;
+  try { canSearch = (typeof _unitCanLootStructure === 'function') && _unitCanLootStructure(u); } catch (e) {}
+  if (canSearch) {
+    let _rn = '';
+    try {
+      const _st = (App.state.structures || []).find(o => o && o.lootable && !o.looted && o.x === u.pos.x && o.y === u.pos.y);
+      _rn = (_st && _st.name) || '';
+    } catch (e) {}
+    btns.push({ act: 'lootStruct', lbl: 'Search', c: '#e08a2a', icon: 'bag',
+                sub: _rn ? ('Search the ' + _rn.toLowerCase()) : 'Search this building' });
+  }
   // Nothing else left to do this turn — say so on the one row that remains,
   // rather than leaving the player to work it out from an absence.
   if (!btns.length) detail.sub = 'Nothing left this turn · view stats';
@@ -70955,6 +71133,14 @@ function _dispatchHoverAction(act, unitId) {
     case 'loot':
       if (typeof openExtractionMenu === 'function') openExtractionMenu(unitId);
       else if (typeof _lootWithUnit === 'function') _lootWithUnit(unitId);
+      break;
+    // 🏚 Same two-line shape as 'loot' — menu if it exists, otherwise straight
+    // into the default 'normal' mode, which is the branch that opens the real
+    // _lootGridOpen. The fallback matters: it is the path a headless test and
+    // any future non-DOM caller take.
+    case 'lootStruct':
+      if (typeof openStructureExtractionMenu === 'function') openStructureExtractionMenu(unitId);
+      else if (typeof _lootStructureWithUnit === 'function') _lootStructureWithUnit(unitId);
       break;
     case 'details':
     default:
@@ -77733,7 +77919,7 @@ function _lgPaint() {
   const bagCells = _LG.bag.pieces.reduce((a, p) => a + p.w * p.h, 0);
   ov.querySelector('#lg-body').innerHTML = `
     <div class="lg-layout">
-      ${_lgGridHtml(_LG.loot, '☠ Tombstone Salvage', _LG.loot.pieces.length + ' pieces')}
+      ${_lgGridHtml(_LG.loot, _LG.lootTitle || '☠ Tombstone Salvage', _LG.loot.pieces.length + ' pieces')}
       ${_lgGridHtml(_LG.bag, '🎒 Your Bag', bagCells + '/' + (_LG.bag.cols * _LG.bag.rows) + ' cells · cap ' + cap)}
     </div>`;
 }
@@ -77750,11 +77936,17 @@ function _lootGridOpen(got, ctx) {
   const loot = { id: 'loot', cols: 6, rows: Math.max(4, Math.ceil(lootCells / 6) + 1), pieces: [] };
   for (const p of lootPieces) { if (!_lgAutoPlace(loot, p)) loot.pieces.push(Object.assign(p, { x: 0, y: 0 })); }
   _LG.open = true; _LG.loot = loot; _LG.bag = bag; _LG.drag = null;
+  // 🏷 The left-hand grid's heading. `_lgPaint` used to hardcode "☠ Tombstone
+  // Salvage" and never read ctx at all, so a wrecked car announced itself as a
+  // tombstone. Stashed on _LG rather than passed to _lgPaint because _lgPaint
+  // is re-invoked on every drag with no arguments. Default preserved verbatim,
+  // so every existing caller renders exactly as before.
+  _LG.lootTitle = (ctx && ctx.lootTitle) || '☠ Tombstone Salvage';
   const ov = document.createElement('div');
   ov.id = 'lg-overlay';
   ov.innerHTML = `
     <div id="lg-modal">
-      <h2>☠ ${escapeHtml((ctx && ctx.tombName) || 'Field Salvage')} — Salvage</h2>
+      <h2>${escapeHtml((ctx && ctx.icon) || '☠')} ${escapeHtml((ctx && ctx.tombName) || 'Field Salvage')} — Salvage</h2>
       <div class="lg-sub">${escapeHtml((ctx && ctx.unitName) || 'Your unit')} cracks the remains open. Drag salvage into your bag — anything left behind is LOST when you close.</div>
       <div id="lg-body"></div>
       <div class="lg-foot">
@@ -78159,6 +78351,807 @@ function _unitCanLoot(u) {
     return !!(Array.isArray(s.tombstones) && s.tombstones.some(o =>
       o && o.lootable && !o.looted && !o.glowing && o.x === u.pos.x && o.y === u.pos.y));
   } catch (e) { return false; }
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// 🏚 THE FIVE LOOTABLE RUINS — a wrecked CAR, a gutted CHURCH, a collapsed
+// SCHOOL, a caved-in HOSPITAL and a burnt HOUSE, standing on the generated
+// post-apocalyptic field.
+//
+// A ruin is A TOMBSTONE THAT NEVER DIED. Every entry in `state.structures`
+// carries the EXACT field names a lootable tombstone carries — x, y, name,
+// lootable, looted, rarity, level, isBoss, salvage, risk — so every existing
+// consumer works on it untouched: _looterRarityBoost reads rarity off the
+// looter, _rollLootCard / _rollLootItem read {rarity, level, isBoss, name}
+// off the container, _applyTombstoneRisk reads risk, the MP coordinate mirror
+// reads x/y, the salvage-run summary reads nothing at all. Renaming any one
+// of them to something structure-flavoured would fork all of that for no gain.
+//
+// ⚠ THE REQUIREMENT, IN ONE LINE: searching a ruin opens the REAL
+//   `_lootGridOpen(got, ctx)` — the same Tarkov salvage grid a tombstone
+//   opens, with drag, rotate-on-R, Take All, and swap-your-own-loot-into-the-
+//   container. Not a copy, not a lookalike, the identical function. If a
+//   second salvage grid ever appears in this file the feature has been broken,
+//   however well the second one renders.
+//
+// DECIDED, NOT OMITTED (both called out in the brief as traps):
+//  · A ruin does NOT block its tile. Tombstones only block while `glowing`
+//    (tileBlockedByTombstone), and a unit has to STAND ON the container to
+//    search it — a church you cannot walk into is a church you can never loot.
+//  · There is no tickTombstones analogue. A ruin is not pruned, does not
+//    expire, and an enemy standing on it does not deny it forever the way a
+//    body can. Ruins are terrain; bodies are events.
+// ════════════════════════════════════════════════════════════════════════
+const STRUCTURE_KINDS = {
+  car:      { name: 'Wrecked Car',      icon: '🚗', verb: 'strips the wreck' },
+  church:   { name: 'Gutted Church',    icon: '⛪', verb: 'searches the nave' },
+  school:   { name: 'Collapsed School', icon: '🏫', verb: 'digs through the classrooms' },
+  hospital: { name: 'Ruined Hospital',  icon: '🏥', verb: 'sweeps the wards' },
+  house:    { name: 'Burnt House',      icon: '🏚', verb: 'ransacks the house' },
+};
+// Fixed order so the five ruins are placed in the same sequence from the same
+// seed on every client. Object key order would work today and would break the
+// day someone re-sorts the table above.
+const STRUCTURE_ORDER = ['car', 'church', 'school', 'hospital', 'house'];
+// 📏 HEIGHT-AWARE BACK-ROW KEEP-OUT.
+//
+// A ruin is drawn as a BILLBOARD one structure-height above its own tile, and
+// the stage fits its vertical FOV to the safe box (CONTRACT §1.6). So the
+// taller the thing and the further back the row, the closer its head sits to
+// the top of the frame — and past a point it is simply off it. Measured in the
+// real projector (battle-board's own project(), 1600x900), head Y by row for a
+// 2.85-unit church: row 0 = -127, row 1 = -87, row 2 = -43, row 3 = +5. Rows
+// 0-2 DECAPITATE it, and the old roll put a church there on 13.5% of seeds —
+// roughly one match in seven shipping a headless church.
+//
+// ⚠ ELEVATION COUNTS, and leaving it out is why the first attempt at this rule
+// still cropped. _BB_ELEV runs to 1.36 world units — nearly a whole house — so
+// a church on a level-4 plateau is a 4.2-unit object, not a 2.85-unit one, and
+// needs three more rows of clearance than the same church on the flat. The
+// keep-out is therefore computed per TILE, not per kind.
+// These are the DRAWN heights, which for the school is not its STRUCT_DEF h:
+// its flagpole reaches 1.30x the head box, so it is budgeted at 1.89.
+const STRUCTURE_DRAWN_H = { car: 0.78, school: 1.89, house: 1.85, hospital: 2.35, church: 2.85 };
+// Calibration, measured not guessed: the worst column of each row was projected
+// on FLAT ground for billboard heights 0.8 … 4.4 and the first row whose top
+// clears the frame recorded. Thresholds are the height at which the answer
+// steps up. (0.8→0, 1.2→1, 1.6→1, 2.0→2, 2.4→3, 2.8→3, 3.2→4, 3.6→5, 4.0→6.)
+const _STRUCT_ROW_STEPS = [0.9, 1.7, 2.1, 2.9, 3.3, 3.7];
+function _structMinRow(kind, elev) {
+  const E = (STRUCTURE_DRAWN_H[kind] || 1.85) + (+elev || 0);
+  let r = 0;
+  while (r < _STRUCT_ROW_STEPS.length && E > _STRUCT_ROW_STEPS[r]) r++;
+  return r;
+}
+// 🎁 THE HAUL TABLE. `core` always drops (that is what makes a hospital FEEL
+// like a hospital instead of "a container that sometimes has medicine in it");
+// `flavour` supplies 1-3 extra lines drawn without replacement. Every id below
+// is a REAL id out of SALVAGE_RES / RESOURCES — nothing is invented, because
+// _meta() would silently degrade an unknown id to a 📦 box named after itself
+// and the player would never learn it was a bug.
+const STRUCTURE_SALVAGE = {
+  car:      { core: ['metal', 'fuel', 'scrapMetal', 'mechanicalParts'],
+              flavour: ['batteryCells', 'toolKits', 'plasticComponents', 'repairKits', 'weaponParts', 'ammo'] },
+  church:   { core: ['relicFragments', 'divineSigils', 'ritualCandles'],
+              flavour: ['ancientCoins', 'spiritAshes', 'goldBars', 'silverFragments', 'memoryShards'] },
+  school:   { core: ['researchData', 'supplies', 'cloth'],
+              flavour: ['ancientDataDrives', 'survivorManuals', 'blueprintPages', 'craftingSchematics', 'dataFragments', 'memoryChips'] },
+  hospital: { core: ['medicine', 'medicalSupplies', 'chemicals'],
+              flavour: ['medicalHerbs', 'bioMatter', 'syntheticOrgans', 'containmentFluid', 'water'] },
+  house:    { core: ['food', 'water', 'cloth', 'wood'],
+              flavour: ['supplies', 'campSupplies', 'foodSupplies', 'militaryRations', 'survivalGear', 'glassShards'] },
+};
+// Same return shape as _rollUnitSalvage: a flat { resourceId: qty } map, which
+// is the only thing _lootGridOpen reads. `rnd` is injected so the haul can be
+// derived from the MAP SEED — Math.random() here would hand the two
+// multiplayer clients different loot out of the same building.
+function _rollStructureSalvage(kind, rnd) {
+  const out = {};
+  try {
+    const R = (typeof rnd === 'function') ? rnd : Math.random;
+    const tbl = STRUCTURE_SALVAGE[kind] || STRUCTURE_SALVAGE.house;
+    const n = (a, b) => a + Math.floor(R() * (b - a + 1));
+    const add = (k, q) => { if (k && q > 0) out[k] = (out[k] | 0) + q; };
+    for (const id of tbl.core) add(id, n(2, 6));
+    // Shuffled slice, the same trick _rollUnitSalvage uses for its exotics, so
+    // one ruin never dumps the same resource three times.
+    const pool = tbl.flavour.slice();
+    for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(R() * (i + 1)); const t = pool[i]; pool[i] = pool[j]; pool[j] = t; }
+    const kinds = 1 + Math.floor(R() * 3);
+    for (let i = 0; i < kinds && i < pool.length; i++) add(pool[i], n(1, 4));
+  } catch (e) {}
+  return out;
+}
+// Risk weighted by what the building IS — a car's fuel tank is rigged, a
+// church is cursed, a hospital is contaminated. Every kind can come up clean;
+// the ceiling is ~28% so a five-ruin map is not five guaranteed HP taxes.
+// Returns one of RISK_META's keys or null, exactly like _rollTombstoneRisk.
+function _rollStructureRisk(kind, rnd) {
+  try {
+    const R = (typeof rnd === 'function') ? rnd : Math.random;
+    const r = R();
+    if (kind === 'car')      return r < 0.22 ? 'explosive' : null;
+    if (kind === 'hospital') return r < 0.20 ? 'corrupted' : (r < 0.28 ? 'guarded' : null);
+    if (kind === 'church')   return r < 0.24 ? 'cursed' : null;
+    if (kind === 'school')   return r < 0.14 ? 'guarded' : null;
+    return r < 0.12 ? 'guarded' : null;
+  } catch (e) { return null; }
+}
+// 🌱 THE SEED — the SAME one the terrain generator uses, resolved the same way
+// and stamped on the same field, so the ruins sit on the map they were placed
+// against for both multiplayer clients and for a replay.
+// ⚠ Do NOT call _bbMapSeed() from here. It reads App.state, and at
+//   createInitialState time App.state is still the PREVIOUS match's state (or
+//   null) — the ruins would be laid out against a seed the board never uses.
+//   Stamping state._bbMapSeed makes _bbMapSeed()'s branch 2 return this exact
+//   value later, which is what ties the two together.
+function _structureSeed(state) {
+  try {
+    const bp = (typeof App !== 'undefined' && App.battlePrep) || null;
+    const mid = (bp && (bp.multiplayerMatchId || bp._matchId)) ||
+      ((typeof MatchBroadcast !== 'undefined' && MatchBroadcast && MatchBroadcast.matchId) || null);
+    if (mid && typeof _bbSeedFromString === 'function') return _bbSeedFromString('bbmap:' + mid);
+  } catch (e) {}
+  try { if (state && typeof state._bbMapSeed === 'number' && state._bbMapSeed) return state._bbMapSeed >>> 0; } catch (e) {}
+  const v = ((Math.random() * 0xffffffff) >>> 0) || 1;
+  try { if (state) state._bbMapSeed = v; } catch (e) {}
+  return v;
+}
+// Five tiles, deterministic from the seed. Constraints, in priority order:
+//  · never within 3 of a hero's start — deployment is getCardRange (=1) around
+//    the hero, so 3 leaves a hex of daylight beyond the summon ring and a ruin
+//    can never eat a placement tile;
+//  · never on standing water (read-only from the terrain generator, so this
+//    tracks whatever the terrain builder ships without a second map model);
+//  · the car prefers asphalt and the buildings prefer anything but;
+//  · spread, so all five are not in one quadrant.
+// The passes relax in a fixed, bounded order and the last one accepts any free
+// tile: five ruins are named in the requirement, so the function may not
+// return four because the geometry got awkward.
+function _rollStructurePlacements(state, seed) {
+  const dims = (typeof _boardDims === 'function') ? _boardDims(state) : { W: BOARD_W, H: BOARD_H };
+  const W = Math.max(1, dims.W | 0), H = Math.max(1, dims.H | 0);
+  const rnd = _bbRng((seed ^ 0x5b1e57a1) >>> 0);
+  let surf = null, elevAt = null;
+  try {
+    if (typeof _bbGenTerrain === 'function') {
+      surf = {}; elevAt = {};
+      // elev is read alongside surf out of the SAME pass, so the height-aware
+      // keep-out below never builds a second map model that could drift from
+      // the terrain builder's. If the generator is missing, elevAt stays null
+      // and the keep-out degrades to the flat-ground answer rather than throwing.
+      for (const t of _bbGenTerrain(W, H, seed)) { surf[t.x + ',' + t.z] = t.surf; elevAt[t.x + ',' + t.z] = +t.elev || 0; }
+    }
+  } catch (e) { surf = null; elevAt = null; }   // cosmetic loss only — the layout still resolves
+  // Heroes are read off the live roster rather than re-derived from BOARD_W /
+  // DEPLOY_INSET, so this stays correct if either of those ever moves.
+  const keepOut = (state && Array.isArray(state.units) ? state.units : [])
+    .filter(u => u && u.isHero && u.pos).map(u => u.pos);
+  const free = [];
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const p = { x: x, y: y };
+    if (keepOut.some(h => distance(p, h) < 3)) continue;
+    if (surf && surf[x + ',' + y] === 'water') continue;
+    free.push(p);
+  }
+  // Seeded Fisher-Yates. Math.random() here is the whole bug class this
+  // function exists to avoid: two clients, one seed, two different maps.
+  for (let i = free.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); const t = free[i]; free[i] = free[j]; free[j] = t; }
+  const out = [];
+  for (const kind of STRUCTURE_ORDER) {
+    const wantsRoad = (kind === 'car');
+    // Clamped so a short board can always seat all five (see _structMinRow):
+    // "five ruins" is the requirement, and a keep-out that returns four ruins
+    // has traded a cropped roof for a missing building, which is worse.
+    const rowCap = Math.max(0, H - 4);
+    let pick = null;
+    for (let attempt = 0; attempt < 4 && !pick; attempt++) {
+      const spacing = attempt >= 3 ? 1 : (attempt >= 2 ? 2 : 3);
+      const strict = (attempt === 0);
+      for (const c of free) {
+        // HARD reject, on every attempt, unlike the edge-column preference
+        // below: an edge ruin is merely awkward, a decapitated one is wrong on
+        // every frame of every match that rolled it.
+        if (c.y < Math.min(_structMinRow(kind, elevAt ? elevAt[c.x + ',' + c.y] : 0), rowCap)) continue;
+        if (out.some(o => o.x === c.x && o.y === c.y)) continue;
+        if (out.some(o => distance(o, c) < spacing)) continue;
+        // A church is nearly three world units tall and is drawn wider than its
+        // own tile, so one on the literal corner hangs half of itself over the
+        // edge of the field. Preferred, not required — dropped from attempt 2
+        // on, because a missing ruin is worse than a ruin at the edge.
+        if (attempt < 2 && (c.x === 0 || c.y === 0 || c.x === W - 1 || c.y === H - 1)) continue;
+        if (strict && surf) {
+          const s0 = surf[c.x + ',' + c.y];
+          if (wantsRoad ? s0 !== 'asphalt' : s0 === 'asphalt') continue;
+        }
+        pick = c; break;
+      }
+    }
+    if (pick) out.push({ x: pick.x, y: pick.y, kind: kind });
+  }
+  return out;
+}
+// Seeds state.structures at battle build time. Idempotent on purpose: a replay
+// and an incoming multiplayer snapshot both arrive with the array already
+// populated, and re-rolling it would hand the two players different buildings.
+function _seedBattleStructures(state) {
+  try {
+    if (!state || Array.isArray(state.structures)) return state;
+    state.structures = [];
+    const seed = _structureSeed(state);
+    const spots = _rollStructurePlacements(state, seed);
+    spots.forEach((p, i) => {
+      const meta = STRUCTURE_KINDS[p.kind] || STRUCTURE_KINDS.house;
+      // One stream per ruin, salted with its own tile AND its index — the same
+      // reason _bbGenTerrain seeds its props from the tile rather than from the
+      // iteration: the haul must not depend on the order the list is walked.
+      const rnd = _bbRng((seed ^ Math.imul(p.x + 7, 0x9e3779b1) ^ Math.imul(p.y + 13, 0x85ebca6b) ^ Math.imul(i + 1, 0xc2b2ae35)) >>> 0);
+      state.structures.push({
+        x: p.x, y: p.y, kind: p.kind,
+        name: meta.name, icon: meta.icon,
+        // Drawn procedurally by the stage (drawStruct) and by the DOM board, so
+        // there is no texture to lose. Kept as an explicit null because `image`
+        // is a HEAVY_KEY (CONTRACT R11) — a renderer that trusted a URL here
+        // would show nothing at all to the remote player.
+        image: null,
+        lootable: true, looted: false,
+        rarity: rnd() < 0.18 ? 'rare' : (rnd() < 0.45 ? 'uncommon' : 'common'),
+        level: 1 + Math.floor(rnd() * 3),
+        isBoss: false,
+        salvage: _rollStructureSalvage(p.kind, rnd),
+        risk: _rollStructureRisk(p.kind, rnd),
+      });
+    });
+  } catch (e) { try { console.warn('[structures] seed failed', e); } catch (_) {} }
+  return state;
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// 🚚 THREE SCP CONTAINMENT TRUCKS — the control points, and the SECOND WAY
+// TO WIN A BATTLE.
+//
+// The requirement is two mechanics wearing one name, and they are kept
+// separate on purpose below:
+//   (a) A RUNNING SCORE that goes UP and DOWN. Every turn a side holds a
+//       truck it gains a point; the turn it loses that truck it gives the
+//       point back.
+//   (b) A WIN CONDITION. Holding TWO of the three at the start of THREE
+//       STRAIGHT turns ends the match in that side's favour — no hero has to
+//       die. "Straight" is consecutive: the streak drops to 0 the moment the
+//       side is holding fewer than two, it does not decay by one.
+//
+// ── THE CAPTURE RULE, written once so the tick, the HUD and the board art
+//    all quote the same sentence ────────────────────────────────────────────
+//   · Every truck has a CAPTURE RING: its own tile plus its six hex
+//     neighbours (hexNeighbors — six, never eight; HEXSPEC §5).
+//   · Count the LIVING units of each side standing inside that ring.
+//   · Strictly more units than the other side → that side HOLDS the truck.
+//   · Equal counts → CONTESTED, nobody holds it. 0–0 counts as equal, so an
+//     abandoned truck goes neutral rather than staying flagged.
+//
+// WHY a ring instead of the oil tower's "stand on the pad": exactly one unit
+// can occupy a tile, so under a pad rule "both sides have units on it" is
+// unreachable and the word *contested* would be decoration. A ring is the
+// smallest shape two players can genuinely fight over, and it is still
+// countable at a glance — which matters, because the player has to be able to
+// look at the board and see WHY they are or are not holding a truck.
+//
+// WHY holding does NOT latch (walk away and you lose it): with latching a
+// player takes two trucks on turn 1, walks off to fight, and wins on turn 3
+// with no counterplay whatsoever. Presence-based holding is what makes "hold
+// two of them for three straight turns" the commitment the requirement
+// describes, and it is what makes losing a point — requirement (a) — a thing
+// that can actually happen.
+//
+// WHY the state lives on the POINT and never on a unit: CONTRACT R8. The
+// rejected oil-tower design stamped a `_twOilStandTowerIdx` marker on the unit
+// object; unit objects are rebuilt between turns, the marker was dropped, and
+// progress sat at 0 forever with no error and no warning. Occupancy is
+// re-scanned from scratch every tick.
+// ════════════════════════════════════════════════════════════════════════
+const CP_COUNT         = 3;   // three trucks — requirement 7, verbatim
+const CP_HOLD_TO_WIN   = 2;   // "the first to control two of them"
+const CP_STREAK_TO_WIN = 3;   // "...for 3 turns straight"
+const CP_RING          = 1;   // capture-ring radius in hexes (the six neighbours)
+// Phonetic call-signs so the log line, the tracker tile and the truck's own
+// hull stencil can all name the same vehicle in one word.
+const CP_LABELS = ['ALPHA', 'BRAVO', 'CHARLIE'];
+
+// Three tiles, deterministic from the SAME map seed the terrain and the ruins
+// use, so both multiplayer clients and every replay put the trucks in the same
+// place. Constraints, in priority order:
+//  · one truck per horizontal THIRD of the board, so the three are spread and
+//    a single side cannot open the match sitting on two of them;
+//  · inside the middle band of rows — equidistant-ish from both deployment
+//    edges, which is the other half of "no one side starts holding two";
+//  · never within 3 hexes of a hero: deployment is a 1-hex ring around the
+//    hero and the capture ring is 1 more, so 3 guarantees that at battle start
+//    NOBODY is inside ANY ring. That is an arithmetic guarantee, not a hope.
+//  · never on standing water, never on a ruin's tile (a truck parked inside a
+//    church reads as a bug even when the rules are fine).
+// The passes relax in a fixed, bounded order and the last one accepts any free
+// tile: three trucks are named in the requirement, so this may not return two
+// because the geometry got awkward.
+function _cpRollTruckTiles(state, seed) {
+  const dims = (typeof _boardDims === 'function') ? _boardDims(state) : { W: BOARD_W, H: BOARD_H };
+  const W = Math.max(1, dims.W | 0), H = Math.max(1, dims.H | 0);
+  const rnd = _bbRng((seed ^ 0x7c0ffee1) >>> 0);
+  let surf = null;
+  try {
+    if (typeof _bbGenTerrain === 'function') {
+      surf = {};
+      for (const t of _bbGenTerrain(W, H, seed)) surf[t.x + ',' + t.z] = t.surf;
+    }
+  } catch (e) { surf = null; }   // cosmetic loss only — the layout still resolves
+  const heroes = (state && Array.isArray(state.units) ? state.units : [])
+    .filter(u => u && u.isHero && u.pos).map(u => u.pos);
+  const ruins = (state && Array.isArray(state.structures) ? state.structures : [])
+    .filter(t => t && t.x != null).map(t => ({ x: t.x, y: t.y }));
+  const midY = (H - 1) / 2;
+  const out = [];
+  for (let lane = 0; lane < CP_COUNT; lane++) {
+    const lo = Math.floor(lane * W / CP_COUNT), hi = Math.floor((lane + 1) * W / CP_COUNT);
+    let pick = null;
+    for (let pass = 0; pass < 4 && !pick; pass++) {
+      // pass 0 is the tight band; each pass widens it and drops one rule.
+      const band = Math.max(1, Math.round(H / 6)) + pass;
+      const heroKeep = pass >= 3 ? 2 : 3;
+      const cand = [];
+      for (let y = 0; y < H; y++) for (let x = lo; x < hi; x++) {
+        if (Math.abs(y - midY) > band) continue;
+        // A truck is drawn about three tiles wide and its capture ring is wider
+        // still, so one parked in column 0 or column W-1 hangs half of itself
+        // and most of its ring over the edge of the field — and a ring whose
+        // tiles are off-board is a smaller ring, i.e. a quietly easier point.
+        // Preferred, not required: dropped from the last pass on, because a
+        // missing third truck is far worse than one near the edge.
+        if (pass < 3 && (x === 0 || x === W - 1)) continue;
+        const p = { x: x, y: y };
+        if (heroes.some(h => distance(p, h) < heroKeep)) continue;
+        if (pass < 2 && surf && surf[x + ',' + y] === 'water') continue;
+        if (ruins.some(r => r.x === x && r.y === y)) continue;
+        // ⚠ 3, not 2, and only the very last pass relaxes it. Two trucks 2 apart
+        // have OVERLAPPING capture rings — one tile that counts toward both —
+        // and the DOM board's ring tint can only paint a tile in one truck's
+        // colour, so the player would be shown a boundary that is a lie about
+        // half of what is happening on it. The rule itself copes with overlap
+        // fine; the picture of it does not.
+        if (out.some(o => distance(o, p) < (pass >= 3 ? 2 : 3))) continue;
+        cand.push(p);
+      }
+      // Seeded Fisher-Yates, never Math.random(): two clients, one seed, two
+      // different truck layouts is the exact bug this whole function avoids.
+      for (let i = cand.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); const t = cand[i]; cand[i] = cand[j]; cand[j] = t; }
+      if (cand.length) pick = cand[0];
+    }
+    if (pick) out.push({ x: pick.x, y: pick.y });
+  }
+  return out;
+}
+// Seeds state.controlPoints at battle build time. Idempotent like the ruins
+// seeder: a replay and an incoming multiplayer snapshot both arrive with the
+// array already populated, and re-rolling would hand the two players different
+// objectives in the same match.
+function _cpSeedControlPoints(state) {
+  try {
+    if (!state || Array.isArray(state.controlPoints)) return state;
+    state.controlPoints = [];
+    if (!state.cpScore)  state.cpScore  = { player: 0, ai: 0 };
+    if (!state.cpStreak) state.cpStreak = { player: 0, ai: 0 };
+    const seed = (typeof _structureSeed === 'function') ? _structureSeed(state) : 1;
+    _cpRollTruckTiles(state, seed).forEach((p, i) => {
+      state.controlPoints.push({
+        id: 'cp' + (i + 1),
+        label: CP_LABELS[i] || String(i + 1),
+        name: 'SCP-' + (CP_LABELS[i] || (i + 1)),
+        x: p.x, y: p.y,
+        holder: null,                              // 'player' | 'ai' | null (contested/empty)
+        scored: { player: false, ai: false },      // does that side currently have a point banked off THIS truck
+      });
+    });
+  } catch (e) { try { console.warn('[control points] seed failed', e); } catch (_) {} }
+  return state;
+}
+// Who holds this truck right now. PURE — reads state, mutates nothing, and is
+// safe to call from a renderer (it is, on every frame, by the tracker).
+function _cpHolderOf(state, cp) {
+  try {
+    if (!state || !cp) return null;
+    let p = 0, a = 0;
+    for (const u of (state.units || [])) {
+      if (!u || !u.alive || !u.pos) continue;
+      if (distance(u.pos, cp) > CP_RING) continue;
+      if (u.owner === 'player') p++;
+      else if (u.owner === 'ai') a++;
+    }
+    if (p > a) return 'player';
+    if (a > p) return 'ai';
+    return null;
+  } catch (e) { return null; }
+}
+// How many trucks `side` holds right now. PURE. The HUD reads this live so the
+// tracker shows the CURRENT board, not last turn's snapshot.
+function _cpHeldCount(state, side) {
+  try {
+    return (state && Array.isArray(state.controlPoints) ? state.controlPoints : [])
+      .filter(cp => cp && _cpHolderOf(state, cp) === side).length;
+  } catch (e) { return 0; }
+}
+// ── THE TICK ──────────────────────────────────────────────────────────────
+// Runs from startTurn, once per side per turn, KEYED ON `who`.
+// ⚠ Never on state.turnNumber. That counter is incremented in TWO places —
+//   endAITurn for single-player and the multiplayer path in scheduleAIStep —
+//   so a tick keyed on it double-counts in one mode and under-counts in the
+//   other, and the two failure modes look nothing like each other (CONTRACT
+//   R9). `who` is the only symmetric per-side signal in the loop.
+// Side W is scored at the start of W's OWN turn: that is the instant the
+// opponent has finished moving, so what the tracker shows W is what W actually
+// still holds going into its own turn.
+// ⚠ Mutates in place and returns NOTHING, matching _twTickGameMode. Writing
+//   `s = _cpTickControlPoints(s, who)` at the call site would set `s` to
+//   undefined, and startTurn's try/catch would then silently swallow every
+//   remaining turn-start tick — bleed, smoke, surfaces, the draw phase
+//   (CONTRACT R7).
+function _cpTickControlPoints(state, who) {
+  if (!state || !Array.isArray(state.controlPoints) || state.controlPoints.length === 0) return;
+  if (who !== 'player' && who !== 'ai') return;
+  // ⚠ MULTIPLAYER: TICK THE LOCAL SIDE ONLY. In MP each client is authoritative
+  // for its OWN turn-start and nobody else's, so `who === 'ai'` here means "the
+  // human on the other machine", and they will tick that side themselves.
+  // The exact double-count, traced through both call sites:
+  //   · USE_COLYSEUS_MP is false (index.html:45134 `const USE_COLYSEUS_MP = false`),
+  //     so `_mpColEnd` (index.html:151820) is false and onEndTurn takes the
+  //     `App.state = endPlayerTurn(App.state)` branch (:151827) — the full LOCAL
+  //     handoff, which runs startTurn(s,'ai') and would tick the OPPONENT's side
+  //     on MY machine;
+  //   · that state is then broadcast, the opponent adopts it wholesale at
+  //     `App.state = swapped` (index.html:183805 — and cpScore/cpStreak ride the
+  //     snapshot, they are NOT kept private the way the `player` block is), and
+  //     their TURN-START ON FLIP block (index.html:183858-183869) runs
+  //     startTurn(App.state,'player') — ticking THAT SAME SIDE a second time.
+  // Measured before this guard: one round, one side, score P0/A1 on the sender
+  // and P2/A0 on the receiver — streak +2 per round on your own client and +1 on
+  // your opponent's, so a client reached CP_STREAK_TO_WIN a full round early,
+  // stamped gameOver and showed the victory overlay while the other board still
+  // read streak 1 with the match live. Wrong winner AND a desync on the one
+  // condition that ends a match without a hero dying.
+  // REJECTED: stamping `state._cpTickedFor = {player:n, ai:n}` with turnNumber.
+  // It does NOT work here — the sender bumps turnNumber at index.html:151846
+  // (`turnNumber: _prevTurnNumber + 1`) AFTER its own tick, so the receiver sees
+  // a different number, the stamp misses, and it ticks anyway.
+  // The opponent's score and streak still reach us: they ride the adopted
+  // snapshot, and swapBattlePerspective already swaps holder/scored/cpScore/
+  // cpStreak (index.html:182048-182056). Single-player is untouched — there is
+  // no second client, so both sides must be ticked locally as before.
+  try { if (App.battlePrep && App.battlePrep.multiplayer && who !== 'player') return; } catch (e) {}
+  const log = state.log || (state.log = []);
+  if (!state.cpScore)  state.cpScore  = { player: 0, ai: 0 };
+  if (!state.cpStreak) state.cpStreak = { player: 0, ai: 0 };
+  const mine = who === 'player';
+  let held = 0, lost = 0;
+  const heldNames = [];
+  for (const cp of state.controlPoints) {
+    if (!cp) continue;
+    // Re-scanned from tile occupancy every single tick — see the header's R8 note.
+    cp.holder = _cpHolderOf(state, cp);
+    if (!cp.scored) cp.scored = { player: false, ai: false };
+    if (cp.holder === who) {
+      // (a) "each turn a player control a control point give them a point"
+      held++; heldNames.push(cp.label || cp.name);
+      state.cpScore[who] = (state.cpScore[who] | 0) + 1;
+      cp.scored[who] = true;
+    } else if (cp.scored[who]) {
+      // (a) "when they lose it take away the point" — ONE point back, the one
+      // this truck was banking. Never below 0: a side can only ever give back
+      // a point it was given, so the floor is arithmetic, not a clamp hiding a
+      // sign error.
+      state.cpScore[who] = Math.max(0, (state.cpScore[who] | 0) - 1);
+      cp.scored[who] = false;
+      lost++;
+    }
+  }
+  // (b) The streak. Consecutive means consecutive: below the threshold and it
+  // is 0, not one less. A player two turns in has to keep both trucks through
+  // one more of their own turn-starts.
+  const prev = state.cpStreak[who] | 0;
+  state.cpStreak[who] = (held >= CP_HOLD_TO_WIN) ? (prev + 1) : 0;
+  const now = state.cpStreak[who];
+  const side = mine ? 'You' : 'The enemy';
+  const has  = mine ? 'hold' : 'holds';   // "You hold" / "The enemy holds"
+  // ⚠ CONTRACT R26: showToast keeps only the LAST toast, so per-truck toasts
+  // would show one of three. The per-turn detail goes to s.log (which the rail
+  // shows, the log modal keeps and the replay recorder keys on) and at most one
+  // toast fires, for the single moment that actually needs interrupting.
+  if (held > 0) {
+    log.push({ msg: `🚚 ${side} ${has} ${held}/${state.controlPoints.length} SCP truck${held === 1 ? '' : 's'} (${heldNames.join(', ')}) — ${mine ? 'your' : 'their'} score ${state.cpScore[who] | 0}${now > 0 ? ` · ${now} turn${now === 1 ? '' : 's'} straight` : ''}.`, color: mine ? 'green' : 'red' });
+  } else if (lost > 0) {
+    log.push({ msg: `🚚 ${side} lost every SCP truck — ${mine ? 'your' : 'their'} score down to ${state.cpScore[who] | 0}.`, color: mine ? 'red' : 'amber' });
+  }
+  if (prev > 0 && now === 0) {
+    log.push({ msg: `🚚 ${side} dropped below ${CP_HOLD_TO_WIN} trucks — hold streak RESET to 0.`, color: mine ? 'red' : 'green' });
+  }
+  if (now === CP_STREAK_TO_WIN - 1) {
+    log.push({ msg: `🚚 ${side} ${mine ? 'are' : 'is'} ONE TURN from winning on control points — ${now}/${CP_STREAK_TO_WIN} straight.`, color: mine ? 'green' : 'red' });
+    try {
+      if (!App.replayViewing && typeof showToast === 'function') {
+        showToast(mine
+          ? `🚚 Hold both trucks one more turn to WIN.`
+          : `🚚 The enemy holds ${CP_HOLD_TO_WIN} trucks — they win next turn unless you break it.`, 3200);
+      }
+    } catch (e) {}
+  }
+  if (now >= CP_STREAK_TO_WIN) {
+    log.push({ msg: `🚚 ${side} held ${CP_HOLD_TO_WIN} of ${state.controlPoints.length} SCP trucks for ${CP_STREAK_TO_WIN} straight turns.`, color: mine ? 'green' : 'red' });
+  }
+}
+// The verdict. Returns the WINNER's side name — 'player' | 'ai' | null —
+// because that is what state.gameOver holds (it NAMES THE WINNER, not the
+// loser; see the comment above the safety sweep in renderBattle).
+// ⚠ PURE READ. CONTRACT R19: the objective evaluator runs on EVERY RENDER,
+//   dozens of times per turn. Anything that advanced progress in here would
+//   race to victory inside a single turn. Progress belongs in the tick above
+//   and nowhere else.
+function _cpEvalVictory(state) {
+  try {
+    if (!state || !Array.isArray(state.controlPoints) || state.controlPoints.length === 0) return null;
+    const st = state.cpStreak || {};
+    if ((st.player | 0) >= CP_STREAK_TO_WIN) return 'player';
+    if ((st.ai | 0) >= CP_STREAK_TO_WIN) return 'ai';
+    return null;
+  } catch (e) { return null; }
+}
+
+// True if this unit can SEARCH a ruin right now. Mirrors _unitCanLoot line for
+// line, minus the `!o.glowing` clause — a ruin never glows, nothing rises out
+// of a house. ⚠ CONTRACT R25: this is the THIRD copy of the same guard set, and
+// it is kept byte-aligned with the gate inside _lootStructureWithUnit ON
+// PURPOSE. If the two ever drift the action row appears, the click returns
+// false, and nothing is logged anywhere — a completely silent dead button.
+function _unitCanLootStructure(u) {
+  try {
+    const s = App.state;
+    if (!s || !u || !u.alive || !u.pos) return false;
+    if (u.owner !== 'player' || s.turn !== 'player') return false;
+    if (u.hasMoved && u.hasAttacked) return false;
+    return !!(Array.isArray(s.structures) && s.structures.some(o =>
+      o && o.lootable && !o.looted && o.x === u.pos.x && o.y === u.pos.y));
+  } catch (e) { return false; }
+}
+// mode: 'normal' | 'dna' | 'essence' | 'shards' | 'research' | 'destroy'
+// _lootWithUnit for buildings. Deliberately the same six modes so "search a
+// ruin" and "harvest a body" are one ability with two containers, which is the
+// requirement. What was dropped, and why:
+//  · the graveyard-removal block — a building never stamped a card;
+//  · trackMission('lootBody') — Scavenger / Pack Rat read "Loot N tombstones",
+//    and five ruins a map would finish them in two battles;
+//  · _rollChestDrops() — CONTRACT R33. It takes no arguments and rolls
+//    unconditionally, so wiring it to five ruins per map would multiply the
+//    chest/key drop rate across the WHOLE economy. Chests stay a body drop.
+function _lootStructureWithUnit(unitId, mode) {
+  try {
+    mode = mode || 'normal';
+    const s = App.state;
+    if (!s || !Array.isArray(s.structures) || !Array.isArray(s.units)) return false;
+    const u = s.units.find(x => x && x.id === unitId && x.alive);
+    if (!u || !u.pos) return false;
+    if (u.owner !== 'player' || s.turn !== 'player') return false;
+    if (u.hasMoved && u.hasAttacked) return false;          // turn already spent
+    const st = s.structures.find(o => o && o.lootable && !o.looted
+      && o.x === u.pos.x && o.y === u.pos.y);
+    if (!st) return false;
+    // 🔒 CONTRACT R12 + R14 — _LG is a singleton. Opening a second grid over an
+    // open one destroys the first's pending haul WITHOUT committing it, and the
+    // close that does run replaces Profile.fieldBag wholesale. Checked BEFORE
+    // the turn is spent (R15), so a refused search costs nothing.
+    if (typeof _LG !== 'undefined' && _LG && _LG.open) {
+      try { showToast('🎒 Finish the salvage grid you already have open.', 2600); } catch (e) {}
+      return false;
+    }
+
+    st.looted = true;
+    // ⚠ MUST-KEEP — the one line that spends the unit's turn. Searching a
+    // building is an action, exactly as harvesting a body is.
+    s.units = s.units.map(x => x.id === u.id ? { ...x, hasMoved: true, hasAttacked: true, _looted: true } : x);
+    // ⚠ MUST-KEEP (CONTRACT R13) — _lootGridOpen's commit writes into
+    // s._salvageRun only `if (s && s._salvageRun)` and NEVER creates it. Omit
+    // these two lines and the haul banks correctly while the end-of-battle
+    // summary reports zero, with no error anywhere to point at it.
+    s._salvageRun = s._salvageRun || { gained: {}, looted: 0 };
+    s._salvageRun.looted++;
+
+    // DESTROY — deny the loot, safely neutralize any risk. No consequence.
+    if (mode === 'destroy') {
+      const dMsg = `💣 ${u.name || 'Unit'} torched the ${st.risk ? RISK_META[st.risk].name + ' ' : ''}${st.name || 'ruin'} — nothing salvaged.`;
+      try { s.log = [...(s.log || []), { msg: dMsg, color: 'green' }]; } catch (e) {}
+      try { if (typeof playSfx === 'function') playSfx('uiBack'); } catch (e) {}
+      try { if (typeof showToast === 'function') showToast(dMsg, 2800); } catch (e) {}
+      try { App.ui.modalUnitId = null; } catch (e) {}
+      try { if (typeof render === 'function') render(); } catch (e) {}
+      return true;
+    }
+
+    // ⚠ MUST-KEEP — the haul pipeline, in this order: looter rarity boost →
+    // targeted-extraction bias → world-event loot mods → backpack multiplier.
+    // Reordering it changes the numbers; skipping a stage silently drops a
+    // whole progression system out of the ruin path.
+    let got = _looterRarityBoost((st.salvage && typeof st.salvage === 'object') ? st.salvage : {}, u);
+    if (mode === 'dna')     got = _biasSalvage(got, 'dna');
+    else if (mode === 'essence') got = _biasSalvage(got, 'corruptedEssence');
+    else if (mode === 'shards')  got = _biasSalvage(got, 'memoryShards');
+    if (typeof _applyEventLootMods === 'function') got = _applyEventLootMods(got);
+    try {
+      const _heroIdLoot = (App.battlePrep && App.battlePrep.hero && App.battlePrep.hero.id) || null;
+      const _bpMult = (typeof _battleBackpackLootMult === 'function' && _heroIdLoot)
+        ? _battleBackpackLootMult(_heroIdLoot)
+        : 1.0;
+      if (_bpMult > 1.0) {
+        const boosted = {};
+        for (const k in got) boosted[k] = Math.max(0, Math.round((got[k] | 0) * _bpMult));
+        got = boosted;
+      }
+    } catch (e) {}
+
+    let destLine, where;
+    if (mode === 'research') {
+      const _vehFuel = VEHICLE_LOOT_FUEL;
+      // ⚠ CONTRACT R15 — the turn was spent above, so EVERY early return from
+      // here on must refund it. That is what _unLoot is for; a new failure
+      // path added without one silently eats the unit's turn for nothing.
+      const _unLoot = (msg) => {
+        st.looted = false;
+        s._salvageRun.looted = Math.max(0, (s._salvageRun.looted | 0) - 1);
+        s.units = s.units.map(x => x.id === u.id ? { ...x, hasMoved: false, hasAttacked: false, _looted: false } : x);
+        showToast(msg, 5000);
+        try { if (typeof render === 'function') render(); } catch (e) {}
+      };
+      if (typeof playerOwnsVehicle !== 'function' || !playerOwnsVehicle()) {
+        _unLoot('🔒 Need a vehicle to send loot to camp. Buy one in the Vehicle Marketplace.');
+        return true;
+      }
+      {
+        const _haveFuel = (typeof getRes === 'function') ? (getRes('fuel') | 0) : 0;
+        if (_haveFuel < _vehFuel) {
+          _unLoot('⛽ Need ' + _vehFuel + ' Fuel to run the vehicle — you have ' + _haveFuel + '. Carry it in your bag instead, or refuel at Camp.');
+          return true;
+        }
+        if (typeof spendResources === 'function') spendResources({ fuel: _vehFuel });
+      }
+      const researchMult = (typeof _vmResearchMult === 'function') ? _vmResearchMult() : 0.6;
+      const led = (typeof _ensureSalvageLedger === 'function') ? _ensureSalvageLedger() : (Profile.salvage = Profile.salvage || {});
+      const banked = {};
+      for (const k in got) { const n = Math.max(0, Math.round((got[k] | 0) * researchMult)); if (n) { led[k] = (led[k] || 0) + n; banked[k] = n; } }
+      try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+      for (const k in banked) s._salvageRun.gained[k] = (s._salvageRun.gained[k] || 0) + banked[k];
+      const tierLbl = (typeof _vmResearchTierLabel === 'function') ? _vmResearchTierLabel() : ('×' + researchMult.toFixed(2));
+      destLine = `📦 Sent to Camp research (secured, ${tierLbl}): ${_resLine(banked) || 'nothing'}`;
+      var _namedLineForToast = _resLineNamed(banked) || 'nothing';
+      where = 'research';
+    } else if (typeof _lootGridOpen === 'function' && Object.keys(got).some((k) => (got[k] | 0) > 0)) {
+      // ⚠ THIS LINE IS THE FEATURE. The SAME _lootGridOpen a tombstone opens —
+      // drag, rotate-on-R, Take All, and your own carried loot shown as pieces
+      // you can swap into the container. `ctx` is two cosmetic strings and
+      // nothing else, which is exactly why it took no change to accept a
+      // building. `tombName` is the container's display name, not a claim that
+      // it is a tomb — renaming the key would fork _lootGridOpen for no gain.
+      // The Object.keys guard is the EMPTY-HAUL GUARD: an empty haul must fall
+      // through to the addToFieldBag branch, never open an empty modal.
+      // `icon` and `lootTitle` are OPTIONAL and both default to the tombstone's
+      // own strings inside _lootGridOpen, so every existing caller renders
+      // byte-for-byte as it did — the skull heading was the only thing that
+      // told a player a wrecked car was a grave.
+      _lootGridOpen(got, { tombName: st.name || 'ruin', unitName: u.name || 'Unit',
+                           icon: st.icon || '🏚',
+                           lootTitle: (st.icon || '🏚') + ' ' + (st.name || 'Ruin') + ' Salvage' });
+      destLine = '🎒 salvage cracked open — choosing what to carry';
+      var _namedLineForToast = 'salvage grid opened — drag your picks into the bag';
+      where = 'bag';
+    } else {
+      const { taken, left } = addToFieldBag(got);
+      for (const k in taken) { const n = taken[k] | 0; if (n) s._salvageRun.gained[k] = (s._salvageRun.gained[k] || 0) + n; }
+      const cap = _fieldBagCap(), usedSlots = _bagSlots(_ensureFieldBag());
+      destLine = `🎒 ${_resLine(taken) || 'nothing of use'}${_resLine(left) ? ' — ⚠ bag full, left ' + _resLine(left) : ''} · bag ${usedSlots}/${cap}`;
+      var _namedTaken = _resLineNamed(taken);
+      var _namedLeft  = _resLineNamed(left);
+      var _namedLineForToast = _namedTaken
+        ? _namedTaken + (_namedLeft ? ` · ⚠ bag full, left: ${_namedLeft}` : '')
+        : 'nothing of use';
+      where = 'bag';
+    }
+
+    // Risk consequence applies to ANY harvest (not Destroy/Leave) — the same
+    // HP-only, clamped-to-1 function the bodies use.
+    const riskMsg = _applyTombstoneRisk(s, u.id, st.risk);
+    let cardMsg = '';
+    try {
+      const lc = (typeof _rollLootCard === 'function') ? _rollLootCard(st) : null;
+      if (lc) {
+        cardMsg = ` · 🃏 CARD DROP: ${lc.icon || ''} ${lc.name} (${lc.rarity}) → collection`;
+        try { s.log = [...(s.log || []), { msg: `🃏 ${u.name || 'Unit'} found a card in the ruins — ${lc.name} (${lc.rarity})!`, color: 'gold' }]; } catch (e) {}
+      }
+    } catch (e) {}
+    let itemMsg = '', lootedItem = null;
+    try {
+      lootedItem = (typeof _rollLootItem === 'function') ? _rollLootItem(st) : null;
+      if (lootedItem) {
+        itemMsg = ` · 🎒 ITEM DROP: ${lootedItem.icon || ''} ${lootedItem.name} → inventory`;
+        try { s.log = [...(s.log || []), { msg: `🎒 ${u.name || 'Unit'} found an item — ${lootedItem.icon || ''} ${lootedItem.name}!`, color: 'gold' }]; } catch (e) {}
+      }
+    } catch (e) {}
+    const harvestMsg = `${u.name || 'Unit'} ${(STRUCTURE_KINDS[st.kind] || {}).verb || 'searches the ruin'} → ${destLine}${riskMsg ? ' · ' + riskMsg : ''}${cardMsg}${itemMsg}`;
+    const namedMsg = `🪙 Salvaged: ${_namedLineForToast || 'nothing'}${riskMsg ? ' · ' + riskMsg : ''}${cardMsg}${itemMsg}`;
+    try {
+      s.log = [...(s.log || []),
+        { msg: (st.icon || '🏚') + ' ' + harvestMsg, color: riskMsg ? 'red' : 'green' },
+        { msg: namedMsg,                             color: riskMsg ? 'amber' : 'green' },
+      ];
+    } catch (e) {}
+    try { if (typeof playSfx === 'function') playSfx(st.risk ? 'uiError' : 'uiConfirm'); } catch (e) {}
+    try { if (typeof showToast === 'function') showToast(namedMsg, riskMsg ? 5200 : 3400); } catch (e) {}
+    if (lootedItem) {
+      try {
+        setTimeout(() => {
+          try { if (typeof playSfx === 'function') playSfx('uiConfirm'); } catch (e) {}
+          try { if (typeof showToast === 'function') showToast(`🎒 ITEM LOOTED: ${lootedItem.icon || ''} ${lootedItem.name} — added to your inventory!`, 5200); } catch (e) {}
+        }, 700);
+      } catch (e) {}
+    }
+    try { App.ui.modalUnitId = null; } catch (e) {}
+    try { if (typeof render === 'function') render(); } catch (e) {}
+    return true;
+  } catch (e) { return false; }
+}
+// The extraction-choice overlay for a ruin. A SEPARATE function rather than a
+// `source` argument threaded through openExtractionMenu: that one is on the
+// tombstone path every player already uses, and a building has no business
+// changing its control flow. Same six modes, same markup, ruin wording.
+function openStructureExtractionMenu(unitId) {
+  try {
+    const s = App.state;
+    if (!s) return;
+    const u = (s.units || []).find(x => x && x.id === unitId && x.alive);
+    if (!u || !u.pos) return;
+    const st = (s.structures || []).find(o => o && o.lootable && !o.looted && o.x === u.pos.x && o.y === u.pos.y);
+    if (!st) return;
+    const ID = 'extract-menu';   // same id as the tombstone menu: only one may ever be open
+    const old = document.getElementById(ID); if (old) old.remove();
+    const rm = st.risk ? RISK_META[st.risk] : null;
+    const opt = (mode, label, desc, cls) =>
+      `<button data-extract="${mode}" style="display:block;width:100%;text-align:left;margin:4px 0;cursor:pointer;border-radius:9px;padding:0.55rem 0.8rem;border:1px solid ${cls};background:rgba(20,12,40,0.7);color:#e8ddff">
+        <strong style="color:#ffd166">${label}</strong><br><span class="small-text ink-dim">${desc}</span></button>`;
+    const ov = document.createElement('div');
+    ov.id = ID;
+    ov.style.cssText = "position:fixed;inset:0;z-index:2147483600;display:flex;align-items:center;justify-content:center;background:rgba(4,2,10,0.78);backdrop-filter:blur(3px)";
+    ov.innerHTML =
+      '<div style="max-width:min(440px,94vw);max-height:88vh;overflow:auto;background:linear-gradient(180deg,rgba(26,16,46,0.99),rgba(12,7,22,0.99));border:2px solid ' + (rm ? rm.color : 'rgba(212,175,55,0.6)') + ';border-radius:16px;padding:18px 20px;box-shadow:0 24px 70px rgba(0,0,0,0.8)">' +
+        '<div style="font-family:\'Cinzel\',serif;font-size:1.15rem;font-weight:800;color:#ffd166;margin-bottom:2px">' + (st.icon || '🏚') + ' ' + escapeHtml(st.name || 'Ruin') + '</div>' +
+        (rm ? '<div class="small-text" style="color:' + rm.color + ';margin-bottom:8px">' + rm.icon + ' ' + rm.name.toUpperCase() + ' — ' + rm.warn + '</div>'
+            : '<div class="small-text ink-dim" style="margin-bottom:8px">Choose how ' + escapeHtml(u.name || 'your unit') + ' searches it. This forfeits the unit\'s turn.</div>') +
+        opt('normal',  '🎒 Search It',            'Full salvage roll → the loot grid (carry risk).', 'rgba(212,175,55,0.5)') +
+        opt('dna',     '🧬 Harvest DNA',          'Biased toward DNA.', 'rgba(120,220,150,0.5)') +
+        opt('essence', '🟣 Drain Corrupted Essence','Biased toward Corrupted Essence.', 'rgba(155,107,255,0.5)') +
+        opt('shards',  '🧠 Extract Memory Shards', 'Biased toward Memory Shards.', 'rgba(120,200,255,0.5)') +
+        ((typeof playerOwnsVehicle === 'function' && playerOwnsVehicle())
+          ? (function () {
+              const _f = (typeof getRes === 'function') ? (getRes('fuel') | 0) : 0;
+              const _dry = _f < VEHICLE_LOOT_FUEL;
+              return opt('research',
+                '📦 Send to Camp (Research) — ⛽' + VEHICLE_LOOT_FUEL,
+                'Straight to SECURED storage (' + (typeof _vmResearchTierLabel === 'function' ? _vmResearchTierLabel() : '×0.6') + ') — no carry risk. Runs your vehicle: costs ' + VEHICLE_LOOT_FUEL + ' Fuel (you have ' + _f + ').'
+                  + (_dry ? ' ⛽ Not enough Fuel.' : ''),
+                _dry ? 'rgba(124,255,178,0.18)' : 'rgba(124,255,178,0.5)');
+            })()
+          : opt('research','🔒 Send to Camp (locked — need a vehicle)','Owning a car unlocks this. Buy one in the 🛒 Vehicle Marketplace.', 'rgba(124,255,178,0.18)')) +
+        opt('destroy', '💣 Burn It Out',           'No loot — safely neutralizes any risk.', 'rgba(255,120,90,0.5)') +
+        '<button id="extract-leave" style="display:block;width:100%;margin-top:6px;cursor:pointer;border-radius:9px;padding:0.5rem;border:1px solid rgba(184,136,255,0.4);background:transparent;color:#b8a0ff">↩ Leave It (keep your turn)</button>' +
+      '</div>';
+    document.body.appendChild(ov);
+    const close = () => ov.remove();
+    ov.onclick = (e) => { if (e.target === ov) close(); };
+    const lv = document.getElementById('extract-leave'); if (lv) lv.onclick = close;
+    ov.querySelectorAll('[data-extract]').forEach(b => {
+      b.onclick = () => { close(); _lootStructureWithUnit(unitId, b.getAttribute('data-extract')); };
+    });
+  } catch (e) {}
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -97969,6 +98962,17 @@ const initGame = (heroData, opponentHero, customCards, playerGoesFirst, chosenDe
   // 🌋 Seed the battlefield's environmental surfaces (oil / water / ice / ember
   // patches) so some maps open with hazards already in play.
   try { if (typeof _seedBattleSurfaces === 'function') _seedBattleSurfaces(state); } catch (e) {}
+  // 🏚 The five lootable ruins — car / church / school / hospital / house.
+  // Seeded HERE, beside the surfaces, because this is the last point at which
+  // both heroes are already on the board (the keep-out radius reads them) and
+  // nothing has been broadcast yet. Deterministic from the map seed, so both
+  // multiplayer clients and any replay lay the same buildings on the same map.
+  try { if (typeof _seedBattleStructures === 'function') _seedBattleStructures(state); } catch (e) {}
+  // 🚚 The three SCP containment trucks — the control points. Seeded AFTER the
+  // ruins on purpose: the placement reads state.structures so a truck is never
+  // parked on the same tile as a building. Same map seed, so both multiplayer
+  // clients and every replay fight over the same three tiles.
+  try { if (typeof _cpSeedControlPoints === 'function') _cpSeedControlPoints(state); } catch (e) {}
   // 🧬 Infection Zone — if this node is flagged infectious, the squad starts
   // the fight Infected unless a Mask relic is equipped.
   try { if (typeof _applyInfectionZone === 'function') _applyInfectionZone(state); } catch (e) {}
@@ -101611,6 +102615,12 @@ const startTurn = (state, who) => {
   // (after player's turn ends); oil-tower progress advances on player
   // turn start; RNG events roll once per AI turn.
   try { if (typeof _twTickGameMode === 'function') _twTickGameMode(s, who); } catch (e) { console.warn('[TW gameMode tick]', e); }
+  // 🚚 Control-point tick — re-scans who holds each SCP truck, moves the
+  // running score up or down, and advances or resets the hold streak. Keyed on
+  // `who`, never on s.turnNumber (CONTRACT R9), and called as a BARE STATEMENT
+  // because it mutates in place and returns nothing (CONTRACT R7): assigning
+  // its result to `s` would blank the state and silently kill every tick below.
+  try { if (typeof _cpTickControlPoints === 'function') _cpTickControlPoints(s, who); } catch (e) { console.warn('[control points tick]', e); }
   // 🩸 Bleed-out tick — each bleeding unit's countdown decrements once
   // per turn-start. Permadeath fires when the counter hits 0.
   try { if (typeof _stabilizeTickBleeding === 'function') s = _stabilizeTickBleeding(s); } catch (e) { console.warn('[stabilize tick]', e); }
@@ -103583,7 +104593,7 @@ const _BME_TORDER = Object.keys(_BME_TERRAIN);
 // _bbMapFromEditor converts one to the other WITHOUT touching the stored
 // format, so the editor keeps saving exactly what it saves today.
 // ═══════════════════════════════════════════════════════════════════════════
-const BB_VER = 'v119k4';
+const BB_VER = 'v119k5';
 // terrain key → board tile type. Anything unlisted is plain ground.
 const BB_TERRAIN_TYPE = { water:'hazard', lava:'hazard', blight:'hazard' };
 // editor prop key → the board's billboard prop vocabulary
@@ -103704,14 +104714,26 @@ function _bbMapSeed() {
 // window.__bbHexCheck() asserts the whole round trip at every rung.
 // So the ceiling is now what the eye needs. At the game's real 802x688 stage
 // rect one world unit of height is ~36 screen px, so:
-//   0.30 → ~11 px   the smallest step that reads as a STEP and not a bevel
-//   1.35 → ~49 px   total relief ≈ one full hex width (hexes measure ~50 px)
+//   0.34 → ~12 px   the smallest step that reads as a STEP and not a bevel
+//   1.36 → ~49 px   total relief ≈ one full hex width (hexes measure ~50 px)
 // BAR R1 asks for "chunky slabs at several heights with visible cliff faces …
 // height readable at a glance". Under ~10 px a face is an outline; the old
 // ladder's 4.7 px per step is why the board read as a coloured hex mosaic.
+//
+// 📏 THE RUNGS ARE EVENLY SPACED, AND THAT IS A PICKING CONSTRAINT.
+// They used to be [0, 0.30, 0.62, 0.95, 1.35] — gaps of 0.30 / 0.32 / 0.33 /
+// 0.40 — and the 0.40 at the top was measurably over the line. A tile's own
+// centre is 0.577 world units behind the back boundary of the two tiles in the
+// row in front of it (they are half a column either side of it, so at the
+// centre's x they reach back only to their ±30° vertices). The pick ray runs
+// about 1.45 units of z per unit of y at the far edge of the board, so a step
+// of Δ in front of a tile eats 1.45·Δ of that 0.577. Δ = 0.40 gives 0.58 —
+// over — and the sweep found the centres of (9,0) and (0,1) genuinely
+// unclickable. Δ = 0.34 gives 0.49, a 15% margin, and every rung now costs the
+// same, so THE FRINGE RULE below can be stated in rungs instead of in metres.
 // ⚠ This array is copied BYTE-FOR-BYTE into public/battle-board/_harness.html.
 // Change it here and re-copy, or the control capture is a lie.
-const _BB_ELEV = [0, 0.30, 0.62, 0.95, 1.35];
+const _BB_ELEV = [0, 0.34, 0.68, 1.02, 1.36];
 
 // Odd-r neighbour offsets, indexed [rowParity][edge], where `edge` is the same
 // index the stage's hexCorners() uses: edge i faces outward at i·60°.
@@ -103764,83 +104786,272 @@ function _bbGenTerrain(cols, rows, seed) {
 
   // ── the street network ────────────────────────────────────────────────────
   // NOT per-tile noise. Uncorrelated random per tile is the tell of a generated
-  // map; a place has roads that go somewhere. One avenue runs across the board
-  // through a central plaza, two side streets run up and down it, and the four
-  // lots those lines cut out are where the buildings used to be.
+  // map; a place has roads that go somewhere. Three streets run UP AND DOWN the
+  // board — a main avenue through the middle and one either side — and a cross
+  // street connects them near each end, which leaves six lots for the buildings
+  // that used to stand there.
+  //
+  // 🧭 THE MAIN LINES RUN NORTH–SOUTH ON PURPOSE, AND IT IS A PICKING
+  // CONSTRAINT RATHER THAN A LAYOUT PREFERENCE. See THE FRINGE RULE below: what
+  // buries a tile is a taller tile in the row IN FRONT of it, because that is
+  // what stands between it and the camera; a taller tile in the same ROW hides
+  // nothing, because it is at the same depth and only covers its own column. A
+  // street is rung 0 by definition, so an EAST–WEST avenue pins a whole row to
+  // the floor and forbids any real height within three rows either side of it —
+  // which is exactly why the previous layout could only put rung-3 and rung-4
+  // tiles in rows 0–3 and 8–11 and left the middle, where the fight actually
+  // happens, flat. A NORTH–SOUTH street pins a COLUMN instead, so its canyon
+  // walls may be sheer and full height and the relief is free to sit in the
+  // middle of the board where the eye is.
+  //
   // Every line passes through — or is mirrored about — the lattice centre, and
   // every wobble term is ODD in its argument, which is what keeps the whole
   // network its own 180° rotation. (Check: for the avenue residual
-  // r = az − Aꞏsin(kꞏax), r(−ax,−az) = −r(ax,az), so |r| is symmetric. For the
+  // r = ax − Aꞏsin(kꞏaz), r(−ax,−az) = −r(ax,az), so |r| is symmetric. For the
   // side-street pair r₁ = ax − D − Bꞏsin(mꞏaz) and r₂ = ax + D − Bꞏsin(mꞏaz),
-  // r₁(−ax,−az) = −r₂(ax,az), so min(|r₁|,|r₂|) is symmetric as a set.)
-  const avA = 0.34 + rnd() * 0.42, avK = 0.26 + rnd() * 0.2, avW = 0.80;
-  const csD = 3.0 + rnd() * 1.0, csB = 0.30 + rnd() * 0.40, csM = 0.30 + rnd() * 0.22, csW = 0.74;
-  const plzR = 1.5 + rnd() * 0.45;
-  function streetDist(ax, az) {
-    const av = Math.abs(az - avA * Math.sin(avK * ax * 2)) / avW;
+  // r₁(−ax,−az) = −r₂(ax,az), so min(|r₁|,|r₂|) is symmetric as a set — and the
+  // same argument transposed covers the cross-street pair in az.)
+  const avA = 0.50 + rnd() * 0.50, avK = 0.12 + rnd() * 0.10, avW = 0.42;
+  const csD = 4.1 + rnd() * 0.5, csB = 0.30 + rnd() * 0.45, csM = 0.14 + rnd() * 0.10, csW = 0.40;
+  const xsD = 4.15 + rnd() * 0.35, xsB = 0.35 + rnd() * 0.45, xsM = 0.20 + rnd() * 0.18, xsW = 0.34;
+  // 📐 SIGNED DISTANCE TO THE NEAREST CARRIAGEWAY EDGE, IN COLUMN WIDTHS.
+  // Negative on the road itself. This used to be each line divided by its own
+  // half-width and then Math.min'd together — three different units glued into
+  // one number. That is fine for the boolean `paved` it was written for and
+  // useless for the height gate below, which needs a REAL distance so it can
+  // let the ground climb back at a rate bounded PER TILE STEP. HEXSPEC §3 with
+  // hexW = 1 puts all six neighbours of a hex exactly 1.0 apart in (ax, az), so
+  // here "rungs per column width" IS "rungs per tile step", with no conversion
+  // and nothing to get wrong.
+  //
+  // ⚖ AND IT IS SPLIT BY DIRECTION, WHICH IS THE WHOLE POINT OF THE LAYOUT.
+  // Distance to a NORTH–SOUTH line varies with ax, so the ground may climb out
+  // of that gutter as fast as it likes: a sheer four-rung canyon wall is a step
+  // within a row and hides nothing (THE FRINGE RULE). Distance to a cross
+  // street varies with az, so THAT gate has to climb slowly or it re-creates
+  // the buried tile it exists to prevent. One `streetGap` for both would have
+  // to obey the slower of the two everywhere, and on a 14-wide board with a
+  // road every four columns that caps the entire map at rung 1 — measured, not
+  // guessed: the first build of this pass came back with 96 tiles at rung 1,
+  // four at rung 2 and nothing above.
+  function gapNS(ax, az) {
+    const av = Math.abs(ax - avA * Math.sin(avK * az * 2)) - avW;
     const wob = csB * Math.sin(csM * az * 2);
-    const cs = Math.min(Math.abs(ax - csD - wob), Math.abs(ax + csD - wob)) / csW;
-    const pl = Math.hypot(ax * 0.88, az * 1.10) / plzR;
-    return Math.min(av, cs, pl);                   // < 1 → paved
+    const cs = Math.min(Math.abs(ax - csD - wob), Math.abs(ax + csD - wob)) - csW;
+    return Math.min(av, cs);
+  }
+  function gapEW(ax, az) {
+    const xw = xsB * Math.sin(xsM * ax * 2);
+    return Math.min(Math.abs(az - xsD - xw), Math.abs(az + xsD - xw)) - xsW;
+  }
+  function streetGap(ax, az) {                     // < 0 → paved
+    return Math.min(gapNS(ax, az), gapEW(ax, az));
   }
 
+  // ── THE MASSIF — the relief the fight happens ON ──────────────────────────
+  // Height is built as a CONTINUOUS field in RUNG units and quantised once at
+  // the end, instead of being assigned per shell as an integer. That is what
+  // makes the no-burying constraint checkable rather than merely hoped for: the
+  // six neighbours of a hex are all exactly 1.0 apart in (ax, az), so a field
+  // whose gradient stays under one rung per unit quantises to a level field
+  // that steps by AT MOST ONE RUNG between neighbours. (Proof of the last step:
+  // if |Ha − Hb| ≤ 1 then round(Ha) and round(Hb) cannot differ by 2, because
+  // that would need Ha < 0.5 and Hb ≥ 1.5, i.e. |Ha − Hb| > 1.)
+  //
+  // The shape is a broad central mass whose terraces run ACROSS the board, so
+  // rows 3–8 — the middle, where the units stand and the eye goes — are the
+  // HIGH ground and the two deployment ends are the low ground. The build
+  // before this one had it exactly inverted: every rung-3 and rung-4 tile was
+  // in rows 0–3 or 8–11 and the middle topped out at rung 1, which is the "even
+  // border round an arena" this generator's own comment swears off, drawn in
+  // relief instead of in rubble.
+  const mfTop = 4.45, mfSlope = 0.95, mfFlat = 0.50;
+  const mfW1 = 1.25 + rnd() * 0.55, mfK1 = 0.62 + rnd() * 0.16;
+  const mfW2 = 0.25 + rnd() * 0.30, mfK2 = 0.60 + rnd() * 0.38;
+  // Where the crest is WIDEST, in column widths. Halfway between the avenue at
+  // ax = 0 and the side street at ax = csD, i.e. over the middle of a block —
+  // and it is derived from csD rather than typed so it cannot drift away from
+  // the street grid. It used to be a plain cos(k·ax), whose maximum is at ax = 0
+  // BY DEFINITION, so the crest was always widest exactly where the avenue cuts
+  // it down to rung 0. Two whole rungs of the ladder were unreachable for that
+  // reason alone, and nothing about the symptom pointed at it.
+  const mfCx = csD * 0.52;
+  function massif(ax, az) {
+    // The crest wobbles with ax so the terrace edges are not ruled lines. cos()
+    // is EVEN and |az| is even, so massif(−ax,−az) === massif(ax,az): the 180°
+    // symmetry holds by construction rather than by the mirror pass.
+    // ⚠ The wobble is RECTIFIED to [0, 1] and therefore only ever WIDENS the
+    // crest. A signed cosine swung the terrace line ±2 rows, which sounds like
+    // the same amount of interest and is not: where it swung NEGATIVE it pulled
+    // rows 4 and 7 down to rung 2, and THE FRINGE RULE then capped rows 5 and 6
+    // at rung 3 from both sides. That is how three successive attempts to reach
+    // the top of the ladder came back with a map whose maximum was 1.02 and no
+    // hint of why.
+    const w = mfW1 * (0.5 + 0.5 * Math.cos(mfK1 * (Math.abs(ax) - mfCx)))
+            + mfW2 * (0.5 + 0.5 * Math.cos(mfK2 * (Math.abs(ax) + 1.7)));
+    return mfTop - Math.max(0, Math.abs(az) - mfFlat - w) * mfSlope;
+  }
   // ── ruined building footprints ────────────────────────────────────────────
   // Sampled in ONE half and mirrored, so the pair is symmetric by construction.
   // Rejection-sampled off the road network and off each other: a building grown
   // through the road would erase the thing that makes the map read as a place.
+  // A lot is now a BUMP ON the massif rather than a tower of its own. It used
+  // to be three concentric shells stepping 4 / 3 / 2 across a radius of 1.25 —
+  // bands a third of a tile wide, so a single step could be TWO rungs and the
+  // apron met the street with a two-rung drop. Those were the buried tiles.
+  // A cone of bounded slope adds up to a rung and a half over a run of four
+  // columns instead, which still carries the crest to the top of the ladder.
+  // 📍 AND THE FIRST PAIR IS ANCHORED IN THE MIDDLE BAND, ON PURPOSE.
+  // |az| ≤ 1.9 is rows 3.3–7.7, i.e. inside rows 3–8. Left to uniform sampling
+  // the lots scatter over rows 0–5 and their mirrors, and the two that happen
+  // to land near the deployment ends are the two the cross-street gate holds
+  // down — which is how the previous build ended up with every tall tile in the
+  // border rows. Forcing one pair into the middle guarantees TWO rung-3+ masses
+  // in the half of the board the camera is pointed at, whatever the seed does.
   const lots = [];
-  for (let guard = 0; lots.length < 6 && guard < 600; guard++) {
+  for (let guard = 0; lots.length < 6 && guard < 900; guard++) {
     const p = A(Math.floor(rnd() * cols), Math.floor(rnd() * (rows / 2)));
-    const r = 1.25 + rnd() * 0.95;
-    if (streetDist(p.ax, p.az) < 1 + r * 0.5) continue;
-    if (lots.some(L => Math.hypot(L.ax - p.ax, L.az - p.az) < (L.r + r) * 0.9)) continue;
+    const r = 1.9 + rnd() * 1.2;
+    if (lots.length < 2 && Math.abs(p.az) > 1.9) continue;
+    if (streetGap(p.ax, p.az) < 0.45) continue;
+    if (lots.some(L => Math.hypot(L.ax - p.ax, L.az - p.az) < (L.r + r) * 0.55)) continue;
     lots.push({ ax: p.ax, az: p.az, r: r }, { ax: -p.ax, az: -p.az, r: r });
   }
-  // Three concentric shells, and they deliberately reach the TOP of the ladder:
-  // a ruin footprint has to stand a full unit-height above the street or the
-  // building it is the remains of reads as a kerb. Core → rung 4 (1.35, about
-  // one hex width on screen), the shell around it → rung 3, the outer apron →
-  // rung 2, which leaves rung 1 to the kerb step alone so the pavement still
-  // has its own distinct height and does not merge into the rubble.
-  function lotLevel(ax, az) {
-    let lv = 0;
+  const LOT_RISE = 0.55, LOT_CAP = 1.00;
+  function lotBump(ax, az) {
+    let b = 0;
     for (let i = 0; i < lots.length; i++) {
-      const L = lots[i], d = Math.hypot(ax - L.ax, az - L.az) / L.r;
-      if (d < 1) lv = Math.max(lv, d < 0.34 ? 4 : d < 0.68 ? 3 : 2);
+      const L = lots[i], d = Math.hypot(ax - L.ax, az - L.az);
+      if (d < L.r) b = Math.max(b, Math.min(LOT_CAP, (L.r - d) * LOT_RISE));
     }
-    return lv;
-  }
-  // Drifts. Rubble does not lie in an even border round an arena — it piles
-  // where something pushed it, so the edge band is gated on the debris field
-  // and comes out as three or four heaps, not a picture frame.
-  function driftLevel(x, z, ax, az) {
-    const edge = Math.min(x, cols - 1 - x, z, rows - 1 - z);
-    if (edge > 1) return 0;
-    const d = nsym(ax, az, 0.40, SALT_D);
-    return edge === 0 ? (d > 0.56 ? 2 : d > 0.44 ? 1 : 0) : (d > 0.60 ? 1 : 0);
+    return b;
   }
 
   // ── assemble ──────────────────────────────────────────────────────────────
+  // 🧱 THE HEIGHT GATE. The road is the LOW ground, always: it is what the
+  // player reads height against, and a street that climbed over a rubble heap
+  // would say the opposite of what the silhouette says. But it can no longer
+  // SLAM the tile to zero the way `paved ? 0 : …` did: a rung-3 tile with a
+  // rung-0 tile in the row behind it is exactly the buried-tile bug. So the
+  // carriageway pulls the field down to zero and lets it climb back at a rate
+  // bounded per tile step instead of dropping off a kerb four rungs high.
+  // 🛣 AND THE CROSS STREET IS SURFACED, NOT CUT. Only the north–south lines
+  // gate the height. An east–west street that dug itself down to rung 0 would
+  // pin a whole ROW to the floor, and THE FRINGE RULE would then forbid any
+  // real height for three rows either side of it — measured: with both gates
+  // live the whole 14×12 board topped out at rung 2 with four tiles on it.
+  // So the cross street is a road laid ALONG the terrace rather than a trench
+  // through it. It still reads as a street, because `paved` (which decides the
+  // material, the kerbstones and the asphalt) is the union of both gaps; it
+  // simply does not flatten the hillside it runs across, which is what a road
+  // on a slope actually looks like.
+  const NS_RISE = 9.0;                         // rungs per column width
   const out = [];
-  const moists = [];
   for (let z = 0; z < rows; z++) {
     for (let x = 0; x < cols; x++) {
       const p = A(x, z);
-      const paved = streetDist(p.ax, p.az) < 1;
-      // The road is the LOW ground, always: it is what the player reads height
-      // against, and a street that climbed over a rubble heap would say the
-      // opposite of what the silhouette says.
-      const lvl = paved ? 0 : Math.max(lotLevel(p.ax, p.az), driftLevel(x, z, p.ax, p.az));
-      const moist = nsym(p.ax, p.az, 0.30, SALT_M);
-      out.push({ x: x, z: z, elev: _BB_ELEV[lvl], _lvl: lvl, _pv: paved ? 1 : 0,
-                 _m: moist, _d: nsym(p.ax, p.az, 0.52, SALT_D) });
-      // Only FLAT ground competes for the water/grass quantiles: a lot core is
-      // rubble whatever its moisture, and letting those tiles hold slots in the
-      // sort silently ate the puddles on seeds whose wettest spots landed under
-      // a building.
-      if (lvl === 0) moists.push(moist);
+      const gn = gapNS(p.ax, p.az), ge = gapEW(p.ax, p.az);
+      const paved = gn < 0 || ge < 0;
+      const lb = lotBump(p.ax, p.az);
+      // Symmetric noise at a feature size of ~3 columns and half a rung of
+      // amplitude, so the terraces buckle instead of running as clean bands.
+      const rough = (nsym(p.ax, p.az, 0.30, SALT_D) - 0.5) * 0.45;
+      const h = Math.min(massif(p.ax, p.az) + lb + rough, Math.max(0, gn) * NS_RISE);
+      out.push({ x: x, z: z, _lvl: Math.max(0, Math.min(4, Math.round(h))),
+                 _pv: paved ? 1 : 0, _lb: lb,
+                 _m: nsym(p.ax, p.az, 0.30, SALT_M), _d: nsym(p.ax, p.az, 0.52, SALT_D) });
     }
   }
+
+  // 🚧 THE FRINGE RULE — the constraint that keeps every tile CLICKABLE.
+  // ═══════════════════════════════════════════════════════════════════════
+  //   No tile may sit more than ONE RUNG below either of its neighbours in an
+  //   ADJACENT ROW. Steps within a row are unconstrained.
+  // ═══════════════════════════════════════════════════════════════════════
+  // WHY IT EXISTS. A judge sampled 36 points inside every tile and asked
+  // `pickTile` which tile each one resolved to. On the shipped map (13,5),
+  // (4,8), (3,9) and (8,9) came back with almost nothing — five to seven
+  // samples out of thirty-six, and their CENTRES dead — because a rung-3 or
+  // rung-4 mound in the row in front of them stood between them and the
+  // camera. A tile you cannot click is a tile you cannot move to, cannot
+  // target and cannot select the unit on, WHILE THE DOM BOARD CAN STILL REACH
+  // IT: the two renderers disagreeing about what is reachable, which is the
+  // same "the UI lies about the rules" family as the scar at index.html:141543.
+  // `pickTile` was doing the physically correct thing. The generator was the
+  // bug, and this is where it is fixed — not by capping the ladder, because
+  // the height is what BAR R1 is judged on.
+  //
+  // WHY *ROWS* AND NOT ALL SIX NEIGHBOURS. Only the row in front can occlude:
+  // a taller tile in the same row is at the same depth and covers its own
+  // column, nothing behind it. Constraining all six would forbid a sheer
+  // canyon wall for no gain and, with the streets pinned to rung 0, would
+  // flatten the whole board to rungs 0–1 — there is not enough room on a 14×12
+  // lattice to terrace away from a road in every direction.
+  //
+  // WHY IT LOWERS AND NEVER RAISES. Raising the tile behind would work for the
+  // camera and would silently rebuild the road network on top of the rubble.
+  // Lowering only is also what makes this terminate: levels are bounded below
+  // by 0 and never increase, so the loop cannot oscillate.
+  //
+  // AND IT IS SYMMETRIC. The constraint is on a PAIR, so it reads the same
+  // from either end, and the odd-r neighbour relation maps onto itself under
+  // the 180° rotation (BOARD_H is even). A point-symmetric input therefore
+  // stays point-symmetric, and the mirror pass further down stays the no-op it
+  // is supposed to be rather than quietly re-introducing a violation.
+  function fringePass() {
+    for (let pass = 0; pass < rows + 2; pass++) {
+      let cut = 0;
+      for (let z = 0; z < rows; z++) {
+        for (let x = 0; x < cols; x++) {
+          const t = out[z * cols + x], nb = _BB_NB[z & 1];
+          let cap = 4;
+          for (let e2 = 0; e2 < 6; e2++) {
+            if (nb[e2][1] === 0) continue;       // same row — cannot occlude
+            const ox = x + nb[e2][0], oz = z + nb[e2][1];
+            if (ox < 0 || oz < 0 || ox >= cols || oz >= rows) continue;
+            cap = Math.min(cap, out[oz * cols + ox]._lvl + 1);
+          }
+          if (t._lvl > cap) { t._lvl = cap; cut++; }
+        }
+      }
+      if (!cut) break;
+    }
+  }
+  fringePass();
+  // 🛬 THE DEPLOYMENT SHELF — the second row in from each end is levelled DOWN
+  // to the outermost one, and it is the one place the fringe rule is not
+  // enough. At the far CORNERS the pick ray is not in the z–y plane at all: it
+  // also runs six and a half columns sideways, which lengthens it and flattens
+  // its descent per row, so the 0.34 that clears everywhere else does not clear
+  // there. Measured: with the rule alone, __bbHexCheck reported one dead
+  // centre, at (0,0), answered by (0,1) one rung above it.
+  // ⚠ IT LOWERS THE INNER ROW; IT MUST NOT RAISE THE OUTER ONE. Raising row 0
+  // to meet row 1 is free — nothing stands behind row 0 — but the mirror of
+  // that operation raises row 11, which is the row NEAREST the camera, and that
+  // promptly buried (10,10). Any raise makes a tile a new occluder for the row
+  // behind it; only a lowering is safe in both directions, which is what lets
+  // the same operation run at both ends and keep the map its own 180° rotation.
+  // The fringe pass is re-run afterwards because a lowering can open a two-rung
+  // step further in.
+  function shelfPass() {
+    for (let x = 0; x < cols; x++) {
+      for (const z of [1, rows - 2]) {
+        const outward = z === 1 ? -1 : 1;
+        const nb = _BB_NB[z & 1], t = out[z * cols + x];
+        let lv = t._lvl;
+        for (let e2 = 0; e2 < 6; e2++) {
+          if (nb[e2][1] !== outward) continue;
+          const ox = x + nb[e2][0], oz = z + outward;
+          if (ox < 0 || ox >= cols) continue;
+          lv = Math.min(lv, out[oz * cols + ox]._lvl);
+        }
+        t._lvl = lv;
+      }
+    }
+  }
+  shelfPass(); fringePass();
+  for (const t of out) t.elev = _BB_ELEV[t._lvl];
+
   // 💧 QUANTILES, NOT FIXED CUTOFFS. Thresholding a noise field at a constant
   // is a coin flip on how much water and grass a given seed happens to get: an
   // early build of this ran four seeds and one of them produced ZERO grass on a
@@ -103849,15 +105060,30 @@ function _bbGenTerrain(cols, rows, seed) {
   // seed gets the same amount of overgrowth in a different shape. The field is
   // symmetric and a quantile is a whole-board statistic, so this does not break
   // the 180° symmetry.
-  const sorted = moists.slice().sort((a, b) => a - b);
-  const qAt = f => sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(f * sorted.length)))];
-  const qWater = qAt(0.955), qGrass = qAt(0.70);
+  //
+  // 🎨 AND MATERIAL IS NOT HEIGHT. The pass this replaces opened with
+  // `if (_lvl >= 2) surf = 'rubble'`, which welded the two questions together:
+  // every single one of the 36 tiles at the top of the ladder came out rubble,
+  // 100% of them, and grass, dirt and asphalt could only ever exist on the
+  // floor. BAR R1 asks for four materials at four heights — "rock plateau,
+  // dirt shelf, grass shelf, and a wide marsh floor" — so `_lvl` now answers
+  // only "how high" and the moisture and debris fields answer "made of what",
+  // at every height. Standing water is the one exception and stays on the
+  // floor, because a puddle on a plateau is not a thing.
+  const qOf = (arr, f) => {
+    const s = arr.slice().sort((a, b) => a - b);
+    return s.length ? s[Math.min(s.length - 1, Math.max(0, Math.floor(f * s.length)))] : 1;
+  };
+  const land = out.filter(t => !t._pv);
+  const qWater = qOf(out.filter(t => !t._pv && t._lvl === 0).map(t => t._m), 0.86);
+  const qGrass = qOf(land.map(t => t._m), 0.60);
+  const qRub   = qOf(land.map(t => t._d + t._lb * 0.34), 0.52);
   for (const t of out) {
-    if (t._lvl >= 2) t.surf = 'rubble';
-    else if (t._lvl === 1) t.surf = t._d > 0.46 ? 'rubble' : 'dirt';
-    else if (t._m >= qWater) t.surf = 'water';
+    if (t._pv) t.surf = 'asphalt';
+    else if (t._lvl === 0 && t._m >= qWater) t.surf = 'water';
     else if (t._m >= qGrass) t.surf = 'grass';
-    else t.surf = t._pv ? 'asphalt' : 'dirt';
+    else if (t._d + t._lb * 0.34 >= qRub) t.surf = 'rubble';
+    else t.surf = 'dirt';
   }
 
   // 🛤 THE KERB STEP. Pavement stands one step above the carriageway — that is
@@ -103869,14 +105095,25 @@ function _bbGenTerrain(cols, rows, seed) {
   // it is made of are two questions, and an earlier build conflated them —
   // raising the kerb there turned every verge into rubble.
   for (const t of out) {
-    if (t.elev || t._pv) continue;
+    // Standing water is exempt: a puddle that stands one step PROUD of the
+    // street it drained off is not a puddle. The first run of the decoupled
+    // surface pass kerbed all eight water tiles because the kerb reads `elev`
+    // and the surface pass had already run.
+    if (t.elev || t._pv || t.surf === 'water') continue;
     const nb = _BB_NB[t.z & 1];
     for (let e2 = 0; e2 < 6; e2++) {
       const ox = t.x + nb[e2][0], oz = t.z + nb[e2][1];
       if (ox < 0 || oz < 0 || ox >= cols || oz >= rows) continue;
-      if (out[oz * cols + ox]._pv) { t.elev = _BB_ELEV[1]; break; }
+      if (out[oz * cols + ox]._pv) { t._lvl = 1; break; }
     }
   }
+  // ⚠ THE KERB IS A RAISE, AND A RAISE IS WHAT BURIES. Re-run the two passes
+  // that guarantee it cannot. On seed 424242 the kerb lifted (0,1) one rung
+  // above (0,0) AFTER the shelf had levelled the pair, and the far corner went
+  // dead again — a one-line raise reopening a bug three passes had just closed,
+  // with nothing in the kerb code to suggest it could.
+  shelfPass(); fringePass();
+  for (const t of out) t.elev = _BB_ELEV[t._lvl];
 
   // 🪞 Belt and braces — see the header. Pairs are taken by LINEAR index so this
   // still terminates, and still pairs correctly, if either dimension is ever
@@ -103951,9 +105188,9 @@ function _bbGenTerrain(cols, rows, seed) {
     b.deco = d.map(o => ({ k: o.k, u: R2(-o.u), v: R2(-o.v), s: o.s, r: R2((o.r + Math.PI) % TAU) }));
   }
 
-  // Emit the wire shape only. `_lvl`/`_pv` were scratch; `elev` and `deco` are
-  // dropped when empty because this array crosses a postMessage boundary once
-  // per battle and 168 tiles of "elev: 0" is pure freight.
+  // Emit the wire shape only. `_lvl`/`_pv`/`_lb`/`_m`/`_d` were scratch; `elev`
+  // and `deco` are dropped when empty because this array crosses a postMessage
+  // boundary once per battle and 168 tiles of "elev: 0" is pure freight.
   return out.map(t => {
     const o = { x: t.x, z: t.z, surf: t.surf };
     if (t.elev) o.elev = t.elev;
@@ -104007,7 +105244,13 @@ function _bbMapFromEditor(raw) {
   return {
     id: m.id || 'editor', name: m.name || 'Battlemap', cols: cols, rows: rows,
     timeOfDay: _bbTimeOfDay(), location: _bbActiveLocationId(),
-    ground: { base: '#2a2418', accent: '#4a3f24' },
+    // ⛰ The ground pair is what shows THROUGH and AROUND the tiles — the apron,
+    // the skirt's own floor and every gap. #2a2418 is L=36, near-black, so it
+    // dragged the frame's histogram down exactly where the tile palette was
+    // already too dark (see SURF in battle-board/index.html). Lifted to a lit
+    // dry-earth value with the SAME hue and chroma; the tiles still read a
+    // clear step above it, which is the only thing this pair has to do.
+    ground: { base: '#6b5c3e', accent: '#8a7846' },
     tiles: tiles, events: [],
     spawns: { mine: [[2, rows - 1], [3, rows - 1], [4, rows - 1], [5, rows - 1]],
               foe:  [[2, 0], [3, 0], [4, 0], [5, 0]] }
@@ -104687,6 +105930,64 @@ function _bbStagePushTombs() {
   _BBS.tombKey = key;
   _bbStagePost('tombs', { list: list });
 }
+// 🏚 The five lootable ruins. Modelled on _bbStagePushTombs above: read the
+// game's own array, rename game.y → board.z (CONTRACT §1.1 — get this backwards
+// and the whole board transposes silently), JSON-diff against a key on _BBS so
+// a settled board sends nothing, and post only on change.
+// ⚠ No image is resolved and none is sent. Ruins are drawn PROCEDURALLY by
+//   drawStruct in the stage, which sidesteps two live traps at once: `image` is
+//   a HEAVY_KEY blanked out of every multiplayer snapshot (CONTRACT R11), and a
+//   blob: URL cannot cross into the iframe at all (the reason the tombs push
+//   above nulls them). `kind` is a five-value enum, so it survives both.
+function _bbStagePushStructs() {
+  const src = (App.state && Array.isArray(App.state.structures)) ? App.state.structures : [];
+  const list = [];
+  for (const t of src) {
+    if (!t || t.x == null || t.y == null) continue;
+    list.push({ x: t.x | 0, z: t.y | 0, kind: String(t.kind || 'house'),
+                lootable: !!t.lootable, looted: !!t.looted, risk: t.risk || null });
+  }
+  const key = JSON.stringify(list);
+  if (key === _BBS.structKey) return;
+  _BBS.structKey = key;
+  _bbStagePost('structs', { list: list });
+}
+// 🚚 The three SCP control-point trucks. Same three moves as the two pushes
+// above: rename game.y → board.z (CONTRACT §1.1 — backwards and the whole board
+// transposes with no error), JSON-diff against a key on _BBS so a settled board
+// sends nothing, post only on change.
+// `holder` rides along because it is what the stage colours the node array and
+// the ground ring with — the board is a renderer and owns no rule, but it has
+// to be TOLD the answer or the player cannot see who is holding what. `held`
+// and `streak` ride along for the same reason: the truck itself shows how close
+// the holder is to winning, so the read exists on the field and not only in the
+// rail. No image is resolved and none is sent: the trucks are drawn
+// procedurally, which sidesteps `image` being a HEAVY_KEY blanked out of every
+// multiplayer snapshot (CONTRACT R11) and blob: URLs being unable to cross into
+// the iframe at all.
+function _bbStagePushCPs() {
+  const s = App.state;
+  const src = (s && Array.isArray(s.controlPoints)) ? s.controlPoints : [];
+  const list = [];
+  for (const c of src) {
+    if (!c || c.x == null || c.y == null) continue;
+    const holder = (typeof _cpHolderOf === 'function') ? _cpHolderOf(s, c) : (c.holder || null);
+    list.push({
+      x: c.x | 0, z: c.y | 0,
+      label: String(c.label || ''),
+      // 'mine' / 'foe' / null — the board's own ownership vocabulary, the same
+      // rename spawnUnit does. Sending 'player'/'ai' would make the stage learn
+      // a second one.
+      side: holder === 'player' ? 'mine' : (holder === 'ai' ? 'foe' : null),
+      streak: holder ? (((s && s.cpStreak && s.cpStreak[holder]) | 0)) : 0,
+      need: CP_STREAK_TO_WIN,
+    });
+  }
+  const key = JSON.stringify(list);
+  if (key === _BBS.cpKey) return;
+  _BBS.cpKey = key;
+  _bbStagePost('cps', { list: list });
+}
 // 🎨 KEEP THE DEFS HONEST AS ART STREAMS IN.
 // ⚠ `_bbUnitDefs` resolves a unit's sprite ONCE, and with on-demand art streaming
 // `getSpriteFrames` returns null on a COLD miss — it only kicks off the load and
@@ -104871,6 +106172,8 @@ function _bbStageMount() {
       _bbStagePushDefs(false);
       _bbStagePushPaint();
       _bbStagePushTombs();
+      _bbStagePushStructs();
+      _bbStagePushCPs();
       _bbStagePushSurfaces();
       let key = '';
       try { key = _bbActiveLocationId() + '|' + _bbTimeOfDay(); } catch (e) {}
@@ -104939,8 +106242,8 @@ function _bbStageMount() {
       } catch (e) {}
       try { _BBS.key = _bbActiveLocationId() + '|' + _bbTimeOfDay(); } catch (e2) {}
       _bbStagePost('init', _bbStagePayload());
-      _BBS.unitKey = ''; _BBS.paintKey = ''; _BBS.tombKey = ''; _BBS.defKey = ''; _BBS._defsAt = 0; _BBS.surfKey = '';
-      _bbStagePushUnits(); _bbStagePushPaint(); _bbStagePushTombs(); _bbStagePushSurfaces();
+      _BBS.unitKey = ''; _BBS.paintKey = ''; _BBS.tombKey = ''; _BBS.structKey = ''; _BBS.cpKey = ''; _BBS.defKey = ''; _BBS._defsAt = 0; _BBS.surfKey = '';
+      _bbStagePushUnits(); _bbStagePushPaint(); _bbStagePushTombs(); _bbStagePushStructs(); _bbStagePushCPs(); _bbStagePushSurfaces();
     });
   }
   let host = document.getElementById('bb-stage-host');
@@ -134868,6 +136171,45 @@ function _renderBattleImmediateImpl() {
       if (verdict === 'loss') { s.gameOver = 'ai';     s.log = (s.log || []).concat([{ msg: '🎯 Objective failed — defeat.',   color: 'red' }]); }
     } catch (e) { console.warn('[TW] objective eval failed', e); }
   }
+  // 🚚 CONTROL-POINT VICTORY — the second way to win, and deliberately NOT
+  // behind the Territory-Wars gate directly above.
+  // ⚠ CONTRACT R5, the gate everybody forgets: the block above requires
+  //   App.battlePrep.territoryWarsAttack, which is FALSE in a normal battle.
+  //   Inheriting that condition would tick the score every turn, paint the
+  //   tracker every render, and never once end the match — a routing bug that
+  //   reads exactly like a scoring bug. The trucks are seeded into every
+  //   battle, so their verdict is evaluated in every battle.
+  // ⚠ Re-evaluated on EVERY render on purpose. _applyHeroGuardian (earlier in
+  //   this same function) can clear s.gameOver back to null, and the hero-death
+  //   sweeps re-derive their own verdict at each turn start. Because this is a
+  //   pure read of streak state that PERSISTS on s.cpStreak, a control-point
+  //   win that some later path clears is simply re-stamped on the next pass —
+  //   which is why the verdict lives in a read and the progress lives in the
+  //   turn tick, and not the other way round.
+  if (!s.gameOver && !App.replayViewing) {
+    try {
+      const cpWin = (typeof _cpEvalVictory === 'function') ? _cpEvalVictory(s) : null;
+      if (cpWin) {
+        // gameOver NAMES THE WINNER — same convention as every other site.
+        s.gameOver = cpWin;
+        // ⚠ The VERDICT is idempotent (a pure read of persistent streak state,
+        //   deliberately re-stamped if something clears gameOver — see above).
+        //   The LOG LINE is not: _applyHeroGuardian clearing gameOver and this
+        //   block re-stamping it on the next render pushed a SECOND "VICTORY!"
+        //   line into s.log, which the rail shows, the log modal keeps and the
+        //   replay recorder plays back. One stamp per match, keyed on the state
+        //   itself so it survives the object spreads the reducers do.
+        if (s._cpWinLogged !== cpWin) {
+          s._cpWinLogged = cpWin;
+          s.log = (s.log || []).concat([{
+            msg: cpWin === 'player'
+              ? `🚚 ${CP_HOLD_TO_WIN} of ${CP_COUNT} SCP trucks held for ${CP_STREAK_TO_WIN} straight turns — VICTORY!`
+              : `🚚 The enemy held ${CP_HOLD_TO_WIN} of ${CP_COUNT} SCP trucks for ${CP_STREAK_TO_WIN} straight turns — defeat.`,
+            color: cpWin === 'player' ? 'green' : 'red' }]);
+        }
+      }
+    } catch (e) { console.warn('[control points] victory eval failed', e); }
+  }
   // Record progress once when game ends — but NEVER while viewing a replay, otherwise
   // re-watching a finished battle would award gems / stats / achievements all over again.
   if (s.gameOver && !App.battleProgressRecorded && !App.replayViewing) {
@@ -134995,6 +136337,12 @@ function _renderBattleImmediateImpl() {
                approved mockup: header · field · heroes · actions · log · ult ·
                end turn · consumables. The CENTER board (below) is untouched. -->
           <div class="bc-rail bchrome">
+            <!-- 🚚 Control points come FIRST in the rail: the banner states the
+                 alternate victory condition in one sentence and the tracker is
+                 the clock on it. Both are built by their own try/catch'd helper
+                 (CONTRACT R1) so a bad frame costs the tracker, not the HUD. -->
+            ${(typeof _cpObjectiveBanner === 'function') ? _cpObjectiveBanner(s) : ''}
+            ${(typeof _cpTracker === 'function') ? _cpTracker(s) : ''}
             ${twObjectiveBanner}
             ${(App.battlePrep && App.battlePrep.multiplayer && typeof isWaitingForOpponent === 'function' && isWaitingForOpponent())
               ? `<div class="mp-waiting-banner">🕓 <strong>Waiting for ${escapeHtml((App.battlePrep && App.battlePrep.opponentName) || 'opponent')}…</strong> Their turn. <button class="btn-mini" style="margin-left:8px;padding:2px 9px;font-size:0.72rem;vertical-align:middle;cursor:pointer" title="Stuck? Ask your opponent to re-send the board." onclick="try{_mpRequestResync('manual');if(typeof showToast==='function')showToast('🔄 Re-syncing with opponent…',1400);}catch(e){}">🔄 Re-sync</button></div>`
@@ -141814,6 +143162,98 @@ try {
     }, true);
   }
 } catch (e) {}
+// ════════════════════════════════════════════════════════════════════════
+// 🚚 CONTROL-POINT HUD — a persistent objective banner and a three-truck
+// tracker, both mounted at the very top of the battle rail.
+// ⚠ CONTRACT R1, and it is the single most expensive mistake available in this
+//   file: renderBattle SWALLOWS EXCEPTIONS and keeps the last good frame. A
+//   throw in a HUD builder does not surface anywhere — the board simply stops
+//   updating and the game looks frozen. Both builders below therefore carry
+//   their own try/catch returning '', the same per-item isolation renderHandStrip
+//   uses for a card.
+// ⚠ Both are PURE READS of state. They run on every render (dozens of times a
+//   turn); the score and the streak are advanced once per side per turn, in
+//   _cpTickControlPoints, and nowhere else. What these two read live is only
+//   `holder`, so the tracker shows the CURRENT board rather than last turn's
+//   snapshot — the player can watch a truck flip the moment a unit steps into
+//   the ring, before the tick banks anything for it.
+// ════════════════════════════════════════════════════════════════════════
+function _cpObjectiveBanner(s) {
+  try {
+    if (!s || !Array.isArray(s.controlPoints) || s.controlPoints.length === 0) return '';
+    const n = s.controlPoints.length;
+    // BAR R3: one plain sentence of what must happen, persistent, never modal.
+    return `<div class="tw-objective-banner" title="Every turn you hold a truck you gain a point; the turn you lose it the point goes back. Holding ${CP_HOLD_TO_WIN} at the start of ${CP_STREAK_TO_WIN} straight turns wins outright.">`
+      + `<span class="cpb-ic">🚚</span>`
+      + `<span class="cpb-lab">OBJECTIVE</span>`
+      + `<span class="cpb-txt">Hold <b>${CP_HOLD_TO_WIN} of the ${n} SCP trucks</b> at the start of <b>${CP_STREAK_TO_WIN} straight turns</b> to win the battle — or defeat the enemy hero.</span>`
+      + `</div>`;
+  } catch (e) { return ''; }
+}
+function _cpTracker(s) {
+  try {
+    if (!s || !Array.isArray(s.controlPoints) || s.controlPoints.length === 0) return '';
+    const pts = s.controlPoints;
+    const score  = s.cpScore  || { player: 0, ai: 0 };
+    const streak = s.cpStreak || { player: 0, ai: 0 };
+    // ⚠ CONTRACT R25 — ONE source of truth for the verdict. This used to
+    // re-derive `holder` from its own inline ring census, which made three
+    // separate copies of the same majority arithmetic (here, _cpHolderOf, and
+    // the AI scorer). The repo's own comments warn that drift between copies of
+    // a guard is SILENT — the tracker would have gone on saying YOURS while the
+    // tick banked nothing, with nothing logged anywhere. The counts below are
+    // still gathered locally, but ONLY as display: the tooltip has to show its
+    // working ("2 of yours vs 2 of theirs — tied") or "simple and legible" is
+    // just an assertion. The verdict itself comes from _cpHolderOf, and the
+    // held totals from _cpHeldCount, so the HUD cannot disagree with the rule.
+    const heldYou  = (typeof _cpHeldCount === 'function') ? _cpHeldCount(s, 'player') : 0;
+    const heldThem = (typeof _cpHeldCount === 'function') ? _cpHeldCount(s, 'ai')     : 0;
+    const cards = pts.map(cp => {
+      if (!cp) return '';
+      let mine = 0, foe = 0;
+      for (const u of (s.units || [])) {
+        if (!u || !u.alive || !u.pos) continue;
+        if (distance(u.pos, cp) > CP_RING) continue;
+        if (u.owner === 'player') mine++; else if (u.owner === 'ai') foe++;
+      }
+      const holder = (typeof _cpHolderOf === 'function') ? _cpHolderOf(s, cp) : null;
+      const contested = !holder && (mine > 0 || foe > 0);
+      const cls = holder === 'player' ? 'held-you' : (holder === 'ai' ? 'held-them' : (contested ? 'contested' : ''));
+      const who = holder === 'player' ? 'YOURS' : (holder === 'ai' ? 'ENEMY' : (contested ? 'CONTESTED' : 'OPEN'));
+      const why = contested
+        ? `${mine} of yours vs ${foe} of theirs in the ring — tied, so nobody holds it.`
+        : (holder ? `${holder === 'player' ? mine : foe} unit${(holder === 'player' ? mine : foe) === 1 ? '' : 's'} in the ring against ${holder === 'player' ? foe : mine}.`
+                  : 'Nobody in the capture ring.');
+      const ttl = `${cp.name || 'SCP truck'} at (${cp.x}, ${cp.y}) — ${why} Hold it at the start of your turn to bank a point.`;
+      return `<div class="cp-card ${cls}" title="${escapeHtml(ttl)}">`
+        + `<span class="cp-nodes"><i></i><i></i><i></i></span>`
+        + `<span class="cp-truck">🚚</span>`
+        + `<span class="cp-name">${escapeHtml(cp.label || cp.name || '')}</span>`
+        + `<span class="cp-who">${who}</span>`
+        + `</div>`;
+    }).join('');
+    const pips = (n) => Array.from({ length: CP_STREAK_TO_WIN },
+      (_, i) => `<i class="${i < n ? 'on' : ''}"></i>`).join('');
+    // "one turn from losing" is the read the requirement calls out by name, so
+    // it gets the only animation in the tracker — on EITHER side's row, because
+    // being one turn from winning matters just as much as one turn from losing.
+    const row = (side, label, n, held) => {
+      const brink = n >= (CP_STREAK_TO_WIN - 1);
+      return `<div class="cp-streak ${side}${brink ? ' brink' : ''}" title="${escapeHtml(
+          `${label} currently hold ${held} of ${pts.length}. ${n} straight turn${n === 1 ? '' : 's'} at ${CP_HOLD_TO_WIN}+ so far; ${Math.max(0, CP_STREAK_TO_WIN - n)} more to win.`)}">`
+        + `<span class="cp-sl">${label}</span>`
+        + `<span class="cp-sub">${held} of ${pts.length} held · ${n} turn${n === 1 ? '' : 's'} straight</span>`
+        + `<span class="cp-pips">${pips(n)}</span>`
+        + `</div>`;
+    };
+    return `<div class="cp-track panel">`
+      + `<div class="cp-head"><span class="cp-title">SCP CONTROL</span>`
+      + `<span class="cp-tally"><span class="you">${score.player | 0}</span><span class="sep">·</span><span class="them">${score.ai | 0}</span></span></div>`
+      + `<div class="cp-row">${cards}</div>`
+      + `<div class="cp-streaks">${row('you', 'YOU', streak.player | 0, heldYou)}${row('them', 'ENEMY', streak.ai | 0, heldThem)}</div>`
+      + `</div>`;
+  } catch (e) { return ''; }
+}
 function _bcPanel(s, aiHero, playerHero) {
   const tm = _bcpTimer(s);
   const turnN = s.turnNumber || s.turn_count || 1;
@@ -142588,6 +144028,23 @@ function renderBoard() {
         if (_twOilTower.extracted) tileClasses.push('tw-oil-done');
         else if (_twOilTower.progress > 0) tileClasses.push('tw-oil-active');
       }
+      // 🚚 SCP control point — the truck's own tile, plus its six-hex CAPTURE
+      // RING. The ring is painted because the capture rule is "count the units
+      // inside it": a rule the player cannot SEE the boundary of is a rule they
+      // cannot plan around, and they would be left guessing why a truck flipped.
+      // Both classes are additive tints; neither touches the tile's own
+      // surface/target/threat classes.
+      if (Array.isArray(s.controlPoints)) {
+        for (const _cp of s.controlPoints) {
+          if (!_cp) continue;
+          const _d = distance({ x, y }, _cp);
+          if (_d > CP_RING) continue;
+          const _h = (typeof _cpHolderOf === 'function') ? _cpHolderOf(s, _cp) : _cp.holder;
+          tileClasses.push(_d === 0 ? 'cp-tile' : 'cp-ring');
+          tileClasses.push(_h === 'player' ? 'cp-you' : (_h === 'ai' ? 'cp-them' : 'cp-open'));
+          break;   // rings are spaced ≥2 apart, so a tile belongs to at most one
+        }
+      }
       // 🌌 Polycreation — paint hero-radius ring while fusion-selection is up.
       if (App.ui && App.ui.fusionMode && !App.ui.fusionMode.confirmed) {
         const fmHero = (s.units || []).find(u => u && u.owner === 'player' && u.isHero && u.alive);
@@ -142852,6 +144309,44 @@ function renderBoard() {
             : (ts.looted ? `${escapeHtml(ts.name || 'Body')} — looted` : escapeHtml(ts.name || 'Tombstone')));
         cellInner += `<div class="${cls}" title="${ttl}">${inner}${reviveHint}${lootBadge}</div>`;
       }
+      // 🏚 Lootable ruin on this tile. The DOM board is hidden while the canvas
+      // stage is mounted, but it is still the renderer for the browser pane,
+      // for reduced-motion / no-iframe fallbacks and for anyone who turns the
+      // 3D stage off — a marker that only existed in the stage would make the
+      // ruins vanish for them with no error.
+      // ⚠ Styled INLINE on purpose: `.tile` carries `contain: layout paint`
+      //   (CONTRACT §6.10) which hard-clips descendants, so this stays inside
+      //   the cell box and never relies on a rule that could be overridden by
+      //   chrome.css's later `!important` block.
+      try {
+        const _rn = Array.isArray(s.structures)
+          ? s.structures.find(t => t && t.x === x && t.y === y) : null;
+        if (_rn) {
+          const _open = !!(_rn.lootable && !_rn.looted);
+          const _rrm = (_open && _rn.risk && typeof RISK_META !== 'undefined') ? RISK_META[_rn.risk] : null;
+          const _rttl = _open
+            ? `${_rn.name || 'Ruin'}${_rrm ? ' — ⚠ ' + _rrm.name + ' (risk)' : ''} — move a unit here, then Search from its panel`
+            : `${_rn.name || 'Ruin'} — stripped`;
+          cellInner += `<div class="ruin-marker" title="${escapeHtml(_rttl)}" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:1.5rem;pointer-events:none;${_open ? 'filter:drop-shadow(0 0 6px rgba(224,138,42,.85))' : 'opacity:.45;filter:grayscale(1)'}">${_rn.icon || '🏚'}<span style="position:absolute;right:2px;bottom:1px;font-size:.62rem;line-height:1">${_open ? (_rrm ? _rrm.icon : '💰') : '✅'}</span></div>`;
+        }
+      } catch (e) {}
+      // 🚚 SCP truck marker. Same reasoning as the ruin marker above: the DOM
+      // board is hidden while the canvas stage is mounted, but it is still the
+      // renderer for the browser pane, for reduced-motion / no-iframe fallbacks
+      // and for anyone who turns the 3D stage off — a control point that only
+      // existed in the stage would be invisible to them while still deciding
+      // the match. Styled INLINE because `.tile` carries `contain: layout paint`
+      // (CONTRACT §6.10), which hard-clips descendants.
+      try {
+        const _cpm = Array.isArray(s.controlPoints)
+          ? s.controlPoints.find(t => t && t.x === x && t.y === y) : null;
+        if (_cpm) {
+          const _ch = (typeof _cpHolderOf === 'function') ? _cpHolderOf(s, _cpm) : _cpm.holder;
+          const _cc = _ch === 'player' ? '#63d97a' : (_ch === 'ai' ? '#e0553c' : '#f6dc95');
+          const _cw = _ch === 'player' ? 'held by you' : (_ch === 'ai' ? 'held by the enemy' : 'unheld');
+          cellInner += `<div class="cp-marker" title="${escapeHtml((_cpm.name || 'SCP truck') + ' — ' + _cw + '. Have more units than the enemy on this tile or the six around it to hold it.')}" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:1.45rem;pointer-events:none;filter:drop-shadow(0 0 7px ${_cc})">🚚<span style="position:absolute;left:50%;transform:translateX(-50%);top:2px;display:flex;gap:2px">${'<i style="width:4px;height:4px;border-radius:50%;background:' + _cc + ';box-shadow:0 0 5px ' + _cc + '"></i>'.repeat(3)}</span><span style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);font-family:Cinzel,serif;font-weight:700;font-size:.5rem;letter-spacing:.1em;color:${_cc};text-shadow:0 1px 2px #000">${escapeHtml(_cpm.label || '')}</span></div>`;
+        }
+      } catch (e) {}
       // 🩸 Prepend bleeding overlay so the body shows under any occupant
       // or marker rendered above it.
       // 🔷 ODD-R STAGGER. Explicit placement, never auto-flow: a tile spans
@@ -152444,6 +153939,52 @@ function doAIStep() {
         const _ta  = (diff && diff.threatAwareness) ? diff.threatAwareness : 1;
         const _agg = (diff && diff.aggression)      ? diff.aggression      : 1;
         const lowHp = (unit.currentHp / Math.max(1, unit.maxHp)) < 0.3;
+        // 🚚 CONTROL-POINT OBJECTIVE (requirement 8) — precomputed ONCE per unit.
+        // WHY this exists: before it, NOTHING anywhere in the AI referenced
+        // controlPoints, so the three SCP trucks were an uncontested second win
+        // condition handed to the player in EVERY single-player battle. A new win
+        // condition the opponent cannot see is a difficulty regression, not a
+        // feature. Measured across eight rounds of this real controller with the
+        // term disabled: `ai max trucks ever held = 0`, its units drifting toward
+        // the player hero and never once entering a capture ring.
+        // WHY it is hoisted out of the destination loop: _cpHolderOf is a full
+        // O(units) ring census, and calling it per (destination × truck) turns a
+        // ~30-tile move search into ~1800 unit scans every step of every AI turn.
+        // WHY the census EXCLUDES this unit: so the loop below can ask the real
+        // question — "who holds this truck if I stand HERE?" — and, just as
+        // importantly, "…if I walk away?". Without the exclusion a unit already
+        // anchoring a truck sees no difference between staying and leaving, and
+        // drifts off to chase the hero while the point flips back.
+        let _cpAim = null;
+        try {
+          const _cps = Array.isArray(App.state.controlPoints) ? App.state.controlPoints : [];
+          // The hero stays out of the objective entirely. The AI's LOSS condition
+          // is its own hero dying; walking it into the middle of the field to sit
+          // on a truck is how the AI throws the primary condition to win the
+          // secondary one.
+          if (_cps.length && !unit.isHero && typeof CP_RING === 'number') {
+            const _st = App.state.cpStreak || {};
+            const _mine = (_st.ai | 0), _theirs = (_st.player | 0);
+            // Urgency. Attacking a point and defending one are the same physical
+            // job — be inside the ring — so ONE multiplier covers both, and it
+            // spikes when the player is one turn from winning on points.
+            const _urg = 1
+              + 0.8 * Math.max(_mine, _theirs) / Math.max(1, CP_STREAK_TO_WIN)
+              + (_theirs >= CP_STREAK_TO_WIN - 1 ? 1.1 : 0);
+            const _rings = [];
+            for (const _cp of _cps) {
+              if (!_cp) continue;
+              let _p = 0, _a = 0;
+              for (const _u of (App.state.units || [])) {
+                if (!_u || !_u.alive || !_u.pos || _u.id === unit.id) continue;
+                if (distance(_u.pos, _cp) > CP_RING) continue;
+                if (_u.owner === 'player') _p++; else if (_u.owner === 'ai') _a++;
+              }
+              _rings.push({ x: _cp.x, y: _cp.y, p: _p, a: _a });
+            }
+            if (_rings.length) _cpAim = { rings: _rings, urg: _urg };
+          }
+        } catch (e) { _cpAim = null; }   // purely additive — losing it degrades to the old scoring
         let best = null, bestScore = -Infinity;
         for (const dest of validMoves) {
           // Score this destination by best attack reachable + safety
@@ -152531,6 +154072,47 @@ function doAIStep() {
                 if (dHero < nearestFoeD && onLine) sc += (26 + 60 * hurt) * _ta;
                 else if (dHero <= 2) sc += (10 + 26 * hurt) * _ta;
               }
+            }
+          } catch (e) {}
+          // 🚚 CONTROL-POINT OBJECTIVE — see _cpAim above. Additive and bounded:
+          // the whole term tops out around 250, while aiScoreAttack pays 800+ for
+          // a finishing blow and 600+ for a swing at the hero, so the AI never
+          // walks past lethal to go stand on a truck. It only ever decides where
+          // to put a unit that had nothing better to do — which, before this, was
+          // "shuffle vaguely toward the player hero".
+          // ⚠ It CAN outweigh the suicide guard above (−(140+threat)·_ta) once
+          // `urg` is at its ceiling, and that is deliberate, not an oversight:
+          // urg only reaches the ceiling when the player is one turn from
+          // winning on points, and at that moment trading a body to break the
+          // streak is the correct play — the alternative is losing the match
+          // with a full-health unit standing somewhere safe.
+          try {
+            if (_cpAim) {
+              let _hold = 0, _pull = 0;
+              for (const _r of _cpAim.rings) {
+                const _d = distance(dest, _r);
+                const _here = _d <= CP_RING;
+                // The SAME arithmetic as _cpHolderOf (strict majority of living
+                // bodies in the ring), replayed with this unit placed at dest.
+                // It is re-derived rather than shared because _cpHolderOf reads
+                // the board as it IS and this needs the board as it WOULD BE.
+                const _a = _r.a + (_here ? 1 : 0);
+                const _holder = _a > _r.p ? 'ai' : (_r.p > _a ? 'player' : null);
+                if (_here) {
+                  // Taking a truck OFF the player swings two scores at once, so
+                  // it outbids adding a second body to one we already hold.
+                  if (_holder === 'ai') _hold = Math.max(_hold, _r.p > 0 ? 92 : 60);
+                  // Contested is not a consolation prize: at parity NEITHER side
+                  // scores, which is exactly what breaks the player's streak.
+                  else if (_holder === null && _r.p > 0) _hold = Math.max(_hold, 48);
+                }
+                // Gravity toward any truck we would not already hold, so a unit
+                // with nothing to attack walks to the objective instead of only
+                // at the hero. Falls off with distance and stays well under the
+                // ring bonus, so ARRIVING always beats hovering nearby.
+                if (_holder !== 'ai') _pull = Math.max(_pull, 34 / (1 + _d));
+              }
+              sc += (_hold + _pull) * _cpAim.urg;
             }
           } catch (e) {}
           if (sc > bestScore) { bestScore = sc; best = dest; }
@@ -152725,7 +154307,20 @@ function renderGameOverOverlay() {
     `<span class="scanline" style="--d:${(i * 0.2).toFixed(2)}s;--y:${i * 16}%"></span>`
   ).join('') : '';
 
-  const sub = won ? 'You triumph over your enemy.' : 'Your hero has fallen in battle.';
+  // 🚚 A match decided on CONTROL POINTS ends with BOTH heroes alive, so the
+  // default subtitle ("Your hero has fallen in battle") is a flat lie about how
+  // it ended — and the cause banner right below finds no death record and
+  // renders nothing, leaving the player with a DEFEAT screen and no explanation
+  // at all. `_cpWinLogged` is stamped by the control-point evaluator at the
+  // exact moment it set s.gameOver (and nowhere else), so comparing it to the
+  // winner is the one signal that cannot confuse "the streak happens to be at 3"
+  // with "the streak is what ended this match" — a hero-death sweep runs first
+  // and would already own gameOver in that case.
+  const _cpDecided = (function () { try { return !!s._cpWinLogged && s._cpWinLogged === s.gameOver; } catch (e) { return false; } })();
+  const sub = _cpDecided
+    ? (won ? `You held ${CP_HOLD_TO_WIN} SCP trucks for ${CP_STREAK_TO_WIN} straight turns.`
+           : `The enemy held ${CP_HOLD_TO_WIN} SCP trucks for ${CP_STREAK_TO_WIN} straight turns.`)
+    : (won ? 'You triumph over your enemy.' : 'Your hero has fallen in battle.');
 
   // ☠️ CAUSE OF DEFEAT/VICTORY — the "how did I die?" answer. Pulls the record
   // captured at the killing blow (see applyDamageTriggers / _recordHeroDeath).
@@ -152789,6 +154384,21 @@ function renderGameOverOverlay() {
                 <div class="gox-stat"><span class="gox-statnum">${kills}</span><span class="gox-statlabel">⚔ Kills</span></div>
                 <div class="gox-stat"><span class="gox-statnum">${allySurvivors}/${allyTotal || 0}</span><span class="gox-statlabel">👥 Allies Alive</span></div>
                 <div class="gox-stat"><span class="gox-statnum">${s.turnNumber || 1}</span><span class="gox-statlabel">⏳ Turns</span></div>
+                ${(function () {
+                  // 🚚 SCP debrief tile — the match had a second win condition,
+                  // so the debrief has to report on it whether or not it decided
+                  // the game. Only rendered in battles that actually seeded
+                  // trucks, so nothing appears in a mode that never had any.
+                  try {
+                    if (!Array.isArray(s.controlPoints) || !s.controlPoints.length) return '';
+                    const _sc = s.cpScore || {};
+                    const _ttl = `Points banked from holding SCP trucks — yours vs theirs. `
+                      + `${_cpDecided ? 'This match was decided on points.' : 'This match was decided by a hero falling.'}`;
+                    return `<div class="gox-stat" title="${escapeHtml(_ttl)}">`
+                      + `<span class="gox-statnum">${_sc.player | 0}<span style="opacity:.45;margin:0 .12em">·</span>${_sc.ai | 0}</span>`
+                      + `<span class="gox-statlabel">🚚 ${_cpDecided ? 'Decided on Points' : 'SCP Points'}</span></div>`;
+                  } catch (e) { return ''; }
+                })()}
               </div>
             </div>
           </div>
@@ -152798,8 +154408,14 @@ function renderGameOverOverlay() {
           // 🎒 Field bag status — what's CARRIED (not yet secured), plus the
           // defeat toll if the player fell.
           const run = s._salvageRun || { gained: {}, looted: 0 };
-          const missed = Array.isArray(s.tombstones)
-            ? s.tombstones.filter(t => t && t.lootable && !t.looted && !t.glowing).length : 0;
+          // 🏚 Ruins count toward "left behind" too — a match where you walked
+          // past a hospital left loot on the field just as surely as one where
+          // you walked past a body, and reporting only the bodies would quietly
+          // under-count the miss on every single map.
+          const missed = (Array.isArray(s.tombstones)
+            ? s.tombstones.filter(t => t && t.lootable && !t.looted && !t.glowing).length : 0)
+            + (Array.isArray(s.structures)
+            ? s.structures.filter(t => t && t.lootable && !t.looted).length : 0);
           const loss = App._fieldBagLoss;     // {kept,lost} on defeat, else null
           const bag = (typeof _ensureFieldBag === 'function') ? _ensureFieldBag() : (Profile.fieldBag || {});
           const bagKeys = Object.keys(bag).filter(k => (bag[k] | 0) > 0);
@@ -180339,6 +181955,21 @@ function _mirrorAllPositions(state) {
   if (Array.isArray(out.tombstones)) {
     out.tombstones = out.tombstones.map(t => t ? { ...t, x: (BOARD_W - 1) - (t.x | 0), y: (BOARD_H - 1) - (t.y | 0) } : t);
   }
+  // 🏚 Lootable ruins — same shape as tombstones (root x/y). CONTRACT R10: a
+  // positioned array missing from this mirror renders on the WRONG TILES for
+  // the remote player, and it looks like an art bug rather than a mirror bug.
+  // The tombstone entry above exists because that was hit for real once.
+  if (Array.isArray(out.structures)) {
+    out.structures = out.structures.map(t => t ? { ...t, x: (BOARD_W - 1) - (t.x | 0), y: (BOARD_H - 1) - (t.y | 0) } : t);
+  }
+  // 🚚 SCP control-point trucks — same shape again (root x/y). Same R10 reason:
+  // left out of this mirror the remote player would see the three trucks on
+  // three unrelated tiles, would be told they are holding trucks their units
+  // are nowhere near, and could lose the match to an objective that looked, on
+  // their screen, like it was never contested.
+  if (Array.isArray(out.controlPoints)) {
+    out.controlPoints = out.controlPoints.map(c => c ? { ...c, x: (BOARD_W - 1) - (c.x | 0), y: (BOARD_H - 1) - (c.y | 0) } : c);
+  }
   // Smoke / flashbang clouds — same shape (root x/y).
   if (Array.isArray(out.smokeClouds)) {
     out.smokeClouds = out.smokeClouds.map(c => c ? { ...c, x: (BOARD_W - 1) - (c.x | 0), y: (BOARD_H - 1) - (c.y | 0) } : c);
@@ -180414,6 +182045,28 @@ function swapBattlePerspective(state) {
     })),
     // gameOver is a side string.
     gameOver: state.gameOver ? swapOwner(state.gameOver) : null,
+    // 🚚 Control points carry THREE owner-keyed fields, and every one of them
+    // has to flip or the receiver is told the wrong story about the objective
+    // that can end the match without a hero dying: `holder` names a side, and
+    // `scored` / cpScore / cpStreak are side-keyed maps — the documented drift
+    // class that already bit graveLock, _lastMove.owner, _atkFx and
+    // enchantments. Invariant to keep, same as those: swapping TWICE is the
+    // identity. (The x/y flip happens in _mirrorAllPositions, step 2.)
+    controlPoints: Array.isArray(state.controlPoints)
+      ? state.controlPoints.map(c => c ? {
+          ...c,
+          holder: c.holder ? swapOwner(c.holder) : null,
+          scored: c.scored ? { player: !!c.scored.ai, ai: !!c.scored.player } : { player: false, ai: false },
+        } : c)
+      : state.controlPoints,
+    cpScore:  state.cpScore  ? { player: (state.cpScore.ai  | 0), ai: (state.cpScore.player  | 0) } : state.cpScore,
+    cpStreak: state.cpStreak ? { player: (state.cpStreak.ai | 0), ai: (state.cpStreak.player | 0) } : state.cpStreak,
+    // 🚚 …and the fourth owner-keyed field: `_cpWinLogged` NAMES A SIDE (it is
+    // the winner the control-point evaluator stamped, kept so the victory line
+    // is logged once and so the game-over subtitle knows the match ended on
+    // points rather than on a dead hero). Adopted unswapped it would name the
+    // wrong side and the loser's screen would read "You held 2 SCP trucks…".
+    _cpWinLogged: state._cpWinLogged ? swapOwner(state._cpWinLogged) : state._cpWinLogged,
     // 🪦 GRAVEYARD SEAL — `{player: turns, ai: turns}`. Unswapped, a seal the
     // opponent cast on ME landed on THEM after the snapshot: their graveyard
     // effects stopped working and mine kept running. Side-keyed state has to be
@@ -214324,6 +215977,12 @@ const TW_NODE_OBJECTIVES = [
   // 1 turn → pick Reward / Backdoor / Brute Force, each with its own
   // success% + rewards. Failure spawns enemy reinforcements.
   { id: 'hack_mainframe',      name: '💻 Hack Mainframe',  icon: '💻', desc: 'A Mainframe tile spawns on the map. Stand on it for 1 turn to open a hack prompt. Pick Reward (loot), Backdoor (sabotage upgrade), or Brute Force (reveal traps). Failure spawns reinforcements.' },
+  // 🚚 CONTROL POINTS — listed here so a Territory Wars node can name it as an
+  // objective, but the trucks themselves are seeded into EVERY battle and are
+  // judged by their own render hook, which is not behind the TW gate. This
+  // entry adds the banner chip and the node-editor checkbox; it does not turn
+  // the mode on, because the mode is always on.
+  { id: 'control_points:3',    name: '🚚 Hold the Trucks', icon: '🚚', desc: 'Three SCP containment trucks stand on the field. Hold two of them at the start of three straight turns to win the battle outright — no hero has to die.' },
 ];
 // Parse an objective ID into { kind, param }.
 function _twParseObjective(id) {
@@ -214408,6 +216067,16 @@ function _twEvalObjectives(state) {
         // rolls a success). Engine doesn't auto-win until the player
         // also kills the hero — completing the hack is bonus loot.
         if (state.mods.twHack && state.mods.twHack.succeeded && state.mods.twHack.victory) return 'win';
+        break;
+      }
+      case 'control_points': {
+        // Delegates to the SAME pure evaluator the normal-battle render hook
+        // uses, so a TW node that lists this objective cannot drift from the
+        // base rule — there is one definition of "held two for three straight".
+        // _cpEvalVictory names the WINNING SIDE; this switch speaks in
+        // attacker-relative 'win'/'loss', hence the translation.
+        const cpw = (typeof _cpEvalVictory === 'function') ? _cpEvalVictory(state) : null;
+        if (cpw) return cpw === attackerSide ? 'win' : 'loss';
         break;
       }
       // 'defeat_hero' is a no-op override — the standard win check handles it.

@@ -439,6 +439,20 @@ function bridgeTombs(sc) {
   return { list: list };
 }
 
+/* _bbStagePushStructs — index.html, beside _bbStagePushTombs. Same `z: t.y|0`
+   rename, and no image field at all: ruins are drawn procedurally by
+   drawStruct, which is what keeps them visible for the REMOTE player (`image`
+   is a HEAVY_KEY, blanked out of every multiplayer snapshot). */
+function bridgeStructs(sc) {
+  const list = [];
+  for (const t of (sc.structures || [])) {
+    if (!t || t.x == null || t.y == null) continue;
+    list.push({ x: t.x | 0, z: t.y | 0, kind: String(t.kind || 'house'),
+                lootable: !!t.lootable, looted: !!t.looted, risk: t.risk || null });
+  }
+  return { list: list };
+}
+
 /* _bbStagePushSurfaces — index.html:103990. The game walks board[y][x].surface
    and emits `out[x + ',' + y] = _BB_SURFACE_FX[type]`, silently skipping a
    type with no shader. A fixture hands the same thing in as a flat map. */
@@ -503,7 +517,18 @@ const COLS = 14, ROWS = 12;
    battlefield today and next week or the A/B against .gauntlet/baseline-stage.png
    compares two different maps and says nothing.
    ══════════════════════════════════════════════════════════════════ */
-const HARNESS_MAP_SEED = 0x5eed1a17;
+/* ?seed=<number> overrides it. The default is what every capture and every A/B
+   uses and must not change; the override exists because the no-burying
+   constraint the generator now enforces (THE FRINGE RULE) is a property of the
+   whole seed FAMILY, not of one map, and a sweep that only ever ran one map
+   would prove nothing about the next match. `| 0` because a NaN seed silently
+   becomes the mulberry32 fallback constant and every seed would then be the
+   same board while appearing to differ. */
+const HARNESS_MAP_SEED = (() => {
+  const q = new URLSearchParams(location.search).get('seed');
+  const n = q == null ? NaN : Number(q);
+  return Number.isFinite(n) ? (n >>> 0) : 0x5eed1a17;
+})();
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 🏙 TERRAIN GENERATOR — the ground a match is actually fought on.
@@ -581,14 +606,26 @@ function _bbSeedFromString(s) {
 // window.__bbHexCheck() asserts the whole round trip at every rung.
 // So the ceiling is now what the eye needs. At the game's real 802x688 stage
 // rect one world unit of height is ~36 screen px, so:
-//   0.30 → ~11 px   the smallest step that reads as a STEP and not a bevel
-//   1.35 → ~49 px   total relief ≈ one full hex width (hexes measure ~50 px)
+//   0.34 → ~12 px   the smallest step that reads as a STEP and not a bevel
+//   1.36 → ~49 px   total relief ≈ one full hex width (hexes measure ~50 px)
 // BAR R1 asks for "chunky slabs at several heights with visible cliff faces …
 // height readable at a glance". Under ~10 px a face is an outline; the old
 // ladder's 4.7 px per step is why the board read as a coloured hex mosaic.
+//
+// 📏 THE RUNGS ARE EVENLY SPACED, AND THAT IS A PICKING CONSTRAINT.
+// They used to be [0, 0.30, 0.62, 0.95, 1.35] — gaps of 0.30 / 0.32 / 0.33 /
+// 0.40 — and the 0.40 at the top was measurably over the line. A tile's own
+// centre is 0.577 world units behind the back boundary of the two tiles in the
+// row in front of it (they are half a column either side of it, so at the
+// centre's x they reach back only to their ±30° vertices). The pick ray runs
+// about 1.45 units of z per unit of y at the far edge of the board, so a step
+// of Δ in front of a tile eats 1.45·Δ of that 0.577. Δ = 0.40 gives 0.58 —
+// over — and the sweep found the centres of (9,0) and (0,1) genuinely
+// unclickable. Δ = 0.34 gives 0.49, a 15% margin, and every rung now costs the
+// same, so THE FRINGE RULE below can be stated in rungs instead of in metres.
 // ⚠ This array is copied BYTE-FOR-BYTE into public/battle-board/_harness.html.
 // Change it here and re-copy, or the control capture is a lie.
-const _BB_ELEV = [0, 0.30, 0.62, 0.95, 1.35];
+const _BB_ELEV = [0, 0.34, 0.68, 1.02, 1.36];
 
 // Odd-r neighbour offsets, indexed [rowParity][edge], where `edge` is the same
 // index the stage's hexCorners() uses: edge i faces outward at i·60°.
@@ -641,83 +678,272 @@ function _bbGenTerrain(cols, rows, seed) {
 
   // ── the street network ────────────────────────────────────────────────────
   // NOT per-tile noise. Uncorrelated random per tile is the tell of a generated
-  // map; a place has roads that go somewhere. One avenue runs across the board
-  // through a central plaza, two side streets run up and down it, and the four
-  // lots those lines cut out are where the buildings used to be.
+  // map; a place has roads that go somewhere. Three streets run UP AND DOWN the
+  // board — a main avenue through the middle and one either side — and a cross
+  // street connects them near each end, which leaves six lots for the buildings
+  // that used to stand there.
+  //
+  // 🧭 THE MAIN LINES RUN NORTH–SOUTH ON PURPOSE, AND IT IS A PICKING
+  // CONSTRAINT RATHER THAN A LAYOUT PREFERENCE. See THE FRINGE RULE below: what
+  // buries a tile is a taller tile in the row IN FRONT of it, because that is
+  // what stands between it and the camera; a taller tile in the same ROW hides
+  // nothing, because it is at the same depth and only covers its own column. A
+  // street is rung 0 by definition, so an EAST–WEST avenue pins a whole row to
+  // the floor and forbids any real height within three rows either side of it —
+  // which is exactly why the previous layout could only put rung-3 and rung-4
+  // tiles in rows 0–3 and 8–11 and left the middle, where the fight actually
+  // happens, flat. A NORTH–SOUTH street pins a COLUMN instead, so its canyon
+  // walls may be sheer and full height and the relief is free to sit in the
+  // middle of the board where the eye is.
+  //
   // Every line passes through — or is mirrored about — the lattice centre, and
   // every wobble term is ODD in its argument, which is what keeps the whole
   // network its own 180° rotation. (Check: for the avenue residual
-  // r = az − Aꞏsin(kꞏax), r(−ax,−az) = −r(ax,az), so |r| is symmetric. For the
+  // r = ax − Aꞏsin(kꞏaz), r(−ax,−az) = −r(ax,az), so |r| is symmetric. For the
   // side-street pair r₁ = ax − D − Bꞏsin(mꞏaz) and r₂ = ax + D − Bꞏsin(mꞏaz),
-  // r₁(−ax,−az) = −r₂(ax,az), so min(|r₁|,|r₂|) is symmetric as a set.)
-  const avA = 0.34 + rnd() * 0.42, avK = 0.26 + rnd() * 0.2, avW = 0.80;
-  const csD = 3.0 + rnd() * 1.0, csB = 0.30 + rnd() * 0.40, csM = 0.30 + rnd() * 0.22, csW = 0.74;
-  const plzR = 1.5 + rnd() * 0.45;
-  function streetDist(ax, az) {
-    const av = Math.abs(az - avA * Math.sin(avK * ax * 2)) / avW;
+  // r₁(−ax,−az) = −r₂(ax,az), so min(|r₁|,|r₂|) is symmetric as a set — and the
+  // same argument transposed covers the cross-street pair in az.)
+  const avA = 0.50 + rnd() * 0.50, avK = 0.12 + rnd() * 0.10, avW = 0.42;
+  const csD = 4.1 + rnd() * 0.5, csB = 0.30 + rnd() * 0.45, csM = 0.14 + rnd() * 0.10, csW = 0.40;
+  const xsD = 4.15 + rnd() * 0.35, xsB = 0.35 + rnd() * 0.45, xsM = 0.20 + rnd() * 0.18, xsW = 0.34;
+  // 📐 SIGNED DISTANCE TO THE NEAREST CARRIAGEWAY EDGE, IN COLUMN WIDTHS.
+  // Negative on the road itself. This used to be each line divided by its own
+  // half-width and then Math.min'd together — three different units glued into
+  // one number. That is fine for the boolean `paved` it was written for and
+  // useless for the height gate below, which needs a REAL distance so it can
+  // let the ground climb back at a rate bounded PER TILE STEP. HEXSPEC §3 with
+  // hexW = 1 puts all six neighbours of a hex exactly 1.0 apart in (ax, az), so
+  // here "rungs per column width" IS "rungs per tile step", with no conversion
+  // and nothing to get wrong.
+  //
+  // ⚖ AND IT IS SPLIT BY DIRECTION, WHICH IS THE WHOLE POINT OF THE LAYOUT.
+  // Distance to a NORTH–SOUTH line varies with ax, so the ground may climb out
+  // of that gutter as fast as it likes: a sheer four-rung canyon wall is a step
+  // within a row and hides nothing (THE FRINGE RULE). Distance to a cross
+  // street varies with az, so THAT gate has to climb slowly or it re-creates
+  // the buried tile it exists to prevent. One `streetGap` for both would have
+  // to obey the slower of the two everywhere, and on a 14-wide board with a
+  // road every four columns that caps the entire map at rung 1 — measured, not
+  // guessed: the first build of this pass came back with 96 tiles at rung 1,
+  // four at rung 2 and nothing above.
+  function gapNS(ax, az) {
+    const av = Math.abs(ax - avA * Math.sin(avK * az * 2)) - avW;
     const wob = csB * Math.sin(csM * az * 2);
-    const cs = Math.min(Math.abs(ax - csD - wob), Math.abs(ax + csD - wob)) / csW;
-    const pl = Math.hypot(ax * 0.88, az * 1.10) / plzR;
-    return Math.min(av, cs, pl);                   // < 1 → paved
+    const cs = Math.min(Math.abs(ax - csD - wob), Math.abs(ax + csD - wob)) - csW;
+    return Math.min(av, cs);
+  }
+  function gapEW(ax, az) {
+    const xw = xsB * Math.sin(xsM * ax * 2);
+    return Math.min(Math.abs(az - xsD - xw), Math.abs(az + xsD - xw)) - xsW;
+  }
+  function streetGap(ax, az) {                     // < 0 → paved
+    return Math.min(gapNS(ax, az), gapEW(ax, az));
   }
 
+  // ── THE MASSIF — the relief the fight happens ON ──────────────────────────
+  // Height is built as a CONTINUOUS field in RUNG units and quantised once at
+  // the end, instead of being assigned per shell as an integer. That is what
+  // makes the no-burying constraint checkable rather than merely hoped for: the
+  // six neighbours of a hex are all exactly 1.0 apart in (ax, az), so a field
+  // whose gradient stays under one rung per unit quantises to a level field
+  // that steps by AT MOST ONE RUNG between neighbours. (Proof of the last step:
+  // if |Ha − Hb| ≤ 1 then round(Ha) and round(Hb) cannot differ by 2, because
+  // that would need Ha < 0.5 and Hb ≥ 1.5, i.e. |Ha − Hb| > 1.)
+  //
+  // The shape is a broad central mass whose terraces run ACROSS the board, so
+  // rows 3–8 — the middle, where the units stand and the eye goes — are the
+  // HIGH ground and the two deployment ends are the low ground. The build
+  // before this one had it exactly inverted: every rung-3 and rung-4 tile was
+  // in rows 0–3 or 8–11 and the middle topped out at rung 1, which is the "even
+  // border round an arena" this generator's own comment swears off, drawn in
+  // relief instead of in rubble.
+  const mfTop = 4.45, mfSlope = 0.95, mfFlat = 0.50;
+  const mfW1 = 1.25 + rnd() * 0.55, mfK1 = 0.62 + rnd() * 0.16;
+  const mfW2 = 0.25 + rnd() * 0.30, mfK2 = 0.60 + rnd() * 0.38;
+  // Where the crest is WIDEST, in column widths. Halfway between the avenue at
+  // ax = 0 and the side street at ax = csD, i.e. over the middle of a block —
+  // and it is derived from csD rather than typed so it cannot drift away from
+  // the street grid. It used to be a plain cos(k·ax), whose maximum is at ax = 0
+  // BY DEFINITION, so the crest was always widest exactly where the avenue cuts
+  // it down to rung 0. Two whole rungs of the ladder were unreachable for that
+  // reason alone, and nothing about the symptom pointed at it.
+  const mfCx = csD * 0.52;
+  function massif(ax, az) {
+    // The crest wobbles with ax so the terrace edges are not ruled lines. cos()
+    // is EVEN and |az| is even, so massif(−ax,−az) === massif(ax,az): the 180°
+    // symmetry holds by construction rather than by the mirror pass.
+    // ⚠ The wobble is RECTIFIED to [0, 1] and therefore only ever WIDENS the
+    // crest. A signed cosine swung the terrace line ±2 rows, which sounds like
+    // the same amount of interest and is not: where it swung NEGATIVE it pulled
+    // rows 4 and 7 down to rung 2, and THE FRINGE RULE then capped rows 5 and 6
+    // at rung 3 from both sides. That is how three successive attempts to reach
+    // the top of the ladder came back with a map whose maximum was 1.02 and no
+    // hint of why.
+    const w = mfW1 * (0.5 + 0.5 * Math.cos(mfK1 * (Math.abs(ax) - mfCx)))
+            + mfW2 * (0.5 + 0.5 * Math.cos(mfK2 * (Math.abs(ax) + 1.7)));
+    return mfTop - Math.max(0, Math.abs(az) - mfFlat - w) * mfSlope;
+  }
   // ── ruined building footprints ────────────────────────────────────────────
   // Sampled in ONE half and mirrored, so the pair is symmetric by construction.
   // Rejection-sampled off the road network and off each other: a building grown
   // through the road would erase the thing that makes the map read as a place.
+  // A lot is now a BUMP ON the massif rather than a tower of its own. It used
+  // to be three concentric shells stepping 4 / 3 / 2 across a radius of 1.25 —
+  // bands a third of a tile wide, so a single step could be TWO rungs and the
+  // apron met the street with a two-rung drop. Those were the buried tiles.
+  // A cone of bounded slope adds up to a rung and a half over a run of four
+  // columns instead, which still carries the crest to the top of the ladder.
+  // 📍 AND THE FIRST PAIR IS ANCHORED IN THE MIDDLE BAND, ON PURPOSE.
+  // |az| ≤ 1.9 is rows 3.3–7.7, i.e. inside rows 3–8. Left to uniform sampling
+  // the lots scatter over rows 0–5 and their mirrors, and the two that happen
+  // to land near the deployment ends are the two the cross-street gate holds
+  // down — which is how the previous build ended up with every tall tile in the
+  // border rows. Forcing one pair into the middle guarantees TWO rung-3+ masses
+  // in the half of the board the camera is pointed at, whatever the seed does.
   const lots = [];
-  for (let guard = 0; lots.length < 6 && guard < 600; guard++) {
+  for (let guard = 0; lots.length < 6 && guard < 900; guard++) {
     const p = A(Math.floor(rnd() * cols), Math.floor(rnd() * (rows / 2)));
-    const r = 1.25 + rnd() * 0.95;
-    if (streetDist(p.ax, p.az) < 1 + r * 0.5) continue;
-    if (lots.some(L => Math.hypot(L.ax - p.ax, L.az - p.az) < (L.r + r) * 0.9)) continue;
+    const r = 1.9 + rnd() * 1.2;
+    if (lots.length < 2 && Math.abs(p.az) > 1.9) continue;
+    if (streetGap(p.ax, p.az) < 0.45) continue;
+    if (lots.some(L => Math.hypot(L.ax - p.ax, L.az - p.az) < (L.r + r) * 0.55)) continue;
     lots.push({ ax: p.ax, az: p.az, r: r }, { ax: -p.ax, az: -p.az, r: r });
   }
-  // Three concentric shells, and they deliberately reach the TOP of the ladder:
-  // a ruin footprint has to stand a full unit-height above the street or the
-  // building it is the remains of reads as a kerb. Core → rung 4 (1.35, about
-  // one hex width on screen), the shell around it → rung 3, the outer apron →
-  // rung 2, which leaves rung 1 to the kerb step alone so the pavement still
-  // has its own distinct height and does not merge into the rubble.
-  function lotLevel(ax, az) {
-    let lv = 0;
+  const LOT_RISE = 0.55, LOT_CAP = 1.00;
+  function lotBump(ax, az) {
+    let b = 0;
     for (let i = 0; i < lots.length; i++) {
-      const L = lots[i], d = Math.hypot(ax - L.ax, az - L.az) / L.r;
-      if (d < 1) lv = Math.max(lv, d < 0.34 ? 4 : d < 0.68 ? 3 : 2);
+      const L = lots[i], d = Math.hypot(ax - L.ax, az - L.az);
+      if (d < L.r) b = Math.max(b, Math.min(LOT_CAP, (L.r - d) * LOT_RISE));
     }
-    return lv;
-  }
-  // Drifts. Rubble does not lie in an even border round an arena — it piles
-  // where something pushed it, so the edge band is gated on the debris field
-  // and comes out as three or four heaps, not a picture frame.
-  function driftLevel(x, z, ax, az) {
-    const edge = Math.min(x, cols - 1 - x, z, rows - 1 - z);
-    if (edge > 1) return 0;
-    const d = nsym(ax, az, 0.40, SALT_D);
-    return edge === 0 ? (d > 0.56 ? 2 : d > 0.44 ? 1 : 0) : (d > 0.60 ? 1 : 0);
+    return b;
   }
 
   // ── assemble ──────────────────────────────────────────────────────────────
+  // 🧱 THE HEIGHT GATE. The road is the LOW ground, always: it is what the
+  // player reads height against, and a street that climbed over a rubble heap
+  // would say the opposite of what the silhouette says. But it can no longer
+  // SLAM the tile to zero the way `paved ? 0 : …` did: a rung-3 tile with a
+  // rung-0 tile in the row behind it is exactly the buried-tile bug. So the
+  // carriageway pulls the field down to zero and lets it climb back at a rate
+  // bounded per tile step instead of dropping off a kerb four rungs high.
+  // 🛣 AND THE CROSS STREET IS SURFACED, NOT CUT. Only the north–south lines
+  // gate the height. An east–west street that dug itself down to rung 0 would
+  // pin a whole ROW to the floor, and THE FRINGE RULE would then forbid any
+  // real height for three rows either side of it — measured: with both gates
+  // live the whole 14×12 board topped out at rung 2 with four tiles on it.
+  // So the cross street is a road laid ALONG the terrace rather than a trench
+  // through it. It still reads as a street, because `paved` (which decides the
+  // material, the kerbstones and the asphalt) is the union of both gaps; it
+  // simply does not flatten the hillside it runs across, which is what a road
+  // on a slope actually looks like.
+  const NS_RISE = 9.0;                         // rungs per column width
   const out = [];
-  const moists = [];
   for (let z = 0; z < rows; z++) {
     for (let x = 0; x < cols; x++) {
       const p = A(x, z);
-      const paved = streetDist(p.ax, p.az) < 1;
-      // The road is the LOW ground, always: it is what the player reads height
-      // against, and a street that climbed over a rubble heap would say the
-      // opposite of what the silhouette says.
-      const lvl = paved ? 0 : Math.max(lotLevel(p.ax, p.az), driftLevel(x, z, p.ax, p.az));
-      const moist = nsym(p.ax, p.az, 0.30, SALT_M);
-      out.push({ x: x, z: z, elev: _BB_ELEV[lvl], _lvl: lvl, _pv: paved ? 1 : 0,
-                 _m: moist, _d: nsym(p.ax, p.az, 0.52, SALT_D) });
-      // Only FLAT ground competes for the water/grass quantiles: a lot core is
-      // rubble whatever its moisture, and letting those tiles hold slots in the
-      // sort silently ate the puddles on seeds whose wettest spots landed under
-      // a building.
-      if (lvl === 0) moists.push(moist);
+      const gn = gapNS(p.ax, p.az), ge = gapEW(p.ax, p.az);
+      const paved = gn < 0 || ge < 0;
+      const lb = lotBump(p.ax, p.az);
+      // Symmetric noise at a feature size of ~3 columns and half a rung of
+      // amplitude, so the terraces buckle instead of running as clean bands.
+      const rough = (nsym(p.ax, p.az, 0.30, SALT_D) - 0.5) * 0.45;
+      const h = Math.min(massif(p.ax, p.az) + lb + rough, Math.max(0, gn) * NS_RISE);
+      out.push({ x: x, z: z, _lvl: Math.max(0, Math.min(4, Math.round(h))),
+                 _pv: paved ? 1 : 0, _lb: lb,
+                 _m: nsym(p.ax, p.az, 0.30, SALT_M), _d: nsym(p.ax, p.az, 0.52, SALT_D) });
     }
   }
+
+  // 🚧 THE FRINGE RULE — the constraint that keeps every tile CLICKABLE.
+  // ═══════════════════════════════════════════════════════════════════════
+  //   No tile may sit more than ONE RUNG below either of its neighbours in an
+  //   ADJACENT ROW. Steps within a row are unconstrained.
+  // ═══════════════════════════════════════════════════════════════════════
+  // WHY IT EXISTS. A judge sampled 36 points inside every tile and asked
+  // `pickTile` which tile each one resolved to. On the shipped map (13,5),
+  // (4,8), (3,9) and (8,9) came back with almost nothing — five to seven
+  // samples out of thirty-six, and their CENTRES dead — because a rung-3 or
+  // rung-4 mound in the row in front of them stood between them and the
+  // camera. A tile you cannot click is a tile you cannot move to, cannot
+  // target and cannot select the unit on, WHILE THE DOM BOARD CAN STILL REACH
+  // IT: the two renderers disagreeing about what is reachable, which is the
+  // same "the UI lies about the rules" family as the scar at index.html:141543.
+  // `pickTile` was doing the physically correct thing. The generator was the
+  // bug, and this is where it is fixed — not by capping the ladder, because
+  // the height is what BAR R1 is judged on.
+  //
+  // WHY *ROWS* AND NOT ALL SIX NEIGHBOURS. Only the row in front can occlude:
+  // a taller tile in the same row is at the same depth and covers its own
+  // column, nothing behind it. Constraining all six would forbid a sheer
+  // canyon wall for no gain and, with the streets pinned to rung 0, would
+  // flatten the whole board to rungs 0–1 — there is not enough room on a 14×12
+  // lattice to terrace away from a road in every direction.
+  //
+  // WHY IT LOWERS AND NEVER RAISES. Raising the tile behind would work for the
+  // camera and would silently rebuild the road network on top of the rubble.
+  // Lowering only is also what makes this terminate: levels are bounded below
+  // by 0 and never increase, so the loop cannot oscillate.
+  //
+  // AND IT IS SYMMETRIC. The constraint is on a PAIR, so it reads the same
+  // from either end, and the odd-r neighbour relation maps onto itself under
+  // the 180° rotation (BOARD_H is even). A point-symmetric input therefore
+  // stays point-symmetric, and the mirror pass further down stays the no-op it
+  // is supposed to be rather than quietly re-introducing a violation.
+  function fringePass() {
+    for (let pass = 0; pass < rows + 2; pass++) {
+      let cut = 0;
+      for (let z = 0; z < rows; z++) {
+        for (let x = 0; x < cols; x++) {
+          const t = out[z * cols + x], nb = _BB_NB[z & 1];
+          let cap = 4;
+          for (let e2 = 0; e2 < 6; e2++) {
+            if (nb[e2][1] === 0) continue;       // same row — cannot occlude
+            const ox = x + nb[e2][0], oz = z + nb[e2][1];
+            if (ox < 0 || oz < 0 || ox >= cols || oz >= rows) continue;
+            cap = Math.min(cap, out[oz * cols + ox]._lvl + 1);
+          }
+          if (t._lvl > cap) { t._lvl = cap; cut++; }
+        }
+      }
+      if (!cut) break;
+    }
+  }
+  fringePass();
+  // 🛬 THE DEPLOYMENT SHELF — the second row in from each end is levelled DOWN
+  // to the outermost one, and it is the one place the fringe rule is not
+  // enough. At the far CORNERS the pick ray is not in the z–y plane at all: it
+  // also runs six and a half columns sideways, which lengthens it and flattens
+  // its descent per row, so the 0.34 that clears everywhere else does not clear
+  // there. Measured: with the rule alone, __bbHexCheck reported one dead
+  // centre, at (0,0), answered by (0,1) one rung above it.
+  // ⚠ IT LOWERS THE INNER ROW; IT MUST NOT RAISE THE OUTER ONE. Raising row 0
+  // to meet row 1 is free — nothing stands behind row 0 — but the mirror of
+  // that operation raises row 11, which is the row NEAREST the camera, and that
+  // promptly buried (10,10). Any raise makes a tile a new occluder for the row
+  // behind it; only a lowering is safe in both directions, which is what lets
+  // the same operation run at both ends and keep the map its own 180° rotation.
+  // The fringe pass is re-run afterwards because a lowering can open a two-rung
+  // step further in.
+  function shelfPass() {
+    for (let x = 0; x < cols; x++) {
+      for (const z of [1, rows - 2]) {
+        const outward = z === 1 ? -1 : 1;
+        const nb = _BB_NB[z & 1], t = out[z * cols + x];
+        let lv = t._lvl;
+        for (let e2 = 0; e2 < 6; e2++) {
+          if (nb[e2][1] !== outward) continue;
+          const ox = x + nb[e2][0], oz = z + outward;
+          if (ox < 0 || ox >= cols) continue;
+          lv = Math.min(lv, out[oz * cols + ox]._lvl);
+        }
+        t._lvl = lv;
+      }
+    }
+  }
+  shelfPass(); fringePass();
+  for (const t of out) t.elev = _BB_ELEV[t._lvl];
+
   // 💧 QUANTILES, NOT FIXED CUTOFFS. Thresholding a noise field at a constant
   // is a coin flip on how much water and grass a given seed happens to get: an
   // early build of this ran four seeds and one of them produced ZERO grass on a
@@ -726,15 +952,30 @@ function _bbGenTerrain(cols, rows, seed) {
   // seed gets the same amount of overgrowth in a different shape. The field is
   // symmetric and a quantile is a whole-board statistic, so this does not break
   // the 180° symmetry.
-  const sorted = moists.slice().sort((a, b) => a - b);
-  const qAt = f => sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(f * sorted.length)))];
-  const qWater = qAt(0.955), qGrass = qAt(0.70);
+  //
+  // 🎨 AND MATERIAL IS NOT HEIGHT. The pass this replaces opened with
+  // `if (_lvl >= 2) surf = 'rubble'`, which welded the two questions together:
+  // every single one of the 36 tiles at the top of the ladder came out rubble,
+  // 100% of them, and grass, dirt and asphalt could only ever exist on the
+  // floor. BAR R1 asks for four materials at four heights — "rock plateau,
+  // dirt shelf, grass shelf, and a wide marsh floor" — so `_lvl` now answers
+  // only "how high" and the moisture and debris fields answer "made of what",
+  // at every height. Standing water is the one exception and stays on the
+  // floor, because a puddle on a plateau is not a thing.
+  const qOf = (arr, f) => {
+    const s = arr.slice().sort((a, b) => a - b);
+    return s.length ? s[Math.min(s.length - 1, Math.max(0, Math.floor(f * s.length)))] : 1;
+  };
+  const land = out.filter(t => !t._pv);
+  const qWater = qOf(out.filter(t => !t._pv && t._lvl === 0).map(t => t._m), 0.86);
+  const qGrass = qOf(land.map(t => t._m), 0.60);
+  const qRub   = qOf(land.map(t => t._d + t._lb * 0.34), 0.52);
   for (const t of out) {
-    if (t._lvl >= 2) t.surf = 'rubble';
-    else if (t._lvl === 1) t.surf = t._d > 0.46 ? 'rubble' : 'dirt';
-    else if (t._m >= qWater) t.surf = 'water';
+    if (t._pv) t.surf = 'asphalt';
+    else if (t._lvl === 0 && t._m >= qWater) t.surf = 'water';
     else if (t._m >= qGrass) t.surf = 'grass';
-    else t.surf = t._pv ? 'asphalt' : 'dirt';
+    else if (t._d + t._lb * 0.34 >= qRub) t.surf = 'rubble';
+    else t.surf = 'dirt';
   }
 
   // 🛤 THE KERB STEP. Pavement stands one step above the carriageway — that is
@@ -746,14 +987,25 @@ function _bbGenTerrain(cols, rows, seed) {
   // it is made of are two questions, and an earlier build conflated them —
   // raising the kerb there turned every verge into rubble.
   for (const t of out) {
-    if (t.elev || t._pv) continue;
+    // Standing water is exempt: a puddle that stands one step PROUD of the
+    // street it drained off is not a puddle. The first run of the decoupled
+    // surface pass kerbed all eight water tiles because the kerb reads `elev`
+    // and the surface pass had already run.
+    if (t.elev || t._pv || t.surf === 'water') continue;
     const nb = _BB_NB[t.z & 1];
     for (let e2 = 0; e2 < 6; e2++) {
       const ox = t.x + nb[e2][0], oz = t.z + nb[e2][1];
       if (ox < 0 || oz < 0 || ox >= cols || oz >= rows) continue;
-      if (out[oz * cols + ox]._pv) { t.elev = _BB_ELEV[1]; break; }
+      if (out[oz * cols + ox]._pv) { t._lvl = 1; break; }
     }
   }
+  // ⚠ THE KERB IS A RAISE, AND A RAISE IS WHAT BURIES. Re-run the two passes
+  // that guarantee it cannot. On seed 424242 the kerb lifted (0,1) one rung
+  // above (0,0) AFTER the shelf had levelled the pair, and the far corner went
+  // dead again — a one-line raise reopening a bug three passes had just closed,
+  // with nothing in the kerb code to suggest it could.
+  shelfPass(); fringePass();
+  for (const t of out) t.elev = _BB_ELEV[t._lvl];
 
   // 🪞 Belt and braces — see the header. Pairs are taken by LINEAR index so this
   // still terminates, and still pairs correctly, if either dimension is ever
@@ -828,9 +1080,9 @@ function _bbGenTerrain(cols, rows, seed) {
     b.deco = d.map(o => ({ k: o.k, u: R2(-o.u), v: R2(-o.v), s: o.s, r: R2((o.r + Math.PI) % TAU) }));
   }
 
-  // Emit the wire shape only. `_lvl`/`_pv` were scratch; `elev` and `deco` are
-  // dropped when empty because this array crosses a postMessage boundary once
-  // per battle and 168 tiles of "elev: 0" is pure freight.
+  // Emit the wire shape only. `_lvl`/`_pv`/`_lb`/`_m`/`_d` were scratch; `elev`
+  // and `deco` are dropped when empty because this array crosses a postMessage
+  // boundary once per battle and 168 tiles of "elev: 0" is pure freight.
   return out.map(t => {
     const o = { x: t.x, z: t.z, surf: t.surf };
     if (t.elev) o.elev = t.elev;
@@ -950,7 +1202,7 @@ function shippedMap(timeOfDay, location) {
   return {
     id:'editor', name:'Battlemap', cols:COLS, rows:ROWS,
     timeOfDay: timeOfDay, location: location,
-    ground:{ base:'#2a2418', accent:'#4a3f24' },
+    ground:{ base:'#6b5c3e', accent:'#8a7846' },
     /* ⬅ THIS LINE USED TO BE `tiles: []`. It was true: the shipped converter
        filled the array only from an admin battlemap, and the shipped default
        has none, so a real match sent the stage an empty board. `_bbMapFromEditor`
@@ -989,7 +1241,7 @@ function ruinsMap(timeOfDay, location, tiles) {
   return {
     id:'harness-ruins', name:'Overgrown Downtown', cols:COLS, rows:ROWS,
     timeOfDay: timeOfDay, location: location,
-    ground:{ base:'#2a2418', accent:'#4a3f24' },
+    ground:{ base:'#6b5c3e', accent:'#8a7846' },
     tiles: base,
     events: [],
     spawns:{ mine:[[2,ROWS-1],[3,ROWS-1],[4,ROWS-1],[5,ROWS-1]],
@@ -1193,18 +1445,38 @@ SCENES.night = Object.assign({}, SCENES.skirmish, {
   map: ruinsMap('night', 'battlefield')
 });
 
-/* — 5 · RUINS. What a lootable map structure (BAR item 5) looks like on this
-     board today: an EVENT tile with baked art, which is the only way the board
-     can currently draw a building. Read the bridgeEvents note above before
-     drawing conclusions — the in-battle stage is not sent events at all, so
-     this is the full-screen board's view.
-     ⚠ The five ruins the brief names are car / church / school / hospital /
-     house. The repo ships art for a car, a house, a generic building, an SCP
-     facility and a truck — there is no church art and no school art, so this
-     scene labels each tile for the asset it really is rather than pretending. */
+/* — 5 · RUINS. THE FIVE LOOTABLE RUINS the brief names, on the real
+     `board:structs` path: a wrecked CAR, a gutted CHURCH, a collapsed SCHOOL,
+     a caved-in HOSPITAL and a burnt HOUSE.
+
+     ⚠ WHAT CHANGED, AND WHY THE OLD FIXTURE IS GONE. This scene used to place
+     five EVENT tiles carrying baked ruin art, because an event was the only
+     way the board could draw a building at all. Two things were wrong with
+     that and both are now fixed rather than papered over:
+       · the repo ships no church and no school art, so two of the five were
+         labelled "Ruined Building" / "Abandoned Facility" — the scene could
+         not show the thing the requirement actually asks for;
+       · the in-battle stage is never sent events (see the bridgeEvents note),
+         so the fixture was doubly target-state: it showed a path no match
+         takes, using art for buildings the requirement does not name.
+     `board:structs` is sent by _bbStagePushStructs on the SAME slow tick and
+     the SAME board:ready path as board:tombs, so this scene now exercises a
+     message a real match really sends, and the art is procedural — drawStruct
+     in battle-board/index.html — so nothing depends on an asset that isn't
+     there. `shipped` stays false only because the terrain under it is.
+
+     Spread across the 14x12 board rather than bunched in one quadrant: five
+     ruins in one corner tells you nothing about how they read at the far edge,
+     where the projection is smallest. One ruin is `looted:true` — the greyed-out
+     state is half the read and it needs to be in the capture, not just in the
+     code — and it is the HOUSE, not the school. It used to be the school, and
+     that was a mistake: the school is the ruin whose identity is hardest to
+     read, so greying it out meant the one building a critic most needed to
+     judge was the one shown at reduced contrast. The house's gable and chimney
+     survive the grey; nothing is lost by moving the flag to it. */
 SCENES.ruins = {
   shipped: false,
-  desc: 'Ruin art on event tiles: car, house, building, facility, truck. Doubly target-state — the battle stage is never sent events at all.',
+  desc: 'The five lootable ruins on the real board:structs path — car, church, school, hospital, house. Procedural art; the house is shown already stripped.',
   timeOfDay: 'dusk', location: 'battlefield',
   map: ruinsMap('dusk', 'battlefield', [
     { x:12, z:3, prop:'pylon', elev:0.18 },
@@ -1213,16 +1485,21 @@ SCENES.ruins = {
     { x:11, z:9, prop:'bones' }
   ]),
   units: [ unit('warrior-hero', 'player', 6, 10), unit('zombie', 'ai', 7, 2) ],
-  tombstones: [], surfaces: {}, paint: null,
-  /* spread across the 14x12 board rather than the top-left corner of it — five
-     ruins bunched in one quadrant told you nothing about how the art reads at
-     the far edge, where the projection is smallest. */
-  events: [
-    { x:2,  y:2, type:'structure', name:'Wrecked Car',       art:RUIN_ART.car,      scale:0.9 },
-    { x:6,  y:1, type:'structure', name:'Burnt House',       art:RUIN_ART.house },
-    { x:10, y:3, type:'structure', name:'Ruined Building',   art:RUIN_ART.building },
-    { x:3,  y:6, type:'structure', name:'Abandoned Facility',art:RUIN_ART.facility },
-    { x:9,  y:7, type:'structure', name:'Abandoned Truck',   art:RUIN_ART.truck,    scale:0.9 }
+  tombstones: [], surfaces: {}, paint: null, events: [],
+  /* GAME coords {x,y} — the bridge renames y → z, exactly as the game's own
+     push does. Writing {x,z} here is the transpose bug README warns about. */
+  structures: [
+    /* Rows follow STRUCTURE_MIN_ROW (index.html, next to STRUCTURE_ORDER) —
+       the same height-aware back-row keep-out the game's own roll now obeys, so
+       this fixture shows a layout a real match can actually produce. It used to
+       put the church on row 2, which measures head Y = -43 in this projector:
+       its steeple was cropped off the top of the frame in the delivered
+       capture, and a capture whose subject is half off-screen judges nothing. */
+    { x:2,  y:4, kind:'car',      lootable:true, looted:false, risk:'explosive' },
+    { x:5,  y:5, kind:'church',   lootable:true, looted:false, risk:'cursed' },
+    { x:10, y:5, kind:'school',   lootable:true, looted:false, risk:null },
+    { x:3,  y:8, kind:'hospital', lootable:true, looted:false, risk:'corrupted' },
+    { x:9,  y:9, kind:'house',    lootable:true, looted:true,  risk:null }
   ]
 };
 
@@ -1465,6 +1742,7 @@ async function pushScene() {
 
   post('paint', bridgePaint(SCENE));
   post('tombs', bridgeTombs(SCENE));
+  post('structs', bridgeStructs(SCENE));
   post('surfaces', bridgeSurfaces(SCENE));
   post('events', await bridgeEvents(SCENE));
 

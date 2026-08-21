@@ -472,6 +472,21 @@
 
   /* ── Morale / hunger meters (matches the camp panel style) ── */
   #moralecard .mrow{display:flex;justify-content:space-between;font-size:12px;margin-top:2px;}
+  /* ⚡💧 THE UTILITIES CARD. Deliberately the same visual grammar as
+     #moralecard's rows above — label left, value right, 12px — because it is
+     the same kind of readout and a new look would only make it read as a
+     different KIND of thing. `.head` separates the three blocks (power, water,
+     draws) without three sub-headings in a 236px column. */
+  #utilcard .urow{display:flex;justify-content:space-between;gap:8px;font-size:12px;margin-top:2px;}
+  #utilcard .urow.head{margin-top:8px;padding-top:5px;border-top:1px solid rgba(255,255,255,.10);}
+  #utilcard .urow.head:first-child{margin-top:0;padding-top:0;border-top:0;}
+  #utilcard .urow span{color:var(--ink-dim,#9aa0a6);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  #utilcard .urow b{flex:0 0 auto;font-weight:600;}
+  #utilcard .ugood{color:#5fd08a;}
+  #utilcard .ubad{color:#ff7a6a;}
+  #utilcard .udim{color:var(--ink-dim,#9aa0a6);font-size:10px;opacity:.75;}
+  #utilcard .ubtns{display:flex;flex-direction:column;gap:4px;margin-top:9px;}
+  #utilcard .ubtns .hbtn{width:100%;text-align:left;font-size:11px;}
   #moralecard .mval{font-family:'Cinzel','Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji',serif;color:var(--gold);font-size:15px;}
   .mbar{height:8px;background:#241d33;border-radius:3px;overflow:hidden;margin:3px 0 7px;
     box-shadow:inset 0 0 4px rgba(0,0,0,.6);}
@@ -888,6 +903,26 @@
     <h2>Raider Threat</h2>
     <div id="raidtimer">—</div>
     <div id="raidmeta"></div>
+  </div>
+  <!-- ⚡💧 THE UTILITIES CARD — what the city is USING, and the way in to the
+       two info views that explain it.
+       🔴 IT EXISTS BECAUSE BOTH PANELS WERE UNREACHABLE IN PRACTICE. The
+       electricity view (/src/power) and the hydrology view (/src/water) have
+       always had exactly two doors each: a keystroke (E and G) and a small
+       chip INSIDE #vitalscard. So a player had to already have the Vitals
+       panel open, and had to know that a 12px chip reading '⚡ 4.0/3.2' was a
+       button. Reported verbatim: 'I saw the modal I do not know how I find
+       it.' That is the same built-but-no-door defect this project has hit
+       repeatedly; the chips stay (they are the glanceable value) and this is
+       the launcher.
+       ⚠ ONE CARD FOR BOTH, NOT TWO. #railbar is measured and already runs to
+         two rows at 1280 — see the RAILS width note. Power and water are one
+         question for a player ('what are my utilities doing'), so they get
+         one seat. Re-measure with tmp/fix-zom-tops.mjs before adding another.
+       Rendered by renderUtil() off the 0.5s HUD beat. -->
+  <div class="card" id="utilcard">
+    <h2>Utilities</h2>
+    <div id="utilbody"></div>
   </div>
   <!-- 🧟 THE OUTBREAK CARD. Rendered entirely by /src/zombie/panel.js — this
        file owns the container and nothing else, the same contract #ecocard
@@ -32398,6 +32433,7 @@ function vitalsTick(dtSec) {
     vitalTrend.output = 0;
   }
   renderVitals();
+  renderUtil();
 }
 function trendMeasured() { return _trendSpan >= TREND_MIN_SPAN_SEC; }
 // Small helper so the clamp reads once and cannot drift between the three uses.
@@ -32723,6 +32759,95 @@ const VITAL_ROWS = [
   { k: 'civilization', name: 'Civilization',    ico: '🏛️' },
   { k: 'trade',        name: 'Trade Stability', ico: '🚚' },
 ];
+/* ⚡💧 THE UTILITIES READOUT.
+   Every figure here is READ FROM THE MODULE THAT OWNS IT — MythicPower
+   .supply() is { capacity, load, factor, byPlant } and MythicWater.supply()
+   is { capacity, draw, shortfall, ... }. Nothing is re-derived, because a
+   second opinion about the city's power is exactly the drift this file has
+   had to rip out of two panels already.
+   ⚠ THE PER-BUILDING LIST IS THE DECLARED DRAW AND SAYS SO. `powerNeed` and
+     `use.water` are the BUILDINGS rows the host's own pre-passes read to
+     BUILD the demand figure above (:26569), so the list and the total come
+     from one source — but a tile's declared draw is its nameplate, not a
+     meter reading, and calling it 'using' would be a number with a wrong
+     label on it. The header says 'declared draw'.
+   ⚠ A MODULE THAT IS ABSENT PRINTS NOTHING, NOT ZERO. A 404 on /src/power
+     must not render '0.0 / 0.0', which is a permanent false readout for a
+     feature that simply is not there — the rule the 💧 chip already keeps. */
+function renderUtil() {
+  const el = $('utilbody'); if (!el) return;
+  const f1 = (v) => (Math.round(v * 10) / 10).toFixed(1);
+  const rows = [];
+
+  /* ⚡ POWER. game.power is the host's own live pair and is always present;
+     the module adds the availability factor behind it when it is mounted. */
+  const pg = (game.power && game.power.gen) || 0, pd = (game.power && game.power.demand) || 0;
+  const pbal = pg - pd;
+  rows.push('<div class="urow head"><b>⚡ Electricity</b><span class="' + (pbal < 0 ? 'ubad' : 'ugood') + '">' +
+            (pbal < 0 ? f1(-pbal) + ' short' : f1(pbal) + ' spare') + '</span></div>');
+  rows.push('<div class="urow"><span>Generated</span><b>' + f1(pg) + ' /min</b></div>');
+  rows.push('<div class="urow"><span>Used</span><b>' + f1(pd) + ' /min</b></div>');
+
+  /* 💧 WATER. Only when the module is answering with a real model — see the
+     💧 chip's own note on why an absent module prints nothing at all. */
+  let wsup = null;
+  try { const W = window.MythicWater; if (W && W.ready()) { const s = W.supply(); if (s && s.model !== 'none') wsup = s; } } catch (e) {}
+  if (wsup) {
+    const wshort = wsup.shortfall > 0.005;
+    rows.push('<div class="urow head"><b>💧 Water</b><span class="' + (wshort ? 'ubad' : 'ugood') + '">' +
+              (wshort ? f1(wsup.shortfall) + ' short' : f1(Math.max(0, wsup.capacity - wsup.draw)) + ' spare') + '</span></div>');
+    rows.push('<div class="urow"><span>Can draw</span><b>' + f1(wsup.capacity) + ' /min</b></div>');
+    rows.push('<div class="urow"><span>Wanted</span><b>' + f1(wsup.draw) + ' /min</b></div>');
+  }
+
+  /* THE BIGGEST CONSUMERS, declared draw, both utilities in one list so the
+     answer to 'what is eating my power' and 'what is eating my water' is one
+     glance. Sites and damaged tiles are skipped for the same reason the water
+     pre-pass skips them: a hole in the ground draws nothing. */
+  const use = [];
+  try {
+    for (const k in game.tiles) {
+      const t = game.tiles[k]; const d = BUILDINGS[t && t.type];
+      if (!d || t.damaged || bldSite(t)) continue;
+      const lvl = Math.max(1, t.lvl | 0);
+      const p = (d.powerNeed || 0) * lvl, w = ((d.use && d.use.water) || 0) * lvl;
+      if (p > 0 || w > 0) use.push({ n: d.name, i: d.ico, p, w });
+    }
+  } catch (e) {}
+  use.sort((a, b) => (b.p + b.w) - (a.p + a.w));
+  if (use.length) {
+    rows.push('<div class="urow head"><b>Biggest draws</b><span class="udim">declared</span></div>');
+    for (const u of use.slice(0, 6)) {
+      rows.push('<div class="urow"><span>' + u.i + ' ' + u.n + '</span><b>' +
+                (u.p > 0 ? '⚡' + f1(u.p) : '') + (u.p > 0 && u.w > 0 ? ' · ' : '') +
+                (u.w > 0 ? '💧' + f1(u.w) : '') + '</b></div>');
+    }
+  }
+
+  /* THE TWO DOORS. This is the half of the card that answers the actual
+     complaint: the info views are real, detailed and were unreachable.
+     Each button is rendered ONLY when its module is mounted — a button that
+     opens nothing is worse than no button. */
+  const btns = [];
+  try { if (window.MythicPower && window.MythicPower.ready()) btns.push('<button class="hbtn" data-util="pw">⚡ Electricity map (E)</button>'); } catch (e) {}
+  try { if (window.MythicWater && window.MythicWater.ready()) btns.push('<button class="hbtn" data-util="wt">💧 Groundwater map (G)</button>'); } catch (e) {}
+  if (btns.length) rows.push('<div class="ubtns">' + btns.join('') + '</div>');
+
+  const html = rows.join('');
+  if (html !== renderUtil._last) { renderUtil._last = html; el.innerHTML = html; }
+}
+/* Delegated, for the same reason the ⚡ and 💧 chip handlers are: the rail
+   moves this card into #rmbody and renderUtil() replaces its innerHTML
+   whenever a figure moves, so a listener bound to the buttons is thrown away. */
+addEventListener('click', (ev) => {
+  const b = ev.target.closest && ev.target.closest('[data-util]');
+  if (!b) return;
+  try {
+    if (b.dataset.util === 'pw' && window.MythicPower) window.MythicPower.togglePanel();
+    if (b.dataset.util === 'wt' && window.MythicWater) window.MythicWater.togglePanel();
+  } catch (e) {}
+});
+
 function renderVitals() {
   const el = $('vitalsbody'); if (!el) return;
   const pop = Math.round(cityPop()), cap = popCap();
@@ -43840,6 +43965,20 @@ const RAILS = [
        a clocked button sits 1px high). Use tmp/fix-zom-tops.mjs, which groups
        by top edge and prints the buttons on each row. */
   { id: 'progtree',   ico: '🌳', name: 'Research', title: 'Research tree (K)', ext: 'progress' },
+  /* ⚡ THE FIFTEENTH SEAT, and unlike the two above it this one was MEASURED
+     BEFORE it was added rather than argued about afterwards.
+     tmp/fix-zom-tops.mjs at 1280 wide, which groups by top edge and is the
+     tool the 🌳 note says to use (eval-rail-worst.js miscounts a clocked
+     button as its own row):
+         natural   13 shown   1217px used   2 rows
+         forced 15 15 shown   1460px used   2 rows   barH 107
+     The dock is ALREADY two rows — that is the measured truth the 🌳 note
+     records — and the second row carries only logcard(78) + bcphone(94) +
+     progtree(115) ≈ 300px of a ~1010px wrap width. This launcher lands on
+     that row with roughly 600px still free, so it does not add a third one.
+     🔴 RE-MEASURE BEFORE A SIXTEENTH. The failure that matters is a THIRD row
+        over the map, not the width number itself. */
+  { id: 'utilcard',   ico: '⚡', name: 'Utility',  title: 'Power and water usage — and the way into both info views' },
 ];
 
 let _railOpen = null;                    // id of the panel currently in #rmbody

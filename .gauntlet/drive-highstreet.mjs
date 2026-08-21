@@ -80,11 +80,11 @@ for (const t of NEW) ok('  ' + t + ' is in it', !!MAP[t], MAP[t] ? MAP[t].out + 
 let node = null;
 for (let i = 0; i < 60 && !node; i++) {
   const id = 'hs-' + i;
-  E.mount({ nodeId: id, population: 120 });
+  E.mount({ nodeId: id, population: 420 });
   if (E.canBuild('cotton') && E.canBuild('ironOre')) node = id;
 }
 node = node || 'hs-0';
-E.mount({ nodeId: node, population: 120 });
+E.mount({ nodeId: node, population: 420 });
 console.log('\n   node: ' + node + '  (cotton + ironOre in the ground, so the honest chains have a root)');
 
 /* A city that has been BUILT OUT, so a shop is tested against every producer
@@ -92,7 +92,17 @@ console.log('\n   node: ' + node + '  (cotton + ironOre in the ground, so the ho
 const SUPPORT = ['farm', 'hydrofarm', 'purifier', 'powerstation', 'scrapmine', 'fuelrig',
                  'lumbercamp', 'quarry', 'fibercroft', 'sawmill', 'weavery', 'smelter',
                  'cannery', 'machineshop', 'munitions', 'medlab', 'depot', 'warehouse',
-                 'papermill', 'printworks', 'housing', 'housing', 'housing', 'grocery'];
+                 'papermill', 'printworks', 'housing', 'housing', 'housing', 'grocery',
+                 /* ⚗ THE MATERIALS TIER. Without these the city has no chemical
+                    industry, and the honest answer to 'can a shop trade' is NO —
+                    which is exactly what this driver reported before the tier
+                    existed. A shop is only testable in a city that could supply
+                    it. `waterintake` is here because the chain starts at RAW
+                    water; the Purifier makes fresh water out of air, not raw. */
+                 'waterintake', 'procwater', 'refinery', 'sugarmill', 'gasplant',
+                 'feedplant', 'chemworks', 'polymerplant', 'panelmill',
+                 'acidworks', 'solventworks', 'fiberplant', 'adhesiveplant',
+                 'paintworks', 'rubberworks', 'plasticworks', 'joinery', 'medchem'];
 
 const tiles = {};
 let n = 0;
@@ -112,7 +122,15 @@ const host = { powerFactor: 1, waterFactor: 1, logisticsCounts: { warehouse: 4, 
                hasBank: true, infrastructure: 0.8 };
 
 E.syncBuildings(list());
-const DAYS = 180;
+/* 🔴 A DEEPER CITY NEEDS MORE PEOPLE AND MORE DAYS. With the materials
+   tier the city went from ~24 firms to ~42, and at population 120 the shops
+   were simply out-bid for labour — ECON.labor.fillOrder fills the highest
+   wage band first, so a starved city staffs its refineries and leaves the
+   shop counters empty. That is the model working, not failing, but it
+   masks the thing under test. 420 residents and 360 days: enough crew to
+   staff the chain, and enough time for stock to walk seven steps from raw
+   water to a bolt of cloth. */
+const DAYS = 360;
 for (let d = 0; d < DAYS; d++) { E.tick(DAY, host); if (d % 30 === 0) E.syncBuildings(list()); }
 E.syncBuildings(list());
 
@@ -165,6 +183,24 @@ const trading = NEW.filter((t) => !results[t].missing && results[t].rev >= FLOOR
 const blocked = NEW.filter((t) => !trading.includes(t));
 console.log('   trading now   : ' + (trading.join(', ') || '- none -'));
 console.log('   supply-blocked: ' + (blocked.join(', ') || '- none -'));
+/* 🔴 STILL REPORTED, NOT ASSERTED — AND THE REASON MOVED. Before the
+   materials tier the shops were blocked because NOTHING IN THE CITY MADE
+   THEIR INPUTS. That is fixed: the graph is complete, round0j is green, and
+   clothier/pharmacy/furnistore/fastfood no longer report a missing producer.
+
+   What blocks them now is OLDER and lives in sim.js, not here. Measured with
+   .gauntlet/_chainprobe: a Refinery with full input availability
+   (fill 1.00, avail 1.00, no bottleneck) produced ZERO over 400 days, because
+   productionTargets() plans from REALISED demand — and nothing downstream has
+   realised any, because it in turn is not producing. A freshly built deep
+   chain has no way to start itself. ECONOMY.md records the same shape once
+   already ('a copper mine with no local customer sat dark while four partner
+   cities were openly buying'), fixed there by feeding export interest into
+   the forecast; the domestic case was never closed.
+
+   So this stays a report. Asserting it would be a red that this round cannot
+   clear, and the next person would raise the bar instead of fixing the cause.
+   The bar moves when the demand forecast does. */
 console.log('   A blocked shop still hires, still gives node-city coverage and still pays');
 console.log('   tile income; what it cannot do is stock its shelves. The shipped Club and');
 console.log('   Arena have been in exactly this state since they landed (beverages and');

@@ -3712,6 +3712,89 @@ const BUILDINGS = {
   college:  { name: 'College',          ico: '🎓', cost: { cinder: 200, metal: 56, supplies: 24 }, pop: 3, crew: 3, powerNeed: 1.2,
               school: { rung: 'college', seats: 20 },
               desc: 'Technical work starts here — labs, clinics and the refining chain. A city with no College cannot staff its own industry however many people live in it.' },
+
+  /* ══ ⚗ THE MATERIALS TIER — why eight shops could not stock a shelf ══════
+
+     🔴 THE DIAGNOSIS, MEASURED. Every shop the commerce round added founds a
+     firm, hires a crew and earns NOTHING. The shops are not at fault:
+     sim.js availabilityMap() computes a firm's input availability from
+     S.INV — LOCAL inventory — so an input bought in from outside (which
+     payUpstream does, booking it as an import) NEVER lifts production above
+     zero. A shop therefore needs a local producer for every input, all the
+     way down, and this city had no chemical tier whatsoever. That is the
+     same mechanism that left the Card Shop printing zero for its whole
+     shipped life until the Paper Mill and Print Works landed.
+
+     ⚗ These seventeen are that missing tier. Every one of them bottoms out
+     in ground the city already digs — rawWater, crudeOil, naturalGas,
+     sugarCrops, lumber, quartz — or in another member of the tier.
+     Modelled with .gauntlet/model-materials.mjs against round0j's own
+     primary-leg walk, so this file and the gate cannot disagree:
+         Clothing Store, Furniture Store, Cinema and Pharmacy light up;
+         the dark list falls 21 -> 14, under the shipped ceiling of 19.
+
+     ⚠ NO `gen:` AND NO `use:`, DELIBERATELY — the Paper Mill's rule exactly.
+       A `gen` would make these idle earners in the CITY-resource layer, and
+       worse, these outputs are ECONOMY chain ids: CLAUDE.md forbids ever
+       addRes()-ing one, because the 258 chain ids are not in index.html's
+       RESOURCES and the cloud whitelist never syncs them. Their entire
+       output is the FIRM, which lives in the economy's own inventory.
+
+     🎨 `mesh:` ALIASES, not new buildMesh arms. A BUILDINGS row may name an
+       existing recipe (BUILDINGS[type].mesh || type at :36809), which is how
+       the Weavery and Paper Mill already render. That closes the
+       invisible-building trap without touching a 400-line switch.
+
+     💱 COST is a three-rung ladder off ONE named neighbour, the Smelting
+       Works (60 🔥 / 24 metal, pop 2, crew 2) — the city's other
+       'raw goes in, refined comes out' tile at this scale:
+         rung A, first processing off a deposit   60 / 24
+         rung B, one step into the chain          78 / 30
+         rung C, specialty output                 96 / 36
+     ⚡ powerNeed is DERIVED, not chosen: each recipe's own `power`
+       coefficient ×2, rounded to 0.05 and floored at 0.3. A chemical plant
+       that the economy says is power-hungry is power-hungry on the tile too,
+       and retuning the recipe moves the building with it. */
+
+  // ── rung A: first processing, straight off a deposit ──
+  procwater:{ name: 'Process Water Plant', ico: '🚿', cost: { cinder: 60, metal: 24 }, pop: 2, crew: 2, powerNeed: 0.3, mesh: 'waterstation',
+              desc: 'Filters raw water up to industrial grade. Almost nothing downstream of it — chemicals, acids, paper — can run without it.' },
+  refinery: { name: 'Refinery',          ico: '🛢️', cost: { cinder: 60, metal: 24 }, pop: 2, crew: 2, powerNeed: 0.7, mesh: 'smelter',
+              desc: 'Cracks crude and gas into petrochemicals. The head of the whole chemical chain — plastics, fibre, rubber, adhesives all start here.' },
+  sugarmill:{ name: 'Sugar Mill',        ico: '🍬', cost: { cinder: 60, metal: 24 }, pop: 2, crew: 2, powerNeed: 0.35, mesh: 'cannery',
+              desc: 'Presses cane into sugar. Small, cheap, and the reason a Cinema or a Club has anything to sell over the counter.' },
+  gasplant: { name: 'Industrial Gas Plant', ico: '🫧', cost: { cinder: 60, metal: 24 }, pop: 2, crew: 2, powerNeed: 0.3, mesh: 'smelter',
+              desc: 'Bottles process gases off the natural-gas line. Quiet, unglamorous, and required by the acid and pharmaceutical benches.' },
+
+  // ── rung B: one step into the chain ──
+  feedplant:{ name: 'Feedstock Plant',   ico: '⚗️', cost: { cinder: 78, metal: 30 }, pop: 2, crew: 2, powerNeed: 0.5, mesh: 'smelter',
+              desc: 'Turns petrochemicals and process water into chemical feedstock — the common ancestor of almost everything on this tab.' },
+  chemworks:{ name: 'Chemical Works',    ico: '🧪', cost: { cinder: 78, metal: 30 }, pop: 2, crew: 2, powerNeed: 0.6, mesh: 'smelter',
+              desc: 'Industrial chemicals in bulk. Feeds the acid bench, the solvent still, the fibre line and the medical benches.' },
+  polymerplant:{name: 'Polymer Plant',   ico: '🧴', cost: { cinder: 78, metal: 30 }, pop: 2, crew: 2, powerNeed: 0.45, mesh: 'smelter',
+              desc: 'Cracks petrochemicals down to plastic feedstock. One step, one output, and nothing plastic exists without it.' },
+  panelmill:{ name: 'Panel Mill',        ico: '🪵', cost: { cinder: 78, metal: 30 }, pop: 2, crew: 2, powerNeed: 0.3, mesh: 'machineshop',
+              desc: 'Presses lumber and glue into board. The Joinery next door is its only real customer, and the Furniture Store is its only real reason.' },
+
+  // ── rung C: specialty outputs ──
+  acidworks:{ name: 'Acid Works',        ico: '🧫', cost: { cinder: 96, metal: 36 }, pop: 2, crew: 2, powerNeed: 0.6, mesh: 'cannery',
+              desc: 'Mineral acids for tanning, etching and pharmacy. Wants to be far from anything you care about breathing near.' },
+  solventworks:{name: 'Solvent Still',   ico: '🫙', cost: { cinder: 96, metal: 36 }, pop: 2, crew: 2, powerNeed: 0.5, mesh: 'cannery',
+              desc: 'Distils solvents out of petrochemicals. Paint needs it, and so does every cleaning line in the city.' },
+  fiberplant:{name: 'Fibre Plant',       ico: '🧵', cost: { cinder: 96, metal: 36 }, pop: 2, crew: 2, powerNeed: 0.6, mesh: 'cannery',
+              desc: 'Spins synthetic fibre. The Weavery has always needed it to make real cloth — without one, every bolt in the city is half cotton and half nothing.' },
+  adhesiveplant:{name: 'Adhesive Plant', ico: '🩹', cost: { cinder: 96, metal: 36 }, pop: 2, crew: 2, powerNeed: 0.3, mesh: 'cannery',
+              desc: 'Glues and binders. Board, furniture and books all fall apart without it, which is why it is on nobody\'s wish list and in everybody\'s chain.' },
+  paintworks:{name: 'Paint Works',       ico: '🎨', cost: { cinder: 96, metal: 36 }, pop: 2, crew: 2, powerNeed: 0.35, mesh: 'cannery',
+              desc: 'Pigment, solvent and quartz filler. The last step before a piece of furniture is something you would put in a room.' },
+  rubberworks:{name: 'Rubber Works',     ico: '⚫', cost: { cinder: 96, metal: 36 }, pop: 2, crew: 2, powerNeed: 0.5, mesh: 'cannery',
+              desc: 'Vulcanises petrochemicals into rubber. Tyres, soles and seals — the material nothing advertises and everything needs.' },
+  plasticworks:{name: 'Plastics Works',  ico: '🧱', cost: { cinder: 96, metal: 36 }, pop: 2, crew: 2, powerNeed: 0.55, mesh: 'machineshop',
+              desc: 'Moulds feedstock into finished plastic. Toys, housings, packaging — the single most-demanded input on the high street.' },
+  joinery:  { name: 'Joinery',           ico: '🪑', cost: { cinder: 96, metal: 36 }, pop: 2, crew: 2, powerNeed: 0.3, mesh: 'machineshop',
+              desc: 'Board, glue and paint into furniture components. The Furniture Store is dark until this is standing.' },
+  medchem:  { name: 'Medical Chemicals', ico: '💉', cost: { cinder: 96, metal: 36 }, pop: 3, crew: 3, powerNeed: 0.7, mesh: 'medlab',
+              desc: 'Pharmaceutical-grade chemistry. The Pharmacy counter has nothing to dispense without it, and the Med Lab runs better with one.' },
   university:{name: 'University',       ico: '🏛️', cost: { cinder: 300, metal: 84, supplies: 36 }, pop: 4, crew: 4, powerNeed: 1.6,
               school: { rung: 'university', seats: 14 },
               desc: 'The top of the ladder, and the only route to ADVANCED labour — the anomaly work, the research spires and the reality lines. Seats few, costs most.' },
@@ -4141,6 +4224,13 @@ const BUILD_SECTIONS = [
      The ladder has to be READ AS A LADDER — the order in this list is the
      order a city must build them in, and burying it inside 'population,
      health and morale' would hide the one thing a player needs to know. */
+  /* ⚗ MATERIALS — its own section rather than seventeen more cards in
+     Refining, which is already ten wide. Ordered by DEPTH, because that is
+     the order they have to be built in: nothing downstream runs until the
+     thing above it is standing. */
+  { id: 'mat',   name: 'Materials',      ico: '⚗️', desc: 'The chemical and materials chain. Shops cannot stock what the city cannot make — a firm only ever produces against LOCAL supply.',
+    items: ['procwater', 'refinery', 'sugarmill', 'gasplant', 'feedplant', 'chemworks', 'polymerplant', 'panelmill',
+            'acidworks', 'solventworks', 'fiberplant', 'adhesiveplant', 'paintworks', 'rubberworks', 'plasticworks', 'joinery', 'medchem'] },
   { id: 'edu',   name: 'Education',      ico: '🎓', desc: 'Every rung a resident can climb, and each one only works if the rung below it exists. No schools at all and the city is stuck at self-taught.',
     items: ['elemschool', 'midschool', 'highschool', 'college', 'university'] },
   { id: 'comm',  name: 'Commerce',       ico: '🏬', desc: 'Where the city spends its wages — and where most of it works. Each shop hires against its own skill band.',
@@ -4193,6 +4283,9 @@ const BUILD_ORDER = ['streetlight','farm','hydrofarm','purifier','scrapmine','fu
   'clothier', 'fastfood', 'pharmacy', 'greatbuy', 'furnistore', 'gamestore', 'cinema', 'weaponshop',
   // ── 🏫 the school ladder (education round) ──
   'elemschool', 'midschool', 'highschool', 'college', 'university',
+  // ── ⚗ the materials tier (unblocks the high street) ──
+  'procwater', 'refinery', 'sugarmill', 'gasplant', 'feedplant', 'chemworks', 'polymerplant', 'panelmill',
+  'acidworks', 'solventworks', 'fiberplant', 'adhesiveplant', 'paintworks', 'rubberworks', 'plasticworks', 'joinery', 'medchem',
   // ── the Ouroboros chain: the two links that made the Card Shop able to print
   'papermill', 'printworks',
   // ── the financial district: the Forge remodelled. 'forge' is BACK in this
@@ -27672,6 +27765,27 @@ const ECO_BUILDING_MAP = {
   cinema:      { out: ['beverages'],          ind: 'venue' },
   fastfood:    { out: ['preparedMeals'],      ind: 'restaurant' },
   weaponshop:  { out: ['sportingGoods'],      ind: 'armsDealer' },
+  /* ── ⚗ THE MATERIALS TIER. One `out` each, and every one of them is a
+     chain id the shops above are waiting on. See the BUILDINGS block for the
+     measured reason this tier exists at all: a firm produces against LOCAL
+     inventory only, so an unmade input is an unmade product for ever. */
+  procwater:   { out: ['industrialWater'],    ind: 'waterworks' },
+  refinery:    { out: ['petrochemicals'],     ind: 'refinery' },
+  sugarmill:   { out: ['sugar'],              ind: 'foodPlant' },
+  gasplant:    { out: ['industrialGas'],      ind: 'chemPlant' },
+  feedplant:   { out: ['chemicalFeedstock'],  ind: 'chemPlant' },
+  chemworks:   { out: ['industrialChemicals'],ind: 'chemPlant' },
+  polymerplant:{ out: ['plasticFeedstock'],   ind: 'chemPlant' },
+  panelmill:   { out: ['woodPanels'],         ind: 'sawmill' },
+  acidworks:   { out: ['acids'],              ind: 'chemPlant' },
+  solventworks:{ out: ['solvents'],           ind: 'chemPlant' },
+  fiberplant:  { out: ['syntheticFiber'],     ind: 'chemPlant' },
+  adhesiveplant:{out: ['adhesives'],          ind: 'chemPlant' },
+  paintworks:  { out: ['paint'],              ind: 'chemPlant' },
+  rubberworks: { out: ['rubber'],             ind: 'chemPlant' },
+  plasticworks:{ out: ['plastic'],            ind: 'chemPlant' },
+  joinery:     { out: ['furnitureComponents'],ind: 'fabricator' },
+  medchem:     { out: ['medicalChemicals'],   ind: 'pharma' },
   papermill:   { out: ['cardStock'],          ind: 'paperMill' },
   printworks:  { out: ['printedCards'],       ind: 'cardPrinter' },
   /* ── 🏗 FIVE STANDING TILES THAT WERE ALWAYS BUSINESSES AND WERE NEVER WIRED.

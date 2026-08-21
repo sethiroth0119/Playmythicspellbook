@@ -5,10 +5,10 @@
 
 <script id="run-data" type="application/json">
 {
-  "updated": "2026-08-21 \u2014 Wave 4: a real bug, and the objectives",
-  "headline": "The judge found four hexes nobody can click. That goes first.",
-  "phase": "Wave 4",
-  "round": 4,
+  "updated": "2026-08-21 \u2014 Wave 5: the camera, the arrows, and three real breaks",
+  "headline": "The regression gate found what four waves of critics had missed.",
+  "phase": "Wave 5",
+  "round": 6,
   "goal": "Rebuild the battlefield as a full-field hex map \u2014 XCOM + Fire Emblem + FFT \u2014 in a post-apocalyptic world. Free camera (WASD pan, Q/E turn), five lootable ruins, three SCP-truck control points, XCOM-style move and attack arrows. Every existing battlefield function survives.",
   "bar": [
     "Sprite units and heroes stay sprites \u2014 extremely clear, high quality on the board",
@@ -99,13 +99,21 @@
     },
     {
       "name": "Free camera",
-      "state": "queued",
-      "note": "WASD pan and Q/E yaw. No camera controls exist today. Yaw breaks the painter sort, the ground slices, the screen-anchored sky, and every ground-circle radius at once."
+      "state": "building",
+      "note": "Entirely unbuilt until now. The traps are known in advance: the baked static ground is cached on viewport but not on camera pose, so it would stay nailed to the screen while the board slides under it; the painter sort is z-ascending and inverts when you turn around; and picking has to stay exact at every pose, which is the guarantee the whole board rests on.",
+      "rounds": [
+        {
+          "n": 1,
+          "verdict": "run",
+          "label": "building",
+          "short": "\u00b7\u00b7\u00b7"
+        }
+      ]
     },
     {
       "name": "Post-apocalyptic terrain",
       "state": "critiqued",
-      "note": "Three rounds each killed the previous round's named gap: relief too shallow to read, then a diorama still floating on a photograph, then four ornate braziers marking out the old rectangle in fire. The final judge ranked it far above both baselines and still refused to pass it \u2014 the whole field is painted at 19% of the value range, and the relief is a rim around a flat middle where all the units actually stand.",
+      "note": "Four rounds of gaps closed. The fifth: the seam between flush tiles was removed from the stroke but not from the geometry \u2014 every tile top is inset 0.008 toward its own centre, so two level neighbours never touch and a black trench shows between them. Measured at 48-82 L deep, deeper than an actual cliff edge.",
       "rounds": [
         {
           "n": 1,
@@ -127,39 +135,83 @@
         },
         {
           "n": 4,
+          "verdict": "rework",
+          "label": "seams cut every tile apart",
+          "short": "\u25d1"
+        },
+        {
+          "n": 5,
+          "verdict": "rework",
+          "label": "inset trench survived",
+          "short": "\u25d1"
+        },
+        {
+          "n": 6,
           "verdict": "run",
-          "label": "value range + the bug",
+          "label": "joined shelf",
           "short": "\u00b7\u00b7\u00b7"
         }
       ]
     },
     {
       "name": "Ruins + loot",
-      "state": "building",
-      "note": "The requirement is identity, not similarity: looting a ruin must call the real _lootGridOpen, so the salvage grid, the drag, the rotate, and swapping your own loot into the container are literally the tombstone ones. A parallel lookalike grid is a fail however good it looks.",
+      "state": "won",
+      "note": "Verified end to end by the regression gate: looting a ruin calls the same single _lootGridOpen the tombstones call \u2014 identity, not similarity, which is what was asked for. Placement now rejects both the placer's row and the mirrored row so a ruin cannot be cropped off the multiplayer guest's screen either.",
       "rounds": [
         {
           "n": 1,
-          "verdict": "run",
-          "label": "building",
-          "short": "\u00b7\u00b7\u00b7"
+          "verdict": "rework",
+          "label": "school unidentifiable",
+          "short": "\u25d1"
+        },
+        {
+          "n": 2,
+          "verdict": "rework",
+          "label": "keep-out asymmetric",
+          "short": "\u25d1"
+        },
+        {
+          "n": 3,
+          "verdict": "pass",
+          "label": "symmetric, loot verified",
+          "short": "\u2713"
         }
       ]
     },
     {
       "name": "SCP truck control points",
-      "state": "queued",
-      "note": "Two mechanics, not one: a score that goes up when you hold a point and down when you lose it, and a streak \u2014 two of three for three straight turns wins without touching the enemy hero. The critic has to execute the turn loop, not read it."
+      "state": "critiqued",
+      "note": "Verified by execution: the capture ring is a tile plus its six hexes, holding two of three for three straight turns returns a win, and the score falls when a point is lost. Remaining gap is multiplayer \u2014 the arithmetic agrees on both clients but nothing carries the VERDICT across, so a control-point win leaves the winner confirming forever and the loser frozen.",
+      "rounds": [
+        {
+          "n": 1,
+          "verdict": "rework",
+          "label": "double-ticks in multiplayer",
+          "short": "\u25d1"
+        },
+        {
+          "n": 2,
+          "verdict": "rework",
+          "label": "MP win never ends the match",
+          "short": "\u25d1"
+        },
+        {
+          "n": 3,
+          "verdict": "run",
+          "label": "legitimate MP ending",
+          "short": "\u00b7\u00b7\u00b7"
+        }
+      ]
     },
     {
       "name": "XCOM telegraph",
       "state": "queued",
-      "note": "Move range as a glowing contour, a path arrow along the actual route, and an arc to the attack target. Not a tile checkerboard, not a straight laser."
+      "note": "Move range as one traced contour rather than a checkerboard, a path arrow along the route the unit will ACTUALLY walk \u2014 taken from the game's own getMovePath, not re-derived \u2014 and a curved arc to the attack target."
     },
     {
       "name": "Sprite clarity",
       "state": "queued",
-      "note": "Units stay sprites and stay crisp at the new map scale \u2014 hard edges, ownership rings, readable nameplates."
+      "note": "Measured, not eyeballed: edge transition across a silhouette, fractional-pixel offsets, shadowBlur on the sprite draw. And tuned against what the game actually sends, not a harness-only best case."
     }
   ],
   "log": [
@@ -267,6 +319,71 @@
       "t": "11:50",
       "kind": "build",
       "text": "Wave 4 launched on two disjoint regions: the terrain fixes plus that bug, and the five lootable ruins. Control points and the alternate victory follow in the same wave."
+    },
+    {
+      "t": "13:10",
+      "kind": "critic",
+      "text": "Wave 4: the ruins critic confirmed looting a structure calls the real _lootGridOpen rather than a lookalike \u2014 the requirement was identity, not similarity. It failed the school instead: four of five buildings carry an unmistakable icon and the school is a dark box."
+    },
+    {
+      "t": "13:35",
+      "kind": "critic",
+      "text": "The objectives critic caught the exact trap the brief warned about, by executing the turn loop instead of reading it: the per-turn tick double-counts in multiplayer but not single-player, because the turn counter increments in two different places."
+    },
+    {
+      "t": "14:05",
+      "kind": "critic",
+      "text": "And a subtler one on placement: the height-aware keep-out that stops a ruin being buried is applied in the sender's coordinate frame, while multiplayer mirrors every position 180\u00b0 for the other client. The guarantee held for one player and not the other."
+    },
+    {
+      "t": "14:20",
+      "kind": "build",
+      "text": "Wave 4 committed \u2014 ruins, control points, the value-range fix, and the unclickable-tile bug. Deploy knobs moved together to v120x0."
+    },
+    {
+      "t": "14:25",
+      "kind": "build",
+      "text": "Wave 5 launched: free camera and the mirror fix in parallel, then the XCOM telegraph, then sprite clarity and the UI restyle \u2014 and finally a regression gate that inventories every battlefield function the game had before this work and verifies each one still works, by executing it rather than reading it."
+    },
+    {
+      "t": "14:10",
+      "kind": "critic",
+      "text": "Ruins critic: the loot identity requirement passes \u2014 a structure opens the real _lootGridOpen, not a lookalike. The gap is art: four ruins carry an unmistakable icon and the school carries none, so it reads as the hospital without a cross."
+    },
+    {
+      "t": "15:05",
+      "kind": "critic",
+      "text": "Objectives critic caught exactly the trap the brief warned about, one level deeper. The tick correctly keys on WHO rather than the turn number \u2014 but in multiplayer one client runs the opponent's turn-start locally, broadcasts, and the opponent then runs its own, so the same point was banked twice."
+    },
+    {
+      "t": "15:40",
+      "kind": "critic",
+      "text": "A second ruins critic measured 400 seeds and found the fix from the previous round made things worse for the multiplayer guest: the keep-out protecting the host's framing pushed every ruin onto exactly the rows that mirror onto the guest's cropped edge. Host crops fell to 85/400, guest crops rose to 315/400 \u2014 worse than with the rule off."
+    },
+    {
+      "t": "18:30",
+      "kind": "pass",
+      "text": "Function-inventory gate ran: every battlefield function that existed before this work, enumerated from the code and tested on the new board. Nothing was deleted across four waves and the hex conversion is clean \u2014 distance symmetric over all 168x168 pairs, movement range identical to a brute-forced hex disc, cleave hitting the hex neighbour and leaving the square diagonal alone, traps firing, walls blocking, the AI taking a full legal turn."
+    },
+    {
+      "t": "18:32",
+      "kind": "critic",
+      "text": "It also found three breaks four waves of critics had missed. Replays render a board that never existed: the snapshot is an allow-list and the ruins, trucks, scores and map seed are not on it, so nothing throws and the replay just draws different terrain."
+    },
+    {
+      "t": "18:33",
+      "kind": "critic",
+      "text": "Knockback, pull, vortex and ice-slide all pick their direction with Math.sign on dx and dy \u2014 a square diagonal on a six-direction lattice. Measured: a shove from (6,7) landed two hexes away, straight through an enemy standing on the true neighbour."
+    },
+    {
+      "t": "18:34",
+      "kind": "critic",
+      "text": "And two tiles project off the canvas entirely. Real clicks there hit the page background \u2014 yet getValidMoves offers one of them as a legal destination, so the rules would send a unit somewhere the player can neither see nor click."
+    },
+    {
+      "t": "18:40",
+      "kind": "build",
+      "text": "Wave 5: the free camera and the arrows \u2014 the two requirements still entirely unbuilt \u2014 alongside all three breaks. Every critic this wave has to drive the thing rather than read it."
     }
   ]
 }

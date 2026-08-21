@@ -200,7 +200,7 @@ body{ font-family:"EB Garamond",serif; color:#e9dab2; user-select:none; }
 <div class="hint" id="hint">click a card, then a tile — or click a unit and a tile to move it</div>
 
 
-<script>window.BB_BUILD='v119k5';
+<script>window.BB_BUILD='v119k8';
 "use strict";
 /* ══════════════════════════════════════════════════════════════════
    CONFIG — camera + UI safe areas. Port these numbers verbatim.
@@ -363,6 +363,26 @@ let HAND = [];   /* the real hand lives in the game HUD */
    ══════════════════════════════════════════════════════════════════ */
 /* legal-target overlay pushed by the game each render */
 const PAINT = { move:new Set(), attack:new Set(), place:new Set(), swap:new Set(), sel:null };
+/* 🏹 THE XCOM TELEGRAPH — pushed by the game as board:tele.
+   Everything here is a RENDER INPUT, exactly like PAINT: the board owns no
+   pathfinder and must never derive a route of its own. `path` is the ordered
+   tile list the game's OWN getMovePath() returned for the hovered destination
+   — the same call moveUnit() makes to decide which tiles the unit walks over
+   and which traps fire — so the drawn route and the walked route are the same
+   array, not two answers that happen to agree today.
+   ⚠ Do NOT be tempted to interpolate a straight line between unit and cursor
+   when `path` is empty. An empty path means the game said "no legal route",
+   and drawing one anyway is the UI-lies-about-the-rules bug in its purest
+   form: the player would watch the unit walk somewhere else.
+   `rev` is bumped by the message handler; the contour cache keys off it so a
+   14x12 boundary trace happens on a selection change, not 60 times a second.
+   `side` says WHOSE route this is — 'mine' when the player is previewing a
+   move, 'foe' when the AI is walking one on its own turn. It exists because
+   "where I am going" and "where IT is going" must never be the same colour,
+   the same separation BAR R2 demands between the move region and the threat
+   wash. It is pushed by the host, never inferred here: the board does not
+   know whose turn it is. */
+const TELE = { path:[], dest:null, arc:null, threat:new Set(), side:'mine', rev:0 };
 /* dead units' grave markers, pushed by the game */
 const TOMBS = [];
 /* 🏚 lootable ruins (car / church / school / hospital / house), pushed by the
@@ -413,8 +433,15 @@ function drawGroundSlices(img, alpha){
   for (let i=0;i<N;i++){
     const t0 = i/N, t1 = (i+1)/N;
     const z0 = zFar + t0*depth, z1 = zFar + t1*depth;
-    const L0 = project({x:-halfW, y:0, z:z0}), R0 = project({x:halfW, y:0, z:z0});
-    const L1 = project({x:-halfW, y:0, z:z1}), R1 = project({x:halfW, y:0, z:z1});
+    /* 🎥 gp(), not a world point: the bands are perpendicular to the CAMERA's
+       ground-forward axis, not to world Z. That is what keeps each band
+       projecting to a horizontal trapezoid — which is the entire reason the
+       four corners below can be reduced to one axis-aligned drawImage rect.
+       Band the ground in world Z under yaw and every rect is a sheared quad
+       squeezed into an upright box, i.e. the photograph smears sideways.
+       At yaw 0 with no pan gp(u,v) is (u,0,v) and nothing about this moves. */
+    const L0 = project(gp(-halfW, z0)), R0 = project(gp(halfW, z0));
+    const L1 = project(gp(-halfW, z1)), R1 = project(gp(halfW, z1));
     if (!L0||!R0||!L1||!R1) continue;
     const dx = Math.min(L0.x, L1.x), dw = Math.max(R0.x, R1.x) - dx;
     const dy = L0.y, dh = (L1.y - L0.y) + 1.2;   /* +1.2 hides seams */
@@ -607,7 +634,50 @@ function boardExtent(){
    clamp is also what keeps this cheap enough to call per frame. */
 function groundExtent(){
   const e = boardExtent();
-  const out = { x:e.x, near:e.z, far:e.z };
+  /* 🎥 The board's reach measured ALONG THE CAMERA'S ground axes, not along
+     the world's. boardExtent() is a world-axis half-extent pair; once the
+     camera can turn, "how far away is the far edge" is the support function of
+     that rectangle in the eye's own −V direction, which is |e.x·sin yaw| +
+     |e.z·cos yaw|. At yaw 0 that is e.z and at 90° it is e.x — take the world
+     answer at 90° and the lattice sticks out past the apron that is supposed
+     to be under it, with the location photograph laid over the far columns. */
+  const cy = Math.abs(Math.cos(CAMERA.yaw)), sy = Math.abs(Math.sin(CAMERA.yaw));
+  /* …measured from the PAN ORIGIN, which is where gp() puts the quad, and not
+     from the world origin, which is where the board is. Pan the focus a third
+     of the way across the field and the board's far edge is now a third of the
+     field FURTHER from the quad's centre than it was; without this term the
+     apron's far edge lands in the middle of the lattice and the location
+     photograph is laid over the back rows. */
+  /* SIGNED, and that is the whole point. The board's centre sits at
+     (sU, sV) in the frame, so the board occupies V ∈ [sV−supV, sV+supV]: the
+     far reach only has to cover supV−sV and the near reach only supV+sV.
+     ⚠ THE BUG THIS REPLACES: this used |frameV(0,0)| and added it to BOTH,
+     which grows the quad in the direction the board is NOT in as well. Because
+     skirtRange() bounds the skirt by this quad, panning 2.67 away from the
+     centre roughly DOUBLED the quad's depth and, with the same treatment on U,
+     its area — and the painted skirt went from 164 cells to 342-368. Measured
+     as a bake of 18-39 ms at every yaw with pan (0,0) and 130-300 ms as soon as
+     pan and a non-cardinal yaw were combined, which is the one input
+     combination the free camera exists to allow. Each axis had been varied with
+     the other at zero, so nothing caught it.
+     At pan (0,0) sU and sV are 0 and every number below is bit-identical to
+     what shipped, which is why the resting framing does not move. */
+  const sU = frameU(0, 0), sV = frameV(0, 0);
+  const supV = e.x*sy + e.z*cy;           /* board's support toward the eye */
+  const supU = e.x*cy + e.z*sy;           /*        …and across the frame   */
+  const nearV = Math.max(supV + sV, hexV());
+  const farV  = Math.max(supV - sV, hexV());
+  /* U is the one axis where the quad really is symmetric about the frame
+     origin, so the pan offset cannot simply be signed away. It is dropped from
+     the FLOOR instead: out.x below is set from the frustum's own floor
+     footprint, and anything the pan pushes off to one side is by definition
+     outside the frustum, i.e. not in the picture. Leaving |sU| in the floor
+     forced the quad wider than the frame at every panned pose and was the last
+     surviving arm of the cliff — a held E+D still baked 185 ms with the V axis
+     already fixed, on 366 painted skirt cells. The old value is kept as the
+     CEILING so the degenerate-camera guard has the headroom it had. */
+  const out = { x:supU, near:nearV, far:farV };
+  const capU = (supU + Math.abs(sU)) * 3;
   if (!CAM || !VIEW.box) return out;
   const a = (VIEW.cy - (VIEW.box.t + VIEW.box.h + 24)) / VIEW.scale;
   const d = { x:CAM.u.x*a + CAM.f.x, y:CAM.u.y*a + CAM.f.y, z:CAM.u.z*a + CAM.f.z };
@@ -615,17 +685,29 @@ function groundExtent(){
     const t = -CAM.pos.y / d.y;
     /* also has to stay IN FRONT of the eye — a degenerate camera would
        otherwise ask for a floor that begins behind the near clip, where
-       project() returns null and the whole apron silently disappears. */
-    out.near = clamp(CAM.pos.z + d.z*t, e.z, Math.min(e.z*3, CAM.pos.z - 1));
+       project() returns null and the whole apron silently disappears.
+       ⚠ Measured in the CAMERA-ALIGNED ground frame (frameV), not in world Z.
+       "How far does the floor have to reach toward the viewer" is a question
+       about the viewer; taking the world-Z of the hit answered it correctly
+       only while the eye sat on the +Z axis, and under yaw it reads the
+       LATERAL distance instead and collapses the apron to nothing at 90°.
+       At yaw 0 with no pan frameV(x,z) === z, so this is the same number. */
+    /* The LOWER bound is the board's own near reach (so the apron never stops
+       short of the lattice); the UPPER bound keeps the old headroom, measured
+       off the board's support rather than off the new tighter nearV — shrinking
+       the ceiling with the floor would let a pan clip the floor the frustum
+       genuinely needs and leave bare apron in the foreground. */
+    out.near = clamp(frameV(CAM.pos.x + d.x*t, CAM.pos.z + d.z*t),
+                     nearV, Math.min((supV + Math.abs(sV))*3, frameV(CAM.pos.x, CAM.pos.z) - 1));
   }
   /* Half-width is measured at the FAR row, not the near one. Screen offset is
      x·scale/depth, so for a fixed screen edge the world x needed GROWS with
      depth: sizing off the near row leaves two dark wedges of nothing in the
      top corners where the floor has already run out. */
-  const depth = dot(sub({x:0,y:0,z:-out.far}, CAM.pos), CAM.f);
+  const depth = dot(sub(gp(0, -out.far), CAM.pos), CAM.f);
   if (depth > 0.2)
     out.x = clamp((VIEW.box.w/2 + 24)*depth/VIEW.scale + Math.abs(latticeCentreX()),
-                  e.x, e.x*3);
+                  supU, capU);
   return out;
 }
 
@@ -649,6 +731,34 @@ let TILE_ELEVS = [0];
    thrown away wholesale whenever the host replaces the map. */
 let SKIRT_SEED = 0x9e3779b9;
 let SKIRT_CELLS = new Map();
+/* 📊 SKIRT COST, COUNTED — not estimated.
+   The first cut of the free camera bounded the skirt by the size of a LATTICE
+   RECTANGLE (skirtRange's BUDGET) and reasoned that the three culls inside
+   paintSkirtCell would throw away the excess. They do not, and the proof is
+   that a bake measured 18-39 ms at every yaw with pan 0 and 130-300 ms the
+   moment ANY pan was added — the one input combination WASD+QE exists to
+   allow, and the one nobody measured because each axis was varied with the
+   other at zero. The rectangle was the same size in both cases; what changed
+   was how many cells inside it survived to paint. So the budget now counts the
+   thing that actually costs: cells that get PAINTED.
+   `asked` is every cell the sweep offered, and the three cull counters say
+   which gate rejected the rest — without them "the bake got slower" is a
+   symptom with four candidate causes and no way to tell them apart. Surfaced
+   in __bbPerf() and __bbCam.check().terrain so a regression is a number in a
+   test, not an impression from a screenshot. */
+const SKIRT_STAT = { asked:0, painted:0, cullQuad:0, cullScreen:0, cullLod:0,
+                     lod:0, budget:0, areaKpx:0, maxR:0 };
+/* ⏱ THE BAKE, BROKEN DOWN — opt-in, because the split needs a clock read per
+   painted cell and the shipped path must not pay for a diagnostic.
+   It exists because the first two censuses of the pan×yaw cliff both failed:
+   painted cells did not explain it (359 cells → 144 ms at one pose, 296 → 28 ms
+   at another) and neither did painted area. "The bake got slower" has five
+   candidate causes inside paintTerrain and no way to tell them apart from
+   outside, which is how a fix by guess happens. `window.__bbTerrSec(true)` arms
+   it; __bbPerf().terrainSections reads it. */
+const TSEC = { on:false, apron:0, art:0, plan:0, sweep:0, skirt:0, field:0, tail:0, top:[] };
+const _tnow = () => (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0;
+window.__bbTerrSec = (on) => { TSEC.on = !!on; return TSEC; };
 function rebuildTileIndex(){
   if (!Array.isArray(MAP.tiles)) MAP.tiles = [];
   TILE_INDEX = new Map();
@@ -793,7 +903,10 @@ const CAM_FIT = {
 };
 
 /* Point the eye at (tx, targetY, 0) from `dist` away at `pitch` below level.
-   Yaw is fixed at 0 — this is a fit, and CONTRACT §2 Tier 2 owns yaw. */
+   Yaw is fixed at 0 here on purpose: this is the FIT's NEUTRAL view, the one
+   the search solves and the one viewShiftY is derived from. The free camera
+   below orbits away from it and never re-runs the search, so the framing a
+   player returns to with R is bit-for-bit the framing the fit produced. */
 function camAt(pitch, dist, tx){
   const c = CONFIG.camera;
   c.target.x = tx; c.target.y = CAM_FIT.targetY; c.target.z = 0;
@@ -801,6 +914,338 @@ function camAt(pitch, dist, tx){
   c.pos.y = CAM_FIT.targetY + dist*Math.sin(pitch);
   c.pos.z = dist*Math.cos(pitch);
   buildCam();
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   🎥 THE FREE CAMERA — BAR requirement #2: "players can move the camera
+   around the map with wasd, and turn the camera with q/e".
+   ══════════════════════════════════════════════════════════════════
+   Shape is the one CONTRACT §2 Tier 2 asks for — focus / yaw / pitch / dist,
+   re-derived into CONFIG.camera every frame — with one deliberate difference:
+   PITCH AND DIST ARE NOT PLAYER CONTROLS. They stay exactly where fitCamera()
+   put them. Two reasons, both load-bearing:
+     · ~11 ground ellipses in this file are squashed by a hardcoded
+       ctx.scale(1,k) with k ∈ {.34 … .46} and NONE of them is derived from the
+       camera (CONTRACT §2 Tier 2, "breaks under pitch"). Yaw leaves every one
+       of them correct; pitch silently makes all eleven wrong.
+     · the whole fit — the pitch search against sprite height, viewShiftY, the
+       distance solve — exists to answer "how does this board sit in this host
+       rect". A player-controlled dolly would fight it every frame.
+   So the player gets an ORBIT and a PAN around the fitted view. That is what
+   the requirement asks for and it is the part that cannot lie about geometry.
+
+   CAM_BASE is the fit's answer, written once by fitCamera(). CAMERA is the
+   player's offset from it. Keeping them apart is what lets a window resize
+   (which re-runs the fit) preserve where the player was looking. */
+const CAM_BASE = { tx:0, pitch:CAM_FIT.pitchLo, dist:12 };
+const CAMERA = {
+  pan:{ x:0, z:0 },      /* look-at offset from the fitted aim, WORLD units */
+  yaw:0,                 /* radians; 0 is the fitted three-quarter view       */
+  vel:{ x:0, z:0 },      /* pan velocity, world units/sec                     */
+  yawVel:0,              /* rad/sec                                           */
+  moving:false           /* true while anything is actually in motion         */
+};
+/* Rates. Pan is expressed in HEX WIDTHS per second rather than world units so
+   it reads the same on any board size, and yaw in degrees so the number in the
+   source is the number a player would describe. */
+const CAM_MOVE = {
+  pan: 6.0,              /* hex widths / sec at full deflection */
+  yaw: 78*Math.PI/180,   /* rad / sec                            */
+  accel: 11,             /* e-folding rate toward the target velocity */
+  /* Below this the camera is PARKED, not crawling. Not 1e-4: the velocity
+     decays exponentially, so a tighter threshold buys ~0.9s of invisible
+     coasting during which terrainKey() keeps changing and the ground layer
+     keeps re-baking every frame for motion of 0.006°/s. 4e-3 rad/s is 0.23°/s,
+     which nobody can see, and it hands the cache back about half a second
+     sooner. */
+  stopEps: 4e-3
+};
+
+/* ── INTENT, from three senders that must not stack ──
+   The camera can be driven from the standalone page's own keydown listener,
+   from host-forwarded `board:key` edges, and from host-forwarded
+   `board:camera` pulses — and the harness sends the last two TOGETHER. So none
+   of them integrates anything: they all write the same −1..1 intent and
+   camUpdate() integrates it once, against THIS document's dt. Add a sender
+   that accumulates into pan/yaw directly and it double-counts, silently, at
+   whatever ratio the two clocks happen to sit at. */
+const CAM_HELD = Object.create(null);      /* from key edges: fwd/back/left/right/yawL/yawR */
+const CAM_PULSE = { x:0, z:0, yaw:0, at:-1e9 };   /* from board:camera */
+/* A pulse is re-sent every animation frame while a key is held, so anything
+   older than a few frames means the sender stopped. 150ms is ~9 frames at
+   60Hz — long enough to survive a hitch, short enough that a dropped keyup
+   cannot leave the camera sliding. */
+const CAM_PULSE_TTL = 0.15;
+
+const CAM_KEYS = {
+  KeyW:'fwd', KeyS:'back', KeyA:'left', KeyD:'right',
+  KeyQ:'yawL', KeyE:'yawR', KeyR:'reset'
+};
+/* `code` is the right key for a movement cluster (it is the physical key, so
+   WASD stays WASD on AZERTY), but a host that forwards only `key` — or a
+   synthetic event from a test — would otherwise be inert. Fall back to the
+   letter. */
+function camAction(code, key){
+  if (code && CAM_KEYS[code]) return CAM_KEYS[code];
+  const k = String(key || '').toLowerCase();
+  return CAM_KEYS['Key' + k.toUpperCase()] || null;
+}
+/* 🔑 R RESETS THE VIEW, and it has to be SOMETHING: a player who yaws 180°,
+   pans into the skirt and cannot find the board again will report the camera
+   as broken. R is the convention every tactics game with a free camera uses,
+   it is next to WASD, and it is not claimed here (`g` and `1`-`4` are, see the
+   keydown listener at the bottom of this file). It restores the fit exactly —
+   yaw 0, no pan — because the fit is the framing every other capture, every
+   piece of host-side VFX anchoring and every screenshot in .gauntlet assumes. */
+function camReset(){
+  CAMERA.pan.x = CAMERA.pan.z = 0; CAMERA.yaw = 0;
+  CAMERA.vel.x = CAMERA.vel.z = 0; CAMERA.yawVel = 0;
+  for (const k in CAM_HELD) delete CAM_HELD[k];
+  CAM_PULSE.x = CAM_PULSE.z = CAM_PULSE.yaw = 0; CAM_PULSE.at = -1e9;
+  CAMERA.moving = false;
+  camApply();
+}
+/* `src` is 'h' for a host-forwarded edge and 'l' for this document's own
+   listener. It is stored rather than discarded because the watchdog in
+   camUpdate() may only release keys whose SENDER has a heartbeat to go
+   missing — see there. */
+function camKey(down, code, key, src){
+  const a = camAction(code, key);
+  if (!a) return;
+  if (a === 'reset'){ if (down) camReset(); return; }
+  if (down) CAM_HELD[a] = (src === 'h' ? 'h' : 'l'); else delete CAM_HELD[a];
+}
+/* Held keys never survive losing focus: the keyup is delivered to whoever has
+   focus now, so without this a key held while the player alt-tabs sticks down
+   and the board drifts forever. The host clears its own set the same way. */
+function camReleaseAll(){ for (const k in CAM_HELD) delete CAM_HELD[k]; }
+
+/* 🐢 prefers-reduced-motion. The camera itself is the player's own input and
+   is not what the media query is about; the EASING is. With reduce set, the
+   velocity ramp collapses to a snap, so the view starts and — more to the
+   point — STOPS exactly with the key instead of coasting. Read once and
+   watched, because a page that only samples it at boot ignores a mid-session
+   change. */
+let CAM_REDUCED = false;
+try {
+  const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+  CAM_REDUCED = !!mq.matches;
+  const onMq = e => { CAM_REDUCED = !!e.matches; };
+  if (mq.addEventListener) mq.addEventListener('change', onMq);
+  else if (mq.addListener) mq.addListener(onMq);
+} catch (e) {}
+
+/* Derive CONFIG.camera from CAM_BASE + CAMERA and re-aim. This is the ONLY
+   writer of the camera during play, and it runs before anything projects.
+   ⚠ CAM.pos is a LIVE REFERENCE to CONFIG.camera.pos but CAM.f/r/u are
+   SNAPSHOTS (see buildCam) — CONTRACT §2 Tier 2 names moving `pos` without
+   re-aiming as the trap. Hence the buildCam() call, every time, no exceptions. */
+/* 📍 Set by camApply(), cleared by the board:rects publish in frame().
+   Every host-side anchor (_bbAnchorRect / _bbAnchorPoint / _bbTilePoint) is a
+   screen box, and camApply() is the ONLY thing that can move all of them at
+   once. Flagging it here rather than testing CAMERA.moving covers the two
+   poses a `moving` test misses: the single frame where motion STOPS, and R,
+   which teleports the view without ever setting moving at all — both of which
+   would otherwise leave every overlay up to 250ms behind the board. */
+let CAM_ANCHOR_DIRTY = true;
+function camApply(){
+  CAM_ANCHOR_DIRTY = true;
+  const c = CONFIG.camera, B = CAM_BASE;
+  const cy = Math.cos(CAMERA.yaw), sy = Math.sin(CAMERA.yaw);
+  const fx = B.tx + CAMERA.pan.x, fz = CAMERA.pan.z;
+  const horiz = B.dist * Math.cos(B.pitch);
+  c.target.x = fx; c.target.y = CAM_FIT.targetY; c.target.z = fz;
+  c.pos.x = fx + sy*horiz;
+  c.pos.y = CAM_FIT.targetY + B.dist*Math.sin(B.pitch);
+  c.pos.z = fz + cy*horiz;
+  buildCam();
+}
+/* 🛑 THE CLAMP. CONTRACT R17: project() returns null at z <= 0.05 and ~40
+   callers answer that with a bare `continue`, so geometry pushed out of the
+   frustum vanishes with no error at all. Orbiting cannot do that (the eye
+   keeps its distance from the focus), but panning can walk the focus off into
+   the skirt until the board is a speck — and a player who holds W for three
+   seconds and sees nothing but sky reports the camera as broken.
+   The focus is therefore held inside the board's own extent. That is a hard
+   guarantee that the tile under the middle of the frame is always ON the
+   lattice, which is stronger than "some of the board is visible" and much
+   easier to reason about than a screen-space test. */
+const CAM_PAN_RANGE = 0.5;   /* of the board's half-extent, per axis */
+function camClampPan(){
+  /* Half the board's half-extent, not the whole of it. At the full extent the
+     look-at point sits on the lattice's own edge and roughly two thirds of the
+     field is off frame — the board is not LOST, but it is a corner of skirt
+     with the battle pushed into one corner, which is the same complaint in a
+     politer form. At half, the fit already frames the whole board and the pan
+     is what it should be on a tactics map: a way to re-compose, not a way to
+     go somewhere else. */
+  const e = boardExtent();
+  const px = clamp(CAMERA.pan.x, -e.x*CAM_PAN_RANGE, e.x*CAM_PAN_RANGE);
+  const pz = clamp(CAMERA.pan.z, -e.z*CAM_PAN_RANGE, e.z*CAM_PAN_RANGE);
+  /* kill the velocity INTO a wall, not along it — otherwise the camera keeps
+     accelerating against the clamp and takes a visible moment to unstick when
+     the player reverses. */
+  if (px !== CAMERA.pan.x) CAMERA.vel.x = 0;
+  if (pz !== CAMERA.pan.z) CAMERA.vel.z = 0;
+  CAMERA.pan.x = px; CAMERA.pan.z = pz;
+}
+
+/* Integrated in update(dt), NOT on keydown — CONTRACT §2 Tier 2 is explicit,
+   and the reason is that a per-keydown delta makes camera speed track the OS
+   key-repeat rate and the frame rate at once. */
+function camUpdate(dt){
+  /* held keys → intent */
+  let mx = (CAM_HELD.right ? 1 : 0) - (CAM_HELD.left ? 1 : 0);
+  let mz = (CAM_HELD.fwd ? 1 : 0) - (CAM_HELD.back ? 1 : 0);
+  let my = (CAM_HELD.yawR ? 1 : 0) - (CAM_HELD.yawL ? 1 : 0);
+  /* …merged with the forwarded pulse, by MAGNITUDE and not by sum, so a host
+     that sends both shapes (the harness does) drives the camera once. */
+  if (T - CAM_PULSE.at < CAM_PULSE_TTL){
+    /* ⚠ SIGN. board:camera's `dz` is a delta along +Z — the board's +Z is the
+       NEAR edge, so S (toward the viewer) sends dz > 0 and W sends dz < 0.
+       `mz` here is "away from the viewer" positive, so it is the NEGATION.
+       Get this backwards and W/S are swapped in the game while they stay
+       correct in the standalone preview, because only the forwarded path goes
+       through this line. `dx` and `yaw` need no flip: right is right, and E is
+       positive in both. */
+    if (Math.abs(CAM_PULSE.x) > Math.abs(mx)) mx = Math.sign(CAM_PULSE.x);
+    if (Math.abs(CAM_PULSE.z) > Math.abs(mz)) mz = -Math.sign(CAM_PULSE.z);
+    if (Math.abs(CAM_PULSE.yaw) > Math.abs(my)) my = Math.sign(CAM_PULSE.yaw);
+  }
+  /* 🐕 WATCHDOG. A held key that never gets its keyup leaves the camera
+     sliding forever with nothing pressed, and there is no error and no way for
+     a player to stop it short of reloading. The host clears its set on blur and
+     on unmount, but a single dropped `board:key` up would still strand us — so
+     treat the pulse stream as the heartbeat it already is: the host re-sends
+     board:camera every animation frame while ANY camera key is held, and
+     CAM_HELD can only ever contain those keys, so a second of silence from a
+     host that pumps means nothing over there is down.
+     It only ever drops HOST-forwarded keys ('h'). The standalone listener and
+     the __bbCam probe have no heartbeat and do not need one — their keyup is
+     delivered to this same document — and dropping their keys here would make
+     a held key mysteriously stop after a second. */
+  if ((T - CAM_PULSE.at) > 1){
+    let dropped = false;
+    for (const k in CAM_HELD) if (CAM_HELD[k] === 'h'){ delete CAM_HELD[k]; dropped = true; }
+    if (dropped){
+      mx = (CAM_HELD.right ? 1 : 0) - (CAM_HELD.left ? 1 : 0);
+      mz = (CAM_HELD.fwd ? 1 : 0) - (CAM_HELD.back ? 1 : 0);
+      my = (CAM_HELD.yawR ? 1 : 0) - (CAM_HELD.yawL ? 1 : 0);
+    }
+  }
+  const mag = Math.hypot(mx, mz) || 1;         /* no diagonal speed bonus */
+  mx /= mag; mz /= mag;
+
+  /* 🧭 PAN IN THE CAMERA PLANE, not in world axes. W has to mean "push the
+     view away from me along the ground" at every yaw; if it meant −Z the
+     controls would rotate under the player the moment they touched Q or E,
+     which is the single most common way a free camera feels broken.
+     The ground basis is the camera's own: forward is CAM.f flattened onto the
+     floor, right is CAM.r (already horizontal — buildCam crosses f with world
+     up, so r has no y component by construction). */
+  const gf = Math.hypot(CAM.f.x, CAM.f.z) || 1;
+  const fwdX = CAM.f.x/gf, fwdZ = CAM.f.z/gf;
+  const speed = CAM_MOVE.pan * hexW();
+  const wantX = (CAM.r.x*mx + fwdX*mz) * speed;
+  const wantZ = (CAM.r.z*mx + fwdZ*mz) * speed;
+  const wantY = my * CAM_MOVE.yaw;
+
+  /* Exponential approach to the target velocity: acceleration on press, easing
+     on release, and 1-e^(-k·dt) rather than min(1,k·dt) so the curve is the
+     same at 30fps and at 144fps instead of merely bounded. */
+  const k = CAM_REDUCED ? 1 : (1 - Math.exp(-CAM_MOVE.accel * dt));
+  CAMERA.vel.x += (wantX - CAMERA.vel.x) * k;
+  CAMERA.vel.z += (wantZ - CAMERA.vel.z) * k;
+  CAMERA.yawVel += (wantY - CAMERA.yawVel) * k;
+
+  const moving = Math.abs(CAMERA.vel.x) > CAM_MOVE.stopEps ||
+                 Math.abs(CAMERA.vel.z) > CAM_MOVE.stopEps ||
+                 Math.abs(CAMERA.yawVel) > CAM_MOVE.stopEps;
+  if (!moving){
+    /* park it exactly, so a resting camera produces a STABLE terrainKey and
+       the baked ground layer stops rebuilding. A camera that creeps by 1e-9
+       per frame re-bakes the whole diorama every frame, forever, and the only
+       symptom is the frame rate. */
+    CAMERA.vel.x = CAMERA.vel.z = CAMERA.yawVel = 0;
+    if (CAMERA.moving){ CAMERA.moving = false; camApply(); }
+    return;
+  }
+  CAMERA.moving = true;
+  CAMERA.pan.x += CAMERA.vel.x * dt;
+  CAMERA.pan.z += CAMERA.vel.z * dt;
+  CAMERA.yaw += CAMERA.yawVel * dt;
+  /* keep yaw in (−π, π] so the terrain key, the backdrop wrap and the fit
+     probe all see a bounded number no matter how long someone leans on E */
+  if (CAMERA.yaw > Math.PI) CAMERA.yaw -= Math.PI*2;
+  else if (CAMERA.yaw <= -Math.PI) CAMERA.yaw += Math.PI*2;
+  camClampPan();
+  camApply();
+}
+
+/* 🧭 THE CAMERA-ALIGNED GROUND FRAME.
+   Everything that dresses the FLOOR rather than the lattice — the stone apron,
+   the location photograph, the depth bands that lay it down, the backdrop's
+   horizon anchor, the skirt's reach — was written as a world-axis rectangle
+   spanning ±groundExtent().x by −far…+near in world Z. That is the same thing
+   as "left/right/behind/in front of the camera" only while the camera looks
+   down −Z. Turn it and the apron shears off one flank, the photograph stops
+   being the far horizon and slides into the foreground, and the depth bands
+   (which are blitted as axis-aligned screen rects) fall apart.
+   So those quads move into a frame that TURNS AND PANS WITH THE EYE:
+     U  = ( cos yaw, 0, −sin yaw)   plays the old world +X ("screen right")
+     V  = ( sin yaw, 0,  cos yaw)   plays the old world +Z ("toward the eye")
+   with the origin at the pan offset. At yaw 0 and no pan this is the identity
+   and every one of those call sites projects exactly the world point it used
+   to, which is why the shipped framing is unchanged.
+   Note what does NOT move into it: the lattice, the frame kerb, the braziers,
+   the motes and the shards are statements about the PLAY FIELD and stay in
+   world space, where they belong — they are supposed to swing past the camera
+   when it turns. */
+function gp(u, v, y){
+  const c = Math.cos(CAMERA.yaw), s = Math.sin(CAMERA.yaw);
+  return { x: CAMERA.pan.x + u*c + v*s, y: y || 0, z: CAMERA.pan.z - u*s + v*c };
+}
+/* world → the frame's coordinates. gp()'s inverse, split into the two
+   components the callers actually need: V is depth toward the eye, U is across
+   the frame. */
+function frameV(wx, wz){
+  const c = Math.cos(CAMERA.yaw), s = Math.sin(CAMERA.yaw);
+  return (wx - CAMERA.pan.x)*s + (wz - CAMERA.pan.z)*c;
+}
+function frameU(wx, wz){
+  const c = Math.cos(CAMERA.yaw), s = Math.sin(CAMERA.yaw);
+  return (wx - CAMERA.pan.x)*c - (wz - CAMERA.pan.z)*s;
+}
+/* camera-space depth of a world point. The painter's algorithm's only honest
+   sort key: world/grid Z is the same thing ONLY at yaw 0 (CONTRACT §2 Tier
+   2.2). */
+function camDepth(p){
+  return (p.x - CAM.pos.x)*CAM.f.x + (p.y - CAM.pos.y)*CAM.f.y + (p.z - CAM.pos.z)*CAM.f.z;
+}
+
+/* 🧭 THE TERRAIN SWEEP'S DIRECTION, and which axis is depth at all.
+   paintTerrain() has no depth buffer: its ordering IS its occlusion, and that
+   ordering used to be spelled "rows ascending, columns ascending", which is
+   far-to-near only while the camera looks down −Z. Turn 180° and the same loop
+   paints the near row first and the relief folds inside out — every cliff face
+   drawn over the row that should hide it. Turn 90° and rows stop being depth
+   at all: a COLUMN is, and row-major then paints (x,z+1) over the taller
+   (x+1,z) standing in front of it.
+   Depth is affine in the lattice indices, so the gradient tells you both
+   answers at once: the axis with the larger depth gain per step is the outer
+   loop, and each axis runs in whichever direction starts furthest away.
+   At yaw 0 this returns exactly `majorZ, +1, +1` — the loop it replaces. */
+function sweepOrder(){
+  const gx = CAM.f.x * hexW(), gz = CAM.f.z * hexV();
+  return { majorZ: Math.abs(gz) >= Math.abs(gx),
+           zStep: gz > 0 ? -1 : 1,
+           xStep: gx > 0 ? -1 : 1 };
+}
+function sweepSeq(a, b, step){
+  const out = [];
+  if (step > 0) for (let i=a; i<=b; i++) out.push(i);
+  else          for (let i=b; i>=a; i--) out.push(i);
+  return out;
 }
 
 /* Smallest distance at which every tile CENTRE still lands inside the box.
@@ -880,6 +1325,11 @@ function fitCamera(){
   }
   const tx = aim.tx;
   camAt(pitch, aim.dist, tx);
+  /* 🎥 The fit's answer, handed to the free camera. Everything below this line
+     still measures the NEUTRAL view — viewShiftY has to be derived from the
+     framing R returns to, not from wherever the player happens to be looking,
+     or a window resize mid-pan would walk the horizon up the screen. */
+  CAM_BASE.tx = tx; CAM_BASE.pitch = pitch; CAM_BASE.dist = aim.dist;
   /* Re-derive the optical shift from the board's OWN bbox. Measured with the
      shift zeroed first, so the answer never depends on the shift already in
      place — that is what makes a second board:map land on the same numbers
@@ -896,6 +1346,11 @@ function fitCamera(){
     CONFIG.viewShiftY = (wantFar - far.y) / kk;
     resize(); buildCam();
   }
+  /* …and only now put the player's own pan/yaw back on top. Re-clamped rather
+     than kept verbatim because the fit may have run because the MAP changed
+     size, in which case the old pan could be outside the new board. */
+  camClampPan();
+  camApply();
 }
 
 /* resize → fit → resize. VIEW.box feeds the fit and the fit writes viewShiftY
@@ -1185,7 +1640,17 @@ function drawSky(){
      light azimuth across the middle of the frame at a large radius, which put
      it straight over the battlefield. Now it stays in the corner, well clear of
      the play area, and only drifts a little with the light direction. */
-  const bx = VIEW.cx + VIEW.box.w * .40 + Math.sin(az) * VIEW.box.w * .05;
+  /* 🎥 …and it drifts with the CAMERA too, at the same rate as the backdrop.
+     A sun pinned to the upper-right corner no matter which way the player
+     turns is the sky-is-a-decal tell in one object. Wrapped over the same
+     panorama period as the backdrop rather than over 2π so the two stay in
+     register: with a repeating skyline, one sun per repeat is the consistent
+     picture, and the alternative — one sun in 360° — means most angles have a
+     lit scene with no light source anywhere in it. */
+  const bxBase = VIEW.cx + VIEW.box.w * .40 + Math.sin(az) * VIEW.box.w * .05;
+  const skyPeriod = Math.max(320, VIEW.box.w * 1.35);
+  let bx = bxBase + skyShift();
+  bx = bxBase + ((bx - bxBase) % skyPeriod + skyPeriod*1.5) % skyPeriod - skyPeriod*0.5;
   const by = VIEW.cy - VIEW.box.h * .40 - (el - .15) * VIEW.box.h * .16;
   const isSun = LIGHT.body === 'sun';
   const R = (isSun ? 40 : 32) * clamp(VIEW.box.h/900, .7, 1.15);
@@ -1285,10 +1750,15 @@ function drawSky(){
   /* procedural ruin silhouettes — only when the location has no backdrop art */
   if (!(BACKDROP.img && BACKDROP.img.complete)){
     ctx.fillStyle = rgba(LIGHT.fog, .92);
-    const horizon = project({x:0,y:0,z:-14});
+    const horizon = project(gp(0,-14));
     const hy = horizon ? horizon.y : H*.42;
+    /* 🎥 The ruin line parallaxes with the rest of the sky. The modulo period
+       is (W+200), the same span the layout already wraps on, so sliding by
+       skyShift() and re-wrapping keeps exactly the 26 silhouettes it had —
+       they just scroll past instead of standing still while the world turns. */
+    const ruinShift = skyShift();
     for (let i=0;i<26;i++){
-      const sx = (i*163 + 40) % (W+200) - 100;
+      const sx = ((((i*163 + 40) + ruinShift) % (W+200)) + (W+200)) % (W+200) - 100;
       const w = 26 + (i*37)%60, h = 40 + (i*91)%160;
       ctx.fillRect(sx, hy-h, w, h+30);
       if (i%3===0){ ctx.fillRect(sx+w*.3, hy-h-24, w*.28, 26); }
@@ -1307,11 +1777,20 @@ function drawSky(){
    (Three.js: a large curved backdrop plane / skydome segment behind the
    board, or a cubemap face. Keep the same fade + grade.)
    ══════════════════════════════════════════════════════════════════ */
+/* 🎥 HOW FAR THE SKY SLIDES WHEN THE CAMERA TURNS, in pixels.
+   A point infinitely far away at azimuth φ off the view axis lands at
+   VIEW.cx + tan(φ)·VIEW.scale. Over the yaw range a player actually uses,
+   arc length (φ·scale) and tan(φ)·scale agree to within a percent and arc
+   length is the one that stays finite past 90°, which matters because Q and E
+   can be held for as long as anyone likes. So: yaw·scale, negated because
+   turning right slides the world left. */
+function skyShift(){ return -CAMERA.yaw * VIEW.scale; }
+
 function drawOneBackdrop(img, alpha){
   /* COVER the entire viewport — no horizon cut, no empty gradient below.
      The image is scaled to fill W x H, then slid vertically so its own
      horizon lands near the board's far edge. */
-  const far = project({ x:0, y:0, z:-groundExtent().far - CONFIG.wall });
+  const far = project(gp(0, -groundExtent().far - CONFIG.wall));
   const anchorY = (far ? far.y : H*0.45);
   const sc = Math.max(W/img.naturalWidth, H/img.naturalHeight) * 1.02;
   const dw = img.naturalWidth*sc, dh = img.naturalHeight*sc;
@@ -1320,7 +1799,28 @@ function drawOneBackdrop(img, alpha){
   let dy = anchorY - dh*BACKDROP.horizon;
   dy = Math.min(0, Math.max(H - dh, dy));      /* never expose an edge */
   ctx.globalAlpha = alpha;
-  ctx.drawImage(img, dx, dy, dw, dh);
+  /* 🎥 THE SKY IS NO LONGER NAILED TO THE CAMERA.
+     CONTRACT §2 Tier 2.4: this backdrop is screen-anchored by an explicit past
+     decision, and while the camera could not move that was invisible. It stops
+     being invisible the moment Q and E work — a horizon that turns with you is
+     the single loudest tell that a "3D" board is a painted flat, and BAR R1
+     wants "a single object you could rotate".
+     Treated as a cylindrical panorama: the strip scrolls by skyShift() and
+     repeats, with every other copy MIRRORED so the repeat reads as more ruined
+     skyline instead of as a tiling artefact. It repeats roughly every 50° of
+     turn, which is about one horizontal FOV — i.e. you never see a seam and its
+     twin at the same time. Scaling the source up to make one copy cover 360°
+     instead would cost ~7× resolution on the only photograph in the frame,
+     which is a worse trade. */
+  const shift = skyShift();
+  let k = Math.floor((0 - (dx + shift)) / dw);          /* leftmost visible copy */
+  for (; dx + shift + k*dw < W; k++){
+    const ox = dx + shift + k*dw;
+    if (ox + dw < 0) continue;
+    if ((k & 1) === 0){ ctx.drawImage(img, ox, dy, dw, dh); continue; }
+    ctx.save(); ctx.translate(ox + dw, dy); ctx.scale(-1, 1);
+    ctx.drawImage(img, 0, 0, dw, dh); ctx.restore();
+  }
   ctx.globalAlpha = 1;
   return { dx, dy, dw, dh, anchorY };
 }
@@ -1525,7 +2025,28 @@ function terrainKey(){
   /* The light lerps over 2.5s (setTimeOfDay). Quantising it rebuilds ~20 times
      across a transition instead of 150, which is invisible and cheap. */
   const lk = LIGHT.key + LIGHT.fog + Math.round(LIGHT.keyI*12) + ',' + Math.round(LIGHT.elev*20) + ',' + Math.round(LIGHT.az*20) + ',' + Math.round(LIGHT.ambI*12);
-  return W+'x'+H+'@'+DPR+'|'+((VIEW.cx|0)+','+(VIEW.cy|0)+','+(VIEW.scale|0))+'|'+MAP.cols+'x'+MAP.rows+'#'+MAPSIG+'|'+gk+'|'+lk;
+  /* 🎥 THE CAMERA IS PART OF THIS KEY, and leaving it out is a landmine, not a
+     bug you would find. Everything paintTerrain() draws is PROJECTED — the
+     slabs, the cliff faces, the cast shadows, the apron, the photograph — so
+     the bake describes one specific eye position. This key used to name the
+     canvas size, the safe box, the map, the ground art and the light, all of
+     which were the only things that could move while CONFIG.camera was a
+     literal that nothing ever wrote. The moment WASD/QE can write it, a key
+     that ignores it means the baked ground stays NAILED TO THE SCREEN while
+     the units, props, tombs, trucks and shadows drawn live on top of it slide
+     across. Nothing throws. Nothing warns. The board simply lies.
+     Quantised finely (1e-3 world units, ~0.03° of yaw) rather than coarsely:
+     the cache must not survive a movement a player can see, and while the
+     camera IS moving the layer is being rebuilt every frame anyway — that is
+     the honest cost of a free camera over a baked diorama, and it is measured
+     in __bbFitProbe().terrainBakeMs. A parked camera produces a stable key
+     (camUpdate zeroes the velocities exactly, see CAM_MOVE.stopEps) and the
+     bake goes back to being free. */
+  const p = CONFIG.camera.pos, tg = CONFIG.camera.target;
+  const ck = Math.round(p.x*1e3)+','+Math.round(p.y*1e3)+','+Math.round(p.z*1e3)+
+             ';'+Math.round(tg.x*1e3)+','+Math.round(tg.z*1e3)+
+             ';'+Math.round(CAMERA.yaw*1e4);
+  return W+'x'+H+'@'+DPR+'|'+((VIEW.cx|0)+','+(VIEW.cy|0)+','+(VIEW.scale|0))+'|'+MAP.cols+'x'+MAP.rows+'#'+MAPSIG+'|'+gk+'|'+lk+'|'+ck;
 }
 function terrainLayer(){
   const key = terrainKey();
@@ -1714,6 +2235,16 @@ function paintSurfTexture(x,z,e,S,surf){
 function paintTile(x,z,lv){ paintTileRec(x, z, tileAt(x,z), lv); }
 function paintTileRec(x,z,t,lv){
   const e = t && t.elev ? t.elev : 0;
+  /* 🎥 CULL, the same one paintSkirtCell() has always had. It did not exist for
+     FIELD tiles because the fit guaranteed all 168 were on screen — true right
+     up until the camera could pan, at which point most of the board can be off
+     the edge and every one of those tiles was still paying ~12 path ops plus a
+     surface texture. p.s is pixels per world unit at this depth; two
+     circumradii of margin covers the hex, its cliff face and its props. */
+  const c = project(gw(x,z,e));
+  if (!c) return;
+  const m = c.s * hexSize() * 2.4 + 24;
+  if (c.x < -m || c.x > W + m || c.y < -m || c.y > H + m) return;
   const P = tilePoly(x,z,TILE_INSET,e); if (!P) return;
   const S = surfOf(t);
   const surf = (t && t.surf) || 'dirt';
@@ -2475,24 +3006,169 @@ function paintSkirtShadow(x, z, e, lv){
    thousand hexes, and a bake is not allowed to become unbounded. */
 function skirtRange(){
   const g = groundExtent();
-  const cz = (MAP.rows-1)/2, cx = (MAP.cols-1)/2;
-  const zMax = Math.min(MAP.rows-1 + 7, Math.ceil(cz + g.near/hexV()) + 1);
-  const zMin = Math.max(-4, Math.floor(cz - g.far/hexV()) - 1);
-  const xPad = Math.min(9, Math.ceil(g.x - cx) + 1);
-  return { x0:-xPad, x1:MAP.cols-1 + xPad, z0:zMin, z1:zMax };
+  const cx = (MAP.cols-1)/2;
+  /* 🎥 groundExtent() is a rectangle in the CAMERA's ground frame; the skirt is
+     indexed on the LATTICE. Under yaw those two are rotated against each
+     other, so a near/far/side split in lattice axes stops describing the quad
+     it is supposed to fill — turn 90° and the "flanks" become the depth and
+     the skirt runs out exactly where the camera is now looking. One RADIUS
+     padded onto both axes is the only version that survives every angle. The
+     three caps below are what keep that affordable, and they bind on the
+     shipped board at yaw 0 as well, so this is at most a few extra rings of
+     cells — every one of which paintSkirtCell() culls with a single
+     projection before it paints anything (see its CULL note). */
+  const rad = Math.max(g.x, g.near, g.far);
+  /* The old caps were 4 rows behind / 7 in front / 9 columns aside, which was
+     generous for a fixed camera and is not for a turning one: a row is only
+     hexV = 0.866 deep against a column's 1.0, so the row axis runs out first
+     and at 45° the skirt ended mid-frame, leaving a wedge of bare apron where
+     the diorama should reach the edge (BAR R1's "the map IS the frame").
+     Budgeted instead of capped per axis: ask for what the ground quad needs,
+     then shrink both pads together if the rectangle would exceed BUDGET cells.
+     A bake is not allowed to become unbounded, but it is allowed to spend its
+     budget where the camera is actually pointing — and every cell in the
+     rectangle that is off screen costs ONE projection and nothing else
+     (paintSkirtCell's CULL), so the budget is about the worst case, not the
+     normal one. */
+  const BUDGET = 1500;
+  let padZ = Math.ceil(rad/hexV()) + 1;
+  let padX = Math.max(0, Math.ceil(rad/hexW() - cx)) + 1;
+  for (let i = 0; i < 24; i++){
+    if ((MAP.cols + 2*padX) * (MAP.rows + 2*padZ) <= BUDGET) break;
+    if (padZ > 1) padZ--;
+    if (padX > 1 && (MAP.cols + 2*padX) * (MAP.rows + 2*padZ) > BUDGET) padX--;
+  }
+  /* …and the QUAD itself, carried along so paintSkirtCell can reject a cell
+     that is outside the floor the picture needs. The lattice rectangle above
+     is a bounding box in LATTICE space around a quad that lives in CAMERA
+     space; at 45° of yaw the two differ by 40% of their area, and the screen
+     bbox cull cannot make up the difference because its margin scales with
+     p.s — a cell just below the frame edge is also the closest cell to the
+     eye, so its margin is hundreds of pixels and it is drawn anyway. That
+     single interaction was the whole of a 33 ms → 171 ms bake regression. */
+  return skirtPlan({ x0:-padX, x1:MAP.cols-1 + padX, z0:-padZ, z1:MAP.rows-1 + padZ,
+                     qx: g.x + hexW(), qNear: g.near + hexV(), qFar: g.far + hexV(),
+                     lod: SKIRT_LOD_MIN });
+}
+/* 💰 THE PAINTED-CELL BUDGET.
+   The rectangle above is a budget on the LATTICE, and a lattice rectangle is
+   not what a bake costs. It was sized at 1500 cells on the reasoning that the
+   culls inside paintSkirtCell would throw the excess away — and at pan (0,0)
+   they do: 18-39 ms at every yaw. Add pan and the same 1500-cell rectangle
+   cost 130-300 ms, because panning grew the ground QUAD (groundExtent's pan
+   term, now fixed) and the quad is what the culls test against. The rectangle
+   never moved; the number of cells that survived to paint did, by 5-8×.
+   So the budget is enforced where the money is spent. Count the survivors
+   first, then, if there are more than the frame can afford, raise the LOD
+   threshold until there are not — which drops the SMALLEST cells, i.e. the
+   horizon strip the fog band at the end of paintTerrain() is already drawn
+   over. Shrinking padX/padZ instead (the shipped lever) shrinks the rectangle
+   and not the visible cells: it cuts from the far corners of a bounding box
+   that the quad cull had already rejected for free, so it costs picture and
+   buys nothing.
+   The census is one gw + two frame dots per cell, plus a project() for cells
+   inside the quad — the same work the painter's own cull does, i.e. a few
+   tenths of a ms against a bake measured in tens. Paying it twice to know the
+   number is the trade; guessing it is what produced the cliff. */
+const SKIRT_LOD_MIN = 3.5;   /* px of hex radius — below this a cell is smaller than its outline */
+/* `let`, and settable from the probe, for one reason: the number below is the
+   only tuning knob in the terrain pass and it was picked by SWEEPING it against
+   a measured bake, not by taste. `window.__bbSkirtBudget(n)` is how that sweep
+   is reproduced — and how a critic checks the choice instead of taking it. */
+let SKIRT_BUDGET = 240;      /* painted skirt cells per bake */
+window.__bbSkirtBudget = (n) => { if (n > 0) SKIRT_BUDGET = n|0; return SKIRT_BUDGET; };
+function skirtPlan(R){
+  SKIRT_STAT.asked = 0; SKIRT_STAT.painted = 0;
+  SKIRT_STAT.cullQuad = 0; SKIRT_STAT.cullScreen = 0; SKIRT_STAT.cullLod = 0;
+  SKIRT_STAT.areaKpx = 0; SKIRT_STAT.maxR = 0;
+  SKIRT_STAT.budget = SKIRT_BUDGET;
+  const radii = [];
+  for (let z = R.z0; z <= R.z1; z++) for (let x = R.x0; x <= R.x1; x++){
+    if (x >= 0 && z >= 0 && x < MAP.cols && z < MAP.rows) continue;   /* the field owns it */
+    SKIRT_STAT.asked++;
+    if (skirtCull(x, z, R, SKIRT_LOD_MIN)) radii.push(SKIRT_HIT.r);
+    else if (SKIRT_HIT.why === 1) SKIRT_STAT.cullQuad++;
+    else if (SKIRT_HIT.why === 2) SKIRT_STAT.cullScreen++;
+    else SKIRT_STAT.cullLod++;
+  }
+  /* Keep the BUDGET nearest cells. p.s·hexSize is pixels of circumradius, so
+     sorting by it descending is sorting by "how much of the picture is this
+     cell", and the cut lands on a distance contour rather than on a lattice
+     edge — a ring vanishing at the horizon is invisible under the fog band,
+     a wedge vanishing off one flank is not. +1e-6 so the comparison in
+     skirtCull (strict <) rejects the cell AT the threshold too, which is what
+     makes painted ≤ BUDGET exactly rather than off by the size of a tie. */
+  if (radii.length > SKIRT_BUDGET){
+    radii.sort((a, b) => b - a);
+    R.lod = radii[SKIRT_BUDGET] + 1e-6;
+  }
+  SKIRT_STAT.lod = +R.lod.toFixed(3);
+  return R;
 }
 /* One skirt cell, painted. Everything but the lookup is the field's own
    painter, so the material, the cliff shading, the grain and the cell division
    are the same code — there is no "skirt look" to fall out of step. */
-function paintSkirtCell(x, z, lv, INK){
-  if (x >= 0 && z >= 0 && x < MAP.cols && z < MAP.rows) return;   /* the field owns it */
+/* Scratch out-param for skirtCull(). It exists so the cull can report WHICH of
+   its three gates rejected a cell without allocating an object per cell per
+   bake — the census below walks the whole lattice rectangle twice. */
+const SKIRT_HIT = { c:null, p:null, r:0, why:0 };
+/* THE THREE CULLS, IN ONE PLACE. skirtPlan() (which decides the LOD threshold)
+   and paintSkirtCell() (which honours it) must agree cell for cell: a plan that
+   counts a cell the painter then skips under-spends the budget, and one that
+   misses a cell the painter paints blows straight through it. Two copies of a
+   predicate that must agree is the exact bug class this file keeps scarring
+   itself on (see gw ↔ pickTile), so there is one copy and both callers use it.
+   Returns true and fills SKIRT_HIT on survival; false with SKIRT_HIT.why set to
+   1 = outside the ground quad, 2 = off screen / behind the eye, 3 = below LOD. */
+function skirtCull(x, z, R, lod){
+  /* 🎥 Inside the floor the picture needs? Asked in the CAMERA's ground frame,
+     because that is where the apron, the photograph and the depth bands live
+     (see gp()). */
+  if (R){
+    const w0 = gw(x, z, 0);
+    const u = frameU(w0.x, w0.z), v = frameV(w0.x, w0.z);
+    if (u < -R.qx || u > R.qx || v > R.qNear || v < -R.qFar){ SKIRT_HIT.why = 1; return false; }
+  }
   const c = skirtAt(x, z);
   const p = project(gw(x, z, c.elev));
   /* CULL. p.s is pixels per world unit at this depth; two circumradii of margin
      covers the hex plus its cliff face and its props. */
-  if (!p) return;
+  if (!p){ SKIRT_HIT.why = 2; return false; }
   const m = p.s * hexSize() * 2.4 + 24;
-  if (p.x < -m || p.x > W + m || p.y < -m || p.y > H + m) return;
+  if (p.x < -m || p.x > W + m || p.y < -m || p.y > H + m){ SKIRT_HIT.why = 2; return false; }
+  /* 🎥 …AND AN LOD CULL, which the fixed camera did not need.
+     The screen cull above is a bounding box, and a bounding box never rejects
+     the horizon: the ground plane compresses without limit as it recedes, so
+     rows far behind the board all land in a few pixels of sky-line and every
+     one of them stays "on screen". That was invisible while the skirt reached
+     four rows back; once it has to reach far enough to cover the frame at 45°
+     of yaw it is HUNDREDS of cells, each painting a slab top, up to six cliff
+     faces and a surface texture into a sliver two pixels tall. Measured: the
+     bake went 33 ms → 171 ms at yaw 0 for no pixels anyone can see.
+     Below SKIRT_LOD_MIN px of hex radius a cell is smaller than its own
+     outline, and the horizon fog band at the end of paintTerrain() is already
+     drawn over that strip on purpose (see "THE FAR EDGE, DISSOLVED"). The
+     threshold is a VARIABLE and not the old literal because it is also the
+     budget's only honest lever — see skirtPlan(). */
+  const r = p.s * hexSize();
+  if (r < lod){ SKIRT_HIT.why = 3; return false; }
+  SKIRT_HIT.c = c; SKIRT_HIT.p = p; SKIRT_HIT.r = r; SKIRT_HIT.why = 0;
+  return true;
+}
+function paintSkirtCell(x, z, lv, INK, R){
+  if (x >= 0 && z >= 0 && x < MAP.cols && z < MAP.rows) return;   /* the field owns it */
+  if (!skirtCull(x, z, R, R ? R.lod : SKIRT_LOD_MIN)) return;
+  const c = SKIRT_HIT.c;
+  /* Count AND measure. The first census of this bake counted cells and the
+     count did not explain the cost: 359 painted cells baked in 144 ms at one
+     pose and 296 baked in 28 ms at another. A rasteriser is charged by PIXELS,
+     and a skirt cell's pixel count is r² — so a handful of near cells with a
+     200px circumradius outweigh two hundred at the horizon. areaKpx is the
+     number the budget is actually about; painted is what it is made of. */
+  const r = SKIRT_HIT.r;
+  SKIRT_STAT.painted++;
+  SKIRT_STAT.areaKpx += r*r/1000;
+  if (r > SKIRT_STAT.maxR) SKIRT_STAT.maxR = r;
   paintTileRec(x, z, c, lv);
   /* Cast shadows only on the two rings that are actually read. Past that the
      terraces are at the bottom rung under a heavy vignette, and a bake that
@@ -2501,13 +3177,11 @@ function paintSkirtCell(x, z, lv, INK){
   if (c._ring <= 2) paintSkirtShadow(x, z, c.elev, lv);
   paintDecoRec(x, z, c, INK);
 }
-/* A whole skirt row, minus whatever the field occupies in it. */
-function paintSkirtRow(z, R, lv, INK){
-  for (let x = R.x0; x <= R.x1; x++){
-    if (z >= 0 && z < MAP.rows && x >= 0 && x < MAP.cols) continue;
-    paintSkirtCell(x, z, lv, INK);
-  }
-}
+/* (paintSkirtRow() lived here. It is gone because the sweep in paintTerrain()
+   no longer walks in whole rows — under yaw the outer loop may be columns, and
+   the field and the skirt have to interleave on the INNER index or a skirt
+   cell laps a field cell it is standing beside. The sweep calls
+   paintSkirtCell() directly, which already knows to leave the field alone.) */
 
 /* ── the bake ─────────────────────────────────────────────────────────────
    Row order is far to near (gz 0 is the far edge). Within a row: tops, then
@@ -2515,6 +3189,8 @@ function paintSkirtRow(z, R, lv, INK){
    to wait until it exists — then this row's props, which the next row's tops
    will correctly occlude. */
 function paintTerrain(){
+  if (TSEC.on){ TSEC.apron = TSEC.art = TSEC.plan = TSEC.sweep = TSEC.skirt = TSEC.field = TSEC.tail = 0; TSEC.top = []; }
+  let _tm = TSEC.on ? _tnow() : 0;
   const lv = lightVector();
   const INK = decoInk();
   const INK_S = dimInk(INK, .34);          /* the skirt's props, see dimInk() */
@@ -2523,11 +3199,14 @@ function paintTerrain(){
      kerb with a dim warm lip rather than a bright gold rail: a gold rail you
      can see all four sides of IS the floating plate the bar rejects. */
   const gnd = groundExtent();
+  /* 🎥 The apron, the photograph and the grain all live in the CAMERA-ALIGNED
+     ground frame (see gp()): they are the picture's floor, not the field's, so
+     they have to swing round with the eye. At yaw 0 gp() is the identity. */
   const outer = [
-    project({x:-gnd.x-CONFIG.wall, y:-.02, z:-gnd.far-CONFIG.wall}),
-    project({x: gnd.x+CONFIG.wall, y:-.02, z:-gnd.far-CONFIG.wall}),
-    project({x: gnd.x+CONFIG.wall, y:-.02, z: gnd.near+CONFIG.wall}),
-    project({x:-gnd.x-CONFIG.wall, y:-.02, z: gnd.near+CONFIG.wall})
+    project(gp(-gnd.x-CONFIG.wall, -gnd.far-CONFIG.wall, -.02)),
+    project(gp( gnd.x+CONFIG.wall, -gnd.far-CONFIG.wall, -.02)),
+    project(gp( gnd.x+CONFIG.wall,  gnd.near+CONFIG.wall, -.02)),
+    project(gp(-gnd.x-CONFIG.wall,  gnd.near+CONFIG.wall, -.02))
   ];
   if (outer.every(Boolean)){
     pathPoly(outer);
@@ -2539,6 +3218,7 @@ function paintTerrain(){
     ctx.strokeStyle = rgba('#8a6f3a',.22); ctx.lineWidth = 1; ctx.stroke();
   }
 
+  if (TSEC.on){ TSEC.apron = _tnow() - _tm; _tm = _tnow(); }
   /* ── LOCATION GROUND ART ──
      📷 CONFINED TO THE HORIZON STRIP. This used to blit the location
      photograph across the WHOLE ground quad, from the far edge to gnd.near —
@@ -2556,18 +3236,23 @@ function paintTerrain(){
      field. Everything below the far edge is terrain or apron — nothing
      photographic sits under the board's vertical midpoint any more. */
   const bq = [
-    project({x:-gnd.x, y:0, z:-gnd.far}), project({x:gnd.x, y:0, z:-gnd.far}),
-    project({x:gnd.x, y:0, z:gnd.near}),  project({x:-gnd.x, y:0, z:gnd.near})
+    project(gp(-gnd.x, -gnd.far)), project(gp(gnd.x, -gnd.far)),
+    project(gp(gnd.x, gnd.near)),  project(gp(-gnd.x, gnd.near))
   ];
   /* hexV()*1.0 puts the photograph's near boundary between row 0's CENTRE and
      its near vertices, i.e. strictly behind the front edge of the far row. It
      was 1.5 and that projected four pixels PAST row 0 at the flanks — measured,
      not guessed. The rule this is answering is literal: no continuous run of
      photograph anywhere below the far row. */
-  const photoNear = -boardExtent().z + hexV()*1.0;
+  /* 🎥 …and because the strip is in the ground frame, "behind the far row"
+     stays behind whichever row the camera is currently looking PAST. Anchored
+     to a world −Z the photograph would swing into the foreground at yaw 180
+     and the horizon behind the board would be bare apron. The radius used is
+     the board's, so the strip clears the lattice at every angle. */
+  const photoNear = -gnd.far + hexV()*1.0;
   const pq = [
-    project({x:-gnd.x, y:0, z:-gnd.far}), project({x:gnd.x, y:0, z:-gnd.far}),
-    project({x:gnd.x, y:0, z:photoNear}), project({x:-gnd.x, y:0, z:photoNear})
+    project(gp(-gnd.x, -gnd.far)), project(gp(gnd.x, -gnd.far)),
+    project(gp(gnd.x, photoNear)), project(gp(-gnd.x, photoNear))
   ];
   if (pq.every(Boolean) && GROUND.img && GROUND.img.complete && GROUND.img.naturalWidth){
     ctx.save();
@@ -2585,34 +3270,67 @@ function paintTerrain(){
     ctx.restore();
   }
 
+  if (TSEC.on){ TSEC.art = _tnow() - _tm; _tm = _tnow(); }
   /* ── THE SKIRT AND THE FIELD, IN ONE FAR-TO-NEAR SWEEP ──
      The skirt cannot simply be appended after the MAP loop: this is a painter's
      algorithm with no depth buffer, and a skirt row BEHIND the field painted
      last would draw straight over row 0. So the sweep is widened instead — the
-     same far-to-near row order, now running from the first skirt row behind the
-     board to the last one in front of it, with the field's own rows painted in
-     their proper place inside it. Row order is the depth sort; break it and the
-     terrain folds inside out. */
+     same far-to-near order, running from the first skirt slab behind the board
+     to the last one in front of it, with the field's own slabs painted in their
+     proper place inside it. Slab order is the depth sort; break it and the
+     terrain folds inside out.
+     🎥 "Slab", not "row", because the camera turns now: sweepOrder() decides
+     whether depth runs along rows or along columns and which way each axis
+     runs, and every loop below is written against that instead of against
+     ascending z. At yaw 0 it degenerates to the row sweep it replaces, cell
+     for cell. */
   const R = skirtRange();
+  if (TSEC.on){ TSEC.plan = _tnow() - _tm; _tm = _tnow(); }
+  const SW = sweepOrder();
+  const outerSeq = SW.majorZ ? sweepSeq(R.z0, R.z1, SW.zStep) : sweepSeq(R.x0, R.x1, SW.xStep);
+  const innerSeq = SW.majorZ ? sweepSeq(R.x0, R.x1, SW.xStep) : sweepSeq(R.z0, R.z1, SW.zStep);
+  const outerN = SW.majorZ ? MAP.rows : MAP.cols;
+  /* 🔦 Which slab does a caster's shadow land in? The light is fixed in WORLD
+     space, so this is a property of the sky and NEVER turns with the camera —
+     which is exactly why it is derived here from lv rather than left as the
+     "+1" the old row loop hardcoded. (With every shipped preset cos(az) > 0, so
+     on the row axis it still evaluates to +1; spelling it out is what stops a
+     future dusk preset from silently inverting every cast shadow.) */
+  const lightStep = (SW.majorZ ? -lv.z : -lv.x) >= 0 ? 1 : -1;
+  let kerbDone = false;
 
-  /* rows BEHIND the board first, so the rim kerb and row 0 both cover them */
-  for (let z = R.z0; z < 0; z++) paintSkirtRow(z, R, lv, INK_S);
-
-  /* the rim kerb's FAR edge — behind row 0, so it is baked here and the row
-     that must occlude it is painted immediately below. See frameBand(). */
-  frameBand(true);
-
-  for (let z=0; z<MAP.rows; z++){
-    for (let x=0; x<MAP.cols; x++) paintTile(x,z,lv);
-    /* the flanks of this row, outside the lattice, in the same pass */
-    paintSkirtRow(z, R, lv, INK_S);
-    if (z > 0) for (let x=0; x<MAP.cols; x++) paintShadow(x,z-1,lv);
-    for (let x=0; x<MAP.cols; x++) paintDeco(x,z,INK);
+  for (const a of outerSeq){
+    const fieldSlab = a >= 0 && a < outerN;
+    /* the rim kerb's FAR edge — behind the first field slab, so it is baked
+       here and the slab that must occlude it is painted immediately after.
+       See frameBand(), which now picks WHICH of its four edges is the far one
+       from the camera rather than assuming it is the z = −hh side. */
+    if (fieldSlab && !kerbDone){ frameBand(); kerbDone = true; }
+    for (const b of innerSeq){
+      const x = SW.majorZ ? b : a, z = SW.majorZ ? a : b;
+      const _c0 = TSEC.on ? _tnow() : 0;
+      const _fld = x >= 0 && z >= 0 && x < MAP.cols && z < MAP.rows;
+      if (_fld) paintTile(x, z, lv); else paintSkirtCell(x, z, lv, INK_S, R);
+      if (TSEC.on){
+        const _d = _tnow() - _c0;
+        if (_fld) TSEC.field += _d; else TSEC.skirt += _d;
+        if (_d > 0.6) TSEC.top.push({ x, z, ms:+_d.toFixed(2), fld:_fld, n:TSEC.top.length });
+      }
+    }
+    if (!fieldSlab) continue;
+    /* the caster slab whose shadow lands on the one just painted. Note this is
+       independent of the sweep DIRECTION: the receiver is what the shadow needs
+       to exist, and the receiver is `a`. */
+    const caster = a - lightStep;
+    if (caster >= 0 && caster < outerN){
+      if (SW.majorZ) for (let x=0; x<MAP.cols; x++) paintShadow(x, caster, lv);
+      else           for (let z=0; z<MAP.rows; z++) paintShadow(a - lightStep, z, lv);
+    }
+    if (SW.majorZ) for (let x=0; x<MAP.cols; x++) paintDeco(x, a, INK);
+    else           for (let z=0; z<MAP.rows; z++) paintDeco(a, z, INK);
   }
 
-  /* …and the rows in FRONT of the board, which terrace down and out of frame */
-  for (let z = MAP.rows; z <= R.z1; z++) paintSkirtRow(z, R, lv, INK_S);
-
+  if (TSEC.on){ TSEC.sweep = _tnow() - _tm; _tm = _tnow(); }
   /* grain over the whole play plane, under the horizon fade */
   if (bq.every(Boolean)){
     const pat = noisePattern(ctx);
@@ -2638,8 +3356,23 @@ function paintTerrain(){
      right at the far edge, so equal world depth is nothing like equal screen
      depth there. Asking the projector where rows 0 and 3 actually landed is the
      only version of this that cannot be wrong. */
-  const yFar = project({x:0, y:0, z:-gnd.far});
-  const yIn  = project(gw(0, Math.min(MAP.rows-1, 3), 0));
+  const yFar = project(gp(0, -gnd.far));
+  /* 🎥 "three rows in from the far edge" has to be re-asked once the camera can
+     turn — at 90° the third ROW is not three steps deeper, the third COLUMN is.
+     So find the deepest tile the camera can see and then the tile closest to
+     three row-pitches nearer than it. Same answer as `gw(0, 3, 0)` at yaw 0,
+     and it stays an answer the projector gave rather than a world-z guess,
+     which is what the note above says this must be. */
+  let dMax = -Infinity;
+  for (let z=0; z<MAP.rows; z++) for (let x=0; x<MAP.cols; x++)
+    dMax = Math.max(dMax, camDepth(gw(x,z,0)));
+  const want = dMax - hexV()*3;
+  let best = Infinity, bestW = null;
+  for (let z=0; z<MAP.rows; z++) for (let x=0; x<MAP.cols; x++){
+    const w = gw(x,z,0), e = Math.abs(camDepth(w) - want);
+    if (e < best){ best = e; bestW = w; }
+  }
+  const yIn = bestW ? project(bestW) : null;
   if (yFar && yIn && yIn.y > yFar.y + 6){
     const top = yFar.y - 4, bot = yIn.y;
     const fade = ctx.createLinearGradient(0, top, 0, bot);
@@ -2648,6 +3381,7 @@ function paintTerrain(){
     fade.addColorStop(1, rgba(LIGHT.fog, 0));
     ctx.fillStyle = fade; ctx.fillRect(0, top, W, bot - top);
   }
+  if (TSEC.on) TSEC.tail = _tnow() - _tm;
   /* the near row's own shadows have nothing in front of them to land on, so
      there is deliberately no trailing paintShadow pass */
 }
@@ -2656,8 +3390,28 @@ function paintTerrain(){
    drawBoard — one blit, then only what MOVES.
    ══════════════════════════════════════════════════════════════════ */
 function drawBoard(){
-  const layer = terrainLayer();
-  if (layer) ctx.drawImage(layer, 0, 0, W, H);
+  /* 🎥 WHILE THE CAMERA MOVES, THE CACHE CANNOT HELP — SO SKIP IT.
+     terrainKey() names the camera (it has to; see the note there), so every
+     frame of a pan or a turn is a cache MISS. Going through terrainLayer()
+     anyway means paying the bake AND then blitting a just-dirtied 3200x1800
+     offscreen canvas into the visible one, which is a full-surface copy the
+     compositor cannot elide. Measured in this rig: 22-28 ms of bake and a
+     130-157 ms BLIT, i.e. the cache was costing six times what it saved and
+     the whole cost was in the copy, not the drawing. Painting straight to the
+     visible canvas is the same pixels for the bake alone.
+     The cache is exactly right the rest of the time — a parked camera re-blits
+     an unchanged surface for ~0 ms — so this only bypasses it while something
+     is actually in motion, and drops TERR.key so the first parked frame bakes
+     once and every frame after it is free again. */
+  if (CAMERA.moving){
+    const t0 = performance.now();
+    TERR.key = '';                       /* force one rebake when we stop */
+    try { paintTerrain(); } catch (e) {} /* CONTRACT R2: frameErr is one-way */
+    TERR.ms = performance.now() - t0;
+  } else {
+    const layer = terrainLayer();
+    if (layer) ctx.drawImage(layer, 0, 0, W, H);
+  }
 
   /* Everything below is per-frame, and it is deliberately driven off the PAINT
      sets rather than off a 14x12 sweep: in a normal frame nothing is painted
@@ -2669,7 +3423,15 @@ function drawBoard(){
     const k = x+','+z; if (seen[k]) return; seen[k] = 1; live.push({x:x,z:z,col:col});
   };
   for (const k of PAINT.attack){ const c = k.indexOf(','); push(+k.slice(0,c), +k.slice(c+1), '#ff5a4a'); }
-  for (const k of PAINT.move)  { const c = k.indexOf(','); push(+k.slice(0,c), +k.slice(c+1), '#4fd0ff'); }
+  /* 🏹 PAINT.move IS DELIBERATELY ABSENT FROM THIS LOOP.
+     It used to tint every reachable tile as its own outlined hexagon — the
+     "range as a tile checkerboard" BAR R3 names as a fail condition. The same
+     set is now drawn by drawTeleGround() as ONE region with ONE contour traced
+     around its outer boundary. It is the same Set, read at the same instant;
+     only the rendering changed, so the outline can never disagree with the
+     reachable region. Attack / place / swap stay per-tile on purpose: those
+     mark INDIVIDUAL targets, and a contour around three scattered enemies
+     would say something about the space between them that is not true. */
   for (const k of PAINT.place) { const c = k.indexOf(','); push(+k.slice(0,c), +k.slice(c+1), '#7fe89f'); }
   for (const k of PAINT.swap)  { const c = k.indexOf(','); push(+k.slice(0,c), +k.slice(c+1), '#e0b64a'); }
   for (const d of live){
@@ -2745,7 +3507,13 @@ function drawRune(gx,gz,nd,t){
    drawFrame() keeps the three edges that genuinely are in front of the field.
    It cannot simply be drawn before the terrain blit: the stone apron reaches
    further out in z than the frame does and would cover it. */
-function frameBand(far){
+/* 🎥 …and WHICH edge is the far one is now a question, not a constant. It used
+   to be corners[0]→corners[1] because that pair sits at z = −hh and the camera
+   could only ever be on the +z side. Under yaw the far edge is whichever of
+   the four has the greatest camera depth at its midpoint — at yaw 0 that is
+   still edge 0, so the shipped picture is unchanged, and at 180° it becomes
+   edge 2 instead of drawing the kerb across the front of the board. */
+function frameBand(){
   const ext = boardExtent();
   /* Centred on the lattice, not on the origin: odd rows are shifted +½ column
      so the hexes are not symmetric about x=0, and a frame that is would sit a
@@ -2756,10 +3524,15 @@ function frameBand(far){
   /* frame band */
   const top = corners.map(c => project({x:c.x, y:.14, z:c.z}));
   const bot = corners.map(c => project({x:c.x, y:-.02, z:c.z}));
+  let farEdge = 0, farD = -Infinity;
+  for (let i=0;i<4;i++){
+    const j = (i+1)%4;
+    const d = camDepth({ x:(corners[i].x+corners[j].x)/2, y:0, z:(corners[i].z+corners[j].z)/2 });
+    if (d > farD){ farD = d; farEdge = i; }
+  }
   if (top.every(Boolean) && bot.every(Boolean)){
     for (let i=0;i<4;i++){
-      /* corners[0]→corners[1] is the far edge (both at z = -hh) */
-      if ((i === 0) !== !!far) continue;
+      if (i !== farEdge) continue;
       const j = (i+1)%4;
       ctx.beginPath();
       ctx.moveTo(top[i].x,top[i].y); ctx.lineTo(top[j].x,top[j].y);
@@ -2785,12 +3558,15 @@ function frameBand(far){
    the thing that announces plate". With the skirt carrying the ground past the
    frame edge on those three sides there is nothing left for them to enclose,
    and drawing them would cut the diorama in half.
-   The FAR band survives (frameBand(true), baked inside paintTerrain): behind
-   row 0 it is not a frame edge at all, it is the lip of the horizon with the
-   ragged row-0 skyline standing over it.
+   The FAR band survives (frameBand(), baked inside paintTerrain): behind the
+   far row it is not a frame edge at all, it is the lip of the horizon with
+   that row's ragged skyline standing over it. 🎥 WHICH edge that is now
+   changes with the camera — frameBand() picks the deepest of the four rather
+   than assuming z = −hh — so the "future camera" this note anticipated is
+   here, and the answer was to turn the one surviving edge rather than to bring
+   the other three back.
    Kept as a function rather than deleted at the call site so the drawBoard()
-   order stays readable and so a future camera can bring an edge back if a yaw
-   ever makes one meaningful again. */
+   order stays readable. */
 function drawFrame(){ /* near + side bands intentionally not drawn — see above */ }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -3039,10 +3815,16 @@ function drawPylon(br){
   if (PYLON_ART.img && PYLON_ART.img.complete && PYLON_ART.img.naturalWidth){
     const base = project({x:px, y:0, z:pz});
     const top  = project({x:px, y:PYLON_ART.heightWorld, z:pz});
-    const side = project({x:px + PYLON_ART.widthWorld/2, y:0, z:pz});
-    if (base && top && side){
+    if (base && top){
       shadowEllipse({x:px, y:0, z:pz}, .62, .85);
-      const wpx = Math.abs(side.x - base.x)*2, hpx = Math.abs(base.y - top.y);
+      /* 🎥 The billboard's WIDTH used to be measured by projecting a second
+         point offset along world +X and taking the screen gap — the same idiom
+         CONTRACT §2 Tier 2.1 names, and it deflates continuously to zero as the
+         camera yaws toward the X axis. At 90° the pillars would be one pixel
+         wide, with no error anywhere. `base.s` is already pixels-per-world-unit
+         at this depth, so this is the same number at yaw 0, correct at every
+         other yaw, and one projection cheaper. */
+      const wpx = ringPx(base, PYLON_ART.widthWorld), hpx = Math.abs(base.y - top.y);
       const img = PYLON_ART.img;
       const fw = img.naturalWidth / Math.max(1, PYLON_ART.frames);
       const fi = PYLON_ART.frames > 1 ? Math.floor(T*PYLON_ART.fps) % PYLON_ART.frames : 0;
@@ -3341,10 +4123,12 @@ function seedBraziers(){
     const fits = w => {
       for (const zz of [hh, -hh]) for (const sgn of [-1, 1]){
         const a = project({ x:tx + sgn*w,         y:0,    z:zz });
-        const b = project({ x:tx + sgn*w + wHalf, y:0,    z:zz });
         const c = project({ x:tx + sgn*w,         y:tall, z:zz });
-        if (!a || !b || !c) return false;
-        const half = Math.abs(b.x - a.x);
+        if (!a || !c) return false;
+        /* 🎥 ringPx, not a projected world-X offset: the pillar's half-width in
+           pixels must not shrink as the camera yaws (CONTRACT §2 Tier 2.1).
+           This fit runs on every resize, and a resize can happen at any yaw. */
+        const half = ringPx(a, wHalf);
         if (a.x - half < lo || a.x + half > hi) return false;
         if (c.y < top || a.y > bot) return false;
       }
@@ -4572,7 +5356,20 @@ function drawUnit(u){
   ctx.save();
   const sh = u.shake ? Math.sin(T*60)*u.shake*8 : 0;
   ctx.translate(foot.x + sh, foot.y);
-  ctx.scale(u.face * u.scaleX, u.scaleY);
+  /* 🎥 FACING IS A WORLD DIRECTION, MIRRORING IS A SCREEN ONE.
+     `u.face` is ±1 along world +X (moveUnit sets it from gx, spawnUnit gives
+     the enemy +1 and the player −1) and it used to be applied straight as a
+     horizontal flip — correct only while world +X pointed screen-right, i.e.
+     only at yaw 0. Walk the camera round behind the board and every unit is
+     mirrored the wrong way: the whole army faces away from the enemy it is
+     attacking, which reads as an animation bug rather than a camera one.
+     CAM.r IS the screen-right axis (buildCam crosses forward with world up),
+     so the sign of its x component is the whole answer. At ±90° it passes
+     through zero — the unit is facing the camera dead-on, where a mirror is
+     meaningless anyway, and >= keeps the flip deterministic instead of
+     dithering on floating-point noise. */
+  const faceMirror = (CAM.r.x >= 0 ? 1 : -1);
+  ctx.scale(u.face * faceMirror * u.scaleX, u.scaleY);
   /* clip below the tile while rising out of the ground */
   if (u.y < -0.02){
     ctx.save();
@@ -4667,8 +5464,14 @@ function drawEffects(pass){
   }
 }
 function drawParticles(){
-  /* dust puffs first (they sit under the sparks), back to front */
-  const puffs = particles.filter(p => p.puff).sort((a,b) => a.z - b.z);
+  /* dust puffs first (they sit under the sparks), back to front.
+     🎥 …by CAMERA depth, not by world z. These are already in world space, so
+     it is one call — and it is the same substitution the drawable sort in
+     frame() needed, for the same reason (CONTRACT §2 Tier 2.2). The stakes are
+     lower here (translucent puffs overlapping puffs) but leaving one sort on
+     world z is how the idiom gets copied back into something that matters. */
+  const puffs = particles.filter(p => p.puff)
+    .sort((a,b) => camDepth({x:b.x, y:b.y, z:b.z}) - camDepth({x:a.x, y:a.y, z:a.z}));
   for (const p of puffs){
     const pr = project({x:p.x, y:p.y, z:p.z}); if (!pr) continue;
     const k = clamp(p.t/p.life, 0, 1);
@@ -4722,6 +5525,13 @@ function drawGuides(){
    UPDATE + FRAME
    ══════════════════════════════════════════════════════════════════ */
 function update(dt){
+  /* 🎥 The camera first, and from HELD STATE against dt — never from a keydown
+     delta (CONTRACT §2 Tier 2). It runs before anything is drawn so the whole
+     frame, terrain bake included, sees one consistent eye. Its own try/catch
+     because frameErr is a ONE-WAY LATCH (CONTRACT R2): a throw in here would
+     paint RENDER ERROR and stop the RAF loop for good, and an input path is
+     exactly where an unexpected value arrives. */
+  try { camUpdate(dt); } catch (e) {}
   /* cosmetic summon rise — see summonFx() */
   for (const u of units){
     if (!u.rise || u.riseT === undefined) continue;
@@ -5057,6 +5867,374 @@ holy(c, q, cx, cy, r, T, gx, gz){
   c.fillStyle = g; c.fill();
 }
 };
+/* ══════════════════════════════════════════════════════════════════
+   🏹 THE XCOM TELEGRAPH
+   Four pictures, one rule: every one of them is a RENDERING of a set the
+   game's own rules produced. Nothing here re-derives reachability, adjacency
+   or a route. BAR R3's path line and BAR R2's threat wash exist precisely to
+   stop the UI from telling a different story than the rules, so a telegraph
+   that computed its own answer would be the bug rather than the fix.
+
+     1. MOVE CONTOUR   — the OUTER BOUNDARY of PAINT.move, the same set the
+                         checkerboard used to tint tile by tile.
+     2. PATH ARROW     — TELE.path, straight out of the game's getMovePath().
+     3. ATTACK ARC     — TELE.arc, from the game's own attack-target set.
+     4. THREAT REGION  — TELE.threat, the union of the enemies' real reach.
+
+   ⚠ NO DASH / EXTENDED-RANGE CONTOUR IS DRAWN, and that is a finding, not an
+   omission. BAR R3 asks for a second dimmer contour "if the game has such a
+   concept". It does not: getMoveRange() returns ONE number, getValidMoves()
+   BFSes to it, and a unit carries a single boolean `hasMoved` — there is no
+   second, costlier movement band a player can opt into. The only thing that
+   ever refunds a move is the `speed` passive firing AFTER a kill, which is a
+   consequence of an action rather than a range you can preview. Inventing a
+   dimmer ring at speed+N would be drawing tiles the click gate rejects.
+   ══════════════════════════════════════════════════════════════════ */
+
+/* Edge i of a pointy-top hex runs from corner i to corner i+1 (hexCorners()
+   walks i*60°−30°), so edge i's OUTWARD NORMAL points at exactly i*60°. These
+   are HEXSPEC §5's six offset-row neighbours re-ordered into that winding, so
+   `neighbour of edge i` is a table lookup and not a search.
+   Getting the order wrong does not throw and does not warn: the contour simply
+   grows teeth where it should run straight, which reads as an art bug. */
+const TELE_EDGE_EVEN = [[1,0],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1]];
+const TELE_EDGE_ODD  = [[1,0],[1,1],[0,1],[-1,0],[0,-1],[1,-1]];
+
+/* Trace the outer boundary of a tile SET as chained world-space polylines.
+   An edge is on the boundary iff the tile across it is not in the set — which
+   makes the contour a pure function of the set, so it cannot disagree with the
+   reachable region the way an independently-derived outline could.
+   Holes (a blocked tile inside the reachable region) come out as their own
+   loops for free, which is correct: XCOM draws them too.
+   Corner points carry their OWN tile's elevation, so where the region crosses
+   a cliff the chain gets a vertical connector and the contour climbs the face
+   instead of cutting through it. */
+function teleContour(set){
+  if (!set || !set.size) return [];
+  const edges = [];
+  const byStart = new Map();
+  /* Quantised corner identity. Neighbouring tiles compute the same lattice
+     corner from different centres, so the two doubles differ in the last bits;
+     corners are ~0.87 world units apart, so rounding at 1/512 of a unit is
+     three orders of magnitude of headroom and can never merge two of them. */
+  const q = (p) => Math.round(p.x*512) + ',' + Math.round(p.z*512);
+  for (const key of set){
+    const c = key.indexOf(','); if (c < 0) continue;
+    const gx = +key.slice(0,c), gz = +key.slice(c+1);
+    if (!isFinite(gx) || !isFinite(gz)) continue;
+    const NB = (gz & 1) ? TELE_EDGE_ODD : TELE_EDGE_EVEN;
+    let corners = null;
+    for (let i=0;i<6;i++){
+      const d = NB[i];
+      if (set.has((gx+d[0]) + ',' + (gz+d[1]))) continue;
+      /* lifted a hair off the surface so the line is not z-fought by the
+         ground bake it is drawn over */
+      if (!corners) corners = hexCorners(gx, gz, 0, tileElev(gx,gz) + 0.016);
+      const a = corners[i], b = corners[(i+1)%6];
+      const rec = { a:a, b:b, ka:q(a), kb:q(b), used:false };
+      edges.push(rec);
+      let L = byStart.get(rec.ka); if (!L) byStart.set(rec.ka, L = []);
+      L.push(rec);
+    }
+  }
+  const loops = [];
+  for (const e0 of edges){
+    if (e0.used) continue;
+    e0.used = true;
+    const pts = [e0.a, e0.b];
+    let cur = e0;
+    /* Bounded walk. A pinch corner (three tiles meeting, two of them in the
+       set but not adjacent) has two outgoing boundary edges; either choice
+       still consumes every edge exactly once across all loops, so the guard is
+       belt-and-braces against a malformed set rather than an expected exit. */
+    for (let guard=0; guard<2048; guard++){
+      const L = byStart.get(cur.kb); if (!L) break;
+      let nxt = null;
+      for (const cand of L) if (!cand.used){ nxt = cand; break; }
+      if (!nxt) break;
+      nxt.used = true;
+      /* Push BOTH endpoints of every edge. When the next edge belongs to a
+         tile at another elevation, its start point sits above or below the one
+         we just finished on and this pair IS the vertical climb. When the
+         elevations match the two points coincide and the extra vertex is free. */
+      pts.push(nxt.a, nxt.b);
+      cur = nxt;
+      if (cur.kb === e0.ka) break;
+    }
+    loops.push(pts);
+  }
+  return loops;
+}
+
+/* Contour geometry is WORLD space, so it survives every camera move and only
+   has to be rebuilt when the SET or the TERRAIN changes. TELE.rev is bumped by
+   both the `paint` and the `tele` message handlers; TILE_INDEX identity covers
+   a new map (rebuildTileIndex() mints a fresh Map). Without this the boundary
+   trace ran 60x/second for a set that changes on a click. */
+const TELE_CACHE = { rev:-1, idx:null, move:null, threat:null };
+function teleLoops(){
+  if (TELE_CACHE.rev !== TELE.rev || TELE_CACHE.idx !== TILE_INDEX){
+    if (!TILE_INDEX) rebuildTileIndex();
+    TELE_CACHE.rev = TELE.rev;
+    TELE_CACHE.idx = TILE_INDEX;
+    TELE_CACHE.move   = teleContour(PAINT.move);
+    TELE_CACHE.threat = teleContour(TELE.threat);
+  }
+  return TELE_CACHE;
+}
+
+/* One fill for a whole region. Every hexagon goes into a SINGLE path and is
+   filled once with the default nonzero winding, so the union comes out at a
+   flat alpha — filling tile by tile double-darkens every shared edge and turns
+   a region back into the checkerboard BAR R3 rejects. The −0.012 inset is a
+   hair of OVERLAP, which is what closes the antialiasing hairlines between
+   neighbours; nonzero winding makes the overlap free. */
+function teleWash(set, colour, alpha){
+  if (!set || !set.size) return;
+  ctx.beginPath();
+  let any = false;
+  for (const key of set){
+    const c = key.indexOf(','); if (c < 0) continue;
+    const gx = +key.slice(0,c), gz = +key.slice(c+1);
+    const P = tilePoly(gx, gz, -0.012); if (!P) continue;
+    ctx.moveTo(P[0].x, P[0].y);
+    for (let i=1;i<6;i++) ctx.lineTo(P[i].x, P[i].y);
+    ctx.closePath(); any = true;
+  }
+  if (any){ ctx.fillStyle = rgba(colour, alpha); ctx.fill(); }
+}
+
+/* Stroke pre-chained loops. Points are projected ONCE and both the glow pass
+   and the core pass reuse them — projecting per pass doubled the cost of the
+   one thing on this board that runs over a whole region. A point behind the
+   near plane (project() → null, CONTRACT R17) breaks the subpath rather than
+   joining across the screen, which is what a bare `continue` would draw. */
+function teleStroke(loops, colour, coreW, glowW, alpha){
+  if (!loops || !loops.length) return;
+  const runs = [];
+  for (const L of loops){
+    let run = null;
+    for (const w of L){
+      const p = project(w);
+      if (!p){ run = null; continue; }
+      if (!run){ run = [p]; runs.push(run); } else run.push(p);
+    }
+  }
+  if (!runs.length) return;
+  ctx.save();
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  for (let pass=0; pass<2; pass++){
+    ctx.strokeStyle = rgba(colour, pass ? alpha : alpha*0.26);
+    ctx.lineWidth   = pass ? coreW : glowW;
+    ctx.beginPath();
+    for (const r of runs){
+      ctx.moveTo(r[0].x, r[0].y);
+      for (let i=1;i<r.length;i++) ctx.lineTo(r[i].x, r[i].y);
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/* Two routes, two palettes. `mine` is the cyan XCOM ribbon; `foe` is the red
+   the attack arc has always used for an enemy swing (drawTeleArc's '#ff5a4a'),
+   so the enemy's move and the enemy's attack read as one actor's intent while
+   staying unmistakably not-mine. Deliberately NOT the threat wash's orange
+   (#ff7a30): a route is one line the enemy walks, a threat region is every
+   tile it could reach, and BAR R2 is explicit that two questions get two
+   colours. `mark` is the destination hexagon and cursor diamond, kept a step
+   paler than the ribbon so the endpoint reads as a marker rather than more
+   line. */
+const TELE_PAL = {
+  mine: { glow:'#8fe8ff', core:'#63d8ff', mark:'#dffaff' },
+  foe:  { glow:'#ffa392', core:'#ff5a4a', mark:'#ffdcd4' }
+};
+function telePal(){ return TELE_PAL[TELE.side] || TELE_PAL.mine; }
+
+/* The walked route, on the ground, bending exactly where the game's BFS bends.
+   Points are the TILE CENTRES of TELE.path in order — no smoothing through
+   them, because a spline that cuts a corner draws the unit walking over a tile
+   the path never contained. */
+function drawTelePath(t){
+  const P = TELE.path;
+  if (!P || P.length < 2) return;
+  const pts = [];
+  for (const k of P){
+    const c = k.indexOf(','); if (c < 0) return;
+    const gx = +k.slice(0,c), gz = +k.slice(c+1);
+    const p = project(gw(gx, gz, tileElev(gx,gz) + 0.05));
+    if (!p) return;                       /* partial route > no route is FALSE */
+    pts.push(p);
+  }
+  const s = pts[pts.length-1].s;
+  const core = Math.max(2.2, tileR() * s * 0.17);
+  const PAL = telePal();
+  ctx.save();
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  /* dark casing first — the route has to read over wet asphalt AND over pale
+     rubble, and a single bright line reads over neither */
+  ctx.strokeStyle = 'rgba(4,10,16,0.68)'; ctx.lineWidth = core + Math.max(3, core*0.9);
+  ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.stroke();
+  ctx.strokeStyle = rgba(PAL.glow, 0.30); ctx.lineWidth = core * 2.1;
+  ctx.stroke();
+  ctx.strokeStyle = rgba(PAL.core, 0.92); ctx.lineWidth = core;
+  ctx.stroke();
+
+  /* Direction chevrons, marching along the route. They are what makes it a
+     telegraph rather than a drawn line: without them the picture says where
+     but not which way. Phase runs with T so the route reads as flowing toward
+     the destination. */
+  /* Chevron placement walks ONE running distance along the whole polyline
+     rather than resetting per segment — a per-segment phase makes the spacing
+     jump at every bend, and every bend is the interesting part of this route. */
+  const step = Math.max(22, core * 5.2);
+  let travelled = 0;
+  let next = step - ((t * 46) % step);
+  const chev = (cx, cy, ux, uy, scale) => {
+    const w = core * 0.62 * scale, h = core * 0.78 * scale;
+    ctx.beginPath();
+    ctx.moveTo(cx - ux*w - uy*h, cy - uy*w + ux*h);
+    ctx.lineTo(cx + ux*w*1.35,   cy + uy*w*1.35);
+    ctx.lineTo(cx - ux*w + uy*h, cy - uy*w - ux*h);
+    /* dark casing UNDER a bright mark, never the other way round: dark
+       chevrons on a light ribbon read as hazard tape, not as direction. */
+    ctx.strokeStyle = 'rgba(4,10,16,0.8)'; ctx.lineWidth = Math.max(2.4, core*0.62); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,0.96)'; ctx.lineWidth = Math.max(1.2, core*0.30); ctx.stroke();
+  };
+  for (let i=1;i<pts.length;i++){
+    const a = pts[i-1], b = pts[i];
+    const dx = b.x-a.x, dy = b.y-a.y, len = Math.hypot(dx,dy);
+    if (len < 0.001) continue;
+    const ux = dx/len, uy = dy/len;
+    while (next <= travelled + len){
+      const d = next - travelled;
+      chev(a.x + ux*d, a.y + uy*d, ux, uy, 1);
+      next += step;
+    }
+    travelled += len;
+  }
+  /* The head, sitting ON the destination and pointing into it. XCOM's route
+     line ends in a marker; without the head the ribbon just stops. */
+  const pE = pts[pts.length-1], pP = pts[pts.length-2];
+  const hx = pE.x-pP.x, hy = pE.y-pP.y, hlen = Math.hypot(hx,hy) || 1;
+  ctx.save();
+  ctx.lineJoin = 'miter';
+  chev(pE.x, pE.y, hx/hlen, hy/hlen, 2.0);
+  ctx.restore();
+  ctx.restore();
+}
+
+/* Destination marker: the hexagon the unit will stand on, plus the floating
+   cursor diamond BAR R2 asks for, on a dropline so its foot is unambiguous. */
+function drawTeleDest(t){
+  const d = TELE.dest; if (!d) return;
+  const e = tileElev(d.x, d.z);
+  const P = tilePoly(d.x, d.z, 0.06, e + 0.055);
+  const pulse = 0.5 + Math.sin(t*3.4)*0.5;
+  const PAL = telePal();
+  ctx.save();
+  if (P){
+    pathPoly(P); ctx.fillStyle = rgba(PAL.mark, 0.10 + pulse*0.10); ctx.fill();
+    pathPoly(P); ctx.strokeStyle = 'rgba(4,10,16,0.6)'; ctx.lineWidth = 5; ctx.stroke();
+    pathPoly(P); ctx.strokeStyle = rgba(PAL.mark, 0.95); ctx.lineWidth = 2.6; ctx.stroke();
+  }
+  const foot = project(gw(d.x, d.z, e + 0.06));
+  const head = project(gw(d.x, d.z, e + 0.62 + pulse*0.06));
+  if (foot && head){
+    ctx.strokeStyle = rgba(PAL.glow, 0.5); ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.moveTo(foot.x, foot.y); ctx.lineTo(head.x, head.y); ctx.stroke();
+    const r = Math.max(5, tileR() * head.s * 0.30);
+    ctx.beginPath();
+    ctx.moveTo(head.x, head.y - r); ctx.lineTo(head.x + r*0.72, head.y);
+    ctx.lineTo(head.x, head.y + r); ctx.lineTo(head.x - r*0.72, head.y);
+    ctx.closePath();
+    ctx.fillStyle = rgba(PAL.mark, 0.9); ctx.fill();
+    ctx.strokeStyle = 'rgba(4,10,16,0.75)'; ctx.lineWidth = 2; ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/* The GROUND half of the telegraph, composited after the surface FX so a route
+   across a fire tile still reads. Order is deliberate: threat underneath (it is
+   context), then my own reachable region, then the route on top of both. */
+function drawTeleGround(t){
+  const C = teleLoops();
+  if (TELE.threat.size){
+    teleWash(TELE.threat, '#ff7a30', 0.13 + Math.sin(t*1.6)*0.02);
+    teleStroke(C.threat, '#ff8a3c', 3.0, 9, 0.92);
+  }
+  if (PAINT.move.size){
+    teleWash(PAINT.move, '#4fd0ff', 0.13 + Math.sin(t*2.2)*0.025);
+    teleStroke(C.move, '#7fe4ff', 2.6, 10, 0.95);
+  }
+  drawTelePath(t);
+  drawTeleDest(t);
+}
+
+/* The AIR half — the attack arc, drawn AFTER the depth-sorted actors so it
+   passes over the units instead of under them (BAR R2: "drawn above the
+   board"). Sampled in WORLD space and projected per sample: a curve drawn
+   between two projected endpoints in SCREEN space is a different curve at
+   every yaw, and at 90° it lies flat against the board. */
+function drawTeleArc(t){
+  const a = TELE.arc; if (!a || !a.from || !a.to) return;
+  const mine = a.side !== 'foe';
+  const col  = mine ? '#7fd8ff' : '#ff5a4a';
+  const A = gw(a.from.x, a.from.z, tileElev(a.from.x, a.from.z) + 0.52);
+  const B = gw(a.to.x,   a.to.z,   tileElev(a.to.x,   a.to.z)   + 0.52);
+  const span = Math.hypot(B.x-A.x, B.z-A.z);
+  const lift = Math.max(0.7, span * 0.44);
+  const N = 30, S = [];
+  for (let i=0;i<=N;i++){
+    const u = i/N, v = 1-u;
+    const p = project({ x: v*v*A.x + 2*v*u*((A.x+B.x)/2)        + u*u*B.x,
+                        y: v*v*A.y + 2*v*u*((A.y+B.y)/2 + lift) + u*u*B.y,
+                        z: v*v*A.z + 2*v*u*((A.z+B.z)/2)        + u*u*B.z });
+    if (!p) return;
+    S.push(p);
+  }
+  ctx.save();
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  const w = Math.max(2.4, tileR() * S[N].s * 0.16);
+  ctx.beginPath(); ctx.moveTo(S[0].x, S[0].y);
+  for (let i=1;i<=N;i++) ctx.lineTo(S[i].x, S[i].y);
+  ctx.strokeStyle = 'rgba(4,8,14,0.62)'; ctx.lineWidth = w + 4; ctx.stroke();
+  ctx.strokeStyle = rgba(col, 0.34);      ctx.lineWidth = w * 2.4; ctx.stroke();
+  ctx.strokeStyle = rgba(col, 0.98);      ctx.lineWidth = w;       ctx.stroke();
+  /* travelling charge — the arc reads as intent, not as a static rope */
+  for (let k=0;k<3;k++){
+    const u = ((t*0.85 + k/3) % 1) * N;
+    const i = Math.min(N-1, u|0), f = u - i;
+    const px = S[i].x + (S[i+1].x - S[i].x)*f, py = S[i].y + (S[i+1].y - S[i].y)*f;
+    ctx.beginPath(); ctx.arc(px, py, w*0.9, 0, 7);
+    ctx.fillStyle = rgba('#ffffff', 0.75); ctx.fill();
+  }
+  /* head at the target end */
+  const p1 = S[N], p0 = S[N-1];
+  const dx = p1.x-p0.x, dy = p1.y-p0.y, len = Math.hypot(dx,dy) || 1;
+  const ux = dx/len, uy = dy/len, hl = w*3.4, hw = w*1.7;
+  ctx.beginPath();
+  ctx.moveTo(p1.x + ux*hl*0.35, p1.y + uy*hl*0.35);
+  ctx.lineTo(p1.x - ux*hl + -uy*hw, p1.y - uy*hl + ux*hw);
+  ctx.lineTo(p1.x - ux*hl +  uy*hw, p1.y - uy*hl + -ux*hw);
+  ctx.closePath();
+  ctx.fillStyle = rgba(col, 0.98); ctx.fill();
+  ctx.strokeStyle = 'rgba(4,8,14,0.7)'; ctx.lineWidth = 1.8; ctx.stroke();
+  /* and a ring under the target's feet so ownership reads even when the arc
+     crosses a crowd (BAR R2's directional foot ring, in the attack colour) */
+  const f = project(gw(a.to.x, a.to.z, tileElev(a.to.x, a.to.z) + 0.02));
+  if (f){
+    const r = ringPx(f, tileR() * 0.72);
+    ctx.save(); ctx.translate(f.x, f.y); ctx.scale(1, 0.46);
+    ctx.beginPath(); ctx.arc(0, 0, r * (0.9 + Math.sin(t*4)*0.06), 0, 7);
+    ctx.strokeStyle = rgba(col, 0.9); ctx.lineWidth = 2.6; ctx.stroke();
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
 /* Re-stroke the move/attack/place/swap highlight on top of a painted surface —
    brighter and thicker than the under-ground pass so it reads through flames
    and oil sheen. Keyed off SURFACES so a clean tile is never touched twice. */
@@ -5065,7 +6243,9 @@ function drawPaintOverSurfaces(T){
     if (!SURFACES[key]) continue;
     let col = null;
     if (PAINT.attack.has(key))     col = '#ff5a4a';
-    else if (PAINT.move.has(key))  col = '#4fd0ff';
+    /* move is not re-stroked here either — see the note in drawBoard(). The
+       move region is composited by drawTeleGround(), which runs AFTER this
+       function and therefore already reads through fire and oil. */
     else if (PAINT.place.has(key)) col = '#7fe89f';
     else if (PAINT.swap.has(key))  col = '#e0b64a';
     if (!col) continue;
@@ -5105,15 +6285,59 @@ function drawSurfaceFx(T){
     ctx.restore();
   }
 }
+/* ⏱ PER-SECTION FRAME COST — a ring buffer of the last 120 frames, six
+   performance.now() calls a frame and nothing else. It exists because the free
+   camera turned a BAKED diorama into one that can be invalidated every frame,
+   and "the camera is smooth" is not a claim anyone should make from a
+   screenshot. `window.__bbPerf()` returns medians in ms per section plus
+   whether the camera was moving, which is the only way to tell a slow bake
+   apart from a slow blit apart from a slow sky. */
+const PERF = { i:0, n:0, buf:[], moving:0 };
+function perfPush(rec){
+  PERF.buf[PERF.i] = rec; PERF.i = (PERF.i + 1) % 120; if (PERF.n < 120) PERF.n++;
+}
+window.__bbPerf = () => {
+  const all = PERF.buf.slice(0, PERF.n);
+  /* Split by whether the camera was MOVING on that frame — averaging the two
+     together is how a 6fps pan hides behind a 300fps idle. */
+  const stat = rows => {
+    if (!rows.length) return { frames:0 };
+    const med = k => { const a = rows.map(r => r[k]).sort((x,y) => x-y); return +a[a.length>>1].toFixed(2); };
+    return { frames: rows.length, total:med('total'), sky:med('sky'),
+             terrainBake:med('bake'), terrainBlit:med('blit'), board:med('board'),
+             fx:med('fx'), actors:med('actors'), atmos:med('atmos') };
+  };
+  return { moving: stat(all.filter(r => r.mov)), parked: stat(all.filter(r => !r.mov)),
+           /* The bake's unit of work, from the LAST bake. Not a median: the
+              stat rows are per frame and a cached frame bakes nothing, so a
+              median over them would read zero and hide exactly the frames that
+              cost. terrainBake above is what it cost; this is what it did. */
+           skirt: { painted:SKIRT_STAT.painted, asked:SKIRT_STAT.asked,
+                    areaKpx:+SKIRT_STAT.areaKpx.toFixed(1), maxR:+SKIRT_STAT.maxR.toFixed(1),
+                    budget:SKIRT_STAT.budget, lod:SKIRT_STAT.lod,
+                    cull:{ quad:SKIRT_STAT.cullQuad, screen:SKIRT_STAT.cullScreen, lod:SKIRT_STAT.cullLod } },
+           /* Only meaningful after __bbTerrSec(true); zeros otherwise. */
+           terrainSections: TSEC.on ? { apron:+TSEC.apron.toFixed(2), art:+TSEC.art.toFixed(2),
+                                        plan:+TSEC.plan.toFixed(2), sweep:+TSEC.sweep.toFixed(2),
+                                        skirt:+TSEC.skirt.toFixed(2), field:+TSEC.field.toFixed(2),
+                                        tail:+TSEC.tail.toFixed(2),
+                                        top:TSEC.top.slice().sort((a,b)=>b.ms-a.ms).slice(0,6) } : null };
+};
+window.__bbPerfReset = () => { PERF.buf.length = 0; PERF.i = 0; PERF.n = 0; };
+
 function frame(now){
   if (frameErr) return;
   try {
   const dt = Math.min((now - last)/1000, 0.05) || 0.016; last = now; T += dt;
+  const _t0 = performance.now();
   update(dt);
   ctx.clearRect(0,0,W,H);
   drawSky();
   drawShards();
+  const _t1 = performance.now();
+  const _bake0 = TERR.ms;
   drawBoard();
+  const _t2 = performance.now();
   /* 🎨 Painted tile surfaces — composited HERE, between the ground and the
      depth-sorted pass, so a unit standing in fire is drawn ON TOP of it. The
      shader layer renders to its own offscreen WebGL canvas and is blitted in;
@@ -5127,28 +6351,47 @@ function frame(now){
      though it is a perfectly legal move. Only surfaced tiles are touched, so
      the rest of the board keeps the original look. */
   try { drawPaintOverSurfaces(T); } catch (e) {}
+  /* 🏹 THE TELEGRAPH, ground half — move contour, threat wash, walked route,
+     destination marker. Sits here, above the surface FX, for the same reason
+     drawPaintOverSurfaces does: a hazard composited over the reachable region
+     made a perfectly legal move look unreachable.
+     Its own try/catch, CONTRACT R2: frameErr is a one-way latch and a bad
+     contour must cost the contour, not the whole board. */
+  try { drawTeleGround(T); } catch (e) {}
   drawEffects('ground');
-  /* painter's algorithm: far rows first */
+  const _t3 = performance.now();
+  /* painter's algorithm: FURTHEST FROM THE EYE FIRST.
+     🎥 This used to sort on grid z ascending, which is the same ordering only
+     while the camera looks down −Z (CONTRACT §2 Tier 2.2). The instant Q or E
+     turns it, "z ascending" stops meaning "far to near": at 90° it is a
+     LATERAL sweep and neighbouring units draw through each other, at 180° it
+     is exactly backwards and every unit is occluded by the one behind it — a
+     hero standing in front of a ruin disappears into it. Nothing throws.
+     The honest key is camera-space depth, so each drawable now carries the
+     WORLD point it stands on and `d` comes from camDepth(). Grid items go
+     through gw() to get there; the braziers are already in world space, which
+     is why they no longer need the grid-row conversion they used to do. */
   const drawables = [];
-  for (const t of MAP.tiles) if (t.prop) drawables.push({ z:t.z, kind:'prop', t });
-  for (const u of units) drawables.push({ z:u.z, kind:'unit', u });
-  for (const tb of TOMBS) drawables.push({ z:tb.z, kind:'tomb', tb });
+  for (const t of MAP.tiles) if (t.prop) drawables.push({ d:camDepth(gw(t.x,t.z,0)), kind:'prop', t });
+  for (const u of units) drawables.push({ d:camDepth(gw(u.x,u.z,0)), kind:'unit', u });
+  for (const tb of TOMBS) drawables.push({ d:camDepth(gw(tb.x,tb.z,0)), kind:'tomb', tb });
   /* 🏚 ruins go through the SAME painter's sort as everything else — they are
      the tallest things on the board, so a ruin drawn out of order would hide a
      unit that is standing in front of it. */
-  for (const sc of STRUCTS) drawables.push({ z:sc.z, kind:'struct', sc });
+  for (const sc of STRUCTS) drawables.push({ d:camDepth(gw(sc.x,sc.z,0)), kind:'struct', sc });
   /* 🚚 control-point trucks join the SAME painter's sort — a truck is a metre
      and a half of solid geometry, so one drawn out of order would swallow a
      unit standing in front of it, which on this board is a unit that is
      CAPTURING it. */
-  for (const cp of CPS) drawables.push({ z:cp.z, kind:'cp', cp });
-  /* pylons live in world z, convert to grid-space depth for one sort */
-  for (const ev of (MAP.events||[])) drawables.push({ z:ev.z, kind:'event', ev });
-  /* pylons live in world z; the rest of this list is in GRID rows, so divide by
-     the row pitch before the offset. It used to add (rows-1)/2 to a raw world z,
-     which only agreed with a grid row while a row was one world unit deep. */
-  for (const br of braziers) drawables.push({ z: br.z/hexV() + (MAP.rows-1)/2, kind:'pylon', br });
-  drawables.sort((a,b) => a.z - b.z);
+  for (const cp of CPS) drawables.push({ d:camDepth(gw(cp.x,cp.z,0)), kind:'cp', cp });
+  for (const ev of (MAP.events||[])) drawables.push({ d:camDepth(gw(ev.x,ev.z,0)), kind:'event', ev });
+  /* The braziers are the one entry already in WORLD space. They used to be
+     converted INTO grid rows (divide by the row pitch, add (rows-1)/2) so they
+     could share a grid-z sort key; with the key now camera depth, world is
+     where everything else has to be converted TO and this one is already
+     there. */
+  for (const br of braziers) drawables.push({ d:camDepth({x:br.x, y:0, z:br.z}), kind:'pylon', br });
+  drawables.sort((a,b) => b.d - a.d);      /* deepest (furthest) painted first */
   for (const d of drawables){
     if (d.kind==='prop') drawProp(d.t);
     else if (d.kind==='event') drawEvent(d.ev);
@@ -5161,12 +6404,28 @@ function frame(now){
     else if (d.kind==='cp'){ try { drawTruck(d.cp); } catch (e) {} }
     else drawUnit(d.u);
   }
-  /* 📍 Publish unit screen rects to the host ~4x/sec. Every VFX and cinematic
-     in the game anchors off a unit's on-screen box; with the DOM board hidden
-     those lookups return stale iso coordinates, so the host needs ours. Cheap
-     and rate-limited — this is position data, not a render path. */
-  if (EMBEDDED && (T - (window.__rectsAt || 0)) > 0.25){
+  /* 🏹 THE TELEGRAPH, air half. AFTER the depth-sorted actors on purpose: BAR
+     R2 wants the attack shown as an arc "drawn above the board", and an arc
+     that respects the painter's sort would be swallowed by the very units it
+     connects. Own try/catch for the R2 latch. */
+  try { drawTeleArc(T); } catch (e) {}
+  /* 📍 Publish unit screen rects to the host ~4x/sec — EXCEPT while the camera
+     is moving, when it goes every frame.
+     Every VFX, cinematic, damage number and the unit hover menu anchors off
+     these boxes (host side: _bbAnchorRect / _bbAnchorPoint / _bbTilePoint),
+     and 4/sec was fine for a camera that could not move. It is not fine for one
+     that can: at the shipped 78°/s a unit's published box travels ~84px (worst
+     unit 107px) inside an 802px-wide host over a single 250ms publish period,
+     so every anchored overlay visibly detaches from its unit for as long as the
+     player holds Q or E. Measured, not guessed.
+     The publish itself is 168 project() calls plus one per unit — a few tenths
+     of a ms against a moving frame that is already paying ~25ms for the terrain
+     bake — and the host handler is two assignments (index.html, the
+     `board:rects` case). So the rate limit stays for the resting case, where it
+     is genuinely free, and lifts exactly while the anchors would otherwise lie. */
+  if (EMBEDDED && (CAM_ANCHOR_DIRTY || (T - (window.__rectsAt || 0)) > 0.25)){
     window.__rectsAt = T;
+    CAM_ANCHOR_DIRTY = false;
     const map = {};
     for (const u of units){
       if (u.dead) continue;
@@ -5186,6 +6445,7 @@ function frame(now){
     }
     post('rects', { rects: map, tiles: tmap });
   }
+  const _t4 = performance.now();
   drawParticles();
   drawEffects('air');
   /* atmosphere */
@@ -5199,6 +6459,10 @@ function frame(now){
   ctx.fillStyle = vg; ctx.fillRect(0,0,W,H);
   drawEffects('screen');
   drawGuides();
+  const _t5 = performance.now();
+  perfPush({ total:_t5-_t0, sky:_t1-_t0, bake:(TERR.ms !== _bake0 ? TERR.ms : 0),
+             blit:(_t2-_t1) - (TERR.ms !== _bake0 ? TERR.ms : 0), board:_t2-_t1,
+             fx:_t3-_t2, actors:_t4-_t3, atmos:_t5-_t4, mov:CAMERA.moving?1:0 });
   } catch (err) {
     frameErr = true;
     ctx.setTransform(1,0,0,1,0,0);
@@ -5533,6 +6797,128 @@ function fitReport(){
   };
 }
 window.__bbFitProbe = fitReport;
+/* 🎥 CAMERA PROBE — the free camera's state, and a way to drive it from a test
+   without a real key event. There is no other way to assert that a capture was
+   taken at the yaw it claims: yaw is not visible in a PNG, and "it looks
+   turned" is not a measurement.
+   `set` jumps straight to a pose (no easing, no clamp bypass — camClampPan
+   still runs) so a screenshot rig can capture yaw 0 / 45 / 90 / 180 / 270
+   deterministically instead of holding a key for a guessed number of ms.
+   `hold` drives the real integrated path, which is what proves the easing and
+   the frame-rate independence rather than the teleport. */
+window.__bbCam = {
+  get: () => ({
+    yaw: +CAMERA.yaw.toFixed(5), yawDeg: +(CAMERA.yaw*180/Math.PI).toFixed(2),
+    pan: { x:+CAMERA.pan.x.toFixed(4), z:+CAMERA.pan.z.toFixed(4) },
+    vel: { x:+CAMERA.vel.x.toFixed(4), z:+CAMERA.vel.z.toFixed(4), yaw:+CAMERA.yawVel.toFixed(4) },
+    moving: CAMERA.moving, reduced: CAM_REDUCED,
+    held: Object.keys(CAM_HELD),
+    base: { tx:+CAM_BASE.tx.toFixed(3), pitchDeg:+(CAM_BASE.pitch*180/Math.PI).toFixed(2),
+            dist:+CAM_BASE.dist.toFixed(3) },
+    pos: { x:+CONFIG.camera.pos.x.toFixed(3), y:+CONFIG.camera.pos.y.toFixed(3), z:+CONFIG.camera.pos.z.toFixed(3) },
+    terrainKey: terrainKey()
+  }),
+  set: (yawDeg, px, pz) => {
+    CAMERA.yaw = (+yawDeg || 0) * Math.PI/180;
+    while (CAMERA.yaw > Math.PI) CAMERA.yaw -= Math.PI*2;
+    while (CAMERA.yaw <= -Math.PI) CAMERA.yaw += Math.PI*2;
+    CAMERA.pan.x = +px || 0; CAMERA.pan.z = +pz || 0;
+    CAMERA.vel.x = CAMERA.vel.z = CAMERA.yawVel = 0;
+    camClampPan(); camApply();
+    return window.__bbCam.get();
+  },
+  key: (down, code) => { camKey(!!down, code, null); return Object.keys(CAM_HELD); },
+  reset: camReset,
+  check: () => camCheck()
+};
+
+/* 🎥 THE CAMERA SELF-CHECK — three assertions that are invisible in a PNG and
+   silent in the console, all of which the free camera can break at an angle
+   nobody screenshotted. It lives here, and not in the capture script, for the
+   reason CLAUDE.md's "globals trap" spells out: every binding in this file is a
+   top-level `const`/`let`, i.e. a LEXICAL global, so it is NOT on `window` and
+   an outside driver cannot see MAP, gw(), project() or pickTile() at all. A
+   test that cannot reach them would have to re-implement the projection, which
+   would then be testing its own copy.
+
+   1. CLICK ROUND-TRIP — pickTile() must keep resolving to the hexagon actually
+      DRAWN under the cursor at any camera angle. `__bbHexCheck` proves gw() ↔
+      worldToTile and the elevation plane sweep, but it asks the projection
+      about itself. This asks the PICTURE: for each tile's own centre pixel,
+      which tile's projected top face contains that pixel, taking the nearest
+      such face because that is the one the terrain sweep painted last and
+      therefore the one the player sees. Disagreement with pickTile() is a
+      click landing on a tile other than the one drawn there — the single most
+      likely thing to break under a camera, and it breaks silently.
+   2. PAINTER ORDER — the drawable list must be sorted far-to-near in CAMERA
+      depth. Rebuilt here exactly as frame() builds it. Under the old grid-z
+      key this passes at yaw 0 and fails completely at 180.
+   3. TERRAIN REGISTRATION — the landmine. The baked ground layer is a picture
+      of one specific eye; if terrainKey() does not name the camera, the cache
+      survives a camera move and the ground stays nailed to the screen while
+      everything drawn live slides over it. `registered` compares the key the
+      layer was actually baked with against the key for the pose now. */
+function camCheck(){
+  const inPoly = (P, x, y) => {
+    let inside = false;
+    for (let i = 0, j = P.length - 1; i < P.length; j = i++){
+      const xi = P[i].x, yi = P[i].y, xj = P[j].x, yj = P[j].y;
+      if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) inside = !inside;
+    }
+    return inside;
+  };
+  const faces = [];
+  for (let z = 0; z < MAP.rows; z++) for (let x = 0; x < MAP.cols; x++){
+    const e = tileElev(x, z);
+    const P = tilePoly(x, z, 0, e);
+    if (P) faces.push({ x, z, P, d: camDepth(gw(x, z, e)) });
+  }
+  const drawnAt = (px, py) => {
+    let best = null;
+    for (const f of faces) if (inPoly(f.P, px, py)) if (!best || f.d < best.d) best = f;
+    return best;
+  };
+  let samples = 0, mismatch = 0, offScreen = 0;
+  const bad = [];
+  for (let z = 0; z < MAP.rows; z++) for (let x = 0; x < MAP.cols; x++){
+    const e = tileElev(x, z);
+    const p = project(gw(x, z, e));
+    if (!p || p.x < 0 || p.x > W || p.y < 0 || p.y > H){ offScreen++; continue; }
+    samples++;
+    const got = pickTile(p.x, p.y), drawn = drawnAt(p.x, p.y);
+    const gk = got ? got.x + ',' + got.z : 'null';
+    const dk = drawn ? drawn.x + ',' + drawn.z : 'null';
+    if (gk !== dk && bad.length < 8) bad.push({ tile:[x,z], picked:gk, drawn:dk, at:[Math.round(p.x), Math.round(p.y)] });
+    if (gk !== dk) mismatch++;
+  }
+  const order = [];
+  for (const t of MAP.tiles) if (t.prop) order.push(camDepth(gw(t.x,t.z,0)));
+  for (const u of units) order.push(camDepth(gw(u.x,u.z,0)));
+  for (const tb of TOMBS) order.push(camDepth(gw(tb.x,tb.z,0)));
+  for (const sc of STRUCTS) order.push(camDepth(gw(sc.x,sc.z,0)));
+  for (const cp of CPS) order.push(camDepth(gw(cp.x,cp.z,0)));
+  for (const ev of (MAP.events||[])) order.push(camDepth(gw(ev.x,ev.z,0)));
+  for (const br of braziers) order.push(camDepth({x:br.x, y:0, z:br.z}));
+  order.sort((a,b) => b - a);
+  let inversions = 0;
+  for (let i = 1; i < order.length; i++) if (order[i] > order[i-1] + 1e-9) inversions++;
+  return {
+    yawDeg: +(CAMERA.yaw*180/Math.PI).toFixed(2),
+    pan: { x:+CAMERA.pan.x.toFixed(3), z:+CAMERA.pan.z.toFixed(3) },
+    click: { samples, mismatch, offScreen, bad },
+    painter: { items: order.length, inversions },
+    /* skirtPainted sits next to bakeMs because it is the number bakeMs is made
+       of: the field is a constant 168 tiles, so every ms of growth in the bake
+       is a skirt cell. Reading them apart is how the pan×yaw cliff was found
+       and how a return of it would be caught. */
+    terrain: { registered: TERR.key === terrainKey(), bakeMs: +TERR.ms.toFixed(2),
+               skirtPainted: SKIRT_STAT.painted, skirtAsked: SKIRT_STAT.asked,
+               skirtAreaKpx: +SKIRT_STAT.areaKpx.toFixed(1), skirtMaxR: +SKIRT_STAT.maxR.toFixed(1),
+               skirtBudget: SKIRT_STAT.budget, skirtLod: SKIRT_STAT.lod,
+               skirtCull: { quad:SKIRT_STAT.cullQuad, screen:SKIRT_STAT.cullScreen, lod:SKIRT_STAT.cullLod } },
+    cols: MAP.cols, rows: MAP.rows
+  };
+}
 cv.addEventListener('mousemove', e => { hoverTile = pickTile(e.clientX, e.clientY); });
 cv.addEventListener('mouseleave', () => hoverTile = null);
 cv.addEventListener('click', e => {
@@ -5548,13 +6934,26 @@ cv.addEventListener('click', e => {
     moveUnit(selected, t.x, t.z);
   }
 });
+/* ⌨ LOCAL KEYS — the STANDALONE preview only.
+   When EMBEDDED this listener is dead: the stage paints below the app and the
+   iframe never holds focus, so it receives no keydown for exactly the reason it
+   receives no mousedown (CONTRACT §1.4). The game forwards keys instead, as
+   `board:key` / `board:camera` — see handleHostMessage. Both paths land in
+   camKey()/CAM_PULSE and are integrated once, in camUpdate().
+   `g` and `1`-`4` were already claimed here; WASD/QE/R were free. */
 addEventListener('keydown', e => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.key === 'g' || e.key === 'G'){ showGuides = !showGuides; }
   if (e.key === '1') setTimeOfDay('dawn');
   if (e.key === '2') setTimeOfDay('day');
   if (e.key === '3') setTimeOfDay('dusk');
   if (e.key === '4') setTimeOfDay('night');
+  if (camAction(e.code, e.key)){ e.preventDefault(); camKey(true, e.code, e.key); }
 });
+addEventListener('keyup', e => { camKey(false, e.code, e.key); });
+/* A window that loses focus never delivers the keyup — without this a key held
+   while the player alt-tabs stays down and the board drifts on its own. */
+addEventListener('blur', camReleaseAll);
 
 /* ══════════════════════════════════════════════════════════════════
    PUBLIC API — keep these signatures when porting
@@ -5824,6 +7223,25 @@ function handleHostMessage(msg){
       PAINT.place = new Set(msg.place || []);
       PAINT.swap  = new Set(msg.swap  || []);
       PAINT.sel   = msg.sel || null;
+      TELE.rev++;                 /* the move CONTOUR is traced from this set */
+    }
+    /* 🏹 THE TELEGRAPH. Same division of authority as `paint`: the game has
+       already run its pathfinder, its attack-target gate and the enemies'
+       reachability, and this message is the ANSWER. The board renders it.
+       `path` arrives as ordered "x,z" keys starting on the unit's own tile,
+       straight from the host's getMovePath() call — the identical call
+       moveUnit() makes when the move is committed. */
+    else if (t === 'tele'){
+      TELE.path = Array.isArray(msg.path) ? msg.path.slice() : [];
+      TELE.dest = msg.dest || null;
+      TELE.arc  = msg.arc  || null;
+      TELE.threat = new Set(msg.threat || []);
+      /* Anything that is not literally 'foe' is mine. A missing field must not
+         be able to paint the player's own route in the enemy colour, which is
+         the failure mode an older host (or a replay of an old payload) would
+         otherwise produce. */
+      TELE.side = (msg.side === 'foe') ? 'foe' : 'mine';
+      TELE.rev++;
     }
     /* 🖱 FORWARDED POINTER. The stage paints BELOW the app (so the HUD stays
        on top), which means it cannot receive its own mouse events. The host
@@ -5845,6 +7263,35 @@ function handleHostMessage(msg){
                                   box: hit ? unitScreenBox(hit) : null });
         }
       }
+    }
+    /* 🎥 FORWARDED CAMERA INPUT. Same problem as the pointer above and the
+       same answer: an iframe that never holds focus gets no keydown, so the
+       host captures the keys over the board and forwards them. Two shapes,
+       both already specified by the harness and by CONTRACT §2 Tier 2, and the
+       host sends BOTH:
+
+         board:key    {down, code, key, repeat}  — key EDGES. This is the
+             frame-rate-independent path: the board keeps the held set and
+             integrates it in update(dt) against its own clock. It is also the
+             only one that can carry R (reset), which is an edge, not an axis.
+
+         board:camera {dx, dz, yaw}              — resolved intent, re-sent
+             every animation frame while a key is held, with the SENDER's dt
+             already applied.
+
+       ⚠ The deltas are read as an INTENT SIGN, not accumulated. Accumulating
+       them would double-count against board:key (the harness sends both, and
+       so does the game) and would tie camera speed to the HOST's frame rate
+       rather than this document's. The pulse expires on its own after
+       CAM_PULSE_TTL, so a host that stops pumping stops the camera even if its
+       keyup is lost. */
+    else if (t === 'camera'){
+      CAM_PULSE.x = +msg.dx || 0; CAM_PULSE.z = +msg.dz || 0;
+      CAM_PULSE.yaw = +msg.yaw || 0; CAM_PULSE.at = T;
+    }
+    else if (t === 'key'){
+      if (msg.repeat) { /* the held set already covers repeats */ }
+      else camKey(!!msg.down, msg.code, msg.key, 'h');
     }
     else if (t === 'event'){
       if (msg.action === 'spawn')   spawnEvent(msg.evType || msg.evtType, msg.x, msg.z);

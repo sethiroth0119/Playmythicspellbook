@@ -424,6 +424,23 @@ function bridgePaint(sc) {
            sel: (p.sel) ? { x: p.sel.x, z: p.sel.y } : null };
 }
 
+/* _bbStagePushTele — the XCOM telegraph (index.html, `_bbStagePushTele`).
+   The GAME builds `path` by calling getMovePath() — the same function moveUnit()
+   uses to decide which tiles the unit walks over — and hands the board the
+   ordered result. The harness has no rules and no pathfinder, so a scene states
+   its route as a literal tile list and this bridge only performs the {x,y} →
+   {x,z} rename, exactly as bridgePaint does.
+   ⚠ That is the honest limit of this rig: a harness capture proves the board
+   DRAWS the route it is given. It cannot prove the route is the one the unit
+   will walk — only the real game can, by calling the real pathfinder. */
+function bridgeTele(sc) {
+  const t = sc.tele || {};
+  const k = (arr) => (arr || []).map(p => p.x + ',' + p.y);
+  const xz = (p) => p ? { x: p.x, z: p.y } : null;
+  return { path: k(t.path), dest: xz(t.dest), threat: k(t.threat),
+           arc: t.arc ? { from: xz(t.arc.from), to: xz(t.arc.to), side: t.arc.side || 'mine' } : null };
+}
+
 /* _bbStagePushTombs — index.html:103880. Note `z: t.y|0`, the rename the
    CONTRACT calls out by name, and that a blob: image is dropped rather than
    sent (it cannot cross into the iframe). */
@@ -1289,6 +1306,60 @@ function disc(units, blocked, cx, cy, r) {
   return out;
 }
 
+/* Six neighbours, odd-r (HEXSPEC §5). Same table the game's hexNeighbors()
+   uses, kept here for the same reason `disc` keeps a hex metric: a fixture that
+   expands the wrong frontier would put a shape on screen the rules never
+   produce, and the whole point of these captures is that they cannot. */
+function hexNb(x, y) {
+  const D = (y & 1) ? [[1,0],[-1,0],[1,-1],[0,-1],[1,1],[0,1]]
+                    : [[1,0],[-1,0],[0,-1],[-1,-1],[0,1],[-1,1]];
+  return D.map(d => ({ x: x + d[0], y: y + d[1] }));
+}
+/* Breadth-first route with a parent trace — a FIXTURE MIRROR of the game's
+   getMovePath() (index.html), which is the function moveUnit() calls to decide
+   which tiles a unit walks over. Same six-way frontier, same "occupied tiles
+   are not enterable", same parent unwind. It exists so a harness scene can show
+   a route that genuinely bends around an obstacle instead of a hand-drawn
+   polyline. It is NOT the proof that the drawn route is the walked route — only
+   the real game can be that, because only the real game runs the real BFS. */
+function bfsPath(units, blocked, sx, sy, tx, ty, speed) {
+  const taken = new Set((units || []).map(u => u.pos.x + ',' + u.pos.y));
+  taken.delete(sx + ',' + sy);
+  const seen = new Map([[sx + ',' + sy, null]]);
+  let frontier = [{ x: sx, y: sy }];
+  for (let d = 0; d < speed && frontier.length; d++) {
+    const next = [];
+    for (const p of frontier) {
+      for (const n of hexNb(p.x, p.y)) {
+        if (n.x < 0 || n.y < 0 || n.x >= COLS || n.y >= ROWS) continue;
+        const k = n.x + ',' + n.y;
+        if (seen.has(k)) continue;
+        if (taken.has(k) || (blocked && blocked.has(k))) continue;
+        seen.set(k, { x: p.x, y: p.y });
+        next.push(n);
+      }
+    }
+    frontier = next;
+  }
+  const out = [];
+  let cur = { x: tx, y: ty };
+  while (cur) {
+    out.unshift({ x: cur.x, y: cur.y });
+    cur = seen.get(cur.x + ',' + cur.y);
+  }
+  return (out.length && out[0].x === sx && out[0].y === sy) ? out : [];
+}
+/* The reachable SET for the same fixture BFS — what the move contour is traced
+   around. Kept next to bfsPath so the two can never expand differently. */
+function bfsReach(units, blocked, sx, sy, speed) {
+  const out = [];
+  for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
+    if (x === sx && y === sy) continue;
+    if (bfsPath(units, blocked, sx, sy, x, y, speed).length) out.push({ x: x, y: y });
+  }
+  return out;
+}
+
 /* Every scene carries `shipped`. There is no default: a scene that forgets it
    is falsy, i.e. target-state, which is the safe way round — the failure mode
    of the flag is "labelled as a fixture when it was honest", never the reverse. */
@@ -1434,6 +1505,109 @@ SCENES.moverange = (function () {
   };
 })();
 
+/* — 3b · TELEGRAPH. BAR R3's picture: the reachable region as ONE contour, and
+     a route to the cursor that BENDS. The blockers are placed deliberately —
+     a wall of bodies between the mover and the destination — because a
+     straight-line route proves nothing at all. Verify the bend is real by
+     reading the path out: it must not be a monotone run. */
+SCENES.telegraph = (function () {
+  const sel = { x: 4, y: 8 };
+  const units = [
+    unit('dual-blader',  'player', sel.x, sel.y),
+    /* the wall: seven bodies sealing every direct line north from (4,8) */
+    unit('zombie',       'ai',     5, 7),
+    unit('zombie',       'ai',     5, 6),
+    unit('scum-grunt',   'ai',     6, 5),
+    unit('zombie',       'ai',     6, 6),
+    unit('scum-grunt',   'ai',     4, 6),
+    unit('zombie',       'ai',     3, 6),
+    unit('scum-grunt',   'ai',     4, 7),
+    unit('warrior-hero', 'player', 2, 10),
+    unit('rifleman',     'player', 9, 9)
+  ];
+  const blocked = new Set(RUIN_TILES.filter(t => t.type === 'hazard' || t.type === 'blocked')
+                                    .map(t => t.x + ',' + t.z));
+  const SPEED = 6;
+  const move = bfsReach(units, blocked, sel.x, sel.y, SPEED);
+  /* (4,5) is THREE hexes from (4,8) in a straight line and SIX steps by the
+     only legal route — the destination is chosen for exactly that gap, because
+     a straight-line route would prove nothing. */
+  const dest = { x: 4, y: 5 };
+  const path = bfsPath(units, blocked, sel.x, sel.y, dest.x, dest.y, SPEED);
+  return {
+    shipped: false,
+    desc: 'Dual Blader at (4,8), speed 5. Move range as ONE cyan contour, not a checkerboard. Route to (4,5) — 3 hexes away, 6 steps by the only legal route — detours around seven blockers — read the chevrons, they turn.',
+    timeOfDay: 'day', location: 'battlefield',
+    map: ruinsMap('day', 'battlefield'),
+    units: units, tombstones: [], surfaces: {},
+    paint: { move: move, attack: [], place: [], swap: [], sel: sel },
+    tele: { path: path, dest: dest, arc: null, threat: [] }
+  };
+})();
+
+/* — 3c · ARC. The attack telegraph: a curve from attacker to target drawn
+     ABOVE the board (BAR R2), not a straight laser along the ground. */
+SCENES.arc = (function () {
+  const sel = { x: 5, y: 7 };
+  const tgt = { x: 8, y: 4 };
+  const units = [
+    unit('rifleman',     'player', sel.x, sel.y),
+    unit('scum-boss',    'ai',     tgt.x, tgt.y),
+    unit('zombie',       'ai',     7, 5),
+    unit('scum-grunt',   'ai',     6, 6),
+    unit('warrior-hero', 'player', 4, 9)
+  ];
+  return {
+    shipped: false,
+    desc: 'Rifleman at (5,7) telegraphing an attack on the Scum Boss at (8,4): an arc over the board coloured by ownership, arrowhead and foot ring on the target.',
+    timeOfDay: 'dusk', location: 'battlefield',
+    map: ruinsMap('dusk', 'battlefield'),
+    units: units, tombstones: [], surfaces: {},
+    paint: { move: [], attack: [tgt], place: [], swap: [], sel: sel },
+    tele: { path: [], dest: null, threat: [],
+            arc: { from: sel, to: tgt, side: 'mine' } }
+  };
+})();
+
+/* — 3d · THREAT. BAR R2's danger zone: the enemy reach as a painted region
+     with a BRIGHTER outer edge, in a colour that is not the move colour, so
+     "where I can stand" and "what threatens me" never read as one thing. */
+SCENES.threat = (function () {
+  const sel = { x: 4, y: 9 };
+  const units = [
+    unit('dual-blader',  'player', sel.x, sel.y),
+    unit('warrior-hero', 'player', 6, 10),
+    unit('scum-boss',    'ai',     7, 4),
+    unit('zombie',       'ai',     4, 5),
+    unit('scum-grunt',   'ai',    10, 6)
+  ];
+  const blocked = new Set(RUIN_TILES.filter(t => t.type === 'hazard' || t.type === 'blocked')
+                                    .map(t => t.x + ',' + t.z));
+  const move = bfsReach(units, blocked, sel.x, sel.y, 3);
+  /* Enemy reach the way the game builds it: where each foe can STAND (its own
+     move BFS) grown by its attack range. Here that is a 1-step grow of each
+     foe's speed-2 reach, done with the same fixture BFS. */
+  const threatSet = new Set();
+  for (const e of units.filter(u => u.owner === 'ai')) {
+    const stands = bfsReach(units, blocked, e.pos.x, e.pos.y, 2).concat([e.pos]);
+    for (const st of stands) {
+      threatSet.add(st.x + ',' + st.y);
+      for (const n of hexNb(st.x, st.y))
+        if (n.x >= 0 && n.y >= 0 && n.x < COLS && n.y < ROWS) threatSet.add(n.x + ',' + n.y);
+    }
+  }
+  const threat = Array.from(threatSet).map(k => ({ x: +k.split(',')[0], y: +k.split(',')[1] }));
+  return {
+    shipped: false,
+    desc: 'Three foes, their combined reach painted orange with a bright outer edge; the selected Dual Blader\'s own cyan move contour sits inside it. Two regions, two colours, one board.',
+    timeOfDay: 'day', location: 'battlefield',
+    map: ruinsMap('day', 'battlefield'),
+    units: units, tombstones: [], surfaces: {},
+    paint: { move: move, attack: [], place: [], swap: [], sel: sel },
+    tele: { path: [], dest: null, arc: null, threat: threat }
+  };
+})();
+
 /* — 4 · NIGHT. Skirmish under the night rig, which swaps the whole lighting
      preset (TIME_PRESETS, battle-board/index.html:284) and turns the braziers
      into the dominant light source. Cheap to ship, and half the board's look
@@ -1554,6 +1728,7 @@ const readEl = document.getElementById('h-read');
 let boardReady = false;      // board:ready seen
 let pushedAt   = 0;          // performance.now() when the scenario finished going out
 let rectsSeen  = 0;          // board:rects since the push — proof the iframe's RAF runs
+let lastRects  = null;       // …and the newest payload, for anchor-staleness tests
 const errors   = [];
 
 function note(msg, isErr) {
@@ -1741,6 +1916,7 @@ async function pushScene() {
   post('units', { units: bridgeUnitList(SCENE) });
 
   post('paint', bridgePaint(SCENE));
+  post('tele', bridgeTele(SCENE));
   post('tombs', bridgeTombs(SCENE));
   post('structs', bridgeStructs(SCENE));
   post('surfaces', bridgeSurfaces(SCENE));
@@ -1762,11 +1938,16 @@ window.addEventListener('message', (e) => {
     pushScene().catch(err => note('pushScene: ' + (err && err.message || err), true));
     return;
   }
-  /* board:rects is EMBEDDED-only and throttled to 4/sec (CONTRACT §1.3). It is
-     published from inside frame() itself, so receiving them is direct evidence
-     the stage's RAF loop is alive — which is what the ready gate below wants,
-     and what a parent-side rAF count could never prove. */
-  if (d.type === 'board:rects') { rectsSeen++; return; }
+  /* board:rects is EMBEDDED-only, throttled to 4/sec while the camera is at
+     rest and published EVERY FRAME while it moves (the anchors are what every
+     VFX and cinematic hangs off, and at 78°/s a 250ms-old box is ~84px stale).
+     It is published from inside frame() itself, so receiving them is direct
+     evidence the stage's RAF loop is alive — which is what the ready gate below
+     wants, and what a parent-side rAF count could never prove.
+     The payload is KEPT, not just counted: it is the only way to measure that
+     staleness from outside the iframe, which is how the 4/sec desync was
+     quantified in the first place. See __harness.rects(). */
+  if (d.type === 'board:rects') { rectsSeen++; lastRects = d; return; }
   if (d.type === 'board:tileClick') {
     note('tileClick ' + d.x + ',' + d.z + (d.unitId ? ' → unit ' + d.unitId : ''));
     return;
@@ -1789,41 +1970,46 @@ catch_.addEventListener('click', (e) => { const n = norm(e); post('pointer', { k
 catch_.addEventListener('mousemove', (e) => { const n = norm(e); post('pointer', { kind:'move', nx:n.nx, ny:n.ny }); });
 catch_.addEventListener('mouseleave', () => post('pointer', { kind:'move', nx:-1, ny:-1 }));
 
-/* ── ⌨ KEY FORWARDING — a STUB, and here is exactly what that means ─────
+/* ── ⌨ KEY FORWARDING — NO LONGER A STUB ───────────────────────────────
    .gauntlet/BAR.md requirement #2 is "Camera: WASD moves it, Q/E turns it".
-   There are no camera controls today: `CONFIG.camera` (battle-board:209) is
-   never mutated at runtime, and `handleHostMessage` (:2812-2907) has no `key`
-   and no `camera` case — so both messages below fall off the end of its if/else
-   chain and do nothing. SILENTLY: the try/catch at :2905 only fires on a throw,
-   and an unmatched `t` is not a throw. Nothing warns. That is expected today
-   and must stop being true the moment someone adds the case.
-
-   It is wired anyway, because of CONTRACT §2 Tier 2: an embedded free camera
-   needs HOST-FORWARDED KEYS. An iframe that never holds focus receives no
-   `keydown`, for exactly the reason it receives no mouse events (§1.4) — so a
+   This rig forwarded the two messages below long before anything received
+   them, because CONTRACT §2 Tier 2 is explicit that an embedded free camera
+   needs HOST-FORWARDED KEYS: an iframe that never holds focus receives no
+   `keydown` for exactly the reason it receives no mouse events (§1.4), so a
    camera built and tested only against the standalone preview's local listener
-   (:2634) will be dead in the game, and, without this, dead in the rig too. A
-   rig that cannot exercise the single most-requested feature of the build
-   cannot be used to judge it.
+   would be dead in the game and dead here.
 
-   TWO messages go out, because which shape the board will want is not decided:
-     board:key    {down, code, key, repeat}   raw. CONTRACT §2 Tier 2 is explicit
-                  that held-key state must be integrated in `update(dt)` (:2139)
-                  and NOT on keydown, or the camera speed tracks frame rate — so
-                  the board tracks its own held set and this is just the edges.
+   The board now has both receivers (`handleHostMessage`, cases `key` and
+   `camera`), and the GAME sends both messages from `_bbCamKeysBind`
+   (index.html) in the same shapes and the same units this rig does — that
+   pairing is the whole reason to keep both:
+
+     board:key    {down, code, key, repeat}   key EDGES. The board keeps the
+                  held set and integrates it in update(dt) against its own
+                  clock, which is what makes camera speed independent of either
+                  side's frame rate. It is also the only shape that can carry
+                  R (reset the view), which is an edge and not an axis.
      board:camera {dx, dz, yaw}               resolved intent, re-sent every
                   animation frame while a camera key is held, with dt already
-                  applied. A board that would rather not own key state can take
-                  this instead.
-   Add either case to the chain and this rig drives it with no harness change.
+                  applied. `dz` is a delta along the board's +Z, i.e. toward
+                  the NEAR edge, so S is positive and W is negative.
 
-   ⚠ `g` and `1`-`4` ARE ALREADY CLAIMED by the board's own local listener
-   (:2634-2639: guides, and the four time-of-day presets). They are forwarded as
-   `board:key` like everything else and are equally inert, because that listener
-   is inside the iframe and the iframe has no focus. Use
-   `__harness.post('timeOfDay',{key:'night'})` for time of day — that one is
-   real protocol and works today. */
-const CAMKEYS = { KeyW:'fwd', KeyS:'back', KeyA:'left', KeyD:'right', KeyQ:'yawL', KeyE:'yawR' };
+   ⚠ The board reads the pulse as an intent SIGN and never accumulates it, so
+   sending both shapes does not drive the camera twice. A rig (or a host) that
+   integrated deltas on the board's behalf WOULD double-count, at whatever
+   ratio the two clocks happened to sit at, and it would look like a tuning
+   problem rather than a bug.
+
+   ⚠ `g` and `1`-`4` are claimed by the board's own local listener and are
+   inert here for the focus reason above — they are forwarded as `board:key`
+   but the board only maps WASD/QE/R out of that message. Use
+   `__harness.post('timeOfDay',{key:'night'})` for time of day.
+
+   For a deterministic capture, do not hold a key for a guessed number of
+   milliseconds — reach into the stage and set the pose:
+     __harness.cam().set(90, 0, 0)   → yaw 90°, no pan, no easing
+     __harness.cam().get()           → { yawDeg, pan, moving, terrainKey, … } */
+const CAMKEYS = { KeyW:'fwd', KeyS:'back', KeyA:'left', KeyD:'right', KeyQ:'yawL', KeyE:'yawR', KeyR:'reset' };
 const held = Object.create(null);
 let camSent = 0, camRaf = 0, camLast = 0;
 
@@ -1847,11 +2033,13 @@ window.addEventListener('keydown', (e) => {
   if (e.repeat && CAMKEYS[e.code]) { pumpCam(); return; }   /* the rAF pump owns repeats */
   post('key', { down: true, code: e.code, key: e.key, repeat: !!e.repeat });
   if (CAMKEYS[e.code]) {
-    held[e.code] = true;
-    pumpCam();
+    /* R is an EDGE (reset), not an axis — it goes out as board:key and must
+       never enter the held set, or the rAF pump would spin forever on a key
+       that contributes nothing to dx/dz/yaw. */
+    if (e.code !== 'KeyR') { held[e.code] = true; pumpCam(); }
     note('key ' + e.code + ' ↓ → board:key + board:camera (' + CAMKEYS[e.code] + ')');
   } else {
-    note('key ' + e.code + ' ↓ → board:key (no receiver on the board yet)');
+    note('key ' + e.code + ' ↓ → board:key (the board maps WASD/QE/R only)');
   }
 });
 window.addEventListener('keyup', (e) => {
@@ -1907,9 +2095,21 @@ window.__harness = {
       return { ok:false, error:'board has no __bbHexCheck (not loaded yet?)' };
     return w.__bbHexCheck(opts);
   },
-  /* `camSent` is the only externally checkable proof that forwarded keys
-     actually left the parent — the board has no receiver, so nothing on the
-     board side can show it. */
+  /* 🎥 The stage's camera probe, reached straight through the same-origin
+     iframe. `set(yawDeg, panX, panZ)` jumps to a pose with no easing (the
+     clamp still runs), which is the only way a screenshot rig can assert the
+     angle a capture was taken at — yaw is not visible in a PNG. `get()`
+     reports the pose AND the live terrainKey, so a test can prove the baked
+     ground layer actually re-keyed when the camera moved. */
+  cam: () => {
+    const w = frame.contentWindow;
+    return (w && w.__bbCam) || { error: 'board has no __bbCam (not loaded yet?)' };
+  },
+  /* The most recent board:rects payload as the HOST sees it — {rects, tiles}.
+     Compare against the board's own live unitScreenBox() to measure how stale
+     an anchored overlay is at any moment. */
+  rects: () => lastRects,
+  /* `camSent` counts board:camera posts that left the parent. */
   state: () => ({ boardReady, pushedAt, rectsSeen, ready: window.__harnessReady,
                   degraded: window.__harnessDegraded || null,
                   shipped: !!SCENE.shipped, hostMode: HOSTMODE,

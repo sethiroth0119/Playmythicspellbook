@@ -36768,7 +36768,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120x0';
+  window.BUILD_VERSION = 'v120x2';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -78395,28 +78395,85 @@ const STRUCTURE_KINDS = {
 const STRUCTURE_ORDER = ['car', 'church', 'school', 'hospital', 'house'];
 // 📏 HEIGHT-AWARE BACK-ROW KEEP-OUT.
 //
+// ⚠ IT RETURNS A CLEARANCE, NOT A MINIMUM ROW, AND THE CALLER APPLIES IT AT
+// BOTH ENDS OF THE BOARD. The name says "back row" because that is the row a
+// ruin is cropped in — but which row is the back row depends on WHICH PLAYER IS
+// LOOKING (`_mirrorAllPositions`). See the two-frame test in
+// _rollStructurePlacements for the measurement and the reasoning; a caller that
+// compares this against `y` alone protects one of the two clients only.
+//
 // A ruin is drawn as a BILLBOARD one structure-height above its own tile, and
 // the stage fits its vertical FOV to the safe box (CONTRACT §1.6). So the
 // taller the thing and the further back the row, the closer its head sits to
-// the top of the frame — and past a point it is simply off it. Measured in the
-// real projector (battle-board's own project(), 1600x900), head Y by row for a
-// 2.85-unit church: row 0 = -127, row 1 = -87, row 2 = -43, row 3 = +5. Rows
-// 0-2 DECAPITATE it, and the old roll put a church there on 13.5% of seeds —
-// roughly one match in seven shipping a headless church.
+// the top of the frame — and past a point it could be off it.
 //
-// ⚠ ELEVATION COUNTS, and leaving it out is why the first attempt at this rule
-// still cropped. _BB_ELEV runs to 1.36 world units — nearly a whole house — so
-// a church on a level-4 plateau is a 4.2-unit object, not a 2.85-unit one, and
-// needs three more rows of clearance than the same church on the flat. The
-// keep-out is therefore computed per TILE, not per kind.
-// These are the DRAWN heights, which for the school is not its STRUCT_DEF h:
-// its flagpole reaches 1.30x the head box, so it is budgeted at 1.89.
+// 🩹 THE MEASUREMENT BELOW WAS TAKEN IN THE WRONG HOST, AND THAT IS THE WHOLE
+// STORY OF THIS TABLE. The first calibration projected into the FULL 1600x900
+// VIEWPORT — the framing the target-state harness scenes use and that NO MATCH
+// EVER PRODUCES. The game mounts the stage into `.board-area` (`_bbStageTrack`),
+// which measures 802x688 at that same 1600x900 window, and `VIEW.scale` fits
+// the vertical FOV to the box HEIGHT — so a shorter, narrower host is a
+// PROPORTIONALLY SMALLER picture, not a cropped one, and the head that hung off
+// the top at full viewport sits comfortably inside the real rect.
+//
+// Re-measured in the host the game ships, with
+//   node .gauntlet/probe.mjs "/battle-board/_harness.html?scene=ruins&host=boardarea" … 1600 900
+// projecting head = project({x:wp.x, y:wp.y+h, z:wp.z}) for every tile at
+// gw(x,y,0) and taking the worst column of each row. AT `host=boardarea`
+// (802x688) THE WORST-CASE HEAD AT ROW 0 IS INSIDE THE CANVAS FOR EVERY HEIGHT
+// THE GAME CAN PRODUCE: +124px for a house (1.85), +84px for a church (2.85),
+// and +25px for a 4.21-unit church standing on the top rung of _BB_ELEV, which
+// is the tallest object this game has. NOTHING CROPS AT ANY ROW.
+// The same probe at `host=full` reproduces the old table exactly (0.78→row 0,
+// 1.85→2, 2.35→3, 2.85→3, 3.21→4, 4.21→6), which is the proof that the numbers
+// were right and the FRAME was wrong. Quoting a head-Y without naming the host
+// it was taken in is what let that stand, so the host is named twice above.
+//
+// The cost of the error was not a crash — it was the frame. A clearance of 3-6
+// rows applied at BOTH ends of a 12-row board evicted every building from rows
+// 0-2 and 9-11: over 20000 seeds the church appeared only on rows 4-7 (it had
+// been 4-10, with 27% of churches on rows 8-10) and the near half of the
+// picture, the half with the most pixels, held nothing but a wrecked car. BAR
+// R1 is "the map IS the frame, edge to edge"; an off-by-one-projector safety
+// rule quietly took a third of it away.
+//
+// ⚠ ELEVATION COUNTS wherever this table is non-empty. _BB_ELEV runs to 1.36
+// world units — nearly a whole house — so a church on a level-4 plateau is a
+// 4.21-unit object, not a 2.85-unit one. The keep-out is therefore computed per
+// TILE, not per kind, and STRUCTURE_DRAWN_H is what a tile's height is measured
+// FROM. These are the DRAWN heights, which for the school is not its STRUCT_DEF
+// h: its flagpole reaches 1.30x the head box, so it is budgeted at 1.89.
 const STRUCTURE_DRAWN_H = { car: 0.78, school: 1.89, house: 1.85, hospital: 2.35, church: 2.85 };
-// Calibration, measured not guessed: the worst column of each row was projected
-// on FLAT ground for billboard heights 0.8 … 4.4 and the first row whose top
-// clears the frame recorded. Thresholds are the height at which the answer
-// steps up. (0.8→0, 1.2→1, 1.6→1, 2.0→2, 2.4→3, 2.8→3, 3.2→4, 3.6→5, 4.0→6.)
-const _STRUCT_ROW_STEPS = [0.9, 1.7, 2.1, 2.9, 3.3, 3.7];
+// 🎯 EMPTY, AND THAT IS THE MEASURED ANSWER — not a rule switched off.
+// The probe above records, for each height, the first row whose worst column has
+// head.y >= 0. In the shipped `.board-area` host that row is 0 for 0.78, 1.45,
+// 1.85, 1.89, 2.35, 2.85, 3.21 AND 4.21 alike, so the honest clearance for every
+// ruin the game can build is ZERO and the table has no steps in it.
+// `_structMinRow` therefore returns 0, and the two-sided keep-out in
+// _rollStructurePlacements becomes a no-op that still costs two object lookups
+// per candidate tile.
+//
+// ⚠ IT IS KEPT, DELIBERATELY, RATHER THAN DELETED. The symmetry argument at the
+// call site is CORRECT and independent of this table (a one-sided rule failed
+// 23138 of 100000 ruin placements in the receiver's frame; two-sided is 0). The
+// row clearance is the only part that was wrong, and it was wrong by a factor
+// this file cannot see — the host rect. Leaving the invariant application in
+// place means the day a framing change genuinely does clip a roof, the fix is
+// ONE array literal here and it is already correct in both players' frames. The
+// alternative — delete the check, rediscover the mirror bug later — is how this
+// same asymmetry gets shipped twice.
+//
+// ⚠ AND IT IS NOT THE PLACE TO PUT THE GUARANTEE BACK. A row-indexed keep-out
+// is a property of the CAMERA, not of the ruin, and BAR requirement #2 gives the
+// player that camera. Probed at host=boardarea: the worst-case tile is (0,0) at
+// rest, still (0,0) at maximum S-pan (the pan clamp stops at pan.z 2.67, where a
+// 4.21 object reaches -28px), and migrates to (13,11) at yaw -150°, (13,0) at
+// -60°, (13,1) at -90° and (0,10) at +120°. A rule indexed on row cannot track a
+// worst case that walks from the far corner to the near corner when the player
+// presses Q. That guarantee belongs at DRAW time, where it is per-client, free,
+// and mirror-symmetric with no placement constraint at all — see drawStruct in
+// public/battle-board/index.html.
+const _STRUCT_ROW_STEPS = [];
 function _structMinRow(kind, elev) {
   const E = (STRUCTURE_DRAWN_H[kind] || 1.85) + (+elev || 0);
   let r = 0;
@@ -78543,7 +78600,16 @@ function _rollStructurePlacements(state, seed) {
     // Clamped so a short board can always seat all five (see _structMinRow):
     // "five ruins" is the requirement, and a keep-out that returns four ruins
     // has traded a cropped roof for a missing building, which is worse.
-    const rowCap = Math.max(0, H - 4);
+    // ⚠ THE CLAMP IS THE BOARD'S HALF-DEPTH, NOT H-4, BECAUSE THE KEEP-OUT
+    // BELOW IS TWO-SIDED. A band [m, H-1-m] is empty as soon as m > (H-1)/2,
+    // and an empty band rejects the entire board and returns NO ruin — the
+    // exact outcome the clamp exists to prevent. floor((H-1)/2) is the
+    // tightest value that always leaves at least one legal row (rows 5 and 6
+    // at H=12). With _STRUCT_ROW_STEPS empty — the measured answer for the
+    // shipped host — `_need` is 0 for every ruin and this clamp NEVER BINDS.
+    // It is kept for the same reason the keep-out itself is: it is the safety
+    // net for a future non-empty table, and it is already correct.
+    const rowCap = Math.max(0, (H - 1) >> 1);
     let pick = null;
     for (let attempt = 0; attempt < 4 && !pick; attempt++) {
       const spacing = attempt >= 3 ? 1 : (attempt >= 2 ? 2 : 3);
@@ -78552,7 +78618,59 @@ function _rollStructurePlacements(state, seed) {
         // HARD reject, on every attempt, unlike the edge-column preference
         // below: an edge ruin is merely awkward, a decapitated one is wrong on
         // every frame of every match that rolled it.
-        if (c.y < Math.min(_structMinRow(kind, elevAt ? elevAt[c.x + ',' + c.y] : 0), rowCap)) continue;
+        //
+        // 🪞 AND IT IS TESTED IN BOTH COORDINATE FRAMES — `min(y, H-1-y)`, not
+        // `y`. THAT IS THE WHOLE POINT OF THIS LINE, so it is written out.
+        //
+        // ⚠ AS SHIPPED THIS TEST NEVER REJECTS ANYTHING, because the measured
+        // clearance in the real host is 0 for every height (see
+        // _STRUCT_ROW_STEPS). Read the rest of this comment as the argument for
+        // the SHAPE of the test, which is what has to survive; the THRESHOLD it
+        // is applied to is measured elsewhere and was, in its first version,
+        // measured in the wrong frame. Both halves of this rule were once
+        // wrong in the same commit and only one of them was noticed.
+        //
+        // WHY CONSTRAINING ONLY THE SENDER IS WRONG. Multiplayer does not ship
+        // the guest the host's coordinates: `_mirrorAllPositions` rotates the
+        // whole board 180° on receive — `state.structures` included — so a ruin
+        // the sender placed on row y is DRAWN ON ROW H-1-y on the remote
+        // client. A one-sided `y >= minRow` therefore buys a headroom that is
+        // not a property of the ruin at all, only of who is looking at it: the
+        // front rows are the SAFEST rows for the placer and the MOST
+        // decapitating rows for the opponent. Measured over 4000 seeds × 5
+        // ruins with the one-sided rule: 0 cropped in the sender's frame and
+        // 4570 in the receiver's — 22.9% of every ruin ever placed, i.e. the
+        // guarantee held for exactly one of the two players, every match.
+        //
+        // WHY INVARIANCE AND NOT "CHECK IT AGAIN ON THE RECEIVER". The receiver
+        // cannot fix it: the layout arrives already rolled (shared seed, and
+        // `_seedBattleStructures` is idempotent so a snapshot never re-rolls),
+        // and moving a ruin on one screen only would hand the two players
+        // different maps — worse than a cropped roof, and equally silent. So
+        // the CONSTRAINT is made symmetric under y → H-1-y, at the one place
+        // that chooses the tile, where it cannot drift back out of agreement
+        // the way a duplicated check could.
+        //
+        // The ELEVATION half is already invariant — `_bbGenTerrain` folds its
+        // field onto its own 180° rotation on purpose (see its header), so
+        // elev(x,y) === elev(W-1-x, H-1-y), asserted over 4.2M tiles. Both
+        // tiles are still read and the TALLER answer taken, because that
+        // promise is made 26k lines away in a function this one does not own
+        // and two object lookups are free at five ruins per battle.
+        //
+        // ⚠ AND `rowCap` IS A LAST RESORT, NOT A STANDING DISCOUNT. Applied on
+        // every attempt it let the roll ACCEPT a church on the top rung of
+        // _BB_ELEV — an object whose honest requirement is 6 rows of clearance
+        // on an 11-row-deep board, which no tile can give — and then crop it by
+        // one row on ONE of the two screens: the original asymmetry back at
+        // 2.5%. Clamping only on the final pass makes the roll exhaust every
+        // uncropped tile first (0 failures over 25000 seeds), and leaves the
+        // clamp for a board geometry that genuinely has no legal tile.
+        const _mx = (W - 1) - c.x, _my = (H - 1) - c.y;
+        const _need = Math.max(
+          _structMinRow(kind, elevAt ? elevAt[c.x + ',' + c.y] : 0),
+          _structMinRow(kind, elevAt ? elevAt[_mx + ',' + _my] : 0));
+        if (Math.min(c.y, _my) < (attempt >= 3 ? Math.min(_need, rowCap) : _need)) continue;
         if (out.some(o => o.x === c.x && o.y === c.y)) continue;
         if (out.some(o => distance(o, c) < spacing)) continue;
         // A church is nearly three world units tall and is drawn wider than its
@@ -104593,7 +104711,7 @@ const _BME_TORDER = Object.keys(_BME_TERRAIN);
 // _bbMapFromEditor converts one to the other WITHOUT touching the stored
 // format, so the editor keeps saving exactly what it saves today.
 // ═══════════════════════════════════════════════════════════════════════════
-const BB_VER = 'v119k5';
+const BB_VER = 'v119k8';
 // terrain key → board tile type. Anything unlisted is plain ground.
 const BB_TERRAIN_TYPE = { water:'hazard', lava:'hazard', blight:'hazard' };
 // editor prop key → the board's billboard prop vocabulary
@@ -105757,7 +105875,7 @@ function _bbClose() {
 // Flag: durable localStorage `hg_newboard_on`, default ON. Toggle at runtime
 // with __mg.newBoard(false) / __mg.newBoard(true).
 // ═══════════════════════════════════════════════════════════════════════════
-const _BBS = { frame:null, host:null, ready:false, key:'', unitKey:'', unitIds:null, rects:null, tiles:null };
+const _BBS = { frame:null, host:null, ready:false, key:'', unitKey:'', unitIds:null, rects:null, tiles:null, teleKey:'' };
 function _bbStageOn() {
   try {
     if (App.ui && typeof App.ui.newBoard === 'boolean') return App.ui.newBoard;
@@ -105859,7 +105977,99 @@ function _bbStagePost(type, detail) {
   if (!f || !f.contentWindow) return;
   try { f.contentWindow.postMessage(Object.assign({ type:'board:' + type }, detail || {}), window.location.origin); } catch (e) {}
 }
+// ⌨🎥 FORWARDED CAMERA KEYS — the keyboard half of the pointer bridge above.
+// The stage paints BELOW #app so the HUD stays on top; that is also why the
+// iframe never holds focus, and an iframe with no focus receives no `keydown`
+// for exactly the reason it receives no `mousedown`. So the host captures the
+// camera keys and forwards them, the same way `.bb-catch` forwards the mouse.
+//
+// TWO messages, because the board takes both and the .gauntlet harness already
+// sends both — keeping the game and the rig byte-identical is the whole point
+// of having a rig:
+//   board:key    {down, code, key, repeat}  key EDGES. The board keeps the held
+//        set and integrates it against ITS OWN dt, which is what makes camera
+//        speed independent of either side's frame rate. It also carries R
+//        (reset the view), which is an edge and has no `board:camera` shape.
+//   board:camera {dx, dz, yaw}              resolved intent, re-pumped every
+//        animation frame while a key is held, with dt applied. dz is a delta
+//        along the board's +Z (its NEAR edge), so S is positive and W negative.
+//
+// The board reads the pulse as an intent SIGN and never accumulates it, so
+// sending both shapes does not double the speed. Do not "simplify" this by
+// dropping board:key: the held set is what survives a dropped pump frame, and
+// nothing else can send the reset.
+const _BBK = { held: Object.create(null), raf: 0, last: 0, bound: false };
+const _BBK_KEYS = { KeyW:1, KeyA:1, KeyS:1, KeyD:1, KeyQ:1, KeyE:1, KeyR:1 };
+function _bbCamActive() {
+  // Only while the 3D stage is the board the player is actually looking at.
+  if (App.screen !== 'battle') return false;
+  return !!(_BBS.frame && _BBS.ready);
+}
+function _bbCamTyping(e) {
+  const t = e && e.target;
+  if (!t) return false;
+  return t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || !!t.isContentEditable;
+}
+function _bbCamStep(now) {
+  _BBK.raf = 0;
+  const dt = _BBK.last ? Math.min(0.1, (now - _BBK.last) / 1000) : 0.016;
+  _BBK.last = now;
+  const h = _BBK.held;
+  const dx  = (h.KeyD ? 1 : 0) - (h.KeyA ? 1 : 0);
+  const dz  = (h.KeyS ? 1 : 0) - (h.KeyW ? 1 : 0);
+  const yaw = (h.KeyE ? 1 : 0) - (h.KeyQ ? 1 : 0);
+  if (!dx && !dz && !yaw) { _BBK.last = 0; return; }
+  // The stage went away (screen change, unmount) while a key was still down.
+  // Release rather than just stopping: the BOARD has a held set too, and it was
+  // told `down` and would never be told `up`, so it would keep sliding.
+  if (!_bbCamActive()) { _bbCamRelease(); return; }
+  // Same units the harness pumps: 6 tiles/sec of pan, 90°/sec of turn. The
+  // board treats them as a direction, not as a distance — it owns the rates.
+  _bbStagePost('camera', { dx: dx * 6 * dt, dz: dz * 6 * dt, yaw: yaw * (Math.PI / 2) * dt });
+  _BBK.raf = requestAnimationFrame(_bbCamStep);
+}
+function _bbCamPump() { if (!_BBK.raf) _BBK.raf = requestAnimationFrame(_bbCamStep); }
+// A key held while the player alt-tabs, opens a modal that steals focus, or
+// leaves the battle screen never delivers its keyup — without this the board
+// would keep sliding with nothing pressed. Every release path goes here.
+function _bbCamRelease() {
+  const any = Object.keys(_BBK.held);
+  for (const code of any) { delete _BBK.held[code]; _bbStagePost('key', { down: false, code: code, key: '', repeat: false }); }
+  if (_BBK.raf) { cancelAnimationFrame(_BBK.raf); _BBK.raf = 0; }
+  _BBK.last = 0;
+}
+function _bbCamKeysBind() {
+  if (_BBK.bound) return;
+  _BBK.bound = true;
+  window.addEventListener('keydown', (e) => {
+    if (!_BBK_KEYS[e.code] || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (!_bbCamActive() || _bbCamTyping(e)) return;
+    // NOT preventDefault: these keys are unbound elsewhere in battle today, and
+    // swallowing them would silently break any handler added later.
+    if (e.repeat) { _bbCamPump(); return; }   // the rAF pump owns repeats
+    // R is an EDGE, not an axis. It used to land in the held set and start the
+    // rAF pump, which then found dx/dz/yaw all zero and stopped again — one
+    // wasted tick, and a `held` readout that disagreed with the board's own
+    // CAM_HELD (which never takes 'reset' either, see camKey). Forward the edge
+    // and nothing else. Its keyup is not sent and does not need to be: the
+    // board's camKey() ignores `down:false` for reset.
+    if (e.code !== 'KeyR') {
+      _BBK.held[e.code] = 1;
+      _bbStagePost('key', { down: true, code: e.code, key: e.key, repeat: false });
+      _bbCamPump();
+      return;
+    }
+    _bbStagePost('key', { down: true, code: e.code, key: e.key, repeat: false });
+  });
+  window.addEventListener('keyup', (e) => {
+    if (!_BBK_KEYS[e.code] || !_BBK.held[e.code]) return;
+    delete _BBK.held[e.code];
+    _bbStagePost('key', { down: false, code: e.code, key: e.key, repeat: false });
+  });
+  window.addEventListener('blur', _bbCamRelease);
+}
 function _bbStageUnmount() {
+  try { _bbCamRelease(); } catch (e) {}
   try { document.body.classList.remove('bb-stage-active'); } catch (e) {}
   try { const h = document.getElementById('bb-stage-host'); if (h) h.remove(); } catch (e) {}
   try { if (_BBS.frame) _BBS.frame.remove(); } catch (e) {}
@@ -105910,6 +106120,229 @@ function _bbStagePushPaint() {
   if (key === _BBS.paintKey) return;
   _BBS.paintKey = key;
   _bbStagePost('paint', payload);
+}
+
+// ═══ 🏹 THE XCOM TELEGRAPH — where a unit is GOING and what it is HITTING ═══
+// BAR requirement #9. Four pictures leave here, and every one of them is an
+// answer the RULES already computed:
+//
+//   path   — getMovePath(), the SAME call moveUnit() makes at :102403 to decide
+//            which tiles the unit walks over and which traps it springs. Not a
+//            straight line, not a re-derivation: literally the same function
+//            with the same four arguments, so the drawn route and the walked
+//            route are one array.
+//   dest   — the tile the unit will stand on.
+//   arc    — attacker → target, taken from the attack set the render already
+//            built (App._bbPaint.attack), so the arc can only point at a
+//            target the click gate would accept.
+//   threat — the enemies' real reach: getValidMoves() for where each of them
+//            can stand, then their own getEffectiveAttackRange() from there.
+//
+// ⚠ THE BOARD MUST NEVER FILL ANY OF THESE IN FOR ITSELF. It has no
+// pathfinder (CONTRACT §1: "the board is a renderer… all rules live in
+// public/index.html"), and a route invented at draw time is the
+// UI-lies-about-the-rules bug with a nicer coat of paint.
+
+// Threat is the one expensive piece — a BFS per enemy plus a reach expansion —
+// and hover fires it several times a second. It only changes when a unit moves,
+// dies or the turn flips, so it is memoised on exactly that.
+const _BBT = { key: '', tiles: [], warned: false };
+
+// Every tile this ONE enemy could attack, if it moved first. Two real rules,
+// composed: getValidMoves() answers "where can it stand" (walls, occupancy,
+// tombstones, zone-of-control and Follow My Lead all included, because it is
+// the same function the enemy's own move highlight uses), and
+// getEffectiveAttackRange() answers "how far can it reach from there".
+function _bbTeleUnitThreat(s, e, out) {
+  let stands;
+  try { stands = (getValidMoves(e, s.units, s.weather) || []).slice(); }
+  catch (err) { stands = []; }
+  stands.push(e.pos);
+  // Longest reach across the moves it actually knows. A unit with no usable
+  // move still threatens its own neighbours, which is what range 1 means.
+  let R = 1;
+  try {
+    for (const mid of (e.knownMoves || [])) {
+      const mv = lookupMove(mid);
+      if (!mv) continue;
+      if (mv.kind !== 'attack' && mv.target !== 'enemy') continue;
+      R = Math.max(R, getEffectiveAttackRange(e, mv) | 0);
+    }
+  } catch (err) {}
+  R = Math.max(1, R);
+  // 🔭 SQUAD SIGHT lifts getEffectiveAttackRange() to a board-wide 12 on
+  // purpose — its own comment calls that "a generous range ceiling so the
+  // move-selection pipeline doesn't gate too tightly", and the real gate is
+  // _squadSightCanSee(): the target must sit inside an ALIVE ally's 3-tile
+  // bubble. Painting the ceiling would wash the whole board red for a threat
+  // that mostly is not there, so the bubble test is applied here too — the
+  // same rule, not a cap invented to make the picture tidier.
+  let bubbles = null;
+  try {
+    if (hasPassive(e, 'squadSight')) {
+      bubbles = (s.units || []).filter(u => u && u.alive && u.owner === e.owner && u.id !== e.id && u.pos);
+    }
+  } catch (err) {}
+  // Reach expansion as R rings of hexNeighbors from the stand set — the six-way
+  // frontier, never a square box (HEXSPEC §5). Cheaper than testing all 168
+  // tiles against every stand tile, and it cannot pick up a tile the hex metric
+  // would have excluded.
+  let frontier = new Map();
+  for (const p of stands) {
+    if (!p) continue;
+    const k = p.x + ',' + p.y;
+    if (!frontier.has(k)) frontier.set(k, p);
+  }
+  const seen = new Map(frontier);
+  for (let step = 0; step < R; step++) {
+    const next = new Map();
+    for (const p of frontier.values()) {
+      for (const n of hexNeighbors(p.x, p.y)) {
+        if (!inBounds(n.x, n.y)) continue;
+        const k = n.x + ',' + n.y;
+        if (seen.has(k)) continue;
+        seen.set(k, n); next.set(k, n);
+      }
+    }
+    frontier = next;
+    if (!frontier.size) break;
+  }
+  for (const [k, p] of seen) {
+    if (bubbles && !bubbles.some(u => distance(u.pos, p) <= 3)) continue;
+    out.add(k);
+  }
+}
+
+// The union, memoised. Returns an array of "x,z" keys.
+function _bbTeleThreat(s) {
+  if (!s || !Array.isArray(s.units)) return [];
+  // Opt-out lives on App.ui so it can be flipped from the console without a
+  // reload: `App.ui.showThreat = false; render()`.
+  if (App.ui && App.ui.showThreat === false) return [];
+  const foes = s.units.filter(u => {
+    if (!u || !u.alive || u.owner === 'player' || !u.pos) return false;
+    try { if (isVanished(u)) return false; } catch (e) {}
+    return true;
+  });
+  if (!foes.length) return [];
+  // Memo key: everything the answer depends on. Occupancy changes the BFS for
+  // every enemy, so ALL live units go in, not just the foes.
+  let key = s.turn + '|' + (s.turnNumber | 0) + '|' + ((s.weather && s.weather.weatherType) || '');
+  for (const u of s.units) if (u && u.alive && u.pos) key += '|' + u.id + ':' + u.pos.x + ',' + u.pos.y;
+  if (key === _BBT.key) return _BBT.tiles;
+  const out = new Set();
+  for (const e of foes) { try { _bbTeleUnitThreat(s, e, out); } catch (err) {} }
+  _BBT.key = key;
+  _BBT.tiles = Array.from(out);
+  return _BBT.tiles;
+}
+
+function _bbStagePushTele() {
+  const payload = { path: [], dest: null, arc: null, threat: [], side: 'mine' };
+  try {
+    const s = App.state;
+    if (s && Array.isArray(s.units)) {
+      const p = App._bbPaint || {};
+      const h = App._bbHover;
+      const sel = (App.ui && App.ui.selectedUnitId)
+        ? s.units.find(u => u && u.id === App.ui.selectedUnitId && u.alive) : null;
+      // ═══ 🤖 THE ENEMY HALF — the half XCOM is actually famous for ═══
+      // The AI narrates every action through setAIActor(), and its move site
+      // now hands us the SAME getMovePath() array moveUnit() consumed
+      // (computed there BEFORE the commit — after it, the unit is already on
+      // the destination and the BFS returns nothing). Its two attack sites
+      // hand us the attacker/victim tiles snapshotted before the swing
+      // resolved. So this branch invents nothing: it renames game {x,y} to
+      // board {x,z} (CONTRACT §1.1) and forwards.
+      // ⚠ WHY THIS EXISTS AT ALL: the enemy's move arrow was already being
+      // rendered every turn — into `.ai-trail`, a glyph on the legacy DOM
+      // board, which is `visibility:hidden` while the stage is on. The data
+      // was correct and the picture was invisible, so the one moment a
+      // telegraph earns its keep — watching an enemy cross the field and pick
+      // your hero — was the one moment the board showed a teleport.
+      // ⚠ It is an `else if` in front of the player branch on purpose. A stale
+      // player selection + hover can survive into the AI's turn, and two
+      // routes drawn at once would be the board telling two stories. An AI
+      // actor owns the telegraph for as long as it is acting; clearAIActor()
+      // hands it straight back.
+      const aiTrail = (App.ui && App.ui.aiActorId) ? App.ui.aiMoveTrail : null;
+      if (aiTrail && (aiTrail.arc || (Array.isArray(aiTrail.path) && aiTrail.path.length))) {
+        if (Array.isArray(aiTrail.path) && aiTrail.path.length && aiTrail.from) {
+          // Prepend the actor's OWN start tile — getMovePath excludes it, so
+          // without this the ribbon starts one hex ahead of the unit's feet.
+          // `from` is the pre-move snapshot taken at the AI move site, which
+          // is the only place that tile still exists once the move commits.
+          payload.path = [aiTrail.from.x + ',' + aiTrail.from.y]
+            .concat(aiTrail.path.map(r => r.x + ',' + r.y));
+          if (aiTrail.to) payload.dest = { x: aiTrail.to.x | 0, z: aiTrail.to.y | 0 };
+          payload.side = 'foe';
+        }
+        if (aiTrail.arc && aiTrail.arc.from && aiTrail.arc.to) {
+          // drawTeleArc already takes `side` and has a foe colour it has never
+          // been given — this is the first caller that sends 'foe'.
+          payload.arc = { from: { x: aiTrail.arc.from.x | 0, z: aiTrail.arc.from.y | 0 },
+                          to:   { x: aiTrail.arc.to.x   | 0, z: aiTrail.arc.to.y   | 0 },
+                          side: 'foe' };
+          payload.side = 'foe';
+        }
+      } else if (sel && sel.pos && h && h.x >= 0) {
+        const hv = { x: h.x | 0, y: h.z | 0 };
+        // Only the MOVE set gets a route. The set is the one the render just
+        // published, so a tile the player cannot legally reach can never be
+        // handed to the pathfinder here.
+        if ((p.move || []).some(t => t && t.x === hv.x && t.y === hv.y)) {
+          const route = getMovePath(sel, s.units, s.weather, hv) || [];
+          const end = route[route.length - 1];
+          if (end && end.x === hv.x && end.y === hv.y) {
+            // Prepend the unit's own tile so the ribbon starts under its feet
+            // rather than one hex away — getMovePath excludes the start tile.
+            payload.path = [sel.pos.x + ',' + sel.pos.y]
+              .concat(route.map(r => r.x + ',' + r.y));
+            payload.dest = { x: hv.x, z: hv.y };
+          } else if (!_BBT.warned) {
+            // 🚨 CONTRACT R31, surfaced instead of drawn over.
+            // getValidMoves() and getMovePath() are near-duplicate BFS bodies
+            // that already disagree, and the disagreement is MEASURED, not
+            // theoretical. getMovePath() consults neither tileBlockedByTombstone
+            // nor the zone-of-control dead-end rule, so it is the LOOSER of the
+            // two: with a glowing tombstone at (4,7) and a blocker at (3,7), a
+            // spd-4 unit at (4,8) gets `4,8 → 4,7 → 4,6` out of getMovePath
+            // while getValidMoves' region has a hole at (4,7). The route the
+            // unit walks really does cross that tile — moveUnit() calls the
+            // same function — so the ARROW is still telling the truth about
+            // the walk. It is the two BFS bodies that need reconciling, and
+            // that lives in movement code this piece may not edit.
+            // The reverse (the move set offering a tile the path BFS cannot
+            // reach) is what lands HERE. It should be impossible while
+            // getMovePath stays the looser of the two — so if it ever fires,
+            // the two have drifted further apart and the warning is the only
+            // thing that will say so. Drawing a short arrow at a marker
+            // somewhere else would be the lie; drawing nothing is not.
+            _BBT.warned = true;
+            console.warn('[telegraph] getValidMoves offered ' + hv.x + ',' + hv.y +
+              ' but getMovePath cannot reach it — no route drawn (CONTRACT R31)');
+          }
+        }
+        // The arc points at whatever the attack set already contains, so it
+        // agrees with the click gate by construction.
+        if ((p.attack || []).some(t => t && t.x === hv.x && t.y === hv.y)) {
+          payload.arc = { from: { x: sel.pos.x, z: sel.pos.y }, to: { x: hv.x, z: hv.y },
+                          side: sel.owner === 'player' ? 'mine' : 'foe' };
+        }
+      }
+      // Threat is shown while the player is deciding where to STAND — the one
+      // moment "what can reach me there" is the question being asked. It is a
+      // different colour from the move region on purpose (BAR R2): "where I
+      // can stand" and "what threatens me" must never read as the same thing.
+      if (App.ui && App.ui.actionMode === 'move' && sel && sel.owner === 'player') {
+        payload.threat = _bbTeleThreat(s);
+      }
+    }
+  } catch (e) {}
+  const key = JSON.stringify(payload);
+  if (key === _BBS.teleKey) return;
+  _BBS.teleKey = key;
+  _bbStagePost('tele', payload);
 }
 // 🪦 Grave markers. `App.state.tombstones` is the game's own list — the board
 // only draws what's here, so decay, revive timers and loot state stay entirely
@@ -106171,6 +106604,10 @@ function _bbStageMount() {
       // settled would otherwise be stuck as card art / procedural bodies.
       _bbStagePushDefs(false);
       _bbStagePushPaint();
+      // 🏹 Telegraph rides the same tick as the paint it is derived from, so a
+      // selection change, a move, a death or an end-of-turn refreshes the
+      // contour and the threat wash without a hover to trigger it.
+      _bbStagePushTele();
       _bbStagePushTombs();
       _bbStagePushStructs();
       _bbStagePushCPs();
@@ -106186,6 +106623,7 @@ function _bbStageMount() {
     }
     return;
   }
+  _bbCamKeysBind();               // ⌨🎥 forwarded camera keys — idempotent
   if (!App._bbStageMsgBound) {
     App._bbStageMsgBound = true;
     window.addEventListener('message', (e) => {
@@ -106212,6 +106650,11 @@ function _bbStageMount() {
         // to follow the unit on this board (the DOM board's rects are stale here)
         App._bbHover = (d.x >= 0) ? { x: d.x, z: d.z, unitId: d.unitId, box: d.box || null } : null;
         try { _bbHoverMenu(d); } catch (e3) {}
+        // 🏹 The route follows the cursor, so it has to be recomputed HERE and
+        // not on the mount tick — the stage only dispatches tileHover when the
+        // hovered tile actually changes (`__lastHoverKey`), so this is once per
+        // tile crossed, not once per mouse pixel.
+        try { _bbStagePushTele(); } catch (e3) {}
         return;
       }
       if (d.type === 'board:unitClick') {
@@ -106242,8 +106685,8 @@ function _bbStageMount() {
       } catch (e) {}
       try { _BBS.key = _bbActiveLocationId() + '|' + _bbTimeOfDay(); } catch (e2) {}
       _bbStagePost('init', _bbStagePayload());
-      _BBS.unitKey = ''; _BBS.paintKey = ''; _BBS.tombKey = ''; _BBS.structKey = ''; _BBS.cpKey = ''; _BBS.defKey = ''; _BBS._defsAt = 0; _BBS.surfKey = '';
-      _bbStagePushUnits(); _bbStagePushPaint(); _bbStagePushTombs(); _bbStagePushStructs(); _bbStagePushCPs(); _bbStagePushSurfaces();
+      _BBS.unitKey = ''; _BBS.paintKey = ''; _BBS.tombKey = ''; _BBS.structKey = ''; _BBS.cpKey = ''; _BBS.defKey = ''; _BBS._defsAt = 0; _BBS.surfKey = ''; _BBS.teleKey = '';
+      _bbStagePushUnits(); _bbStagePushPaint(); _bbStagePushTele(); _bbStagePushTombs(); _bbStagePushStructs(); _bbStagePushCPs(); _bbStagePushSurfaces();
     });
   }
   let host = document.getElementById('bb-stage-host');
@@ -153891,10 +154334,18 @@ function doAIStep() {
         // attack before it resolves. Only fires when there's actually a
         // matching counter in the player's hand AND they can afford it;
         // otherwise tryPromptCounter resolves false immediately.
+        // 🏹 Attacker and victim tiles, snapshotted BEFORE the swing resolves.
+        // _aiResolveMove() can kill the target outright, and a dead unit is
+        // dropped from App.state.units — reading pick.target.pos afterwards
+        // would be reading a body that no longer exists. `unit` and
+        // `pick.target` are the pre-resolve snapshots, so their `pos` is the
+        // geometry of the swing the player just watched land.
+        const _arcFrom = { ...unit.pos }, _arcTo = { ...pick.target.pos };
         const _doAttack = () => {
           App.state = _aiResolveMove(App.state, unit, pick.target, pick.move);
           markAIUnitActed(unit.id);
-          setAIActor(unit.id, `⚔ Enemy ${unit.name} → ${pick.move.name} → ${pick.target.name}`);
+          setAIActor(unit.id, `⚔ Enemy ${unit.name} → ${pick.move.name} → ${pick.target.name}`,
+                     { arc: { from: _arcFrom, to: _arcTo } });
           renderBattle();
           scheduleAIStepAfterCutaway(AI_DELAYS.attack);
         };
@@ -154120,13 +154571,30 @@ function doAIStep() {
         if (best) {
           const oldPos = { ...unit.pos };
           const moveDest = best;
+          // 🏹 THE ENEMY HALF OF THE XCOM TELEGRAPH (BAR R3 / requirement #9).
+          // The route is computed HERE, before moveUnit() commits, and that
+          // ordering is the whole bug this line avoids: setAIActor() fires
+          // AFTER the commit, at which point `unit` has already been relocated
+          // to moveDest, so a getMovePath() call made there would BFS from the
+          // destination to itself and hand the board an empty array — an enemy
+          // that teleports, which is exactly what the board used to show.
+          // Same four arguments moveUnit() passes at :102403 (it does
+          // `s = {...state}`, so `s.units` IS `App.state.units`), so the drawn
+          // route and the walked route are one array rather than two answers
+          // that happen to agree today.
+          // ⚠ UI state only. It rides on App.ui.aiMoveTrail and is read by
+          // _bbStagePushTele(); nothing here feeds the AI's target scoring and
+          // moveUnit() is untouched.
+          let aiPath = [];
+          try { aiPath = getMovePath(unit, App.state.units, App.state.weather, moveDest) || []; }
+          catch (e) { aiPath = []; }
           // ⏱ COUNTER WINDOW — give the player a chance to interrupt the AI's
           // movement with a counter card whose counterTriggers contains 'move'.
           // Resolves immediately as false when the player has no matching/
           // affordable counter in hand.
           const _doMove = () => {
             App.state = moveUnit(App.state, unit, moveDest);
-            setAIActor(unit.id, `↗ Enemy ${unit.name} moves`, { from: oldPos, to: moveDest });
+            setAIActor(unit.id, `↗ Enemy ${unit.name} moves`, { from: oldPos, to: moveDest, path: aiPath });
             renderBattle();
             scheduleAIStep(AI_DELAYS.move);
           };
@@ -154168,9 +154636,13 @@ function doAIStep() {
     if (unit && unit.alive && unit.hasMoved && !unit.hasAttacked) {
       const pick = tryAttackFromPos(unit.pos);
       if (pick) {
+        // 🏹 Same snapshot-before-resolve rule as the attack site above: the
+        // target can die in _aiResolveMove and vanish from App.state.units.
+        const _arcFrom2 = { ...unit.pos }, _arcTo2 = { ...pick.target.pos };
         App.state = _aiResolveMove(App.state, unit, pick.target, pick.move);
         markAIUnitActed(unit.id);
-        setAIActor(unit.id, `⚔ Enemy ${unit.name} → ${pick.move.name} → ${pick.target.name}`);
+        setAIActor(unit.id, `⚔ Enemy ${unit.name} → ${pick.move.name} → ${pick.target.name}`,
+                   { arc: { from: _arcFrom2, to: _arcTo2 } });
         renderBattle();
         scheduleAIStepAfterCutaway(AI_DELAYS.attack);
         return;

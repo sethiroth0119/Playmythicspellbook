@@ -79,7 +79,10 @@ that made it.
 | `gamemap` | ◆ **as-shipped** | **The control capture.** `_bbMapFromEditor()`'s literal output for the shipped default: all 168 tiles carrying `surf`, `elev` and `deco` from `_bbGenTerrain`, i.e. the seeded post-apocalyptic relief a real match is fought on. Units, defs (`h:1.05`), graves and surfaces are all verbatim-real. Same layout as `skirmish` so the two diff cleanly. Add `&seed=<n>` to build the same map family on a different seed — the default seed is what every A/B uses and must not change. |
 | `empty` | ◇ target-state | Terrain, props, horizon and lighting with no units in front of them. |
 | `skirmish` | ◇ target-state | Both sides deployed, mixed unit types, three graves in three states, three painted surfaces. |
-| `moverange` | ◇ target-state | One unit selected: blue move set, red attack set, gold selection ring. Paint is real; terrain is not. |
+| `moverange` | ◇ target-state | One unit selected: the move set as ONE cyan contour (it stopped being a per-tile checkerboard in the telegraph wave — BAR R3), red attack set, gold selection ring. Paint is real; terrain is not. |
+| `telegraph` | ◇ target-state | 🏹 BAR R3. Move contour plus the **path arrow** to a hovered destination. The destination is chosen so the route must DETOUR: (4,5) is three hexes from the mover and six steps by the only legal route. |
+| `arc` | ◇ target-state | 🏹 BAR R2. The attack telegraph — a curve from attacker to target drawn *above* the board, arrowhead and ownership ring on the target. Not a straight laser. |
+| `threat` | ◇ target-state | 🏹 BAR R2. Enemy reach as an orange painted region with a brighter outer edge, with the player's own cyan move contour sitting inside it — two questions, two colours. |
 | `night` | ◇ target-state | `skirmish` under the night lighting rig. |
 | `ruins` | ◇ target-state | Ruin art on event tiles. Doubly so — the battle stage is never sent events at all. |
 
@@ -125,6 +128,7 @@ function copied from `public/index.html` and named for its original:
 | `bridgeDefs` | `_bbUnitDefs` (`:103363`) | `board:defs` |
 | `bridgeUnitList` | `_bbStageUnitList` (`:103862`) | `board:units` |
 | `bridgePaint` | `_bbStagePushPaint` (`:103885`) | `board:paint` |
+| `bridgeTele` | `_bbStagePushTele` | `board:tele` |
 | `bridgeTombs` | `_bbStagePushTombs` (`:103898`) | `board:tombs` |
 | `bridgeSurfaces` | `_bbStagePushSurfaces` (`:104008`) | `board:surfaces` |
 | `bridgeEvents` | `_bbEvents` (`:103646`) | `board:events` |
@@ -138,27 +142,49 @@ iframe — the same forwarded-input path the game uses (`CONTRACT.md` §1.4), so
 in the harness goes through `pickTile` and comes back as `board:tileClick` just as it
 would in a match.
 
-### Keys: a forwarding stub, on purpose
+### Keys: forwarded, and now received
 
-`BAR.md` requirement #2 is *"Camera: WASD moves it, Q/E turns it."* There is no camera
-today — `CONFIG.camera` is never mutated at runtime and `handleHostMessage` has no `key`
-or `camera` case — so the harness forwards two messages that the board currently
-**ignores silently** (an unmatched type is not a throw, so nothing even warns):
+`BAR.md` requirement #2 is *"Camera: WASD moves it, Q/E turns it."* **The board has a free
+camera.** `handleHostMessage` has both cases, the game sends both messages from
+`_bbCamKeysBind` (`public/index.html`), and this rig sends the identical pair — an iframe
+that never holds focus gets no `keydown` for the same reason it gets no mouse events
+(`CONTRACT.md` §1.4), so forwarding is the only path that works in either place.
 
 | message | payload | for |
 |---|---|---|
-| `board:key` | `{down, code, key, repeat}` | a board that integrates held-key state in `update(dt)`, which `CONTRACT.md` §2 Tier 2 says it must (frame-rate independence) |
-| `board:camera` | `{dx, dz, yaw}` | a board that would rather take resolved intent. Re-sent every animation frame while a camera key is held, with `dt` already applied. |
+| `board:key` | `{down, code, key, repeat}` | key EDGES. The board keeps the held set and integrates it in `update(dt)` against its own clock — `CONTRACT.md` §2 Tier 2's frame-rate-independence rule. It is also the only shape that carries **R** (reset the view), which is an edge and not an axis. |
+| `board:camera` | `{dx, dz, yaw}` | resolved intent, re-sent every animation frame while a camera key is held, with `dt` already applied. `dz` is a delta along the board's **+Z**, i.e. toward the NEAR edge — S is positive, W is negative. |
 
-It is wired now because §2 Tier 2 is explicit that an embedded free camera needs
-**host-forwarded keys** — an iframe that never holds focus gets no `keydown` for the
-same reason it gets no mouse events. Add either case to the chain and this rig drives it
-with no harness change. `__harness.state().camSent` counts the `board:camera` posts, so a
-Playwright probe can prove forwarding happened before any receiver exists.
+⚠ The board reads the pulse as an intent **sign** and never accumulates it, so sending
+both shapes does not drive the camera twice. Anything that integrates deltas on the
+board's behalf **will** double-count, at whatever ratio the two clocks sit at, and it
+looks like a tuning problem rather than a bug.
 
-⚠ `g` and `1`–`4` are already claimed by the board's *local* listener
-(`battle-board:2634`) and are equally inert here for the focus reason above. Use
-`__harness.post('timeOfDay', {key:'night'})` — that is real protocol and works today.
+Controls: **WASD** pans in the camera plane (W pushes the view away along the ground at
+any yaw), **Q/E** yaw around the board with acceleration and easing, **R** restores the
+fit exactly. Pan is clamped to half the board's half-extent per axis. `prefers-reduced-
+motion` collapses the velocity ramp to a snap so the view stops dead with the key.
+
+For a deterministic capture, do not hold a key for a guessed number of milliseconds —
+set the pose:
+
+```js
+__harness.cam().set(90, 0, 0)   // yaw 90°, no pan, no easing (the clamp still runs)
+__harness.cam().get()           // { yawDeg, pan, vel, moving, reduced, terrainKey, … }
+__harness.cam().check()         // { click:{samples,mismatch}, painter:{inversions},
+                                //   terrain:{registered,bakeMs} }
+```
+
+`__harness.state().camSent` counts `board:camera` posts that left the parent, and
+`__harness.rects()` returns the newest `board:rects` payload as the HOST sees it — which is
+how anchor staleness is measured from outside the iframe (compare it against the board's own
+`Board.unitScreenBox(u)` on the same frame). Rects are published 4/sec at rest and **every
+frame the camera re-aims**, so an anchored overlay tracks its unit to under a pixel while
+the player turns; at 4/sec it was up to 107 px behind.
+
+⚠ `g` and `1`–`4` are claimed by the board's *local* listener and are inert here for the
+focus reason above — they are forwarded as `board:key`, but the board maps only WASD/QE/R
+out of that message. Use `__harness.post('timeOfDay', {key:'night'})` for time of day.
 
 Scenarios are written in **game** terms (`pos:{x,y}`, `owner:'player'|'ai'`,
 tombstones keyed by `y`, surfaces keyed `"x,y"` by surface *type*). The rename to
@@ -214,9 +240,19 @@ SCENES.myscene = {
   tombstones: [ { x:4, y:3, owner:'ai', lootable:true, looted:false, glowing:false } ],
   surfaces: { '2,3':'oil' },        // keys are GAME "x,y"; values are surface TYPE ids
   paint: null,                      // { move:[{x,y}], attack:[…], place:[…], swap:[…], sel:{x,y} }
+  tele: null,                       // { path:[{x,y}…], dest:{x,y}, arc:{from,to,side}, threat:[{x,y}…] }
   events: []                        // { x, y, type, name, art, scale }
 };
 ```
+
+⚠ **A `tele` scene proves the board DRAWS a route; it cannot prove the route is the
+one the unit walks.** The harness has no rules and no pathfinder, so `tele.path` is a
+literal tile list (`bfsPath()` is a fixture mirror of the game's `getMovePath`, kept
+honest about being one). The real claim — drawn route == walked route — is only
+provable in the game, by patching `window.getMovePath` and comparing what the telegraph
+pushed against what `moveUnit()` actually consumed. `getMovePath` is a top-level
+function *declaration*, so it IS on `window` and both callers resolve through it; the
+`const` movement helpers around it are not (`CLAUDE.md`, the globals trap).
 
 `shipped` has no default. A scene that forgets it is falsy — target-state — which is the
 safe way round: the failure mode is "labelled a fixture when it was honest", never the
@@ -276,5 +312,23 @@ await page.evaluate(() => window.__harness.post('focus', { x:3, z:4 }));
   *rig annotations* marking where that furniture would be — they are hairlines with
   monospace caps labels precisely so they cannot be mistaken for the game's own chrome,
   which is an opaque gold-bordered panel (`CONTRACT.md` §6.4).
-- **`board:key` / `board:camera` do nothing yet.** By design — see *Keys* above. If you
-  add the receiver, delete that sentence from this file.
+- **The camera bake is not free, and `bakeMs` alone is a LIAR.** `terrainKey()` names the
+  camera, so every frame of a pan or a turn is a cache miss and the ground is drawn live
+  instead of blitted (see `drawBoard`, which bypasses the cache entirely while
+  `CAMERA.moving`). Measured in this rig's software rasteriser at `scene=gamemap`,
+  `host=boardarea`, across the **cross product** of 12 yaws × 9 pans (108 poses):
+  **~0 ms parked, worst 30.7 ms and median 24.2 ms of terrain bake at any pose**, with the
+  painted skirt hard-capped at `SKIRT_BUDGET` (240) cells. Held live: 27.0 ms/frame for
+  yaw alone (E), 17.2 for pan alone (W), 23.9 for E+W and 29.3 for E+D.
+  ⚠ **Do not read a single `bakeMs` sample as work.** Chromium's 2D canvas records ops and
+  flushes them lazily; once the recorded list crosses a threshold the flush lands *inside*
+  the bake timer and the same pose reports 28 ms on one frame and 157 ms on the next. That
+  bimodality — not a 5–8× change in work — is what an earlier round measured as a
+  "pan×yaw cliff": swept against a pinned pose, 320 painted cells reported **171 ms** and
+  300 reported **29 ms**, while the iframe's true rAF rate was **4.15 vs 4.33 fps**. Judge
+  a camera change on `__bbPerf()` medians *plus* an actual frame count over a wall clock,
+  and on `__bbCam.check().terrain.skirtPainted`, which counts the work rather than timing
+  where the flush fell. There is no GPU here, so all of it is an upper bound.
+  `window.__bbTerrSec(true)` splits the bake into apron / art / plan / sweep / field /
+  skirt / tail if you need to know which painter grew; `window.__bbSkirtBudget(n)` re-runs
+  the sweep that picked 240.

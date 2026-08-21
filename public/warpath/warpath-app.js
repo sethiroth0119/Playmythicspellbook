@@ -332,6 +332,56 @@ function fogState(x, y) {
   return inVision(x, y) ? 2 : 1;
 }
 
+/* 🦸 THE PLAYER'S OWN HERO, DRAWN AS ITSELF.
+   ------------------------------------------------------------------------
+   `st.me.hero_id` has been in the state all along — warpath-app.js already
+   hands it to the battle bridge — but nothing ever drew with it, so every
+   hero on the map was the same anonymous cloak.
+
+   🔴 THE ART CANNOT BE READ FROM HERE. It lives in the parent: getCardArt()
+      plus the sprite library, both of which are index.html's, and the sub-app
+      is a separate document. So it is REQUESTED, exactly the way the card
+      draft already requests its catalogue (`warpath:cardmeta:req`) — one
+      established seam rather than a second invented one.
+   ⚠ ASKED FOR ONCE PER ID. `_heroArtAsked` is the guard: without it every
+     frame of a 60fps render loop would post a message, and the parent would
+     answer every one of them with a base64 image.
+   ⚠ AND A MISS IS REMEMBERED. A hero with no art resolves to null and is
+     never asked for again — otherwise a player whose hero has no uploaded
+     sprite generates one round-trip per frame, for ever. */
+var _heroArt = {};        // heroId -> HTMLImageElement (loaded) | null (known missing)
+var _heroArtAsked = {};   // heroId -> true once a request is in flight
+function heroArtFor(id) {
+  if (!id) return null;
+  var got = _heroArt[id];
+  if (got !== undefined) return (got && got.complete && got.naturalWidth > 0) ? got : null;
+  if (!_heroArtAsked[id]) {
+    _heroArtAsked[id] = true;
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ type: 'warpath:heroart:req', id: id }, window.location.origin);
+      } else { _heroArt[id] = null; }   // standalone: no parent, no art, no retry
+    } catch (e) { _heroArt[id] = null; }
+  }
+  return null;
+}
+try {
+  window.addEventListener('message', function (ev) {
+    var d = ev && ev.data;
+    if (!d || d.type !== 'warpath:heroart' || !d.id) return;
+    if (!d.art) { _heroArt[d.id] = null; return; }        // answered: nothing to draw
+    var im = new Image();
+    /* ⚠ draw() DIRECTLY, not a dirty flag. There is no render loop in this
+       app — draw() is called explicitly by every input handler (see renderAll
+       and the pointer handlers), so a flag would be set and never read, and
+       the sprite would not appear until the player happened to pan the map.
+       The first version of this line set `S.dirty`, which nothing reads. */
+    im.onload = function () { _heroArt[d.id] = im; try { draw(); } catch (e) {} };
+    im.onerror = function () { _heroArt[d.id] = null; };
+    im.src = d.art;
+  });
+} catch (e) {}
+
 function actorList() {
   var st = S.state, out = [];
   if (!st) return out;
@@ -348,8 +398,16 @@ function actorList() {
                  label: o.hero_name, color: '#c0473f', slot: o.slot });
     }
   });
+  /* `img` is the hero's own artwork when the parent has handed it over, and
+     absent otherwise — the renderer falls back to the cloak, so a player with
+     no uploaded sprite sees exactly what they saw before.
+     ⚠ ONLY `me`. The server does not send a rival's hero_id (see the state
+       contract — `others` carries hero_name and nothing else), so drawing
+       their art would mean guessing which hero they are. Rivals keep the
+       cloak until the server sends an id. */
   if (st.me) out.push({ kind: 'hero', x: st.me.x, y: st.me.y, self: true,
-                        label: st.me.hero_name || 'Your Hero', color: '#d4af37',
+                        heroId: st.me.hero_id || null,
+                        img: heroArtFor(st.me.hero_id),
                         slot: st.me.slot, status: st.me.status });
   return out;
 }
@@ -1893,6 +1951,23 @@ function boot() {
   });
 }
 boot();
+
+/* 🔬 DIAGNOSTICS SEAM. This whole file is an IIFE, so S, draw() and the hero
+   art cache are unreachable from a driver — and the hero sprite is a CANVAS
+   change, which cannot be asserted from the DOM. Same seam shape, and the same
+   justification, as node-city's window.__nc.
+   Read-only by convention; nothing in the shipped app reads this back.
+   See .gauntlet/drive-warpath-hero.mjs. */
+try {
+  window.__wp = {
+    state: function () { return S; },
+    draw: function () { try { draw(); } catch (e) {} },
+    heroArt: function () { return _heroArt; },
+    /* Forget what is cached AND what has been asked for, so a driver can
+       replay the request/reply seam without reloading the world. */
+    resetHeroArt: function () { _heroArt = {}; _heroArtAsked = {}; },
+  };
+} catch (e) {}
 
 // Let the parent tell us to re-read (e.g. right after it applied a grant).
 window.addEventListener('message', function (ev) {

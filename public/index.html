@@ -232370,6 +232370,35 @@ function _warpathOpen() {
       }
       return;
     }
+    /* 🦸 HERO ART FOR THE MAP. The sub-app knows its hero_id but cannot reach
+       getCardArt or the sprite library — both live in this document. Same
+       request/reply shape as the card catalogue above, and for the same
+       reason: one seam, not two.
+       ⚠ ALWAYS REPLIES, EVEN WITH NOTHING. `art: null` is an ANSWER — the
+         sub-app records the miss and stops asking. Staying silent on a hero
+         with no uploaded art would leave its request flag set with no result,
+         and the guard there would never let it ask again if the art later
+         arrived — but worse, an unanswered request looks identical to a
+         dropped one, which is how a retry loop gets written next. */
+    if (d.type === 'warpath:heroart:req') {
+      const _hid = String(d.id || '');
+      let _art = null;
+      try {
+        if (_hid && typeof getCardArt === 'function') {
+          _art = getCardArt(_hid) || getCardArt('h_' + _hid) || null;
+          /* Not resident yet: kick the same on-demand loader _heroPortraitHtml
+             uses, so a second request after it lands resolves. */
+          if (!_art && typeof _lazyLoadCardArt === 'function') {
+            try { _lazyLoadCardArt(_hid, true); } catch (e) {}
+            try { _lazyLoadCardArt('h_' + _hid, true); } catch (e) {}
+          }
+        }
+      } catch (e) { _art = null; }
+      try { _WP.frame.contentWindow.postMessage({ type: 'warpath:heroart', id: _hid,
+                                                  art: (typeof _art === 'string' ? _art : null) },
+                                                window.location.origin); } catch (e) {}
+      return;
+    }
     if (d.type === 'warpath:battle') { warpathStartBattle(d.battle); return; }
     if (d.type === 'warpath:done')   { _warpathClose(); warpathClaimGrants(); return; }
   };

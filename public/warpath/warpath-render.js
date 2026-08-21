@@ -3297,6 +3297,28 @@ function drawCamp(ctx, x, y, z, col, a) {
    banner. The first version's cloak was a bowtie — the quadratic bulged the
    wrong way and at a distance the hero read as a white X. */
 function drawHero(ctx, x, y, z, col, a) {
+  /* 🦸 THE PLAYER'S OWN ARTWORK, when the parent has sent it.
+     🔴 THE PLINTH, THE GLOW AND THE BANNER ARE KEPT. The note above this
+        function is a legibility argument, not a decoration: a hero has to be
+        findable in one glance on a busy painted map. The sprite replaces the
+        CLOAK SILHOUETTE and nothing else, so a hero drawn as art is still
+        seated on the same dark plinth, still haloed in the player's colour
+        and still flying the same banner.
+     ⚠ CONTAIN, NOT COVER. Hero art is not square — a `drawImage` stretched to
+       a fixed box gives a different aspect per hero, and at this size that
+       reads as the wrong character rather than as a squashed one. */
+  if (a && a.img && a.img.complete && a.img.naturalWidth > 0) {
+    var _s = z * 0.52;
+    ctx.fillStyle = 'rgba(8,6,5,0.50)';
+    ctx.beginPath(); ctx.ellipse(x + _s * 0.24, y + _s * 0.04, _s * 0.66, _s * 0.22, 0, 0, Math.PI * 2); ctx.fill();
+    glow(ctx, x, y - _s * 0.72, _s * 2.0, 'rgba(' + hex(col).join(',') + ',0.30)');
+    var _box = _s * 2.0;
+    var _r = Math.min(_box / a.img.naturalWidth, _box / a.img.naturalHeight);
+    var _w = a.img.naturalWidth * _r, _h = a.img.naturalHeight * _r;
+    try { ctx.drawImage(a.img, x - _w / 2, y + _s * 0.06 - _h, _w, _h); } catch (e) {}
+    banner(ctx, x + _s * 0.60, y, _s * 1.8, col);
+    return;
+  }
   var s = z * 0.52;
   ctx.fillStyle = 'rgba(8,6,5,0.50)';
   ctx.beginPath(); ctx.ellipse(x + s * 0.24, y + s * 0.04, s * 0.66, s * 0.22, 0, 0, Math.PI * 2); ctx.fill();

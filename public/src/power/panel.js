@@ -456,11 +456,14 @@ const CSS = `
    topbarh+6 put the ARMY/CAMP/SYNC/GOV launchers straight through this panel's
    own title bar. */
 #ncpwr{position:absolute;top:calc(var(--topbarh) + 72px);right:256px;z-index:8;width:min(340px,calc(100vw - 300px));
-  max-height:calc(100vh - var(--topbarh) - 92px);overflow-y:auto;background:var(--panel-solid);
+  /* -172, not -92: #buildbar's top is innerHeight-92 (see node-city
+     index.html:642), so -92 put the last 72px of this panel UNDER the dock and
+     the end of the scroll could not be reached. This clears the dock + 8px. */
+  max-height:calc(100vh - var(--topbarh) - 172px);overflow-y:auto;background:var(--panel-solid);
   border:1px solid var(--edge);border-radius:10px;padding:10px 12px 12px;color:var(--bone);
   font-size:12px;line-height:1.35;box-shadow:0 8px 28px rgba(0,0,0,.55);}
 @media (max-width:980px){ #ncpwr{top:calc(var(--topbarh) + 108px);right:12px;width:min(340px,92vw);z-index:9;
-  max-height:calc(100vh - var(--topbarh) - 128px);} }
+  max-height:calc(100vh - var(--topbarh) - 208px);} }
 #ncpwr::-webkit-scrollbar{width:8px}#ncpwr::-webkit-scrollbar-thumb{background:var(--edge);border-radius:4px}
 #ncpwr .pwhead{display:flex;align-items:center;gap:8px;margin-bottom:8px}
 #ncpwr .pwtitle{font-weight:700;letter-spacing:.06em;font-size:13px;flex:1}

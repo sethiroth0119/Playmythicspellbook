@@ -298,12 +298,15 @@ function row(ico, label, val, active) {
 
 const CSS = `
 #ncpol{position:absolute;top:calc(var(--topbarh) + 72px);left:620px;z-index:8;width:min(348px,calc(100vw - 660px));
-  max-height:calc(100vh - var(--topbarh) - 92px);overflow-y:auto;background:var(--panel-solid);
+  /* -172, not -92: #buildbar's top is innerHeight-92 (see node-city
+     index.html:642), so -92 put the last 72px of this panel UNDER the dock and
+     the end of the scroll could not be reached. This clears the dock + 8px. */
+  max-height:calc(100vh - var(--topbarh) - 172px);overflow-y:auto;background:var(--panel-solid);
   border:1px solid var(--edge);border-radius:10px;padding:10px 12px 12px;color:var(--bone);
   font-size:12px;line-height:1.35;box-shadow:0 8px 28px rgba(0,0,0,.55);}
 @media (max-width:1400px){ #ncpol{left:260px;width:min(348px,calc(100vw - 300px));z-index:9;} }
 @media (max-width:980px){ #ncpol{top:calc(var(--topbarh) + 108px);left:12px;width:min(348px,92vw);z-index:9;
-  max-height:calc(100vh - var(--topbarh) - 128px);} }
+  max-height:calc(100vh - var(--topbarh) - 208px);} }
 #ncpol::-webkit-scrollbar{width:8px}#ncpol::-webkit-scrollbar-thumb{background:var(--edge);border-radius:4px}
 #ncpol .plhead{display:flex;align-items:center;gap:8px;margin-bottom:6px}
 #ncpol .pltitle{font-weight:700;letter-spacing:.06em;font-size:13px;flex:1}

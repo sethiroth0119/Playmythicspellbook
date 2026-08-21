@@ -72,6 +72,109 @@ let TOOLS = null, TOK = null;   // /src/netdrag/rig.js — the shared arbiter
 const M = () => WATER.mains;
 
 export function repaintNext() { dirty = true; lastSig = ''; }
+
+/* ════════════════════════════════════════════════════════════════════════
+   🌊 THE FLOW — 'show water going through the pipes if they are connected'.
+   ------------------------------------------------------------------------
+   The trunk already tells the player whether a run is LIVE (a waterworks is
+   on this component) by drawing it cyan rather than dead slate. That is a
+   colour a player has to be told about. Motion is not: a main with water in
+   it moves, and one without it sits still.
+
+   🔴 DIRECTION IS DERIVED, NOT DECORATIVE. The dashes travel AWAY from the
+      waterworks, because that is where the water is going. A BFS over the
+      pipe graph from every tile a well is attached to gives each pipe tile a
+      hop count; an edge then flows from its lower end to its higher one.
+      Dashes that all drifted one way on screen would be a screensaver — and
+      worse, would point the wrong way on half the network, which is a
+      readout that lies.
+
+   ⚠ COST. This is the ONE thing in this file that repaints without the
+     picture having changed, so it is gated hard: `flowLive` is recomputed by
+     paint() itself and the frame loop refuses to schedule unless the mesh is
+     visible AND some component is live. Toggle the layer off, or lose the
+     last waterworks, and the loop stops on the next frame. It also throttles
+     to FLOW_HZ rather than running at display rate — the dashes move 1.6
+     tiles a second and nothing about that needs 60 fps.
+   ════════════════════════════════════════════════════════════════════════ */
+const FLOW_HZ = 15;
+let flowPhase = 0;      // tiles travelled, wrapped to the dash period
+let flowLive = false;   // is there anything to animate at all?
+let flowReq = 0;        // rAF handle, 0 when not scheduled
+let flowAt = 0;         // timestamp of the last frame we actually drew
+
+function flowStop() {
+  if (flowReq) { try { cancelAnimationFrame(flowReq); } catch (e) {} flowReq = 0; }
+  flowAt = 0;
+}
+function flowSchedule() {
+  if (flowReq || !flowLive) return;
+  try { flowReq = requestAnimationFrame(flowFrame); } catch (e) { flowReq = 0; }
+}
+function flowFrame(now) {
+  flowReq = 0;
+  if (!flowLive) { flowAt = 0; return; }
+  const t = typeof now === 'number' ? now : 0;
+  /* ⚠ CLAMPED. A backgrounded tab hands back a dt of many seconds on the
+     first frame after it wakes; without the clamp the dashes teleport, which
+     reads as the network having glitched rather than as time having passed. */
+  const dt = flowAt ? Math.min(0.2, Math.max(0, (t - flowAt) / 1000)) : 0;
+  if (dt > 0 && dt < 1 / FLOW_HZ) { flowSchedule(); return; }   // throttle
+  flowAt = t;
+  if (dt > 0) {
+    const period = Math.max(0.2, M().flowDash) * 2;
+    flowPhase = (flowPhase + dt * Math.max(0, M().flowSpeed)) % period;
+    dirty = true;                    // the picture DID change — bypass the sig gate
+    paint();
+  }
+  flowSchedule();
+}
+
+/* Hops from the nearest waterworks, over the pipe graph. A function of the
+   network and the well list, both of which are already in paint()'s
+   signature, so it is rebuilt exactly when the picture is. */
+function flowField(st, set) {
+  const d = Object.create(null);
+  if (!st || !st.wells || !st.wells.length) return d;
+  const R = M().reach;
+  const q = [];
+  for (const w of st.wells) {
+    if (w.comp < 0) continue;
+    /* The same reach rule attachOf() uses, so 'which pipe does this
+       waterworks feed' has one answer in this package and not two. */
+    for (let dx = -R; dx <= R; dx++) for (let dz = -R; dz <= R; dz++) {
+      if (Math.abs(dx) + Math.abs(dz) > R) continue;
+      const k = (w.x + dx) + ',' + (w.z + dz);
+      if (set.has(k) && d[k] === undefined) { d[k] = 0; q.push(k); }
+    }
+  }
+  for (let i = 0; i < q.length; i++) {
+    const k = q[i]; const p = parse(k); const n = d[k] + 1;
+    const nb = [(p.x + 1) + ',' + p.z, (p.x - 1) + ',' + p.z,
+                p.x + ',' + (p.z + 1), p.x + ',' + (p.z - 1)];
+    for (const m of nb) if (set.has(m) && d[m] === undefined) { d[m] = n; q.push(m); }
+  }
+  return d;
+}
+
+/* One trunk edge with the moving dash over it. `a` is always the END NEAREST
+   THE WATERWORKS — the caller orders them — so a negative dash offset walks
+   the dashes from a to b, i.e. away from the source. */
+function flowEdge(a, b) {
+  const w = Math.max(1, PX * 0.26) * Math.max(0.1, M().flowWidth);
+  const dash = Math.max(0.2, M().flowDash) * PX;
+  cx2.save();
+  cx2.strokeStyle = WATER.col.pipeFlow;
+  cx2.lineWidth = w;
+  cx2.lineCap = 'butt';
+  try { cx2.setLineDash([dash, dash]); } catch (e) {}
+  cx2.lineDashOffset = -flowPhase * PX;
+  cx2.beginPath();
+  cx2.moveTo(px(a.x), px(a.z));
+  cx2.lineTo(px(b.x), px(b.z));
+  cx2.stroke();
+  cx2.restore();
+}
 export function isArmed() { return armed; }
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -576,6 +679,38 @@ function paint() {
     }
     dot(a, col, W * 0.62);
   }
+
+  /* 🌊 THE MOVING WATER, over the trunks. A SECOND PASS rather than an extra
+     stroke inside the trunk loop, because every dash has to be drawn with the
+     same phase and the same dash array — interleaving it would mean setting
+     and clearing the dash pattern once per edge for no benefit.
+     ⚠ `st.plumbed` MATTERS. Before the first solve every run would otherwise
+       animate, which tells the player their pipes work before anything has
+       checked whether they do. */
+  const carrying = !!(st && st.plumbed && live.size);
+  if (carrying) {
+    const fd = flowField(st, set);
+    for (const k of keys) {
+      if (!live.has(comp.id[k])) continue;
+      const da = fd[k];
+      if (da === undefined) continue;          // live component, unreached tile
+      const a = parse(k);
+      for (const b of [{ x: a.x + 1, z: a.z }, { x: a.x, z: a.z + 1 }]) {
+        const bk = b.x + ',' + b.z;
+        if (!set.has(bk)) continue;
+        const db = fd[bk];
+        if (db === undefined || da === db) continue;
+        /* Equal hops means the two tiles are fed from opposite directions and
+           neither leads; that edge is left still rather than given a side at
+           random. Otherwise the nearest-the-source end goes first. */
+        if (da < db) flowEdge(a, b); else flowEdge(b, a);
+      }
+    }
+  }
+  /* 🌊 ARM OR DISARM THE LOOP, from the same pass that decided whether there
+     is anything to animate. Nothing else in this file may set `flowLive`. */
+  if (carrying !== flowLive) { flowLive = carrying; if (!carrying) flowStop(); }
+  flowSchedule();
 
   /* THE DRAG PREVIEW. Ember for new tiles, red for the ones a right-drag will
      lift, and the tiles already carrying a main are drawn in neither — a

@@ -42840,6 +42840,15 @@ function animate() {
        See .gauntlet/drive-vault.mjs. */
     vaultPanel: (id) => openVaultPanel(id),
     vaultState: () => MythicCityBridge.vaultState(),
+    /* 🎬 THE SCENE ITSELF. Added for the water-flow round: /src/water paints
+       its mains onto a CanvasTexture that is never attached to the document,
+       so a driver cannot querySelector it — the only handle is the named mesh
+       (`mythic-water-mains`) on the graph. Reading that canvas with a 2D
+       context is also the ONE way to A/B an animation without the framebuffer
+       trap in .gauntlet/README.md item 6: it is a real 2D canvas, so there is
+       no preserveDrawingBuffer to lose and no render() to interleave.
+       Read-only by convention; nothing in the shipped app reads this back. */
+    scene: () => scene,
     /* 🧱 THE MESH PROBE, AND IT EXISTS BECAUSE OF ONE SPECIFIC SILENT FAILURE.
        `buildMesh` has no default arm, so a BUILDINGS row whose type is missing
        from the switch renders an EMPTY THREE.Group — an invisible building on a

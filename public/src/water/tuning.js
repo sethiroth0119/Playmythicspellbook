@@ -379,6 +379,19 @@ export const WATER = {
     // serves the plots either side of it, which is the whole reason a CS2 main
     // follows a road.
     reach: 1,
+    /* 🌊 THE FLOW ANIMATION. Tiles per second the dashes travel, the dash
+       period in tiles, and the share of the trunk width the moving dash
+       takes. Speed is DELIBERATELY SLOW: this is a readout saying 'this run
+       is carrying', not a river. At 1.6 tiles/s a 20-tile main takes about
+       12 s end to end, which is legible without pulling the eye off the map.
+       ⚠ THE ANIMATION IS NOT FREE AND IS THEREFORE GATED THREE WAYS in
+         netui.js: the mains layer must be VISIBLE, at least one component
+         must be LIVE, and the frame loop stops itself the moment either
+         stops being true. A dead network animates nothing and costs nothing,
+         which is the same contract the signature gate already keeps. */
+    flowSpeed: 1.6,
+    flowDash: 0.9,
+    flowWidth: 0.52,
     /* 🔴 THE FLOOR, AND IT IS NOT ZERO. A Water Station off the mains still has
        a yard, a tank and a tanker bay; what it loses is the network. 0.30 is a
        bite the player cannot miss and cannot mistake for weather — and the
@@ -592,6 +605,10 @@ export const WATER = {
        slate for one no waterworks can reach, and the ember the rest of this
        project uses for a refusal on the drag preview. */
     pipe:        '#6fe3f5',
+    /* 🌊 The moving half of a live main. Brighter than `pipe` so the dashes
+       read ON the trunk rather than beside it, and only ever drawn over a
+       component that has a waterworks on it — see netui.js's flow pass. */
+    pipeFlow:    '#d9fbff',
     pipeDead:    '#6b7480',
     pipeGhost:   '#ffd08a',
     pipeBad:     '#ff5f4a',

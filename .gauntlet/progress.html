@@ -5,10 +5,10 @@
 
 <script id="run-data" type="application/json">
 {
-  "updated": "2026-08-21 \u2014 Wave 4: a real bug, and the objectives",
-  "headline": "The judge found four hexes nobody can click. That goes first.",
-  "phase": "Wave 4",
-  "round": 4,
+  "updated": "2026-08-21 \u2014 Wave 4b: closing named gaps, then the function gate",
+  "headline": "Ruins loot from the real grid. Control points can win a match. Now prove nothing broke.",
+  "phase": "Wave 4b",
+  "round": 5,
   "goal": "Rebuild the battlefield as a full-field hex map \u2014 XCOM + Fire Emblem + FFT \u2014 in a post-apocalyptic world. Free camera (WASD pan, Q/E turn), five lootable ruins, three SCP-truck control points, XCOM-style move and attack arrows. Every existing battlefield function survives.",
   "bar": [
     "Sprite units and heroes stay sprites \u2014 extremely clear, high quality on the board",
@@ -105,7 +105,7 @@
     {
       "name": "Post-apocalyptic terrain",
       "state": "critiqued",
-      "note": "Three rounds each killed the previous round's named gap: relief too shallow to read, then a diorama still floating on a photograph, then four ornate braziers marking out the old rectangle in fire. The final judge ranked it far above both baselines and still refused to pass it \u2014 the whole field is painted at 19% of the value range, and the relief is a rim around a flat middle where all the units actually stand.",
+      "note": "Value range fixed \u2014 the material albedos were near-black by construction, which is why a real 49px cliff still read as flat; the light rig was never the problem. Relief moved into the middle rows where units actually stand, and height is no longer welded to rubble. Latest gap: the field still reads as 168 loose counters because every tile draws its own seam and lip even where its neighbour is flush.",
       "rounds": [
         {
           "n": 1,
@@ -127,29 +127,61 @@
         },
         {
           "n": 4,
+          "verdict": "rework",
+          "label": "seams cut every tile apart",
+          "short": "\u25d1"
+        },
+        {
+          "n": 5,
           "verdict": "run",
-          "label": "value range + the bug",
+          "label": "per-edge seams",
           "short": "\u00b7\u00b7\u00b7"
         }
       ]
     },
     {
       "name": "Ruins + loot",
-      "state": "building",
-      "note": "The requirement is identity, not similarity: looting a ruin must call the real _lootGridOpen, so the salvage grid, the drag, the rotate, and swapping your own loot into the container are literally the tombstone ones. A parallel lookalike grid is a fail however good it looks.",
+      "state": "critiqued",
+      "note": "A ruin is modelled as a tombstone that never died, using the same field names, so looting one opens the REAL _lootGridOpen \u2014 the actual salvage grid, drag, rotate-on-R, take-all, and dragging your own loot back into the container. The must-keeps were carried deliberately, including creating _salvageRun before the grid writes into it: the grid never creates it, and without it a haul silently vanishes.",
       "rounds": [
         {
           "n": 1,
+          "verdict": "rework",
+          "label": "school unidentifiable",
+          "short": "\u25d1"
+        },
+        {
+          "n": 2,
+          "verdict": "rework",
+          "label": "keep-out asymmetric for MP guest",
+          "short": "\u25d1"
+        },
+        {
+          "n": 3,
           "verdict": "run",
-          "label": "building",
+          "label": "mirrored keep-out",
           "short": "\u00b7\u00b7\u00b7"
         }
       ]
     },
     {
       "name": "SCP truck control points",
-      "state": "queued",
-      "note": "Two mechanics, not one: a score that goes up when you hold a point and down when you lose it, and a streak \u2014 two of three for three straight turns wins without touching the enemy hero. The critic has to execute the turn loop, not read it."
+      "state": "critiqued",
+      "note": "Three trucks, a score that rises when you hold and falls when you lose, and a streak that wins the match at two-of-three for three straight turns without touching the enemy hero. The tick keys on whose turn it is, not the turn number \u2014 that counter increments in two different places for single-player and multiplayer.",
+      "rounds": [
+        {
+          "n": 1,
+          "verdict": "rework",
+          "label": "double-ticks in multiplayer",
+          "short": "\u25d1"
+        },
+        {
+          "n": 2,
+          "verdict": "run",
+          "label": "local-side-only tick",
+          "short": "\u00b7\u00b7\u00b7"
+        }
+      ]
     },
     {
       "name": "XCOM telegraph",
@@ -267,6 +299,26 @@
       "t": "11:50",
       "kind": "build",
       "text": "Wave 4 launched on two disjoint regions: the terrain fixes plus that bug, and the five lootable ruins. Control points and the alternate victory follow in the same wave."
+    },
+    {
+      "t": "14:10",
+      "kind": "critic",
+      "text": "Ruins critic: the loot identity requirement passes \u2014 a structure opens the real _lootGridOpen, not a lookalike. The gap is art: four ruins carry an unmistakable icon and the school carries none, so it reads as the hospital without a cross."
+    },
+    {
+      "t": "15:05",
+      "kind": "critic",
+      "text": "Objectives critic caught exactly the trap the brief warned about, one level deeper. The tick correctly keys on WHO rather than the turn number \u2014 but in multiplayer one client runs the opponent's turn-start locally, broadcasts, and the opponent then runs its own, so the same point was banked twice."
+    },
+    {
+      "t": "15:40",
+      "kind": "critic",
+      "text": "A second ruins critic measured 400 seeds and found the fix from the previous round made things worse for the multiplayer guest: the keep-out protecting the host's framing pushed every ruin onto exactly the rows that mirror onto the guest's cropped edge. Host crops fell to 85/400, guest crops rose to 315/400 \u2014 worse than with the rule off."
+    },
+    {
+      "t": "15:55",
+      "kind": "build",
+      "text": "Wave 4b: three fixes, each re-checked by a fresh critic who has to execute rather than read. Then the function-inventory gate \u2014 an agent that lists every battlefield function that existed before this work and tests each one on the new board, because 'keep all of the functions' has to be enforceable, not aspirational."
     }
   ]
 }

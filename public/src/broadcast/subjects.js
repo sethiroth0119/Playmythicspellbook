@@ -46,6 +46,12 @@ export const DEPTS = {
      208/220/286/344) rather than picked; the nearest is Parks at 286 and 24°
      of hue is a distinguishable avatar at 28px. */
   death:   { id: 'death',   name: 'Registry & Deathcare',   ico: '🪦', hue: 262 },
+  /* 🎓 The office that runs the school ladder. hue 320 — CHECKED against the
+     sixteen above (0/12/24/36/46/54/92/130/160/176/198/208/220/262/286/344)
+     rather than picked: the nearest are Parks at 286 and Health at 344, i.e.
+     34° and 24° away, and the Registry note above establishes 24° as a
+     distinguishable avatar at 28px. */
+  edu:     { id: 'edu',     name: 'Department of Education', ico: '🎓', hue: 320 },
 };
 
 /* ── THE SUBJECT TABLE ────────────────────────────────────────────────────
@@ -90,6 +96,14 @@ export const SUBJECTS = {
      claiming both would be the feed's loudest line contradicting the vitals
      card, which is the bug the water split already fixed once. */
   deathcare:{ id: 'deathcare', label: 'Deathcare',  tag: 'deathcare',   tagsBad: ['unburied', 'graves'], tagsGood: ['restinpeace'], dept: 'death', scope: 'city', citizen: true, poles: ['bad', 'good'] },
+  /* 🏫 SCHOOL PROVISION — the ladder the city has BUILT, not what any one
+     resident studied. Kept separate from `grad` below for the same reason
+     `water` and `water_draw` are separate: this is 'there is no middle school
+     in this city', which the player fixes with a building; that is 'I
+     finished my course', which is one life and is nobody's doing. One post
+     claiming both would put a complaint and a celebration in the same
+     sentence, which is the bug the water split already fixed once. */
+  schooling:{ id: 'schooling', label: 'Schools',   tag: 'schools',     tagsBad: ['noschool', 'education'], tagsGood: ['education'], dept: 'edu', scope: 'city', citizen: true, poles: ['bad', 'good'] },
   rent:     { id: 'rent',     label: 'Rent',        tag: 'rent',        tagsBad: ['housing'], tagsGood: [],          dept: 'housing', scope: 'city',   citizen: true,  poles: ['bad'] },
   jobs:     { id: 'jobs',     label: 'Work',        tag: 'jobs',        tagsBad: ['nowork'], tagsGood: ['hiring'],           dept: 'labour',  scope: 'city',   citizen: true,  poles: ['bad', 'good'] },
   traffic:  { id: 'traffic',  label: 'Traffic',     tag: 'traffic',     tagsBad: ['commute'], tagsGood: ['commute'],          dept: 'roads',   scope: 'city',   citizen: true,  poles: ['bad', 'good'] },

@@ -575,6 +575,18 @@ const api = {
   zoneOf: (parcel) => Z.zoneOf(parcel),
   survey: () => LAST.survey,
   ladder: () => P.labourLadder(),
+  /* 🏫 SCHOOLS. `setSchooling` is the host's per-tick handover (node-city owns
+     game.tiles; this module cannot see it) and `schooling()` is the readout —
+     the cap, the missing tier and the seat factor, all from the same call the
+     graduation step gates on, so the panel and the rule cannot disagree. */
+  setSchooling: (s) => P.setSchooling(s),
+  schooling: () => P.schooling(),
+  /* 🏫 SCHOOLS. `setSchooling` is the host's per-tick handover (node-city
+     owns game.tiles; this module cannot see it) and `schooling()` is the
+     readout — the cap, the missing tier and the seat factor, from the same
+     call the graduation step gates on. */
+  setSchooling: (s) => P.setSchooling(s),
+  schooling: () => P.schooling(),
   tierMix: () => P.arrivalTierMix(),
   state: () => P.state(),
   ECON: () => D(),

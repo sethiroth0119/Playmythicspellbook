@@ -687,6 +687,44 @@ export const PHRASES = {
     },
   },
 
+  /* 🏫 SCHOOLS. `{p}` is the missing tier, named by the observer — never
+     invented here. A line that guessed which school was missing would be the
+     exact thing the {p} rule forbids. */
+  schooling: {
+    cit: {
+      bad: B(
+        ['there is no {p} in this city', 'my kid has nowhere to go after this year',
+         'we ran out of {tag} here'],
+        ['{n} of us have children with nowhere to go — this city has no {p}',
+         'the {tag} here stop {i} short and everybody knows it',
+         'you can only get so far here. There is no {p}'],
+        ['there are no {tag} in this city at all. None',
+         'nobody here can learn past what they teach themselves',
+         'we are raising a generation with no {p} to send them to']
+      ),
+      good: G(
+        ['the {tag} here go all the way up', 'my kid can go as far as they want in this city'],
+        ['I finished the whole ladder without leaving this city',
+         'the {tag} here are the reason I stayed']
+      ),
+    },
+    dept: {
+      bad: B(
+        ['the city has no {p}, so residents cannot progress past that rung'],
+        ['{n} residents are held at their current level — this city has no {p}',
+         'our {tag} ladder is {i} incomplete and stops before the qualifications employers ask for',
+         'without a {p} the city cannot staff the work it is zoning for'],
+        ['this city has no {tag} whatsoever. Every resident is self-taught and capped there',
+         'the {tag} ladder does not exist here. {n} residents cannot advance at all',
+         'until a {p} is built, nobody in this city advances']
+      ),
+      good: G(
+        ['the {tag} ladder is complete — every rung to university is standing'],
+        ['this city can teach a resident from their first year to a research post']
+      ),
+    },
+  },
+
   mood: {
     cit: {
       bad: B(

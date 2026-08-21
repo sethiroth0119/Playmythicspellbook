@@ -713,6 +713,44 @@ function fromRoster(ctx, pop) {
 
 /* 🙂 HOW IT IS GOING, personally. A mood band crossed is a real event about a
    real person, and node-city already speaks in these two numbers. */
+/* 🏫 SCHOOL PROVISION. Reads /src/demographics' own schooling() — the SAME
+   call the graduation step gates on, so the feed and the rule cannot disagree
+   about why nobody is advancing.
+   🔴 SEVERITY IS THE HEIGHT OF THE LADDER THAT IS MISSING, which is what
+      makes this actionable rather than a nag: a city with no schools at all
+      reads 1.0 and a city missing only the University reads 0.2. The same
+      complaint at the same volume for both would tell the player nothing
+      about which one to fix.
+   ⚠ `p` IS THE MISSING TIER'S OWN LABEL, taken from ECON's level table. The
+     phrases ask for it and must never guess it. */
+function fromSchools(ctx, pop) {
+  const D = DE();
+  if (!D || typeof D.schooling !== 'function') return [];
+  let s = null; try { s = D.schooling(); } catch (e) { return []; }
+  if (!s) return [];
+  let ord = null, lv = null;
+  try { const E = EC(); const ed = E && E.ECON && E.ECON.demographics && E.ECON.demographics.education;
+        if (ed) { ord = ed.order; lv = ed.levels; } } catch (e) {}
+  if (!ord || !lv) return [];
+  const top = ord.length - 1;
+  const out = [];
+  if (s.missing) {
+    const label = (lv[s.missing] && lv[s.missing].label) || s.missing;
+    const sev = Math.max(0, Math.min(1, 1 - (s.capIdx / top)));
+    out.push({ src: 'school', key: 'sch|' + s.missing,
+               subject: 'schooling', pole: 'bad', severity: sev,
+               affected: Math.round(pop * Math.max(0, Math.min(1, sev))),
+               facts: { p: label, n: num(Math.round(pop * sev)), v: pct(1 - s.capIdx / top) },
+               why: 'the city can teach to ' + s.cap + ' and has no ' + s.missing });
+  } else if (s.any) {
+    out.push({ src: 'school', key: 'sch|full',
+               subject: 'schooling', pole: 'good', severity: 0.5,
+               affected: pop, facts: { p: (lv[ord[top]] && lv[ord[top]].label) || ord[top] },
+               why: 'every rung of the school ladder is standing' });
+  }
+  return out;
+}
+
 function fromMood(ctx, pop) {
   const cz = CZ(); if (!cz || typeof cz.list !== 'function') return [];
   let rows = []; try { rows = cz.list() || []; } catch (e) { return []; }
@@ -783,9 +821,14 @@ export function observe(ctx) {
   const pop = (() => { try { return Math.max(0, +ctx.cityPop() || 0); } catch (e) { return 0; } })();
   const out = [];
   for (const ev of consumeLog(ctx, 8)) out.push(ev);
+  /* ⚠ AN OBSERVER THAT IS NOT IN THIS LIST DOES NOT EXIST. It will parse, it
+     will export, modcheck will pass it, and the feed will simply never mention
+     its subject — which is indistinguishable from the system it watches being
+     quiet. `fromSchools` was written and left out of this array for exactly
+     long enough to prove the point. */
   for (const fn of [fromCoverage, fromPower, fromWater, fromPollution,
                     fromDemographics, fromEconomy, fromForecast, fromWeather, fromMood,
-                    fromStreets, fromRoster]) {
+                    fromStreets, fromRoster, fromSchools]) {
     for (const ev of safe(fn, ctx, pop)) out.push(ev);
   }
   /* ── NORMALISE, AND FAN OUT INTO CANDIDATES ─────────────────────────────

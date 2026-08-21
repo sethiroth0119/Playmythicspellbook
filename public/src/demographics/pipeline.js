@@ -35,6 +35,44 @@ import * as A from './archetypes.js';
 import * as Z from './zones.js';
 
 const D = () => ECON.demographics;
+
+/* 🏫 WHAT THE CITY CAN TEACH. Set by the host every tick (node-city's school
+   pre-pass) and read by the graduation step below. Held here rather than
+   derived because only the host can see game.tiles — the globals trap, the
+   same shape as every other host→module handover in this codebase.
+   The identity when nothing has set it is NO SCHOOLS: `have` empty, so the
+   cap is the self-taught floor. A module that assumed a full ladder until
+   told otherwise would make every existing save briefly educated. */
+let SCHOOLS = { have: {}, seats: 0, pop: 0 };
+export function setSchooling(s) {
+  const have = (s && s.have && typeof s.have === 'object') ? s.have : {};
+  const n = (v) => (typeof v === 'number' && isFinite(v) && v > 0 ? v : 0);
+  SCHOOLS = { have, seats: n(s && s.seats), pop: n(s && s.pop) };
+  return true;
+}
+/* The cap, the pacing and the sentence the panel prints — ONE call, so the
+   rule and the readout cannot disagree about why nobody is graduating.
+   🔴 THE CAP IS THE MECHANIC. A city can teach up to the highest rung it has
+      an UNBROKEN ladder of schools for: no middle school means nobody gets
+      past elementary however many universities are standing. The rate is only
+      pacing. This is the shape /src/zombie was disarmed for lacking — build
+      the building, watch the meter move. */
+export function schooling() {
+  const dm = D();
+  const ord = A.eduOrder();
+  const cfg = (dm.education && dm.education.schooling) || { attendShare: 0.22, floorFactor: 0.06 };
+  let capIdx = 0, missing = null;
+  for (let i = 1; i < ord.length; i++) {
+    if (SCHOOLS.have[ord[i]]) capIdx = i;
+    else { missing = ord[i]; break; }
+  }
+  const students = Math.max(1, SCHOOLS.pop * Math.max(0, cfg.attendShare));
+  const any = capIdx > 0;
+  const factor = any ? Math.max(cfg.floorFactor, Math.min(1, SCHOOLS.seats / students))
+                     : cfg.floorFactor;
+  return { cap: ord[capIdx], capIdx, missing, factor, seats: SCHOOLS.seats,
+           students: Math.round(students), any };
+}
 const clamp01 = (v) => Math.max(0, Math.min(1, Number(v) || 0));
 
 const S = {
@@ -432,13 +470,20 @@ export function step(days, ctx) {
           well as an upgrade of the ones who stay. Flatmates disperse; some of
           them leave the city. Counted in `grad`, not hidden inside `out`. */
   const order = A.eduOrder();
+  /* 🏫 THE GATE. `capIdx` is the highest rung the city's own schools can carry
+     a resident to; `factor` is how fast, from seats against students.
+     ⚠ A HOUSEHOLD AT THE CAP DOES NOT GRADUATE AND DOES NOT STOP BEING A
+       STUDENT. That is the whole point: they are stuck, the education mix
+       visibly stops climbing, and the fix is a building rather than a wait. */
+  const sch = schooling();
   for (const k of Object.keys(S.co)) {
     const c = parseKey(k);
     const arch = A.archetype(c.arch);
     if (!arch || !arch.inSchool) continue;
     const i = order.indexOf(c.edu);
+    if (i < 0 || i >= sch.capIdx) continue;       // the city cannot teach past here
     const next = order[Math.min(order.length - 1, i + 1)];
-    const moved = take(k, S.co[k] * Math.min(1, dm.education.graduatePerDay * days));
+    const moved = take(k, S.co[k] * Math.min(1, dm.education.graduatePerDay * sch.factor * days));
     if (moved <= 0) continue;
     add(c.zone, 'single', next, moved);
     S.flow.grad += moved * A.avgSize(c.arch);    // people, see the eviction note

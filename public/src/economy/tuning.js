@@ -179,17 +179,37 @@ export const ECON = {
        that makes zoning a decision (zone only low-rent housing and the advanced
        industries stay unstaffed however many people arrive). */
     education: {
-      order: ['none', 'school', 'college', 'university'],
+      /* 🎓 SIX RUNGS, AND THE BOTTOM ONE IS A JOKE THE CITY TAKES SERIOUSLY.
+         The ladder used to be none → school → college → university. It is now
+         the school system a player can actually BUILD, one rung per building,
+         so 'my city has no high school' is a sentence with a fix attached.
+
+         🔴 `guru` IS THE FLOOR, NOT A GAP. It is what somebody teaches
+            themselves when the city has no schools at all — and it is a real
+            rung rather than the old `none` because a city with no schools
+            must still be able to staff its unskilled work. Nobody is
+            unemployable; they are just capped. It maps to `unskilled` for
+            exactly that reason.
+         ⚠ THE BAND COLUMN IS A MANY-TO-ONE MAP AND HAS TO BE. There are four
+           labour bands and six rungs, so three rungs share `unskilled`/
+           `skilled`. Adding a fifth band to make it one-to-one would move
+           every wage in ECON.labor and re-tune the whole employment model to
+           serve a table's tidiness. `requires` below is the exact inverse of
+           this column — both are read, neither is derived, because a future
+           band with no education of its own still has to be answerable. */
+      order: ['guru', 'elementary', 'middle', 'high', 'college', 'university'],
       levels: {
-        none:       { label: 'No schooling', short: 'None',    ico: '📕', band: 'unskilled' },
-        school:     { label: 'Schooled',     short: 'School',  ico: '📗', band: 'skilled' },
-        college:    { label: 'College',      short: 'College', ico: '📘', band: 'technical' },
-        university: { label: 'University',   short: 'Uni',     ico: '🎓', band: 'advanced' },
+        guru:       { label: 'Self-taught',   short: 'Guru',   ico: '📱', band: 'unskilled' },
+        elementary: { label: 'Elementary',    short: 'Elem',   ico: '📕', band: 'unskilled' },
+        middle:     { label: 'Middle school', short: 'Middle', ico: '📗', band: 'skilled' },
+        high:       { label: 'High school',   short: 'High',   ico: '📘', band: 'skilled' },
+        college:    { label: 'College',       short: 'Coll',   ico: '📙', band: 'technical' },
+        university: { label: 'University',    short: 'Uni',    ico: '🎓', band: 'advanced' },
       },
-      /* The minimum education a band's jobs demand. Mirrors `levels[*].band`
-         from the other side; both are read, neither is derived, because a
-         future band with no education of its own must still be answerable. */
-      requires: { unskilled: 'none', skilled: 'school', technical: 'college', advanced: 'university' },
+      /* The minimum education a band's jobs demand — the inverse of the band
+         column above, and the reason a Great Buy counter cannot be staffed by
+         a city that never built a middle school. */
+      requires: { unskilled: 'guru', skilled: 'middle', technical: 'college', advanced: 'university' },
       /* 🎒 …AND EDUCATION IS NOT FIXED AT BIRTH. A student household graduates
          at this rate per economic day and its members move UP one rung, which
          is why low-rent housing is not a dead end: it is where a city's future
@@ -201,6 +221,27 @@ export const ECON = {
            number — the whole point of low-rent zoning is that students are
            what it holds. */
       graduatePerDay: 0.012,
+      /* 🏫 …AND SCHOOLS ARE WHAT LET IT HAPPEN AT ALL.
+         `graduatePerDay` above is the rate a cohort moves up WHEN THE CITY
+         CAN TEACH THEM. What follows is the gate, and it exists because of
+         the failure /src/zombie was disarmed for: a meter that does not
+         visibly move when the player builds the thing that fixes it reads as
+         broken, and no amount of correct arithmetic behind it helps.
+
+         🔴 THE CAP IS THE MECHANIC, THE RATE IS ONLY THE PACING. A city can
+            teach up to the highest rung it has an UNBROKEN LADDER of schools
+            for — no middle school means nobody gets past elementary, however
+            many universities are standing. That is a build order with a
+            sentence attached, and it is instantly legible: the panel names
+            the missing tier.
+         `attendShare`  share of the population in education at any time; the
+                        denominator seats are measured against.
+         `floorFactor`  the rate with NO schools at all. Deliberately not 0:
+                        people teach themselves, which is exactly what the
+                        `guru` rung IS — and since the cap holds them at guru
+                        anyway, a non-zero floor costs nothing and avoids a
+                        dead city where nothing about education ever moves. */
+      schooling: { attendShare: 0.22, floorFactor: 0.06 },
     },
 
     /* ── 🔁 TENANCY TURNOVER — WHY A STUDENT DISTRICT STAYS A STUDENT DISTRICT
@@ -339,32 +380,32 @@ export const ECON = {
       resLow:     { name: 'Low Density Housing', short: 'Low Density', ico: '🏡',
                     homes: 1,  perLevel: 0.5, rentMul: 2.20,
                     bag: { family: 7, couple: 3, retired: 2, single: 1, student: 0 },
-                    eduTilt: { none: 0.45, school: 0.9, college: 1.35, university: 1.7 },
+                    eduTilt: { guru: 0.45, elementary: 0.55, middle: 0.9, high: 1.05, college: 1.35, university: 1.7 },
                     desc: 'Detached houses on their own plots. Few, large, wealthy households.' },
       resRow:     { name: 'Row Housing', short: 'Row Housing', ico: '🏘️',
                     homes: 3,  perLevel: 1.2, rentMul: 1.35,
                     bag: { family: 4, couple: 4, single: 2, retired: 2, student: 1 },
-                    eduTilt: { none: 0.8, school: 1.05, college: 1.1, university: 1.0 },
+                    eduTilt: { guru: 0.8, elementary: 0.9, middle: 1.05, high: 1.05, college: 1.1, university: 1.0 },
                     desc: 'Wall-to-wall terraces. Mid-size households at mid rents.' },
       resApt:     { name: 'Apartments', short: 'Apartments', ico: '🏢',
                     homes: 6,  perLevel: 2.5, rentMul: 0.95,
                     bag: { couple: 4, single: 4, family: 2, student: 2, retired: 2 },
-                    eduTilt: { none: 1, school: 1, college: 1, university: 1 },
+                    eduTilt: { guru: 1, elementary: 1, middle: 1, high: 1, college: 1, university: 1 },
                     desc: 'Medium-density blocks. The city\'s ordinary middle.' },
       resHigh:    { name: 'High Density Towers', short: 'Towers', ico: '🏙️',
                     homes: 14, perLevel: 6, rentMul: 0.72,
                     bag: { single: 6, couple: 4, student: 3, family: 1, retired: 1 },
-                    eduTilt: { none: 0.85, school: 1, college: 1.2, university: 1.25 },
+                    eduTilt: { guru: 0.85, elementary: 0.9, middle: 1, high: 1.05, college: 1.2, university: 1.25 },
                     desc: 'Many small households on one square. Upkeep is split so many ways that the rent is low.' },
       resMixed:   { name: 'Mixed Use', short: 'Mixed', ico: '🏬',
                     homes: 5,  perLevel: 2, rentMul: 1.10,
                     bag: { single: 4, couple: 4, student: 3, retired: 2, family: 1 },
-                    eduTilt: { none: 0.8, school: 1, college: 1.25, university: 1.3 },
+                    eduTilt: { guru: 0.8, elementary: 0.9, middle: 1, high: 1.05, college: 1.25, university: 1.3 },
                     desc: 'Retail below, homes above. The city-centre demographic.' },
       resLowRent: { name: 'Low Rent Housing', short: 'Low Rent', ico: '🏚️',
                     homes: 8,  perLevel: 3, rentMul: 0.50,
                     bag: { student: 7, single: 4, retired: 2, couple: 1, family: 1 },
-                    eduTilt: { none: 1.8, school: 1.25, college: 0.5, university: 0.18 },
+                    eduTilt: { guru: 1.8, elementary: 1.5, middle: 1.25, high: 1.0, college: 0.5, university: 0.18 },
                     desc: 'Cheap first apartments. Students and young adults who have just left home.' },
     },
 
@@ -376,7 +417,7 @@ export const ECON = {
     archetypes: {
       family:  { name: 'Families', ico: '👨‍👩‍👧', workers: 2,
                  size: [[3, 4], [4, 5], [5, 2], [6, 1]],
-                 edu: { none: 1, school: 4, college: 4, university: 2 },
+                 edu: { guru: 1, elementary: 1, middle: 2, high: 2, college: 4, university: 2 },
                  /* ⚠ THE WEALTH WEIGHTS ARE DELIBERATELY POOR AT THE TOP. They
                     decide which of households.js's three tiers an ARRIVAL joins,
                     and the high tier weights its consumption basket 2.4× and its
@@ -389,26 +430,26 @@ export const ECON = {
                  desc: 'Two earners and children. Fewer households per tile, and the cost of living is split across fewer of them — so a low-density street reads wealthy.' },
       couple:  { name: 'Couples', ico: '👫', workers: 2,
                  size: [[2, 8], [3, 2]],
-                 edu: { none: 1, school: 4, college: 4, university: 3 },
+                 edu: { guru: 1, elementary: 1, middle: 2, high: 2, college: 4, university: 3 },
                  wealth: { low: 4, mid: 6, high: 1.2 },
                  ages: { child: 0.05, young: 0.28, adult: 0.63, senior: 0.04 },
                  desc: 'Two earners, no dependants. The most mobile households in the city.' },
       single:  { name: 'Singles', ico: '🧍', workers: 1,
                  size: [[1, 9], [2, 1]],
-                 edu: { none: 2, school: 5, college: 3, university: 2 },
+                 edu: { guru: 2, elementary: 2, middle: 2, high: 3, college: 3, university: 2 },
                  wealth: { low: 6, mid: 4, high: 0.6 },
                  ages: { child: 0, young: 0.42, adult: 0.52, senior: 0.06 },
                  desc: 'One earner carrying one rent. Densest per square metre and the first to leave when work dries up.' },
       student: { name: 'Students & Young Adults', ico: '🎒', workers: 1,
                  size: [[1, 4], [2, 3], [3, 2], [4, 1]],
-                 edu: { none: 0, school: 7, college: 3, university: 0 },
+                 edu: { guru: 0, elementary: 1, middle: 3, high: 3, college: 3, university: 0 },
                  wealth: { low: 9, mid: 1, high: 0 },
                  ages: { child: 0, young: 1, adult: 0, senior: 0 },
                  inSchool: 1,
                  desc: 'Moved out of their parents\' home into a first apartment. Small households, low wealth, and an education still in progress.' },
       retired: { name: 'Retired', ico: '🧓', workers: 0,
                  size: [[1, 5], [2, 5]],
-                 edu: { none: 3, school: 4, college: 2, university: 1 },
+                 edu: { guru: 3, elementary: 2, middle: 2, high: 2, college: 2, university: 1 },
                  wealth: { low: 5, mid: 4, high: 0.7 },
                  ages: { child: 0, young: 0, adult: 0, senior: 1 },
                  desc: 'Out of the labour force. They consume, they pay rent, and they never fill a vacancy.' },

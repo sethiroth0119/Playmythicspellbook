@@ -146,7 +146,17 @@ export function wealthWeights(archId, edu) {
   const a = archetype(archId);
   const base = (a && a.wealth) || { low: 1, mid: 0, high: 0 };
   const i = eduOrder().indexOf(edu);
-  const lift = i < 0 ? 0 : i;                 // 0..3, one per education rung
+  /* 🔴 NORMALISED TO THE OLD 0..3 SPAN, AND THAT IS A BUG FIX RATHER THAN A
+     RETUNE. This was `lift = i`, i.e. the rung's INDEX — which was 0..3 while
+     the ladder had four rungs. The ladder now has six, so the same line would
+     have handed a university household a lift of 5 against the 3 that
+     ECON.demographics.wealthLift was tuned for, inflating the high-wealth
+     draw by ~67% across the whole city with nothing in the diff to show it.
+     Scaling by (rungs - 1) keeps the top of the ladder worth exactly what it
+     was worth before and makes the span independent of how many rungs a
+     future ladder has. */
+  const span = Math.max(1, eduOrder().length - 1);
+  const lift = i < 0 ? 0 : (i / span) * 3;    // 0..3, whatever the rung count
   const L = D().wealthLift;
   return {
     low:  Math.max(0, base.low  * (1 + L.low  * lift)),

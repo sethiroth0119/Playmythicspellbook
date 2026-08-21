@@ -63,7 +63,12 @@ export const DEMOG_CSS = `
 `;
 
 const TIER_COLOR = { low: '#7a6a4a', mid: '#6f8fd0', high: '#9ad17a' };
-const EDU_COLOR = { none: '#5b6376', school: '#6f8fd0', college: '#c08fd0', university: '#9ad17a' };
+/* Six rungs now. The three added hues sit BETWEEN the two they were split out
+   of rather than beside them, so the ramp still reads low-to-high left to
+   right on the stacked bar; a new colour picked for contrast alone would have
+   broken the one thing this chart communicates without a legend. */
+const EDU_COLOR = { guru: '#5b6376', elementary: '#66789e', middle: '#6f8fd0',
+                    high: '#9a8fd0', college: '#c08fd0', university: '#9ad17a' };
 const AGE_COLOR = { child: '#e0a060', young: '#6f8fd0', adult: '#9ad17a', senior: '#8fa0b8' };
 
 /* A meter with its causes under it. `v` is 0..1, `caption` says what the number

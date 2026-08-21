@@ -3666,6 +3666,55 @@ const BUILDINGS = {
   fastfood: { name: 'Fast Food',      ico: '🍔', cost: { cinder: 46, metal: 12, supplies: 6 }, pop: 2, crew: 2, powerNeed: 0.5,
               svc: { need: 'food', supply: 2.4, input: 'rations', rate: 1.20, leisure: 0.2 },
               desc: 'A hatch, a fryer and a lit menu board. Feeds far more of a block than a Food Truck for far less than a Grocery — and lifts no Morale at all, which is the whole trade.' },
+
+  /* ══ 🏫 THE SCHOOL SYSTEM — five rungs, five buildings ═══════════════════
+
+     🔴 THE LADDER MUST BE UNBROKEN. /src/demographics caps a resident at the
+     highest rung the city has a CONTINUOUS run of schools for, so an
+     Elementary School and a University with nothing between them teaches
+     nobody past elementary — the panel names the missing tier. That is the
+     mechanic; `seats` is only the pacing.
+
+     🎓 AND THE SIXTH RUNG HAS NO BUILDING ON PURPOSE. `guru` — self-taught —
+     is the floor a city sits at with no schools at all. It is a real rung
+     mapping to unskilled work, so a school-less city still staffs its farms
+     and its shop counters; what it cannot do is staff anything above them.
+
+     💱 THE PRICES ARE A LADDER OFF ONE NAMED NEIGHBOUR. `grocery` (60 / 22 /
+     8, pop 2, crew 2, powerNeed 0.6) is the city's other mid-size service
+     building that a district needs one of, and the Elementary School is that
+     row almost exactly. Each rung above it is ×1.5 on Cinder against the one
+     below, which is the same shape UPGRADE_MULT uses for levels — so the
+     ladder costs what a ladder costs and no figure here was invented.
+
+     🪑 SEATS FALL AS THE RUNGS RISE, and that is the one piece of real-world
+     shape in the table: everybody goes to primary school and a fraction go to
+     university, so a University seats fewer people for more money. A city
+     therefore needs several primaries and one university, which is the
+     footprint a player expects.
+
+     🎨 MESH REUSE, FLAGGED, as the Police Station and Containment Post do.
+     buildMesh has no default arm and a row with no case is an INVISIBLE
+     building on a paid-for tile. The three lower schools ride makeRetail —
+     low, wide, glazed, built to the property line with a marked forecourt,
+     which reads as a schoolyard — and the two higher ones ride makeOffice,
+     which is a taller block set back behind its own grounds. Bespoke
+     geometry is a follow-up, not a blocker. */
+  elemschool:{name: 'Elementary School', ico: '🖍️', cost: { cinder: 60, metal: 22, supplies: 8 }, pop: 2, crew: 2, powerNeed: 0.6,
+              school: { rung: 'elementary', seats: 40 },
+              desc: 'The first rung, and the one the whole ladder stands on. Without it nobody in this city gets past teaching themselves.' },
+  midschool:{ name: 'Middle School',    ico: '📐', cost: { cinder: 90, metal: 30, supplies: 12 }, pop: 2, crew: 2, powerNeed: 0.7,
+              school: { rung: 'middle', seats: 34 },
+              desc: 'Where a resident first becomes SKILLED labour — the band a workshop, a Great Buy counter and a transit depot all hire from.' },
+  highschool:{name: 'High School',      ico: '🏫', cost: { cinder: 135, metal: 40, supplies: 16 }, pop: 3, crew: 3, powerNeed: 0.9,
+              school: { rung: 'high', seats: 28 },
+              desc: 'Finishes the general education. Same labour band as a Middle School — what it buys is the way through to College.' },
+  college:  { name: 'College',          ico: '🎓', cost: { cinder: 200, metal: 56, supplies: 24 }, pop: 3, crew: 3, powerNeed: 1.2,
+              school: { rung: 'college', seats: 20 },
+              desc: 'Technical work starts here — labs, clinics and the refining chain. A city with no College cannot staff its own industry however many people live in it.' },
+  university:{name: 'University',       ico: '🏛️', cost: { cinder: 300, metal: 84, supplies: 36 }, pop: 4, crew: 4, powerNeed: 1.6,
+              school: { rung: 'university', seats: 14 },
+              desc: 'The top of the ladder, and the only route to ADVANCED labour — the anomaly work, the research spires and the reality lines. Seats few, costs most.' },
   cinema:   { name: 'Cinema',         ico: '🎬', cost: { cinder: 105, metal: 26, supplies: 12 }, pop: 2, crew: 2, powerNeed: 1.1,
               gen: { cinder: 0.30 },
               svc: { need: 'leisure', supply: 1.8, input: 'goods', rate: 0.55, morale: 4 },
@@ -4088,6 +4137,12 @@ const BUILD_SECTIONS = [
      those, it is where the household budget is spent and where most of a
      mature city's jobs are. Ordered as a player meets them: the everyday
      shops, then the two leisure boxes, then the licensed counter. */
+  /* 🏫 EDUCATION gets its own section rather than five more cards in Civic.
+     The ladder has to be READ AS A LADDER — the order in this list is the
+     order a city must build them in, and burying it inside 'population,
+     health and morale' would hide the one thing a player needs to know. */
+  { id: 'edu',   name: 'Education',      ico: '🎓', desc: 'Every rung a resident can climb, and each one only works if the rung below it exists. No schools at all and the city is stuck at self-taught.',
+    items: ['elemschool', 'midschool', 'highschool', 'college', 'university'] },
   { id: 'comm',  name: 'Commerce',       ico: '🏬', desc: 'Where the city spends its wages — and where most of it works. Each shop hires against its own skill band.',
     items: ['clothier', 'fastfood', 'pharmacy', 'greatbuy', 'furnistore', 'gamestore', 'cinema', 'weaponshop'] },
   { id: 'civic', name: 'Civic',          ico: '🏠', desc: 'Population, health and morale.',
@@ -4136,6 +4191,8 @@ const BUILD_ORDER = ['streetlight','farm','hydrofarm','purifier','scrapmine','fu
   'lumbercamp', 'quarry', 'fibercroft', 'sawmill', 'weavery',
   // ── 🏬 the high street (commerce round) ──
   'clothier', 'fastfood', 'pharmacy', 'greatbuy', 'furnistore', 'gamestore', 'cinema', 'weaponshop',
+  // ── 🏫 the school ladder (education round) ──
+  'elemschool', 'midschool', 'highschool', 'college', 'university',
   // ── the Ouroboros chain: the two links that made the Card Shop able to print
   'papermill', 'printworks',
   // ── the financial district: the Forge remodelled. 'forge' is BACK in this
@@ -8477,6 +8534,15 @@ function buildMesh(type, lvl, tx, tz) {
        entries are high-street brand colours; a licensed arms counter behind a
        steel shutter is the one shop on the street that should not be one. */
     case 'weaponshop': { _adopt(g, makeRetail(lvl, 0x6d6f78), true); break; }
+    /* 🏫 THE SCHOOLS. Reuse, flagged on the BUILDINGS block: the three lower
+       rungs are low wide glazed frontages with a forecourt (a schoolyard),
+       the two higher ones are set-back blocks. Every row needs an arm —
+       buildMesh has no default and a missing case is an invisible building. */
+    case 'elemschool': { _adopt(g, makeRetail(lvl, 0xe0902a), true); break; }
+    case 'midschool':  { _adopt(g, makeRetail(lvl, 0x2f7fbf), true); break; }
+    case 'highschool': { _adopt(g, makeRetail(lvl, 0x2f9e63), true); break; }
+    case 'college':    { _adopt(g, makeOffice(lvl, x, z), true); break; }
+    case 'university': { _adopt(g, makeOffice(lvl, x, z), true); break; }
     /* 🏢 tx,tz ARE PASSED, and this arm is one of only six that does it.
        makeOffice seeds its curtain-wall palette and its accent spandrel on the
        tile, so the block is a property of its PLOT rather than of the moment it
@@ -26624,6 +26690,32 @@ async function economyTick(dtMin) {
       if (s && s.ok) _wtFac = s.factor;
     }
   } catch (e) { /* the host's own water rate stands unchanged */ }
+
+  /* 🏫 THE SCHOOL PRE-PASS — same shape as the power and water ones above and
+     for the same reason: /src/demographics cannot see game.tiles (the globals
+     trap), so the host counts the schools and hands over the result.
+     ⚠ THE SAME HALF-BUILT GUARD AS ITS NEIGHBOURS. A school that is still a
+       hole in the ground teaches nobody, and a damaged one has stopped — both
+       must be invisible to the ladder or a player could cap their city on a
+       building that is not open yet.
+     `have` is a SET OF RUNGS, not a count: the cap only asks whether a tier
+     exists at all. `seats` is the count, and it is what paces the rate. */
+  try {
+    const DM = window.MythicDemographics;
+    if (DM && typeof DM.setSchooling === 'function') {
+      const have = {}; let seats = 0;
+      for (const [k, t] of Object.entries(game.tiles)) {
+        const def = BUILDINGS[t.type];
+        if (!def || !def.school || t.damaged || bldSite(t)) continue;
+        have[def.school.rung] = true;
+        seats += (Number(def.school.seats) || 0) * Math.max(1, t.lvl | 0);
+      }
+      DM.setSchooling({ have, seats, pop: cityPop() });
+    }
+  } catch (e) { /* An absent or older /src/demographics simply never learns
+                  about the schools, and its ladder then reads as "no schools"
+                  — the safe direction, and the same degradation every other
+                  pre-pass in this function promises. */ }
 
   /* 🗺 THE RESOURCE PRE-PASS — /src/resmap. Same shape as the two above it and
      for the same reason: the main loop needs a per-tile multiplier, and the

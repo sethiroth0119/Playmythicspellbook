@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The Gauntlet Ledger</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=EB+Garamond:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#070605; --ink-2:#0c0908; --panel:#110d08; --panel-2:#161009;
+  --gold:#d8b45f; --gold-hi:#f2dda2; --gold-dim:#8a7038; --gold-deep:#5c4a22;
+  --rule:rgba(216,180,95,.20); --rule-hi:rgba(216,180,95,.42);
+  --text:#cabfa9; --muted:#8b8071; --faint:#6b6255;
+  --loss:#b4553f; --loss-dim:#6d3527; --win:#d8b45f;
+  --oct:polygon(10px 0,calc(100% - 10px) 0,100% 10px,100% calc(100% - 10px),calc(100% - 10px) 100%,10px 100%,0 calc(100% - 10px),0 10px);
+  --oct-9:polygon(9px 0,calc(100% - 9px) 0,100% 9px,100% calc(100% - 9px),calc(100% - 9px) 100%,9px 100%,0 calc(100% - 9px),0 9px);
+  --oct-s:polygon(6px 0,calc(100% - 6px) 0,100% 6px,100% calc(100% - 6px),calc(100% - 6px) 100%,6px 100%,0 calc(100% - 6px),0 6px);
+  --disp:"Cinzel",Georgia,"Times New Roman",serif;
+  --body:"EB Garamond",Georgia,"Times New Roman",serif;
+}
+html{background:var(--ink)}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--ink); color:var(--text);
+  font-family:var(--body); font-size:17px; line-height:1.62;
+  -webkit-font-smoothing:antialiased;
+  background-image:
+    radial-gradient(120% 70% at 50% -10%, rgba(120,88,34,.16), transparent 62%),
+    radial-gradient(90% 55% at 50% 108%, rgba(84,60,24,.10), transparent 60%);
+  background-attachment:fixed;
+}
+.wrap{max-width:1120px;margin:0 auto;padding:0 24px 96px}
+
+/* ── masthead ─────────────────────────────────────────────── */
+.mast{padding:64px 0 30px;text-align:center;position:relative}
+.kicker{font-family:var(--disp);font-size:11px;letter-spacing:.44em;
+  color:var(--gold-dim);text-transform:uppercase;margin:0 0 20px}
+h1{font-family:var(--disp);font-weight:700;font-size:clamp(38px,7vw,68px);
+  letter-spacing:.10em;margin:0;line-height:1.04;
+  background:linear-gradient(178deg,#fbeec4 8%,var(--gold) 46%,#9b7c33 92%);
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+  filter:drop-shadow(0 2px 0 rgba(0,0,0,.65))}
+.dek{font-family:var(--disp);font-size:12px;letter-spacing:.30em;
+  text-transform:uppercase;color:var(--muted);margin:18px 0 0}
+.diamond{display:flex;align-items:center;gap:14px;justify-content:center;margin:26px auto 0;max-width:440px}
+.diamond::before,.diamond::after{content:"";height:1px;flex:1;
+  background:linear-gradient(90deg,transparent,var(--rule-hi),transparent)}
+.diamond i{width:7px;height:7px;background:var(--gold);rotate:45deg;flex:none;
+  box-shadow:0 0 10px rgba(216,180,95,.55)}
+
+/* ── tally ────────────────────────────────────────────────── */
+.tally{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+  gap:14px;margin:38px 0 6px}
+.stat{background:linear-gradient(180deg,var(--gold-dim),#2c2211);
+  clip-path:var(--oct);padding:20px 18px;text-align:center;position:relative;isolation:isolate}
+.stat::before{content:"";position:absolute;inset:1px;z-index:-1;clip-path:var(--oct-9);
+  background:linear-gradient(180deg,#1b1409,var(--panel))}
+.stat b{display:block;font-family:var(--disp);font-size:40px;font-weight:700;
+  color:var(--gold-hi);line-height:1;text-shadow:0 2px 6px rgba(0,0,0,.7)}
+.stat span{display:block;font-family:var(--disp);font-size:10px;letter-spacing:.24em;
+  text-transform:uppercase;color:var(--muted);margin-top:10px}
+
+/* ── section headings ─────────────────────────────────────── */
+h2{font-family:var(--disp);font-size:13px;font-weight:600;letter-spacing:.34em;
+  text-transform:uppercase;color:var(--gold);margin:64px 0 6px;
+  display:flex;align-items:center;gap:16px}
+h2::after{content:"";height:1px;flex:1;background:linear-gradient(90deg,var(--rule-hi),transparent)}
+.hint{color:var(--faint);font-size:14px;font-style:italic;margin:0 0 22px}
+
+/* ── timeline matrix ──────────────────────────────────────── */
+.tl{width:100%;border-collapse:collapse;font-size:14px}
+.tl th{font-family:var(--disp);font-size:10px;letter-spacing:.22em;text-transform:uppercase;
+  color:var(--muted);font-weight:400;text-align:left;padding:0 12px 12px;
+  border-bottom:1px solid var(--rule)}
+.tl th.rd{text-align:center;width:172px;color:var(--gold-dim)}
+.tl td{padding:13px 12px;border-bottom:1px solid rgba(216,180,95,.09);vertical-align:middle}
+.tl td.u{font-family:var(--disp);font-size:13px;letter-spacing:.06em;color:var(--text)}
+.tl td.u em{display:block;font-family:var(--body);font-style:normal;font-size:12px;
+  color:var(--faint);letter-spacing:0;margin-top:2px}
+.cell{text-align:center}
+.meter{display:block;height:5px;background:rgba(255,255,255,.06);position:relative;margin:8px auto 0;width:132px}
+.meter i{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,var(--loss-dim),var(--loss))}
+.meter.near i{background:linear-gradient(90deg,#6d5a24,var(--gold))}
+.meter b{position:absolute;top:-4px;bottom:-4px;width:2px;margin-left:-1px;
+  background:var(--gold-hi);opacity:.9;box-shadow:0 0 5px rgba(242,221,162,.5)}
+.sc{font-family:var(--disp);font-size:15px;color:var(--text)}
+.sc.bad{color:var(--loss)}
+.sc small{color:var(--faint);font-size:11px;letter-spacing:.06em}
+.seal{display:inline-block;font-family:var(--disp);font-size:10px;letter-spacing:.20em;
+  color:#0a0806;background:linear-gradient(180deg,var(--gold-hi),var(--gold-dim));
+  padding:5px 12px;clip-path:var(--oct-s);font-weight:700}
+.na{color:#3d382f}
+
+/* ── unit panels ──────────────────────────────────────────── */
+.unit{background:linear-gradient(180deg,rgba(138,112,56,.75),rgba(46,36,18,.75));
+  clip-path:var(--oct);margin:16px 0;position:relative;isolation:isolate}
+.unit::before{content:"";position:absolute;inset:1px;z-index:-1;clip-path:var(--oct-9);
+  background:linear-gradient(180deg,#171009,var(--ink-2))}
+.uhead{display:flex;align-items:baseline;gap:16px;flex-wrap:wrap;
+  padding:22px 26px;border-bottom:1px solid var(--rule);
+  background:linear-gradient(180deg,rgba(216,180,95,.055),transparent)}
+.uhead h3{font-family:var(--disp);font-size:19px;font-weight:600;letter-spacing:.10em;
+  color:var(--gold-hi);margin:0}
+.uid{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;
+  color:var(--faint);letter-spacing:.02em}
+.ublurb{flex:1 1 100%;font-size:14px;color:var(--muted);font-style:italic;margin:2px 0 0}
+.pill{margin-left:auto;font-family:var(--disp);font-size:10px;letter-spacing:.18em;
+  text-transform:uppercase;padding:6px 13px;clip-path:var(--oct-s);white-space:nowrap}
+.pill.open{color:var(--loss);background:rgba(180,85,63,.13);
+  box-shadow:inset 0 0 0 1px rgba(180,85,63,.34)}
+.pill.won{color:#0a0806;background:linear-gradient(180deg,var(--gold-hi),var(--gold-dim));font-weight:700}
+
+.rnd{padding:8px 26px 24px}
+.rlabel{font-family:var(--disp);font-size:10px;letter-spacing:.26em;text-transform:uppercase;
+  color:var(--gold-dim);margin:20px 0 0;display:flex;align-items:center;gap:12px}
+.rlabel::after{content:"";height:1px;flex:1;background:var(--rule)}
+.crit{margin:16px 0 0;padding:0 0 0 20px;border-left:2px solid var(--loss-dim)}
+.crit.w{border-left-color:var(--gold-deep)}
+.cmeta{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:9px}
+.vd{font-family:var(--disp);font-size:10px;letter-spacing:.18em;padding:4px 10px;clip-path:var(--oct-s)}
+.vd.l{color:#f0c3b5;background:rgba(180,85,63,.2);box-shadow:inset 0 0 0 1px rgba(180,85,63,.4)}
+.vd.w{color:var(--gold-hi);background:rgba(216,180,95,.14);box-shadow:inset 0 0 0 1px rgba(216,180,95,.36)}
+.who{font-family:var(--disp);font-size:10px;letter-spacing:.20em;text-transform:uppercase;color:var(--faint)}
+.sv{font-family:var(--disp);font-size:13px;color:var(--muted)}
+.sv b{color:var(--text)}
+.gap{margin:0;color:var(--text);font-size:16px;line-height:1.68;
+  hyphens:auto;overflow-wrap:break-word}
+.gap code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.83em;
+  color:var(--gold);background:rgba(216,180,95,.075);padding:1px 5px;
+  border-radius:2px;overflow-wrap:break-word}
+.verb{font-family:var(--disp);font-size:9px;letter-spacing:.2em;text-transform:uppercase;
+  color:#61594a;margin:0 0 7px}
+
+/* ── integration ──────────────────────────────────────────── */
+.ipass{background:linear-gradient(180deg,rgba(138,112,56,.55),rgba(46,36,18,.55));
+  clip-path:var(--oct);padding:8px 26px 26px;margin:16px 0;position:relative;isolation:isolate}
+.ipass::before{content:"";position:absolute;inset:1px;z-index:-1;clip-path:var(--oct-9);
+  background:linear-gradient(180deg,#150f08,var(--ink-2))}
+.ientry{display:grid;grid-template-columns:104px 1fr;gap:18px;padding:18px 0;
+  border-bottom:1px solid rgba(216,180,95,.09)}
+.ientry:last-child{border-bottom:0}
+.itag{font-family:var(--disp);font-size:9px;letter-spacing:.18em;text-align:center;
+  padding:5px 6px;clip-path:var(--oct-s);height:fit-content;margin-top:3px}
+.itag.FIXED{color:#0a0806;background:linear-gradient(180deg,var(--gold-hi),var(--gold-dim));font-weight:700}
+.itag.CHECKED{color:var(--gold);background:rgba(216,180,95,.1);box-shadow:inset 0 0 0 1px rgba(216,180,95,.3)}
+.itag.CLEAN{color:var(--muted);background:rgba(255,255,255,.04);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}
+.ientry h4{font-family:var(--disp);font-size:14px;font-weight:600;letter-spacing:.05em;
+  color:var(--gold-hi);margin:0 0 6px}
+.ientry p{margin:0;font-size:15px;color:var(--muted);line-height:1.6}
+.ientry code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.82em;
+  color:var(--gold);background:rgba(216,180,95,.075);padding:1px 5px;border-radius:2px}
+
+footer{margin-top:70px;padding-top:26px;border-top:1px solid var(--rule);
+  text-align:center;font-family:var(--disp);font-size:10px;letter-spacing:.22em;
+  text-transform:uppercase;color:#4b443a}
+
+@media (max-width:720px){
+  .wrap{padding:0 16px 64px}
+  .uhead,.rnd,.ipass{padding-left:18px;padding-right:18px}
+  .pill{margin-left:0}
+  .ientry{grid-template-columns:1fr;gap:8px}
+  .itag{justify-self:start;padding-left:12px;padding-right:12px}
+  .tlwrap{overflow-x:auto}
+}
+</style>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     THE GAUNTLET LEDGER — docs/gauntlet-progress.html
+
+     ⚠ APPEND ONLY. Each round the integrator adds ONE object to the "rounds"
+     array in the JSON block below. Never edit and never delete an earlier
+     round: the whole point of this page is that the improvement between
+     rounds stays legible, and a rewritten history shows none.
+
+     Every "gap" string is a critic's own words, copied VERBATIM. Do not
+     summarise, tidy or shorten them — a paraphrased critique is a critique
+     you can no longer check the next round's work against. Backtick spans in
+     that text are rendered as <code> at paint time; the text itself is
+     untouched.
+
+     Self-contained by design: no images, no scripts, no data beyond this
+     file. It must open correctly straight off disk.
+     ═══════════════════════════════════════════════════════════════════════ -->
+</head>
+<body>
+
+<script type="application/json" id="ledger">
+{
+ "units": [
+  {
+   "id": "u1-keep-foundation",
+   "name": "Keep Foundation",
+   "blurb": "The shared hub shell — top bar, plaques, background grade."
+  },
+  {
+   "id": "u2-hub-tiles",
+   "name": "Hub Tiles",
+   "blurb": "The portal tile: art panel, title type, size steps."
+  },
+  {
+   "id": "u3-main-menu-comp-a",
+   "name": "Main Menu (Comp A)",
+   "blurb": "The standalone painted main menu and its furniture."
+  },
+  {
+   "id": "u4-dispatch-and-warpath",
+   "name": "Dispatch & Warpath",
+   "blurb": "Herald's Dispatch feed, its footer and pager."
+  },
+  {
+   "id": "u5-motion",
+   "name": "Motion",
+   "blurb": "Page-to-page transitions and the sub-hub entrance."
+  },
+  {
+   "id": "u6-one-back-button",
+   "name": "One Back Button",
+   "blurb": "A single back control across every screen."
+  }
+ ],
+ "rounds": [
+  {
+   "n": 1,
+   "won": [],
+   "open": [
+    "u1-keep-foundation",
+    "u2-hub-tiles",
+    "u3-main-menu-comp-a",
+    "u4-dispatch-and-warpath",
+    "u5-motion",
+    "u6-one-back-button"
+   ],
+   "integration": [
+    {
+     "tag": "FIXED",
+     "head": "Blank sub-hubs (u5).",
+     "body": "Every entrance rule in hub-transitions.css was one animation, <code>from{opacity:0; translate:…}</code> under <code>animation-fill-mode: backwards</code>. <code>backwards</code> also holds the from-state while an animation is merely <em>pending</em>, and in the mandated verification environment the animations are created but never tick — playState <code>running</code>, currentTime <code>0</code>, forever. So <code>opacity:0</code> was held forever and four hubs rendered as background art plus a breadcrumb. Split into two components per element: movement keeps <code>backwards</code>, the opacity ramp runs with no fill-mode and a non-zero delay so a frozen clock lands in the <em>before</em> phase. Recorded as R1b in the file's rules header."
+    },
+    {
+     "tag": "CHECKED",
+     "head": "All four hubui sheets are linked.",
+     "body": "<code>hub-keep.css</code>, <code>hub-tiles.css</code>, <code>hub-chrome.css</code>, <code>hub-transitions.css</code> — all present at index.html:223407-223410 with the <code>?v=120w7</code> buster. No dead sheets this round."
+    },
+    {
+     "tag": "CHECKED",
+     "head": "No duplicate rules fighting.",
+     "body": "Ten selectors are declared in more than one sheet, all of them <code>hub-keep</code> × <code>hub-transitions</code> on the same elements — and not one shares a property. hub-keep owns the rest look, hub-transitions owns <code>animation</code>. The separation holds."
+    },
+    {
+     "tag": "CHECKED",
+     "head": "Eight pages render, plus reduced motion.",
+     "body": "main, battle, forge, exchange, codex, field, arcanum, cardshop — and battle again under forced <code>prefers-reduced-motion</code>, which had failed identically. Battle Hall went 11.4 / 195 colours → 15.1 / 623, matching a run with the sheet removed. Locked tiles kept their dimmed rest state, so the opacity split did not step on R3."
+    },
+    {
+     "tag": "CLEAN",
+     "head": "<code>node _synckcheck.mjs</code>",
+     "body": "All scripts clean."
+    }
+   ],
+   "critiques": {
+    "u1-keep-foundation": [
+     {
+      "verdict": "LOSES",
+      "score": 8.2,
+      "bar": 9,
+      "gap": "The top bar's three plaque types do not share a height, so the bar has no baseline rhythm. Measured at 1920x993: `.keep-tab` = 41px tall, `.keep-glyph-btn` (music) = 41x41, but `.hub-currency-rail` = 374x37. In comp-hub.html all three are one band — `.tab{height:44px}` with a 42px `.tab-in`, `.plaque` 620x44 with a 42px `.plaque-in`, `.glyph-btn` 44x44 — cut from one piece of metal, which is exactly what hub-keep.css's own §C4 comment claims to do. In our render the speaker octagon is visibly taller than the player strip it sits beside, and the player strip is shorter than the two tabs opposite it, so the group reads as a lightweight status line floating between plaques instead of the third plaque in a row. The whole bar is also ~7% under the comp (41 vs 44), which is why the comp's chrome feels more substantial at a glance. Fix: `html body .keep-hud .hub-currency-rail:not(#keep-none)` currently sets only `padding:1px 3px` and takes its height from pill content — give it an explicit `height:44px` with the `::before` inner face at `inset:1px` (42px), and lift `.keep-tab` / `.keep-glyph-btn` from 41 to the comp's 44/42. Three plaques, one height, one band."
+     },
+     {
+      "verdict": "LOSES",
+      "score": 8,
+      "bar": 8.5,
+      "gap": "§3 Background. The shell applies a per-hub `--keep-bg-filter` and claims in its own comment that \"the RESULT is uniform: every plate ends up on the same warm near-black.\" Measured, it is not — and it is not warm. Sampling the left gutter (x20-300, y300-900) of each rendered hub against the comp: comp = mean 9.6, rgb [11,9,7] (R−B = 4 at low luminance, i.e. distinctly warm). Live: Forge = mean 20.9, rgb [21,20,19] — more than double the comp's ground and effectively NEUTRAL GREY (R−B = 1), which is the one thing §1 forbids by name; Exchange = mean 0.8, rgb [0,0,0] — the painted plate is crushed out of existence, which fights the hard requirement to keep every background image; Arcanum = mean 14.1, rgb [21,12,6]. In the title band (y80-230) the same spread runs 3.9 (Codex) → 12.0 (Battle) → 23.4 (Arcanum) against the comp's 12.7, with peak highlights of 229 on Exchange vs the comp's 60. The visible consequence: on Arcanum the subtitle and the diamond rule sit on a lit carved arch and nearly disappear; on Forge the largest area of the screen is flat cold grey with the plate's burnt-in English signage (\"FREEDOM GUNS AMMO\", \"THANK YOU FOR YOUR BUS…\") legible at UI size, competing with the Cinzel type — the comp's plate carries no text at all. The fix is not more per-hub `brightness()` guessing. The `::before` top scrim fades to zero alpha by 30% of viewport height, which on a 993px viewport is ABOVE the title block, so the title band is at the mercy of the plate. Extend the top scrim through the title block and give it a floor — e.g. `rgba(9,7,5,.72) 0%, rgba(9,7,5,.62) 22%, rgba(9,7,5,.45) 34%, rgba(9,7,5,0) 46%` — add a warm multiply layer (`rgba(26,18,9,.30)` or `sepia()` applied to the wash rather than the plate) so the ground is warm regardless of plate temperature, and then walk the per-hub `brightness()` values back toward the comp's `.80` so Exchange and Codex stop being crushed to dead black. One recipe, uniform text contrast, art still visible on all six."
+     }
+    ],
+    "u2-hub-tiles": [
+     {
+      "verdict": "LOSES",
+      "score": 7.5,
+      "bar": 9,
+      "gap": "The art panel — the one thing §3 exists for — is empty for the first seconds of every visit and often never fills. HUB_TILE_ART (public/index.html:115027-115075) points every tile at full-resolution background plates (Combatbackground.png 1.8 MB, warmap.png 2.2 MB, vs-screen-bg.png 2.2 MB …) rendered into a 289x178 panel, with loading=\"lazy\". That is ~10 MB of PNG per sub-hub and ~40 MB across the six. On a cold cache the comp-parity render only arrives at a 40 s virtual-time budget, and even then 2 of 7 Battle Hall panels were still blank; at the mandated budget the panels are dark wells with a gold hairline and nothing inside — the \"icon floating in an empty well\" the clause forbids, reached from the other direction. Fix: bake downscaled crops (600x356 webp, <80 KB) under public/assets/hubtiles/, key HUB_TILE_ART to those (keeping _hubTileArtUrl override precedence), drop loading=\"lazy\" on above-the-fold tiles, and give .hub-portal-art a warm painted CSS ground so the pre-load rest state still reads as a stone plaque rather than a hole."
+     },
+     {
+      "verdict": "LOSES",
+      "score": 8,
+      "bar": 9,
+      "gap": "The title size-step fires two characters too early, so roughly half of every hub's tiles are set at 23px where the comp sets 26px — and the sizes jitter within a single row. index.html:115141 does `_nameLen >= 16 ? is-xlong : _nameLen >= 12 ? is-long`. I measured the real fit: with the step classes stripped at runtime on Forge, every title up to 14 characters reports scrollWidth == clientWidth (298/298) at 26px — i.e. it fits on one line with room to spare. Only \"Emergency Broadcast\" (19) actually overflows (411/298). The comp agrees: its own `.tile-name.long` is applied to DAILY CHALLENGE (15), and QUICK BATTLE (12) is left at full 26px. The result on screen is Forge row 1 reading THE LAB (26) / DECK BUILDER (23) / PACK OPENING (23) / EMERGENCY BROADCAST (19), where the comp holds one size across the row. Ragged type across a row is exactly what makes a menu read as auto-generated rather than art-directed. Fix: raise `is-long` to `>= 15` and `is-xlong` to `>= 18`; nothing in the CSS needs to change."
+     }
+    ],
+    "u3-main-menu-comp-a": [
+     {
+      "verdict": "LOSES",
+      "score": 8,
+      "bar": 9,
+      "gap": "The four-layer grade stack plus the vignette crushes the painted plate, so ~60% of the frame is a featureless near-black field. Every piece of the FURNITURE now matches the comp — frame, corners, rail, nav, plaques, banners are effectively a pixel reproduction — which leaves the stage as the one thing separating the two images, and it is not close. Measured on the live render vs the comp render: upper sky band (420,150→1400,380) mean luminance 10.0 vs the comp's 28.3; right-middle band (1450,400→1880,700) mean 4.5 vs 26.4, with ZERO pixels above luminance 60 (max 69) against the comp's 10.1% above 60. The source plate has detail there — lit skyscraper windows and water reflections are visible as faint smudges at the right edge — it is the grade that is eating it. Concretely, public/main-menu/index.html:135-140 stacks .bg-grade.violet (multiply, bottom stop rgba(18,13,34,.64)) under .bg-grade.tone (multiply, bottom stop rgba(7,5,10,.60)) and then .vignette (line 147) on top, giving roughly 14% transmission at the bottom of the frame. The result reads as an excellent interface sitting on a dim wallpaper; the comp reads as painted key art with an interface in it. That is the studio/not-studio tell, and it is exactly the \"how much painted art is let through and at what luminance\" clause."
+     },
+     {
+      "verdict": "LOSES",
+      "score": 7,
+      "bar": 8,
+      "gap": "The admin top bar overflows and CLIPS live currency values between ~1200px and ~1400px wide. `.topbar` packs from flex-end with `.tb-left{margin-right:auto}`; `.divider-bookmark` is `flex:0 0 30px` and every `.grp` (star / coin / gem) is `flex:0 0 auto`, while `.plaque-player{min-width:0}` is the only shrinkable item — so once the CHARACTERS plaque + bookmark are present the plaque shrinks below its content and the notched `clip-path` on `.pl`/`.in` cuts the overflow off mid-glyph. Rendered admin-mode results (public/main-menu/index.html, all with real mm:data): at 1360 the gem icon paints but the \"2\" is severed and the bookmark divider is buried under the player plaque; at 1300 the whole Aza group is gone; at 1200 the Cinder balance renders as \"2,07\" — a truncated number the player will read as their actual balance. It self-heals at 1180 where the existing media query collapses the CHARACTERS label and shrinks the divider. This is exactly the failure the file's own comment claims to have designed out (\"a coin balance that disappears at 1180px is a bug the player reports as 'my Cinder vanished'\"), and the previous build showed all three values intact at 1280 admin, so it is a live-count regression in that configuration. Fix: give paintChars() a class hook on `.topbar` (e.g. `has-chars`) and apply the existing 1180px collapse rules (`.plaque-chars .lbl{display:none}`, narrow divider, tighter `.grp` padding) at ~1500px when that class is on; and make the value groups authoritative — `.plaque-player` should stop shrinking once `.name-btn` has hit its ellipsis floor rather than letting the clip-path eat digits."
+     }
+    ],
+    "u4-dispatch-and-warpath": [
+     {
+      "verdict": "LOSES",
+      "score": 8,
+      "bar": 8.5,
+      "gap": "The default (non-admin, has-posts) footer is a hole. `_hdSocialHtml()` renders `+ Add special Links` only for admins, so for every real player the footer row is `FOLLOW ☐` hard left, then ~180px of empty parchment (378px inner width − ~79px Follow cluster − ~99px pager − gaps), then an orphan `.hd-fbar` hairline sitting 10px off the pager separating nothing, then `‹ • • • • ›`. The comp's footer is three evenly-gapped items (`Follow ☐ | + Add special Links`) that fill the rule edge-to-edge, and §2 pins that exact string. Fix: render the `+ Add special Links` / `✎ Edit links` slot ALWAYS — as the admin button when `isAdmin()`, and as the same-metrics static ink label (or a control that opens a \"links are set by the heralds\" note) for players — and drop `.hd-fbar` when the group to its left is empty so no divider is left dividing nothing. That one change closes the only place where a stranger's eye lands on unfinished layout instead of paper."
+     },
+     {
+      "verdict": "LOSES",
+      "score": 7.5,
+      "bar": 8,
+      "gap": "The pager's dot strip collapses to nothing as soon as the feed has real content. `#md-dispatch .hd-dots` (index.html:113515) caps the strip at `max-width:71px;overflow:hidden`, but `.hd-dots span` (113516) sets only `width:6px` with no `flex-shrink:0`, so the dots are flex items that compress instead of clipping. Measured in the browser at 20 posts (the exact number `_hdFetch` requests): `#hd-dots` is 71x6 and every `#hd-dots span` is **0x6** — the position indicator is an empty 71px hole between ‹ and ›. At 12 posts the dots render as 0.9px vertical hairline ticks, which reads as a rendering fault, not a control. Degradation starts at 8 posts. The builder already knew this failure mode — `.hd-soc` carries `flex:none` so the social strip clips correctly — the dots just got missed. Fix: `#md-dispatch .hd-dots span{flex:0 0 6px}` so the strip clips to the first ~6 dots as intended, and because a clipped strip then always shows the same six, either window the rendered dots around `S.idx` in `_hdPaint` (dots.innerHTML build, ~113847) or swap the strip for an ink `3 / 20` counter in the same 12px Cinzel as `FOLLOW` once `posts.length > 6`."
+     }
+    ],
+    "u5-motion": [
+     {
+      "verdict": "LOSES",
+      "score": 2,
+      "bar": 9,
+      "gap": "Every entrance rule in hub-transitions.css is `animation: … backwards` over a `from { opacity: 0 }` keyframe, so an animation whose clock never advances holds its element invisible forever. Measured on the settled sub-hub at document-timeline t=19,006ms: `.hub-banner` computed opacity 0 with `hubTxTitleIn` at playState `running`, currentTime `0`; `.hub-portal` computed opacity 0 with `hubTxTileLand` at playState `running`, currentTime `0`. The result is that Battle Hall renders as bare background art plus the two breadcrumb tabs — no title, no subtitle, no diamond rule, none of the seven tiles, no footer — and the reduced-motion path fails identically because it also uses `backwards`. The file's own §2 comment names this exact hazard and refuses `backwards` for `#mm-frame` on the grounds that it would be \"a black screen with the whole game behind it,\" then applies it to the entire sub-hub. Fix: stop letting visibility depend on an animation that may never tick. Either drive the entrance from `@starting-style` + `transition` on `opacity`/`translate`/`scale` (an untriggered transition leaves the element at its final, correct value) with the 40ms-per-tile cascade carried by `transition-delay`; or keep `@keyframes` but drop `backwards` everywhere and fold each element's lead-in into its own percentage offsets on one shared ~600ms timeline, so a never-started animation leaves the element at its natural rest state instead of at opacity 0."
+     },
+     {
+      "verdict": "LOSES",
+      "score": 2,
+      "bar": 8,
+      "gap": "The sub-hub entrance blanks the entire hub. Every rule in §3 uses `animation-fill-mode: backwards`, and in the project's own mandated verification environment those animations are created but never advance (playState \"running\", currentTime frozen), so the `from{opacity:0}` keyframe is held forever. `node tools/shot.mjs battle` now renders background art, breadcrumb and currency rail and NOTHING else — no BATTLE HALL title, no subtitle, no keep-rule diamond, no side hero, no seven tiles, no Terms of Service footer. Same on forge/codex/arcanum. Deleting the sheet restores the full page (meanLum 14.7 / colors 712 without it vs 11.8 / 166 as shipped), so causation is this file alone — the working-tree index.html edits are all Herald's Dispatch and touch nothing here. The brief's own acceptance test (\"the settled frame must be identical to a run without this sheet … no tile left at opacity 0\") fails as hard as it is possible to fail, and the file's §2 comment shows the author identified this exact risk for #mm-frame, then knowingly accepted it for the tiles by mis-sizing the consequence as \"a bad frame\". It is a blank hub. Fix: never let a frozen animation hide content. Split the entrance in two — keep `backwards` only on the movement (`translate`/`scale`), where a frozen element is merely offset 18px and 4.5% small but fully visible, and run the opacity ramp as a separate `animation-fill-mode: none` component so a frozen element sits at its own rest opacity. Worst case becomes \"tiles slightly nudged\", never \"page empty\"."
+     }
+    ],
+    "u6-one-back-button": [
+     {
+      "verdict": "LOSES",
+      "score": 8.2,
+      "bar": 9,
+      "gap": "The Card Shop's Cinders balance plaque (`.shop-gems-pill`) is framed with `border: 1px solid` PLUS `clip-path: var(--keep-oct-6)`, so the clip shaves the border off all four 6px diagonals and the frame renders as four detached hairline segments with visible gaps at every corner — at 7x zoom the top rule stops ~6px short of each end and the side rules do the same. It reads as a rectangle drawn with four disconnected lines, i.e. a CSS box, and it sits 40px from the `← MENU` tab, which IS built correctly (gold-gradient parent cut by --keep-oct-10 + a `::before` face at inset:1px cut by --keep-oct-9, so 1px of gold survives on all eight sides). Same header, same intended material, two different levels of construction — and this file's own header comment at hub-chrome.css:99-103 documents exactly this trap (\"a `border` + `clip-path` loses the edge on the four diagonals and the control stops looking cut\") before committing it 380 lines later. Fix: rebuild `.shop-gems-pill` with the two-layer technique — drop the border, give the element the gold gradient background + --keep-oct-6 clip and `isolation:isolate`, and add a `::before { inset:1px; z-index:-1; clip-path: var(--keep-oct-5); background: linear-gradient(180deg,#171208,#0c0906); box-shadow: var(--keep-emboss), var(--keep-liner) }`."
+     },
+     {
+      "verdict": "WINS",
+      "score": 8,
+      "bar": 8,
+      "gap": "The Crafting Station's back control (`.cft-back` / `#cft-back`, public/index.html:160127, styled at public/index.html:159680 with `border-radius:999px`) is still a gold rounded capsule — and it is opened by a tab INSIDE the Card Shop this unit just re-cut (`data-cs=\"cs-craft\"` at index.html:160209 → `App.screen='craftStation'`, index.html:159579). One click from the new tab plaque the player meets a different back object, inside the unit's own named screen. It is neither in hub-chrome.css's `:is()` list nor given the `keep-tab` class. The same holds for ~15 other real screens: `#vm-back` (Vendor Market, plain `.btn-secondary` pill, index.html:195970), `#ct-back` (index.html:202645), `#rlc-map-back` (index.html:185861), `#dj-leave` (index.html:153541), `#bma-back` (inline `border-radius:9px` purple rect, index.html:183663), `#bmt-back`, `#sp-admin-back`, `#ult-admin-back`, `#btn-research-back`, `#cx-err-back`. §4 says \"no page invents its own\"; a dozen still do. FIX: extend the `:is(…)` list in hub-chrome.css §1 with those ids/classes (they inherit all five states for free — the list is the whole mechanism), and put the literal `keep-tab` class on `#cft-back` and `#vm-back` so the two screens closest to the Card Shop are genuinely the same component rather than a lookalike."
+     }
+    ]
+   }
+  }
+ ]
+}
+</script>
+
+<div class="wrap">
+  <header class="mast">
+    <p class="kicker">Mythic Spellbook</p>
+    <h1>The Gauntlet</h1>
+    <p class="dek">Main Menu Redesign &middot; Progress Ledger</p>
+    <div class="diamond"><i></i></div>
+  </header>
+
+  <div class="tally" id="tally"></div>
+
+  <h2>The Timeline</h2>
+  <p class="hint">Each unit's worst score of the round, against the bar it had to clear. Read left to right &mdash; the meters should march toward the marker.</p>
+  <div class="tlwrap"><table class="tl" id="timeline"></table></div>
+
+  <h2>The Units</h2>
+  <p class="hint">Every critic's biggest gap, in the critic's own words.</p>
+  <div id="units"></div>
+
+  <h2>The Integration Pass</h2>
+  <p class="hint">What the integrator fixed or verified between the critique and the commit. Outright breakage only &mdash; design belongs to the builders.</p>
+  <div id="ipass"></div>
+
+  <footer>Append only &middot; never overwrite an earlier round</footer>
+</div>
+
+<script>
+(function () {
+  var D = JSON.parse(document.getElementById('ledger').textContent);
+  var R = D.rounds, U = D.units;
+  var last = R[R.length - 1];
+
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  /* Backtick spans become <code>. The critic's text is not altered — this is
+     purely how it is set. Escaping happens FIRST so nothing in a critique can
+     inject markup. */
+  function ink(s) {
+    return esc(s).replace(/`([^`]+)`/g, '<code>$1</code>');
+  }
+  /* Which round did this unit win, if any? First round whose "won" list has it. */
+  function wonAt(id) {
+    for (var i = 0; i < R.length; i++) if (R[i].won.indexOf(id) >= 0) return R[i].n;
+    return null;
+  }
+  function critsFor(id, r) { return (r.critiques && r.critiques[id]) || []; }
+  /* The unit's standing in a round is set by its WORST critic — one loss is a loss. */
+  function worst(id, r) {
+    var cs = critsFor(id, r);
+    if (!cs.length) return null;
+    return cs.reduce(function (a, b) { return (b.score - b.bar) < (a.score - a.bar) ? b : a; });
+  }
+
+  /* ---- tally ---------------------------------------------------------- */
+  var nWon = U.filter(function (u) { return wonAt(u.id) !== null; }).length;
+  document.getElementById('tally').innerHTML = [
+    ['Rounds run', R.length],
+    ['Units won', nWon],
+    ['Still in the gauntlet', U.length - nWon],
+  ].map(function (s) {
+    return '<div class="stat"><b>' + s[1] + '</b><span>' + s[0] + '</span></div>';
+  }).join('');
+
+  /* ---- timeline ------------------------------------------------------- */
+  var head = '<tr><th>Unit</th>' + R.map(function (r) {
+    return '<th class="rd">Round ' + r.n + '</th>';
+  }).join('') + '</tr>';
+
+  var body = U.map(function (u) {
+    var w = wonAt(u.id);
+    var cells = R.map(function (r) {
+      if (w !== null && r.n > w) return '<td class="cell na">&mdash;</td>';
+      if (w === r.n) return '<td class="cell"><span class="seal">Won</span></td>';
+      var c = worst(u.id, r);
+      if (!c) return '<td class="cell na">&mdash;</td>';
+      var near = (c.bar - c.score) <= 1;
+      return '<td class="cell">' +
+        '<span class="sc' + (near ? '' : ' bad') + '">' + c.score +
+        ' <small>/ ' + c.bar + '</small></span>' +
+        '<span class="meter' + (near ? ' near' : '') + '">' +
+          '<i style="width:' + (c.score / 10 * 100).toFixed(1) + '%"></i>' +
+          '<b style="left:' + (c.bar / 10 * 100).toFixed(1) + '%"></b>' +
+        '</span></td>';
+    }).join('');
+    return '<tr><td class="u">' + esc(u.name) + '<em>' + esc(u.id) + '</em></td>' + cells + '</tr>';
+  }).join('');
+  document.getElementById('timeline').innerHTML = head + body;
+
+  /* ---- units ---------------------------------------------------------- */
+  document.getElementById('units').innerHTML = U.map(function (u) {
+    var w = wonAt(u.id);
+    var pill = w !== null
+      ? '<span class="pill won">Won &middot; Round ' + w + '</span>'
+      : '<span class="pill open">Still in the gauntlet</span>';
+
+    var rounds = R.map(function (r) {
+      var cs = critsFor(u.id, r);
+      if (!cs.length) return '';
+      var crits = cs.map(function (c, i) {
+        var win = c.verdict === 'WINS';
+        return '<div class="crit' + (win ? ' w' : '') + '">' +
+          '<div class="cmeta">' +
+            '<span class="vd ' + (win ? 'w' : 'l') + '">' + esc(c.verdict) + '</span>' +
+            '<span class="who">Critic ' + (i + 1) + '</span>' +
+            '<span class="sv"><b>' + c.score + '</b> against a bar of <b>' + c.bar + '</b></span>' +
+          '</div>' +
+          '<p class="verb">Biggest gap, verbatim</p>' +
+          '<p class="gap">' + ink(c.gap) + '</p>' +
+        '</div>';
+      }).join('');
+      return '<p class="rlabel">Round ' + r.n + '</p>' + crits;
+    }).join('');
+
+    return '<section class="unit">' +
+      '<div class="uhead"><h3>' + esc(u.name) + '</h3>' +
+        '<span class="uid">' + esc(u.id) + '</span>' + pill +
+        '<p class="ublurb">' + esc(u.blurb) + '</p></div>' +
+      '<div class="rnd">' + rounds + '</div></section>';
+  }).join('');
+
+  /* ---- integration pass ----------------------------------------------- */
+  document.getElementById('ipass').innerHTML = R.map(function (r) {
+    if (!r.integration || !r.integration.length) return '';
+    return '<p class="rlabel" style="margin:26px 0 0">Round ' + r.n + '</p>' +
+      '<div class="ipass">' + r.integration.map(function (e) {
+        return '<div class="ientry">' +
+          '<span class="itag ' + esc(e.tag) + '">' + esc(e.tag) + '</span>' +
+          '<div><h4>' + e.head + '</h4><p>' + e.body + '</p></div></div>';
+      }).join('') + '</div>';
+  }).join('');
+
+  document.title = 'The Gauntlet Ledger — Round ' + last.n;
+})();
+</script>
+</body>
+</html>

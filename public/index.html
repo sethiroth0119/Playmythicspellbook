@@ -74521,6 +74521,71 @@ const hexDirs = (y) => ((y & 1) ? HEX_DIRS_ODD : HEX_DIRS_EVEN);
 // decide between inBounds() and inBoundsOf(state,…), and silently dropping
 // off-board neighbours here would hide that choice.
 const hexNeighbors = (x, y) => hexDirs(y).map(d => ({ x: x + d[0], y: y + d[1] }));
+// ═══ A VECTOR → ONE OF THE SIX. THE SHOVE PRIMITIVE. ═══════════════════════
+// Knockback, pull, vortex/shockwave and the ice slide used to build a step as
+// `Math.sign(dx), Math.sign(dy)` and then ADD THAT SAME PAIR repeatedly. Two
+// things were wrong with that, and only the second one is obvious:
+//   1. it picks one of EIGHT square directions, and eight is not six; but
+//   2. worse — a fixed offset PAIR can never be a straight hex line at all,
+//      because the six real offsets change with row parity (HEXSPEC §5). Add
+//      (+1,+1) twice from an odd row and you have walked a zigzag.
+// Measured cost, from the regression gate: a shove from (7,6) onto the unit at
+// (6,7) stepped (-1,+1) and landed it on (5,8) — cube distance TWO from where
+// it started — while an enemy stood on (6,8), the true neighbour in that
+// direction. The occupancy test was never wrong; it simply never looked at
+// (6,8), because the walk never visited it. The unit passed THROUGH an
+// occupied tile, which no other movement path in this game permits.
+//
+// A direction is therefore carried as an INDEX 0..5 into hexDirs(), never as
+// an offset pair, and the offsets are re-read for the CURRENT row at every
+// step. That works because HEX_DIRS_EVEN[i] and HEX_DIRS_ODD[i] are the same
+// cube direction at the same index — the table above is ordered that way on
+// purpose, and reordering either half silently breaks every shove in the game.
+//
+// ⚠ Do NOT re-derive an adjacency table at a call site. That is how the eight-
+// way offsets got scattered across nine systems in the first place.
+const _HEX_WX = (x, y) => (x + (y & 1) * 0.5) * 1.7320508075688772; // HEXSPEC §3, SIZE = 1
+const _HEX_WZ = (y) => y * 1.5;
+// The six unit vectors, DERIVED from HEX_DIRS_EVEN rather than typed out, so
+// the lattice is still written down in exactly one place. Base row 2 is even
+// (so HEX_DIRS_EVEN is the right half) and keeps every probe's y >= 0.
+const HEX_DIR_VEC = HEX_DIRS_EVEN.map(d => {
+  const vx = _HEX_WX(d[0], 2 + d[1]) - _HEX_WX(0, 2);
+  const vz = _HEX_WZ(2 + d[1]) - _HEX_WZ(2);
+  const m = Math.hypot(vx, vz) || 1;
+  return [vx / m, vz / m];
+});
+// Nearest of the six hex directions to the vector (fx,fy) → (tx,ty), as an
+// index for hexStep(). Returns -1 when the two tiles are the same, which is a
+// real case (a unit sharing the caster's tile has no "away") and which every
+// caller must skip rather than treat as direction 0.
+//
+// The dot product is taken in WORLD space, not on the offset pair: offset
+// deltas are not Euclidean on a staggered lattice, so (+1,-1) means different
+// physical angles on odd and even rows and comparing them directly re-imports
+// the very bug this replaces.
+//
+// Ties — a vector sitting exactly 30° between two directions, e.g. two rows
+// straight "north" — resolve to the LOWER index. Deterministic on purpose: the
+// AI, the local resolve and a replay all re-run this and must agree, and a
+// tie-break by anything float-shaped would eventually disagree across builds.
+function hexDirToward(fx, fy, tx, ty) {
+  let vx = _HEX_WX(tx, ty) - _HEX_WX(fx, fy);
+  let vz = _HEX_WZ(ty) - _HEX_WZ(fy);
+  const m = Math.hypot(vx, vz);
+  if (m < 1e-9) return -1;
+  vx /= m; vz /= m;
+  let best = -1, bestDot = -Infinity;
+  for (let i = 0; i < 6; i++) {
+    const dot = HEX_DIR_VEC[i][0] * vx + HEX_DIR_VEC[i][1] * vz;
+    if (dot > bestDot + 1e-9) { bestDot = dot; best = i; }
+  }
+  return best;
+}
+// One step along direction index `i` FROM (x,y). Call it per step; never cache
+// its result as an offset pair and re-add it — that is the whole bug.
+// NOT bounds-checked, for the same reason hexNeighbors() is not.
+const hexStep = (x, y, i) => { const d = hexDirs(y)[i]; return { x: x + d[0], y: y + d[1] }; };
 const inBounds = (x, y) => x >= 0 && x < BOARD_W && y >= 0 && y < BOARD_H;
 // State-aware sibling. inBounds() answers from the CONSTANTS; inBoundsOf()
 // answers from the LIVE board array via _boardDims() (:74915). They agree
@@ -75434,12 +75499,23 @@ function _floodConvertSurface(state, x, y, fromType, toType, turns) {
 // 🧊 Ice slide — a unit shoved (knockback) or yanked (pull) ONTO ice keeps
 // skidding in the same direction until it runs off the ice, hits a wall /
 // unit, or reaches the board edge. Returns the final tile + slide distance.
-function _slideOnIce(state, cx, cy, dx, dy) {
+//
+// ⚠ SIGNATURE CHANGED (hex fix, OPEN-BREAKS §1): the last argument used to be
+// a square offset pair `dx, dy` that this loop added over and over. On odd-r
+// that traces a zigzag, not a line, and a 12-step skid amplifies the error
+// further than the shove that started it — it could cross a tile a unit was
+// standing on without the occupancy test below ever seeing that tile. It now
+// takes `dir`, an index into hexDirs(), and re-reads the offsets for the row
+// it is currently on. All three call sites (knockback, pull, vortex) pass the
+// index they shoved along, so the skid continues the same hex line exactly.
+function _slideOnIce(state, cx, cy, dir) {
+  if (!(dir >= 0)) return { x: cx, y: cy, steps: 0 };
   let steps = 0;
   while (steps < 12) {
     const surf = _surfaceAt(state, cx, cy);
     if (!surf || surf.type !== 'ice') break;          // only slide while ON ice
-    const nx = cx + dx, ny = cy + dy;
+    const _n = hexStep(cx, cy, dir);                  // per-step, parity-correct
+    const nx = _n.x, ny = _n.y;
     if (!inBoundsOf(state, nx, ny)) break;
     const tile = state.board[ny] && state.board[ny][nx];
     if (tile && tile.wall) break;
@@ -93356,12 +93432,16 @@ function _applyOnPlayOneRaw(state, unit, card) {
       const live = (state.units || []).find(u => u && u.id === cand.id);
       if (!live || !live.alive || !live.pos) continue;
       const tx = live.pos.x, ty = live.pos.y;
-      const dx = isPull ? Math.sign(ox - tx) : Math.sign(tx - ox);
-      const dy = isPull ? Math.sign(oy - ty) : Math.sign(ty - oy);
-      if (dx === 0 && dy === 0) continue;   // sharing the caster's tile — no direction
+      // Nearest of the SIX hex directions to the vector, re-stepped by row
+      // parity (see hexDirToward, :74524). This used to be a Math.sign() pair,
+      // which on odd-r walked a zigzag and could hurl a unit clean through
+      // another one standing on the true neighbour.
+      const vdir = isPull ? hexDirToward(tx, ty, ox, oy) : hexDirToward(ox, oy, tx, ty);
+      if (vdir < 0) continue;   // sharing the caster's tile — no direction
       let cx = tx, cy = ty, moved = 0;
       for (let step = 0; step < tiles; step++) {
-        const nx = cx + dx, ny = cy + dy;
+        const _n = hexStep(cx, cy, vdir);
+        const nx = _n.x, ny = _n.y;
         if (!inBounds(nx, ny)) break;
         if (isPull && nx === ox && ny === oy) break;     // never land on the caster
         const row = state.board && state.board[ny];
@@ -93371,7 +93451,7 @@ function _applyOnPlayOneRaw(state, unit, card) {
         cx = nx; cy = ny; moved++;
       }
       if (!moved) continue;
-      const _slid = (typeof _slideOnIce === 'function') ? _slideOnIce(state, cx, cy, dx, dy) : { x: cx, y: cy, steps: 0 };
+      const _slid = (typeof _slideOnIce === 'function') ? _slideOnIce(state, cx, cy, vdir) : { x: cx, y: cy, steps: 0 };
       cx = _slid.x; cy = _slid.y; slidTiles += (_slid.steps | 0);
       // Commit immediately so the NEXT unit's occupancy test sees this one's new tile.
       state = { ...state, units: (state.units || []).map(u => u.id === live.id ? { ...u, pos: { x: cx, y: cy } } : u) };
@@ -101048,27 +101128,36 @@ const executeMove = (state, attacker, target, move) => {
   // ===== Knockback: push the target N tiles in the direction away from the attacker =====
   // Stops short if it hits a wall, another unit, or the board edge. Skips if target died or
   // if move.knockback isn't set. Flying targets are still pushed.
-  // ⚠ KNOWN GAP, DELIBERATELY NOT FIXED IN THE HEX WAVE (this is combat
-  // resolution and that wave was forbidden from editing it). `Math.sign(dx)`
-  // / `Math.sign(dy)` picks one of the EIGHT square directions and then steps
-  // it repeatedly. On odd-r that traces a zigzag, not a straight hex line —
-  // the shove still lands on real, unoccupied, in-bounds tiles (inBounds() and
-  // getOccupant() still gate every step, so nothing can end up off-board), but
-  // "away from the attacker" drifts by up to half a column per row. Same in
-  // the pull block below and in _slideOnIce's direction walk. The fix is one
-  // helper — pick the hexDirs(y) entry with the largest dot product against
-  // the away-vector, and re-pick it each step because the six offsets change
-  // with row parity — applied at three call sites. Needs the combat owner.
+  // ✅ FIXED — the gap this comment used to admit is closed (OPEN-BREAKS §1).
+  // WHAT CHANGED, AND IT IS A DELIBERATE BEHAVIOUR CHANGE: the shove used to
+  // be `Math.sign(tx-ax), Math.sign(ty-ay)` — one of EIGHT square directions,
+  // re-added as a fixed offset pair. On odd-r that is not a straight line at
+  // all (the six offsets depend on row parity), so a shove could travel a
+  // zigzag and land the target at cube distance 2 from a ONE-tile knockback,
+  // having crossed a tile the occupancy test below never got to examine. The
+  // regression gate caught it: (7,6) shoving (6,7) landed it on (5,8) with an
+  // enemy standing untouched on (6,8).
+  //
+  // It now snaps the away-vector to the NEAREST OF SIX via hexDirToward() and
+  // walks with hexStep(), which re-reads hexDirs() for the row it is on at
+  // each step. Same three gates as before (inBounds / tile.wall / getOccupant)
+  // — they just finally see every tile the unit actually crosses.
+  //
+  // Consequence to state plainly: shove DESTINATIONS move. A knockback that
+  // used to land a unit on a square diagonal now lands it on a real hex
+  // neighbour, which can be a different tile and can be blocked where it was
+  // not before. That is the point — the old destination was not a direction.
   if (updatedTarget.alive && move.knockback && move.knockback > 0
       && (Math.random() * 100 < ((move.knockbackChance == null) ? 100 : move.knockbackChance))
       && !(updatedTarget.isWall && !(updatedTarget.wall && updatedTarget.wall.canBePushed))) {
     const ax = attacker.pos.x, ay = attacker.pos.y;
     const tx = updatedTarget.pos.x, ty = updatedTarget.pos.y;
-    const dx = Math.sign(tx - ax), dy = Math.sign(ty - ay);
-    if (dx !== 0 || dy !== 0) {
+    const kdir = hexDirToward(ax, ay, tx, ty);   // away from the attacker, snapped to one of six
+    if (kdir >= 0) {
       let cx = tx, cy = ty, moved = 0;
       for (let step = 0; step < move.knockback; step++) {
-        const nx = cx + dx, ny = cy + dy;
+        const _n = hexStep(cx, cy, kdir);        // per-step: the offsets flip with row parity
+        const nx = _n.x, ny = _n.y;
         if (!inBounds(nx, ny)) break;
         const tile = s.board[ny][nx];
         if (tile.wall) break;
@@ -101077,7 +101166,7 @@ const executeMove = (state, attacker, target, move) => {
       }
       if (moved > 0) {
         // 🧊 Ice slide — a shove onto ice sends the unit skidding further.
-        const _slid = (typeof _slideOnIce === 'function') ? _slideOnIce(s, cx, cy, dx, dy) : { x: cx, y: cy, steps: 0 };
+        const _slid = (typeof _slideOnIce === 'function') ? _slideOnIce(s, cx, cy, kdir) : { x: cx, y: cy, steps: 0 };
         cx = _slid.x; cy = _slid.y;
         s.units = s.units.map(u => u.id === updatedTarget.id ? { ...u, pos: { x: cx, y: cy } } : u);
         log.push({ msg: `🌬️ ${updatedTarget.name} is blown back ${moved} tile${moved === 1 ? '' : 's'}${_slid.steps ? ` and skids ${_slid.steps} more across the ice!` : '!'}`, color: 'amber' });
@@ -101089,16 +101178,22 @@ const executeMove = (state, attacker, target, move) => {
   // ===== Grappling Hook / Pull: yank the target N tiles TOWARD the attacker =====
   // Mirror of knockback in reverse. Stops short of the attacker's own tile,
   // walls, other units, and the board edge. Skips immovable walls.
+  // Same hex fix as the knockback block above (OPEN-BREAKS §1): the toward-
+  // vector is snapped to the nearest of SIX and re-stepped per row parity.
+  // Note the direction is picked from the TARGET toward the attacker, so a
+  // pull that cannot quite reach still travels along the correct hex line
+  // instead of the mirror-image zigzag the Math.sign() pair produced.
   if (updatedTarget.alive && move.pull && move.pull > 0
       && (Math.random() * 100 < ((move.pullChance == null) ? 100 : move.pullChance))
       && !(updatedTarget.isWall && !(updatedTarget.wall && updatedTarget.wall.canBePushed))) {
     const ax = attacker.pos.x, ay = attacker.pos.y;
     const tx = updatedTarget.pos.x, ty = updatedTarget.pos.y;
-    const dx = Math.sign(ax - tx), dy = Math.sign(ay - ty);
-    if (dx !== 0 || dy !== 0) {
+    const pdir = hexDirToward(tx, ty, ax, ay);   // toward the attacker, snapped to one of six
+    if (pdir >= 0) {
       let cx = tx, cy = ty, moved = 0;
       for (let step = 0; step < move.pull; step++) {
-        const nx = cx + dx, ny = cy + dy;
+        const _n = hexStep(cx, cy, pdir);        // per-step: the offsets flip with row parity
+        const nx = _n.x, ny = _n.y;
         if (!inBounds(nx, ny)) break;
         if (nx === ax && ny === ay) break;            // never land on the attacker
         const tile = s.board[ny][nx];
@@ -101108,7 +101203,7 @@ const executeMove = (state, attacker, target, move) => {
       }
       if (moved > 0) {
         // 🧊 Ice slide — a yank onto ice keeps the unit skidding inward.
-        const _slid = (typeof _slideOnIce === 'function') ? _slideOnIce(s, cx, cy, dx, dy) : { x: cx, y: cy, steps: 0 };
+        const _slid = (typeof _slideOnIce === 'function') ? _slideOnIce(s, cx, cy, pdir) : { x: cx, y: cy, steps: 0 };
         cx = _slid.x; cy = _slid.y;
         s.units = s.units.map(u => u.id === updatedTarget.id ? { ...u, pos: { x: cx, y: cy } } : u);
         log.push({ msg: `🪝 ${updatedTarget.name} is yanked ${moved} tile${moved === 1 ? '' : 's'} closer${_slid.steps ? ` and skids ${_slid.steps} more across the ice!` : '!'}`, color: 'amber' });

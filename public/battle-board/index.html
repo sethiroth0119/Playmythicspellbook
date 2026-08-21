@@ -2346,11 +2346,41 @@ function paintTileRec(x,z,t,lv){
   }
   /* The ramp runs far→near, so only the far and near neighbours can produce a
      visible discontinuity in it: edges 1,2 face +z (toward the eye) and edges
-     4,5 face −z, for both row parities (see NB6). A tile flush on both ends of
-     that axis is INTERIOR to a shelf and gets the skirt's flattened ramp; one
-     that drops on one end gets half; a tile exposed both ways keeps the full
-     0.30/0.16 and earns its terrace read. */
-  const rampF = ring ? 0 : ((drop[1]||drop[2] ? .5 : 0) + (drop[4]||drop[5] ? .5 : 0));
+     4,5 face −z, for both row parities (see NB6).
+     ⚠ THE TWO ENDS ARE INDEPENDENT AND ONE SCALAR CANNOT SPEAK FOR BOTH. This
+     was a single `rampF` averaged over the whole tile — 1, ½ or 0 — applied to
+     the far stop and the near stop alike. A canvas linear gradient has an end
+     at each corner and each end meets a DIFFERENT neighbour, so averaging them
+     put a half-strength dark stop against a flush far neighbour and a
+     half-strength bright stop against a flush near one: on the ridged map the
+     generator actually ships, almost every tile drops SOMEWHERE on the ±z axis,
+     so ½ was the near-universal answer and the seam came back as shading on
+     both ends of a shelf the stroke fix had just joined. Split, each stop is
+     chosen by its own boundary — which is the same per-EDGE rule the seam and
+     the lit lip below are drawn by, and the only version of it a two-stop
+     gradient can express.
+     AND, not OR, at each end, and that is forced by the geometry rather than
+     chosen: a gradient END is a CORNER, and each of those corners is shared by
+     TWO edges — the near corner (2) by edges 1 and 2, the far corner (5) by
+     edges 4 and 5. If either of the pair is flush the ground runs on past that
+     corner, and a stop that steps there cuts the shelf; only when BOTH drop is
+     the corner really hanging over a cliff and entitled to the lip. OR was
+     tried first and measured: same-surface flush-edge seam energy went 4.00 →
+     3.52 median L with OR and 4.00 → 2.40 with AND. Nothing is lost on the
+     cliff edge itself, because the lit lip there is a STROKE drawn per-edge
+     below and paintWalls puts its own aggregate hairline along the same line —
+     this ramp was never what made a drop legible.
+     Zero, not the skirt's 0.13/0.06, at a flush end: those two figures exist so
+     a skirt cell that is nobody's neighbour still has some form in it, and the
+     residual step they leave (~0.19 of the lo→hi range, ~4 L on dirt) is the
+     whole of what was still cutting a same-rung run into counters. An interior
+     tile is not featureless without them — the ±8% value jitter above, the
+     surface texture, the baked film grain and the props all still land on it.
+     A tile exposed both ways keeps the full 0.30/0.16 and earns its terrace
+     read; a tile that drops on one end only gets a dark lip over its cliff and
+     stays flush with the shelf behind it. */
+  const farF  = ring ? 0 : ((drop[4]&&drop[5]) ? 1 : 0);
+  const nearF = ring ? 0 : ((drop[1]&&drop[2]) ? 1 : 0);
 
   /* 🎲 PER-TILE VALUE JITTER. Without it every dirt tile is the identical
      swatch and the board reads as painted cardboard hexes rather than as
@@ -2365,21 +2395,38 @@ function paintTileRec(x,z,t,lv){
   const j = (_sHash(x,z,7) - .5) * .16;
   col = mixHexRaw(col, j > 0 ? S.hi : S.lo, Math.abs(j));
   /* …and a value gradient across the tile itself, dark at the far edge and lit
-     at the near one. P[4] is the far corner and P[1] the near one (corner i
-     sits at i*60-30 degrees, so +z — toward the eye — is corner 1). */
+     at the near one. Corner i sits at i*60−30 degrees, so on a POINTY-TOP hex
+     the extreme −z (far) corner is i=5 (270°) and the extreme +z (near) corner
+     is i=2 (90°). Measured on the live projection: dz = −0.577 at corner 5 and
+     +0.577 at corner 2, against ±0.289 at corners 4 and 1.
+     ⚠ THIS RAN P[4]→P[1] AND THAT QUIETLY UNDID THE PER-EDGE FIX ABOVE. Those
+     two corners are the ±0.289 pair, so the ramp axis came out 60° off true
+     far→near — it ran mostly EAST–WEST. The rampF gate below is chosen from
+     drops on edges 1,2,4,5 (the ones that face ±z) precisely because that is
+     where a far→near ramp can break at a shared edge; with the axis rotated,
+     the ramp's biggest break landed on edges 0 and 3, the E/W pair, which the
+     gate never touches. Measured on the ground layer over every flush edge of
+     the shipped map: the ramp parameter stepped 0.877 across a flush E/W edge
+     and only 0.235 across edges 2/5. So a run of same-rung tiles in one ROW —
+     the commonest shelf there is — still met with a full light→dark step after
+     the seam and the lip had been correctly removed from it, and the field kept
+     reading as loose counters. Corrected the axis is 0.228 at E/W and the whole
+     break moves onto 1,2,4,5, where rampF can flatten it. */
   pathPoly(P);
-  const tg = ctx.createLinearGradient(P[4].x, P[4].y, P[1].x, P[1].y);
+  const tg = ctx.createLinearGradient(P[5].x, P[5].y, P[2].x, P[2].y);
   /* Flatter across a skirt cell, and now equally flat across the INTERIOR of a
      field shelf. On an exposed tile this cross-tile ramp is what stops a hex
      reading as a flat swatch; where the neighbour is flush the same ramp draws
      a bright rim on that cell's near half, which is the cell division coming
      back as shading after it was deliberately taken out of the stroke.
      Neighbouring cells at one height have to merge into a shelf. */
-  /* The interior figures are the skirt's own, to the decimal, because it is
-     literally the same problem solved once already and two numbers that mean
-     "flat enough to merge" must not be allowed to drift apart. */
-  tg.addColorStop(0, mixHexRaw(col, S.lo, ring ? .13 : .13 + rampF*.17));
-  tg.addColorStop(1, mixHexRaw(col, S.hi, ring ? .06 : .06 + rampF*.10));
+  /* The skirt keeps its own 0.13/0.06 unchanged — its cells are dressing, they
+     are nobody's flush neighbour on the field's own terms, and the ring darken
+     above already carries them away from the play surface. The FIELD's flush
+     end goes to zero instead; see the note at farF/nearF for why the skirt's
+     residual is the wrong number here even though it was the right one there. */
+  tg.addColorStop(0, mixHexRaw(col, S.lo, ring ? .13 : farF*.30));
+  tg.addColorStop(1, mixHexRaw(col, S.hi, ring ? .06 : nearF*.16));
   ctx.globalAlpha = ring ? 1 : S.a; ctx.fillStyle = tg; ctx.fill(); ctx.globalAlpha = 1;
   if (t && t.type === 'hazard'){ pathPoly(P); ctx.fillStyle = rgba('#5a1a0e',.34); ctx.fill(); }
   if (t && t.type === 'objective'){ pathPoly(P); ctx.fillStyle = rgba('#6a5a1e',.30); ctx.fill(); }

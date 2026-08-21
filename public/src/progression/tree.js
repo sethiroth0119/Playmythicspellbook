@@ -72,6 +72,14 @@
    ══════════════════════════════════════════════════════════════════════════ */
 
 /* The left rail. `ico` is drawn at 18px; `blurb` is the rail tooltip. */
+/* 🛣 The road resolver. Listing a building on a node is what LOCKS it, and
+   'absent ⇒ open' cuts both ways: a road class the tree did not mention would
+   be the cheap way around the trunk node. Spread from the resolver so every
+   carriageway class is gated exactly as Road is. Evaluated at import, which is
+   inside boot() — node-city registers window.MythicRoads at script eval, long
+   before, and the reader falls open to ['road'] if it somehow did not. */
+import { roadTypes } from '../roads/types.js';
+
 export const CATS = [
   { id: 'civ', ico: '🏛', name: 'Civics',         blurb: 'The registry, the services and the landmarks a city is judged on.' },
   { id: 'res', ico: '🏘', name: 'Residential',    blurb: 'What people are allowed to live in, and how densely.' },
@@ -277,7 +285,7 @@ export const NODES = [
   { id: 'tra_basic', cat: 'tra', row: 1, col: 0, cost: 0, auto: true, req: ['civ_basic'],
     name: 'Basic Transportation Services',
     desc: 'Roads and supply depots. Everything a city can move before it can move people.',
-    buildings: ['road', 'depot'] },
+    buildings: [...roadTypes(), 'depot'] },
   { id: 'tra_bus', cat: 'tra', row: 1, col: 1, cost: 2, req: ['tra_basic'], licence: 'bus',
     name: 'Bus Network',
     desc: 'Stops, and player-drawn routes between them. Public transport never turns a profit — it reduces a subsidy.',

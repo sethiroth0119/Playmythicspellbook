@@ -888,6 +888,12 @@ export const ECON = {
          road and it is auto-tiled off its neighbours exactly like road, so it
          is drawn, not built. It also means the 10,000,000 🔥 Rail Operator
          licence was blocked twice over. */
+    /* ⚠ 'road' HERE IS THE LEGACY CLASS ONLY, and that is deliberate. This is
+       a static table in an ES module and cannot call node-city's road
+       resolver, so node-city's bldExempt() ORs this list with isRoadType() —
+       EVERY carriageway class is exempt there. Adding class ids to this array
+       would be the list-shaped form of the bare-string tile-type bug and would
+       drift the moment a class is renamed. */
     exemptTypes: ['road', 'wall', 'streetlight', 'lot', 'railtrack'],
     opSec:     900,        // every op_* is a flat 15 min. Ops carry cost:{}
                            // (index.html:21491) so no cost curve applies, and

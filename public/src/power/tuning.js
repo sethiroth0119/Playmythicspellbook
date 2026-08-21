@@ -284,6 +284,17 @@ export const POWER = {
       railyard: 'utility', hydrofarm: 'utility',
       /* 💧 The Water Intake is the Purifier's other half and sheds with it. */
       waterintake: 'utility',
+      /* 🚰 THE MAINS ROUND. Both declare `powerNeed` on their own BUILDINGS rows
+         rather than joining `extra` below — no save can contain either of them,
+         so the save-compatibility rule that created `extra` does not apply and
+         the honest home is the row (the `papermill`/`printworks` precedent, and
+         the same reading the four extraction rows above took).
+         They still need a CLASS here or they would be billed and never shed,
+         which is the half-wired state §③ warns about — and a Water Station that
+         browns out while a nightclub does not is exactly the ordering the
+         lifeline→leisure ladder exists to produce. Both are `utility`: they are
+         the machinery the city's own lifelines run on. */
+      waterstation: 'utility', outfall: 'utility',
       farm: 'industry', scrapmine: 'industry', fuelrig: 'industry', gasstation: 'industry',
       quarry: 'industry', lumbercamp: 'industry', fibercroft: 'industry', munitions: 'industry',
       /* ⛏ THE EXTRACTION ROUND. These four declare `powerNeed` on their own
@@ -514,29 +525,46 @@ export const POWER = {
      Electric Cables" from "High Voltage Power Lines" as NETWORK colours — i.e.
      as something drawn along a network the city already has.
 
-     🔴 `enforce` IS OFF, ON PURPOSE, AND THIS IS THE MOST IMPORTANT LINE IN THE
-        FILE. Today's host charges brownout from a pure supply/demand ratio and
-        ignores topology completely. Turning topology into a production gate
-        would retroactively black out every building in every EXISTING SAVE that
-        happens to sit off the powered road component — a silent, unannounced
-        balance break landing on cities the player already built, which the
-        save-compatibility constraint forbids. So connectivity is DIAGNOSTIC:
-        it drives the overlay, the bottleneck colour and the panel's "unserved"
-        advisory, and it does not touch `factor`. Flipping this to true is a
-        deliberate, announced balance round — one number, right here.
+     🔴 `enforce` IS NOW TRUE, AND THIS IS STILL THE MOST IMPORTANT LINE IN THE
+        FILE — SO READ WHAT CHANGED AND WHAT DID NOT.
+
+        What it said before, verbatim in intent: "Turning topology into a
+        production gate would retroactively black out every building in every
+        EXISTING SAVE that happens to sit off the powered road component — a
+        silent, unannounced balance break landing on cities the player already
+        built, which the save-compatibility constraint forbids." That argument
+        was never about the FLAG. It was about EXISTING SAVES. It is still
+        correct and it is still enforced — by a per-city latch, not by this
+        number.
+
+        THE LATCH IS `wired`, AND IT IS THE `metered` OPT-IN, ARGUED AGAIN.
+        index.js owns a module-level `wired` boolean:
+          · a city that never calls load() is NEW and is wired from its first
+            tick — it was built under this rule and has a Grid Connector on its
+            north verge from the moment it exists;
+          · load() sets `wired` from the blob's own key, and a blob written
+            before this round HAS NO SUCH KEY, so it comes back false. That
+            ABSENCE is the version stamp; no version number is written and none
+            is needed. An old city keeps the exact pre-change numbers — same
+            load, same factor, same per-tile map — until its player opts in from
+            the panel.
+        grid.js therefore branches on `host.enforce`, which index.js resolves as
+        `POWER.transmission.enforce && wired`. This flag stays the FEATURE
+        switch (set it false and no city in any state enforces anything, which
+        is the kill switch a balance round needs); the latch is the SAVE switch.
 
      ⚠ AND IT GOVERNS LINE LOSS TOO, for exactly the same reason. Loss is a
        DEMAND term: charging it raises consumption a few per cent, which is
        enough to tip a city that sits just above parity today into a brownout it
        did not have yesterday. That is the same silent retroactive re-balance,
-       just smaller, and "smaller" is not a defence. So while `enforce` is false
+       just smaller, and "smaller" is not a defence. So in an UNWIRED (old) city
        the loss figure is COMPUTED and REPORTED — the panel prints what it would
        cost — and is not added to load. One flag, one meaning: "does
        transmission affect the simulation, or only the info view".
      ⚠ Anything reading this flag must degrade to "ratio only" when it is false;
-       grid.js branches on it in exactly one place, in solve(). */
+       grid.js branches on the RESOLVED value in exactly one place, in solve(). */
   transmission: {
-    enforce: false,
+    enforce: true,
     // A road tile's cable rating, in draw units. Any segment carrying more than
     // this is a BOTTLENECK — the reference's whole diagnostic argument is that a
     // single availability number can never say WHERE the grid is choking.
@@ -557,6 +585,167 @@ export const POWER = {
     // Loss is capped however long the run: beyond this the model is no longer
     // saying anything true about a 24-tile city.
     lossMax: 0.12,
+  },
+
+  /* ══ 🗼 POWER LINES AND THE GRID CONNECTOR ═════════════════════════════════
+     ──────────────────────────────────────────────────────────────────────────
+     A road carries cable. That was true before this round and it stays true —
+     retro-fitting "you must now also run a line down every street you already
+     built" onto a live city is the same retroactive break the enforce header
+     spends thirty lines refusing. So lines are ADDITIVE CONDUCTORS: a second
+     way to carry the grid, for the two jobs a road cannot do.
+
+       1. REACHING OFF THE PLATE. The Grid Connector stands on the north verge,
+          between the buildable plate and the highway embankment. There is no
+          road out there and there never will be — `tryPlace` only places on the
+          24×24 grid — so without a conductor that is not a road, the connector
+          is unreachable and therefore decorative.
+       2. CROSSING GROUND YOU DO NOT WANT PAVED. A line over open land is how a
+          player wires an outlying plant without laying a road to it and paying
+          the road maintenance cap for the privilege.
+
+     🔴 A LINE IS NOT A TILE, AND THAT IS THE WHOLE SAFETY ARGUMENT.
+        node-city's `game.tiles[k]` is one object with one `type`, and `t.type
+        === 'road'` is re-derived independently in a dozen files. A new tile
+        type for a cable would fall out of the road maintenance cap, render as
+        an invisible building (buildMesh has no arm and no default), despawn
+        every agent standing on it (agentTick reads a type change as a
+        demolition), become zonable land and stop bounding zoning fills. Lines
+        therefore live in THIS MODULE'S OWN SAVE SLICE as a set of cell keys.
+        node-city's tile map is never written. A save round-tripped through a
+        build where /src/power 404s loses its lines and nothing else — every
+        tile in it is still exactly the tile it was.
+
+     ⚠ A LINE CELL IS NOT A GRID TILE EITHER. The domain is the plate PLUS a
+       one-cell apron (`apron` below), so x and z run -1 … GRID. The apron is
+       where the connector and its first span live. Nothing but a line may ever
+       occupy it. */
+  lines: {
+    /* ── COST. Cinder, per cell, charged through node-city's own payCost() —
+       this module never touches a ledger. Sited against the shipped build
+       shelf rather than invented: a road tile is `{cinder:4}` × BUILD_CINDER_MULT
+       100 = 400🔥, and a span of cable is emphatically cheaper to lay than a
+       paved carriageway with kerbs, drains and a maintenance obligation. 120 is
+       a little under a third of a road and makes a ten-cell run to the connector
+       1,200🔥 — real money for a settlement, pocket change for a city, which is
+       the shape a first-hour tutorial cost wants.
+       ⚠ ALREADY SCALED. node-city's scaleCost() multiplies a BUILDINGS row's
+         cinder by 100; this number never passes through it, exactly as
+         ROAD_DEMOLISH_COST does not. Writing 1.2 here and hoping would quote
+         100× low and look entirely correct — /src/streets records that specific
+         mistake against costOf('road'). */
+    costPerCell: 120,
+    /* 🚫 THERE IS NO REMOVAL PRICE AND NO REFUND DIAL, AND BOTH ABSENCES ARE
+       DECISIONS. A road charges ROAD_DEMOLISH_COST to demolish because a
+       carriageway is earthworks; a pole is a pole, and charging for a mis-drag
+       makes a drag tool punishing to learn. A REFUND is worse than punishing:
+       it would be a module crediting the player, which is the retired Cinder
+       Forge with a new label on it (CLAUDE.md, ECONOMY.md — Cinder is never
+       minted, and every leak that shipped looked entirely correct in review).
+       So `lift()` takes the cable down and no money moves in either direction,
+       and there is deliberately no number here to turn that into a faucet. */
+    /* A hard ceiling on the network, in cells. Not an economy dial: it is the
+       bound that keeps the mesh at two draw calls and the BFS at O(cells). The
+       plate is 576 tiles; a city that has wired 900 cells has painted the map,
+       which is what the road maintenance cap exists to prevent and this is the
+       same argument for the same reason. */
+    maxCells: 900,
+    /* The one-cell apron outside the plate that a line may occupy. 1, and it
+       must stay 1 unless the connector moves: the embankment toe is at world
+       z = -12.8 and the apron row's centre is world z = -12.5, so a second
+       apron row would put cable inside the earthworks. */
+    apron: 1,
+
+    /* ── THE CONNECTOR ────────────────────────────────────────────────────────
+       Deliberately NOT a BUILDINGS row and NOT placed by the player. It is
+       infrastructure that was already there — the same standing the highway
+       itself has in /src/outside, which draws a road past a city that has not
+       joined it yet. Every city gets one, at the same place, from its first
+       frame, so "drag a line to the connector" is an instruction that is true
+       in a city with nothing in it.
+
+       ⚠ THE CELL IS OFF THE PLATE, at the NORTH-WEST outer corner: (-1, -1),
+         which is world (-12.5, -12.5). North because that is where /src/outside
+         put the highway (HW.z = -18.8) and the interchange row (ICH.edgeZ = 0).
+         The corner because the interchange's ramps run ±X from whichever north
+         edge tile the player chose and taper across the verge — and ICH.margin
+         keeps the interchange one tile clear of the corners, so the corner is
+         the one point on the verge the ramps are least likely to reach.
+         🐞 They can still meet, when the interchange sits at x = 1 and its
+            off-ramp crosses the verge heading west. That is a cosmetic overlap
+            of two meshes on the plain, not a placement conflict — nothing here
+            occupies a tile, so nothing can be blocked. */
+    connector: {
+      name: 'Grid Connector',
+      ico: '🗼',
+      // Cell coordinates in the apron. cx is resolved against GRID at mount so
+      // a different grid size keeps the corner rather than a stale number.
+      cx: -1, cz: -1,
+      /* Injects at this cell as if it were a plant, ALWAYS — including in a
+         city whose interconnector is refused. Being CONNECTED to the national
+         grid and being ALLOWED TO TRADE OVER IT are two questions with two
+         owners: link.js answers the second (and gates it on
+         MythicOutside.connected, the caravan's own rule). A connector that
+         stopped conducting when the trade gate shut would black out a city's
+         own coal plant for want of a Highway Interchange, which is nonsense. */
+      seeds: true,
+    },
+
+    /* ── THE DRAG ─────────────────────────────────────────────────────────────
+       An L-shaped run between the two ends of the gesture, because a cable run
+       is axis-aligned and a rectangle marquee is the wrong verb for a line: a
+       zoning marquee fills an area, a road or a cable draws a PATH. `elbowFirst`
+       is which leg is drawn first when the player has not expressed a
+       preference — X then Z. Holding shift swaps it, which is the CS2 idiom. */
+    elbowFirst: 'x',
+    // A run longer than this in one gesture is refused whole rather than
+    // half-charged. It is the same "one line for the whole drag" rule
+    // /src/zoning's develop() states: a bulk action must be all or nothing.
+    maxRun: 64,
+
+    /* ── THE LOOK ─────────────────────────────────────────────────────────────
+       Two draw calls for the whole network: one InstancedMesh of poles, one
+       LineSegments of wire. The city already pushes ~1,700 meshes and the
+       ground was deliberately reduced from 576 meshes to 2 — a per-cell Group
+       would spend that budget on a utility. */
+    pole: {
+      h: 0.78,          // above the tile surface
+      r: 0.035,         // pole radius at the base
+      col: 0x6b6259,    // creosoted timber, not steel: steel reads as a plant
+      // A pole every other cell along a straight run, plus one at every corner,
+      // junction and dead end (degree ≠ 2). Poles on every cell read as a fence.
+      everyOther: true,
+    },
+    wire: {
+      // Wire height, as a fraction of pole height — the crossarm, not the tip.
+      hFrac: 0.88,
+      // Catenary sag at mid-span, in world units. Small, but it is the single
+      // detail that stops a wire reading as a debug line.
+      sag: 0.055,
+      segs: 3,
+      /* Ribbon width. A REAL cable would be a few millimetres and would vanish
+         at the aerial camera this game is played from — the same reason
+         node-city's road paint stack is 1.8 mm and its lane markings are not.
+         0.028 is the narrowest that still reads as a continuous line across the
+         map at the default zoom. */
+      w: 0.028,
+      col: 0x2b2b30,
+    },
+    // Y of the cable network's base above the tile surface. Above RD_Y (.016)
+    // and above the hover plane (.02) so a pole never z-fights a road apron,
+    // below the power overlay's plane (.06) so the info view still reads on top.
+    y: 0.028,
+
+    /* ── THE REFUSALS ─────────────────────────────────────────────────────────
+       House style is node-city's own and tryPlace()'s road-cap message is the
+       model: say WHAT is refused, WHY, and exactly what fixes it. */
+    say: {
+      occupied: 'A building stands there. Run the line around it — a line only has to REACH a building, not cross it.',
+      outside:  'That is off the map. A power line may leave the plate by one cell, which is the verge the Grid Connector stands on.',
+      cap:      'The network is at its limit. Take a line down before laying another.',
+      afford:   'Not enough Cinder for that run.',
+      run:      'That is too long for one drag. Lay it in two.',
+    },
   },
 
   /* ── THE CAUSAL LIST ──────────────────────────────────────────────────────

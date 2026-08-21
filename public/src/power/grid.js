@@ -185,6 +185,16 @@ function topoSignature(host, loads) {
   const T = POWER.transmission;
   let s = host.grid + '|' + T.lvRating + ',' + T.hvRating + ',' + T.hvThreshold + ',' +
           T.trunkHops + ',' + T.lossPerHop + ',' + T.lossMax + '|';
+  /* 🗼 …and the LINE NETWORK, which is the fourth input this signature has had
+     to learn about. The first two versions of it were silently wrong (tile
+     count only, then tile roles only) and the header above records why each
+     looked complete. A conductor set that changed without changing the key
+     would be the same failure through a fourth door: the player draws a run to
+     the Grid Connector, the cache hits, and the overlay keeps painting the city
+     they had before they drew it. /src/power/lines.js sorts its own cells for
+     exactly this — re-laying the same run in a different order must not read as
+     a different network. */
+  s += ((host.lines && host.lines.sig) || 'L-') + '|';
   /* ⚠ THE DRAW MAP IS BUILT FROM THE MERGED LOAD LIST, not from `t.need`.
      Metering the 33 changes what a tile draws without changing anything the
      host reports on the tile itself, so a signature that read `t.need` would
@@ -218,27 +228,69 @@ function topoSignature(host, loads) {
    a building on an islanded road is powered exactly as well as one wired to the
    turbine hall. */
 function buildTopology(host, allLoads) {
-  const road = new Map();      // k -> { x, z, hop, prev, src, flow }
-  const isRoad = new Set();
-  for (const t of host.tiles) if (t.road) isRoad.add(t.k);
+  const road = new Map();      // k -> { x, z, hop, prev, src, flow, virtual }
+  /* 🗼 A CONDUCTOR IS A ROAD **OR** A POWER LINE, and lines were added rather
+     than substituted. A road has carried cable since this module shipped and it
+     still does: retro-fitting "you must now also run a line down every street
+     you already built" onto a live city is the same retroactive break the
+     enforce header spends thirty lines refusing. What lines add is the two jobs
+     a road cannot do — reaching OFF the plate (there is no road on the verge and
+     tryPlace will never put one there, so without them the Grid Connector is
+     unreachable and therefore decorative), and crossing ground the player does
+     not want to pave and pay the road maintenance cap for.
+     ⚠ The cells arrive as a plain Set of keys through the host snapshot. This
+       module does not import /src/power/lines.js and does not know what a pole
+       looks like — same seam, same direction, as every other fact here. */
+  const isCond = new Set();
+  for (const t of host.tiles) if (t.road) isCond.add(t.k);
+  const lineCells = (host.lines && host.lines.cells) || null;
+  if (lineCells) for (const k of lineCells) isCond.add(k);
 
-  // Seed: road tiles touching a plant. The plant injects there.
   const q = [];
+  function seed(x, z, src, virtual) {
+    const nk = K(x, z);
+    if (road.has(nk)) return;
+    road.set(nk, { x, z, hop: 0, prev: null, src, flow: 0, virtual: !!virtual });
+    q.push(nk);
+  }
+
+  /* Seed: conductors touching a plant. The plant injects there. */
   for (const p of host.plants) {
+    /* ⚡ …AND THE PLANT'S OWN TILE, as a VIRTUAL node that is never drawn as a
+       segment. This is the plant's switchyard, and it exists to remove a cliff
+       that only appears once connectivity is enforced: a player who builds a
+       Power Station on bare ground with no road and no line beside it would
+       otherwise seed nothing at all, every load in the city would read
+       unserved, and the city would go to the brownout floor at the exact moment
+       the player finished building the thing that was supposed to fix it —
+       while the availability meter read a comfortable surplus. A generator
+       powers what is standing next to it. Beyond that you run cable.
+       ⚠ Deliberately hop 0 and deliberately NOT emitted into `seg`: adding it
+         to the segment list would put an HV cable on a building tile in the
+         overlay, and shifting the adjacent conductors to hop 1 would re-cut
+         every HV/LV boundary in every existing city through POWER.transmission
+         .trunkHops. Neither is a rendering detail. */
+    seed(p.x, p.z, p.k, true);
     for (const [dx, dz] of NEI) {
       const nk = K(p.x + dx, p.z + dz);
-      if (!isRoad.has(nk)) continue;
-      if (road.has(nk)) continue;
-      road.set(nk, { x: p.x + dx, z: p.z + dz, hop: 0, prev: null, src: p.k, flow: 0 });
-      q.push(nk);
+      if (isCond.has(nk)) seed(p.x + dx, p.z + dz, p.k, false);
     }
+  }
+  /* 🗼 …and the GRID CONNECTOR, which injects like a plant because that is what
+     it is: the point where the city's network meets the one outside it. It
+     seeds whether or not the interconnector is currently allowed to trade — see
+     POWER.lines.connector.seeds. A connector that stopped conducting when the
+     trade gate shut would black out a city's own coal plant for want of a
+     Highway Interchange. */
+  for (const s of ((host.lines && host.lines.seeds) || [])) {
+    if (isCond.has(s.k)) seed(s.x, s.z, s.k, false);
   }
 
   for (let i = 0; i < q.length; i++) {
     const cur = road.get(q[i]);
     for (const [dx, dz] of NEI) {
       const nx = cur.x + dx, nz = cur.z + dz, nk = K(nx, nz);
-      if (!isRoad.has(nk) || road.has(nk)) continue;
+      if (!isCond.has(nk) || road.has(nk)) continue;
       road.set(nk, { x: nx, z: nz, hop: cur.hop + 1, prev: K(cur.x, cur.z), src: cur.src, flow: 0 });
       q.push(nk);
     }
@@ -277,6 +329,7 @@ function buildTopology(host, allLoads) {
   const T = POWER.transmission;
   const seg = [];
   for (const [k, r] of road) {
+    if (r.virtual) continue;          // the plant's own switchyard is not a cable
     const hv = r.flow >= T.hvThreshold || r.hop < T.trunkHops;
     const rating = hv ? T.hvRating : T.lvRating;
     seg.push({ k, x: r.x, z: r.z, hop: r.hop, prev: r.prev, src: r.src,
@@ -348,8 +401,45 @@ export function solve(host, store) {
   //    "no grid, no brownout" rule: the per-capita term is only charged once
   //    the city has something electrical in it. Re-deriving that rule would be
   //    a second truth, so `host.hasGrid` is handed in already decided.
+  /* ── 🔌 IS CONNECTIVITY A GATE THIS TICK? ──────────────────────────────────
+     TWO switches, ANDed, and they answer two different questions:
+       · POWER.transmission.enforce is the FEATURE switch — "does transmission
+         affect the simulation at all". One number, the kill switch a balance
+         round needs.
+       · host.enforce is the PER-CITY LATCH index.js resolved from the save —
+         `wired`, which is false for any city whose blob predates this round.
+         That is the whole grandfather rule and it is the `metered` opt-in
+         argued a second time: absence of the key in the blob IS the version
+         stamp, so an old city keeps the exact numbers it had — same load, same
+         factor, same per-tile map — until its player opts in.
+     ⚠ `typeof`, not `||`. A host that hands over `enforce: false` means it, and
+       falling through to the module default on a falsey value would enforce
+       against precisely the cities the latch exists to protect. A host that
+       hands nothing (an older node-city, or a direct call from a test) gets the
+       feature flag alone, which is this module's own opinion about itself. */
+  const enforcing = (typeof host.enforce === 'boolean') ? host.enforce : !!POWER.transmission.enforce;
+
+  /* ── WHO IS ON THE GRID ────────────────────────────────────────────────────
+     🔴 THIS IS THE LINE THAT CHANGES PRODUCTION, and it is the first time in
+        this module's life that the walk has been allowed to. Before it, `topo
+        .unserved` was computed every tick, drawn in the overlay, printed in the
+        panel's advisory — and then every load, wired or not, was handed the
+        same city factor. A building on an islanded road was powered exactly as
+        well as one wired to the turbine hall, which made the entire diagnostic
+        a claim the simulation contradicted.
+     An OFF-NETWORK building is not shed: it is not connected. So it does not
+     appear in `load` (it draws nothing from a grid it is not attached to) and
+     it does not appear in the ladder (there is nothing to ration to it). It is
+     pinned to `host.floor` below — the same floor a city with no generator at
+     all has always sat at, which is what makes this a connection rule rather
+     than a new punishment. */
+  const gridLoads = enforcing ? topo.loads : allLoads;
+  const offLoads = enforcing ? topo.unserved : [];
+
   let bldLoad = 0, meterLoad = 0;
-  for (const l of allLoads) { bldLoad += l.draw; if (l.metered) meterLoad += l.draw; }
+  for (const l of gridLoads) { bldLoad += l.draw; if (l.metered) meterLoad += l.draw; }
+  let offLoad = 0;
+  for (const l of offLoads) offLoad += l.draw;
   const popLoad = host.hasGrid ? host.perPop * host.pop : 0;
   /* Line loss is a DEMAND term and is only CHARGED when transmission is
      enforced — see POWER.transmission's header. Computed either way, because
@@ -357,7 +447,7 @@ export function solve(host, store) {
      computed when it is charged is a number nobody can sanity-check before
      turning the flag on. */
   const lossWouldBe = bldLoad * topo.loss;
-  const lossLoad = POWER.transmission.enforce ? lossWouldBe : 0;
+  const lossLoad = enforcing ? lossWouldBe : 0;
   const load = bldLoad + popLoad + lossLoad;
 
   /* ── STORAGE ──────────────────────────────────────────────────────────────
@@ -441,20 +531,38 @@ export function solve(host, store) {
        minShare is folded into one "…and N smaller" row carrying its real sum —
        the same rule node-city states for its away-report leaver list. A list
        that does not add up to the meter is worse than no list. */
-  const causes = buildCauses({ byPlant, host, loads: allLoads, popLoad, lossLoad, fromStore, dt,
+  const causes = buildCauses({ byPlant, host, loads: gridLoads, popLoad, lossLoad, fromStore, dt,
                                importUnits, exportUnits,
                                meanHop: topo.meanHop, loss: topo.loss });
 
   /* ── 🪜 THE LADDER. Same energy, distributed by priority. See shedLadder's
-     header for the identity it maintains and the audit that enforces it. */
-  const ladder = shedLadder(allLoads, popLoad, lossLoad, served, host.floor);
+     header for the identity it maintains and the audit that enforces it.
+     ⚠ IT IS HANDED THE CONNECTED LOADS, NOT ALL OF THEM, and that is what keeps
+       the audit an identity rather than an approximation. `served` is what the
+       plants, the battery and the link produced; `gridLoads` is everything
+       attached to them. Feeding the ladder loads that are not attached would
+       ration real energy to buildings that cannot receive it and the audit
+       would still pass, because the ladder only ever checks that it handed out
+       what it was given — it cannot know the recipient was not there. */
+  const ladder = shedLadder(gridLoads, popLoad, lossLoad, served, host.floor);
   /* 🔴 THE FALLBACK IS FLAT, AND IT IS OBSERVABLE. If the audit fails, every
      tile gets the same factor node-city would have computed on its own — no
      redistribution, nothing lost — and `shedOk` goes false so the panel can say
      so. A silent revert here would be indistinguishable from a working ladder
      that happens to be shedding nothing. */
   let tileFactor = ladder.tileFactor;
-  if (!ladder.ok) { tileFactor = Object.create(null); for (const l of allLoads) tileFactor[l.k] = factor; }
+  if (!ladder.ok) { tileFactor = Object.create(null); for (const l of gridLoads) tileFactor[l.k] = factor; }
+  /* 🔌 …and the off-network tiles, pinned AFTER the ladder and deliberately
+     OUTSIDE its audit. They are not part of the energy being redistributed, so
+     including them would break the identity that makes the ladder safe. `floor`
+     is node-city's own POWER_FLOOR — the number a city with no generator has
+     always sat at — so an unconnected building is exactly as productive as it
+     would be in a city with no power station in it, and no worse.
+     ⚠ THE DRAW-WEIGHTED MEAN OF tileFactor STILL EQUALS `factor`, OVER `load`.
+       That invariant is stated in node-city's own header and it survives,
+       because `load` no longer counts these buildings either. The mean is taken
+       over what is on the grid; these are not. */
+  if (enforcing) for (const l of offLoads) tileFactor[l.k] = host.floor;
 
   /* ☁ THE POLLUTION TICK. One call, immediately after the tick's real outputs
      are known and before anything else can change them. See plants.js →
@@ -500,7 +608,21 @@ export function solve(host, store) {
     emissions,
     plantCount: host.plants.length,
     loadCount: allLoads.length,
-    enforce: POWER.transmission.enforce,
+    /* 🔌 THREE FIELDS, NOT ONE, because "is the feature on", "is this city
+       under it" and "what did it cost this city" are three questions and a
+       panel that can only ask the first cannot explain the other two.
+         enforce     — in effect for THIS city this tick (flag AND latch)
+         enforceFlag — the feature switch alone
+         offNetwork  — how many buildings the rule is currently holding at the
+                       floor, and what they would have drawn if wired. Zero is
+                       a real and common answer here, and an honest one. */
+    enforce: enforcing,
+    enforceFlag: !!POWER.transmission.enforce,
+    offNetwork: offLoads.length,
+    offNetworkDraw: offLoad,
+    /* 🗼 The conductor set's own accounting, so the panel can distinguish "you
+       have no lines" from "your lines do not reach". */
+    lineCells: (host.lines && host.lines.cells && host.lines.cells.size) || 0,
   };
 }
 

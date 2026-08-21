@@ -48,6 +48,11 @@
    carries the streets blob forward untouched (index.html keeps the raw object
    and re-serialises it), and nothing else changes.                            */
 
+/* 🛣 THE ROAD RESOLVER. There is one classifier and it lives in node-city;
+   this is the guarded reader. A street must run through EVERY carriageway
+   class or a segment stops dead at the first Lane and the player's road gets
+   two names. */
+import { isRoadTile } from '../roads/types.js';
 import { STREET } from './tuning.js';
 import { segment } from './segment.js';
 import { generateName, sanitiseName } from './naming.js';
@@ -82,9 +87,18 @@ export function mount(ctx) {
   let uiTab = 'ov';
   let dirty = false;                // something worth saving changed
 
-  const isRoad = (x, z) => {
-    const t = game.tiles[x + ',' + z];
-    return !!t && t.type === 'road';
+  const isRoad = (x, z) => isRoadTile(game.tiles[x + ',' + z]);
+  /* 🛣 THE ROAD CLASS (/src/roads), read live through the module's resolver and
+     never off `t.rc` directly — the same rule that makes roadsAdjacentTo() take
+     a resolver rather than a list. A run of one class is one named street, so
+     an avenue does not silently inherit the name of the lane it turns into.
+     ⚠ ABSENT ⇒ null FOR EVERY TILE ⇒ the segmenter this module has always used.
+       No city's street names move because a module loaded or failed to. */
+  const classOf = (x, z) => {
+    try {
+      const RC = window.MythicRoadClasses;
+      return (RC && RC.classOf) ? RC.classOf(game.tiles[x + ',' + z]) : null;
+    } catch (e) { return null; }
   };
 
   /* ── the street graph ───────────────────────────────────────────────────
@@ -96,11 +110,20 @@ export function mount(ctx) {
     const roadKeys = [];
     let sum = 0, n = 0;
     for (const k in game.tiles) {
-      if (game.tiles[k].type !== 'road') continue;
+      if (!isRoadTile(game.tiles[k])) continue;
       roadKeys.push(k);
       n++;
       const c = k.indexOf(',');
       sum += (+k.slice(0, c) + 1) * 977 + (+k.slice(c + 1) + 1) * 31;
+      /* 🛣 THE CLASS IS PART OF THE SIGNATURE. Without this, re-laying a run of
+         streets as an avenue changes NO road key, so the signature is identical
+         and the cached graph is returned — the segmenter would keep serving the
+         one-street answer for a run that is now two, until the player happened
+         to place or lift a road somewhere. Exactly the class of stale-cache bug
+         /src/power's topoSignature() records having shipped twice (count-only,
+         then role-only). Hashed by string so a new class id needs no number. */
+      const rc = classOf(+k.slice(0, c), +k.slice(c + 1));
+      if (rc) for (let i = 0; i < rc.length; i++) sum += rc.charCodeAt(i) * 7;
     }
     const sig = n + ':' + sum;
     // The meter's capacity model needs the size of the road network; this loop
@@ -108,7 +131,7 @@ export function mount(ctx) {
     meter.setNetwork(n);
     if (!force && graph && sig === lastSig) return graph;
     lastSig = sig;
-    graph = segment(roadKeys, isRoad);
+    graph = segment(roadKeys, isRoad, classOf);
     assignNames(graph.streets);
     return graph;
   }

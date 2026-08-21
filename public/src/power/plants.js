@@ -161,7 +161,7 @@ function waterAt(x, z) {
     const s = W.sourceAt(x, z);
     if (!s) return null;
     return { flow: Math.max(0, Math.min(1, Number(s.flow) || 0)), kind: s.kind,
-             purity: Number(s.purity), name: s.name || '' };
+             purity: Number(s.purity), name: s.name || '', salt: !!s.salt };
   } catch (e) { return null; }
 }
 
@@ -373,6 +373,17 @@ export function siteRefusal(type, x, z, ctx) {
     const w = waterAt(x, z);
     if (!w) return '💧 A dam needs surface water, and no hydrology model is loaded to find any.';
     if (w.flow >= spec.minFlow) return null;
+    /* 🧂 THE COAST IS REFUSED BY THE SAME LINE THAT REFUSES DRY GROUND, AND IT
+       IS WORTH SAYING SO IN WORDS RATHER THAN QUOTING "0% flow" AT A PLAYER WHO
+       CAN SEE THE SEA FROM THE SITE. /src/water registers the sea as its own
+       body with flow 0 precisely so this refusal keeps working (see WATER.sea);
+       what was missing was the REASON, and "there is no water here" is a lie
+       when there is visibly water there. A dam converts a HEAD and a CURRENT
+       into power; a sea has neither, and salt would eat the turbines besides. */
+    if (w.salt || w.kind === 'sea')
+      return '🌊 That is the sea. A dam needs a current and a fall to work with, and open ' +
+             'salt water has neither — the coast is for a waterworks, not a turbine. ' +
+             'Open the ⚡ panel and turn on Surface Water Flow to find a channel.';
     return '💧 Not enough flow here — ' + Math.round(w.flow * 100) + '% against the ' +
       Math.round(spec.minFlow * 100) + '% a dam needs. Open the ⚡ panel and turn on Surface Water Flow to see the channel.';
   }

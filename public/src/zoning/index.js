@@ -27,6 +27,11 @@
      • three/scene missing → the overlay is skipped, the data layer still works.
    ══════════════════════════════════════════════════════════════════════════ */
 
+/* 🛣 The road resolver. Zoning depends on it in BOTH directions: a road tile
+   is not zonable, AND a road tile is what BOUNDS applyFill. A class that fell
+   out of this test would become paintable land and one fill would escape the
+   block and run to FILL_MAX. */
+import { isRoadTile } from '../roads/types.js';
 import { ZONES, ZONE_BY_ID, CATS, ADOPT_BY_TYPE } from './zones.js';
 import { makeSeeder } from './seed.js';
 import { makeOverlay } from './overlay.js';
@@ -47,7 +52,7 @@ export function mount(ctx) {
   const key = ctx.key || ((x, z) => x + ',' + z);
   const inGrid = ctx.inGrid || ((x, z) => x >= 0 && z >= 0 && x < GRID && z < GRID);
   const tileAt = ctx.tileAt || ((x, z) => (G.tiles || {})[key(x, z)] || null);
-  const isRoad = ctx.isRoad || ((x, z) => { const t = tileAt(x, z); return !!t && t.type === 'road'; });
+  const isRoad = ctx.isRoad || ((x, z) => isRoadTile(tileAt(x, z)));
   const toast = ctx.toast || function () {};
   const logEvent = ctx.logEvent || function () {};
   const saveSoon = ctx.saveSoon || function () {};
@@ -961,7 +966,7 @@ export function mount(ctx) {
       _adopted = true;
       let n = 0, res = 0;
       for (const k in (G.tiles || {})) {
-        const t = G.tiles[k]; if (!t || t.type === 'anchor' || t.type === 'road') continue;
+        const t = G.tiles[k]; if (!t || t.type === 'anchor' || isRoadTile(t)) continue;
         const id = ADOPT_BY_TYPE[t.type]; if (!id) continue;
         G.zones[k] = id; n++;
         if (id === 'r_asbuilt') res++;

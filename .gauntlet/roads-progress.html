@@ -1,0 +1,566 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Roads &amp; Utilities — round log</title>
+<style>
+  :root{
+    --bg:#14121c; --panel:#1b1826; --panel2:#211d2e; --line:#2e2941;
+    --ink:#dcd9e6; --dim:#948da8; --dimmer:#6f6885;
+    --pass:#6ee7a8; --fail:#ff7a6b; --warn:#f6c667; --link:#8fb8ff;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    color-scheme:dark;
+  }
+  *{box-sizing:border-box}
+  body{background:var(--bg);color:var(--ink);margin:0;padding:0 20px 80px;
+       font:14.5px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+       -webkit-font-smoothing:antialiased}
+  .wrap{max-width:1180px;margin:0 auto}
+  header{padding:38px 0 4px;border-bottom:1px solid var(--line);margin-bottom:26px}
+  h1{font-size:26px;margin:0 0 6px;letter-spacing:-.01em;font-weight:650}
+  .sub{color:var(--dim);margin:0 0 22px;font-size:14px;max-width:78ch}
+
+  .strip{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 30px}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:9px;
+        padding:11px 15px;min-width:132px;flex:1 1 132px}
+  .stat b{display:block;font-size:21px;font-weight:650;letter-spacing:-.01em;line-height:1.2}
+  .stat span{display:block;color:var(--dimmer);font-size:11px;text-transform:uppercase;
+             letter-spacing:.07em;margin-top:3px}
+  .stat.ok b{color:var(--pass)}
+  .stat.hot b{color:var(--warn)}
+
+  h2{font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:var(--dimmer);
+     margin:46px 0 14px;font-weight:650;border-top:1px solid var(--line);padding-top:22px}
+  h2:first-of-type{border-top:0;padding-top:0}
+
+  .honest{background:#231a1e;border:1px solid #4b2f38;border-left:3px solid var(--fail);
+          border-radius:10px;padding:20px 22px;margin:0 0 34px}
+  .honest h3{margin:0 0 4px;font-size:15px;color:#ffb3a8;font-weight:650}
+  .honest > p{margin:0 0 18px;color:#d9c6c8;max-width:82ch}
+  .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px}
+  .cols h4{margin:0 0 8px;font-size:11.5px;letter-spacing:.09em;text-transform:uppercase;
+           color:var(--warn);font-weight:650}
+  .cols ul{margin:0;padding-left:17px}
+  .cols li{margin:0 0 9px;color:#cfc4cb;font-size:13.4px;line-height:1.55}
+  .cols li b{color:#fff;font-weight:600}
+
+  table{border-collapse:collapse;width:100%;font-size:13.6px}
+  th,td{text-align:left;vertical-align:top;padding:10px 12px;border-bottom:1px solid var(--line)}
+  th{background:var(--panel2);color:#b7afcc;font-weight:600;font-size:11px;
+     text-transform:uppercase;letter-spacing:.07em;white-space:nowrap}
+  tbody tr:hover{background:#1a1725}
+  td.n{white-space:nowrap;color:var(--dim);font-variant-numeric:tabular-nums}
+  .pass{color:var(--pass);font-weight:650}
+  .fail{color:var(--fail);font-weight:650}
+  .score{font-family:var(--mono);font-weight:650;font-size:14px}
+  .score .of{color:var(--dimmer);font-weight:400;font-size:11.5px}
+  code,kbd{font-family:var(--mono);background:#252032;padding:1.5px 5px;border-radius:4px;
+       font-size:12.3px;color:#cfc7e4}
+
+  .piece{background:var(--panel);border:1px solid var(--line);border-radius:11px;
+         padding:22px 24px;margin:0 0 20px}
+  .piece > h3{margin:0 0 2px;font-size:17px;font-weight:650;letter-spacing:-.01em}
+  .piece .meta{color:var(--dimmer);font-size:12.3px;margin:0 0 16px;font-family:var(--mono)}
+  .piece table{margin-top:6px}
+  .piece .bar{color:var(--dim);font-size:13.2px;margin:0 0 14px;padding-left:13px;
+              border-left:2px solid var(--line);max-width:88ch}
+  .piece .bar b{color:#c9c1de;font-weight:600}
+  .ev{display:flex;flex-wrap:wrap;gap:6px;margin:14px 0 0}
+  .ev span{background:#252032;border:1px solid #332c47;border-radius:5px;padding:3px 9px;
+           font-family:var(--mono);font-size:11.6px;color:#b9b1d0}
+  .ev span b{color:var(--pass);font-weight:650}
+  .next{margin:16px 0 0;padding:11px 14px;background:#1e2130;border:1px solid #2c3350;
+        border-radius:8px;font-size:13.2px;color:#b9c3dd}
+  .next b{color:#dbe4ff;font-weight:600;display:block;font-size:11px;letter-spacing:.08em;
+          text-transform:uppercase;margin-bottom:3px;color:var(--link)}
+
+  pre{background:#0f0d16;border:1px solid var(--line);border-radius:9px;padding:16px 18px;
+      overflow-x:auto;font-family:var(--mono);font-size:12.6px;line-height:1.62;color:#c3bcd8;
+      margin:0 0 14px}
+  pre .cmd{color:var(--warn)}
+  pre .good{color:var(--pass);font-weight:650}
+
+  footer{margin-top:46px;padding-top:20px;border-top:1px solid var(--line);
+         color:var(--dimmer);font-size:12.5px}
+  footer p{margin:0 0 7px;max-width:88ch}
+  a{color:var(--link)}
+</style>
+
+<div class="wrap">
+
+<header>
+  <h1>Roads &amp; Utilities — round log</h1>
+  <p class="sub">node-city. Six pieces, seven rounds. One piece was reopened and closed;
+  the other five passed on the first round, which means this log has far fewer <em>gaps closed</em>
+  than the shape of the exercise implies — see the score column and read the caveat under it.</p>
+
+  <div class="strip">
+    <div class="stat ok"><b>6 / 6</b><span>pieces met the bar</span></div>
+    <div class="stat"><b>7</b><span>rounds run</span></div>
+    <div class="stat hot"><b>1</b><span>reopened (water)</span></div>
+    <div class="stat ok"><b>ALL CLEAN</b><span>index.html gate</span></div>
+    <div class="stat ok"><b>213 / 213</b><span>modules parse</span></div>
+    <div class="stat hot"><b>0</b><span>commits, deploys, version bumps</span></div>
+  </div>
+</header>
+
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<div class="honest">
+  <h3>Read this first: what is not done</h3>
+  <p>Every piece here was scored against a bar and passed it. That is not the same as
+  <em>finished</em>, and it is definitely not the same as <em>played</em>. Nothing below has ever
+  been touched by a human hand — every proof in this log came from a driven browser under
+  Playwright. Nothing is committed, nothing is deployed, and no version knob was bumped.</p>
+
+  <div class="cols">
+    <div>
+      <h4>Not done</h4>
+      <ul>
+        <li><b>No road is ever wider than one tile.</b> A highway is darker, hatched and
+            barriered — it is not <em>wide</em>. <code>roads/mesh.js:52</code> refuses to touch
+            <code>RD_HW</code> on purpose: moving it re-cuts every kerb, verge, footway, apron and
+            junction in the city. The roundabout is nine one-tile roads, not a nine-tile object.
+            So the network reads as nine <em>surfaces</em>, not as a hierarchy of <em>capacities</em>.</li>
+        <li><b>Power enforcement is opt-in, per city.</b> <code>enforce: true</code> ships
+            (<code>power/tuning.js:567</code>) but resolves as
+            <code>POWER.transmission.enforce &amp;&amp; wired</code>. A save written before this
+            round has no <code>wired</code> key, comes back <code>false</code>, and behaves
+            <em>exactly</em> as before. The constraint does not bite for any existing player until
+            they press a button in the ⚡ panel that nobody has yet pressed by hand.</li>
+        <li><b>Water is the same shape.</b> <code>plumbed</code> is derived: no pipe, no governed
+            waterworks and no outfall ⇒ every factor is <code>1.00</code>. A player who never
+            touches the mains never feels the system exist.</li>
+        <li><b>The ocean was photographed at <code>medium</code> and <code>low</code>, not at
+            <code>potato</code>.</b> The harness itself degraded to potato mid-run
+            (see the tier log in <code>shots/ocean/report.json</code>) — that tier is unmeasured.</li>
+        <li><b>No UI round.</b> The road palette, the mains panel and the grid panel exist and
+            print correct numbers; none of them has been through a legibility pass, and the road
+            classes have no in-game explanation of what each one is <em>for</em>.</li>
+      </ul>
+    </div>
+    <div>
+      <h4>Deliberately cut</h4>
+      <ul>
+        <li><b>Multi-tile roads.</b> Explicitly deferred to its own round — <code>index.html:28378</code>
+            already refused multi-tile occupancy once, at the Stadium, and shipped clearance instead.</li>
+        <li><b>Conversion priced as a difference.</b> Re-laying a highway as an alley charges the
+            full alley price, not the gap. A gap would be <em>negative</em>, and a negative charge
+            mints Cinder outside the audited faucet — forbidden outright by ECONOMY.md.
+            (<code>roads/price.js:73</code>)</li>
+        <li><b>Line loss in old cities.</b> Computed and printed, never added to load, because a
+            few per cent of extra demand tips a city that sits just above parity into a brownout it
+            did not have yesterday.</li>
+        <li><b>Any SQL.</b> Six pieces, zero migrations. Everything persists through the existing
+            city blob — <code>t.rc</code> rides on the tile, pipes and lines go in the shelf. If
+            you were expecting a <code>/sql</code> file to review, there isn't one.</li>
+      </ul>
+    </div>
+    <div>
+      <h4>A human must verify by playing</h4>
+      <ul>
+        <li><b>Does the drag feel like a drag?</b> It was proved with synthesised pointer events at
+            machine speed. The Browser pane composites at ~0.56 Hz; a real hand on a real mouse is
+            the only thing that can say whether the preview quad keeps up.</li>
+        <li><b>Does the tool arbitration read?</b> Zero zone cells painted during a road drag is
+            asserted numerically in both directions. Whether a player <em>notices</em> that the
+            other tool stood down — or just thinks the game ignored them — is unmeasured.</li>
+        <li><b>The one summary toast</b> is one toast on a three-slot rail. Nobody has watched it
+            land next to two other toasts.</li>
+        <li><b>The power opt-in is a live balance change to an existing save.</b> Clicking it
+            re-prices a city the player already built. That flow has never been played through
+            once.</li>
+        <li><b>Does the mains panel now lead anywhere?</b> The round-2 fix made the arithmetic
+            per-component and the copy honest. Whether a human reads it and correctly concludes
+            "join my two mains" is exactly the thing an assertion cannot check.</li>
+        <li><b>The sea on a real low-end device</b>, at the tier that device actually boots at.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<h2>Scoreboard</h2>
+
+<table>
+  <thead>
+    <tr><th>Piece</th><th>Rounds</th><th>Score</th><th>Where it lives</th><th>Verdict</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><b>1 · The drag primitive</b></td><td class="n">1</td>
+      <td class="score">8.3 <span class="of">/10</span></td>
+      <td class="n"><code>src/netdrag/</code> · 1,041 lines</td>
+      <td class="pass">MET THE BAR</td>
+    </tr>
+    <tr>
+      <td><b>2 · One road resolver</b></td><td class="n">1</td>
+      <td class="score">8 <span class="of">/10</span></td>
+      <td class="n"><code>src/roads/types.js</code>, <code>classes.js</code></td>
+      <td class="pass">MET THE BAR</td>
+    </tr>
+    <tr>
+      <td><b>3 · A road network</b></td><td class="n">1</td>
+      <td class="score">0.82 <span class="of">/1</span></td>
+      <td class="n"><code>src/roads/</code> · 1,882 lines</td>
+      <td class="pass">MET THE BAR</td>
+    </tr>
+    <tr>
+      <td><b>4 · Ocean every city can see</b></td><td class="n">1</td>
+      <td class="score">7 <span class="of">/10</span></td>
+      <td class="n"><code>src/ocean/</code> · 737 lines</td>
+      <td class="pass">MET THE BAR</td>
+    </tr>
+    <tr>
+      <td><b>5 · Water and sewer</b></td><td class="n">2</td>
+      <td class="score"><span class="fail">0.72</span> → <span class="pass">8</span></td>
+      <td class="n"><code>src/water/network.js</code>, <code>netui.js</code></td>
+      <td class="pass">MET THE BAR (round 2)</td>
+    </tr>
+    <tr>
+      <td><b>6 · Power lines to the connector</b></td><td class="n">1</td>
+      <td class="score">78 <span class="of">/100</span></td>
+      <td class="n"><code>src/power/lines.js</code> · 817 lines</td>
+      <td class="pass">MET THE BAR</td>
+    </tr>
+  </tbody>
+</table>
+
+<p class="sub" style="margin-top:14px">
+<b style="color:var(--warn)">⚠ The score column is not one scale.</b> Six critics used four
+different ranges — <code>/10</code>, <code>/1</code>, <code>/100</code> — and the water piece
+changed range <em>between its own two rounds</em> (0.72 on a 0–1 scale, then 8 on a 0–10 scale).
+Read each score against its own denominator and against its own bar. Do not read the column as a
+ranking: 0.82 is the <em>highest</em> relative score on this page and 78 is not better than 8.
+</p>
+
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<h2>Piece by piece</h2>
+
+<!-- 1 -->
+<div class="piece">
+  <h3>1 · The drag primitive</h3>
+  <p class="meta">public/src/netdrag/{index.js, preview.js, rig.js} — 1,041 lines · 1 round · 8.3/10</p>
+  <p class="bar"><b>The bar:</b> one <code>pointerdown</code>, N <code>pointermove</code>s, one
+  <code>pointerup</code> places a ≥10-tile run; the camera must not move; the preview total must
+  equal <code>run.length × costOf('road').cinder</code> and never <code>BUILDINGS.road.cost</code>
+  raw (which quotes 100× low); a run that crosses the cap or an occupied tile produces ONE summary
+  toast. <b>The hard part was arbitration</b>, asserted in both directions.</p>
+
+  <table>
+    <thead><tr><th>Round</th><th>Score</th><th>Verdict</th><th>What it did / what was left</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="n">1</td><td class="score">8.3</td><td class="pass">PASS</td>
+        <td>Placed the run from a single gesture with <code>camera.position</code> byte-identical
+        across it, and the &gt;6px "it was a camera drag" bail at <code>index.html:33018</code>
+        never fired. Road drag with the Zones panel open and Housing armed painted a
+        <b>zero-entry <code>G.zones</code> diff</b>; arming zoning made the road tool stand down
+        symmetrically. Passed first time — <b>no reopening gap was recorded, and the residual 1.7
+        was not itemised</b> in what came back.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="ev">
+    <span>camera delta <b>0</b></span>
+    <span>camera-drag bail <b>not fired</b></span>
+    <span>zone cells painted <b>0</b></span>
+    <span>arbitration asserted <b>both ways</b></span>
+    <span>total via <b>costOf()</b>, not BUILDINGS.road.cost</span>
+  </div>
+
+  <div class="next"><b>What the next round would attack</b>
+  The gesture is proved but not <em>felt</em>. Next round is latency and forgiveness: the preview
+  under a real hand at the pane's ~0.56 Hz composite, an undo for a mis-drag, and whether the
+  summary toast survives contact with two other toasts on a three-slot rail.</div>
+</div>
+
+<!-- 2 -->
+<div class="piece">
+  <h3>2 · One road resolver, before any second road type</h3>
+  <p class="meta">public/src/roads/{types.js, classes.js} — 242 lines · 1 round · 8/10</p>
+  <p class="bar"><b>The bar:</b> <code>grep -rn "=== 'road'"</code> returns ZERO hits outside the
+  single resolver (baseline 23 + 12 = 35), then one tile of the proof class must still be seen as a
+  road by all <b>eight</b> downstream systems — cap, mesh, agents, zoning bound, power topology,
+  streets, economy exemption, <code>computeLinks</code> — plus a 404 round-trip with the module
+  absent.</p>
+
+  <table>
+    <thead><tr><th>Round</th><th>Score</th><th>Verdict</th><th>What it did / what was left</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="n">1</td><td class="score">8</td><td class="pass">PASS</td>
+        <td>Solved it by <b>not inventing a tile type at all</b>. <code>t.type</code> stays the
+        literal string <code>'road'</code> for all nine classes and the class rides beside it in
+        <code>t.rc</code>. That is why the eight downstream systems keep working
+        <em>unchanged</em> rather than being individually patched, and why the 404 round-trip is
+        trivially safe: delete the module from the deploy and a classed road is just a road.
+        Passed first time — no gap recorded.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="ev">
+    <span>live <code>=== 'road'</code> comparisons: <b>0</b></span>
+    <span>14 textual hits remain — <b>every one inside a comment</b></span>
+    <span>baseline was <b>35</b></span>
+    <span>persists with <b>no save migration</b></span>
+    <span>module-absent reload: <b>renders, prices, demolishes</b></span>
+  </div>
+
+  <div class="next"><b>What the next round would attack</b>
+  The rule holds by convention, not by machine. Next round makes it enforceable: fold the
+  <code>=== 'road'</code> grep into <code>.gauntlet/precommit-scan.mjs</code> so hit #15 fails a
+  gate instead of being caught by whoever happens to look.</div>
+</div>
+
+<!-- 3 -->
+<div class="piece">
+  <h3>3 · A road network, not painted tiles</h3>
+  <p class="meta">public/src/roads/ — 1,882 lines · 1 round · 0.82/1</p>
+  <p class="bar"><b>The bar:</b> at least EIGHT visually distinct classes proved
+  <em>photographically</em> — <code>renderer.render()</code> driven by hand and
+  <code>drawImage</code> in the SAME task — each differing from plain road by a stated percentage
+  against a control of exactly 0. It must READ as a network: no staircase gap on a diagonal, no lip
+  at a junction, a roundabout that is one component. Draw-call budget, zero price literals, and
+  <b>no insertion into <code>rdRng</code>'s ten fixed-order rolls</b>.</p>
+
+  <table>
+    <thead><tr><th>Round</th><th>Score</th><th>Verdict</th><th>What it did / what was left</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="n">1</td><td class="score">0.82</td><td class="pass">PASS</td>
+        <td>Nine classes shipped; eight photographed against <code>street</code> as the control
+        (street <em>is</em> the baseline, so its own delta is 0 by definition and it is not counted
+        as one of the eight). Every control read exactly <b>0.00%</b>, which is the number that
+        makes the others mean anything. Draw calls came in at <b>zero delta per class</b> —
+        158 before, 158 after — because every class merges into the existing six buckets.
+        Passed first time; no gap recorded.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="ev">
+    <span>culdesac <b>18.96%</b></span>
+    <span>bridge <b>15.72%</b></span>
+    <span>roundabout <b>14.06%</b></span>
+    <span>highway <b>9.27%</b></span>
+    <span>alley <b>7.80%</b></span>
+    <span>avenue <b>6.48%</b></span>
+    <span>bikelane <b>5.22%</b></span>
+    <span>curve <b>5.14%</b></span>
+    <span>every control <b>0.00%</b></span>
+    <span>draw-call delta <b>0</b> (158→158)</span>
+    <span>diagonal run len 13, breaks <b>0</b></span>
+    <span>roundabout: <b>1 component, 9 reached</b></span>
+    <span>rdRng rolls <b>appended, never inserted</b></span>
+  </div>
+
+  <div class="next"><b>What the next round would attack</b>
+  Width — the thing this round explicitly refused. A highway that is darker but not wider still
+  reads as paint at the game's 20–30° camera, and <code>RD_HW</code> is the one variable that would
+  fix it and would also re-cut every kerb, verge and apron in the city. That is its own round, with
+  its own before/after photographs.</div>
+</div>
+
+<!-- 4 -->
+<div class="piece">
+  <h3>4 · Ocean every city can see</h3>
+  <p class="meta">public/src/ocean/{index.js, tuning.js} — 737 lines · 1 round · 7/10</p>
+  <p class="bar"><b>The bar:</b> photograph it at the default boot camera on the
+  <code>medium</code> tier occupying a non-trivial share of a named crop against a control of
+  exactly 0 — and prove the pixels are <em>not fog colour</em>, the exact failure
+  <code>/src/outside</code> shipped silently at z=−19.6. Present on EVERY city (20 sampled).
+  ≤2 draw calls, ≤2 geometries. No z-fight against five named layers. <code>sourceAt()</code> must
+  agree it is the sea, and hydro must still refuse the coast.</p>
+
+  <table>
+    <thead><tr><th>Round</th><th>Score</th><th>Verdict</th><th>What it did / what was left</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="n">1</td><td class="score">7</td><td class="pass">PASS</td>
+        <td>One swept lattice, one material, one generated ripple normal — <b>1 mesh, 1 geometry,
+        1 material, 1 texture</b>, half the allowed budget. The fog test is the one that mattered:
+        mean sea RGB <code>(103,168,189)</code> against fog <code>(137,156,165)</code>, a distance
+        of <b>43</b> — it is water, not haze. The sea is a new body type inside
+        <code>water/endowment.js</code> rather than a private truth beside it, so there is one
+        coastline and not two. Passed first time; no gap recorded. The 7/10 is the lowest
+        <code>/10</code> here and the tier coverage below is the likeliest reason.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="ev">
+    <span>seaward crop <b>21.13%</b> (medium)</span>
+    <span>control <b>0.00%</b></span>
+    <span>quadrant <b>10.14%</b></span>
+    <span>fog distance <b>43</b></span>
+    <span>draw calls +<b>1</b> (budget 2)</span>
+    <span>geometries +<b>0</b> (budget 2)</span>
+    <span>20 / 20 cities have sea</span>
+    <span><b>9 of 20</b> have neither river nor lake</span>
+    <span>coastal <code>sourceAt</code> = <b>kind 'sea'</b>, factor 0.943 vs 0.80 dry</span>
+    <span>hydro on coast: <b>still refused, by name</b></span>
+    <span>outskirts scenery: <b>0 verts in sea</b>, 24 cells rejected</span>
+  </div>
+
+  <div class="next"><b>What the next round would attack</b>
+  The tier below the two that were measured. The harness dropped to <code>low</code> and then
+  <code>potato</code> during this very run — at <code>low</code> the fog distance falls from 43 to
+  22, and nobody has looked at potato at all. Next round photographs the sea at the tier a weak
+  device actually boots at, and states the number where it is worst rather than where it is best.</div>
+</div>
+
+<!-- 5 -->
+<div class="piece">
+  <h3>5 · Water and sewer as a real constraint</h3>
+  <p class="meta">public/src/water/{network.js, netui.js} — 1,010 lines · <b>2 rounds</b> · 0.72 → 8</p>
+  <p class="bar"><b>The bar:</b> the constraint must BITE, which is precisely where
+  <code>/src/power</code> stopped. A consumer with no pipe path must tick measurably below its
+  connected control in the SAME tick and recover when a run is dragged. The outfall refuses
+  placement away from open water; the station refuses off-aquifer and names the aquifer.
+  <b>Pipes are a NETWORK: two disconnected runs are two components and only the one touching the
+  station serves.</b> A pre-existing save loads at factor 1.0 throughout.</p>
+
+  <table>
+    <thead><tr><th>Round</th><th>Score</th><th>Verdict</th><th>What it did / what was left</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="n">1</td><td class="score">0.72</td><td class="fail">GAP</td>
+        <td><b>Failed on the one assertion the bar names it by.</b> The factor path aggregated over
+        the WHOLE CITY where the connected component is the unit — one idea in two places:
+        <br>· <code>network.js:262</code> — <code>reach = demandByComp[c] / totalDemand</code>, a
+        <em>global</em> denominator. Two properly plumbed districts, each with its own station,
+        pipes and outfall, both ran at <b>0.650</b> while the same solve reported
+        <code>unserved: 0</code> and every consumer <code>served: true</code>.
+        <br>· <code>network.js:279/291/295</code> — <code>load</code> was city-total and
+        <code>capacity</code> a flat sum over all outfalls, so two redundant outfalls on one
+        component fully treated a <em>disconnected</em> component's sewage: backup 0.000,
+        sewerFactor 1.000, bit-identical to the correct layout and below <code>warnAbove</code>, so
+        nothing was said.
+        <br>· The visible symptom was a self-contradicting panel: "100% of demand · every building
+        reached" printed three lines above "the worst is at 65% … a run of pipe from it to the
+        district it feeds is the whole fix" — advice that <em>could not work</em>, because the only
+        remedy was joining the two mains, which the panel never said.</td>
+      </tr>
+      <tr>
+        <td class="n">2</td><td class="score">8</td><td class="pass">PASS</td>
+        <td><b>Gap closed by making both legs per-component.</b> Reach is now computed BEFORE the
+        factor, not after (<code>network.js</code> §3): a demand tile is reached when its component
+        carries a waterworks, so a second district cannot take 35% off the first for the crime of
+        existing. Sewer capacity is pooled per component and capped ONCE (§5), so two outfalls on
+        one main can no longer treat a disconnected main's waste. Unreached demand is charged to
+        the orthogonally <em>nearest</em> governed waterworks — the one whose district the building
+        plainly belongs to, and therefore the one the player will drag from — which keeps the
+        factor a gradient instead of collapsing to "are you touching a pipe, yes or no". An
+        ungoverned Purifier is never charged an orphan.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="ev">
+    <span>unit of arithmetic: <b>the component</b></span>
+    <span>capacity capped <b>once per component</b></span>
+    <span>unplumbed city ⇒ every factor <b>1.00</b></span>
+    <span>pipes persist in the shelf: <code>waterMains v1</code>, cityId + 24 keys</span>
+    <span>city id <b>latched and checked</b></span>
+  </div>
+
+  <div class="next"><b>What the next round would attack</b>
+  The panel copy, now that the arithmetic underneath it is honest. The round-2 fix means the
+  advice <em>can</em> be right; it does not prove a player reads it and joins their two mains. That
+  needs a human, not an assertion — and it is the top item on the play-test list above.</div>
+</div>
+
+<!-- 6 -->
+<div class="piece">
+  <h3>6 · Power lines to the highway connector</h3>
+  <p class="meta">public/src/power/lines.js — 817 lines · 1 round · 78/100</p>
+  <p class="bar"><b>The bar:</b> connection must change production and the audit must survive it.
+  Two identical buildings, one on the network and one off it, in one tick — the off-network factor
+  strictly lower, <em>for the first time</em>. <code>shedLadder</code>'s identity holds every tick.
+  <b>Grandfathering is the pass/fail:</b> an existing save loses ZERO buildings to power.
+  <code>game.power</code> stays the only power figure anything reads.</p>
+
+  <table>
+    <thead><tr><th>Round</th><th>Score</th><th>Verdict</th><th>What it did / what was left</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="n">1</td><td class="score">78</td><td class="pass">PASS</td>
+        <td>Turned <code>enforce</code> on without turning it on <em>for anybody who already
+        built a city</em>. The flag is <code>true</code> (<code>tuning.js:567</code>) but
+        <code>grid.js:420</code> resolves <code>POWER.transmission.enforce &amp;&amp; wired</code>,
+        and <code>wired</code> is a per-city latch: a new city is wired from its first tick; a blob
+        written before this round <b>has no such key</b>, so it returns false and gets the exact
+        pre-change numbers. <b>The absence of the key IS the version stamp</b> — no version number
+        is written and none is needed. Line loss is governed by the same flag for the same reason:
+        in an old city it is computed and printed but never added to load, because a few per cent
+        of demand is enough to tip a city that sits just above parity into a brownout it did not
+        have yesterday. Passed first time; no gap recorded.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="ev">
+    <span>off-network factor <b>strictly lower</b> — first commit where that holds</span>
+    <span>existing saves: <b>0 buildings lose power</b></span>
+    <span>shed order unchanged: lifeline &gt; utility &gt; households &gt; industry &gt; commerce &gt; leisure</span>
+    <span>lines are <b>additive</b> conductors — roads still carry cable</span>
+    <span>saved as <code>wired: 1|0</code> (power/index.js:551)</span>
+    <span>one power figure: <b>game.power</b>, no game.grid</span>
+  </div>
+
+  <div class="next"><b>What the next round would attack</b>
+  The opt-in itself. Right now the honest grandfathering means the feature is <em>off</em> for every
+  city that exists, and the whole system hinges on a panel button whose flow has never been played.
+  Next round is that screen: what it says it will do, what it actually does to the player's numbers,
+  and whether it can be undone.</div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<h2>Both gates, run just now</h2>
+
+<pre><span class="cmd">$ export PATH="$PATH:/c/Program Files/nodejs"
+$ node _synckcheck.mjs</span>
+
+=== public/index.html ===
+script #1: OK (30476 chars)
+script #2: OK (12302317 chars)
+script #3: skipped (importmap)
+script #4: OK (1255 chars, module)
+
+<span class="good">ALL CLEAN</span>
+<span style="color:#6f6885">exit 0</span></pre>
+
+<pre><span class="cmd">$ node .gauntlet/modcheck.mjs</span>
+
+<span class="good">ALL 213 MODULES PARSE  (public/src)</span>
+<span style="color:#6f6885">exit 0</span></pre>
+
+<p class="sub">Both gates matter and neither is optional: <code>_synckcheck.mjs</code> does not look
+under <code>public/src</code>, and a module that fails to parse is reported at runtime as
+"not mounted (non-fatal)" — indistinguishable from the module simply being absent.</p>
+
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<h2>Where the evidence is</h2>
+
+<table>
+  <thead><tr><th>What</th><th>Path</th></tr></thead>
+  <tbody>
+    <tr><td>Road class photographs + per-class deltas</td><td class="n"><code>.gauntlet/shots/roadclass/{gallery.png, frame.png, result.json}</code></td></tr>
+    <tr><td>Ocean photographs, fog test, cost, 20-city sweep</td><td class="n"><code>.gauntlet/shots/ocean/report.json</code>, <code>tmp/crit-ocean/crit-report.json</code></td></tr>
+    <tr><td>Road tile crops, junction and diagonal studies</td><td class="n"><code>tmp/crit-roads/</code></td></tr>
+    <tr><td>Water round 1 evidence (the gap)</td><td class="n"><code>tmp/crit-water/</code></td></tr>
+    <tr><td>Water round 2 evidence (the close)</td><td class="n"><code>tmp/crit-water2/</code></td></tr>
+    <tr><td>Drivers</td><td class="n"><code>.gauntlet/{drive-power-lines.mjs, drive-water-mains.mjs, oceanshot.mjs, oceansave.mjs, roadclass-ab.mjs}</code></td></tr>
+  </tbody>
+</table>
+
+<footer>
+  <p><b>State of the tree:</b> 29 modified files and 8 new module directories, all uncommitted.
+  Nothing was committed, pushed or deployed; no version knob was bumped.
+  <code>public/version.txt</code>, <code>window.BUILD_VERSION</code> and <code>sw.js</code>'s
+  <code>CACHE_VERSION</code> are untouched and still agree with each other.</p>
+  <p>Branch <code>city-construction-timers</code>. Both gates green as of the run printed above.</p>
+</footer>
+
+</div>

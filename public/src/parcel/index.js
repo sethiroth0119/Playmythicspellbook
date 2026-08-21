@@ -85,6 +85,10 @@ let audit = { rects: [], found: 0, foundTiles: 0, tiles: 0, own: 0,
    mildest of the three treatments — paving and a kerb — so a building added
    later gets a plausible parcel instead of no parcel, and never gets a
    palisade fence it did not ask for. */
+/* 🛣 The road resolver. A carriageway gets no parcel treatment — see skipType
+   below, which is SKIP widened by every road class. */
+import { isRoadType } from '../roads/types.js';
+
 const CLASS = {
   industry: ['depot', 'munitions', 'smelter', 'cannery', 'warehouse', 'powerstation',
              'machineshop', 'railyard', 'motorpool', 'scrapmine', 'fuelrig', 'quarry',
@@ -162,6 +166,11 @@ const SKIP = new Set(['road', 'anchor', 'housing', 'tree', 'bush', 'garden', 'fo
    surface, never add one on top of a recipe's paving.
    ⚠ SO DO NOT DELETE THIS SET, and do not "clean it up" against the raster.
      Its whole job now is to be wrong in the harmless direction. */
+/* SKIP, widened by the road resolver. SKIP is a static Set and its 'road'
+   entry is the legacy class only; every carriageway class is skipped here, so
+   a Lane never gets a driveway, a hedge or a bin store laid over it. */
+const skipType = (ty) => isRoadType(ty) || SKIP.has(ty);
+
 const HAS_OWN_GROUND = new Set(['farm', 'hydrofarm', 'purifier', 'forge', 'reslab',
                                 'siphon', 'obelisk', 'kalonstable', 'restaurant',
                                 'foodtruck', 'grocery', 'barracks', 'tower', 'munitions',
@@ -771,7 +780,7 @@ function build() {
 
   for (const k in game.tiles) {
     const t = game.tiles[k];
-    if (!t || !t.mesh || SKIP.has(t.type)) continue;
+    if (!t || !t.mesh || skipType(t.type)) continue;
     const cls = CLASS_OF[t.type] || 'commerce';
     const col = COL[cls];
     const [gx, gz] = k.split(',').map(Number);
@@ -871,7 +880,7 @@ function build() {
          One boundary per line, and on that line the house's is the one that
          already exists. */
       if (nb && nb.type === 'housing') continue;
-      const shared = !!(nb && nb.mesh && !SKIP.has(nb.type));
+      const shared = !!(nb && nb.mesh && !skipType(nb.type));
       if (shared && (gx * 4096 + gz) > ((gx + ex) * 4096 + (gz + ez))) continue;
       const off = shared ? .5 : .478;
       boundary(S, R, cls, cx + ex * off, cz + ez * off, ez ? 1 : 0, ex ? 1 : 0, .462, PROP);
@@ -1142,7 +1151,7 @@ export function mount(ctx) {
       const out = {};
       for (const k in CTX.game.tiles) {
         const t = CTX.game.tiles[k];
-        if (!t || !t.mesh || SKIP.has(t.type)) continue;
+        if (!t || !t.mesh || skipType(t.type)) continue;
         const c = CLASS_OF[t.type] || 'commerce';
         out[c] = (out[c] || 0) + 1;
       }

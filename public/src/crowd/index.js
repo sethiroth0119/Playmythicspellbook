@@ -68,6 +68,11 @@
      material's own map, which is also why the merge has to carry `uv`.
    ══════════════════════════════════════════════════════════════════════════ */
 
+/* 🛣 The road resolver. This file re-computes the N/S/E/W mask itself (off
+   CTX.isRoad), so the ONE thing it must not do is disagree with the host about
+   which tiles are carriageway — pedestrians would stand in the road. */
+import { isRoadTile } from '../roads/types.js';
+
 const MAX_STANDING = 78;    // ceiling on the standing crowd, ~12 meshes
 const FOOT_LAT     = 0.410; // footway centre, lateral (band is .325 … .500)
 /* 🚦 …AND A SECOND STANCE, AT THE KERB. Measured on the street framing, which
@@ -160,7 +165,7 @@ function pitches() {
   const { game, isRoad } = CTX;
   const out = [];
   for (const k of Object.keys(game.tiles).sort()) {
-    if (game.tiles[k].type !== 'road') continue;
+    if (!isRoadTile(game.tiles[k])) continue;
     const [x, z] = k.split(',').map(Number);
     const N = isRoad(x, z - 1), S = isRoad(x, z + 1), E = isRoad(x + 1, z), W = isRoad(x - 1, z);
     const cnt = (N ? 1 : 0) + (S ? 1 : 0) + (E ? 1 : 0) + (W ? 1 : 0);

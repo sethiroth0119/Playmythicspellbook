@@ -42,6 +42,9 @@
    not lie about what it can do while they do not.
    ══════════════════════════════════════════════════════════════════════════ */
 import * as E from './stadium.economy.js';
+/* 🛣 The road resolver — the away-day report counts the road network the fans
+   travel on, and a Lane carries them exactly as a Road does. */
+import { isRoadTile } from '../roads/types.js';
 
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -141,7 +144,7 @@ export function nodeSnapshot() {
   for (const k in tiles) {
     const t = tiles[k]; if (!t) continue;
     const [x, z] = k.split(',').map(Number);
-    if (t.type === 'road') { roadsTotal++; if (!t.damaged) roadsRepaired++; continue; }
+    if (isRoadTile(t)) { roadsTotal++; if (!t.damaged) roadsRepaired++; continue; }
     if (t.damaged) continue;                       // a burnt-out building moves nobody
     if (t.type === 'motorpool') motorPoolCapacity += (t.lvl || 1);
     if (t.type === 'railyard') railYardCapacity += (t.lvl || 1);

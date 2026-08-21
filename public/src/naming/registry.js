@@ -33,6 +33,8 @@
    ══════════════════════════════════════════════════════════════════════════ */
 import { generate } from './generate.js';
 import { NO_NAME } from './words.js';
+/* 🛣 …and every road class on top of NO_NAME's literal list — see words.js. */
+import { isRoadType } from '../roads/types.js';
 import { addressFor } from './address.js';
 
 export const NAME_MAX = 48;
@@ -79,7 +81,7 @@ export class NameRegister {
   /* Roads, walls, gates and anchors are not premises. */
   eligible(key) {
     const t = this.ctx.game.tiles[key];
-    return !!(t && t.type && !NO_NAME.has(t.type));
+    return !!(t && t.type && !NO_NAME.has(t.type) && !isRoadType(t.type));
   }
 
   /* The licence label, if this tile is a sited operation and the bridge can

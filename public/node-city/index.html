@@ -9,7 +9,7 @@
      believed the file was already live. Only a CONTENT change moves the hash
      and forces a re-upload, so bump this stamp whenever the city 404s, and
      probe it (grep NC_BUILD on the served page) to prove the deploy landed. -->
-<script>window.NC_BUILD = "v121b5-housing";</script>
+<script>window.NC_BUILD = "v121c0-roads";</script>
 <!-- ════════════════════════════════════════════════════════════════════════
      NODE CITY — SimCity-style settlement layer for Mythic Spellbook.
      Three.js WebGPU (auto-falls back to WebGL2). Realistic sun/moon cycle.
@@ -2957,16 +2957,135 @@ const NODE_TYPES = {
 
 // City buildings. cost = {cinder + game resources}. gen/use are per-minute
 // at level 1 (rate doubles per level, like the main-game upgrade curve).
+/* ══ 🛣 THE ROAD RESOLVER — THE ONE ANSWER TO "IS THIS TILE A ROAD" ═══════
+   🔴 THE BARE-STRING TILE-TYPE BUG CLASS, INSTANCE #9, PRE-EMPTED.
+      This file has already named this class twice in its own source —
+      TRUCK_STOPS calls itself the "seventh instance", the workplaceTypes()
+      load-order snapshot the eighth. Before this block existed, "is this tile
+      a road" was re-derived as t.type === (the literal) in 23 separate places
+      HERE and 12 more under /src, plus two aliased projections (b.road for the
+      adjacency bonus and road: isR for /src/power's cable graph) and two
+      modules (/src/parking, /src/crowd) that re-compute the N/S/E/W mask off
+      their own copy.
+      A SECOND ROAD TYPE against that shape does not throw anywhere. It:
+        · falls out of the road maintenance cap, so it is free and uncapped
+          and "pave the map" — the exact thing ROAD_CAP_BASE exists to stop;
+        · renders as an EMPTY GROUP, because buildMesh has no road arm and the
+          five sites that route roads to refreshRoad all test the literal —
+          a paid tile with nothing standing on it;
+        · DESPAWNS every agent on the tile, because agentTick reads a type
+          change as "the road was demolished";
+        · becomes zonable land AND stops bounding zoning fills, so one click
+          escapes the block and runs to FILL_MAX;
+        · drops off /src/power's grid, /src/streets' segmenter, /src/contact's
+          AO patches, /src/naming's NO_NAME suppression and /src/parcel's skip;
+        · and starts being charged a construction timer, which is a pricing
+          change shipped out of a rendering feature.
+      So: ONE table, ONE predicate, and every reader goes through it.
+
+   THE SHAPE. ROAD_CLASSES is the table; isRoadType(type) is the predicate for
+   a type STRING, isRoadTile(t) for a tile OBJECT, isRoad(x, z) (far below,
+   unchanged in signature) for a COORDINATE. Modules cannot see any of them —
+   they are lexical const, not window — so the table is published on
+   window.MythicRoads and /src/roads/types.js is the guarded reader every
+   module imports. That reader fails OPEN to ['road'], which is what makes the
+   404 round trip safe: a save containing a road class still loads, renders and
+   demolishes in a build where the module never arrived.
+
+   ⚠ A CLASS IS A CARRIAGEWAY, NOT A PRICE. The price of a road class is its
+     BUILDINGS row read through costOf() — never a number in this table. See
+     /src/streets' roadCost note: reading the raw table quotes 100x low and
+     looks correct.
+   ⚠ A NEW ID STILL NEEDS ITS BUILDINGS ROW and its BUILD_ORDER /
+     BUILD_SECTIONS entry. It needs NO buildMesh arm — roads bypass buildMesh
+     entirely and are auto-tiled from their neighbours by refreshRoadArea.
+   ⚠ NEVER REMOVE AN ID. Tile types are written verbatim into every save.
+   ════════════════════════════════════════════════════════════════════════ */
+const ROAD_CLASSES = Object.assign(Object.create(null), {
+  road:     { id: 'road',     name: 'Road', ico: '🛤️' },
+  /* 🛣 THE SECOND CLASS, and the proof the resolver actually holds. It is the
+     same carriageway recipe (roads are auto-tiled from their neighbours, so a
+     class has no mesh of its own to own yet) at a lower price on the same
+     authored cost shelf — deliberately no new geometry and no new pricing
+     path in the round that introduces the resolver, because the point of the
+     round is that the other eight systems keep working. */
+  roadlane: { id: 'roadlane', name: 'Lane', ico: '🛣️' },
+});
+const ROAD_TYPE_IDS = Object.freeze(Object.keys(ROAD_CLASSES));
+/* Null-prototype table on purpose: a plain object literal answers truthy for
+   'constructor' and 'toString', and a tile type is player-adjacent data. */
+function roadClassOf(type) { return (typeof type === 'string' && ROAD_CLASSES[type]) || null; }
+function isRoadType(type)  { return !!roadClassOf(type); }
+function isRoadTile(t)     { return !!t && isRoadType(t.type); }
+/* THE HAND-OVER. A real window property, so an ES module may read it; see the
+   globals trap in CLAUDE.md. Registered HERE, at the declaration, rather than
+   in boot() — /src/roads/types.js is imported by modules that mount before
+   boot's tail, and a resolver that is only correct late is worse than one that
+   is wrong early, because the failure moves. */
+try {
+  window.MythicRoads = {
+    types:   () => ROAD_TYPE_IDS.slice(),
+    isType:  (ty) => isRoadType(ty),
+    classOf: (ty) => roadClassOf(ty),
+  };
+} catch (e) {}
+
 const MAX_LVL = 3, UPGRADE_MULT = 1.75, RATE_MULT = 2, CAP_PER_BUILDING = 80;
 const BUILDINGS = {
   road:     { name: 'Road',          ico: '🛤️', cost: { cinder: 4 }, pop: 0, maxLvl: 1,
               desc: 'Links districts to Node Anchors. Producers beside a road work +25% faster.' },
+  /* 🛣 A ROAD CLASS, not a building — see ROAD_CLASSES above. Everything that
+     makes a road a road (the maintenance cap, auto-tiling, the +25%, agents,
+     zoning bounds, the cable graph, streets, the construction-timer exemption)
+     it gets from the resolver, not from this row. This row carries only what a
+     BUILDINGS row is for: the name, the icon and the price. */
+  roadlane: { name: 'Lane',          ico: '🛣️', cost: { cinder: 3 }, pop: 0, maxLvl: 1,
+              desc: 'A narrow neighbourhood street. Cheaper to lay than a Road and part of the same network — it carries traffic, counts against the road maintenance limit, and gives producers beside it the same +25%.' },
   farm:     { name: 'Farm',          ico: '🌾', cost: { cinder: 14, metal: 4 }, pop: 2, crew: 2, outdoor: true,
               gen: { food: 1.5 },  desc: 'Open-field crops. Cheap and productive — but rain feeds it, snow and storms hurt it.' },
   hydrofarm:{ name: 'Hydro Farm',    ico: '🥫', cost: { cinder: 24, metal: 10 }, pop: 2, crew: 2,
               gen: { food: 1.1 },  desc: 'Indoor ember-lamp crops. Weatherproof.' },
   purifier: { name: 'Purifier',      ico: '💧', cost: { cinder: 20, metal: 10 }, pop: 2, crew: 2, outdoor: true,
               gen: { water: 1.2 }, desc: 'Condenses clean water. Rain fills it faster.' },
+  /* ══ 🚰 THE TWO UTILITY BUILDINGS (/src/water) ═════════════════════════════
+     The Purifier makes water out of AIR, which is why it needs nothing but a
+     tile and why every city has always been able to drink. These two are the
+     other model — water taken from somewhere real and put back somewhere real —
+     and each declares its requirement on this row rather than in the module:
+
+       `aquifer: true`   this tile must be over groundwater. tryPlace asks
+                         MythicWater.siteRefusal, which names the basin AND the
+                         overlay layer that draws it, so the player can find a
+                         legal site from the 💧 panel without hunting.
+       `openWater: true` this tile must discharge into open water — the sea when
+                         the coastline module lands, else a river, a lake, or the
+                         edge row where the channel leaves the plate.
+       `mains: true`     this building answers to the pipe network: what it
+                         delivers is capped by what its own run can reach.
+       `sewer: { cap }`  how much waste one LEVEL of it clears, in the same
+                         per-minute water units the rest of this table uses.
+
+     🔴 THE FLAGS LIVE HERE, NOT IN A LIST IN THE MODULE. `roadsAdjacentTo(match)`
+        takes a resolver rather than a list of type strings for exactly this
+        reason, and this file has had to correct the list-in-another-file bug
+        three times (TRUCK_STOPS, "seventh instance"; the load-order snapshot,
+        "eighth"). A second aquifer-sited building is one flag on one row.
+     🔴 AND `mains` IS WHY NO EXISTING SAVE CAN BE DRIED OUT. It is the ONLY
+        thing /src/water's delivery factor governs, and the only row that carries
+        it did not exist until this round — so no building that can be standing
+        in an old city is subject to a network that city never had. Same
+        argument /src/power's `metered` opt-in makes, made structurally instead
+        of with a flag in the blob.
+     ⚠ PRICED ON THIS FILE'S OWN 2..600 SHELF like every other row: scaleCost()
+       multiplies cinder ×100 and everything else ×5. The Station is dearer than
+       the Purifier and makes a little over twice as much — but only if the
+       ground, the mains and the sewer all say yes, which is the trade. */
+  waterstation:{name:'Water Station', ico: '🚰', cost: { cinder: 34, metal: 16 }, pop: 2, crew: 2,
+              outdoor: true, powerNeed: 0.55, gen: { water: 2.6 }, aquifer: true, mains: true,
+              desc: 'A wellhead over the aquifer, a clearwell and a high-lift pump. Must stand on groundwater, and only delivers what its water mains can actually reach — pipe it to the district it feeds.' },
+  outfall:  { name: 'Sewer Outfall',  ico: '🚱', cost: { cinder: 26, metal: 12 }, pop: 1, crew: 1,
+              outdoor: true, powerNeed: 0.30, openWater: true, sewer: { cap: 5.0 },
+              desc: 'Screening chamber, a lift pump and a discharge headwall. Where the city\'s waste leaves — it has to stand on the shore, within reach of the sea, a river or a lake, and it has to be on the same mains as the district it drains. Untreated sewage soaks back into the ground every intake in the city draws from.' },
   scrapmine:{ name: 'Mine',          ico: '⛏️', cost: { cinder: 26, food: 10 }, pop: 2, crew: 2,
               gen: { metal: 0.8 }, desc: 'Pulls metal and ore from the buried ruins.' },
   fuelrig:  { name: 'Fuel Rig',      ico: '🛢️', cost: { cinder: 32, metal: 16 }, pop: 2, crew: 2, outdoor: true,
@@ -3585,7 +3704,12 @@ const BUILD_SECTIONS = [
             /* ⛏ The five seams round. Four sit here beside the extraction tiles they
                were derived from; the Rift Bore is in Arcane beside the Rift Siphon,
                because that is where a player already looks for anomalous work. */
-            'waterintake', 'deepmine', 'alloyworks', 'canecroft'] },
+            'waterintake', 'deepmine', 'alloyworks', 'canecroft',
+            /* 🚰 The Water Station sits beside the Purifier and the Intake it
+               competes with — a player choosing how to water a district is
+               choosing between these three, and burying one of them in
+               Infrastructure would hide the choice. */
+            'waterstation'] },
   // 🍽 The service layer sits ABOVE production: these buildings consume refined
   // stock and pay it back as COVERAGE, which is what the vitals actually read.
   { id: 'svc',   name: 'Food & Service',  ico: '🍽️', desc: 'Feeds the city. Coverage, not stockpiles — this is what stops the population falling.',
@@ -3600,7 +3724,10 @@ const BUILD_SECTIONS = [
   { id: 'pwr',   name: 'Power',          ico: '⚡', desc: 'Nine ways to light a city, and none of them is strictly best. Watch the fuel, the weather, the ground and the smoke.',
     items: ['wind', 'solar', 'powerstation', 'coal', 'oil', 'gas', 'incinerator', 'hydro', 'geothermal', 'nuclear'] },
   { id: 'infra', name: 'Infrastructure', ico: '🛤️', desc: 'Links and stores. Producers beside a road work faster.',
-    items: ['road', 'streetlight', 'depot', 'interchange', 'caravanpost', 'railyard', 'lot'] },
+    /* 🚱 The Outfall is infrastructure, not production: it makes nothing, it is
+       the other end of the pipe, and it belongs beside the roads and the
+       interchange — the other buildings whose entire job is a connection. */
+    items: ['road', 'roadlane', 'streetlight', 'depot', 'interchange', 'caravanpost', 'railyard', 'lot', 'outfall'] },
   { id: 'civic', name: 'Civic',          ico: '🏠', desc: 'Population, health and morale.',
     items: ['housing', 'medlab', 'arena', 'shop', 'retail', 'office', 'stadium'] },
   { id: 'def',   name: 'Defense',        ico: '🛡️', desc: 'Raiders are coming. These are what stop them.',
@@ -3615,7 +3742,7 @@ const BUILD_SECTIONS = [
     items: ['tree', 'bush', 'garden', 'fountain'] },
 ];
 
-const BUILD_ORDER = ['road','streetlight','farm','hydrofarm','purifier','scrapmine','fuelrig','gasstation','depot','medlab','munitions','housing','barracks','tower','wall','gate','arena','shop','caravanpost','lot','reslab','siphon','obelisk','kalonstable','tree','bush','garden','fountain',
+const BUILD_ORDER = ['road','roadlane','streetlight','farm','hydrofarm','purifier','scrapmine','fuelrig','gasstation','depot','medlab','munitions','housing','barracks','tower','wall','gate','arena','shop','caravanpost','lot','reslab','siphon','obelisk','kalonstable','tree','bush','garden','fountain',
   // ── the service city (r5) ──
   'foodtruck','restaurant','grocery','retail','clinic','club','cannery','smelter','machineshop','powerstation','warehouse','motorpool','firestation','police',
   // ── the House (r8) ──
@@ -3637,7 +3764,9 @@ const BUILD_ORDER = ['road','streetlight','farm','hydrofarm','purifier','scrapmi
   // ── outside connections (/src/outside) ──
   'interchange',
   // ── ⚡ the generating fleet (/src/power) ──
-  'wind', 'solar', 'coal', 'gas', 'oil', 'geothermal', 'hydro', 'nuclear', 'incinerator'];
+  'wind', 'solar', 'coal', 'gas', 'oil', 'geothermal', 'hydro', 'nuclear', 'incinerator',
+  // ── 🚰 the mains (/src/water): the two ends of the pipe ──
+  'waterstation', 'outfall'];
 
 /* ── TCG layer ─────────────────────────────────────────────────────────
    The player's card collection powers the city:
@@ -5623,7 +5752,7 @@ function damageLogKind(cause) {
   return /Raider|siege|SIEGE|⚔|💥/.test(cause) ? 'raid' : 'env';
 }
 function damageTile(k, destroy, cause) {
-  const t = game.tiles[k]; if (!t || t.type === 'anchor' || t.type === 'road') return false;
+  const t = game.tiles[k]; if (!t || t.type === 'anchor' || isRoadTile(t)) return false;
   const [x, z] = k.split(',').map(Number);
   /* 🏗 Read BEFORE the destroy branch deletes the tile — the log line has to be
      able to say the thing that vanished was still a hole in the ground. */
@@ -5857,7 +5986,7 @@ function weatherTick(dt) {
         // otherwise a town already battered by one storm gets a smaller
         // allowance in the next, and the damage compounds exactly where the
         // player can least afford it.
-        const all = Object.keys(game.tiles).filter(k => game.tiles[k].type !== 'road' && game.tiles[k].type !== 'anchor');
+        const all = Object.keys(game.tiles).filter(k => !isRoadTile(game.tiles[k]) && game.tiles[k].type !== 'anchor');
         const cap = Math.max(1, Math.ceil(all.length * WX_LIGHTNING_CAP_FRAC));
         if ((wx._strikes | 0) < cap) {
           const ks = all.filter(k => !game.tiles[k].damaged);
@@ -5876,7 +6005,7 @@ function weatherTick(dt) {
     weatherTick._fireAcc = (weatherTick._fireAcc || 0) + dt;
     if (weatherTick._fireAcc > 6) {
       weatherTick._fireAcc = 0;
-      const ks = Object.keys(game.tiles).filter(k => game.tiles[k].type !== 'road' && game.tiles[k].type !== 'anchor');
+      const ks = Object.keys(game.tiles).filter(k => !isRoadTile(game.tiles[k]) && game.tiles[k].type !== 'anchor');
       if (ks.length && Math.random() < .8) {
         const k = ks[Math.floor(Math.random() * ks.length)];
         const t = game.tiles[k];
@@ -5892,7 +6021,7 @@ function weatherTick(dt) {
     if (weatherTick._anomAcc > 14) {
       weatherTick._anomAcc = 0;
       if (Math.random() < .5) {
-        const ks = Object.keys(game.tiles).filter(k => !['road','anchor'].includes(game.tiles[k].type) && !game.tiles[k].damaged);
+        const ks = Object.keys(game.tiles).filter(k => !(isRoadTile(game.tiles[k]) || game.tiles[k].type === 'anchor') && !game.tiles[k].damaged);
         if (ks.length && !_wxShield('anomaly')) damageTile(ks[Math.floor(Math.random() * ks.length)], false, '🌀 The anomaly');
       }
     }
@@ -5917,7 +6046,7 @@ function weatherTick(dt) {
     const gx = Math.floor(s.x), gz = Math.floor(s.z);
     if (now - s.lastCrush > 900 && inGrid(gx, gz)) {
       const k = key(gx, gz);
-      if (game.tiles[k] && game.tiles[k].type !== 'anchor' && game.tiles[k].type !== 'road') {
+      if (game.tiles[k] && game.tiles[k].type !== 'anchor' && !isRoadTile(game.tiles[k])) {
         s.lastCrush = now;
         /* 🛖 Shelters answer the tornado. The crush still COUNTS as a pass —
            lastCrush is stamped either way — so a sheltered city is not swept
@@ -7273,6 +7402,37 @@ function perimeterScenery() {
   const B = [];   // → RD_SOLID, vertex-coloured: everything opaque
   const W = [];   // → winMat,  the lit glazing and the lamp globes
 
+  /* ══ 🌊 THE OUTSKIRTS STOP AT THE WATER ══════════════════════════════════
+     /src/ocean puts a sea on the plain east of the plate on EVERY map, and this
+     district is the only other thing out there: houses at ring 15, then blocks,
+     then towers, out to 30. Without this test a tower stands in the sea — and
+     not vaguely, because these two meshes are deliberately FOG-EXEMPT (see the
+     note at their creation), so a block 25 units out over open water is drawn
+     crisply while the water around it is 70% haze.
+
+     🔴 AND THAT IS WHY THIS FUNCTION IS CALLED TWICE ON A BOOT WITH THE OCEAN.
+        The call site below is at module top level — it has to be, because this
+        body reads RD_Y, C_KERB, rdGeo, _H_WALLCOL and a dozen more top-level
+        `const`s, and the line after rdRng is the first place all of them are
+        initialised. That is ~29,000 lines before boot() can `await import()`
+        anything, so `window.MythicOcean` cannot exist on the first run and this
+        predicate correctly answers "no sea" for every point. The ocean's mount
+        then calls back into here once (ctx.reperimeter) and the district is
+        rebuilt knowing where the water is.
+     ⚠ ABSENCE MEANS "NO SEA", NEVER "DON'T DRAW". Same contract as the three
+       module refusals in tryPlace: a 404 on /src/ocean leaves the outskirts
+       byte for byte what they were before this round, and the extra build never
+       happens because nothing calls back.
+     ⚠ THE MARGIN IS THE OBJECT'S OWN REACH, PASSED PER CALL, not one number
+       here — a tree is 0.5 across and a tower cell is 3.8, and a single
+       clearance would either drown the trees or leave a bald strip along the
+       whole coast (the artefact /src/wild's CLR_ROAD 🐞 records arriving
+       through exactly this door). */
+  const atSea = (x, z, m) => {
+    try { return !!(window.MythicOcean && window.MythicOcean.isSea(x, z, m || 0)); }
+    catch (e) { return false; }
+  };
+
   /* Aerial perspective. Everything out here is mixed toward the `ground` plane's
      own hex as it recedes, which is what puts the outskirts BEHIND the city
      tonally instead of beside it. Quantised to 6 steps because rdCol keeps one
@@ -7445,7 +7605,16 @@ function perimeterScenery() {
     const R = rdRng(i * 13 + 5, 91);
     const a = -R3 + R() * (2 * R3), d = R3 + .22 + R() * .85;
     const s = R() < .5 ? -1 : 1, k = (R() * 3) | 0;
-    if (R() < .5) tree(a, s * d, k); else tree(s * d, a, k);
+    /* 🌊 …and the belt ends at the beach. The verge runs 13.43–14.28 out and the
+       waterline can come as close as 13.91, so on the sea side a few of these
+       40 would otherwise be standing in the surf. The roll is spent EITHER WAY —
+       `R()` is drawn above, before the test — so the trees that survive keep the
+       exact positions they had before this round and no existing city's horizon
+       rearranges itself. That is the same save-compat rule r1_road.js's
+       "APPENDED, NEVER INSERTED" states about its own PRNG stream. */
+    const alongX = R() < .5;          // ← the SAME single roll the line below was
+    const tx = alongX ? a : s * d, tz = alongX ? s * d : a;
+    if (!atSea(tx, tz, .55)) tree(tx, tz, k);
   }
 
   /* ── 3. THE DISTRICT ──────────────────────────────────────────────────────
@@ -7464,6 +7633,13 @@ function perimeterScenery() {
     const bx = ix * CELL, bz = iz * CELL;
     const r = Math.max(Math.abs(bx), Math.abs(bz));
     if (r < RING0) continue;                       // the plate, the ring road and the belt
+    /* 🌊 …and no cell over the water. The margin is the widest thing a cell can
+       contain — a tower is up to 3.8 across, so 2.1 from its centre plus a
+       little — tested BEFORE the cell's PRNG is drawn, because a cell in the sea
+       draws nothing at all and its stream is therefore never entered. (Cells are
+       seeded per-cell off their own lattice coords, not off a running stream, so
+       skipping one cannot move any other cell's roll.) */
+    if (atSea(bx, bz, 2.2)) continue;
     const t = Math.min(1, (r - RING0) / (RINGN - RING0));
     const R = rdRng(ix * 37 + 11, iz * 23 - 7);
 
@@ -7581,6 +7757,28 @@ function perimeterScenery() {
     fogless.needsUpdate = true;
     m.material = fogless;
     OUTSKIRT_MATS.push(fogless);
+  }
+  /* ══ ♻ AND IT IS IDEMPOTENT, WHICH IT WAS NOT ═════════════════════════════
+     /src/ocean calls this a second time once it knows where the water is (see
+     `atSea` at the top of this function and the reperimeter note in
+     ocean/index.js), and a second run that merely ADDED two more meshes would
+     leave a full district standing in the sea underneath the corrected one.
+
+     🔴 THE ORDER OF THESE TWO BLOCKS IS LOAD-BEARING. The new pair is built,
+        fogged and configured FIRST, above; only then is the old pair taken out.
+        Build-then-swap means a throw anywhere in this body leaves the player's
+        existing outskirts on screen, which matters because the second call
+        happens inside boot()'s module section where every other failure is
+        already a caught non-fatal.
+     ⚠ THE CLONED MATERIALS GO WITH THEM. Each run clones `RD_SOLID` and
+       `winMat` for the fog exemption, so leaving the old clones behind would
+       leak one shader program's worth of material per rebuild. The merged
+       geometries are ours too and are disposed; the SOURCE geometries in RD_GEO
+       / RD_QUAD are shared caches and are deliberately not touched. */
+  for (const old of scene.children.filter(o => o.name === 'outskirts')) {
+    scene.remove(old);
+    try { old.geometry.dispose(); } catch (e) {}
+    try { if (old.material && old.material !== RD_SOLID && old.material !== winMat) old.material.dispose(); } catch (e) {}
   }
   for (const m of [mass, glaz]) if (m) {
     // rdMerge turns receiveShadow on for tiles; out here nothing casts, so the
@@ -7870,6 +8068,14 @@ function buildMesh(type, lvl, tx, tz) {
          Power Station recipe. A generator that looks like the wrong generator is
          a cosmetic bug; an invisible one the player already paid for is not. The
          sweep in boot() rebuilds these once the module is actually up. */
+    /* 🚰 THE MAINS ROUND (/src/water). Recipes, not a module dispatch — unlike
+       the nine generators below, because these two are BUILDINGS rows in this
+       file and their geometry belongs beside makeWaterintake's, which is the
+       recipe a player will compare them against. There is therefore no
+       module-absent case to fall back from: a 404 on /src/water costs the
+       player the siting rule and the pipe tool, never the building's mesh. */
+    case 'waterstation': { _adopt(g, makeWaterstation(lvl, tx, tz), true); break; }
+    case 'outfall': { _adopt(g, makeOutfall(lvl, tx, tz), true); break; }
     case 'wind': case 'solar': case 'coal': case 'gas': case 'oil':
     case 'geothermal': case 'hydro': case 'nuclear': case 'incinerator': {
       let m = null;
@@ -11196,7 +11402,15 @@ const RD_OWNED = {};
 // nbr is {n,s,e,w} booleans — true where an adjacent tile is also a road.
 // Use it to decide kerb runs, markings and junction treatment.
 // tx,tz are the tile's grid coords and seed the prop PRNG; both may be omitted.
-function makeRoad(nbr, tx, tz) {
+/* 🛣 `rc` IS THE ROAD CLASS AND IT IS OPTIONAL EVERYWHERE. It rides in from the
+   tile (t.rc) and is handed to /src/roads at §10, one call, immediately before
+   the merge. Absent, unknown, or with the module 404'd, this recipe runs
+   BYTE-FOR-BYTE as it did before the class catalogue existed — which is the
+   whole reason the class is a field on the tile rather than a second tile type.
+   See public/src/roads/classes.js for the eight things a second type would
+   silently break (invisible buildings, despawned agents, an uncapped network,
+   unbounded zoning fills, roads off the power cable graph…). */
+function makeRoad(nbr, tx, tz, rc) {
   nbr = nbr || {};
   const g = new THREE.Group();
   const N = !!nbr.n, S = !!nbr.s, E = !!nbr.e, W = !!nbr.w;   // n = -z, s = +z, e = +x, w = -x
@@ -11691,6 +11905,46 @@ function makeRoad(nbr, tx, tz) {
      tile->world mapping. A second copy of that mapping drifts the first time it
      changes. */
   g.userData.contacts = CT;
+
+  /* ── 9½. THE ROAD CLASS (/src/roads) ────────────────────────────────────
+     ⭐ ONE CALL, ONE PLACE, AND IT IS DELIBERATELY HERE: after every part this
+     recipe lays and BEFORE the merge below. That position is what buys the
+     whole feature its draw-call budget — an avenue's median, a highway's crash
+     barriers, a roundabout's island and a cul-de-sac's turning head all land in
+     the SAME six buckets §10 is about to merge, so a classed road costs exactly
+     the six draw calls a plain one costs. A module that wrapped buildRoadMesh
+     instead (the buildMesh seam's shape) could only ADD A GROUP, i.e. one to
+     six more draw calls on every road tile in the city — against this file's
+     own binding limit, "round 4 adds detail, never a draw call".
+
+     ⚠ ADDITIVE ONLY, BY CONSTRUCTION. The module is handed the buckets AFTER
+       they are filled; it appends and never edits, so a tile with no class — or
+       with the module absent — renders byte-for-byte as it always has. That is
+       also why `street` resolves to no recipe at all: the shipped road IS the
+       street, and a city of streets does one property lookup that misses.
+     ⚠ IT DOES NOT TOUCH rdRng. The rolls above are a save-compat contract
+       ("APPENDED, NEVER INSERTED" — insert one and every bin, hydrant, drain,
+       patch, shelter and verge tone moves in every existing city). The module
+       is handed rdRng itself and takes its OWN stream off the same tile seed,
+       so a class's props are still a property of the tile and the shared
+       stream is never advanced.
+     ⚠ THE CLASS IS `t.rc`, NOT A TILE TYPE. Carriageway TYPES are the table at
+       the top of this file (ROAD_CLASSES / isRoadTile); a class is a second,
+       independent axis riding beside it. See /src/roads/classes.js for the
+       eight things minting a type per class would silently break.
+     Guarded and swallowing: a class recipe that throws costs the player its
+     decoration and nothing else — the six buckets still merge and the tile is
+     still a road. */
+  if (rc) {
+    try {
+      const RC = window.MythicRoadClasses;
+      if (RC && RC.decorate) {
+        RC.decorate({ cls: rc, n: N, s: S, e: E, w: W, cnt: cnt, tx: tx, tz: tz },
+                    { road: B_ROAD, pave: B_PAVE, drive: B_DRIVE, solid: B_SOLID, gold: B_GOLD, lamp: B_LAMP },
+                    CT);
+      }
+    } catch (e) { /* a class is decoration; a road is a road */ }
+  }
 
   /* ── 10. Emit: one mesh per non-empty bucket ────────────────────────────
      castShadow is per bucket. The three flat ground buckets stay out of the
@@ -23044,12 +23298,13 @@ function makePolice(lvl) {
 
 
 
-function buildRoadMesh(conn, drv = {}, tx, tz) { // conn = road links, drv = structure links
+function buildRoadMesh(conn, drv = {}, tx, tz, rc) { // conn = road links, drv = structure links
   // ! tx/tz are the TILE COORDS, threaded through purely so makeRoad can seed a
   //   stable PRNG from them. refreshRoadArea rebuilds a tile whenever a
   //   neighbour changes, so unseeded props blinked in and out as the player
   //   built nearby — visible, and it read as a bug.
-  const g = makeRoad(conn, tx, tz);
+  // ! rc is the ROAD CLASS (t.rc) and is optional everywhere — see makeRoad.
+  const g = makeRoad(conn, tx, tz, rc);
   // Driveway apron: a narrower, lighter strip reaching an adjacent building's
   // lot. Kept from the original recipe — makeRoad is only told about road
   // neighbours, so it cannot draw these.
@@ -23218,6 +23473,145 @@ function makeWaterintake(lvl, tx, tz) {
     [STEEL, EX_TRIM, true, true], [WATER, MAT.blue, false, false],
     [MT, MAT.metal, true, false], [GL, winMat, false, false],
     [DK, EX_PAINT, false, true],
+  ]) { const x = _ntMesh(m, mat, cast, tint); if (x) inner.add(x); }
+  return g;
+}
+
+/* 🚰 WATER STATION. The wellhead half of the water system, and deliberately a
+   different SILHOUETTE from makeWaterintake's basin farm: the read here is ONE
+   TALL CLEARWELL CYLINDER with a squat brick wellhead beside it and a delivery
+   main leaving the tile — a thing that pushes water OUT, where the Intake is a
+   thing that lets water settle. A player looking down can tell which of the two
+   they built without reading the label, which is the whole test.
+   Level adds clearwell height and a second wellhead (lvl 2) and a valve gallery
+   (lvl 3). 7 merged meshes — the same budget every recipe in this block keeps.
+   ⚠ SEEDED ON THE TILE (rdRng), not Math.random: a building that redraws itself
+     differently on every boot is the bug the makeTree2 header records two rounds
+     of chasing. */
+function makeWaterstation(lvl, tx, tz) {
+  const g = new THREE.Group(), inner = _ntRoot(g, lvl);
+  const R = (typeof rdRng !== 'undefined') ? rdRng(tx, tz) : Math.random;
+  const AY = _iAY(), GB = _IN_GB;
+  const PAD = _ntB(), CONC = _ntB(), STEEL = _ntB(), WATER = _ntB(),
+        MT = _ntB(), GL = _ntB(), DK = _ntB();
+  const conc = _SM_CONC[(R() * _SM_CONC.length) | 0];
+  const steel = _SM_STEEL[(R() * _SM_STEEL.length) | 0];
+
+  // the yard — the same ±.45 apron the other extraction tiles lay, so
+  // /src/parcel's raster reads it as a served plot rather than as a whole tile.
+  _hPush(PAD.g, _hSlab(-.45, .45, -.45, .45, AY, GB)); PAD.c.push(0xffffff);
+
+  /* THE CLEARWELL. One cylinder, and it is the tallest thing on the tile at
+     every level — the silhouette is the identity. */
+  const CH = .30 + lvl * .085;
+  const cwx = .16, cwz = -.10;
+  CONC.add(_hCyl(.200, .034, cwx, AY + .017, cwz, 16), conc);            // its ring beam
+  CONC.add(_hCyl(.178, CH, cwx, AY + CH / 2 + .030, cwz, 16), conc);     // the tank
+  STEEL.add(_hCyl(.196, .026, cwx, AY + CH + .050, cwz, 16), steel);     // the roof lip
+  DK.add(_hCyl(.170, .014, cwx, AY + CH + .066, cwz, 16), 0x3b4a52);     // the deck
+  MT.add(_hBox(.014, CH, .014, cwx + .190, AY + CH / 2 + .040, cwz));    // the access ladder
+  // the level board — a pale stripe up one side, which is what makes a plain
+  // cylinder read as a WATER tank rather than as a silo.
+  WATER.add(_hBox(.020, CH * .82, .010, cwx, AY + CH * .46 + .030, cwz + .180));
+
+  /* THE WELLHEADS. Squat brick collars with a capped riser — the part that is
+     actually standing on the aquifer, so there are more of them at level 2. */
+  const heads = lvl >= 2 ? [[-.26, .06], [-.24, -.28]] : [[-.26, -.06]];
+  for (const [hx, hz] of heads) {
+    CONC.add(_hBox(.150, .090, .150, hx, AY + .045, hz), conc);
+    MT.add(_hCyl(.030, .120, hx, AY + .150, hz, 8));
+    MT.add(_hCyl(.052, .018, hx, AY + .215, hz, 8));                     // the cap flange
+    DK.add(_hBox(.156, .010, .156, hx, AY + .092, hz), 0x2f3a40);
+  }
+
+  /* THE PUMP HOUSE, on the road side (+Z) with a lit window — the one part of
+     the tile that changes at night, same as the Intake's. */
+  CONC.add(_hBox(.240, .140, .170, -.10, AY + .070, .30), conc);
+  STEEL.add(_hBox(.258, .016, .188, -.10, AY + .148, .30), steel);
+  GL.add(_hBox(.120, .054, .010, -.10, AY + .082, .30 + .086));
+  MT.add(_hCyl(.016, .080, -.010, AY + .186, .262, 6));                  // its vent
+
+  /* THE DELIVERY MAIN. A pipe on stools that leaves the tile — the visual claim
+     the whole building makes, and the reason a player looks for somewhere to
+     run pipes to. It points at +X, which is where placeMeshAt's rotation will
+     take it round to whichever side the player faced. */
+  for (let i = 0; i < 4; i++) MT.add(_hCyl(.008, .030, .02 + i * .11, AY + .015, .30, 5));
+  MT.add(_hCyl(.024, .420, .150, AY + .044, .30, 8, 0, Math.PI / 2));
+  MT.add(_hCyl(.038, .030, .360, AY + .044, .30, 8, 0, Math.PI / 2));    // the flange at the boundary
+
+  /* Level 3 puts a VALVE GALLERY along the back edge — low, wide and busy, so
+     the top tier reads as more PLANT rather than only as more tank. */
+  if (lvl >= 3) {
+    CONC.add(_hBox(.560, .070, .110, .02, AY + .035, -.360), conc);
+    for (let i = 0; i < 4; i++) {
+      MT.add(_hCyl(.020, .058, -.20 + i * .145, AY + .100, -.360, 6));
+      STEEL.add(_hBox(.044, .010, .044, -.20 + i * .145, AY + .132, -.360), steel);
+    }
+  }
+  for (const [m, mat, cast, tint] of [
+    [PAD, MAT.drive, false, false], [CONC, EX_PAINT, true, true],
+    [STEEL, EX_TRIM, true, true], [WATER, MAT.blue, false, false],
+    [MT, MAT.metal, true, false], [GL, winMat, false, false],
+    [DK, EX_PAINT, false, true],
+  ]) { const x = _ntMesh(m, mat, cast, tint); if (x) inner.add(x); }
+  return g;
+}
+
+/* 🚱 SEWER OUTFALL. Where the waste leaves. The read is a LOW CONCRETE HEADWALL
+   with a stepped apron falling AWAY from the tile and a discharge pipe standing
+   proud of it — a building that is visibly pointing off the plot, which is what
+   makes "this has to be on open water" legible before the refusal ever fires.
+   Level adds screening bays and a second discharge. 6 merged meshes. */
+function makeOutfall(lvl, tx, tz) {
+  const g = new THREE.Group(), inner = _ntRoot(g, lvl);
+  const R = (typeof rdRng !== 'undefined') ? rdRng(tx, tz) : Math.random;
+  const AY = _iAY(), GB = _IN_GB;
+  const PAD = _ntB(), CONC = _ntB(), STEEL = _ntB(), WATER = _ntB(),
+        MT = _ntB(), DK = _ntB();
+  const conc = _SM_CONC[(R() * _SM_CONC.length) | 0];
+  const steel = _SM_STEEL[(R() * _SM_STEEL.length) | 0];
+
+  _hPush(PAD.g, _hSlab(-.45, .45, -.45, .45, AY, GB)); PAD.c.push(0xffffff);
+
+  /* THE SCREENING CHAMBER — a sunken rectangular tank with bar screens across
+     it, on the inland (+Z) half. */
+  CONC.add(_hBox(.420, .080, .200, 0, AY + .040, .22), conc);
+  DK.add(_hBox(.360, .062, .150, 0, AY + .048, .22), 0x333c33);
+  WATER.add(_hBox(.350, .008, .142, 0, AY + .066, .22));
+  for (let i = 0; i < 6; i++) MT.add(_hBox(.007, .060, .007, -.155 + i * .062, AY + .078, .17, 0));
+  STEEL.add(_hBox(.440, .014, .020, 0, AY + .088, .130), steel);          // the walkway rail
+
+  /* THE HEADWALL AND THE APRON. The apron STEPS DOWN toward -Z, which is the
+     one gesture that says "the water goes that way" from directly overhead. */
+  CONC.add(_hBox(.500, .120, .070, 0, AY + .060, -.055), conc);           // the wall
+  const steps = lvl >= 2 ? 4 : 3;
+  for (let i = 0; i < steps; i++) {
+    const w = .460 - i * .030, y = AY + .022 - i * .008, zz = -.115 - i * .075;
+    CONC.add(_hBox(w, .016, .072, 0, y, zz), conc);
+    WATER.add(_hBox(w - .030, .006, .062, 0, y + .012, zz));
+  }
+
+  /* THE DISCHARGE PIPES, through the headwall and standing proud of it. Level 2
+     adds a second, level 3 a third — capacity you can count. */
+  /* ⚠ `rx`, NOT `rz` — the 7th argument of _hCyl, not the 8th. These pipes run
+     along Z (out of the tile, toward the water); makeWaterintake's delivery main
+     runs along X and uses `rz`, and copying that call is how a headwall ends up
+     discharging sideways into the neighbour's garden. */
+  const outs = lvl >= 3 ? [-.14, 0, .14] : lvl >= 2 ? [-.10, .10] : [0];
+  for (const ox of outs) {
+    MT.add(_hCyl(.038, .240, ox, AY + .062, -.130, 10, Math.PI / 2, 0));
+    MT.add(_hCyl(.048, .022, ox, AY + .062, -.238, 10, Math.PI / 2, 0));
+    DK.add(_hCyl(.030, .012, ox, AY + .062, -.246, 10, Math.PI / 2, 0), 0x2b3230);
+  }
+  // the lift pump house, small and to one side — it is a pump, not a plant
+  CONC.add(_hBox(.150, .110, .140, -.31, AY + .055, .30), conc);
+  STEEL.add(_hBox(.166, .014, .156, -.31, AY + .117, .30), steel);
+  MT.add(_hCyl(.014, .070, -.26, AY + .150, .262, 6));
+
+  for (const [m, mat, cast, tint] of [
+    [PAD, MAT.drive, false, false], [CONC, EX_PAINT, true, true],
+    [STEEL, EX_TRIM, true, true], [WATER, MAT.blue, false, false],
+    [MT, MAT.metal, true, false], [DK, EX_PAINT, false, true],
   ]) { const x = _ntMesh(m, mat, cast, tint); if (x) inner.add(x); }
   return g;
 }
@@ -24160,7 +24554,30 @@ function roadCapParts() {
   return { depots, convoy, cap: ROAD_CAP_BASE + depots * ROAD_PER_DEPOT + convoy * ROAD_PER_CONVOY };
 }
 function roadCap() { return roadCapParts().cap; }
-function roadUsed() { return allRoadKeys().length; }
+/* 🛤️ WHAT THE NETWORK COSTS TO MAINTAIN — tiles, or weighted tiles.
+   The cap is explicitly "what the city can MAINTAIN" (see ROAD_CAP_BASE), so a
+   dual-carriageway avenue, a parapeted bridge deck and a barriered highway
+   cannot all cost the same upkeep as a lane of setts. /src/roads publishes a
+   per-class weight and this is the ONE place it is applied — the refusal in
+   tryPlace, the meter in the inspector and the tooltip all read this function,
+   so they cannot disagree about how full the network is.
+   ⚠ ABSENT MODULE ⇒ THE TILE COUNT, EXACTLY. Not "roughly": every class's
+     weight floors at 1 and an unclassed road weighs 1, so a city with no
+     classes reads identically with the module and without it, and no existing
+     save is retroactively over its cap by a single unit.
+   ⚠ Math.round on the sum, not per tile. Weights are integers today; rounding
+     the total is what keeps the meter an integer if that ever stops being true,
+     rather than printing "37.5 / 40" at the player. */
+function roadUsed() {
+  try {
+    const RC = window.MythicRoadClasses;
+    if (RC && RC.capUsed) {
+      const n = RC.capUsed();
+      if (Number.isFinite(n)) return Math.max(allRoadKeys().length, Math.round(n));
+    }
+  } catch (e) {}
+  return allRoadKeys().length;
+}
 function roadMeterHtml() {
   const p = roadCapParts(), used = roadUsed();
   const pct = Math.min(100, Math.round((used / Math.max(1, p.cap)) * 100));
@@ -24282,7 +24699,7 @@ const inGrid = (x, z) => x >= 0 && z >= 0 && x < GRID && z < GRID;
 const NEI = [[0,-1],[1,0],[0,1],[-1,0]];
 
 function tileAt(x, z) { return game.tiles[key(x, z)] || null; }
-function isRoad(x, z) { const t = tileAt(x, z); return t && t.type === 'road'; }
+function isRoad(x, z) { return isRoadTile(tileAt(x, z)); }
 
 /* 🌓 SHADOW-CAST POLICY — the cheapest frame-rate win in the project.
    box() and cyl() set castShadow on everything they make, so every road slab,
@@ -24342,7 +24759,7 @@ function placeMeshAt(mesh, x, z, rot) {
 /* Which types may be turned. Roads auto-tile from their neighbours, so a road
    has no orientation of its own to rotate; anchors are fixed world features. */
 function canRotate(type) {
-  return !!type && type !== 'road' && type !== 'anchor';
+  return !!type && !isRoadType(type) && type !== 'anchor';
 }
 /* ONE source of truth for the rotate button's caption. It is written from two
    places (opening the inspector and turning the building) and they drifted. */
@@ -24395,13 +24812,17 @@ function dropTileMesh(t) {
   disposeOwnedGeo(t.mesh);
 }
 function refreshRoad(x, z) {
-  const t = tileAt(x, z); if (!t || t.type !== 'road') return;
+  const t = tileAt(x, z); if (!isRoadTile(t)) return;
   dropTileMesh(t);
-  const structAt = (xx, zz) => { const s = tileAt(xx, zz); return !!s && s.type !== 'road'; };
+  const structAt = (xx, zz) => { const s = tileAt(xx, zz); return !!s && !isRoadTile(s); };
   t.mesh = buildRoadMesh(
     { n: isRoad(x, z - 1), s: isRoad(x, z + 1), e: isRoad(x + 1, z), w: isRoad(x - 1, z) },
     { n: structAt(x, z - 1), s: structAt(x, z + 1), e: structAt(x + 1, z), w: structAt(x - 1, z) },
-    x, z);
+    /* 🛣 …and the tile's ROAD CLASS. It rides off the tile rather than being
+       looked up inside the recipe, because makeRoad is a pure geometry
+       function that must stay callable from the critic harness with no
+       game.tiles at all. Undefined ⇒ the shipped street. */
+    x, z, t.rc);
   placeMeshAt(t.mesh, x, z);
   // 💡 Register this tile's lamp with the light pool. Read the world position
   // back off the PLACED mesh instead of re-deriving it — placeMeshAt owns the
@@ -24454,7 +24875,7 @@ async function spawnAnchors() {
       to reachable road (or the anchor itself) feed that anchor. ──────── */
 function computeLinks() {
   const roadSet = new Set();
-  for (const k in game.tiles) if (game.tiles[k].type === 'road') roadSet.add(k);
+  for (const k in game.tiles) if (isRoadTile(game.tiles[k])) roadSet.add(k);
   let totalRoads = roadSet.size;
 
   /* 🚦 ROAD COMPONENTS — COMPUTED ONCE FOR THE WHOLE CITY, NOT ONCE PER ANCHOR.
@@ -24512,7 +24933,7 @@ function computeLinks() {
     }
     // Which buildings are served? adjacent to reachable road OR to the anchor.
     const served = new Set();
-    const mark = (x, z) => { for (const [dx, dz] of NEI) { const t = tileAt(x + dx, z + dz); if (t && t.type !== 'road' && t.type !== 'anchor') served.add(key(x + dx, z + dz)); } };
+    const mark = (x, z) => { for (const [dx, dz] of NEI) { const t = tileAt(x + dx, z + dz); if (t && !isRoadTile(t) && t.type !== 'anchor') served.add(key(x + dx, z + dz)); } };
     mark(a.x, a.z);
     let reachedRoads = 0;                            // was `seen.size`
     for (const c of touched) {
@@ -24642,7 +25063,7 @@ function bonusesFor(x, z, type) {
     //    building that has not opened. (Roads are exempt from timers entirely,
     //    so the road leg below is unaffected in practice.)
     if (bldSite(t)) continue;
-    if (t.type === 'road') b.road = true;
+    if (isRoadTile(t)) b.road = true;
     else if (t.type === 'anchor') b.anchor = true;
     else if (t.type === type && BUILDINGS[type].gen) b.cluster = Math.min(CLUSTER_MAX, b.cluster + CLUSTER_EACH);
   }
@@ -25334,7 +25755,7 @@ async function economyTick(dtMin) {
          yet, and guarding only the demand leg would power it from one. */
       const def = BUILDINGS[t.type]; if (!def || t.damaged || bldSite(t)) continue;
       const [x, z] = k.split(',').map(Number);
-      const isR = t.type === 'road';
+      const isR = isRoadTile(t);   // -> pwTiles.road; /src/power/grid.js builds its cable set from it
       let plant = 0, need = 0;
       if (def.gen && def.gen.power) { plant = def.gen.power * tileMult(x, z, t, staff, 1); gen += plant; grid = true; }
       if (def.powerNeed) { need = def.powerNeed * t.lvl; dem += need; grid = true; }
@@ -25495,20 +25916,40 @@ async function economyTick(dtMin) {
   try {
     const W = window.MythicWater;
     if (W && W.ready()) {
-      const wells = [], users = [];
+      /* 🚰 FOUR LISTS NOW, NOT TWO — the two extra ones are what let the module
+         answer "does this pipe run reach anybody" without ever seeing
+         `game.tiles`. `homes` carries each Housing tile's SHARE of the city's
+         beds rather than a per-home drink rate, so the module SPLITS the drink
+         figure this file already publishes instead of re-deriving it: the same
+         reason `want` arrives with tileMult already baked in. `outfalls` carries
+         the capacity declared on the BUILDINGS row, because the host owns rates
+         and always has. */
+      const wells = [], users = [], homes = [], outfalls = [];
+      let bedTotal = 0;
       for (const [k, t] of Object.entries(game.tiles)) {
-        // 🏗 Same half-built guard as the power pre-pass, on one line for both
-        //    legs: a Purifier that is still a hole draws nothing and supplies
-        //    nothing.
+        // 🏗 Same half-built guard as the power pre-pass, on one line for every
+        //    leg: a Purifier that is still a hole draws nothing and supplies
+        //    nothing, and an unfinished Outfall treats nothing.
         const def = BUILDINGS[t.type]; if (!def || t.damaged || bldSite(t)) continue;
         const gw = def.gen && def.gen.water, uw = def.use && def.use.water;
-        if (!gw && !uw) continue;
+        const sw = def.sewer, beds = def.popCap;
+        if (!gw && !uw && !sw && !beds) continue;
         const [x, z] = k.split(',').map(Number);
-        const m = tileMult(x, z, t, staff, powered);
-        if (gw) wells.push({ k, x, z, type: t.type, name: def.name, ico: def.ico, want: gw * m });
+        // Only the two production legs need the output multiplier; a bed is a
+        // bed and a headwall is a headwall whatever the weather is doing.
+        const m = (gw || uw) ? tileMult(x, z, t, staff, powered) : 1;
+        if (gw) wells.push({ k, x, z, type: t.type, name: def.name, ico: def.ico, want: gw * m,
+                             // 🚰 The row's own flag, handed over per tile — see
+                             //    the BUILDINGS block for why this is not a list
+                             //    of type strings inside the module.
+                             mains: !!def.mains });
         if (uw) users.push({ k, x, z, type: t.type, name: def.name, ico: def.ico, draw: uw * m });
+        if (sw) outfalls.push({ k, x, z, type: t.type, name: def.name, ico: def.ico,
+                                cap: (Number(sw.cap) || 0) * (t.lvl || 1) });
+        if (beds) { const c = beds * (t.lvl || 1); bedTotal += c; homes.push({ k, x, z, beds: c }); }
       }
-      const s = W.solve({ cityId: cityGroundId(), grid: GRID, wells, users,
+      for (const h of homes) h.share = bedTotal > 0 ? h.beds / bedTotal : 0;
+      const s = W.solve({ cityId: cityGroundId(), grid: GRID, wells, users, homes, outfalls,
                           pop: cityPop(), drinkPerMin: MORALE.drinkPerPopPerMin, dtMin });
       if (s && s.ok) _wtFac = s.factor;
     }
@@ -25559,7 +26000,7 @@ async function economyTick(dtMin) {
                        mult: tileMult(x, z, t, staff, powered) });
         }
         // Decor and roads are not places anyone spends time; everything else is.
-        if (!def.decor && t.type !== 'road' && t.type !== 'wall' && t.type !== 'lot') {
+        if (!def.decor && !isRoadTile(t) && t.type !== 'wall' && t.type !== 'lot') {
           places.push({ k, x, z, home: !!def.popCap, name: def.name, ico: def.ico });
         }
       }
@@ -26927,6 +27368,12 @@ const bldRemain = (t, now) => t && t.bld
    maintenance-cap branch in tryPlace. ⚠ Fails CLOSED — with no config every
    type is exempt, which is the "feature off" state, not a half-on one. */
 const bldExempt = type => type === 'anchor'
+      /* 🛣 EVERY ROAD CLASS, through the resolver — not through the literal
+         'road' in ECON.construction.exemptTypes. That list is a static table
+         in an ES module and cannot call the resolver; this OR is what keeps a
+         new class off the construction curve, which is also what keeps it out
+         of tryPlace's crew-slot branch. */
+      || isRoadType(type)
       || (bldCfg() ? bldCfg().exemptTypes.indexOf(type) >= 0 : true)
       || !!(BUILDINGS[type] && BUILDINGS[type].decor);
 
@@ -27919,7 +28366,7 @@ function bldFinish(k, t) {
   if (rec.k === 0) t.born = game.cityAge || 0;
   try {
     const [x, z] = k.split(',').map(Number);
-    if (t.type === 'road') refreshRoadArea(x, z);
+    if (isRoadTile(t)) refreshRoadArea(x, z);
     else {
       dropTileMesh(t);
       t.mesh = buildMesh(t.type === 'lot' && t.tenant ? 'tenantbiz' : t.type, t.lvl, x, z);
@@ -28197,7 +28644,7 @@ async function raidTick(dt) {
       Math.round(RAID_STORE_LOSS * 100) + '% of stores: ' + (lootStr || 'nothing — the stores were empty') + '.' + nodeNote);
     // Raiders may torch a building on the way out; sieges level one
     if (isSiege || Math.random() < .5) {
-      const ks = Object.keys(game.tiles).filter(k => game.tiles[k].type !== 'road' && game.tiles[k].type !== 'anchor');
+      const ks = Object.keys(game.tiles).filter(k => !isRoadTile(game.tiles[k]) && game.tiles[k].type !== 'anchor');
       if (ks.length) damageTile(ks[Math.floor(Math.random() * ks.length)], isSiege, isSiege ? '⚔️ The siege' : '💥 Raiders');
     }
   }
@@ -28364,7 +28811,7 @@ async function tryPlace(x, z) {
   const count = Object.values(game.tiles).filter(t => t.type === placeType).length + _pendingOf(placeType);
   // 🛤️ Roads answer to the maintenance cap, not the generic per-building one —
   // and the refusal has to say how to RAISE it, or it is just a wall.
-  if (placeType === 'road') {
+  if (isRoadType(placeType)) {
     const p = roadCapParts();
     if (roadUsed() >= p.cap) {
       toast('🛤️ Road network is at capacity (' + roadUsed() + '/' + p.cap + '). Build a 📦 Supply Depot (+' +
@@ -28391,7 +28838,7 @@ async function tryPlace(x, z) {
       if (!dx && !dz) continue;
       if (!inGrid(x + dx, z + dz)) { blocked.push('the map edge'); continue; }
       const n = tileAt(x + dx, z + dz);
-      if (n && n.type !== 'road') blocked.push((BUILDINGS[n.type] || { name: n.type }).name);
+      if (n && !isRoadTile(n)) blocked.push((BUILDINGS[n.type] || { name: n.type }).name);
     }
     if (blocked.length) {
       const uniq = [...new Set(blocked)];
@@ -28455,6 +28902,27 @@ async function tryPlace(x, z) {
     const why = (P && P.siteRefusal) ? P.siteRefusal(placeType, x, z) : null;
     if (why) { toast(why, 'bad'); return; }
   } catch (e) { /* no gate, exactly as before */ }
+  /* 💧 THE WATER SITING GATE (/src/water). Fourth module refusal on this gate
+     and written to the identical contract as the three above it: the module
+     returns the refusal STRING so the reason lives where the rule does, and
+     ABSENCE MEANS YES — a build with no /src/water places a Water Station on
+     bare rock rather than refusing a building the player has already paid the
+     UI cost of choosing.
+     ⚠ THE REQUIREMENT TRAVELS FROM THE ROW, NOT FROM A LIST IN THE MODULE. The
+       two flags are read off `def` right here and handed over, so a second
+       aquifer-sited or open-water building is one flag on one BUILDINGS row and
+       /src/water does not change. That is the `roadsAdjacentTo(match)` rule —
+       resolver, never a list of type strings in a second file — applied to the
+       one gate that can refuse a build. */
+  if (def.aquifer || def.openWater) {
+    try {
+      const W = window.MythicWater;
+      const whyW = (W && W.siteRefusal)
+        ? W.siteRefusal(placeType, x, z, { aquifer: !!def.aquifer, openWater: !!def.openWater, name: def.name })
+        : null;
+      if (whyW) { toast(whyW, 'bad'); return; }
+    } catch (e) { /* no gate, exactly as before the module existed */ }
+  }
   /* ⛏ THE GROUND GATE (/src/economy). The rule and the refusal are written at
      ecoGroundRefusal(); this is the call site, and it is the ONLY one. */
   {
@@ -28462,7 +28930,30 @@ async function tryPlace(x, z) {
     if (whyGround) { toast(whyGround, 'bad'); return; }
   }
   if (def.pop && popUsed() + def.pop > popCap()) { toast('Not enough population — build Housing.', 'bad'); return; }
-  const cost = costOf(placeType);
+  /* 🛣 THE ROAD CLASS SURCHARGE (/src/roads), and the two reads it forces to
+     agree. A class is a LADDER ON THIS TYPE'S OWN PRICE — costOf(placeType),
+     never a number of its own — so a retune of the road row retunes every class
+     with it and no class can drift out of step with the carriageway it is
+     priced against. /src/streets' roadCost note is the reason that matters:
+     reading BUILDINGS.road.cost raw quotes 100x low and looks correct.
+     🔴 CAPTURED ONCE, HERE, BEFORE THE AWAIT — exactly as `ptype` is, and for
+        the identical reason its comment gives ("the player can switch the
+        palette while payCost is in flight"). `cost` below is what payCost
+        charges and `rcls` is what the tile records, and if those two came from
+        two reads of a live palette the player could be charged for a highway
+        and handed a street. One read, both uses.
+     ⚠ ABSENCE MEANS THE SHIPPED PRICE. No module, no class armed, or a class
+       the module does not know ⇒ costOf(placeType) unchanged, byte for byte. */
+  let rcls = null, cost = costOf(placeType);
+  if (isRoadType(placeType)) {
+    try {
+      const RC = window.MythicRoadClasses;
+      if (RC && RC.pending) {
+        rcls = RC.pending() || null;
+        if (rcls) cost = RC.costFor(cost, rcls) || cost;
+      }
+    } catch (e) { rcls = null; cost = costOf(placeType); }
+  }
   /* 🏗 THE DURATION IS FIXED HERE, BEFORE THE AWAIT — and it is the last read
      of bldSpeed() this order will ever make. Re-reading crew speed after
      payCost resolves would let a Construction Co. that completed during the
@@ -28500,7 +28991,12 @@ async function tryPlace(x, z) {
          dict it was handed, so a cancel refunds the price that was paid rather
          than the price costOf() would quote after a retune. */
     const t = { type: placeType, lvl: 1, rot: canRotate(placeType) ? placeRot : 0, born: game.cityAge || 0,
-                spent: (cost && cost.cinder) | 0, earn: 0, bld: bldRecord(0, 1, durSec, cost) };
+                spent: (cost && cost.cinder) | 0, earn: 0, bld: bldRecord(0, 1, durSec, cost),
+                /* 🛣 The class, from the SAME capture the price came from — see
+                   the surcharge above. Written before refreshRoadArea below, so
+                   the very first mesh this tile ever gets is already its class's
+                   and the player never sees a street flick into a highway. */
+                rc: rcls };
     if (def.requiresCard) {
       const c = freeCards().find(c => c.type === def.requiresCard);
       CARDS.splice(CARDS.indexOf(c), 1);
@@ -28508,7 +29004,7 @@ async function tryPlace(x, z) {
       toast('🃏 ' + c.name + ' was consumed to raise the ' + def.name + '.', 'good');
     }
     game.tiles[pk] = t;
-    if (placeType === 'road') { refreshRoadArea(x, z); }
+    if (isRoadType(placeType)) { refreshRoadArea(x, z); }
     else { t.mesh = buildMesh(placeType, 1, x, z); placeMeshAt(t.mesh, x, z, t.rot); refreshRoadArea(x, z); }
     /* 🚧 The site look, applied the same way loadState applies it to a tile
        that came off disk — AFTER placeMeshAt, because it copies the world
@@ -28870,7 +29366,7 @@ function insTopline(k, t, x, z, mult, om) {
     const lit = litKeys(); let n = 0; for (const kk in game.tiles) if (lit.has(kk)) n++;
     out.push({ e: 'Blocks lit', v: n + '<small> / ' + Object.keys(game.tiles).length + '</small>', d: (def.lightRadius * 2 + 1) + '×' + (def.lightRadius * 2 + 1) + ' around this pole' });
   }
-  if (t.type === 'road') {
+  if (isRoadTile(t)) {
     const p = roadCapParts(), used = roadUsed();
     out.push({ e: 'Road network', v: used + '<small> / ' + p.cap + '</small>',
       d: 'base ' + ROAD_CAP_BASE + ' · +' + ROAD_PER_DEPOT + ' per Supply Depot (' + p.depots + ') · +' + ROAD_PER_CONVOY + ' per Convoy anchor (' + p.convoy + ')' });
@@ -28884,7 +29380,7 @@ function insTopline(k, t, x, z, mult, om) {
   if (def.decorPts) out.push({ e: 'Beauty', v: '+' + def.decorPts + '<small> decor</small>',
     d: 'city total ' + decorPoints() + ' → +' + Math.min(DECOR_MORALE_CAP, decorPoints() * DECOR_MORALE_EACH).toFixed(1) + ' morale (cap ' + DECOR_MORALE_CAP + ')' });
   // Wear only exists on things that decay — decayTick skips decor and roads.
-  if (!def.decor && t.type !== 'road') {
+  if (!def.decor && !isRoadTile(t)) {
     const hasDepot = Object.values(game.tiles).some(d => d.type === 'depot' && !d.damaged && !bldSite(d));
     const rate = DECAY_PER_HR * (hasDepot ? DECAY_DEPOT_FACTOR : 1);
     out.push({ e: 'Condition', v: t.damaged ? '<span style="color:var(--invalid)">FAILED</span>' : (100 - Math.round(t.wear || 0)) + '<small>%</small>',
@@ -29017,7 +29513,7 @@ function insContribution(t, x, z, mult) {
     if (def.gen) for (const r in def.gen) if (nt.feeds.indexOf(r) >= 0) return true;
     if (def.popCap && nt.feeds.indexOf('__housing__') >= 0) return true;
     if (def.defense && nt.feeds.indexOf('__defense__') >= 0) return true;
-    if (t.type === 'road' && nt.feeds.indexOf('__roads__') >= 0) return true;
+    if (isRoadTile(t) && nt.feeds.indexOf('__roads__') >= 0) return true;
     return false;
   };
   for (const a of game.anchors) {
@@ -29097,7 +29593,7 @@ function insSystems(t, x, z) {
 
 function insRisk(t, x, z) {
   const def = BUILDINGS[t.type], rows = [];
-  const decays = !def.decor && t.type !== 'road';
+  const decays = !def.decor && !isRoadTile(t);
   if (decays) {
     const hasDepot = Object.values(game.tiles).some(d => d.type === 'depot' && !d.damaged && !bldSite(d));
     const rate = DECAY_PER_HR * (hasDepot ? DECAY_DEPOT_FACTOR : 1);
@@ -29118,7 +29614,7 @@ function insRisk(t, x, z) {
     rows.push(insFac(WEATHER[wx.type].ico + ' Open-air, current weather', '×' + wm.toFixed(2), wm < 1 ? 'dn' : wm > 1 ? 'up' : ''));
   }
   rows.push(insFac('⚔️ Raider wave ' + game.raid.wave, 'in ' + fmtCountdown(game.raid.timer)));
-  if (t.type !== 'road') rows.push(insFac('💥 On a breach', def.defense ? 'defends with ' + def.defense * t.lvl : 'raiders may torch it'));
+  if (!isRoadTile(t)) rows.push(insFac('💥 On a breach', def.defense ? 'defends with ' + def.defense * t.lvl : 'raiders may torch it'));
   return insCardHtml('Risk', 'live', rows.join('')) +
     (t.damaged ? insAlert('bad', '🔥', 'Offline — this building produces nothing',
       'It stopped counting toward production and defence the moment it failed. Repair restores it at ' +
@@ -29252,8 +29748,8 @@ function insLedgerPane(t, x, z, mult, om) {
   let right = lifetime + (invRows || spent ? insCardHtml('Invested', invRows ? 'build + ' + (t.lvl - 1) + ' upgrade' + (t.lvl === 2 ? '' : 's') : 'charged to this tile',
     (invRows || '<div class="led"><span>Cinder</span><span>' + Math.round(spent).toLocaleString() + ' 🔥</span></div>') +
     '<div class="ins-desc" style="margin:10px 0 0">Exact, not estimated: build and upgrade prices are fixed per level, so this is what left the ledger for this tile.</div>') : '') +
-    (Object.keys(ref).length || t.type === 'road' ? insCardHtml('If you demolish', t.type === 'road' ? 'roads cost to lift' : '50% refund',
-      (t.type === 'road' ? '<div class="led"><span>Clearing charge</span><span class="dn">−' + ROAD_DEMOLISH_COST + ' 🔥</span></div>'
+    (Object.keys(ref).length || isRoadTile(t) ? insCardHtml('If you demolish', isRoadTile(t) ? 'roads cost to lift' : '50% refund',
+      (isRoadTile(t) ? '<div class="led"><span>Clearing charge</span><span class="dn">−' + ROAD_DEMOLISH_COST + ' 🔥</span></div>'
         : Object.entries(ref).map(([r, v]) => '<div class="led"><span>' + resName(r) + '</span><span class="up">+' + v.toLocaleString() + ' ' + resIco(r) + '</span></div>').join(''))) : '');
   return '<div>' + left + '</div><div>' + right + '</div>';
 }
@@ -29387,7 +29883,7 @@ function insBuildOverview(k, t, x, z, mult, om) {
       (omRow ? '. City conditions are applied on top of it, to resources only — a service building\'s coverage is never scaled by them.' : '.') + '</div>');
   }
   left += insLevelCard(t, x, z, mult, om);
-  if (t.type === 'road') left += insCardHtml('Road network', '', roadMeterHtml());
+  if (isRoadTile(t)) left += insCardHtml('Road network', '', roadMeterHtml());
   /* 👥 …and the household goes at the TOP of the other column, so the dossier
      reads as the reference does: the building on one side, the people who live
      in it on the other. Empty string for anything that is not a home. */
@@ -29507,7 +30003,7 @@ function openInspect(k) {
      CLAUDE.md puts new systems in /src, and guarded twice — a 404 on the module
      or a throw inside it falls straight through to the ordinary tile dossier
      below, which is exactly what a player saw before this feature existed. */
-  if (t.type === 'road') {
+  if (isRoadTile(t)) {
     try { if (window.MythicStreets && window.MythicStreets.renderInspect(k)) return; }
     catch (e) { console.warn('[streets] panel', e); }
   }
@@ -29805,7 +30301,7 @@ function openInspect(k) {
        even inside a comment: run.mjs round0r §3e greps the source for it, and
        its comment-stripper cannot reliably tell prose from markup in an HTML
        document. Describe the old promise; never reproduce it. */
-  dem.textContent = t.type === 'road'
+  dem.textContent = isRoadTile(t)
     ? '🧨 Demolish road — ' + ROAD_DEMOLISH_COST + ' ₵'
     : bldSite(t) ? '🧨 Cancel construction (refunds the order)'
     : '🧨 Demolish (50% refund)';
@@ -29979,7 +30475,7 @@ $('btn-demolish').onclick = guardedAction(async () => {
   /* 🛤 A road is CHARGED for, not refunded. Paid before anything is torn down —
      payCost is the only thing that can fail here, and a half-demolished tile
      with the ledger untouched would be unrecoverable. */
-  if (t.type === 'road') {
+  if (isRoadTile(t)) {
     const rc = { cinder: ROAD_DEMOLISH_COST };
     if (!(await payCost(rc))) { toast('Clearing a road costs ' + ROAD_DEMOLISH_COST + ' ₵.', 'bad'); return; }
     dropTileMesh(t);
@@ -30133,7 +30629,7 @@ function agentMesh(kind) {
 /* ── road graph helpers ── */
 function allRoadKeys() {
   const out = [];
-  for (const k in game.tiles) if (game.tiles[k].type === 'road') out.push(k);
+  for (const k in game.tiles) if (isRoadTile(game.tiles[k])) out.push(k);
   return out;
 }
 /* ⚠ TAKES A PREDICATE, and roadsAdjacentToTypes() is the thin list wrapper over
@@ -30232,7 +30728,7 @@ function doorsAt(roadK, kind) {
   for (const [dx, dz] of NEI) {
     const k = key(x + dx, z + dz), t = game.tiles[k];
     // 🏗 …and no door on a building that has no walls yet.
-    if (t && !t.damaged && !bldSite(t) && t.type !== 'road' && t.type !== 'anchor' && !BUILDINGS[t.type].decor && !BUILDINGS[t.type].noEnter) out.push(k);
+    if (t && !t.damaged && !bldSite(t) && !isRoadTile(t) && t.type !== 'anchor' && !BUILDINGS[t.type].decor && !BUILDINGS[t.type].noEnter) out.push(k);
   }
   return out;
 }
@@ -30692,7 +31188,7 @@ function builtCount() {
        would let a player raise the city's Civilisation vital by placing
        buildings they never finish. ⚠ No `damaged` test here today — a real
        edit, not a copy. */
-    if (d && !d.decor && t.type !== 'road' && !bldSite(t)) n++;
+    if (d && !d.decor && !isRoadTile(t) && !bldSite(t)) n++;
   }
   return n;
 }
@@ -31710,7 +32206,7 @@ const needsToastAt = {};
 function evaluateNeeds() {
   const needs = [];
   const add = (k, ico, msg, crit) => needs.push({ k, ico, msg, crit });
-  const buildings = Object.entries(game.tiles).filter(([k, t]) => t.type !== 'road' && t.type !== 'anchor');
+  const buildings = Object.entries(game.tiles).filter(([k, t]) => !isRoadTile(t) && t.type !== 'anchor');
   const roadCount = allRoadKeys().length;
 
   // Roads: nothing moves without them
@@ -31952,7 +32448,7 @@ function lotValueStencil(x, z) {
     // 🏗 A building site is not an amenity. Land value arrives with the arena,
     //    not with the announcement of one.
     if (!t || bldSite(t)) continue;
-    if (t.type === 'road') v += 10;
+    if (isRoadTile(t)) v += 10;
     if (t.type === 'anchor') v += Math.round(20 + t.anchor.link * .5);
     if (t.type === 'arena') v += 30;
     if (t.type === 'fountain') v += 12;
@@ -31991,7 +32487,7 @@ function decayTick(dtSec, unattended) {
        accrues wear for its whole build and can trip 100 — which would set
        t.damaged on a hole in the ground, i.e. reach the exact (bld && damaged)
        state damageTile and loadState both exist to make unreachable. */
-    if (!def || t.damaged || bldSite(t) || def.decor || t.type === 'road') continue;
+    if (!def || t.damaged || bldSite(t) || def.decor || isRoadTile(t)) continue;
     t.wear = (t.wear || 0) + rate;
     if (t.wear >= 100 && unattended) { t.wear = 99.9; continue; }
     if (t.wear >= 100) {
@@ -32845,7 +33341,7 @@ function rebuildSlot(slot) {
   for (const [k, t] of Object.entries(game.tiles)) {
     if (t.type !== slot) continue;
     const [x, z] = k.split(',').map(Number);
-    if (slot === 'road') { refreshRoad(x, z); continue; }
+    if (isRoadType(slot)) { refreshRoad(x, z); continue; }
     dropTileMesh(t);
     t.mesh = buildMesh(t.type, t.lvl, x, z); placeMeshAt(t.mesh, x, z, t.rot);
     if (t.damaged) applyDamagedLook(t);
@@ -32892,6 +33388,29 @@ function tileFromEvent(ev) {
   if (!raycaster.ray.intersectPlane(groundPlane, p)) return null;
   const x = Math.floor(p.x + HALF), z = Math.floor(p.z + HALF);
   return inGrid(x, z) ? { x, z } : null;
+}
+/* ── 🗼 THE SAME PICK, WITH AN APRON. ─────────────────────────────────────
+   tileFromEvent ends in `inGrid(x, z) ? {x, z} : null` and that is correct for
+   everything that PLACES A BUILDING: the plate is the city and nothing may be
+   built off it. But /src/power's Grid Connector stands on the north verge —
+   deliberately off the plate, because there is no road out there and never will
+   be — and a tool that cannot pick the connector cannot connect to it.
+   ⚠ This is a PICKER, not a permission. It widens what can be POINTED AT by
+     `pad` cells; it grants nothing. tryPlace still refuses everything outside
+     inGrid, and the only consumer is the power-line drag, which does not touch
+     game.tiles at all. Same mathematical y=0 plane, same raycast — deliberately
+     a second reader of the one pick rather than a second pick. */
+function cellFromEvent(ev, pad) {
+  const r = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((ev.clientX - r.left) / r.width) * 2 - 1;
+  pointer.y = -((ev.clientY - r.top) / r.height) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+  const p = new THREE.Vector3();
+  if (!raycaster.ray.intersectPlane(groundPlane, p)) return null;
+  const x = Math.floor(p.x + HALF), z = Math.floor(p.z + HALF);
+  const n = Math.max(0, pad | 0);
+  if (x < -n || x > GRID - 1 + n || z < -n || z > GRID - 1 + n) return null;
+  return { x, z };
 }
 /* ── 🔍 HOVER INFO ON A PLACED BUILDING ─────────────────────────────────
    ⚠ Correcting the note left in the v120g0 commit: the map was NEVER without
@@ -32952,7 +33471,7 @@ function tipHtml(k, t) {
   if (t.type === 'stadium') { try { if (window.MythicStadium) h += window.MythicStadium.tipLine(t); } catch (e) {} }
   if (t.type === 'lot') h += (t.tenant ? '🪧 Leased to <span class="hl">' + logEsc(t.tenant) + '</span> — +' + LOT_RENT_PER_MIN + ' 🔥/min<br>' : '🪧 Vacant — lease it for rent<br>');
   if (t.wear) h += '🏚️ Wear ' + Math.round(t.wear) + '%<br>';
-  if (t.type === 'road') h += '🛤️ Road network ' + roadUsed() + ' / ' + roadCap() + '<br>';
+  if (isRoadTile(t)) h += '🛤️ Road network ' + roadUsed() + ' / ' + roadCap() + '<br>';
   if (def.gen || def.defense) h += '<span class="tbon">' +
     '<span class="' + (b.road ? 'on' : '') + '">🛤️ road +' + Math.round(ROAD_BONUS * 100) + '%</span> · ' +
     '<span class="' + (b.cluster ? 'on' : '') + '">🏘️ cluster +' + Math.round(b.cluster * 100) + '%</span> · ' +
@@ -33147,7 +33666,7 @@ function buildShopBody() {
     + (sec.desc ? '<p class="sd">' + shopEsc(sec.desc) + '</p>' : '')
     // 🛤️ The road cap is shown where roads are BOUGHT, so the limit is read
     // before it is hit rather than discovered as a refusal.
-    + (sec.items.includes('road') ? roadMeterHtml() : '')
+    + (sec.items.some(isRoadType) ? roadMeterHtml() : '')
     + '<div class="shopgrid">'
     + sec.items.map((t) => {
         const d = BUILDINGS[t];
@@ -33372,6 +33891,19 @@ function serialize() {
   const tiles = {};
   for (const [k, t] of Object.entries(game.tiles)) if (t.type !== 'anchor')
     tiles[k] = { type: t.type, lvl: t.lvl, dmg: t.damaged ? 1 : 0, rot: (t.rot | 0) & 3,
+                 /* 🛣 THE ROAD CLASS (/src/roads). A second axis beside the
+                    carriageway TYPE above: 'highway', 'avenue', 'bridge'…
+                    ⚠ WRITTEN STRAIGHT OFF THE TILE, WITH NO MODULE IN THE PATH,
+                      and that is the erase guard. The `power`, `water` and
+                      `pollution` fields below all fall back to what was LOADED
+                      rather than to null, for the same reason; here the tile
+                      itself is that fallback, because loadState puts the string
+                      back on the tile whether or not /src/roads ever mounted.
+                      So a save round-tripped through a build where the module
+                      404'd keeps every class the player paid for.
+                    `null` on every non-road tile and on every road that is a
+                    plain street, so no existing save grows by a byte. */
+                 rc: (typeof t.rc === 'string' && t.rc) ? t.rc : null,
                  card: t.card || null, cards: t.cards || null,
                  tenant: t.tenant || null, wear: Math.round(t.wear || 0),
                  /* 🛡 The grace-period birth stamp, on the game.cityAge clock.
@@ -34569,6 +35101,16 @@ async function loadState() {
          upgrade. Same expression the upgrade button already uses. */
       const lvl = Math.min(BUILDINGS[td.type].maxLvl || MAX_LVL, td.lvl | 0) || 1;
       const t = { type: td.type, lvl, damaged: !!td.dmg,
+                  /* 🛣 THE ROAD CLASS (/src/roads), kept VERBATIM and validated
+                     nowhere here — deliberately, and it is the same rule
+                     game.zones two screens up carries: an id this build does not
+                     know is a save from a NEWER build, and keeping it means it
+                     renders as a plain street today and comes back as the
+                     highway the player paid for the moment that build is
+                     deployed again. Validating here would delete it instead.
+                     Absent on every save written before this feature ⇒ null ⇒
+                     the shipped street. */
+                  rc: (typeof td.rc === 'string' && td.rc) ? td.rc : null,
                   rot: (td.rot | 0) & 3,
                   card: td.card || null, cards: td.cards || null,
                   tenant: td.tenant || null, wear: td.wear || 0,
@@ -34630,7 +35172,7 @@ async function loadState() {
         try { if (window.MythicStadium) { const raw = t.stad; t.stad = null; window.MythicStadium.loadTile(t, raw); } } catch (e) {}
       }
       game.tiles[k] = t;
-      if (td.type !== 'road') {
+      if (!isRoadType(td.type)) {
         t.mesh = buildMesh(td.type === 'lot' && t.tenant ? 'tenantbiz' : td.type, t.lvl, x, z);
         placeMeshAt(t.mesh, x, z, t.rot);
         if (t.damaged) applyDamagedLook(t);
@@ -34670,7 +35212,7 @@ async function loadState() {
         .slice(-LOG_SAVE);
     }
     if (s.nodeXp && typeof s.nodeXp === 'object') game.nodeXp = s.nodeXp;
-    for (const k in game.tiles) if (game.tiles[k].type === 'road') { const [x, z] = k.split(',').map(Number); refreshRoad(x, z); }
+    for (const k in game.tiles) if (isRoadTile(game.tiles[k])) { const [x, z] = k.split(',').map(Number); refreshRoad(x, z); }
     /* 👤 Named citizens, AFTER the tile loop so citAssignJobs can see which
        workplaces actually came back. Absent ⇒ empty roster, never a throw. A
        citizen whose building did not survive the load is left IDLE and
@@ -38817,6 +39359,10 @@ function _bubBlocked(a) {
   return hit;
 }
 
+/* 🌊 Cached at the ocean's mount rather than looked up per frame; null until
+   then, and nulled permanently if it ever throws — a per-frame hook that can
+   throw 60 times a second is a console nobody can read. */
+let _oceanTick = null;
 function animate() {
   const dt = Math.min(clock.getDelta(), .25);
   qualityTick(dt);
@@ -38848,6 +39394,13 @@ function animate() {
   // 💡 Lamps have always GLOWED at night (the emissive head above) but never
   // lit anything. Re-aim the pool so they actually cast light on the street.
   try { updateLampLights(); } catch (e) {}
+  /* 🌊 The sea's ripple drifts. ONE texture offset and two adds when the layer
+     is there, and a single truthy test when it is not — which is why this reads
+     a cached handle rather than `window.MythicOcean` (a property lookup on
+     `window` every frame, forever, for a module that may not exist). The module
+     no-ops itself while its own mesh is hidden, so an A/B that toggles the layer
+     cannot mistake the drift for the layer's contribution. */
+  if (_oceanTick) { try { _oceanTick(dt); } catch (e) { _oceanTick = null; } }
   const tnow = performance.now() * .003;
   // Hoisted out of the per-tile loop — this runs over every tile in the city.
   const _camX = camera.position.x, _camZ = camera.position.z;
@@ -39032,6 +39585,68 @@ function animate() {
     const dmod = await import('../src/districts/index.js?v=' + (window.NC_BUILD || 'ds1'));
     dmod.mount({ game, BUILDINGS, key, toast, logEvent, saveSoon });
   } catch (e) { console.warn('[Districts] not mounted (non-fatal):', e); }
+  /* ══ 🛣 ROAD CLASSES (/src/roads) ═════════════════════════════════════════
+     Nine carriageway classes — street, alley, curve, cycle track, cul-de-sac,
+     avenue, roundabout, bridge, highway — on ONE tile type, riding in `t.rc`
+     beside the carriageway TYPE the resolver at the top of this file owns. Two
+     independent axes: ROAD_CLASSES answers "is this a carriageway", /src/roads
+     answers "which class of one". Neither is derivable from the other and
+     neither may be collapsed into the other.
+
+     🔴 MOUNTED BEFORE loadState, AND THAT IS THE WHOLE REASON IT IS HERE
+        RATHER THAN BESIDE /src/netdrag AT THE TAIL OF boot(). loadState builds
+        every road mesh in the city, and the class hook lives INSIDE makeRoad
+        (§9½). Mount this after that loop and a city of highways loads as a city
+        of plain streets and stays that way until the player happens to touch
+        each tile — a save that renders wrong and never says so, which is
+        exactly the failure mode this file keeps calling the worst kind.
+        (The palette needs nothing that is not up yet: the build bar exists, and
+        the map-pointer arbiter is a window singleton that does not care who
+        mounts first — see /src/netdrag/rig.js.)
+
+     🔴 THE GLOBALS TRAP (CLAUDE.md). `game`, `BUILDINGS`, `THREE`, `scene`,
+        `costOf`, `payCost`, `tryPlace`, `toast` AND THE ENTIRE rd* ROAD KIT
+        (rdSlab, rdFlat, rdLane, rdPart, rdGeo, rdQuad, rdTint, rdRng and the
+        RD_* cross-section constants) are top-level `const` in THIS module
+        script and are invisible to an ES module. The `kit` below IS the
+        hand-over, and it is the reason a class recipe can draw into the SAME
+        SIX BUCKETS makeRoad merges instead of adding a Group of its own: one
+        highway, six draw calls, same as a street.
+     ⚠ THE KIT HANDS OVER PRIMITIVES, NOT THE RECIPE. The module may append
+       parts; it cannot edit or remove one, cannot reach rdRng's shared stream
+       (it is handed the FACTORY and takes its own), and cannot mint a material.
+       Every colour it uses is a vertex colour on RD_SOLID, exactly as the verge
+       already is.
+     ⚠ WHAT DOES NOT CROSS IT: no ledger call. Roads on empty ground go through
+       `place` (the same one-line tryPlace closure /src/zoning and /src/netdrag
+       are handed) and re-lays go through payCost. Nothing here can mint. */
+  try {
+    const rcmod = await import('../src/roads/index.js?v=' + (window.NC_BUILD || 'rc1'));
+    window.MythicRoadClasses = rcmod.mount({
+      THREE, scene, camera, controls, canvas: renderer.domElement,
+      game, GRID, HALF, BUILDINGS,
+      key, inGrid, tileAt, isRoad,
+      tileFromEvent, setMode, mode: () => mode, onMode: onModeChange,
+      /* The carriageway type a fresh drag lays. The class ladder multiplies
+         THIS row's price, never a number of its own. */
+      roadType: 'road',
+      costOf, payCost, refreshRoadArea, computeLinks, updateHUD,
+      roadCapParts, toast, logEvent, saveSoon,
+      place: (type, x, z) => { placeType = type; return tryPlace(x, z); },
+      /* ── the road kit ────────────────────────────────────────────────── */
+      kit: {
+        slab: rdSlab, flat: rdFlat, lane: rdLane, paint: rdPaint, part: rdPart,
+        box: rdGeo, quad: rdQuad, tint: rdTint, rng: rdRng,
+        Y: { Y: RD_Y, KH: RD_KH, LIP: RD_LIP, IN: RD_IN, VG: RD_VG, PT: RD_PT,
+             BASE: RD_BASE, HW: RD_HW, QY: RD_QY, WY: RD_WY, PY: RD_PY, DY: RD_DY,
+             EL: RD_EL, GT: RD_GT, GR: RD_GR, BC: RD_BC },
+        C: { KERB: C_KERB, MARK: C_MARK, DARK: C_DARK, LEAF: C_LEAF, GRASS: C_GRASS },
+        T: { ROAD: T_ROAD, TRACK: T_TRACK, GUT: T_GUT, GRIME: T_GRIME, PATCH: T_PATCH, SCAR: T_SCAR },
+      },
+    });
+    // Silence is a pass — same contract as /src/power's verify().
+    try { const v = window.MythicRoadClasses.verify(); if (v && !v.ok) console.warn('[Roads] verify:', v.issues); } catch (e) {}
+  } catch (e) { console.warn('[Roads] not mounted (non-fatal):', e); }
   /* ══ 🏷 THE BUSINESS REGISTER + THE MODULE SAVE SHELF ═════════════════════
      Mounted BEFORE loadState, and FIRST of the three modules below, because
      this one owns `window.MythicCitySave` — the shelf loadState calls to hand
@@ -39218,7 +39833,7 @@ function animate() {
   try {
     await spawnAnchors();
     await loadState();
-    for (const k in game.tiles) if (game.tiles[k].type === 'road') { const [x, z] = k.split(',').map(Number); refreshRoad(x, z); }
+    for (const k in game.tiles) if (isRoadTile(game.tiles[k])) { const [x, z] = k.split(',').map(Number); refreshRoad(x, z); }
     computeLinks();
     // 🗺 Adopt what was already standing into land-use zones — see afterLoad().
     try { if (window.MythicZoning) window.MythicZoning.afterLoad(); } catch (e) {}
@@ -39614,7 +40229,31 @@ function animate() {
   try {
     await import('../src/water/index.js?v=' + (window.NC_BUILD || 'r1'));
     if (window.MythicWater) {
-      window.MythicWater.mount({ THREE, scene, grid: GRID, cityId: cityGroundId() });
+      /* 🚰 THE MAINS ROUND WIDENED THIS CTX, and every key added below is here
+         because the pipe TOOL needs it — the simulation still arrives entirely
+         through solve(). `canvas`/`controls`/`tileFromEvent` are the drag rig;
+         `mode`/`setMode`/`onMode` are BOTH halves of the tool exclusion (see
+         /src/water/netui.js's header on why a third capture-phase claimant is
+         the risk in this round); `payCost` is the ONLY way this module can spend
+         anything, so a pipe run goes through the same ledger call a building
+         does; `scaleCinder` hands over this file's own cost scaler so the
+         module's authored 2..600 figure is multiplied by the ONE helper that
+         prices everything the city builds — /src/streets records what reading a
+         raw table figure without it costs (a quote 100× low that looks correct).
+         ⚠ NO `game`, NO `BUILDINGS`, NO ledger call of its own. */
+      window.MythicWater.mount({
+        THREE, scene, grid: GRID, cityId: cityGroundId(),
+        canvas: renderer.domElement, controls, tileFromEvent,
+        mode: () => mode, setMode, onMode: onModeChange,
+        /* Read-only, and for ONE purpose: /src/netdrag/rig.js's `bindMode` uses
+           it to NAME the building in the stand-down reason, so a tool that is
+           put away can say what took the pointer. Whichever claimant binds the
+           hook first supplies it; passing it here means /src/water is not the
+           one that makes the message anonymous. */
+        BUILDINGS,
+        toast, saveSoon, payCost,
+        scaleCinder: (n) => (scaleCost({ cinder: n }).cinder | 0),
+      });
       window.MythicWater.load(_pendingWater);
       /* 🔍 Reported ONLY when it fails. A self-check that logs on success is a
          self-check everyone learns to scroll past. */
@@ -39624,6 +40263,71 @@ function animate() {
       } catch (e) {}
     }
   } catch (e) { console.warn('[Water] not mounted (non-fatal):', e); }
+  /* ══ 🌊 THE SEA YOU CAN SEE ══════════════════════════════════════════════
+     /src/ocean. There has never been one square metre of 3D water in this file:
+     /src/water's river and lakes are arithmetic that becomes pixels only inside
+     a 24-px-per-tile CanvasTexture while the 💧 panel is open, and a river only
+     exists at all above wetness 0.52 — a bit over half of all cities have no
+     surface water whatever. /src/outside/tuning.js defers the CS2 "water"
+     outside connection in as many words: "there is no coast and no flight path
+     on this map". Now there is a coast, on every map.
+
+     ⚠ MOUNTED IMMEDIATELY AFTER /src/water AND THAT IS AN ORDERING RULE, NOT
+       POLITENESS. The module does not own the waterline — it reads it from
+       `MythicWater.endowment().sea.shoreAt(z)`, which is keyed on the LATCHED
+       city id, and the line that latches it is `MythicWater.load(_pendingWater)`
+       three lines above. Mount the sea first and a loaded city gets the
+       coastline of whatever id the host happens to derive today instead of the
+       one it was founded on.
+
+     ⚠ AND BEFORE /src/wild, WHICH TAKES `isSea` OFF IT. The scatter draws on
+       every tile nobody has built on and it takes its y from NC_TERRAIN_AT, so
+       without the exclusion its thickets and rocks grow in the water.
+
+     🔴 THE GLOBALS TRAP, and this is the thirteenth module to hit it. `THREE`,
+        `scene`, `GRID`, `HALF`, `NC_TERRAIN_AT`, `NC_GROUND_AT`,
+        `skyEnvRegister` and `perimeterScenery` are top-level bindings in THIS
+        module script and are invisible to an ES module. The ctx below IS the
+        hand-over, copied from /src/wild's — which is the shipped precedent for
+        a module that needs the terrain.
+     ⚠ Note what does NOT cross: `game`. The sea is off the plate entirely, so
+       this layer never reads a tile, never writes one, adds no save field and
+       cannot refuse a placement. tryPlace() is untouched by this round. */
+  try {
+    const omod = await import('../src/ocean/index.js?v=' + (window.NC_BUILD || 'r1'));
+    window.MythicOcean = omod.mount({
+      THREE, scene, GRID, HALF,
+      /* The plate's surface and its authored tone — the same two samplers
+         /src/wild takes, and for the two reasons its ctx gives: the water has to
+         meet a lattice displaced by ±9mm, and its rim has to be the colour of
+         the ground it is dissolving into or the waterline is a hard edge. */
+      terrainAt: NC_TERRAIN_AT,
+      groundAt: NC_GROUND_AT,
+      grainPer: NC_GRAIN_PER,
+      /* 🪞 THE REFLECTION. `scene.environment` is deliberately NOT set in this
+         file (see THE SKY ENVIRONMENT MAP) — materials opt in here instead, and
+         the map is rebuilt from the LIVE sky, so the sea carries the hour and
+         the weather for the price of one more entry in a list. */
+      skyEnvRegister,
+      /* 🏘 …and the one call back into the host. See the block at `atSea` in
+         perimeterScenery for why the outskirts can only learn about the water
+         after the fact, and why this function was made idempotent. */
+      reperimeter: () => { try { perimeterScenery(); } catch (e) { console.warn('[Ocean] outskirts rebuild failed (non-fatal):', e); } },
+    });
+    /* 🔍 Reported ONLY when it fails — the same idiom as MythicWild.verify()
+       above. It matters more here than for most: this mount is a catch-and-warn
+       like every other, so "drew nothing", "drew a coastline that disagrees with
+       the simulation" and "was never imported" are one observation from the
+       console. verify() asserts the four things the header promises, against the
+       buffer that actually shipped. */
+    try {
+      const ov = window.MythicOcean && window.MythicOcean.verify();
+      if (ov && !ov.ok) console.warn('[Ocean] self-check FAILED', ov.problems);
+    } catch (e) {}
+    // …and only now does animate() start paying for the hook. See _oceanTick.
+    if (window.MythicOcean && typeof window.MythicOcean.tick === 'function')
+      _oceanTick = (dt) => window.MythicOcean.tick(dt);
+  } catch (e) { console.warn('[Ocean] not mounted (non-fatal):', e); }
   /* ══ ⚡ THE GRID AND ITS INFO VIEW ════════════════════════════════════════
      Mounted AFTER loadState so the saved battery charge exists before the first
      economyTick can discharge it, and BEFORE the offline catch-up for the same
@@ -39643,7 +40347,37 @@ function animate() {
   try {
     await import('../src/power/index.js?v=' + (window.NC_BUILD || 'r1'));
     if (window.MythicPower) {
-      window.MythicPower.mount({ THREE, scene, grid: GRID, cityId: cityGroundId() });
+      /* 🗼 THE CTX GREW THIS ROUND, AND ONLY FOR THE POWER-LINE TOOL.
+         Everything that was here before still is; what is added below is the
+         handful of seams a DRAG TOOL cannot work without, and they are the same
+         seams /src/zoning is already handed — the globals trap means a module
+         can read none of them for itself.
+           canvas/controls   own the gesture and suspend OrbitControls for it
+           cellFromEvent     the pick, WITH the one-cell apron the Grid Connector
+                             stands on (tileFromEvent refuses everything off the
+                             plate, which is where the connector is)
+           mode/setMode/onMode   the two-way tool exclusion. /src/zoning/ui.js's
+                             header records the measured bug this closes, and a
+                             THIRD tool on the same capture-phase pointer that
+                             did not join this seam would re-create it.
+           payCost           the shipped ledger call. The module never touches a
+                             ledger; every coin a line costs goes through here,
+                             exactly as a zoned build does.
+           tileAt            occupancy, as a live predicate rather than a copied
+                             map — a line must go round a building, and a map
+                             taken at tick time is one tick stale, which is
+                             exactly long enough to tell a player a tile is free
+                             while they are looking at the building on it.
+         ⚠ NOTHING WRITEABLE CROSSES. No `game`, no `BUILDINGS` mutation, no
+           tile handle. The line network lives entirely in the module's own save
+           slice and node-city's tile map is never written by it. */
+      window.MythicPower.mount({
+        THREE, scene, grid: GRID, cityId: cityGroundId(),
+        canvas: renderer.domElement, controls,
+        cellFromEvent, tileFromEvent, tileAt,
+        mode: () => mode, setMode, onMode: onModeChange,
+        payCost, toast, saveSoon, BUILDINGS,
+      });
       window.MythicPower.load(_pendingPower);
       /* 🚧 The one predicate the siting gate cannot get from a per-tick snapshot:
          it has to answer for the tile the player is hovering RIGHT NOW. `game`
@@ -39680,6 +40414,16 @@ function animate() {
         const gens = Object.keys(BUILDINGS).filter(t => BUILDINGS[t].gen && BUILDINGS[t].gen.power);
         const j = window.MythicPower.selfCheck(gens);
         if (j && !j.ok) console.warn('[Power] plant/BUILDINGS join FAILED', j);
+        /* 🗼 …and a third: the Grid Connector. Two things can go wrong here and
+           both look perfect in a diff — a connector resolved onto the buildable
+           plate (where a building could stand on it), or a connector that is not
+           in its own conductor set (the walk would seed from a cell it cannot
+           traverse, and every fresh city would read "unserved" with no
+           explanation anywhere). */
+        if (window.MythicPower.lines && window.MythicPower.lines.verify) {
+          const lv = window.MythicPower.lines.verify();
+          if (lv && !lv.ok) console.warn('[Power] grid connector self-check FAILED', lv.violations);
+        }
       } catch (e) {}
     }
   } catch (e) { console.warn('[Power] not mounted (non-fatal):', e); }
@@ -39881,7 +40625,7 @@ function animate() {
         if (!inGrid(x, z) || game.tiles[k]) return null;
         const t = { type, lvl: 1, rot: 0, born: game.cityAge || 0, spent: 0, earn: 0 };
         game.tiles[k] = t;
-        if (type !== 'road') { t.mesh = buildMesh(type, 1, x, z); placeMeshAt(t.mesh, x, z, 0); }
+        if (!isRoadType(type)) { t.mesh = buildMesh(type, 1, x, z); placeMeshAt(t.mesh, x, z, 0); }
         refreshRoadArea(x, z);
         return k;
       },
@@ -39953,6 +40697,72 @@ function animate() {
     // 🛣 Arm the two agentTick hooks only once the module is really there.
     _stMeter = window.MythicStreets;
   } catch (e) { console.warn('[Streets] not mounted (non-fatal):', e); }
+  /* ══ 🛣 THE ROAD DRAG (/src/netdrag) ═══════════════════════════════════════
+     This file has no drag placement at all: the pointerup handler above bails
+     on `moved > 6` because "it was a camera drag", so a ten-tile road is TEN
+     clicks and TEN awaited payCost round trips. /src/netdrag turns one
+     pointerdown → N pointermoves → one pointerup into an ordered run and lays
+     it as a batch.
+
+     WHAT IT DOES NOT DO, AND THIS IS THE LOAD-BEARING HALF: it mints no tile
+     type, no road class and no mesh. It lays the EXISTING `road` type through
+     `place` below — the same one-line wrapper /src/zoning and __nc.place use —
+     so every tile of a drag passes the SHIPPED gate: the road maintenance cap,
+     `_placing`, `_pendingType`, progression, the power siting refusal, the
+     ground refusal, population and payCost. tryPlace is reassigned twice after
+     its definition (the ops wrapper, then the order gate), and this closure is
+     re-read at every call, so the module can never hold a stale copy.
+
+     🖱 THE POINTER IS THE REAL FEATURE, AND IT HAS A HISTORY. `onModeChange`
+     was added for exactly two tools (see its header, and /src/zoning/ui.js's
+     account of the measured bug where picking Housing with the Zones panel open
+     silently painted a zone). A THIRD claimant on the same capture-phase
+     pointer makes that pairwise wiring N², with one silent conflict per missing
+     edge. /src/netdrag/rig.js is that wiring turned into a registry: ONE armed
+     map tool at a time, ONE set of document listeners dispatching only to it,
+     and `onMode` handed over ONCE — from whichever of the two modules mounts
+     first — so setMode('place') stands down every armed tool rather than the
+     one that happened to be wired.
+     ⚠ MOUNTED AFTER /src/zoning, WHICH IS THE ORDER THE BUILD BAR WANTS (the
+       🛣 Roads button is inserted beside 🗺 Zones) AND THE ONLY ONE THE
+       ARBITER DOES NOT CARE ABOUT — the registry lives on `window` precisely so
+       that two modules importing rig.js under different query strings still
+       share one arbiter.
+
+     🔴 THE GLOBALS TRAP (CLAUDE.md), for the umpteenth module. `game`,
+        `BUILDINGS`, `tryPlace`, `costOf`, `roadCap`, `mode`, `toast` and the
+        rest are top-level `const`/`let` in THIS module script and invisible to
+        an ES module. The ctx below IS the hand-over.
+     ⚠ WHAT DOES NOT CROSS IT: no ledger call, no mesh factory, no writer of
+       game.tiles. Every coin goes through payCost and every road mesh through
+       refreshRoadArea — the module is handed that one so it can re-cut a
+       junction, never so it can build one. */
+  try {
+    const ndmod = await import('../src/netdrag/index.js?v=' + (window.NC_BUILD || 'r1'));
+    window.MythicNetDrag = ndmod.mount({
+      THREE, scene, camera, controls, canvas: renderer.domElement,
+      game, GRID, HALF, BUILDINGS,
+      key, inGrid, tileAt, isRoad,
+      tileFromEvent, setMode, mode: () => mode, onMode: onModeChange,
+      /* The placement gate, current binding, one line — identical to the
+         closure /src/zoning is handed so a dragged road runs the SAME checks a
+         clicked one does. */
+      place: (type, x, z) => { placeType = type; return tryPlace(x, z); },
+      /* 🛣 The mesh choke point. tryPlace already calls this for every road that
+         lands, so the module's own use of it is an integrity pass, not a second
+         rebuild: buildMesh has no road case, five separate sites here hard-code
+         `=== 'road'` to route to refreshRoad instead, and a road that misses
+         them all is an invisible building on a tile the player paid 400🔥 for. */
+      refreshRoadArea,
+      /* ⚠ costOf('road').cinder, NOT BUILDINGS.road.cost — the table says 4 and
+         scaleCost turns that into the 400 a player is actually charged. The
+         /src/streets mount above carries the identical note, because reading
+         the raw table quotes 100x low AND LOOKS CORRECT. */
+      roadCost: () => (costOf('road').cinder || 0),
+      roadCap, roadUsed, roadMeterHtml,
+      toast, saveSoon, updateHUD,
+    });
+  } catch (e) { console.warn('[NetDrag] not mounted (non-fatal):', e); }
   /* ══ 🅿 KERBSIDE PARKING ═════════════════════════════════════════════════
      The half of a street's vehicle population that does not move. The moving
      fleet is capped by AGENTS.*Max — a measured frame-rate decision this does
@@ -39978,7 +40788,7 @@ function animate() {
          own anchors are not frontages, and a road opposite a road is a junction
          approach rather than a plot — so the predicate is the same one
          doorsAt() uses to decide a building has a door. */
-      isPlot: (t) => !!t && t.type !== 'road' && t.type !== 'anchor'
+      isPlot: (t) => !!t && !isRoadTile(t) && t.type !== 'anchor'
                      && !!BUILDINGS[t.type] && !BUILDINGS[t.type].decor,
       /* Its own material, but built from MAT.road's map so a bay is the same
          asphalt as the carriageway it opens off. vertexColors is what lets the
@@ -40179,6 +40989,18 @@ function animate() {
          plate's actual surface y (so nothing floats over a ridge or sinks into
          a hollow — the lattice is displaced by ±9mm). See NC_TERRAIN_AT. */
       terrainAt: NC_TERRAIN_AT,
+      /* 🌊 …AND WHERE THE SEA IS, WHICH IS AN EXCLUSION AND NOT A DECORATION.
+         This layer draws on every tile with no `game.tiles` entry and takes its
+         y from NC_TERRAIN_AT, so a thicket over water would be a thicket
+         standing on the plain with the sea drawn over it — and the scatter would
+         go on reporting a healthy build. It cannot happen TODAY, because the
+         waterline can never come inside HALF + 1.75 and this layer never leaves
+         the plate — which is exactly why the test is handed over rather than
+         argued: the day the coast moves inward, or the day something asks this
+         module to dress the plain, the exclusion is already wired and the
+         alternative is a silent one. Absence means "no sea", never "draw
+         nothing". */
+      isSea: (wx, wz) => { try { return !!(window.MythicOcean && window.MythicOcean.isSea(wx, wz, 0)); } catch (e) { return false; } },
     });
     /* 🔍 AND ITS SELF-CHECK, REPORTED ONLY WHEN IT FAILS — the same idiom as
        MythicLandValue.verify() and MythicDistricts.verify() above, and here
@@ -40636,6 +41458,22 @@ function animate() {
     waterAt: (x, z) => { try { return window.MythicWater ? window.MythicWater.sourceAt(x, z) : null; } catch (e) { return null; } },
     waterPanel: (on) => { try { return window.MythicWater ? (on === false ? window.MythicWater.closePanel() : window.MythicWater.openPanel()) : false; } catch (e) { return false; } },
     waterId: () => cityGroundId(),
+    /* 🚰 THE MAINS, on the diagnostics seam — the whole network editable from
+       the console, which is what makes the constraint drivable in a headless
+       harness that has no pointer. `waterPipe` takes the two ends of a run and
+       lays it FREE OF CHARGE, exactly as /src/outside's grandfather migration
+       goes through the deliberately ungated `place` closure: a test rig must be
+       able to build the situation it is testing without a treasury. */
+    waterMains: () => { try { return window.MythicWater ? window.MythicWater.mains() : null; } catch (e) { return null; } },
+    waterPipe: (x0, z0, x1, z1) => { try {
+      const W = window.MythicWater; if (!W) return 0;
+      return W.pipes.add(W.pipes.path(x0, z0, x1, z1));
+    } catch (e) { return 0; } },
+    waterUnpipe: (x0, z0, x1, z1) => { try {
+      const W = window.MythicWater; if (!W) return 0;
+      return W.pipes.remove(W.pipes.path(x0, z0, x1, z1));
+    } catch (e) { return 0; } },
+    waterTool: (on) => { try { return window.MythicWater ? window.MythicWater.pipes.tool(on) : false; } catch (e) { return false; } },
     /* ☁ /src/pollution's diagnostics seam. `pollutionAt` is the per-tile answer
        WITH its blame list — the same object the inspector row prints — so a
        driver can assert "the tile two downwind of the coal plant is dirtier than
@@ -40725,6 +41563,29 @@ function animate() {
     tenantOverlay: (on) => { try { return window.MythicTenants ? window.MythicTenants.overlay(on) : false; } catch (e) { return false; } },
     landValuePanel: (on) => { try { return window.MythicLandValue ? (on === false ? window.MythicLandValue.closePanel() : window.MythicLandValue.openPanel()) : false; } catch (e) { return false; } },
     place: (type, x, z) => { placeType = type; return tryPlace(x, z); },
+    /* 🛣 THE ROAD CLASS, on the diagnostics seam — the same two operations the
+       road palette performs and in the same order: write `t.rc`, then re-cut
+       the tile and its four neighbours through refreshRoadArea. Nothing
+       test-only: /src/roads' own applyRun() does exactly this for a conversion,
+       and the seam exists because the class is otherwise only reachable through
+       a pointer drag, and the Browser pane composites at ~0.56 Hz (CLAUDE.md),
+       which makes a synthesised pointer gesture the least reliable way to set
+       up a photograph.
+       ⚠ IT DOES NOT CHARGE. That is deliberate and it is the same argument
+         /src/outside's grandfather migration makes for its ungated place
+         closure: a rig has to be able to BUILD the situation it is measuring
+         without a treasury. The player-facing path is applyRun(), which pays
+         through payCost for every tile — this one cannot be reached from any
+         UI. */
+    roadClass: (x, z, cls) => {
+      const t = tileAt(x, z); if (!isRoadTile(t)) return null;
+      t.rc = (typeof cls === 'string' && cls) ? cls : null;
+      refreshRoadArea(x, z);
+      return t.rc;
+    },
+    roadClassOf: (x, z) => { const t = tileAt(x, z); return isRoadTile(t) ? (t.rc || null) : null; },
+    roadClasses: () => { try { return window.MythicRoadClasses ? window.MythicRoadClasses.classes() : null; } catch (e) { return null; } },
+    roadVerify: () => { try { return window.MythicRoadClasses ? window.MythicRoadClasses.verify() : null; } catch (e) { return null; } },
     /* Fast-forward: n economy minutes in `steps` slices.
        ⚠ Calls the SAME three functions in the SAME order as animate()'s
          economy/vitals block — economyTick, vitalsTick, periodicSaveTick — so a

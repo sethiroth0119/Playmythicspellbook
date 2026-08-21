@@ -56,6 +56,11 @@
      shadow map) and a second fleet that ignored it would undo the measurement.
    ══════════════════════════════════════════════════════════════════════════ */
 
+/* 🛣 The road resolver — same reason as /src/crowd: this file re-derives the
+   N/S/E/W mask, and a bay cut into a tile the host does not think is road is a
+   parked car in somebody's garden. */
+import { isRoadTile } from '../roads/types.js';
+
 const MAX_PARKED = 44;      // ceiling on the standing fleet, ~176 meshes
 const BAY_LAT    = 0.355;   // bay centre, lateral — spans .26….45
 const BAY_HALF   = 0.300;   // bay half-length along the road
@@ -108,7 +113,7 @@ function bayTiles() {
   const { game, isRoad, isPlot } = CTX;
   const out = [];
   for (const k in game.tiles) {
-    if (game.tiles[k].type !== 'road') continue;
+    if (!isRoadTile(game.tiles[k])) continue;
     const [x, z] = k.split(',').map(Number);
     const N = isRoad(x, z - 1), S = isRoad(x, z + 1), E = isRoad(x + 1, z), W = isRoad(x - 1, z);
     const cnt = (N ? 1 : 0) + (S ? 1 : 0) + (E ? 1 : 0) + (W ? 1 : 0);

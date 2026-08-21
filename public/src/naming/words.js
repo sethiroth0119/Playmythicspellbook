@@ -220,4 +220,9 @@ export const GENERIC = ['retail', ['Company', 'Works', 'Trading', 'Concern']];
      anchor — a Node Anchor already carries the node's own name from the game.
    Everything else in BUILDINGS gets a name, because "name every business"
    read against a city where half the buildings are unnamed reads as a bug. */
+/* ⚠ 'road' HERE IS THE LEGACY CLASS ONLY. This is a static table and cannot
+   call the road resolver, so registry.js ORs it with isRoadType() — a Lane and
+   every future carriageway class is suppressed there, not by an entry added
+   here. Adding class ids to this list would be the list-shaped form of the
+   bare-string tile-type bug (see TRUCK_STOPS, node-city). */
 export const NO_NAME = new Set(['road', 'streetlight', 'wall', 'gate', 'anchor']);

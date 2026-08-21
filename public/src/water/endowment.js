@@ -155,6 +155,21 @@ export function hydrologyFor(cityId, grid) {
   //       they sit under it (a springfed basin is the endowment's own answer to
   //       "why can this city pump harder than that one").
   const surface = buildSurface(id, G, wetness);
+  /* 🌊 HOW MANY BUILDABLE COLUMNS ARE ACTUALLY COASTAL. Counted ONCE, here,
+     against the real field — never derived from `reach`, which is measured from
+     the waterline and therefore spends its first ~2.5 tiles crossing the gap
+     between the last column and the water (see WATER.sea.reach's 🐞). The panel
+     prints THIS, because "reaches N tiles inland" has to be a fact about the
+     map the player is looking at and not about the falloff's parameter. */
+  let seaInland = 0;
+  if (surface.sea) {
+    for (let x = G - 1; x >= 0; x--) {
+      let any = false;
+      for (let z = 0; z < G; z++) if (seaStrengthAt(surface.sea, x, z) > 0.02) { any = true; break; }
+      if (!any) break;
+      seaInland++;
+    }
+  }
 
   // ── 3. AQUIFERS.
   const nBasins = Math.max(E.basinsMin, Math.min(E.basinsMax,
@@ -201,7 +216,7 @@ export function hydrologyFor(cityId, grid) {
   }
 
   const H = {
-    cityId: id, grid: G, wetness, cls, basins, surface,
+    cityId: id, grid: G, wetness, cls, basins, surface, seaInland,
     /* The 0..1 deposit field the overlays paint. THE GROUND AS IT WAS MADE —
        no drawdown, no contamination. /src/power/overlay.js paints exactly this
        through `endowment().groundAt`, and it is why that layer is stable while
@@ -224,11 +239,30 @@ export function hydrologyFor(cityId, grid) {
       return best && m >= WATER.aquifer.minRead ? { basin: best, strength: m } : null;
     },
     surfaceAt(x, z) { return surfaceStrengthAt(surface, x, z); },
+    /* 🌊 THE SEA IS ASKED FOR BY NAME AND IS NOT FOLDED INTO `surfaceAt`.
+       Folding it in is the obvious tidy-up and it breaks three shipped things at
+       once, so it is refused here, once, with the list:
+         · /src/power/plants.js sites a Hydro Plant on `sourceAt().flow`, which
+           is `surfaceAt` under another name. Every city would get a dam site.
+         · `springfed` above is decided by `surfaceStrengthAt(cx, cz)` and feeds
+           basin RECHARGE, which is saved state. Every coastal basin in every
+           EXISTING city would silently gain a ×3.2 recharge — a balance change
+           made from a rendering round, applied retroactively.
+         · /src/power/overlay.js paints `flow` as "Surface Water Flow". A sea has
+           no flow. The layer would start lying.
+       `sourceAt()` consults this separately and reports the sea as its own
+       `kind`, which is what "a new body type" has to mean if the bodies behave
+       differently. */
+    seaAt(x, z) { return seaStrengthAt(surface.sea, x, z); },
+    shoreAt(z) { return shoreXAt(surface.sea, z); },
     /* One line a human can read, for the panel header and for any other system
        that wants to describe this city without re-deriving it. */
     summary() {
       const parts = [cls.label.toLowerCase() + ' hydrology',
                      basins.length + ' aquifer' + (basins.length === 1 ? '' : 's')];
+      // The sea first among the surface bodies: it is the one that is always
+      // there, and a summary that buried it would teach the player it is rare.
+      if (surface.sea) parts.push('an ' + surface.sea.side + ' coast');
       if (surface.river) parts.push('a river');
       if (surface.lakes.length) parts.push(surface.lakes.length === 1 ? 'a lake' : surface.lakes.length + ' lakes');
       if (basins.some(b => b.springfed)) parts.push('springfed ground');
@@ -250,7 +284,7 @@ const BASIN_NAMES = ['Kessel', 'Dunmere', 'Ashvale', 'Corrin'];
    neither blocks construction. */
 function buildSurface(id, G, wetness) {
   const E = WATER.endow;
-  const out = { river: null, lakes: [] };
+  const out = { river: null, lakes: [], sea: buildSea(id, G) };
 
   if (wetness >= E.riverAbove) {
     const horiz = hash01(id, 'rax') < 0.5;
@@ -279,6 +313,85 @@ function buildSurface(id, G, wetness) {
 /* The river's centreline at a given position along its axis. */
 function riverCentre(r, along) {
   return r.base + Math.sin(r.phase + along * r.freq) * r.amp;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   🌊 THE SEA — the third body type, and the only one every city has.
+   ----------------------------------------------------------------------------
+   A river exists above wetness 0.52 and a lake above 0.34, so a bit over half of
+   all cities have no surface water at all. The sea is not rolled. Every map ends
+   at a coast on its EAST side; what a city id decides is the SHAPE of that
+   coast, never its existence.
+
+   🧭 WHY EAST AND NOT A ROLLED SIDE, WHICH IS THE OBVIOUS MOVE.
+      node-city's default camera stands at (14, 15, 14) looking at the origin,
+      and on the `medium` quality tier — the one EVERY non-WebGPU client boots at
+      — `scene.fog` runs 25 → 34. From that camera the far corner of the plate is
+      already 39.7 units out, i.e. 100% fog. Measured against the frustum, the
+      ONLY ground outside the plate that is both in shot and inside the fog's far
+      stop is the strip east of the plate at roughly z ∈ [−10, +2]: the bottom
+      right of the frame, 21–29 units from the lens.
+      A rolled side would therefore give three cities in four an ocean that is
+      either behind the camera or 100% haze — which is not "a coast you cannot
+      see today", it is the /src/outside failure recorded verbatim in its own
+      tuning file ("at −19.6 … invisible in the photograph"), shipped again.
+      The side is a constant so that the sea is a fact about the GAME; the id
+      still owns the bay, the headland and how close the water comes.
+
+   ⚠ EVERYTHING HERE IS IN TILE UNITS, MEASURED FROM THE PLATE'S EAST EDGE at
+     tile coordinate `grid - 0.5`. This file has never seen a world coordinate
+     and does not start now; /src/ocean converts once, where it has HALF.
+   ════════════════════════════════════════════════════════════════════════════ */
+function buildSea(id, G) {
+  const S = WATER.sea;
+  return {
+    side: 'east',
+    grid: G,
+    /* The waterline's mean tile-x. */
+    base: (G - 0.5) + S.inset,
+    /* Two phases and nothing else is rolled. Frequencies and weights are tuning,
+       so two cities differ in WHERE the bay is rather than in how wiggly the
+       coast is — a coast whose roughness varied per city would read as a
+       rendering inconsistency rather than as geography. */
+    p1: hash01(id, 'sea1') * Math.PI * 2,
+    p2: hash01(id, 'sea2') * Math.PI * 2,
+    f1: Math.PI * 2 / S.wavePeriodCoarse,
+    f2: Math.PI * 2 / S.wavePeriodFine,
+    reach: S.reach,
+    strength: S.strength,
+    purity: S.purity,
+    name: S.name,
+  };
+}
+
+/* 🔴 THE WATERLINE. THE ONE TRUTH, AND BOTH CONSUMERS READ THIS FUNCTION.
+   `sourceAt()` asks it how far a tile is from the water; /src/ocean asks it
+   where to put the edge of the mesh. If either had its own copy, the player
+   would eventually stand on a beach the simulation says is inland — and the
+   contradiction would be visible on screen, which is the worst place for one.
+   Returns the tile-x of the shoreline at tile-z `z`. Defined for ALL z,
+   including well past the grid, because the mesh runs further north and south
+   than the buildable plate does. */
+export function shoreXAt(sea, z) {
+  if (!sea) return Infinity;
+  const S = WATER.sea;
+  return sea.base + S.bow * (Math.sin(sea.p1 + z * sea.f1) * S.weightCoarse
+                           + Math.sin(sea.p2 + z * sea.f2) * S.weightFine);
+}
+
+/* How strongly the sea reaches a tile: 1 at (and beyond) the waterline, falling
+   to 0 `reach` tiles inland.
+   ⚠ SMOOTHSTEP, NOT LINEAR, for the same reason `falloff` above is not a cone:
+     a linear ramp gives the coast a wide weak fringe and the last tile that
+     "counts" is then an arbitrary rounding, which is exactly the sort of edge a
+     player learns to distrust. */
+export function seaStrengthAt(sea, x, z) {
+  if (!sea) return 0;
+  const d = shoreXAt(sea, z) - x;          // tiles inland; ≤0 means in the water
+  if (d <= 0) return sea.strength;
+  if (d >= sea.reach) return 0;
+  const t = 1 - d / sea.reach;
+  return sea.strength * t * t * (3 - 2 * t);
 }
 
 function surfaceStrengthAt(surface, x, z) {
@@ -319,7 +432,7 @@ export function verify(sampleIds, grid) {
   const ids = sampleIds && sampleIds.length ? sampleIds
     : Array.from({ length: 200 }, (_, i) => 'verify-city-' + i);
   const bad = [];
-  let wetCount = 0, dryCount = 0, riverCount = 0;
+  let wetCount = 0, dryCount = 0, riverCount = 0, seaCount = 0;
   for (const id of ids) {
     invalidate();
     const H = hydrologyFor(id, grid || 24);
@@ -338,6 +451,39 @@ export function verify(sampleIds, grid) {
     invalidate();
     const a2 = hydrologyFor(id, grid || 24).groundAt(3, 5);
     if (a1 !== a2) bad.push(id + ': groundAt not deterministic across a cache flush');
+    /* 🌊 EVERY CITY HAS A SEA, AND THIS IS WHERE THAT SENTENCE IS PROVED.
+       ~54% of cities get neither river nor lake, so "surface water exists" was
+       never a property this file could assert before. The sea is, and it is
+       asserted for the same reason `minBasinStrength` is: a promise nobody
+       checks is a promise that quietly stops being true after a tuning pass.
+       Three things, because "the object exists" is not the claim:
+         · the body is there at all;
+         · the waterline clears node-city's ring road — the perimeter footway
+           ends 1.21 tiles past the plate edge, and a coast inside that runs the
+           sea over a road (see WATER.sea.inset's 🐞);
+         · a tile ON the last column reads a non-zero sea, i.e. the reach is
+           actually long enough to make the east edge coastal. Without this the
+           sea would be a picture with no consequence. */
+    const sea = H.surface.sea;
+    const G2 = grid || 24;
+    if (!sea) { bad.push(id + ': no sea'); }
+    else {
+      let minShore = Infinity, maxShore = -Infinity;
+      for (let z = -4; z <= G2 + 4; z += 0.25) {
+        const s = H.shoreAt(z);
+        if (s < minShore) minShore = s;
+        if (s > maxShore) maxShore = s;
+      }
+      if (!(minShore - (G2 - 0.5) > 1.21))
+        bad.push(id + ': waterline ' + (minShore - (G2 - 0.5)).toFixed(3) +
+                 ' tiles off the plate — inside the ring road footway (1.21)');
+      if (!(maxShore > minShore)) bad.push(id + ': the coastline is a straight ruled line');
+      if (!(H.seaAt(G2 - 1, Math.floor(G2 / 2)) > 0))
+        bad.push(id + ': the last column is not coastal — reach is too short to matter');
+      if (!(H.seaAt(0, Math.floor(G2 / 2)) === 0))
+        bad.push(id + ': the WEST edge reads as coastal — the sea has crossed the map');
+      seaCount++;
+    }
     if (H.wetness > 0.62) wetCount++;
     if (H.wetness < 0.36) dryCount++;
     if (H.surface.river) riverCount++;
@@ -345,7 +491,8 @@ export function verify(sampleIds, grid) {
   invalidate();
   return { ok: !bad.length, violations: bad, sampled: ids.length,
            wetShare: wetCount / ids.length, dryShare: dryCount / ids.length,
-           riverShare: riverCount / ids.length };
+           riverShare: riverCount / ids.length, seaShare: seaCount / ids.length };
 }
 
-export default { hydrologyFor, classOf, CLASSES, verify, invalidate, riverPosition };
+export default { hydrologyFor, classOf, CLASSES, verify, invalidate, riverPosition,
+                 shoreXAt, seaStrengthAt };

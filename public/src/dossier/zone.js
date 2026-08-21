@@ -52,6 +52,8 @@ function zoningLayer() {
     return window.MythicZoning || window.MythicZones || window.NCZoning || null;
   } catch (e) { return null; }
 }
+import { isRoadTile } from '../roads/types.js';   // 🛣 the road resolver
+
 export function zoneOf(C, k, t, x, z) {
   const fromModule = probe(zoningLayer(),
     ['zoneAt', 'zoneOf', 'zoneForTile', 'at', 'forTile', 'get'],
@@ -61,7 +63,7 @@ export function zoneOf(C, k, t, x, z) {
   const def = C.BUILDINGS[t.type] || {};
   const lvl = t.lvl || 1;
   let label;
-  if (t.type === 'road') label = 'Street Network';
+  if (isRoadTile(t)) label = 'Street Network';
   else if (def.popCap > 0) {
     // The model really does gain storeys per level — see makeHousing.
     label = 'Residential — ' + (lvl >= 3 ? 'High' : lvl === 2 ? 'Medium' : 'Low') + ' Density Housing';

@@ -40,6 +40,9 @@
 /* index.html: `['south','west','north','east'][t.rot & 3]` — the same order,
    as unit steps. rot is quarter turns and the recipes are authored
    frontage-to-+Z, so rot 0 faces +z. */
+/* 🛣 The road resolver — a road tile is not AT an address, it IS the street. */
+import { isRoadTile } from '../roads/types.js';
+
 const ROT_DIR = [[0, 1], [-1, 0], [0, -1], [1, 0]];
 /* The same neighbour order index.html's NEI uses, so "first road found" means
    the same thing here as it does in bonusesFor() and lotValue(). */
@@ -171,7 +174,7 @@ export function addressOf(C, k) {
 
   /* A ROAD IS NOT AT an address — it IS the street. Report which one, so the
      dossier of a road tile can be titled with the street's name. */
-  if (t.type === 'road') {
+  if (isRoadTile(t)) {
     // A road's own axis: whichever direction it continues in. Both ⇒ crossing.
     let ew = false, ns = false;
     try { ew = C.isRoad(x - 1, z) || C.isRoad(x + 1, z); } catch (e) {}

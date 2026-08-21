@@ -22,7 +22,21 @@
    right drag marquees, which leaves OrbitControls nothing to bind to — the same
    trade every paint tool in every city builder makes. Scroll zoom, middle-drag
    and the game's WASD panning all still work, and the panel says so.
+
+   🔁 UPDATE — THE LISTENERS MOVED, THE REASONING DID NOT.
+   Everything above is still true and is now implemented ONCE, in
+   /src/netdrag/rig.js, because there are more than two tools on this pointer.
+   The exclusion this file's own pointer section documents was written 1-vs-1
+   (arming leaves build mode; onModeChange stands zoning down) and a THIRD
+   claimant — the road drag — makes that wiring N² with one silent bug per
+   missing edge. The rig is the same document/capture:true dispatcher, the same
+   hot() guard, the same holdControls contract; the difference is that it knows
+   who is armed and dispatches to exactly one tool, so two tools cannot both
+   receive a gesture by construction. This file's handlers are unchanged; they
+   are handed to the rig instead of to `document`.
    ══════════════════════════════════════════════════════════════════════════ */
+
+import { tools } from '../netdrag/rig.js';
 
 const ERASE_COL = 0xff5f4a;
 
@@ -283,7 +297,7 @@ export function mountUI(api, ctx) {
     refresh();
   }
 
-  /* ══ 🖱 TWO TOOLS, ONE POINTER — THE EXCLUSION, IN BOTH DIRECTIONS ══════════
+  /* ══ 🖱 N TOOLS, ONE POINTER — THE EXCLUSION, IN EVERY DIRECTION ═══════════
      🔴 THE DEFECT THIS CLOSES, MEASURED: with the Zones panel open (which arms
      the paint tool) the player picked Housing off the build bar and clicked the
      map. They got a green zone square. No house, no toast, no cue — because the
@@ -295,29 +309,42 @@ export function mountUI(api, ctx) {
      there. The missing half is the other direction, and it cannot be done from
      here alone: `mode` is a `let` inside node-city's module script and is
      invisible to an ES module (CLAUDE.md, the globals trap). So node-city hands
-     over `onMode` — a one-way notification fired from setMode — and this is the
-     listener. Both directions now END IN A VISIBLE CHANGE, which is the part
-     that actually fixes it: the panel closes or opens, the build-bar button
-     lights or clears, and a toast names the tool the player is now holding.
-     ⚠ NEVER CALL ctx.setMode FROM INSIDE THIS LISTENER. It is fired from within
-       setMode itself; calling back would put the two tools in a loop handing
-       the pointer to each other. Standing our own tool down is enough. */
-  if (typeof ctx.onMode === 'function') {
-    ctx.onMode((m, type) => {
-      if (m !== 'place' || !(armed || open)) return;
-      const name = (ctx.BUILDINGS && ctx.BUILDINGS[type] && ctx.BUILDINGS[type].name) || null;
-      setOpen(false);
-      /* The overlay is deliberately LEFT ON. Land use is exactly what a player
-         wants to see while they place a building into it, and it swallows no
-         clicks — only the armed tool did that. */
-      if (ctx.toast) ctx.toast('🗺 Zoning put away — you picked ' + (name || 'a building') +
+     over `onMode` — a one-way notification fired from setMode.
+
+     🔁 THAT PAIR IS NOW A REGISTRY. `standDown` below is called by
+     /src/netdrag/rig.js whenever ANY other claimant takes the pointer, and the
+     build-bar half arrives through the same callback with reason.kind ===
+     'place' (the rig registers node-city's onMode once, for every claimant at
+     once). Both directions still END IN A VISIBLE CHANGE, which is the part
+     that actually fixes it: the panel closes, the build-bar button clears, and
+     a toast names whatever took the pointer.
+     ⚠ NEVER CALL ctx.setMode FROM INSIDE THIS CALLBACK. It can be fired from
+       within setMode itself; calling back would put two tools in a loop handing
+       the pointer to each other. Standing our own tool down is enough — and the
+       rig refuses a re-arm from inside a broadcast for the same reason. */
+  function standDown(why) {
+    if (!(armed || open)) return;
+    setOpen(false);
+    /* The overlay is deliberately LEFT ON. Land use is exactly what a player
+       wants to see while they place a building into it, and it swallows no
+       clicks — only the armed tool did that. */
+    if (!ctx.toast) return;
+    if (why && why.kind === 'place') {
+      ctx.toast('🗺 Zoning put away — you picked ' + (why.name || 'a building') +
         ', and the map is building again. Click 🗺 Zones to paint land use.', 'good');
-    });
+    } else {
+      ctx.toast('🗺 Zoning put away — ' + ((why && why.label) || 'another map tool') +
+        ' has the pointer now. Click 🗺 Zones to paint land use.', 'good');
+    }
   }
 
   function setArmed(v) {
     const was = armed;
     armed = !!v;
+    /* The arm IS the claim. Taking it broadcasts a stand-down to every other
+       map tool, so this one line is the whole of the "who owns the pointer"
+       negotiation from this side. */
+    if (armed) tok.arm(); else tok.disarm();
     if (armed && ctx.setMode) {
       /* Leaving build mode is not enough on its own — a player who had a
          building in hand has just had it taken away, and being told is the
@@ -449,12 +476,29 @@ export function mountUI(api, ctx) {
     if (map[ev.key]) { tool = map[ev.key]; refresh(); }
   }
 
-  doc.addEventListener('pointerdown', onDown, true);
-  doc.addEventListener('pointermove', onMove, true);
-  doc.addEventListener('pointerup', onUp, true);
-  doc.addEventListener('pointercancel', onUp, true);
-  doc.addEventListener('contextmenu', onCtx, true);
-  doc.addEventListener('keydown', onKey, true);
+  /* ── the pointer, through the shared rig ────────────────────────────────
+     These were six document/capture:true listeners of this file's own. They are
+     the same six handlers; the rig registers ONE set for every map tool and
+     dispatches only to the armed one. Declared here, at the bottom, because
+     `tok` is a const that setArmed() closes over — nothing above calls setArmed
+     during mount, and putting the claim any earlier would only widen the window
+     in which it could.
+     ⚠ `cancel` is the half a per-tool listener stack never had. A drag that is
+       abandoned because ANOTHER tool armed mid-gesture used to leave `drag` set
+       and `ctrlWas` held, i.e. OrbitControls disabled forever — the camera dies
+       silently, three files from its cause. The rig calls this on every forced
+       stand-down. */
+  const TOOLS = tools();
+  const tok = TOOLS.claim('zoning', { label: '🗺 Zoning', standDown });
+  tok.on({
+    down: onDown, move: onMove, up: onUp, ctx: onCtx, key: onKey,
+    cancel: () => { drag = null; erase = false; releaseControls(); api.preview(null, null); },
+  });
+  /* Registered once per page, by whichever map tool mounts first; a second call
+     is a no-op. This is node-city's 1-vs-1 onModeChange hook turned into the
+     N-claimant one — picking a building now stands down every armed map tool,
+     not just this one. */
+  TOOLS.bindMode(ctx.onMode, ctx.BUILDINGS);
 
   refresh();
 

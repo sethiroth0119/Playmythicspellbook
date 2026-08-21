@@ -156,6 +156,11 @@
    Three "regressions" in this project's history were random draws.
    ══════════════════════════════════════════════════════════════════════════ */
 
+/* 🛣 The road resolver — AO patches are read off the road mesh's `contacts`
+   declaration, so a carriageway class this file cannot see keeps its props
+   floating with no contact shadow under them. */
+import { isRoadTile } from '../roads/types.js';
+
 const SEG = 12;            // segments around a patch. 12 is smooth at the
                            // venue and frontage framings and costs 36 tris.
 const RING = 0.55;         // inner ring radius as a fraction of the outer. The
@@ -345,7 +350,7 @@ function harvest() {
      consecutive seeds). Here it costs nothing and it makes an A/B honest. */
   for (const k of Object.keys(game.tiles).sort()) {
     const t = game.tiles[k];
-    if (!t || !t.mesh || t.type !== 'road') continue;
+    if (!t || !t.mesh || !isRoadTile(t)) continue;
     const list = t.mesh.userData && t.mesh.userData.contacts;
     if (!list || !list.length) continue;
     /* WORLD POSITION OFF THE PLACED MESH, never re-derived from the tile key.

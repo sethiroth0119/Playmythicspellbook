@@ -17,12 +17,17 @@
    ============================================================================ */
 
 import { MODES, GATE, RAIL, ICH } from './tuning.js';
+/* 🛣 The road resolver. ⚠ The migration below still PLACES the legacy 'road'
+   type on purpose — it is a repair, not a design choice, and it must produce
+   the same tile every existing city already has. What the resolver is for here
+   is READING: a city reconnected through a Lane is still connected. */
+import { isRoadTile } from '../roads/types.js';
 
 /* Every tile that is a real, road-served part of the city — i.e. the thing an
    outside connection has to be able to reach. Anchors are world features, roads
    are the graph itself, and decoration is not a reason to keep trading. */
 function isCityBuilding(C, t) {
-  if (!t || t.type === 'road' || t.type === 'anchor') return false;
+  if (!t || isRoadTile(t) || t.type === 'anchor') return false;
   const def = C.BUILDINGS[t.type];
   if (!def || def.decor) return false;
   return true;
@@ -203,7 +208,7 @@ export function migrate(C) {
     let hit = false;
     for (let z = ICH.edgeZ + 1; z < G; z++) {
       const t = C.game.tiles[C.key(x, z)];
-      if (t && t.type === 'road') { hit = true; break; }
+      if (isRoadTile(t)) { hit = true; break; }
       if (t) break;                                                 // blocked by a building
       run.push(z);
       if (run.length > GATE.migrateMaxRoads) break;

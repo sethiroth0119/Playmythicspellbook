@@ -147,6 +147,95 @@ export const WATER = {
     downstream: 0.75,
   },
 
+  /* ── 🌊 THE SEA ───────────────────────────────────────────────────────────
+     THE THIRD BODY TYPE, AND THE ONLY ONE EVERY CITY HAS. `surface` above gives
+     a city a river only above `riverAbove` (0.52 on a triangular wetness, i.e.
+     about 46% of cities) and a lake only above `lakeAbove`. The sea is not
+     rolled: it is off the east edge of every map, always, which is why it is the
+     one body a player can be taught to plan around.
+
+     🔴 WHY IT LIVES HERE AND NOT IN /src/ocean's OWN TABLE. /src/ocean draws the
+        water. This file decides where the waterline IS. If the module that draws
+        the sea also owned its position, then `sourceAt()` would answer "no water
+        here" on a tile the player can see the sea from — the exact "fourth
+        truth" failure /src/water/index.js's cross-workflow note is written
+        against, with the added insult that the player is LOOKING at the
+        contradiction. So endowment.js owns `shoreOffsetAt()` and /src/ocean
+        imports it. One waterline, two consumers.
+
+     ⚠ EVERY LENGTH BELOW IS IN TILES, measured from the PLATE'S EAST EDGE —
+       which is tile coordinate `grid - 0.5`, i.e. world +HALF. endowment.js
+       never sees world coordinates and must not start; /src/ocean converts once,
+       at the one place it has the host's HALF.
+
+     🔴 …AND `flow` IS NOT IN THIS TABLE AT ALL, WHICH IS DELIBERATE AND IS THE
+        WHOLE OF THE "salt is salt" RULE. /src/power/plants.js sites a Hydro
+        Plant on `MythicWater.sourceAt(x,z).flow >= spec.minFlow`. Registering
+        the sea as FLOW would make a dam siteable on the coast of every city in
+        the game — converting a wet-city reward into a universal one, off the
+        back of a RENDERING feature, and doing it on salt water where a dam is
+        wrong anyway. A sea has no current. `sourceAt` therefore keeps reporting
+        `flow` as FRESH surface presence whichever body wins, and a coastal tile
+        with no river on it reports flow 0 and the dam is refused, in the same
+        words it is refused inland today. */
+  sea: {
+    /* How far EAST of the plate's edge the mean waterline sits, in tiles.
+       🐞 2.05 AND NOT 1.45, AND THE 0.6 IS MEASURED RATHER THAN CHOSEN.
+          node-city's perimeterScenery lays a ring road hugging the plate:
+          carriageway from HALF+0.16, kerb, then a footway whose outer edge is
+          at HALF+1.21. A waterline inside that runs the sea over a road the
+          city walks on. 2.05 − `bow` (0.30) = HALF+1.75 at the closest the
+          coast can ever come, which leaves the promenade a 0.54-tile verge at
+          its narrowest. */
+    inset: 2.05,
+    /* The coast is not a ruled line. Two sines with per-city phases, summed at
+       these weights — the coarse one gives the map a bay and a headland, the
+       fine one keeps the waterline from reading as a single smooth arc.
+       ⚠ AMPLITUDE IS CAPPED AT `bow` BY CONSTRUCTION (the weights sum to 1), so
+         the clearance argument above is a proof and not a hope. */
+    bow: 0.30,
+    wavePeriodCoarse: 17.0,   // tiles
+    wavePeriodFine: 6.5,
+    weightCoarse: 0.62,
+    weightFine: 0.38,
+
+    /* ── WHAT THE SEA IS WORTH TO A WATERWORKS ─────────────────────────────
+       How far the sea reaches, in tiles, MEASURED FROM THE WATERLINE.
+       🐞 IT WAS 3.0 AND THAT PUT THE COAST OFF THE MAP, WHICH IS A UNITS BUG
+          AND NOT A BALANCE ONE — measured, on 20 city ids, before the fix:
+
+            seaAt(last column)  0.012 … 0.107     kind 'sea' in 12 of 20
+
+          …i.e. eight cities in twenty had a visible sea and an east edge that
+          still answered `kind: 'none'`, which is the precise defect this whole
+          integration exists to prevent. The reason is arithmetic: the waterline
+          sits at `inset` (2.05) past the plate EDGE, and the plate edge is
+          another 0.5 past the last column's CENTRE — so the nearest tile a
+          building can stand on is already ~2.55 tiles from the water before the
+          falloff starts. A reach of 3.0 had 0.45 of usable band left.
+          At 6.0 the same measurement gives 0.44 at the last column, 0.10 three
+          columns in and nothing by the fourth: a coastal STRIP a player can plan
+          a district against, and dry land for the other 21 columns.
+       ⚠ WHICH IS WHY THE PANEL DOES NOT PRINT THIS NUMBER. "reaches 6 tiles
+         inland" is false — six tiles inland is 2.5 tiles off the map. It prints
+         `seaInland`, counted off the real field. See endowment.js. */
+    reach: 6.0,
+    /* Strength at the waterline itself, falling to 0 at `reach`. Below a strong
+       river (flowCenter 0.92) on purpose: an intake on a river beats a
+       desalination plant, and the endowment should keep saying so. */
+    strength: 0.70,
+    /* 🧂 SALT. This is the number that stops the sea from being a free river.
+       `usable()` turns purity into the share of a draw that survives treatment
+       (floor 0.25, exponent 1.6): at 0.30 that is 0.25 + 0.75·0.30^1.6 = 0.36,
+       so a coastal plant runs for about a third of what a clean intake gives
+       it. Sea water is not dirty — it is SALT, which costs energy to remove —
+       so it is modelled where the cost lands (yield) and it does not decay: the
+       sea is never "cleaned up" and never gets worse. */
+    purity: 0.30,
+    /* The body's name, for the panel and for `sourceAt().name`. */
+    name: 'Sea',
+  },
+
   /* ── EXTRACTION ───────────────────────────────────────────────────────────
      🔴 THE ONE PLACE THIS MODULE TOUCHES THE HOST'S ECONOMY, AND THE REASON THE
         BAND IS SHAPED THE WAY IT IS.
@@ -175,6 +264,18 @@ export const WATER = {
     atmos: 0.80,          // the floor: condensation, available anywhere
     groundGain: 0.85,     // …plus this much for a full-strength clean aquifer
     surfaceGain: 0.95,    // …or this much for an intake on strong flow
+    /* 🌊 …or this much for a plant on the coast. Deliberately BETWEEN ground and
+       surface as a headline number and well below both after `usable(0.30)`
+       bites: at the waterline the whole coastal term is 0.90 × 0.70 × 0.36 =
+       0.23, so a purifier on the beach delivers ~1.03× against the 0.80× floor
+       it gets on dry ground.
+       🔴 THAT DIRECTION IS THE SAFE ONE AND IT IS THE ONLY DIRECTION ALLOWED.
+          Every existing save has purifiers placed by a player who could not see
+          a coastline, and some of them stand in the last three columns. This
+          round makes those buildings slightly BETTER and can never make one
+          worse, refused or relocated — which is the save rule from `extract`'s
+          own header, applied to the body this round added. */
+    seaGain: 0.90,
     min: 0.80,
     max: 1.80,
     // Only the part ABOVE `atmos` is pumped out of the ground, because only that
@@ -215,6 +316,152 @@ export const WATER = {
     supply:   { red: 0.30, amber: 0.55, ratioFull: 2.0 },
     reserve:  { red: 0.25, amber: 0.55 },   // mean aquifer level
     purity:   { red: 0.45, amber: 0.72 },   // mean purity, weighted by draw
+  },
+
+  /* ── 🚰 THE MAINS ─────────────────────────────────────────────────────────
+     Pipes. The player drags a run, the run is a graph, and a waterworks that
+     cannot reach the city through that graph cannot deliver what it pumps.
+
+     🔴 WHY THIS IS ALLOWED TO BITE WHEN /src/power's `transmission.enforce` IS
+        NOT. The grid module computes connectivity, line loss and an unserved
+        list and then applies NONE of it, because turning it on would black out
+        buildings standing in EVERY EXISTING SAVE — every one of them was placed
+        by a player who could not see a grid. That argument is about SAVES, and
+        it does not transfer to a building that did not exist until this round.
+        So the mains govern by an OPT-IN THE PLAYER TAKES:
+
+          ① A city with no pipe, no Water Station and no Sewer Outfall is
+            UNPLUMBED. Every waterworks in it is delivered at 1.00×, i.e. byte
+            for byte what it produced before this file existed. Every save
+            written before this round is in this state by construction — the
+            flag is DERIVED from the city, never stored, so it cannot drift.
+          ② Once the city is plumbed, `governs` decides WHICH waterworks answer
+            to the mains — and it is not a list in this file. The BUILDINGS row
+            declares `mains: true` and the host hands the flag over per well
+            (`w.mains`). node-city's own `roadsAdjacentTo(match)` header records
+            why: a list comparison in a second file is how a type quietly falls
+            out of a rule nobody re-read. Today exactly one row carries it, the
+            Water Station, so no building that can be in an old save is
+            governed and NO CITY IS RETROACTIVELY DRIED OUT.
+          ③ The sewer factor below has no list either: untreated waste fouls the
+            shallow ground the intakes ON THAT MAIN draw from. It is safe to
+            apply with no exemption because its LOAD is zero until the player
+            attaches demand to the mains — see WATER.sewer.
+
+     🔴 AND THE UNIT OF BOTH FACTORS IS THE CONNECTED COMPONENT, NOT THE CITY.
+        A waterworks answers for the main it is standing on and for the demand
+        nearest it that no main reaches; a backup is charged to the main it is
+        standing in. The first version of network.js divided by CITY totals in
+        both legs, and both mistakes reported success: two properly plumbed
+        districts each ran at 0.650 while the same solve said every building was
+        served, and two outfalls on one run treated a disconnected run's sewage
+        to a bit-perfect 1.000, below `warnAbove`, so nothing was said anywhere.
+        A citywide denominator also breaks the only advice the panel can give —
+        "lay a run of pipe" cannot move a ratio whose denominator is the city.
+
+     ⚠ A PIPE IS NOT A TILE, AND THAT IS A CORRECTNESS DECISION, NOT A STYLE ONE.
+       Pipes are underground and live in this module's own set, keyed by
+       "x,z". They never enter `game.tiles`, so they cannot mint a new tile type
+       — which is the bug class node-city has now named three times (TRUCK_STOPS
+       "seventh instance", a load-order snapshot "eighth"). A pipe under a road
+       therefore costs the road nothing: no maintenance cap, no invisible
+       building with no buildMesh arm, no agent despawn on a type change, no
+       zoning fill escaping its block. */
+  mains: {
+    /* Authored on node-city's OWN 2..600 shelf — the host multiplies it by
+       BUILD_CINDER_MULT in scaleCost(), the one helper that prices everything
+       the city builds. /src/streets/index.js records the failure this avoids:
+       reading a raw table figure quotes 100× low and looks perfectly correct.
+       A pipe is ~⅓ of a road tile: cheap enough to plan a network with, dear
+       enough that the network is a plan. */
+    pipeCost: 1.4,
+    // The reach of a main, in tiles, orthogonal. 1 = the pipe under the street
+    // serves the plots either side of it, which is the whole reason a CS2 main
+    // follows a road.
+    reach: 1,
+    /* 🔴 THE FLOOR, AND IT IS NOT ZERO. A Water Station off the mains still has
+       a yard, a tank and a tanker bay; what it loses is the network. 0.30 is a
+       bite the player cannot miss and cannot mistake for weather — and the
+       remedy is one drag. A zero here would make an unfinished network
+       indistinguishable from a broken building. */
+    unpiped: 0.30,
+    // Longest single dragged run, so one slip of the pointer cannot spend a
+    // treasury. The toolbar prints the count and the price before the button.
+    maxRun: 48,
+    /* Above /src/water's own info-view plane (0.075), which is above /src/power's
+       (0.06). Three flat planes over one ground z-fight into a flicker the first
+       time a player opens two info views; the y-stack is the only thing keeping
+       them apart. */
+    overlayY: 0.088,
+    overlayOpacity: 0.92,
+    renderOrder: 6,
+  },
+
+  /* ── 🚱 THE SEWER ─────────────────────────────────────────────────────────
+     Water that goes into a city comes back out. Where it leaves is the Sewer
+     Outfall, and it has to reach open water.
+
+     🔴 THE LOAD IS ZERO UNTIL THE PLAYER ATTACHES DEMAND TO THE MAINS, which is
+        what makes this safe to apply to every waterworks with no exemption list.
+        Sewage is charged on the demand the pipe network actually SERVES: an
+        unplumbed city owes nothing, a half-plumbed city owes half, and the bill
+        grows exactly as fast as the player chooses to grow it. There is no
+        moment at which a city wakes up owing a treatment plant it never built.
+
+     ⚠ NO RATE IS INVENTED HERE. `returnFrac` is a fraction of the host's OWN
+       water figures — the draw it already charges and the drink rate it already
+       publishes — for the same reason `extract` is a multiplier: this module has
+       never seen a rate and must not start now. */
+  sewer: {
+    // Share of served water that comes back as waste. Municipal return factors
+    // sit around 0.8; the rest is drunk, evaporated or built into goods.
+    returnFrac: 0.80,
+    /* How much waste one Outfall level clears, in the host's own per-minute
+       water units — declared on the BUILDINGS row as `sewer: { cap }`, not
+       here, because it is a property of the BUILDING and the host owns rates.
+       This is only the fallback for a row that forgets to say. */
+    capFallback: 4.0,
+    // Surface flow (river / lake) an outfall needs to discharge into. Below this
+    // it is a damp bank, not open water.
+    minFlow: 0.30,
+    /* 🌊 …and for the SEA, measured in TILES INLAND OF THE WATERLINE rather than
+       against a strength threshold.
+       🐞 THE STRENGTH TEST WAS WRITTEN FIRST AND WAS DEAD ON ARRIVAL, and the
+          driven test is what caught it. `WATER.sea.inset` puts the mean
+          waterline 2.05 tiles EAST OF THE PLATE — deliberately, so the coast
+          cannot run over perimeterScenery's ring road — so the strongest sea
+          any on-grid tile reads is about 0.03 of `sea.strength`, not 0.7 of it.
+          A gate written as "≥ 70% of full sea" therefore matched NO TILE IN ANY
+          CITY, and it would have looked exactly like a gate that simply
+          preferred the map edge: the ③ fallback answered every time and the
+          feature would have shipped with its primary rule never once firing.
+       So the band is `shoreAt(z) − x ≤ shoreTiles`, which is the same question
+       `seaStrengthAt` asks (`d = shoreX − x`) with the smoothstep taken off.
+       ⚠ 5.0, NOT `WATER.sea.reach`'s 3.0, AND THE DRIVEN TEST IS WHY. The
+         waterline sits 1.6–2.4 tiles beyond the plate depending on where the
+         bow falls, so a 3.0 band puts the entire legal coast on column 23 — the
+         map edge, which rule ③ already covers — and on the rows where the bow
+         pushes the sea furthest out it leaves NO legal tile at all. 5.0 makes
+         the waterfront two to three columns deep, always satisfiable, and DEEPER
+         IN A BAY than on a headland, which is a fact about the coast the player
+         can see and plan against.
+       ⚠ AND IT IS THE SHORE, NOT THE WATER. An outfall does not stand in the
+         sea; it stands on the bank and discharges through a headwall, which is
+         exactly what makeOutfall draws — a stepped apron falling off the tile.
+         The rule is "close enough to reach the water", and the refusal says so
+         in those words. */
+    shoreTiles: 5.0,
+    /* 🔴 WHAT A BACKUP COSTS. Waste standing in the streets soaks into the
+       shallow ground the intakes on THAT MAIN draw from, so a full backup takes
+       this share off the delivery of every waterworks standing on it — and off
+       none of the ones on a main that treats its own waste. Half, not all: a city
+       that cannot treat its sewage is crippled, not killed, and a mechanic that
+       can reach zero is one the player can lose a city to while reading a
+       panel. */
+    bite: 0.50,
+    // Below this the panel stops calling it a backup. Rounding on a 24-tile
+    // grid should not raise an alarm.
+    warnAbove: 0.02,
   },
 
   causes: { maxRows: 7, minShare: 0.02 },
@@ -270,6 +517,17 @@ export const WATER = {
     well:        '#4fd8e8',
     wellDry:     '#8a8f98',
     stress:      '#ff7a4d',
+    /* 🚰 THE MAINS. Deliberately NOT in the aquifer's blue family: a pipe is a
+       thing the player built and the aquifer is a thing they found, and an
+       overlay that draws both in the same blue makes the player hunt for which
+       of the two they are looking at. Cyan-white for a served main, a dead
+       slate for one no waterworks can reach, and the ember the rest of this
+       project uses for a refusal on the drag preview. */
+    pipe:        '#6fe3f5',
+    pipeDead:    '#6b7480',
+    pipeGhost:   '#ffd08a',
+    pipeBad:     '#ff5f4a',
+    sewer:       '#b9a24d',
   },
 };
 

@@ -52,6 +52,12 @@ export const LAYERS = [
     sub: [['wellDry', 'No source — condensing only']] },
   { id: 'draw',    group: 'building', ramp: 'drawRamp', label: 'Water Consumption',
     lo: 'Low', hi: 'High' },
+  /* 🚰 The mains. A BUILDING layer, not a terrain one: pipes are the only thing
+     in this panel the player put there. The pipe tool switches this on for
+     itself while it is armed — an editing surface has to be visible while it is
+     being edited — and this row is how the player keeps it up afterwards. */
+  { id: 'pipes',   group: 'building', sw: 'pipe', label: 'Water Mains',
+    sub: [['pipeDead', 'No waterworks on this run']] },
 ];
 const GROUP_LABEL = { terrain: 'Terrain color', building: 'Building color' };
 
@@ -59,7 +65,7 @@ const GROUP_LABEL = { terrain: 'Terrain color', building: 'Building color' };
    what is drinking it. Drawdown and consumption are diagnostics the player
    turns on when the meters tell them to — an info view that lights every layer
    at once is a colour soup and its first read says nothing. */
-export const layers = { aquifer: true, surface: true, stress: false, wells: true, draw: false };
+export const layers = { aquifer: true, surface: true, stress: false, wells: true, draw: false, pipes: true };
 
 /* ── UNITS ──────────────────────────────────────────────────────────────────
    node-city's water is an abstract per-minute ledger quantity. The panel speaks
@@ -97,10 +103,17 @@ function meter(t, stops, label) {
    away report already states for its leaver list. */
 function causes(s) {
   const rows = [];
-  const byKind = { aquifer: 0, surface: 0, none: 0 };
+  /* ⚠ `sea` HAS TO BE DECLARED HERE, NOT DISCOVERED. The line below indexes this
+     object by `w.src`, which is `sourceAt().kind` — so the round that added a
+     third body type would otherwise have added `undefined + out = NaN` to the
+     causal list and printed it, silently, only in coastal cities. */
+  const byKind = { aquifer: 0, surface: 0, sea: 0, none: 0 };
   for (const w of s.wells) byKind[w.src === 'none' ? 'none' : w.src] += w.out || 0;
   if (byKind.aquifer > 0) rows.push({ sign: '+', ico: '🕳', label: 'Wells over groundwater', v: byKind.aquifer });
   if (byKind.surface > 0) rows.push({ sign: '+', ico: '🌊', label: 'Intakes on surface water', v: byKind.surface });
+  // Named for what it costs, not for where it is: the player's question about a
+  // coastal plant is always "why is it worse than the river one".
+  if (byKind.sea > 0) rows.push({ sign: '+', ico: '🧂', label: 'Desalinating sea water', v: byKind.sea });
   if (byKind.none > 0) rows.push({ sign: '+', ico: '🌫', label: 'Condensing from air only', v: byKind.none, dim: true });
   if (s.rejected > 0.0005) rows.push({ sign: '−', ico: '☣', label: 'Rejected — contaminated source', v: s.rejected });
   if (s.drink > 0) rows.push({ sign: '−', ico: '🚰', label: 'Citizens drinking', v: s.drink });
@@ -145,6 +158,24 @@ function sources(s) {
       '</div>' +
       '<div class="wtsub2">' + fmtVol(b.stock) + ' of ' + fmtVol(b.volume) +
         ' · pumping ' + fmtQ(b.pump) + ' against ' + fmtQ(b.recharge) + ' of recharge</div>';
+  }
+  /* 🌊 THE COAST, FIRST AMONG THE SURFACE BODIES AND ALWAYS PRINTED.
+     Ordered above the river deliberately: it is the body that is always there,
+     and a table that listed it last would teach a player it is the exception.
+     ⚠ `∞` for reserve like the river, but the purity column is where the whole
+       lesson lives — a flat 30% that never moves, against a river's 94% that
+       does. The sub-line says the two things the number cannot: how far inland
+       it reaches, and that no amount of cleaning up will improve it. */
+  if (s.sea) {
+    h += '<div class="wtsrow">' +
+      '<span class="wtsn">🌊 ' + esc(s.sea.name) + ' <i class="wtspring" title="Salt water">🧂</i></span>' +
+      '<span class="wtsv" title="Effectively unlimited">∞</span>' +
+      '<span class="wtsv" title="Purity — salt, and it never changes">' + pct(s.sea.purity) + '</span>' +
+      '<span class="wtst ok">● salt</span>' +
+      '</div>' +
+      '<div class="wtsub2">drawing ' + fmtQ(s.sea.draw) + ' · the ' + esc(s.sea.side) +
+        ' ' + (s.sea.inland === 1 ? 'column is' : s.sea.inland + ' columns are') +
+        ' coastal · salt is not pollution and does not clean up</div>';
   }
   if (s.surface.river || s.surface.lakes) {
     const bad = s.surface.purity < WATER.purity.warnBelow;
@@ -203,6 +234,114 @@ function header(s) {
          '<button class="wtx" data-wtclose="1" aria-label="Close">×</button></div>';
 }
 
+/* ── 🚰 MAINS & SEWER ───────────────────────────────────────────────────────
+   Everything here is read off `s.net` — network.js's own answer for the tick
+   that was just charged — and NOTHING is re-derived. The panel's job is to
+   explain the number the city was charged, and a panel that computes its own
+   version of that number is a panel that will eventually contradict the game
+   while looking authoritative.
+
+   🔴 THE HONEST EMPTY STATE COMES FIRST. An unplumbed city is not "0% served";
+      it is a city the mains do not govern at all, and saying so is the whole
+      grandfathering promise made visible. A meter pinned at zero would tell a
+      player who has never laid a pipe that something is broken. */
+function mains(s) {
+  const n = s.net;
+  if (!n) return '';
+  const SW = WATER.sewer;
+
+  if (!n.plumbed) {
+    return '<div class="wtsec">MAINS &amp; SEWER</div>' +
+      '<div class="wtnote">🚰 This city is not plumbed. No mains, no Water Station, no Outfall — so every ' +
+      'waterworks delivers at 100% and nothing here governs it. Lay a run with the 🚰 <b>Pipes</b> tool, or ' +
+      'build a 🚰 Water Station over a basin, and the network starts to matter.</div>';
+  }
+
+  const d = n.demand;
+  /* 🔴 REACHED, NOT ATTACHED, AND THE DIFFERENCE IS THE WHOLE HEADLINE. A
+     building can sit on a main that has no waterworks anywhere on it; that
+     building is plumbed to nothing. Reading `attached` here printed "100% of
+     demand · every building reached" directly above a warning that a waterworks
+     was at 65% — two lines of the same panel disagreeing, with the player left
+     to decide which one to believe. `reached` is set by the same pass in
+     network.js that sets `served`, so this line and that warning are now the
+     same walk. */
+  const reach = d.total > 0 ? d.reached / d.total : 1;
+  let h = '<div class="wtsec">MAINS<span class="wtsecv">' + pct(reach) + ' of demand</span></div>';
+  h += meter(reach, WATER.meters.supply, 'Mains coverage');
+  h += '<div class="wtends"><span>' + n.pipes + ' tile' + (n.pipes === 1 ? '' : 's') + ' of main · ' +
+       n.components + ' network' + (n.components === 1 ? '' : 's') + '</span>' +
+       '<span>' + (d.unservedTiles
+         ? '<b class="dn">' + d.unservedTiles + '</b> building' + (d.unservedTiles === 1 ? '' : 's') + ' unreached'
+         : 'every building reached') + '</span></div>';
+
+  /* 🔴 THE OFF-MAINS WATERWORKS ARE NAMED AND THE PENALTY IS QUOTED, because
+     this is the one place where a number the player cannot see is taking their
+     water away. /src/power's panel says "N buildings sit off the powered road
+     network. Not charged today" — this one is charged today, so it says by how
+     much. */
+  const off = (n.wells || []).filter(w => w.governed && w.factor < 0.999);
+  if (off.length) {
+    const worst = off.reduce((a, b) => (b.factor < a.factor ? b : a));
+    /* 🔴 THE ADVICE NAMES THE PIPE THAT WOULD FIX IT, and after this round it
+       can, because there are exactly two reasons a governed waterworks is
+       below 1: it is on no main at all, or there is demand nobody reaches and
+       this is the nearest station to it. Both are one drag. The old text said
+       "a run of pipe is the whole fix" for a penalty whose denominator was the
+       whole city — where the actual remedy was joining two mains the panel
+       never mentioned, so the sentence was advice that could not work. */
+    h += '<div class="wtnote warn">🚰 ' + off.length + ' waterworks ' + (off.length === 1 ? 'is' : 'are') +
+      ' delivering below capacity because of the mains — the worst is at <b>' + esc(worst.k) + '</b>, at ' +
+      pct(worst.factor) + ' of what the ground under it would give. ' +
+      (worst.comp < 0
+        ? 'It is not on a main at all: drag a run from it to the district it feeds.'
+        : 'Its own main reaches ' + fmtQ(worst.onMain) + ' of demand and there is ' + fmtQ(worst.missed) +
+          ' nearer to it that no main reaches — a run of pipe out to that demand is the whole fix.') +
+      '</div>';
+  }
+  if (n.components > 1) {
+    h += '<div class="wtnote">There ' + (n.components === 2 ? 'are two separate networks' : 'are ' + n.components + ' separate networks') +
+      '. A waterworks only delivers to the run it is standing on — two mains that never touch are two cities as far ' +
+      'as the water is concerned.</div>';
+  }
+
+  h += '<div class="wtsec">SEWER<span class="wtsecv">' +
+       (n.sewage.load > 0 ? pct(1 - n.backup) + ' treated' : 'no load') + '</span></div>';
+  h += meter(n.sewage.load > 0 ? 1 - n.backup : 1, WATER.meters.purity, 'Sewage treated');
+  h += '<div class="wtends"><span>Waste: <b>' + fmtQ(n.sewage.load) + '</b></span>' +
+       '<span>Outfall capacity: <b>' + fmtQ(n.sewage.capacity) + '</b></span></div>';
+  if (n.backup > SW.warnAbove) {
+    /* The penalty is STATED as the multiplier the tick applied, not as a mood.
+       "Sewage is backing up" is a warning; "the waterworks on that main are at
+       72% because of it" is a decision.
+
+       🔴 AND IT IS SAID PER MAIN, because that is now where the arithmetic
+          happens. "Every waterworks in the city is at X" was true when one
+          scalar was multiplied into every well; it is false now, and a panel
+          that keeps saying it would be telling a player with a clean, outfalled
+          district that their clean district is poisoned. Each backed-up main is
+          named with its own share and its own multiplier. */
+    const backed = (n.sewage.byComp || []).filter(c => c.backup > SW.warnAbove && c.load > 0);
+    h += '<div class="wtnote warn">🚱 ' + pct(n.backup) + ' of this city\'s sewage has nowhere to go, and untreated ' +
+      'waste soaks into the shallow ground the intakes on that main draw from. ' +
+      (backed.length <= 1
+        ? 'The waterworks on it ' + (backed.length && backed[0].wells === 1 ? 'is' : 'are') + ' at <b>' +
+          pct(n.sewerFactor) + '</b>.'
+        : backed.length + ' separate mains are backing up: ' +
+          backed.slice().sort((a, b) => a.sewer - b.sewer)
+            .map(c => 'the one carrying ' + fmtQ(c.load) + ' of waste is at <b>' + pct(c.sewer) + '</b>').join(', ') + '.') +
+      ' Build a 🚱 Sewer Outfall on open water and connect it to the SAME main — an outfall on a different ' +
+      'network treats nothing here, however big it is.</div>';
+    const bad = n.sewage.outfalls.filter(o => o.effective <= 0 && o.why);
+    if (bad.length) {
+      h += '<div class="wtnote warn">' + bad.map(o => '· the outfall at ' + esc(o.k) + ' — ' + esc(o.why)).join('<br>') + '</div>';
+    } else if (!n.sewage.outfalls.length) {
+      h += '<div class="wtnote">This city has no Sewer Outfall at all. It is in the 🛤️ Infrastructure section of the build bar.</div>';
+    }
+  }
+  return h;
+}
+
 function html(s, caps) {
   if (!s || !s.ok) {
     return header(s) + '<div class="wtempty">The hydrology model is not answering.' +
@@ -225,6 +364,8 @@ function html(s, caps) {
   if (!s.demandKnown)
     h += '<div class="wtnote">Demand is partial: the host did not hand over its per-citizen drink rate this tick, ' +
          'so only building consumption is counted.</div>';
+
+  h += mains(s);
 
   h += '<div class="wtsec">AQUIFER RESERVES<span class="wtsecv">' + pct(s.meanLevel) + '</span></div>';
   h += meter(s.meanLevel, M.reserve, 'Aquifer reserves');

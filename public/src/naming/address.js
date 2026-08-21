@@ -43,12 +43,14 @@
    naming the global it wanted.
    ══════════════════════════════════════════════════════════════════════════ */
 import { streetLabel } from '../dossier/address.js';
+/* 🛣 The road resolver — an address faces a CARRIAGEWAY, whatever class it is. */
+import { isRoadTile } from '../roads/types.js';
 
 /* Which way the road at (rx,rz) runs. A road with more east-west road
    neighbours than north-south ones is an east-west street; ties go to
    east-west, which only matters for an isolated stub and is stable either way. */
 function roadAxis(tiles, rx, rz) {
-  const isRoad = (x, z) => { const t = tiles[x + ',' + z]; return !!(t && t.type === 'road'); };
+  const isRoad = (x, z) => isRoadTile(tiles[x + ',' + z]);
   const ew = (isRoad(rx - 1, rz) ? 1 : 0) + (isRoad(rx + 1, rz) ? 1 : 0);
   const ns = (isRoad(rx, rz - 1) ? 1 : 0) + (isRoad(rx, rz + 1) ? 1 : 0);
   return ns > ew ? 'ns' : 'ew';
@@ -72,7 +74,7 @@ export function addressFor(tiles, key) {
   for (const [dx, dz] of FRONTAGE) {
     const rx = x + dx, rz = z + dz;
     const r = tiles[rx + ',' + rz];
-    if (!r || r.type !== 'road') continue;
+    if (!isRoadTile(r)) continue;
     const axis = roadAxis(tiles, rx, rz);
     /* THE STREET, from the module that owns street names. streetLabel speaks
        the dossier's axis vocabulary — 'x' for a road running east–west, 'z'

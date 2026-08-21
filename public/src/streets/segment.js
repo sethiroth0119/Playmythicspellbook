@@ -43,8 +43,27 @@ function anchorOf(tiles) {
 }
 
 /* Build the whole street graph for a set of road tile keys.
-   `isRoad(x, z)` is handed in so this file never touches game.tiles itself. */
-export function segment(roadKeys, isRoad) {
+   `isRoad(x, z)` is handed in so this file never touches game.tiles itself.
+
+   🛣 `classOf(x, z)` IS OPTIONAL AND BREAKS A RUN WHERE THE CLASS CHANGES.
+   A street is "a contiguous run of road tiles along one axis" — and once roads
+   have classes (/src/roads: street, avenue, highway, bridge…), a run that
+   silently spanned two of them would be ONE street with ONE name covering a
+   residential street and the trunk road it turns into. Worse, it would be
+   quoted at a single per-tile upkeep (index.js quotes tiles × roadCost) at the
+   exact moment two classes started pricing differently, which is how a UI
+   number drifts from the ledger without anything throwing.
+
+   ⚠ ABSENT ⇒ BYTE-FOR-BYTE THE OLD SEGMENTER. The default resolver answers
+     null for every tile, so every comparison below is null === null and every
+     run is exactly the run this file emitted before classes existed. No city's
+     street names move because a module loaded.
+   ⚠ THE CLASS BREAKS THE RUN; IT DOES NOT BREAK THE JUNCTION. makeStreet's
+     `perp` and `deadEnds` below still ask the raw isRoad, deliberately: a
+     street that continues as a different class is not a dead end, and a
+     crossing of two classes is still a crossing. Those are facts about the
+     NETWORK, and the network does not know about classes. */
+export function segment(roadKeys, isRoad, classOf) {
   const streets = [];
   const covered = new Set();
   const parsed = [];
@@ -52,6 +71,14 @@ export function segment(roadKeys, isRoad) {
     const c = k.indexOf(',');
     parsed.push({ k, x: +k.slice(0, c), z: +k.slice(c + 1) });
   }
+  const clsAt = (typeof classOf === 'function') ? classOf : () => null;
+  // Continue a run only into a road OF THE SAME CLASS.
+  const cont = (x, z, cls) => isRoad(x, z) && clsAt(x, z) === cls;
+  // …and a run STARTS wherever the previous tile is not that same-class road,
+  // which is what keeps every tile the start of exactly one run per axis. That
+  // invariant is what makes this O(roads) rather than O(roads²), and it is also
+  // what stops rule 3 below emitting a duplicate.
+  const starts = (px, pz, dx, dz) => !cont(px - dx, pz - dz, clsAt(px, pz));
 
   const emit = (axis, cells) => {
     if (cells.length < 2) return;
@@ -60,21 +87,22 @@ export function segment(roadKeys, isRoad) {
     streets.push(makeStreet(axis, cells, isRoad));
   };
 
-  /* Horizontal: a run STARTS at a tile whose west neighbour is not a road, and
-     is walked east. Every tile is therefore visited by exactly one start, which
-     is why this is O(roads) and not O(roads^2). */
+  /* Horizontal: a run STARTS at a tile whose west neighbour is not a road of
+     the same class, and is walked east. */
   for (const p of parsed) {
-    if (isRoad(p.x - 1, p.z)) continue;
+    if (!starts(p.x, p.z, 1, 0)) continue;
+    const cls = clsAt(p.x, p.z);
     const cells = [];
     let x = p.x;
-    while (isRoad(x, p.z)) { cells.push({ k: kOf(x, p.z), x, z: p.z }); x++; }
+    while (cont(x, p.z, cls)) { cells.push({ k: kOf(x, p.z), x, z: p.z }); x++; }
     emit('x', cells);
   }
   for (const p of parsed) {
-    if (isRoad(p.x, p.z - 1)) continue;
+    if (!starts(p.x, p.z, 0, 1)) continue;
+    const cls = clsAt(p.x, p.z);
     const cells = [];
     let z = p.z;
-    while (isRoad(p.x, z)) { cells.push({ k: kOf(p.x, z), x: p.x, z }); z++; }
+    while (cont(p.x, z, cls)) { cells.push({ k: kOf(p.x, z), x: p.x, z }); z++; }
     emit('z', cells);
   }
   // Rule 3: leftovers become one-tile streets, exactly once each.

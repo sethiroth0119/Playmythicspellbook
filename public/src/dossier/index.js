@@ -39,6 +39,7 @@
       A 404 on this file costs the player these three cards and nothing else.
    ══════════════════════════════════════════════════════════════════════════ */
 
+import { isRoadTile } from '../roads/types.js';   // 🛣 the road resolver
 import { addressOf } from './address.js';
 import { householdOf, workersOf, moodBand, averageMood, surnameOf, _flush } from './household.js';
 import { zoneOf, wealthOf } from './zone.js';
@@ -292,7 +293,7 @@ function addressCard(k) {
 
 function booksCard(k) {
   const t = C.game.tiles[k];
-  if (!t || t.type === 'road') return '';
+  if (!t || isRoadTile(t)) return '';
   const B = booksOf(C, k);
   if (!B) return '';
   let body = B.rows.map(r => facRow(esc(r.label),

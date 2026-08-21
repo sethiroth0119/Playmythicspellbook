@@ -286,6 +286,30 @@ function html(s, caps) {
     : '<div class="pwnote">🔌 <b>Legacy demand</b> — this city was built before the grid metered its mines, farms, depots and workshops, so those 15 building types still draw nothing. ' +
         '<button class="pwbtn" data-pwmeter="1">Meter them</button></div>';
 
+  /* ══ 🗼 THE CONNECTION RULE, AND ITS OPT-IN ═══════════════════════════════
+     The same statement-about-your-save the metering note makes, about a bigger
+     number. `wired` is the per-city latch: a city founded after power lines
+     landed is under the connection rule from its first tick; one loaded from an
+     older blob is not, because its player laid their roads when a building on
+     an islanded road was powered exactly as well as one wired to the turbine
+     hall, and re-deciding that for them while they were away is precisely what
+     the save-compatibility constraint forbids.
+     ⚠ THE PRICE IS QUOTED BEFORE IT IS PAID, and here it is quotable exactly:
+       the walk already knows how many buildings would fall off, so the offer
+       names them. A switch whose cost only appears after you press it is a
+       switch nobody presses twice. */
+  if (s.enforceFlag) {
+    h += s.enforce
+      ? '<div class="pwnote">🗼 <b>Connected supply</b> — a building only draws from the grid if a road or a power line reaches it' +
+          (s.lineCells ? ' (' + s.lineCells + ' cell' + (s.lineCells === 1 ? '' : 's') + ' of line laid)' : '') + '. ' +
+          (s.offNetwork ? '<b>' + s.offNetwork + '</b> ' + (s.offNetwork === 1 ? 'is' : 'are') + ' off the network right now.'
+                        : 'Everything is on the network.') + '</div>'
+      : '<div class="pwnote">🗼 <b>Legacy grid</b> — this city was built before connection mattered, so every building draws ' +
+          'wherever it stands. Under the connection rule <b>' + (s.topo.unserved.length || 0) + '</b> of them would fall to the ' +
+          'brownout floor until a road or a power line reached them. ' +
+          '<button class="pwbtn" data-pwwired="1">Enforce connection</button></div>';
+  }
+
   /* ══ 🪜 THE SHED LADDER ═══════════════════════════════════════════════════
      The answer to "powers homes and buildings different", and the one section
      that turns a single availability percentage into something a player can act
@@ -375,13 +399,16 @@ function html(s, caps) {
     if (s.idlePlants) h += '<div class="pwnote warn">👷 ' + s.idlePlants + ' generator' + (s.idlePlants === 1 ? '' : 's') +
                            ' producing nothing — a plant with no crew makes no power. Hire workers, or check it is not damaged.</div>';
     if (lossy) h += '<div class="pwnote">〰 Line loss would be <b>' + fmtW(s.lossWouldBe) + '</b> over an average run of ' +
-                    s.topo.meanHop.toFixed(1) + ' tiles. Not charged — transmission is diagnostic until ' +
-                    'POWER.transmission.enforce is turned on, so no existing city is re-balanced by this panel arriving.</div>';
+                    s.topo.meanHop.toFixed(1) + ' tiles. Not charged in this city — it was built before the connection rule, ' +
+                    'so no existing save is re-balanced by that rule arriving.</div>';
     if (ch) h += '<div class="pwnote warn">🔌 ' + ch + ' cable segment' + (ch === 1 ? '' : 's') +
                  ' over rating. Turn on a network layer to see where — bottlenecks paint red on low voltage, magenta on high.</div>';
     if (un) h += '<div class="pwnote warn">⛓ ' + un + ' building' + (un === 1 ? '' : 's') +
-                 ' sit off the powered road network.' +
-                 (s.enforce ? '' : ' Not charged today — transmission is diagnostic until POWER.transmission.enforce is turned on.') + '</div>';
+                 ' sit off the powered network.' +
+                 (s.enforce
+                   ? ' They are held at the brownout floor until a road or a power line reaches them — draw a line with 🗼 Lines, ' +
+                     'or run one to the Grid Connector on the north-west verge.'
+                   : ' Not charged in this city — it predates the connection rule. See the 🗼 Legacy grid note above.') + '</div>';
     h += '</div>';
   }
 
@@ -529,7 +556,14 @@ export function mount(h, a) {
   root.addEventListener('click', (ev) => {
     if (ev.target.closest('[data-pwclose]')) { api.close(); return; }
     const m = ev.target.closest('[data-pwmeter]');
-    if (m && api.meter) api.meter(m.dataset.pwmeter === '1');
+    if (m && api.meter) { api.meter(m.dataset.pwmeter === '1'); return; }
+    /* 🗼 The connection opt-in. One direction only, deliberately: a player may
+       ADOPT the rule their city was built before, and there is no button that
+       un-adopts it. Letting a city toggle connectivity off would make every
+       line the player then laid refundable in effect — pay nothing, get the
+       same power — which is a faucet, not a setting. */
+    const w = ev.target.closest('[data-pwwired]');
+    if (w && api.wired) api.wired(w.dataset.pwwired === '1');
   });
   (document.body || document.documentElement).appendChild(root);
 }

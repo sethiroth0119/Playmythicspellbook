@@ -54,6 +54,7 @@ import * as Plants from './plants.js';
 import * as Geo from './geology.js';
 import * as Meshes from './meshes.js';
 import * as Link from './link.js';
+import * as Lines from './lines.js';
 
 let host = null;          // the last host snapshot handed over
 let state = null;         // the last solve
@@ -91,6 +92,30 @@ function setCityId(id) {
      none is needed. `load()` is what flips it; a session that never loads a blob
      is a new city and stays metered. */
 let metered = true;
+
+/* 🔌 THE CONNECTIVITY LATCH — the second opt-in, and it is the metering
+   argument made a second time about a bigger number.
+   ----------------------------------------------------------------------------
+   POWER.transmission.enforce was false for this module's whole life and its own
+   comment called that "the most important line in the file": turning topology
+   into a production gate would "retroactively black out every building in every
+   EXISTING SAVE that happens to sit off the powered road component". That is
+   still true and it is still forbidden. What changed is that the rule now has
+   somewhere to live that is not the flag.
+
+   ⚠ ABSENT IN THE SAVE BLOB ⇒ NOT WIRED, and that absence is exactly what
+     identifies an older save — which is why no version number is written and
+     none is needed. `load()` is what flips it; a session that never loads a blob
+     is a new city and stays wired from its first tick. A city built under this
+     rule has a Grid Connector on its verge from the moment it exists and its
+     player laid their roads knowing connection matters; a city built before it
+     did not, and re-deciding that for them while they were away is the one
+     thing the save-compatibility constraint actually forbids.
+   🚫 REJECTED: enforcing on old saves after a warning toast. A toast is read by
+      the player who is looking at the screen when it fires; the affected city
+      may not be opened for a month, and by then the blackout is "a bug that
+      appeared in an update". */
+let wired = true;
 
 function warnOnce(m) { if (warned) return; warned = true; try { console.warn('[power] ' + m); } catch (e) {} }
 
@@ -256,12 +281,31 @@ const API = {
       if (h && h.cityId != null) setCityId(h.cityId);
       Panel.mount(h, { onLayers: () => { Overlay.repaintNext(); refresh(); },
                        close: () => API.closePanel(),
-                       meter: (on) => { metered = !!on; Grid.invalidate(); refresh(); } });
+                       meter: (on) => { metered = !!on; Grid.invalidate(); refresh(); },
+                       /* 🗼 …and the connection opt-in. ONE WAY: `on` is only
+                          ever honoured as true. A city that could turn the rule
+                          back off would get the power its lines bought without
+                          keeping the lines, which is a refund faucet wearing a
+                          setting's clothes. */
+                       wired: (on) => { if (on) { wired = true; Grid.invalidate(); refresh(); } } });
       Overlay.mount(h);
       /* The mesh builders need THREE and nothing else. Mounted here rather than
          lazily on the first buildMesh() call, because the host asks for a mesh
          while it is restoring a saved city — see the rebuild sweep in boot(). */
       Meshes.mount(h);
+      /* 🗼 THE CONDUCTOR THE PLAYER DRAWS. Mounted last of the four because it
+         is the only one that binds document-level listeners and builds scene
+         geometry of its own, so a throw inside it must not cost the panel, the
+         overlay or the plant meshes — it is wrapped again inside its own mount
+         for the same reason.
+         ⚠ Its onChange is what keeps the topology cache honest. grid.js caches
+           the walk behind a signature and its header records two versions of
+           that signature that were silently wrong; a conductor set that changed
+           without invalidating would be the third, and a stale network looks
+           exactly like a correct one. */
+      try {
+        Lines.mount(h, { onChange: () => { Grid.invalidate(); refresh(); } });
+      } catch (e) { warnOnce('lines mount failed: ' + (e && e.message)); }
       mounted = true;
       return true;
     } catch (e) { warnOnce('mount failed: ' + (e && e.message)); return false; }
@@ -329,10 +373,22 @@ const API = {
          this one has already mounted, and because /src/outside's own answer is
          already cached behind refreshRoadArea. */
       const link = Link.read();
+      /* 🗼 THE CONDUCTOR SET, HANDED OVER RATHER THAN IMPORTED. grid.js does not
+         import lines.js and does not know what a pole looks like — it is given
+         a Set of cell keys, a list of injecting cells and one signature string,
+         which is the same shape and the same direction as every other fact in
+         its host snapshot. Cheap: both are memoised in lines.js and rebuilt only
+         when the player draws.
+         ⚠ AND IT IS RESOLVED HERE, NOT THERE. `enforce` is the feature flag AND
+           the per-city latch, ANDed once, in one place. Two callers resolving it
+           independently is how a flag comes to mean two different things. */
       const s = Grid.solve({ grid: snapshot.grid, tiles: snapshot.tiles, plants: snapshot.plants,
                              loads: snapshot.loads, pop: snapshot.pop, hasGrid: snapshot.hasGrid,
                              perPop: snapshot.perPop, floor: snapshot.floor, dtMin: snapshot.dtMin,
-                             metered, link }, store);
+                             metered, link,
+                             enforce: !!(POWER.transmission.enforce && wired),
+                             lines: { cells: Lines.conductors(), seeds: Lines.seeds(),
+                                      sig: Lines.signature() } }, store);
       if (!s.ok) { warnOnce(s.why || 'solve refused'); state = s; return null; }
       store = s.store.charge;
       state = s;
@@ -443,6 +499,38 @@ const API = {
   metered: () => metered,
   setMetered(on) { metered = !!on; Grid.invalidate(); refresh(); return metered; },
 
+  /* ── 🗼 POWER LINES ────────────────────────────────────────────────────────
+     The tool, the network and the connector. Every entry is guarded and every
+     one degrades to a truthful nothing rather than a plausible zero — the same
+     rule trade() and supply() are written to. */
+  lines: {
+    ready: () => Lines.ready(),
+    arm: (v) => Lines.setArmed(v == null ? true : v),
+    armed: () => Lines.isArmed(),
+    count: () => Lines.count(),
+    has: (x, z) => Lines.has(Number(x) || 0, Number(z) || 0),
+    connector: () => Lines.connector(),
+    /* The drag, exposed so a driver can lay a run without a pointer. Same code
+       path the tool uses — a test that calls a private twin of the shipped
+       function is a test of the twin. */
+    lay: (x0, z0, x1, z1, swap) => Lines.lay(Lines.runCells(x0, z0, x1, z1, !!swap)),
+    lift: (x0, z0, x1, z1, swap) => Lines.lift(Lines.runCells(x0, z0, x1, z1, !!swap)),
+    run: (x0, z0, x1, z1, swap) => Lines.runCells(x0, z0, x1, z1, !!swap),
+    quote: (x0, z0, x1, z1, swap) => Lines.quote(Lines.runCells(x0, z0, x1, z1, !!swap), false),
+    verify: () => Lines.verify(),
+  },
+
+  /* 🔌 IS CONNECTIVITY GATING PRODUCTION IN THIS CITY? Three answers, because
+     "the feature is on" and "this city is under it" are different facts and a
+     UI that can only ask the first cannot explain the second to the player
+     whose old city is not enforcing. */
+  enforcing: () => ({ inEffect: !!(POWER.transmission.enforce && wired),
+                      flag: !!POWER.transmission.enforce, wired }),
+  /* The opt-in, for the panel switch. Symmetric with setMetered, and it
+     invalidates for the same reason: the walk's answer has not changed but what
+     is done with it has, and the cached solve would keep the old one. */
+  setWired(on) { wired = !!on; Grid.invalidate(); refresh(); return wired; },
+
   state: () => state,
   topology: () => Grid.topology(),
   layers: Panel.layers,
@@ -454,7 +542,13 @@ const API = {
 
   /* ── SAVE. One number. Optional-with-default on load, so every existing save
      opens with an empty buffer and nothing else changes. */
-  save: () => ({ store, cityId, metered: metered ? 1 : 0, plants: Plants.save() }),
+  save: () => ({ store, cityId, metered: metered ? 1 : 0, plants: Plants.save(),
+                 /* 🗼 The line network, and the latch that says this city was
+                    played under the connection rule. BOTH are written every
+                    time, including when the network is empty — `wired` is only
+                    meaningful as a key that is PRESENT, and a city that has
+                    drawn no cable yet is still a city that knows it has to. */
+                 lines: Lines.save(), wired: wired ? 1 : 0 }),
   load(blob) {
     const v = blob && Number(blob.store);
     store = isFinite(v) && v >= 0 ? v : 0;
@@ -469,6 +563,17 @@ const API = {
        A brand-new city never calls load() at all and stays metered from its
        first tick, which is the whole asymmetry. */
     if (blob && typeof blob === 'object') metered = !!blob.metered;
+    /* 🔌 THE CONNECTIVITY LATCH, READ THE SAME WAY AND FOR THE SAME REASON. See
+       `wired`'s header: a blob that exists but carries no `wired` key was
+       written before connectivity gated production, and that city's player laid
+       their roads under the old rule. This one line is the entire grandfather
+       guarantee — with it false, grid.js takes the identical branch it took
+       before this round and the city's numbers are bit-for-bit what they were.
+       ⚠ The LINES are loaded either way. A save that somehow carries a network
+         but no latch still gets its poles back; the network is the player's
+         property and the latch is only about whether it is enforced. */
+    Lines.load(blob && blob.lines);
+    if (blob && typeof blob === 'object') wired = !!blob.wired;
     Grid.invalidate();
   },
 

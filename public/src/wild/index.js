@@ -606,7 +606,7 @@ function clear() {
 }
 
 function build() {
-  const { THREE, game, GRID, HALF, isRoad, groundAt, terrainAt, grainPer, texDiv } = CTX;
+  const { THREE, game, GRID, HALF, isRoad, groundAt, terrainAt, grainPer, texDiv, isSea } = CTX;
   clear();
 
   /* ── 🔴 0. THE TWO HOST CALLS, AND WHY A MISSING ONE NOW REFUSES TO DRAW ──
@@ -717,9 +717,28 @@ function build() {
     const gx = +k.slice(0, c), gz = +k.slice(c + 1);
     if (gx >= 0 && gz >= 0 && gx < GRID && gz < GRID) OCC[gz * GRID + gx] = isRoad(gx, gz) ? 2 : 1;
   }
+  /* 🌊 …AND NOTHING GROWS IN THE SEA. /src/ocean puts open water on the plain
+     east of the plate on every map, and this layer's whole emptiness test is
+     "the key is not in game.tiles" — which a stretch of ocean satisfies
+     perfectly. A tuft there would be planted on the plain at NC_TERRAIN_AT's y
+     with the water drawn over it, and `stats` would report a healthy build.
+     ⚠ PER TILE, NOT PER CANDIDATE, AND THAT IS A COST DECISION WITH A PROOF
+       BEHIND IT. clearOf() runs ~8,400 times a rebuild and this test crosses a
+       module boundary; per candidate it would be the third thing on the profile.
+       Per tile is exact here because the waterline can never come inside
+       HALF + 1.75 (WATER.sea.inset − bow) while this layer never leaves the
+       plate at HALF — the sea cannot cut a tile in half, so a tile is wholly in
+       or wholly out. If the coast is ever brought inside the plate, this test
+       moves down into clearOf and the note moves with it.
+     ⚠ ABSENT ⇒ NOT SEA. A host that hands over no `isSea` gets exactly the
+       scatter it got before this round; the layer never refuses over it. */
+  const wet = typeof isSea === 'function' ? isSea : null;
   const empty = [];
-  for (let gx = 0; gx < GRID; gx++) for (let gz = 0; gz < GRID; gz++)
-    if (!OCC[gz * GRID + gx]) empty.push([gx, gz]);
+  for (let gx = 0; gx < GRID; gx++) for (let gz = 0; gz < GRID; gz++) {
+    if (OCC[gz * GRID + gx]) continue;
+    if (wet && wet(gx - HALF + .5, gz - HALF + .5)) continue;
+    empty.push([gx, gz]);
+  }
   /* See TARGET_TILES: an empty map must not be the expensive one. */
   const load = empty.length > TARGET_TILES ? TARGET_TILES / empty.length : 1;
 

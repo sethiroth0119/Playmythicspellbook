@@ -1682,6 +1682,30 @@ function PageOpsVault({ account }) {
   const walletTotal = cat.reduce((s, r) => s + (wRes[r.id] | 0), 0);
   const bankedTypes = cat.filter(r => (bRes[r.id] | 0) > 0).length;
 
+  /* 🔎 FIND A RESOURCE. The catalogue is long and almost every card reads 0/0,
+     so the two questions a player actually has — "what can I put in right now"
+     and "where is the one I am looking for" — were both answered by scrolling.
+     `have` is keyed on the WALLET, not the bank: what you can deposit is what
+     is loose in your wallet, which is the question the Deposit button asks. */
+  const [q, setQ] = React.useState("");
+  const [only, setOnly] = React.useState("all");
+  const needle = q.trim().toLowerCase();
+  const shown = cat.filter(r => {
+    const inB = bRes[r.id] | 0, inW = wRes[r.id] | 0;
+    if (only === "have" && inW <= 0) return false;
+    if (only === "banked" && inB <= 0) return false;
+    if (only === "empty" && (inW > 0 || inB > 0)) return false;
+    if (!needle) return true;
+    return String(r.name || "").toLowerCase().includes(needle)
+        || String(r.id || "").toLowerCase().includes(needle);
+  });
+  const FILTERS = [
+    { k: "all",    label: "All",         n: cat.length },
+    { k: "have",   label: "Can deposit", n: cat.filter(r => (wRes[r.id] | 0) > 0).length },
+    { k: "banked", label: "In bank",     n: bankedTypes },
+    { k: "empty",  label: "Empty",       n: cat.filter(r => !((wRes[r.id] | 0) > 0 || (bRes[r.id] | 0) > 0)).length },
+  ];
+
   return (
     <div>
       <div className="page-head">
@@ -1711,8 +1735,42 @@ function PageOpsVault({ account }) {
       )}
 
       {vault && (
+        <div className="panel" style={{ padding: "10px 12px", marginBottom: 12, display: "flex",
+             gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <input
+            value={q}
+            onChange={e => setQ(e.target.value)}
+            placeholder="Search resources…"
+            style={{ flex: "1 1 220px", minWidth: 160, padding: "7px 10px", borderRadius: 8,
+                     border: "1px solid var(--edge, #2e2740)", background: "rgba(0,0,0,.35)",
+                     color: "var(--ink, #e8e2d5)", font: "inherit", fontSize: 13 }} />
+          {FILTERS.map(f => (
+            <button key={f.k} onClick={() => setOnly(f.k)}
+              style={{ cursor: "pointer", padding: "6px 11px", borderRadius: 999, fontSize: 12,
+                       fontWeight: 700, font: "inherit", whiteSpace: "nowrap",
+                       border: "1px solid " + (only === f.k ? "rgba(212,175,55,.65)" : "rgba(150,150,170,.28)"),
+                       background: only === f.k ? "rgba(212,175,55,.14)" : "rgba(0,0,0,.25)",
+                       color: only === f.k ? "#ffcf5a" : "var(--ink-dim, #9aa0a6)" }}>
+              {f.label} <span style={{ opacity: .7 }}>{f.n}</span>
+            </button>
+          ))}
+          {(needle || only !== "all") && (
+            <span style={{ fontSize: 12, color: "var(--ink-dim, #9aa0a6)" }}>
+              {shown.length} shown
+            </span>
+          )}
+        </div>
+      )}
+
+      {vault && shown.length === 0 && (
+        <div className="panel" style={{ padding: 22, textAlign: "center", color: "var(--ink-dim)" }}>
+          Nothing matches. {needle ? "Try a different search" : "Try another filter"}.
+        </div>
+      )}
+
+      {vault && (
         <div className="grid g-3">
-          {cat.map(r => (
+          {shown.map(r => (
             <OpsResCard
               key={r.id}
               meta={r}

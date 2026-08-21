@@ -36564,7 +36564,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v121c3';
+  window.BUILD_VERSION = 'v121c4';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -85150,7 +85150,7 @@ async function _whOpen(warehouseId) {
   ov.style.cssText = 'position:fixed;inset:0;z-index:2147483400;background:#0b0910';
   const fr = document.createElement('iframe');
   fr.id = 'wh-frame';
-  fr.src = 'warehouse/index.html?v=v121c3';
+  fr.src = 'warehouse/index.html?v=v121c4';
   fr.setAttribute('title', 'Storage Warehouse');
   fr.style.cssText = 'width:100%;height:100%;border:0;background:#0b0910';
   ov.appendChild(fr);
@@ -107935,7 +107935,7 @@ const _BME_TORDER = Object.keys(_BME_TERRAIN);
 // and BB_VER may legitimately move on its own between releases (it sat at
 // v120x1 while the rest sat at v120x0). The release sweep then drags all nine
 // knobs back onto ONE string, which is why it reads v120x3 here today.
-const BB_VER = 'v121c3';
+const BB_VER = 'v121c4';
 // terrain key → board tile type. Anything unlisted is plain ground.
 const BB_TERRAIN_TYPE = { water:'hazard', lava:'hazard', blight:'hazard' };
 // editor prop key → the board's billboard prop vocabulary
@@ -118136,7 +118136,7 @@ function _mmMount() {
   } catch (e) {}
   const f = document.createElement('iframe');
   f.id = 'mm-frame';
-  f.src = 'main-menu/index.html?v=v121c3';
+  f.src = 'main-menu/index.html?v=v121c4';
   f.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;border:0;z-index:5;background:#0a0610';
   document.body.appendChild(f);
   App._mmReady = false;
@@ -213859,7 +213859,7 @@ function _openNodeCity(nodeId, _resolved) {
      knob shipped stale. Rejected: "just remember to check this one". Every
      buster now carries the literal BUILD_VERSION text, so ONE grep for the
      version string finds all nine knobs. Keep the prefix. */
-  f.src = 'node-city/index.html?v=v121c3';
+  f.src = 'node-city/index.html?v=v121c4';
   f.setAttribute('title', 'Node City');
   /* 🔴 THE HOST CHROME RUNS ON LOAD, AND THIS IS THE BUG IT FIXES.
      _ncHostGutter and _ncZonePill used to run synchronously right after this
@@ -233388,8 +233388,8 @@ render();
      catches them. Rejected: dropping the ?v= and leaning on sw.js's /src/
      network-first branch — that only helps clients the SW already controls,
      and says nothing to the browser's own HTTP cache on a cold first load. -->
-<link rel="stylesheet" href="src/battle/hud.css?v=v121c3">
-<script type="module" src="src/battle/hud.js?v=v121c3"></script>
+<link rel="stylesheet" href="src/battle/hud.css?v=v121c4">
+<script type="module" src="src/battle/hud.js?v=v121c4"></script>
 <script src="src/battle/combat.js?v=120m4" defer></script>
 <script src="src/battle/targeting.js?v=120k6" defer></script>
 <link rel="stylesheet" href="src/sprites/frames.css?v=120k3">

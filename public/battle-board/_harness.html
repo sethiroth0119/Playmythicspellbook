@@ -1489,17 +1489,27 @@ SCENES.ruins = {
   /* GAME coords {x,y} — the bridge renames y → z, exactly as the game's own
      push does. Writing {x,z} here is the transpose bug README warns about. */
   structures: [
-    /* Rows follow STRUCTURE_MIN_ROW (index.html, next to STRUCTURE_ORDER) —
-       the same height-aware back-row keep-out the game's own roll now obeys, so
-       this fixture shows a layout a real match can actually produce. It used to
-       put the church on row 2, which measures head Y = -43 in this projector:
-       its steeple was cropped off the top of the frame in the delivered
-       capture, and a capture whose subject is half off-screen judges nothing. */
-    { x:2,  y:4, kind:'car',      lootable:true, looted:false, risk:'explosive' },
-    { x:5,  y:5, kind:'church',   lootable:true, looted:false, risk:'cursed' },
-    { x:10, y:5, kind:'school',   lootable:true, looted:false, risk:null },
-    { x:3,  y:8, kind:'hospital', lootable:true, looted:false, risk:'corrupted' },
-    { x:9,  y:9, kind:'house',    lootable:true, looted:true,  risk:null }
+    /* ⚠ NOT HAND-PICKED. These five tiles are the LITERAL OUTPUT of the game's
+       own _rollStructurePlacements (index.html, next to STRUCTURE_ORDER) on
+       seed 1810039509, chosen out of a 4000-seed scan for the widest spread.
+       Copying real output is the only way this fixture can keep its claim to
+       show "a layout a real match can actually produce": the previous hand-set
+       rows were written against the keep-out as it stood then, and when that
+       rule changed they quietly became a layout the roll can no longer emit —
+       the fixture asserting compliance while demonstrating a violation.
+       The rule they satisfy is now SYMMETRIC: a ruin must clear the frame on
+       the placer's row AND on row (BOARD_H-1-y), where _mirrorAllPositions puts
+       it on the opponent's screen. Mirrors of the five below are (11,9), (6,5),
+       (12,5), (1,5), (9,6) — all legal too, which is the whole point.
+       Consequence worth seeing rather than hiding: the tall ruins now cluster
+       into the middle rows, because that is the only band that clears both
+       frames on a 12-row board. Only the car (0.78 units) can still sit far
+       back, and it does, at row 2. */
+    { x:2,  y:2, kind:'car',      lootable:true, looted:false, risk:'explosive' },
+    { x:7,  y:6, kind:'church',   lootable:true, looted:false, risk:'cursed' },
+    { x:1,  y:6, kind:'school',   lootable:true, looted:false, risk:null },
+    { x:12, y:6, kind:'hospital', lootable:true, looted:false, risk:'corrupted' },
+    { x:4,  y:5, kind:'house',    lootable:true, looted:true,  risk:null }
   ]
 };
 

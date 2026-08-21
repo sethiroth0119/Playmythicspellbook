@@ -78398,11 +78398,29 @@ const STRUCTURE_ORDER = ['car', 'church', 'school', 'hospital', 'house'];
 // A ruin is drawn as a BILLBOARD one structure-height above its own tile, and
 // the stage fits its vertical FOV to the safe box (CONTRACT §1.6). So the
 // taller the thing and the further back the row, the closer its head sits to
-// the top of the frame — and past a point it is simply off it. Measured in the
-// real projector (battle-board's own project(), 1600x900), head Y by row for a
-// 2.85-unit church: row 0 = -127, row 1 = -87, row 2 = -43, row 3 = +5. Rows
-// 0-2 DECAPITATE it, and the old roll put a church there on 13.5% of seeds —
+// the top of the frame — and past a point it is simply off it. Rows 0-2
+// DECAPITATE a church, and the old roll put a church there on 13.5% of seeds —
 // roughly one match in seven shipping a headless church.
+//
+// ⚠ THE FRAME IS NOT THE VIEWPORT, and the first calibration of this table got
+// that wrong. It was measured at "1600x900" meaning the full viewport, which is
+// a frame no match produces: the stage is sized to `.board-area`'s rect
+// (`_bbStageTrack`), and `applyFit` then dollies the camera and re-derives
+// viewShiftY from the resulting board bbox — so the crop is a function of that
+// rect's SHAPE, not of the window's. It is not even monotone in window size.
+// Re-measured in the real projector through the stage's own project(), worst
+// column per row, first row whose drawn top clears y=0 for a flat 2.85 church:
+//     1366x768  → .board-area  708x556   : row 0   (nothing ever crops)
+//     1600x900  → .board-area  802x688   : row 0   (nothing ever crops)
+//     1920x1080 → .board-area 1122x868   : row 0
+//     2560x1440 → .board-area 1762x1228  : row 0
+//     2560x1080 → .board-area 1762x868   : row 5   ← the binding case
+//     3440x1440 → .board-area 2642x1228  : row 5
+//     1600x900  FULL VIEWPORT            : row 3   ← the old, wrong calibration
+// Short-and-wide is what hurts: the same 868px of height with 1762px of width
+// makes applyFit pull the board up the frame. So the table below is calibrated
+// at the WIDEST rect whose back rows are still on screen at all, and is merely
+// conservative (never wrong) at the narrower ones.
 //
 // ⚠ ELEVATION COUNTS, and leaving it out is why the first attempt at this rule
 // still cropped. _BB_ELEV runs to 1.36 world units — nearly a whole house — so
@@ -78412,11 +78430,26 @@ const STRUCTURE_ORDER = ['car', 'church', 'school', 'hospital', 'house'];
 // These are the DRAWN heights, which for the school is not its STRUCT_DEF h:
 // its flagpole reaches 1.30x the head box, so it is budgeted at 1.89.
 const STRUCTURE_DRAWN_H = { car: 0.78, school: 1.89, house: 1.85, hospital: 2.35, church: 2.85 };
-// Calibration, measured not guessed: the worst column of each row was projected
-// on FLAT ground for billboard heights 0.8 … 4.4 and the first row whose top
-// clears the frame recorded. Thresholds are the height at which the answer
-// steps up. (0.8→0, 1.2→1, 1.6→1, 2.0→2, 2.4→3, 2.8→3, 3.2→4, 3.6→5, 4.0→6.)
-const _STRUCT_ROW_STEPS = [0.9, 1.7, 2.1, 2.9, 3.3, 3.7];
+// Calibration, measured not guessed: every (kind, elevation rung) pair was
+// projected through the stage's own project() at the worst column of every row
+// and the first row whose DRAWN top clears y=0 recorded. Thresholds are the
+// total height (drawn height + tile elevation) at which the answer steps up.
+// (0.8→2, 1.2→3, 1.6→3, 2.0→4, 2.4→5, 2.8→5, 3.2→6, 3.6→6, 4.0→8.)
+//
+// ⚠ TWO ROWS HIGHER THAN THE FIRST VERSION, and for the frame reason above —
+// NOT because the old numbers were arithmetically wrong. They were right for
+// the frame they named: a flat church really does clear at row 3 at 1600x900
+// full-viewport. It clears at row 5 in the 2560x1080 .board-area rect, which is
+// a frame the game really does produce and the old one is not. Checked against
+// the re-measured floors: every entry here is >= the measured requirement at
+// both 2560x1080 and 3440x1440, so the rule never permits a crop it can see.
+//
+// (For the record, because it cost a round: "-86.8 at row 3, -35.5 at row 4" is
+// not the flat church at all — it is the church on a LEVEL-3 (elev 1.02) tile
+// at 1600x900 full-viewport, where the old table already returned 6 against a
+// measured 5 and was over-strict rather than under. The flat calibration was
+// never the defect; the choice of frame was.)
+const _STRUCT_ROW_STEPS = [0.3, 0.6, 0.9, 1.7, 2.1, 2.9, 3.3, 3.7];
 function _structMinRow(kind, elev) {
   const E = (STRUCTURE_DRAWN_H[kind] || 1.85) + (+elev || 0);
   let r = 0;
@@ -78552,7 +78585,36 @@ function _rollStructurePlacements(state, seed) {
         // HARD reject, on every attempt, unlike the edge-column preference
         // below: an edge ruin is merely awkward, a decapitated one is wrong on
         // every frame of every match that rolled it.
-        if (c.y < Math.min(_structMinRow(kind, elevAt ? elevAt[c.x + ',' + c.y] : 0), rowCap)) continue;
+        //
+        // 🪞 AND IT IS REJECTED IN BOTH COORDINATE FRAMES, NOT JUST THE
+        // PLACER'S. This is the bug the one-sided version shipped: multiplayer
+        // does not hand the guest the host's coordinates, it rotates the whole
+        // board 180° (`_mirrorAllPositions`, :181914 — `structures` is in its
+        // mirror list). So a ruin the host sees on row y sits on row H-1-y on
+        // the GUEST's screen. Testing only `c.y` therefore did not remove the
+        // decapitated church, it MOVED IT ONTO THE OTHER PLAYER'S SCREEN — and
+        // moved it there systematically, because pushing all five ruins DOWN to
+        // clear the host's top rows deposits them on exactly the rows that
+        // mirror onto the guest's cropped top rows. Measured over 400 seeds
+        // against the real projector: at the 1600x900 full-viewport frame the
+        // rule cut host crops to 0/400 but RAISED guest crops to 290/400,
+        // against 221/400 with no rule at all; at the 2560x1080 in-game
+        // .board-area frame it was 381/400 guest against 343/400 with no rule.
+        // Worse than nothing, in the one place the builder never looked.
+        //
+        // The guest floor reads the MIRRORED tile's own elevation, because
+        // terrain is generated per-client from the shared seed and is NOT put
+        // through the rotation (see _bbGenTerrain's header). Today the two
+        // lookups agree — that generator folds the map onto its own 180°
+        // partner on purpose, so elev is point-symmetric and elevAt[mx,my] ===
+        // elevAt[x,y] — but reading the mirrored tile is what stays correct if
+        // that fold is ever weakened, and a bare `elevAt[c.x,c.y]` would then
+        // silently go back to guessing.
+        const _mx = W - 1 - c.x, _my = H - 1 - c.y;
+        const _floorH = Math.min(_structMinRow(kind, elevAt ? (elevAt[c.x + ',' + c.y] || 0) : 0), rowCap);
+        const _floorG = Math.min(_structMinRow(kind, elevAt ? (elevAt[_mx + ',' + _my] || 0) : 0), rowCap);
+        if (c.y < _floorH) continue;   // cropped on the placer's own screen
+        if (_my  < _floorG) continue;  // cropped on the GUEST's screen after _mirrorAllPositions
         if (out.some(o => o.x === c.x && o.y === c.y)) continue;
         if (out.some(o => distance(o, c) < spacing)) continue;
         // A church is nearly three world units tall and is drawn wider than its

@@ -47728,6 +47728,10 @@ function _profileLooksEmpty(p) {
     if (p.deckByHero && Object.keys(p.deckByHero).length > 0) return false;
     if (p.units && Object.keys(p.units).length > 0) return false;
     if (p.starterPicked === true) return false;
+    /* 🏗 A settlement is progress. Symmetric with the cloud-row gate above —
+       see _campProgressFrom for why they must share one definition. */
+    if (_campProgressFrom(p.recon, p.campWorkforce, p.campContrib,
+                          p.campPrestige, p.campNodeId)) return false;
     // Auto-owned starter heroes at Lv1/0xp are NOT progress; only a hero with
     // real advancement counts.
     const H = p.heroes || {};
@@ -47769,6 +47773,36 @@ function _profileLooksEmpty(p) {
     return true;
   } catch (e) { return false; }
 }
+/* 🏗 DOES THIS ACCOUNT HAVE A SETTLEMENT? Two helpers below decide whether a
+   save is worth protecting, and NEITHER OF THEM COULD SEE THE CAMP — they
+   counted battles, decks, heroes and forge decks and nothing else. A player
+   who had only ever played the Camp Console therefore had a cloud row that
+   read as EMPTY, which switched off the fresh-device restore branch and let
+   an empty local profile upload over their board. Reported as 'this section
+   is not saving'; it was saving, and then being overwritten.
+
+   Both readers call THIS, on their own shape, so they can never disagree
+   about what counts — the two gates are compared against each other in
+   cloudFetchProfile and a split definition is how one of them ends up
+   protecting a save the other one discards.
+   `sites` is the paid-for half (Cinder + resources per reclaim); the rest is
+   hired crew and standing. Any one of them means the account was played. */
+function _campProgressFrom(recon, workforce, contrib, prestige, nodeId) {
+  try {
+    const r = recon && typeof recon === 'object' ? recon : {};
+    const s = r.sites && typeof r.sites === 'object' ? r.sites : {};
+    for (const k in s) if (s[k]) return true;
+    const w = workforce && typeof workforce === 'object' ? workforce : {};
+    for (const k in w) if ((w[k] | 0) > 0) return true;
+    if ((+contrib || 0) > 0) return true;
+    if ((+prestige || 0) > 0) return true;
+    if (typeof nodeId === 'string' && nodeId) return true;
+    /* Vitals are NOT counted: _reconState() seeds them at 50/30/50 for every
+       player who so much as opens the screen, so they are a default and not
+       a signal — the same trap the PROFILE_START_GEMS note below records. */
+    return false;
+  } catch (e) { return false; }
+}
 function _cloudRowHasProgress(d) {
   try {
     if (!d) return false;
@@ -47784,6 +47818,11 @@ function _cloudRowHasProgress(d) {
     const f = d.forge || {};
     if (Array.isArray(f.userDecks) && f.userDecks.length > 0) return true;
     if (Array.isArray(f.customCards) && f.customCards.length > 0) return true;
+    /* 🏗 THE SETTLEMENT. Every camp key rides the forge JSONB, so it is read
+       from `f` like the two lines above it. Without this a camp-only account
+       reads as an empty cloud row and the anti-wipe gates work AGAINST it. */
+    if (_campProgressFrom(f.__recon__, f.__campWorkforce__, f.__campContrib__,
+                          f.__campPrestige__, f.__campNodeKnown__ ? 'known' : null)) return true;
     return false;
   } catch (e) { return true; }
 }
@@ -48812,7 +48851,22 @@ async function cloudFetchProfile() {
       if (f.__campWorkforce__ && typeof f.__campWorkforce__ === 'object') Profile.campWorkforce = f.__campWorkforce__;
       if (f.__campNodeHire__ && typeof f.__campNodeHire__ === 'object') Profile.campNodeHire = f.__campNodeHire__;
       if (f.__campRoute__ && typeof f.__campRoute__ === 'object') Profile.campRoute = f.__campRoute__;
-      if (f.__recon__ && typeof f.__recon__ === 'object') Profile.recon = f.__recon__;
+      /* 🏗 RECLAIMED SITES MERGE — a UNION, not a replacement, for exactly the
+         reason __garage__ above merges: a reclaim costs Cinder and resources,
+         the code that grants it calls reconstruction PERMANENT, and there is
+         no path in the game that un-reclaims one. A straight assignment (what
+         this line was) let any cloud copy that predated a reclaim delete it.
+         ⚠ ONLY `sites` is unioned. `vitals` and `day` are living values that
+           should take the fresher copy — merging those would freeze a
+           player's morale at the highest number either device ever saw. */
+      if (f.__recon__ && typeof f.__recon__ === 'object') {
+        const _localSites = (Profile.recon && Profile.recon.sites && typeof Profile.recon.sites === 'object')
+          ? Profile.recon.sites : {};
+        const _cloudRecon = f.__recon__;
+        const _cloudSites = (_cloudRecon.sites && typeof _cloudRecon.sites === 'object') ? _cloudRecon.sites : {};
+        Profile.recon = Object.assign({}, _cloudRecon,
+          { sites: Object.assign({}, _cloudSites, _localSites) });
+      }
       if (Array.isArray(f.__campTraits__))         Profile.campTraits     = f.__campTraits__.slice();
       // 🕒 Container cooldown maps — MERGE the higher (later) expiry per id so
       // a stale cloud copy never resets a fresh local cooldown back to 0.

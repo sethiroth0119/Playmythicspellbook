@@ -90,13 +90,14 @@ ok('its buttons re-enable pointer events',
 ok('layout order is explicit, not creation order',
    // The opener builds three pills (My storage 1, Buy storage 2, Leave city 6);
    // Zones 3, Land 4 and Air 5 are built by the helpers below _closeNodeCity.
-   (cityBar.match(/order:[1-6];/g) || []).length === 3
+   (cityBar.match(/order:[1-7];/g) || []).length === 3
    && idx.includes("order: 4, label: '🏷 LAND'")
-   && idx.includes("order: 5, label: '☁ AIR'"));
+   && idx.includes("order: 5, label: '☁ AIR'")
+   && idx.includes("order: 6, label: '⛏ RESOURCES'"));
 ok('the Zones pill sits between Buy storage and Leave city',
    idx.includes("p.id = 'node-city-zones'")
    && idx.includes("'order:3;flex:none")
-   && idx.includes("x.style.cssText = 'order:6;"));
+   && idx.includes("x.style.cssText = 'order:7;"));
 
 /* 🗺 The Zones pill drives node-city's OWN #ncsb-demand button across the
    same-origin boundary, then hides the original so the control is not offered

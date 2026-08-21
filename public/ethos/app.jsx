@@ -378,6 +378,14 @@ function App() {
             bankRes: (d.bankRes && typeof d.bankRes === 'object') ? d.bankRes : {},
             bankReady: !!d.bankReady,
             extCols: !!d.extCols,
+            // Vault ceiling from the parent. Absent (0) when an older
+            // parent seeded us — every readout below is guarded on cap > 0
+            // rather than defaulting, so a stale parent shows no cap at all
+            // instead of a made-up one.
+            cap: Math.max(0, Number(d.vaultCap) || 0),
+            fee: Math.max(0, Number(d.vaultFee) || 0),
+            used: Math.max(0, Number(d.vaultUsed) || 0),
+            room: Math.max(0, Number(d.vaultRoom) || 0),
           },
           // Real ledger + Cinder requests (incoming pending = ask to pay,
           // outgoing = ones we sent).
@@ -683,7 +691,10 @@ function PageVaults({ role, account, liveCinder, sessionSec, onSend }) {
         const inflow24 = ledger.filter(e => (e.ts || 0) >= last24 && (e.cinder | 0) > 0).reduce((s, e) => s + (e.cinder | 0), 0);
         return (
           <div className="grid g-4" style={{ marginBottom: 14 }}>
-            <Metric k="Resources in Bank" v={fmt(bankedTotal) + " units"} sub={bankedTotal > 0 ? bankedTypes + " of " + cat.length + " types" : "deposit via Ops Vault"} />
+            <Metric k="Resources in Bank"
+                    v={(v.cap | 0) > 0 ? fmt((v.used | 0)) + " / " + fmt(v.cap | 0) : fmt(bankedTotal) + " units"}
+                    sub={(v.cap | 0) > 0 ? fmt(v.room | 0) + " units of room"
+                                         : (bankedTotal > 0 ? bankedTypes + " of " + cat.length + " types" : "deposit via Ops Vault")} />
             <Metric k="Cinder Inflow (24h)" v={fmt(inflow24)} sub={<><CinderGlyph size={11}/> CDR</>} />
             <Metric k="Active Mercenary Contracts" v={String(activeContracts.length)} sub={activeContracts.length ? "see Mercenary Ops" : "(none)"} />
             <Metric k="Active Loans" v={activeLoans.length ? activeLoans.length + " · " + fmt(owed) : "0"} sub={activeLoans.length ? <><CinderGlyph size={11}/> CDR owed</> : "(none)"} />
@@ -1682,6 +1693,16 @@ function PageOpsVault({ account }) {
   const walletTotal = cat.reduce((s, r) => s + (wRes[r.id] | 0), 0);
   const bankedTypes = cat.filter(r => (bRes[r.id] | 0) > 0).length;
 
+  /* 🏦 THE CEILING, SHOWN WHERE THE DEPOSITS HAPPEN.
+     cap/used/room come from the parent's __boeVault — the same helpers
+     boeDepositRes refuses with — so this readout and the rule move together.
+     "used" is preferred over the locally summed bankedTotal for the same
+     reason: one number, one source. Guarded on cap > 0 so an older parent
+     renders the original "x of N types" line rather than a made-up "0 / 0". */
+  const vCap  = (vault && vault.cap)  | 0;
+  const vUsed = vCap > 0 ? ((vault && vault.used) | 0) : bankedTotal;
+  const vRoom = (vault && vault.room) | 0;
+
   /* 🔎 FIND A RESOURCE. The catalogue is long and almost every card reads 0/0,
      so the two questions a player actually has — "what can I put in right now"
      and "where is the one I am looking for" — were both answered by scrolling.
@@ -1719,7 +1740,10 @@ function PageOpsVault({ account }) {
       </div>
 
       <div className="grid g-4" style={{ marginBottom: 14 }}>
-        <Metric k="Resources in bank" v={`${fmt(bankedTotal)} units`} sub={`${bankedTypes} of ${cat.length} types`} />
+        <Metric k="Resources in bank"
+                v={vCap > 0 ? `${fmt(vUsed)} / ${fmt(vCap)}` : `${fmt(bankedTotal)} units`}
+                sub={vCap > 0 ? `${fmt(vRoom)} units of room · ${bankedTypes} of ${cat.length} types`
+                              : `${bankedTypes} of ${cat.length} types`} />
         <Metric k="Resources in wallet" v={`${fmt(walletTotal)} units`} sub="loose salvage" />
         <Metric k="Cinder in bank" v={fmt(account ? account.cinder : 0)} sub="🔥 CDR" />
         <Metric k="Aza in bank" v={fmt(account ? account.aza : 0)} sub="👑 AZA" />

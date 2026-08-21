@@ -61692,6 +61692,12 @@ function openBankOfEthos() {
           resCatalog: resCatalog,
           walletRes: walletRes,
           bankRes: (BankEthos.ready && BankEthos.resources) ? BankEthos.resources : {},
+          // Vault ceiling + deposit fee, read from the enforcing helpers so
+          // the Ops Vault page cannot show a cap the deposit path does not use.
+          vaultCap: BOE_VAULT_CAP,
+          vaultFee: BOE_DEPOSIT_FEE,
+          vaultUsed: _boeVaultUsed(),
+          vaultRoom: _boeVaultRoom(),
           bankReady: !!BankEthos.ready,
           extCols: !!BankEthos._extCols,
           // True until the player completes the AuthScreen application
@@ -61863,7 +61869,8 @@ function openBankOfEthos() {
         // Same catalogue as postSeed below — a first paint that dropped the
         // held/banked ids would show a banked chain resource with no card for
         // the ~1 s before the real seed lands. One helper, both sites.
-        vault: { resCatalog: _boeResCatalog(), walletRes: {}, bankRes: {}, bankReady: !!BankEthos.ready, extCols: !!BankEthos._extCols },
+        vault: { resCatalog: _boeResCatalog(), walletRes: {}, bankRes: {}, bankReady: !!BankEthos.ready, extCols: !!BankEthos._extCols,
+                 cap: BOE_VAULT_CAP, fee: BOE_DEPOSIT_FEE, used: _boeVaultUsed(), room: _boeVaultRoom() },
         // First-paint default: if we haven't fetched the bank row yet,
         // treat as pending so the AuthScreen renders. postSeed updates
         // this with the real flag once boeFetch resolves.
@@ -216503,6 +216510,14 @@ window.cityVaultState = function () {
       canBank: !!(BankEthos && BankEthos.ready && BankEthos._extCols),
       bank: (BankEthos && BankEthos.resources && typeof BankEthos.resources === 'object')
         ? Object.assign({}, BankEthos.resources) : {},
+      /* 🏦 THE CAP TRAVELS WITH THE BALANCE, from the same helpers
+         boeDepositRes refuses with. A UI that recomputed either number
+         could disagree with the rule that actually blocks the deposit, and
+         the readout is the half a player would believe. */
+      cap: BOE_VAULT_CAP,
+      fee: BOE_DEPOSIT_FEE,
+      used: _boeVaultUsed(),
+      room: _boeVaultRoom(),
     };
   } catch (e) { return { ready: false, canBank: false, bank: {} }; }
 };

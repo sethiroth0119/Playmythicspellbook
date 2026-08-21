@@ -2579,7 +2579,14 @@ const MythicCityBridge = (() => {
       return { ready: false, canBank: false, bank: {} };
     }
     if (B.mode === 'message') { return (await rpc('vaultState', {})) || { ready: false, canBank: false, bank: {} }; }
-    return { ready: true, canBank: true, bank: Object.assign({}, mockVaultLedger()) };
+    /* Standalone mirrors the SHAPE so the panel is testable offline. These
+       two numbers are a mock, like the ledger above — the real cap and fee
+       are enforced in index.html's boeDepositRes and arrive over the bridge
+       in 'parent' / 'message' mode, which is every mode a player is in. */
+    const _mv = mockVaultLedger();
+    let _mu = 0; for (const k in _mv) _mu += Math.max(0, _mv[k] | 0);
+    return { ready: true, canBank: true, bank: Object.assign({}, _mv),
+             cap: 8000, fee: 500, used: _mu, room: Math.max(0, 8000 - _mu) };
   };
   B.vaultMove = async (id, qty, dir) => {
     const n = Math.floor(Number(qty) || 0);
@@ -33652,6 +33659,15 @@ async function openVaultPanel(resId) {
   const st = await MythicCityBridge.vaultState();
   const box = document.createElement('div');
   box.id = 'cardpicker';                 // reuse the picker's overlay chrome
+  /* 🏦 What the vault will actually accept right now. st.room is the bank's
+     own headroom number (boeDepositRes refuses above it), so clamping the
+     All-in button to it is not a second copy of the rule — it is the rule,
+     read. cap === 0 means an older bridge that reports no ceiling, and every
+     readout below then falls back to the un-capped wording. */
+  const depMax = () => {
+    const inCamp = game.res[resId] | 0;
+    return ((st.cap | 0) > 0) ? Math.min(inCamp, st.room | 0) : inCamp;
+  };
   const paint = () => {
     const inCamp = game.res[resId] | 0;
     const inBank = (st.bank && st.bank[resId]) | 0;
@@ -33660,6 +33676,10 @@ async function openVaultPanel(resId) {
       (st.canBank
         ? '<div class="vrow"><span>🏕️ In camp stores</span><b id="v-camp">' + inCamp + '</b></div>' +
           '<div class="vrow"><span>🏦 In the vault</span><b id="v-bank">' + inBank + '</b></div>' +
+          ((st.cap | 0) > 0
+            ? '<div class="vrow"><span>📦 Vault space left</span><b id="v-room">' +
+                (st.room | 0).toLocaleString() + ' / ' + (st.cap | 0).toLocaleString() + '</b></div>'
+            : '') +
           // ⚠ Only the seven HUD_RES are lootable — RAID_STORE_LOSS walks that
           //   list, not the display list. Promising raid safety for the two rare
           //   resources would be a lie the player could not check.
@@ -33667,12 +33687,17 @@ async function openVaultPanel(resId) {
             ? 'Raiders take ' + Math.round(RAID_STORE_LOSS * 100) + '% of your camp stores when a wave breaks through. Anything in the vault is untouchable.'
             : 'Raiders cannot carry this off, so banking it is storage rather than safety — the vault simply keeps it separate from what the city spends.') +
           '</div>' +
+          ((st.fee | 0) > 0
+            ? '<div class="vnote">A deposit costs ' + (st.fee | 0).toLocaleString() +
+              ' 🔥 however much you move, so one big deposit is cheaper than several small ones. Withdrawing is free.</div>'
+            : '') +
           '<input id="v-amt" type="number" min="1" step="1" placeholder="amount" class="vinput">' +
           '<div class="vbtns">' +
             '<button class="pbtn ember" data-v="deposit">⤓ Deposit</button>' +
             '<button class="pbtn" data-v="withdraw">⤒ Withdraw</button>' +
           '</div>' +
-          '<div class="vbtns"><button class="pbtn" data-v="max-dep">All in (' + inCamp + ')</button>' +
+          '<div class="vbtns"><button class="pbtn" data-v="max-dep"' + (depMax() > 0 ? '' : ' disabled') +
+            '>All in (' + depMax() + ')</button>' +
             '<button class="pbtn" data-v="max-wd">All out (' + inBank + ')</button></div>'
         : '<div class="cpempty">' + (st.ready
             ? 'This bank account cannot hold resources yet — open the Bank of Ethos once to finish setting it up.'
@@ -33689,7 +33714,7 @@ async function openVaultPanel(resId) {
     let n = Math.floor(Number(amtEl && amtEl.value) || 0);
     let dir = 'deposit';
     if (act === 'withdraw') dir = 'withdraw';
-    if (act === 'max-dep') { n = game.res[resId] | 0; dir = 'deposit'; }
+    if (act === 'max-dep') { n = depMax(); dir = 'deposit'; }
     if (act === 'max-wd')  { n = (st.bank && st.bank[resId]) | 0; dir = 'withdraw'; }
     if (!(n > 0)) { toast('Enter an amount first.', 'bad'); return; }
     vaultBusy = true;
@@ -33702,6 +33727,8 @@ async function openVaultPanel(resId) {
       await refreshLedgerMirror();
       const fresh = await MythicCityBridge.vaultState();
       st.bank = fresh.bank || {};
+      // The ceiling moved too — repaint from the fresh read, not the stale st.
+      st.cap = fresh.cap | 0; st.used = fresh.used | 0; st.room = fresh.room | 0;
       updateHUD();
       toast('🏦 ' + (dir === 'deposit' ? 'Banked ' : 'Withdrew ') + n + ' ' + meta.ico + '.', 'good');
       logEvent('city good', '🏦 ' + (dir === 'deposit' ? 'Deposited ' : 'Withdrew ') + n + ' ' +
@@ -42659,6 +42686,13 @@ function animate() {
     bury: (n, dtMin) => { try { return window.MythicMortality ? window.MythicMortality.step(n, dtMin == null ? 1 : dtMin) : null; } catch (e) { return null; } },
     citDeaths: () => CITIZENS_API.deaths(),
     retire: (id, cause) => CITIZENS_API.retire(id, cause),
+    /* 🏦 THE OPS VAULT PANEL, exposed for the same reason meshBox is: the
+       room readout and the All-in clamp are DOM built from numbers that
+       arrive over the bridge, and the only way to show they agree with the
+       ceiling the bank actually enforces is to open the panel and read it.
+       See .gauntlet/drive-vault.mjs. */
+    vaultPanel: (id) => openVaultPanel(id),
+    vaultState: () => MythicCityBridge.vaultState(),
     /* 🧱 THE MESH PROBE, AND IT EXISTS BECAUSE OF ONE SPECIFIC SILENT FAILURE.
        `buildMesh` has no default arm, so a BUILDINGS row whose type is missing
        from the switch renders an EMPTY THREE.Group — an invisible building on a

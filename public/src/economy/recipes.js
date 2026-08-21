@@ -105,6 +105,20 @@ export const INDUSTRIES = {
   clinic:       { name: 'Clinic',                ico: '🏥', band: 'technical', kind: 'service' },
   cardShop:     { name: 'Card Shop',             ico: '🎴', band: 'unskilled', kind: 'retail' },
   luxuryStore:  { name: 'Luxury Boutique',       ico: '💎', band: 'skilled',   kind: 'retail' },
+  /* 🗡 THE ARMS DEALER — the one industry this round had to ADD rather than
+     find. Every other shop in the commerce round sells into a basket
+     category that already existed (clothing, electronics, healthcare,
+     luxury, restaurants, entertainment); there is no `weapons` category and
+     no weapons resource, so a Weapon Shop had nothing to be.
+     ⚠ IT SELLS `sportingGoods`, WHICH IS A REAL RESOURCE WITH REAL DEMAND —
+       the entertainment basket buys it — rather than a `weapons` id invented
+       to justify the shop. An id with no recipe behind it would price at
+       nothing, derive nothing, and fail the arbitrage sweep; an id with a
+       recipe behind it is a chain somebody has to supply. This is the
+       sporting-arms reading of the building, and it is the honest one until
+       a weapons chain is designed properly.
+     `skilled`, not `unskilled`: it is the licensed counter of the set. */
+  armsDealer:   { name: 'Arms Dealer',           ico: '🗡️', band: 'skilled',   kind: 'retail' },
   venue:        { name: 'Entertainment Venue',   ico: '🎭', band: 'unskilled', kind: 'service' },
   hotel:        { name: 'Hotel',                 ico: '🏨', band: 'unskilled', kind: 'service' },
   transitCo:    { name: 'Transit Company',       ico: '🚌', band: 'skilled',   kind: 'service' },

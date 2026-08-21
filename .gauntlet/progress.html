@@ -5,10 +5,10 @@
 
 <script id="run-data" type="application/json">
 {
-  "updated": "2026-08-20 \u2014 Wave 3: making the ground a place",
-  "headline": "The hex field is proven correct. Now it has to become beautiful.",
-  "phase": "Wave 3",
-  "round": 3,
+  "updated": "2026-08-21 \u2014 Wave 4: a real bug, and the objectives",
+  "headline": "The judge found four hexes nobody can click. That goes first.",
+  "phase": "Wave 4",
+  "round": 4,
   "goal": "Rebuild the battlefield as a full-field hex map \u2014 XCOM + Fire Emblem + FFT \u2014 in a post-apocalyptic world. Free camera (WASD pan, Q/E turn), five lootable ruins, three SCP-truck control points, XCOM-style move and attack arrows. Every existing battlefield function survives.",
   "bar": [
     "Sprite units and heroes stay sprites \u2014 extremely clear, high quality on the board",
@@ -104,8 +104,39 @@
     },
     {
       "name": "Post-apocalyptic terrain",
+      "state": "critiqued",
+      "note": "Three rounds each killed the previous round's named gap: relief too shallow to read, then a diorama still floating on a photograph, then four ornate braziers marking out the old rectangle in fire. The final judge ranked it far above both baselines and still refused to pass it \u2014 the whole field is painted at 19% of the value range, and the relief is a rim around a flat middle where all the units actually stand.",
+      "rounds": [
+        {
+          "n": 1,
+          "verdict": "rework",
+          "label": "relief 4.7px per step",
+          "short": "\u25d1"
+        },
+        {
+          "n": 2,
+          "verdict": "rework",
+          "label": "plate on a photograph",
+          "short": "\u25d1"
+        },
+        {
+          "n": 3,
+          "verdict": "rework",
+          "label": "braziers = the old rectangle",
+          "short": "\u25d1"
+        },
+        {
+          "n": 4,
+          "verdict": "run",
+          "label": "value range + the bug",
+          "short": "\u00b7\u00b7\u00b7"
+        }
+      ]
+    },
+    {
+      "name": "Ruins + loot",
       "state": "building",
-      "note": "The map generator emits no elevation at all and returns an empty tile list, so the stage \u2014 which can already draw lit slabs and cliff walls \u2014 is being fed nothing. Meanwhile every one of 168 tiles carries a pulsing gold rune circle. Both halves are this piece.",
+      "note": "The requirement is identity, not similarity: looting a ruin must call the real _lootGridOpen, so the salvage grid, the drag, the rotate, and swapping your own loot into the container are literally the tombstone ones. A parallel lookalike grid is a fail however good it looks.",
       "rounds": [
         {
           "n": 1,
@@ -116,14 +147,9 @@
       ]
     },
     {
-      "name": "Ruins + loot",
-      "state": "queued",
-      "note": "Car, church, school, hospital, house \u2014 visibly destroyed. Looting calls the real _lootGridOpen, not a lookalike, so the salvage grid and the swap behaviour are literally the tombstone ones."
-    },
-    {
       "name": "SCP truck control points",
       "state": "queued",
-      "note": "Three trucks with nodes. Per-turn tick scores a held point and un-scores a lost one; two of three held for three straight turns wins without touching the enemy hero."
+      "note": "Two mechanics, not one: a score that goes up when you hold a point and down when you lose it, and a streak \u2014 two of three for three straight turns wins without touching the enemy hero. The critic has to execute the turn loop, not read it."
     },
     {
       "name": "XCOM telegraph",
@@ -216,6 +242,31 @@
       "t": "07:05",
       "kind": "build",
       "text": "Wave 2 committed. Wave 3 opens on the piece the bar hinges on: the ground itself. Three rounds, a fresh critic each time doing a blind A/B against the two earlier captures of this same board, with a final judge who has seen none of the work."
+    },
+    {
+      "t": "09:20",
+      "kind": "critic",
+      "text": "Terrain round 1: the relief was measured, not eyeballed \u2014 one elevation step was 4.7px against 50px hexes, and the cap was deliberate: pickTile only intersects the y=0 plane, so taller slabs would resolve clicks to the row behind. The art could not get taller until picking got smarter."
+    },
+    {
+      "t": "10:30",
+      "kind": "critic",
+      "text": "Round 2 closed that and exposed the next layer: 45% of the frame was still photographic backdrop. Round 3 closed THAT and exposed the last one \u2014 four ornate braziers standing at exactly the corners of the old board rectangle, the only lattice-aligned furniture left, owning 27,220 gold pixels in a frame otherwise pulled down to 0.9% saturation."
+    },
+    {
+      "t": "11:40",
+      "kind": "critic",
+      "text": "Final judge: ranked the new board far above both baselines, then refused to pass it. 89.5% of pixels sit below L=96 because every material's fully-lit colour is near-black by construction \u2014 the light rig was never the problem. And every rung-3+ tile is in the outer rows, so the play area itself is flat."
+    },
+    {
+      "t": "11:45",
+      "kind": "finding",
+      "text": "The judge also found a real bug, not an art gap: four hexes are completely unclickable. A tall mound in the row in front can bury a low tile entirely, so no pixel inside it resolves to it \u2014 you cannot move there, select a unit standing there, or target it, while the DOM board still can. The in-tree self-check passes on that exact map because it files those tiles under 'occluded' and calls it acceptable."
+    },
+    {
+      "t": "11:50",
+      "kind": "build",
+      "text": "Wave 4 launched on two disjoint regions: the terrain fixes plus that bug, and the five lootable ruins. Control points and the alternate victory follow in the same wave."
     }
   ]
 }

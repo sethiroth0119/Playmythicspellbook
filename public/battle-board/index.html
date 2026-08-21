@@ -624,11 +624,46 @@ function groundExtent(){
    re-walking the same short array. The index is rebuilt only when the host
    replaces the map (buildStage), which is the only time MAP.tiles changes. */
 let TILE_INDEX = null;
+/* 🪜 The distinct heights present on this map, DESCENDING, always ending in 0.
+   Built here and not in pickTile because pickTile runs on every pointer move
+   and this is a property of the map, which changes only when the host replaces
+   it. It is what makes picking elevation-aware (see pickTile) and what gives a
+   tall cliff face its strata lines (paintWalls) — both need to know where the
+   rungs of the ladder actually are, and neither may hardcode _BB_ELEV: the
+   board is a renderer and the ladder lives in the generator. */
+let TILE_ELEVS = [0];
+/* 🏞 SKIRT STATE. Declared beside TILE_INDEX because rebuildTileIndex() writes
+   both and they must not be able to disagree about which map they describe.
+   SKIRT_CELLS is a memo of generated off-board dressing, keyed "x,z"; it is
+   thrown away wholesale whenever the host replaces the map. */
+let SKIRT_SEED = 0x9e3779b9;
+let SKIRT_CELLS = new Map();
 function rebuildTileIndex(){
   if (!Array.isArray(MAP.tiles)) MAP.tiles = [];
   TILE_INDEX = new Map();
-  for (const t of MAP.tiles) if (t) TILE_INDEX.set(t.x + ',' + t.z, t);
+  const set = new Set([0]);
+  let h = 0x811c9dc5 ^ (MAP.cols * 73856093) ^ (MAP.rows * 19349663);
+  for (const t of MAP.tiles) if (t){
+    TILE_INDEX.set(t.x + ',' + t.z, t); if (t.elev > 0) set.add(t.elev);
+    /* 🌱 THE SKIRT'S SEED, derived from the MAP ITSELF.
+       The board is a renderer: it is handed tiles, never the generator's seed
+       (`_bbMapSeed` lives in the game and is not on the wire). But two clients
+       in the same match receive byte-identical tile arrays, and a replay
+       rebuilds the same array from the recorded state — so a hash over the
+       tiles is exactly as deterministic as the seed that produced them, and it
+       cannot drift out of step with the field the way a second independent
+       seed could. Math.random() anywhere in this path would be a desync. */
+    h = Math.imul(h ^ (t.x * 374761393) ^ (t.z * 668265263), 2246822519);
+    h = Math.imul(h ^ _surfCode(t.surf) ^ Math.round((t.elev || 0) * 100), 3266489917);
+    h ^= h >>> 15;
+  }
+  SKIRT_SEED = (h >>> 0) || 0x9e3779b9;
+  SKIRT_CELLS = new Map();
+  TILE_ELEVS = Array.from(set).sort((a,b) => b - a);
 }
+const _SURF_ORDER = ['dirt','asphalt','rubble','grass','water'];
+function _surfCode(s){ const i = _SURF_ORDER.indexOf(s); return (i < 0 ? 7 : i) * 2654435761; }
+function tileElevRungs(){ if (!TILE_INDEX) rebuildTileIndex(); return TILE_ELEVS; }
 function tileAt(x,z){
   if (!TILE_INDEX) rebuildTileIndex();
   return TILE_INDEX.get(x + ',' + z) || null;
@@ -1101,9 +1136,21 @@ function seedMotes(){
   const b = moteBox();
   particles = particles.filter(p => !p.amb);
   for (let i=0;i<AMBIENT_MOTES;i++){
-    particles.push({ amb:true, x:rnd(-b.x,b.x), y:rnd(.1,3.4), z:rnd(-b.z,b.z),
+    particles.push({ amb:true, soft:true, x:rnd(-b.x,b.x), y:rnd(.1,3.4), z:rnd(-b.z,b.z),
+      /* `soft` drops them out of the additive pass in drawParticles(). Drifting
+         ash lit by an overcast sky is not an emitter; composited with `lighter`
+         even a grey mote blew out to a white bokeh disc, which is how a muted
+         colour was still reading as neon. */
       vx:rnd(-.06,.06), vy:rnd(.05,.22), vz:rnd(-.06,.06), t:0, life:1e9,
-      col: Math.random()<.5 ? '#b98cff' : '#ffcf7a', size:rnd(.8,2.1), g:0, w:Math.random()*7 });
+      /* 🚫 NOT PURPLE. These were #b98cff / #ffcf7a — a lavender and a bright
+         gold — and BAR R1 names "saturated fantasy-purple lighting" as a fail
+         condition outright, with "palette muted and desaturated, one value
+         range, nothing neon" as the requirement. Seventy saturated violet discs
+         drifting over a grey ruin were the single most chromatic thing in the
+         frame. What is actually in the air over a burnt street is ash and
+         cinder, so: a cool grey ash and a dull warm ember, both low-chroma and
+         both inside the ground's own value range. */
+      col: Math.random()<.55 ? '#8f9298' : '#b8946a', size:rnd(.8,2.1), g:0, w:Math.random()*7 });
   }
 }
 
@@ -1312,10 +1359,17 @@ function drawShards(){
     const k = s.s * p.s * .5;
     ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(s.r + Math.sin(T*.3+s.w)*.06);
     const g = ctx.createLinearGradient(0,-k,0,k);
-    g.addColorStop(0, rgba('#b98cff',.85)); g.addColorStop(1, rgba('#4a2a8a',.5));
+    /* 🚫 The last violet in the frame. These were #b98cff → #4a2a8a with a
+       #d8b8ff keyline: two fully saturated fantasy-purple lozenges hanging over
+       a burnt street, and BAR R1 names "saturated fantasy-purple lighting" as a
+       fail condition. The geometry and the motion are untouched — only the
+       material is, exactly as the rim kerb was restyled rather than removed.
+       Cold window glass tumbling out of a ruin is the same shape and belongs to
+       this world; it also stays inside the ground's value range. */
+    g.addColorStop(0, rgba('#a9b4bd',.62)); g.addColorStop(1, rgba('#3d4650',.42));
     ctx.fillStyle = g;
     ctx.beginPath(); ctx.moveTo(0,-k); ctx.lineTo(k*.42,0); ctx.lineTo(0,k); ctx.lineTo(-k*.42,0); ctx.closePath(); ctx.fill();
-    ctx.strokeStyle = rgba('#d8b8ff',.5); ctx.lineWidth = 1; ctx.stroke();
+    ctx.strokeStyle = rgba('#c6cfd6',.34); ctx.lineWidth = 1; ctx.stroke();
     ctx.restore();
   }
 }
@@ -1415,8 +1469,22 @@ const NB6 = [
   [[1,0],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1]],   /* even row */
   [[1,0],[1,1],[0,1],[-1,0],[0,-1],[1,-1]]      /* odd row  */
 ];
+/* 🏞 OFF-BOARD IS NOT A FLOOR ANY MORE — it is the SKIRT.
+   This used to return 0, which said "the world outside the play field is a
+   perfectly flat plane at play height". Everything downstream believed it: the
+   edge tiles of the field drew no cliff face outward, so the 14x12 lattice
+   ended in a clean rectangular lip with the location PHOTOGRAPH either side of
+   it. That is BAR R1's opening fail condition ("a grid drawn on a photo") and
+   its opening requirement ("the map IS the frame") in one line of code.
+   skirtElev() returns a seeded, terraced falloff that drops BELOW zero as it
+   recedes, so the field's outer rows now have something to fall to and the
+   ground keeps stepping down and outward past the frame edge.
+   ⚠ The skirt is DRESSING ONLY. Its cells never enter TILE_INDEX, so tileAt /
+   tileElev / pickTile / worldToTile and every bounds test in this file still
+   answer exactly as they did — a click off the board is still null, and the
+   168-tile hex assertions are untouched by construction. */
 function elevOf(x,z){
-  if (x < 0 || z < 0 || x >= MAP.cols || z >= MAP.rows) return 0;   /* off-board is the floor */
+  if (x < 0 || z < 0 || x >= MAP.cols || z >= MAP.rows) return skirtElev(x,z);
   return tileElev(x,z);
 }
 
@@ -1600,8 +1668,14 @@ function paintSurfTexture(x,z,e,S,surf){
 }
 
 /* ── one tile: cliff faces, slab top, texture, cell division ─────────────── */
-function paintTile(x,z,lv){
-  const t = tileAt(x,z);
+/* Split in two when the skirt landed. paintTile() is the FIELD's entry point
+   and still looks its tile up in TILE_INDEX; paintTileRec() takes the record
+   directly, which is the only way an off-board skirt cell — deliberately not in
+   that index, see skirtAt() — can be drawn by the same painter as the board.
+   Same code, same material, same cell division: the seam between the play field
+   and the world around it has to be invisible or the plate is still there. */
+function paintTile(x,z,lv){ paintTileRec(x, z, tileAt(x,z), lv); }
+function paintTileRec(x,z,t,lv){
   const e = t && t.elev ? t.elev : 0;
   const P = tilePoly(x,z,TILE_INSET,e); if (!P) return;
   const S = surfOf(t);
@@ -1612,8 +1686,16 @@ function paintTile(x,z,lv){
      one whole flank to the floor value. */
   const nd = clamp(.55 + lv.y*.45 + ((wpos.x*lv.x + wpos.z*lv.z)/hexW())*.018, .25, 1);
 
-  /* 🧱 CLIFF FACES, drawn before the top they hang from. */
-  if (e > 0) paintWalls(x,z,e,P,lv);
+  /* 🧱 CLIFF FACES, drawn before the top they hang from.
+     ⚠ This was `if (e > 0)`, which was true while off-board was a flat floor at
+     y=0: nothing at ground level could have anything to fall to. The skirt sinks
+     BELOW zero, so a play-field tile at e=0 on the rim now has a real drop on
+     its outward edge, and the guard was leaving a gap there — a hairline of
+     apron between the last row and the world outside it, which is the plate's
+     outline drawn in negative space. paintWalls() already skips every edge whose
+     neighbour is flush, so the unconditional call costs six comparisons on a
+     flat interior tile and nothing else. */
+  paintWalls(x,z,e,P,lv);
 
   /* the slab top */
   /* mixHexRaw, not mixHex — this value gets mixed again below. See the note at
@@ -1637,26 +1719,57 @@ function paintTile(x,z,lv){
      the top says it is up. Two steps, deliberately: a lift toward the surface's
      OWN highlight (a value step, which is what carries at a glance and at small
      size) and then a smaller warm wash toward the key (which is what says the
-     step is height and not a different material). */
+     step is height and not a different material).
+     ⚠ Both coefficients are calibrated against the TOP OF THE LADDER, not
+     against absolute world height, and they were re-scaled when the ladder went
+     from a 0.34 ceiling to 1.35. Left alone they clamped at the second rung and
+     every raised tile — kerb, rubble apron and ruin core alike — came back the
+     same washed-out pale, which quietly costs BAR R1's "surface variety within
+     one map": the height was legible and the MATERIAL was not. */
   if (e > 0){
-    col = mixHexRaw(col, S.hi, clamp(e*1.25, 0, .40));
-    col = mixHexRaw(col, LIGHT.key, clamp(.05 + e*.42, 0, .20));
+    col = mixHexRaw(col, S.hi, clamp(e*.34, 0, .40));
+    col = mixHexRaw(col, LIGHT.key, clamp(.05 + e*.11, 0, .20));
+  } else if (e < 0){
+    /* …and the same argument in reverse for the skirt. Ground that has fallen
+       away from the field is in its own shadow and further from the key, so it
+       loses value as it descends. Without this the terraces outside the board
+       came back the same value as the street and the whole surround read as one
+       flat apron again — the plate, moved outward by three rings. */
+    col = mixHexRaw(col, S.lo, clamp(-e*.30, 0, .42));
+    col = mixHexRaw(col, LIGHT.ambient, clamp(-e*.13, 0, .20));
   }
+  /* 🌘 THE SKIRT SINKS INTO THE DARK AS IT LEAVES. `_ring` is set only by
+     skirtAt(), so this is off for every one of the 168 play tiles.
+     Two jobs. One is pictorial: BAR R1's reference sits its diorama in a pool
+     of light with a heavy vignette, and ground that keeps its full value all
+     the way to the frame edge fights the field for attention. The other is
+     GAMEPLAY, and it is the real reason. The skirt is dressing — it is not in
+     TILE_INDEX and a click on it returns null — so it must never look like
+     somewhere the player could stand. Value is what carries that read at a
+     glance: the play field is the lit ground, everything darker than it is
+     scenery. */
+  const ring = (t && t._ring) || 0;
+  if (ring > 0) col = mixHexRaw(col, '#0a0910', clamp(.13 + ring*.115, 0, .55));
   /* 🎲 PER-TILE VALUE JITTER. Without it every dirt tile is the identical
      swatch and the board reads as painted cardboard hexes rather than as
      ground that happens to be divided into cells — the same "grid on a photo"
      smell, arrived at from the other direction. Hashed off the tile, so it is
      stable across rebuilds. */
-  const j = (_sHash(x,z,7) - .5) * .34;
+  const j = (_sHash(x,z,7) - .5) * (ring ? .16 : .34);
   col = mixHexRaw(col, j > 0 ? S.hi : S.lo, Math.abs(j));
   /* …and a value gradient across the tile itself, dark at the far edge and lit
      at the near one. P[4] is the far corner and P[1] the near one (corner i
      sits at i*60-30 degrees, so +z — toward the eye — is corner 1). */
   pathPoly(P);
   const tg = ctx.createLinearGradient(P[4].x, P[4].y, P[1].x, P[1].y);
-  tg.addColorStop(0, mixHexRaw(col, S.lo, .30));
-  tg.addColorStop(1, mixHexRaw(col, S.hi, .16));
-  ctx.globalAlpha = S.a; ctx.fillStyle = tg; ctx.fill(); ctx.globalAlpha = 1;
+  /* Flatter across a skirt cell. On the play field this cross-tile ramp is what
+     stops a hex reading as a flat swatch; out on the skirt the same ramp draws
+     a bright rim on the near half of EVERY cell, which is the cell division
+     coming back as shading after it was deliberately taken out of the stroke.
+     Neighbouring skirt cells at one height have to merge into a shelf. */
+  tg.addColorStop(0, mixHexRaw(col, S.lo, ring ? .13 : .30));
+  tg.addColorStop(1, mixHexRaw(col, S.hi, ring ? .06 : .16));
+  ctx.globalAlpha = ring ? 1 : S.a; ctx.fillStyle = tg; ctx.fill(); ctx.globalAlpha = 1;
   if (t && t.type === 'hazard'){ pathPoly(P); ctx.fillStyle = rgba('#5a1a0e',.34); ctx.fill(); }
   if (t && t.type === 'objective'){ pathPoly(P); ctx.fillStyle = rgba('#6a5a1e',.30); ctx.fill(); }
 
@@ -1666,7 +1779,7 @@ function paintTile(x,z,lv){
      14-deep board reads as a flat sheet of the same value from the horizon to
      the player's feet, which is the "flat plate" fail condition wearing a
      texture. Row 0 is the far edge. */
-  const hz = (1 - z/Math.max(1,MAP.rows-1)) * (.06 + LIGHT.haze*.20);
+  const hz = clamp(1 - z/Math.max(1,MAP.rows-1), 0, 1.25) * (.06 + LIGHT.haze*.20);
   if (hz > .004){ pathPoly(P); ctx.fillStyle = rgba(LIGHT.fog, hz); ctx.fill(); }
 
   /* 🔲 THE CELL DIVISION — and this is the line that used to be
@@ -1680,11 +1793,20 @@ function paintTile(x,z,lv){
      GROUND being divided rather than as jewellery laid on top, and it survives
      both a dark asphalt tile and a pale rubble one because it carries a value
      step in each direction. */
+  /* …and the skirt gets the dark seam only, faint, with NO lit lip. The lip is
+     what says "this is a cell you can pick"; drawing it out here would publish
+     a 24x18 grid over a 14x12 board and invite the player to click ground the
+     picker will answer null for. The faint dark seam stays because without any
+     division at all the surround flattens into one poured slab — but it reads
+     as a crack in the ground, not as a cell edge. */
   pathPoly(P);
-  ctx.strokeStyle = 'rgba(6,6,10,.38)'; ctx.lineWidth = 1.8; ctx.stroke();
-  pathPoly(P);
-  ctx.strokeStyle = rgba(mixHexRaw(S.grit, LIGHT.key, .35), .13 + nd*.13);
-  ctx.lineWidth = .9; ctx.stroke();
+  ctx.strokeStyle = ring ? 'rgba(6,6,10,.13)' : 'rgba(6,6,10,.38)';
+  ctx.lineWidth = ring ? 1.0 : 1.8; ctx.stroke();
+  if (!ring){
+    pathPoly(P);
+    ctx.strokeStyle = rgba(mixHexRaw(S.grit, LIGHT.key, .35), .13 + nd*.13);
+    ctx.lineWidth = .9; ctx.stroke();
+  }
 }
 
 /* 🧱 CLIFF FACES. This used to draw three quads from the fixed index pairs
@@ -1722,10 +1844,41 @@ function paintWalls(x,z,e,P,lv){
     ctx.beginPath();
     ctx.moveTo(P[i].x,P[i].y); ctx.lineTo(P[j].x,P[j].y);
     ctx.lineTo(B[j].x,B[j].y); ctx.lineTo(B[i].x,B[i].y); ctx.closePath();
-    /* vertical gradient: bright at the lip, occluded at the foot */
-    const g2 = ctx.createLinearGradient(0, (P[i].y+P[j].y)/2, 0, (B[i].y+B[j].y)/2);
-    g2.addColorStop(0, mixHex('#0a0810', LIGHT.key, .10 + lam*.34));
-    g2.addColorStop(1, mixHex('#050409', LIGHT.key, .03 + lam*.12));
+    /* 🎚 THE FACE IS NOT ONE FLAT BLACK BAND. It was: two near-black stops,
+       #0a0810 → #050409, a 5-value spread that at any real size is a single
+       silhouette. With a 4.7px step nobody could tell; with a 50px cliff three
+       stacked terraces merged into one thick outline and the relief the ladder
+       had just bought went straight back out again.
+       Two things break it up, and they answer two different questions.
+       1 · WHICH LEVEL IS THIS. `tier` is the face's lip as a fraction of the
+           tallest thing on the map, and it steps the face's whole base value:
+           a wall falling from the ruin core is materially lighter and warmer
+           than the kerb face two rungs down, so a terrace reads as three faces
+           rather than as one tall shadow. This is a value break, deliberately,
+           not a hue break — value is what survives at 50px and in the corner of
+           the player's eye.
+       2 · HOW FAR DOES IT FALL. A face that spans intermediate rungs of the
+           ladder gets a crease ruled at each one, with a lit ledge just under
+           it. That is what a multi-storey drop looks like — courses of masonry,
+           not a cliff — and it comes from tileElevRungs(), the map's own
+           distinct heights, so it cannot drift out of step with the generator
+           the way a hardcoded copy of _BB_ELEV would. */
+    const topY = (P[i].y+P[j].y)/2, botY = (B[i].y+B[j].y)/2;
+    const g2 = ctx.createLinearGradient(0, topY, 0, botY);
+    const rungs = tileElevRungs(), tier = clamp(e / (rungs[0] || 1), 0, 1);
+    const lipC  = mixHexRaw(mixHexRaw('#0b0912', '#7a6e5d', .05 + tier*.40), LIGHT.key, .07 + lam*.30);
+    const footC = mixHexRaw(mixHexRaw('#040308', '#221e19', .08 + tier*.34), LIGHT.key, .02 + lam*.10);
+    g2.addColorStop(0, lipC);
+    const span = e - below;
+    for (let k = 0; k < rungs.length; k++){
+      const r = rungs[k];
+      if (r >= e - 1e-4 || r <= below + 1e-4) continue;    /* strictly inside the drop */
+      const f = clamp((e - r)/span, .04, .96);             /* rungs[] descends → f ascends */
+      const band = mixHexRaw(lipC, footC, f);
+      g2.addColorStop(f - .022, mixHexRaw(band, '#000000', .40));
+      g2.addColorStop(f + .006, mixHexRaw(band, LIGHT.key, .18));
+    }
+    g2.addColorStop(1, footC);
     ctx.fillStyle = g2; ctx.fill();
     /* a hairline of exposed aggregate along the broken lip */
     ctx.beginPath(); ctx.moveTo(P[i].x,P[i].y); ctx.lineTo(P[j].x,P[j].y);
@@ -1772,6 +1925,15 @@ function paintShadow(x,z,lv){
    block in index.html). They are billboards — projected from a world point on
    the slab top, then drawn in screen pixels so they stand UP out of the ground
    instead of lying in it. */
+/* The skirt's props are the same shapes drawn with a darker set of inks — the
+   same argument as the value sink in paintTileRec: scenery outside the play
+   field must not compete with the ground the player is reading. Built once per
+   bake and handed to paintSkirtCell, never recomputed per prop. */
+function dimInk(INK, k){
+  const o = {};
+  for (const key in INK) o[key] = mixHexRaw(INK[key], '#0a0910', k);
+  return o;
+}
 function decoInk(){
   return {
     /* all mixHexRaw: several of these are wrapped in rgba() at use */
@@ -1789,8 +1951,10 @@ function decoInk(){
    belongs here, where it can be tuned against a capture without regenerating
    every map. First pass had waist-high grass and dinner-plate rubble. */
 const DECO_K = { chunk:0.62, slab:0.80, kerb:0.78, rebar:0.66, scrub:0.72, tuft:0.46, reed:0.60 };
-function paintDeco(x,z,INK){
-  const t = tileAt(x,z); if (!t || !t.deco || !t.deco.length) return;
+/* Split for the same reason paintTile was — see the note there. */
+function paintDeco(x,z,INK){ paintDecoRec(x, z, tileAt(x,z), INK); }
+function paintDecoRec(x,z,t,INK){
+  if (!t || !t.deco || !t.deco.length) return;
   const e = t.elev || 0, R = hexSize();
   const w = gw(x,z,e);
   for (let i=0;i<t.deco.length;i++){
@@ -1876,6 +2040,242 @@ function paintDecoShape(d, k, INK, rot){
   }
 }
 
+/* ══════════════════════════════════════════════════════════════════
+   🏞 THE SKIRT — the world OUTSIDE the play field.
+   ══════════════════════════════════════════════════════════════════
+   BAR R1's first line is "the map IS the frame — the diorama fills the screen
+   edge to edge; there is no small board plate floating in the middle of a
+   painting", and its first fail condition is "a grid drawn on a photo". Up to
+   this wave the 14x12 lattice stopped dead at its own rim, a gold-lit kerb was
+   ruled round three sides of it, and everything outside was the location
+   PHOTOGRAPH — a blurred jungle plate filling the bottom third of the host
+   rect. The terrain inside the rim had become real geometry; it was real
+   geometry sitting on a photo.
+   So the same lattice keeps going. Rings of NON-INTERACTIVE filler hexes are
+   generated from gw()/hexCorners() at x/z outside [0,cols)/[0,rows), stepping
+   DOWN a mirrored copy of the elevation ladder as they recede, so the near edge
+   terraces out of the bottom of the frame instead of ending at a rule, and the
+   flanks terrace out of the sides.
+
+   THREE THINGS THIS MUST NOT DO, and how each is prevented:
+   1 · It must not become playable. Skirt cells are never written to MAP.tiles
+       and never enter TILE_INDEX, so tileAt(), tileElev(), tileBlocked(),
+       worldToTile(), pickTile() and unitAt() cannot see them. pickTile still
+       answers null outside the board, the 168-tile bounds are unchanged, and
+       __bbHexCheck()'s assertions run over exactly the same 168 tiles they did.
+   2 · It must not desync. Everything here is a pure function of (x, z,
+       SKIRT_SEED), and SKIRT_SEED is hashed from the tile array the host sent
+       (see rebuildTileIndex). Two clients holding the same map build the same
+       skirt; a replay rebuilds it identically. There is no Math.random() in
+       this path and there must never be one.
+   3 · It must not cost a frame. It is painted inside paintTerrain(), which is
+       baked into TERR.cv and blitted — so it is paid on a map/resize/light
+       change, not per frame. Cells whose projected disc misses the canvas are
+       culled before any path op.                                             */
+
+/* Value hash over (x, z, n) folded with the map's seed. Deliberately NOT
+   _sHash: that one has no seed input, so every map would grow the same skirt.
+   Negative coordinates are the normal case here — Math.imul keeps the whole
+   thing in int32 and gives the same stream on every engine. */
+function _kHash(x, z, n){
+  let h = Math.imul(x | 0, 374761393) ^ Math.imul(z | 0, 668265263) ^ Math.imul(n | 0, 2246822519);
+  h = Math.imul(h ^ SKIRT_SEED, 1274126177);
+  h = Math.imul(h ^ (h >>> 13), 2654435761);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+/* Smooth value noise on the skirt lattice, so a heap has an edge and a middle
+   rather than being per-cell salt. Same two-octave shape the field generator
+   uses, at the resolution the skirt needs. */
+function _kNoise(x, z, f, salt){
+  const px = x * f, pz = z * f;
+  const x0 = Math.floor(px), z0 = Math.floor(pz);
+  const tx = px - x0, tz = pz - z0;
+  const sx = tx*tx*(3-2*tx), sz = tz*tz*(3-2*tz);
+  const a0 = _kHash(x0, z0, salt),     a1 = _kHash(x0+1, z0, salt);
+  const b0 = _kHash(x0, z0+1, salt),   b1 = _kHash(x0+1, z0+1, salt);
+  const t0 = a0 + (a1-a0)*sx, t1 = b0 + (b1-b0)*sx;
+  return t0 + (t1-t0)*sz;
+}
+
+/* 🪜 THE LADDER, MIRRORED. The field climbs [0, .30, .62, .95, 1.35]; the
+   skirt falls through the same rungs so a terrace outside the field is the
+   same SIZE of step as one inside it, and the two read as one landscape rather
+   than as a board plus a border. Taken from the map's own distinct heights
+   (tileElevRungs), never from a copy of _BB_ELEV — the ladder lives in the
+   generator and the board is not allowed a second opinion about it. */
+function skirtRungs(){
+  const r = tileElevRungs();                    /* descending, ends in 0 */
+  const out = [0];
+  for (let i = r.length - 2; i >= 0; i--) out.push(-r[i]);   /* -0.30 … -1.35 */
+  return out;                                   /* [0, -.30, -.62, -.95, -1.35] */
+}
+/* How far outside the field a cell lies, in whole cells, 0 for an on-board
+   cell. Offset coordinates, so this is a rectangular ring index — which is
+   what we want: the field is a rectangle and the skirt is what surrounds it. */
+function skirtRing(x, z){
+  const dx = Math.max(0, -x, x - (MAP.cols - 1));
+  const dz = Math.max(0, -z, z - (MAP.rows - 1));
+  return Math.max(dx, dz);
+}
+/* One skirt cell: elevation, surface and props. Memoised — elevOf() asks its
+   six neighbours for every wall of every cell, so an un-memoised version would
+   regenerate each cell about seven times per bake. */
+function skirtAt(x, z){
+  const key = x + ',' + z;
+  let c = SKIRT_CELLS.get(key);
+  if (c) return c;
+  const ring = skirtRing(x, z);
+  const rungs = skirtRungs();
+  /* ⏬ HOW FAST IT FALLS, and it is NOT the same rate in every direction. The
+     camera is a 43° three-quarter, so a row in front of the board is worth
+     about 60 screen px while a column beside it is worth the full hex width and
+     keeps going for nine of them. Measured at the game's 802x688 rect, only
+     about two and a half skirt ROWS fit between the near edge and the bottom of
+     the frame — so a falloff that treated a row and a column alike spent the
+     whole near budget on one gentle step and the bottom of the picture came
+     back as more flat board. Weighting the near direction is what turns those
+     two rows into a real terraced descent that leaves the frame. */
+  const dxOut = Math.max(0, -x, x - (MAP.cols - 1));
+  const dzOut = Math.max(0, -z, z - (MAP.rows - 1));
+  const ringE = Math.max(dxOut, dzOut * (z > MAP.rows - 1 ? 1.7 : 1));
+  /* Level, then noise. A pure function of the ring would be concentric
+     rectangles — the "props evenly spaced on a lattice" smell, applied to
+     relief — so the noise field is what actually decides, with the ring only
+     biasing it downward. A cell can therefore hold up a shelf one step higher
+     than its neighbours further in, which is what a collapsed edge looks like. */
+  const n = _kNoise(x, z, 0.34, 0x51ed) * 0.72 + _kNoise(x, z, 0.9, 0x27b1) * 0.28;
+  let lvl = Math.round(ringE - 0.35 + (n - 0.5) * 1.7);
+  /* 🧵 AND THE BOUNDARY IS BROKEN ON PURPOSE. If every cell in the first ring
+     stepped down, the drop from the play field into the skirt would be one
+     continuous cliff all the way round — a lit hairline ruled across the bottom
+     of the frame and up both flanks, which is the gold rail this wave just
+     deleted, redrawn in stone. Roughly two cells in five stay flush with the
+     field instead, so the edge of the play area dissolves into the ground
+     rather than being outlined by it. */
+  if (ring === 1 && n < 0.42) lvl = 0;
+  lvl = Math.min(rungs.length - 1, Math.max(0, lvl));
+  /* MATERIAL CONTINUITY. The nearest on-board tile is what the skirt is a
+     continuation OF — a street that runs off the edge of the field has to stay
+     a street for a cell or two — so ring 1 inherits it outright and the rings
+     beyond it decay toward rubble, dirt and overgrowth as the built world runs
+     out. */
+  const near = tileAt(clamp(x, 0, MAP.cols - 1), clamp(z, 0, MAP.rows - 1));
+  let surf = (near && near.surf) || 'dirt';
+  if (ring > 1 || lvl > 1){
+    const d = _kNoise(x, z, 0.5, 0x1a3f);
+    if (surf === 'water') surf = 'dirt';         /* a puddle does not run off-map */
+    surf = d > 0.66 ? 'grass' : d > 0.30 ? (lvl >= 2 ? 'rubble' : 'dirt') : 'rubble';
+  }
+  c = { x:x, z:z, elev:rungs[lvl], surf:surf, _ring:ring, deco:skirtDeco(x, z, surf, lvl) };
+  SKIRT_CELLS.set(key, c);
+  return c;
+}
+function skirtElev(x, z){ return skirtAt(x, z).elev; }
+
+/* Props, in the same wire shape the generator emits (`k` kind, `u`/`v` offsets
+   in circumradii, `s` size, `r` heading) so paintDecoShape draws them with the
+   identical code path as the field's — the skirt must be made of the same stuff
+   as the board or the seam shows. Thinner than the field: this is periphery,
+   under the vignette, and 260-odd cells of full prop density is bake time spent
+   where nobody is looking. */
+function skirtDeco(x, z, surf, lvl){
+  const d = [];
+  let i = 0;
+  const rp = () => _kHash(x, z, 900 + (i++));
+  const put = (k, spread, s0, s1) => d.push({
+    k:k, u:(rp()-0.5)*spread, v:(rp()-0.5)*spread,
+    s:s0 + rp()*(s1-s0), r:rp()*6.28
+  });
+  if (surf === 'rubble'){
+    const n = 2 + ((rp()*3) | 0);
+    for (let j=0;j<n;j++) put('chunk', 1.15, 0.18, 0.42);
+    if (rp() < 0.34) put('rebar', 0.9, 0.5, 0.95);
+    if (rp() < 0.22) put('slab', 0.8, 0.45, 0.8);
+  } else if (surf === 'grass'){
+    const n = 1 + ((rp()*3) | 0);
+    for (let j=0;j<n;j++) put('tuft', 1.15, 0.4, 0.95);
+    if (rp() < 0.34) put('scrub', 0.95, 0.45, 0.85);
+  } else if (surf === 'asphalt'){
+    if (rp() < 0.34) put('chunk', 1.1, 0.12, 0.26);
+    if (rp() < 0.16) put('tuft', 1.0, 0.3, 0.55);
+  } else {
+    if (rp() < 0.5) put('chunk', 1.1, 0.14, 0.3);
+    if (rp() < 0.42) put('scrub', 1.0, 0.4, 0.8);
+  }
+  if (lvl >= 2 && rp() < 0.3) put('rebar', 1.0, 0.45, 0.9);
+  return d;
+}
+
+/* 🌑 The skirt's own cast shadows. paintShadow() is left exactly as it is for
+   the field — its length comes off the tile's ABSOLUTE height, which is the
+   right answer when everything falls to y=0, and changing it would touch relief
+   the bar has already scored as met. Out here nothing falls to zero, so the
+   length has to come off the SPAN of each individual drop instead. */
+function paintSkirtShadow(x, z, e, lv){
+  const C = hexCorners(x, z, TILE_INSET, 0);
+  const nb = NB6[((z % 2) + 2) % 2];
+  const w = gw(x, z, 0);
+  for (let i=0;i<6;i++){
+    const j = (i+1)%6;
+    const below = elevOf(x+nb[i][0], z+nb[i][1]);
+    const span = e - below; if (span <= 1e-4) continue;
+    const mx = (C[i].x+C[j].x)/2, mz = (C[i].z+C[j].z)/2;
+    const len = clamp(span/(lv.y+.22), 0, span*3.2);
+    const dx = -lv.x*len, dz = -lv.z*len;
+    if ((mx-w.x)*dx + (mz-w.z)*dz <= 0) continue;
+    const q = [ project({x:C[i].x, y:below+.004, z:C[i].z}),
+                project({x:C[j].x, y:below+.004, z:C[j].z}),
+                project({x:C[j].x+dx, y:below+.004, z:C[j].z+dz}),
+                project({x:C[i].x+dx, y:below+.004, z:C[i].z+dz}) ];
+    if (!q.every(Boolean)) continue;
+    pathPoly(q);
+    const g2 = ctx.createLinearGradient(q[0].x,q[0].y, q[2].x,q[2].y);
+    g2.addColorStop(0, 'rgba(0,0,0,.42)'); g2.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g2; ctx.fill();
+  }
+}
+
+/* How far the skirt has to reach, in lattice indices. Derived from
+   groundExtent() — the same quad the apron and the location art already use —
+   so "the diorama reaches the frame edge" is one answer, not two that can
+   drift. Clamped hard: a degenerate camera must not be able to ask for ten
+   thousand hexes, and a bake is not allowed to become unbounded. */
+function skirtRange(){
+  const g = groundExtent();
+  const cz = (MAP.rows-1)/2, cx = (MAP.cols-1)/2;
+  const zMax = Math.min(MAP.rows-1 + 7, Math.ceil(cz + g.near/hexV()) + 1);
+  const zMin = Math.max(-4, Math.floor(cz - g.far/hexV()) - 1);
+  const xPad = Math.min(9, Math.ceil(g.x - cx) + 1);
+  return { x0:-xPad, x1:MAP.cols-1 + xPad, z0:zMin, z1:zMax };
+}
+/* One skirt cell, painted. Everything but the lookup is the field's own
+   painter, so the material, the cliff shading, the grain and the cell division
+   are the same code — there is no "skirt look" to fall out of step. */
+function paintSkirtCell(x, z, lv, INK){
+  if (x >= 0 && z >= 0 && x < MAP.cols && z < MAP.rows) return;   /* the field owns it */
+  const c = skirtAt(x, z);
+  const p = project(gw(x, z, c.elev));
+  /* CULL. p.s is pixels per world unit at this depth; two circumradii of margin
+     covers the hex plus its cliff face and its props. */
+  if (!p) return;
+  const m = p.s * hexSize() * 2.4 + 24;
+  if (p.x < -m || p.x > W + m || p.y < -m || p.y > H + m) return;
+  paintTileRec(x, z, c, lv);
+  /* Cast shadows only on the two rings that are actually read. Past that the
+     terraces are at the bottom rung under a heavy vignette, and a bake that
+     runs ~20 times across a time-of-day lerp is not the place to spend six
+     projected quads a cell on a shadow nobody can see. */
+  if (c._ring <= 2) paintSkirtShadow(x, z, c.elev, lv);
+  paintDecoRec(x, z, c, INK);
+}
+/* A whole skirt row, minus whatever the field occupies in it. */
+function paintSkirtRow(z, R, lv, INK){
+  for (let x = R.x0; x <= R.x1; x++){
+    if (z >= 0 && z < MAP.rows && x >= 0 && x < MAP.cols) continue;
+    paintSkirtCell(x, z, lv, INK);
+  }
+}
+
 /* ── the bake ─────────────────────────────────────────────────────────────
    Row order is far to near (gz 0 is the far edge). Within a row: tops, then
    the shadows cast by the PREVIOUS row — which land on this one, and so have
@@ -1884,6 +2284,7 @@ function paintDecoShape(d, k, INK, rot){
 function paintTerrain(){
   const lv = lightVector();
   const INK = decoInk();
+  const INK_S = dimInk(INK, .34);          /* the skirt's props, see dimInk() */
   /* Stone apron under the grid, out to groundExtent() so the floor reaches the
      frame edges (BAR R1: "the map IS the frame"). The rail on it is now a dark
      kerb with a dim warm lip rather than a bright gold rail: a gold rail you
@@ -1905,32 +2306,79 @@ function paintTerrain(){
     ctx.strokeStyle = rgba('#8a6f3a',.22); ctx.lineWidth = 1; ctx.stroke();
   }
 
-  /* ── LOCATION GROUND ART (clipped to the play plane) ── */
+  /* ── LOCATION GROUND ART ──
+     📷 CONFINED TO THE HORIZON STRIP. This used to blit the location
+     photograph across the WHOLE ground quad, from the far edge to gnd.near —
+     which at the game's real 802x688 rect meant roughly 130px of out-of-focus
+     jungle filling the bottom of the frame under the near row, and two blurred
+     strips down the flanks. A critic measured it and named it: "the terrain
+     itself is no longer a grid drawn on a photo — it is real geometry — but it
+     still sits ON a photo", against BAR R1's opening line.
+     The photograph is not deleted, because it is still the only thing that says
+     WHERE this battle is: it is pushed back to the strip beyond the far row,
+     where it reads as distant ground running out to the ruin line under the
+     sky, and everything nearer than that is now built out of hexes by the
+     skirt below. `photoNear` stops it a row and a half behind row 0's own far
+     edge, so even a gap in the skirt cannot expose foliage in front of the
+     field. Everything below the far edge is terrain or apron — nothing
+     photographic sits under the board's vertical midpoint any more. */
   const bq = [
     project({x:-gnd.x, y:0, z:-gnd.far}), project({x:gnd.x, y:0, z:-gnd.far}),
     project({x:gnd.x, y:0, z:gnd.near}),  project({x:-gnd.x, y:0, z:gnd.near})
   ];
-  if (bq.every(Boolean) && GROUND.img && GROUND.img.complete && GROUND.img.naturalWidth){
+  /* hexV()*1.0 puts the photograph's near boundary between row 0's CENTRE and
+     its near vertices, i.e. strictly behind the front edge of the far row. It
+     was 1.5 and that projected four pixels PAST row 0 at the flanks — measured,
+     not guessed. The rule this is answering is literal: no continuous run of
+     photograph anywhere below the far row. */
+  const photoNear = -boardExtent().z + hexV()*1.0;
+  const pq = [
+    project({x:-gnd.x, y:0, z:-gnd.far}), project({x:gnd.x, y:0, z:-gnd.far}),
+    project({x:gnd.x, y:0, z:photoNear}), project({x:-gnd.x, y:0, z:photoNear})
+  ];
+  if (pq.every(Boolean) && GROUND.img && GROUND.img.complete && GROUND.img.naturalWidth){
     ctx.save();
-    pathPoly(bq); ctx.clip();
+    pathPoly(pq); ctx.clip();
     if (GROUND.prev && GROUND.fade < 1 && GROUND.prev.complete) drawGroundSlices(GROUND.prev, 1);
     drawGroundSlices(GROUND.img, GROUND.fade);
     /* light grade: the location sits under the battle's sky */
     const shade = clamp(0.60 - LIGHT.keyI*0.30, 0.10, 0.66);
-    pathPoly(bq); ctx.fillStyle = rgba(LIGHT.fog, shade); ctx.fill();
+    pathPoly(pq); ctx.fillStyle = rgba(LIGHT.fog, shade); ctx.fill();
     ctx.globalCompositeOperation = 'lighter';
-    pathPoly(bq); ctx.fillStyle = rgba(LIGHT.key, 0.05 + LIGHT.keyI*0.045); ctx.fill();
+    pathPoly(pq); ctx.fillStyle = rgba(LIGHT.key, 0.05 + LIGHT.keyI*0.045); ctx.fill();
     ctx.globalCompositeOperation = 'source-over';
     const loc = LOCATIONS[MAP.location];
-    if (loc && loc.tint){ pathPoly(bq); ctx.fillStyle = loc.tint; ctx.fill(); }
+    if (loc && loc.tint){ pathPoly(pq); ctx.fillStyle = loc.tint; ctx.fill(); }
     ctx.restore();
   }
 
+  /* ── THE SKIRT AND THE FIELD, IN ONE FAR-TO-NEAR SWEEP ──
+     The skirt cannot simply be appended after the MAP loop: this is a painter's
+     algorithm with no depth buffer, and a skirt row BEHIND the field painted
+     last would draw straight over row 0. So the sweep is widened instead — the
+     same far-to-near row order, now running from the first skirt row behind the
+     board to the last one in front of it, with the field's own rows painted in
+     their proper place inside it. Row order is the depth sort; break it and the
+     terrain folds inside out. */
+  const R = skirtRange();
+
+  /* rows BEHIND the board first, so the rim kerb and row 0 both cover them */
+  for (let z = R.z0; z < 0; z++) paintSkirtRow(z, R, lv, INK_S);
+
+  /* the rim kerb's FAR edge — behind row 0, so it is baked here and the row
+     that must occlude it is painted immediately below. See frameBand(). */
+  frameBand(true);
+
   for (let z=0; z<MAP.rows; z++){
     for (let x=0; x<MAP.cols; x++) paintTile(x,z,lv);
+    /* the flanks of this row, outside the lattice, in the same pass */
+    paintSkirtRow(z, R, lv, INK_S);
     if (z > 0) for (let x=0; x<MAP.cols; x++) paintShadow(x,z-1,lv);
     for (let x=0; x<MAP.cols; x++) paintDeco(x,z,INK);
   }
+
+  /* …and the rows in FRONT of the board, which terrace down and out of frame */
+  for (let z = MAP.rows; z <= R.z1; z++) paintSkirtRow(z, R, lv, INK_S);
 
   /* grain over the whole play plane, under the horizon fade */
   if (bq.every(Boolean)){
@@ -2052,8 +2500,19 @@ function drawRune(gx,gz,nd,t){
   ctx.restore();
 }
 
-/* ornate gold frame + corner brazier pylons (reference art) */
-function drawFrame(){
+/* ornate gold frame + corner brazier pylons (reference art)
+   ⛰ Split into two passes when the elevation ladder was opened up. The band is
+   a 0.14-high kerb standing at the board's rim, so the FAR edge of it is behind
+   every tile and the other three are in front. That was invisible while the
+   tallest slab was 0.34 world units and 12px on screen; at 1.35 the back row
+   stands a clear 50px proud of the rim and a frame drawn last ruled a dark line
+   straight across the tops of the far slabs. So the far edge is baked INSIDE
+   paintTerrain, after the apron and before row 0 — the bake already runs far to
+   near, so the row that should occlude it is painted right afterwards — and
+   drawFrame() keeps the three edges that genuinely are in front of the field.
+   It cannot simply be drawn before the terrain blit: the stone apron reaches
+   further out in z than the frame does and would cover it. */
+function frameBand(far){
   const ext = boardExtent();
   /* Centred on the lattice, not on the origin: odd rows are shifted +½ column
      so the hexes are not symmetric about x=0, and a frame that is would sit a
@@ -2066,6 +2525,8 @@ function drawFrame(){
   const bot = corners.map(c => project({x:c.x, y:-.02, z:c.z}));
   if (top.every(Boolean) && bot.every(Boolean)){
     for (let i=0;i<4;i++){
+      /* corners[0]→corners[1] is the far edge (both at z = -hh) */
+      if ((i === 0) !== !!far) continue;
       const j = (i+1)%4;
       ctx.beginPath();
       ctx.moveTo(top[i].x,top[i].y); ctx.lineTo(top[j].x,top[j].y);
@@ -2084,6 +2545,20 @@ function drawFrame(){
   }
   /* pillars are depth-sorted with units — see drawPylon() */
 }
+/* 🚫 THE NEAR AND SIDE BANDS ARE GONE, and this is now a deliberate no-op.
+   They were the last literal statement that the battlefield is an OBJECT on a
+   table: a lit kerb ruled across the bottom of the frame and up both flanks,
+   with the world outside it. A critic put it exactly right — "the gold rule is
+   the thing that announces plate". With the skirt carrying the ground past the
+   frame edge on those three sides there is nothing left for them to enclose,
+   and drawing them would cut the diorama in half.
+   The FAR band survives (frameBand(true), baked inside paintTerrain): behind
+   row 0 it is not a frame edge at all, it is the lip of the horizon with the
+   ragged row-0 skyline standing over it.
+   Kept as a function rather than deleted at the call site so the drawBoard()
+   order stays readable and so a future camera can bring an edge back if a yaw
+   ever makes one meaningful again. */
+function drawFrame(){ /* near + side bands intentionally not drawn — see above */ }
 
 /* ══════════════════════════════════════════════════════════════════
    BOARD EVENTS  ── FOR CLAUDE CODE ──
@@ -2750,11 +3225,22 @@ function drawProp(t){
     ctx.beginPath(); ctx.arc(0,0,k*.4,0,7); ctx.stroke();
     ctx.restore();
   } else if (t.prop === 'pylon'){
+    /* 🚫 …and the third violet. This was a #b98cff → #3a1c6a crystal spire with
+       a #d8b8ff keyline: a fantasy mana shard standing in a bombed street, and
+       the brightest chroma left on the board once the motes and the floating
+       shards were pulled back. Restyled, NOT removed and NOT moved — the pylon
+       is a real obstacle (tileBlocked() blocks its tile) and it still stands
+       exactly where and how tall it did. It is now a snapped concrete stanchion
+       with a cold lit facet: same silhouette, same read at 20px, inside the
+       ground's own value range. BAR R1: "one value range; nothing neon". */
     const g = ctx.createLinearGradient(0,-k*1.1,0,0);
-    g.addColorStop(0, rgba('#b98cff',.9)); g.addColorStop(1, rgba('#3a1c6a',.8));
+    g.addColorStop(0, rgba(mixHexRaw('#8d8b84', LIGHT.key, .18), .92));
+    g.addColorStop(1, rgba('#26241f',.9));
     ctx.fillStyle = g;
     ctx.beginPath(); ctx.moveTo(0,-k*1.15); ctx.lineTo(k*.22,-k*.4); ctx.lineTo(0,0); ctx.lineTo(-k*.22,-k*.4); ctx.closePath();
-    ctx.fill(); ctx.strokeStyle = rgba('#d8b8ff',.6); ctx.stroke();
+    ctx.fill(); ctx.strokeStyle = rgba('#0a0810',.75); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,-k*1.15); ctx.lineTo(k*.22,-k*.4);
+    ctx.strokeStyle = rgba(mixHexRaw('#b6b0a2', LIGHT.key, .3), .5); ctx.stroke();
   } else if (t.prop === 'bones'){
     ctx.strokeStyle = rgba('#cfc4a8',.75); ctx.lineWidth = 2.4;
     ctx.beginPath(); ctx.moveTo(-k*.4,-k*.05); ctx.lineTo(k*.3,-k*.2); ctx.moveTo(-k*.25,-k*.24); ctx.lineTo(k*.36,-k*.02); ctx.stroke();
@@ -3703,8 +4189,33 @@ function worldToTile(wx, wz){
   if (col < 0 || row < 0 || col >= MAP.cols || row >= MAP.rows) return null;
   return { x:col, z:row };
 }
+/* ⛰ SCREEN → TILE, ELEVATION-AWARE.
+   This used to intersect the y = 0 plane and stop. That is only right on a flat
+   board, and it is why the elevation ladder in index.html was capped at 0.34
+   world units: the top of a slab at height e projects to the same pixel as a
+   ground point ~0.91·e FURTHER from the eye (the camera drops 0.914 world units
+   of y per unit of −z), one hex row is hexV = 0.866 deep, so past ~0.43 of a row
+   of height a click on a slab top silently resolved to the row BEHIND it. The
+   art could not get taller until picking could see height, which is why this is
+   the first edit and not the last.
+
+   The fix is a plane sweep, not an iteration from the flat answer. Sweeping was
+   chosen after the obvious cheaper thing was tried and rejected: "take the y=0
+   tile, re-intersect at ITS height, repeat until stable" converges on the WRONG
+   fixed point whenever the flat answer happens to land on a ground-level tile —
+   which is the common case, because a ground tile re-intersected at y=0 is
+   trivially stable and the loop exits pleased with itself before it has looked
+   at the slab the user actually clicked.
+
+   Because the ray descends monotonically, higher planes are crossed FIRST, i.e.
+   nearer the eye. So walk the map's distinct heights top-down and return the
+   first plane whose crossing lands on a tile that is actually that tall: that
+   tile's top face is the nearest surface under the cursor, occlusion included —
+   a 1.35-high ruin standing in front of a street tile takes the click, which is
+   what the picture already says it should do. Falling through every rung means
+   the ray met no top face, only a cliff side; the y = 0 answer is the tile whose
+   flank it entered, which is the right tile anyway. */
 function pickTile(mx, my){
-  /* unproject to a ray, intersect y=0 plane, convert to grid */
   const ndx = (mx - VIEW.cx) / VIEW.scale;
   const ndy = -(my - VIEW.cy) / VIEW.scale;
   const dir = norm({
@@ -3713,8 +4224,16 @@ function pickTile(mx, my){
     z: CAM.f.z + CAM.r.z*ndx + CAM.u.z*ndy
   });
   if (Math.abs(dir.y) < 1e-5) return null;
-  const t = -CAM.pos.y / dir.y; if (t <= 0) return null;
-  return worldToTile(CAM.pos.x + dir.x*t, CAM.pos.z + dir.z*t);
+  const at = h => {
+    const t = (h - CAM.pos.y) / dir.y;
+    return t > 0 ? worldToTile(CAM.pos.x + dir.x*t, CAM.pos.z + dir.z*t) : null;
+  };
+  const rungs = tileElevRungs();
+  for (let i = 0; i < rungs.length; i++){
+    const t = at(rungs[i]);
+    if (t && Math.abs(tileElev(t.x, t.z) - rungs[i]) < 1e-6) return t;
+  }
+  return at(0);
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -3726,11 +4245,29 @@ function pickTile(mx, my){
    else in this file would notice.
    It lives on window rather than running at boot on purpose — a match
    must not pay for it and must not have its console spammed. Call it:
-     window.__bbHexCheck()   →  { ok, tiles, centreFails, jitterFails }
+     window.__bbHexCheck()   →  { ok, tiles, centreFails, jitterFails,
+                                  slabFails, occluded, rungs }
+   ⛰ Second half added when the elevation ladder was opened up. The world-space
+   half above only ever proves gw(…,0) ↔ worldToTile. It cannot see the bug that
+   capped the ladder, because that bug is in the SCREEN → world step: pickTile
+   chooses which horizontal plane to unproject onto, and choosing wrong lands on
+   a real tile at a real world position — the round trip above stays green while
+   every click on high ground addresses the row behind it. So the slab half runs
+   the full loop the player's finger runs, project(gw(x,z,tileElev)) → pickTile,
+   at each tile's OWN height and jittered across its top face rather than only at
+   the centre, and it reports which rungs of the ladder it actually exercised so
+   "clean" cannot mean "the map happened to be flat".
+   `occluded` is counted apart from `slabFails` and is NOT a failure: a sample
+   the picker answers with a taller tile nearer the eye is a sample the player
+   cannot see either. It is reported rather than swallowed because a large number
+   there means the generator is burying tiles, which is a gameplay problem even
+   though the projection is right.
    ══════════════════════════════════════════════════════════════════ */
 function hexSelfCheck(opts){
   const rings = (opts && opts.rings) || 8;
-  const centre = [], jitter = [];
+  const centre = [], jitter = [], slab = [];
+  let occluded = 0, slabSamples = 0;
+  const rungHits = {};
   for (let z = 0; z < MAP.rows; z++){
     for (let x = 0; x < MAP.cols; x++){
       const w = gw(x, z, 0);
@@ -3750,14 +4287,41 @@ function hexSelfCheck(opts){
           jitter.push({ want:[x,z], got:t2 ? [t2.x,t2.z] : null,
                         deg: Math.round(a*180/Math.PI) });
       }
+      /* ⛰ the slab-top round trip, at this tile's own rung */
+      const e = tileElev(x,z);
+      rungHits[e.toFixed(3)] = (rungHits[e.toFixed(3)]||0) + 1;
+      if (!CAM || !VIEW.scale) continue;
+      const wt = gw(x, z, e);
+      for (let i = -1; i < rings; i++){
+        /* i = -1 is the centre; the rest walk the top face at 0.7 of the
+           INRADIUS, which is strictly inside the hex the slab top occupies. */
+        const a = i * Math.PI * 2 / rings, rr = i < 0 ? 0 : tileR() * 0.7;
+        const sp = project({ x: wt.x + Math.cos(a)*rr, y: e, z: wt.z + Math.sin(a)*rr });
+        if (!sp) continue;
+        slabSamples++;
+        const t3 = pickTile(sp.x, sp.y);
+        if (t3 && t3.x === x && t3.z === z) continue;
+        /* Taller ⇒ genuinely in the way, and nothing else needs checking.
+           The ray's y falls monotonically, so a plane at a greater height is
+           crossed EARLIER, i.e. nearer the eye. A taller answer is therefore a
+           surface in front of this sample by construction — including a
+           same-ROW neighbour, which an earlier version of this test wrongly
+           excluded by comparing world z and then reported ten honest occlusions
+           in `skirmish` as projection failures. */
+        if (t3 && tileElev(t3.x,t3.z) > e + 1e-6){ occluded++; continue; }
+        slab.push({ want:[x,z], got:t3 ? [t3.x,t3.z] : null, elev:+e.toFixed(3),
+                    deg: i < 0 ? 'centre' : Math.round(a*180/Math.PI) });
+      }
     }
   }
   const tiles = MAP.cols * MAP.rows;
   return { cols:MAP.cols, rows:MAP.rows, tiles,
-           samples: tiles * (1 + rings),
+           samples: tiles * (1 + rings) + slabSamples,
            centreFails: centre.length, jitterFails: jitter.length,
-           ok: centre.length === 0 && jitter.length === 0,
-           fails: centre.slice(0,10).concat(jitter.slice(0,10)) };
+           slabSamples, slabFails: slab.length, occluded,
+           rungs: rungHits, ladder: tileElevRungs().slice(),
+           ok: centre.length === 0 && jitter.length === 0 && slab.length === 0,
+           fails: centre.slice(0,10).concat(jitter.slice(0,10)).concat(slab.slice(0,10)) };
 }
 window.__bbHexCheck = hexSelfCheck;
 

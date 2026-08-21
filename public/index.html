@@ -103690,16 +103690,28 @@ function _bbMapSeed() {
   return _BB_SEED_FALLBACK;
 }
 
-// 🪜 THE ELEVATION LADDER, and why it stops at 0.34.
-// `pickTile` (battle-board:2612 area) intersects the view ray with the y = 0
-// plane ONLY — CONTRACT §7 R27. A tile whose TOP sits at height e therefore
-// resolves a click at a ground point pushed toward the camera by
-// e · (cam.z / cam.y) ≈ 1.09·e world units. One hex row is hexV = 1.5/√3 ≈
-// 0.866 deep, so 0.34 of height is 0.43 of a row — still inside the rounding
-// radius of the tile that was actually clicked. 0.40 would be 0.50 of a row and
-// would start resolving to the tile BEHIND, with no error and no warning.
-// Raise this number and high ground quietly becomes unclickable.
-const _BB_ELEV = [0, 0.13, 0.26, 0.34];
+// 🪜 THE ELEVATION LADDER.
+// Five rungs, and the numbers are chosen against the PICTURE, not against a
+// picking constraint. They used to be [0, 0.13, 0.26, 0.34] and the comment
+// here explained at length why 0.34 was the ceiling: `pickTile` intersected the
+// y = 0 plane only, so a slab top projected to the same pixel as a ground point
+// ~0.91·e further away, one hex row is hexV = 0.866 deep, and past ~0.43 of a
+// row of height a click on high ground silently resolved to the row BEHIND it.
+// That constraint is GONE — pickTile now sweeps the map's distinct heights from
+// the top down and returns the first tile whose own top face the ray meets
+// (battle-board/index.html, "SCREEN → TILE, ELEVATION-AWARE"). It is exact for
+// a single-height-per-column field, which is what this generator emits, and
+// window.__bbHexCheck() asserts the whole round trip at every rung.
+// So the ceiling is now what the eye needs. At the game's real 802x688 stage
+// rect one world unit of height is ~36 screen px, so:
+//   0.30 → ~11 px   the smallest step that reads as a STEP and not a bevel
+//   1.35 → ~49 px   total relief ≈ one full hex width (hexes measure ~50 px)
+// BAR R1 asks for "chunky slabs at several heights with visible cliff faces …
+// height readable at a glance". Under ~10 px a face is an outline; the old
+// ladder's 4.7 px per step is why the board read as a coloured hex mosaic.
+// ⚠ This array is copied BYTE-FOR-BYTE into public/battle-board/_harness.html.
+// Change it here and re-copy, or the control capture is a lie.
+const _BB_ELEV = [0, 0.30, 0.62, 0.95, 1.35];
 
 // Odd-r neighbour offsets, indexed [rowParity][edge], where `edge` is the same
 // index the stage's hexCorners() uses: edge i faces outward at i·60°.
@@ -103784,11 +103796,17 @@ function _bbGenTerrain(cols, rows, seed) {
     if (lots.some(L => Math.hypot(L.ax - p.ax, L.az - p.az) < (L.r + r) * 0.9)) continue;
     lots.push({ ax: p.ax, az: p.az, r: r }, { ax: -p.ax, az: -p.az, r: r });
   }
+  // Three concentric shells, and they deliberately reach the TOP of the ladder:
+  // a ruin footprint has to stand a full unit-height above the street or the
+  // building it is the remains of reads as a kerb. Core → rung 4 (1.35, about
+  // one hex width on screen), the shell around it → rung 3, the outer apron →
+  // rung 2, which leaves rung 1 to the kerb step alone so the pavement still
+  // has its own distinct height and does not merge into the rubble.
   function lotLevel(ax, az) {
     let lv = 0;
     for (let i = 0; i < lots.length; i++) {
       const L = lots[i], d = Math.hypot(ax - L.ax, az - L.az) / L.r;
-      if (d < 1) lv = Math.max(lv, d < 0.34 ? 3 : d < 0.68 ? 2 : 1);
+      if (d < 1) lv = Math.max(lv, d < 0.34 ? 4 : d < 0.68 ? 3 : 2);
     }
     return lv;
   }

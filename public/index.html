@@ -36564,7 +36564,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v121c4';
+  window.BUILD_VERSION = 'v121c5';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -60376,6 +60376,26 @@ async function boeExchangeAzaToCinder(azaAmt) {
 // Profile.salvage[id] ⇄ bank_of_ethos.resources[id]. Validated against
 // the real salvage ledger; rolled back on cloud failure.
 function _boeResName(id) { try { return (typeof _meta === 'function' ? _meta(id).name : id) || id; } catch (e) { return id; } }
+/* 🏦 VAULT LIMITS — one copy, read by the deposit path and by every UI that
+   wants to show how full the vault is. The Ethos page and the city modal both
+   render "x / cap" from these, so a retune moves the rule and the readout
+   together and they cannot drift apart.
+   ⚠ Counted over BankEthos.resources itself, NOT over the catalogue. A chain id
+     banked through the shipped bug the catalogue note above records still takes
+     up room, and a cap that could not see it would let a player past it. */
+const BOE_VAULT_CAP = 8000;
+const BOE_DEPOSIT_FEE = 500;
+function _boeVaultUsed() {
+  try {
+    const r = (BankEthos && BankEthos.resources) || {};
+    let n = 0;
+    for (const k in r) n += Math.max(0, r[k] | 0);
+    return n;
+  } catch (e) { return 0; }
+}
+function _boeVaultRoom() { return Math.max(0, BOE_VAULT_CAP - _boeVaultUsed()); }
+try { window.__boeVault = { cap: () => BOE_VAULT_CAP, fee: () => BOE_DEPOSIT_FEE, used: _boeVaultUsed, room: _boeVaultRoom }; } catch (e) {}
+
 async function boeDepositRes(id, qty) {
   qty = Math.floor(qty);
   if (!BankEthos.ready) { showToast('Bank not ready.', 2600); return false; }
@@ -60383,7 +60403,33 @@ async function boeDepositRes(id, qty) {
   if (!id || !(qty > 0)) { showToast('Enter an amount.'); return false; }
   const have = (typeof getRes === 'function') ? getRes(id) : 0;
   if (have < qty) { showToast('Need ' + qty.toLocaleString() + ' ' + _boeResName(id) + ' — you have ' + have.toLocaleString() + '.', 4200); return false; }
-  if (typeof spendResources === 'function' && !spendResources({ [id]: qty })) { showToast('Not enough ' + _boeResName(id) + '.'); return false; }
+
+  /* 🏦 THE CAP AND THE FEE LIVE HERE, ON THE ONE DEPOSIT PATH.
+     Both the city's Ops Vault modal and the Ethos page call this function, so
+     putting either rule in a UI would let the two disagree — and the one that
+     did not enforce it would be the one players used.
+
+     ORDER IS THE WHOLE CORRECTNESS ARGUMENT, and it runs cheapest-to-unwind
+     first: refuse on space, then refuse on fee, THEN take the resources. Taking
+     the goods before discovering the vault is full would need a refund path
+     through the same clamped addRes the rollback note below warns about. */
+  const used = _boeVaultUsed();
+  if (used + qty > BOE_VAULT_CAP) {
+    const room = Math.max(0, BOE_VAULT_CAP - used);
+    showToast('🏦 The vault holds ' + BOE_VAULT_CAP.toLocaleString() + ' units and ' + used.toLocaleString()
+      + ' are in it — room for ' + room.toLocaleString() + ' more, not ' + qty.toLocaleString() + '.', 5200);
+    return false;
+  }
+  /* 💸 A FLAT FEE PER DEPOSIT, not per unit — so banking one thing at a time is
+     the expensive way to do it and a single large deposit is rewarded. Charged
+     BEFORE the goods move and refunded on any failure below. */
+  if (typeof spendGems === 'function' && !spendGems(BOE_DEPOSIT_FEE)) {
+    showToast('🏦 A deposit costs ' + BOE_DEPOSIT_FEE.toLocaleString() + ' 🔥 — you cannot cover the fee.', 4600);
+    return false;
+  }
+  const _refundFee = () => { try { if (typeof addGems === 'function') addGems(BOE_DEPOSIT_FEE); } catch (e) {} };
+
+  if (typeof spendResources === 'function' && !spendResources({ [id]: qty })) { _refundFee(); showToast('Not enough ' + _boeResName(id) + '.'); return false; }
   try { if (typeof _persistResourcesSoon === 'function') _persistResourcesSoon(); } catch (e) {}
   /* 🔒 ONE SECTION: read the bank map, add to it, write it. See _boeResTx.
      This used to be a bare `Object.assign({}, BankEthos.resources)` here and a
@@ -60425,8 +60471,15 @@ async function boeDepositRes(id, qty) {
         beside a _refundRes call. A new banking path that reaches for addRes on
         an unwind is the bug, whether or not anyone has found its window yet. */
     if (typeof _refundRes === 'function') _refundRes(id, qty); else if (typeof addRes === 'function') addRes(id, qty);
+    /* 💸 AND THE FEE COMES BACK TOO. The goods being unwound above is only half
+       the undo — the deposit was also CHARGED before this write was attempted,
+       and a failed deposit that keeps the fee is the player paying for
+       something that never happened. Exactly the invariant the block above
+       states, applied to the other currency it never had to think about. */
+    _refundFee();
     try { _persistResourcesSoon(); } catch (_) {}
-    showToast(_tx.refused || '⚠ Deposit failed — refunded.', _tx.refused ? _tx.refusedMs : 4200);
+    showToast(_tx.refused || '⚠ Deposit failed — resources and the ' + BOE_DEPOSIT_FEE.toLocaleString() + ' 🔥 fee refunded.',
+      _tx.refused ? _tx.refusedMs : 4600);
     return false;
   }
   try { boeLog('resource', 0, 0, 'Banked ' + qty.toLocaleString() + ' ' + _boeResName(id)); } catch (e) {}
@@ -85150,7 +85203,7 @@ async function _whOpen(warehouseId) {
   ov.style.cssText = 'position:fixed;inset:0;z-index:2147483400;background:#0b0910';
   const fr = document.createElement('iframe');
   fr.id = 'wh-frame';
-  fr.src = 'warehouse/index.html?v=v121c4';
+  fr.src = 'warehouse/index.html?v=v121c5';
   fr.setAttribute('title', 'Storage Warehouse');
   fr.style.cssText = 'width:100%;height:100%;border:0;background:#0b0910';
   ov.appendChild(fr);
@@ -107935,7 +107988,7 @@ const _BME_TORDER = Object.keys(_BME_TERRAIN);
 // and BB_VER may legitimately move on its own between releases (it sat at
 // v120x1 while the rest sat at v120x0). The release sweep then drags all nine
 // knobs back onto ONE string, which is why it reads v120x3 here today.
-const BB_VER = 'v121c4';
+const BB_VER = 'v121c5';
 // terrain key → board tile type. Anything unlisted is plain ground.
 const BB_TERRAIN_TYPE = { water:'hazard', lava:'hazard', blight:'hazard' };
 // editor prop key → the board's billboard prop vocabulary
@@ -118136,7 +118189,7 @@ function _mmMount() {
   } catch (e) {}
   const f = document.createElement('iframe');
   f.id = 'mm-frame';
-  f.src = 'main-menu/index.html?v=v121c4';
+  f.src = 'main-menu/index.html?v=v121c5';
   f.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;border:0;z-index:5;background:#0a0610';
   document.body.appendChild(f);
   App._mmReady = false;
@@ -213859,7 +213912,7 @@ function _openNodeCity(nodeId, _resolved) {
      knob shipped stale. Rejected: "just remember to check this one". Every
      buster now carries the literal BUILD_VERSION text, so ONE grep for the
      version string finds all nine knobs. Keep the prefix. */
-  f.src = 'node-city/index.html?v=v121c4';
+  f.src = 'node-city/index.html?v=v121c5';
   f.setAttribute('title', 'Node City');
   /* 🔴 THE HOST CHROME RUNS ON LOAD, AND THIS IS THE BUG IT FIXES.
      _ncHostGutter and _ncZonePill used to run synchronously right after this
@@ -233388,8 +233441,8 @@ render();
      catches them. Rejected: dropping the ?v= and leaning on sw.js's /src/
      network-first branch — that only helps clients the SW already controls,
      and says nothing to the browser's own HTTP cache on a cold first load. -->
-<link rel="stylesheet" href="src/battle/hud.css?v=v121c4">
-<script type="module" src="src/battle/hud.js?v=v121c4"></script>
+<link rel="stylesheet" href="src/battle/hud.css?v=v121c5">
+<script type="module" src="src/battle/hud.js?v=v121c5"></script>
 <script src="src/battle/combat.js?v=120m4" defer></script>
 <script src="src/battle/targeting.js?v=120k6" defer></script>
 <link rel="stylesheet" href="src/sprites/frames.css?v=120k3">

@@ -36768,7 +36768,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120x2';
+  window.BUILD_VERSION = 'v120x3';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -104711,7 +104711,15 @@ const _BME_TORDER = Object.keys(_BME_TERRAIN);
 // _bbMapFromEditor converts one to the other WITHOUT touching the stored
 // format, so the editor keeps saving exactly what it saves today.
 // ═══════════════════════════════════════════════════════════════════════════
-const BB_VER = 'v119k8';
+// ⚠ Moves with EVERY edit to battle-board/index.html — it is the iframe's only
+// cache-buster, and it must stay equal to that file's own window.BB_BUILD or
+// the stale-edge self-heal in _bbStageMount has nothing to compare against.
+// v119k9: the enemy half of the telegraph (TELE.side + the foe palette).
+// v120x3: sprite crispness (contour instead of shadowBlur, device-pixel blit),
+//         ownership rings for BOTH sides, and enemy nameplates — the last of
+//         which needs the new name/hp/hpMax/hero fields in the units payload,
+//         so a board stuck on the old build would draw no plates at all.
+const BB_VER = 'v120x3';
 // terrain key → board tile type. Anything unlisted is plain ground.
 const BB_TERRAIN_TYPE = { water:'hazard', lava:'hazard', blight:'hazard' };
 // editor prop key → the board's billboard prop vocabulary
@@ -106102,9 +106110,20 @@ function _bbStageUnitList() {
       // ⚠ Kalon-scoped via _bbUnitKey — a transform that doesn't change cardId
       // (hero subclass forms) is otherwise invisible to the board's diff.
       const key = _bbUnitKey(u);
+      // 🏷 NAMEPLATE PAYLOAD (BAR R3: "enemy nameplates float above units —
+      // name in caps, a segmented health bar"). The stage had no idea what a
+      // unit was called or how hurt it was, so the only place that read was
+      // targeting.js's DOM plates — and the DOM board is visibility:hidden
+      // whenever the 3D stage is on, so during a stage match it reached the
+      // player exactly never. Four extra scalars per unit; the board ignores
+      // them if it is a stale cached build (CONTRACT R6 — bump BB_VER).
       out.push({ id: String(u.id), key: key,
                  x: u.pos.x | 0, z: u.pos.y | 0,
-                 side: u.owner === 'player' ? 'mine' : 'foe' });
+                 side: u.owner === 'player' ? 'mine' : 'foe',
+                 name: String(u.name || ''),
+                 hp: Math.max(0, u.currentHp | 0),
+                 hpMax: Math.max(1, u.maxHp | 0),
+                 hero: !!u.isHero });
     }
   } catch (e) {}
   return out;
@@ -106305,13 +106324,25 @@ function _bbStagePushTele() {
             // that already disagree, and the disagreement is MEASURED, not
             // theoretical. getMovePath() consults neither tileBlockedByTombstone
             // nor the zone-of-control dead-end rule, so it is the LOOSER of the
-            // two: with a glowing tombstone at (4,7) and a blocker at (3,7), a
-            // spd-4 unit at (4,8) gets `4,8 → 4,7 → 4,6` out of getMovePath
-            // while getValidMoves' region has a hole at (4,7). The route the
-            // unit walks really does cross that tile — moveUnit() calls the
-            // same function — so the ARROW is still telling the truth about
-            // the walk. It is the two BFS bodies that need reconciling, and
-            // that lives in movement code this piece may not edit.
+            // two. BOTH halves have a measured instance, listed because naming
+            // only the tombstone one leaves a reader believing the ZoC half is
+            // hypothetical — it is not:
+            //   • TOMBSTONE — with a glowing tombstone at (4,7) and a blocker
+            //     at (3,7), a spd-4 unit at (4,8) gets `4,8 → 4,7 → 4,6` out of
+            //     getMovePath while getValidMoves' region has a hole at (4,7).
+            //   • ZONE OF CONTROL — a foe carrying the zoneOfControl passive at
+            //     (5,4) makes its six neighbours enterable-but-never-expanded
+            //     for getValidMoves (the `continue` at :85047). A spd-4 unit at
+            //     (4,4) therefore has NO route to (6,3) anywhere in the move
+            //     region, while getMovePath returns `4,3 → 5,3 → 6,3` — through
+            //     two tiles of the line. Swept across the whole 14x12 board
+            //     that is 8556 (start, gate, target) triples where the two
+            //     disagree, so it is a rule gap and not a corner case.
+            // In both, the route the unit walks really does cross those tiles —
+            // moveUnit() calls the same function — so the ARROW is still telling
+            // the truth about the walk. It is the two BFS bodies that need
+            // reconciling, and that lives in movement code this piece may not
+            // edit.
             // The reverse (the move set offering a tile the path BFS cannot
             // reach) is what lands HERE. It should be impossible while
             // getMovePath stays the looser of the two — so if it ever fires,
@@ -106568,14 +106599,28 @@ function _surfaceDebugReport() {
 try { window.__mg = window.__mg || {}; window.__mg.surfaceDebug = _surfaceDebugReport; } catch (e) {}
 function _bbStagePushUnits() {
   const list = _bbStageUnitList();
-  const key = list.map(u => u.id + ':' + u.key + ':' + u.x + ',' + u.z + ':' + u.side).sort().join('|');
+  // ⚠ TWO KEYS, NOT ONE, AND THE SECOND ONE EXISTS TO PROTECT THE FIRST.
+  // HP has to be in the push gate or a unit that took damage without moving
+  // produced an identical key, the push was skipped, and the nameplate above
+  // it kept showing the health it had before the hit — a HUD that lies
+  // quietly, which is worse than one that is missing.
+  // But this function also force-pushes the whole DEF table, art strings and
+  // all, and `force` bypasses BOTH of _bbStagePushDefs's own guards (the 500ms
+  // gate and the signature check). Folding HP into one key would therefore
+  // re-send every sprite URL in the match on every point of damage. The ROSTER
+  // key (who / where / whose) still gates the def push; the full key, which
+  // adds HP, gates the unit push the plates read.
+  const posKey = list.map(u => u.id + ':' + u.key + ':' + u.x + ',' + u.z + ':' + u.side).sort().join('|');
+  const key = posKey + '#' + list.map(u => u.id + ':' + u.hp + '/' + u.hpMax).sort().join(',');
   if (key === _BBS.unitKey) return;
   const firstPaint = !_BBS.unitKey;
   const prev = _BBS.unitIds || new Set();
+  const rosterChanged = posKey !== _BBS.unitPosKey;
   _BBS.unitKey = key;
+  _BBS.unitPosKey = posKey;
   _BBS.unitIds = new Set(list.map(u => u.id));
   // register art for anything new before it is drawn
-  _bbStagePushDefs(true);
+  if (rosterChanged) _bbStagePushDefs(true);
   // ⚠ ALWAYS send the full roster. An earlier version withheld a freshly
   // played unit and asked the board to summon it instead — but if the
   // ceremony bailed for any reason (already summoning, tile occupied, def not
@@ -106685,7 +106730,13 @@ function _bbStageMount() {
       } catch (e) {}
       try { _BBS.key = _bbActiveLocationId() + '|' + _bbTimeOfDay(); } catch (e2) {}
       _bbStagePost('init', _bbStagePayload());
-      _BBS.unitKey = ''; _BBS.paintKey = ''; _BBS.tombKey = ''; _BBS.structKey = ''; _BBS.cpKey = ''; _BBS.defKey = ''; _BBS._defsAt = 0; _BBS.surfKey = ''; _BBS.teleKey = '';
+      // ⚠ `unitPosKey` HAS TO BE CLEARED WITH THE REST OF THEM. It is the
+      // roster half of the unit diff (see _bbStagePushUnits) and it is what
+      // gates the DEF push — so a board that reloads (the stale-edge self-heal
+      // above, or a location swap) and comes back with every unit on the same
+      // tile would see rosterChanged === false, skip the def push, and render
+      // the whole army as procedural bodies with no error anywhere.
+      _BBS.unitKey = ''; _BBS.unitPosKey = ''; _BBS.paintKey = ''; _BBS.tombKey = ''; _BBS.structKey = ''; _BBS.cpKey = ''; _BBS.defKey = ''; _BBS._defsAt = 0; _BBS.surfKey = ''; _BBS.teleKey = '';
       _bbStagePushUnits(); _bbStagePushPaint(); _bbStagePushTele(); _bbStagePushTombs(); _bbStagePushStructs(); _bbStagePushCPs(); _bbStagePushSurfaces();
     });
   }
@@ -152729,12 +152780,26 @@ function setAIActor(id, label, trail) {
   App.ui.aiActorId = id || null;
   App.ui.aiActionLabel = label || '';
   App.ui.aiMoveTrail = trail || null;
+  // 🏹 Push the enemy telegraph IMMEDIATELY, for the same reason the player's
+  // route is pushed straight from the hover handler instead of waiting for the
+  // mount tick: _bbStageMount() rides startSpriteTicker's rAF, and an AI step
+  // only lives for AI_DELAYS.move (700 ms). Measured in the headless capture
+  // rig, where software rasterisation drags the host's rAF down to ~1 fps, the
+  // route reached the board 4.2 s after this call — i.e. after the unit had
+  // already finished walking it, which is precisely the picture this telegraph
+  // exists to prevent. Diffed on _BBS.teleKey and a no-op when the stage is
+  // unmounted, so calling it here costs one string compare on every other
+  // setAIActor in the AI turn.
+  try { if (typeof _bbStagePushTele === 'function') _bbStagePushTele(); } catch (e) {}
 }
 
 function clearAIActor() {
   App.ui.aiActorId = null;
   App.ui.aiActionLabel = '';
   App.ui.aiMoveTrail = null;
+  // Same reason as setAIActor: hand the telegraph back to the player's own
+  // hover on the same frame the AI stops acting, not a tick later.
+  try { if (typeof _bbStagePushTele === 'function') _bbStagePushTele(); } catch (e) {}
 }
 
 function finishAIPhase() {
@@ -226156,7 +226221,7 @@ render();
      Bump ?v= on every change — the service worker caches these like any asset. -->
 <link rel="stylesheet" href="src/battle/board.css?v=120x1hex">
 <link rel="stylesheet" href="src/battle/units.css?v=120k6">
-<link rel="stylesheet" href="src/battle/chrome.css?v=120k6">
+<link rel="stylesheet" href="src/battle/chrome.css?v=120x3">
 <link rel="stylesheet" href="src/battle/alive.css?v=120x1hex">
 <script src="src/battle/combat.js?v=120m4" defer></script>
 <script src="src/battle/targeting.js?v=120x1hex" defer></script>

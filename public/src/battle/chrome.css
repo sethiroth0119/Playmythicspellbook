@@ -615,3 +615,204 @@ body:has(.battle-screen) .emote-tray {
   body:has(.battle-screen) #chat-fab { bottom: 0.6rem !important; left: 0.6rem !important; }
   body:has(.battle-screen) .emote-bar { bottom: 4.6rem; left: 0.6rem; }
 }
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   14. SIT WITH THE FIELD
+   ~~~~~~~~~~~~~~~~~~~~~~
+   The battlefield stopped being a purple fantasy arena in the terrain wave and
+   became a muted post-apocalyptic diorama — cracked asphalt, wet grey-green,
+   rubble brown, one narrow value range (.gauntlet/BAR.md R1). The HUD did not
+   move with it, so the two now read as two different games sharing a screen:
+   captured from a real match at 1600x900, the chrome answered that field with a
+   violet page wash, a neon-lime health bar, a cornflower-blue status strip and
+   two saturated violet slabs.
+
+   This section is COLOUR ONLY. Not one rule below changes a size, a position,
+   an order or a control — grep it for width/height/display/position/grid/flex
+   and you will find none. Every panel keeps its function and its place; what
+   changes is which palette it is painted in, and the palette it moves to is the
+   one CONTRACT.md §6 already specifies for this screen.
+
+   ⚠ Colour is the ONLY lever available here. `filter` is forbidden on this
+   screen (CONTRACT §6.10 — board.css / alive.css / units.css state as an
+   explicit contract that the word does not appear in them, and the 40-line scar
+   comment at index.html:11184 records what a re-projection of the board plane
+   cost). So a desaturation pass is out; each surface is re-specified instead.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* 14a. THE PAGE WASH — and it is on BODY, not on .battle-screen.
+   The violet cast around the whole HUD comes from `body`'s ground
+   (index.html:138): `--bg-deep:#0b0814` under a violet and an ember radial.
+   .battle-screen has its own, far better, destroyed-city photograph — but
+   index.html:101094 punches it out with
+   `body.bb-stage-active .battle-screen { background:none!important }`, and
+   for a very good reason: the 3D stage host is a fixed z-index:0 layer under
+   #app, so ANY background on the screen root buries the board completely (the
+   comment above that line records exactly that bug). A rule on .battle-screen
+   is therefore a dead rule for this battlefield — the first cut of this
+   section wrote one and measured `backgroundImage: none` on the live page.
+
+   So the ground moves to `body`, scoped to `body.bb-stage-active`, which is
+   set only while the canvas stage is up. Two things follow: the surround stops
+   being purple, and the destroyed-city art the screen root had to give up
+   comes back in the margins around the board — which is the closest this
+   layout gets to BAR R1's "the map IS the frame".
+   ⚠ The url resolves against THIS FILE (public/src/battle/), not the document,
+   so it needs the ../../ that index.html's copy does not. */
+body.bb-stage-active {
+  background:
+    linear-gradient(rgba(9,10,13,0.72), rgba(6,7,9,0.86)),
+    url('../../assets/background/Backgrounds/battle-page-bg.png') center/cover no-repeat fixed,
+    #0a0b0e;
+}
+
+/* 14b. HERO CARDS READ OWNERSHIP, NOT ELEMENT.
+   `.fighter` takes its whole frame colour from `--fc`, written inline from the
+   hero's first element (index.html:143394) — so the enemy commander's card was
+   outlined in cornflower blue purely because she is a LIGHT/STORM hero, and a
+   nature hero would have outlined it lime. Two problems at once: the rail's
+   accent hue changes from match to match, and it says nothing about whose side
+   the card is on while the board right next to it is spending a red ring and a
+   red nameplate on exactly that question.
+
+   ⚠ `--fc` ITSELF IS DELIBERATELY LEFT ALONE. It is written inline, so
+   overriding it would take !important, and it also drives the portrait's
+   radial glow and the element pills — the element read would go with it. Only
+   the FRAME is re-pointed, at ordinary specificity: element stays legible in
+   the portrait and the pills, ownership takes the border.
+
+   Mine is gold because gold already means "yours" everywhere else in this
+   chrome (END TURN, Field Bag, Your Deck); theirs is --bc-ember, the same
+   #e0553c the board paints under enemy feet and around a hero's nameplate. */
+.bcp .fighter {
+  background: linear-gradient(180deg, rgba(23,22,37,.92), rgba(14,14,20,.96));
+}
+.bcp .fighter[data-side="mine"] {
+  border-color: rgba(210,164,78,.80);
+  box-shadow: inset 0 0 34px rgba(0,0,0,.62), 0 6px 20px rgba(0,0,0,.55);
+}
+.bcp .fighter[data-side="foe"] {
+  border-color: rgba(224,85,60,.80);
+  box-shadow: inset 0 0 34px rgba(0,0,0,.62), 0 6px 20px rgba(0,0,0,.55),
+              0 0 16px rgba(224,85,60,.12);
+}
+.bcp .fighter[data-side="foe"] .finfo h2 { color: #f4ddd2; }
+
+/* 14c. THE HEALTH BAR.
+   Ten segments of `linear-gradient(#8fe86a,#4fae2e)` plus a 7px lime bloom is
+   the brightest, most saturated object in the rail — brighter than END TURN,
+   which CONTRACT §6.8 makes the loudness ceiling. Same ten segments, same
+   on/off read, same widths: a field green in the board's own value range and
+   no bloom. The remaining highlight is a 1px inner top edge, which is what
+   makes a segment read as raised rather than as lit. */
+.bcp .rpseg.on {
+  background: linear-gradient(180deg, #7fbf62, #3f7f34);
+  box-shadow: inset 0 1px 0 rgba(206,232,184,.30);
+}
+.bcp .rpbar { border-color: rgba(210,164,78,.42); }
+
+/* 14d. THE STATUS LINE ("You control N units · N can still act").
+   Was the only cornflower-blue panel in the rail. On the field blue now means
+   "this unit is mine" (BAR R2's ownership ring), so a blue panel that is not
+   about ownership is actively misleading as well as off-palette. */
+.bchrome .bcp .hint {
+  color: #d9cdb0;
+  border-color: rgba(210,164,78,.40);
+  background: linear-gradient(180deg, rgba(23,22,37,.85), rgba(13,13,20,.92));
+  box-shadow: inset 0 0 18px rgba(0,0,0,.5);
+}
+
+/* 14e. THE ULTIMATE BAR.
+   Violet is the game's Shadow accent (--bc-shadow:#b483f0) and the Ultimate is
+   entitled to it — but it had the accent as a filled SLAB, which put a
+   saturated purple block the width of the rail directly above the gold END
+   TURN button and split the eye between them. The accent moves to the keyline
+   and the charge fill; the body joins the panel palette. The bar still fills
+   left-to-right, still glows when ready, still reads at a glance. */
+.bcp .ult {
+  border-color: rgba(180,131,240,.48);
+  background: linear-gradient(180deg, rgba(23,22,37,.92), rgba(13,12,21,.96));
+}
+.bcp .ult .fill {
+  background: linear-gradient(90deg, rgba(180,131,240,.34), rgba(120,60,220,.10));
+  box-shadow: none;
+}
+
+/* 14f. THE KALON SOURCE ROWS in the right-hand deck rail.
+   `--bc:#a35cff` is written inline on the button, so the fill is re-specified
+   rather than the variable re-pointed — the keyline and the pulse keep reading
+   the inline value and stay violet, which is the correct accent for a Kalon.
+   What goes is the 34%-violet body: two of these stacked were the loudest
+   thing on the right of the screen. */
+.bsx .buff {
+  background: linear-gradient(90deg, rgba(24,21,38,.95), rgba(14,12,23,.96) 55%, rgba(24,21,38,.95));
+}
+
+/* 14g. THE MULTIPLAYER BANNERS.
+   Three flat 6px-radius strips in three different saturated hues, sitting in a
+   rail where everything else carries the §6.4 panel treatment. Same three
+   states, same three meanings, same three hues — as keylines on the panel body
+   instead of as washes, so they read as part of the rail. The pulse animations
+   are untouched: they are how "waiting" and "disconnected" announce themselves. */
+.bc-rail > .mp-waiting-banner,
+.bc-rail > .mp-yourturn-banner,
+.bc-rail > .mp-dc-warn-banner {
+  border-radius: var(--r3-radius);
+  background: linear-gradient(180deg, rgba(23,22,37,.90), rgba(13,13,20,.95));
+  box-shadow: inset 0 0 18px rgba(0,0,0,.5);
+}
+.bc-rail > .mp-waiting-banner  { border-color: rgba(108,146,212,.55); color: #c3d2ea; }
+.bc-rail > .mp-yourturn-banner { border-color: rgba(99,217,122,.55);  color: #cfe7cd; }
+.bc-rail > .mp-dc-warn-banner  { border-color: rgba(224,85,60,.70);   color: #f0c4b6; }
+
+/* 14h. ONE OBJECTIVE SYSTEM, NOT TWO.
+   The rail leads with two objective banners that were built in different waves
+   and look it: `.tw-objective-banner` (the control-point sentence) already
+   carries the §6.4 double-gradient treatment, while `.tw-battle-banner` (the
+   territory node's own victory conditions, index.html:27110) is a flat
+   amber-on-brown strip with a 6px radius. They stack directly on top of each
+   other above the tracker, so the seam is the first thing in the rail.
+   Same content, same chips, same title — repainted onto the banner above it so
+   the three of them (sentence · conditions · tracker) read as one block.       */
+.bc-rail > .tw-battle-banner {
+  border-radius: var(--r3-radius);
+  border-color: rgba(210,164,78,.55);
+  background: linear-gradient(180deg, rgba(23,22,37,.92), rgba(13,13,20,.95));
+  box-shadow: inset 0 0 20px rgba(0,0,0,.5);
+  color: #e4d7b6;
+}
+.bc-rail > .tw-battle-banner strong {
+  font-family: "Cinzel", serif; font-weight: 700;
+  letter-spacing: .14em; text-transform: uppercase;
+  font-size: 9.5px; color: #a2957a;
+}
+.bc-rail > .tw-battle-banner .tw-bb-obj {
+  border-color: rgba(210,164,78,.45);
+  background: rgba(8,8,13,.7);
+  color: #f2e6c2;
+}
+
+/* 14i. THE FIELD-CONDITION CHIPS.
+   `.bc-fieldcond > div` compacts whatever the location / weather / day-night
+   builders emit, and those three carry their own backgrounds from three
+   different eras of the app. §6.5's `.envcard` treatment is the repo's own
+   template for a chip of exactly this shape, so they get it — one border
+   weight, one radius, one inset shadow, for all three. */
+.bc-rail > .bc-fieldcond > div {
+  border: 1.5px solid rgba(210,164,78,.42) !important;   /* answers !important */
+  border-radius: var(--r3-radius-sm) !important;         /* answers !important */
+  background: linear-gradient(180deg, rgba(20,17,26,.9), rgba(10,9,15,.95)) !important;
+  box-shadow: inset 0 0 20px rgba(0,0,0,.55);
+  color: #d9cdb0;
+}
+
+/* 14j. THE DECK RAIL'S FRAME joins the panel palette. It was the one large
+   surface still mixing a blue-grey (rgba(13,16,25)) into an otherwise
+   neutral chrome; against a grey-green field that reads as a blue column. */
+.bsx-frame {
+  background: linear-gradient(180deg, rgba(21,20,32,.96), rgba(11,11,17,.985));
+}
+.bsx .opp {
+  background: linear-gradient(180deg, rgba(26,25,40,.9), rgba(13,13,20,.95));
+}

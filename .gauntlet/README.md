@@ -83,6 +83,7 @@ that made it.
 | `telegraph` | ◇ target-state | 🏹 BAR R3. Move contour plus the **path arrow** to a hovered destination. The destination is chosen so the route must DETOUR: (4,5) is three hexes from the mover and six steps by the only legal route. |
 | `arc` | ◇ target-state | 🏹 BAR R2. The attack telegraph — a curve from attacker to target drawn *above* the board, arrowhead and ownership ring on the target. Not a straight laser. |
 | `threat` | ◇ target-state | 🏹 BAR R2. Enemy reach as an orange painted region with a brighter outer edge, with the player's own cyan move contour sitting inside it — two questions, two colours. |
+| `aitele` | ◇ target-state | 🏹 BAR R3, the **enemy** half. A foe crossing the field on a route that bends, drawn in RED (`tele.side:'foe'`) so it can never be confused with the player's cyan preview, plus a second foe's attack arc onto the player hero. In a match the host pushes this from `setAIActor` while the AI walks — see the note below on why it used to draw nothing. |
 | `night` | ◇ target-state | `skirmish` under the night lighting rig. |
 | `ruins` | ◇ target-state | Ruin art on event tiles. Doubly so — the battle stage is never sent events at all. |
 
@@ -253,6 +254,18 @@ provable in the game, by patching `window.getMovePath` and comparing what the te
 pushed against what `moveUnit()` actually consumed. `getMovePath` is a top-level
 function *declaration*, so it IS on `window` and both callers resolve through it; the
 `const` movement helpers around it are not (`CLAUDE.md`, the globals trap).
+
+⚠ **The ENEMY route has one extra trap, and it is an ordering trap.** `setAIActor()`
+fires *after* `moveUnit()` has committed, so a `getMovePath()` call made from there
+BFSes from the destination to itself and returns an empty array — an enemy that
+teleports. The AI move site therefore computes the route **before** the commit and
+carries it on `App.ui.aiMoveTrail.path`; `_bbStagePushTele()` prepends the pre-move tile
+and sends `side:'foe'`. Two more things that were live bugs, kept here because they cost
+real time: the enemy's arrow used to be rendered only into `.ai-trail`, a DOM-board glyph
+that is `visibility:hidden` whenever the stage is on — correct data, invisible picture;
+and the push has to leave `setAIActor` directly rather than wait for `_bbStageMount`'s
+rAF tick, because an AI step only lives for `AI_DELAYS.move` (700 ms) and in this rig
+that tick was measured **4.2 s** behind.
 
 `shipped` has no default. A scene that forgets it is falsy — target-state — which is the
 safe way round: the failure mode is "labelled a fixture when it was honest", never the

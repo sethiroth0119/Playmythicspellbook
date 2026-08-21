@@ -200,7 +200,7 @@ body{ font-family:"EB Garamond",serif; color:#e9dab2; user-select:none; }
 <div class="hint" id="hint">click a card, then a tile — or click a unit and a tile to move it</div>
 
 
-<script>window.BB_BUILD='v119k8';
+<script>window.BB_BUILD='v120x3';
 "use strict";
 /* ══════════════════════════════════════════════════════════════════
    CONFIG — camera + UI safe areas. Port these numbers verbatim.
@@ -4348,10 +4348,156 @@ function shadowEllipse(world, rx, alpha){
 }
 
 /* ══════════════════════════════════════════════════════════════════
+   SPRITE EDGE CACHE — separation WITHOUT blur.
+
+   BAR R1 asks for units that are small against the map and still
+   "perfectly crisp — hard pixel edges, no blur, strong single-colour
+   silhouettes that separate from the ground". Those two halves used to
+   fight each other here: the separation came from
+   `ctx.shadowBlur = k*.16` wrapped around the sprite draw in drawUnit
+   (CONTRACT §7 R32), i.e. a gaussian roughly 17 DEVICE pixels wide
+   smeared over the whole unit. It did make the unit lift off the
+   ground; it also destroyed exactly the property the bar names first,
+   and it sat OUTSIDE paintSprite's carefully restored smoothing block
+   so no amount of care in here could undo it.
+
+   The replacement is a contour, not a glow. For each source frame we
+   bake ONE canvas containing the frame's alpha silhouette dilated by
+   `SIL_PAD` pixels — dark on the underside and sides, LIGHT.rim on the
+   upper offsets, so the contour reads as a lit edge instead of a
+   sticker outline. One extra blit per unit per frame, and the boundary
+   is hard by construction because nothing is ever blurred.
+
+   ⚠ The bake is per SOURCE RECT, not per unit, so an eight-strong squad
+   of zombies shares five canvases. Keyed by url + rect + both tints
+   (the rim colour moves with time of day, so it has to be in the key or
+   a dusk match would keep the noon contour). Bounded and FIFO-evicted:
+   a long match with Kalon transforms would otherwise grow it forever.
+   ══════════════════════════════════════════════════════════════════ */
+const SIL_PAD = 2;                 /* dilation radius, in SOURCE pixels */
+const _SIL = new Map();
+const _SIL_MAX = 96;
+function spriteEdgeCanvas(img, src, sx, sy, sw, sh, dark, rim, darkA, rimA){
+  if (!img || !img.width || !(sw > 0) || !(sh > 0)) return null;
+  const key = src + '|' + sx + ',' + sy + ',' + sw + ',' + sh + '|' + dark + '|' + rim + '|' + darkA + ',' + rimA;
+  const hit = _SIL.get(key);
+  if (hit !== undefined) return hit;
+  let out = null;
+  try {
+    const p = SIL_PAD;
+    const cv2 = document.createElement('canvas');
+    cv2.width = Math.ceil(sw) + p * 2; cv2.height = Math.ceil(sh) + p * 2;
+    const g2 = cv2.getContext('2d');
+    /* the frame's own alpha, tinted flat — draw once, recolour with
+       'source-in', then reuse it as the stamp for every offset */
+    const stamp = document.createElement('canvas');
+    stamp.width = cv2.width; stamp.height = cv2.height;
+    const gs = stamp.getContext('2d');
+    gs.drawImage(img, sx, sy, sw, sh, p, p, sw, sh);
+    /* 🚫 A CONTOUR ONLY MEANS ANYTHING AROUND A CUT-OUT.
+       On a cold client with no Atelier sprite, _bbUnitDefs falls back to
+       `art` — the card ILLUSTRATION, a fully opaque rectangle. Tracing
+       that gives a dark box around a billboarded picture, which is worse
+       than the nothing it replaced. Probe the border: if the frame's own
+       outer ring is solid, this is a standee and it gets no contour.
+       (A cross-origin image throws here instead; the catch below turns
+       that into "no contour" too, which is the same safe answer.) */
+    const ring = gs.getImageData(p, p, Math.ceil(sw), Math.ceil(sh));
+    const RW = ring.width, RH = ring.height, RD = ring.data;
+    let clear = 0, tested = 0;
+    for (let i = 0; i < RW; i += 3){ tested += 2; if (RD[(i) * 4 + 3] < 8) clear++; if (RD[((RH - 1) * RW + i) * 4 + 3] < 8) clear++; }
+    for (let j = 0; j < RH; j += 3){ tested += 2; if (RD[(j * RW) * 4 + 3] < 8) clear++; if (RD[(j * RW + RW - 1) * 4 + 3] < 8) clear++; }
+    if (tested && clear / tested < 0.5){ if (_SIL.size >= _SIL_MAX) _SIL.delete(_SIL.keys().next().value); _SIL.set(key, null); return null; }
+    gs.globalCompositeOperation = 'source-in';
+    /* DOWN and SIDEWAYS offsets carry the dark keyline; a single straight-UP
+       offset carries the sky rim. Both are stamped from the same alpha, so
+       the contour can never disagree with the silhouette it belongs to.
+       ⚠ EACH GROUP IS UNIONED AT FULL OPACITY IN ITS OWN LAYER and only then
+       composited at its own weight. Stamping seven translucent copies
+       straight into one canvas instead makes the ring's alpha depend on how
+       many offsets happen to overlap at that pixel — which is thickest at
+       the corners and thinnest along a straight edge, i.e. an outline whose
+       darkness varies with the shape of the sprite. The first cut did that
+       and the rim read as a white sticker halo rather than a lit edge.
+       ⚠ ONE up offset, not three. Diagonal up offsets expose a bright band
+       down the SIDES of a vertical edge too, which is where "lit from the
+       sky" turns into "outlined in white". */
+    const DOWN = [[0, p], [p, p * .5], [-p, p * .5], [p, 0], [-p, 0], [p * .7, -p * .7], [-p * .7, -p * .7]];
+    const UP   = [[0, -p]];
+    const layer = (col, offs) => {
+      const L = document.createElement('canvas');
+      L.width = cv2.width; L.height = cv2.height;
+      const gl = L.getContext('2d');
+      gs.fillStyle = col; gs.fillRect(0, 0, stamp.width, stamp.height);
+      for (const [ox, oy] of offs) gl.drawImage(stamp, ox, oy);
+      return L;
+    };
+    const Ld = layer(dark, DOWN), Lr = layer(rim, UP);
+    g2.globalAlpha = darkA; g2.drawImage(Ld, 0, 0);
+    g2.globalAlpha = rimA;  g2.drawImage(Lr, 0, 0);
+    g2.globalAlpha = 1;
+    out = cv2;
+  } catch (e) { out = null; }   /* a tainted or zero-size frame costs a contour, not the board */
+  if (_SIL.size >= _SIL_MAX) _SIL.delete(_SIL.keys().next().value);
+  _SIL.set(key, out);
+  return out;
+}
+
+/* ── THE ONE PLACE A SPRITE FRAME REACHES THE SCREEN ──────────────────
+   Every crispness rule lives here so there is exactly one copy of it.
+
+   1. DEVICE PIXELS, NOT LOCAL ONES. The old code did `Math.round(-h)` in
+      unit-local units, which only lands on the device grid when the live
+      transform's scale happens to be a whole number — it is not at DPR
+      1.5, and it is not for a unit mid-squash (drawUnit scales by
+      u.scaleX/u.scaleY). Read the live matrix, round the destination
+      EDGES in device space, convert back. The blit then starts and ends
+      on a whole device pixel at any DPR and any squash.
+
+   2. THE UPSCALE TEST WAS COMPARING TWO DIFFERENT UNITS. `dw > img.width`
+      put a CSS-pixel destination next to a device-pixel source, so on
+      every 2× display the test said "downscaling" — smoothing ON, quality
+      'high' — while the real blit was a 1.01× UPSCALE. Resampling a
+      near-1:1 ratio at a fractional phase is the softest thing a canvas
+      can do, and it was happening to every unit on every retina client.
+      Measured on the as-shipped gamemap scene: source frames are 154 px
+      wide and the drawn width is ~156 DEVICE px. The comparison is now
+      device-to-device.
+   ─────────────────────────────────────────────────────────────────── */
+function spriteBlit(c, img, src, sx, sy, sw, sh, k, aspect, edge){
+  let mx = DPR, my = DPR;
+  try { const m = c.getTransform(); mx = Math.abs(m.a) || DPR; my = Math.abs(m.d) || DPR; } catch (e) {}
+  const h = k, w = k * (aspect || 0.8);
+  const x0 = Math.round(-w / 2 * mx), x1 = Math.round(w / 2 * mx);
+  const y0 = Math.round(-h * my), y1 = 0;
+  const dx = x0 / mx, dw = (x1 - x0) / mx, dy = y0 / my, dh = (y1 - y0) / my;
+  if (!(dw > 0) || !(dh > 0)) return;
+  const sm = c.imageSmoothingEnabled, sq = c.imageSmoothingQuality;
+  const up = (x1 - x0) > sw;                    /* device-px destination vs real source px */
+  c.imageSmoothingEnabled = !up;                /* crisp when upscaling, smooth when down */
+  if (!up) c.imageSmoothingQuality = 'high';
+  if (edge){
+    const ec = spriteEdgeCanvas(img, src, sx, sy, sw, sh, edge.dark, edge.rim,
+                                edge.darkA == null ? 0.88 : edge.darkA,
+                                edge.rimA  == null ? 0.42 : edge.rimA);
+    if (ec){
+      /* the contour is baked with SIL_PAD source pixels of margin, so the
+         destination grows by the same margin THROUGH the blit's own scale
+         — the outline thus stays proportional to the unit instead of
+         vanishing at DPR 1 and fattening at DPR 3. */
+      const px = SIL_PAD * (dw / sw), py = SIL_PAD * (dh / sh);
+      c.drawImage(ec, dx - px, dy - py, dw + px * 2, dh + py * 2);
+    }
+  }
+  c.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
+  c.imageSmoothingEnabled = sm; c.imageSmoothingQuality = sq;
+}
+
+/* ══════════════════════════════════════════════════════════════════
    SPRITE PAINTERS — procedural stand-ins for the real sheets.
    Drawn into a unit-local space: x ∈ [-.5,.5], y ∈ [-1,0] (feet at 0)
    ══════════════════════════════════════════════════════════════════ */
-function paintSprite(c, key, k, col, t){
+function paintSprite(c, key, k, col, t, edge){
   /* ── REAL ART FIRST ───────────────────────────────────────────────
      A unit with `art` or a `sheet` draws its own texture, billboarded in
      the same unit-local space the procedural painters use (x -.5..+.5,
@@ -4375,30 +4521,19 @@ function paintSprite(c, key, k, col, t){
     const fps = D.fps || 10;
     const n = D.frames.length;
     const idx = n > 1 ? (Math.floor((t + (D._phase || 0)) * fps) % n) : 0;
-    const img = artImage(D.frames[idx]) || artImage(D.frames[0]);
+    const useIdx = artImage(D.frames[idx]) ? idx : 0;
+    const img = artImage(D.frames[useIdx]);
     if (img && img.width){
-      const h = k, w = k * (img.width / img.height || 0.8);
-      const dx = Math.round(-w / 2), dy = Math.round(-h), dw = Math.round(w), dh = Math.round(h);
-      const sm = c.imageSmoothingEnabled, sq = c.imageSmoothingQuality;
-      const upscaling = dw > img.width;
-      c.imageSmoothingEnabled = !upscaling;
-      if (!upscaling) c.imageSmoothingQuality = 'high';
-      c.drawImage(img, dx, dy, dw, dh);
-      c.imageSmoothingEnabled = sm; c.imageSmoothingQuality = sq;
+      spriteBlit(c, img, String(D.frames[useIdx]), 0, 0, img.width, img.height,
+                 k, img.width / img.height, edge);
       return;
     }
   }
   if (D && (D.art || (D.sheet && D.sheet.src))){
     const sheet = D.sheet && D.sheet.src ? D.sheet : null;
-    const img = artImage(sheet ? sheet.src : D.art);
+    const srcUrl = String(sheet ? sheet.src : D.art);
+    const img = artImage(srcUrl);
     if (img && img.width){
-      const aspect = sheet && sheet.fw ? (sheet.fw / sheet.fh) : (img.width / img.height);
-      const h = k, w = k * (aspect || 0.8);
-      const dx = Math.round(-w / 2), dy = Math.round(-h), dw = Math.round(w), dh = Math.round(h);
-      const sm = c.imageSmoothingEnabled, sq0 = c.imageSmoothingQuality;
-      const up = dw > (sheet ? (sheet.fw || img.width) : img.width);
-      c.imageSmoothingEnabled = !up;                /* crisp when upscaling, smooth when down */
-      if (!up) c.imageSmoothingQuality = 'high';
       if (sheet){
         const fw = sheet.fw || Math.floor(img.width / (sheet.frames || 1));
         const fh = sheet.fh || img.height;
@@ -4407,11 +4542,11 @@ function paintSprite(c, key, k, col, t){
         const rowMap = sheet.rows || {};
         const row = rowMap[D._clip || 'idle'] || 0;
         const f = n > 1 ? (Math.floor(t * fps) % n) : 0;
-        c.drawImage(img, f * fw, row * fh, fw, fh, dx, dy, dw, dh);
+        spriteBlit(c, img, srcUrl, f * fw, row * fh, fw, fh, k, fw / fh, edge);
       } else {
-        c.drawImage(img, dx, dy, dw, dh);
+        spriteBlit(c, img, srcUrl, 0, 0, img.width, img.height,
+                   k, img.width / img.height, edge);
       }
-      c.imageSmoothingEnabled = sm; c.imageSmoothingQuality = sq0;
       return;
     }
   }
@@ -5331,31 +5466,64 @@ function drawUnit(u){
   const k = Math.abs(foot.y - head.y);
   if (u.y > -0.9) shadowEllipse(base, .30, .8);
 
-  /* 🔴 WHOSE IS WHOSE. Enemy units and heroes stand in a red pool with a red
-     rim; the player's are untouched. On this board the units are painted on a
-     canvas, so the DOM board's .unit.ai styling cannot reach them — this is the
-     same read, done in the stage. */
-  if (u.side === 'foe' && u.y > -0.9 && !u.dead){
+  /* 🔵🔴 WHOSE IS WHOSE — BAR R2: "unit feet carry a directional ring
+     (blue = mine, red = theirs) so ownership reads even when sprites overlap."
+     This used to paint a red pool under the ENEMY only and leave the player's
+     units bare, which answers the question exactly half the time: two sprites
+     overlapping at a shared edge still gave the player one ring between them
+     and no way to tell which of the two it belonged to. Both sides get one now.
+
+     DIRECTIONAL is the other half of the requirement and it is not decoration:
+     the bright prow tells the player which way a unit is turned before they
+     commit a flank. `u.face` is ±1 along WORLD +X, so the screen angle has to
+     be projected, not assumed — the same trap the facing mirror below
+     documents. And because the ring is drawn inside ctx.scale(1,.34), the
+     y component of that screen delta is un-squashed before atan2 or the prow
+     points somewhere the unit is not. */
+  if (u.y > -0.9 && !u.dead){
     const isHero = !!(u.def && (u.def.hero || u.def.isHero)) || /hero/i.test(String(u.key||''));
+    const foe = u.side === 'foe';
+    const SQ = 0.34;
+    const col = foe ? '224,85,60' : '74,168,232';        /* --bc-ember / --bc-storm */
+    const lit = foe ? '255,142,112' : '138,208,255';
     ctx.save();
     ctx.translate(foot.x, foot.y);
-    ctx.scale(1, 0.34);
+    ctx.scale(1, SQ);
     const rr = k * (isHero ? 0.52 : 0.42);
     const g = ctx.createRadialGradient(0, 0, 0, 0, 0, rr);
-    g.addColorStop(0, 'rgba(232,64,52,' + (isHero ? 0.42 : 0.30) + ')');
-    g.addColorStop(0.6, 'rgba(226,58,48,0.16)');
-    g.addColorStop(1, 'rgba(226,58,48,0)');
+    g.addColorStop(0, 'rgba(' + col + ',' + (isHero ? 0.42 : 0.30) + ')');
+    g.addColorStop(0.6, 'rgba(' + col + ',0.16)');
+    g.addColorStop(1, 'rgba(' + col + ',0)');
     ctx.fillStyle = g;
     ctx.beginPath(); ctx.arc(0, 0, rr, 0, 6.2832); ctx.fill();
+    const R = rr * 0.78;
     ctx.lineWidth = isHero ? 3 : 2;
-    ctx.strokeStyle = 'rgba(255,86,70,' + (isHero ? 0.85 : 0.6) + ')';
-    ctx.beginPath(); ctx.arc(0, 0, rr * 0.78, 0, 6.2832); ctx.stroke();
+    ctx.strokeStyle = 'rgba(' + col + ',' + (isHero ? 0.85 : 0.62) + ')';
+    ctx.beginPath(); ctx.arc(0, 0, R, 0, 6.2832); ctx.stroke();
+    /* the prow — a brighter arc on the side the unit is facing */
+    const fp = project({ x: base.x + (u.face || 1) * 0.5, y: base.y, z: base.z });
+    if (fp){
+      const ang = Math.atan2((fp.y - foot.y) / SQ, fp.x - foot.x);
+      ctx.lineWidth = isHero ? 4.2 : 3.2;
+      ctx.strokeStyle = 'rgba(' + lit + ',0.95)';
+      ctx.beginPath(); ctx.arc(0, 0, R, ang - 0.62, ang + 0.62); ctx.stroke();
+    }
     ctx.restore();
   }
 
   ctx.save();
   const sh = u.shake ? Math.sin(T*60)*u.shake*8 : 0;
-  ctx.translate(foot.x + sh, foot.y);
+  /* 📐 SNAP THE ANCHOR TO THE DEVICE PIXEL GRID.
+     spriteBlit rounds the destination RECT in device space, but a rounded
+     rect on top of a fractional translate still lands between pixels —
+     the rounding has to happen on the sum. Measured on the as-shipped
+     gamemap scene before this line existed: the thirteen units sat a mean
+     0.176 and a worst 0.46 of a device pixel off the grid, which is a
+     resample of the whole sprite every frame for no visual gain at all.
+     Quantising the anchor costs a half-CSS-pixel step during a walk at
+     DPR 2 (invisible), and buys a blit that is byte-for-byte the source
+     wherever the scale is 1:1. CONTRACT §7 R32, second half. */
+  ctx.translate(Math.round((foot.x + sh) * DPR) / DPR, Math.round(foot.y * DPR) / DPR);
   /* 🎥 FACING IS A WORLD DIRECTION, MIRRORING IS A SCREEN ONE.
      `u.face` is ±1 along world +X (moveUnit sets it from gx, spawnUnit gives
      the enemy +1 and the player −1) and it used to be applied straight as a
@@ -5376,11 +5544,20 @@ function drawUnit(u){
     ctx.beginPath(); ctx.rect(-k, -k*2.4, k*2, k*2.4 - Math.max(0, -u.y*k*0.92));
     ctx.clip();
   }
-  /* rim light from the sun/moon */
-  ctx.save();
-  ctx.shadowColor = rgba(LIGHT.rim, .8); ctx.shadowBlur = k*.16;
-  paintSprite(ctx, u.key, k, u.def.color, T + u.bob);
-  ctx.restore();
+  /* 🔪 RIM LIGHT AND GROUND SEPARATION — as a CONTOUR, never as a blur.
+     What stood here was `ctx.shadowColor = rgba(LIGHT.rim,.8);
+     ctx.shadowBlur = k*.16`, which at the shipped unit size is a ~17
+     device-pixel gaussian over the entire sprite: CONTRACT §7 R32 names it
+     as the single biggest softness source on this board, and it is
+     outside paintSprite's smoothing block so nothing in there could
+     compensate. spriteBlit now stamps a one-to-two device-pixel contour
+     from the frame's own alpha instead — dark underneath and to the sides
+     so the unit sits ON the ground, LIGHT.rim across the top so it still
+     reads as lit from the sky. Same job, hard edge. */
+  paintSprite(ctx, u.key, k, u.def.color, T + u.bob, {
+    dark: '#07060b', darkA: 0.88,        /* the keyline does the separating */
+    rim : LIGHT.rim || '#cfe4ff', rimA: 0.38   /* the sky rim only suggests it */
+  });
   if (u.flash > 0){
     ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = u.flash;
     paintSprite(ctx, u.key, k, '#ffffff', T + u.bob);
@@ -6047,7 +6224,11 @@ function teleStroke(loops, colour, coreW, glowW, alpha){
    line. */
 const TELE_PAL = {
   mine: { glow:'#8fe8ff', core:'#63d8ff', mark:'#dffaff' },
-  foe:  { glow:'#ffa392', core:'#ff5a4a', mark:'#ffdcd4' }
+  /* `mark` stays a tint of the ribbon rather than the near-white the player
+     side uses: measured on the aitele capture, a #ffdcd4 destination hexagon
+     read as plain white next to the red route, which put the one element that
+     answers "where is it STOPPING" back into the player's colour family. */
+  foe:  { glow:'#ffa392', core:'#ff5a4a', mark:'#ffb3a0' }
 };
 function telePal(){ return TELE_PAL[TELE.side] || TELE_PAL.mine; }
 
@@ -6178,6 +6359,105 @@ function drawTeleGround(t){
    board"). Sampled in WORLD space and projected per sample: a curve drawn
    between two projected endpoints in SCREEN space is a different curve at
    every yaw, and at 90° it lies flat against the board. */
+/* ══════════════════════════════════════════════════════════════════
+   🏷 ENEMY NAMEPLATES — BAR R3: "name in caps, a segmented health bar,
+   readable at distance", floating above the unit and never on hover only
+   ("enemy health only visible on hover" is a named fail condition).
+
+   ENEMIES ONLY, and that is the requirement, not a shortcut: the player's
+   own roster is already spelled out in the rail with full stats, and a
+   plate over every friendly would double that read while burying the
+   board. The bar's own words are "enemy nameplates float above units".
+
+   NO PIPS FOR ARMOUR/SHIELDS. R3 asks for them; this game has no per-unit
+   armour or shield COUNTER to show — DEF/RES are stats, not charges — so
+   inventing pips here would be the HUD asserting a mechanic that does not
+   exist. Said out loud rather than faked.
+
+   Drawn after the painter's sort, in its own pass, so a plate is never
+   swallowed by the unit standing in front of its owner. Every number is
+   rounded to a whole device pixel for the same reason the sprites are:
+   text resampled off the pixel grid is the other half of "no blur".
+   ══════════════════════════════════════════════════════════════════ */
+function drawNameplates(){
+  const R = v => Math.round(v * DPR) / DPR;
+  /* far to near, so a nearer plate overlaps a farther one — the same
+     answer the actors themselves get from the depth sort */
+  const list = units.filter(u => !u.dead && u.side === 'foe' && u.uname && u.hpMax != null && u.y > -0.9)
+                    .map(u => ({ u, d: camDepth(gw(u.x, u.z, 0)) }))
+                    .sort((a, b) => b.d - a.d);
+  for (const { u } of list){
+    const box = unitScreenBox(u); if (!box) continue;
+    /* ease the drawn bar toward the real value — a hit that just snaps is
+       hard to notice on a plate this small */
+    const want = u.hpCur / u.hpMax;
+    u.hpShown = u.hpShown == null ? want : u.hpShown + (want - u.hpShown) * 0.14;
+    const pct = clamp(u.hpShown, 0, 1);
+
+    /* SIZE. CONTRACT §6.8 — the End Turn button is the loudness ceiling and
+       nothing new may out-shout it. The first cut sized the plate off the
+       unit at 1.25× and it dominated the field: thirteen plates as tall as
+       the sprites under them. Capped at 1.0 and floored so a distant unit's
+       plate stays legible (BAR R3, "readable at distance") without growing. */
+    const S = clamp(box.height / 58, 0.62, 1.0);
+    const nameSz = Math.max(7.5, 9 * S);
+    ctx.font = '700 ' + nameSz.toFixed(1) + 'px "Cinzel", Georgia, serif';
+    const nm = String(u.uname).toUpperCase();
+    const tw = ctx.measureText(nm).width;
+    const padX = 6 * S, barH = Math.max(2.5, 3.4 * S), gapY = 2.5 * S;
+    const w = Math.max(44 * S, tw + padX * 2);
+    const h = nameSz + gapY + barH + 6 * S;
+    /* ⚠ CLAMPED INTO THE CANVAS, not just skipped when it leaves it. The far
+       row of a 14×12 board projects within a few pixels of the top edge, so an
+       un-clamped plate for the units that matter most early — the ones you
+       have not reached yet — is the half that gets guillotined by the host
+       rect. Clamping puts it just inside instead. */
+    const cx = clamp(R(box.left + box.width / 2), w / 2 + 2, W - w / 2 - 2);
+    const y0 = clamp(R(box.top - h - 7 * S), 2, H - h - 2);
+    const x0 = R(cx - w / 2);
+
+    /* the plate. Dark, hard-edged, one thin keyline — BAR R2's chrome rule.
+       Deliberately quieter than the End Turn button (CONTRACT §6.8). */
+    ctx.fillStyle = 'rgba(9,8,13,0.82)';
+    ctx.fillRect(x0, y0, w, h);
+    ctx.lineWidth = 1 / DPR;
+    ctx.strokeStyle = u.hero ? 'rgba(224,85,60,0.85)' : 'rgba(210,164,78,0.42)';
+    ctx.strokeRect(x0 + 0.5 / DPR, y0 + 0.5 / DPR, w - 1 / DPR, h - 1 / DPR);
+
+    ctx.fillStyle = u.hero ? '#f6dc95' : '#e9dab2';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    ctx.fillText(nm, cx, R(y0 + 3.5 * S));
+
+    /* THE SEGMENTED BAR. One segment per HIT POINT while that is legible —
+       which is the XCOM read the bar is asking for, "how many more hits"
+       rather than "what fraction". Above 12 max HP the segments would be
+       thinner than the gaps between them, so it falls back to twelfths and
+       stops claiming to count individual points. */
+    const segs = u.hpMax <= 12 ? u.hpMax : 12;
+    const exact = u.hpMax <= 12;
+    const on = exact ? Math.ceil(pct * u.hpMax) : Math.round(pct * segs);
+    const bx = x0 + padX * 0.6, bw = w - padX * 1.2;
+    const gap = Math.max(1 / DPR, 1.2 * S);
+    const sw = (bw - gap * (segs - 1)) / segs;
+    const by = R(y0 + nameSz + gapY + 3.5 * S);
+    for (let i = 0; i < segs; i++){
+      const sx = bx + i * (sw + gap);
+      /* ⚠ ONE COLOUR FOR "ALIVE", ONE FOR "NEARLY DEAD", AND THAT IS ALL.
+         The first cut ran a green→amber→red ramp like the rail's own bar, on
+         a plate that is already red-keyed because the unit is an ENEMY — so a
+         foe at full health showed a dark red bar and a foe at a third showed a
+         brighter orange one, which reads as the wrong way round. The COUNT of
+         lit segments is the information; the colour only says whether this one
+         is a kill this turn. */
+      ctx.fillStyle = i < on
+        ? (pct <= 0.34 ? '#f0705a' : '#c9432f')
+        : 'rgba(120,112,98,0.30)';
+      ctx.fillRect(R(sx), by, Math.max(1 / DPR, sw), barH);
+    }
+    ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
+  }
+}
+
 function drawTeleArc(t){
   const a = TELE.arc; if (!a || !a.from || !a.to) return;
   const mine = a.side !== 'foe';
@@ -6409,6 +6689,10 @@ function frame(now){
      that respects the painter's sort would be swallowed by the very units it
      connects. Own try/catch for the R2 latch. */
   try { drawTeleArc(T); } catch (e) {}
+  /* 🏷 Plates last of the board-space passes and in their own try/catch —
+     CONTRACT R2's one-way frameErr latch means a single throw in here would
+     stop the RAF loop forever, so a bad name costs a plate, not the board. */
+  try { drawNameplates(); } catch (e) {}
   /* 📍 Publish unit screen rects to the host ~4x/sec — EXCEPT while the camera
      is moving, when it goes every frame.
      Every VFX, cinematic, damage number and the unit hover menu anchors off
@@ -7089,6 +7373,25 @@ function applyDefs(defs){
 /* Replace the whole unit set from a match snapshot. Units already on the
    board with the same id are MOVED rather than re-spawned, so a snapshot
    refresh never restarts an animation mid-flight. */
+/* 🏷 The nameplate half of a `board:units` entry. Kept OUT of the unit
+   literal in spawnUnit because it is optional: an older host — or the
+   board's own standalone demo — sends no name and no hp, and a plate is
+   simply not drawn for that unit rather than one reading "undefined 0/1".
+   `hero` widens the plate's authority, not its size: a hero plate stays
+   visible at any distance, a grunt's fades with depth. */
+function applyPlate(u, msg){
+  if (!u || !msg) return;
+  if (typeof msg.name === 'string' && msg.name) u.uname = msg.name;
+  if (msg.hpMax != null){
+    const mx = Math.max(1, msg.hpMax | 0);
+    const hp = Math.max(0, Math.min(mx, msg.hp | 0));
+    /* animate the bar toward the new value so a hit READS as a hit; seeded
+       to the first value so a unit does not drain in from full on arrival */
+    if (u.hpMax == null) u.hpShown = hp / mx;
+    u.hpMax = mx; u.hpCur = hp;
+  }
+  if (msg.hero != null) u.hero = !!msg.hero;
+}
 function applyUnits(list){
   if (!Array.isArray(list)) return;
   const seen = new Set();
@@ -7097,6 +7400,7 @@ function applyUnits(list){
     seen.add(String(u.id));
     const cur = units.find(x => String(x.id) === String(u.id) && !x.dead);
     if (cur){
+      applyPlate(cur, u);
       if (cur.gx !== u.x || cur.gz !== u.z) moveUnit(cur.id, u.x, u.z);
       /* 🜂 KALON TRANSFORM (and any other in-place identity change).
          The unit keeps its instance id but its CARD changes, so matching by id
@@ -7121,6 +7425,7 @@ function applyUnits(list){
     }
     const nu = spawnUnit(u.key || u.defKey || 'imp', u.x, u.z, u.side === 'foe' ? 'foe' : 'mine');
     if (nu && u.id != null) nu.id = String(u.id);
+    if (nu) applyPlate(nu, u);
   }
   for (const x of units.slice()) if (!x.dead && !seen.has(String(x.id))) killUnit(x.id);
 }

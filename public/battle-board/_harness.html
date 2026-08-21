@@ -382,9 +382,19 @@ function bridgeUnitList(sc) {
   const out = [];
   for (const u of (sc.units || [])) {
     if (!u || !u.alive || !u.pos) continue;
+    /* 🏷 The nameplate half of the payload, mirroring the four scalars the
+       real _bbStageUnitList now sends (name / hp / hpMax / hero). Without
+       them the board's plate pass finds no name and draws nothing, and a
+       capture would show the enemy-nameplate requirement as un-built when
+       it is the FIXTURE that is silent. `hp`/`maxHp` come off the fixture
+       unit exactly as `currentHp`/`maxHp` come off a real one. */
     out.push({ id: String(u.id), key: _bbUnitKey(u),
                x: u.pos.x | 0, z: u.pos.y | 0,
-               side: u.owner === 'player' ? 'mine' : 'foe' });
+               side: u.owner === 'player' ? 'mine' : 'foe',
+               name: String(u.name || ''),
+               hp: Math.max(0, u.currentHp | 0),
+               hpMax: Math.max(1, u.maxHp | 0),
+               hero: !!u.isHero });
   }
   return out;
 }
@@ -437,7 +447,12 @@ function bridgeTele(sc) {
   const t = sc.tele || {};
   const k = (arr) => (arr || []).map(p => p.x + ',' + p.y);
   const xz = (p) => p ? { x: p.x, z: p.y } : null;
+  /* `side` says whose route this is. The game sends 'foe' while the AI is
+     acting (from App.ui.aiMoveTrail, set at the AI's own move site) and 'mine'
+     for the player's hover preview; the board picks the palette off it so the
+     two can never be the same colour. Default 'mine', matching the host. */
   return { path: k(t.path), dest: xz(t.dest), threat: k(t.threat),
+           side: t.side === 'foe' ? 'foe' : 'mine',
            arc: t.arc ? { from: xz(t.arc.from), to: xz(t.arc.to), side: t.arc.side || 'mine' } : null };
 }
 
@@ -1270,8 +1285,16 @@ let _uid = 0;
 function unit(cardId, owner, x, y) {
   _uid++;
   const r = ROSTER[cardId] || {};
+  /* hp is a FIXTURE value — the harness has no rules and no combat, so it
+     stands in for whatever a real match would have on the unit at this
+     moment. Varied on purpose (and not by Math.random, which would make
+     every capture a different picture): the plate has to be checkable at
+     full, at a scratch, and at the brink in one shot. */
+  const hpMax = r.hpMax || (r.h && r.h > 1.15 ? 34 : 22);
+  const hp = Math.max(1, Math.round(hpMax * [1, 0.62, 0.28, 0.85, 0.45][_uid % 5]));
   return { id: 'u' + _uid, cardId: cardId, name: r.name || cardId,
-           owner: owner, alive: true, pos: { x: x, y: y } };
+           owner: owner, alive: true, pos: { x: x, y: y },
+           currentHp: hp, maxHp: hpMax, isHero: /hero|boss|lead/.test(cardId) };
 }
 
 /* HEXSPEC §6 — cube distance over odd-r offset coordinates. This used to be a
@@ -1605,6 +1628,49 @@ SCENES.threat = (function () {
     units: units, tombstones: [], surfaces: {},
     paint: { move: move, attack: [], place: [], swap: [], sel: sel },
     tele: { path: [], dest: null, arc: null, threat: threat }
+  };
+})();
+
+/* — 3e · AI TELEGRAPH. The ENEMY half of BAR R3 — the half XCOM is actually
+     famous for. In the game this picture is pushed from setAIActor(): the AI's
+     move site computes getMovePath() BEFORE it commits the move and hands the
+     route over on App.ui.aiMoveTrail, so the enemy walks a route the player
+     can see. Before that existed the enemy's arrow was rendered only into
+     `.ai-trail`, a DOM-board glyph that is visibility:hidden while the stage
+     is on, and the enemy simply teleported.
+     Two things are on screen at once here, exactly as they are in a real AI
+     turn: the mover's RED route (side:'foe' — never the player's cyan) and a
+     second foe's attack arc onto the player hero. `paint.move` is empty on
+     purpose: the game publishes no player move set while the AI is acting. */
+SCENES.aitele = (function () {
+  const from = { x: 8, y: 3 };
+  const dest = { x: 5, y: 7 };
+  const hero = { x: 4, y: 9 };
+  const shooter = { x: 7, y: 6 };
+  const units = [
+    unit('scum-grunt',   'ai',     from.x, from.y),
+    unit('scum-boss',    'ai',     shooter.x, shooter.y),
+    /* the wall — bodies sealing the direct line south-west out of (8,3), so
+       the route has to swing wide. A straight route would prove nothing. */
+    unit('zombie',       'ai',     7, 4),
+    unit('zombie',       'ai',     6, 4),
+    unit('zombie',       'ai',     6, 5),
+    unit('scum-grunt',   'ai',     5, 5),
+    unit('warrior-hero', 'player', hero.x, hero.y),
+    unit('rifleman',     'player', 3, 8)
+  ];
+  const blocked = new Set(RUIN_TILES.filter(t => t.type === 'hazard' || t.type === 'blocked')
+                                    .map(t => t.x + ',' + t.z));
+  const path = bfsPath(units, blocked, from.x, from.y, dest.x, dest.y, 8);
+  return {
+    shipped: false,
+    desc: 'The ENEMY telegraph. A Scum Grunt crossing from (8,3) to (5,7) — its route drawn in RED, not the player\'s cyan — while a Scum Boss telegraphs an attack arc onto the player hero. In a match this is pushed from setAIActor while the AI walks.',
+    timeOfDay: 'dusk', location: 'battlefield',
+    map: ruinsMap('dusk', 'battlefield'),
+    units: units, tombstones: [], surfaces: {},
+    paint: { move: [], attack: [], place: [], swap: [], sel: null },
+    tele: { path: path, dest: dest, threat: [], side: 'foe',
+            arc: { from: shooter, to: hero, side: 'foe' } }
   };
 })();
 

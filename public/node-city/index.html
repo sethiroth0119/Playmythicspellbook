@@ -3546,6 +3546,95 @@ const BUILDINGS = {
   office:   { name: 'Office Block',  ico: '🏢', cost: { cinder: 90, metal: 20, supplies: 14 }, pop: 3, crew: 2, powerNeed: 0.5,
               gen: { cinder: 0.18 }, use: { supplies: 0.08 },
               desc: 'Five floors of let space behind a glass curtain wall, with a lobby, a plant deck and its own car park. Clean work: no freight, no smoke, and the only building in the city that is taller than its plot is wide. Each level adds a floor.' },
+
+  /* ══ 🏬 THE HIGH STREET — eight shops, and every one of them closes a hole
+     that was already open. ══════════════════════════════════════════════
+
+     🔴 THE DEMAND WAS ALREADY THERE AND HAD NOWHERE TO GO. /src/economy's
+     household basket (households.js BASKET) has spent its whole life
+     charging residents for clothing, electronics, healthcare, luxury and
+     entertainment, and naming the industry each category pays: `clothier`,
+     `techStore`, `pharmacy`, `luxuryStore`, `venue`. Four of those five had
+     NO BUILDING IN THIS TABLE. A resident's clothing budget was demand with
+     no shop to spend it in — so it was met by imports or not at all, and the
+     player could not open the business however much their city wanted one.
+     This is the same defect the Office Block round closed for offices: four
+     systems advertising a land use the catalogue could not answer.
+
+     ⚠ NOTHING NEW IS INVENTED ON THE ECONOMY SIDE. Each row below is one
+       ECO_BUILDING_MAP entry away from being a firm, and that firm hires,
+       banks and buys inputs through the SAME closed loop every other
+       business runs in. No shop mints a Cinder. `gen: { cinder }` on the dry
+       shops is node-city's own tile income and is byte-for-byte `shop`'s
+       (0.18 against 0.08 supplies) — the Player Shop is this table's other
+       'a business operating out of a building' row at this scale, and
+       copying it is the only way to be sure a new shop is not quietly the
+       best earner in the game.
+
+     💱 EVERY NUMBER IS LIFTED FROM A NAMED NEIGHBOUR:
+       · the six dry shops — `retail` exactly (52 / 14 / 8, pop 2, crew 1,
+         powerNeed 0.30). They ARE retail parades; matching it means
+         bldProfile() gives them the same build duration and the same
+         municipal-ceiling behaviour, and none of them can be arbitraged
+         against the parade they are a unit of.
+       · `svc.leisure` is HALF the parade's (0.30 against 0.60, rate 0.09
+         against 0.18) and that halving is derived from the parade's own
+         description: it is 'four units under one roof'. One shop is not
+         four, so it does not supply what four do.
+       · Fast Food sits between `foodtruck` and `grocery` on volume and
+         carries NO morale. ⚠ THAT IS LOAD-BEARING: `restaurant`'s desc
+         claims it is 'the only food building that lifts Morale and Hope'.
+         Giving fast food morale would make a shipped description false.
+       · Cinema is `club`'s row (105 / 26 / 12, pop 2, crew 2, powerNeed
+         1.1) — the city's other lit, powered, night-time leisure box.
+
+     🎨 MESH REUSE, DELIBERATE AND FLAGGED, exactly as the Police Station and
+       the Containment Post borrow makeDepot and makeSiphon. buildMesh has no
+       default arm, so a row with no case is an INVISIBLE building on a real
+       tile — that is the failure being avoided here. Every one of these is a
+       glazed shopfront with a lit fascia and a forecourt of marked bays,
+       which is what makeRetail already draws. What they do NOT share is the
+       fascia colour: each passes a fixed brand tint, so a Pharmacy and a
+       Great Buy are told apart on the tile at the aerial camera instead of
+       being eight identical parades. Bespoke geometry is a follow-up. */
+  clothier: { name: 'Clothing Store', ico: '👕', cost: { cinder: 52, metal: 14, supplies: 8 }, pop: 2, crew: 1, powerNeed: 0.30,
+              gen: { cinder: 0.18 }, use: { supplies: 0.08 },
+              svc: { need: 'leisure', supply: 0.30, input: 'goods', rate: 0.09 },
+              desc: 'Racks, mirrors and a lit window. Sews and sells what the city wears — the clothing line of every household budget is spent here rather than shipped in.' },
+  greatbuy: { name: 'Great Buy',      ico: '📱', cost: { cinder: 52, metal: 14, supplies: 8 }, pop: 2, crew: 1, powerNeed: 0.30,
+              gen: { cinder: 0.18 }, use: { supplies: 0.08 },
+              svc: { need: 'leisure', supply: 0.30, input: 'goods', rate: 0.09 },
+              desc: 'A blue-fascia big box of screens, white goods and cable. Skilled counter work: it will not staff itself out of a city with no schools.' },
+  pharmacy: { name: 'Pharmacy',       ico: '⚕️', cost: { cinder: 52, metal: 14, supplies: 8 }, pop: 2, crew: 1, powerNeed: 0.30,
+              gen: { cinder: 0.18 }, use: { supplies: 0.08 },
+              svc: { need: 'leisure', supply: 0.30, input: 'goods', rate: 0.09 },
+              /* ⚠ NO `svc.need: health`, AND THAT IS A DECISION. The Clinic
+                 supplies the whole of Health coverage out of `remedies`; a
+                 second opinion about the same need, drawing on the same
+                 input, is the two-panels-disagreeing shape this file has had
+                 to rip out twice. The Pharmacy is a SHOP — it meets the
+                 healthcare line of the household budget, which is a different
+                 quantity from the city's Health coverage. */
+              desc: 'A green cross and a dispensing counter. Meets the healthcare line of every household budget — which is not the same thing as the city\'s Health coverage, and does not replace a Clinic.' },
+  furnistore:{name: 'Furniture Store',ico: '🛋️', cost: { cinder: 52, metal: 14, supplies: 8 }, pop: 2, crew: 1, powerNeed: 0.30,
+              gen: { cinder: 0.18 }, use: { supplies: 0.08 },
+              svc: { need: 'leisure', supply: 0.30, input: 'goods', rate: 0.09 },
+              desc: 'A deep showroom behind full-height glass. Sells into the luxury line of the household budget, which is where a wealthy district spends and a poor one does not.' },
+  gamestore:{ name: 'Game Store',     ico: '🎮', cost: { cinder: 52, metal: 14, supplies: 8 }, pop: 2, crew: 1, powerNeed: 0.30,
+              gen: { cinder: 0.18 }, use: { supplies: 0.08 },
+              svc: { need: 'leisure', supply: 0.55, input: 'goods', rate: 0.16 },
+              desc: 'Shelves of boxes and a demo counter. A leisure destination as much as a shop, so it supplies more coverage than the dry units either side of it.' },
+  weaponshop:{name: 'Weapon Shop',    ico: '🗡️', cost: { cinder: 52, metal: 14, supplies: 8 }, pop: 2, crew: 1, powerNeed: 0.30,
+              gen: { cinder: 0.18 }, use: { supplies: 0.08 },
+              svc: { need: 'leisure', supply: 0.30, input: 'goods', rate: 0.09 },
+              desc: 'A licensed counter behind a steel shutter. Sporting arms and field kit — it sells real sporting goods out of a real supply chain, not an invented commodity.' },
+  fastfood: { name: 'Fast Food',      ico: '🍔', cost: { cinder: 46, metal: 12, supplies: 6 }, pop: 2, crew: 2, powerNeed: 0.5,
+              svc: { need: 'food', supply: 2.4, input: 'rations', rate: 1.20, leisure: 0.2 },
+              desc: 'A hatch, a fryer and a lit menu board. Feeds far more of a block than a Food Truck for far less than a Grocery — and lifts no Morale at all, which is the whole trade.' },
+  cinema:   { name: 'Cinema',         ico: '🎬', cost: { cinder: 105, metal: 26, supplies: 12 }, pop: 2, crew: 2, powerNeed: 1.1,
+              gen: { cinder: 0.30 },
+              svc: { need: 'leisure', supply: 1.8, input: 'goods', rate: 0.55, morale: 4 },
+              desc: 'A lit marquee over a dark room. The other end of the night from the Club — the same leisure coverage, less morale, and it does not need a policed block to break even.' },
   /* 🛡 THE TWO PROTECTIVE BUILDINGS. The Fire Station below already existed —
      it is the third of the Municipal Services trio — and it is what answers
      fire. These two answer the other two severe fronts, so each hazard has a
@@ -3959,6 +4048,13 @@ const BUILD_SECTIONS = [
      buildings whose job is the people rather than the ledger. Not in Defense
      (a graveyard defends nothing) and not in Decoration (it is a service with
      a coverage number, not a mood bonus). */
+  /* 🏬 COMMERCE — its own section rather than eight more cards in Civic.
+     Civic is 'population, health and morale'; a high street is none of
+     those, it is where the household budget is spent and where most of a
+     mature city's jobs are. Ordered as a player meets them: the everyday
+     shops, then the two leisure boxes, then the licensed counter. */
+  { id: 'comm',  name: 'Commerce',       ico: '🏬', desc: 'Where the city spends its wages — and where most of it works. Each shop hires against its own skill band.',
+    items: ['clothier', 'fastfood', 'pharmacy', 'greatbuy', 'furnistore', 'gamestore', 'cinema', 'weaponshop'] },
   { id: 'civic', name: 'Civic',          ico: '🏠', desc: 'Population, health and morale.',
     items: ['housing', 'medlab', 'arena', 'shop', 'retail', 'office', 'stadium', 'graveyard', 'cemetery'] },
   { id: 'def',   name: 'Defense',        ico: '🛡️', desc: 'Raiders are coming. These are what stop them.',
@@ -4003,6 +4099,8 @@ const BUILD_ORDER = ['streetlight','farm','hydrofarm','purifier','scrapmine','fu
   'railyard', 'stadium',
   // ── the material chain (r12) ──
   'lumbercamp', 'quarry', 'fibercroft', 'sawmill', 'weavery',
+  // ── 🏬 the high street (commerce round) ──
+  'clothier', 'fastfood', 'pharmacy', 'greatbuy', 'furnistore', 'gamestore', 'cinema', 'weaponshop',
   // ── the Ouroboros chain: the two links that made the Card Shop able to print
   'papermill', 'printworks',
   // ── the financial district: the Forge remodelled. 'forge' is BACK in this
@@ -8328,6 +8426,22 @@ function buildMesh(type, lvl, tx, tz) {
       _adopt(g, makeDepot(lvl), true);
       break; }
     case 'retail': { _adopt(g, makeRetail(lvl), true); break; }
+    /* 🏬 THE HIGH STREET. One chassis, eight brand colours — see the BUILDINGS
+       block for why the geometry is shared and why the colour is not.
+       ⚠ EVERY ONE OF THESE NEEDS AN ARM. buildMesh has no default case, so a
+         missing one here is an empty THREE.Group: an invisible shop standing
+         on a tile the player paid for, and BOTH syntax gates pass on it. */
+    case 'clothier':   { _adopt(g, makeRetail(lvl, 0xc93a52), true); break; }
+    case 'greatbuy':   { _adopt(g, makeRetail(lvl, 0x2f7fbf), true); break; }
+    case 'pharmacy':   { _adopt(g, makeRetail(lvl, 0x2f9e63), true); break; }
+    case 'furnistore': { _adopt(g, makeRetail(lvl, 0xe0902a), true); break; }
+    case 'gamestore':  { _adopt(g, makeRetail(lvl, 0x8e4bbf), true); break; }
+    case 'cinema':     { _adopt(g, makeRetail(lvl, 0x1f8f8a), true); break; }
+    case 'fastfood':   { _adopt(g, makeRetail(lvl, 0xd8452f), true); break; }
+    /* Gunmetal, and deliberately NOT from _Z_FASCIA. The seven palette
+       entries are high-street brand colours; a licensed arms counter behind a
+       steel shutter is the one shop on the street that should not be one. */
+    case 'weaponshop': { _adopt(g, makeRetail(lvl, 0x6d6f78), true); break; }
     /* 🏢 tx,tz ARE PASSED, and this arm is one of only six that does it.
        makeOffice seeds its curtain-wall palette and its accent spandrel on the
        tile, so the block is a property of its PLOT rather than of the moment it
@@ -21581,7 +21695,7 @@ const _Z_CONT   = [0xa8563a, 0x2f6f9e, 0x3f7a4f, 0xb0872c, 0x8a4550, 0x4a5a6b];
        air and it is deliberately the brightest colour on the tile.
    9 meshes.
    ══════════════════════════════════════════════════════════════════════════ */
-function makeRetail(lvl) {
+function makeRetail(lvl, tint) {
   const g = new THREE.Group(), inner = _ntRoot(g, lvl), R = Math.random;
   const AY = _iAY(), GB = _IN_GB, MY = AY + .003;
 
@@ -21589,7 +21703,12 @@ function makeRetail(lvl) {
         SIGN = _ntB(), GL = _ntB(), MT = _ntB(), DK = _ntB(), VEG = _ntB();
 
   const wallCol = _Z_RWALL[(R() * _Z_RWALL.length) | 0];
-  const fasCol  = _Z_FASCIA[(R() * _Z_FASCIA.length) | 0];
+  /* 🎨 A BRAND COLOUR IF THE CALLER HAS ONE, else the random parade pick.
+     The Retail Parade is a row of unnamed units and SHOULD vary tile to
+     tile; a chain is the opposite — a Pharmacy that painted itself a
+     different colour on every plot would be unreadable at the aerial
+     camera, which is the whole reason the shops carry a tint at all. */
+  const fasCol  = (typeof tint === 'number') ? tint : _Z_FASCIA[(R() * _Z_FASCIA.length) | 0];
   const trimCol = 0xefe9dc, baseCol = 0x8c8578;
 
   /* The _i* shell context, with every bucket routed into an _ntB lane. */
@@ -27398,6 +27517,34 @@ const ECO_BUILDING_MAP = {
      and concluded the card line was covered. A wrong cross-reference to a round
      that does not exist is a typo; one to a round that does is a trap.) */
   shop:        { out: ['boosterPacks'],       ind: 'cardShop' },
+  /* ── 🏬 THE HIGH STREET. Each of these founds a firm of an industry the
+     household basket ALREADY pays: `clothier` takes the clothing line,
+     `techStore` electronics, `pharmacy` healthcare, `luxuryStore` luxury,
+     `venue` entertainment, `restaurant` restaurants. The band on the
+     INDUSTRIES row is what decides who can work here, which is the seam
+     that makes schooling worth building: a Great Buy and a Pharmacy are
+     `skilled` counters and a city with no educated residents cannot staff
+     them however many people it has.
+     ⚠ ONE `out` EACH, NOT A CANDIDATE LIST. pickAvailable() returns the
+       FIRST producible non-deposit it sees, so a second entry on a
+       manufactured good is never reached — it would read as a fallback that
+       does not exist. The multi-candidate form is for DEPOSITS, where the
+       ground decides.
+     🔴 AND EVERY ONE OF THESE NEEDS A SUPPLY CHAIN THAT CAN ACTUALLY RUN.
+       The Player Shop above spent its entire life founding a healthy firm
+       that printed ZERO because nothing in the city made `printedCards`;
+       the fix was two producer BUILDINGS, not a tuning change. Which of
+       these eight can be supplied from a real city, and which are still
+       waiting on a producer, is measured rather than assumed —
+       see .gauntlet/drive-highstreet.mjs. */
+  clothier:    { out: ['clothing'],           ind: 'clothier' },
+  greatbuy:    { out: ['appliances'],         ind: 'techStore' },
+  pharmacy:    { out: ['medicine'],           ind: 'pharmacy' },
+  furnistore:  { out: ['furniture'],          ind: 'luxuryStore' },
+  gamestore:   { out: ['toys'],               ind: 'venue' },
+  cinema:      { out: ['beverages'],          ind: 'venue' },
+  fastfood:    { out: ['preparedMeals'],      ind: 'restaurant' },
+  weaponshop:  { out: ['sportingGoods'],      ind: 'armsDealer' },
   papermill:   { out: ['cardStock'],          ind: 'paperMill' },
   printworks:  { out: ['printedCards'],       ind: 'cardPrinter' },
   /* ── 🏗 FIVE STANDING TILES THAT WERE ALWAYS BUSINESSES AND WERE NEVER WIRED.

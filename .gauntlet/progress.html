@@ -5,10 +5,10 @@
 
 <script id="run-data" type="application/json">
 {
-  "updated": "2026-08-21 \u2014 Wave 5: the camera, the arrows, and three real breaks",
-  "headline": "The regression gate found what four waves of critics had missed.",
-  "phase": "Wave 5",
-  "round": 6,
+  "updated": "2026-08-21 \u2014 Wave 6: closing the breaks",
+  "headline": "Camera and arrows are in. Now the three breaks, and the gate that has to sign it off.",
+  "phase": "Wave 6",
+  "round": 7,
   "goal": "Rebuild the battlefield as a full-field hex map \u2014 XCOM + Fire Emblem + FFT \u2014 in a post-apocalyptic world. Free camera (WASD pan, Q/E turn), five lootable ruins, three SCP-truck control points, XCOM-style move and attack arrows. Every existing battlefield function survives.",
   "bar": [
     "Sprite units and heroes stay sprites \u2014 extremely clear, high quality on the board",
@@ -99,14 +99,20 @@
     },
     {
       "name": "Free camera",
-      "state": "building",
-      "note": "Entirely unbuilt until now. The traps are known in advance: the baked static ground is cached on viewport but not on camera pose, so it would stay nailed to the screen while the board slides under it; the painter sort is z-ascending and inverts when you turn around; and picking has to stay exact at every pose, which is the guarantee the whole board rests on.",
+      "state": "critiqued",
+      "note": "WASD pans in the camera plane so it still feels right after you turn; Q/E yaws around the board centre. The critic found what the builder's own testing structurally could not: the terrain bake collapsed when pan and yaw were COMBINED, because each had only ever been varied on its own. Open gap: units and their ground rings still draw through terrain nearer than they are at some combined poses.",
       "rounds": [
         {
           "n": 1,
-          "verdict": "run",
-          "label": "building",
-          "short": "\u00b7\u00b7\u00b7"
+          "verdict": "rework",
+          "label": "bake dies on pan+yaw",
+          "short": "\u25d1"
+        },
+        {
+          "n": 2,
+          "verdict": "rework",
+          "label": "units draw through terrain",
+          "short": "\u25d1"
         }
       ]
     },
@@ -205,13 +211,35 @@
     },
     {
       "name": "XCOM telegraph",
-      "state": "queued",
-      "note": "Move range as one traced contour rather than a checkerboard, a path arrow along the route the unit will ACTUALLY walk \u2014 taken from the game's own getMovePath, not re-derived \u2014 and a curved arc to the attack target."
+      "state": "critiqued",
+      "note": "Reachable region as one traced contour, not a checkerboard; the arrow follows the game's own pathfinder so it bends where the unit bends. Round 1 shipped it for your units only \u2014 the critic pointed out requirement #9 says 'when a unit or hero moves', which includes theirs. Round 2 added the enemy telegraph and the critic immediately found the enemy sprite slides straight through the wall its own route goes around.",
+      "rounds": [
+        {
+          "n": 1,
+          "verdict": "rework",
+          "label": "enemy never telegraphed",
+          "short": "\u25d1"
+        },
+        {
+          "n": 2,
+          "verdict": "rework",
+          "label": "sprite ignores its own route",
+          "short": "\u25d1"
+        }
+      ]
     },
     {
       "name": "Sprite clarity",
-      "state": "queued",
-      "note": "Measured, not eyeballed: edge transition across a silhouette, fractional-pixel offsets, shadowBlur on the sprite draw. And tuned against what the game actually sends, not a harness-only best case."
+      "state": "critiqued",
+      "note": "Enemy nameplates with segmented health bars, blue rings under your units and red under theirs, so ownership reads even where sprites overlap. Restyled the HUD against the existing battle chrome tokens rather than rebuilding it \u2014 every panel kept its function and its position.",
+      "rounds": [
+        {
+          "n": 1,
+          "verdict": "rework",
+          "label": "critique cut short by restart",
+          "short": "\u25d1"
+        }
+      ]
     }
   ],
   "log": [
@@ -384,6 +412,26 @@
       "t": "18:40",
       "kind": "build",
       "text": "Wave 5: the free camera and the arrows \u2014 the two requirements still entirely unbuilt \u2014 alongside all three breaks. Every critic this wave has to drive the thing rather than read it."
+    },
+    {
+      "t": "20:10",
+      "kind": "critic",
+      "text": "Camera critic found the bug the builder's own method could not: pan worked, yaw worked, and the terrain bake collapsed when they were COMBINED \u2014 the one input combination the feature exists to allow. Each had only ever been varied alone."
+    },
+    {
+      "t": "21:05",
+      "kind": "critic",
+      "text": "Telegraph round 1 drew arrows for your units only. The critic went back to the wording \u2014 'when a unit or hero moves' \u2014 and ruled that the enemy's move is exactly the one you most need telegraphed."
+    },
+    {
+      "t": "21:50",
+      "kind": "critic",
+      "text": "Round 2 added it, and the critic caught the deeper version instantly: the enemy telegraph drew a route around a wall and the enemy sprite then slid straight through the wall. The arrow was honest; the animation was not."
+    },
+    {
+      "t": "22:20",
+      "kind": "build",
+      "text": "Wave 5 committed \u2014 camera, arrows, mirror fix, nameplates and ownership rings. Wave 6 opens on the three breaks the regression gate found, the camera occlusion gap, and a final function-inventory gate that has to reproduce each original failure before it may call a fix closed."
     }
   ]
 }

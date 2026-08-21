@@ -1,405 +1,619 @@
 /* ══════════════════════════════════════════════════════════════════════════
-   hub-chrome.css — the KEEP'S PERSISTENT CHROME
-   One back control · one breadcrumb · one HUD rail. Everywhere.
+   hub-chrome.css — THE ONE BACK BUTTON, EVERYWHERE ELSE.
+   public/src/hubui/hub-chrome.css   (served as /src/hubui/hub-chrome.css)
 
-   WIRING (index.html owner): this sheet must be linked from public/index.html,
-   AFTER the legacy inline <style> and after the other /src/hubui sheets:
+   THE CLAUSE THIS FILE ANSWERS — docs/hub-ui-bar.md
+     §4 "One back button. A single component, identical on every page — the
+         tab-plaque form from Comp B. No page invents its own."
+     §4 "Every state earns its keep": rest · hover · active · focus-visible ·
+         disabled. Disabled is desaturated gold at 40% with the frame dropped
+         to hairline only — never a bare `opacity:.5`.
+     §1 / §4 "No sans-serif, no rounded rectangles" — applied here to the Card
+         Shop entry chrome, which is the first thing a player sees after
+         leaving the main menu.
 
-       <link rel="stylesheet" href="src/hubui/hub-chrome.css">
+   WIRING (already done in index.html, keep this order):
+       <link rel="stylesheet" href="src/hubui/hub-keep.css">      ← tokens + .keep-tab
+       <link rel="stylesheet" href="src/hubui/hub-tiles.css">
+       <link rel="stylesheet" href="src/hubui/hub-chrome.css">    ← this file
+       <link rel="stylesheet" href="src/hubui/hub-transitions.css">
 
-   ── WHY THIS FILE EXISTS ────────────────────────────────────────────────
-   The way out of a screen was three different objects: the sub-hub's
-   `← Main Hub` rounded pill inside the breadcrumb capsule, the `btn-back*`
-   gradient-border pill, and the in-context `.hub-back-btn/.wfa-back/…`
-   family — plus the Card Shop's `← Menu`, which was a plain btn-secondary.
-   Four looks for one idea. This file collapses them into a single control
-   cut from the main menu's HUD pods (main-menu/index.html `.hud .box`):
-   bevelled octagon, gold edge, dark face, Cinzel gold caps. Only the LABEL
-   differs from screen to screen, because only the destination differs.
+   ── WHAT THIS FILE OWNS ─────────────────────────────────────────────────
+     1. THE BACK CONTROL on every screen that is NOT a sub-hub. The sub-hub
+        breadcrumb is two `.keep-tab` plaques and belongs to hub-keep.css §B3;
+        this file drags the ~20 legacy back controls scattered through
+        index.html onto that same object.
+     2. THE CARD SHOP ENTRY CHROME (`.campaign-header.keep-header`) — the
+        header of renderCardShop only. Title, sub-label, balance plaque, exit.
+     3. The pill-level typography of the top-right HUD rail. The rail's PLAQUE
+        (frame, fill, bevel) is hub-keep.css §C4; only the segments inside it
+        are dressed here.
+
+   ── WHAT THIS FILE DOES NOT OWN ─────────────────────────────────────────
+     · TOKENS. Every colour, bevel, easing and shadow below comes from the
+       `--keep-*` dictionary declared once in hub-keep.css. This file declares
+       NONE. (The four face-gradient literals in §1 are the single exception
+       and they are copied verbatim from `.keep-tab::before` — see the note
+       there before changing either copy.)
+     · `.hub-breadcrumb`. That capsule is GONE from the markup — renderTitle()
+       now emits `<nav class="keep-tabs">` with two `.keep-tab` children. The
+       old §2 of this file styled an element that no longer exists; it was
+       deleted rather than left to rot.
+     · The Card Shop BODY: the 3D store, the tabs, the listings, and every
+       line of card/economy logic. Chrome only.
 
    ── WHY SO MUCH `!important` ────────────────────────────────────────────
-   index.html:679-698 and index.html:606-676 declare the old look with
-   `!important` on nearly every line, and index.html:113068+ re-skins the
-   sub-hub back button navy on top of that. There is no way to replace those
-   declarations from a separate sheet without `!important` of our own. This
-   file is the ONLY sanctioned place for it, and only against those rules.
+   index.html:606-676 and index.html:679-698 declare the old rounded gold
+   capsule with `!important` on nearly every line — background, border,
+   border-radius, colour, padding, box-shadow, font, display. There is no way
+   to replace a declaration like that from a separate sheet without
+   `!important` of our own. This file is the ONLY sanctioned place for it, and
+   only against those rules. hub-keep.css contains none and must stay that way.
 
    ── WHY THE `html body :is(…):not(#hc-never)` PREFIX ────────────────────
    `!important` vs `!important` is decided by specificity first and source
-   order second — and we do not control where the <link> lands relative to
-   the inline <style>. So every contested selector is deliberately lifted
-   above anything in index.html:
+   order second — and the link tag's position relative to the inline <style>
+   is not something a stylesheet can rely on. So every contested selector is
+   deliberately lifted above anything index.html can say:
      html body                → +(0,0,2)
      :is(…) with an #id arg   → the whole list reads as (1,0,0)
-     :not(#hc-never)          → +(1,0,0)   (#hc-never matches nothing)
+     :not(#hc-never)          → +(1,0,0)   (#hc-never matches nothing, ever)
    Total (2,0,2), which outranks the worst offender in index.html
    (`.spellbook-hub.is-sub .hub-back-btn`, (0,3,0)) no matter the order.
    Ugly, and load-bearing. Do not "clean it up" into a bare class.
 
    ── WHAT THIS FILE MUST NEVER DO ────────────────────────────────────────
-   REPOSITION ANYTHING. index.html:660-676 records the bug: a back button
-   pinned `position:fixed` escaped a transformed ancestor, re-rooted into it
-   and stretched into a giant capsule across the middle of the page. Every
-   control here keeps the placement its own screen gives it — we set
-   `position:relative` only so the frame pseudo-elements have a containing
-   block, and never an inset/top/left/float/margin that moves anything.
+   REPOSITION ANYTHING. index.html:660-676 records the bug this cost us: a
+   back button pinned `position:fixed; top:16px; left:16px` tore itself out of
+   whatever header its screen had laid out, dropped on the viewport corner
+   over the page title — and on any screen with a TRANSFORMED ancestor it
+   re-rooted into that ancestor and stretched into a giant gold capsule across
+   the middle of the page. `.dsx .dsx-back` still carries
+   `position:absolute !important; left:40px; top:26px` for exactly that reason.
+   Every control here keeps the placement its own screen gives it. We set
+   `position:relative` ONLY where the element has no position of its own, so
+   the frame pseudo-element has a containing block — and never an
+   inset/top/left/right/bottom/float/margin that moves a control.
    ══════════════════════════════════════════════════════════════════════ */
 
-:root {
-  /* Lifted verbatim from main-menu/index.html so the two can never drift. */
-  --hc-gold:      #d2a44e;
-  --hc-gold-hi:   #f6dc95;
-  --hc-gold-lo:   #7a5f24;
-  --hc-parch:     #f2e3b8;
-  --hc-parch-hi:  #fff6dd;
-  --hc-dim:       #9a8d6c;
-  --hc-line:      rgba(214, 170, 82, 0.58);
-  --hc-line-soft: rgba(210, 164, 78, 0.25);
-  --hc-face:      linear-gradient(180deg, rgba(19,12,26,0.88), rgba(9,6,14,0.93));
-  --hc-face-hot:  linear-gradient(180deg, rgba(44,32,16,0.94), rgba(15,10,20,0.96));
-  --hc-edge:      linear-gradient(150deg, #f6d67e 0%, #c29a3a 27%, #7a5f24 52%, #c29a3a 76%, #f6d780 100%);
-  /* The one bevel in the game. 10px cut, same as `.hud .box`. */
-  --hc-bevel:     polygon(10px 0, calc(100% - 10px) 0, 100% 10px, 100% calc(100% - 10px),
-                          calc(100% - 10px) 100%, 10px 100%, 0 calc(100% - 10px), 0 10px);
-  --hc-bevel-out: polygon(11px 0, calc(100% - 11px) 0, 100% 11px, 100% calc(100% - 11px),
-                          calc(100% - 11px) 100%, 11px 100%, 0 calc(100% - 11px), 0 11px);
-  --hc-pod-shadow: inset 0 0 0 1px rgba(0,0,0,0.7),
-                   inset 0 1px 0 rgba(246,220,149,0.08),
-                   0 6px 18px rgba(0,0,0,0.45);
-}
 
 /* ═══════════════════════════════════════════════════════════════════════
-   1 · THE BACK CONTROL
-   One object. The label is the only variable.
+   1 · THE BACK CONTROL — the tab plaque from Comp B
+   ─────────────────────────────────────────────────────────────────────────
+   This is `.keep-tab` (hub-keep.css §B3), restated with `!important` for the
+   legacy family. The class is now ALSO on the markup of the named controls
+   (renderCardShop's `[data-cs="cs-back"]`, #btn-back-forge,
+   #btn-back-forge-bottom, #btn-back-tutor, #btn-back-market, #btn-back-camp,
+   #btn-back-profile, #gym-back, .dsx-back#btn-back) so there is genuinely ONE
+   component rather than a lookalike. The selector list below is what covers
+   the rest of the family — the backs whose markup this unit does not touch —
+   and what out-shouts index.html:606-698 for all of them at once.
 
-   The frame is drawn with two negative-z pseudo-elements rather than a
-   border, because a `border` + `clip-path` loses the edge on the four
-   bevels — the diagonal reads as bare face and the control stops looking
-   cut. ::before is the gold edge, ::after is the dark face inset 1.5px, so
-   gold survives on all EIGHT sides. `isolation:isolate` keeps the negative
-   z-index inside this button: without it the pseudos escape to the nearest
-   stacking context and paint behind whatever panel the button sits on.
-   The button's own text is inline content, which paints above negative-z
-   descendants, so the label needs no wrapper (and there isn't one to add —
-   this sheet cannot touch markup).
+   ⚠ THE FOUR LITERALS. `#181309/#0d0a07` (rest face), `#221a0f/#120d08`
+     (hover face) are copied verbatim from `.keep-tab::before` in hub-keep.css
+     §B3. They are not tokens there either — they are that component's own
+     surface. If one copy changes the other MUST change with it, or the sub-hub
+     breadcrumb and every other back button stop being the same object, which
+     is the entire clause this file answers.
+
+   ⚠ THE FRAME IS A `::before`, NOT A BORDER. The button's own background is
+     the gold gradient, cut by `clip-path: --keep-oct-10`. `::before` is the
+     dark face at `inset:1px` cut by `--keep-oct-9`, so exactly 1px of gold
+     survives on all EIGHT sides — a `border` + `clip-path` loses the edge on
+     the four diagonals and the control stops looking cut. The face sits at
+     `z-index:-1`, which paints above the parent's own background and below the
+     parent's inline content: precisely the sandwich needed when there is no
+     inner wrapper to add (this sheet cannot touch markup, and ~20 legacy
+     buttons ship bare text). `isolation:isolate` pins that -1 inside the
+     button; without it the pseudo escapes to the nearest stacking context and
+     paints behind whatever panel the button sits on, i.e. vanishes.
    ═══════════════════════════════════════════════════════════════════════ */
 
 html body :is(
   .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
+  .fgx-back, .dsx-back, .tw-wm-back,
   #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
   #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-  .tw-wm-back, #pox-back, [data-cs="cs-back"],
+  #pox-back, [data-cs="cs-back"],
   button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
 ):not(#hc-never) {
-  /* — geometry: relative ONLY (no offsets). See the header note. — */
+  /* — geometry: NO offsets, NO float, NO margin. See the header note. — */
   position: relative;
   isolation: isolate;
   display: inline-flex !important;
   align-items: center;
   justify-content: center;
-  gap: 0.5em;
-  /* Left padding runs heavier than right on purpose: 0.18em of tracking is
-     appended after the LAST glyph too, so an evenly padded label reads as
-     sitting left of centre. */
-  padding: 0.56rem 1.05rem 0.56rem 1.3rem !important;
-  min-width: 8.25em !important;
+  gap: 9px;
+  height: 44px !important;
   min-height: 0;
+  /* Symmetric padding + `text-indent` to pay back the trailing letterspace,
+     exactly as `.keep-tab` does — an evenly padded letterspaced label reads as
+     sitting left of centre otherwise. */
+  padding: 0 22px !important;
   white-space: nowrap;
-  /* — strip the four inherited looks down to bare — */
+  /* — strip the legacy capsule down to bare metal — */
   -webkit-appearance: none; appearance: none;
   border: 0 !important;
   border-radius: 0 !important;
-  background: none !important;
   box-shadow: none !important;
-  clip-path: none !important;
   backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
+  opacity: 1 !important;
   outline: none;
+  transform: none !important;
+  /* — the frame: gold gradient, notched — */
+  background: linear-gradient(180deg, rgba(200, 168, 105, 0.60), rgba(138, 111, 60, 0.34)) !important;
+  clip-path: var(--keep-oct-10);
+  filter: drop-shadow(0 6px 12px rgba(0, 0, 0, 0.62));
   /* — the keep's voice — */
-  font-family: 'Cinzel', serif !important;
-  font-weight: 700 !important;
-  font-size: 0.82rem !important;
-  line-height: 1.15 !important;
-  letter-spacing: 0.18em !important;
+  font-family: var(--keep-cinzel) !important;
+  font-size: 15px !important;
+  font-weight: 600 !important;
+  line-height: 1 !important;
+  letter-spacing: 0.11em !important;
+  text-indent: 0.11em;
   text-transform: uppercase !important;
   text-decoration: none !important;
-  color: var(--hc-parch) !important;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.85) !important;
+  color: #b0996f !important;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.8) !important;
   cursor: pointer;
-  transition: color 0.18s ease, transform 0.16s ease !important;
+  transition: filter var(--keep-fast) var(--keep-ease),
+              color  var(--keep-fast) var(--keep-ease) !important;
 }
 
-/* Gold edge. */
+/* The dark face. */
 html body :is(
   .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
+  .fgx-back, .dsx-back, .tw-wm-back,
   #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
   #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-  .tw-wm-back, #pox-back, [data-cs="cs-back"],
+  #pox-back, [data-cs="cs-back"],
   button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
 ):not(#hc-never)::before {
   content: "";
-  position: absolute; inset: 0; z-index: -1;
+  position: absolute;
+  inset: 1px;
+  z-index: -1;
+  clip-path: var(--keep-oct-9);
+  background: linear-gradient(180deg, #181309 0%, #0d0a07 100%);
+  box-shadow: var(--keep-emboss), var(--keep-liner);
+  transition: background var(--keep-fast) var(--keep-ease),
+              box-shadow var(--keep-fast) var(--keep-ease);
   pointer-events: none;
-  background: var(--hc-edge);
-  clip-path: var(--hc-bevel-out);
-  /* drop-shadow follows the clip, so the shadow is bevelled too — box-shadow
-     would draw a rectangle behind a cut shape. */
-  filter: drop-shadow(0 6px 16px rgba(0,0,0,0.55));
-  transition: filter 0.2s ease, opacity 0.2s ease;
 }
 
-/* Dark face + the engraved inner frame (see the box-shadow note below). */
+/* Nothing in the legacy sheets draws a second decoration on these buttons, and
+   a stray `::after` from a future rule would paint over the label. Neutralised
+   once, here, rather than discovered later on one screen. */
 html body :is(
   .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
+  .fgx-back, .dsx-back, .tw-wm-back,
   #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
   #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-  .tw-wm-back, #pox-back, [data-cs="cs-back"],
+  #pox-back, [data-cs="cs-back"],
   button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
 ):not(#hc-never)::after {
-  content: "";
-  position: absolute; inset: 1.5px; z-index: -1;
-  pointer-events: none;
-  background: var(--hc-face);
-  clip-path: var(--hc-bevel);
-  /* Engraved inner frame. The 1px inset ring is rectangular and the bevel cuts
-     its corners away, so what survives is four short gold rules that stop at
-     the cuts — the bracket. Drawn as a shadow, not a border, so it costs no
-     layout and cannot fight the clip. */
-  box-shadow: inset 0 0 0 1px rgba(246,220,149,0.13),
-              inset 0 1px 0 rgba(255,240,200,0.10);
-  transition: background 0.2s ease, box-shadow 0.2s ease;
+  content: none;
 }
 
-/* — hover — */
+/* — HOVER. The tab lights up. It does not move and it does not scale. — */
 html body :is(
   .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
+  .fgx-back, .dsx-back, .tw-wm-back,
   #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
   #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-  .tw-wm-back, #pox-back, [data-cs="cs-back"],
+  #pox-back, [data-cs="cs-back"],
   button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
 ):not(#hc-never):hover:not(:disabled):not([disabled]):not([aria-disabled="true"]) {
-  color: var(--hc-parch-hi) !important;
-  transform: translateY(-1px) !important;
+  color: var(--keep-gold-hi) !important;
+  transform: none !important;
+  box-shadow: none !important;
 }
 html body :is(
   .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
+  .fgx-back, .dsx-back, .tw-wm-back,
   #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
   #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-  .tw-wm-back, #pox-back, [data-cs="cs-back"],
+  #pox-back, [data-cs="cs-back"],
   button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
 ):not(#hc-never):hover:not(:disabled):not([disabled]):not([aria-disabled="true"])::before {
-  filter: drop-shadow(0 9px 20px rgba(0,0,0,0.62)) brightness(1.16) saturate(1.06);
-}
-html body :is(
-  .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
-  #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
-  #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-  .tw-wm-back, #pox-back, [data-cs="cs-back"],
-  button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
-):not(#hc-never):hover:not(:disabled):not([disabled]):not([aria-disabled="true"])::after {
-  background: var(--hc-face-hot);
-  box-shadow: inset 0 0 0 1px rgba(255,241,196,0.34),
-              inset 0 1px 0 rgba(255,240,200,0.18),
-              inset 0 0 24px rgba(246,220,149,0.20);
+  background: linear-gradient(180deg, #221a0f 0%, #120d08 100%);
 }
 
-/* — active (pressed): the control sinks and the face darkens — */
+/* — ACTIVE. A physical press: the drop shadow collapses and the face sinks. — */
 html body :is(
   .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
+  .fgx-back, .dsx-back, .tw-wm-back,
   #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
   #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-  .tw-wm-back, #pox-back, [data-cs="cs-back"],
+  #pox-back, [data-cs="cs-back"],
   button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
 ):not(#hc-never):active:not(:disabled):not([disabled]):not([aria-disabled="true"]) {
-  transform: translateY(1px) !important;
-  color: #e8d5a4 !important;
+  filter: var(--keep-drop-lo);
+  color: var(--keep-gold) !important;
+  transform: none !important;
 }
 html body :is(
   .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
+  .fgx-back, .dsx-back, .tw-wm-back,
   #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
   #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-  .tw-wm-back, #pox-back, [data-cs="cs-back"],
+  #pox-back, [data-cs="cs-back"],
   button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
 ):not(#hc-never):active:not(:disabled):not([disabled]):not([aria-disabled="true"])::before {
-  filter: drop-shadow(0 2px 5px rgba(0,0,0,0.6)) brightness(0.92);
-}
-html body :is(
-  .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
-  #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
-  #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-  .tw-wm-back, #pox-back, [data-cs="cs-back"],
-  button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
-):not(#hc-never):active:not(:disabled):not([disabled]):not([aria-disabled="true"])::after {
-  background: linear-gradient(180deg, rgba(10,7,15,0.96), rgba(20,14,27,0.96));
-  box-shadow: inset 0 0 0 1px rgba(246,220,149,0.16),
-              inset 0 3px 7px rgba(0,0,0,0.8),
-              inset 0 0 14px rgba(246,220,149,0.08);
+  box-shadow: inset 0 3px 8px rgba(0, 0, 0, 0.85), var(--keep-liner);
 }
 
-/* — focus-visible: the same ring the main menu uses on its HUD pods — */
+/* — FOCUS-VISIBLE. The ring is INSET: an outside outline would be shaved off
+     at all four notched corners by the clip-path, leaving four broken stubs. — */
 html body :is(
   .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
+  .fgx-back, .dsx-back, .tw-wm-back,
   #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
   #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-  .tw-wm-back, #pox-back, [data-cs="cs-back"],
+  #pox-back, [data-cs="cs-back"],
   button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
 ):not(#hc-never):focus-visible {
-  outline: 2px solid var(--hc-gold-hi) !important;
-  outline-offset: 3px !important;
-  color: var(--hc-parch-hi) !important;
+  outline: none !important;
+  color: var(--keep-gold-hi) !important;
+  box-shadow: none !important;
 }
-/* Mouse clicks must not leave a ring behind. */
 html body :is(
   .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
+  .fgx-back, .dsx-back, .tw-wm-back,
   #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
   #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-  .tw-wm-back, #pox-back, [data-cs="cs-back"],
+  #pox-back, [data-cs="cs-back"],
+  button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
+):not(#hc-never):focus-visible::before {
+  box-shadow: inset 0 0 0 2px var(--keep-gold-hi), var(--keep-liner);
+}
+/* A mouse click must not leave a ring behind. `.btn-mini:focus-visible` in the
+   legacy sheet paints a 4px halo; :focus without :focus-visible must be silent. */
+html body :is(
+  .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
+  .fgx-back, .dsx-back, .tw-wm-back,
+  #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
+  #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
+  #pox-back, [data-cs="cs-back"],
   button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
 ):not(#hc-never):focus:not(:focus-visible) {
   outline: none !important;
+  box-shadow: none !important;
 }
 
-/* — disabled: the gold goes out of the metal — */
+/* — DISABLED. §4: desaturated gold at 40% with the frame dropped to hairline
+     only. The legacy `.btn-secondary:disabled{opacity:.4}` is exactly the
+     "never just opacity" the bar names, so it is overridden above and the
+     gold is taken out of the metal properly here. — */
 html body :is(
   .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
+  .fgx-back, .dsx-back, .tw-wm-back,
   #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
   #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-  .tw-wm-back, #pox-back, [data-cs="cs-back"],
+  #pox-back, [data-cs="cs-back"],
   button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
 ):not(#hc-never):is(:disabled, [disabled], [aria-disabled="true"], .btn-disabled) {
   cursor: not-allowed !important;
-  color: #8b8069 !important;
-  transform: none !important;
-  text-shadow: 0 1px 1px rgba(0,0,0,0.8) !important;
+  background: rgba(138, 111, 60, 0.28) !important;
+  filter: none;
+  color: rgba(201, 171, 114, 0.40) !important;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.8) !important;
 }
 html body :is(
   .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
+  .fgx-back, .dsx-back, .tw-wm-back,
   #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
   #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-  .tw-wm-back, #pox-back, [data-cs="cs-back"],
+  #pox-back, [data-cs="cs-back"],
   button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
 ):not(#hc-never):is(:disabled, [disabled], [aria-disabled="true"], .btn-disabled)::before {
-  filter: grayscale(0.7) brightness(0.5);
-}
-html body :is(
-  .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
-  #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
-  #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-  .tw-wm-back, #pox-back, [data-cs="cs-back"],
-  button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
-):not(#hc-never):is(:disabled, [disabled], [aria-disabled="true"], .btn-disabled)::after {
-  background: linear-gradient(180deg, rgba(16,13,21,0.95), rgba(9,7,13,0.97));
-  box-shadow: inset 0 0 0 1px rgba(150,140,120,0.10);
+  background: linear-gradient(180deg, #141210 0%, #0b0a08 100%);
+  box-shadow: var(--keep-liner);
 }
 
-/* Narrow screens: the control shrinks, it does not change species. */
-@media (max-width: 640px) {
+/* The `←` most of these labels ship as literal text. It is a hair too loud at
+   full body gold next to the letterspaced caps, so it is dimmed the same way
+   `.keep-tab .keep-tab-arrow` is — but only where the markup wraps it. Where
+   it is bare text (most screens) it simply inherits the label colour, which is
+   what the comp's arrow does at rest anyway. */
+html body :is(
+  .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
+  .fgx-back, .dsx-back, .tw-wm-back,
+  #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
+  #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
+  #pox-back, [data-cs="cs-back"],
+  button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
+):not(#hc-never) .keep-tab-arrow {
+  color: #8d7a55;
+  text-indent: 0;
+  margin-right: 1px;
+  transition: color var(--keep-fast) var(--keep-ease);
+}
+
+/* Narrow screens: the control shrinks, it does not change species. The numbers
+   match `.keep-tab`'s own 900px step in hub-keep.css §D so the breadcrumb and
+   every other back button stay the same size as each other. */
+@media (max-width: 900px) {
   html body :is(
     .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
+    .fgx-back, .dsx-back, .tw-wm-back,
     #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
     #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-    .tw-wm-back, #pox-back, [data-cs="cs-back"],
+    #pox-back, [data-cs="cs-back"],
     button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
   ):not(#hc-never) {
-    padding: 0.44rem 0.8rem 0.44rem 1.0rem !important;
-    font-size: 0.72rem !important;
-    letter-spacing: 0.14em !important;
-    min-width: 0 !important;
+    height: 38px !important;
+    padding: 0 15px !important;
+    font-size: 13px !important;
+    letter-spacing: 0.09em !important;
+    text-indent: 0.09em;
   }
 }
 
-/* ═══════════════════════════════════════════════════════════════════════
-   2 · THE BREADCRUMB
-   `← MAIN HUB  ››  BATTLE HALL` as one engraved gold rule.
 
-   The markup carries inline `style="opacity:0.5"` on the arrow and
-   `style="color:#c8a060;font-weight:700;letter-spacing:0.14em"` on the
-   title (index.html ~114941). Inline styles beat every stylesheet except
-   `!important`, and this sheet cannot edit markup — hence the overrides.
-   POSITION IS NOT TOUCHED: whatever `top`/`left`/`position` the screen
-   already gave the capsule, it keeps.
+/* ═══════════════════════════════════════════════════════════════════════
+   2 · THE CARD SHOP ENTRY CHROME
+   ─────────────────────────────────────────────────────────────────────────
+   `renderCardShop()` is reached straight off the main menu's Card Shop nav
+   row, so it is the first screen a player sees after the keep. It used to
+   greet them with a purple glass rounded rect, a sans-ish sub-label and a
+   plain `← Menu` btn-secondary — a cliff edge two clicks from the comp.
+
+   SCOPE. `.campaign-header` is shared with the campaign screen and Gym Core
+   Wars. Only renderCardShop's copy carries the extra `keep-header` class, so
+   nothing else on the app moves. Everything below the header — the tabs, the
+   listings, the 3D store, all card and economy logic — is untouched.
+
+   LAYOUT. The legacy `.campaign-header` is `grid-template-columns:1fr auto
+   auto` and the Card Shop puts FOUR children in it, so the exit button was
+   already wrapping onto a second row of its own. A flex row with the title
+   block taking the slack seats all four on one line. That is a chrome fix,
+   not a redesign: no child is added, removed, reordered or re-parented, and
+   every `data-cs` hook is exactly where it was.
    ═══════════════════════════════════════════════════════════════════════ */
 
-html body .hub-breadcrumb:not(#hc-never) {
-  gap: 0.85rem !important;
-  border: 1px solid var(--hc-line) !important;
+html body .campaign-header.keep-header:not(#hc-never) {
+  position: relative;
+  isolation: isolate;
+  display: flex !important;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 17px 24px 21px !important;
+  margin-bottom: 1.5rem;
+  /* Bevelled dark stone: gold gradient frame + `::before` face, the same two
+     layers as the tab. NOT a rounded rect and NOT a purple wash (§1). */
+  border: 0 !important;
   border-radius: 0 !important;
-  background: var(--hc-face) !important;
-  box-shadow: var(--hc-pod-shadow) !important;
-  clip-path: var(--hc-bevel);
-  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
-  color: var(--hc-parch) !important;
-  font-family: 'Cinzel', serif !important;
-  /* The back control inside carries its own vertical padding, so the capsule
-     only needs to hug it. Horizontal padding stays generous for the title. */
-  padding: 0.4rem 1.15rem 0.4rem 0.45rem !important;
+  background: linear-gradient(180deg, rgba(200, 168, 105, 0.50), rgba(138, 111, 60, 0.26)) !important;
+  clip-path: var(--keep-oct-10);
+  filter: var(--keep-drop);
+  font-family: var(--keep-cinzel);
+}
+html body .campaign-header.keep-header:not(#hc-never)::before {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  z-index: -1;
+  clip-path: var(--keep-oct-9);
+  background: linear-gradient(180deg, #171208 0%, #0c0906 100%);
+  box-shadow: var(--keep-emboss), var(--keep-liner);
+  pointer-events: none;
+}
+/* The title block takes the slack so the balance plaque and the exit tab sit
+   hard right. `min-width:0` keeps a long sub-label from forcing an overflow. */
+html body .campaign-header.keep-header:not(#hc-never) > div:first-child {
+  position: relative;
+  flex: 1 1 260px;
+  min-width: 0;
+  padding-bottom: 15px;
+}
+/* §1 ORNAMENT — the gold hairline with a diamond boss, one per screen, drawn
+   entirely from this block's own two pseudo-elements because a stylesheet
+   cannot add the three `<i>` children that `.keep-rule` (hub-keep.css §B5)
+   is built from. Left-anchored, since the Card Shop's title block is
+   left-aligned where the sub-hub's is centred. It also gives the long empty
+   middle of the header something to be, which is what a rule is for. */
+html body .campaign-header.keep-header:not(#hc-never) > div:first-child::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 1px;
+  width: 9px;
+  height: 9px;
+  transform: rotate(45deg);
+  background: linear-gradient(135deg, var(--keep-gold-hi-2), #a67f3c);
+  box-shadow: 0 0 12px rgba(232, 200, 119, 0.50), inset 0 0 0 1px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+}
+html body .campaign-header.keep-header:not(#hc-never) > div:first-child::after {
+  content: "";
+  position: absolute;
+  left: 18px;
+  right: 0;
+  bottom: 5px;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(200, 168, 105, 0.85), rgba(138, 111, 60, 0.55) 42%, transparent);
+  pointer-events: none;
 }
 
-/* The separator. The markup ships a `↣`; the keep speaks in chevrons, so the
-   glyph is collapsed and redrawn here. Pure CSS — no markup was harmed. */
-html body .hub-breadcrumb .hub-breadcrumb-arrow:not(#hc-never) {
-  font-size: 0 !important;
-  opacity: 1 !important;
-  line-height: 1;
-  display: inline-flex; align-items: center;
-  margin: 0 0.1rem;
-}
-html body .hub-breadcrumb .hub-breadcrumb-arrow:not(#hc-never)::after {
-  content: "\203A\203A";
-  font-family: 'Cinzel', serif;
-  font-size: 0.86rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  color: var(--hc-gold);
-  text-shadow: 0 0 10px rgba(246,220,149,0.35), 0 1px 1px rgba(0,0,0,0.9);
-}
-
-/* The destination, engraved. Gold gradient on the type instead of a flat
-   fill, matching `.hub-title` — the breadcrumb is a small echo of the page
-   name, so it should be made of the same metal. */
-html body .hub-breadcrumb .hub-breadcrumb-title:not(#hc-never) {
-  font-family: 'Cinzel', serif !important;
+/* THE TITLE — gold stamped metal (§1), not coloured text.
+   ⚠ The hard dark shadow comes from `filter: drop-shadow()`, NEVER
+     `text-shadow`. Chromium paints text-shadow ON TOP of a
+     `background-clip:text` fill, which hollows every glyph into an outline.
+     `text-shadow:none` below is therefore load-bearing, not tidying.
+   ⚠ The label opens with an emoji (`🛒`). A colour-font glyph is painted as an
+     image and ignores `-webkit-text-fill-color`, so it survives the
+     transparent fill and still reads in colour — verified in a render, not
+     assumed. */
+html body .campaign-header.keep-header:not(#hc-never) .section-title {
+  font-family: var(--keep-cinzel) !important;
+  font-size: 2rem !important;
   font-weight: 700 !important;
-  font-size: 0.82rem !important;
-  letter-spacing: 0.24em !important;
-  text-indent: 0.24em;
+  letter-spacing: 0.10em !important;
   text-transform: uppercase !important;
-  background: linear-gradient(180deg, #fdf3d2 0%, #f0cf7f 46%, #c79a3c 74%, #8f6a24 100%) !important;
-  -webkit-background-clip: text !important; background-clip: text !important;
-  -webkit-text-fill-color: transparent !important;
+  background: linear-gradient(180deg, #fdf3d2 0%, #f2dda2 34%, #d8b25c 66%, #9a742c 100%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
   color: transparent !important;
-  /* text-shadow cannot coexist with a transparent text fill — drop-shadow can. */
-  filter: drop-shadow(0 1px 1px rgba(0,0,0,0.95));
-  white-space: nowrap;
+  text-shadow: none !important;
+  filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.85)) drop-shadow(0 0 26px rgba(232, 200, 119, 0.22));
+}
+/* The sub-label — italic serif in muted gold-grey (§1 Type). */
+html body .campaign-header.keep-header:not(#hc-never) .small-text {
+  font-family: var(--keep-serif-it) !important;
+  font-style: italic;
+  font-size: 0.92rem !important;
+  letter-spacing: 0.02em;
+  color: var(--keep-gold-grey) !important;
 }
 
-@media (max-width: 640px) {
-  html body .hub-breadcrumb:not(#hc-never) { gap: 0.45rem !important; padding: 0.3rem 0.7rem 0.3rem 0.3rem !important; }
-  html body .hub-breadcrumb .hub-breadcrumb-title:not(#hc-never) { font-size: 0.68rem !important; letter-spacing: 0.16em !important; }
+/* THE BALANCE — a small notched plaque, hairline gold, Cinzel value. The
+   number itself is still whatever `_csCinders()` returned; only the frame
+   around it changed. */
+html body .campaign-header.keep-header:not(#hc-never) .shop-balance-stack { gap: 10px; }
+html body .campaign-header.keep-header:not(#hc-never) .shop-gems-pill {
+  border: 1px solid var(--keep-gold-line) !important;
+  border-radius: 0 !important;
+  clip-path: var(--keep-oct-6);
+  background: linear-gradient(180deg, rgba(26, 21, 14, 0.92), rgba(13, 10, 7, 0.94)) !important;
+  box-shadow: var(--keep-emboss), var(--keep-liner);
+  padding: 0.4rem 0.95rem !important;
+  min-width: 132px;
 }
+html body .campaign-header.keep-header:not(#hc-never) .shop-gems-num {
+  font-family: var(--keep-cinzel) !important;
+  font-size: 1.4rem !important;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--keep-gold-hi) !important;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.8);
+}
+html body .campaign-header.keep-header:not(#hc-never) .shop-gems-pill .small-text {
+  font-style: normal;
+  font-family: var(--keep-cinzel) !important;
+  font-size: 0.62rem !important;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+/* THE 3D-STORE TOGGLE sits shoulder to shoulder with the exit tab in the same
+   header. Left as a btn-secondary it would be the one rounded rectangle on the
+   screen, so it is cut from the same plaque — SAME OBJECT, different label.
+   Its `data-cs="cs-3d-toggle"` hook and its handler are untouched; this is
+   skin only. Its inline `style="margin-right:6px"` is left alone: the flex gap
+   already spaces the row and overriding an inline margin would be a
+   repositioning this file has no business doing. */
+html body .campaign-header.keep-header:not(#hc-never) [data-cs="cs-3d-toggle"] {
+  position: relative;
+  isolation: isolate;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  height: 44px !important;
+  padding: 0 22px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  background: linear-gradient(180deg, rgba(200, 168, 105, 0.60), rgba(138, 111, 60, 0.34)) !important;
+  clip-path: var(--keep-oct-10);
+  filter: drop-shadow(0 6px 12px rgba(0, 0, 0, 0.62));
+  font-family: var(--keep-cinzel) !important;
+  font-size: 15px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.11em !important;
+  text-indent: 0.11em;
+  text-transform: uppercase !important;
+  color: #b0996f !important;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.8) !important;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: filter var(--keep-fast) var(--keep-ease),
+              color  var(--keep-fast) var(--keep-ease) !important;
+}
+html body .campaign-header.keep-header:not(#hc-never) [data-cs="cs-3d-toggle"]::before {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  z-index: -1;
+  clip-path: var(--keep-oct-9);
+  background: linear-gradient(180deg, #181309 0%, #0d0a07 100%);
+  box-shadow: var(--keep-emboss), var(--keep-liner);
+  transition: background var(--keep-fast) var(--keep-ease),
+              box-shadow var(--keep-fast) var(--keep-ease);
+  pointer-events: none;
+}
+html body .campaign-header.keep-header:not(#hc-never) [data-cs="cs-3d-toggle"]:hover {
+  color: var(--keep-gold-hi) !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+html body .campaign-header.keep-header:not(#hc-never) [data-cs="cs-3d-toggle"]:hover::before {
+  background: linear-gradient(180deg, #221a0f 0%, #120d08 100%);
+}
+html body .campaign-header.keep-header:not(#hc-never) [data-cs="cs-3d-toggle"]:active {
+  filter: var(--keep-drop-lo);
+  color: var(--keep-gold) !important;
+  transform: none !important;
+}
+html body .campaign-header.keep-header:not(#hc-never) [data-cs="cs-3d-toggle"]:active::before {
+  box-shadow: inset 0 3px 8px rgba(0, 0, 0, 0.85), var(--keep-liner);
+}
+html body .campaign-header.keep-header:not(#hc-never) [data-cs="cs-3d-toggle"]:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+  color: var(--keep-gold-hi) !important;
+}
+html body .campaign-header.keep-header:not(#hc-never) [data-cs="cs-3d-toggle"]:focus-visible::before {
+  box-shadow: inset 0 0 0 2px var(--keep-gold-hi), var(--keep-liner);
+}
+html body .campaign-header.keep-header:not(#hc-never) [data-cs="cs-3d-toggle"]:focus:not(:focus-visible) {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+@media (max-width: 900px) {
+  html body .campaign-header.keep-header:not(#hc-never) {
+    gap: 12px;
+    padding: 12px 16px !important;
+  }
+  html body .campaign-header.keep-header:not(#hc-never) .section-title { font-size: 1.5rem !important; }
+  html body .campaign-header.keep-header:not(#hc-never) [data-cs="cs-3d-toggle"] {
+    height: 38px !important;
+    padding: 0 15px !important;
+    font-size: 13px !important;
+    letter-spacing: 0.09em !important;
+  }
+}
+
+/* The Card Shop's OTHER exit — the one floating over the full-screen 3D store
+   — sits on a dark canvas with no plaque behind it, so it needs its drop
+   shadow deepened to stay legible against a bright shelf. Same object, same
+   size, one shadow value. */
+html body .cs-3d-topbar [data-cs="cs-back"]:not(#hc-never) {
+  filter: drop-shadow(0 6px 16px rgba(0, 0, 0, 0.85));
+}
+
 
 /* ═══════════════════════════════════════════════════════════════════════
-   3 · THE TOP-RIGHT HUD RAIL
-   Was: a scatter of separate small pills — a plainer system than the main
-   menu, which reads as ONE long bevelled pod carrying segments split by
-   gold hairlines (main-menu/index.html `.hud .box` + `.seg + .seg`).
-   Now the rail itself is the pod and every pill is a segment. No pill is
-   removed, reordered or re-parented: `_hubCurrencyRailHtml()` still emits
-   exactly what it emitted, `_wireHubCurrencyRail()` still finds every id,
-   and every live number keeps its place in the row.
+   3 · THE TOP-RIGHT HUD RAIL — segments only
+   ─────────────────────────────────────────────────────────────────────────
+   The rail's PLAQUE (gold frame, dark face, bevel, drop shadow) belongs to
+   hub-keep.css §C4 `html body .keep-hud .hub-currency-rail:not(#keep-none)`,
+   which is deliberately specific enough to win against this file. What is
+   left here is the inside of the pod: the type, the colour, and the four
+   states of the segments that are actually buttons (cloud dropdown, rank →
+   Colosseum, music mute, sync-error fix).
+
+   No pill is removed, reordered or re-parented: `_hubCurrencyRailHtml()`
+   still emits exactly what it emitted, `_wireHubCurrencyRail()` still finds
+   every id, and every live number keeps its place in the row.
    ═══════════════════════════════════════════════════════════════════════ */
 
 html body .hub-currency-rail:not(#hc-never) {
   gap: 0 !important;
   align-items: stretch;
-  /* 1px of vertical breathing room so a hovered end segment's wash never
-     paints over the pod's own gold hairline. */
-  padding: 1px 3px;
-  border: 1px solid var(--hc-line);
-  border-radius: 0;
-  background: var(--hc-face);
-  box-shadow: var(--hc-pod-shadow);
-  clip-path: var(--hc-bevel);
-  font-family: 'Cinzel', serif;
 }
 
 html body .hub-currency-rail .hub-cur-pill:not(#hc-never) {
@@ -410,158 +624,113 @@ html body .hub-currency-rail .hub-cur-pill:not(#hc-never) {
   box-shadow: none !important;
   clip-path: none !important;
   backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
-  padding: 0.62rem 0.95rem !important;
+  padding: 0.58rem 0.9rem !important;
   gap: 0.55rem !important;
-  font-family: 'Cinzel', serif !important;
+  font-family: var(--keep-cinzel) !important;
   font-weight: 600 !important;
   font-size: 0.9rem !important;
-  letter-spacing: 0.04em !important;
-  color: var(--hc-parch) !important;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.75);
-  transition: color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+  letter-spacing: 0.06em !important;
+  color: var(--keep-gold) !important;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.8);
+  transition: color var(--keep-fast) var(--keep-ease),
+              background var(--keep-fast) var(--keep-ease);
 }
 
-/* The hairline between segments — the main menu's `.seg + .seg` rule. Two
-   details matter and neither is a `border-left`:
-     · the main menu's divider stops short top and bottom, which is what keeps
-       the rail from reading like a table row;
-     · a background or border on the pill would be wiped by the hover wash
-       below, so the divider would blink out whenever the neighbouring segment
-       was hovered.
-   An absolutely positioned pseudo-element solves both. */
-html body .hub-currency-rail .hub-cur-pill + .hub-cur-pill:not(#hc-never)::before {
-  content: "";
-  position: absolute; left: 0; top: 24%; bottom: 24%; width: 1px;
-  background: rgba(210, 164, 78, 0.38);
-  pointer-events: none;
-}
-
-/* Interactive segments (cloud dropdown, rank → Colosseum, music mute,
-   sync-error fix) each earn their states. `.hud .seg-btn` in the main menu
-   behaves exactly this way: a warm wash, no geometry change. */
+/* Interactive segments each earn their states — a warm wash, no geometry
+   change, exactly as the tab lights up without moving. */
 html body .hub-currency-rail button.hub-cur-pill:not(#hc-never) { cursor: pointer; }
 html body .hub-currency-rail button.hub-cur-pill:not(#hc-never):hover {
-  color: var(--hc-parch-hi) !important;
-  background: linear-gradient(180deg, rgba(210,164,78,0.16), rgba(210,164,78,0.06)) !important;
-  box-shadow: inset 0 0 22px rgba(246,220,149,0.10) !important;
+  color: var(--keep-gold-hi) !important;
+  background: linear-gradient(180deg, rgba(200, 168, 105, 0.16), rgba(200, 168, 105, 0.05)) !important;
 }
 html body .hub-currency-rail button.hub-cur-pill:not(#hc-never):active {
-  background: rgba(0,0,0,0.42) !important;
-  box-shadow: inset 0 2px 6px rgba(0,0,0,0.7) !important;
-  color: #e8d5a4 !important;
+  background: rgba(0, 0, 0, 0.42) !important;
+  color: var(--keep-gold) !important;
 }
 /* The ring is INSET: the rail's clip-path would shave an outside outline. */
 html body .hub-currency-rail button.hub-cur-pill:not(#hc-never):focus-visible {
-  outline: 2px solid var(--hc-gold-hi) !important;
+  outline: 2px solid var(--keep-gold-hi) !important;
   outline-offset: -3px !important;
-  color: var(--hc-parch-hi) !important;
+  color: var(--keep-gold-hi) !important;
 }
 html body .hub-currency-rail button.hub-cur-pill:not(#hc-never):focus:not(:focus-visible) {
   outline: none !important;
 }
 html body .hub-currency-rail button.hub-cur-pill:not(#hc-never):is(:disabled, [disabled], [aria-disabled="true"]) {
-  cursor: not-allowed !important; color: #8b8069 !important; background: none !important; box-shadow: none !important;
+  cursor: not-allowed !important;
+  color: rgba(201, 171, 114, 0.40) !important;
+  background: none !important;
 }
 
 /* Glyphs carry the colour; the frame never changes personality. */
 html body .hub-currency-rail .hub-cur-pill .rail-glyph:not(#hc-never) {
   font-size: 1.02rem; line-height: 1; flex: 0 0 auto;
-  filter: drop-shadow(0 1px 1px rgba(0,0,0,0.85));
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.85));
 }
 html body .hub-currency-rail .hub-cur-pill .rail-sub:not(#hc-never) {
-  color: var(--hc-dim) !important; font-weight: 500 !important;
+  color: var(--keep-gold-grey) !important;
+  font-weight: 500 !important;
 }
-/* Music is a glyph-only segment — square it up so the speaker centres. */
-html body .hub-currency-rail .hub-cur-pill-music:not(#hc-never) { padding: 0.62rem 0.85rem !important; }
 /* The XP bar reads as a hairline gauge, not a web progress bar. */
 html body .hub-currency-rail .acc-pill-bar:not(#hc-never) {
   border-radius: 0 !important;
-  border: 1px solid rgba(210,164,78,0.45) !important;
-  background: rgba(0,0,0,0.6) !important;
+  border: 1px solid var(--keep-gold-line) !important;
+  background: rgba(0, 0, 0, 0.6) !important;
   height: 5px;
 }
 html body .hub-currency-rail .acc-pill-bar-fill:not(#hc-never) {
-  background: linear-gradient(90deg, #caa23e 0%, #f6dc95 100%) !important;
-  box-shadow: 0 0 8px rgba(246,220,149,0.5) !important;
+  background: linear-gradient(90deg, #a67f3c 0%, var(--keep-gold-hi-2) 100%) !important;
+  box-shadow: 0 0 8px rgba(232, 200, 119, 0.45) !important;
 }
 
 /* Narrow screens: the rail wraps, and a wrapped row cannot share one frame
    without the hairlines landing in nonsense places. So below 900px each
-   segment becomes its own small pod — the same bevel, just repeated. */
+   segment becomes its own small plaque — the same bevel, just repeated. */
 @media (max-width: 900px) {
-  html body .hub-currency-rail:not(#hc-never) {
-    gap: 0.4rem !important;
-    padding: 0;
-    border: 0;
-    background: none;
-    box-shadow: none;
-    clip-path: none;
-  }
+  html body .hub-currency-rail:not(#hc-never) { gap: 0.4rem !important; }
   html body .hub-currency-rail .hub-cur-pill:not(#hc-never) {
-    padding: 0.45rem 0.7rem !important;
+    padding: 0.42rem 0.7rem !important;
     font-size: 0.82rem !important;
-    border: 1px solid var(--hc-line) !important;
-    background: var(--hc-face) !important;
-    box-shadow: var(--hc-pod-shadow) !important;
-    clip-path: var(--hc-bevel);
+    border: 1px solid var(--keep-gold-line) !important;
+    background: linear-gradient(180deg, #171208 0%, #0c0906 100%) !important;
+    box-shadow: var(--keep-emboss), var(--keep-liner) !important;
+    clip-path: var(--keep-oct-6) !important;
   }
   html body .hub-currency-rail .hub-cur-pill + .hub-cur-pill:not(#hc-never)::before { display: none; }
   html body .hub-currency-rail button.hub-cur-pill:not(#hc-never):focus-visible { outline-offset: -2px !important; }
 }
 
-/* ═══════════════════════════════════════════════════════════════════════
-   4 · ARRIVAL
-   The main menu's HUD drifts in (`@keyframes hudIn`). The sub-hub chrome
-   now arrives the same way, so crossing from the menu into a hub does not
-   swap one HUD for a differently-behaved one. Short and small on purpose:
-   hubs re-render on ordinary actions, and a long entrance would replay.
-   ═══════════════════════════════════════════════════════════════════════ */
-@keyframes hcChromeIn {
-  from { opacity: 0; transform: translateY(-8px); }
-  to   { opacity: 1; transform: none; }
-}
-html body .hub-currency-rail:not(#hc-never) {
-  animation: hcChromeIn 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both 0.08s;
-}
-html body .hub-breadcrumb:not(#hc-never) {
-  animation: hcChromeIn 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both 0.02s;
-}
 
 /* ═══════════════════════════════════════════════════════════════════════
-   5 · REDUCED MOTION
-   Everything above still has all five states — they just stop moving and
-   stop fading in. Colour, glow and the focus ring are untouched, so the
-   states remain distinguishable without motion.
+   4 · REDUCED MOTION (§4)
+   Every control above still has all five states — they just stop moving and
+   stop transitioning. Colour, fill and the focus ring are untouched, so the
+   states remain fully distinguishable without motion. Nothing here animates
+   position in the first place, so the honest reading of "drops to a plain
+   opacity change" is: drop the transitions.
    ═══════════════════════════════════════════════════════════════════════ */
 @media (prefers-reduced-motion: reduce) {
-  html body :is(.hub-currency-rail, .hub-breadcrumb):not(#hc-never) {
-    animation: none !important;
-  }
   html body :is(
     .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
+    .fgx-back, .dsx-back, .tw-wm-back,
     #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
     #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-    .tw-wm-back, #pox-back, [data-cs="cs-back"],
+    #pox-back, [data-cs="cs-back"],
     button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks),
+    .campaign-header.keep-header [data-cs="cs-3d-toggle"],
     .hub-currency-rail .hub-cur-pill
   ):not(#hc-never) {
     transition: none !important;
-    transform: none !important;
   }
   html body :is(
     .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
+    .fgx-back, .dsx-back, .tw-wm-back,
     #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
     #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-    .tw-wm-back, #pox-back, [data-cs="cs-back"],
-    button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
-  ):not(#hc-never)::before,
-  html body :is(
-    .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
-    #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
-    #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-    .tw-wm-back, #pox-back, [data-cs="cs-back"],
-    button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
-  ):not(#hc-never)::after {
+    #pox-back, [data-cs="cs-back"],
+    button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks),
+    .campaign-header.keep-header [data-cs="cs-3d-toggle"]
+  ):not(#hc-never)::before {
     transition: none !important;
   }
 }

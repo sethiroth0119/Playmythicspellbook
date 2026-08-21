@@ -47,9 +47,32 @@
        `translateY(var(--lift)) scale(var(--press))` and its hover works by
        re-binding those vars through a transition — a filled `transform`
        animation would freeze every tile and kill hover for the life of the
-       page. Everything here uses `backwards`: the from-state holds during the
+       page. Movement here uses `backwards`: the from-state holds during the
        delay, and the moment the animation ends the element is handed back to
        its own CSS, untouched. (`#mm-frame` uses no fill at all — §2 says why.)
+
+   R1b. ⚠ VISIBILITY MUST NEVER DEPEND ON AN ANIMATION ACTUALLY TICKING.
+       This cost a whole round. Every entrance below used to be ONE animation —
+       `from{opacity:0; translate:...}` under `backwards` — and `backwards` also
+       holds the from-state while an animation is merely PENDING. In the
+       project's mandated verification environment (headless + virtual time, see
+       CLAUDE.md) those animations are created but their clock never advances:
+       playState `running`, currentTime `0`, forever. So `opacity:0` was held
+       forever and `node tools/shot.mjs battle` rendered background art, the
+       breadcrumb and the currency rail and NOTHING ELSE — no title, no diamond
+       rule, no tiles, no footer. §2 had already spotted this hazard for
+       `#mm-frame` and then shipped it on every tile anyway.
+
+       So each entrance is now TWO animation components on one element:
+         · the MOVEMENT (`translate`/`scale`/`transform`) keeps `backwards` —
+           frozen, a tile is merely offset 18px and 4.5% small, but fully there;
+         · the OPACITY ramp runs with NO fill-mode and a non-zero delay, so a
+           frozen clock sits in the animation's BEFORE phase, where an unfilled
+           animation contributes nothing and the element keeps its own rest
+           opacity (which R3 exists to preserve anyway).
+       The non-zero delay is load-bearing: at currentTime 0 with delay 0 the
+       animation is already ACTIVE, and `from{opacity:0}` would bite again.
+       Worst case is now "slightly nudged", never "empty page".
 
    R2. ANIMATE `translate` / `scale`, NOT `transform`. They are separate
        properties that compose *before* `transform`, so the tile keeps its own
@@ -294,7 +317,13 @@ html body #md-nav-flash::after  { transform: skewX(-11deg); }
    fires once per actual mount and never on a re-render.
    ------------------------------------------------------------------------- */
 html body #mm-frame {
-  animation: hubTxFrameIn 460ms cubic-bezier(0.16, 0.84, 0.28, 1);
+  /* The 1ms lead is not a timing choice, it is the safety. With no fill-mode an
+     animation applies nothing during its BEFORE phase — but at currentTime 0 with
+     zero delay the element is already in the ACTIVE phase, where `from{opacity:0}`
+     bites. A 1ms lead puts the frozen case in the before phase, which is what the
+     paragraph above always claimed happened: "if the animation never runs at all,
+     the iframe is simply visible." Now that is actually true. */
+  animation: hubTxFrameIn 460ms cubic-bezier(0.16, 0.84, 0.28, 1) 1ms;
 }
 @keyframes hubTxFrameIn {
   from { opacity: 0; scale: 1.012; }
@@ -327,11 +356,15 @@ html body #mm-frame {
    `scale` (not `transform`) per R2; the layer is fixed + inset:0 + overflow
    hidden, so the 4.5% overscan simply crops. */
 .spellbook-hub.is-sub .spellbook-hub-bg {
-  animation: hubTxBgSettle 460ms var(--hub-in-ease) backwards;
+  animation: hubTxBgPush 460ms var(--hub-in-ease) backwards,
+             hubTxBgLift 460ms var(--hub-in-ease) 1ms;
 }
-@keyframes hubTxBgSettle {
-  from { opacity: 0.28; scale: 1.045; }
+@keyframes hubTxBgPush {
+  from { scale: 1.045; }
   to   { scale: none; }
+}
+@keyframes hubTxBgLift {
+  from { opacity: 0.28; }
 }
 
 /* ---- ambient layers: they simply catch up ------------------------------- */
@@ -341,17 +374,18 @@ html body #mm-frame {
    the ambience would die the moment the entrance finished. */
 .spellbook-hub.is-sub .spellbook-embers,
 .spellbook-hub.is-sub .spellbook-smoke {
-  animation: hubTxFade 540ms ease-out backwards 60ms;
+  animation: hubTxFade 540ms ease-out 60ms;
 }
 
 /* ---- side hero: drifts in from the edge --------------------------------- */
 /* Opacity endpoint deliberately absent (R3) — the hero's rest opacity is not 1,
    and a hardcoded `to{opacity:1}` would punch it to full for half a second. */
 .spellbook-hub.is-sub .hub-side-hero {
-  animation: hubTxHeroIn 480ms var(--hub-in-ease) backwards 90ms;
+  animation: hubTxHeroDrift 480ms var(--hub-in-ease) backwards 90ms,
+             hubTxFade     480ms var(--hub-in-ease) 90ms;
 }
-@keyframes hubTxHeroIn {
-  from { opacity: 0; translate: 34px 0; scale: 1.03; }
+@keyframes hubTxHeroDrift {
+  from { translate: 34px 0; scale: 1.03; }
   to   { translate: none; scale: none; }
 }
 
@@ -368,10 +402,11 @@ html body #mm-frame {
    nothing matches and the title simply appears, which is a correct page. */
 .spellbook-hub.is-sub .hub-banner,
 .spellbook-hub.is-sub :is(.hub-title, .hub-subtitle):not(.hub-banner *) {
-  animation: hubTxTitleIn 340ms var(--hub-in-ease) backwards 70ms;
+  animation: hubTxTitleSettle 340ms var(--hub-in-ease) backwards 70ms,
+             hubTxFade        340ms var(--hub-in-ease) 70ms;
 }
-@keyframes hubTxTitleIn {
-  from { opacity: 0; translate: 0 -8px; scale: 1.04; }
+@keyframes hubTxTitleSettle {
+  from { translate: 0 -8px; scale: 1.04; }
   to   { translate: none; scale: none; }
 }
 
@@ -382,12 +417,13 @@ html body #mm-frame {
    transform of their own and no hover state to protect. */
 .spellbook-hub.is-sub .hub-subtitle::before,
 .spellbook-hub.is-sub .hub-subtitle::after {
-  animation: hubTxRuleDraw 400ms var(--hub-in-ease) backwards 200ms;
+  animation: hubTxRuleDraw 400ms var(--hub-in-ease) backwards 200ms,
+             hubTxFade    400ms var(--hub-in-ease) 200ms;
 }
 .spellbook-hub.is-sub .hub-subtitle::before { transform-origin: 100% 50%; }
 .spellbook-hub.is-sub .hub-subtitle::after  { transform-origin: 0 50%; }
 @keyframes hubTxRuleDraw {
-  from { opacity: 0; transform: scaleX(0.04); }
+  from { transform: scaleX(0.04); }
   to   { transform: scaleX(1); }
 }
 
@@ -424,8 +460,11 @@ html body #mm-frame {
      §4's reduced-motion block can neutralise the whole stagger by replacing ONE
      rule; per-tile delay overrides would out-specify it and survive. */
   --hub-tile-i: 6;
-  animation: hubTxTileLand 260ms var(--hub-tile-ease) backwards
-             calc(var(--hub-in-lead) + var(--hub-in-step) * var(--hub-tile-i));
+  animation:
+    hubTxTileDrop 260ms var(--hub-tile-ease) backwards
+      calc(var(--hub-in-lead) + var(--hub-in-step) * var(--hub-tile-i)),
+    hubTxFade     260ms var(--hub-tile-ease)
+      calc(var(--hub-in-lead) + var(--hub-in-step) * var(--hub-tile-i));
 }
 .spellbook-hub.is-sub .hub-portal:nth-child(1) { --hub-tile-i: 0; }
 .spellbook-hub.is-sub .hub-portal:nth-child(2) { --hub-tile-i: 1; }
@@ -434,8 +473,8 @@ html body #mm-frame {
 .spellbook-hub.is-sub .hub-portal:nth-child(5) { --hub-tile-i: 4; }
 .spellbook-hub.is-sub .hub-portal:nth-child(6) { --hub-tile-i: 5; }
 
-@keyframes hubTxTileLand {
-  from { opacity: 0; translate: 0 18px; scale: 0.955; }
+@keyframes hubTxTileDrop {
+  from { translate: 0 18px; scale: 0.955; }
   to   { translate: none; scale: none; }
 }
 
@@ -443,10 +482,11 @@ html body #mm-frame {
 /* `.hub-game-footer::before` runs its own loop (hub-layout.css:608) — animate
    the footer element, never that pseudo. */
 .spellbook-hub.is-sub .hub-game-footer {
-  animation: hubTxFooterIn 300ms var(--hub-in-ease) backwards 380ms;
+  animation: hubTxFooterRise 300ms var(--hub-in-ease) backwards 380ms,
+             hubTxFade       300ms var(--hub-in-ease) 380ms;
 }
-@keyframes hubTxFooterIn {
-  from { opacity: 0; translate: 0 8px; }
+@keyframes hubTxFooterRise {
+  from { translate: 0 8px; }
   to   { translate: none; }
 }
 
@@ -502,11 +542,11 @@ html body #mm-frame {
   }
 
   html body #mm-frame {
-    animation: hubTxFade 320ms ease;   /* no fill — see §2 */
+    animation: hubTxFade 320ms ease 1ms;   /* no fill, 1ms lead — see §2 */
   }
 
   .spellbook-hub.is-sub .spellbook-hub-bg {
-    animation: hubTxBgSettleFlat 300ms ease backwards;
+    animation: hubTxBgSettleFlat 300ms ease 1ms;
   }
   /* Still starts warm rather than black, for the same reason the moving version
      does — but with no scale, so nothing travels. */
@@ -516,16 +556,16 @@ html body #mm-frame {
 
   .spellbook-hub.is-sub .spellbook-embers,
   .spellbook-hub.is-sub .spellbook-smoke {
-    animation: hubTxFade 300ms ease backwards 60ms;
+    animation: hubTxFade 300ms ease 60ms;
   }
 
   .spellbook-hub.is-sub .hub-side-hero {
-    animation: hubTxFade 300ms ease backwards 60ms;
+    animation: hubTxFade 300ms ease 60ms;
   }
 
   .spellbook-hub.is-sub .hub-banner,
   .spellbook-hub.is-sub :is(.hub-title, .hub-subtitle):not(.hub-banner *) {
-    animation: hubTxFade 300ms ease backwards 60ms;
+    animation: hubTxFade 300ms ease 60ms;
   }
 
   /* The flanking rules fade in at full width instead of drawing outward, and
@@ -533,7 +573,7 @@ html body #mm-frame {
      thing that ever scales them. */
   .spellbook-hub.is-sub .hub-subtitle::before,
   .spellbook-hub.is-sub .hub-subtitle::after {
-    animation: hubTxFade 300ms ease backwards 120ms;
+    animation: hubTxFade 300ms ease 120ms;
     transform: scaleX(1);
   }
 
@@ -558,10 +598,10 @@ html body #mm-frame {
      frame, which is why this is safe to leave in place either way. */
   .spellbook-hub.is-sub .hub-portal,
   .spellbook-hub.is-sub .hub-portal-grid {
-    animation: hubTxFade 300ms ease backwards 120ms;
+    animation: hubTxFade 300ms ease 120ms;
   }
 
   .spellbook-hub.is-sub .hub-game-footer {
-    animation: hubTxFade 300ms ease backwards 180ms;
+    animation: hubTxFade 300ms ease 180ms;
   }
 }

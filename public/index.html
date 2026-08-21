@@ -63465,7 +63465,7 @@ function renderGymWars() {
         <div style="display:flex;gap:0.5rem;align-items:center">
           ${_isAdm && online && !GymWars.tableMissing ? '<button class="btn-secondary btn-mini" id="gym-season" title="Archive all reigns, reset ownership, start a new season">⚙ Advance Season</button>' : ''}
           <button class="btn-secondary btn-mini" id="gym-hall">🏛 Hall of Legends</button>
-          <button class="btn-secondary btn-mini" id="gym-back">← Menu</button>
+          <button class="btn-secondary btn-mini keep-tab" id="gym-back">← Menu</button>
         </div>
       </div>
 
@@ -113408,16 +113408,23 @@ function _hdEnsureStyle() {
 
   #md-dispatch .hd-sheet{position:absolute;inset:0;padding:21px 26px 15px;z-index:1;
     display:flex;flex-direction:column}
-  #md-dispatch .hd-head{display:flex;align-items:center;gap:12px;flex:none}
+  /* padding-right reserves the corner the pennant hangs into — the ornament
+     overlaps the paper by design, and anything live under it would be hidden. */
+  #md-dispatch .hd-head{display:flex;align-items:center;gap:10px;flex:none;padding-right:30px}
   #md-dispatch .hd-raven{width:34px;height:34px;flex:0 0 34px;margin-top:-2px;display:block}
   /* Ink Cinzel, not gold — gold on parchment is the one place stamped metal is
      wrong. A 1px paper-white shadow is the letterpress bite; this is plain ink
      type with no background-clip fill, so text-shadow here is safe. */
-  #md-dispatch .hd-title{font-family:var(--keep-cinzel,'Cinzel',Georgia,serif);font-size:23px;
+  #md-dispatch .hd-title{font-family:var(--keep-cinzel,'Cinzel',Georgia,serif);font-size:25px;
     font-weight:700;letter-spacing:.07em;color:var(--keep-parch-ink,#2b2118);flex:1;min-width:0;
     text-shadow:0 1px 0 rgba(255,250,235,.5)}
-  #md-dispatch .hd-new{font-family:var(--keep-cinzel,'Cinzel',Georgia,serif);font-size:9px;
-    font-weight:700;letter-spacing:.12em;color:#f6ecd2;flex:none;padding:3px 8px;
+  /* The unread chip rides the RIGHT END OF THE RULE, not the title row. In the
+     head it competed with a 25px title for the same 348px and pushed
+     "Herald's Dispatch" onto two lines the moment a post was unread. Anchored
+     to .hd-rule it needs no magic offset and can never reflow the title. */
+  #md-dispatch .hd-new{position:absolute;right:0;top:50%;transform:translateY(-50%);z-index:2;
+    font-family:var(--keep-cinzel,'Cinzel',Georgia,serif);font-size:8.5px;
+    font-weight:700;letter-spacing:.1em;color:#f6ecd2;padding:3px 7px;
     background:linear-gradient(180deg,#7d2a18,#4d1407);
     clip-path:polygon(4px 0,calc(100% - 4px) 0,100% 4px,100% calc(100% - 4px),calc(100% - 4px) 100%,4px 100%,0 calc(100% - 4px),0 4px);
     box-shadow:inset 0 1px 0 rgba(255,220,180,.28)}
@@ -113437,7 +113444,7 @@ function _hdEnsureStyle() {
   #md-dispatch .hd-ico:focus-visible{outline:none;box-shadow:inset 0 0 0 2px rgba(43,33,24,.8)}
   #md-dispatch .hd-ico:disabled{cursor:default;color:rgba(43,33,24,.3);border-color:rgba(43,33,24,.1);background:none}
 
-  #md-dispatch .hd-rule{height:1px;margin:12px 0 11px;flex:none;
+  #md-dispatch .hd-rule{position:relative;height:1px;margin:12px 0 11px;flex:none;
     background:linear-gradient(90deg,rgba(43,33,24,.05),rgba(43,33,24,.42) 12%,rgba(43,33,24,.42) 88%,rgba(43,33,24,.05))}
 
   #md-dispatch .hd-body{flex:1;min-height:0;display:flex;flex-direction:column}
@@ -113453,28 +113460,36 @@ function _hdEnsureStyle() {
     letter-spacing:.04em;color:var(--keep-parch-ink,#2b2118);margin-bottom:3px;flex:none;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   /* §2: "body copy in dark ink serif italic". */
-  #md-dispatch .hd-ptext{font-style:italic;font-size:14.5px;line-height:1.5;color:#3a2c1f;
+  #md-dispatch .hd-ptext{font-style:italic;font-size:15px;line-height:1.52;color:#3a2c1f;
     flex:1;min-height:0;overflow-y:auto;padding-right:5px;
     scrollbar-width:thin;scrollbar-color:rgba(43,33,24,.35) transparent}
   #md-dispatch .hd-ptext::-webkit-scrollbar{width:5px}
   #md-dispatch .hd-ptext::-webkit-scrollbar-thumb{background:rgba(43,33,24,.32)}
   #md-dispatch .hd-ptext::-webkit-scrollbar-track{background:none}
-  #md-dispatch .hd-empty{font-style:italic;font-size:14.5px;line-height:1.5;color:rgba(43,33,24,.55);padding:8px 0}
+  /* Nothing to page through — the line sits in the middle of the sheet rather
+     than stranded at the top of an empty well. */
+  #md-dispatch .hd-empty{font-style:italic;font-size:15px;line-height:1.5;color:rgba(43,33,24,.55);margin:auto 0;text-align:center}
 
   /* Footer row — §2: "Follow ☐  |  + Add special Links". The pager lives at the
      right end of the same rule, so the parchment has ONE footer, not two. */
   #md-dispatch .hd-foot{flex:none;display:flex;align-items:center;gap:10px;margin-top:10px;padding-top:9px;
     border-top:1px solid rgba(43,33,24,.28)}
-  #md-dispatch .hd-social{display:flex;align-items:center;gap:7px;flex:1;min-width:0}
-  #md-dispatch .hd-social-lbl{font-family:var(--keep-cinzel,'Cinzel',Georgia,serif);font-size:11px;font-weight:700;
+  /* THE OVERFLOW GUARD. An admin account with all six social links, an edit
+     button AND a 20-post pager wants more than the 378px the sheet has. Only
+     the ICON STRIP is allowed to clip — the Follow label and the admin's
+     edit button are flex:none, so the control the admin needs never gets
+     squeezed off the paper while decorative glyphs are still on it. */
+  #md-dispatch .hd-social{display:flex;align-items:center;gap:6px;flex:1 1 auto;min-width:0}
+  #md-dispatch .hd-soc-strip{display:flex;align-items:center;gap:6px;flex:0 1 auto;min-width:0;overflow:hidden}
+  #md-dispatch .hd-social-lbl{font-family:var(--keep-cinzel,'Cinzel',Georgia,serif);font-size:12.5px;font-weight:700;
     letter-spacing:.13em;text-transform:uppercase;color:#4a3927;flex:none}
-  #md-dispatch .hd-box{width:12px;height:12px;flex:none;border:1.5px solid rgba(43,33,24,.6)}
+  #md-dispatch .hd-box{width:13px;height:13px;flex:none;border:1.5px solid rgba(43,33,24,.6)}
   /* §4 "Disabled is … never just opacity:.5" — with no links set and no admin
      rights the Follow group is a desaturated ghost of itself, not a hole. */
   #md-dispatch .hd-social.is-empty .hd-social-lbl{color:rgba(43,33,24,.42)}
   #md-dispatch .hd-social.is-empty .hd-box{border-color:rgba(43,33,24,.26)}
   #md-dispatch .hd-fbar{width:1px;height:16px;flex:none;background:rgba(43,33,24,.28)}
-  #md-dispatch .hd-soc{width:22px;height:22px;flex:none;padding:0;border:0;background:none;border-radius:0;
+  #md-dispatch .hd-soc{width:20px;height:20px;flex:none;padding:0;border:0;background:none;border-radius:0;
     display:grid;place-items:center;cursor:pointer;text-decoration:none;color:rgba(43,33,24,.72);
     transition:color .16s var(--keep-ease,cubic-bezier(.22,.61,.36,1)),
                transform .16s var(--keep-ease,cubic-bezier(.22,.61,.36,1))}
@@ -113484,7 +113499,7 @@ function _hdEnsureStyle() {
   #md-dispatch .hd-soc:focus-visible{outline:2px solid rgba(43,33,24,.75);outline-offset:2px}
   #md-dispatch .hd-soc svg{width:15px;height:15px;fill:currentColor;display:block}
   #md-dispatch .hd-soc-add{font-family:var(--keep-cinzel,'Cinzel',Georgia,serif);font-size:10.5px;font-weight:700;
-    letter-spacing:.06em;color:#5a462f;background:none;border:1px dashed rgba(43,33,24,.35);border-radius:0;
+    letter-spacing:.06em;color:#5a462f;background:none;border:1px dashed rgba(43,33,24,.24);border-radius:0;
     padding:3px 8px;cursor:pointer;white-space:nowrap;flex:none;
     transition:color .16s var(--keep-ease,cubic-bezier(.22,.61,.36,1)),
                background .16s var(--keep-ease,cubic-bezier(.22,.61,.36,1)),
@@ -113494,7 +113509,10 @@ function _hdEnsureStyle() {
   #md-dispatch .hd-soc-add:focus{outline:none}
   #md-dispatch .hd-soc-add:focus-visible{outline:2px solid rgba(43,33,24,.75);outline-offset:2px}
   #md-dispatch .hd-pager{display:flex;gap:6px;align-items:center;flex:none}
-  #md-dispatch .hd-dots{display:flex;gap:5px}
+  /* _hdFetch pulls up to 20 dispatches, i.e. up to 20 dots — 215px of them,
+     which would shove the pager off the sheet. The strip is capped instead;
+     ‹ › still walk the full set. */
+  #md-dispatch .hd-dots{display:flex;gap:5px;max-width:71px;overflow:hidden}
   #md-dispatch .hd-dots span{width:6px;height:6px;border-radius:50%;background:rgba(43,33,24,.24);transition:background .2s}
   #md-dispatch .hd-dots span.on{background:rgba(43,33,24,.85)}
 
@@ -113755,10 +113773,10 @@ function _hdSocialHtml() {
   // player with no links configured, which left the card with a naked bottom
   // edge. With nothing to follow it renders the ☐ in the §4 disabled treatment
   // (desaturated ink, not opacity:.5) instead of vanishing.
-  return `<div class="hd-social${btns ? '' : ' is-empty'}">
+  return `<div class="hd-social${(btns || admin) ? '' : ' is-empty'}">
     <span class="hd-social-lbl">Follow</span>
-    ${btns || '<span class="hd-box" aria-hidden="true"></span>'}
-    ${admin ? `<button class="hd-soc-add" id="hd-soc-edit" title="Set your social media links (admin)">${btns ? '✎ Edit links' : '＋ Add special Links'}</button>` : ''}
+    <span class="hd-soc-strip">${btns || '<span class="hd-box" aria-hidden="true"></span>'}</span>
+    ${admin ? `<span class="hd-fbar" aria-hidden="true"></span><button class="hd-soc-add" id="hd-soc-edit" title="Set your social media links (admin)">${btns ? '✎ Edit links' : '＋ Add special Links'}</button>` : ''}
   </div>`;
 }
 function _hdState() {
@@ -113797,20 +113815,21 @@ const _HD_PENNANT = '<svg class="hd-pennant" viewBox="0 0 56 88" aria-hidden="tr
   '</linearGradient></defs></svg>';
 // 📰 The parchment card. EVERY id below is bound by _hdInit / _hdPaint —
 // #hd-body, #hd-dots, #hd-new, #hd-prev, #hd-next, #hd-admin and (via
-// _hdSocialHtml) #hd-soc-edit. The markup grew a `.hd-paper` layer and a
-// `.hd-sheet` wrapper; the ids did not move.
+// _hdSocialHtml) #hd-soc-edit. The markup grew a .hd-paper layer and a
+// .hd-sheet wrapper, and #hd-admin / #hd-new changed PARENT (the admin pencil
+// joined the pager cluster, the unread chip rides the rule) — but every id is
+// still exactly one element, which is all getElementById cares about.
 function _hdWidgetHtml() {
   return `<section id="md-dispatch" aria-label="Herald's Dispatch — latest news">
     <div class="hd-paper" aria-hidden="true"></div>
     <div class="hd-sheet">
-      <div class="hd-head">${_HD_RAVEN}<div class="hd-title">Herald's Dispatch</div>
-        <span class="hd-new" id="hd-new" style="display:none">NEW</span>
-        ${((typeof isAdmin === 'function') && isAdmin()) ? '<button class="hd-ico" id="hd-admin" title="Manage dispatches (admin)" aria-label="Manage dispatches">✎</button>' : ''}</div>
-      <div class="hd-rule"></div>
+      <div class="hd-head">${_HD_RAVEN}<div class="hd-title">Herald's Dispatch</div></div>
+      <div class="hd-rule"><span class="hd-new" id="hd-new" style="display:none">NEW</span></div>
       <div class="hd-body" id="hd-body"><div class="hd-empty">Consulting the herald…</div></div>
       <div class="hd-foot">${_hdSocialHtml()}
         <span class="hd-fbar" aria-hidden="true"></span>
         <div class="hd-pager">
+          ${((typeof isAdmin === 'function') && isAdmin()) ? '<button class="hd-ico" id="hd-admin" title="Manage dispatches (admin)" aria-label="Manage dispatches">✎</button>' : ''}
           <button class="hd-ico" id="hd-prev" aria-label="Previous dispatch">‹</button>
           <div class="hd-dots" id="hd-dots"></div>
           <button class="hd-ico" id="hd-next" aria-label="Next dispatch">›</button>
@@ -117785,7 +117804,7 @@ function renderDeckSelect() {
       <div class="dsx-backdrop"><span class="dsx-ring r1"></span><span class="dsx-ring r2"></span></div>
       <canvas class="dsx-embers" id="dsx-embers"></canvas>
       <div class="dsx-page">
-        <button class="btn-secondary dsx-back" id="btn-back">← BACK</button>
+        <button class="btn-secondary dsx-back keep-tab" id="btn-back">← BACK</button>
         <button class="btn-secondary dsx-tut" id="btn-ds-tutorial" title="Watch the Quick Battle lesson">✦ TUTORIAL</button>
         <h2 class="section-title">${mpIntent ? 'Choose Your Deck for Online' : 'Choose Your Deck'}</h2>
         <div class="section-subtitle">${mpIntent ? 'Tap a hero — the modal\'s 🌐 Find Match button kicks off the ranked queue.' : 'Pick a hero to take into battle. Heroes with more than one deck let you choose which deck to play.'}</div>
@@ -122156,7 +122175,7 @@ function renderForge() {
   root.innerHTML = `
     <div class="forge-page fgx">
       <div class="forge-header fgx-header">
-        <button class="fgx-back" id="btn-back-forge">← Back to Menu</button>
+        <button class="fgx-back keep-tab" id="btn-back-forge">← Back to Menu</button>
         <h2 class="fgx-title">
           <img class="fgx-anvil" src="assets/artwork/gameicons/crating%20table%20icone.png" alt="">
           <span>The Forge</span>
@@ -122168,7 +122187,7 @@ function renderForge() {
       <!-- 🔁 v119i7: a SECOND back button at the foot of the page. With
            thousands of cards the header one is a very long scroll away. -->
       <div class="fgx-footer">
-        <button class="fgx-back fgx-back-btm" id="btn-back-forge-bottom">← Back to Menu</button>
+        <button class="fgx-back fgx-back-btm keep-tab" id="btn-back-forge-bottom">← Back to Menu</button>
         <button class="fgx-top" id="btn-forge-top" title="Jump to the top of this tab">↑ Top</button>
       </div>
     </div>
@@ -153708,7 +153727,7 @@ function renderTutor() {
         <h2 class="section-title"><img src="assets/artwork/gameicons/Tutor%20shop.png" alt="" style="height:2.3em;width:2.3em;object-fit:contain;vertical-align:middle;display:inline-block;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.75))"> Tutor Shop</h2>
         <div style="display:flex;gap:0.6rem;align-items:center">
           <span class="result-stat-pill" style="background:rgba(212,175,55,0.18);border-color:rgba(212,175,55,0.5);color:#ffd166;font-size:0.95rem;padding:0.3rem 0.8rem"><span class="cinder-icon"></span> ${Profile.gems || 0}</span>
-          <button class="btn-secondary" id="btn-back-tutor">← Back to Menu</button>
+          <button class="btn-secondary keep-tab" id="btn-back-tutor">← Back to Menu</button>
         </div>
       </div>
       <div class="placement-hint" style="margin-bottom:1rem">Pick a hero or unit, then a move to teach. Each move costs gems based on its energy cost.</div>
@@ -154019,7 +154038,7 @@ function renderMarket() {
         <div style="display:flex;gap:0.6rem;align-items:center">
           <span class="result-stat-pill" style="background:rgba(212,175,55,0.18);border-color:rgba(212,175,55,0.5);color:#ffd166;font-size:0.95rem;padding:0.3rem 0.8rem"><span class="cinder-icon"></span> ${Profile.gems || 0}</span>
           <button class="btn-mini" id="btn-market-reseed">🔄 Refresh Listings</button>
-          <button class="btn-secondary" id="btn-back-market">← Back to Menu</button>
+          <button class="btn-secondary keep-tab" id="btn-back-market">← Back to Menu</button>
         </div>
       </div>
       <div class="placement-hint" style="margin-bottom:1rem">
@@ -156825,7 +156844,7 @@ function renderCamp() {
         <h2 class="section-title" style="position:relative;padding-left:3.2em"><img src="assets/artwork/gameicons/camp%20icon.png" alt="" style="position:absolute;left:0;top:50%;transform:translateY(-50%);width:2.8em;height:2.8em;object-fit:contain;filter:drop-shadow(0 4px 12px rgba(0,0,0,0.7));pointer-events:none"> Camp</h2>
         <div style="display:flex;gap:0.6rem;align-items:center">
           <span class="result-stat-pill" style="background:rgba(212,175,55,0.18);border-color:rgba(212,175,55,0.5);color:#ffd166;font-size:0.95rem;padding:0.3rem 0.8rem"><span class="cinder-icon"></span> ${Profile.gems || 0}</span>
-          <button class="btn-secondary" id="btn-back-camp">${App._campReturnsToBunker ? '← Camp' : '← Back to Menu'}</button>
+          <button class="btn-secondary keep-tab" id="btn-back-camp">${App._campReturnsToBunker ? '← Camp' : '← Back to Menu'}</button>
         </div>
       </div>
       ${_campCommandBarHtml()}
@@ -157615,7 +157634,7 @@ function renderProfile() {
   root.innerHTML = `
     <div class="profile-page">
       <div class="profile-header-bar">
-        <button class="btn-secondary btn-mini" id="btn-back-profile">← Menu</button>
+        <button class="btn-secondary btn-mini keep-tab" id="btn-back-profile">← Menu</button>
         <h2 class="section-title" style="margin:0;position:relative;padding-left:3.2em"><img src="assets/artwork/gameicons/profile.png" alt="" style="position:absolute;left:0;top:50%;transform:translateY(-50%);width:2.8em;height:2.8em;object-fit:contain;filter:drop-shadow(0 4px 12px rgba(0,0,0,0.7));pointer-events:none"> Profile</h2>
         <div style="min-width:90px"></div>
       </div>
@@ -160201,7 +160220,7 @@ function renderCardShop() {
             ${_csCounterIsVisiting() ? `<button class="btn-secondary btn-mini" data-cs="cs-go-home">🏠 My Shop</button>` : ((typeof isAdmin === 'function' && isAdmin()) || _csOwnsLicense()) ? `<button class="btn-secondary btn-mini" data-cs="cs-furniture">🛋️ Furniture</button><button class="btn-secondary btn-mini" data-cs="cs-shop-build">🏗️ Build</button>${((typeof isAdmin === 'function') && isAdmin()) ? `<button class="btn-secondary btn-mini" data-cs="cs-shop-edit">🛠 Edit</button>` : ''}` : ''}
             <button class="btn-secondary btn-mini" data-cs="cs-visit-shops">🏪 Shops</button>
             <button class="btn-secondary btn-mini" data-cs="cs-3d-toggle">☰ Menu</button>
-            <button class="btn-secondary btn-mini" data-cs="cs-back">← Exit</button>
+            <button class="btn-secondary btn-mini keep-tab" data-cs="cs-back">← Exit</button>
           </div>
         </div>
       </div>`;
@@ -160211,14 +160230,14 @@ function renderCardShop() {
       : tabbed;
     root.innerHTML = `
       <div class="campaign-page">
-        <div class="campaign-header">
+        <div class="campaign-header keep-header">
           <div>
             <h2 class="section-title" style="text-align:left;margin-bottom:0.2rem">🛒 Card Shop</h2>
             <div class="small-text ink-dim">Run your own storefront — or visit shops other players own and buy their cards for Cinder.</div>
           </div>
           <div class="shop-balance-stack"><div class="shop-gems-pill"><span class="shop-gems-num">${cinders.toLocaleString()}</span> <span class="cinder-icon cinder-icon-lg"></span><div class="small-text ink-dim">Cinders</div></div></div>
           ${signedIn ? `<button class="btn-secondary btn-mini" data-cs="cs-3d-toggle" style="margin-right:6px">🏬 3D Store</button>` : ''}
-          <button class="btn-secondary btn-mini" data-cs="cs-back">← Menu</button>
+          <button class="btn-secondary btn-mini keep-tab" data-cs="cs-back">← Menu</button>
         </div>
         <div class="cs-page">${body}</div>
       </div>`;

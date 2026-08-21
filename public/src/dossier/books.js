@@ -282,6 +282,42 @@ export function booksOf(C, k) {
     rows.push({ label: 'Income', value: '—', cls: 'fl', un: true,
       sub: 'this building sells nothing — it earns no Cinder of its own' });
   }
+
+  /* 🧍💸 WHAT THE CITY'S RESIDENTS SPENT ACROSS THIS COUNTER.
+     ------------------------------------------------------------------
+     The Income row above is the TILE's own production — def.gen.cinder put
+     through genOf() and paid by node-city's tick. For a shop that is the
+     wrong half of the question and, until this row existed, the only half
+     on the panel: a Grocery with a full crew and real customers printed
+     'this building sells nothing — it earns no Cinder of its own', which is
+     false about the business standing on it.
+
+     🔴 THE FIGURES ARE THE SIMULATION'S, NOT AN ESTIMATE. `revenueDay` and
+        `customersDay` are kept by /src/economy/firms.js and are the same
+        numbers the Econ panel prints. Multiplying a price by a population
+        here would produce a plausible figure that drifts from the ledger
+        the moment anything is retuned — the two-systems-disagreeing defect
+        this package polices hardest.
+     ⚠ AND IT IS A DIFFERENT KIND OF CINDER FROM THE ROW ABOVE. This is
+       money residents were PAID and then spent, moving inside the economy's
+       closed loop; the Income row is what the city tick banks for the
+       player. They are not added together anywhere, and the labels say so.
+     ⚠ A shop with a payroll and no takings is the SHIPPED state of any
+       trade whose supply chain the city cannot feed yet (see round0j's dark
+       list in tools/economy-tests). The empty case says WHY rather than
+       printing a bare zero that reads as a bug. */
+  if (firm && (firm.kind === 'retail' || firm.kind === 'service')) {
+    const took = Math.max(0, +firm.revenueDay || 0);
+    const cust = Math.max(0, Math.round(+firm.customersDay || 0));
+    const crew = ['unskilled', 'skilled', 'technical', 'advanced']
+      .reduce((s, b) => s + ((firm.workers && firm.workers[b]) | 0), 0);
+    rows.push({ label: 'Customer spend', value: took > 0 ? fmtCin(C, took) : '—',
+      cls: took > 0 ? 'up' : 'fl', un: took <= 0,
+      sub: took > 0
+        ? cust + ' customer' + (cust === 1 ? '' : 's') + ' a day · ' + crew +
+          ' on the payroll — residents spending wages, inside the economy'
+        : 'no takings yet — nothing this trade sells can be supplied by the city' });
+  }
   /* Belt and braces: a residence that ALSO generates (nothing in BUILDINGS does
      today) gets both lines rather than one of them silently winning. */
   if (isHome && incomeKnown) {

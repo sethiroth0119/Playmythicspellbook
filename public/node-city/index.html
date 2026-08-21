@@ -38712,6 +38712,7 @@ function citEmpInfo(c) {
            indIco: (meta && meta.ico) || '🏭' };
 }
 
+
 /* 😐 MOOD — FIVE terms, every one of them a number the game already keeps.
    Weights sum to 1.00 and the result is 0..100.
      .35  wellbeing.morale        the city-wide mood the whole layer runs on
@@ -42974,6 +42975,11 @@ function animate() {
        no preserveDrawingBuffer to lose and no render() to interleave.
        Read-only by convention; nothing in the shipped app reads this back. */
     scene: () => scene,
+    /* 🔍 THE BUILDING INFO PANEL, by tile key. Same reason as vaultPanel
+       above: the panel is DOM built from live numbers, and the only way to
+       show it agrees with the economy is to open it and read it back.
+       See .gauntlet/drive-spendrow.mjs. */
+    inspect: (k) => openInspect(String(k)),
     /* 🧱 THE MESH PROBE, AND IT EXISTS BECAUSE OF ONE SPECIFIC SILENT FAILURE.
        `buildMesh` has no default arm, so a BUILDINGS row whose type is missing
        from the switch renders an EMPTY THREE.Group — an invisible building on a

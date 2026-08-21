@@ -359,8 +359,60 @@ export function mount(ctx) {
       + '<div class="ndft"><div class="ndsel" id="ndg-sel"></div></div>';
     doc.body.appendChild(panel);
 
+    /* ══ 🛣 ONE ROAD TAB, NOT TWO ═══════════════════════════════════════════
+       This tool and /src/roads' class palette are two road drags on the same
+       build bar, both labelled with a road glyph, and they have been since the
+       class round shipped. That was tolerable while the bar also sold roads as
+       shop cards; now that the shop does not, "which of these two buttons lays
+       a road" is the first question the bar asks and it has no good answer.
+
+       So the class palette wins the seat, and it is a clean win rather than a
+       coin toss: it is a strict functional SUPERSET of this tool. Its `street`
+       class is costMult 1.00 / capWeight 1 — the plain carriageway this file
+       lays, priced identically, by contract (see /src/roads/tuning.js: street
+       "MUST stay first and MUST stay cost 1.0 / weight 1"). It has this file's
+       line / elbow / freehand plus a diagonal, a right-click class eyedropper,
+       a roundabout stamp and live per-class prices.
+
+       ⚠ AND NOTHING IS LOST TO THE RUN CAP, which is the one place a superset
+         claim could have been wrong. This tool's MAX_RUN is 180 and the
+         palette's is ROADS.drag.max = 48 — but the plate is GRID×GRID = 24×24,
+         so the longest run a player can physically draw is a two-leg elbow of
+         24 + 24 − 1 = 47 cells. 48 already covers the whole map corner to
+         corner; 180 was never reachable. No gesture that works today stops
+         working.
+
+       🔴 THE SUPERSET IS OVER **THIS TOOL**, AND IT IS NOT A SUPERSET OF THE
+          SHOP. Scoped deliberately, because the unscoped version of this
+          paragraph was wrong and shipped. This file lays exactly one type,
+          'road'; the palette lays that same one type with nine classes on it,
+          so every gesture HERE is covered THERE — that claim stands and was
+          re-checked. But the build shop sold TWO carriageway types, 'road' and
+          'roadlane', and the palette lays one. Deleting both cards on the
+          strength of a superset argument that only ever covered this tool left
+          the Lane with no way to buy it and a research node still advertising
+          it. The Lane is now retired on purpose (node-city's ROAD_CLASSES row
+          carries the flag and the reasoning; the tree's unlock list derives
+          from it) — but the lesson is the sentence, not the fix: a superset
+          claim names what it is a superset OF, or it will be read as covering
+          whatever the reader had in mind.
+
+       🔒 THIS TOOL IS NOT DELETED, AND THAT IS THE POINT OF DOING IT THIS WAY.
+          /src/roads imports its own palette DYNAMICALLY precisely so a 404 on
+          it costs the class recipes and not the road drag. If that import fails
+          — or /src/roads never mounted at all — nothing claims the tab, this
+          button appears exactly as it always did, and the player can still lay
+          roads. The claim is a window flag rather than a DOM probe because the
+          two modules mount from two different dynamic imports in an order
+          neither of them controls: whoever is second reads the flag, and the
+          palette additionally sweeps up a button the netdrag path may already
+          have added. Order-independent in both directions.
+       ══════════════════════════════════════════════════════════════════════ */
     const bar = doc.getElementById('buildbar');
-    if (bar) {
+    let tabTaken = false;
+    try { tabTaken = !!(window.__ncRoadTab && window.__ncRoadTab !== 'netdrag'); } catch (e) {}
+    if (bar && !tabTaken) {
+      try { window.__ncRoadTab = 'netdrag'; } catch (e) {}
       barBtn = doc.createElement('button');
       barBtn.className = 'bbtn tool';
       barBtn.id = 'ndg-open';

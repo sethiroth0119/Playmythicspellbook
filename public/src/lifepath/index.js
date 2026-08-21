@@ -138,6 +138,12 @@ const api = {
      object, with the largest share deviation between them and the bound that
      deviation is supposed to obey. */
   distribution: () => Model.distribution(),
+  /* 🪦 Whether this city HAS mortality, and the one sentence that says so.
+     Exposed because /src/citizen's Age row used to type the answer as a
+     constant ("no named citizen ever dies…") and would keep printing it in a
+     city where /src/mortality is retiring people. Reading it here means the
+     panel and the drift line quote the same words and cannot disagree. */
+  mortality: () => Model.mortality(),
   /* Deal any unstamped citizen into the pyramid. Idempotent, never re-deals,
      and called automatically by every read above — this is here so a driver can
      run it explicitly and count what it did. */

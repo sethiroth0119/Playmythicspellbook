@@ -614,6 +614,16 @@ API.setSiteCtx = function (c) { _siteCtx = c || {}; };
    the player closed the panel is the single fastest way to make an overlay feel
    like a bug. */
 function refresh() {
+  /* 🗼 THE CABLE IS NOT GATED ON THE PANEL, and that is the one deliberate
+     difference — the same one /src/water/index.js draws, in the same place, for
+     the same reason. The overlay layers below are an INFO VIEW: a mode the
+     player enters and leaves. The poles and wire are an EDITING SURFACE, and a
+     player dragging a run has to see the run they are extending, so closing the
+     panel to get the cable back would make the tool unusable. lines.js decides
+     for itself (armed, OR this layer switched on) — this line only hands it the
+     checkbox, and it must stay ABOVE the isOpen() early-out or the cable would
+     freeze at whatever the layer said when the panel was last open. */
+  try { Lines.syncLayer(Panel.layers.wires); } catch (e) {}
   if (!Panel.isOpen()) { Overlay.hide(); return; }
   const t = terrain();
   Panel.render(state, caps());

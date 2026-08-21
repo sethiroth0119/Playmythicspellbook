@@ -9,7 +9,7 @@
      believed the file was already live. Only a CONTENT change moves the hash
      and forces a re-upload, so bump this stamp whenever the city 404s, and
      probe it (grep NC_BUILD on the served page) to prove the deploy landed. -->
-<script>window.NC_BUILD = "v121c0-roads";</script>
+<script>window.NC_BUILD = "v121c1-deathcare";</script>
 <!-- ════════════════════════════════════════════════════════════════════════
      NODE CITY — SimCity-style settlement layer for Mythic Spellbook.
      Three.js WebGPU (auto-falls back to WebGL2). Realistic sun/moon cycle.
@@ -129,11 +129,21 @@
   /* ── Right column: threat + inspect ── */
   #rightcol{position:absolute;top:var(--topbarh);right:12px;width:232px;z-index:6;display:flex;flex-direction:column;gap:10px;
     max-height:calc(100% - var(--topbarh) - 140px);overflow-y:auto;}
-  #raidtimer{font-size:20px;font-family:'Cinzel','Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji',serif;color:var(--bone);font-variant-numeric:tabular-nums;}
-  #raidmeta{font-size:11px;color:var(--mist);margin-top:5px;line-height:1.6;}
-  #raidmeta b{font-variant-numeric:tabular-nums;}
-  #raidmeta .ok{color:var(--valid);} #raidmeta .bad{color:var(--invalid);}
-  #raidcard.warn{border-color:var(--invalid);animation:warnpulse 1s infinite;}
+  /* 🧟 #ztimer/#zmeta/#zcard ride the raid card's rules rather than getting a
+     block of their own: they are the same card in the same column saying the
+     same kind of thing, and a second near-identical style block is how two
+     threat cards come to look subtly different for no reason anybody can name.
+     The only additions are `.warn` (amber, the watch band) and `.mut` (the
+     forecast's assumptions and provenance lines, which must read as footnotes
+     rather than as findings). */
+  #raidtimer,#ztimer{font-size:20px;font-family:'Cinzel','Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji',serif;color:var(--bone);font-variant-numeric:tabular-nums;}
+  #raidmeta,#zmeta{font-size:11px;color:var(--mist);margin-top:5px;line-height:1.6;}
+  #raidmeta b,#zmeta b{font-variant-numeric:tabular-nums;}
+  #raidmeta .ok,#zmeta .ok{color:var(--valid);} #raidmeta .bad,#zmeta .bad{color:var(--invalid);}
+  #zmeta .warn{color:var(--gold,#c9a86a);} #zmeta .mut{opacity:.62;}
+  #zmeta code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10px;opacity:.85;}
+  #raidcard.warn,#zcard.danger{border-color:var(--invalid);animation:warnpulse 1s infinite;}
+  #zcard.warn{border-color:var(--gold,#c9a86a);}
   @keyframes warnpulse{0%,100%{box-shadow:0 0 0 rgba(192,71,63,0)}50%{box-shadow:0 0 16px rgba(192,71,63,.4)}}
   /* ════════════════════════════════════════════════════════════════════════
      🏛 THE BUILDING DOSSIER — the inspect panel, r7.
@@ -878,6 +888,27 @@
     <h2>Raider Threat</h2>
     <div id="raidtimer">—</div>
     <div id="raidmeta"></div>
+  </div>
+  <!-- 🧟 THE OUTBREAK CARD. Rendered entirely by /src/zombie/panel.js — this
+       file owns the container and nothing else, the same contract #ecocard
+       ships under. Hidden until the module shows it, so a 404 on the module
+       leaves no empty card behind and the city ticks exactly as it did before
+       the feature existed.
+       ⚠ THE .use HINT BELOW IS THE ONLY TYPED LIST OF BURIAL BUILDINGS in the
+         feature, and it is a tooltip, not the answer. The card's own "raise it
+         with:" line is DERIVED from the BUILDINGS rows (burialTypes() in
+         /src/zombie/index.js), so a new burial building appears there without
+         an edit; this line names the RESEARCH NODE, which is the part that
+         does not change when a row is added. It previously named "a Clinic
+         morgue", a flag deleted at :3678 — i.e. the one surviving piece of
+         mitigation advice pointed at a building that did nothing.
+       🎛 IT IS ALSO A RAIL LAUNCHER (🧟 in RAILS). A card in #rightcol is in a
+         display:none stash and is unreachable without one — see that row. -->
+  <div class="card rtiphost" id="zcard" style="display:none">
+    <span class="rtip"><b>🧟 Outbreak Risk</b>Unburied dead raise the risk of an outbreak. The risk is checked on a timer; the odds are published before the draw and the draw is seeded.<span class="use">Lower it: burial capacity — 🪦 Graveyards and ⚰️ Cemeteries, unlocked by the Deathcare research node. Survive it: 🛡 Defence repels the horde, ☣️ a Containment Field quarantines strikes.</span></span>
+    <h2>Outbreak Risk</h2>
+    <div id="ztimer">—</div>
+    <div id="zmeta"></div>
   </div>
   <!-- 🏙 THE LIVING ECONOMY. Rendered entirely by /src/economy — this file owns
        the container and nothing else. If that module 404s the card stays hidden
@@ -3008,10 +3039,50 @@ const ROAD_CLASSES = Object.assign(Object.create(null), {
      class has no mesh of its own to own yet) at a lower price on the same
      authored cost shelf — deliberately no new geometry and no new pricing
      path in the round that introduces the resolver, because the point of the
-     round is that the other eight systems keep working. */
-  roadlane: { id: 'roadlane', name: 'Lane', ico: '🛣️' },
+     round is that the other eight systems keep working.
+
+     🪦 RETIRED — NOT DELETED. `retired: true` is the flag, and it means exactly
+     one thing: NO PATH IN THE GAME LAYS A NEW ONE. Read on, because the reason
+     it is a flag on this row and not a deletion is the whole point.
+
+     WHY IT IS RETIRED. It was proof-of-concept for the TYPE axis, and the CLASS
+     axis then shipped and did its job better. /src/roads' `alley` is the narrow
+     cheap neighbourhood street this row describes — at costMult 0.60 it is 240
+     🔥 against this row's 300, it has a real mesh recipe, and it rides type
+     'road' so all twelve of the isRoad consumers keep working for free. A Lane
+     rendered IDENTICALLY to a Road (both go through refreshRoad; neither has a
+     mesh of its own) and cost more than the Alley that supersedes it. Two
+     indistinguishable carriageways at two prices is a trap, not a choice.
+
+     ⚠ THE ROW STAYS, AND SO DOES THE BUILDINGS ROW, because a tile type is
+       written verbatim into every save. isRoadType('roadlane') MUST keep
+       answering true or every Lane already standing in a player's city stops
+       being a road: it would fall out of the maintenance cap, stop auto-tiling,
+       stop bounding zoning fills, drop off /src/power's cable graph, despawn
+       its agents and start being charged a construction timer. Retiring the way
+       to BUY a thing and deleting the thing are different operations, and this
+       file has made that distinction once before — see the empty `forge` def
+       further down, kept because six sites read BUILDINGS[t.type].name with no
+       null guard.
+
+     ⚠ WHAT READS THE FLAG: `buildable()` on the hand-over below, and nothing
+       else. `types()` still returns every id, because "which types are
+       carriageways" is a question about SAVES and its answer never shrinks.
+       Only "which types may a player still lay" shrinks, and that is the
+       question the research tree is asking when it gates a road. Un-retiring is
+       deleting one word here — no migration, because nothing was migrated. */
+  roadlane: { id: 'roadlane', name: 'Lane', ico: '🛣️', retired: true },
 });
 const ROAD_TYPE_IDS = Object.freeze(Object.keys(ROAD_CLASSES));
+/* 🪦 …and the ones a player may still LAY. A retired type stays a carriageway
+   forever (ROAD_TYPE_IDS above) and stops being an offer. Derived from the
+   table so a retirement is one flag on one row rather than a second list that
+   can disagree with the first — the failure mode this file has named twice by
+   number (TRUCK_STOPS, "the seventh instance").
+   ⚠ NEVER EMPTY. `road` carries no flag and cannot be retired: it is what
+     /src/roads lays, what /src/outside's grandfather migration places, and what
+     the reader in /src/roads/types.js falls open to. */
+const ROAD_BUILDABLE_IDS = Object.freeze(ROAD_TYPE_IDS.filter(t => !ROAD_CLASSES[t].retired));
 /* Null-prototype table on purpose: a plain object literal answers truthy for
    'constructor' and 'toString', and a tile type is player-adjacent data. */
 function roadClassOf(type) { return (typeof type === 'string' && ROAD_CLASSES[type]) || null; }
@@ -3025,6 +3096,12 @@ function isRoadTile(t)     { return !!t && isRoadType(t.type); }
 try {
   window.MythicRoads = {
     types:   () => ROAD_TYPE_IDS.slice(),
+    /* 🪦 The buildable subset — see ROAD_BUILDABLE_IDS. Anything that OFFERS a
+       carriageway to the player (today: the research tree's unlock list) asks
+       this. Anything that INTERPRETS a tile already on the board asks types()
+       or isType(). Two questions, two answers, and the second one never
+       shrinks. */
+    buildable: () => ROAD_BUILDABLE_IDS.slice(),
     isType:  (ty) => isRoadType(ty),
     classOf: (ty) => roadClassOf(ty),
   };
@@ -3038,9 +3115,18 @@ const BUILDINGS = {
      makes a road a road (the maintenance cap, auto-tiling, the +25%, agents,
      zoning bounds, the cable graph, streets, the construction-timer exemption)
      it gets from the resolver, not from this row. This row carries only what a
-     BUILDINGS row is for: the name, the icon and the price. */
+     BUILDINGS row is for: the name, the icon and the price.
+     🪦 RETIRED (see the `retired` flag on the ROAD_CLASSES row). The row is
+        kept because costOf('roadlane') still has to price a Lane that is
+        already standing — the road meter, the demolish refund and the class
+        conversion ladder in /src/roads all quote a tile off its own type — and
+        because the desc below is what the inspector prints for that tile. It
+        is NOT in BUILD_ORDER, NOT in any BUILD_SECTIONS.items and NOT in the
+        research tree's unlock list, which together are every path that could
+        offer one. The desc says so, because a player who owns one and reads a
+        description of how to get more has been told something false. */
   roadlane: { name: 'Lane',          ico: '🛣️', cost: { cinder: 3 }, pop: 0, maxLvl: 1,
-              desc: 'A narrow neighbourhood street. Cheaper to lay than a Road and part of the same network — it carries traffic, counts against the road maintenance limit, and gives producers beside it the same +25%.' },
+              desc: 'A narrow neighbourhood street, and part of the same network as a Road — it carries traffic, counts against the road maintenance limit, and gives producers beside it the same +25%. No new ones are laid: the 🛣 Roads tab replaced it with the Alley, which is narrower still and cheaper. This one keeps working for as long as you keep it, and you can drag any road class straight over it.' },
   farm:     { name: 'Farm',          ico: '🌾', cost: { cinder: 14, metal: 4 }, pop: 2, crew: 2, outdoor: true,
               gen: { food: 1.5 },  desc: 'Open-field crops. Cheap and productive — but rain feeds it, snow and storms hurt it.' },
   hydrofarm:{ name: 'Hydro Farm',    ico: '🥫', cost: { cinder: 24, metal: 10 }, pop: 2, crew: 2,
@@ -3064,6 +3150,22 @@ const BUILDINGS = {
                          delivers is capped by what its own run can reach.
        `sewer: { cap }`  how much waste one LEVEL of it clears, in the same
                          per-minute water units the rest of this table uses.
+
+     🗺 AND ONE MORE, ADDED BY /src/resmap AND CARRIED BY NOTHING YET:
+
+       `deposit: '<id>'` this tile must stand on a named resource field — 'ore',
+                         'petro', 'stone', 'fertile' or 'timber'. tryPlace asks
+                         MythicResourceMap.siteRefusal, which names the nearest
+                         body, its centre AND the overlay layer that draws it.
+                         🔴 NO ROW CARRIES IT AND THAT IS DELIBERATE. Adding it
+                            to the Mine or the Quarry would retro-gate every one
+                            already standing in a lived save — the exact reason
+                            `mains` above could not dry out an existing city.
+                            NEW rows only.
+                         ⚠ The YIELD half of that module needs no flag at all:
+                           it reads `gen` and `outdoor`, which every row already
+                           has, and it is a soft multiplier that can never
+                           refuse a build.
 
      🔴 THE FLAGS LIVE HERE, NOT IN A LIST IN THE MODULE. `roadsAdjacentTo(match)`
         takes a resolver rather than a list of type strings for exactly this
@@ -3464,6 +3566,65 @@ const BUILDINGS = {
               powerNeed: 0.28, svc: { need: 'safety', supply: 2.2 }, use: { ammo: 0.05 },
               desc: 'A charge desk, cells and a patrol yard. The strongest Security in the city and the only building that puts cars on the street to earn it — corruption falls fastest inside its beat.' },
 
+  /* ══ 🪦 THE TWO DEATHCARE BUILDINGS ═══════════════════════════════════════
+     People die — /src/demographics has rated them through a terminal stage
+     since the life course landed, and until this round the model posted them
+     into the same bucket as "the rent went up". These are where they go.
+
+     🔑 `plots` IS A NEW ROW FIELD AND IT IS THE WHOLE OF THE GATE. It is the
+        number of graves ONE LEVEL of this building holds; /src/mortality reads
+        it off the row and never keeps its own list of building ids, because a
+        module-side id table is stale the moment somebody adds a row and this
+        file has corrected that exact mistake three times. Two consequences fall
+        out of it with no further code: economyTick multiplies `svc.supply` by
+        the module's 1-or-0 plot factor (so a full graveyard reads UNDERFED and
+        stops covering Deathcare), and the inspect panel prints the plots.
+
+     🔢 THE TWO RATES, AND WHICH ONE BINDS FIRST — stated because they are two
+        different constraints and only one of them can be the near-term one.
+        Demand is ~2.59e-5 interments per resident per minute (see
+        DEMAND_PER_POP.deathcare for the derivation), so:
+          · a Graveyard's 0.006/min covers ~230 residents, and its 24 plots
+            per level are full after ~4,000 real minutes of that rate;
+          · a Cemetery's 0.020/min covers ~770, and 90 plots per level last
+            ~4,500.
+        So COVERAGE is what bites in a session — a city with no deathcare reads
+        0% on the vitals card from the first tick and hears about it — and
+        PLOTS are what bite over the life of a save. That split is deliberate
+        and it is the CS2 shape: the immediate problem is "build one", the
+        long problem is "you will need more ground".
+
+     💱 COSTS are ordinary BUILDINGS costs and go through scaleCost() like every
+        other row. ⚠ NEITHER IS AN opType. demogGrowth().fixFor sorts the
+        cheapest three tiles that answer a need, and ops blueprints carry
+        `cost: {}` — which once sorted a 400,000-Cinder corporate wing ahead of
+        the Clinic as "cheapest". A deathcare row with no real cost dict would
+        do the same to the demand panel's own advice.
+
+     🕯 NO `svc.morale`. A graveyard is not an amenity and pretending it cheers
+        the city up would be inventing a mechanic to justify a mesh — the same
+        objection the Office Block's row records against giving it a svc. What
+        it does is answer a need, which is enough.
+     ⚠ MESHES ARE REAL, not borrowed: see makeGraveyard/makeCemetery. A type
+       with no buildMesh arm renders an EMPTY GROUP — an invisible building on a
+       real tile — and both syntax gates pass on it. */
+  /* 💱 …AND THE COSTS ARE DELIBERATELY DULL: cinder + metal + supplies, the
+     three keys 71 and 34 of this table's 84 cost dicts already use. `stone` and
+     `planks` were the obvious choices for a stonemason's trade and BOTH were
+     rejected — a graveyard priced in a resource a starting city cannot produce
+     (the Quarry is a later building, and `planks` is CITY_STOCK, not a ledger
+     key spendRes can even reach) would be a complaint the player is told about
+     and then not allowed to answer, which is the whole failure this node hangs
+     off the progression trunk to avoid. */
+  graveyard:{ name: 'Graveyard',     ico: '🪦', cost: { cinder: 35, metal: 6 }, pop: 0, crew: 1,
+              plots: 24,
+              svc: { need: 'deathcare', supply: 0.006 },
+              desc: 'A walled plot, a gate and rows of stones. Somewhere for the city to put its dead — small, cheap, and it fills up. Each level lays out more ground.' },
+  cemetery: { name: 'Cemetery',      ico: '⚰️', cost: { cinder: 110, metal: 26, supplies: 12 }, pop: 0, crew: 2, powerNeed: 0.12,
+              plots: 90,
+              svc: { need: 'deathcare', supply: 0.020 },
+              desc: 'Consecrated ground on a proper plan: a chapel, an avenue, a lodge and a register. Over three times the Graveyard\'s rate and nearly four times its ground, and still finite.' },
+
   // ── The chain — refining and fabrication ──
   smelter:  { name: 'Smelting Works',ico: '🏭', cost: { cinder: 60, metal: 24 }, pop: 2, crew: 2, powerNeed: 0.5,
               /* ! reagents 0.09 against the Machine Shop's 0.05 draw. Matching them
@@ -3523,6 +3684,21 @@ const BUILDINGS = {
   clinic:   { name: 'Clinic',        ico: '🏥', cost: { cinder: 110, metal: 24, medicine: 10 }, pop: 2, crew: 2, powerNeed: 0.4,
               gen: { remedies: 0.45 }, use: { medicine: 0.28, water: 0.24 },
               svc: { need: 'health', supply: 1.5, input: 'remedies', rate: 0.30 },
+              /* 🪦 NO `deathcare` FLAG HERE, AND ITS REMOVAL IS THE POINT.
+                 This row briefly carried `deathcare: { inter: 5 }` — a clinic
+                 morgue — as the stopgap that armed /src/zombie's outbreak
+                 engine before there was anywhere to bury anybody. /src/mortality
+                 has since landed with real graveyards, real plots and the eighth
+                 NEED, so the morgue would now be a THIRD opinion about the same
+                 bodies: the vitals card, the graveyard and the outbreak card
+                 each counting a different backlog. /src/zombie reads
+                 MythicMortality.report() instead and the flag is gone.
+                 The `deathcare: { inter }` contract still exists in
+                 /src/zombie/risk.js capacityOf() as the fallback for a build
+                 where /src/mortality is absent — NOTHING declares it today, and
+                 that is correct: with no deathcare system the outbreak engine is
+                 dormant and says so, rather than rolling against a player who
+                 has nowhere to put anyone. */
               desc: 'A cross over the door and an ambulance bay at the side. Prepares remedies from medicine and clean water, and dispenses them — the whole of the city\'s Health coverage runs through here.' },
 
   /* ══ 🛏 THE RESTING HOUSE (resonance-card-training.md §5 · §6)
@@ -3727,9 +3903,57 @@ const BUILD_SECTIONS = [
     /* 🚱 The Outfall is infrastructure, not production: it makes nothing, it is
        the other end of the pipe, and it belongs beside the roads and the
        interchange — the other buildings whose entire job is a connection. */
-    items: ['road', 'roadlane', 'streetlight', 'depot', 'interchange', 'caravanpost', 'railyard', 'lot', 'outfall'] },
+    /* 🛣 THE CARRIAGEWAYS ARE GONE FROM HERE — 'road' and 'roadlane' were the
+       first two entries in this list. THEY LEFT FOR TWO DIFFERENT REASONS and
+       the distinction is load-bearing, because one of them is a re-home and the
+       other is a retirement:
+
+         · 'road' IS RE-HOMED. It is laid from the 🛣 Roads tab (/src/roads),
+           which is a strict superset of the card: a drag, a run preview, a live
+           price chip, nine classes and the cap meter. A road has not really
+           been a shop card since the drag tools shipped — buying one from here
+           put a single tile in the player's hand, one payCost per click, no
+           preview, no class and no meter, i.e. a strictly worse version of the
+           tool two buttons away on the same bar. Two ways to buy the same tile
+           is also two things to keep in agreement, and one of them had no price
+           preview. VERIFIED, not assumed: /src/roads lays type 'road' through
+           ctx.place on empty ground, so every class in the palette is reachable.
+
+         · 'roadlane' IS RETIRED. ⚠ THE ROADS TAB DOES NOT LAY IT AND NEVER DID.
+           The palette's nine entries are road CLASSES riding in `t.rc` on type
+           'road' (see /src/roads/classes.js, which spends forty lines on why a
+           class must not mint a type); none of them writes the type 'roadlane'.
+           So deleting the card did not move the Lane somewhere else — it ended
+           it, and saying otherwise here would make this comment the licence for
+           a removal that did not happen the way it claims. The reasoning for
+           ending it, and the `retired` flag that is the single source of truth
+           for it, are on the ROAD_CLASSES row at the top of this file: the
+           `alley` class supersedes the Lane at a lower price with a real mesh.
+           The research tree's unlock list is DERIVED from that flag
+           (MythicRoads.buildable()), so the tree no longer advertises a Lane it
+           cannot deliver — which it did, as a live "Lane · building" row, for
+           exactly as long as this comment was half wrong.
+       ⚠ REMOVED FROM BUILD_ORDER TOO, in the same commit. buildShopBody()
+         appends every BUILD_ORDER id that no section claimed into an automatic
+         "Other" bucket, so deleting from one registry alone does not remove the
+         card — it MOVES it, out of Infrastructure and into Other, which is the
+         opposite of the ask and looks like a bug.
+       ⚠ THE BUILDINGS ROWS STAY. 'road' and 'roadlane' are tile types written
+         verbatim into every save, they are what costOf('road') prices, and
+         ROAD_CLASSES still lists them. Deleting a row would break loading, not
+         just building. This list is about what the SHOP sells.
+       ✅ NON-CARRIAGEWAY INFRASTRUCTURE STAYS, and that is a decision rather
+          than an oversight: a Street Light, an Interchange, a Parking Lot and a
+          Supply Depot are single placed buildings, not runs. Nothing drags
+          them, isRoadType() is false for all four, and moving them would empty
+          a section to no purpose. Same for the transit trio spliced in below. */
+    items: ['streetlight', 'depot', 'interchange', 'caravanpost', 'railyard', 'lot', 'outfall'] },
+  /* 🪦 The two deathcare rows sit in Civic, at the END, beside the other
+     buildings whose job is the people rather than the ledger. Not in Defense
+     (a graveyard defends nothing) and not in Decoration (it is a service with
+     a coverage number, not a mood bonus). */
   { id: 'civic', name: 'Civic',          ico: '🏠', desc: 'Population, health and morale.',
-    items: ['housing', 'medlab', 'arena', 'shop', 'retail', 'office', 'stadium'] },
+    items: ['housing', 'medlab', 'arena', 'shop', 'retail', 'office', 'stadium', 'graveyard', 'cemetery'] },
   { id: 'def',   name: 'Defense',        ico: '🛡️', desc: 'Raiders are coming. These are what stop them.',
     items: ['barracks', 'tower', 'police', 'wall', 'gate', 'munitions', 'motorpool', 'firestation'] },
   { id: 'fin',   name: 'Financial',      ico: '💹', desc: 'Lifts every Cinder earner in the city, and invests a slice of the takings.',
@@ -3742,7 +3966,28 @@ const BUILD_SECTIONS = [
     items: ['tree', 'bush', 'garden', 'fountain'] },
 ];
 
-const BUILD_ORDER = ['road','roadlane','streetlight','farm','hydrofarm','purifier','scrapmine','fuelrig','gasstation','depot','medlab','munitions','housing','barracks','tower','wall','gate','arena','shop','caravanpost','lot','reslab','siphon','obelisk','kalonstable','tree','bush','garden','fountain',
+/* 🛣 'road' and 'roadlane' USED TO HEAD THIS LIST and were removed with the
+   Infrastructure section entry above — see the note there for WHY each one
+   went, which is not the same reason for both ('road' re-homed to the Roads
+   tab; 'roadlane' retired outright). This registry is the one that matters for
+   reachability: buildShopBody() appends anything here that no section claimed
+   into an automatic "Other" bucket, so a carriageway left in here would still
+   be sold, just from a worse place.
+   🔍 The invariant, if it is ever worth a test: no id for which isRoadType() is
+      true may appear in BUILD_ORDER or in any BUILD_SECTIONS.items — including
+      after the three runtime pushes further down this file (the ops blueprints
+      at opsKeyOf(), and 'busstop'/'trainstation'/'railtrack'), none of which is
+      a carriageway.
+   ⚠ THE INVARIANT IS NOT THE WHOLE CHECK, and the gap cost a round. "Not in the
+     shop" and "not offered" are different claims: a type can be absent from
+     both registries here and still be advertised to the player by the research
+     tree, which keeps its own unlock list. When a carriageway leaves this list,
+     the question to ask next is which OTHER surface still names it — the tree
+     did, as a live "Lane · building" unlock row for a tile with no affordance
+     anywhere in the game. That list is derived from MythicRoads.buildable()
+     now, so the two move together; ADMIN_SLOTS deliberately does not, because
+     an admin still has to be able to re-model a Lane that is standing. */
+const BUILD_ORDER = ['streetlight','farm','hydrofarm','purifier','scrapmine','fuelrig','gasstation','depot','medlab','munitions','housing','barracks','tower','wall','gate','arena','shop','caravanpost','lot','reslab','siphon','obelisk','kalonstable','tree','bush','garden','fountain',
   // ── the service city (r5) ──
   'foodtruck','restaurant','grocery','retail','clinic','club','cannery','smelter','machineshop','powerstation','warehouse','motorpool','firestation','police',
   // ── the House (r8) ──
@@ -3766,7 +4011,9 @@ const BUILD_ORDER = ['road','roadlane','streetlight','farm','hydrofarm','purifie
   // ── ⚡ the generating fleet (/src/power) ──
   'wind', 'solar', 'coal', 'gas', 'oil', 'geothermal', 'hydro', 'nuclear', 'incinerator',
   // ── 🚰 the mains (/src/water): the two ends of the pipe ──
-  'waterstation', 'outfall'];
+  'waterstation', 'outfall',
+  // ── 🪦 deathcare (/src/mortality): the eighth need ──
+  'graveyard', 'cemetery'];
 
 /* ── TCG layer ─────────────────────────────────────────────────────────
    The player's card collection powers the city:
@@ -4484,7 +4731,43 @@ const MORALE = {
    threshold (falling more than 5 points a day) within reach of a session.
    ════════════════════════════════════════════════════════════════════ */
 const CITY_DAY_MIN = 20;                       // one "day" of vitals trend, in real minutes
-const NEEDS = ['food', 'water', 'power', 'safety', 'light', 'health', 'leisure'];
+/* ⚠ EIGHT, NOT SEVEN, AS OF THE MORTALITY ROUND — AND THAT IS A DECISION WITH
+   THREE NAMED CONSEQUENCES, NOT A ROW APPENDED TO A LIST.
+   ─────────────────────────────────────────────────────────────────────────────
+   `computeCoverage()` ends with `avg /= NEEDS.length`, so lengthening this
+   array RE-WEIGHTS the city average. Every consumer was read before the row
+   went in; here is all three of them and what moves:
+
+     1. cov_avgClamped() → tCiv (:31351). Civilisation is
+        civBase × (0.55 + 0.45 × min(1, avg)). A city meeting all seven needs
+        used to average 1.00; it now averages 7/8 = 0.875 until it builds a
+        graveyard, i.e. tCiv falls ~5.6%. That is the intended reading — a city
+        with nowhere to bury anybody is measurably less civilised — and it is
+        RECOVERABLE for one research point and ~35 Cinder.
+     2. The morale term at :31384 (`32 + min(1, cov_avgClamped()) × 38`) moves
+        by the same fraction, ≤ 4.75 points of morale, in the same direction and
+        for the same reason.
+     3. ecoHost().infrastructure (:27284) is `avg × 0.7 + roadFill × 0.3`, read
+        by the firm LEVEL GATES. Worst case −0.0875 on a 0..1 score. It is a
+        gate on GROWTH, not a tax on output, so an existing firm is never
+        demoted by this; the city's next promotion is simply held until the
+        deathcare row is answered.
+
+   ⚠ AND THE DEMAND RAMP COVERS THE TRANSITION. `game.cov.ramp` blends every
+     coverage figure from a neutral 100% over DEMAND_RAMP_SEC from load, so a
+     save written before this row existed is never judged on a frame where it
+     could not have reacted — the same grandfathering the seven original needs
+     got, applied to the eighth for free.
+
+   ⚠ REJECTED: keeping deathcare OUT of NEEDS and giving it a bespoke meter.
+     It would have avoided all three lines above and cost the feature every
+     surface that makes it legible: the vitals card row, the status-bar dot,
+     demogGrowth().fixFor (which DERIVES "what fixes this" from BUILDINGS'
+     svc.need and is never typed), citMoodTarget, and /src/broadcast's
+     fromCoverage — five existing readers, none of which would have known the
+     meter existed. A fifth parallel path is the exact failure this file has
+     documented fixing four times. */
+const NEEDS = ['food', 'water', 'power', 'safety', 'light', 'health', 'leisure', 'deathcare'];
 const NEED_META = {
   food:    { name: 'Food',    ico: '🍱' },
   water:   { name: 'Water',   ico: '💧' },
@@ -4493,6 +4776,7 @@ const NEED_META = {
   light:   { name: 'Light',   ico: '💡' },
   health:  { name: 'Health',  ico: '🩹' },
   leisure: { name: 'Leisure', ico: '🎵' },
+  deathcare: { name: 'Deathcare', ico: '🪦' },
 };
 /* Per citizen, per real minute. The doc's per-1,000-per-day figures scale by
    ×0.0025:  food 40→0.100 · water 30→0.075 · power 25→0.0625 · health 8→0.020 ·
@@ -4507,6 +4791,28 @@ const NEED_META = {
    ⚠ `light` is NOT per-capita either — it is per built block, see computeCoverage(). */
 const DEMAND_PER_POP = {
   food: 0.100, water: 0.075, power: 0.0625, safety: 0.020, health: 0.020, leisure: 0.030,
+  /* 🪦 DEATHCARE IS THE ONLY ROW HERE THAT IS DERIVED RATHER THAN SCALED FROM
+     THE DOC, AND IT IS A FALLBACK, NOT THE MODEL.
+     The live figure comes from /src/mortality via the `dem.deathcare` override
+     in computeCoverage() — the same shape `dem.power` and `dem.light` already
+     use, and for the same reason: the true denominator is what the simulation
+     is actually doing, not a per-head constant. This constant is what the city
+     divides by when that module is absent, and it is DERIVED so the two can
+     never be far apart:
+
+        life expectancy   = retireAge 70 + 1/(retiredLeavePerDay 0.004
+                            × daysPerYear 24.038)          ≈ 80.4 years
+        one citizen-year  = daysPerYear 24.038 × dayMin 20 ≈ 480.8 real minutes
+        deaths/person/min = 1 / (80.4 × 480.8)             ≈ 2.59e-5
+
+     Every input is /src/economy's ECON or /src/lifepath's LIFE, and
+     /src/mortality/tuning.js runs the identical derivation off clockOf() at
+     runtime rather than copying this number. A city of 400 therefore wants
+     ~0.0104 interments a minute, i.e. one funeral every ~96 minutes.
+     ⚠ If ECON.demographics.lifecycle is retuned, this constant goes stale and
+       the module's does not. That asymmetry is deliberate: the stale one is
+       only ever reached on a build where /src/mortality 404'd. */
+  deathcare: 0.0000259,
 };
 const COVERAGE_MAX = 1.5;                      // doc: clamped 0–150%
 // Stored stock softens a production gap instead of the vital snapping to zero:
@@ -5894,6 +6200,21 @@ const WX_SHIELD = {
   fire:    { b: 'firestation',  ico: '🚒', name: 'Fire crews',      per: 0.20, cap: 0.75 },
   tornado: { b: 'stormshelter', ico: '🛖', name: 'Storm shelters',  per: 0.16, cap: 0.65 },
   anomaly: { b: 'containment',  ico: '🔮', name: 'Containment',     per: 0.18, cap: 0.70 },
+  /* 🧟 THE OUTBREAK'S COUNTER-BUILDING, AND IT IS ONE ROW HERE RATHER THAN A
+     BRANCH IN /src/zombie — which is the whole point of this table. The
+     outbreak is not weather (nothing in weatherTick fires it; /src/zombie's own
+     beat does) but its MITIGATION is the same rule, so it lives in the same
+     place and reads the same way: per building, per level, capped, and a
+     damaged one protects nobody.
+     ⚠ /src/zombie reads _wxShieldStrength('outbreak') and takes the DRAW
+       itself, deliberately not through _wxShield(). Two reasons, both real:
+       _wxShield() uses Math.random() and the outbreak must reproduce from a
+       seed, and its `wx._shieldSaid` dedupe is scoped to a weather FRONT,
+       which an outbreak does not have. Same row, same arithmetic, seeded draw.
+     ⚠ Containment does double duty — it dampens rifts AND quarantines the
+       streets. Deliberate: a second near-identical building for the second
+       hazard is how a build menu gets to forty rows nobody reads. */
+  outbreak:{ b: 'containment',  ico: '☣️', name: 'Quarantine',      per: 0.16, cap: 0.65 },
 };
 function _wxShieldStrength(hazard) {
   const S = WX_SHIELD[hazard]; if (!S) return 0;
@@ -7285,9 +7606,19 @@ function addWindows(g, w, h, d, rows, cols, y0) {
      are the only two things this touches, so makeTree stays safe to call from
      anywhere, including during module evaluation — which is exactly the trap the
      old cone version could not fall into and this one must not introduce. */
-function makeTree(scale = 1) {
+function makeTree(scale = 1, rng) {
   const t = new THREE.Group();
-  const R = Math.random;
+  /* 🎲 OPTIONALLY SEEDED. Every existing caller passes nothing and gets exactly
+     what it got before — `Math.random`, byte-identical, no behaviour change.
+     The second argument exists for callers that have a TILE to seed on and a
+     promise to keep about not redrawing themselves on every boot: makeGraveyard
+     hands in rdRng(tx, tz) for precisely that reason, because its own header
+     claims determinism and this line was the one thing quietly breaking it.
+     ⚠ It is `rng`, not `seed`. This function must stay callable during module
+       evaluation (see the NO LATE BINDINGS note above), so it cannot reach for
+       a hash helper of its own — the caller, which is not in a dead zone, is
+       the right place to build the generator. */
+  const R = (typeof rng === 'function') ? rng : Math.random;
   const bark = [], leaf = [];
   const put = (list, geo, x, y, z, rot) => {
     if (rot) { geo.rotateX(rot[0] || 0); geo.rotateZ(rot[2] || 0); geo.rotateY(rot[1] || 0); }
@@ -8055,6 +8386,13 @@ function buildMesh(type, lvl, tx, tz) {
     case 'machineshop': { _adopt(g, makeMachineshop(lvl), true); break; }
     case 'clinic': { _adopt(g, makeClinic(lvl), true); break; }
     case 'police': { _adopt(g, makePolice(lvl), true); break; }
+    /* 🪦 DEATHCARE. Real arms, not borrowed ones — buildMesh has no default
+       case, so a `graveyard` row with no arm here would render an empty
+       THREE.Group: an invisible building on a real tile the player paid for,
+       and both syntax gates pass on it. stormshelter/containment borrow
+       makeDepot and makeSiphon and FLAG it; these two did not need to. */
+    case 'graveyard': { _adopt(g, makeGraveyard(lvl, tx, tz), true); break; }
+    case 'cemetery': { _adopt(g, makeCemetery(lvl), true); break; }
     case 'resthouse': { _adopt(g, makeResthouse(lvl), true); break; }
     case 'stadium': { _adopt(g, makeStadium(lvl), true); break; }
     case 'railyard': { _adopt(g, makeRailyard(lvl), true); break; }
@@ -23332,6 +23670,153 @@ function buildRoadMesh(conn, drv = {}, tx, tz, rc) { // conn = road links, drv =
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
+   🪦 DEATHCARE — the Graveyard and the Cemetery.
+
+   TWO RULES, both of them this file's own and neither re-derived here:
+
+   1. THE HEADSTONES ARE ONE InstancedMesh, NOT N MESHES. A level-3 Cemetery
+      lays out 63 stones; sixty-three Meshes is sixty-three draw calls for a
+      building the player will put four of on the map. Every field layer in
+      /src/landvalue, /src/pollution and /src/power records the same rule for
+      the same reason ("a tinted quad per tile is 576 meshes"). One geometry,
+      one material, one matrix per stone written once at build time.
+   2. THE PLAN IS A GRID, NOT A SCATTER, AND THE ONE ROLL IS SEEDED ON THE
+      TILE. A graveyard is laid out by a surveyor, so the rows ARE regular and
+      no part of the plan is rolled. Level adds rows, never jitter.
+      ⚠ THE ORIGINAL WORDING HERE WAS "No Math.random anywhere below", AND IT
+        WAS FALSE FOR THE GRAVEYARD. Every line of the plan obeyed it, but the
+        yard's one tree came from makeTree(), which picks species and every
+        limb off Math.random — measured across three identical makeGraveyard(1)
+        calls the bbox height came back 0.451 / 0.394 / 0.433, i.e. the tree
+        changed species on every boot underneath a comment saying it could not.
+        The Cemetery has no tree and was byte-stable (0.98 × 0.422 × 0.994 ×3),
+        so the claim held for exactly one of the two. It is now true of both:
+        makeTree takes an optional generator and makeGraveyard hands it
+        rdRng(tx, tz), the tile hash makeHousing already uses. So neither
+        building silently redraws itself on every boot the way `farm`, `lot`,
+        `shop` and `machineshop` still do (see the meshHash note in the
+        five-seams header below) — and this note stays, because a comment that
+        was believed and was wrong is worth more as a record than as a delete.
+
+   ⚠ THE STONES ARE THE CAPACITY, VISUALLY, BUT THEY ARE NOT THE MODEL. What
+     is drawn is the PLOT, laid out and empty; /src/mortality owns how many are
+     occupied and there is deliberately no per-grave mesh state. Making the
+     geometry track occupancy would mean rebuilding the mesh every interment —
+     a rebuild on a beat the player cannot see, for a difference of a few
+     pixels at the camera distances this game is played at.
+   ═════════════════════════════════════════════════════════════════════════ */
+
+/* One row-and-column plan of headstones as a single InstancedMesh. Returns the
+   mesh so the caller can add it; `n` stones, laid out inside the given rect. */
+function _gyStones(cols, rows, x0, x1, z0, z1, y, w, h, d) {
+  const n = Math.max(1, cols * rows);
+  const geo = new THREE.BoxGeometry(w, h, d);
+  const im = new THREE.InstancedMesh(geo, MAT.stone, n);
+  const m = new THREE.Matrix4();
+  let i = 0;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const x = x0 + (x1 - x0) * ((c + .5) / cols);
+      const z = z0 + (z1 - z0) * ((r + .5) / rows);
+      m.makeTranslation(x, y + h / 2, z);
+      im.setMatrixAt(i++, m);
+    }
+  }
+  im.instanceMatrix.needsUpdate = true;
+  im.castShadow = true;
+  im.receiveShadow = false;
+  return im;
+}
+
+/* A low perimeter wall with a gap for the gate on the +z (street) face. Four
+   boxes, and the gap is where the path meets the kerb — a walled plot with no
+   way in reads as a bunker. */
+function _gyWall(g, half, y, h, th, gate) {
+  g.add(box(half * 2, h, th, MAT.stone, 0, y + h / 2, -half));                       // back
+  g.add(box(th, h, half * 2, MAT.stone, -half, y + h / 2, 0));                       // west
+  g.add(box(th, h, half * 2, MAT.stone, half, y + h / 2, 0));                        // east
+  const seg = (half * 2 - gate) / 2;
+  g.add(box(seg, h, th, MAT.stone, -(gate / 2 + seg / 2), y + h / 2, half));          // front, left of gate
+  g.add(box(seg, h, th, MAT.stone, (gate / 2 + seg / 2), y + h / 2, half));           // front, right of gate
+}
+
+/* ── 🪦 GRAVEYARD. A walled plot, a gate, a gravel path, rows of stones and one
+   tree. 9 meshes + 1 instanced field, at every level; level adds ROWS. ─────── */
+function makeGraveyard(lvl, tx, tz) {
+  const g = new THREE.Group();
+  const H = .46, GY = .012;                          // plot half-width, ground height
+  g.add(box(.96, GY, .96, MAT.drive, 0, GY / 2, 0));                                 // apron
+  g.add(box(.86, .006, .86, MAT.green, 0, GY + .003, 0));                            // kept grass
+  _gyWall(g, H, GY, .085, .028, .20);
+  g.add(box(.16, .008, .78, MAT.drive, 0, GY + .008, .04));                          // path in from the gate
+  g.add(cyl(.026, .030, .155, MAT.stone, -.10, GY + .078, H, 8));                    // gate pier
+  g.add(cyl(.026, .030, .155, MAT.stone, .10, GY + .078, H, 8));                     // gate pier
+  /* Stones either side of the path. Two blocks so the path is never buried. */
+  const rows = 3 + lvl;                                                              // 4 / 5 / 6
+  g.add(_gyStones(3, rows, -.40, -.12, -.38, .26, GY + .009, .046, .075, .016));
+  g.add(_gyStones(3, rows, .12, .40, -.38, .26, GY + .009, .046, .075, .016));
+  /* 🌳 THE ONE TREE EVERY YARD HAS — AND THE ONE THING IN HERE THAT ROLLS.
+     Reported as a defect against this file's own header two lines up: the
+     header claimed "No Math.random anywhere below… it also means the building
+     does not silently redraw itself on every boot", and it was true of every
+     line except this one. makeTree() picks species and every limb off
+     Math.random, so three identical makeGraveyard(1) calls measured bounding
+     boxes 0.451 / 0.394 / 0.433 high — the yard changed species and height on
+     every reload while the claim above said it could not.
+     Fixed at the source rather than by softening the sentence: makeTree now
+     takes an optional generator and this passes rdRng(tx, tz), the same tile
+     hash makeHousing uses for the same reason ("seeding on the grid coords
+     makes a house a property of its plot"). The seed IGNORES `lvl`, exactly as
+     makeHousing's, makeArena's and makeOffice's do — upgrading a graveyard
+     adds rows of stones to the yard that is standing there; it must not swap
+     its tree for a different species.
+     ⚠ rdRng already falls back to Math.random when the coords are absent,
+       which is the GLB-preview and harness case, so this is not a new
+       requirement on any caller. */
+  const tree = makeTree(.62, (typeof rdRng !== 'undefined') ? rdRng(tx, tz) : undefined);
+  tree.position.set(-.33, GY, .36);                                                  // inside the gate, clear of the rows
+  g.add(tree);
+  return g;
+}
+
+/* ── ⚰ CEMETERY. The Graveyard's plan on a bigger sheet of paper: a chapel with
+   a lit window, a lodge at the gate, an avenue, and four blocks of stones.
+   14 meshes + 4 instanced fields. ─────────────────────────────────────────── */
+function makeCemetery(lvl) {
+  const g = new THREE.Group();
+  const H = .47, GY = .012;
+  g.add(box(.98, GY, .98, MAT.drive, 0, GY / 2, 0));                                 // apron
+  g.add(box(.90, .006, .90, MAT.green, 0, GY + .003, 0));                            // lawn
+  _gyWall(g, H, GY, .105, .032, .24);
+  g.add(box(.20, .008, .88, MAT.drive, 0, GY + .008, 0));                            // the avenue, gate to chapel
+  g.add(box(.62, .008, .16, MAT.drive, 0, GY + .008, -.10));                         // cross walk
+  g.add(cyl(.030, .034, .195, MAT.stone, -.12, GY + .098, H, 8));                    // gate pier
+  g.add(cyl(.030, .034, .195, MAT.stone, .12, GY + .098, H, 8));                     // gate pier
+  /* The chapel at the head of the avenue. A box, a pitched cap and a door —
+     read from above it is the one thing that says this is not a park. */
+  g.add(box(.30, .20, .24, MAT.stone, 0, GY + .10, -.32));
+  g.add(box(.34, .036, .28, MAT.dark, 0, GY + .218, -.32));                          // roof slab
+  g.add(box(.20, .028, .17, MAT.dark, 0, GY + .246, -.32));                          // roof upper
+  g.add(box(.026, .150, .026, MAT.stone, 0, GY + .335, -.32));                       // finial
+  g.add(box(.090, .012, .012, MAT.stone, 0, GY + .372, -.32));                       // …and its crossbar
+  g.add(box(.11, .085, .010, winMat, 0, GY + .120, -.32 + .121));                    // lit window
+  g.add(box(.14, .16, .12, MAT.stone, .33, GY + .08, .36));                          // gate lodge
+  g.add(box(.17, .026, .15, MAT.dark, .33, GY + .173, .36));                         // lodge roof
+  /* FOUR BLOCKS, and every rectangle below is clear of the avenue (x ±.10),
+     the cross walk (z −.18…−.02), the chapel (x ±.15, z −.44…−.20) and the
+     lodge. Two big blocks south of the walk, two narrow ones flanking the
+     chapel — which is what a real cemetery looks like from the air, and it is
+     why the plan is written out rather than looped over four quadrants. */
+  const rows = 3 + lvl;                                                              // 4 / 5 / 6
+  const SY = GY + .009, SW = .050, SH = .088, SD = .018;
+  g.add(_gyStones(3, rows, -.42, -.15, -.02, .24, SY, SW, SH, SD));
+  g.add(_gyStones(3, rows, .15, .42, -.02, .24, SY, SW, SH, SD));
+  g.add(_gyStones(1, rows - 1, -.40, -.22, -.42, -.22, SY, SW, SH, SD));
+  g.add(_gyStones(1, rows - 1, .22, .40, -.42, -.22, SY, SW, SH, SD));
+  return g;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
    ⛏ THE FIVE SEAMS — the mesh recipes for the extraction round.
    ----------------------------------------------------------------------------
    Water Intake · Deep Mine · Strategic Minerals Works · Cane & Seed Croft ·
@@ -25524,6 +26009,30 @@ function wtFactor(k) {
   const f = _wtFac && _wtFac[k];
   return Number.isFinite(f) && f > 0 ? f : 1;
 }
+
+/* 🗺 THE GROUND UNDER EVERY OTHER RESOURCE — /src/resmap, refreshed by the
+   resource pre-pass in economyTick and read exactly once, at the same line
+   `gen.water` reads wtFactor(). Third map of this shape in this file and the
+   contract is word for word the other two: THIS FILE OWNS THE RATE, the module
+   owns the ground, and null means "no module, or it refused" — at which point
+   rmFactor() returns 1 and every number in the tick is what it was before the
+   module existed.
+
+   ⚠ KEYED `tile|resource`, NOT `tile`, AND THAT IS NOT FUSSINESS. A tile can
+     bank two things at once (the Sawmill makes planks; the refiners make
+     several goods), and a map keyed by tile alone would apply the ore
+     multiplier to whatever else that tile produced. That is the same class of
+     defect as the bare `t.type === 'road'` comparisons this file has numbered
+     four times: it looks right in review and is wrong only for the rows nobody
+     tested.
+   ⚠ WATER NEVER REACHES HERE. /src/water already owns the water multiplier and
+     the call site below routes `water` to wtFactor() instead — one ground, one
+     module, one multiplier. */
+let _rmFac = null;
+function rmFactor(k, r) {
+  const f = _rmFac && _rmFac[k + '|' + r];
+  return Number.isFinite(f) && f > 0 ? f : 1;
+}
 /* 🗺 The id the ground under this city is derived from. Deliberately the SAME
    expression boot() hands /src/economy for the ore endowment, so the two
    systems are describing one place rather than two.
@@ -25955,6 +26464,60 @@ async function economyTick(dtMin) {
     }
   } catch (e) { /* the host's own water rate stands unchanged */ }
 
+  /* 🗺 THE RESOURCE PRE-PASS — /src/resmap. Same shape as the two above it and
+     for the same reason: the main loop needs a per-tile multiplier, and the
+     module cannot see `game.tiles`.
+     ────────────────────────────────────────────────────────────────────────
+     WHAT THE MODULE OWNS AND WHAT THIS FILE OWNS. This file owns the RATE — a
+     Mine's `gen.metal` times tileMult() — and always has. /src/resmap owns the
+     GROUND, which this file has never modelled at tile resolution: whether
+     there is an ore body, a gas pocket or good soil under the tile. So the
+     module is handed a list of (tile × resource) sites and returns a MULTIPLIER
+     PER SITE; it never returns a rate, and there is no second production figure
+     anywhere in this file.
+
+     ⚠ THE SITE LIST IS BUILT FROM `def.gen` GENERICALLY AND NAMES NO BUILDING
+       TYPE. Which resource comes out of which ground is the MODULE's subject
+       and lives in its tuning table; this loop just says "this tile banks
+       metal, it is at 4,17, and its row is/is not `outdoor`". A list of type
+       strings here is the shape this file has had to correct three times.
+     ⚠ `outdoor` IS THE ROW'S OWN EXISTING FLAG and is handed over rather than
+       interpreted: /src/resmap uses it to exempt INDOOR buildings from the
+       SURFACE fields, which is why the Hydro Farm — "Indoor ember-lamp crops.
+       Weatherproof." — is not charged for the soil outside while the Farm is.
+     ⚠ NO tileMult() HERE, unlike the water pre-pass. That pre-pass needs the
+       rates because it solves a whole network against city demand; this one
+       answers a question about the GROUND, which does not care how many crew
+       the building has. Multiplying the rate in and then dividing it out again
+       is how two figures start to drift.
+     ⚠ IF THE MODULE 404s OR REFUSES, `_rmFac` stays null and rmFactor() returns
+       1 — every resource is produced exactly as it was before this feature
+       existed. That is the whole absent-module guarantee, and it is one line. */
+  _rmFac = null;
+  try {
+    const RM = window.MythicResourceMap;
+    if (RM && RM.ready()) {
+      const sites = [];
+      for (const [k, t] of Object.entries(game.tiles)) {
+        // 🏗 Same half-built guard as the two pre-passes above: a Mine that is
+        //    still a hole is not standing on anything yet.
+        const def = BUILDINGS[t.type]; if (!def || !def.gen || t.damaged || bldSite(t)) continue;
+        let xz = null;
+        for (const r in def.gen) {
+          // Water is /src/water's ground and cinder is money, not a crop; the
+          // module refuses both by having no field that feeds them, but not
+          // asking at all keeps the list short on a city full of shops.
+          if (r === 'water' || r === 'cinder' || r === 'power') continue;
+          if (!RM.fieldForRes(r)) continue;
+          if (!xz) xz = k.split(',').map(Number);
+          sites.push({ k, x: xz[0], z: xz[1], res: r, outdoor: !!def.outdoor });
+        }
+      }
+      const s = RM.solve({ cityId: cityGroundId(), grid: GRID, sites });
+      if (s && s.ok) _rmFac = s.factor;
+    }
+  } catch (e) { /* the host's own resource rates stand unchanged */ }
+
   /* ☁ THE POLLUTION PRE-PASS — /src/pollution. Third of three, and it runs
      LAST of the three deliberately.
      ────────────────────────────────────────────────────────────────────────
@@ -26190,8 +26753,18 @@ async function economyTick(dtMin) {
            madeR` and the ABSENCE of an inline `_ledgerFree` clamp are this
            tree's. The incoming side still clamped here and decremented
            _ledgerFree in place — see the note below for why that is the bug. */
+      /* 🗺 …AND THE GROUND UNDER EVERYTHING ELSE, /src/resmap, on the SAME line
+         and for the same reason: `genR` feeds the banked amount, the rate the
+         HUD prints and waterNetRaw below, so a multiplier applied anywhere else
+         would let the panel advertise output the tick does not deliver.
+         ⚠ THE TERNARY IS EXCLUSIVE ON PURPOSE. `water` goes to wtFactor() and
+           nothing else ever does; every other resource goes to rmFactor(), which
+           returns 1 for the ones no field feeds (cinder, power, and every
+           REFINED good — a Sawmill stands on planks nobody mined). One ground,
+           one module, one multiplier: multiplying both in would charge the
+           aquifer twice the day someone gave /src/resmap a water field. */
       const genR = ((r === 'cinder') ? cinderRate(def.gen[r]) : def.gen[r]) *
-                   (r === 'water' ? wtFactor(k) : 1);
+                   (r === 'water' ? wtFactor(k) : rmFactor(k, r));
       const madeR = genR * mult * om * dtMin;
       /* 📦 A LEDGER RESOURCE THE VAULT CANNOT TAKE IS NOT PRODUCED — BUT WHICH
          ONE GOES SHORT IS NOT DECIDED HERE ANY MORE.
@@ -26249,9 +26822,39 @@ async function economyTick(dtMin) {
     if (def.svc) {
       const s = def.svc;
       const got = s.input ? svcDraw(s.input, s.rate * mult * dtMin) : 1;
-      t.svcFed = got;                            // read by the inspect panel
-      supply[s.need] += s.supply * mult * got;
-      if (s.leisure) supply.leisure += s.leisure * mult * got;
+      /* 🪦 A FULL GRAVEYARD IS NOT A GRAVEYARD. /src/mortality owns how many of
+         a tile's `plots` are taken; this asks it for a 1-or-0 and folds it into
+         the same `svcFed` the inspect panel already prints, so a full plot
+         reads UNDERFED in the panel and stops covering Deathcare on the vitals
+         card without one other line in the city moving.
+         ⚠ IDENTITY WHEN THE MODULE IS ABSENT, and identity for every building
+           that declares no `plots` — which is all of them but two. The line is
+           byte-identical to what it computed before this existed for every
+           existing save, every existing building and every build where the
+           module 404s. That is the same contract the /src/water ground factor
+           and the /src/pollution health load keep.
+         ⚠ NOT `svcDraw`. A plot is not a refined input: it is not fungible,
+           not tradeable and not movable, and routing it through the stock
+           shelf would make CITY_STOCK claim the city can trade graves. */
+      let plotFac = 1;
+      if (def.plots > 0) {
+        try {
+          const MT = window.MythicMortality;
+          /* ⚠ `Math.max(1, t.lvl|0)`, NOT `t.lvl`, AND IT MUST STAY THAT WAY.
+             /src/mortality's own sites() sizes the same graveyard with exactly
+             this expression, and the two are the SAME tile's capacity read by
+             two callers. With a bare `t.lvl` a tile carrying lvl 0 (an older
+             save, or a row written before levelling) offered this line a
+             capacity of 0 — which plotFactor treats as "no cap declared" and
+             answers 1 — while sites() counted its full plots and buried people
+             in it. Full graveyard, coverage never drops: the exact class of
+             two-answers-about-one-tile bug this file has named before. */
+          if (MT && MT.ready()) plotFac = MT.plotFactor(k, def.plots * Math.max(1, t.lvl | 0));
+        } catch (e) { plotFac = 1; }
+      }
+      t.svcFed = got * plotFac;                  // read by the inspect panel
+      supply[s.need] += s.supply * mult * t.svcFed;
+      if (s.leisure) supply.leisure += s.leisure * mult * t.svcFed;
     }
     // Buildings that were already doing a service job before this layer landed.
     const L = LEGACY_SERVICE[t.type];
@@ -27191,23 +27794,37 @@ function demogParcels() {
       own and cannot buy. Measured, in the first driven run of this feature. A
       plausible number with the wrong price behind it is the exact failure mode
       the handover calls "make the fallback loud". */
+/* 🔧 WHAT ANSWERS A NEED — the cheapest three tiles that supply it, DERIVED
+   from BUILDINGS' own `svc.need` and never typed anywhere.
+   ─────────────────────────────────────────────────────────────────────────
+   ⚠ HOISTED OUT OF demogGrowth() IN THE MORTALITY ROUND, and only hoisted —
+     the body is unchanged. It had TWO would-be callers (the growth gate's
+     verdict and the vitals card's own coverage chips) and a closure has one.
+     A second copy in the chip renderer is how the card and the gate come to
+     recommend different buildings for the same shortfall.
+   Memoised: BUILDINGS is fixed once the ops blueprints are registered at boot,
+   and demogGrowth() runs inside economyTick — a sort over the whole table three
+   times every two seconds for an answer that cannot change is the kind of cost
+   nobody notices until a profile says so.
+   ⚠ `!d.opType` IS LOAD-BEARING. Ops blueprints carry `cost: {}`, so a plain
+     cheapest-first sort once put a 400,000-Cinder corporate hospital wing the
+     player does not own and cannot buy ahead of the Clinic. Measured, in the
+     first driven run of the growth gate. */
+function needFix(k) {
+  const M = needFix._m || (needFix._m = {});
+  if (M[k]) return M[k];
+  const cinderOf = (d) => ((d.cost && d.cost.cinder) || 0);
+  return (M[k] = Object.keys(BUILDINGS)
+    .filter((t) => { const d = BUILDINGS[t]; return d && d.svc && d.svc.need === k && !d.decor && !d.opType; })
+    .sort((a, b) => cinderOf(BUILDINGS[a]) - cinderOf(BUILDINGS[b]))
+    .slice(0, 3)
+    .map((t) => ({ type: t, name: BUILDINGS[t].name, ico: BUILDINGS[t].ico || '' })));
+}
+
 function demogGrowth() {
   const cov = (game.cov && game.cov.pct) || {};
   const num = (v) => (typeof v === 'number' && isFinite(v) ? v : null);
-  /* Memoised: BUILDINGS is fixed once the ops blueprints are registered at
-     boot, and this runs inside economyTick — a sort over the whole table three
-     times every two seconds for an answer that cannot change is the kind of
-     cost nobody notices until a profile says so. */
-  const fixFor = (k) => {
-    const M = demogGrowth._fix || (demogGrowth._fix = {});
-    if (M[k]) return M[k];
-    const cinderOf = (d) => ((d.cost && d.cost.cinder) || 0);
-    return (M[k] = Object.keys(BUILDINGS)
-      .filter((t) => { const d = BUILDINGS[t]; return d && d.svc && d.svc.need === k && !d.decor && !d.opType; })
-      .sort((a, b) => cinderOf(BUILDINGS[a]) - cinderOf(BUILDINGS[b]))
-      .slice(0, 3)
-      .map((t) => ({ type: t, name: BUILDINGS[t].name, ico: BUILDINGS[t].ico || '' })));
-  };
+  const fixFor = needFix;
   return {
     pop: cityPop(), cap: popCap(),
     grow: POP_GROW_AT, fall: POP_DECLINE_AT,
@@ -28565,11 +29182,23 @@ function bldNormalize(defer) {
   return null;
 }
 
-/* ── Raids: threat waves, towers defend, ammo is the fuel of defense ── */
-async function raidTick(dt) {
-  game.raid.timer -= dt;
-  const isSiege = game.raid.wave % SIEGE_EVERY === 0;
-  const strength = Math.round((RAID_BASE_STR + (game.raid.wave - 1) * RAID_STR_PER_WAVE) * (isSiege ? SIEGE_MULT : 1));
+/* 🛡 THE DEFENCE TALLY — ONE FUNCTION, BECAUSE THERE MAY ONLY BE ONE NUMBER.
+   ---------------------------------------------------------------------------
+   This loop used to live inline in raidTick(), which was fine while raidTick
+   was the only thing that ever fought. It is not any more: /src/zombie resolves
+   an outbreak against the same garrison, and staticDefense() above already
+   carries the standing warning that a second tally "promises a defence the raid
+   does not deliver". Extracting it is the only way two callers can be made to
+   agree by construction rather than by review.
+
+   ⚠ EXTRACTION ONLY — the arithmetic below is byte-for-byte what raidTick ran
+     before, including the ammo shortfall and the siege doubling on walls. If
+     this function's output ever needs to change, it changes for both wars at
+     once, which is the point.
+   ⚠ `isSiege` is a parameter rather than read off game.raid because an outbreak
+     is never a siege: walls do not count double against something that walks in
+     through the gate you left open. */
+function raidDefence(isSiege) {
   let towers = 0, staticDef = 0;
   for (const t of Object.values(game.tiles)) {
     // 🏗 A tower with no walls up yet shoots nobody, and must not be counted
@@ -28582,10 +29211,30 @@ async function raidTick(dt) {
     if (t.type === 'wall') staticDef += BUILDINGS.wall.defense * t.lvl * (isSiege ? 2 : 1);  // walls shine in sieges
   }
   const armyDef = soldierDefense();
-  const defense = staticDef + armyDef + deckPower() + cardDefenseFromSockets();
+  const cardDef = deckPower() + cardDefenseFromSockets();
+  const defense = staticDef + armyDef + cardDef;
   const ammoHave = game.res.ammo || 0;
   const ammoNeed = towers * RAID_AMMO_PER_DEF + Math.ceil(game.army.soldiers / 2);
   const effDefense = ammoHave >= ammoNeed ? defense : Math.floor(defense * (ammoNeed ? ammoHave / ammoNeed : 0));
+  /* The breakdown string is built HERE too, so the outbreak card and the raid
+     log line cannot describe the same garrison differently. */
+  const breakdown = towers + ' 🗼 ' + staticDef + ' static · ' + game.army.soldiers + ' 🪖 ' + armyDef +
+    ' · 🃏 ' + cardDef;
+  const ammoNote = ammoHave >= ammoNeed
+    ? 'ammo ' + ammoNeed + '/' + ammoNeed + ' 🔫'
+    : 'ammo SHORT ' + ammoHave + '/' + ammoNeed + ' 🔫 — defence cut from ' + defense + ' to ' + effDefense;
+  return { towers, staticDef, armyDef, cardDef, defense, ammoHave, ammoNeed, effDefense,
+           ammoShort: ammoHave < ammoNeed, breakdown, ammoNote, isSiege: !!isSiege };
+}
+
+/* ── Raids: threat waves, towers defend, ammo is the fuel of defense ── */
+async function raidTick(dt) {
+  game.raid.timer -= dt;
+  const isSiege = game.raid.wave % SIEGE_EVERY === 0;
+  const strength = Math.round((RAID_BASE_STR + (game.raid.wave - 1) * RAID_STR_PER_WAVE) * (isSiege ? SIEGE_MULT : 1));
+  const _d = raidDefence(isSiege);
+  const towers = _d.towers, staticDef = _d.staticDef, armyDef = _d.armyDef;
+  const defense = _d.defense, ammoHave = _d.ammoHave, ammoNeed = _d.ammoNeed, effDefense = _d.effDefense;
   const card = $('raidcard');
   // ⚠ The warn window was a flat 30s, which on a 2-hour cycle is 0.4% of the
   //   cycle — the card would go red about a minute before the player could do
@@ -28607,11 +29256,11 @@ async function raidTick(dt) {
   // The breakdown behind the single Defense number, so a loss can be READ
   // rather than guessed at: where the defence came from, and what the ammo
   // shortfall cost. Built for both outcomes before the branch.
-  const breakdown = towers + ' 🗼 ' + staticDef + ' static · ' + game.army.soldiers + ' 🪖 ' + armyDef +
-    ' · 🃏 ' + (deckPower() + cardDefenseFromSockets());
-  const ammoNote = ammoHave >= ammoNeed
-    ? 'ammo ' + ammoNeed + '/' + ammoNeed + ' 🔫'
-    : 'ammo SHORT ' + ammoHave + '/' + ammoNeed + ' 🔫 — defence cut from ' + defense + ' to ' + effDefense;
+  /* ⚠ Both strings now come off raidDefence() rather than being rebuilt here.
+     They were duplicated expressions of the same tally, and a duplicated
+     expression is a future disagreement — which is exactly the failure the
+     outbreak's shared tally exists to prevent. */
+  const breakdown = _d.breakdown, ammoNote = _d.ammoNote;
   if (effDefense >= strength) {
     if (ammoNeed) await MythicCityBridge.spendRes({ ammo: Math.min(ammoNeed, ammoHave) });
     const reward = Math.round(RAID_REWARD_PER_WAVE * game.raid.wave * (isSiege ? 2 : 1));
@@ -28921,6 +29570,32 @@ async function tryPlace(x, z) {
         ? W.siteRefusal(placeType, x, z, { aquifer: !!def.aquifer, openWater: !!def.openWater, name: def.name })
         : null;
       if (whyW) { toast(whyW, 'bad'); return; }
+    } catch (e) { /* no gate, exactly as before the module existed */ }
+  }
+  /* 🗺 THE DEPOSIT SITING GATE (/src/resmap). Fifth module refusal on this gate
+     and written to the identical contract as the four above it: the module
+     returns the refusal STRING so the reason lives where the rule does, and
+     ABSENCE MEANS YES.
+     ⚠ THE REQUIREMENT TRAVELS FROM THE ROW. `def.deposit` names a field id
+       ('ore', 'fertile', …) and is handed over here, so a deposit-sited
+       building is one flag on one BUILDINGS row and /src/resmap does not
+       change.
+     🔴 NO ROW CARRIES `deposit` TODAY, AND THAT IS THE POINT, NOT AN OVERSIGHT.
+        Putting it on the Mine or the Quarry would RETRO-GATE every one of those
+        already standing in a lived save: a player who sited four Mines before
+        this map existed would load a city whose own buildings are illegal. The
+        flag is for NEW rows only — the structural argument /src/water made with
+        `mains` and /src/power made with `metered`, which is why neither of
+        those could dry out or brown out a city that predated them. The gate is
+        live and tested; the first building to use it is the first building that
+        has never existed without it. */
+  if (def.deposit) {
+    try {
+      const RM = window.MythicResourceMap;
+      const whyR = (RM && RM.siteRefusal)
+        ? RM.siteRefusal(placeType, x, z, { deposit: def.deposit, name: def.name })
+        : null;
+      if (whyR) { toast(whyR, 'bad'); return; }
     } catch (e) { /* no gate, exactly as before the module existed */ }
   }
   /* ⛏ THE GROUND GATE (/src/economy). The rule and the refusal are written at
@@ -29301,6 +29976,53 @@ function insOmRow(t, om) {
     om.res > 1 ? 'up' : om.res < 1 ? 'dn' : 'fl');
 }
 
+/* 🗺 THE GROUND UNDER THIS TILE — /src/resmap, one row per resource this
+   building actually banks, and it is the row that makes the map checkable.
+   ----------------------------------------------------------------------------
+   🔴 IT PRINTS THE NUMBER THE TICK APPLIED, not a second derivation of it.
+      `rmFactor(k, r)` is literally the same lookup economyTick reads at `genR`,
+      and the deposit reading beside it comes from the module's own `yieldAt` —
+      the same call that produced the factor. So "the legend promises a colour
+      the sim does not use" cannot happen here: a player can read 62% off the
+      overlay, read 62% off this row, and see the ×1.41 that 62% bought.
+   ⚠ Guarded by typeof/window and returns '' on anything unanswerable: an absent
+     module costs the row, never the panel.
+   ⚠ NOT part of insFactors' product. It is not a term of tileMult() —
+     economyTick applies it separately, to resource output only — so it is
+     appended for display beside the city-conditions row, exactly as that one is
+     and for exactly the same reason. */
+function insResRow(k, t, x, z) {
+  const def = BUILDINGS[t.type];
+  if (!def || !def.gen) return '';
+  let out = '';
+  try {
+    const RM = window.MythicResourceMap;
+    if (!RM || !RM.ready()) return '';
+    for (const r in def.gen) {
+      if (r === 'water' || r === 'cinder' || r === 'power') continue;
+      const y = RM.yieldAt(x, z, r, !!def.outdoor);
+      if (!y || !y.field) continue;
+      if (y.exempt) {
+        out += insFac(y.ico + ' ' + y.label + ' — indoors, the ground does not apply', '—', 'fl');
+        continue;
+      }
+      /* The tick's own value when the pre-pass has run, the module's when it
+         has not — and they are the same function, so the two can only differ
+         by being one tick apart. The fallback exists because the panel can be
+         opened on a tile placed a moment ago, before any economyTick listed it;
+         printing 0% there would be the panel contradicting the map for one
+         second, which is exactly long enough for a player to believe it. */
+      const applied = _rmFac && _rmFac[k + '|' + r];
+      const f = (Number.isFinite(applied) && applied > 0) ? applied : y.factor;
+      out += insFac(y.ico + ' ' + y.label + ' here — ' + Math.round(y.value * 100) + '%' +
+        ' <span class="' + (y.value >= (RM.tuning.yield.full || 1) ? 'on' : '') + '">' +
+        (y.value >= (RM.tuning.yield.full || 1) ? 'core of the deposit' : 'open 🗺 Resources (M)') + '</span>',
+        insDelta(f), f > 1 ? 'up' : f < 1 ? 'dn' : 'fl');
+    }
+  } catch (e) { return ''; }
+  return out;
+}
+
 /* The input gate economyTick actually applies: a generator with ANY input at
    zero produces nothing at all this tick (`if (haveOf(u) <= 0) ok = false`). */
 function insHalted(t) {
@@ -29333,10 +30055,20 @@ function insTopline(k, t, x, z, mult, om) {
   }
   if (def.gen) {
     const keys = Object.keys(def.gen), r = keys[0];
+    /* 🗺 THE GROUND MULTIPLIER IS IN THIS NUMBER, because economyTick applies it
+       to exactly this rate (see `genR`). It was NOT here for the first round of
+       /src/water either, and that is a defect this line does not repeat: a
+       panel that prints the unmodified rate while the tick banks the modified
+       one is two systems telling the player different stories about the same
+       building, which this file's own headers call out four separate times.
+       ⚠ `water` deliberately still isn't covered — /src/water's factor is not
+         exposed per tile to this panel — so the ONE resource this row can still
+         over-report is the one the 💧 panel explains in full. */
+    const rmOf = (rr) => (rr === 'water' ? 1 : rmFactor(k, rr));
     out.push({ e: 'Output / min', v: '<span style="color:' + (dead ? 'var(--invalid)' : 'var(--valid)') + '">' +
-      insRate(dead ? 0 : genOf(def, r) * mult * insOmFor(r, om)) + '</span> <small>' + resIco(r) + '</small>',
+      insRate(dead ? 0 : genOf(def, r) * mult * insOmFor(r, om) * rmOf(r)) + '</span> <small>' + resIco(r) + '</small>',
       d: t.damaged ? 'offline — damaged' : insHalted(t) ? 'halted — no ' + resName(insHalted(t))
-        : keys.length > 1 ? '+ ' + keys.slice(1).map(rr => insRate(genOf(def, rr) * mult * insOmFor(rr, om)) + ' ' + resIco(rr)).join(' · ')
+        : keys.length > 1 ? '+ ' + keys.slice(1).map(rr => insRate(genOf(def, rr) * mult * insOmFor(rr, om) * rmOf(rr)) + ' ' + resIco(rr)).join(' · ')
         // Cinder is hourly, everything else is per minute — say which, per row,
         // rather than printing one unit that is wrong for half the catalogue.
         : 'base ' + genOf(def, r) + ' ' + resIco(r) + (r === 'cinder' ? '/hr' : '/min') + ' at L1' });
@@ -29466,6 +30198,29 @@ function insContribution(t, x, z, mult) {
     const s = def.svc, fed = t.svcFed == null ? 1 : t.svcFed;
     need(s.need, t.damaged ? 0 : s.supply * mult * fed);
     if (s.leisure) need('leisure', t.damaged ? 0 : s.leisure * mult * fed);
+  }
+  /* 🪦 PLOTS, WHERE THE BUILDING DECLARES THEM. This row is not decoration: a
+     graveyard whose ground is full stops supplying Deathcare (economyTick folds
+     /src/mortality's plot factor into `svcFed`), and WITHOUT this row the only
+     visible symptom would be a coverage number quietly falling with no cause
+     anywhere on the building the player would go and look at. That is the
+     "a number that quietly moves" failure the whole round is against.
+     ⚠ Guarded, and absent rather than wrong when the module is not there —
+       there is no honest number to print if nobody is counting graves. */
+  if (def.plots > 0) {
+    try {
+      const MT = window.MythicMortality;
+      if (MT && MT.ready()) {
+        const cap = def.plots * t.lvl;
+        const st = MT.state ? MT.state() : null;
+        const used = st && st.used ? (st.used[key(x, z)] | 0) : 0;
+        const free = Math.max(0, cap - used);
+        rows.push(insVitRow('🪦 Plots remaining', free + ' / ' + cap, cap > 0 ? free / cap : 0,
+          free > 0
+            ? 'This ground holds ' + cap + ' graves at level ' + t.lvl + ' and ' + used + ' are taken. When it is full it stops supplying Deathcare coverage entirely.'
+            : 'Full. It supplies no Deathcare coverage at all until the city lays out more ground — upgrading adds ' + def.plots + ' more plots per level.'));
+      }
+    } catch (e) { /* no module, no honest number, no row */ }
   }
   const L = LEGACY_SERVICE[t.type];
   if (L) need(L.need, t.damaged ? 0 : L.supply * mult);
@@ -29875,9 +30630,10 @@ function insBuildOverview(k, t, x, z, mult, om) {
   if (def.gen || def.svc || LEGACY_SERVICE[t.type]) {
     const F = insFactors(x, z, t);
     const omRow = insOmRow(t, om);
+    const rmRow = insResRow(k, t, x, z);
     const eff = mult / F.lvlMul * (omRow ? om.res : 1);
     left += insCardHtml('Efficiency factors', '<span style="color:' + insPctCol(Math.min(1, eff)) + '">' + Math.round(eff * 100) + '%</span>',
-      F.f.map(o => insFac(o.l, insDelta(o.v), o.v > 1 ? 'up' : o.v < 1 ? 'dn' : 'fl')).join('') + omRow +
+      F.f.map(o => insFac(o.l, insDelta(o.v), o.v > 1 ? 'up' : o.v < 1 ? 'dn' : 'fl')).join('') + omRow + rmRow +
       '<div class="ins-desc" style="margin:9px 0 0">These are the exact terms the economy multiplies together for this tile — ' +
       'tile multiplier ×' + mult.toFixed(2) + (F.lvlMul !== 1 ? ', of which ×' + F.lvlMul + ' is level' : '') +
       (omRow ? '. City conditions are applied on top of it, to resources only — a service building\'s coverage is never scaled by them.' : '.') + '</div>');
@@ -31213,6 +31969,30 @@ function computeCoverage() {
   for (const t of Object.values(game.tiles)) if (bldSite(t)) siteTiles++;
   dem.light = Math.max(1, Object.keys(game.tiles).length - siteTiles);
 
+  /* 🪦 DEATHCARE DEMAND IS THE CITY'S OWN DEATH RATE — /src/mortality, one
+     override, guarded. Third entry in this short list of needs whose demand is
+     NOT per-head (power draws what the buildings draw, light is per block),
+     and the argument is the same one: the honest denominator for "can we bury
+     everybody" is how many people are actually dying, which /src/demographics
+     already rates through the life course and /src/mortality already reads.
+
+     ⚠ ONE NUMBER, THREE SURFACES. The module divides ITS backlog by the supply
+       figure this same function publishes (`game.cov.supply.deathcare`), so
+       the vitals card, the phone feed and the graveyard's own plot count are
+       arithmetic on the same two values. A second, per-head denominator here
+       would let the card say a city was covered while the dead piled up — the
+       "two different stories about the same street" failure this file has now
+       named four times.
+     ⚠ null is a REAL ANSWER and means "nothing could be derived": the constant
+       above stands, which is exactly what a build without the module does. */
+  try {
+    const MT = window.MythicMortality;
+    if (MT && MT.ready()) {
+      const d = MT.demandPerMin();
+      if (Number.isFinite(d) && d >= 0) dem.deathcare = d;
+    }
+  } catch (e) { /* demand stands exactly as it did before this module existed */ }
+
   /* 🤒 POLLUTION RAISES HEALTH DEMAND — /src/pollution, one line, guarded.
      ────────────────────────────────────────────────────────────────────────
      ⚠ THE DIRECTION MATTERS AND IS THE WHOLE DESIGN. This raises DEMAND; it
@@ -31844,8 +32624,23 @@ function renderVitals() {
     '<div class="vcov">' + NEEDS.map((n) => {
       const c = cov[n] == null ? 1 : cov[n];
       const cls = c >= .9 ? 'ok' : c >= .6 ? 'mid' : 'bad';
+      /* 🔧 …AND WHAT WOULD FIX IT, on a chip that is short. The number already
+         told the player they had a problem and stopped; the SAME derivation the
+         growth gate uses (needFix — read off BUILDINGS' svc.need, never typed)
+         now finishes the sentence. This is the only surface most needs have —
+         the gate's own "what fixes this" list is deliberately scoped to the
+         three that gate population growth, because putting an eighth need in
+         THAT list would claim deathcare holds the city's growth back, which is
+         false: vitalsTick gates on min(food, water, health) and nothing else.
+         ⚠ Title text, not a new element and not a new alert. */
+      let fix = '';
+      if (c < .9) {
+        const f = needFix(n);
+        if (f.length) fix = ' — build ' + f.map((x) => x.name).join(' or ');
+      }
       return '<span class="vchip ' + cls + '" title="' + NEED_META[n].name + ' coverage — supply ' +
-        ((game.cov.supply || {})[n] || 0).toFixed(2) + ' vs demand ' + ((game.cov.demand || {})[n] || 0).toFixed(2) + '">' +
+        ((game.cov.supply || {})[n] || 0).toFixed(2) + ' vs demand ' + ((game.cov.demand || {})[n] || 0).toFixed(2) +
+        fix + '">' +
         NEED_META[n].ico + ' ' + Math.round(c * 100) + '%</span>';
     }).join('') + '</div>' +
     (ramping ? '<div class="vramp">⏳ Demand is phasing in — ' +
@@ -31965,6 +32760,28 @@ function renderVitals() {
                  s.built + '/' + s.specialised + '</span>';
         } catch (e) { return ''; }
       })() +
+      /* 🗺 THE RESOURCE MAP CHIP — the launcher for the ground view, and the
+         same glanceable-value-plus-explanation pairing as the chips beside it.
+         ⚠ RENDERED ONLY WHEN THE MODULE IS ACTUALLY ANSWERING, the rule the ⚡
+           chip's comment states and this file has had to enforce three times: a
+           chip that printed a resource summary whenever /src/resmap 404'd would
+           be a permanent claim about ground nobody modelled.
+         ⚠ AND IT PRINTS WHAT THE CITY HAS, NOT A PERCENTAGE. Every other chip
+           here is a ratio because every other one is a running total; this one
+           is a fact about the place and never moves, so a number would be a
+           number the player learns to stop reading. `summary()` is the two
+           richest fields, named. */
+      (function () {
+        try {
+          const RM = window.MythicResourceMap;
+          if (!RM || !RM.ready()) return '';
+          const s = RM.summary();
+          if (!s) return '';
+          return '<span class="schip pw" id="rmchip" title="What is in this city\'s ground, and where. ' +
+                 'Click for the resource map — groundwater, ore, fertile land and what each is worth.  (M)">🗺 ' +
+                 logEsc(s) + '</span>';
+        } catch (e) { return ''; }
+      })() +
       '<span class="scap">cap ' + stockCap() + '</span></div>';
   if (html !== renderVitals._last) { renderVitals._last = html; el.innerHTML = html; }
 }
@@ -32039,6 +32856,30 @@ addEventListener('keydown', (ev) => {
   if (ev.key !== 'v' && ev.key !== 'V') return;
   if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
   try { if (window.MythicLandValue) window.MythicLandValue.togglePanel(); } catch (e) {}
+});
+/* 🗺 THE RESOURCE MAP'S TWO WAYS IN — the chip, delegated for the same reason
+   as the four above it (renderVitals replaces #vitalscard's innerHTML whenever
+   the numbers move), and M for Map.
+   ⚠ M, AND IT WAS GREPPED RATHER THAN ASSUMED, which is what every comment in
+     this block claims and this one actually did: the whole file was searched
+     for `ev.key !== '` / `ev.key === '` and `key.toLowerCase()`, and /src/*.js
+     for the same, before the letter was taken. The register is W/A/S/D (KEYPAN),
+     E electricity, G hydrology, P pollution, V land value, Z zones, B build,
+     K progression tree, R rotate, 1/2/3 the zoning tools while that panel is
+     armed, Escape closes panels, and the arrow/Home/End keys belong to the
+     build-bar roving tabindex. M was free and is the initial of the thing it
+     opens. Degrades to nothing if /src/resmap never loaded: no module, no
+     panel, and no chip to click either. */
+addEventListener('click', (ev) => {
+  if (!ev.target.closest || !ev.target.closest('#rmchip')) return;
+  try { if (window.MythicResourceMap) window.MythicResourceMap.togglePanel(); } catch (e) {}
+});
+addEventListener('keydown', (ev) => {
+  const a = document.activeElement;
+  if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable)) return;
+  if (ev.key !== 'm' && ev.key !== 'M') return;
+  if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  try { if (window.MythicResourceMap) window.MythicResourceMap.togglePanel(); } catch (e) {}
 });
 /* 🏙 THE DISTRICTS CHIP'S TWO WAYS IN — the chip, delegated for the same reason
    as the four above it (renderVitals replaces #vitalscard's innerHTML whenever
@@ -33294,6 +34135,14 @@ const ADMIN_SLOTS = [
   { slot: 'truck',    name: '🚚 Truck',    agent: true },
   { slot: 'police',   name: '🚓 Police',   agent: true },
   { slot: 'streetlamp', name: '💡 Street Lamp' },
+  /* 🛣 THE CARRIAGEWAYS, LISTED BY HAND — they came off BUILD_ORDER when roads
+     left the build shop, and this list is built from BUILD_ORDER. That would
+     have quietly retired a slot that is genuinely wired: makeRoad() calls
+     regOf('road') and swaps the whole procedural tile for the registered GLB.
+     A slot with a live consumer and no row in this editor is a model an admin
+     can no longer change and cannot see is missing — so they are named here,
+     beside the other four slots that were never shop cards either. */
+  ...ROAD_TYPE_IDS.map(t => ({ slot: t, name: (BUILDINGS[t] ? BUILDINGS[t].ico + ' ' + BUILDINGS[t].name : t) })),
 ].concat(BUILD_ORDER.map(t => ({ slot: t, name: BUILDINGS[t].ico + ' ' + BUILDINGS[t].name })));
 
 function buildAdminPanel() {
@@ -33539,7 +34388,28 @@ renderer.domElement.addEventListener('pointerup', async ev => {
   const moved = Math.hypot(ev.clientX - downAt.x, ev.clientY - downAt.y) > 6;
   downAt = null;
   if (moved) return;                       // it was a camera drag
-  const t = tileFromEvent(ev); if (!t) return;
+  const t = tileFromEvent(ev);
+  /* 🌊 A CLICK ON THE WATER USED TO BE SILENCE. tileFromEvent returns null for
+     every cell off the plate, so a player holding a building who clicked the sea
+     got nothing at all — no toast, no cue, no reason — which is the same class
+     of defect /src/zoning's header names ("the worst class of UI bug: the player
+     blames themselves"), and it got worse the moment this round put a Sea Drain
+     out there worth clicking on. /src/water answers, because /src/water owns the
+     coastline; the reply names the ocean AND the thing that DOES go in it.
+     ⚠ GUARDED, AND ABSENCE MEANS SILENCE — exactly what this line did before.
+       Only in `place` mode, and only for a cell inside the apron: a click into
+       open space beyond it is a miss, and a toast for every stray click is
+       noise. This is a MESSAGE, not a gate: tryPlace is not called and nothing
+       about what may be built has changed. */
+  if (!t && mode === 'place') {
+    try {
+      const c = cellFromEvent(ev, 3);
+      const W = window.MythicWater;
+      const why = (c && W && W.placeRefusal) ? W.placeRefusal(c.x, c.z, (BUILDINGS[placeType] || {}).name) : null;
+      if (why) toast(why, 'bad');
+    } catch (e) {}
+  }
+  if (!t) return;
   if (mode === 'place') await tryPlace(t.x, t.z);
   else { const k = key(t.x, t.z); if (game.tiles[k]) openInspect(k); else $('inspect').classList.remove('open'); }
 });
@@ -33664,8 +34534,16 @@ function buildShopBody() {
     + '<div class="shopsec">'
     + '<h3><span>' + sec.ico + '</span>' + shopEsc(sec.name) + '</h3>'
     + (sec.desc ? '<p class="sd">' + shopEsc(sec.desc) + '</p>' : '')
-    // 🛤️ The road cap is shown where roads are BOUGHT, so the limit is read
-    // before it is hit rather than discovered as a refusal.
+    /* 🛤️ The road cap is shown where roads are BOUGHT, so the limit is read
+       before it is hit rather than discovered as a refusal.
+       ⚠ INERT AS OF THIS ROUND, AND KEPT ON PURPOSE. No section contains a
+         carriageway any more — roads are laid from the 🛣 Roads tab and the
+         meter moved there with them (/src/roads/drag.js, fed by roadMeterHtml
+         through the mount ctx). This line is left standing because it is a
+         PREDICATE, not a hard-coded list: if a future round ever sells a
+         carriageway as a shop card again, the cap shows up beside it without
+         anyone remembering to re-add it. Deleting it would be deleting the
+         guard, not the dead code. */
     + (sec.items.some(isRoadType) ? roadMeterHtml() : '')
     + '<div class="shopgrid">'
     + sec.items.map((t) => {
@@ -37293,6 +38171,13 @@ const CIT_FAMILY = ['Ashcroft', 'Bellow', 'Crane', 'Dunmore', 'Ember', 'Fallow',
 const citizens = [];               // [{ id, name, job, mood }] — the roster
 const _citById = new Map();
 let _citSeq = 0;                   // next sequence number to mint
+/* 🪦 …and who has died. Written ONLY by CITIZENS_API.retire (see its header),
+   read by /src/broadcast so a death is not published as "moved away". Sixteen
+   is generous: /src/broadcast caps itself at two departures per observation
+   pass and observes every few seconds, so nothing can fall off the ring before
+   it has been seen. */
+const CIT_DEATH_RING = 16;
+const _citDeaths = [];             // [{ id, name, job, at, cause, age }] — newest last
 
 function citName(seq) {
   const n = Math.max(0, seq | 0);
@@ -37528,14 +38413,33 @@ function citEmpInfo(c) {
            indIco: (meta && meta.ico) || '🏭' };
 }
 
-/* 😐 MOOD — four terms, every one of them a number the game already keeps.
+/* 😐 MOOD — FIVE terms, every one of them a number the game already keeps.
    Weights sum to 1.00 and the result is 0..100.
-     .40  wellbeing.morale        the city-wide mood the whole layer runs on
+     .35  wellbeing.morale        the city-wide mood the whole layer runs on
      .25  vitals food/water/health  what this person personally consumes
      .20  their own workplace     idle / wrecked / how thin the crew is spread
      .15  safety                  game.cov.pct.safety, falling back to
                                   vitals.security when coverage has not run yet
-   Nothing else is in here, because nothing else exists. */
+     .05  deathcare               game.cov.pct.deathcare — whether this city has
+                                  anywhere to bury the people it loses
+   Nothing else is in here, because nothing else exists.
+
+   🪦 THE FIFTH TERM AND WHERE ITS 0.05 CAME FROM. It came OUT OF `morale`
+   alone, .40 → .35, and only out of morale: that term is the broadest thing in
+   the list ("the city-wide mood the whole layer runs on") and is the only one
+   wide enough to lend five points without changing what a narrower term MEANS.
+   Shaving a point off each of the other three would have quietly redefined
+   "their own work" and "safety" for a reason that has nothing to do with
+   either.
+   ⚠ 0.05 IS SMALL ON PURPOSE. A city with no graveyard is short of a civic
+     service, not starving: five points of mood is a citizen who mentions it, a
+     bubble that says it, and a phone feed that carries it — which is the whole
+     ask — while food and safety keep the weights that make them the emergencies.
+   🔴 ctTerms() BELOW MUST BE EDITED IN THE SAME BREATH AS THIS FUNCTION AND
+     WITH THE SAME NUMBERS. ctHtml cross-checks the two and DROPS the entire
+     "what that mood is made of" breakdown when they disagree by more than a
+     tenth of a point — silently, so the panel simply loses its explanation and
+     nothing anywhere says why. */
 function citMoodTarget(c) {
   const cl = v => (Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0);
   const cov = (game.cov && game.cov.pct) || {};
@@ -37547,7 +38451,12 @@ function citMoodTarget(c) {
   else if (t.damaged) work = 0.15;           // their building is wrecked
   else work = cl(typeof staffingRatio === 'function' ? staffingRatio() : 1);
   const safe = Number.isFinite(+cov.safety) ? cl(+cov.safety) : cl((+vitals.security || 0) / 100);
-  return Math.max(0, Math.min(100, 100 * (morale * .40 + need * .25 + work * .20 + safe * .15)));
+  /* ⚠ A CITY WHOSE COVERAGE HAS NOT RUN YET READS 1, NOT 0. `safe` above has
+     the same shape for the same reason: an unmeasured need is not a failed one,
+     and docking every citizen five points on the first frame after a load would
+     be this term inventing a complaint. */
+  const rest = Number.isFinite(+cov.deathcare) ? cl(+cov.deathcare) : 1;
+  return Math.max(0, Math.min(100, 100 * (morale * .35 + need * .25 + work * .20 + safe * .15 + rest * .05)));
 }
 /* Ease rather than snap, so a mood has inertia and a life-event that pushes it
    (MythicCitizens.nudge) is visible for a while before the city pulls it back.
@@ -37765,6 +38674,78 @@ const CITIZENS_API = {
     if (!d || !(d.crew > 0) || bldSite(t)) return false;
     c.job = key; return true;
   },
+  /* ══ 🪦 MORTALITY — THE REMOVAL VERB ═══════════════════════════════════
+     ────────────────────────────────────────────────────────────────────────
+     🔴 UNTIL THIS ROUND THERE WAS NO WAY TO REMOVE A NAMED PERSON AT ALL, and
+     /src/lifepath's seed() says so in writing, at length, as a REJECTED item:
+     "ageing people out — retiring or killing a named citizen when they pass
+      the derived life expectancy… requires WRITING to the roster. This module
+      is read-only over every other layer by construction… If the roster is
+      ever given its own mortality it belongs in the citizens layer that mints
+      them, and this module would then simply be correct."
+     This is that verb, in that layer. It is the only writer, and /src/mortality
+     is its only caller.
+
+     🔴 IT IS NOT citEnsure()'S TRIM, AND THE DIFFERENCE IS THE WHOLE POINT.
+     citEnsure pops from the END of a LIFO stack — the most recently minted
+     person — and it fires when cityPop() shrinks, i.e. when the CITIZENRY got
+     smaller. That is emigration and it is correctly not a death. This removes
+     ONE person the caller names, on the caller's own evidence, and records it.
+     /src/lifepath measured what the absence of this cost: at +400 real hours,
+     30 of 40 named residents past life expectancy, ages 119 to 178, because
+     the only exit killed the newest person and never the oldest.
+
+     ⚠ THE ID NEVER COMES BACK. `_citSeq` only ever counts up, so citEnsure's
+       regrowth mints a genuinely new person rather than reviving this one, and
+       /src/lifepath's own stamp cleanup (seed(), which drops stamps for ids no
+       longer on the roster) has something to clean. That cleanup is why this
+       does NOT try to delete anything in lifepath itself: two layers writing
+       one table is the second-citizen-store bug facts.js exists to refuse.
+
+     ⚠ IT REFUSES TO EMPTY THE ROSTER. `citizens.length > 1` — a city whose
+       last named resident dies has no one to speak for it, every panel that
+       reads the roster goes blank, and the cause would look like the roster
+       failing to load. The city's own population is not touched here at all:
+       cityPop() is the NPC citizenry and this layer has never written to it.
+
+     ⚠ NO TOAST, NO ALERT, NO LOG LINE. The death reaches the player through
+       the four channels that already exist — the phone feed (a Registry post,
+       via the ring below), the vitals card's Deathcare chip, the demand panel
+       and the citizen's own dialogue. A fifth parallel path is the failure
+       this file has documented fixing four times. */
+  retire: (id, cause) => {
+    const c = _citById.get(String(id));
+    if (!c) return false;
+    if (citizens.length <= 1) return false;
+    const i = citizens.indexOf(c);
+    if (i < 0) return false;
+    /* Their age is read BEFORE the removal: /src/lifepath keys stamps on the
+       roster and drops them on its next seed(), so afterwards there is nobody
+       to ask and the feed's obituary would have no number in it. */
+    let age = NaN;
+    try {
+      const L = window.MythicLifepath;
+      if (L && typeof L.age === 'function') { const a = L.age(c.id); age = a && Number.isFinite(a.years) ? a.years : Number(a); }
+    } catch (e) { age = NaN; }
+    citizens.splice(i, 1);
+    _citById.delete(c.id);
+    _citDeaths.push({ id: c.id, name: c.name, job: c.job || null, at: Date.now(),
+                      cause: String(cause || 'age').slice(0, 24),
+                      age: Number.isFinite(age) ? age : null });
+    while (_citDeaths.length > CIT_DEATH_RING) _citDeaths.shift();
+    return true;
+  },
+  /* Who has died recently, newest last. /src/broadcast's roster observer asks
+     this before it calls a vanished id a leaver — it is the ONLY thing that
+     can tell the two apart, because by the time the diff runs the person is
+     off the roster either way.
+     ⚠ A RING, NOT A HISTORY, AND NOT SAVED. It exists to label a diff that is
+       itself only taken within one session (sources.js `snap` is explicitly
+       not persisted, "diffing across a reload would let the feed claim
+       somebody left while the tab was shut"). A persisted ring would outlive
+       the diff it labels and start announcing week-old deaths on every load. */
+  deaths: () => _citDeaths.map(d => ({ ...d })),
+
   // — inspection / test seam —
   moodTarget: (id) => { const c = _citById.get(String(id)); return c ? citMoodTarget(c) : null; },
   refresh: (force) => { citRefresh(!!force); return citizens.length; },
@@ -38213,7 +39194,7 @@ try { window.MythicLife = LIFE_API; } catch (e) {}
      Every sentence below is a TEMPLATE chosen by a real number and filled
      with real values — the citizen's own mood, the building they hold a seat
      at, what that building actually produces at today's multiplier, the
-     weakest of the four terms their mood is made of, the other people on
+     weakest of the five terms their mood is made of, the other people on
      their shift, and what the offline-life log recorded about THEM by name.
      A generated line about an invented fact is worse than a plain line about
      a true one, so where the game knows nothing, THE LINE IS ABSENT.
@@ -38307,10 +39288,14 @@ function ctTipWork(c) {
   if (emp) return logEsc(emp.name + ' · ' + emp.indIco + ' ' + emp.indName);
   return 'no work right now';
 }
-/* The four terms citMoodTarget() is built from, recomputed so the panel can
+/* The FIVE terms citMoodTarget() is built from, recomputed so the panel can
    show WHY. ⚠ Cross-checked against citMoodTarget itself below: if the two
    ever disagree by more than a tenth of a point the breakdown is dropped
-   rather than shown wrong, because 12z owns that formula and may change it. */
+   rather than shown wrong, because 12z owns that formula and may change it.
+   ⚠ It was four until the mortality round. Every weight and every fallback
+     below is a copy of citMoodTarget's, and it has to stay one — including
+     `deathcare`'s "unmeasured reads 1", which is the one that would otherwise
+     look like a harmless `|| 0`. */
 function ctTerms(c) {
   const cl = v => (Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0);
   const cov = (game.cov && game.cov.pct) || {};
@@ -38328,7 +39313,7 @@ function ctTerms(c) {
      the panel already names, and the arithmetic is untouched. */
   const emp = t ? null : (() => { try { return citEmpInfo(c); } catch (e) { return null; } })();
   return [
-    { k: 'morale', w: .40, v: cl((wellbeing.morale || 0) / 100), lab: 'City morale',
+    { k: 'morale', w: .35, v: cl((wellbeing.morale || 0) / 100), lab: 'City morale',
       src: 'wellbeing.morale' },
     { k: 'need', w: .25, v: cl((((+vitals.food || 0) + (+vitals.water || 0) + (+vitals.health || 0)) / 300)),
       lab: 'Food, water, health', src: 'the three vitals they live on' },
@@ -38339,6 +39324,9 @@ function ctTerms(c) {
                    : 'no seat anywhere' },
     { k: 'safe', w: .15, v: Number.isFinite(+cov.safety) ? cl(+cov.safety) : cl((+vitals.security || 0) / 100),
       lab: 'Safety', src: Number.isFinite(+cov.safety) ? 'safety coverage' : 'security vitals' },
+    { k: 'rest', w: .05, v: Number.isFinite(+cov.deathcare) ? cl(+cov.deathcare) : 1,
+      lab: 'Somewhere to be buried',
+      src: Number.isFinite(+cov.deathcare) ? 'deathcare coverage' : 'not measured yet' },
   ];
 }
 function ctMates(c) {
@@ -38431,7 +39419,7 @@ function ctLines(c, W, terms) {
                why: 'job = ' + W.k + ', a crewed building with no output of its own' });
   }
 
-  // 3. what is actually weighing on them: the WEAKEST of the four mood terms
+  // 3. what is actually weighing on them: the WEAKEST of the five mood terms
   let low = terms[0];
   for (const t of terms) if (t.v < low.v) low = t;
   if (low.v >= .7) {
@@ -38439,7 +39427,21 @@ function ctLines(c, W, terms) {
                tone: 'up', why: 'weakest mood term is ' + low.lab.toLowerCase() + ' at ' + Math.round(low.v * 100) + '% — nothing below 70%' });
   } else if (low.k === 'morale') {
     out.push({ text: 'The whole city is flat. You feel that whatever job you are in.',
-               tone: 'dn', why: 'wellbeing.morale = ' + Math.round(low.v * 100) + ', the weakest of the four terms' });
+               tone: 'dn', why: 'wellbeing.morale = ' + Math.round(low.v * 100) + ', the weakest of the five terms' });
+  } else if (low.k === 'rest') {
+    /* 🪦 THE FIFTH BRANCH. It is deliberately not about THEM — nobody in this
+       game is dying of old age on a schedule the player can watch — it is
+       about what happens to the people the city loses, which is a thing every
+       resident of a city with no graveyard has an opinion about. The `why`
+       names the coverage figure so the sentence can be checked against the
+       vitals card chip sitting two panels away. */
+    const un = (() => { try { const M = window.MythicMortality; const r = M && M.ready() && M.report(); return r ? r.unburied : 0; } catch (e) { return 0; } })();
+    out.push({ text: un > 0
+                 ? 'There are ' + un + ' still waiting on a plot. You do not forget a thing like that.'
+                 : 'There is nowhere in this city to bury anyone. That is what people talk about.',
+               tone: 'dn',
+               why: 'deathcare coverage = ' + Math.round(low.v * 100) + '%, the weakest of the five terms' +
+                    (un > 0 ? ' — MythicMortality.report().unburied = ' + un : '') });
   } else if (low.k === 'need') {
     const v = { food: +vitals.food || 0, water: +vitals.water || 0, health: +vitals.health || 0 };
     let worst = 'food'; for (const q in v) if (v[q] < v[worst]) worst = q;
@@ -38467,7 +39469,7 @@ function ctLines(c, W, terms) {
   } else {
     out.push({ text: 'It is not safe out here. Only ' + Math.round(low.v * 100) +
                      '% of this city has any kind of watch on it.',
-               tone: 'dn', why: 'safety coverage = ' + Math.round(low.v * 100) + '%, the weakest of the four terms' });
+               tone: 'dn', why: 'safety coverage = ' + Math.round(low.v * 100) + '%, the weakest of the five terms' });
   }
 
   // 4. the bond — the OTHER people holding a seat at the same tile. Not a
@@ -38523,7 +39525,7 @@ function ctHtml(c0) {
      Placed HERE, above the four sentences, because the reference panel leads
      with identity and this dialogue leads with voice; both are wanted and the
      identity is the part you scan for.
-     ⚠ It deliberately does NOT restate the mood NUMBER or the four terms — those
+     ⚠ It deliberately does NOT restate the mood NUMBER or the five terms — those
        are below, in this file, and a second copy of them 200px apart is how two
        readouts of one figure start disagreeing. The module prints the BAND WORD
        only, and it gets that word from ctBand (handed over in its ctx) rather
@@ -38540,8 +39542,11 @@ function ctHtml(c0) {
       c.mood.toFixed(1) + ' / 100</span></div>' +
     '<div class="ctbar"><i style="width:' + Math.max(0, Math.min(100, c.mood)) + '%;background:' + col + '"></i></div>';
 
-  /* WHY the mood is what it is — the four weighted terms, recomputed here and
-     checked against 12z's own citMoodTarget before they are shown. */
+  /* WHY the mood is what it is — the FIVE weighted terms (Deathcare joined
+     morale/needs/work/safety this round; the count is written out here because
+     a stale "four" is how a reader stops trusting the rest of the comment),
+     recomputed here and checked against 12z's own citMoodTarget before they are
+     shown. The two must agree within 0.1 or the whole breakdown is dropped. */
   const sum = terms.reduce((a, t) => a + t.w * t.v, 0) * 100;
   let target = null;
   try { target = citMoodTarget(c); } catch (e) { target = null; }
@@ -39112,6 +40117,18 @@ const BUBBLE_LINES = {
           'This place has no heart.'],
     good: ['Met everyone down at the shop.', 'Good night out, for once.'],
   },
+  /* 🪦 THE EIGHTH NEED NEEDS A ROW HERE OR IT SILENCES THE OTHER SEVEN.
+     bubbleLine() picks the WORST need and then tests `BUBBLE_LINES[worst]`, so
+     a need with no entry does not fall through to the second-worst — it falls
+     through to the IDLE pool, and a city short of food AND deathcare would have
+     stopped complaining about the food. Measured by reading the function, not
+     by guessing: the `if` is a single test on the winner. */
+  deathcare: {
+    bad: ['There is nowhere to bury anyone here.', 'My mother is still waiting for a plot.',
+          'Where do the dead go in this city? Nobody will say.',
+          'They are keeping them somewhere. That is all we are told.'],
+    good: ['The new ground is kept properly.', 'At least they see people out with some dignity.'],
+  },
 };
 
 /* Said when nothing is failing — otherwise a well-run city goes quiet, which
@@ -39363,6 +40380,11 @@ function _bubBlocked(a) {
    then, and nulled permanently if it ever throws — a per-frame hook that can
    throw 60 times a second is a console nobody can read. */
 let _oceanTick = null;
+/* 🧟 /src/zombie's beat handle. Same shape and the same reasoning as
+   _oceanTick above: a hoisted `let` so the frame loop can null it on the first
+   throw instead of throwing sixty times a second, and so a 404 on the module
+   costs the outbreak card and nothing else. */
+let _zombieTick = null;
 function animate() {
   const dt = Math.min(clock.getDelta(), .25);
   qualityTick(dt);
@@ -39428,6 +40450,11 @@ function animate() {
 
   ecoAccum += dt;
   raidTick(dt);
+  /* 🧟 THE OUTBREAK BEAT, beside the raid beat because it is the same kind of
+     thing: a threat resolved on a timer against the garrison. The module runs
+     its own 1 s accumulator internally, so this call is a null check and an
+     addition per frame; a 404 nulls the handle and the city never notices. */
+  if (_zombieTick) { try { _zombieTick(dt); } catch (e) { _zombieTick = null; } }
   if (ecoAccum >= 1) { economyTick(ecoAccum / 60); ecoAccum = 0; }
 
   sysTimer += dt;
@@ -39631,7 +40658,14 @@ function animate() {
          THIS row's price, never a number of its own. */
       roadType: 'road',
       costOf, payCost, refreshRoadArea, computeLinks, updateHUD,
-      roadCapParts, toast, logEvent, saveSoon,
+      /* 🛤️ THE CAP METER, HANDED OVER RATHER THAN RE-DERIVED. buildShopBody()
+         used to inject this into whichever shop section held a carriageway;
+         roads are not sold in the shop any more, so the palette renders it and
+         this is the seam. It must be THIS function and not a reimplementation:
+         it is the one place roadUsed() (weighted, via MythicRoadClasses) meets
+         roadCapParts(), so the refusal in tryPlace, the meter in the inspector
+         and the meter in the palette cannot drift apart. */
+      roadCapParts, roadMeterHtml, toast, logEvent, saveSoon,
       place: (type, x, z) => { placeType = type; return tryPlace(x, z); },
       /* ── the road kit ────────────────────────────────────────────────── */
       kit: {
@@ -40244,6 +41278,18 @@ function animate() {
       window.MythicWater.mount({
         THREE, scene, grid: GRID, cityId: cityGroundId(),
         canvas: renderer.domElement, controls, tileFromEvent,
+        /* 🌊 THE APRON PICKER, ADDED FOR THE SEWER ROUND. tileFromEvent ends in
+           `inGrid(x, z) ? {x, z} : null`, so it refuses every cell off the plate
+           — and the sea is ENTIRELY off the plate (WATER.sea.inset holds the
+           waterline 2.05 tiles east of the edge on purpose, so the coast cannot
+           run over perimeterScenery's ring road). A pipe run that cannot leave
+           the plate can never reach a Sea Drain, and a tool that cannot pick the
+           water cannot place one. cellFromEvent is the same raycast against the
+           same mathematical y = 0 plane with an apron allowed, and its own
+           header states the contract this relies on: "a PICKER, not a
+           permission… tryPlace still refuses everything outside inGrid". Nothing
+           in /src/water writes game.tiles. */
+        cellFromEvent,
         mode: () => mode, setMode, onMode: onModeChange,
         /* Read-only, and for ONE purpose: /src/netdrag/rig.js's `bindMode` uses
            it to NAME the building in the stand-down reason, so a tool that is
@@ -40534,6 +41580,119 @@ function animate() {
       } catch (e) {}
     }
   } catch (e) { console.warn('[LandValue] not mounted (non-fatal):', e); }
+  /* ══ 🪦 MORTALITY — CITIZENS DIE, AND THE CITY HAS TO PUT THEM SOMEWHERE ══
+     "Citizens die. Without somewhere to put them, the citizens complain."
+
+     THE DEATHS WERE ALREADY THERE. /src/demographics has run a LIFE COURSE
+     since it landed — working households age into `retired`, retired ones reach
+     a terminal stage — and posted the result into `S.flow.out`, the same bucket
+     as "the rent went up". This round splits `died` out of that bucket, gives
+     node-city's roster a removal verb (CITIZENS_API.retire), gives
+     /src/broadcast a `death` subject so the feed stops announcing a funeral as
+     "moved away", and adds the two BUILDINGS rows that answer the eighth NEED.
+     This module is the join between them and it decides nothing about how many
+     people die.
+
+     ⚠ MOUNTED AFTER /src/demographics AND AFTER THE FIELD MODULES, WHICH IS
+       WHERE IT IS. It reads the demographic counter and node-city's own
+       `game.cov.supply.deathcare`; both are per-tick reads, so the order is
+       correctness for the FIRST tick rather than for the model, and a
+       demographics 404 drops it to the derived crude rate rather than to zero.
+     ⚠ …AND BEFORE offlineCatchUp(), for the reason /src/pollution's mount block
+       gives about fields: the catch-up runs REAL economy ticks, so a module
+       that mounted afterwards would miss every death that happened during the
+       absence. Mounted here it differences the counter across the catch-up and
+       digs the graves the absence earned.
+
+     🔴 THE GLOBALS TRAP. `game`, `BUILDINGS`, `bldSite` and `cityPop` are
+        top-level in THIS module script and invisible to an ES module; the
+        object below IS the hand-over. Note what does NOT cross it: nothing that
+        writes a tile, nothing that spends, nothing that touches the ledger. The
+        one thing this module writes anywhere is a named citizen's removal, and
+        it does that through window.MythicCitizens.retire — the host's own
+        guarded verb — rather than through anything handed over here.
+
+     A 404 costs the player deathcare and nothing else: `dem.deathcare` falls
+     back to node-city's own derived per-capita constant, every graveyard runs
+     at full plot factor forever, and no named citizen ever dies — which is
+     exactly the behaviour that shipped last round. */
+  try {
+    await import('../src/mortality/index.js?v=' + (window.NC_BUILD || 'mort1'));
+    if (window.MythicMortality) {
+      window.MythicMortality.mount({
+        game, BUILDINGS, bldSite,
+        pop: () => cityPop(),
+        cityId: cityGroundId(),
+        dayMin: CITY_DAY_MIN,
+      });
+      /* 🔍 Reported ONLY when it fails, like its neighbours. Two things can go
+         wrong here and both are invisible in a diff: the books stop balancing
+         (every death is in a grave, part-way into one, or waiting — there is no
+         fourth place), and a BUILDINGS row carries `plots` without the matching
+         `svc.need`, which would be a graveyard that takes bodies and never
+         appears on the vitals card. */
+      try {
+        const mv = window.MythicMortality.verify(Object.keys(BUILDINGS));
+        if (mv && !mv.ok) console.warn('[Mortality] self-check FAILED', mv.problems);
+      } catch (e) {}
+    }
+  } catch (e) { console.warn('[Mortality] not mounted (non-fatal):', e); }
+  /* ══ 🗺 THE RESOURCE MAP (/src/resmap) ════════════════════════════════════
+     "The player cannot see where anything IS. Show resources on the ground —
+      above all GROUNDWATER, because a water station has to be sited on it and
+      right now siting is blind guessing."
+
+     ⚠ MOUNTED AFTER /src/water AND /src/power, AND THAT IS POLITENESS RATHER
+       THAN CORRECTNESS. Two of its layers are READ-THROUGH: groundwater comes
+       from `MythicWater.endowment().groundAt` and heat from
+       `MythicPower.heatAt`, asked live on every paint, and a row whose owner is
+       missing renders DISABLED and names the global it is waiting for. It
+       re-asks every render, so a late owner is picked up — but a legend that is
+       grey for the first frame of every session is a legend players learn to
+       distrust, which is the same argument the 💧 block makes for mounting
+       before /src/power.
+
+     🔴 IT DOES NOT RE-ROLL GROUND THAT EXISTS, AND THAT IS THE WHOLE DESIGN.
+        There is exactly one groundwater field in this game and it belongs to
+        /src/water — the one the Water Station's placement gate enforces. A
+        second one drawn here from a second seed would render perfectly and
+        disagree with that gate forever, visibly. What /src/resmap DOES generate
+        is the ground nobody modelled at all: ore, rift-gas, stone, fertile
+        land and standing timber, each a pure function of the city id to the
+        same template /src/water/endowment.js and /src/power/geology.js run.
+
+     🔴 THE GLOBALS TRAP, and this is the nineteenth module to hit it. `THREE`,
+        `scene`, `GRID` and `renderer` are top-level bindings in THIS module
+        script and are invisible to an ES module; the object below IS the
+        hand-over. Note how little goes over: the renderer handles for the
+        overlay plane, the city's id, and the canvas plus the tile picker for
+        the cursor readout.
+     ⚠ WHAT DOES NOT CROSS IT: no `game`, no `BUILDINGS`, no tile writer, no
+       addRes, no payCost, no saveSoon. Every fact about the city arrives per
+       tick through solve(), from the resource pre-pass in economyTick — one
+       caller, one direction, no writes. Its only persisted state is the city's
+       IDENTITY (one string, on window.MythicCitySave), so serialize() is
+       untouched and there is no migration to write. */
+  try {
+    await import('../src/resmap/index.js?v=' + (window.NC_BUILD || 'r1'));
+    if (window.MythicResourceMap) {
+      window.MythicResourceMap.mount({
+        THREE, scene, grid: GRID, cityId: cityGroundId(),
+        /* Read-only, and for ONE purpose: the panel's cursor readout. The
+           listener is PASSIVE and bubble-phase, so it never competes with
+           /src/netdrag/rig.js's capture-phase arbitration — see the module's
+           own note on why this is deliberately not a claimant. */
+        canvas: renderer.domElement, tileFromEvent,
+      });
+      /* 🔍 Reported ONLY when it fails. The one thing a tuning pass can
+         silently break is the scarcity floor — a city with nowhere good to put
+         an extractor — and verify() measures it over 200 ids. */
+      try {
+        const rv = window.MythicResourceMap.verify();
+        if (rv && !rv.ok) console.warn('[ResMap] field self-check FAILED', rv.violations.slice(0, 6));
+      } catch (e) {}
+    }
+  } catch (e) { console.warn('[ResMap] not mounted (non-fatal):', e); }
   /* ══ 🏢 LAYER 3 — THE TENANT MARKET (/src/tenants) ════════════════════════
      "Don't let players directly place every business. Zoning = private economy.
       The player paints Commercial — Mythic Retail. Then NPC COMPANIES COMPETE
@@ -41109,6 +42268,68 @@ function animate() {
       cycleMin: () => CITY_DAY_MIN,
     });
   } catch (e) { console.warn('[Lifepath] not mounted (non-fatal):', e); }
+  /* ══ 🧟 OUTBREAK RISK — WHAT UNBURIED DEAD COST ═══════════════════════════
+     "Unburied dead carry a CHANCE of a zombie outbreak. It should be a
+      consequence the player can see coming and prevent, not a coin flip."
+
+     MOUNTED HERE, IMMEDIATELY AFTER /src/lifepath, and the adjacency is the
+     argument: lifepath's model.js is where this game wrote down that NOBODY ON
+     THE NAMED ROSTER EVER DIES, and rejected fixing it there ("if the roster is
+     ever given its own mortality it belongs in the citizens layer that mints
+     them"). This module does not fix that either. It takes deaths as an INPUT
+     through one function — MythicZombie.reportDeaths(n, source) — and until
+     something calls it, it counts the deaths THIS FILE ALREADY CAUSES: the
+     population decline that runs whenever Food, Water or Health coverage falls
+     under POP_DECLINE_AT. That decline was simulated, saved, and narrated
+     nowhere. Now it has a consequence, and the card names its own source.
+
+     🔴 THE GLOBALS TRAP. `game`, `BUILDINGS`, `cityPop`, `bldSite`,
+        `damageTile`, `toast`, `logEvent`, `isRoadTile`, `raidDefence` and
+        `_wxShieldStrength` are top-level in THIS module script and invisible to
+        an ES module. The object below IS the hand-over.
+     ⚠ WHAT DOES NOT CROSS IT: nothing that spends or mints. No payCost, no
+       addCinders, no addRes. An outbreak costs buildings and bodies. The one
+       writer that crosses is damageTile — the single funnel every other hazard
+       in this file already uses.
+     ⚠ The module registers its own save slice on window.MythicCitySave, so
+       serialize() is not edited and there is no migration: a city saved before
+       this existed loads with an empty slice, zero backlog and zero risk. */
+  try {
+    await import('../src/zombie/index.js?v=' + (window.NC_BUILD || 'z1'));
+    if (window.MythicZombie) {
+      window.MythicZombie.mount({
+        cityId: cityGroundId(),
+        BUILDINGS,
+        daySec: CITY_DAY_MIN * 60,
+        tiles: () => game.tiles,
+        bldSite, isRoadTile,
+        pop: () => cityPop(),
+        /* The decline RATE, not a population sample. game.pop.npc is clamped at
+           POP_MIN, so a sample alone would keep manufacturing bodies out of a
+           rate that is no longer moving anybody; the module takes the smaller
+           of the two. */
+        declinePerMin: () => (game.pop && Number.isFinite(+game.pop.perMin)) ? +game.pop.perMin : 0,
+        /* 🛡 THE HOST'S OWN TALLY, handed over rather than re-derived — the
+           whole reason raidDefence() was extracted out of raidTick(). */
+        raidDefence,
+        /* ☣️ …and the WX_SHIELD row, likewise. One mitigation table. */
+        wxShieldStrength: _wxShieldStrength,
+        damageTile, toast, logEvent, saveSoon,
+        el: (id) => $(id),
+      });
+      _zombieTick = window.MythicZombie.tick;
+      /* 🔍 Reported ONLY when it fails, like every neighbour's check. It proves
+         the two properties the feature may be judged on and cannot be eyeballed
+         in a diff: that raising burial capacity never raises risk on the next
+         tick (over a sweep of populations, backlogs and rates), and that no
+         state — fresh, loaded, or mass-casualty — can be rolled against before
+         a full wave interval of warning has stood. */
+      try {
+        const zv = window.MythicZombie.verify();
+        if (zv && !zv.ok) console.warn('[Zombie] self-check FAILED', zv.problems.slice(0, 6));
+      } catch (e) {}
+    }
+  } catch (e) { console.warn('[Zombie] not mounted (non-fatal):', e); }
   /* ══ 👤 THE CITIZEN DOSSIER ═══════════════════════════════════════════════
      The other end of the dossier's household rows. openCitTalk() already gave
      a citizen a voice; /src/citizen gives them an identity — household,
@@ -41428,6 +42649,46 @@ function animate() {
     outFactor: (k, isCinder) => game.tiles[k] ? tileOutputFactor(game.tiles[k], !!isCinder) : null,
     grace: (k) => game.tiles[k] ? tileGrace(game.tiles[k]) : null,
     sens: OUTPUT_SENSITIVITY,
+    /* 🪦 DEATHCARE. `mortality()` is the whole readout — plots, backlog, which
+       read answered — and `bury(n)` drives one interment step by hand with an
+       explicit death count, which is what lets a driver prove a hundred burials
+       in a frame instead of waiting a hundred real hours for them.
+       `citDeaths()` is the roster's own ring, i.e. what /src/broadcast reads to
+       tell a death from a departure. */
+    mortality: () => { try { return window.MythicMortality ? window.MythicMortality.report() : null; } catch (e) { return null; } },
+    bury: (n, dtMin) => { try { return window.MythicMortality ? window.MythicMortality.step(n, dtMin == null ? 1 : dtMin) : null; } catch (e) { return null; } },
+    citDeaths: () => CITIZENS_API.deaths(),
+    retire: (id, cause) => CITIZENS_API.retire(id, cause),
+    /* 🧱 THE MESH PROBE, AND IT EXISTS BECAUSE OF ONE SPECIFIC SILENT FAILURE.
+       `buildMesh` has no default arm, so a BUILDINGS row whose type is missing
+       from the switch renders an EMPTY THREE.Group — an invisible building on a
+       real tile the player paid for — and BOTH syntax gates pass on it. That
+       cannot be caught by reading the file (the switch is 400 lines long) and
+       it cannot be caught by a screenshot (the pane composites at ~0.56 Hz and
+       an empty group photographs exactly like an occluded one).
+       So: build the group and measure it. `empty: true` or `meshes: 0` IS the
+       bug, and a driver can assert against a CONTROL — any type with no arm. */
+    meshBox: (type, lvl) => {
+      try {
+        const g = buildMesh(String(type), Math.max(1, Math.min(MAX_LVL, (lvl | 0) || 1)), 0, 0);
+        /* `instances` counts what an InstancedMesh actually draws. A recipe
+           that puts more of something on the tile per level — the graveyard's
+           extra rows of stones, say — adds INSTANCES and not MESHES, which is
+           the whole point of using one, so a probe that only counted meshes
+           would report "the level does nothing" about a building where it
+           plainly does. */
+        let n = 0, inst = 0;
+        g.traverse((o) => {
+          if (o.isInstancedMesh) { n++; inst += o.count | 0; }
+          else if (o.isMesh) { n++; inst++; }
+        });
+        const b = new THREE.Box3().setFromObject(g);
+        const empty = b.isEmpty();
+        const s = empty ? { x: 0, y: 0, z: 0 } : b.getSize(new THREE.Vector3());
+        return { type: String(type), lvl: (lvl | 0) || 1, meshes: n, instances: inst, empty,
+                 w: +(+s.x).toFixed(4), h: +(+s.y).toFixed(4), d: +(+s.z).toFixed(4) };
+      } catch (e) { return { type: String(type), error: String((e && e.message) || e) }; }
+    },
     trendSpan: () => _trendSpan,
     prod: () => ({ ...prodPerMin }),
     stock: () => ({ ...game.stock }),
@@ -41474,6 +42735,34 @@ function animate() {
       return W.pipes.remove(W.pipes.path(x0, z0, x1, z1));
     } catch (e) { return 0; } },
     waterTool: (on) => { try { return window.MythicWater ? window.MythicWater.pipes.tool(on) : false; } catch (e) { return false; } },
+    /* 🌊 THE SEA DRAIN'S SEAM. `drainWhy` is the refusal string for a cell and
+       `drainAt` is the sea predicate — the SHIPPED ones, not copies, so a driver
+       cannot agree with the rule by accident. `drainMesh` reports the drawn
+       structures (child counts and world bounding boxes) because "it is not an
+       invisible building" is a claim about geometry and has to be measured off
+       the scene graph rather than asserted in a comment. */
+    drains: () => { try { return window.MythicWater ? { count: window.MythicWater.drains.count(), keys: window.MythicWater.drains.keys(), apron: window.MythicWater.drains.apron() } : null; } catch (e) { return null; } },
+    drainAt: (x, z) => { try { return window.MythicWater ? window.MythicWater.seaAtCell(x, z) : null; } catch (e) { return null; } },
+    drainWhy: (x, z) => { try { return window.MythicWater ? window.MythicWater.drains.refusalAt(x, z) : null; } catch (e) { return null; } },
+    drainPlace: (x, z) => { try { return window.MythicWater ? window.MythicWater.drains.place(x, z) : null; } catch (e) { return null; } },
+    drainMesh: () => { try { return window.MythicWater ? window.MythicWater.drains.structures() : null; } catch (e) { return null; } },
+    drainVerify: () => { try { return window.MythicWater ? window.MythicWater.drains.verify() : null; } catch (e) { return null; } },
+    drainTool: (on) => { try { return window.MythicWater ? window.MythicWater.drains.tool(on) : false; } catch (e) { return false; } },
+    /* 🗺 /src/resmap's diagnostics seam. `resmapAt` is the per-tile answer for
+       EVERY field at once and `resmapYield` is the multiplier the tick applies
+       — the same two calls the panel and the inspector row make — so a driver
+       can assert "the map and the number agree at this tile" without reading a
+       screenshot, which is the one property a colour ramp cannot be tested for
+       by eye. `resmapFactor` reads the map economyTick actually built, so the
+       two can be compared against each other rather than both against the
+       module. */
+    resmap: () => { try { return window.MythicResourceMap ? window.MythicResourceMap.stats() : null; } catch (e) { return null; } },
+    resmapAt: (x, z) => { try { return window.MythicResourceMap ? window.MythicResourceMap.readAt(x, z) : null; } catch (e) { return null; } },
+    resmapYield: (x, z, r, o) => { try { return window.MythicResourceMap ? window.MythicResourceMap.yieldAt(x, z, r, o) : null; } catch (e) { return null; } },
+    resmapFactor: (x, z, r) => { try { return rmFactor(key(x, z), r); } catch (e) { return null; } },
+    resmapDeposits: (f) => { try { return window.MythicResourceMap ? window.MythicResourceMap.deposits(f) : null; } catch (e) { return null; } },
+    resmapPanel: (on) => { try { return window.MythicResourceMap ? (on === false ? window.MythicResourceMap.closePanel() : window.MythicResourceMap.openPanel()) : false; } catch (e) { return false; } },
+    resmapMesh: () => { try { return window.MythicResourceMap ? window.MythicResourceMap.overlayMesh() : null; } catch (e) { return null; } },
     /* ☁ /src/pollution's diagnostics seam. `pollutionAt` is the per-tile answer
        WITH its blame list — the same object the inspector row prints — so a
        driver can assert "the tile two downwind of the coal plant is dirtier than
@@ -41965,7 +43254,13 @@ function animate() {
     // 🎥 The render trio. `renderer.info.memory.geometries` is the only honest
     //    read on the tile/agent buffer leak, and the bubble overlay cannot be
     //    checked at all without the camera it projects through.
-    three: () => ({ renderer, scene, camera, THREE }),
+    /* `controls` rides along because OrbitControls is the one thing a drag tool
+       can break invisibly: a claimant that stands down still holding
+       `controls.enabled = false` kills the camera for the rest of the session
+       and presents as a renderer bug three files from its cause. There is no
+       other seam that can observe it, so a driver could only assert the fix by
+       hoping. See .gauntlet/utilgate-ab.mjs. */
+    three: () => ({ renderer, scene, camera, THREE, controls }),
     /* 🪞 THE SKY ENV MAP'S OWN BOOKKEEPING. `builds` is the only number that
        answers the day/night question — a map that rebuilt once and then tracked
        nothing looks identical to a working one in a single screenshot — and
@@ -42260,6 +43555,41 @@ const RAILS = [
   { id: 'needscard',  ico: '😊', name: 'People', title: 'The People Need…' },
   { id: 'vitalscard', ico: '📉', name: 'Vitals', title: 'Vital Signs' },
   { id: 'raidcard',   ico: '⚔',  name: 'Raid',   title: 'Raider Threat', clock: true },
+  /* 🧟 THE FIFTEENTH SEAT — and it is here because without it the outbreak
+     forecast was NOT DELIVERED AT ALL. #zcard is declared in #rightcol, which
+     the rail-dock refactor turned into a display:none stash (see the note on
+     that column): a card there is reachable ONLY by being in this array. The
+     card rendered correct text, at risk 91/100, into a node with a 0×0 rect
+     and offsetParent null — a guaranteed 1800 s of notice worth exactly zero
+     pixels. A warning nobody can see is not a warning.
+     ⏱ `clock` for the same reason ⚔ has one: this launcher relays #ztimer, so
+       the countdown to the next roll is on the dock without opening anything —
+       which is what "the player saw it coming" means when the panel is closed.
+     ⚠ IT IS SELF-HIDING, like 🔧 and 🏗. railState returns { hide: true }
+       whenever /src/zombie has the card at display:none, so a city with no
+       deathcare system and no dead never pays for this seat at all — it is
+       only on the row when there is something to be warned about.
+     🔴 RE-MEASURED, because the note above says the row was already at its last
+        seat — and the measurement CHANGED THE ANSWER. At 1280 wide, forced
+        worst case (every launcher visible, a 1:59:59 clock on ⚔ AND on 🧟, a
+        two-digit badge on all of them), grouping buttons by TOP EDGE:
+             14 launchers (this row REMOVED — the control)  1360px, TWO rows
+             15 launchers (this row present)                1460px, TWO rows
+        and unforced, on a live city: 13 visible, 1219px, TWO rows (11 + 2).
+        THE ROW ALREADY WRAPPED BEFORE THIS SEAT, and this seat does not add a
+        row in either case — it rides a wrap that was already there.
+     ⚠ TWO STALE NUMBERS IN THE NOTES ABOVE, corrected here rather than left to
+       mislead the next person the way they misled me:
+         · the 1256px track is gone. #railbar now lives inside #nctop (the dock
+           refactor at :42486) and its content box wraps the row at ~1010px,
+           not at the viewport, which is why 12 launchers already wrapped.
+         · .gauntlet/eval-rail-worst.js reports `rows` as the count of DISTINCT
+           TOPS, and a clocked button sits 1px high — so it calls two rows
+           three. Re-measure with tmp/fix-zom-tops.mjs, which groups by edge.
+     ⚠ SO THE HONEST STATEMENT IS "the row wraps to two, and this button rides
+       the wrap", NOT "it fits". A SIXTEENTH is the one to measure for a THIRD
+       row: that is the line that has not been crossed yet. */
+  { id: 'zcard',      ico: '🧟', name: 'Outbreak', title: 'Outbreak Risk', clock: true },
   { id: 'repaircard', ico: '🔧', name: 'Repair', title: 'Repairs' },
   { id: 'bldcard',    ico: '🏗', name: 'Build',  title: 'Under Construction' },
   { id: 'ecocard',    ico: '🏭', name: 'Econ',   title: 'The Living Economy', wide: true },
@@ -42300,14 +43630,25 @@ const RAILS = [
         What the note forbids is the dock WRAPPING onto a second line over the
         map — #railbar is `flex-wrap: wrap`, so overflow used to do exactly
         that. At desktop widths the bar is now `nowrap` with `overflow-x: auto`,
-        so an over-long row scrolls in place and the map is never covered. The
-        wrap is kept below 900px, where the dock is not over the map in the same
-        way and stacking is the better answer.
-     ⚠ I COULD NOT RE-MEASURE. The note's figures come from
-       .gauntlet/eval-rail-worst.js; my attempt read a city in the "cut off"
-       state and measured an error banner, not the dock. The scroll guard is
-       what makes that safe to ship without the number — but run that script
-       before trusting the row at 1280 in the worst case it defines. */
+        so an over-long row scrolls in place and the map is never covered.
+     🔴🔴 THE PARAGRAPH DIRECTLY ABOVE IS FALSE, AND IT WAS ALREADY FALSE WHEN
+        IT WAS WRITTEN. The nowrap/overflow-x switch it describes was tried and
+        REVERTED before shipping — the CSS says so in full at the #railbar rule
+        ("⚠ NO nowrap/overflow-x HERE, AND THAT WAS TRIED": `justify-content:
+        center` stops centring on a nowrap scroller and the bar ran across the
+        Services column). The rule shipped is plain `flex-wrap: wrap`.
+        It is left standing, struck rather than deleted, because a comment that
+        confidently describes a guard that does not exist is worse than no
+        comment: the 🧟 seat below was justified against it, and the mistake was
+        only caught by measuring. MEASURED TRUTH, at 1280 wide: the dock is TWO
+        ROWS from twelve launchers up, because #railbar sits in #nctop and wraps
+        at that box's ~1010px, not at the 1256px viewport track this file's
+        older notes assume. The second line is real and it is over the map.
+     ⚠ I COULD NOT RE-MEASURE — and that is exactly how the false paragraph
+       survived. The figures above it come from .gauntlet/eval-rail-worst.js,
+       which additionally reports two rows as three (it counts distinct tops and
+       a clocked button sits 1px high). Use tmp/fix-zom-tops.mjs, which groups
+       by top edge and prints the buttons on each row. */
   { id: 'progtree',   ico: '🌳', name: 'Research', title: 'Research tree (K)', ext: 'progress' },
 ];
 
@@ -42386,6 +43727,25 @@ function railState(r) {
       const t = document.getElementById('raidtimer');
       const warn = card.classList.contains('warn');
       return { clock: t ? t.textContent : '—', tone: warn ? 'bad' : '', urgent: warn };
+    }
+    /* 🧟 THE OUTBREAK CLOCK. Same shape as ⚔ above and for the same reason —
+       everything here is READ OFF THE RENDERED CARD and nothing is re-derived.
+       /src/zombie/panel.js already decided which band the risk is in and wrote
+       .warn / .danger onto the card; this reads that class back. A launcher
+       that re-thresholded ZOM.watch / ZOM.arm would be a second opinion about
+       the outbreak, and the two would drift the first time tuning.js moved.
+       Hidden exactly when the module hides the card: /src/zombie sets
+       display:none until the engine is armed or there are bodies, so a 404 on
+       that module — or a city with nothing to warn about — costs this launcher
+       and nothing else, the same contract 🏭 keeps. */
+    case 'zcard': {
+      if (card.style.display === 'none') return { hide: true };
+      const t = document.getElementById('ztimer');
+      const danger = card.classList.contains('danger');
+      const warn = card.classList.contains('warn');
+      return { clock: t ? t.textContent : '—',
+               tone: danger ? 'bad' : warn ? 'warn' : '',
+               urgent: danger };
     }
     // 🔧 🏗 The two self-hiding cards. `.on` is renderRepairs' and
     //    renderBuildBoard's own emptiness verdict — the launcher does not

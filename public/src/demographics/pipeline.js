@@ -41,15 +41,36 @@ const S = {
   v: 1,
   co: {},                  // "zone|arch|edu" -> households (float)
   stress: {},              // education -> consecutive economic days of a dead labour market
-  flow: { in: 0, out: 0, grad: 0, evicted: 0 },   // THIS step, whatever length it was
+  /* 🪦 `died` IS A BREAKDOWN OF `out`, NOT A FIFTH BUCKET — and the distinction
+     is load-bearing, not pedantry. The life course below (step 3b) already
+     rated people through a terminal stage and already posted them into `out`;
+     until this round that was the ONLY record of them, so the panel reported a
+     funeral and a removal van with one number and /src/broadcast announced
+     every death as "moved away". `died` labels that same figure. It is added
+     ALONGSIDE the `out` line, never instead of it: `rate.out` feeds
+     `netPerDay` and the attract loop, so moving deaths out of `out` would be a
+     simulation change wearing a re-label's clothes. Read it as
+     "of `out`, this many were deaths".  ⇒ out ≥ died, always. */
+  flow: { in: 0, out: 0, grad: 0, evicted: 0, died: 0 },   // THIS step, whatever length it was
+  /* 💀 …and the same number as a MONOTONE COUNT, because a rate cannot be
+     integrated safely by a consumer that does not know the tick length.
+     /src/mortality DIFFERENCES this to decide how many graves to dig, which is
+     exact under any cadence, survives a long tick and picks up node-city's
+     offlineCatchUp() (real economy ticks) for free.
+     ⚠ SESSION-LOCAL AND NOT SERIALISED, deliberately. It is a cursor, not a
+       history: reset() zeroes it, and its one consumer treats a DECREASE as a
+       re-base rather than as a resurrection. The city's permanent death toll
+       is /src/mortality's own `lifetime`, which is reconstructed from the
+       graves themselves and therefore cannot drift from them. */
+  deaths: 0,
   /* 📅 …AND THE LAST WHOLE ECONOMIC DAY, WHICH IS THE ONLY ONE A PANEL CAN
      HONESTLY PRINT AS A RATE. `rate` was an EMA of `flow / days`, and a tick is
      a quarter of a day: one structural move (a de-zoning, or the city's own
      citizenry collapsing) divided by 0.25 came out as −1,167 residents/day on
      screen in a city of 249 people. A rate is a measurement over a period, so
      this accumulates until a whole day has passed and then reports it. */
-  acc: { in: 0, out: 0, grad: 0, evicted: 0, days: 0 },
-  day: { in: 0, out: 0, grad: 0, evicted: 0 },
+  acc: { in: 0, out: 0, grad: 0, evicted: 0, died: 0, days: 0 },
+  day: { in: 0, out: 0, grad: 0, evicted: 0, died: 0 },
   rate: { in: 0, out: 0 },
   rentIndex: 1,
   attract: 0,
@@ -70,9 +91,10 @@ export function reset() {
   S.co = {};
   S.stress = {};
   for (const e of A.eduOrder()) S.stress[e] = 0;
-  S.flow = { in: 0, out: 0, grad: 0, evicted: 0 };
-  S.acc = { in: 0, out: 0, grad: 0, evicted: 0, days: 0 };
-  S.day = { in: 0, out: 0, grad: 0, evicted: 0 };
+  S.flow = { in: 0, out: 0, grad: 0, evicted: 0, died: 0 };
+  S.deaths = 0;
+  S.acc = { in: 0, out: 0, grad: 0, evicted: 0, died: 0, days: 0 };
+  S.day = { in: 0, out: 0, grad: 0, evicted: 0, died: 0 };
   S.rate = { in: 0, out: 0 };
   S.rentIndex = 1; S.attract = 0; S.causes = []; S.limit = null;
   S.seeded = false; S.lastInMix = null;
@@ -289,7 +311,7 @@ export function seeded() { return S.seeded && households() > 0; }
 export function step(days, ctx) {
   days = Math.max(0, Math.min(ECON.clock.maxCatchUpDays, Number(days) || 0));
   const sv = ctx && ctx.survey;
-  S.flow = { in: 0, out: 0, grad: 0, evicted: 0 };
+  S.flow = { in: 0, out: 0, grad: 0, evicted: 0, died: 0 };
   if (!sv) { S.causes = [{ sign: '−', label: 'No city to live in', why: 'The city has not reported any land yet.' }]; return S; }
 
   /* 1. 🧹 EVICTION. The dwellings went away — demolished, re-zoned, or the
@@ -476,7 +498,16 @@ export function step(days, ctx) {
       const c = parseKey(k);
       if (A.workersPer(c.arch) > 0) continue;    // the retired ARE the workerless
       const gone = take(k, S.co[k] * retLeave);
-      S.flow.out += gone * A.avgSize(c.arch);
+      const people = gone * A.avgSize(c.arch);
+      S.flow.out += people;
+      /* 🪦 …AND THIS IS THE LINE THAT MAKES THEM DEATHS RATHER THAN LEAVERS.
+         Same number, said twice, on purpose — see the `flow` declaration. It is
+         the only place in the model where somebody reaches the end of the life
+         course, so it is the only place `died` may be written. `deaths` is the
+         monotone cursor /src/mortality differences; `flow.died` is the rate the
+         panel and the coverage denominator read. */
+      S.flow.died += people;
+      S.deaths += people;
     }
   }
 
@@ -741,13 +772,19 @@ export function step(days, ctx) {
      elapsed — see the `acc` declaration for the −1,167/day this replaces. */
   S.acc.in += S.flow.in; S.acc.out += S.flow.out;
   S.acc.grad += S.flow.grad; S.acc.evicted += S.flow.evicted;
+  S.acc.died += S.flow.died;
   S.acc.days += days;
   if (S.acc.days >= 1) {
     const d = S.acc.days;
-    S.day = { in: S.acc.in / d, out: S.acc.out / d, grad: S.acc.grad / d, evicted: S.acc.evicted / d };
+    S.day = { in: S.acc.in / d, out: S.acc.out / d, grad: S.acc.grad / d, evicted: S.acc.evicted / d,
+              died: S.acc.died / d };
     S.rate.in = S.day.in;
+    /* ⚠ `died` IS NOT ADDED HERE. It is already inside `out` (see the `flow`
+       declaration), and adding it would count every death twice against the
+       arrivals — the city would read as shedding people twice as fast as it
+       is, which is the growth loop's own input. */
     S.rate.out = S.day.out + S.day.evicted;
-    S.acc = { in: 0, out: 0, grad: 0, evicted: 0, days: 0 };
+    S.acc = { in: 0, out: 0, grad: 0, evicted: 0, died: 0, days: 0 };
   }
   return S;
 }

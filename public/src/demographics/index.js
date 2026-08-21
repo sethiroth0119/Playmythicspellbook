@@ -517,7 +517,15 @@ function report() {
       /* The LAST WHOLE DAY, not the last tick — a tick is a quarter of a day and
          printing one as a daily figure is how the panel reported −1,167
          residents/day in a city of 249. See pipeline.js `acc`. */
+      /* 🪦 …and `flow.died` rides along inside it now: of the people in `out`,
+         this many reached the end of the life course rather than moving away.
+         It arrives here for free because `day` is spread wholesale — which is
+         the whole argument for having spread it rather than listing fields. */
       flow: { ...st.day },
+      /* The monotone cursor, published so a consumer can integrate deaths
+         EXACTLY instead of multiplying a rate by a tick length it does not
+         know. /src/mortality differences this. See pipeline.js `deaths`. */
+      deathsTotal: st.deaths,
       adults,
       wealth: ['low', 'mid', 'high'].map(t => ({ k: t, label: A.TIER_LABEL[t], v: wealth[t] })),
       education: A.eduOrder().map(e => ({ k: e, label: A.eduDef(e).short, v: edu[e] || 0 })),

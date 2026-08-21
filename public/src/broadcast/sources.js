@@ -232,8 +232,15 @@ function fromCoverage(ctx, pop) {
   const out = [];
   const T = BCAST.thresholds;
   const pctMap = (ctx.game.cov && ctx.game.cov.pct) || {};
+  /* 🪦 `deathcare` is node-city's EIGHTH need as of this round and it needs
+     nothing here but its row: severity, affected count, provenance and both
+     polarities all fall out of the loop below exactly as they do for Health.
+     That is the whole of the "the complaint is free, not built" claim — the
+     shortfall reaches the phone feed, the vitals card, the demand panel's fix
+     list and the talk dialog through four mechanisms that already existed. */
   const MAP = { food: 'food', water: 'water', power: 'power', safety: 'safety',
-                health: 'health', leisure: 'leisure', light: 'light' };
+                health: 'health', leisure: 'leisure', light: 'light',
+                deathcare: 'deathcare' };
   for (const need in MAP) {
     const p = pctMap[need];
     if (!Number.isFinite(p)) continue;
@@ -610,6 +617,24 @@ function fromRoster(ctx, pop) {
   snap = now;
   if (!prev) return [];              // first pass: baseline only, claim nothing
 
+  /* ⚰ WHY THEY LEFT, ASKED BEFORE IT IS ASSUMED.
+     ─────────────────────────────────────────────────────────────────────────
+     🔴 THIS OBSERVER USED TO ANNOUNCE EVERY DEATH AS "moved away". A vanished
+     id was `subject: 'leaving'`, poster sub "former resident", body "I am
+     leaving the city. It stopped working for me." — published in the first
+     person, by somebody who had just died, blaming the city for it. It was
+     the only place in the codebase where a named person's disappearance was
+     narrated at all, so it was also the only place that could be wrong.
+     node-city's roster now keeps a short ring of who DIED and when
+     (CITIZENS_API.deaths(), written by the retire() verb), and this asks it.
+     ⚠ An older host has no deaths() at all: the map comes back empty, every
+       departure reads as `leaving` exactly as it did, and nothing throws. */
+  const died = new Map();
+  try {
+    const rows = (typeof cz.deaths === 'function') ? cz.deaths() : null;
+    if (Array.isArray(rows)) for (const d of rows) if (d && d.id) died.set(String(d.id), d);
+  } catch (e) { /* the ring is a nicety; a departure is still reportable */ }
+
   const out = [];
   const at = Date.now();
   /* Capped per pass. A population collapse can empty forty seats at once and
@@ -620,6 +645,31 @@ function fromRoster(ctx, pop) {
   for (const [id, b] of prev) {
     if (now.has(id)) continue;
     if (++left > 2) break;
+    const d = died.get(id);
+    if (d) {
+      /* 🪦 SEVERITY IS THE CITY'S CAPACITY, NOT THE DEATH. A death is not more
+         or less severe than another death; what changes — and what the player
+         can act on — is whether there was anywhere to put them. So an unburied
+         death reads `severe` and a buried one `notable`, which is also what
+         selects between the two clause pools in phrases.js. */
+      const un = (() => { try { const M = window.MythicMortality; const r = M && M.ready() && M.report(); return r ? r.unburied : 0; } catch (e) { return 0; } })();
+      /* ⚠ `d.age == null ? NaN : Number(d.age)` and NOT `Number(d.age)`.
+         Number(null) is 0 and 0 IS finite, so the plain coercion published the
+         obituary "Ada Fallow died at 0" for every citizen whose age
+         /src/lifepath could not supply. Measured in the first driven run of
+         this feature. Absent must stay absent all the way to the clause
+         filter, which then drops every template carrying {v}. */
+      const age = (d.age == null) ? NaN : Number(d.age);
+      out.push({ src: 'roster', at, key: 'died|' + id,
+                 subject: 'death', pole: 'bad', severity: un > 0 ? 0.95 : 0.55,
+                 affected: 1,
+                 facts: { q: d.name, v: Number.isFinite(age) && age > 0 ? String(Math.round(age)) : null,
+                          p: workName(ctx, b.job) },
+                 posterKind: 'dept',
+                 why: d.name + ' died' + (Number.isFinite(age) ? ' at ' + Math.round(age) : '') +
+                      (un > 0 ? ' — ' + un + ' unburied in the city' : '') });
+      continue;
+    }
     out.push({ src: 'roster', at, key: 'left|' + id,
                subject: 'leaving', pole: 'bad', severity: 0.5,
                affected: 1, facts: { p: workName(ctx, b.job) },

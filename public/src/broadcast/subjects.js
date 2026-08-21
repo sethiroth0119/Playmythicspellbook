@@ -41,6 +41,11 @@ export const DEPTS = {
   trade:   { id: 'trade',   name: 'Trade Desk',             ico: '🚚', hue: 176 },
   works:   { id: 'works',   name: 'Municipal Works',        ico: '🏗', hue: 36 },
   civil:   { id: 'civil',   name: 'Civil Defence',          ico: '⚔️', hue: 0 },
+  /* 🪦 The office that registers a death and finds it a plot. hue 262 —
+     checked against the fifteen above (0/12/24/36/46/54/92/130/160/176/198/
+     208/220/286/344) rather than picked; the nearest is Parks at 286 and 24°
+     of hue is a distinguishable avatar at 28px. */
+  death:   { id: 'death',   name: 'Registry & Deathcare',   ico: '🪦', hue: 262 },
 };
 
 /* ── THE SUBJECT TABLE ────────────────────────────────────────────────────
@@ -76,6 +81,15 @@ export const SUBJECTS = {
      made the feed's loudest recurring line contradict the vitals card. A
      department speaks it; a citizen cannot see an aquifer level. */
   water_draw:{ id: 'water_draw', label: 'Water extraction', tag: 'water', tagsBad: ['aquifer'], tagsGood: [], dept: 'water', scope: 'city', citizen: false, poles: ['bad'] },
+  /* 🪦 DEATHCARE — the city's own interment capacity against the rate people
+     die at, i.e. node-city's eighth NEED read exactly like the other seven
+     (fromCoverage). Kept SEPARATE from `death` below for the same reason
+     `water` and `water_draw` are separate: this is "there is nowhere to bury
+     anybody", which is a thing the player fixes by building a graveyard; that
+     is "somebody died", which is a life and is nobody's fault. One post
+     claiming both would be the feed's loudest line contradicting the vitals
+     card, which is the bug the water split already fixed once. */
+  deathcare:{ id: 'deathcare', label: 'Deathcare',  tag: 'deathcare',   tagsBad: ['unburied', 'graves'], tagsGood: ['restinpeace'], dept: 'death', scope: 'city', citizen: true, poles: ['bad', 'good'] },
   rent:     { id: 'rent',     label: 'Rent',        tag: 'rent',        tagsBad: ['housing'], tagsGood: [],          dept: 'housing', scope: 'city',   citizen: true,  poles: ['bad'] },
   jobs:     { id: 'jobs',     label: 'Work',        tag: 'jobs',        tagsBad: ['nowork'], tagsGood: ['hiring'],           dept: 'labour',  scope: 'city',   citizen: true,  poles: ['bad', 'good'] },
   traffic:  { id: 'traffic',  label: 'Traffic',     tag: 'traffic',     tagsBad: ['commute'], tagsGood: ['commute'],          dept: 'roads',   scope: 'city',   citizen: true,  poles: ['bad', 'good'] },
@@ -94,6 +108,23 @@ export const SUBJECTS = {
   laid:     { id: 'laid',     label: 'Lost work',   tag: 'laidoff',     tagsBad: ['jobs'], tagsGood: [],             dept: null,      scope: 'person', citizen: true,  poles: ['bad'] },
   movedin:  { id: 'movedin',  label: 'Moved in',    tag: 'newhome',     tagsBad: [], tagsGood: ['hello'],            dept: null,      scope: 'person', citizen: true,  poles: ['good'] },
   leaving:  { id: 'leaving',  label: 'Leaving',     tag: 'movingout',   tagsBad: ['goodbye'], tagsGood: [],          dept: null,      scope: 'person', citizen: true,  poles: ['bad'] },
+  /* ⚰ A DEATH. Person-scope, and the ONE life event with a department on it.
+     🔴 WHY THE REGISTRY SPEAKS AND NOT A RESIDENT. Every other person-scope
+     subject is written in the FIRST PERSON about the poster's own life (see
+     phrases.js, "I finished my course", "I am leaving the city") — and the
+     poster of a death cannot be its subject. Handing it to a mourner instead
+     would mean this module choosing, from a mood-weighted draw, which resident
+     was close to the deceased; the game has no relationship state to support
+     that claim, and inventing one is exactly what phrases.js's {p} rule
+     forbids. So the institution states it, factually, and names them. The
+     GRIEF, such as the city models it, is the deathcare shortfall above and
+     the mood term node-city added in the same change.
+     `citizen: false` for that reason — the cit pool would be an invention.
+     ⚠ Before this subject existed, /src/broadcast/sources.js fromRoster()
+       published every death as subject 'leaving' with poster sub "former
+       resident" and the body "I am leaving the city. It stopped working for
+       me." Ship the two together or the feed goes on lying. */
+  death:    { id: 'death',    label: 'A death',     tag: 'inmemoriam',  tagsBad: ['deathcare'], tagsGood: [],        dept: 'death',   scope: 'person', citizen: false, poles: ['bad'] },
   mood:     { id: 'mood',     label: 'How it goes', tag: 'cityliving',  tagsBad: ['worndown'], tagsGood: ['happylife'],        dept: null,      scope: 'person', citizen: true,  poles: ['bad', 'good'] },
 };
 

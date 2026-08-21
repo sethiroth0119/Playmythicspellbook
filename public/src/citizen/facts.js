@@ -307,14 +307,18 @@ export function factsOf(C, id) {
      ⚠ AND THE DISTRIBUTION CLAIM IS TENSED, WHICH IT WAS NOT. These words said
        the roster "REPRODUCES that distribution", present tense, unqualified.
        It reproduces it AT THE MOMENT EACH PERSON IS DEALT and drifts from it
-       every second afterwards, because nobody on the named roster ever dies,
-       retires off it or leaves while the clock ages all of them together —
-       about three real hours of play puts the largest band outside the
-       one-person bound the deal guarantees. The source line now says so, and
-       when the module can see the bound is actually broken it says THAT
-       instead, in the present tense, with the number. See /src/lifepath
-       model.js distribution() for why the alternatives (re-dealing, ageing
-       people out) were rejected rather than skipped. */
+       afterwards while the clock ages all of them together. The source line
+       now says so, and when the module can see the bound is actually broken it
+       says THAT instead, in the present tense, with the number.
+       🔴 WHY IT DRIFTS IS NO LONGER A FIXED SENTENCE. It was "nobody on the
+          named roster ever dies, retires off it or leaves" — the honest reason
+          then, and the wrong one now: the roster has a removal verb
+          (node-city CITIZENS_API.retire) and /src/mortality retires the OLDEST
+          resident against the city's own death rate. See model.js seed(),
+          where ageing-out is now recorded as CLOSED rather than rejected. The
+          row asks /src/lifepath mortality() and prints whichever is true of
+          this build, so it degrades to the original sentence and never to a
+          stale boast. */
   const LP = LIFEPATH();
   const la = LP ? (() => { try { return LP.age(c.id); } catch (e) { return null; } })() : null;
   const clk = LP ? (() => { try { return LP.clock(); } catch (e) { return null; } })() : null;
@@ -327,6 +331,18 @@ export function factsOf(C, id) {
        and the row simply carries the general warning. */
     const dist = (LP && typeof LP.distribution === 'function')
       ? (() => { try { return LP.distribution(); } catch (e) { return null; } })() : null;
+    /* 🪦 …and whether anybody on this roster ever leaves it, which this row
+       used to state as a FLAT FACT ("no named citizen ever dies, retires off
+       the roster or leaves"). That sentence was true when it was written and
+       became a lie the round the roster got a removal verb — printed, in the
+       panel, thirty lines above the citizen's own "Somewhere to be buried"
+       mood term. It is now a READ off /src/lifepath, which reads the layer
+       that actually does the retiring, so this row cannot go stale again.
+       An older /src/lifepath with no `mortality` answers nothing and the row
+       falls back to the original sentence — correct for that build, because a
+       build without the module is a build without the verb driving it. */
+    const mort = (LP && typeof LP.mortality === 'function')
+      ? (() => { try { return LP.mortality(); } catch (e) { return null; } })() : null;
     citizenRows.push(row('Age', '≈ ' + la.whole + ' years · ' + la.bandIco + ' ' + la.bandLabel,
       'SAMPLED, not recorded — the roster still carries no age. /src/lifepath deals every named ' +
       'citizen into the city’s OWN age pyramid (MythicDemographics.report().ages, children ' +
@@ -340,12 +356,31 @@ export function factsOf(C, id) {
       (la.pastExpectancy ? '; they are past the ' + clk.lifeExpectancy.toFixed(0) +
         '-year life expectancy the same table derives, which is a real state and not a fault' : '') +
       /* ⚠ THE DRIFT, AND IT IS NOT A FOOTNOTE. Without this sentence the row
-         above claims the roster matches the city's pyramid, which is true for
-         about three hours of play and false for ever after. */
+         above claims the roster matches the city's pyramid, which is true at
+         the moment of the deal and drifts afterwards.
+         🔴 THE CAUSE CLAUSE IS SOURCED, NOT TYPED. What follows the colon used
+            to be the words "no named citizen ever dies, retires off the roster
+            or leaves" — hard-coded here AND appended a second time from
+            /src/lifepath's own drift line, so the panel said it twice. It now
+            comes from mortality().note in both places, which means the two
+            sentences in this row cannot contradict each other and neither can
+            contradict the mood term for Deathcare printed under them. */
       '. ⚠ THE DEAL MATCHED THE CITY’S PYRAMID TO WITHIN ONE PERSON WHEN IT WAS MADE, AND DRIFTS ' +
-      'AFTERWARDS: no named citizen ever dies, retires off the roster or leaves, so they all age ' +
-      'together on one clock while the city’s own pyramid does not follow them. About three real ' +
-      'hours of play is enough to put the largest band outside that one-person bound' +
+      'AFTERWARDS: ' +
+      (mort && mort.ok
+        ? mort.note + (mort.live
+            ? '. The deal is only re-made when somebody new is dealt in, so the bound is a claim ' +
+              'about that moment and not about the hours between them'
+            /* ⚠ THE THREE-HOUR FIGURE BELONGS TO THE NO-EXIT ROSTER AND ONLY TO
+               IT. It is /src/lifepath distribution()'s measured table (static
+               roster of 40, first breach at +3 h), so it is quoted where that
+               table applies and dropped where it does not — a real measurement
+               attached to the wrong city is worse than no measurement. */
+            : '. About three real hours of play is enough to put the largest band outside that ' +
+              'one-person bound')
+        : 'no named citizen dies, retires off the roster or leaves, so they all age together on ' +
+          'one clock while the city’s own pyramid does not follow them. About three real hours ' +
+          'of play is enough to put the largest band outside that one-person bound') +
       (dist && dist.ok && dist.drift ? ', and it is outside it now — ' + dist.drift : '')));
   } else {
     citizenRows.push(unav('Age',

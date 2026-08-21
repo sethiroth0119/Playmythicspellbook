@@ -62,6 +62,17 @@ export const LAYERS = [
     sub: [['lvFlow', 'Electricity Flow'], ['lvChoke', 'Bottleneck']] },
   { id: 'hv',           group: 'network',  sw: 'hv',          label: 'High Voltage Power Lines',
     sub: [['hvFlow', 'Electricity Flow'], ['hvChoke', 'Bottleneck']] },
+  /* 🗼 THE ONE ROW IN THIS LEGEND THAT IS NOT AN OVERLAY COLOUR. Every other
+     layer here tints the canvas plane; this one switches the actual 3D poles
+     and wire that lines.js builds. It belongs in the legend anyway, for the
+     reason /src/water's `pipes` row belongs in its own: the cable is the only
+     thing in this panel THE PLAYER PUT THERE, and an editing surface needs a
+     way to be kept up after the tool that draws it has been put away.
+     ⚠ DEFAULT OFF, unlike lv/hv. That is the whole ask this round answers — a
+       wire is a thing you go and look at, not a permanent decoration over the
+       city. The line tool switches it on for itself while it is armed
+       (lines.js syncVisible), and this row is how the player pins it. */
+  { id: 'wires',        group: 'network',  sw: 'wire',        label: 'Power Line Poles & Wires' },
   /* ☁ OURS, and named for what it actually is. A row called "Air Pollution"
      would promise a dispersion model this module does not have and must not
      invent; "Emission Sources" promises exactly what it draws — how dirty each
@@ -86,7 +97,7 @@ const GROUP_LABEL = { building: 'Building color', network: 'Network color', terr
    layer at once is a colour soup, and the first read must be the one the panel
    is named after. */
 export const layers = { plants: true, transformers: false, batteries: false, demand: true,
-                        emit: false, lv: true, hv: true, wind: false, heat: false,
+                        emit: false, lv: true, hv: true, wires: false, wind: false, heat: false,
                         ground: false, surface: false };
 
 /* ── UNITS ──────────────────────────────────────────────────────────────────

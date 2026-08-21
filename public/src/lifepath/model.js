@@ -295,6 +295,13 @@ function DEMOG() {
 function ECONOMY() {
   try { const w = W(); return (w && w.MythicEconomy) || null; } catch (e) { return null; }
 }
+/* 🪦 /src/mortality — the layer that DRIVES the removal verb. Probed, never
+   assumed: this module still writes nothing, and everything below that used to
+   assert "nobody here ever dies" now ASKS instead. See mortality(). */
+function MORTALITY() {
+  try { const w = W(); const M = w && w.MythicMortality; return (M && typeof M.report === 'function') ? M : null; }
+  catch (e) { return null; }
+}
 
 /* ── state: the ONE stored field, plus whatever a newer build wrote ──────── */
 let STAMPS = Object.create(null);     // citizen id -> birth stamp, game.cityAge seconds
@@ -450,18 +457,35 @@ function yearInBand(clk, band, id) {
        makes — that a named person's age is theirs. A citizen who was 34 last
        time you opened the panel and is 61 now is not drift, it is a different
        person wearing the same name, and it is worse than the drift.
-     ⚠ REJECTED: ageing people out — retiring or killing a named citizen when
-       they pass the derived life expectancy, which is the only thing that would
-       genuinely fix it. It requires WRITING to the roster. This module is
+     ✅ CLOSED — ageing people out. This was carried here as a REJECTED item
+       for exactly one reason, and it was never "not worth it": retiring or
+       killing a named citizen requires WRITING to the roster, this module is
        read-only over every other layer by construction (see index.js: three
        read closures, not one writer), and a lifepath layer that deletes
        citizens is a second citizen store, which facts.js exists to refuse.
-       If the roster is ever given its own mortality it belongs in the citizens
-       layer that mints them, and this module would then simply be correct.
-     ⇒ SO IT IS DISCLOSED INSTEAD. distribution() reports whether the bound is
-       still met and says why not, and the Age row's source line tells the
-       player in one sentence that nobody here ever dies or leaves. An
-       undisclosed drift is a false claim; a disclosed one is a limitation. */
+       The note ended by naming where the verb would have to live instead —
+       "the citizens layer that mints them" — and that is where it was built:
+       node-city CITIZENS_API.retire(id, cause), driven by /src/mortality
+       against the city's own death rate, taking the OLDEST resident rather
+       than citEnsure()'s newest-first LIFO trim.
+       ⚠ NOTHING HERE CHANGED, AND THAT IS THE POINT. This module still writes
+         no roster and calls no verb; it is still read-only, and the closure of
+         the note is not a licence to start writing. The only thing it gained
+         is mortality() — a READ of whether that layer is present — because
+         every sentence downstream used to assert "nobody here ever dies" as a
+         constant and would have gone on printing it to the player in a city
+         where people demonstrably do.
+       ⚠ STAMPS ARE STILL CLEANED BY THIS FUNCTION, NOT BY THE KILLER. The
+         removal verb deliberately does not touch STAMPS; the block below drops
+         the stamp on the next seed() because the id is off the roster. Two
+         layers writing one table is the bug being avoided, and _citSeq never
+         reissues an id, so a dropped stamp can never be resurrected.
+     ⇒ DISCLOSURE REMAINS THE FALLBACK, NOT THE ANSWER. With /src/mortality
+       absent the roster is exactly the no-exit roster measured at
+       distribution(), so `drift` and the Age row still say so — sourced from
+       mortality().why rather than typed. An undisclosed drift is a false
+       claim; a disclosed one is a limitation; a disclosure that outlived its
+       cause is a false claim again. */
 export function seed() {
   const M = CITS();
   const clk = clock();
@@ -743,6 +767,62 @@ export function careerOf(id) {
   };
 }
 
+/* ── 🪦 IS THERE MORTALITY? ───────────────────────────────────────────────
+   🔴 THIS FUNCTION EXISTS BECAUSE THE ANSWER USED TO BE HARD-CODED. Every
+      sentence in this file that ended "…no named citizen ever dies, retires
+      off the roster or leaves" was true when it was written and is a LIE the
+      moment a removal verb exists. The fix is not to retype the opposite
+      sentence — that would be the same mistake with the sign flipped, and it
+      would be wrong in every build where /src/mortality 404s. It is to make
+      the claim a READ, so the panel says whichever of the two is true here.
+
+   TWO INDEPENDENT THINGS HAVE TO BE TRUE and they fail differently:
+     canRetire  the citizens layer exposes MythicCitizens.retire(id, cause).
+                That verb is node-city's (CITIZENS_API), i.e. the layer that
+                MINTS people — which is exactly where seed()'s rejection note
+                said it would have to live. Absent ⇒ nothing can leave the
+                roster except citEnsure()'s LIFO trim, and the old sentence is
+                still the true one.
+     live       /src/mortality is mounted and driving it. The verb existing
+                and nobody calling it looks identical from here and is not the
+                same city, so it is reported separately rather than folded in.
+
+   ⚠ STILL READ-ONLY. This module does not call retire() and must not: two
+     layers writing one roster is the second-citizen-store bug facts.js exists
+     to refuse. What changed is only that the disclosure is now sourced. */
+export function mortality() {
+  const M = CITS();
+  const canRetire = !!(M && typeof M.retire === 'function');
+  const mo = MORTALITY();
+  let rep = null;
+  if (mo) { try { rep = mo.report(); } catch (e) { rep = null; } }
+  const live = !!(canRetire && rep && rep.ok);
+  /* Deaths are the mortality layer's lifetime counter, not anything derived
+     here. Null — never 0 — when it cannot be asked, because "no deaths yet"
+     and "no death model" are different cities and 0 reads as the first. */
+  const deaths = live && Number.isFinite(+rep.deaths) ? +rep.deaths : null;
+  const why = canRetire
+    ? (live ? null
+            : (mo ? '/src/mortality is loaded but not mounted, so nothing is calling the verb'
+                  : 'the roster can be retired (MythicCitizens.retire) but /src/mortality is not mounted, so nothing is driving it'))
+    : 'the citizens layer exposes no removal verb, so nobody can be taken off the roster at all';
+  /* The one sentence every consumer of this file wants, written once here so
+     the Age row, the drift line and any driver all quote the SAME words.
+     Present tense both ways — it is a statement about this city right now. */
+  const note = live
+    ? 'named citizens now die: /src/mortality retires the OLDEST resident (never citEnsure()’s ' +
+      'newest-first trim, which is emigration) as the city’s own death rate falls due' +
+      (deaths != null ? ', ' + (deaths >= 1 ? deaths.toFixed(0) + ' so far in this city' : 'none yet in this city') : '')
+    : 'no named citizen dies, retires off the roster or leaves, so they all age together on one ' +
+      'clock while the city’s own pyramid does not follow them' +
+      /* The reason is only worth a clause when it is NEWS. "there is no verb"
+         is the same statement the sentence just made; "the verb exists and
+         nothing is calling it" is a different city and the player should be
+         told which one they are in. */
+      (canRetire ? ' — ' + why : '');
+  return { ok: true, canRetire, live, deaths, why, note };
+}
+
 /* ── 📊 THE PROOF SEAM ────────────────────────────────────────────────────
    Both distributions, side by side, so "these ages match the city's pyramid"
    is falsifiable rather than asserted. `dev` is the largest share deviation
@@ -764,13 +844,13 @@ export function careerOf(id) {
       0.77% against 2.50% at n = 40. That run is .gauntlet/critlife-2-dist.mjs
       and it is the number to cite.
 
-   🔴 …AND THE BOUND IS ONLY MET AT t = 0. THIS IS STRUCTURAL AND IT IS FAST.
-      Nobody on the named roster ever dies, retires off it, or leaves: citEnsure
-      trims only when cityPop() shrinks and pops from the END, so the people who
-      never go are exactly the ones dealt first. Meanwhile every stamp ages on
-      one live clock. So the roster reproduces the pyramid at the instant each
-      person was dealt into it and drifts from it for ever after. Static roster
-      of 40, live clock, nothing else touched:
+   🔴 …AND THE BOUND WAS ONLY MET AT t = 0, UNTIL THE ROSTER GOT MORTALITY.
+      READ THIS TABLE AS HISTORY, NOT AS A STANDING CLAIM. It measures a roster
+      with NO EXIT: citEnsure trims only when cityPop() shrinks and pops from
+      the END, so the people who never went were exactly the ones dealt first,
+      while every stamp aged on one live clock. That is still the shape of any
+      build where /src/mortality is absent, which is why the numbers stay here.
+      Static roster of 40, live clock, nothing else touched:
 
           real hours   0     2     3      24      80        400
           max dev      0.77% 0.77% 2.63%  10.77%  25.77%    85.13%
@@ -780,13 +860,19 @@ export function careerOf(id) {
       At +80 h the roster holds ZERO young adults against a city reporting
       25.8%; at +400 h it is 39/40 senior with 30 of them past the life
       expectancy the same derivation produces; at +100 y every named citizen is
-      119–178 years old. Three hours is one evening of play, so this is not a
-      slow burn and it is not a corner.
-      THE FIX IS DISCLOSURE, ARGUED AT seed(): re-dealing and ageing-out were
-      both considered and both rejected there for reasons that are not about
-      effort. So this seam REPORTS it — `withinBound` and `drift` below — and
-      the Age row's source line says it in one sentence to the player. The seam
-      that exists to make a claim falsifiable has to be willing to falsify it. */
+      119–178 years old. Three hours is one evening of play, so this was not a
+      slow burn and it was not a corner.
+
+   ✅ AND THAT IS THE ROW THAT GOT BUILT. seed() rejected ageing-out on the
+      grounds that it needs a WRITER and this module is read-only — and said
+      where the writer would have to live: "the citizens layer that mints
+      them". It now lives there (node-city CITIZENS_API.retire), /src/mortality
+      drives it against the city's own death rate, and it takes the OLDEST
+      resident rather than citEnsure()'s newest. So the mechanism that made
+      this table inevitable is gone, and the honest report is no longer one
+      fixed sentence. `drift` below ASKS mortality() which city this is and
+      says the true one; it never asserts either. A disclosure that has stopped
+      being true is just a false claim with a warning triangle on it. */
 export function distribution() {
   const clk = clock();
   if (!clk.ok) return { ok: false, why: clk.why };
@@ -818,8 +904,9 @@ export function distribution() {
 
   /* The claim, and whether it currently holds. `bound` was already reported;
      what was missing was anybody saying out loud when it stops being met, and
-     WHY it stops — the reason is never sampling error, it is always ageing on a
-     roster nobody ever leaves. See the header block. */
+     WHY it stops — the reason is never sampling error, it is ageing between
+     deals. Which KIND of ageing depends on whether this build has mortality,
+     so `cause` below reads it rather than naming one. See the header block. */
   const bound = n > 0 ? 1 / n : null;
   const withinBound = (tgt.ok && n > 0) ? dev <= bound : null;
   /* ⚠ NOT ages[ages.length - 1]: `ages` is in ROSTER order here and is not
@@ -827,12 +914,26 @@ export function distribution() {
      to be last on the roster and called them the oldest. */
   let oldest = null;
   for (const y of ages) if (oldest == null || y > oldest) oldest = y;
+  /* ⚠ THE CAUSE CLAUSE IS A READ, NOT A CONSTANT. It used to end "…no named
+     citizen ever dies, retires off the roster or leaves", which was the true
+     explanation right up until the roster was given a removal verb and would
+     have gone on being printed, in the player's face, for ever after. With
+     mortality live the drift is real but its cause is different — the oldest
+     leave, the frame moves faster than they do, and new arrivals are dealt
+     against the frame as it stands — so the sentence says THAT instead. */
+  const mo = mortality();
+  const cause = mo.live
+    ? 'the oldest residents are now retired off the roster by /src/mortality' +
+      (mo.deaths != null && mo.deaths >= 1 ? ' (' + mo.deaths.toFixed(0) + ' deaths so far)' : '') +
+      ', so this is lag rather than a one-way slide: the deal is only re-made when somebody ' +
+      'new is dealt in, and the city’s pyramid moves between those moments'
+    : 'no named citizen dies, retires off the roster or leaves, so they simply age together and ' +
+      'the pyramid moves without them — ' + mo.why;
   const drift = withinBound === false
     ? 'the roster no longer reproduces the city’s pyramid: the largest band is out by ' +
       (dev * 100).toFixed(2) + '% against a one-person bound of ' + (bound * 100).toFixed(2) +
       '%. Hamilton apportionment met that bound when these people were dealt; it says nothing ' +
-      'about afterwards, and no named citizen ever dies, retires off the roster or leaves, so ' +
-      'they simply age together and the pyramid moves without them' +
+      'about afterwards, and ' + cause +
       (oldest != null ? ' (the oldest is now ' + oldest.toFixed(1) + ')' : '')
     : null;
 

@@ -84,6 +84,41 @@ export function roadTypes() {
   return [ROAD_TYPE];
 }
 
+/** 🪦 Every carriageway type a player may still LAY — the subset of
+    roadTypes() with the host's `retired` flag removed.
+
+    ⚠ THIS IS A DIFFERENT QUESTION FROM roadTypes(), and mixing them up is how
+      the Lane became a research reward for a building with no affordance.
+
+        roadTypes()           what counts as a carriageway. Asked of TILES —
+                              rendering, the maintenance cap, zoning bounds, the
+                              cable graph, demolition. Its answer may only ever
+                              GROW: a type is written verbatim into every save
+                              and a save is never stranded.
+        buildableRoadTypes()  what may still be OFFERED. Asked by anything that
+                              puts a carriageway in front of the player — today
+                              that is the research tree's unlock list, and
+                              'absent ⇒ open' means listing one there is what
+                              LOCKS it, so a type that can be built and is not
+                              listed is the cheap way around the trunk node.
+                              Its answer may shrink, and has.
+
+    🔒 FAILS OPEN IN THE SAFE DIRECTION, TWICE. An older host with no
+    `buildable()` on the hand-over falls back to roadTypes() — i.e. to the
+    pre-retirement behaviour, gating everything, which costs a player nothing
+    and closes the trunk-node loophole. No host at all falls back to ['road'].
+    Never returns empty: an empty unlock list would ungate every carriageway. */
+export function buildableRoadTypes() {
+  const h = host();
+  try {
+    if (h && typeof h.buildable === 'function') {
+      const l = h.buildable();
+      if (Array.isArray(l) && l.length) return l.slice();
+    }
+  } catch (e) {}
+  return roadTypes();
+}
+
 /* The same question asked of a bare type string, for the host seams that
    genuinely only have one (serialize's whitelist, the buildMesh dispatch, the
    construction-timer exemption). Deliberately separate from isRoadTile so a
@@ -118,4 +153,4 @@ export function roadClassOf(type) {
   return isRoadType(type) ? { id: type, name: 'Road', ico: '🛤️' } : null;
 }
 
-export default { ROAD_TYPE, roadTypes, isRoadTile, isRoadType, roadClassOf };
+export default { ROAD_TYPE, roadTypes, buildableRoadTypes, isRoadTile, isRoadType, roadClassOf };

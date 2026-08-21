@@ -276,8 +276,32 @@ export function load(blob) {
    utility. Geometries created here are disposed on the next rebuild — nothing
    is stamped `userData.owned`, because these are OURS and never pass through
    node-city's dropTileMesh.
+
+   ── 👁 TWO GROUPS, AND THE SPLIT IS THE WHOLE POINT OF IT ────────────────────
+   `G`  the CABLE — poles and wire. GATED. Visible only while the line tool is
+        armed or the panel's "Power Line Poles & Wires" layer is switched on.
+   `GC` the GRID CONNECTOR. NEVER gated, added straight to the scene.
+
+   The gate is /src/water/netui.js's syncVisible() copied deliberately rather
+   than reinvented: `visible = armed || (layerOn && count > 0)`. Its argument is
+   the one that applies here word for word — the other power layers are an INFO
+   VIEW, a mode the player enters and leaves, but a cable run is an EDITING
+   SURFACE, and a player dragging a run has to see the run they are dragging
+   onto. So it is gated on the TOOL, not on the panel: closing the panel to get
+   the cable back would make the tool unusable.
+
+   🔴 AND THE CONNECTOR COMES OUT OF THE GATED GROUP, which is not tidiness.
+      seeds() makes the connector conductive whether or not one cell of cable
+      exists, so on a fresh city it is the ONLY instruction the feature gives —
+      "run a line to the tower on the north-west verge". A connector that only
+      appeared once the player had already drawn a line to it would be an
+      instruction that is invisible until it has been obeyed. It is a permanent
+      piece of the map, in the same standing as /src/outside's highway: it was
+      already there. verify() asserts it is not parented to `G`, because moving
+      one `add()` call back would re-hide it and every gate in this file would
+      still pass.
    ════════════════════════════════════════════════════════════════════════════ */
-let G = null, poles = null, wires = null, poleGeo = null, wireGeo = null;
+let G = null, GC = null, poles = null, wires = null, poleGeo = null, wireGeo = null;
 let MAT = null;
 const wx = (x) => x - HALF + 0.5;
 const wz = (z) => z - HALF + 0.5;
@@ -321,12 +345,38 @@ function poleAt(x, z, set) {
   return ((x + z) & 1) === 0;                     // every other cell of a straight run
 }
 
+/* ── THE GATE ───────────────────────────────────────────────────────────────
+   `layerOn` is the panel's `wires` checkbox, pushed in by index.js's refresh()
+   BEFORE its Panel.isOpen() early-out — exactly where water/index.js pushes
+   `Panel.layers.pipes` into netui.js, and for the identical reason: this one
+   surface must keep answering after the panel closes.
+   ⚠ `count > 0` matters. Without it a city with no cable and the layer on shows
+     an empty group, which is harmless — but the same expression with the layer
+     OFF and the tool armed is what makes an armed tool over an empty city show
+     the preview against a clean map, and the two halves are read together. */
+let layerOn = false;
+
+function syncVisible() {
+  if (G) G.visible = armed || (layerOn && cells.size > 0);
+}
+/* Pushed by index.js on every refresh; also the seam the panel checkbox reaches
+   this file through. Idempotent and free — it is a boolean and one compare. */
+export function syncLayer(on) {
+  layerOn = !!on;
+  syncVisible();
+}
+export function layerVisible() { return !!(G && G.visible); }
+
 function rebuild() {
   if (!mounted || !T || !G) return;
   if (poles) { G.remove(poles); poles = null; }
   if (wires) { G.remove(wires); wires = null; }
   if (poleGeo) { poleGeo.dispose(); poleGeo = null; }
   if (wireGeo) { wireGeo.dispose(); wireGeo = null; }
+  /* Before the early-out, not after it: the gate reads cells.size, and a run
+     the player just lifted back to nothing has to hide the group on the way
+     past rather than leave it showing an empty one. */
+  syncVisible();
   if (!cells.size) return;
 
   const L = POWER.lines, y0 = L.y;
@@ -534,8 +584,15 @@ export function mount(h, hooks) {
     makeMaterials();
     G = new T.Group();
     G.name = 'mythic-power-lines';
+    G.visible = false;          // gated from the first frame; syncVisible owns it hereafter
     h.scene.add(G);
-    G.add(buildConnector());
+    /* 🗼 THE CONNECTOR IS ITS OWN GROUP AND IS NEVER GATED — see the note at the
+       head of THE MESH. It is added to the SCENE, not to `G`; the one-line
+       difference is the whole reason a fresh city can be told where to draw. */
+    GC = new T.Group();
+    GC.name = 'mythic-power-connector';
+    GC.add(buildConnector());
+    h.scene.add(GC);
     rebuild();
   } catch (e) { warn('mesh mount failed: ' + (e && e.message)); }
 
@@ -634,6 +691,10 @@ export function setArmed(v) {
     if (held && !was) say('🗼 Power line tool armed — the building you were holding was put back. Press Esc, or pick a building again, to build.', 'good');
   }
   if (!armed) { drag = null; preview(null, false); releaseControls(); }
+  /* 👁 The cable follows the tool. This is the ONE line that makes "wires appear
+     when you go to look at them" true, and it has to run on BOTH edges — arming
+     shows the run the player is about to extend, disarming puts it away. */
+  syncVisible();
   paintBtn();
   return armed;
 }
@@ -646,9 +707,17 @@ export function isArmed() { return armed; }
 function standDown(reason) {
   if (!armed && !drag) return;
   armed = false; drag = null;
-  preview(null, false); releaseControls(); paintBtn();
+  preview(null, false); releaseControls(); syncVisible(); paintBtn();
   const who = reason && (reason.name || reason.label);
-  say('🗼 Power lines put away' + (who ? ' — you picked ' + who : '') + '. Click 🗼 Lines to draw cable again.', 'good');
+  /* 👁 …and the toast SAYS the cable went, because it did. rig.js's rule is that
+     a stand-down ends in something the player can see; now that standing down
+     also hides a layer, a stand-down that did not name that would be the player
+     watching their network vanish and blaming the build. */
+  const hidden = cells.size > 0 && !layerOn;
+  say('🗼 Power lines put away' + (who ? ' — you picked ' + who : '') + '. Click 🗼 Lines to draw cable again' +
+      /* ⚠ PLAIN TEXT. node-city's toast() assigns textContent, so markup here
+         would be printed at the player as literal angle brackets. */
+      (hidden ? ' — your cable is still there; switch on “Power Line Poles & Wires” in the ⚡ panel to keep it in view.' : '.'), 'good');
 }
 
 function say(msg, kind) { try { if (C && C.toast) C.toast(msg, kind || 'good'); } catch (e) {} }
@@ -788,8 +857,15 @@ async function mountTool() {
            /* `cancel` is the mid-gesture case: the arbiter hands the seat away
               while a drag is in flight. Releasing OrbitControls here is not
               cosmetic — a tool that stands down holding `controls.enabled =
-              false` kills the camera for the rest of the session. */
-           cancel: () => { drag = null; preview(null, false); releaseControls(); } });
+              false` kills the camera for the rest of the session.
+              👁 syncVisible() rides along so that EVERY exit from a gesture
+              leaves the group agreeing with the flags. rig.js calls cancel()
+              before standDown(), so `armed` is usually still true here and this
+              call is a no-op — but it is the only exit that does not go through
+              setArmed/standDown, and "the one path that forgot" is exactly how
+              the camera bug this handler exists for got written in the first
+              place. Idempotent: it is a boolean and one compare. */
+           cancel: () => { drag = null; preview(null, false); releaseControls(); syncVisible(); } });
   /* Registered ONCE by whichever module gets there first; a second call is a
      no-op that returns true, so neither this file nor /src/netdrag has to know
      which of them mounted earlier. */
@@ -813,5 +889,13 @@ export function verify() {
   if (onPlate(CONN.x, CONN.z)) v.push('connector cell ' + K(CONN.x, CONN.z) + ' sits ON the buildable plate; it must stand on the verge');
   if (!conductors().has(K(CONN.x, CONN.z))) v.push('connector cell is not a conductor');
   if (!(pw('lines.costPerCell', 0) > 0)) v.push('lines.costPerCell is not a positive price');
-  return { ok: !v.length, violations: v, connector: K(CONN.x, CONN.z), cells: cells.size };
+  /* 👁 THE GATE'S OWN INVARIANT. Moving one `add()` call would put the Grid
+     Connector back inside the gated group, and every other check in this file —
+     and both syntax gates — would still pass while a fresh city lost the only
+     landmark the feature's instruction refers to. So it is asserted, not
+     assumed: the connector's group must be parented to the SCENE. */
+  if (GC && G && GC.parent === G) v.push('the Grid Connector is parented to the gated cable group; it must be added to the scene so it is never hidden');
+  if (G && GC && G.visible !== (armed || (layerOn && cells.size > 0))) v.push('cable group visibility disagrees with the gate (armed=' + armed + ', layer=' + layerOn + ', cells=' + cells.size + ')');
+  return { ok: !v.length, violations: v, connector: K(CONN.x, CONN.z), cells: cells.size,
+           gate: { armed, layerOn, visible: !!(G && G.visible), connectorGated: !!(GC && G && GC.parent === G) } };
 }

@@ -69,6 +69,7 @@ import * as Panel from './panel.js';
 import * as Overlay from './overlay.js';
 import * as Net from './network.js';
 import * as NetUI from './netui.js';
+import * as Drain from './drain.js';
 
 let mounted = false;
 let grid = 24;
@@ -158,6 +159,38 @@ function shoreColumn(z) {
   return Math.max(0, Math.min(g - 1, first));
 }
 
+/* ════════════════════════════════════════════════════════════════════════════
+   🌊 IS THIS CELL IN THE OCEAN? — the SEA-ONLY question, and it is a different
+   question from openWaterAt() above.
+   ----------------------------------------------------------------------------
+   openWaterAt answers "can waste leave from here", and it has three rules and a
+   fallback (sea → river/lake → the channel off the map edge) precisely so that
+   it is ALWAYS SATISFIABLE. That is what makes the Sewer Outfall safe to have
+   shipped, and it is why it cannot be narrowed now: outfalls stand on river
+   banks in saves already written.
+
+   THIS one answers "is this cell water", with no fallback and no second chance,
+   for the Sea Drain — a NEW endpoint no existing city can be holding, so a
+   strictly stronger rule breaks nothing. It is delegated whole to
+   window.MythicOcean.isSea, the predicate /src/ocean exports and that
+   node-city's perimeterScenery and /src/wild already consult. There is no
+   coastline arithmetic here: the only line below is node-city's own frame
+   conversion (`world = cell − HALF + 0.5`), written on adjacent lines the way
+   /src/ocean writes it.
+   ⚠ ABSENT ⇒ FALSE. /src/ocean's isSea already answers false for everything when
+     the layer refused to draw ("a module that did not draw the sea must not be
+     able to delete the outskirts"), and that is the direction we want: a drain
+     that cannot prove it is in water treats nothing, and drain.js says why.
+   ════════════════════════════════════════════════════════════════════════════ */
+const wOf = (t) => t - grid / 2 + 0.5;
+function seaCellAt(x, z) {
+  try {
+    const O = (typeof window !== 'undefined') && window.MythicOcean;
+    if (!O || typeof O.isSea !== 'function') return false;
+    return !!O.isSea(wOf(Number(x) || 0), wOf(Number(z) || 0), WATER.sewer.drain.margin);
+  } catch (e) { return false; }
+}
+
 function openWaterAt(x, z) {
   try { if (seaHere(x, z)) return true; } catch (e) { /* fall through */ }
   try { if (H().surfaceAt(x, z) >= WATER.sewer.minFlow) return true; } catch (e) {}
@@ -211,6 +244,12 @@ const API = {
       if (h && h.grid) grid = h.grid | 0;
       if (h && h.cityId != null) setCityId(h.cityId);
       Net.setCity(cityId);
+      /* 🌊 THE PIPE DOMAIN GROWS EAST BEFORE ANYTHING IS LOADED INTO IT. A main
+         has to be able to cross the shoreline or a land district could never
+         reach a Sea Drain as ONE component — which is the whole assertion this
+         round makes. Set here, before load(), because network.js DROPS
+         out-of-domain cells on load rather than clamping them. */
+      Net.setDomain(WATER.sewer.drain.apron);
       Panel.mount(h, { onLayers: () => { Overlay.repaintNext(); NetUI.repaintNext(); refresh(); }, close: () => API.closePanel() });
       Overlay.mount(h);
       /* 🚰 THE PIPE TOOL. Everything DOM- and THREE-shaped about the mains lives
@@ -226,6 +265,17 @@ const API = {
         netState: () => net,
         onEdit: () => { NetUI.repaintNext(); refresh(); },
       });
+      /* 🌊 THE SEA DRAIN. Same split as the mains: network.js holds the cells
+         and folds them into the one per-component sewer solve; drain.js owns the
+         pointer, the money and the headwall you can see. Mounted AFTER NetUI so
+         the two claims on rig.js land in a stable order, and handed the same
+         api object so neither can be told about an edit the graph did not make. */
+      Drain.mount(h, {
+        Net,
+        grid: () => grid,
+        netState: () => net,
+        onEdit: () => { NetUI.repaintNext(); refresh(); },
+      });
       /* 💾 THE SAVE SLICE RIDES THE SHELF, so node-city's serialize() literal is
          not touched — the whole point of window.MythicCitySave (see
          /src/naming/save.js: "every one of those edits is a merge conflict and a
@@ -235,7 +285,14 @@ const API = {
       try {
         const shelf = (typeof window !== 'undefined') && window.MythicCitySave;
         if (shelf && shelf.register) {
-          shelf.register('waterMains', { save: () => Net.save(), load: (b) => { Net.load(b); NetUI.repaintNext(); } });
+          /* 🌊 THE SAME SLICE CARRIES THE DRAINS. One key, one cityId guard, one
+             refusal — a second slice would be a second thing that can be
+             restored into the wrong city, and the drains are meaningless without
+             the pipes that reach them. `d` is written only when there is one, so
+             its ABSENCE is its version stamp and every save written before this
+             round loads as "no drains", which is what it is. */
+          shelf.register('waterMains', { save: () => Net.save(),
+                                         load: (b) => { Net.load(b, grid); NetUI.repaintNext(); Drain.syncMeshes(); } });
         } else {
           warnOnce('no MythicCitySave — the pipe network will not persist this session');
         }
@@ -272,10 +329,23 @@ const API = {
         const at = H().basinAt(Number(x) || 0, Number(z) || 0);
         if (!at) {
           const b = nearestBasin(Number(x) || 0, Number(z) || 0);
+          /* 🗺 …AND THE RESOURCE MAP, WHEN IT IS THERE. Same field, same
+             `groundAt`, drawn beside the ore and the fertile land — /src/resmap
+             reads THIS module's endowment rather than rolling a second one, so
+             pointing at it cannot send the player to a map that disagrees with
+             this refusal. Guarded and additive: with no /src/resmap the message
+             is exactly what it was, which is why it is appended rather than
+             substituted. */
+          let alsoMap = '';
+          try {
+            if (typeof window !== 'undefined' && window.MythicResourceMap && window.MythicResourceMap.ready())
+              alsoMap = ' The 🗺 Resources map (M) draws the same aquifers beside everything else in the ground.';
+          } catch (e) {}
           return '🕳 ' + name + ' pumps groundwater and there is none under this tile. ' +
             (b ? 'The nearest is the ' + b.name + ' basin, centred near ' + b.x + ',' + b.z + ' — '
                : '') +
-            'open 💧 Water and switch on “Groundwater Deposits”: every tile the layer paints is a legal site.';
+            'open 💧 Water and switch on “Groundwater Deposits”: every tile the layer paints is a legal site.' +
+            alsoMap;
         }
       }
       if (req.openWater) {
@@ -299,8 +369,58 @@ const API = {
             'Failing both, the outermost row of tiles discharges off the plate.';
         }
       }
+      /* 🌊 `seaOnly` — the strictest siting rule in the subsystem, and it is on
+         this gate rather than in a second one so that the day a BUILDINGS row
+         wants it (a pier head, a rig) it is one flag on one row and this file
+         does not change. Nothing on the shelf carries it today: the Sea Drain is
+         a module-owned structure precisely BECAUSE tryPlace cannot reach the
+         water (see drain.js's header and WATER.sewer.drain for the measurement),
+         so this leg is the seam and not the customer.
+         ⚠ It asks MythicOcean.isSea like everything else here. No second
+           coastline, on this path either. */
+      if (req.seaOnly) {
+        const xx = Number(x) || 0, zz = Number(z) || 0;
+        if (!seaCellAt(xx, zz)) {
+          return '🌊 ' + name + ' has to stand in open water and this cell is dry land. ' +
+            'Open 💧 Water and switch on “Water Mains” to see how far your pipes reach, ' +
+            'then place it out past the shoreline.';
+        }
+      }
       return null;
     } catch (e) { return null; }   // a gate that throws must not block a build
+  },
+
+  /* ════════════════════════════════════════════════════════════════════════
+     🌊 WHY A CLICK OUT THERE DID NOTHING — the message the shoreline was
+     missing.
+     ----------------------------------------------------------------------------
+     node-city's pointerup does `const t = tileFromEvent(ev); if (!t) return;`,
+     so a player who is holding a building and clicks the sea gets SILENCE. That
+     is the same class of defect /src/zoning's header records and rig.js was
+     built to stop — "the worst class of UI bug: the player blames themselves" —
+     and it got worse the moment this round put something out there worth
+     clicking on.
+     Returns a sentence for a cell that is off the plate but inside the apron,
+     and null for everything else (a click into open space beyond the apron is
+     just a miss, and a toast for every stray click is noise). The host calls
+     this only in `place` mode.
+     ════════════════════════════════════════════════════════════════════════ */
+  placeRefusal(x, z, name) {
+    try {
+      const xx = Number(x) || 0, zz = Number(z) || 0;
+      const g = grid | 0;
+      if (xx >= 0 && zz >= 0 && xx <= g - 1 && zz <= g - 1) return null;   // on the plate; not ours
+      if (zz < 0 || zz > g - 1) return null;
+      const A = Drain.apron();
+      if (xx < g || xx > g - 1 + A) return null;
+      const what = name ? String(name) : 'Buildings';
+      if (seaCellAt(xx, zz)) {
+        return '🌊 That is the ocean. ' + what + ' cannot be built on water — the city stops at the shoreline. ' +
+               'What DOES go out there is a 🌊 Sea Drain: place one, then drag 🚰 Pipes east to reach it.';
+      }
+      return '🌊 That is off the map. The buildable city is the plate; the strip beyond it is the beach and ' +
+             'then the sea. Build on the last columns of the map to be on the waterfront.';
+    } catch (e) { return null; }
   },
 
   /* ── THE TICK. node-city's water pre-pass calls this and applies
@@ -329,6 +449,14 @@ const API = {
         homes: snapshot.homes, outfalls: snapshot.outfalls,
         drink: dk.drink,
         openWater: openWaterAt,
+        /* 🌊 TWO PREDICATES, TWO QUESTIONS, HANDED OVER SEPARATELY. `openWater`
+           is the Sewer Outfall's always-satisfiable rule; `sea` is the Sea
+           Drain's absolute one. Passing one for both would either let a drain
+           live on the map edge (and the picture would show it standing on dry
+           grass) or refuse an outfall on a river bank in a save already
+           written. network.js never asks which is which — it asks the row's own
+           predicate, once, in one loop. */
+        sea: seaCellAt,
       });
       const s = Hydro.solve({ ...snapshot, cityId, grid, net });
       if (!s || !s.ok) { warnOnce((s && s.why) || 'solve refused'); state = s || null; return null; }
@@ -481,13 +609,20 @@ const API = {
         One walk, one reading: `demand.reached` is set by the same pass that
         sets `served`, in network.js, and both the panel and this API read it. */
   mains() {
-    if (!net) return { plumbed: false, pipes: Net.count(), parts: 0, reach: 1,
+    if (!net) return { plumbed: false, pipes: Net.count(), drains: Net.drainCount(), drainsLive: 0,
+                       parts: 0, reach: 1,
                        backup: 0, sewer: 1, load: 0, treated: 0, capacity: 0,
                        unserved: 0, unservedTiles: 0, governed: 0 };
     const d = net.demand;
     return {
       plumbed: net.plumbed,
       pipes: net.pipes,
+      /* 🌊 Both numbers, written out (see the NO SPREAD note above): how many
+         drains the player has paid for, and how many are actually in the water
+         AND on a main. A consumer that only got the first would report a city
+         with three unreachable drains as having three drains' worth of sewer. */
+      drains: net.drains,
+      drainsLive: net.drainsLive,
       parts: net.components,
       reach: d.total > 0 ? d.reached / d.total : 1,
       backup: net.backup,
@@ -546,6 +681,59 @@ const API = {
     remove(list) { const n = Net.remove(list); if (n) { NetUI.repaintNext(); refresh(); } return n; },
     components: () => Net.components(),
     tool: (v) => NetUI.arm(v),
+    /* The pipe DOMAIN, so a driver (or a future dock) can ask how far east a run
+       may go without re-deriving the apron. */
+    domain: () => Net.domain(grid),
+  },
+
+  /* ════════════════════════════════════════════════════════════════════════
+     🌊 THE SEA DRAINS. Same seam as `pipes` above and for the same reason: edits
+     go through here so the graph, the structures, the overlay and the save can
+     never be told about a change one of them did not make.
+     ⚠ `add` IS THE FREE PATH AND IT IS FOR THE DRIVEN TEST AND THE LOADER ONLY.
+       The player's path is `place()`, which charges. Both are exposed because
+       network.js is deliberately node-importable and a test must be able to
+       build a city without a wallet — the same reason MythicWater.pipes.add
+       exists beside the pipe tool.
+     ════════════════════════════════════════════════════════════════════════ */
+  drains: {
+    count: () => Net.drainCount(),
+    keys: () => Net.drainKeys(),
+    has: (k) => Net.hasDrain(k),
+    add(list) { const n = Net.addDrain(list); if (n) { Drain.syncMeshes(); NetUI.repaintNext(); refresh(); } return n; },
+    remove(list) { const n = Net.removeDrain(list); if (n) { Drain.syncMeshes(); NetUI.repaintNext(); refresh(); } return n; },
+    /* The player's path: refuses, charges, builds and draws. Async — payCost is
+       an awaited bridge round trip. */
+    place: (x, z) => Drain.place(Number(x) || 0, Number(z) || 0),
+    lift: (x, z) => Drain.lift(Number(x) || 0, Number(z) || 0),
+    /* Why this cell is not legal, or null. The SAME function the tool and the
+       preview ghost use, so a refusal can never name a cell the ghost painted
+       green. */
+    refusalAt: (x, z) => Drain.refusalAt(Number(x) || 0, Number(z) || 0),
+    price: () => Drain.price(),
+    apron: () => Drain.apron(),
+    tool: (v) => Drain.arm(v),
+    /* The drawn structures — group, child counts and world bounding boxes — so a
+       driver measures the thing rather than believing a comment about it. */
+    structures: () => Drain.structures(),
+    verify: () => Drain.verify(),
+  },
+
+  /* 🌊 IS THIS CELL IN THE OCEAN? The one sea-only predicate, delegated whole to
+     MythicOcean.isSea. Exposed because the shoreline is about to have customers
+     — docks and beach houses — and every one of them must ask THIS rather than
+     grow a second coastline. `openWaterAt` beside it is the older, weaker "can
+     waste leave from here" and the two are deliberately not the same call. */
+  seaAtCell: (x, z) => seaCellAt(x, z),
+  /* …and its complement, for the buildings that must stand on LAND beside the
+     water rather than in it: on the plate, and not sea. A dock or a beach house
+     asks this; nothing has to know where the waterline is to use it. */
+  beachAt(x, z) {
+    const xx = Number(x) || 0, zz = Number(z) || 0;
+    const g = grid | 0;
+    if (xx < 0 || zz < 0 || xx > g - 1 || zz > g - 1) return false;
+    if (seaCellAt(xx, zz)) return false;
+    try { return !!seaHere(xx, zz); } catch (e) { return false; }
   },
 
   /* The optional PUSH path for /src/pollution. The primary path is a pull —

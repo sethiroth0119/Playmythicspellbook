@@ -65,7 +65,17 @@ const GROUP_LABEL = { terrain: 'Terrain color', building: 'Building color' };
    what is drinking it. Drawdown and consumption are diagnostics the player
    turns on when the meters tell them to — an info view that lights every layer
    at once is a colour soup and its first read says nothing. */
-export const layers = { aquifer: true, surface: true, stress: false, wells: true, draw: false, pipes: true };
+/* 🚰 `pipes` MOVED FROM true TO false, and it is a correction rather than a
+   retune. The gate in netui.js (`armed || (layerOn && count > 0)`) has been
+   right since it shipped, but this default handed it a layer that was always
+   on, so the mains were painted across the city from the first frame and the
+   gate could never be seen doing anything — which is exactly the report that
+   came back from play: "pipes show all the time". The row's own comment above
+   already describes it as how the player keeps the mains up AFTERWARDS; the
+   default is what was disagreeing with it. Now the tool shows the run while it
+   is being drawn, and this checkbox pins it. Same decision, same round, as
+   /src/power/panel.js's new `wires` row, so the two utilities read alike. */
+export const layers = { aquifer: true, surface: true, stress: false, wells: true, draw: false, pipes: false };
 
 /* ── UNITS ──────────────────────────────────────────────────────────────────
    node-city's water is an abstract per-minute ledger quantity. The panel speaks

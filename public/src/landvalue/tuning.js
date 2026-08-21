@@ -174,7 +174,22 @@ export const LV = {
             /src/power      y 0.060  renderOrder  ~4
             /src/water      y 0.075  renderOrder   4
             /src/pollution  y 0.090  renderOrder  13
-            /src/landvalue  y 0.105  renderOrder  14   ← this one, on top
+            /src/landvalue  y 0.105  renderOrder  14   ← this one
+            /src/tenants    y 0.115  renderOrder  15
+            /src/resmap     y 0.120  renderOrder  16   ← the resource map, on top
+        ⚠ THIS ONE IS NO LONGER THE TOP OF THE STACK, and the table is kept
+          up to date here rather than only in the new file for the reason the
+          🐞 below records: the next module to want a plane reads the FIRST of
+          these tables it finds, and a stale one is how two of them end up
+          coplanar again. /src/resmap took 0.120 by reading this list.
+        🐞 …AND THE LIST WAS ALREADY STALE WHEN IT DID. /src/tenants/overlay.js
+           has shipped `Y = 0.115, RENDER_ORDER = 15` since the tenant round and
+           was never added here, so /src/resmap read the bottom of this table,
+           claimed renderOrder 15, and collided with a plane the document did
+           not mention. Its row is now written in, and the resource round's
+           driven test enumerates the live scene graph for every CanvasTexture
+           plane instead of trusting this comment — because a table is only as
+           good as the last module that remembered to update it.
         ⚠ 0.09 WAS THE FIRST VALUE HERE AND IT WAS WRONG: it is /src/pollution's
           exact height, and two coplanar planes z-fight into a flicker the
           moment a player opens both. Caught by reading the neighbour's table

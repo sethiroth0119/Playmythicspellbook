@@ -45,7 +45,18 @@ const BAND_DOWN = { severe: 'notable', notable: 'mild', mild: null, great: 'good
 /* Which slots a clause needs. Cheap, and it runs per candidate rather than per
    post, so it is deliberately a regex test and not a parse. */
 function needs(tpl) {
-  return { n: /\{n\}/.test(tpl), v: /\{v\}/.test(tpl), p: /\{p\}/.test(tpl), w: /\{w\}/.test(tpl) };
+  return { n: /\{n\}/.test(tpl), v: /\{v\}/.test(tpl), p: /\{p\}/.test(tpl), w: /\{w\}/.test(tpl),
+           /* 🪦 {q} — A NAMED PERSON, and it is a fifth slot rather than a
+              second use of {p} on purpose. {p} is "a real PLACE", and the one
+              rule this file has never bent is that a slot carries one unit:
+              the first cut let each observer format {n} how it liked and the
+              Health Department published "4 residents residents cannot be
+              treated" while the Food office published a headcount as a rate.
+              Both composed correctly, both were nonsense. A person in the
+              place slot is the same error one clause later — "we have recorded
+              a death at Ilva Vantree" — so it gets its own slot and its own
+              no-name-no-clause rule. */
+           q: /\{q\}/.test(tpl) };
 }
 
 function fillable(tpl, facts) {
@@ -54,6 +65,7 @@ function fillable(tpl, facts) {
   if (q.v && !facts.v) return false;
   if (q.p && !facts.p) return false;
   if (q.w && !facts.w) return false;
+  if (q.q && !facts.q) return false;
   return true;
 }
 
@@ -112,7 +124,8 @@ function attempt(ev, poster, voice, band, seed) {
     .replace(/\{n\}/g, ev.facts.n || '')
     .replace(/\{v\}/g, ev.facts.v || '')
     .replace(/\{p\}/g, ev.facts.p || '')
-    .replace(/\{w\}/g, ev.facts.w || '');
+    .replace(/\{w\}/g, ev.facts.w || '')
+    .replace(/\{q\}/g, ev.facts.q || '');
 
   body = sentenceCase(tidy(body));
 

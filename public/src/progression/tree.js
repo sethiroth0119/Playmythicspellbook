@@ -77,8 +77,19 @@
    be the cheap way around the trunk node. Spread from the resolver so every
    carriageway class is gated exactly as Road is. Evaluated at import, which is
    inside boot() — node-city registers window.MythicRoads at script eval, long
-   before, and the reader falls open to ['road'] if it somehow did not. */
-import { roadTypes } from '../roads/types.js';
+   before, and the reader falls open to ['road'] if it somehow did not.
+
+   🪦 buildableRoadTypes(), NOT roadTypes(), AND THAT IS THE WHOLE FIX FOR A
+   REAL DEFECT. An unlock list is a PROMISE — the node's detail pane renders one
+   row per entry, so `roadlane` here drew a live "Lane · building" line and
+   buildingUnlocked('roadlane') answered true. The Lane has been retired: it is
+   in neither build registry and no drag tool writes its type, so that row
+   promised a research reward for a building the player could not obtain by any
+   path. Gating a retired type is not harmless caution, it is a lie with a
+   price tag on it. The two ideas do not conflict — the trunk-node loophole
+   only exists for a type something can actually lay, so gating exactly the
+   BUILDABLE set is both the honest list and the complete one. */
+import { buildableRoadTypes } from '../roads/types.js';
 
 export const CATS = [
   { id: 'civ', ico: '🏛', name: 'Civics',         blurb: 'The registry, the services and the landmarks a city is judged on.' },
@@ -114,6 +125,20 @@ export const NODES = [
     name: 'Municipal Services',
     desc: 'A clinic, a fire station and a police station — the three buildings a city is measured by when something goes wrong.',
     buildings: ['clinic', 'firestation', 'police'] },
+  /* 🪦 DEATHCARE. Hangs off the TRUNK, not off Municipal Services, and the one
+     point it costs is the whole of the gate — because node-city's eighth NEED
+     is `deathcare` and a city with no graveyard reads 0% on it from the first
+     tick. A node two points deep would mean a player could see the complaint,
+     read the demand panel's own answer to it, and still not be allowed to act
+     for an hour: "the worst class of UI bug: the player blames themselves".
+     ⚠ SLOT CHECKED, NOT ASSUMED. The `civ` category occupies (1,0) civ_basic,
+       (1,1) civ_services, (0,2) civ_parks, (2,2) civ_landmark and (3,2)
+       civ_shelter. (2,1) is free; two nodes on one slot draw over each other,
+       and this file's own header says so. */
+  { id: 'civ_deathcare', cat: 'civ', row: 2, col: 1, cost: 1, req: ['civ_basic'],
+    name: 'Deathcare',
+    desc: 'Consecrated ground, a register and a gate. People die whatever you build; this is where they go, and a city with nowhere to put them says so loudly.',
+    buildings: ['graveyard', 'cemetery'] },
   /* 🛡 THE TWO SEVERE-WEATHER DEFENCES. The fire station is already in
      civ_services above and answers fire; these answer the other two fronts.
      Behind Municipal Services on purpose — a city learns to run a fire station
@@ -285,7 +310,7 @@ export const NODES = [
   { id: 'tra_basic', cat: 'tra', row: 1, col: 0, cost: 0, auto: true, req: ['civ_basic'],
     name: 'Basic Transportation Services',
     desc: 'Roads and supply depots. Everything a city can move before it can move people.',
-    buildings: [...roadTypes(), 'depot'] },
+    buildings: [...buildableRoadTypes(), 'depot'] },
   { id: 'tra_bus', cat: 'tra', row: 1, col: 1, cost: 2, req: ['tra_basic'], licence: 'bus',
     name: 'Bus Network',
     desc: 'Stops, and player-drawn routes between them. Public transport never turns a profit — it reduces a subsidy.',

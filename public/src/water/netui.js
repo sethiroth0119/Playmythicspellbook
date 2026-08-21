@@ -56,6 +56,11 @@ import { WATER } from './tuning.js';
 let THREE = null, scene = null, host = null, api = null;
 let mesh = null, tex = null, cvs = null, cx2 = null;
 let GRID = 24, PX = 0;
+/* 🌊 THE APRON. Columns east of the plate that a pipe run — and this overlay —
+   are allowed to reach into, so a main can cross the shoreline and touch a Sea
+   Drain standing in the water. WATER.sewer.drain.apron carries the measurement
+   that fixed it at 3; nothing here re-derives where the water starts. */
+let APRON = 0;
 
 let armed = false, drag = null, erase = false, busy = false;
 let ctrlWas = null;
@@ -82,6 +87,7 @@ export function mount(h, a) {
   host = h || {}; api = a;
   GRID = (h && h.grid) | 0 || 24;
   PX = WATER.overlay.px;
+  APRON = Math.max(0, WATER.sewer.drain.apron | 0);
   if (h && h.THREE && h.scene) buildMesh(h.THREE, h.scene);
   if (typeof document !== 'undefined' && document.body) { buildButton(); buildStrip(); }
   /* Deliberately NOT awaited by the caller. /src/water's mount() is synchronous
@@ -136,15 +142,31 @@ function standDown(reason) {
   syncVisible();
   paint();
   const who = reason && (reason.name || reason.label);
+  /* 🚰 …and it names the LAYER going with it. The `pipes` legend row now
+     defaults OFF (see /src/water/panel.js), so standing the tool down usually
+     takes the painted mains off the map as well — a network the player just
+     laid appearing to vanish is a stand-down they cannot read, which is the
+     exact failure rig.js requires this toast to prevent. Plain text: node-city's
+     toast() assigns textContent. */
+  const hidden = !layerOn && api && api.Net && api.Net.count() > 0;
   toast('🚰 Pipe tool put away' + (who ? ' — you picked ' + who + '.' : '.') +
-        ' Click 🚰 Pipes to lay mains again.', 'good');
+        ' Click 🚰 Pipes to lay mains again' +
+        (hidden ? ' — your mains are still there; switch on “Water Mains” in the 💧 panel to keep them in view.' : '.'), 'good');
 }
 
 function buildMesh(T, sc) {
   THREE = T; scene = sc;
   try {
+    /* 🌊 THE CANVAS IS WIDER THAN THE PLATE. A main that stops at the plate edge
+       can never reach a Sea Drain, so the pipe DOMAIN runs `APRON` columns
+       further east than the city does — and an overlay that only covered the
+       plate would draw the run right up to the shoreline and then stop, which
+       reads as the pipe having failed rather than as the picture having ended.
+       Width is (GRID + APRON) tiles, height is still GRID; the plane below is
+       offset east by APRON/2 so canvas x still maps tile x with no flip. */
     cvs = document.createElement('canvas');
-    cvs.width = cvs.height = GRID * PX;
+    cvs.width = (GRID + APRON) * PX;
+    cvs.height = GRID * PX;
     cx2 = cvs.getContext('2d');
     if (!cx2) return;
     tex = new THREE.CanvasTexture(cvs);
@@ -156,15 +178,25 @@ function buildMesh(T, sc) {
     tex.magFilter = THREE.NearestFilter;
     tex.minFilter = THREE.LinearFilter;
     if ('colorSpace' in tex && THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
-    const geo = new THREE.PlaneGeometry(GRID, GRID);
+    const geo = new THREE.PlaneGeometry(GRID + APRON, GRID);
     const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true,
       opacity: M().overlayOpacity, depthWrite: false, toneMapped: false });
     mesh = new THREE.Mesh(geo, mat);
+    /* 👁 NAMED, so a driver can read this one surface's visibility off the scene
+       graph instead of inferring it. syncVisible() is the shipped gate (`armed
+       || (layerOn && count > 0)`) and .gauntlet/utilgate-ab.mjs asserts it here
+       beside the identical gate /src/power/lines.js now carries; an A/B that can
+       only see pixels cannot tell "hidden" from "drawn behind something". */
+    mesh.name = 'mythic-water-mains';
     // -PI/2 about X lays it flat with canvas (0,0) over tile (0,0) — node-city's
     // own mapping, no flip anywhere. Above both other info-view planes; see
     // WATER.mains.overlayY for why the y-stack is load-bearing.
     mesh.rotation.x = -Math.PI / 2;
-    mesh.position.set(0, M().overlayY, 0);
+    /* x = APRON/2, not 0. The plate's centre is the world origin; a plane that
+       is APRON tiles wider but still centred there would hang half an apron off
+       the WEST edge and paint the pipe network one and a half tiles out of
+       register — a silent, uniform offset, which is the worst kind. */
+    mesh.position.set(APRON / 2, M().overlayY, 0);
     mesh.renderOrder = M().renderOrder;
     mesh.visible = false;
     mesh.castShadow = mesh.receiveShadow = false;
@@ -235,6 +267,18 @@ function stripHtml() {
   h += '<div class="nwphint">' + n + ' tile' + (n === 1 ? '' : 's') + ' of main · ' +
        parts + ' network' + (parts === 1 ? '' : 's') +
        (price != null ? ' · ' + money(price) + ' 🔥 per tile' : '') + '</div>';
+  /* 🌊 THE SEA IS PART OF THE DOMAIN NOW, so the strip says so — a player who
+     cannot drag past the city edge will not discover that they can. The count
+     printed is LIVE drains (in the water AND on a main), because "you have two"
+     and "two of yours are doing anything" are different sentences and only the
+     second is advice. */
+  if (APRON > 0) {
+    const dz = api.Net.drainCount();
+    const dl = st ? (st.drainsLive | 0) : 0;
+    h += '<div class="nwphint">🌊 Drag east past the city edge to reach the water — ' +
+         (dz ? dl + ' of ' + dz + ' Sea Drain' + (dz === 1 ? '' : 's') + ' on a main.'
+             : 'place a 🌊 Sea Drain out there first.') + '</div>';
+  }
   if (drag) {
     const path = api.Net.pathBetween(drag.x0, drag.z0, drag.x1, drag.z1, api.grid());
     const fresh = erase ? path.filter(k => api.Net.has(k)) : path.filter(k => !api.Net.has(k));
@@ -248,7 +292,7 @@ function stripHtml() {
     }
     if (st.backup > WATER.sewer.warnAbove) {
       h += '<div class="nwphint nwpwarn">🚱 ' + Math.round(st.backup * 100) +
-           '% of the sewage has nowhere to go — build a Sewer Outfall on open water and pipe it in.</div>';
+           '% of the sewage has nowhere to go — build a Sewer Outfall on open water, or a 🌊 Sea Drain out in the ocean, and pipe it in.</div>';
     }
   }
   return h;
@@ -292,6 +336,16 @@ export function arm(v) {
   dirty = true;
   refreshStrip();
   syncVisible();
+  /* 🐞 AND PAINT, WHICH THIS PATH DID NOT DO. paint() early-returns while the
+     mesh is hidden, so the canvas holds whatever was last drawn into it — and
+     with the `pipes` layer now defaulting OFF (see panel.js) that is NOTHING on
+     a fresh city. arm() made the plane visible and then left it blank until the
+     next water tick pushed a sync through, i.e. the player armed the pipe tool
+     and got an empty map for up to a second. Measured at exactly 0.00% against
+     a control of 0.00% by .gauntlet/utilgate-ab.mjs — the gate was right and the
+     surface behind it was empty, which no `visible` assertion can tell apart.
+     standDown() has always called paint() here; this path simply forgot. */
+  paint();
   return armed;
 }
 
@@ -313,14 +367,38 @@ function releaseControls() {
      player who just picked a building must win, because they are holding it. */
 function hot(ev) {
   const canvas = host.canvas;
-  if (!armed || !canvas || ev.target !== canvas || typeof host.tileFromEvent !== 'function') return false;
+  if (!armed || !canvas || !canPick()) return false;
+  if (ev.target !== canvas) return false;
   try { if (typeof host.mode === 'function' && host.mode() === 'place') return false; } catch (e) {}
   return true;
 }
 
+function canPick() {
+  return typeof host.cellFromEvent === 'function' || typeof host.tileFromEvent === 'function';
+}
+
+/* 🌊 THE PICKER IS cellFromEvent, NOT tileFromEvent, AND THAT IS THE ONE LINE
+   THAT LETS A MAIN CROSS THE SHORELINE. node-city's tileFromEvent ends in
+   `inGrid(x, z) ? {x, z} : null`, so it refuses every cell off the plate —
+   including every cell the Sea Drain can stand on. cellFromEvent is the same
+   raycast against the same mathematical y = 0 plane with the apron allowed, and
+   its own header states what it is: "a PICKER, not a permission. It widens what
+   can be POINTED AT by `pad` cells; it grants nothing." tryPlace is untouched;
+   nothing here writes game.tiles.
+   ⚠ FALLBACK COSTS THE APRON, NOT THE FEATURE. An older node-city with no
+     cellFromEvent still lays mains across the plate exactly as it did before —
+     it simply cannot reach the water, and /src/water/drain.js says so once. */
+function pick(ev) {
+  try {
+    if (typeof host.cellFromEvent === 'function') return host.cellFromEvent(ev, APRON);
+    if (typeof host.tileFromEvent === 'function') return host.tileFromEvent(ev);
+  } catch (e) {}
+  return null;
+}
+
 function onDown(ev) {
   if (!hot(ev) || (ev.button !== 0 && ev.button !== 2)) return;
-  const t = host.tileFromEvent(ev);
+  const t = pick(ev);
   if (!t) return;
   ev.preventDefault(); ev.stopPropagation();
   erase = ev.button === 2;
@@ -332,7 +410,7 @@ function onDown(ev) {
 function onMove(ev) {
   if (!hot(ev)) return;
   if (!drag) return;
-  const t = host.tileFromEvent(ev);
+  const t = pick(ev);
   ev.preventDefault(); ev.stopPropagation();
   if (t && (t.x !== drag.x1 || t.z !== drag.z1)) {
     drag.x1 = t.x; drag.z1 = t.z;
@@ -468,6 +546,7 @@ function paint() {
     api.Net.count(), api.Net.keys().join('|'),
     drag ? drag.x0 + ':' + drag.z0 + ':' + drag.x1 + ':' + drag.z1 + ':' + (erase ? 'e' : 'd') : '-',
     st ? st.components + ':' + st.wells.map(w => w.comp).join(',') : '-',
+    api.Net.drainKeys().join('|'),
   ].join('#');
   if (!dirty && sig === lastSig) return;
   dirty = false; lastSig = sig;
@@ -528,6 +607,16 @@ function paint() {
     cx2.strokeStyle = o.live ? C.sewer : C.pipeBad;
     cx2.lineWidth = Math.max(2, PX * 0.14);
     cx2.strokeRect(o.x * PX + PX * 0.16, o.z * PX + PX * 0.16, PX * 0.68, PX * 0.68);
+    /* 🌊 A DRAIN IS FILLED, AN OUTFALL IS OUTLINED. Two endpoints on one graph
+       with two different rules about where they may stand should not be one
+       symbol — the player has to be able to tell, at a glance, which of their
+       sewer capacity is out in the water. */
+    if (o.kind === 'drain') {
+      cx2.fillStyle = o.live ? C.sewer : C.pipeBad;
+      cx2.globalAlpha = 0.42;
+      cx2.fillRect(o.x * PX + PX * 0.16, o.z * PX + PX * 0.16, PX * 0.68, PX * 0.68);
+      cx2.globalAlpha = 1;
+    }
   }
 
   tex.needsUpdate = true;

@@ -101,7 +101,10 @@ export function mountUI(api, ctx) {
 #nrc-panel .sel{flex:1;min-width:0;color:var(--mist,#8f87a3);font-size:11px;line-height:1.4}
 #nrc-panel .sel b{color:var(--bone,#e9e0cc)}
 #nrc-panel .meter{white-space:nowrap;font-size:11px;color:var(--mist,#8f87a3);font-variant-numeric:tabular-nums}
-#nrc-panel .meter.full{color:#ff8a6a;font-weight:700}`;
+#nrc-panel .meter.full{color:#ff8a6a;font-weight:700}
+#nrc-panel .fullmeter:empty{display:none}
+#nrc-panel .fullmeter{margin-top:7px}
+#nrc-panel .fullmeter .roadmeter{font-size:11px}`;
     doc.head.appendChild(st);
   }
 
@@ -132,19 +135,69 @@ export function mountUI(api, ctx) {
           + '<span class="sw" style="background:' + hex(d.col) + '"></span>'
           + '<span>' + esc(d.ico + ' ' + d.short) + '<br><span class="pr" data-price="' + esc(id) + '"></span></span></button>';
       }).join('') + '</div>'
+    /* 🛤️ THE ROAD CAP METER, RE-HOMED. node-city's buildShopBody() injected
+       roadMeterHtml() into whichever shop section contained a carriageway
+       (`sec.items.some(isRoadType)`); no section does any more, so the full
+       meter — the bar, and the "Base N · +N per Supply Depot · +N per Convoy
+       anchor" breakdown that tells the player how to RAISE the cap — had
+       nowhere left to render. It renders here, where roads are now bought,
+       which is the same argument the shop made for showing it where roads were
+       bought before. The compact `used / cap` readout below stays as the
+       fallback for a host that does not hand the builder over. */
+    + '<div class="fullmeter" id="nrc-fullmeter"></div>'
     + '<div class="ft"><div class="sel" id="nrc-sel"></div><div class="meter" id="nrc-meter"></div></div>';
 
   /* The build-bar button lives here rather than in node-city so the whole
-     feature is one import: a 404 leaves no dead button pointing at nothing. */
+     feature is one import: a 404 leaves no dead button pointing at nothing.
+
+     ══ 🛣 THIS BUTTON IS NOW THE CITY'S ONLY ROAD TAB ═══════════════════════
+     node-city's build shop no longer sells 'road' or 'roadlane' as cards, and
+     /src/netdrag stands its own duplicate button down when it sees the claim
+     below. The full argument — why this palette is the superset, and why the
+     48-cell run cap loses nothing against a 24×24 plate — is written where the
+     stand-down happens, in /src/netdrag/index.js. Two halves of one decision,
+     one copy of the reasoning.
+
+     ⚠ "ONLY ROAD TAB" IS A CLAIM ABOUT 'road', NOT ABOUT EVERY CARRIAGEWAY
+       TYPE, and the difference is worth one sentence because the superset
+       argument next door quietly assumed otherwise. This palette lays exactly
+       ONE type — applyRun() calls ctx.place('road', …) — and its nine entries
+       are CLASSES in `t.rc`, not types. The shop's other carriageway, the Lane,
+       is therefore NOT re-homed here: it is retired at the source, by the
+       `retired` flag on node-city's ROAD_CLASSES row. What this palette does
+       still do for a Lane already standing is CONVERT it — the branch above
+       quotes convertQuote(baseCost(t.type), …) off the tile's own type, so
+       dragging Avenue over a Lane charges the Lane's ladder and leaves the type
+       alone. A retired type keeps every class in this palette; it just stops
+       being something new ground can become.
+
+     ⚠ THE CLAIM IS UNCONDITIONAL AND THE SWEEP IS NOT OPTIONAL. These two
+       modules arrive on two different dynamic imports and neither controls the
+       order, so this path must handle "netdrag got here first and has already
+       appended its button" as well as "netdrag has not run yet". Setting the
+       flag covers the second; removing #ndg-open covers the first. netdrag's
+       own dispose() calls barBtn.remove() as well and a double remove() is a
+       no-op, so nothing here can strand it.
+     ⚠ RENAMED "Class" → "Roads". It is not a modifier on a road tool any more;
+       it IS the road tool, and a bar button called "Class" beside no "Roads" is
+       a label that only makes sense to whoever shipped the previous round. */
   const bar = doc.getElementById('buildbar');
   let barBtn = null;
   if (bar) {
+    try { window.__ncRoadTab = 'roadclass'; } catch (e) {}
+    try { const dup = doc.getElementById('ndg-open'); if (dup) dup.remove(); } catch (e) {}
     barBtn = doc.createElement('button');
     barBtn.className = 'bbtn tool';
     barBtn.id = 'nrc-open';
-    barBtn.innerHTML = '<span class="bico">🛣</span><span class="bname">Class</span>';
+    barBtn.innerHTML = '<span class="bico">🛣</span><span class="bname">Roads</span>';
+    barBtn.title = 'Lay roads — every class, on a drag';
     barBtn.onclick = () => setOpen(!open);
-    bar.appendChild(barBtn);
+    /* Beside Zones, which is where the road tab has always sat: laying the
+       network and zoning the land it serves are the same job. netdrag placed
+       its button here for that reason and the seat moves with the tab. */
+    const z = doc.getElementById('nz-open');
+    if (z && z.parentNode === bar) bar.insertBefore(barBtn, z.nextSibling);
+    else bar.appendChild(barBtn);
   }
 
   function refresh() {
@@ -167,11 +220,24 @@ export function mountUI(api, ctx) {
             : 'One leg, along whichever axis you dragged furthest.')
         + '<br>' + esc('Dragging over a road of another class re-lays it at the full ' + d.name.toLowerCase() + ' price.');
     }
+    /* The full cap card first — it is the one that says how to RAISE the cap,
+       and it is built by the HOST so the refusal in tryPlace, the inspector and
+       this panel cannot disagree about how full the network is. Guarded: an
+       older host, or one that dropped the hand-over, falls back to the compact
+       readout rather than to a number this file invented. */
+    const fm = panel.querySelector('#nrc-fullmeter');
+    let fullShown = false;
+    if (fm) {
+      let html = '';
+      try { html = typeof ctx.roadMeterHtml === 'function' ? ctx.roadMeterHtml() : ''; } catch (e) { html = ''; }
+      if (fm.innerHTML !== html) fm.innerHTML = html;
+      fullShown = !!html;
+    }
     const m = panel.querySelector('#nrc-meter');
     if (m) {
       const c = api.capInfo();
-      m.textContent = '🛤️ ' + c.used + ' / ' + c.cap;
-      m.classList.toggle('full', c.used >= c.cap);
+      m.textContent = fullShown ? '' : '🛤️ ' + c.used + ' / ' + c.cap;
+      m.classList.toggle('full', !fullShown && c.used >= c.cap);
     }
     if (barBtn) barBtn.classList.toggle('active', armed);
   }

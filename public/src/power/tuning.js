@@ -830,6 +830,13 @@ export const POWER = {
     hv:          '#4fd8e8',   // cyan
     hvFlow:      '#a8f0f8',
     hvChoke:     '#ff5ad8',   // magenta
+    /* 🗼 The legend swatch for the CABLE THE PLAYER DREW — the 3D poles and
+       wire, not an overlay colour. It is `lines.pole.col` (creosoted timber),
+       NOT `lines.wire.col`: the wire is 0x2b2b30, near-black, and a near-black
+       chip against this panel's dark card reads as an empty swatch. The legend
+       has to name the thing the player can point at on the map, and what they
+       can point at from the aerial camera is the line of poles. */
+    wire:        '#6b6259',
     unserved:    '#8a8f98',   // grey — connected to nothing
     // Consumption ramp, pale -> yellow -> orange -> red.
     demandRamp: ['#e8e2c8', '#ffe066', '#ff9d3d', '#ff4d3d'],

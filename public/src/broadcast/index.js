@@ -362,7 +362,7 @@ const API = {
   variants: () => {
     /* Facts are assumed available, which is the CEILING — a real event with no
        number reaches fewer. Reported per (subject, pole) summed over voices. */
-    const facts = { n: '1', v: '1', p: 'x', w: 'x' };
+    const facts = { n: '1', v: '1', p: 'x', w: 'x', q: 'x' };
     const out = {};
     let total = 0;
     for (const id in SUBJECTS) {

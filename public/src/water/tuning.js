@@ -451,6 +451,74 @@ export const WATER = {
          The rule is "close enough to reach the water", and the refusal says so
          in those words. */
     shoreTiles: 5.0,
+
+    /* ══ 🌊 THE SEA DRAIN ═══════════════════════════════════════════════════
+       THE SEWER'S SEA-ONLY ENDPOINT, AND THE DECISION BEHIND IT WRITTEN DOWN.
+
+       🔴 IT IS A NEW SIBLING OF `outfall`, NOT `outfall` RELOCATED. The Sewer
+          Outfall stands ON the plate and discharges into the sea, a river, a
+          lake, or the channel off the map edge — three rules with a fallback,
+          which is what makes it always satisfiable and therefore what makes it
+          safe to have shipped. Narrowing it now to "sea only" would put every
+          outfall standing on a river bank in an already-written save into
+          violation of a rule it was never shown. The drain is the STRICTLY
+          STRONGER rule on a NEW endpoint that no old city can be holding: it
+          may stand nowhere but in open water. Nothing that exists is re-judged.
+
+       🔴 AND IT STANDS OFF THE PLATE, WHICH IS WHY IT IS NOT A BUILDINGS ROW.
+          Measured, over 24 city ids × 24 rows, against endowment.js's own
+          shoreXAt():
+
+              waterline, tile-x     25.253 … 25.849
+              waterline, world-x    13.753 … 14.349
+
+          The plate's last column is tile 23 (world +11.5) and its east edge is
+          world +12. So there is NO on-grid tile in the water and there never can
+          be — `sea.inset` (2.05) holds the coast clear of perimeterScenery's
+          ring road on purpose, and pulling the waterline back onto the plate to
+          make a tile wet would run the sea over a road the city walks on.
+          A drain therefore lives in the APRON: cells east of the plate, picked
+          with node-city's cellFromEvent(ev, pad), owned and drawn by /src/water.
+          Exactly /src/power's Grid Connector, which is off-plate for the same
+          class of reason and is the shipped precedent for an off-plate terminal
+          that a dragged network reaches.
+
+       ⚠ `apron` IS 3 AND THE THIRD COLUMN IS THE ONLY LEGAL ONE. From the
+         measurement above: cell x = 24 is world 12.50 and x = 25 is 13.50, both
+         inland of even the closest waterline (13.753); x = 26 is world 14.50,
+         which clears even the furthest (14.349) by 0.151. So column GRID+2 is
+         wet in EVERY city and every row, and the two before it never are.
+         2 would leave rows — sometimes all of them — with no legal cell, which
+         is the failure mode `shoreTiles`'s 🐞 above records happening once
+         already: a rule that can be unsatisfiable is a rule that bricks a city.
+         The apron is not the rule; MythicOcean.isSea is. The apron is only how
+         far a pipe and a pointer are allowed to go looking for it. */
+    drain: {
+      apron: 3,
+      /* Nameplate, in the same per-minute water units BUILDINGS.outfall.sewer
+         declares (5.0 at level 1). Dearer per unit than the Outfall and worth
+         nearly twice as much, because it costs a run of pipe across the whole
+         city to reach and it can never be levelled up — the Outfall is a
+         building with MAX_LVL behind it, the drain is a headwall. */
+      cap: 9.0,
+      /* On node-city's OWN 2..600 shelf — the host's scaleCinder multiplies it
+         by BUILD_CINDER_MULT. Between the Outfall (26) and the Water Station
+         (34): a real commitment, and one that only pays back once the pipe run
+         that reaches it is also paid for. NEVER read raw; /src/streets records
+         what that costs (a quote 100× low that looks perfectly correct). */
+      cost: 46,
+      /* Margin handed to MythicOcean.isSea, in world units. ZERO, deliberately:
+         a positive margin pushes the answer INLAND and would make a cell the
+         player can see is dry read as sea; a negative one would put the drain
+         further out than the mesh. The predicate is the rule, unmodified. */
+      margin: 0,
+      /* The headwall's silhouette, in world units. It stands in shallow water,
+         so its deck is above the ocean surface (OCEAN.extent.y = 0.035) and its
+         apron falls below it — the same read makeOutfall gives on land. */
+      deckY: 0.16,
+      size: 0.78,
+    },
+
     /* 🔴 WHAT A BACKUP COSTS. Waste standing in the streets soaks into the
        shallow ground the intakes on THAT MAIN draw from, so a full backup takes
        this share off the delivery of every waterworks standing on it — and off

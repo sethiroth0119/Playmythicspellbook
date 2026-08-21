@@ -48,11 +48,74 @@ import { WATER } from './tuning.js';
 let pipes = new Set();
 let cityId = '';
 
-export function reset() { pipes = new Set(); cityId = ''; }
+/* ── 🌊 THE SEA DRAINS ──────────────────────────────────────────────────────
+   A second Set, in the same file, deliberately: a drain is an ENDPOINT ON THIS
+   GRAPH and nothing else. It is not a BUILDINGS row, it is not in `game.tiles`,
+   and it is not a second pipe model — it rides `components()` and `attachOf()`
+   unchanged, and solve() folds it into the SAME outfall rows the host's
+   `outfall` buildings produce, so the per-component pooling that this file's
+   §5 exists to protect is written once and serves both.
+
+   🔴 WHY A DRAIN IS NOT A `game.tiles` BUILDING, IN ONE SENTENCE: it stands in
+      the OCEAN, and the ocean is off the plate. tryPlace() opens with
+      `if (!inGrid(x, z) || tileAt(x, z)) return;` — the plate is the city and
+      the whole file's invariants (the ~200 `for x in 0..GRID` walks, zoning's
+      fill bounds, agentTick, the road cap, dropTileMesh, serialize) are written
+      against it. Putting a tile OUTSIDE that domain is strictly worse than
+      minting a new tile TYPE inside it, which is the bug class node-city has
+      already numbered twice. /src/power's Grid Connector is the shipped
+      precedent for the honest shape: an off-plate terminal that a dragged
+      network reaches, owned by the module that drew it, with its own mesh and
+      its own save. This is that, for water.
+   ⚠ AND IT IS A SIBLING OF `outfall`, NOT A RELOCATION OF IT. The Sewer Outfall
+     stays exactly as it shipped — it stands ON the plate and discharges into
+     the sea, a river, a lake or the channel off the map edge. Narrowing it to
+     sea-only would invalidate outfalls standing on river banks in saves already
+     written, which is the one thing the save rules forbid. The drain is the
+     STRICTLY STRONGER rule on a NEW endpoint: it may stand nowhere but in open
+     water, so no existing city can be broken by a rule it has never met. */
+let drains = new Set();
+
+/* ── THE DOMAIN ─────────────────────────────────────────────────────────────
+   The buildable plate (0 … grid-1) PLUS an apron of columns to the EAST, which
+   is where the sea is on every map (WATER.sea's side is a constant). Pipe runs
+   have to cross the shoreline or a land district could never reach a drain as
+   ONE component, which is the whole assertion this round is making.
+
+   ⚠ THE APRON IS EAST ONLY, AND `apronE` IS A COUNT OF COLUMNS, NOT A REACH. It
+     is set by index.js from WATER.sewer.drain.apron; this file holds no opinion
+     about where the water starts — `sea(x,z)` arrives in the solve snapshot and
+     is MythicOcean's answer, never a coastline re-derived here. */
+let apronE = 0;
+export function setDomain(a) { apronE = Math.max(0, a | 0); }
+export function domain(grid) { const g = (grid | 0) || 24; return { x0: 0, x1: g - 1 + apronE, z0: 0, z1: g - 1 }; }
+function inDomain(x, z, grid) {
+  const d = domain(grid);
+  return x >= d.x0 && x <= d.x1 && z >= d.z0 && z <= d.z1;
+}
+
+export function reset() { pipes = new Set(); drains = new Set(); cityId = ''; }
 export function count() { return pipes.size; }
 export function keys() { return Array.from(pipes); }
 export function has(k) { return pipes.has(k); }
 export function setCity(id) { cityId = String(id == null ? '' : id); }
+
+/* Drains, in the same verbs as the pipes above so a caller does not have to
+   learn a second vocabulary. addDrain/removeDrain return what ACTUALLY changed,
+   for the same reason add/remove do: the caller charges for that number. */
+export function drainCount() { return drains.size; }
+export function drainKeys() { return Array.from(drains); }
+export function hasDrain(k) { return drains.has(k); }
+export function addDrain(list) {
+  let n = 0;
+  for (const k of list) if (!drains.has(k)) { drains.add(k); n++; }
+  return n;
+}
+export function removeDrain(list) {
+  let n = 0;
+  for (const k of list) if (drains.delete(k)) n++;
+  return n;
+}
 
 const K = (x, z) => (x | 0) + ',' + (z | 0);
 export const pipeKey = K;
@@ -87,8 +150,14 @@ export function remove(list) {
 export function pathBetween(x0, z0, x1, z1, grid) {
   const G = grid || 24;
   const out = [];
-  const clamp = (v) => Math.max(0, Math.min(G - 1, v | 0));
-  x0 = clamp(x0); z0 = clamp(z0); x1 = clamp(x1); z1 = clamp(z1);
+  /* 🌊 CLAMPED TO THE DOMAIN, NOT TO THE PLATE. x runs one apron further east
+     than z does, because that is where the water is — a run that stopped at the
+     plate edge could never reach a drain, and the player would be told to
+     connect to something they cannot connect to. */
+  const d = domain(G);
+  const cx = (v) => Math.max(d.x0, Math.min(d.x1, v | 0));
+  const cz = (v) => Math.max(d.z0, Math.min(d.z1, v | 0));
+  x0 = cx(x0); z0 = cz(z0); x1 = cx(x1); z1 = cz(z1);
   const dx = Math.abs(x1 - x0), dz = Math.abs(z1 - z0);
   const sx = x1 >= x0 ? 1 : -1, sz = z1 >= z0 ? 1 : -1;
   const max = WATER.mains.maxRun;
@@ -188,9 +257,31 @@ export function solve(snap) {
   const wells = Array.isArray(snap.wells) ? snap.wells : [];
   const users = Array.isArray(snap.users) ? snap.users : [];
   const homes = Array.isArray(snap.homes) ? snap.homes : [];
-  const outfalls = Array.isArray(snap.outfalls) ? snap.outfalls : [];
+  const hostOutfalls = Array.isArray(snap.outfalls) ? snap.outfalls : [];
   const drink = Math.max(0, Number(snap.drink) || 0);
   const openWater = typeof snap.openWater === 'function' ? snap.openWater : () => false;
+  /* 🌊 IS THIS CELL IN THE OCEAN? Handed in, never derived. index.js delegates
+     it to window.MythicOcean.isSea — the ONE exported coastline predicate that
+     /src/wild and node-city's perimeterScenery already consult. A second answer
+     computed here would render perfectly and disagree with the water the player
+     is looking at, which is this project's most-repeated failure. Absent ⇒ no
+     drain is ever live, which is the safe direction: a drain that cannot prove
+     it is in the water treats nothing. */
+  const sea = typeof snap.sea === 'function' ? snap.sea : () => false;
+
+  /* THE ONE OUTFALL LIST. A Sewer Outfall (a BUILDINGS row on the plate, wet by
+     `openWater`) and a Sea Drain (a module-owned structure, wet by `sea`) are
+     two ways to buy the same nameplate, so they are two ROWS in one list rather
+     than two code paths — §5's per-component pooling and the `min` that caps it
+     once are then written exactly once and cannot drift.
+     ⚠ `cap` for a drain comes from the tuning table (SW.drainCap) because there
+       is no BUILDINGS row to carry it. That is the only asymmetry, and it is
+       stated here rather than buried in the loop. */
+  const outfalls = hostOutfalls.map(o => ({ ...o, kind: 'outfall', wet: !!openWater(o.x, o.z) }));
+  for (const k of drains) {
+    const p = parse(k);
+    outfalls.push({ k, x: p.x, z: p.z, kind: 'drain', cap: SW.drain.cap, wet: !!sea(p.x, p.z) });
+  }
 
   const comp = components();
 
@@ -201,6 +292,9 @@ export function solve(snap) {
      no stored flag that can disagree with the city it describes. */
   const governedWells = wells.filter(w => w.mains);
   const plumbed = pipes.size > 0 || governedWells.length > 0 || outfalls.length > 0;
+  /* ⚠ `outfalls` above is the MERGED list, so a city whose only sewer endpoint
+     is a Sea Drain is plumbed too. Still derived, still no stored flag, still
+     nothing to migrate — the latch grew a third term and not a version number. */
 
   // ── 1. DEMAND, PER TILE, WITH ITS COMPONENT.
   /* Two kinds of demand and both weights come from the HOST: a consumer brings
@@ -308,12 +402,14 @@ export function solve(snap) {
   const nameplateByComp = new Array(comp.count).fill(0);
   for (const o of outfalls) {
     const a = attachOf(comp, o.x, o.z);
-    const wet = !!openWater(o.x, o.z);
+    const wet = !!o.wet;                       // decided ONCE, above, by the right predicate for the row's kind
     const cap = Number(o.cap) > 0 ? Number(o.cap) : SW.capFallback;
     const live = wet && a.comp >= 0;
     if (live) nameplateByComp[a.comp] += cap;
-    outRows.push({ k: o.k, x: o.x, z: o.z, comp: a.comp, openWater: wet, cap, live, effective: 0,
-                   why: !wet ? 'no open water' : a.comp < 0 ? 'not connected to a main' : '' });
+    outRows.push({ k: o.k, x: o.x, z: o.z, kind: o.kind || 'outfall', comp: a.comp,
+                   openWater: wet, cap, live, effective: 0,
+                   why: !wet ? (o.kind === 'drain' ? 'not in the sea' : 'no open water')
+                             : a.comp < 0 ? 'no pipe reaches it' : '' });
   }
 
   /* One row per component: what it draws, what it owes, what it treats and what
@@ -397,6 +493,12 @@ export function solve(snap) {
     ok: true,
     plumbed,
     pipes: pipes.size,
+    drains: drains.size,
+    /* Drains that are BOTH in the water and on a main. The panel and the drag
+       strip print this rather than counting `drains`, because "you have three
+       drains" and "three of your drains are doing anything" are different
+       sentences and only the second one is advice. */
+    drainsLive: outRows.filter(r => r.kind === 'drain' && r.live).length,
     components: comp.count,
     comp,                       // { id, sizes, count } — netui.js paints from this
     mainsFactor,
@@ -419,7 +521,7 @@ export function solve(snap) {
    so (`plumbed: false`). */
 export function idle() {
   return {
-    ok: true, plumbed: false, pipes: pipes.size, components: 0,
+    ok: true, plumbed: false, pipes: pipes.size, drains: drains.size, drainsLive: 0, components: 0,
     comp: { id: Object.create(null), sizes: [], count: 0 },
     mainsFactor: Object.create(null), sewerAt: Object.create(null),
     sewerFactor: 1, worstComp: -1, backup: 0,
@@ -442,27 +544,46 @@ export function idle() {
      can move under a live city; a pipe network restored into a DIFFERENT city
      would put mains through buildings that are not there. Refused, not merged. */
 export function save() {
-  if (!pipes.size) return { v: 1, cityId, p: '' };
-  return { v: 1, cityId, p: Array.from(pipes).join(' ') };
+  const b = { v: 1, cityId, p: pipes.size ? Array.from(pipes).join(' ') : '' };
+  /* 🌊 `d` IS WRITTEN ONLY WHEN THERE IS ONE, AND ITS ABSENCE IS ITS VERSION
+     STAMP. Every save written before this round has no `d`, which loads as "no
+     drains" — the correct reading of a city that had none because they did not
+     exist. Same move /src/power's line save makes ("presence of the key IS the
+     version stamp"), and the same reason /src/water's `plumbed` is derived: a
+     version number is a second thing that can be wrong about the city it
+     describes. */
+  if (drains.size) b.d = Array.from(drains).join(' ');
+  return b;
 }
 
-export function load(blob) {
+function readCells(s, into, grid) {
+  for (const k of String(s || '').split(' ')) {
+    if (!k) continue;
+    const p = k.split(',');
+    const x = +p[0], z = +p[1];
+    if (!isFinite(x) || !isFinite(z)) continue;
+    /* OUT-OF-DOMAIN CELLS ARE DROPPED, NOT CLAMPED. If the apron ever shrinks,
+       clamping would silently move a player's drain to a cell that is not in the
+       water and then report it as broken; dropping it is the answer they can
+       see and fix. /src/power/lines.js load() makes the same choice. */
+    if (!inDomain(x | 0, z | 0, grid)) continue;
+    into.add(K(x, z));
+  }
+}
+
+export function load(blob, grid) {
   pipes = new Set();
+  drains = new Set();
   if (!blob || typeof blob !== 'object') return;
   if (blob.cityId && cityId && String(blob.cityId) !== cityId) {
     try { console.warn('[water/mains] pipe network belongs to ' + blob.cityId + ', not ' + cityId + ' — ignored'); } catch (e) {}
     return;
   }
   if (blob.cityId && !cityId) cityId = String(blob.cityId);
-  const s = typeof blob.p === 'string' ? blob.p : '';
-  for (const k of s.split(' ')) {
-    if (!k) continue;
-    const p = k.split(',');
-    const x = +p[0], z = +p[1];
-    if (!isFinite(x) || !isFinite(z)) continue;
-    pipes.add(K(x, z));
-  }
+  readCells(blob.p, pipes, grid);
+  readCells(blob.d, drains, grid);
 }
 
 export default { solve, idle, components, attachOf, pathBetween, add, remove, has, keys,
-                 count, reset, save, load, setCity, pipeKey };
+                 count, reset, save, load, setCity, pipeKey, setDomain, domain,
+                 addDrain, removeDrain, hasDrain, drainKeys, drainCount };

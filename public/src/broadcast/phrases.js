@@ -33,6 +33,10 @@
         it.
      {p}     a real place: a business name, a street name, a building. Same
              rule — no place, no clause.
+     {q}     a real PERSON, by name. Same rule again, and it is a separate slot
+             from {p} for the reason compose.js needs() spells out: one slot,
+             one unit. A person in the place slot reads as "a death at Ilva
+             Vantree", which composes perfectly and is nonsense.
      {w}     the weather's own name, from node-city's WEATHER table.
 
    ⚠ HASHTAGS ARE DERIVED, NOT SPRINKLED. Every tag in this file is `{tag}`;
@@ -619,6 +623,67 @@ export const PHRASES = {
         ['I am {i} done. Packing up and going — this place could not keep me']
       ),
       good: G([], []),
+    },
+  },
+
+  /* ⚰ A DEATH. The Registry only — see subjects.js `death` for why there is no
+     `cit` pool here and why writing one would be an invention. Every clause
+     needs {q}; the ones that also want {v} (their age) are dropped when
+     /src/lifepath is absent and cannot supply one, which is the no-number
+     no-clause rule doing its job rather than a gap in the table. */
+  death: {
+    dept: {
+      bad: B(
+        ['the death of {q} has been registered'],
+        ['we have registered the death of {q}, aged {v}',
+         '{q} died this week. The Registry has recorded it and is arranging a plot',
+         'a plot has been found for {q}. Our condolences to those who worked with them'],
+        /* ⚠ {v} IS THE AGE IN THIS SUBJECT AND IN NO OTHER. One slot, one
+           unit — a clause reading "{q} is the {v}th death" would be the same
+           slot carrying an ordinal in one line and a lifetime in the next,
+           which is the {n}-as-a-rate bug this table's header records. */
+        ['{q} died and there is no plot in this city to put them in',
+         'we have registered the death of {q}, aged {v}, and we have nowhere to bury them',
+         '{q} died. There is no consecrated ground left and they are waiting with the others']
+      ),
+      good: G([], []),
+    },
+  },
+
+  /* 🪦 DEATHCARE — the capacity reading, not the life. Same shape as the other
+     coverage subjects because it IS one: node-city's eighth NEED, supply over
+     demand, read by fromCoverage with no code of its own. */
+  deathcare: {
+    cit: {
+      bad: B(
+        ['there is nowhere in this city to bury anyone', 'the {tag} here is {i} thin',
+         'we are told there is a waiting list for a plot'],
+        ['{n} of us have nobody to bury and nowhere to do it',
+         'the {tag} in this city has {i} run out of room',
+         'my neighbour has been waiting on a plot for days'],
+        ['the dead are waiting and nobody will say for how long',
+         'there is no {tag} here at all. None. Ask anyone on this street',
+         '{n} residents are waiting on a grave that does not exist']
+      ),
+      good: G(
+        ['the {tag} here is quiet and it is kept well', 'nobody waits for a plot in this city'],
+        ['whoever laid out the new ground did it properly', 'the {tag} here is the one thing nobody has to worry about']
+      ),
+    },
+    dept: {
+      bad: B(
+        ['interment capacity is running {i} behind the city’s own rate'],
+        ['our {tag} capacity is not meeting the city’s death rate and {n} residents are affected',
+         'the city’s plots are filling faster than we can consecrate ground',
+         'we are {v} of demand on {tag} and the waiting list is growing'],
+        ['{tag} provision has {i} failed. The dead are waiting and we have no ground left',
+         'there is no consecrated ground left in this city — {n} residents are waiting on a plot',
+         'until new ground is laid out, the {tag} backlog will keep growing']
+      ),
+      good: G(
+        ['{tag} capacity is comfortably ahead of the city’s own rate'],
+        ['every plot this city needs is already consecrated and standing empty']
+      ),
     },
   },
 

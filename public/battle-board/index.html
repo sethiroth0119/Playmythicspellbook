@@ -896,7 +896,11 @@ const CAM_FIT = {
   pitchLo: 34*Math.PI/180,
   pitchHi: 52*Math.PI/180,
   pitchStep: Math.PI/180,
-  fillX: 1.0,                  /* share of box width the outermost CENTRES span */
+  /* Share of box width the outermost tile FOOTPRINT spans — footprint, not
+     centre. It was the centres until the off-canvas fix (see fitDistance);
+     reading it as centres is what let half of each edge column hang outside
+     the frame at 1.0. */
+  fillX: 1.0,
   skyShare: 0.58,              /* of the leftover height, how much sits above    */
   spriteMin: 1/13.5,           /* near-row sprite height / box height, the floor */
   targetY: CONFIG.camera.target.y
@@ -1248,12 +1252,52 @@ function sweepSeq(a, b, step){
   return out;
 }
 
-/* Smallest distance at which every tile CENTRE still lands inside the box.
-   A tile at grid (gx,gz) sits at world x = px, z = pz; the eye is on the z
-   axis at `dist`, so that tile's camera depth is dist + targetY·sinθ − pz·cosθ
-   and its screen offset is px·scale/depth. Requiring |offset| ≤ wMax inverts
-   to a distance per tile, and the fit is the largest of them. Only the first
-   and last COLUMN can be extreme, so this is 2·rows work, not cols·rows. */
+/* Smallest distance at which every tile's whole TOP FACE still lands inside
+   the box.
+   A tile at grid (gx,gz) sits at world x = px, z = pz, y = its own elevation e;
+   the eye is on the z axis at `dist`, so that tile's camera depth is
+   dist + (targetY − e)·sinθ − pz·cosθ and its screen offset is px·scale/depth.
+   Requiring |offset| ≤ wMax inverts to a distance per tile, and the fit is the
+   largest of them.
+
+   🖼 THIS USED TO SOLVE FOR TILE CENTRES AT y = 0, AND THAT WAS THE OFF-CANVAS
+   BUG (OPEN-BREAKS #3). Two separate terms were missing and both push the same
+   way — outward:
+     · HALF A TILE. A pointy-top hex is hexW wide, so a centre parked exactly on
+       the box edge hangs its outer half over the edge. Worse, the fit binds on
+       the CENTRE, so `fillX: 1.0` was asking for the outer column's centres to
+       touch the frame — by construction half of column 0 and half of column
+       cols−1 were always outside it. The widest points of a pointy-top hex are
+       the two side vertices at ±30°: they sit ±tileR() in x and ±hexSize()/2 in
+       z, which is where the two corner terms below come from.
+     · ELEVATION. Raising a tile by e moves it e·sinθ NEARER the eye, which
+       divides its screen offset by a smaller depth and throws it further out.
+       Terrain is seeded, so WHICH edge tiles this pushes over the line changes
+       with the map seed — which is exactly why the failure looked intermittent
+       and why fitting the flat lattice could never catch it.
+   Measured before the fix, default seed, in-game host (802×688): the centres of
+   (0,10) and (13,11) projected to x = −5.7 and x = 807.3, i.e. off the canvas
+   entirely, while getValidMoves happily offered BOTH as legal destinations from
+   five different origins. A click there landed on the page background.
+
+   🎥 WHY FRAME THE BOARD RATHER THAN LEAN ON THE CAMERA. The rule OPEN-BREAKS
+   asks for is "a tile the rules consider playable must always be REACHABLE by
+   the player", and a free camera can satisfy that on its own — every tile can
+   be panned or yawed into view, and R restores the fit exactly. That option was
+   rejected as the ONLY guarantee: it makes reachability a thing the player must
+   discover and perform, with nothing on screen saying which tiles are currently
+   outside the frame or which way to pan to find them, and it would leave the
+   *default* view — the one every match opens on and the one every screenshot is
+   taken of — quietly lying about the shape of the board. So the neutral pose is
+   the guarantee: at rest every tile is wholly inside the host rect, and the pan
+   clamp plus R mean the player can always get back to that pose from anywhere
+   the camera can go. The camera stays free; it is a second way to see a tile,
+   not the only one.
+
+   Cost: cols·rows arithmetic (no projection) instead of 2·rows, ~150× per fit,
+   and a fit runs on a board:map or a resize — not per frame. The old
+   "only the first and last COLUMN can be extreme" shortcut is not true once e
+   varies per tile, so every tile is tested. */
 function fitDistance(pitch, tx){
   const scale = VIEW.scale, wMax = Math.max(40, VIEW.box.w/2 * CAM_FIT.fillX);
   const st = Math.sin(pitch), ct = Math.cos(pitch);
@@ -1261,11 +1305,13 @@ function fitDistance(pitch, tx){
      clip, or project() starts returning null and geometry vanishes silently
      (CONTRACT §1.6 / R17). */
   let d = 1.5 - CAM_FIT.targetY*st + boardExtent().z*ct;
+  const cornerX = tileR(), cornerZ = hexSize()/2;
   for (let gz = 0; gz < MAP.rows; gz++){
-    const pz = (gz - (MAP.rows-1)/2) * hexV();
-    for (const gx of [0, MAP.cols-1]){
+    const pz = (gz - (MAP.rows-1)/2) * hexV() + cornerZ;   /* the NEARER of the two side vertices */
+    for (let gx = 0; gx < MAP.cols; gx++){
       const px = (gx + rowShift(gz) - (MAP.cols-1)/2) * hexW() - tx;
-      d = Math.max(d, Math.abs(px)*scale/wMax - CAM_FIT.targetY*st + pz*ct);
+      const e = tileElev(gx, gz);
+      d = Math.max(d, (Math.abs(px) + cornerX)*scale/wMax + (e - CAM_FIT.targetY)*st + pz*ct);
     }
   }
   return d;
@@ -1394,15 +1440,75 @@ function spawnUnit(defKey, gx, gz, side){
 }
 function unitAt(gx,gz){ return units.find(u => u.gx===gx && u.gz===gz && !u.dead); }
 
-/* crisp tile-to-tile movement: cubic ease + hop arc + squash + dust */
-function moveUnit(id, gx, gz){
+/* 🛤 WAYPOINTS → LEGS. Validates a route the HOST walked and turns it into the
+   chained tween moveUnit() runs. Returns null for anything it cannot vouch
+   for, and null means "fall back to the endpoint tween" — never "draw
+   something plausible", which is the whole point.
+
+   Three checks, and each one is a bug that would otherwise be invisible:
+     • path[0] must be the unit's CURRENT tile and path[last] the destination.
+       A ray is consumed once host-side but arrives on a full roster snapshot,
+       so a stale one could ride along beside an ordinary walk; both endpoints
+       matching is what makes a stale ray impossible to misapply.
+     • every leg must be ONE hex step (|dx|<=1 and |dz|<=1, the six odd-r
+       offsets and nothing else). rowShift() interpolates the half-column
+       stagger EXACTLY across a single row change and no further — that is
+       precisely why 1-tile shoves were always drawn correctly and 2+ tile ones
+       were not. A multi-row leg would re-import the drift this fixes.
+     • no zero-length leg, which would divide the eased progress by a tile
+       that does not exist and stall the sprite mid-hop.
+
+   ⚠ Do NOT be tempted to reconstruct the ray here from the two endpoints and a
+   hex direction. That re-scatters the lattice offsets into a second file and
+   is exactly the mistake the host-side fix just undid. If there is no path,
+   there is no path. */
+function shoveLegs(u, gx, gz, path){
+  if (!Array.isArray(path) || path.length < 2) return null;
+  const a = path[0], b = path[path.length-1];
+  if (!a || !b) return null;
+  if ((a.x|0) !== u.gx || (a.z|0) !== u.gz) return null;   /* stale: not from here */
+  if ((b.x|0) !== gx   || (b.z|0) !== gz)   return null;   /* stale: not to there  */
+  /* Leg 0 starts at the sprite's LIVE position, not at the tile centre: a unit
+     interrupted mid-lunge sits at a fractional x/z, and the old endpoint tween
+     started from u.x for the same reason. Every later leg is a tile centre. */
+  const out = [{ x:u.x, z:u.z }];
+  let px = a.x|0, pz = a.z|0;
+  for (let i=1;i<path.length;i++){
+    const p = path[i]; if (!p) return null;
+    const nx = p.x|0, nz = p.z|0;
+    if (nx === px && nz === pz) return null;
+    if (Math.abs(nx-px) > 1 || Math.abs(nz-pz) > 1) return null;
+    out.push({ x:nx, z:nz });
+    px = nx; pz = nz;
+  }
+  return out;
+}
+
+/* crisp tile-to-tile movement: cubic ease + hop arc + squash + dust
+   `path` (optional) is the ordered tile list the GAME actually walked — first
+   element the unit's current tile, last the destination. When present the
+   tween is CHAINED through it leg by leg instead of interpolated straight from
+   one endpoint to the other. Ordinary walking passes nothing and is untouched.
+   `force` (optional) skips only the unit-occupancy gate — see applyUnits, where
+   a batch of simultaneous shoves can legitimately vacate a tile it also fills.
+   Signature stays backwards compatible: moveUnit(id,gx,gz) behaves as before. */
+function moveUnit(id, gx, gz, path, force){
   const u = units.find(x => x.id===id); if (!u || u.tween) return;
-  if (tileBlocked(gx,gz) || unitAt(gx,gz)) { deny(u); return; }
+  if (tileBlocked(gx,gz)) { deny(u); return; }
+  if (!force){ const occ = unitAt(gx,gz); if (occ && occ.id !== u.id) { deny(u); return; } }
   u.face = (gx === u.gx) ? u.face : (gx > u.gx ? 1 : -1);
-  u.tween = { x0:u.x, z0:u.z, x1:gx, z1:gz, t:0, dur:0.34 };
+  const legs = shoveLegs(u, gx, gz, path) || [{ x:u.x, z:u.z }, { x:gx, z:gz }];
+  const n = legs.length - 1;
+  /* Duration scales with LEG COUNT, not per leg: 0.34s each would make a
+     12-tile ice skid a four-second cutscene. One leg is 0.34s exactly, so an
+     ordinary step animates at the speed it always has. */
+  const dur = n <= 1 ? 0.34 : Math.min(0.72, 0.34 + 0.085*(n-1));
+  /* The hop arc is per leg (one bounce per tile). Damp it by how fast the legs
+     are going by, or a long skid turns into a pogo stick. */
+  u.tween = { legs, n, x1:gx, z1:gz, t:0, dur, hop: 0.28 * Math.min(1, (dur/n)/0.34) };
   u.anim = 'walk';
   u.gx = gx; u.gz = gz;
-  dispatch('unitMove', { id, x:gx, z:gz });
+  dispatch('unitMove', { id, x:gx, z:gz, path: n > 1 ? legs.slice(1) : null });
 }
 function deny(u){
   u.shake = 0.28;
@@ -5796,8 +5902,20 @@ function update(dt){
     if (u.tween){
       const tw = u.tween; tw.t += dt/tw.dur;
       const k = clamp(tw.t,0,1), e = easeInOut(k);
-      u.x = lerp(tw.x0, tw.x1, e); u.z = lerp(tw.z0, tw.z1, e);
-      u.y = Math.sin(k*Math.PI) * 0.28;
+      /* 🛤 CHAINED LEGS. The eased progress is spread over the whole route and
+         then split into (leg index, fraction within leg), so the sprite passes
+         EXACTLY through every tile centre the rules walked — at e*n integral,
+         the fraction is 0 and the position is that waypoint to the bit — while
+         still accelerating and decelerating once across the whole shove rather
+         than stuttering at every tile.
+         A single leg reduces to the old lerp(x0,x1,easeInOut(t)) identically:
+         n===1 ⇒ li=0, f=e. That is deliberate — ordinary walking must not
+         change. See shoveLegs() for why a leg is always one hex step. */
+      const p = e * tw.n;
+      let li = Math.floor(p); if (li >= tw.n) li = tw.n - 1; if (li < 0) li = 0;
+      const f = p - li, a = tw.legs[li], b = tw.legs[li+1];
+      u.x = lerp(a.x, b.x, f); u.z = lerp(a.z, b.z, f);
+      u.y = Math.sin((tw.n === 1 ? k : f) * Math.PI) * tw.hop;
       if (k < .18) { u.scaleY = lerp(1,.86,k/.18); u.scaleX = lerp(1,1.12,k/.18); }
       if (k >= 1){
         u.tween = null; u.anim='idle'; u.x = tw.x1; u.z = tw.z1; u.y = 0;
@@ -6987,9 +7105,25 @@ function ptInPoly(px, py, P){
   }
   return inside;
 }
+/* 🖼 IS THIS TILE'S WHOLE TOP FACE INSIDE THE CANVAS?
+   The invariant fitDistance() now solves for, restated as a test — because the
+   off-canvas break (OPEN-BREAKS #3) survived every check in this file. The
+   round trip below is a WORLD↔GRID identity and the slab half is a
+   SCREEN↔GRID identity; both are perfectly happy about a tile whose pixels are
+   at x = −5.7, off the left of the frame, where a real click hits the page
+   behind the iframe. Nothing here looked at the frame. Now something does.
+   Measured at the NEUTRAL pose only — see fitDistance's camera note: the fit is
+   the guarantee, the free camera is allowed to pan a tile out of view because R
+   brings the whole board back. */
+function tileOffFrame(x, z){
+  const P = tilePoly(x, z, 0, tileElev(x, z));
+  if (!P) return true;                       /* a corner behind the camera is off-frame too */
+  for (const p of P) if (p.x < 0 || p.x > W || p.y < 0 || p.y > H) return true;
+  return false;
+}
 function hexSelfCheck(opts){
   const rings = (opts && opts.rings) || 8;
-  const centre = [], jitter = [], slab = [], buried = [], deadCentre = [];
+  const centre = [], jitter = [], slab = [], buried = [], deadCentre = [], offFrame = [];
   let occluded = 0, slabSamples = 0, minVisible = 1;
   const rungHits = {};
   for (let z = 0; z < MAP.rows; z++){
@@ -7067,6 +7201,12 @@ function hexSelfCheck(opts){
         if (vis < minVisible) minVisible = vis;
         if (reach === 0) buried.push({ tile:[x,z], elev:+e.toFixed(3), samples:taken });
       }
+      /* 🖼 …and is it even ON the canvas. A hard failure, like buriedFails: a
+         tile the frame cuts is a tile the player cannot fully click, while
+         getValidMoves still offers it. Not folded into the reach loop above
+         because that loop already skips off-canvas samples — which is how the
+         board could report every tile reachable with two of them off frame. */
+      if (tileOffFrame(x, z)) offFrame.push({ tile:[x,z], elev:+e.toFixed(3) });
     }
   }
   const tiles = MAP.cols * MAP.rows;
@@ -7075,12 +7215,21 @@ function hexSelfCheck(opts){
            centreFails: centre.length, jitterFails: jitter.length,
            slabSamples, slabFails: slab.length, occluded,
            buriedFails: buried.length, deadCentres: deadCentre.length,
+           offFrameFails: offFrame.length,
+           /* offFrameFails is only a FAILURE at the neutral pose — a panned or
+              yawed camera is allowed to push tiles out of frame. Report the pose
+              beside the count so the number cannot be read out of context. */
+           pose: { yawDeg: +(CAMERA.yaw*180/Math.PI).toFixed(2),
+                   pan: { x:+CAMERA.pan.x.toFixed(3), z:+CAMERA.pan.z.toFixed(3) },
+                   neutral: Math.abs(CAMERA.yaw) < 1e-6 && !CAMERA.pan.x && !CAMERA.pan.z },
            minVisible: +minVisible.toFixed(3),
            rungs: rungHits, ladder: tileElevRungs().slice(),
            ok: centre.length === 0 && jitter.length === 0 && slab.length === 0
-               && buried.length === 0 && deadCentre.length === 0,
+               && buried.length === 0 && deadCentre.length === 0
+               && offFrame.length === 0,
            fails: centre.slice(0,10).concat(jitter.slice(0,10)).concat(slab.slice(0,10))
-                  .concat(buried.slice(0,10)).concat(deadCentre.slice(0,10)) };
+                  .concat(buried.slice(0,10)).concat(deadCentre.slice(0,10))
+                  .concat(offFrame.slice(0,10)) };
 }
 window.__bbHexCheck = hexSelfCheck;
 
@@ -7442,13 +7591,26 @@ function applyPlate(u, msg){
 function applyUnits(list){
   if (!Array.isArray(list)) return;
   const seen = new Set();
+  /* 🚚 MOVES ARE DEFERRED AND ORDERED, NOT APPLIED IN LIST ORDER.
+     A vortex or shockwave moves several units in ONE snapshot. moveUnit()
+     refuses a destination that unitAt() says is occupied — and mid-batch it is
+     occupied, by a unit further down this same list that has not been synced
+     yet. The unit got deny()'d: a red refusal ring and a sprite left on the
+     tile it no longer occupies, while the game state said otherwise. It only
+     survived this long because the old square-diagonal shove rarely produced
+     a train of units landing on each other's tiles; the hex ray does.
+     So: collect the moves, then apply any whose target is free, repeatedly.
+     Whatever is left after no pass makes progress is a genuine CYCLE (a swap),
+     which no ordering can resolve — those go through with `force`, because a
+     correct board beats a refusal animation. */
+  const pending = [];
   for (const u of list){
     if (!u || u.id == null) continue;
     seen.add(String(u.id));
     const cur = units.find(x => String(x.id) === String(u.id) && !x.dead);
     if (cur){
       applyPlate(cur, u);
-      if (cur.gx !== u.x || cur.gz !== u.z) moveUnit(cur.id, u.x, u.z);
+      if (cur.gx !== u.x || cur.gz !== u.z) pending.push({ id: cur.id, x: u.x, z: u.z, path: u.path || null });
       /* 🜂 KALON TRANSFORM (and any other in-place identity change).
          The unit keeps its instance id but its CARD changes, so matching by id
          alone left the base form's art on the board forever. Swap the key and
@@ -7474,6 +7636,21 @@ function applyUnits(list){
     if (nu && u.id != null) nu.id = String(u.id);
     if (nu) applyPlate(nu, u);
   }
+  /* Drain the deferred moves (see the note above). Bounded by pending.length
+     passes: every pass either places at least one unit or breaks out. */
+  let guard = pending.length + 1;
+  while (pending.length && guard-- > 0){
+    let progressed = false;
+    for (let i = pending.length - 1; i >= 0; i--){
+      const p = pending[i];
+      const occ = unitAt(p.x, p.z);
+      if (occ && String(occ.id) !== String(p.id)) continue;   /* still blocked — retry */
+      moveUnit(p.id, p.x, p.z, p.path);
+      pending.splice(i, 1); progressed = true;
+    }
+    if (!progressed) break;
+  }
+  for (const p of pending) moveUnit(p.id, p.x, p.z, p.path, true);
   for (const x of units.slice()) if (!x.dead && !seen.has(String(x.id))) killUnit(x.id);
 }
 

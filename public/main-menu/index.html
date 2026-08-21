@@ -178,6 +178,55 @@
     box-shadow: inset 0 0 0 3px rgba(10,6,16,.9), inset 0 0 0 4px rgba(246,220,149,.6), 0 0 16px rgba(246,220,149,.35), 0 4px 10px rgba(0,0,0,.5);
   }
 
+  /* ---- COMMIT: the menu's outbound moment -------------------------------
+     The chosen item does not just turn `.active` and vanish — it acknowledges
+     the choice and hands off. A gold sweep runs left→right across the item (the
+     direction of travel, out of the menu and into the game), the sigil flares,
+     and the active rail bar snaps to full height. Then the parent routes.
+     `.committing` is additive on top of `.active`; it changes nothing at rest.
+
+     ⚠ THE SWEEP IS A BACKGROUND-POSITION, NOT A TRANSLATE. `.nav-item` cannot
+     take `overflow:hidden` — the active rail bar `::before` deliberately sits
+     at `left:-14px`, OUTSIDE the item, and clipping would delete it. So a
+     translated sweep layer would run out over the neighbouring nav rows. Moving
+     an oversized gradient inside a fixed box keeps every pixel in bounds.
+     Positioned absolute so it is not picked up as a flex item by `display:flex`
+     on the parent (which would shove the sigil and label sideways). */
+  .nav-item::after{
+    content:""; position:absolute; inset:0; pointer-events:none;
+    opacity:0;
+    background:linear-gradient(100deg,
+      transparent 34%,
+      rgba(246,220,149,.16) 43%,
+      rgba(255,244,214,.50) 49%,
+      rgba(255,150,45,.30) 55%,
+      transparent 66%);
+    background-size:240% 100%;
+    background-position:-70% 0;
+  }
+  .nav-item.committing::after{ animation:navCommitSweep .42s cubic-bezier(.24,.62,.2,1); }
+  .nav-item.committing .sigil{ animation:navCommitFlare .42s cubic-bezier(.24,.62,.2,1); }
+  .nav-item.committing .label{ color:#fff6dc; text-shadow:0 0 18px rgba(246,220,149,.8), 0 2px 3px rgba(0,0,0,.9); }
+  .nav-item.committing::before{ opacity:1; animation:navCommitBar .42s cubic-bezier(.24,.62,.2,1); }
+  /* No fill-mode on any of the three: when the animation ends every element
+     falls back to its own `.active` styling, so an interrupted or skipped
+     hand-off can never strand the nav in a half-lit state. */
+  @keyframes navCommitSweep{
+    0%{ opacity:0; background-position:-70% 0; }
+    14%{ opacity:1; }
+    100%{ opacity:0; background-position:130% 0; }
+  }
+  @keyframes navCommitFlare{
+    0%{ transform:scale(1.07); }
+    32%{ transform:scale(1.15); box-shadow: inset 0 0 0 3px rgba(10,6,16,.9), inset 0 0 0 4px rgba(255,246,214,.9), 0 0 34px rgba(246,220,149,.75), 0 4px 10px rgba(0,0,0,.5); }
+    100%{ transform:scale(1); }
+  }
+  @keyframes navCommitBar{
+    0%{ transform:scaleY(.4); filter:brightness(1); }
+    30%{ transform:scaleY(1.06); filter:brightness(1.9); }
+    100%{ transform:scaleY(1); filter:brightness(1); }
+  }
+
   /* ============ TOP HUD ============ */
   .hud{
     position:fixed; z-index:5; top:26px; right:34px;
@@ -900,16 +949,52 @@ function showToast(text){
   toastTimer = setTimeout(() => toast.classList.remove('show'), 2200);
 }
 
+/* THE HAND-OFF.
+   The parent unmounts this iframe the moment it routes, so the outbound moment
+   only exists inside the ~180ms window between the click and the post. That
+   window is the ONLY reason the post is deferred at all.
+
+   ⚠ THE POST IS NEVER GATED ON THE ANIMATION. Every path below ends in `send()`,
+   which is idempotent and fires at most once per click:
+     · reduced motion            → posts synchronously, in the click itself
+     · normal                    → posts on a 180ms timer
+     · timer starved (backgrounded tab, throttled iframe)
+                                 → `animationend` on the sweep posts instead
+   Whichever lands first wins and the other becomes a no-op, so all seven items
+   still route on the first click even if the sweep is skipped, interrupted, or
+   never renders at all. The guard is PER CLICK, not per page: a click that the
+   parent chooses to ignore (a gated destination) must leave the menu clickable
+   again, exactly as it was before. */
+const prefersReducedMotion = () => {
+  try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch(e){ return false; }
+};
+
 document.querySelectorAll('.nav-item').forEach(btn => {
   btn.addEventListener('pointerenter', () => tick(1200, 0.045, 0.015));
   btn.addEventListener('click', () => {
-    document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.nav-item').forEach(b => { b.classList.remove('active'); b.classList.remove('committing'); });
     btn.classList.add('active');
     tick(520, 0.14, 0.04); setTimeout(()=>tick(780, 0.12, 0.03), 70);
     flash.classList.remove('go'); void flash.offsetWidth; flash.classList.add('go');
     if (window.__pulseFire) window.__pulseFire();
+
+    let sent = false;
+    const send = () => {
+      if (sent) return;
+      sent = true;
+      post({ type: 'mm:nav', label: btn.dataset.label });
+    };
+
+    // Reduced motion: no acknowledgement to wait for, so do not wait.
+    if (prefersReducedMotion()) { send(); return; }
+
+    // The chosen item lights and a gold sweep runs across it. Re-adding the
+    // class is not enough to replay an animation — the reflow read is what
+    // restarts it when the same item is clicked twice.
+    btn.classList.remove('committing'); void btn.offsetWidth; btn.classList.add('committing');
+    btn.addEventListener('animationend', send, { once: true });
     // Hand off to the game after the flash has a beat to land.
-    setTimeout(() => post({ type: 'mm:nav', label: btn.dataset.label }), 190);
+    setTimeout(send, 190);
   });
 });
 

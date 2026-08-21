@@ -140,6 +140,29 @@ export function reset() {
 reset();
 
 const key = (z, a, e) => z + '|' + a + '|' + e;
+
+/* 🎓 THE OLD FOUR-RUNG LADDER, AND WHY THIS MAP EXISTS.
+   Education was `none → school → college → university` until the schools
+   round. load() below DROPS a cohort whose edu this build does not have,
+   which is the right rule for a DELETED zone — but the ladder was RENAMED,
+   and `none` and `school` carry the heaviest weights in every archetype.
+   Without this map a returning player loads their city and most of the
+   population is simply gone, with the panel, the ledger and the audit all
+   agreeing about the smaller number. That is the worst shape a bug can have
+   here and it would not have shown up in any gate.
+
+   🔴 THE INVARIANT IS THE LABOUR BAND, NOT THE NAME. A resident who could
+      hold skilled work before must still hold it after, so each old rung
+      maps to the new rung with the SAME band:
+        none   → guru        (unskilled — the floor, in both ladders)
+        school → middle      (skilled  — the FIRST skilled rung, not `high`;
+                              mapping up a rung would hand every returning
+                              city a free education)
+        college / university are unchanged in both name and band.
+   ⚠ THIS IS NOT A GENERAL ALIAS TABLE. An id that is in neither ladder is
+     still dropped, exactly as before — see the control in
+     .gauntlet/drive-edu-migrate.mjs. */
+const EDU_LEGACY = { none: 'guru', school: 'middle' };
 function add(z, a, e, n) {
   if (!(n > 0)) return;
   const k = key(z, a, e);
@@ -866,11 +889,23 @@ export function load(raw) {
        is DROPPED, not coerced. Retuning ECON must not resurrect a deleted zone
        through a save file, and silently folding it into a neighbour would make
        the population figure wrong in a way nothing could see. */
-    if (!zones.has(c.zone) || !archs.has(c.arch) || !edus.has(c.edu)) continue;
+    /* Rename first, THEN test. The test is unchanged: anything the current
+       ladder does not name is still dropped. */
+    const edu = edus.has(c.edu) ? c.edu : (EDU_LEGACY[c.edu] || c.edu);
+    if (!zones.has(c.zone) || !archs.has(c.arch) || !edus.has(edu)) continue;
     const n = num(co[k], 0);
-    if (n > 0) S.co[key(c.zone, c.arch, c.edu)] = n;
+    /* += rather than =, because two legacy rungs can now land on one new rung.
+       They do not today (the map is 1:1) but a straight assignment would
+       silently discard one of them the first time that changed. */
+    if (n > 0) S.co[key(c.zone, c.arch, edu)] = (S.co[key(c.zone, c.arch, edu)] || 0) + n;
   }
+  /* Stress is keyed by rung as well; a legacy key is carried across by the
+     same map so a loaded city does not read as unstressed for one tick. */
   for (const e of A.eduOrder()) S.stress[e] = num(raw.stress && raw.stress[e], 0);
+  if (raw.stress) for (const old in EDU_LEGACY) {
+    const v = num(raw.stress[old], 0);
+    if (v > 0) S.stress[EDU_LEGACY[old]] = (S.stress[EDU_LEGACY[old]] || 0) + v;
+  }
   S.rentIndex = Math.max(1, num(raw.rent, 1));
   S.seeded = !!raw.seeded || households() > 0;
   return true;

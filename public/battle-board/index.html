@@ -1570,8 +1570,22 @@ const WALK_DUR_MAX = 1.35;
    OFF a slab dropped a metre before it had moved anywhere; one stepping ONTO a
    slab floated across at the higher level and landed on nothing. The tween
    carries the interpolated ground height of the leg it is actually on. */
+/* ⚠ THE FALLBACK IS unitTile(), NOT u.gx/u.gz — same distinction as the block
+   below, on the elevation axis instead of the tile axis. moveUnit() moves
+   gx/gz to the destination on the first frame of the walk, and on that one
+   frame the tween has not written `gy` yet, so this used to answer with the
+   DESTINATION's elevation while the sprite was still standing on the source.
+   The occlusion mask keys its "is this slab higher than what the actor stands
+   on" reject on exactly this number, so a step UP silently switched off every
+   occluder for a frame — measured as 3–12 leaked pixels on the first sample
+   after a move, gone by the next.
+   At rest this is byte-identical: unitTile() fast-paths to {gx,gz} whenever
+   u.x/u.z already equal them, which is every frame a unit is not walking. */
 function unitGroundY(u){
-  return (u && u.tween && typeof u.tween.gy === 'number') ? u.tween.gy : tileElev(u.gx, u.gz);
+  if (u && u.tween && typeof u.tween.gy === 'number') return u.tween.gy;
+  if (!u) return 0;
+  const t = unitTile(u);
+  return tileElev(t.x, t.z);
 }
 
 /* 🧱 …and the TILE it is standing on, which is the SAME distinction from the
@@ -6737,7 +6751,7 @@ function drawNameplates(){
        that is actually behind that cliff; the rest still floats above the slab,
        which is what keeps BAR R3's "readable at distance" true. */
     const _put = unitTile(u);   /* the tile under the sprite NOW, not its destination */
-    const _pclip = clipBehindTerrain(gw(u.x, u.z, unitGroundY(u)), unitGroundY(u),
+    const _pclip = clipBehindTerrain(gw(u.x, u.z, unitGroundY(u) + (u.y||0)), unitGroundY(u),
                                      { x0, x1: x0 + w, y0, y1: y0 + h }, _put.x, _put.z);
     /* ⚠ try/finally, matching the actor loop in frame() and for the same
        reason: ctx.save() is a STACK, and one throw between here and the
@@ -7310,7 +7324,19 @@ function frame(now){
      tween, so aiming the exemption at them frees the tile actually under the
      sprite to clip it. See unitTile(). */
   for (const u of units) { const _ut = unitTile(u);
-    drawables.push({ d:camDepth(gw(u.x,u.z,0)), kind:'unit', u, sx:_ut.x, sz:_ut.z, fe:unitGroundY(u), wp:gw(u.x,u.z,unitGroundY(u)), bw:1.1, bh:3.2 }); }
+    /* ⚠ THE ANCHOR CARRIES THE HOP, THE FOOTING DOES NOT, and they are two
+       different questions the clip asks separately:
+         wp — where the sprite is actually DRAWN. drawUnit and unitScreenBox
+              both anchor at base.y + u.y, so a walking unit is a hop-arc
+              above its tile for most of a step. Handing the clip the
+              un-hopped point put the figure's axis below the picture of it
+              and the cut landed low — measured as 3-12 leaked pixels on the
+              first frames of every walk, gone once the unit landed.
+         fe — the GROUND it stands on, which the "is this slab higher than
+              what the actor stands on" reject keys off. That must not move
+              with the hop or a unit in mid-air stops being masked by the
+              step it is climbing. */
+    drawables.push({ d:camDepth(gw(u.x,u.z,0)), kind:'unit', u, sx:_ut.x, sz:_ut.z, fe:unitGroundY(u), wp:gw(u.x,u.z,unitGroundY(u) + (u.y||0)), bw:1.1, bh:3.2 }); }
   for (const tb of TOMBS) drawables.push({ d:camDepth(gw(tb.x,tb.z,0)), kind:'tomb', tb, sx:tb.x, sz:tb.z, fe:tileElev(tb.x,tb.z), wp:gw(tb.x,tb.z,tileElev(tb.x,tb.z)), bw:0.9, bh:1.8 });
   /* 🏚 ruins go through the SAME painter's sort as everything else — they are
      the tallest things on the board, so a ruin drawn out of order would hide a
@@ -8000,20 +8026,38 @@ function occlusionAudit(faces, inPoly){
     const dT = camDepth(gw(x, z, e));
     for (let k = 1; k < pcs.length; k++) surf.push({ x, z, P: pcs[k], d: dT, pl: pcs[k].pl });
   }
+  /* a screen bbox per face so the point test is not 450 polygons deep on every
+     one of ~1500 samples. Pure speed; it changes no answer. */
+  for (const f of surf){
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const v of f.P){ if (v.x < x0) x0 = v.x; if (v.x > x1) x1 = v.x;
+                          if (v.y < y0) y0 = v.y; if (v.y > y1) y1 = v.y; }
+    f.bb = [x0, x1, y0, y1];
+  }
   const drawnSurf = (px, py) => {
     let best = null;
-    for (const f of surf) if (inPoly(f.P, px, py)) if (!best || f.d < best.d) best = f;
+    for (const f of surf){
+      const b = f.bb;
+      if (px < b[0] || px > b[1] || py < b[2] || py > b[3]) continue;
+      if (best && f.d >= best.d) continue;
+      if (inPoly(f.P, px, py)) best = f;
+    }
     return best;
   };
   const out = { units: 0, samples: 0, feetTested: 0, feetHidden: 0, feetLeaks: 0,
                 bodyHidden: 0, bodyLeaks: 0, sameBand: 0, overMask: 0, behind: 0,
-                wallSamples: 0, worst: [], bad: [], over: [] };
+                wallSamples: 0, ringTested: 0, ringHidden: 0, ringLeaks: 0, overMaskRing: 0,
+                worst: [], bad: [], over: [] };
   for (const u of units){
     if (u.dead) continue;
     const box = unitScreenBox(u); if (!box) continue;
     const fe = unitGroundY(u);        /* the renderer's footing — see drawables */
     const dKey = camDepth(gw(u.x, u.z, 0));            /* the renderer's key */
-    const foot = gw(u.x, u.z, fe);
+    /* the DRAWN anchor, hop included — frame() hands the clip this point and
+       unitScreenBox measures from it, so the audit has to model the figure
+       from it too or it grades a sprite nobody drew. */
+    const fa = fe + (u.y || 0);
+    const foot = gw(u.x, u.z, fa);
     /* ⚠ "its own slab" is the tile the unit is STANDING ON RIGHT NOW, and that
        is NOT u.gx/u.gz while it walks: moveUnit() moves those to the
        destination on the first frame of the tween. Reading them here made the
@@ -8033,14 +8077,18 @@ function occlusionAudit(faces, inPoly){
     const mask = occluderMask(foot, fe, abox, own.x, own.z);
     out.units++;
     let hid = 0, leaked = 0, n = 0;
-    for (let iy = 0; iy <= 6; iy++) for (let ix = 0; ix <= 4; ix++){
-      const feet = iy === 6;
-      const px = box.left + box.width  * (ix / 4);
+    /* 9x11 over the box. It was 5x7, and a mask artefact is tens of pixels —
+       at 35 samples a unit the grid could step straight over a wedge that a
+       reader sees instantly. */
+    const NX = 8, NY = 10;
+    for (let iy = 0; iy <= NY; iy++) for (let ix = 0; ix <= NX; ix++){
+      const feet = iy === NY;
+      const px = box.left + box.width  * (ix / NX);
       /* ⚠ the FEET row is taken at the projected foot POINT, not at the bottom
          of the art box. The two differ by a few pixels of sprite padding, and
          "the pixel under their feet" has to mean the pixel the foot point lands
          on or the strictest test in this audit is testing a pixel of air. */
-      const py = feet ? pFoot.y : box.top + box.height * (iy / 6);
+      const py = feet ? pFoot.y : box.top + box.height * (iy / NY);
       if (px < 0 || px > W || py < 0 || py > H) continue;
       n++; out.samples++;
       if (feet) out.feetTested++;
@@ -8053,7 +8101,7 @@ function occlusionAudit(faces, inPoly){
          height a pixel stands for is its offset above the foot over pFoot.s —
          the SAME model clipPieceInFront() cuts with, deliberately, so a
          disagreement here is a bug in the clip and not in the two models. */
-      const yFig = feet ? fe : fe + hUnit * (1 - iy / 6);
+      const yFig = feet ? fa : fa + hUnit * (1 - iy / NY);
       const dFig = camDepth(gw(u.x, u.z, yFig));
       /* depth of the TERRAIN the player actually sees at this pixel, met on
          that surface's OWN plane — top face or cliff face. */
@@ -8093,6 +8141,52 @@ function occlusionAudit(faces, inPoly){
       if (!masked){
         leaked++; if (feet) out.feetLeaks++; else out.bodyLeaks++;
         if (out.bad.length < 8) out.bad.push({ unit: u.id, at: [u.gx, u.gz], feet, sameBand: band,
+                                               behind: [drawn.x, drawn.z],
+                                               px: [Math.round(px), Math.round(py)] });
+      }
+    }
+    /* ⚠ THE GROUND RING AND THE SHADOW ARE UNDER THE SAME CLIP and were never
+       sampled. They are not a billboard — they are a flat disc lying ON the
+       unit's own tile top — so their depth is the honest camDepth of the world
+       point itself, no card model in it at all. A third of the over-masking an
+       independent pixel-diff found at these poses was ring, and every one of
+       those samples was outside this audit. 3 radii x 12 spokes, inside the
+       tile's INRADIUS so the disc cannot spill onto a neighbour and grade a
+       tile it does not belong to. */
+    for (let ri = 1; ri <= 3; ri++) for (let ai = 0; ai < 12; ai++){
+      const rad = tileR() * (0.3 * ri), th = ai * Math.PI / 6;
+      /* the ring/shadow is drawn from `base`, i.e. WITHOUT the hop — see
+         drawUnit's shadowEllipse(base, …) — so these samples stay at fe. */
+      const wpt = { x: foot.x + rad*Math.cos(th), y: fe, z: foot.z + rad*Math.sin(th) };
+      const pr = project(wpt); if (!pr) continue;
+      const px = pr.x, py = pr.y;
+      if (px < 0 || px > W || py < 0 || py > H) continue;
+      out.samples++; out.ringTested++;
+      const drawn = drawnSurf(px, py); if (!drawn) continue;
+      if (drawn.pl.y === 0) out.wallSamples++;
+      if (drawn.x === own.x && drawn.z === own.z) continue;
+      const wp = rayToPlaneN(px, py, drawn.pl); if (!wp) continue;
+      const shouldHide = camDepth(wp) < camDepth(wpt) - 1e-4;
+      let masked = false, byGnd = 0;
+      if (mask) for (const m of mask){
+        let hit = false;
+        for (const pc of m.cut) if (inPoly(pc, px, py)) { hit = true; break; }
+        if (!hit) continue;
+        masked = true; byGnd = m.o.dGnd; break;
+      }
+      if (!shouldHide){
+        if (masked){
+          out.overMask++; out.overMaskRing++;
+          if (byGnd > dKey + 1e-4) out.behind++;
+          if (out.over.length < 8) out.over.push({ unit: u.id, at: [u.gx, u.gz], ring: true,
+                                                   px: [Math.round(px), Math.round(py)] });
+        }
+        continue;
+      }
+      out.ringHidden++;
+      if (!masked){
+        out.ringLeaks++;
+        if (out.bad.length < 8) out.bad.push({ unit: u.id, at: [u.gx, u.gz], ring: true,
                                                behind: [drawn.x, drawn.z],
                                                px: [Math.round(px), Math.round(py)] });
       }

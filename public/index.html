@@ -102669,6 +102669,62 @@ const moveUnit = (state, unit, newPos) => {
   let s = { ...state };
   // Walk the path tile-by-tile and fire any enemy trap on the way (or at the destination).
   const path = getMovePath(unit, s.units, s.weather, newPos);
+  // ═══ 🚶 THE ROUTE TRAVELS WITH THE MOVE ═══════════════════════════════════
+  // `walkPath` is written onto the moved unit, in STATE, and that placement is
+  // the whole fix — not a convenience.
+  //
+  // The board used to learn a walk's route from TELE, the telegraph overlay.
+  // TELE only exists while a human is hovering (the player's own preview) or
+  // while the local AI is narrating through setAIActor(). Neither is true on a
+  // client RECEIVING a multiplayer snapshot, and neither is true in the replay
+  // viewer: both of those relocate the unit in state and then push the roster.
+  // With no telegraph the board fell through to the two-endpoint tween, so on
+  // the opponent's screen and in every replay a six-hex move was a 0.34s
+  // straight slide THROUGH walls, units and cliff faces — the exact
+  // "arrow right, picture wrong" lie the local walk fix had just removed.
+  // Reproduced before this line existed: relocate (6,9)→(6,3) with a wall of
+  // units across row 6 and no selection gave tween {n:1, dur:0.34,
+  // legs:[[6,9],[6,3]]} straight over the occupied tile (6,6).
+  //
+  // A UI overlay is the wrong place to keep a route because it is not part of
+  // the state change. Unit state IS: `units` is carried verbatim by
+  // `_serializeBattleStateForBroadcast` (its strip list is media keys only),
+  // mirrored by `_mirrorAllPositions`, and cloned by `cloneStateLight`. So one
+  // write here reaches all three consumers — local, multiplayer receive and
+  // replay — through the same channel the position itself travels on.
+  //
+  // It rides the EXISTING per-unit route channel rather than a parallel one:
+  // `_bbStageUnitList` already forwards `entry.path` for shoves
+  // (`_shoveRayRecord`), and the board already validates and chains it
+  // (`shoveLegs` → `moveUnit`). Nothing new on the wire protocol.
+  //
+  // ⚠ Staleness is handled by the board, not by clearing this everywhere: a
+  // route is only applied when it STARTS on the unit's current tile and ENDS
+  // on the destination, and every leg is one hex step. A leftover route can
+  // therefore never be misapplied — it just fails the check and the honest
+  // endpoint tween runs. Every branch below still assigns it (to null when
+  // there is no route) so a unit never keeps the route of an older move.
+  const _walkFrom = { x: unit.pos.x | 0, y: unit.pos.y | 0 };
+  // getMovePath() EXCLUDES the start tile, so prepend it — the board's first
+  // leg has to be the tile the sprite is standing on. Truncated at `endPos`
+  // because a trap stops the walk partway and the drawn route must stop there
+  // too. Returns null (→ straight tween) when there is no multi-tile route.
+  const _routeTo = (endPos) => {
+    if (!endPos) return null;
+    const out = [_walkFrom];
+    for (const st of path) {
+      if (!st) return null;
+      out.push({ x: st.x | 0, y: st.y | 0 });
+      if ((st.x | 0) === (endPos.x | 0) && (st.y | 0) === (endPos.y | 0)) break;
+    }
+    const last = out[out.length - 1];
+    if (out.length < 2) return null;
+    // Endpoint disagreement (CONTRACT R31 — getMovePath is the looser of the
+    // two BFS bodies) means we cannot vouch for this route. Say nothing rather
+    // than ship a route that ends somewhere the unit is not.
+    if (last.x !== (endPos.x | 0) || last.y !== (endPos.y | 0)) return null;
+    return out;
+  };
   let finalPos = { ...unit.pos };
   for (const step of path) {
     finalPos = { x: step.x, y: step.y };
@@ -102683,7 +102739,7 @@ const moveUnit = (state, unit, newPos) => {
         continue;
       }
       // Trap fires: place the unit on this tile and stop movement.
-      s.units = s.units.map(u => u.id === unit.id ? { ...u, pos: finalPos, hasMoved: true } : u);
+      s.units = s.units.map(u => u.id === unit.id ? { ...u, pos: finalPos, hasMoved: true, walkPath: _routeTo(finalPos) } : u);
       // 🔮 RESONANCE Path B — "moved a lot" → SPD. Credited for the distance
       // ACTUALLY covered before the trap stopped them, not the distance asked
       // for; a unit that walked one tile into a bear trap did not sprint.
@@ -102699,7 +102755,7 @@ const moveUnit = (state, unit, newPos) => {
     }
   }
   // No trap hit — finalize the move.
-  s.units = s.units.map(u => u.id === unit.id ? { ...u, pos: newPos, hasMoved: true } : u);
+  s.units = s.units.map(u => u.id === unit.id ? { ...u, pos: newPos, hasMoved: true, walkPath: _routeTo(newPos) } : u);
   // 🔮 RESONANCE Path B — "moved a lot" → SPD.
   _rezMoved(unit, unit.pos, newPos);
   // Hero stepped on an event tile? Trigger it (only player heroes can claim events).
@@ -106425,7 +106481,20 @@ function _bbStageUnitList() {
       // Taken once and dropped: an ordinary walk on a later tick must animate
       // with the board's own endpoint tween exactly as it always has.
       const _ray = (typeof _shoveRayTake === 'function') ? _shoveRayTake(u.id) : null;
-      if (_ray) entry.path = _ray.map(t => ({ x: t.x | 0, z: t.y | 0 }));
+      // 🚶 …AND THE ORDINARY WALK, on the same channel. `u.walkPath` is written
+      // by the moveUnit() reducer onto the unit IN STATE, so it survives the
+      // broadcast, the mirror and the replay snapshot and arrives here on the
+      // receiving client and in the replay viewer — the two places that have no
+      // telegraph and therefore used to get a straight teleport tween. See the
+      // long note at the top of moveUnit().
+      // A shove RAY wins when both exist: it is recorded at the moment of the
+      // displacement, so it describes the movement that just happened, while
+      // walkPath describes the walk that preceded it.
+      // The board re-validates either one (shoveLegs: starts here, ends there,
+      // every leg one hex step) and falls back to the endpoint tween otherwise,
+      // which is what a genuine teleport or summon relocation should look like.
+      const _route = _ray || (Array.isArray(u.walkPath) ? u.walkPath : null);
+      if (_route) entry.path = _route.map(t => ({ x: t.x | 0, z: t.y | 0 }));
       out.push(entry);
     }
   } catch (e) {}
@@ -182785,6 +182854,14 @@ function _mirrorAllPositions(state) {
       // dart across the board.
       if (u.lastPos)   nu.lastPos   = _mirrorPos(u.lastPos);
       if (u.targetPos) nu.targetPos = _mirrorPos(u.targetPos);
+      // 🚶 THE WALKED ROUTE. CONTRACT R10 applies to it exactly as it does to
+      // the positioned arrays below: a route left in the SENDER's coordinates
+      // starts on a tile the unit is not standing on, so the board's endpoint
+      // check rejects it and the receiver silently goes back to the straight
+      // teleport tween this whole mechanism exists to remove. Mirrored
+      // point-by-point through the same _mirrorPos as `pos`, so the route and
+      // the destination can never disagree about which board half they are on.
+      if (Array.isArray(u.walkPath)) nu.walkPath = u.walkPath.map(_mirrorPos);
       return nu;
     });
   }
@@ -182846,14 +182923,22 @@ function _mirrorAllPositions(state) {
     if (m.twSabotage && m.twSabotage.pos)     m.twSabotage   = { ...m.twSabotage,   pos: _mirrorPos(m.twSabotage.pos) };
     out.mods = m;
   }
-  // AI move trail (used for the "AI just walked here" preview) — array of
-  // {x,y} points. Mirror so the trail makes visual sense post-swap.
-  if (App.ui && Array.isArray(App.ui.aiMoveTrail)) {
-    // Only mirror this when it belongs to the same state we're swapping;
-    // the App.ui copy gets re-rendered next tick anyway. Touched on the
-    // outer state so a future renderer can pick it up.
-    out._mirroredAiTrail = App.ui.aiMoveTrail.map(_mirrorPos);
-  }
+  // 🪞 THE AI MOVE TRAIL IS NOT MIRRORED HERE, AND THAT IS THE FIX, NOT A GAP.
+  // This block used to read `Array.isArray(App.ui.aiMoveTrail)` and write
+  // `out._mirroredAiTrail`. It could never fire and would have been wrong if
+  // it had, on two counts:
+  //   • setAIActor() stores an OBJECT, `{from, to, path}` (see :153105 and the
+  //     `trail.from` reader in renderBoard) — never an array. The isArray guard
+  //     was false on every call this function has ever made.
+  //   • Even with the shape fixed it reads the LOCAL client's App.ui, which in
+  //     a multiplayer match belongs to nobody: there is no local AI, and the
+  //     sender's trail is UI state that never entered the payload. Stamping it
+  //     onto the incoming state would have mirrored our own overlay into the
+  //     opponent's board.
+  // The route a receiver actually needs now travels as real state, on the unit
+  // (`walkPath`, mirrored with `pos` above), which is the only place a route
+  // can ride a state change through the wire. Nothing reads _mirroredAiTrail
+  // any more; the receive side clears App.ui.aiMoveTrail as it always did.
   return out;
 }
 
@@ -184748,11 +184833,13 @@ function _onRemoteStateArrived(payload) {
   App.ui.selectedMoveId = null;
   App.ui.selectedCardId = null;
   App.ui.actionMode = null;
-  // 🪞 AI move trail was computed in the sender's coord space (pre-mirror).
-  // Clear it on swap so we don't paint a "trail" across the wrong board half.
-  // Future-proof: the swapped state carries _mirroredAiTrail if any was set.
-  if (swapped._mirroredAiTrail) App.ui.aiMoveTrail = swapped._mirroredAiTrail;
-  else App.ui.aiMoveTrail = null;
+  // 🪞 AI move trail is LOCAL UI state and never crosses the wire — clear it on
+  // swap so we don't paint a stale overlay across the wrong board half. (The
+  // `_mirroredAiTrail` handoff that used to be read here was dead on both ends;
+  // see the note in _mirrorAllPositions.) The opponent's actual walked route
+  // arrives on the unit as `walkPath` and is mirrored with its position, so the
+  // board walks the real bent route without needing any of this.
+  App.ui.aiMoveTrail = null;
   // 🏯 LOCATION board-art + FX sync. The snapshot strips activeLocation.image
   // ('image' is a HEAVY_KEY), so the opponent's board reverted to the default
   // background. Re-derive the board art from the location id via our own shared
@@ -204682,7 +204769,12 @@ function resolveHeroConsumable(slotIdx, targetPos, targetUnit) {
     if (dist > reach) { showToast(`⚠ Tile too far — max ${reach} tiles.`); return; }
     const occ = (s.units || []).find(u => u && u.alive && u.pos && u.pos.x === targetPos.x && u.pos.y === targetPos.y);
     if (occ) { showToast('⚠ Tile is occupied.'); return; }
-    s.units = s.units.map(u => u.id === playerHero.id ? { ...u, pos: { x: targetPos.x, y: targetPos.y } } : u);
+    // 🚶 `walkPath: null` is DELIBERATE, not an oversight. A grapple is a
+    // teleport: the hero does not walk the tiles in between, so there is no
+    // route to hand the board and the straight endpoint tween is the honest
+    // picture. Written explicitly (rather than left alone) so a route recorded
+    // by the hero's LAST ordinary walk cannot ride along with this relocation.
+    s.units = s.units.map(u => u.id === playerHero.id ? { ...u, pos: { x: targetPos.x, y: targetPos.y }, walkPath: null } : u);
     s.log.push({ msg: `🪝 ${playerHero.name} grapples to (${targetPos.x}, ${targetPos.y}) — free action.`, color: 'green' });
     // 🎯 Overwatch fix — direct pos-write bypasses moveUnit() so the
     // ambush-reaction never fired on grapple. Re-run the reaction check

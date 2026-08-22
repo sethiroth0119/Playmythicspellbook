@@ -114102,9 +114102,9 @@ function _hubCurrencyRailHtml() {
             } else if (cc._reconnecting) {
               errPill = `<button class="hub-cur-pill" id="hub-sync-reconnecting-pill" title="Cloud edge had a brief hiccup — retrying automatically. Your progress is safe locally."><span class="rail-glyph" style="color:#a8b5c3">☁</span> Reconnecting…</button>`;
             }
-            return `<button class="hub-cur-pill hub-cur-pill-cloud signed-in" id="hub-cloud-pill" title="Signed in as ${escapeHtml(cc.email || '')} — click for account settings"><span class="rail-glyph">☁</span> ${name} <span class="rail-sub">▾</span></button>${errPill}`;
+            return `<button class="hub-cur-pill hub-cur-pill-cloud signed-in" id="hub-cloud-pill" title="Signed in as ${escapeHtml(cc.email || '')} — click for account settings"><span class="rail-glyph"><svg class="keep-inline-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.2 18.5h9.6a3.9 3.9 0 0 0 .5-7.77 5.6 5.6 0 0 0-10.7-1.2 3.9 3.9 0 0 0 .6 8.97z"/></svg></span> ${name} <span class="rail-sub">▾</span></button>${errPill}`;
           }
-          return `<button class="hub-cur-pill hub-cur-pill-cloud" id="hub-cloud-pill" title="Sign in to back up your progress and play multiplayer"><span class="rail-glyph">☁</span> Sign In</button>`;
+          return `<button class="hub-cur-pill hub-cur-pill-cloud" id="hub-cloud-pill" title="Sign in to back up your progress and play multiplayer"><span class="rail-glyph"><svg class="keep-inline-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.2 18.5h9.6a3.9 3.9 0 0 0 .5-7.77 5.6 5.6 0 0 0-10.7-1.2 3.9 3.9 0 0 0 .6 8.97z"/></svg></span> Sign In</button>`;
         })()}
         ${(() => {
           const comp = Profile.competitive || {};
@@ -114977,8 +114977,15 @@ function renderTitle() {
   const HUB_BG = {
     main:     'assets/background/Backgrounds/CampHeights.png',
     battle:   'assets/background/Backgrounds/battle-page-bg.png',        // the comp's own plate
-    forge:    'assets/background/Backgrounds/equipment background.png',  // the armoury
-    exchange: 'assets/Locations/City Streets.png',                       // trade amid the ashes
+    forge:    'assets/background/Backgrounds/equipment background.png',  // the armoury (cropped — see hub-keep.css)
+    // 🏚 Ruin Exchange was `Locations/City Streets.png`, which is an overcast
+    // DAYLIGHT photograph of a road junction with English road signs
+    // ("LITHONIA", "Pine St", "EAST 20 Atlanta") legible at UI size. It had to
+    // be crushed to near-black to sit under gold type, which threw the painted
+    // art away entirely. `darkmarket background.png` is what this hub actually
+    // is — a hooded vendor behind a table of wares — and it is already dark
+    // and already lit. Both files ship in the repo today; nothing was drawn.
+    exchange: 'assets/background/Backgrounds/darkmarket background.png',  // trade amid the ashes
     codex:    'assets/background/Backgrounds/Deck Select Menue background.png', // a scribe at a wall of runes
     field:    'assets/background/Backgrounds/CampHeights.png',           // the Camp keeps its own hill
     arcanum:  'assets/Locations/Power Altar.png',                        // the deep weave, by candlelight
@@ -115306,6 +115313,15 @@ function renderTitle() {
     <div class="spellbook-hub ${isMain ? 'is-main' : 'is-sub hub-v2'}" data-hub="${escapeHtml(hub)}">
       <div class="spellbook-hub-bg">
         <img class="hub-bg-img" src="${escapeHtml(hubBg)}" alt="" draggable="false">
+        ${isMain ? '' : `
+        <!-- 🖼 Foreground silhouettes bled off the bottom corners, exactly as
+             comp-hub.html:365-367 paints them, so the plate has a foreground
+             and a distance instead of reading as one flat photo behind a
+             scrim. The ART is chosen in CSS (--keep-fg-l / --keep-fg-r) from
+             files already in the repo; a hub that sets neither var paints
+             nothing at all. Decorative only — aria-hidden, no pointer events. -->
+        <i class="keep-fg keep-fg-l" aria-hidden="true"></i>
+        <i class="keep-fg keep-fg-r" aria-hidden="true"></i>`}
       </div>
       <div class="spellbook-smoke">${smokePuffs}</div>
       <div class="spellbook-embers">${embers}</div>

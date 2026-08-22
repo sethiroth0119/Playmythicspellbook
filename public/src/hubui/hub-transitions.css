@@ -9,7 +9,7 @@
 
    WHAT THIS FILE OWNS — four things, and nothing else:
      1. `#md-nav-flash` — the body-level element `_playNavFlash()` fires on EVERY
-        navigation (index.html:113250). Shipped cyan → white → violet, the last
+        navigation (index.html:113248). Shipped cyan → white → violet, the last
         surviving piece of the Master-Duel skin. Re-cut here as a warm-gold
         torch pass over a brief ember veil.
      2. The sub-hub ENTRANCE — background art settles, the title block resolves,
@@ -89,7 +89,7 @@
        A filled animation keeps applying its final keyframe at animation
        priority, which OUTRANKS the element's own declarations *and* any CSS
        transition on the same property. `.hub-portal`'s hover lift is
-       `transform: translateY(-3px)` (hub-tiles.css:538) reached through a
+       `transform: translateY(-3px)` (hub-tiles.css:539) reached through a
        transition — a filled `transform` animation would freeze every tile and
        kill hover for the life of the page. Nothing in this file fills, in either
        direction; see R0 for why `backwards` is out too.
@@ -153,13 +153,18 @@
        its real style. Measured over six runs each: unpinned 5/6 blank; pinned
        6/6 identical to a capture with this entire file deleted.
 
-       WHY THIS PROPERTY. `.hub-portal:focus-visible` is `outline: none` — its
-       ring is a `::before` box-shadow (hub-tiles.css:582-588) — and no other
-       element this file touches draws an outline either (`.tos-link-btn` does,
-       but the animation is on `.hub-game-footer` and `outline-color` does not
-       inherit). So the pin animates a property that is guaranteed to paint
-       nothing on every element it lands on. `border-spacing` was tried as a
-       more obviously inert alternative and only reached 5/6.
+       WHY THIS PROPERTY. Nothing this file animates paints an outline, so the
+       pin is guaranteed inert on every element it lands on:
+         · `.hub-portal` — `outline: none` under focus-visible, its ring is a
+           `::before` box-shadow (hub-tiles.css:582-588). Even on a hub that
+           somehow lacks `.hub-v2`, `outline-style` is still `none` at rest, and
+           an `outline-color` with no style paints nothing.
+         · everything else here — `.spellbook-hub-bg`, the banner, the ambient
+           layers, `.keep-rule i`, `.hub-game-footer`, `#mm-frame` — has no
+           outline at all. `.tos-link-btn` does, but the animation sits on its
+           PARENT `.hub-game-footer` and `outline-color` does not inherit.
+       `border-spacing` was tried as a more obviously inert alternative and only
+       reached 5/6.
 
        WHAT IT COSTS, honestly: these entrance animations now run on the main
        thread in real browsers. They are one-shot, ≤680ms, and fire once per
@@ -196,7 +201,7 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    1 · THE NAVIGATION SWEEP  —  #md-nav-flash
    ═══════════════════════════════════════════════════════════════════════════
-   `_playNavFlash()` (index.html:113250) creates this div once, then re-triggers
+   `_playNavFlash()` (index.html:113248) creates this div once, then re-triggers
    it by removing/reflowing/adding `.go` on every screen or hub change. That
    trigger is not ours to rebuild — we restyle what it fires.
 
@@ -238,7 +243,7 @@
    browser reads it before or after index.html's inline <style>.
 
    KEYFRAME NAMES are `hubTx…`, NEVER the legacy `mdWhoosh`: that name is shared
-   with `#md-whoosh` (index.html:113026), and redefining it would silently
+   with `#md-whoosh` (index.html:112941), and redefining it would silently
    restyle a second, unrelated effect.
    ------------------------------------------------------------------------- */
 html body #md-nav-flash {
@@ -425,6 +430,19 @@ html body #mm-frame {
    content that arrived before its own background — the exact "web page fading
    in" this file exists to avoid.
 
+   ⚠ HONEST LIMIT — MOUNTING IS THE ONLY TRIGGER, so ANY `render()` that lands
+   while a sub-hub is open replays the whole 680ms. That is the price of "pure
+   CSS, no index.html edit": there is no state to consult, only new nodes. It is
+   survivable because `renderTitle()` rewrites `root.innerHTML` wholesale
+   (index.html:115305) and nothing polls `render()` on a title hub — the two
+   background pollers that do (CityHall :60864, FoundationReserve :62185) are
+   panel-scoped and bail when their panel is gone. What DOES replay it is a user
+   action that re-renders in place (dismissing a modal, a badge landing). If that
+   ever reads as a flicker the fix is one line in index.html — carry a
+   `data-entered` flag on the hub root and let a `:not([data-entered])` guard
+   here gate §3 — deliberately NOT taken in this unit, which ships index.html
+   untouched.
+
    ⚠ HOW TO READ EVERY RULE BELOW. Per R0 each one is
 
        animation: <name> <lead + travel>ms <ease> 1ms;
@@ -538,7 +556,7 @@ html body #mm-frame {
 
 /* ---- the tile band: lands ----------------------------------------------- */
 /* `translate`/`scale` per R2 — `.hub-portal` owns `transform` for its hover lift
-   (`translateY(-3px)`, hub-tiles.css:538) and this file never touches it. Rising
+   (`translateY(-3px)`, hub-tiles.css:539) and this file never touches it. Rising
    18px into a hair of overshoot is what gives the band weight: the tile arrives,
    is briefly a touch large, then sets.
 
@@ -632,14 +650,14 @@ html body #mm-frame {
    net: it would also beat any future per-hub override that legitimately wants a
    different arrival.
 
-   ⚠ NOTE WHAT IS *NOT* RESET HERE: `opacity` and `transform` on hub elements.
-   Opacity is never held by this file (R3), so with the travel gone it already
-   comes from the element's own cascade — forcing it (even to `revert-layer`)
-   would punch a locked tile's dimmed state back to full. `transform` is
-   `.hub-portal`'s own hover lift and `.keep-diamond`'s 45° rotation; resetting
-   either here would win on source order and break them for good. The two
-   hairlines are the single exception — this file is the only thing that ever
-   scales them, so their identity is handed back explicitly.
+   ⚠ NOTE WHAT IS *NOT* RESET HERE: `opacity`, `translate`, `scale` and
+   `transform` on hub elements. None of them is ever DECLARED by this file — every
+   one lives inside a keyframe block, and replacing the `animation` replaces the
+   keyframes with it, so there is nothing left to undo. Resetting them anyway
+   would be actively harmful: `opacity` would punch a locked tile's dimmed state
+   back to full, and `transform` is `.hub-portal`'s own hover lift and
+   `.keep-diamond`'s 45° rotation, either of which this block would then win on
+   source order and break for good.
    ------------------------------------------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
 
@@ -650,7 +668,9 @@ html body #mm-frame {
     opacity: 0;
   }
   html body #md-nav-flash.go {
-    animation: hubTxNavVeil 420ms linear;
+    /* Still eased, not `linear`: a linear opacity ramp reads as a shutter. The
+       symmetric in-out is the most literal possible crossfade. */
+    animation: hubTxNavVeil 420ms cubic-bezier(0.4, 0, 0.4, 1);
   }
 
   html body #mm-frame {
@@ -674,12 +694,12 @@ html body #mm-frame {
     animation: hubTxFadeIn 360ms ease 1ms;
   }
 
-  /* The rule fades in at full width instead of drawing outward, and the
-     hairlines get their scale identity handed back explicitly. */
+  /* The rule fades in at full width instead of drawing outward. Nothing to
+     hand back: §3's `scale` lives only inside `hubTxRuleDraw`, which this rule
+     replaces outright, and `transform-origin` paints nothing on its own. */
   .spellbook-hub.is-sub .keep-rule i,
   .spellbook-hub.is-sub .keep-diamond {
     animation: hubTxFadeIn 420ms ease 1ms;
-    scale: none;
   }
 
   /* ONE rule kills the entire cascade. `:nth-child(-n+6)` is (0,4,0) — the same

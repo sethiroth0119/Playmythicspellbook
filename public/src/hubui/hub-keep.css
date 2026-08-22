@@ -412,54 +412,176 @@
 .spellbook-hub.is-sub .spellbook-hub-bg {
   background-color: var(--keep-ground-0);
 }
+
+/* 🐛 THE STACKING BUG THAT MADE THE WASH INERT — the single most expensive
+   thing in this file, found by measurement and not by reading.
+   `::before` is inserted as the FIRST child of its originating element. Every
+   layer in this stack is `position:absolute` with `z-index:auto`, and
+   same-stacking-context positioned boxes paint in TREE ORDER. So the order was
+   ::before (the wash) → img (the plate) → and the plate painted straight over
+   the wash. Every scrim, vignette and warm layer in this file was being drawn
+   and then covered up; the ONLY thing darkening a sub-hub was the plate's own
+   `filter: brightness()`, which is exactly why round 1 could not level six
+   plates without six hand-tuned exposures, and why re-tuning the top scrim
+   produced byte-identical title-band luminance (14.1 before, 14.1 after — the
+   measurement that caught it).
+   The legacy vignette at index.html:345 has been dead the same way for as long
+   as it has existed.
+   Every layer therefore gets an EXPLICIT z-index, bottom to top, in the comp's
+   own order (comp-hub.html: art → silhouettes → wash → grain). Do not remove
+   these and trust source order. */
 .spellbook-hub.is-sub .spellbook-hub-bg img.hub-bg-img {
+  z-index: 0;
   filter: var(--keep-bg-filter, brightness(0.72) saturate(0.74) contrast(1.05) sepia(0.18));
   transform: scale(var(--keep-bg-zoom, 1));
   transform-origin: 50% 100%;
 }
 
 /* ── PER-HUB EXPOSURE ─────────────────────────────────────────────────────
-   §3 gives ONE filter — `brightness(.80) saturate(.80)` — and it is exactly
-   right for the plate the comp uses, which is already a near-black burnt city.
-   The other five plates are not that. `City Streets` is an overcast DAYLIGHT
-   photo; the `Deck Select` scribe wall is a mid-tone with cartoon graffiti on
-   it. Run through the comp's numbers they land two stops brighter than the
-   ground §1 defines, the title stops reading, and the screen goes cold grey —
-   which is the one thing §1 forbids by name ("warm, never blue-black").
-   So the FILTER is per-hub and the RESULT is uniform: every plate ends up on
-   the same warm near-black. `sepia()` is what pulls the cold greys back to
-   warm; the near-black plates need little or none of it.
-   `--keep-bg-zoom` crops a plate — used once, below. */
+   §3 gives ONE filter — `brightness(.80) saturate(.80)`. Round 1 tried to make
+   six very different plates land on one ground by giving each its own
+   `brightness()`, and it did not work: measured against the comp's gutter
+   (mean 9.6, rgb [11,9,7], R−B 4 — distinctly warm), Forge came back at mean
+   21 rgb [21,20,19], i.e. NEUTRAL GREY, the one thing §1 forbids by name,
+   while Exchange was crushed to [0,0,0] — the painted art gone, which fights
+   the hard requirement to keep every background image.
+   The lesson: contrast belongs in the WASH, not in six hand-tuned exposures.
+   The filters below are back near the comp's single recipe (.60–.80, never
+   below .54) and their only remaining job is to knock the loudest plates down
+   a stop and pull the cold ones warm with `sepia()`. Everything that makes the
+   ground warm and the type legible now happens once, in the wash under this.
+   `--keep-bg-zoom` crops a plate — used twice, and only to get burnt-in
+   English signage out of frame. */
 .spellbook-hub.is-sub[data-hub="battle"]   { --keep-bg-filter: brightness(0.80) saturate(0.80) contrast(1.04); }
-.spellbook-hub.is-sub[data-hub="arcanum"]  { --keep-bg-filter: brightness(0.62) saturate(0.82) contrast(1.06); }
-.spellbook-hub.is-sub[data-hub="forge"]    { --keep-bg-filter: brightness(0.52) saturate(0.55) contrast(1.08) sepia(0.34); }
-.spellbook-hub.is-sub[data-hub="exchange"] { --keep-bg-filter: brightness(0.40) saturate(0.42) contrast(1.12) sepia(0.42); }
-.spellbook-hub.is-sub[data-hub="codex"]    { --keep-bg-filter: brightness(0.44) saturate(0.55) contrast(1.08) sepia(0.30); }
-/* The Camp keeps CampHeights.png — but the painting has the MYTHIC SPELLBOOK
-   wordmark burnt into its top-left corner, which landed right beside the
-   breadcrumb tabs and read as a second, broken logo. Zooming from the bottom
-   edge crops the top ~15% and the wordmark with it. The art is kept; only the
-   framing changed. */
+.spellbook-hub.is-sub[data-hub="arcanum"]  { --keep-bg-filter: brightness(0.56) saturate(0.74) contrast(1.05); }
+.spellbook-hub.is-sub[data-hub="exchange"] { --keep-bg-filter: brightness(0.72) saturate(0.34) contrast(1.04) sepia(0.44); }
+/* THE CODEX. Same signage problem as Forge, milder: the `Deck Select` plate has
+   two carved notices in its top-left — "Silence · Knowledge is sacred" and
+   "Disobedience invites punishment" — which land beside the breadcrumb and read
+   as UI copy. A modest crop from the bottom edge takes both out of frame and
+   pushes the scribe down under the tile band where it belongs. */
+.spellbook-hub.is-sub[data-hub="codex"] {
+  --keep-bg-filter: brightness(0.60) saturate(0.50) contrast(1.05) sepia(0.26);
+  --keep-bg-zoom: 1.28;
+}
+/* FORGE. `equipment background.png` is a ruined gun store and its top third
+   carries burnt-in English signage — "FREEDOM FIREARMS · GUNS AMMO SURVIVAL",
+   "THANK YOU FOR YOUR BUSINESS" — legible at UI size and reading as a second,
+   wrong headline under the Cinzel title. The comp's plate carries no text at
+   all. Zooming from the bottom edge crops the top ~37% and every sign with it,
+   leaving the counters and rubble, which is what an armoury floor should look
+   like. The image is kept, as required; only the framing changed. */
+.spellbook-hub.is-sub[data-hub="forge"] {
+  --keep-bg-filter: brightness(0.66) saturate(0.46) contrast(1.05) sepia(0.30);
+  --keep-bg-zoom: 1.62;
+}
+/* THE CAMP deliberately shares CampHeights.png with the main menu, and that is
+   the right call rather than an oversight: this hub IS Camp Heights — the
+   painting is a labelled gate onto the camp, and no other plate in either
+   library depicts it. §3's "each hub keeps its own painted background" is
+   satisfied in spirit; what it forbids is six hubs sharing one anonymous
+   plate, not a hub using the picture of itself.
+   The zoom is for the same reason as Forge's: the painting has the MYTHIC
+   SPELLBOOK wordmark burnt into its top-left corner, which landed beside the
+   breadcrumb tabs and read as a second, broken logo. */
 .spellbook-hub.is-sub[data-hub="field"] {
-  --keep-bg-filter: brightness(0.60) saturate(0.72) contrast(1.06) sepia(0.16);
+  --keep-bg-filter: brightness(0.62) saturate(0.68) contrast(1.05) sepia(0.14);
   --keep-bg-zoom: 1.34;
 }
 
-/* The wash. Two scrims on top of the comp's vignette: one under the top bar
-   and title, one under the footer. Without them the two text bands are at the
-   mercy of whatever the painting happens to be doing at that height, which is
-   different on all six hubs. */
+/* ── THE WASH — ONE RECIPE, ALL SIX HUBS ──────────────────────────────────
+   Five layers, topmost first.
+
+   1 TOP SCRIM. Round 1's faded to zero alpha by 30% of the viewport, which on
+     the 993px viewport this renders at is 298px — ABOVE the title block. The
+     72px title sits at y75-150 and the sub-caps and diamond rule at y180-215,
+     so the two quietest pieces of type on the page were left at the mercy of
+     whatever the painting happened to be doing there: measured across the six
+     hubs the title band ran 3.9 (Codex) to 23.4 (Arcanum) against the comp's
+     12.7, with a peak highlight of 229 on one plate against the comp's 60.
+     This one covers the whole title block and lands on a floor, so the type
+     has the same ground under it on every hub.
+   2 BOTTOM SCRIM — the same job for the Terms of Service link.
+   3 VIGNETTE — the comp's, unchanged.
+   4 THE WARM LAYER. This is what makes the ground warm, and it is why the
+     per-hub `sepia()` guessing above could be walked back. A flat warm-black
+     at .26 over ANY plate lifts red about 8 and blue about 3, so R−B lands
+     near the comp's +4 whether the painting underneath is a cold grey daylight
+     photo or a purple-lit market. Warm because the WASH is warm — not because
+     each plate got hand-tuned.
+     It sits UNDER the vignette on purpose: the corners must still go to black.
+   5 The comp's own base gradient. */
 .spellbook-hub.is-sub .spellbook-hub-bg::before {
+  z-index: 2;     /* above the plate AND the silhouettes — see the note in C2 */
   background:
-    linear-gradient(180deg, rgba(9, 7, 5, 0.72) 0%, rgba(9, 7, 5, 0.34) 14%, rgba(9, 7, 5, 0) 30%),
-    linear-gradient(0deg,   rgba(9, 7, 5, 0.64) 0%, rgba(9, 7, 5, 0.22) 10%, rgba(9, 7, 5, 0) 22%),
+    linear-gradient(180deg, rgba(9, 7, 5, 0.64) 0%, rgba(9, 7, 5, 0.46) 22%,
+                            rgba(9, 7, 5, 0.30) 34%, rgba(9, 7, 5, 0.08) 46%,
+                            rgba(9, 7, 5, 0) 54%),
+    linear-gradient(0deg,   rgba(9, 7, 5, 0.66) 0%, rgba(9, 7, 5, 0.34) 9%,
+                            rgba(9, 7, 5, 0.08) 17%, rgba(9, 7, 5, 0) 24%),
     radial-gradient(140% 108% at 50% 38%, rgba(11, 9, 6, 0) 0%, rgba(11, 9, 6, 0.22) 62%, rgba(6, 5, 3, 0.58) 100%),
+    linear-gradient(0deg,   rgba(30, 20, 10, 0.26), rgba(30, 20, 10, 0.26)),
     linear-gradient(180deg, rgba(18, 16, 12, 0.52) 0%, rgba(11, 9, 6, 0.16) 30%, rgba(9, 7, 5, 0.30) 72%, rgba(9, 7, 5, 0.44) 100%);
+}
+
+/* ── THE FOREGROUND PLATE (§3 "painted art", comp-hub.html:365-367) ────────
+   The comp's background is not one flat photo: it bleeds two heavily darkened
+   silhouettes off the bottom corners — armoured debris bottom-left, the
+   armoured turtle bottom-right — so the plate has a foreground and a distance.
+   Ours was a single flat photo behind a scrim, which is a visibly shallower
+   picture. These two `<i>` layers restore it.
+
+   ⚠ NO NEW ART. Both are existing files in `public/assets/artwork/`, the same
+     two the comp itself points at. A hub that does not set the two custom
+     properties paints nothing at all — `background-image` falls back to `none`
+     and the element is invisible — so this costs nothing on hubs where a
+     silhouette would be wrong.
+   The masks are the comp's: the art fades out upward so it reads as painted
+   INTO the plate rather than pasted on top of it. */
+.spellbook-hub.is-sub .spellbook-hub-bg .keep-fg {
+  position: absolute;
+  bottom: 0;
+  pointer-events: none;
+  background-repeat: no-repeat;
+  background-position: bottom center;
+  background-size: contain;
+  z-index: 1;     /* over the plate, under the wash — the comp's order */
+}
+.spellbook-hub.is-sub .spellbook-hub-bg .keep-fg-l {
+  left: -150px;
+  bottom: -90px;
+  width: 640px;
+  height: 620px;
+  transform: rotate(-7deg);
+  background-image: var(--keep-fg-l, none);
+  filter: brightness(0.42) saturate(0.34) contrast(1.10);
+  opacity: 0.85;
+  -webkit-mask-image: linear-gradient(to top, #000 0%, #000 54%, transparent 100%);
+          mask-image: linear-gradient(to top, #000 0%, #000 54%, transparent 100%);
+}
+.spellbook-hub.is-sub .spellbook-hub-bg .keep-fg-r {
+  right: -40px;
+  bottom: -34px;
+  width: 760px;
+  height: 620px;
+  background-image: var(--keep-fg-r, none);
+  filter: brightness(0.60) saturate(0.55) contrast(1.05) drop-shadow(0 20px 40px #000);
+  opacity: 0.95;
+  -webkit-mask-image: linear-gradient(to top, #000 0%, #000 58%, rgba(0, 0, 0, 0.45) 86%, transparent 100%);
+          mask-image: linear-gradient(to top, #000 0%, #000 58%, rgba(0, 0, 0, 0.45) 86%, transparent 100%);
+}
+/* Battle Hall is the hub the comp itself draws, so it gets the comp's own two
+   silhouettes on the comp's own plate. The other five stay flat rather than
+   have a creature invented for them. */
+.spellbook-hub.is-sub[data-hub="battle"] {
+  --keep-fg-l: url("../../assets/artwork/Sparta%20Spartan.png");
+  --keep-fg-r: url("../../assets/artwork/10000%20turtle.png");
 }
 .spellbook-hub.is-sub .spellbook-hub-bg::after {
   content: "";
   position: absolute;
   inset: 0;
+  z-index: 3;     /* the grain is the last thing over the plate */
   pointer-events: none;
   opacity: 0.05;
   mix-blend-mode: overlay;
@@ -542,6 +664,21 @@ html body .keep-hud .hub-currency-rail:not(#keep-none) {
   position: relative;
   isolation: isolate;
   gap: 0;
+  /* ⚠ THE HEIGHT IS EXPLICIT AND IT IS THE POINT. The top bar is THREE plaques
+     — two `.keep-tab` breadcrumbs on the left, this player pod and the music
+     glyph on the right — and comp-hub.html cuts all three from one piece of
+     metal: `.tab{height:44px}` over a 42px `.tab-in` (:123/:129), `.plaque`
+     620x44 over a 42px `.plaque-in` (:200), `.glyph-btn` 44x44 (:178).
+     Round 1 let this pod take its height from its pill content and it landed
+     at 39.5px beside two 44px tabs and a 44px square — measured, not guessed —
+     so the group read as a lightweight status line floating between plaques
+     instead of the third plaque in the row. Height goes here, never on the
+     pills: `_hubCurrencyRailHtml()` emits a different NUMBER of pills
+     depending on sign-in state, rank and sync errors, and a content-derived
+     height changes with them. 44 outer / 42 inner face, always. */
+  height: 44px;
+  box-sizing: border-box;
+  align-items: stretch;
   padding: 1px 3px;
   border: 0;
   border-radius: 0;
@@ -569,6 +706,11 @@ html body .keep-hud .hub-currency-rail:not(#keep-none)::before {
   clip-path: none;
   background: none;
   box-shadow: none;
+  /* The pills fill the 42px face; they do not define it. See the height note
+     on the pod above. */
+  align-self: stretch;
+  display: flex;
+  align-items: center;
 }
 /* The 1px gold vrules between value groups (§3). Stopping short top and bottom
    is what keeps the row from reading like a table. */
@@ -583,14 +725,75 @@ html body .keep-hud .hub-currency-rail:not(#keep-none)::before {
   pointer-events: none;
 }
 .keep-hud .hub-currency-rail .hub-cur-pill { position: relative; }
-/* The signed-in player name is the loudest thing in the group, in Comp A and
-   Comp B alike. */
-.keep-hud .hub-currency-rail #hub-cloud-pill.signed-in {
-  color: var(--keep-gold-hi);
-  font-weight: 700;
-  letter-spacing: 0.10em;
+/* The player name is the loudest thing in the group, in Comp A and Comp B
+   alike — comp-hub.html `.pname` is 17px/700 at ls .10em in highlight gold.
+   ⚠ `!important` is not decoration here. hub-chrome.css owns the INSIDE of this
+     pod (its §3, ~line 619) and sets `font-size:.9rem !important` on every
+     segment, which is right for the value segments and wrong for the name. An
+     important declaration is only beaten by another important declaration, so
+     this is the only way to give one segment its own weight without reaching
+     into hub-chrome's file. Coordinated, not duplicated: everything else about
+     the segments still comes from there. */
+html body .keep-hud .hub-currency-rail #hub-cloud-pill:not(#keep-none) {
+  font-size: 16px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.10em !important;
+  color: var(--keep-gold-hi) !important;
+}
+html body .keep-hud .hub-currency-rail #hub-cloud-pill:not(#keep-none):hover {
+  color: #f7e6b8 !important;
+}
+/* The cloud mark is line art in the same gold as the speaker glyph beside it.
+   It used to be the `☁` emoji, which Chromium paints as a filled light-BLUE
+   cloud — the only cold mark anywhere in the shell, sitting at the leftmost,
+   most prominent position of the pod. §1 allows one gold family in menu
+   chrome. The markup now ships an inline SVG (`_hubCurrencyRailHtml()`); this
+   is what colours it. */
+/* ⚠ THE LEGACY COLOURS THAT HAD TO BE BEATEN. index.html:25885-25886 paints
+   this one glyph `#b9c9e8` signed-out and `#9ddba0` signed-in — a cold blue
+   cloud and a green one. Swapping the emoji for line art was only half the
+   job; without these two lines the SVG inherits the same cold colour through
+   `currentColor` and the pod still carries the only non-gold mark in the
+   shell, at its leftmost and most prominent position. `inherit` puts it back
+   on the pill's own gold. */
+.keep-hud .hub-currency-rail .hub-cur-pill-cloud .rail-glyph,
+.keep-hud .hub-currency-rail .hub-cur-pill-cloud.signed-in .rail-glyph {
+  color: inherit;
+}
+.keep-hud .hub-currency-rail .rail-glyph .keep-inline-glyph {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  display: block;
 }
 .keep-hud .hub-currency-rail .rail-sub { color: var(--keep-gold-grey); }
+
+/* THE ACCOUNT XP METER. Round 1 left this as hub-chrome's bare 1px outline,
+   and at 0 XP — which is every signed-out player, i.e. every first impression —
+   the fill has zero width and the whole thing reads as an undressed hairline
+   dropped inside a finished plaque. It is dressed here as a carved slot out of
+   the same tokens as everything else: a dark well with the standard liner, a
+   1px gold hairline, the octagonal cut at the smallest size, and an inner top
+   highlight. Empty, it now reads as a deliberate empty gauge. */
+html body .keep-hud .hub-currency-rail .acc-pill-bar:not(#keep-none) {
+  width: 46px;
+  height: 8px;
+  clip-path: var(--keep-oct-6);
+  border: 0 !important;
+  background: linear-gradient(180deg, #0a0806 0%, #14100a 100%) !important;
+  box-shadow: inset 0 0 0 1px rgba(138, 111, 60, 0.55),
+              inset 0 1px 0 rgba(246, 220, 149, 0.10),
+              inset 0 0 6px rgba(0, 0, 0, 0.9) !important;
+}
+html body .keep-hud .hub-currency-rail .acc-pill-bar-fill:not(#keep-none) {
+  min-width: 0;
+  background: linear-gradient(180deg, var(--keep-gold-hi-2) 0%, #c9a45a 46%, #a67f3c 100%) !important;
+  box-shadow: 0 0 7px rgba(232, 200, 119, 0.55) !important;
+}
 
 /* ── C5 · TITLE BLOCK (§3) ────────────────────────────────────────────────
    72px gold Cinzel caps at ls .12em with a warm glow and a hard dark shadow;
@@ -654,6 +857,34 @@ html body .keep-hud .hub-currency-rail:not(#keep-none)::before {
   padding: 0;
 }
 
+/* FILL THE FRAME ON THE SPARSE HUBS.
+   Forge, The Codex and The Camp carry ONE row of tiles. With the band pinned
+   under the title and the footer's `margin-top:auto` shoving itself to the
+   floor, those three ran title → one row → ~450px of dead plate → Terms of
+   Service. Top-heavy; the comp fills its frame. Letting the band absorb the
+   leftover column space and sit centred in it gives the same three-part
+   composition on every hub: title at the top, tiles in the middle, the link on
+   the floor.
+
+   ⚠ WHY THE SELECTOR IS SHAPED LIKE THIS, and why it is only two properties.
+     The tile band belongs to hub-tiles.css, which declares it as
+     `.spellbook-hub.is-sub.hub-v2 .hub-portal-grid` (0,4,0) and is linked
+     AFTER this file — so the shell's own (0,3,0) rule above never applied, and
+     an equal-specificity copy would lose the tie too. `:not(#keep-none)` scores
+     as an id without matching anything, lifting this to (1,4,0). It touches
+     the two properties that are a PAGE decision — how the band sits in the
+     column — and nothing about tile size, gap, wrap point or width, all of
+     which stay hub-tiles'.
+   ⚠ SAFE ON THE TALL HUBS. Ruin Exchange runs four rows past the fold. There
+     the band's content is already taller than the free space, `flex-grow` has
+     nothing to hand it, `align-content` has nothing to distribute, and the
+     layout is byte-identical to what it was. Verified by render, not by
+     reasoning. */
+.spellbook-hub.is-sub.hub-v2:not(#keep-none) .hub-portal-grid {
+  flex: 1 1 auto;
+  align-content: center;
+}
+
 /* ── C7 · BOTTOM (§3) ─────────────────────────────────────────────────────
    "A small underlined gold-grey Terms of Service link, centred." Just that:
    the legacy `◇ ⚔ ◇` sigil is decorative and the comp has no room for it.
@@ -709,6 +940,24 @@ html body .keep-hud .hub-currency-rail:not(#keep-none)::before {
   .keep-hud { top: 0.7rem; right: 0.7rem; gap: 6px; flex-wrap: wrap; justify-content: flex-end; max-width: 82vw; }
   .keep-tab { height: 38px; padding: 0 15px; font-size: 13px; letter-spacing: 0.09em; }
   .keep-glyph-btn { width: 38px; height: 38px; }
+  /* THE DOUBLED HAIRLINE. Below 900px hub-chrome.css breaks the pod up — each
+     segment becomes its own small plaque with its own 1px gold frame, because
+     a wrapped row cannot share one frame without the vrules landing in
+     nonsense places. But the POD kept its frame too, so every segment showed
+     the pod's hairline and then its own a pixel away: two parallel gold lines
+     between each value group, correct at 1920 and doubled at 900.
+     Once the segments are plaques the pod must stop being one. */
+  html body .keep-hud .hub-currency-rail:not(#keep-none) {
+    height: auto;
+    padding: 0;
+    clip-path: none;
+    background: none;
+    filter: none;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  html body .keep-hud .hub-currency-rail:not(#keep-none)::before { display: none; }
+  html body .keep-hud .hub-currency-rail #hub-cloud-pill:not(#keep-none) { font-size: 0.82rem !important; }
   .spellbook-hub.is-sub .hub-subtitle { letter-spacing: 0.24em; text-indent: 0.24em; font-size: 12px; }
 }
 @media (max-width: 680px) {
@@ -730,4 +979,5 @@ html body .keep-hud .hub-currency-rail:not(#keep-none)::before {
     transition: none;
   }
   .spellbook-hub.is-sub .spellbook-embers span { animation: none; opacity: 0.25; }
+  html body .keep-hud .hub-currency-rail .acc-pill-bar-fill:not(#keep-none) { transition: none; }
 }

@@ -113575,6 +113575,19 @@ function _hdEnsureStyle() {
      it is half of §2's Follow-box pair — inside the strip a six-dot pager was enough
      to shrink it to nothing and the footer lost the glyph the bar names. */
   #md-dispatch .hd-social{display:flex;align-items:center;gap:10px;flex:1 1 auto;min-width:0}
+  /* 🩹 SHRINK ORDER — the live controls yield LAST, the decorative legend first.
+     The strip kept flex:0 1 auto while the third-slot legend was flex:none, so
+     the 374px footer row squeezed the ONE item holding real links: measured in a
+     headless probe, a player with 3 published links got a 48px strip around 72px
+     of icons, and with 6 links 48px around 150px. Everything past the first icon
+     was inside overflow:hidden — invisible AND unclickable, a straight regression
+     from the wrapping row this replaced.
+     flex-shrink is proportional, so ordering is expressible: the legend and the
+     admin button carry shrink 1000 against the strip's 1, which means they give
+     up their width (down to min-width:0) before a single icon is touched. The
+     strip stays shrinkable rather than flex:0 0 auto on purpose — at 0 0 auto an
+     overlong row would overflow .hd-social and paint straight over the pager,
+     which is worse than the honest clip the .is-clipped fade already announces. */
   #md-dispatch .hd-soc-strip{display:flex;align-items:center;gap:6px;flex:0 1 auto;min-width:0;overflow:hidden}
   /* A strip cut off mid-glyph reads as a bug. The fade says "there is more",
      which is the truth. Only applied when it actually overflows — _hdFitSocial
@@ -113603,9 +113616,11 @@ function _hdEnsureStyle() {
   #md-dispatch .hd-soc:focus{outline:none}
   #md-dispatch .hd-soc:focus-visible{outline:2px solid rgba(43,33,24,.75);outline-offset:2px}
   #md-dispatch .hd-soc svg{width:15px;height:15px;fill:currentColor;display:block}
+  /* flex:0 1000 auto, not flex:none — see the SHRINK ORDER note on .hd-soc-strip.
+     The label may lose characters; a published link may never lose its icon. */
   #md-dispatch .hd-soc-add{font-family:var(--keep-cinzel,'Cinzel',Georgia,serif);font-size:10.5px;font-weight:700;
     letter-spacing:.06em;color:#5a462f;background:none;border:1px dashed rgba(43,33,24,.24);border-radius:0;
-    padding:3px 8px;cursor:pointer;white-space:nowrap;flex:none;
+    padding:3px 8px;cursor:pointer;white-space:nowrap;flex:0 1000 auto;min-width:0;overflow:hidden;
     transition:color .16s var(--keep-ease,cubic-bezier(.22,.61,.36,1)),
                background .16s var(--keep-ease,cubic-bezier(.22,.61,.36,1)),
                border-color .16s var(--keep-ease,cubic-bezier(.22,.61,.36,1))}
@@ -113619,7 +113634,8 @@ function _hdEnsureStyle() {
      because it states who keeps the links, it does not offer to edit them. */
   #md-dispatch .hd-soc-note{font-family:var(--keep-cinzel,'Cinzel',Georgia,serif);font-size:12.5px;font-weight:700;
     letter-spacing:.05em;color:#5a462f;border:1px solid transparent;
-    padding:3px 2px;white-space:nowrap;flex:none;cursor:default}
+    padding:3px 2px;white-space:nowrap;flex:0 1000 auto;min-width:0;overflow:hidden;
+    text-overflow:ellipsis;cursor:default}
   #md-dispatch .hd-pager{display:flex;gap:6px;align-items:center;flex:none;margin-left:auto;padding-left:4px}
   /* _hdFetch pulls up to 20 dispatches, i.e. up to 20 dots — 215px of them,
      which would shove the pager off the sheet. Four is the cap (_hdPaint swaps
@@ -114082,6 +114098,12 @@ function _hdInit() {
   const soc = document.getElementById('hd-soc-edit');
   if (soc) soc.onclick = () => { try { _socialAdminOpen(); } catch (e) {} };
   _hdFitSocial();
+  // …and again next frame, for the same reason _hdFitBody is measured twice: the
+  // Cinzel swap lands after mount and re-widens the footer legend, so the single
+  // synchronous measure could read "fits" on a strip that was about to clip. A
+  // probe caught exactly that — scrollWidth 72 against clientWidth 48 with
+  // .is-clipped absent, i.e. the fade missing in the one case it exists for.
+  try { requestAnimationFrame(_hdFitSocial); } catch (e) {}
   // 💬 Keep the chat bubble sitting just above the dispatch card.
   try { if (typeof _chatPositionFab === 'function') requestAnimationFrame(_chatPositionFab); } catch (e) {}
 }

@@ -476,6 +476,107 @@ footer{margin-top:70px;padding-top:26px;border-top:1px solid var(--rule);
      }
     ]
    }
+  },
+  {
+   "n": 3,
+   "won": [
+    "u1-keep-foundation",
+    "u3-main-menu-comp-a",
+    "u5-motion"
+   ],
+   "open": [
+    "u4-dispatch-and-warpath"
+   ],
+   "integration": [
+    {
+     "tag": "CLEAN",
+     "head": "Syntax, sheets and every menu surface.",
+     "body": "<code>node _synckcheck.mjs</code> passes all four scripts in <code>public/index.html</code> (the 11.5 MB main script included). All eight pages render through <code>tools/shot.mjs</code> and were looked at: main, battle, forge, exchange, codex, field, arcanum, cardshop. Nothing blank, nothing black, no page lost against round 2. The Card Shop's empty state is the signed-out state, not a regression — the harness never signs in."
+    },
+    {
+     "tag": "CHECKED",
+     "head": "The four hub sheets are actually linked.",
+     "body": "All of <code>hub-keep.css</code>, <code>hub-tiles.css</code>, <code>hub-chrome.css</code> and <code>hub-transitions.css</code> carry a live <code>&lt;link&gt;</code> in <code>public/index.html</code> (lines 223720–223723, cache-busted to <code>?v=120w7</code>). No dead sheet this round — an unlinked stylesheet has silently cost a round before, so this is now checked explicitly rather than assumed."
+    },
+    {
+     "tag": "CHECKED",
+     "head": "No duplicate rules fighting between sheets.",
+     "body": "Nine selectors appear in both <code>hub-keep.css</code> and <code>hub-transitions.css</code>, all of them <code>.spellbook-hub.is-sub</code> descendants. A property-level diff across the two files returns <b>zero</b> conflicts: keep declares the resting state, transitions declares only <code>animation:</code>. The seam between the layout unit and the motion unit is holding."
+    },
+    {
+     "tag": "FIXED",
+     "head": "The Follow links were clipped out of existence (u4).",
+     "body": "Confirmed independently with a headless probe built from the real <code>#md-dispatch</code> CSS and the real footer markup, at 0/1/2/3/6 published links × player/admin. The strip was <code>flex:0 1 auto; overflow:hidden</code> while the decorative third-slot legend was <code>flex:none</code>, so the 374px footer squeezed the one item holding real links: a player with 3 links got a <b>72px</b> strip inside a <b>48px</b> box, and with 6 links <b>150px</b> inside <b>48px</b>. Every icon past the first was invisible <em>and</em> unclickable — a straight regression from the wrapping row it replaced. Because flex-shrink is proportional, shrink ORDER is expressible: the legend and the admin button now carry <code>flex:0 1000 auto; min-width:0</code> against the strip's 1, so they give up their width before a single icon is touched. Re-probed: players now keep every icon at full width (3 links 72/72, 6 links 150/150). The strip stays shrinkable rather than <code>flex:0 0 auto</code> on purpose — at zero shrink an over-long row would escape <code>.hd-social</code> and paint over the pager, which is worse than the honest clip the <code>.is-clipped</code> fade already announces. Only the admin's own “✎ Edit links” label truncates now, at 6 links. Fixed as breakage, not as design: the stamp/tag ink treatment the other critic asked for is untouched and still belongs to the builder."
+    },
+    {
+     "tag": "FIXED",
+     "head": "The overflow fade never fired, in the one case it exists for.",
+     "body": "<code>_hdFitSocial()</code> measured once, synchronously, at mount — before the Cinzel swap re-widens the footer legend underneath it. The probe caught the result: <code>scrollWidth 72</code> against <code>clientWidth 48</code> with <code>.is-clipped</code> absent, i.e. a strip clipping silently with no fade to say so. It is now measured again on the next frame, which is exactly what its vertical twin <code>_hdFitBody</code> already does, and for the same stated reason."
+    },
+    {
+     "tag": "CHECKED",
+     "head": "The one surface the harness cannot photograph.",
+     "body": "Worth flagging for round 4: <b>the Herald's Dispatch cannot be screenshotted at all.</b> It is mounted at body level into <code>#mm-hud</code> only on the new-menu path (<code>public/index.html:113142</code>), and that path needs the <code>main-menu/</code> iframe to post <code>mm:ready</code> — which never happens under the harness, so the failsafe drops the app to the legacy master menu, where no dispatch markup exists. I confirmed it by forcing a main-hub render: the legacy fallback menu paints, the parchment card does not. So u4 is the one unit whose builders and critics are both working from hand-built probes rather than from the real surface, while every other unit gets looked at directly. That is a plausible part of why it is the last unit still in the gauntlet."
+    }
+   ],
+   "critiques": {
+    "u1-keep-foundation": [
+     {
+      "verdict": "WINS",
+      "score": 8.5,
+      "bar": 8.5,
+      "gap": "The account segment in the player plaque breaks the comp's one-glyph-one-number segment rhythm. Every other cell in comp-hub.html's player group is exactly one mark plus one value fenced by 1px gold vrules (| ★ II | ◉ 2,076,571 | ▲ 2 |). Ours crams THREE unrelated marks into a single unfenced cell — the gold star, then a stroked shield glyph with the level number, then a 46px XP slot — so at 1x the top-right reads as \"★ ⓪1 ▭\", a mushy cluster the eye cannot parse, and it is the only place in the shell where the comp's hairline cadence fails. Fix: split it into two vrule-delimited segments the way every neighbour is built — `| ★ 1 |` (drop the redundant shield; the star already means \"account level\") and `| ▭ |` for the gauge — or, if the gauge must stay attached to the level, drop the star and run `| ⛊ 1 ▭ |` as a single two-atom cell. Either way one vrule must appear between the level and the gauge, because at 46px wide the empty slot currently reads as a fourth glyph rather than as a meter. Secondary: a \"v120w6\" build stamp sits in the bottom-right of all six hubs in ~10px monospace sans — the one element on the page outside the design language, and a direct violation of the no-sans-serif constraint; it should take the footer's gold-grey Cinzel small-caps treatment or be moved out of the hub surface."
+     },
+     {
+      "verdict": "WINS",
+      "score": 8.5,
+      "bar": 8,
+      "gap": "The sub-hub entrance choreography re-fires on any in-place re-render, and the trigger is a control inside the player group this unit built. renderTitle() rewrites root.innerHTML wholesale (public/index.html:115594) and hub-transitions.css §3 uses node MOUNTING as its only trigger, so every render() that lands while a hub is open replays all 680ms: background push-in, title resolve, seven-tile stagger. The reachable path is one click deep in this unit's own shell — #hub-cloud-pill -> \"Sync Now\" (public/index.html, cmi-sync handler: `await cloudSyncProfile(); showToast(...); render();`), and the same on sign-in success. FIX: this unit owns the index.html edits, so stamp the guard there — in renderTitle() emit `data-entered` on the .spellbook-hub.is-sub root when App._keepEnteredHub === hub, set App._keepEnteredHub = hub after mount, then gate hub-transitions.css §3's eleven `animation:` rules behind `.spellbook-hub.is-sub:not([data-entered])`. hub-transitions.css:549 already names this exact fix and declines it because that unit \"ships index.html untouched\" — this unit does not, so the guard fell through the seam between the two."
+     }
+    ],
+    "u3-main-menu-comp-a": [
+     {
+      "verdict": "WINS",
+      "score": 9,
+      "bar": 9,
+      "gap": "The top bar's right terminus. The comp closes the bar with exactly TWO objects — the player plaque, then 31px of air, then the lone gear plaque — so the gear reads as a single piece of punctuation ending the row. Our build inserts a third plaque (music) with geometry identical to the gear (same height, same 1px gold border, same fill, same chamfer), and to fit it the inter-plaque gaps were squeezed from the comp's 31px to 15px and the whole player plaque was dragged 61px left (left edge x=1000 vs the comp's x=1061, widening the bookmark-to-plaque gap from 371px to 320px). Measured at y=70: comp = player 1061–1774 · gap 31 · gear 1805–1875; ours = player 1000–1735 · gap 15 · music 1750–1805 · gap 15 · gear 1820–1875. The result is that the right end reads as a crowded two-cell segmented control rather than the comp's confident single terminal glyph, and the bar's spacing rhythm goes from one clear caesura to an even, mechanical 15/15 run. This is the only place in the whole surface where our composition is visibly looser than the comp's — and it is a spacing/hierarchy decision, not a missing feature, so it is fixable without dropping the music control."
+     },
+     {
+      "verdict": "WINS",
+      "score": 8.5,
+      "bar": 8.5,
+      "gap": "focus-visible on a nav row is visually indistinguishable from the active row, because the one thing meant to separate them never renders. `.nav-item:focus-visible .nav-ico{ box-shadow:0 0 0 2px rgba(232,200,119,.85) }` (public/main-menu/index.html:405) puts an OUTER ring on `.nav-ico` — but `.nav-ico` carries `clip-path:var(--oct-6)` (line ~336), and clip-path clips the element's entire painted output, outer box-shadow included. The declaration is dead. What survives on focus is a full-height gold marker bar plus a bright label — which is exactly the active row's treatment. Result: a keyboard user tabbing to Card Shop while Battle Hall is selected sees TWO full-height \"you are here\" bars in the rail at once, with only a wash-opacity difference (.62 vs 1) and one gold step of label colour (#f2dda2 vs #e8c877) between them. Hover, by contrast, is unambiguous — its marker is a 40% stub. Fix: move the ring inside the clip. `box-shadow: inset 0 0 0 2px rgba(232,200,119,.85)` on `.nav-ico > span` paints within the octagon and is not clipped away. Better still, give focus a marker the active row never uses — a segmented or double-hairline bar, or an inset hairline around the row's inner edge — so focus reads as \"the keyboard is here\", not \"this is your current section\"."
+     }
+    ],
+    "u4-dispatch-and-warpath": [
+     {
+      "verdict": "LOSES",
+      "score": 8.4,
+      "bar": 9,
+      "gap": "The NEW unread stamp (`#md-dispatch .hd-new`, index.html:113487) is the one element on the parchment that reads as UI rather than as paper, and it sits at the exact point the eye lands first. It is an OPAQUE flat `#65200e` box with `#efe1c1` type, clipped to a 4px octagon on a ~14px-tall chip, positioned `left:0` on `.hd-rule` — so (a) no paper grain passes through it, which is the single tell that separates an overprinted mark from a pasted sticker; (b) its cream type is the brightest thing on the sheet, brighter than the parchment ground, which inverts the hierarchy — at true 1x my eye goes pennant → NEW → title, where the comp goes title → pennant; (c) it severs the hairline rule at its origin, so the rule appears to emerge from the badge instead of running the width of the sheet; (d) §2 grants this card exactly one accent (the purple skull pennant) and this is a second saturated mark. FIX: make it an overprint rather than a chip. Drop the opaque fill and the octagon clip; use `mix-blend-mode:multiply` with `background:rgba(101,32,14,.82)` (or no box at all — `color:rgba(101,32,14,.86)`, 1.5px ink hairline rectangle at .5 ink, `rotate(-3deg)`) so the fibre and blotch layers of `.hd-paper` read straight through it the way a real wax/rubber stamp does, and move it to the RIGHT end of the rule or float it over the top-right of the body well so the hairline stays continuous edge to edge. The same \"lighter than the paper\" mistake repeats one row down on `.hd-tag` (113518), whose `rgba(255,250,235,.34)` fill is brighter than the parchment and makes the UPDATE chip float above the sheet — the same multiply/ink-only treatment fixes both, and fixing both is what collapses the crowded four-band top third back toward the comp's two."
+     },
+     {
+      "verdict": "LOSES",
+      "score": 7,
+      "bar": 8,
+      "gap": "The Follow links are clipped out of existence. `#md-dispatch .hd-soc-strip` (index.html:113578) is `flex:0 1 auto; overflow:hidden` and now shares one 374px footer row with the FOLLOW label (65px), a divider, the always-rendered 153px \"＋ Add special Links\" note (the non-admin `slot` at index.html:113903) and the pager (92px). Measured in a live DOM probe of the real markup + real CSS: a player account gets **strip clientWidth = 24px** no matter how many links are published (scrollWidth 46 at 2 links, 72 at 3, 150 at 6). Admin gets 53px. So icons 2..6 are outside an `overflow:hidden` box — invisible AND unclickable. The base build (commit 4dbc4f9) rendered `.hd-social` as its own row with `flex-wrap:wrap` and every icon visible, so Discord/X/YouTube/TikTok/Instagram/Twitch just disappeared from the main menu for every player with more than one link. Fix: the decorative label must yield to the live controls, not the reverse — for non-admins render the `hd-soc-note` only when `btns` is empty (it is literally the \"there are no links\" legend), and give `.hd-soc-strip` `flex:0 0 auto` while letting the note/`hd-soc-add` be the shrinking item; then re-measure `_hdFitSocial` on the next frame the way `_hdPaint` already re-measures `_hdFitBody` (index.html:114084 calls it once, synchronously — my probe caught `is-clipped=false` while scrollWidth 46 > clientWidth 24, i.e. the fade is missing in exactly the case it exists for, because the Cinzel swap widens the note after the measure)."
+     }
+    ],
+    "u5-motion": [
+     {
+      "verdict": "WINS",
+      "score": 8.5,
+      "bar": 8,
+      "gap": "The one-frame ghost on every sub-hub navigation is unmitigated, and the layer that is supposed to cover it mathematically cannot. R0's unfilled + 1ms-delay shape means the first painted frame after mount samples the animation at currentTime 0, inside the lead, so the browser paints ONE full frame (~16ms) of the completely settled hub, then blanks the whole tile band to opacity 0, then plays the 640ms entrance — the page appears, vanishes, then arrives. hub-transitions.css:396-405 claims the veil hides this, but `html body #md-nav-flash` is `mix-blend-mode: screen` over two 16%/11% ember radial gradients (lines 306, 328-332): screen can only ADD light, so a fully painted tile band and gold title stay completely legible through it. My isolation render at full veil+blade strength proves it — every tile, every badge and the BATTLE HALL title read perfectly through the sweep at peak. FIX, in-file, no index.html edit: `#md-nav-flash` is already the one element allowed to paint, so move `mix-blend-mode: screen` off the element and onto the two travelling pseudos, then give the veil an OPAQUE warm-black bottom layer (e.g. `linear-gradient(rgba(11,9,6,1), rgba(11,9,6,1))` beneath the ember radials) that is fully opaque for the first ~2 frames and gone by ~60ms while the gold blade keeps running on top. That converts the ghost frame into a deliberate one-beat dip through warm black under a torch pass — and it simultaneously gives #mm-frame the real exit cover that deliverable 3 currently only asserts."
+     },
+     {
+      "verdict": "WINS",
+      "score": 8.5,
+      "bar": 8,
+      "gap": "The one-frame flash-of-settled-content on every sub-hub mount, and the claim that the nav veil covers it. Because R0 puts a 1ms lead on every entrance with no fill, an animation sampled at currentTime 0 sits in its before-phase and contributes nothing — so in a real browser the hub paints ONE complete frame at rest (title, rule, all seven tiles, footer) and the NEXT frame snaps every one of them to opacity 0 before the entrance starts. I measured exactly that: probe at t=0 reads `bg{op=1.00} topbar{op=1.00} banner{op=1.00} foot{op=1.00} tiles=1,1,1,1,1,1,1`, and at t=60 the same elements read `topbar{op=0.16} banner{op=0.00} foot{op=0.00} tiles=0,0,0,0,0,0,0`. That is appear → blank → fade, on every navigation into every sub-hub, i.e. exactly the \"popping transition\" the clause exists to remove. The file's stated mitigation (§1's veil already lit at .88) does not hold up: the veil is a `mix-blend-mode: screen` wash of 16% ember / 11% body gold, and in my isolated capture of the sweep at t=0 (scratchpad/veil-0.png) the gold BATTLE HALL title and every tile read straight through it — it warms the frame, it does not conceal a content pop. The fix is to stop paying a shipped-product cost for a screenshot-harness constraint: give the §3 entrance rules `animation-fill-mode: backwards` (which is correct in every real browser — no leaked frame, no discontinuity) and neutralise the frozen-clock harness where the harness lives, by having tools/shot.mjs inject `*{animation:none !important}` for settled captures. Failing that, the one-line index.html version: have `renderTitle()` mount the hub root with a class and clear it inside a `requestAnimationFrame`, so the entrance begins on the frame after mount instead of one frame late."
+     }
+    ]
+   }
   }
  ]
 }

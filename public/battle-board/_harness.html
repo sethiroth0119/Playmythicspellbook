@@ -1568,6 +1568,91 @@ SCENES.telegraph = (function () {
   };
 })();
 
+/* — 3b-ii · WALKWALL. 🚶 THE WALKED ROUTE, not just the drawn one.
+     `telegraph` proves the board DRAWS a bent route. These two scenes exist to
+     prove the SPRITE WALKS IT — moveUnit() now reads TELE.path (the very list
+     the arrow was drawn from) instead of lerping endpoint to endpoint, and the
+     only way to catch a regression in that is to move a unit and sample where
+     it actually went. Both scenes therefore hand the board a route whose
+     straight line passes through solid matter, so a straight tween cannot
+     possibly be mistaken for a correct one.
+
+     Here the obstacle is a WALL of `type:'blocked'` tiles across row 6 with a
+     single gap at (6,6). Every route from the south half to the north half is
+     funnelled through that one hex; the straight line from (3,9) to (3,3) is
+     not. */
+SCENES.walkwall = (function () {
+  const sel = { x: 3, y: 9 };
+  const dest = { x: 3, y: 3 };
+  const wall = [];
+  for (let x = 0; x < COLS; x++) if (x !== 6) wall.push({ x: x, z: 6, type: 'blocked', elev: 0.22 });
+  const units = [
+    unit('dual-blader',  'player', sel.x, sel.y),
+    unit('warrior-hero', 'player', 1, 10),
+    unit('scum-boss',    'ai',     10, 2)
+  ];
+  const blocked = new Set(wall.map(t => t.x + ',' + t.z));
+  const SPEED = 14;
+  const path = bfsPath(units, blocked, sel.x, sel.y, dest.x, dest.y, SPEED);
+  return {
+    shipped: false,
+    desc: 'WALKED-ROUTE RIG. A blocked wall across row 6 with one gap at (6,6). The Dual Blader walks (3,9) → (3,3): straight line is 6 hexes through solid wall, the legal route is ' + (path.length - 1) + ' steps through the gap. Drive it with Board.moveUnit and sample where the sprite goes.',
+    timeOfDay: 'day', location: 'battlefield',
+    map: ruinsMap('day', 'battlefield', RUIN_TILES.concat(wall)),
+    units: units, tombstones: [], surfaces: {},
+    paint: { move: bfsReach(units, blocked, sel.x, sel.y, SPEED), attack: [], place: [], swap: [], sel: sel },
+    tele: { path: path, dest: dest, arc: null, threat: [] }
+  };
+})();
+
+/* — 3b-iii · WALKSLAB. The same proof with the obstacle RAISED, because the
+     second half of the walked-route fix is that a unit follows the ground.
+     A nine-by-two raised mass seals columns 0–8 of rows 5 and 6, so the only
+     way north is round its eastern shoulder — and that shoulder is a stepped
+     shelf, so the legal route climbs 0 → 0.15 → 0.34 → 0.15 → 0 on its way
+     past. A sprite pinned to its DESTINATION's height (which is what
+     tileElev(u.gx,u.gz) gave for the whole tween) walks through the shelf
+     instead of over it. */
+SCENES.walkslab = (function () {
+  const sel = { x: 4, y: 8 };
+  const dest = { x: 4, y: 2 };
+  const mass = [];
+  for (let z = 5; z <= 6; z++) for (let x = 0; x <= 8; x++) mass.push({ x: x, z: z, type: 'blocked', elev: 0.62 });
+  /* the stepped shoulder the detour has to climb — heights on the route itself,
+     not beside it, so the walk is what changes height.
+     ⚠ Row 4 is lifted with them, and NOT for looks: a 0.62 slab on row 5 is
+     tall enough to bury the centre pixel of the flat tile behind it, and a
+     buried tile is a tile the player can see the rules offer and cannot click
+     (.gauntlet/OPEN-BREAKS.md #3). __bbHexCheck counts it as a deadCentre — the
+     fixture must not manufacture one of those to make its own point. */
+  const shelf = [
+    { x: 0, z: 4, elev: 0.34 }, { x: 1, z: 4, elev: 0.34 }, { x: 2, z: 4, elev: 0.34 },
+    { x: 3, z: 4, elev: 0.34 }, { x: 4, z: 4, elev: 0.34 }, { x: 5, z: 4, elev: 0.34 },
+    { x: 6, z: 4, elev: 0.34 }, { x: 7, z: 4, elev: 0.34 },
+    { x: 9,  z: 7, elev: 0.15 }, { x: 10, z: 7, elev: 0.15 },
+    { x: 9,  z: 6, elev: 0.34 }, { x: 10, z: 6, elev: 0.34 },
+    { x: 9,  z: 5, elev: 0.34 }, { x: 10, z: 5, elev: 0.34 },
+    { x: 9,  z: 4, elev: 0.15 }, { x: 10, z: 4, elev: 0.15 }
+  ];
+  const units = [
+    unit('dual-blader',  'player', sel.x, sel.y),
+    unit('rifleman',     'player', 2, 10),
+    unit('scum-grunt',   'ai',     11, 1)
+  ];
+  const blocked = new Set(mass.map(t => t.x + ',' + t.z));
+  const SPEED = 20;
+  const path = bfsPath(units, blocked, sel.x, sel.y, dest.x, dest.y, SPEED);
+  return {
+    shipped: false,
+    desc: 'WALKED-ROUTE RIG, RAISED. A blocked mass 0–8 wide over rows 5–6 at elev 0.62; the only way north is over the stepped shelf at columns 9–10. The Dual Blader walks (4,8) → (4,2) in ' + (path.length - 1) + ' steps and must RISE with the shelf on the way.',
+    timeOfDay: 'day', location: 'battlefield',
+    map: ruinsMap('day', 'battlefield', RUIN_TILES.concat(mass, shelf)),
+    units: units, tombstones: [], surfaces: {},
+    paint: { move: bfsReach(units, blocked, sel.x, sel.y, SPEED), attack: [], place: [], swap: [], sel: sel },
+    tele: { path: path, dest: dest, arc: null, threat: [] }
+  };
+})();
+
 /* — 3c · ARC. The attack telegraph: a curve from attacker to target drawn
      ABOVE the board (BAR R2), not a straight laser along the ground. */
 SCENES.arc = (function () {

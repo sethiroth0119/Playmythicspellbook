@@ -1484,28 +1484,154 @@ function shoveLegs(u, gx, gz, path){
   return out;
 }
 
+/* 🏹 THE ARROW *IS* THE ROUTE — the ordinary-walk half of the same fix.
+   `shoveLegs` above only ever fires for knockback / pull / vortex / ice, the
+   four movements the host has to hand a ray for because no getMovePath() sits
+   behind them. An ORDINARY walk got nothing, so it fell through to the two-
+   endpoint tween: the telegraph honestly drew the bent route the rules were
+   about to take, and then the sprite slid straight through the wall that route
+   went around. Arrow right, picture still wrong — the lie moved from the rules
+   into the animation.
+
+   The route is not recomputed here. It is READ from the exact tile list the
+   telegraph drew: `TELE.path`, pushed by the host straight out of the
+   getMovePath() call the move itself is about to commit (see the `tele`
+   message handler, and `_bbStagePushTele` on the host). A second derivation is
+   how the two drift apart again, and this file owns no pathfinder to derive
+   one with anyway.
+
+   ⚠ ORDERING is what makes this safe rather than lucky. The host's tick posts
+   `units` BEFORE `tele` (`_bbStageMount`), and postMessage delivery is ordered,
+   so when applyUnits→moveUnit runs, TELE still holds the PRE-move route. The AI
+   half is the same shape from the other side: setAIActor() pushes `side:'foe'`
+   with the pre-move tile prepended, and the board does not move the unit until
+   the next roster push.
+
+   Staleness is not assumed away — every route goes through shoveLegs(), whose
+   three checks (starts on this unit's tile, ends on this destination, every leg
+   exactly one hex step) are precisely what makes a leftover hover route for
+   another unit or another target impossible to misapply. No match, no legs,
+   and no legs means the honest endpoint tween — never an invented route. */
+function telegraphLegs(u, gx, gz){
+  const P = TELE.path;
+  if (!Array.isArray(P) || P.length < 2) return null;
+  const tiles = [];
+  for (const k of P){
+    if (typeof k !== 'string') return null;      /* the wire format is "x,z" */
+    const c = k.indexOf(','); if (c < 0) return null;
+    const x = +k.slice(0, c), z = +k.slice(c + 1);
+    if (!isFinite(x) || !isFinite(z)) return null;
+    tiles.push({ x: x | 0, z: z | 0 });
+  }
+  return shoveLegs(u, gx, gz, tiles);
+}
+
+/* 🚶 THE PACE CURVE. Returns distance travelled, in LEGS, at normalised time k.
+   Every hex step is the same world length (all six odd-r neighbour offsets come
+   out to exactly HEXW — check it: a row step is hypot(HEXW/2, 1.5*SIZE) =
+   sqrt(3)*SIZE), so "legs travelled" IS arc length and a constant slope here is
+   a constant ground speed out there.
+
+   One leg keeps the cubic easeInOut it always had, to the bit — an ordinary
+   single step must not change. Two or more legs get a trapezoid: accelerate
+   over the FIRST leg, cruise at a constant speed through the middle, decelerate
+   over the LAST. That is the one profile that reads as walking. The two
+   alternatives both lie about the route in their own way — easing per leg makes
+   a six-tile walk six separate hops with five dead stops, and easing once across
+   the whole route makes the interior legs blur past at several times the speed
+   of the first and last, so a long route looks like a dash and a short one like
+   a shuffle.
+
+   The algebra, so nobody has to re-derive it: ramp DISTANCE is fixed at one leg
+   each end, so with a linear accel (mean speed V/2) the ramp TIME is 2/V. Total
+   time is 1, so 2/V + (n-2)/V + 2/V = 1 ⇒ V = n+2 legs per unit of normalised
+   time. Everything below falls out of that. */
+function tweenDist(n, k){
+  if (n <= 1) return easeInOut(k);
+  const V = n + 2;                 /* cruise speed, legs per unit normalised t */
+  const ta = 2 / V;                /* ramp time; ramp distance is exactly 1 leg */
+  const A = (V * V) / 4;           /* = V / (2*ta), the quadratic's coefficient */
+  if (k <= ta) return A * k * k;
+  if (k >= 1 - ta){ const s = 1 - k; return n - A * s * s; }
+  return 1 + V * (k - ta);
+}
+/* Cruise speed in legs per second. 8 is brisk enough that a 6-tile route is a
+   1.0s walk rather than a cutscene, and it keeps the common 2–3 tile move
+   (0.50s / 0.63s) comfortably inside the host's AI_DELAYS.move of 700ms. */
+const WALK_LEGS_PER_SEC = 8;
+/* …and a ceiling, because a 12-tile ice skid at a constant walk is 1.75s of
+   nothing happening. Past ~9 legs the skid speeds up rather than drags. */
+const WALK_DUR_MAX = 1.35;
+
+/* ⛰ THE GROUND UNDER A UNIT'S FEET, mid-walk.
+   moveUnit() sets u.gx/u.gz to the DESTINATION the instant the tween starts —
+   it has to, so unitAt() and every rules-facing lookup see the new tile — but
+   drawUnit() then read tileElev(u.gx,u.gz) for the whole walk. A unit stepping
+   OFF a slab dropped a metre before it had moved anywhere; one stepping ONTO a
+   slab floated across at the higher level and landed on nothing. The tween
+   carries the interpolated ground height of the leg it is actually on. */
+function unitGroundY(u){
+  return (u && u.tween && typeof u.tween.gy === 'number') ? u.tween.gy : tileElev(u.gx, u.gz);
+}
+
+/* 🧱 …and the TILE it is standing on, which is the SAME distinction from the
+   other side. `u.gx/u.gz` is where the unit will BE — moveUnit() moves them to
+   the destination on the first frame — so anything that means "which slab is
+   underneath this sprite right now" has to derive it from the live position,
+   not from the grid fields. The one consumer that matters is the occlusion
+   mask's own-slab exemption (clipBehindTerrain's `sx/sz`): aim it at the
+   destination and, for the length of the walk, the tile the unit is actually
+   standing on is free to clip it — which on a raised route is the unit's boots
+   disappearing into the step it is climbing.
+   Rounding goes through worldToTile() rather than Math.round on the offsets,
+   because odd-r rows are staggered and rounding the columns independently is
+   wrong near hex edges (HEXSPEC §4). Fast path first: a unit at rest is already
+   on integer coordinates and needs none of it. */
+function unitTile(u){
+  if (!u) return { x:0, z:0 };
+  if (u.x === u.gx && u.z === u.gz) return { x:u.gx, z:u.gz };
+  const w = gw(u.x, u.z, 0);
+  return worldToTile(w.x, w.z) || { x:u.gx, z:u.gz };
+}
+
 /* crisp tile-to-tile movement: cubic ease + hop arc + squash + dust
    `path` (optional) is the ordered tile list the GAME actually walked — first
    element the unit's current tile, last the destination. When present the
    tween is CHAINED through it leg by leg instead of interpolated straight from
-   one endpoint to the other. Ordinary walking passes nothing and is untouched.
+   one endpoint to the other. When it is ABSENT the telegraph's own route is
+   used instead (telegraphLegs, above) — that is the ordinary-walk path and it
+   is why the sprite now goes round what the arrow went round.
    `force` (optional) skips only the unit-occupancy gate — see applyUnits, where
    a batch of simultaneous shoves can legitimately vacate a tile it also fills.
    Signature stays backwards compatible: moveUnit(id,gx,gz) behaves as before. */
 function moveUnit(id, gx, gz, path, force){
-  const u = units.find(x => x.id===id); if (!u || u.tween) return;
+  const u = units.find(x => x.id===id); if (!u) return;
+  /* A move arriving mid-animation used to be DROPPED outright. That was survivable
+     while every walk was ≤0.34s; walking the real route makes the window several
+     times wider, and a dropped move leaves the sprite on a tile the rules have
+     already vacated until some later snapshot happens to differ again. Settle the
+     running tween onto its own endpoint (which u.gx/u.gz already agree with) and
+     start the new one from there — a correct board beats a refused animation, the
+     same call the deferred-move loop in applyUnits makes. */
+  if (u.tween){ const p = u.tween; u.tween = null; u.x = p.x1; u.z = p.z1; u.y = 0; }
   if (tileBlocked(gx,gz)) { deny(u); return; }
   if (!force){ const occ = unitAt(gx,gz); if (occ && occ.id !== u.id) { deny(u); return; } }
   u.face = (gx === u.gx) ? u.face : (gx > u.gx ? 1 : -1);
-  const legs = shoveLegs(u, gx, gz, path) || [{ x:u.x, z:u.z }, { x:gx, z:gz }];
+  const legs = shoveLegs(u, gx, gz, path) || telegraphLegs(u, gx, gz) || [{ x:u.x, z:u.z }, { x:gx, z:gz }];
   const n = legs.length - 1;
-  /* Duration scales with LEG COUNT, not per leg: 0.34s each would make a
-     12-tile ice skid a four-second cutscene. One leg is 0.34s exactly, so an
-     ordinary step animates at the speed it always has. */
-  const dur = n <= 1 ? 0.34 : Math.min(0.72, 0.34 + 0.085*(n-1));
+  /* Ground height at each waypoint, sampled ONCE here rather than per frame:
+     leg 0 starts at the sprite's live position, whose tile is the one u.gx/u.gz
+     still name at this point in the function — read it BEFORE they are
+     reassigned to the destination below. Every later leg is an integer tile. */
+  const ey = [ tileElev(u.gx, u.gz) ];
+  for (let i = 1; i < legs.length; i++) ey.push(tileElev(legs[i].x, legs[i].z));
+  /* Constant ground speed: the duration is proportional to the route length,
+     which is the whole point of walking it. One leg stays 0.34s exactly. */
+  const dur = n <= 1 ? 0.34 : Math.min(WALK_DUR_MAX, (n + 2) / WALK_LEGS_PER_SEC);
   /* The hop arc is per leg (one bounce per tile). Damp it by how fast the legs
      are going by, or a long skid turns into a pogo stick. */
-  u.tween = { legs, n, x1:gx, z1:gz, t:0, dur, hop: 0.28 * Math.min(1, (dur/n)/0.34) };
+  u.tween = { legs, ey, n, x1:gx, z1:gz, t:0, dur, li:-1, gy:ey[0],
+              hop: 0.28 * Math.min(1, (dur/n)/0.34) };
   u.anim = 'walk';
   u.gx = gx; u.gz = gz;
   dispatch('unitMove', { id, x:gx, z:gz, path: n > 1 ? legs.slice(1) : null });
@@ -1675,10 +1801,15 @@ function burst(wx, wz, power, n, col){
    ground, drift outward and fade, plus a little heavier grit that arcs and
    settles. (Three.js: soft-particle billboards with depth-fade + the same
    expand/fade curve; grit as a small GPU sprite burst.) */
-function dust(wx, wz, n){
+/* `y0` (optional) is the GROUND height to kick the dust off. It defaults to 0,
+   which is the flat-board assumption every caller made before there were slabs:
+   a unit landing on a raised tile left its dust puffing out of the dirt below
+   the cliff it had just climbed. */
+function dust(wx, wz, n, y0){
+  const g = y0 || 0;
   for (let i=0;i<n;i++){
     const a = Math.random()*Math.PI*2, sp = rnd(.35,1.05);
-    particles.push({ puff:true, x:wx, y:rnd(.01,.10), z:wz,
+    particles.push({ puff:true, x:wx, y:g+rnd(.01,.10), z:wz,
       vx:Math.cos(a)*sp, vz:Math.sin(a)*sp, vy:rnd(.10,.34),
       t:0, life:rnd(.75,1.35),
       r0:rnd(.09,.17), r1:rnd(.44,.78),
@@ -1686,8 +1817,8 @@ function dust(wx, wz, n){
   }
   for (let i=0;i<Math.round(n*.55);i++){
     const a = Math.random()*Math.PI*2, sp = rnd(.5,1.6);
-    particles.push({ x:wx, y:.03, z:wz, vx:Math.cos(a)*sp, vy:rnd(.5,1.5), vz:Math.sin(a)*sp,
-      life:rnd(.35,.75), t:0, col:'#d8c9a4', size:rnd(1.1,2.2), g:4.2, soft:true });
+    particles.push({ x:wx, y:g+.03, z:wz, vx:Math.cos(a)*sp, vy:rnd(.5,1.5), vz:Math.sin(a)*sp,
+      life:rnd(.35,.75), t:0, col:'#d8c9a4', size:rnd(1.1,2.2), g:4.2, soft:true, y0:g });
   }
 }
 function emberDissolve(sx, sy){
@@ -4809,7 +4940,7 @@ function paintSprite(c, key, k, col, t, edge){
    so the host only has to add the stage's page offset. */
 function unitScreenBox(u){
   if (!u) return null;
-  const base = gw(u.x, u.z, tileElev(u.gx, u.gz));
+  const base = gw(u.x, u.z, unitGroundY(u));
   const wy = base.y + u.y;
   const foot = project({ x:base.x, y:wy, z:base.z });
   const head = project({ x:base.x, y:wy + unitWorldH(u.def), z:base.z });
@@ -5612,7 +5743,7 @@ function drawTruck(cp){
   ctx.restore();
 }
 function drawUnit(u){
-  const base = gw(u.x, u.z, tileElev(u.gx,u.gz));
+  const base = gw(u.x, u.z, unitGroundY(u));
   const wy = base.y + u.y;
   const foot = project({ x:base.x, y:wy, z:base.z }); if (!foot) return;
   const head = project({ x:base.x, y:wy + unitWorldH(u.def), z:base.z }); if (!head) return;
@@ -5901,26 +6032,40 @@ function update(dt){
     u.scaleY += (1 - u.scaleY) * Math.min(1, dt*9);
     if (u.tween){
       const tw = u.tween; tw.t += dt/tw.dur;
-      const k = clamp(tw.t,0,1), e = easeInOut(k);
-      /* 🛤 CHAINED LEGS. The eased progress is spread over the whole route and
-         then split into (leg index, fraction within leg), so the sprite passes
-         EXACTLY through every tile centre the rules walked — at e*n integral,
-         the fraction is 0 and the position is that waypoint to the bit — while
-         still accelerating and decelerating once across the whole shove rather
-         than stuttering at every tile.
+      const k = clamp(tw.t,0,1);
+      /* 🛤 CHAINED LEGS. Distance along the route (tweenDist, in legs) is split
+         into (leg index, fraction within leg), so the sprite passes EXACTLY
+         through every tile centre the route contained — at an integral
+         distance the fraction is 0 and the position is that waypoint to the
+         bit — while accelerating once at the start and settling once at the
+         end rather than stuttering at every tile.
          A single leg reduces to the old lerp(x0,x1,easeInOut(t)) identically:
-         n===1 ⇒ li=0, f=e. That is deliberate — ordinary walking must not
-         change. See shoveLegs() for why a leg is always one hex step. */
-      const p = e * tw.n;
+         n===1 ⇒ tweenDist returns easeInOut(k), li=0, f=e. That is deliberate —
+         ordinary single-tile walking must not change. See shoveLegs() for why a
+         leg is always one hex step, and telegraphLegs() for where the route of
+         an ordinary multi-tile walk comes from. */
+      const p = tweenDist(tw.n, k);
       let li = Math.floor(p); if (li >= tw.n) li = tw.n - 1; if (li < 0) li = 0;
       const f = p - li, a = tw.legs[li], b = tw.legs[li+1];
       u.x = lerp(a.x, b.x, f); u.z = lerp(a.z, b.z, f);
+      /* ⛰ rise and fall with the ground under this leg — see unitGroundY() */
+      tw.gy = lerp(tw.ey[li], tw.ey[li+1], f);
+      /* 🧭 Face along the LEG, not at the endpoint: a route that bends back on
+         itself had the sprite moonwalking through half of it. World x, not
+         offset column, because a pure row step still slides half a hex
+         sideways (rowShift). Single-leg moves keep the endpoint facing set in
+         moveUnit() so nothing about an ordinary step changes. */
+      if (tw.n > 1 && tw.li !== li){
+        tw.li = li;
+        const wa = gw(a.x, a.z), wb = gw(b.x, b.z);
+        if (Math.abs(wb.x - wa.x) > 1e-4) u.face = wb.x > wa.x ? 1 : -1;
+      }
       u.y = Math.sin((tw.n === 1 ? k : f) * Math.PI) * tw.hop;
       if (k < .18) { u.scaleY = lerp(1,.86,k/.18); u.scaleX = lerp(1,1.12,k/.18); }
       if (k >= 1){
         u.tween = null; u.anim='idle'; u.x = tw.x1; u.z = tw.z1; u.y = 0;
         u.scaleY = 1.18; u.scaleX = .86;
-        dust(gw(u.x,u.z).x, gw(u.x,u.z).z, 14);
+        dust(gw(u.x,u.z).x, gw(u.x,u.z).z, 14, tileElev(u.gx, u.gz));
         /* ← REPLACE with the game's rule for when an event resolves */
         if (eventsAt(u.gx, u.gz).length) triggerEvent(u.gx, u.gz, u.id);
       }
@@ -5953,7 +6098,10 @@ function update(dt){
     }
     p.vy -= p.g*dt;
     p.x += p.vx*dt; p.y += p.vy*dt; p.z += p.vz*dt;
-    if (p.y < 0){ p.y = 0; p.vy *= -0.32; p.vx *= .6; p.vz *= .6; }
+    /* bounce off the SLAB the burst came from, not off world zero — grit kicked
+       up on a raised tile used to fall straight through it (see dust(y0)) */
+    const pg = p.y0 || 0;
+    if (p.y < pg){ p.y = pg; p.vy *= -0.32; p.vx *= .6; p.vz *= .6; }
   }
   particles = particles.filter(p => p.amb || p.t < p.life);
   updateFlames(dt);
@@ -6581,6 +6729,24 @@ function drawNameplates(){
     const y0 = clamp(R(box.top - h - 7 * S), 2, H - h - 2);
     const x0 = R(cx - w / 2);
 
+    /* 🧱 …and the plate is in the SAME depth sequence as everything else. It is
+       the one drawable whose screen box is not derived from its own feet — it
+       is clamped into the canvas — so the clip is asked for with the PLATE's
+       rect while the depth and the footing still come from the unit. A plate
+       whose unit is hidden behind a near cliff loses only the part of itself
+       that is actually behind that cliff; the rest still floats above the slab,
+       which is what keeps BAR R3's "readable at distance" true. */
+    const _put = unitTile(u);   /* the tile under the sprite NOW, not its destination */
+    const _pclip = clipBehindTerrain(gw(u.x, u.z, unitGroundY(u)), unitGroundY(u),
+                                     { x0, x1: x0 + w, y0, y1: y0 + h }, _put.x, _put.z);
+    /* ⚠ try/finally, matching the actor loop in frame() and for the same
+       reason: ctx.save() is a STACK, and one throw between here and the
+       restore leaks a frame's clip into the rest of this frame and every frame
+       after it — the canvas state stack then grows for the life of the
+       session. Nothing in the plate body throws today; the actor loop's
+       comment says the same and it is still wrapped. */
+    try {
+
     /* the plate. Dark, hard-edged, one thin keyline — BAR R2's chrome rule.
        Deliberately quieter than the End Turn button (CONTRACT §6.8). */
     ctx.fillStyle = 'rgba(9,8,13,0.82)';
@@ -6620,6 +6786,8 @@ function drawNameplates(){
       ctx.fillRect(R(sx), by, Math.max(1 / DPR, sw), barH);
     }
     ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
+
+    } finally { if (_pclip) ctx.restore(); }
   }
 }
 
@@ -6770,6 +6938,305 @@ window.__bbPerf = () => {
 };
 window.__bbPerfReset = () => { PERF.buf.length = 0; PERF.i = 0; PERF.n = 0; };
 
+/* ══════════════════════════════════════════════════════════════════
+   🧱 TERRAIN OCCLUSION — slabs and billboards in ONE depth sequence
+   ══════════════════════════════════════════════════════════════════
+   THE BUG THIS KILLS. The ground was painted whole (drawBoard) and every actor
+   was painted after it, so a unit was ALWAYS in front of every slab on the map.
+   At yaw 0 that is invisible, because the only terrain that can be nearer than
+   a unit is also BELOW it on screen. Turn the camera and it stops being true: a
+   ruin core or a rubble terrace that now sits between the eye and the unit is
+   still painted first, so the pixel showing that unit's feet is terrain that
+   should be in front of them — and the ground ring and shadow float on top of a
+   cliff face they are behind.
+
+   WHY A CLIP AND NOT A SECOND TERRAIN PASS. By the time the actors go down the
+   ground is not just slabs any more: the surface-FX blit, the reachable-region
+   paint, the threat wash, the walked route, the runes and the ground VFX are all
+   composited over it. Re-painting an occluding tile with paintTile() would put
+   bare terrain back over all of that, and re-blitting the baked layer has the
+   same problem AND is unavailable exactly when it is most needed — drawBoard
+   bypasses the cache entirely while the camera moves, by measurement. So nothing
+   is re-drawn. The ACTOR is clipped instead, to the complement of the slabs that
+   stand in front of it.
+   Complement of a UNION is the INTERSECTION of the complements, which is exactly
+   a run of `clip(viewportRect + piece, 'evenodd')` calls — one per slab. Doing it
+   as a single even-odd path over several slabs would be wrong the moment two of
+   them overlap on screen: even-odd counts the overlap twice and punches a hole
+   back through the mask. One clip per slab has no winding-rule trap.
+
+   THE SORT KEY FOR A BILLBOARD STANDING ON A SURFACE, and the cases that pick
+   it. Both halves of the comparison are camDepth() — world z and row index are
+   the thing the free camera already broke (CONTRACT §2 Tier 2.2) — but a slab
+   and a billboard are not the same KIND of object, and the honest question is
+   which of the two points that can actually meet at a pixel is nearer:
+     · the billboard enters the sequence at its FOOT POINT, gw(x, z, elev). It
+       is a figure standing on the ground, so that is the only point of it whose
+       position is a fact; everything above it is a picture of a figure.
+     · a slab enters at its TOP FACE, gw(x, z, e). That is the surface a ray
+       through the pixel actually hits.
+   So a slab hides an actor exactly when camDepth(slabTop) < camDepth(actorFoot)
+   AND the slab stands higher than the ground the actor is on. That second test
+   is not a tie-breaker, it is the geometry: a slab at the SAME height cannot
+   hide feet that are level with it, and without it every coplanar tile nearer
+   than the unit would clip the near half of its own ground ring and shadow.
+   What this pair of points gets right, case by case:
+     · a unit's OWN slab: same tile, skipped outright, and its top depth equals
+       the foot depth anyway. The unit, its ring and its shadow draw over the
+       slab top they stand on. ✔  (the hard case)
+     · a TALLER slab one step nearer: top depth is a whole row nearer AND lifted
+       toward the eye. Clips. ✔  (the critic's gap)
+     · a taller slab BESIDE the unit, same depth row: level in z, but its top
+       face is lifted toward the eye, so its depth is genuinely smaller and it
+       clips the shoulder of the sprite that leans over it. ✔ Sorting these on
+       the ground plane instead left them behind the sprite, and every residual
+       leak the audit found before this paragraph existed was one of them.
+     · a taller slab BEHIND the unit: height buys nearness at sin(pitch) per
+       unit and a row costs a full row of depth, and on this board the row wins
+       for every rung of the ladder — so it does NOT clip, and a unit does not
+       get its head cut off by the hill it is standing in front of. ✔ Measured,
+       not assumed: camCheck().occlusion counts it.
+   Keying a slab by its own ground plane (y = 0) instead of its top face is the
+   version that loses the third case; keying the ACTOR by its top instead of its
+   feet loses the first, because the eye is above the board and height reduces
+   camera depth, so every unit on high ground would be cut off by its own slab.
+   The ACTOR-vs-ACTOR order in frame() is deliberately left on the ground-plane
+   key it already used: that is a billboard-vs-billboard question, it is not
+   what the critic named, and two sprites that swap because one is on a shelf
+   is a different bug from the one being fixed here. */
+const OCCL = { list: [] };
+
+/* The convex pieces a slab actually PAINTS: its top face, plus one quad per
+   cliff face that is front-facing and has something to fall to. Same six-edge
+   table, same back-face test and same flush test as paintWalls — if the two
+   ever disagree, the clip and the picture disagree, and that is a hairline of
+   unit showing through a cliff.
+   ⚠ ONE deliberate difference: inset 0, where paintWalls uses TILE_INSET. The
+   inset is a hairline cell division, ~1px on screen, and a mask a hairline
+   SMALLER than the paint leaks a rim of unit around every slab it hides —
+   measured, that was most of the residual on the first pass. A mask a hairline
+   LARGER costs at worst one pixel of sprite over a seam nobody can see. */
+function slabPieces(x, z, e){
+  const P = tilePoly(x, z, 0, e); if (!P) return null;
+  const Wtop = hexCorners(x, z, 0, e);
+  /* 📐 EVERY PIECE CARRIES THE GEOMETRY IT IS A PICTURE OF, and both users of
+     it need that rather than the polygon alone:
+       `.d`  camera depth of the WORLD point each screen vertex came from. The
+             half-plane cut below solves for where the slab's own surface
+             crosses the figure's depth, and it can only do that per VERTEX if
+             the vertex knows how deep it is. It is free here — the world
+             corners are already in hand — and impossible later, because a
+             projected point has thrown its depth away.
+       `.pl` the world PLANE the piece lies in, {x,y,z,c} for n·p = c. The
+             audit ray-casts a sampled pixel against the surface actually
+             drawn there; against a horizontal plane at the tile's elevation
+             every cliff-face pixel answers with a point metres away from the
+             wall it landed on. */
+  P.d = Wtop.map(camDepth);
+  P.pl = { x:0, y:1, z:0, c:e };            /* the top face is horizontal */
+  const pieces = [P];
+  const ctr = gw(x, z, e);
+  const nb = NB6[((z % 2) + 2) % 2];
+  for (let i = 0; i < 6; i++){
+    const j = (i + 1) % 6;
+    const mx = (Wtop[i].x + Wtop[j].x) / 2, mz = (Wtop[i].z + Wtop[j].z) / 2;
+    const nx = mx - ctr.x, nz = mz - ctr.z;
+    if (nx*(CAM.pos.x - mx) + nz*(CAM.pos.z - mz) <= 0) continue;   /* back-facing */
+    const below = elevOf(x + nb[i][0], z + nb[i][1]);
+    if (below >= e - 1e-4) continue;                                 /* flush: no face */
+    const B = tilePoly(x, z, 0, below); if (!B) continue;
+    const Wb = hexCorners(x, z, 0, below);
+    const q = [P[i], P[j], B[j], B[i]];
+    q.d = [P.d[i], P.d[j], camDepth(Wb[j]), camDepth(Wb[i])];
+    /* the wall is VERTICAL and contains the edge i→j, so its normal is that
+       edge turned a quarter turn in the ground plane. Sign is irrelevant —
+       only the zero set is used. */
+    const ex = Wtop[j].x - Wtop[i].x, ez = Wtop[j].z - Wtop[i].z;
+    q.pl = { x:ez, y:0, z:-ex, c: ez*Wtop[i].x - ex*Wtop[i].z };
+    pieces.push(q);
+  }
+  return pieces;
+}
+
+/* Rebuilt once per frame, before the sorted pass. Only tiles that are RAISED
+   can hide a billboard at all, and only tiles on screen can hide one here, so
+   the two cheap rejects run before anything else.
+   ⚠ NO POLYGONS ARE BUILT HERE. A first cut called slabPieces() for every
+   raised on-screen tile and cost 1.1–3.4 ms of a 2.3 ms parked frame in this
+   rig — measured by no-opping the pass and re-running __bbPerf. The set of
+   slabs that raise the question is ~100 tiles; the set that actually masks
+   something is a handful, so the pieces are built LAZILY on the first frame a
+   slab survives every reject, and the estimated box below is what does the
+   rejecting. The box is deliberately GENEROUS: too small silently skips a mask
+   that was needed, which is the whole bug. */
+function buildOccluders(){
+  const out = [];
+  const tiles = MAP.tiles;
+  const R = hexSize();
+  if (Array.isArray(tiles)){
+    for (let i = 0; i < tiles.length; i++){
+      const t = tiles[i]; if (!t) continue;
+      const e = t.elev || 0;
+      if (e <= 1e-3) continue;                 /* flat ground hides nothing */
+      const c = project(gw(t.x, t.z, e)); if (!c) continue;
+      const m = c.s * R * 2.4 + 24;
+      if (c.x < -m || c.x > W + m || c.y < -m || c.y > H + m) continue;
+      /* how far the cliff faces hang below the top, in screen pixels */
+      const nb = NB6[((t.z % 2) + 2) % 2];
+      let low = e;
+      for (let k = 0; k < 6; k++) low = Math.min(low, elevOf(t.x + nb[k][0], t.z + nb[k][1]));
+      const cb = low < e ? project(gw(t.x, t.z, low)) : null;
+      const r = c.s * R * 1.25;
+      /* dTop is the cheap reject key — the slab's own top face. The mask's real
+         decision is per-VERTEX and lives in clipPieceInFront(); nothing here
+         is allowed to be the last word on whether a pixel is masked.
+         dGnd is kept so the audit can say whether an occluder was in front of
+         the actor or behind it, which is the number that tells a decapitation
+         regression from a correct lateral clip.
+         ⚠ A `dNear` (nearest top corner) used to be computed here for a single
+         horizontal waterline. It is gone with the waterline: one depth for a
+         whole slab is exactly the approximation that cut wedges out of heads. */
+      out.push({ dTop: camDepth(gw(t.x, t.z, e)), dGnd: camDepth(gw(t.x, t.z, 0)),
+                 x: t.x, z: t.z, e, pieces: null,
+                 x0: c.x - r, x1: c.x + r,
+                 y0: c.y - r * 0.75, y1: (cb ? cb.y : c.y) + r * 0.75 });
+    }
+  }
+  OCCL.list = out;
+}
+
+/* A generous screen box for a billboard, in the units project() already gives
+   us: p.s is pixels per world unit at that depth, so `wide`/`tall` are world
+   units and the box scales with distance for free. Generous on purpose — it is
+   only a reject test, and a box that is too SMALL silently skips a clip that
+   was needed, which is the bug this whole block exists to remove. */
+function actorBox(p, wide, tall){
+  const r = p.s * wide;
+  return { x0: p.x - r, x1: p.x + r, y0: p.y - p.s * tall, y1: p.y + p.s * 0.6 };
+}
+
+/* 🌊 THE CUT, and why it is NOT a screen-horizontal line.
+   A standing figure is not a flat card at one depth: it is vertical, so its
+   depth FALLS as you go up it (the eye is above the board). A slab whose top
+   clears the unit's feet is therefore in front of its boots and behind its
+   head, and masking the whole silhouette takes the head off.
+
+   The first fix for that took ONE depth for the whole slab — its nearest top
+   corner — solved for the single figure height that matched it, and cut every
+   piece with a horizontal screen line. That is wrong in the direction that
+   shows: the mask was bounded from ABOVE and never from the SIDE, so a slab
+   whose nearest corner is nearer than the figure but whose painted body is
+   further masked all of it, and a straight-edged wedge came out of a boss's
+   head with flat ground showing through. Measured at 7–35 sampled pixels in
+   EVERY pose, not a residual.
+
+   So the comparison is made per PIECE and per VERTEX against that piece's own
+   surface:
+       f(v) = dFig(v.y) − dSlab(v)
+   · dSlab(v) is exact and free — the vertex is the projection of a world
+     corner and `.d` carries that corner's camDepth.
+   · dFig(y) models the figure the way the renderer DRAWS it: a flat screen
+     card anchored at the projected foot and scaled by pFoot.s pixels per world
+     unit, so a pixel `pFoot.y − y` above the foot stands for that many
+     /pFoot.s world units up, and camDepth is affine in world height with
+     gradient CAM.f.y. Deliberately the same model occlusionAudit() uses, so
+     the audit is not grading a different figure from the one being clipped.
+   f > 0 means the FIGURE is further, i.e. the slab really is in front there →
+   keep. f < 0 means the sprite owns the pixel outright → drop it from the mask.
+   dFig is affine in screen y and dSlab is affine over the piece's world plane
+   to within the perspective divide, so f crosses zero along ONE straight edge
+   per convex piece and ordinary Sutherland–Hodgman is exact enough: over the
+   ~60px a slab piece spans, both depths move a few percent of ~30 units and
+   the residual curvature of the divide is far under a pixel.
+   Returns P itself when nothing is cut — the common case, and no allocation. */
+function clipPieceInFront(P, pFoot, dFoot){
+  const D = P.d, n = P.length;
+  const k = CAM.f.y / pFoot.s;         /* depth per screen pixel DOWN the card */
+  const f = [];
+  let pos = 0;
+  for (let i = 0; i < n; i++){
+    const v = dFoot + k * (pFoot.y - P[i].y) - D[i];
+    f.push(v); if (v > 0) pos++;
+  }
+  if (pos === n) return P;             /* wholly in front of the figure */
+  if (pos === 0) return null;          /* wholly behind it — masks nothing */
+  const out = [];
+  for (let i = 0; i < n; i++){
+    const j = (i + 1) % n, a = P[i], b = P[j], fa = f[i], fb = f[j];
+    if (fa > 0) out.push(a);
+    if ((fa > 0) !== (fb > 0)){
+      const t = fa / (fa - fb);
+      out.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+    }
+  }
+  return out.length >= 3 ? out : null;
+}
+
+/* The slab pieces that genuinely stand in front of ONE actor, each already cut
+   to the part of itself that does. Returns null when nothing masks the actor.
+   ⚠ SHARED WITH THE AUDIT ON PURPOSE. occlusionAudit() used to re-implement
+   the rejects and the cut so it could point-test them, which means the number
+   that gates this work was grading a paraphrase — and the paraphrase agreed
+   with the bug. There is now exactly one copy of the rule and both callers run
+   it. */
+function occluderMask(footWorld, footElev, box, sx, sz){
+  const pFoot = project(footWorld); if (!pFoot) return null;
+  const dFoot = camDepth(footWorld);
+  const list = OCCL.list;
+  let out = null;
+  for (let i = 0; i < list.length; i++){
+    const o = list[i];
+    if (o.x === sx && o.z === sz) continue;    /* its own slab: never hides it */
+    if (o.dTop >= dFoot) continue;             /* top face is not nearer than the feet */
+    if (o.e <= footElev + 1e-3) continue;      /* not higher than what it stands on */
+    if (o.x1 < box.x0 || o.x0 > box.x1 || o.y1 < box.y0 || o.y0 > box.y1) continue;
+    /* survived every reject — NOW build the polygons, once per frame per slab */
+    if (!o.pieces) o.pieces = slabPieces(o.x, o.z, o.e) || [];
+    if (!o.pieces.length) continue;
+    /* 🗡 THE GEOMETRIC CUT — see clipPieceInFront(). This is also the
+       guard for the pathological direction, and it is a MEASUREMENT rather
+       than the assumption the rejects above encode: a slab whose ground-plane
+       key `o.dGnd` is further than the actor's can still get past `o.dTop <
+       dFoot` by being tall, and that is the "a hill behind eats a head" case.
+       Its surface is then further than the figure at every vertex, every
+       piece comes back empty, and the slab drops out here with no mask at all
+       — instead of taking a horizontal bite out of the sprite. */
+    let cut = null;
+    for (let k = 0; k < o.pieces.length; k++){
+      const q = clipPieceInFront(o.pieces[k], pFoot, dFoot);
+      if (q) (cut || (cut = [])).push(q);
+    }
+    if (!cut) continue;
+    (out || (out = [])).push({ o, cut });
+  }
+  return out;
+}
+
+/* Clip ctx to everything EXCEPT the slabs standing in front of this actor.
+   Returns true if it called ctx.save() — the caller must ctx.restore() then,
+   and must do it from a finally, because three of the draw kinds are already
+   wrapped in their own try/catch for the CONTRACT R2 one-way frameErr latch. */
+function clipBehindTerrain(footWorld, footElev, box, sx, sz){
+  const mask = occluderMask(footWorld, footElev, box, sx, sz);
+  if (!mask) return false;
+  ctx.save();
+  for (let i = 0; i < mask.length; i++){
+    ctx.beginPath();
+    ctx.rect(0, 0, W, H);
+    const cut = mask[i].cut;
+    for (const pc of cut){
+      ctx.moveTo(pc[0].x, pc[0].y);
+      for (let k = 1; k < pc.length; k++) ctx.lineTo(pc[k].x, pc[k].y);
+      ctx.closePath();
+    }
+    /* one slab per clip call. Its own pieces cannot overlap each other — a
+       front-facing wall hangs below the top edge it is attached to — so
+       even-odd is safe WITHIN a slab and only unsafe ACROSS slabs. */
+    ctx.clip('evenodd');
+  }
+  return true;
+}
+
 function frame(now){
   if (frameErr) return;
   try {
@@ -6816,38 +7283,76 @@ function frame(now){
      WORLD point it stands on and `d` comes from camDepth(). Grid items go
      through gw() to get there; the braziers are already in world space, which
      is why they no longer need the grid-row conversion they used to do. */
+  /* 🧱 …and the TERRAIN is in the same sequence now, not underneath it. The
+     slabs are not re-drawn — see the block above clipBehindTerrain() for why —
+     but every actor below is masked against the slabs whose TOP FACE is nearer
+     than that actor's FOOT POINT. Both sides of that are camDepth(); nothing
+     here reads world z or a row index. Each drawable therefore carries three
+     things beyond its art: `wp`, the world point of its feet; `fe`, the height
+     of the ground under them; and `sx/sz`, the integer tile it is standing on,
+     which is the one slab that is never allowed to hide it. */
+  buildOccluders();
   const drawables = [];
-  for (const t of MAP.tiles) if (t.prop) drawables.push({ d:camDepth(gw(t.x,t.z,0)), kind:'prop', t });
-  for (const u of units) drawables.push({ d:camDepth(gw(u.x,u.z,0)), kind:'unit', u });
-  for (const tb of TOMBS) drawables.push({ d:camDepth(gw(tb.x,tb.z,0)), kind:'tomb', tb });
+  for (const t of MAP.tiles) if (t.prop) drawables.push({ d:camDepth(gw(t.x,t.z,0)), kind:'prop', t, sx:t.x, sz:t.z, fe:tileElev(t.x,t.z), wp:gw(t.x,t.z,tileElev(t.x,t.z)), bw:0.9, bh:1.8 });
+  /* ⚠ `fe` is the height of the ground the unit is STANDING ON, and it has to
+     come from unitGroundY() — never tileElev(u.x,u.z). u.x/u.z go FRACTIONAL
+     the moment a unit tweens or lunges, and tileAt() is a Map keyed on
+     "x,z" integers, so a fractional lookup misses and tileElev returns 0. A
+     walking unit therefore reported "standing at height 0" and was clipped
+     away by every raised slab in front of it — invisible for the length of the
+     walk. It only ever cost 0.34s of one straight step before moveUnit walked
+     real routes; on a fourteen-leg route across a terraced field it is the
+     whole animation. */
+  /* ⚠ `sx/sz` is the INTEGER tile the sprite is standing on RIGHT NOW, and its
+     only job is "which slab is my own, and therefore may not hide me". It has
+     to come from unitTile(), not from u.gx/u.gz: a fractional mid-walk position
+     matches no slab, but the grid fields are the DESTINATION for the whole
+     tween, so aiming the exemption at them frees the tile actually under the
+     sprite to clip it. See unitTile(). */
+  for (const u of units) { const _ut = unitTile(u);
+    drawables.push({ d:camDepth(gw(u.x,u.z,0)), kind:'unit', u, sx:_ut.x, sz:_ut.z, fe:unitGroundY(u), wp:gw(u.x,u.z,unitGroundY(u)), bw:1.1, bh:3.2 }); }
+  for (const tb of TOMBS) drawables.push({ d:camDepth(gw(tb.x,tb.z,0)), kind:'tomb', tb, sx:tb.x, sz:tb.z, fe:tileElev(tb.x,tb.z), wp:gw(tb.x,tb.z,tileElev(tb.x,tb.z)), bw:0.9, bh:1.8 });
   /* 🏚 ruins go through the SAME painter's sort as everything else — they are
      the tallest things on the board, so a ruin drawn out of order would hide a
      unit that is standing in front of it. */
-  for (const sc of STRUCTS) drawables.push({ d:camDepth(gw(sc.x,sc.z,0)), kind:'struct', sc });
+  for (const sc of STRUCTS) drawables.push({ d:camDepth(gw(sc.x,sc.z,0)), kind:'struct', sc, sx:sc.x, sz:sc.z, fe:tileElev(sc.x,sc.z), wp:gw(sc.x,sc.z,tileElev(sc.x,sc.z)), bw:3.0, bh:5.5 });
   /* 🚚 control-point trucks join the SAME painter's sort — a truck is a metre
      and a half of solid geometry, so one drawn out of order would swallow a
      unit standing in front of it, which on this board is a unit that is
      CAPTURING it. */
-  for (const cp of CPS) drawables.push({ d:camDepth(gw(cp.x,cp.z,0)), kind:'cp', cp });
-  for (const ev of (MAP.events||[])) drawables.push({ d:camDepth(gw(ev.x,ev.z,0)), kind:'event', ev });
+  for (const cp of CPS) drawables.push({ d:camDepth(gw(cp.x,cp.z,0)), kind:'cp', cp, sx:cp.x, sz:cp.z, fe:tileElev(cp.x,cp.z), wp:gw(cp.x,cp.z,tileElev(cp.x,cp.z)), bw:2.4, bh:3.6 });
+  for (const ev of (MAP.events||[])) drawables.push({ d:camDepth(gw(ev.x,ev.z,0)), kind:'event', ev, sx:ev.x, sz:ev.z, fe:tileElev(ev.x,ev.z), wp:gw(ev.x,ev.z,tileElev(ev.x,ev.z)), bw:1.8, bh:3.6 });
   /* The braziers are the one entry already in WORLD space. They used to be
      converted INTO grid rows (divide by the row pitch, add (rows-1)/2) so they
      could share a grid-z sort key; with the key now camera depth, world is
      where everything else has to be converted TO and this one is already
      there. */
-  for (const br of braziers) drawables.push({ d:camDepth({x:br.x, y:0, z:br.z}), kind:'pylon', br });
+  for (const br of braziers) drawables.push({ d:camDepth({x:br.x, y:0, z:br.z}), kind:'pylon', br, sx:null, sz:null, fe:0, wp:{x:br.x, y:0, z:br.z}, bw:1.1, bh:2.8 });
   drawables.sort((a,b) => b.d - a.d);      /* deepest (furthest) painted first */
   for (const d of drawables){
-    if (d.kind==='prop') drawProp(d.t);
-    else if (d.kind==='event') drawEvent(d.ev);
-    else if (d.kind==='pylon') drawPylon(d.br);
-    else if (d.kind==='tomb') drawTomb(d.tb);
-    /* CONTRACT R2: frameErr is a ONE-WAY LATCH — one throw anywhere in frame()
-       paints RENDER ERROR and never reschedules the RAF loop. New per-frame
-       art gets its own try/catch so a bad ruin costs a ruin, not the board. */
-    else if (d.kind==='struct'){ try { drawStruct(d.sc); } catch (e) {} }
-    else if (d.kind==='cp'){ try { drawTruck(d.cp); } catch (e) {} }
-    else drawUnit(d.u);
+    /* 🧱 mask this actor against the slabs in front of it. The clip covers the
+       WHOLE draw — sprite, ground ring, shadow ellipse and any glow — because
+       all of them are geometry standing at the same feet, and a ring that
+       ignored the cliff its unit is hidden behind is the same lie in miniature. */
+    let _p = null; try { _p = project(d.wp); } catch (e) {}
+    const _clip = _p ? clipBehindTerrain(d.wp, d.fe, actorBox(_p, d.bw, d.bh), d.sx, d.sz) : false;
+    try {
+      if (d.kind==='prop') drawProp(d.t);
+      else if (d.kind==='event') drawEvent(d.ev);
+      else if (d.kind==='pylon') drawPylon(d.br);
+      else if (d.kind==='tomb') drawTomb(d.tb);
+      /* CONTRACT R2: frameErr is a ONE-WAY LATCH — one throw anywhere in frame()
+         paints RENDER ERROR and never reschedules the RAF loop. New per-frame
+         art gets its own try/catch so a bad ruin costs a ruin, not the board. */
+      else if (d.kind==='struct'){ try { drawStruct(d.sc); } catch (e) {} }
+      else if (d.kind==='cp'){ try { drawTruck(d.cp); } catch (e) {} }
+      else drawUnit(d.u);
+    } finally {
+      /* finally, not a trailing call: the two kinds above swallow their own
+         throws but drawUnit/drawProp do not, and an un-restored clip would
+         survive into the telegraph, the plates and every frame after. */
+      if (_clip) ctx.restore();
+    }
   }
   /* 🏹 THE TELEGRAPH, air half. AFTER the depth-sorted actors on purpose: BAR
      R2 wants the attack shown as an arc "drawn above the board", and an arc
@@ -7351,7 +7856,10 @@ function camCheck(){
   for (let z = 0; z < MAP.rows; z++) for (let x = 0; x < MAP.cols; x++){
     const e = tileElev(x, z);
     const P = tilePoly(x, z, 0, e);
-    if (P) faces.push({ x, z, P, d: camDepth(gw(x, z, e)) });
+    /* `pl` is the world plane the face lies in — horizontal for a top face.
+       occlusionAudit ray-casts against it rather than against a height, so it
+       can carry cliff-face quads in the same list. */
+    if (P) faces.push({ x, z, P, d: camDepth(gw(x, z, e)), pl: { x:0, y:1, z:0, c:e } });
   }
   const drawnAt = (px, py) => {
     let best = null;
@@ -7387,6 +7895,16 @@ function camCheck(){
     pan: { x:+CAMERA.pan.x.toFixed(3), z:+CAMERA.pan.z.toFixed(3) },
     click: { samples, mismatch, offScreen, bad },
     painter: { items: order.length, inversions },
+    /* 4. OCCLUSION — the measurement the picture cannot give you.
+       For every unit, take the pixel its FEET land on and ask the terrain which
+       slab top is drawn there (nearest containing face, i.e. the one the sweep
+       painted last). If that slab is a DIFFERENT tile, is NEARER in camera depth
+       than the unit's own sort key, and stands HIGHER than the ground the unit
+       is standing on, then the honest picture has terrain in front of the unit
+       at that pixel and the unit must be masked there. `occluded` counts those;
+       `leaks` counts the ones the clip failed to catch, which is the bug this
+       whole block exists to remove and is 100% of `occluded` without it. */
+    occlusion: occlusionAudit(faces, inPoly),
     /* skirtPainted sits next to bakeMs because it is the number bakeMs is made
        of: the field is a constant 168 tiles, so every ms of growth in the bake
        is a skirt cell. Reading them apart is how the pan×yaw cliff was found
@@ -7398,6 +7916,192 @@ function camCheck(){
                skirtCull: { quad:SKIRT_STAT.cullQuad, screen:SKIRT_STAT.cullScreen, lod:SKIRT_STAT.cullLod } },
     cols: MAP.cols, rows: MAP.rows
   };
+}
+
+/* The audit behind camCheck().occlusion. Kept beside camCheck rather than in
+   the capture script for the same globals-trap reason the rest of the probe is
+   (CLAUDE.md): MAP, gw(), project() and OCCL are lexical consts and an outside
+   driver cannot see any of them.
+   It rebuilds the occluder set from scratch so it audits the RULE, not a stale
+   list left over from whichever frame ran last. */
+/* Screen pixel → the world point where its ray meets an ARBITRARY plane
+   n·p = c. Same ray construction as pickTile(), on purpose: an audit that
+   built its own projector would be grading its own copy.
+   ⚠ It has to take a plane and not just a height. The audit's whole job is the
+   pixels where a near slab hides a unit, and those are overwhelmingly CLIFF
+   FACE pixels — vertical. Meeting them with a horizontal plane at the tile's
+   elevation answers with a point metres away along the ray, if it answers at
+   all. Each slab piece carries its own plane in `.pl` (see slabPieces). */
+function rayToPlaneN(px, py, pl){
+  const ndx = (px - VIEW.cx) / VIEW.scale;
+  const ndy = -(py - VIEW.cy) / VIEW.scale;
+  const dir = norm({
+    x: CAM.f.x + CAM.r.x*ndx + CAM.u.x*ndy,
+    y: CAM.f.y + CAM.r.y*ndx + CAM.u.y*ndy,
+    z: CAM.f.z + CAM.r.z*ndx + CAM.u.z*ndy
+  });
+  const den = pl.x*dir.x + pl.y*dir.y + pl.z*dir.z;
+  if (Math.abs(den) < 1e-9) return null;
+  const t = (pl.c - (pl.x*CAM.pos.x + pl.y*CAM.pos.y + pl.z*CAM.pos.z)) / den;
+  if (t <= 0) return null;
+  return { x: CAM.pos.x + dir.x*t, y: CAM.pos.y + dir.y*t, z: CAM.pos.z + dir.z*t };
+}
+/* the horizontal case, kept under its old name and signature — pickTile's
+   elevation sweep and the outside probes both call it. */
+function rayToPlane(px, py, h){
+  return rayToPlaneN(px, py, { x:0, y:1, z:0, c:h });
+}
+
+function occlusionAudit(faces, inPoly){
+  buildOccluders();
+  /* Sampled over the unit's whole SCREEN BOX, not just the one pixel under its
+     feet: the critic's sentence names the feet, but a billboard that punches
+     through a cliff does it up its whole silhouette.
+
+     ⚠ THE TEST DOES NOT ASK THE SORT KEY WHETHER THE SORT KEY IS RIGHT. It
+     ray-casts: for a sample pixel it takes the terrain surface actually DRAWN
+     there (nearest containing piece — the one the sweep painted last), finds
+     the exact world point where that pixel's ray meets THAT PIECE'S OWN PLANE,
+     and takes ITS camera depth. That is compared against the depth of the figure at
+     the same pixel, modelled as a VERTICAL object standing on its tile — depth
+     falls with height, because the eye is above the board. Both halves are
+     geometry; neither is camDepth(gw(x,z,0)), which is the key the renderer
+     sorts on and is exactly what is under test.
+       · `feet`   — the pixel under the unit's feet. Model-independent: if
+                    terrain drawn there is nearer than the FOOT POINT itself,
+                    the picture is lying, full stop. This one must be zero.
+       · `body`   — the rest of the silhouette, against the vertical-figure
+                    depth.
+       · `overMask` — A FIRST-CLASS ASSERTION, not a note. It counts a pixel
+                    whenever the mask fires and the ray says the FIGURE is the
+                    nearer of the two, i.e. the clip took a pixel the sprite
+                    owns outright. That is a hole through a unit, which BAR R1
+                    calls out by name, and it is a worse artefact than the leak
+                    it would be trading against. It must be 0 across the pose
+                    sweep, same as `feetLeaks`.
+       · `behind` — the same failure attributed: the masking slab's
+                    ground-plane centre is FURTHER than the unit's, i.e. a hill
+                    behind it eating its head.
+
+     ⚠ CLIFF FACES ARE INSIDE THE DENOMINATOR NOW. `faces` is built from tile
+     TOP polygons only, so a sample landing on a wall used to resolve to no
+     face at all and be dropped — and the pixels where a near slab hides a unit
+     are overwhelmingly wall pixels, so the entire population this audit exists
+     to measure sat outside it. `surf` below adds every slab's front-facing
+     wall quads, straight out of slabPieces() so the audit cannot disagree with
+     the renderer about where a wall is. */
+  const surf = faces.slice();
+  for (let z = 0; z < MAP.rows; z++) for (let x = 0; x < MAP.cols; x++){
+    const e = tileElev(x, z); if (e <= 1e-3) continue;
+    const pcs = slabPieces(x, z, e); if (!pcs) continue;
+    /* piece 0 is the top face, already in `faces`; 1.. are the walls. They
+       carry the tile's own top-centre depth so a pixel resolves to whichever
+       TILE the sweep painted last, exactly as the top-face test does. */
+    const dT = camDepth(gw(x, z, e));
+    for (let k = 1; k < pcs.length; k++) surf.push({ x, z, P: pcs[k], d: dT, pl: pcs[k].pl });
+  }
+  const drawnSurf = (px, py) => {
+    let best = null;
+    for (const f of surf) if (inPoly(f.P, px, py)) if (!best || f.d < best.d) best = f;
+    return best;
+  };
+  const out = { units: 0, samples: 0, feetTested: 0, feetHidden: 0, feetLeaks: 0,
+                bodyHidden: 0, bodyLeaks: 0, sameBand: 0, overMask: 0, behind: 0,
+                wallSamples: 0, worst: [], bad: [], over: [] };
+  for (const u of units){
+    if (u.dead) continue;
+    const box = unitScreenBox(u); if (!box) continue;
+    const fe = unitGroundY(u);        /* the renderer's footing — see drawables */
+    const dKey = camDepth(gw(u.x, u.z, 0));            /* the renderer's key */
+    const foot = gw(u.x, u.z, fe);
+    /* ⚠ "its own slab" is the tile the unit is STANDING ON RIGHT NOW, and that
+       is NOT u.gx/u.gz while it walks: moveUnit() moves those to the
+       destination on the first frame of the tween. Reading them here made the
+       audit skip a tile six rows away and then flag the slab actually under the
+       sprite's feet as an unmasked occluder — four phantom feetLeaks per walk.
+       Derive it from the live position through the board's own cube-rounding
+       inverse, which is what "which tile is this" means everywhere else. */
+    const own = unitTile(u);        /* the renderer's own-slab exemption */
+    const pFoot = project(foot); if (!pFoot) continue;
+    const hUnit = box.height / pFoot.s;                /* sprite height in WORLD units */
+    /* ⚠ THE SHIPPING RULE ITSELF, called once per unit — not a copy of it, and
+       not once per pixel. occluderMask() is the function frame() clips with,
+       so a mask this audit reports is the mask the player is looking at. The
+       reject box is the SAME one frame() builds for a unit (bw 1.1, bh 3.2 in
+       its drawables). */
+    const abox = actorBox(pFoot, 1.1, 3.2);
+    const mask = occluderMask(foot, fe, abox, own.x, own.z);
+    out.units++;
+    let hid = 0, leaked = 0, n = 0;
+    for (let iy = 0; iy <= 6; iy++) for (let ix = 0; ix <= 4; ix++){
+      const feet = iy === 6;
+      const px = box.left + box.width  * (ix / 4);
+      /* ⚠ the FEET row is taken at the projected foot POINT, not at the bottom
+         of the art box. The two differ by a few pixels of sprite padding, and
+         "the pixel under their feet" has to mean the pixel the foot point lands
+         on or the strictest test in this audit is testing a pixel of air. */
+      const py = feet ? pFoot.y : box.top + box.height * (iy / 6);
+      if (px < 0 || px > W || py < 0 || py > H) continue;
+      n++; out.samples++;
+      if (feet) out.feetTested++;
+      const drawn = drawnSurf(px, py);
+      if (!drawn) continue;
+      if (drawn.pl.y === 0) out.wallSamples++;           /* a cliff-face pixel */
+      if (drawn.x === own.x && drawn.z === own.z) continue; /* its own slab never occludes it */
+      /* depth of the FIGURE at this pixel. The sprite is drawn as a flat screen
+         card anchored at the projected foot and scaled by pFoot.s, so the world
+         height a pixel stands for is its offset above the foot over pFoot.s —
+         the SAME model clipPieceInFront() cuts with, deliberately, so a
+         disagreement here is a bug in the clip and not in the two models. */
+      const yFig = feet ? fe : fe + hUnit * (1 - iy / 6);
+      const dFig = camDepth(gw(u.x, u.z, yFig));
+      /* depth of the TERRAIN the player actually sees at this pixel, met on
+         that surface's OWN plane — top face or cliff face. */
+      const wp = rayToPlaneN(px, py, drawn.pl); if (!wp) continue;
+      const dTer = camDepth(wp);
+      const shouldHide = dTer < dFig - 1e-4;             /* is the terrain really in front? */
+      /* does the SHIPPING mask cover this pixel? `mask` is the renderer's own
+         output for this unit, so there is nothing here to drift out of sync. */
+      let masked = false, byGnd = 0;
+      if (mask) for (const m of mask){
+        let hit = false;
+        for (const pc of m.cut) if (inPoly(pc, px, py)) { hit = true; break; }
+        if (!hit) continue;
+        masked = true; byGnd = m.o.dGnd;
+        break;
+      }
+      /* ⚠ THE COUNTER-TEST. A mask that removes a pixel the geometry says the
+         FIGURE owns is the opposite failure from a leak and just as wrong — it
+         is a unit disappearing into a slab it is standing in front of. Counted
+         separately, and separately again when the slab responsible is further
+         away than the unit is, which is the shape a head-eating hill would take
+         if a taller elevation ladder ever let height out-buy a row of depth. */
+      if (!shouldHide){
+        if (masked){
+          out.overMask++;
+          if (byGnd > dKey + 1e-4) out.behind++;
+          if (out.over.length < 8) out.over.push({ unit: u.id, at: [u.gx, u.gz], feet,
+                                                   px: [Math.round(px), Math.round(py)] });
+        }
+        continue;
+      }
+      hid++; if (feet) out.feetHidden++; else out.bodyHidden++;
+      /* the renderer's ground-plane key says these two are in the same depth
+         band, i.e. the slab is BESIDE the unit rather than in front of it */
+      const band = camDepth(gw(drawn.x, drawn.z, 0)) >= dKey;
+      if (band) out.sameBand++;
+      if (!masked){
+        leaked++; if (feet) out.feetLeaks++; else out.bodyLeaks++;
+        if (out.bad.length < 8) out.bad.push({ unit: u.id, at: [u.gx, u.gz], feet, sameBand: band,
+                                               behind: [drawn.x, drawn.z],
+                                               px: [Math.round(px), Math.round(py)] });
+      }
+    }
+    if (hid) out.worst.push({ unit: u.id, at: [u.x, u.z], hid, of: n, leaked });
+  }
+  out.worst.sort((a, b) => b.hid - a.hid);
+  out.worst = out.worst.slice(0, 6);
+  return out;
 }
 cv.addEventListener('mousemove', e => { hoverTile = pickTile(e.clientX, e.clientY); });
 cv.addEventListener('mouseleave', () => hoverTile = null);
@@ -7464,7 +8168,12 @@ window.Board = {
   spawnEvent, setEvents, triggerEvent, clearEvent, eventsAt, get eventTypes(){ return EVENT_TYPES; },
   get locations(){ return LOCATIONS; }, get map(){ return MAP; }, get units(){ return units; },
   on:(evt,fn) => document.addEventListener('board:'+evt, fn),
-  get paint(){ return PAINT; }, unitScreenBox
+  get paint(){ return PAINT; },
+  /* The telegraph, read-only-by-convention, exposed for the same reason
+     `paint` is: it is the route moveUnit() now walks, so any rig that wants to
+     prove drawn-route == walked-route has to be able to read the drawn one
+     from the board itself rather than from the fixture that posted it. */
+  get tele(){ return TELE; }, unitScreenBox
 };
 
 /* ══════════════════════════════════════════════════════════════════

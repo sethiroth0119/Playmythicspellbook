@@ -112843,6 +112843,49 @@ const SOCIAL_LINKS = [
 // sub + badge of #btn-play-online, and only writes when a value actually
 // changed (so no needless repaints / animation restarts). No-op when the tile
 // isn't mounted. Online/queue counts stay admin-only.
+// 📏 Step every sub-hub tile title down until it fits its plaque on one line.
+// See the call site in renderTitle() for why this is measured rather than
+// derived from name length. Runs again when Cinzel finishes loading, because a
+// measurement taken against the Georgia fallback is a measurement of the wrong
+// font — Cinzel is materially wider at the same size.
+function _hubFitPortalTitles() {
+  const els = document.querySelectorAll('.spellbook-hub.is-sub .hub-portal-name');
+  if (!els.length) return;
+  els.forEach(el => {
+    // The template's length-derived class is only the FIRST-PAINT guess (it
+    // stops a long title flashing as `BOOK OF KNOWLE…` before this runs). From
+    // here the measurement is the authority, so the guess is cleared.
+    el.classList.remove('is-long', 'is-xlong');
+    el.style.fontSize = ''; el.style.letterSpacing = ''; el.style.textIndent = '';
+    // +1px of slack: sub-pixel text metrics report a 1px overflow on titles
+    // that are visibly fine, and stepping those down is exactly the jitter
+    // this function exists to remove.
+    if (el.scrollWidth <= el.clientWidth + 1) return;      // the common case
+    // 1px at a time, so an overflowing title ends up as LARGE as it can be
+    // rather than dropped a whole step past where it had to go. Across all six
+    // hubs only two titles ever reach this loop — `Book of Knowledge` (fits at
+    // 20px) and `Emergency Broadcast` (19px) — so this is ~7 layout reads on a
+    // hub render, not 13×9. Tracking scales with the size, or a 19px title
+    // would carry 26px letterspacing and lose the step it just bought.
+    for (let fs = 25; fs >= 17; fs--) {
+      const ls = (0.07 * fs / 26).toFixed(4) + 'em';
+      el.style.fontSize = fs + 'px';
+      el.style.letterSpacing = ls;
+      el.style.textIndent = ls;
+      if (el.scrollWidth <= el.clientWidth + 1) return;
+    }
+  });
+  try {
+    if (document.fonts && document.fonts.status !== 'loaded' && !_hubFitPortalTitles._queued) {
+      _hubFitPortalTitles._queued = true;
+      document.fonts.ready.then(() => {
+        _hubFitPortalTitles._queued = false;
+        if (document.querySelector('.spellbook-hub.is-sub .hub-portal-name')) _hubFitPortalTitles();
+      });
+    }
+  } catch (e) {}
+}
+
 function _refreshOnlinePresenceUi() {
   const tile = document.getElementById('btn-play-online');
   if (!tile) return false;
@@ -112852,14 +112895,17 @@ function _refreshOnlinePresenceUi() {
   const q = (typeof LobbyPresence !== 'undefined' && LobbyPresence.queueCount) || 0;
   let sub;
   if (!sig) sub = 'Sign in to face real players';
-  else if (adm) sub = (online > 0 ? ('🟢 ' + online + ' online · 🔍 ' + q + ' searching') : 'Find a real opponent · ranked');
+  // No emoji: this writes into the same gold plaque the template renders, and
+  // the tile copy there is stripped (`_hubPlainText`). "Online · 4" is the
+  // comp's own pill text for this tile.
+  else if (adm) sub = (online > 0 ? ('Online · ' + online + ' · Searching · ' + q) : 'Find a real opponent · ranked');
   else sub = 'Find a real opponent · ranked';
   const subEl = tile.querySelector('.hub-portal-sub');
   if (subEl && subEl.innerHTML !== sub) subEl.innerHTML = sub;
   const badgeEl = tile.querySelector('.hub-portal-badge');
   if (badgeEl) {
     if (adm && online >= 2) {
-      const txt = '🟢 ' + online + ' online';
+      const txt = 'Online · ' + online;
       if (badgeEl.style.visibility === 'hidden') badgeEl.style.visibility = '';
       if (badgeEl.innerHTML !== txt) badgeEl.innerHTML = txt;
       if (badgeEl.classList.contains('alert') !== (adm && q > 0)) badgeEl.classList.toggle('alert', adm && q > 0);
@@ -114486,7 +114532,7 @@ function renderTitle() {
       // ALL players: run your own storefront and visit shops other players OWN to buy
       // their cards for Cinder. (The card-shop economy is cross-player via Supabase.)
       { id: 'p-cardshop', icon: '🛒', name: 'Card Shop',
-        sub: 'Run your own shop · visit player-owned shops',
+        sub: 'Run a shop · visit player shops',
         accent: '#d4af37',
         badge: null,
         onclick: () => { App._cardShopReturn = App.screen; App.screen = 'cardShop'; render(); } },
@@ -114710,7 +114756,7 @@ function renderTitle() {
         // Buying a pack no longer auto-opens; packs go to inventory + the
         // player opens them here (Hearthstone-style). Live badge shows the
         // count so packs waiting to be opened are obvious.
-        { id: 'btn-pack-opening', icon: '<img src="assets/artwork/gameicons/Cardpackitem.png" alt="Pack Opening" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(2.2);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Pack Opening',  sub: 'Crack your unopened packs · build the deck to survive Ethos City', accent: '#ffb070',
+        { id: 'btn-pack-opening', icon: '<img src="assets/artwork/gameicons/Cardpackitem.png" alt="Pack Opening" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(2.2);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Pack Opening',  sub: 'Crack packs · build a deck that survives', accent: '#ffb070',
           badge: (() => { const n = (typeof getUnopenedPackCount === 'function') ? getUnopenedPackCount() : 0; return n > 0 ? `📦 ${n} unopened` : null; })(),
           alertBadge: (() => { try { return ((typeof getUnopenedPackCount === 'function') ? getUnopenedPackCount() : 0) > 0; } catch (e) { return false; } })(),
           onclick: () => { App.screen = 'packOpening'; App._packReveal = null; render(); } },
@@ -114718,7 +114764,7 @@ function renderTitle() {
         // links straight to the player's own public profile when they're
         // signed in (so it opens on THEIR decks/cities/posts, not a stranger's
         // feed); signed-out players land on the network feed instead.
-        { id: 'btn-broadcast', icon: '<span style="font-size:3rem;line-height:1;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">📡</span>', name: 'Emergency Broadcast', sub: 'Your public profile · the network feed · strategy posts & clips', accent: '#ff6a2b',
+        { id: 'btn-broadcast', icon: '<span style="font-size:3rem;line-height:1;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">📡</span>', name: 'Emergency Broadcast', sub: 'Your profile · the network feed', accent: '#ff6a2b',
           onclick: () => {
             try {
               const uid = (Profile.cloud && Profile.cloud.signedIn && Profile.cloud.userId) ? Profile.cloud.userId : '';
@@ -114755,7 +114801,7 @@ function renderTitle() {
       // node-shop upgrades. Lives HERE (moved out of the Battle Hall) because
       // it's territory + economy, alongside Just Business / City Hall / the
       // Foundation Reserve. Visible to all players.
-      { id: 'btn-warmap', icon: '🗺', name: 'City Nodes', sub: 'Corp territory · capture nodes · defend with guards', accent: '#6cd4ff',
+      { id: 'btn-warmap', icon: '🗺', name: 'City Nodes', sub: 'Capture nodes · defend with guards', accent: '#6cd4ff',
           badge: (() => {
             try {
               const t = (Forge.territoryWars || {});
@@ -114791,7 +114837,7 @@ function renderTitle() {
         onclick: () => { if (typeof openFoundationReserve === 'function') openFoundationReserve(); } },
       // 💼 Just Business — the player-economy / Corporation app (full-screen
       // iframe, like the bunker). Reached only from here.
-      { id: 'btn-just-business', icon: '<img src="assets/artwork/gameicons/Business%20icon.png" alt="Just Business" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Just Business', sub: 'Corporations · vault · operations · markets', accent: '#c89a4a',
+      { id: 'btn-just-business', icon: '<img src="assets/artwork/gameicons/Business%20icon.png" alt="Just Business" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Just Business', sub: 'Corporations · vault · operations', accent: '#c89a4a',
         badge: 'Player economy',
         onclick: () => { App.screen = 'justBusiness'; render(); } },
       // 🏛️ City Hall — survivor government: corp registry, law, licensing,
@@ -114807,7 +114853,7 @@ function renderTitle() {
       //   `.filter(Boolean)`ed, which is how every conditional portal here
       //   hides itself. There is no `hidden` flag; returning null IS the flag.
       ((typeof window !== 'undefined' && window.MythicCommunity)
-        ? { id: 'btn-communities', icon: '🏛', name: 'Communities', sub: 'Alliances of corporations · standings · contribution', accent: '#9fd8ff',
+        ? { id: 'btn-communities', icon: '🏛', name: 'Communities', sub: 'Alliances of corps · standings', accent: '#9fd8ff',
             badge: (() => { try { const n = window.MythicCommunity.state.list.length; return n ? n + ' active' : 'Corps, together'; } catch (e) { return 'Corps, together'; } })(),
             onclick: () => {
               try { window.MythicCommunity.open(); }
@@ -114822,7 +114868,7 @@ function renderTitle() {
       // 📈 Crash/Exchange — global market terminal. Tracks every resource +
       // item, price moves with player buy / craft / sell activity. Lives
       // next to the BoE since both are economy-side.
-      { id: 'btn-crash-exchange', icon: '<span style="display:inline-block;font-family:\'Cinzel\',serif;font-weight:900;font-size:1.7rem;color:#ff3a1f;text-shadow:0 0 14px rgba(255,58,31,0.55),2px 0 0 #7a1810;letter-spacing:0.02em">CX</span>', name: 'Crash / Exchange', sub: 'Live market terminal · all resources tracked', accent: '#ff3a1f',
+      { id: 'btn-crash-exchange', icon: '<span style="display:inline-block;font-family:\'Cinzel\',serif;font-weight:900;font-size:1.7rem;color:#ff3a1f;text-shadow:0 0 14px rgba(255,58,31,0.55),2px 0 0 #7a1810;letter-spacing:0.02em">CX</span>', name: 'Crash / Exchange', sub: 'Live market · all resources tracked', accent: '#ff3a1f',
         badge: '📈 Live market',
         onclick: () => { App._cxReturnScreen = 'title'; App.screen = 'crashExchange'; render(); } },
       // Sports-betting hub — wager Cinders on AI vs AI fixtures + future tournaments.
@@ -114869,7 +114915,7 @@ function renderTitle() {
         ? { id: 'btn-market', icon: '<img src="assets/artwork/gameicons/player%20market.png" alt="Player Market" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Player Market', sub: 'Cards listed by other players', accent: '#88c8e0',
             badge: marketListings > 0 ? `${marketListings} listings` : null,
             onclick: () => { App.screen = 'market'; App.marketTab = 'browse'; App.marketFilter = 'all'; reseedNpcListingsIfStale(false); render(); } }
-        : { id: 'btn-market', icon: '🔒', name: 'Player Market', sub: `Train ${MARKET_UNLOCK_HERO_COUNT} heroes to Lv ${MARKET_UNLOCK_HERO_LEVEL} — or capture a node`, accent: '#607890',
+        : { id: 'btn-market', icon: '🔒', name: 'Player Market', sub: `Train ${MARKET_UNLOCK_HERO_COUNT} heroes to Lv ${MARKET_UNLOCK_HERO_LEVEL} — or own a node`, accent: '#607890',
             badge: marketLockText, locked: true,
             onclick: () => { showToast(`🔒 Player Market unlocks when you have ${MARKET_UNLOCK_HERO_COUNT} heroes at Lv ${MARKET_UNLOCK_HERO_LEVEL}+ (you have ${heroesAtMarketLv}) — or the moment you own a node in City Nodes.`, 4200); } },
     ],
@@ -114878,7 +114924,7 @@ function renderTitle() {
         onclick: () => { App.screen = 'collection'; App.collectionTab = 'unit'; render(); } },
       { id: 'btn-bestiary',     icon: '<img src="assets/artwork/gameicons/Card%20Data.png" alt="World Data" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'World Data',   sub: 'Catalog of all units',        accent: '#a0c8e0',
         onclick: () => { App.screen = 'bestiary'; render(); } },
-      { id: 'btn-book',         icon: '<img src="assets/artwork/gameicons/Book%20of%20knowledge.png" alt="Book of Knowledge" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Book of Knowledge', sub: 'Elements, factions, stats — the rules of the world', accent: '#d4af37',
+      { id: 'btn-book',         icon: '<img src="assets/artwork/gameicons/Book%20of%20knowledge.png" alt="Book of Knowledge" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Book of Knowledge', sub: 'Elements, factions, stats', accent: '#d4af37',
         onclick: () => { App.screen = 'bookOfKnowledge'; App.bookTab = 'elements'; render(); } },
       { id: 'btn-achievements', icon: '<img src="assets/artwork/gameicons/Achivements.png" alt="Achievements" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Achievements', sub: 'Trophies & <span class="cinder-icon"></span> bonuses',       accent: '#ffd166',
         badge: `${achEarned}/${achTotal}`,
@@ -115027,99 +115073,126 @@ function renderTitle() {
   // column apart. The admin override still applies everywhere, exactly as
   // before; only the new defaults are gated.
   //
-  // ⚠ EVERY PATH BELOW WAS VERIFIED TO EXIST WITH `ls`. A 404 here does not
-  // break the tile (the glyph comes back) but it does silently cost the panel,
-  // so check before you change one. Comic-panel art under assets/story/ is
+  // 🔻 THESE ARE BAKED CROPS, NOT THE FULL PLATES — AND THAT IS THE POINT.
+  // Round 1 pointed every tile straight at the background plate the art comes
+  // from: Combatbackground.png is 1.8 MB, warmap.png 2.2 MB, vs-screen-bg.png
+  // 2.2 MB, and a sub-hub asked the browser for ~10 MB of PNG to fill seven
+  // 284×178 panels (~40 MB across the six hubs). The panels therefore arrived
+  // late or, often, not at all — a gold hairline around an empty well, which
+  // is precisely what the art panel exists to stop.
+  //
+  // So each plate is baked ONCE into a 600×356 WebP under public/assets/
+  // hubtiles/ (centre `cover` crop — the same framing object-fit was already
+  // showing, so nothing is restaged; quality stepped down until the file is
+  // under 78 KB). Whole directory: 1.3 MB for all 32, ~250 KB per hub. They
+  // are keyed by SOURCE, not by portal id, because eight of the plates are
+  // shared by two or three tiles and a per-id copy would pay for the same
+  // pixels twice.
+  //
+  // TO ADD OR REPLACE ONE: bake a 600×356 crop under 78 KB into
+  // public/assets/hubtiles/ and point the id at it. Do NOT point a tile back
+  // at a full-size plate — the panel is 284 px wide and the cost is the whole
+  // defect. A 404 here does not break the tile (the glyph comes back) but it
+  // does silently cost the panel. Comic-panel art under assets/story/ is
   // deliberately NOT used: those images carry speech bubbles that crop badly.
   const HUB_TILE_ART = {
     // Battle Hall — the comp's own four, plus three matched to the same library.
-    'btn-start':              'assets/background/Backgrounds/Combatbackground.png',
-    'btn-play-online':        'assets/background/Backgrounds/warmap.png',
-    'btn-season-pass':        'assets/Locations/Power Altar.png',
-    'btn-coliseum':           'assets/background/Backgrounds/vs-screen-bg.png',
-    'btn-gymwars':            'assets/camp/training ground.png',
-    'btn-rlc':                'assets/Locations/Wasteland.png',
-    'btn-daily':              'assets/Locations/Sacred Grove.png',
+    'btn-start':              'assets/hubtiles/background-backgrounds-combatbackground.webp',
+    'btn-play-online':        'assets/hubtiles/background-backgrounds-warmap.webp',
+    'btn-season-pass':        'assets/hubtiles/locations-power-altar.webp',
+    'btn-coliseum':           'assets/hubtiles/background-backgrounds-vs-screen-bg.webp',
+    'btn-gymwars':            'assets/hubtiles/camp-training-ground.webp',
+    'btn-rlc':                'assets/hubtiles/locations-wasteland.webp',
+    'btn-daily':              'assets/hubtiles/locations-sacred-grove.webp',
     // Forge Sanctum (the last four are admin-only tiles).
-    'btn-lab':                'assets/camp/ai lab.png',
-    'btn-deck':               'assets/background/Backgrounds/Deck Select Menue background.png',
-    'btn-pack-opening':       'assets/background/Backgrounds/Packs background.png',
-    'btn-broadcast':          'assets/camp/command center.png',
-    'btn-forge':              'assets/camp/card forge.png',
-    'btn-sprites':            'assets/background/Backgrounds/card background.png',
-    'btn-pack-creator':       'assets/Boosterandpacks/Revealing Realms.png',
-    'btn-pricing-admin':      'assets/Operations/Mining Company.png',
+    'btn-lab':                'assets/hubtiles/camp-ai-lab.webp',
+    'btn-deck':               'assets/hubtiles/background-backgrounds-deck-select-menue-background.webp',
+    'btn-pack-opening':       'assets/hubtiles/background-backgrounds-packs-background.webp',
+    'btn-broadcast':          'assets/hubtiles/camp-command-center.webp',
+    'btn-forge':              'assets/hubtiles/camp-card-forge.webp',
+    'btn-sprites':            'assets/hubtiles/background-backgrounds-card-background.webp',
+    'btn-pack-creator':       'assets/hubtiles/boosterandpacks-revealing-realms.webp',
+    'btn-pricing-admin':      'assets/hubtiles/operations-mining-company.webp',
     // Ruin Exchange.
-    'btn-warmap':             'assets/background/Backgrounds/warmap.png',
-    'btn-vendor-market':      'assets/worldbuilder/Vendor market.png',
-    'btn-foundation-reserve': 'assets/Locations/SCp Foundation.png',
-    'btn-just-business':      'assets/Operations/construction company.png',
-    'btn-city-hall':          'assets/Locations/City Streets.png',
-    'btn-communities':        'assets/camp/camp.png',
-    'btn-bank-ethos':         'assets/real estate/Skyscrapper.png',
-    'btn-crash-exchange':     'assets/Operations/oil company.png',
-    'btn-wager-hall':         'assets/background/Backgrounds/flip-bg.png',
-    'btn-vendor':             'assets/background/Backgrounds/darkmarket background.png',
-    'btn-cashout':            'assets/camp/relic  vault.png',   // two spaces — that IS the filename
-    'btn-tutor':              'assets/worldbuilder/Tent.png',
-    'btn-market':             'assets/Operations/salvage hub.png',
+    'btn-warmap':             'assets/hubtiles/background-backgrounds-warmap.webp',
+    'btn-vendor-market':      'assets/hubtiles/worldbuilder-vendor-market.webp',
+    'btn-foundation-reserve': 'assets/hubtiles/locations-scp-foundation.webp',
+    'btn-just-business':      'assets/hubtiles/operations-construction-company.webp',
+    'btn-city-hall':          'assets/hubtiles/locations-city-streets.webp',
+    'btn-communities':        'assets/hubtiles/camp-camp.webp',
+    'btn-bank-ethos':         'assets/hubtiles/real-estate-skyscrapper.webp',
+    'btn-crash-exchange':     'assets/hubtiles/operations-oil-company.webp',
+    'btn-wager-hall':         'assets/hubtiles/background-backgrounds-flip-bg.webp',
+    'btn-vendor':             'assets/hubtiles/background-backgrounds-darkmarket-background.webp',
+    'btn-cashout':            'assets/hubtiles/camp-relic-vault.webp',   // two spaces — that IS the filename
+    'btn-tutor':              'assets/hubtiles/worldbuilder-tent.webp',
+    'btn-market':             'assets/hubtiles/operations-salvage-hub.webp',
     // The Codex.
-    'btn-collection':         'assets/camp/containment.png',
-    'btn-bestiary':           'assets/Locations/First Galaxy.png',
-    'btn-book':               'assets/background/Backgrounds/Tree of Abraxas.png',
-    'btn-achievements':       'assets/camp/relic  vault.png',
+    'btn-collection':         'assets/hubtiles/camp-containment.webp',
+    'btn-bestiary':           'assets/hubtiles/locations-first-galaxy.webp',
+    'btn-book':               'assets/hubtiles/background-backgrounds-tree-of-abraxas.webp',
+    'btn-achievements':       'assets/hubtiles/camp-relic-vault.webp',
     // The Camp.
-    'btn-camp':               'assets/camp/camp.png',
-    'btn-bankrow':            'assets/real estate/Skyscrapper.png',
-    'btn-replays':            'assets/background/Backgrounds/vs-screen-bg.png',
+    'btn-camp':               'assets/hubtiles/camp-camp.webp',
+    'btn-bankrow':            'assets/hubtiles/real-estate-skyscrapper.webp',
+    'btn-replays':            'assets/hubtiles/background-backgrounds-vs-screen-bg.webp',
     // Arcanum.
-    'btn-profile':            'assets/camp/command center.png',
-    'btn-friends':            'assets/camp/camp.png',
-    'btn-settings':           'assets/camp/power reactor.png',
-    'btn-website':            'assets/background/Backgrounds/mythcis-spellbook.png',
-    'btn-usermgmt':           'assets/Locations/SCp Foundation.png',
-    'btn-data':               'assets/camp/containment.png',
+    'btn-profile':            'assets/hubtiles/camp-command-center.webp',
+    'btn-friends':            'assets/hubtiles/camp-camp.webp',
+    'btn-settings':           'assets/hubtiles/camp-power-reactor.webp',
+    'btn-website':            'assets/hubtiles/background-backgrounds-mythcis-spellbook.webp',
+    'btn-usermgmt':           'assets/hubtiles/locations-scp-foundation.webp',
+    'btn-data':               'assets/hubtiles/camp-containment.webp',
   };
 
   // 🎚 ART EXPOSURE BUCKETS — the tone half of the art panel.
   // The comp's tiles carry `is-dim` / `is-bright` modifiers on the art panel,
-  // and they are load-bearing: measured over the exact 284x178 crop a tile
-  // shows, the paintings above run from a mean luminance of 15 (camp/
-  // containment) to 84 (card background). A single flat brightness() leaves the
-  // dark half as black rectangles and lets the bright half shout over its own
-  // title. So each file was measured once — drawn into a canvas at the tile's
-  // crop, mean of 0.2126R + 0.7152G + 0.0722B — and sorted into three buckets
-  // that hub-tiles.css pulls back to roughly the same output band.
-  //   dim    <= 24    lifted   (x1.30)
-  //   default 25-45   held     (x0.80)
-  //   bright  >= 46   pushed down (x0.60)
-  // Admin-override art is unmeasured and lands in the default bucket on purpose
-  // — guessing at an arbitrary URL would be worse than being predictable.
-  // Re-measure if you change a path; the numbers in the comments are the values.
+  // and they are load-bearing: measured over the exact 284×178 crop a tile
+  // shows, the baked crops run from a mean luminance of 16.5 (camp/relic vault)
+  // to 84.2 (card background). A single flat brightness() leaves the dark half
+  // as black rectangles and lets the bright half shout over its own title.
+  //
+  // So every crop was measured once — drawn into a canvas at the tile's size,
+  // mean of 0.2126R + 0.7152G + 0.0722B — and sorted into three buckets that
+  // hub-tiles.css pulls back toward one output band. The measured value is in
+  // the comment on each line; re-measure if you swap a file.
+  //   dim     <= 26   lifted        (×1.28)
+  //   default 27–44   held          (×0.78)
+  //   bright  >= 45   pushed down   (×0.48)
+  // Rendered through the panel's scrim that lands every tile between ~18 and
+  // ~34 mean luminance, matching the comp panel-for-panel (comp Quick Battle
+  // 19.0 / Season Pass 21.3 / Play Online 31.9 / Colosseum 19.4 — ours 18.0 /
+  // 23.4 / 25.0 / 22.6; means 22.9 vs 22.3). Round 1 ran ×1.30 / ×0.80 / ×0.60 and measured 23–30
+  // with the dim bucket at 29.8 against the comp's 19.0: every painting was
+  // competing with the gold title above it.
+  // Admin-override art is unmeasured and lands in the default bucket on
+  // purpose — guessing at an arbitrary URL would be worse than predictable.
   const HUB_ART_DIM = new Set([
-    'assets/camp/containment.png',                          // 15
-    'assets/camp/relic  vault.png',                         // 15
-    'assets/camp/power reactor.png',                        // 16
-    'assets/background/Backgrounds/darkmarket background.png', // 17
-    'assets/camp/card forge.png',                           // 19
-    'assets/camp/training ground.png',                      // 20
-    'assets/Locations/SCp Foundation.png',                  // 21
-    'assets/camp/ai lab.png',                               // 21
-    'assets/background/Backgrounds/flip-bg.png',            // 22
-    'assets/background/Backgrounds/Combatbackground.png',   // 24
+    'assets/hubtiles/camp-relic-vault.webp',                            // 16.5
+    'assets/hubtiles/camp-containment.webp',                            // 16.8
+    'assets/hubtiles/camp-power-reactor.webp',                          // 17.8
+    'assets/hubtiles/background-backgrounds-darkmarket-background.webp', // 18.2
+    'assets/hubtiles/camp-card-forge.webp',                             // 20.6
+    'assets/hubtiles/camp-training-ground.webp',                        // 21.5
+    'assets/hubtiles/camp-ai-lab.webp',                                 // 22.3
+    'assets/hubtiles/locations-scp-foundation.webp',                    // 22.7
+    'assets/hubtiles/background-backgrounds-flip-bg.webp',              // 23.4
+    'assets/hubtiles/worldbuilder-vendor-market.webp',                  // 25.3
   ]);
   const HUB_ART_BRIGHT = new Set([
-    'assets/Locations/Sacred Grove.png',                    // 46
-    'assets/Operations/oil company.png',                    // 48
-    'assets/Operations/salvage hub.png',                    // 49
-    'assets/Operations/construction company.png',           // 52
-    'assets/background/Backgrounds/Packs background.png',   // 54
-    'assets/Locations/First Galaxy.png',                    // 56
-    'assets/Operations/Mining Company.png',                 // 56
-    'assets/background/Backgrounds/warmap.png',             // 58
-    'assets/background/Backgrounds/Tree of Abraxas.png',    // 59
-    'assets/Locations/Wasteland.png',                       // 73
-    'assets/background/Backgrounds/card background.png',    // 84
+    'assets/hubtiles/worldbuilder-tent.webp',                           // 45.6
+    'assets/hubtiles/locations-sacred-grove.webp',                      // 46.8
+    'assets/hubtiles/operations-salvage-hub.webp',                      // 48.3
+    'assets/hubtiles/operations-oil-company.webp',                      // 49.2
+    'assets/hubtiles/background-backgrounds-mythcis-spellbook.webp',    // 50.0
+    'assets/hubtiles/operations-construction-company.webp',             // 54.7
+    'assets/hubtiles/background-backgrounds-packs-background.webp',     // 56.1
+    'assets/hubtiles/operations-mining-company.webp',                   // 57.4
+    'assets/hubtiles/background-backgrounds-tree-of-abraxas.webp',      // 58.6
+    'assets/hubtiles/background-backgrounds-warmap.webp',               // 59.7
+    'assets/hubtiles/locations-first-galaxy.webp',                      // 62.5
+    'assets/hubtiles/locations-wasteland.webp',                         // 74.8
+    'assets/hubtiles/background-backgrounds-card-background.webp',       // 84.2
   ]);
 
   // 🟣 THE PROMOTED TILE — §3: "violet frame and a violet outer glow instead of
@@ -115135,17 +115208,72 @@ function renderTitle() {
   };
   const _promotedId = HUB_PROMOTED[hub] || null;
 
-  const portalCards = portals.map(p => {
+  // 🚫 NO EMOJI ON A GOLD PLATE. The comp has none anywhere, and on a tile
+  // whose entire palette is gold-on-near-black a full-colour emoji is the
+  // loudest pixel on the page — round 1 shipped "Season 1 · Tier 0 · 🎯
+  // missions", "Trophies & 🩸 bonuses", "🎁 Contribute", "☑ Live market".
+  // They are stripped at RENDER time rather than edited out of the ~90 portal
+  // definitions, because those same strings are reused by other screens that
+  // are not this remodel's to change (and by the legacy main hub).
+  // Only the sub and the badge are cleaned. `p.icon` is untouched — the glyph
+  // is the tile's fallback art and several are gold gameicon sprites — and so
+  // is the title, which never carried any.
+  // Markup is preserved: the string is split on tags first, so the gold
+  // `<span class="cinder-icon">` sprites and the gameicon <img>s survive.
+  // ⚠ SUB-HUBS ONLY. `portalCards` is also what the LEGACY main hub renders
+  // (see the `isMain` branch further down), and the main menu is not this
+  // unit's to restyle — so on `main` the strings pass through untouched.
+  const _hubPlainText = (html) => {
+    if (html == null) return '';
+    if (isMain) return String(html);
+    // The Cinder sprite is a RED game icon, and in a line of gold-grey italic
+    // it reads as exactly the stray full-colour blob the emoji rule is about
+    // ("Trophies & 🩸 bonuses" in round 1's review). It becomes the word.
+    // The doubled form that leaves behind ("Cinder Cinders → real money") is
+    // collapsed on the way out.
+    // Same for the blue Aza coin sprite next to it.
+    html = String(html)
+      .replace(/<span class="cinder-icon"[^>]*><\/span>/g, 'Cinder')
+      .replace(/<span class="aza-icon"[^>]*><\/span>/g, 'Aza');
+    return html.split(/(<[^>]*>)/).map((part, i) => {
+      if (i % 2) return part;                       // a tag — leave it alone
+      return part
+        // Extended_Pictographic covers the emoji blocks; the trailing class
+        // eats the variation selectors and ZWJs that glue sequences together.
+        .replace(/\p{Extended_Pictographic}[\u{1F3FB}-\u{1F3FF}\u{FE0E}\u{FE0F}\u{200D}]*/gu, '')
+        // "· 🎯 missions" and "🎁 Contribute" leave a double space or a
+        // dangling separator behind; tidy both rather than shipping the gap.
+        .replace(/[ \t]{2,}/g, ' ')
+        .replace(/(^|[·|])\s*(?=[·|])/g, '$1')
+        .replace(/^\s*[·|]\s*/, '')
+        .replace(/\s*[·|]\s*$/, '');
+    }).join('')
+      .replace(/\bCinder\s+Cinders\b/g, 'Cinders')
+      .replace(/^\s+|\s+$/g, '');
+  };
+
+  const portalCards = portals.map((p, _pIdx) => {
     const _art = _hubTileArtUrl(p.id) || (!isMain ? (HUB_TILE_ART[p.id] || '') : '');
     // A promoted tile that is LOCKED would be selling a door the player cannot
     // open, so the promotion drops when the gate is up.
     const _promoted = (!isMain && p.id === _promotedId && !p.locked) ? ' is-promoted' : '';
     const _tone = HUB_ART_DIM.has(_art) ? ' is-art-dim' : (HUB_ART_BRIGHT.has(_art) ? ' is-art-bright' : '');
-    // Title size step, by length. Cinzel caps at 26px fit ~11 characters across
-    // a 300px plaque; `DAILY CHALLENGE` (15) is the comp's own `.long`, and
-    // `EMERGENCY BROADCAST` (19) needs the second step to stay on one line.
+    // Title size step, by length — and the two thresholds are MEASURED, not
+    // eyeballed. With the step classes stripped at runtime, every title up to
+    // 14 characters reports scrollWidth == clientWidth (298/298) at 26px inside
+    // the 276px content box; `EMERGENCY BROADCAST` (19) reports 411/298 and
+    // genuinely needs the second step. So 15 and 18.
+    // The comp agrees with the first one: its own `.tile-name.long` is applied
+    // to `DAILY CHALLENGE` (15) and `QUICK BATTLE` (12) is left at full 26px.
+    // ⚠ Round 1 stepped at 12/16 and put roughly half of every hub's tiles at
+    // 23px — Forge row 1 read THE LAB (26) / DECK BUILDER (23) / PACK OPENING
+    // (23) / EMERGENCY BROADCAST (19), four titles, three sizes, one row. Type
+    // that jitters across a row is what makes a menu look auto-generated.
+    // Lowering these again costs 26px on QUICK BATTLE, DECK BUILDER, PACK
+    // OPENING, PACK CREATOR, PRICING ADMIN, SPRITE ATELIER, GYM CORE WARS,
+    // BANK OF ETHOS and CITY HALL. Don't.
     const _nameLen = String(p.name || '').length;
-    const _nameCls = _nameLen >= 16 ? ' is-xlong' : (_nameLen >= 12 ? ' is-long' : '');
+    const _nameCls = _nameLen >= 18 ? ' is-xlong' : (_nameLen >= 15 ? ' is-long' : '');
     // ⌨ THE TILE IS A <div>, SO IT HAS TO BE TOLD IT IS A BUTTON.
     // §3 asks for a focus-visible ring and §4 makes it a judged state — but a
     // plain div is not in the tab order, so `:focus-visible` could never fire
@@ -115160,12 +115288,12 @@ function renderTitle() {
          role="button" tabindex="0"${p.locked ? ' aria-disabled="true"' : ''}
          onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">
       <div class="hub-portal-art">
-        ${_art ? `<img class="hub-portal-photo" src="${escapeHtml(_art)}" alt="" loading="lazy" decoding="async" onerror="this.remove();var c=this.closest('.hub-portal');if(c)c.classList.remove('has-art')">` : ''}
+        ${_art ? `<img class="hub-portal-photo" src="${escapeHtml(_art)}" alt=""${_pIdx < 8 ? '' : ' loading="lazy"'} decoding="async" onerror="this.remove();var c=this.closest('.hub-portal');if(c)c.classList.remove('has-art')">` : ''}
         <div class="hub-portal-icon">${p.icon}</div>
       </div>
       <div class="hub-portal-name${_nameCls}">${escapeHtml(p.name)}</div>
-      <div class="hub-portal-sub">${p.sub || ''}</div>
-      ${p.badge ? `<div class="hub-portal-badge ${p.alertBadge ? 'alert' : ''} ${p.locked ? 'lock' : ''}">${p.badge}</div>` : '<div style="visibility:hidden" class="hub-portal-badge">.</div>'}
+      <div class="hub-portal-sub">${_hubPlainText(p.sub)}</div>
+      ${p.badge ? `<div class="hub-portal-badge ${p.alertBadge ? 'alert' : ''} ${p.locked ? 'lock' : ''}">${_hubPlainText(p.badge)}</div>` : '<div style="visibility:hidden" class="hub-portal-badge">.</div>'}
     </div>`;
   }).join('');
 
@@ -115371,6 +115499,16 @@ function renderTitle() {
     const el = document.getElementById(p.id);
     if (el && typeof p.onclick === 'function') el.onclick = p.onclick;
   });
+  // 📏 TITLE FIT — the last word on the §3 size step, and it is MEASURED.
+  // The class the template picks from name length is a good first guess (it is
+  // what paints on frame one, so nothing flashes), but character count is a
+  // proxy for width, not width: `BOOK OF KNOWLEDGE` is 17 characters and does
+  // not fit at 23px, `GYM CORE WARS` is 13 and fits at 26px with room. Guessing
+  // in either direction is visible — too small jitters the type across a row,
+  // too large truncates a title to `BOOK OF KNOWLE…`. So after mount we ask the
+  // browser and step down only while the text actually overflows its box.
+  // Cheap: at most 13 tiles, two layout reads each, and only on a hub render.
+  if (!isMain) _hubFitPortalTitles();
   if (!isMain) {
     const back = document.getElementById('hub-back');
     if (back) back.onclick = () => { App.titleHub = 'main'; render(); };

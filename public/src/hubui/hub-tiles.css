@@ -29,15 +29,24 @@
       `portal-locked` pair at ~25734). `.hub-v2` is the opt-in switch AND the
       extra specificity class that beats them. Dropping it to "tidy up" hands
       the tile straight back to the legacy sheet.
-   2. THE OUTER SHADOW IS A `filter: drop-shadow()`, NOT `box-shadow`.
-      `clip-path` clips box-shadow, so every outer shadow the legacy CSS
-      declared was being thrown away — which is exactly why the old tiles read
-      flat. drop-shadow() runs after the clip and follows the octagon.
+   2. THE TILE IS THREE LAYERS, AND THE SPLIT IS LOAD-BEARING.
+      `.hub-portal` itself is UNCLIPPED and paints nothing: it exists to carry
+      `transform` and the `filter: drop-shadow()` outer shadow. `::before` is
+      the notched gold hairline FRAME; `::after` is the stone FACE, 1px inside
+      it.  ⚠ DO NOT PUT `clip-path` BACK ON `.hub-portal`.
+      Per CSS Filter Effects the filter is applied BEFORE `clip-path`, so an
+      element that carries both has its own drop-shadow sliced off at its own
+      silhouette. Round 1 did exactly that and shipped tiles with NO outer
+      shadow at all and a promoted "glow" that was a 1px violet line — measured
+      in isolation: same-element filter+clip leaves lum 42 / sat 0.00 just
+      outside the edge (i.e. bare background), the split leaves lum 61 / sat
+      0.57. `box-shadow` is not the alternative: it would be clipped by the
+      frame layer's own clip-path. The split is.
       ⚠ Keep the NUMBER of drop-shadow() functions identical between a state
       and the state it transitions to, or the filter snaps instead of easing.
-      Gold tiles use one; promoted (violet) tiles use two in every state.
-   3. THE FRAME IS A BACKGROUND, NOT A BORDER. `.hub-portal`'s own background
-      IS the 1px gold hairline; `::before` paints the stone face 1px inside it.
+      Gold tiles use one; promoted (violet) tiles use three in every state.
+   3. THE FRAME IS A BACKGROUND, NOT A BORDER. `::before`'s background IS the
+      1px gold hairline; `::after` paints the stone face 1px inside it.
       A real `border` cannot do this — clip-path slices the corners off and the
       four diagonal bevel edges come out bare, which is the "div with a border"
       look the remodel exists to kill.
@@ -113,8 +122,8 @@
   align-items: stretch;
   text-align: center;
 
-  /* The frame is the padding: 1px of the element's own background shows all the
-     way round, on every one of the octagon's eight edges. */
+  /* The frame is the padding: `::before`'s 1px of gold shows all the way round,
+     on every one of the octagon's eight edges. */
   padding: 1px;
   margin: 0;
   border: 0;
@@ -123,34 +132,62 @@
   overflow: visible;
   -webkit-tap-highlight-color: transparent;
 
-  /* THE 1px GOLD HAIRLINE. A vertical ramp so the edge catches light at the top
-     and sinks into shadow at the foot, the way a struck metal edge does. */
-  background: linear-gradient(
-    180deg,
-    rgba(203, 170, 106, 0.78) 0%,
-    rgba(138, 111, 60, 0.46) 55%,
-    rgba(110, 86, 44, 0.55) 100%
-  );
-
-  clip-path: polygon(
-    var(--tile-notch) 0, calc(100% - var(--tile-notch)) 0,
-    100% var(--tile-notch), 100% calc(100% - var(--tile-notch)),
-    calc(100% - var(--tile-notch)) 100%, var(--tile-notch) 100%,
-    0 calc(100% - var(--tile-notch)), 0 var(--tile-notch)
-  );
+  /* NOTHING IS PAINTED HERE AND NOTHING IS CLIPPED HERE — see header note 2.
+     This element is only the shadow host. Its `filter` would be sliced off at
+     its own silhouette the instant it also carried a `clip-path`.
+     ⚠ `box-shadow: none` IS LOAD-BEARING, here and on :hover. index.html's
+     legacy `.hub-portal` carries `0 8px 26px + inset 0 0 44px` and its hover
+     adds `0 0 32px var(--portal-accent)` — a per-portal COLOURED glow, the
+     signature of the purple design being replaced. While this element clipped
+     itself those were invisible; the moment the clip moved to `::before` they
+     would have come back, and the accent glow would have fired on every
+     hover. */
+  background: none;
+  box-shadow: none;
 
   transform: translateY(0);
   filter: drop-shadow(0 12px 22px rgba(0, 0, 0, 0.66));
 
   transition:
     transform var(--keep-fast, 0.16s) var(--keep-ease, ease),
-    filter    var(--keep-fast, 0.16s) var(--keep-ease, ease),
-    background var(--keep-fast, 0.16s) var(--keep-ease, ease);
+    filter    var(--keep-fast, 0.16s) var(--keep-ease, ease);
+}
+
+/* THE FRAME — the 1px GOLD HAIRLINE, notched. A vertical ramp so the edge
+   catches light at the top and sinks into shadow at the foot, the way a struck
+   metal edge does. */
+.spellbook-hub.is-sub.hub-v2 .hub-portal::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border: 0;
+  width: auto;
+  height: auto;
+  display: block;
+  background: linear-gradient(
+    180deg,
+    rgba(203, 170, 106, 0.78) 0%,
+    rgba(138, 111, 60, 0.46) 55%,
+    rgba(110, 86, 44, 0.55) 100%
+  );
+  clip-path: polygon(
+    var(--tile-notch) 0, calc(100% - var(--tile-notch)) 0,
+    100% var(--tile-notch), 100% calc(100% - var(--tile-notch)),
+    calc(100% - var(--tile-notch)) 100%, var(--tile-notch) 100%,
+    0 calc(100% - var(--tile-notch)), 0 var(--tile-notch)
+  );
+  transition: background var(--keep-fast, 0.16s) var(--keep-ease, ease);
+  pointer-events: none;
 }
 
 /* THE STONE FACE. Warm near-black vertical gradient, 1px inside the hairline,
-   carrying the §1 emboss + liner insets. */
-.spellbook-hub.is-sub.hub-v2 .hub-portal::before {
+   carrying the §1 emboss + liner insets — and, in §7, the focus ring and the
+   press. (The legacy sheet used `::after` for a pair of corner brackets that
+   belong to the design being replaced; they are retired rather than restyled —
+   §1's ornaments are "sparse and deliberate", and a bracket on all thirteen
+   Exchange tiles is a border of them.) */
+.spellbook-hub.is-sub.hub-v2 .hub-portal::after {
   content: '';
   position: absolute;
   inset: 1px;
@@ -158,6 +195,7 @@
   border: 0;
   width: auto;
   height: auto;
+  display: block;
   clip-path: polygon(
     var(--tile-notch-in) 0, calc(100% - var(--tile-notch-in)) 0,
     100% var(--tile-notch-in), 100% calc(100% - var(--tile-notch-in)),
@@ -173,15 +211,6 @@
   box-shadow: var(--keep-emboss), var(--keep-liner);
   transition: box-shadow var(--keep-fast, 0.16s) var(--keep-ease, ease);
   pointer-events: none;
-}
-
-/* The legacy sheet uses `::after` for a pair of corner brackets that belong to
-   the design being replaced. Retired rather than restyled — §1's ornaments are
-   "sparse and deliberate", and a bracket on all thirteen Exchange tiles is a
-   border of them. */
-.spellbook-hub.is-sub.hub-v2 .hub-portal::after {
-  content: none;
-  display: none;
 }
 
 /* Every real child sits above the face. */
@@ -205,8 +234,21 @@
   margin: 7px 7px 0;
   padding: 0;
   overflow: hidden;
+  /* Contains the colour-grade blend below — without it the blend would reach
+     past the panel and take the painted page background with it. */
+  isolation: isolate;
+  /* THE REST STATE OF THE PANEL — what is on screen before the crop decodes,
+     and what a tile with no art at all shows through §3's fallback rule below.
+     It is a lit stone recess (warm ochre bounce off the foot, cool-black crown)
+     rather than flat black, because a 1px gold hairline around a hole is the
+     "icon floating in an empty well" the clause forbids, reached from the other
+     direction. Round 1 shipped that hole for the first seconds of every visit.
+     Baking the art down to <80KB webp crops (assets/hubtiles/) is the other
+     half of the fix; this is the half that covers the frame the crop misses. */
   background:
-    radial-gradient(120% 100% at 50% 34%, #16110b 0%, #0c0906 62%, #080605 100%);
+    linear-gradient(180deg, rgba(246, 220, 149, 0.05) 0%, rgba(0, 0, 0, 0) 26%),
+    radial-gradient(76% 86% at 50% 112%, rgba(184, 134, 58, 0.20) 0%, rgba(112, 80, 34, 0.09) 42%, rgba(0, 0, 0, 0) 74%),
+    radial-gradient(122% 104% at 50% 30%, #1c1610 0%, #110d09 58%, #0a0806 100%);
   clip-path: polygon(
     var(--tile-notch-art) 0, calc(100% - var(--tile-notch-art)) 0,
     100% var(--tile-notch-art), 100% calc(100% - var(--tile-notch-art)),
@@ -231,16 +273,56 @@
   object-position: 50% 42%;
   border: 0;
   border-radius: 0;
-  /* Darkened so the title below stays dominant (§3) — but only just. The comp's
-     panels are still READABLE paintings; taking them below ~0.8 turns the whole
-     band into seven dark rectangles and throws away the thing this unit exists
-     to add. The scrim below does the rest of the work, weighted at the foot
-     where the title needs the contrast. */
-  filter: brightness(0.80) saturate(0.90) contrast(1.05);
+  /* THE GRADE. Four functions, and every other photo filter in this file
+     restates all four in the same order — a `filter` list only interpolates
+     function-by-function, so a state that drops one snaps instead of easing.
+       brightness  §3's "darkened so the title below stays dominant". Measured
+                   over the exact 284×178 crop a tile shows, this lands the
+                   default bucket at ~19–23 mean luminance, which is where the
+                   comp's own panels sit (Quick Battle 19.0, Season Pass 21.3,
+                   Colosseum 19.4). Round 1 ran 0.80 and measured 23–30: the
+                   painting was competing with its own gold title. The two
+                   bucket overrides below restate it; index.html carries the
+                   measurement each image was sorted by.
+       saturate    the library is not colour-managed for this palette. Pack
+                   Opening is an electric-blue vault, the Lab is cyan screens,
+                   World Data is a magenta galaxy — at full chroma they read as
+                   photographs pasted into a gold/near-black system.
+       sepia       and this is what pulls them back INTO it. 20% toward sepia
+                   is a warm grade, not a tint: it bends the cool half of the
+                   library toward the hub's amber without flattening the warm
+                   half into monochrome. Cheaper and truer than a wash layer,
+                   which would lift the blacks instead of turning the hues.
+       contrast    buys back the local contrast the two above cost. */
+  filter: brightness(0.78) saturate(0.78) sepia(0.20) contrast(1.06);
   transform: scale(1.02);
   transition:
     filter    var(--keep-fast, 0.16s) var(--keep-ease, ease),
     transform var(--keep-fast, 0.16s) var(--keep-ease, ease);
+}
+
+/* ── THE WARM GRADE ────────────────────────────────────────────────────────
+   `mix-blend-mode: color` takes its HUE AND SATURATION from this layer and its
+   LUMINANCE from the painting underneath, so at 34% it pulls every panel a
+   third of the way to one warm key WITHOUT touching a single value. That is
+   the difference between a graded frame and a tinted one, and it is the piece
+   `filter: sepia()` alone cannot do: sepia barely moves a near-white specular,
+   which is exactly what The Lab's cyan monitors and Pack Opening's blue
+   lightning are made of. Round 1 had no grade at all and those two plates —
+   plus World Data's magenta galaxy — read as cool photographs pasted into a
+   gold/near-black system where every comp panel is warm and subdued.
+   Measured by eye against 0 / .22 / .34 / .46: at .46 the paintings go
+   monochrome and stop being paintings; .34 warms the cool half of the library
+   and leaves the warm half looking untouched. */
+.spellbook-hub.is-sub.hub-v2 .hub-portal-art::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: rgb(168, 104, 44);
+  mix-blend-mode: color;
+  opacity: 0.34;
 }
 
 /* THE INSET HAIRLINE + THE BOTTOM-WEIGHTED SCRIM.
@@ -284,19 +366,24 @@
    bucket — deliberately, since guessing at an arbitrary URL would be worse.
    ─────────────────────────────────────────────────────────────────────────── */
 .spellbook-hub.is-sub.hub-v2 .hub-portal.is-art-dim .hub-portal-photo {
-  filter: brightness(1.30) saturate(0.98) contrast(1.02);
+  filter: brightness(1.28) saturate(0.86) sepia(0.16) contrast(1.04);
 }
 .spellbook-hub.is-sub.hub-v2 .hub-portal.is-art-bright .hub-portal-photo {
-  filter: brightness(0.60) saturate(0.86) contrast(1.06);
+  filter: brightness(0.48) saturate(0.70) sepia(0.24) contrast(1.06);
 }
-/* The hover lift has to be restated per bucket: the generic hover rule is one
-   class less specific than these, so without this a toned panel would sit
-   perfectly still under the cursor while its neighbours brightened. */
+/* ⚠ EVERY HOVER NUMBER BELOW IS DERIVED FROM THE REST VALUE IN *THIS* FILE —
+   rest × ~1.11 — and NOT copied out of the comp. Round 1 lifted the comp's
+   hover brightness (.79) onto its own raised rest (.80), which made hover 1%
+   DARKER than rest: the default bucket, which is also where every admin
+   override lands, sat dead under the cursor while its neighbours brightened.
+   If you retune a rest value, rescale its hover by the same ratio here.
+   The lift also has to be restated per bucket: the generic hover rule is one
+   class less specific than these, so a toned panel would otherwise not move. */
 .spellbook-hub.is-sub.hub-v2 .hub-portal.is-art-dim:hover .hub-portal-photo {
-  filter: brightness(1.44) saturate(1.02) contrast(1.02);
+  filter: brightness(1.42) saturate(0.92) sepia(0.16) contrast(1.04);
 }
 .spellbook-hub.is-sub.hub-v2 .hub-portal.is-art-bright:hover .hub-portal-photo {
-  filter: brightness(0.67) saturate(0.92) contrast(1.06);
+  filter: brightness(0.53) saturate(0.76) sepia(0.24) contrast(1.06);
 }
 
 /* THE GLYPH IS THE FALLBACK, NEVER THE DESIGN.
@@ -317,7 +404,10 @@
 .spellbook-hub.is-sub.hub-v2 .hub-portal-icon {
   position: absolute;
   inset: 0;
-  z-index: 1;
+  /* Above the grade (1) and the scrim (2): the glyph is the fallback ART, and
+     dimming it with the layers meant for a photograph makes it look forgotten
+     rather than deliberate. */
+  z-index: 3;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -357,14 +447,24 @@
    subtitle in muted gold-grey.)
    ════════════════════════════════════════════════════════════════════════════ */
 .spellbook-hub.is-sub.hub-v2 .hub-portal-name {
+  /* ── THE TITLE BOX IS A FIXED BAND, AND THE STEPS ONLY CHANGE THE TYPE ──
+     `height` and `line-height` are declared HERE and never restated by the
+     size steps below, so a 26px title, a 23px title and a 19px title in the
+     same row share one baseline and one block of space. Round 1 let the box
+     shrink with the font: Forge row 1 read THE LAB / DECK BUILDER / PACK
+     OPENING / EMERGENCY BROADCAST at three different sizes on three different
+     baselines, which is what makes a menu read as auto-generated instead of
+     art-directed. A `line-height` in `px` (not a ratio) is the whole trick. */
   flex: 0 0 auto;
+  box-sizing: border-box;
+  height: 44px;
   margin: 0;
-  padding: 13px 12px 0;
+  padding: 10px 12px 0;
   font-family: var(--keep-cinzel, 'Cinzel', Georgia, serif);
   font-size: 26px;
   font-weight: 700;
   font-style: normal;
-  line-height: 1.05;
+  line-height: 34px;
   letter-spacing: 0.07em;
   text-indent: 0.07em;          /* pay back the trailing letterspace */
   text-transform: uppercase;
@@ -381,32 +481,48 @@
     0 0 14px rgba(232, 200, 119, 0.16);
   transition: color var(--keep-fast, 0.16s) var(--keep-ease, ease);
 }
-/* Two steps down, chosen by name length in index.html. `Daily Challenge` (15)
-   is the comp's own `.long`; `Emergency Broadcast` (19) and `Foundation
-   Reserve` (18) need the second step to stay on one line inside 276px. */
+/* Two steps down, chosen by name length in index.html — but ONLY as the
+   first-paint guess. `_hubFitPortalTitles()` re-measures every title against
+   its real box the moment the hub mounts (and again when Cinzel finishes
+   loading) and sets the largest size that fits, 1px at a time; character count
+   is a proxy for width, not width. These two exist so a long title does not
+   paint one frame as `BOOK OF KNOWLE…` before that runs.
+   Note that neither step touches height or line-height — see the band note
+   above; that is what keeps a stepped title on its row's baseline. */
 .spellbook-hub.is-sub.hub-v2 .hub-portal-name.is-long  { font-size: 23px; letter-spacing: 0.055em; text-indent: 0.055em; }
 .spellbook-hub.is-sub.hub-v2 .hub-portal-name.is-xlong { font-size: 19px; letter-spacing: 0.045em; text-indent: 0.045em; }
 
 .spellbook-hub.is-sub.hub-v2 .hub-portal-sub {
+  /* ONE RESERVED LINE — §3, and a fixed 18px of it whether the tile has a
+     subtitle or not, so the pill rows line up across a row of tiles. Round 1
+     allowed two, and four tiles per hub took the second one: ragged,
+     bottom-heavy plaques standing next to single-line neighbours. The clamp is
+     the backstop, not the plan — the long subtitles in index.html were cut to
+     fit rather than left to be truncated. */
   flex: 0 0 auto;
-  margin: 6px 0 0;
-  padding: 0 14px;
+  box-sizing: border-box;
+  /* ⚠ `min-height` AND `max-height`, not just `height`. index.html's legacy
+     `.hub-portal-sub` (~line 1440) declares `min-height: 2.4em` — two lines —
+     and a `height` from a more specific rule does NOT beat a `min-height` from
+     a less specific one, they are different properties. Measured: the band was
+     coming out 32.4px tall with one line of text in it. */
+  height: 18px;
+  min-height: 18px;
+  max-height: 18px;
+  margin: 5px 0 0;
+  padding: 0 13px;
   font-family: var(--keep-serif-it, Georgia, serif);
   font-style: italic;
   font-weight: 400;
   font-size: 13.5px;
-  line-height: 1.28;
+  line-height: 18px;
   letter-spacing: 0.015em;
   text-transform: none;
   color: var(--keep-gold-grey, #9a8d6c);
-  /* One line in the comp. Two is the honest ceiling for the sub-hubs, several
-     of which ship a genuinely two-clause subtitle ("Crack your unopened packs ·
-     build the deck to survive Ethos City"); past that it clamps rather than
-     pushing the badge row off the plaque. */
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
   overflow: hidden;
   transition: color var(--keep-fast, 0.16s) var(--keep-ease, ease);
 }
@@ -506,19 +622,27 @@
    index.html enforces the "at most one" — the class comes from a per-hub map,
    and a locked tile never gets it.
    ════════════════════════════════════════════════════════════════════════════ */
+/* THE BLOOM IS TWO PASSES, NOT ONE. The comp's promoted halo visibly bleeds
+   onto its neighbours; a single tight pass reads as a violet outline instead.
+   So: a near pass that hugs the frame, and a WIDE low-alpha pass that carries
+   past the 22px gutter and lands on the tiles either side. THREE drop-shadows
+   here and in every promoted state below — see header note 2 on keeping the
+   count stable so the filter eases instead of snapping. */
 .spellbook-hub.is-sub.hub-v2 .hub-portal.is-promoted {
+  filter:
+    drop-shadow(0 0 18px rgba(148, 114, 206, 0.42))
+    drop-shadow(0 0 46px rgba(126, 90, 204, 0.34))
+    drop-shadow(0 12px 22px rgba(0, 0, 0, 0.62));
+}
+.spellbook-hub.is-sub.hub-v2 .hub-portal.is-promoted::before {
   background: linear-gradient(
     180deg,
     rgba(154, 122, 208, 0.92) 0%,
     rgba(107, 79, 160, 0.62) 55%,
     rgba(78, 56, 120, 0.66) 100%
   );
-  /* TWO drop-shadows here and in every promoted state below — see header note 2. */
-  filter:
-    drop-shadow(0 0 26px rgba(138, 100, 214, 0.62))
-    drop-shadow(0 12px 22px rgba(0, 0, 0, 0.62));
 }
-.spellbook-hub.is-sub.hub-v2 .hub-portal.is-promoted::before {
+.spellbook-hub.is-sub.hub-v2 .hub-portal.is-promoted::after {
   background: linear-gradient(180deg, #181125 0%, #110e15 48%, var(--keep-ground-0, #0b0906) 100%);
 }
 .spellbook-hub.is-sub.hub-v2 .hub-portal.is-promoted .hub-portal-art::after {
@@ -537,14 +661,18 @@
       a few percent, the tile rises ~3px into a deeper shadow. ── */
 .spellbook-hub.is-sub.hub-v2 .hub-portal:hover {
   transform: translateY(-3px);
+  box-shadow: none;                 /* see §2 — kills the legacy accent glow */
+  filter: drop-shadow(0 18px 30px rgba(0, 0, 0, 0.75));
+}
+.spellbook-hub.is-sub.hub-v2 .hub-portal:hover::before {
   background: linear-gradient(180deg,
     var(--keep-gold-hi-2, #f2dda2) 0%,
     var(--keep-gold-hi, #e8c877) 55%,
     #b08b45 100%);
-  filter: drop-shadow(0 18px 30px rgba(0, 0, 0, 0.75));
 }
 .spellbook-hub.is-sub.hub-v2 .hub-portal:hover .hub-portal-photo {
-  filter: brightness(0.79) saturate(0.94) contrast(1.05);
+  /* 0.78 × 1.11 — see the note on the bucket hovers in §3. */
+  filter: brightness(0.87) saturate(0.84) sepia(0.20) contrast(1.06);
   transform: scale(1.045);
 }
 .spellbook-hub.is-sub.hub-v2 .hub-portal:hover .hub-portal-name {
@@ -553,10 +681,13 @@
 .spellbook-hub.is-sub.hub-v2 .hub-portal:hover .hub-portal-icon {
   filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.85)) brightness(1.12);
 }
-.spellbook-hub.is-sub.hub-v2 .hub-portal.is-promoted:hover {
+.spellbook-hub.is-sub.hub-v2 .hub-portal.is-promoted:hover::before {
   background: linear-gradient(180deg, #c3a9ea 0%, var(--keep-violet-hi, #9a7ad0) 55%, var(--keep-violet, #6b4fa0) 100%);
+}
+.spellbook-hub.is-sub.hub-v2 .hub-portal.is-promoted:hover {
   filter:
-    drop-shadow(0 0 30px rgba(140, 102, 214, 0.62))
+    drop-shadow(0 0 22px rgba(166, 132, 224, 0.54))
+    drop-shadow(0 0 58px rgba(140, 102, 220, 0.42))
     drop-shadow(0 18px 30px rgba(0, 0, 0, 0.70));
 }
 
@@ -568,10 +699,11 @@
 }
 .spellbook-hub.is-sub.hub-v2 .hub-portal.is-promoted:active {
   filter:
-    drop-shadow(0 0 14px rgba(122, 88, 190, 0.42))
+    drop-shadow(0 0 8px rgba(122, 88, 190, 0.44))
+    drop-shadow(0 0 24px rgba(122, 88, 190, 0.28))
     drop-shadow(0 5px 10px rgba(0, 0, 0, 0.72));
 }
-.spellbook-hub.is-sub.hub-v2 .hub-portal:active::before {
+.spellbook-hub.is-sub.hub-v2 .hub-portal:active::after {
   box-shadow: inset 0 3px 9px rgba(0, 0, 0, 0.85), var(--keep-liner);
 }
 
@@ -580,13 +712,13 @@
       ring is an inset shadow on the stone face, which is already clipped. ── */
 .spellbook-hub.is-sub.hub-v2 .hub-portal:focus { outline: none; }
 .spellbook-hub.is-sub.hub-v2 .hub-portal:focus-visible { outline: none; }
-.spellbook-hub.is-sub.hub-v2 .hub-portal:focus-visible::before {
+.spellbook-hub.is-sub.hub-v2 .hub-portal:focus-visible::after {
   box-shadow:
     inset 0 0 0 2px var(--keep-gold-hi, #e8c877),
     inset 0 0 0 4px rgba(0, 0, 0, 0.75),
     var(--keep-liner);
 }
-.spellbook-hub.is-sub.hub-v2 .hub-portal.is-promoted:focus-visible::before {
+.spellbook-hub.is-sub.hub-v2 .hub-portal.is-promoted:focus-visible::after {
   box-shadow:
     inset 0 0 0 2px var(--keep-violet-hi, #9a7ad0),
     inset 0 0 0 4px rgba(0, 0, 0, 0.75),
@@ -600,15 +732,23 @@
       It simply stops responding visually like a live tile. ── */
 .spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked {
   opacity: 1;                                  /* out-shouts the legacy .65 */
-  background: rgba(138, 111, 60, 0.28);        /* hairline only — no ramp */
   filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.55));
   cursor: not-allowed;
 }
 .spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked::before {
+  background: rgba(138, 111, 60, 0.28);        /* hairline only — no ramp */
+}
+.spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked::after {
   background: linear-gradient(180deg, #141210 0%, #0b0a08 100%);
 }
 .spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked .hub-portal-photo {
-  filter: brightness(0.42) saturate(0.15);
+  filter: brightness(0.42) saturate(0.15) sepia(0.30) contrast(1.02);
+}
+/* §4's disabled state is "desaturated gold at 40%", so the warm grade all but
+   steps out of the way here — at full strength it would push the hue back into
+   a panel the lock has just drained. */
+.spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked .hub-portal-art::before {
+  opacity: 0.10;
 }
 .spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked .hub-portal-icon {
   color: rgba(201, 171, 114, 0.40);
@@ -625,11 +765,13 @@
    light up. The frame warms by a hair so the click still feels received. */
 .spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked:hover {
   transform: none;
-  background: rgba(138, 111, 60, 0.40);
   filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.55));
 }
+.spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked:hover::before {
+  background: rgba(138, 111, 60, 0.40);
+}
 .spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked:hover .hub-portal-photo {
-  filter: brightness(0.42) saturate(0.15);
+  filter: brightness(0.42) saturate(0.15) sepia(0.30) contrast(1.02);
   transform: scale(1.02);
 }
 .spellbook-hub.is-sub.hub-v2 .hub-portal.portal-locked:hover .hub-portal-name {
@@ -683,6 +825,7 @@
 @media (prefers-reduced-motion: reduce) {
   .spellbook-hub.is-sub.hub-v2 .hub-portal,
   .spellbook-hub.is-sub.hub-v2 .hub-portal::before,
+  .spellbook-hub.is-sub.hub-v2 .hub-portal::after,
   .spellbook-hub.is-sub.hub-v2 .hub-portal-photo,
   .spellbook-hub.is-sub.hub-v2 .hub-portal-icon,
   .spellbook-hub.is-sub.hub-v2 .hub-portal-name,

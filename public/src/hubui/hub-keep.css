@@ -461,7 +461,7 @@
    as UI copy. A modest crop from the bottom edge takes both out of frame and
    pushes the scribe down under the tile band where it belongs. */
 .spellbook-hub.is-sub[data-hub="codex"] {
-  --keep-bg-filter: brightness(0.60) saturate(0.50) contrast(1.05) sepia(0.26);
+  --keep-bg-filter: brightness(0.54) saturate(0.50) contrast(1.05) sepia(0.26);
   --keep-bg-zoom: 1.28;
 }
 /* FORGE. `equipment background.png` is a ruined gun store and its top third
@@ -472,7 +472,7 @@
    leaving the counters and rubble, which is what an armoury floor should look
    like. The image is kept, as required; only the framing changed. */
 .spellbook-hub.is-sub[data-hub="forge"] {
-  --keep-bg-filter: brightness(0.66) saturate(0.46) contrast(1.05) sepia(0.30);
+  --keep-bg-filter: brightness(0.60) saturate(0.46) contrast(1.05) sepia(0.30);
   --keep-bg-zoom: 1.62;
 }
 /* THE CAMP deliberately shares CampHeights.png with the main menu, and that is

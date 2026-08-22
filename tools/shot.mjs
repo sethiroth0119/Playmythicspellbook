@@ -69,6 +69,15 @@ const PAGES = {
   // The Card Shop is a SCREEN, not a hub — the main menu's portal sets
   // App.screen='cardShop' (see PORTALS.main in index.html). Same bootstrap, no hub.
   cardshop: { kind: 'app', screen: 'cardShop', hub: 'main' },
+  // 📜 index.html AT the main hub — NOT the same thing as `main`.
+  // `main` renders public/main-menu/index.html standalone, which is the iframe
+  // only. The Herald's Dispatch is mounted at BODY level by _mmMount (index.html
+  // deliberately keeps it out of #app, because #app is a stacking context and
+  // would paint it under the iframe), so `main` cannot see the dispatch at all
+  // and neither can anything judging it. That blind spot let a footer
+  // regression through a whole round: the Follow links were clipped to nothing
+  // and no screenshot in the run could have shown it.
+  hubmain:  { kind: 'app', screen: 'title', hub: 'main' },
 };
 
 // ---------------------------------------------------------------- cli

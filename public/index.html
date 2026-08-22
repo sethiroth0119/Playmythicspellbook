@@ -36293,7 +36293,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120w6';
+  window.BUILD_VERSION = 'v120w7';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -113916,9 +113916,16 @@ function _hdSocialHtml() {
   // layout instead of paper. The slot is the ✎ control for admins and the
   // same-metrics static ink label for everyone else, so the string §2 pins is
   // always on the sheet and the row fills the rule edge to edge.
+  // ⚠ MEASURED, not reasoned: with six links the footer row is 374px and the
+  // note is the item that loses. Rendering it unconditionally for players
+  // squeezed it to 29.9px — it displayed as "＋ …", so the string §2 pins was
+  // NOT on the sheet, it was an ellipsis. The row already fills edge to edge on
+  // its own once six icons are in it; the note is only load-bearing when there
+  // is nothing to follow. So for players it is the EMPTY-STATE legend it always
+  // was, and admins keep their control in both states.
   const slot = admin
     ? `<button class="hd-soc-add" id="hd-soc-edit" title="Set your social media links (admin)">${btns ? '✎ Edit links' : '＋ Add special Links'}</button>`
-    : '<span class="hd-soc-note" title="The heralds keep these links">＋ Add special Links</span>';
+    : (btns ? '' : '<span class="hd-soc-note" title="The heralds keep these links">＋ Add special Links</span>');
   // ☐ is a SIBLING of the icon strip, never a child of it: the strip is the one
   // footer item allowed to clip, and with the box inside it a six-dot pager was
   // enough to shrink the box to zero and take half of §2's footer with it.

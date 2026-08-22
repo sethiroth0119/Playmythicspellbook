@@ -5,7 +5,7 @@
 
 <script id="run-data" type="application/json">
 {
-  "updated": "2026-08-22 \u2014 Run complete: 102 pass, 0 fail",
+  "updated": "2026-08-22 \u2014 run complete and stopped by the user; branch pushed",
   "headline": "Ten pieces, thirty-one critic rounds, one gate. The last FAIL is closed.",
   "phase": "Complete",
   "round": 8,
@@ -100,7 +100,7 @@
     {
       "name": "Free camera",
       "state": "won",
-      "note": "WASD pans in the camera plane so it still feels right after you turn; Q/E yaws; R restores the neutral pose exactly. The baked ground is keyed on camera pose now \u2014 without that it stayed nailed to the screen while the board turned underneath it, silently. Picking stays exact at every pose: 7,358 click samples across 48 poses, 0 mismatches.",
+      "note": "WASD pans in the camera plane so it still feels right after you turn; Q/E yaws; R restores the neutral pose exactly. The baked ground is keyed on camera pose now \u2014 without that it stayed nailed to the screen while the board turned underneath it, silently. Picking stays exact at every pose: 7,358 click samples across 48 poses, 0 mismatches. Final round: rotating the camera was still pushing tiles outside the canvas rect \u2014 14 of them at yaw 45, where a click lands on the page background. Yaw now re-derives the fit and that is 0, while panning still moves the view, because a camera that re-frames whatever you pan toward is not a camera. Picking stayed exact throughout: 0 centre failures and 0 jitter failures at every pose measured.",
       "rounds": [
         {
           "n": 1,
@@ -112,6 +112,12 @@
           "n": 2,
           "verdict": "pass",
           "label": "holds at every pose",
+          "short": "\u2713"
+        },
+        {
+          "n": 3,
+          "verdict": "pass",
+          "label": "yaw keeps every tile framed",
           "short": "\u2713"
         }
       ]
@@ -469,6 +475,21 @@
       "t": "33:15",
       "kind": "finding",
       "text": "The sign-off also caught a ship-blocker nobody was looking for: the three deploy knobs agreed with each other, but at a version stamped three waves earlier. Shipping as-is would have left the update check silent and every existing client on the old bundle. All three bumped to v120x4."
+    },
+    {
+      "t": "33:40",
+      "kind": "finding",
+      "text": "One more defect, found by running the board's own self-check across camera POSES rather than trusting it at the default one: rotating pushed 14 tiles off-frame at yaw 45, and a click there lands on the page background. The check had only ever been run at the neutral pose."
+    },
+    {
+      "t": "34:05",
+      "kind": "pass",
+      "text": "Closed by splitting the camera in two. Yaw is a look-at-it-from-here action and should not cost the player tiles, so the fit re-derives on rotation: off-frame tiles at 45 degrees go from 14 to 0. Pan is navigation and still moves the view. Picking geometry untouched \u2014 0 centre failures, 0 jitter failures at every pose."
+    },
+    {
+      "t": "34:20",
+      "kind": "phase",
+      "text": "Stopped here at the user's request, branch pushed with all three deploy knobs in agreement. What was verified and by what method is written into FUNCTION-INVENTORY.md and OPEN-BREAKS.md rather than summarised away \u2014 including the parts that could not be exercised offline, which are marked unverified rather than passed."
     }
   ]
 }

@@ -345,6 +345,137 @@ footer{margin-top:70px;padding-top:26px;border-top:1px solid var(--rule);
      }
     ]
    }
+  },
+  {
+   "n": 2,
+   "won": [
+    "u2-hub-tiles",
+    "u6-one-back-button"
+   ],
+   "open": [
+    "u1-keep-foundation",
+    "u3-main-menu-comp-a",
+    "u4-dispatch-and-warpath",
+    "u5-motion"
+   ],
+   "integration": [
+    {
+     "tag": "FIXED",
+     "head": "The keep shell's background was never actually <code>position:fixed</code>.",
+     "body": "<code>.spellbook-hub-bg</code> is <code>position:fixed; inset:0</code> (index.html:330) and the whole of hub-keep.css §C2 assumes that means “the viewport”. It did not. <code>#app</code> carries <code>.page-fade-in</code>, an animation declared <code>220ms ease-out both</code> whose 100% keyframe is <code>transform: translateY(0)</code> — and <code>fill-mode: both</code> retains that endpoint forever, so <code>#app</code> computes <code>transform: matrix(1,0,0,1,0,0)</code>. An identity matrix, but not <code>none</code>, and any non-<code>none</code> transform makes the element the containing block for every <code>position:fixed</code> descendant. index.html:155793 already documents this exact bug from the other side (the DVS modal is portalled out to <code>&lt;body&gt;</code> to escape it). Measured on Ruin Exchange, the one hub whose tiles overflow: viewport 993px, document 1678px, and the background came back <b>1678px tall with its top at &minus;300 after a 300px scroll</b> — so the painted plate was <code>object-fit: cover</code>-ed into a box 69% taller than the frame it is composed for, a different crop than the comp on every tall hub, and it scrolled away with the tiles instead of sitting still behind them. Every wash, vignette and grain layer in §C2 is sized off that same box. Fixed at the endpoint rather than the animation: a <code>keepPageFadeIn</code> whose only keyframe is 0%, so nothing is retained and <code>#app</code> returns to <code>transform: none</code>. Scoped with <code>:has(&gt; .spellbook-hub.is-sub)</code> so no other screen's fixed layout moves. Re-measured: transform <code>none</code>, background 993px, top 0 after the same scroll."
+    },
+    {
+     "tag": "CHECKED",
+     "head": "All four hubui sheets are still linked.",
+     "body": "<code>hub-keep.css</code>, <code>hub-tiles.css</code>, <code>hub-chrome.css</code>, <code>hub-transitions.css</code> at index.html:223670-223673 with the <code>?v=120w7</code> buster. No dead sheets. The three deploy knobs agree with each other at <code>v120w6</code> (<code>version.txt</code>, <code>window.BUILD_VERSION</code>, <code>sw.js CACHE_VERSION</code>); the sheet buster deliberately runs ahead so the CSS refetches."
+    },
+    {
+     "tag": "CHECKED",
+     "head": "No duplicate rules fighting.",
+     "body": "Six selectors are declared more than twice across the four sheets, and every one is a media-query variant or the documented hub-keep × hub-transitions split — hub-keep owns the rest look, hub-transitions owns <code>animation</code>. Braces balance in all four files. One token, <code>--keep-oct-5</code>, is referenced at hub-chrome.css:627 without ever being declared, but it carries a full literal polygon fallback exactly as the project's convention requires, so it paints correctly; worth declaring for tidiness, not breakage."
+    },
+    {
+     "tag": "CHECKED",
+     "head": "All 32 tile-art derivatives resolve.",
+     "body": "Every image path in the <code>HUB_TILE_ART</code> map (index.html:115174) was resolved against <code>public/</code> on disk: 32 referenced, 0 missing. No tile is falling back to the empty gradient well because of a bad path."
+    },
+    {
+     "tag": "CHECKED",
+     "head": "Eight pages render, before and after the fix.",
+     "body": "main, battle, forge, exchange, codex, field, arcanum, cardshop — all captured and read, none blank, black or regressed. Mean luminance and colour counts are identical across the fix on seven of eight; only Ruin Exchange moves (16.5→16.6, 545→561 colours), which is the taller-than-viewport hub whose plate crop the fix corrects. Card Shop renders its signed-out empty state, as expected with no cloud session."
+    },
+    {
+     "tag": "CLEAN",
+     "head": "<code>node _synckcheck.mjs</code>",
+     "body": "All scripts clean, before and after."
+    }
+   ],
+   "critiques": {
+    "u1-keep-foundation": [
+     {
+      "verdict": "LOSES",
+      "score": 8,
+      "bar": 9,
+      "gap": "The sub-hub background wash flattens the painted art into haze. public/src/hubui/hub-keep.css:523 adds a fifth wash layer the comp does not have — `linear-gradient(0deg, rgba(30,20,10,0.26), rgba(30,20,10,0.26))` — a flat, full-frame veil that is 0.26-opaque at EVERY pixel. Every layer in the comp's wash (comp-hub.html .bg-wash) is a gradient that reaches alpha 0 somewhere; its radial is `rgba(11,9,6,0)` at centre, so the plate's own contrast survives untouched in the middle and is only darkened toward the corners. A flat layer instead compresses the whole range toward its colour: it lifts the blacks and clips the highlights simultaneously. That is exactly what the pixels show — on identical patches our MEAN is equal or higher than the comp's while our PEAKS are 30-40% lower. The result is that the comp's left third reads as a painted armoured figure and tripod with real form, and ours reads as a uniform brown fog. Compounding it, the per-hub `--keep-bg-filter` values (hub-keep.css:455-488) run brightness 0.54 (codex), 0.56 (arcanum), 0.60 (forge), 0.62 (field) against the comp's single 0.80 recipe, so four of six hubs are darkened a further 25-33% on top of the veil. The comp is a §3 \"brightness(.80) saturate(.80)\" plate under gradients only; ours is a .54-.62 plate under a flat scrim, and it reads as a photo behind frosted glass rather than as painted art let through."
+     },
+     {
+      "verdict": "WINS",
+      "score": 9,
+      "bar": 9,
+      "gap": "The account-XP gauge inside the player pod is sheared into a broken shape by its own clip-path, and it is the one element in the shell that reads as an artifact rather than as metal. `public/src/hubui/hub-keep.css:782-791` gives `.acc-pill-bar` `width:46px; height:8px; clip-path: var(--keep-oct-6)`. A 6px octagonal cut on an 8px-tall box self-intersects: `calc(100% - 6px)` on the vertical axis is 2px, so the top and bottom corner cuts cross each other and the polygon collapses into a bowtie at both ends. Rendered (crop of live-battle.png at 7x, top bar, between the level shield and the Cinder count) it is not a carved slot — it is two tapered horizontal hairlines that never meet, with a detached 1px vertical stub floating off each end. At 0 XP, which is every signed-out first impression, the fill has zero width so there is nothing else to read, and this is the leftmost thing after the player's own level. The comp's pod is one uninterrupted stamped group; this one segment breaks the illusion. Fix: cut the corner to strictly less than half the height — add a `--keep-oct-3` polygon (or set `clip-path:none` and let the existing `inset 0 0 0 1px rgba(138,111,60,.55)` hairline close all four sides). The dark well, liner, top highlight and gold fill ramp are already right; only the clip is wrong."
+     }
+    ],
+    "u2-hub-tiles": [
+     {
+      "verdict": "WINS",
+      "score": 8.6,
+      "bar": 8.5,
+      "gap": "The art-panel colour grade. `public/src/hubui/hub-tiles.css:297` grades every tile image with `brightness(.78) saturate(.78) sepia(.20) contrast(1.06)`; the comp (docs/bar/comp-hub.html, `.tile-art img`) uses `brightness(.72) saturate(.88) contrast(1.05)` with NO sepia. The added sepia plus the 10-point saturation cut collapses every panel to one warm monochrome, so a row of tiles stops differentiating by subject. Isolated proof: /tmp/claude-0/-home-user-Playmythicspellbook/100f27e2-18bc-569c-9c2a-7fd9365dc961/scratchpad/ab/r2-u2-hub-tiles-craft/grade.png renders the same source under both grades — the WebP derivatives are faithful, the grade is the whole delta. The compounding case is Battle Hall's bottom row (zoom3.png, 2x): the comp's gym storefront / cracked earth / dartboard each read instantly by tone, while ours are three panels of identical brown, and btn-daily's art (`locations-sacred-grove.webp`) is unreadable mush at 1x — an art panel that is technically filled but reads as a failed image. Fix: drop `sepia()` from the rest, hover, `.is-art-bright`, `.is-art-dim` and disabled rules and take saturate back to ~.88, and re-point the btn-daily entry in the tile-art map (index.html ~115400) at an image with a legible subject."
+     },
+     {
+      "verdict": "WINS",
+      "score": 8.6,
+      "bar": 8.5,
+      "gap": "The art panel's colour grade. hub-tiles.css:317-326 lays a `background:rgb(168,104,44); mix-blend-mode:color; opacity:.34` layer over every panel, and every exposure bucket adds sepia on top (`sepia(.20)` default :297, `.16` dim :369, `.24` bright :372, `.30` locked :746). The comp's own rule is `filter:brightness(.72) saturate(.88) contrast(1.05)` — no sepia, no blend layer: it holds paintings DARK but keeps their hue. Ours holds them dark AND collapses them to one amber. Side by side at 2x, the comp's PLAY ONLINE is a cool blue-grey moonlit river-city sitting next to SEASON PASS's fire-orange; ours renders both the same brown, so the panels stop telling one destination from another — the exact job §3 gives them. It is also uneven: `color` blending cannot move a saturated magenta, so PACK CREATOR (Forge), WEBSITE (Arcanum) and WORLD DATA (Codex) stay violet while all their siblings go sepia, which reads as three broken tiles rather than a grade. Fix: drop the `::before` grade to ~.16 and remove `sepia()` from the default and bright buckets, keeping the brightness/contrast pull that does the real work; if the cool plates (The Lab's cyan monitors, Pack Opening's blue lightning) still fight the gold, tag those specific ids with an `is-art-cool` class in the HUB_TILE_ART map and give only that class the .34 grade, instead of taxing the whole library for three files."
+     }
+    ],
+    "u3-main-menu-comp-a": [
+     {
+      "verdict": "LOSES",
+      "score": 8.3,
+      "bar": 9.1,
+      "gap": "The background grade. §2's Background clause says the plate is \"kept exactly as-is — the UI must not brighten, blur or tint it beyond a soft vignette.\" public/main-menu/index.html instead stacks a `filter: saturate(.34) contrast(1.10) sepia(.10)` on `.bg` plus FOUR full-frame `.bg-grade` sheets, and one of them — `.bg-grade.warm{ background:#8a5a1e; mix-blend-mode:color; opacity:.26 }` — is a flat single-hue colour blend across the entire frame. That is precisely the move comp-main.html's own comment (lines 95-103) says was tried and rejected because \"it collapsed both temperatures into one khaki wash: the city went brown, the lightning stopped reading as gold because nothing around it was cool any more.\" Every one of those layers is a semi-opaque sheet, so they lift the shadows and veil the highlights at the same time. Net effect measured over the stage region (x 420-1900, y 120-820): live sits at p50=27, p95=79, p99=119, warmth(r-b)=+11.7; the comp sits at p50=14, p95=181, p99=208, warmth=+7.0. The comp is a near-black plate with struck gold on top — 167 luminance steps between median and p95. Ours is 52 steps of uniform tan haze. Consequence you can see without measuring: in the comp the gold furniture is unambiguously the brightest thing on screen; in ours the sky sits at 90-120 and competes with it, and the source plate's own gold lightning — the best asset in the image — is graded down into the same brown as the buildings and disappears. The plate reads as a hazy sepia photograph behind the UI rather than as painted art the UI is mounted on."
+     },
+     {
+      "verdict": "LOSES",
+      "score": 7,
+      "bar": 8.5,
+      "gap": "The top bar has no overflow strategy — its flex line spills LEFT out of its own box, so below ~1160px the player plaque climbs onto the stone rail and paints over the CHARACTERS plaque, which becomes both invisible and unclickable. `.topbar` is `position:fixed; left:calc(--frame-in + --rail-w + 24px); justify-content:flex-end` and `.hud` is a shrinkable item that also packs from `flex-end`. When the line no longer fits, negative free space makes both spill past their main-START edge. The code comment at line ~447 knowingly accepts this (\"the worst case is a visible overlap rather than a value the player cannot see at all\") — but the measured worst case is both at once: an overlap AND a control that is completely gone, and at very narrow widths the player's own name runs off the left edge of the screen. Fix: stop the line from spilling instead of choosing which way it spills."
+     }
+    ],
+    "u4-dispatch-and-warpath": [
+     {
+      "verdict": "LOSES",
+      "score": 8,
+      "bar": 9,
+      "gap": "The body-copy fade mask on `.hd-ptext` (public/index.html:113532-113538) is unconditional, so on a normal full-length post the LAST line of the dispatch renders at roughly half ink — the sentence dissolves mid-line with nothing below it to scroll to. On the one light, highest-attention surface on the screen it reads as ink that ran out, not as an affordance. Fix: toggle the mask from JS the way `_hdFitSocial()` already toggles `.is-clipped` on the social strip — in `_hdPaint()`, after writing the post, set a class on `.hd-ptext` only when `el.scrollHeight > el.clientHeight + 1`, put the `-webkit-mask-image`/`mask-image` declarations behind that class, and shorten the ramp from 26px to ~12px so when it does fire it fades the sliced glyph row rather than a whole line of type."
+     },
+     {
+      "verdict": "LOSES",
+      "score": 8,
+      "bar": 8.5,
+      "gap": "The `.hd-ptext` overflow mask is UNCONDITIONAL, so it fades the last line of body copy even when nothing is scrolled away. index.html ~113591 applies `mask-image:linear-gradient(180deg,#000 calc(100% - 26px),rgba(0,0,0,0))` to `#md-dispatch .hd-ptext` with no measurement. Rendered against the comp's own dispatch copy (four lines, exact fit, nothing hidden), the final line \"Warpath Gate before the hour turns.\" comes out at roughly 55-60% ink while lines 1-3 are full ink — the sentence visibly dissolves into the parchment. comp-main.html has that identical line at full ink. On the ONE light surface of the main menu this reads as the ink running out mid-sentence, and it actively lies: the fade signals \"there is more below\" when the post is complete. It is not an edge case — 3-4 line posts are the normal length for this 280px card. Fix: reuse the pattern the same file already contains 40 lines earlier for the social strip. `_hdFitSocial` measures `strip.scrollWidth > strip.clientWidth + 1` and toggles `.is-clipped`; do the same vertically at the end of `_hdPaint` (after `body.innerHTML = …`, so the box has been laid out) — `const t = body.querySelector('.hd-ptext'); if (t) t.classList.toggle('is-scrollable', t.scrollHeight > t.clientHeight + 1);` — and move the two mask declarations from `.hd-ptext` onto `.hd-ptext.is-scrollable`. Short and exact-fit posts then stay fully inked and the fade only appears when it is telling the truth."
+     }
+    ],
+    "u5-motion": [
+     {
+      "verdict": "LOSES",
+      "score": 8,
+      "bar": 8.7,
+      "gap": "The warm-gold veil is at opacity 0 at the exact instant of the cut, so neither \"crossfade\" it is responsible for actually covers anything. `_playNavFlash()` fires at index.html:110897 inside `_renderImpl`, BEFORE `renderTitle()` rewrites the hub subtree and BEFORE `_mmTeardown()` calls `f.remove()` (index.html:113178) — all in one synchronous turn. So animation t=0 IS the swap frame. But `@keyframes hubTxNavVeil` (hub-transitions.css:~330) is `0%{opacity:0} 30%{opacity:1}`: at the first painted frame (~16ms of 520ms, through cubic-bezier(0.32,0,0.24,1) which starts slow) the veil is at roughly 5% and the blade has not started (`12%{opacity:1}` = 62ms). The seam is uncovered for the first 60-150ms — the veil arrives after the damage, and the blade is pure ornament rather than a cut-hider. This compounds with the cost R0 knowingly buys: on a real browser the new hub paints ONE frame of its fully settled state, then blinks back to its entrance start (bg at 0.28, all tiles at opacity 0) and rebuilds over 680ms. That pop-then-blink is precisely what a veil at full strength would hide, and it is naked. Deliverable 3 fails outright for the same reason: `#mm-frame` has an in-fade (`hubTxFrameIn`) but no exit, and the file's own comment nominates §1's veil as the out-fade — the veil is dark at the millisecond the iframe is removed, so the main menu still pops out. FIX (four numbers, one keyframe block, no JS, no index.html edit): make the veil start already-lit so it is covering the frame that carries the swap — `@keyframes hubTxNavVeil { 0%{opacity:.88} 20%{opacity:1} 62%{opacity:.7} 100%{opacity:0} }`. Leave the blade's own 0→1 ramp alone (the blade is the ornament, the veil is the cover) and leave the reduced-motion veil symmetric. Sanity-check the result with the negative-delay freeze-frame rig below at t=0/16/40ms; the plate must already read warm at t=16."
+     },
+     {
+      "verdict": "LOSES",
+      "score": 7.5,
+      "bar": 8,
+      "gap": "The \"crossfade\" never covers the cut it exists to hide. `@keyframes hubTxNavVeil` (public/src/hubui/hub-transitions.css:~330) starts at `0%{opacity:0}` and does not peak until 30% of 520ms (~156ms). But `_playNavFlash()` (index.html:113298) adds `.go` and `renderTitle()` rewrites `root.innerHTML` in the SAME synchronous turn, so the first painted frame after the swap has the veil at opacity 0 — the seam is fully exposed. The file's own comment asserts the opposite (\"the warm-up has to already be there when the page changes under it\"); its keyframes make that impossible. Worse, that same first frame is the one R0 deliberately paints at the settled style (the 1ms lead puts every entrance animation in its before phase), so the measured real-browser sequence per navigation is: old hub → 1 frame of the NEW hub fully drawn → new hub blanked → gold sweep + 680ms fade-up. That is a flash followed by a fade-up, not a crossfade — exactly the \"popping transition\" the lens fails."
+     }
+    ],
+    "u6-one-back-button": [
+     {
+      "verdict": "WINS",
+      "score": 8.5,
+      "bar": 8.5,
+      "gap": "The Card Shop header's ornament rule. `html body .campaign-header.keep-header .. > div:first-child::after/::before` (public/src/hubui/hub-chrome.css §2) draws the gold hairline + diamond boss across the FULL width of the title block, and that block is `flex: 1 1 260px` — so on a 1920 viewport the rule runs ~1160px from x≈244 to x≈1400 and the diamond lands at its midpoint, x≈815, floating in ~600px of empty black with nothing above or below it. The sub-label ends at x≈806. The result reads as an accidental full-width divider that happens to have a gem stuck in it, not as the comp's ornament: comp-hub.html's title rule is a ~560px element sized to the text it underlines, with the diamond centred on the TITLE. Fix: stop hanging the rule off the flex child's full box. Give the rule its own fixed measure tied to content — e.g. drop the `left:0; right:0` on the `::after` and use `left:0; width:min(560px, 100%)` (or `right:auto; width:38ch`) with the `::before` diamond at `left:min(280px, 50%)` so the boss sits over the middle of the title/sub-label pair rather than the middle of the empty header. That single change removes the only element on this header that reads as CSS rather than metal."
+     },
+     {
+      "verdict": "WINS",
+      "score": 8.5,
+      "bar": 8.5,
+      "gap": "Two LIVE screen-level exits still ship the pre-redesign gold capsule, so §4's \"no page invents its own\" is not yet literally true — and one of them was missed because the selector list was built against dead code. (1) `public/index.html:28430-28445` `.recon-back-btn` (\"← Camp\", Reconstruction Settlement, markup at :217154) is verbatim the old object: `border-radius:999px`, 2px transparent gradient border, `text-shadow` gold, and a `transform:translateY(-1px)` hover lift — the exact rounded rectangle and cheap lift the bar names, with a comment above it that now lies (\"Same unified gold pill as the rest of the game's back buttons\"). (2) `.sdx-back#btn-pbl-back` (\"← Back to Opponent\", pre-battle loadout footer, markup at :119550, style at :4127, `border-radius:10px`) is missed while `.pbl-back-btn` — which is in hub-chrome.css's list — exists ONLY inside the dead `if (false)` branch at :119565. FIX: add `keep-tab` to the class attributes at :119550 and :217154 (both are handler-bound by `id`/`data-act`, so a class is free), add `.sdx-back` and `.recon-back-btn` to every selector list in hub-chrome.css §1 (including the disabled and reduced-motion blocks), and delete the legacy `.recon-back-btn` rest/hover/active rules at index.html:28430-28445 so the translateY lift dies with the capsule."
+     }
+    ]
+   }
   }
  ]
 }

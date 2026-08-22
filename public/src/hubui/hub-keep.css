@@ -413,6 +413,44 @@
   background-color: var(--keep-ground-0);
 }
 
+/* 🐛 THE `position:fixed` THAT WAS NEVER FIXED — measured, not read.
+   `.spellbook-hub-bg` is `position:fixed; inset:0` (index.html:330) and the whole
+   of C2 above assumes that means "the viewport". It did not. `#app` carries
+   `.page-fade-in`, whose animation is `220ms ease-out both` with a 100% keyframe
+   of `transform: translateY(0)` (index.html:111818-111824). `fill-mode: both`
+   RETAINS that endpoint forever, so `#app` computes `transform: matrix(1,0,0,1,0,0)`
+   — an identity matrix, but not `none`, and any non-`none` transform makes the
+   element the containing block for every `position:fixed` descendant.
+
+   index.html:155793 already documents this exact bug (the DVS modal is portalled
+   out to <body> to escape it); the keep shell walked into it from the other side.
+
+   Measured on Ruin Exchange, the one hub whose tiles overflow: viewport 993px,
+   document 1678px, and `.spellbook-hub-bg` came back 1678px tall with its top at
+   -300 after a 300px scroll. So the painted plate was being `object-fit: cover`-ed
+   into a box 69% taller than the frame it is composed for — a different crop than
+   the comp on every tall hub — and it SCROLLED WITH THE TILES instead of sitting
+   still behind them. Every wash, vignette and grain layer in C2 is sized off that
+   same box, so all of them stretched with it.
+
+   The fix is the endpoint, not the animation: re-run the same fade under a name
+   whose only keyframe is 0%, so there is no retained transform and `#app` goes
+   back to `transform: none`. The 4px whole-page nudge goes with it, deliberately —
+   §3's entrance (hub-transitions.css) already moves the background, title, tiles
+   and footer on its own schedule, and a second nudge of the entire page underneath
+   that was fighting it. Keeping a transform for even one frame is not an option:
+   it would re-create the containing block during the fade and the plate would
+   visibly rescale when the animation released it.
+
+   Scoped with `:has(> .spellbook-hub.is-sub)` so this is the sub-hub shell's
+   business only — no other screen's fixed layout moves. */
+html body #app.page-fade-in:has(> .spellbook-hub.is-sub) {
+  animation-name: keepPageFadeIn;
+}
+@keyframes keepPageFadeIn {
+  0% { opacity: 0; }
+}
+
 /* 🐛 THE STACKING BUG THAT MADE THE WASH INERT — the single most expensive
    thing in this file, found by measurement and not by reading.
    `::before` is inserted as the FIRST child of its originating element. Every

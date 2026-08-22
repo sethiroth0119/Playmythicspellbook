@@ -576,11 +576,13 @@
      `white-space:nowrap` + `text-overflow:ellipsis` is the obvious rule — and
      it is wrong here: ellipsis does not apply to the anonymous flex item a
      text node becomes inside an inline-flex, so a long badge came out sliced
-     mid-word at BOTH ends with no ellipsis to explain it. The Ruin Exchange's
-     gate badges are whole sentences ("Train a hero to Lv 15 (max 1) — or own a
-     node"), so the pill wraps and grows instead, capped at three lines so a
-     freak badge can never push the plaque's contents past its foot. A short
-     badge still measures exactly 22px tall — identical to the comp. */
+     mid-word at BOTH ends with no ellipsis to explain it. Every badge the six
+     hubs actually ship is now a short chip (the Ruin Exchange's gate badges
+     were whole sentences until index.html cut them to progress counters), but
+     one of them is data-driven and could grow, so the pill wraps and grows
+     rather than slicing, capped at three lines so a freak badge can never push
+     the plaque's contents past its foot. A one-line badge measures exactly
+     22px tall — identical to the comp. */
   white-space: normal;
   overflow-wrap: anywhere;
   overflow: hidden;

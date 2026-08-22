@@ -21,7 +21,7 @@
    ── WHAT THIS FILE OWNS ─────────────────────────────────────────────────
      1. THE BACK CONTROL on every screen that is NOT a sub-hub. The sub-hub
         breadcrumb is two `.keep-tab` plaques and belongs to hub-keep.css §B3;
-        this file drags the ~20 legacy back controls scattered through
+        this file drags the ~40 legacy back controls scattered through
         index.html onto that same object.
      2. THE CARD SHOP ENTRY CHROME (`.campaign-header.keep-header`) — the
         header of renderCardShop only. Title, sub-label, balance plaque, exit.
@@ -74,6 +74,21 @@
    `position:relative` ONLY where the element has no position of its own, so
    the frame pseudo-element has a containing block — and never an
    inset/top/left/right/bottom/float/margin that moves a control.
+
+   🐛 AND HERE IS HOW THAT RULE WAS BROKEN ONCE, BY THIS FILE, IN A WAY THAT
+      LOOKED LIKE A NO-OP. The legacy block ships
+        @media (max-width:640px){ button[id^="btn-back"]…{ top:10px; left:10px } }
+      a leftover from the `position:fixed` era. It was DEAD as long as the
+      legacy rule two lines above it held `position:static` — offsets do
+      nothing on a static box. Changing `position` to `relative` here (needed
+      for the `::before` face) brought those two offsets back to life, and on
+      any viewport under 640px every `btn-back-*` control slid 10px down and
+      10px right of where its own header had put it. Measured, not guessed:
+      computed `top=10px left=10px`, rect (28,28) instead of (20,20).
+      That is why the base block below sets `inset: auto`. It moves nothing;
+      it cancels an offset that only ever reached the control because WE
+      changed `position`. Any future `position` change here must come with the
+      same audit.
    ══════════════════════════════════════════════════════════════════════ */
 
 
@@ -84,10 +99,21 @@
    legacy family. The class is now ALSO on the markup of the named controls
    (renderCardShop's `[data-cs="cs-back"]`, #btn-back-forge,
    #btn-back-forge-bottom, #btn-back-tutor, #btn-back-market, #btn-back-camp,
-   #btn-back-profile, #gym-back, .dsx-back#btn-back) so there is genuinely ONE
-   component rather than a lookalike. The selector list below is what covers
-   the rest of the family — the backs whose markup this unit does not touch —
-   and what out-shouts index.html:606-698 for all of them at once.
+   #btn-back-profile, #gym-back, .dsx-back#btn-back, #cft-back, #vm-back) so
+   there is genuinely ONE component rather than a lookalike. The selector list
+   below is what covers the rest of the family — the backs whose markup this
+   unit does not touch — and what out-shouts index.html:606-698 for all of
+   them at once.
+
+   THE LIST IS THE WHOLE MECHANISM, so it is deliberately long. Every id in it
+   is a real way OUT of a real screen: the Crafting Station (opened by a tab
+   inside the Card Shop this file re-cuts, so a player met a gold capsule one
+   click from the new plaque), the Vendor Market, the Cosmic Tree, the roguelike
+   campaign map and its two admin editors, the Bazaar's two dialogs, the dojo,
+   the research bench, the Cloud error card, the Grand Slam Draft and the
+   Fantasy Cup. Deliberately EXCLUDED, and they must stay excluded:
+   `#btn-tutorial-back`, `#btn-back-to-decks`, `#onb-tour-back`,
+   `#btn-cancel-card` — step controllers and a cancel, not a way out.
 
    ⚠ THE FOUR LITERALS. `#181309/#0d0a07` (rest face), `#221a0f/#120d08`
      (hover face) are copied verbatim from `.keep-tab::before` in hub-keep.css
@@ -100,25 +126,40 @@
      the gold gradient, cut by `clip-path: --keep-oct-10`. `::before` is the
      dark face at `inset:1px` cut by `--keep-oct-9`, so exactly 1px of gold
      survives on all EIGHT sides — a `border` + `clip-path` loses the edge on
-     the four diagonals and the control stops looking cut. The face sits at
-     `z-index:-1`, which paints above the parent's own background and below the
-     parent's inline content: precisely the sandwich needed when there is no
-     inner wrapper to add (this sheet cannot touch markup, and ~20 legacy
-     buttons ship bare text). `isolation:isolate` pins that -1 inside the
-     button; without it the pseudo escapes to the nearest stacking context and
-     paints behind whatever panel the button sits on, i.e. vanishes.
+     the four diagonals and the control stops looking cut. (That trap is not
+     hypothetical: the Card Shop's balance plaque in §2 shipped as `border` +
+     `clip-path` for a round and rendered as four detached hairlines with a
+     visible gap at every corner. It is built the two-layer way now, like
+     everything else on this page.) The face sits at `z-index:-1`, which paints
+     above the parent's own background and below the parent's inline content:
+     precisely the sandwich needed when there is no inner wrapper to add (this
+     sheet cannot touch markup, and ~40 legacy buttons ship bare text).
+     `isolation:isolate` pins that -1 inside the button; without it the pseudo
+     escapes to the nearest stacking context and paints behind whatever panel
+     the button sits on, i.e. vanishes.
    ═══════════════════════════════════════════════════════════════════════ */
 
 html body :is(
   .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
-  .fgx-back, .dsx-back, .tw-wm-back,
+  .fgx-back, .dsx-back, .tw-wm-back, .cft-back,
   #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
   #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-  #pox-back, [data-cs="cs-back"],
+  #pox-back, #cft-back, #vm-back, #ct-back, #dj-leave, #dj-back,
+  #rlc-map-back, #rlc-back-title, #rlc-adm-back, #rlc-ed-back,
+  #bma-back, #bmt-back, #sp-admin-back, #ult-admin-back, #btn-research-back,
+  #cx-err-back, #gsd-back, #fc-back, #pp-back,
+  [data-cs="cs-back"],
   button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
 ):not(#hc-never) {
   /* — geometry: NO offsets, NO float, NO margin. See the header note. — */
   position: relative;
+  /* NOT a reposition — a cancellation. See the 🐛 note in the header: these
+     four are the legacy `@media (max-width:640px)` offsets, dead under
+     `position:static` and live the instant we made the box `relative`. Every
+     screen that positions its own back button does so with `!important`
+     (`.dsx .dsx-back`) or an inline style (`#pp-back`, `#fc-back`), both of
+     which outrank this, so nothing that placed itself is disturbed. */
+  inset: auto;
   isolation: isolate;
   display: inline-flex !important;
   align-items: center;
@@ -163,10 +204,14 @@ html body :is(
 /* The dark face. */
 html body :is(
   .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
-  .fgx-back, .dsx-back, .tw-wm-back,
+  .fgx-back, .dsx-back, .tw-wm-back, .cft-back,
   #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
   #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-  #pox-back, [data-cs="cs-back"],
+  #pox-back, #cft-back, #vm-back, #ct-back, #dj-leave, #dj-back,
+  #rlc-map-back, #rlc-back-title, #rlc-adm-back, #rlc-ed-back,
+  #bma-back, #bmt-back, #sp-admin-back, #ult-admin-back, #btn-research-back,
+  #cx-err-back, #gsd-back, #fc-back, #pp-back,
+  [data-cs="cs-back"],
   button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
 ):not(#hc-never)::before {
   content: "";
@@ -186,10 +231,14 @@ html body :is(
    once, here, rather than discovered later on one screen. */
 html body :is(
   .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
-  .fgx-back, .dsx-back, .tw-wm-back,
+  .fgx-back, .dsx-back, .tw-wm-back, .cft-back,
   #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
   #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-  #pox-back, [data-cs="cs-back"],
+  #pox-back, #cft-back, #vm-back, #ct-back, #dj-leave, #dj-back,
+  #rlc-map-back, #rlc-back-title, #rlc-adm-back, #rlc-ed-back,
+  #bma-back, #bmt-back, #sp-admin-back, #ult-admin-back, #btn-research-back,
+  #cx-err-back, #gsd-back, #fc-back, #pp-back,
+  [data-cs="cs-back"],
   button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
 ):not(#hc-never)::after {
   content: none;
@@ -198,10 +247,14 @@ html body :is(
 /* — HOVER. The tab lights up. It does not move and it does not scale. — */
 html body :is(
   .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
-  .fgx-back, .dsx-back, .tw-wm-back,
+  .fgx-back, .dsx-back, .tw-wm-back, .cft-back,
   #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
   #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-  #pox-back, [data-cs="cs-back"],
+  #pox-back, #cft-back, #vm-back, #ct-back, #dj-leave, #dj-back,
+  #rlc-map-back, #rlc-back-title, #rlc-adm-back, #rlc-ed-back,
+  #bma-back, #bmt-back, #sp-admin-back, #ult-admin-back, #btn-research-back,
+  #cx-err-back, #gsd-back, #fc-back, #pp-back,
+  [data-cs="cs-back"],
   button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
 ):not(#hc-never):hover:not(:disabled):not([disabled]):not([aria-disabled="true"]) {
   color: var(--keep-gold-hi) !important;
@@ -210,10 +263,14 @@ html body :is(
 }
 html body :is(
   .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
-  .fgx-back, .dsx-back, .tw-wm-back,
+  .fgx-back, .dsx-back, .tw-wm-back, .cft-back,
   #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
   #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-  #pox-back, [data-cs="cs-back"],
+  #pox-back, #cft-back, #vm-back, #ct-back, #dj-leave, #dj-back,
+  #rlc-map-back, #rlc-back-title, #rlc-adm-back, #rlc-ed-back,
+  #bma-back, #bmt-back, #sp-admin-back, #ult-admin-back, #btn-research-back,
+  #cx-err-back, #gsd-back, #fc-back, #pp-back,
+  [data-cs="cs-back"],
   button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
 ):not(#hc-never):hover:not(:disabled):not([disabled]):not([aria-disabled="true"])::before {
   background: linear-gradient(180deg, #221a0f 0%, #120d08 100%);
@@ -222,10 +279,14 @@ html body :is(
 /* — ACTIVE. A physical press: the drop shadow collapses and the face sinks. — */
 html body :is(
   .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
-  .fgx-back, .dsx-back, .tw-wm-back,
+  .fgx-back, .dsx-back, .tw-wm-back, .cft-back,
   #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
   #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-  #pox-back, [data-cs="cs-back"],
+  #pox-back, #cft-back, #vm-back, #ct-back, #dj-leave, #dj-back,
+  #rlc-map-back, #rlc-back-title, #rlc-adm-back, #rlc-ed-back,
+  #bma-back, #bmt-back, #sp-admin-back, #ult-admin-back, #btn-research-back,
+  #cx-err-back, #gsd-back, #fc-back, #pp-back,
+  [data-cs="cs-back"],
   button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
 ):not(#hc-never):active:not(:disabled):not([disabled]):not([aria-disabled="true"]) {
   filter: var(--keep-drop-lo);
@@ -234,10 +295,14 @@ html body :is(
 }
 html body :is(
   .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
-  .fgx-back, .dsx-back, .tw-wm-back,
+  .fgx-back, .dsx-back, .tw-wm-back, .cft-back,
   #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
   #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-  #pox-back, [data-cs="cs-back"],
+  #pox-back, #cft-back, #vm-back, #ct-back, #dj-leave, #dj-back,
+  #rlc-map-back, #rlc-back-title, #rlc-adm-back, #rlc-ed-back,
+  #bma-back, #bmt-back, #sp-admin-back, #ult-admin-back, #btn-research-back,
+  #cx-err-back, #gsd-back, #fc-back, #pp-back,
+  [data-cs="cs-back"],
   button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
 ):not(#hc-never):active:not(:disabled):not([disabled]):not([aria-disabled="true"])::before {
   box-shadow: inset 0 3px 8px rgba(0, 0, 0, 0.85), var(--keep-liner);
@@ -247,10 +312,14 @@ html body :is(
      at all four notched corners by the clip-path, leaving four broken stubs. — */
 html body :is(
   .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
-  .fgx-back, .dsx-back, .tw-wm-back,
+  .fgx-back, .dsx-back, .tw-wm-back, .cft-back,
   #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
   #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-  #pox-back, [data-cs="cs-back"],
+  #pox-back, #cft-back, #vm-back, #ct-back, #dj-leave, #dj-back,
+  #rlc-map-back, #rlc-back-title, #rlc-adm-back, #rlc-ed-back,
+  #bma-back, #bmt-back, #sp-admin-back, #ult-admin-back, #btn-research-back,
+  #cx-err-back, #gsd-back, #fc-back, #pp-back,
+  [data-cs="cs-back"],
   button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
 ):not(#hc-never):focus-visible {
   outline: none !important;
@@ -259,10 +328,14 @@ html body :is(
 }
 html body :is(
   .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
-  .fgx-back, .dsx-back, .tw-wm-back,
+  .fgx-back, .dsx-back, .tw-wm-back, .cft-back,
   #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
   #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-  #pox-back, [data-cs="cs-back"],
+  #pox-back, #cft-back, #vm-back, #ct-back, #dj-leave, #dj-back,
+  #rlc-map-back, #rlc-back-title, #rlc-adm-back, #rlc-ed-back,
+  #bma-back, #bmt-back, #sp-admin-back, #ult-admin-back, #btn-research-back,
+  #cx-err-back, #gsd-back, #fc-back, #pp-back,
+  [data-cs="cs-back"],
   button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
 ):not(#hc-never):focus-visible::before {
   box-shadow: inset 0 0 0 2px var(--keep-gold-hi), var(--keep-liner);
@@ -271,10 +344,14 @@ html body :is(
    legacy sheet paints a 4px halo; :focus without :focus-visible must be silent. */
 html body :is(
   .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
-  .fgx-back, .dsx-back, .tw-wm-back,
+  .fgx-back, .dsx-back, .tw-wm-back, .cft-back,
   #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
   #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-  #pox-back, [data-cs="cs-back"],
+  #pox-back, #cft-back, #vm-back, #ct-back, #dj-leave, #dj-back,
+  #rlc-map-back, #rlc-back-title, #rlc-adm-back, #rlc-ed-back,
+  #bma-back, #bmt-back, #sp-admin-back, #ult-admin-back, #btn-research-back,
+  #cx-err-back, #gsd-back, #fc-back, #pp-back,
+  [data-cs="cs-back"],
   button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
 ):not(#hc-never):focus:not(:focus-visible) {
   outline: none !important;
@@ -287,10 +364,14 @@ html body :is(
      gold is taken out of the metal properly here. — */
 html body :is(
   .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
-  .fgx-back, .dsx-back, .tw-wm-back,
+  .fgx-back, .dsx-back, .tw-wm-back, .cft-back,
   #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
   #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-  #pox-back, [data-cs="cs-back"],
+  #pox-back, #cft-back, #vm-back, #ct-back, #dj-leave, #dj-back,
+  #rlc-map-back, #rlc-back-title, #rlc-adm-back, #rlc-ed-back,
+  #bma-back, #bmt-back, #sp-admin-back, #ult-admin-back, #btn-research-back,
+  #cx-err-back, #gsd-back, #fc-back, #pp-back,
+  [data-cs="cs-back"],
   button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
 ):not(#hc-never):is(:disabled, [disabled], [aria-disabled="true"], .btn-disabled) {
   cursor: not-allowed !important;
@@ -301,10 +382,14 @@ html body :is(
 }
 html body :is(
   .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
-  .fgx-back, .dsx-back, .tw-wm-back,
+  .fgx-back, .dsx-back, .tw-wm-back, .cft-back,
   #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
   #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-  #pox-back, [data-cs="cs-back"],
+  #pox-back, #cft-back, #vm-back, #ct-back, #dj-leave, #dj-back,
+  #rlc-map-back, #rlc-back-title, #rlc-adm-back, #rlc-ed-back,
+  #bma-back, #bmt-back, #sp-admin-back, #ult-admin-back, #btn-research-back,
+  #cx-err-back, #gsd-back, #fc-back, #pp-back,
+  [data-cs="cs-back"],
   button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
 ):not(#hc-never):is(:disabled, [disabled], [aria-disabled="true"], .btn-disabled)::before {
   background: linear-gradient(180deg, #141210 0%, #0b0a08 100%);
@@ -318,10 +403,14 @@ html body :is(
    what the comp's arrow does at rest anyway. */
 html body :is(
   .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
-  .fgx-back, .dsx-back, .tw-wm-back,
+  .fgx-back, .dsx-back, .tw-wm-back, .cft-back,
   #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
   #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-  #pox-back, [data-cs="cs-back"],
+  #pox-back, #cft-back, #vm-back, #ct-back, #dj-leave, #dj-back,
+  #rlc-map-back, #rlc-back-title, #rlc-adm-back, #rlc-ed-back,
+  #bma-back, #bmt-back, #sp-admin-back, #ult-admin-back, #btn-research-back,
+  #cx-err-back, #gsd-back, #fc-back, #pp-back,
+  [data-cs="cs-back"],
   button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
 ):not(#hc-never) .keep-tab-arrow {
   color: #8d7a55;
@@ -336,10 +425,14 @@ html body :is(
 @media (max-width: 900px) {
   html body :is(
     .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
-    .fgx-back, .dsx-back, .tw-wm-back,
+    .fgx-back, .dsx-back, .tw-wm-back, .cft-back,
     #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
     #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-    #pox-back, [data-cs="cs-back"],
+    #pox-back, #cft-back, #vm-back, #ct-back, #dj-leave, #dj-back,
+    #rlc-map-back, #rlc-back-title, #rlc-adm-back, #rlc-ed-back,
+    #bma-back, #bmt-back, #sp-admin-back, #ult-admin-back, #btn-research-back,
+    #cx-err-back, #gsd-back, #fc-back, #pp-back,
+    [data-cs="cs-back"],
     button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
   ):not(#hc-never) {
     height: 38px !important;
@@ -370,6 +463,16 @@ html body :is(
    block taking the slack seats all four on one line. That is a chrome fix,
    not a redesign: no child is added, removed, reordered or re-parented, and
    every `data-cs` hook is exactly where it was.
+
+   ⚠ EVERY FRAME ON THIS HEADER IS THE SAME TWO-LAYER CUT — gold gradient on
+     the element, dark face on a `::before` at `inset:1px` one notch smaller.
+     The header, the balance plaque, the 3D toggle and the exit tab are four
+     sizes of one object. Do not "simplify" any of them to `border` +
+     `clip-path`: the clip shaves the border off all four diagonals and the
+     frame renders as four detached hairline segments with a gap at every
+     corner. That is exactly how the balance plaque shipped for a round, and
+     40px away from a correctly-built tab it read as a CSS box next to a
+     carved one.
    ═══════════════════════════════════════════════════════════════════════ */
 
 html body .campaign-header.keep-header:not(#hc-never) {
@@ -390,13 +493,21 @@ html body .campaign-header.keep-header:not(#hc-never) {
   filter: var(--keep-drop);
   font-family: var(--keep-cinzel);
 }
+/* THE HEADER FACE IS ONE STOP DARKER THAN THE PLAQUES IT HOLDS.
+   In the comp the exit tab sits on painted art, so its own face reads against
+   a different material. Here it sits on another plaque, and the first cut gave
+   the two nearly the same gradient (#171208→#0c0906 holding #181309→#0d0a07):
+   a plaque nested in a plaque, ~1 luminance step apart, which flattened both.
+   Dropping the HOST rather than lifting the guest keeps `.keep-tab`'s own
+   surface byte-identical to hub-keep.css §B3 — the component must not change
+   identity just because of where it is standing. */
 html body .campaign-header.keep-header:not(#hc-never)::before {
   content: "";
   position: absolute;
   inset: 1px;
   z-index: -1;
   clip-path: var(--keep-oct-9);
-  background: linear-gradient(180deg, #171208 0%, #0c0906 100%);
+  background: linear-gradient(180deg, #100c06 0%, #070503 100%);
   box-shadow: var(--keep-emboss), var(--keep-liner);
   pointer-events: none;
 }
@@ -408,32 +519,42 @@ html body .campaign-header.keep-header:not(#hc-never) > div:first-child {
   min-width: 0;
   padding-bottom: 15px;
 }
-/* §1 ORNAMENT — the gold hairline with a diamond boss, one per screen, drawn
+/* §1 ORNAMENT — the gold hairline with a diamond boss at ITS CENTRE, drawn
    entirely from this block's own two pseudo-elements because a stylesheet
-   cannot add the three `<i>` children that `.keep-rule` (hub-keep.css §B5)
-   is built from. Left-anchored, since the Card Shop's title block is
-   left-aligned where the sub-hub's is centred. It also gives the long empty
-   middle of the header something to be, which is what a rule is for. */
+   cannot add the three `<i>` children that `.keep-rule` (hub-keep.css §B5) is
+   built from. `.keep-rule` is two gradients running INTO a centred diamond;
+   the single gradient below reproduces that with a transparent gap at 50%,
+   fading to nothing at both ends. Round 1 anchored the boss at the left end,
+   which is not what §1 draws. */
 html body .campaign-header.keep-header:not(#hc-never) > div:first-child::before {
   content: "";
   position: absolute;
-  left: 0;
+  left: 50%;
   bottom: 1px;
   width: 9px;
   height: 9px;
-  transform: rotate(45deg);
+  transform: translateX(-50%) rotate(45deg);
   background: linear-gradient(135deg, var(--keep-gold-hi-2), #a67f3c);
   box-shadow: 0 0 12px rgba(232, 200, 119, 0.50), inset 0 0 0 1px rgba(0, 0, 0, 0.55);
   pointer-events: none;
+  z-index: 1;
 }
 html body .campaign-header.keep-header:not(#hc-never) > div:first-child::after {
   content: "";
   position: absolute;
-  left: 18px;
+  left: 0;
   right: 0;
   bottom: 5px;
   height: 1px;
-  background: linear-gradient(90deg, rgba(200, 168, 105, 0.85), rgba(138, 111, 60, 0.55) 42%, transparent);
+  background: linear-gradient(90deg,
+    transparent 0%,
+    rgba(138, 111, 60, 0.72) 26%,
+    rgba(200, 168, 105, 0.85) 45%,
+    transparent 45.6%,
+    transparent 54.4%,
+    rgba(200, 168, 105, 0.85) 55%,
+    rgba(138, 111, 60, 0.72) 74%,
+    transparent 100%);
   pointer-events: none;
 }
 
@@ -442,15 +563,19 @@ html body .campaign-header.keep-header:not(#hc-never) > div:first-child::after {
      `text-shadow`. Chromium paints text-shadow ON TOP of a
      `background-clip:text` fill, which hollows every glyph into an outline.
      `text-shadow:none` below is therefore load-bearing, not tidying.
-   ⚠ The label opens with an emoji (`🛒`). A colour-font glyph is painted as an
-     image and ignores `-webkit-text-fill-color`, so it survives the
-     transparent fill and still reads in colour — verified in a render, not
-     assumed. */
+   ⚠ THE EMOJI IS GONE FROM THE MARKUP, not hidden here. `🛒 Card Shop` opened
+     a line of stamped gold Cinzel with a multicolour glyph. A colour font is
+     painted as an image, so it ignores `-webkit-text-fill-color` and survives
+     the transparent fill — round 1 read that as "it still works", which is the
+     wrong test: it works by being the one thing on the header made of a
+     different material. §1 allows one gold family in menu chrome. The `<h2>`
+     now reads `Card Shop` and the ornament below carries the decoration. */
 html body .campaign-header.keep-header:not(#hc-never) .section-title {
   font-family: var(--keep-cinzel) !important;
   font-size: 2rem !important;
   font-weight: 700 !important;
   letter-spacing: 0.10em !important;
+  text-indent: 0.10em;
   text-transform: uppercase !important;
   background: linear-gradient(180deg, #fdf3d2 0%, #f2dda2 34%, #d8b25c 66%, #9a742c 100%);
   -webkit-background-clip: text; background-clip: text;
@@ -468,18 +593,41 @@ html body .campaign-header.keep-header:not(#hc-never) .small-text {
   color: var(--keep-gold-grey) !important;
 }
 
-/* THE BALANCE — a small notched plaque, hairline gold, Cinzel value. The
-   number itself is still whatever `_csCinders()` returned; only the frame
-   around it changed. */
+/* THE BALANCE — the same plaque as the exit tab beside it, two sizes down.
+   The number itself is still whatever `_csCinders()` returned; only the frame
+   around it changed.
+
+   🐛 HOW THIS SHIPPED WRONG, since the fix is invisible in a diff: it was
+      `border: 1px solid var(--keep-gold-line)` PLUS `clip-path: --keep-oct-6`.
+      A clip-path cuts the border with the box, so all four 6px diagonals took
+      the hairline with them and the frame rendered as four disconnected
+      segments — at 7x the top rule stopped ~6px short at each end, and so did
+      the sides. Forty pixels from a tab whose gold survives all eight edges,
+      the difference is not subtle: one is carved, the other is a CSS box.
+      The element is the gold now, and `::before` at `inset:1px` is the face,
+      exactly as §1 of this file and `.keep-tab` do it. */
 html body .campaign-header.keep-header:not(#hc-never) .shop-balance-stack { gap: 10px; }
 html body .campaign-header.keep-header:not(#hc-never) .shop-gems-pill {
-  border: 1px solid var(--keep-gold-line) !important;
+  position: relative;
+  isolation: isolate;
+  border: 0 !important;
   border-radius: 0 !important;
   clip-path: var(--keep-oct-6);
-  background: linear-gradient(180deg, rgba(26, 21, 14, 0.92), rgba(13, 10, 7, 0.94)) !important;
-  box-shadow: var(--keep-emboss), var(--keep-liner);
+  background: linear-gradient(180deg, rgba(200, 168, 105, 0.55), rgba(138, 111, 60, 0.30)) !important;
+  box-shadow: none !important;
+  filter: var(--keep-drop-lo);
   padding: 0.4rem 0.95rem !important;
   min-width: 132px;
+}
+html body .campaign-header.keep-header:not(#hc-never) .shop-gems-pill::before {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  z-index: -1;
+  clip-path: var(--keep-oct-5, polygon(5px 0, calc(100% - 5px) 0, 100% 5px, 100% calc(100% - 5px), calc(100% - 5px) 100%, 5px 100%, 0 calc(100% - 5px), 0 5px));
+  background: linear-gradient(180deg, #171208 0%, #0c0906 100%);
+  box-shadow: var(--keep-emboss), var(--keep-liner);
+  pointer-events: none;
 }
 html body .campaign-header.keep-header:not(#hc-never) .shop-gems-num {
   font-family: var(--keep-cinzel) !important;
@@ -712,10 +860,14 @@ html body .hub-currency-rail .acc-pill-bar-fill:not(#hc-never) {
 @media (prefers-reduced-motion: reduce) {
   html body :is(
     .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
-    .fgx-back, .dsx-back, .tw-wm-back,
+    .fgx-back, .dsx-back, .tw-wm-back, .cft-back,
     #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
     #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-    #pox-back, [data-cs="cs-back"],
+    #pox-back, #cft-back, #vm-back, #ct-back, #dj-leave, #dj-back,
+    #rlc-map-back, #rlc-back-title, #rlc-adm-back, #rlc-ed-back,
+    #bma-back, #bmt-back, #sp-admin-back, #ult-admin-back, #btn-research-back,
+    #cx-err-back, #gsd-back, #fc-back, #pp-back,
+    [data-cs="cs-back"],
     button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks),
     .campaign-header.keep-header [data-cs="cs-3d-toggle"],
     .hub-currency-rail .hub-cur-pill
@@ -724,10 +876,14 @@ html body .hub-currency-rail .acc-pill-bar-fill:not(#hc-never) {
   }
   html body :is(
     .hub-back-btn, .wfa-back, .br-back, .cx-back-btn, .pbl-back-btn, .pledge-back-btn,
-    .fgx-back, .dsx-back, .tw-wm-back,
+    .fgx-back, .dsx-back, .tw-wm-back, .cft-back,
     #cr-back, #vault-back, #cs-back, #hl-back, #tr-hub-back, #gym-back,
     #um-back, #tw-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back,
-    #pox-back, [data-cs="cs-back"],
+    #pox-back, #cft-back, #vm-back, #ct-back, #dj-leave, #dj-back,
+    #rlc-map-back, #rlc-back-title, #rlc-adm-back, #rlc-ed-back,
+    #bma-back, #bmt-back, #sp-admin-back, #ult-admin-back, #btn-research-back,
+    #cx-err-back, #gsd-back, #fc-back, #pp-back,
+    [data-cs="cs-back"],
     button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks),
     .campaign-header.keep-header [data-cs="cs-3d-toggle"]
   ):not(#hc-never)::before {

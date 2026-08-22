@@ -112857,10 +112857,14 @@ function _hubFitPortalTitles() {
     // here the measurement is the authority, so the guess is cleared.
     el.classList.remove('is-long', 'is-xlong');
     el.style.fontSize = ''; el.style.letterSpacing = ''; el.style.textIndent = '';
-    // +1px of slack: sub-pixel text metrics report a 1px overflow on titles
-    // that are visibly fine, and stepping those down is exactly the jitter
-    // this function exists to remove.
-    if (el.scrollWidth <= el.clientWidth + 1) return;      // the common case
+    // ⚠ NO SLACK. An earlier version allowed +1px "because sub-pixel metrics
+    // report a 1px overflow on titles that are visibly fine" — and that is the
+    // one tolerance this test cannot have, because the box also carries
+    // `text-overflow: ellipsis`. Any overflow at all, even one pixel, makes
+    // Chromium replace the tail of the word with `…`: `BOOK OF KNOWLEDGE`
+    // stopped at 21px (scrollWidth 299 in a 298px box) and rendered as
+    // `BOOK OF KNOWLED…`. One pixel of overflow costs three characters.
+    if (el.scrollWidth <= el.clientWidth) return;          // the common case
     // 1px at a time, so an overflowing title ends up as LARGE as it can be
     // rather than dropped a whole step past where it had to go. Across all six
     // hubs only two titles ever reach this loop — `Book of Knowledge` (fits at
@@ -112872,7 +112876,7 @@ function _hubFitPortalTitles() {
       el.style.fontSize = fs + 'px';
       el.style.letterSpacing = ls;
       el.style.textIndent = ls;
-      if (el.scrollWidth <= el.clientWidth + 1) return;
+      if (el.scrollWidth <= el.clientWidth) return;
     }
   });
   try {
@@ -113452,28 +113456,40 @@ function _hdEnsureStyle() {
       inset 0 0 74px rgba(140,110,66,.18),inset 0 1px 0 rgba(255,250,235,.30);
     filter:drop-shadow(0 10px 24px rgba(0,0,0,.7)) drop-shadow(0 2px 3px rgba(0,0,0,.5))}
 
-  #md-dispatch .hd-sheet{position:absolute;inset:0;padding:21px 26px 15px;z-index:1;
+  /* The comp's air: 26/28/20. It used to be 21/26/15, which put the footer rule
+     ~5px off the torn bottom edge and made the card read as a panel rather than
+     a page. The height that costs is bought back below by folding the post
+     title into the meta row instead of giving it a row of its own. */
+  #md-dispatch .hd-sheet{position:absolute;inset:0;padding:26px 28px 20px;z-index:1;
     display:flex;flex-direction:column}
   /* padding-right reserves the corner the pennant hangs into — the ornament
      overlaps the paper by design, and anything live under it would be hidden. */
-  #md-dispatch .hd-head{display:flex;align-items:center;gap:10px;flex:none;padding-right:30px}
-  #md-dispatch .hd-raven{width:34px;height:34px;flex:0 0 34px;margin-top:-2px;display:block}
+  #md-dispatch .hd-head{display:flex;align-items:center;gap:13px;flex:none;padding-right:30px}
+  #md-dispatch .hd-raven{width:35px;height:35px;flex:0 0 35px;margin-top:-2px;display:block}
   /* Ink Cinzel, not gold — gold on parchment is the one place stamped metal is
      wrong. A 1px paper-white shadow is the letterpress bite; this is plain ink
      type with no background-clip fill, so text-shadow here is safe. */
   #md-dispatch .hd-title{font-family:var(--keep-cinzel,'Cinzel',Georgia,serif);font-size:25px;
     font-weight:700;letter-spacing:.07em;color:var(--keep-parch-ink,#2b2118);flex:1;min-width:0;
     text-shadow:0 1px 0 rgba(255,250,235,.5)}
-  /* The unread chip rides the RIGHT END OF THE RULE, not the title row. In the
-     head it competed with a 25px title for the same 348px and pushed
-     "Herald's Dispatch" onto two lines the moment a post was unread. Anchored
-     to .hd-rule it needs no magic offset and can never reflow the title. */
-  #md-dispatch .hd-new{position:absolute;right:0;top:50%;transform:translateY(-50%);z-index:2;
-    font-family:var(--keep-cinzel,'Cinzel',Georgia,serif);font-size:8.5px;
-    font-weight:700;letter-spacing:.1em;color:#f6ecd2;padding:3px 7px;
-    background:linear-gradient(180deg,#7d2a18,#4d1407);
+  /* The unread chip rides the rule, never the title row — in the head it
+     competed with a 25px title for the same 348px and pushed "Herald's
+     Dispatch" onto two lines the moment a post was unread.
+     It sits at the LEFT end of the rule, not the right. On the right it stacked
+     a second saturated mark directly under the purple skull pennant, so the
+     card's top-right carried a banner AND a sticker where the comp carries one
+     accent; it also cut the rule at its strongest point. The rule's gradient is
+     already down to 5% ink at its left edge, so the stamp lands on the faintest
+     millimetre of it and severs nothing.
+     Flat oxblood, no inset highlight: the bevel read as a UI badge. What is
+     wanted is a wax stamp — one flat ink, a hair off square, a soft shadow from
+     filter (never an inner gloss, §2's "no gloss" applies to the whole card). */
+  #md-dispatch .hd-new{position:absolute;left:0;top:50%;transform:translateY(-50%) rotate(-1.6deg);z-index:2;
+    font-family:var(--keep-cinzel,'Cinzel',Georgia,serif);font-size:8px;
+    font-weight:700;letter-spacing:.1em;color:#efe1c1;padding:2.5px 6px;
+    background:#65200e;
     clip-path:polygon(4px 0,calc(100% - 4px) 0,100% 4px,100% calc(100% - 4px),calc(100% - 4px) 100%,4px 100%,0 calc(100% - 4px),0 4px);
-    box-shadow:inset 0 1px 0 rgba(255,220,180,.28)}
+    filter:drop-shadow(0 1px 1px rgba(43,33,24,.45))}
 
   /* ✎ / ‹ / › — the ink controls. Notched, never rounded; the focus ring is
      INSET because clip-path shaves an outside outline off at every notch. */
@@ -113490,45 +113506,69 @@ function _hdEnsureStyle() {
   #md-dispatch .hd-ico:focus-visible{outline:none;box-shadow:inset 0 0 0 2px rgba(43,33,24,.8)}
   #md-dispatch .hd-ico:disabled{cursor:default;color:rgba(43,33,24,.3);border-color:rgba(43,33,24,.1);background:none}
 
-  #md-dispatch .hd-rule{position:relative;height:1px;margin:12px 0 11px;flex:none;
+  #md-dispatch .hd-rule{position:relative;height:1px;margin:12px 0 13px;flex:none;
     background:linear-gradient(90deg,rgba(43,33,24,.05),rgba(43,33,24,.42) 12%,rgba(43,33,24,.42) 88%,rgba(43,33,24,.05))}
 
   #md-dispatch .hd-body{flex:1;min-height:0;display:flex;flex-direction:column}
-  #md-dispatch .hd-meta{display:flex;align-items:center;gap:9px;margin-bottom:5px;flex:none}
+  /* One row, three items: tag chip, post title, date. The title used to own a
+     row of its own, which cost ~20px of a 280px card and was what forced the
+     tight padding above. Sharing the meta baseline gives the body copy the
+     comp's 16px without losing a visible line. */
+  #md-dispatch .hd-meta{display:flex;align-items:baseline;gap:9px;margin-bottom:7px;flex:none}
   #md-dispatch .hd-tag{font-family:var(--keep-cinzel,'Cinzel',Georgia,serif);font-size:9px;font-weight:700;
     letter-spacing:.12em;text-transform:uppercase;padding:2px 7px;border:1px solid;background:rgba(255,250,235,.34);
     clip-path:polygon(4px 0,calc(100% - 4px) 0,100% 4px,100% calc(100% - 4px),calc(100% - 4px) 100%,4px 100%,0 calc(100% - 4px),0 4px)}
   #md-dispatch .hd-tag[data-t="update"]{color:#2f5236;border-color:rgba(47,82,54,.5)}
   #md-dispatch .hd-tag[data-t="event"]{color:#6d4a12;border-color:rgba(109,74,18,.5)}
   #md-dispatch .hd-tag[data-t="hotfix"]{color:#7a2c15;border-color:rgba(122,44,21,.5)}
-  #md-dispatch .hd-date{font-style:italic;font-size:11.5px;color:rgba(43,33,24,.6)}
-  #md-dispatch .hd-ptitle{font-family:var(--keep-cinzel,'Cinzel',Georgia,serif);font-size:15px;font-weight:700;
-    letter-spacing:.04em;color:var(--keep-parch-ink,#2b2118);margin-bottom:3px;flex:none;
+  #md-dispatch .hd-date{font-style:italic;font-size:11.5px;color:rgba(43,33,24,.6);flex:none;white-space:nowrap}
+  #md-dispatch .hd-ptitle{font-family:var(--keep-cinzel,'Cinzel',Georgia,serif);font-size:14.5px;font-weight:700;
+    letter-spacing:.04em;color:var(--keep-parch-ink,#2b2118);flex:1 1 auto;min-width:0;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   /* §2: "body copy in dark ink serif italic". */
-  #md-dispatch .hd-ptext{font-style:italic;font-size:15px;line-height:1.52;color:#3a2c1f;
+  /* The mask is the difference between "there is more below" and a line of ink
+     sliced through the middle. It only ever bites on an overflowing post — with
+     short copy the faded band is empty parchment. */
+  #md-dispatch .hd-ptext{font-style:italic;font-size:16px;line-height:1.52;color:#3a2c1f;
     flex:1;min-height:0;overflow-y:auto;padding-right:5px;
+    -webkit-mask-image:linear-gradient(180deg,#000 calc(100% - 26px),rgba(0,0,0,0));
+            mask-image:linear-gradient(180deg,#000 calc(100% - 26px),rgba(0,0,0,0));
     scrollbar-width:thin;scrollbar-color:rgba(43,33,24,.35) transparent}
   #md-dispatch .hd-ptext::-webkit-scrollbar{width:5px}
   #md-dispatch .hd-ptext::-webkit-scrollbar-thumb{background:rgba(43,33,24,.32)}
   #md-dispatch .hd-ptext::-webkit-scrollbar-track{background:none}
   /* Nothing to page through — the line sits in the middle of the sheet rather
      than stranded at the top of an empty well. */
-  #md-dispatch .hd-empty{font-style:italic;font-size:15px;line-height:1.5;color:rgba(43,33,24,.55);margin:auto 0;text-align:center}
+  #md-dispatch .hd-empty{font-style:italic;font-size:16px;line-height:1.5;color:rgba(43,33,24,.55);margin:auto 0;text-align:center}
 
   /* Footer row — §2: "Follow ☐  |  + Add special Links". The pager lives at the
-     right end of the same rule, so the parchment has ONE footer, not two. */
-  #md-dispatch .hd-foot{flex:none;display:flex;align-items:center;gap:10px;margin-top:10px;padding-top:9px;
+     right end of the same rule, so the parchment has ONE footer, not two.
+     ONE divider, the comp's. There used to be a second .hd-fbar between the
+     social group and the pager; on a normal player account the links slot was
+     not rendered at all, so that bar sat in ~180px of blank parchment dividing
+     nothing from nothing. The links slot is now always rendered (see
+     _hdSocialHtml) and the spare bar is gone; the pager separates itself with
+     margin-left:auto, which is also what fills the row edge to edge. */
+  #md-dispatch .hd-foot{flex:none;display:flex;align-items:center;gap:9px;margin-top:9px;padding-top:9px;
     border-top:1px solid rgba(43,33,24,.28)}
   /* THE OVERFLOW GUARD. An admin account with all six social links, an edit
-     button AND a 20-post pager wants more than the 378px the sheet has. Only
-     the ICON STRIP is allowed to clip — the Follow label and the admin's
-     edit button are flex:none, so the control the admin needs never gets
-     squeezed off the paper while decorative glyphs are still on it. */
-  #md-dispatch .hd-social{display:flex;align-items:center;gap:6px;flex:1 1 auto;min-width:0}
+     button AND a pager wants more than the 374px the sheet has. Only the ICON
+     STRIP is allowed to clip — every other footer item is flex:none, so the
+     control the admin needs never gets squeezed off the paper while decorative
+     glyphs are still on it.
+     ☐ is NOT in the strip. It stands in for the icons when there are none, and
+     it is half of §2's Follow-box pair — inside the strip a six-dot pager was enough
+     to shrink it to nothing and the footer lost the glyph the bar names. */
+  #md-dispatch .hd-social{display:flex;align-items:center;gap:10px;flex:1 1 auto;min-width:0}
   #md-dispatch .hd-soc-strip{display:flex;align-items:center;gap:6px;flex:0 1 auto;min-width:0;overflow:hidden}
+  /* A strip cut off mid-glyph reads as a bug. The fade says "there is more",
+     which is the truth. Only applied when it actually overflows — _hdFitSocial
+     measures and toggles the class, because CSS cannot ask that question. */
+  #md-dispatch .hd-soc-strip.is-clipped{
+    -webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 24px),rgba(0,0,0,0));
+            mask-image:linear-gradient(90deg,#000 calc(100% - 24px),rgba(0,0,0,0))}
   #md-dispatch .hd-social-lbl{font-family:var(--keep-cinzel,'Cinzel',Georgia,serif);font-size:12.5px;font-weight:700;
-    letter-spacing:.13em;text-transform:uppercase;color:#4a3927;flex:none}
+    letter-spacing:.12em;text-transform:uppercase;color:#4a3927;flex:none}
   #md-dispatch .hd-box{width:13px;height:13px;flex:none;border:1.5px solid rgba(43,33,24,.6)}
   /* §4 "Disabled is … never just opacity:.5" — with no links set and no admin
      rights the Follow group is a desaturated ghost of itself, not a hole. */
@@ -113554,13 +113594,30 @@ function _hdEnsureStyle() {
   #md-dispatch .hd-soc-add:active{background:rgba(43,33,24,.13)}
   #md-dispatch .hd-soc-add:focus{outline:none}
   #md-dispatch .hd-soc-add:focus-visible{outline:2px solid rgba(43,33,24,.75);outline-offset:2px}
-  #md-dispatch .hd-pager{display:flex;gap:6px;align-items:center;flex:none}
+  /* The player's half of §2's third footer slot. Same box metrics as the admin
+     button (transparent border, same padding, same face) so the row does not
+     shift between accounts — but flat ink with no dashed frame and no pointer,
+     because it states who keeps the links, it does not offer to edit them. */
+  #md-dispatch .hd-soc-note{font-family:var(--keep-cinzel,'Cinzel',Georgia,serif);font-size:12.5px;font-weight:700;
+    letter-spacing:.05em;color:rgba(43,33,24,.58);border:1px solid transparent;
+    padding:3px 2px;white-space:nowrap;flex:none;cursor:default}
+  #md-dispatch .hd-pager{display:flex;gap:6px;align-items:center;flex:none;margin-left:auto;padding-left:4px}
   /* _hdFetch pulls up to 20 dispatches, i.e. up to 20 dots — 215px of them,
-     which would shove the pager off the sheet. The strip is capped instead;
-     ‹ › still walk the full set. */
-  #md-dispatch .hd-dots{display:flex;gap:5px;max-width:71px;overflow:hidden}
-  #md-dispatch .hd-dots span{width:6px;height:6px;border-radius:50%;background:rgba(43,33,24,.24);transition:background .2s}
+     which would shove the pager off the sheet. Four is the cap (_hdPaint swaps
+     in a counter past that), so 39px is all this ever reserves.
+     🩹 The cap alone was a bug: the dots are flex items, so max-width made
+     them COMPRESS instead of clip. At 20 posts every dot measured 0×6 and the
+     indicator was an empty 71px hole; at 12 they were 0.9px hairlines, which
+     reads as a rendering fault. flex:0 0 6px is what .hd-soc already had and
+     the dots did not. Past six the strip stops being a position indicator at
+     all, so _hdPaint swaps it for an ink "3 / 20" counter in the same face as
+     FOLLOW — one control that is honest at every feed length. */
+  #md-dispatch .hd-dots{display:flex;align-items:center;gap:5px;max-width:39px;overflow:hidden}
+  #md-dispatch .hd-dots span{flex:0 0 6px;width:6px;height:6px;border-radius:50%;background:rgba(43,33,24,.24);transition:background .2s}
   #md-dispatch .hd-dots span.on{background:rgba(43,33,24,.85)}
+  #md-dispatch .hd-dots.is-count{max-width:none;overflow:visible;gap:0;padding:0 3px;
+    font-family:var(--keep-cinzel,'Cinzel',Georgia,serif);font-size:11.5px;font-weight:700;
+    letter-spacing:.08em;color:rgba(43,33,24,.66);white-space:nowrap;font-variant-numeric:tabular-nums}
 
   /* §2: "A dark purple banner ornament with a skull hangs off the top-right
      corner." Purple is an ACCENT (§1) — this ornament and the NEW badge are the
@@ -113815,14 +113872,29 @@ function _hdSocialHtml() {
     return typeof u === 'string' && /^https?:\/\//i.test(u.trim());
   }).map((s) => `<a class="hd-soc" style="--soc:${s.color}" href="${escapeHtml(links[s.id].trim())}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(s.label)}" aria-label="${escapeHtml(s.label)}">${s.svg}</a>`).join('');
   // 📜 docs/hub-ui-bar.md §2 pins the parchment's footer as `Follow ☐  |  + Add
-  // special Links`, so the row is ALWAYS rendered — it used to return '' for a
-  // player with no links configured, which left the card with a naked bottom
-  // edge. With nothing to follow it renders the ☐ in the §4 disabled treatment
-  // (desaturated ink, not opacity:.5) instead of vanishing.
+  // special Links` — THREE slots, on every account. The row is always rendered
+  // (it used to return '' for a player with no links, leaving a naked bottom
+  // edge), and as of now so is the third slot.
+  // Admin-only was the wrong call: for every real player the footer read
+  // `FOLLOW ☐` hard left, ~180px of blank parchment, then a lone divider and
+  // the pager — the one place on the card where the eye landed on unfinished
+  // layout instead of paper. The slot is the ✎ control for admins and the
+  // same-metrics static ink label for everyone else, so the string §2 pins is
+  // always on the sheet and the row fills the rule edge to edge.
+  const slot = admin
+    ? `<button class="hd-soc-add" id="hd-soc-edit" title="Set your social media links (admin)">${btns ? '✎ Edit links' : '＋ Add special Links'}</button>`
+    : '<span class="hd-soc-note" title="The heralds keep these links">＋ Add special Links</span>';
+  // ☐ is a SIBLING of the icon strip, never a child of it: the strip is the one
+  // footer item allowed to clip, and with the box inside it a six-dot pager was
+  // enough to shrink the box to zero and take half of §2's footer with it.
+  const group = btns
+    ? '<span class="hd-soc-strip">' + btns + '</span>'
+    : '<span class="hd-box" aria-hidden="true"></span>';
   return `<div class="hd-social${(btns || admin) ? '' : ' is-empty'}">
     <span class="hd-social-lbl">Follow</span>
-    <span class="hd-soc-strip">${btns || '<span class="hd-box" aria-hidden="true"></span>'}</span>
-    ${admin ? `<span class="hd-fbar" aria-hidden="true"></span><button class="hd-soc-add" id="hd-soc-edit" title="Set your social media links (admin)">${btns ? '✎ Edit links' : '＋ Add special Links'}</button>` : ''}
+    ${group}
+    <span class="hd-fbar" aria-hidden="true"></span>
+    ${slot}
   </div>`;
 }
 function _hdState() {
@@ -113873,7 +113945,6 @@ function _hdWidgetHtml() {
       <div class="hd-rule"><span class="hd-new" id="hd-new" style="display:none">NEW</span></div>
       <div class="hd-body" id="hd-body"><div class="hd-empty">Consulting the herald…</div></div>
       <div class="hd-foot">${_hdSocialHtml()}
-        <span class="hd-fbar" aria-hidden="true"></span>
         <div class="hd-pager">
           ${((typeof isAdmin === 'function') && isAdmin()) ? '<button class="hd-ico" id="hd-admin" title="Manage dispatches (admin)" aria-label="Manage dispatches">✎</button>' : ''}
           <button class="hd-ico" id="hd-prev" aria-label="Previous dispatch">‹</button>
@@ -113883,27 +113954,59 @@ function _hdWidgetHtml() {
       </div>
     </div>${_HD_PENNANT}</section>`;
 }
+// 🎚 Does the icon strip overflow? CSS cannot ask, so measure once at mount and
+// let .is-clipped fade the right edge. Without it an admin account with six
+// links has Instagram and Twitch sliced mid-glyph by a bare overflow:hidden,
+// which reads as a rendering fault rather than "there is more here".
+function _hdFitSocial() {
+  try {
+    const strip = document.querySelector('#md-dispatch .hd-soc-strip');
+    if (!strip) return;
+    strip.classList.toggle('is-clipped', strip.scrollWidth > strip.clientWidth + 1);
+  } catch (e) {}
+}
 function _hdPaint() {
   const S = _hdState();
   const body = document.getElementById('hd-body'), dots = document.getElementById('hd-dots');
   if (!body || !dots) return;
-  dots.innerHTML = '';
+  // ⏸ The chevrons EARN their disabled state. `.hd-ico:disabled` has always been
+  // styled and nothing ever set the property, so on an empty or single-post
+  // feed both arrows sat in the rest state and silently did nothing on click.
+  const prev = document.getElementById('hd-prev'), next = document.getElementById('hd-next');
+  const pageable = S.posts.length > 1;
+  if (prev) prev.disabled = !pageable;
+  if (next) next.disabled = !pageable;
+  dots.className = 'hd-dots';
+  dots.textContent = '';
   if (!S.posts.length) {
     body.innerHTML = '<div class="hd-empty">The realm is quiet — no dispatches yet.</div>';
     return;
   }
   S.idx = Math.max(0, Math.min(S.idx, S.posts.length - 1));
   const p = S.posts[S.idx];
+  // Tag, title and date share ONE baseline. The title used to own a row of its
+  // own; folding it in is what pays for the comp's 26/28/20 padding and 16px
+  // body copy inside the same 280px card.
   body.innerHTML =
     '<div class="hd-meta"><span class="hd-tag" data-t="' + escapeHtml(p.tag || 'update') + '">' + escapeHtml(p.tag || 'update') + '</span>' +
+    '<span class="hd-ptitle">' + escapeHtml(p.title || '') + '</span>' +
     '<span class="hd-date">' + escapeHtml(p.date || '') + '</span></div>' +
-    '<div class="hd-ptitle">' + escapeHtml(p.title || '') + '</div>' +
     '<div class="hd-ptext">' + escapeHtml(p.body || '') + '</div>';
-  S.posts.forEach((_, i) => {
-    const d = document.createElement('span');
-    if (i === S.idx) d.classList.add('on');
-    dots.appendChild(d);
-  });
+  // 🔢 Four dots is the most the footer can carry before the pager starts
+  // eating the Follow group's width (six dots is 61px and cost the ☐ its box),
+  // and a clipped strip would show the same dots forever — so past four the
+  // indicator becomes a counter instead of lying about where you are. See the
+  // .hd-dots CSS for the flex bug this replaced.
+  if (S.posts.length > 4) {
+    dots.className = 'hd-dots is-count';
+    dots.textContent = (S.idx + 1) + ' / ' + S.posts.length;
+  } else {
+    S.posts.forEach((_, i) => {
+      const d = document.createElement('span');
+      if (i === S.idx) d.classList.add('on');
+      dots.appendChild(d);
+    });
+  }
   // Unread badge: newest post id vs last-seen (per device).
   try {
     const newest = S.posts[0] && S.posts[0].id;
@@ -113943,6 +114046,7 @@ function _hdInit() {
   if (adm) adm.onclick = () => { try { _hdAdminOpen(); } catch (e) {} };
   const soc = document.getElementById('hd-soc-edit');
   if (soc) soc.onclick = () => { try { _socialAdminOpen(); } catch (e) {} };
+  _hdFitSocial();
   // 💬 Keep the chat bubble sitting just above the dispatch card.
   try { if (typeof _chatPositionFab === 'function') requestAnimationFrame(_chatPositionFab); } catch (e) {}
 }
@@ -114504,25 +114608,30 @@ function renderTitle() {
   // 🏕 One source of truth (isCampUnlocked): node owners are always in, at any
   // level; everyone else needs Lv CAMP_UNLOCK_LEVEL.
   const campUnlocked  = (typeof isCampUnlocked === 'function') ? isCampUnlocked() : (_hubIsAdmin || topHeroLevel >= CAMP_UNLOCK_LEVEL);
-  const campLockText  = `🔒 Reach Hero Lv ${CAMP_UNLOCK_LEVEL} (max ${topHeroLevel}) — or own a node`;
+  // 🏷 GATE BADGES ARE PROGRESS, NOT PROSE. These four render as the tile's
+  // badge pill, and §3's pill is a short outlined chip — the full sentence
+  // ("Reach Account Lv 5 (now Lv 1) — or own a node") wrapped to two lines and
+  // made a bottom-heavy plaque out of every locked tile on the Ruin Exchange.
+  // The REQUIREMENT is already the tile's subtitle, so the pill carries only
+  // the number that changes. The lock is read from the tile's whole desaturated
+  // treatment (see hub-tiles.css §7), which is why the 🔒 went with the prose.
+  const campLockText  = `Hero Lv ${topHeroLevel} / ${CAMP_UNLOCK_LEVEL}`;
   // 💰 RUIN EXCHANGE GATES — read from the SAME is*Unlocked() functions each
   // screen guards itself with, so the tile can never disagree with the screen.
   // These used to be recomputed inline here, which is why node owners saw an
   // unlocked screen behind a locked-looking tile. Node owners pass all three.
-  const _hubOwnsNode    = (typeof playerOwnsAnyNode === 'function') && playerOwnsAnyNode();
-  const _orNode         = _hubOwnsNode ? '' : ' — or own a node';
   // Tutor Shop gate — account level, or any node.
   const acctLevel       = getAccountLevel();
   const tutorUnlocked   = (typeof isTutorUnlocked === 'function') ? isTutorUnlocked() : (_hubIsAdmin || acctLevel >= TUTOR_UNLOCK_ACCOUNT_LEVEL);
-  const tutorLockText   = `🔒 Reach Account Lv ${TUTOR_UNLOCK_ACCOUNT_LEVEL} (now Lv ${acctLevel})${_orNode}`;
+  const tutorLockText   = `Account Lv ${acctLevel} / ${TUTOR_UNLOCK_ACCOUNT_LEVEL}`;
   // Player Market gate — N heroes at Lv 15+, or any node.
   const heroesAtMarketLv = getHeroesAtLevelCount(MARKET_UNLOCK_HERO_LEVEL);
   const marketUnlocked   = (typeof isPlayerMarketUnlocked === 'function') ? isPlayerMarketUnlocked() : (_hubIsAdmin || heroesAtMarketLv >= MARKET_UNLOCK_HERO_COUNT);
-  const marketLockText   = `🔒 Need ${MARKET_UNLOCK_HERO_COUNT} heroes at Lv ${MARKET_UNLOCK_HERO_LEVEL} (have ${heroesAtMarketLv})${_orNode}`;
+  const marketLockText   = `${heroesAtMarketLv} / ${MARKET_UNLOCK_HERO_COUNT} heroes at Lv ${MARKET_UNLOCK_HERO_LEVEL}`;
   // Cashout Vault gate — 1 hero at Lv 15+, or any node.
   const heroesAtCashoutLv = getHeroesAtLevelCount(CASHOUT_UNLOCK_HERO_LEVEL);
   const cashoutUnlocked   = (typeof isCashoutUnlocked === 'function') ? isCashoutUnlocked() : (_hubIsAdmin || heroesAtCashoutLv >= 1);
-  const cashoutLockText   = `🔒 Train a hero to Lv ${CASHOUT_UNLOCK_HERO_LEVEL} (max ${topHeroLevel})${_orNode}`;
+  const cashoutLockText   = `Hero Lv ${topHeroLevel} / ${CASHOUT_UNLOCK_HERO_LEVEL}`;
 
   // ----- Portal definitions per hub -----
   // Each portal: { id, icon, name, sub, accent, badge?, alertBadge?, onclick }
@@ -160278,7 +160387,7 @@ function renderCraftStation() {
   root.innerHTML = `
     <div class="cft">
       <div class="cft-head">
-        <button class="cft-back" id="cft-back">← Back</button>
+        <button class="cft-back keep-tab" id="cft-back">← Back</button>
         <div class="cft-title">🔨 CRAFTING STATION</div>
         <div class="cft-parts">${keyMats}</div>
       </div>
@@ -160386,7 +160495,7 @@ function renderCardShop() {
       <div class="campaign-page">
         <div class="campaign-header keep-header">
           <div>
-            <h2 class="section-title" style="text-align:left;margin-bottom:0.2rem">🛒 Card Shop</h2>
+            <h2 class="section-title" style="text-align:left;margin-bottom:0.2rem">Card Shop</h2>
             <div class="small-text ink-dim">Run your own storefront — or visit shops other players own and buy their cards for Cinder.</div>
           </div>
           <div class="shop-balance-stack"><div class="shop-gems-pill"><span class="shop-gems-num">${cinders.toLocaleString()}</span> <span class="cinder-icon cinder-icon-lg"></span><div class="small-text ink-dim">Cinders</div></div></div>
@@ -183467,7 +183576,7 @@ function openBlackMarketTrade() {
             (tiles || '<div class="ink-dim" style="padding:2rem;text-align:center">No spare cards to smuggle — every copy you own is locked into a deck, or your stash is empty.</div>') +
           '</div>' +
           (totalSellable > 0 ? '<button id="bmt-sell-all" style="margin-top:10px;cursor:pointer;border-radius:9px;padding:0.6rem 0.9rem;border:1px solid #ffd166;background:linear-gradient(180deg,#caa23e,#7a5a18);color:#1a1206;font-weight:800">🕯️ Smuggle ALL spares — +' + totalValue + ' 🔥</button>' : '') +
-          '<button id="bmt-back" style="margin-top:10px;cursor:pointer;border-radius:9px;padding:0.6rem 0.9rem;border:1px solid rgba(176,112,176,0.6);background:rgba(176,112,176,0.16);color:#e6c6f0;font-weight:800">← Back to the Hall</button>' +
+          '<button id="bmt-back" style="margin-top:10px;cursor:pointer;padding:0.6rem 0.9rem;border:1px solid rgba(176,112,176,0.6);background:rgba(176,112,176,0.16);color:#e6c6f0;font-weight:800">← Back to the Hall</button>' +
           '<div class="small-text ink-dim" style="margin-top:6px">You stay at the Bazaar. The only way home is the Hall’s “Travel Home”.</div>' +
         '</div>';
 
@@ -183814,7 +183923,7 @@ function openBlackMarketAuction() {
           '<div style="margin:2px 0 8px;padding:7px 10px;border:1px solid rgba(255,209,102,0.4);border-radius:8px;background:rgba(255,209,102,0.08);color:#ffd166;font-size:0.85rem"><span class="cinder-icon"></span> Cinders on hand: <strong>' + ((Profile && Profile.gems) || 0) + '</strong></div>' +
           (online && !BmMarket.tableMissing ? '<div style="display:flex;gap:4px;margin-bottom:-1px">' + tabBtn('browse', '🛍 Browse Booths') + tabBtn('booth', '🏷 My Booth') + '</div>' : '') +
           '<div id="bma-body" style="flex:1;min-height:220px;max-height:52vh;overflow:auto;border:1px solid rgba(176,112,176,0.25);border-radius:0 0 8px 8px;padding:10px">' + body + '</div>' +
-          '<button id="bma-back" style="margin-top:12px;cursor:pointer;border-radius:9px;padding:0.6rem 0.9rem;border:1px solid rgba(176,112,176,0.6);background:rgba(176,112,176,0.16);color:#e6c6f0;font-weight:800">← Back to the Hall</button>' +
+          '<button id="bma-back" style="margin-top:12px;cursor:pointer;padding:0.6rem 0.9rem;border:1px solid rgba(176,112,176,0.6);background:rgba(176,112,176,0.16);color:#e6c6f0;font-weight:800">← Back to the Hall</button>' +
           '<div class="small-text ink-dim" style="margin-top:6px">You stay at the Bazaar. The only way home is the Hall’s “Travel Home”.</div>' +
         '</div>';
 
@@ -196121,7 +196230,7 @@ function renderVehicleMarket() {
         <h2 class="section-title">🛒 Vehicle Marketplace</h2>
         <div style="display:flex;gap:0.6rem;align-items:center">
           <span class="result-stat-pill" style="background:rgba(212,175,55,0.18);border-color:rgba(212,175,55,0.5);color:#ffd166"><span class="cinder-icon"></span> ${(Profile.gems | 0).toLocaleString()}</span>
-          <button class="btn-secondary" id="vm-back">← Back</button>
+          <button class="btn-secondary keep-tab" id="vm-back">← Back</button>
         </div>
       </div>
       <div class="placement-hint">Buy cars from other dealership owners. The better your vehicle, the more loot you can <strong>📦 Send to Camp (Research)</strong> after a battle.</div>

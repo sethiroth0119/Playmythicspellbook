@@ -89,6 +89,14 @@
   --keep-oct-9:  polygon(9px 0, calc(100% - 9px) 0, 100% 9px, 100% calc(100% - 9px), calc(100% - 9px) 100%, 9px 100%, 0 calc(100% - 9px), 0 9px);
   --keep-oct-7:  polygon(7px 0, calc(100% - 7px) 0, 100% 7px, 100% calc(100% - 7px), calc(100% - 7px) 100%, 7px 100%, 0 calc(100% - 7px), 0 7px);
   --keep-oct-6:  polygon(6px 0, calc(100% - 6px) 0, 100% 6px, 100% calc(100% - 6px), calc(100% - 6px) 100%, 6px 100%, 0 calc(100% - 6px), 0 6px);
+  /* ⚠ A corner cut only reads as a notch while it is STRICTLY LESS THAN HALF the
+     box's shorter side. Above that the two cuts on one edge cross and the
+     polygon self-intersects: `--keep-oct-6` on the 8px-tall XP gauge put the
+     top and bottom cuts 2px apart, and Chromium resolved the bowtie into two
+     tapered hairlines with a detached 1px stub floating off each end — at 0 XP,
+     the signed-out first impression, that WAS the whole element. This is the
+     size for anything under ~14px tall. */
+  --keep-oct-3:  polygon(3px 0, calc(100% - 3px) 0, 100% 3px, 100% calc(100% - 3px), calc(100% - 3px) 100%, 3px 100%, 0 calc(100% - 3px), 0 3px);
 
   /* ── MOTION. Never linear (§3). ── */
   --keep-ease: cubic-bezier(.22, .61, .36, 1);
@@ -202,8 +210,13 @@
   cursor: pointer;
   -webkit-appearance: none;
           appearance: none;
-  transition: filter var(--keep-fast) var(--keep-ease),
-              color  var(--keep-fast) var(--keep-ease);
+  /* `background` is in the list although nothing animates it today: the outer
+     element carries the gold FRAME gradient, the ::before carries the face, and
+     the two must cross-fade together or a future hover state on the frame would
+     snap while the face eased. Symmetry with the ::before's transition below. */
+  transition: filter     var(--keep-fast) var(--keep-ease),
+              color      var(--keep-fast) var(--keep-ease),
+              background var(--keep-fast) var(--keep-ease);
 }
 .keep-tab::before {
   content: "";
@@ -368,6 +381,23 @@
    iframe menu and is never touched here.
    ════════════════════════════════════════════════════════════════════════════ */
 
+/* ── C0 · THE DOCUMENT GROUND ─────────────────────────────────────────────
+   index.html:137-147 paints `body` with two violet radial washes over
+   `--bg-deep`, which is a blue-black. `.spellbook-hub-bg` is
+   `position:fixed;inset:0` so on a screen that fits, nothing shows through —
+   but the hub is a `min-height:100vh` flex column and the Ruin Exchange runs
+   past the fold, and the moment the document is taller than the viewport the
+   band below it is the BODY's ground: visibly indigo, under a shell whose §1
+   says "warm, never blue-black" and "no large flat purple field". It is also
+   what every 1920x1080 screenshot shows below the 993px layout viewport.
+   Scoped with `:has()` so this is the hub screens' business only — the rest of
+   the app keeps the ground it was designed against. The noise overlay at
+   index.html:148 is warm-neutral at .035 and stays. */
+html:has(.spellbook-hub),
+html:has(.spellbook-hub) body {
+  background: var(--keep-ground-0);
+}
+
 /* ── C1 · PAGE ─────────────────────────────────────────────────────────────
    comp-hub.html `.stage`: padding 24px 44px 0, a flex column of
    topbar → title block → tile band → foot. */
@@ -470,7 +500,7 @@ html body #app.page-fade-in:has(> .spellbook-hub.is-sub) {
    these and trust source order. */
 .spellbook-hub.is-sub .spellbook-hub-bg img.hub-bg-img {
   z-index: 0;
-  filter: var(--keep-bg-filter, brightness(0.72) saturate(0.74) contrast(1.05) sepia(0.18));
+  filter: var(--keep-bg-filter, brightness(0.80) saturate(0.80) contrast(1.04));
   transform: scale(var(--keep-bg-zoom, 1));
   transform-origin: 50% 100%;
 }
@@ -483,23 +513,36 @@ html body #app.page-fade-in:has(> .spellbook-hub.is-sub) {
    21 rgb [21,20,19], i.e. NEUTRAL GREY, the one thing §1 forbids by name,
    while Exchange was crushed to [0,0,0] — the painted art gone, which fights
    the hard requirement to keep every background image.
-   The lesson: contrast belongs in the WASH, not in six hand-tuned exposures.
-   The filters below are back near the comp's single recipe (.60–.80, never
-   below .54) and their only remaining job is to knock the loudest plates down
-   a stop and pull the cold ones warm with `sepia()`. Everything that makes the
-   ground warm and the type legible now happens once, in the wash under this.
-   `--keep-bg-zoom` crops a plate — used twice, and only to get burnt-in
-   English signage out of frame. */
+   Round 2 over-corrected the other way: .54 (Codex) to .62 (Camp) against the
+   comp's single .80, which on top of the flat veil that used to sit in the wash
+   (see the bug note below) darkened four of six plates a further 25-33% and
+   turned painted art into fog.
+   Every filter here is now inside .74-.80 — the comp's own stop, give or take
+   one notch for the two loudest plates. The title band does NOT need the plate
+   dimmed to get its floor: wash layers 1 and 2 are opaque scrims sitting ABOVE
+   the plate exactly where the type is, and they level the six hubs on their own.
+   `sepia()` stays on the cold plates, and it is not the same tool as a scrim:
+   sepia is a linear colour matrix with no offset term, so black maps to black
+   and a 255 red stays near 255 — it rotates hue without lifting the floor or
+   clipping the peak. That is why warming a plate is contrast-safe and warming
+   the frame with a constant-alpha layer is not.
+   `--keep-bg-zoom` crops a plate — used three times, and only to get burnt-in
+   English signage or a second wordmark out of frame. Those stay.
+   */
 .spellbook-hub.is-sub[data-hub="battle"]   { --keep-bg-filter: brightness(0.80) saturate(0.80) contrast(1.04); }
-.spellbook-hub.is-sub[data-hub="arcanum"]  { --keep-bg-filter: brightness(0.56) saturate(0.74) contrast(1.05); }
-.spellbook-hub.is-sub[data-hub="exchange"] { --keep-bg-filter: brightness(0.72) saturate(0.34) contrast(1.04) sepia(0.44); }
+.spellbook-hub.is-sub[data-hub="arcanum"]  { --keep-bg-filter: brightness(0.74) saturate(0.76) contrast(1.05) sepia(0.10); }
+/* RUIN EXCHANGE. `darkmarket background.png` is lit in cold violet, which under
+   §1 is the one hue that must not become a field. saturate() alone only mutes
+   it; sepia() rotates it into the gold family without touching the black floor,
+   so the market keeps its lamps and loses its purple cast. */
+.spellbook-hub.is-sub[data-hub="exchange"] { --keep-bg-filter: brightness(0.78) saturate(0.38) contrast(1.05) sepia(0.44); }
 /* THE CODEX. Same signage problem as Forge, milder: the `Deck Select` plate has
    two carved notices in its top-left — "Silence · Knowledge is sacred" and
    "Disobedience invites punishment" — which land beside the breadcrumb and read
    as UI copy. A modest crop from the bottom edge takes both out of frame and
    pushes the scribe down under the tile band where it belongs. */
 .spellbook-hub.is-sub[data-hub="codex"] {
-  --keep-bg-filter: brightness(0.54) saturate(0.50) contrast(1.05) sepia(0.26);
+  --keep-bg-filter: brightness(0.76) saturate(0.52) contrast(1.05) sepia(0.34);
   --keep-bg-zoom: 1.28;
 }
 /* FORGE. `equipment background.png` is a ruined gun store and its top third
@@ -510,8 +553,29 @@ html body #app.page-fade-in:has(> .spellbook-hub.is-sub) {
    leaving the counters and rubble, which is what an armoury floor should look
    like. The image is kept, as required; only the framing changed. */
 .spellbook-hub.is-sub[data-hub="forge"] {
-  --keep-bg-filter: brightness(0.60) saturate(0.46) contrast(1.05) sepia(0.30);
+  /* The concrete-and-daylight cast of this plate reads NEUTRAL GREY under a
+     warm shell — §1 names grey and blue-black as the two grounds to avoid.
+     saturate() alone only mutes it; sepia() rotates the whole plate into the
+     gold family with no offset term, so the black floor and the highlight peak
+     both survive. Measured G against B in the mid-field: cooler than the wash
+     before, warmer than it after. */
+  --keep-bg-filter: brightness(0.74) contrast(1.06) sepia(0.92) saturate(1.25);
   --keep-bg-zoom: 1.62;
+  /* ⚠ FILTER ORDER IS THE WHOLE TRICK. `saturate()` BEFORE `sepia()` mutes the
+     plate and then sepia has almost nothing left to rotate, which is how round 3
+     first read: still concrete-grey at sepia(.52). Putting a near-full sepia
+     first and saturating AFTER intensifies the tone sepia just produced, so the
+     armoury lands warm brown in one pass. Neither operation has an offset term,
+     so black stays black and the highlight peak is untouched — this is a hue
+     move, not the flat scrim that round 2 lost on.
+     🪧 …and the store's OTHER burnt-in sign. The 1.62 crop takes the
+     "FREEDOM FIREARMS" board off the top; a "PRO SHOP" board painted low on the
+     right survived it, sitting just above the Terms of Service link. The wash's
+     standard bottom scrim is already on the floor by then, so this hub adds its
+     own — again a gradient that reaches zero, over the bottom fifth only. */
+  --keep-scrim-extra: linear-gradient(0deg, rgba(9, 7, 5, 0.58) 0%,
+                                            rgba(9, 7, 5, 0.46) 11%,
+                                            rgba(9, 7, 5, 0) 21%);
 }
 /* THE CAMP deliberately shares CampHeights.png with the main menu, and that is
    the right call rather than an oversight: this hub IS Camp Heights — the
@@ -523,12 +587,53 @@ html body #app.page-fade-in:has(> .spellbook-hub.is-sub) {
    SPELLBOOK wordmark burnt into its top-left corner, which landed beside the
    breadcrumb tabs and read as a second, broken logo. */
 .spellbook-hub.is-sub[data-hub="field"] {
-  --keep-bg-filter: brightness(0.62) saturate(0.68) contrast(1.05) sepia(0.14);
+  --keep-bg-filter: brightness(0.78) saturate(0.72) contrast(1.05) sepia(0.14);
   --keep-bg-zoom: 1.34;
+  /* 🪧 "CAMP HEIGHTS" IS PAINTED ON THE FENCE, and no crop can reach it: the
+     plate is 1280x720, exactly the frame's aspect, so `object-fit:cover` has
+     87px of vertical slack to give and nothing else. Cropping the sign out with
+     `--keep-bg-zoom` alone needs ~1.9x, which throws the whole camp away to
+     lose one board. At round 2's brightness(.62) the sign was simply too dark
+     to read; at .78 it is a second white headline sitting directly under
+     "THE CAMP", which is worse than a dim plate.
+     So this hub gets its own top-band scrim. It peaks over the sign (y260-360)
+     and is on the floor by 46%, so everything below — the camp itself, which is
+     the reason this plate was chosen — keeps its own contrast. */
+  --keep-scrim-extra: linear-gradient(180deg, rgba(9, 7, 5, 0.26) 0%,
+                                              rgba(9, 7, 5, 0.54) 27%,
+                                              rgba(9, 7, 5, 0.48) 37%,
+                                              rgba(9, 7, 5, 0) 47%);
 }
 
 /* ── THE WASH — ONE RECIPE, ALL SIX HUBS ──────────────────────────────────
-   Five layers, topmost first.
+   FOUR layers, topmost first. There were five.
+
+   🐛 THE FLAT VEIL — the round-2 defect, and worth the paragraph because the
+      instinct that produced it is a good one and still wrong.
+      Layer 4 used to be `linear-gradient(0deg, rgba(30,20,10,.26), rgba(30,20,10,.26))`
+      — a warm scrim at .26 over EVERY pixel of the frame. It was bought to make
+      six very different plates land on one warm ground without six hand-tuned
+      exposures, and it did do that: measured R-B came out near the comp's +4 on
+      all six. But a constant-alpha layer is an affine compression of the whole
+      range toward its own colour: it lifts the blacks and clips the highlights
+      in the same stroke. On identical patches against comp-hub.png our MEAN was
+      equal or higher while our PEAKS were 30-40% lower — x1700,y300 comp
+      (6.8,5.1,3.6) peak R 92 vs ours (11.9,8.5,5.2) peak R 72. Matching means
+      with collapsed peaks is exactly the look of a photo behind frosted glass,
+      which is what the whole background read as: a uniform brown fog where the
+      comp reads as a painted armoured figure with real form.
+      EVERY layer in the comp's wash reaches alpha 0 somewhere. Its radial is
+      `rgba(11,9,6,0)` at the centre, so the middle of the frame — where the
+      painting's subject is — is never veiled at all and keeps its own contrast;
+      only the corners darken. That is the rule this file now follows: warmth is
+      carried by the STOP COLOURS of gradients that still reach zero, never by a
+      constant layer. The radial and the base gradient below keep the comp's
+      exact geometry and alphas and only shift hue warmer (rgba(11,9,6,·) →
+      rgba(20,13,7,·)), so the ground is warm and the plate's own dynamic range
+      survives through the middle of the frame.
+      Do not re-add a flat layer here. If a hub still reads cold, warm the PLATE
+      with `sepia()` — the exposure block above says why that is contrast-safe
+      and a scrim is not.
 
    1 TOP SCRIM. Round 1's faded to zero alpha by 30% of the viewport, which on
      the 993px viewport this renders at is 298px — ABOVE the title block. The
@@ -539,27 +644,31 @@ html body #app.page-fade-in:has(> .spellbook-hub.is-sub) {
      12.7, with a peak highlight of 229 on one plate against the comp's 60.
      This one covers the whole title block and lands on a floor, so the type
      has the same ground under it on every hub.
+     It is deliberately TIGHT. Round 2's ran to alpha 0 at 54% of the viewport —
+     536px on the 993px viewport this renders at — so it was still ~.36 opaque at
+     y300, halfway down the frame and a long way below anything it was bought to
+     protect. Measured there against the comp: peak red 36 against 58. The title
+     block ends at y215 (22%), so this one is on the floor by 27% and the painting
+     below it is untouched.
    2 BOTTOM SCRIM — the same job for the Terms of Service link.
    3 VIGNETTE — the comp's, unchanged.
-   4 THE WARM LAYER. This is what makes the ground warm, and it is why the
-     per-hub `sepia()` guessing above could be walked back. A flat warm-black
-     at .26 over ANY plate lifts red about 8 and blue about 3, so R−B lands
-     near the comp's +4 whether the painting underneath is a cold grey daylight
-     photo or a purple-lit market. Warm because the WASH is warm — not because
-     each plate got hand-tuned.
-     It sits UNDER the vignette on purpose: the corners must still go to black.
-   5 The comp's own base gradient. */
+   4 THE COMP'S OWN BASE GRADIENT, warmed in its stop colours only (see the bug
+     note above): same geometry, same alphas, hue shifted. */
 .spellbook-hub.is-sub .spellbook-hub-bg::before {
   z-index: 2;     /* above the plate AND the silhouettes — see the note in C2 */
   background:
-    linear-gradient(180deg, rgba(9, 7, 5, 0.64) 0%, rgba(9, 7, 5, 0.46) 22%,
-                            rgba(9, 7, 5, 0.30) 34%, rgba(9, 7, 5, 0.08) 46%,
-                            rgba(9, 7, 5, 0) 54%),
+    /* 0 PER-HUB TOP-BAND BOOST, opt-in, `none` on five of six hubs. Some plates
+       carry burnt-in painted TEXT that a crop cannot reach — see The Camp. This
+       is still a gradient that reaches alpha 0, so it darkens a band and leaves
+       the rest of the frame's contrast alone; it is not the flat veil. */
+    var(--keep-scrim-extra, none),
+    linear-gradient(180deg, rgba(9, 7, 5, 0.64) 0%, rgba(9, 7, 5, 0.52) 14%,
+                            rgba(9, 7, 5, 0.34) 20%, rgba(9, 7, 5, 0.12) 24%,
+                            rgba(9, 7, 5, 0) 27%),
     linear-gradient(0deg,   rgba(9, 7, 5, 0.66) 0%, rgba(9, 7, 5, 0.34) 9%,
                             rgba(9, 7, 5, 0.08) 17%, rgba(9, 7, 5, 0) 24%),
-    radial-gradient(140% 108% at 50% 38%, rgba(11, 9, 6, 0) 0%, rgba(11, 9, 6, 0.22) 62%, rgba(6, 5, 3, 0.58) 100%),
-    linear-gradient(0deg,   rgba(30, 20, 10, 0.26), rgba(30, 20, 10, 0.26)),
-    linear-gradient(180deg, rgba(18, 16, 12, 0.52) 0%, rgba(11, 9, 6, 0.16) 30%, rgba(9, 7, 5, 0.30) 72%, rgba(9, 7, 5, 0.44) 100%);
+    radial-gradient(140% 108% at 50% 38%, rgba(20, 13, 7, 0) 0%, rgba(20, 13, 7, 0.22) 62%, rgba(12, 8, 4, 0.58) 100%),
+    linear-gradient(180deg, rgba(26, 19, 11, 0.52) 0%, rgba(20, 14, 8, 0.16) 30%, rgba(16, 11, 6, 0.30) 72%, rgba(16, 11, 6, 0.44) 100%);
 }
 
 /* ── THE FOREGROUND PLATE (§3 "painted art", comp-hub.html:365-367) ────────
@@ -585,28 +694,43 @@ html body #app.page-fade-in:has(> .spellbook-hub.is-sub) {
   background-size: contain;
   z-index: 1;     /* over the plate, under the wash — the comp's order */
 }
+/* 🐛 THE BOX THAT ATE THE FIGURE. The comp's silhouettes are <img> elements
+   given a WIDTH ONLY (`.bg-spears{width:640px}`) — the intrinsic aspect then
+   sets the height, and `Sparta Spartan.png` is 640x960, so the armoured figure
+   and its tripod stand 960px tall and fill the comp's whole left third.
+   Ours are CSS background-images, which have no intrinsic sizing: the box needs
+   an explicit height, round 1 guessed 620px, and `background-size:contain`
+   dutifully shrank a 2:3 painting into a 640x620 box — the figure came out
+   ~413px wide, anchored to the bottom, leaving the left third of every Battle
+   Hall render empty. Measured against the comp at x40,y300: peak red 36 vs 58,
+   the whole difference being that the comp has a painted figure there and we
+   had bare plate.
+   The heights below are the files' own aspect at the comp's width — Spartan
+   640x960, turtle 1280x853 at width 760 → 507. If either file is ever replaced,
+   these two numbers must be recomputed or the art silently rescales again. */
 .spellbook-hub.is-sub .spellbook-hub-bg .keep-fg-l {
   left: -150px;
   bottom: -90px;
   width: 640px;
-  height: 620px;
+  height: 960px;   /* 640x960 intrinsic — see above */
   transform: rotate(-7deg);
   background-image: var(--keep-fg-l, none);
-  filter: brightness(0.42) saturate(0.34) contrast(1.10);
+  /* The comp's own exposure, to the digit. */
+  filter: brightness(0.50) saturate(0.38) contrast(1.10);
   opacity: 0.85;
-  -webkit-mask-image: linear-gradient(to top, #000 0%, #000 54%, transparent 100%);
-          mask-image: linear-gradient(to top, #000 0%, #000 54%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to top, #000 0%, #000 58%, transparent 100%);
+          mask-image: linear-gradient(to top, #000 0%, #000 58%, transparent 100%);
 }
 .spellbook-hub.is-sub .spellbook-hub-bg .keep-fg-r {
   right: -40px;
   bottom: -34px;
   width: 760px;
-  height: 620px;
+  height: 507px;   /* 1280x853 intrinsic at 760 wide — see above */
   background-image: var(--keep-fg-r, none);
-  filter: brightness(0.60) saturate(0.55) contrast(1.05) drop-shadow(0 20px 40px #000);
+  filter: brightness(0.74) saturate(0.62) contrast(1.05) drop-shadow(0 20px 40px #000);
   opacity: 0.95;
-  -webkit-mask-image: linear-gradient(to top, #000 0%, #000 58%, rgba(0, 0, 0, 0.45) 86%, transparent 100%);
-          mask-image: linear-gradient(to top, #000 0%, #000 58%, rgba(0, 0, 0, 0.45) 86%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to top, #000 0%, #000 62%, rgba(0, 0, 0, 0.45) 88%, transparent 100%);
+          mask-image: linear-gradient(to top, #000 0%, #000 62%, rgba(0, 0, 0, 0.45) 88%, transparent 100%);
 }
 /* Battle Hall is the hub the comp itself draws, so it gets the comp's own two
    silhouettes on the comp's own plate. The other five stay flat rather than
@@ -810,6 +934,27 @@ html body .keep-hud .hub-currency-rail #hub-cloud-pill:not(#keep-none):hover {
 }
 .keep-hud .hub-currency-rail .rail-sub { color: var(--keep-gold-grey); }
 
+/* THE LEVEL MARK. The rail's own markup now ships a stroked shield SVG instead
+   of `getLevelIcon()`'s raster (index.html, `_hubCurrencyRailHtml()`), so this
+   only has to size it — `.keep-inline-glyph` above already gives it the stroke,
+   the gold and the join.
+   ⚠ THE `!important` BELOW IS NOT DECORATION. `getLevelIcon()` writes an INLINE
+     `style="…filter:drop-shadow(…)"` onto its <img>, and an inline declaration
+     beats any stylesheet rule that is not important. If that helper is ever put
+     back on this pod — or reaches it through another call site — this is the
+     only thing that stops a red-and-silver heraldic sprite from being the one
+     colour mark in an otherwise monochrome-gold plaque. grayscale FIRST so the
+     red is gone rather than merely muted, then sepia + saturate + a small
+     negative hue rotation to land on --keep-gold instead of sepia's browner
+     default; the drop-shadow is carried over so nothing is lost. */
+.keep-hud .hub-currency-rail .acc-pill-level { display: flex; align-items: center; gap: 0.3rem; }
+.keep-hud .hub-currency-rail .acc-pill-level .keep-inline-glyph { width: 15px; height: 15px; }
+html body .keep-hud .hub-currency-rail .acc-pill-level img {
+  filter: grayscale(1) sepia(0.55) saturate(1.6) hue-rotate(-8deg) brightness(1.05)
+          drop-shadow(0 1px 2px rgba(0, 0, 0, 0.7)) !important;
+}
+
+
 /* THE ACCOUNT XP METER. Round 1 left this as hub-chrome's bare 1px outline,
    and at 0 XP — which is every signed-out player, i.e. every first impression —
    the fill has zero width and the whole thing reads as an undressed hairline
@@ -818,17 +963,30 @@ html body .keep-hud .hub-currency-rail #hub-cloud-pill:not(#keep-none):hover {
    1px gold hairline, the octagonal cut at the smallest size, and an inner top
    highlight. Empty, it now reads as a deliberate empty gauge. */
 html body .keep-hud .hub-currency-rail .acc-pill-bar:not(#keep-none) {
+  position: relative;
   width: 46px;
-  height: 8px;
-  clip-path: var(--keep-oct-6);
+  height: 10px;
+  /* 3px, not 6px — a 6px cut on a box this short self-intersects. See the note
+     on --keep-oct-3. The slot must read as closed on all eight edges. */
+  clip-path: var(--keep-oct-3);
   border: 0 !important;
-  background: linear-gradient(180deg, #0a0806 0%, #14100a 100%) !important;
+  /* ONE half-way tick in the well, not three. Three quarter-ticks turned the
+     slot into a four-cell tray and read as an empty inventory strip; one tick
+     reads as the midpoint of a meter, which is what it is. It lives UNDER the
+     fill, so it is only ever visible in the part of the gauge that is empty. */
+  background:
+    linear-gradient(90deg, transparent 0 calc(50% - 1px), rgba(138, 111, 60, 0.26) calc(50% - 1px) 50%,
+                           transparent 50% 100%),
+    linear-gradient(180deg, #0a0806 0%, #14100a 100%) !important;
   box-shadow: inset 0 0 0 1px rgba(138, 111, 60, 0.55),
               inset 0 1px 0 rgba(246, 220, 149, 0.10),
               inset 0 0 6px rgba(0, 0, 0, 0.9) !important;
 }
 html body .keep-hud .hub-currency-rail .acc-pill-bar-fill:not(#keep-none) {
-  min-width: 0;
+  /* A 3px floor so a zero-XP account still shows a lit head at the left edge —
+     a gauge at rest, not a gauge that failed to render. Below 3px the glow
+     below is wider than the thing glowing and it reads as a smudge. */
+  min-width: 3px;
   background: linear-gradient(180deg, var(--keep-gold-hi-2) 0%, #c9a45a 46%, #a67f3c 100%) !important;
   box-shadow: 0 0 7px rgba(232, 200, 119, 0.55) !important;
 }

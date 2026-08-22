@@ -9,9 +9,10 @@
 
    WHAT THIS FILE OWNS — four things, and nothing else:
      1. `#md-nav-flash` — the body-level element `_playNavFlash()` fires on EVERY
-        navigation (index.html:113248). Shipped cyan → white → violet, the last
-        surviving piece of the Master-Duel skin. Re-cut here as a warm-gold
-        torch pass over a brief ember veil.
+        navigation (defined index.html:113298, called from `_renderImpl` at
+        index.html:110897). Shipped cyan → white → violet, the last surviving
+        piece of the Master-Duel skin. Re-cut here as a warm-gold torch pass
+        over an ember veil that is already lit when the page changes under it.
      2. The sub-hub ENTRANCE — background art settles, the title block resolves,
         the tile band lands in a ~240ms stagger. Pure CSS: `renderTitle()`
         replaces the whole sub-hub subtree on every render, so MOUNTING the
@@ -61,6 +62,9 @@
 
          bg{op=1 sc=1.045 anims=[hubTxBgPush:running:0, hubTxBgLift:running:0]}
          banner{op=1 tr=0px -8px sc=1.04 …}  p0{op=1 tr=0px 18px sc=0.955 …}
+                                              ↑ that probe predates §3 dropping
+                                                the tiles' scale; the shape of the
+                                                result is what matters here
 
        Three shapes were tested head-to-head on a page that mounts its nodes
        after load, exactly as `renderTitle()` does. Frozen-clock outcome:
@@ -161,7 +165,16 @@
        effect if ANY property in it is unsupported, so one inert declaration
        moves the whole animation to the main thread and the element paints from
        its real style. Measured over six runs each: unpinned 5/6 blank; pinned
-       6/6 identical to a capture with this entire file deleted.
+       6/6 painting.
+
+       ⚠ "PINNED = IDENTICAL TO THE FILE DELETED" IS ALMOST TRUE AND THE GAP IS
+       WORTH KNOWING. Diffed properly — a settled Battle Hall against the SAME
+       page with the `<link>` to this sheet removed — the pinned sheet came back
+       0.004% of pixels different, maxDelta 154, on about 25 pixels of anti-alias
+       around `.keep-diamond`. It is not literally zero, and the earlier revision
+       of this comment claiming "identical" was rounding in its own favour. It got
+       there from 0.371% only by deleting `scale` from the tile keyframes; see the
+       tile band in §3 for that measurement.
 
        WHY THIS PROPERTY. Nothing this file animates paints an outline, so the
        pin is guaranteed inert on every element it lands on:
@@ -211,7 +224,7 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    1 · THE NAVIGATION SWEEP  —  #md-nav-flash
    ═══════════════════════════════════════════════════════════════════════════
-   `_playNavFlash()` (index.html:113248) creates this div once, then re-triggers
+   `_playNavFlash()` (index.html:113298) creates this div once, then re-triggers
    it by removing/reflowing/adding `.go` on every screen or hub change. That
    trigger is not ours to rebuild — we restyle what it fires.
 
@@ -260,6 +273,27 @@
    KEYFRAME NAMES are `hubTx…`, NEVER the legacy `mdWhoosh`: that name is shared
    with `#md-whoosh` (index.html:112941), and redefining it would silently
    restyle a second, unrelated effect.
+
+   ⚠⚠ HOW TO ACTUALLY SEE THIS SWEEP, because two rounds of review could not and
+   both concluded from that it was not there. THE HEADLESS HARNESS WILL NOT PAINT
+   THIS ELEMENT AT ITS SHIPPED `z-index: 2147480000`. Bisected on two pages that
+   differ in one declaration and nothing else: at `z-index: 9999` the veil paints
+   (ground rgb(10,8,6) → rgb(44,28,13)); at the legacy 2147480000 the identical
+   page paints the bare ground, as soon as ANY other positioned element exists on
+   it — which on a real hub is every layer there is. It is not a blend-mode
+   problem (normal blend fails the same way), not the animation (a static
+   `opacity:.88` fails too), and not `color-mix` (the same gradient on a plain div
+   paints fine). It is paint order at an extreme z-index, it is this environment
+   only, and 2147480000 is a perfectly legal int32 that real browsers honour.
+   So the verification recipe is: put the settled hub PNG into a page as a flat
+   <img>, add `#md-nav-flash.go` over it, override `z-index` to 9999 FOR THE
+   CAPTURE ONLY, re-emit these three keyframe blocks with `outline-color:
+   transparent` added (an unpinned frozen composited layer paints at its first
+   keyframe here, see R5), and sample with `animation-delay: -Xms !important` —
+   the document clock never advances, so a negative delay is the only way to move
+   through the animation. Measured that way at 1920x1080 over the Battle Hall,
+   row y=400: base rowMean 12.4 → 33.1 at t=16ms → 40.2 at t=80ms. The plate is
+   already warm on the frame that carries the cut, which is the entire point.
    ------------------------------------------------------------------------- */
 html body #md-nav-flash {
   position: fixed;
@@ -480,6 +514,29 @@ html body #mm-frame {
    content that arrived before its own background — the exact "web page fading
    in" this file exists to avoid.
 
+   ⚠ MEASURED ON THE REAL BATTLE HALL, NOT DRAWN ON PAPER. The document clock is
+   frozen here, so screenshots cannot show this; the way to read it is to walk the
+   animations by hand — `el.getAnimations().forEach(a => a.currentTime = t)` and
+   then `getComputedStyle` — which works fine with a stopped timeline. Opacity per
+   element, seven tiles across:
+
+       t=0     bg 1     topbar 1     banner 1     tiles 1 1 1 1 1 1 1   ← R0: the
+                                                    1ms lead, page at rest
+       t=60    bg .66   topbar .14   banner 0      tiles 0 0 0 0 0 0 0
+       t=120   bg .84   topbar .72   banner .57    tiles 0 0 0 0 0 0 0
+       t=180   bg .92   topbar .90   banner .84    tiles .58 0 0 0 0 0 0
+       t=260   bg .97   topbar .98   banner .96    tiles .97 .87 .58 0 0 0 0
+       t=340   bg .99   topbar 1     banner .99    tiles 1 1 .97 .87 .58 0 0
+       t=420   bg 1     footer .53                 tiles 1 1 1 1 .97 .87 .58
+       t=640   everything 1, `translate: none` everywhere
+
+   Read the tile columns: the cascade is strictly monotonic, no tile ever
+   overtakes an earlier one, the first lands at ~140ms and the seventh is away by
+   ~380ms — the ~240ms §4 asks for, at 40ms a tile. The topbar is ahead of the
+   title at every sample (.72 vs .57 at 120ms), which is the ordering §"TOP BAR"
+   in the header describes. And t=0 and t=640 are both the settled page, which is
+   R0 and R3 holding: nothing here has an endpoint of its own to leave behind.
+
    ⚠ HONEST LIMIT — MOUNTING IS THE ONLY TRIGGER, so ANY `render()` that lands
    while a sub-hub is open replays the whole 680ms. That is the price of "pure
    CSS, no index.html edit": there is no state to consult, only new nodes. It is
@@ -626,10 +683,28 @@ html body #mm-frame {
 }
 
 /* ---- the tile band: lands ----------------------------------------------- */
-/* `translate`/`scale` per R2 — `.hub-portal` owns `transform` for its hover lift
+/* `translate` per R2 — `.hub-portal` owns `transform` for its hover lift
    (`translateY(-3px)`, hub-tiles.css:539) and this file never touches it. Rising
-   18px into a hair of overshoot is what gives the band weight: the tile arrives,
-   is briefly a touch large, then sets.
+   18px through `--hub-tile-ease` is what gives the band weight: that curve ends
+   at 1.06, so each tile rises a hair PAST its resting line and settles back onto
+   it. The tile arrives, bounces off the floor, sets.
+
+   ⚠ AND IT IS TRANSLATE ONLY — THE `scale: 0.955` THAT USED TO OPEN THESE SEVEN
+   BLOCKS IS DELETED, ON A MEASUREMENT. It was a second helping of weight the
+   overshoot already provides, and it was not free: giving every `.hub-portal` a
+   `scale` keyframe re-rasterizes the tile for the life of the animation, and the
+   settled frame came back with each tile's bottom hairline and its badge text
+   snapped ~0.4px off. Same page, same harness, settled capture diffed against the
+   very same page with this stylesheet UNLINKED:
+       with    `scale: 0.955`   0.371% of pixels differ, maxDelta 230,
+                                concentrated on rows 442 / 585-586 / 794 / 937-938
+                                — i.e. exactly the art-panel and tile bottom edges
+       without `scale: 0.955`   0.004% of pixels differ, maxDelta 154, and the
+                                survivors are ~25 pixels around y=208-216, which is
+                                `.keep-diamond`'s own scale, not the tiles'
+   A one-shot 640ms entrance is not allowed to change how the tile band rasterizes
+   for the rest of the session. If a future revision wants the scale back, re-run
+   that diff first.
 
    NOT scoped to `.hub-portal-grid > …`. `.hub-portal` is one of the five class
    names contractually guaranteed to survive the remodel; the grid's class name
@@ -680,13 +755,13 @@ html body #mm-frame {
 .spellbook-hub.is-sub .hub-portal:nth-child(6)    { animation: hubTxTileLand5 600ms var(--hub-tile-ease) 1ms; }
 
 /* R5 pin first in each block; it is inert and it is what makes these paint. */
-@keyframes hubTxTileLand0 { 0%, 35% { outline-color: transparent; opacity: 0; translate: 0 18px; scale: 0.955; } }
-@keyframes hubTxTileLand1 { 0%, 40.909% { outline-color: transparent; opacity: 0; translate: 0 18px; scale: 0.955; } }
-@keyframes hubTxTileLand2 { 0%, 45.833% { outline-color: transparent; opacity: 0; translate: 0 18px; scale: 0.955; } }
-@keyframes hubTxTileLand3 { 0%, 50% { outline-color: transparent; opacity: 0; translate: 0 18px; scale: 0.955; } }
-@keyframes hubTxTileLand4 { 0%, 53.571% { outline-color: transparent; opacity: 0; translate: 0 18px; scale: 0.955; } }
-@keyframes hubTxTileLand5 { 0%, 56.667% { outline-color: transparent; opacity: 0; translate: 0 18px; scale: 0.955; } }
-@keyframes hubTxTileLand6 { 0%, 59.375% { outline-color: transparent; opacity: 0; translate: 0 18px; scale: 0.955; } }
+@keyframes hubTxTileLand0 { 0%, 35% { outline-color: transparent; opacity: 0; translate: 0 18px; } }
+@keyframes hubTxTileLand1 { 0%, 40.909% { outline-color: transparent; opacity: 0; translate: 0 18px; } }
+@keyframes hubTxTileLand2 { 0%, 45.833% { outline-color: transparent; opacity: 0; translate: 0 18px; } }
+@keyframes hubTxTileLand3 { 0%, 50% { outline-color: transparent; opacity: 0; translate: 0 18px; } }
+@keyframes hubTxTileLand4 { 0%, 53.571% { outline-color: transparent; opacity: 0; translate: 0 18px; } }
+@keyframes hubTxTileLand5 { 0%, 56.667% { outline-color: transparent; opacity: 0; translate: 0 18px; } }
+@keyframes hubTxTileLand6 { 0%, 59.375% { outline-color: transparent; opacity: 0; translate: 0 18px; } }
 
 /* ---- footer ------------------------------------------------------------- */
 /* Last, and barely — it is a Terms of Service link, not an event.
@@ -709,11 +784,25 @@ html body #mm-frame {
      · no stagger — the band arrives as one object
      · no sweep — `#md-nav-flash` keeps only its warm veil, which is a pure
        opacity ramp and the most literal possible reading of "crossfade"
-     · every settled frame is identical to the full-motion one, because no fade
-       here names an endpoint either (R3) and none of them fills (R0). Verified,
-       not asserted: `tools/shot.mjs battle` and the same capture under
-       `--force-prefers-reduced-motion` return the same image statistics as a
-       capture with this whole file removed.
+     · every settled frame lands where the full-motion one does, because no fade
+       here names an endpoint either (R3) and none of them fills (R0).
+
+   VERIFIED, WITH THE NUMBERS, because "verified" on its own is worth nothing.
+   A settled Battle Hall under `--force-prefers-reduced-motion`, diffed against
+   the same page with this sheet's `<link>` removed: 2.5% of pixels differ but
+   maxDelta is 31, and the hot rows are y=980-987 — the ambient band at the foot
+   of the frame. That residue is NOT this file: hub-keep.css:1019 drops
+   `.spellbook-embers span` to `animation:none; opacity:.25` under the same query,
+   against a .30 rest elsewhere. Nothing here is stuck, dimmed or displaced.
+
+   And what actually attaches, read off the live elements rather than inferred
+   (`getAnimations()` on a sub-hub, normal vs forced-reduce, same page):
+     normal   topbar hubTxTopbarIn 370ms · banner hubTxTitleIn 410ms ·
+              bg hubTxBgIn 460ms · diamond hubTxDiamondIn 600ms ·
+              footer hubTxFooterIn 680ms · tiles hubTxTileLand0…6, in order
+     reduce   topbar/banner/diamond/footer/EVERY tile → hubTxFadeIn ·
+              bg → hubTxBgFlatIn
+   One shared fade, no per-tile index, no keyframe that moves anything.
 
    HOW THESE RULES WIN WITHOUT `!important`: each selector is at least as
    specific as the one it overrides and this block is the end of the file, so

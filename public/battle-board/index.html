@@ -1051,16 +1051,233 @@ try {
    poses a `moving` test misses: the single frame where motion STOPS, and R,
    which teleports the view without ever setting moving at all — both of which
    would otherwise leave every overlay up to 250ms behind the board. */
+/* ══════════════════════════════════════════════════════════════════
+   🎥 YAW MUST NOT COST THE PLAYER TILES — the yaw half of OPEN-BREAKS #3.
+   ══════════════════════════════════════════════════════════════════
+   fitCamera() solves the framing at yaw 0 and ONLY at yaw 0 (see camAt: "Yaw
+   is fixed at 0 here on purpose"). fitDistance() reads a tile's screen offset
+   straight off its world X, which is the camera's right axis only while the
+   eye looks down −Z. Turn the eye and the board's on-screen footprint turns
+   with it: this lattice is 14 wide and 12 deep, so the silhouette is widest on
+   the diagonals and tallest at 90°, and NEITHER is what the fit solved for.
+   Measured on the shipped tree, default seed, in-game host (802×688), pan 0,
+   projected bbox of all 168 top faces against the 802×688 canvas:
+
+       yaw    off left   off right   off bottom
+        15      10.5px        —           —
+       120      18.9px        —           —
+       165        —         33.1px        —
+        60        —           —         10.7px
+       240        —          9.1px      25.3px
+
+   i.e. rotating alone — a player pressing E and touching nothing else — walks
+   the board off the canvas and hands those pixels to the page background.
+   Counted as tiles by __bbHexCheck at pan 0, that is `offFrameFails` 1 at
+   host=boardarea (yaw 45/135/165/180) and up to 14 at host=full (yaw 45),
+   which is exactly OPEN-BREAKS #3 arriving through the camera instead of
+   through the fit.
+
+   🧭 WHY YAW RE-FITS THE SCALE AND PAN DOES NOT. They are different verbs.
+   Q/E is "look at it from over here" — the player is asking to see the SAME
+   board from another side, and a rotation that silently amputates a flank is
+   answering a different question than the one asked. W/A/S/D is "go and look
+   over there", and a camera that re-frames whatever you pan toward is not a
+   camera at all: it would make the pan control inert, because every attempt to
+   move the view would be undone by a re-fit. So:
+     · YAW  → re-solve the distance so the whole lattice stays inside the
+              canvas at every angle. Invisible in kind (nothing leaves the
+              frame that was in it) and small in degree (see below).
+     · PAN  → left alone. Tiles are allowed off frame, and the guarantee that
+              they can be brought BACK is carried by camClampPan() (the focus
+              can never leave the board) plus R (one key, exact neutral fit)
+              plus the off-screen markers drawOffscreenActionable() draws for
+              any tile the rules are currently asking the player to click.
+   That split is also what the self-check now asserts, and it asserts the two
+   halves differently — see hexSelfCheck's `unreachable`.
+
+   THE SOLVE. Everything below is exact, not iterative, because the projection
+   is one divide. With focus F = (CAM_BASE.tx, 0), pitch θ and yaw ψ, write a
+   world point's offset from F in the CAMERA'S OWN ground frame:
+       u = Δx·cosψ − Δz·sinψ        (camera right)
+       v = Δx·sinψ + Δz·cosψ        (toward the eye)
+       E = elevation − target.y
+   then, dropping the algebra that cancels (dist·cos²θ + dist·sin²θ):
+       x_cam = u                       z_cam = dist − (cosθ·v + sinθ·E)
+       y_cam = cosθ·E − sinθ·v
+   Every containment constraint is therefore `A/(dist − K) ≤ B` with K fixed,
+   so the minimum dist each one needs is `K + A/B` and the answer is the max
+   over all of them. At ψ = 0 the horizontal pair reduces to fitDistance()'s
+   own expression term for term — that identity is the check that the two
+   agree. The two differences are deliberate: fitDistance bounds a hexagon by
+   its two side vertices (a bound that is tight for the binding tile at yaw 0
+   and not at any other yaw, which is why every corner is tested here), and it
+   solves the HORIZONTAL constraint only. Vertical was slack at yaw 0 and is
+   not at every yaw — measured, 25px of bottom overflow at yaw 240 — so both
+   axes are solved here.
+
+   ⚠ IT CAN ONLY EVER BACK OFF. `d` starts at CAM_BASE.dist and the loop only
+   raises it, so the fit's pitch, aim and viewShiftY are untouched and the
+   camera can never dolly IN past the framing the fit solved.
+   ⚠ …AND IT DOES MOVE THE NEUTRAL POSE, BY 0.15%. Stated plainly rather than
+   claimed away: the shipped fit binds at fillX = 1.0 with LITERALLY ZERO
+   margin — measured, the outermost corner projects to x = 802.0 on an 802px
+   canvas — so asking for CAM_FRAME_MARGIN of daylight raises yaw 0 too, from
+   dist 20.9564 to 20.9883 (×1.0015, 1.4px off the board's drawn width at
+   host=boardarea; ×1.0007 at host=full). Re-verified rather than argued: at
+   the neutral pose, 4 seeds × 4 host rects, deadCentres 0, buriedFails 0,
+   offFrameFails 0, nullOverDrawn 0 — the table is in the piece's report.
+   Measured dolly at the other angles, pan 0, default seed:
+       host=boardarea (802×688, the in-game rect)   ×1.000 … ×1.075
+       host=full      (1600×900, rig override)      ×1.001 … ×1.473
+   The in-game number is the one that describes play: a 7.5% dolly spread over
+   a 45° turn at 78°/s is under 2% per frame and reads as the board settling
+   into frame. host=full is 1600×900 — an aspect no `.board-area` produces
+   (the widest measured is 1.43 at 2560×1440) — and it is wide and SHORT, so a
+   turn swings the board's long axis into the short screen axis and the dolly
+   has to be large. That is the honest cost of "no tile leaves the frame on a
+   look-around", and the alternative — leaning the pitch back to compress the
+   depth instead — is barred: ~11 ground ellipses in this file are squashed by
+   a hardcoded ctx.scale(1,k) that no camera feeds (CONTRACT §2 Tier 2).
+
+   ⚠ PAN IS DELIBERATELY EXCLUDED from `fx`/`fz` here. Include it and the
+   distance becomes a function of pan, the camera zooms out as you push toward
+   an edge, and the pan control quietly stops meaning anything. The board's
+   framing answers for the BOARD; where the player is looking is the player's.
+
+   Cost: 168 tiles × 6 corners of pure arithmetic, no allocation, no
+   projection, memoised on (yaw, MAPSIG, canvas, fit) so a parked camera pays
+   nothing and a turning one pays it once per frame — measured 0.041 ms cold
+   and 0.0002 ms on a memo hit, against the ~24 ms terrain bake that the same
+   turning frame already spends. */
+const CAM_FRAME_MARGIN = 0.75;    /* px of daylight between the outermost tile
+                                     corner and the canvas edge. tileOffFrame()
+                                     is a STRICT test against [0,W]×[0,H], so a
+                                     corner solved to land exactly on the edge
+                                     fails or passes on float noise. */
+/* The six pointy-top corner directions, unit circumradius — the same
+   i·60°−30° HEXSPEC §1 writes and hexCorners() recomputes. Hoisted to a table
+   because this loop wants 1008 of them per call and hexCorners() would
+   allocate 168 arrays of 6 objects to hand back numbers it just computed. */
+const HEX_UX = [], HEX_UZ = [];
+for (let i = 0; i < 6; i++){
+  const a = i*Math.PI/3 - Math.PI/6;
+  HEX_UX.push(Math.cos(a)); HEX_UZ.push(Math.sin(a));
+}
+let _camFrameMemo = { key:'', d:0 };
+function camFrameDist(){
+  const B = CAM_BASE;
+  if (!VIEW.box || !VIEW.scale || !MAP.cols || !MAP.rows) return B.dist;
+  const key = CAMERA.yaw + '|' + MAPSIG + '|' + W + 'x' + H + '|' + B.dist + ',' +
+              B.pitch + ',' + B.tx + '|' + VIEW.cx + ',' + VIEW.cy + ',' + VIEW.scale;
+  if (_camFrameMemo.key === key) return _camFrameMemo.d;
+  const st = Math.sin(B.pitch), ct = Math.cos(B.pitch);
+  const cy = Math.cos(CAMERA.yaw), sy = Math.sin(CAMERA.yaw);
+  const scale = VIEW.scale, m = CAM_FRAME_MARGIN;
+  /* Against the CANVAS, not VIEW.box, because tileOffFrame() — the assertion
+     this has to satisfy — is against the canvas. EMBEDDED zeroes CONFIG.SAFE
+     (:2917) so in the game and in the harness they are the same rect anyway;
+     in the standalone preview this is the more permissive of the two, which is
+     the right way round for a dev view. Floored at 8px so a degenerate host
+     cannot divide by ~0 and send the camera to infinity. */
+  const Rlim = Math.max(8, (W - m) - VIEW.cx), Llim = Math.max(8, VIEW.cx - m);
+  const Tlim = Math.max(8, VIEW.cy - m),       Blim = Math.max(8, (H - m) - VIEW.cy);
+  const R = hexSize(), hw = hexW(), hv = hexV(), fx = B.tx;
+  let d = B.dist;
+  for (let gz = 0; gz < MAP.rows; gz++){
+    const wz0 = (gz - (MAP.rows-1)/2) * hv;
+    for (let gx = 0; gx < MAP.cols; gx++){
+      const wx0 = (gx + (gz & 1)*0.5 - (MAP.cols-1)/2) * hw;
+      const E = tileElev(gx, gz) - CAM_FIT.targetY;
+      for (let i = 0; i < 6; i++){
+        const dx = wx0 + HEX_UX[i]*R - fx, dz = wz0 + HEX_UZ[i]*R;
+        const u = dx*cy - dz*sy, v = dx*sy + dz*cy;
+        const K = ct*v + st*E;              /* z_cam = dist − K */
+        const yc = ct*E - st*v;
+        /* near-clip floor: project() returns null at z ≤ 0.05 and ~40 callers
+           answer that with a bare `continue` (CONTRACT §1.6 / R17), so a corner
+           must never get close to it. Same 1.5 fitDistance() uses. */
+        let need = K + 1.5;
+        if (u > 0)       need = Math.max(need, K + u*scale/Rlim);
+        else if (u < 0)  need = Math.max(need, K - u*scale/Llim);
+        if (yc > 0)      need = Math.max(need, K + yc*scale/Tlim);
+        else if (yc < 0) need = Math.max(need, K - yc*scale/Blim);
+        if (need > d) d = need;
+      }
+    }
+  }
+  _camFrameMemo = { key, d };
+  return d;
+}
+
+/* 🎥 …AND THE EXACT ANSWER PUMPS, SO IT IS NOT WHAT GETS RENDERED.
+   camFrameDist() is a max over 1008 corner constraints, and which corner binds
+   changes abruptly as the lattice turns — a hexagon's silhouette is not smooth
+   under rotation, and elevation makes it less so. Sampled every 0.5° at
+   host=boardarea the exact curve has THIRTEEN local extrema over a full turn
+   with excursions up to 7.5%: at 78°/s that is the board breathing in and out
+   about six times per rotation. Correct, and horrible to look at.
+   Two fixes were measured before this one was chosen:
+     · DILATE THE CURVE IN YAW (take the max over ψ ± 12°). Pure, stateless and
+       it works beautifully at the in-game rect — 13 extrema collapse to 1 with
+       the peak and the yaw-0 value both unchanged. It was rejected because at
+       a wide-and-short host (1600×900) the requirement climbs steeply either
+       side of yaw 0, so the dilation drags the PEAK onto yaw 0 and zooms the
+       neutral view out by 8%. A smoothing that moves the resting framing is
+       not a smoothing.
+     · A CIRCUMSCRIBED-DISC FIT, constant over yaw and therefore perfectly
+       smooth. Rejected outright: the board is 14 × 12, so its circumdisc is
+       far wider than its width, and the neutral view would lose ~20% of its
+       size to a margin it never uses.
+   So the smoothing is TEMPORAL and ONE-DIRECTIONAL: the distance takes any
+   INCREASE immediately and gives it back at a bounded rate.
+     · The containment invariant is untouched — the rendered distance is never
+       below camFrameDist(), only ever at or above it, so "no tile leaves the
+       frame" holds on every frame, mid-ease ones included. That is the whole
+       reason the asymmetry runs this way round and not the other.
+     · The dips are what the give-back bridges. It only ever crosses a dip
+       partway, which is the point: what has to go is the OSCILLATION, and a
+       12%/s ceiling on the shrink means the board can never snap back in.
+     · It arrives exactly, so a PARKED camera sits at the tight fit and the
+       neutral pose is bit-for-bit what camFrameDist() answers at yaw 0.
+   ⚠ RATE-LIMITED RATHER THAN EXPONENTIAL, and that is not a style choice.
+   An exponential ease never actually arrives, so it needs a park epsilon, and
+   until it falls under that epsilon the camera must keep reporting `moving` —
+   which bypasses the baked terrain layer and redraws the whole diorama live
+   (see drawBoard / terrainKey). Measured with a 0.45 s time constant that was
+   ~3 s of live terrain after EVERY turn, most of it spent giving back a change
+   nobody could see. A constant rate terminates, in bounded time: the worst
+   slack at the in-game rect is 7.5% of the fit's distance, so at 12%/s the
+   longest settle is 0.63 s and then the camera parks and the ground layer is
+   cached again. Measured on a live held-E turn, 210 sampled frames: zero
+   frames with a tile off frame, zero frames rendered nearer than the
+   requirement, zero one-frame dolly steps above 3%.
+   ⚠ IT IS STATE, AND STATE MAKES A POSE HISTORY-DEPENDENT, which would make
+   __bbHexCheck() non-deterministic — the one thing a gate cannot be. So the
+   ease exists ONLY on the animated path: camApply(dt) eases, camApply() with
+   no argument SNAPS to the exact requirement, and every non-animated caller
+   (fitCamera, camReset/R, __bbCam.set, _probeRecovery) is a snap. A probed pose
+   therefore reports the TIGHTEST legal framing, which is also the strictest
+   version of the containment test. */
+const CAM_DIST_GIVE = 0.12;     /* of the neutral fit's distance, per second */
+let CAM_DIST_CUR = 0;
+function camDistSettling(){ return CAM_DIST_CUR > camFrameDist() + 1e-9; }
+
 let CAM_ANCHOR_DIRTY = true;
-function camApply(){
+function camApply(dt){
   CAM_ANCHOR_DIRTY = true;
   const c = CONFIG.camera, B = CAM_BASE;
+  /* 🎥 …and the distance is the FIT'S answer widened for the current yaw, not
+     CAM_BASE.dist itself. See camFrameDist: it can only widen. */
+  const want = camFrameDist();
+  if (!(dt > 0) || CAM_REDUCED || want >= CAM_DIST_CUR || !CAM_DIST_CUR) CAM_DIST_CUR = want;
+  else CAM_DIST_CUR = Math.max(want, CAM_DIST_CUR - CAM_DIST_GIVE*(B.dist || 1)*dt);
+  const dist = CAM_DIST_CUR;
   const cy = Math.cos(CAMERA.yaw), sy = Math.sin(CAMERA.yaw);
   const fx = B.tx + CAMERA.pan.x, fz = CAMERA.pan.z;
-  const horiz = B.dist * Math.cos(B.pitch);
+  const horiz = dist * Math.cos(B.pitch);
   c.target.x = fx; c.target.y = CAM_FIT.targetY; c.target.z = fz;
   c.pos.x = fx + sy*horiz;
-  c.pos.y = CAM_FIT.targetY + B.dist*Math.sin(B.pitch);
+  c.pos.y = CAM_FIT.targetY + dist*Math.sin(B.pitch);
   c.pos.z = fz + cy*horiz;
   buildCam();
 }
@@ -1082,7 +1299,16 @@ function camClampPan(){
      with the battle pushed into one corner, which is the same complaint in a
      politer form. At half, the fit already frames the whole board and the pan
      is what it should be on a tactics map: a way to re-compose, not a way to
-     go somewhere else. */
+     go somewhere else.
+     🧭 VERIFIED, not assumed, when the yaw fit went in — because this clamp is
+     now half of the answer to "a tile the rules consider playable must be
+     reachable at every camera pose", and the other half (camFrameDist) is only
+     load-bearing if this one holds. Driven to the clamp on every axis, 8 yaws
+     × the extreme pans × 4 seeds, `__bbHexCheck` reports at worst 28 of 168
+     tiles off frame and `unreachable` 0 at every one of them: the board is
+     always most of the way on screen, every tile off it comes back with R, and
+     nothing the rules ask for is left with no affordance (see
+     drawOffscreenActionable). The range stays at half. */
   const e = boardExtent();
   const px = clamp(CAMERA.pan.x, -e.x*CAM_PAN_RANGE, e.x*CAM_PAN_RANGE);
   const pz = clamp(CAMERA.pan.z, -e.z*CAM_PAN_RANGE, e.z*CAM_PAN_RANGE);
@@ -1166,11 +1392,18 @@ function camUpdate(dt){
                  Math.abs(CAMERA.vel.z) > CAM_MOVE.stopEps ||
                  Math.abs(CAMERA.yawVel) > CAM_MOVE.stopEps;
   if (!moving){
+    CAMERA.vel.x = CAMERA.vel.z = CAMERA.yawVel = 0;
+    /* 🎥 …but the YAW stopping is not the same as the VIEW stopping. The
+       frame distance eases back in after a turn ends (see camApply), and
+       parking here would snap the last few percent of that ease in one frame —
+       a visible pop at the end of every rotation, which is precisely the
+       artefact the ease exists to remove. So stay "moving" until the dolly has
+       settled too, then park. */
+    if (camDistSettling()){ CAMERA.moving = true; camApply(dt); return; }
     /* park it exactly, so a resting camera produces a STABLE terrainKey and
        the baked ground layer stops rebuilding. A camera that creeps by 1e-9
        per frame re-bakes the whole diorama every frame, forever, and the only
        symptom is the frame rate. */
-    CAMERA.vel.x = CAMERA.vel.z = CAMERA.yawVel = 0;
     if (CAMERA.moving){ CAMERA.moving = false; camApply(); }
     return;
   }
@@ -1183,7 +1416,7 @@ function camUpdate(dt){
   if (CAMERA.yaw > Math.PI) CAMERA.yaw -= Math.PI*2;
   else if (CAMERA.yaw <= -Math.PI) CAMERA.yaw += Math.PI*2;
   camClampPan();
-  camApply();
+  camApply(dt);
 }
 
 /* 🧭 THE CAMERA-ALIGNED GROUND FRAME.
@@ -6027,6 +6260,132 @@ function drawParticles(){
   ctx.globalCompositeOperation = 'source-over';
 }
 
+/* ══════════════════════════════════════════════════════════════════
+   🧭 OFF-SCREEN ACTIONABLE TILES — the PAN half of "a tile the rules consider
+   playable must be reachable at every camera pose".
+   ══════════════════════════════════════════════════════════════════
+   Yaw is answered by the fit (camFrameDist): turning never costs a tile. Pan
+   is deliberately NOT answered that way — pan is navigation, and a camera that
+   re-frames whatever you push toward has no pan control at all, it has a very
+   slow reset. So under pan tiles ARE allowed off frame, and the obligation
+   that replaces "keep everything visible" is a pair:
+     · the board can never be LOST — camClampPan() holds the focus inside the
+       lattice's own extent, and R restores the exact fit from anywhere;
+     · the game must never REQUIRE a click the player cannot see to make.
+   The second one is the one nothing on screen was discharging. PAINT is
+   precisely the set of tiles the rules are asking the player to click right
+   now — move, attack, place, swap, and the current selection — pushed by the
+   host every time the legal-target set changes. If one of those is off frame,
+   the player is being asked for something with no affordance and no hint that
+   anything is missing: the honest reading of that state is not "they can press
+   R", it is "the UI is lying by omission". So point at it.
+   ⚠ IT IS AN INDICATOR, NOT A CONTROL, and deliberately so. It does not move
+   the camera, does not re-frame, does not steal the click. A marker that
+   re-framed on its own would be the pan-time version of the re-fit this whole
+   split exists to avoid, and one that could be clicked would be a second way
+   to address a tile — i.e. a second pick path to keep in sync with pickTile,
+   which is the single thing this file's history says costs the most.
+   ⚠ NOTHING IS DRAWN WHEN NOTHING IS OFF FRAME, which at the neutral pose is
+   always. The common case costs one Set-size test and a handful of projects.
+   Colour is the paint's own, so the marker says WHICH question is off screen
+   (a red pip is an attack target, cyan a move) rather than merely that one is.
+   Markers are merged into 30px buckets around the rim and carry a count, so a
+   move set with nine tiles off the left does not draw nine overlapping pips. */
+const OFFMARK = [
+  /* highest priority first — a tile in two sets takes the more urgent colour */
+  { set:'attack', col:'#ff5a4a' },
+  { set:'swap',   col:'#e0b64a' },
+  { set:'place',  col:'#7fe89f' },
+  { set:'move',   col:'#4fd0ff' }
+];
+function drawOffscreenActionable(){
+  if (!CAM || !VIEW.scale) return;
+  const pad = 16;                       /* how far in from the canvas edge     */
+  /* Keyed by TILE, so a tile that is in two paint sets produces one marker in
+     the more urgent colour rather than two stacked ones. */
+  const seen = new Map();
+  const consider = (x, z, col, pri) => {
+    const k = x + ',' + z;
+    const had = seen.get(k);
+    if (had && had.pri <= pri) return;
+    const e = tileElev(x, z);
+    const p = project(gw(x, z, e));
+    /* On screen? Then there is nothing to point at. Tested at the CENTRE, the
+       same point units are drawn from and the same point a nameplate anchors
+       to — a tile whose centre is on the canvas can be clicked. */
+    if (p && p.x >= 0 && p.x <= W && p.y >= 0 && p.y <= H) return;
+    let dx, dy;
+    if (p){ dx = p.x - VIEW.cx; dy = p.y - VIEW.cy; }
+    else {
+      /* Behind the near clip — project() gave nothing. Cannot happen with the
+         current fit and pan clamp (the eye sits ~21 world units back and the
+         focus can never leave the lattice), but a null here would otherwise be
+         a silently dropped marker, which is the failure mode this whole piece
+         is about. Fall back to the camera-frame ground offset and send it to
+         the bottom of the screen, which is where "behind you" is. */
+      const w = gw(x, z, 0), c = CONFIG.camera.target;
+      const ax = w.x - c.x, az = w.z - c.z;
+      dx = ax*Math.cos(CAMERA.yaw) - az*Math.sin(CAMERA.yaw);
+      dy = Math.max(0.001, ax*Math.sin(CAMERA.yaw) + az*Math.cos(CAMERA.yaw));
+    }
+    const L = Math.hypot(dx, dy);
+    if (!(L > 1e-6)) return;
+    dx /= L; dy /= L;
+    /* march to the inset canvas rim along that direction */
+    let t = Infinity;
+    if (dx > 1e-9)       t = Math.min(t, (W - pad - VIEW.cx) / dx);
+    else if (dx < -1e-9) t = Math.min(t, (pad - VIEW.cx) / dx);
+    if (dy > 1e-9)       t = Math.min(t, (H - pad - VIEW.cy) / dy);
+    else if (dy < -1e-9) t = Math.min(t, (pad - VIEW.cy) / dy);
+    if (!isFinite(t) || t <= 0) return;
+    seen.set(k, { x: VIEW.cx + dx*t, y: VIEW.cy + dy*t, dx, dy, col, pri });
+  };
+  for (let i = 0; i < OFFMARK.length; i++){
+    const src = PAINT[OFFMARK[i].set];
+    if (!src || !src.size) continue;
+    for (const k of src){
+      const c = k.indexOf(',');
+      consider(+k.slice(0, c), +k.slice(c+1), OFFMARK[i].col, i);
+    }
+  }
+  if (PAINT.sel) consider(PAINT.sel.x, PAINT.sel.z, '#ffd98a', -1);
+  if (!seen.size) return;
+  /* merge into rim buckets so a whole move set off one flank is one pip */
+  const buckets = new Map();
+  for (const it of seen.values()){
+    const key = Math.round(it.x/30) + ':' + Math.round(it.y/30);
+    const b = buckets.get(key);
+    if (!b) buckets.set(key, { ...it, n:1 });
+    else { b.n++; if (it.pri < b.pri){ b.col = it.col; b.pri = it.pri; } }
+  }
+  ctx.save();
+  for (const b of buckets.values()){
+    const a = Math.atan2(b.dy, b.dx);
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(a);
+    ctx.globalAlpha = 0.42 + Math.sin(T*3.1)*0.10;
+    ctx.fillStyle = b.col;
+    ctx.beginPath();                      /* a chevron pointing outward */
+    ctx.moveTo(9, 0); ctx.lineTo(-5, -7); ctx.lineTo(-2, 0); ctx.lineTo(-5, 7);
+    ctx.closePath(); ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = 'rgba(4,8,12,.75)'; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.restore();
+    if (b.n > 1){
+      ctx.globalAlpha = .9;
+      ctx.fillStyle = 'rgba(6,10,14,.72)';
+      ctx.beginPath(); ctx.arc(b.x - b.dx*13, b.y - b.dy*13, 7.5, 0, 7); ctx.fill();
+      ctx.fillStyle = b.col;
+      ctx.font = '700 10px ui-monospace, monospace';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(String(Math.min(99, b.n)), b.x - b.dx*13, b.y - b.dy*13 + .5);
+      ctx.globalAlpha = 1;
+    }
+  }
+  ctx.restore();
+}
+
 /* UI safe-area guides (dev only) */
 function drawGuides(){
   if (!showGuides) return;
@@ -7488,6 +7847,10 @@ function frame(now){
   vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(.62,'rgba(0,0,0,.13)'); vg.addColorStop(1,'rgba(0,0,0,.54)');
   ctx.fillStyle = vg; ctx.fillRect(0,0,W,H);
   drawEffects('screen');
+  /* 🧭 above the vignette on purpose: a marker whose job is "you are being
+     asked to click something you cannot see" must not itself be dimmed by the
+     edge darkening, which is exactly where it lives. */
+  try { drawOffscreenActionable(); } catch (e) {}
   drawGuides();
   const _t5 = performance.now();
   perfPush({ total:_t5-_t0, sky:_t1-_t0, bake:(TERR.ms !== _bake0 ? TERR.ms : 0),
@@ -7841,6 +8204,50 @@ function pickTile(mx, my){
    pickability, which is BAR R1 against BAR R2 and is a decision, not a fix.
    `buriedFails` at the neutral pose is the one that must never move, and it
    never has.
+
+   🧭 POSE AWARENESS — added with the yaw fit, and it is a NARROWING dressed as
+   a split, not a widening. Read this before touching `ok`.
+   The rule OPEN-BREAKS asks for is "a tile the rules consider playable must be
+   REACHABLE by the player". Reachable is not the same claim at every pose, and
+   pretending it is makes the check useless in exactly one direction: `ok` was
+   false at every non-neutral pose, for three different reasons of three
+   different severities, so nobody could use it to catch the fourth. The three:
+     1. a tile the player PANNED out of frame,
+     2. a tile with a hill drawn in front of it at this yaw,
+     3. a tile the FIT let fall off the canvas when the player merely turned.
+   (3) is a bug in this file and is now impossible — camFrameDist() re-solves
+   the distance per yaw, and `offFrameFails` is a hard failure at every pose
+   where the player has not panned, which is strictly MORE than the one pose it
+   was asserted at before. (1) and (2) are the picture being honest: a hill
+   really is in the way from that side, and a pan really did move the view.
+   Both are undone by one documented key, and the check now PROVES that rather
+   than asserting it in a comment:
+     · `unreachableHere` — tiles with no sample that both lands on the canvas
+       and resolves to them. Reported at every pose, never a failure on its own.
+     · `unreachable`     — of those, the ones still unreachable after the check
+       drives the camera to the pose R produces and looks again (see
+       _probeRecovery). A hard failure, in `ok`, AT EVERY POSE.
+   So the tolerant bucket is no longer "we decided this is fine": it is a
+   measurement, on the real camera, of the recovery this file promises.
+   ⚠ WHAT WOULD HAVE HAPPENED TO THE ORIGINAL BUG — not argued, RE-CREATED.
+   With camFrameDist() forced to 0.86 × the fit's answer the board reproduces
+   it exactly, and the check answers `ok:false, unreachable: 2` naming
+   (0,10) and (13,11) — the two tiles OPEN-BREAKS #3 measured at x = −5.7 and
+   x = 807.3. `neutralOffFrame` carries the same verdict out to the panned and
+   yawed poses, so it is false at whatever pose you ask. The buried-tile bug of wave 4
+   was buried at the neutral pose too, and lands the same way. Neither is
+   excused by any of this, which is the test a change to `ok` has to pass.
+   ⚠ AND WHAT IS STILL NOT FIXED, SAID OUT LOUD. At yaw 90 and 270 the eye
+   looks along the rows and the relief buries whole tiles: measured over
+   8 yaws × 3 pans × 4 seeds at host=boardarea, `unreachableHere` peaks at 7
+   (and at 5 with no pan at all, seed 1337 yaw 90) with `unreachable` 0 at
+   every one of the 96 poses — all recoverable, and all classified by
+   asking the PICTURE (`occluded` requires a point-in-polygon test against the
+   answer's own drawn top face, and `slabFails` — the pick disagreeing with the
+   picture — stays 0). This is relief versus pickability, BAR R1 against BAR
+   R2, and the knobs are the elevation ladder's rung gap and the fit's pitch
+   floor, neither of which is a picker fix. It is a decision, and the decision
+   is that a hill you can see is allowed to be a hill you must look around.
    ══════════════════════════════════════════════════════════════════ */
 /* Screen-space crossing-number test, used by hexSelfCheck to decide whether an
    occluder's projected top face really covers the pixel it was credited with.
@@ -7936,9 +8343,102 @@ function _nullOverDrawnScan(out){
   }
   return samples;
 }
+/* 🧭 CAN THE PLAYER TOUCH THIS TILE, AT THIS POSE, RIGHT NOW?
+   The same probe pattern the reach loop below runs — centre plus two rings at
+   0.45 and 0.80 of the inradius — with ONE extra condition that the reach loop
+   does not apply: the sample must land inside the canvas. That difference is
+   the whole point. `project()` has a near clip and no far clip and no viewport
+   test, so it happily returns a screen point at x = −5.7, and `pickTile()`
+   happily unprojects it back to the right tile. Both are correct as geometry
+   and both are useless as an answer to "can this be clicked", because the
+   pixel belongs to the page behind the iframe. That gap is exactly how the
+   board once reported every tile reachable with two of them off frame
+   (OPEN-BREAKS #3), and it is why this counts on-screen hits and nothing else.
+   Returns the number of samples that both landed on the canvas and resolved to
+   this tile. Zero means: at this pose, there is no pixel the player can click
+   that addresses this tile. */
+function _tileReachOn(x, z, rings){
+  const e = tileElev(x, z), wt = gw(x, z, e), rr0 = tileR();
+  let n = 0;
+  for (let i = -1; i < rings*2; i++){
+    const a = (i % rings) * Math.PI * 2 / rings;
+    const rr = i < 0 ? 0 : rr0 * (i < rings ? 0.45 : 0.80);
+    const sp = project({ x: wt.x + Math.cos(a)*rr, y: e, z: wt.z + Math.sin(a)*rr });
+    if (!sp || sp.x < 0 || sp.x > W || sp.y < 0 || sp.y > H) continue;
+    const t = pickTile(sp.x, sp.y);
+    if (t && t.x === x && t.z === z) n++;
+  }
+  return n;
+}
+/* 🔑 …AND IF NOT NOW, IS IT ONE KEYPRESS AWAY?
+   The recovery claim this file has made in prose since the fit went in — "the
+   NEUTRAL FIT is the guarantee, and R restores it" — EXECUTED instead of
+   asserted. Given the tiles that have no clickable pixel at the current pose,
+   it drives the camera to the pose camReset() produces (yaw 0, pan 0), re-runs
+   _tileReachOn on exactly those tiles, and returns the ones that are still
+   unreachable there. Those are the real failures: no pose the player can get
+   to with one documented key addresses them.
+   ⚠ It MOVES THE LIVE CAMERA and puts it back. Everything hexSelfCheck reads
+   is derived from CONFIG.camera through camApply(), so there is no way to ask
+   this question without actually asking it; a parallel "what if" projection
+   would be a second implementation of the thing under test, which is the one
+   mistake this file's history says not to make twice. Save/restore is exact
+   (yaw, pan, velocity and the moving flag) and camApply() is idempotent, so a
+   check run mid-turn leaves the camera exactly where it found it.
+   ⚠ The per-tile pick loop runs ONLY on the shortlist, and only when the
+   shortlist is non-empty — a clean pose pays nothing.
+   ⚠ IT ALSO RE-FRAMES THE WHOLE BOARD AT NEUTRAL, EVERY TIME, and that is not
+   redundant — it closes a hole the first cut of this had. Measured, with the
+   fit deliberately broken (camFrameDist forced to 0.86 × the fit's answer, the
+   OPEN-BREAKS #3 failure re-created): at the NEUTRAL pose the check correctly
+   reported `unreachable: 2` on tiles (0,10) and (13,11) — the very two that
+   break records — but at yaw 45 pan (2,1) it reported ok:TRUE, because at that
+   pose every tile happened to be reachable and the shortlist was empty, so
+   nothing ever looked at neutral. A board whose resting framing is broken must
+   fail from wherever you ask, or a gate that sweeps only panned poses passes a
+   broken board. So the neutral frame test is unconditional and cheap: 168
+   tilePoly() calls, no picks. */
+function _probeRecovery(list, rings){
+  const save = { yaw:CAMERA.yaw, px:CAMERA.pan.x, pz:CAMERA.pan.z,
+                 vx:CAMERA.vel.x, vz:CAMERA.vel.z, vy:CAMERA.yawVel,
+                 moving:CAMERA.moving, dist:CAM_DIST_CUR };
+  const out = { unreachable: [], offFrame: 0, yawOnlyOffFrame: 0 };
+  try {
+    /* ── STOP 1: the pose R produces. yaw 0, pan 0. ── */
+    CAMERA.yaw = 0; CAMERA.pan.x = 0; CAMERA.pan.z = 0; camApply();
+    for (const t of list)
+      if (_tileReachOn(t.tile[0], t.tile[1], rings) === 0) out.unreachable.push(t);
+    for (let z = 0; z < MAP.rows; z++) for (let x = 0; x < MAP.cols; x++)
+      if (tileOffFrame(x, z)) out.offFrame++;
+    /* ── STOP 2: THIS yaw, with only the PAN undone. ──
+       The yaw guarantee, asked from wherever you are standing. See the block
+       above for why the neutral stop alone was not enough to catch a broken
+       camFrameDist from a panned pose. camApply() with no dt, so the frame
+       ease is snapped and the measurement is deterministic. */
+    CAMERA.yaw = save.yaw; CAMERA.pan.x = 0; CAMERA.pan.z = 0; camApply();
+    for (let z = 0; z < MAP.rows; z++) for (let x = 0; x < MAP.cols; x++)
+      if (tileOffFrame(x, z)) out.yawOnlyOffFrame++;
+  } finally {
+    CAMERA.yaw = save.yaw; CAMERA.pan.x = save.px; CAMERA.pan.z = save.pz;
+    CAMERA.vel.x = save.vx; CAMERA.vel.z = save.vz; CAMERA.yawVel = save.vy;
+    CAMERA.moving = save.moving;
+    /* …including the frame ease's slack. camApply() with no dt SNAPS the ease
+       (that is what makes a probed pose deterministic), which is right for the
+       neutral measurement above and wrong here: a check run mid-turn would
+       otherwise eat the slack the camera was in the middle of giving back and
+       show as a small pop. A non-zero dt takes the eased branch, and one this
+       small leaves CAM_DIST_CUR where it was to ~1e-9 while still re-deriving
+       CONFIG.camera from it. A zero saved value means the ease has never run,
+       and camApply's `!CAM_DIST_CUR` guard snaps that case. */
+    CAM_DIST_CUR = save.dist;
+    camApply(1e-9);
+  }
+  return out;
+}
 function hexSelfCheck(opts){
   const rings = (opts && opts.rings) || 8;
   const centre = [], jitter = [], slab = [], buried = [], deadCentre = [], offFrame = [];
+  const unreachHere = [];
   let occluded = 0, slabSamples = 0, minVisible = 1;
   const rungHits = {};
   for (let z = 0; z < MAP.rows; z++){
@@ -7969,7 +8469,7 @@ function hexSelfCheck(opts){
          centre. One ring at 0.7 could not distinguish "the near fringe is all
          that is left" from "the whole tile is reachable", which is the exact
          distinction this check now has to make. */
-      let reach = 0, taken = 0;
+      let reach = 0, taken = 0, reachOn = 0;
       for (let i = -1; i < rings * 2; i++){
         const a = (i % rings) * Math.PI * 2 / rings;
         const rr = i < 0 ? 0 : tileR() * (i < rings ? 0.45 : 0.80);
@@ -7977,7 +8477,18 @@ function hexSelfCheck(opts){
         if (!sp) continue;
         slabSamples++; taken++;
         const t3 = pickTile(sp.x, sp.y);
-        if (t3 && t3.x === x && t3.z === z){ reach++; continue; }
+        if (t3 && t3.x === x && t3.z === z){
+          reach++;
+          /* 🧭 …and separately, was that hit somewhere the player's mouse can
+             actually go. `reach` answers the PROJECTION question and must keep
+             ignoring the viewport (it is what buriedFails is built on);
+             `reachOn` answers the REACHABILITY question. Same sample, two
+             different claims, counted apart so neither can launder the other.
+             _tileReachOn() runs the identical predicate for the neutral
+             re-measure. */
+          if (sp.x >= 0 && sp.x <= W && sp.y >= 0 && sp.y <= H) reachOn++;
+          continue;
+        }
         /* 🔬 A dead centre carries its own post-mortem. Finding out WHY the
            five in the final gate were dead took an hour of external probing to
            learn one number — how far inside the answer's projected top face
@@ -8026,6 +8537,8 @@ function hexSelfCheck(opts){
         const vis = reach / taken;
         if (vis < minVisible) minVisible = vis;
         if (reach === 0) buried.push({ tile:[x,z], elev:+e.toFixed(3), samples:taken });
+        if (reachOn === 0) unreachHere.push({ tile:[x,z], elev:+e.toFixed(3),
+                                              why: reach ? 'offFrame' : 'buried' });
       }
       /* 🖼 …and is it even ON the canvas. A hard failure, like buriedFails: a
          tile the frame cuts is a tile the player cannot fully click, while
@@ -8038,6 +8551,19 @@ function hexSelfCheck(opts){
   const tiles = MAP.cols * MAP.rows;
   const nullDrawn = [];
   const nullDrawnSamples = (CAM && VIEW.scale) ? _nullOverDrawnScan(nullDrawn) : 0;
+  /* 🧭 THE POSE-AWARE SPLIT. See the header block: `unreachHere` is what the
+     player cannot touch from where they are standing; `unreachable` is what
+     they cannot touch from ANYWHERE, measured by actually going to the pose R
+     produces and looking again. Only the second is a failure. */
+  const panned = !!(CAMERA.pan.x || CAMERA.pan.z);
+  const neutral = Math.abs(CAMERA.yaw) < 1e-6 && !panned;
+  /* At the neutral pose all three measurements ARE the current one — yaw 0,
+     pan 0 — so the shortcut is an identity, not a tolerance. Everywhere else
+     the probe actually drives the camera to both recovery poses. */
+  const atNeutral = neutral ? { unreachable: unreachHere.slice(), offFrame: offFrame.length,
+                                yawOnlyOffFrame: offFrame.length }
+                            : _probeRecovery(unreachHere, rings);
+  const unreachable = atNeutral.unreachable;
   return { cols:MAP.cols, rows:MAP.rows, tiles,
            samples: tiles * (1 + rings) + slabSamples + nullDrawnSamples,
            centreFails: centre.length, jitterFails: jitter.length,
@@ -8049,17 +8575,59 @@ function hexSelfCheck(opts){
               EVERY pose: a rim that eats clicks does not care about the fit. */
            nullOverDrawn: nullDrawn.length, nullOverDrawnSamples: nullDrawnSamples,
            nullDrawn: nullDrawn.slice(0, 12),
-           /* offFrameFails is only a FAILURE at the neutral pose — a panned or
-              yawed camera is allowed to push tiles out of frame. Report the pose
-              beside the count so the number cannot be read out of context. */
+           /* offFrameFails is a FAILURE whenever the player has not PANNED —
+              at the neutral pose and at every yaw-only pose, because yaw is a
+              look-around and must not cost tiles (see camFrameDist). Under pan
+              it is expected and is folded into `unreachable` instead. Report
+              the pose beside the count so the number cannot be read out of
+              context. */
            pose: { yawDeg: +(CAMERA.yaw*180/Math.PI).toFixed(2),
                    pan: { x:+CAMERA.pan.x.toFixed(3), z:+CAMERA.pan.z.toFixed(3) },
-                   neutral: Math.abs(CAMERA.yaw) < 1e-6 && !CAMERA.pan.x && !CAMERA.pan.z },
+                   panned, neutral,
+                   kind: neutral ? 'neutral' : panned ? 'panned' : 'yaw-only',
+                   distX: +(camFrameDist()/(CAM_BASE.dist||1)).toFixed(4) },
+           /* 🧭 tiles with no clickable pixel AT THIS POSE (off frame, or with
+              a hill drawn over every sample) … */
+           unreachableHere: unreachHere.length,
+           /* … of which this many are still unreachable at the pose R
+              restores. THIS is the hard one, and it holds at EVERY pose. */
+           unreachable: unreachable.length,
+           recoverable: unreachHere.length - unreachable.length,
+           unreachableTiles: unreachable.slice(0, 16),
+           unreachableHereTiles: unreachHere.slice(0, 16),
+           /* 🔑 the recovery pose's OWN framing, measured from wherever you
+              asked. `R is the guarantee` is only worth anything if R lands
+              somewhere whole. Hard failure at every pose. */
+           neutralOffFrame: atNeutral.offFrame,
+           /* 🎥 …and the framing of THIS YAW with the pan undone. THE YAW
+              GUARANTEE, ASKED FROM EVERY POSE. `offFrameFails` cannot carry it
+              once the player has panned, because pan is allowed to push tiles
+              off frame and the count stops distinguishing the two causes — so
+              a camFrameDist that had been deleted outright still reported
+              ok:true from any panned pose, which is the exact hole this field
+              closes. At yaw 0 / pan 0 it is the same number as offFrameFails;
+              at a panned pose it is the only thing asserting that turning did
+              not cost tiles. Hard failure at EVERY pose. Cost: 168 tilePoly()
+              calls and zero picks, on a path that already moves the camera. */
+           yawOnlyOffFrame: atNeutral.yawOnlyOffFrame,
            minVisible: +minVisible.toFixed(3),
            rungs: rungHits, ladder: tileElevRungs().slice(),
            ok: centre.length === 0 && jitter.length === 0 && slab.length === 0
-               && buried.length === 0 && deadCentre.length === 0
-               && offFrame.length === 0 && nullDrawn.length === 0,
+               && nullDrawn.length === 0
+               /* holds at every pose */
+               && unreachable.length === 0
+               /* yaw must not cost tiles; pan is allowed to */
+               && (panned || offFrame.length === 0)
+               /* the pose R lands on must itself be whole, asked from ANY pose */
+               && atNeutral.offFrame === 0
+               /* …and so must THIS yaw with the pan undone, asked from ANY
+                  pose. Unconditional on purpose: `panned` excuses
+                  offFrameFails, so without this line the yaw fit is asserted
+                  at pan-zero poses only. */
+               && atNeutral.yawOnlyOffFrame === 0
+               /* the shipped guarantee, unchanged: at the framing R restores,
+                  every tile centre resolves to itself and nothing is buried */
+               && (!neutral || (deadCentre.length === 0 && buried.length === 0)),
            /* the dead-centre post-mortems on their own as well as inside
               `fails`: they are the one bucket whose per-entry numbers (which
               tile answered, how deep inside its drawn top face the pixel was)
@@ -8068,7 +8636,7 @@ function hexSelfCheck(opts){
            deadCentre: deadCentre.slice(0, 16),
            fails: centre.slice(0,10).concat(jitter.slice(0,10)).concat(slab.slice(0,10))
                   .concat(buried.slice(0,10)).concat(deadCentre.slice(0,10))
-                  .concat(offFrame.slice(0,10)) };
+                  .concat(offFrame.slice(0,10)).concat(unreachable.slice(0,10)) };
 }
 window.__bbHexCheck = hexSelfCheck;
 
@@ -8154,6 +8722,12 @@ window.__bbCam = {
     held: Object.keys(CAM_HELD),
     base: { tx:+CAM_BASE.tx.toFixed(3), pitchDeg:+(CAM_BASE.pitch*180/Math.PI).toFixed(2),
             dist:+CAM_BASE.dist.toFixed(3) },
+    /* 🎥 the yaw fit, as a multiple of the neutral fit's distance. `want` is
+       the exact requirement at this yaw, `dist` is what is being rendered
+       (≥ want while the ease gives slack back). See camFrameDist. */
+    frame: { want:+(camFrameDist()/(CAM_BASE.dist||1)).toFixed(4),
+             dist:+((CAM_DIST_CUR||camFrameDist())/(CAM_BASE.dist||1)).toFixed(4),
+             settling: camDistSettling() },
     pos: { x:+CONFIG.camera.pos.x.toFixed(3), y:+CONFIG.camera.pos.y.toFixed(3), z:+CONFIG.camera.pos.z.toFixed(3) },
     terrainKey: terrainKey()
   }),

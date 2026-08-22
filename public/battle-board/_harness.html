@@ -1984,6 +1984,25 @@ function paintGuides() {
   }
 }
 
+/* 🎥 …and the CAMERA POSE, for the same reason the provenance kind is here:
+   a PNG outlives the URL that made it, and yaw is not visible in a picture of
+   a board that has no signposts. Two captures of the same scene at yaw 0 and
+   yaw 45 look like two different maps, and until this stamp existed nothing on
+   the image said which was which — a critic comparing them was comparing poses
+   without knowing it. `fit ×N` is the yaw fit's dolly (camFrameDist), so a
+   capture also carries how much the framing had to back off to keep the whole
+   board on the canvas at that angle. Best effort: the board may not be up yet,
+   and a missing stamp must never be an error. */
+function poseStamp() {
+  try {
+    const w = host && host.querySelector('iframe') && host.querySelector('iframe').contentWindow;
+    const c = w && w.__bbCam && w.__bbCam.get();
+    if (!c) return '';
+    const flat = !c.yawDeg && !c.pan.x && !c.pan.z;
+    return ' · ' + (flat ? 'NEUTRAL' : 'yaw ' + c.yawDeg + '° pan ' + c.pan.x + ',' + c.pan.z)
+         + ' · fit ×' + (c.frame ? c.frame.dist : '?');
+  } catch (e) { return ''; }
+}
 /* 🏷 The watermark. Kind first because that is the thing a stray PNG loses. */
 function paintMark() {
   const el = document.getElementById('h-mark');
@@ -1992,7 +2011,8 @@ function paintMark() {
     (SCENE.shipped ? '◆ AS-SHIPPED' : '◇ TARGET-STATE FIXTURE') + '</b>' +
     ' · scene=' + NAME +
     ' · host ' + (HOSTMODE === 'boardarea' ? '.board-area' : 'viewport') + ' ' +
-    Math.round(hostBox.width) + '×' + Math.round(hostBox.height);
+    Math.round(hostBox.width) + '×' + Math.round(hostBox.height) +
+    poseStamp();
   const hb = document.getElementById('h-host');
   if (hb) hb.textContent = (HOSTMODE === 'boardarea' ? '.board-area (in-game)' : 'full viewport')
     + ' · ' + Math.round(hostBox.width) + '×' + Math.round(hostBox.height);
@@ -2226,6 +2246,13 @@ const readyTick = setInterval(() => {
     window.__harnessReady = true; clearInterval(readyTick);
   }
 }, 100);
+
+/* 🎥 Keep the pose stamp current. On its own timer rather than the ready gate
+   (which clears itself) or a rAF (which the parent document runs even when the
+   iframe's does not, so it would burn a frame's worth of work 60×/sec to
+   re-read one string). 200ms is well inside the settle time a capture waits
+   out, so a `?shot=1` PNG is always stamped with the pose it was taken at. */
+setInterval(paintMark, 200);
 
 /* Driver handle: `__harness.post('timeOfDay',{key:'night'})`,
    `__harness.push()` to re-send, `__harness.scenes` to enumerate. */

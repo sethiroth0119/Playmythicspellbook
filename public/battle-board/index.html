@@ -7824,8 +7824,18 @@ function pickTile(mx, my){
    without lying about the picture. Swinging the camera to yaw 90 or 270 looks
    along the rows and buries whole tiles (`buriedFails` 2–3, `minVisible` 0) —
    the same class as offFrameFails at a panned pose, and the same answer: the
-   NEUTRAL FIT is the guarantee, and R restores it. Up to yaw 45 with pan,
-   deadCentres is 0.
+   NEUTRAL FIT is the guarantee, and R restores it.
+   ⚠ "Up to yaw 45 with pan, deadCentres is 0" used to stand here and it is not
+   true of every pan — measured at yaw 45 pan(1.8, 1.4): deadCentres 4,
+   buriedFails 0, and all four classified by asking the PICTURE which face is
+   drawn on that pixel: 4 of 4 honest occlusion (the pick returns the tile the
+   renderer actually painted there, 1.43–1.72 px inside it), 0 cases of the pick
+   disagreeing with the picture. At yaw 90 it is deadCentres 10 / buriedFails 4,
+   again with `hard` 0. So the honest statement is the narrow one: AT THE
+   NEUTRAL FIT deadCentres is 0 and every tile centre resolves to itself
+   (168/168, confirmed with real mouse clicks); away from it the terrain is
+   allowed to stand in front of an anchor, and the pick says so rather than
+   lying about it.
    If those last few have to go too, the knob is the ELEVATION LADDER's rung gap
    or the fit's pitch floor, not the picker — and that trade is relief for
    pickability, which is BAR R1 against BAR R2 and is a decision, not a fix.

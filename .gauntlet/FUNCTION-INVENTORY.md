@@ -1,11 +1,39 @@
 # FINAL REGRESSION GATE — battlefield function inventory
 
-**Verdict: 91 PASS · 1 FAIL · 17 UNVERIFIED.**
-**Does every battlefield function that worked before still work? — NO. One does not.**
-The single failure is *click precision on the canvas stage*: on every map seed tested,
-1–6 of the 168 tiles have a centre pixel that resolves to a **neighbouring** tile, so
-clicking exactly on a unit's feet there selects the wrong tile. Nothing is unreachable
-(`buriedFails: 0` on all 24 seeds), no rule is wrong, and no other function regressed.
+**Verdict: 102 PASS · 0 FAIL · 17 UNVERIFIED.**
+*(wave 8 sign-off. The gate's own tally was 90 PASS · 1 FAIL · 17 UNVERIFIED — its header
+said 91, which was an off-by-one; counted by table row, it was 90. The sign-off flipped
+the FAIL to PASS and added 11 rows for what this wave introduced and re-measured.)*
+
+**Does every battlefield function that worked before still work? — YES.**
+
+The one FAIL this gate recorded (click precision on the canvas stage) is **CLOSED**, and
+the one substantive gap the wave-7 walk fix left open — a move that arrives with **no
+telegraph**, i.e. every multiplayer receive and every replay step — is **CLOSED**. Both
+were re-measured from scratch by the sign-off, not read off the patch:
+
+* **The FAIL.** 24 random match seeds at the neutral fit, 1600×900 (host 802×688):
+  `deadCentres 0` on **24 of 24** (was 1–6 on 24 of 24), `buriedFails 0`,
+  `offFrameFails 0`, `nullOverDrawn 0`, `slabFails 0`, `centreFails 0`, `jitterFails 0`,
+  `click.hard 0`, `painter.inversions 0` — `__bbHexCheck().ok === true` on all 24.
+  Confirmed with **real Playwright mouse clicks on all 168 projected tile centres**:
+  **168/168 correct** on six seeds, and 168/168 again after `R` restores the pose.
+* **The route.** The walked route now travels with the move as `unit.walkPath`, so the
+  two routeless arrival shapes walk the real bent route: MP receive **10 legs / 1.35 s**,
+  replay stepper **10 legs / 1.35 s**, both identical to `getMovePath`. Strip the route
+  from the same push and the old bug returns (1 leg / 0.34 s straight through a wall of
+  bodies) — the teeth are real.
+
+**What is left, stated plainly and not counted as the FAIL.** The FREE CAMERA away from
+the neutral fit can still stand terrain in front of a tile's anchor. Real mouse clicks,
+default seed: neutral 0 wrong · yaw 45 0 wrong · yaw 180 0 wrong · yaw 45 + pan(1.8,1.4)
+3 wrong · yaw 90 14 wrong · yaw 137 + pan 12 wrong · yaw 270 + pan 14 wrong; and a pan can
+push up to 10 tile centres off the canvas, where a click answers nothing at all. In every
+one of those poses `click.hard === 0` — the pick returns the tile the renderer actually
+painted, so the picture and the pick still agree — and `R` restores the neutral pose
+exactly (measured: yaw 0 / pan (0,0), then 168/168 again). That is the disclosed BAR R1 vs
+BAR R2 trade in `battle-board/index.html:7568-7845`, not the failure this gate recorded,
+which was about every match seed at the shipped framing.
 
 Everything below was **executed** in real Chromium against a real match
 (`startBattleWithPrep` → `App.state`), with real Playwright mouse clicks where a click
@@ -21,6 +49,15 @@ Gate ran against the working tree at `47fbbe5` **plus an uncommitted change to
 `public/battle-board/index.html`** (105 insertions — occlusion clip / audit work by
 another builder). Everything measured here includes that change.
 
+⏭ **SIGN-OFF PASS (wave 8)** re-ran against the working tree at `503db38` plus the
+uncommitted comment-only edit to `public/battle-board/index.html`. Rows re-measured this
+pass are marked **PASS ✓w8**; the rest are the gate's own results and were not re-run —
+this pass was deliberately narrow (the FAIL, the route, the three OPEN-BREAKS, picking,
+painter order, the harness scenes and the deploy knobs), not a second full 109-item sweep.
+`node _synckcheck.mjs` → ALL CLEAN. `node _harness.js public/index.html` → ALL CHECKS
+PASSED. Capture: `.gauntlet/SIGNOFF.png` (`scene=gamemap`, 1600×900, host 802×688) —
+1.55% of pixels differ from `GATE-final.png`, all of it rain and brazier animation.
+
 ---
 
 ## Deploy knobs — IN SYNC
@@ -32,6 +69,15 @@ another builder). Everything measured here includes that change.
 | `public/sw.js` `CACHE_VERSION` (`sw.js:414`) | `mythic-v120x3-sprites-ui` |
 
 `node _synckcheck.mjs` → ALL CLEAN. `node _harness.js public/index.html` → ALL CHECKS PASSED.
+
+⚠ **The three knobs AGREE WITH EACH OTHER, but they are STALE against the code.**
+`public/version.txt` was last bumped at `e085032` (wave 5). Waves 6, 7 and 8 all shipped
+real changes to `public/index.html` and `public/battle-board/index.html` under the same
+`v120x3`. Nothing is out of sync *between* the three, so the check passes as written — but
+deploying this tree as-is means the update check never fires and every existing client
+keeps the wave-5 bundle out of its service-worker cache. **The three must be bumped
+together before this ships** (`public/version.txt`, `window.BUILD_VERSION` at
+`index.html:36771`, `CACHE_VERSION` at `sw.js:414`), and the EDGE verified with curl.
 
 ---
 
@@ -69,6 +115,8 @@ another builder). Everything measured here includes that change.
 | `moveUnit` | :102344 | **PASS** | unit landed on the clicked destination; game `pos` == board `gx,gz` |
 | `onTileClick` move branch | :146077 | **PASS** | real mouse click on the destination moved the hero |
 | Wall blocks the BFS | inside `getValidMoves` | **PASS** | wall tile never offered |
+| **`moveUnit` writes `unit.walkPath`** (the route travels with the move) | :102672-102729 | **PASS ✓w8** | a 10-step detour round a full row of bodies: `walkPath` == `getMovePath` with the start tile prepended; truncated at the tile a trap stops the walk on; `null` when there is no multi-tile route, and re-assigned on **every** branch so a unit can never keep an older move's route |
+| `_bbStageUnitList` forwards the route on the per-unit `path` channel | :106481-106497 | **PASS ✓w8** | a shove ray still wins over `walkPath`; the board re-validates either with `shoveLegs` |
 | Zone-of-control gating | :84960-84970 | UNVERIFIED | no ZoC-passive unit in the seeded roster |
 | **Move highlight: DOM vs canvas** | renderBoard / `_bbStagePushPaint` | **PASS** | `.tile.move-target` set is **byte-identical** to the canvas `paint.move` set and to `getValidMoves` — 32/32/32, same tiles. The two layers do not disagree about reachability |
 
@@ -182,6 +230,8 @@ another builder). Everything measured here includes that change.
 | `rebuildReplayState` | :71831 | **PASS** | |
 | **Replay rebuilds the SAME battlefield** | — | **PASS** | live seed `3322110575` == replay seed; structures identical; control points identical; `_bbGenTerrain(14,12,seed)` is byte-identical for the same seed and differs for another |
 | `renderReplayViewer` / replay board | :168874 | **PASS** | the rebuilt board renders 168 tiles, **5** ruin markers, **3** CP markers, the CP track and the objective banner |
+| **Replay stepper walks the REAL bent route** | `cloneStateLight` carries `units` verbatim | **PASS ✓w8** | `rebuildReplayState(rep,1)` with an EMPTY telegraph: the sprite walked all 10 legs of `getMovePath` in 1.35 s and settled on (6,3). Before wave 8 this was 1 leg / 0.34 s straight through a wall of bodies |
+| Replay snapshot re-diffed (OPEN-BREAKS §2) | :71787 | **PASS ✓w8** | live vs replay: seed `857321850` == `857321850`, ruins `car@11,1\|church@2,8\|hospital@4,1\|house@12,4\|school@10,9` identical, trucks `cp1@1,6\|cp2@7,5\|cp3@11,6` identical, `cpScore`/`cpStreak` identical; `_bbGenTerrain(14,12,seed)` byte-identical for that seed and different for another |
 
 ## §11 — Multiplayer
 
@@ -189,6 +239,9 @@ another builder). Everything measured here includes that change.
 |---|---|---|---|
 | `_mirrorPos` | :181968 | **PASS** | 0 hex-distance violations over the sampled pair sweep |
 | `_mirrorAllPositions` | :181976 | **PASS** | involution over units **and** structures **and** control points |
+| **`_mirrorAllPositions` mirrors `unit.walkPath`** | :182857 | **PASS ✓w8** | route mirrored point-by-point through the same `_mirrorPos` as `pos`: `6,9→…→6,3` came back as `7,2→…→7,8`, every point the exact mirror. Left unmirrored it starts on a tile the unit is not on, the board rejects it, and the receiver silently reverts to the straight tween |
+| **Multiplayer RECEIVE walks the real bent route** | serialize → mirror → `_onRemoteStateArrived` shape | **PASS ✓w8** | with `TELE` empty: 10 legs, 1.35 s, legs == the mirrored route, settled on (7,8). Teeth: `delete u.walkPath` on the same push → 1 leg, 0.34 s, straight through the wall |
+| Dead `_mirroredAiTrail` handoff removed | :182926 / :184836 | **PASS ✓w8** | the `isArray(App.ui.aiMoveTrail)` guard could never fire (`setAIActor` stores an object) and read local UI state that belongs to nobody in a multiplayer match. Removed; the receiver clears `aiMoveTrail` as before and the real route rides on the unit |
 | `_serializeBattleStateForBroadcast` | :182194 | **PASS** | deny-list — `structures`, `controlPoints`, `cpScore`, `cpStreak`, `tombstones`, `_bbMapSeed` all survive; 17.8 KB |
 | Colyseus relay / `_onRemoteStateArrived` / turn-start-on-flip CP tick | :45775, :183805, :183858 | UNVERIFIED | needs two live clients + Supabase. The guard that makes it safe is executed above; the round trip is not |
 | Supabase loot persistence | — | UNVERIFIED | the grid opens; the write does not run offline |
@@ -200,8 +253,12 @@ another builder). Everything measured here includes that change.
 | `gw` / `worldToTile` / `pickTile` round trip | battle-board:553, :5282, :5325 | **PASS** | `__bbHexCheck`: 4,368 centre samples + 2,856 slab samples → **0** centreFails, **0** jitterFails, **0** slabFails |
 | `hexCorners` / `tilePoly` | :563 / :1423 | **PASS** | 6 vertices |
 | `drawStruct` / `drawTruck` / `drawUnit` + painter order | :3887 / :4376 / :4589 | **PASS** | painter items 14 = 5 ruins + 3 trucks + 2 units + 4 braziers, **0 depth inversions** |
-| **Pointer → `pickTile` → `board:tileClick` → `onTileClick`** | :8582 / index.html:107011 | **FAIL** | **164 of 168** real mouse clicks on projected tile centres resolved to the right tile. See FAILURE 1 |
+| **Pointer → `pickTile` → `board:tileClick` → `onTileClick`** | :8948 / index.html:107066 | **PASS ✓w8** | **168 of 168** real mouse clicks on projected tile centres resolve to the right tile, on six match seeds and again after `R`. Was 164/168. See FAILURE 1 — CLOSED |
+| `slabTakesSample` / `PICK_EDGE_PX` (the fix) | :7573 / :7699 | **PASS ✓w8** | 24 random seeds at the neutral fit: `deadCentres` 0/24 (was 1–6 on 24/24), `nullOverDrawn` 0, `click.hard` 0. Also 0 at 1366×768 and 1920×1080 |
+| `hexStepDirs` / `isHexStep` (shoveLegs leg test) | :1477 / :1482 | **PASS ✓w8** | a square-box diagonal `(6,8)→(7,7)→(7,6)` — hex distance 2 off an even row — is **refused** (falls back to the 1-leg endpoint tween); the legal `(6,8)→(6,7)→(7,6)` is **accepted** (2 legs, 0.5 s). Six offsets, not eight |
 | Camera fit / framing | `fitDistance` :1301, `fitAim` :1332 | **PASS** | `offFrameFails: 0` and 0 off-canvas tile centres at 1366×768, 1600×900 and 1920×1080 |
+| **All ten harness scenes still render** | `battle-board/_harness.html?scene=` | **PASS ✓w8** | gamemap · empty · skirmish · moverange · telegraph · arc · threat · aitele · night · ruins — every one reaches `__harnessReady`, **0 page errors**, 168 tiles, `__bbHexCheck().ok true`, `deadCentres`/`buriedFails`/`offFrameFails`/`nullOverDrawn` all 0, `click.hard 0`, `painter.inversions 0` |
+| **Painter order under the free camera** | `camCheck().painter` | **PASS ✓w8** | `inversions: 0` on 24 random seeds at the neutral fit, on all eight camera poses swept (yaw 0/45/90/137/180/270, panned and unpanned), at three viewports and on all ten harness scenes. `terrain.registered` true at every pose — the baked ground layer is not surviving a camera move |
 | Free camera (WASD / Q-E / R) | `__bbCam`, `camReset` | **PASS** | 16 poses driven (8 yaws × pans); **R restores exactly** to yaw 0 / pan (0,0) and off-frame back to 0 |
 | `_bbMapSeed` / `_bbGenTerrain` | index.html:104733 / :105164 | **PASS** | deterministic: same seed → identical 168-tile output, different seed → different |
 | `_bbMapFromEditor` / `_bbStagePayload` | :105269 / :105914 | **PASS** | cols 14, rows 12, 168 tiles, 132 carry `elev`, 168 carry `surf` |
@@ -221,9 +278,100 @@ App.state pos  (rules)    {x:10, y:6}
 
 Identical. The route bends, and the arrow does not lie about the rules.
 
+### Wave 8 verified, end to end — **the route on the paths that have NO telegraph**
+
+Wave 7 fixed the walk by reading the route off `TELE`, the telegraph overlay. `TELE` only
+exists while a human is hovering or the local AI is narrating, so the fix reached the
+player's own move and nothing else. A client RECEIVING a multiplayer snapshot and the
+REPLAY STEPPER both relocate the unit in state and push the roster with no telegraph at
+all, and both fell through to the two-endpoint tween. Wave 8 moves the route into state
+(`unit.walkPath`, written by the `moveUnit()` reducer, mirrored by `_mirrorAllPositions`,
+cloned by `cloneStateLight`, forwarded on the existing per-unit `path` channel).
+
+Hero at (6,9), a wall of bodies across the whole of row 6 with one gap at (3,6),
+destination (6,3) — the only legal route detours nine hexes west and back:
+
+```
+getMovePath (the rules)   6,9 → 5,9 → 4,9 → 4,8 → 3,7 → 3,6 → 3,5 → 4,5 → 5,5 → 6,4 → 6,3
+unit.walkPath (state)     6,9 → 5,9 → 4,9 → 4,8 → 3,7 → 3,6 → 3,5 → 4,5 → 5,5 → 6,4 → 6,3
+
+A · MULTIPLAYER RECEIVE     serialize → _mirrorAllPositions → adopt → _bbStagePushUnits
+    telegraph at push       []                                  ← no telegraph, the point
+    mirrored route          7,2 → 8,2 → 9,2 → 9,3 → 10,4 → 10,5 → 10,6 → 9,6 → 8,6 → 7,7 → 7,8
+    WALKED  u.tween         10 legs, dur 1.35 s (7.4 hex/s), legs == the mirrored route
+    settled                 7,8  anim=idle        (mirror of (6,3) on a 14×12 board ✓)
+    teeth: same push, route stripped
+                            1 leg, dur 0.34 s, 7,2 → 7,8 straight through the wall
+
+B · REPLAY STEPPER          recordReplaySnapshot → rebuildReplayState(rep, 1)
+    telegraph at push       []
+    WALKED  u.tween         10 legs, dur 1.35 s, legs == getMovePath exactly
+    settled                 6,3  anim=idle
+
+C · LOCAL CLICK (wave 7's own case, unchanged)
+    telegraph drawn         6,9 → … → 6,3      (11 tiles)
+    WALKED  u.tween         10 legs, dur 1.35 s, legs == getMovePath
+    App.state pos           {x:6, y:3}
+
+D · PACE          2-hex route → 2 legs / 0.50 s.  10-hex route → 10 legs / 1.35 s
+                  (dur = min(WALK_DUR_MAX 1.35, (n+2)/WALK_LEGS_PER_SEC 8) — constant
+                  ground speed until the cap, one leg still 0.34 s).
+                  A relocation with NO route (teleport / summon) → 1 leg / 0.34 s straight,
+                  which is the honest picture: nothing walked.
+```
+
 ---
 
-# FAILURE 1 — one to six tiles per match have a dead centre pixel
+# FAILURE 1 — **CLOSED IN WAVE 8.** One to six tiles per match had a dead centre pixel
+
+> ## ✅ CLOSED — re-measured by the wave 8 sign-off, from scratch
+>
+> The fix is `slabTakesSample()` + `PICK_EDGE_PX` in `public/battle-board/index.html`
+> (`:7573`, applied in `pickTile` at `:7699`): the analytic plane sweep keeps its exact
+> answer, but a slab only occludes a sample its **drawn top face actually covers**, and
+> the ≤1.5 px hairline inside a slab's BACK edges is handed to the tile behind. A
+> rim-rejected rung is remembered and restored when the sweep bottoms out on nothing, so
+> the rim cannot turn a hit into a null on a perimeter tile.
+>
+> **Independently re-measured — 24 RANDOM match seeds, neutral fit, host 802×688:**
+>
+> ```
+> deadCentres      0 on 24 of 24 seeds       (was 1..6 on 24 of 24)
+> buriedFails      0 on 24 of 24
+> offFrameFails    0 on 24 of 24
+> nullOverDrawn    0 on 24 of 24             ← the new invariant, and it holds
+> slabFails / centreFails / jitterFails  0 on 24 of 24
+> click.hard       0 on 24 of 24             ← pick still agrees with the picture
+> painter.inversions  0 on 24 of 24
+> __bbHexCheck().ok   true on 24 of 24
+> minVisible       0.471 – 0.588             (was 0.412 – 0.471)
+> ```
+>
+> **And with real Playwright mouse clicks on all 168 projected tile centres** — the whole
+> live path, `.bb-catch` → `board:pointer` → `pickTile` → `board:tileClick`:
+>
+> ```
+> seed 3322110575   168/168 correct        seed 1606707961   168/168
+> seed 4248822701   168/168                seed 3489095897   168/168
+> seed 2219915628   168/168                after R restore   168/168
+> ```
+>
+> Also `ok:true` at 1366×768 (host 712×560) and 1920×1080 (host 1111×868), and on all
+> ten harness scenes.
+>
+> **What the free camera can still do, and why it is not this failure.** Real clicks,
+> default seed: yaw 45 → 0 wrong · yaw 180 → 0 wrong · yaw 45 + pan(1.8,1.4) → 3 wrong ·
+> yaw 90 → 14 · yaw 137 + pan(3.75,−2.67) → 12 · yaw 270 + pan(−1.5,1) → 14; and
+> pan(1.8,−1.4) pushes 10 tile centres off the canvas, where the click answers nothing.
+> `click.hard` is **0 at every one of those poses** — the pick returns the tile the
+> renderer painted, so nothing lies — and `R` restores yaw 0 / pan (0,0) exactly, after
+> which the sweep is 168/168 again. That is the BAR R1 relief vs BAR R2 pickability trade
+> disclosed at `battle-board/index.html:7568-7845`. The knob is still the elevation
+> ladder's rung gap, and it is still a decision, not a fix.
+
+---
+
+*The original diagnosis is kept below because it is what the fix was derived from.*
 
 **`public/battle-board/index.html:8582`** (`pointer` → `pickTile` → `unitAt`), consequence
 of the elevation ladder introduced by the terrain wave. Disclosed as a known trade in the
@@ -279,7 +427,30 @@ everywhere. The pixel genuinely has a taller slab in front of it; the picture is
 and the pick is honest. What is wrong is that the *unit's anchor point* is allowed to sit
 on a pixel the terrain covers.
 
-**The knob, stated so the next person does not re-derive it.** Either (a) shrink the
+> ⚠ **STALE AS OF THE `PICK_EDGE_PX` FIX — the two sentences above about `mismatch`
+> no longer hold, and the probe's shape changed.** `camCheck().click` is now
+> `{samples, mismatch, rim, hard, offScreen, bad}`. `mismatch` is nonzero **by design**:
+> the pick hands the ≤1.5 px band inside a slab's back edges to the tile behind it, so
+> pick and picture disagree on 5.64% of drawn ground pixels board-wide (10,392 / 184,215
+> rastered at 1 px, 802×688, default seed). **The assertion is `hard === 0`**, and `rim`
+> is only allowed to absorb a disagreement whose depth inside the drawn owner is
+> ≤ `PICK_EDGE_PX` — without that bound `hard === 0` was satisfiable by any rim width
+> (demonstrated at `PICK_EDGE_PX = 8`, every check green, the board measurably worse).
+> A second invariant now backs it: `__bbHexCheck().nullOverDrawn`, which asserts that no
+> drawn ground pixel answers **nothing**, and is in `ok`.
+>
+> **Sign-off confirms the new shape and the new assertion.** `camCheck().click` reports
+> `{samples, mismatch, rim, hard, offScreen, bad}`; over 24 random seeds at the neutral
+> fit `mismatch` is 0–3 and **every one of them is classified `rim`**, `hard` is 0 on all
+> 24, and `nullOverDrawn` is 0 on all 24. Held at 1366×768 and 1920×1080 too, and at all
+> eight camera poses swept (yaw 0/45/90/137/180/270, panned and unpanned): `hard` 0 at
+> every pose.
+
+**The knob, stated so the next person does not re-derive it.** *(Answered: neither (a) nor
+(b) — the fix was a third option, the hybrid analytic-plus-drawn-polygon test in
+`slabTakesSample`. (b) was explicitly rejected because a sprite-box fallback would make
+units clickable and leave bare GROUND still mis-picking, i.e. the rules and the picture
+still disagreeing. The original two options are kept below as written.)* Either (a) shrink the
 elevation ladder's rung gap — trades BAR R1 relief for BAR R2 pickability, and is a
 decision, not a fix; or (b) give `unitAt` a screen-space fallback: when `pickTile` lands
 on a tile whose *neighbour* holds a unit whose `unitScreenBox` contains the cursor, prefer
@@ -289,6 +460,22 @@ click resolves to for *ground* purposes would stay exactly as it is.
 ---
 
 # OPEN-BREAKS — all three reproduced on the pre-fix code, then confirmed closed
+
+> ⏭ **RE-CONFIRMED BY THE WAVE 8 SIGN-OFF.** The two fixes this wave made touch code
+> adjacent to all three, so all three were measured again on `503db38`:
+>
+> * **§1 displacement** — 4,730 attacker/target pairs at hex distance ≤3, shoved AWAY and
+>   PULLED TOWARD through the shipping `hexDirToward` + `hexStep`: **0** away-step
+>   violations, **0** pull-step violations, 0 pairs with no direction. The three recorded
+>   cases still land one hex: (7,6)→(7,5), (7,6)→(7,7), (6,6)→(6,5). `_slideOnIce` still
+>   has arity 4, i.e. still takes a direction index. Still closed.
+> * **§2 replay snapshot** — recorded a live match and replayed it: seed, all five ruin
+>   tiles, all three truck tiles, `cpScore` and `cpStreak` identical; `_bbGenTerrain`
+>   byte-identical for that seed and different for another. The snapshot now also carries
+>   `walkPath`. Still closed.
+> * **§3 off-frame tiles** — `offFrameFails: 0` at 1366×768, 1600×900 and 1920×1080 at the
+>   neutral fit, and 0 on all 24 random seeds at 1600×900. `R` still restores yaw 0 /
+>   pan (0,0) exactly, after which a 168-click sweep is 168/168. Still closed.
 
 Each was reproduced first. A pre-fix serve root was built by symlinking `public/` and
 substituting the pre-fix file from git, so the failing code really ran.
@@ -404,6 +591,37 @@ off-frame back to 0). Every playable tile is always one keypress from being in v
   mid-match: rail, objective banner, SCP tracker, hero panels, log, END TURN, consumables,
   hand strip, deck rail, and the hex field with all five ruins and the trucks on it).
   Every tile of the board sits inside the host rect in both.
+
+## Sign-off rigs (wave 8) — how the numbers above were produced
+
+All four are in `scratchpad/` (gitignored), all four drive the **real** `public/index.html`
+through `startBattleWithPrep` in Playwright Chromium, and all four call the shipping
+functions as bare identifiers because every game global is a lexical `const`.
+
+* `so_lib.mjs` — the shared boot: http-server on `public/`, real match, wait on
+  `_BBS.frame.contentWindow.__bbHexCheck` before probing.
+* `seedsweep.mjs` — forces a map seed into the real sender
+  (`App.state._bbMapSeed = s; _bbStagePost('init', _bbStagePayload())`), then reads
+  `__bbHexCheck()` and `__bbCam.check()`. 24 seeds at the neutral fit + 8 camera poses on
+  three seeds.
+* `clicksweep.mjs` — **real** `page.mouse.click()` on all 168 projected tile centres taken
+  from the board's own `board:rects` publish, offset by the `#bb-stage-host` rect. Two
+  things make it exact where the gate's sweep was slow and noisy:
+  `App.replayViewing = true` makes the host's `board:tileClick` handler a no-op
+  (`index.html:107072`) so the click travels the whole real path
+  `.bb-catch → board:pointer → pickTile → board:tileClick` and is recorded **without
+  mutating the match** — no unit modal to dismiss, no 380 ms settle; and each click is
+  **polled for its own answer** instead of zipped positionally, because a click whose
+  centre projects off the canvas dispatches nothing and a positional zip turns one silent
+  click into a phantom mismatch on every click after it (that artifact alone reported 102
+  false mismatches on the first run of this rig).
+* `routeprobe.mjs` — builds the wall-of-bodies board, drives
+  `_serializeBattleStateForBroadcast → swapBattlePerspective → _bbStagePushUnits` for the
+  multiplayer-receive shape and `recordReplaySnapshot → rebuildReplayState` for the replay
+  shape, and reads the tween the board actually ran out of `__bbWalk(id)`.
+* `breaksprobe.mjs` — the three OPEN-BREAKS, plus the off-frame sweep at three viewports.
+* `scenes.mjs` — loads all ten harness scenes and asserts `__harnessReady`, 0 page errors
+  and `__bbHexCheck().ok`.
 
 ## What genuinely could not be exercised here
 

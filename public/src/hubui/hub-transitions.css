@@ -32,11 +32,21 @@
    as its fallback, so the sheet is also correct standing alone.
 
    SELECTOR SCOPE: `.spellbook-hub.is-sub`, `.hub-portal`, the title block (incl.
-   its `.keep-rule` ornament), `#md-nav-flash`, `#mm-frame`. NOT `.hub-v2` — that
-   opt-in class is another unit's business and a sheet that depends on it dies
-   silently the day the class is dropped. NOT the breadcrumb or the currency rail
-   either: hub-chrome.css owns their arrival (`@keyframes hcChromeIn`) and two
-   sheets animating one element is a race, not a design.
+   its `.keep-rule` ornament), the sub-hub's `.keep-topbar`, `#md-nav-flash`,
+   `#mm-frame`. NOT `.hub-v2` — that opt-in class is another unit's business and a
+   sheet that depends on it dies silently the day the class is dropped.
+
+   ⚠ THE TOP BAR IS ANIMATED HERE ONLY BECAUSE NOBODY ELSE ANIMATES IT. An earlier
+   revision of this comment claimed hub-chrome.css owned the breadcrumb and the
+   currency rail via `@keyframes hcChromeIn`. THAT CLAIM WAS FALSE and it hid a
+   real hole: `grep -rn 'animation' public/src/hubui/hub-chrome.css` returns
+   nothing at all, that sheet declares no keyframes, and `.keep-topbar` is in fact
+   styled in hub-keep.css:637. The bar is written by `renderTitle()`
+   (index.html:115567) with every other node, so with no rule anywhere it HARD-
+   POPPED: a fully painted breadcrumb and currency rail sitting over an empty room
+   while the title, rule, tiles and footer resolved beneath it over 680ms. §3 now
+   lands it with the title. If hub-chrome.css ever grows an entrance of its own,
+   DELETE that block — two sheets writing one `animation` shorthand is a race.
 
    ── THE FIVE RULES THIS FILE IS BUILT ON (each one is a bug already paid for)
 
@@ -208,17 +218,22 @@
    IT IS THE CROSSFADE, NOT AN ORNAMENT. The old sub-hub DOM is destroyed and
    the new one written in the same synchronous turn, so there is no moment when
    both pages exist and nothing to literally cross-dissolve. What sells a
-   crossfade is a brief warm veil that peaks *across* the swap and hides its
-   seam, with a light pass travelling through it. Hence three layers:
+   crossfade is a warm veil that is ALREADY LIT on the frame that carries the
+   swap and then decays off it, with a light pass travelling through it. Hence
+   three layers:
 
-     the element   a low, wide ember VEIL — the room warms for ~a third of a
-                   second. This is the crossfade.
+     the element   a warm ember VEIL, already at .88 on its first frame. This is
+                   the crossfade, and it is the only layer that covers anything.
      ::before      an ember WASH, wide and soft, trailing the light.
      ::after       the gold BLADE — narrow, bright, leading. The torch itself.
 
    The blade leads and the wash lags on purpose: light arrives before heat
    fades, which is what makes a pass read as directional rather than as a
-   rectangle sliding by.
+   rectangle sliding by. But note the division of labour, because getting it
+   backwards is exactly what broke the last cut: THE VEIL IS THE COVER AND THE
+   BLADE IS THE ORNAMENT. Only the veil is on screen at t=0, so only the veil can
+   hide a seam; the blade's own 0→1 ramp is decoration and is deliberately left
+   alone.
 
    ⚠ `transform: none` IS THE WHOLE DELIVERABLE. index.html:112986 ships
      #md-nav-flash{… transform:translateX(-110%) skewX(-12deg) …}
@@ -263,14 +278,23 @@ html body #md-nav-flash {
   --navtx-body:  var(--keep-gold,     #c9ab72);   /* body gold   */
   --navtx-core:  var(--keep-gold-lit, #fff6e0);   /* the hot core */
 
-  /* THE VEIL. Warm, wide, weak — you should not be able to name it afterwards,
-     only notice that the swap did not snap. Two bloom centres rather than one
-     flat wash so it reads as firelight in a room, not as a tint layer. */
+  /* THE VEIL. Warm and wide. Two bloom centres rather than one flat wash so it
+     reads as firelight in a room, not as a tint layer.
+
+     ⚠ THE STOPS WERE RAISED (8%/6% → 16%/11%) TOGETHER WITH THE KEYFRAME RE-CUT
+     BELOW, and the two must be retuned together. The old veil could afford to be
+     nearly invisible because it was scored as an ornament; now it is the layer
+     that has to be *doing something* on the swap frame. `mix-blend-mode: screen`
+     means it can only ever lighten, so this is a warm lift over the near-black
+     ground (measured mid-frame: the plate reads ~2.5x the settled ground
+     luminance at peak) — enough to read as a wash of firelight across the cut,
+     never enough to be a curtain. A curtain would be a wipe; the bar asks for a
+     crossfade. */
   background:
     radial-gradient(78% 62% at 38% 42%,
-      color-mix(in srgb, var(--navtx-ember) 8%, transparent), transparent 76%),
+      color-mix(in srgb, var(--navtx-ember) 16%, transparent), transparent 76%),
     radial-gradient(64% 74% at 72% 58%,
-      color-mix(in srgb, var(--navtx-body) 6%, transparent), transparent 78%);
+      color-mix(in srgb, var(--navtx-body) 11%, transparent), transparent 78%);
 
   animation: none;
 }
@@ -328,15 +352,36 @@ html body #md-nav-flash.go          { animation: hubTxNavVeil  520ms cubic-bezie
 html body #md-nav-flash.go::after   { animation: hubTxNavBlade 520ms cubic-bezier(0.36, 0.06, 0.22, 1); }
 html body #md-nav-flash.go::before  { animation: hubTxNavWash  600ms cubic-bezier(0.30, 0.10, 0.20, 1); }
 
-/* The veil peaks EARLY (30%) and leaves slowly. The DOM swap happens in the
-   same turn `_playNavFlash()` is called, i.e. right at the front of this
-   animation — the warm-up has to already be there when the page changes under
-   it, or it is covering nothing. It is also the only exit the main-menu iframe
-   gets; see §2. */
+/* ⚠ THE VEIL STARTS ALREADY LIT. THIS IS THE WHOLE POINT OF THE LAYER, and the
+   previous cut (`0%{opacity:0} 30%{opacity:1}`) got it exactly wrong — read this
+   before "fixing" it back to a symmetric in-out.
+
+   TRACE THE CALL, because the timing is not a matter of taste. `_playNavFlash()`
+   runs at index.html:110897, inside `_renderImpl`. It removes `.go`, forces a
+   reflow, and re-adds it — and then, in the SAME synchronous turn and before the
+   browser can paint anything, `renderTitle()` rewrites the hub subtree and
+   `_mmTeardown()` (index.html:113178) calls `f.remove()` on the main-menu iframe.
+   So t=0 of this animation IS the swap frame. There is no lead-in to spend.
+
+   A veil that ramps 0→1 over 30% of 520ms is at roughly 5% opacity on the first
+   painted frame (~16ms, and this ease starts slow) and does not arrive until
+   ~156ms — i.e. it arrives after the damage, covering a page that has already
+   finished changing. Everything it exists to hide happens in front of it:
+     · the seam between the outgoing and incoming hub;
+     · the one frame of the fully settled NEW hub that R0 knowingly leaks before
+       the entrance animations take over, which otherwise reads as a flash
+       followed by a fade-up rather than as a transition;
+     · the disappearance of `#mm-frame`, whose removal is synchronous and which
+       therefore has no CSS exit of its own (see §2).
+   Starting at .88 and decaying covers all three with one layer and no JS.
+
+   The numbers: .88 on the swap frame, a brief crest at 20% (104ms) while the
+   blade is at its brightest, then a long decay. Nothing here fills, so the veil
+   ends where its base rule leaves it — `opacity: 0`. */
 @keyframes hubTxNavVeil {
-  0%   { opacity: 0; }
-  30%  { opacity: 1; }
-  60%  { opacity: 0.72; }
+  0%   { opacity: 0.88; }
+  20%  { opacity: 1; }
+  62%  { opacity: 0.70; }
   100% { opacity: 0; }
 }
 
@@ -392,15 +437,19 @@ html body #md-nav-flash::after  { transform: skewX(-11deg); }
    Going the other way would letterbox the viewport with the parent's
    background for the length of the animation; overscan simply crops.
 
-   ⚠ HONEST LIMIT — THERE IS NO CSS EXIT. `_mmTeardown()` calls `f.remove()`
-   synchronously, and a removed element cannot be animated: there is no style
-   change to transition and `@starting-style` is entry-only. Teardown also runs
-   *before* the replacement hub's markup is written, so the two never coexist for
-   even one frame. The out-fade is therefore carried by §1's veil, which
-   `_playNavFlash()` fires on the same navigation and which is at full strength
-   exactly when the iframe vanishes. Giving the iframe a real exit needs one line
-   of JS in `_mmTeardown` (add a class, remove on `transitionend`) — that is an
-   index.html edit, and this unit ships without one by design.
+   ⚠ THE EXIT IS NOT ON THIS ELEMENT, AND CANNOT BE. `_mmTeardown()` calls
+   `f.remove()` synchronously (index.html:113178), and a removed element cannot be
+   animated: there is no style change to transition and `@starting-style` is
+   entry-only. Teardown also runs *before* the replacement hub's markup is
+   written, so the two never coexist for even one frame. The out-fade is therefore
+   carried by §1's veil — and that is a real answer only since the veil was re-cut
+   to start at .88. `_playNavFlash()` fires earlier in the same synchronous turn
+   (index.html:110897), so the veil is already lit on the frame that loses the
+   iframe; under the old `0%{opacity:0}` cut this same paragraph was an alibi, not
+   a mechanism, and the main menu popped out with nothing over it. Giving the
+   iframe an exit of its own needs one line of JS in `_mmTeardown` (add a class,
+   remove on `transitionend`) — that is an index.html edit, and this unit ships
+   without one by design.
 
    `_mmMount` early-returns when the frame already exists, so this animation
    fires once per actual mount and never on a re-render.
@@ -419,6 +468,7 @@ html body #mm-frame {
    Order of arrival — the whole thing is over inside ~680ms:
 
        0ms   background art settles out of a slight push-in
+      50ms   the top bar (breadcrumb + currency rail) drops into the frame
       60ms   ambient embers and smoke catch up
       70ms   title block resolves
       90ms   side hero drifts in from the edge
@@ -496,6 +546,27 @@ html body #mm-frame {
 }
 @keyframes hubTxHeroIn {
   0%, 15.789% { outline-color: transparent; opacity: 0; translate: 34px 0; scale: 1.03; }
+}
+
+/* ---- the top bar: drops into the frame ---------------------------------- */
+/* ⚠ READ THE SCOPE NOTE IN THE FILE HEADER FIRST. This block exists because
+   NOTHING else animates `.keep-topbar` — hub-chrome.css contains no `animation`
+   declaration and no keyframes, and the bar is rewritten by `renderTitle()` with
+   the rest of the subtree. Without this it was the one element on the page that
+   hard-popped: breadcrumb and currency rail fully painted over a room that was
+   still arriving. It lands just AHEAD of the title, because chrome that frames a
+   room should be there before the room's name is.
+   ⚠ AND IT IS THE FIRST THING TO DELETE if hub-chrome.css ever grows its own.
+
+   `translate` only, -10px, no scale: this bar is a row of small type and a rank
+   pill against a hairline: scaling it would resample the glyphs for the length of
+   the animation and read as a focus pull.
+                              50ms lead + 320ms travel = 370ms; 50/370 = 13.514%. */
+.spellbook-hub.is-sub .keep-topbar {
+  animation: hubTxTopbarIn 370ms var(--hub-in-ease) 1ms;
+}
+@keyframes hubTxTopbarIn {
+  0%, 13.514% { outline-color: transparent; opacity: 0; translate: 0 -10px; }
 }
 
 /* ---- title block: resolves --------------------------------------------- */
@@ -668,8 +739,13 @@ html body #mm-frame {
     opacity: 0;
   }
   html body #md-nav-flash.go {
-    /* Still eased, not `linear`: a linear opacity ramp reads as a shutter. The
-       symmetric in-out is the most literal possible crossfade. */
+    /* Deliberately the SAME keyframes as §1, shorter and with a softer ease — so
+       this veil also starts already lit (.88) and decays. Reduced motion changes
+       what may MOVE; it does not move the cut. `_playNavFlash()` still fires in
+       the same synchronous turn as the DOM swap, so a veil that ramped up from 0
+       here would be exactly as late as the one §1 just stopped shipping, and a
+       reduced-motion user would get the naked seam that everyone else no longer
+       sees. Still eased and not `linear`: a linear ramp reads as a shutter. */
     animation: hubTxNavVeil 420ms cubic-bezier(0.4, 0, 0.4, 1);
   }
 
@@ -686,6 +762,7 @@ html body #mm-frame {
     0% { outline-color: transparent; opacity: 0.28; }
   }
 
+  .spellbook-hub.is-sub .keep-topbar,
   .spellbook-hub.is-sub .spellbook-embers,
   .spellbook-hub.is-sub .spellbook-smoke,
   .spellbook-hub.is-sub .hub-side-hero,

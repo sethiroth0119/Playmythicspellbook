@@ -5,7 +5,7 @@
 
 <script id="run-data" type="application/json">
 {
-  "updated": "2026-08-22 \u2014 run complete and stopped by the user; branch pushed",
+  "updated": "2026-08-22 \u2014 run complete; both gauntlet lines reconciled and pushed",
   "headline": "Ten pieces, thirty-one critic rounds, one gate. The last FAIL is closed.",
   "phase": "Complete",
   "round": 8,
@@ -490,6 +490,16 @@
       "t": "34:20",
       "kind": "phase",
       "text": "Stopped here at the user's request, branch pushed with all three deploy knobs in agreement. What was verified and by what method is written into FUNCTION-INVENTORY.md and OPEN-BREAKS.md rather than summarised away \u2014 including the parts that could not be exercised offline, which are marked unverified rather than passed."
+    },
+    {
+      "t": "34:40",
+      "kind": "finding",
+      "text": "One last piece of housekeeping worth recording, because it is the same class of bug as everything else here: the hourly container restarts had forked this session into two gauntlet lines running from the same commit. They were not rivals \u2014 they shared identical content through the ruins and control points, then one built the camera, arrows and nameplates while the other fixed the tile seams and carried the run to sign-off."
+    },
+    {
+      "t": "34:45",
+      "kind": "pass",
+      "text": "Reconciled rather than picked: the seam fix was re-applied as a clean patch, the duplicated mirror and shove fixes were dropped rather than applied twice, and the completed line's content wins on every conflict. Gates green on the merged tree \u2014 syntax clean, no TDZ, 14x12 board, all three deploy knobs agreeing at v120x4. Pushed."
     }
   ]
 }

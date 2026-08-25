@@ -5,10 +5,10 @@
 
 <script id="run-data" type="application/json">
 {
-  "updated": "2026-08-21 \u2014 Wave 6: closing the breaks",
-  "headline": "Camera and arrows are in. Now the three breaks, and the gate that has to sign it off.",
-  "phase": "Wave 6",
-  "round": 7,
+  "updated": "2026-08-22 \u2014 run complete and stopped by the user; branch pushed",
+  "headline": "Ten pieces, thirty-one critic rounds, one gate. The last FAIL is closed.",
+  "phase": "Complete",
+  "round": 8,
   "goal": "Rebuild the battlefield as a full-field hex map \u2014 XCOM + Fire Emblem + FFT \u2014 in a post-apocalyptic world. Free camera (WASD pan, Q/E turn), five lootable ruins, three SCP-truck control points, XCOM-style move and attack arrows. Every existing battlefield function survives.",
   "bar": [
     "Sprite units and heroes stay sprites \u2014 extremely clear, high quality on the board",
@@ -99,8 +99,8 @@
     },
     {
       "name": "Free camera",
-      "state": "critiqued",
-      "note": "WASD pans in the camera plane so it still feels right after you turn; Q/E yaws around the board centre. The critic found what the builder's own testing structurally could not: the terrain bake collapsed when pan and yaw were COMBINED, because each had only ever been varied on its own. Open gap: units and their ground rings still draw through terrain nearer than they are at some combined poses.",
+      "state": "won",
+      "note": "WASD pans in the camera plane so it still feels right after you turn; Q/E yaws; R restores the neutral pose exactly. The baked ground is keyed on camera pose now \u2014 without that it stayed nailed to the screen while the board turned underneath it, silently. Picking stays exact at every pose: 7,358 click samples across 48 poses, 0 mismatches. Final round: rotating the camera was still pushing tiles outside the canvas rect \u2014 14 of them at yaw 45, where a click lands on the page background. Yaw now re-derives the fit and that is 0, while panning still moves the view, because a camera that re-frames whatever you pan toward is not a camera. Picking stayed exact throughout: 0 centre failures and 0 jitter failures at every pose measured.",
       "rounds": [
         {
           "n": 1,
@@ -110,16 +110,22 @@
         },
         {
           "n": 2,
-          "verdict": "rework",
-          "label": "units draw through terrain",
-          "short": "\u25d1"
+          "verdict": "pass",
+          "label": "holds at every pose",
+          "short": "\u2713"
+        },
+        {
+          "n": 3,
+          "verdict": "pass",
+          "label": "yaw keeps every tile framed",
+          "short": "\u2713"
         }
       ]
     },
     {
       "name": "Post-apocalyptic terrain",
-      "state": "critiqued",
-      "note": "Four rounds of gaps closed. The fifth: the seam between flush tiles was removed from the stroke but not from the geometry \u2014 every tile top is inset 0.008 toward its own centre, so two level neighbours never touch and a black trench shows between them. Measured at 48-82 L deep, deeper than an actual cliff edge.",
+      "state": "won",
+      "note": "Six rounds. Relief too shallow to read; then a diorama still on a photograph; then braziers marking the old rectangle in fire; then the whole field at 19% of the value range with all the height at the rim; then seams cutting every tile apart. Each round killed the gap the last critic named.",
       "rounds": [
         {
           "n": 1,
@@ -153,9 +159,9 @@
         },
         {
           "n": 6,
-          "verdict": "run",
+          "verdict": "pass",
           "label": "joined shelf",
-          "short": "\u00b7\u00b7\u00b7"
+          "short": "\u2713"
         }
       ]
     },
@@ -186,8 +192,8 @@
     },
     {
       "name": "SCP truck control points",
-      "state": "critiqued",
-      "note": "Verified by execution: the capture ring is a tile plus its six hexes, holding two of three for three straight turns returns a win, and the score falls when a point is lost. Remaining gap is multiplayer \u2014 the arithmetic agrees on both clients but nothing carries the VERDICT across, so a control-point win leaves the winner confirming forever and the loser frozen.",
+      "state": "won",
+      "note": "Verified by executing the turn loop, not reading it: holding two of three for three straight turns wins, the streak resets rather than pausing when you drop below two, and the score falls when a point is lost. The tick fires once per side per turn in both single-player and multiplayer \u2014 it double-counted in one and not the other until a critic stepped a real match.",
       "rounds": [
         {
           "n": 1,
@@ -203,16 +209,16 @@
         },
         {
           "n": 3,
-          "verdict": "run",
-          "label": "legitimate MP ending",
-          "short": "\u00b7\u00b7\u00b7"
+          "verdict": "pass",
+          "label": "MP ending legitimate",
+          "short": "\u2713"
         }
       ]
     },
     {
       "name": "XCOM telegraph",
-      "state": "critiqued",
-      "note": "Reachable region as one traced contour, not a checkerboard; the arrow follows the game's own pathfinder so it bends where the unit bends. Round 1 shipped it for your units only \u2014 the critic pointed out requirement #9 says 'when a unit or hero moves', which includes theirs. Round 2 added the enemy telegraph and the critic immediately found the enemy sprite slides straight through the wall its own route goes around.",
+      "state": "won",
+      "note": "Reachable region as one traced contour; the arrow follows the game's own pathfinder so it bends where the unit bends. Then the deeper half: the walk itself now travels with the move rather than reading a UI overlay, so the multiplayer receive path and the replay stepper walk the real bent route too, instead of sliding straight through walls.",
       "rounds": [
         {
           "n": 1,
@@ -225,19 +231,31 @@
           "verdict": "rework",
           "label": "sprite ignores its own route",
           "short": "\u25d1"
+        },
+        {
+          "n": 3,
+          "verdict": "pass",
+          "label": "route travels with the move",
+          "short": "\u2713"
         }
       ]
     },
     {
       "name": "Sprite clarity",
-      "state": "critiqued",
-      "note": "Enemy nameplates with segmented health bars, blue rings under your units and red under theirs, so ownership reads even where sprites overlap. Restyled the HUD against the existing battle chrome tokens rather than rebuilding it \u2014 every panel kept its function and its position.",
+      "state": "won",
+      "note": "Sprites stayed sprites and got crisper \u2014 enemy nameplates with segmented health bars, blue rings under your units and red under theirs, and units no longer draw through terrain nearer than they are. The HUD was restyled against the existing chrome tokens; every panel kept its function and its position.",
       "rounds": [
         {
           "n": 1,
           "verdict": "rework",
           "label": "critique cut short by restart",
           "short": "\u25d1"
+        },
+        {
+          "n": 2,
+          "verdict": "pass",
+          "label": "silhouettes unbroken",
+          "short": "\u2713"
         }
       ]
     }
@@ -432,6 +450,46 @@
       "t": "22:20",
       "kind": "build",
       "text": "Wave 5 committed \u2014 camera, arrows, mirror fix, nameplates and ownership rings. Wave 6 opens on the three breaks the regression gate found, the camera occlusion gap, and a final function-inventory gate that has to reproduce each original failure before it may call a fix closed."
+    },
+    {
+      "t": "27:10",
+      "kind": "critic",
+      "text": "The occlusion fix cut a straight-edged wedge out of a boss's head at yaw 90 \u2014 the mask was bounded from above and never from the side. The critic found it by A/B-ing the same frozen frame with the clip switched off, then proved the replacement with a null control at 0 differing pixels."
+    },
+    {
+      "t": "29:40",
+      "kind": "pass",
+      "text": "Function-inventory gate: 91 pass, 1 FAIL, 17 unverified. The fail was real \u2014 clicking a tile's CENTRE resolved to a neighbouring hexagon on 1-6 tiles of every match. It had been missed because the in-tree check only ever ran the fixture's default seed; across 24 random match seeds it failed on 24 of 24."
+    },
+    {
+      "t": "31:20",
+      "kind": "critic",
+      "text": "The first picking fix closed that hole and opened a smaller one in the same family: on a board-edge tile there is nothing behind the rejected back edge, so the sweep ran off the board and returned null. 1,914 of 184,215 drawn pixels selected nothing. The critic found it by rastering every pixel instead of sampling \u2014 and then proved the audit was blind to it by running a deliberately-too-wide rim through a fully green suite."
+    },
+    {
+      "t": "33:05",
+      "kind": "pass",
+      "text": "Sign-off: 102 pass, 0 fail, 17 unverified. Dead centres 0 on 24 of 24 seeds; 168/168 real mouse clicks correct at the shipped framing; the route walks bent on local, multiplayer-receive and replay paths alike, and reverts to a straight slide the moment the route is deleted \u2014 the old bug reproduces on demand, which is what makes the fix believable."
+    },
+    {
+      "t": "33:15",
+      "kind": "finding",
+      "text": "The sign-off also caught a ship-blocker nobody was looking for: the three deploy knobs agreed with each other, but at a version stamped three waves earlier. Shipping as-is would have left the update check silent and every existing client on the old bundle. All three bumped to v120x4."
+    },
+    {
+      "t": "33:40",
+      "kind": "finding",
+      "text": "One more defect, found by running the board's own self-check across camera POSES rather than trusting it at the default one: rotating pushed 14 tiles off-frame at yaw 45, and a click there lands on the page background. The check had only ever been run at the neutral pose."
+    },
+    {
+      "t": "34:05",
+      "kind": "pass",
+      "text": "Closed by splitting the camera in two. Yaw is a look-at-it-from-here action and should not cost the player tiles, so the fit re-derives on rotation: off-frame tiles at 45 degrees go from 14 to 0. Pan is navigation and still moves the view. Picking geometry untouched \u2014 0 centre failures, 0 jitter failures at every pose."
+    },
+    {
+      "t": "34:20",
+      "kind": "phase",
+      "text": "Stopped here at the user's request, branch pushed with all three deploy knobs in agreement. What was verified and by what method is written into FUNCTION-INVENTORY.md and OPEN-BREAKS.md rather than summarised away \u2014 including the parts that could not be exercised offline, which are marked unverified rather than passed."
     }
   ]
 }

@@ -71715,6 +71715,75 @@ const REPLAY_HISTORY_MAX = 5;
 // localStorage budget. Hands/decks are kept as COUNTS only (since the closed parts of
 // either side's deck don't matter for replay viewing). The full hand at start of game
 // is preserved separately in `replay.initialPlayerHand`.
+//
+// 🩻 THIS IS AN ALLOW-LIST, AND AN ALLOW-LIST IS A BUG GENERATOR.
+// Everything added to battle state after this function was written is silently
+// absent from every replay, and NOTHING THROWS. The playback path just renders a
+// different match: the terrain generator re-rolls from a fresh seed, the five
+// ruins land somewhere else, the SCP trucks move, the objective score resets to
+// 0–0. It is precisely the divergence the seeded generator exists to prevent
+// between two live clients, arriving on the one path nobody was watching.
+// Found missing, in one pass: `_bbMapSeed`, `structures`, `controlPoints`,
+// `cpScore`, `cpStreak`, and — older than this project — `tombstones`,
+// `activeLocation`, `heroUltimates`, `heroEmotions`, `persistentSpells`,
+// `smokedTiles`, `scanned`/`scannedTemp`.
+//
+// So the list below is paired with REPLAY_STATE_IGNORED and audited at runtime by
+// _replayAuditSnapshotKeys(): a top-level state key that is in NEITHER list warns
+// once per battle in the console. Add a key to battle state and you are told the
+// day you add it, instead of by a bug report six months later that says "the
+// replay showed a different map".
+//
+// ⚠ If you add a key here, ask whether it can hold an inline `data:` URL or a
+//   blob — see the activeLocation note below. Snapshots go to localStorage.
+const REPLAY_STATE_IGNORED = {
+  // Card zones — reduced to counts + the player's own hand, below.
+  player: 1, ai: 1,
+  // Pure engine bookkeeping. None of it reaches a renderer, and the replay
+  // viewer runs no reducers, so carrying it would only cost bytes.
+  selection: 1, phase: 1, turnLocks: 1, spellTurn: 1,
+  currentTurn: 1, concededByPlayer: 1,
+  _deckUnitIds: 1, _fieldBagAtStart: 1, _counterChain: 1, _fkDeathSeen: 1,
+  _phoenixTurnRevives: 1, _usedConsumableSlots: 1, _usedActiveSkills: 1,
+  _lastPlayerCounterCard: 1, _lastAiCounterCard: 1, _pendingTargets: 1,
+  _forceAiTargetId: 1, _atkFx: 1, _timeoutForfeit: 1, _fusMatTick: 1,
+  _cpWinLogged: 1, _wmUltimate: 1, _wmToxin: 1, _wmSacrifice: 1,
+};
+// Keys that may carry an inline data: URL or an oversized blob. Same reasoning as
+// _serializeBattleStateForBroadcast's HEAVY_KEYS — and the same fix: the renderer
+// re-resolves the art from its own catalog at draw time (see the comment at the
+// iso-backdrop location lookup), so a blank here costs nothing and a 3 MB base64
+// string per snapshot would blow the localStorage quota on the first save.
+const REPLAY_HEAVY_KEYS = { image: 1, img: 1, imageUrl: 1, art: 1, artUrl: 1, cover: 1, coverArt: 1 };
+function _replayStripHeavy(v) {
+  if (v == null || typeof v !== 'object') return v;
+  const out = Array.isArray(v) ? [] : {};
+  for (const k in v) {
+    if (!Object.prototype.hasOwnProperty.call(v, k)) continue;
+    const x = v[k];
+    if (REPLAY_HEAVY_KEYS[k] && typeof x === 'string') { out[k] = ''; continue; }
+    out[k] = (x && typeof x === 'object') ? _replayStripHeavy(x) : x;
+  }
+  return out;
+}
+// The audit. Warns ONCE per battle (keyed off App.replay) so a 1200-snapshot match
+// cannot spam the console, and never throws — a broken audit must not stop a
+// recording.
+function _replayAuditSnapshotKeys(state, carried) {
+  try {
+    const rep = App.replay;
+    if (!rep || rep._keyAuditDone) return;
+    rep._keyAuditDone = true;
+    const unknown = Object.keys(state).filter(k =>
+      !Object.prototype.hasOwnProperty.call(carried, k) && !REPLAY_STATE_IGNORED[k]);
+    if (unknown.length) {
+      console.warn('[replay] battle state carries key(s) the snapshot neither records nor ' +
+        'ignores — a replay will render without them: ' + unknown.join(', ') +
+        '\n  → add each to cloneStateLight() (if a renderer reads it) or to ' +
+        'REPLAY_STATE_IGNORED (if nothing does).');
+    }
+  } catch (e) {}
+}
 function cloneStateLight(state) {
   if (!state) return null;
   const slim = {
@@ -71728,6 +71797,35 @@ function cloneStateLight(state) {
     mods: state.mods,
     comboHits: state.comboHits,
     log: state.log,
+    // 🌱 THE MAP SEED. Without this line the replay's `_bbMapSeed()` falls through
+    // to its "no stamp on the state" branch and rolls a NEW random seed, so
+    // `_bbGenTerrain` builds a different relief, different surfaces and different
+    // props than the match was fought on. It is a plain number; ten bytes.
+    _bbMapSeed: state._bbMapSeed,
+    // 🏚 / 🚚 / 🪦 The three POSITIONED arrays. Every one of them is drawn by
+    // renderBoard() and pushed to the canvas stage, and every one of them was
+    // absent: ruins were re-seeded onto different tiles, the SCP trucks moved,
+    // and the graves the match ended with never appeared. (`tombstones` predates
+    // this project and was missing the whole time.)
+    structures: state.structures,
+    controlPoints: state.controlPoints,
+    tombstones: state.tombstones,
+    smokedTiles: state.smokedTiles,
+    // 🚚 …and the objective HUD that reads the trucks. Without the score and the
+    // streak the replay of a capture win shows 0–0 all the way to the victory.
+    cpScore: state.cpScore,
+    cpStreak: state.cpStreak,
+    // 🗺 Location card in play — drives the board backdrop, the rail's LOCATION
+    // row and the field-effect pills. Heavy art is blanked (see _replayStripHeavy).
+    activeLocation: state.activeLocation ? _replayStripHeavy(state.activeLocation) : state.activeLocation,
+    // ⚡ / 😢 / ✨ HUD state: the hero ultimate charge ring, the emotion badge and
+    // the persistent-enchantment pills are all rendered from these.
+    heroUltimates: state.heroUltimates,
+    heroEmotions: state.heroEmotions,
+    persistentSpells: state.persistentSpells ? _replayStripHeavy(state.persistentSpells) : state.persistentSpells,
+    // 🔍 Scan reveals — what the player could see about enemy units at that moment.
+    scanned: state.scanned,
+    scannedTemp: state.scannedTemp,
     // Just energy and counts for hands/decks — full card lists balloon storage.
     player: state.player ? {
       energy: state.player.energy, maxEnergy: state.player.maxEnergy,
@@ -71741,6 +71839,7 @@ function cloneStateLight(state) {
       deckCount: (state.ai.deck || []).length,
     } : null,
   };
+  _replayAuditSnapshotKeys(state, slim);
   try { return JSON.parse(JSON.stringify(slim)); }
   catch (e) { return null; }
 }
@@ -74586,6 +74685,53 @@ function hexDirToward(fx, fy, tx, ty) {
 // its result as an offset pair and re-add it — that is the whole bug.
 // NOT bounds-checked, for the same reason hexNeighbors() is not.
 const hexStep = (x, y, i) => { const d = hexDirs(y)[i]; return { x: x + d[0], y: y + d[1] }; };
+// ═══ THE WALKED RAY — HANDING THE ROUTE TO THE RENDERER ════════════════════
+// A shove is the ONE movement in this game with no getMovePath() behind it:
+// the tiles fall out of the step loop above, so nothing else can be asked for
+// them after the fact. The board therefore has to be TOLD them, exactly the
+// way the telegraph is told its route (battle-board/index.html, the TELE block
+// — "the board owns no pathfinder and must never derive a route of its own").
+//
+// WHY this exists, because it is the same lie one layer up. The stage tweens a
+// unit with a single linear interpolation between the two ENDPOINTS. On a
+// staggered lattice a straight line in offset space is not the hex ray: the
+// board's rowShift() half-column sawtooth beats against the linear column
+// lerp, so a 2+ tile shove was DRAWN weaving up to half a hex width off the
+// tiles the rules actually routed it through — straddling the boundary of the
+// tile next door. Destination right, journey a lie.
+//
+// It only looked exact before the hex fix above because a repeated fixed
+// offset pair IS, by construction, a straight line in offset space. The
+// animation was faithful to a walk that was itself wrong. Fixing the walk
+// without fixing the drawing just moved the lie from the rules into the
+// picture, which is the failure this whole file's scar comments exist about.
+//
+// Rules record the ray → _bbStageUnitList() forwards it → the board chains its
+// tween through it. The board still derives nothing.
+//
+// ⚠ Bounded on purpose. Nothing guarantees a consumer: with the 3D stage off,
+// rays are recorded and never read, so this would grow for the length of a
+// match. It caps and drops its OLDEST entry (Map preserves insertion order),
+// because the newest ray is the only one anyone could still want.
+const _SHOVE_RAY_MAX = 64;
+const _shoveRays = new Map();
+function _shoveRayRecord(unitId, ray) {
+  if (unitId == null || !Array.isArray(ray) || ray.length < 2) return;
+  const k = String(unitId);
+  _shoveRays.delete(k);                       // re-insert, so this id is newest
+  while (_shoveRays.size >= _SHOVE_RAY_MAX) _shoveRays.delete(_shoveRays.keys().next().value);
+  _shoveRays.set(k, ray);
+}
+// Consume-once. A ray describes one shove that has already happened; leaving it
+// in the map would let an ordinary walk on a later tick be animated along a
+// stale route. The board re-checks both endpoints anyway (belt and braces —
+// see its moveUnit), but the fix for staleness is not to keep it around.
+function _shoveRayTake(unitId) {
+  const k = String(unitId);
+  const r = _shoveRays.get(k);
+  if (r) _shoveRays.delete(k);
+  return r || null;
+}
 const inBounds = (x, y) => x >= 0 && x < BOARD_W && y >= 0 && y < BOARD_H;
 // State-aware sibling. inBounds() answers from the CONSTANTS; inBoundsOf()
 // answers from the LIVE board array via _boardDims() (:74915). They agree
@@ -75508,9 +75654,20 @@ function _floodConvertSurface(state, x, y, fromType, toType, turns) {
 // takes `dir`, an index into hexDirs(), and re-reads the offsets for the row
 // it is currently on. All three call sites (knockback, pull, vortex) pass the
 // index they shoved along, so the skid continues the same hex line exactly.
+//
+// Returns `tiles` too: the ordered list of tiles the skid ACTUALLY crossed,
+// which the caller appends to its shove ray so the board animates the skid
+// along the same hexes the rules walked (see _shoveRayRecord). A 12-tile skid
+// is the longest and most visible shove in the game and was the worst case of
+// the straight-line-lerp drift.
 function _slideOnIce(state, cx, cy, dir) {
-  if (!(dir >= 0)) return { x: cx, y: cy, steps: 0 };
+  // ⚠ HARDENED GUARD. `!(dir >= 0)` caught the -1 "no direction" sentinel but
+  // nothing else: a caller still passing the OLD (dx, dy) offset pair would
+  // bind `dir = dx`, and a dx of 0 or 1 reads as a perfectly legal direction
+  // index — an arbitrary skid with no error anywhere. Only 0..5 are directions.
+  if (!(Number.isInteger(dir) && dir >= 0 && dir <= 5)) return { x: cx, y: cy, steps: 0, tiles: [] };
   let steps = 0;
+  const tiles = [];
   while (steps < 12) {
     const surf = _surfaceAt(state, cx, cy);
     if (!surf || surf.type !== 'ice') break;          // only slide while ON ice
@@ -75520,9 +75677,9 @@ function _slideOnIce(state, cx, cy, dir) {
     const tile = state.board[ny] && state.board[ny][nx];
     if (tile && tile.wall) break;
     if (typeof getOccupant === 'function' && getOccupant({ x: nx, y: ny }, state.units)) break;
-    cx = nx; cy = ny; steps++;
+    cx = nx; cy = ny; steps++; tiles.push({ x: nx, y: ny });
   }
-  return { x: cx, y: cy, steps: steps };
+  return { x: cx, y: cy, steps: steps, tiles: tiles };
 }
 
 // Turn-start surface tick: fire spreads to adjacent oil, units that ended
@@ -93439,6 +93596,11 @@ function _applyOnPlayOneRaw(state, unit, card) {
       const vdir = isPull ? hexDirToward(tx, ty, ox, oy) : hexDirToward(ox, oy, tx, ty);
       if (vdir < 0) continue;   // sharing the caster's tile — no direction
       let cx = tx, cy = ty, moved = 0;
+      // The ray the rules actually walk, tile by tile, starting where the unit
+      // stands. Handed to the board so the drawn route IS the walked route —
+      // a vortex can drag 6 tiles, and an endpoint lerp across 6 staggered
+      // rows is not the line the unit took (see _shoveRayRecord).
+      const ray = [{ x: tx, y: ty }];
       for (let step = 0; step < tiles; step++) {
         const _n = hexStep(cx, cy, vdir);
         const nx = _n.x, ny = _n.y;
@@ -93448,11 +93610,13 @@ function _applyOnPlayOneRaw(state, unit, card) {
         const tile = row && row[nx];
         if (!tile || tile.wall) break;
         if (getOccupant({ x: nx, y: ny }, state.units)) break;
-        cx = nx; cy = ny; moved++;
+        cx = nx; cy = ny; moved++; ray.push({ x: nx, y: ny });
       }
       if (!moved) continue;
-      const _slid = (typeof _slideOnIce === 'function') ? _slideOnIce(state, cx, cy, vdir) : { x: cx, y: cy, steps: 0 };
+      const _slid = (typeof _slideOnIce === 'function') ? _slideOnIce(state, cx, cy, vdir) : { x: cx, y: cy, steps: 0, tiles: [] };
       cx = _slid.x; cy = _slid.y; slidTiles += (_slid.steps | 0);
+      if (_slid.tiles) for (const _t of _slid.tiles) ray.push(_t);
+      if (typeof _shoveRayRecord === 'function') _shoveRayRecord(live.id, ray);
       // Commit immediately so the NEXT unit's occupancy test sees this one's new tile.
       state = { ...state, units: (state.units || []).map(u => u.id === live.id ? { ...u, pos: { x: cx, y: cy } } : u) };
       movedCount++; totalTiles += moved;
@@ -101155,6 +101319,10 @@ const executeMove = (state, attacker, target, move) => {
     const kdir = hexDirToward(ax, ay, tx, ty);   // away from the attacker, snapped to one of six
     if (kdir >= 0) {
       let cx = tx, cy = ty, moved = 0;
+      // The walked ray, accumulated tile by tile for the renderer. The board
+      // cannot re-derive it (there is no getMovePath behind a shove) and must
+      // not try — see _shoveRayRecord for the drift this closes.
+      const ray = [{ x: tx, y: ty }];
       for (let step = 0; step < move.knockback; step++) {
         const _n = hexStep(cx, cy, kdir);        // per-step: the offsets flip with row parity
         const nx = _n.x, ny = _n.y;
@@ -101162,12 +101330,14 @@ const executeMove = (state, attacker, target, move) => {
         const tile = s.board[ny][nx];
         if (tile.wall) break;
         if (getOccupant({ x: nx, y: ny }, s.units)) break;
-        cx = nx; cy = ny; moved++;
+        cx = nx; cy = ny; moved++; ray.push({ x: nx, y: ny });
       }
       if (moved > 0) {
         // 🧊 Ice slide — a shove onto ice sends the unit skidding further.
-        const _slid = (typeof _slideOnIce === 'function') ? _slideOnIce(s, cx, cy, kdir) : { x: cx, y: cy, steps: 0 };
+        const _slid = (typeof _slideOnIce === 'function') ? _slideOnIce(s, cx, cy, kdir) : { x: cx, y: cy, steps: 0, tiles: [] };
         cx = _slid.x; cy = _slid.y;
+        if (_slid.tiles) for (const _t of _slid.tiles) ray.push(_t);
+        if (typeof _shoveRayRecord === 'function') _shoveRayRecord(updatedTarget.id, ray);
         s.units = s.units.map(u => u.id === updatedTarget.id ? { ...u, pos: { x: cx, y: cy } } : u);
         log.push({ msg: `🌬️ ${updatedTarget.name} is blown back ${moved} tile${moved === 1 ? '' : 's'}${_slid.steps ? ` and skids ${_slid.steps} more across the ice!` : '!'}`, color: 'amber' });
         updatedTarget = { ...updatedTarget, pos: { x: cx, y: cy } };
@@ -101191,6 +101361,7 @@ const executeMove = (state, attacker, target, move) => {
     const pdir = hexDirToward(tx, ty, ax, ay);   // toward the attacker, snapped to one of six
     if (pdir >= 0) {
       let cx = tx, cy = ty, moved = 0;
+      const ray = [{ x: tx, y: ty }];            // walked ray for the renderer, as above
       for (let step = 0; step < move.pull; step++) {
         const _n = hexStep(cx, cy, pdir);        // per-step: the offsets flip with row parity
         const nx = _n.x, ny = _n.y;
@@ -101199,12 +101370,14 @@ const executeMove = (state, attacker, target, move) => {
         const tile = s.board[ny][nx];
         if (tile.wall) break;
         if (getOccupant({ x: nx, y: ny }, s.units)) break;
-        cx = nx; cy = ny; moved++;
+        cx = nx; cy = ny; moved++; ray.push({ x: nx, y: ny });
       }
       if (moved > 0) {
         // 🧊 Ice slide — a yank onto ice keeps the unit skidding inward.
-        const _slid = (typeof _slideOnIce === 'function') ? _slideOnIce(s, cx, cy, pdir) : { x: cx, y: cy, steps: 0 };
+        const _slid = (typeof _slideOnIce === 'function') ? _slideOnIce(s, cx, cy, pdir) : { x: cx, y: cy, steps: 0, tiles: [] };
         cx = _slid.x; cy = _slid.y;
+        if (_slid.tiles) for (const _t of _slid.tiles) ray.push(_t);
+        if (typeof _shoveRayRecord === 'function') _shoveRayRecord(updatedTarget.id, ray);
         s.units = s.units.map(u => u.id === updatedTarget.id ? { ...u, pos: { x: cx, y: cy } } : u);
         log.push({ msg: `🪝 ${updatedTarget.name} is yanked ${moved} tile${moved === 1 ? '' : 's'} closer${_slid.steps ? ` and skids ${_slid.steps} more across the ice!` : '!'}`, color: 'amber' });
         updatedTarget = { ...updatedTarget, pos: { x: cx, y: cy } };
@@ -104890,6 +105063,30 @@ function _bbSeedFromString(s) {
 // clients (or a client and a replay) agreeing without talking to each other.
 let _BB_SEED_FALLBACK = 0;
 function _bbMapSeed() {
+  // 0 · A REPLAY is playing back a recorded state, and that state carries the
+  //     seed the match was actually fought on (cloneStateLight). It must win
+  //     over everything below, including branch 1: App.battlePrep and
+  //     MatchBroadcast.matchId are NOT cleared when a match ends, so watching a
+  //     solo replay straight after an online game re-derived the seed from that
+  //     online match's id and rebuilt the wrong battlefield — the same "replay
+  //     of a match that never happened" bug the snapshot fix closes, arriving
+  //     through the resolver instead of through the recording.
+  //     ⏮ AND IT MUST ANSWER FOR AN OLD REPLAY TOO. Replays recorded before the
+  //     seed was added to the snapshot carry none, and `rebuildReplayState`
+  //     rebuilds `App.state` FROM THE SNAPSHOT on every frame step — so branch 2
+  //     stamped a fresh random seed on each new state object and the battlefield
+  //     was re-generated, differently, on every ⏩. Pinning those to the
+  //     page-level fallback cannot recover the map that was actually played (the
+  //     recording does not contain it), but it does stop the board rebuilding
+  //     itself underneath the viewer while they step through.
+  try {
+    if (typeof App !== 'undefined' && App.replayViewing) {
+      const rs = App.state && App.state._bbMapSeed;
+      if (typeof rs === 'number' && rs) return rs >>> 0;
+      if (!_BB_SEED_FALLBACK) _BB_SEED_FALLBACK = ((Math.random() * 0xffffffff) >>> 0) || 1;
+      return _BB_SEED_FALLBACK;
+    }
+  } catch (e) {}
   // 1 · A multiplayer match id is the strongest source: BOTH clients hold the
   //     same string before either has received a single state snapshot, so both
   //     derive the same seed with no round trip and no race over who stamps it.
@@ -106212,13 +106409,24 @@ function _bbStageUnitList() {
       // whenever the 3D stage is on, so during a stage match it reached the
       // player exactly never. Four extra scalars per unit; the board ignores
       // them if it is a stale cached build (CONTRACT R6 — bump BB_VER).
-      out.push({ id: String(u.id), key: key,
+      const entry = { id: String(u.id), key: key,
                  x: u.pos.x | 0, z: u.pos.y | 0,
                  side: u.owner === 'player' ? 'mine' : 'foe',
                  name: String(u.name || ''),
                  hp: Math.max(0, u.currentHp | 0),
                  hpMax: Math.max(1, u.maxHp | 0),
-                 hero: !!u.isHero });
+                 hero: !!u.isHero };
+      // 🌬 THE WALKED SHOVE RAY. Knockback / pull / vortex / ice skid are the
+      // only movements with no getMovePath() behind them, so the board cannot
+      // ask for the route and must be handed it (_shoveRayRecord, :74688).
+      // Without this the stage lerps endpoint-to-endpoint and draws a 2+ tile
+      // shove up to half a hex width off the tiles the rules routed it through.
+      // Game {x,y} → board {x,z} renames HERE, at the bridge, per CONTRACT §1.1.
+      // Taken once and dropped: an ordinary walk on a later tick must animate
+      // with the board's own endpoint tween exactly as it always has.
+      const _ray = (typeof _shoveRayTake === 'function') ? _shoveRayTake(u.id) : null;
+      if (_ray) entry.path = _ray.map(t => ({ x: t.x | 0, z: t.y | 0 }));
+      out.push(entry);
     }
   } catch (e) {}
   return out;
@@ -106729,8 +106937,20 @@ function _bbStagePushUnits() {
     for (const u of list) if (!prev.has(u.id)) _bbStagePost('summonFx', { id: u.id });
   }
 }
+// 🎬 …AND ON THE REPLAY SCREEN, which is not `battle`.
+// renderReplayViewer() calls renderBattle() and then sits on
+// `App.screen === 'replayViewer'`, so this gate used to tear the stage down the
+// moment a replay opened. The DOM board underneath is still built (168 tiles,
+// the units, the paint) but the hex conversion draws the field on the CANVAS —
+// the DOM tiles carry no ground art of their own any more — so a replay showed
+// the bare `.board-area` backdrop and no battlefield at all. That is the same
+// break as the missing snapshot keys seen from the other end: the recording was
+// wrong AND the picture was absent, so neither half could reveal the other.
+// Anything in this file that means "a match is being played" must keep testing
+// `App.screen === 'battle'`; this one means "a battlefield is on screen".
 function _bbStageMount() {
-  if (App.screen !== 'battle' || !_bbStageOn()) { if (_BBS.frame) _bbStageUnmount(); return; }
+  const _boardScreen = (App.screen === 'battle' || App.screen === 'replayViewer');
+  if (!_boardScreen || !_bbStageOn()) { if (_BBS.frame) _bbStageUnmount(); return; }
   const area = document.querySelector('.board-area');
   if (!area) { if (_BBS.frame) _bbStageUnmount(); return; }
   _bbStageEnsureStyle();
@@ -106775,6 +106995,14 @@ function _bbStageMount() {
       // the SAME entry point the DOM tiles used, so selection, movement,
       // targeting, placement and unit modals all behave exactly as before.
       if (d.type === 'board:tileClick') {
+        // 🎬 A REPLAY IS A READ-ONLY VIEW. The DOM board got this for free —
+        // renderBattle only calls bindBattleEvents() when !App.replayViewing, so
+        // its tiles simply had no onclick. The stage's catcher is armed by the
+        // mount tick instead, independent of that bind, so now that the stage
+        // runs on the replay screen the guard has to be stated here: without it
+        // a viewer could select and MOVE units inside a recorded match, and the
+        // next frame step would silently overwrite whatever they did.
+        if (App.replayViewing) return;
         // Mirror the DOM board exactly: clicking a UNIT ran onUnitClick (which
         // opens its details); clicking bare ground ran onTileClick. The old
         // `.unit` handler called stopPropagation, so the two never both fired.

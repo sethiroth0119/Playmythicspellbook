@@ -1,0 +1,1542 @@
+/* ════════════════════════════════════════════════════════════════════════════
+   🍔 MYTHIC KITCHEN — THE SURFACE
+   ----------------------------------------------------------------------------
+   CONTRACT.md §1: this file owns ALL styling. Every selector is `.mk-*` and
+   every one of them is scoped under `#mythic-kitchen-ov`. Nothing here may leak
+   into the 11.6 MB legacy page — that page has ~4,000 of its own rules and a
+   bare `.card` or `.slot` from us would repaint somebody's Just Business screen
+   three weeks from now with no way to trace it back here.
+
+   Loaded by index.js injecting a <link> (§9), NOT by an index.html edit. That
+   is deliberate: every extra edit to an 11.6 MB file is a merge hazard, and a
+   stylesheet is the one of the four that can be attached from JS for free.
+
+   🔴 MOBILE IS THE PLATFORM. Everything below is written at 360px first and
+   then widened by exactly ONE breakpoint (820px). If a change makes something
+   unreachable by one thumb on a 360×640 phone, the change is wrong even if it
+   looks better on the desktop screenshot. The rails (board / line / bins) all
+   scroll horizontally on phones and re-flow into columns on desktop; that is
+   the whole responsive strategy and there is no third layout to maintain.
+
+   ── WHY IT LOOKS LIKE THIS ──────────────────────────────────────────────────
+   The bar is two commercial fast-food sims. What makes those read as a kitchen
+   in one glance is not detail, it is MATERIAL and DEPTH: brushed stainless with
+   a lit top edge, a griddle that glows from underneath, a warm ceiling light
+   that falls off into a dark room, and an overhead order screen that is clearly
+   a SCREEN. All of that is gradients, insets and one repeating-linear-gradient
+   per material. There are no image assets anywhere in here (none exist, and
+   CLAUDE.md bans uploading any) except the game's own Cinder coin, which is
+   already shipped at /assets/artwork/gameicons/Cinder.png and is the currency
+   idiom the rest of the game uses. Absolute path on purpose — a relative url()
+   in this file would resolve against /src/kitchen/ and 404.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* ── TOKENS ────────────────────────────────────────────────────────────────
+   One palette, defined once. The station surfaces below all mix from these,
+   which is why the fryer and the griddle look like they are in the same room
+   instead of like two people picked two oranges. */
+#mythic-kitchen-ov {
+  --mk-ink: #f6efe4;          /* warm off-white; pure #fff reads clinical      */
+  --mk-dim: #a99c8c;
+  --mk-faint: #6f6558;
+
+  --mk-bg0: #0d0908;          /* the dark end of the room                      */
+  --mk-bg1: #1a1310;
+  --mk-bg2: #251a15;
+
+  --mk-steel0: #6b727b;       /* brushed stainless, light → dark               */
+  --mk-steel1: #4a515a;
+  --mk-steel2: #2e343b;
+  --mk-steel3: #1d2126;
+
+  --mk-amber: #ffb648;        /* warm interior light / primary accent          */
+  --mk-hot: #ff6a3d;          /* heat, sizzle, urgency                         */
+  --mk-ready: #5fd97a;        /* done / ready / served                         */
+  --mk-danger: #ff4d5e;       /* burning, walking out                          */
+  --mk-cyan: #67d8ff;         /* cold side: chiller, drinks, convoys           */
+  --mk-screen: #7fffc4;       /* order-screen phosphor                         */
+
+  --mk-line: rgba(255,255,255,.10);
+  --mk-line2: rgba(255,255,255,.18);
+  --mk-shadow: 0 8px 20px rgba(0,0,0,.55);
+  --mk-r: 12px;
+
+  /* Brushed-metal overlay. Used as a second background layer on anything that
+     is supposed to be a fabricated stainless panel. */
+  --mk-brush: repeating-linear-gradient(90deg,
+      rgba(255,255,255,.055) 0 1px, rgba(0,0,0,.05) 1px 3px);
+}
+
+/* ── OVERLAY SHELL ─────────────────────────────────────────────────────────
+   z-index sits BELOW the legacy `.toast` (2147483647) on purpose: the bridge's
+   toast() is our only error channel and a kitchen that covered its own error
+   messages would be worse than one with no error messages at all. */
+#mythic-kitchen-ov {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: var(--mk-ink);
+  font-family: "Segoe UI", system-ui, -apple-system, Roboto, Helvetica, Arial, sans-serif;
+  font-size: 13px;
+  line-height: 1.25;
+  -webkit-tap-highlight-color: transparent;
+  background:
+    /* the ceiling light, blooming down over the pass */
+    radial-gradient(120% 60% at 50% -8%, rgba(255,186,92,.26), transparent 62%),
+    /* the far wall falling into shadow */
+    radial-gradient(90% 70% at 50% 118%, rgba(0,0,0,.65), transparent 60%),
+    linear-gradient(180deg, var(--mk-bg2) 0%, var(--mk-bg1) 46%, var(--mk-bg0) 100%);
+}
+#mythic-kitchen-ov * { box-sizing: border-box; }
+#mythic-kitchen-ov button { font: inherit; color: inherit; }
+
+/* The tiled back wall. A real restaurant interior behind the counter is what
+   sells DEPTH; two repeating gradients and a vignette do it for nothing. */
+#mythic-kitchen-ov .mk-room {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: .5;
+  background:
+    repeating-linear-gradient(0deg,  rgba(255,255,255,.045) 0 1px, transparent 1px 38px),
+    repeating-linear-gradient(90deg, rgba(255,255,255,.045) 0 1px, transparent 1px 38px);
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, rgba(0,0,0,.35) 46%, transparent 72%);
+          mask-image: linear-gradient(180deg, #000 0%, rgba(0,0,0,.35) 46%, transparent 72%);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   🎛 HUD — popularity face + meter, LEVEL + XP, Cinder, day + clock.
+   ------------------------------------------------------------------------
+   This is REF-B's HUD and it is the single fastest thing on screen for making
+   us read as a sim rather than as a menu. It is `position:sticky` rather than
+   fixed so it participates in the flex column and cannot overlap the tab bar
+   on a short landscape phone.
+   ════════════════════════════════════════════════════════════════════════ */
+#mythic-kitchen-ov .mk-hud {
+  position: relative;
+  z-index: 4;
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: auto minmax(0,1fr) auto;
+  grid-template-areas: "pop lvl close" "cash cash clock";
+  gap: 6px 8px;
+  padding: 8px 10px;
+  background:
+    linear-gradient(180deg, rgba(255,182,72,.10), transparent 60%),
+    linear-gradient(180deg, var(--mk-steel1) 0%, var(--mk-steel2) 55%, var(--mk-steel3) 100%),
+    var(--mk-brush);
+  border-bottom: 1px solid rgba(0,0,0,.6);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.28), 0 6px 18px rgba(0,0,0,.5);
+}
+#mythic-kitchen-ov .mk-hud-pop   { grid-area: pop; }
+#mythic-kitchen-ov .mk-hud-lvl   { grid-area: lvl; }
+#mythic-kitchen-ov .mk-hud-cash  { grid-area: cash; }
+#mythic-kitchen-ov .mk-hud-clock { grid-area: clock; }
+#mythic-kitchen-ov .mk-hud-close { grid-area: close; }
+
+#mythic-kitchen-ov .mk-hud-pop,
+#mythic-kitchen-ov .mk-hud-lvl,
+#mythic-kitchen-ov .mk-hud-cash,
+#mythic-kitchen-ov .mk-hud-clock {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 4px 8px;
+  border-radius: 9px;
+  background: linear-gradient(180deg, rgba(0,0,0,.34), rgba(0,0,0,.5));
+  border: 1px solid var(--mk-line);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.07);
+}
+
+#mythic-kitchen-ov .mk-face {
+  font-size: 20px;
+  line-height: 1;
+  filter: drop-shadow(0 2px 3px rgba(0,0,0,.6));
+}
+#mythic-kitchen-ov .mk-meter {
+  position: relative;
+  width: 74px;
+  height: 8px;
+  border-radius: 99px;
+  overflow: hidden;
+  /* ⚠ The TRACK needs its own light: a near-black track on a near-black chip
+     makes a half-full bar look like a short bar floating in space, and the
+     player cannot tell 50% from 100%. */
+  background: rgba(255,255,255,.12);
+  box-shadow: inset 0 1px 2px rgba(0,0,0,.7);
+}
+#mythic-kitchen-ov .mk-meter > i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  display: block;
+  width: 50%;
+  border-radius: 99px;
+  background: linear-gradient(90deg, #ff8a5a, var(--mk-amber));
+  transition: width .35s ease;
+}
+#mythic-kitchen-ov .mk-lab {
+  font-size: 11px;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--mk-dim);
+  white-space: nowrap;
+}
+#mythic-kitchen-ov .mk-val {
+  font-size: 13px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* LEVEL n + XP bar. The bar is the widest thing in the HUD because on a phone
+   the XP bar is the only place the player sees progress at all. */
+#mythic-kitchen-ov .mk-xp {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 54px;
+  height: 9px;
+  border-radius: 99px;
+  overflow: hidden;
+  background: rgba(255,255,255,.12);
+  box-shadow: inset 0 1px 2px rgba(0,0,0,.7);
+}
+#mythic-kitchen-ov .mk-xp > i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  display: block;
+  border-radius: 99px;
+  background: linear-gradient(90deg, #56b8ff, var(--mk-cyan));
+  box-shadow: 0 0 10px rgba(103,216,255,.5);
+  transition: width .35s ease;
+}
+#mythic-kitchen-ov .mk-lvl-badge {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  padding: 2px 7px;
+  border-radius: 7px;
+  background: linear-gradient(180deg, #3c4655, #232a33);
+  border: 1px solid rgba(103,216,255,.35);
+  font-size: 11px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: #cfeaff;
+}
+#mythic-kitchen-ov .mk-lvl-badge b { font-size: 14px; color: #fff; }
+
+/* The Cinder coin, the game's own art. `.mk-coin` is our local copy of the
+   legacy `.cinder-icon` idiom — we cannot reuse that class because this file
+   must not depend on a rule 22,000 lines into index.html that could move. */
+#mythic-kitchen-ov .mk-coin {
+  display: inline-block;
+  width: 1.35em;
+  height: 1.35em;
+  vertical-align: -.32em;
+  background-image: url('/assets/artwork/gameicons/Cinder.png?v=2');
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  border-radius: 50%;
+  box-shadow: 0 0 8px rgba(255,182,72,.35);
+}
+#mythic-kitchen-ov .mk-cash { color: #ffd88a; font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; }
+
+/* The clock chip. REF-A's "MONDAY 01:18 PM", plus a rush pip row, because the
+   demand curve is invisible otherwise and "why did it suddenly get hard" is a
+   question the HUD should answer before the player has to ask it. */
+#mythic-kitchen-ov .mk-day { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--mk-amber); }
+#mythic-kitchen-ov .mk-clock { font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: .02em; }
+#mythic-kitchen-ov .mk-rush { display: flex; gap: 2px; align-items: center; }
+#mythic-kitchen-ov .mk-rush > i {
+  width: 4px; height: 11px; border-radius: 2px;
+  background: rgba(255,255,255,.14);
+}
+#mythic-kitchen-ov .mk-rush > i.on { background: linear-gradient(180deg, var(--mk-amber), var(--mk-hot)); box-shadow: 0 0 6px rgba(255,106,61,.55); }
+
+/* ⚠ At 360px the HUD's top row is pop | level | ✕ and the level cell WILL try to
+   push the close button off the panel: `1fr` is a minimum of auto, so the xp
+   label's text sets a floor and the grid overflows. min-width:0 on the cell and
+   a hard cap on the label is the fix; do not "solve" it by shortening the text,
+   because the text is a live number. */
+#mythic-kitchen-ov .mk-hud-lvl { min-width: 0; overflow: hidden; }
+/* The xp NUMERAL is desktop-only. On a phone the bar plus "LV 12" carries the
+   same information in a third of the width, and the number was what pushed the
+   close button off the panel. It comes back at the breakpoint. */
+#mythic-kitchen-ov .mk-hud-lvl .mk-lab { display: none; }
+#mythic-kitchen-ov .mk-hud-lvl .mk-xp { min-width: 56px; }
+
+#mythic-kitchen-ov .mk-hud-close {
+  align-self: center;
+  width: 34px; height: 34px;
+  border-radius: 9px;
+  border: 1px solid var(--mk-line2);
+  background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(0,0,0,.35));
+  font-size: 16px;
+  cursor: pointer;
+}
+#mythic-kitchen-ov .mk-hud-close:hover { border-color: var(--mk-danger); color: var(--mk-danger); }
+
+/* ── BODY / SECTION CHROME ───────────────────────────────────────────────── */
+#mythic-kitchen-ov .mk-body {
+  position: relative;
+  z-index: 2;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding: 8px 0 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+#mythic-kitchen-ov .mk-sec { position: relative; min-width: 0; }
+#mythic-kitchen-ov .mk-sec-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px 5px;
+  font-size: 11px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--mk-dim);
+}
+#mythic-kitchen-ov .mk-sec-head b { color: var(--mk-ink); font-weight: 700; letter-spacing: .1em; }
+#mythic-kitchen-ov .mk-sec-head .mk-spacer { flex: 1 1 auto; }
+
+/* Horizontal rails. THE mobile primitive: everything wide scrolls sideways
+   with snap points instead of shrinking into illegibility. */
+#mythic-kitchen-ov .mk-rail {
+  display: flex;
+  gap: 8px;
+  padding: 2px 10px 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x proximity;
+  scrollbar-width: thin;
+}
+#mythic-kitchen-ov .mk-rail > * { scroll-snap-align: start; flex: 0 0 auto; }
+#mythic-kitchen-ov .mk-rail::-webkit-scrollbar { height: 5px; }
+#mythic-kitchen-ov .mk-rail::-webkit-scrollbar-thumb { background: rgba(255,255,255,.16); border-radius: 9px; }
+
+#mythic-kitchen-ov .mk-empty {
+  padding: 14px 12px;
+  border: 1px dashed rgba(255,255,255,.14);
+  border-radius: 10px;
+  color: var(--mk-faint);
+  font-size: 12px;
+  text-align: center;
+  min-width: 190px;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   📋 THE ORDER BOARD — the overhead screen.
+   ------------------------------------------------------------------------
+   REF-B mounts a screen over the pass listing itemised tickets with timers and
+   a green READY state. It reads as a screen because of three things and only
+   three: the bezel, the phosphor header, and the scanlines. Tickets inside are
+   slate cards, not paper — paper on a screen was drafted and looked like a
+   sticker on a monitor.
+   ════════════════════════════════════════════════════════════════════════ */
+#mythic-kitchen-ov .mk-board {
+  margin: 0 8px;
+  border-radius: 14px;
+  padding: 6px 0 0;
+  background:
+    linear-gradient(180deg, rgba(127,255,196,.05), transparent 42%),
+    linear-gradient(180deg, #10171b, #070b0d);
+  border: 1px solid rgba(127,255,196,.16);
+  box-shadow:
+    0 10px 26px rgba(0,0,0,.6),
+    inset 0 1px 0 rgba(255,255,255,.09),
+    0 0 0 4px rgba(0,0,0,.35);
+  position: relative;
+  overflow: hidden;
+}
+/* Scanlines. 3px pitch — coarse enough to read as a screen at 360px, fine
+   enough not to strobe when the board scrolls. */
+#mythic-kitchen-ov .mk-board::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: .35;
+  background: repeating-linear-gradient(0deg, rgba(0,0,0,.32) 0 1px, transparent 1px 3px);
+}
+#mythic-kitchen-ov .mk-board-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px 6px;
+  border-bottom: 1px solid rgba(127,255,196,.18);
+  color: var(--mk-screen);
+  font-size: 11px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  text-shadow: 0 0 10px rgba(127,255,196,.45);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+#mythic-kitchen-ov .mk-board-head .mk-spacer { flex: 1 1 auto; }
+#mythic-kitchen-ov .mk-board-count {
+  padding: 1px 7px;
+  border-radius: 99px;
+  background: rgba(127,255,196,.14);
+  border: 1px solid rgba(127,255,196,.3);
+  font-variant-numeric: tabular-nums;
+}
+#mythic-kitchen-ov .mk-board .mk-rail { padding: 7px 8px 8px; }
+
+/* ── a ticket ───────────────────────────────────────────────────────────── */
+#mythic-kitchen-ov .mk-tk {
+  position: relative;
+  width: 166px;
+  min-height: 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 7px 8px 8px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #1d262c, #141b20);
+  border: 1px solid rgba(255,255,255,.10);
+  border-left: 3px solid var(--mk-dim);
+  box-shadow: 0 4px 12px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.06);
+  text-align: left;
+  cursor: default;
+}
+#mythic-kitchen-ov .mk-tk[data-src="drive"] { border-left-color: var(--mk-cyan); }
+#mythic-kitchen-ov .mk-tk[data-src="counter"] { border-left-color: var(--mk-amber); }
+#mythic-kitchen-ov .mk-tk-top { display: flex; align-items: center; gap: 5px; min-width: 0; }
+#mythic-kitchen-ov .mk-tk-who { font-size: 12px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#mythic-kitchen-ov .mk-tk-src {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: rgba(255,255,255,.08);
+  color: var(--mk-dim);
+  white-space: nowrap;
+}
+#mythic-kitchen-ov .mk-tk-items { display: flex; flex-direction: column; gap: 3px; }
+#mythic-kitchen-ov .mk-tk-it {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  padding: 2px 4px;
+  border-radius: 6px;
+  background: rgba(255,255,255,.04);
+}
+#mythic-kitchen-ov .mk-tk-it .mk-ic { font-size: 14px; }
+#mythic-kitchen-ov .mk-tk-it .mk-nm { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #dfd6c8; }
+#mythic-kitchen-ov .mk-tk-it .mk-qt { font-variant-numeric: tabular-nums; color: var(--mk-dim); font-size: 11px; }
+#mythic-kitchen-ov .mk-tk-it[data-done="1"] { background: rgba(95,217,122,.14); }
+#mythic-kitchen-ov .mk-tk-it[data-done="1"] .mk-nm { color: var(--mk-ready); }
+#mythic-kitchen-ov .mk-pips { display: flex; gap: 2px; }
+#mythic-kitchen-ov .mk-pips > i {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: rgba(255,255,255,.18);
+}
+#mythic-kitchen-ov .mk-pips > i.on { background: var(--mk-ready); box-shadow: 0 0 6px rgba(95,217,122,.7); }
+
+/* The countdown. This is the most-watched pixel in the feature: it must change
+   COLOUR as well as length, because a bar that only shortens is invisible in
+   peripheral vision while you are staring at a griddle. */
+#mythic-kitchen-ov .mk-tk-foot { display: flex; align-items: center; gap: 6px; margin-top: auto; }
+#mythic-kitchen-ov .mk-bar {
+  position: relative;
+  flex: 1 1 auto;
+  height: 7px;
+  border-radius: 99px;
+  overflow: hidden;
+  background: rgba(0,0,0,.5);
+  box-shadow: inset 0 1px 2px rgba(0,0,0,.7);
+}
+#mythic-kitchen-ov .mk-bar > i {
+  position: absolute; inset: 0 auto 0 0;
+  display: block; width: 0;
+  border-radius: 99px;
+  background: var(--mk-ready);
+}
+#mythic-kitchen-ov .mk-tk-time {
+  font-size: 12px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  min-width: 34px;
+  text-align: right;
+}
+#mythic-kitchen-ov .mk-tk[data-urg="ok"]   .mk-bar > i { background: linear-gradient(90deg,#3fbf63,var(--mk-ready)); }
+#mythic-kitchen-ov .mk-tk[data-urg="warn"] .mk-bar > i { background: linear-gradient(90deg,#e0a83c,#ffd166); }
+#mythic-kitchen-ov .mk-tk[data-urg="warn"] .mk-tk-time { color: #ffd166; }
+#mythic-kitchen-ov .mk-tk[data-urg="late"] .mk-bar > i { background: linear-gradient(90deg,#ff6a3d,#ff4d5e); }
+#mythic-kitchen-ov .mk-tk[data-urg="late"] .mk-tk-time { color: var(--mk-danger); }
+#mythic-kitchen-ov .mk-tk[data-urg="late"] { border-color: rgba(255,77,94,.5); animation: mk-panic 1s ease-in-out infinite; }
+
+#mythic-kitchen-ov .mk-tk[data-state="ready"] {
+  border-color: rgba(95,217,122,.55);
+  box-shadow: 0 0 0 1px rgba(95,217,122,.25), 0 6px 18px rgba(0,0,0,.55), 0 0 22px rgba(95,217,122,.20);
+}
+#mythic-kitchen-ov .mk-serve {
+  width: 100%;
+  padding: 7px 6px;
+  border-radius: 8px;
+  border: 1px solid rgba(95,217,122,.6);
+  background: linear-gradient(180deg, #4fce6d, #2c8f45);
+  color: #06200f;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  animation: mk-ready-pulse 1.4s ease-in-out infinite;
+}
+#mythic-kitchen-ov .mk-serve:active { transform: translateY(1px); }
+
+/* ════════════════════════════════════════════════════════════════════════
+   🚗 THE DRIVE-THRU LANE
+   ------------------------------------------------------------------------
+   A road, a speaker box, and cars that lose patience in public. Cars are
+   positioned with `transform: translateX()` off a percentage the sim owns —
+   never `left`, because `left` on ten nodes per frame lays out the whole strip
+   and drops frames on the phones this is aimed at.
+   ════════════════════════════════════════════════════════════════════════ */
+#mythic-kitchen-ov .mk-lane {
+  margin: 0 8px;
+  border-radius: 12px;
+  padding: 5px 6px 6px;
+  background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(0,0,0,.35));
+  border: 1px solid var(--mk-line);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.07);
+}
+#mythic-kitchen-ov .mk-road {
+  position: relative;
+  height: 84px;
+  border-radius: 9px;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, #2b2b30 0%, #202024 55%, #161619 100%);
+  box-shadow: inset 0 2px 6px rgba(0,0,0,.6);
+}
+/* centre line + kerb */
+#mythic-kitchen-ov .mk-road::before {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; top: 50%;
+  height: 2px;
+  transform: translateY(-50%);
+  background: repeating-linear-gradient(90deg, rgba(255,214,120,.55) 0 14px, transparent 14px 30px);
+  opacity: .5;
+}
+#mythic-kitchen-ov .mk-road::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 5px;
+  background: repeating-linear-gradient(90deg, #d8d2c4 0 12px, #b6412f 12px 24px);
+  opacity: .35;
+}
+/* "no cars" — centred on the asphalt, not a box floating over it. */
+#mythic-kitchen-ov .mk-road-empty {
+  position: absolute;
+  left: 10px; right: 58px; top: 50%;
+  transform: translateY(-50%);
+  text-align: center;
+  font-size: 12px;
+  color: var(--mk-faint);
+}
+#mythic-kitchen-ov .mk-speaker {
+  position: absolute;
+  right: 4px; top: 4px; bottom: 4px;
+  width: 46px;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  font-size: 11px;
+  color: #ffe0a8;
+  text-align: center;
+  background: linear-gradient(180deg, var(--mk-steel1), var(--mk-steel3));
+  border: 1px solid rgba(255,255,255,.16);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.25), 0 4px 10px rgba(0,0,0,.5);
+}
+#mythic-kitchen-ov .mk-speaker span { font-size: 16px; }
+
+#mythic-kitchen-ov .mk-car {
+  position: absolute;
+  /* ⚠ 22px, not 6px: the order bubble is anchored `bottom:100%` off the car and
+     the road clips its overflow, so a car parked at the top of the strip loses
+     its speech bubble to the bezel. */
+  top: 22px;
+  left: 0;
+  width: 76px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  will-change: transform;
+  transition: transform .25s linear;
+}
+#mythic-kitchen-ov .mk-car-body {
+  font-size: 26px;
+  line-height: 1;
+  filter: drop-shadow(0 4px 5px rgba(0,0,0,.6));
+}
+#mythic-kitchen-ov .mk-car-name {
+  font-size: 11px;
+  color: #e6dccd;
+  white-space: nowrap;
+  max-width: 76px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#mythic-kitchen-ov .mk-car .mk-bar { width: 54px; height: 5px; flex: 0 0 auto; }
+#mythic-kitchen-ov .mk-car[data-state="gone"] { opacity: .25; filter: grayscale(1); }
+#mythic-kitchen-ov .mk-car[data-say="0"] .mk-bub { display: none; }
+#mythic-kitchen-ov .mk-bub {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translate(-50%, -2px);
+  padding: 2px 7px;
+  border-radius: 8px;
+  background: #f3ead9;
+  color: #241a12;
+  font-size: 11px;
+  white-space: nowrap;
+  box-shadow: 0 3px 8px rgba(0,0,0,.5);
+}
+/* The car at the window is by definition at the right-hand edge, which is
+   exactly where a centred bubble gets eaten by the speaker box. `data-side` is
+   set by updateCars() and flips the bubble to hang leftwards instead. */
+#mythic-kitchen-ov .mk-car[data-side="right"] .mk-bub { left: auto; right: 4px; transform: translate(0, -2px); }
+#mythic-kitchen-ov .mk-car[data-side="right"] .mk-bub::after { left: auto; right: 16px; transform: none; }
+#mythic-kitchen-ov .mk-bub { max-width: 190px; overflow: hidden; text-overflow: ellipsis; }
+#mythic-kitchen-ov .mk-bub::after {
+  content: "";
+  position: absolute;
+  top: 100%; left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: #f3ead9;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   🔥 THE LINE — stations, slots, and the thing that is burning.
+   ------------------------------------------------------------------------
+   Each station kind gets its OWN surface material. That is the difference
+   between "a kitchen" and "five identical grey cards with different emoji",
+   and it is the single highest-value block of CSS in this file.
+   ════════════════════════════════════════════════════════════════════════ */
+#mythic-kitchen-ov .mk-hood {
+  margin: 0 8px 2px;
+  height: 16px;
+  border-radius: 10px 10px 4px 4px;
+  background:
+    repeating-linear-gradient(90deg, rgba(0,0,0,.35) 0 2px, transparent 2px 7px),
+    linear-gradient(180deg, var(--mk-steel0), var(--mk-steel2));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.4), 0 10px 18px -8px rgba(255,176,80,.5);
+}
+#mythic-kitchen-ov .mk-st {
+  width: auto;
+  border-radius: 12px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: linear-gradient(180deg, var(--mk-steel1), var(--mk-steel3)), var(--mk-brush);
+  border: 1px solid rgba(255,255,255,.12);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.28), var(--mk-shadow);
+}
+#mythic-kitchen-ov .mk-st-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: #e9dfd0;
+}
+#mythic-kitchen-ov .mk-st-head .mk-ic { font-size: 14px; }
+#mythic-kitchen-ov .mk-st-head .mk-n { margin-left: auto; color: var(--mk-dim); letter-spacing: 0; }
+
+/* 🍳 PANS SIT SIDE BY SIDE, at every width.
+   Stacked slots were the first draft and they cost ~90px of vertical space per
+   lane. On a 360×640 phone that pushed THE LINE — the part of the game you
+   actually play — entirely below the fold, under a drive-thru you only watch.
+   Side by side is both more compact and more honest: that is how three patties
+   sit on a flat-top. The price is that a 3-lane station is wider than a phone,
+   which the horizontal rail already handles. */
+#mythic-kitchen-ov .mk-slots { display: flex; flex-direction: row; gap: 5px; }
+
+/* A SLOT. Everything about cook state is derived by the sim and arrives here
+   as `data-phase`; this file never decides whether something is burnt. */
+#mythic-kitchen-ov .mk-slot {
+  position: relative;
+  display: block;
+  flex: 0 0 84px;
+  min-width: 0;
+  min-height: 116px;
+  /* the bottom strip is RESERVED for the flag + the two bars, which are
+     absolutely positioned; without the reserve the build stack grows through
+     them and "BURNT" prints across a cook bar. */
+  padding: 6px 6px 42px;
+  border-radius: 9px;
+  border: 1px solid rgba(0,0,0,.55);
+  background: #17181b;
+  overflow: hidden;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+/* surfaces, by station kind */
+#mythic-kitchen-ov .mk-st[data-kind="heat"] .mk-slot {
+  background:
+    radial-gradient(80% 120% at 50% 130%, rgba(255,120,40,.35), transparent 62%),
+    repeating-linear-gradient(90deg, rgba(255,255,255,.05) 0 1px, transparent 1px 9px),
+    linear-gradient(180deg, #34343a, #17171a);
+}
+#mythic-kitchen-ov .mk-st[data-kind="fry"] .mk-slot {
+  background:
+    radial-gradient(70% 90% at 50% 115%, rgba(255,190,70,.28), transparent 60%),
+    linear-gradient(180deg, #2c2820, #141210);
+}
+#mythic-kitchen-ov .mk-st[data-kind="bake"] .mk-slot {
+  background:
+    radial-gradient(90% 70% at 50% 120%, rgba(255,90,30,.42), transparent 58%),
+    repeating-linear-gradient(0deg, rgba(0,0,0,.28) 0 1px, transparent 1px 12px),
+    repeating-linear-gradient(90deg, rgba(0,0,0,.28) 0 1px, transparent 1px 24px),
+    linear-gradient(180deg, #3a2f28, #1c1512);
+}
+#mythic-kitchen-ov .mk-st[data-kind="build"] .mk-slot {
+  background:
+    repeating-linear-gradient(90deg, rgba(0,0,0,.10) 0 6px, rgba(255,255,255,.03) 6px 12px),
+    linear-gradient(180deg, #6d4c31, #4a331f);
+}
+#mythic-kitchen-ov .mk-st[data-kind="instant"] .mk-slot {
+  background:
+    linear-gradient(180deg, rgba(103,216,255,.16), transparent 55%),
+    linear-gradient(180deg, #2b3238, #14181c);
+}
+
+#mythic-kitchen-ov .mk-slot[data-phase="empty"] {
+  padding-bottom: 6px;
+  border-style: dashed;
+  border-color: rgba(255,255,255,.20);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--mk-faint);
+  font-size: 12px;
+  letter-spacing: .06em;
+}
+#mythic-kitchen-ov .mk-slot[data-phase="empty"]:hover { border-color: var(--mk-amber); color: var(--mk-amber); }
+#mythic-kitchen-ov .mk-slot[data-sel="1"] {
+  outline: 2px solid var(--mk-amber);
+  outline-offset: -2px;
+  box-shadow: 0 0 0 3px rgba(255,182,72,.18), inset 0 0 20px rgba(255,182,72,.12);
+}
+
+/* ⚠ padding-right leaves the corner free for `.mk-slot-flag`, which is
+   absolutely positioned. Without it a long dish name runs underneath the
+   countdown and both become unreadable at exactly the moment they matter. */
+#mythic-kitchen-ov .mk-slot-top { display: flex; align-items: center; gap: 5px; min-width: 0; }
+/* ⚠ On a phone the pan is ~84px wide and a dish NAME in there is three
+   truncated letters, which is worse than no name at all. The food is identified
+   by its icon and by the build stack — which is how the reference games do it —
+   and the name is still in the slot's aria-label for a screen reader. It comes
+   back at the breakpoint, where there is room for it. */
+#mythic-kitchen-ov .mk-slot-name { display: none; }
+#mythic-kitchen-ov .mk-slot-dish { font-size: 21px; }
+#mythic-kitchen-ov .mk-slot-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 3px rgba(0,0,0,.8);
+}
+#mythic-kitchen-ov .mk-slot-verb { font-size: 11px; color: #d8c8ac; text-shadow: 0 1px 3px rgba(0,0,0,.8); }
+#mythic-kitchen-ov .mk-slot-bars {
+  position: absolute;
+  left: 6px; right: 6px; bottom: 6px;
+  display: flex; flex-direction: column; gap: 3px;
+}
+#mythic-kitchen-ov .mk-slot .mk-bar { height: 6px; }
+#mythic-kitchen-ov .mk-slot .mk-bar.cook > i { background: linear-gradient(90deg, #ffb648, #ff8a3d); }
+#mythic-kitchen-ov .mk-slot .mk-bar.burn { background: rgba(0,0,0,.55); }
+#mythic-kitchen-ov .mk-slot .mk-bar.burn > i { background: linear-gradient(90deg, var(--mk-ready), #ffd166 55%, var(--mk-danger)); }
+
+/* The sizzle. Only drawn while something is actually cooking on a hot surface,
+   because an idle griddle that sizzles is a lie the player learns to ignore. */
+#mythic-kitchen-ov .mk-sizzle {
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 22px;
+  pointer-events: none;
+  opacity: 0;
+  background:
+    radial-gradient(6px 4px at 20% 80%, rgba(255,255,255,.5), transparent 70%),
+    radial-gradient(5px 3px at 52% 90%, rgba(255,255,255,.4), transparent 70%),
+    radial-gradient(7px 4px at 78% 75%, rgba(255,255,255,.35), transparent 70%);
+  animation: mk-sizzle 1.6s ease-in-out infinite;
+}
+#mythic-kitchen-ov .mk-slot[data-phase="cooking"] .mk-sizzle { opacity: .55; }
+
+#mythic-kitchen-ov .mk-slot[data-phase="done"] {
+  box-shadow: inset 0 0 0 2px rgba(95,217,122,.7), 0 0 18px rgba(95,217,122,.25);
+}
+#mythic-kitchen-ov .mk-slot[data-phase="done"][data-q="perfect"] {
+  box-shadow: inset 0 0 0 2px rgba(255,214,102,.85), 0 0 22px rgba(255,214,102,.35);
+}
+/* 🔴 THE BURN WARNING. It has to be alarming. A slot about to burn is the only
+   thing in this feature that can destroy player value with no input, so it gets
+   the loudest treatment on the screen: a red ring, a flash, and a label. */
+#mythic-kitchen-ov .mk-slot[data-warn="1"] {
+  animation: mk-burnwarn .5s steps(2, end) infinite;
+}
+#mythic-kitchen-ov .mk-slot[data-phase="burnt"] {
+  filter: grayscale(.55) brightness(.7);
+  box-shadow: inset 0 0 0 2px rgba(255,77,94,.8);
+}
+#mythic-kitchen-ov .mk-slot-flag {
+  position: absolute;
+  left: 6px; bottom: 24px;
+  padding: 1px 5px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  background: rgba(0,0,0,.55);
+  border: 1px solid currentColor;
+}
+#mythic-kitchen-ov .mk-slot[data-phase="done"] .mk-slot-flag { color: var(--mk-ready); }
+#mythic-kitchen-ov .mk-slot[data-phase="done"][data-q="perfect"] .mk-slot-flag { color: #ffd166; }
+#mythic-kitchen-ov .mk-slot[data-phase="burnt"] .mk-slot-flag { color: var(--mk-danger); }
+#mythic-kitchen-ov .mk-slot[data-phase="cooking"] .mk-slot-flag { color: var(--mk-amber); }
+
+/* the tiny corner "yank it out early" control */
+/* ⚠ TOP-right on a phone, bottom-right on desktop. On an 84px pan the phase
+   flag ("PERFECT") and this button both want the bottom strip and the flag
+   loses its last two letters — which is the difference between a perfect pull
+   and a burnt one. The phone slot has no dish NAME, so its top row is free. */
+#mythic-kitchen-ov .mk-pull {
+  position: absolute;
+  right: 4px;
+  top: 4px;
+  width: 24px; height: 20px;
+  border-radius: 7px;
+  border: 1px solid rgba(255,255,255,.25);
+  background: rgba(0,0,0,.5);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+#mythic-kitchen-ov .mk-pull:hover { border-color: var(--mk-amber); color: var(--mk-amber); }
+
+/* ── THE BUILD STACK ──────────────────────────────────────────────────────
+   The half-built burger on the wrapper. Laid layers are solid and in tap order
+   bottom-up; the layers the recipe still wants are ghosted above them, which is
+   both the prettiest and the most USEFUL thing on the slot — it is the recipe
+   card and the progress bar in one, with no extra text. */
+#mythic-kitchen-ov .mk-build {
+  position: relative;
+  margin: 5px auto 0;
+  width: 52px;
+  min-height: 30px;
+  display: flex;
+  flex-direction: column-reverse;   /* first step at the BOTTOM */
+  align-items: center;
+  justify-content: flex-start;
+  gap: 1px;
+  filter: drop-shadow(0 3px 4px rgba(0,0,0,.55));
+}
+#mythic-kitchen-ov .mk-lay {
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--c, #caa) 72%, #fff), var(--c, #caa));
+  box-shadow: inset 0 -1px 0 rgba(0,0,0,.28);
+}
+#mythic-kitchen-ov .mk-lay[data-layer="base"] { height: 9px; border-radius: 3px 3px 8px 8px; width: 100%; }
+#mythic-kitchen-ov .mk-lay[data-layer="lid"]  { height: 11px; border-radius: 10px 10px 3px 3px; }
+#mythic-kitchen-ov .mk-lay[data-layer="fill"] { height: 8px; width: 104%; }
+#mythic-kitchen-ov .mk-lay[data-layer="spread"] { height: 4px; width: 92%; }
+#mythic-kitchen-ov .mk-lay[data-layer="top"]  { height: 5px; width: 98%; }
+#mythic-kitchen-ov .mk-lay.ghost {
+  background: transparent;
+  border: 1px dashed rgba(255,255,255,.28);
+  box-shadow: none;
+}
+#mythic-kitchen-ov .mk-slot-dish {
+  font-size: 16px;
+  line-height: 1;
+  filter: drop-shadow(0 2px 3px rgba(0,0,0,.7));
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   🍽 THE PASS + WHAT IS IN YOUR HANDS
+   ════════════════════════════════════════════════════════════════════════ */
+#mythic-kitchen-ov .mk-pass {
+  margin: 0 8px;
+  border-radius: 12px;
+  padding: 7px 8px 8px;
+  background:
+    linear-gradient(180deg, rgba(255,196,110,.16), transparent 46%),
+    linear-gradient(180deg, var(--mk-steel1), var(--mk-steel3)), var(--mk-brush);
+  border: 1px solid rgba(255,255,255,.14);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.32), var(--mk-shadow);
+}
+#mythic-kitchen-ov .mk-pass-rail { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; min-height: 58px; }
+#mythic-kitchen-ov .mk-dish {
+  position: relative;
+  flex: 0 0 auto;
+  width: 56px;
+  padding: 4px 3px 5px;
+  border-radius: 9px;
+  text-align: center;
+  background: linear-gradient(180deg, rgba(255,255,255,.14), rgba(0,0,0,.3));
+  border: 1px solid rgba(255,255,255,.18);
+}
+#mythic-kitchen-ov .mk-dish .mk-ic { font-size: 19px; line-height: 1; display: block; }
+#mythic-kitchen-ov .mk-dish .mk-q {
+  display: block;
+  font-size: 11px;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+#mythic-kitchen-ov .mk-dish[data-q="perfect"] { border-color: rgba(255,214,102,.7); box-shadow: 0 0 12px rgba(255,214,102,.25); }
+#mythic-kitchen-ov .mk-dish[data-q="perfect"] .mk-q { color: #ffd166; }
+#mythic-kitchen-ov .mk-dish[data-q="good"] .mk-q { color: var(--mk-ready); }
+#mythic-kitchen-ov .mk-dish[data-q="raw"] { border-color: rgba(255,138,90,.6); }
+#mythic-kitchen-ov .mk-dish[data-q="raw"] .mk-q { color: #ff8a5a; }
+#mythic-kitchen-ov .mk-dish .mk-fresh {
+  position: absolute; left: 4px; right: 4px; bottom: 2px;
+  height: 3px; border-radius: 99px; background: rgba(0,0,0,.5);
+}
+#mythic-kitchen-ov .mk-dish .mk-fresh > i {
+  display: block; height: 100%; border-radius: 99px;
+  background: var(--mk-cyan);
+}
+
+/* The hand bar is the ONLY thing in the layout that is allowed to shout, and it
+   only exists when you are holding something. A permanent "you are holding
+   nothing" strip would eat 56px of a 640px phone for no information. */
+#mythic-kitchen-ov .mk-hand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 7px;
+  padding: 6px 7px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(255,182,72,.20), rgba(0,0,0,.35));
+  border: 1px solid rgba(255,182,72,.45);
+}
+#mythic-kitchen-ov .mk-hand .mk-ic { font-size: 22px; }
+#mythic-kitchen-ov .mk-hand-txt { flex: 1 1 auto; min-width: 0; font-size: 12px; }
+#mythic-kitchen-ov .mk-hand-txt b { display: block; font-size: 13px; }
+#mythic-kitchen-ov .mk-hand-txt span { color: var(--mk-dim); font-size: 11px; }
+
+/* ════════════════════════════════════════════════════════════════════════
+   🫙 THE BINS — the prep counter.
+   ------------------------------------------------------------------------
+   REF-B's bins read as bins because you can see the STOCK inside them. So each
+   bin is a jar with a fill level driven by how many units are left, which makes
+   "running low" a thing you notice at a glance rather than a number you have to
+   read. The red rim only comes on at ECON.PANTRY_LOW, which the sim decides.
+   ════════════════════════════════════════════════════════════════════════ */
+#mythic-kitchen-ov .mk-shelf {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 6px 7px;
+  border-radius: 11px;
+  background: linear-gradient(180deg, rgba(255,255,255,.055), rgba(0,0,0,.28));
+  border: 1px solid var(--mk-line);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.10);
+}
+#mythic-kitchen-ov .mk-shelf-lab {
+  font-size: 11px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--mk-dim);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+#mythic-kitchen-ov .mk-shelf-row { display: flex; gap: 5px; }
+#mythic-kitchen-ov .mk-bin {
+  position: relative;
+  width: 58px;
+  padding: 4px 3px 5px;
+  border-radius: 8px 8px 10px 10px;
+  border: 1px solid rgba(255,255,255,.18);
+  background: linear-gradient(180deg, rgba(255,255,255,.13), rgba(0,0,0,.35));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.25), 0 3px 8px rgba(0,0,0,.45);
+  text-align: center;
+  cursor: pointer;
+  overflow: hidden;
+  color: inherit;
+}
+/* the contents, filling from the bottom */
+#mythic-kitchen-ov .mk-bin-fill {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 0;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--c,#888) 70%, #fff), var(--c,#888));
+  opacity: .34;
+  transition: height .3s ease;
+  pointer-events: none;
+}
+#mythic-kitchen-ov .mk-bin .mk-ic { position: relative; font-size: 18px; line-height: 1.15; display: block; }
+#mythic-kitchen-ov .mk-bin .mk-nm {
+  position: relative;
+  display: block;
+  font-size: 11px;
+  color: #e2d8c8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#mythic-kitchen-ov .mk-bin .mk-n {
+  position: relative;
+  display: block;
+  font-size: 12px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+#mythic-kitchen-ov .mk-bin[data-low="1"] { border-color: rgba(255,77,94,.75); }
+#mythic-kitchen-ov .mk-bin[data-low="1"] .mk-n { color: var(--mk-danger); }
+#mythic-kitchen-ov .mk-bin[data-out="1"] { opacity: .55; }
+#mythic-kitchen-ov .mk-bin[data-want="1"] {
+  border-color: var(--mk-amber);
+  box-shadow: 0 0 0 2px rgba(255,182,72,.28), inset 0 1px 0 rgba(255,255,255,.3);
+}
+#mythic-kitchen-ov .mk-bin-badge {
+  position: absolute;
+  top: 2px; right: 2px;
+  min-width: 15px;
+  padding: 0 3px;
+  border-radius: 99px;
+  background: var(--mk-amber);
+  color: #241703;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 15px;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   🎬 CALL TO ACTION — the "start the shift" curtain
+   ════════════════════════════════════════════════════════════════════════ */
+#mythic-kitchen-ov .mk-cta {
+  margin: 0 8px;
+  padding: 12px;
+  border-radius: 12px;
+  text-align: center;
+  background:
+    radial-gradient(120% 100% at 50% 0%, rgba(255,182,72,.18), transparent 62%),
+    linear-gradient(180deg, rgba(0,0,0,.4), rgba(0,0,0,.55));
+  border: 1px solid rgba(255,182,72,.35);
+}
+#mythic-kitchen-ov .mk-cta h3 { margin: 0 0 3px; font-size: 15px; letter-spacing: .06em; }
+#mythic-kitchen-ov .mk-cta p { margin: 0 0 9px; font-size: 12px; color: var(--mk-dim); }
+
+#mythic-kitchen-ov .mk-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 8px 14px;
+  border-radius: 9px;
+  border: 1px solid var(--mk-line2);
+  background: linear-gradient(180deg, rgba(255,255,255,.13), rgba(0,0,0,.35));
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+#mythic-kitchen-ov .mk-btn:hover { border-color: var(--mk-amber); }
+#mythic-kitchen-ov .mk-btn:disabled { opacity: .4; cursor: not-allowed; }
+#mythic-kitchen-ov .mk-btn.go {
+  background: linear-gradient(180deg, #ffc766, #e08a2a);
+  border-color: rgba(255,214,140,.7);
+  color: #2a1703;
+  font-weight: 900;
+}
+#mythic-kitchen-ov .mk-btn.danger { border-color: rgba(255,77,94,.6); color: #ffb4bb; }
+#mythic-kitchen-ov .mk-btn.wide { width: 100%; }
+
+/* ════════════════════════════════════════════════════════════════════════
+   🎚 THE STRIP — shift control + today's tallies, always under your thumb.
+   ------------------------------------------------------------------------
+   It sits OUTSIDE `.mk-body` on purpose. The desktop layout turns the body
+   into a CSS grid with named areas, and a fifth section that only exists half
+   the time would either need its own area (dead space when the shift is
+   running) or would have to be re-parented in JS. Keeping the one control the
+   player always needs — open the doors / end the shift — pinned above the tab
+   bar solves both, and it is the right place on a phone anyway.
+   ════════════════════════════════════════════════════════════════════════ */
+#mythic-kitchen-ov .mk-strip {
+  position: relative;
+  z-index: 4;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background:
+    linear-gradient(180deg, rgba(255,182,72,.12), transparent 70%),
+    linear-gradient(180deg, rgba(0,0,0,.35), rgba(0,0,0,.5));
+  border-top: 1px solid var(--mk-line);
+}
+#mythic-kitchen-ov .mk-strip:empty { display: none; }
+#mythic-kitchen-ov .mk-strip-txt { flex: 1 1 auto; min-width: 0; }
+#mythic-kitchen-ov .mk-strip-txt b { display: block; font-size: 13px; }
+#mythic-kitchen-ov .mk-strip-txt span { font-size: 11px; color: var(--mk-dim); }
+#mythic-kitchen-ov .mk-tallies { flex: 1 1 auto; display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+#mythic-kitchen-ov .mk-tallies .mk-chip { font-size: 12px; padding: 3px 8px; }
+#mythic-kitchen-ov .mk-strip .mk-btn { flex: 0 0 auto; }
+/* When you are holding a dish the strip becomes the hand bar (see handHtml). */
+#mythic-kitchen-ov .mk-strip .mk-hand { margin: 0; flex: 1 1 auto; min-width: 0; }
+
+/* ════════════════════════════════════════════════════════════════════════
+   🗂 TAB BAR
+   ════════════════════════════════════════════════════════════════════════ */
+#mythic-kitchen-ov .mk-tabs {
+  position: relative;
+  z-index: 4;
+  flex: 0 0 auto;
+  display: flex;
+  gap: 2px;
+  padding: 5px 6px calc(5px + env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(180deg, var(--mk-steel2), var(--mk-steel3)), var(--mk-brush);
+  border-top: 1px solid rgba(255,255,255,.16);
+  box-shadow: 0 -8px 20px rgba(0,0,0,.5);
+}
+#mythic-kitchen-ov .mk-tab {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 5px 2px 4px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--mk-dim);
+  font-size: 11px;
+  letter-spacing: .04em;
+  cursor: pointer;
+}
+#mythic-kitchen-ov .mk-tab .mk-ic { font-size: 17px; line-height: 1; }
+#mythic-kitchen-ov .mk-tab[aria-selected="true"] {
+  color: var(--mk-ink);
+  background: linear-gradient(180deg, rgba(255,182,72,.22), rgba(255,182,72,.06));
+  border-color: rgba(255,182,72,.4);
+}
+#mythic-kitchen-ov .mk-tab-dot {
+  position: absolute;
+  top: 2px; right: 8px;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--mk-ready);
+  box-shadow: 0 0 8px rgba(95,217,122,.8);
+}
+#mythic-kitchen-ov .mk-tab { position: relative; }
+
+/* ════════════════════════════════════════════════════════════════════════
+   📄 SHEETS — menu picker, supplies, convoys, day report.
+   ------------------------------------------------------------------------
+   Bottom sheets, not modals-in-the-middle: on a phone the bottom half of the
+   screen is the only place a thumb reaches comfortably, and the top half stays
+   visible so you can watch a griddle while you buy patties.
+   ════════════════════════════════════════════════════════════════════════ */
+#mythic-kitchen-ov .mk-sheet-wrap {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  background: rgba(6,4,3,.55);
+  backdrop-filter: blur(2px);
+}
+#mythic-kitchen-ov .mk-sheet-wrap[hidden] { display: none; }
+#mythic-kitchen-ov .mk-sheet {
+  max-height: 78%;
+  display: flex;
+  flex-direction: column;
+  border-radius: 16px 16px 0 0;
+  background:
+    radial-gradient(120% 60% at 50% 0%, rgba(255,182,72,.12), transparent 60%),
+    linear-gradient(180deg, #241a15, #140e0c);
+  border: 1px solid rgba(255,255,255,.16);
+  border-bottom: 0;
+  box-shadow: 0 -14px 40px rgba(0,0,0,.7);
+  animation: mk-sheet-in .18s ease-out;
+}
+#mythic-kitchen-ov .mk-sheet-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--mk-line);
+}
+#mythic-kitchen-ov .mk-sheet-head h3 { margin: 0; font-size: 14px; letter-spacing: .06em; text-transform: uppercase; }
+#mythic-kitchen-ov .mk-sheet-head .mk-spacer { flex: 1 1 auto; }
+#mythic-kitchen-ov .mk-sheet-body {
+  padding: 10px 12px 16px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+#mythic-kitchen-ov .mk-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: 8px;
+}
+
+/* menu / dish card */
+#mythic-kitchen-ov .mk-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border-radius: 10px;
+  text-align: left;
+  color: inherit;
+  background: linear-gradient(180deg, rgba(255,255,255,.08), rgba(0,0,0,.32));
+  border: 1px solid var(--mk-line);
+  cursor: pointer;
+}
+#mythic-kitchen-ov .mk-card:hover { border-color: var(--mk-amber); }
+#mythic-kitchen-ov .mk-card[data-locked="1"],
+#mythic-kitchen-ov .mk-card[disabled] { opacity: .5; cursor: not-allowed; }
+#mythic-kitchen-ov .mk-card-top { display: flex; align-items: center; gap: 6px; }
+#mythic-kitchen-ov .mk-card-top .mk-ic { font-size: 21px; }
+#mythic-kitchen-ov .mk-card-top b { font-size: 13px; }
+#mythic-kitchen-ov .mk-card-sub { font-size: 11px; color: var(--mk-dim); }
+#mythic-kitchen-ov .mk-needs { display: flex; flex-wrap: wrap; gap: 3px; }
+#mythic-kitchen-ov .mk-need {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 5px;
+  border-radius: 99px;
+  font-size: 11px;
+  background: rgba(255,255,255,.07);
+  border: 1px solid transparent;
+  font-variant-numeric: tabular-nums;
+}
+#mythic-kitchen-ov .mk-need[data-short="1"] { border-color: rgba(255,77,94,.6); color: #ffb4bb; }
+#mythic-kitchen-ov .mk-lock {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: rgba(8,5,4,.62);
+  font-size: 12px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: #ffd166;
+}
+
+/* supply row */
+#mythic-kitchen-ov .mk-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(0,0,0,.28));
+  border: 1px solid var(--mk-line);
+  margin-bottom: 7px;
+}
+#mythic-kitchen-ov .mk-row .mk-ic { font-size: 22px; }
+#mythic-kitchen-ov .mk-row-main { flex: 1 1 auto; min-width: 0; }
+#mythic-kitchen-ov .mk-row-main b { font-size: 13px; }
+#mythic-kitchen-ov .mk-row-main .mk-card-sub { display: block; }
+#mythic-kitchen-ov .mk-cost { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 3px; }
+#mythic-kitchen-ov .mk-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: 99px;
+  font-size: 11px;
+  background: rgba(0,0,0,.35);
+  border: 1px solid var(--mk-line);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+#mythic-kitchen-ov .mk-chip[data-short="1"] { border-color: rgba(255,77,94,.6); color: #ffb4bb; }
+#mythic-kitchen-ov .mk-chip .mk-coin { width: 1.1em; height: 1.1em; vertical-align: -.2em; }
+#mythic-kitchen-ov .mk-buys { display: flex; flex-direction: column; gap: 4px; }
+#mythic-kitchen-ov .mk-buys .mk-btn { min-height: 30px; padding: 5px 10px; }
+
+/* banner (offline / not-set-up / info) */
+#mythic-kitchen-ov .mk-banner {
+  padding: 8px 10px;
+  border-radius: 10px;
+  margin-bottom: 9px;
+  font-size: 12px;
+  color: #ffe0a8;
+  background: linear-gradient(180deg, rgba(255,182,72,.14), rgba(0,0,0,.3));
+  border: 1px solid rgba(255,182,72,.3);
+}
+
+/* day report */
+#mythic-kitchen-ov .mk-stats { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 7px; margin-bottom: 4px; }
+/* Section headings inside a sheet need air above them — without it "ALL TIME"
+   sits on top of the row of numbers it is NOT describing. */
+#mythic-kitchen-ov .mk-sheet-body .mk-sec-head { margin-top: 13px; }
+#mythic-kitchen-ov .mk-sheet-body > .mk-sec-head:first-child { margin-top: 0; }
+#mythic-kitchen-ov .mk-stat {
+  padding: 8px 6px;
+  border-radius: 10px;
+  text-align: center;
+  background: linear-gradient(180deg, rgba(255,255,255,.07), rgba(0,0,0,.3));
+  border: 1px solid var(--mk-line);
+}
+#mythic-kitchen-ov .mk-stat b { display: block; font-size: 17px; font-variant-numeric: tabular-nums; }
+#mythic-kitchen-ov .mk-stat span { font-size: 11px; color: var(--mk-dim); letter-spacing: .07em; text-transform: uppercase; }
+#mythic-kitchen-ov .mk-grade {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px; height: 52px;
+  border-radius: 14px;
+  font-size: 26px;
+  font-weight: 900;
+  background: linear-gradient(180deg, #ffc766, #d9852a);
+  color: #2a1703;
+  box-shadow: 0 6px 16px rgba(0,0,0,.5);
+}
+
+/* convoy row */
+#mythic-kitchen-ov .mk-convoy .mk-bar { height: 8px; }
+#mythic-kitchen-ov .mk-convoy .mk-bar > i { background: linear-gradient(90deg, #56b8ff, var(--mk-cyan)); }
+
+/* ════════════════════════════════════════════════════════════════════════
+   ✨ FX — float-ups. Purely decorative, consumed from Kitchen._fx.
+   ════════════════════════════════════════════════════════════════════════ */
+#mythic-kitchen-ov .mk-fx {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+  overflow: hidden;
+}
+#mythic-kitchen-ov .mk-float {
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  transform: translate(-50%, 0);
+  padding: 3px 9px;
+  border-radius: 99px;
+  font-size: 13px;
+  font-weight: 900;
+  white-space: nowrap;
+  background: rgba(8,5,4,.7);
+  border: 1px solid currentColor;
+  animation: mk-float 900ms ease-out forwards;
+}
+#mythic-kitchen-ov .mk-float[data-kind="pay"] { color: #ffd88a; }
+#mythic-kitchen-ov .mk-float[data-kind="level"] { color: var(--mk-cyan); font-size: 16px; }
+#mythic-kitchen-ov .mk-float[data-kind="lost"] { color: var(--mk-danger); }
+#mythic-kitchen-ov .mk-float[data-kind="bin"] { color: var(--mk-dim); }
+#mythic-kitchen-ov .mk-float[data-kind="buy"] { color: var(--mk-ready); }
+
+/* ════════════════════════════════════════════════════════════════════════
+   🎞 KEYFRAMES
+   ════════════════════════════════════════════════════════════════════════ */
+@keyframes mk-float {
+  0%   { opacity: 0; transform: translate(-50%, 6px) scale(.9); }
+  18%  { opacity: 1; transform: translate(-50%, -2px) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -46px) scale(1); }
+}
+@keyframes mk-ready-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(95,217,122,.45); }
+  50%      { box-shadow: 0 0 0 5px rgba(95,217,122,0); }
+}
+@keyframes mk-panic {
+  0%, 100% { box-shadow: 0 4px 12px rgba(0,0,0,.5); }
+  50%      { box-shadow: 0 0 0 2px rgba(255,77,94,.55), 0 4px 12px rgba(0,0,0,.5); }
+}
+@keyframes mk-burnwarn {
+  0%, 100% { outline: 2px solid rgba(255,77,94,.9); outline-offset: -2px; }
+  50%      { outline: 2px solid rgba(255,77,94,.15); outline-offset: -2px; }
+}
+@keyframes mk-sizzle {
+  0%, 100% { transform: translateY(0); opacity: .5; }
+  50%      { transform: translateY(-3px); opacity: .8; }
+}
+@keyframes mk-sheet-in {
+  from { transform: translateY(18px); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   ♿ ACCESSIBILITY
+   ------------------------------------------------------------------------
+   Focus is VISIBLE and it is visible against a dark warm background, which
+   rules out the browser default. Nothing in this file is below 11px. And
+   prefers-reduced-motion turns off every loop — including the burn warning,
+   which is replaced by a solid ring so the information survives the animation
+   being switched off. An accessibility setting must never cost a player money.
+   ════════════════════════════════════════════════════════════════════════ */
+#mythic-kitchen-ov :focus-visible {
+  outline: 3px solid #ffd166;
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+#mythic-kitchen-ov .mk-sr {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  #mythic-kitchen-ov *,
+  #mythic-kitchen-ov *::before,
+  #mythic-kitchen-ov *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+  }
+  #mythic-kitchen-ov .mk-slot[data-warn="1"] {
+    outline: 3px solid var(--mk-danger);
+    outline-offset: -3px;
+  }
+  #mythic-kitchen-ov .mk-tk[data-urg="late"] { border-color: var(--mk-danger); }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   🖥 THE ONE BREAKPOINT — 820px and up.
+   ------------------------------------------------------------------------
+   The phone stack becomes a landscape line: the lane runs across the top like
+   the window you serve out of, the order screen hangs on the left, the cooking
+   happens in the middle, the bins are on the right where your other hand is.
+   Nothing is re-parented in JS to do this — it is the same DOM in a grid, which
+   is the only reason one renderer can serve both.
+   ════════════════════════════════════════════════════════════════════════ */
+@media (min-width: 820px) {
+  #mythic-kitchen-ov { font-size: 14px; }
+  #mythic-kitchen-ov .mk-hud {
+    grid-template-columns: auto auto minmax(0,1fr) auto auto;
+    grid-template-areas: "pop lvl . cash clock close";
+    gap: 10px;
+    padding: 10px 16px;
+  }
+  #mythic-kitchen-ov .mk-hud-close { grid-area: close; }
+  #mythic-kitchen-ov .mk-meter { width: 110px; height: 10px; }
+  #mythic-kitchen-ov .mk-xp { width: 190px; flex: 0 0 190px; }
+  #mythic-kitchen-ov .mk-hud-lvl .mk-lab { display: block; }
+
+  #mythic-kitchen-ov .mk-body {
+    display: grid;
+    grid-template-columns: 340px minmax(0, 1fr) 320px;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    /* The board is a TALL screen on the left (REF-B mounts it over the pass);
+       the line runs down the middle and the pass sits at the END of the line,
+       which is where a pass physically is. Putting the pass under the board
+       instead left a column of dead asphalt in the middle of the kitchen. */
+    grid-template-areas:
+      "lane  lane  lane"
+      "board line  bins"
+      "board pass  bins";
+    gap: 10px;
+    padding: 10px;
+    overflow: hidden;
+  }
+  #mythic-kitchen-ov .mk-sec-lane  { grid-area: lane;  margin: 0; }
+  #mythic-kitchen-ov .mk-sec-board { grid-area: board; min-height: 0; display: flex; flex-direction: column; }
+  #mythic-kitchen-ov .mk-sec-line  { grid-area: line;  min-height: 0; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+  #mythic-kitchen-ov .mk-sec-board { min-height: 0; }
+  #mythic-kitchen-ov .mk-sec-bins  { grid-area: bins;  min-height: 0; overflow-y: auto; }
+  #mythic-kitchen-ov .mk-sec-pass  { grid-area: pass; }
+
+  #mythic-kitchen-ov .mk-lane { margin: 0; }
+  #mythic-kitchen-ov .mk-road { height: 88px; }
+  /* "no cars" — centred on the asphalt, not a box floating over it. */
+#mythic-kitchen-ov .mk-road-empty {
+  position: absolute;
+  left: 10px; right: 58px; top: 50%;
+  transform: translateY(-50%);
+  text-align: center;
+  font-size: 12px;
+  color: var(--mk-faint);
+}
+#mythic-kitchen-ov .mk-speaker { width: 64px; }
+
+  /* the board becomes a real overhead screen: a vertical ticket column */
+  #mythic-kitchen-ov .mk-board { margin: 0; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  #mythic-kitchen-ov .mk-board .mk-rail {
+    flex: 1 1 auto;
+    flex-direction: column;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scroll-snap-type: none;
+  }
+  #mythic-kitchen-ov .mk-board .mk-tk { width: 100%; }
+
+  /* the line: stations wrap into a grid instead of a sideways rail */
+  #mythic-kitchen-ov .mk-sec-line .mk-rail {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(268px, 1fr));
+    gap: 10px;
+    overflow: visible;
+    padding: 0;
+  }
+  /* 🔥 Landscape puts the pans SIDE BY SIDE, the way they sit on a real
+     flat-top — three burgers across, not three burgers stacked. It is also what
+     makes all five stations fit the column without scrolling: stacked slots at
+     92px each ran the line ~200px past the fold on a 900px screen. */
+  /* Desktop pans grow to fill the card and get their dish name back. */
+  #mythic-kitchen-ov .mk-slot { flex: 1 1 0; min-height: 124px; padding-bottom: 46px; }
+  #mythic-kitchen-ov .mk-slot-name { display: block; }
+  #mythic-kitchen-ov .mk-slot-flag { left: 7px; bottom: 26px; }
+  #mythic-kitchen-ov .mk-slot-bars { left: 7px; right: 7px; bottom: 7px; }
+  #mythic-kitchen-ov .mk-build { width: 56px; }
+  #mythic-kitchen-ov .mk-pull { top: auto; bottom: 25px; right: 5px; }
+  #mythic-kitchen-ov .mk-hood { margin: 0 0 2px; }
+  #mythic-kitchen-ov .mk-pass { margin: 0; }
+
+  /* bins stack vertically down the right-hand wall */
+  #mythic-kitchen-ov .mk-sec-bins .mk-rail {
+    flex-direction: column;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: 0;
+    gap: 8px;
+  }
+  #mythic-kitchen-ov .mk-shelf-row { flex-wrap: wrap; }
+  #mythic-kitchen-ov .mk-shelf { width: 100%; }
+
+  #mythic-kitchen-ov .mk-tabs { justify-content: center; gap: 6px; padding: 6px 10px; }
+  #mythic-kitchen-ov .mk-tab { flex: 0 0 auto; min-width: 96px; flex-direction: row; gap: 6px; padding: 7px 14px; }
+
+  #mythic-kitchen-ov .mk-sheet-wrap { justify-content: center; align-items: center; }
+  #mythic-kitchen-ov .mk-sheet {
+    width: min(720px, 92%);
+    max-height: 82%;
+    border-radius: 16px;
+    border-bottom: 1px solid rgba(255,255,255,.16);
+  }
+}

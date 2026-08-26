@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120w6';
+  window.BUILD_VERSION = 'v120x0';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -114702,6 +114702,39 @@ function renderTitle() {
             onclick: () => {
               try { window.MythicCommunity.open(); }
               catch (e) { showToast('⚠ The Community module did not load.', 3200); }
+            } }
+        : null),
+      // 🍔 Mythic Kitchen — the fast-food / drive-thru sim. Lives entirely in
+      // /src/kitchen as ES modules; this tile plus window.MythicKitchenBridge
+      // are the only two things index.html knows about it.
+      // ⚠ Resolves to NULL when the module has not loaded — the tile list is
+      //   `.filter(Boolean)`ed, which is how every conditional portal here
+      //   hides itself. There is no `hidden` flag; returning null IS the flag,
+      //   so a module that 404s or throws on import leaves a MISSING tile
+      //   rather than a button that does nothing when tapped.
+      ((typeof window !== 'undefined' && window.MythicKitchen)
+        ? { id: 'btn-kitchen', icon: '🍔', name: 'Mythic Kitchen', sub: 'Cook · drive-thru · ship convoys to other cities', accent: '#ffb347',
+            // Live, and deliberately in this order: something the player must
+            // act on beats something merely in flight, which beats a status.
+            // 🚚 Convoys tick on WALL CLOCK (they are the one thing that
+            //    advances while the panel is shut), so an arrival really can
+            //    appear here without the kitchen ever having been opened.
+            badge: (() => {
+              try {
+                const K = window.MythicKitchen.state || {};
+                const up = (K.tickets || []).filter(t => t && (t.state === 'open' || t.state === 'ready')).length;
+                if (up > 0) return `🎫 ${up} order${up === 1 ? '' : 's'} up`;
+                const landed = (K.convoys || []).filter(c => c && c.state === 'arrived').length + (K.inbound || []).length;
+                if (landed > 0) return `📦 ${landed} convoy${landed === 1 ? '' : 's'} to claim`;
+                const moving = (K.convoys || []).filter(c => c && c.state === 'transit').length;
+                if (moving > 0) return `🚚 ${moving} in transit`;
+                if (K.shift && K.shift.running) return `🟢 Day ${K.shift.day | 0} · service on`;
+                return '🔥 Fire up the grill';
+              } catch (e) { return '🔥 Fire up the grill'; }
+            })(),
+            onclick: () => {
+              try { window.MythicKitchen.open(); }
+              catch (e) { showToast('⚠ The Kitchen module did not load.', 3200); }
             } }
         : null),
       // 🏦 Bank of Ethos — Camp Heights treasury sub-app (iframe). Node /
@@ -207412,6 +207445,117 @@ window.MythicTradeBridge = {
   save: () => { try { saveProfile(); return true; } catch (e) { return false; } },
   toast: (m, ms) => { try { showToast(m, ms || 3600); } catch (e) {} },
 };
+/* 🍔 KITCHEN BRIDGE — the ONE seam between this file and /src/kitchen
+   (Mythic Kitchen: the drive-thru / cooking sim). CONTRACT.md §7 is the
+   authority on this list; kitchen.bridge.js patches anything missing and warns
+   once in the console, so a key added there and forgotten here degrades rather
+   than throws — but it degrades to a ZERO, which in this feature means "you
+   cannot afford anything". Keep the two in step.
+
+   🔴 THE GLOBALS TRAP, FOR THE FOURTH TIME (CLAUDE.md). `Profile`, `Cloud`,
+   `Corp`, `RESOURCES`, `getRes`, `addRes`, `spendResources`, `spendGems`,
+   `addGems`, `showToast`, `gcConfirm`, `render` and `saveProfile` are top-level
+   `const` / `function` declarations in THIS file. They are global LEXICAL
+   bindings and are therefore NOT properties of `window`: an ES module cannot
+   see one of them, and `window.Profile` is `undefined` however much
+   `const Profile` looks global. That trap has now cost real time on
+   FoundationReserve, on Profile in the Node City bridge, and again in Trading.
+   /src/kitchen reads NO bare global and has no second path — everything it is
+   allowed to touch is written out below. If the kitchen needs something new,
+   it is ADDED HERE. Do not reach around this object from inside the module.
+
+   ⚠ EVERY ACCESSOR IS A FUNCTION, NEVER A SNAPSHOT. A captured `Profile.gems`
+   is stale the instant the player spends, and this feature pays out Cinder on
+   every single ticket — a frozen balance would let a player buy supplies they
+   cannot afford and would render the wrong number in a HUD chip that is on
+   screen every frame.
+
+   🔴 EVERY MUTATOR RETURNS A BOOLEAN, AND `true` MEANS IT ACTUALLY HAPPENED.
+   Not decoration: `buySupply()` is all-or-nothing on /src/trading's settle.js
+   discipline and decides from these return values whether to unwind a
+   half-taken purchase. A wrapper that returns `undefined` on success makes the
+   rollback fire on a leg that worked — the player is "refunded" for something
+   they already received. kitchen.bridge.js deliberately does not coerce an
+   `undefined` (both coercions swap one visible bug for an invisible one); it
+   names the offending key in the console instead. So: return a boolean.
+
+   🔴 refundRes vs addRes is the whole safety story, exactly as on
+   MythicTradeBridge above. `addRes` enforces the stash cap and returns WITHOUT
+   ADDING when the vault is full — right for loot, catastrophic for an unwind
+   (that is how 215 units of a real player's resources went missing). Undoing a
+   deduction this call stack just made → `refundRes` (uncapped). Creating units
+   for the player — a convoy claim, a payout → `addRes`, and the module then
+   RE-READS `getRes()` and treats a short landing as a failed leg.
+
+   ⚠ `cloud` is a GETTER, not a copied value. Copying it once freezes whatever
+   `Cloud` was at build time, which on a page that loads signed out and signs in
+   thirty seconds later is `null` forever — kitchen.api.js would report the
+   convoy network "offline" for the rest of the session with nothing in the
+   console to say why. */
+window.MythicKitchenBridge = {
+  // ── Readers. Functions, never snapshots.
+  resources: () => { try { return (typeof RESOURCES !== 'undefined') ? RESOURCES : []; } catch (e) { return []; } },
+  /* Never null: every call site renders this straight into an icon + label, so
+     a null here is a blank ingredient bin on screen. `_meta` predates the
+     kitchen and does not promise a `color`, which the bins do use — defaulted
+     here rather than inside the module, so there is one answer. */
+  meta: (id) => {
+    try { const m = _meta(id) || {}; return { id: m.id || id, name: m.name || id, icon: m.icon || '📦', color: m.color || '#8ea0b5' }; }
+    catch (e) { return { id: id, name: id, icon: '📦', color: '#8ea0b5' }; }
+  },
+  // 🔴 getRes(), NOT Profile.resources — _ensureResources() aliases Profile.salvage.
+  getRes: (id) => { try { return getRes(id) | 0; } catch (e) { return 0; } },
+  resourceCap: () => { try { return getResourceCap() | 0; } catch (e) { return 0; } },
+  resourceUnits: () => { try { return getResourceUnits() | 0; } catch (e) { return 0; } },
+  gems: () => { try { return Profile.gems | 0; } catch (e) { return 0; } },
+  signedIn: () => { try { return !!(Profile.cloud && Profile.cloud.signedIn && Cloud && Cloud.client); } catch (e) { return false; } },
+  userId: () => { try { return (Profile.cloud && Profile.cloud.userId) || null; } catch (e) { return null; } },
+  displayName: () => {
+    try { return (Profile.cloud && Profile.cloud.displayName) || (Profile.account && Profile.account.displayName) || 'Survivor'; }
+    catch (e) { return 'Survivor'; }
+  },
+  get cloud() { try { return (typeof Cloud !== 'undefined') ? Cloud : null; } catch (e) { return null; } },
+  // 🏢 Convoy recipient shortlist — read, never written. Corps are Corp.*'s.
+  myCorp: () => { try { return (Corp && Corp.mine) ? { id: Corp.mine.id, name: Corp.mine.name, tag: Corp.mine.tag } : null; } catch (e) { return null; } },
+  /* 🏭 READ-ONLY. Feeds the "your city already makes this" hint on the restock
+     screen. The kitchen must never write city production — /src/city owns that
+     state through MythicCityBridge.setProdState and two writers would diverge. */
+  cityProd: () => { try { return Profile.cityProduction || {}; } catch (e) { return {}; } },
+  isAdmin: () => { try { return !!(typeof isAdmin === 'function' && isAdmin()); } catch (e) { return false; } },
+
+  // ── Mutators. true = IT HAPPENED.
+  spendRes: (id, n) => { try { return !!spendResources({ [id]: n | 0 }); } catch (e) { return false; } },
+  addRes: (id, n) => { try { addRes(id, n | 0); return true; } catch (e) { return false; } },
+  refundRes: (id, n) => { try { _refundRes(id, n | 0); return true; } catch (e) { return false; } },
+  spendGems: (n) => { try { return !!spendGems(n | 0); } catch (e) { return false; } },
+  addGems: (n) => { try { addGems(n | 0); return true; } catch (e) { return false; } },
+
+  /* ── Persistence. The kitchen's whole save lives on `Profile.kitchen`.
+     Auto-created, so a save written before this feature existed hydrates as a
+     fresh kitchen rather than a throw (CONTRACT §5, "absent-tolerant by
+     construction").
+     🔴 THESE TWO RETURN FALSE ON FAILURE AND THAT MUST NOT BE SWALLOWED. The
+     same `try { … } catch (e) {}` on MythicCityBridge once charged a player
+     50,000 Cinder for a building that never persisted, because the module's
+     refund-on-write-failure path was dead code. The kitchen turns a `false`
+     into K.error + a toast; give it something to turn. */
+  kitchenState: () => {
+    try {
+      if (!Profile.kitchen || typeof Profile.kitchen !== 'object') Profile.kitchen = {};
+      return Profile.kitchen;
+    } catch (e) { return {}; }
+  },
+  setKitchenState: (s) => {
+    try { if (!s || typeof s !== 'object') return false; Profile.kitchen = s; return true; } catch (e) { return false; }
+  },
+  save: () => { try { saveProfile(); return true; } catch (e) { return false; } },
+
+  // ── Chrome
+  toast: (m, ms) => { try { showToast(m, ms || 3600); } catch (e) {} },
+  confirm: async (m) => { try { return !!(await gcConfirm(m)); } catch (e) { return false; } },
+  // Legacy render(), for the HUD chips that live outside the kitchen overlay.
+  render: () => { try { render(); } catch (e) {} },
+};
 window.MythicCityBridge = {
   // ── Resources. Accessors, never snapshots — a captured value goes stale the
   //    moment the player loots or spends.
@@ -223072,6 +223216,18 @@ render();
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
 <script type="module" src="src/trading/index.js?v=r12trade1"></script>
+<!-- 🍔 MYTHIC KITCHEN — the fast-food / drive-thru sim. Registers
+     window.MythicKitchen (+ __mk) and is INERT until the title tile opens it:
+     no DOM, no RAF loop, no Supabase call happens on load. Everything it can
+     touch arrives through window.MythicKitchenBridge, defined next to
+     MythicTradeBridge above — the globals trap, for the fourth time.
+     ⚠ It injects its OWN stylesheet, so there is deliberately no <link> here:
+       every extra edit to an 11.6 MB file is a merge hazard for one line.
+     ⚠ If this 404s the tile simply never appears (it is gated on
+       window.MythicKitchen), which is the safe failure — never a dead button.
+     ⚠ Bump ?v= on every change — the service worker caches /src/* like any
+       other static asset, and a missed bump ships invisibly. -->
+<script type="module" src="src/kitchen/index.js?v=v120x0kitchen1"></script>
 <!-- 🔌 PRN NODE TIERS — the generation-rate table (Free 0.5% … Eternal 20%).
      Registers window.MythicNodeTiers: pure math, no I/O, no globals. Two
      consumers in this file, both `typeof`-guarded so an absent module falls

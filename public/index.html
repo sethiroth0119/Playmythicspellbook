@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120x4';
+  window.BUILD_VERSION = 'v120x5';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -207633,18 +207633,28 @@ window.MythicInfluenceBridge = {
      BEST of their PRN rows and their owned city nodes, and resolveTier already
      folds in the founder package they paid for — so "node level" here is the
      same number the PRN payout uses, not a second opinion about it. */
+  /* 🔌 The node tier INFLUENCE uses — and deliberately NOT the same resolution
+     the PRN payout uses.
+
+     🔴 PLEDGE ONLY, NO NODE OVERRIDE. `_myTierNode()` resolves through
+     `economy_nodes.meta.tier`, and en_ins/en_upd let a player write `meta` on
+     any node they own — so that path is forgeable. sql/038 dropped it from the
+     server-side standing for exactly that reason, and this has to match: if the
+     modal's NODE meter advertised a Titan tier the payout no longer honours,
+     the feature would be lying to honest players and flattering forged ones.
+
+     ⚠ This changes NOTHING about PRN payouts. _nodeTierPoolShare / _opSettle
+       keep their own resolution; this accessor is Influence's alone.
+     ⚠ An admin tier override no longer reaches Influence. Restoring it means
+       putting the override somewhere `authenticated` cannot write. */
   nodeTier: () => {
-    /* ⚡ MEMOISED FOR 30s, and it is not premature. The CAMP STATUS bar calls
-       this on EVERY render of the camp screen, and _myTierNode walks every PRN
-       row plus every Territory Wars node (up to ~300) resolving an owner for
-       each. A node tier changes when somebody buys a package or an admin
-       stamps an override — never between two repaints of a status bar. */
     try {
       const now = Date.now();
       if (_infNodeTierMemo.at && (now - _infNodeTierMemo.at) < 30000) return _infNodeTierMemo.val;
       const T = window.MythicNodeTiers;
       if (!T) return { id: 'free', name: 'Free', rate: 0.5, rankIndex: 0, rankCount: 7 };
-      const t = T.resolveTier(_myTierNode(), _nodeTierCtx());
+      // resolveTier(null, ctx) = "no node" → the paid pledge tier, else Free.
+      const t = T.resolveTier(null, _nodeTierCtx());
       const idx = T.TIERS.findIndex((x) => x.id === t.id);
       const val = { id: t.id, name: t.name, rate: t.rate, rankIndex: Math.max(0, idx), rankCount: T.TIERS.length };
       _infNodeTierMemo = { at: now, val: val };
@@ -223342,7 +223352,7 @@ render();
        every call site checks window.MythicInfluence first.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/influence/index.js?v=v120x4inf5"></script>
+<script type="module" src="src/influence/index.js?v=v120x5inf6"></script>
 <!-- 🧰 RESOURCE CHAIN — the 258-entry industrial catalogue behind the city
      builder (water → agriculture → … → containment → civic). Registers
      window.MythicResourceChain: pure data, no I/O, no globals, and NOTHING in

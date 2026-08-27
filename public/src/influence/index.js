@@ -88,7 +88,9 @@ export function level() {
   const s = state();
   // The server's level wins whenever we have mirrored one.
   if (s.srvLevel > 0) return s.srvLevel | 0;
-  return M.effectiveLevel(s.xp, repRank().index | 0);
+  // Rep no longer floors the level — it is forgeable, and the level drives the
+  // Cinder band. See the note in model.js. XP only.
+  return M.effectiveLevel(s.xp);
 }
 export function standing() {
   const s = state();
@@ -310,7 +312,7 @@ function view() {
   return {
     level: lv,
     levelMeta: M.levelMeta(lv),
-    progress: M.levelProgress(s.srvLevel > 0 ? (s.srvXp | 0) : (s.xp | 0), repRank().index | 0),
+    progress: M.levelProgress(s.srvLevel > 0 ? (s.srvXp | 0) : (s.xp | 0)),
     standing: standing(),
     parts: M.standingParts({ nodeRankIndex: nt.rankIndex | 0, nodeRankCount: nt.rankCount | 0, level: lv, repPoints: repPoints() }),
     nodeTier: nt,

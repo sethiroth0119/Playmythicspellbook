@@ -51,17 +51,26 @@ export const INFLUENCE_LEVELS = [
 ];
 export const MAX_LEVEL = INFLUENCE_LEVELS[INFLUENCE_LEVELS.length - 1].lv;
 
-/* 🏛 REP BUYS A HEAD START, NOT A SECOND MULTIPLIER.
-   A Civilization Builder with 300k contribution points starting at Influence 1
-   would read as the system ignoring everything they have already done. So the
-   Reserve rank sets a FLOOR on the level — one-time, monotonic, and capped
-   below the top so the ladder still has to be climbed.
+/* 🔴 REP NO LONGER SETS A FLOOR ON THE LEVEL, AND THAT IS A SECURITY FIX.
+   It used to: a Civilization Builder started at Influence 6 rather than 1, so
+   the system did not ignore what they had already done. It had to go.
 
-   ⚠ Deliberately NOT additive XP. Rep's ongoing pull lives in `standing`
-     (below); if it also fed XP, every rep point would be counted twice and the
-     tuning of one would silently move the other. */
-export const REP_FLOOR_BY_RANK = [1, 2, 3, 4, 5, 6];   // index = Reserve rank index
-export const REP_FLOOR_MAX = 6;
+   `reserve_contributions` carries `rc_upd: for update to authenticated using
+   (user_id = auth.uid())` — a player can set their own `points` to any number
+   straight through PostgREST. Rep is therefore FORGEABLE, and the level sets
+   the Cinder band directly, so a forged rep bought roughly a 19x jump in the
+   per-envoy cap. A forgeable input must never drive money multiplicatively.
+
+   Rep still counts, exactly as the feature was specified — it keeps its 0.25
+   weight in `standing` (below), where the worst a maxed forgery can buy is
+   +7.5% Cinder and some rarity drift. Bounded, not multiplicative.
+
+   ⚠ THE LEVEL NOW COMES FROM XP ALONE, and xp is written only by
+     influence_resolve server-side (sql/038), which makes it the one input with
+     no forgery path. Keep it that way: never let a client-writable table feed
+     the level again.
+   ⚠ sql/038 is canonical and does the same thing. If you change one, change
+     both, or display and payout will disagree. */
 
 export function levelFromXp(xp) {
   xp = Math.max(0, Number(xp) || 0);
@@ -70,13 +79,11 @@ export function levelFromXp(xp) {
   return lv;
 }
 
-/* The level actually used everywhere = max(earned, rep floor). One resolver, so
-   no caller can accidentally read the raw XP level and under-pay someone. */
-export function effectiveLevel(xp, repRankIndex) {
-  const earned = levelFromXp(xp);
-  const idx = Math.max(0, Math.min(REP_FLOOR_BY_RANK.length - 1, repRankIndex | 0));
-  const floor = Math.min(REP_FLOOR_MAX, REP_FLOOR_BY_RANK[idx] || 1);
-  return Math.max(earned, floor);
+/* The level used everywhere. One resolver, so no caller can reintroduce a
+   second opinion about what a player's level is.
+   ⚠ The second argument is gone on purpose — see the note above. */
+export function effectiveLevel(xp) {
+  return levelFromXp(xp);
 }
 
 export function levelMeta(lv) {
@@ -84,21 +91,19 @@ export function levelMeta(lv) {
   return INFLUENCE_LEVELS[lv - 1];
 }
 
-/* Progress toward the next EARNED level. Returns null at the cap, and reports
-   `floored:true` when the rep floor is currently carrying the player — without
-   that flag the bar would look stuck at 0% for a big contributor who has not
-   hosted an envoy yet, which reads as a bug rather than as a head start. */
-export function levelProgress(xp, repRankIndex) {
+/* Progress toward the next level. Returns pct 100 at the cap.
+   (`floored` is retained as always-false so any older caller reading it keeps
+   working; nothing floors a level any more.) */
+export function levelProgress(xp) {
   xp = Math.max(0, Number(xp) || 0);
-  const eff = effectiveLevel(xp, repRankIndex);
   const earned = levelFromXp(xp);
   const next = INFLUENCE_LEVELS.find((t) => t.min > xp) || null;
-  if (!next) return { pct: 100, xp, need: 0, next: null, floored: eff > earned };
+  if (!next) return { pct: 100, xp, need: 0, next: null, floored: false };
   const cur = levelMeta(earned).min;
   const span = Math.max(1, next.min - cur);
   return {
     pct: Math.max(0, Math.min(100, Math.round(((xp - cur) / span) * 100))),
-    xp, need: Math.max(0, next.min - xp), next, floored: eff > earned,
+    xp, need: Math.max(0, next.min - xp), next, floored: false,
   };
 }
 

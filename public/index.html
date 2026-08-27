@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120x3';
+  window.BUILD_VERSION = 'v120x4';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -223342,7 +223342,7 @@ render();
        every call site checks window.MythicInfluence first.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/influence/index.js?v=v120x3inf4"></script>
+<script type="module" src="src/influence/index.js?v=v120x4inf5"></script>
 <!-- 🧰 RESOURCE CHAIN — the 258-entry industrial catalogue behind the city
      builder (water → agriculture → … → containment → civic). Registers
      window.MythicResourceChain: pure data, no I/O, no globals, and NOTHING in

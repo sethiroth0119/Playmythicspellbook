@@ -18,8 +18,9 @@
 --   • the CLOCK      — now(), not the browser's
 --   • the RNG        — random(), unseeded by and invisible to the client
 --   • the LEVEL      — from influence_state.xp, which only these functions write
---   • the STANDING   — recomputed here from reserve_contributions, economy_nodes
---                      and pledge_purchases; the client cannot assert any of it
+--   • the STANDING   — recomputed here, and ONLY from inputs the player cannot
+--                      write. See the block below: two obvious sources are
+--                      player-writable and are therefore NOT trusted with money.
 --   • every AMOUNT   — Cinder, resource quantities, the rolled rarity
 --
 -- The client's remaining job is to DISPLAY what came back and to apply the
@@ -33,6 +34,44 @@
 --    derived from the rarity THIS FUNCTION ROLLED AND STORED, never from
 --    anything the client says about the card. A client asking 1,000,000 for a
 --    common gets 500. Lying is therefore pointless rather than merely audited.
+--
+-- 🔴 TWO STANDING INPUTS ARE PLAYER-WRITABLE. THIS FILE MUST NOT TRUST THEM.
+--    An earlier draft of this header claimed the client "cannot assert any of"
+--    the standing inputs. That was WRONG, and a security review of this very
+--    file caught it. Both of these are writable straight through PostgREST, no
+--    game UI involved:
+--
+--      reserve_contributions  rc_upd: `for update to authenticated
+--                             using (user_id = auth.uid())` — a player can set
+--                             their OWN `points` to anything. (index.html does
+--                             exactly this write on every deposit.)
+--      economy_nodes          en_ins/en_upd: `owner_id = auth.uid()` with no
+--                             constraint on `meta` — a player can stamp
+--                             meta.tier = 'eternal' on a node they own.
+--
+--    Left trusted, that was a ~23x Cinder inflation: forge both and a level-1
+--    camp reads as standing 0.80 at level 6, moving the per-envoy cap from
+--    ~1,000 to ~23,500. So:
+--
+--      • NODE TIER comes from pledge_purchases ONLY. That table is written by
+--        the Stripe edge functions with the service role; a player cannot
+--        insert a paid row. The economy_nodes meta.tier read is GONE.
+--        ⚠ An admin tier override therefore no longer feeds Influence. If that
+--          is wanted back, it needs a table `authenticated` cannot write —
+--          not economy_nodes.meta.
+--      • REP still counts, because the feature is specified around it, but it
+--        can no longer set the LEVEL — level drives the Cinder band directly,
+--        and a forgeable input must never do that. Rep now only carries its
+--        0.25 weight in `standing`, so forging it to the maximum is worth at
+--        most +7.5% Cinder (standing's sweetener is +30% at standing 1.0) and
+--        some rarity drift. Bounded and survivable, rather than multiplicative.
+--      • THE LEVEL comes from influence_state.xp and nothing else. That column
+--        is written only by these functions, so it is the one input with no
+--        forgery path at all.
+--
+--    The durable fix for rep is to stop letting clients write
+--    reserve_contributions.points — but that is an existing table with an
+--    existing client write path, and changing it belongs in its own migration.
 --
 -- 🔴 WHAT IS STILL TRUSTED, STATED PLAINLY. The client picks WHICH card sits
 --    at the rolled rarity (the custom-card catalogue is client-held; the server
@@ -177,21 +216,13 @@ begin
   v_pts := coalesce(v_pts, 0);
   v_rep := public._inf_rep_rank(v_pts);
 
-  -- 🔌 Node tier: an admin override stamped on a node the player owns wins,
-  --    then the founder package they actually paid for, then Free. Same order
-  --    /src/nodes/tiers.js resolves in, so one player has one tier everywhere.
+  /* 🔌 Node tier — from pledge_purchases ONLY.
+     economy_nodes.meta.tier is deliberately NOT read here. en_ins/en_upd let a
+     player write `meta` on any node they own, so trusting it would let anyone
+     stamp meta.tier='eternal' on a node and take node_rank 6. pledge_purchases
+     is written by the Stripe edge functions under the service role, so a paid
+     row cannot be forged from the client. See the header. */
   begin
-    select n.meta->>'tier' into v_tier
-      from public.economy_nodes n
-     where n.owner_id = p_uid and coalesce(n.meta->>'tier', '') <> ''
-     order by case n.meta->>'tier'
-                when 'eternal' then 6 when 'titan' then 5 when 'dominion' then 4
-                when 'foundation' then 3 when 'outpost' then 2 when 'starter' then 1
-                else 0 end desc
-     limit 1;
-  exception when undefined_table or undefined_column then v_tier := null; end;
-
-  if v_tier is null then
     begin
       select case p.tier_id
                when 'eternal' then 'eternal' when 'titan' then 'titan'
@@ -208,16 +239,19 @@ begin
                   else 0 end desc
        limit 1;
     exception when undefined_table or undefined_column then v_tier := null; end;
-  end if;
+  end;
 
   v_node := case v_tier
               when 'eternal' then 6 when 'titan' then 5 when 'dominion' then 4
               when 'foundation' then 3 when 'outpost' then 2 when 'starter' then 1
               else 0 end;
 
-  -- Rep buys a FLOOR on the level, never additive xp — counting it twice would
-  -- make the two knobs impossible to tune independently. See model.js.
-  v_lv := greatest(public._inf_level_from_xp(v_xp), least(6, v_rep + 1));
+  /* 🔴 LEVEL COMES FROM SERVER-GRANTED XP AND NOTHING ELSE.
+     This used to be greatest(level_from_xp, rep_floor). Rep is forgeable (see
+     the header) and the level sets the Cinder band directly, so a forged rep
+     was worth a ~19x jump in the per-envoy cap all by itself. xp is written
+     only by influence_resolve, which makes it the one unforgeable input. */
+  v_lv := public._inf_level_from_xp(v_xp);
 
   -- standing = 0.30 node + 0.45 influence + 0.25 rep, each normalised 0..1.
   -- Rep is logarithmic: the gap between 0 and 5,000 matters far more to a
@@ -562,6 +596,10 @@ end$fn$;
 --    callable, and each derives its user from auth.uid() rather than an
 --    argument, so no caller can act as anybody else.
 -- --------------------------------------------------------------------------
+revoke all on function public._inf_level_from_xp(bigint)             from public, anon, authenticated;
+revoke all on function public._inf_rep_rank(numeric)                from public, anon, authenticated;
+revoke all on function public._inf_sale_cap(text)                   from public, anon, authenticated;
+revoke all on function public._inf_sale_floor(text)                 from public, anon, authenticated;
 revoke all on function public._inf_inputs(uuid)                     from public, anon, authenticated;
 revoke all on function public._inf_roll_cinder(integer, numeric)    from public, anon, authenticated;
 revoke all on function public._inf_roll_rarity(numeric)             from public, anon, authenticated;

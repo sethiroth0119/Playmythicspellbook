@@ -164,6 +164,23 @@ function cardBlockHtml(view, card, kind) {
 function offerHtml(view) {
   const enc = view.enc;
   if (!enc) return '';
+  /* 📬 The envoy arrived with a card this client cannot show — an empty card
+     catalogue (Forge.useCustomOnlyPool with nothing published, or the catalog
+     fetch has not landed). They are NOT spent: the server still holds them, and
+     this panel exists so the player is told that instead of being shown an
+     empty gate while an envoy quietly vanished. */
+  if (enc.kind === 'unavailable') {
+    return '<div class="mif-offer">' +
+      '<div class="mif-prize"><div class="mif-glyph">' + (enc.srvKind === 'recruit' ? '🧍' : '🃏') + '</div>' +
+        '<div><div style="font-weight:700;color:#e8dcc4">' +
+          (enc.srvKind === 'recruit' ? 'A survivor wants to join' : 'A card was set aside for you') +
+          (enc.rarity ? ' <span class="mif-pill" style="color:' + esc(rarityOf(view, enc.rarity).color) + '">' + esc(rarityOf(view, enc.rarity).name) + '</span>' : '') +
+        '</div>' +
+        '<div style="color:#9fb4d8;font-size:0.78rem;margin-top:4px">Your card catalogue is empty on this device, so there is nothing to hand you yet. Sign in, or wait for the catalogue to load, and they will still be here.</div>' +
+        '</div></div>' +
+      '<div class="mif-space">⏳ They stay at the gate until you can receive them — closing this does not send them away.</div>' +
+    '</div>';
+  }
   if (enc.kind === 'cinder') {
     return '<div class="mif-offer"><div class="mif-prize">' +
       '<div class="mif-glyph">🔥</div>' +
@@ -212,6 +229,13 @@ function actionsHtml(view) {
       '<button class="mif-btn" id="mif-close">Close</button></div>';
   }
   if (!enc) return '<div class="mif-acts"><button class="mif-btn" id="mif-close">Close</button></div>';
+  if (enc.kind === 'unavailable') {
+    // Leaving is the DEFAULT and the safe one; sending them away is the only
+    // action that spends the envoy, so it is the secondary button.
+    return '<div class="mif-acts">' +
+      '<button class="mif-btn" id="mif-decline"' + dis + '>Send them away</button>' +
+      '<button class="mif-btn gold" id="mif-wait">Leave them waiting</button></div>';
+  }
   if (enc.kind === 'cinder') {
     return '<div class="mif-acts"><button class="mif-btn gold" id="mif-take"' + dis + '>' + (view.busy ? 'Settling…' : 'Take the tribute') + '</button></div>';
   }
@@ -241,7 +265,8 @@ function bodyHtml(view) {
       (eta ? '<div style="margin-top:6px;font-size:0.82rem">Next envoy in about ' + esc(eta) + '.</div>' : '') +
       '<div style="margin-top:10px;font-size:0.78rem;color:#6f8099">Standing draws them in — raise your node tier, your Reserve rep, or your Influence level and they arrive richer.</div></div>';
   }
-  const face = enc.kind === 'supply' ? '🚚' : enc.kind === 'recruit' ? '🧍' : enc.kind === 'gift' ? '📜' : '🪙';
+  const face = enc.kind === 'unavailable' ? '📬'
+             : enc.kind === 'supply' ? '🚚' : enc.kind === 'recruit' ? '🧍' : enc.kind === 'gift' ? '📜' : '🪙';
   const say = res && res.dialog ? res.dialog : enc.envoy.line;
   const refused = !!(res && res.refused);
   return '<div class="mif-body">' +
@@ -285,6 +310,7 @@ export function mount(view, handlers) {
   on('mif-sell', handlers.onSell);
   on('mif-decline', handlers.onDecline);
   on('mif-next', handlers.onNext);
+  on('mif-wait', handlers.onWait);
 }
 
 export function unmount() {

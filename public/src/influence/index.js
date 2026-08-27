@@ -237,13 +237,31 @@ async function deal() {
       const s = state(); s.pending = compactEnc(enc); save();
       return enc;
     }
-    /* The server dealt a card encounter and this client's pool has nothing at
-       that rarity — an empty catalogue, or every card locked 🎁-off. Decline it
-       server-side rather than stranding the envoy: leaving it pending would
-       block every future claim until something changed. */
-    await S.resolve(b, 'decline', {});
-    _enc = null; const s2 = state(); s2.pending = null; save();
-    return null;
+    /* 🔴 THE SERVER DEALT A CARD ENCOUNTER AND THIS CLIENT HAS NO CARD TO SHOW.
+       Real and not rare: `Forge.useCustomOnlyPool` skips the whole built-in
+       catalogue, and getAllCustomCards() is empty until the catalog fetch lands
+       — so a signed-out or still-booting client has a pool of ZERO. A browser
+       run caught it: ~half of all envoys are gift or recruit.
+
+       This used to silently `decline` server-side and return null, which painted
+       "No one is at the gate". The envoy was spent, the player saw nothing, and
+       there was nothing to tell them why. Never do that — an envoy the player
+       never saw must not be consumed on their behalf.
+
+       So: leave the server row PENDING (it resumes the moment a catalogue
+       exists) and show the visitor as unreceivable, with the decision left to
+       the player. Closing keeps them waiting; declining is an explicit choice.
+       That is also why this cannot simply block forever — a player whose pool
+       is permanently empty still has a way to clear the gate. */
+    _enc = {
+      kind: 'unavailable', srvKind: d.encounter.kind,
+      rarity: String(d.encounter.rarity || '').toLowerCase(),
+      level: (d.encounter.level | 0) || 1, standing: Number(d.encounter.standing) || 0,
+      envoy: { name: 'A courier', title: (d.encounter.kind === 'recruit' ? 'Unaffiliated Survivor' : 'Archive Runner'),
+               line: 'I have something for you, but you have nowhere to put it yet.' },
+    };
+    const s2 = state(); s2.pending = compactEnc(_enc); save();
+    return _enc;
   }
 
   if (d && d.ok === false && !d.offline) {
@@ -272,8 +290,12 @@ async function deal() {
 
   if (M.envoysReady(s.lastAt, Date.now(), M.ENVOY_INTERVAL_MS, M.ENVOY_BANK_CAP) <= 0) { _enc = null; return null; }
   const enc = E.rollEncounter(ctx({ allowCinder: false }));
-  s.lastAt = M.consumeStamp(s.lastAt || Date.now(), Date.now(), M.ENVOY_INTERVAL_MS, M.ENVOY_BANK_CAP);
+  /* ⚠ ROLL FIRST, SPEND SECOND. The clock used to advance before this check, so
+     a client that could produce no encounter at all — empty card pool, no
+     resource accessors — burned an envoy to show "No one is at the gate".
+     Nothing was dealt, so nothing is spent. */
   if (!enc) { s.pending = null; save(); _enc = null; return null; }
+  s.lastAt = M.consumeStamp(s.lastAt || Date.now(), Date.now(), M.ENVOY_INTERVAL_MS, M.ENVOY_BANK_CAP);
   _enc = enc;
   s.pending = compactEnc(enc);
   save();
@@ -442,6 +464,9 @@ const handlers = {
     if (_mode === 'server') return resolveServer('decline');
     _busy = false; return settle(E.dismiss(), enc);
   }),
+  /* "Leave them waiting" on an unreceivable encounter: close WITHOUT resolving,
+     so the server row keeps the envoy for a session that can actually show it. */
+  onWait: () => { _result = null; _busy = false; R.unmount(); const b = B(); try { if (b && b.render) b.render(); } catch (e) {} },
 };
 
 export async function open() {

@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120x1';
+  window.BUILD_VERSION = 'v120x2';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -207509,8 +207509,46 @@ window.MythicInfluenceBridge = {
   save: () => { try { saveProfile(); } catch (e) {} },
   render: () => { try { render(); } catch (e) {} },
   toast: (m, ms) => { try { showToast(m, ms || 4200); } catch (e) {} },
-  // 🔥 Cinder. Routed through the real helper so the named-faucet audit trail
-  //    and the server mirror both happen — never Profile.gems directly.
+
+  /* ☁ THE SERVER SEAM (sql/038). `Cloud` is a top-level `const` here and
+     therefore invisible to a module — the globals trap again — so the module
+     cannot reach Supabase itself and asks through these two.
+
+     ⚠ NEVER THROWS. Every failure shape the module has to tell apart —
+       signed out, offline, sql/038 not applied — comes back as a returned
+       error object, because a rejected promise inside a click handler is how a
+       modal ends up permanently stuck on "Settling…". */
+  signedIn: () => {
+    try { return !!(Profile.cloud && Profile.cloud.signedIn && typeof initCloud === 'function' && initCloud() && Cloud && Cloud.client); }
+    catch (e) { return false; }
+  },
+  rpc: async (fn, args) => {
+    try {
+      if (typeof initCloud !== 'function' || !initCloud() || !Cloud || !Cloud.client) return { error: { message: 'no client' } };
+      if (!(Profile.cloud && Profile.cloud.signedIn)) return { error: { message: 'signed out' } };
+      return await Cloud.client.rpc(String(fn), args || {});
+    } catch (e) { return { error: { message: (e && e.message) || 'rpc threw' } }; }
+  },
+  /* 💰 THE SERVER ALREADY PAID — this only catches the DISPLAY up.
+     influence_resolve() credits user_progress.cinder (the canonical wallet) via
+     wallet_credit before it returns, and wallet_credit itself raises the
+     user_profiles.gems mirror. Calling addGems() here as well would pay the
+     same envoy twice: once for real, and once into the local mirror that the
+     MAX(server, local) adopt in cloudFetchProfile later reconciles UP into a
+     second real credit. So this RAISES the local number to the canonical one
+     and never adds to it — and it only ever moves UP, so a stale reply cannot
+     take Cinder away from a player who has earned some since. */
+  syncCinder: (balance) => {
+    try {
+      const b = Math.max(0, balance | 0);
+      if (b > (Profile.gems | 0)) { Profile.gems = b; saveProfile(); }
+      return Profile.gems | 0;
+    } catch (e) { return 0; }
+  },
+
+  // 🔥 Cinder. The LOCAL (offline) path only — the server path never calls this.
+  //    Routed through the real helper so the named-faucet audit trail and the
+  //    server mirror both happen; never Profile.gems directly.
   gems: () => { try { return Profile.gems | 0; } catch (e) { return 0; } },
   addGems: (n, reason) => { try { addGems(n | 0, reason || 'influence_envoy'); return true; } catch (e) { return false; } },
   /* 🃏 The pool an envoy can draw from. Custom cards are flagged so the module
@@ -223290,15 +223328,21 @@ render();
      ⚠ IT READS ITS THREE INPUTS AND WRITES NONE OF THEM. Node tier and
        Foundation Reserve rep are consumed, never moved — a reward loop that
        could raise its own difficulty inputs would compound without limit.
-     ⚠ Cinder is capped at 50,000 per envoy inside the model, below the
-       wallet_credit single-credit bound (sql/034); a payout above that bound
-       would be refused server-side and the player would watch Cinder that never
-       banked.
+     ⚠ THE PAYOUTS ARE THE SERVER'S (sql/038). influence_claim/_resolve own the
+       clock, the RNG, the level, the standing and every amount, and credit the
+       canonical wallet themselves — so this file's bridge exposes `rpc` and a
+       `syncCinder` that only ever raises the DISPLAY. It deliberately does NOT
+       let the module call addGems on that path: the server has already paid,
+       and crediting again would pay one envoy twice.
+     ⚠ Before sql/038 is applied the module degrades to an offline envoy that
+       hands out cards and resources but NEVER Cinder — money needs a server to
+       name the amount. Cinder stays capped at 50,000 per envoy, below the
+       wallet_credit single-credit bound (sql/034).
      ⚠ If this 404s the camp loses the Influence button and nothing else —
        every call site checks window.MythicInfluence first.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/influence/index.js?v=v120x1inf2"></script>
+<script type="module" src="src/influence/index.js?v=v120x2inf3"></script>
 <!-- 🧰 RESOURCE CHAIN — the 258-entry industrial catalogue behind the city
      builder (water → agriculture → … → containment → civic). Registers
      window.MythicResourceChain: pure data, no I/O, no globals, and NOTHING in

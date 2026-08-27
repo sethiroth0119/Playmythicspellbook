@@ -115,6 +115,14 @@ function rollKind(s, rng, allowed) {
      fallback, because a camp with no custom cards published must still get
      offers rather than an empty modal. */
 export function pickCard(pool, s, rng, filter) {
+  return pickCardAtRarity(pool, M.rollRarity(s, rng), rng, filter);
+}
+
+/* The same search with the rarity DECIDED ELSEWHERE. This is the entry point the
+   server path uses: sql/038 rolls the rarity, and the client's only job is to
+   find a card sitting at it. Keeping the search identical means an online and
+   an offline envoy pick from the pool the same way. */
+export function pickCardAtRarity(pool, want, rng, filter) {
   if (!Array.isArray(pool) || !pool.length) return null;
   const usable = pool.filter((e) => e && e.card && e.card.id && (!filter || filter(e)));
   if (!usable.length) return null;
@@ -126,7 +134,8 @@ export function pickCard(pool, s, rng, filter) {
     const rid = String((e.card.rarity || 'common')).toLowerCase();
     (byRarity[rid] = byRarity[rid] || []).push(e);
   }
-  const want = M.rollRarity(s, rng);
+  want = String(want || 'common').toLowerCase();
+  if (M.RARITY_ORDER.indexOf(want) < 0) want = 'common';
   const idx = M.RARITY_ORDER.indexOf(want);
   const order = [want];
   for (let i = idx - 1; i >= 0; i--) order.push(M.RARITY_ORDER[i]);
@@ -153,7 +162,18 @@ export function rollEncounter(ctx) {
   // An outcome the game cannot actually deliver is never offered. This is why
   // a player with no custom cards and no catalogue still gets a working modal
   // instead of an envoy holding nothing.
-  const allowed = { cinder: true, gift: pool.length > 0, recruit: hasUnits, supply: canSupply };
+  /* 🔴 OFFLINE PAYS NO CINDER, and this flag is the whole enforcement.
+     Cinder is cashable-out currency; sql/038 exists precisely so the amount is
+     named by the server. With the RPCs unreachable there is nothing to name it
+     but the browser, which is the hole the migration closed — so an offline
+     envoy still visits and can still hand over cards and resources (ordinary
+     client-held progression, exactly like loot), and simply never carries
+     money. index.js sets this from whether the server answered. */
+  const allowed = {
+    cinder: ctx.allowCinder !== false,
+    gift: pool.length > 0, recruit: hasUnits, supply: canSupply,
+  };
+  if (!allowed.cinder && !allowed.gift && !allowed.recruit && !allowed.supply) return null;
   const kind = rollKind(s, rng, allowed);
   const enc = { kind, level, standing: s, at: Date.now(), envoy: envoyIdentity(kind, rng) };
 
@@ -168,7 +188,7 @@ export function rollEncounter(ctx) {
     // recruit branch's business: spells, traps, weather, locations, walls — and
     // units too, as a straight gift rather than a person.
     const got = pickCard(pool, s, rng, null);
-    if (!got) { enc.kind = 'cinder'; enc.cinder = M.rollCinder(level, s, rng); enc.band = M.cinderBand(level); return enc; }
+    if (!got) return _cinderFallback(enc, level, s, rng, allowed);
     enc.card = got.entry.card;
     enc.cardKind = got.entry.kind;
     enc.rarity = String(got.entry.card.rarity || 'common').toLowerCase();
@@ -178,7 +198,7 @@ export function rollEncounter(ctx) {
 
   if (kind === 'recruit') {
     const got = pickCard(pool, s, rng, (e) => e.kind === 'unit');
-    if (!got) { enc.kind = 'cinder'; enc.cinder = M.rollCinder(level, s, rng); enc.band = M.cinderBand(level); return enc; }
+    if (!got) return _cinderFallback(enc, level, s, rng, allowed);
     enc.card = got.entry.card;
     enc.cardKind = 'unit';
     enc.rarity = String(got.entry.card.rarity || 'common').toLowerCase();
@@ -201,6 +221,81 @@ export function rollEncounter(ctx) {
     if (!r || !r.id) continue;
     grants.push({ id: r.id, name: r.name || r.id, icon: r.icon || '📦', qty: M.rollResourceQty(level, s, rng) });
   }
+  enc.grants = grants;
+  enc.total = grants.reduce((a, g) => a + g.qty, 0);
+  enc.space = spaceFor(ctx, enc.total);
+  return enc;
+}
+
+/* When the pool cannot serve the kind we rolled, fall back — but NEVER into a
+   Cinder payout the offline path is not allowed to make. Returning null is the
+   honest answer there: nobody came, rather than the browser inventing money. */
+function _cinderFallback(enc, level, s, rng, allowed) {
+  if (!allowed || allowed.cinder === false) return null;
+  enc.kind = 'cinder';
+  enc.cinder = M.rollCinder(level, s, rng);
+  enc.band = M.cinderBand(level);
+  return enc;
+}
+
+/* ── Hydrating a SERVER encounter ───────────────────────────────────────────
+   sql/038 returns the decisions it owns — kind, Cinder amount, rolled rarity,
+   resource quantities. This turns that into the object the renderer draws by
+   attaching only the things the server cannot know: which card sits at that
+   rarity, and which resources fill those quantities.
+
+   ⚠ IT RE-ROLLS NOTHING. Every number here comes from `srv`; the local model is
+     used only for the display band on a Cinder tribute. If this function ever
+     computes a payout, the migration has been defeated from the client side. */
+export function fromServer(srv, ctx) {
+  if (!srv || !srv.kind) return null;
+  ctx = ctx || {};
+  const rng = ctx.rng || Math.random;
+  const level = Math.max(1, (srv.level | 0) || 1);
+  const s = Math.max(0, Math.min(1, Number(srv.standing) || 0));
+  const kind = String(srv.kind);
+  const enc = { kind, level, standing: s, server: true, at: Date.now(), envoy: envoyIdentity(kind, rng) };
+
+  if (kind === 'cinder') {
+    enc.cinder = Math.max(0, srv.cinder | 0);
+    enc.band = M.cinderBand(level);          // display only — the amount is the server's
+    return enc;
+  }
+
+  if (kind === 'gift' || kind === 'recruit') {
+    const pool = (typeof ctx.cardPool === 'function' ? ctx.cardPool() : []) || [];
+    const got = pickCardAtRarity(pool, srv.rarity, rng, kind === 'recruit' ? ((e) => e.kind === 'unit') : null);
+    if (!got) return null;                   // nothing to offer; caller declines the envoy
+    enc.card = got.entry.card;
+    enc.cardKind = kind === 'recruit' ? 'unit' : got.entry.kind;
+    enc.rarity = String(srv.rarity || 'common').toLowerCase();
+    if (kind === 'recruit') {
+      const raw = Math.max(1, (typeof ctx.cardMarketValue === 'function' ? ctx.cardMarketValue(enc.card) : 0) | 0);
+      /* Shown PRE-CLAMPED so the button never promises more than the server
+         will pay. The server clamps regardless; showing the raw DVS number and
+         then paying a fifth of it would read as the game short-changing you. */
+      const cap = Math.max(1, srv.sale_cap | 0) || raw;
+      const floor = Math.max(0, srv.sale_floor | 0);
+      enc.value = Math.max(floor, Math.min(cap, raw));
+      enc.valueRaw = raw;
+      enc.saleCap = cap;
+      enc.owned = (typeof ctx.ownedCount === 'function' ? ctx.ownedCount(enc.card.id) : 0) | 0;
+    }
+    return enc;
+  }
+
+  // supply — the server named the quantities; we choose which resources.
+  const list = (typeof ctx.resources === 'function' ? ctx.resources() : []) || [];
+  const qty = Array.isArray(srv.qty) ? srv.qty.map((q) => Math.max(1, q | 0)) : [];
+  const bag = list.slice();
+  const grants = [];
+  for (const q of qty) {
+    if (!bag.length) break;
+    const r = bag.splice(Math.floor(rng() * bag.length), 1)[0];
+    if (!r || !r.id) continue;
+    grants.push({ id: r.id, name: r.name || r.id, icon: r.icon || '📦', qty: q });
+  }
+  if (!grants.length) return null;
   enc.grants = grants;
   enc.total = grants.reduce((a, g) => a + g.qty, 0);
   enc.space = spaceFor(ctx, enc.total);

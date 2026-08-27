@@ -176,8 +176,15 @@ function offerHtml(view) {
     return '<div class="mif-offer">' + cardBlockHtml(view, enc.card, enc.cardKind) + '</div>';
   }
   if (enc.kind === 'recruit') {
+    /* The price shown is the one that will actually be PAID — already clamped
+       to the server's per-rarity ceiling. Showing the raw DVS figure and then
+       paying a fraction of it would read as the game short-changing you, so
+       when the clamp bites we say so instead of hiding it. */
+    const capped = enc.valueRaw != null && (enc.valueRaw | 0) > (enc.value | 0);
     return '<div class="mif-offer">' + cardBlockHtml(view, enc.card, 'unit') +
-      '<div class="mif-space">💰 Player-market value <strong style="color:#ffcf6b">' + n(enc.value) + ' 🔥</strong>' +
+      '<div class="mif-space">💰 Sells for <strong style="color:#ffcf6b">' + n(enc.value) + ' 🔥</strong>' +
+      (capped ? ' <span title="Market says ' + n(enc.valueRaw) + ', but a ' + esc(enc.rarity) +
+                ' recruit is capped at ' + n(enc.saleCap) + '">(market ' + n(enc.valueRaw) + ', capped)</span>' : '') +
       (enc.owned ? ' · you already hold ' + (enc.owned | 0) : '') + '</div></div>';
   }
   // supply
@@ -194,6 +201,10 @@ function offerHtml(view) {
 function actionsHtml(view) {
   const enc = view.enc;
   const res = view.result;
+  // While an RPC is in flight every button is inert. The server is what decides
+  // the payout, so a second click before it answers would either double-resolve
+  // or resolve against an encounter that is already gone.
+  const dis = view.busy ? ' disabled' : '';
   if (res) {
     const more = (view.ready | 0) > 0;
     return '<div class="mif-acts">' +
@@ -202,23 +213,23 @@ function actionsHtml(view) {
   }
   if (!enc) return '<div class="mif-acts"><button class="mif-btn" id="mif-close">Close</button></div>';
   if (enc.kind === 'cinder') {
-    return '<div class="mif-acts"><button class="mif-btn gold" id="mif-take">Take the tribute</button></div>';
+    return '<div class="mif-acts"><button class="mif-btn gold" id="mif-take"' + dis + '>' + (view.busy ? 'Settling…' : 'Take the tribute') + '</button></div>';
   }
   if (enc.kind === 'gift') {
-    return '<div class="mif-acts"><button class="mif-btn gold" id="mif-take">Take the card</button></div>';
+    return '<div class="mif-acts"><button class="mif-btn gold" id="mif-take"' + dis + '>' + (view.busy ? 'Settling…' : 'Take the card') + '</button></div>';
   }
   if (enc.kind === 'recruit') {
     return '<div class="mif-acts">' +
-      '<button class="mif-btn" id="mif-decline">Turn them away</button>' +
-      '<button class="mif-btn" id="mif-sell">Sell for ' + n(enc.value) + ' 🔥</button>' +
-      '<button class="mif-btn green" id="mif-accept">Accept — join camp</button></div>';
+      '<button class="mif-btn" id="mif-decline"' + dis + '>Turn them away</button>' +
+      '<button class="mif-btn" id="mif-sell"' + dis + '>Sell for ' + n(enc.value) + ' 🔥</button>' +
+      '<button class="mif-btn green" id="mif-accept"' + dis + '>Accept — join camp</button></div>';
   }
   // 📦 The accept button stays ENABLED on a full stash. Disabling it would hide
   //    the refusal behind a greyed-out control; the player is meant to hear the
   //    envoy say it, which is the whole point of the specified line.
   return '<div class="mif-acts">' +
-    '<button class="mif-btn" id="mif-decline">Wave them off</button>' +
-    '<button class="mif-btn gold" id="mif-take">Take the delivery</button></div>';
+    '<button class="mif-btn" id="mif-decline"' + dis + '>Wave them off</button>' +
+    '<button class="mif-btn gold" id="mif-take"' + dis + '>' + (view.busy ? 'Settling…' : 'Take the delivery') + '</button></div>';
 }
 
 function bodyHtml(view) {
@@ -261,7 +272,9 @@ export function mount(view, handlers) {
   }
   root.innerHTML = '<div class="mif-card" role="dialog" aria-modal="true">' +
     headHtml(view) + bodyHtml(view) + actionsHtml(view) +
-    '<div class="mif-foot">Envoys arrive at your camp on their own. Rarity follows your node tier, your Influence level and your Foundation Reserve rep.</div>' +
+    '<div class="mif-foot">' + (view.mode === 'local'
+      ? '⚠ Offline — envoys can still bring cards and supplies, but Cinder tributes need the Foundation on the line. Sign in to receive them.'
+      : 'Envoys arrive at your camp on their own. Rarity follows your node tier, your Influence level and your Foundation Reserve rep.') + '</div>' +
   '</div>';
 
   const on = (id, fn) => { const el = document.getElementById(id); if (el && fn) el.onclick = fn; };

@@ -18,8 +18,23 @@
    game is the product, and a civic side-panel must never be the reason a
    player's session ends.
 
+   🔴 THE STATE SEAM COPIES, AND THIS FILE DEPENDS ON IT. `host.state()` hands
+   back a fresh CLONE of `Profile.dilemma` and `host.setState(x)` stores a
+   clone — both ends, in index.js's adapter and again in index.html's bridge
+   (CONTRACT-R2 §1.2). Round 1 handed the live object out by reference, so
+   `commit()` wrote influence, `seen`, `recent`, `nextAt` and `resolved` onto
+   the persisted blob and then reported failure without unwinding: the player
+   was told the Heights did not record their call, got their Cinder back, and
+   still lost ten standing, a `recent` slot and their next forty-five minutes —
+   and the refund's own `addGems()` then persisted the phantom resolution. With
+   a copying seam, mutating the object `ensureState()` returns costs nothing
+   until `saveState()` lands it, and `saveState()` is the ONE place that lands
+   it and the ONE place that unwinds. There is no second restore path in this
+   file and there must never be one — a second place to put the state back is a
+   second place for that bug to come back.
+
    ⚙ ONE TUNING TABLE. Every number a choice is worth lives in `DILEMMA_ECON`
-   in data.js and nowhere else — the `_opEcon()` habit as index.html:80478-80480
+   in data.js and nowhere else — the `_opEcon()` habit as index.html:80536-80537
    states it for CORP_LAWS. If you find yourself typing a magnitude here, it
    belongs there instead. The only bare numbers below are algorithm constants
    (FNV-1a's prime, mulberry32's mixing words), the four rung indices of the
@@ -31,15 +46,15 @@ import { DILEMMA_ECON, DILEMMAS, DILEMMA_BY_ID, DILEMMA_SCHEMA_VERSION, INFLUENC
 
 /* ── The value vocabulary ───────────────────────────────────────────────────
    Stance is derived from the SHIPPED value system: eight poles on four opposed
-   axes (LQ_AXES / LQ_POLE_AXIS, index.html:72969-72975) and the tuned
-   approve/oppose magnitudes in LQ_INTENSITY (index.html:72983-72987). Both
+   axes (LQ_AXES / LQ_POLE_AXIS, index.html:73028-73034) and the tuned
+   approve/oppose magnitudes in LQ_INTENSITY (index.html:73042-73046). Both
    arrive over the bridge as `host.values()`.
 
    🔴 THE MAGNITUDES ARE NEVER COPIED INTO THIS FILE, and that is a decision.
    Duplicating `{ mild:{approve:2,oppose:3}, … }` here would give the project a
    second bond-magnitude table that drifts from index.html's the first time
    anyone retunes it — which is exactly the live copy bug in a reference file
-   (house.camp.js:151-153 promises "No rest-quality modifier here" while
+   (src/resonance/house.camp.js:152 promises "No rest-quality modifier here" while
    house.camp.js:88 runs at CAMP_REST_QUALITY = 0.75). With no bridge, bond
    deltas are 0. Inert is honest; invented numbers are not.
 
@@ -97,7 +112,7 @@ function _absorbValues(host) {
    ⚠ `Number(x) || 0`, NEVER `x | 0`, on anything that can be an epoch. A
    millisecond timestamp overflows a 32-bit int and comes back NEGATIVE, which
    silently inverted the first cut of the city-production cloud merge
-   (index.html:48051-48054). Every timestamp in this file goes through `num()`.
+   (index.html:48059-48062). Every timestamp in this file goes through `num()`.
 
    ⚠ And `Number(x)` is not itself total: it THROWS a TypeError on a Symbol.
    Found by fuzzing every export with junk arguments — `makeRng(Symbol.iterator)`
@@ -149,7 +164,7 @@ export function makeRng(seed) {
   };
 }
 
-/* The CAMP_RUN_EVENTS weight walk (index.html:65686-65691), generalised to
+/* The CAMP_RUN_EVENTS weight walk (index.html:65732-65735), generalised to
    `[[value, weight], …]` and taking its randomness as an argument so nothing
    downstream of `openDilemma()` ever touches `Math.random()` directly. */
 export function pickWeighted(rows, rng) {
@@ -194,15 +209,35 @@ function defaultState() {
     recent: [],
     nextAt: 0,
     resolved: 0,
+    /* 🎟 THE PINNED OFFER — { id, seed, at } — see `openDilemma()`. It rides
+       INSIDE this blob deliberately: `Profile.dilemma` is already whitelisted
+       wholesale in all three places (the cloud payload, the hydration merge and
+       loadForge's local restore), so a new field here needs no whitelist edit
+       and cannot become the sixth silent-save bug this project has shipped. */
+    offer: null,
     lastDeck: null,
     updatedAt: 0,
   };
 }
 
+/* A pinned offer that survived a reload, a corrupt blob or a cross-device merge
+   has to load as "no offer", never as a throw and never as a half-record: an
+   offer with no id would pin the player to nothing at all for the rest of the
+   45-minute window. `at <= 0` is treated as absent for the same reason
+   `ensureState` drops a `seen` stamp of 0 — a zero timestamp is indistinguishable
+   from never, and pretending otherwise arms a window that opened in 1970. */
+function normalizeOffer(o) {
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
+  const id = (typeof o.id === 'string' && o.id) ? o.id : null;
+  const at = num(o.at);
+  if (!id || !(at > 0)) return null;
+  return { id, seed: num(o.seed), at };
+}
+
 /* A recorded deck is only useful if it can still be READ. `_dilemmaRecordDeck`
    in index.html writes this at battle start and deliberately does not call
    saveProfile() (that would add a 50-200 ms stringify to the worst possible
-   moment, index.html:70835-70839), so a half-written or force-quit record is a
+   moment, index.html:70895-70899), so a half-written or force-quit record is a
    real shape this has to survive. */
 function normalizeLastDeck(ld) {
   if (!ld || typeof ld !== 'object' || Array.isArray(ld)) return null;
@@ -223,7 +258,7 @@ function normalizeLastDeck(ld) {
 }
 
 /* 🔴 ABSENT-TOLERANT ON LOAD. This project has shipped silent save bugs at
-   least five times — index.html:46677-46682 records a player losing a
+   least five times — index.html:46676-46683 records a player losing a
    120,000-Cinder Gene Vault to a key that was in neither cloud whitelist — so
    every field here is defaulted and no shape is assumed. A save written before
    this feature existed, a corrupt blob, `null`, a string, an array and a
@@ -233,7 +268,7 @@ function normalizeLastDeck(ld) {
    It writes the normalised object back through `host.setState()` so the rest of
    the session reads one shape, but it deliberately does NOT save: merely
    LOOKING at your standing must not cost a whole-Profile stringify. That is the
-   same split `resonanceGet`/`resonanceSet` draws at index.html:206918-206921. */
+   same split `resonanceGet`/`resonanceSet` draws at index.html:207019-207028. */
 export function ensureState(host) {
   try {
     _absorbValues(host);
@@ -264,10 +299,17 @@ export function ensureState(host) {
 
     s.nextAt = num(s.nextAt);
     s.resolved = Math.max(0, Math.floor(num(s.resolved)));
+    s.offer = normalizeOffer(s.offer);
     s.lastDeck = normalizeLastDeck(s.lastDeck);
     s.updatedAt = num(s.updatedAt);
 
-    try { host.setState(s); } catch (e) { /* a refused setState is reported by saveState, not here */ }
+    /* The normalisation write-back. It is not a save and it is not a resolution:
+       it repairs the SHAPE so the rest of the session reads one blob. Since the
+       seam clones (see the header), this stores a copy and leaves `s` ours to
+       mutate — which is exactly what makes `saveState()`'s rollback snapshot
+       survive its own `setState`. A refused setState is reported by saveState,
+       not here: merely LOOKING at your standing must not raise an error. */
+    try { host.setState(s); } catch (e) { /* a stale shape beats a thrown one */ }
     return s;
   } catch (e) { return defaultState(); }
 }
@@ -289,9 +331,41 @@ export function ensureState(host) {
 export function saveState(host, state) {
   try {
     if (!state || typeof state !== 'object') return false;
+
+    /* 🔴 THE ROLLBACK SNAPSHOT, AND IT LIVES HERE ON PURPOSE.
+       Every state write in this feature goes through this function, so putting
+       the unwind in the ONE atomic write means no future caller has to remember
+       it. `host.state()` returns a COPY (CONTRACT-R2 §1.2) — that is precisely
+       why the seam clones, and it is what lets this snapshot survive the
+       `setState` two lines below instead of being re-aliased by it.
+
+       The snapshot is taken AFTER `ensureState()` has already repaired the
+       shape, and that split is correct: a failed resolution must not survive,
+       but a normalisation must — putting a corrupt blob back would be undoing a
+       repair, not undoing a purchase. */
+    let prev = null;
+    try { prev = host.state(); } catch (e) { prev = null; }
+
     state.updatedAt = num(host.now());
+    // A refused setState wrote NOTHING. There is nothing to unwind, and calling
+    // setState again to "restore" would be the only write of the pair.
     if (host.setState(state) !== true) return false;
-    return host.save() === true;
+    if (host.save() === true) return true;
+
+    /* The save failed. Put the old blob back BEFORE returning false, so the
+       caller's refund does not persist a resolution we are about to tell them
+       did not happen — the refund's own addGems() calls saveProgressCloud(),
+       which would have written the phantom to disk and to the cloud. This is
+       the order production.state.js:452-461 already uses: `s.placed.pop();
+       host.setState(s);` and THEN `paid.refund()` — "the in-memory state must
+       not carry a purchase that was refunded."
+
+       If the restoring setState fails too, we still return false and we do NOT
+       retry. A host that refuses two writes in a row is not one this file can
+       repair from here, and `false` is the right answer either way: the caller
+       refunds, which is the player-favourable direction. */
+    if (prev) { try { host.setState(prev); } catch (e) { /* nothing further to try */ } }
+    return false;
   } catch (e) { return false; }
 }
 
@@ -300,7 +374,7 @@ export function influence(host) {
   catch (e) { return DILEMMA_ECON.influenceSeed; }
 }
 
-/* The named rung of the ladder, RESERVE_RANKS-style (index.html:56227-56240).
+/* The named rung of the ladder, RESERVE_RANKS-style (index.html:56269-56276).
    Display only — CONTRACT §9.3 is explicit that a name a player can say out
    loud is not one of Influence's two required consumers. Those are the
    eligibility band, the reward multiplier and the choice count. */
@@ -321,19 +395,79 @@ export function rank(value) {
 // ROSTER  —  who is standing in the room when the decision lands
 // ══════════════════════════════════════════════════════════════════════════
 
+/* 🔴 THE NEWCOMER, AND IT IS THE ORDINARY FIRST-WEEK ROW, NOT AN EDGE CASE.
+   `_dilemmaRecordDeck` records EVERY key in the deck the player took into
+   battle, but index.html's battle-end loop only creates a `Profile.units` row
+   for units actually DEPLOYED (`cur._lastBattleFielded = true`,
+   index.html:152696, inside the fieldedSet walk). A twelve-card deck that
+   fielded four leaves eight companions with no profile row at all.
+
+   Round 1 read those rows through `bondOf`, which answers 0 for a missing row,
+   and printed them at "Wary 0" — the only surface in the game that shows a
+   companion below BOND_NEW. The modal then previewed +3 and the resolve landed
+   +103, because the bridge's `adjustBond` CREATES the row at BOND_NEW (100)
+   before applying the delta (index.html:73543-73545 is the shape it copies).
+   A unit that OBJECTED was reported as having warmed to the player by +94.
+
+   So the row's baseline is the value the mutator will actually start from.
+   `host.bondNew()` is that number and it is the bridge's to know, not ours —
+   BOND_NEW is a bond constant and CONTRACT §0 puts every bond literal in
+   DILEMMA_ECON or on the far side of the bridge.
+
+   ⚠ DEGRADATION, STATED. A service-worker-cached index.html predating
+   CONTRACT-R2 §5.3 has no `bondNew` accessor. There is nothing in this file
+   that can honestly recover the creation baseline without writing the literal
+   this file is forbidden to write, so such a row falls back to 0 and behaves
+   exactly as round 1 did — no better, and no worse. It self-heals the moment
+   the accessor exists. */
+function newcomerBase(host) {
+  try {
+    if (typeof host.bondNew !== 'function') return 0;
+    const n = num(host.bondNew());
+    return n > 0 ? n : 0;
+  } catch (e) { return 0; }
+}
+
+/* A companion whose card definition is missing on this device still gets a row
+   (see the `unit:` branch in `roster()`), and round 1 labelled it with the raw
+   internal id — a roster line reading "ghost". Card ids in this codebase are
+   slugs of the card name (`goblin`, `xenoDrone`, `parasiteHost`), so titling the
+   slug is the closest honest label available: "Ghost", "Xeno Drone". It is a
+   formatting rule, not an invented name, and it never puts an internal
+   identifier in front of a player. The row also carries `unresolved: true` so
+   the fact is preserved rather than lost; render.js does not read it this round
+   and must not start without a contract change. */
+function titleFromId(id) {
+  try {
+    const raw = String(id == null ? '' : id);
+    if (!raw) return '';
+    const spaced = raw.replace(/[_\-.:]+/g, ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2').trim();
+    if (!spaced) return raw;
+    return spaced.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+  } catch (e) { return String(id == null ? '' : id); }
+}
+
 function rosterRow(host, id, kind, card, order, fallback) {
   const entry = (kind === 'hero')
     ? (typeof host.heroEntry === 'function' ? host.heroEntry(id) : null)
     : (typeof host.unitEntry === 'function' ? host.unitEntry(id) : null);
 
+  /* `bondOf` returns 0 for a missing row, and 0 is a real bond for a companion
+     who HAS a row. The two are only distinguishable from `entry`, which is why
+     the newcomer test is `!entry` and not `bond === 0`. */
+  const newcomer = !entry;
   let bond = 0;
-  try { bond = num(host.bondOf(id, kind)); } catch (e) { bond = 0; }
+  if (newcomer) {
+    bond = newcomerBase(host);
+  } else {
+    try { bond = num(host.bondOf(id, kind)); } catch (e) { bond = 0; }
+  }
 
   let tier = null;
   try { tier = host.bondTier(bond); } catch (e) { tier = null; }
 
   /* 🎭 Heroes carry no temperament and never have — `getUnitTemper` would
-     happily DERIVE one from the hero id (index.html:72593), and it would be a
+     happily DERIVE one from the hero id (index.html:72662), and it would be a
      lie in both directions: the pill would show a temperament the hero does not
      have, and `previewBond` would scale by a multiplier `adjustBond` is never
      going to apply, because adjustBond reads `entry.temper` and a hero entry has
@@ -346,7 +480,7 @@ function rosterRow(host, id, kind, card, order, fallback) {
   /* The reachable ceiling is snapshotted here, once, because `previewBond`
      takes no host (it runs per-unit per-choice on every repaint). ⚠ It is
      `bondCeilingFor(ENTRY)` — passing a NUMBER returns BOND_MAX through the
-     typeof-object guard at index.html:72510, which reads as "the clamp works"
+     typeof-object guard at index.html:72569, which reads as "the clamp works"
      while silently ignoring saleCount and everSold. */
   let ceiling = 0;
   try { ceiling = num(host.bondCeiling(entry)); } catch (e) { ceiling = 0; }
@@ -354,17 +488,24 @@ function rosterRow(host, id, kind, card, order, fallback) {
 
   /* CAN legitimately be `[]`, and that is the COMMON case, not an edge case —
      see `stanceFor`. A null card (a forged card whose definition was never
-     published on this device, lookupCustomCard at index.html:51036) resolves the
+     published on this device, lookupCustomCard at index.html:51081) resolves the
      same way instead of throwing its way into the render pipeline. */
   let poles = [];
   try { const p = host.valueProfile(card); if (Array.isArray(p)) poles = p; } catch (e) { poles = []; }
 
   return {
     id, kind, card: card || null, entry: entry || null,
-    name: (card && card.name) || id,
+    name: (card && card.name) || titleFromId(id),
     icon: (card && card.icon) || '',
     bond, tier: tier || null, ceiling, temper, poles,
     fallback: !!fallback,
+    /* ⚙ ENGINE-INTERNAL. `previewBond` clamps from `bond` and `applyStances`
+       takes `before` from `bond` instead of re-reading `bondOf`, so preview,
+       report and the real write all move from one number. The row renders like
+       any other — "Neutral 100" — which is what every other bond surface in the
+       game shows for a fresh companion. */
+    newcomer,
+    unresolved: !card,
     _order: order,
     together: num(entry && entry.together),
   };
@@ -390,11 +531,11 @@ export function roster(host) {
       let order = 0;
 
       /* The hero enters the field separately from the deck — `buildStarterDeck`
-         strips `type === 'hero'` out of the card list at index.html:73750-73753
+         strips `type === 'hero'` out of the card list at index.html:73794-73795
          — so it is prepended rather than found among the keys.
          ⚠ KNOWN GAP, stated rather than worked around: `findHeroById` is not on
          the bridge (CONTRACT §6), and `cardById` (_cardDefById,
-         index.html:87319) only reaches custom + unit pools, so a BUILT-IN
+         index.html:87378) only reaches custom + unit pools, so a BUILT-IN
          starter hero resolves to null here and reads as Middle on every choice.
          Reaching past the bridge for STARTER_HEROES is the globals trap and is
          not an option; adding `heroById()` to §6 is the round-2 fix. */
@@ -441,8 +582,8 @@ export function roster(host) {
        fielded.
        ⚠ `_lastBattleFielded` is NOT a last-roster record and must never be
        presented as one: it is set true only for units actually DEPLOYED
-       (index.html:152594) and cleared only for benched units that were in
-       s._deckUnitIds (index.html:152693), so a unit from a deck the player
+       (index.html:152696) and cleared only for benched units that were in
+       s._deckUnitIds (index.html:152795), so a unit from a deck the player
        abandoned keeps a stale `true` forever. It is a decaying heuristic, which
        is why every row carries `fallback: true` and render.js is required to
        relabel the section "your most-fought companions", never "your last
@@ -481,7 +622,7 @@ function intensityRank(i) { const n = INTENSITY_ORDER.indexOf(i); return n < 0 ?
    embodies mercy would produce an incoherent dilemma no cheap validator can
    catch — deriving the far side from LQ_AXES makes that unwritable.
 
-   This is the shipped `_lqPoleVerdict(pole, st)` (index.html:73224-73236) turned
+   This is the shipped `_lqPoleVerdict(pole, st)` (index.html:73283-73295) turned
    inside out: there, a pole reads a battle; here, a unit reads a choice. That
    function's `null` return is literally this codebase's own name for the Middle
    stance, which is why Middle is a real answer here and not a shrug.
@@ -503,7 +644,7 @@ export function stanceFor(unit, choice) {
     const up = (unit && Array.isArray(unit.poles)) ? unit.poles : [];
     /* 🔴 THE HONEST FALLBACK, AND IT IS THE COMMON CASE.
        `_lqUnitValueProfile` returns `[]` whenever `_lqArchetypeDefault` finds
-       nothing (index.html:73036-73039) — and it finds nothing whenever the
+       nothing (index.html:73089-73099) — and it finds nothing whenever the
        joined class+archetype+passive+subclass+factions string is empty or
        matches none of the eight LQ_ARCHETYPE_POLE regexes. A Forge card
        authored with a name, an icon and stats — the ordinary shape of a custom
@@ -548,7 +689,7 @@ export function stanceFor(unit, choice) {
 
 /* ── BOND MAGNITUDE ─────────────────────────────────────────────────────────
    🔴 THIS IS THE RAW DELTA — THE ONE HANDED TO `adjustBond`, NOT THE ONE SHOWN.
-   `adjustBond` (index.html:72519-72542) applies the unit's temperament itself.
+   `adjustBond` (index.html:72578-72599) applies the unit's temperament itself.
    Passing it a temper-scaled number would scale a Vain unit's loss by 1.5 twice
    and land −27 where the table says −12. `previewBond()` below is the display
    half and does the scaling; this half must stay raw.
@@ -557,7 +698,7 @@ export function stanceFor(unit, choice) {
    3/6, zealous 5/10 — multiplied by how much the choice is ABOUT its poles
    (`choice.weight`, one of DILEMMA_ECON.choiceWeights). Inventing a second
    magnitude table for "a unit approved / a unit objected" when a tuned one
-   already ships is the parallel-system mistake index.html:80450 argues against.
+   already ships is the parallel-system mistake index.html:80511 argues against.
 
    Range: ±1 at mild/0.5 up to +8 / −12 at zealous/1.5, hard-capped at
    DILEMMA_ECON.bondCapPerResolve.
@@ -607,7 +748,7 @@ function rawDelta(unit, choice) {
   const signed = (st.stance === 'support' ? 1 : -1) * base * w;
   if (!signed) return 0;
 
-  // The same guard `adjustBond` uses at index.html:72533-72534, for the same
+  // The same guard `adjustBond` uses at index.html:72593-72594, for the same
   // reason: a 0.5 weight must soften a reaction, never delete it.
   const guarded = signed > 0 ? Math.max(1, Math.round(signed)) : Math.min(-1, Math.round(signed));
   return clampAbs(guarded, DILEMMA_ECON.bondCapPerResolve);
@@ -632,7 +773,12 @@ function rawDelta(unit, choice) {
    • A unit whose ceiling has since been LOWERED — sold more than three times,
      or sold at all while Sworn is first-owner-only — sits above its cap, and
      `adjustBond` drops it to the cap on the next adjustment whatever the sign.
-     The preview returns that negative rather than promising a gain. */
+     The preview returns that negative rather than promising a gain.
+   • A NEWCOMER — a deck card carried into battle but never deployed, so it has
+     no profile row yet — clamps from `bondNew()`, which is where the bridge's
+     `adjustBond` is about to create it. That is the whole of the round-2 fix
+     here: this function already clamped from `unit.bond`, and `rosterRow` now
+     puts the right number in it. Round 1 previewed +3 against a landed +103. */
 export function previewBond(unit, choice) {
   try {
     if (!unit) return 0;
@@ -682,6 +828,17 @@ export function stanceTally(units, choice) {
    Level 3 is the floor and is never relaxed: handing a player the exact dilemma
    they just resolved is the one outcome that reads as a bug rather than as a
    quiet week. A corpus of one therefore returns null, and the caller says so. */
+/* The influence gate, in one place. `eligible()`, `available()` and the pinned
+   offer's re-check all ask the same question, and three copies of an inclusive
+   band comparison is three chances for one of them to drift to `<` on a rewrite.
+   Not invented: this is `needMorale` on RECON_EVENTS generalised to a band. */
+function withinBand(d, influenceValue) {
+  const inf = clampInfluence(influenceValue);
+  const lo = (typeof d.minInfluence === 'number') ? d.minInfluence : DILEMMA_ECON.influenceMin;
+  const hi = (typeof d.maxInfluence === 'number') ? d.maxInfluence : DILEMMA_ECON.influenceCap;
+  return inf >= lo && inf <= hi;
+}
+
 function poolAt(state, now, level) {
   const out = [];
   const inf = clampInfluence(state.influence);
@@ -692,11 +849,7 @@ function poolAt(state, now, level) {
     if (!d || typeof d.id !== 'string') continue;
     if (!Array.isArray(d.choices) || !d.choices.length) continue;
 
-    if (level <= 1) {
-      const lo = (typeof d.minInfluence === 'number') ? d.minInfluence : DILEMMA_ECON.influenceMin;
-      const hi = (typeof d.maxInfluence === 'number') ? d.maxInfluence : DILEMMA_ECON.influenceCap;
-      if (inf < lo || inf > hi) continue;
-    }
+    if (level <= 1 && !withinBand(d, inf)) continue;
     if (level <= 2) {
       if (recent.indexOf(d.id) !== -1) continue;
     } else {
@@ -722,9 +875,7 @@ function hasEligible(state, now) {
   for (const d of list) {
     if (!d || typeof d.id !== 'string') continue;
     if (!Array.isArray(d.choices) || !d.choices.length) continue;
-    const lo = (typeof d.minInfluence === 'number') ? d.minInfluence : DILEMMA_ECON.influenceMin;
-    const hi = (typeof d.maxInfluence === 'number') ? d.maxInfluence : DILEMMA_ECON.influenceCap;
-    if (inf < lo || inf > hi) continue;
+    if (!withinBand(d, inf)) continue;
     if (recent.indexOf(d.id) !== -1) continue;
     if (now - num(seen[d.id]) < DILEMMA_ECON.repeatCooldownMs) continue;
     return true;
@@ -772,7 +923,7 @@ export function pickDilemma(host, now, rng) {
     for (let level = 0; level <= 3; level++) {
       const pool = poolAt(s, t, level);
       if (!pool.length) continue;
-      // The CAMP_RUN_EVENTS weight walk, index.html:65686-65691, verbatim in shape.
+      // The CAMP_RUN_EVENTS weight walk, index.html:65732-65735, verbatim in shape.
       const total = pool.reduce((a, d) => a + Math.max(0, num(d.weight)), 0);
       if (total <= 0) return pool[0];
       let x = num(r()) * total;
@@ -781,6 +932,32 @@ export function pickDilemma(host, now, rng) {
     }
     return null;
   } catch (e) { return null; }
+}
+
+/* 🔴 THE FALLBACK SET, AND ROUND 1 GOT IT WRONG IN A WAY THAT CONTRADICTED THE
+   PARAGRAPH BELOW IT. `rollChoices` promised the `always` choice — the refusal,
+   the walk-away — is in EVERY offered set, and then its catch path returned
+   `all.slice(0, choicesMin)`. Every authored dilemma places its refusal LAST,
+   so that slice dropped it on every dilemma in the corpus: the one branch a
+   player can always take, gone precisely when something has already gone wrong.
+
+   So the fallback claims the `always` indices FIRST and fills up to `choicesMin`
+   from the rest, then emits in AUTHORED ORDER — the same order guarantee the
+   happy path makes, because a player who has met this dilemma before must not
+   have to re-read every row. If a dilemma authors more `always` choices than
+   `choicesMin`, they all survive: the floor is a floor, not a cap.
+
+   Pure, allocation-bounded, and it takes no rng — which is the point. It is
+   reached when the rng itself threw (`shuffled()` calls it outside `num()`'s
+   guard), so it must not ask for another random number to recover. */
+function authoredFallback(all) {
+  const rows = Array.isArray(all) ? all : [];
+  const take = new Set();
+  for (let i = 0; i < rows.length; i++) if (rows[i] && rows[i].always) take.add(i);
+  for (let i = 0; i < rows.length && take.size < DILEMMA_ECON.choicesMin; i++) take.add(i);
+  const out = [];
+  for (let i = 0; i < rows.length; i++) if (take.has(i)) out.push(rows[i]);
+  return out;
 }
 
 /* ── "About four choices" ───────────────────────────────────────────────────
@@ -796,14 +973,17 @@ export function pickDilemma(host, now, rng) {
    line that prevents it:
    • FEWER THAN THE DILEMMA NEEDS — every `always: true` choice is taken first
      and `n` is raised to fit them, so the refusal option (or whatever the
-     author marked essential) is in every offered set.
+     author marked essential) is in every offered set. That now holds on the
+     FAILURE path too: round 1's catch returned `all.slice(0, choicesMin)`,
+     which dropped the refusal on every dilemma in the corpus because every one
+     of them authors it last. See `authoredFallback` above.
    • DUPLICATES — the sample is over INDICES into a Set, so an author who pastes
      the same choice object twice still gets it once.
-   • AN EMPTY OR ONE-ITEM SET — `n` is at least `always.length`, and
+   • AN EMPTY OR ONE-ITEM SET — `n` is at least `alwaysIdx.length`, and
      `validateCorpus()` guarantees at least one `always` and at least
-     `choicesMin` authored choices. The `Math.min(n, all.length)` below is the
-     only thing that can take it lower, and only for a corpus that is already
-     failing validation.
+     `choicesMin` authored choices. The `Math.min(n, alwaysIdx.length +
+     restIdx.length)` below is the only thing that can take it lower, and only
+     for a corpus that is already failing validation.
 
    ⚠ ORDER NEVER VARIES, AND THAT IS A DECISION. Shuffling the presented order
    was considered and rejected: a player who has met a dilemma before would have
@@ -867,10 +1047,10 @@ export function rollChoices(dilemma, influenceValue, rng) {
 
     const out = [];
     for (let i = 0; i < all.length; i++) if (take.has(i)) out.push(all[i]);
-    return out.length ? out : all.slice(0, DILEMMA_ECON.choicesMin);
+    return out.length ? out : authoredFallback(all);
   } catch (e) {
     // Never `[]`: a dilemma with no choices is a dead modal.
-    return all.slice(0, DILEMMA_ECON.choicesMin);
+    return authoredFallback(all);
   }
 }
 
@@ -887,10 +1067,31 @@ export function rollChoices(dilemma, influenceValue, rng) {
    derived from the clock via `seedFrom(dilemma.id + ':' + now)`, which makes a
    whole resolution reproducible from (id, openedAt) and a bug report actionable.
 
-   OPENING IS INSPECTING. Nothing is persisted here — no `seen` stamp, no
-   cooldown, no standing. A player who opens the Heights and walks back out has
-   changed nothing, which is the same rule `resonanceGet` draws at
-   index.html:206918-206921. */
+   🔴 AN OFFER IS A COMMITMENT TO THAT OFFER — THE PIN, AND WHY IT EXISTS.
+   Round 1 seeded from the clock on every open and persisted nothing, so closing
+   and reopening the modal rerolled the dilemma AND its choice set for free. The
+   45-minute cadence is armed only by `commit()`, so before the first resolve of
+   each window a player could reopen until the corpus handed them the branch they
+   wanted: measured at forty reopens over five seconds reaching twenty-four of the
+   authored dilemmas, and sixty reopens of one id producing twenty distinct choice
+   sets. That is shopping, not deciding, and it aims straight at the largest
+   `cinderBand` — which is the faucet data.js's own audit note is written about
+   ("a farmed Cinder and an earned Cinder are the same integer in the same
+   column").
+
+   So the first open of a window PINS `{ id, seed, at }` into the blob and every
+   reopen inside that window replays it. The cost is one whole-Profile stringify
+   per 45 minutes, on a path that is already painting a full modal — and it is
+   the same write that makes index.js's §2 claim ("if the page reloads mid
+   dilemma, nothing was spent and nothing moved, and the offer is still there")
+   true, which round 1's was not.
+
+   OPENING IS STILL INSPECTING. No `seen` stamp, no cooldown, no standing, no
+   Cinder — the pin records WHICH decision is on the table, never that it was
+   taken. A player who opens the Heights and walks back out has changed nothing
+   they can feel, which is the rule `resonanceGet` draws at
+   index.html:207019-207028. `available()` stays strictly read-only: it runs
+   twice per hub render and must never arm, persist or clear the pin. */
 export function openDilemma(host, opts) {
   try {
     if (!host) return null;
@@ -899,36 +1100,86 @@ export function openDilemma(host, opts) {
 
     const now = resolveNow(host, o.now);
 
-    let d = null;
     if (o.id) {
-      // A forced open (admin, debug, a test) bypasses the cooldowns but NOT the
-      // corpus: an id that is not in DILEMMAS is a typo, not a dilemma.
-      d = (DILEMMA_BY_ID && DILEMMA_BY_ID[o.id]) || null;
-      if (!d) return null;
-    } else {
-      /* The offer cooldown is enforced here and not only in `available()`, so
-         that the hub tile's badge and the tile's click can never disagree —
-         a badge that says nothing is waiting and a panel that opens anyway is
-         the same lie told twice. */
-      if (now < num(s.nextAt)) return null;
-      d = pickDilemma(host, now);
-      if (!d) return null;
+      /* A forced open (admin, debug, a test) bypasses the cooldowns and the pin
+         but NOT the corpus: an id that is not in DILEMMAS is a typo, not a
+         dilemma. It persists nothing either — a debug open must not be able to
+         overwrite the offer a player is in the middle of. */
+      const forced = (DILEMMA_BY_ID && DILEMMA_BY_ID[o.id]) || null;
+      if (!forced) return null;
+      return buildInstance(host, s, forced, seedFrom(forced.id + ':' + now), now);
     }
 
-    const seed = seedFrom(d.id + ':' + now);
-    const rng = makeRng(seed);
-    const influenceAtOpen = clampInfluence(s.influence);
+    /* The offer cooldown is enforced here and not only in `available()`, so that
+       the hub tile's badge and the tile's click can never disagree — a badge
+       that says nothing is waiting and a panel that opens anyway is the same lie
+       told twice. It is also what bounds a pin that arrived from another device:
+       `commit()` clears the pin and arms `nextAt` in the SAME atomic write, so a
+       pin that outlived its own resolution can only reach this line behind a
+       `nextAt` that already blocks it. That is why the reuse test below checks
+       eligibility and not `recent`. */
+    if (now < num(s.nextAt)) return null;
 
-    return {
-      dilemma: d,
-      choices: rollChoices(d, influenceAtOpen, rng),
-      seed,
-      openedAt: now,
-      influenceAtOpen,
-      roster: roster(host),
-      resolved: false,
-    };
+    const pin = s.offer;
+    if (pin && (now - num(pin.at)) < DILEMMA_ECON.offerCooldownMs) {
+      const pinned = (DILEMMA_BY_ID && DILEMMA_BY_ID[pin.id]) || null;
+      if (pinned && withinBand(pinned, s.influence)) {
+        /* Replayed from the pin's OWN clock, not from now — the seed, the choice
+           set and `openedAt` must be the ones the player was already looking at,
+           or reopening would still be a reroll with extra steps. */
+        return buildInstance(host, s, pinned, num(pin.seed) || seedFrom(pinned.id + ':' + num(pin.at)), num(pin.at));
+      }
+      /* The pinned dilemma left the corpus (a trimmed data.js) or the player's
+         standing moved out of its band. Fall through and roll a fresh one rather
+         than offering a dilemma the Heights would no longer bring them. */
+    }
+
+    const d = pickDilemma(host, now);
+    if (!d) return null;
+    const seed = seedFrom(d.id + ':' + now);
+
+    /* ONE write per window, and its failure is not fatal. If the save does not
+       land the pin is simply not durable — the modal in front of the player is
+       still coherent because `d` and `seed` are already in hand, and the next
+       open rerolls, which is round-1 behaviour rather than a new failure.
+       Refusing to open on a failed save would trade a live feature for a
+       bookkeeping entry.
+
+       ⚠ Guarded on `now > 0` because `normalizeOffer` reads `at <= 0` as absent:
+       pinning against a dead clock would spend a whole-Profile stringify on a
+       record the next load deletes, on EVERY open.
+
+       ⚠ AND IT STAMPS `updatedAt`, DELIBERATELY. The cloud hydration merge picks
+       influence / recent / nextAt / resolved wholesale by that stamp, so a write
+       that did not move the standing must not touch it — which is exactly why
+       CONTRACT-R2 §5.5 deletes the battle-start touch in `_dilemmaRecordDeck`.
+       This is the other case: the pin IS dilemma state, written on the device
+       the player is looking at, so claiming the later write is the correct one.
+       The distinction is "did a dilemma field change", not "did something
+       happen". */
+    if (now > 0) {
+      s.offer = { id: d.id, seed, at: now };
+      saveState(host, s);
+    }
+
+    return buildInstance(host, s, d, seed, now);
   } catch (e) { return null; }
+}
+
+/* The instance itself. Split out so the pinned path and the fresh path build
+   byte-identical objects — a reopened dilemma that differed from its first open
+   in any field would be the bug the pin exists to prevent, wearing a disguise. */
+function buildInstance(host, state, dilemma, seed, openedAt) {
+  const influenceAtOpen = clampInfluence(state.influence);
+  return {
+    dilemma,
+    choices: rollChoices(dilemma, influenceAtOpen, makeRng(seed)),
+    seed,
+    openedAt,
+    influenceAtOpen,
+    roster: roster(host),
+    resolved: false,
+  };
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -942,11 +1193,11 @@ export function openDilemma(host, opts) {
    path) stamps `bondScaled: true`.
 
    ⚠ `bondScaled: true` IS NOT COSMETIC. `saveProfile()` runs `_migrateBondScale`
-   (index.html:70821 → 72731) across every entry, and `_migrateBondEntry`
+   (index.html:70880 → 72790) across every entry, and `_migrateBondEntry`
    rewrites any unflagged `bond <= 100` as `round(100 + bond * 11)`. A row
    created at BOND_NEW (100) without the flag becomes 1200 — instantly Sworn —
    on the very next save. The bridge does the create exactly as `_rezEntry` does
-   (index.html:73486-73487); this file's job is to never invent a second path.
+   (index.html:73543-73545); this file's job is to never invent a second path.
 
    ⚠ THE DELTA HANDED OVER IS THE RAW ONE. `adjustBond` scales by temperament
    itself. Passing `previewBond()`'s output would apply a Vain unit's 1.5 loss
@@ -966,8 +1217,18 @@ export function applyStances(host, instance, choice) {
       const want = rawDelta(u, choice);
       if (!want) continue;
 
+      /* 🔴 `before` COMES FROM THE ROW, AND FOR A NEWCOMER IT STAYS THERE.
+         The re-read exists because bond can have moved since the modal opened
+         (a battle finishing in another tab, a sale), and the aftermath must
+         report against what was true a moment ago rather than a stale snapshot.
+         But `bondOf` answers 0 for a MISSING row, and for a newcomer that 0 is
+         exactly what produced round 1's "+94 to a companion who objected": the
+         bridge creates the row at BOND_NEW and returns 94, and 94 − 0 is the
+         report. A row with no entry has nothing to refresh from, so it doesn't. */
       let before = num(u.bond);
-      try { before = num(host.bondOf(u.id, u.kind)); } catch (e) { /* keep the snapshot */ }
+      if (!u.newcomer) {
+        try { before = num(host.bondOf(u.id, u.kind)); } catch (e) { /* keep the snapshot */ }
+      }
 
       let after = null;
       try { after = host.adjustBond(u.id, want, u.kind); } catch (e) { after = null; }
@@ -993,26 +1254,55 @@ export function applyStances(host, instance, choice) {
    which is what keeps "who wrote this number" answerable when a player asks why
    their standing moved.
 
-   §9.4 runs this BEFORE the bond ticks and before the grant, deliberately:
-   `adjustBond` is not invertible (temperament scales gains and losses by
-   different factors, so +5 then −5 does not return a Vain unit to where it
-   started), so there is no honest rollback for the bond step and the only way
-   to guarantee one is never needed is to run the step that CAN fail first. The
-   alternative — snapshotting each entry's raw `.bond` and restoring it — was
-   rejected because restoring requires a direct `.bond` write, which would put a
-   second bond-writing path into a codebase that has exactly one. */
+   🔴 ALL OR NOTHING. After this returns anything other than `true`, the
+   persisted blob is exactly what it was before the call: same influence, same
+   `seen`, same `recent`, same `nextAt`, same `resolved`, same pinned offer. It
+   mutates the `s` it got from `ensureState()` freely, and that is safe because
+   `s` is a COPY (see the header) — nothing reaches `Profile.dilemma` until
+   `saveState()` lands it, and `saveState()` puts the old blob back if it
+   doesn't. This function adds no unwind of its own; one restore path is the
+   whole design.
+
+   Round 1's comment here argued rollback away, and it was the one place this
+   file's reasoning was wrong. The argument is true of BOND — `adjustBond`
+   scales gains and losses by different temperament factors, so +5 then −5 does
+   not return a Vain unit to where it started, and restoring the raw value would
+   need a direct `.bond` write into a codebase that has exactly one bond-writing
+   path. It is false of state: influence, `recent`, `nextAt` and `resolved` are
+   plain integers and strings, fully invertible, and quoting the bond argument to
+   justify leaving them dirty is how a player ended up refunded for a resolution
+   that still cost them ten standing and their next forty-five minutes.
+
+   What survives from that argument is the ORDER, and §9.4 keeps it: this runs
+   BEFORE the bond ticks and before the grant, because the step that can fail
+   must be the one that runs while there is still nothing to undo. */
 export function commit(host, instance, choice, influenceDelta) {
   try {
     if (!host || !instance || !instance.dilemma) return false;
-    // Idempotent per instance. index.js holds a `busy` lock too, but a double
-    // commit must be inert on its own account rather than on a lock's — a
-    // second write here would burn a second `recent` slot and re-arm the
-    // 45-minute cooldown from a click the player made once.
+
+    /* Idempotent per instance, and now actually so. index.js holds a `busy`
+       lock as well, but a double commit must be inert on its OWN account rather
+       than on a lock's — round 1 read this flag and never set it, so the guard
+       was dead code and two commits on one instance moved influence twice,
+       burned a second `recent` slot and re-armed the cooldown from a click the
+       player made once. The flag is set below, on success only; `markResolved()`
+       stays exported and stays called by index.js, and both being idempotent is
+       fine. */
     if (instance.resolved) return true;
 
     const s = ensureState(host);
-    let now;
-    try { now = num(host.now()); } catch (e) { now = 0; }
+
+    /* 🔴 NO CLOCK, NO COMMIT. Round 1 fell back to `now = 0` and then armed
+       `nextAt = 0 + offerCooldownMs` — a 1970 timestamp, permanently in the
+       past, which disables the 45-minute cadence gate for the rest of the save.
+       That cadence is not decoration: it is the entire reason this feature can
+       reuse the battle bond magnitudes without out-earning battles (see
+       `rawDelta`). It also stamped `seen[id] = 0`, which the next
+       `ensureState()` deletes as garbage, losing the 72h repeat cooldown too.
+       A refunded resolution costs the player one click. A permanently disarmed
+       cooldown costs them the balance of the feature, silently. */
+    const now = resolveNow(host);
+    if (!(now > 0)) return false;
 
     const id = instance.dilemma.id;
     const dInf = clampAbs(Math.round(num(influenceDelta)), DILEMMA_ECON.influenceMax);
@@ -1028,11 +1318,27 @@ export function commit(host, instance, choice, influenceDelta) {
     s.nextAt = now + DILEMMA_ECON.offerCooldownMs;
     s.resolved = Math.max(0, Math.floor(num(s.resolved))) + 1;
 
-    // Verbatim, because the caller's refund path is written for this boolean.
-    return saveState(host, s);
+    /* The pinned offer is spent, and it is cleared inside this same atomic
+       write. A FAILED commit therefore leaves it armed, which is correct: the
+       decision is still on the table and the player must find the same one
+       waiting when they try again. */
+    s.offer = null;
+
+    if (saveState(host, s) !== true) return false;
+
+    /* Only now. `true` from this function means the resolution is durably
+       written, and index.js is entitled to spend bond and mint a card on it. */
+    instance.resolved = true;
+    return true;
   } catch (e) { return false; }
 }
 
+/* index.js's re-entrancy guard calls this at §9.4 step 6. `commit()` already
+   set the flag on its own success path, so this is now a second idempotent write
+   of the same `true` rather than the only one — which is the point: the guard
+   holds whether or not a caller remembers to call it. Kept exported because the
+   CONTRACT names it and because a caller that composes the transaction
+   differently still needs the seal. */
 export function markResolved(instance) {
   try { if (instance && typeof instance === 'object') instance.resolved = true; } catch (e) {}
 }

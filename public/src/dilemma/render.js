@@ -33,7 +33,10 @@
    screen this modal has nothing to do with. Those eight names are avoided. The
    structural names the contract fixes (`.md-wrap`, `.md-hd`, `.md-x`,
    `.md-wire`, `.md-brief`, `.md-choices`, `.md-choice`, `.md-roster`) were
-   checked against the same list and are free.
+   checked against the same list and are free, as were the two this round adds
+   (`.md-ucell`, `.md-solo` — `grep -c` on index.html returns 0 for both). Check
+   any new name the same way before using it; the cost of being wrong is a rule
+   nobody here wrote silently restyling this panel.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 import { DILEMMA_ECON } from './data.js';
@@ -92,7 +95,14 @@ function safeColor(c, fallback) {
    missing or throwing handler as a rendering condition rather than as an
    impossibility — a dilemma is a feature; the game is the product. A modal that
    renders a roster with no stances is a worse modal; a modal that throws on open
-   is a broken screen. */
+   is a broken screen.
+
+   The seam is SEVEN functions: onChoose, onClose, describe, preview, stance,
+   affordable — and, added this round, poleLabel. Every one is optional as far as
+   this file is concerned; callH() supplies the fallback and the modal renders a
+   degraded but honest panel without any of them. poleLabel is the one that must
+   never fail loudly: it decorates a tooltip, and a tooltip is not worth a thrown
+   handler or a second copy of LQ_POLE_LABEL living here. */
 function callH(name, fallback) {
   const args = Array.prototype.slice.call(arguments, 2);
   try {
@@ -142,7 +152,8 @@ const STANCE = {
 
 /* Middle is four different silences and the modal says which. 'no-opinion' is
    the COMMON one — a Forge card authored with a name, an icon and stats resolves
-   to no value poles at all (engine.js's fallback note, index.html:73036-73039)
+   to no value poles at all — _lqUnitValueProfile returns [] when there is no
+   valueProfile, no legacy `values` and no archetype hit — index.html:73089-73098)
    — so it gets the plainest, least apologetic wording of the four. */
 const MIDDLE_WORD = {
   torn:         'Torn',
@@ -157,23 +168,28 @@ const MIDDLE_WHY = {
   procedural:   'There is no side to take here.',
 };
 
-/* Pole names are printed from the pole id, capitalised — NOT from a copy of
-   LQ_POLE_LABEL. That table (index.html:72976) lives behind the bridge, and
-   this file may not call the bridge; the alternative is transcribing eight
-   labels and their emoji into a second place that can drift from the first.
-   "Honor" is not as pretty as "⚔ Honor" and it can never be wrong.
-   Handing a `poleLabel(pole)` through `handlers` is the round-2 fix. */
+/* Pole names come from LQ_POLE_LABEL (`index.html:73035`) — "⚔ Honor", not
+   "Honor" — and they arrive through `handlers.poleLabel()`, which index.js
+   builds off `values().poleLabel`. This file still may not call the bridge, and
+   it still refuses to transcribe those eight labels and their emoji into a
+   second table that can drift from the first: the capitalised id is the callH()
+   fallback and nothing more. Round 1 shipped the fallback as the only answer,
+   which was correct-but-plain; the handler is the round-2 fix and this is where
+   it lands. The result is escaped by every caller — it reaches the DOM only
+   through stanceWhy(), inside `title="${esc(...)}"`. */
 function poleWord(p) {
   const s = String(p || '');
-  return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+  if (!s) return '';
+  const cap = s.charAt(0).toUpperCase() + s.slice(1);
+  return String(callH('poleLabel', cap, s) || cap);
 }
 const INTENSITY_TAIL = { mild: '', firm: ' — firmly', zealous: ' — and will not be moved' };
 
 /* One sentence, in the game's third-person-about-units voice, explaining a
    stance to a player who hovers it. Derived from the Stance object so it can
-   never disagree with the chip beside it — the citizens.city.js:406-408 rule
-   ("the sentence is the WORST-scoring mood term, VERBATIM, so the bubble and
-   the dialog can never disagree") applied to a stance. */
+   never disagree with the chip beside it — the src/city/citizens.city.js:407-409
+   rule ("the sentence is the WORST-scoring mood term, VERBATIM, so the bubble
+   and the dialog can never disagree") applied to a stance. */
 function stanceWhy(st) {
   const tail = INTENSITY_TAIL[st.intensity] || '';
   if (st.stance === 'support') return 'Speaks for ' + poleWord(st.pole) + tail + '.';
@@ -207,9 +223,17 @@ function stanceWord(st) {
      a v105b GPU-crash fix, so writing one looks fine in review and does nothing.
      community.render.js:74 still carries a dead `blur(5px)`; this file does not
      copy it.
-   ⚠ NO 'Lora', NO 'Roboto Mono'. Neither is in the Google Fonts link at
-     index.html:78 — `.ds-modal` asks for Lora and silently gets generic serif,
-     house.camp.js asks for Roboto Mono 53 times and silently gets the default.
+   ⚠ NO 'Lora', NO 'Roboto Mono'. The Google Fonts link at index.html:78 loads
+     Cinzel, Cinzel Decorative, Crimson Text, Rajdhani and EB Garamond — nothing
+     else. `.ds-modal` still asks for Lora (index.html:2803; 7 asks in all) and
+     silently gets generic serif; 'Roboto Mono' is asked for 54 times across
+     index.html and twice more in src/resonance/house.camp.js:111,120, and every
+     one of them silently gets the default sans.
+     ⚠ Round 1 wrote "house.camp.js asks for Roboto Mono 53 times" here. It does
+     not — it asks twice; the 53 were index.html's. The count was real and the
+     file it was pinned to was not, and that is the failure mode a WHY-comment
+     has to be held to hardest: a number nobody can check is decoration, and a
+     number pinned to the wrong file is worse than no number at all.
      Cinzel for headings and labels, Crimson Text for prose, and
      `font-variant-numeric: tabular-nums` (the `.dpx-chip` idiom) wherever a
      number sits in a column that must not jitter. */
@@ -229,7 +253,8 @@ export const DILEMMA_CSS = `
 #${OV} .md-hd{display:flex;align-items:flex-start;gap:.75rem;padding:14px 18px;
   border-bottom:1px solid rgba(210,164,78,.28);
   background:linear-gradient(180deg,rgba(255,255,255,.03),transparent)}
-#${OV} .md-hd .ico{font-size:1.7rem;line-height:1.1;filter:drop-shadow(0 2px 6px rgba(0,0,0,.6))}
+#${OV} .md-hd .ico{font-size:1.7rem;line-height:1.1;filter:drop-shadow(0 2px 6px rgba(0,0,0,.6));
+  flex:none;max-width:1.9em;overflow:hidden;white-space:nowrap;max-height:1.4em}
 #${OV} .md-hd .who{flex:1;min-width:0}
 #${OV} .md-hd h2{font-family:'Cinzel',serif;font-weight:900;color:#f6dc95;font-size:1.06rem;
   letter-spacing:.06em;margin:0 0 3px;overflow-wrap:anywhere}
@@ -256,8 +281,43 @@ export const DILEMMA_CSS = `
 #${OV} .md-wire{font-size:.76rem;letter-spacing:.06em;color:#8d8370;font-style:italic;
   margin:0 0 10px;overflow-wrap:anywhere}
 #${OV} .md-brief{font-size:1rem;line-height:1.62;color:#efe3c4;margin:0 0 14px;max-width:78ch}
-#${OV} .md-cols{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:14px;align-items:start}
+#${OV} .md-cols{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:14px;
+  align-items:start;align-content:start}
 @media (max-width:880px){#${OV} .md-cols{grid-template-columns:1fr}}
+/* A LOW CHOICE ROLL FILLS THE COLUMN INSTEAD OF LEAVING A HOLE. \`choiceBag\`
+   can return three, and two columns then put an eight-row roster beside three
+   buttons: measured 226px of empty panel under the last choice at 1280x900,
+   which is the first thing the eye lands on after the brief.
+
+   ⚠ COLLAPSING TO ONE COLUMN WAS TRIED FIRST AND IS WORSE — rendered, measured
+   and rejected, not argued away. Stacked at 1280x900 the roster starts 483px
+   down a 780px block: three of eight companions on screen, and the choices
+   scroll off the top to reach the rest. This modal exists so the room reacts
+   WHILE you read the lines; a layout that cannot show both at once trades a
+   cosmetic hole for the feature. The dead space was the [low] defect. That
+   would have been the high one.
+
+   So the choices stretch into the space instead. \`align-items:stretch\` lets
+   the column take the row height, the buttons share it, and their contents
+   centre so a grown button reads as a deliberate card rather than as a short
+   one with padding stuck to the bottom.
+
+   The 560px cap on the CONTAINER is the guard, and it is not theoretical: with
+   a 30-unit roster the row is 1625px tall, and uncapped that is three buttons at
+   ~540px each. Capped, the same roll renders 181/183/181 and the roster scrolls
+   past them as it should. Measured at 1280x900: three choices 483/483 with the
+   roster (dead space 226px -> 0), two choices 237/239, an empty roster 88/90/88
+   because there is nothing taller to match. Below the breakpoint the cap is
+   lifted — see the media query — because there the grid is one column and a
+   capped choice list would clip itself. */
+#${OV} .md-cols.md-solo{align-items:stretch}
+#${OV} .md-cols.md-solo .md-choices{max-height:560px}
+#${OV} .md-cols.md-solo .md-choice{flex:1 1 auto;display:flex;flex-direction:column;
+  justify-content:center}
+/* Below the breakpoint the grid is already one column and the rows size to
+   their content, so the stretch above is inert — but the cap is not, and a
+   phone must never clip its own choice list. */
+@media (max-width:880px){#${OV} .md-cols.md-solo .md-choices{max-height:none}}
 
 #${OV} .md-h3{font-family:'Cinzel',serif;color:#e9cf8c;font-size:.78rem;letter-spacing:.12em;
   text-transform:uppercase;margin:0 0 4px}
@@ -328,9 +388,31 @@ export const DILEMMA_CSS = `
 #${OV} .md-urow.ag{--c:rgba(224,85,106,.55);--bgc:rgba(224,85,106,.06)}
 #${OV} .md-urow.mid{--c:rgba(255,255,255,.14)}
 #${OV} .md-urow.quiet{opacity:.62}
-#${OV} .md-uicon{font-size:1.15rem;text-align:center;line-height:1}
-#${OV} .md-uname{min-width:0;color:#efe3c4;font-size:.9rem;overflow:hidden;text-overflow:ellipsis;
-  white-space:nowrap}
+/* 🔴 THE ICON CELL IS CLAMPED, AND card.icon IS WHY. A Forge card's icon is
+   whatever its author typed into the field — esc() makes it safe and does
+   nothing about its SIZE. An icon of \`<img src=x onerror=...>\` measured 55px
+   tall inside this 26px column and, with overflow visible, painted straight
+   across the unit name and the bond pill: two strings in the same pixels, in
+   the one panel this modal exists to show. Clamped to one line and one cell.
+   \`.md-hd .ico\` carries the same clamp for the same reason. */
+#${OV} .md-uicon{font-size:1.15rem;text-align:center;line-height:1;
+  overflow:hidden;white-space:nowrap;max-height:1.4em}
+/* 🔴 min-width:0 BELONGS ON THE GRID ITEM, AND ROUND 1 PUT IT ONE LEVEL TOO
+   DEEP. \`.md-urow\` is \`26px minmax(0,1fr) auto\`, so the TRACK may shrink —
+   but the middle item is \`.md-ucell\`, and a grid item's own min-width:auto
+   resolves to its min-content size, which for nowrap text is the whole string.
+   Measured before the fix: a 627px name inside a 437px row, 212px past the
+   roster panel at 1280w and 301px at 390w, through its own stance chip and into
+   horizontal scroll on .md-body. The reference file gets this right by making
+   the flex item itself the name (community.render.js's \`.mc-row .nm\`); here
+   the name shares a cell with the bond pill, so the CELL takes the min-width
+   and the name takes the ellipsis.
+   \`display:block\` on .md-uname is the other half and is not cosmetic:
+   overflow and text-overflow do not apply to a non-atomic INLINE box, so the
+   ellipsis declared below never fired even once the track was free to shrink. */
+#${OV} .md-ucell{min-width:0}
+#${OV} .md-uname{display:block;min-width:0;color:#efe3c4;font-size:.9rem;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
 #${OV} .md-uname .tag{font-family:'Cinzel',serif;font-size:.62rem;letter-spacing:.12em;
   text-transform:uppercase;color:#8d8370;margin-left:5px}
 #${OV} .md-uname .tag.hero{color:#f0cf7a}
@@ -351,7 +433,7 @@ export const DILEMMA_CSS = `
 #${OV} .md-delta.nil{color:#6f665a}
 /* .bond-pill declares \`border:1px solid\` with NO colour at index.html:16034 —
    it is invisible without the tier colour supplied inline, which is exactly how
-   the live unit panel uses it at index.html:140260. Redeclared here rather than
+   the live unit panel uses it at index.html:140362. Redeclared here rather than
    inherited so the panel is correct in any host. */
 #${OV} .bond-pill{display:inline-flex;align-items:center;gap:3px;border:1px solid;
   background:rgba(0,0,0,.3);padding:.06rem .42rem;border-radius:3px;font-family:'Cinzel',serif;
@@ -443,7 +525,7 @@ export function injectStyle() {
   try {
     // DOM-id guard rather than a module-level boolean: it survives a double
     // module evaluation (two <script type="module"> tags, a dev reload), which
-    // the boolean in house.camp.js:126-130 does not.
+    // the `cssDone` boolean in src/resonance/house.camp.js:126-130 does not.
     if (typeof document === 'undefined') return;
     if (document.getElementById(STYLE_ID)) return;
     const s = document.createElement('style');
@@ -553,15 +635,35 @@ function rosterRowHtml(unit, choice) {
   const tc = safeColor(tier && tier.color, '#9aa0a6');
   const quiet = (st.stance === 'middle' && st.reason === 'no-opinion');
 
-  // A non-middle stance that previews 0 is not a bug and must not read as one:
-  // a Sworn companion sitting on its ceiling cannot be raised further, and
-  // engine.previewBond() has already run adjustBond's own arithmetic to find
-  // that out. Say so where the number would have been.
-  const capped = (st.stance !== 'middle' && d === 0);
+  /* A non-middle stance that previews 0 is not a bug and must not read as one:
+     engine.previewBond() has already run adjustBond's own arithmetic and found
+     the change had nowhere to go. Say so where the number would have been.
+
+     🔴 THERE ARE TWO CLAMPS AND THIS SAID "CEILING" FOR BOTH. `stance !== middle
+     && delta === 0` cannot tell a Sworn companion pinned at 1200 from a Wary one
+     pinned at 0, so a soured unit at bond 0 who OPPOSED the call was told "their
+     regard is already at its ceiling" — the exact opposite of the truth, in the
+     most emotionally load-bearing sentence in the panel, and repeated by the
+     pinned band and the aftermath ledger. Bond 0 is the bottom of the Wary tier,
+     not an exotic state: a companion benched through a run arrives there.
+     The row already carries the number needed to split them. `bond <= 0 &&
+     against` is the floor; a stuck SUPPORTER is the ceiling; and the third arm
+     claims neither, because an against-unit stuck above 0 cannot happen through
+     previewBond (it clamps at -current, and adjustBond's own Math.min(-1) floor
+     means any survivor of that clamp moves at least one) — so if one ever
+     arrives, it arrives from a producer this file cannot reason about, and the
+     honest thing is to say it did not move and stop there.
+     No richer previewBond() return was asked for: CONTRACT §4 is frozen, and
+     the field that settles it was on the row all along. */
+  const stuck = (st.stance !== 'middle' && d === 0);
+  const floored = stuck && st.stance === 'against' && (Number(unit.bond) || 0) <= 0;
   const dCls = d > 0 ? 'up' : d < 0 ? 'dn' : 'nil';
-  const dTxt = d > 0 ? '+' + d : d < 0 ? '−' + Math.abs(d) : (capped ? '0' : '·');
-  const dTitle = capped
+  const dTxt = d > 0 ? '+' + d : d < 0 ? '−' + Math.abs(d) : (stuck ? '0' : '·');
+  const dTitle = floored
+    ? 'This one cannot fall further — their regard is already on the floor.'
+    : stuck && st.stance === 'support'
     ? 'This one cannot move — their regard is already at its ceiling.'
+    : stuck ? 'This one cannot move on this call.'
     : d === 0 ? 'Their bond does not move on this.'
     : 'Their bond moves by ' + (d > 0 ? '+' : '−') + Math.abs(d) + ' if you make this call.';
 
@@ -569,7 +671,7 @@ function rosterRowHtml(unit, choice) {
     ? `<span class="md-temper" title="${esc(unit.temper.blurb || '')}">${esc(unit.temper.icon || '')} ${esc(unit.temper.name)}</span>` : '';
 
   /* A forged card whose definition was never published on THIS device resolves
-     to `card: null` (lookupCustomCard, index.html:51036) and engine falls back
+     to `card: null` (lookupCustomCard, index.html:51081) and engine falls back
      to printing the stored id. Left bare that reads as a bug in the player's own
      collection, so the row says what it is instead. Dropping the row was the
      other option and is worse: their deck would look shorter than it is. */
@@ -580,7 +682,7 @@ function rosterRowHtml(unit, choice) {
 
   return `<div class="md-urow ${meta.cls}${quiet ? ' quiet' : ''}">
     <span class="md-uicon" aria-hidden="true">${esc(unit.icon || (unit.kind === 'hero' ? '🎖' : '🃏'))}</span>
-    <span>
+    <span class="md-ucell">
       <span class="md-uname${unknown ? ' unknown' : ''}"${nameTitle}>${esc(unit.name || unit.id)}${
         unknown ? '<span class="tag">Unlisted</span>'
                 : (unit.kind === 'hero' ? '<span class="tag hero">Hero</span>' : '')}</span>
@@ -605,8 +707,8 @@ function rosterHtml() {
   /* ⚠ THE HEADING CHANGES WHEN THE ROSTER IS A GUESS, and that is a
      requirement, not a nicety. The fallback ladder ranks Profile.units by
      `_lastBattleFielded`, which is set true only for units actually DEPLOYED
-     (index.html:152594) and cleared only for benched units that were in
-     s._deckUnitIds (index.html:152693) — so a unit from a deck the player
+     (index.html:152696) and cleared only for benched units that were in
+     s._deckUnitIds (index.html:152795) — so a unit from a deck the player
      abandoned keeps a stale `true` forever. It is a decaying heuristic.
      Calling it "your last deck" would be the modal telling a small lie about
      the player's own collection, which is the kind of thing a player notices
@@ -640,8 +742,9 @@ function rosterRowsHtml(choice) {
    same `handlers.preview()` the roster prints, the money and standing values
    from `handlers.describe()`, which reads DILEMMA_ECON. No number here is
    hand-written, so retuning the table retunes the copy. That is the fix for the
-   drift bug in the reference files: house.camp.js:151 promises "No rest-quality
-   modifier here" while house.camp.js:88 runs at CAMP_REST_QUALITY = 0.75.
+   drift bug in the reference files: src/resonance/house.camp.js:152 promises
+   "No rest-quality modifier here" while the same file's line 88 runs at
+   CAMP_REST_QUALITY = 0.75.
 
    ⚠ KEY-AND-VALUE, NOT SENTENCES, AND THAT IS A CORRECTION. The first cut wrapped
    describe()'s strings in prose — 'Your standing gains <b>+3 standing</b>.' —
@@ -656,34 +759,51 @@ function consequenceHtml() {
   const eff = describeOf(choice);
   const can = affordableOf(choice);
 
-  let up = 0, dn = 0, still = 0, capped = 0;
+  // The two clamps are counted apart for the reason rosterRowHtml() gives: the
+  // band asserted "already at the ceiling" over a unit sitting on the floor, so
+  // the modal told the same lie twice in the same viewport.
+  let up = 0, dn = 0, still = 0, atCeiling = 0, atFloor = 0;
   for (const u of _roster) {
     const st = stanceOf(u, choice).stance;
     const d = previewOf(u, choice);
     if (d > 0) up++; else if (d < 0) dn++;
-    else if (st === 'middle') still++; else capped++;
+    else if (st === 'middle') still++;
+    else if (st === 'against' && (Number(u.bond) || 0) <= 0) atFloor++;
+    else atCeiling++;
   }
 
   const bits = [];
-  if (up)     bits.push('<b>' + up + '</b> ' + (up === 1 ? 'gains' : 'gain') + ' regard');
-  if (dn)     bits.push('<b>' + dn + '</b> ' + (dn === 1 ? 'loses' : 'lose') + ' it');
-  if (still)  bits.push('<b>' + still + '</b> ' + (still === 1 ? 'stays' : 'stay') + ' put');
-  if (capped) bits.push('<b>' + capped + '</b> already at the ceiling');
+  if (up)        bits.push('<b>' + up + '</b> ' + (up === 1 ? 'gains' : 'gain') + ' regard');
+  if (dn)        bits.push('<b>' + dn + '</b> ' + (dn === 1 ? 'loses' : 'lose') + ' it');
+  if (still)     bits.push('<b>' + still + '</b> ' + (still === 1 ? 'stays' : 'stay') + ' put');
+  if (atCeiling) bits.push('<b>' + atCeiling + '</b> already at the ceiling');
+  if (atFloor)   bits.push('<b>' + atFloor + '</b> ' + (atFloor === 1 ? 'has' : 'have') + ' nothing left to lose');
 
-  const line = (k, v, cls) => `<span class="md-cline"><span class="k">${k}</span><span class="v ${cls || ''}">${v}</span></span>`;
+  /* 🔴 `line()` ESCAPES ITS VALUE. It used to take raw HTML, which made every
+     call site responsible for remembering esc() — three of the five did, the
+     other two happened to pass literals, and the first person to add a sixth
+     with a live string would have opened the one hole this file is otherwise
+     built to refuse. Escaping is now the default and the exception is named:
+     `lineHtml()` is for the ONE value that is generated markup (the room's
+     <b>counts</b>, built four lines above out of integers). The shape, not the
+     current call sites, is what was wrong — callH() and safeColor() exist for
+     exactly this reason and this helper was the odd one out. */
+  const lineHtml = (k, v, cls) =>
+    `<span class="md-cline"><span class="k">${esc(k)}</span><span class="v ${esc(cls || '')}">${v}</span></span>`;
+  const line = (k, v, cls) => lineHtml(k, esc(v), cls);
   const rows = [];
 
-  rows.push(line('The room', _roster.length
+  rows.push(lineHtml('The room', _roster.length
     ? (bits.length ? bits.join(' · ') : 'nobody here has a view on this')
     : 'nobody is here to weigh in'));
 
   // Cost first and unhedged, and it never disappears when it cannot be paid —
   // a choice the player cannot afford must still say what it would have cost.
-  if (eff.costText) rows.push(line('Out of pocket', esc(eff.costText), can ? 'cost' : 'short'));
+  if (eff.costText) rows.push(line('Out of pocket', eff.costText, can ? 'cost' : 'short'));
   if (!can) rows.push(line('Short', 'you do not have it — this line stays shut', 'short'));
-  if (eff.rewardText) rows.push(line('May return', esc(eff.rewardText), 'rew'));
+  if (eff.rewardText) rows.push(line('May return', eff.rewardText, 'rew'));
   if (eff.influenceText) {
-    rows.push(line('With the Heights', esc(eff.influenceText), Number(choice.influence) < 0 ? 'dn' : 'up'));
+    rows.push(line('With the Heights', eff.influenceText, Number(choice.influence) < 0 ? 'dn' : 'up'));
   }
 
   return `<div class="md-cons${can ? '' : ' bad'}" id="md-cons">${rows.join('')}</div>`;
@@ -734,10 +854,14 @@ function paintFoot() {
 
 function chooseBodyHtml() {
   const d = _instance.dilemma || {};
+  // Two columns are worth it only when the choices can fill one. The threshold
+  // is the CHOICE COUNT, not a breakpoint — see the .md-solo rule for what a
+  // three-line roll looked like beside an eight-row roster.
+  const solo = (_instance.choices || []).length < 4;
   return `<div class="md-body">
     ${d.wire ? `<p class="md-wire">${esc(d.wire)}</p>` : ''}
     <p class="md-brief">${esc(d.brief || '')}</p>
-    <div class="md-cols">
+    <div class="md-cols${solo ? ' md-solo' : ''}">
       <div class="md-choices">${(_instance.choices || []).map(choiceHtml).join('')}</div>
       ${rosterHtml()}
     </div>
@@ -759,8 +883,26 @@ function ledgerHtml(bonds) {
     const real = landed ? (Number(b.after) - Number(b.before)) : 0;
     const cls = real > 0 ? 'up' : real < 0 ? 'dn' : 'nil';
     const txt = real > 0 ? '+' + real : real < 0 ? '−' + Math.abs(real) : '0';
+    /* The clamp note splits on `before` and `stance` — the same two fields the
+       roster row uses, so the preview and the receipt cannot disagree about
+       which end a companion is pinned against. Calling the floor a ceiling was
+       the round-1 defect and the modal said it in three places; this is the
+       third.
+
+       ⚠ WHAT THIS BRANCH IS ACTUALLY WORTH, stated honestly. Under CONTRACT §5's
+       AppliedBond a clamped write reports `delta = after - before = 0` AND
+       `landed: false` ("the ceiling ate it"), so a clamped row takes the
+       `!landed` arm and prints 'not recorded' — `stuck` is unreachable through
+       today's engine. It is kept, and split, because `landed` conflates a
+       refused write with an eaten one, and the day that is separated this row
+       must already know which clamp it is looking at. What it must NOT do is
+       guess: 'nothing left to lose' is only ever printed off `landed === true`,
+       never inferred from a refusal, because a bridge that refused the write and
+       a floor that absorbed it look identical from here. */
+    const stuck = (real === 0 && d !== 0);
     const note = !landed ? 'not recorded'
-      : (real === 0 && d !== 0) ? 'at the ceiling'
+      : (stuck && b.stance === 'against' && (Number(b.before) || 0) <= 0) ? 'nothing left to lose'
+      : stuck ? 'at the ceiling'
       : '';
     return `<div class="lr">
       <span aria-hidden="true">${real > 0 ? '▲' : real < 0 ? '▼' : '—'}</span>
@@ -1026,7 +1168,7 @@ export function openModal(instance, roster, handlers) {
     _closing  = false;
 
     // Remember who opened us so focus can go home. index.html's render() will
-    // only restore focus for an id'd text input (110963-111012), so a modal
+    // only restore focus for an id'd text input (index.html:111029-111070), so a modal
     // that does not do this leaves the player's focus on document.body.
     try { _opener = document.activeElement || null; } catch (e) { _opener = null; }
 
@@ -1035,7 +1177,7 @@ export function openModal(instance, roster, handlers) {
       ov = document.createElement('div');
       ov.id = OV;
       // Click-outside closes, matching every other overlay in the game. Two
-      // listeners on the same node, as community.render.js:844-846 does: this
+      // listeners on the same node, as community.render.js:846-847 does: this
       // one is `ev.target === ov` only, so a click that lands anywhere inside
       // the panel is untouched by it.
       ov.addEventListener('click', (e) => { if (e.target === ov) closeModal(); });
@@ -1048,10 +1190,10 @@ export function openModal(instance, roster, handlers) {
     }
 
     /* ⌨ ESCAPE CLOSES. The self-removing document listener from
-       index.html:111553 / 111593-111596; /src/battle/combat.js:918 states the
-       principle — "Escape is the one gesture that unambiguously means 'stop
-       showing me…'". The community overlay has no Escape handler at all
-       (community.render.js:846-863 listens only for Enter on the chat input);
+       openInfoModal's onKey (index.html:111612); src/battle/combat.js:918
+       states the principle — "Escape is the one gesture that unambiguously means
+       'stop showing me…'". The community overlay has no Escape handler at all
+       (community.render.js:848-856 listens only for Enter on #mc-wmsg);
        that is a gap in the reference file, not a house convention.
        The listener is held in `_onKey` so all THREE close paths remove the same
        one — a leaked keydown handler that closes an overlay which is no longer

@@ -48078,6 +48078,21 @@ async function cloudFetchProfile() {
            lastDeck = whichever record has the LATER .at, independently of the
              blob-level winner: the deck you last took out is a fact about a
              battle, not about which device synced last.
+         ⚠ influence / recent / nextAt / resolved DELIBERATELY GET NO PER-FIELD
+           MERGE, and that was re-argued rather than assumed. Every candidate
+           rule is exploitable in the direction the player wants: Math.max on
+           influence is farmable by device-switching; the EARLIER nextAt hands
+           back the 45-minute offer cooldown; the SHORTER recent[] hands back
+           the 72h repeat cooldown; Math.max on resolved inflates a counter that
+           only ever counts up anyway. `seen` is the one field where the safe
+           direction (the LATER stamp, which BLOCKS) and the merge-able shape
+           coincide, which is why it is the one field that has a rule.
+           What made last-write-wins dishonest was never the policy — it was
+           _dilemmaRecordDeck stamping updatedAt at battle START, so a tab that
+           had DECIDED nothing outranked one that had. That stamp is gone (see
+           the note in _dilemmaRecordDeck), and updatedAt now moves only inside
+           /src/dilemma/engine.js's saveState(). The later blob is now genuinely
+           the one that decided last.
          ⚠ Number(x) || 0, NEVER `| 0` — an epoch-ms timestamp overflows a
            32-bit int and comes back negative, which silently inverted the
            first cut of the city merge directly above. */
@@ -207620,22 +207635,27 @@ window.MythicCityBridge = {
    inside the module, and never reached for as a bare global.
 
    ⚠ EVERY READER IS A FUNCTION, NEVER A SNAPSHOT — the rule window.MythicBridge
-   states at 206906: "Profile.gems changes constantly; a captured value would go
+   states at 207022: "Profile.gems changes constantly; a captured value would go
    stale the moment the player spends." The value tables (LQ_AXES, LQ_INTENSITY)
    are static and could safely have been snapshotted; they are handed over as a
    function anyway so there is exactly ONE rule for reading this object.
+   ⚠ `state()` RETURNING A COPY IS NOT A SNAPSHOT IN THAT SENSE, and the two
+   rules do not conflict. It reads Profile.dilemma FRESH on every call and can
+   never go stale; what it withholds is the OBJECT IDENTITY, so a caller cannot
+   write standing by holding onto the thing it was handed. See the note above
+   the object.
 
    🔴 EVERY MUTATOR RETURNS A BOOLEAN (or the new value). That is not
-   decoration — the same point MythicTradeBridge makes at 207358. /src/dilemma
+   decoration — the same point MythicTradeBridge makes at 207475. /src/dilemma
    resolves a choice as a five-step transaction (cost → state → bond → grant →
    save) and decides from these return values whether to refund the Cinder it
    just took. A wrapper that swallowed a throw and returned `undefined` would
    make its refund branch dead code. The city bridge learned this the expensive
    way: `setProdState` used to swallow, so a saveProfile() throw charged a
-   player 50,000 Cinder for a building that never persisted (see 207446).
+   player 50,000 Cinder for a building that never persisted (see 207566).
 
    ⚠ Profile itself is deliberately NOT exposed. MythicHouseBridge does expose
-   it (207322) and that works, but it hands a module the ability to write
+   it (207438) and that works, but it hands a module the ability to write
    `.bond` directly — and bond is exactly what this feature moves. There is one
    bond mutator in this codebase and `adjustBond` below is how the module
    reaches it.
@@ -207646,20 +207666,55 @@ window.MythicCityBridge = {
    whitelist. Profile.cityProduction and Profile.recon are each in only two of
    the three today, which is why an offline reload drops them.
    ═══════════════════════════════════════════════════════════════════════════ */
+/* 🔴 THE STATE SEAM COPIES IN BOTH DIRECTIONS, AND THAT IS THE WHOLE POINT.
+   Round 1 handed out Profile.dilemma BY REFERENCE. engine.commit() then wrote
+   influence, seen, recent, nextAt and resolved onto the live object, and when
+   saveProfile() threw it returned false WITHOUT unwinding — so a resolution the
+   player was told had failed still cost them 10 standing, a `recent` slot and a
+   45-minute lockout, and the refund's own addGems() -> saveProgressCloud() then
+   wrote that phantom resolution to disk and to the cloud. Copying on read alone
+   does not fix it: setState stored the copy by reference, so ensureState()'s
+   normalisation write-back re-aliased it one line later. Both ends copy.
+   The cost is one small object clone per state() call (twice per hub render for
+   the tile badge). That is the price of the invariant; do not optimise it away. */
+function _dilemmaCloneState(s) {
+  if (!s || typeof s !== 'object' || Array.isArray(s)) return {};
+  const out = {};
+  for (const k of Object.keys(s)) {
+    const v = s[k];
+    if (v === null || typeof v !== 'object') { out[k] = v; continue; }
+    if (Array.isArray(v)) { out[k] = v.slice(); continue; }
+    const o = {};
+    for (const k2 of Object.keys(v)) { const v2 = v[k2]; o[k2] = Array.isArray(v2) ? v2.slice() : v2; }
+    out[k] = o;   // depth 3 is the whole schema: seen{}, recent[], lastDeck{cards[]}, offer{}
+  }
+  return out;
+}
 window.MythicDilemmaBridge = {
 
   // ── Persisted state ───────────────────────────────────────────────────────
   // Absent-tolerant by construction: a save written before this feature existed
   // hydrates as an empty object, never as a throw. The module's ensureState()
-  // normalises every field from there.
-  state: () => {
-    try {
-      if (!Profile.dilemma || typeof Profile.dilemma !== 'object') Profile.dilemma = {};
-      return Profile.dilemma;
-    } catch (e) { return {}; }
-  },
-  setState: (s) => { try { if (!s || typeof s !== 'object') return false; Profile.dilemma = s; return true; } catch (e) { return false; } },
-  save: () => { try { saveProfile(); return true; } catch (e) { return false; } },
+  // normalises every field from there, and reads `{}` as "a stranger arriving
+  // in Ethos Heights" — which is why the catch below still returns `{}`.
+  state:    () => { try { if (!Profile.dilemma || typeof Profile.dilemma !== 'object') Profile.dilemma = {};
+                          return _dilemmaCloneState(Profile.dilemma); } catch (e) { return {}; } },
+  setState: (s) => { try { if (!s || typeof s !== 'object' || Array.isArray(s)) return false;
+                           Profile.dilemma = _dilemmaCloneState(s); return true; } catch (e) { return false; } },
+  save: () => { try {
+    // A reader tab's saveProfile() returns early and writes nothing (70900). This
+    // module builds a refund decision on this boolean, so it must not report a
+    // write that did not happen: commit() fails, the Cinder comes back, and the
+    // player keeps the 'Active in another tab' banner they are already being shown.
+    // ⚠ STRICTLY `=== false`. MultiTab.amWriter defaults to true (69611) and is
+    // only ever set false by the election, so single-tab play is untouched; a
+    // truthiness test would break every session where MultiTab never initialised.
+    // MythicCityBridge and MythicHouseBridge have the identical hole and are
+    // deliberately left alone — this is the one bridge whose caller refunds real
+    // currency off the answer.
+    if (typeof MultiTab !== 'undefined' && MultiTab && MultiTab.amWriter === false) return false;
+    saveProfile(); return true;
+  } catch (e) { return false; } },
   // One clock for the whole feature, so a test can pin it and so the module
   // never grows a second source of "now".
   now: () => { try { return Date.now(); } catch (e) { return 0; } },
@@ -207675,7 +207730,7 @@ window.MythicDilemmaBridge = {
      renders an EMPTY roster rather than an error — silence, in the one panel
      whose entire point is the roster. */
   deckKeyCardId: (key) => { try { return _deckKeyCardId(key) || null; } catch (e) { return null; } },
-  /* ⚠ _cardDefById, NOT _lqCard. _lqCard (72764) searches ONLY Forge.customCards
+  /* ⚠ _cardDefById, NOT _lqCard. _lqCard (72838) searches ONLY Forge.customCards
      and returns null for every built-in UNIT_CARDS entry, which is why the
      shipped values system only ever evaluates custom cards. A deck of built-ins
      must not come back opinion-less for that reason. */
@@ -207688,8 +207743,9 @@ window.MythicDilemmaBridge = {
      run, or a save from before this shipped).
      ⚠ _lastBattleFielded IS NOT A LAST-ROSTER RECORD and the module is required
      to relabel the section when it uses this. It is set true only for units
-     actually DEPLOYED (152594) and cleared only for benched units that were in
-     s._deckUnitIds (152693), so a unit from a deck the player abandoned keeps a
+     actually DEPLOYED (recordBattleProgress, 152711) and cleared only for benched
+     units that were in s._deckUnitIds (152802-152810), so a unit from a deck the
+     player abandoned keeps a
      stale `true` forever and the true-set only grows. It ranks "most fought
      beside" honestly; it cannot reconstruct a deck. */
   fallbackRoster: (n) => {
@@ -207711,10 +207767,11 @@ window.MythicDilemmaBridge = {
 
   // ── Units, heroes, bond ───────────────────────────────────────────────────
   /* 🔴 THESE TWO READ AND NEVER CREATE. Merely LOOKING at a card must not
-     fabricate progression — the rule resonanceGet states at 206918, and a
+     fabricate progression — the rule resonanceGet states at 207034-207037, and a
      dilemma modal DISPLAYS units, so displaying is inspecting. They deliberately
      do NOT go through getUnitProfile / getHeroProfile: those return a DETACHED
-     object for a missing row (73344-73356), migrate it, stamp a temper on it and
+     object for a missing row (getUnitProfile, 73418-73429), migrate it, stamp a
+     temper on it and
      throw all of it away, so `adjustBond(getUnitProfile(id), +20)` on a card the
      player never fielded is a silent no-op that passes a smoke test on any
      well-played save. Only adjustBond below creates a row. */
@@ -207729,14 +207786,27 @@ window.MythicDilemmaBridge = {
   },
   bondTier: (b) => { try { return getBondTier(b) || null; } catch (e) { return null; } },
   /* ⚠ TAKES A PROFILE ENTRY, NOT A NUMBER, and passing a number does not throw:
-     bondCeilingFor's typeof-object guard (72510) sends it down the default path
+     bondCeilingFor's typeof-object guard (72583-72584) sends it down the default path
      and returns BOND_MAX. The mistake therefore reads as "the ceiling clamp
      works" while silently ignoring saleCount and everSold — a resold companion
      would preview a Sworn ceiling it can never reach. */
   bondCeiling: (entry) => { try { return bondCeilingFor(entry) | 0; } catch (e) { return BOND_MAX; } },
   bondMax: () => { try { return BOND_MAX | 0; } catch (e) { return 0; } },
+  /* 🔴 THE NEVER-DEPLOYED COMPANION. A card that sat in the deck but was never
+     put on the field has NO Profile.units row — recordBattleProgress only
+     creates rows for fieldedSet (152711) — so bondOf() above honestly answers
+     0. The modal then printed "Wary 0", the only surface in the game that shows
+     a companion below BOND_NEW, previewed +3, and the real write landed +103,
+     because adjustBond below CREATES the row at BOND_NEW first. On a new
+     player's first dilemma that is the ordinary case, not an exotic one.
+     This hands the module the same floor adjustBond will use, so the preview
+     and the write agree. BOND_NEW = 100 (72569); the literal fallback is the
+     same number, and it is here because a service-worker-cached index.html can
+     serve an older bridge to a freshly-updated module. */
+  bondNew: () => { try { return BOND_NEW | 0; } catch (e) { return 100; } },
   // Heroes carry no temper and getUnitTemper would happily DERIVE one from the
-  // id (72593). The module asks only for units; this is here for the units.
+  // id (getUnitTemper, 72677; the derivation is the return at 72697). The module
+  // asks only for units; this is here for the units.
   temperOf: (cardId, entry) => { try { return getUnitTemper(cardId, entry) || null; } catch (e) { return null; } },
   /* CAN legitimately return []. _lqArchetypeDefault returns null when the joined
      class+archetype+passive+subclass+factions string matches none of the eight
@@ -207762,13 +207832,14 @@ window.MythicDilemmaBridge = {
      through here and there is no second path.
 
      It resolves the store, CREATES the row if it is absent exactly as _rezEntry
-     does (73486-73487), calls the real adjustBond — which applies the unit's
+     does (_rezEntry, 73557-73561), calls the real adjustBond — which applies the unit's
      temperament gain/loss and clamps to bondCeilingFor(entry) — writes the entry
      back, and returns the NEW bond so the caller can report what actually landed
      rather than what it asked for.
 
      ⚠ `bondScaled: true` IS NOT OPTIONAL. saveProfile() runs _migrateBondScale
-     (70821 → 72731) over every entry in Profile.units and Profile.heroes, and
+     (saveProfile 70895 → _migrateBondScale 72805) over every entry in
+     Profile.units and Profile.heroes, and _migrateBondEntry (72799)
      _migrateBondEntry rewrites any unflagged `bond <= 100` as
      round(100 + bond * 11). A row created here at BOND_NEW (100) without the
      flag becomes 1200 on the very next save — an instantly Sworn companion the
@@ -207780,7 +207851,7 @@ window.MythicDilemmaBridge = {
 
      ⚠ IT DOES NOT SAVE. The module batches ONE save for the whole resolution —
      saveProfile() stringifies the entire Profile (50-200 ms, up to 800 ms on the
-     slow path, 70835-70839) and doing that once per companion would be eight
+     slow path, 70909-70913) and doing that once per companion would be eight
      stalls for one decision. */
   adjustBond: (id, delta, kind) => {
     try {
@@ -207806,27 +207877,40 @@ window.MythicDilemmaBridge = {
   },
 
   // ── Economy ───────────────────────────────────────────────────────────────
-  gems: () => { try { return Profile.gems | 0; } catch (e) { return 0; } },
+  /* 🔴 `null` MEANS "UNREADABLE", AND IT IS THE ONLY READER HERE ALLOWED TO SAY
+     SO. Round 1 collapsed a throw to `0`, which is also the value for "the
+     player is broke" — so a bridge whose gems() failed made rewards.payCost
+     charge 1,600 Cinder through spendGems and then return
+     {ok:false, why:'Not enough Cinder.'} off the re-read, and index.js toasted
+     that and returned WITHOUT refunding. The money was simply gone, and the
+     `before === null` fallback rewards.js is built around was unreachable code
+     that read as defence-in-depth while providing none.
+     ⚠ Math.floor, NOT `| 0`. `| 0` is a 32-bit truncation, and a wallet past
+     2,147,483,647 comes back negative — the same overflow the dilemma cloud
+     merge above calls out for timestamps.
+     ⚠ bondOf stays at 0 for a missing row. That is a real answer (a companion
+     you have not fielded has no bond), not a failed reading. */
+  gems: () => { try { const n = Number(Profile.gems); return isFinite(n) ? Math.floor(n) : null; } catch (e) { return null; } },
   /* ⚠ Returns TRUE for n <= 0, and on insufficient funds returns false and does
-     NOTHING ELSE — no toast, no clamp, no render (64434). The module gates the
+     NOTHING ELSE — no toast, no clamp, no render (spendGems, 64490). The module gates the
      button on canAfford() and toasts the refusal itself; an ungated button would
      simply do nothing when pressed. */
   spendGems: (n) => { try { return !!spendGems(n | 0); } catch (e) { return false; } },
   /* ⚠ NEVER call this with a negative n. addGems guards on `amount === 0`
-     (64456), so a negative decrements Profile.gems locally while
+     (addGems, 64516), so a negative decrements Profile.gems locally while
      _serverMirrorCredit clamps to Math.max(0, …) and returns early — a durable
      client/server divergence. Every Cinder LOSS in this feature is a spendGems
      cost the choice is gated on, never a fine, so nothing here ever needs to.
      ⚠ `reason` is required and never defaulted. addGems falls back to the
-     literal 'addGems' (64472), and that anonymous label is exactly why the
+     literal 'addGems' (64534), and that anonymous label is exactly why the
      Cinder supply could not be audited — production showed +602,357 of
      reconcile gains in one week with nothing attributing a unit of it to a
-     source (64447-64453). A dilemma payout carries
+     source (64506-64513). A dilemma payout carries
      'Dilemma: <dilemmaId>/<choiceId>' so an audit can isolate this faucet.
      It is for AUDITABILITY, never for authorisation: sql/034 is blunt about it
      ("p_reason CARRIES NO AUTHORITY. It is a client-supplied string."). */
   addGems: (n, reason) => { try { addGems(n | 0, String(reason || 'Dilemma')); return true; } catch (e) { return false; } },
-  /* 🃏 THE CARD GRANT. _rollLootCard (77108-77142) is the model — pool from
+  /* 🃏 THE CARD GRANT. _rollLootCard (77182-77216) is the model — pool from
      getCardPoolForPacks, up to six rarity rolls, uniform fallback, increment
      Profile.cardCollection, save — with two deliberate differences:
        • IT FILTERS isForgeLootable('card', id). Neither getCardPoolForPacks nor
@@ -207834,18 +207918,19 @@ window.MythicDilemmaBridge = {
          all (read all three bodies; there is no call), so an admin-only card can
          already drop from a pack today. Not inheriting that hole is a one-line
          improvement over the paths this copies.
-       • IT CALLS ensureUnitTrait for units, as openPack does (65073) and
+       • IT CALLS ensureUnitTrait for units, as openPack does (65133-65134) and
          _rollLootCard does not, so a pulled unit is the player's rather than
          a blank.
      ⚠ It deliberately does NOT call cxProduce. That is what "packs are how cards
-     ENTER the world" means (65081) — a print run moves the exchange price. A
+     ENTER the world" means (65138) — a print run moves the exchange price. A
      one-off narrative find in the ruins is loot, and loot does not.
      ⚠ Returns null when the pool is EMPTY, which is legal and reachable:
-     Forge.useCustomOnlyPool suppresses every built-in array (64934), so a
+     Forge.useCustomOnlyPool suppresses every built-in array
+     (getCardPoolForPacks, 64967; the customOnly branch at 64969), so a
      custom-only install with nothing published has no pool. The module reads
      null as "the ruins were bare", not as an error.
      ⚠ Heroes are never here. getCardPoolForPacks's includeHeroes branch is
-     literally `if (false && …)` (64944), left as a decision rather than deleted. */
+     literally `if (false && …)` (65005), left as a decision rather than deleted. */
   grantCard: (opts) => {
     try {
       if (typeof getCardPoolForPacks !== 'function') return null;
@@ -207889,32 +207974,33 @@ window.MythicDilemmaBridge = {
 };
 
 /* 🃏 THE LAST-DECK RECORDER — the ONE touch this feature makes to battle code,
-   and it is a single typeof-guarded line at 119638 that calls this.
+   and it is a single typeof-guarded line in startBattleWithPrep (119754) that
+   calls this.
 
    WHY IT HAD TO BE ADDED AT ALL. There is no persisted "which deck did the
    player last take out" signal anywhere in this codebase, and every candidate
-   was checked: Profile.deckHistory (54321) is keyed by deck id but carries no
+   was checked: Profile.deckHistory (44731) is keyed by deck id but carries no
    timestamp and no ordering, so it gives "most played" and never "last";
    App.battlePrep.deckId is the real in-session answer but App is a top-level
-   `const` (110780) and therefore invisible to a module, it dies on reload, and
+   `const` (110854) and therefore invisible to a module, it dies on reload, and
    it is null on the friend-challenge, multiplayer, spectator and generated-deck
-   paths; App.state._deckUnitIds (97574) is exactly the right concept and dies
+   paths; App.state._deckUnitIds (97648) is exactly the right concept and dies
    with the session; Profile.units[id]._lastBattleFielded is a decaying
    heuristic that never clears for an abandoned deck; and there is no
    deck-related localStorage key at all.
 
    ⚠ bp.deckId ALONE IS NOT ENOUGH — it is null on four real paths — so the
    resolved card KEYS are stored beside it. Keys also survive the two things
-   that dangle a recorded id: deleteDeckEntry (54659) and battlefield permadeath
-   (100677-100691), which strips the card from every Profile.decks[].cards.
+   that dangle a recorded id: deleteDeckEntry (54719) and battlefield permadeath
+   (100759-100763), which strips the card from every Profile.decks[].cards.
    ~25 short strings against the localStorage quota-recovery path is a cost
    worth paying once.
 
    ⚠ IT DELIBERATELY DOES NOT CALL saveProfile(). Do not "fix" that. saveProfile
    stringifies the whole Profile (50-200 ms, up to 800 ms on the slow path,
-   70835-70839) and battle start is the worst place in the game to add a stall.
+   70909-70913) and battle start is the worst place in the game to add a stall.
    buildUnit already fires a save during initGame when it rolls a nature
-   (97177-97178) and recordBattleProgress saves at battle end, so the record
+   (buildUnit, 97250-97253) and recordBattleProgress saves at battle end, so the record
    persists on its own. Losing it when a player force-quits before either is
    honest and acceptable: the module then falls back to "your most-fought
    companions" and says so on screen.
@@ -207953,7 +208039,23 @@ function _dilemmaRecordDeck(bp) {
     if (!Profile.dilemma || typeof Profile.dilemma !== 'object') Profile.dilemma = {};
     const at = Date.now();
     Profile.dilemma.lastDeck = { id: id, name: String(name || ''), heroId: heroId, cards: keys, at: at };
-    Profile.dilemma.updatedAt = at;
+    /* 🔴 IT DOES NOT STAMP Profile.dilemma.updatedAt, AND IT MUST NEVER START.
+       It used to, and that made a battle-start TOUCH pose as a standing WRITE.
+       The cloud hydration merge picks the whole blob by updatedAt and only
+       `seen` and `lastDeck` carry their own per-field merges, so: the player
+       resolves a dilemma on their phone (influence 50 -> 70, offer cooldown
+       armed, uploaded at T1); a stale desktop tab still holding influence 50
+       starts a battle at T2 > T1; this line stamped T2 over the old standing;
+       recordBattleProgress then saved and synced, and the desktop blob won
+       every future merge. Reproduced in node against the real merge block: 20
+       standing and the armed cooldown gone, while `seen` survived — which is
+       exactly what made the loss quiet instead of obvious.
+       The deletion is free because the merge already resolves lastDeck by its
+       own `.at`, independently of the blob-level winner, and `.at` is still
+       written on the line above. updatedAt now moves only in
+       /src/dilemma/engine.js's saveState(), which is the one place a real
+       standing write happens — so last-write-wins is once again an honest
+       answer to "which device decided most recently?". */
   } catch (e) {}
 }
 /* 🏦 CITY → OPS VAULT.
@@ -223570,7 +223672,7 @@ render();
        ONLY: the four sibling files are imported by bare relative specifier and
        carry no query string, which is exactly why sw.js serves /src/** network
        first. -->
-<script type="module" src="src/dilemma/index.js?v=v120w6dil1"></script>
+<script type="module" src="src/dilemma/index.js?v=v120w6dil2"></script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the

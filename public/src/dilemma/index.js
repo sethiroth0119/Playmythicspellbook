@@ -56,7 +56,7 @@ import { openModal, closeModal, isOpen as modalIsOpen, paint } from './render.js
 /* ════════════════════════════════════════════════════════════════════════════
    1. THE HOST ADAPTER
    ════════════════════════════════════════════════════════════════════════════
-   /src/city/index.js:34-95 is the shape, and its comment at :62-70 is the
+   /src/city/index.js:34-85 (makeHost) is the shape, and its comment at :63-70 is the
    standard this file is held to:
 
      "🔴 THESE TWO REPORT FAILURE. THEY USED TO SWALLOW IT. … a throw from
@@ -71,16 +71,52 @@ import { openModal, closeModal, isOpen as modalIsOpen, paint } from './render.js
    it. Nothing throws across the seam in either direction; the answer is the
    return value.
 
+   🔴 AND THE STATE SEAM COPIES, IN BOTH DIRECTIONS. A strict boolean was not
+   enough on its own. Round 1's `state()` handed back the LIVE Profile.dilemma;
+   engine.commit() wrote influence, seen, recent, nextAt and resolved onto it,
+   and when saveProfile() threw, commit() returned false without unwinding — so
+   a resolution the player was told had FAILED still cost them standing, a
+   `recent` slot and a 45-minute lockout, and the refund's own addGems() ->
+   saveProgressCloud() wrote that phantom to disk and uploaded it. Copying on
+   read alone does not close it either: setState stored the copy by reference,
+   so ensureState()'s normalisation write-back re-aliased it one line later.
+   Both ends copy, here and in index.html, so that engine.saveState()'s
+   snapshot survives its own setState and can put the old blob back.
+
    Every entry is individually wrapped with a TYPED fallback — 0 for a count,
    null for a lookup, false for a mutation, [] for a list. A partially-mounted
    or older bridge therefore degrades one accessor at a time instead of taking
    the modal down, and the module's own guards (engine.previewBond returns 0 for
    a null entry, rewards.grant treats a missing accessor as "unconfirmed") were
-   all written against exactly these values. */
+   all written against exactly these values. `gems()` is the ONE deliberate
+   exception and returns `number | null`; see its comment. */
+
+/* The adapter's own clone, byte-identical in behaviour to index.html's
+   `_dilemmaCloneState`. That duplication is NOT redundancy and must not be
+   collapsed: `sw.js` caches `index.html` and `/src/*` separately and serves
+   /src/** network-first, so a freshly-updated module can and does run against a
+   service-worker copy of index.html that predates the copying seam and still
+   returns the live Profile.dilemma. The adapter is the only surface the engine
+   ever sees, so the adapter is where the invariant is actually enforced.
+   Depth 3 is the whole persisted schema: seen{}, recent[], lastDeck{cards[]},
+   offer{}. Nothing below that is an object, so nothing below that is aliased. */
+function cloneState(s) {
+  if (!s || typeof s !== 'object' || Array.isArray(s)) return {};
+  const out = {};
+  for (const k of Object.keys(s)) {
+    const v = s[k];
+    if (v === null || typeof v !== 'object') { out[k] = v; continue; }
+    if (Array.isArray(v)) { out[k] = v.slice(); continue; }
+    const o = {};
+    for (const k2 of Object.keys(v)) { const v2 = v[k2]; o[k2] = Array.isArray(v2) ? v2.slice() : v2; }
+    out[k] = o;
+  }
+  return out;
+}
 function makeHost() {
   const B = (typeof window !== 'undefined') ? window.MythicDilemmaBridge : null;
 
-  /* ⚠ SHAPE CHECK, NOT TRUTHINESS. community.bridge.js:52 uses
+  /* ⚠ SHAPE CHECK, NOT TRUTHINESS. community.bridge.js:53 uses
      `typeof b.signedIn === 'function'` for this reason: a half-built bridge
      object (a syntax error partway through the literal, an older index.html
      that predates a method) passes `!!B` and then throws on the first call,
@@ -91,12 +127,33 @@ function makeHost() {
 
   return {
     // ── Persisted state ────────────────────────────────────────────────────
-    state: () => { try { const s = B.state(); return (s && typeof s === 'object') ? s : {}; } catch (e) { return {}; } },
+    /* 🔴 BOTH OF THESE COPY. Read the header. `state()` never returns anything
+       the bridge still holds, and `setState()` never stores anything the caller
+       still holds — which is what makes engine.saveState()'s rollback snapshot
+       survive its own setState, and what makes the invariant true:
+       after commit() returns anything but `true`, Profile.dilemma is exactly
+       what it was before the call.
+       It also closes a smaller hole for free: MythicDilemmas.state() below is
+       this same accessor via ensureState(), so a console session can no longer
+       do `MythicDilemmas.state().influence = 999999` and have the next
+       unrelated saveProfile() from any system persist it. */
+    state: () => { try { const s = B.state(); return (s && typeof s === 'object' && !Array.isArray(s)) ? cloneState(s) : {}; } catch (e) { return {}; } },
     /* Strict `=== true`, both here and in engine.saveState. An older bridge
        whose setter returned `undefined` on success must read as a FAILURE
        rather than as a silent success — the whole point of the boolean is that
-       the refund path can trust it. */
-    setState: (s) => { try { return B.setState(s) === true; } catch (e) { return false; } },
+       the refund path can trust it.
+
+       ⚠ THE RESOLVE TRANSACTION MUST STAY SYNCHRONOUS, and that is load-bearing
+       now rather than merely tidy. Round 1's setState assigned the very object
+       it was handed (which WAS Profile.dilemma), so it was a no-op; this one
+       REPLACES the blob. index.html has two other writers — _dilemmaRecordDeck
+       at battle start and cloudFetchProfile's hydration merge — and a
+       read-modify-write that yielded between ensureState() and setState() would
+       drop whichever of them landed in the gap. It cannot today: resolve() is
+       declared async for its callers' benefit and contains no `await`, and
+       commit() does its own ensureState immediately before saveState. Do not
+       put an await between a state read and its write. */
+    setState: (s) => { try { return B.setState(cloneState(s)) === true; } catch (e) { return false; } },
     save: () => { try { return B.save() === true; } catch (e) { return false; } },
     /* Time comes over the bridge so a test can pin it, and so there is exactly
        one clock in the feature. `Date.now()` here would be a second one. */
@@ -123,11 +180,12 @@ function makeHost() {
     // ── Units, heroes, bond ────────────────────────────────────────────────
     /* READ-ONLY, AND THEY MUST STAY THAT WAY. Merely LOOKING at a card must
        not fabricate a progression row — window.MythicBridge states the rule for
-       Resonance at index.html:206918-206921 and this feature inherits it: a
+       Resonance at index.html:207034-207037 and this feature inherits it: a
        dilemma modal DISPLAYS units, and displaying is inspecting. The bridge
        side reaches Profile.units directly rather than through getUnitProfile,
        which returns a DETACHED object for a missing row and throws every
-       mutation on it away (index.html:73344-73356). Only adjustBond creates. */
+       mutation on it away (getUnitProfile, index.html:73418-73429). Only
+       adjustBond creates. */
     unitEntry: (id) => { try { return B.unitEntry(id) || null; } catch (e) { return null; } },
     heroEntry: (id) => { try { return B.heroEntry(id) || null; } catch (e) { return null; } },
     bondOf: (id, kind) => { try { const n = Number(B.bondOf(id, kind)); return isFinite(n) ? n : 0; } catch (e) { return 0; } },
@@ -139,6 +197,21 @@ function makeHost() {
        entry; nothing else may call this. */
     bondCeiling: (entry) => { try { const n = Number(B.bondCeiling(entry)); return isFinite(n) ? n : 0; } catch (e) { return 0; } },
     bondMax: () => { try { const n = Number(B.bondMax()); return isFinite(n) ? n : 0; } catch (e) { return 0; } },
+    /* 🔴 THE FLOOR A NEVER-DEPLOYED COMPANION STARTS FROM. A card that was in
+       the deck but never put on the field has no Profile.units row, so bondOf()
+       honestly answers 0 — and round 1 rendered that as "Wary 0", the only
+       surface in the game that shows a companion below BOND_NEW, previewed +3,
+       and then landed +103 because the bridge's adjustBond CREATES the row at
+       BOND_NEW first. engine.rosterRow/previewBond/applyStances now start from
+       this instead.
+       ⚠ THE LITERAL 100 IS NOT A GUESS AND NOT A DUPLICATED CONSTANT. It is the
+       service-worker fallback: /src/** is served network-first but index.html is
+       cached, so an updated module can run against an index.html whose bridge
+       predates this accessor. `Number(undefined)` is NaN, which is why the
+       isFinite test rather than a truthiness one — and BOND_NEW has been 100
+       since the bond system shipped, so a stale bridge degrades to the right
+       answer rather than to zero. */
+    bondNew: () => { try { const n = Number(B.bondNew()); return isFinite(n) ? n : 100; } catch (e) { return 100; } },
     temperOf: (id, entry) => { try { return B.temperOf(id, entry) || null; } catch (e) { return null; } },
     valueProfile: (card) => { try { const p = B.valueProfile(card); return Array.isArray(p) ? p : []; } catch (e) { return []; } },
     values: () => { try { const v = B.values(); return (v && typeof v === 'object') ? v : null; } catch (e) { return null; } },
@@ -159,9 +232,27 @@ function makeHost() {
     },
 
     // ── Economy ────────────────────────────────────────────────────────────
-    gems: () => { try { const n = Number(B.gems()); return isFinite(n) ? n : 0; } catch (e) { return 0; } },
+    /* 🔴 `number | null`, AND `null` IS NOT `0`. This is the one accessor in the
+       adapter allowed to return null for a numeric reading, and it is the one
+       that had to be: round 1 collapsed an unreadable balance to `0` in BOTH
+       layers, so "the reading failed" and "the player is broke" were the same
+       value. A bridge whose gems() threw therefore made rewards.payCost charge
+       1,600 Cinder through spendGems and then report
+       {ok:false, why:'Not enough Cinder.'} off the re-read — and the branch
+       below toasted that and returned WITHOUT refunding. The money was gone,
+       and the `before === null` fallback rewards.js is written around was
+       unreachable code that read as defence-in-depth and provided none.
+       rewards.js now takes each leg in its safe direction: an unreadable
+       balance disables a PAID choice, never turns a real charge into a refusal,
+       and never reports a landed credit as lost.
+       ⚠ Math.floor, not `| 0` — `| 0` is a 32-bit truncation and a wallet past
+       2,147,483,647 comes back negative.
+       ⚠ bondOf() above keeps returning 0 for a missing row. That is a real
+       answer, not a failed reading, and rewards.js does not treat it as one. */
+    gems: () => { try { const n = Number(B.gems()); return isFinite(n) ? Math.floor(n) : null; } catch (e) { return null; } },
     /* ⚠ Returns TRUE for n <= 0 and, on insufficient funds, returns false and
-       does NOTHING ELSE — no toast, no clamp, no render (index.html:64434).
+       does NOTHING ELSE — no toast, no clamp, no render (spendGems,
+       index.html:64490).
        rewards.canAfford() gates the button and this file toasts the refusal;
        an ungated button would simply do nothing when pressed. */
     spendGems: (n) => { try { return B.spendGems(n) === true; } catch (e) { return false; } },
@@ -170,7 +261,7 @@ function makeHost() {
        to Math.max(0, …) and returns early — a durable client/server divergence.
        ⚠ `reason` is passed through and never defaulted. addGems falls back to
        the literal 'addGems', and that anonymous label is precisely why the
-       Cinder supply could not be audited (index.html:64447-64453). */
+       Cinder supply could not be audited (index.html:64506-64513). */
     addGems: (n, reason) => { try { return B.addGems(n, reason) !== false; } catch (e) { return false; } },
     grantCard: (opts) => { try { const c = B.grantCard(opts); return (c && c.id) ? c : null; } catch (e) { return null; } },
 
@@ -203,7 +294,15 @@ function host() {
    ════════════════════════════════════════════════════════════════════════════
    Two variables, both deliberately module-level and neither persisted. The
    instance is a view of one decision in progress; if the page reloads mid
-   dilemma, nothing was spent and nothing moved, and the offer is still there. */
+   dilemma, nothing was spent and nothing moved, and the offer is still there.
+
+   ⚠ "the offer is still there" IS A CLAIM ABOUT engine.openDilemma(), not about
+   these two variables, and round 1 made it without earning it: the offer was
+   re-seeded from the clock on every open, so closing and reopening the modal
+   rerolled the dilemma AND its choice set, and a player could shop the corpus
+   for the biggest payout before committing. The offer is now PINNED in the
+   persisted blob for the length of the cooldown, which is what makes the
+   sentence above true across a reload as well as across a close. */
 let _instance = null;   // the Instance currently on screen, or null
 let _busy = false;      // resolve re-entrancy lock; released in a finally
 
@@ -215,8 +314,13 @@ let _busy = false;      // resolve re-entrancy lock; released in a finally
    to be inferred:
 
      1. payCost      — a refusal here means NOTHING has happened yet. Abort clean.
-     2. commit       — state first, because it is the step that CAN fail. A
-                       failure refunds the cost and leaves bond untouched.
+     2. commit       — state first, because it is the step that CAN fail, and it
+                       is ATOMIC: engine.saveState() snapshots the blob, writes,
+                       and puts the old one back if the save did not land. So
+                       `commit() !== true` means Profile.dilemma is byte-for-byte
+                       what it was — same influence, same seen, same recent, same
+                       nextAt, same resolved, same pinned offer. A failure
+                       refunds the cost and leaves bond untouched.
      3. applyStances — bond, AFTER commit, because adjustBond is NOT INVERTIBLE:
                        temperament scales gains and losses by different factors,
                        so +5 then −5 does not return a Vain unit to where it
@@ -229,7 +333,7 @@ let _busy = false;      // resolve re-entrancy lock; released in a finally
      4. grant        — Cinder and the card. Both persist themselves.
      5. save         — one save for the whole resolution rather than eight;
                        saveProfile() stringifies the entire Profile (50–200 ms,
-                       up to 800 ms on the slow path, index.html:70835-70839).
+                       up to 800 ms on the slow path, index.html:70909-70913).
                        A failure here is REPORTED, not unwound: the state
                        committed and the rewards landed, only the bond ticks are
                        at risk, and taking a granted card back off a player to
@@ -267,12 +371,25 @@ async function resolve(choiceId) {
     // ── 2. STATE ──────────────────────────────────────────────────────────
     const influenceBefore = influenceOf(h);
     if (commit(h, inst, choice, influenceDelta(choice)) !== true) {
-      /* The one refund path in the feature. It gives back the Cinder and says
-         so; it does NOT recover the 2% Foundation spend tax the _gemsTaxTick
-         poll already billed on the original spend (index.html:56789). That
-         asymmetry is accepted rather than reaching for _gemsTaxExempt, because
-         this branch only runs on a save that did not persist — rare, and
-         already being reported to the player rather than hidden. */
+      /* 🔴 THE CINDER IS THE ONLY THING THAT NEEDS UNWINDING HERE, and that is a
+         guarantee rather than an oversight. engine.saveState() restored the
+         previous blob before commit() returned false, so no standing moved, no
+         `seen` stamp was set, no `recent` slot was burned, no cooldown was armed
+         and the offer is still pinned to the same dilemma. Bond has not been
+         touched — step 3 runs after this — and the card grant has not run.
+         ⚠ DO NOT ADD A STATE RESTORE HERE. A second unwind path is a second
+         place for round 1's bug to come back, and the two would drift. The one
+         atomic write is engine.saveState(); this branch trusts it. The words in
+         the toast below are now true in both directions, which is the whole
+         point: round 1 said "The Heights did not record your call" while the
+         resolution was in fact recorded and about to be uploaded.
+
+         It does NOT recover the 2% Foundation spend tax the _gemsTaxTick poll
+         may already have billed on the original spend (_gemsTaxTick,
+         index.html:56849). That asymmetry is accepted rather than reaching for
+         _gemsTaxExempt, because putting a tax-suppression hole on the bridge to
+         recover a few Cinder on a rare, already-reported path is the worse
+         trade. It is stated here rather than hidden. */
       const back = refundCost(h, choice);
       h.toast(back
         ? '⚠ The Heights did not record your call. Your Cinder came back.'
@@ -291,12 +408,21 @@ async function resolve(choiceId) {
        the multiplier mid-transaction would make the preview a lie by exactly
        the amount of the delta. The standing they earn here scales the NEXT one.
 
-       The rng is derived from the instance seed and the choice id, so the
-       outcome is reproducible from (dilemma.id, openedAt, choiceId) alone and a
-       bug report is actionable. It is deliberately not `makeRng(instance.seed)`
-       reconstructed: that stream's first draws were already consumed by
-       rollChoices() inside openDilemma, so re-creating it would tie the reward
-       roll to the same number that picked the choice count. */
+       The rng is derived from the instance seed and the choice id, so WHETHER a
+       card drops and in WHICH RARITY BAND is reproducible from
+       (dilemma.id, openedAt, choiceId) alone — that much of a bug report is
+       actionable. ⚠ WHICH CARD IS NOT. The identity is picked by three
+       unseeded `Math.random()` sites inside the bridge's grantCard
+       (index.html:207945, 207951 — that one inside a six-iteration loop — and
+       207953), over a pool that depends on the player's own Forge settings. So
+       replaying the triple reproduces the land/band decision and a DIFFERENT
+       card every run. Threading the rng through grantCard would make the
+       stronger claim true; it was rejected as a bridge-surface change made to
+       satisfy a comment. The claim is narrowed instead.
+       It is deliberately not `makeRng(instance.seed)` reconstructed: that
+       stream's first draws were already consumed by rollChoices() inside
+       openDilemma, so re-creating it would tie the reward roll to the same
+       number that picked the choice count. */
     const rng = makeResolveRng(inst, choice);
     const rolled = rollReward(choice, inst.influenceAtOpen, rng);
     const gift = grant(h, inst, choice, rolled);
@@ -358,14 +484,38 @@ function makeResolveRng(inst, choice) {
    4. THE HANDLER SEAM
    ════════════════════════════════════════════════════════════════════════════
    render.js never touches the bridge, never calls an RNG and never writes
-   state. Everything it needs to draw a stance, a preview delta, an effect line
-   or a disabled button arrives through these six functions, and each one is
-   already total on its own — render.js's callH() still supplies a typed
-   fallback on top, which is belt and braces rather than duplication. */
+   state. Everything it needs to draw a stance, a preview delta, an effect line,
+   a pole name or a disabled button arrives through these seven functions, and
+   each one is already total on its own — render.js's callH() still supplies a
+   typed fallback on top, which is belt and braces rather than duplication. */
 function handlersFor(inst) {
   return {
     stance: (unit, choice) => stanceFor(unit, choice),
     preview: (unit, choice) => previewBond(unit, choice),
+    /* 🏷 THE POLE LABEL, HANDED OVER RATHER THAN TRANSCRIBED. LQ_POLE_LABEL
+       (index.html:73050) is the game's own vocabulary — '⚔ Honor', '🕊 Mercy'.
+       render.js may not call the bridge, and copying eight labels and their
+       emoji into the render layer would put the player-facing spelling of the
+       value system in two places that can drift. So it comes through the seam,
+       like every other fact render.js needs.
+       Total by construction: a missing table, a missing pole, a bridge that
+       throws — every path falls back to the capitalised pole id, which is what
+       render.js printed before this existed. "Honor" is not as pretty as
+       "⚔ Honor" and it can never be wrong. */
+    poleLabel: (p) => {
+      try {
+        const s = String(p || '');
+        const cap = s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+        const h = host();
+        /* h.values() legitimately returns null — the tables are read through
+           `typeof` guards on the bridge side, so an older index.html hands back
+           null rather than throwing. Guard it; do not dereference it. */
+        const v = (h && typeof h.values === 'function') ? h.values() : null;
+        const t = (v && v.poleLabel && typeof v.poleLabel === 'object') ? v.poleLabel : null;
+        const lbl = t ? t[s] : null;
+        return (typeof lbl === 'string' && lbl) ? lbl : cap;
+      } catch (e) { return String(p || ''); }
+    },
     /* The influence the dilemma OPENED at, matching the value rollReward() is
        given at resolve. One number, quoted once, paid once. */
     describe: (choice) => describeChoice(choice, inst.influenceAtOpen),
@@ -437,6 +587,10 @@ const MythicDilemmas = {
     } catch (e) { return null; }
   },
 
+  /* A COPY, always — the adapter's state() clones on the way out, so nothing
+     reachable from here is the object Profile.dilemma actually holds. There is
+     deliberately no matching public mutator: writes go through the resolve
+     transaction or through _save() below, never by editing what this returns. */
   state() { const h = host(); try { return h ? ensureState(h) : {}; } catch (e) { return {}; } },
   influence() { const h = host(); try { return h ? influenceOf(h) : 0; } catch (e) { return 0; } },
   rank() { try { return rankFor(MythicDilemmas.influence()); } catch (e) { return null; } },

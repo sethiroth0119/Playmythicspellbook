@@ -10,38 +10,82 @@
    `window`. An ES module cannot see them, and `window.Profile` is `undefined`
    however global `const Profile` looks. There is not one bare global below.
    Cinder moves only through `host.spendGems` / `host.addGems`, which are the
-   bridge's wrappers over the sanctioned helpers (index.html:64430 / 64454).
+   bridge's wrappers over the sanctioned helpers (`spendGems`, index.html:64475
+   / `addGems`, index.html:64499).
    `Profile.gems` is never written, never read, never named except in comments.
 
-   💰 WHY THE PAYOUTS ARE SMALL, AND WHAT BOUNDS THEM.
-   `sql/AUDIT_farmed_cinder.sql` exists because of a mint that "left NO
+   🔴 THE BALANCE READS `number | null`, AND THE DIFFERENCE IS THE FEATURE.
+   Round 1 built this file around an "unreadable balance" fallback that could
+   never fire. Both wrappers on the way here collapsed every failure to the
+   number 0 — `gems: () => { … return isFinite(n) ? n : 0; } catch { return 0; }`
+   — so "the bridge threw" and "the player is broke" arrived as the same value.
+   Driven against a bridge whose gems() throws, `payCost` really charged 1,600
+   Cinder, computed `moved = 0 - 0`, and returned `{ ok:false, why:'Not enough
+   Cinder.' }`. index.js toasts that and aborts, and the only refund path in the
+   feature hangs off a COMMIT failure, so it never ran: the money was simply
+   gone. The mirror case reported `cinder: 0` and "the purse never arrived" on
+   900 Cinder that had landed.
+   CONTRACT-R2 §2 settles it at the seam. `host.gems()` returns a number, or
+   `null` when the balance could not be read; `0` now means zero Cinder and
+   nothing else. Everything below reads it through `readGems()` and branches on
+   null EXPLICITLY — and the direction of the fallback is chosen per leg,
+   because "safe" points a different way for a charge than for a credit:
+     • canAfford  — unreadable ⇒ FALSE. A paid choice we cannot price is
+       disabled. Every dilemma authors a free refusal, so an unreadable wallet
+       degrades the dilemma; it can never block it.
+     • payCost    — `spendGems`'s own `true` is AUTHORITATIVE. The re-read may
+       only turn a false NEGATIVE into a success; it may never turn a real
+       charge into a refusal. That inversion is what took the 1,600.
+     • grant      — unreadable ⇒ report the credit as DELIVERED, bounded by
+       `addGems`'s own boolean. Telling a player their reward failed when it
+       landed is the lie that matters here; the other direction costs them
+       nothing they were promised.
+     • refundCost — unreadable ⇒ fall back to the mutator's boolean, and the
+       caller prints a different sentence for each.
+   The `has(host, 'gems')` guard stays and it is not belt-and-braces: `sw.js`
+   caches index.html and /src/* on separate keys, so a freshly-updated module
+   can and does run against a cached index.html whose bridge has no `gems`
+   accessor at all.
+
+   💰 WHY THE PAYOUTS ARE SMALL, AND WHAT ACTUALLY BOUNDS THEM.
+   `sql/AUDIT_farmed_cinder.sql:15` exists because of a mint that "left NO
    distinguishing record — a farmed Cinder and an earned Cinder are the same
    integer in the same column. There is no 'exploit' flag to filter on."
-   `sql/034_wallet_credit_bounds.sql` records the live distribution this feature
-   joins: `addGems max 250,000, MEDIAN 2, over 65k rows`. A new faucet that
-   cannot be told apart after the fact must therefore be small enough that it
-   never needs telling apart. Four things bound it, and all four are enforced
-   in this file rather than assumed:
-     1. The BAND. Cinder amounts come from `DILEMMA_ECON.cinderBand`
+   `sql/034_wallet_credit_bounds.sql:18` records the live distribution this
+   feature joins: `addGems max 250,000, MEDIAN 2, over 65k rows`. A new faucet
+   that cannot be told apart after the fact must therefore be small enough that
+   it never needs telling apart. Four things bound it:
+     1. The BAND — here. Cinder amounts come from `DILEMMA_ECON.cinderBand`
         (120 / 400 / 900) and nowhere else — a choice names a band key, never
-        a number.
-     2. The CHANCE gate. `reward.chance` decides whether a reward lands at all,
-        and `validateCorpus()` caps the share of choices that carry any reward
-        at `maxPayingRatio`. "A dilemma that always pays is a vending machine."
-     3. The CLAMP. `influenceValue` is clamped into the table's own range before
-        it can scale anything, and the result is clamped to MAX_CINDER_GRANT
-        below — the largest number the table can express. A corrupt save with
-        `influence: 10000` cannot turn a 400 into a fortune.
-     4. The CADENCE. `offerCooldownMs` is 45 minutes, so the whole feature is
-        capped at roughly 1.3 resolutions an hour before any of the above.
+        a number, and an unknown key pays nothing.
+     2. The CHANCE gate — here. `reward.chance` decides whether a reward lands
+        at all, rolled once per resolution in `rollReward()`.
+     3. The CLAMP — here. `influenceValue` is clamped into the table's own range
+        before it can scale anything, and the result is clamped to
+        MAX_CINDER_GRANT below — the largest number the table can express. A
+        corrupt save with `influence: 10000` cannot turn a 400 into a fortune.
+     4. The CADENCE — NOT here. `offerCooldownMs` is 45 minutes, so the feature
+        is capped at roughly 1.3 resolutions an hour, but that gate lives in
+        engine.js and this file cannot enforce it.
+   ⚠ AND ONE THAT IS NOT A BOUND AT ALL, corrected in round 2 because the only
+   thing this header is worth is being literally true. It used to list
+   `validateCorpus()`'s `maxPayingRatio` — the 0.5 "a dilemma that always pays
+   is a vending machine" ratio — beside the three this file actually enforces.
+   It does not belong there: grep across /src/dilemma finds exactly one caller
+   of `validateCorpus`,
+   `MythicDilemmas.debug()` in index.js, so nothing on the open or the resolve
+   path ever evaluates it. It is a DEVELOPER-TIME self-audit of the corpus, and
+   a real one — the corpus sits at 0.134 against a 0.5 ceiling — but a reviewer
+   who trusted the four-way claim would have believed in a runtime guard that
+   does not exist.
    The admin has already switched a Cinder faucet off once for exactly this
-   reason (`GEM_REWARDS` zeroed at index.html:64415-64421 — "it will devalue
-   our money"). This one is built so it never has to be switched off.
+   reason (`GEM_REWARDS` zeroed, index.html:64460-64472 — "it will devalue our
+   money"). This one is built so it never has to be switched off.
 
    🔥 EVERY CREDIT CARRIES A DISTINCT REASON. `addGems(n, reason)` exists
    because "every Cinder faucet used to land in wallet_ledger as either
    'addGems' or an anonymous reconcile blob… Neither says WHERE the money came
-   from, so the Cinder supply could not be audited" (index.html:64447-64453).
+   from, so the Cinder supply could not be audited" (index.html:64491-64496).
    Every credit from here reads `Dilemma: <dilemmaId>/<choiceId>` — greppable,
    attributable, one row per decision. sql/034 is blunt that this is for
    AUDITABILITY and never for authorisation: "p_reason CARRIES NO AUTHORITY.
@@ -50,9 +94,13 @@
 
    🔴 NO ROLLBACK, AND THAT IS THE DESIGN — see §"THE BASKET" above `grant()`.
    ⚙ ONE TUNING TABLE. Every number a reward is worth lives in `DILEMMA_ECON`
-   (data.js) and nowhere else — the `_opEcon()` habit as index.html:80478-80480
-   states it for CORP_LAWS. The only bare numbers below are 0, 1 and the 100
-   that is the definition of "per cent".
+   (data.js) and nowhere else — the `_opEcon()` habit as index.html:80536-80537
+   states it for CORP_LAWS ("Every number a policy is worth lives in CORP_LAWS
+   and nowhere else"). Strip the comments and the only bare numbers left below
+   are 0, 1 and the 100 that is the definition of "per cent" — including in
+   REFUND_CEILING, whose fallback is written `-1 >>> 1` precisely so that the
+   32-bit boundary the bridge's own `n | 0` imposes is DERIVED and named rather
+   than typed as a magic 2147483647.
    ⚠ THIS FILE NEVER WRITES DILEMMA STATE. It computes an Influence *delta* and
    hands it back; `engine.commit()` applies it. That split keeps the module DAG
    acyclic (rewards.js must not import engine.js) and keeps "who wrote this
@@ -79,6 +127,32 @@ function fmt(n) { try { return int(n).toLocaleString(); } catch (e) { return Str
    credit silently refused against a stub host. Every call below is
    `host.thing(...)` so the receiver is never lost. */
 function has(host, name) { return !!(host && typeof host[name] === 'function'); }
+
+/* 🔴 THE ONE PLACE THE BALANCE IS READ. Returns a whole number of Cinder, or
+   `null` for "could not be read" — the distinction CONTRACT-R2 §2.1 settles and
+   the header above narrates. Four different things arrive here as null and they
+   are all the same answer to the only question a caller has:
+     • the host has no `gems` accessor at all (a service-worker-cached
+       index.html whose bridge predates it);
+     • the accessor threw (`Profile` not yet assigned during boot);
+     • it returned null, which is now the seam's own word for unreadable;
+     • it returned NaN / Infinity / a string that is not a number.
+   Math.floor rather than `| 0`, because `| 0` is a 32-bit truncation and a
+   balance is not bounded by 32 bits — production has reported a client wallet
+   at 661,147 while the canonical row read 1,143, and the day a wallet passes
+   2^31 a `| 0` read would report it as negative and every affordability test in
+   this file would invert. This is a READ; it never touches the wallet, so it is
+   safe to call twice around a mutator, which is exactly what the verification
+   below does. */
+function readGems(host) {
+  if (!has(host, 'gems')) return null;
+  let raw;
+  try { raw = host.gems(); } catch (e) { return null; }
+  if (raw === null || raw === undefined) return null;
+  const n = Number(raw);
+  if (!isFinite(n)) return null;
+  return Math.floor(n);
+}
 
 /* Influence arrives from a save file, so it is treated as hostile input every
    time it is read. Clamping HERE rather than trusting engine.ensureState() is
@@ -109,11 +183,44 @@ const MAX_CINDER_GRANT = (() => {
   } catch (e) { return 0; }
 })();
 
+/* 🔴 THE CEILING ON A REFUND — the round-2 fix for the only wallet mutator in
+   this file that had no upper bound while `grant()` had one. A critic pushed
+   1e12 through `refundCost` and the bridge's `addGems(n | 0, …)` turned a
+   3,000,000,000 refund into a credit of −1,294,967,296: a NEGATIVE addGems,
+   which decrements Profile.gems locally while `_serverMirrorCredit` clamps to
+   Math.max(0, …) and returns early — the exact durable client/server
+   divergence the comment above `refundCost` says this function avoids by "only
+   ever adding". One Math.min closes it.
+
+   The number is read, never typed. CONTRACT-R2 §5.7 puts `maxChoiceCost` in
+   DILEMMA_ECON and makes `validateCorpus`'s R8 refuse any authored cost above
+   it, so the clamp and the corpus can never disagree — that is the whole reason
+   the constant lives in the table (index.html:80536-80537 again).
+   ⚠ THE FALLBACK IS DELIBERATELY NOT A COPY OF THAT NUMBER. Typing 2000 here
+   would be a second copy of the contract, free to drift from data.js the first
+   time somebody retunes it. When the key is unreadable — an older data.js
+   served from the service-worker cache beside a newer rewards.js, the same
+   split that motivates the guard in readGems — we fall back to the boundary the
+   DAMAGE has rather than the boundary the design has: `-1 >>> 1` is the largest
+   integer the bridge's `n | 0` returns unchanged. That still makes a negative
+   refund unreachable, which is the defect, and it can never shrink a refund
+   below what `payCost` actually charged, which a guessed economy number could.
+   Be clear about what that costs: with the key missing, an absurd authored cost
+   is refunded in full instead of clamped. A refund is the player's own money
+   coming back — over-returning it is a disappointment for an auditor, where
+   under-returning it is a theft. */
+const REFUND_CEILING = (() => {
+  try {
+    const n = Math.floor(Number(DILEMMA_ECON.maxChoiceCost));
+    return (isFinite(n) && n > 0) ? n : (-1 >>> 1);
+  } catch (e) { return (-1 >>> 1); }
+})();
+
 /* Standing scales the purse: ×0.6 at influence 0, ×1.0 at 50, ×1.4 at 100.
    This is Influence consumer #2 of three (CONTRACT §9.3) and the only one that
    lives in this file — consumer #1 is the eligibility band in engine.eligible()
    and #3 is the choice-count floor in engine.rollChoices(). The relationship is
-   the one NODE_TIERS has to the Cinder pool slice (src/nodes/tiers.js:30-38 —
+   the one NODE_TIERS has to the Cinder pool slice (src/nodes/tiers.js:6-7 —
    "the pool now distributes by standing rather than first-come-first-served")
    and frRankFor has to the Foundation Reserve. */
 function rewardMult(influenceValue) {
@@ -125,11 +232,12 @@ function rewardMult(influenceValue) {
 /* 🔴 ONE ARITHMETIC, TWO CALLERS. `describeChoice()` shows this number and
    `rollReward()` pays it. They call the same function on purpose: the moment
    a preview computes its own version of a payout, the two drift and the modal
-   starts lying. That drift is a live bug in a reference file — house.camp.js:
-   151-153 promises "No rest-quality modifier here" while house.camp.js:88 runs
-   at CAMP_REST_QUALITY = 0.75. The same rule the citizens use for speech
-   (citizens.city.js:406-408 — the bubble shows the worst mood term VERBATIM
-   "so the bubble and the dialog can never disagree"), applied to money. */
+   starts lying. That drift is a live bug in a reference file —
+   src/resonance/house.camp.js:152 promises "No rest-quality modifier here"
+   while the same file's line 88 runs at CAMP_REST_QUALITY = 0.75. The same rule
+   the citizens use for speech (src/city/citizens.city.js:407-410 — the bubble
+   shows the worst mood term VERBATIM "so the bubble and the dialog can never
+   disagree"), applied to money. */
 function cinderFor(choice, influenceValue) {
   const key = choice && choice.reward && choice.reward.cinder;
   if (!key) return 0;                                   // card-only rewards are legal
@@ -137,13 +245,13 @@ function cinderFor(choice, influenceValue) {
   if (!(num(band) > 0)) return 0;                       // an unknown band key pays nothing
   const raw = Math.round(num(band) * rewardMult(influenceValue));
   // Math.max(1, …) so a real reward can never round away to zero, mirroring the
-  // anti-rounding guard adjustBond uses on bond (index.html:72533-72534).
+  // anti-rounding guard adjustBond uses on bond (index.html:72592-72594).
   return Math.min(MAX_CINDER_GRANT, Math.max(1, raw));
 }
 
 /* A choice's Cinder cost, normalised. Anything that is not a positive number is
    "no cost" — a cost leg that is present but zero is not a price, and letting
-   it through would call spendGems(0), which returns TRUE (index.html:64432)
+   it through would call spendGems(0), which returns TRUE (index.html:64477)
    and reads in a log as a successful charge that never happened. */
 function costOf(choice) {
   const n = int(choice && choice.cost && choice.cost.cinder);
@@ -183,8 +291,7 @@ function probOf(x, fallback) {
    Every player-facing number in this feature is generated here from
    DILEMMA_ECON and the choice — never hand-written in data.js. Retuning the
    table retunes the copy, and the corpus author cannot promise a payout the
-   economy will not make. That is the single most reviewable difference between
-   this feature and the reference files.
+   economy will not make.
 
    The chance is SHOWN, not hidden. "Not every dilemma pays" is the mechanism
    the whole reward design rests on; a player who is not told the odds reads a
@@ -230,7 +337,7 @@ export function describeChoice(choice, influenceValue) {
     if (inf > 0) out.influenceText = '+' + inf + ' standing';
     // U+2212 MINUS, not a hyphen: it sits on the same optical line as the plus
     // and this codebase already uses it for a computed subtraction in the camp
-    // log ("−26 threat, +rep", index.html:65949).
+    // log ("−${cut} threat, +rep", index.html:65995-65996).
     else if (inf < 0) out.influenceText = '−' + Math.abs(inf) + ' standing';
 
     return out;
@@ -246,43 +353,83 @@ export function describeChoice(choice, influenceValue) {
    Two shipped precedents conflict and picking one makes the ambiguity
    unreachable. `spendGems()` refuses when the player cannot afford it — right
    for a cost, wrong for a fine that must still land. `_reconApplyEffects`
-   (index.html:216107-216108) does a clamped direct decrement instead, which the
-   0.6s `_gemsTaxTick` poll then bills 2% civic tax on, two lines below a comment
-   arguing civic tax should not be booked on a fine. Choosing "cost, always"
-   keeps this feature on the one sanctioned path and out of that argument. */
+   (`_reconApplyEffects`, index.html:216559-216560) does a clamped direct
+   decrement instead, which the 0.6s `_gemsTaxTick` poll then bills 2% civic tax
+   on, a few lines below a comment arguing civic tax should not be booked on a
+   fine. Choosing "cost, always" keeps this feature on the one sanctioned path
+   and out of that argument. */
 
 /* Drives the DISABLED state of the button. This must exist, because
    `spendGems()` returning false is the ONLY thing that happens on insufficient
-   funds — no toast, no clamp, no render (index.html:64434). An ungated button
-   would simply do nothing when pressed, which reads as a broken feature. */
+   funds — no toast, no clamp, no render (index.html:64478). An ungated button
+   would simply do nothing when pressed, which reads as a broken feature.
+
+   ⚠ AN UNREADABLE BALANCE DISABLES A PAID CHOICE, and that is the safe
+   direction rather than a convenient one. We cannot price the call, so we do
+   not offer it. It degrades instead of breaking because every dilemma authors a
+   free refusal that costs nothing (CONTRACT-R2 §3, rule R3, is the machine
+   check that keeps that true) — so the dilemma is always still resolvable, and
+   the player is never trapped in a modal with nothing they can press.
+   The button then reads as "unaffordable" rather than as "unreadable", which is
+   accepted rather than hidden: reaching it requires Profile.gems to be
+   non-finite or the bridge to be missing the accessor, and round 1 behaved
+   identically here (its `| 0` turned the same failure into 0, also
+   unaffordable). Making the modal say which of the two happened would be a
+   render change for a state a player can neither cause nor fix. */
 export function canAfford(host, choice) {
   try {
     const n = costOf(choice);
     // A free choice is affordable without asking anybody. Consulting the host
     // first would let a missing bridge disable every free choice in the modal.
     if (n <= 0) return true;
-    if (!has(host, 'gems')) return false;     // cannot verify a real cost ⇒ refuse
-    return int(host.gems()) >= n;
+    const bal = readGems(host);
+    if (bal === null) return false;           // cannot verify a real cost ⇒ refuse
+    return bal >= n;
   } catch (e) { return false; }
 }
 
 /* Charge the player. Returns { ok, why }; never throws.
 
-   🔴 THE STRICTNESS HERE IS ASYMMETRIC TO grant()'s, ON PURPOSE.
-   For a CHARGE, an ambiguous return must never be read as "paid" — that hands
-   out a free choice. For a CREDIT (see grant) an ambiguous return must never be
-   read as "failed" — this repo has already been bitten by a mutator that
-   returned undefined on success and made a rollback path fire on a leg that
-   actually worked, which is why the index.html bridge wrappers end in
-   `return true` rather than falling off the end (settle.js's io contract).
-   Both directions are then settled by re-reading the balance, which is the
-   settle.js "VERIFIED DELIVERY" precedent: it turns "should not happen" into
-   "cannot happen unnoticed".
+   🔴 THE MUTATOR'S OWN `true` IS AUTHORITATIVE ON A CHARGE. THE RE-READ IS NOT.
+   This is the round-2 correction and it is the most important line in the file.
+   Round 1 had it the other way round — "balance is the authority when we can
+   read it" — and the balance is exactly the thing that can lie. `spendGems`
+   cannot: it returns `true` only after `Profile.gems` has already been
+   decremented on the previous statement (index.html:64475-64479), so a `true`
+   from it is a fact about what happened, not a report. A balance read is a
+   fact about what the wallet says NOW, which is a different question the moment
+   anything else in the tab has touched it.
+   With the seam collapsing an unreadable balance to 0 (see the header), the
+   inversion charged a player 1,600 Cinder and told them "Not enough Cinder.",
+   and index.js aborted without refunding. So the rule is now one-directional:
 
-   The re-read is sound because `spendGems` decrements `Profile.gems`
-   synchronously (index.html:64433) and only fires the cloud write afterwards;
-   nothing — including the 0.6s tax poll — can run between two adjacent
-   synchronous statements. */
+     THE RE-READ MAY ONLY TURN A FALSE NEGATIVE INTO A SUCCESS.
+     IT MAY NEVER TURN A REAL CHARGE INTO A REFUSAL.
+
+   The predicate below is CONTRACT-R2 §2.3's table, in its order:
+
+     cost <= 0                        → ok       (spendGems is never called)
+     no spendGems accessor            → refuse   (nothing was charged)
+     said === true                    → ok       (authoritative)
+     moved !== null && moved >= cost  → ok       (spendGems under-reported)
+     moved !== null && 0 < moved < c  → refuse, and say the charge was partial
+     otherwise                        → refuse   ('Not enough Cinder.')
+
+   `moved >= cost` rather than `=== cost` so a concurrent legitimate spend in
+   another tab cannot make a real charge look like a failure.
+
+   ⚠ THE PARTIAL BRANCH DOES NOT REFUND, and that is a decision. `spendGems`
+   cannot partially charge — it is a single guarded subtraction — so reaching
+   that branch means something OUTSIDE this file moved the balance between our
+   two reads, and we cannot attribute the movement. Crediting the difference
+   back would be minting against another system's spend. Refusing the decision
+   and naming what we saw is the honest end of it; the player can see their own
+   wallet and a generic "not enough" would read as us lying to them.
+
+   The re-read is sound in the ordinary case because `spendGems` decrements
+   `Profile.gems` synchronously (index.html:64479) and only fires the cloud
+   write afterwards; nothing — including the 0.6s tax poll — can run between two
+   adjacent synchronous statements. */
 export function payCost(host, choice) {
   try {
     const n = costOf(choice);
@@ -290,33 +437,20 @@ export function payCost(host, choice) {
 
     if (!has(host, 'spendGems')) return { ok: false, why: 'The ledger is unavailable — nothing was charged.' };
 
-    const canRead = has(host, 'gems');
-    let before = null, after = null;
-    try { before = canRead ? int(host.gems()) : null; } catch (e) { before = null; }
+    const before = readGems(host);
 
     let said = false;
     try { said = host.spendGems(n) === true; } catch (e) { said = false; }
 
-    try { after = canRead ? int(host.gems()) : null; } catch (e) { after = null; }
-
+    const after = readGems(host);
     const moved = (before === null || after === null) ? null : (before - after);
 
-    // Balance is the authority when we can read it; the return value only when
-    // we cannot. `moved >= n` rather than `=== n` so a concurrent legitimate
-    // spend in another tab cannot make a real charge look like a failure.
-    if (moved === null) {
-      if (said) return { ok: true, why: '' };
-      return { ok: false, why: 'Not enough Cinder.' };
+    if (said) return { ok: true, why: '' };
+    if (moved !== null && moved >= n) return { ok: true, why: '' };
+    if (moved !== null && moved > 0 && moved < n) {
+      return { ok: false, why: 'The charge only partly went through — the decision was not taken.' };
     }
-    if (moved >= n) return { ok: true, why: '' };
-    if (moved <= 0) return { ok: false, why: 'Not enough Cinder.' };
-
-    // Cinder left the wallet but not the full amount. spendGems cannot do this,
-    // so reaching here means something outside this file moved the balance
-    // mid-charge. Refusing is right — the choice does not proceed — and saying
-    // so plainly is better than a generic "not enough", because the player can
-    // see their own wallet and would otherwise think we are lying to them.
-    return { ok: false, why: 'The charge only partly went through — the decision was not taken.' };
+    return { ok: false, why: 'Not enough Cinder.' };
   } catch (e) {
     return { ok: false, why: 'The ledger refused the charge — nothing was taken.' };
   }
@@ -327,31 +461,92 @@ export function payCost(host, choice) {
    (CONTRACT §9.4 step 2). The player paid for a decision the save never
    recorded, so the money comes back.
 
+   🔴 THE BOOLEAN HAS TO CARRY INFORMATION, BECAUSE THE CALLER PRINTS IT.
+   index.js branches on this return to choose between "Your Cinder came back."
+   and "the refund could not be confirmed." Round 1 returned
+   `host.addGems(n, …) !== false`, which against the shipped stack is
+   CONSTANT TRUE: `addGems` returns undefined unconditionally
+   (index.html:64499-64520, there is no return statement) and the bridge wrapper
+   is `try { addGems(n | 0, …); return true; } catch { return false; }`. So the
+   sentence was printed whether or not the money came back, and a driver proved
+   it against an addGems that credited nothing. This was the one wallet mutator
+   in the file that was neither verified nor clamped — and it is the refund
+   path, the one that runs when the player has ALREADY been charged.
+   It now does both, the way `payCost` and `grant` do:
+     • CLAMP to REFUND_CEILING, so `n | 0` on the far side of the bridge can
+       never turn a large positive into a negative credit.
+     • VERIFY by reading the balance before and after. `true` iff the balance is
+       readable and rose by at least `n`, or the balance is unreadable and
+       `addGems` did not say `false`. When the wallet cannot be read there is
+       nothing better than the mutator's word, and the caller has a sentence for
+       exactly that case.
+   The day `addGems` becomes a path that can decline — sql/034 states the
+   planned real fix is per-faucet server RPCs, after which `wallet_credit` is
+   revoked from `authenticated` — this boolean starts being the difference
+   between a player who was told the truth and one who was not.
+
+   ⚠ AND THE ONE CASE THIS STILL CANNOT SEE, stated rather than glossed, because
+   a "there is no third outcome" claim that a driver can break is worth less
+   than an honest bound. When the balance is UNREADABLE **and** `addGems` credits
+   nothing while returning its usual undefined, this returns `true` and the
+   player reads "Your Cinder came back." over money that did not come back.
+   Driven, and it is the only surviving row of the sweep in which the report and
+   the wallet disagree. There is no fix from inside this function: with no
+   readable balance and a mutator that cannot decline, there is no third source
+   of truth to consult, and inventing pessimism ("assume it failed") would make
+   the far more common honest refund read as a failure. It shrank from round 1's
+   EVERY case to this intersection of two simultaneous host failures, and it
+   closes entirely the moment either the balance is readable or `addGems`
+   reports. That is the real state of it.
+
+   ⚠ NOTED DISAGREEMENT WITH CONTRACT-R2 §2.3, implemented as written.
+   The amendment says "refuse (return false) if n <= 0". `costOf()` returns 0
+   for a FREE choice, so a failed commit on a free refusal now returns false and
+   the player reads "the refund could not be confirmed" over a call that cost
+   them nothing. Round 1 returned true there, meaning "you are whole". Both are
+   defensible and the amendment's is implemented: it makes the boolean mean
+   exactly one thing — "a positive credit was verified to land" — and a return
+   value that means two things is how this file got into trouble in the first
+   place. Recorded here rather than quietly re-decided; the copy is index.js's
+   to soften if anyone wants it softened.
+
    ⚠ THE 2% FOUNDATION SPEND TAX DOES NOT COME BACK, and that is stated rather
-   than hidden. `_gemsTaxTick` (index.html:56789-56834) polls every ~0.6s, sees
+   than hidden. `_gemsTaxTick` (index.html:56834-56880) polls every ~0.6s, sees
    any net decrease of Profile.gems, and bills civic tax on it — so by the time
    this runs, the tax on the original spend may already be booked. The clean fix
-   would be `_gemsTaxExempt` (index.html:56777), and it was deliberately NOT put
+   would be `_gemsTaxExempt` (index.html:56822), and it was deliberately NOT put
    on the bridge: this path only runs on a save failure, which is rare and is
    already being reported to the player, and adding a tax-suppression hole to
    the bridge to recover a few Cinder on a failure path is a worse trade than
    eating the asymmetry. If refunds ever become routine, revisit this first.
 
    ⚠ NEVER a negative addGems. `addGems` guards on `amount === 0`
-   (index.html:64456), so a negative decrements Profile.gems locally while
+   (index.html:64501), so a negative decrements Profile.gems locally while
    `_serverMirrorCredit` clamps to Math.max(0,…) and returns early — a durable
-   client/server divergence. This function only ever adds. */
+   client/server divergence. This function only ever adds, and REFUND_CEILING
+   is what makes that sentence true rather than intended. */
 export function refundCost(host, choice) {
   try {
-    const n = costOf(choice);
-    if (n <= 0) return true;                   // nothing was charged; nothing to give back
+    const n = Math.min(int(costOf(choice)), REFUND_CEILING);
+    if (!(n > 0)) return false;                // nothing positive to credit back
     if (!has(host, 'addGems')) return false;
     // A refund is its own faucet in wallet_ledger and gets its own greppable
     // label. It carries the choice id but not a dilemma id, because refundCost
     // is deliberately callable without an instance — the failure it exists for
     // is a save that did not persist, and the instance is not what failed.
     const cid = (choice && choice.id) ? String(choice.id) : 'unknown';
-    return host.addGems(n, 'Dilemma refund: ' + cid) !== false;
+
+    const before = readGems(host);
+    // GENEROUS ON THE RETURN VALUE, STRICT ON THE BALANCE: `!== false`, because
+    // a host adapter that returns undefined from a credit that actually worked
+    // must not make this look like a failure. The re-read below is what decides
+    // whenever it can decide.
+    let said = false;
+    try { said = host.addGems(n, 'Dilemma refund: ' + cid) !== false; } catch (e) { said = false; }
+    const after = readGems(host);
+
+    if (before !== null && after !== null) return (after - before) >= n;
+    return said;
   } catch (e) { return false; }
 }
 
@@ -359,10 +554,18 @@ export function refundCost(host, choice) {
    3. THE ROLL — PURE
    ════════════════════════════════════════════════════════════════════════════
    No host, no side effects, no Math.random(). The rng arrives from the
-   instance (engine.makeRng over the instance seed), so a resolution is
-   reproducible from (dilemma.id, openedAt) alone and a bug report is
-   actionable. Being pure is also what lets the render layer show an honest
-   preview band without minting anything.
+   instance (engine.makeRng over the instance seed), so THIS ROLL is reproducible
+   from (dilemma.id, openedAt, choiceId) and a bug report about the amount is
+   actionable. ⚠ The narrowing is round 2's: what is reproducible is whether a
+   reward landed, how much Cinder, and whether a card was REQUESTED in which
+   rarity band. WHICH card arrives is not — that is three `Math.random()` picks
+   inside the bridge's grantCard (index.html:207860, 207866, 207868) plus
+   rollRarityFromWeights' own (index.html:65006), all on the far side of a seam
+   this module does not thread an rng through. Threading one would be a
+   bridge-surface change to make a comment true, so the comment was narrowed
+   instead. Claiming the whole resolution was reproducible was an overreach.
+   Being pure is also what lets the render layer show an honest preview band
+   without minting anything.
 
    ⚠ NO RNG ⇒ NOTHING PAYS. That is the safe direction and it is deliberate:
    a caller that forgot the rng gets a disappointment, never a payout, and a
@@ -375,8 +578,11 @@ export function rollReward(choice, influenceValue, rng) {
 
     const r = choice.reward;
 
-    // 1. Does the reward land at all? This gate plus validateCorpus's
-    //    maxPayingRatio is the whole of "not every dilemma pays".
+    // 1. Does the reward land at all? This is the RUNTIME half of "not every
+    //    dilemma pays", and it is the only half that runs. validateCorpus's
+    //    maxPayingRatio bounds how many choices may carry a reward AT ALL, but
+    //    it is a developer-time self-audit reachable only from
+    //    MythicDilemmas.debug(); this line is what a player actually meets.
     const landP = probOf(r.chance, 1);
     if (!(rng() < landP)) return none;
 
@@ -447,7 +653,8 @@ export function influenceDelta(choice) {
        LEG 1 — THE CARD, first, because it is the leg that can legitimately
                decline. grantCard() returns null whenever the pack pool is empty,
                which is legal any time Forge.useCustomOnlyPool is on with no
-               published customs (index.html:64909, 64934). A declined card
+               published customs — getCardPoolForPacks, index.html:64954 and 64979). A
+               declined card
                before any credit costs nothing and needs no unwind.
        LEG 2 — THE CINDER, last, because it is the leg with no inverse. Nothing
                runs after it that could want it back.
@@ -469,9 +676,10 @@ export function influenceDelta(choice) {
    exist in a loot table and not in the ledger ("their pile of it is real and
    inert"). The first line of defence is on the far side of the bridge, where
    grantCard picks the CARD OBJECT out of getCardPoolForPacks() and uses
-   `pick.card.id`, so the id provably resolves (index.html:64907-64953). This is
+   `pick.card.id`, so the id provably resolves (MythicDilemmaBridge.grantCard,
+   index.html:207849-207880, over getCardPoolForPacks at 64952). This is
    the second: after the grant, the id is re-resolved through host.cardById()
-   (_cardDefById, index.html:87319) and a miss is reported as a failed leg.
+   (_cardDefById, index.html:87378) and a miss is reported as a failed leg.
    Belt and braces, exactly as settle.js re-reads a balance after addRes().
    ⚠ If the host cannot verify (no cardById accessor) we do NOT flag — an
    unverifiable grant is not a bad grant, and crying wolf on a partial bridge
@@ -548,32 +756,50 @@ export function grant(host, instance, choice, rolled) {
         out.why = out.why || 'The wallet is unavailable — the purse did not arrive.';
         out.lines.push('⚠ The purse was counted out and never arrived. Nothing was taken from you.');
       } else {
-        const canRead = has(host, 'gems');
-        let before = null, after = null;
-        try { before = canRead ? int(host.gems()) : null; } catch (e) { before = null; }
+        const before = readGems(host);
 
         // 🔴 GENEROUS ON A CREDIT: `!== false`, not `=== true`. A host adapter
         // that returns undefined on a credit that actually worked must not make
         // this look like a failure — that exact shape (a mutator returning
         // undefined on success firing a rollback path) is a scar this repo
-        // already carries. The balance re-read below is what really decides.
+        // already carries. The balance re-read below is what really decides,
+        // WHEN IT CAN.
         let said = false;
         try { said = host.addGems(want, reasonFor(instance, choice)) !== false; } catch (e) { said = false; }
 
-        try { after = canRead ? int(host.gems()) : null; } catch (e) { after = null; }
+        const after = readGems(host);
 
-        const delivered = (before === null || after === null)
-          ? (said ? want : 0)
-          : Math.max(0, after - before);
+        /* 🔴 AN UNVERIFIABLE CREDIT IS REPORTED AS DELIVERED. Round 2's fix, and
+           the direction is the opposite of payCost's on purpose.
+           Round 1 read an unreadable balance as `delivered = said ? want : 0`,
+           which sounds equivalent and was not, because the seam collapsed
+           "unreadable" to the number 0 and the branch never ran: a driver saw
+           900 Cinder actually land in the wallet while this function reported
+           `cinder: 0`, `ok: false` and "The purse was counted out and never
+           arrived." Telling a player their reward failed when it landed is the
+           lie that matters — they go looking for money they already have, or
+           they file a bug against a system that worked.
+           The claim is still bounded: we only say "delivered" when `addGems`
+           itself did not decline. Over-reporting is capped at one band times
+           the multiplier (MAX_CINDER_GRANT) on a GIFT the player was not
+           charged for; under-reporting corrodes every reward line in the
+           feature. `verified` is what separates the two, and the readable path
+           below is untouched — it still reports what LANDED, never what was
+           requested. */
+        const verified = (before !== null && after !== null);
+        const delivered = verified ? Math.max(0, after - before) : (said ? want : 0);
 
         out.cinder = delivered;
         if (delivered >= want) {
           out.lines.push('🔥 The ward settled up on the spot — ' + fmt(want) + ' Cinder.');
         } else if (delivered > 0) {
-          // addGems has no upper clamp, so this should be unreachable. Reported
-          // rather than smoothed over: a short credit is exactly the class of
-          // silent loss the verified-delivery check in settle.js exists for,
-          // and guessing a top-up here risks double-crediting on a lying read.
+          // Only reachable on a VERIFIED read — an unverifiable credit is
+          // all-or-nothing above, never partial. addGems has no upper clamp, so
+          // a short landing means something else moved the wallet between our
+          // two reads. Reported rather than smoothed over: a short credit is
+          // exactly the class of silent loss the verified-delivery check in
+          // settle.js exists for, and guessing a top-up here risks
+          // double-crediting on a lying read.
           out.ok = false;
           out.why = out.why || 'Part of the promised Cinder did not arrive.';
           out.lines.push('🔥 Part of the purse arrived — ' + fmt(delivered) + ' Cinder, short of what was counted.');
@@ -597,7 +823,8 @@ export function grant(host, instance, choice, rolled) {
 /* ── Attribution ────────────────────────────────────────────────────────────
    The reason string every credit carries. Built defensively because it must
    never be blank or defaulted: `addGems` falls back to the literal 'addGems'
-   when the reason is missing (index.html:64472), and that anonymous label is
+   when the reason is missing (`reason || 'addGems'`, index.html:64519), and that
+   anonymous label is
    precisely why the Cinder supply could not be audited in the first place.
    A dilemma with a broken instance still produces an attributable row. */
 function choiceRef(instance, choice) {

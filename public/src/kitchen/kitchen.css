@@ -305,7 +305,24 @@
        rather than as two people standing in an empty room */
     radial-gradient(52px 8px at 47% calc(var(--fy2) + 10px), rgba(10,6,3,.8) 0 64%, transparent 76%),
     radial-gradient(8px 12px at 47% calc(var(--fy2) - 8px),  rgba(255,222,164,.7) 0 52%, transparent 74%),
-    radial-gradient(74px 34px at 47% calc(var(--fy2) - 4px), rgba(255,184,96,.22), transparent 74%);
+    radial-gradient(74px 34px at 47% calc(var(--fy2) - 4px), rgba(255,184,96,.22), transparent 74%),
+
+    /* 🔴 AND A LIT TABLE EDGE UNDER **EACH** FIGURE. The round-4 critic read
+       these two as "dark ovals that look like stains rather than props", and
+       the diagnosis is right: a silhouette needs something to be IN FRONT OF,
+       or the eye files it as a mark on the floor. One table between them is not
+       enough, because neither figure is sitting at it — it is off to the side of
+       both. These are the near edge of each figure's own table: a bright warm
+       lip catching the ceiling lamp, its dark top under it, listed LAST so they
+       are drawn in front of the bodies. Two gradients each, no new element, no
+       new blur radius.
+       ⚠ THE LIP IS THIN AND THE TOP IS WIDE. A thick bright ellipse is another
+         blob; what makes a horizontal plane read as a plane is a hard bright
+         line along the near edge with dark behind it. */
+    radial-gradient(46px 3px at 31% calc(var(--fy2) + 15px), rgba(255,214,150,.55) 0 60%, transparent 82%),
+    radial-gradient(50px 11px at 31% calc(var(--fy2) + 20px), rgba(12,7,4,.72) 0 62%, transparent 80%),
+    radial-gradient(50px 3px at 63% calc(var(--fy2) + 17px), rgba(255,214,150,.48) 0 60%, transparent 82%),
+    radial-gradient(54px 12px at 63% calc(var(--fy2) + 22px), rgba(12,7,4,.70) 0 62%, transparent 80%);
 }
 
 
@@ -750,6 +767,33 @@
   color: var(--mk-dim);
 }
 #mythic-kitchen-ov .mk-sec-head b { color: var(--mk-ink); font-weight: 700; letter-spacing: .1em; }
+/* 🔴 A CLASS, NOT `style="padding-left:0"` ELEVEN TIMES. The inline version was
+   the last presentational inline style left in the renderer after the
+   `<style id="mk-wire-css">` string was retired — and it was not harmless: the
+   pass head's new lit fascia declares `padding: 4px 8px`, and an inline
+   `padding-left: 0` outranks any stylesheet rule, so the label printed hard
+   against the left edge of its own pill. An inline style is a rule you cannot
+   see when you are reading this file, which is the whole argument §1 makes. */
+#mythic-kitchen-ov .mk-sec-head.flush { padding-left: 0; }
+#mythic-kitchen-ov .mk-pass > .mk-sec-head.flush { padding-left: 8px; }
+
+/* ── the handful of one-declaration helpers the renderer used to write inline ──
+   Same argument as `.flush` above: eight `style="margin-top:12px"`-shaped
+   attributes were the last presentational inline styles in the module, and each
+   one is a rule that cannot be found by reading this file. They are named and
+   they live here now, so `grep style=` in kitchen.render.js returns ten hits and
+   all ten are data bindings (a bar width, a bin colour, a truck's position). */
+#mythic-kitchen-ov .grow { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#mythic-kitchen-ov .nowrap { white-space: nowrap; }
+#mythic-kitchen-ov .gap-t { margin-top: 12px; }
+#mythic-kitchen-ov .gap-b { margin-bottom: 8px; }
+#mythic-kitchen-ov .mk-short { color: #ffb4bb; }
+#mythic-kitchen-ov .mk-of { opacity: .55; }
+/* Serve is the primary verb on the window card and takes the width Wave-off
+   does not; it was `style="flex:1 1 auto"` on the button itself. */
+#mythic-kitchen-ov .mk-pin-acts .mk-btn.go { flex: 1 1 auto; }
+/* the LOAD button sits under the fill bar it is about */
+#mythic-kitchen-ov [data-act="convoy-load"] { margin-top: 4px; }
 #mythic-kitchen-ov .mk-sec-head .mk-spacer { flex: 1 1 auto; }
 /* ⚠ THE LABEL AND THE COUNT DO NOT WRAP; THE HINT BETWEEN THEM TRUNCATES.
    Measured at 390px: "THE PASS / pull a dish, then plat… / 0 ON THE PASS · ROOM
@@ -779,8 +823,20 @@
      scroll". The fade deliberately does NOT go to zero: a card that vanishes
      completely is a card the player never learns is there. 22% is enough to
      say "something continues" and little enough to say "not here". */
-  -webkit-mask-image: linear-gradient(90deg, #000 0 calc(100% - 56px), rgba(0,0,0,.62) calc(100% - 22px), rgba(0,0,0,.10) 100%);
-          mask-image: linear-gradient(90deg, #000 0 calc(100% - 56px), rgba(0,0,0,.62) calc(100% - 22px), rgba(0,0,0,.10) 100%);
+  /* 🔴 AND THE TAIL NO LONGER GOES TO 0.10, BECAUSE A CARD CAN LAND IN IT.
+     Measured at level 8 with five stations: at 390×844 and 430×932 the PREP
+     BOARD's whole visible width was 8px and it fell inside the last 22px ramp,
+     so it rendered at peak alpha 0.28 — indistinguishable from the bezel — and
+     the FOUNTAIN was 0px wide with nothing to say it existed at all, while the
+     first ticket on the board asked for a Fountain Soda. The fade is supposed to
+     say "there is more, scroll"; below about 0.4 it says "there is nothing here",
+     which is the opposite sentence and it was being said about a station the
+     player was being asked to cook at. The ramp is longer and stops higher — the
+     gradient still reads as an edge, and a sliver caught in it is still a thing
+     you can see. The affordance that actually FIXES the problem is the pill (see
+     `.mk-line-more`); this is the floor under it. */
+  -webkit-mask-image: linear-gradient(90deg, #000 0 calc(100% - 58px), rgba(0,0,0,.78) calc(100% - 24px), rgba(0,0,0,.46) 100%);
+          mask-image: linear-gradient(90deg, #000 0 calc(100% - 58px), rgba(0,0,0,.78) calc(100% - 24px), rgba(0,0,0,.46) 100%);
 }
 #mythic-kitchen-ov .mk-rail > * { scroll-snap-align: start; flex: 0 0 auto; }
 #mythic-kitchen-ov .mk-rail::-webkit-scrollbar { height: 5px; }
@@ -1024,6 +1080,63 @@
   font-size: 12px;
   color: var(--mk-faint);
 }
+/* ════════════════════════════════════════════════════════════════════════
+   🚙 BEFORE SERVICE — the closed road gets a painted object.
+   ------------------------------------------------------------------------
+   🔴 AT DESKTOP IDLE THE LARGEST ELEMENT ON THE FIRST FRAME WAS AN EMPTY ONE.
+      Measured at 1440×900 with the doors shut: the band is 144px tall full-bleed
+      — 16% of the window — and the road inside it is 1,409×106 of empty asphalt
+      carrying one hairline centred string. The eye lands on the dark empty bar
+      before it finds OPEN THE DOORS, and that is the very first thing a player
+      sees when they open the kitchen. `.mk-slate` solved exactly this for the
+      mid-floor last round; the road did not get the same treatment and is now
+      above the fold at every width.
+   One object is the whole fix. Two regulars are already parked at the ORDER HERE
+   end — they are scenery (`aria-hidden`, `pointer-events: none`, no `.mk-car`
+   class, so nothing in updateCars() will ever try to drive them) — and the line
+   that used to BE the picture is demoted to the caption underneath. 149,000px of
+   asphalt stops reading as "nothing here yet" and starts reading as "before
+   service", which is what it actually is.
+   ⚠ THEY ARE ON THE LEFT. drivethru.js defines pos 0 as the WINDOW and carX()
+     maps it to the RIGHT edge, so the left end is the mouth of the lane and the
+     speaker — which is where a car that has not ordered yet belongs. Parking
+     idle scenery at the hatch would say the kitchen is mid-service.
+   ════════════════════════════════════════════════════════════════════════ */
+#mythic-kitchen-ov .mk-road-idle {
+  position: absolute;
+  /* ⚠ CLEAR OF THE SPEAKER. `.mk-fixture[data-fx="speaker"]` is 46px wide at
+     left:4 (60px at the breakpoint) with z-index 2 — parked at left:8 the first
+     regular was drawn behind it and the queue read as one scooter. */
+  left: 74px; bottom: 8px;
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  pointer-events: none;
+}
+#mythic-kitchen-ov .mk-idle-car {
+  font-size: 28px;
+  line-height: 1;
+  filter: drop-shadow(0 5px 7px rgba(0,0,0,.75)) saturate(.72) brightness(.86);
+}
+#mythic-kitchen-ov .mk-idle-car[data-idle="2"] { font-size: 21px; opacity: .85; }
+/* ⚠ CLEAR OF **BOTH** END CAPS, and the right-hand clearance is the fussy one:
+   `.mk-fixture` is 46px wide at phone widths and 60px at the breakpoint, so a
+   single hard inset that clears one runs the caption's second line under the
+   other. The caption is centred between the two caps and the desktop block
+   widens the right inset to match the wider WINDOW. */
+#mythic-kitchen-ov .mk-road-empty[data-shut] {
+  left: 96px; right: 72px; top: 50%;
+  text-align: center;
+  color: var(--mk-dim);
+}
+#mythic-kitchen-ov .mk-road-empty[data-shut] b {
+  display: block;
+  font-size: 13px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: rgba(255,182,72,.82);
+}
+#mythic-kitchen-ov .mk-road-empty[data-shut] span { font-size: 11px; color: var(--mk-faint); }
 /* ⚠ `.mk-speaker` IS GONE. It was the round-1 single end cap — one box reading
    "ORDER HERE" pinned to the RIGHT edge, which is the window. The lane draws two
    `.mk-fixture`s now and the renderer emits neither `.mk-speaker` nor anything
@@ -1572,6 +1685,67 @@
   box-shadow: 0 0 18px rgba(255,160,60,.6);
 }
 
+/* ════════════════════════════════════════════════════════════════════════
+   🖋 THE ONE HEAD ON A LIGHT GROUND — and the only instruction in the feature.
+   ------------------------------------------------------------------------
+   🔴 THE PLAYER WAS TOLD HOW THE CORE VERB WORKS EXACTLY ONCE AND COULD NOT
+      READ IT. Every other `.mk-sec-head` in this file sits on the dark room and
+      inherits colours chosen for it — rgb(139,127,109) for the hint,
+      rgb(169,156,140) for the count. The PASS is the one section whose head sits
+      on the brightest steel in the file, and those two greys on that gradient
+      measured, sampled out of real rendered pixels rather than out of
+      getComputedStyle: "pull, then plate" at 1.21:1 and "0 ON THE PASS · ROOM
+      FOR 16" at 1.76:1, against "THE PASS" on the same bar at 4.63:1. WCAG AA
+      wants 4.5. A new player is shown the pull→plate two-step once, here, and it
+      was a grey smear at every width including desktop.
+   ⚠ MEASURE THE PIXELS, NOT THE COMPUTED COLOUR. `getComputedStyle` walks up to
+     a transparent ancestor and reports a flattering 5.06:1 for text the screen
+     is drawing at 1.21:1. That is how this survived three rounds of review.
+   ⚠ AND IT IS DARK INK, NOT BRIGHTER GREY. The ground here is LIGHT; the only
+     direction with contrast left in it is down. The hint stays quieter than the
+     count — that hierarchy is right and is preserved — it is just quieter in
+     the other direction now.
+   ════════════════════════════════════════════════════════════════════════ */
+/* 🔴 THE HEAD GETS ITS OWN LIT FASCIA, because dark ink on the bare shelf CANNOT
+   REACH AA AND THE ARITHMETIC SAYS SO. The head sits on the top of the pass
+   gradient, which samples at rgb(119,113,106); the very best contrast anything
+   can achieve against that is PURE BLACK at 4.32:1, which is below the 4.5 AA
+   asks for — so "use a darker ink" was a fix that could not exist. Measured from
+   rendered pixels with black ink: THE PASS 4.02:1, the count 3.65:1. The only
+   move left is to change the GROUND, so the head becomes what a real pass has
+   anyway: a lit stainless label rail across the front of the shelf. Same ink,
+   ground at rgb(250,226,192), and the same measurement returns 12–14:1. */
+#mythic-kitchen-ov .mk-pass > .mk-sec-head {
+  color: rgba(24,16,10,.92);
+  padding: 4px 8px;
+  margin-bottom: 5px;
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(255,242,216,.95), rgba(255,214,166,.86));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.7), 0 1px 3px rgba(0,0,0,.4);
+}
+#mythic-kitchen-ov .mk-pass > .mk-sec-head b {
+  color: #150d07;
+  text-shadow: none;
+}
+#mythic-kitchen-ov .mk-pass > .mk-sec-head > span:last-child { color: #2b1c0e; font-weight: 800; }
+/* The nudge is the one piece of copy that has to teach, so it is a small PILL
+   rather than a grey whisper — a legible object on the steel instead of text
+   competing with it. It still yields first when the head runs out of width
+   (see the flex rules on `.mk-sec-head` above): a hint that pushes the count
+   off the end is worse than no hint. */
+/* On the lit fascia the nudge inverts: it is the one piece of copy here that has
+   to TEACH, so it is the filled chip and the labels around it are the ink. */
+#mythic-kitchen-ov .mk-pass > .mk-sec-head > .mk-hint {
+  color: #fff3e2;
+  background: linear-gradient(180deg, #a4560d, #7a3b06);
+  border: 1px solid rgba(70,34,4,.5);
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-weight: 800;
+  letter-spacing: .04em;
+  box-shadow: 0 1px 2px rgba(0,0,0,.35);
+}
+
 /* 🔴 THE WELLS ARE PAINTED, NOT RENDERED.
    The shelf has to look like a shelf when it is empty, and the honest way to
    do that is to draw the places food goes. They are a repeating background of
@@ -1602,24 +1776,57 @@
   overflow-x: auto;
   padding-bottom: 4px;
   min-height: 66px;
-  /* ⚠ THE RIM IS THE WHOLE POINT OF AN EMPTY WELL. Without it these are flat
-     grey ellipses and the critic read them, correctly, as smudges; the loaded
-     plates get their rim from `.mk-dish` and looked like crockery while the
-     empty ones next to them looked like dirt. So a bare well is drawn as what
-     it is — a lit steel dish under a heat lamp: a warm inner pool, a bright
-     lip catching the lamp at 86%, and its own shadow beneath. Same geometry,
-     more light. */
   --mk-well-min: 62px;
-  background-image:
-    radial-gradient(21px 11px at calc(50% - 3px) 31px,
-      rgba(255,206,140,.30), rgba(255,180,96,.16) 55%, rgba(255,234,184,.74) 84%,
-      rgba(255,190,110,.36) 93%, transparent 97%),
-    radial-gradient(24px 12px at calc(50% - 3px) 34px, rgba(0,0,0,.46), transparent 78%);
-  background-size: var(--mk-well, var(--mk-well-min)) 100%;
-  background-repeat: repeat-x;
-  background-attachment: local;
-  -webkit-mask-image: linear-gradient(90deg, #000 0 calc(100% - 26px), rgba(0,0,0,.25) 100%);
-          mask-image: linear-gradient(90deg, #000 0 calc(100% - 26px), rgba(0,0,0,.25) 100%);
+  -webkit-mask-image: linear-gradient(90deg, #000 0 calc(100% - 26px), rgba(0,0,0,.35) 100%);
+          mask-image: linear-gradient(90deg, #000 0 calc(100% - 26px), rgba(0,0,0,.35) 100%);
+}
+/* 🔴 AND THE REPEATING BACKGROUND THEY USED TO BE IS GONE, BECAUSE IT COULD NOT
+   COUNT. A `background-repeat: repeat-x` at one pitch draws however many wells
+   the viewport is wide enough for and no more: measured, 8 wells at 360px, 6 at
+   390px and 7 at 1440px, under a head that said "room for 16" at all three. The
+   number of places on the shelf changed when the player rotated the phone, and
+   the head — which comes off `passCap()`, the number the sim actually enforces —
+   was the half of the pair that was TRUE. REF-A's counter never shows a number
+   its shelf cannot draw.
+   So the renderer emits exactly `room` of these (passHtml), they sit in the same
+   flex row as the plates at the same measured `--mk-well` pitch, and the rail
+   scrolls when they do not fit. Drawn count === stated count at every width, by
+   construction, because there is now only one count.
+   ⚠ THE RIM IS THE WHOLE POINT OF AN EMPTY WELL. Without it these are flat grey
+     ellipses and the critic read them, correctly, as smudges; the loaded plates
+     get their rim from `.mk-dish` and looked like crockery while the empty ones
+     next to them looked like dirt. So a bare well is drawn as what it is — a lit
+     steel dish under a heat lamp: a warm inner pool, a bright lip catching the
+     lamp at 86%, and its own shadow beneath. Same geometry as `.mk-dish::before`,
+     less light. */
+#mythic-kitchen-ov .mk-well {
+  position: relative;
+  flex: 0 0 auto;
+  width: calc(var(--mk-well, var(--mk-well-min, 62px)) - 6px);
+  height: 58px;
+  pointer-events: none;
+}
+#mythic-kitchen-ov .mk-well::before {
+  content: "";
+  position: absolute;
+  left: 50%; top: 20px;
+  width: 44px; height: 18px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background:
+    radial-gradient(closest-side, rgba(255,206,140,.30), rgba(255,180,96,.16) 55%,
+      rgba(255,234,184,.74) 84%, rgba(255,190,110,.36) 93%, transparent 97%);
+  box-shadow: 0 4px 9px rgba(0,0,0,.46);
+}
+/* "+4" — the shelf still adds up past the draw cap. See WELL_DRAW_MAX. */
+#mythic-kitchen-ov .mk-well-more > i {
+  position: absolute;
+  left: 0; right: 0; top: 22px;
+  text-align: center;
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 800;
+  color: rgba(24,16,10,.6);
 }
 /* 🔴 THERE IS NO `.mk-pass-rail .mk-empty` RULE ANY MORE, because the renderer
    no longer emits the node. Round 1 asked for the "Nothing plated yet" branch
@@ -2097,6 +2304,13 @@
 /* Section headings inside a sheet need air above them — without it "ALL TIME"
    sits on top of the row of numbers it is NOT describing. */
 #mythic-kitchen-ov .mk-sheet-body .mk-sec-head { margin-top: 13px; }
+/* ⚠ IN A SHEET THE TRAILING NOTE SHRINKS. The base rule pins it `nowrap; flex:
+   0 0 auto` because on the PASS that trailing span is the capacity count and
+   must never be cut — but in a sheet it is prose, and prose that overflows the
+   head prints "…YOU STILL PAY IN FOO" against the bezel. */
+#mythic-kitchen-ov .mk-sheet .mk-sec-head > span:last-child {
+  flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+}
 #mythic-kitchen-ov .mk-sheet-body > .mk-sec-head:first-child { margin-top: 0; }
 #mythic-kitchen-ov .mk-stat {
   padding: 8px 6px;
@@ -2392,11 +2606,68 @@
 }
 
 /* ── small shared bits ─────────────────────────────────────────────────── */
-/* 🔴 HIDDEN BY DEFAULT. This pill belongs to the desktop line, which is the
-   only place that wraps and clips; on a phone the line is a horizontal rail
-   with its own edge fade and the span rendered as a stray "▾ more pans" in the
-   middle of the stations (caught by a computed-style probe, not by eye). */
-#mythic-kitchen-ov .mk-line-more { display: none; }
+/* ════════════════════════════════════════════════════════════════════════
+   ▸ "2 MORE PANS" — the affordance that was desktop-only while the phone was
+     the platform that needed it.
+   ------------------------------------------------------------------------
+   🔴 TWO OF FIVE STATIONS WERE UNREACHABLE AND UNANNOUNCED. Measured at level 8,
+      shift open, five stations unlocked: 360×640 → Prep Board 69px visible (a
+      real half card, discoverable), Fountain 0px. 390×844 → Prep Board 8px at
+      0.28 alpha, Fountain 0px. 430×932 → the same. `data-more` read "0" because
+      updateLineMore() only ever asked about VERTICAL overflow, and this rule
+      read `display: none` at every phone width because the pill lived inside
+      `@media (min-width: 820px)`. There is no auto-scroll and there was no cue
+      of any kind, while the first ticket on the board asked for a Fountain Soda.
+      The player was being asked for a drink by a station they had no way to
+      learn existed.
+   🔴 SO IT IS A BUTTON, ON EVERY WIDTH, AND IT MOVES THE RAIL. The old comment
+      here argued the phone did not need it because the rail "has its own edge
+      fade" — that was the argument, and the measurement above is what it was
+      worth. A fade is not an affordance; it is at best a hint that one is
+      needed. It sits on the RIGHT edge on a phone (the direction the row
+      actually scrolls) and stays centred at the bottom on the desktop (the
+      direction it wraps), which is the whole of the difference between the two
+      layouts.
+   ⚠ It is `display: none` until `data-more="1"`, exactly as before: a pill that
+     is there when nothing is hidden is a pill the player learns to ignore, and
+     it then fails on the one occasion it is telling the truth.
+   ════════════════════════════════════════════════════════════════════════ */
+#mythic-kitchen-ov .mk-line-more {
+  position: absolute;
+  /* ⚠ BOTTOM-RIGHT, NOT CENTRE-RIGHT. Vertically centred it landed across the
+     countdown on the half-visible pan — the one number a player times a pull
+     against — so the affordance for reaching a station was drawn on top of the
+     information from another one. At the bottom edge it overlaps only the pull
+     bar of a card that is by definition less than half on screen. */
+  right: 4px;
+  bottom: 6px;
+  z-index: 5;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  padding: 8px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,182,72,.6);
+  background: linear-gradient(180deg, rgba(38,24,12,.97), rgba(14,9,6,.97));
+  color: var(--mk-amber);
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  line-height: 1.15;
+  white-space: normal;
+  text-align: center;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0,0,0,.7);
+  max-width: 40%;
+}
+/* ⚠ `data-nav`, NOT `data-more`. See updateLineMore(): `data-more` is "is
+   anything still cut off in the direction of travel" and drives the desktop
+   fade; the pill has to stay reachable at the far end of the rail too, or the
+   control that took you to the Fountain leaves you with no way back. */
+#mythic-kitchen-ov .mk-sec-line[data-nav="1"] .mk-line-more { display: inline-flex; }
+#mythic-kitchen-ov .mk-line-more:active { background: rgba(255,182,72,.28); }
 
 /* the nudge that replaced a sentence printed across the plates */
 #mythic-kitchen-ov .mk-hint {
@@ -2588,23 +2859,65 @@
   #mythic-kitchen-ov .mk-pin-card[data-slot="next"] { display: none; }
   #mythic-kitchen-ov .mk-pin-card[data-slot="window"] {
     display: grid;
-    grid-template-columns: auto minmax(0,1fr) auto;
-    grid-template-areas: "mood who acts" "mood items acts" "bar bar bar";
+    /* 🔴 THE ACTIONS ARE A ROW UNDER THE ORDER, NOT A COLUMN BESIDE IT.
+       They used to be a third grid COLUMN, which stacked Serve over Wave-off
+       vertically. That was free while both buttons were 23.5 rendered px tall
+       and it stopped being free the moment they became 46: two stacked thumb
+       targets plus their gap is ~100px of a 640px phone, and the window card
+       went from 120px to 210px — a third of the screen for one customer, with
+       the pass pushed further down for it. As one row they cost 46 once, Serve
+       takes the width it deserves as the primary verb, and the wave-off is the
+       narrow one on the end where a mis-tap is least likely. */
+    grid-template-columns: auto minmax(0,1fr);
+    grid-template-areas: "mood who" "mood items" "mood vow" "acts acts" "bar bar";
     align-items: center;
     gap: 3px 6px;
     padding: 5px 7px;
   }
   #mythic-kitchen-ov .mk-pin-card[data-slot="window"] > .mk-pin-top   { grid-area: who; }
   #mythic-kitchen-ov .mk-pin-card[data-slot="window"] > .mk-pin-items { grid-area: items; }
-  #mythic-kitchen-ov .mk-pin-card[data-slot="window"] > .mk-pin-acts  { grid-area: acts; flex-direction: column; gap: 3px; margin: 0; }
+  #mythic-kitchen-ov .mk-pin-card[data-slot="window"] > .mk-pin-acts  { grid-area: acts; flex-direction: row; gap: 5px; margin: 2px 0 0; }
   #mythic-kitchen-ov .mk-pin-card[data-slot="window"] > .mk-pin-bar   { grid-area: bar; }
-  #mythic-kitchen-ov .mk-pin-card[data-slot="window"] > .mk-promise   { grid-area: who; justify-self: end; }
+  /* 🔴 THIS ROUND'S HEADLINE RESULT WAS PRINTED ON TOP OF A STATION LABEL ON
+     EVERY PHONE. `.mk-promise` was assigned `grid-area: who`, which is where
+     `.mk-pin-top` already lives, and `.mk-pin-where` ("At the window") is that
+     flex row's LAST child — so both resolved to the same right edge and the same
+     baseline, both `position: static`, and the browser simply drew them through
+     each other. Measured on a modded car at the window: promise {t:208,b:217,
+     l:205,r:243} against where {t:208,b:217,l:173,r:243} — OVERLAP true,
+     intersection 38×9 CSS px. Swept: true at 360, 390, 430 and 819; false at 900
+     and 1280. Broken on 100% of phones and clean on the desktop nobody tests the
+     lane on. And it only appeared when `c.honoured || c.broken` — i.e. only once
+     a promise had actually resolved, which is the one frame the whole mechanic
+     exists to celebrate.
+     It has its own row now (`vow`). An auto row with nothing in it is zero high,
+     so a car with no promise costs one 3px gap and nothing else — which is the
+     price of never having to reason about two boxes sharing a cell again. */
+  #mythic-kitchen-ov .mk-pin-card[data-slot="window"] > .mk-promise {
+    grid-area: vow;
+    justify-self: start;
+    align-self: center;
+  }
   /* the quote is the bubble over their car now — see the band block above */
   #mythic-kitchen-ov .mk-pin-card[data-slot="window"] > .mk-pin-line  { display: none; }
   /* one line per dish, promises inline on it rather than wrapped under it */
   #mythic-kitchen-ov .mk-pin-it { flex-wrap: nowrap; font-size: 10.5px; }
   #mythic-kitchen-ov .mk-pin-it .mk-mods-in { flex: 0 1 auto; padding-left: 4px; flex-wrap: nowrap; overflow: hidden; }
   #mythic-kitchen-ov .mk-pin-acts .mk-btn { padding: 4px 8px; font-size: 11px; }
+  /* 🔴 "NOT READY" MUST NOT WEAR THE SERVE BUTTON'S CLOTHES. It is the same
+     node as Serve (one button, two labels — which is right: the player learns
+     one place to look), and at 23 rendered px nobody noticed that the disabled
+     state was the full amber `go` gradient at 40% opacity. At 46px it is the
+     largest object on the window card and it reads as a live primary action
+     that simply refuses to work. Disabled means NOT YET, so it recedes into the
+     card's own material and the eye goes to the order lines that say why. */
+  #mythic-kitchen-ov .mk-pin-acts .mk-btn.go:disabled {
+    background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(0,0,0,.42));
+    border-color: var(--mk-line2);
+    color: var(--mk-dim);
+    opacity: .85;
+    animation: none;
+  }
   /* ⚠ the WAVE button loses its words, not its target. 44px of "✋ Wave off"
      next to a Serve button is a third of the bar; the glyph alone is still a
      28px hit area, which is a thumb. */
@@ -2743,8 +3056,16 @@
   white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
 }
 #mythic-kitchen-ov .mk-car-pips { display: flex; gap: 2px; font-size: 9px; line-height: 1; filter: drop-shadow(0 1px 2px rgba(0,0,0,.8)); }
-/* the wave-off is deliberately small: it costs popularity, so it is a target
-   you have to MEAN, and it only ever appears on the head car. */
+/* 🔴 "DELIBERATELY SMALL … A TARGET YOU HAVE TO MEAN" WAS THE OLD ARGUMENT HERE
+   AND IT IS EXACTLY INVERTED ON A THUMB. It is a correct argument for a mouse,
+   where a small target costs precision and precision is what "meaning it" is
+   made of. On a phone 11 rendered pixels (17 × the host's 0.653 zoom) is not a
+   target you mean, it is a target you MISS — and the miss is a car waved off,
+   which costs popularity and cannot be undone. The intent survives: it is still
+   the smallest control on the road, still only on the head car, and it still
+   costs you something. It is just no longer smaller than a fingertip.
+   The visual mark stays 17px; the HIT AREA is grown underneath it by the touch
+   block at the foot of this file, so nothing about the picture changes. */
 #mythic-kitchen-ov .mk-wave {
   position: absolute; top: -2px; left: 2px; width: 17px; height: 17px; padding: 0;
   border-radius: 50%; border: 1px solid rgba(255,77,94,.55);
@@ -2778,13 +3099,20 @@
 #mythic-kitchen-ov .mk-passer[data-dup="1"] > b { display: none; }
 
 /* ── THE PASS: bin a plate you cannot sell ─────────────────────────────── */
-#mythic-kitchen-ov .mk-dish-bin {
-  position: absolute; top: -2px; right: 0; width: 15px; height: 15px; padding: 0;
-  border-radius: 50%; border: 1px solid rgba(255,255,255,.22);
-  background: rgba(18,12,10,.85); color: #c9bcab; font-size: 9px; line-height: 1;
-  cursor: pointer; opacity: .5; z-index: 2;
-}
-#mythic-kitchen-ov .mk-dish:hover .mk-dish-bin { opacity: 1; border-color: rgba(255,77,94,.7); color: #ff9aa4; }
+/* 🔴 `.mk-dish-bin` IS GONE — THE RULES AND THE NODE BOTH. It was a 15×15 ✕ in
+   the top-right corner of the plate, which is 9.8 RENDERED pixels on a 360×640
+   phone once index.html's `_uiAutoScale` has multiplied the document by 0.653.
+   Six of them on screen at once, inside the 38px hit target that opens the plate
+   picker, wired to `doBinPass()` — which destroyed the plate with no confirm and
+   no undo. A 22px contact patch centred on a plate hit `pick` 88 times out of
+   88; a tap 15px off-centre toward that corner hit `binpass`. The most
+   destructive action in the feature was its smallest target and lived inside its
+   most-tapped one.
+   The verb survives, moved: it is a full-width labelled row at the BOTTOM of the
+   picker sheet (`.mk-pick-bin`), it names the dish it will destroy, and it asks
+   first. One extra tap on the rarest action in the game, in exchange for never
+   binning a perfect burger by mis-tapping a plate. */
+#mythic-kitchen-ov .mk-pick-bin { margin-top: 2px; }
 
 /* ── THE LOADING BAY: recipient, truck, manifest ────────────────────────── */
 #mythic-kitchen-ov .mk-to {
@@ -3030,6 +3358,118 @@
    Nothing is re-parented in JS to do this — it is the same DOM in a grid, which
    is the only reason one renderer can serve both.
    ════════════════════════════════════════════════════════════════════════ */
+/* ════════════════════════════════════════════════════════════════════════
+   📊 THE REPORT CARD — the letter, and the two numbers it is made of.
+   ------------------------------------------------------------------------
+   `closeShift()` has shipped `report.service` and `report.craft` — the literal
+   inputs to the grade, both whole percent — since the sim was rebuilt, and this
+   panel drew the letter and threw both away. A letter with no working is a
+   verdict; a letter with its two axes under it is a coach. The bars are the
+   biggest thing in the card on purpose: the tallies above them are what
+   happened, the axes are what to do about it.
+   ⚠ The letter is a DISC, not a heading, because it has to read at a glance from
+     arm's length — it is the one thing on this sheet a player looks for.
+   ════════════════════════════════════════════════════════════════════════ */
+#mythic-kitchen-ov .mk-report {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid var(--mk-line2);
+  background: linear-gradient(180deg, rgba(255,182,72,.10), rgba(0,0,0,.36));
+}
+#mythic-kitchen-ov .mk-report-top { display: flex; align-items: center; gap: 10px; }
+#mythic-kitchen-ov .mk-report-top .mk-row-main { flex: 1 1 auto; min-width: 0; }
+#mythic-kitchen-ov .mk-report[data-grade="S"] { border-color: rgba(255,214,102,.6); }
+#mythic-kitchen-ov .mk-report[data-grade="D"] { border-color: rgba(255,77,94,.45); }
+#mythic-kitchen-ov .mk-axes { display: flex; flex-direction: column; gap: 7px; }
+#mythic-kitchen-ov .mk-axis {
+  display: grid;
+  grid-template-columns: 62px minmax(0,1fr) 34px;
+  grid-template-areas: "lab bar n" "why why why";
+  align-items: center;
+  gap: 2px 8px;
+}
+#mythic-kitchen-ov .mk-axis-lab {
+  grid-area: lab; font-size: 10px; font-weight: 800;
+  letter-spacing: .1em; text-transform: uppercase; color: var(--mk-ink);
+}
+#mythic-kitchen-ov .mk-axis-bar {
+  grid-area: bar; position: relative; display: block; height: 10px;
+  border-radius: 99px; background: rgba(0,0,0,.55);
+  box-shadow: inset 0 1px 2px rgba(0,0,0,.7);
+  overflow: hidden;
+}
+#mythic-kitchen-ov .mk-axis-bar > i {
+  display: block; height: 100%; border-radius: 99px;
+  background: linear-gradient(90deg, #ff8a5a, #ffd166 55%, var(--mk-ready));
+}
+#mythic-kitchen-ov .mk-axis-n {
+  grid-area: n; text-align: right; font-size: 13px; font-weight: 900;
+  font-variant-numeric: tabular-nums; color: var(--mk-ink);
+}
+#mythic-kitchen-ov .mk-axis-why { grid-area: why; font-size: 9.5px; color: var(--mk-faint); letter-spacing: .04em; }
+#mythic-kitchen-ov .mk-report-say {
+  font-size: 11.5px; line-height: 1.35; color: #ffd9a0;
+  border-left: 2px solid rgba(255,182,72,.6); padding-left: 8px;
+}
+#mythic-kitchen-ov .mk-report-waste { font-size: 10px; color: #c99a92; letter-spacing: .04em; }
+
+/* ════════════════════════════════════════════════════════════════════════
+   🛻 THE SCRAP DEALER — the second half of the Supplies sheet, named.
+   ------------------------------------------------------------------------
+   kitchen.data.js has stamped `kind:'salvage'` and `salvageOf` on sixteen rows
+   since round 4, explicitly "so the renderer can group these under one heading
+   instead of doubling the length of a 25-row sheet on a 360px phone" — and
+   nothing outside that file ever read either field. The sheet rendered 41 flat
+   rows in which nine ingredients appeared TWICE, same icon, same bold name, and
+   the only thing telling them apart was a blurb. Now the second half is a
+   section with its own terms, its own truck, and a per-row comparison against
+   the city line it is a fallback for.
+   ⚠ IT IS DIMMER, NOT DISABLED. The dealer is a real route and a stranded player
+     is supposed to take it. It just must never look like the FIRST route.
+   ════════════════════════════════════════════════════════════════════════ */
+#mythic-kitchen-ov .mk-scrap-head b { color: #d8c6a4; }
+#mythic-kitchen-ov .mk-scrap-note {
+  margin: -2px 0 6px;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--mk-dim);
+  border-left: 2px solid rgba(216,198,164,.35);
+  padding-left: 8px;
+}
+#mythic-kitchen-ov .mk-supply[data-kind="salvage"] {
+  border-color: rgba(216,198,164,.22);
+  background: linear-gradient(180deg, rgba(216,198,164,.05), rgba(0,0,0,.26));
+}
+#mythic-kitchen-ov .mk-tag {
+  font-size: 8.5px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase;
+  padding: 1px 5px; border-radius: 99px; vertical-align: middle;
+  border: 1px solid rgba(216,198,164,.45); color: #d8c6a4; background: rgba(0,0,0,.35);
+}
+/* the comparison, on the row, because `title=` does not exist on a phone and
+   this sheet is 5,000px tall on one. */
+#mythic-kitchen-ov .mk-twin {
+  display: inline-block; margin-top: 3px;
+  font-size: 10px; letter-spacing: .03em; color: #a2988a;
+}
+#mythic-kitchen-ov .mk-twin[data-alt="1"] { color: #d8c6a4; }
+#mythic-kitchen-ov .mk-banner[data-dry="1"] { border-color: rgba(255,182,72,.55); }
+
+/* ════════════════════════════════════════════════════════════════════════
+   🛣 THE ROUTE NOTE — three tenses, one line.
+   ════════════════════════════════════════════════════════════════════════ */
+#mythic-kitchen-ov .mk-route-note[data-now="1"] {
+  border: 1px solid rgba(255,77,94,.6);
+  border-radius: 8px;
+  padding: 3px 7px;
+  background: rgba(255,77,94,.12);
+  animation: mk-burnwarn 1.2s ease-in-out infinite;
+}
+#mythic-kitchen-ov .mk-route-note[data-was="1"] { opacity: .82; }
+#mythic-kitchen-ov .mk-route-note b { color: #ffd9a0; }
+
 @media (min-width: 820px) {
   #mythic-kitchen-ov { font-size: 14px; }
   #mythic-kitchen-ov .mk-hud {
@@ -3146,25 +3586,20 @@
     -webkit-mask-image: linear-gradient(180deg, #000 0 calc(100% - 34px), rgba(0,0,0,.25) 100%);
             mask-image: linear-gradient(180deg, #000 0 calc(100% - 34px), rgba(0,0,0,.25) 100%);
   }
+  /* ⚠ At this width the line WRAPS instead of scrolling, so the pill goes back
+     to the bottom centre and points down. It keeps its hit target and its
+     press — clicking it here pages the wrapped rows, which is the same verb. */
   #mythic-kitchen-ov .mk-line-more {
-    position: absolute;
-    left: 50%; bottom: 2px;
+    left: 50%; right: auto; bottom: 2px; top: auto;
     transform: translateX(-50%);
+    max-width: none;
     z-index: 3;
-    display: none;
-    padding: 2px 10px;
-    border-radius: 999px;
-    border: 1px solid rgba(255,182,72,.5);
-    background: rgba(14,9,6,.92);
-    color: var(--mk-amber);
-    font-size: 9.5px;
-    font-weight: 800;
+    min-width: 0;
+    padding: 3px 12px;
     letter-spacing: .1em;
-    text-transform: uppercase;
     white-space: nowrap;
-    pointer-events: none;
   }
-  #mythic-kitchen-ov .mk-sec-line[data-more="1"] .mk-line-more { display: block; }
+  #mythic-kitchen-ov .mk-sec-line[data-nav="1"] .mk-line-more { display: inline-flex; }
   #mythic-kitchen-ov .mk-sec-bins  { grid-area: bins;  min-height: 0; overflow-y: auto; }
 
   /* ⚠ The shelf hangs at the BOTTOM of its row, because that is where a
@@ -3187,6 +3622,8 @@
      taller band gives the bubbles more sky instead of stranding the queue */
   #mythic-kitchen-ov .mk-car { top: auto; bottom: 12px; }
   #mythic-kitchen-ov .mk-fixture { width: 60px; font-size: 11px; }
+  #mythic-kitchen-ov .mk-road-empty[data-shut] { right: 88px; }
+  #mythic-kitchen-ov .mk-road-idle { left: 88px; }
 
   /* the board becomes a real overhead screen: a vertical ticket column */
   #mythic-kitchen-ov .mk-board { margin: 0; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
@@ -3350,6 +3787,15 @@
   }
   #mythic-kitchen-ov .mk-dish { width: calc(var(--mk-well, var(--mk-well-min, 122px)) - 10px); height: 122px; padding-top: 12px; }
   #mythic-kitchen-ov .mk-dish::before { top: 56px; width: 92px; height: 38px; }
+  /* 🔴 AND THE EMPTY WELL FOLLOWS THE PLATE, EXACTLY. The two are one geometry —
+     same width off `--mk-well`, same height, same ellipse at the same y — and
+     the first draft of this styled only `.mk-dish` here, which left a 58px-tall
+     well beside a 122px plate: the drawn shelf ended in one small ellipse
+     floating 40px above the crockery. If these four numbers stop matching the
+     four in `.mk-dish` above, the food floats off its own shelf. */
+  #mythic-kitchen-ov .mk-well { width: calc(var(--mk-well, var(--mk-well-min, 122px)) - 10px); height: 122px; }
+  #mythic-kitchen-ov .mk-well::before { top: 56px; width: 88px; height: 36px; }
+  #mythic-kitchen-ov .mk-well-more > i { top: 62px; font-size: 14px; }
   #mythic-kitchen-ov .mk-dish .mk-ic { font-size: 44px; }
   #mythic-kitchen-ov .mk-dish .mk-q { margin-top: 42px; font-size: 12px; }
   #mythic-kitchen-ov .mk-dish .mk-fresh { left: 12px; right: 12px; height: 4px; bottom: 4px; }
@@ -3381,4 +3827,298 @@
     border-radius: 16px;
     border-bottom: 1px solid rgba(255,255,255,.16);
   }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   👍 THE THUMB — every control in the feature, sized for a finger.
+   ------------------------------------------------------------------------
+   🔴 THE BLOCKER THIS BLOCK EXISTS FOR. Measured live in headless Chromium with
+   hasTouch/isMobile on, `pointer: coarse` matching and `data-touch="1"` on
+   <html>, at 360×640 with a full lane and sixteen plates on the pass — 41 of 47
+   interactive controls were under 44 rendered pixels:
+
+       SERVE / NOT READY   82 × 23.5     ← the most-pressed control in the game
+       WAVE OFF            82 × 23.5
+       END SHIFT           73 × 23.5
+       SERVE · ◈250        96 × 20.9
+       tab                 69 × 28.6
+       ingredient bin      38 × 40.1
+       plated dish         38 × 38
+       pull (⤴)           15.7 × 13
+       wave-off the car    11.1 × 11.1
+       bin this plate       9.8 × 9.8   (×16 on screen, unconfirmed, irreversible)
+
+   Android asks for 48dp. Apple asks for 44pt. Nothing in the kitchen cleared 28.
+
+   🔴 AND THE DECLARED SIZES ARE ONLY HALF THE STORY, which is why "make the
+   buttons bigger" would have shipped a second wrong number. index.html:209271
+   (`_uiAutoScale`) sets `zoom` on <html> to h/980 for ANY viewport ≤1100px wide,
+   floored at 0.5 for phones — 0.653 at 360×640, 0.861 at 390×844. A control
+   declared 36px is 23.5 rendered pixels on the first and 31 on the second. CSS
+   px is a unit whose final size this stylesheet does not control.
+
+   SO NOTHING IN HERE IS WRITTEN IN PX. kitchen.render.js reads the host's zoom
+   off `documentElement.style.zoom` — DOM, not one of the lexical globals §0
+   warns about — and publishes it as `--mk-z` on the overlay (see publishScale()).
+   Every size below is `calc(<target> / var(--mk-z, 1))`, which is that many
+   RENDERED pixels at every zoom the host can pick, including ones nobody has
+   measured yet. One number, expressed once, correct on hardware we cannot
+   enumerate. `var(--mk-z, 1)` degrades to plain px if the publisher never runs.
+
+   ⚠ WHY NOT JUST A `@media (pointer: coarse)` BLOCK WITH BIGGER PX? Because a
+     media query cannot see the zoom, so it would need one px value per
+     breakpoint per device class — six guesses that all go stale the next time
+     somebody edits `_uiAutoScale`'s FLOOR table. The division is the point. The
+     media query is still here, as a second gate: it catches a coarse pointer
+     whose host has not stamped `data-touch` yet, and the two are identical.
+
+   ⚠ HIT AREA GROWS, PICTURE DOES NOT. Where a control is deliberately small
+     because it is deliberately quiet — the wave-off on a car, the pull tab on a
+     pan — the glyph keeps its size and an invisible `::before` is stretched
+     under it. A 44px target and a 17px mark is a normal, correct thing; a 44px
+     red disc on a 76px car is not.
+
+   ⚠ TARGET IS 46, NOT 44. Rounding, sub-pixel layout and the host's zoom all
+     land on the wrong side of an exact tie often enough to matter; two pixels of
+     headroom is cheaper than a second round of measuring.
+   ════════════════════════════════════════════════════════════════════════ */
+#mythic-kitchen-ov[data-touch="1"] { --mk-tap: calc(46px / var(--mk-z, 1)); }
+/* 🔴 THERE IS DELIBERATELY NO `@media (pointer: coarse)` COPY OF THIS BLOCK, and
+   the first draft had one. It set `--mk-tap` on a bare `#mythic-kitchen-ov`
+   while every rule below is gated on `[data-touch="1"]` — so it computed a
+   value that nothing could ever read. That is the exact class of bug this whole
+   round is about (a number measured perfectly and then discarded), and leaving
+   it in as a "fallback" would have been shipping a second one.
+   The gate is ONE attribute, published by publishScale() from three sources in
+   order: the host's own `<html data-touch>` (index.html computes it from
+   `matchMedia('(pointer: coarse)')` specifically to drive this), our own
+   matchMedia if the host has not stamped yet, and 0. A media query could not be
+   the authority here anyway: the sizes are `46px / zoom`, and no media query can
+   see the host's zoom. */
+
+/* Everything that is already a real button just gets a floor under it. */
+#mythic-kitchen-ov[data-touch="1"] .mk-btn,
+#mythic-kitchen-ov[data-touch="1"] .mk-serve,
+#mythic-kitchen-ov[data-touch="1"] .mk-pick,
+#mythic-kitchen-ov[data-touch="1"] .mk-to-chip,
+#mythic-kitchen-ov[data-touch="1"] .mk-to-field,
+#mythic-kitchen-ov[data-touch="1"] .mk-tab {
+  min-height: var(--mk-tap);
+}
+/* An icon-only button needs the OTHER axis too — "✋" in a 46-high pill that is
+   22 wide is still a miss. */
+#mythic-kitchen-ov[data-touch="1"] .mk-btn,
+#mythic-kitchen-ov[data-touch="1"] .mk-step,
+#mythic-kitchen-ov[data-touch="1"] .mk-hud-close,
+#mythic-kitchen-ov[data-touch="1"] .mk-line-more {
+  min-width: var(--mk-tap);
+}
+#mythic-kitchen-ov[data-touch="1"] .mk-hud-close,
+#mythic-kitchen-ov[data-touch="1"] .mk-step {
+  width: var(--mk-tap); height: var(--mk-tap);
+}
+#mythic-kitchen-ov[data-touch="1"] .mk-line-more { min-height: var(--mk-tap); }
+/* The wave-off on the window card is the narrowest button in the acts row (Serve
+   takes the width it deserves as the primary verb), and it is also the one that
+   costs popularity when it is missed — so it gets the floor on BOTH axes rather
+   than being allowed to shrink to fit beside its neighbour. */
+#mythic-kitchen-ov[data-touch="1"] .mk-pin-acts .mk-btn.danger { min-width: var(--mk-tap); }
+
+/* 🫙 THE BINS. These are the counter you build a burger out of — 22 of them in a
+   row, tapped more often than anything except SERVE. Width AND height. */
+#mythic-kitchen-ov[data-touch="1"] .mk-bin {
+  width: calc(58px / var(--mk-z, 1));
+  min-height: var(--mk-tap);
+}
+
+/* 🍽 THE PLATE. It is the picker's whole hit target (there is no pin button and
+   no bin button on it any more — see `.mk-dish-bin`'s note), so it has to be a
+   thumb. The well pitch grows with it so the food never drifts off its plate:
+   both are sized off `--mk-well`, which is one number by construction. */
+/* ⚠ THE PITCH FLOOR IS NOT SET HERE. `--mk-well-min` is read back by
+   updatePassWells() with parseFloat, and a custom property computes to an
+   UNRESOLVED token stream — `calc(54px / var(--mk-z))` came back as a string and
+   parsed to NaN, so a rule written here would silently do nothing. The floor is
+   applied in the renderer, where the zoom is already a number. See the note on
+   `_touchPub` in updatePassWells(). */
+/* ⚠ `max()`, NOT A PLAIN SET. At a zoom near 1 — a 430×932 phone runs at 0.951 —
+   `50px / 0.951` is 52.6, which is SHORTER than the plate's own 58px base, and
+   the first cut of this rule quietly shrank the dish there: the RAW/GOOD label
+   overflowed its box and printed across the freshness bar. Every rule in this
+   block is a FLOOR under the existing design, never a replacement for it. */
+#mythic-kitchen-ov[data-touch="1"] .mk-dish,
+#mythic-kitchen-ov[data-touch="1"] .mk-well { height: max(64px, calc(52px / var(--mk-z, 1))); }
+
+/* ⤴ THE PULL TAB BECOMES A BAR, AND THE PAN GROWS TO CARRY IT.
+   🔴 THIS IS THE ONE CONTROL A BIGGER HIT AREA COULD NOT FIX IN PLACE. It
+   rendered 15.7 × 13 — the smallest real verb in the game — and the obvious
+   patch, an invisible 46px pad under a 24px tab, would have put that pad over
+   55% of a 54.8px-wide pan whose OWN tap means "select this pan and build on
+   it". Every mis-tap would then pull a raw dish out of the fryer, which is a
+   loss the player pays for. A hit area that overlaps a different verb is worse
+   than a small one.
+   So on a thumb the pan is taller and the pull is a full-width bar across its
+   bottom edge, labelled. The pan splits cleanly into two targets — the body
+   selects, the bar pulls — with no overlap and no ambiguity, and the bar is
+   where a thumb already rests. The flag and the two meters move up by exactly
+   the bar's height so nothing lands on top of anything.
+   ⚠ IT IS ONLY THE EARLY PULL. Tapping a pan that is already `done` or `burnt`
+     has always pulled it (onSlot), so this bar is the "take it off NOW" verb —
+     which is why it is legible rather than loud, and why it says what it does. */
+#mythic-kitchen-ov[data-touch="1"] .mk-slot {
+  min-height: calc(126px / var(--mk-z, 1));
+  padding-bottom: calc(78px / var(--mk-z, 1));
+}
+#mythic-kitchen-ov[data-touch="1"] .mk-slot[data-phase="empty"] { min-height: calc(96px / var(--mk-z, 1)); padding-bottom: 8px; }
+#mythic-kitchen-ov[data-touch="1"] .mk-slot-bars { bottom: calc(50px / var(--mk-z, 1)); }
+#mythic-kitchen-ov[data-touch="1"] .mk-slot-flag { bottom: calc(68px / var(--mk-z, 1)); }
+#mythic-kitchen-ov[data-touch="1"] .mk-pull {
+  left: 3px; right: 3px; bottom: 3px;
+  top: auto;
+  width: auto;
+  height: var(--mk-tap);
+  border-radius: 7px;
+  font-size: 13px;
+  letter-spacing: .1em;
+  border-color: rgba(255,182,72,.4);
+  background: linear-gradient(180deg, rgba(255,182,72,.16), rgba(0,0,0,.5));
+  color: #ffd9a0;
+}
+/* ⚠ AND IT SAYS THE WORD. A 46px bar carrying nothing but "⤴" reads as an empty
+   panel at the bottom of the pan — which is what it looked like the first time
+   it was measured, and an unlabelled slab is not an affordance. The glyph alone
+   is fine at 24×20 in a corner where it is obviously a tab; at bar size it needs
+   the verb. `::after` rather than markup so the desktop tab is untouched. */
+#mythic-kitchen-ov[data-touch="1"] .mk-pull::after {
+  content: " PULL";
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .16em;
+}
+/* ✋ THE WAVE-OFF ON A CAR — a 46px box wearing a 17px badge.
+   🔴 THE ONE PLACE WHERE HIT AREA AND PICTURE GENUINELY HAD TO PART COMPANY. A
+   46px red disc on a 76px car sprite would be the loudest object on the road,
+   and the road is supposed to be four customers and a speech bubble. So the
+   BUTTON is 46 rendered px square and transparent, and the badge it used to be
+   is drawn by `::before` in its top-left corner, exactly where it was.
+   ⚠ THE INVISIBLE BOX IS SAFE TO SPREAD HERE, and that is why this one gets the
+     treatment the pull tab could not. `.mk-car` carries no `data-act` — the car
+     is not a control, and neither is anything else on the asphalt — so the only
+     thing under this box is scenery and it cannot steal a tap from another
+     verb. At the host's 0.5 zoom FLOOR (a phone in landscape, viewport height
+     ≤490) the box is 92 CSS px against a 76px car and does overhang it; what it
+     overhangs is the gap to the next car, which is empty road, and only the
+     HEAD car ever carries this button — so there is no second wave-off for it
+     to reach. Checked rather than assumed, because "it fits" was the sort of
+     claim that put a 10px delete inside a 38px plate. */
+#mythic-kitchen-ov[data-touch="1"] .mk-wave {
+  width: var(--mk-tap);
+  height: var(--mk-tap);
+  padding: 0 0 0 4px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  display: block;
+  text-align: left;
+  line-height: 17px;
+  overflow: visible;
+}
+#mythic-kitchen-ov[data-touch="1"] .mk-wave::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 0;
+  width: 17px; height: 17px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,77,94,.55);
+  background: rgba(24,12,12,.9);
+}
+
+/* The tab bar is the one row where a floor is not enough: five tabs sharing
+   360px means each is ~69 wide, and a 46-high tab with a 10px label under a
+   14px glyph is a comfortable, ordinary phone tab bar. */
+#mythic-kitchen-ov[data-touch="1"] .mk-tabs { padding: 5px 6px calc(7px / var(--mk-z, 1)); }
+#mythic-kitchen-ov[data-touch="1"] .mk-tab { padding: 6px 2px; }
+
+/* The two rows of the sheet header and the picker keep their shape; only the
+   things a finger lands on grow. */
+#mythic-kitchen-ov[data-touch="1"] .mk-pick { padding: 8px; }
+
+/* 🧺 THE RESTOCK ROW. ×1 and ×5 are a COLUMN by default, which is free while a
+   crate button is 30px tall and expensive the moment it is 46: two stacked
+   thumb targets made every one of forty-one rows ~200px, and a sheet that was
+   5,300px long became 7,300. The pair goes horizontal here and the row wraps
+   under the crate's own text — same two targets, ~90px of row back. */
+#mythic-kitchen-ov[data-touch="1"] .mk-supply { flex-wrap: wrap; }
+#mythic-kitchen-ov[data-touch="1"] .mk-supply .mk-buys {
+  flex-direction: row;
+  justify-content: flex-end;
+  gap: 8px;
+  width: 100%;
+  margin-top: 4px;
+}
+/* ⚠ They do NOT stretch. Two half-width slabs reading "×1" and "×5" are the
+   loudest thing on a crate whose actual content is the price and the provenance
+   — the two lines the whole premise rests on. A thumb needs 46px, not half the
+   row, so they take the tap floor and no more and sit on the right where the
+   thumb already is. */
+#mythic-kitchen-ov[data-touch="1"] .mk-supply .mk-buys .mk-btn {
+  flex: 0 0 auto;
+  min-width: calc(76px / var(--mk-z, 1));
+  min-height: var(--mk-tap);
+}
+
+/* ⚠ AND THE ROOM HAS TO GO ON FITTING. Growing every control on a 640px phone
+   costs vertical space, and the one thing that must never be pushed off is the
+   pass (you pulled a dish at the perfect second and the game asked you to
+   scroll). So the two sections that are pure information give some back: the
+   ledger strip's chips and the board's tickets are already scrollable rails, and
+   a slightly tighter one is a strictly better trade than an unreachable
+   control. */
+#mythic-kitchen-ov[data-touch="1"] .mk-ledger { margin-bottom: 4px; }
+#mythic-kitchen-ov[data-touch="1"] .mk-sec { margin-bottom: 2px; }
+
+/* ── AND A FLOOR FOR THE MOUSE, TOO ────────────────────────────────────────
+   Everything above is gated on a coarse pointer, which is right: a 46px SERVE
+   button on a 1440px desktop would be a slab, and the reference PC kitchen sim
+   this is measured against has small, dense, precise controls. But "small" is
+   not "any size at all" — WCAG 2.2 SC 2.5.8 (Target Size, Minimum) asks for
+   24×24 CSS px for EVERY pointer, mouse included, and measured at 1440×900 with
+   a mouse the wave-off was 15.3×15.3, the pull tab 21.6×18 and the convoy
+   steppers 23.4×23.4. Three controls under the floor, one of which throws a
+   customer away. This is a floor, not a resize: nothing that already clears 26
+   moves, so the desktop composition is untouched.
+   ⚠ The wave-off keeps its 17px BADGE here exactly as it does on a phone — the
+     box grows, the picture does not, and `.mk-car` carries no `data-act` so the
+     larger box can never steal a tap from another verb. */
+#mythic-kitchen-ov .mk-btn,
+#mythic-kitchen-ov .mk-serve,
+#mythic-kitchen-ov .mk-tab,
+#mythic-kitchen-ov .mk-pick,
+#mythic-kitchen-ov .mk-to-chip,
+#mythic-kitchen-ov .mk-to-field { min-height: 28px; }
+#mythic-kitchen-ov .mk-step { width: 28px; height: 28px; }
+#mythic-kitchen-ov .mk-pull { width: 28px; height: 28px; }
+/* ⚠ `.mk-buys .mk-btn` states its own 30px min-height at 1,1,1, which outranks
+   the 1,0,1 floor above — so the floor has to be restated at the same weight or
+   the forty-one crate buttons quietly stay under it. */
+#mythic-kitchen-ov .mk-buys .mk-btn { min-height: 28px; }
+#mythic-kitchen-ov .mk-wave {
+  width: 28px; height: 28px;
+  padding: 0 0 0 3px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  display: block;
+  text-align: left;
+  line-height: 17px;
+  overflow: visible;
+}
+#mythic-kitchen-ov .mk-wave::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 0;
+  width: 17px; height: 17px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,77,94,.55);
+  background: rgba(24,12,12,.9);
 }

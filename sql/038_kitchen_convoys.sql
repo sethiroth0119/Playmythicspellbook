@@ -167,7 +167,43 @@ create table if not exists public.kitchen_convoys (
   --      their food. A delay costs the sender nothing they can count and still
   --      makes the road an event.
   delay_ms    int not null default 0,      -- 0 = a clean run
-  delay_leg   int not null default 0       -- 1-based leg it happened on; 0 = none
+  delay_leg   int not null default 0,      -- 1-based leg it happened on; 0 = none
+  -- ── 🔴 THE IDEMPOTENCY KEY (round 5). THE ANSWER TO "DID MY INSERT LAND?" ──
+  --    A client-generated uuid, unique per (from_user, client_ref). It exists
+  --    because of a defect that needs no attacker at all:
+  --
+  --      The sender's client calls the launch RPC. The RPC commits the row. The
+  --      REPLY IS LOST — a dropped mobile connection, a suspended tab, a TLS
+  --      reset, a 502 from the gateway. The client cannot tell that apart from
+  --      "the server never got it", so round 4's client did the only thing it
+  --      could think of and turned the truck back into a local practice run
+  --      that the SENDER unloads. The server row was still on the road to the
+  --      recipient. Forty dishes left the pass once and EIGHTY units of live
+  --      `food` were created — an effective 2.0 food per dish, straight through
+  --      the wall the header of this file calls the most dangerous number in
+  --      the feature.
+  --
+  --    🔴 THE CLIENT CANNOT ANSWER THE QUESTION, SO THE SERVER HAS TO MAKE IT
+  --       ANSWERABLE. With a client_ref the retry is free of consequence:
+  --       kitchen_convoy_launch() looks the ref up first and RETURNS THE ROW IT
+  --       ALREADY WROTE instead of writing a second one, and the client can ask
+  --       "is my ref up there?" on the next heartbeat and get a yes/no it can
+  --       act on. Nothing is paid out until that answer arrives.
+  --
+  --    ⚠ THE RECIPIENT CAN READ IT (kc_sel returns the whole row to both
+  --      parties) AND THAT IS HARMLESS. The idempotency lookup is scoped
+  --      `from_user = me`, so a ref only ever identifies a convoy for the
+  --      account that sent it; a recipient replaying somebody else's ref gets a
+  --      brand-new truck of their own, which is what any other uuid would have
+  --      done. Measured on a live database. kitchen.api.js still keeps it off
+  --      the INBOUND select — no reason to hand out a key nobody can use.
+  --    ⚠ NULLABLE, and the unique index below is PARTIAL. Rows written before
+  --      this migration have no ref, and two of them must not collide with each
+  --      other on a NULL. A caller that omits the ref simply gets no
+  --      idempotency — which is round 4's behaviour, i.e. the bug — so the
+  --      client always sends one and the verify block asserts the parameter
+  --      exists.
+  client_ref  uuid
 );
 
 -- Re-runnable against an earlier shape.
@@ -177,6 +213,7 @@ alter table public.kitchen_convoys add column if not exists tier       text;
 alter table public.kitchen_convoys add column if not exists claimed_at timestamptz;
 alter table public.kitchen_convoys add column if not exists delay_ms   int not null default 0;
 alter table public.kitchen_convoys add column if not exists delay_leg  int not null default 0;
+alter table public.kitchen_convoys add column if not exists client_ref uuid;
 
 -- Constraints added by name so a re-run does not duplicate them.
 -- 🔴 `dishes` ceiling: the biggest truck in CONVOY_TIERS is 120 boxes and the
@@ -214,6 +251,24 @@ create index if not exists kitchen_convoys_to_idx
   on public.kitchen_convoys (to_user, state, arrives_at);
 create index if not exists kitchen_convoys_from_idx
   on public.kitchen_convoys (from_user, launched_at desc);
+
+-- 🔴 THE GHOST-CONVOY LOCK. One truck per (sender, client_ref), enforced by the
+--    database and not by a check the launch RPC could be edited around.
+--    kitchen_convoy_launch() looks the ref up under its advisory lock and
+--    returns the existing row, so this index should never actually fire — and
+--    it stays because "should never fire" is exactly the guarantee that stops
+--    being true the next time somebody adds a second write path. A duplicate
+--    launch then fails loudly instead of putting a second truck on the road.
+-- ⚠ PARTIAL. Pre-migration rows carry client_ref = null and two nulls are not
+--   equal under a unique index anyway; `where client_ref is not null` makes that
+--   explicit rather than incidental, and keeps the index off every legacy row.
+-- ⚠ It is ALSO the client's reconcile key: kitchen.api.js asks
+--   `select … where client_ref in (…)` to settle a launch whose reply was lost,
+--   and this index is what makes that lookup an index scan rather than a seq
+--   scan of every convoy the sender has ever posted.
+create unique index if not exists kitchen_convoys_client_ref_once
+  on public.kitchen_convoys (from_user, client_ref)
+  where client_ref is not null;
 
 
 -- APPEND-ONLY. One row per settled movement.
@@ -509,6 +564,45 @@ revoke all on function public.kitchen_convoy_quota_ok(int)        from public, a
 --   which the client correctly but confusingly reports as "the convoy network is
 --   not set up yet". Defaults make an older client degrade to a sane truck
 --   instead of to a banner.
+-- ── 🔴 ROUND 5: THE LAUNCH IS IDEMPOTENT. THE GHOST CONVOY FIX. ──────────
+--    Rounds 2 and 3 made the server own the CLOCK and the SIZE. What was still
+--    client-owned was the ANSWER TO "DID IT LAND?", and nobody could give it:
+--
+--      client → RPC → row committed → **reply lost on the way back**
+--
+--    A dropped mobile connection, a suspended tab, a TLS reset, a 502 from the
+--    gateway. Round 4's client could not distinguish that from "the depot never
+--    heard me", so it turned the truck back into a local practice run and paid
+--    the SENDER for it while the committed server row was still on the road to
+--    the recipient. 40 dishes left the pass once; 80 units of live `food` came
+--    out. That is the food printer this file spends four hundred lines
+--    preventing, opened by a flaky connection rather than by an attacker.
+--
+--    `p_client_ref` closes it, and note WHICH property does the work: the retry
+--    has to be FREE OF CONSEQUENCE. Under the same advisory lock that
+--    serialises wall 10, the function looks the ref up FIRST and returns the row
+--    it already wrote — no second truck, no second ledger row, and crucially NO
+--    SECOND BITE OF THE QUOTA, so an honest client on a bad connection is not
+--    throttled for retrying. The unique index kitchen_convoys_client_ref_once is
+--    the backstop underneath, and the nested exception block below turns even a
+--    lost race into the same answer instead of an error the player cannot act on.
+--
+--    ⚠ THE OLD 7-ARGUMENT FUNCTION IS DROPPED, NOT LEFT BESIDE THIS ONE.
+--      PostgREST resolves an RPC by the exact set of keys in the request body,
+--      so an overload without `p_client_ref` is not a harmless leftover: it is a
+--      SECOND LAUNCH PATH with no idempotency at all, reachable by anything that
+--      omits the key, and it would pass every other check in the verify block.
+--      That is the same trap the zero-argument quota function was dropped for.
+--      The verify block asserts there is exactly ONE launch function.
+--    ⚠ CONSEQUENCE FOR DEPLOY ORDER: a client carrying the round-5 convoy.js
+--      against a database that has NOT had this file re-applied sends
+--      `p_client_ref` and gets PGRST202. kitchen.api.js reads that as
+--      `missing:true`, the panel says "the convoy network is not set up yet",
+--      and the launch turns back locally — which is a DEFINITE refusal (the
+--      function does not exist, so nothing was written) and therefore cannot
+--      ghost. Re-run this file and it lights up. Never the other way round.
+drop function if exists public.kitchen_convoy_launch(uuid, text, text, text, jsonb, int, bigint);
+
 create or replace function public.kitchen_convoy_launch(
   p_to         uuid,
   p_to_name    text    default null,
@@ -516,7 +610,8 @@ create or replace function public.kitchen_convoy_launch(
   p_tier       text    default 'van',
   p_items      jsonb   default '{}'::jsonb,
   p_dishes     int     default 1,
-  p_transit_ms bigint  default 1800000
+  p_transit_ms bigint  default 1800000,
+  p_client_ref uuid    default null
 )
 returns public.kitchen_convoys
 language plpgsql security definer set search_path = public, pg_temp as $$
@@ -586,6 +681,34 @@ begin
   -- 🔴 THE VERIFY BLOCK AT THE BOTTOM FAILS IF THIS LINE IS DELETED. It has to:
   --    removing it leaves a function that still passes every other check.
   perform pg_advisory_xact_lock(hashtextextended('kitchen_convoy_launch:' || me::text, 0));
+
+  -- ══════════════════════════════════════════════════════════════════════════
+  -- 🔴 THE IDEMPOTENT REPLY. THIS IS THE GHOST-CONVOY FIX AND IT IS FOUR LINES.
+  -- ══════════════════════════════════════════════════════════════════════════
+  -- If this ref already has a truck, that truck IS the answer. Return it and
+  -- write nothing. A client whose first reply was lost asks again with the same
+  -- ref and learns, definitively, that its convoy exists — which is the one
+  -- question round 4's client could not ask, and the reason it invented a
+  -- second copy of the load out of nothing.
+  --
+  -- ⚠ IT IS INSIDE THE ADVISORY LOCK AND THAT IS THE WHOLE ORDERING. Two
+  --   simultaneous retries of the same ref would otherwise both read "no row"
+  --   at READ COMMITTED and both insert — the identical shape as the round-3
+  --   quota race. Serialised, the second one sees the first one's committed row.
+  -- ⚠ IT IS BEFORE THE QUOTA CHECK, ON PURPOSE. A retry must not spend a second
+  --   slot of walls 1..4: an honest client on a bad connection would otherwise
+  --   be rate-limited for the network's failure, which is the round-2 lockout
+  --   wearing a different hat.
+  -- ⚠ `from_user = me` IS NOT DECORATION. The unique index is on (from_user,
+  --   client_ref), so refs are only unique per sender; without this predicate a
+  --   caller could hand back another player's convoy row by guessing a uuid.
+  --   RLS does not help — this function is SECURITY DEFINER.
+  if p_client_ref is not null then
+    select * into c from public.kitchen_convoys
+     where kitchen_convoys.from_user  = me
+       and kitchen_convoys.client_ref = p_client_ref;
+    if found then return c; end if;
+  end if;
 
   -- 🔴 LAND WHAT HAS LANDED, FIRST. The server used to write 'arrived' nowhere
   --    at all, so a truck the recipient never unloaded held an in-flight slot
@@ -672,21 +795,38 @@ begin
     v_items := '{}'::jsonb;
   end if;
 
-  insert into public.kitchen_convoys
-    (id, from_user, to_user, from_name, to_name, tier, items, dishes,
-     launched_at, arrives_at, state, delay_ms, delay_leg)
-  values
-    (v_id, me, p_to,
-     left(coalesce(nullif(btrim(p_from_name), ''), 'Survivor'), 40),
-     left(nullif(btrim(coalesce(p_to_name, '')), ''), 40),
-     -- 🔴 THE TIER THAT WAS ACTUALLY APPLIED, not the string the client sent.
-     --    Storing the client's word for it while clamping to something else is
-     --    how a row ends up describing a truck that never existed.
-     t.id,
-     v_items, v_dish,
-     now(), now() + ((v_ms + v_delay)::text || ' milliseconds')::interval, 'transit',
-     v_delay, v_leg)
-  returning * into c;
+  -- ⚠ THE NESTED BLOCK IS THE BACKSTOP UNDER THE LOOKUP ABOVE, NOT A
+  --   DUPLICATE OF IT. The advisory lock plus the lookup is what normally makes
+  --   a retry return the first truck; this catches the case where that pair is
+  --   ever broken — a lock removed, a lookup edited, a second write path added
+  --   by somebody who did not read this far — and turns it into the SAME answer
+  --   (the existing row) rather than a unique_violation the player cannot act
+  --   on and the client would classify as ambiguous all over again.
+  -- ⚠ It is a subtransaction, so the failed insert rolls back cleanly and the
+  --   advisory lock — taken OUTSIDE this block — is untouched.
+  begin
+    insert into public.kitchen_convoys
+      (id, from_user, to_user, from_name, to_name, tier, items, dishes,
+       launched_at, arrives_at, state, delay_ms, delay_leg, client_ref)
+    values
+      (v_id, me, p_to,
+       left(coalesce(nullif(btrim(p_from_name), ''), 'Survivor'), 40),
+       left(nullif(btrim(coalesce(p_to_name, '')), ''), 40),
+       -- 🔴 THE TIER THAT WAS ACTUALLY APPLIED, not the string the client sent.
+       --    Storing the client's word for it while clamping to something else is
+       --    how a row ends up describing a truck that never existed.
+       t.id,
+       v_items, v_dish,
+       now(), now() + ((v_ms + v_delay)::text || ' milliseconds')::interval, 'transit',
+       v_delay, v_leg, p_client_ref)
+    returning * into c;
+  exception when unique_violation then
+    select * into c from public.kitchen_convoys
+     where kitchen_convoys.from_user  = me
+       and kitchen_convoys.client_ref = p_client_ref;
+    if found then return c; end if;
+    raise;
+  end;
 
   -- The other half of the append-only ledger. -dishes: the boxes left the
   -- sender. The 'claim' row that lands them is +dishes, so a delivered convoy
@@ -701,8 +841,8 @@ begin
   return c;
 end $$;
 
-revoke all on function public.kitchen_convoy_launch(uuid, text, text, text, jsonb, int, bigint) from public, anon;
-grant execute on function public.kitchen_convoy_launch(uuid, text, text, text, jsonb, int, bigint) to authenticated;
+revoke all on function public.kitchen_convoy_launch(uuid, text, text, text, jsonb, int, bigint, uuid) from public, anon;
+grant execute on function public.kitchen_convoy_launch(uuid, text, text, text, jsonb, int, bigint, uuid) to authenticated;
 
 
 -- ============================================================================
@@ -889,6 +1029,64 @@ end $$;
 
 revoke all on function public.kitchen_stats_upsert(text, int, bigint, int, int) from public, anon;
 grant execute on function public.kitchen_stats_upsert(text, int, bigint, int, int) to authenticated;
+
+
+-- ============================================================================
+-- 5b. 🔴 THE TRIPWIRE THAT MAKES THE VERIFY BLOCK MEAN SOMETHING.
+-- ============================================================================
+-- ROUND 5, FINDING #2, AND IT IS THE WORST KIND OF DEFECT: A GUARD THAT LIES.
+--
+-- Several checks at the bottom of this file assert that a load-bearing
+-- STATEMENT is still inside a function — the advisory lock of wall 10, the
+-- `arrives_at > now()` of the lockout fix, the tier clamps of the faucet fix.
+-- They did it with `p.prosrc like '%pg_advisory_xact_lock%'`. **`prosrc`
+-- INCLUDES THE FUNCTION'S OWN COMMENTS**, and the block explaining wall 10
+-- names `pg_advisory_xact_lock` four times inside the body.
+--
+-- MEASURED, on a real PostgreSQL 16: delete ONLY the
+-- `perform pg_advisory_xact_lock(...)` statement, leave every comment intact,
+-- re-apply this file — the verify block prints `launch serialises one sender |
+-- ok` and every other row 'ok' as well. The identical sixty-parallel burst on
+-- that "verified" function put 33 trucks and 3,960 boxes on the road against a
+-- lifetime budget of 120. `quota releases landed trucks` failed the same way:
+-- the comment quotes the predicate it is checking for.
+--
+-- This file is applied BY HAND in the Supabase SQL editor. That verify table is
+-- the ONLY signal a human gets that the apply did what it says. A check that
+-- passes on a function with the guard removed is worse than no check at all,
+-- because the next maintainer trusts it and stops looking.
+--
+-- SO THE CHECKS MATCH THE CODE, NOT THE PROSE. `kitchen_sql_strip()` removes
+-- `--` line comments and `/* */` block comments; `kitchen_fn_body()` is the
+-- comment-free source of a named function; and the checks use a regex for the
+-- STATEMENT (`perform\s+pg_advisory_xact_lock\s*\(`) rather than a substring
+-- that a sentence can satisfy.
+--
+-- ⚠ AND THE STRIPPER ITSELF IS CHECKED. A stripper that quietly stopped
+--   stripping would restore the exact hole this section exists to close, and it
+--   would do it silently, so the verify block feeds it a known comment and
+--   asserts the token inside that comment is gone. A tripwire on the tripwire.
+-- ⚠ NOT SECURITY DEFINER and deliberately so: it reads pg_proc, which every
+--   role can already read. It is a diagnostic, granted to nobody.
+create or replace function public.kitchen_sql_strip(p_src text)
+returns text
+language sql immutable set search_path = pg_catalog, pg_temp as $$
+  select regexp_replace(
+           regexp_replace(coalesce(p_src, ''), '/\*.*?\*/', ' ', 'g'),
+           '--[^' || chr(10) || ']*', ' ', 'g')
+$$;
+
+create or replace function public.kitchen_fn_body(p_name text)
+returns text
+language sql stable set search_path = pg_catalog, pg_temp as $$
+  select public.kitchen_sql_strip(string_agg(p.prosrc, chr(10)))
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = p_name
+$$;
+
+revoke all on function public.kitchen_sql_strip(text) from public, anon, authenticated;
+revoke all on function public.kitchen_fn_body(text)   from public, anon, authenticated;
 
 
 -- ─── 6. RLS ────────────────────────────────────────────────────────────────
@@ -1263,12 +1461,15 @@ union all
 -- 🔴 THE FAUCET. Round 2's launch clamped `least(greatest(p_dishes,1),500)` with
 --    no reference to the tier and accepted 500-box rigs landing in ten minutes.
 --    If `t.capacity` is not in the body, that hole is open again.
+-- ⚠ COMMENT-STRIPPED (§5b). Every prosrc check below reads
+--   kitchen_fn_body(), which is the function's source with `--` and `/* */`
+--   removed, and matches the STATEMENT with a regex. The substring versions
+--   these replace were satisfiable by the comments explaining the guard, and
+--   two of them were demonstrated passing on a function with the guard deleted.
 select 'launch clamps to the tier',
-       case when exists (
-              select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-               where n.nspname = 'public' and p.proname = 'kitchen_convoy_launch'
-                 and p.prosrc like '%t.capacity%' and p.prosrc like '%t.transit_ms%'
-            ) then 'ok'
+       case when public.kitchen_fn_body('kitchen_convoy_launch') ~ 't\.capacity'
+             and public.kitchen_fn_body('kitchen_convoy_launch') ~ 't\.transit_ms'
+            then 'ok'
             else 'LAUNCH RPC IS PRE-FIX — 500-BOX RIGS AT TEN MINUTES' end
 
 union all
@@ -1279,12 +1480,16 @@ union all
 --    ⚠ `_xact_` is asserted specifically: `pg_advisory_lock` (session-scoped)
 --      would pass a naive "does it lock" test and then leak the lock onto the
 --      next request that reuses the pooled PostgREST connection.
+--    🔴 AND THIS IS THE CHECK THAT DID NOT WORK. `prosrc like
+--      '%pg_advisory_xact_lock%'` was satisfied by the comment block above the
+--      statement, which names the function four times. The statement was
+--      deleted, every comment left in place, the file re-applied — this row
+--      printed 'ok' and the sixty-parallel burst put 33 trucks / 3,960 boxes on
+--      the road. It matches `perform <fn> (` on comment-stripped source now.
 select 'launch serialises one sender',
-       case when exists (
-              select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-               where n.nspname = 'public' and p.proname = 'kitchen_convoy_launch'
-                 and p.prosrc like '%pg_advisory_xact_lock%'
-            ) then 'ok'
+       case when public.kitchen_fn_body('kitchen_convoy_launch')
+                  ~ 'perform\s+pg_advisory_xact_lock\s*\('
+            then 'ok'
             else 'QUOTA LOSES A RACE — 60 PARALLEL CALLS BEAT ALL FOUR WALLS' end
 
 union all
@@ -1294,21 +1499,23 @@ select 'quota sees the box count',
        case when exists (
               select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
                where n.nspname = 'public' and p.proname = 'kitchen_convoy_quota_ok'
-                 and p.pronargs = 1
-                 and p.prosrc like '%sum(dishes)%'
-            ) then 'ok'
+                 and p.pronargs = 1)
+             and public.kitchen_fn_body('kitchen_convoy_quota_ok')
+                 ~ 'sum\s*\(\s*dishes\s*\)'
+            then 'ok'
             else 'QUOTA IGNORES CARGO SIZE — THE FAUCET IS OPEN' end
 
 union all
 -- 🔴 THE PERMANENT LOCKOUT. Counting `state = 'transit'` alone locked a sender
 --    out forever the first time a recipient did not unload. Reproduced at
 --    thirty days on a real database.
+--    🔴 THE SECOND CHECK THAT DID NOT WORK: the header of
+--      kitchen_convoy_quota_ok() quotes the predicate verbatim, so dropping
+--      `and arrives_at > now()` from wall 1 still printed 'ok'.
 select 'quota releases landed trucks',
-       case when exists (
-              select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-               where n.nspname = 'public' and p.proname = 'kitchen_convoy_quota_ok'
-                 and p.prosrc like '%arrives_at > now()%'
-            ) then 'ok'
+       case when public.kitchen_fn_body('kitchen_convoy_quota_ok')
+                  ~ 'arrives_at\s*>\s*now\s*\(\s*\)'
+            then 'ok'
             else 'PERMANENT LOCKOUT — an unclaimed convoy holds a slot forever' end
 
 union all
@@ -1323,11 +1530,9 @@ select 'one quota function',
 union all
 -- The server writes 'arrived' somewhere, so the state column stops lying.
 select 'server lands its own trucks',
-       case when exists (
-              select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-               where n.nspname = 'public' and p.proname = 'kitchen_convoy_launch'
-                 and p.prosrc like '%set state = ''arrived''%'
-            ) then 'ok' else 'NOTHING EVER WRITES arrived' end
+       case when public.kitchen_fn_body('kitchen_convoy_launch')
+                  ~ 'set\s+state\s*=\s*''arrived'''
+            then 'ok' else 'NOTHING EVER WRITES arrived' end
 
 union all
 -- The road columns exist and the claim RPC hands them back, so convoy.js can
@@ -1345,6 +1550,95 @@ select 'claim returns the road',
                where n.nspname = 'public' and p.proname = 'kitchen_convoy_claim'
                  and p.proargnames @> array['delay_ms','delay_leg']
             ) then 'ok' else 'CLAIM RPC PREDATES THE ROAD' end
+
+union all
+-- ══════════════════════════════════════════════════════════════════════════
+-- 🔴 THE GHOST-CONVOY CHECKS (round 5). Wall 11: the launch is idempotent.
+-- ══════════════════════════════════════════════════════════════════════════
+
+-- The column the client keys its retry on. Without it there is no way for a
+-- sender to ask "did my insert land?", and round 4's client answered that
+-- question by inventing a second copy of the load.
+select 'convoy carries a client ref',
+       case when count(*) = 1 then 'ok' else 'NO client_ref — A LOST REPLY DUPLICATES FOOD' end
+  from information_schema.columns
+ where table_schema = 'public' and table_name = 'kitchen_convoys'
+   and column_name = 'client_ref'
+
+union all
+-- The database-level backstop. The RPC's lookup is the normal path; this index
+-- is what makes a second truck for one ref impossible rather than unlikely.
+select 'one truck per client ref',
+       case when count(*) = 1 then 'ok' else 'IDEMPOTENCY INDEX MISSING' end
+  from pg_indexes
+ where schemaname = 'public' and indexname = 'kitchen_convoys_client_ref_once'
+
+union all
+-- The parameter exists, so a client can actually send a ref.
+select 'launch takes a client ref',
+       case when exists (
+              select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+               where n.nspname = 'public' and p.proname = 'kitchen_convoy_launch'
+                 and p.proargnames @> array['p_client_ref']
+            ) then 'ok' else 'LAUNCH RPC PREDATES THE IDEMPOTENCY KEY' end
+
+union all
+-- 🔴 …AND IT USES IT, ON THE PATH BEFORE THE INSERT. The parameter being
+--    present proves nothing, and neither does the ref appearing SOMEWHERE in
+--    the body: the exception backstop mentions it too, so a check that only
+--    looked for `client_ref = p_client_ref` still printed 'ok' with the whole
+--    pre-insert lookup deleted. That was caught by mutating this file and
+--    re-applying it, which is the only way any of these checks are worth
+--    anything. Both halves of the guarded lookup are asserted.
+select 'launch is idempotent per ref',
+       case when public.kitchen_fn_body('kitchen_convoy_launch')
+                  ~ 'p_client_ref\s+is\s+not\s+null'
+             and public.kitchen_fn_body('kitchen_convoy_launch')
+                  ~ 'client_ref\s*=\s*p_client_ref'
+            then 'ok'
+            else 'RETRY WRITES A SECOND TRUCK — THE GHOST CONVOY IS BACK' end
+
+union all
+-- The backstop under the lookup: if the lock or the lookup is ever broken, a
+-- duplicate insert must come back as the FIRST truck, not as a 23505 the client
+-- would classify as ambiguous all over again.
+select 'launch survives a lost race',
+       case when public.kitchen_fn_body('kitchen_convoy_launch')
+                  ~ 'exception\s+when\s+unique_violation'
+            then 'ok'
+            else 'A DUPLICATE LAUNCH ERRORS INSTEAD OF RETURNING THE FIRST TRUCK' end
+
+union all
+-- 🔴 EXACTLY ONE LAUNCH FUNCTION. PostgREST resolves an RPC by the exact set of
+--    keys in the body, so a leftover 7-argument overload is a SECOND launch path
+--    with no idempotency, reachable by anything that omits p_client_ref, and it
+--    would pass every other check on this list. Same trap as the zero-argument
+--    quota function.
+select 'one launch function',
+       case when count(*) = 1 then 'ok'
+            else 'TWO LAUNCH FUNCTIONS — the non-idempotent one still resolves' end
+  from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public' and p.proname = 'kitchen_convoy_launch'
+
+union all
+-- 🔴 THE TRIPWIRE ON THE TRIPWIRE (§5b). Five checks above are only as good as
+--    kitchen_sql_strip(). Feed it a comment containing the exact token those
+--    checks hunt for: if the token survives, the stripper has stopped stripping
+--    and every one of those 'ok's is meaningless again — silently, which is how
+--    round 4 shipped a guard that lied. This row is what makes that loud.
+select 'comment stripper works',
+       case when public.kitchen_sql_strip(
+                   'x := 1; -- perform pg_advisory_xact_lock(9)' || chr(10) ||
+                   '/* client_ref = p_client_ref */ y := 2;')
+                  !~ 'pg_advisory_xact_lock'
+             and public.kitchen_sql_strip(
+                   'x := 1; -- perform pg_advisory_xact_lock(9)' || chr(10) ||
+                   '/* client_ref = p_client_ref */ y := 2;')
+                  !~ 'client_ref'
+             and public.kitchen_sql_strip('perform pg_advisory_xact_lock(9);')
+                  ~ 'pg_advisory_xact_lock'
+            then 'ok'
+            else 'STRIPPER IS BROKEN — EVERY prosrc CHECK ABOVE IS MEANINGLESS' end
 
 union all
 -- The tier table must be unreachable from a browser by ANY route, PUBLIC

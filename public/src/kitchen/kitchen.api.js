@@ -70,6 +70,25 @@
        `serverCode()` for why a player-facing sentence is not one.
      · convoys carry `delay_ms` / `delay_leg`: the hold-up the server rolled on
        the road, already inside `arrives_at`. See `CONVOY_COLS`.
+
+   ── 🔴 ROUND 4 SHIPPED A GHOST. ROUND 5 IS ABOUT LOST REPLIES. ──────────────
+   Rounds 2 and 3 gave the server the clock and the size. What nobody owned was
+   the answer to **"did my write land?"**, and the launch path could not tell
+   "the depot never heard me" from "the depot heard me, committed the row, and
+   the reply died on the way back". It treated both as a refusal, turned the
+   truck back into a local practice run, and paid the SENDER for it — while the
+   committed row was still on the road to the recipient. 40 dishes left the pass
+   once and 80 units of live `food` came out. Proven against a depot that
+   commits and then rejects the promise; reachable with no attacker at all by a
+   dropped mobile connection, a suspended tab or a TLS reset.
+
+   THREE THINGS IN THIS FILE CLOSE IT, and none of them is a heuristic:
+     · `ambiguousErr()` — DEFINITE (the server answered with a code) vs
+       AMBIGUOUS (nobody knows). Every failure result carries `ambiguous`.
+     · `insertConvoy()` sends `p_client_ref`, so a retry is free of consequence:
+       the RPC returns the row it already wrote instead of writing another.
+     · `findConvoysByRef()` — the reconcile. It is what lets convoy.js hold a
+       launch in `'pending'`, pay out nothing, and settle it on a fact.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 import * as BRIDGE from './kitchen.bridge.js';
@@ -122,9 +141,15 @@ function fail(e) {
   const msg = (e && (e.message || e.msg)) || String(e || '');
   const probe = [msg, e && e.code, e && e.details, e && e.hint]
     .filter((x) => x != null).join(' ');
-  return { ok: false, missing: MISSING_RE.test(probe), error: msg, code: serverCode(probe) };
+  return { ok: false, missing: MISSING_RE.test(probe), error: msg, code: serverCode(probe),
+           // 🔴 "DID THE SERVER GET IT?" — see ambiguousErr() below. Present on
+           //    every failure so a WRITE caller never has to guess, and harmless
+           //    on a read, where a retry costs nothing either way.
+           ambiguous: ambiguousErr(e) };
 }
-const OFFLINE = { ok: false, missing: false, offline: true, error: 'not signed in' };
+/* ⚠ `ambiguous:false` — nothing was SENT. A signed-out client refuses before it
+   opens a socket, so there is no committed row to reconcile against. */
+const OFFLINE = { ok: false, missing: false, offline: true, error: 'not signed in', ambiguous: false };
 
 /* The RPCs in sql/038 signal refusals with `raise exception 'LAUNCH_QUOTA'` and
    friends. PostgREST hands those back as a P0001 whose `message` is the bare
@@ -159,6 +184,51 @@ function serverCode(probe) {
   return null;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   🔴 DID THE SERVER GET IT? THE ONE QUESTION A FAILED WRITE HAS TO ANSWER.
+   ═══════════════════════════════════════════════════════════════════════════
+   ROUND 5, FINDING #1 — THE GHOST CONVOY. A launch whose reply was lost AFTER
+   the row committed was indistinguishable, to convoy.js, from a launch the
+   server never received. It turned the truck back into a local practice run and
+   paid the SENDER for it while the committed row was still on the road to the
+   recipient: 40 dishes left the pass once, 80 units of live `food` came out.
+   That is the food printer the whole feature is built around preventing, opened
+   by a dropped mobile connection rather than by an attacker.
+
+   The fix has two halves and this is the first: **stop collapsing two different
+   failures into one.**
+
+     DEFINITE  — the depot ANSWERED and said no. PostgREST handed back an error
+                 object carrying a `code`: a SQLSTATE (`P0001` for every token
+                 in SERVER_CODES, `42P01`, `23505`, `XX000`) or a PGRST code
+                 (`PGRST202` = the function is not there). Every one of those
+                 means the statement raised and the transaction rolled back, so
+                 NOTHING WAS WRITTEN. Safe to turn the truck back.
+     AMBIGUOUS — nobody knows. `fetch` rejected, the tab was suspended, a
+                 gateway returned a 5xx with no PostgREST body, the RPC came
+                 back 200 with no row. The insert may well have committed.
+                 🔴 THE ONLY SAFE ACT HERE IS TO PAY NOTHING AND ASK AGAIN —
+                 which is what `p_client_ref` + `findConvoysByRef()` make
+                 possible, and what convoy.js's `'pending'` state is for.
+
+   ⚠ IT ERRS TOWARDS AMBIGUOUS, ON PURPOSE. A DEFINITE misread pays the sender
+     for a truck that exists — the ghost. An AMBIGUOUS misread costs one extra
+     round trip on the next heartbeat and nothing else. The asymmetry is total,
+     so anything without a recognisable code is ambiguous.
+   ⚠ `missing` and `offline` never come through here: `missing` is PGRST202/205
+     (definite — the function does not exist) and `offline` is a client-side
+     refusal before any request is made (definite — nothing was sent). Both are
+     handled by name in convoy.js, ahead of this.
+   ═══════════════════════════════════════════════════════════════════════════ */
+const DEFINITE_CODE_RE = /^(PGRST\d{3,}|[0-9A-Za-z]{5})$/;
+function ambiguousErr(e) {
+  try {
+    const code = e && e.code;
+    if (typeof code === 'string' && DEFINITE_CODE_RE.test(code)) return false;
+    return true;
+  } catch (e2) { return true; }
+}
+
 function uid() {
   const b = bridge();
   try { return (b.userId ? b.userId() : null) || null; } catch (e) { return null; }
@@ -184,6 +254,14 @@ function firstRow(data) {
 const CONVOY_COLS =
   'id,from_user,to_user,from_name,to_name,tier,items,dishes,launched_at,arrives_at,state,claimed_at,'
   + 'delay_ms,delay_leg';
+
+/* 🔴 THE OUTBOUND READ CARRIES THE IDEMPOTENCY KEY AND THE INBOUND ONE DOES
+   NOT. `client_ref` is how a SENDER settles a launch whose reply was lost — it
+   is the only column that can answer "is my truck up there?" — and it is of no
+   use whatsoever to a recipient. Selecting it on the inbound pipe would hand
+   every recipient a key that only the sender's retry path can use, for nothing.
+   Two constants, and the narrower one is the one aimed at other people's rows. */
+const OUTBOUND_COLS = CONVOY_COLS + ',client_ref';
 
 /* ⚠ `delay_ms` / `delay_leg` ARE ALREADY INSIDE `arrives_at`. They are not a
    second number to add on: the launch RPC rolls the hold-up, adds it to the
@@ -241,7 +319,7 @@ export async function listOutbound(limit = 40) {
   const me = uid(); if (!me) return { ...OFFLINE, rows: [] };
   try {
     const r = await c.from('kitchen_convoys')
-      .select(CONVOY_COLS)
+      .select(OUTBOUND_COLS)
       .eq('from_user', me)
       .order('launched_at', { ascending: false })
       .limit(Math.max(1, Math.min(100, _int(limit) || 40)));
@@ -298,8 +376,10 @@ export async function insertConvoy(payload) {
   const c = client(); if (!c) return { ...OFFLINE, row: null };
   const me = uid(); if (!me) return { ...OFFLINE, row: null };
   const p = payload || {};
-  if (!p.to_user) return { ok: false, error: 'no recipient', row: null };
-  if (p.to_user === me) return { ok: false, error: 'cannot ship to yourself', row: null };
+  // ⚠ `ambiguous:false` on both: these refuse BEFORE a request leaves the
+  //   device, so there is definitively no row on the server to reconcile.
+  if (!p.to_user) return { ok: false, error: 'no recipient', row: null, ambiguous: false };
+  if (p.to_user === me) return { ok: false, error: 'cannot ship to yourself', row: null, ambiguous: false };
   try {
     const r = await c.rpc('kitchen_convoy_launch', {
       p_to: p.to_user,
@@ -309,6 +389,16 @@ export async function insertConvoy(payload) {
       p_items: (p.items && typeof p.items === 'object') ? p.items : {},
       p_dishes: Math.max(1, _int(p.dishes)),
       p_transit_ms: Math.max(0, _int(p.transit_ms)),
+      /* 🔴 THE IDEMPOTENCY KEY. A uuid the CALLER generates once per launch and
+         re-sends on every retry of that same launch. sql/038's
+         kitchen_convoy_launch() looks it up under the sender's advisory lock and
+         returns the row it already wrote, so a retry cannot put a second truck
+         on the road, cannot write a second ledger row, and cannot spend a second
+         slot of the quota.
+         🔴 IT IS WHAT MAKES A LOST REPLY ANSWERABLE, which is the whole of the
+            ghost-convoy fix: without it, "did my insert land?" has no answer and
+            round 4 answered it by minting a second copy of the load. */
+      p_client_ref: p.client_ref || null,
     });
     if (r.error) {
       const f = fail(r.error);
@@ -320,9 +410,57 @@ export async function insertConvoy(payload) {
         badPlayer: f.code === 'NO_SUCH_PLAYER' };
     }
     const row = firstRow(r.data);
-    if (!row || !row.id) return { ok: false, error: 'no row returned', row: null };
+    /* ⚠ 200 WITH NO ROW IS AMBIGUOUS, NOT A REFUSAL. The RPC `returns
+       public.kitchen_convoys`, so an empty body means something between us and
+       Postgres ate the result — a proxy, a truncated response — and the insert
+       may perfectly well have committed. Round 4 read this as "it did not
+       happen" and paid the sender. It is a reconcile now, like every other
+       unanswered question. */
+    if (!row || !row.id) return { ok: false, error: 'no row returned', row: null, ambiguous: true };
     return { ok: true, row };
   } catch (e) { return { ...fail(e), row: null }; }
+}
+
+/**
+ * 🔴 THE RECONCILE. "Is my truck up there?" — the question round 4 could not ask.
+ *
+ * Given the client refs of launches whose reply was lost, return the server rows
+ * that actually exist. convoy.js holds those launches in `state:'pending'`,
+ * pays out NOTHING for them, and settles each one on the answer:
+ *   · a row came back  → adopt its id and its clock; the truck is real and on
+ *                        the road to the person it was addressed to;
+ *   · `ok` and no row  → the insert never landed. NOW it is safe to turn the
+ *                        truck back into a local run, because the depot has
+ *                        answered the question.
+ *   · `ok:false`       → still nobody knows. Stay pending. Never pay.
+ *
+ * ⚠ KEYED ON `client_ref`, NOT ON A PAGE OF `listOutbound()`. The obvious
+ *   implementation is "look for it in the outbound list", and it is wrong in a
+ *   way that only bites the busiest senders: `listOutbound()` is `limit(40)`
+ *   ordered by `launched_at desc`, so a pending truck can simply fall off the
+ *   page — and "not on this page" would then be read as "never existed" and the
+ *   sender would be paid for a truck that is on the road. An `.in()` on the
+ *   unique-indexed column cannot be wrong about absence.
+ * ⚠ `.eq('from_user', me)` is a PERFORMANCE filter, not a security one: RLS
+ *   (`kc_sel`) is what stops a client reading somebody else's convoys, and refs
+ *   are only unique per sender, so this is also what makes the answer *mine*.
+ */
+export async function findConvoysByRef(refs) {
+  const c = client(); if (!c) return { ...OFFLINE, rows: [] };
+  const me = uid(); if (!me) return { ...OFFLINE, rows: [] };
+  const list = (Array.isArray(refs) ? refs : [])
+    .filter((x) => typeof x === 'string' && x.length >= 8 && x.length <= 64)
+    .slice(0, 40);
+  if (!list.length) return { ok: true, rows: [] };
+  try {
+    const r = await c.from('kitchen_convoys')
+      .select(OUTBOUND_COLS)
+      .eq('from_user', me)
+      .in('client_ref', list)
+      .limit(list.length);
+    if (r.error) return { ...fail(r.error), rows: [] };
+    return { ok: true, rows: r.data || [] };
+  } catch (e) { return { ...fail(e), rows: [] }; }
 }
 
 /**

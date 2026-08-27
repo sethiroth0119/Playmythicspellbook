@@ -93,8 +93,8 @@ import * as State from './kitchen.state.js';
    rest of the shift and blocks the closing bell. That failure is invisible and
    unbounded. So a gap is caught, but it is caught in ONE place, it is RECORDED
    (`econAudit()`), and the number it falls back to lives in the single
-   `ECON_PENDING` table below — which is a handover list with a name on it, not
-   36 anonymous literals scattered through the file. When kitchen.data.js adopts
+   `ECON_PENDING` table below — which is a handover list with a name on it (C1),
+   not 36 anonymous literals scattered through the file. When kitchen.data.js adopts
    a key, its row here is deleted and nothing else changes.
    ─────────────────────────────────────────────────────────────────────────── */
 
@@ -113,7 +113,8 @@ import * as State from './kitchen.state.js';
 
    ⚠ Do not add a row here to avoid asking, and do not retune one. A row here
    that ECON also defines is dead; a row here that ECON does not define is an
-   ask, and it belongs in the HANDOVER at the bottom of this file as well. */
+   ask, and it belongs in the HANDOVER at the bottom of this file as well, in
+   the OPEN half and with a signature on it. */
 const ECON_PENDING = {
   /* 🔊 WHERE THE SPEAKER BOX IS, as a fraction of LANE_LEN measured from the
      WINDOW (pos 0). The lane's picture and its state machine disagreed: render
@@ -294,8 +295,9 @@ function DF(name) {
      MOD_PAY_UNPROVEN            🔴 zero. Always zero. See §MODIFIERS.
      MOD_POP_HIT                 word of mouth, per honoured line…
      MOD_POP_MISS                …and per broken one. Charged by `serveCar()`.
-     MOD_XP_HIT                  ⚠ READ BY NOBODY YET. There is no path from
-                                 this file to `addXp()` — see the HANDOVER.
+     MOD_XP_HIT                  ⚠ STILL READ BY NOBODY, re-verified round 5.
+                                 There is no path from this file to `addXp()`.
+                                 See handover item O2.
 
    ── THE TIP RETURN (§TIP) ────────────────────────────────────────────────
      TIP_GEN_MAX                 runaway guard on the GENEROSITY STACK (tipBias
@@ -428,7 +430,11 @@ const VOICE = {
               'See you tomorrow. Probably. Roads permitting.',
               'Only part of the day nobody’s ruined yet.'],
     angry:   ['I’ll eat at the checkpoint. Again.',
-              'Fine. FINE.',
+              // Was 'Fine. FINE.' — the one line in the file that could have come
+              // out of any game at any window. The VOICE header is explicit that
+              // a generic line is not neutral, it is wrong. This one spends the
+              // eleven minutes their own testy line counts down.
+              'Two years of custom, gone in eleven minutes.',
               'Tell tomorrow’s me I’m sorry.'],
   },
   courier: {
@@ -526,6 +532,19 @@ const VOICE = {
               'I’ll be recommending the other one.',
               'This conversation is over, and it is minuted.'],
   },
+  /* ⚠ THE KID’S ONE DELIBERATE ECHO, so nobody “tidies” it away: the speaker
+     line “I saved ALL WEEK for the big one” and the furious line “I saved all
+     week. ALL WEEK. For standing here” are a SETUP AND A PAYOFF, and both pools
+     are reachable in one visit (speaker at the box, furious once the fuse is
+     short) so the callback actually lands. It is the only near-repeat in the
+     275 authored lines that is there on purpose — scratchpad r5dt/voice.mjs
+     flags similarity across every pool and this is the row to expect.
+     The served/angry pair used to echo the same way — “I’m telling EVERYONE at
+     the pump” against “I’m telling everyone at the pump. The BAD version” — and
+     it was a MISTAKE: `settle()` draws from exactly ONE of those two pools per
+     customer, so the setup and the punchline could never both be heard and the
+     joke did not exist. The angry line now pays off the SPEAKER line instead
+     (“I’ve got the caps, look”), which is a pair a player can actually hear. */
   kid: {
     speaker: ['Fries. Just fries. I’ve got the caps, look.',
               'Can I get the one with the — the crispy — yeah, that.',
@@ -543,7 +562,7 @@ const VOICE = {
               'I’m going to eat this so fast. Watch.'],
     angry:   ['Fine. I’ll go to the noodle guy. He’s worse but he’s FAST.',
               'That’s not fair and you know it.',
-              'I’m telling everyone at the pump. The BAD version.'],
+              'Putting the caps back in the tin. All of them.'],
   },
   raider: {
     speaker: ['Make it fast and nobody’s day gets ruined.',
@@ -897,10 +916,20 @@ const MODS = [
   { id:'extra_bacon', kind:'extra', w:1,    label:'extra bacon',    ing:'bacon',    say:'Twice the bacon. It’s been a week.' },
   { id:'extra_pickle',kind:'extra', w:1,    label:'extra pickle',   ing:'pickle',   say:'Twice the pickle. I know. I know.' },
   { id:'extra_onion', kind:'extra', w:1,    label:'extra onions',   ing:'onion',    say:'Bury it in onions. Nobody’s kissing me.' },
-  { id:'no_cheese',   kind:'hold',  w:1,    label:'no cheese',      ing:'cheese',   say:'No cheese. Long story, don’t ask.' },
+  /* ⚠ NOT “Long story” — `no_tomato` already says “Long story, bad year”, and
+     cheese and tomato are both on a Margherita and a Veggie, so one breath read
+     “No tomato. Long story, bad year. No cheese. Long story, don’t ask.” Same
+     stutter, same detector (r5dt/mods.mjs). */
+  { id:'no_cheese',   kind:'hold',  w:1,    label:'no cheese',      ing:'cheese',   say:'No cheese. I gave it up the year the cows did.' },
   { id:'no_mustard',  kind:'hold',  w:1,    label:'no mustard',     ing:'mustard',  say:'No mustard. It gets everywhere.' },
   { id:'extra_must',  kind:'extra', w:1,    label:'extra mustard',  ing:'mustard',  say:'Yellow all over it. All over it.' },
-  { id:'extra_pep',   kind:'extra', w:1,    label:'extra pepperoni',ing:'pepperoni',say:'Double the pepperoni. Go on.' },
+  /* ⚠ NOT “Double the pepperoni” — `extra_chz` already says “Double the cheese”
+     and both are in the pool for pizzaPepperoni and pizzaSupreme, so one order
+     in the same breath read “Double the cheese. I’ll pay for it. Double the
+     pepperoni. Go on.” Two promises are a fussy customer; two promises with the
+     same opening two words are a stutter. Checked by r5dt/mods.mjs, which pairs
+     every CO-SPEAKABLE modifier per recipe. */
+  { id:'extra_pep',   kind:'extra', w:1,    label:'extra pepperoni',ing:'pepperoni',say:'Pepperoni till you can’t see the base.' },
   { id:'extra_oil',   kind:'extra', w:1,    label:'extra crispy',   ing:'oil',      say:'Extra crispy. Leave them in a bit.' },
   /* ⚠ THE DRINKS AND SIDES ROWS EXIST FOR A MEASURED REASON. `rollMods()` filters
      the pool to modifiers about an ingredient THIS dish contains, so a soda or a
@@ -1121,15 +1150,36 @@ function judgeMod(mod, item) {
    That is a delivery pipe, not a design: the number is a settlement on the
    BILL and it prints as a tip. It is honest — the Cinder is real, it is priced
    from ECON, and the direction and magnitude are right — but the correct shape
-   is a payout hook, and the exact signature is written out in the HANDOVER at
-   the bottom of this file. Two consequences of the pipe, both real and both
-   preferable to the alternative of the mechanic paying nothing:
+   is a payout hook, and the exact signature is written out as handover item O1.
+   Three consequences of the pipe, all real:
      • TIP_FRACTION_MAX (0.95) can bind on a CHEAP dish carrying an honoured
-       `extra` — MOD_PAY_HIT_MIN is 18 Cinder against a 25-Cinder soda — so the
-       floor is delivered in full on everything except the bottom of the menu.
+       `extra` — MOD_PAY_HIT_MIN is a per-unit Cinder floor set above the
+       priciest pantry unit in the game, and the cheapest thing on the menu is a
+       25-Cinder soda — so the floor is delivered in full on everything except
+       the very bottom of the menu. Read the two numbers out of ECON and RECIPES
+       rather than from here; they have both moved once already.
      • a badly broken promise can take the whole tip to zero and no further,
        because state.js reads a non-positive return as "no tip" and there is no
        way to reach into the payout from here.
+     • 🔴 AND THE PROMISE MOVES THE TILL TWICE, ONLY ONE OF WHICH IS ON THE
+       CHIP. The settlement is delivered on the tip line AND `gen *= verdict.mul`
+       has already multiplied the generosity blend by MOD_TIP_HIT / MOD_TIP_MISS.
+       MEASURED, round 5, one Commuter / one burgerClassic / one "no greens",
+       everything else held identical and controlled against an ignore run that
+       carries no promise at all (scratchpad r5dt/settle.mjs):
+           settlement channel alone (MOD_TIP_* zeroed on the mod)
+               chip "+28" → the tip moves +27      chip "−17" → the tip moves −18
+           both channels, i.e. what ships
+               chip "+28" → the till moves +34     chip "−17" → the till moves −32
+       So the chip's figure IS delivered, to a Cinder of rounding — and then the
+       blend moves it again, unshown. Honouring pays MORE than advertised; a
+       break costs about TWICE what the chip warned. Nothing on screen argues
+       with itself (there is no counterfactual on the card), so this is an
+       understatement of stakes and not a lie — but it is the direction a player
+       can least learn from, and it is O1's second half.
+       ⚠ THE POPULARITY HALF HAS NO SUCH GAP: the same run charges +0.14 / −0.50
+       and the chip and the toast both print +0.1 / −0.5, which is MOD_POP_HIT
+       and MOD_POP_MISS exactly. One channel, one number, four surfaces.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /**
@@ -1257,36 +1307,42 @@ function judgeTicket(ticket) {
 /**
  * 🔴 HOW WELL DOES THIS PLATE FIT THIS ORDER? Higher is better; 0 is neutral.
  *
- * ⚠ NOTHING CALLS THIS YET AND IT IS EXPORTED ON PURPOSE — it is the one-line
- * fix for the largest remaining false negative in the whole mechanic, and the
- * line is in kitchen.state.js.
+ * ✅ SHIPPED AND CONSUMED. Three readers, all on the live path:
+ *     kitchen.state.js `fitOf()`      — wrapped and guarded, feeding `planPass()`
+ *     kitchen.state.js `planPass()`   — the ONE matcher behind both
+ *                                       `refreshReady()` and `takeDishes()`
+ *     kitchen.render.js `pickerHtml()`— the per-candidate "✓ keeps no greens" /
+ *                                       "✗ breaks no greens" on the plate picker
  *
- * MEASURED: six seeded 720s days at level 20 with an auto-cook that reads every
- * ticket and builds to it exactly — 80 promises honoured and 57 still BROKEN,
- * of which 43 were `hold` mods the bot had genuinely obeyed. The cause is not
- * the check. `takeDishes()` fills a line with the FIRST matching-recipe plate on
- * the pass, so the careful burger built without lettuce for car 3 gets handed to
- * car 1, and car 3 is served the lettuce burger somebody else's ticket wanted.
- * Both cars are then judged on a plate that was not built for them. A player who
- * did everything right is told they broke a promise, which is the one failure
- * mode this mechanic must never have.
+ * ⚠ THIS COMMENT USED TO SAY "NOTHING CALLS THIS YET AND IT IS EXPORTED ON
+ * PURPOSE", for a whole round after kitchen.state.js started calling it every
+ * tick. That is worse than an out-of-date note: a comment claiming the file's
+ * biggest fix is UNSHIPPED is the exact instrument the next builder reads to
+ * decide where to spend a round, and it points them at finished work. Re-grep
+ * before you believe any "nobody calls this" in this codebase, including this
+ * one — `grep -rn "fitScore" public/src/kitchen/`.
  *
- * The pass is deliberately fungible (kitchen.state.js's THE PASS: plates are
- * stock, not a pipe) and that is the right call — earmarking every plate to a
- * ticket would make the pass a queue of promises the player cannot re-plan. So
- * the fix is not to earmark; it is to make the CHOICE amongst equals prefer the
- * plate that keeps a promise, which costs nothing and is invisible when no
- * modifier is involved. In `takeDishes()` and `refreshReady()`, where the
- * candidate loop picks the first matching dish:
+ * WHAT THE BUG WAS, in the past tense it belongs in. `takeDishes()` filled a
+ * ticket line with the FIRST matching-recipe plate on the pass, so the careful
+ * burger built without lettuce for car 3 was handed to car 1, and car 3 got the
+ * lettuce burger somebody else's ticket wanted. Both cars were then judged on a
+ * plate that was not built for them, and a player who did everything right was
+ * told they broke a promise — the one failure mode this mechanic must never
+ * have. Six seeded 720s days at level 20 measured 80 honoured against 57 broken,
+ * of which 43 were `hold` mods an obeying auto-cook HAD kept.
  *
- *     const fit = (d) => (typeof DriveThru.fitScore === 'function'
- *                          ? DriveThru.fitScore(item, d) : 0);
- *     candidates.sort((a, b) => fit(b) - fit(a));     // stable; 0 for everyone
- *                                                     // when the line is plain
+ * WHAT CLOSED IT, and why it is not an earmark. The pass stays fungible
+ * (kitchen.state.js's THE PASS: "plates are stock, not a pipe") — reserving a
+ * plate for a ticket would turn the pass into a queue of promises the player
+ * cannot re-plan. `planPass()` only decides WHICH of several INTERCHANGEABLE
+ * plates goes out, lexicographically: pin > fit > contention > oldest, with a
+ * fast exit so a board carrying no modifiers is byte-for-byte the old FIFO.
+ * Re-measured over 12 seeded days: 89 broken `hold` verdicts remain and ZERO of
+ * them had an available, uncontested, fitting plate the matcher passed over.
  *
  * → +1 for each modifier this plate HONOURS, −1 for each it BREAKS, 0 for each
- *   it cannot prove. A plain line scores 0 for every plate, so the sort is a
- *   no-op and pass order is preserved exactly as it is today.
+ *   it cannot prove. A plain line scores 0 for every plate, which is what makes
+ *   the fast exit sound.
  */
 export function fitScore(item, dish) {
   try {
@@ -1460,10 +1516,14 @@ function raiseLater(K, name, payload) { return raise(K, null, name, payload); }
    untouched. `cust.vehicles` is read FIRST if kitchen.data.js ever adopts the
    field, so adopting it needs no change here.
 
-   ⚠ THE ONE THING THIS CANNOT FIX FROM IN HERE. CARS has no bicycle. "Kid on a
-   BMX" is therefore mapped to `bike` — 🏍️, a motorbike — which is much closer
-   than a pickup and still not right. The ask (a `bmx` row, one seat, len 1) is
-   in the HANDOVER; until it lands the Kid rides the smallest thing on the lot.
+   ⚠ CARS HAS NO BICYCLE, AND THE LANE STOPPED SAYING OTHERWISE (§RIDE SKINS).
+   Round 3 mapped "Kid on a BMX" to `bike` because it was the smallest chassis
+   on the lot; `bike`'s icon is 🏍️, so the lane label read "🏍️ Kid on a BMX" —
+   a boy on a bicycle riding a motorbike, in the one pairing that contradicts
+   its own customer name on screen. Round 5 closed it WITHOUT a data.js row: see
+   RIDE_SKINS below, which repaints the icon and the vehicle NAME and changes no
+   number. A `bmx` row in CARS would still be tidier and is still in the
+   HANDOVER; it is now a nicety, not a visible defect.
 
    An empty or unrecognised list falls through to the full roster rather than to
    an empty pool: a personality nobody has thought about yet drives anything,
@@ -1481,13 +1541,67 @@ const RIDES = {
      ≥4-seat roster and turned up in a TRANSIT BUS. One row with four seats on
      the list keeps the fallback for genuinely impossible pairings only. */
   suit:     ['suv', 'taxi', 'hatch'],     // no limo in CARS; a taxi reads corp
-  kid:      ['bike'],                     // ⚠ see the note above
+  kid:      ['bike'],                     // …wearing the BMX skin. See RIDE_SKINS.
   raider:   ['pickup', 'bike'],           // technicals and motorbikes
   family:   ['van', 'bus', 'suv'],        // five seats minimum, and they use them
   mayor:    ['taxi', 'suv'],              // driven, not driving
   ghoul:    ['pickup', 'hatch'],          // forty years of the same truck
   guard:    ['patrol', 'suv'],            // 🚓
 };
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   🚲 §RIDE SKINS — PAINT, NEVER PHYSICS.
+   ═══════════════════════════════════════════════════════════════════════════
+   🔴 THE CAPTURED DEFECT, and it survived two rounds because the fix looked
+   like somebody else's file: the lane label read "🏍️ Kid on a BMX". §RIDES
+   above got the RIGHT ROW — a bike is the smallest, cheapest, one-seat thing in
+   CARS and it is exactly what a child turns up on — and then printed the wrong
+   PICTURE, because CARS[].icon for `bike` is a motorbike.
+
+   Both available fixes were wrong on their own terms:
+     • a `bmx` row in kitchen.data.js is one line and is NOT THIS FILE'S to
+       write. It stays in the HANDOVER.
+     • inventing a local car object here would fork the vehicle vocabulary —
+       §RIDES is explicit that it may not invent one ("every id below is an
+       existing `CARS[].id`, so the weights, `seats`, `len` and `patienceMul`
+       … all keep working untouched"), and a lane row with an id nothing else
+       knows breaks `DATA.car(id)` for every reader downstream.
+
+   So a skin overrides EXACTLY the two presentation fields — `icon` and `name` —
+   on a shallow copy, and touches nothing that the sim reads. `id`, `seats`,
+   `len`, `weight` and `patienceMul` are still the real `bike` row, so a BMX
+   still holds one length of lane, still carries one seat's worth of order and
+   still has a bike's short fuse. Nothing about the economy or the queue moves;
+   the label stops lying.
+
+   ⚠ APPLIED AFTER THE WEIGHTED PICK, NEVER TO THE POOL. Skinning inside
+   `ridePool()` would allocate three objects per spawn for nothing, and — the
+   part that matters — `arrivalPlan()` shares this pick path. Copying after
+   `rweight()` consumes no extra RNG, so a replay is still byte-for-byte the
+   shift it is replaying.
+
+   ⚠ A SKIN IS NOT A LICENCE TO RE-NAME A VEHICLE FOR FLAVOUR. It exists for the
+   one case where the customer's own NAME contradicts the picture. Two rows
+   would already be one too many; if a third is ever wanted, that is the signal
+   that CARS wants the row instead.
+   ═══════════════════════════════════════════════════════════════════════════ */
+const RIDE_SKINS = {
+  // "Kid on a BMX" is a bicycle. The Courier keeps 🏍️ on purpose — their own
+  // customer icon is 🛵 and "courier on a motorbike" is not a contradiction.
+  kid: { bike: { icon: '🚲', name: 'BMX' } },
+};
+
+/** Repaint a picked vehicle for whoever is sitting in it. See §RIDE SKINS. */
+function skinRide(carDef, cust) {
+  if (!carDef || !cust) return carDef;
+  const byCar = RIDE_SKINS[cust.id];
+  const skin = byCar && byCar[carDef.id];
+  if (!skin) return carDef;
+  // A COPY. CARS rows are module-level data shared with every other reader in
+  // the app; mutating one here would give every motorbike in the game a bicycle
+  // icon for the rest of the page load.
+  return Object.assign({}, carDef, { icon: skin.icon, name: skin.name });
+}
 
 /** The vehicles this personality plausibly turns up in. See §RIDES. */
 function ridePool(cars, cust) {
@@ -1800,7 +1914,11 @@ export function spawn(K, now, force) {
       const fast = pool.filter((c) => _num(c.patienceMul, 1) <= 0.9);
       if (fast.length) pool = fast;
     }
-    const carDef = rweight(r, pool, 'weight') || rpick(r, cars) || { id: 'hatch', icon: '🚗', seats: 2, patienceMul: 1, len: 1 };
+    // §RIDE SKINS — paint only, after the pick, so the RNG stream is untouched
+    // and `balk()` below (which reads `carDef.icon` for the drive-past) gets the
+    // same repaint the arrival would have got.
+    const carDef = skinRide(rweight(r, pool, 'weight') || rpick(r, cars)
+      || { id: 'hatch', icon: '🚗', name: 'Hatchback', seats: 2, patienceMul: 1, len: 1 }, cust);
 
     /* 🔴 THE ONE OCCUPANCY TEST, AND IT IS HERE BECAUSE IT NEEDS THE VEHICLE.
        A road train needs two lengths of lane and will drive past a gap that a
@@ -2578,10 +2696,16 @@ function advanceCar(K, car, dt, now, out) {
 
    TWO CAUSES, AND THEY NEED TWO DIFFERENT OWNERS:
 
-     1. `white-space: nowrap` on `.mk-bub` (kitchen.css). NOT OUR FILE. The
-        exact change is written out in the HANDOVER and it is FIVE declarations,
-        not the one it looks like — measured in the running game, not in a
-        mock-up, and the difference matters:
+     1. ✅ `white-space: nowrap` on `.mk-bub` (kitchen.css). NOT OUR FILE, AND
+        IT LANDED. What shipped is `white-space: normal` + `width: max-content` +
+        `max-height: 3.75em` (three line boxes exactly) rather than the
+        `-webkit-line-clamp` trio this block originally asked for — a plain
+        max-height on an exact multiple of the line-height clips only BETWEEN
+        lines, which is the same guarantee with one vendor prefix fewer. The two
+        declarations that were NOT negotiable both went in verbatim. Kept here in
+        full because this is the only record of WHY, and because a reviewer
+        deleting `width: max-content` as redundant re-breaks 100% of the lane's
+        writing on a phone. Measured in the running game, not a mock-up:
           · `white-space: normal` ALONE MAKES IT WORSE. `.mk-bub` is
             `position:absolute` inside `.mk-car`, so the moment it is allowed
             to wrap its shrink-to-fit width collapses to the CAR's 76px and
@@ -2594,6 +2718,8 @@ function advanceCar(K, car, dt, now, out) {
         they are. No re-layout, no widening, no new breakpoint — the width the
         design already chose is enough the moment the text may use more than one
         line of it and is not being squeezed by the sprite it hangs over.
+        AFTER, live at 360×780 over 220 paint steps: 61 distinct spoken lines,
+        0 clipped, 0 off-road, line histogram {1 line: 4, 2 lines: 57}.
 
      2. LINE LENGTH, WHICH IS OURS. Individual authored lines are already
         inside that budget (272 lines, longest 63 chars). The 131-character
@@ -2986,16 +3112,25 @@ function scheduleArrivals(K, now, out) {
    🎬 SERVICE RESOLUTION — §THE TWO VERBS.
    ═══════════════════════════════════════════════════════════════════════════
    These are the ONLY two things a player can do to the lane, and they are the
-   entire reason the lane is a game and not an animation. They were also, in the
-   round that shipped, DEAD CODE: `grep -rn "serveCar\\|waveCar" public/src
-   public/index.html` returned nothing but the two definitions. The renderer
-   served through `State.serveTicket()` directly, so the reward moment (the
-   customer's `served` line, the regulars ledger, the modifier verdict, the
-   stats) never ran, and there was no `data-act="wave"` anywhere so the player's
-   escape hatch could not be invoked at all.
+   entire reason the lane is a game and not an animation.
 
-   🔴 THE EXACT CALLS THE RENDERER MUST MAKE. Written here rather than "left to
-   the wiring" because that is what produced two dead exports last time:
+   ✅ BOTH ARE WIRED. `serveCar()` is called from `doServe()` (kitchen.render.js
+   :2704) and `doWave()` calls `waveCar()` (:2733) off a `data-act="wave"` button
+   that exists in two places — the ✋ on the head car (:757) and the "✋ Wave off"
+   on the pinned card (:1785). Re-check with
+   `grep -rn "serveCar\\|waveCar" public/src public/index.html` before trusting
+   this sentence; it was false for a whole round.
+
+   🔴 IT SHIPPED DEAD, AND THAT IS WHY THE CALL SITES ARE STILL WRITTEN OUT IN
+   FULL BELOW. In the round that first shipped these two functions, that same
+   grep returned nothing but the two definitions: the renderer served through
+   `State.serveTicket()` directly, so the reward moment (the customer's `served`
+   line, the regulars ledger, the modifier verdict, the stats) never ran, and
+   there was no `data-act="wave"` anywhere, so the player's escape hatch could
+   not be invoked at all. Leaving a verb's exact wiring in a handover for
+   somebody else to design is how that happens. This block is the antidote and
+   it stays even though the work is done — the next person to touch `doServe()`
+   should be able to read what it is supposed to look like without diffing:
 
        // in doServe(id, now), where `t` is the ticket being served:
        if (t.source === 'drive' && t.carId) {
@@ -3038,12 +3173,20 @@ function scheduleArrivals(K, now, out) {
    still returned separately for anything that wants to colour them.
 
    THE FORMAT IS THE CHIP'S FORMAT, ON PURPOSE. `modChip()` prints a bare signed
-   figure — "+18" green, "−22" red — beside the promise WHILE the player can
-   still keep it. The toast has to print the same glyphs and the same figure or
-   the player cannot tell it is the same number, which is the entire point:
-       one promise   →  "✓ no greens +18 · +0.5 pop"
-       one broken    →  "✗ no greens −17 · −0.5 pop"
-       several       →  "✓2 ✗1 −4 · −0.5 pop"
+   figure — green for a bonus, red for a charge — beside the promise WHILE the
+   player can still keep it. The toast has to print the same glyphs and the same
+   figure or the player cannot tell it is the same number, which is the entire
+   point. The SHAPE, which is what this block is specifying:
+       one promise   →  "✓ no greens +NN · +N.N pop"
+       one broken    →  "✗ no greens −NN · −N.N pop"
+       several       →  "✓2 ✗1 −NN · −N.N pop"
+   ⚠ THE FIGURES ARE DELIBERATELY NOT WRITTEN OUT HERE. This block used to show
+   "✓ no greens +18 · +0.5 pop" as its worked example; by the time anyone read it
+   again MOD_PAY_HIT_MIN had moved to 28 and MOD_POP_HIT was 0.14, so the example
+   was wrong in both columns and looked authoritative. Every figure comes from
+   MOD_PAY_* / MOD_POP_* in kitchen.data.js and from nowhere else. If you want to
+   see today's, run the A/B: scratchpad r4dt/ab.mjs prints obey / defy / ignore
+   side by side off the real ECON table.
    UNPROVEN rows are counted in neither. They are worth exactly 0 in both
    directions and `modChip()` already refuses to print a zero, because a "0" on
    an untouched line reads as a penalty already taken. */
@@ -3091,9 +3234,13 @@ function verdictLine(verdict) {
  *   • the customer's `served` line — the payoff for reading their voice all shift;
  *   • the regulars ledger (§SETTLE), which is what makes the FAVOUR set piece
  *     reachable at all;
- *   • the modifier verdict (§MODIFIERS), captured BEFORE serveTicket runs,
- *     because serveTicket deletes the ticket off the board when it is done and
- *     the verdict is unrecoverable one line later.
+ *   • the modifier verdict (§MODIFIERS), re-judged AFTER `serveTicket()` has
+ *     committed, on the plates that physically left the pass — see the block
+ *     inside the function. ⚠ THIS LINE USED TO SAY "captured BEFORE serveTicket
+ *     runs", which was the bug, not the design: judging early answered a
+ *     different question about a different set of plates, and the chip, the
+ *     toast and the popularity charge disagreed with the till on 14 of 239
+ *     drive tickets over 12 seeded days. Zero now.
  *
  * ⚠ WHAT THIS FUNCTION MUST NOT DO: emit `car:served` or `car:leave`. state.js
  * has already emitted both by the time it returns, and a duplicate is two
@@ -3454,7 +3601,7 @@ export function tipFor(K, car, quality, now) {
  * the same place. If a fourth multiplier is ever added to the payout, this
  * estimate is quietly wrong by that factor and the settlement is delivered at
  * the wrong size. That is the strongest argument in the file for the payout
- * hook in the HANDOVER: with it, this function deletes.
+ * hook, handover item O1: with it, this function deletes.
  *
  * It is only ever a DENOMINATOR, so an under-estimate over-delivers the
  * settlement and an over-estimate under-delivers it; neither can invert the
@@ -3591,7 +3738,8 @@ export function arrivalPlan(opts) {
       const big = pool.filter((c) => _int(c.seats) >= 4);
       pool = big.length ? big : (cars.filter((c) => _int(c.seats) >= 4) || pool);
     }
-    const carDef = rweight(r, pool, 'weight') || { id: 'hatch', seats: 2, patienceMul: 1 };
+    const carDef = skinRide(rweight(r, pool, 'weight')
+      || { id: 'hatch', icon: '🚗', name: 'Hatchback', seats: 2, patienceMul: 1 }, cust);
     const items = buildOrder(r, cust, carDef, level, pick.special);
     if (!items.length) continue;
     const mods = [];
@@ -3717,13 +3865,18 @@ export function laneStatus(K, now) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   🖼 §RENDER — the six fields the lane computes every frame and nobody drew.
+   🖼 §RENDER — the six fields the lane computes every frame. ✅ ALL SIX DRAWN.
    ═══════════════════════════════════════════════════════════════════════════
    A measured 84px strip of four emoji is what this lane looked like on a phone,
-   while the sim underneath was computing all of this per car per frame and
-   throwing it away. This is the say-so for each one — WHAT it is and WHAT to
-   draw — and `laneCard()` below hands the whole set over pre-chewed so a
-   renderer never has to reach into `K._lane` or re-derive a mood.
+   while the sim underneath computed all of this per car per frame and threw it
+   away. Every field below now has a renderer — `moodFace` and `specialLabel` on
+   the pinned card, `exitDir` in `updateCars()`, `ticket.line` in the ticket
+   header, `item.mods` as chips under the line, `p.lane` on the drive-past band —
+   so this block is now a SPEC AND A RECEIPT rather than a request. It stays
+   because `laneCard()` hands the whole set over pre-chewed and a renderer must
+   never have to reach into `K._lane` or re-derive a mood; the "DRAW:" notes say
+   what each field is FOR, which is the thing a redesign needs and the thing a
+   screenshot cannot tell you.
 
      car.mood     'happy' | 'ok' | 'testy' | 'furious', stepped off patience
                   remaining at LANE_MOOD_TESTY / LANE_MOOD_ANGRY.
@@ -3935,198 +4088,253 @@ export function regulars(K) {
   return out;
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   📌 HANDOVER NOTES — the things this file needs from other people's files.
-   ═══════════════════════════════════════════════════════════════════════════
+/* ════════════════════════════════════════════════════════════════════════════
+   📌 HANDOVER — THINGS THIS FILE STILL NEEDS FROM OTHER PEOPLE'S FILES.
+   ════════════════════════════════════════════════════════════════════════════
    CONTRACT.md: "If you need something this contract does not give you, do not
    invent it locally — say so and it gets added HERE first." These are the
    say-sos. Everything below WORKS today; each one would work better with a
    small addition somebody else owns.
 
-   1. ✅ ECON KEYS — CLOSED, ALL OF THEM. The 36 keys this file used to carry as
-      `EC(key, literal)` fallbacks are in kitchen.data.js, `EC()` now takes ONE
-      argument, and the four keys this round introduced —
+   🔴 HOW TO READ THIS LIST, AND THE RULE THAT NOW GOVERNS IT.
+   A handover that keeps a shipped fix listed as the top outstanding defect is
+   an ACTIVE HAZARD, not merely untidy: it is the instrument the next builder or
+   critic reads to decide where to spend a round, and it sent one of them at
+   finished work with round-3 numbers attached. So:
+     • a CLOSED item is rewritten in the past tense, marked ✅, and keeps only
+       what a future reader needs — what the bug was, what closed it, and the
+       re-measured figure. It is NEVER left phrased as work to do.
+     • an OPEN item is marked 🔴 or ⚠, names the file and the exact signature,
+       and says what it is worth. If you cannot name the signature, it is not
+       ready to be a handover item.
+     • EVERY claim here is a grep away from being checked. Check it. Two rounds
+       running, the thing this block asserted about another file was false.
+   Last swept: round 5, against the shipped code, item by item.
 
-        LANE_SPEAKER_POS   where the speaker box is (§GEOGRAPHY)
-        PASSBY_STAGGER_MS  head start between consecutive drive-pasts
-        PASSBY_LANES       rows of the far-side band to spread them over
-        PLAN_SERVE_RATE    the hit rate `arrivalPlan()` models by default
+   ── OPEN ────────────────────────────────────────────────────────────────
 
-      — were adopted by kitchen.data.js in the same round. `econAudit()` returns
-      `{gaps, pending, ok}` and `ok` is TRUE after a full simulated day, which is
-      the assertion to re-run rather than a claim to take on trust. Two of the
-      pairs had ALREADY drifted before this landed (MOD_TIP_MISS -0.45 in ECON
-      against -0.30 here, SPAWN_MIN_MS 2100 against 1400), which is the whole
-      argument for why one argument beats two.
+   O1. 🔴 A PAYOUT HOOK IN kitchen.state.js. THE OLDEST OPEN ITEM AND THE ONE
+      THAT DELETES CODE RATHER THAN ADDING IT. §SETTLEMENT explains at length
+      why the modifier Cinder currently rides out on the tip line:
+      `serveTicket()` makes exactly one `bridge().addGems(payout + tip)` call and
+      opens no seam between computing the payout and paying it. The one this
+      file wants, immediately after `const payout = …`:
 
-   2. 🔴 MODIFIER EVIDENCE — ✅ CLOSED, AND HALF OF THE SETTLEMENT IS NOT.
-      kitchen.state.js now records `dish.built` and freezes it onto
-      `item.built` / `item.builds` at the moment of service (§MODIFIERS), so
-      every `hold` and every `extra` scores for real. Measured over six seeded
-      720s days at level 20 with an assembling auto-cook: 94 promises HONOURED
-      where round 2 measured 0 over twelve days.
+          // kitchen.state.js, serveTicket(), right after `payout`
+          let bonus = 0;
+          if (ticket.source === 'drive' && typeof DriveThru.settleFor === 'function') {
+            bonus = _int(DriveThru.settleFor(K, ticket, payout, t));
+          }
+          const paidOut = Math.max(0, payout + bonus);
 
-      TWO THINGS THE SETTLEMENT STILL CANNOT REACH, both needing one line in
-      kitchen.state.js and neither changing an existing number:
+      `settleFor(K, ticket, payout, now) → integer Cinder, signed` is two lines
+      here (`judgeTicket(ticket).cinder`, rounded). It DELETES `payoutEstimate()`,
+      which today re-derives state.js's own payout formula and is therefore the
+      one place in this file that silently goes wrong if a fourth payout
+      multiplier is ever added. With the hook, TIP_FRACTION_MAX stops binding on
+      cheap dishes carrying an honoured `extra`, and a broken promise can cost
+      more than the whole tip.
 
-        (a) 🔴 A PAYOUT HOOK. §SETTLEMENT explains at length why the Cinder
-            currently rides out on the tip line: `serveTicket()` makes exactly
-            one `bridge().addGems(payout + tip)` call and opens no seam between
-            computing the payout and paying it. The one this file wants, called
-            immediately after `const payout = …`:
+      ⚠ AND IT WOULD MAKE THE CHIP EXACT, WHICH IT IS NOT TODAY. MEASURED, round
+      5, one Commuter, one burgerClassic, one "no greens", everything else held
+      identical (scratchpad r5dt/settle.mjs, controlled against an ignore run
+      that carries no promise at all):
+          settlement channel alone (MOD_TIP_* zeroed)
+              chip "+28" → tip moves +27      chip "−17" → tip moves −18
+          both channels, i.e. what ships
+              chip "+28" → till moves +34     chip "−17" → till moves −32
+      So the figure the chip prints IS delivered, to a Cinder of rounding — and
+      then MOD_TIP_HIT / MOD_TIP_MISS move the generosity blend a SECOND time on
+      top of it, unshown. Honouring therefore pays more than advertised (fine)
+      and BREAKING costs about twice what the chip warned (not fine, and it is
+      the direction a player is least able to learn from). Nothing on screen
+      contradicts itself — there is no counterfactual on the card — so this is an
+      understatement of stakes rather than a lie, which is why it is a handover
+      item and not a defect fix. The two honest resolutions both live in other
+      people's files or in a design call:
+        (a) take the hook, pay the settlement out of the PAYOUT, and leave the
+            tip blend as the only thing riding the tip; or
+        (b) decide the blend is part of the promise and show the total.
+      Do not resolve it by deleting `gen *= verdict.mul` — that strands
+      MOD_TIP_HIT / MOD_TIP_MISS / MOD_TIP_UNPROVEN as three more dead ECON keys,
+      which is the fault O2 is already about.
 
-                // kitchen.state.js, serveTicket(), right after `payout`
-                let bonus = 0;
-                if (ticket.source === 'drive' && typeof DriveThru.settleFor === 'function') {
-                  bonus = _int(DriveThru.settleFor(K, ticket, payout, t));
-                }
-                const paidOut = Math.max(0, payout + bonus);
+   O2. 🔴 ECON.MOD_XP_HIT IS STILL READ BY NOBODY. kitchen.data.js ships it at
+      3 xp (getting a fussy order right) and there is no path from this file to
+      `addXp()` — it is module-private in kitchen.state.js, levels are derived
+      inside it, and writing `K.xp` from here would skip the level-up emit, the
+      unlock list and the forced save. Either export
+      `awardXp(n, why) → boolean` or fold the modifier xp into `serveTicket()`
+      beside O1's hook. Verified still true this round:
+      `grep -rn "MOD_XP_HIT\\|awardXp" public/src/kitchen/` returns the ECON row
+      and these comments, nothing else. A shipped key nothing reads is a designer
+      tuning a number that does not exist.
 
-            `settleFor(K, ticket, payout, now) → integer Cinder, signed` is two
-            lines here (`judgeTicket(ticket).cinder`, rounded) and it deletes
-            `payoutEstimate()` — which today re-derives state.js's own payout
-            formula and is therefore the one place in this file that silently
-            goes wrong if a fourth payout multiplier is ever added. With the
-            hook, TIP_FRACTION_MAX stops binding on cheap dishes carrying an
-            honoured `extra`, and a broken promise can cost more than the tip.
+   O3. 🔴 kitchen.state.js SAYS THIS FILE READS `K._dry`. IT DOES NOT.
+      kitchen.state.js's `Kitchen` literal annotates `_dry` with "drivethru.js
+      reads this to stop the lane (see the HANDOVER)". `grep -n "_dry"
+      drivethru.js` returns nothing. Either the lane should stop spawning when
+      the kitchen is provably dry — which is a real design question, because a
+      lane that keeps filling with people you cannot feed is a popularity drain
+      with no counter-play — or that annotation should be corrected. This file
+      will take the behaviour the moment somebody decides which; it is one test
+      in `scheduleArrivals()`. Named here because a comment in SOMEBODY ELSE'S
+      file asserting something about THIS one is exactly the class of error this
+      round was spent deleting.
 
-        (b) ECON.MOD_XP_HIT IS READ BY NOBODY. kitchen.data.js ships it (3 xp
-            for getting a fussy order right) and there is no path from this file
-            to `addXp()` — it is module-private and levels are derived inside it,
-            so writing `K.xp` from here would skip the level-up emit, the unlock
-            list and the forced save. Either export `awardXp(n, why)` or fold
-            the modifier xp into `serveTicket()` beside the hook above. Until
-            one of those lands the key is dead and this file does not read it.
+   O4. ⚠ `extra` MODIFIERS ARE GATED ON THE RECIPE, NOT ON THE MODIFIER, and it
+      is a data question as much as a code one. `State.addStep()` refuses to lay
+      more of an ingredient than the recipe calls for, so an `extra` promise is
+      only keepable on a dish whose canon carries at least MOD_EXTRA_MIN of it.
+      Re-derived against the shipped RECIPES this round: `extra_must` (no recipe
+      carries mustard:2) and `extra_oil` (none carries oil:2) can never spawn.
+      Every other `extra` row is live — cheese, sauce, pickle, onion, pepperoni,
+      chili, bacon, ice, syrup, coffee, milk all have at least one dish. Either
+      state is fine; what is not fine is a promise the game forbids the player
+      from keeping, which is what shipping the ungated pool would have been. If
+      more `extra` variety is wanted the lever is in RECIPES, not here.
 
-   2d. 🔴 THE PASS HANDS OVER THE WRONG PLATE — THE LARGEST REMAINING FALSE
-      NEGATIVE, and the fix is ONE LINE in kitchen.state.js against an export
-      that already exists here. `takeDishes()` and `refreshReady()` fill a
-      ticket line with the FIRST matching-recipe plate on the pass, so a burger
-      built without lettuce for the car that asked for "no greens" is handed to
-      whoever is served first, and the careful player is told they broke a
-      promise they kept. MEASURED, six seeded days at level 20 with an auto-cook
-      that reads every ticket and builds to it exactly: 80 honoured against 57
-      broken, of which 43 were `hold` mods the bot HAD obeyed.
-
-      `DriveThru.fitScore(item, dish)` is written, exported and unit-tested for
-      exactly this. It returns +1 per promise the plate keeps, −1 per promise it
-      breaks and 0 for anything unproven — so a line with no modifiers scores 0
-      for every candidate and the sort is a no-op:
-
-          const fit = (d) => (typeof DriveThru.fitScore === 'function'
-                               ? DriveThru.fitScore(item, d) : 0);
-          candidates.sort((a, b) => fit(b) - fit(a));
-
-      ⚠ NOT an earmark. The pass is deliberately fungible (state.js's THE PASS:
-      "plates are stock, not a pipe") and it should stay that way — reserving a
-      plate for a ticket would turn the pass into a queue of promises the player
-      cannot re-plan. This only decides WHICH of several identical plates goes
-      out, which is a choice the game is already making arbitrarily.
-
-   2b. 🚲 CARS HAS NO BICYCLE (§RIDES). The vehicle now matches the driver — the
-      pickup truck full of Kid on a BMX is gone — but "Kid on a BMX" and the
-      Courier both map to `bike`, which is 🏍️, a motorbike. One row in
-      kitchen.data.js's CARS closes it and needs nothing here:
+   O5. 🚲 CARS STILL HAS NO BICYCLE ROW — now a nicety, not a visible defect.
+      §RIDE SKINS repaints the Kid's `bike` as 🚲 BMX in the lane, on the pinned
+      card and on the drive-past, without touching kitchen.data.js and without
+      moving a single number. A real row would let the BMX have its own `weight`
+      and `patienceMul` instead of borrowing a motorbike's:
           { id:'bmx', icon:'🚲', name:'BMX', seats:1, patienceMul:0.9,
             weight:5, len:1 }
-      …and `RIDES.kid` / `RIDES.courier` gain it. Optionally
-      `CUSTOMERS[].vehicles` moves the whole table into the data file;
-      `ridePool()` already prefers that field when it exists.
+      …and `RIDES.kid` becomes `['bmx']` with the skin deleted. Optionally
+      `CUSTOMERS[].vehicles` moves the whole ride table into the data file;
+      `ridePool()` already prefers that field when it exists. The Courier keeps
+      🏍️ either way — their own customer icon is 🛵 and a courier on a motorbike
+      is not a contradiction.
 
-   2c. 🥬 `extra` MODIFIERS ARE GATED ON THE RECIPE, NOT ON THE MODIFIER, and
-      that is a data question as much as a code one. `State.addStep()` refuses
-      to lay more of an ingredient than the recipe calls for, so an `extra`
-      promise is only keepable on a dish whose canon carries at least
-      MOD_EXTRA_MIN of it — which today silently retires `extra_must` (mustard
-      is 1 on every recipe) and `extra_oil` (oil:1). Either is fine; what is not
-      fine is a promise the game forbids the player from keeping, which is what
-      shipping the ungated pool would have been. If more `extra` variety is
-      wanted, the lever is in RECIPES, not here.
+   O6. 🔴 kitchen.state.js's `skewClocks()` REACHES INTO `K.lane`, AND ITS OWN
+      COMMENT SAYS SO: "⚠ K.lane BELONGS TO drivethru.js. … The alternative — a
+      `DriveThru.skew(K, ms)` entry point — is the better shape and wants adding
+      to CONTRACT §1." Agreed, and here is the exact signature, ready to take:
 
-   3. `patiencePct` DIRECTION and `tipFor` RETURN TYPE. Both are ambiguous in
-      CONTRACT.md and both are resolved defensively here and in kitchen.state.js
-      (see §TIP and `patiencePct`). They want writing down properly in §1 so the
-      next reader does not have to reconstruct the reasoning from two comments
-      in two files.
+          export function skew(K, ms) → boolean   // push every ABSOLUTE lane
+                                                  // stamp forward by `ms`
 
-   4. RENDER READS. `laneView()`, `laneStatus()`, `laneCard()`, `passersBy()`,
-      `modVerdict()` and `regulars()` are the public shape of the lane. A
-      renderer reaching into `K._lane` directly is a renderer that breaks the
-      next time this file is retuned. §RENDER above says what to draw with each
-      field; `laneCard()` hands the whole pinned-strip payload over resolved.
+      ⚠ IT IS DELIBERATELY NOT WRITTEN YET, and that is the whole discipline of
+      this list. This file has shipped a dead export twice (§THE TWO VERBS, and
+      `fitScore` for a round). An entry point with no caller is worth less than
+      nothing: it looks done. It gets written in the same change that makes
+      `skewClocks()` call it, and not before.
 
-   5. THE TWO VERBS ARE THE WIRING (§THE TWO VERBS). `serveCar(K, carId, now)`
-      and `waveCar(K, carId, now)` are the only two things a player can do to
-      the lane and both shipped with zero callers. The exact call sites the
-      renderer needs are written out in full in §THE TWO VERBS; they are two
-      small edits to `doServe()` and the `onClick` switch in kitchen.render.js.
+      🔴 AND THE HAND-ROLLED VERSION IS ALREADY MISSING TWO OF OUR STAMPS, which
+      is the argument for the seam rather than against it. `skewClocks()` shifts
+      arrivedAt / orderedAt / expiresAt / balkAt / sayUntil / nagAt / leftAt and
+      `_lane.nextAt`. It does NOT shift:
+        · `car.orderStartedAt` — so a car skewed mid-order has its order start
+          left in the past, `now - orderStartedAt >= LANE_ORDER_MS` is instantly
+          true, and it files its ticket without finishing its sentence;
+        · each `passers[].at` / `.until` — so every drive-past on screen expires
+          at once and the §BALK traffic vanishes in a frame.
+      Neither is fatal and both are invisible in review, which is exactly what a
+      list of field names in somebody else's file always eventually is.
 
-   6. ✅ `car:balk` IS WIRED (§BALK). It is in TOAST_RANK and `passersBy()`
-      drives `.mk-passer`. What is still owed is the STYLING half of §BALK
-      SPACING, and the DATA for it now exists: each row carries `lane` (0..
-      `lanes`-1) and is already held at the kerb for its own stagger. The
-      renderer currently hashes the id for the vertical offset — reading
-      `p.lane` instead makes a burst deterministic and evenly spread, and
-      `.mk-passers` wants to be `PASSBY_LANES × row-height` tall rather than a
-      fixed 30px band so three rows fit without overlapping.
+   O7. ⚠ `laneView()` HAS NO CONSUMER AND kitchen.render.js REACHES PAST IT.
+      §RENDER says "a renderer that reaches into `K._lane` is a renderer that
+      breaks the next time this file is retuned", and render does the adjacent
+      thing: `(k.lane || []).find(…)` in five places (kitchen.render.js :644,
+      :953, :1792, :2256, :2283) while `laneView(K)` — the read that exists for
+      exactly this — is called by nobody. It is not currently a BUG: `K.lane` is
+      the same array `laneView()` copies. It is a seam that is not being used,
+      so the next time the lane's internal shape moves, five call sites in
+      somebody else's file move with it. Either render adopts `laneView()` or
+      §RENDER stops claiming the rule. Do not resolve it by deleting
+      `laneView()`; the CONTRACT lists it.
 
-   7. THE PINNED CARD'S "WHERE" IS NOW TRUE (§GEOGRAPHY). `station` is derived
+   ── CLOSED, KEPT AS THE RECORD ───────────────────────────────────────
+
+   C1. ✅ ECON KEYS — ALL 36 OF THEM, PLUS THIS FILE'S OWN FOUR. `EC()` takes ONE
+      argument and reads ECON. LANE_SPEAKER_POS, PASSBY_STAGGER_MS, PASSBY_LANES
+      and PLAN_SERVE_RATE were adopted by kitchen.data.js at exactly the values
+      in `ECON_PENDING`, so that object is now unreachable and stays only as a
+      degradation guard. ASSERT IT rather than believing it: `econAudit()`
+      returns `{gaps: [], … ok: true}` after a full simulated day.
+      Two of the old pairs had ALREADY drifted before this landed — MOD_TIP_MISS
+      −0.45 in ECON against −0.30 here, SPAWN_MIN_MS 2100 against 1400 — which is
+      the whole argument for why one argument beats two.
+
+   C2. ✅ MODIFIER EVIDENCE. kitchen.state.js records `dish.built` and freezes it
+      onto `item.built` / `item.builds` at the moment of service (§MODIFIERS), so
+      every `hold` and every `extra` scores for real. Six seeded 720s days at
+      level 20 with an assembling auto-cook: 94 promises HONOURED, where the
+      round that shipped the check measured 0 over twelve days.
+
+   C3. ✅ THE PASS HANDED OVER THE WRONG PLATE — CLOSED BY `planPass()`, NOT BY
+      THIS FILE. This item spent a round listed as "THE LARGEST REMAINING FALSE
+      NEGATIVE" after it had been fixed, with round-3 measurements attached; see
+      the rule at the top of this block, which exists because of exactly that.
+      WHAT IT WAS: `takeDishes()` and `refreshReady()` filled a ticket line with
+      the FIRST matching-recipe plate on the pass, so a burger built without
+      lettuce for the car that asked for "no greens" went to whoever was served
+      first and the careful player was told they broke a promise they kept. Six
+      seeded days: 80 honoured against 57 broken, 43 of those `hold` mods the bot
+      HAD obeyed.
+      WHAT CLOSED IT: kitchen.state.js's `planPass()` — ONE matcher, asked by
+      both readers, ranking lexicographically pin > fit > contention > oldest,
+      with a fast exit that makes a plain board byte-for-byte the old FIFO. Our
+      `fitScore(item, dish)` is its `fit` term, reached through `fitOf()`.
+      RE-MEASURED, 12 seeded days: 89 broken `hold` verdicts remain and ZERO of
+      them had an available, uncontested, fitting plate the matcher passed over.
+      Cost: 0.181ms/tick on a saturated 15-ticket / 16-plate all-modded board.
+
+   C4. ✅ `patiencePct` DIRECTION AND `tipFor` RETURN TYPE ARE IN THE CONTRACT.
+      Both were ambiguous in CONTRACT.md §1 and resolved defensively here and in
+      kitchen.state.js. Round 5 wrote them down properly: §1 now states that
+      `patiencePct` returns patience REMAINING (1 fresh → 0 gone) and that
+      `tipFor` returns a FRACTION of the payout, never absolute Cinder.
+
+   C5. ✅ THE TWO VERBS ARE WIRED. `serveCar()` is called by `doServe()`
+      (kitchen.render.js) and `waveCar()` by `doWave()`, off a `data-act="wave"`
+      button that exists both on the head car and on the pinned card. They
+      shipped with zero callers; §THE TWO VERBS keeps the exact call sites
+      written out so the next person to touch `doServe()` does not have to diff.
+
+   C6. ✅ `car:balk` IS WIRED AND SPACED. It is in TOAST_RANK, `passersBy()`
+      drives `.mk-passer`, and the renderer reads `p.lane` / `p.lanes` for the
+      row rather than hashing the id — so a burst of five fans out into traffic
+      instead of stacking five sprites on one x-coordinate.
+
+   C7. ✅ THE PINNED CARD'S "WHERE" IS TRUE (§GEOGRAPHY). `station` is derived
       from position rather than from slot index, so STATION_WORD no longer says
       "At the window" over a car that is still rolling in. Nothing to do — this
       is a note that the string got MORE accurate, in case a screenshot diff
       looks like a regression.
 
-   8. 🔴 `serveCar().modLine` — ONE LINE IN `rewardMoment()`, AND IT IS THE
-      LAST STEP OF THE MODIFIER MECHANIC. Round 3 returned `modCinder` and
-      `modPop` and left the wording to the renderer, and the renderer drew
-      neither — so the chip promised "+18" before the player pressed SERVE and
-      nothing ever confirmed the 18 had landed. The formatting decision has been
-      taken out of the handover and made here (see the block above `serveCar()`).
-      In kitchen.render.js `rewardMoment()`, DELETE these two lines:
-          if (broke.length) line += ` · ✗ ${esc0(broke[0].label)}`;
-          else if (kept.length) line += ` · ✓ ${esc0(kept[0].label)}`;
-      and REPLACE them with this one:
-          if (r.modLine) line += ` · ${esc0(r.modLine)}`;
-      `kept` and `broke` then have no other reader and can go too. This also
-      fixes the second half of that finding for free: the old code showed
-      `broke[0]` OR `kept[0]`, so a ticket that honoured two promises and broke
-      one read as a pure failure; `modLine` prints "✓2 ✗1 −4 · −0.5 pop".
+   C8. ✅ `serveCar().modLine` IS DRAWN. `rewardMoment()` prints it verbatim, so
+      the "+28" the chip promised before the player pressed SERVE is confirmed by
+      the toast after it. It also fixed a second half for free: the old code
+      showed `broke[0]` OR `kept[0]`, so a ticket that honoured two promises and
+      broke one read as a pure failure; `modLine` prints "✓2 ✗1 −N · −N.N pop".
 
-   8b. 🔴 THE BUBBLE MUST WRAP — FIVE DECLARATIONS IN ONE RULE, AND UNTIL
-      THEY LAND 98% OF THE LANE'S WRITING IS UNREADABLE ON A PHONE
-      (§READABILITY). This is the half of that defect this file cannot fix:
-      shortening the lines is done (nothing spoken now exceeds SAY_MAX_CH, and
-      the 131-character compound order is delivered in beats), and measured
-      live at 360px it changes the clip rate from 49/50 to 58/59. The text is
-      not the problem any more; the box is.
+   C9. ✅ THE BUBBLE WRAPS. kitchen.css took `white-space: normal`,
+      `width: max-content` and a `max-height` of exactly three line boxes (its own
+      solution, and a better one than the `-webkit-line-clamp` this file asked
+      for). `width: max-content` is the one a reviewer deletes as redundant and
+      the one without which `white-space: normal` makes the box NARROWER — 76px,
+      the width of the car it hangs over — rather than wider. §READABILITY keeps
+      the measurement that proves it. Live at 360×780 over 220 paint steps: 61
+      distinct spoken lines, 0 clipped, 0 off-road.
 
-      In kitchen.css, in the `#mythic-kitchen-ov .mk-bub` rule that carries
-      `white-space: nowrap` (the FIRST of the two `.mk-bub` blocks), replace
-      that one declaration with these five:
-          white-space: normal;
-          width: max-content;
-          display: -webkit-box;
-          -webkit-box-orient: vertical;
-          -webkit-line-clamp: 3;
-      Leave `overflow:hidden`, `text-overflow:ellipsis`, the second block's
-      `max-width: min(190px, 46vw)`, the box-shadow and the `data-side` flip
-      exactly as they are.
-
-      🔴 `width: max-content` IS NOT OPTIONAL AND IT IS THE ONE A REVIEWER
-      WILL DELETE AS REDUNDANT. `.mk-bub` is `position:absolute` inside
-      `.mk-car`. Dropping `nowrap` on its own hands the box shrink-to-fit sizing
-      against its containing block, which is the CAR — 76px — so `max-width`
-      never binds and the bubble gets NARROWER, not wider. MEASURED LIVE in the
-      running game at 360px: `white-space:normal` alone leaves 52 of 52 bubbles
-      clipped in a 77px box; with `width:max-content` beside it the box is the
-      intended 166×31 and the clip count is ZERO — 0/52 at 360px, 0/59 at 390,
-      0/52 at 430, 0/55 at 1280, nothing overflowing the viewport at any width.
-      That is the whole change and it needs no other edit anywhere.
-
-      ⚠ The `nowrap` was originally justified by two bubbles colliding. That
-      justification is spent: `updateCars()` shows only ONE bubble per frame
-      (the `loudest` pick), so the collision the cap defended against can no
-      longer happen. While you are in there, `loudest` should prefer a car in
-      the `order` phase over a merely impatient one — the order line is the one
-      with information in it, and it is spoken once.
-   ═══════════════════════════════════════════════════════════════════════════ */
+   C10. ✅ RENDER READS — SIX OF THE SEVEN. `laneStatus()`, `laneCard()`,
+      `passersBy()`, `modVerdict()`, `fitScore()` and `patiencePct()` all have
+      live consumers in kitchen.render.js; `tick()`, `tipFor()` and `clearLane()`
+      are called by kitchen.state.js; `serveCar()` and `waveCar()` by the two
+      buttons (C5). `laneCard()` hands the whole pinned-strip payload over
+      resolved, which is why the renderer never has to re-derive a mood.
+      ⚠ THE SEVENTH IS `laneView()` AND IT IS OPEN — see O7. Counted honestly
+      because the previous version of this line said "all ten have a consumer",
+      and a grep says otherwise for `laneView`, `econAudit`, `voiceAudit`,
+      `arrivalPlan` and `regulars`. The last four are TOOLS, not render reads —
+      they are for harnesses, the critic's replay and the admin debug panel, and
+      index.js does not import this module at all, so `debug()` cannot print
+      them. That is a one-line ask if anybody wants it in the panel:
+      `import * as DriveThru from './drivethru.js'` and
+      `drivethru: { econ: DriveThru.econAudit(), voice: DriveThru.voiceAudit() }`
+      in index.js's `debug()`. Both audits are pure, cheap and return `ok:true`
+      in the only state this file ships in — which is precisely the pair of
+      claims a debug panel exists to stop anyone having to take on trust.
+   ════════════════════════════════════════════════════════════════════════════ */

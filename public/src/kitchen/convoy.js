@@ -74,6 +74,42 @@
         already unloaded, and `leaderboard()` is exported for the Day sheet. See
         §10.
 
+   ── 🔴 WHAT CHANGED IN ROUND 5, AND WHY ─────────────────────────────────────
+   Round 4 closed the quota race on the server and then shipped a food printer
+   on the client, with no attacker anywhere near it.
+
+     G. THE GHOST CONVOY. A launch whose reply was lost AFTER the server
+        committed the INSERT was converted into a local "turned back" practice
+        run and PAID OUT TO THE SENDER — while the committed server row was
+        still on the road to the recipient. 40 dishes left the pass once and 80
+        units of live `food` came out: an effective 2.0 per dish against a wall
+        of 1.267, straight through the number rule 4 calls the most dangerous in
+        the feature. The trigger is a dropped mobile connection, a suspended tab
+        or a TLS reset. Two lines did it — `row.turnedBack = true; row.self =
+        true;` fired on ANY `!res.ok`, and the reconcile heartbeat opened with
+        `if (!c.remoteId) continue;`, which skipped exactly the rows that needed
+        reconciling.
+
+        🔴 THE FIX IS NOT A BETTER GUESS. The client genuinely cannot know
+        whether the INSERT landed, so the DESIGN had to make the question
+        answerable, and it does, in three pieces:
+          · every launch carries a `clientRef` (an idempotency key) generated
+            before the request and saved with the row;
+          · `kitchen_convoy_launch()` in sql/038 dedupes on (from_user,
+            client_ref) under the same advisory lock as wall 10 and returns the
+            row it already wrote, so a retry is free of consequence;
+          · an ambiguous failure PARKS the row as `state:'pending'` — recipient
+            intact, no `self` flag, no claim path, no payout of any kind — and
+            `settlePending()` asks `findConvoysByRef()` on the next heartbeat.
+            Adopt if the row is there; turn back only once the depot has said it
+            is not; stay pending for as long as nobody knows.
+        `isAmbiguous()` (§2a) is where DEFINITE and AMBIGUOUS are told apart, and
+        the default is AMBIGUOUS because the two mistakes are not symmetric: one
+        costs a round trip, the other mints food.
+
+     H. THE SCOREBOARD STOPPED UPLOADING TO A PAGE NOBODY OPENS. `publishStats`
+        is gated on `_boardRead` — see §10.
+
    🔴 THE SIX HARD RULES THIS FILE LIVES UNDER
 
    1. NO DOM. NO TIMERS. NO `Date.now()`. `now` and `dt` arrive as arguments
@@ -456,6 +492,62 @@ function localId(K, now) {
 }
 
 /**
+ * 🔴 THE IDEMPOTENCY KEY FOR ONE LAUNCH. A uuid, generated once, stored on the
+ * row BEFORE the network call and re-sent on every retry of that launch.
+ *
+ * WHY THIS IS THE FIX AND NOT A HEURISTIC. Round 4's launch could not tell a
+ * server that never heard it from a server that committed the row and lost the
+ * reply, so it guessed — it turned the truck back into a local practice run and
+ * paid the SENDER, while the committed row was still on the road to the
+ * recipient. 40 dishes left the pass once; 80 units of live `food` came out.
+ * With a ref the question stops being a guess: sql/038 returns the row it
+ * already wrote for that ref, and `API.findConvoysByRef()` answers "is my truck
+ * up there?" with a yes or a no on the next heartbeat.
+ *
+ * ⚠ IT MUST NOT BE DERIVED FROM `now`. Rule 1 forbids a clock read in here, and
+ *   more importantly a time-derived key COLLIDES: two launches in the same
+ *   millisecond (a double-tap, an automated client) would share a ref and the
+ *   second truck would silently come back as the first. Randomness is the whole
+ *   requirement, so this is the one place in the file that wants it —
+ *   `routePlan()`'s ban on `Math.random()` is about REPLAYABILITY of a drawn
+ *   outcome and does not apply to an opaque key nothing re-derives.
+ * ⚠ THE SHAPE IS A uuid BECAUSE THE COLUMN IS `uuid`. A malformed string is a
+ *   22P02 from Postgres — a DEFINITE refusal, so it cannot ghost, but it would
+ *   make every launch fail. `crypto.randomUUID` first, `getRandomValues` next,
+ *   and a `Math.random` v4 last so a hardened or ancient environment still
+ *   ships trucks instead of refusing to.
+ */
+function newClientRef() {
+  const g = (typeof globalThis !== 'undefined') ? globalThis : null;
+  try {
+    const c = g && g.crypto;
+    if (c && typeof c.randomUUID === 'function') {
+      const v = c.randomUUID();
+      if (typeof v === 'string' && v.length === 36) return v;
+    }
+    if (c && typeof c.getRandomValues === 'function' && typeof Uint8Array === 'function') {
+      const b = c.getRandomValues(new Uint8Array(16));
+      return _uuidFromBytes(b);
+    }
+  } catch (e) { /* fall through */ }
+  const b = [];
+  for (let i = 0; i < 16; i++) b.push(Math.floor(Math.random() * 256) & 255);
+  return _uuidFromBytes(b);
+}
+function _uuidFromBytes(b) {
+  const h = [];
+  for (let i = 0; i < 16; i++) {
+    let v = b[i] & 255;
+    if (i === 6) v = (v & 0x0f) | 0x40;      // version 4
+    if (i === 8) v = (v & 0x3f) | 0x80;      // variant 1
+    h.push((v + 0x100).toString(16).slice(1));
+  }
+  return h.slice(0, 4).join('') + '-' + h.slice(4, 6).join('') + '-'
+       + h.slice(6, 8).join('') + '-' + h.slice(8, 10).join('') + '-'
+       + h.slice(10, 16).join('');
+}
+
+/**
  * A stable 0..1 from a string. Used ONLY for the route, and it must be stable:
  * a re-rolled incident would change the arrival amount every time the panel
  * repainted, which reads as the game lying about how much is on the truck, and
@@ -611,7 +703,15 @@ function passCounts(K) {
     HELD one is not on the road at all. */
 function activeOutbound(K) {
   let n = 0;
-  for (const c of (K.convoys || [])) if (c && c.state === 'transit' && c.dir !== 'in') n++;
+  // ⚠ 'pending' COUNTS. It is a truck that is probably on the road — that is
+  //   the whole reason it is not paid out — so it occupies a driver exactly
+  //   like a confirmed one. Not counting it would let a player with a flaky
+  //   connection stack launches past ECON.CONVOY_MAX_ACTIVE, and the server's
+  //   own wall 1 would then refuse them one at a time with no explanation.
+  for (const c of (K.convoys || [])) {
+    if (!c || c.dir === 'in') continue;
+    if (c.state === 'transit' || c.state === 'pending') n++;
+  }
   return n;
 }
 
@@ -828,6 +928,84 @@ function takeFromPass(K, recipeId, n) {
   return taken;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   §2a — 🔴 THE TWO KINDS OF FAILED LAUNCH, AND WHY ROUND 4 ONLY HAD ONE
+   ═══════════════════════════════════════════════════════════════════════════
+   Round 4 turned the truck back on ANY `!res.ok`. That is right for a depot
+   that ANSWERED and said no, and catastrophic for one that did not answer at
+   all — because "did not answer" includes "committed the row and then the reply
+   died", which is what a dropped mobile connection, a suspended tab or a TLS
+   reset does. The sender was paid for a load that was simultaneously on the
+   road to somebody else. 40 dishes out, 80 food in.
+
+   So there are two branches now and the test is a fact, not a vibe:
+
+     DEFINITE   `missing` (PGRST202/205 — the RPC is not there), `offline` (no
+                request was made), `quota` / `badPlayer` / any `res.code` (a
+                `raise exception` inside kitchen_convoy_launch, which ABORTS the
+                transaction, so nothing is on the road). → TURN BACK. Nothing
+                was written and nothing can be double-paid.
+     AMBIGUOUS  everything else. → PARK. Pay nothing, claim nothing, and ask the
+                depot on the next heartbeat with the client ref.
+
+   ⚠ THE DEFAULT IS AMBIGUOUS AND THAT ASYMMETRY IS DELIBERATE. Mis-classifying
+     a definite refusal as ambiguous costs one extra round trip and a few
+     seconds of "confirming". Mis-classifying an ambiguous one as definite mints
+     food. There is no version of this where guessing "definite" is the safe
+     default, which is exactly the mistake this replaces.
+   ═══════════════════════════════════════════════════════════════════════════ */
+function isAmbiguous(res) {
+  try {
+    if (!res) return true;                  // the api layer itself vanished
+    if (res.ok) return false;
+    if (res.missing || res.offline) return false;
+    if (res.quota || res.badPlayer) return false;
+    if (res.code) return false;             // a named refusal: the depot spoke
+    return res.ambiguous !== false;         // kitchen.api.js's own verdict
+  } catch (e) { return true; }
+}
+
+/**
+ * Turn a launch into a local practice run.
+ *
+ * 🔴 ONLY EVER CALLED ON A DEFINITE REFUSAL — either at launch (the depot said
+ * no) or from `settlePending()` (the depot has since confirmed the row is not
+ * there). This function is where a truck becomes claimable by the SENDER, and
+ * calling it on an ambiguous failure is precisely the ghost convoy. There are
+ * exactly two call sites; keep it that way.
+ *
+ * The fee is already spent and the dishes are already off the pass, so the one
+ * thing that must not happen is "your food is gone and there is no truck". The
+ * row becomes a local run: it still arrives and the sender can unload it. The
+ * intended recipient gets nothing — the honest outcome of a shipment that never
+ * reached the network — and the player is not robbed, because a local run still
+ * pays out less food than the ingredients cost (rule 4).
+ *
+ * ⚠ Round 1 renamed the row and said nothing else. `turnedBack` is here so the
+ *   renderer can say WHY on the row itself.
+ */
+function turnBack(K, row) {
+  const span = Math.max(0, _num(row.arrivesAt, 0) - _num(row.launchedAt, 0));
+  row.state = 'transit';        // a parked row rejoins the road as a local run
+  row.pendingSince = 0;
+  row.local = true;
+  row.turnedBack = true;
+  row.self = true;              // nobody else can see it, so it is claimable here
+  row.toUserId = myId();
+  row.toName = myName() + ' (turned back)';
+  // A turned-back truck is a local run and gets a local road, for the same
+  // reason a practice run does — otherwise the one convoy the player is most
+  // annoyed about is also the only one with nothing to watch.
+  // ⚠ ONCE. `delayMs` is only rolled if the row has not already got one, so a
+  //   pending row settled into a turn-back cannot be delayed twice.
+  if (!(_int(row.delayMs) > 0)) {
+    const hb = rollLocalHold(row.id, span);
+    if (hb.ms > 0) { row.delayMs = hb.ms; row.delayLeg = hb.leg; row.arrivesAt += hb.ms; }
+  }
+  K.rev++;
+  forceSave(K);
+}
+
 /**
  * Put a composed load on the road.
  *
@@ -966,6 +1144,13 @@ export async function launch(K, convoy, toUserId, now) {
       // Clock skew between this device and the server, filled in below. Zero
       // for a practice run, which has no server to disagree with.
       skewMs: 0,
+      /* 🔴 THE IDEMPOTENCY KEY, GENERATED BEFORE THE NETWORK CALL AND SAVED
+         WITH THE ROW. Both halves of that sentence are load-bearing: the ref
+         has to exist before the request so the retry can re-send it, and it has
+         to be in `snapshot()` (it is — `K.convoys` is saved whole) so a launch
+         that was still unresolved when the tab died is still resolvable
+         tomorrow. See `newClientRef()` and §6's `settlePending()`. */
+      clientRef: newClientRef(),
     };
     // A PRACTICE RUN'S ROAD. There is no server leg for one (step 7 skips it), so
     // if it is not rolled here the offline mode — CONTRACT §9 rungs 1–3, i.e.
@@ -1006,6 +1191,8 @@ export async function launch(K, convoy, toUserId, now) {
           dishes: row.dishes,
           // 🔴 A DURATION, NOT A TIMESTAMP. See the block comment above.
           transit_ms: Math.max(0, _int(load.transitMs)),
+          // 🔴 THE GHOST-CONVOY FIX (§2a). Re-sent verbatim by every retry.
+          client_ref: row.clientRef,
         });
       } catch (e) { res = null; }                 // api never throws; belt and braces
       if (res && res.ok && res.row && res.row.id) {
@@ -1014,6 +1201,64 @@ export async function launch(K, convoy, toUserId, now) {
         K.missing = false; K.offline = false;
         K.rev++;
         forceSave(K);
+      } else if (isAmbiguous(res)) {
+        /* ═══════════════════════════════════════════════════════════════════
+           🔴 §2a — NOBODY KNOWS WHETHER THE TRUCK LEFT, SO NOBODY GETS PAID.
+           ═══════════════════════════════════════════════════════════════════
+           THE ROUND-4 DEFECT, in one line: `row.turnedBack = true; row.self =
+           true;` fired on ANY `!res.ok`. A launch whose reply was lost AFTER
+           the server committed the INSERT therefore became a local practice run
+           the SENDER could unload — while the server row was still on the road
+           to the recipient. 40 dishes left the pass once and 80 units of live
+           `food` were created, an effective 2.0 per dish against a wall of
+           1.267. No attacker: a dropped mobile connection, a suspended tab, a
+           TLS reset. And the reconcile heartbeat could never catch it, because
+           it opened with `if (!c.remoteId) continue;` and a turned-back row has
+           no remoteId.
+
+           THE TWO REQUIREMENTS PULL AGAINST EACH OTHER AND BOTH ARE REAL:
+             · the player must never be left with "your food is gone and there
+               is no truck" — that is why round 4 turned it back at all;
+             · the food must never be paid out twice — that is what turning it
+               back did.
+           PARKING IS WHAT SATISFIES BOTH. The row stays on the board, addressed
+           to the person it was addressed to, with `pending` written on it. It
+           pays out NOTHING and can be claimed by NOBODY (`arriveDue()` only
+           flips `'transit'`, `claim()` refuses it by name). The freight and the
+           dishes are already spent, which is honest — they are on a truck, and
+           within one heartbeat the depot says which truck.
+
+           ⚠ `self` IS NOT SET AND THE RECIPIENT IS NOT REWRITTEN. That is the
+             exact mutation that made the ghost claimable. A pending row is not
+             a practice run; it is a launch waiting for its receipt. */
+        row.state = 'pending';
+        row.pendingSince = t;
+        K.rev++;
+        forceSave(K);
+        netFail(K, res);
+        /* 🔴 SAY SO, ON THE CLOSED EVENT SET. The launch ALSO raised
+           `convoy:launch`, which render maps to "🚚 On the road to Kestrel." —
+           measured, and it is a lie about a truck nobody can vouch for yet.
+           `error` is in CONTRACT §6's closed set and is rank 100 in render's
+           toast ranker, so it outranks the launch line in the same frame and the
+           player is told the true thing instead of the cheerful one. This does
+           not depend on the renderer learning a new field; `why` is what
+           `toastEvents()` already prints for `error`. */
+        raise(K, null, 'error', {
+          code: 'CONVOY_PENDING',
+          why: 'The depot did not answer about your convoy to ' + _str(to.name || 'them', 40)
+             + '. It is held until the depot confirms — nothing unloads until then.',
+        });
+        // Ask straight away rather than waiting out the 60s heartbeat: the
+        // failure may have been one dropped packet, and the panel is open and
+        // being looked at right now. Fire-and-forget — `launch()` must not sit
+        // in front of the UI for a second round trip.
+        try { maybeSync(K, t, true); } catch (e) {}
+        return ok({
+          id: row.id, convoy: row, feeCinder: paid, local: false, pending: true,
+          why: 'The depot did not answer. Your truck is held until it confirms — '
+             + 'nothing is unloaded until then.',
+        });
       } else {
         // 🔴 THE TRUCK TURNS BACK. The fee is already spent and the dishes are
         //    already off the pass, so the one thing that must not happen here is
@@ -1028,18 +1273,10 @@ export async function launch(K, convoy, toUserId, now) {
         //   to the caller so the launch toast is not a cheerful lie.
         if (res && res.missing) K.missing = true;
         if (res && res.offline) K.offline = true;
-        row.local = true;
-        row.turnedBack = true;
-        row.self = true;        // nobody else can see it, so it is claimable here
-        row.toUserId = myId();
-        row.toName = myName() + ' (turned back)';
-        // A turned-back truck is a local run and gets a local road, for the same
-        // reason a practice run does — otherwise the one convoy the player is
-        // most annoyed about is also the only one with nothing to watch.
-        const hb = rollLocalHold(row.id, load.transitMs);
-        if (hb.ms > 0) { row.delayMs = hb.ms; row.delayLeg = hb.leg; row.arrivesAt += hb.ms; }
-        K.rev++;
-        forceSave(K);
+        // 🔴 DEFINITE ONLY. `isAmbiguous()` took the other branch above, so by
+        //    the time control reaches here the depot has answered and said no,
+        //    which means no row was written and this cannot double-pay.
+        turnBack(K, row);
         // ⚠ AFTER THE SAVE, NOT BEFORE. state.js's `save()` writes
         //   `K.error = null` on success, so recording the failure first is the
         //   same as not recording it. See the netFail() block for the measurement.
@@ -1506,8 +1743,16 @@ export function route(c, now) {
        §5a's unloading beat: the truck has stopped and the doors are still shut,
        which is a DISABLED button with a filling bar, never an armed one and
        never a refusal the player has to discover by pressing it. */
+    /* ⚠ 'pending' IS THE SIXTH PHASE (§2a) AND IT IS NOT A ROAD STATE. A launch
+       whose reply was lost has not started a journey the player can watch and
+       must never be drawn as one: no ETA to count down, no truck glyph creeping
+       along, and above all NO BUTTON — there is nothing to claim, by anybody,
+       until the depot says which truck this is. Falling through to 'transit'
+       here would have drawn a perfectly ordinary convoy over a row whose whole
+       point is that its status is unknown. */
     const phase = (c.state === 'arrived' || c.state === 'delivered'
-                || c.state === 'held' || c.state === 'claimed') ? c.state : 'transit';
+                || c.state === 'held' || c.state === 'claimed'
+                || c.state === 'pending') ? c.state : 'transit';
     const dock = phase === 'arrived' ? docking(c, now) : { docking: false, pct: 1, msLeft: 0 };
     let caption = '', claimable = false;
     let button = { show: false, label: '', disabled: true, pct: 1 };
@@ -1532,6 +1777,11 @@ export function route(c, now) {
       button = { show: true, label: 'Unload', disabled: false, pct: 1 };
     } else if (phase === 'claimed') {
       caption = 'unloaded';
+    } else if (phase === 'pending') {
+      // 🔴 NO BUTTON, and not a refused one — an ABSENT one. The truck may well
+      //    be on the road to the recipient right now; offering the sender a
+      //    Claim they could press is the ghost convoy with a nicer label on it.
+      caption = 'waiting on the depot — nothing unloads until it confirms';
     }
 
     return {
@@ -1540,7 +1790,10 @@ export function route(c, now) {
       phase,
       // 🔴 "MINE TO UNLOAD", not "the road is over". See the block above.
       arrived: phase === 'arrived',
-      roadOver: phase !== 'transit',
+      // ⚠ 'pending' is NOT road-over: the road has not started. A renderer that
+      //   reads `roadOver` as "draw the aftermath" would draw an ending for a
+      //   trip whose beginning is still unconfirmed.
+      roadOver: phase !== 'transit' && phase !== 'pending',
       claimable,
       caption,
       button,
@@ -2240,6 +2493,114 @@ function mapInbound(row, now) {
 }
 
 /**
+ * 🔴 SETTLE EVERY LAUNCH WHOSE REPLY WAS LOST. THE SECOND HALF OF §2a.
+ * → boolean: did anything change?
+ *
+ * A `'pending'` row is a launch that was paid for, whose dishes are off the
+ * pass, and whose fate nobody knows. It pays out nothing and can be claimed by
+ * nobody until this function turns it into a fact. `client_ref` is what makes
+ * the question askable at all: it is unique per (sender, ref) in sql/038, so
+ * "not in the answer" is proof of absence rather than the absence of proof.
+ *
+ * THREE OUTCOMES, AND ONLY ONE OF THEM PAYS ANYBODY ANYTHING:
+ *   · THE ROW IS THERE  → adopt its id and its clock. The truck is real, it is
+ *     on the road to the person it was addressed to, and it goes back to being
+ *     an ordinary outbound convoy. The sender is paid nothing extra and cannot
+ *     unload it — which is the entire point.
+ *   · THE DEPOT ANSWERED AND THE ROW IS NOT THERE → the insert never landed.
+ *     NOW `turnBack()` is safe, because the question has been answered.
+ *   · THE DEPOT DID NOT ANSWER → stay pending. Forever, if that is how long it
+ *     takes. A truck in limbo is uncomfortable; a truck paid for twice is
+ *     unrecoverable, and it is the recipient's food either way.
+ *
+ * ⚠ IT RUNS BEFORE THE `if (!c.remoteId) continue;` LOOP BELOW, and that
+ *   ordering is finding #1's second half. Round 4's reconcile skipped every row
+ *   without a remoteId, which is exactly and only the rows that need
+ *   reconciling. A pending row HAS no remoteId — that is what pending means.
+ * ⚠ NO NEW EVENT NAME (CONTRACT §6 is a closed set). An adopted row just
+ *   changes state and bumps `rev`; a settled TURN-BACK raises `'error'`, which
+ *   is in the set, is rank 100 in render's toast ranker, and is the only way to
+ *   tell a player something happened to a truck they were told was pending.
+ *   Adoption is deliberately silent: nothing went wrong, and a toast saying
+ *   "your convoy is fine after all" is noise about a problem the player was
+ *   never shown.
+ */
+async function settlePending(K) {
+  const rows = [];
+  try {
+    for (const c of (K.convoys || [])) {
+      if (c && c.state === 'pending' && typeof c.clientRef === 'string' && c.clientRef) rows.push(c);
+    }
+  } catch (e) { return false; }
+  if (!rows.length) return false;
+
+  let r = null;
+  try { r = await API.findConvoysByRef(rows.map((c) => c.clientRef)); } catch (e) { r = null; }
+  if (!r || !r.ok) {
+    // 🔴 STILL NO ANSWER. Leave every one of them pending. This is the branch a
+    //    lazy implementation gets wrong by "cleaning up" — and cleaning up here
+    //    means turning a real truck into a second copy of its own cargo.
+    if (r && !r.missing && !r.offline) netFail(K, r);
+    return false;
+  }
+
+  const byRef = Object.create(null);
+  for (const x of (r.rows || [])) if (x && x.client_ref) byRef[String(x.client_ref)] = x;
+
+  let changed = false;
+  for (const c of rows) {
+    const srv = byRef[String(c.clientRef)];
+    if (srv && srv.id) {
+      c.remoteId = srv.id;
+      /* ⚠ THE SKEW REFERENCE IS `c.launchedAt`, NOT `K.now`. `adoptServerClock`
+         computes skew as (server's launched_at − our idea of when it left), and
+         our idea of when it left is `launchedAt` — which may be hours ago if the
+         tab was shut. Passing `now` would book the whole elapsed trip as clock
+         skew and the countdown would be wrong by exactly that much. */
+      adoptServerClock(c, srv, _num(c.launchedAt, 0));
+      c.state = 'transit';
+      c.pendingSince = 0;
+      c.local = false;
+      c.turnedBack = false;
+      changed = true;
+    } else {
+      // The depot answered and has no such row. The insert never landed.
+      // ⚠ READ THE RECIPIENT FIRST. `turnBack()` REWRITES `toName` to
+      //   "<me> (turned back)", so building the sentence afterwards produced
+      //   "The depot never got your convoy to Me (turned back)" — measured, in
+      //   the very first run of the harness for this fix.
+      const who = _str(c.toName || 'them', 40);
+      turnBack(K, c);
+      raise(K, null, 'error', {
+        code: 'CONVOY_TURNED_BACK',
+        why: 'The depot never got your convoy to ' + who
+           + '. The truck turned back to your own city.',
+      });
+      changed = true;
+    }
+  }
+  if (changed) { K.rev++; forceSave(K); }
+  return changed;
+}
+
+/** Launches still waiting on a receipt. Pure read, for the renderer's banner
+    and for a headless test. → [{ id, toName, dishes, sinceMs }] */
+export function pending(K, now) {
+  const out = [];
+  try {
+    const t = _num(now, _num(K && K.now, 0));
+    for (const c of ((K && K.convoys) || [])) {
+      if (!c || c.state !== 'pending') continue;
+      out.push({
+        id: c.id, toName: c.toName || '', dishes: Math.max(0, _int(c.dishes)),
+        sinceMs: Math.max(0, t - _num(c.pendingSince, 0)),
+      });
+    }
+  } catch (e) {}
+  return out;
+}
+
+/**
  * Pull what is addressed to me, and reconcile what I sent.
  *
  * ⚠ IT DOES BOTH, AND THE NAME ONLY SAYS ONE. Kept as `refreshInbound` because
@@ -2309,7 +2670,11 @@ export async function refreshInbound(K) {
     K.inbound = next;
 
     // ── RECONCILE MINE ──────────────────────────────────────────────────────
-    let reconciled = false;
+    /* 🔴 PENDING FIRST, AND BEFORE THE `!c.remoteId` SKIP BELOW. Round 4's
+       reconcile opened with `if (!c || !c.remoteId) continue;`, which skipped
+       precisely the rows that had a question outstanding — the phantom it was
+       supposed to catch was the one thing it could not see. */
+    let reconciled = await settlePending(K);
     const outb = await API.listOutbound();
     if (outb && outb.ok && Array.isArray(outb.rows)) {
       const byRemote = Object.create(null);
@@ -2393,6 +2758,14 @@ function maybeSync(K, now, force) {
       //    and hanging the board off it means one round trip's worth of
       //    politeness covers both. `shift:close` is also a moment the panel is
       //    being torn down, which is the worst moment to start a fetch.
+      //    ⚠ ROUND 5: `publishStats` NOW RETURNS WITHOUT WRITING until something
+      //      has actually read the board (`_boardRead`, set by `leaderboard()`).
+      //      Round 3's finding was that the board had no reader in any file and
+      //      the upload rode this heartbeat anyway — a player's display name
+      //      posted to a shared table every sixty seconds for a page that does
+      //      not exist. The call site stays exactly here; what changed is that
+      //      it is now a no-op until the read exists. See the block on
+      //      `_boardRead`.
       .then(() => publishStats(K));
   } catch (e) { K._convoySyncing = false; }
 }
@@ -2405,6 +2778,42 @@ function maybeSync(K, now, force) {
    It is not a ledger, it is not evidence, and nothing may read it back and grant
    anything. sql/038 says the same thing in the same words above the table.
    ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   🔴 THE UPLOAD IS DEMAND-DRIVEN. NOTHING IS PUBLISHED TO A PAGE NOBODY OPENS.
+   ═══════════════════════════════════════════════════════════════════════════
+   ROUND 3 FINDING #6, UNCHANGED THROUGH ROUNDS 4 AND 5 AND NOW CLOSED FROM THIS
+   SIDE. `leaderboard()` and `API.listLeaderboard()` had exactly one caller each
+   — each other. No screen in the game displayed a single row of it. Meanwhile
+   `publishStats()` rode the 60-second heartbeat, so every client uploaded its
+   DISPLAY NAME, level, served count, days played and popularity to a shared
+   Supabase table, for the life of the account, for a page that does not exist.
+   sql/038 spends a policy, five column grants and three verify checks
+   protecting that surface. The critic's own words: "uploading player names for
+   a page that does not exist is the worse of the two states."
+
+   THE BOARD'S RENDERER IS NOT THIS FILE'S TO WRITE (kitchen.render.js has one
+   owner and it is not this agent), so the half that IS ours is the upload — and
+   the honest version of it is not "delete the call", it is "make the write
+   follow the read":
+
+     `_boardRead` is set by `leaderboard()` and by nothing else. Until something
+     in this build has actually READ the board, `publishStats()` returns without
+     writing a byte. The day the Day sheet calls `Convoy.leaderboard(25)`, the
+     very next heartbeat starts publishing with no other change anywhere.
+
+   ⚠ THE OBVIOUS OBJECTION, ANSWERED: "then a board only contains people who
+     have opened it." Yes — and that is a normal, defensible shape for an opt-in
+     wall of names (you appear once you have been to look), whereas "we upload
+     everybody's name to a page that does not exist" is not defensible at all.
+     If a populate-first board is ever wanted, the decision to publish a name
+     without the player ever seeing where it goes should be taken deliberately
+     and written down here, not inherited from a heartbeat.
+   ⚠ MODULE SCOPE, NOT `K`. It is a property of this BUILD (does a reader
+     exist?), not of the player's save, so it must not be persisted and must not
+     be per-kitchen. `reset()` does not clear it and should not.
+   ═══════════════════════════════════════════════════════════════════════════ */
+let _boardRead = false;
 
 /**
  * Publish my row. Best-effort, fire-and-forget, silent on every failure.
@@ -2419,6 +2828,8 @@ function maybeSync(K, now, force) {
 function publishStats(K) {
   try {
     if (!K || typeof K !== 'object') return;
+    // 🔴 NO READER, NO WRITE. See the block above.
+    if (!_boardRead) return;
     if (K.missing || K.offline) return;               // setup states: not a failure, just nothing to do
     const t = _num(K.now, 0);
     const totals = K.totals || {};
@@ -2455,6 +2866,11 @@ function publishStats(K) {
  */
 export async function leaderboard(limit) {
   try {
+    /* 🔴 THE READ IS WHAT AUTHORISES THE WRITE. Set before the await so that a
+       board opened on a dead network still counts: the player has asked to see
+       the wall, which is the consent this gate is about, and whether the fetch
+       succeeded is a different question entirely. */
+    _boardRead = true;
     const r = await API.listLeaderboard(Math.max(1, _int(limit || 25)));
     if (!r || !r.ok) {
       return { ok: false, rows: [], missing: !!(r && r.missing), offline: !!(r && r.offline) };
@@ -2512,6 +2928,16 @@ export async function claim(K, convoyId, now) {
     const c = found.row;
 
     if (c.state === 'claimed') return no('NOT_READY', 'That convoy has already been unloaded.');
+
+    /* 🔴 A PENDING LAUNCH PAYS NOBODY. §2a. The server may already hold this
+       convoy and have it on the road to the recipient — that is exactly the
+       case this state exists for — so unloading it here is the ghost: 40 dishes
+       out, 80 food in. `arriveDue()` never flips a pending row to 'arrived', so
+       this is belt to that brace, and it stays because `claim()` is reachable
+       from the console and from a hand-edited save as well as from a button. */
+    if (c.state === 'pending') {
+      return no('NOT_READY', 'The depot has not confirmed that convoy yet. Nothing unloads until it does.');
+    }
 
     // A 'delivered' row is the sender's five-second acknowledgement of a truck
     // that is now the RECIPIENT's (§5a). There is nothing here to unload and
@@ -2827,9 +3253,9 @@ export function recentPartners(K, limit) {
    nothing downstream has to know they exist; they want adding to §1 on the next
    pass: `shippablePass` `manifest` `route` `held` `heldFood` `board` `progress`
    `history` `recentPartners` `claimableAt` `docking` `leaderboard` `netError`
-   `banner` `arrival`. (`ackArrival` mutates `K._arrival` and nothing else.)
+   `banner` `arrival` `pending`. (`ackArrival` mutates `K._arrival`, nothing else.)
 
-   ── 🔴 THE FIVE CONVOY STATES — AND WHY YOU SHOULD NOT BRANCH ON THEM ──────
+   ── 🔴 THE SIX CONVOY STATES — AND WHY YOU SHOULD NOT BRANCH ON THEM ───────
    Round 3 wrote this table out and asked the renderer to honour it. It did not,
    and it was never going to: `kitchen.render.js` reconstructed the verdict from
    `c.state === 'arrived' || route().arrived`, that expression is true for FOUR
@@ -2847,11 +3273,23 @@ export function recentPartners(K, limit) {
      'delivered' 'delivered'    'delivered — {toName} has it'          none  🔴 absent, not refused
      'held'      'held'         'held at the depot: N food — …'        Unload
      'claimed'   'claimed'      'unloaded'                             none
+     'pending'   'pending'      'waiting on the depot — nothing        none  🔴 absent, not refused
+                                 unloads until it confirms'
 
    `route().arrived` now means ONLY "mine to unload" and is false for
    'delivered' and 'held', so even a renderer that never reads `phase` stops
    drawing the button that scolds you. `roadOver` is the old meaning if you
-   genuinely want "the road is behind it".
+   genuinely want "the road is behind it" — and it is FALSE for 'pending',
+   because a launch waiting on its receipt has not started a road, let alone
+   finished one. `progress()` is 0 for 'pending' for the same reason.
+
+   ── 🔴 'pending' IS THE ONE STATE A RENDERER MUST NOT IMPROVISE AROUND ─────
+   It is round 5's ghost-convoy fix (§2a). Every other state is a fact; this one
+   is the absence of one. The rule it enforces is that the sender is paid
+   NOTHING and can claim NOTHING while the depot has not said whether the truck
+   exists — because round 4's alternative (assume it does not, pay the sender)
+   created 80 units of live `food` out of 40 dishes on any dropped connection.
+   `pending(K, now)` is the list, for a banner. Do not add a button to it.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /** Every truck on the board, mine and inbound, newest departure first.
@@ -2865,6 +3303,11 @@ export function board(K) {
 /** 0..1 progress along the route, for the truck glyph on the route strip. */
 export function progress(c, now) {
   if (!c) return 0;
+  // ⚠ A PENDING LAUNCH IS AT THE START LINE, NOT THE FINISH. Every other
+  //   non-transit state means the road is behind it; 'pending' means the road
+  //   may not have begun. Returning 1 here would park the truck glyph on the
+  //   destination marker of a journey nobody has confirmed.
+  if (c.state === 'pending') return 0;
   if (c.state && c.state !== 'transit') return 1;
   const span = Math.max(1, _num(c.arrivesAt, 0) - _num(c.launchedAt, 0));
   return _clamp((_num(now, 0) - _num(c.launchedAt, 0)) / span, 0, 1);

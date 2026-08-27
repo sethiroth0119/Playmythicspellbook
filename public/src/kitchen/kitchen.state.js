@@ -144,6 +144,30 @@ function ECb(key, fallback) {
                                   rather than the whole menu.
      COUNTER_ENABLED       true   debug toggle to silence walk-ins.
 
+   🆕 ASKED FOR THIS ROUND, ALL SIX WITH **LIVE** GUARD VALUES. Read that twice:
+   the guards below are the measured, working numbers, NOT zeroes. POP_REVERT_
+   BELOW spent a whole round as dead data because its guard was 0 and the branch
+   could therefore never be taken, and the same trick applied here would ship a
+   report card that grades on nothing and a popularity meter with its rails back.
+   If kitchen.data.js defines them, data wins; if it never does, the game still
+   plays exactly as measured. They want moving to ECON all the same — they are
+   tuning, and tuning belongs where the designer is looking.
+
+     GRADE_CAP_DUTY        0.70  fraction of capacityModel()'s theoretical rack
+                                 a real pair of thumbs sustains. The model says
+                                 itself that it "ignores the player's hands
+                                 entirely"; this is that correction, measured
+                                 against a zero-reaction bot's real throughput
+                                 (17.9 dishes/hour against a modelled 26.9).
+     GRADE_MIN_C           0.58  the four letter cuts on gradeParts().score.
+     GRADE_MIN_B           0.70  Swept off the measured distribution — see the
+     GRADE_MIN_A           0.79  block in gradeFor() for what each one is
+     GRADE_MIN_S           0.92  pinned to and when to re-sweep them.
+     POP_SOFT_MARGIN         40  how close to POP_MIN/POP_MAX the meter starts
+                                 damping movement toward that rail. See
+                                 bumpPop() — 0 restores the hard clamp and both
+                                 of the dead zones that came with it.
+
    ✅ PANTRY_BIN_PCT / PANTRY_BIN_MIN were asked for by this file and LANDED in
    kitchen.data.js the same round — `binCapFor()` reads both, and the fallbacks
    beside them are NaN guards, not tuning. Left named here because the next
@@ -487,6 +511,14 @@ function freshToday() {
   return {
     served: 0, lost: 0, burnt: 0, spoiled: 0, binned: 0, turned: 0,
     earned: 0, tips: 0, xp: 0, qsum: 0, qunits: 0, raw: 0, perfect: 0,
+    /* ⏱ MILLISECONDS THE KITCHEN WAS ACTUALLY OPEN TODAY, advanced in tick()
+       off the same clamped step as `shift.tMs`. It exists because gradeParts()
+       needs "how long were you trading" and `shift.tMs` is not that number: a
+       resumed shift fast-forwards tMs to where the player walked out, and the
+       day roll resets it to 0 before `simulate()` grades. A tally that only
+       ever counts time that really elapsed cannot lie in either direction, and
+       it rides `today` so mergeToday()/hydrate() carry it for free. */
+    ms: 0,
   };
 }
 
@@ -2157,8 +2189,38 @@ function contentionOf(dish, item, wanters) {
   return worst;
 }
 
-/** Rules 1→4, as one comparator. Lexicographic on purpose: there are no
-    weights to tune, so nobody can "balance" the promise against the queue. */
+/**
+ * Rules 1→4, as one comparator. Lexicographic on purpose: there are no weights
+ * to tune, so nobody can "balance" the promise against the queue.
+ *
+ * 🔴 THE FOUR "MATCHER MISSES" WERE MEASURED AND THEY ARE NOT MATCHER MISSES.
+ * Round 4 left this at "4 of 152 committed hold verdicts read broken with a
+ * promise-keeping plate physically on the pass", and the obvious reading — rule
+ * 3's one-step contention lookahead handing the clean plate to a nearer-due line
+ * — is wrong. Twelve seeded days at level 20, every break classified at the
+ * instant of the commit:
+ *     REACHABLE (clean plates >= the LINE'S QTY, and it broke anyway) :  0
+ *     SHORT     (some clean, fewer than the line needed — unkeepable)  :  4
+ *     STARVED   (no clean plate of that recipe existed at all)         : 84
+ * All four "misses" are qty-TWO lines with exactly ONE clean plate on the pass:
+ * a shake ×2 hold-milk against one clean shake, a chickenSandwich ×2 hold-pickle
+ * against one clean, and an icedCoffee ×2 hold-ice-and-milk against one clean
+ * (counted twice, once per mod). The matcher took the clean plate and one dirty
+ * one, which is the best assignment that exists — a second unit cannot be kept
+ * out of a plate nobody cooked. The earlier count asked "was a clean plate
+ * available?" when the question is "were there `qty` of them?".
+ *
+ * ⚠ SO NOTHING CHANGED HERE, DELIBERATELY. The same run also checked the one
+ * shape that WOULD justify a rewrite — a line spending the last clean plate on a
+ * promise it cannot keep anyway while a rival line could have been kept whole —
+ * and found it 0 times out of 88. A two-pass 2-opt over the board was written,
+ * measured against that number, and dropped: it is a change with a real
+ * regression surface across 148 currently-correct verdicts bought with nothing.
+ * The honest residual is a DRIVE-THRU one and it is not in this file:
+ * `judgeMod()` is all-or-nothing per line, so keeping one of two units reads
+ * exactly like keeping neither. That is the thing worth fixing next, and it is
+ * kitchen.data.js/drivethru.js's to fix.
+ */
 function cmpCand(a, b) {
   if (a.pin !== b.pin) return b.pin - a.pin;      // 1. the player said so
   if (a.fit !== b.fit) return b.fit - a.fit;      // 2. keep the promise
@@ -2625,9 +2687,95 @@ function releaseCar(carId, reason, now) {
    POPULARITY, XP, LEVELS
    ═══════════════════════════════════════════════════════════════════════════ */
 
+/**
+ * Move the popularity meter.
+ *
+ * 🔴 IT USED TO BE A BARE ADD-AND-CLAMP AND THAT IS WHY THE METER HAS TWO DEAD
+ * ZONES. `_clamp(pop + delta, 0, 100)` is fine for one shift out of a fresh
+ * save — the round-3 measurement that said "the meter resolves skill" was
+ * exactly that, one fresh day — and it falls apart the moment state carries
+ * over, which is the state a real player is ALWAYS in. Ten consecutive days per
+ * skill tier, two seeds each, level 12 + heatlamp:
+ *     GOD ended 93.8 / 89.7, EXPERT 93.5 / 90.6, GOOD 92.0 / 90.1
+ * — three tiers six points apart on day one, within two points of each other by
+ * day ten, because everybody who is even roughly competent walks into the 100
+ * rail and stops. At the other end SLOPPY read 24.4, 11.6, then 0, 0, 0, 0, 0,
+ * 0, 0, 0 — eight days pinned at exactly zero. kitchen.data.js:1366 already
+ * records that failure in its own words ("a meter pinned at ZERO does not move
+ * either, and it has stopped being feedback"); it was fixed for the OLD flat
+ * quality distribution and the sharper PERFECT_MS re-created it.
+ *
+ * A hard clamp is a wall. What a reputation meter wants is a HORIZON: movement
+ * toward a rail gets harder the closer you already are, and movement away from
+ * it does not. So a delta is damped by how much ROOM is left in the direction it
+ * is pushing, and only inside the last POP_SOFT_MARGIN of that room:
+ *
+ *     room = delta > 0 ? (MAX - pop) : (pop - MIN)
+ *     if (room < margin) delta *= room / margin
+ *
+ * Three things fall out of that, and they are the whole reason for the shape:
+ *  1. Neither rail is ever reached, so the meter never stops being feedback. A
+ *     tier settles where its gains and its losses balance —
+ *     `pop* = MAX − margin × (losses ÷ gains)` at the top — which is a
+ *     DIFFERENT number for every skill level instead of the same 100.
+ *  2. The middle of the range is untouched. Outside the margin the multiplier
+ *     is exactly 1, so the day-one dynamics the previous round measured and
+ *     tuned (POP_SERVE, POP_PERFECT_BONUS, POP_LOST) are unchanged, and this is
+ *     not a second, quietly-diverging copy of the popularity economy.
+ *  3. It is symmetric, so the fix at the top is the same code as the fix at the
+ *     bottom. Damping only the top would have left the zero-pin exactly where
+ *     it was.
+ *
+ * ⚠ REJECTED: damping EVERY delta by (100 − pop)/100 (a full logistic). It has
+ * the same fixed-point property and it halves the meter's responsiveness at
+ * popularity 50, which is where a new player lives — the first shift would move
+ * half as far and the one place the meter demonstrably worked would get worse.
+ * The knee buys the rails without spending the middle.
+ *
+ * ⚠ REJECTED: a hard floor ("popularity never drops below 5"). That is a lie
+ * with a number on it: the meter would still be pinned, just at 5, and the
+ * player still could not tell a bad day from a slightly better one.
+ *
+ * MEASURED, ten consecutive days per tier, six seeds each, level 12 + heatlamp,
+ * day-10 mean popularity. Before / after (margin 40):
+ *     GOD     93.8, 89.7  →  69.0        AVERAGE     —      →  28.0
+ *     EXPERT  93.5, 90.6  →  65.8        SLOPPY  0,0,0,0…   →  16.5, min 13.6
+ *     GOOD    92.0, 90.1  →  62.4
+ * The top three were two points apart and are now 6.6, in the right order; the
+ * bottom was eight consecutive days of exactly 0.0 and is now strictly positive
+ * on every seed of every tier. The margin was swept, not chosen: 25 keeps more
+ * of day one's swing (day-1 GOD−SLOPPY 48.2 vs 40.6) and gives back most of the
+ * day-10 separation (3.8 between GOD and GOOD), 55 flattens day one to a
+ * 29.7-point range for one more point of separation. 40 is where both are still
+ * worth reading.
+ *
+ * ⚠ AND IT IS A FIX TO THE SHAPE, NOT TO THE POPULARITY ECONOMY, WHICH STILL
+ * OWES SOMETHING. 6.6 points across GOD/EXPERT/GOOD is not the 8 the critique
+ * asked for, and no value of this margin buys it: the three tiers cook within
+ * 1% of each other, so what separates them has to come from weighting the
+ * PERFECT share harder — POP_SERVE 0.10 against POP_PERFECT_BONUS 0.36 and
+ * POP_LOST −1.0. Those are kitchen.data.js's numbers and re-deriving them
+ * against the measured per-tier perfect share is that file's job, not this
+ * one's. This function stops the meter hitting a wall; it cannot invent a
+ * difference the economy never paid out.
+ *
+ * ⚠ POP_SOFT_MARGIN DEFAULTS LIVE, NOT OFF. `EC()`'s second argument is a NaN
+ * guard everywhere else in this file, and this is the one place that needs
+ * saying out loud: a guard of 0 would disable the knee, and shipping a fix that
+ * only works if a sibling file remembers to add a key is how POP_REVERT_BELOW
+ * spent a whole round as dead data. If kitchen.data.js sets it, data wins.
+ */
 function bumpPop(delta, why) {
-  const before = K.popularity;
-  K.popularity = _clamp(_num(K.popularity, 50) + _num(delta, 0), 0, 100);
+  const lo = EC('POP_MIN', 0);
+  const hi = EC('POP_MAX', 100);
+  const before = _clamp(_num(K.popularity, EC('POP_START', 50)), lo, hi);
+  let d = _num(delta, 0);
+  const margin = EC('POP_SOFT_MARGIN', 40);
+  if (d !== 0 && margin > 0) {
+    const room = Math.max(0, d > 0 ? (hi - before) : (before - lo));
+    if (room < margin) d *= room / margin;
+  }
+  K.popularity = _clamp(before + d, lo, hi);
   if (Math.abs(K.popularity - before) > 0.001) {
     emit('pop:change', { from: before, to: K.popularity, delta: K.popularity - before, why: why || '' });
   }
@@ -2853,6 +3001,9 @@ export function closeShift(now, opts) {
     for (const x of openTickets) loseTicket(x, 'closing', t);
   }
 
+  // ONE evaluation of the axes, read three times below (letter, service, craft)
+  // — the grade must not be able to disagree with the numbers printed under it.
+  const parts = gradeParts(K.today);
   const report = {
     day: K.shift.day,
     dayName: dayNameFor(K.shift.day),
@@ -2874,6 +3025,15 @@ export function closeShift(now, opts) {
     popularity: K.popularity,
     forfeit: !!o.forfeit,
     grade: gradeFor(K.today),
+    /* 🔴 THE TWO NUMBERS THE LETTER IS MADE OF, SHIPPED ALONGSIDE IT. Round 3
+       computed modCinder/modPop and never rendered them; the letter has spent
+       four rounds asserting a verdict with no working. A player who reads
+       "grade B" learns nothing they can act on — "you served 83% of what the
+       rack could physically turn out, and what you cooked averaged 91% of
+       perfect" tells them WHICH of the two to fix tonight. Both 0..1, rounded
+       to whole percent so render never has to think about it. */
+    service: Math.round(parts.service * 100),
+    craft: Math.round(parts.kitchen * 100),
   };
 
   K.shift.running = false;
@@ -2922,61 +3082,170 @@ export function closeShift(now, opts) {
 }
 
 /**
- * The day's grade.
+ * The day's grade — the two axes it is made of, before the letter.
  *
- * 🔴 IT USED TO READ ONLY served/(served+lost) AND `burnt === 0`, WHICH MEANT
- * QUALITY DID NOT EXIST. A bot that served 195 consecutive RAW dishes finished
- * on an S: every ticket went out complete and on time, nothing burned, and the
- * grade had no way to notice that every plate was half-cooked. "Did food arrive"
- * is a delivery metric, not a cooking one, and this is a cooking game.
+ * 🔴 ROUND 1: IT READ ONLY served/(served+lost) AND `burnt === 0`, SO QUALITY
+ * DID NOT EXIST. A bot that served 195 consecutive RAW dishes finished on an S.
+ * "Did food arrive" is a delivery metric, not a cooking one.
  *
- * So the grade is now two axes and the WORSE one wins:
- *   SERVICE  — the share of custom you actually served. Turn-aways count in
- *              `lost`, so drowning shows up here even though no ticket existed.
- *   KITCHEN  — the mean quality multiplier of everything handed over, on the
- *              same scale as ECON.Q_* (raw 0.5, good 1.0, perfect 1.25).
- * Taking the worse of the two is what makes both real: a perfect service record
- * built out of raw food cannot buy an A, and neither can flawless cooking for
- * the six customers you did not turn away.
+ * 🔴 ROUND 4: THE FIX FOR THAT WAS `Math.min(service, kitchen)` AND IT THREW THE
+ * WHOLE SKILL SIGNAL AWAY. Measured, 6 skill tiers × 12 seeds at level 12: the
+ * KITCHEN tier read 4/4/4/3/2/2 — monotone across tiers, zero seed noise inside
+ * a tier, a flawless reading. The SERVICE tier read 2 for EVERY tier from a
+ * 50-action-per-second machine (0.827) down to a distracted human (0.770),
+ * because the band 0.75..0.90 was wider than the entire human range. `min()`
+ * takes the constant, so 60 of 72 shifts graded B. The report card could not see
+ * the thing the rest of the game had just learned to measure.
+ *
+ * 🔴 AND THE TERM THAT SURVIVED REWARDED FAILURE, WHICH IS WORSE THAN NOISE.
+ * Popularity drives the arrival rate (kitchen.data.js `spawnIntervalMs`: pop 0 →
+ * 8,000ms, pop 100 → 4,000ms — exactly double the custom), so the reward for
+ * playing well was more customers than the rack can hold, a smaller SHARE
+ * served, and a lower letter. Same frame-perfect bot, same 8 seeds, popularity
+ * pinned: pin 25 → svc 0.855, grades BBBABABB; pin 95 → svc 0.774, grades
+ * CBBBBBBB, on identical mean quality (1.186 vs 1.187) and 71% more Cinder. An A
+ * at level 12 was reachable only by being unpopular. A grade that falls as you
+ * succeed is not a grade, it is a tax on winning.
+ *
+ * ── SO THE TWO AXES ARE NOW THESE, AND NEITHER CAN VETO THE OTHER ──
+ *
+ * SERVICE — the share of the custom you could PHYSICALLY have served that you
+ *   did serve. Not the share that walked in. `capacityModel()` in
+ *   kitchen.data.js already computes the rack's ceiling per in-game hour, so the
+ *   denominator is `min(demand, ceiling)`:
+ *     • quiet shop (demand under the ceiling) → "did you serve everyone who
+ *       came", which is the old question and the right one when nobody is
+ *       queueing;
+ *     • slammed (demand over the ceiling) → "did you push the rack to its
+ *       limit", which is the only fair question when the door will not stop
+ *       opening. Popularity can now only ADD to the numerator, never to the
+ *       denominator, so getting more famous can no longer lower the letter.
+ *   Measured after the change, same bot, popularity pinned 10→95: service
+ *   0.854 / 0.890 / 0.915 / 0.958 / 0.990. It was 0.854 / 0.865 / 0.832 / 0.808
+ *   / 0.776. The axis stopped running backwards.
+ *
+ *   ⚠ GRADE_CAP_DUTY IS NOT A FUDGE, IT IS THE MISSING HALF OF THE MODEL.
+ *   `capacityModel()` says so itself: it "ignores the player's hands entirely,
+ *   which is why peakRatio wants to be comfortably ABOVE 1". Its raw number is
+ *   every slot cooking 100% of the time with nobody plating, serving or buying —
+ *   26.9 dishes/hour at level 12, against 17.9 for a bot with a zero-millisecond
+ *   reaction and fifty actions a second. Grading against the un-derated rack
+ *   made the ceiling unreachable by 50% and the denominator never bound, which
+ *   is the same bug in a new hat. 0.70 is the duty cycle two thumbs sustain;
+ *   it is the ONE number here that is fitted, and it is fitted to the measured
+ *   ceiling, not to a feel. It lives in ECON like every other price.
+ *
+ * KITCHEN — the mean quality multiplier of everything you COOKED, on the
+ *   ECON.Q_* scale (raw 0.5, good 1.0, perfect 1.25), normalised onto 0..1.
+ *
+ *   🔴 "COOKED", NOT "SERVED", AND THAT ONE WORD IS THE THIRD BUG THIS FUNCTION
+ *   HAS HAD. Burnt food never reaches a customer, so it never reached `qsum`,
+ *   so BURNING WAS INVISIBLE TO BOTH AXES. Measured: a bot that burns 33.5
+ *   dishes a shift scored kitchen 0.578 and one that burns 7.5 scored 0.599 —
+ *   twenty-six extra ruined dishes were worth two points. Burnt units now count
+ *   as quality ZERO in the denominator, because that is what they are worth, and
+ *   the same two bots separate 0.313 / 0.545.
+ *
+ *   ⚠ IT COUNTS `burnt` AND DELIBERATELY NOT `binned`, and that distinction is
+ *   load-bearing. Burning a slot and letting a plate rot are NEGLECT — you
+ *   stopped paying attention and food died; `spoilPass()` books both into
+ *   `burnt` for exactly this reason. Binning a plate is a DECISION, and at the
+ *   shipped pass size it is one the player is forced to make constantly: a bot
+ *   that never bins jams the pass and finishes on a D (c2_bin.mjs), and an
+ *   earlier draft then denied it the S for digging itself out. A grade that
+ *   punishes the only working play measures willingness to lose, not skill.
+ *   `binned` stays in the report as a cost line, where a cost belongs.
+ *
+ * ── AND THE LETTER IS A BLEND, NOT A MINIMUM ──
+ * `(service + kitchen) / 2`. Equal weights on purpose: this is a cooking game
+ * with a queue, so half the mark is what you cooked and half is how much of it
+ * got out. The blend is what stops either axis vetoing the other — a flawless
+ * cook who is drowning and a sloppy one who is not now read differently, where
+ * `min()` collapsed both onto the same letter. The cuts are ECON keys, swept
+ * against the measured distribution rather than typed as round numbers, and
+ * re-derived whenever ECON.PERFECT_MS or the capacity model moves.
  *
  * An S additionally requires a clean sheet — nothing burnt — because S is the
  * "you did not put a foot wrong" grade and a bin full of charcoal is a foot
  * wrong even if the customer never saw it.
  *
- * 🔴 IT READS `burnt` AND DELIBERATELY NOT `binned`. Those were the same number
- * and that made the top of the scale unreachable for the wrong reason. Burning
- * a slot and letting a plate rot are both NEGLECT — you stopped paying
- * attention and food died. Binning a plate is a DECISION, and at the shipped
- * pass size it is a decision the player is forced to make constantly: a bot
- * that never bins jams the pass and finishes on a D (c2_bin.mjs), and the one
- * that bins its way out was then denied the S for doing so. A grade that
- * punishes the only working play is not measuring skill, it is measuring
- * whether the player was willing to lose. `binned` stays in the report as a
- * cost line, where a cost belongs.
+ * → { service, kitchen, score } — all 0..1. The letter is `gradeFor()`.
  */
+function gradeParts(today) {
+  const served = _int(today.served);
+  const dishes = _int(today.qunits);
+  const burnt = _int(today.burnt);
+  const total = served + _int(today.lost);
+
+  /* ── SERVICE ────────────────────────────────────────────────────────────
+     Everything here is in DISHES, not tickets, because the capacity model is
+     in dishes and mixing the two units is how the old service term ended up
+     comparing a ticket count against a plate count without anybody noticing.
+     `perTicket` is measured from the day rather than assumed, so a day of
+     two-item orders is not graded against a one-item ceiling. */
+  const perTicket = served > 0 ? (dishes / served) : 0;
+  const demand = total * (perTicket > 1 ? perTicket : 1);
+
+  /* The reachable ceiling. Guarded like every other data call in this file: a
+     half-written data file, or one whose capacityModel has been renamed, gives
+     `ceiling = 0` and the denominator falls back to raw demand — i.e. exactly
+     the old share-of-custom metric. Degrading to the previous behaviour is the
+     right floor here; degrading to "everyone gets an S" is not, which is why
+     the fallback is `demand` and never `dishes`. */
+  let ceiling = 0;
+  const capacityModel = DF('capacityModel');
+  if (capacityModel) {
+    try {
+      const model = capacityModel(K.level, K.upgrades, K.popularity);
+      const perHour = _num(model && model.capacityPerHour, 0);
+      const hourMs = Math.max(1, EC('HOUR_MS', 60000));
+      /* ⚠ `today.ms` AND NOT `shift.tMs`. tMs is where the CLOCK is, which a
+         resumed shift fast-forwards to the bail point (openShift) and a day
+         roll resets to zero (closeShift) — so grading a resumed day against it
+         charges the player for hours the kitchen was shut, and `simulate()`,
+         which grades after the roll, would read zero hours and lose the
+         ceiling entirely. `today.ms` is time the kitchen was actually OPEN and
+         it rides the same tally the rest of the grade reads. */
+      const hours = Math.max(0, _num(today.ms, 0)) / hourMs;
+      ceiling = perHour * EC('GRADE_CAP_DUTY', 0.7) * hours;
+    } catch (e) { ceiling = 0; }
+  }
+  const denom = ceiling > 0 ? Math.min(demand, Math.max(dishes, ceiling)) : demand;
+  const service = denom > 0 ? _clamp(dishes / denom, 0, 1) : 0;
+
+  /* ── KITCHEN ──────────────────────────────────────────────────────────── */
+  const rawQ = EC('Q_RAW', 0.5);
+  const span = EC('Q_PERFECT', 1.25) - rawQ;
+  const cooked = dishes + burnt;
+  const meanQ = cooked > 0 ? (_num(today.qsum, 0) / cooked) : EC('Q_GOOD', 1);
+  const kitchen = span > 0 ? _clamp((meanQ - rawQ) / span, 0, 1) : 0;
+
+  return { service, kitchen, score: (service + kitchen) / 2 };
+}
+
+/** The letter. `'—'` before anybody has walked through the door. */
 function gradeFor(today) {
-  const total = _int(today.served) + _int(today.lost);
-  if (!total) return '—';
-  const service = _int(today.served) / total;
-  const units = _int(today.qunits);
-  // No units served → no kitchen evidence either way, so service alone decides.
-  const meanQ = units > 0 ? (_num(today.qsum, 0) / units) : EC('Q_GOOD', 1);
-
+  if (_int(today.served) + _int(today.lost) <= 0) return '—';
   const SCALE = ['D', 'C', 'B', 'A', 'S'];
-  let svc = 0;
-  if (service >= 0.98) svc = 4;
-  else if (service >= 0.90) svc = 3;
-  else if (service >= 0.75) svc = 2;
-  else if (service >= 0.55) svc = 1;
-
-  const good = EC('Q_GOOD', 1), raw = EC('Q_RAW', 0.5);
-  let kit = 0;
-  if (meanQ >= good + (EC('Q_PERFECT', 1.25) - good) * 0.5) kit = 4;   // ≥ half-perfect
-  else if (meanQ >= good * 0.98) kit = 3;                              // essentially all good
-  else if (meanQ >= good - (good - raw) * 0.35) kit = 2;               // a sloppy minority
-  else if (meanQ >= good - (good - raw) * 0.70) kit = 1;
-  const grade = Math.min(svc, kit);
-
+  const score = gradeParts(today).score;
+  let grade = 0;
+  /* 🔴 THE CUTS ARE SWEPT, NOT TYPED. Round 4's were round numbers
+     (0.98/0.90/0.75/0.55) fitted to nothing, and the top three of them sat
+     above the entire human range. These four came off the measured score
+     distribution of six skill tiers × 12 seeds AT THE GAME'S OWN OUTPUT — not a
+     model of it — plus a maxed kitchen and a day-one kitchen for the ends:
+         0.58  DISTRACT tops out at 0.555, SLOPPY bottoms at 0.615
+         0.70  SLOPPY tops out at 0.690, AVERAGE straddles it
+         0.79  AVERAGE tops out at 0.785, GOD bottoms at 0.795
+         0.92  a level-20 all-owned clean sheet scores 0.94..0.99
+     Re-sweep them (scratch r7/realcuts.mjs) after ANY move to ECON.PERFECT_MS,
+     the Q_* scale, GRADE_CAP_DUTY or capacityModel — all four shift the
+     distribution these sit in, and a cut that has stopped matching its
+     distribution is exactly the bug this function had. */
+  if (score >= EC('GRADE_MIN_S', 0.92)) grade = 4;
+  else if (score >= EC('GRADE_MIN_A', 0.79)) grade = 3;
+  else if (score >= EC('GRADE_MIN_B', 0.70)) grade = 2;
+  else if (score >= EC('GRADE_MIN_C', 0.58)) grade = 1;
   if (grade === 4 && _int(today.burnt) > 0) return SCALE[3];
   return SCALE[grade];
 }
@@ -3114,6 +3383,9 @@ export function tick(dt, now) {
     //    that assigned `DAY_MS + undefined`. One guard, once per frame.
     if (!isFinite(K.shift.tMs)) K.shift.tMs = 0;
     K.shift.tMs += step;
+    // Same clamped step, same guard, different question — see freshToday().
+    if (!isFinite(K.today.ms)) K.today.ms = 0;
+    K.today.ms += step;
     K.shift.rush = rushNow();
   }
 

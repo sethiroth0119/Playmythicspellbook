@@ -6,6 +6,17 @@ builders from writing six incompatible function signatures.**
 If you need something this contract does not give you, **do not invent it locally** —
 say so and it gets added HERE first. That rule is the entire reason this file exists.
 
+> 🔴 **AND THE SECOND RULE, ADDED IN ROUND 5 BECAUSE IT HAD ALREADY COST A ROUND.**
+> This file drifted for four rounds. §1 listed `plateHand(now)` while the shipped
+> signature took a second argument; the plate-steering verbs (`assignDish`,
+> `assignmentOf`, `binPass`, `addStep`, `dumpSupply`) were shipped and absent from it
+> entirely; the ingredient list said 15 when 25 had shipped; the recipe list said 9
+> when 19 had. **A contract that lies is how four parallel builders disagree.**
+> So: **if you change an exported signature, you change §1 in the same edit.** Not in the
+> handover, not next round. The export lists below were regenerated from the shipped code
+> — `grep -n "^export" public/src/kitchen/*.js` — and §12 records which round moved what.
+> Regenerate them the same way before you trust them.
+
 ---
 
 ## 0. THE THREE RULES THAT BREAK EVERYTHING IF IGNORED
@@ -22,15 +33,24 @@ say so and it gets added HERE first. That rule is the entire reason this file ex
 3. **🔴 EVERY BRIDGE MUTATOR RETURNS A BOOLEAN.** Not `undefined` on success.
    The pantry restock unwind (§8) decides whether to refund from these return values,
    exactly like `/src/trading/settle.js` does. A wrapper that returns `undefined` makes
-   the rollback fire on a leg that worked. See the comment on `MythicTradeBridge`.
+   the rollback fire on a leg that worked. `kitchen.bridge.js` `guard()` `console.warn`s
+   once per key when a real bridge returns `undefined` from a mutator — it deliberately
+   does not guess.
 
 ---
 
 ## 1. FILES, OWNERSHIP, EXPORTS
 
-Nine modules + one migration. **Own your file. Do not edit anyone else's.**
-Every module is `.js`, ES module, **must not throw at import time** (it is loaded on every
-page load of a 223k-line app), and imports nothing outside `/src/kitchen/`.
+Eight ES modules + one stylesheet + one migration. **Own your file. Do not edit anyone
+else's.** Every module **must not throw at import time** (it is loaded on every page load
+of a 223k-line app) and imports nothing outside `/src/kitchen/`.
+
+> ⚠ **NAMESPACE IMPORTS ONLY** (`import * as State from './kitchen.state.js'`).
+> `kitchen.state.js` ↔ `drivethru.js` and `kitchen.state.js` ↔ `convoy.js` are import
+> CYCLES. ESM resolves a cycle correctly for hoisted `function` declarations and **not**
+> for `const` arrows, which are still in the temporal dead zone while the graph links.
+> A namespace import binds the module record rather than a binding; guard every call site
+> with `typeof`, and **touch nothing across the cycle at module-evaluation time.**
 
 ### `public/src/kitchen/kitchen.data.js`
 Owns: every number and every id in the feature. **Pure data. Zero imports. Zero side effects.**
@@ -40,57 +60,149 @@ Owns: every number and every id in the feature. **Pure data. Zero imports. Zero 
 
 ```js
 export const INGREDIENTS   // [{id,name,icon,color,unit,batch}]  the PANTRY vocabulary (§8)
-export const RECIPES       // [{id,name,icon,tier,minLevel,station,needs:{ingId:n},
-                           //   cookMs,doneWindowMs,burnMs,basePrice,xp,pop}]
-export const STATIONS      // [{id,name,icon,kind,slots}]  kind:'heat'|'fry'|'bake'|'build'|'instant'
+export const RECIPES       // [{id,name,icon,tier,minLevel,station,cat,needs:{ingId:n},
+                           //   steps:[{ing}], cookMs,doneWindowMs,burnMs,basePrice,xp,pop}]
+export const STATIONS      // [{id,name,icon,kind,slots}]
+export const SHELVES       // pantry bin grouping, for the restock screen
+export const MENU_CATS     // menu categories; CUSTOMERS[].likes indexes these
 export const SUPPLY_RECIPES// [{id,out:{ing,qty},cost:{<liveResId|'cinder'>:n}}]  §8
-export const CUSTOMERS     // [{id,name,icon,patienceMs,tipBias,order:{min,max}}]
-export const CARS          // [{id,icon,seats,patienceMul}]  drive-thru sprites
+export const RELIEF        // 🔴 the CINDER-PRICED escape hatch. Pays out LIVE
+                           //    resources, not pantry stock. Read §8.1's warning.
+export const UPGRADES      // [{id,…,effect:{…}}]  owned ids live in Kitchen.upgrades
+export const CUSTOMERS     // [{id,name,icon,patienceMs,tipBias,likes,order:{min,max}}]
+export const CARS          // [{id,icon,name,seats,patienceMul,weight,len}]
 export const CONVOY_TIERS  // [{id,name,capacity,transitMs,feePct,minLevel}]
-export const ECON          // ALL tuning. See §8 for the required keys.
-export function recipe(id)      // → RECIPES entry | null
-export function ingredient(id)  // → INGREDIENTS entry | null
-export function station(id)     // → STATIONS entry | null
-export function xpForLevel(lv)  // → cumulative XP needed to REACH level lv (lv 1 → 0)
-export function levelForXp(xp)  // → integer level for a total XP number
-export function menuForLevel(lv)// → RECIPES filtered by minLevel, in menu order
+export const DAY_NAMES, POP_FACES
+export const ECON          // ALL tuning. 153 keys. See §8.
+export const DATA          // the whole module re-exported as one object, for the console
+
+// lookups (all → row | null)
+export function recipe(id), ingredient(id), station(id), supply(id), supplyFor(ingId)
+export function salvageFor(ingId), customer(id), car(id), convoyTier(id), upgrade(id), shelf(id)
+export function relief(id), salvageMenu(), salvageCinderCost(recipeId), resRetail(id)
+export function cheapestRoute(recipeId, payableIn), reliefRouteCost(recipeId, parcelId)
+
+// progression
+export function xpForLevel(lv), levelForXp(xp), xpProgress(xp)
+export function menuForLevel(lv, cookable), unlocksAt(lv)
+
+// upgrade-aware derived values — ALWAYS pass Kitchen.upgrades as `owned`
+export function slotsFor(stationId, owned), speedMulFor(stationId, owned)
+export function cookMsFor(recipeId, owned), doneWindowMsFor(recipeId)
+export function laneCap(owned), passCap(owned), pantryCap(owned)
+export function patienceMul(owned), tipMul(owned), popGainMul(owned)
+export function passFreshMs(owned), passSpoilMs(owned)
+export function convoyCapacity(tierId, owned), convoyFeePct(tierId, owned)
+export function expectedUpgradesFor(lv, lagLevels), upgradesForLevel(lv, owned)
+
+// the day curve and the payout multipliers — state.js and drivethru.js BOTH read these,
+// which is what stops two files inventing two economies
+export function dayPct(tMs), hourAt(tMs), rushAt(tMs), dayName(day)
+export function demandScale(level), spawnIntervalMs(pop, rush)
+export function rushPayMul(rush), popPayMul(pop), qualityMul(q), faceFor(pop)
+export function popDayDelta(pop, report), orderScore(recipeId, laidIds)
+export function shippable(recipeId), foodCostOf(recipeId), dishValue(items)
+export function capacityModel(lv, owned, pop)
+
+// 🔴 SELF-AUDITS. Both are pure and cheap and both are printed by `__mk.debug()`.
+export function convoyGuardOk()   // → is a convoy round trip still a LOSS? (§8.4)
+export function assertDataSane()  // → [] when the data file is internally consistent
 ```
 
 **Fixed shared vocabulary — these ids are the contract; do not rename them.**
-- Ingredients (15): `dough sauce cheese tomato pepperoni patty chicken bun lettuce onion
-  pickle sausage potato syrup milk`
-- Stations (5): `oven griddle fryer assembly drinks`
-- Recipes (9): `pizzaMargherita pizzaPepperoni burgerClassic burgerDouble chickenSandwich
-  hotDog fries soda shake`
+Regenerated round 5 from the shipped tables. **The counts have grown twice; read them from
+the file, not from memory.**
+- Ingredients (**25**): `dough sauce cheese tomato pepperoni patty chicken bun lettuce
+  onion pickle sausage potato syrup milk roll bacon chili slaw mushroom mustard mayo oil
+  ice coffee`
+- Stations (5): `griddle fryer oven assembly drinks`
+- Recipes (**19**): `hotDog chiliDog slawDog burgerClassic burgerDouble chickenSandwich
+  burgerBacon pizzaMargherita pizzaPepperoni pizzaVeggie pizzaSupreme fries sideSalad
+  onionRings nuggets chiliCheeseFries soda shake icedCoffee`
+- Customers (12): `commuter courier scav trucker medic suit kid raider family mayor ghoul
+  guard`
+- Cars (9): `hatch suv pickup van taxi bike rig bus patrol`
+- Convoy tiers (3): `van truck rig`
 - Numbers on all of the above are yours to tune. The **ids** are everyone's.
 
 ### `public/src/kitchen/kitchen.state.js`
 Owns: the sim. **No DOM. No `document`. No `window`. No `Date.now()` inside `tick`.**
 Must run to completion under `node --input-type=module` with no browser at all — that is
 the test, and it is why `now` is a parameter everywhere.
-```js
-export const Kitchen                       // the state object (§2)
-export function init()                     // hydrate from bridge, catchUp convoys, → Kitchen
-export function tick(dt, now)              // ⏱ THE ONLY ADVANCE. → Event[] drained this frame
-export function on(name, fn)               // → off() unsubscribe fn
-export function emit(name, payload)        // internal + testable; render never calls it
-export function openShift(now)             // → boolean   starts service, resets `today`
-export function closeShift(now, opts)      // → boolean   opts:{forfeit:true} (§4)
-export function startCook(stationId, slot, recipeId, now)  // → {ok,code,why}
-export function pullSlot(stationId, slot, now)             // → {ok,code,why}  slot → hand
-export function dropHand()                                 // → boolean  bin what's in hand
-export function plateHand(now)                             // → {ok,code,why}  hand → pass
-export function serveTicket(ticketId, now)                 // → {ok,code,why,paid,tip,xp}
-export function buySupply(supplyId, batches)               // → {ok,code,why,spent} (§8)
-export function pantryHas(needs)                           // → boolean  affordability, no mutation
-export function snapshot()                                 // → the SAVED subset only (§5)
-export function hydrate(saved)                             // ← the SAVED subset only (§5)
-export function save(force)                                // → boolean  debounced write (§5)
-export function reset()                                    // wipe to a fresh kitchen (admin/console)
-```
+
 `{ok,code,why}` is the universal action result. `code` is a stable machine string
 (`OK NO_PANTRY NO_SLOT LOCKED CLOSED NOT_READY BAD_ARG CAP`). `why` is the player sentence
 that goes to `toast()`. **Never throw across an action boundary — return `{ok:false}`.**
+
+```js
+export const Kitchen                       // the state object (§2)
+export function init()                     // hydrate from bridge, catchUp convoys, → Kitchen
+export function reset()                    // wipe to a fresh kitchen (admin/console)
+export function tick(dt, now)              // ⏱ THE ONLY ADVANCE. → Event[] drained this frame
+export function on(name, fn)               // → off() unsubscribe fn
+export function emit(name, payload)        // internal + testable; render never calls it
+export function seed(n)                    // reseed the deterministic RNG (tests only)
+export function simulate(seconds, actions, opts)  // headless day runner. opts:{seed,step,
+                                           //   quiet,gap:{at,ms}} → a settlement report
+
+// ── shift ────────────────────────────────────────────────────────────────
+export function openShift(now)             // → boolean   starts service, resets `today`
+export function closeShift(now, opts)      // → boolean   opts:{forfeit:true} (§4)
+export function shiftClock()               // → {hour,label,dayName,pct} for the HUD chip
+export function lastReport()               // → the last day-end settlement report
+
+// ── pantry ───────────────────────────────────────────────────────────────
+export function pantryHas(needs)           // → boolean  affordability, no mutation
+export function pantryRoom()               // → the cooler read: per-bin fill + cap
+export function pantryLowList()            // → ingredients running out (the red bins)
+export function startPantryCovers()        // → can the FIRST tap be a yes? (§9 rung 1)
+export function dryCheck()                 // → 🔴 nothing cookable AND nothing affordable
+export function buySupply(supplyId, batches)      // → {ok,code,why,spent} (§8.1)
+export function dumpSupply(ingId, n)              // → {ok,code,why}  empty a bin; n<=0 = all
+
+// ── cooking ──────────────────────────────────────────────────────────────
+export function canCook(recipeId)                        // → boolean
+export function startCook(stationId, slotIndex, recipeId, now) // → {ok,code,why}
+export function addStep(stationId, slotIndex, ingredientId, now)// → {ok,code,why}
+                                           //   🔴 refuses to lay MORE of an ingredient
+                                           //   than the recipe calls for — see §8.5
+export function pullSlot(stationId, slotIndex, now)      // → {ok,code,why}  slot → hand
+export function dropHand()                               // → boolean  bin what's in hand
+export function plateHand(now, forTicketId)              // → {ok,code,why}  hand → pass
+                                           //   🔴 TWO ARGUMENTS. `forTicketId` plates AND
+                                           //   pins in one gesture; a REFUSED pin never
+                                           //   fails the plating.
+export function binPass(dishId)            // → {ok,code,why}  triage, NOT failure (§8.6)
+export function slotPhase(slot, now), cookPct(slot, now), burnPct(slot, now)
+export function qualityOf(slot, now), qMult(quality), scoreBuild(slot)
+
+// ── the pass ↔ the board ─────────────────────────────────────────────────
+export function assignDish(dishId, ticketId)  // → {ok,code,why}  PIN a plate to an order.
+                                           //   `ticketId` null un-pins. A refused pin
+                                           //   returns ok:false rather than silently
+                                           //   ignoring the instruction.
+export function assignmentOf(dishId)       // → ticketId | null   read-only, for render
+export function newTicket(k, opts)         // → ticket   drivethru.js files lane orders here
+export function ticketPct(ticket, now)     // → 0..1 of the deadline BURNT THROUGH.
+                                           //   ⚠ THE OPPOSITE SENSE TO drivethru's
+                                           //   `patiencePct`, which returns REMAINING.
+                                           //   Both are deliberate — the board bar FILLS
+                                           //   as time runs out, the car bar EMPTIES — and
+                                           //   the pair is exactly why §1 has to say so.
+export function passStalePct(dish, now)    // → 0..1  how far a plate is toward spoiling
+export function serveTicket(ticketId, now) // → {ok,code,why,paid,tip,xp}
+
+// ── progression ──────────────────────────────────────────────────────────
+export function xpProgress()               // → {level,into,need,pct}
+export function menu()                     // → menuForLevel(K.level)
+export function ownsUpgrade(id)            // → boolean
+export function buyUpgrade(upgradeId)      // → {ok,code,why}
+
+// ── persistence (§5) ─────────────────────────────────────────────────────
+export function snapshot()                 // → the SAVED subset only
+export function hydrate(saved)             // ← the SAVED subset only
+export function save(force)                // → boolean  debounced write
+```
 
 ### `public/src/kitchen/kitchen.render.js`
 Owns: every pixel. Reads `Kitchen`, calls actions, subscribes to events. **Never writes
@@ -112,34 +224,72 @@ export function toastEvents(events)        // map sim events → bridge.toast() 
 Owns: all styling. A real stylesheet — no `<style>` string soup in JS.
 Every selector is namespaced `.mk-*` and scoped under `#mythic-kitchen-ov`.
 **Must be legible and playable at 360px wide AND at desktop width** — that is a hard
-requirement, phones are the main platform. Mobile-first, one `@media (min-width:820px)`
-that widens the counter into the landscape layout.
+requirement, phones are the main platform. Mobile-first, with the layout break at 820px:
+`@media (min-width:820px)` widens the counter into the landscape layout and
+`@media (max-width:819px)` carries the phone-only overrides. Two more exist and are not
+layout — `prefers-reduced-motion` and a `pointer: coarse` tap-target bump.
+⚠ **A phone-only rule is a rule nobody testing on desktop will ever see fail.** Round 4
+shipped the promise summary printed on top of "AT THE WINDOW" in the same grid area, at
+360/390/430/819 and clean at 900/1280. Sweep both sides of the break.
 Loaded by `index.js` injecting a `<link>` (§9) — **not** by an index.html edit.
 
 ### `public/src/kitchen/drivethru.js`
-Owns: NPC customers, the lane, patience, tips, service resolution. Pure functions over `K`.
+Owns: NPC customers, the lane, patience, tips, set pieces, the promise mechanic
+(§MODIFIERS), and the lane's WRITING. Pure functions over `K`; never schedules anything.
 ```js
-export function tick(K, dt, now)           // → Event[]  spawn/advance/expire. NEVER schedules.
-export function spawn(K, now, force)       // → car | null
-export function serveCar(K, carId, now)    // → {ok,code,why,paid,tip}
-export function waveCar(K, carId, now)     // → boolean  turn one away (pop cost, no lost-ticket)
-export function patiencePct(car, now)      // → 0..1     for the bar over the car
-export function tipFor(K, car, quality, now) // → integer Cinder, via ECON only
+export function tick(K, dt, now)           // → Event[]  spawn/advance/expire
+export function spawn(K, now, force)       // → car | null   (null IS the balk)
+export function serveCar(K, carId, now)    // → {ok,code,why,paid,tip,xp,custName,icon,line,
+                                           //    honoured,broken,unproven,modCinder,modPop,
+                                           //    modLine,mods[]}
+                                           //   🔴 CALLS State.serveTicket() ITSELF.
+                                           //   Do NOT also call it — that is a double pay.
+export function waveCar(K, carId, now)     // → {ok,code,why,custName,icon,pop}
+                                           //   pop cost, NO lost ticket
+export function patiencePct(car, now)      // → 0..1 patience REMAINING. 1 = fresh arrival,
+                                           //   0 = gone. (Resolved round 5; the bar EMPTIES.)
+export function tipFor(K, car, quality, now) // → a FRACTION of the payout, 0..1 — never
+                                           //   absolute Cinder. state.js multiplies.
+export function fitScore(item, dish)       // → +1 per promise this plate keeps, −1 per
+                                           //   promise it breaks, 0 unprovable. Consumed by
+                                           //   state.js `planPass()` and render's picker.
+export function modVerdict(K, car, now)    // → the live per-promise verdict, for the chips
 export function clearLane(K)               // → void     shift close
+export function laneView(K)                // → cars in draw order (front first)
+export function laneStatus(K, now)         // → the HUD chip. `label` is the thing to print.
+export function laneCard(K, now)           // → the pinned window/next strip, resolved
+export function passersBy(K, now)          // → drive-past records (§BALK), with `lane`/`pct`
+export function regulars(K)                // → this shift's regulars ledger
+export function arrivalPlan(opts)          // → a deterministic replayable rush (critic tool)
+export function econAudit()                // → {gaps,pending,ok}  ok:true is the only
+                                           //   state this file ships in
+export function voiceAudit(budget)         // → {budget,over,max,ok}  every authored line
+                                           //   that cannot fit the speech bubble
 ```
 
 ### `public/src/kitchen/convoy.js`
 Owns: composition, transit, arrival, claim. **The only part of the sim that advances on
 wall-clock while the panel is shut** (§4).
 ```js
+export function estimate(tierId, items, owned)  // → {dishes,transitMs,feeCinder,capacity,…}
+export function shippablePass(K)           // → what on the pass can legally ride
+export function manifest(K, tierId, wanted)// → the loading screen's resolved payload
 export function compose(K, tierId, items)  // → {ok,code,why,convoy}  validates capacity+stock
 export async function launch(K, convoy, toUserId, now) // → {ok,code,why,id}  local first, then api
 export function tick(K, dt, now)           // → Event[]  flips transit→arrived
 export function catchUp(K, now)            // → Event[]  offline gap; called by init() and open()
 export async function refreshInbound(K)    // → boolean  guarded api.listInbound()
-export async function claim(K, convoyId, now) // → {ok,code,why,granted}  §8 payout + cap check
-export function estimate(tierId, items)    // → {dishes,transitMs,feeCinder}  pure, for the UI
+export async function claim(K, convoyId, now) // → {ok,code,why,granted}  §8.4 payout + cap check
+export function pending(K, now)            // → launches the server has not confirmed yet
+export function board(K), progress(c, now), route(c, now), docking(c, now)
+export function held(K), heldFood(K), claimableAt(c)
+export function arrival(K, now), ackArrival(K, id)   // the arrival moment + its dismissal
+export function banner(K), netError(K)     // the degradation ladder's on-screen wording
+export async function recipients(fragment, K), leaderboard(limit), history(convoyId)
+export function recentPartners(K, limit)
 ```
+Convoy `state` values: `pending` → `transit` → `arrived` → `claimed`, plus `held`
+(quota) and `delivered` (the sender's copy once the recipient has claimed).
 
 ### `public/src/kitchen/kitchen.api.js`
 Owns: **every** Supabase call. If a query lives anywhere else, that is the bug.
@@ -147,21 +297,26 @@ Copy `/src/community/community.api.js` exactly: `MISSING_RE`, `client()`, `fail(
 **Every function returns `{ok, rows|row, missing?, offline?, error?}` and NEVER throws.**
 A 404 on a table is an empty list, never a crash.
 ```js
-export async function listInbound()                  // → {ok,rows}
-export async function listOutbound()                 // → {ok,rows}
-export async function insertConvoy(payload)          // → {ok,row}
+export async function listInbound(limit = 40)        // → {ok,rows}
+export async function listOutbound(limit = 40)       // → {ok,rows}
+export async function insertConvoy(payload)          // → {ok,row}   RPC kitchen_convoy_launch
+export async function findConvoysByRef(refs)         // → {ok,rows}  idempotency recovery
 export async function claimConvoy(convoyId)          // → {ok,row}   RPC kitchen_convoy_claim
-export async function listConvoyLedger(convoyId)     // → {ok,rows}  append-only, read-only
-export async function upsertStats(stats)             // → {ok}       best-effort leaderboard
-export async function listLeaderboard(limit)         // → {ok,rows}
-export async function findPlayer(nameFragment)       // → {ok,rows}  convoy recipient picker
+export async function listConvoyLedger(convoyId, limit = 20) // → {ok,rows}  append-only
+export async function upsertStats(stats)             // → {ok}       RPC kitchen_stats_upsert
+export async function listLeaderboard(limit = 25)    // → {ok,rows}
+export async function findPlayer(nameFragment, limit = 12) // → {ok,rows}
 ```
+> ⚠ `insertConvoy` is a misnomer kept for the call sites: there is **no client INSERT** on
+> `kitchen_convoys` at all. It calls the launch RPC, which computes `arrives_at` on the
+> SERVER clock. See §10.
 
 ### `public/src/kitchen/kitchen.bridge.js`
 Owns: the seam + total-degradation fallbacks + tiny shared formatters.
 ```js
 export function bridge()                   // → real bridge, or NULL_BRIDGE (never null)
 export function bridgeReady()              // → boolean   (!bridge()._null)
+export function bridgeReason()             // → why it is not ready, for the debug panel
 export function esc(t)                     // HTML escape
 export function fmtNum(n)                  // 1.2k / 3.4M
 export function fmtCinder(n)               // "◈ 12,400"
@@ -175,30 +330,39 @@ render and play against `NULL_BRIDGE` alone — that is how it is tested headles
 ### `public/src/kitchen/index.js`
 Owns: registration, the **one** RAF loop (§3), the CSS `<link>`, the public surface.
 ```js
+export function open(), close(), paint(), isOpen()
 window.MythicKitchen = {
-  version:'v1', open, close, paint,        // open/close wrap render + loop start/stop
-  state: Kitchen, data, api, bridgeReady, debug(),
+  version, open, close, paint, isOpen,
+  state: Kitchen, sim: State, ui: Render, data: Data, api: Api, convoy: Convoy,
+  bridgeReady, bridgeReason, debug(), NULL_BRIDGE,
 };
 window.__mk = window.MythicKitchen;        // console shorthand, like __mc
 // dispatches CustomEvent('mythic:kitchen-ready') so index.html can unhide the tile
 ```
 Registration is wrapped in try/catch. A failure here makes the tile not appear; it does
 not take the game down.
+> ⚠ **index.js does NOT import `drivethru.js`.** `debug()` therefore cannot print
+> `econAudit()` / `voiceAudit()`. That is a live handover ask in drivethru.js (item C10),
+> not an oversight to "fix" by adding an unused import.
 
 ### `sql/038_kitchen_convoys.sql`
-§10. Idempotent, re-runnable, RLS in the same file, ends with a verify query.
+§10. Idempotent, re-runnable, RLS in the same file, ends with a verify block.
 
 ### index.html gets EXACTLY THREE EDITS (one agent, nobody else touches this file)
-1. `window.MythicKitchenBridge = {…}` beside the other bridges (~line 207430).
-2. One tile that calls `window.MythicKitchen.open()`, hidden until `mythic:kitchen-ready`.
-3. `<script type="module" src="src/kitchen/index.js?v=…"></script>` beside the others (~223074).
-> The stylesheet is deliberately **not** a fourth edit — `index.js` injects the `<link>`.
-> The battle CSS is `<link>`ed from index.html; we do not follow that here because every
-> extra edit to an 11.6 MB file is a merge hazard for one line of markup.
+1. `window.MythicKitchenBridge = {…}` beside the other bridges (**index.html:207495**).
+2. One tile that calls `window.MythicKitchen.open()`, hidden until `mythic:kitchen-ready`
+   (**~114708**).
+3. `<script type="module" src="src/kitchen/index.js?v=…"></script>` (**223230**).
+> Still exactly three, verified round 5. The stylesheet is deliberately **not** a fourth
+> edit — `index.js` injects the `<link>`. The battle CSS is `<link>`ed from index.html; we
+> do not follow that here because every extra edit to an 11.6 MB file is a merge hazard
+> for one line of markup.
 
 ---
 
 ## 2. THE STATE OBJECT
+
+Regenerated round 5 from `kitchen.state.js`'s `Kitchen` literal.
 
 ```js
 export const Kitchen = {
@@ -214,54 +378,72 @@ export const Kitchen = {
     tMs: 0,              // ms elapsed inside the current in-game day
     running: false,      // service open → customers spawn
     rush: 1,             // demand multiplier from the day curve, recomputed each tick
+    bail: null,          // 🔴 THE UNFINISHED SHIFT — {day,tMs,owed,today} or null. SAVED.
+                         //    The whole of the anti-rewind; `owed` is a COUNT, never a
+                         //    popularity number. See closeShift/openShift.
   },
 
   // ── PROGRESSION ───────────────────────────────────────────────────────────
   level: 1,
   xp: 0,                 // TOTAL lifetime xp. Level is derived: levelForXp(xp).
   popularity: 50,        // 0..100. The emoji face + meter. Drives spawn rate and tips.
+  upgrades: [],          // owned UPGRADES ids. SAVED. Feeds every DATA.*(…, owned) helper.
 
   // ── PANTRY — the kitchen's OWN stock. NOT the 14-id live ledger. (§8) ──────
-  pantry: {},            // ingredientId → integer units. Uncapped by the stash cap.
+  pantry: {},            // ingredientId → integer units. Capped by DATA.pantryCap(owned).
 
   // ── STATIONS ──────────────────────────────────────────────────────────────
-  stations: {},          // stationId → { slots: [slot|null, …] }  length = STATIONS.slots
-                         // slot = { recipeId, startedAt, doneAt, burnAt }
+  stations: {},          // stationId → { slots: [slot|null, …] }  length = slotsFor()
+                         // slot = { recipeId, startedAt, doneAt, burnAt, steps:[ingId] }
                          // 🔴 'raw'|'cooking'|'done'|'burnt' is DERIVED from now vs
                          //    doneAt/burnAt. Never store a state string — it goes stale.
-  hand: null,            // { recipeId, quality } lifted off a station, or null
-  pass: [],              // plated and waiting: [{id, recipeId, quality, madeAt}]
+  hand: null,            // { recipeId, quality, mult, built } lifted off a station, or null
+  pass: [],              // plated and waiting: [{id, recipeId, quality, mult, madeAt,
+                         //   built:[ingId], assembled, forTicket }]
 
   // ── TICKETS ───────────────────────────────────────────────────────────────
-  tickets: [],           // [{ id, source:'counter'|'drive', carId|null,
-                         //    items:[{recipeId, qty, filled}], placedAt, dueAt,
+  tickets: [],           // [{ id, source:'counter'|'drive', carId|null, custId, name, icon,
+                         //    line, items:[{recipeId, qty, filled, qsum, xn, pn, mods[],
+                         //    built[] }], placedAt, dueAt,
                          //    state:'open'|'ready'|'served'|'lost', paid:0, tip:0 }]
 
-  // ── DRIVE-THRU LANE ───────────────────────────────────────────────────────
-  lane: [],              // [{ id, carId, custId, name, ticketId, arrivedAt,
-                         //    patienceMs, pos, state:'rolling'|'ordering'|'waiting'|'gone' }]
+  // ── DRIVE-THRU LANE — drivethru.js owns this array outright ───────────────
+  lane: [],              // [{ id, carId, custId, name, icon, vehicle, vehicleIcon,
+                         //    vehicleName, len, ticketId, arrivedAt, expiresAt, patienceMs,
+                         //    pos, target, slot, station:'window'|'speaker'|'queue',
+                         //    mood, special, exitDir, say, sayUntil,
+                         //    state:'rolling'|'ordering'|'waiting'|'gone',
+                         //    phase:'approach'|'order'|'wait'|'collect'|'exit' }]
 
   // ── CONVOYS ───────────────────────────────────────────────────────────────
-  convoys: [],           // MINE, outbound: [{ id, remoteId, tierId, toUserId, toName,
-                         //   items:{recipeId:qty}, dishes, launchedAt, arrivesAt,
-                         //   state:'transit'|'arrived'|'claimed', feeCinder }]
+  convoys: [],           // MINE, outbound. SAVED.
   inbound: [],           // server rows addressed to me. [] when offline or table missing.
 
   // ── TALLIES ───────────────────────────────────────────────────────────────
-  today:  { served:0, lost:0, burnt:0, earned:0, tips:0 },   // reset each openShift()
-  totals: { served:0, lost:0, burnt:0, earned:0, days:0 },   // lifetime, saved
+  today:  freshToday(),  // 🔴 ONE definition of the shape. served lost burnt spoiled binned
+                         //    turned earned tips xp qsum qunits raw perfect ms
+  totals: { served, lost, burnt, spoiled, binned, earned, days },   // lifetime, SAVED
+
+  startGranted: false,   // 🔴 THE STARTING-STOCK RECEIPT. SAVED, or every open re-grants.
 
   // ── CLOUD STATUS — the Corp.* triple, verbatim ────────────────────────────
   missing: false,        // sql/038 has not been run → UI says "not set up yet"
   offline: false,        // signed out / no cloud
   error: null,
 
-  // ── DERIVED. NEVER SAVED. Recomputed every tick. ──────────────────────────
-  _fx: [],               // transient float-ups / sparks for the renderer to consume+clear
-  _events: [],           // this frame's event drain buffer
-  _lastSave: 0,          // debounce stamp
+  // ── DERIVED. NEVER SAVED. ─────────────────────────────────────────────────
+  _fx, _events, _lastSave, _seq, _seed, _nextCounter, _lowSeen, _dry, _report, _init,
+  _lane,   // drivethru.js's per-shift book: spawn timer, regulars ledger, stats, passers
+  _arrival,// convoy.js's "a truck just landed" moment, until ackArrival()
 };
 ```
+
+> 🔴 **THREE KINDS OF WASTE AND THEY ARE NOT ONE NUMBER.** `burnt` is NEGLECT (a slot
+> crossed `burnAt`, or a plate rotted on the pass) and is the only one `gradeFor()` reads.
+> `spoiled` is the pass half of `burnt`, counted in both. `binned` is TRIAGE — the player
+> deliberately binning a plate — and **must never be scored as failure**: breaking the pass
+> deadlock is mandatory play, and the shipped build charged `today.burnt` for it, so
+> correct play was booked as incompetence.
 
 ---
 
@@ -293,10 +475,11 @@ function loop(ts) {
 ```
 
 Inside `State.tick(dt, now)`, in this order, every frame:
-1. `K.now = now`; advance `shift.tMs` by `dt`; recompute `shift.rush`; roll the day over.
+1. `K.now = now`; advance `shift.tMs` and `today.ms` by the clamped step; recompute
+   `shift.rush`; roll the day over.
 2. Station timers (derive done/burnt from `now`; emit `cook:done` / `cook:burnt` on crossing).
 3. `DriveThru.tick(K, dt, now)` → events.
-4. Ticket expiry → `ticket:lost`, popularity hit.
+4. Ticket expiry → `ticket:lost`, popularity hit. Pass staleness → spoil.
 5. `Convoy.tick(K, dt, now)` → events.
 6. Popularity/XP settle; `save()` if the debounce is due.
 7. Return the drained `K._events`.
@@ -304,6 +487,14 @@ Inside `State.tick(dt, now)`, in this order, every frame:
 **Sub-modules receive `(K, dt, now)` and return `Event[]`. They never schedule anything and
 never read the clock themselves.** That is what makes a headless test able to run a whole
 in-game day in one loop of fake `dt`s.
+
+> ⚠ **A CLAMPED FRAME LOSES TIME, AND THE LOST TIME IS PAID BACK BY A SKEW.**
+> `skewClocks(ms, now)` in state.js pushes every absolute stamp in the game forward by the
+> amount the clamp swallowed, so a backgrounded tab does not silently expire the board.
+> 🔴 It reaches into `K.lane`, which belongs to drivethru.js, and its own comment says the
+> right shape is a `DriveThru.skew(K, ms)` entry point. **That is an open cross-file item**
+> (drivethru.js handover O6, with the signature written out). The hand-rolled list is
+> already missing `car.orderStartedAt` and the drive-past stamps.
 
 **⚠ RAF NEVER FIRES IN THE BUILT-IN BROWSER PANE** (CLAUDE.md). For a real visual check use
 headless Chromium via the global Playwright:
@@ -315,7 +506,8 @@ Harness scripts go in the scratchpad, **never in the repo.**
 ## 4. 🔴 THE SHIFT IS THE UNIT OF PERSISTENCE
 
 **Closing the panel closes the shift.** Tickets, lane, `pass`, `hand`, station slots and
-`today` are all cleared. Pantry, level, xp, popularity, `shift.day`, `totals` and convoys survive.
+`today` are all cleared. Pantry, level, xp, upgrades, popularity, `shift.day`, `totals` and
+convoys survive.
 
 > WHY, because a reasonable person would do this differently: a ticket with a 90-second
 > countdown cannot survive a page close honestly. Either it keeps running while you sleep —
@@ -324,7 +516,12 @@ Harness scripts go in the scratchpad, **never in the repo.**
 > "the shift ended." So we end the shift, forfeit open tickets **with no popularity
 > penalty** (`closeShift(now, {forfeit:true})`), and let the player start a fresh one.
 
-**Convoys are the single exception and advance on wall-clock.** They are a hours-long
+**⚠ AND THAT IS A FREE PAUSE BUTTON UNLESS SOMETHING REMEMBERS.** `shift.bail` is what
+remembers: walking out mid-shift records the day, the clock and how many customers were
+abandoned, it is SAVED, and re-opening on the same day resumes into it rather than handing
+the player a fresh morning. `hydrate()` drops a bail record that names a different day.
+
+**Convoys are the single exception and advance on wall-clock.** They are an hours-long
 logistics promise, not a real-time reflex, so they must tick while you are away.
 `Convoy.catchUp(K, now)` is called by `init()` and by `open()` and flips anything whose
 `arrivesAt <= now`. It is idempotent — calling it twice must not double-arrive a convoy.
@@ -337,24 +534,28 @@ logistics promise, not a real-time reflex, so they must tick while you are away.
 written back with `bridge().setKitchenState(obj)` then `bridge().save()`.
 **Never touch `Profile` directly. Never `saveProfile()` directly.**
 
-**`snapshot()` saves exactly this and nothing else:**
+**`snapshot()` saves exactly this and nothing else** (regenerated round 5):
 ```
-v, shift.day, level, xp, popularity, pantry, convoys, totals
+v, shift.day, level, xp, popularity, pantry, upgrades, convoys, totals,
+shift.bail, startGranted
 ```
 **NEVER SAVED (derived or ephemeral):**
 `rev, open, now, shift.tMs, shift.running, shift.rush, stations, hand, pass, tickets,
-lane, inbound, today, missing, offline, error, _fx, _events, _lastSave`
+lane, inbound, today, missing, offline, error, _fx, _events, _lastSave, _seq, _seed,
+_nextCounter, _lowSeen, _dry, _report, _init, _lane, _arrival`
 — plus, inside a station slot, any `'cooking'|'done'|'burnt'` string. Cook state is
 **always** derived from `now` vs `doneAt`/`burnAt`. A stored state string is a stale lie.
 
-**How often:** `save()` is debounced to at most once per `ECON.SAVE_DEBOUNCE_MS` (5000).
+**How often:** `save()` is debounced to at most once per `ECON.SAVE_DEBOUNCE_MS`.
 It is force-called (`save(true)`) on: `closeShift`, `convoy:launch`, `convoy:claim`,
-`level:up`, `buySupply` success, and `close()`. It is **never** called per tick.
+`level:up`, `buySupply` / `buyUpgrade` success, and `close()`. It is **never** called per tick.
 `setProdState`-style failure handling applies: `setKitchenState`/`save` returning `false`
 is a real failure — surface it with `toast()`, do not swallow it.
 
 **Hydrate is absent-tolerant by construction.** No `Profile.kitchen` key → a fresh kitchen,
 never a throw. Unknown `v` → keep what parses, default the rest, bump to current `v`.
+**Unknown pantry ids are KEPT, not dropped** — if kitchen.data.js renames an ingredient,
+deleting the old key would destroy stock the player paid real resources for.
 
 ---
 
@@ -371,8 +572,16 @@ never a throw. Unknown `v` → keep what parses, default the rest, bump to curre
   adding it here:**
   `shift:open shift:close day:roll cook:start cook:done cook:burnt ticket:new
    ticket:ready ticket:served ticket:lost car:arrive car:order car:served car:leave
-   pantry:low pantry:buy level:up pop:change pay convoy:launch convoy:arrive
+   car:balk pantry:low pantry:buy level:up pop:change pay convoy:launch convoy:arrive
    convoy:claim error`
+  > `car:balk` was added in round 3 (§BALK: a car reached a full lane and drove past — the
+  > largest number in the business, and it used to happen in total silence). It is listed
+  > here because the previous version of this section did not list it, which is how a
+  > "closed set" stops being one.
+- 🔴 **`name` AND `t` ARE RESERVED PAYLOAD KEYS.** Both emitters build the event as
+  `Object.assign({ name, t }, payload)`, so a payload key called `name` **silently
+  overwrites the event name**. drivethru.js shipped `car:arrive` with `{name: car.name}`
+  once and every arrival dispatched under the event name "Kid on a BMX". Use `custName`.
 - **Repaint rule.** `paint()` (structural) runs when `Kitchen.rev` changed since last paint,
   or on an explicit view-state change. `frame()` (cheap) runs every RAF and may only
   `textContent` / `style.*` existing nodes.
@@ -383,6 +592,7 @@ never a throw. Unknown `v` → keep what parses, default the rest, bump to curre
 
 Built in index.html beside `MythicTradeBridge`, in its style: every reader wrapped in
 try/catch with a zero fallback, **every mutator returns a boolean.**
+Verified round 5: the shipped bridge carries exactly these keys and no others.
 
 | Accessor | Signature | Returns | Notes |
 |---|---|---|---|
@@ -395,7 +605,7 @@ try/catch with a zero fallback, **every mutator returns a boolean.**
 | `signedIn` | `() => boolean` | | |
 | `userId` | `() => string\|null` | | |
 | `displayName` | `() => string` | `'Survivor'` fallback | |
-| `cloud` | property | `Cloud` object or `null` | the only thing `kitchen.api.js` reads |
+| `cloud` | property | `Cloud` object or `null` | ⚠ a live GETTER, not a copied value |
 | `myCorp` | `() => object\|null` | `{id,name,tag}` | convoy recipient shortlist |
 | `cityProd` | `() => object` | `Profile.cityProduction` | **read-only**; "your city makes X" hint |
 | `isAdmin` | `() => boolean` | | debug panel gate |
@@ -418,6 +628,11 @@ try/catch with a zero fallback, **every mutator returns a boolean.**
 > claim, a payout) → `addRes`, and then RE-READ `getRes()` and treat a short landing as a
 > failed leg.** Belt and braces; "the preflight should have caught it" is how the 215 went missing.
 
+> ⚠ `NULL_BRIDGE.confirm` answers **true** — the one fallback that is not the conservative
+> answer — because with no bridge every spend mutator returns false, so nothing can be
+> lost, and answering false would make rung 1 of §9 unplayable. A **real** bridge merely
+> MISSING `confirm` gets `SAFE_FILL.confirm` instead, which asks the browser or refuses.
+
 ---
 
 ## 8. THE ECONOMY CONTRACT
@@ -436,7 +651,7 @@ corruptedEssence memoryShards dna wood stone cloth` — are the **only** spendab
   are not tradeable, not lootable, not stash-capped. *WHY:* `/src/resources/chain.js`
   documents exactly what happens when an id is holdable but has no producer, no cost
   renderer and no market entry — "worse than missing, because the player's pile of it is
-  real and inert." Fifteen more of those is fifteen more of that fault.
+  real and inert."
 - `buySupply(supplyId, batches)` is **all-or-nothing, settle.js discipline**:
   1. Preflight **every** leg (`getRes` ≥ n for each; `gems()` ≥ cinder). Refuse before
      touching anything — a failing buy costs the player nothing at all.
@@ -445,15 +660,34 @@ corruptedEssence memoryShards dna wood stone cloth` — are the **only** spendab
      `{ok:false}`. Never leave a partial spend.
   4. Only then `pantry[ing] += qty * batches`, `rev++`, `save(true)`.
 
+> 🔴 **AND THE LIVE LEDGER MUST STAY THE INPUT, WHICH IS THE PREMISE OF THE WHOLE
+> FEATURE.** The player asked for a cooking minigame **fed by what businesses, the city
+> builder and battle produce**. A fallback supply ladder priced purely in Cinder closes
+> every dead end and also makes the 14-id ledger optional — measured on a fresh account,
+> 188 dishes served over ten days with the ledger never moving once, minting +23,542
+> Cinder net. **A kitchen that runs on Cinder fails the request at a deeper level than any
+> soft-lock.** Both requirements — never soft-locked, and genuinely fed by the ledger —
+> have to hold at once; picking one is not an answer.
+>
+> **WHERE THAT STANDS TODAY, measured round 5 rather than asserted.** `SUPPLY_RECIPES` is
+> 41 lines and **not one of them is Cinder-only** — 39 want `food`, 12 want `water`, 8 want
+> `dna`, 3 `supplies`, and every line carries a Cinder component beside the resources. The
+> pantry is genuinely fed by the ledger. `RELIEF` is the escape hatch and it is the hole:
+> three parcels, `cost` is Cinder and nothing else, and `out` is **live resources**
+> (`rel_pallet` → `{food:10, water:10}` for ◈1200). So a player is never dead-ended, and a
+> player with Cinder can also buy their way round the ledger at roughly 12× retail. The
+> price is the wall. **If you retune `RELIEF`, you are retuning the premise** — check what
+> a day of play mints against what a day of play burns before you touch it.
+
 ### 8.2 Cooking, quality, and ruining it
 `startCook` spends `recipe.needs` from the pantry (all-or-nothing, same discipline) and
-writes a slot with `startedAt`, `doneAt = startedAt + cookMs`,
-`burnAt = doneAt + doneWindowMs`. Quality is derived at `pullSlot(now)`:
+writes a slot with `startedAt`, `doneAt = startedAt + cookMsFor(recipeId, owned)`,
+`burnAt = doneAt + doneWindowMsFor(recipeId)`. Quality is derived at `pullSlot(now)`:
 | when pulled | quality | multiplier |
 |---|---|---|
-| `now < doneAt` | `'raw'` | `ECON.Q_RAW` (0.5, and no XP) |
-| within the first third of the done window | `'perfect'` | `ECON.Q_PERFECT` (1.25) |
-| rest of the done window | `'good'` | `ECON.Q_GOOD` (1.0) |
+| `now < doneAt` | `'raw'` | `ECON.Q_RAW` (and no XP) |
+| within the first third of the done window | `'perfect'` | `ECON.Q_PERFECT` |
+| rest of the done window | `'good'` | `ECON.Q_GOOD` |
 | `now >= burnAt` | `'burnt'` | `0` — pays nothing and costs `ECON.POP_BURN` popularity |
 The done window is what makes timing a skill instead of a wait. Do not widen it to be kind.
 
@@ -461,42 +695,57 @@ The done window is what makes timing a skill instead of a wait. Do not widen it 
 Money in this game is **Cinder = `Profile.gems`**, reached only via `bridge().addGems` /
 `spendGems`. There is no second currency and no "restaurant cash".
 ```
-payout = Σ(recipe.basePrice × qualityMult)   × popMult × rushMult
-popMult  = ECON.POP_PAY_FLOOR + (popularity/100) × ECON.POP_PAY_SPAN   // 0.8 → 1.2
-tip      = payout × DriveThru.tipFor(...)                              // patience + quality
-xp       = Σ(recipe.xp) + (ticket fully filled and on time ? ECON.XP_TICKET_BONUS : 0)
+payout = Σ(recipe.basePrice × qsum)  × popPayMul(popularity) × rushPayMul(rush)
+tip    = payout × DriveThru.tipFor(…)          // a FRACTION, never absolute Cinder
+xp     = Σ(recipe.xp) + (ticket fully filled and on time ? ECON.XP_TICKET_BONUS : 0)
 ```
 Popularity moves on `ticket:served` (+), `ticket:lost` (−−), `cook:burnt` (−),
-`car:leave` unserved (−−). It is clamped 0..100 and is **the only thing** the emoji face reads.
-Every constant above is a key in `ECON`. **No number in this section may appear literally
-in any file other than `kitchen.data.js`.** Required `ECON` keys, minimum:
-`DAY_MS OPEN_HOUR CLOSE_HOUR MAX_DT_MS SAVE_DEBOUNCE_MS Q_RAW Q_GOOD Q_PERFECT
-POP_PAY_FLOOR POP_PAY_SPAN POP_SERVE POP_LOST POP_BURN POP_WAVE XP_TICKET_BONUS
-LANE_CAP SPAWN_BASE_MS SPAWN_POP_SPAN TIP_MAX_PCT CONVOY_FOOD_PER_DISH CONVOY_FEE_PCT`
+`car:leave` unserved (−−), `car:balk` (− tiny), `waveCar` (−). It is clamped 0..100 and is
+**the only thing** the emoji face reads.
+Every constant above is a key in `ECON` (153 of them). **No number in this section may
+appear literally in any file other than `kitchen.data.js`.** Read the keys from the file;
+this contract deliberately no longer restates their values, because two of them had
+already drifted apart from the numbers a comment claimed.
 
 ### 8.4 Convoys — a transfer, never a faucet
 A convoy carries **finished dishes** from `pass` to another player's city.
-- Sender: dishes leave `pass`, a Cinder freight fee (`tier.feePct` of dish value) is paid
-  with `spendGems`, the row is written, `state:'transit'`.
+- Sender: dishes leave `pass`, a Cinder freight fee (`convoyFeePct(tier, owned)` of dish
+  value) is paid with `spendGems`, the launch RPC writes the row, `state:'transit'`.
 - Receiver on `claim()`: gains `dishes × ECON.CONVOY_FOOD_PER_DISH` units of the live
   resource `food` via `addRes` — **then re-reads `getRes('food')`.** A short landing (stash
   cap) is reported as `{ok:false, code:'CAP'}` and the convoy stays claimable; it is never
-  silently clamped. Sender gets XP on `convoy:arrive`.
+  silently clamped. **The client may only pay on the RPC's `delivered_dishes`, which is 0
+  on a replay.**
 - 🔴 `CONVOY_FOOD_PER_DISH` must be tuned **below** the `food` cost of the ingredients that
   made the dish. *WHY:* the dishes were bought out of the 14-id ledger in the first place,
   so a convoy **moves** value between players. If the round trip nets more `food` than it
   consumed, the kitchen becomes an infinite `food` printer and the whole resource economy
-  is dead. This is the single most dangerous number in the feature.
+  is dead. This is the single most dangerous number in the feature — and it is now
+  ASSERTED, not merely intended: `DATA.convoyGuardOk()` re-derives the comparison and
+  `__mk.debug()` prints it.
 - Everything works with **zero tables**: a local practice convoy to your own city runs
   entirely in `Kitchen.convoys`. `missing`/`offline` disable only the player-to-player picker.
+
+### 8.5 🔴 A PROMISE MUST BE PHYSICALLY KEEPABLE
+`addStep()` refuses to lay more of an ingredient than the recipe calls for, so an `extra`
+modifier is only keepable on a dish whose canon carries at least `ECON.MOD_EXTRA_MIN` of
+it. drivethru.js's `rollMods()` gates the pool on the RECIPE for exactly that reason.
+**A promise the game forbids the player from keeping is worse than no promise**: it is
+loud, it is wrong, and it charges `MOD_PAY_MISS` for obedience.
+
+### 8.6 🔴 BINNING A PLATE IS TRIAGE, NOT FAILURE
+Breaking a pass deadlock is mandatory play. `binPass()` counts `today.binned`, which the
+settlement report shows as a cost line, and `gradeFor()` does **not** read it. The
+ingredients and the slot time are already the price; the grade may not charge again.
 
 ---
 
 ## 9. LOADING & DEGRADATION
 
 `index.js` on import: publish `window.MythicKitchen`, inject
-`<link rel="stylesheet" href="/src/kitchen/kitchen.css?v=…">` once (guard by id), dispatch
-`mythic:kitchen-ready`. **It does not touch the DOM otherwise and does not start the loop.**
+`<link rel="stylesheet" href="./kitchen.css?v=…">` once (guard by id, resolved against
+`import.meta.url`), dispatch `mythic:kitchen-ready`. **It does not touch the DOM otherwise
+and does not start the loop.**
 `open()` → `State.init()` → `Convoy.catchUp()` → `Render.open()` → start RAF.
 `close()` → stop RAF, `State.closeShift(now,{forfeit:true})`, `save(true)`, `Render.close()`.
 
@@ -512,26 +761,27 @@ A convoy carries **finished dishes** from `pass` to another player's city.
 
 ## 10. `sql/038_kitchen_convoys.sql`
 
-Idempotent (`create table if not exists`, `drop policy if exists` before each `create policy`),
-RLS enabled and **policies in this same file**, ends with a verify `select`.
+**The file's own header is the current spec — read it, not this summary.** It is 1,654
+lines, idempotent, ships its RLS, and ends with a ~30-assertion verify block that names
+each defect explicitly if it is still present.
 
-- `kitchen_convoys` — `id uuid pk default gen_random_uuid(), from_user uuid not null,
-  to_user uuid not null, from_name text, to_name text, tier text, items jsonb not null,
-  dishes int not null check (dishes > 0), launched_at timestamptz default now(),
-  arrives_at timestamptz not null, state text not null default 'transit', claimed_at timestamptz`
-- `kitchen_convoy_ledger` — **append-only**, `amount int` signed.
-  🔴 **Balance = `sum(amount)`. There is no balance column and there never will be.
-  No UPDATE policy on this table at all** — that is what makes append-only enforceable.
-- `kitchen_stats` — optional leaderboard, `user_id uuid pk`, cosmetic only, never trusted
-  as an economy source.
+What it adds: `kitchen_convoys`, `kitchen_convoy_ledger` (**append-only, no balance
+column, no write policy, ever**), `kitchen_stats` (cosmetic, never an economy source),
+`kitchen_convoy_tiers` (the truck table **on the server**), and the four RPCs that are the
+only write paths — `kitchen_convoy_launch()`, `kitchen_convoy_claim()`,
+`kitchen_stats_upsert()`, `kitchen_convoy_quota_ok()`, plus the `is_convoy_party()` helper.
 
-**RLS:**
+**RLS, and every line of it is the security boundary:**
 - `select`: `auth.uid() = from_user or auth.uid() = to_user`.
-- `insert`: `with check (auth.uid() = from_user)` — you cannot ship *from* someone else.
-- **No client `update` on `kitchen_convoys`.** Claiming goes through
-  `kitchen_convoy_claim(p_id uuid)` — `security definer`, `set search_path = public`, which
-  checks `auth.uid() = to_user and state = 'transit' and arrives_at <= now()`, flips state,
-  writes the ledger row, and returns the row. One RPC, one atomic claim, no double-claim.
+- **No client INSERT, UPDATE or DELETE on `kitchen_convoys` at all.** Both writes are RPCs.
+- Claiming is `kitchen_convoy_claim(p_id uuid)` — `security definer`,
+  `set search_path = public` — which checks party, state and `arrives_at <= now()`, flips
+  state, writes the ledger row, and **returns `delivered_dishes`, 0 on a replay.** That
+  return value is the wall against a double payout; the client pays on it and nothing else.
+- Transit is computed **on the server** from `now()`. The client posts a duration, never a
+  timestamp, so a fast device clock buys nothing.
+- `to_user <> from_user` is enforced on the server, so the trivial ship-to-myself loop
+  cannot exist. Local practice runs never reach this table.
 - ⚠ **RLS recursion:** any policy that needs "am I a party to this convoy" uses the
   `security definer` helper `is_convoy_party(p_convoy uuid)`. A policy on `kitchen_convoys`
   that itself selects `kitchen_convoys` recurses and hangs — the exact trap
@@ -543,15 +793,33 @@ RLS enabled and **policies in this same file**, ends with a verify `select`.
 
 ## 11. VERIFYING BEFORE YOU HAND OFF
 
-- `node --check public/src/kitchen/<yourfile>.js` (or `node --input-type=module --check < file`).
+- `node --check public/src/kitchen/<yourfile>.js`.
 - `node _synckcheck.mjs` if — and only if — you are the one agent editing index.html. **Not** `build.mjs`.
-- Headless sim proof (state.js owner): run `tick()` in a loop with fake `dt` against
-  `NULL_BRIDGE`, for a full in-game day, and assert no throw, popularity stays 0..100,
-  and pantry never goes negative.
+- Headless sim proof (state.js owner): `State.simulate(720, null, {seed, quiet:true})` for
+  several seeds; assert no throw, popularity stays 0..100, and pantry never goes negative.
+- Self-audits, all four, all of which must be clean and all of which are one call:
+  `DriveThru.econAudit().ok`, `DriveThru.voiceAudit().ok`, `Data.convoyGuardOk()`,
+  `Data.assertDataSane()` → `[]`.
 - Visual proof (render/css owner): headless Chromium at **360px** and at 1280px.
   Screenshot both. If it does not read as a working kitchen at a glance at 360px, it is not done.
+- ⚠ index.html:209271 (`_uiAutoScale`) multiplies the whole document by `h/980` on any
+  viewport ≤1100px wide. **A control declared at 36px is not 36px on a phone.** Measure
+  rendered pixels, not declared ones.
+- 🔴 **GREP FOR THE CALL SITE.** Four rounds running, this feature shipped a value that was
+  computed and never consumed: two dead player verbs, a modifier verdict the till ignored,
+  `modCinder`/`modPop` that nothing drew, and a skill signal `min()` threw away. "I added
+  the field" is not "the game uses the field". Before you report anything closed, run the
+  path end to end and print what the PLAYER receives.
 
-## 12. HOUSE VOICE
-Heavy block comments. 🔴 for load-bearing warnings, ⚠ for traps. Comments explain **WHY**,
-including past bugs and rejected designs — a comment that restates the code is noise, a
-comment that records why the obvious approach was wrong is why this codebase is maintainable.
+## 12. WHAT CHANGED, BY ROUND
+
+Kept so a reader can tell a deliberate change from drift. Rounds 1–4 are commits
+`c574ac3`, `6518447`, `822f0a4`, `ee827b0`.
+
+| Round | Contract-visible change |
+|---|---|
+| 1 | Original nine-module split, the bridge surface (§7), the tick contract (§3). |
+| 2 | `UPGRADES` + `Kitchen.upgrades` and every `DATA.*(…, owned)` helper. `ECON` absorbed drivethru's 36 private literals. `car:balk` groundwork. |
+| 3 | `car:balk` event and `passersBy()`. §RIDES. §MODIFIERS became a literal three-way per-line check with `MOD_PAY_*` / `MOD_POP_*`. `kitchen_convoy_tiers` moved the truck table onto the server. `shift.bail` (the anti-rewind). |
+| 4 | `plateHand(now, forTicketId)` — **the second argument**. `assignDish` / `assignmentOf` (the plate-steering control). `planPass()` and `fitScore()`. `serveCar()` re-judges AFTER the commit. `RELIEF` and the Cinder supply ladder (see §8.1's warning — it closed the dead end and broke the premise). |
+| 5 | **This file, brought back into line with the shipped code.** §1 export lists regenerated from `grep "^export"` across all eight modules; vocabulary counts corrected (15→25 ingredients, 9→19 recipes); `patiencePct` direction and `tipFor` return type written down (§1); `car:balk` added to the closed event set (§6); `shift.bail`, `startGranted` and `upgrades` added to §5's saved subset; §2 regenerated; §10 reduced to a pointer at the migration's own header plus the six economy walls; §8.5, §8.6 and the §8.1 premise warning added; the skew seam recorded in §3. In drivethru.js: §RIDE SKINS (the Kid rides a bicycle), the handover split into OPEN/CLOSED with the closed half in the past tense, three dialogue lines rewritten. |

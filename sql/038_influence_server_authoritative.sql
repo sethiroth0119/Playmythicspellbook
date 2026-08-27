@@ -613,46 +613,77 @@ grant select on public.influence_state  to authenticated;
 grant select on public.influence_ledger to authenticated;
 
 -- ===========================================================================
--- VERIFY (run inside a transaction and ROLL BACK — it moves real money)
+-- VERIFY — SELF-CONTAINED. Paste the block below into the SQL editor and run
+-- it as-is. There is NOTHING to fill in: it resolves a real user itself.
+--
+-- 🔴 AN EARLIER VERSION OF THIS BLOCK HAD `'<a user_id>'` PLACEHOLDERS IN IT.
+--    Pasted unchanged it fails with `22P02: invalid input syntax for type uuid`
+--    from inside influence_peek() — which looks alarming and is only the
+--    placeholder reaching auth.uid(). A verify block that cannot be run
+--    verbatim is not a verify block, so it now resolves the user itself.
+--
+-- It ROLLS BACK, so nothing it does survives — including the Cinder it credits.
+-- ===========================================================================
 --
 -- begin;
---   set local role authenticated;
---   set local request.jwt.claims =
---     '{"sub":"<a user_id>","role":"authenticated","email":"nobody@example.com"}';
 --
---   -- a) A fresh camp has exactly one envoy waiting, and peek deals nothing.
---   select public.influence_peek();                      -- ready = 1, pending = null
---   select public.influence_peek();                      -- STILL ready = 1
+-- -- Become a real player: your own account if present, else any user.
+-- -- set_config(..., true) is transaction-local and dies with the rollback.
+-- select set_config('request.jwt.claims',
+--        jsonb_build_object('sub', (select id from auth.users
+--                                    order by (email = 'play@mythicsoa.com') desc, id
+--                                    limit 1),
+--                           'role','authenticated',
+--                           'email','verify@local')::text,
+--        true) is not null as claims_set;
+-- set local role authenticated;
 --
---   -- b) Claiming deals one; claiming again RESUMES it rather than rerolling.
---   select public.influence_claim() -> 'encounter';
---   select public.influence_claim() -> 'resumed';         -- true
+-- select 'a) peek deals nothing — ready stays 1' as check,
+--        (public.influence_peek()->>'ready') as first,
+--        (public.influence_peek()->>'ready') as again;
+-- select 'b) claim deals one' as check, public.influence_claim()->'encounter'->>'kind' as kind;
+-- select 'c) claiming again RESUMES, never rerolls' as check,
+--        public.influence_claim()->>'resumed' as resumed;
+-- select 'd) resolve pays once' as check, public.influence_resolve('take','card_x',0,999999)->>'ok' as ok;
+-- select 'e) resolving again is refused' as check, public.influence_resolve('take')->>'error' as err;
+-- select 'f) no second envoy for 48h' as check,
+--        public.influence_claim()->>'error' as err,
+--        round((public.influence_claim()->>'next_seconds')::numeric/3600,1) as hours_left;
 --
---   -- c) A second envoy is refused until the clock says otherwise.
---   select public.influence_resolve('take');
---   select public.influence_claim();                      -- ok=false, no_envoy
+-- -- g) THE CLAMP. Ask a million for a common recruit; get the common ceiling.
+-- set local role postgres;
+-- update public.influence_state set pending =
+--   jsonb_build_object('kind','recruit','rarity','common','level',10,'standing',1)
+--  where user_id = (current_setting('request.jwt.claims')::jsonb->>'sub')::uuid;
+-- set local role authenticated;
+-- select 'g) asked 1,000,000 for a COMMON recruit' as check,
+--        public.influence_resolve('sell','any_card',1000000)->>'cinder' as paid_should_be_500;
 --
---   -- d) THE CLAMP. Ask a million for a common recruit; get 500.
---   update public.influence_state
---      set pending = jsonb_build_object('kind','recruit','rarity','common',
---                                       'level',10,'standing',1)
---    where user_id = '<a user_id>';
---   select public.influence_resolve('sell', 'some_card', 1000000);   -- cinder = 500
+-- -- h) A full stash refuses and delivers nothing.
+-- set local role postgres;
+-- update public.influence_state set pending =
+--   jsonb_build_object('kind','supply','qty',jsonb_build_array(400,120),'level',10,'standing',1)
+--  where user_id = (current_setting('request.jwt.claims')::jsonb->>'sub')::uuid;
+-- set local role authenticated;
+-- select 'h) full stash (3 free, 520 needed)' as check,
+--        public.influence_resolve('take',null,0,3)->>'refused' as refused_should_be_true;
 --
---   -- e) A full stash refuses and delivers nothing.
---   update public.influence_state
---      set pending = jsonb_build_object('kind','supply','qty',jsonb_build_array(400),
---                                       'level',10,'standing',1)
---    where user_id = '<a user_id>';
---   select public.influence_resolve('take', null, 0, 3);   -- refused = true
+-- -- i) The player cannot write their own state. Trapped so the run finishes.
+-- do $$
+-- begin
+--   begin
+--     execute 'update public.influence_state set xp = 999999 where user_id = auth.uid()';
+--     raise notice 'i) xp forge ............ ALLOWED  <-- BAD, investigate';
+--   exception when insufficient_privilege then
+--     raise notice 'i) xp forge ............ REFUSED  <-- correct';
+--   end;
+-- end $$;
 --
---   -- f) The ceiling holds over a large sample.
---   select max(public._inf_roll_cinder(10, 1.0)) from generate_series(1, 20000);  -- 50000
---
---   -- g) The player cannot write their own state.
---   update public.influence_state set xp = 999999 where user_id = '<a user_id>';
---   -- expected: UPDATE 0 (no policy grants it)
 -- rollback;
+--
+-- EXPECTED (verified on Postgres 16):
+--   a) 1 / 1     b) a kind     c) true     d) true     e) nothing_pending
+--   f) no_envoy, 48.0     g) 500     h) true     i) REFUSED
 --
 -- Watch the faucet in production:
 --   select left(user_id::text,8) usr, kind, choice, rarity, level, cinder, created_at

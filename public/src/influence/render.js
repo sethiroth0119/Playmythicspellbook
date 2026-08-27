@@ -16,6 +16,7 @@
    ============================================================================ */
 
 import { NO_SPACE_LINE } from './envoys.js';
+import { formatEta } from './model.js';
 
 const STYLE_ID = 'mif-styles';
 const ROOT_ID = 'mif-backdrop';
@@ -224,10 +225,9 @@ function bodyHtml(view) {
   const enc = view.enc;
   const res = view.result;
   if (!enc) {
-    const mins = Math.max(0, Math.ceil((view.nextMs || 0) / 60000));
+    const eta = view.nextMs > 0 ? formatEta(view.nextMs) : '';
     return '<div class="mif-empty">🚪 No one is at the gate.' +
-      (mins ? '<div style="margin-top:6px;font-size:0.82rem">Next envoy in about ' +
-        (mins >= 60 ? Math.round(mins / 60) + 'h' : mins + 'm') + '.</div>' : '') +
+      (eta ? '<div style="margin-top:6px;font-size:0.82rem">Next envoy in about ' + esc(eta) + '.</div>' : '') +
       '<div style="margin-top:10px;font-size:0.78rem;color:#6f8099">Standing draws them in — raise your node tier, your Reserve rep, or your Influence level and they arrive richer.</div></div>';
   }
   const face = enc.kind === 'supply' ? '🚚' : enc.kind === 'recruit' ? '🧍' : enc.kind === 'gift' ? '📜' : '🪙';

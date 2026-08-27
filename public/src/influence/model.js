@@ -23,20 +23,31 @@
 
 /* ── The ladder ─────────────────────────────────────────────────────────────
    Ten levels. The thresholds are XP earned by RESOLVING ENCOUNTERS (see
-   XP_FOR below) — roughly 40 XP a visit and, at the 4h cadence, ~6 visits a
-   day, so ~240 XP/day and the top of the ladder is a long-tail goal rather
-   than a fortnight's grind. */
+   XP_FOR below).
+
+   🔴 THESE THRESHOLDS ARE A FUNCTION OF THE ENVOY CADENCE AND MUST MOVE WITH
+   IT. They were first written for a 4h clock (~6 visits/day, ~240 XP/day) and
+   were rescaled when the clock became 48h. At ~33 XP a visit and one visit
+   every two days that is ~16.5 XP/day, so the same numbers left alone would
+   have put the top of the ladder 475 days out and quietly turned a progression
+   track into a wall. Anyone retuning ENVOY_INTERVAL_MS has to come back here;
+   the pacing note on each row below is what to check the new cadence against.
+
+   Current pacing at the 48h clock: Influential (6) at roughly two months,
+   Mythic Authority (10) at roughly seven. Long on purpose — the top rank is a
+   title, not a milestone — and the Reserve-rank floor below means an
+   established contributor does not start at the bottom of it. */
 export const INFLUENCE_LEVELS = [
-  { lv: 1,  min: 0,     name: 'Unknown',          icon: '🕯' },
-  { lv: 2,  min: 60,    name: 'Noted',            icon: '📜' },
-  { lv: 3,  min: 180,   name: 'Regarded',         icon: '🎗' },
-  { lv: 4,  min: 420,   name: 'Respected',        icon: '🎖' },
-  { lv: 5,  min: 850,   name: 'Renowned',         icon: '🏵' },
-  { lv: 6,  min: 1500,  name: 'Influential',      icon: '⚜️' },
-  { lv: 7,  min: 2500,  name: 'Power Broker',     icon: '🗝' },
-  { lv: 8,  min: 4000,  name: 'Kingmaker',        icon: '👑' },
-  { lv: 9,  min: 6200,  name: 'Sovereign Voice',  icon: '🜲' },
-  { lv: 10, min: 9500,  name: 'Mythic Authority', icon: '🏛' },
+  { lv: 1,  min: 0,    name: 'Unknown',          icon: '🕯' },   //   —
+  { lv: 2,  min: 80,   name: 'Noted',            icon: '📜' },   //  ~5 days
+  { lv: 3,  min: 220,  name: 'Regarded',         icon: '🎗' },   // ~13 days
+  { lv: 4,  min: 430,  name: 'Respected',        icon: '🎖' },   // ~26 days
+  { lv: 5,  min: 720,  name: 'Renowned',         icon: '🏵' },   // ~44 days
+  { lv: 6,  min: 1100, name: 'Influential',      icon: '⚜️' },   // ~67 days
+  { lv: 7,  min: 1580, name: 'Power Broker',     icon: '🗝' },   // ~96 days
+  { lv: 8,  min: 2180, name: 'Kingmaker',        icon: '👑' },   // ~132 days
+  { lv: 9,  min: 2900, name: 'Sovereign Voice',  icon: '🜲' },   // ~176 days
+  { lv: 10, min: 3800, name: 'Mythic Authority', icon: '🏛' },   // ~230 days
 ];
 export const MAX_LEVEL = INFLUENCE_LEVELS[INFLUENCE_LEVELS.length - 1].lv;
 
@@ -225,7 +236,31 @@ export function rollResourceQty(level, s, rng) {
    ⚠ Consuming one advances `lastAt` by exactly ONE interval, never to now —
      advancing to now would silently destroy the partial progress toward the
      next envoy every single time the player opened the modal. */
-export const ENVOY_INTERVAL_MS = 4 * 3600 * 1000;
+/* 🔴 ONE ENVOY PER 48 HOURS, AND THE NUMBER IS AN ANTI-ABUSE DECISION, NOT A
+   PACING ONE. A single envoy can pay up to 50,000 Cinder, so the clock IS the
+   faucet's rate limit: at the 4h cadence this shipped with, a level-10 camp
+   averaged roughly 45,000 Cinder a day out of thin air, which is a scale of
+   free income the rest of the economy has no answer to. At 48h the same camp
+   averages under 4,000.
+
+   ⚠ CHANGING THIS RESCALES THE LADDER. INFLUENCE_LEVELS above is denominated
+     in visits; see the note there before touching this number.
+
+   ⚠ THE CLOCK IS THE CLIENT'S, AND THAT IS A KNOWN LIMIT, NOT AN OVERSIGHT.
+     Everything here reads Date.now(), so a player who moves their system clock
+     forward can bank the cap early. Three things bound the damage and none of
+     them is a client-side check (a client check is defeated by the same player
+     who moved the clock): the bank cap below limits any single burst to 3
+     envoys, `lastAt` is persisted and merges to the LATER stamp across devices
+     so the jump cannot be replayed, and wallet_credit (sql/034) refuses more
+     than 10,000,000 Cinder an hour and records every refusal. The durable fix
+     is the one sql/034's own header names — a server RPC that computes the
+     payout from state the server owns — and it is not built here. */
+export const ENVOY_INTERVAL_MS = 48 * 3600 * 1000;
+/* Absence forgiveness, NOT extra income: banking cannot raise the long-run rate,
+   it only lets a player who was away for up to 6 days collect what the clock
+   already granted them. It does bound the worst single sitting, which is why it
+   stays small — 3 envoys is the largest burst this feature can ever produce. */
 export const ENVOY_BANK_CAP = 3;
 
 export function envoysReady(lastAt, now, intervalMs, cap) {
@@ -237,6 +272,27 @@ export function envoysReady(lastAt, now, intervalMs, cap) {
   // worse introduction than any tuning gain is worth.
   if (!lastAt) return c >= 1 ? 1 : 0;
   return Math.max(0, Math.min(c, Math.floor((now - lastAt) / iv)));
+}
+
+/* ⏱ "when does the next one turn up" as a human string. ONE definition, used
+   by the modal AND — through window.MythicInfluence.formatEta — by the camp
+   status bar in index.html, which cannot import a module and would otherwise
+   grow a second copy that drifts. At a 48h clock the old hours-only form read
+   "in about 47h", which is precise and nearly unreadable. */
+export function formatEta(ms) {
+  ms = Math.max(0, Number(ms) || 0);
+  if (ms < 60000) return 'any moment';
+  /* Floored past the minute mark, deliberately and consistently. Rounding
+     crossed the boundaries the wrong way — 23h30m rendered as "1d", which
+     overstates the wait and reads as the feature being further away than it
+     is. Understating by under an hour is the harmless direction. */
+  const mins = Math.ceil(ms / 60000);
+  if (mins < 60) return mins + 'm';
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return hours + 'h';
+  const days = Math.floor(hours / 24);
+  const rem = hours % 24;
+  return rem ? days + 'd ' + rem + 'h' : days + 'd';
 }
 
 export function msToNextEnvoy(lastAt, now, intervalMs) {

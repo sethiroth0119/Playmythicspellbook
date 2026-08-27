@@ -266,6 +266,9 @@ try {
     window.MythicInfluence = {
       MODEL: M, ENVOYS: E,
       open, close, status, level, standing, ready,
+      // Published so the CAMP STATUS bar renders the same ETA string the modal
+      // does — index.html cannot import, and a second copy would drift.
+      formatEta: M.formatEta,
       isOpen: R.isOpen,
       NO_SPACE_LINE: E.NO_SPACE_LINE,
     };

@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120x0';
+  window.BUILD_VERSION = 'v120x1';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -156682,10 +156682,12 @@ function renderCamp() {
               if (!MI || typeof MI.status !== 'function') return '';
               const st = MI.status();
               const waiting = st.waiting | 0;
-              const mins = Math.max(0, Math.ceil((st.nextMs || 0) / 60000));
+              // Same ETA string the modal prints — MI publishes the formatter so
+              // this bar and /src/influence can never disagree about "2d 3h".
+              const eta = (typeof MI.formatEta === 'function') ? MI.formatEta(st.nextMs) : '';
               const when = waiting
                 ? (waiting + ' waiting at the gate')
-                : ('next arrives in about ' + (mins >= 60 ? Math.round(mins / 60) + 'h' : mins + 'm'));
+                : ('next arrives in about ' + eta);
               const tip = 'Influence ' + st.level + ' — ' + st.name + '. Envoys arrive at your camp carrying Cinder, cards, '
                         + 'recruits or supply convoys; what they bring follows your node tier, your Influence level and your '
                         + 'Foundation Reserve rep. ' + when + '.';
@@ -223296,7 +223298,7 @@ render();
        every call site checks window.MythicInfluence first.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/influence/index.js?v=v120x0inf1"></script>
+<script type="module" src="src/influence/index.js?v=v120x1inf2"></script>
 <!-- 🧰 RESOURCE CHAIN — the 258-entry industrial catalogue behind the city
      builder (water → agriculture → … → containment → civic). Registers
      window.MythicResourceChain: pure data, no I/O, no globals, and NOTHING in

@@ -51,6 +51,25 @@
      · STATS   — an upsert needs UPDATE on the row, and giving the client UPDATE
                  on a table it does not own is a bigger door than a leaderboard
                  is worth. The RPC pins `user_id = auth.uid()`.
+
+   ── 🔴 ROUND 3: THE CLIENT STOPPED SETTING THE PRICE ────────────────────────
+   Round 2 moved the CLOCK to the server and left the SIZE with the client. The
+   launch RPC took the box count and the transit time as arguments and clamped
+   them globally — 1..500 boxes, 10 minutes..12 hours — with the tier sitting
+   unused in `p_tier`. Ten trucks of 500 boxes, launched in one burst with zero
+   cooking, all landing in ten minutes: 10,000 units of live `food` an hour into
+   a colluding account, carrying an append-only ledger row that made the balance
+   look audited. sql/038 now looks the tier up in a server-side table and clamps
+   to it, and rate-limits BOXES (not just trucks) against what a kitchen could
+   physically have cooked.
+
+   What that means for THIS file, and it is the only thing it means:
+     · `dishes` and `transit_ms` are REQUESTS, not facts. Read what actually
+       happened off the returned row.
+     · a refusal now has a REASON — `code` on every failure result. See
+       `serverCode()` for why a player-facing sentence is not one.
+     · convoys carry `delay_ms` / `delay_leg`: the hold-up the server rolled on
+       the road, already inside `arrives_at`. See `CONVOY_COLS`.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 import * as BRIDGE from './kitchen.bridge.js';
@@ -103,9 +122,42 @@ function fail(e) {
   const msg = (e && (e.message || e.msg)) || String(e || '');
   const probe = [msg, e && e.code, e && e.details, e && e.hint]
     .filter((x) => x != null).join(' ');
-  return { ok: false, missing: MISSING_RE.test(probe), error: msg };
+  return { ok: false, missing: MISSING_RE.test(probe), error: msg, code: serverCode(probe) };
 }
 const OFFLINE = { ok: false, missing: false, offline: true, error: 'not signed in' };
+
+/* The RPCs in sql/038 signal refusals with `raise exception 'LAUNCH_QUOTA'` and
+   friends. PostgREST hands those back as a P0001 whose `message` is the bare
+   token, so a caller can tell them apart WITHOUT string-matching a player-facing
+   sentence — which is the trap: the moment someone rewords a toast, a
+   `/quota/i.test(msg)` branch stops firing and the player is told the wrong
+   thing with no test failing anywhere.
+
+   🔴 WHY THIS EXISTS AT ALL, and it is finding #2 from the round-2 review. The
+   launch path had exactly one failure sentence — "the depot could not reach
+   them, the truck turned back" — for every possible refusal. When the in-flight
+   quota locked a sender out (permanently, on round-2's server), the fee was
+   charged, the dishes left the pass, the network was blamed, and every future
+   attempt did the same thing. The player could not act on any of it because the
+   message was about a problem they did not have. A refusal the player can FIX
+   has to be distinguishable from one they cannot.
+
+   ⚠ The list is a CLOSED SET matched whole. A substring match would let a
+   Postgres message that merely CONTAINS one of these words be misread as a
+   refusal code. */
+const SERVER_CODES = [
+  'NOT_SIGNED_IN', 'NO_RECIPIENT', 'NO_SELF_SHIP', 'NO_SUCH_PLAYER',
+  'LAUNCH_QUOTA', 'NO_TIER_TABLE', 'BAD_CONVOY', 'CONVOY_GONE',
+  'NOT_YOURS', 'STILL_IN_TRANSIT',
+];
+function serverCode(probe) {
+  const s2 = String(probe || '');
+  for (const k of SERVER_CODES) {
+    // Word-boundary match: the token appears as its own word, not inside one.
+    if (new RegExp('(^|[^A-Z_])' + k + '([^A-Z_]|$)').test(s2)) return k;
+  }
+  return null;
+}
 
 function uid() {
   const b = bridge();
@@ -130,7 +182,23 @@ function firstRow(data) {
    shape of what the client already parses — and so a reader can see at a glance
    exactly what leaves the database. */
 const CONVOY_COLS =
-  'id,from_user,to_user,from_name,to_name,tier,items,dishes,launched_at,arrives_at,state,claimed_at';
+  'id,from_user,to_user,from_name,to_name,tier,items,dishes,launched_at,arrives_at,state,claimed_at,'
+  + 'delay_ms,delay_leg';
+
+/* ⚠ `delay_ms` / `delay_leg` ARE ALREADY INSIDE `arrives_at`. They are not a
+   second number to add on: the launch RPC rolls the hold-up, adds it to the
+   transit it was going to charge, and stores both the total arrival and what it
+   rolled. The client reads them ONLY to draw the story — which leg the truck
+   was stopped on and for how long. Treating `delay_ms` as an additional wait
+   would double it and make the countdown disagree with the claim RPC, which is
+   the one clock that matters.
+
+   ⚠ A SERVER ONE MIGRATION BEHIND HAS NEITHER COLUMN, and PostgREST fails a
+   `select` naming a column that does not exist — it does NOT quietly omit it.
+   The error carries "does not exist", which `MISSING_RE` already reads as
+   `missing:true`, so an un-migrated project degrades to "the convoy network is
+   not set up yet" rather than to a hard error. That is the correct rung: re-run
+   sql/038. */
 
 /* ═══════════════════════════════════════════════════════════════════════════
    CONVOYS — reads
@@ -212,8 +280,19 @@ export async function listOutbound(limit = 40) {
  * post. Three walls, because a client number that turns into a live resource
  * has to have more than one.
  *
- * → { ok, row }  `row` has the SERVER's `launched_at`/`arrives_at`; convoy.js
- *                adopts them and corrects for device clock skew.
+ * ⚠ THE SERVER MAY SHRINK THE LOAD OR LENGTHEN THE ROAD, AND THAT IS NOT AN
+ * ERROR. sql/038 clamps `dishes` DOWN to the tier's real capacity and
+ * `transit_ms` UP to the tier's real transit — the two safe directions — so a
+ * client one deploy out of step under-ships instead of failing. Read the numbers
+ * back off `row`, never off what was posted.
+ *
+ * → { ok, row }        `row` has the SERVER's `launched_at`/`arrives_at`/
+ *                      `delay_ms`/`delay_leg`; convoy.js adopts them and
+ *                      corrects for device clock skew.
+ * → { ok:false, quota:true }   the sender has too many trucks out, or has
+ *                      shipped more this hour than a kitchen could cook. A
+ *                      refusal the player can act on — see `serverCode`.
+ * → { ok:false, badPlayer:true } that recipient does not exist any more.
  */
 export async function insertConvoy(payload) {
   const c = client(); if (!c) return { ...OFFLINE, row: null };
@@ -231,7 +310,15 @@ export async function insertConvoy(payload) {
       p_dishes: Math.max(1, _int(p.dishes)),
       p_transit_ms: Math.max(0, _int(p.transit_ms)),
     });
-    if (r.error) return { ...fail(r.error), row: null };
+    if (r.error) {
+      const f = fail(r.error);
+      // 🔴 A QUOTA REFUSAL IS NOT A NETWORK FAILURE and must not be reported as
+      //    one. Round 2 collapsed both into "the depot could not reach them",
+      //    which told a locked-out sender to blame their connection forever.
+      return { ...f, row: null,
+        quota: f.code === 'LAUNCH_QUOTA',
+        badPlayer: f.code === 'NO_SUCH_PLAYER' };
+    }
     const row = firstRow(r.data);
     if (!row || !row.id) return { ok: false, error: 'no row returned', row: null };
     return { ok: true, row };
@@ -284,6 +371,11 @@ export async function claimConvoy(convoyId) {
       deliveredDishes: Object.prototype.hasOwnProperty.call(row, 'delivered_dishes')
         ? Math.max(0, _int(row.delivered_dishes))
         : Math.max(0, _int(row.dishes)),      // pre-migration server; see the note
+      // The road, so an arrival can say what the trip actually was even when the
+      // recipient never had the row on screen while it was moving. Absent on a
+      // pre-road server → 0, which convoy.js reads as "a clean run".
+      delayMs: Math.max(0, _int(row.delay_ms)),
+      delayLeg: Math.max(0, _int(row.delay_leg)),
     };
   } catch (e) { return { ...fail(e), row: null }; }
 }

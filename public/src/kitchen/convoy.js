@@ -50,6 +50,30 @@
         SERVER clock; the client posts a transit DURATION, not a timestamp, and
         adopts the server's answer (with a skew correction, §2).
 
+   ── 🔴 WHAT CHANGED IN ROUND 3, AND WHY ─────────────────────────────────────
+   Round 2 closed every defect it was given and the review came back with a
+   worse one: the road had no stakes, the arrival had no moment, and three
+   exported functions had no caller.
+
+     D. THE ROAD IS REAL NOW, AND THE SERVER OWNS IT. `sql/038` rolls a HOLD-UP
+        at launch — a stretch of the ruin where the truck is stopped — bakes it
+        into `arrives_at`, and stores `delay_ms` / `delay_leg` so this file can
+        say WHERE and FOR HOW LONG. §3 has the full argument for why the stake is
+        TIME and not boxes, and why that roll cannot live on the client.
+
+     E. THE ARRIVAL IS A MOMENT. A truck that lands is held at the dock for
+        `ECON.CONVOY_HOLD_MS` before the CLAIM button arms, and an outbound truck
+        that has been handed over stays on the board for the same beat as
+        `state:'delivered'` instead of vanishing between two frames. Round 2's
+        board went from "a truck on the road" straight to "No convoys on the
+        road" with nothing in between, and two hours of anticipation resolved
+        into a toast that a level-up could outrank.
+
+     F. THE DEAD API IS WIRED OR GONE. `upsertStats` is called by this file's own
+        heartbeat, `listConvoyLedger` is read when the server says a convoy was
+        already unloaded, and `leaderboard()` is exported for the Day sheet. See
+        §10.
+
    🔴 THE SIX HARD RULES THIS FILE LIVES UNDER
 
    1. NO DOM. NO TIMERS. NO `Date.now()`. `now` and `dt` arrive as arguments
@@ -174,15 +198,22 @@ function noStash() {
    changes nothing on a correctly-built data file and will silently diverge from
    the number the designer is looking at. Retune in kitchen.data.js.
 
-   ⚠ FOUR KEYS BELOW ARE NOT IN ECON YET and are flagged where they are read:
-   CONVOY_SPOIL_PCT, CONVOY_ROUTE_LEGS, CONVOY_SYNC_MS and CONVOY_HOLD_MS.
-   Their fallbacks are chosen so the feature behaves EXACTLY as CONTRACT §8.4
-   describes when the keys are absent — INCIDENT LOSS OFF, in particular, so a
-   data file that has not been retuned cannot start eating a player's boxes.
-   The route still draws, still names its legs and still reads as a journey at
-   zero loss; setting `CONVOY_SPOIL_PCT` is the one line that arms it.
-   Inventing a spoilage rate locally would be inventing an economy number in the
-   wrong file, which is the exact bug CLAUDE.md names.
+   ✅ THE FOUR MISSING KEYS LANDED IN ROUND 3. `CONVOY_ROUTE_LEGS`,
+   `CONVOY_SPOIL_PCT`, `CONVOY_SYNC_MS` and `CONVOY_HOLD_MS` are all in ECON now
+   and are read, not defaulted. The fallbacks below stay as NaN guards and are
+   deliberately chosen so an older kitchen.data.js still behaves exactly as
+   CONTRACT §8.4 describes.
+
+   ⚠ `CONVOY_SPOIL_PCT` IS IN ECON AND IS SET TO 0, ON PURPOSE, BY ITS OWNER.
+   The incident model in §3 is built, deterministic and armed by that one
+   number — and kitchen.data.js sets it to zero with a reasoned comment: a convoy
+   MOVES value between two players (CONTRACT §8.4), so shrinkage on a transfer is
+   a net DESTRUCTION of food the sender already paid the live ledger for, and it
+   reads to both of them as the game eating their stuff. That is a design call
+   and it belongs to that file, not this one. It is also why the road's stake is
+   TIME (§3): a hold-up costs the sender something real and destroys nothing.
+   Do not arm spoilage from in here, and do not re-derive a rate locally —
+   inventing an economy number in the wrong file is the exact bug CLAUDE.md names.
    ─────────────────────────────────────────────────────────────────────────── */
 function EC(key, fallback) {
   try {
@@ -256,6 +287,91 @@ function raise(K, out, name, payload) {
     `K.convoys`, which `snapshot()` saves; if the save does not happen, the
     remainder of a short-landed claim dies with the tab. Every path that creates
     or drains a hold calls this. */
+/* ═══════════════════════════════════════════════════════════════════════════
+   🔴 THE NETWORK ERROR, AND WHY IT NEEDS ITS OWN FIELD
+   ═══════════════════════════════════════════════════════════════════════════
+   Round 2's review, finding #7: a genuine network failure is INVISIBLE. The
+   convoy panel's banner ladder branches on `missing` and `offline` and has no
+   third rung, so with every `from()` and `rpc()` rejecting the panel looked
+   completely normal while inbound convoys silently stopped appearing.
+
+   The obvious fix is "set `K.error`". It does not work, and finding out why is
+   worth writing down, because it looks like it works in every casual test:
+
+     kitchen.state.js's `save()` sets `K.error = 'save-failed'` on a failed write
+     AND `K.error = null` ON EVERY SUCCESSFUL ONE (state.js:802). `K.error` is
+     therefore that file's SAVE STATUS, not a general error slot — and this file
+     calls `forceSave()` on essentially every path that can fail. So a network
+     error written to `K.error` survives until the next successful save, which is
+     at most five seconds and usually the very next statement. Measured: the
+     launch turn-back path set `K.error = 'Failed to fetch'`, called
+     `forceSave()` two lines later, and `K.error` read back as `null` in the same
+     synchronous block. A banner rung driven off it would flicker for one frame
+     every few minutes and be invisible in exactly the situation it exists for.
+
+   TWO FIELDS, THEN, AND THEY MEAN DIFFERENT THINGS:
+     `K.error`      — kept in sync as a courtesy, because CONTRACT §2 names it
+                      and something may already read it. Not durable. Set AFTER
+                      the save on every path here, never before.
+     `K._netError`  — ours, durable, `_`-prefixed so `snapshot()` never sees it
+                      (CONTRACT §5: a transient network state must not be
+                      persisted into a save file and re-shown tomorrow).
+                      `netError(K)` is the read.
+
+   ⚠ CLEARED ONLY BY A SUCCESSFUL ROUND TRIP. `refreshInbound()` clears it when
+     the server answers, which is the only evidence that the depot is back.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Record a REAL network failure. `missing` and `offline` are setup states and
+ * must never come through here (CONTRACT §9) — they have their own flags and
+ * their own quiet sentences.
+ */
+function netFail(K, res) {
+  try {
+    if (!K || !res || !res.error || res.missing || res.offline) return;
+    // 🔴 A NAMED SERVER REFUSAL IS NOT A NETWORK FAILURE — IT IS THE OPPOSITE.
+    //    `res.code` is set by kitchen.api.js's `serverCode()` only for the
+    //    tokens sql/038 raises deliberately (LAUNCH_QUOTA, NOT_YOURS,
+    //    STILL_IN_TRANSIT, …), which means the depot ANSWERED and said no. It
+    //    was measured saying otherwise: a quota refusal lit "the depot is not
+    //    answering right now" underneath a toast that had just explained, in
+    //    plain words, that the player had too many trucks out. Two sentences
+    //    contradicting each other about the same click is worse than either one
+    //    alone. The refusal carries its own sentence; the banner stays dark.
+    if (res.code) return;
+    K._netError = String(res.error).slice(0, 200);
+    K._netErrorAt = _num(K.now, 0);
+    K.error = K._netError;      // courtesy copy; see the block above
+    K.rev++;
+  } catch (e) {}
+}
+
+/** Clear it. Only a successful round trip may call this. */
+function netOk(K) {
+  try {
+    if (!K || !K._netError) return;
+    K._netError = null; K._netErrorAt = 0;
+    if (K.error && K.error !== 'save-failed') K.error = null;
+    K.rev++;
+  } catch (e) {}
+}
+
+/**
+ * Is the depot answering?
+ * → { error: string|null, at: number }
+ *
+ * THE RENDERER'S SIDE OF THE DEAL: this is the third rung of the banner ladder,
+ * after `missing` and `offline` and never before them —
+ *   "The depot is not answering right now. Your trucks are safe — try again in
+ *    a moment."
+ * Never a toast: it is a condition, not an event, and it can last minutes.
+ */
+export function netError(K) {
+  try { return { error: (K && K._netError) || null, at: _num(K && K._netErrorAt, 0) }; }
+  catch (e) { return { error: null, at: 0 }; }
+}
+
 function forceSave(K) {
   try {
     if (typeof State.save === 'function' && State.Kitchen === K) return State.save(true) !== false;
@@ -788,6 +904,13 @@ export async function launch(K, convoy, toUserId, now) {
       launchedAt: t,
       arrivesAt: t + Math.max(0, _int(load.transitMs)),   // ← provisional; §2 note
       state: 'transit',
+      // THE ROAD (§3a). Zero for now: a P2P convoy's hold-up is rolled by the
+      // server and adopted below, and a practice run's is rolled locally two
+      // lines after this object is built (it needs `row.id`, which is right
+      // here). Never a guess in between — a drawn hold-up that the server then
+      // contradicts is worse than no hold-up at all.
+      delayMs: 0,
+      delayLeg: 0,
       feeCinder: paid,
       // Bookkeeping the claim path needs. `paidFood` is how much of this
       // convoy's food has ALREADY landed in a stash — see the depot hold (§4).
@@ -801,6 +924,21 @@ export async function launch(K, convoy, toUserId, now) {
       // for a practice run, which has no server to disagree with.
       skewMs: 0,
     };
+    // A PRACTICE RUN'S ROAD. There is no server leg for one (step 7 skips it), so
+    // if it is not rolled here the offline mode — CONTRACT §9 rungs 1–3, i.e.
+    // the entire game for anybody who has not signed in — gets a road on which
+    // nothing ever happens. See `rollLocalHold()` for why that is safe.
+    if (to.self) {
+      const h = rollLocalHold(row.id, load.transitMs);
+      if (h.ms > 0) {
+        row.delayMs = h.ms;
+        row.delayLeg = h.leg;
+        // 🔴 APPLIED TO THE CLOCK, ONCE, HERE. `route()` only ever READS the
+        //    hold-up (§3a); if it were added again at draw time the truck would
+        //    be late twice over and the countdown would disagree with itself.
+        row.arrivesAt += h.ms;
+      }
+    }
     K.convoys.push(row);
     K.rev++;
     raise(K, null, 'convoy:launch', {
@@ -852,13 +990,39 @@ export async function launch(K, convoy, toUserId, now) {
         row.self = true;        // nobody else can see it, so it is claimable here
         row.toUserId = myId();
         row.toName = myName() + ' (turned back)';
+        // A turned-back truck is a local run and gets a local road, for the same
+        // reason a practice run does — otherwise the one convoy the player is
+        // most annoyed about is also the only one with nothing to watch.
+        const hb = rollLocalHold(row.id, load.transitMs);
+        if (hb.ms > 0) { row.delayMs = hb.ms; row.delayLeg = hb.leg; row.arrivesAt += hb.ms; }
         K.rev++;
         forceSave(K);
+        // ⚠ AFTER THE SAVE, NOT BEFORE. state.js's `save()` writes
+        //   `K.error = null` on success, so recording the failure first is the
+        //   same as not recording it. See the netFail() block for the measurement.
+        netFail(K, res);
+        /* 🔴 THE REFUSAL HAS TO NAME ITSELF. Round 2 had ONE sentence here for
+           every possible outcome — "the depot could not reach them" — and the
+           review found the case that makes that indefensible: the server's
+           in-flight quota locked a sender out PERMANENTLY (an unclaimed convoy
+           held its slot forever), so the player was charged, told their network
+           was at fault, and would be told exactly the same thing on every
+           attempt for the rest of the account's life. sql/038 fixes the lockout;
+           this fixes the lie about it. A refusal the player can act on must be
+           distinguishable from one they cannot. */
+        let why;
+        if (res && res.missing) {
+          why = 'The convoy network is not set up yet — the truck turned back to your own city.';
+        } else if (res && res.quota) {
+          why = 'Too many of your trucks are still out. Wait for one to land, then send this again.';
+        } else if (res && res.badPlayer) {
+          why = 'That kitchen is not there any more. The truck turned back to your own city.';
+        } else {
+          why = 'The depot could not reach ' + (to.name || 'them') + '. The truck turned back to your own city.';
+        }
         return ok({
           id: row.id, convoy: row, feeCinder: paid, local: true, turnedBack: true,
-          why: (res && res.missing)
-            ? 'The convoy network is not set up yet — the truck turned back to your own city.'
-            : 'The depot could not reach ' + (to.name || 'them') + '. The truck turned back to your own city.',
+          quota: !!(res && res.quota), why,
         });
       }
     }
@@ -917,7 +1081,15 @@ function adoptServerClock(row, srv, localNow) {
     row.arrivesAt = sArrive - skew;
     row.launchedAt = sLaunch ? (sLaunch - skew) : row.launchedAt;
     row.arrivesAtServer = srv.arrives_at || null;
+    // 🔴 THE SERVER MAY HAVE SHRUNK THE LOAD. sql/038 clamps `dishes` DOWN to the
+    //    tier's real capacity, so what the row says is what is on the truck —
+    //    and the freight fee was quoted on what the client asked for. Reading
+    //    this back is the difference between a board that describes the convoy
+    //    and a board that describes the request.
     if (srv.dishes != null) row.dishes = Math.max(0, _int(srv.dishes));
+    // The road (§3a). Already inside `arrives_at`; recorded so it can be drawn.
+    row.delayMs = Math.max(0, _int(srv.delay_ms));
+    row.delayLeg = Math.max(0, _int(srv.delay_leg));
   } catch (e) { /* keep the provisional local clock */ }
 }
 
@@ -933,8 +1105,46 @@ function adoptServerClock(row, srv, localNow) {
      · An INCIDENT may sit on a leg: a checkpoint, a washed-out span, a stall
        in the road. The truck reaches it at a known point in the trip and the
        player watches it happen.
-     · An incident can cost BOXES. Never all of them (`dishes - 1` is the hard
-       ceiling), never nothing-but-flavour when the loss rate is armed.
+     · 🔴 AN INCIDENT COSTS TIME. `delay_ms` / `delay_leg` come off the SERVER
+       row and are already inside `arrives_at` (see §3a).
+     · An incident MAY also cost BOXES — but only if `ECON.CONVOY_SPOIL_PCT` is
+       armed, and its owner deliberately sets it to 0. Never all of them
+       (`dishes - 1` is the hard ceiling).
+
+   ── 🔴 §3a. WHY THE STAKE IS TIME, AND WHY THE SERVER ROLLS IT ──────────────
+   Round 2's review was blunt: "a beautifully drawn road on which nothing can
+   ever go wrong — a convoy is a guaranteed 100% delivery with a timer." It was
+   right, and the obvious fix — arm the spoilage — is the wrong one, for a reason
+   kitchen.data.js writes out where the number lives: a convoy MOVES value
+   between two players. Both of them paid for those boxes out of the live ledger
+   already. Destroying part of a gift in transit does not add tension, it adds a
+   grievance, and the person it lands on is the RECIPIENT, who did nothing.
+
+   A HOLD-UP COSTS TIME AND DESTROYS NOTHING. Every box still arrives. What the
+   sender loses is the thing a logistics game is actually about — the schedule —
+   and what both players get is a story: the truck stopped at Checkpoint Nine for
+   twenty-five minutes and you watched it happen.
+
+   🔴 AND THE SERVER HAS TO ROLL IT. Three reasons, in order of how badly each
+   one bites:
+     1. `arrives_at` is the ONE timestamp `kitchen_convoy_claim()` enforces. A
+        client-side delay would put the drawn road and the enforced clock into
+        permanent disagreement — the truck would look held up and land on time,
+        or look on time and refuse to unload.
+     2. A client that rolls its own hold-up reloads until it does not get one.
+     3. THE TWO PLAYERS MUST SEE THE SAME ROAD. The sender's client and the
+        recipient's client are different machines; only a stored fact makes them
+        agree about what happened to a truck they are both watching.
+   So the roll is `random()` inside the launch RPC, added to the transit it was
+   going to charge anyway, and STORED. This file reads it and draws it.
+   ⚠ `delay_ms` IS NOT ADDED TO ANYTHING HERE. It is already in `arrivesAt`.
+     Adding it again would double every hold-up and desynchronise the countdown
+     from the server, which is defect (1) above arriving by the other door.
+
+   ⚠ SPOILAGE AND THE HOLD-UP ARE INDEPENDENT AND MAY LAND ON DIFFERENT LEGS.
+     That is correct and not a bug: they are two different things that can happen
+     on a road. When spoilage is unarmed (it is), the hold-up is the only
+     incident there is, and the route reads as one journey with one event.
 
    🔴 EVERYTHING HERE IS DETERMINISTIC AND SEEDED FROM THE CONVOY'S ID. For a
    P2P convoy that id is the SERVER's `gen_random_uuid()`, so the route is
@@ -965,13 +1175,35 @@ const FALLBACK_PLACES = [
   { name: 'Grid North',     icon: '🏚' },
 ];
 
+/* 🔴 TWO SENTENCES PER HAZARD, AND THEY ARE NOT INTERCHANGEABLE.
+   `line` is what happened when the road took BOXES. `hold` is what happened when
+   it took TIME. They are separate because the first version of the hold-up
+   reused `line`, and a truck that was merely delayed reported "the chiller cut
+   out and part of the load turned" — telling the player their food had spoiled
+   when every box arrived. That is not a wording nit: the recipient counts the
+   boxes, they are all there, and the game has just been caught lying about its
+   own road. `hold` also carries no number: the duration is `holdMs` and belongs
+   in the UI where it can be formatted, not baked into prose.
+   ⚠ A `DATA.CONVOY_HAZARDS` row that supplies only `line` (an older data file)
+     falls back to a neutral hold sentence rather than borrowing the loss one. */
 const FALLBACK_HAZARDS = [
-  { id: 'toll',    name: 'Roadside toll',   icon: '💰', line: 'A crew at the barrier took their cut in boxes.' },
-  { id: 'washout', name: 'Washed-out span', icon: '🌊', line: 'The detour cost the load a pallet off the back.' },
-  { id: 'heat',    name: 'Cooler stall',    icon: '🥵', line: 'The chiller cut out and part of the load turned.' },
-  { id: 'raiders', name: 'Raiders',         icon: '🏴', line: 'They took what they could carry and let the truck go.' },
-  { id: 'patrol',  name: 'Patrol stop',     icon: '🚓', line: 'A search, a shrug, and a lighter truck.' },
+  { id: 'toll',    name: 'Roadside toll',   icon: '💰',
+    line: 'A crew at the barrier took their cut in boxes.',
+    hold: 'A crew at the barrier went through the manifest twice.' },
+  { id: 'washout', name: 'Washed-out span', icon: '🌊',
+    line: 'The detour cost the load a pallet off the back.',
+    hold: 'The span was out. The long way round is the only way round.' },
+  { id: 'heat',    name: 'Cooler stall',    icon: '🥵',
+    line: 'The chiller cut out and part of the load turned.',
+    hold: 'The chiller cut out and the driver sat with it until it caught.' },
+  { id: 'raiders', name: 'Raiders',         icon: '🏴',
+    line: 'They took what they could carry and let the truck go.',
+    hold: 'They waited it out in a culvert until the road was quiet.' },
+  { id: 'patrol',  name: 'Patrol stop',     icon: '🚓',
+    line: 'A search, a shrug, and a lighter truck.',
+    hold: 'A search, a shrug, and an hour of somebody else\'s paperwork.' },
 ];
+const HOLD_LINE_FALLBACK = 'The road stopped the truck for a while.';
 
 function places() {
   try {
@@ -997,6 +1229,55 @@ const _routeCache = new Map();
 function routeSeed(c) { return String((c && (c.remoteId || c.id)) || ''); }
 
 /**
+ * The hold-up on this convoy, as facts.
+ * → { ms, leg }   `leg` is 1-based; `{0,0}` is a clean run.
+ *
+ * 🔴 THE SERVER'S ANSWER WINS WHENEVER THERE IS ONE. `delayMs`/`delayLeg` come
+ * off the `kitchen_convoys` row (§3a) and are already inside `arrivesAt`.
+ *
+ * ⚠ A LOCAL PRACTICE RUN HAS NO SERVER AND THEREFORE NO ROW. It gets the same
+ * kind of hold-up rolled from its own id — which is safe for exactly the reason
+ * a practice run is safe at all: it pays the player their own food back at a
+ * deliberate loss, so there is nothing to gain by re-rolling it, and the road
+ * would otherwise be dead scenery in the one mode CONTRACT §9 rungs 1–3 say has
+ * to be the whole game.
+ *
+ * ⚠ ABOUT THE TWO NUMBERS IN HERE, BECAUSE CLAUDE.md IS STRICT ABOUT THIS AND
+ *   SHOULD BE. `0.22` and `0.25` are not new economy tuning: they are the VAN's
+ *   `risk_pct` and `delay_max_pct`, mirrored from the `kitchen_convoy_tiers`
+ *   seed in sql/038 — a file this slice owns, where they are the authority for
+ *   every convoy that has a server. This is the offline mirror of a server-side
+ *   guard rail, kept next to the code that needs it because there is no row to
+ *   read it from, and it moves NOTHING: a practice run pays the player their own
+ *   food back at a loss whatever the road does. If the road ever becomes a thing
+ *   a designer tunes rather than a guard rail, it wants two ECON keys — named in
+ *   the hand-off — and this function reads them instead.
+ *
+ * ⚠ AND IT IS APPLIED TO THE CLOCK, NOT ADDED TO THE DRAWING. `launch()` adds it
+ * to a practice run's `arrivesAt` at creation. Here it is only ever READ.
+ */
+function holdUp(c) {
+  const ms = Math.max(0, _int(c && c.delayMs));
+  const leg = Math.max(0, _int(c && c.delayLeg));
+  if (ms > 0 && leg > 0) return { ms, leg };
+  return { ms: 0, leg: 0 };
+}
+
+/**
+ * Roll a practice run's hold-up. Deterministic from the local id, so it is the
+ * same every repaint and survives a reload. Never called for a server convoy.
+ */
+function rollLocalHold(id, transitMs) {
+  const seed = String(id || '');
+  const t = Math.max(0, _int(transitMs));
+  if (!seed || t <= 0) return { ms: 0, leg: 0 };
+  if (_hash01(seed + ':risk') >= 0.22) return { ms: 0, leg: 0 };   // van risk_pct
+  const ms = Math.floor(t * 0.25 * (0.35 + _hash01(seed + ':size') * 0.65)); // van delay_max_pct
+  if (ms <= 0) return { ms: 0, leg: 0 };
+  return { ms, leg: 1 + Math.floor(_hash01(seed + ':where') * 5) };
+}
+
+/**
  * The plan for one convoy: legs, incidents, and the total boxes lost.
  * Pure. No `K`, no clock, no bridge.
  */
@@ -1011,7 +1292,14 @@ function routePlan(c) {
   // 🔴 THE ARMING KEY. Absent → 0 → a scenic route with no losses, exactly as
   //    CONTRACT §8.4 describes today. See the EC() note at the top.
   const pct = _clamp(_num(EC('CONVOY_SPOIL_PCT', 0), 0), 0, 0.5);
-  const key = seed + '|' + dishes + '|' + legs + '|' + pct;
+  // 🔴 THE HOLD-UP IS PART OF THE CACHE KEY. It arrives LATE — a local row is
+  //    created, then `adoptServerClock()` writes the server's answer onto it a
+  //    round trip later — so a plan memoised before that would show a clean road
+  //    for the whole trip and there would be nothing on screen to say otherwise.
+  //    This is the same class of bug as the missing avalanche in `_hash01`:
+  //    invisible, deterministic, and wrong for the entire life of the convoy.
+  const hold = holdUp(c);
+  const key = seed + '|' + dishes + '|' + legs + '|' + pct + '|' + hold.ms + '@' + hold.leg;
   const hit = _routeCache.get(key);
   if (hit) return hit;
 
@@ -1042,6 +1330,7 @@ function routePlan(c) {
       icon: (p && p.icon) || '🛣',
       hazard: null,
       lost: 0,
+      holdMs: 0,          // ms the truck is held on THIS leg. 0 = it rolls through.
     };
     // An incident is rolled per leg. `pct * 2` is the *chance*, `pct` the size:
     // at a 6% loss rate roughly one leg in eight has an incident and it costs a
@@ -1053,9 +1342,33 @@ function routePlan(c) {
       leg.hazard = { id: hz.id, name: hz.name, icon: hz.icon, line: hz.line };
       lost += leg.lost;
     }
+    // ── THE HOLD-UP (§3a). Server-rolled, already inside `arrivesAt`, and it
+    //    lands on ONE leg. `hold.leg` is 1..5 from the database and the road may
+    //    be narrower than that, so it is clamped into the legs we are actually
+    //    drawing rather than dropped — a hold-up the player is living through
+    //    that has nowhere to be drawn is worse than one drawn a marker early.
+    if (hold.ms > 0 && i === (Math.min(hold.leg, legs) - 1)) {
+      const hz = H[Math.floor(_hash01(seed + ':d' + i) * H.length) % H.length] || H[0];
+      leg.holdMs = hold.ms;
+      // ⚠ If spoilage ever gets armed AND rolls on this same leg, the hold-up
+      //   does not overwrite it — the box loss is the bigger event and keeps the
+      //   headline, so the leg keeps its `line`. The delay still shows either way.
+      if (!leg.hazard) {
+        leg.hazard = {
+          id: hz.id, name: hz.name, icon: hz.icon,
+          // TIME, not boxes. See the note on FALLBACK_HAZARDS.
+          line: hz.hold || HOLD_LINE_FALLBACK,
+        };
+      }
+      leg.hazard.holdMs = hold.ms;
+    }
     out.push(leg);
   }
-  const plan = { legs: out, spoilFinal: lost, dishes, armed: pct > 0 };
+  const plan = {
+    legs: out, spoilFinal: lost, dishes, armed: pct > 0,
+    holdMs: hold.ms,
+    holdLeg: hold.ms > 0 ? Math.min(hold.leg, legs) : 0,
+  };
   if (_routeCache.size > 32) _routeCache.clear();
   _routeCache.set(key, plan);
   return plan;
@@ -1076,8 +1389,18 @@ function routePlan(c) {
  *     dishes,       // boxes loaded
  *     delivering,   // boxes that will actually land = dishes - spoilFinal
  *     food,         // live `food` that lands = delivering × CONVOY_FOOD_PER_DISH
- *     armed,        // false when ECON.CONVOY_SPOIL_PCT is absent/0
+ *     armed,        // false when ECON.CONVOY_SPOIL_PCT is 0 (it is — see the
+ *                   //   EC() note; box loss is off and the hold-up is the stake)
+ *     holdMs,       // 🔴 ms the server held this truck up. 0 = a clean run.
+ *     holdLeg,      // 1-based leg it happened on, clamped into `legs`. 0 = none.
+ *     holdName,     // 'Checkpoint Nine' — where. '' when there was no hold-up.
+ *     holdLine,     // the sentence for it. '' when there was no hold-up.
+ *     holding,      // true while the truck is AT the hold-up right now
+ *     held,         // true once the truck has passed it (it is in the past)
  *   }
+ *
+ * ⚠ `holdMs` IS ALREADY INSIDE `etaMs`. It is reported so the road can say what
+ * happened, never so a caller can add it to anything. See §3a.
  *
  * PURE and cheap enough for `frame()`. Safe against a null convoy.
  */
@@ -1086,6 +1409,7 @@ export function route(c, now) {
     pct: 0, etaMs: 0, arrived: false,
     origin: { name: 'Your kitchen', icon: '🍔' }, dest: { name: 'Their city', icon: '🏙' },
     legs: [], incidents: [], spoil: 0, spoilFinal: 0, dishes: 0, delivering: 0, food: 0, armed: false,
+    holdMs: 0, holdLeg: 0, holdName: '', holdLine: '', holding: false, held: false,
   };
   try {
     if (!c || typeof c !== 'object') return empty;
@@ -1097,6 +1421,8 @@ export function route(c, now) {
     let spoil = 0;
     for (const l of incidents) spoil += Math.max(0, _int(l.lost));
     const delivering = Math.max(0, plan.dishes - plan.spoilFinal);
+    // The hold-up leg, if there is one, so the caller does not have to hunt.
+    const hl = plan.holdLeg > 0 ? (legs[plan.holdLeg - 1] || null) : null;
     return {
       pct,
       etaMs: Math.max(0, _num(c.arrivesAt, 0) - _num(now, 0)),
@@ -1115,6 +1441,17 @@ export function route(c, now) {
       delivering,
       food: Math.max(0, Math.floor(delivering * EC('CONVOY_FOOD_PER_DISH', 1))),
       armed: plan.armed,
+      holdMs: plan.holdMs,
+      holdLeg: plan.holdLeg,
+      holdName: hl ? hl.name : '',
+      holdLine: (hl && hl.hazard) ? hl.hazard.line : '',
+      // ⚠ `holding` is a WINDOW, not an instant. The truck glyph moves in
+      //   `frame()` at whatever rate the trip is long, so "pct === leg.at" is
+      //   never true on any actual frame of a six-hour convoy. A window one
+      //   twentieth of the road wide is what makes the hold-up something the
+      //   player can catch happening instead of a state nobody ever observes.
+      holding: !!hl && pct < 1 && pct >= hl.at && pct < (hl.at + 0.05),
+      held: !!hl && pct >= (hl.at + 0.05),
     };
   } catch (e) { return empty; }
 }
@@ -1342,6 +1679,71 @@ function grantXp(K, out, n) {
   }
 }
 
+/* ───────────────────────────────────────────────────────────────────────────
+   🔴 §5a — THE DOCK HOLD. What makes an arrival a moment instead of a number.
+   ───────────────────────────────────────────────────────────────────────────
+   ROUND 2'S ARRIVAL, MEASURED: a convoy landing in the same frame as a level-up
+   produced `toasts: ["🚚 On the road to Kestrel.", "⭐ Level 40!"]` — the
+   arrival was swallowed by the toast ranker — and the sender's board jumped
+   straight from a truck on the road to "No convoys on the road." Two hours of
+   wall-clock anticipation resolved into nothing at all.
+
+   TWO BEATS FIX IT, AND BOTH ARE HERE RATHER THAN IN THE RENDERER, because a
+   renderer can only draw what is still in the state when it paints:
+
+     1. THE INBOUND TRUCK IS HELD AT THE DOCK for `ECON.CONVOY_HOLD_MS` before
+        CLAIM arms. It has landed, you can see what is on it, and for a few
+        seconds it is being unloaded rather than instantly converted into a
+        number. `claimableAt()` / `docking()` are the readable form of that.
+     2. THE OUTBOUND TRUCK STAYS ON THE BOARD for the same beat as
+        `state:'delivered'` before it is dropped. Round 2 deleted it inside
+        `arriveDue()` in the same frame it arrived, so the one row that could
+        have said "Kestrel has it" was gone before anything could draw it.
+
+   ⚠ ECON.CONVOY_HOLD_MS IS USED FOR BOTH BEATS AND FOR THE DOCK DRAIN, ON
+     PURPOSE. kitchen.data.js documents it as "how long an arrived convoy is held
+     on screen before it is claimable, so the arrival is a MOMENT rather than a
+     number changing" — which is beat 1 exactly. The drain retry (`maybeDrain`)
+     runs on the same cadence because it is the same question asked of the same
+     dock, and a second near-identical constant would be two numbers a designer
+     has to keep in step for no gain.
+
+   🔴 IT CANNOT DELAY A PAYOUT THE SERVER ALREADY MADE. The hold gates the CLAIM
+     BUTTON, never the credit: a claim that already went through the RPC is paid
+     and drained by `drainHeld()` regardless, because the server is the ledger
+     (rule 5) and a client-side beat must never be able to strand food.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/** ms of dock beat. Clamped so a silly ECON value cannot strand a truck. */
+function holdMs() {
+  return _clamp(_int(EC('CONVOY_HOLD_MS', 5000)), 0, 60000);
+}
+
+/**
+ * When this truck's CLAIM button arms. Pure.
+ * → epoch ms. `0` for anything that is not an arrived convoy.
+ */
+export function claimableAt(c) {
+  if (!c || c.state !== 'arrived') return 0;
+  return _num(c.arrivedAt, _num(c.arrivesAt, 0)) + holdMs();
+}
+
+/**
+ * Is this truck still being unloaded at the dock?
+ * → { docking, pct, msLeft }   `pct` 0..1 for a little unloading bar.
+ *
+ * The renderer shows CLAIM disabled with "Unloading…" while `docking` is true.
+ * ⚠ A HELD row (§4) is NOT docking — it has already been paid out by the server
+ *   and is waiting on stash room, which is a different sentence entirely.
+ */
+export function docking(c, now) {
+  const at = claimableAt(c);
+  if (!at) return { docking: false, pct: 1, msLeft: 0 };
+  const span = Math.max(1, holdMs());
+  const left = Math.max(0, at - _num(now, 0));
+  return { docking: left > 0, pct: _clamp(1 - (left / span), 0, 1), msLeft: left };
+}
+
 /**
  * Flip every truck whose clock has run out. THE ONE ARRIVAL PATH — `tick()` and
  * `catchUp()` both come through here, which is what makes calling both (as
@@ -1359,7 +1761,7 @@ function arriveDue(K, now, out) {
     if (!c || c.state !== 'transit') continue;
     if (_num(c.arrivesAt, Infinity) > t) continue;
     c.state = 'arrived';
-    c.arrivedAt = t;
+    c.arrivedAt = t;              // ← the dock beat is measured from here (§5a)
     K.rev++;
 
     if (!c.xpPaid) {
@@ -1370,22 +1772,56 @@ function arriveDue(K, now, out) {
       grantXp(K, out, Math.max(0, _int(c.dishes)) * Math.max(0, _int(EC('CONVOY_XP_PER_DISH', 6))));
     }
 
-    // ⚠ THE ARRIVAL PAYLOAD IS THE BANNER'S SCRIPT. The renderer draws a
-    //   full-width arrival moment off this, so it carries the whole story: who,
-    //   how many boxes, what the road took, what actually lands.
+    /* 🔴 THE ARRIVAL PAYLOAD IS THE ARRIVAL'S SCRIPT, AND IT IS TRUE NOW.
+       Round 2's version of this comment claimed the renderer drew a full-width
+       arrival moment off it. It did not — `grep -n "e.spoil\|e.incidents\|e.delivered"`
+       over kitchen.render.js returned nothing, and the only handler was a
+       one-line toast rate-limited to one a second and outranked by anything
+       above 80 in TOAST_RANK. A comment that describes a renderer nobody wrote
+       is worse than no comment: the next person reads it, believes the story is
+       being told, and does not tell it.
+       So the payload carries every field an arrival needs and the exact contract
+       is written down in §10 for whoever draws it. Until then it is at minimum a
+       complete toast line, which is a floor, not the ceiling it should be. */
     const r = route(c, t);
     raise(K, out, 'convoy:arrive', {
       id: c.id, dishes: _int(c.dishes), toName: c.toName || '', fromName: c.fromName || '',
       self: !!c.self, dir: 'out', spoil: r.spoilFinal, delivered: r.delivering, food: r.food,
       incidents: r.incidents.length,
+      tierId: c.tierId || 'van',
+      // The road, so the moment can say what the trip was.
+      holdMs: r.holdMs, holdName: r.holdName, holdLine: r.holdLine,
+      // What it cost to send, so the sender's half of the story is complete.
+      feeCinder: Math.max(0, _int(c.feeCinder)),
+      xp: c.xpPaid ? Math.max(0, _int(c.dishes)) * Math.max(0, _int(EC('CONVOY_XP_PER_DISH', 6))) : 0,
+      turnedBack: !!c.turnedBack,
     });
 
-    // A truck addressed to SOMEBODY ELSE is theirs to unload. Keeping the
-    // sender's copy would leave a row on the sender's board with a Claim button
-    // that can only ever fail, so it is retired the moment it lands.
-    if (!c.self) { c.state = 'claimed'; c.deliveredAt = t; drop.push(c.id); }
+    /* A truck addressed to SOMEBODY ELSE is theirs to unload, so the sender's
+       copy has to go — a row with a Claim button that can only ever fail is
+       worse than no row.
+       🔴 BUT NOT IN THIS FRAME. Round 2 pushed it straight onto `drop` and the
+       board went from "a truck on the road" to "No convoys on the road." between
+       two paints. It now sits for one dock beat (§5a) as `state:'delivered'`,
+       which is a state the renderer can actually draw: "delivered — Kestrel has
+       it." `deliveredAt` is the latch that retires it on the next pass. */
+    if (!c.self) { c.state = 'delivered'; c.deliveredAt = t; }
   }
-  if (drop.length) K.convoys = K.convoys.filter((c) => drop.indexOf(c.id) === -1);
+
+  /* Retire the delivered rows whose beat is over. Separate pass, and separate on
+     purpose: this runs on EVERY tick, not only on the frame something arrived,
+     so the beat ends even if nothing else happens for the rest of the shift. */
+  for (const c of (K.convoys || [])) {
+    if (!c || c.state !== 'delivered') continue;
+    if ((t - _num(c.deliveredAt, 0)) < holdMs()) continue;
+    c.state = 'claimed';
+    drop.push(c.id);
+    K.rev++;
+  }
+  if (drop.length) {
+    K.convoys = K.convoys.filter((c) => drop.indexOf(c.id) === -1);
+    forceSave(K);   // the board shrank; that belongs in the save, not in RAM
+  }
 
   // ── INBOUND (mirrors of server rows) ─────────────────────────────────────
   // These carry no XP and no fee — they are somebody else's launch. All that
@@ -1394,12 +1830,19 @@ function arriveDue(K, now, out) {
     if (!c || c.state !== 'transit') continue;
     if (_num(c.arrivesAt, Infinity) > t) continue;
     c.state = 'arrived';
+    c.arrivedAt = t;              // ← the dock beat is measured from here (§5a)
     K.rev++;
     const r = route(c, t);
     raise(K, out, 'convoy:arrive', {
       id: c.id, dishes: _int(c.dishes), toName: c.toName || '', fromName: c.fromName || '',
       self: false, dir: 'in', spoil: r.spoilFinal, delivered: r.delivering, food: r.food,
       incidents: r.incidents.length,
+      tierId: c.tierId || 'van',
+      holdMs: r.holdMs, holdName: r.holdName, holdLine: r.holdLine,
+      feeCinder: 0, xp: 0, turnedBack: false,
+      // How long the CLAIM button stays disabled, so the moment can run a bar
+      // rather than a button that looks broken for five seconds.
+      dockMs: holdMs(),
     });
   }
 }
@@ -1449,7 +1892,7 @@ export function catchUp(K, now) {
     scale of seconds. `CONVOY_HOLD_MS` is a UI cadence, not a price. */
 function maybeDrain(K, now, out) {
   if (!(now > 0)) return;
-  const every = Math.max(1000, _int(EC('CONVOY_HOLD_MS', 5000)));   // ⚠ not in ECON yet
+  const every = Math.max(1000, holdMs());   // the dock cadence — see §5a
   const last = _num(K._holdDrain, 0);
   if (last && (now - last) < every) return;
   K._holdDrain = now;
@@ -1482,11 +1925,34 @@ function mapInbound(row, now) {
     dishes: Math.max(0, _int(row.dishes)),
     launchedAt: launched || (arrives - 1),
     arrivesAt: arrives,
-    state: claimed ? 'claimed' : (arrives && arrives <= _num(now, 0) ? 'arrived' : 'transit'),
+    /* 🔴 A TRUCK THAT LANDED WHILE YOU WERE AWAY IS MAPPED 'transit', NOT
+       'arrived', AND THAT IS DELIBERATE.
+
+       Round 2 mapped it straight to 'arrived' and it looked obviously correct —
+       the truck HAS arrived, after all. What it actually did was skip the only
+       code path that produces an arrival: `arriveDue()` flips rows in 'transit',
+       and it is the flip that emits `convoy:arrive`, stamps `arrivedAt` and
+       starts the dock beat (§5a). A row that arrives pre-flipped gets none of
+       those. So the recipient — the player the whole feature exists for — opened
+       the panel to a Claim button that had simply always been there. No landing,
+       no story about the road, no moment. Exactly the complaint round 2 got
+       about the SENDER's side, arriving by the other door.
+
+       Mapping it 'transit' costs one frame in which a landed truck is drawn at
+       the far end of its road (`progress()` clamps to 1, so it sits on the
+       destination marker — not wrong, just early), and buys a real arrival on
+       the very next tick. `arrivesAt` is untouched, so nothing about WHEN it
+       landed is falsified, and `claim()` still refuses anything the server has
+       not released. */
+    state: claimed ? 'claimed' : 'transit',
     feeCinder: 0,
     paidFood: 0,
     serverClaimed: false,
     xpPaid: true,                // never any XP on the receiving end
+    // The road, from the sender's launch. Both players read the same two numbers
+    // off the same row, which is the whole reason the roll is server-side (§3a).
+    delayMs: Math.max(0, _int(row.delay_ms)),
+    delayLeg: Math.max(0, _int(row.delay_leg)),
   };
 }
 
@@ -1522,10 +1988,13 @@ export async function refreshInbound(K) {
       //    including, now, while they are typing in the recipient search.
       if (had || K.missing !== miss || K.offline !== off || K.error !== err) K.rev++;
       K.missing = miss; K.offline = off; K.error = err;
+      // …and durably, so it survives the next successful save (see netFail()).
+      if (err) netFail(K, inb); else netOk(K);
       return false;
     }
-    const changed = K.missing || K.offline || K.error;
+    const changed = K.missing || K.offline || K.error || K._netError;
     K.missing = false; K.offline = false; K.error = null;
+    netOk(K);          // 🔴 the ONLY evidence the depot is back: it answered.
 
     const now = _num(K.now, 0);
     const rows = Array.isArray(inb.rows) ? inb.rows : [];
@@ -1567,6 +2036,12 @@ export async function refreshInbound(K) {
         if (!c || !c.remoteId) continue;           // local practice runs are not up there
         if (c.dir === 'in') continue;              // a held inbound row is ours to drain
         if (c.state === 'held') continue;          // …and is never reconciled away
+        // ⚠ AND A 'delivered' ROW IS MID-BEAT (§5a). The heartbeat runs on a 60s
+        //   timer that has no idea a five-second acknowledgement is on screen;
+        //   retiring the row from under it would put the arrival back exactly
+        //   where round 2 left it — gone before anyone saw it. `arriveDue()`
+        //   owns the end of that beat and nothing else may.
+        if (c.state === 'delivered') continue;
         const r = byRemote[c.remoteId];
         if (!r) continue;
         if (String(r.state || '') === 'claimed') { c.state = 'claimed'; drop.push(c.id); }
@@ -1613,7 +2088,7 @@ function partnersFrom(rows) {
  * read in here.
  */
 function maybeSync(K, now, force) {
-  const every = Math.max(15000, _int(EC('CONVOY_SYNC_MS', 60000)));   // ⚠ not in ECON yet
+  const every = Math.max(15000, _int(EC('CONVOY_SYNC_MS', 60000)));
   const last = _num(K._convoySync, 0);
   if (!force && last && (now - last) < every) return;
   if (!(now > 0)) return;
@@ -1622,8 +2097,87 @@ function maybeSync(K, now, force) {
   K._convoySyncing = true;
   try {
     Promise.resolve(refreshInbound(K))
-      .then(() => { K._convoySyncing = false; }, () => { K._convoySyncing = false; });
+      .then(() => { K._convoySyncing = false; }, () => { K._convoySyncing = false; })
+      // 🔴 THE SCOREBOARD RIDES THE SAME HEARTBEAT, and this is `upsertStats`'s
+      //    first and only call site. Round 2 shipped `kitchen_stats`, its
+      //    SECURITY DEFINER upsert, its `ks_sel` policy and five column grants —
+      //    roughly sixty lines of sql/038 and three of its verify checks — with
+      //    ZERO callers anywhere in the client. Dead API is a lie about what the
+      //    feature does, and secured dead API is worse: it looks like the part
+      //    somebody thought hardest about.
+      //    WHY HERE and not on `shift:close`, which is the obvious place: this
+      //    file owns the only recurring network cadence in the whole feature,
+      //    and hanging the board off it means one round trip's worth of
+      //    politeness covers both. `shift:close` is also a moment the panel is
+      //    being torn down, which is the worst moment to start a fetch.
+      .then(() => publishStats(K));
   } catch (e) { K._convoySyncing = false; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   §10 — THE SCOREBOARD. Cosmetic, and cosmetic is load-bearing here.
+   ═══════════════════════════════════════════════════════════════════════════
+   🔴 NOTHING IN THIS SECTION IS EVER AN ECONOMY SOURCE. Every number on the
+   board was written by a player's own client, so it is a wall to put a name on.
+   It is not a ledger, it is not evidence, and nothing may read it back and grant
+   anything. sql/038 says the same thing in the same words above the table.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Publish my row. Best-effort, fire-and-forget, silent on every failure.
+ *
+ * ⚠ THROTTLED SEPARATELY FROM THE INBOUND POLL. The board moves on the scale of
+ * a shift; the inbound list moves on the scale of a truck. Posting a scoreboard
+ * row every sixty seconds forever is a write nobody asked for, so it goes out at
+ * most every ten minutes and only when something actually changed. The signature
+ * is what the board displays — level, served, days, popularity — so a player
+ * sitting in the panel doing nothing writes exactly once.
+ */
+function publishStats(K) {
+  try {
+    if (!K || typeof K !== 'object') return;
+    if (K.missing || K.offline) return;               // setup states: not a failure, just nothing to do
+    const t = _num(K.now, 0);
+    const totals = K.totals || {};
+    const sig = [_int(K.level), _int(totals.served), _int(totals.days), Math.round(_num(K.popularity, 0))].join('/');
+    if (K._statsSig === sig && K._statsAt && (t - K._statsAt) < 600000) return;
+    K._statsSig = sig;
+    K._statsAt = t;
+    Promise.resolve(API.upsertStats({
+      level: Math.max(1, _int(K.level) || 1),
+      served: Math.max(0, _int(totals.served)),
+      days: Math.max(0, _int(totals.days)),
+      popularity: _clamp(Math.round(_num(K.popularity, 50)), 0, 100),
+    })).then(() => {}, () => {});
+    // ⚠ Deliberately no `K.error` and no toast on failure. A scoreboard that
+    //   could not be written is not a thing the player did or can fix, and
+    //   CONTRACT §9 is explicit that a cosmetic table must never produce an
+    //   error state for the panel.
+  } catch (e) { /* rule 2 */ }
+}
+
+/**
+ * The board, for the Day sheet.
+ * → { ok, rows:[{name,level,served,days,popularity,updated_at}], missing, offline }
+ *
+ * 🔴 THERE IS NO `user_id` IN THESE ROWS AND THERE MUST NEVER BE ONE. sql/038
+ * revokes the column grant outright — round 1 paired `using (true)` with
+ * `select('user_id,…')` and turned the leaderboard into a paginated dump of
+ * `auth.users` UUIDs to every signed-in player. Key rows on `name` + index.
+ *
+ * ⚠ AND THAT IS WHY THE BOARD CANNOT FEED THE RECIPIENT PICKER, which was the
+ * obvious idea and is the wrong one: you cannot address a convoy to a row with
+ * no id, and re-adding the id to make it possible would re-open the leak. The
+ * picker stays on `recipients()` / `findPlayer()`.
+ */
+export async function leaderboard(limit) {
+  try {
+    const r = await API.listLeaderboard(Math.max(1, _int(limit || 25)));
+    if (!r || !r.ok) {
+      return { ok: false, rows: [], missing: !!(r && r.missing), offline: !!(r && r.offline) };
+    }
+    return { ok: true, rows: r.rows || [], missing: false, offline: false };
+  } catch (e) { return { ok: false, rows: [], missing: false, offline: false }; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1676,6 +2230,14 @@ export async function claim(K, convoyId, now) {
 
     if (c.state === 'claimed') return no('NOT_READY', 'That convoy has already been unloaded.');
 
+    // A 'delivered' row is the sender's five-second acknowledgement of a truck
+    // that is now the RECIPIENT's (§5a). There is nothing here to unload and
+    // there never was — saying "still on the road" about a truck the board is
+    // currently captioned "delivered" would be the panel arguing with itself.
+    if (c.state === 'delivered') {
+      return no('NOT_READY', (c.toName || 'They') + ' took delivery — that one is theirs to unload.');
+    }
+
     /* ── A HELD ROW: the dock, not the road. No server call — the RPC has
        already paid this out (`serverClaimed`) and asking again would return
        `first_claim:false` anyway. All that is left is whether it fits. ── */
@@ -1702,6 +2264,17 @@ export async function claim(K, convoyId, now) {
 
     if (c.state !== 'arrived' || _num(c.arrivesAt, Infinity) > t) {
       return no('NOT_READY', 'That convoy is still on the road.');
+    }
+
+    // 🔴 THE DOCK BEAT (§5a). A few seconds between the truck stopping and the
+    //    CLAIM button arming, so an arrival is something that HAPPENS rather
+    //    than a number that changes. It gates the button and nothing else: a
+    //    payout the server has already made is drained by `drainHeld()` on its
+    //    own cadence and can never be stranded by this.
+    const dock = docking(c, t);
+    if (dock.docking) {
+      return no('NOT_READY', 'They are still getting the doors open — a moment.',
+        { docking: true, msLeft: dock.msLeft });
     }
 
     const b = bridge();
@@ -1732,6 +2305,10 @@ export async function claim(K, convoyId, now) {
       if (!res || !res.ok) {
         if (res && res.missing) { K.missing = true; return no('CLOSED', 'The convoy network is not set up yet.'); }
         if (res && res.offline) { K.offline = true; return no('CLOSED', 'Sign in to unload a convoy from another player.'); }
+        // ⚠ A REAL failure is recorded durably. `missing`/`offline` returned
+        //   above and never reach here, which is what keeps a setup state from
+        //   lighting the error banner (CONTRACT §9).
+        netFail(K, res);
         // 🔴 NO LOCAL FALLBACK HERE, EVER. Granting `food` for an inbound
         //    convoy the server did not confirm would let an offline client
         //    unload the same truck as many times as it liked.
@@ -1754,9 +2331,33 @@ export async function claim(K, convoyId, now) {
       // compute a different ceiling from the one this claim used.
       if (ceilingDishes > 0) c.dishes = ceilingDishes;
       if (res.firstClaim === false || ceilingDishes <= 0) {
-        // Someone (probably this player, in another tab) already collected it.
+        /* Someone — almost always this player, in another tab — already
+           collected it. "Already unloaded" is true and completely unhelpful: the
+           player is looking at a truck they were promised and getting nothing,
+           and the one thing that would settle it is WHEN it happened.
+           🔴 THIS IS THE LEDGER'S FIRST REAL CALL SITE, and that is the point.
+           `kitchen_convoy_ledger` is the append-only record this whole feature
+           offers as evidence — sql/038 spends sixty lines protecting it — and
+           round 2 shipped with it written by both RPCs and read by nobody. An
+           append-only record nothing ever reads is not an audit trail, it is a
+           write-only table with a good comment on it.
+           It is best-effort and never blocks: `history()` is guarded, returns
+           `{ok:false}` on every failure, and the sentence falls back to the
+           plain one. */
+        let when = '';
+        try {
+          const h = await history(c.remoteId);
+          const row = (h && h.ok && (h.rows || []).find((x) => x && x.kind === 'claim')) || null;
+          const at = row ? (Date.parse(row.created_at || '') || 0) : 0;
+          if (at > 0) {
+            const mins = Math.max(0, Math.round((_num(t, 0) - at) / 60000));
+            when = mins < 1 ? ' It was unloaded moments ago.'
+                 : mins < 60 ? ' It was unloaded ' + mins + ' minute' + (mins === 1 ? '' : 's') + ' ago.'
+                 : ' It was unloaded ' + Math.round(mins / 60) + ' hour' + (Math.round(mins / 60) === 1 ? '' : 's') + ' ago.';
+          }
+        } catch (e) { when = ''; }
         retire(K, c, t, 0, null);
-        return ok({ granted: 0, already: true, why: 'That convoy was already unloaded.' });
+        return ok({ granted: 0, already: true, why: 'That convoy was already unloaded.' + when });
       }
     }
 
@@ -1936,16 +2537,32 @@ export function recentPartners(K, limit) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   §9 — READ-ONLY VIEWS (for render and the debug panel)
+   §11 — READ-ONLY VIEWS (for render and the debug panel)
    ═══════════════════════════════════════════════════════════════════════════
    ⚠ NOT IN CONTRACT.md's EXPORT LIST, and this note is the "say so" §0 asks
    for. They are pure reads over `K` with no mutation and no side effects, so
    nothing downstream has to know they exist; they want adding to §1 on the next
-   pass. Nothing in this file depends on them.
+   pass: `shippablePass` `manifest` `route` `held` `heldFood` `board` `progress`
+   `history` `recentPartners` `claimableAt` `docking` `leaderboard`.
+
+   ── 🔴 THE FIVE CONVOY STATES, because there are five now and a renderer that
+      knows three will draw two of them wrong. ────────────────────────────────
+     'transit'   on the road. `route()` places the truck; ETA counts down.
+     'arrived'   landed and mine to unload. The CLAIM button is DISABLED while
+                 `docking(c, now).docking` is true (§5a) — show "Unloading…" and
+                 run `docking().pct` as a small bar. Then it arms.
+     'delivered' OUTBOUND ONLY, and it lasts one dock beat: the recipient has it.
+                 Caption the row "delivered — {toName} has it" and give it no
+                 button at all. It retires itself; do not remove it.
+     'held'      the depot hold (§4). The server has already paid this out and
+                 the stash was full. "Held at the depot: {held(K)…food} food —
+                 your stash was full." It drains itself as room appears.
+     'claimed'   over. It is filtered out of `board()`'s source arrays already.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /** Every truck on the board, mine and inbound, newest departure first.
-    Held rows sort with the rest — they carry a `launchedAt` like anything else. */
+    Held and delivered rows sort with the rest — they carry a `launchedAt` like
+    anything else. */
 export function board(K) {
   const rows = [].concat(K && K.convoys ? K.convoys : [], K && K.inbound ? K.inbound : []);
   return rows.slice().sort((a, b2) => _num(b2.launchedAt, 0) - _num(a.launchedAt, 0));

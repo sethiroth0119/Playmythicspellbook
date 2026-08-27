@@ -181,7 +181,8 @@ const _claiming = new Set();
 let _reg = emptyReg();
 function emptyReg() {
   return { hud: {}, tickets: [], slots: [], cars: [], dishes: [], fx: null, road: null,
-           passers: null, pin: null, pinRows: [], routes: [] };
+           passers: null, pin: null, pinRows: [], routes: [], led: [], line: null, lineRail: null,
+           laneNext: null };
 }
 /* The pinned card's structural fingerprint. Module-level, NOT in `_reg`, so it
    survives a rebuildRegistry() — during a rush `paint()` runs several times a
@@ -189,6 +190,8 @@ function emptyReg() {
    eat the tap. It only rebuilds when the two cars, their fill or their verdict
    actually changed. */
 let _pinKey = '';
+/** Slow clock for the line's overflow probe — see updateLineMore(). */
+let _lineMoreAt = 0;
 
 /* ═══════════════════════════════════════════════════════════════════════════
    OPEN / CLOSE
@@ -324,6 +327,17 @@ const WIRE_CSS = `<style id="mk-wire-css">
 #mythic-kitchen-ov :where(.mk-mod[data-result="honoured"]){border-color:rgba(95,217,122,.85);background:rgba(95,217,122,.18);color:#9fe9b1}
 #mythic-kitchen-ov :where(.mk-mod[data-result="broken"]){border-color:rgba(255,77,94,.85);background:rgba(255,77,94,.2);color:#ffb4bb}
 #mythic-kitchen-ov :where(.mk-mods){display:flex;flex-wrap:wrap;gap:3px;margin:2px 0 0 20px}
+/* 💰 the stake, on the chip. drivethru.js prices every promise through ECON and
+   publishes the signed figure; a verdict whose cost the player only meets after
+   the money has moved is a mechanic they never learn. Tabular so a column of
+   them lines up, and it inherits the chip's own verdict colour — the number and
+   the tick are the same statement and must never disagree in colour. */
+#mythic-kitchen-ov :where(.mk-mod-c){font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:0;opacity:.95}
+#mythic-kitchen-ov :where(.mk-mod[data-result="unproven"] .mk-mod-c){opacity:.6}
+/* the running tally under the window card: kept vs broken, at a glance */
+#mythic-kitchen-ov :where(.mk-promise){display:flex;gap:6px;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase}
+#mythic-kitchen-ov :where(.mk-promise [data-k="ok"]){color:#9fe9b1}
+#mythic-kitchen-ov :where(.mk-promise [data-k="bad"]){color:#ffb4bb;font-weight:800}
 
 /* ── the ticket's spoken line ── */
 #mythic-kitchen-ov :where(.mk-tk-line){font-size:10px;font-style:italic;line-height:1.25;color:#bdb1a0;padding:1px 2px 3px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
@@ -338,9 +352,28 @@ const WIRE_CSS = `<style id="mk-wire-css">
 #mythic-kitchen-ov :where(.mk-car-badge){font-size:8.5px;letter-spacing:.04em;padding:0 4px;border-radius:99px;background:rgba(0,0,0,.65);border:1px solid rgba(255,182,72,.55);color:#ffd88a;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}
 #mythic-kitchen-ov :where(.mk-car-pips){display:flex;gap:2px;font-size:9px;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,.8))}
 #mythic-kitchen-ov :where(.mk-wave){position:absolute;top:-2px;left:2px;width:17px;height:17px;padding:0;border-radius:50%;border:1px solid rgba(255,77,94,.55);background:rgba(24,12,12,.9);color:#ff9aa4;font-size:10px;line-height:1;cursor:pointer;z-index:3}
-#mythic-kitchen-ov :where(.mk-passers){position:absolute;left:0;right:0;top:30px;height:30px;pointer-events:none;overflow:hidden;z-index:1}
-#mythic-kitchen-ov :where(.mk-passer){position:absolute;top:0;display:flex;align-items:center;gap:2px;font-size:13px;line-height:1;white-space:nowrap;filter:grayscale(.4) brightness(.72)}
+/* ⚠ 38px, not 30. Three rows of a ~12px sprite do not fit in 30 — the rows
+   were 8px apart and every neighbouring pair overlapped, which is the pile
+   this was meant to stop. The band still sits BEHIND the queue (z-index 1). */
+/* ⚠ 44px, not 30. Three rows of a ~12px sprite do not fit in 30 — the rows
+   were 8px apart and every neighbouring pair overlapped, which is the pile
+   this was meant to stop. The band still sits BEHIND the queue (z-index 1). */
+#mythic-kitchen-ov :where(.mk-lane-next){font-size:9.5px;letter-spacing:.08em;color:#ffb648;font-variant-numeric:tabular-nums;white-space:nowrap}
+#mythic-kitchen-ov :where(.mk-lane-next:empty){display:none}
+#mythic-kitchen-ov :where(.mk-passers){position:absolute;left:0;right:0;top:24px;height:44px;pointer-events:none;overflow:hidden;z-index:1}
+/* ⚠ --dx IS THE TIE-BREAK, NOT THE LAYOUT. (No backticks in this block: it
+   lives inside a template literal and one would end the stylesheet mid-rule,
+   which is exactly how this comment was written the first time.)
+   updatePassers() hands each balk the emptiest of three lanes so two cars
+   turning away in the same frame never print on top of each other; the few px
+   of translate here only separate the case where a fourth balk forces a lane
+   to double up. Round 2 hashed the id for the lane, which spreads ids EVENLY
+   rather than APART, and three simultaneous balks stacked into one illegible
+   pile. Defaults to 0 so a passer built before the property is set is still
+   placed correctly. */
+#mythic-kitchen-ov :where(.mk-passer){position:absolute;top:0;display:flex;align-items:center;gap:2px;font-size:13px;line-height:1;white-space:nowrap;filter:grayscale(.4) brightness(.72);transform:translateX(var(--dx,0px))}
 #mythic-kitchen-ov :where(.mk-passer > b){font-size:8px;font-weight:700;color:#7d7365;letter-spacing:.04em}
+#mythic-kitchen-ov :where(.mk-passer[data-dup="1"] > b){display:none}
 
 /* ── the pass: bin a plate you cannot sell ── */
 #mythic-kitchen-ov :where(.mk-dish-bin){position:absolute;top:-2px;right:0;width:15px;height:15px;padding:0;border-radius:50%;border:1px solid rgba(255,255,255,.22);background:rgba(18,12,10,.85);color:#c9bcab;font-size:9px;line-height:1;cursor:pointer;opacity:.5;z-index:2}
@@ -389,7 +422,15 @@ const WIRE_CSS = `<style id="mk-wire-css">
    ═══════════════════════════════════════════════════════════════════════════ */
 function shellHtml() {
   return WIRE_CSS + `
-  <div class="mk-room" aria-hidden="true"></div>
+  <!-- 🏛 THE ROOM. The div paints wall + floor + lamps out of its three layers
+       (element / ::before / ::after) and those three were FULL — which is why
+       round 2's diners had to share one blurred layer with the bulbs and came
+       out as scuffs on the floor. This one empty child buys three more layers
+       at a DIFFERENT blur radius, and that is the whole difference between a
+       smudge and a person: near figures sharp-ish with a rim of lamp light on
+       one shoulder, the far row left soft. It is aria-hidden and inert, exactly
+       like its parent. -->
+  <div class="mk-room" aria-hidden="true"><i class="mk-folk"></i></div>
 
   <header class="mk-hud">
     <div class="mk-hud-pop" title="Popularity, and what today has cost you">
@@ -550,6 +591,9 @@ function rebuildRegistry() {
     rush: _root.querySelectorAll('#mk-rush > i'),
   };
   _reg.fx = q('#mk-fx');
+  _reg.laneNext = q('#mk-lane-next');
+  _reg.line = q('.mk-sec-line');
+  _reg.lineRail = q('.mk-sec-line .mk-rail');
   _reg.road = q('#mk-road');
   _reg.passers = q('#mk-passers');
   _reg.pin = q('#mk-pin');
@@ -571,6 +615,14 @@ function rebuildRegistry() {
   }
   for (const el of _root.querySelectorAll('.mk-dish')) {
     _reg.dishes.push({ id: el.dataset.dish, el, fresh: el.querySelector('.mk-fresh > i') });
+  }
+  /* The live-ledger strip over the prep counter. Registered so updateHud()'s
+     throttled bridge read can keep it honest: the city collects, a business
+     pays out and a battle drops loot while this panel is open, and a stash
+     figure that only moves when something unrelated repaints is a figure the
+     player learns not to trust. */
+  for (const el of _root.querySelectorAll('.mk-led')) {
+    _reg.led.push({ id: el.dataset.res, el, num: el.querySelector('b[data-led]') });
   }
 }
 
@@ -621,6 +673,14 @@ function laneHtml(k) {
   return `
   <section class="mk-sec mk-sec-lane">
     <div class="mk-sec-head"><b>Drive-Thru</b><span class="mk-spacer"></span>
+      <!-- ⏱ WHEN THE NEXT ONE IS DUE. laneStatus() has published nextInMs
+           since this round and nobody drew it (no backticks in this comment —
+           it lives inside a template literal). It is the only
+           thing on the screen that says PRESSURE IS COMING rather than
+           PRESSURE IS HERE, and knowing you have eleven seconds is what turns
+           "panic" into "start the fryer". Per-FRAME (it counts down), so it is
+           an empty node here and a textContent write in updateCars(). -->
+      <span class="mk-lane-next" id="mk-lane-next"></span>
       <span>${esc(st ? st.label : (live + ' / ' + cap + ' cars'))}</span></div>
     <div class="mk-lane">
       <div class="mk-road" id="mk-road">
@@ -726,16 +786,50 @@ function capLane(k) {
 }
 
 /* ── 📋 THE ORDER BOARD ──────────────────────────────────────────────────── */
+/**
+ * 🔴 THE CUSTOMER AT THE WINDOW IS NOT ALSO A TICKET ON THE BOARD.
+ * Round 2 printed the same order twice, verbatim — the pinned window card
+ * ("Mayor's Aide · Corp order… · Margherita 0/5") and, directly beneath it, a
+ * board ticket with the same name, the same quote and the same 0/5. Between
+ * them they ate the top ~45% of a 390×844 screen to say one thing, and that is
+ * most of why the drive-thru lane ended up at the fold.
+ *
+ * The window card IS that customer's ticket: it carries the itemisation, the
+ * per-line promises, the patience bar and the Serve button. So while they are
+ * at the window their board copy stands down and the head says where it went.
+ *
+ * ⚠ ONLY the window car, never the NEXT one. The pin's second card is a preview
+ *   with no Serve button on it; dropping that ticket from the board too would
+ *   delete the only control that can serve it. Duplication is a cosmetic cost,
+ *   an unservable ready ticket is a real one.
+ */
+function pinnedTicketId(k) {
+  const card = safe(() => (typeof DriveThru.laneCard === 'function' ? DriveThru.laneCard(k, k.now) : null), null);
+  const w = card && card.window;
+  /* ⚠ NOT while the car is leaving. `laneCard().window` is `lane[0]`, and a
+     served car stays in the lane for LANE_EXIT_MS so it can be animated off —
+     so for that second it is still "the window car" while its pinned card is
+     on its way out. Hiding a live ticket behind a card that is disappearing is
+     how a ready order ends up with no Serve button anywhere on screen. */
+  const carId = (w && w.state !== 'gone') ? w.carId : null;
+  if (!carId) return null;
+  const t = (k.tickets || []).find((x) => x && x.carId === carId && (x.state === 'open' || x.state === 'ready'));
+  return t ? t.id : null;
+}
 function boardHtml(k) {
-  const list = (k.tickets || []).filter((t) => t && (t.state === 'open' || t.state === 'ready'));
+  const atWindow = pinnedTicketId(k);
+  const all = (k.tickets || []).filter((t) => t && (t.state === 'open' || t.state === 'ready'));
+  const list = all.filter((t) => t.id !== atWindow);
   const inner = list.length
     ? list.map((t) => ticketHtml(t, k)).join('')
-    : `<div class="mk-empty">${k.shift.running ? 'No orders on the board. Enjoy it.' : 'Service is closed.'}</div>`;
+    : `<div class="mk-empty">${!k.shift.running ? 'Service is closed.'
+        : (atWindow ? 'Only the one at the window. Get it out.' : 'No orders on the board. Enjoy it.')}</div>`;
   return `
   <section class="mk-sec mk-sec-board">
     <div class="mk-board">
       <div class="mk-board-head">Customer Orders<span class="mk-spacer"></span>
-        <span class="mk-board-count">${list.length}</span></div>
+        ${atWindow ? '<span class="mk-board-note">+1 at the window</span>' : ''}
+        <span class="mk-board-count">${all.length}</span></div>
       <div class="mk-rail" data-rail="board">${inner}</div>
     </div>
   </section>`;
@@ -762,7 +856,10 @@ function ticketHtml(t, k) {
     const r = (typeof DATA.recipe === 'function' ? DATA.recipe(it.recipeId) : null) || {};
     const pips = [];
     for (let i = 0; i < it.qty; i++) pips.push(`<i class="${i < it.filled ? 'on' : ''}"></i>`);
-    const mods = (Array.isArray(it.mods) ? it.mods : []).map((m) => modChip(m, verdict[modKey(m, it.recipeId)])).join('');
+    const mods = (Array.isArray(it.mods) ? it.mods : []).map((m) => {
+      const d = modOf(verdict, m, it.recipeId);
+      return modChip(m, d && d.result, d && d.cinder);
+    }).join('');
     return `<div class="mk-tk-it" data-done="${it.filled >= it.qty ? 1 : 0}">
         <span class="mk-ic" aria-hidden="true">${r.icon || '🍽'}</span>
         <span class="mk-nm">${esc(r.name || it.recipeId)}</span>
@@ -776,7 +873,7 @@ function ticketHtml(t, k) {
   const seen = Object.create(null);
   for (const it of (t.items || [])) for (const m of (it.mods || [])) seen[m.id] = 1;
   const loose = (Array.isArray(t.mods) ? t.mods : []).filter((m) => m && !seen[m.id])
-    .map((m) => modChip(m, verdict[modKey(m, null)])).join('');
+    .map((m) => { const d = modOf(verdict, m, null); return modChip(m, d && d.result, d && d.cinder); }).join('');
 
   const ready = t.state === 'ready';
   const worth = ticketWorth(t);
@@ -806,16 +903,34 @@ function modResults(k, t) {
   const car = (k.lane || []).find((c) => c && (c.carId === t.carId || c.id === t.carId));
   if (!car) return out;
   const v = safe(() => DriveThru.modVerdict(k, car, k.now), null);
-  for (const d of ((v && v.detail) || [])) out[modKey(d, d.recipeId)] = d.result;
+  /* ⚠ The whole detail ROW is kept, not just `.result`. The lane prices each
+     promise (`row.cinder`) and modChip() prints that figure — pulling the
+     verdict out and dropping the money was how round 2 ended up with a mechanic
+     the player could see the outcome of but never the stake. */
+  for (const d of ((v && v.detail) || [])) out[modKey(d, d.recipeId)] = d;
   return out;
 }
-function modChip(m, result) {
+function modOf(map, m, recipeId) { return map[modKey(m, recipeId)] || null; }
+/**
+ * 💰 THE STAKES GO ON THE CHIP.
+ * drivethru.js prices every promise through ECON and hands the signed figure
+ * over on `mod.cinder` (laneCard → items[].mods[].cinder). A verdict the player
+ * only learns after the money has already moved is a mechanic they never learn
+ * at all, so the chip carries what this promise is worth WHILE they still have
+ * time to keep it: "+14" in green on a kept one, "−22" in red on a broken one.
+ * ⚠ Zero is printed as nothing. UNPROVEN is worth exactly 0 in both directions
+ *   (kitchen.data.js is explicit and audits itself on it) and a "0" chip on an
+ *   untouched line reads as a penalty the player has already taken.
+ */
+function modChip(m, result, cinder) {
   if (!m) return '';
   const ing = (m.ing && typeof DATA.ingredient === 'function') ? (DATA.ingredient(m.ing) || {}) : {};
   const r = result || 'unproven';
+  const c = Math.round(Number(cinder != null ? cinder : m.cinder) || 0);
+  const money = c ? `<b class="mk-mod-c">${c > 0 ? '+' : '−'}${fmtNum(Math.abs(c))}</b>` : '';
   return `<span class="mk-mod" data-kind="${esc(m.kind || '')}" data-result="${esc(r)}"
-      title="${esc(m.label || '')} — ${r === 'honoured' ? 'kept' : (r === 'broken' ? 'broken' : 'not judged yet')}"
-    >${ing.icon || (m.kind === 'hold' ? '🚫' : '➕')} ${esc(m.label || m.id)}${MOD_MARK[r] ? ' ' + MOD_MARK[r] : ''}</span>`;
+      title="${esc(m.label || '')} — ${r === 'honoured' ? 'kept' : (r === 'broken' ? 'broken' : 'not judged yet')}${c ? ` · ${c > 0 ? '+' : '−'}${Math.abs(c)} Cinder` : ''}"
+    >${ing.icon || (m.kind === 'hold' ? '🚫' : '➕')} ${esc(m.label || m.id)}${MOD_MARK[r] ? ' ' + MOD_MARK[r] : ''}${money}</span>`;
 }
 /** Menu-price estimate for the SERVE button. Deliberately the undecorated base
     price sum: quoting the popularity- and rush-adjusted figure here would be a
@@ -835,18 +950,33 @@ function lineHtml(k) {
   const stations = (Array.isArray(DATA.STATIONS) ? DATA.STATIONS : []).slice()
     .sort((a, bb) => (a.order || 0) - (bb.order || 0));
   const cards = stations.map((s) => stationHtml(k, s)).join('');
+  /* `.mk-line-more` is drawn always and SHOWN only when updateLineMore() says
+     the rail is genuinely cut off — see the note on it below. A pill that is
+     always there is a pill nobody reads. */
   return `
-  <section class="mk-sec mk-sec-line">
+  <section class="mk-sec mk-sec-line" data-more="0">
     <div class="mk-sec-head"><b>The Line</b><span class="mk-spacer"></span>
       <span>${_sel ? 'building · tap a bin' : 'tap a pan to start'}</span></div>
     <div class="mk-hood" aria-hidden="true"></div>
     <div class="mk-rail" data-rail="line">${cards}</div>
+    <span class="mk-line-more" aria-hidden="true">▾ more pans</span>
   </section>`;
 }
+/**
+ * ⚠ `data-slots` EXISTS FOR THE CSS AND FOR NOTHING ELSE, and it is worth the
+ * attribute. At desktop the line is a flex-wrap row; with every card asking for
+ * the same basis, a ONE-pan station stretched to fill the leftover width and
+ * round 2 measured the Prep Board and the Fountain at 401×146 each, holding a
+ * single 388-wide pan — ~85% empty surface on the two cards a player looks at
+ * most often when they are learning the line. CSS cannot count children, so the
+ * renderer says how many there are and kitchen.css sizes the card to what it
+ * actually holds. The extra then falls to the flat-top, which has pans to put
+ * in it, and after that to the pass.
+ */
 function stationHtml(k, s) {
   const rack = (k.stations || {})[s.id] || { slots: [] };
   const slots = rack.slots.map((slot, i) => slotHtml(k, s, slot, i)).join('');
-  return `<div class="mk-st" data-kind="${esc(s.kind || 'heat')}">
+  return `<div class="mk-st" data-kind="${esc(s.kind || 'heat')}" data-slots="${rack.slots.length}">
       <div class="mk-st-head"><span class="mk-ic" aria-hidden="true">${s.icon || '🍳'}</span>
         ${esc(s.name || s.id)}<span class="mk-n">${rack.slots.length}</span></div>
       <div class="mk-slots">${slots}</div>
@@ -916,15 +1046,28 @@ function layerHtml(ingId, layer, ghost) {
 }
 
 /* ── 🍽 THE PASS ─────────────────────────────────────────────────────────── */
+/**
+ * 🔴 THERE IS NO EMPTY BRANCH. Round 1 asked for it to go and round 2 still
+ * printed "Nothing plated yet. Cook something, then plate it." across the wells
+ * — the words "Cook" and "something" sitting on top of two empty plate discs,
+ * grey on grey, for most of a shift's first minute and every time the board is
+ * cleared. REF-A's defining image is food ON the pass; an empty pass is a warm
+ * empty pass, not a sentence about one. The wells are painted by the CSS, so
+ * the shelf reads as a shelf with places left on it with zero DOM.
+ * The nudge, where a nudge is wanted, rides the HEAD next to the count — which
+ * is where the count already says the same thing in numbers.
+ */
 function passHtml(k) {
   const dishes = (k.pass || []).map(dishHtml).join('');
   const cap = safe(() => (typeof DATA.passCap === 'function' ? DATA.passCap(k.upgrades || []) : EC('PASS_CAP', 6)), EC('PASS_CAP', 6));
+  const n = (k.pass || []).length;
   return `
   <section class="mk-sec mk-sec-pass">
     <div class="mk-pass">
       <div class="mk-sec-head" style="padding-left:0"><b>The Pass</b><span class="mk-spacer"></span>
-        <span>${(k.pass || []).length} / ${cap} plated</span></div>
-      <div class="mk-pass-rail" data-rail="pass">${dishes || `<div class="mk-empty">Nothing plated yet. Cook something, then plate it.</div>`}</div>
+        ${n ? '' : '<span class="mk-hint">pull a dish, then plate it</span>'}
+        <span>${n} / ${cap} plated</span></div>
+      <div class="mk-pass-rail" data-rail="pass">${dishes}</div>
     </div>
   </section>`;
 }
@@ -938,12 +1081,28 @@ function dishHtml(d) {
      dinner rush runs is a punishment with no decision in it. Binning it is the
      decision: you paid for it, you choose whether the space is worth more. */
   const canBin = typeof State.binPass === 'function';
+  /* 🔴 WHAT IS ACTUALLY ON IT (SEAM 1, the visible half).
+     kitchen.state.js now carries `built: [ingredientId, …]` in tap order all
+     the way from the pan (`pullSlot`) through the hand (`plateHand`) onto the
+     dish, and drivethru.js judges "no onions" against exactly that array. If
+     the record the money is decided by is invisible, the player experiences the
+     promise as a dice roll — so the plate wears its own build as a row of the
+     ingredients' own colours, the same vocabulary the build stack on the pan
+     uses. A dish nobody assembled (a drink, a bagged fry) simply has none. */
+  const built = Array.isArray(d.built) ? d.built.slice(0, 8) : [];
+  const strip = built.length
+    ? `<span class="mk-dish-build" aria-hidden="true">${built.map((id) => {
+        const ing = (typeof DATA.ingredient === 'function' ? DATA.ingredient(id) : null) || {};
+        return `<i style="--c:${esc(ing.color || '#caa')}" title="${esc(ing.name || id)}"></i>`;
+      }).join('')}</span>`
+    : '';
   return `<div class="mk-dish" data-dish="${esc(d.id)}" data-q="${esc(d.quality || 'good')}"
-      title="${esc(r.name || d.recipeId)}">
+      title="${esc(r.name || d.recipeId)}${built.length ? ' — built with ' + built.length + ' steps' : ''}">
       ${canBin ? `<button class="mk-dish-bin" data-act="binpass" data-id="${esc(d.id)}"
         aria-label="Bin the ${esc(r.name || d.recipeId)}" title="Bin it">✕</button>` : ''}
       <span class="mk-ic" aria-hidden="true">${r.icon || '🍽'}</span>
       <span class="mk-q">${esc(d.quality || 'good')}</span>
+      ${strip}
       <span class="mk-fresh"><i></i></span>
     </div>`;
 }
@@ -972,6 +1131,131 @@ function handHtml(k) {
       </div>
       ${burnt ? '' : '<button class="mk-btn go" data-act="plate">Plate</button>'}
       <button class="mk-btn danger" data-act="drop">Bin</button>
+    </div>`;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   🌾 WHERE THE FOOD COMES FROM — the clause the player wrote most explicitly,
+   and the one thing on this screen that was doing all the work and none of the
+   talking.
+   ───────────────────────────────────────────────────────────────────────────
+   The mechanic is already honest: `SUPPLY_RECIPES` are priced ONLY in the 14
+   live ledger ids plus Cinder, `buySupply()` debits `Profile.salvage` through
+   the bridge, and every one of those ids really is produced by the city
+   builder, by businesses and by battle. But NOTHING ON SCREEN SAID SO. A
+   player looking at "🧀 Cheese · ◈ 60" reads "the kitchen buys ingredients" —
+   which is exactly the failure the request ("uses the food and food type
+   resources … that they get from the other parts of the game") was aimed at.
+
+   So two things are drawn now and they are drawn where the decision happens:
+     · the LEDGER STRIP over the prep counter — the live balances, in the
+       kitchen, updated as the city fills them;
+     · the PROVENANCE line under every crate in Supplies — which building makes
+       this, whether you own one, and what else drops it.
+
+   ⚠ WHY A TABLE LIVES HERE AND NOT IN kitchen.data.js. These are the CITY's
+   building names, owned by /src/city/production.data.js, and CONTRACT §1 bans
+   this module from importing anything outside /src/kitchen/. They are also
+   pure presentation — copy and a glyph, exactly like MOOD_FACE and
+   STATION_WORD above; nothing here can move a price, a timer or a payout, and
+   CLAUDE.md's "no hardcoded economy numbers" is about numbers that change the
+   game. `resSource()` still prefers a table from kitchen.data.js the moment
+   its owner adds one, so this becomes a floor rather than a fork.
+   ═══════════════════════════════════════════════════════════════════════════ */
+const RES_SOURCE_FLOOR = {
+  food:             { def: 'hydroponics',  name: 'Hydroponics Bay',  icon: '🥬', also: 'agri contracts, fishing hauls, site loot' },
+  water:            { def: 'wellhead',     name: 'Water Reclaimer',  icon: '💧', also: 'site loot' },
+  metal:            { def: 'foundry',      name: 'Smelting Foundry', icon: '🏭', also: 'salvage runs' },
+  fuel:             { def: 'refinery',     name: 'Fuel Refinery',    icon: '⛽', also: 'raid spoils' },
+  ammo:             { def: 'munitions',    name: 'Munitions Bench',  icon: '🔫', also: 'battle spoils' },
+  medicine:         { def: 'apothecary',   name: 'Apothecary',       icon: '💊', also: 'infirmary salvage' },
+  supplies:         { def: 'depot',        name: 'Supply Workshop',  icon: '📦', also: 'trade and site loot' },
+  energyDrink:      { def: 'bottling',     name: 'Bottling Line',    icon: '🥤', also: 'vendor stock' },
+  corruptedEssence: { def: 'sump',         name: 'Containment Sump', icon: '🟣', also: 'corrupted nodes' },
+  memoryShards:     { def: 'archive',      name: 'Memory Archive',   icon: '🧠', also: 'deep-site loot' },
+  dna:              { def: 'genevault',    name: 'Gene Vault',       icon: '🧬', also: 'the Genetics Lab' },
+  wood:             { def: 'timberyard',   name: 'Timber Yard',      icon: '🪵', also: 'scavenging' },
+  stone:            { def: 'stonequarry',  name: 'Stone Quarry',     icon: '🪨', also: 'scavenging' },
+  cloth:            { def: 'textilemill',  name: 'Textile Mill',     icon: '🧵', also: 'scavenging' },
+};
+function resSource(id) {
+  const fromData = safe(() => (typeof DATA.resSource === 'function'
+    ? DATA.resSource(id)
+    : ((DATA.RES_SOURCE || {})[id])), null);
+  return fromData || RES_SOURCE_FLOOR[id] || null;
+}
+/**
+ * Which producers the city ACTUALLY has, `defId → highest level`.
+ * `bridge().cityProd()` is read-only by contract (§7) and returns
+ * `Profile.cityProduction`, whose `.placed` is a row per building. Two of the
+ * same building are legal, so the higher level wins — the same rule the cloud
+ * merge in index.html uses, for the same reason.
+ * ⚠ Guarded to `{}` all the way down: a player who has never opened the city
+ *   builder has no key at all, and "not built" is a perfectly good answer.
+ */
+function cityOwned() {
+  const out = Object.create(null);
+  const cp = safe(() => (b().cityProd ? b().cityProd() : null), null);
+  const rows = (cp && Array.isArray(cp.placed)) ? cp.placed : [];
+  for (const r of rows) {
+    if (!r || !r.defId) continue;
+    const lv = Math.max(1, r.level | 0);
+    if (!(out[r.defId] >= lv)) out[r.defId] = lv;
+  }
+  return out;
+}
+/** One "🧬 Gene Vault · Lv 2" / "🧬 Gene Vault · not built yet" chip. */
+function fromChip(resId, owned) {
+  const src = resSource(resId);
+  if (!src) return '';
+  const lv = owned[src.def] | 0;
+  return `<span class="mk-from" data-has="${lv ? 1 : 0}"
+      title="${esc(src.name)} — ${lv ? 'you have one (level ' + lv + ')' : 'build one in the city'}. Also from ${esc(src.also || 'salvage')}."
+    >${src.icon} ${esc(src.name)}<small>${lv ? ' · Lv ' + lv : ' · build one'}</small></span>`;
+}
+/** The live ids the CURRENT counter actually spends — not all fourteen. */
+function ledgerIds(k) {
+  const want = Object.create(null);
+  const order = [];
+  for (const id of binIds(k)) {
+    const s = safe(() => (typeof DATA.supplyFor === 'function' ? DATA.supplyFor(id) : null), null);
+    if (!s || !s.cost) continue;
+    for (const key of Object.keys(s.cost)) {
+      if (key === 'cinder' || want[key]) continue;
+      want[key] = true; order.push(key);
+    }
+  }
+  return order;
+}
+/**
+ * THE LEDGER STRIP. Sits at the top of the prep counter, above the bins it
+ * pays for, so the sentence the player reads on the way to a restock is "these
+ * ingredients come out of the stash my city fills" rather than "these
+ * ingredients cost money".
+ * `data-out="1"` when the stash is empty of something a bin on this counter
+ * needs — the one state that is worth shouting, because it is the state where
+ * the answer is "go and build something", not "come back later".
+ */
+function ledgerHtml(k) {
+  const ids = ledgerIds(k);
+  if (!ids.length) return '';
+  const owned = cityOwned();
+  const chips = ids.map((id) => {
+    const meta = safe(() => (b().meta ? b().meta(id) : null), null) || { name: id, icon: '📦' };
+    const have = safe(() => (b().getRes ? b().getRes(id) : 0), 0) | 0;
+    const src = resSource(id);
+    const mine = src ? (owned[src.def] | 0) : 0;
+    return `<span class="mk-led" data-res="${esc(id)}" data-out="${have <= 0 ? 1 : 0}" data-mine="${mine ? 1 : 0}"
+        title="${esc(meta.name || id)} — you hold ${fmtNum(have)}. ${src ? esc(src.name) + (mine ? ' (built, level ' + mine + ')' : ' — not built yet') + '. Also from ' + esc(src.also || 'salvage') + '.' : ''}"
+      ><span class="mk-led-ic" aria-hidden="true">${esc(meta.icon || '📦')}</span>
+        <b data-led="${esc(id)}">${fmtNum(have)}</b>
+        <small>${esc(meta.name || id)}</small>
+        ${src ? `<em>${src.icon}</em>` : ''}</span>`;
+  }).join('');
+  return `<div class="mk-ledger">
+      <div class="mk-ledger-lab">Out of your stash<span class="mk-spacer"></span>
+        <span>your city, your businesses and your battles fill this</span></div>
+      <div class="mk-ledger-row">${chips}</div>
     </div>`;
 }
 
@@ -1014,6 +1298,7 @@ function binsHtml(k) {
   <section class="mk-sec mk-sec-bins">
     <div class="mk-sec-head"><b>Prep Counter</b><span class="mk-spacer"></span>
       <span>${_sel ? 'tap to lay it on' : 'restock in Supplies'}</span></div>
+    ${ledgerHtml(k)}
     <div class="mk-rail" data-rail="bins">${groups || '<div class="mk-empty">The pantry is bare. Open Supplies.</div>'}</div>
   </section>`;
 }
@@ -1156,6 +1441,10 @@ function pinCardHtml(slot, c) {
       </div>
       ${head && c.line ? `<div class="mk-pin-line">“${esc(c.line)}”</div>` : ''}
       ${items ? `<div class="mk-pin-items">${items}</div>` : `<div class="mk-pin-line">Still reading the board…</div>`}
+      ${head && (c.honoured || c.broken) ? `<div class="mk-promise" data-bad="${c.broken ? 1 : 0}">
+        ${c.honoured ? `<span data-k="ok">✓ ${c.honoured} kept</span>` : ''}
+        ${c.broken ? `<span data-k="bad">✗ ${c.broken} broken</span>` : ''}
+      </div>` : ''}
       <div class="mk-pin-bar"><i></i></div>
       ${head ? `<div class="mk-pin-acts">
         <button class="mk-btn go" data-act="serve-car" data-car="${esc(c.carId)}" ${c.canServe ? '' : 'disabled'}
@@ -1203,8 +1492,56 @@ function updatePassers(t) {
       el.className = 'mk-passer';
       el.dataset.p = p.id;
       el.innerHTML = `<span>${esc(p.vehicleIcon || '🚗')}</span><b>${esc(p.custName || '')} drove past</b>`;
+      /* 🔴 SIMULTANEOUS BALKS MUST NOT LAND ON TOP OF EACH OTHER. Round 2
+         hashed the id for a row, and a hash spreads ids EVENLY rather than
+         APART — two of three balks in the same frame shared a row about a
+         third of the time and printed one illegible pile at one x. The critic
+         caught three at once.
+         🤝 drivethru.js now DECIDES the row and publishes it (`lane`, `lanes`,
+         from ECON.PASSBY_LANES): "Render may hash the id instead; this is the
+         same answer, decided once, by the file that knows how many are in
+         flight." It does know and we do not, so we take its answer. The
+         occupancy pick below is the fallback for the revision that does not
+         send one — the emptiest row rather than a hashed one, because the
+         failure being fixed is a collision, not a distribution. */
+      const lanes = Math.max(1, Number(p.lanes) || 3);
+      let ln;
+      if (p.lane != null && isFinite(p.lane)) {
+        ln = ((Number(p.lane) | 0) % lanes + lanes) % lanes;
+      } else {
+        const used = new Array(lanes).fill(0);
+        for (const e of host.querySelectorAll('.mk-passer')) used[(Number(e.dataset.ln) || 0) % lanes]++;
+        ln = 0;
+        for (let i = 1; i < lanes; i++) if (used[i] < used[ln]) ln = i;
+      }
+      /* The band is 30px tall (`.mk-passers`) and a passer is ~13px, so rows
+         are spaced by what is actually left rather than by a constant that
+         silently stops fitting when the lane count changes. */
+      /* ⚠ AND THE ROW CAN STILL DOUBLE UP — four balks into three rows must,
+         and the lane's own `% lanes` produces exactly that. So a second
+         occupant of a row is pushed a clear 26px along the kerb rather than
+         being nudged by a hash that can land 2px away (measured: 1026 vs 1028,
+         which is a pile). A static offset holds for the whole drive-past
+         because both sprites advance by the same `left`. */
+      let occ = 0;
+      for (const e of host.querySelectorAll('.mk-passer')) if ((Number(e.dataset.ln) || 0) === ln) occ++;
       let h = 0; for (const ch of String(p.id)) h = (h * 31 + ch.charCodeAt(0)) & 255;
-      el.style.top = (h % 3) * 9 + 'px';
+      el.dataset.ln = String(ln);
+      /* rows are spaced by what the band actually has, so adding a fourth
+         PASSBY_LANE moves them closer instead of printing one on top of another */
+      el.style.top = Math.round(ln * (32 / Math.max(1, lanes - 1 || 1))) + 'px';
+      /* A doubled row cannot be fixed by nudging: both sprites carry a ~110px
+         name and any offset short of that still overlaps the text. So the
+         second occupant of a row goes down to its VEHICLE ONLY and moves a
+         clear 40px along — two identifiable cars beats one unreadable caption.
+         (`data-dup` is styled in WIRE_CSS.) */
+      if (occ) el.dataset.dup = '1';
+      /* ⚠ pushed LEFT, not right. These boxes grow rightwards from their
+         `left`, so a dup nudged +20px lands INSIDE the first one's caption
+         (measured: a 15px glyph sitting in a 119px label). −56px clears the
+         whole caption and reads as a car slightly further along the road,
+         which is the direction the traffic is going anyway. */
+      el.style.setProperty('--dx', (occ ? -(occ * 56) : ((h % 9) - 4)) + 'px');
       host.appendChild(el);
     }
     // Right to left, same direction the lane runs, so it reads as traffic that
@@ -1267,7 +1604,33 @@ export function frame(dt, now, events) {
   updatePassers(t);
   updatePass(t);
   updateRoutes(t);
+  updateLineMore(t);
   drainFx(t);
+}
+
+/**
+ * 🔴 IS THE LINE ACTUALLY CUT OFF? Only the layout knows, and only at runtime.
+ *
+ * At 1440×900 — the size the brief names — all five stations now sit on one row
+ * and nothing is clipped; on a short or narrow desktop window they wrap and the
+ * bottom row can go under the fold. Round 2's answer was an unconditional 26px
+ * fade, and the critic's verdict was that nobody reads it: a fade that is there
+ * when nothing is hidden is a fade you learn to ignore, so it fails on the one
+ * occasion it is telling the truth. This measures, and the chevron only lights
+ * when there is genuinely a pan below.
+ *
+ * ⚠ ON A SLOW CLOCK, like the road width above. `scrollHeight` forces a layout
+ *   flush, and doing that once a frame right after this pass has written forty
+ *   styles is exactly how the first draft of this file lost 30fps. Three times
+ *   a second is instant to a human and free to the compositor.
+ */
+function updateLineMore(t) {
+  const sec = _reg.line, rail = _reg.lineRail;
+  if (!sec || !rail) return;
+  if (t - _lineMoreAt < 320) return;
+  _lineMoreAt = t;
+  const more = (rail.scrollHeight - rail.clientHeight - rail.scrollTop) > 6 ? '1' : '0';
+  setData(sec, 'more', more);
 }
 
 function updateHud(t, force) {
@@ -1297,6 +1660,11 @@ function updateHud(t, force) {
   if (force || t - _lastGemsAt > 250) {
     _lastGemsAt = t;
     _gems = safe(() => (b().gems ? b().gems() : 0), 0);
+    for (const row of _reg.led) {
+      const have = safe(() => (b().getRes ? b().getRes(row.id) : 0), 0) | 0;
+      setText(row.num, fmtNum(have));
+      setData(row.el, 'out', have <= 0 ? '1' : '0');
+    }
   }
   setText(h.cash, fmtNum(_gems));
 
@@ -1397,6 +1765,15 @@ function updateCars(t) {
   if (_reg.road && (!_laneW || t - _laneAt > 500)) {
     _laneW = _reg.road.clientWidth || _laneW || 0;
     _laneAt = t;
+  }
+  /* The countdown to the next arrival. Blank while the shift is shut and blank
+     when the lane is full — a full lane is not waiting for anybody, and a
+     countdown that keeps running while nothing can arrive is a countdown the
+     player learns to disbelieve. */
+  if (_reg.laneNext) {
+    const st = safe(() => (typeof DriveThru.laneStatus === 'function' ? DriveThru.laneStatus(k, t) : null), null);
+    const show = st && k.shift && k.shift.running && !st.full && st.nextInMs > 0;
+    setText(_reg.laneNext, show ? ('next in ' + fmtCook(st.nextInMs)) : '');
   }
   const travel = laneTravel();
 
@@ -1997,7 +2374,8 @@ function dishCard(k, r) {
       <div class="mk-card-sub">${esc(fmtCinder(r.basePrice))} · ${Math.round((r.cookMs || 0) / 1000)}s ·
         ${esc(safe(() => DATA.station(r.station).name, r.station) || '')}${short ? ' · <b style="color:#ffb4bb">short</b>' : ''}</div>
       <div class="mk-needs">${needs}</div>
-      ${locked ? `<span class="mk-lock">🔒 Level ${r.minLevel}</span>` : ''}
+      ${locked ? `<span class="mk-lock" title="${esc(r.name)} opens at level ${r.minLevel} — you are level ${k.level}"
+        >🔒 Lv ${r.minLevel}</span>` : ''}
     </button>`;
 }
 
@@ -2015,12 +2393,19 @@ function suppliesSheet(k) {
   const signedIn = safe(() => (b().signedIn ? b().signedIn() : false), false);
 
   const banner = `<div class="mk-banner">Pantry <b>${held}</b> / ${cap} units.
-    Crates are paid for out of your real stash — food, water, DNA and Cinder.
+    🔴 <b>Nothing here is bought in.</b> Every crate is made out of the same 14
+    resources your city buildings, your businesses and your battles produce —
+    the line under each one says which building makes it and whether you have
+    that building yet.
     ${signedIn ? '' : ' Signed out: your kitchen still runs, it just does not sync.'}</div>`;
 
-  return banner + rows.map((s) => supplyRow(k, s)).join('');
+  /* Read ONCE per sheet, not once per row. `cityProd()` crosses the bridge into
+     the legacy Profile and this list is 25 rows long; per-row it was 25 reaches
+     out of the module for an object that cannot change mid-paint. */
+  const owned = cityOwned();
+  return banner + rows.map((s) => supplyRow(k, s, owned)).join('');
 }
-function supplyRow(k, s) {
+function supplyRow(k, s, owned) {
   const ing = safe(() => DATA.ingredient(s.out.ing), null) || {};
   const locked = (s.minLevel || 1) > k.level;
   const have = (k.pantry || {})[s.out.ing] | 0;
@@ -2039,12 +2424,24 @@ function supplyRow(k, s) {
         ${fmtNum(s.cost[key])}<span style="opacity:.55">/${fmtNum(hv)}</span></span>`;
   }).join('');
 
+  /* 🌾 PROVENANCE. The cost chips above say WHAT this crate takes out of the
+     stash; this line says where that comes from and whether the player has the
+     thing that makes it. A green "🧬 Gene Vault · Lv 2" is the reason a Gene
+     Vault was worth 120,000 Cinder; a muted "🧬 Gene Vault · build one" is the
+     kitchen telling the player what to go and do next in the city builder,
+     which is the whole loop the request asked for. */
+  const from = Object.keys(s.cost || {})
+    .filter((key) => key !== 'cinder')
+    .map((key) => fromChip(key, owned || {}))
+    .filter(Boolean).join('');
+
   return `<div class="mk-row">
       <span class="mk-ic" aria-hidden="true">${ing.icon || '🥫'}</span>
       <div class="mk-row-main">
         <b>${esc(ing.name || s.out.ing)}</b>
         <span class="mk-card-sub">+${s.out.qty} per crate · you have ${have} · ${esc(s.blurb || '')}</span>
         <div class="mk-cost">${chips}</div>
+        ${from ? `<div class="mk-froms"><span class="mk-from-lab">made by</span>${from}</div>` : ''}
       </div>
       <div class="mk-buys">
         <button class="mk-btn" data-act="buy" data-supply="${esc(s.id)}" data-n="1" ${locked ? 'disabled' : ''}>×1</button>
@@ -2114,6 +2511,20 @@ function convoySheet(k) {
 
   const fillPct = man && man.capacity ? Math.round((man.dishes / man.capacity) * 100) : 0;
   const dest = _convoyTo ? _convoyTo.name : 'your own city (practice)';
+  /* 🔴 A CAP THE PLAYER CANNOT SEE IS A CAP THEY READ AS A BUG. A truck can be
+     bigger than the pass it is loaded off, and when it is, the pass — not the
+     truck — is the real ceiling. Round 2 shipped a 12-box van against an 8-dish
+     pass with nothing on screen to explain why "SEND IT — 8 BOXES" was the most
+     anyone could ever load. It is stated only when it actually bites; a note
+     about a limit that is not limiting you is noise. */
+  const passNow = safe(() => (typeof DATA.passCap === 'function' ? DATA.passCap(k.upgrades || []) : 0), 0) | 0;
+  const passAdd = safe(() => (Array.isArray(DATA.UPGRADES) ? DATA.UPGRADES : [])
+    .filter((u) => u && u.effect && (u.effect.passAdd | 0) > 0 && (k.upgrades || []).indexOf(u.id) === -1)
+    .sort((a, bb) => (a.minLevel || 1) - (bb.minLevel || 1))[0], null);
+  const ceiling = (man && passNow && man.capacity > passNow)
+    ? `<div class="mk-card-sub" data-ceiling="1">⚠ Your pass holds <b>${passNow}</b> — that is the real ceiling on a load, not the
+        truck's ${man.capacity}.${passAdd ? ` ${esc(passAdd.icon || '🔧')} ${esc(passAdd.name)} adds ${passAdd.effect.passAdd | 0}.` : ''}</div>`
+    : '';
   const manifest = `<div class="mk-man">
       <div class="mk-sec-head" style="padding-left:0"><b>3 · What goes on it?</b>
         <span class="mk-spacer"></span>
@@ -2122,6 +2533,7 @@ function convoySheet(k) {
       ${lines || `<div class="mk-empty">Nothing on the pass can ride a convoy. Fries and shakes do not travel.</div>`}
       <div class="mk-man-fill"><i style="width:${Math.min(100, fillPct)}%"></i>
         <span>${man ? man.dishes : 0} / ${man ? man.capacity : 0} boxes · ${man ? fmtNum(man.food) : 0} food on landing</span></div>
+      ${ceiling}
       <div class="mk-card-sub">Freight <span class="mk-coin"></span> ${man ? fmtNum(man.feeCinder) : 0}
         · ${man ? fmtEta(man.transitMs) : '—'} on the road · to <b>${esc(dest)}</b></div>
       <button class="mk-btn go wide" data-act="convoy-load" data-tier="${esc(_convoyTier || '')}"

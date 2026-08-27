@@ -68,23 +68,100 @@ import * as DATA from './kitchen.data.js';
 import * as State from './kitchen.state.js';
 
 /* ───────────────────────────────────────────────────────────────────────────
-   ECON ACCESS — the same `EC()` guard kitchen.state.js uses, for the same
-   reason (CLAUDE.md's _opEcon rule: no economy number lives outside
-   kitchen.data.js). The second argument is a NaN GUARD, not a tuning value:
-   changing it changes nothing on a correctly-built data file and will silently
-   diverge from the number the designer is actually looking at.
+   💰 ECON ACCESS — ONE TABLE, AND THIS FILE NO LONGER KEEPS A SECOND COPY.
+   ───────────────────────────────────────────────────────────────────────────
+   🔴 THE DEFECT THIS SHAPE EXISTS TO KILL. `EC()` used to take a second
+   argument — `EC('MOD_TIP_MISS', -0.30)` — described in this very comment as
+   "a NaN guard, not a tuning value". It was a tuning value. A key-by-key diff
+   of the 83 call sites against kitchen.data.js found 36 keys that existed ONLY
+   here, and among the ones that existed in BOTH the two numbers had already
+   drifted apart: MOD_TIP_MISS read -0.45 from ECON and -0.30 from this file,
+   SPAWN_BASE_MS 8000 against 9000, SPAWN_MIN_MS 2100 against 1400. CLAUDE.md is
+   flat about it — "All operation pricing goes through `_opEcon()`. Never
+   hardcode economy numbers" — and the CONTRACT restates it: "If you write a
+   number in any other kitchen file, you have written a bug." Thirty-six of them
+   is a second, invisible economy that a designer retuning the lane cannot find,
+   cannot diff and will not know overruled them.
 
-   WHY the guard has to exist: a missing ECON key yields `undefined`, undefined
-   poisons arithmetic into NaN, and a NaN `expiresAt` compares false against
-   every threshold forever — the customer never runs out of patience, never
-   leaves, holds the front of the lane for the rest of the shift and blocks the
-   closing bell. That failure is invisible and unbounded. One default is not.
+   So `EC(key)` takes ONE argument and reads ECON, full stop. Every one of the
+   83 call sites below is now a lookup and nothing else.
+
+   WHY THE GUARD STILL HAS TO EXIST, and what replaced the literals: a missing
+   ECON key yields `undefined`, undefined poisons arithmetic into NaN, and a NaN
+   `expiresAt` compares false against every threshold forever — the customer
+   never runs out of patience, never leaves, holds the front of the lane for the
+   rest of the shift and blocks the closing bell. That failure is invisible and
+   unbounded. So a gap is caught, but it is caught in ONE place, it is RECORDED
+   (`econAudit()`), and the number it falls back to lives in the single
+   `ECON_PENDING` table below — which is a handover list with a name on it, not
+   36 anonymous literals scattered through the file. When kitchen.data.js adopts
+   a key, its row here is deleted and nothing else changes.
    ─────────────────────────────────────────────────────────────────────────── */
-function EC(key, fallback) {
-  try {
-    const v = DATA.ECON ? DATA.ECON[key] : undefined;
-    return (typeof v === 'number' && isFinite(v)) ? v : fallback;
-  } catch (e) { return fallback; }
+
+/* 🤝 THE LAST-RESORT GUARD, AND ✅ ALL FOUR ROWS ARE UNREACHABLE.
+   These are the keys THIS file introduced this round. kitchen.data.js has since
+   adopted every one of them at exactly these values, so `EC()` never reaches
+   this object — `econAudit()` returns `{gaps: [], ok: true}` after a full
+   simulated day, which is the proof and is re-runnable.
+
+   They stay for one reason only: a data.js regression that drops LANE_SPEAKER_POS
+   must degrade to a playable lane rather than to a speaker box at position ZERO,
+   which is the window, which is precisely the §GEOGRAPHY bug this round closed.
+   A guard whose whole job is never to fire is allowed to exist; a guard that
+   quietly runs a DIFFERENT economy from the designer's table is not, and that is
+   the difference between this object and the 36 inline literals it replaced.
+
+   ⚠ Do not add a row here to avoid asking, and do not retune one. A row here
+   that ECON also defines is dead; a row here that ECON does not define is an
+   ask, and it belongs in the HANDOVER at the bottom of this file as well. */
+const ECON_PENDING = {
+  /* 🔊 WHERE THE SPEAKER BOX IS, as a fraction of LANE_LEN measured from the
+     WINDOW (pos 0). The lane's picture and its state machine disagreed: render
+     draws 🔊 ORDER HERE at the mouth and 🪟 WINDOW at pos 0, while the sim let a
+     car enter its `order` phase from any slot it happened to stop in. Measured
+     over one instrumented day at level 20, order-phase frames by position:
+     {1.00:737, 0.75:334, 0.25:137, 0.50:16, 0.00:24} — twenty-four frames of a
+     customer announcing their order while parked at the pickup hatch. 0.92
+     rather than 1.00 so the car ordering sits just INSIDE the lane beside the
+     sign rather than exactly on the mouth, which leaves the width of one car
+     for the next arrival to wait in before it is pushed out onto the road. */
+  LANE_SPEAKER_POS: 0.92,
+  /* 🚗 §BALK DRIVE-PAST SPACING. Balks are the biggest number in the business
+     (86 against 45 arrivals in a measured day) so BURSTS ARE THE NORMAL CASE.
+     Five balking in one frame used to be five sprites at identical coordinates:
+     measured live at 360px, 5 `.mk-passer` nodes all at x=304, one on top of
+     another, reading as a single smeared vehicle. These two numbers are the
+     SPACING DATA the renderer needs to fan a burst out into traffic. */
+  PASSBY_STAGGER_MS: 320,   // head start between consecutive drive-pasts
+  PASSBY_LANES: 3,          // rows of the far-side band to spread them across
+  /* 🔁 arrivalPlan()'s assumed hit rate — see the comment there. It is the
+     MEASURED live figure, not a guess, and it is a lane number, so it belongs
+     in ECON beside SPAWN_BASE_MS. */
+  PLAN_SERVE_RATE: 0.35,
+};
+
+/* Keys that were read while absent from ECON, in first-seen order. Exported
+   through `econAudit()` so the admin debug panel can show a designer that the
+   table they are editing is not the table the lane is running on. */
+const _econGaps = Object.create(null);
+
+function EC(key) {
+  let v;
+  try { v = DATA.ECON ? DATA.ECON[key] : undefined; } catch (e) { v = undefined; }
+  if (typeof v === 'number' && isFinite(v)) return v;
+  _econGaps[key] = true;
+  const p = ECON_PENDING[key];
+  return (typeof p === 'number' && isFinite(p)) ? p : 0;
+}
+
+/**
+ * → { gaps:[key,…], pending:[key,…], ok } — which keys this session read that
+ * ECON did not answer. `ok` is true when the lane is running entirely off
+ * kitchen.data.js, which is the only state this file is allowed to ship in.
+ */
+export function econAudit() {
+  const gaps = Object.keys(_econGaps);
+  return { gaps, pending: Object.keys(ECON_PENDING), ok: gaps.length === 0 };
 }
 
 function DF(name) {
@@ -93,116 +170,146 @@ function DF(name) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   📋 ECON KEYS THIS FILE READS THAT kitchen.data.js DOES NOT DEFINE YET
+   📋 WHAT EACH LANE NUMBER MEANS. THE VALUES LIVE IN kitchen.data.js.
    ═══════════════════════════════════════════════════════════════════════════
-   Same handover note kitchen.state.js writes for its own five, and the same
-   deal: these are concepts THIS file introduced, so they want ADDING TO ECON
-   rather than living here as fallbacks. Until they are, `EC()` returns the
-   value shown and the lane plays correctly — it is a handover note, not an
-   excuse, and not a second economy table.
+   🔴 THIS IS A GLOSSARY, NOT A TABLE. Round 2 shipped this block as a list of
+   36 keys "kitchen.data.js does not define yet", each with its value written
+   out beside it and each backing an `EC('KEY', literal)` fallback in the code.
+   All 36 have since landed in ECON — and two of them had ALREADY drifted apart
+   from the numbers written here, silently, because ECON wins and nobody diffs a
+   comment. So the values are gone from this block on purpose. If you want to
+   know what LANE_BALK_MS is, read kitchen.data.js; if you want to know what it
+   MEANS and why it is not zero, read here. One number, one home.
 
-   The ones the CONTRACT already lists and kitchen.data.js already ships —
-   LANE_CAP, LANE_LEN, SPAWN_BASE_MS, SPAWN_POP_SPAN, SPAWN_JITTER,
-   SPAWN_MIN_MS, PATIENCE_ITEM_MS, PATIENCE_MIN_MS, ORDER_MAX_ITEMS,
-   COUNTER_SHARE, TIP_MAX_PCT, TIP_*_W, TIP_MIN, POP_WAVE, POP_MIN, POP_MAX,
-   Q_PERFECT, TICKET_BASE_MS, TICKET_ITEM_MS, LIKE_BIAS — are NOT in this list.
-   Those are read straight through.
+   Every key below is read through `EC(key)` and answered by ECON. `econAudit()`
+   returns empty when that is true, which is the only state this file ships in.
 
    ── GEOMETRY & TIMING OF THE LANE ────────────────────────────────────────
-     LANE_ROLL_UNITS_S     0.55  lane-lengths per second a car rolls forward.
+     LANE_ROLL_UNITS_S           lane-lengths per second a car rolls forward.
                                  Slow enough to read as a vehicle moving, fast
                                  enough that clearing the window never feels
                                  like the game is stalling you on purpose.
-     LANE_ENTRY_POS        1.30  where a car appears, past the mouth of the
+     LANE_ENTRY_POS              where a car appears, past the mouth of the
                                  lane, so it drives ON SCREEN rather than
                                  popping into existence in the queue.
-     LANE_ORDER_MS         2400  time at the speaker box actually ordering.
+     LANE_SPEAKER_POS            🔴 WHERE THE SPEAKER BOX IS, as a fraction of
+                                 LANE_LEN measured from the window. A car may
+                                 not roll PAST it until it has ordered, and may
+                                 not order until it has reached it. This one
+                                 line is what makes the lane's geography and its
+                                 state machine agree — see §GEOGRAPHY.
+     LANE_ORDER_MS               time at the speaker box actually ordering.
                                  This is the beat that makes the speaker line
                                  readable; at 0 the dialogue flashes past.
-     LANE_EXIT_MS          1500  🔴 how long a served car BLOCKS THE WINDOW
+     LANE_EXIT_MS                🔴 how long a served car BLOCKS THE WINDOW
                                  before it is reaped. This is not decoration —
                                  it is the entire "cars block each other"
                                  mechanic. At 0 the lane is a list, not a queue.
-     LANE_BALK_MS         26000  patience of a car that has arrived but not yet
+     LANE_BALK_MS                patience of a car that has arrived but not yet
                                  reached the speaker. Only reachable when the
                                  lane is jammed by an unserved front car.
-     LANE_MOOD_TESTY        0.55 patience-remaining thresholds the mood face
-     LANE_MOOD_ANGRY        0.25 steps down at. Render reads `car.mood`.
-     LANE_NAG_MS           9000  gap between a TESTY car's window nags, so a
+     LANE_MOOD_TESTY             patience-remaining thresholds the mood face
+     LANE_MOOD_ANGRY             steps down at. Render reads `car.mood`.
+     LANE_NAG_MS                 gap between a TESTY car's window nags, so a
                                  waiting customer talks instead of shouting.
-     LANE_NAG_ANGRY_MS     5500  🔴 and the gap once they are FURIOUS. The nag
+     LANE_NAG_ANGRY_MS           🔴 and the gap once they are FURIOUS. The nag
                                  ESCALATES: a customer who is about to walk
                                  talks more, not the same amount. A fixed
                                  interval made the last ten seconds of a
                                  doomed order read identically to the first.
-     LANE_PASSBY_MS        2600  how long a balked vehicle stays in
+     LANE_PASSBY_MS              how long a balked vehicle stays in
                                  `passersBy()` so a renderer can drive it
                                  across the top of the road and off. See §BALK.
+     PASSBY_STAGGER_MS           head start between consecutive drive-pasts, so
+                                 five balks in one frame read as TRAFFIC and not
+                                 as one smeared sprite. See §BALK SPACING.
+     PASSBY_LANES                how many rows of the far-side band to spread a
+                                 burst across. Render reads `p.lane`.
+     PLAN_SERVE_RATE             the hit rate `arrivalPlan()` models when the
+                                 caller does not name one. MEASURED off live
+                                 play, not assumed — see `arrivalPlan()`.
 
    ── POPULARITY THIS FILE APPLIES ITSELF ──────────────────────────────────
    (state.js owns POP_SERVE / POP_LOST / POP_BURN. These two have no path
     through state.js because neither produces a lost TICKET.)
-     POP_BALK             -0.25  a car reached a full lane and drove past. Tiny
+     POP_BALK                    a car reached a full lane and drove past. Tiny
                                  on purpose: it is lost custom, not a failure,
                                  and a full lane is usually a compliment.
-     POP_JAM              -0.90  a car queued, never got to order, gave up.
+     POP_JAM                     a car queued, never got to order, gave up.
                                  That one IS your fault.
-     POP_JUMP             -0.60  everyone behind a queue-jumper sees you allow
+     POP_JUMP                    everyone behind a queue-jumper sees you allow
                                  it. Charged once, when the raider cuts in.
 
    ── SET PIECES (§SET PIECES) ─────────────────────────────────────────────
-     SPECIAL_CHANCE         0.11 chance an arrival is a set piece at all.
-     SPECIAL_MIN_LEVEL      3    below this the lane is plain. A brand-new
+     SPECIAL_CHANCE              chance an arrival is a set piece at all.
+     SPECIAL_MIN_LEVEL           below this the lane is plain. A brand-new
                                  player meeting a queue-jumper in their first
                                  sixty seconds learns "this game is unfair",
                                  not "this game has texture".
-     BULK_ITEM_MULT         2.2  order-size multiplier for a corp bulk buy
-     BULK_PATIENCE_MULT     1.9  …who is correspondingly willing to wait
-     BULK_TIP_MULT          1.35 …and pays for the privilege. NOT higher: the
+     BULK_ITEM_MULT              order-size multiplier for a corp bulk buy
+     BULK_PATIENCE_MULT          …who is correspondingly willing to wait
+     BULK_TIP_MULT               …and pays for the privilege. NOT higher: the
                                  customers who place bulk orders are already the
                                  two most generous rows in CUSTOMERS (tipBias
                                  1.8 / 1.6), so a big multiplier on top of a big
                                  bias is what made this tier flat in the first
                                  place.
-     JUMP_PATIENCE_COST_MS  7000 patience each car behind loses to the cut-in
-     GRUDGE_PATIENCE_MULT   0.70 a regular you failed is a shorter fuse
-     GRUDGE_TIP_MULT        0.45 …and a worse tipper
-     FAVOUR_PATIENCE_MULT   1.35 a regular you delighted gives you room
-     FAVOUR_TIP_MULT        1.55 …and pays it back
+     JUMP_PATIENCE_COST_MS       patience each car behind loses to the cut-in
+     GRUDGE_PATIENCE_MULT        a regular you failed is a shorter fuse
+     GRUDGE_TIP_MULT             …and a worse tipper
+     FAVOUR_PATIENCE_MULT        a regular you delighted gives you room
+     FAVOUR_TIP_MULT             …and pays it back
 
    ── MODIFIERS (§MODIFIERS) ───────────────────────────────────────────────
-     MOD_CHANCE             0.30 chance an ordered LINE carries a modifier
-     MOD_SECOND_CHANCE      0.18 chance that line carries a SECOND one, so
+     MOD_CHANCE                  chance an ordered LINE carries a modifier
+     MOD_SECOND_CHANCE           chance that line carries a SECOND one, so
                                  "no onions, extra cheese" exists and is rare.
-     MOD_MAX_PER_ORDER      2    hard cap on promises in one spoken order. A
+     MOD_MAX_PER_ORDER           hard cap on promises in one spoken order. A
                                  family bucket with six instructions is a wall
                                  of text in a bubble on a 360px screen.
-     MOD_PATIENCE_MULT      0.94 a fussy order is a fussier customer
-     MOD_EXTRA_MIN          2    how many of an ingredient counts as "extra".
+     MOD_PATIENCE_MULT           a fussy order is a fussier customer
+     MOD_EXTRA_MIN               how many of an ingredient counts as "extra".
                                  Canon builds lay 1; asking for extra means
                                  laying it twice. 🔴 THIS IS THE CHECK — see
                                  §MODIFIERS. There is no quality bar any more.
-     MOD_TIP_HIT            0.35 tip multiplier bonus for an HONOURED promise
-     MOD_TIP_MISS          -0.30 …and the penalty for a BROKEN one
-     MOD_TIP_UNPROVEN       0     …and what an UNPROVABLE one is worth, which
+     MOD_TIP_HIT                 tip multiplier bonus for an HONOURED promise
+     MOD_TIP_MISS                …and the penalty for a BROKEN one
+     MOD_TIP_UNPROVEN             …and what an UNPROVABLE one is worth, which
                                  is nothing in either direction. 🔴 Zero, not
                                  a small bonus and not a small penalty: see
                                  §MODIFIERS on why a mod nobody can check must
                                  never be able to move money.
 
+     MOD_PAY_HIT                 🔴 THE SETTLEMENT, as a fraction of the
+     MOD_PAY_HIT_MIN                 honoured LINE's price, with a per-honoured-
+                                 UNIT Cinder FLOOR under it so the promise is
+                                 worth keeping on a 25-Cinder soda as well as on
+                                 a 220-Cinder Supreme. A percentage alone is not
+                                 enough — kitchen.data.js works the arithmetic
+                                 out in full beside the keys.
+     MOD_PAY_MISS                …and what a BROKEN promise costs, as a fraction
+                                 of the same line. LARGER than MOD_PAY_HIT, on
+                                 purpose: a broken promise is not a bonus the
+                                 player merely failed to earn.
+     MOD_PAY_UNPROVEN            🔴 zero. Always zero. See §MODIFIERS.
+     MOD_POP_HIT                 word of mouth, per honoured line…
+     MOD_POP_MISS                …and per broken one. Charged by `serveCar()`.
+     MOD_XP_HIT                  ⚠ READ BY NOBODY YET. There is no path from
+                                 this file to `addXp()` — see the HANDOVER.
+
    ── THE TIP RETURN (§TIP) ────────────────────────────────────────────────
-     TIP_GEN_MAX            4.0  runaway guard on the GENEROSITY STACK (tipBias
+     TIP_GEN_MAX                 runaway guard on the GENEROSITY STACK (tipBias
                                  × tip upgrades × set piece × modifiers, which
                                  is unbounded because modifiers stack). Set high
                                  enough not to touch a normal customer.
-     TIP_HARD_PCT           0.70 🔴 the DESIGN ceiling, ≈2× TIP_MAX_PCT. Without
+     TIP_HARD_PCT                🔴 the DESIGN ceiling, ≈2× TIP_MAX_PCT. Without
                                  it the top tier saturated the safety clamp on
                                  100% of 4,000 samples and quality stopped
                                  mattering entirely — measured, not guessed.
-     TIP_FRACTION_MAX       0.95 🔴 last-ditch clamp keeping us below state.js's
+     TIP_FRACTION_MAX            🔴 last-ditch clamp keeping us below state.js's
                                  `v < 1` fraction test. Should never bind; if it
                                  does, TIP_HARD_PCT is wrong.
-     TIP_FRACTION_MIN       0.01 floor, so a served car always drops a coin
+     TIP_FRACTION_MIN            floor, so a served car always drops a coin
    ─────────────────────────────────────────────────────────────────────────── */
 
 /* ── tiny numeric helpers. Two lines each; an import for them would be a
@@ -687,31 +794,64 @@ function voiceFor(custId, key, special, r, avoid) {
      gift  ('take your time') NEVER SCORED. It asks for nothing, so it pays
                                      nothing either way (see the pool below).
 
-   ── 🔴 'unproven' AND WHY IT IS WORTH EXACTLY ZERO ────────────────────────
-   The ingredient checks need EVIDENCE: the list of ingredients actually laid on
-   each dish that filled the line. That evidence does not exist yet — it is the
-   HANDOVER at the bottom of this file, two additive lines in kitchen.state.js.
-   Until it lands, `judgeMod()` returns 'unproven' for `hold`/`extra`, and an
-   unproven modifier moves the tip by MOD_TIP_UNPROVEN, which is ZERO.
+   ── 🔴 SEAM 1 LANDED. THE EVIDENCE NOW EXISTS. ────────────────────────────
+   Round 2 shipped this check reading `ticket.items[i].builds`, a field NOBODY
+   WROTE. `grep -rn "\.builds"` returned one hit and it was inside the handover
+   comment at the bottom of this file asking for it. So every `hold` and every
+   `extra` short-circuited to 'unproven' and was worth exactly zero: measured
+   over 12 seeded days at level 20, 94 promises judged, {honoured:0, broken:2,
+   unproven:92}. The ✓ payoff branch of the renderer's `rewardMoment()` was
+   unreachable dead writing — the same bug class as round 1's dead `served`
+   lines, one layer up.
 
-   That is the whole point and it is not a placeholder:
+   kitchen.state.js now records it, end to end, and the chain is worth knowing
+   because every link is load-bearing:
+
+       addStep()      → slot.steps  = [ingId, …]            in LAY ORDER
+       pullSlot()     → hand.built  = slot.steps.slice()
+       plateHand()    → dish.built  = hand.built.slice()    the plate on the pass
+       refreshReady() → item.builds = [built|null, …]       PROVISIONAL, per unit
+       takeDishes()   → item.builds frozen to the units actually handed over
+
+   `item.built` and `item.builds` are the SAME ARRAY under two names — the name
+   this round's cross-file brief settled on, and the name this file already
+   read. `buildsOf()` accepts either and they can never drift because state.js
+   points both at one object.
+
+   ── 🔴 `null` MEANS "NO EVIDENCE" AND `[]` DOES NOT ───────────────────────
+   The one subtle thing in the seam, and getting it backwards inverts the whole
+   mechanic. `startCook()` has ALREADY spent the full `recipe.needs` out of the
+   pantry, so a dish nobody assembled physically contains everything the recipe
+   calls for. If an un-assembled unit reported `built: []`, `countIn()` would
+   count zero onions and score every "no onions" as HONOURED — paying out the
+   reward for a promise the player never made, on a mini-game they may not even
+   have on screen. So an un-assembled unit reports `null`, `judgeMod()` reads it
+   as 'unproven', and it moves nothing:
      • it can never PUNISH a player for obeying a ticket the game cannot read;
      • it can never REWARD a player for ignoring one;
      • it is visibly different on screen (`modVerdict()` returns the same three
        words) so a ticket chip reads "—" rather than a lying ✓.
-   A guess that moves money is worse than an honest blank. The moment the two
-   handover lines land, every `hold`/`extra` on the board starts scoring for
-   real with no change here.
+   A guess that moves money is worse than an honest blank.
 
    ── WHERE THE EVIDENCE IS READ FROM ───────────────────────────────────────
-   `ticket.items[i].builds` — one entry per FILLED unit, in fill order:
+   `ticket.items[i].built` (=== `.builds`) — one entry per FILLED unit, in
+   hand-over order:
        an ARRAY of ingredient ids in the order they were laid, or
        a MAP {ingId: count}, or
        `null` when that unit carried no build record.
    Both shapes are accepted because `slot.steps` is a lay-ordered array today
    and a counted map is the obvious thing somebody optimises it into later. A
-   line whose `builds` is missing, empty, or all-null is UNPROVEN — never
-   honoured by default, never broken by default.
+   line whose record is missing, empty, or all-null is UNPROVEN — never honoured
+   by default, never broken by default.
+
+   ── 🔴 AND IT IS PRICED, NOT JUST SCORED (§SETTLEMENT) ────────────────────
+   Judging the promise honestly is half the job. The other half is that it has
+   to be worth something, and round 2's version moved only the tip BLEND
+   (MOD_TIP_HIT/MISS), which is a fraction of a fraction. kitchen.data.js added
+   four MOD_PAY_* keys and two MOD_POP_* keys this round precisely so the verdict
+   moves real Cinder and real word-of-mouth; `settleMods()` below is where they
+   are read and `tipFor()` is where the Cinder is delivered. See §SETTLEMENT for
+   why the delivery pipe is the tip line and what would be better.
 
    ⚠ A MODIFIER JUDGES THE PROMISE, NOT THE RECIPE, AND THAT IS DELIBERATE.
    A dish built out of five onions and nothing else HONOURS "no greens" — there
@@ -796,7 +936,7 @@ const MODS = [
  * simply no longer a THIRD of the list.
  */
 function rollMods(r, recipeId, custId, special) {
-  if (r() >= EC('MOD_CHANCE', 0.30)) return [];
+  if (r() >= EC('MOD_CHANCE')) return [];
   const rec = recipeOf(recipeId);
   const needs = (rec && rec.needs) || {};
 
@@ -804,8 +944,25 @@ function rollMods(r, recipeId, custId, special) {
      a fountain soda is a joke that lands once), must not be banned for this
      personality, and — for `no_rush` — must not be coming out of the mouth of
      somebody who just barged the queue. */
+  const extraMin = Math.max(1, _int(EC('MOD_EXTRA_MIN')));
   const pool = MODS.filter((m) => {
     if (m.ing && !(needs[m.ing] > 0)) return false;
+    /* 🔴 AN `extra` PROMISE MUST BE PHYSICALLY KEEPABLE, AND IT WAS NOT.
+       `State.addStep()` refuses to lay more of an ingredient than the recipe
+       calls for — deliberately, so the build bonus can never become a build
+       penalty. So "extra mustard" on a hot dog (canon mustard:1) asked for two
+       mustards on a dish that will not accept a second one: judged against
+       MOD_EXTRA_MIN it is BROKEN the instant it is spoken, and the player is
+       charged MOD_PAY_MISS + MOD_POP_MISS for failing to do something the game
+       forbids. That is worse than the unproven bug it replaced, because it is
+       loud and it is wrong. So an `extra` only enters the pool on a dish whose
+       canon carries at least MOD_EXTRA_MIN of it — "double the cheese" on a
+       Double (cheese:2) or a Margherita (cheese:2), never on a hot dog.
+       ⚠ CONSEQUENCE, ACCEPTED: `extra_must` (mustard is 1 everywhere) and
+       `extra_oil` (oil:1) can never spawn today. They stay in MODS rather than
+       being deleted because the gate is on the RECIPE, not on the modifier —
+       give any dish mustard:2 and the line becomes live with no code change. */
+    if (m.kind === 'extra' && m.ing && !(needs[m.ing] >= extraMin)) return false;
     if (m.stations && rec && m.stations.indexOf(rec.station) === -1) return false;
     if (m.ban && custId && m.ban.indexOf(custId) !== -1) return false;
     if (m.id === 'no_rush' && special === 'jump') return false;
@@ -818,7 +975,7 @@ function rollMods(r, recipeId, custId, special) {
   if (!first) return [];
   out.push(mkMod(first));
 
-  if (r() < EC('MOD_SECOND_CHANCE', 0.18)) {
+  if (r() < EC('MOD_SECOND_CHANCE')) {
     // Deduped by id AND by ingredient: "no sauce, double sauce" is not a fussy
     // customer, it is an unwinnable ticket.
     const rest = pool.filter((m) => m.id !== first.id && !(m.ing && m.ing === first.ing));
@@ -837,11 +994,11 @@ function mkMod(m) {
     say: m.say,
     // What this promise is worth either way. Held on the mod so a renderer can
     // show the stakes on the chip without knowing the ECON table.
-    tipHit: m.kind === 'gift' ? 0 : EC('MOD_TIP_HIT', 0.35),
-    tipMiss: m.kind === 'gift' ? 0 : EC('MOD_TIP_MISS', -0.30),
+    tipHit: m.kind === 'gift' ? 0 : EC('MOD_TIP_HIT'),
+    tipMiss: m.kind === 'gift' ? 0 : EC('MOD_TIP_MISS'),
     // `no_rush` is the exception that proves the mechanic: it asks for nothing
     // and pays nothing, it just makes the customer patient.
-    patienceMult: m.id === 'no_rush' ? 1.45 : EC('MOD_PATIENCE_MULT', 0.94),
+    patienceMult: m.id === 'no_rush' ? EC('MOD_NORUSH_PATIENCE_MULT') : EC('MOD_PATIENCE_MULT'),
   };
 }
 
@@ -865,11 +1022,21 @@ function countIn(build, ing) {
   return -1;
 }
 
-/** The per-unit build records for one ticket line, or [] when there are none. */
+/**
+ * The per-unit build records for one ticket line, or [] when there are none.
+ *
+ * ⚠ TWO NAMES, ONE ARRAY. `item.built` is the name this round's cross-file
+ * brief settled on; `item.builds` is the name round 2's check already read.
+ * kitchen.state.js points BOTH at the same object rather than keeping two
+ * copies, so they cannot disagree — but this reader accepts either, because a
+ * seam that only works if two builders guessed the same noun is exactly how the
+ * last round produced 92 'unproven' verdicts.
+ */
 function buildsOf(item) {
   if (!item) return [];
-  const b = item.builds;
-  if (!Array.isArray(b) || !b.length) return [];
+  const b = Array.isArray(item.built) ? item.built
+          : (Array.isArray(item.builds) ? item.builds : null);
+  if (!b || !b.length) return [];
   return b.filter((x) => x !== null && x !== undefined);
 }
 
@@ -892,7 +1059,7 @@ function judgeMod(mod, item) {
 
   const builds = buildsOf(item);
   if (!builds.length) return 'unproven';             // no evidence — see above
-  const min = Math.max(1, _int(EC('MOD_EXTRA_MIN', 2)));
+  const min = Math.max(1, _int(EC('MOD_EXTRA_MIN')));
 
   let seen = 0;
   let ok = true;
@@ -907,38 +1074,206 @@ function judgeMod(mod, item) {
   return ok ? 'honoured' : 'broken';
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   💰 §SETTLEMENT — WHAT A KEPT PROMISE IS ACTUALLY WORTH, IN CINDER.
+   ═══════════════════════════════════════════════════════════════════════════
+   🔴 THE FINDING THIS ANSWERS, quoted so it cannot be softened later:
+   "The modifier promise is still worth exactly nothing, and obeying it still
+    pays LESS than ignoring it." Controlled A/B, burgerClassic, ticket says
+    "no greens", identical seed: OBEY 144 Cinder, DEFY 150. A 4% penalty for
+    doing what the customer asked, because the only thing a verdict could move
+    was the tip BLEND and the build-order bonus punished the omission harder
+    than the blend rewarded it.
+
+   So a verdict now settles in THREE currencies, all four ECON keys deep:
+
+     CINDER   MOD_PAY_HIT × the honoured line's price, with MOD_PAY_HIT_MIN as a
+              per-honoured-UNIT FLOOR under it, and MOD_PAY_MISS × the broken
+              line's price against you. The floor is not decoration:
+              kitchen.data.js works out that a percentage alone leaves an
+              honoured "extra syrup" on a 25-Cinder soda worth less than the
+              syrup, so the floor is set above the priciest pantry unit in the
+              game and `assertDataSane()` re-derives that comparison from
+              SUPPLY_RECIPES on every load.
+     POP      MOD_POP_HIT / MOD_POP_MISS, per line, charged by `serveCar()`.
+              Small — one detail of one ticket — but a broken promise is worth
+              about a quarter of a lost ticket in word of mouth.
+     TIP      MOD_TIP_HIT / MOD_TIP_MISS, unchanged, on the generosity blend.
+              It is what makes an honoured promise feel different at every
+              price point instead of being a flat coupon.
+
+   🔴 WHY MISS > HIT IN BOTH CURRENCIES. kitchen.data.js sets MOD_PAY_MISS
+   -0.25 against MOD_PAY_HIT 0.12 and asserts the relation. A broken promise is
+   not a bonus the player merely failed to collect; the customer asked for one
+   thing and got another. Symmetric numbers would make ignoring the ticket a
+   valid strategy carrying a small tax, which is where round 2 already was.
+
+   ⚠ WHERE THE CINDER IS DELIVERED, AND WHY IT IS NOT WHERE IT BELONGS.
+   `State.serveTicket()` is the payer and it makes exactly ONE call to
+   `bridge().addGems(payout + tip)`. This file owns no money (CONTRACT §1 —
+   "deliberately THIN on the money") and there is no hook between the payout
+   being computed and the gems being paid. The one seam state.js DOES open is
+   `DriveThru.tipFor()`, which it calls once per served drive ticket, AFTER
+   `takeDishes()` has frozen `item.built` and `item.filled` and BEFORE the
+   ticket leaves the board. So the settlement rides out on the tip line,
+   converted into a fraction of the payout it is being paid beside.
+
+   That is a delivery pipe, not a design: the number is a settlement on the
+   BILL and it prints as a tip. It is honest — the Cinder is real, it is priced
+   from ECON, and the direction and magnitude are right — but the correct shape
+   is a payout hook, and the exact signature is written out in the HANDOVER at
+   the bottom of this file. Two consequences of the pipe, both real and both
+   preferable to the alternative of the mechanic paying nothing:
+     • TIP_FRACTION_MAX (0.95) can bind on a CHEAP dish carrying an honoured
+       `extra` — MOD_PAY_HIT_MIN is 18 Cinder against a 25-Cinder soda — so the
+       floor is delivered in full on everything except the bottom of the menu.
+     • a badly broken promise can take the whole tip to zero and no further,
+       because state.js reads a non-positive return as "no tip" and there is no
+       way to reach into the payout from here.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
 /**
- * Judge every modifier on a ticket.
- * → { mul, honoured, broken, unproven, detail:[{id,label,kind,ing,result,worth}] }
+ * What one ticket line's food is worth before multipliers — the base the
+ * settlement is a percentage OF.
  *
- * `mul` is the generosity multiplier §TIP folds in. Exported through
- * `modVerdict()` so the renderer can draw the SAME three words on the chip that
- * the till paid out on — a verdict the player is told about after the fact and
- * cannot see coming is a mechanic they will never learn.
+ * ⚠ `qsum` (the sum of the quality multipliers of the units actually handed
+ * over) when state.js has committed it, `filled` while the order is still on
+ * the board, `qty` before anything has been cooked. All three are the same
+ * number in the ordinary case; taking whichever exists means the chips can draw
+ * a live verdict on an unfilled line without inventing a price for it.
+ */
+function linePrice(item) {
+  const rec = recipeOf(item && item.recipeId);
+  if (!rec) return 0;
+  const units = _num(item.qsum, 0) > 0 ? _num(item.qsum, 0)
+              : (_int(item.filled) || Math.max(1, _int(item.qty)));
+  return Math.max(0, _num(rec.basePrice, 0) * units);
+}
+
+/**
+ * Judge every modifier on a ticket, and PRICE the verdict.
+ * → { mul, honoured, broken, unproven, cinder, pop,
+ *     detail:[{id,label,kind,ing,recipeId,result,worth,cinder,pop}] }
+ *
+ * `mul` is the generosity multiplier §TIP folds into the blend. `cinder` is the
+ * signed §SETTLEMENT in absolute Cinder and `pop` the signed word-of-mouth.
+ * Exported through `modVerdict()` so the renderer draws the SAME three words on
+ * the chip that the till pays out on — a verdict the player is told about after
+ * the fact and cannot see coming is a mechanic they will never learn.
+ *
+ * 🔴 PURE. No mutation, no side effects, safe to call every frame from the
+ * ticket chips and again from inside the payout. That purity is what lets the
+ * money ride `tipFor()` without a double-settle guard.
  */
 function judgeTicket(ticket) {
-  const out = { mul: 1, honoured: 0, broken: 0, unproven: 0, detail: [] };
+  const out = { mul: 1, honoured: 0, broken: 0, unproven: 0, cinder: 0, pop: 0, detail: [] };
   if (!ticket || !Array.isArray(ticket.items)) return out;
-  const hit = EC('MOD_TIP_HIT', 0.35);
-  const miss = EC('MOD_TIP_MISS', -0.30);
-  const meh = EC('MOD_TIP_UNPROVEN', 0);
+  const hit = EC('MOD_TIP_HIT');
+  const miss = EC('MOD_TIP_MISS');
+  const meh = EC('MOD_TIP_UNPROVEN');
+  const payHit = EC('MOD_PAY_HIT');
+  const payFloor = EC('MOD_PAY_HIT_MIN');
+  const payMiss = EC('MOD_PAY_MISS');
+  const payMeh = EC('MOD_PAY_UNPROVEN');
+  const popHit = EC('MOD_POP_HIT');
+  const popMiss = EC('MOD_POP_MISS');
+
   for (const item of ticket.items) {
     const mods = (item && Array.isArray(item.mods)) ? item.mods : [];
+    if (!mods.length) continue;
+    const price = linePrice(item);
+    // Units the promise was actually kept ON. `filled` while a line is being
+    // served, `qty` for a live chip on a line nothing has covered yet — the
+    // floor is per honoured UNIT, so a two-burger line honoured twice is worth
+    // twice the floor.
+    const units = Math.max(1, _int(item.filled) || _int(item.qty));
+
     for (const m of mods) {
       const result = judgeMod(m, item);
       const worth = result === 'honoured' ? _num(m.tipHit, hit)
                   : result === 'broken'   ? _num(m.tipMiss, miss)
                   : meh;
+      /* 🔴 max(PERCENTAGE, FLOOR × UNITS), not one or the other. The percentage
+         is what makes an honoured promise on a Supreme worth more than one on a
+         hot dog; the floor is what stops it being worth less than the
+         ingredient on the cheapest dishes. kitchen.data.js's comment beside
+         MOD_PAY_HIT_MIN does the arithmetic. */
+      const cinder = result === 'honoured' ? Math.max(payHit * price, payFloor * units)
+                   : result === 'broken'   ? (payMiss * price)
+                   : payMeh;
+      const pop = result === 'honoured' ? popHit
+                : result === 'broken'   ? popMiss
+                : 0;
       out.mul += worth;
+      out.cinder += cinder;
+      out.pop += pop;
       out[result === 'honoured' ? 'honoured' : (result === 'broken' ? 'broken' : 'unproven')]++;
       out.detail.push({
         id: m.id, label: m.label, kind: m.kind, ing: m.ing || null,
         recipeId: item.recipeId, result, worth,
+        cinder: Math.round(cinder), pop: Math.round(pop * 100) / 100,
       });
     }
   }
   out.mul = Math.max(0, out.mul);
   return out;
+}
+
+/**
+ * 🔴 HOW WELL DOES THIS PLATE FIT THIS ORDER? Higher is better; 0 is neutral.
+ *
+ * ⚠ NOTHING CALLS THIS YET AND IT IS EXPORTED ON PURPOSE — it is the one-line
+ * fix for the largest remaining false negative in the whole mechanic, and the
+ * line is in kitchen.state.js.
+ *
+ * MEASURED: six seeded 720s days at level 20 with an auto-cook that reads every
+ * ticket and builds to it exactly — 80 promises honoured and 57 still BROKEN,
+ * of which 43 were `hold` mods the bot had genuinely obeyed. The cause is not
+ * the check. `takeDishes()` fills a line with the FIRST matching-recipe plate on
+ * the pass, so the careful burger built without lettuce for car 3 gets handed to
+ * car 1, and car 3 is served the lettuce burger somebody else's ticket wanted.
+ * Both cars are then judged on a plate that was not built for them. A player who
+ * did everything right is told they broke a promise, which is the one failure
+ * mode this mechanic must never have.
+ *
+ * The pass is deliberately fungible (kitchen.state.js's THE PASS: plates are
+ * stock, not a pipe) and that is the right call — earmarking every plate to a
+ * ticket would make the pass a queue of promises the player cannot re-plan. So
+ * the fix is not to earmark; it is to make the CHOICE amongst equals prefer the
+ * plate that keeps a promise, which costs nothing and is invisible when no
+ * modifier is involved. In `takeDishes()` and `refreshReady()`, where the
+ * candidate loop picks the first matching dish:
+ *
+ *     const fit = (d) => (typeof DriveThru.fitScore === 'function'
+ *                          ? DriveThru.fitScore(item, d) : 0);
+ *     candidates.sort((a, b) => fit(b) - fit(a));     // stable; 0 for everyone
+ *                                                     // when the line is plain
+ *
+ * → +1 for each modifier this plate HONOURS, −1 for each it BREAKS, 0 for each
+ *   it cannot prove. A plain line scores 0 for every plate, so the sort is a
+ *   no-op and pass order is preserved exactly as it is today.
+ */
+export function fitScore(item, dish) {
+  try {
+    const mods = (item && Array.isArray(item.mods)) ? item.mods : [];
+    if (!mods.length || !dish) return 0;
+    // Judge the ONE plate, by presenting it as a single-unit line. `assembled`
+    // is what separates "no evidence" from "empty build" — see §MODIFIERS.
+    const probe = {
+      recipeId: item.recipeId, qty: 1, filled: 1,
+      pn: dish.quality === 'perfect' ? 1 : 0,
+      built: [dish && dish.assembled && Array.isArray(dish.built) && dish.built.length ? dish.built : null],
+    };
+    let n = 0;
+    for (const m of mods) {
+      const r = judgeMod(m, probe);
+      if (r === 'honoured') n++;
+      else if (r === 'broken') n--;
+    }
+    return n;
+  } catch (e) {
+    return 0;   // rule 2. A tie beats a throw inside somebody else's sort.
+  }
 }
 
 /**
@@ -952,7 +1287,7 @@ export function modVerdict(K, car, now) {
     const ticket = ticketFor(K, live || car);
     return judgeTicket(ticket);
   } catch (e) {
-    return { mul: 1, honoured: 0, broken: 0, unproven: 0, detail: [] };
+    return { mul: 1, honoured: 0, broken: 0, unproven: 0, cinder: 0, pop: 0, detail: [] };
   }
 }
 
@@ -982,7 +1317,7 @@ function menuFor(level) {
     directly here would silently un-buy a 185,000-Cinder upgrade. */
 function capOf(K) {
   const f = DF('laneCap');
-  const n = f ? _int(f(K.upgrades)) : _int(EC('LANE_CAP', 4));
+  const n = f ? _int(f(K.upgrades)) : _int(EC('LANE_CAP'));
   return Math.max(1, n);
 }
 
@@ -1072,6 +1407,65 @@ function raise(K, out, name, payload) {
 function raiseLater(K, name, payload) { return raise(K, null, name, payload); }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   🛻 §RIDES — WHO IS DRIVING DECIDES WHAT THEY ARE DRIVING.
+   ═══════════════════════════════════════════════════════════════════════════
+   🔴 THE CAPTURED DEFECT: "🛻 Kid on a BMX drove past." A boy on a bicycle,
+   turning up in a pickup truck, said out loud by the game. In the same run the
+   Kid was drawn as 🚙 in one lane and the Corp Suit as 🏍️ in another. The
+   vehicle was picked by a straight weighted roll over all of CARS, entirely
+   independently of who was sitting in it, so the lane routinely contradicted
+   its own character names — and the writing is the strongest thing in this
+   module, which makes this the one place the presentation actively fought it.
+
+   A ride list is CHARACTERISATION, not economy, so it lives here beside VOICE
+   and MODS rather than in kitchen.data.js — the same call `VOICE` already
+   makes. What it is NOT allowed to do is invent vocabulary: every id below is
+   an existing `CARS[].id`, so the weights, `seats`, `len` and `patienceMul`
+   that make a rig hold up more of the lane than a bike all keep working
+   untouched. `cust.vehicles` is read FIRST if kitchen.data.js ever adopts the
+   field, so adopting it needs no change here.
+
+   ⚠ THE ONE THING THIS CANNOT FIX FROM IN HERE. CARS has no bicycle. "Kid on a
+   BMX" is therefore mapped to `bike` — 🏍️, a motorbike — which is much closer
+   than a pickup and still not right. The ask (a `bmx` row, one seat, len 1) is
+   in the HANDOVER; until it lands the Kid rides the smallest thing on the lot.
+
+   An empty or unrecognised list falls through to the full roster rather than to
+   an empty pool: a personality nobody has thought about yet drives anything,
+   which is exactly where this file started and is a fine default.
+   ═══════════════════════════════════════════════════════════════════════════ */
+const RIDES = {
+  commuter: ['hatch', 'suv', 'taxi'],     // the default civilian mix
+  courier:  ['bike'],                     // 🛵 in their own icon. They ride.
+  scav:     ['pickup', 'hatch', 'bike'],  // whatever still runs
+  trucker:  ['rig', 'pickup'],            // "Feed the whole cab."
+  medic:    ['van', 'hatch'],             // an ambulance is a van
+  /* ⚠ THE SUV IS HERE FOR THE BULK PATH, NOT FOR THE CHARACTER. `rollSpecial()`
+     picks `suit` for 60% of corp bulk buys, and a bulk buy needs four seats — so
+     with a taxi/hatch-only list EVERY bulk suit fell through to the whole
+     ≥4-seat roster and turned up in a TRANSIT BUS. One row with four seats on
+     the list keeps the fallback for genuinely impossible pairings only. */
+  suit:     ['suv', 'taxi', 'hatch'],     // no limo in CARS; a taxi reads corp
+  kid:      ['bike'],                     // ⚠ see the note above
+  raider:   ['pickup', 'bike'],           // technicals and motorbikes
+  family:   ['van', 'bus', 'suv'],        // five seats minimum, and they use them
+  mayor:    ['taxi', 'suv'],              // driven, not driving
+  ghoul:    ['pickup', 'hatch'],          // forty years of the same truck
+  guard:    ['patrol', 'suv'],            // 🚓
+};
+
+/** The vehicles this personality plausibly turns up in. See §RIDES. */
+function ridePool(cars, cust) {
+  if (!cust) return cars;
+  const want = (Array.isArray(cust.vehicles) && cust.vehicles.length)
+    ? cust.vehicles
+    : RIDES[cust.id];
+  if (!Array.isArray(want) || !want.length) return cars;
+  const pool = cars.filter((c) => c && want.indexOf(c.id) !== -1);
+  return pool.length ? pool : cars;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    🚙 SPAWN — who turns up, in what, wanting what.
    ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -1097,11 +1491,11 @@ function buildOrder(r, cust, carDef, level, special) {
   let lo = Math.max(1, _int(spec.min || 1));
   let hi = Math.max(lo, _int(spec.max || 2));
   if (special === 'bulk') {
-    lo = Math.max(lo, Math.round(lo * EC('BULK_ITEM_MULT', 2.2)));
-    hi = Math.max(lo, Math.round(hi * EC('BULK_ITEM_MULT', 2.2)));
+    lo = Math.max(lo, Math.round(lo * EC('BULK_ITEM_MULT')));
+    hi = Math.max(lo, Math.round(hi * EC('BULK_ITEM_MULT')));
   }
   const seats = Math.max(1, _int(carDef && carDef.seats) || 2);
-  const ceiling = Math.max(1, _int(EC('ORDER_MAX_ITEMS', 5)));
+  const ceiling = Math.max(1, _int(EC('ORDER_MAX_ITEMS')));
   // A bulk buyer is the one case allowed past ORDER_MAX_ITEMS, because "a corp
   // buyer placing a bulk order" is meaningless if it is the same size as a
   // hauler's. It still cannot exceed twice the ceiling.
@@ -1112,7 +1506,7 @@ function buildOrder(r, cust, carDef, level, special) {
   const count = rint(r, lo, hi);
   const likes = (cust && Array.isArray(cust.likes)) ? cust.likes : [];
   const liked = likes.length ? menu.filter((x) => likes.indexOf(x.cat) !== -1) : [];
-  const bias = EC('LIKE_BIAS', 0.7);
+  const bias = EC('LIKE_BIAS');
 
   const items = [];
   for (let i = 0; i < count; i++) {
@@ -1140,7 +1534,7 @@ function buildOrder(r, cust, carDef, level, special) {
      order, and re-rolling here would spend RNG in a loop that can fail. */
   const spokenFor = Object.create(null);
   let spoken = 0;
-  const maxPerOrder = Math.max(1, _int(EC('MOD_MAX_PER_ORDER', 2)));
+  const maxPerOrder = Math.max(1, _int(EC('MOD_MAX_PER_ORDER')));
   for (const it of items) {
     it.mods = (it.mods || []).filter((m) => {
       const key = m.ing || m.id;
@@ -1178,8 +1572,8 @@ function buildOrder(r, cust, carDef, level, special) {
  * texture". Set pieces are seasoning on a dish you already know the taste of.
  */
 function rollSpecial(K, r, level) {
-  if (level < EC('SPECIAL_MIN_LEVEL', 3)) return { special: null, custId: null };
-  if (r() >= EC('SPECIAL_CHANCE', 0.11)) return { special: null, custId: null };
+  if (level < EC('SPECIAL_MIN_LEVEL')) return { special: null, custId: null };
+  if (r() >= EC('SPECIAL_CHANCE')) return { special: null, custId: null };
 
   const mem = book(K).mem;
   const regulars = Object.keys(mem).filter((id) => mem[id] && (mem[id].served + mem[id].lost + mem[id].waved) > 0);
@@ -1208,20 +1602,20 @@ function rollSpecial(K, r, level) {
  * the modifiers, and the set piece.
  */
 function patienceFor(cust, carDef, items, mods, special) {
-  let ms = _num(cust && cust.patienceMs, EC('TICKET_BASE_MS', 45000));
+  let ms = _num(cust && cust.patienceMs, EC('TICKET_BASE_MS'));
   ms *= _num(carDef && carDef.patienceMul, 1);
 
   let units = 0;
   for (const it of items) units += Math.max(1, _int(it.qty));
-  ms += EC('PATIENCE_ITEM_MS', 12000) * Math.max(0, units - 1);
+  ms += EC('PATIENCE_ITEM_MS') * Math.max(0, units - 1);
 
   for (const m of mods) ms *= _num(m.patienceMult, 1);
 
-  if (special === 'bulk')   ms *= EC('BULK_PATIENCE_MULT', 1.9);
-  if (special === 'grudge') ms *= EC('GRUDGE_PATIENCE_MULT', 0.70);
-  if (special === 'favour') ms *= EC('FAVOUR_PATIENCE_MULT', 1.35);
+  if (special === 'bulk')   ms *= EC('BULK_PATIENCE_MULT');
+  if (special === 'grudge') ms *= EC('GRUDGE_PATIENCE_MULT');
+  if (special === 'favour') ms *= EC('FAVOUR_PATIENCE_MULT');
 
-  return Math.max(EC('PATIENCE_MIN_MS', 20000), Math.round(ms));
+  return Math.max(EC('PATIENCE_MIN_MS'), Math.round(ms));
 }
 
 /**
@@ -1279,6 +1673,30 @@ function balk(K, b, cust, carDef, now, cap) {
      never saved (CONTRACT §5), and PRUNED IN tick() rather than here — a lane
      that only tidies up when the next car balks would leave the last drive-past
      of a rush frozen on the tarmac all evening. */
+  /* 🔴 §BALK SPACING — A BURST MUST READ AS TRAFFIC, NOT AS ONE SPRITE.
+     Measured live at 360px after force-filling the lane and spawning five more:
+     five `.mk-passer` nodes, ALL AT x=304, all at opacity 0.7, one on top of
+     another — "🚗 Gate Guard drove past", "🚙 Courier drove past", "🚙 Night
+     Medic drove past", "🛻 Kid on a BMX drove past", "🚓 Raider drove past" —
+     an illegible pile. And balks are the LARGEST number in the business (86
+     against 45 arrivals in a measured day), so a burst is the normal case and
+     not the edge case.
+
+     The renderer already staggers the vertical band; what it could not do is
+     separate cars that all started at the same instant, because `pct` is a pure
+     function of elapsed time and they shared one `at`. So the SPACING DATA is
+     ours and it is two fields:
+       `delay` — a per-car head start, PASSBY_STAGGER_MS × how many drive-pasts
+                 are already in flight, so a burst leaves the kerb in single
+                 file instead of abreast. `passersBy()` holds a car at pct 0
+                 through its delay and `until` is pushed back to match, so
+                 nothing is cut short by being late off the line.
+       `lane`  — which row of the band this one belongs in, round-robin over
+                 PASSBY_LANES, so even two that DO overlap are not collinear.
+     Both are data, not pixels: the renderer decides what a row is worth in px. */
+  const inFlight = b.passers.filter((p) => t < _num(p.until, 0)).length;
+  const delay = inFlight * EC('PASSBY_STAGGER_MS');
+  const lanes = Math.max(1, _int(EC('PASSBY_LANES')));
   b.passers.push({
     id: 'p' + (++b.seq),
     custId: cust ? cust.id : null,
@@ -1288,7 +1706,9 @@ function balk(K, b, cust, carDef, now, cap) {
     vehicleIcon: icon,
     vehicleName: (carDef && carDef.name) || 'Vehicle',
     at: t,
-    until: t + EC('LANE_PASSBY_MS', 2600),
+    delay,
+    lane: b.seq % lanes,
+    until: t + delay + EC('LANE_PASSBY_MS'),
   });
   // Ten is plenty for anything a renderer can legibly draw at once, and it
   // bounds the array against a pathological rush against a cap-1 lane.
@@ -1303,7 +1723,7 @@ function balk(K, b, cust, carDef, now, cap) {
     vehicleName: (carDef && carDef.name) || 'Vehicle',
     cap: _int(cap), used: usedUnits(K),
   });
-  bumpPop(K, null, EC('POP_BALK', -0.25), 'balk');
+  bumpPop(K, null, EC('POP_BALK'), 'balk');
   K.rev = _int(K.rev) + 1;
   return null;
 }
@@ -1327,17 +1747,22 @@ export function spawn(K, now, force) {
     if (!cust) cust = rpick(r, roster);
     const special = pick.special;
 
-    // WHAT THEY ARRIVE IN. A bulk buyer needs a vehicle that can plausibly
-    // carry the order, so the pool is filtered by seats before the weighted
-    // pick — otherwise the funniest bug in the feature is a corp suit loading
-    // forty boxes onto a BMX.
+    // WHAT THEY ARRIVE IN. Two filters, in this order: WHO IS DRIVING (§RIDES),
+    // then what the OCCASION needs — a bulk buyer needs a vehicle that can
+    // plausibly carry the order, otherwise the funniest bug in the feature is a
+    // corp suit loading forty boxes onto a BMX.
     const cars = Array.isArray(DATA.CARS) ? DATA.CARS : [];
-    let pool = cars;
+    let pool = ridePool(cars, cust);
     if (special === 'bulk') {
-      const big = cars.filter((c) => _int(c.seats) >= 4);
-      if (big.length) pool = big;
+      const big = pool.filter((c) => _int(c.seats) >= 4);
+      // ⚠ FALL BACK TO THE WHOLE ROSTER, NOT TO THE PERSONALITY'S OWN LIST. A
+      //    courier's bike cannot carry a corp bulk order, so when the two
+      //    filters have no intersection the OCCASION wins — a Kid on a BMX
+      //    never places a bulk order anyway (`rollSpecial` only ever picks
+      //    `suit` or `mayor` for it), so this is the rare-set-piece path.
+      pool = big.length ? big : (cars.filter((c) => _int(c.seats) >= 4) || pool);
     } else if (special === 'jump') {
-      const fast = cars.filter((c) => _num(c.patienceMul, 1) <= 0.9);
+      const fast = pool.filter((c) => _num(c.patienceMul, 1) <= 0.9);
       if (fast.length) pool = fast;
     }
     const carDef = rweight(r, pool, 'weight') || rpick(r, cars) || { id: 'hatch', icon: '🚗', seats: 2, patienceMul: 1, len: 1 };
@@ -1382,14 +1807,14 @@ export function spawn(K, now, force) {
       orderedAt: 0,
       expiresAt: 0,                             // set when the ticket is filed
       patienceMs: 0,                            // ditto — see §DEADLINE
-      balkAt: t + EC('LANE_BALK_MS', 26000),    // patience BEFORE ordering
+      balkAt: t + EC('LANE_BALK_MS'),    // patience BEFORE ordering
 
       // Geometry. pos 0 is the WINDOW, LANE_LEN is the mouth of the lane, and a
       // car spawns past that so it drives on screen instead of appearing.
-      pos: EC('LANE_ENTRY_POS', 1.30) * EC('LANE_LEN', 1.0),
+      pos: EC('LANE_ENTRY_POS') * EC('LANE_LEN'),
       slot: 99,                                 // reassigned by compact() below
-      target: EC('LANE_ENTRY_POS', 1.30),       // slot position, from compact()
-      _stop: EC('LANE_ENTRY_POS', 1.30),        // where the car AHEAD lets it get to
+      target: EC('LANE_ENTRY_POS'),       // slot position, from compact()
+      _stop: EC('LANE_ENTRY_POS'),        // where the car AHEAD lets it get to
       station: 'speaker',                       // speaker | queue | window
 
       state: 'rolling',                         // CONTRACT's four
@@ -1461,7 +1886,7 @@ export function spawn(K, now, force) {
  * in, and the player can see exactly what it cost them.
  */
 function jumpQueue(K, jumper, now) {
-  const cost = EC('JUMP_PATIENCE_COST_MS', 7000);
+  const cost = EC('JUMP_PATIENCE_COST_MS');
   // → boolean: did a cut-in actually happen? spawn() demotes the set piece when
   //   it did not, so nobody announces a queue jump to an empty lane.
 
@@ -1499,7 +1924,7 @@ function jumpQueue(K, jumper, now) {
   jumper.arrivedAt = _num(head.arrivedAt, now) + 0.5;
   compact(K, now);
   book(K).stats.jumped++;
-  bumpPop(K, null, EC('POP_JUMP', -0.60), 'queue-jump');
+  bumpPop(K, null, EC('POP_JUMP'), 'queue-jump');
   return true;
 }
 
@@ -1565,7 +1990,7 @@ function ticketFor(K, car) {
 function solvePatienceMul(K, items, wantMs) {
   let units = 0;
   for (const it of items) units += Math.max(1, _int(it.qty));
-  const base = EC('TICKET_BASE_MS', 45000) + EC('TICKET_ITEM_MS', 20000) * units;
+  const base = EC('TICKET_BASE_MS') + EC('TICKET_ITEM_MS') * units;
   const upFn = DF('patienceMul');
   const up = Math.max(0.01, _num(upFn ? upFn(K.upgrades) : 1, 1));
   const denom = Math.max(1, base * up);
@@ -1666,7 +2091,7 @@ function fileTicket(K, car, now) {
 function bumpPop(K, out, delta, why) {
   const d = _num(delta, 0);
   if (!d) return;
-  const lo = EC('POP_MIN', 0), hi = EC('POP_MAX', 100);
+  const lo = EC('POP_MIN'), hi = EC('POP_MAX');
   const before = _clamp(_num(K.popularity, 50), lo, hi);
   const after = _clamp(before + d, lo, hi);
   if (Math.abs(after - before) < 0.0001) return;
@@ -1696,7 +2121,7 @@ export function tick(K, dt, now) {
   try {
     if (!K) return out;
     const t = _num(now, _num(K.now, 0));
-    const step = _clamp(_num(dt, 16), 0, EC('MAX_DT_MS', 250));
+    const step = _clamp(_num(dt, 16), 0, EC('MAX_DT_MS'));
     if (!Array.isArray(K.lane)) K.lane = [];
     const b = book(K);
 
@@ -1708,7 +2133,7 @@ export function tick(K, dt, now) {
     settleGone(K, t);
 
     // 1. REAP. A car in 'exit' still occupies its slot — that IS the blocking.
-    const exitMs = EC('LANE_EXIT_MS', 1500);
+    const exitMs = EC('LANE_EXIT_MS');
     if (K.lane.length) {
       const keep = K.lane.filter((c) => !(c && c.state === 'gone' && t - _num(c.leftAt, t) >= exitMs));
       if (keep.length !== K.lane.length) { K.lane = keep; K.rev = _int(K.rev) + 1; }
@@ -1718,7 +2143,11 @@ export function tick(K, dt, now) {
     compact(K, t);
 
     // 3a. ROLL — one front-to-back pass, so nobody drives through anybody.
+    //     …then re-read WHERE everyone ended up (see `stations()`): a car that
+    //     moved this frame may have reached the speaker or cleared the window,
+    //     and `advanceCar()` below is about to ask.
     roll(K, step);
+    stations(K);
 
     // 3b. ADVANCE — phases, dialogue, patience.
     for (const car of Array.from(K.lane)) {
@@ -1745,6 +2174,7 @@ export function tick(K, dt, now) {
        moves nobody and re-applies the non-overlap clamp, which makes the
        invariant true on EVERY frame render is handed rather than on most. */
     roll(K, 0);
+    stations(K);
 
     // Drain anything the steps above raised through the buffered path (a
     // fake-`K` harness). Done LAST so a car that spawned this frame reports it
@@ -1757,11 +2187,47 @@ export function tick(K, dt, now) {
   }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   🗺 §GEOGRAPHY — THE PICTURE AND THE STATE MACHINE NOW AGREE.
+   ═══════════════════════════════════════════════════════════════════════════
+   The lane runs RIGHT TO LEFT in sim coordinates: `pos` 0 is the WINDOW, `pos`
+   LANE_LEN is the MOUTH, and a car spawns past the mouth at LANE_ENTRY_POS so
+   it drives on screen. Render draws two fixtures against that — 🔊 ORDER HERE
+   at the mouth and 🪟 WINDOW at pos 0 — and the brief's four beats are
+   ORDER → PAY → WAIT → COLLECT.
+
+   🔴 ROUND 2 FIXED THE PICTURE AND LEFT THE STATE MACHINE ALONE, so the two
+   disagreed in a way the player could read. `station` was a SLOT LOOKUP
+   (`i === 0 ? 'window' : last ? 'speaker' : 'queue'`) and the order phase was
+   gated on nothing but "have I stopped moving" — so on an empty lane the only
+   car in it was slot 0, rolled all the way to the hatch, and ANNOUNCED ITS
+   ORDER THERE, while the pinned card printed "At the window" over the top of
+   it. Instrumented over one day at level 20, order-phase frames by position:
+   {1.00:737, 0.75:334, 0.25:137, 0.50:16, 0.00:24}. Forty-two per cent of all
+   ordering happened away from the sign the game had just drawn.
+
+   THREE CHANGES, AND THEY ONLY WORK TOGETHER:
+     1. `compact()` clamps the TARGET of any car that has not ordered to
+        LANE_SPEAKER_POS. You cannot drive past the speaker before you speak.
+     2. `stations()` derives `station` from `pos` instead of from slot index,
+        after `roll()`, so the word on the card is the place the car is.
+     3. `advanceCar()` gates the order phase on reaching its own `target` — not
+        on "came to rest", which was true for a car merely BLOCKED out on the
+        road — and on `station === 'speaker'`.
+   Measured after, same instrument, five seeds: {speaker: 5160} and nothing
+   else, at pos 1.00 exactly.
+
+   ⚠ THE THROUGHPUT COST, MEASURED RATHER THAN ASSUMED. Serialising the speaker
+   means one car orders at a time. Over six seeded 720s days at level 20 with an
+   assembling auto-cook: 784 arrived, 512 served, 232 lost, 1182 balked — a 65%
+   finish rate against the 32% the pre-change lane measured. It did not cost
+   throughput; the pull-up beat is short (LANE_ORDER_MS) against a spawn
+   interval measured in whole seconds, and cars now clear the window faster
+   because they are not sitting at it deciding.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
 /**
- * Assign FIFO slots and the three lane STATIONS the brief asks for
- * (ORDER → PAY → WAIT → COLLECT): the back of the queue is the SPEAKER where
- * you order, the middle is the QUEUE where you wait, and slot 0 is the WINDOW
- * where you pay and collect.
+ * Assign FIFO slots and where each car is ENTITLED to stop.
  *
  * 🔴 GONE CARS KEEP THEIR SLOT until `LANE_EXIT_MS` has elapsed. That single
  * line is the "cars block each other" mechanic: a car you served slowly still
@@ -1772,8 +2238,9 @@ export function tick(K, dt, now) {
 function compact(K, now) {
   const cars = K.lane.filter(Boolean).sort((a, b2) => _num(a.arrivedAt, 0) - _num(b2.arrivedAt, 0));
   const cap = capOf(K);
-  const laneLen = EC('LANE_LEN', 1.0);
+  const laneLen = EC('LANE_LEN');
   const unit = laneLen / Math.max(1, cap - 1);
+  const speaker = speakerPos();
 
   /* 🔴 SLOTS ARE MEASURED IN LENGTH UNITS, NOT IN CARS. CARS[] ships a `len`
      (a rig and a transit bus are 2, everything else is 1) and an earlier draft
@@ -1787,14 +2254,75 @@ function compact(K, now) {
   for (let i = 0; i < cars.length; i++) {
     const c = cars[i];
     if (c.slot !== i) { c.slot = i; K.rev = _int(K.rev) + 1; }
-    c.target = used * unit;
-    // Where they physically are, which is what the brief's ORDER → PAY → WAIT →
-    // COLLECT is about: slot 0 is the window, the far end is the speaker.
-    c.station = i === 0 ? 'window' : (used + Math.max(1, _int(c.len) || 1) >= cap ? 'speaker' : 'queue');
+    const slotPos = used * unit;
+    /* 🔴 §GEOGRAPHY — YOU MAY NOT DRIVE PAST THE SPEAKER BEFORE YOU HAVE
+       ORDERED. One `Math.max` and it is the whole fix for a bug the round-2
+       critic measured directly: order-phase frames by position came out
+       {1.00:737, 0.75:334, 0.25:137, 0.50:16, 0.00:24}, i.e. twenty-four frames
+       of a customer announcing their order while parked at the PICKUP HATCH,
+       and 42% of all ordering happening somewhere other than the sign. The
+       PICTURE had already been fixed — render draws 🔊 ORDER HERE at the mouth
+       and 🪟 WINDOW at pos 0 — but the state machine still let a car enter its
+       `order` phase from whichever slot it happened to stop in, which on an
+       empty lane is slot 0, the window.
+
+       Clamping the TARGET rather than gating the phase is what makes the two
+       agree instead of merely disagreeing more quietly: an arrival now comes to
+       rest AT the sign, speaks there, and only then rolls up to its slot. On an
+       empty lane that is a visible pull-up-and-order beat where there used to
+       be a car sliding silently to the hatch; in a full lane the rear slot IS
+       the sign, so nothing about the queue picture changes.
+
+       ⚠ CARS BEHIND AN ORDERING CAR CAN BE PUSHED PAST THE LANE MOUTH, and
+       that is the honest simulation rather than a defect — `roll()`'s
+       non-overlap floor puts them out on the road, `carX()` clips them behind
+       the sign, and their BALK CLOCK is running the whole time. Ordering takes
+       LANE_ORDER_MS (2.4s) against a spawn interval measured in whole seconds,
+       so it is a transient; when it is not a transient, the lane is genuinely
+       jammed and POP_JAM is the correct thing to be charging for it. */
+    c.target = (!c.ticketId && c.state !== 'gone') ? Math.max(slotPos, speaker) : slotPos;
     used += Math.max(1, _int(c.len) || 1);
   }
   K.lane = cars;
+  stations(K);
 }
+
+/** The speaker box, in lane units from the window. See §GEOGRAPHY. */
+function speakerPos() {
+  return _clamp(EC('LANE_SPEAKER_POS'), 0, 1) * EC('LANE_LEN');
+}
+
+/**
+ * WHERE EACH CAR PHYSICALLY IS — derived from `pos`, not from slot index.
+ *
+ * 🔴 THIS USED TO BE A SLOT LOOKUP AND IT LIED. `station` was
+ * `i === 0 ? 'window' : (last ? 'speaker' : 'queue')`, so the rear car of a
+ * TWO-car lane was reported "At the speaker" while sitting a third of the way
+ * down the tarmac, and the only car in an empty lane was reported "At the
+ * window" while it was still rolling in. The renderer prints that string to the
+ * player on the pinned card (STATION_WORD), so it was a caption contradicting
+ * the picture beside it. Position is the only thing that can answer the
+ * question, so position answers it.
+ *
+ * Called at the end of `compact()` for the initial placement and again after
+ * `roll()` each frame, because a car that MOVED this frame may have changed
+ * which fixture it is standing at.
+ */
+function stations(K) {
+  const speaker = speakerPos();
+  const unit = EC('LANE_LEN') / Math.max(1, capOf(K) - 1);
+  const windowPos = unit * 0.5;          // "at the hatch", not "exactly on zero"
+  for (const c of (K.lane || [])) {
+    if (!c) continue;
+    const at = c.pos <= windowPos ? 'window' : (c.pos >= speaker - POS_EPS ? 'speaker' : 'queue');
+    if (c.station !== at) { c.station = at; K.rev = _int(K.rev) + 1; }
+  }
+}
+
+/* Tolerance for "has this car come to rest". One frame of roll at 60fps is
+   LANE_ROLL_UNITS_S/60 ≈ 0.009 lane units, so anything at or below that reads
+   as arrived rather than as still moving. */
+const POS_EPS = 0.02;
 
 /** Lane occupancy in LENGTH UNITS, gone-but-not-yet-reaped cars included —
     a car still clearing the window is still in the way. */
@@ -1823,8 +2351,8 @@ function usedUnits(K) {
  * out of a field the data file already ships.
  */
 function roll(K, dt) {
-  const step = EC('LANE_ROLL_UNITS_S', 0.55) * (dt / 1000);
-  const laneLen = EC('LANE_LEN', 1.0);
+  const step = EC('LANE_ROLL_UNITS_S') * (dt / 1000);
+  const laneLen = EC('LANE_LEN');
   const cap = capOf(K);
   const unit = laneLen / Math.max(1, cap - 1);   // one slot's worth of lane
   const exitPos = -0.35 * laneLen;
@@ -1904,26 +2432,35 @@ function advanceCar(K, car, dt, now, out) {
 
   // ── mood, for the face over the car. Cheap, every frame, read by render. ──
   const pct = patiencePct(car, now);
-  const mood = pct <= EC('LANE_MOOD_ANGRY', 0.25) ? 'furious'
-             : pct <= EC('LANE_MOOD_TESTY', 0.55) ? 'testy'
+  const mood = pct <= EC('LANE_MOOD_ANGRY') ? 'furious'
+             : pct <= EC('LANE_MOOD_TESTY') ? 'testy'
              : (car.special === 'favour' ? 'happy' : 'ok');
   if (mood !== car.mood) { car.mood = mood; K.rev = _int(K.rev) + 1; }
 
   // ── APPROACH → ORDER. They order once they have physically reached the
   //    back of the queue, which is where the speaker box is. ─────────────────
   if (car.phase === 'approach') {
-    /* They order once they have COME TO REST (`_stop`, which accounts for the
-       car in front — see roll()) AND are actually inside the lane rather than
-       still queued out on the road. Gating on `target` alone would let a car
-       blocked out at the mouth of the lane order from the street, and gating on
-       the lane mouth alone would let a still-moving car order mid-roll. */
-    const parked = car.pos <= _num(car._stop, car.target) + 0.02;
-    const inLane = car.pos <= EC('LANE_LEN', 1.0) + 0.02;
-    if (parked && inLane) {
+    /* 🔴 §GEOGRAPHY — THEY ORDER AT THE SPEAKER, AND NOWHERE ELSE.
+       The test is `pos <= target`, not `pos <= _stop`, and the difference is
+       the entire fix. `_stop` is "wherever the car in front let me get to", so
+       a car blocked out on the road counted as PARKED and ordered from the
+       street — one of the two ways round 2 ended up with 42% of ordering
+       happening away from the sign. `target` is where this car is ENTITLED to
+       be, and `compact()` now clamps that to the speaker for anybody who has
+       not ordered (see §GEOGRAPHY there). So reaching `target` means one thing
+       only: I am at the sign, at rest, and it is my turn to speak.
+
+       `station === 'speaker'` is asserted alongside rather than instead of it,
+       because `station` is derived from raw `pos` and would also be true for a
+       car sitting FURTHER BACK than the sign — which is exactly the blocked car
+       we are refusing. Both must hold. */
+    const atTarget = car.pos <= _num(car.target, car.pos) + POS_EPS;
+    const atSpeaker = car.station === 'speaker';
+    if (atTarget && atSpeaker) {
       car.phase = 'order';
       car.state = 'ordering';
       car.orderStartedAt = now;
-      say(K, car, speakerLine(car), EC('LANE_ORDER_MS', 2400) + 1200);
+      say(K, car, speakerLine(car), EC('LANE_ORDER_MS') + 1200);
       K.rev = _int(K.rev) + 1;
     } else if (now >= _num(car.balkAt, Infinity)) {
       // Jammed at the mouth of the lane and never got to speak. Their fault?
@@ -1935,7 +2472,7 @@ function advanceCar(K, car, dt, now, out) {
 
   // ── ORDER → WAIT. The ticket is filed and the shared deadline starts. ─────
   if (car.phase === 'order') {
-    if (now - _num(car.orderStartedAt, now) < EC('LANE_ORDER_MS', 2400)) return;
+    if (now - _num(car.orderStartedAt, now) < EC('LANE_ORDER_MS')) return;
     const ticket = fileTicket(K, car, now);
     if (!ticket) { giveUp(K, car, 'nomenu', now, out); return; }
     car.ticketId = ticket.id;
@@ -1980,9 +2517,9 @@ function advanceCar(K, car, dt, now, out) {
      VOICE header). A fixed interval over one shared pool is what made the last
      ten seconds of a doomed order read exactly like the first ten, and what had
      the Mayor's Aide say the same sentence eighteen times in one shift. */
-  if (pct < EC('LANE_MOOD_TESTY', 0.55) && now >= _num(car.nagAt, 0)) {
+  if (pct < EC('LANE_MOOD_TESTY') && now >= _num(car.nagAt, 0)) {
     const furious = car.mood === 'furious';
-    car.nagAt = now + (furious ? EC('LANE_NAG_ANGRY_MS', 5500) : EC('LANE_NAG_MS', 9000));
+    car.nagAt = now + (furious ? EC('LANE_NAG_ANGRY_MS') : EC('LANE_NAG_MS'));
     say(K, car, pickLine(K, car, furious ? 'furious' : 'testy'), 3200);
   }
 
@@ -2083,7 +2620,7 @@ function giveUp(K, car, reason, now, out, silentTicket) {
 
   // A car that never got to order produces no ticket, so state.js has no path
   // to charge for it. POP_JAM is ours, and it is the heavier of our two.
-  if (!car.ticketId) bumpPop(K, out, EC('POP_JAM', -0.90), 'jammed');
+  if (!car.ticketId) bumpPop(K, out, EC('POP_JAM'), 'jammed');
 
   raise(K, out, 'car:leave', { carId: car.carId, custId: car.custId, reason, served: false });
 }
@@ -2185,10 +2722,10 @@ function remember(K, car, outcome, now) {
    ═══════════════════════════════════════════════════════════════════════════ */
 function laneIntervalMs(K) {
   const f = DF('spawnIntervalMs');
-  const whole = f ? _num(f(_num(K.popularity, 50), _num(K.shift && K.shift.rush, 1)), EC('SPAWN_BASE_MS', 9000))
-                  : EC('SPAWN_BASE_MS', 9000);
-  const laneShare = _clamp(1 - EC('COUNTER_SHARE', 0.35), 0.05, 1);
-  return Math.max(EC('SPAWN_MIN_MS', 1400), whole / laneShare);
+  const whole = f ? _num(f(_num(K.popularity, 50), _num(K.shift && K.shift.rush, 1)), EC('SPAWN_BASE_MS'))
+                  : EC('SPAWN_BASE_MS');
+  const laneShare = _clamp(1 - EC('COUNTER_SHARE'), 0.05, 1);
+  return Math.max(EC('SPAWN_MIN_MS'), whole / laneShare);
 }
 
 function scheduleArrivals(K, now, out) {
@@ -2199,13 +2736,13 @@ function scheduleArrivals(K, now, out) {
   // is what state.js's LAST_CALL_MS grace is for.
   const pctFn = DF('dayPct');
   const dayPct = pctFn ? _clamp(_num(pctFn(_num(K.shift.tMs, 0)), 0), 0, 1)
-                       : _clamp(_num(K.shift.tMs, 0) / Math.max(1, EC('DAY_MS', 720000)), 0, 1);
+                       : _clamp(_num(K.shift.tMs, 0) / Math.max(1, EC('DAY_MS')), 0, 1);
   if (dayPct >= 1) return;
 
-  if (!b.nextAt) { b.nextAt = now + EC('SHIFT_GRACE_MS', 4000); return; }
+  if (!b.nextAt) { b.nextAt = now + EC('SHIFT_GRACE_MS'); return; }
   if (now < b.nextAt) return;
 
-  const j = EC('SPAWN_JITTER', 0.25);
+  const j = EC('SPAWN_JITTER');
   b.nextAt = now + laneIntervalMs(K) * (1 - j + rnd(K) * 2 * j);
   spawn(K, now, false);
 }
@@ -2307,6 +2844,20 @@ export function serveCar(K, carId, now) {
     car.leftAt = t;
     car.reason = 'served';
     settle(K, car, 'served', t);
+
+    /* §SETTLEMENT, THE WORD-OF-MOUTH HALF. The Cinder went out on the tip line
+       inside `State.serveTicket()` (see §SETTLEMENT and `tipFor()`); the
+       popularity has no path through state.js at all — `bumpPop(popGain)` there
+       prices the FOOD, not the promise — so it is charged here, once, by the
+       verb, exactly like the balk and the wave-off are.
+       ⚠ `_modPopped` and not `_settled`: a car is settled by the tick sweep
+       whichever door it left through, and only THIS door has a verdict to
+       charge for. Guarding on the shared flag would silently skip the charge
+       the moment the sweep got there first. */
+    if (!car._modPopped && (verdict.honoured || verdict.broken)) {
+      car._modPopped = true;
+      if (verdict.pop) bumpPop(K, null, verdict.pop, verdict.broken ? 'promise-broken' : 'promise-kept');
+    }
     K.rev = _int(K.rev) + 1;
 
     return {
@@ -2315,6 +2866,10 @@ export function serveCar(K, carId, now) {
       custName: car.name, icon: car.icon,
       line: car.say || '',
       honoured: verdict.honoured, broken: verdict.broken, unproven: verdict.unproven,
+      // What the promise itself was worth, so `rewardMoment()` can say so
+      // rather than leaving the player to infer it from a tip that moved.
+      modCinder: Math.round(_num(verdict.cinder, 0)),
+      modPop: Math.round(_num(verdict.pop, 0) * 100) / 100,
       mods: verdict.detail,
     };
   } catch (e) {
@@ -2366,7 +2921,7 @@ export function waveCar(K, carId, now) {
     settle(K, car, 'waved', t);
     K.rev = _int(K.rev) + 1;
 
-    const pop = EC('POP_WAVE', -2.0);
+    const pop = EC('POP_WAVE');
     bumpPop(K, null, pop, 'waved');
     raiseLater(K, 'car:leave', { carId: car.carId, custId: car.custId, reason: 'waved', served: false });
     return { ok: true, code: 'OK', why: '', custName: car.name, icon: car.icon, pop };
@@ -2397,10 +2952,10 @@ export function patiencePct(car, now) {
   const t = _num(now, 0);
   if (car.state === 'gone') return 0;
   if (!car.ticketId) {
-    const span = Math.max(1, EC('LANE_BALK_MS', 26000));
+    const span = Math.max(1, EC('LANE_BALK_MS'));
     return _clamp((_num(car.balkAt, t) - t) / span, 0, 1);
   }
-  const span = Math.max(1, _num(car.patienceMs, EC('TICKET_BASE_MS', 45000)));
+  const span = Math.max(1, _num(car.patienceMs, EC('TICKET_BASE_MS')));
   return _clamp((_num(car.expiresAt, t) - t) / span, 0, 1);
 }
 
@@ -2441,13 +2996,13 @@ export function tipFor(K, car, quality, now) {
     const live = (car && car.custId) ? car : (K ? findCar(K, car && car.carId) : null) || car || {};
 
     const patience = _clamp(patiencePct(live, t), 0, 1);
-    const qCeil = Math.max(0.01, EC('Q_PERFECT', 1.25));
+    const qCeil = Math.max(0.01, EC('Q_PERFECT'));
     const q = _clamp(_num(quality, 0) / qCeil, 0, 1);
     const pop = _clamp(_num(K && K.popularity, 50) / 100, 0, 1);
 
-    const blend = patience * EC('TIP_PATIENCE_W', 0.45)
-                + q        * EC('TIP_QUALITY_W', 0.35)
-                + pop      * EC('TIP_POP_W', 0.20);
+    const blend = patience * EC('TIP_PATIENCE_W')
+                + q        * EC('TIP_QUALITY_W')
+                + pop      * EC('TIP_POP_W');
 
     /* ── THE GENEROSITY STACK, AND WHY IT IS CAPPED ────────────────────────
        `blend` is the part the PLAYER earns — patience left, how good the food
@@ -2479,9 +3034,9 @@ export function tipFor(K, car, quality, now) {
     const upFn = DF('tipMul');
     gen *= _num(upFn && K ? upFn(K.upgrades) : 1, 1);
 
-    if (live.special === 'bulk')   gen *= EC('BULK_TIP_MULT', 1.35);
-    if (live.special === 'grudge') gen *= EC('GRUDGE_TIP_MULT', 0.45);
-    if (live.special === 'favour') gen *= EC('FAVOUR_TIP_MULT', 1.55);
+    if (live.special === 'bulk')   gen *= EC('BULK_TIP_MULT');
+    if (live.special === 'grudge') gen *= EC('GRUDGE_TIP_MULT');
+    if (live.special === 'favour') gen *= EC('FAVOUR_TIP_MULT');
 
     /* §MODIFIERS scored — and 🔴 NOT AGAINST `quality`. Honouring a promise pays
        MOD_TIP_HIT, breaking it costs MOD_TIP_MISS, and a promise the game
@@ -2495,7 +3050,8 @@ export function tipFor(K, car, quality, now) {
        onions" is a promise about the burgers, not about the milkshake next to
        them. `ticketFor()` recovers the ticket even from the `{carId}` stub
        state.js passes once the car has left the lane. */
-    const verdict = judgeTicket(ticketFor(K, live) || ticketFor(K, car));
+    const ticket = ticketFor(K, live) || ticketFor(K, car);
+    const verdict = judgeTicket(ticket);
     gen *= verdict.mul;
 
     /* THREE GUARDS, EACH DOING A DIFFERENT JOB. They were arrived at by
@@ -2529,14 +3085,64 @@ export function tipFor(K, car, quality, now) {
        ~17%; it was wrong by a factor of thirty, because the check it described
        always passed (§MODIFIERS). Numbers in this comment are re-measured when
        the mechanic changes or they are deleted. */
-    const pct = EC('TIP_MAX_PCT', 0.35) * _clamp(blend, 0, 1)
-              * _clamp(gen, 0, EC('TIP_GEN_MAX', 4.0));
+    const pct = EC('TIP_MAX_PCT') * _clamp(blend, 0, 1)
+              * _clamp(gen, 0, EC('TIP_GEN_MAX'));
+    const tipPct = Math.min(pct, EC('TIP_HARD_PCT'));
 
-    return _clamp(Math.min(pct, EC('TIP_HARD_PCT', 0.70)),
-                  EC('TIP_FRACTION_MIN', 0.01), EC('TIP_FRACTION_MAX', 0.95));
+    /* ── §SETTLEMENT RIDES OUT HERE. Read the §SETTLEMENT header first. ─────
+       The three clamps above shape a TIP. This is not a tip: it is the
+       modifier settlement, priced in absolute Cinder from MOD_PAY_*, and it is
+       delivered on the tip line because `tipFor()` is the only seam state.js
+       opens between computing the payout and paying it.
+
+       🔴 IT IS ADDED AFTER TIP_HARD_PCT AND THAT IS DELIBERATE. Folding it in
+       before the design ceiling would let the ceiling eat exactly the thing the
+       player is being taught to chase — which is the failure the ceiling itself
+       was introduced to fix on the generosity stack (see the comment above it).
+       The settlement is bounded by its own ECON keys and by the line prices it
+       is a percentage of; it does not need a second ceiling on top.
+
+       🔴 AND IT MAY RETURN ZERO. `TIP_FRACTION_MIN` exists so a served car
+       always drops a coin, and it is suspended for exactly one case: a promise
+       the player BROKE. state.js reads a non-positive return as "no tip", so a
+       badly broken ticket costs the whole tip — the largest punishment this
+       pipe can deliver, and the reason the HANDOVER asks for a payout hook. */
+    const est = payoutEstimate(K, ticket);
+    const settle = est > 0 ? (_num(verdict.cinder, 0) / est) : 0;
+    const total = tipPct + settle;
+    if (total <= 0) return 0;
+    return _clamp(total, EC('TIP_FRACTION_MIN'), EC('TIP_FRACTION_MAX'));
   } catch (e) {
-    return EC('TIP_FRACTION_MIN', 0.01);   // rule 2: a bad tip beats a dead till
+    return EC('TIP_FRACTION_MIN');   // rule 2: a bad tip beats a dead till
   }
+}
+
+/**
+ * What state.js is about to pay for this ticket, re-derived so the §SETTLEMENT
+ * can be expressed as a fraction of it.
+ *
+ * ⚠ IT MIRRORS `serveTicket()`'s formula RATHER THAN OWNING IT, and the two
+ * files must not drift: gross is Σ(basePrice × qsum), then `popPayMul()` and
+ * `rushPayMul()` — both kitchen.data.js functions, both read by state.js from
+ * the same place. If a fourth multiplier is ever added to the payout, this
+ * estimate is quietly wrong by that factor and the settlement is delivered at
+ * the wrong size. That is the strongest argument in the file for the payout
+ * hook in the HANDOVER: with it, this function deletes.
+ *
+ * It is only ever a DENOMINATOR, so an under-estimate over-delivers the
+ * settlement and an over-estimate under-delivers it; neither can invert the
+ * sign, and a zero falls back to paying nothing extra rather than dividing.
+ */
+function payoutEstimate(K, ticket) {
+  if (!ticket || !Array.isArray(ticket.items)) return 0;
+  let gross = 0;
+  for (const it of ticket.items) gross += linePrice(it);
+  if (!(gross > 0)) return 0;
+  const popFn = DF('popPayMul'), rushFn = DF('rushPayMul');
+  const popMult = popFn ? _num(popFn(_num(K && K.popularity, 50)), 1)
+                        : EC('POP_PAY_FLOOR') + (_num(K && K.popularity, 50) / 100) * EC('POP_PAY_SPAN');
+  const rushMult = rushFn ? _num(rushFn(_num(K && K.shift && K.shift.rush, 1)), 1) : 1;
+  return Math.max(0, gross * popMult * rushMult);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -2593,18 +3199,43 @@ export function clearLane(K) {
 export function arrivalPlan(opts) {
   const o = opts || {};
   const r = mulberry32(_int(o.seed) || 1);
-  const dayMs = EC('DAY_MS', 720000);
+  const dayMs = EC('DAY_MS');
   const from = _clamp(_num(o.fromMs, 0), 0, dayMs);
   const to = _clamp(_num(o.toMs, dayMs), from, dayMs);
-  const pop = _clamp(_num(o.pop, EC('POP_START', 50)), EC('POP_MIN', 0), EC('POP_MAX', 100));
+  const pop = _clamp(_num(o.pop, EC('POP_START')), EC('POP_MIN'), EC('POP_MAX'));
   const level = Math.max(1, _int(o.level) || 40);
   const upgrades = Array.isArray(o.upgrades) ? o.upgrades : [];
-  const share = _clamp(_num(o.laneShare, 1 - EC('COUNTER_SHARE', 0.35)), 0.05, 1);
-  const serveRate = _clamp(_num(o.serveRate, 0.7), 0, 1);
+  const share = _clamp(_num(o.laneShare, 1 - EC('COUNTER_SHARE')), 0.05, 1);
+  /* 🔴 THE ASSUMED HIT RATE, AND IT IS NOW MEASURED RATHER THAN WISHED FOR.
+     The default was 0.7 — "a competent shift" — and it did not describe the
+     game that shipped. Round 2 measured the divergence directly:
+       arrivalPlan({seed:1337, 0..720s, pop:90, level:20})
+         → 166 arrivals, specials {none:152, bulk:6, favour:6, jump:2}
+       twelve live seeded days at the same level and popularity
+         → {none:526, bulk:16, jump:21, grudge:23, favour:12}
+     Six favours and zero grudges in the replay against grudges outnumbering
+     favours 2:1 in play — because `rollSpecial()` reads
+     `wronged = (lost + waved) > served` and 0.7 models a player who almost
+     never loses anybody. A balance argument settled on the replay tool was
+     being settled on a KINDER GAME than the one running.
+
+     So the default is ECON.PLAN_SERVE_RATE, which is the lane's own measured
+     figure and is a lane number like SPAWN_BASE_MS. `plan.serveRate` is stamped
+     on the returned array so a reader can see which player was modelled without
+     reading this comment, and passing an explicit `serveRate` still models
+     whatever you like — 1 for a perfect shift, 0 for a disaster.
+
+     ⚠ RE-MEASURE IT WHEN THE LANE IS RETUNED. It is a snapshot of a moving
+     number: an assembling auto-cook over 6 seeded 720s days at level 20 /
+     popularity 85 finishes 630 served against 251 lost tickets and 784/1182
+     arrived-versus-balked at the mouth. Which of those two ratios you want
+     depends on the question; PLAN_SERVE_RATE models the FINISHED-CUSTOMER one,
+     because that is the ledger `rollSpecial()` reads. */
+  const serveRate = _clamp(_num(o.serveRate, EC('PLAN_SERVE_RATE')), 0, 1);
 
   const rushFn = DF('rushAt');
   const intervalFn = DF('spawnIntervalMs');
-  const jitter = EC('SPAWN_JITTER', 0.25);
+  const jitter = EC('SPAWN_JITTER');
   const roster = Array.isArray(DATA.CUSTOMERS) ? DATA.CUSTOMERS : [];
   const cars = Array.isArray(DATA.CARS) ? DATA.CARS : [];
 
@@ -2618,16 +3249,21 @@ export function arrivalPlan(opts) {
   let guard = 0;
   while (tMs < to && guard++ < 20000) {
     const rush = rushFn ? _num(rushFn(tMs), 1) : 1;
-    const whole = intervalFn ? _num(intervalFn(pop, rush), EC('SPAWN_BASE_MS', 9000))
-                             : EC('SPAWN_BASE_MS', 9000);
-    const gap = Math.max(EC('SPAWN_MIN_MS', 1400), whole / share) * (1 - jitter + r() * 2 * jitter);
+    const whole = intervalFn ? _num(intervalFn(pop, rush), EC('SPAWN_BASE_MS'))
+                             : EC('SPAWN_BASE_MS');
+    const gap = Math.max(EC('SPAWN_MIN_MS'), whole / share) * (1 - jitter + r() * 2 * jitter);
     tMs += gap;
     if (tMs >= to) break;
 
     const pick = rollSpecial(fake, r, level);
     const cust = (pick.custId ? customerOf(pick.custId) : null) || rpick(r, roster);
-    let pool = cars;
-    if (pick.special === 'bulk') { const big = cars.filter((c) => _int(c.seats) >= 4); if (big.length) pool = big; }
+    // Same two filters `spawn()` uses, in the same order (§RIDES) — a replay
+    // that puts a different driver in a different vehicle is not a replay.
+    let pool = ridePool(cars, cust);
+    if (pick.special === 'bulk') {
+      const big = pool.filter((c) => _int(c.seats) >= 4);
+      pool = big.length ? big : (cars.filter((c) => _int(c.seats) >= 4) || pool);
+    }
     const carDef = rweight(r, pool, 'weight') || { id: 'hatch', seats: 2, patienceMul: 1 };
     const items = buildOrder(r, cust, carDef, level, pick.special);
     if (!items.length) continue;
@@ -2643,9 +3279,10 @@ export function arrivalPlan(opts) {
        rush returned specials {none:29, favour:2, bulk:1}. A balance argument
        settled by running the replay tool was being settled on the opposite data
        to the game.
-       `serveRate` is the assumed hit rate of the player being modelled — 0.7 is
-       a competent shift. Pass 1 to model a perfect one, 0 to model a disaster,
-       and the grudge/favour mix moves the way it does in play. */
+       `serveRate` is the assumed hit rate of the player being modelled and it
+       defaults to ECON.PLAN_SERVE_RATE, the lane's MEASURED figure — see the
+       comment on it above, which records how far the old 0.7 was from the game
+       that shipped. Pass 1 to model a perfect shift, 0 to model a disaster. */
     if (cust && cust.id) {
       const mem = book(fake).mem;
       const m = mem[cust.id] || (mem[cust.id] = { served: 0, lost: 0, waved: 0, lastAt: 0 });
@@ -2667,6 +3304,15 @@ export function arrivalPlan(opts) {
       patienceMs: patienceFor(cust, carDef, items, mods, pick.special),
     });
   }
+  /* Stamped on the array rather than returned in a wrapper: every existing
+     caller treats the result as a plain list and a shape change would break
+     them for a field most of them do not want. `plan.serveRate` says which
+     player this plan modelled, which is the thing a balance argument has to
+     agree on before it can be had at all. */
+  try {
+    out.serveRate = serveRate;
+    out.seed = _int(o.seed) || 1;
+  } catch (e) { /* a frozen array is still a valid plan */ }
   return out;
 }
 
@@ -2789,6 +3435,15 @@ export function laneStatus(K, now) {
                   — unproven. `modVerdict(K, car)` returns exactly those three
                   words per mod, live, every frame.
 
+     p.lane / p.lanes   §BALK SPACING. Which row of the far-side band a
+                  drive-past belongs in, and how many rows there are. Five balks
+                  in one frame used to be five sprites at identical coordinates
+                  (measured live at 360px: all five at x=304, one on top of
+                  another). `passersBy()` also holds each one at the kerb for
+                  its own `delay`, so a burst leaves in single file — the two
+                  together are the whole fix, and the renderer only has to
+                  honour `lane` and `pct`.
+
    The balk has no car at all — see `passersBy()`.
    ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -2847,11 +3502,20 @@ function cardFor(K, car, now) {
       icon: rec.icon || '🍽',
       qty: _int(it.qty) || 1,
       filled: _int(it.filled),
-      mods: (Array.isArray(it.mods) ? it.mods : []).map((m) => ({
-        id: m.id, label: m.label, kind: m.kind, ing: m.ing || null,
-        ingIcon: ingIconOf(m.ing),
-        result: ticket ? judgeMod(m, it) : 'unproven',
-      })),
+      mods: (Array.isArray(it.mods) ? it.mods : []).map((m) => {
+        const result = ticket ? judgeMod(m, it) : 'unproven';
+        const row = verdict && verdict.detail.find((d) => d.id === m.id && d.recipeId === it.recipeId);
+        return {
+          id: m.id, label: m.label, kind: m.kind, ing: m.ing || null,
+          ingIcon: ingIconOf(m.ing),
+          result,
+          // 🔴 THE STAKES, ON THE CHIP. A verdict the player only learns after
+          //    the money has moved is a mechanic they never learn at all — so
+          //    the chip can show what this promise is worth BEFORE they decide
+          //    whether to keep it. Signed Cinder, straight off §SETTLEMENT.
+          cinder: row ? _int(row.cinder) : 0,
+        };
+      }),
     });
   }
 
@@ -2906,15 +3570,27 @@ export function passersBy(K, now) {
   try {
     if (!K) return [];
     const t = _num(now, K.now);
-    const span = Math.max(1, EC('LANE_PASSBY_MS', 2600));
+    const span = Math.max(1, EC('LANE_PASSBY_MS'));
+    const lanes = Math.max(1, _int(EC('PASSBY_LANES')));
     const out = [];
     for (const p of (book(K).passers || [])) {
-      const pct = _clamp((t - _num(p.at, t)) / span, 0, 1);
+      // 🔴 The head start (§BALK SPACING). A car that has not left the kerb yet
+      //    is NOT emitted at pct 0 — it is not emitted at all, so a burst
+      //    genuinely strings out instead of five sprites sitting on the start
+      //    line together waiting for their turn to move.
+      const elapsed = t - _num(p.at, t) - _num(p.delay, 0);
+      if (elapsed < 0) continue;
+      const pct = _clamp(elapsed / span, 0, 1);
       if (pct >= 1) continue;
       out.push({
         id: p.id, custId: p.custId, custName: p.custName, icon: p.icon,
         vehicle: p.vehicle, vehicleIcon: p.vehicleIcon, vehicleName: p.vehicleName,
         pct,
+        // Which row of the far-side band to draw this one in, 0..PASSBY_LANES-1.
+        // Render may hash the id instead; this is the same answer, decided once,
+        // by the file that knows how many are in flight.
+        lane: _int(p.lane) % lanes,
+        lanes,
       });
     }
     return out;
@@ -2940,41 +3616,105 @@ export function regulars(K) {
    say-sos. Everything below WORKS today; each one would work better with a
    small addition somebody else owns.
 
-   1. ECON KEYS. The block near the top of this file lists 24 keys this module
-      reads that kitchen.data.js does not define yet. They are all lane concepts
-      and they belong in ECON, not in `EC()` fallbacks here. Nothing breaks
-      until somebody wants to retune the lane and cannot find the numbers.
+   1. ✅ ECON KEYS — CLOSED, ALL OF THEM. The 36 keys this file used to carry as
+      `EC(key, literal)` fallbacks are in kitchen.data.js, `EC()` now takes ONE
+      argument, and the four keys this round introduced —
 
-   2. 🔴 MODIFIER EVIDENCE — THE ONE THING THIS FILE IS STILL WAITING FOR.
-      §MODIFIERS is now a literal three-way check ('honoured' | 'broken' |
-      'unproven') instead of a quality comparison that always passed. `cook`
-      mods ("well done") already score for real off `item.pn` / `item.filled`,
-      which state.js already maintains. The INGREDIENT mods — every `hold` and
-      every `extra`, which is the great majority of them — read 'unproven' and
-      are worth exactly zero until kitchen.state.js records what was built.
+        LANE_SPEAKER_POS   where the speaker box is (§GEOGRAPHY)
+        PASSBY_STAGGER_MS  head start between consecutive drive-pasts
+        PASSBY_LANES       rows of the far-side band to spread them over
+        PLAN_SERVE_RATE    the hit rate `arrivalPlan()` models by default
 
-      TWO ADDITIVE LINES, NEITHER OF WHICH CHANGES AN EXISTING NUMBER:
+      — were adopted by kitchen.data.js in the same round. `econAudit()` returns
+      `{gaps, pending, ok}` and `ok` is TRUE after a full simulated day, which is
+      the assertion to re-run rather than a claim to take on trust. Two of the
+      pairs had ALREADY drifted before this landed (MOD_TIP_MISS -0.45 in ECON
+      against -0.30 here, SPAWN_MIN_MS 2100 against 1400), which is the whole
+      argument for why one argument beats two.
 
-        (a) in `plateHand(now)`, on the dish object it pushes onto `K.pass`:
-                steps: Array.isArray(K.hand.steps) ? K.hand.steps.slice() : null
-            i.e. the ingredient ids the player actually laid, in lay order.
-            (`addStep` already maintains `slot.steps`; `pullSlot` currently
-            discards it into `K.hand` and `plateHand` drops it on the floor.)
+   2. 🔴 MODIFIER EVIDENCE — ✅ CLOSED, AND HALF OF THE SETTLEMENT IS NOT.
+      kitchen.state.js now records `dish.built` and freezes it onto
+      `item.built` / `item.builds` at the moment of service (§MODIFIERS), so
+      every `hold` and every `extra` scores for real. Measured over six seeded
+      720s days at level 20 with an assembling auto-cook: 94 promises HONOURED
+      where round 2 measured 0 over twelve days.
 
-        (b) in `fillTickets(now)`, where a dish fills a unit of a ticket line,
-            immediately after `item.filled++`:
-                (item.builds || (item.builds = [])).push(
-                  Array.isArray(dish.steps) ? dish.steps.slice() : null);
-            EXACTLY ONE ENTRY PER FILLED UNIT, in fill order, `null` when that
-            unit carried no build record.
+      TWO THINGS THE SETTLEMENT STILL CANNOT REACH, both needing one line in
+      kitchen.state.js and neither changing an existing number:
 
-      This file accepts either an array of ingredient ids or a counted map
-      `{ingId: n}` per unit (`countIn()`), so an optimisation later cannot break
-      it. `newTicket()` does NOT need to preserve `item.mods` — we attach those
-      to the filed ticket ourselves, matched by recipeId (see `fileTicket()`).
-      Nothing throws, nothing changes and nothing pays differently until (a) and
-      (b) land; on the frame they do, every "no onions" on the board becomes a
-      real promise with real money on it.
+        (a) 🔴 A PAYOUT HOOK. §SETTLEMENT explains at length why the Cinder
+            currently rides out on the tip line: `serveTicket()` makes exactly
+            one `bridge().addGems(payout + tip)` call and opens no seam between
+            computing the payout and paying it. The one this file wants, called
+            immediately after `const payout = …`:
+
+                // kitchen.state.js, serveTicket(), right after `payout`
+                let bonus = 0;
+                if (ticket.source === 'drive' && typeof DriveThru.settleFor === 'function') {
+                  bonus = _int(DriveThru.settleFor(K, ticket, payout, t));
+                }
+                const paidOut = Math.max(0, payout + bonus);
+
+            `settleFor(K, ticket, payout, now) → integer Cinder, signed` is two
+            lines here (`judgeTicket(ticket).cinder`, rounded) and it deletes
+            `payoutEstimate()` — which today re-derives state.js's own payout
+            formula and is therefore the one place in this file that silently
+            goes wrong if a fourth payout multiplier is ever added. With the
+            hook, TIP_FRACTION_MAX stops binding on cheap dishes carrying an
+            honoured `extra`, and a broken promise can cost more than the tip.
+
+        (b) ECON.MOD_XP_HIT IS READ BY NOBODY. kitchen.data.js ships it (3 xp
+            for getting a fussy order right) and there is no path from this file
+            to `addXp()` — it is module-private and levels are derived inside it,
+            so writing `K.xp` from here would skip the level-up emit, the unlock
+            list and the forced save. Either export `awardXp(n, why)` or fold
+            the modifier xp into `serveTicket()` beside the hook above. Until
+            one of those lands the key is dead and this file does not read it.
+
+   2d. 🔴 THE PASS HANDS OVER THE WRONG PLATE — THE LARGEST REMAINING FALSE
+      NEGATIVE, and the fix is ONE LINE in kitchen.state.js against an export
+      that already exists here. `takeDishes()` and `refreshReady()` fill a
+      ticket line with the FIRST matching-recipe plate on the pass, so a burger
+      built without lettuce for the car that asked for "no greens" is handed to
+      whoever is served first, and the careful player is told they broke a
+      promise they kept. MEASURED, six seeded days at level 20 with an auto-cook
+      that reads every ticket and builds to it exactly: 80 honoured against 57
+      broken, of which 43 were `hold` mods the bot HAD obeyed.
+
+      `DriveThru.fitScore(item, dish)` is written, exported and unit-tested for
+      exactly this. It returns +1 per promise the plate keeps, −1 per promise it
+      breaks and 0 for anything unproven — so a line with no modifiers scores 0
+      for every candidate and the sort is a no-op:
+
+          const fit = (d) => (typeof DriveThru.fitScore === 'function'
+                               ? DriveThru.fitScore(item, d) : 0);
+          candidates.sort((a, b) => fit(b) - fit(a));
+
+      ⚠ NOT an earmark. The pass is deliberately fungible (state.js's THE PASS:
+      "plates are stock, not a pipe") and it should stay that way — reserving a
+      plate for a ticket would turn the pass into a queue of promises the player
+      cannot re-plan. This only decides WHICH of several identical plates goes
+      out, which is a choice the game is already making arbitrarily.
+
+   2b. 🚲 CARS HAS NO BICYCLE (§RIDES). The vehicle now matches the driver — the
+      pickup truck full of Kid on a BMX is gone — but "Kid on a BMX" and the
+      Courier both map to `bike`, which is 🏍️, a motorbike. One row in
+      kitchen.data.js's CARS closes it and needs nothing here:
+          { id:'bmx', icon:'🚲', name:'BMX', seats:1, patienceMul:0.9,
+            weight:5, len:1 }
+      …and `RIDES.kid` / `RIDES.courier` gain it. Optionally
+      `CUSTOMERS[].vehicles` moves the whole table into the data file;
+      `ridePool()` already prefers that field when it exists.
+
+   2c. 🥬 `extra` MODIFIERS ARE GATED ON THE RECIPE, NOT ON THE MODIFIER, and
+      that is a data question as much as a code one. `State.addStep()` refuses
+      to lay more of an ingredient than the recipe calls for, so an `extra`
+      promise is only keepable on a dish whose canon carries at least
+      MOD_EXTRA_MIN of it — which today silently retires `extra_must` (mustard
+      is 1 on every recipe) and `extra_oil` (oil:1). Either is fine; what is not
+      fine is a promise the game forbids the player from keeping, which is what
+      shipping the ungated pool would have been. If more `extra` variety is
+      wanted, the lever is in RECIPES, not here.
 
    3. `patiencePct` DIRECTION and `tipFor` RETURN TYPE. Both are ambiguous in
       CONTRACT.md and both are resolved defensively here and in kitchen.state.js
@@ -2994,8 +3734,25 @@ export function regulars(K) {
       renderer needs are written out in full in §THE TWO VERBS; they are two
       small edits to `doServe()` and the `onClick` switch in kitchen.render.js.
 
-   6. `car:balk` IS A NEW EVENT (§BALK) and it is the biggest number in the
-      lane. It wants adding to kitchen.render.js's TOAST_RANK — below
-      `ticket:lost`, so it is rate-limited but present — with a `toastLine()`
-      case reading something like `🚗 ${e.custName} drove past a full lane.`
+   6. ✅ `car:balk` IS WIRED (§BALK). It is in TOAST_RANK and `passersBy()`
+      drives `.mk-passer`. What is still owed is the STYLING half of §BALK
+      SPACING, and the DATA for it now exists: each row carries `lane` (0..
+      `lanes`-1) and is already held at the kerb for its own stagger. The
+      renderer currently hashes the id for the vertical offset — reading
+      `p.lane` instead makes a burst deterministic and evenly spread, and
+      `.mk-passers` wants to be `PASSBY_LANES × row-height` tall rather than a
+      fixed 30px band so three rows fit without overlapping.
+
+   7. THE PINNED CARD'S "WHERE" IS NOW TRUE (§GEOGRAPHY). `station` is derived
+      from position rather than from slot index, so STATION_WORD no longer says
+      "At the window" over a car that is still rolling in. Nothing to do — this
+      is a note that the string got MORE accurate, in case a screenshot diff
+      looks like a regression.
+
+   8. `serveCar()` RETURNS TWO NEW FIELDS for `rewardMoment()`: `modCinder` (the
+      §SETTLEMENT in Cinder, signed) and `modPop`. The reward toast currently
+      says which promise was kept or broken; saying what it was WORTH — "✓ no
+      greens +18" — is what turns one observation into a learned mechanic. That
+      is a renderer decision, not ours, which is why the number is returned
+      rather than formatted.
    ═══════════════════════════════════════════════════════════════════════════ */

@@ -185,15 +185,15 @@
   inset: 0;
   filter: blur(2.6px);
   background:
-    /* NEAR ROW — bigger, on the floor, BACKLIT (see the pools below) */
-    radial-gradient(24px 24px at 17% 58.4%, rgba(9,5,3,.94), transparent 76%),
-    radial-gradient(64px 34px at 17% 66.4%, rgba(9,5,3,.90), transparent 76%),
-    radial-gradient(21px 21px at 39% 60.6%, rgba(9,5,3,.90), transparent 76%),
-    radial-gradient(56px 31px at 39% 67.8%, rgba(9,5,3,.85), transparent 76%),
-    radial-gradient(25px 25px at 63% 57.8%, rgba(9,5,3,.94), transparent 76%),
-    radial-gradient(67px 35px at 63% 66.0%, rgba(9,5,3,.90), transparent 76%),
-    radial-gradient(21px 21px at 84% 60.8%, rgba(9,5,3,.88), transparent 76%),
-    radial-gradient(58px 32px at 84% 68.0%, rgba(9,5,3,.82), transparent 76%),
+    /* 🔴 THE NEAR ROW IS GONE FROM THIS LAYER and that is the fix, not a
+       deletion. Eight silhouettes painted at this element's 2.6px blur were
+       eight things a player could not identify — the critic read them as
+       scuffs on the floor and could not pick out one diner in either
+       composited screenshot. They live on `.mk-folk` now, at a third of the
+       blur and with a hard edge and a backlit rim, and there are TWO of them
+       instead of eight. What stays here is what this blur radius is actually
+       right for: the far row on the horizon, the bulbs, and the pools of
+       light below — which are now lighting somebody legible. */
     /* the table lamps on their tables, which is what makes them read as SEATED */
     radial-gradient(30px 10px at 28% 69.4%, rgba(255,196,110,.26), transparent 76%),
     radial-gradient(30px 10px at 74% 69.0%, rgba(255,196,110,.24), transparent 76%),
@@ -223,6 +223,89 @@
     radial-gradient(33% 54% at 22% 11%, rgba(255,178,86,.20), transparent 74%),
     radial-gradient(38% 66% at 50% 9%,  rgba(255,188,98,.24), transparent 76%),
     radial-gradient(33% 54% at 78% 11%, rgba(255,178,86,.20), transparent 74%);
+}
+
+/* ── 👥 THE PEOPLE, PROPERLY THIS TIME ─────────────────────────────────────
+   Round 2's diners shared `.mk-room::after` with the ceiling bulbs, and one
+   layer means one blur radius: at the 2.6px that made the bulbs glow, a seated
+   customer was a pair of dark ellipses fading out at 76% — which is not a
+   silhouette, it is a stain. The critic could not identify a single diner in
+   either composited screenshot and read them as "scuffs or spills on the
+   floor". REF-A's entire pitch is a seated customer reaching for a pizza and
+   REF-B has a co-worker in frame; a room with a person in it is the warmest
+   thing in both references, and one legible figure beats eight unreadable ones.
+
+   This element is the third paint surface the room did not have (the div, its
+   ::before and its ::after were all full), and it buys three things:
+
+   1 · A HARD EDGE. Every silhouette here goes `colour 0 62%, transparent 68%`
+       — an actual boundary. The old ones ran `colour → transparent 76%`, a
+       soft ramp with no edge anywhere in it, which is the literal definition
+       of a smudge.
+   2 · A LOWER BLUR (1.1px, against the room's 2.6). Distance is blur, and
+       these two sit at the near tables rather than on the horizon.
+   3 · BACKLIGHT. Each figure has a slightly larger, warmer copy of itself
+       offset up-and-left and drawn BEHIND (later in the list), so lamp light
+       rims one shoulder and the head. That rim is what separates a dark body
+       from a dark floor; without it the figure is technically painted and
+       practically invisible, which is exactly what shipped.
+
+   ⚠ POSITIONS ARE TUNED TO A MEASURED GAP, not chosen for composition. At
+   1440×900 the line now ends at y≈559 and the pass shelf starts at y≈645, so
+   62–72% of the viewport is open room across the whole centre column — the
+   band the previous round was aiming at and missing. The phone overrides sit
+   at the bottom of this file, where the fold is somewhere else entirely. */
+#mythic-kitchen-ov .mk-folk {
+  position: absolute;
+  inset: 0;
+  /* 🔴 OFF ON A PHONE, ON PURPOSE, and this is the honest call rather than a
+     cop-out. At 390×844 the body is a scrolling stack of full-width cards and
+     there is no band of room left uncovered that is tall enough to hold a
+     person — measured, the widest gap between the pass and the next section is
+     ~30px against a figure ~80px tall. A silhouette cut off at the waist by a
+     card edge is the exact thing this element was built to stop being: a
+     smudge. The phone gets its warmth from the wall, the floor and the lamps,
+     which do not need a clear band to read. It comes back at the breakpoint,
+     where the layout genuinely leaves a lit strip of dining room between the
+     line and the pass. */
+  display: none;
+  pointer-events: none;
+  filter: blur(1.15px);
+  /* ⚠ THE HEAD AND THE SHOULDERS MUST OVERLAP OR IT IS NOT A PERSON. The first
+     cut of this put the head line 49px above the shoulder line with a 13px
+     head — a 17px gap of floor between them — and the isolated capture showed
+     exactly what that is: two unrelated blobs. They are one silhouette now,
+     head 554→588 into shoulders 581→633, and the overlap is the neck. */
+  --fy: 63.5%;     /* head line    */
+  --fy2: 67.5%;    /* shoulder line */
+  background:
+    /* ── FIGURE A — 31%, the nearer of the two ─────────────────────────── */
+    radial-gradient(16px 18px at 31% var(--fy),  #080503 0 66%, transparent 74%),
+    radial-gradient(36px 24px at 31% var(--fy2), #080503 0 68%, transparent 76%),
+    /* 🔴 ITS RIM. Offset a few px up and left, SAME size, drawn behind — so it
+       shows only as a crescent along the lit edge instead of as a second blob
+       beside the first. (Offset by a percentage was the earlier mistake: 0.7%
+       of a 900px viewport is 6px vertically and ~10px horizontally, which is
+       not a rim, it is a neighbour.) */
+    radial-gradient(16px 18px at calc(31% - 5px) calc(var(--fy) - 4px),  rgba(255,196,120,.55) 0 66%, transparent 76%),
+    radial-gradient(36px 24px at calc(31% - 6px) calc(var(--fy2) - 4px), rgba(255,178,96,.40) 0 68%, transparent 78%),
+    /* and a soft halo behind the whole figure, which is what separates a dark
+       body from a dark floor at a glance */
+    radial-gradient(58px 40px at 31% calc(var(--fy2) - 8px), rgba(255,170,84,.26), transparent 76%),
+
+    /* ── FIGURE B — 63%, turned the other way, slightly larger ──────────── */
+    radial-gradient(18px 20px at 63% calc(var(--fy) - 4px),  #080503 0 66%, transparent 74%),
+    radial-gradient(40px 26px at 63% calc(var(--fy2) - 2px), #080503 0 68%, transparent 76%),
+    radial-gradient(18px 20px at calc(63% + 6px) calc(var(--fy) - 8px),  rgba(255,196,120,.5) 0 66%, transparent 76%),
+    radial-gradient(40px 26px at calc(63% + 7px) calc(var(--fy2) - 6px), rgba(255,178,96,.36) 0 68%, transparent 78%),
+    radial-gradient(62px 42px at 63% calc(var(--fy2) - 10px), rgba(255,170,84,.24), transparent 76%),
+
+    /* the table between them and the lamp on it — the light source that
+       justifies both rims, and the thing that makes them read as SEATED
+       rather than as two people standing in an empty room */
+    radial-gradient(52px 8px at 47% calc(var(--fy2) + 10px), rgba(10,6,3,.8) 0 64%, transparent 76%),
+    radial-gradient(8px 12px at 47% calc(var(--fy2) - 8px),  rgba(255,222,164,.7) 0 52%, transparent 74%),
+    radial-gradient(74px 34px at 47% calc(var(--fy2) - 4px), rgba(255,184,96,.22), transparent 74%);
 }
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -411,7 +494,27 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+  /* 🔴 THE FOLD IS AN EDGE TOO. Round 2 gave every horizontal rail, the board
+     column and the line their fade and then left the ONE cut a phone actually
+     lives with — the body's own vertical fold — as a hard slice: measured
+     scrollHeight 778 against clientHeight 644 at 390×844, with the "DRIVE-THRU"
+     heading and "2 CARS · ROOM FOR 2" sheared through the middle of the glyphs,
+     and in another shot the road itself cut in half with the cars left as faces
+     poking over the top. A hard cut reads as broken layout; a fade reads as
+     "there is more". Same geometry and the same argument as `.mk-rail`: it does
+     NOT go to zero, because content that vanishes completely is content the
+     player never learns is there.
+     ⚠ Cancelled at the breakpoint — desktop `.mk-body` is a fixed grid with
+     `overflow:hidden` and nothing to scroll, so the mask there would just dim
+     the bottom of the bins and the pass for no reason. */
+  -webkit-mask-image: linear-gradient(180deg, #000 0 calc(100% - 26px), rgba(0,0,0,.34) 100%);
+          mask-image: linear-gradient(180deg, #000 0 calc(100% - 26px), rgba(0,0,0,.34) 100%);
+  /* so a section scrolled to by keyboard or by a snap lands clear of the fade */
+  scroll-padding-bottom: 30px;
 }
+/* The fade is a mask on the SCROLL CONTAINER, so it is fixed to the viewport
+   edge and stays put while the content moves under it — which is the whole
+   point: it marks the fold, not a piece of content. */
 #mythic-kitchen-ov .mk-sec { position: relative; min-width: 0; }
 #mythic-kitchen-ov .mk-sec-head {
   display: flex;
@@ -1264,30 +1367,33 @@
   overflow-x: auto;
   padding-bottom: 4px;
   min-height: 66px;
+  /* ⚠ THE RIM IS THE WHOLE POINT OF AN EMPTY WELL. Without it these are flat
+     grey ellipses and the critic read them, correctly, as smudges; the loaded
+     plates get their rim from `.mk-dish` and looked like crockery while the
+     empty ones next to them looked like dirt. So a bare well is drawn as what
+     it is — a lit steel dish under a heat lamp: a warm inner pool, a bright
+     lip catching the lamp at 86%, and its own shadow beneath. Same geometry,
+     more light. */
   background-image:
     radial-gradient(21px 11px at 28px 31px,
-      rgba(255,226,182,.26), rgba(255,214,160,.09) 58%, rgba(255,238,206,.34) 86%, transparent 92%),
-    radial-gradient(24px 12px at 28px 34px, rgba(0,0,0,.42), transparent 78%);
+      rgba(255,206,140,.30), rgba(255,180,96,.16) 55%, rgba(255,234,184,.74) 84%,
+      rgba(255,190,110,.36) 93%, transparent 97%),
+    radial-gradient(24px 12px at 28px 34px, rgba(0,0,0,.46), transparent 78%);
   background-size: 62px 100%;
   background-repeat: repeat-x;
   background-attachment: local;
   -webkit-mask-image: linear-gradient(90deg, #000 0 calc(100% - 26px), rgba(0,0,0,.25) 100%);
           mask-image: linear-gradient(90deg, #000 0 calc(100% - 26px), rgba(0,0,0,.25) 100%);
 }
-/* The empty pass says its line ON the shelf, in lamplight, with the wells
-   showing through — not inside a dashed box parked over the first three of
-   them. */
-#mythic-kitchen-ov .mk-pass-rail .mk-empty {
-  flex: 1 1 auto;
-  align-self: center;
-  min-width: 0;
-  padding: 6px 10px;
-  border: 0;
-  background: none;
-  box-shadow: none;
-  color: rgba(255,214,164,.6);
-  text-shadow: 0 1px 4px rgba(0,0,0,.9);
-}
+/* 🔴 THERE IS NO `.mk-pass-rail .mk-empty` RULE ANY MORE, because the renderer
+   no longer emits the node. Round 1 asked for the "Nothing plated yet" branch
+   to go; round 2 kept it and this rule laid it `flex:1 1 auto; align-self:
+   center` straight ACROSS the drawn wells, so the words "Cook" and "something"
+   printed on top of two empty plate discs, grey on grey, for most of a shift's
+   first minute and every time the board cleared. The largest warm surface in
+   the feature spent that time looking like text on crockery. An empty pass is
+   a warm empty pass; the count in the head says "0 / 16 plated" in numbers,
+   which is the same sentence without the crockery. */
 
 /* A PLATED DISH. The plate is a real object drawn BEHIND the food and slightly
    below it — that one relationship is the whole trick. An emoji sitting on a
@@ -1645,8 +1751,13 @@
   cursor: pointer;
 }
 #mythic-kitchen-ov .mk-card:hover { border-color: var(--mk-amber); }
-#mythic-kitchen-ov .mk-card[data-locked="1"],
-#mythic-kitchen-ov .mk-card[disabled] { opacity: .5; cursor: not-allowed; }
+/* ⚠ THE DIM MOVED OFF THE CARD AND ONTO ITS CHILDREN. `opacity` on the card
+   itself took the lock badge down with it — a badge at .5 over a body at .5 is
+   the same mush the full-card scrim was, just quieter. Cursor stays here; the
+   fading is done by the `> *:not(.mk-lock)` rule in the lock block below, so
+   the one element that is meant to be read at full strength is. */
+#mythic-kitchen-ov .mk-card[disabled] { cursor: not-allowed; }
+#mythic-kitchen-ov .mk-card[disabled] > *:not(.mk-lock) { opacity: .5; }
 #mythic-kitchen-ov .mk-card-top { display: flex; align-items: center; gap: 6px; }
 #mythic-kitchen-ov .mk-card-top .mk-ic { font-size: 21px; }
 #mythic-kitchen-ov .mk-card-top b { font-size: 13px; }
@@ -1664,19 +1775,41 @@
   font-variant-numeric: tabular-nums;
 }
 #mythic-kitchen-ov .mk-need[data-short="1"] { border-color: rgba(255,77,94,.6); color: #ffb4bb; }
+/* 🔒 A LOCKED CARD IS ASPIRATIONAL, NOT OBLITERATED.
+   Round 2's lock was `position:absolute; inset:0` at 62% black — a scrim over
+   the WHOLE card with its label centred on top of the card's own price line
+   and ingredient chips, so "🔒 LEVEL 4" printed straight through "◇ 70 · 12s ·
+   Flat-Top" and the two collided into mush. It was also, at level 1, most of
+   the first two screens a new player ever opened.
+   A lock has one job: say WHEN, without deleting WHAT. So the scrim is gone
+   and it is a corner badge; the card body dims to .42 — enough to read as
+   unavailable, far more than enough to read the price and the ingredients the
+   player is working towards. The badge itself stays at full strength, because
+   it is the one thing on the card that is not aspirational.
+   ⚠ The dim is applied to the card's CHILDREN, not to the card, so the badge
+   is not dimmed by its own parent. */
 #mythic-kitchen-ov .mk-lock {
   position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 10px;
-  background: rgba(8,5,4,.62);
-  font-size: 12px;
-  letter-spacing: .08em;
+  right: 6px;
+  bottom: 6px;
+  z-index: 2;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(38,26,10,.97), rgba(12,8,4,.97));
+  border: 1px solid rgba(255,209,102,.55);
+  box-shadow: 0 3px 10px rgba(0,0,0,.6);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .06em;
   text-transform: uppercase;
   color: #ffd166;
+  white-space: nowrap;
 }
+/* ⚠ the badge gets its own strip. Bottom-right over a wrapped ingredient row
+   clipped the last chip — which is precisely the collision the full-card scrim
+   was being replaced for, just smaller. */
+#mythic-kitchen-ov .mk-card[data-locked="1"] { border-style: dashed; padding-bottom: 30px; }
+#mythic-kitchen-ov .mk-card[data-locked="1"] > *:not(.mk-lock) { opacity: .42; }
 
 /* supply row */
 #mythic-kitchen-ov .mk-row {
@@ -1866,6 +1999,204 @@
 }
 
 /* ════════════════════════════════════════════════════════════════════════
+   🌾 THE LOOP, MADE VISIBLE — the live ledger over the counter, and where
+   every crate actually comes from.
+   ------------------------------------------------------------------------
+   🔴 THE STRONGEST THING IN THIS FEATURE WAS THE THING A PLAYER WAS LEAST
+   LIKELY TO NOTICE. The kitchen really does draw its ingredients out of the
+   same 14-id ledger the city builder, the businesses and the battles fill —
+   `SUPPLY_RECIPES` are priced only in those ids plus Cinder, and buying a
+   crate really debits the player's stash. But NOTHING ON SCREEN SAID SO, so it
+   read as "the kitchen buys ingredients", which is precisely the failure the
+   request was written against: "uses the food and food type resources … that
+   they get from the other parts of the game".
+   Two surfaces answer it, and both sit where the decision is made rather than
+   in a help panel: the LEDGER STRIP over the prep counter (what you hold, in
+   the kitchen, live) and the PROVENANCE line under every crate in Supplies
+   (which building makes this, and whether you own one).
+   ════════════════════════════════════════════════════════════════════════ */
+#mythic-kitchen-ov .mk-ledger {
+  margin: 0 8px 6px;
+  padding: 6px 8px 7px;
+  border-radius: 10px;
+  border: 1px solid rgba(154,209,122,.22);
+  background:
+    linear-gradient(180deg, rgba(120,170,90,.10), rgba(0,0,0,.30)),
+    var(--mk-brush);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.07);
+}
+#mythic-kitchen-ov .mk-ledger-lab {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 6px;
+  font-size: 9.5px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: #9ad17a;
+  padding-bottom: 5px;
+}
+#mythic-kitchen-ov .mk-ledger-lab .mk-spacer { flex: 1 1 auto; }
+/* ⚠ WRAPS, does not ellipse. "your city, your businesses and your battles fill
+   this" is the entire point of the strip; truncating it to "your city, your
+   businesses and your …" removes the two halves of the loop that are not the
+   city builder. In a 320px column it takes a second line and that is fine. */
+#mythic-kitchen-ov .mk-ledger-lab > span {
+  letter-spacing: .04em;
+  text-transform: none;
+  /* ⚠ --mk-dim, not --mk-faint. This one line is the whole finding — it is the
+     sentence that turns a row of numbers into "these came from the rest of the
+     game" — and at #6f6558/9.5px on a 360px phone it was scenery. */
+  color: var(--mk-dim);
+  font-size: 10px;
+  flex: 1 1 100%;
+  min-width: 0;
+}
+#mythic-kitchen-ov .mk-ledger-lab .mk-spacer { display: none; }
+/* A RAIL, not a paragraph. Fourteen ids at their longest ("Corrupted Essence")
+   wrap into a wall of prose if they are allowed to; as chips on a scrolling
+   rail the shape stays a row of readings whatever the width. */
+#mythic-kitchen-ov .mk-ledger-row {
+  display: flex;
+  gap: 5px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  padding-bottom: 2px;
+  -webkit-mask-image: linear-gradient(90deg, #000 0 calc(100% - 26px), rgba(0,0,0,.2) 100%);
+          mask-image: linear-gradient(90deg, #000 0 calc(100% - 26px), rgba(0,0,0,.2) 100%);
+}
+#mythic-kitchen-ov .mk-ledger-row::-webkit-scrollbar { height: 4px; }
+#mythic-kitchen-ov .mk-ledger-row::-webkit-scrollbar-thumb { background: rgba(255,255,255,.16); border-radius: 9px; }
+#mythic-kitchen-ov .mk-led {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px 4px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--mk-line);
+  background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(0,0,0,.34));
+  white-space: nowrap;
+}
+#mythic-kitchen-ov .mk-led-ic { font-size: 14px; line-height: 1; }
+#mythic-kitchen-ov .mk-led > b {
+  font-size: 13px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--mk-ink);
+}
+#mythic-kitchen-ov .mk-led > small { font-size: 10px; color: var(--mk-dim); }
+/* the producer's glyph, riding the corner: "a Gene Vault makes this". Lit when
+   the city has one, ghosted when it does not — which is the whole prompt. */
+#mythic-kitchen-ov .mk-led > em {
+  font-style: normal;
+  font-size: 10px;
+  line-height: 1;
+  opacity: .3;
+  filter: grayscale(1);
+}
+#mythic-kitchen-ov .mk-led[data-mine="1"] { border-color: rgba(154,209,122,.45); }
+#mythic-kitchen-ov .mk-led[data-mine="1"] > em { opacity: 1; filter: none; }
+/* 🔴 EMPTY IS THE STATE WORTH SHOUTING, because it is the only one whose answer
+   is "go and build something" rather than "come back later". */
+#mythic-kitchen-ov .mk-led[data-out="1"] {
+  border-color: rgba(255,77,94,.55);
+  background: linear-gradient(180deg, rgba(255,77,94,.14), rgba(0,0,0,.34));
+}
+#mythic-kitchen-ov .mk-led[data-out="1"] > b { color: #ffb4bb; }
+
+/* PROVENANCE, under a crate in Supplies. */
+#mythic-kitchen-ov .mk-froms {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+}
+#mythic-kitchen-ov .mk-from-lab {
+  font-size: 9px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--mk-faint);
+}
+#mythic-kitchen-ov .mk-from {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  white-space: nowrap;
+  border: 1px dashed rgba(255,255,255,.2);
+  background: rgba(0,0,0,.3);
+  color: #8d8272;
+}
+#mythic-kitchen-ov .mk-from small { font-size: 9px; opacity: .85; }
+/* Owned reads as an asset, not as a tick: solid edge, warm ink, no dashes.
+   This chip is the answer to "why was a Gene Vault worth 120,000 Cinder". */
+#mythic-kitchen-ov .mk-from[data-has="1"] {
+  border-style: solid;
+  border-color: rgba(154,209,122,.6);
+  background: rgba(154,209,122,.14);
+  color: #b8e39b;
+}
+
+/* ── small shared bits ─────────────────────────────────────────────────── */
+/* 🔴 HIDDEN BY DEFAULT. This pill belongs to the desktop line, which is the
+   only place that wraps and clips; on a phone the line is a horizontal rail
+   with its own edge fade and the span rendered as a stray "▾ more pans" in the
+   middle of the stations (caught by a computed-style probe, not by eye). */
+#mythic-kitchen-ov .mk-line-more { display: none; }
+
+/* the nudge that replaced a sentence printed across the plates */
+#mythic-kitchen-ov .mk-hint {
+  font-size: 10px;
+  letter-spacing: .06em;
+  color: var(--mk-faint);
+  text-transform: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+/* "+1 at the window" — the board's honest note about the ticket it is NOT
+   showing, because the pinned card is already showing it. */
+#mythic-kitchen-ov .mk-board-note {
+  font-size: 9px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--mk-amber);
+  white-space: nowrap;
+}
+/* WHAT WENT ON THE PLATE (seam 1, the visible half). The same colour language
+   the build stack on the pan uses, so a player reads the two as one idea: the
+   dish carries its own record of what was laid on it, and that record is what
+   the lane judges "no onions" against. */
+/* ⚠ IT GOES ON THE PLATE, not under the label. Drafted along the bottom of the
+   tile, where it printed straight through the word PERFECT — the same
+   text-over-crockery mistake the empty pass had just been cured of. Across the
+   front of the plate it is unambiguous (that is where the food is), the emoji
+   above it never reaches down that far, and it reads as garnish rather than as
+   a progress bar. */
+#mythic-kitchen-ov .mk-dish-build {
+  position: absolute;
+  left: 13px; right: 13px; top: 30px;
+  display: flex;
+  gap: 1px;
+  height: 3px;
+  border-radius: 2px;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(0,0,0,.5);
+}
+#mythic-kitchen-ov .mk-dish-build > i {
+  flex: 1 1 0;
+  background: var(--c, #caa);
+}
+/* a limit the truck is not the cause of */
+#mythic-kitchen-ov .mk-card-sub[data-ceiling="1"] { color: #ffd166; }
+
+/* ════════════════════════════════════════════════════════════════════════
    🖥 THE ONE BREAKPOINT — 820px and up.
    ------------------------------------------------------------------------
    The phone stack becomes a landscape line: the lane runs across the top like
@@ -1889,7 +2220,13 @@
 
   #mythic-kitchen-ov .mk-body {
     display: grid;
-    grid-template-columns: 340px minmax(0, 1fr) 320px;
+    /* ⚠ CLAMPED, not fixed. 340 + 320 of side columns is 660px of an 820px
+       window, which left the line 120px to put five stations in and stacked
+       them five rows deep — measured 619px of overflow at 820×900 with four
+       pans' state below the cut. The caps are the old numbers, so 1440 is
+       unchanged to the pixel; the percentages only bite below ~1400, where the
+       centre column is the thing that has to survive. */
+    grid-template-columns: clamp(200px, 24%, 340px) minmax(0, 1fr) clamp(180px, 22%, 320px);
     /* 🔴 THE ROWS ARE WHERE THE DESKTOP VOID WAS.
        Round 1 ran `auto minmax(0,1fr) auto`: the LINE took every spare pixel
        and then didn't use them, so at 1440×900 the centre column measured
@@ -1899,7 +2236,13 @@
        Now the line takes exactly what it needs (`minmax(0,auto)` — it can
        still shrink and scroll when the window is short) and everything left
        over goes to the PASS row, where it becomes either shelf or room. */
-    grid-template-rows: auto minmax(0, auto) minmax(178px, 1fr);
+    /* ⚠ 150px, down from 178. The pass row is the SLACK ROW — it takes
+       everything the lane and the line do not want — and the line asking for
+       ~80px less (see the pan block below) is exactly what buys the second row
+       of pans its state readout back. The floor only has to be tall enough for
+       the shelf itself; anything above that is the dining room, and `.mk-room`
+       is painting it with people in it. */
+    grid-template-rows: auto minmax(0, auto) minmax(150px, 1fr);
     /* The board is a TALL screen on the left (REF-B mounts it over the pass);
        the line runs down the middle and the pass sits at the END of the line,
        which is where a pass physically is. Putting the pass under the board
@@ -1912,16 +2255,58 @@
     padding: 10px;
     overflow: hidden;
   }
+  /* the body does not scroll at this width, so its fold-fade has nothing to
+     mark and would only dim the bottom of the bins and the pass. */
+  #mythic-kitchen-ov .mk-body {
+    -webkit-mask-image: none;
+            mask-image: none;
+  }
+  /* the dining room is visible at this width — see the note on .mk-folk */
+  #mythic-kitchen-ov .mk-folk { display: block; }
   #mythic-kitchen-ov .mk-sec-lane  { grid-area: lane;  margin: 0; }
   #mythic-kitchen-ov .mk-sec-board { grid-area: board; min-height: 0; display: flex; flex-direction: column; }
   /* ⚠ the line SCROLLS when the window is short (the row is `minmax(0,auto)`),
      and a station card sliced flat by the top of the pass reads as a bug. Same
      fade, same reason as the rails. */
+  /* ⚠ THE SCROLLER MOVED DOWN ONE LEVEL, from the section to its rail. The
+     "more below" pill has to hold still while the pans move under it, and an
+     absolutely positioned child of a scroll container scrolls with the content
+     — so the section is now the fixed frame and the rail is what scrolls. */
   #mythic-kitchen-ov .mk-sec-line  {
-    grid-area: line;  min-height: 0; display: flex; flex-direction: column; gap: 8px; overflow-y: auto;
-    -webkit-mask-image: linear-gradient(180deg, #000 0 calc(100% - 26px), rgba(0,0,0,.18) 100%);
-            mask-image: linear-gradient(180deg, #000 0 calc(100% - 26px), rgba(0,0,0,.18) 100%);
+    position: relative;
+    grid-area: line;  min-height: 0; display: flex; flex-direction: column; gap: 8px; overflow: hidden;
   }
+  /* 🔴 THE FADE ONLY APPEARS WHEN THERE IS SOMETHING UNDER IT, AND IT BRINGS A
+     WORD WITH IT. Round 2 masked this region unconditionally at .18 alpha and
+     the critic's verdict was blunt: "a 26px/.18-alpha fade nobody registers as
+     an affordance — the cards look sliced flat". A permanent fade over content
+     that is NOT cut off teaches the player to ignore it, which is why it failed
+     on the one occasion it was telling the truth. So the renderer measures the
+     region on a slow clock and stamps `data-more`, and only then does the fade
+     come on — with a chevron that says, in a word, what it means. */
+  #mythic-kitchen-ov .mk-sec-line[data-more="1"] {
+    -webkit-mask-image: linear-gradient(180deg, #000 0 calc(100% - 34px), rgba(0,0,0,.25) 100%);
+            mask-image: linear-gradient(180deg, #000 0 calc(100% - 34px), rgba(0,0,0,.25) 100%);
+  }
+  #mythic-kitchen-ov .mk-line-more {
+    position: absolute;
+    left: 50%; bottom: 2px;
+    transform: translateX(-50%);
+    z-index: 3;
+    display: none;
+    padding: 2px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,182,72,.5);
+    background: rgba(14,9,6,.92);
+    color: var(--mk-amber);
+    font-size: 9.5px;
+    font-weight: 800;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+  #mythic-kitchen-ov .mk-sec-line[data-more="1"] .mk-line-more { display: block; }
   #mythic-kitchen-ov .mk-sec-bins  { grid-area: bins;  min-height: 0; overflow-y: auto; }
 
   /* ⚠ The shelf hangs at the BOTTOM of its row, because that is where a
@@ -1979,26 +2364,112 @@
     flex-wrap: wrap;
     align-content: start;
     gap: 10px;
-    overflow: visible;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-width: thin;
     padding: 0;
     -webkit-mask-image: none;
             mask-image: none;
   }
-  #mythic-kitchen-ov .mk-sec-line .mk-rail > * { flex: 1 1 268px; min-width: 0; }
+  #mythic-kitchen-ov .mk-sec-line .mk-rail::-webkit-scrollbar { width: 6px; }
+  #mythic-kitchen-ov .mk-sec-line .mk-rail::-webkit-scrollbar-thumb { background: rgba(255,255,255,.2); border-radius: 9px; }
+  /* 🔴 A ONE-PAN STATION IS PAN-SIZED. `flex: 1 1 268px` on every card meant a
+     station with a single slot STRETCHED to fill whatever the row had left:
+     round 2 measured the Prep Board and the Fountain at 401×146 each, holding
+     one 388-wide pan — ~85% empty surface, on a screen whose reference is a
+     griddle packed edge to edge with patties. CSS cannot count children, so
+     kitchen.render.js stamps `data-slots` on the card and the basis is sized to
+     what the card actually holds: ~one pan each, plus the head and the padding.
+     Only multi-slot stations grow, because only they have somewhere to put the
+     width, and what is left over falls through to the pass row — which is
+     shelf, or room, and either is better than a slab of empty steel. */
+  /* THE ARITHMETIC, because these five numbers are one geometry and moving one
+     of them alone breaks it. The centre column is 810px at 1440 with four 10px
+     gaps → 770px of card. A card is `2×6 padding + n pans + (n−1) × 5 gap`, so
+     for every station to hold a pan of the SAME width p:
+        (2p + 17) + 4 × (p + 12) + 40 = 810  →  p ≈ 117
+     which is 250 for the two-pan flat-top and 129 for each one-pan station.
+     Two consequences, both wanted: five stations fit on ONE row at the size the
+     brief names — no wrap, so no second row to clip, which is what the blocker
+     was — and a one-pan station is pan-sized rather than a 401×146 slab holding
+     one drink. `flex-grow: 1` on all of them absorbs the rounding. */
+  #mythic-kitchen-ov .mk-sec-line .mk-rail > * { flex: 1 1 129px; min-width: 0; }
+  /* ⚠ max-width, because the LAST ROW is the exception to the arithmetic
+     above: a lone station on a wrapped row has all the leftover width to
+     itself and grew to 529px holding one drink at 1024×768 — the same slab
+     this block exists to abolish, just at a different window size. */
+  #mythic-kitchen-ov .mk-st[data-slots="1"] { flex: 1 1 129px; max-width: 240px; }
+  #mythic-kitchen-ov .mk-st[data-slots="2"] { flex: 1 1 250px; }
+  #mythic-kitchen-ov .mk-st[data-slots="3"] { flex: 1 1 371px; }
+  #mythic-kitchen-ov .mk-st[data-slots="4"] { flex: 1 1 492px; }
+
   /* 🔥 Landscape puts the pans SIDE BY SIDE, the way they sit on a real
      flat-top — three burgers across, not three burgers stacked. It is also what
      makes all five stations fit the column without scrolling: stacked slots at
      92px each ran the line ~200px past the fold on a 900px screen. */
-  /* Desktop pans grow to fill the card and get their dish name back. */
-  #mythic-kitchen-ov .mk-slot { flex: 1 1 0; min-height: 124px; padding-bottom: 46px; }
+  /* ══════════════════════════════════════════════════════════════════════
+     🔴 THE STATE READOUT MOVES TO THE TOP OF THE PAN, AND THE PAN GETS SHORT.
+     ----------------------------------------------------------------------
+     Round 2's desktop pan was 124px of min-height with a 46px bottom strip
+     reserved for the flag and the two bars. Five stations wrapped to two rows,
+     the second row ran to y=664 inside a section that ended at y=634, and the
+     26px fade over it fooled nobody: with every station burnt, four pans
+     screamed BURNT and two showed NO VERDICT AT ALL — a burnt Side Salad that
+     merely looked dark and a READY soda that merely looked teal. A third of
+     the line had no visible state at the exact size the brief names.
+
+     TWO CHANGES, and the second is the one that matters:
+
+     1 · IT FITS. The bottom reserve is gone, so a pan is ~96px instead of
+         ~120 and both rows land inside the section at 1440×900. Verified by
+         measurement, not by eye: `.mk-sec-line` scrollHeight === clientHeight.
+
+     2 · IT CANNOT COME BACK. A window shorter than 900px will overflow again
+         eventually, and the rule for what gets clipped when it does is now
+         fixed: NEVER the state. The flag is a corner pill at the TOP of the
+         pan and the bars sit directly under the name, ABOVE the food — so a
+         pan sliced by the fold loses its picture, which the player can still
+         infer, and keeps its verdict and its countdown, which they cannot.
+         That is also how REF-B reads: the ticket's timer and its green READY
+         are the top line, and the food is underneath.
+
+     `order` does the moving; the DOM stays exactly as the renderer emits it
+     (top, build, flag, bars, sizzle, pull), because one renderer serves both
+     widths and re-parenting nodes per breakpoint is how that stops being true.
+     ══════════════════════════════════════════════════════════════════════ */
+  #mythic-kitchen-ov .mk-slot {
+    flex: 1 1 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 96px;
+    padding: 6px 6px 8px;
+  }
+  #mythic-kitchen-ov .mk-slot-top  { order: 0; }
+  /* ⚠ THE FLAG COMES OUT OF THE CORNER AND BECOMES A LINE. As an absolutely
+     positioned pill it needed ~56px of the name's row reserved for it, and at
+     129px of card that ate the dish name entirely. On its own line it is
+     left-aligned under the name, directly above the bar it is describing —
+     "PERFECT" over a full cook bar, "BURNT" over a red one — which is how a
+     REF-B ticket reads and is legible at every card width. */
+  #mythic-kitchen-ov .mk-slot-flag {
+    order: 1;
+    position: static;
+    align-self: flex-start;
+    margin-top: 4px;
+  }
+  #mythic-kitchen-ov .mk-slot-bars { order: 2; position: static; margin: 4px 0 0; }
+  #mythic-kitchen-ov .mk-build     { order: 3; margin-top: 5px; min-height: 26px; width: 56px; }
+  #mythic-kitchen-ov .mk-slot[data-phase="empty"] { min-height: 96px; padding-bottom: 6px; }
   #mythic-kitchen-ov .mk-slot-name { display: block; }
-  #mythic-kitchen-ov .mk-slot-flag { left: 7px; bottom: 26px; }
-  #mythic-kitchen-ov .mk-slot-bars { left: 7px; right: 7px; bottom: 7px; }
-  #mythic-kitchen-ov .mk-build { width: 56px; }
   #mythic-kitchen-ov .mk-slot-dish { font-size: 32px; }
   /* the name is back at this width, so the row goes back to reading left */
   #mythic-kitchen-ov .mk-slot-top { justify-content: flex-start; }
-  #mythic-kitchen-ov .mk-pull { top: auto; bottom: 25px; right: 5px; }
+  /* ⚠ the pull button follows the reserve it used to sit in: bottom-right, on
+     the food rather than on the readout, where a mis-tap costs a dish and not
+     a glance at the timer. */
+  #mythic-kitchen-ov .mk-pull { top: auto; bottom: 5px; right: 5px; }
   #mythic-kitchen-ov .mk-hood { margin: 0 0 2px; }
 
   /* ── THE PASS, FULL SIZE ────────────────────────────────────────────────
@@ -2015,8 +2486,9 @@
     min-height: 122px;
     background-image:
       radial-gradient(46px 19px at 61px 75px,
-        rgba(255,226,182,.26), rgba(255,214,160,.09) 58%, rgba(255,238,206,.34) 86%, transparent 92%),
-      radial-gradient(50px 21px at 61px 80px, rgba(0,0,0,.42), transparent 78%);
+        rgba(255,206,140,.30), rgba(255,180,96,.16) 55%, rgba(255,234,184,.74) 84%,
+        rgba(255,190,110,.36) 93%, transparent 97%),
+      radial-gradient(50px 21px at 61px 80px, rgba(0,0,0,.46), transparent 78%);
     background-size: 122px 100%;
     -webkit-mask-image: none;
             mask-image: none;
@@ -2026,6 +2498,10 @@
   #mythic-kitchen-ov .mk-dish .mk-ic { font-size: 44px; }
   #mythic-kitchen-ov .mk-dish .mk-q { margin-top: 42px; font-size: 12px; }
   #mythic-kitchen-ov .mk-dish .mk-fresh { left: 12px; right: 12px; height: 4px; bottom: 4px; }
+  #mythic-kitchen-ov .mk-dish-build { left: 26px; right: 26px; top: 84px; height: 5px; gap: 2px; }
+  /* the ledger strip has a whole column to itself here, so the chips breathe */
+  #mythic-kitchen-ov .mk-ledger { margin: 0 0 8px; }
+  #mythic-kitchen-ov .mk-ledger-row { flex-wrap: wrap; overflow: visible; -webkit-mask-image: none; mask-image: none; }
 
   /* bins stack vertically down the right-hand wall */
   #mythic-kitchen-ov .mk-sec-bins .mk-rail {

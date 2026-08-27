@@ -144,6 +144,11 @@ function ECb(key, fallback) {
                                   rather than the whole menu.
      COUNTER_ENABLED       true   debug toggle to silence walk-ins.
 
+   ✅ PANTRY_BIN_PCT / PANTRY_BIN_MIN were asked for by this file and LANDED in
+   kitchen.data.js the same round — `binCapFor()` reads both, and the fallbacks
+   beside them are NaN guards, not tuning. Left named here because the next
+   reader will want to know which side of the seam asked for them.
+
    Nothing else in this file invents a number. If you add one, add it to ECON.
    ─────────────────────────────────────────────────────────────────────────── */
 
@@ -246,11 +251,36 @@ export const Kitchen = {
   convoys: [],
   inbound: [],
 
-  /* Reset by openShift(). `turned` counts walk-ins turned away at a full board
-     (they also count in `lost`); `qsum`/`qunits` are the quality mix the day's
-     GRADE is computed from — see gradeFor(). */
-  today:  { served: 0, lost: 0, burnt: 0, turned: 0, earned: 0, tips: 0, xp: 0, qsum: 0, qunits: 0, raw: 0, perfect: 0 },
-  totals: { served: 0, lost: 0, burnt: 0, earned: 0, days: 0 },
+  /* Reset by openShift() — freshToday() is the ONE definition of its shape, so
+     a new tally cannot be added to three of the four places that build it.
+     `turned` counts walk-ins turned away at a full board (they also count in
+     `lost`); `qsum`/`qunits` are the quality mix the day's GRADE is computed
+     from — see gradeFor().
+
+     🔴 THREE DIFFERENT KINDS OF WASTE, AND THEY USED TO BE ONE NUMBER.
+     `burnt`   — a station slot crossed burnAt, or a plate rotted through on the
+                 pass. NEGLECT. Costs popularity, and it is the ONLY one of the
+                 three that gradeFor() reads.
+     `spoiled` — the pass half of `burnt`, broken out so the settlement report
+                 can say which kind of neglect it was. It is counted in BOTH.
+     `binned`  — the player deliberately binned a plate off the pass. TRIAGE,
+                 not failure, and it must never be scored as failure: breaking
+                 the pass deadlock is mandatory play (a bot that never bins
+                 finishes grade D — c2_bin.mjs), and the shipped build charged
+                 the same `today.burnt` for it, so correct play was booked as
+                 incompetence and pushed a grade-4 day down to an A. The
+                 ingredients and the slot time are already the price; the grade
+                 is not allowed to charge for it a second time. */
+  // ⚠ `freshToday()` is a hoisted function DECLARATION, so it is initialised
+  //   before this literal is evaluated. That is the whole reason it is not a
+  //   `const` arrow (same argument as the exports — see the header).
+  today:  freshToday(),
+  totals: { served: 0, lost: 0, burnt: 0, spoiled: 0, binned: 0, earned: 0, days: 0 },
+
+  /* 🔴 THE STARTING-STOCK RECEIPT. See hydrate(): ECON.START_PANTRY is granted
+     exactly ONCE per save and this flag is how "once" is enforced across every
+     future hydrate. SAVED — it has to be, or every panel open re-grants. */
+  startGranted: false,
 
   missing: false,
   offline: false,
@@ -434,6 +464,23 @@ function counterIntervalMs() {
    INIT / RESET
    ═══════════════════════════════════════════════════════════════════════════ */
 
+/**
+ * The shape of `today`, in ONE place.
+ *
+ * ⚠ WHY THIS IS A FUNCTION AND NOT A COPIED LITERAL. The object was written out
+ * by hand in four places (the state literal, init, openShift, reset). Adding
+ * `binned` and `spoiled` to three of the four would have left one path handing
+ * gradeFor() an `undefined` tally — which `_int()` reads as 0, so the day would
+ * simply have graded itself wrong with nothing on screen to say so. A shape
+ * that must match in four places is a shape that wants a constructor.
+ */
+function freshToday() {
+  return {
+    served: 0, lost: 0, burnt: 0, spoiled: 0, binned: 0, turned: 0,
+    earned: 0, tips: 0, xp: 0, qsum: 0, qunits: 0, raw: 0, perfect: 0,
+  };
+}
+
 /** Build (or rebuild) the station rack from STATIONS. Slot arrays are sized by
     the data file, so unlocking a sixth griddle slot is a data edit. */
 function buildStations() {
@@ -479,7 +526,7 @@ export function init() {
   K.shift.running = false;
   K.shift.tMs = 0;
   K.shift.rush = 1;
-  K.today = { served: 0, lost: 0, burnt: 0, turned: 0, earned: 0, tips: 0, xp: 0, qsum: 0, qunits: 0, raw: 0, perfect: 0 };
+  K.today = freshToday();
   K.error = null;
   K._events = [];
   K._report = null;
@@ -510,17 +557,22 @@ export function reset() {
   K.popularity = 50;
   K.pantry = {};
   K.upgrades = [];
-  // A reset kitchen is a NEW kitchen, so it gets the same starting stock a new
-  // save does — otherwise "reset" hands you a kitchen you cannot cook in.
-  const _start = (DATA.ECON && DATA.ECON.START_PANTRY) || null;
-  if (_start) for (const id of Object.keys(_start)) if (_int(_start[id]) > 0) K.pantry[id] = _int(_start[id]);
+  K.startGranted = false;
   K.convoys = [];
   K.inbound = [];
-  K.today = { served: 0, lost: 0, burnt: 0, turned: 0, earned: 0, tips: 0, xp: 0, qsum: 0, qunits: 0, raw: 0, perfect: 0 };
-  K.totals = { served: 0, lost: 0, burnt: 0, earned: 0, days: 0 };
+  K.today = freshToday();
+  K.totals = { served: 0, lost: 0, burnt: 0, spoiled: 0, binned: 0, earned: 0, days: 0 };
   K.missing = false; K.offline = false; K.error = null;
   K._seq = 0; K._seed = 1; K._nextCounter = 0; K._report = null;
   clearService();
+  /* A reset kitchen is a NEW kitchen, so it gets the same starting stock a new
+     save does — otherwise "reset" hands you a kitchen you cannot cook in.
+     ⚠ IT GOES THROUGH hydrate(), NOT THROUGH A SECOND COPY OF THE GRANT. The
+     previous version inlined the START_PANTRY loop here, which meant the grant
+     existed in two places obeying two different sets of rules — and when the
+     rules gained the pantry cap and the per-bin ceiling, only one copy got
+     them. One door, and reset() walks through it like everybody else. */
+  hydrate(null);
   save(true);
   return K;
 }
@@ -549,6 +601,10 @@ export function snapshot() {
     upgrades: (K.upgrades || []).slice(),
     convoys: (K.convoys || []).map((c) => Object.assign({}, c)),
     totals: Object.assign({}, K.totals),
+    // 🔴 THE STARTING-STOCK RECEIPT. Without this in the save, hydrate() has no
+    //    way to tell "never played" from "played, spent everything" once the
+    //    player's xp is still 0, and the grant becomes a faucet. See hydrate().
+    startGranted: !!K.startGranted,
   };
 }
 
@@ -583,29 +639,6 @@ export function hydrate(saved) {
   const pop = (s.popularity != null) ? s.popularity : s.pop;
   K.popularity = _clamp(_num(pop, 50), 0, 100);
 
-  const pantry = {};
-  const rawPantry = (s.pantry && typeof s.pantry === 'object') ? s.pantry : {};
-  for (const id of Object.keys(rawPantry)) {
-    const n = _int(rawPantry[id]);
-    if (n > 0) pantry[id] = n;          // negatives and NaN are dropped, stock is not
-  }
-  // 🔴 A BRAND NEW KITCHEN STARTS STOCKED. ECON.START_PANTRY exists because the
-  //    first thing a new player does is open the panel and press a station — and
-  //    if the pantry is empty, the only thing the game can say is "no". A cooking
-  //    game whose first interaction is a refusal has already lost the player.
-  //    The test is `saved` being absent, NOT the pantry being empty: an empty
-  //    pantry mid-game is a real, earned failure state and must not be topped up.
-  if (!saved || typeof saved !== 'object') {
-    const start = (DATA.ECON && DATA.ECON.START_PANTRY) || null;
-    if (start && typeof start === 'object') {
-      for (const id of Object.keys(start)) {
-        const n = _int(start[id]);
-        if (n > 0) pantry[id] = n;
-      }
-    }
-  }
-  K.pantry = pantry;
-
   /* ⚠ AND THE SAME HOLE EXISTED IN THE UPGRADE LIST. Filtering on
      `typeof === 'string'` let ANY id survive forever, so a hand-edited save
      naming an upgrade granted its effect (every helper in kitchen.data.js reads
@@ -614,7 +647,13 @@ export function hydrate(saved) {
      future build the player has rolled back from — which would otherwise sit in
      the save granting a slot count this version cannot draw.
      Duplicates go too: `_sumEffect` adds a slot per OCCURRENCE, so a save with
-     the same id twice bought a lane it never paid for. */
+     the same id twice bought a lane it never paid for.
+
+     ⚠ THIS MOVED ABOVE THE PANTRY, AND THE ORDER IS NOW LOAD-BEARING. The
+     pantry clamp below sizes itself with `DATA.pantryCap(K.upgrades)`, and
+     up_walkin/up_walkin2 add to that cap. Clamping the pantry against the base
+     cap while the player owns two cooler upgrades would silently destroy the
+     stock those 198,000 Cinder bought, on every single panel open. */
   const upSeen = Object.create(null);
   K.upgrades = (Array.isArray(s.upgrades) ? s.upgrades : []).filter((u) => {
     if (typeof u !== 'string' || upSeen[u]) return false;
@@ -624,17 +663,111 @@ export function hydrate(saved) {
     return true;
   });
 
+  const t0 = (s.totals && typeof s.totals === 'object') ? s.totals : {};
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     🔴 THE STARTING GRANT — THE WORST BUG THIS FEATURE SHIPPED.
+     ═══════════════════════════════════════════════════════════════════════
+     ECON.START_PANTRY exists because the first thing a new player does is open
+     the panel and press a station, and if the pantry is empty the only thing
+     the game can say is "no". A cooking game whose first interaction is a
+     refusal has already lost the player. The six lines that said exactly that
+     sat directly above a test that COULD NOT FIRE:
+
+         if (!saved || typeof saved !== 'object') { …grant… }
+
+     because `bridge().kitchenState()` AUTO-CREATES `Profile.kitchen = {}` and
+     hands back a truthy object for a player who has never played. So the branch
+     was unreachable for every human being who has ever opened this panel:
+     `Profile.gems 0`, `Profile.salvage {}`, `Kitchen.pantry {}` — tap the
+     flat-top, "Out of ingredients"; tap Supplies, "Not enough Food — you need 5
+     and have 0". A dead end with no exit, on screen one.
+     The headless rung missed it for the same reason from the other side:
+     NULL_BRIDGE.kitchenState() also returns `{}`, so the test reproduced the
+     bug rather than failing on it.
+
+     🔴 SO THE TEST IS NO LONGER "IS THERE A SAVE". Two rules, and they are
+        different questions:
+       1. HAS THIS SAVE EVER BEEN GRANTED? `startGranted` is a receipt written
+          into the save the first time the grant lands. It is the only thing
+          that makes the grant exactly-once across an unbounded number of future
+          hydrates, and it is why this cannot regress into a top-up faucet.
+       2. HAS THIS KITCHEN EVER BEEN PLAYED? For the saves that predate the
+          receipt, evidence of play is xp, a day past 1, or any lifetime total.
+          A kitchen with none of those has not started; a kitchen with any of
+          them has, and an empty pantry mid-game is a real, earned failure state
+          that must NOT be topped up.
+     Every path lands on one of those two: no save, `{}`, `[]`, a string, a
+     zeroed save, a corrupt save, and the headless rung. That is the whole point
+     — "unmissable" is the requirement, so the test is about the CONTENT of the
+     save and never about its presence. */
+  const everPlayed = !!s.startGranted
+    || _int(s.xp) > 0
+    || _int(s.day || (s.shift && s.shift.day)) > 1
+    || _int(t0.days) > 0 || _int(t0.served) > 0 || _int(t0.earned) > 0;
+
+  const pantry = {};
+  const rawPantry = (s.pantry && typeof s.pantry === 'object') ? s.pantry : {};
+
+  /* 🔴 AND THE PANTRY IS CLAMPED ON THE WAY IN — THE HOLE FOUR LINES BELOW THE
+        ONE THAT WAS FIXED. `xp` was clamped and unknown upgrade ids were
+        dropped, and then this loop took any positive integer verbatim: a save
+        carrying `pantry:{roll:99999}` hydrated to 99,999 units against the cap
+        of 1,300 in force at the time (measured, c2_lock.mjs). The
+        self-congratulating comment about closing exactly this shape of hole was
+        sitting immediately underneath it.
+        Two ceilings, because buySupply() enforces two: the TOTAL across every
+        bin, and the share any ONE bin may hold. Admitting stock that no
+        purchase could ever have created is the same bug either way. */
+  const capFn0 = DF('pantryCap');
+  const pcap0 = Math.max(1, _int(capFn0 ? capFn0(K.upgrades) : EC('PANTRY_CAP', 900)));
+  const bcap0 = binCapFor(pcap0);
+  let running = 0;
+  for (const id of Object.keys(rawPantry)) {
+    let n = _int(rawPantry[id]);
+    if (n <= 0) continue;               // negatives and NaN are dropped, stock is not
+    n = Math.min(n, bcap0);
+    n = Math.min(n, Math.max(0, pcap0 - running));
+    if (n <= 0) continue;
+    pantry[id] = n;
+    running += n;
+  }
+
+  if (!everPlayed) {
+    const start = (DATA.ECON && DATA.ECON.START_PANTRY) || null;
+    if (start && typeof start === 'object') {
+      for (const id of Object.keys(start)) {
+        const n = _int(start[id]);
+        if (n <= 0) continue;
+        // The grant obeys the same two ceilings as a purchase. A START_PANTRY
+        // larger than the cooler would otherwise hydrate to a pantry that
+        // `buySupply` considers over-full on the player's very first tap.
+        const room = Math.min(bcap0 - _int(pantry[id]), pcap0 - running);
+        const give = Math.min(n, Math.max(0, room));
+        if (give <= 0) continue;
+        pantry[id] = _int(pantry[id]) + give;
+        running += give;
+      }
+    }
+  }
+  K.pantry = pantry;
+  // The receipt is written whether or not the grant had anything to give, so a
+  // START_PANTRY that is empty (or a data file mid-rewrite) cannot leave the
+  // save permanently "fresh" and re-granting on every open once it is filled in.
+  K.startGranted = true;
+
   K.convoys = Array.isArray(s.convoys)
     ? s.convoys.filter((c) => c && typeof c === 'object').map((c) => Object.assign({}, c))
     : [];
 
-  const t = (s.totals && typeof s.totals === 'object') ? s.totals : {};
   K.totals = {
-    served: Math.max(0, _int(t.served)),
-    lost: Math.max(0, _int(t.lost)),
-    burnt: Math.max(0, _int(t.burnt)),
-    earned: Math.max(0, _int(t.earned)),
-    days: Math.max(0, _int(t.days)),
+    served: Math.max(0, _int(t0.served)),
+    lost: Math.max(0, _int(t0.lost)),
+    burnt: Math.max(0, _int(t0.burnt)),
+    spoiled: Math.max(0, _int(t0.spoiled)),
+    binned: Math.max(0, _int(t0.binned)),
+    earned: Math.max(0, _int(t0.earned)),
+    days: Math.max(0, _int(t0.days)),
   };
 
   K.v = 1;                                // migrations for v2 go HERE, above this line
@@ -724,6 +857,105 @@ function pantryTotal() {
   let n = 0;
   for (const id of Object.keys(K.pantry)) n += _int(K.pantry[id]);
   return n;
+}
+
+/**
+ * 🔴 THE PER-BIN CEILING — THE HALF OF THE PANTRY CAP THAT PREVENTS THE BRICK.
+ *
+ * Making PANTRY_CAP a true TOTAL was correct and it created an unrecoverable
+ * soft-lock on its way in. Measured (c2_lock.mjs): buy ONE line to refusal and
+ * the cooler reads 894 of 900 with 862 of it sitting in a single bin — after
+ * which every other supply line refuses forever. The toast said "cook some of
+ * it down", which is not executable advice, because cooking a hot dog needs
+ * sausage as well as roll and sausage can no longer be bought. A player who
+ * over-buys one bin bricks the kitchen permanently.
+ *
+ * There are now TWO answers and the feature needs both:
+ *   • RECOVERY — `dumpSupply()` below, so a save already in the hole can climb
+ *     out. That is the exit.
+ *   • PREVENTION — this ceiling, so ordinary play cannot walk into the hole in
+ *     the first place. An exit nobody knows about is not a fix; a wall you
+ *     cannot walk through does not need one.
+ * A bin may hold at most PANTRY_BIN_PCT of the whole cooler, and never less than
+ * one batch of the largest supply order — a ceiling that refuses a single
+ * purchase outright would be a worse bug than the one it closes.
+ */
+function binCapFor(pcap) {
+  const pct = _clamp(EC('PANTRY_BIN_PCT', 0.15), 0.02, 1);
+  // ⚠ THE FLOOR IS THREE-WAY, and every arm of it closes a way to ship a
+  //   ceiling that refuses a purchase nobody could route around:
+  //     PANTRY_BIN_MIN — the designer's floor, so a small cooler still holds a
+  //       usable amount of any one thing;
+  //     the largest single batch — a ceiling below one batch would refuse a bin
+  //       the player has never bought from, which reads as a broken shop;
+  //     the share itself, which is the actual rule.
+  let biggest = 1;
+  try {
+    for (const sup of (Array.isArray(DATA.SUPPLY_RECIPES) ? DATA.SUPPLY_RECIPES : [])) {
+      const q = _int(sup && sup.out && sup.out.qty);
+      if (q > biggest) biggest = q;
+    }
+  } catch (e) {}
+  return Math.max(
+    _int(EC('PANTRY_BIN_MIN', 60)),
+    biggest,
+    Math.floor(Math.max(1, _int(pcap)) * pct),
+  );
+}
+
+/**
+ * What the cooler looks like right now. Render draws the "844 of 900" line and
+ * the per-bin bars from this; it is a READ and mutates nothing.
+ */
+export function pantryRoom() {
+  const capFn = DF('pantryCap');
+  const cap = Math.max(1, _int(capFn ? capFn(K.upgrades) : EC('PANTRY_CAP', 900)));
+  const total = pantryTotal();
+  return {
+    total,
+    cap,
+    room: Math.max(0, cap - total),
+    binCap: binCapFor(cap),
+    full: total >= cap,
+  };
+}
+
+/**
+ * 🗑 DUMP STOCK OUT OF ONE BIN. No refund, ever.
+ *
+ * ⚠ NOT IN CONTRACT §1's EXPORT LIST — this is the "say so" the contract asks
+ * for, and it wants adding to §1 alongside `binPass` and `addStep`.
+ *
+ * WHY NO REFUND, AND WHY NO POPULARITY COST EITHER. The sunk purchase IS the
+ * punishment — the player already paid live resources and Cinder for these
+ * units and is now throwing them away. Charging reputation on top would make
+ * the only exit from a soft-lock cost more than the soft-lock, which is how you
+ * end up with players who correctly refuse to use the recovery you built them.
+ * Refunding, on the other hand, would turn the cooler into a free warehouse:
+ * buy the whole market at a good price, dump it back when you want the space.
+ *
+ * ⚠ IT EMITS `pantry:buy` WITH A NEGATIVE `qty`, NOT A NEW EVENT NAME.
+ *   CONTRACT §6 fixes a closed set of event names and this file does not get to
+ *   widen it unilaterally — the same call `binPass` made when it reused
+ *   `cook:burnt` with `binned:true`. `dumped:true` carries the detail for a
+ *   renderer that wants to draw it differently, and the sign carries it for one
+ *   that does not.
+ */
+export function dumpSupply(ingId, n) {
+  const have = _int(K.pantry[ingId]);
+  if (!ingId || have <= 0) return no('BAD_ARG', 'There is nothing in that bin.');
+  const want = _int(n);
+  // `n` omitted (or <= 0) means "empty the bin" — that is the recovery case and
+  // it should not require the caller to know how much is in there.
+  const drop = (want > 0) ? Math.min(want, have) : have;
+  K.pantry[ingId] = have - drop;
+  if (K.pantry[ingId] <= 0) delete K.pantry[ingId];
+  delete K._lowSeen[ingId];               // re-arm the low warning for this id
+  K.rev++;
+  emit('pantry:buy', { supplyId: null, ing: ingId, qty: -drop, batches: 0, cost: {}, dumped: true });
+  fx('bin', `-${drop} ${metaName(ingId) || ingId}`);
+  save(true);
+  return ok({ ing: ingId, dumped: drop, left: _int(K.pantry[ingId]) });
 }
 
 /** The list of ids that are legal keys in a SUPPLY_RECIPES cost dict. */
@@ -859,7 +1091,25 @@ export function buySupply(supplyId, batches) {
   const after = total + _int(out.qty) * n;
   if (after > pcap) {
     const room = Math.max(0, pcap - total);
-    return no('CAP', `Pantry full — ${total.toLocaleString()} of ${pcap.toLocaleString()} units stored, room for ${room.toLocaleString()} more. Cook some of it down or buy a bigger cooler.`);
+    return no('CAP', `Pantry full — ${total.toLocaleString()} of ${pcap.toLocaleString()} units stored, room for ${room.toLocaleString()} more. Dump a bin you are not using, or buy a bigger cooler.`);
+  }
+
+  /* 🔴 AND THE SECOND CEILING: NO ONE BIN MAY EAT THE WHOLE COOLER.
+        The total cap on its own is a brick. c2_lock.mjs: buy one line to
+        refusal → 894 of 900 units with 862 of them in a single bin, and every
+        other line then refuses permanently, including the one that would let
+        you cook the first bin down. `dumpSupply()` is the exit; this is the
+        wall, and the wall is the part that matters, because a player should
+        never have to discover a recovery action to keep playing.
+        See binCapFor() for why the ceiling can never refuse a first batch. */
+  const bcap = binCapFor(pcap);
+  const inBin = _int(K.pantry[out.ing]);
+  if (inBin + _int(out.qty) * n > bcap) {
+    const roomB = Math.max(0, bcap - inBin);
+    const label = metaName(out.ing) || out.ing;
+    return no('CAP', roomB > 0
+      ? `That shelf is nearly full — ${inBin.toLocaleString()} of ${bcap.toLocaleString()} ${label}, room for ${roomB.toLocaleString()} more. One ingredient cannot fill the whole cooler.`
+      : `That shelf is full — ${inBin.toLocaleString()} of ${bcap.toLocaleString()} ${label}. Cook some of it down before you order more.`);
   }
 
   const paid = spendCost(sup.cost || {}, n);
@@ -881,6 +1131,39 @@ function metaName(id) {
   if (ing && ing.name) return ing.name;
   try { const m = bridge().meta ? bridge().meta(id) : null; if (m && m.name) return m.name; } catch (e) {}
   return null;
+}
+
+/**
+ * 🔴 THE ASSERTION THAT WAS MISSING. Pure, mutates nothing, safe at runtime.
+ *
+ * The first-run blocker (see hydrate()) survived a whole round because every
+ * test asked "does hydrate throw" and none asked the only question that
+ * matters: CAN A BRAND NEW PLAYER COOK SOMETHING. This answers it from the data
+ * alone — what ECON.START_PANTRY holds against what the level-1 menu needs —
+ * so a harness can assert on it and a retune of either table trips the wire.
+ *
+ * → { ok, stock, cookable:[recipeId], missing:[{recipeId,ing,need,have}] }
+ * `ok` is false the moment a level-1 kitchen cannot cook a single thing. It is
+ * NOT a claim that every level-1 dish is coverable — the 14-id ledger is
+ * supposed to gate the expensive ones — only that the first tap is not a "no".
+ */
+export function startPantryCovers() {
+  const stock = {};
+  try {
+    const st = (DATA.ECON && DATA.ECON.START_PANTRY) || {};
+    for (const id of Object.keys(st)) if (_int(st[id]) > 0) stock[id] = _int(st[id]);
+  } catch (e) {}
+  const cookable = [], missing = [];
+  for (const r of menuForLevel(1)) {
+    if (!r || !r.needs) continue;
+    let can = true;
+    for (const id of Object.keys(r.needs)) {
+      const need = _int(r.needs[id]), have = _int(stock[id]);
+      if (have < need) { can = false; missing.push({ recipeId: r.id, ing: id, need, have }); }
+    }
+    if (can) cookable.push(r.id);
+  }
+  return { ok: cookable.length > 0, stock, cookable, missing };
 }
 
 /** Which ingredients are running out. Render draws the red bins from this. */
@@ -1069,17 +1352,29 @@ export function pullSlot(stationId, slotIndex, now) {
     quality,
     mult: qMult(quality) * (quality === 'burnt' ? 1 : build.mult),
     build: build.score,
+    // 🔴 SEAM 1 — see THE BUILD RECORD below. `slot.steps` used to die here.
+    built: Array.isArray(slot.steps) ? slot.steps.slice() : [],
+    assembled: Array.isArray(slot.steps) && slot.steps.length > 0,
     madeAt: t,
   };
   K.rev++;
   return ok({ quality, build: build.score });
 }
 
-/** Bin whatever is in hand. The ingredients are gone; that is the lesson. */
+/** Bin whatever is in hand. The ingredients are gone; that is the lesson.
+    ⚠ A BURNT DISH IS NOT DOUBLE-COUNTED HERE. `pullSlot` already booked the
+      burn (and charged POP_BURN) at the moment it came off the surface, so
+      binning it afterwards is bookkeeping, not a second failure. Anything else
+      in the hand is a deliberate discard and books as `binned` — triage, on the
+      same terms as binPass(), and for the same reason. */
 export function dropHand() {
   if (!K.hand) return false;
   const was = K.hand;
   K.hand = null;
+  if (was.quality !== 'burnt') {
+    K.today.binned = _int(K.today.binned) + 1;
+    K.totals.binned = _int(K.totals.binned) + 1;
+  }
   K.rev++;
   fx('bin', 'binned', { recipeId: was.recipeId });
   return true;
@@ -1108,6 +1403,9 @@ export function plateHand(now) {
     recipeId: K.hand.recipeId,
     quality: K.hand.quality,
     mult: _num(K.hand.mult, 1),
+    // 🔴 SEAM 1 — see THE BUILD RECORD below.
+    built: Array.isArray(K.hand.built) ? K.hand.built.slice() : [],
+    assembled: !!K.hand.assembled,
     madeAt: t,
   };
   K.pass.push(dish);
@@ -1233,7 +1531,12 @@ export function newTicket(k, opts) {
     xn: 0,      // units that earn XP at all (raw ones do not)
     pn: 0,      // units that were PERFECT — they earn XP_PERFECT_MULT
     rn: 0,      // units that were RAW — they COST popularity (ECON.POP_RAW)
-  })).filter((it) => recipeOf(it.recipeId));
+    // SEAM 1. Both names, one array, from the first frame — so drivethru.js's
+    // buildsOf() never has to distinguish "no evidence yet" from "no field".
+    builds: [],
+    built: [],
+  })).map((it) => { it.built = it.builds; return it; })
+    .filter((it) => recipeOf(it.recipeId));
   if (!items.length) return null;
 
   const ticket = {
@@ -1449,7 +1752,12 @@ export function passStalePct(dish, now) {
  *
  * ⚠ NO POPULARITY COST. Nobody was served a spoiled plate — it never left the
  *   pass. The ingredients and the slot time are the price, and they are real.
- *   It counts in `today.burnt` because waste should still cost you the S grade.
+ *   It counts in `today.burnt` — and therefore against the S grade — because a
+ *   plate you let rot under the lamp is neglect, the same lesson as a slot you
+ *   let burn down, and the grade's clean sheet should notice both. `spoiled`
+ *   is the same event counted separately so the settlement report can tell the
+ *   player WHICH kind of waste it was. It is NOT `binned`: binning is a decision
+ *   (see binPass), letting it rot is the absence of one.
  */
 function spoilPass(now) {
   if (!K.pass.length) return;
@@ -1462,6 +1770,8 @@ function spoilPass(now) {
     K.pass.splice(i, 1);
     K.today.burnt++;
     K.totals.burnt++;
+    K.today.spoiled = _int(K.today.spoiled) + 1;
+    K.totals.spoiled = _int(K.totals.spoiled) + 1;
     K.rev++;
     emit('cook:burnt', { stationId: null, slot: -1, recipeId: d.recipeId, spoiled: true });
     fx('burn', 'binned — cold', { recipeId: d.recipeId });
@@ -1477,17 +1787,109 @@ function spoilPass(now) {
  * minutes for a wrong dish to rot while the dinner rush runs is a punishment
  * with no decision in it. Binning it is the decision — you paid for it, you
  * choose whether the space is worth more than the food.
+ *
+ * 🔴 IT IS SCORED AS TRIAGE, NOT AS WASTE, AND IT USED NOT TO BE.
+ * This incremented `today.burnt` — the same tally as a slot burned down through
+ * neglect — and `gradeFor()` pushes any grade-4 day down to an A the moment
+ * `burnt` is non-zero. So the game charged the player for playing correctly:
+ * measured, a bot that NEVER bins deadlocks the pass and finishes served=35
+ * lost=64 grade D (c2_bin.mjs), while the bot that bins its way out finishes
+ * far ahead and was then marked down for the bins. Breaking the deadlock is
+ * mandatory play; mandatory play cannot be booked as incompetence.
+ * The ingredients, the slot time and the lost sale are already the price, and
+ * `today.binned` keeps it visible in the settlement report as a cost line —
+ * which is where a cost belongs. It is simply not a grade input.
  */
 export function binPass(dishId) {
   const i = K.pass.findIndex((d) => d && d.id === dishId);
   if (i === -1) return no('BAD_ARG', 'That plate is not on the pass.');
   const d = K.pass.splice(i, 1)[0];
-  K.today.burnt++;
-  K.totals.burnt++;
+  K.today.binned = _int(K.today.binned) + 1;
+  K.totals.binned = _int(K.totals.binned) + 1;
   K.rev++;
-  emit('cook:burnt', { stationId: null, slot: -1, recipeId: d.recipeId, spoiled: true, binned: true });
+  emit('cook:burnt', { stationId: null, slot: -1, recipeId: d.recipeId, spoiled: false, binned: true });
   fx('bin', 'binned', { recipeId: d.recipeId });
   return ok({ recipeId: d.recipeId });
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   🧾 SEAM 1 — THE BUILD RECORD. What actually went onto the food.
+   ═══════════════════════════════════════════════════════════════════════════
+   🔴 WHY THIS EXISTS: THE CUSTOMER'S PROMISE WAS WORTH ZERO CINDER.
+   drivethru.js attaches modifiers to a drive-thru order — "no greens", "extra
+   cheese", "well done" — and `judgeMod()` returns 'honoured' | 'broken' |
+   'unproven' against the EVIDENCE of what the cook laid on the dish. That check
+   is honest and it was reading a field nobody wrote. Measured over 12 seeded
+   days at level 20, 94 promises judged: {honoured:0, broken:2, unproven:92}.
+   Not one modifier was ever honoured, so the ✓ payoff branch was unreachable
+   code and — worse — a controlled A/B on one seed had obeying "no greens" pay
+   144 Cinder against 150 for ignoring it. The game paid you to ignore your
+   customers, which is the exact opposite of the mechanic.
+
+   The evidence never existed because `addStep()` wrote `slot.steps`, `pullSlot`
+   dropped it, and `plateHand` never looked. Three assignments and a copy on
+   commit close it. The chain, end to end, is:
+
+       addStep()      → slot.steps = [ingId, …]       in LAY ORDER
+       pullSlot()     → hand.built = slot.steps.slice()
+       plateHand()    → dish.built = hand.built.slice()   (the dish on the pass)
+       refreshReady() → item.builds = [ built | null, … ]  PROVISIONAL, per unit
+       takeDishes()   → item.builds frozen from the units actually handed over
+
+   🔴 `null` MEANS "NO EVIDENCE", AND AN EMPTY ARRAY DOES NOT.
+   This is the one subtle thing in the whole seam and getting it backwards
+   inverts the mechanic. `startCook()` already spent the FULL `recipe.needs` out
+   of the pantry, so a dish nobody assembled contains everything the recipe calls
+   for — the assembly mini-game is optional and a renderer may not even surface
+   it. If an un-assembled dish reported `built: []`, drivethru's `countIn()`
+   would count zero onions and score every "no onions" as HONOURED, handing out
+   the payoff for a promise the player never made. So an un-assembled unit
+   reports `null`: judgeMod reads it as 'unproven', worth nothing, and the
+   player who never touches assembly is exactly where they are today — neutral.
+   The player who DOES assemble gets a real promise with real money on it, in
+   both directions.
+
+   ⚠ TWO FIELD NAMES ON THE TICKET LINE, ON PURPOSE AND POINTING AT ONE ARRAY.
+   `item.builds` is what drivethru.js's `buildsOf()` already reads; `item.built`
+   is the name the round's cross-file brief settled on. They are the SAME array
+   object, never two copies, so they cannot drift into disagreeing. This wants
+   collapsing to one name in CONTRACT §2 the moment both sides can be edited in
+   the same commit — but shipping a seam that only works if two builders guessed
+   the same noun is how the last round produced 92 'unproven' verdicts.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * One unit's evidence, or `null` when that unit carried none. See above.
+ *
+ * ⚠ IT RETURNS THE DISH'S OWN ARRAY, NOT A COPY, and that is deliberate on the
+ * PROVISIONAL path only. `refreshReady()` runs every frame for every line on
+ * the board, so slicing here would allocate ~100 throwaway arrays a frame for a
+ * record nobody has committed to yet. A plated dish is immutable — nothing
+ * writes `dish.built` after plateHand — so sharing the reference is safe.
+ * `takeDishes()` slices at the moment of commit, because THAT record has to
+ * outlive the dish it came from.
+ */
+function buildEvidence(dish) {
+  if (!dish || !dish.assembled) return null;
+  const b = dish.built;
+  return (Array.isArray(b) && b.length) ? b : null;
+}
+
+/**
+ * Point both names at ONE array, so the two readers cannot disagree.
+ * → true when the record actually CHANGED, which the caller turns into a
+ *   `rev++`: drivethru's `modVerdict()` chips are painted off `rev`, and a
+ *   verdict that flips from 'honoured' to 'broken' because a nearer-due ticket
+ *   took the good burger has to redraw or the chip is lying to the player.
+ */
+function setBuilds(item, arr) {
+  const cur = item.builds;
+  let same = Array.isArray(cur) && cur.length === arr.length;
+  if (same) for (let i = 0; i < arr.length; i++) if (cur[i] !== arr[i]) { same = false; break; }
+  if (same) return false;
+  item.builds = arr;
+  item.built = arr;
+  return true;
 }
 
 /**
@@ -1500,6 +1902,13 @@ export function binPass(dishId) {
  * burger, a ticket that was 'ready' a frame ago is not any more, and the SERVE
  * button has to disappear rather than sit there promising something the pass
  * cannot deliver. The transition is two-way on purpose.
+ *
+ * 🔴 IT ALSO WRITES THE PROVISIONAL BUILD RECORD (see SEAM 1 above), and it has
+ * to happen HERE rather than only at serve time: drivethru.js calls
+ * `judgeTicket()` BEFORE `State.serveTicket()` — it has to, because serving
+ * removes the ticket from the board and takes the mods with it — and
+ * `modVerdict()` is drawn on the ticket chips every single frame. A verdict the
+ * player only learns after the fact is a mechanic they will never learn at all.
  */
 function refreshReady(now) {
   const board = K.tickets
@@ -1513,12 +1922,15 @@ function refreshReady(now) {
     for (const item of ticket.items) {
       const need = Math.max(0, _int(item.qty));
       let got = 0;
+      const builds = [];
       for (let i = 0; i < K.pass.length && got < need; i++) {
         const d = K.pass[i];
         if (!d || used[d.id] || d.recipeId !== item.recipeId) continue;
         used[d.id] = 1;
+        builds.push(buildEvidence(d));
         got++;
       }
+      if (setBuilds(item, builds)) K.rev++;
       if (got !== _int(item.filled)) { item.filled = got; K.rev++; }
       if (got < need) complete = false;
     }
@@ -1561,6 +1973,13 @@ function takeDishes(ticket, now) {
   const taken = [];
   for (const [item, mine] of plan) {
     item.filled = 0; item.qsum = 0; item.xn = 0; item.pn = 0; item.rn = 0;
+    /* 🔴 SEAM 1, THE COMMIT HALF. `refreshReady()` wrote a PROVISIONAL record
+       every tick against whatever the pass happened to be holding; these are
+       the units that physically went out of the window, in hand-over order, and
+       this is the record the till is judged on. Rebuilt rather than trimmed,
+       because the provisional list can contain plates a nearer-due ticket took
+       between the last look and this commit. */
+    const builds = [];
     for (const d of mine) {
       const idx = K.pass.indexOf(d);
       if (idx !== -1) K.pass.splice(idx, 1);
@@ -1568,8 +1987,11 @@ function takeDishes(ticket, now) {
       item.qsum += _num(d.mult, 1) * stalenessMul(d, now);
       if (d.quality === 'raw') item.rn++; else item.xn++;
       if (d.quality === 'perfect') item.pn++;
+      const ev = buildEvidence(d);
+      builds.push(ev ? ev.slice() : null);   // ← COMMIT: copy, the dish is leaving
       taken.push(d);
     }
+    setBuilds(item, builds);
   }
   K.rev++;
   return taken;
@@ -1911,7 +2333,7 @@ export function openShift(now) {
   K.shift.tMs = 0;
   K.shift.running = true;
   K.shift.rush = rushNow();
-  K.today = { served: 0, lost: 0, burnt: 0, turned: 0, earned: 0, tips: 0, xp: 0, qsum: 0, qunits: 0, raw: 0, perfect: 0 };
+  K.today = freshToday();
   K._report = null;
   K._nextCounter = t + EC('SHIFT_GRACE_MS', 4000);
   K.rev++;
@@ -1956,6 +2378,10 @@ export function closeShift(now, opts) {
     served: K.today.served,
     lost: K.today.lost,
     burnt: K.today.burnt,
+    // The two halves of `burnt`, plus the cost line that is deliberately NOT a
+    // grade input. See binPass() and gradeFor().
+    spoiled: _int(K.today.spoiled),
+    binned: _int(K.today.binned),
     earned: K.today.earned,
     tips: K.today.tips,
     xp: K.today.xp,
@@ -2017,6 +2443,17 @@ export function closeShift(now, opts) {
  * An S additionally requires a clean sheet — nothing burnt — because S is the
  * "you did not put a foot wrong" grade and a bin full of charcoal is a foot
  * wrong even if the customer never saw it.
+ *
+ * 🔴 IT READS `burnt` AND DELIBERATELY NOT `binned`. Those were the same number
+ * and that made the top of the scale unreachable for the wrong reason. Burning
+ * a slot and letting a plate rot are both NEGLECT — you stopped paying
+ * attention and food died. Binning a plate is a DECISION, and at the shipped
+ * pass size it is a decision the player is forced to make constantly: a bot
+ * that never bins jams the pass and finishes on a D (c2_bin.mjs), and the one
+ * that bins its way out was then denied the S for doing so. A grade that
+ * punishes the only working play is not measuring skill, it is measuring
+ * whether the player was willing to lose. `binned` stays in the report as a
+ * cost line, where a cost belongs.
  */
 function gradeFor(today) {
   const total = _int(today.served) + _int(today.lost);
@@ -2325,6 +2762,15 @@ export function simulate(seconds, actions, opts) {
 
   if (o.seed != null) seed(o.seed);
   init();
+  /* 🔴 `fresh:true` IS THE FIRST-RUN REGRESSION AND IT IS NOT OPTIONAL.
+     The blocker that shipped — a brand-new player opening to an empty pantry
+     with no legal move — was invisible to every headless test because the two
+     things that hand a save back (`Profile.kitchen` in index.html and
+     `NULL_BRIDGE._mem` in kitchen.bridge.js) BOTH auto-create `{}`, so the test
+     rig reproduced the bug instead of failing on it. Hydrating the literal `{}`
+     is therefore the exact shape a new account has, and `report.firstRun` says
+     whether that account can cook. */
+  if (o.fresh) hydrate({});
   K.now = t;
   if (o.autoOpen !== false) openShift(t);
 
@@ -2418,6 +2864,20 @@ export function simulate(seconds, actions, opts) {
   report.popularity = K.popularity;
   report.level = K.level;
   report.xp = K.xp;
+  report.pantryRoom = pantryRoom();
+  report.binned = _int(K.today.binned);
+  report.spoiled = _int(K.today.spoiled);
+  report.grade = gradeFor(K.today);
+  if (o.fresh) {
+    const cov = startPantryCovers();
+    report.firstRun = {
+      granted: pantryTotal() > 0 || report.served > 0,
+      startPantryOk: cov.ok,
+      cookableAtLevel1: cov.cookable,
+      missing: cov.missing,
+    };
+    if (!cov.ok) report.violations.push('START_PANTRY cannot cook anything on the level-1 menu');
+  }
   report.ok = report.violations.length === 0 && report.errors.length === 0;
   return report;
 }

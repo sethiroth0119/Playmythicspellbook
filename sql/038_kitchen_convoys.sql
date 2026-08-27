@@ -31,6 +31,12 @@
 --                             it REPORTS whether this call was the first, so a
 --                             replayed request cannot be paid twice.
 --  6. kitchen_stats_upsert()  the ONE way a scoreboard row is written.
+--  7. kitchen_convoy_tiers    the truck table, ON THE SERVER. New in round 3 and
+--                             it is the fix for the unpriced faucet: the launch
+--                             RPC used to take the box count and the transit
+--                             time from the client and clamp them GLOBALLY
+--                             (1..500 boxes, 10min..12h) even though the tier
+--                             was sitting right there in p_tier.
 --
 -- ── 🔴 WHAT THE ECONOMY IS TRUSTING THIS FILE WITH ─────────────────────────
 -- A claimed convoy turns into units of the LIVE resource `food` in the
@@ -52,6 +58,37 @@
 --   6. THE CLAIM RPC RETURNS `delivered_dishes`, which is 0 on a replay, and
 --      the client is only allowed to pay on that number. This is the wall that
 --      was missing in round 1.
+--
+-- ── 🔴 THE ROUND-2 HOLE, AND WHY SIX WALLS WERE STILL NOT ENOUGH ───────────
+-- Every one of those six walls was real and every one of them was reviewed, and
+-- the feature still shipped a faucet, because wall 1 — the only wall that makes
+-- shipping net-NEGATIVE — lives in kitchen.data.js and is therefore enforced by
+-- the honest client only. Walls 2..6 constrain the SHAPE of a launch; not one of
+-- them constrains its SIZE against anything the sender actually did. Proven on a
+-- real PostgreSQL 16: as plain `authenticated`,
+--     kitchen_convoy_launch(B,'B','A','rig','{}',500,1)
+-- succeeded ten times in one transaction — 5,000 boxes, zero cooking, every
+-- truck landing in ten minutes. `rig` is 120 boxes over six hours in
+-- CONVOY_TIERS. The server took 500 boxes over ten minutes because it never
+-- looked at p_tier for anything but the text it stored. With the hourly cap that
+-- is 10,000 units of live `food` per hour into a colluding account, ~500× the
+-- legitimate rate with the sign flipped — and it is WORSE than a raw edit of the
+-- player's save, because the convoy path LAUNDERS it: kitchen_convoy_ledger is
+-- the append-only record this feature offers as evidence, so an audit reading it
+-- sees a delivered convoy vouching for the balance.
+--
+-- THREE MORE WALLS, ALL SERVER-SIDE, ALL IN THIS FILE:
+--   7. TIER-TRUE CLAMPS. kitchen_convoy_tiers holds capacity and transit per
+--      truck and the launch RPC clamps to the row it looks up, not to a global
+--      constant. A rig is 120 boxes over six hours because the DATABASE says so.
+--   8. THE THROUGHPUT BUDGET — the production link. A kitchen is a physical
+--      thing with a maximum output rate, so `sum(dishes)` launched in the last
+--      hour is bounded by what a kitchen could actually have COOKED in an hour.
+--      This is the wall the critic asked for: a server-side link between what a
+--      sender shipped and what they could have produced.
+--   9. THE LIFETIME BUDGET. The same statement over the account's whole life,
+--      against auth.users.created_at, so a fresh mule account cannot open with a
+--      burst it had no time to cook.
 --
 -- ── ⚠ RLS RECURSION ────────────────────────────────────────────────────────
 -- A policy on a table that itself queries that table can re-enter RLS and
@@ -94,7 +131,26 @@ create table if not exists public.kitchen_convoys (
   launched_at timestamptz not null default now(),
   arrives_at  timestamptz not null,
   state       text not null default 'transit',
-  claimed_at  timestamptz
+  claimed_at  timestamptz,
+  -- ── THE ROAD (round 3) ───────────────────────────────────────────────────
+  -- 🔴 THE HOLD-UP IS ROLLED HERE, ON THE SERVER, AND IT IS ALREADY BAKED INTO
+  --    `arrives_at`. It is NOT a second number the client adds on top.
+  --    WHY the server and not convoy.js: a convoy crossing a ruined city has to
+  --    be able to go wrong or the road is a progress bar with scenery on it, and
+  --    round 2's review said exactly that. But the client cannot own the
+  --    outcome — it would reload until it rolled a clean run, and worse, it
+  --    would DISAGREE with `arrives_at`, which is the one timestamp the claim
+  --    RPC enforces. So the server rolls it once, adds it to the transit it was
+  --    going to charge anyway, and STORES what it rolled so the client can draw
+  --    the story it is already living through.
+  --    ⚠ IT COSTS TIME AND NEVER BOXES. Spoilage — losing part of the load — is
+  --      a separate, client-side, ECON-armed model (see convoy.js §3), and it is
+  --      deliberately OFF: a convoy MOVES value between two players, and
+  --      destroying part of a transfer reads to both of them as the game eating
+  --      their food. A delay costs the sender nothing they can count and still
+  --      makes the road an event.
+  delay_ms    int not null default 0,      -- 0 = a clean run
+  delay_leg   int not null default 0       -- 1-based leg it happened on; 0 = none
 );
 
 -- Re-runnable against an earlier shape.
@@ -102,6 +158,8 @@ alter table public.kitchen_convoys add column if not exists from_name  text;
 alter table public.kitchen_convoys add column if not exists to_name    text;
 alter table public.kitchen_convoys add column if not exists tier       text;
 alter table public.kitchen_convoys add column if not exists claimed_at timestamptz;
+alter table public.kitchen_convoys add column if not exists delay_ms   int not null default 0;
+alter table public.kitchen_convoys add column if not exists delay_leg  int not null default 0;
 
 -- Constraints added by name so a re-run does not duplicate them.
 -- 🔴 `dishes` ceiling: the biggest truck in CONVOY_TIERS is 120 boxes and the
@@ -206,6 +264,59 @@ create table if not exists public.kitchen_stats (
 create index if not exists kitchen_stats_served_idx on public.kitchen_stats (served desc);
 
 
+-- ============================================================================
+-- 🔴 THE TRUCK TABLE. The round-3 fix for the unpriced faucet.
+-- ============================================================================
+-- Round 2's launch RPC accepted `p_tier` and STORED it and never once used it to
+-- bound anything. The clamps were global — `least(greatest(p_dishes,1),500)` and
+-- a 10-minute floor on transit — so a client that said 'rig' got a rig's NAME
+-- and 500 boxes at ten minutes, when a rig is 120 boxes over six hours. The tier
+-- was right there in the argument list. It is used now.
+--
+-- 🔴 THESE ROWS MIRROR `CONVOY_TIERS` IN public/src/kitchen/kitchen.data.js.
+--    THEY ARE NOT A SECOND SOURCE OF TRUTH — the client draws the truck, quotes
+--    the freight and gates the level off ITS table; this one exists so a
+--    tampered client cannot post a number the real table never offered. If you
+--    retune CONVOY_TIERS, RE-RUN THIS FILE. The verify block at the bottom
+--    prints the seeded numbers so a drift is visible on every apply.
+--
+-- ⚠ WHY `on conflict do update` AND NOT `do nothing`. A hand-edit made in the
+--   SQL editor to "just try something" would otherwise survive every future
+--   apply of this file and silently outrank kitchen.data.js forever. The file is
+--   the source of truth; the table is a cache of it.
+--
+-- ⚠ NO RLS POLICY AND NO CLIENT GRANT, DELIBERATELY. Nothing in the browser
+--   reads this — the client already has CONVOY_TIERS. Only the SECURITY DEFINER
+--   launch RPC reads it, and definer bypasses RLS. RLS is still enabled below so
+--   that a future grant added by mistake still matches zero rows.
+create table if not exists public.kitchen_convoy_tiers (
+  id            text primary key,
+  name          text not null,
+  capacity      int  not null,      -- 🔴 the real box ceiling for this truck
+  transit_ms    bigint not null,    -- 🔴 the real time on the road
+  min_level     int  not null default 1,
+  -- The road, per tier. A longer haul crosses more of the ruin, so it is likelier
+  -- to be held up; the hold is a fraction of the trip, so the long haul's
+  -- fraction is smaller and the absolute delay still grows.
+  risk_pct      numeric not null default 0,
+  delay_max_pct numeric not null default 0
+);
+
+insert into public.kitchen_convoy_tiers
+  (id, name, capacity, transit_ms, min_level, risk_pct, delay_max_pct)
+values
+  ('van',   'Delivery Van', 12,    1200000, 1,  0.22, 0.25),   -- 20 min
+  ('truck', 'Box Truck',    40,    7200000, 12, 0.28, 0.20),   -- 2 h
+  ('rig',   'Road Train',   120,  21600000, 20, 0.34, 0.15)    -- 6 h
+on conflict (id) do update
+  set name          = excluded.name,
+      capacity      = excluded.capacity,
+      transit_ms    = excluded.transit_ms,
+      min_level     = excluded.min_level,
+      risk_pct      = excluded.risk_pct,
+      delay_max_pct = excluded.delay_max_pct;
+
+
 -- ─── 2. SECURITY DEFINER HELPERS (the anti-recursion layer) ────────────────
 
 -- "Am I one of the two parties to this convoy?"
@@ -222,31 +333,112 @@ language sql stable security definer set search_path = public, pg_temp as $$
   );
 $$;
 
--- Anti-spam / anti-collusion throttle.
+-- ============================================================================
+-- 🔴 THE THROTTLE. Four walls, and the last two are the production link.
+-- ============================================================================
 -- 🔴 THIS IS THE RECURSION TRAP IN PERSON: it counts kitchen_convoys and it is
 --    called from code that writes kitchen_convoys. As SECURITY DEFINER it
 --    bypasses RLS and terminates.
--- ⚠ These two numbers are GUARD RAILS, not game tuning. The game's own limit is
---   ECON.CONVOY_MAX_ACTIVE (3) in kitchen.data.js; these are deliberately
---   looser so retuning the client never starts failing launches, and still
---   finite so a scripted client cannot loop.
-create or replace function public.kitchen_convoy_quota_ok()
+--
+-- ── 🔴 WALL 1 WAS A PERMANENT LOCKOUT, AND IT WAS PROVEN, NOT THEORISED ────
+-- Round 2 counted `state = 'transit'` and nothing else. NOTHING IN THE SERVER
+-- EVER WROTE 'arrived' — only the claim RPC moved a row off 'transit' — so a
+-- convoy the recipient simply never unloaded held one of the ten slots FOREVER.
+-- Reproduced on a real database: ten convoys aged to `launched_at = now() - 30
+-- days` still counted `transit | 10`, and the eleventh launch raised
+-- LAUNCH_QUOTA a month after the hourly window had closed. In the live client
+-- that surfaced as the cruellest possible shape — the freight fee was charged,
+-- the dishes left the pass, the toast blamed the network ("the truck turned back
+-- to your own city"), the recipient heard nothing, and every future attempt
+-- would do the same thing for the rest of the account's life.
+--
+-- TWO CHANGES CLOSE IT AND BOTH ARE HERE:
+--   · `and arrives_at > now()` — a LANDED truck is not on the road, whatever its
+--     state column says. This alone makes the lockout impossible even if the
+--     state machine breaks again.
+--   · both RPCs now SWEEP their caller's landed trucks to 'arrived' (see §3/§4),
+--     so the state column stops lying as well.
+--
+-- ── ⚠ WHAT THESE NUMBERS ARE ──────────────────────────────────────────────
+-- GUARD RAILS, not game tuning. The game's own limit is ECON.CONVOY_MAX_ACTIVE
+-- (3) in kitchen.data.js and these are deliberately looser, so retuning the
+-- client never starts failing launches, and still finite so a scripted client
+-- cannot loop. Walls 3 and 4 are the ones that carry the economy.
+--
+-- ── 🔴 WALL 3: THE THROUGHPUT BUDGET (the production link) ─────────────────
+-- Every box on a truck was PLATED, one at a time, by a player watching a timer.
+-- A kitchen is therefore a physical thing with a maximum output rate, and the
+-- number below is that rate written down where the server can see it:
+--
+--   240 boxes/hour = two full Road Trains, or twenty full Delivery Vans.
+--
+-- Sized against the honest ceiling and against the exploit, both measured:
+--   · legitimate play tops out near 20 boxes/hour (one 120-box rig every six
+--     hours, which is the largest truck in the game) — so this is ~12× looser
+--     than the best real player and cannot bite anybody;
+--   · the round-2 exploit ran at 10,000 boxes/hour. This is 40× tighter than
+--     that, and it is the wall that survives when the client is a lie.
+-- It is a SUM OVER DISHES, not a count of launches, which is the whole point:
+-- round 2 limited how many trucks you could send and never once looked at how
+-- much was on them.
+--
+-- ── 🔴 WALL 4: THE LIFETIME BUDGET ────────────────────────────────────────
+-- The same statement over the account's whole life. A mule account registered
+-- sixty seconds ago has not cooked anything, and the rolling hour cannot say so
+-- on its first launch. `auth.users.created_at` can — and reading it is exactly
+-- why this function is SECURITY DEFINER.
+-- ⚠ THE `+ 120` IS THE OPENING GRACE AND IT IS ONE FULL ROAD TRAIN, NOT ONE
+--   HOUR'S PRODUCTION. It was 240 (an hour's worth) for about five minutes and
+--   that was wrong in an obvious way the moment it was measured: a mule account
+--   sixty seconds old launched TWO full rigs before wall 4 bit. A brand-new
+--   player can only fly the van — twelve boxes — so 120 is still ten of their
+--   trucks, and it costs the attacker their entire first hour.
+-- ⚠ The zero-argument version is DROPPED, not left beside this one. Postgres
+--   would happily keep both, `kitchen_convoy_quota_ok()` would still resolve,
+--   and a stale call site would then be throttled by round 2's rules with none
+--   of walls 3 and 4 — a security regression that compiles and passes review.
+--   The default on p_dishes means an explicit `quota_ok()` call still works.
+drop function if exists public.kitchen_convoy_quota_ok();
+
+create or replace function public.kitchen_convoy_quota_ok(p_dishes int default 0)
 returns boolean
 language sql stable security definer set search_path = public, pg_temp as $$
-  select (
+  select
+  -- 1 · trucks ACTUALLY ON THE ROAD. `arrives_at > now()` is the lockout fix.
+  (
     select count(*) from public.kitchen_convoys
-     where from_user = auth.uid() and state = 'transit'
+     where from_user = auth.uid()
+       and state = 'transit'
+       and arrives_at > now()
   ) < 10
+  -- 2 · launches per hour. Caps van-spam independently of box count.
   and (
     select count(*) from public.kitchen_convoys
      where from_user = auth.uid() and launched_at > now() - interval '1 hour'
-  ) < 20;
+  ) < 20
+  -- 3 · BOXES per hour, including the one being launched right now.
+  and (
+    (
+      select coalesce(sum(dishes), 0) from public.kitchen_convoys
+       where from_user = auth.uid() and launched_at > now() - interval '1 hour'
+    ) + greatest(coalesce(p_dishes, 0), 0)
+  ) <= 240
+  -- 4 · BOXES per account lifetime, against what the account had time to cook.
+  and (
+    (
+      select coalesce(sum(dishes), 0) from public.kitchen_convoys
+       where from_user = auth.uid()
+    ) + greatest(coalesce(p_dishes, 0), 0)
+  ) <= 120 + 240 * greatest(
+        extract(epoch from (now() - coalesce(
+          (select u.created_at from auth.users u where u.id = auth.uid()),
+          now()))) / 3600.0, 0);
 $$;
 
-grant execute on function public.is_convoy_party(uuid)        to authenticated;
-grant execute on function public.kitchen_convoy_quota_ok()    to authenticated;
-revoke all on function public.is_convoy_party(uuid)           from public, anon;
-revoke all on function public.kitchen_convoy_quota_ok()       from public, anon;
+grant execute on function public.is_convoy_party(uuid)            to authenticated;
+grant execute on function public.kitchen_convoy_quota_ok(int)     to authenticated;
+revoke all on function public.is_convoy_party(uuid)               from public, anon;
+revoke all on function public.kitchen_convoy_quota_ok(int)        from public, anon;
 
 
 -- ============================================================================
@@ -265,11 +457,27 @@ revoke all on function public.kitchen_convoy_quota_ok()       from public, anon;
 --    The client now posts a DURATION. This function decides when the truck
 --    lands, from now(), in one place, for everybody.
 --
--- ⚠ THE CLAMP IS A GUARD RAIL, NOT TUNING. The game's shortest truck is 30
---   minutes (CONVOY_TIERS) and its longest is 6 hours. The floor here is 10
---   minutes and the ceiling 12 hours: loose enough that retuning the client
---   never starts failing launches, tight enough that neither a zero nor a
---   decade can be posted.
+-- ── 🔴 ROUND 3: THE CLAMPS ARE TIER-TRUE. THIS IS THE FAUCET FIX. ─────────
+--    Round 2 clamped globally — 1..500 boxes, 10 minutes..12 hours — with the
+--    tier sitting unused in `p_tier`. Proven on a real database: 'rig' with
+--    p_dishes => 500, p_transit_ms => 1 was accepted ten times in a row. A rig
+--    is 120 boxes over six hours.
+--    Now the tier row is LOOKED UP and it decides:
+--      · v_dish := least(client, t.capacity)   — the truck's real bed;
+--      · v_ms   := greatest(client, t.transit_ms) — the truck's real road.
+--    ⚠ NOTE THE DIRECTIONS. Boxes clamp DOWN and time clamps UP, because those
+--      are the two safe directions: a client can always ask for a smaller load
+--      or a longer trip (both cost it), and can never ask for a bigger load or a
+--      shorter trip (both would print food). A client that is a deploy AHEAD of
+--      this file — a retune that shortened a tier — gets the older, longer road
+--      rather than a refusal, which is a cosmetic disagreement instead of a
+--      broken feature. Re-run this file after retuning CONVOY_TIERS.
+--    ⚠ AN UNKNOWN TIER FALLS BACK TO THE VAN, THE SMALLEST TRUCK. A client one
+--      deploy ahead with a new tier id under-ships rather than over-ships. Wrong
+--      in the safe direction, every time.
+--    The global 500 / 12h clamps are KEPT as an outer wall underneath, so a tier
+--    row hand-edited to something silly in the SQL editor still cannot mint.
+--
 -- ⚠ EVERY PARAMETER AFTER p_to CARRIES A DEFAULT. PostgREST resolves an RPC by
 --   the exact set of keys in the request body, so a client that is one deploy
 --   behind and omits a key would otherwise get PGRST202 — "function not found" —
@@ -293,10 +501,41 @@ declare
   v_ms    bigint;
   v_dish  int;
   v_items jsonb;
+  v_delay int := 0;
+  v_leg   int := 0;
+  t       public.kitchen_convoy_tiers;
   c       public.kitchen_convoys;
 begin
   if me is null    then raise exception 'NOT_SIGNED_IN'; end if;
   if p_to is null  then raise exception 'NO_RECIPIENT';  end if;
+
+  -- 🔴 LAND WHAT HAS LANDED, FIRST. The server used to write 'arrived' nowhere
+  --    at all, so a truck the recipient never unloaded held an in-flight slot
+  --    for the life of the account (see kitchen_convoy_quota_ok's header for the
+  --    thirty-day reproduction). The quota's `arrives_at > now()` makes the
+  --    lockout impossible on its own; this makes the STATE COLUMN honest too, so
+  --    anything reading it later — a report, a support query, the next person to
+  --    add a write path — is not reading a lie.
+  -- ⚠ Scoped to this caller's own rows, both directions, and served by both
+  --   indexes. It is not a global sweep and must not become one: a table-wide
+  --   update on every launch is a lock convoy nobody asked for.
+  -- ⚠ EVERY COLUMN IN THE `where` IS QUALIFIED, AND THAT IS NOT STYLE.
+  --   `kitchen_convoy_claim` is `returns table (… state text, …)`, which puts an
+  --   OUT VARIABLE CALLED `state` in scope for the whole body. An unqualified
+  --   `where state = 'transit'` is then ambiguous and plpgsql refuses the
+  --   statement AT RUNTIME — the function still creates cleanly, the verify
+  --   block still prints 'ok', and every single claim raises "column reference
+  --   state is ambiguous". That is exactly what happened the first time this
+  --   sweep was written, and it was caught by driving the real RPC on a real
+  --   PostgreSQL 16 rather than by reading it. The file already carries the same
+  --   warning for `id` a few lines down; this is the second instance of it.
+  --   (The left-hand side of `set` is unambiguous by rule — only the `where`
+  --   needs qualifying — but all of it is qualified so nobody has to know that.)
+  update public.kitchen_convoys
+     set state = 'arrived'
+   where kitchen_convoys.state = 'transit'
+     and kitchen_convoys.arrives_at <= now()
+     and (kitchen_convoys.from_user = me or kitchen_convoys.to_user = me);
 
   -- 🔴 THE AUTHORISATION LINE. `from_user` is auth.uid() and there is no
   --    parameter for it. A caller-supplied sender id would be the ability to
@@ -310,10 +549,42 @@ begin
     raise exception 'NO_SUCH_PLAYER';
   end if;
 
-  if not public.kitchen_convoy_quota_ok() then raise exception 'LAUNCH_QUOTA'; end if;
+  -- 🔴 THE TRUCK DECIDES, NOT THE CALLER. Unknown tier → the van (smallest).
+  select * into t from public.kitchen_convoy_tiers
+   where kitchen_convoy_tiers.id = left(coalesce(nullif(btrim(p_tier), ''), 'van'), 24);
+  if not found then
+    select * into t from public.kitchen_convoy_tiers where kitchen_convoy_tiers.id = 'van';
+  end if;
+  -- The tier table is seeded by this same file, so `not found` twice means
+  -- somebody deleted the seed. Refuse rather than fall back to the round-2
+  -- global clamps, which is precisely the state this whole section exists to
+  -- make unreachable.
+  if t.id is null then raise exception 'NO_TIER_TABLE'; end if;
 
-  v_dish := least(greatest(coalesce(p_dishes, 0), 1), 500);
-  v_ms   := least(greatest(coalesce(p_transit_ms, 0), 600000), 43200000);
+  -- Boxes clamp DOWN to the truck's bed; the global 500 stays as an outer wall.
+  v_dish := least(greatest(coalesce(p_dishes, 0), 1), greatest(t.capacity, 1), 500);
+  -- Time clamps UP to the truck's road; the global 12h stays as an outer wall.
+  v_ms   := least(greatest(coalesce(p_transit_ms, 0), t.transit_ms, 600000), 43200000);
+
+  -- 🔴 THE BUDGET SEES THE BOX COUNT. Round 2 asked the quota nothing about SIZE
+  --    and that is how 500-box rigs got through. `v_dish`, not `p_dishes`: ask
+  --    about what is actually going to be written.
+  if not public.kitchen_convoy_quota_ok(v_dish) then raise exception 'LAUNCH_QUOTA'; end if;
+
+  -- ── THE ROAD ───────────────────────────────────────────────────────────────
+  -- Roll the hold-up ONCE, here, and bake it into arrives_at. See the column
+  -- comments on kitchen_convoys.delay_ms for why this cannot live in the client.
+  -- ⚠ `random()` is fine and is not a security surface: the result is STORED, so
+  --   it cannot be re-rolled by anybody, and the only thing it can do is make
+  --   the truck later — which is a cost to the sender and a benefit to nobody.
+  if coalesce(t.risk_pct, 0) > 0 and random() < t.risk_pct then
+    -- 0.35..1.0 of the tier's maximum, so an incident is always felt.
+    v_delay := floor(v_ms * coalesce(t.delay_max_pct, 0) * (0.35 + random() * 0.65))::int;
+    -- 1..5. convoy.js clamps this into whatever ECON.CONVOY_ROUTE_LEGS it is
+    -- drawing, so the two cannot disagree about which marker to flag.
+    v_leg   := 1 + floor(random() * 5)::int;
+    if v_delay <= 0 then v_leg := 0; end if;
+  end if;
 
   -- `items` is display-only and the payout never reads it, but it is still
   -- client-supplied text sitting in our table. Anything that is not a small
@@ -325,14 +596,18 @@ begin
 
   insert into public.kitchen_convoys
     (id, from_user, to_user, from_name, to_name, tier, items, dishes,
-     launched_at, arrives_at, state)
+     launched_at, arrives_at, state, delay_ms, delay_leg)
   values
     (v_id, me, p_to,
      left(coalesce(nullif(btrim(p_from_name), ''), 'Survivor'), 40),
      left(nullif(btrim(coalesce(p_to_name, '')), ''), 40),
-     left(coalesce(nullif(btrim(p_tier), ''), 'van'), 24),
+     -- 🔴 THE TIER THAT WAS ACTUALLY APPLIED, not the string the client sent.
+     --    Storing the client's word for it while clamping to something else is
+     --    how a row ends up describing a truck that never existed.
+     t.id,
      v_items, v_dish,
-     now(), now() + (v_ms::text || ' milliseconds')::interval, 'transit')
+     now(), now() + ((v_ms + v_delay)::text || ' milliseconds')::interval, 'transit',
+     v_delay, v_leg)
   returning * into c;
 
   -- The other half of the append-only ledger. -dishes: the boxes left the
@@ -402,6 +677,8 @@ returns table (
   arrives_at       timestamptz,
   state            text,
   claimed_at       timestamptz,
+  delay_ms         int,
+  delay_leg        int,
   first_claim      boolean,
   delivered_dishes int
 )
@@ -414,6 +691,30 @@ declare
 begin
   if me is null   then raise exception 'NOT_SIGNED_IN'; end if;
   if p_id is null then raise exception 'BAD_CONVOY';    end if;
+
+  -- Same honest-state sweep the launch RPC runs, for the same reason and scoped
+  -- the same way. A recipient who only ever CLAIMS would otherwise never cause
+  -- 'arrived' to be written for anything, and the sender's in-flight count would
+  -- go on describing trucks that landed hours ago. It is not load-bearing —
+  -- kitchen_convoy_quota_ok() reads `arrives_at`, not `state` — and that is
+  -- exactly why it is safe to do here rather than in a job nobody scheduled.
+  -- ⚠ EVERY COLUMN IN THE `where` IS QUALIFIED, AND THAT IS NOT STYLE.
+  --   `kitchen_convoy_claim` is `returns table (… state text, …)`, which puts an
+  --   OUT VARIABLE CALLED `state` in scope for the whole body. An unqualified
+  --   `where state = 'transit'` is then ambiguous and plpgsql refuses the
+  --   statement AT RUNTIME — the function still creates cleanly, the verify
+  --   block still prints 'ok', and every single claim raises "column reference
+  --   state is ambiguous". That is exactly what happened the first time this
+  --   sweep was written, and it was caught by driving the real RPC on a real
+  --   PostgreSQL 16 rather than by reading it. The file already carries the same
+  --   warning for `id` a few lines down; this is the second instance of it.
+  --   (The left-hand side of `set` is unambiguous by rule — only the `where`
+  --   needs qualifying — but all of it is qualified so nobody has to know that.)
+  update public.kitchen_convoys
+     set state = 'arrived'
+   where kitchen_convoys.state = 'transit'
+     and kitchen_convoys.arrives_at <= now()
+     and (kitchen_convoys.from_user = me or kitchen_convoys.to_user = me);
 
   -- FOR UPDATE: two tabs pressing Claim at the same moment serialise here
   -- rather than both reading 'transit' and both proceeding.
@@ -458,6 +759,7 @@ begin
   return query
     select c.id, c.from_user, c.to_user, c.from_name, c.to_name, c.tier,
            c.items, c.dishes, c.launched_at, c.arrives_at, c.state, c.claimed_at,
+           c.delay_ms, c.delay_leg,
            isfirst,
            case when isfirst then c.dishes else 0 end;
 end $$;
@@ -515,6 +817,7 @@ grant execute on function public.kitchen_stats_upsert(text, int, bigint, int, in
 alter table public.kitchen_convoys       enable row level security;
 alter table public.kitchen_convoy_ledger enable row level security;
 alter table public.kitchen_stats         enable row level security;
+alter table public.kitchen_convoy_tiers  enable row level security;
 
 -- ── kitchen_convoys ────────────────────────────────────────────────────────
 
@@ -619,6 +922,20 @@ revoke all on public.kitchen_stats from public;
 grant select (name, level, served, days, popularity, updated_at)
   on public.kitchen_stats to authenticated;
 
+-- ── kitchen_convoy_tiers ───────────────────────────────────────────────────
+-- 🔴 NO POLICY AND NO GRANT. NOT AN OVERSIGHT — THE POINT.
+--    This table is the server's OWN copy of the truck numbers and it exists
+--    solely so the launch RPC can refuse a load the real table never offered. A
+--    browser has no business reading it (the client already has CONVOY_TIERS in
+--    kitchen.data.js) and absolutely no business writing it: a client that could
+--    UPDATE `capacity` would be a client that could set its own faucet, which is
+--    the exact bug this table was added to close. The only reader is
+--    kitchen_convoy_launch(), which is SECURITY DEFINER and bypasses RLS.
+--    RLS is enabled anyway so that a grant added by mistake in some later
+--    migration still matches zero rows — two locks, not one.
+revoke all on public.kitchen_convoy_tiers from anon, authenticated;
+revoke all on public.kitchen_convoy_tiers from public;
+
 commit;
 
 -- PostgREST caches the schema. Without this the brand-new RPCs answer PGRST202
@@ -644,43 +961,91 @@ notify pgrst, 'reload schema';
 --       printed 'ok'.
 --   `left join pg_roles` + `coalesce(rolname,'PUBLIC')` is what makes PUBLIC
 --   visible at all. Do not "simplify" it back to an inner join.
+--
+-- ── 🔴 THE POLICY CHECKS READ THE PREDICATE NOW, NOT JUST THE COUNT ────────
+-- Round 2's block COUNTED policies and never once looked at what they let
+-- through, so it could not see the exact failure this file's own header names in
+-- capitals: "a missing `using (auth.uid() = …)` is a data breach and looks
+-- completely fine in review." That was demonstrated, not argued — `kc_sel` was
+-- replaced with `using (true)`, which hands every signed-in player every convoy
+-- in the game (both parties' ids, names, cargo and timings), the block was
+-- re-run verbatim, and it printed `convoy policies | ok`. A third-party session
+-- then read all ten rows.
+-- For a migration applied BY HAND, whose only review artefact is this block,
+-- that is the one green check capable of hiding a breach. So every policy check
+-- below now asserts its `qual`:
+--   · the two private tables must mention auth.uid();
+--   · the leaderboard must be EXACTLY `true` — asserted deliberately, not
+--     ignored, so that tightening it (a one-row board) or loosening it further
+--     both show up here rather than in a bug report.
+-- ⚠ `qual like '%auth.uid()%'` is a shape test, not a proof of correctness — it
+--   cannot tell `from_user = auth.uid()` from `from_user <> auth.uid()`. It
+--   catches the failure that actually happens (the guard going MISSING) and the
+--   line-by-line read CLAUDE.md demands catches the rest. It is a smoke alarm,
+--   not a fire marshal.
 -- ============================================================================
 select 'tables' as check,
-       case when count(*) = 3 then 'ok' else 'MISSING (' || count(*) || '/3)' end as result
+       case when count(*) = 4 then 'ok' else 'MISSING (' || count(*) || '/4)' end as result
   from information_schema.tables
  where table_schema = 'public'
-   and table_name in ('kitchen_convoys','kitchen_convoy_ledger','kitchen_stats')
+   and table_name in ('kitchen_convoys','kitchen_convoy_ledger','kitchen_stats',
+                      'kitchen_convoy_tiers')
 
 union all
 select 'rls enabled',
        case when bool_and(c.relrowsecurity) then 'ok' else 'RLS OFF SOMEWHERE' end
   from pg_class c join pg_namespace n on n.oid = c.relnamespace
  where n.nspname = 'public'
-   and c.relname in ('kitchen_convoys','kitchen_convoy_ledger','kitchen_stats')
+   and c.relname in ('kitchen_convoys','kitchen_convoy_ledger','kitchen_stats',
+                     'kitchen_convoy_tiers')
 
 union all
--- ONE select policy and nothing else. An insert policy here means somebody gave
--- the client a way around kitchen_convoy_launch() and its server clock; an
--- update or delete policy means a way around kitchen_convoy_claim().
-select 'convoy policies',
+-- ONE select policy and nothing else, AND it must be guarded. An insert policy
+-- here means somebody gave the client a way around kitchen_convoy_launch() and
+-- its server clock; an update or delete policy means a way around
+-- kitchen_convoy_claim(); an unguarded `using` means every player can read every
+-- convoy in the game.
+select 'convoy policy predicate',
        case when count(*) = 1
              and count(*) filter (where cmd = 'SELECT') = 1
-            then 'ok' else 'WRONG POLICY SET (' || count(*) || ')' end
+             and bool_and(coalesce(qual, '') like '%auth.uid()%')
+            then 'ok'
+            when count(*) <> 1 then 'WRONG POLICY SET (' || count(*) || ')'
+            else 'UNGUARDED PREDICATE — EVERY PLAYER READS EVERY CONVOY' end
   from pg_policies where schemaname = 'public' and tablename = 'kitchen_convoys'
 
 union all
--- The ledger is append-only: exactly one policy, and it is a SELECT.
-select 'ledger append-only',
-       case when count(*) = 1 and count(*) filter (where cmd = 'SELECT') = 1
-            then 'ok' else 'LEDGER IS WRITABLE' end
+-- The ledger is append-only: exactly one policy, it is a SELECT, and it is
+-- guarded. An unguarded ledger is every player's shipping history.
+select 'ledger policy predicate',
+       case when count(*) = 1
+             and count(*) filter (where cmd = 'SELECT') = 1
+             and bool_and(coalesce(qual, '') like '%auth.uid()%')
+            then 'ok'
+            when count(*) <> 1 then 'LEDGER IS WRITABLE (' || count(*) || ' policies)'
+            else 'UNGUARDED PREDICATE — EVERY PLAYER READS EVERY MOVEMENT' end
   from pg_policies where schemaname = 'public' and tablename = 'kitchen_convoy_ledger'
 
 union all
--- One SELECT policy on the scoreboard. Writing is the RPC's job.
-select 'stats policies',
-       case when count(*) = 1 and count(*) filter (where cmd = 'SELECT') = 1
-            then 'ok' else 'CLIENT CAN WRITE STATS DIRECTLY' end
+-- One SELECT policy on the scoreboard, and it is `true` ON PURPOSE — a
+-- leaderboard guarded by auth.uid() is a leaderboard with one row in it. The
+-- privacy here is the COLUMN GRANT (user_id is revoked), checked further down.
+select 'stats policy predicate',
+       case when count(*) = 1
+             and count(*) filter (where cmd = 'SELECT') = 1
+             and bool_and(coalesce(qual, '') = 'true')
+            then 'ok'
+            when count(*) <> 1 then 'CLIENT CAN WRITE STATS DIRECTLY'
+            else 'STATS POLICY CHANGED — re-read it against the column grants' end
   from pg_policies where schemaname = 'public' and tablename = 'kitchen_stats'
+
+union all
+-- The tier table is server-only: RLS on, and NO policy at all, so even a grant
+-- added by mistake matches zero rows.
+select 'tiers have no policy',
+       case when count(*) = 0 then 'ok'
+            else 'TIER TABLE IS REACHABLE FROM A CLIENT (' || count(*) || ')' end
+  from pg_policies where schemaname = 'public' and tablename = 'kitchen_convoy_tiers'
 
 union all
 select 'double-claim lock',
@@ -791,5 +1156,111 @@ select 'guard constraints',
        case when count(*) = 4 then 'ok' else 'MISSING (' || count(*) || '/4)' end
   from pg_constraint
  where conname in ('kitchen_convoys_dishes_chk','kitchen_convoys_state_chk',
-                   'kitchen_convoys_time_chk','kitchen_convoys_party_chk');
+                   'kitchen_convoys_time_chk','kitchen_convoys_party_chk')
+
+union all
+-- ══════════════════════════════════════════════════════════════════════════
+-- 🔴 THE FAUCET CHECKS. Every one of these was 'ok'-by-absence in round 2.
+-- ══════════════════════════════════════════════════════════════════════════
+
+-- The truck table exists and carries the three trucks the client draws. If this
+-- is not 'ok' the launch RPC raises NO_TIER_TABLE and nothing ships — which is
+-- the correct failure, but you want to see it here and not in a support ticket.
+select 'tiers seeded',
+       case when count(*) = 3 then 'ok'
+            else 'TIER SEED MISSING (' || count(*) || '/3) — LAUNCHES WILL REFUSE' end
+  from public.kitchen_convoy_tiers
+ where id in ('van','truck','rig')
+
+union all
+-- 🔴 The seeded numbers, printed rather than asserted, because the thing that
+--    goes wrong here is DRIFT against kitchen.data.js CONVOY_TIERS and only a
+--    human comparing the two can see it. Expect, as of this file:
+--        van 12/1200000 · truck 40/7200000 · rig 120/21600000
+select 'tiers (compare to CONVOY_TIERS)',
+       string_agg(id || ' ' || capacity || '/' || transit_ms, ' · ' order by transit_ms)
+  from public.kitchen_convoy_tiers
+
+union all
+-- 🔴 THE FAUCET. Round 2's launch clamped `least(greatest(p_dishes,1),500)` with
+--    no reference to the tier and accepted 500-box rigs landing in ten minutes.
+--    If `t.capacity` is not in the body, that hole is open again.
+select 'launch clamps to the tier',
+       case when exists (
+              select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+               where n.nspname = 'public' and p.proname = 'kitchen_convoy_launch'
+                 and p.prosrc like '%t.capacity%' and p.prosrc like '%t.transit_ms%'
+            ) then 'ok'
+            else 'LAUNCH RPC IS PRE-FIX — 500-BOX RIGS AT TEN MINUTES' end
+
+union all
+-- 🔴 THE PRODUCTION LINK. The quota must see the box count, or it is round 2's
+--    quota: a limit on how many trucks you send and none on what is on them.
+select 'quota sees the box count',
+       case when exists (
+              select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+               where n.nspname = 'public' and p.proname = 'kitchen_convoy_quota_ok'
+                 and p.pronargs = 1
+                 and p.prosrc like '%sum(dishes)%'
+            ) then 'ok'
+            else 'QUOTA IGNORES CARGO SIZE — THE FAUCET IS OPEN' end
+
+union all
+-- 🔴 THE PERMANENT LOCKOUT. Counting `state = 'transit'` alone locked a sender
+--    out forever the first time a recipient did not unload. Reproduced at
+--    thirty days on a real database.
+select 'quota releases landed trucks',
+       case when exists (
+              select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+               where n.nspname = 'public' and p.proname = 'kitchen_convoy_quota_ok'
+                 and p.prosrc like '%arrives_at > now()%'
+            ) then 'ok'
+            else 'PERMANENT LOCKOUT — an unclaimed convoy holds a slot forever' end
+
+union all
+-- Exactly one quota function. Two (the old zero-arg beside the new one) means a
+-- stale call site can still be throttled by round 2's rules.
+select 'one quota function',
+       case when count(*) = 1 then 'ok'
+            else 'TWO QUOTA FUNCTIONS — the zero-arg one still resolves' end
+  from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public' and p.proname = 'kitchen_convoy_quota_ok'
+
+union all
+-- The server writes 'arrived' somewhere, so the state column stops lying.
+select 'server lands its own trucks',
+       case when exists (
+              select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+               where n.nspname = 'public' and p.proname = 'kitchen_convoy_launch'
+                 and p.prosrc like '%set state = ''arrived''%'
+            ) then 'ok' else 'NOTHING EVER WRITES arrived' end
+
+union all
+-- The road columns exist and the claim RPC hands them back, so convoy.js can
+-- draw the hold-up rather than inventing one.
+select 'road columns',
+       case when count(*) = 2 then 'ok' else 'MISSING delay_ms/delay_leg' end
+  from information_schema.columns
+ where table_schema = 'public' and table_name = 'kitchen_convoys'
+   and column_name in ('delay_ms','delay_leg')
+
+union all
+select 'claim returns the road',
+       case when exists (
+              select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+               where n.nspname = 'public' and p.proname = 'kitchen_convoy_claim'
+                 and p.proargnames @> array['delay_ms','delay_leg']
+            ) then 'ok' else 'CLAIM RPC PREDATES THE ROAD' end
+
+union all
+-- The tier table must be unreachable from a browser by ANY route, PUBLIC
+-- included. A client that could UPDATE `capacity` could set its own faucet.
+select 'no client grant on tiers',
+       case when count(*) = 0 then 'ok' else 'CLIENT CAN REACH THE TIER TABLE' end
+  from pg_class c
+  join pg_namespace n on n.oid = c.relnamespace
+  cross join lateral aclexplode(case when array_length(c.relacl, 1) > 0 then c.relacl end) a
+  left join pg_roles r on r.oid = a.grantee
+ where n.nspname = 'public' and c.relname = 'kitchen_convoy_tiers'
+   and coalesce(r.rolname, 'PUBLIC') in ('anon','authenticated','PUBLIC');
 -- ============================================================================

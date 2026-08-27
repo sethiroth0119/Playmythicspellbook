@@ -98,27 +98,27 @@ export const SUPPLY_RECIPES = [
   { id:'sup_dough',   out:{ ing:'dough',   qty:10 }, cost:{ food:6,  water:2,          cinder:60 }, minLevel:1,  blurb:'Flour, water, a tired proofing box.' },
   { id:'sup_potato',  out:{ ing:'potato',  qty:12 }, cost:{ food:5,                    cinder:40  }, minLevel:1,  blurb:'Hydroponic spuds. Gritty, cheap, endless.' },
   { id:'sup_oil',     out:{ ing:'oil',     qty:10 }, cost:{ food:3,  fuel:2,           cinder:50  }, minLevel:2,  blurb:'Fry oil. Cut with refinery bottoms. Do not ask.' },
-  { id:'sup_syrup',   out:{ ing:'syrup',   qty:10 }, cost:{ food:6,  energyDrink:2, water:2, cinder:40 }, minLevel:3, blurb:'Bottling Line concentrate. Legally a beverage.' },
-  { id:'sup_coffee',  out:{ ing:'coffee',  qty:10 }, cost:{ food:5,  water:2,          cinder:80 }, minLevel:14, blurb:'Real beans. The last crate in the wasteland.' },
+  { id:'sup_syrup',   out:{ ing:'syrup',   qty:10 }, cost:{ food:6,  energyDrink:2, water:2, cinder:40 }, minLevel:2, blurb:'Bottling Line concentrate. Legally a beverage.' },
+  { id:'sup_coffee',  out:{ ing:'coffee',  qty:10 }, cost:{ food:5,  water:2,          cinder:80 }, minLevel:15, blurb:'Real beans. The last crate in the wasteland.' },
 
   // ── BREAD RACK ────────────────────────────────────────────────────────────
-  { id:'sup_bun',     out:{ ing:'bun',     qty:10 }, cost:{ food:5,  supplies:1,       cinder:50  }, minLevel:4,  blurb:'Seeded, squashable, sold by the sleeve.' },
+  { id:'sup_bun',     out:{ ing:'bun',     qty:10 }, cost:{ food:5,  supplies:1,       cinder:50  }, minLevel:1,  blurb:'Seeded, squashable, sold by the sleeve.' },
   { id:'sup_roll',    out:{ ing:'roll',    qty:10 }, cost:{ food:5,  supplies:1,       cinder:45  }, minLevel:1,  blurb:'Split-top dog rolls. The starter loaf.' },
 
   // ── CHILLER: PROTEIN. The expensive half of every menu. ───────────────────
-  { id:'sup_patty',   out:{ ing:'patty',   qty:8  }, cost:{ food:8,  dna:2,            cinder:130 }, minLevel:4,  blurb:'Vat-grown beef, pressed at 4oz.' },
+  { id:'sup_patty',   out:{ ing:'patty',   qty:8  }, cost:{ food:8,  dna:2,            cinder:130 }, minLevel:1,  blurb:'Vat-grown beef, pressed at 4oz.' },
   { id:'sup_chicken', out:{ ing:'chicken', qty:8  }, cost:{ food:7,  dna:2,            cinder:120 }, minLevel:8,  blurb:'Cultured fillet. Breaded in-house.' },
   { id:'sup_sausage', out:{ ing:'sausage', qty:10 }, cost:{ food:6,  dna:1,            cinder:80 }, minLevel:1,  blurb:'Links. The first thing this kitchen ever sold.' },
   { id:'sup_bacon',   out:{ ing:'bacon',   qty:8  }, cost:{ food:6,  dna:2,            cinder:120 }, minLevel:11, blurb:'Streaky, salted, worth the markup.' },
-  { id:'sup_cheese',  out:{ ing:'cheese',  qty:10 }, cost:{ food:4,  water:3, dna:1,   cinder:100 }, minLevel:5,  blurb:'Cultured curd. Melts if you are quick.' },
-  { id:'sup_milk',    out:{ ing:'milk',    qty:12 }, cost:{ water:6, food:2,  dna:1,   cinder:48 }, minLevel:10, blurb:'Tank milk. Cold chain holds, mostly.' },
-  { id:'sup_mayo',    out:{ ing:'mayo',    qty:12 }, cost:{ food:3,  dna:1,            cinder:48  }, minLevel:9,  blurb:'Emulsion. Keep it under the counter light.' },
+  { id:'sup_cheese',  out:{ ing:'cheese',  qty:10 }, cost:{ food:4,  water:3, dna:1,   cinder:100 }, minLevel:1,  blurb:'Cultured curd. Melts if you are quick.' },
+  { id:'sup_milk',    out:{ ing:'milk',    qty:12 }, cost:{ water:6, food:2,  dna:1,   cinder:48 }, minLevel:9, blurb:'Tank milk. Cold chain holds, mostly.' },
+  { id:'sup_mayo',    out:{ ing:'mayo',    qty:12 }, cost:{ food:3,  dna:1,            cinder:48  }, minLevel:8,  blurb:'Emulsion. Keep it under the counter light.' },
 
   // ── FRESH RACK ────────────────────────────────────────────────────────────
-  { id:'sup_lettuce', out:{ ing:'lettuce', qty:10 }, cost:{ food:3,  water:2,          cinder:45  }, minLevel:4,  blurb:'Racked greens, straight off the Hydroponics Bay.' },
-  { id:'sup_tomato',  out:{ ing:'tomato',  qty:10 }, cost:{ food:4,                    cinder:50  }, minLevel:4,  blurb:'Sliced thin so one crate goes further.' },
+  { id:'sup_lettuce', out:{ ing:'lettuce', qty:10 }, cost:{ food:3,  water:2,          cinder:45  }, minLevel:1,  blurb:'Racked greens, straight off the Hydroponics Bay.' },
+  { id:'sup_tomato',  out:{ ing:'tomato',  qty:10 }, cost:{ food:4,                    cinder:50  }, minLevel:1,  blurb:'Sliced thin so one crate goes further.' },
   { id:'sup_onion',   out:{ ing:'onion',   qty:12 }, cost:{ food:3,                    cinder:36  }, minLevel:1,  blurb:'Red rings. Cheapest topping on the board.' },
-  { id:'sup_slaw',    out:{ ing:'slaw',    qty:10 }, cost:{ food:3,  water:1,          cinder:45  }, minLevel:5,  blurb:'Shredded, soured, weirdly popular.' },
+  { id:'sup_slaw',    out:{ ing:'slaw',    qty:10 }, cost:{ food:3,  water:1,          cinder:45  }, minLevel:3,  blurb:'Shredded, soured, weirdly popular.' },
   /* 🍄 Mushrooms cost corruptedEssence and that is a joke with a purpose: the
      Containment Sump (production.data.js:203) is the only source, so the veggie
      pizza quietly rewards a player who built the ugliest building in their city.
@@ -128,15 +128,15 @@ export const SUPPLY_RECIPES = [
   // ── CONDIMENT LINE ────────────────────────────────────────────────────────
   { id:'sup_sauce',   out:{ ing:'sauce',   qty:12 }, cost:{ food:5,  water:1,          cinder:48  }, minLevel:1,  blurb:'Red sauce. Ladles a pizza, squeezes a burger.' },
   { id:'sup_mustard', out:{ ing:'mustard', qty:12 }, cost:{ food:2,  supplies:1,       cinder:30  }, minLevel:1,  blurb:'Yellow. Sharp. Non-negotiable on a dog.' },
-  { id:'sup_pickle',  out:{ ing:'pickle',  qty:12 }, cost:{ food:3,  water:2,          cinder:48  }, minLevel:7,  blurb:'Spears, brined in the back for a week.' },
-  { id:'sup_pepperoni',out:{ing:'pepperoni',qty:10}, cost:{ food:5,  dna:2,            cinder:100 }, minLevel:10, blurb:'Cured discs. The reason pizza sells.' },
-  { id:'sup_chili',   out:{ ing:'chili',   qty:8  }, cost:{ food:6,  water:2,          cinder:88 }, minLevel:5,  blurb:'Yesterday’s pot, better today.' },
+  { id:'sup_pickle',  out:{ ing:'pickle',  qty:12 }, cost:{ food:3,  water:2,          cinder:48  }, minLevel:5,  blurb:'Spears, brined in the back for a week.' },
+  { id:'sup_pepperoni',out:{ing:'pepperoni',qty:10}, cost:{ food:5,  dna:2,            cinder:100 }, minLevel:4, blurb:'Cured discs. The reason pizza sells.' },
+  { id:'sup_chili',   out:{ ing:'chili',   qty:8  }, cost:{ food:6,  water:2,          cinder:88 }, minLevel:3,  blurb:'Yesterday’s pot, better today.' },
 
   // ── FREEZER ───────────────────────────────────────────────────────────────
   // Ice costs water and NOTHING ELSE — the only zero-food line in the table.
   // See the CONVOY GUARD note in ECON: it is why the cheapest dish on the menu
   // (soda) still had to be given two units of a food-costed syrup.
-  { id:'sup_ice',     out:{ ing:'ice',     qty:16 }, cost:{ water:5,                   cinder:16  }, minLevel:3,  blurb:'Crushed. Melts on the pass in ninety seconds.' },
+  { id:'sup_ice',     out:{ ing:'ice',     qty:16 }, cost:{ water:5,                   cinder:16  }, minLevel:2,  blurb:'Crushed. Melts on the pass in ninety seconds.' },
 ];
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -231,12 +231,16 @@ const _INGREDIENTS_RAW = [
         nothing else — the file believed it shipped 15 dishes/hour of capacity
         and actually shipped 50. Nothing burned, nothing was ever tight, and the
         entire upgrade shop sold capacity that nobody needed.
-        Base is now 2 + 1 + 1 + 1 + 1 = 6 slots — 26.7 dishes/in-game-hour at
-        level 12 against a 51.9 peak, and 15/hour against 19.6 on day one when
-        only the griddle has a recipe on it. THAT is the wall the whole design
-        is hung off, and
+        Base is now 2 + 1 + 1 + 1 + 1 = 6 slots — 26.9 dishes/in-game-hour at
+        level 12 against a 54.3 peak, and 12.3/hour against 19.6 on day one,
+        when the player owns the griddle AND the deck oven (the margherita is a
+        day-one dish; the fryer and fountain open at 2, the prep board at 3).
+        THAT is the wall the whole design is hung off, and
         `capacityModel()` at the bottom of this file recomputes it from
         slotsFor() so it can never silently drift from the comment again.
+        ⚠ AND IT NOW COUNTS THE PASS TOO. A rack is only worth what you can get
+          OFF it: the same function models the plate jam and reports which of
+          the two binds. A slot you cannot plate out of is not capacity.
         If you add a base slot back, run capacityModel() and look at what you
         did to `peakRatio` before you commit it.
 
@@ -245,14 +249,17 @@ const _INGREDIENTS_RAW = [
    show "▲ 2 upgrades available" on the surface itself instead of burying them.
    ════════════════════════════════════════════════════════════════════════════ */
 export const STATIONS = [
-  // The griddle keeps TWO because it is the day-one station and the only one a
-  // level-1 player owns anything for. One lane would make the tutorial a queue.
+  // The griddle keeps TWO because it is the day-one station carrying two of the
+  // three day-one dishes (hot dog and classic burger; the margherita bakes next
+  // door). One lane would make the tutorial a queue.
   { id:'griddle',  name:'Flat-Top',   icon:'🍳', kind:'heat',    slots:2, speedMul:1, order:1,
     desc:'Two lanes. Patties, franks, fillets, toasted buns — everything that sizzles.',
     upgrades:['up_griddle2','up_griddle3','up_griddle4','up_griddle_fast','up_griddle_fast2'] },
   { id:'fryer',    name:'Fryer',      icon:'🍟', kind:'fry',     slots:1, speedMul:1, order:2,
     desc:'One basket and a timer you will learn to hate.',
     upgrades:['up_fryer2','up_fryer3','up_fryer4','up_fryer_fast','up_fryer_fast2'] },
+  // ⚠ The deck oven is LIVE ON DAY ONE. It used to sit dark until level 8, which
+  //    is most of why a level-1 kitchen modelled at 2 slots and 15 dishes/hour.
   { id:'oven',     name:'Deck Oven',  icon:'🔥', kind:'bake',    slots:1, speedMul:1, order:3,
     desc:'One stone deck. Slow, unforgiving, pays the best — and it blocks.',
     upgrades:['up_oven2','up_oven3','up_oven_fast','up_oven_fast2'] },
@@ -314,12 +321,48 @@ export const MENU_CATS = [
 ];
 
 const _RECIPES_RAW = [
-  /* ── 🌭 HOT DOGS ─────────────────────────────────────────────────────────
-     hotDog is the DAY ONE DISH and the only thing on the board at level 1.
-     Three ingredients, an 8-second cook and a forgiving 9-second window: it is
-     the tutorial, and it is meant to be beatable with one hand while you read
-     the drive-thru. Everything else on this menu is a variation on learning
-     that rhythm and then not having enough hands for it. */
+  /* ══════════════════════════════════════════════════════════════════════
+     🔴 THE LEVEL-1 MENU IS hotDog + burgerClassic + pizzaMargherita, AND THAT
+        IS THE MOST IMPORTANT LINE IN THIS FILE.
+     ══════════════════════════════════════════════════════════════════════
+     The player's request was a feature list, not a request for a progression
+     system: "players can make pizzas, burgers, hot dogs etc… serve npcs through
+     drive ways… setup shipment to send to another player's city on a convoy".
+     Five things, named in two sentences.
+
+     What shipped hid three of them behind an XP ladder. MEASURED with a
+     competent auto-player through this very sim (sim3.mjs, 12-minute shifts
+     back to back): burgers at 36 real minutes, the first convoy of any kind at
+     48, pizza at 2 HOURS 24. The level-1 menu was one 🌭 card and eighteen
+     padlocks. REF-A is a pizza game whose first interaction is a pizza; REF-B
+     hands you a griddle full of patties on the tutorial screen. A player who
+     just closed either of those found a hot-dog stand and a note saying come
+     back after lunch.
+
+     🔴 SO WHY IS THIS NOT JUST "MAKE EVERYTHING LEVEL 1"? Because the kitchen
+     already has a scarcity gate the player DID ask for, and it is a better one:
+     the 14-id live ledger. A pizza needs cheese, cheese costs `dna`, and DNA
+     comes out of a Gene Vault or a Genetics Lab in the city builder. A player
+     who has never built one cannot spam pizzas no matter what level they are.
+     That is the wall the request describes. Stacking an XP wall on top of it
+     bought nothing and cost the whole premise, because it made the first two
+     hours a one-dish game whose real gate was invisible — the one dish was the
+     cheapest thing on the menu.
+
+     WHAT THE 40-LEVEL LADDER IS FOR NOW, and it is still forty levels of it:
+     VARIETY (16 more recipes over levels 2–16), DIFFICULTY (demandScale, and
+     every new station you have to keep an eye on), THROUGHPUT (the upgrade
+     shop, 2–40) and REACH (convoy tiers at 1 / 12 / 20). The depth moved from
+     "which foods exist" to "how much of them can you actually get out", which
+     is what depth is in REF-A and REF-B too. assertDataSane() checks that no
+     level 2..40 unlocks nothing, so this re-pacing cannot quietly become a
+     collapse the next time somebody retunes a minLevel.
+
+     ── 🌭 HOT DOGS ────────────────────────────────────────────────────────
+     hotDog is still the FIRST dish — three ingredients, an 8-second cook, a
+     forgiving 9-second window. It is the one you learn the rhythm on, and it
+     is deliberately the cheapest thing in the grubstake so it is also the one
+     you run out of first. It is no longer the only thing on the board. */
   { id:'hotDog', name:'Hot Dog', icon:'🌭', cat:'dogs', tier:1, minLevel:1, station:'griddle',
     cookMs:8000, doneWindowMs:9000, basePrice:40, xp:8, pop:1.0, ship:true,
     blurb:'A frank, a roll, a stripe of mustard. The whole business started here.',
@@ -327,7 +370,7 @@ const _RECIPES_RAW = [
             { ing:'sausage', qty:1, verb:'sear',   layer:'fill' },
             { ing:'mustard', qty:1, verb:'stripe', layer:'top'  } ] },
 
-  { id:'chiliDog', name:'Chili Dog', icon:'🌭', cat:'dogs', tier:2, minLevel:5, station:'griddle',
+  { id:'chiliDog', name:'Chili Dog', icon:'🌭', cat:'dogs', tier:2, minLevel:3, station:'griddle',
     cookMs:11000, doneWindowMs:8000, basePrice:85, xp:14, pop:1.1, ship:true,
     blurb:'Loaded, messy, and the reason the napkin dispenser is empty.',
     steps:[ { ing:'roll',    qty:1, verb:'split',   layer:'base' },
@@ -336,7 +379,7 @@ const _RECIPES_RAW = [
             { ing:'cheese',  qty:1, verb:'scatter', layer:'top'  },
             { ing:'onion',   qty:1, verb:'scatter', layer:'top'  } ] },
 
-  { id:'slawDog', name:'Slaw Dog', icon:'🌭', cat:'dogs', tier:2, minLevel:6, station:'griddle',
+  { id:'slawDog', name:'Slaw Dog', icon:'🌭', cat:'dogs', tier:2, minLevel:7, station:'griddle',
     cookMs:10000, doneWindowMs:8000, basePrice:70, xp:12, pop:1.05, ship:true,
     blurb:'Sour, cold, on top of hot. It should not work. It sells out.',
     steps:[ { ing:'roll',    qty:1, verb:'split',  layer:'base' },
@@ -345,7 +388,7 @@ const _RECIPES_RAW = [
             { ing:'mustard', qty:1, verb:'stripe', layer:'top'  } ] },
 
   /* ── 🍔 BURGERS ─────────────────────────────────────────────────────────── */
-  { id:'burgerClassic', name:'Classic Burger', icon:'🍔', cat:'burgers', tier:1, minLevel:4, station:'griddle',
+  { id:'burgerClassic', name:'Classic Burger', icon:'🍔', cat:'burgers', tier:1, minLevel:1, station:'griddle',
     cookMs:12000, doneWindowMs:8000, basePrice:70, xp:12, pop:1.1, ship:true,
     blurb:'One patty, done properly. The dish the whole menu is measured against.',
     steps:[ { ing:'bun',     qty:1, verb:'toast',   layer:'base' },
@@ -354,7 +397,7 @@ const _RECIPES_RAW = [
             { ing:'lettuce', qty:1, verb:'lay',     layer:'top'  },
             { ing:'tomato',  qty:1, verb:'lay',     layer:'lid'  } ] },
 
-  { id:'burgerDouble', name:'Double Stack', icon:'🍔', cat:'burgers', tier:2, minLevel:7, station:'griddle',
+  { id:'burgerDouble', name:'Double Stack', icon:'🍔', cat:'burgers', tier:2, minLevel:5, station:'griddle',
     cookMs:16000, doneWindowMs:8000, basePrice:118, xp:18, pop:1.2, ship:true,
     blurb:'Two patties. Twice the sear time, twice the chance you forget it.',
     steps:[ { ing:'bun',     qty:1, verb:'toast',   layer:'base' },
@@ -364,7 +407,7 @@ const _RECIPES_RAW = [
             { ing:'onion',   qty:1, verb:'scatter', layer:'top'  },
             { ing:'mustard', qty:1, verb:'stripe',  layer:'lid'  } ] },
 
-  { id:'chickenSandwich', name:'Chicken Sandwich', icon:'🍗', cat:'burgers', tier:2, minLevel:9, station:'griddle',
+  { id:'chickenSandwich', name:'Chicken Sandwich', icon:'🍗', cat:'burgers', tier:2, minLevel:8, station:'griddle',
     cookMs:14000, doneWindowMs:8000, basePrice:100, xp:17, pop:1.15, ship:true,
     blurb:'Cultured fillet, pressed flat. Undercook it and the customer knows.',
     steps:[ { ing:'bun',     qty:1, verb:'toast',   layer:'base' },
@@ -386,9 +429,17 @@ const _RECIPES_RAW = [
   /* ── 🍕 PIZZA — the long-cook, high-margin tier. ──────────────────────────
      24–28 second bakes against a 12-second window. A pizza in the oven is a
      COMMITMENT: you cannot babysit it and run the drive-thru, which is exactly
-     the tension the oven exists to create. Unlocks late (level 8) because a
-     player who has not internalised the done-window will simply burn money. */
-  { id:'pizzaMargherita', name:'Margherita', icon:'🍕', cat:'pizza', tier:2, minLevel:8, station:'oven',
+     the tension the oven exists to create.
+     ⚠ THE MARGHERITA IS A LEVEL-1 DISH. The old comment said it "unlocks late
+     (level 8) because a player who has not internalised the done-window will
+     simply burn money", and that reasoning is backwards on its own terms: the
+     done window IS the skill, so the dish that teaches it hardest should be
+     available on the first shift, next to a hot dog that forgives you. Burning
+     your first pizza costs one pizza. Waiting two and a half hours for the
+     chance to burn one costs the player. The rest of the pizza tier still
+     ladders (Pepperoni 4, Garden Pie 12, Supreme 16) because those are variety,
+     and variety is what a ladder is for. */
+  { id:'pizzaMargherita', name:'Margherita', icon:'🍕', cat:'pizza', tier:2, minLevel:1, station:'oven',
     cookMs:24000, doneWindowMs:12000, basePrice:125, xp:22, pop:1.25, ship:true,
     blurb:'Sauce, cheese, tomato. Nowhere to hide a mistake.',
     steps:[ { ing:'dough',  qty:1, verb:'stretch', layer:'base' },
@@ -396,7 +447,7 @@ const _RECIPES_RAW = [
             { ing:'cheese', qty:2, verb:'scatter', layer:'fill' },
             { ing:'tomato', qty:1, verb:'lay',     layer:'top'  } ] },
 
-  { id:'pizzaPepperoni', name:'Pepperoni', icon:'🍕', cat:'pizza', tier:2, minLevel:10, station:'oven',
+  { id:'pizzaPepperoni', name:'Pepperoni', icon:'🍕', cat:'pizza', tier:2, minLevel:4, station:'oven',
     cookMs:25000, doneWindowMs:12000, basePrice:155, xp:26, pop:1.3, ship:true,
     blurb:'The one everybody orders. Discs to the edge or it goes back.',
     steps:[ { ing:'dough',     qty:1, verb:'stretch', layer:'base' },
@@ -435,7 +486,7 @@ const _RECIPES_RAW = [
     steps:[ { ing:'potato', qty:3, verb:'cut',  layer:'base' },
             { ing:'oil',    qty:1, verb:'dip',  layer:'none' } ] },
 
-  { id:'sideSalad', name:'Side Salad', icon:'🥗', cat:'sides', tier:1, minLevel:5, station:'assembly',
+  { id:'sideSalad', name:'Side Salad', icon:'🥗', cat:'sides', tier:1, minLevel:3, station:'assembly',
     cookMs:5000, doneWindowMs:30000, basePrice:38, xp:6, pop:0.9, ship:false,
     blurb:'A cold build. The only thing on this menu that cannot burn.',
     steps:[ { ing:'lettuce', qty:2, verb:'tear',    layer:'base' },
@@ -450,7 +501,7 @@ const _RECIPES_RAW = [
             { ing:'dough', qty:1, verb:'batter',layer:'spread' },
             { ing:'oil',   qty:1, verb:'dip',   layer:'none' } ] },
 
-  { id:'nuggets', name:'Nuggets', icon:'🍗', cat:'sides', tier:2, minLevel:8, station:'fryer',
+  { id:'nuggets', name:'Nuggets', icon:'🍗', cat:'sides', tier:2, minLevel:14, station:'fryer',
     cookMs:15000, doneWindowMs:7000, basePrice:62, xp:11, pop:1.0, ship:false,
     blurb:'Six pieces. Nobody has ever asked what shape they are.',
     steps:[ { ing:'chicken', qty:2, verb:'cube', layer:'base' },
@@ -471,20 +522,20 @@ const _RECIPES_RAW = [
      of a drink in a fast-food sim and it is why they are cheap on purpose.
      Their doneWindow is 40s ("goes flat"), not 8s — losing a shift to a warm
      soda would be punitive without being interesting. */
-  { id:'soda', name:'Fountain Soda', icon:'🥤', cat:'drinks', tier:1, minLevel:3, station:'drinks',
+  { id:'soda', name:'Fountain Soda', icon:'🥤', cat:'drinks', tier:1, minLevel:2, station:'drinks',
     cookMs:3000, doneWindowMs:40000, basePrice:25, xp:4, pop:0.8, ship:false,
     blurb:'Syrup, ice, gas. Ninety percent of the margin in this building.',
     steps:[ { ing:'ice',   qty:2, verb:'fill',  layer:'base' },
             { ing:'syrup', qty:2, verb:'pour',  layer:'fill' } ] },
 
-  { id:'shake', name:'Milkshake', icon:'🥛', cat:'drinks', tier:2, minLevel:10, station:'drinks',
+  { id:'shake', name:'Milkshake', icon:'🥛', cat:'drinks', tier:2, minLevel:9, station:'drinks',
     cookMs:6000, doneWindowMs:40000, basePrice:52, xp:8, pop:1.0, ship:false,
     blurb:'Spun thick. Melts on the pass faster than anything else you make.',
     steps:[ { ing:'milk',  qty:3, verb:'pour', layer:'base' },
             { ing:'syrup', qty:2, verb:'pour', layer:'fill' },
             { ing:'ice',   qty:1, verb:'fill', layer:'top'  } ] },
 
-  { id:'icedCoffee', name:'Iced Coffee', icon:'☕', cat:'drinks', tier:3, minLevel:14, station:'drinks',
+  { id:'icedCoffee', name:'Iced Coffee', icon:'☕', cat:'drinks', tier:3, minLevel:15, station:'drinks',
     cookMs:5000, doneWindowMs:40000, basePrice:55, xp:7, pop:1.05, ship:false,
     blurb:'Real beans. The night-shift crowd will queue for this and nothing else.',
     steps:[ { ing:'ice',    qty:2, verb:'fill', layer:'base' },
@@ -558,7 +609,32 @@ export const CARS = [
    the *sender's* cost and it is why a convoy is never free money for the pair.
    ════════════════════════════════════════════════════════════════════════════ */
 export const CONVOY_TIERS = [
-  { id:'van',   name:'Delivery Van', icon:'🚐', capacity:12,  transitMs:30 * 60000,  feePct:0.10, minLevel:5,  blurb:'Twelve boxes and a prayer. Thirty minutes.' },
+  /* 🔴 THE VAN IS A DAY-ONE TIER AND BOTH OF ITS NUMBERS MOVED FOR THE SAME
+     REASON. The player's request named convoys in its own sentence — "setup
+     shipment to send to another player's city on a convoy". Shipped, the van
+     was minLevel 5 and a measured 48 real minutes of uninterrupted play away
+     (sim3.mjs), so the Convoy tab in session one was three greyed tiers and a
+     dead TRUCK LOCKED button. A pillar the player described in detail was not
+     merely unfinished at level 1 — it was not present.
+
+     ⚠ AND ITS CAPACITY WAS ARITHMETICALLY UNREACHABLE. Twelve boxes against a
+     PASS_CAP of 8 meant a full van was impossible until a 34,000-Cinder heat
+     lamp at level 6, with nothing on screen saying so. The pass is now 14, so
+     twelve is loadable by the kitchen that owns the van. If you retune PASS_CAP
+     downward, assertDataSane() will now fail on this — the check exists because
+     "a cap the player cannot see is a cap they read as a bug".
+
+     ⚠ TRANSIT DROPPED 30 → 20 MINUTES, and the old comment's reasoning for the
+     30-minute floor was wrong about which number is the guard. A short convoy
+     is not an exploit: CONVOY_FOOD_PER_DISH (1) sits below the food cost of the
+     cheapest dish that can ride one (hot dog, 1.267), so a round trip DESTROYS
+     value no matter how fast it runs — that is the guard, and convoyGuardOk()
+     is what proves it. What 30 minutes actually bought was a first session in
+     which the player dispatches a truck and never sees it arrive. 20 minutes
+     closes the loop inside one sitting and is still, unmistakably, logistics.
+     ECON.CONVOY_MIN_TRANSIT_MS is the floor that keeps it from becoming a
+     vending machine, and assertDataSane() enforces it. */
+  { id:'van',   name:'Delivery Van', icon:'🚐', capacity:12,  transitMs:20 * 60000,  feePct:0.10, minLevel:1,  blurb:'Twelve boxes and a prayer. Twenty minutes on the road.' },
   { id:'truck', name:'Box Truck',    icon:'🚚', capacity:40,  transitMs:2  * 3600000, feePct:0.08, minLevel:12, blurb:'Forty boxes, two hours, proper insulation.' },
   { id:'rig',   name:'Road Train',   icon:'🛻', capacity:120, transitMs:6  * 3600000, feePct:0.06, minLevel:20, blurb:'A hundred and twenty. Six hours. Cheapest per box.' },
 ];
@@ -640,9 +716,16 @@ export const UPGRADES = [
     blurb:'No more “WHAT?”. Tips up a fifth.' },
 
   // ── THE PASS & THE PANTRY ─────────────────────────────────────────────────
+  /* ⚠ passAdd DROPPED 4 → 2 AND THAT IS NOT A NERF. The base pass went 8 → 14
+     (see ECON.PASS_CAP for the measurement that forced it), so the ladder now
+     lands 14 → 16 → 18 → 20 instead of 8 → 12 → 16. What the lamp is really
+     sold on is `freshMul`: two more plates and a MUCH longer window to sell
+     them in. The plate count was doing the work only because the base pass was
+     below the deadlock point, which is a bug the shop should not be selling the
+     cure for. */
   { id:'up_heatlamp', name:'Heat Lamp Pass', icon:'💡', minLevel:6, requires:null,
-    cost:{ cinder:34000,  metal:20, fuel:14 }, effect:{ passAdd:4, freshMul:1.6 },
-    blurb:'Four more plates on the pass and they stay sellable far longer.' },
+    cost:{ cinder:34000,  metal:20, fuel:14 }, effect:{ passAdd:2, freshMul:1.6 },
+    blurb:'Two more plates on the pass — and they stay sellable far longer.' },
   { id:'up_walkin',   name:'Walk-In Cooler', icon:'🚪', minLevel:8, requires:null,
     cost:{ cinder:58000,  metal:44, supplies:26 }, effect:{ pantryAdd:400 },
     blurb:'+400 units of pantry. Restock twice a shift instead of four times.' },
@@ -664,14 +747,14 @@ export const UPGRADES = [
      over. Seventeen consecutive blank "LEVEL UP!" toasts is not a difficulty
      curve, it is a credits roll with a progress bar on it.
 
-     🔴 THE LOOP IS NOW A TEST, NOT A REQUEST. The previous version of this
-     comment said "run unlocksAt() in a loop after ANY retune of minLevels".
-     Nobody ran it, and the gap shipped. `assertDataSane()` now walks levels
-     1..MAX_LEVEL-5 itself and reports every empty one as a problem, so the
-     instruction is enforced by the file instead of remembered by a person.
-     (36–40 are exempt ON PURPOSE and it is not a cop-out: 35 is the last
-     unlock by design, and the top five levels are the trophy for finishing the
-     ladder. If you want to extend the ladder, move the horizon.)
+     🔴 THE LOOP IS NOW A TEST, NOT A REQUEST — AND THE TEST'S OWN EXEMPTION
+     WAS THE NEXT HOLE. The version before this said assertDataSane() walks
+     1..MAX_LEVEL−5 and called the top five levels "the trophy for finishing the
+     ladder". What shipped behind that sentence was four consecutive blank
+     LEVEL UP toasts at 36, 37, 38 and 39, plus a fifth at 20. The exemption was
+     not a design decision; it was the hole wearing a comment as a hat.
+     assertDataSane() now walks 2..MAX_LEVEL with nothing exempt, the Road Train
+     fills 20, and the four rungs below the capstone fill 36–39.
 
      WHAT THE LATE TIER IS FOR: past about eight live slots the bottleneck stops
      being the rack and becomes the player's two thumbs, so these deliberately
@@ -705,8 +788,8 @@ export const UPGRADES = [
     cost:{ cinder:520000, metal:260, stone:180, supplies:110 }, effect:{ laneAdd:3 },
     blurb:'Three more cars queue instead of driving past. Balks halve.' },
   { id:'up_warmrail', name:'Warming Rail', icon:'🍽️', minLevel:27, requires:'up_heatlamp',
-    cost:{ cinder:410000, metal:180, fuel:90 }, effect:{ passAdd:4, freshMul:1.35 },
-    blurb:'Four more plates under the lamp, and they hold longer still.' },
+    cost:{ cinder:410000, metal:180, fuel:90 }, effect:{ passAdd:2, freshMul:1.35 },
+    blurb:'Two more plates under the lamp, and they hold longer still.' },
 
   /* ── 28–35: throughput, reach and money. No new slots past 26. ───────────── */
   { id:'up_walkin3', name:'Cold Store', icon:'🧊', minLevel:28, requires:'up_walkin2',
@@ -733,6 +816,30 @@ export const UPGRADES = [
   { id:'up_oven_fast2', name:'Rotating Deck', icon:'⚡', minLevel:35, requires:'up_oven_fast',
     cost:{ cinder:900000, metal:420, stone:220, fuel:180 }, effect:{ station:'oven', speedMul:0.85 },
     blurb:'The stone turns so you do not have to. A Supreme in twenty seconds.' },
+
+  /* ── 36–39: THE LAST FOUR RUNGS. ──────────────────────────────────────────
+     🔴 THESE EXIST BECAUSE assertDataSane() NOW WALKS 2..MAX_LEVEL, NOT
+        2..MAX_LEVEL−5. The old horizon exempted the top five levels as "the
+        trophy for finishing the ladder", and what actually shipped behind that
+        exemption was FOUR CONSECUTIVE BLANK LEVEL-UP TOASTS at 36, 37, 38 and
+        39 leading into the cap — measured, not theorised. An exemption that
+        launders a hole is not a design decision, it is the hole with a comment
+        on it. The horizon moved; these fill what it exposed. Level 40 keeps its
+        capstone and is a real unlock in its own right, so nothing is exempt now.
+     They are reach and throughput, not slots: past about eight live slots the
+     bottleneck is the player's two thumbs (see the LATE SHIFT note above). */
+  { id:'up_lane4',    name:'Fourth Drive-Thru Lane', icon:'🛣️', minLevel:36, requires:'up_lane3',
+    cost:{ cinder:980000, metal:460, stone:320, supplies:190 }, effect:{ laneAdd:3 },
+    blurb:'Thirteen cars can queue. Nobody drives past a Flagship.' },
+  { id:'up_warmrail2', name:'Pass Extension', icon:'🍽️', minLevel:37, requires:'up_warmrail',
+    cost:{ cinder:1040000, metal:480, fuel:220 }, effect:{ passAdd:2, freshMul:1.2 },
+    blurb:'Two more plates again, and the lamps that keep them honest.' },
+  { id:'up_board_fast2', name:'Ghost Kitchen Line', icon:'⚡', minLevel:38, requires:'up_board_fast',
+    cost:{ cinder:1150000, metal:520, wood:260, cloth:160 }, effect:{ station:'assembly', speedMul:0.85 },
+    blurb:'A second board nobody sees, prepping into the first. Cold builds fly.' },
+  { id:'up_fountain_fast', name:'Auto-Pour Bank', icon:'⚡', minLevel:39, requires:'up_fountain3',
+    cost:{ cinder:1250000, metal:560, supplies:240 }, effect:{ station:'drinks', speedMul:0.70 },
+    blurb:'Cups fill themselves. The only station you never have to think about.' },
 
   /* 🏆 THE CAPSTONE. Level 40 is the end of the ladder and it should land like
         one — this is the only upgrade in the table that moves three meters at
@@ -802,18 +909,25 @@ export const POP_FACES = [
 
    Where it lands today, COPIED FROM capacityModel()'s output, not typed from
    intent — a level-12 kitchen on a stock rack, popularity 50:
-     6 usable slots · mean cook 13.5s → 26.7 dishes per in-game hour
-       10:00  rush 0.77 →  15.7 demanded   ratio 0.59   this is where you learn
-       11:00  rush 1.30 →  26.5 demanded   ratio 0.99   exactly at the line
-       13:00  rush 2.01 →  41.1 demanded   ratio 1.54   the lunch wall
-       16:00  rush 1.01 →  20.6 demanded   ratio 0.77   restock, load a convoy
-       19:00  rush 2.54 →  51.9 demanded   ratio 1.95   the dinner rush. Stock,
+     6 usable slots · mean cook 13.4s → 26.9 dishes per in-game hour
+     pass 16 plates against a jam floor of 12.5 — slack 1.02, the RACK binds
+       10:00  rush 0.80 →  16.4 demanded   ratio 0.61   this is where you learn
+       11:00  rush 1.36 →  27.7 demanded   ratio 1.03   exactly at the line
+       13:00  rush 2.11 →  43.0 demanded   ratio 1.60   the lunch wall
+       16:00  rush 1.05 →  21.5 demanded   ratio 0.80   restock, load a convoy
+       19:00  rush 2.66 →  54.3 demanded   ratio 2.02   the dinner rush. Stock,
                                                         you WILL lose orders.
-   And the same model at level 1, where only the griddle has a recipe on it:
-     2 usable slots → 15 dishes/hour against a 19.6 peak, ratio 1.31 — a real
-     wall you can still climb with two hands, which is what a tutorial is.
+   And the same model at LEVEL ONE, where the player owns the griddle and the
+   deck oven (the margherita is a day-one dish now — see the RECIPES header):
+     3 usable slots → 12.3 dishes/hour against a 19.6 peak, ratio 1.60 — a real
+     wall you can still climb with two hands, which is what a tutorial is. Note
+     the shape of the first day: under the line until noon, at it through lunch,
+     and genuinely over it at 19:00. You learn, then you are tested.
    That is the brief exactly: the first shift is winnable and tense, and the
    dinner rush is not survivable on a stock rack. The gap IS the upgrade shop.
+   🔴 assertDataSane() now runs this for EVERY level 1..14 rather than for 12
+      alone. Checking one level is how a level-3 kitchen at ratio 0.78 — no rush
+      to answer at all — shipped inside a model that was reporting healthy.
 
    ── AND WHEN YOU FALL BEHIND, IT MUST GET WORSE, NOT EASIER ──────────────
    🔴 TICKET_CAP IS NOT A DIFFICULTY VALVE. An earlier build silently discarded
@@ -899,9 +1013,22 @@ export const ECON = {
         disagree about how busy the restaurant is. Putting it in
         spawnIntervalMs() would have needed a `level` argument drivethru.js does
         not have and cannot be made to pass without editing someone else's file. */
+  /* ⚠ DEMAND_FULL_LEVEL DROPPED 10 → 3, AND IT IS NOT A DIFFICULTY CHANGE — IT
+     IS THE SAME RULE APPLIED TO THE NEW MENU. This ramp was never a pacing dial;
+     it tracks HOW MANY STATIONS THE PLAYER CAN ACTUALLY COOK ON, and the menu
+     retune moved that. It used to be: griddle at L1, fryer L2, drinks L3, board
+     L5, oven L8 — capacity doubling over ten levels, so demand doubled over ten
+     levels. It is now: griddle AND oven at L1 (the margherita is a day-one
+     dish), fryer and fountain at L2, prep board at L3. The whole rack is live by
+     level 3, so the ramp finishes at level 3. Leaving it at 10 would have left
+     levels 3–9 with a rack the town had no reason to fill — measured, ratio 0.78
+     at level 3, which capacityModel() now reports as "no rush to answer".
+     🔴 RE-DERIVE THIS FROM capacityModel(), NOT FROM FEEL, after any menu
+        retune. Walk levels 1..14 on a stock rack and require every `ok` true;
+        that sweep is what produced 0.40 / 3 / 0.02. */
   DEMAND_MIN: 0.40,         // demand multiplier at level 1
-  DEMAND_FULL_LEVEL: 10,    // …reaching 1.0 here, where all five stations are open
-  DEMAND_LATE_PER_LEVEL: 0.03,  // …and creeping past it, so the rush never ends
+  DEMAND_FULL_LEVEL: 3,     // …reaching 1.0 here, where all five stations are open
+  DEMAND_LATE_PER_LEVEL: 0.012, // …and creeping past it, so the rush never ends
 
   // ── QUALITY (CONTRACT §8.2) ─────────────────────────────────────────────
   Q_RAW: 0.5,               // pulled before doneAt. Pays half and earns NO xp.
@@ -955,13 +1082,94 @@ export const ECON = {
      move the meter five times as far as a hot dog, which turns reputation into
      a function of order size rather than of how well you cooked. A ticket is
      one word-of-mouth event; what was IN it decides which direction it goes. */
-  POP_SERVE: 0.60,          // a good unit. × recipe.pop × popGainMul(upgrades)
-  POP_PERFECT_BONUS: 0.40,  // extra, per unit, for the ones caught in the window
-  POP_RAW: -0.80,           // 🔴 a raw unit COSTS reputation. See above.
-  POP_LOST: -3.5,           // 🔴 ASYMMETRIC ON PURPOSE. Six good tickets to undo
-  POP_BURN: -1.2,           //    one lost one. A symmetric reputation meter never
-  POP_WAVE: -2.0,           //    moves, and a meter that never moves is not a
-  POP_DECAY_PER_DAY: -1.5,  //    mechanic — it is a decoration.
+  /* ═══════════════════════════════════════════════════════════════════════
+     🔴 THE METER MUST MOVE BOTH WAYS. IT WAS A ONE-WAY RATCHET, AND FIXING
+        THE RATIO ALONE TURNED IT INTO A ONE-WAY RATCHET POINTING UP.
+     ═══════════════════════════════════════════════════════════════════════
+     WHAT SHIPPED: POP_SERVE 0.60 against POP_LOST −3.5, plus a −1.5/day decay.
+     Measured over 60 simulated days with a competent auto-player: popularity 27
+     after day 1, then 0 or 1 from day 2 through day 60 while the kitchen served
+     1,767 tickets. Pinned at the floor the face reads 🤬 Hated, the pay
+     multiplier sits at POP_PAY_FLOOR and spawns are at their slowest — a spiral
+     whose only exit is five consecutive flawless days. The old comment defended
+     that as "six good tickets to undo one lost one… a symmetric reputation meter
+     never moves". The instinct is right and the conclusion is the trap: a meter
+     pinned at ZERO does not move either, and it has stopped being feedback.
+     REF-B's popularity face is a reward you can read at a glance. Ours was a
+     permanent scold.
+
+     🔴 AND THEN THE OBVIOUS FIX FAILED IN THE OTHER DIRECTION, WHICH IS THE
+        PART WORTH RECORDING. Softening the ratio (POP_SERVE 0.85 / POP_LOST
+        −1.8) put the same bot at popularity 100 by day 3 and it never came
+        down. The reason is a detail two comments up: serveTicket() takes the
+        MEAN per-unit score across a ticket, not the sum — so a served ticket is
+        worth ~1.25 REGARDLESS OF SIZE, while a lost one costs 1.8. Over a
+        110-ticket day at a 25% loss rate that nets +66 on a 0..100 scale.
+        THE METER SATURATED INSIDE A SINGLE DAY, IN BOTH DIRECTIONS, AT BOTH
+        SETTINGS. The ratio was never the whole problem; the MAGNITUDES were
+        sized as if a day were a handful of tickets, and a day is a hundred.
+
+     THE FIX IS BOTH: a ratio a real player can beat, and magnitudes sized
+     against a real day. Every number below is derived, in this order:
+       1. A day is ~110 tickets. For the meter to be a REPUTATION rather than a
+          scoreboard it should move ~a third of its range in a decisive day, not
+          all of it. Target: ±30 points.
+       2. Break-even at ~30% lost tickets — where a competent player under
+          pressure actually sits, measured, not assumed.
+            served × G = lost × L  at 30% ⟹ L ≈ 2.3 × G
+       3. Solve for a ±30-point day: G ≈ 0.46 per PERFECT ticket, L ≈ 1.0.
+     Which lands:
+       POP_SERVE          0.60 → 0.10   a merely-GOOD unit
+       POP_PERFECT_BONUS  0.40 → 0.36   …and what CATCHING THE WINDOW adds
+       POP_LOST           −3.5 → −1.0
+       POP_DECAY_PER_DAY  −1.5 → −0.6   decay exists so fame is a thing you keep
+                                        doing. At −1.5 it was a second penalty
+                                        on top of the first, and the clean-day
+                                        bonus (−decay × 2) could not reach it on
+                                        any day that lost one ticket.
+       POP_BURN, POP_WAVE, POP_TURNAWAY, POP_BALK, POP_JAM, POP_JUMP: all scaled
+       by the same 0.55 as POP_LOST, so every RATIO the previous rounds tuned is
+       preserved exactly and only the magnitude moved.
+
+     🔴 WHY ALMOST ALL OF THE GAIN MOVED INTO POP_PERFECT_BONUS (0.10 good vs
+        0.46 perfect, a 4.6× spread). Popularity is a per-ticket meter, so it is
+        structurally blind to THROUGHPUT — serving 120 tickets instead of 100
+        barely shows. Quality is the only channel it can carry a skill signal
+        on, so that is where the weight goes: a cook who catches the window is
+        four and a half times better liked than one who lets everything coast to
+        merely done. Measured across eight seeds at level 12, that is what turns
+        the meter from noise into a reading of how you cooked.
+     ⚠ POP_RAW stays NEGATIVE and larger in magnitude than POP_SERVE (−0.35 vs
+       0.10). That is the number that stopped a raw-spamming bot scoring S, and
+       softening the curve must not soften it — a raw dish is not a cheap dish,
+       it is a bad one.
+     ⚠ RE-MEASURE, DO NOT SPOT-TUNE. These move together with PASS_CAP: a jammed
+       pass loses tickets, and lost tickets are what pinned the meter in the
+       first place. Change one and re-run the 60-day auto-player AND the
+       eight-seed spread. Measured after this retune, level 12, one perfect bot:
+       popularity mean 74.3, sd 5.7, range 65..82 (it was mean 27.7, sd 23.0,
+       range 0..69), and the 60-day curve breathes 74 → 100 → 54 → 0 → 36
+       instead of sitting on the floor from day 2 onward. */
+  POP_SERVE: 0.10,          // a good unit. × recipe.pop × popGainMul(upgrades)
+  POP_PERFECT_BONUS: 0.36,  // extra, per unit, for the ones caught in the window
+  POP_RAW: -0.35,           // 🔴 a raw unit COSTS reputation. See above.
+  POP_LOST: -1.0,           // 🔴 STILL ASYMMETRIC — 2.2 perfect tickets to undo
+  POP_BURN: -0.65,          //    one lost one. Just no longer six of them
+  POP_WAVE: -1.1,           //    against a decay you could never out-run.
+  POP_DECAY_PER_DAY: -0.6,
+  /* 🔴 MEAN REVERSION — THE RECOVERY THE OLD CURVE HAD NO ROOM FOR.
+     A bad week should cost a bad week, not the account. These two keys say:
+     below POP_REVERT_BELOW, the town's memory fades and reputation drifts back
+     toward it by POP_REVERT_PER_DAY at each day roll, INSTEAD of decaying.
+     ⚠ NOT A FLOOR AND NOT A GIFT: it is strictly smaller than one good day's
+     service, so climbing out is still something the player does — this only
+     stops the hole being infinitely deep. Above the threshold it does nothing
+     at all, so a famous kitchen still decays normally.
+     ⚠ CONSUMER: kitchen.state.js's closeShift() day-roll settle, where
+     POP_DECAY_PER_DAY is already applied. Until it reads these two keys the
+     retune above carries the fix on its own; this makes the floor case kind. */
+  POP_REVERT_BELOW: 30,     // popularity under this drifts back up instead of down
+  POP_REVERT_PER_DAY: 2.0,  // …by this much per day roll, replacing the decay
   /* Two ways to lose custom WITHOUT losing a ticket, and they are not the same
      size because they are not the same failure.
        POP_BALK      a car reached a FULL LANE and drove past. Small: a queue out
@@ -972,8 +1180,8 @@ export const ECON = {
                      have not cleared, and walked back out. It also counts in
                      `today.lost`, so it reaches gradeFor() and the day report.
                      🔴 This is the number that makes drowning compound. */
-  POP_BALK: -0.25,
-  POP_TURNAWAY: -1.0,
+  POP_BALK: -0.14,
+  POP_TURNAWAY: -0.40,
 
   /* ── XP / LEVEL ──────────────────────────────────────────────────────────
      xpForLevel(lv) = XP_L1×n + XP_CURVE×n²   where n = lv−1  (so level 1 = 0).
@@ -1016,7 +1224,21 @@ export const ECON = {
   SPAWN_BASE_MS: 8000,
   SPAWN_POP_SPAN: 4000,     // subtracted at popularity 100 → 4000ms floor
   SPAWN_JITTER: 0.25,       // ±25% so the lane never feels metronomic
-  SPAWN_MIN_MS: 1400,       // hard floor; below this nothing is playable
+  /* 🔴 THE HARD FLOOR ON ARRIVALS, AND IT IS NOW A DERIVED NUMBER. It used to be
+     1400 with the note "below this nothing is playable", which is a claim about
+     the PLAYER'S kitchen written without consulting it. At 1400 the busiest
+     possible hour in the game — level 40, popularity 100, the 20:00 peak — asks
+     for 82.7 dishes, and a FULLY KITTED kitchen tops out at 63.9 because past
+     ECON.HANDS_SLOTS live slots the rack stops being the limit. The endgame was
+     therefore unwinnable by construction: there was no amount of money that
+     bought the last rung, which is exactly what assertDataSane()'s
+     "UPGRADE LADDER DOES NOT CLEAR THE WALL" check exists to catch.
+     2100 is capacityModel(MAX_LEVEL, everything, 100) read backwards: the
+     interval at which the hardest hour lands just inside a maxed kitchen's
+     reach. It binds ONLY at the extreme — at level 12 on a stock rack the
+     interval is 2,166ms and this floor never touches it — so it costs the
+     early and middle game nothing. Re-derive it, do not nudge it. */
+  SPAWN_MIN_MS: 2100,       // hard floor; below this even a maxed kitchen drowns
   PATIENCE_ITEM_MS: 12000,  // added per item beyond the first
   PATIENCE_MIN_MS: 20000,
   ORDER_MAX_ITEMS: 5,
@@ -1051,10 +1273,64 @@ export const ECON = {
      into the quiet hour a real (and decaying) strategy, and makes the heat lamp
      the first thing a struggling kitchen should buy.
 
-     PASS_CAP 8, not 6: the pass now HOLDS stock rather than passing it through,
-     and a single Vault Family order is five dishes. At 6 the cap bound on a
-     legitimate order instead of on hoarding, which is the wrong thing to punish. */
-  PASS_CAP: 8,              // plated dishes waiting; up_heatlamp adds 4
+     ═══════════════════════════════════════════════════════════════════════
+     🔴🔴 PASS_CAP IS THE BINDING CONSTRAINT OF THE WHOLE SIM. 8 WAS BELOW THE
+          DEADLOCK POINT AND THAT MADE THE DAY'S RESULT THE SEED'S, NOT THE
+          PLAYER'S. 8 → 14.
+     ═══════════════════════════════════════════════════════════════════════
+     The previous note said "8, not 6" and reasoned about a Vault Family's
+     five-dish order. Both halves were right and the conclusion was still three
+     sizes too small, because it modelled ONE ticket and the jam is a property of
+     FIVE. `refreshReady()` claims plates nearest-due-first, so with
+     ORDER_MAX_ITEMS 5 the eight plates on the pass spread across four or five
+     tickets that each still need one more item — and the player cannot plate
+     that item, because the pass is full. That is a deadlock, not a queue.
+
+     MEASURED, at level 12 on a stock rack with a frame-perfect bot:
+       • "pass full AND hand holding a dish AND no ticket ready" held for 26.8%
+         of the shift. A bot that never binned sat in it 76.7% of the day and
+         finished served 35 / lost 64 / popularity 0.0 / grade D.
+       • Tripling every station's slots produced a BYTE-IDENTICAL day
+         (served 100, lost 30, pop 31.7, net 14,326) while the rack was full
+         only 3.4% of frames. The rack was never the wall. The pass was.
+       • Raising PASS_CAP alone, touching nothing else, moved popularity
+         31.7 → 81.0 and served 100 → 113.
+       • The only working counter — bin your way out — cost 95 of 275 dishes
+         cooked. 35% waste as the price of not deadlocking.
+
+     🔴 AND IT WAS DESTROYING THE GAME'S CLAIM TO BE A GAME OF SKILL. Ten seeds
+        per configuration, one identical perfect bot:
+            PASS_CAP  8 → popularity mean 27.7, sd 23.0, range 0..69
+            PASS_CAP 24 → popularity mean 65.5, sd  9.2, range 51..78
+        A cliff converts RNG into outcome. Eight seeds at the shipped cap moved
+        the day 73 popularity points at FIXED skill, while sweeping the same bot
+        from 0ms to 2000ms of reaction lag moved it 18. The noise was four times
+        the signal: a 2-second-lag player on a lucky seed beat a frame-perfect
+        player on an unlucky one, and neither could tell why. You cannot learn a
+        shift whose grade is mostly the seed's.
+
+     WHY 16 AND NOT 24. Two independent methods land on the same number, which
+     is the only reason to trust either of them:
+       • MEASURED. The waste/popularity curve was swept and it saturates:
+         cap 8 → 35% waste, pop 41; cap 12 → 13%, 68.5; cap 16 → 8%, 81.4, and
+         flat thereafter. Everything past 16 is comfort nobody is short of.
+       • DERIVED. capacityModel() computes the jam floor from the pigeonhole —
+         TICKET_CAP × (meanOrderDishes − 1) = 12 × 1.04 = 12.5 plates that can
+         be stranded one-short across a full board — times PASS_HEADROOM 1.25,
+         which is 15.6. 16 is the smallest integer that clears it.
+     🔴 THE FIRST DRAFT OF THIS RETUNE SAID 14, ON THE MEASUREMENT ALONE, AND
+        THE MODEL CAUGHT IT AT 0.90× THE FLOOR. That is the entire argument for
+        making the model code instead of a paragraph: 14 "worked" in a sweep and
+        was still under the worst case the dinner rush reaches.
+     The pass must stay a real constraint or cooking ahead stops being a
+     decision — at 16 it clears the floor by 2%, which is a wall you can feel
+     and not a wall you hit. The two pass upgrades were re-sized around the new
+     base (passAdd 4 → 2 each), so the ladder is 16 → 18 → 20 → 22 rather than
+     8 → 12 → 16.
+     🔴 capacityModel() now MODELS the pass and reports which of the two binds.
+        Re-run it after touching this number; it is the check that stops this
+        constraint going invisible again. */
+  PASS_CAP: 16,             // plated dishes waiting; up_heatlamp adds 2
   PASS_FRESH_MS: 45000,     // × freshMul(upgrades) before a plate goes stale.
                             // Measured: the mean plate now waits ~18s to be
                             // handed over, so a 60s line almost never bit (2.5%
@@ -1106,22 +1382,87 @@ export const ECON = {
      ⚠ A pantry filled to the cap with something you cannot cook is still
      genuinely stuck until you cook it down. That is a real — and recoverable —
      consequence of a bad restock, and it is why SUPPLY_MAX_BATCHES exists. */
-  PANTRY_CAP: 900,          // 🔴 TOTAL units across ALL ingredients. Summed in
+  PANTRY_CAP: 1200,         // 🔴 TOTAL units across ALL ingredients. Summed in
                             //    buySupply(). Upgrades add via pantryCap().
                             //    NOTHING to do with bridge().resourceCap() —
                             //    pantry stock is not stash stock (file header).
+  /* 🔴🔴 AND THEN THE TRUE TOTAL BRICKED THE KITCHEN, WHICH IS WHY THE TWO KEYS
+        BELOW EXIST. Making the cap a real total was correct and it created an
+        UNRECOVERABLE state: buy one ingredient to refusal and every other bin
+        is permanently unbuyable. Measured — 85 packs of dog rolls put the
+        pantry at 894 of 900 with roll=862, and `buySupply('sup_patty')` then
+        returned CAP forever. The refusal toast advised "cook some of it down",
+        which is not executable: a hot dog needs sausage as well as a roll, and
+        sausage could no longer be bought. One over-eager restock, permanently
+        dead kitchen, no player action available.
+
+        A per-bin ceiling makes that arithmetically impossible rather than
+        merely unlikely. PANTRY_BIN_PCT is a fraction of the TOTAL cap, so it
+        scales automatically with the walk-in upgrades and can never be retuned
+        out of step with them. At 0.15 of 1,200 a single bin tops out at 180
+        units — six shifts of any one ingredient, generous — and it takes SEVEN
+        separate bins maxed out before the total binds at all, by which point
+        the player has bought roughly ten shifts of food on purpose. That is
+        past "ordinary play" by any reading.
+        ⚠ It is a ceiling, not a reservation: unused headroom in one bin is
+        still spendable by the others. It only stops ONE bin eating everything.
+
+        🔴 THE CAP IS STILL NOT A SUBSTITUTE FOR AN EXIT. kitchen.state.js is
+        adding `dumpSupply(ingId, n)` — bin units from one bin, no refund, no
+        popularity cost, the sunk purchase is the punishment. The per-bin
+        ceiling means a player never NEEDS it to keep playing; the dump means a
+        player who wants their headroom back can have it. Belt and braces,
+        because "the preflight should have caught it" is how the 215 units in
+        CONTRACT §7 went missing. */
+  PANTRY_BIN_PCT: 0.15,     // max share of pantryCap() ONE ingredient may hold
+  PANTRY_BIN_MIN: 60,       // …but never fewer than this many units, so a small
+                            //    cap cannot make a bin unusable for a 5-unit dish
   PANTRY_LOW: 4,            // ≤ this many units fires ONE pantry:low per ingredient
-  SUPPLY_MAX_BATCHES: 20,   // per buySupply() call, so one fat-fingered tap
+  /* ⚠ 20 → 6. Twenty batches is up to 240 units in ONE tap — more than a whole
+     bin's ceiling, so the "fat-fingered tap" this key exists to bound could
+     still fill a bin to refusal in a single press. Six batches is 36–96 units:
+     enough that stocking a shift is two or three taps rather than twelve, small
+     enough that over-buying is a thing you notice happening. */
+  SUPPLY_MAX_BATCHES: 6,    // per buySupply() call, so one fat-fingered tap
                             // cannot drain a player's entire food ledger
 
-  // ── THE GRUBSTAKE ───────────────────────────────────────────────────────
-  // 🔴 A new kitchen starts STOCKED FOR ONE DISH. WHY: rung 1 of the degradation
-  //    ladder (CONTRACT §9) is "no bridge at all → the kitchen opens, cooks and
-  //    serves against an empty pantry". Empty is *survivable*, but as a first
-  //    impression it is a restaurant with nothing in it and a shop that refuses
-  //    you. Twelve hot dogs is the tutorial: it is exactly the day-one menu, it
-  //    runs out inside the first shift, and running out is what teaches restock.
-  START_PANTRY: { roll:12, sausage:12, mustard:12, onion:8 },
+  /* ══════════════════════════════════════════════════════════════════════
+     🔴🔴 THE GRUBSTAKE — A NEW KITCHEN OPENS STOCKED FOR ALL THREE NAMED FOODS.
+     ══════════════════════════════════════════════════════════════════════
+     The old grubstake was twelve hot dogs, sized against a level-1 menu that
+     was one hot dog. It is now sized against the level-1 menu that exists:
+     a hot dog, a classic burger and a margherita.
+
+     🔴 THIS IS THE ANSWER TO THE WORST BUG IN THE FEATURE. On a real untouched
+     profile the kitchen opened with `Profile.gems 0`, `Profile.salvage {}` and
+     `Kitchen.pantry {}`. Tapping the flat-top → "Out of ingredients for Hot Dog
+     — restock from Supplies." Tapping Supplies → "Not enough Food — you need 5
+     and have 0." Dead end, no exit, first sixty seconds. A cooking game whose
+     first interaction is a refusal has already lost the player, and the code
+     that was supposed to prevent it could never run — `hydrate()` granted
+     START_PANTRY only when the save was ABSENT, and the bridge auto-creates
+     `Profile.kitchen = {}`, which is present. (That branch is kitchen.state.js's
+     to fix and it is being fixed; this table is the other half — the grant has
+     to be worth having when it finally fires.)
+
+     SIZED, NOT GUESSED. ~8 hot dogs, ~10 burgers, ~7 pizzas ≈ 25 dishes, which
+     is roughly a third of a first shift. Long enough that the first thing the
+     player does is COOK — REF-A opens on a pizza, REF-B on a griddle full of
+     patties — and short enough that running out inside the first day is what
+     teaches restock, which was the one genuinely good idea in the old note.
+     `sauce`, `cheese` and `tomato` carry extra because they are each shared by
+     two of the three dishes and are what actually runs dry first.
+
+     🛡 assertDataSane() checks this table against EVERY level-1 recipe, so a
+     recipe pulled down to level 1 without a grubstake line for it is a reported
+     problem rather than a first-run dead end. That check is the whole reason
+     this number is safe to change. */
+  START_PANTRY: {
+    roll:10, sausage:10, mustard:10,           // ~8 hot dogs
+    bun:10, patty:10, lettuce:10, onion:8,     // ~10 classic burgers
+    dough:8,                                   // ~7 margheritas
+    sauce:16, cheese:16, tomato:12,            // shared across all three
+  },
 
   // ── CONVOYS (CONTRACT §8.4) ─────────────────────────────────────────────
   /* 🔴🔴 CONVOY_FOOD_PER_DISH IS THE MOST DANGEROUS NUMBER IN THIS FEATURE. 🔴🔴
@@ -1154,6 +1495,238 @@ export const ECON = {
   CONVOY_XP_PER_DISH: 6,
   CONVOY_MAX_ACTIVE: 3,     // outbound at once, stock; up_truckbay does not raise
                             // this — capacity is the upgrade, not concurrency
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     🛡 THE MODEL'S OWN THRESHOLDS. capacityModel() reads these; nothing else
+        should. They are here rather than as literals in the function for the
+        same reason as every other number in this file — a threshold that only
+        exists inside the checker is a number nobody can retune.
+     ═══════════════════════════════════════════════════════════════════════ */
+  WALL_RATIO_MIN: 1.25,     // below this at the peak there is no rush to answer
+  WALL_RATIO_MAX: 2.25,     // above this the rush is unwinnable, not hard.
+                            //    2.25 ≈ "you can serve under half the peak
+                            //    hour". Sized against the measured bot, which
+                            //    holds ~77% service at ratio 2.15 because
+                            //    balks and turn-aways shave real demand below
+                            //    the modelled figure.
+                            // 🔴 THE CEILING IS THE HALF THAT WAS MISSING. See
+                            //    capacityModel()'s `ok`.
+  PASS_HEADROOM: 1.25,      // the pass must clear TICKET_CAP × (meanOrder − 1)
+                            // by this much before the rack counts as the
+                            // bottleneck. See capacityModel() for the pigeonhole
+                            // this comes out of — a pass that merely TIES the
+                            // jam floor still deadlocks, because the floor is a
+                            // worst case the dinner rush reaches.
+  /* 🔴 THE ATTENTION CEILING, PROMOTED FROM A COMMENT TO A NUMBER. The UPGRADES
+     header has always claimed that "past about eight live slots the bottleneck
+     stops being the rack and becomes the player's two thumbs" — and then
+     capacityModel() went on counting all nineteen slots of a fully-kitted
+     kitchen as if they all ran hot, which credited a maxed rack with more than
+     twice the throughput a human can extract from it. A claim the file makes
+     and the file's own model ignores is the exact failure mode this whole
+     section exists to stop. 10, a little above the stated eight, because the
+     fountain and the prep board genuinely are cheap to keep fed. */
+  HANDS_SLOTS: 10,          // live slots one player can actually keep fed
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     🛣 THE LANE — geometry, timing and mood. OWNED BY drivethru.js.
+     ═══════════════════════════════════════════════════════════════════════
+     🔴 EVERY KEY IN THIS SECTION AND THE FOUR BELOW IT WAS, UNTIL NOW, AN
+        `EC('KEY', literal)` FALLBACK INSIDE drivethru.js / convoy.js. Forty-three
+        of them. CLAUDE.md: "All operation pricing goes through _opEcon(). Never
+        hardcode economy numbers." A fallback IS a hardcoded number — it is one
+        with a note attached promising somebody will move it later.
+        The `EC()` second argument is a NaN GUARD, not a tuning value, and with
+        the key present it can never be reached. Retune HERE. If you retune a
+        fallback in drivethru.js instead, you will change nothing and then spend
+        an afternoon finding out why.
+        ⚠ MEASURED PROOF THAT THIS MATTERS: LANE_EXIT_MS carried a fallback of
+        1500 in drivethru.js and 900 in kitchen.render.js. The sim and the
+        pixels disagreed about how long a served car blocks the window, and
+        neither file could tell. One key, one answer. */
+  LANE_ROLL_UNITS_S: 0.55,  // lane-lengths per second a car rolls forward
+  LANE_ENTRY_POS: 1.30,     // where a car appears, PAST the mouth of the lane,
+                            // so it drives on screen instead of popping into
+                            // existence in the queue
+  LANE_SPEAKER_POS: 0.92,   // 🔴 WHERE THE SPEAKER BOX IS, as a fraction of
+                            //    LANE_LEN measured from the window. A car may
+                            //    not roll PAST it until it has ordered, and may
+                            //    not order until it has reached it. This one
+                            //    number is what makes the lane's geography and
+                            //    its state machine agree — the round-2 critic
+                            //    caught them disagreeing on screen ("AT THE
+                            //    WINDOW" printed over a car still rolling at
+                            //    pos 0.695). One key, one answer.
+  LANE_ORDER_MS: 2400,      // beat at the speaker box. At 0 the dialogue flashes
+                            // past and the joke never lands.
+  LANE_EXIT_MS: 1500,       // 🔴 how long a SERVED car blocks the window. This is
+                            //    not decoration — it is the entire "cars block
+                            //    each other" mechanic. At 0 the lane is a list.
+  LANE_BALK_MS: 26000,      // patience of a car that has arrived but not yet
+                            // reached the speaker. Only reachable when the lane
+                            // is jammed by an unserved front car.
+  LANE_MOOD_TESTY: 0.55,    // patience-remaining thresholds the mood face steps
+  LANE_MOOD_ANGRY: 0.25,    // down at. Render reads `car.mood`.
+  LANE_NAG_MS: 9000,        // gap between a TESTY car's window nags
+  LANE_NAG_ANGRY_MS: 5500,  // 🔴 …and once FURIOUS. The nag ESCALATES: the last
+                            //    ten seconds of a doomed order must not read
+                            //    like the first ten.
+  LANE_PASSBY_MS: 2600,     // how long a balked vehicle stays drawable so the
+                            // renderer can drive it across the top and off
+  PASSBY_STAGGER_MS: 320,   // head start between consecutive drive-pasts, so
+                            // five balks in one frame read as TRAFFIC rather
+                            // than as one smeared sprite
+  PASSBY_LANES: 3,          // rows of the far-side band to spread a burst across
+  PLAN_SERVE_RATE: 0.35,    // hit rate arrivalPlan() models when the caller does
+                            // not name one. ⚠ MEASURED off live play, not
+                            // assumed — re-measure it if the lane is retuned,
+                            // because a planner that lies about the serve rate
+                            // makes every rush it previews look winnable.
+
+  /* ── POPULARITY THE LANE APPLIES ITSELF ─────────────────────────────────
+     Neither of these produces a lost TICKET, so neither has a path through
+     kitchen.state.js's serve/lose settle. Sized against POP_LOST (−1.0): a
+     balk is a seventh of a lost ticket, a jam is half of one. Those RATIOS are
+     the tuned quantity and they are unchanged; only the scale moved. */
+  POP_BALK: -0.14,          // a car reached a FULL LANE and drove past. Tiny on
+                            // purpose: a queue out the door is a compliment.
+  POP_JAM: -0.50,           // a car queued, never got to order, gave up. Yours.
+  POP_JUMP: -0.33,          // everyone behind a queue-jumper sees you allow it
+
+  /* ── SET PIECES (drivethru.js §SET PIECES) ──────────────────────────────
+     ⚠ SPECIAL_MIN_LEVEL is a KINDNESS GATE, not a difficulty gate: a brand-new
+       player meeting a queue-jumper in their first sixty seconds learns "this
+       game is unfair", not "this game has texture". It stays at 3 even though
+       the whole MENU moved to level 1 — the menu is what the player asked for,
+       the set pieces are garnish, and garnish can wait a shift. */
+  SPECIAL_CHANCE: 0.11,
+  SPECIAL_MIN_LEVEL: 3,
+  BULK_ITEM_MULT: 2.2,      // a corp bulk buy orders this much more…
+  BULK_PATIENCE_MULT: 1.9,  // …is correspondingly willing to wait…
+  BULK_TIP_MULT: 1.35,      // …and pays for it. 🔴 NOT HIGHER: the two
+                            // personalities who place bulk orders are already
+                            // the most generous rows in CUSTOMERS (tipBias
+                            // 1.8 / 1.6), and a big multiplier on top of a big
+                            // bias is what made this tier flat the first time.
+  JUMP_PATIENCE_COST_MS: 7000,  // patience each car behind loses to the cut-in
+  GRUDGE_PATIENCE_MULT: 0.70,   // a regular you failed has a shorter fuse…
+  GRUDGE_TIP_MULT: 0.45,        // …and a worse memory of your prices
+  FAVOUR_PATIENCE_MULT: 1.35,   // a regular you delighted gives you room…
+  FAVOUR_TIP_MULT: 1.55,        // …and pays it back
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     🗣 MODIFIERS — "no onions", "extra cheese". THE PROMISE, AND WHAT IT PAYS.
+     ═══════════════════════════════════════════════════════════════════════
+     🔴🔴 IT MUST NEVER BE MORE PROFITABLE TO IGNORE A CUSTOMER'S PROMISE THAN
+          TO KEEP IT, AND UNTIL THIS BLOCK EXISTED IT WAS.
+     The lane could only move a TIP: MOD_TIP_HIT/MISS shifted the tip blend and
+     nothing else. Two things followed and both were fatal to the mechanic:
+       1. The tip is a fraction of a payout the modifier could not touch, so an
+          honoured "extra bacon" moved a handful of Cinder while COSTING two
+          rashers of real pantry stock. Honouring lost money.
+       2. `judgeMod()` reads build evidence — `ticket.items[i].builds` — that
+          assembly did not record, so the great majority of modifiers judged
+          'unproven' and were worth exactly zero in either direction.
+     Both halves had to land or neither counts. kitchen.state.js now records
+     what actually went on the dish (`dish.built`, carried onto the pass and
+     into the served item); drivethru.js judges against it and prices the
+     verdict through the four MOD_PAY_* keys below, which move the PAYOUT, not
+     just the tip.
+
+     🔴 THE ARITHMETIC THE FLOOR EXISTS FOR. Honouring an `extra` costs real
+     pantry units, and the priciest single unit in the game is a beef patty at
+     130 Cinder ÷ 8 = 16.25. A percentage bonus alone therefore fails on cheap
+     dishes: 12% of a 25-Cinder soda is 3 Cinder against a 4-Cinder shot of
+     syrup, so honouring "extra syrup" would still lose money. MOD_PAY_HIT_MIN
+     is a per-honoured-UNIT floor set ABOVE the priciest pantry unit, which
+     makes the inequality hold on every dish and every ingredient at once
+     instead of on average. assertDataSane() recomputes that comparison from
+     SUPPLY_RECIPES and reports it — so a price rise on patties cannot quietly
+     re-open the hole.
+     ⚠ MISS IS BIGGER THAN HIT, in both currencies. A broken promise is not a
+       neutral outcome the player merely fails to profit from; the customer
+       asked for one thing and got another. Symmetric numbers would make
+       ignoring modifiers a valid strategy with a small tax.
+     ⚠ UNPROVEN IS ZERO. Not a small bonus, not a small penalty. A modifier
+       nobody can check must never be able to move money — a guess that moves
+       money is worse than an honest blank. */
+  MOD_CHANCE: 0.30,         // chance an ordered LINE carries a modifier
+  MOD_SECOND_CHANCE: 0.18,  // …and a second, so "no onions, extra cheese" is
+                            // real and rare
+  MOD_MAX_PER_ORDER: 2,     // hard cap. Six instructions is a wall of text in a
+                            // speech bubble on a 360px screen.
+  MOD_PATIENCE_MULT: 0.94,  // a fussy order is a fussier customer
+  MOD_NORUSH_PATIENCE_MULT: 1.45,  // …except `no_rush`, the one modifier that
+                            // BUYS the player time. It asks for nothing and
+                            // pays nothing; it is the reason to read the list.
+  MOD_EXTRA_MIN: 2,         // how many of an ingredient counts as "extra"
+  MOD_TIP_HIT: 0.35,        // tip-blend bonus for an HONOURED promise
+  MOD_TIP_MISS: -0.45,      // …and the penalty for a BROKEN one. Bigger. See above.
+  MOD_TIP_UNPROVEN: 0,      // 🔴 zero, in both directions
+  MOD_PAY_HIT: 0.12,        // 🔴 PAYOUT bonus, as a fraction of the line's price
+  MOD_PAY_HIT_MIN: 18,      // 🔴 …with a per-honoured-UNIT Cinder floor ABOVE the
+                            //    priciest pantry unit (patty, 16.25). This is
+                            //    what makes honouring pay on a 25-Cinder soda.
+  MOD_PAY_MISS: -0.25,      // 🔴 payout penalty for a broken promise
+  MOD_PAY_UNPROVEN: 0,
+  MOD_POP_HIT: 0.14,        // reputation, per honoured line. Small — it is one
+  MOD_POP_MISS: -0.50,      // detail of one ticket — but a broken promise is
+                            // half a lost ticket's worth of word of mouth, on
+                            // the same scale as POP_LOST (−1.0).
+  MOD_XP_HIT: 3,            // xp for getting a fussy order right
+
+  /* ── THE TIP RETURN (drivethru.js §TIP) ─────────────────────────────────── */
+  TIP_GEN_MAX: 4.0,         // runaway guard on the GENEROSITY STACK (tipBias ×
+                            // upgrades × set piece × modifiers, which stacks and
+                            // is therefore unbounded). High enough never to
+                            // touch a normal customer.
+  TIP_HARD_PCT: 0.70,       // 🔴 the DESIGN ceiling, ≈2× TIP_MAX_PCT. Without it
+                            //    the top tier saturated the safety clamp on 100%
+                            //    of 4,000 samples and quality stopped mattering
+                            //    at all — measured, not guessed.
+  TIP_FRACTION_MAX: 0.95,   // 🔴 last-ditch clamp below kitchen.state.js's
+                            //    `v < 1` fraction test. Should never bind; if it
+                            //    does, TIP_HARD_PCT is wrong.
+  TIP_FRACTION_MIN: 0.01,   // floor, so a served car always drops a coin
+
+  /* ── SHIFT & TICKET GRACE (kitchen.state.js / index.js) ─────────────────── */
+  SHIFT_GRACE_MS: 4000,     // quiet beat after the bell before the first arrival
+  LAST_CALL_MS: 45000,      // no NEW arrivals inside the last this-much of a day,
+                            // so the closing bell is not a mass extinction event
+  TICKET_HARD_GRACE_MS: 20000,  // slack past dueAt before a ticket is truly lost
+  AWAY_FORFEIT_MS: 60000,   // panel shut longer than this → the shift is forfeit
+                            // rather than resumed (CONTRACT §4)
+  LIKE_BIAS: 0.7,           // weight a customer's `likes` categories get in the
+                            // order roll. Never a hard filter — a locked menu
+                            // must still be servable.
+
+  /* ── CONVOY KEYS THE ROUTE NEEDS (convoy.js) ────────────────────────────── */
+  CONVOY_ROUTE_LEGS: 5,     // markers drawn on the road. LAYOUT, not economy —
+                            // kept here so a designer can widen the road without
+                            // touching code. convoy.js clamps it to 3..8.
+  /* 🔴 THE ARMING KEY FOR ROUTE INCIDENTS, AND IT IS DELIBERATELY 0.
+     convoy.js can lose boxes to hazards on the road. `pct × 2` is the chance
+     per leg and `pct` the size. It stays OFF because a convoy is a TRANSFER
+     (CONTRACT §8.4) and shrinkage on a transfer is a net DESTRUCTION of food
+     the sender already paid the live ledger for — which reads to both players
+     as the game eating their stuff. The road still draws, still names its legs
+     and still reads as a journey at zero loss.
+     ⚠ If you ever arm it: it is a difficulty knob on OTHER PEOPLE'S generosity,
+       so keep it under ~0.06 and re-run the margin table. Do not arm it to
+       "balance" convoys — CONVOY_FOOD_PER_DISH is the balance lever. */
+  CONVOY_SPOIL_PCT: 0,
+  CONVOY_MIN_TRANSIT_MS: 1200000,  // 🔴 20 min. The floor under CONVOY_TIERS
+                            // transit. Below this a convoy stops being logistics
+                            // and becomes a vending machine. assertDataSane()
+                            // enforces it against every tier.
+  CONVOY_SYNC_MS: 60000,    // how often convoy.js may re-poll the server for
+                            // inbound rows. Not a game number — a POLITENESS
+                            // number, and the reason it is here is that a
+                            // literal buried in a networking helper is exactly
+                            // where a runaway poll loop hides.
+  CONVOY_HOLD_MS: 5000,     // how long an arrived convoy is held on screen
+                            // before it is claimable, so the arrival is a MOMENT
+                            // rather than a number changing
 
   // ── FX / feel ───────────────────────────────────────────────────────────
   FLOAT_MS: 900,            // float-up lifetime
@@ -1300,8 +1873,10 @@ export function menuForLevel(lv) {
 
 /**
  * Everything that becomes available AT exactly level `lv` — the level-up toast.
- * A level that unlocks nothing is a level that feels like nothing, so this is
- * also the check to run when retuning minLevels: no gaps below ~L16.
+ * A level that unlocks nothing is a level that feels like nothing.
+ * 🔴 assertDataSane() walks this over EVERY level 2..MAX_LEVEL. It used to stop
+ *    at MAX_LEVEL−5 and the holes simply moved into the exempt band — four
+ *    consecutive blank toasts at 36–39. There is no exempt band now.
  */
 export function unlocksAt(lv) {
   const L = lv | 0;
@@ -1618,7 +2193,10 @@ export function capacityModel(lv, owned, pop) {
   const meanCookMs = n ? (cookSum / n) : 12000;
 
   const hourMs = ECON.HOUR_MS || 60000;
-  const capacityPerHour = slots * (hourMs / Math.max(1, meanCookMs));
+  // ⚠ min(slots, HANDS_SLOTS): a rack bigger than a pair of thumbs is not
+  //    capacity, it is choice. See ECON.HANDS_SLOTS.
+  const handSlots = Math.min(slots, ECON.HANDS_SLOTS || 10);
+  const rackPerHour = handSlots * (hourMs / Math.max(1, meanCookMs));
 
   // Mean dishes on a ticket, straight out of CUSTOMERS rather than assumed.
   let dishSum = 0, dishN = 0;
@@ -1628,6 +2206,63 @@ export function capacityModel(lv, owned, pop) {
     dishN++;
   }
   const meanOrderDishes = dishN ? (dishSum / dishN) : 1.9;
+
+  /* ═════════════════════════════════════════════════════════════════════════
+     🔴 THE PASS TERM. THIS FUNCTION USED TO BE BLIND TO THE THING THAT BINDS.
+     ═════════════════════════════════════════════════════════════════════════
+     The model returned slots, cook times and a rack capacity, and nothing else
+     — so a measured 26.8%-of-the-shift pass deadlock was completely invisible
+     to it. It reported a healthy wall for a kitchen whose real constraint was
+     somewhere it never looked. That is the SAME class of mistake as the
+     hand-written comment this function replaced: the arithmetic was right and
+     the inputs were incomplete, which reads as confirmation.
+
+     🔴 THE PASS IS A STOCK CONSTRAINT, NOT A RATE ONE, AND GETTING THAT WRONG
+        IS WHY THE FIRST DRAFT OF THIS BLOCK ALSO MISSED IT. Little's Law
+        (λ_max = passCap ÷ mean residency) looks like the obvious tool and it
+        exonerates PASS_CAP 8, because the MEAN order is only 1.93 dishes. The
+        jam is not a mean, it is a pigeonhole:
+
+          `refreshReady()` claims plates nearest-due-first, so a plate sits on
+          the pass attached to an INCOMPLETE ticket. Deadlock is the state
+          "pass full AND every ticket on it still missing something" — and the
+          most plates that can be stranded that way is, exactly,
+              TICKET_CAP × (meanOrderDishes − 1)
+          one short of completion on every ticket the board can hold. Give the
+          pass MORE room than that and the state is arithmetically unreachable:
+          the next plate must complete something.
+
+     CALIBRATION — this is not a fitted curve, it is the pigeonhole, and it
+     lands on the measurements without being aimed at them. Level 12,
+     TICKET_CAP 12, meanOrderDishes 1.93 → jamFloor = 11.2 plates:
+         passCap  8  → 0.71× the floor → JAMS   (measured: deadlock 26.8% of
+                                                 the shift, 35% of everything
+                                                 cooked went in the bin)
+         passCap 12  → 1.07×           → borderline (measured: 13% waste)
+         passCap 14  → 1.25×           → clear   (measured: ~10% waste, and the
+                                                 curve saturates by 16)
+     PASS_HEADROOM is that 1.25: a pass that merely ties the floor deadlocks in
+     practice, because arrivals are bursty and the floor is a worst case that
+     the dinner rush reaches.
+
+     🔴 THE DESIGN LAW THIS EXPOSES, WHICH IS THE REAL VALUE OF WRITING IT DOWN:
+        PASS_CAP MUST SCALE WITH TICKET_CAP × ORDER SIZE. Raising TICKET_CAP
+        from 8 to 12 (round one's fix for the silent demand valve) is what
+        pushed the pass under water in the first place, and nothing connected
+        the two numbers. Now something does. */
+  const pCap = passCap(owned);
+  const ticketCap = Math.max(1, ECON.TICKET_CAP || 12);
+  const jamFloor = ticketCap * Math.max(0, meanOrderDishes - 1);
+  const headroom = ECON.PASS_HEADROOM || 1.25;
+  const passSlack = jamFloor > 0 ? (pCap / (jamFloor * headroom)) : Infinity;
+  const bottleneck = passSlack < 1 ? 'pass' : 'rack';
+  /* When the pass binds, throughput degrades in proportion to how far under the
+     floor it is — a kitchen at 0.71× the floor spends roughly that fraction of
+     its rack actually cooking, and the rest of the time the cook is holding a
+     plate with nowhere to put it. Everything downstream (demand ratios, the
+     peak, `ok`) is then measured against the REAL ceiling, not the rack's. */
+  const passPerHour = rackPerHour * Math.min(1, passSlack);
+  const capacityPerHour = Math.min(rackPerHour, passPerHour);
 
   const hours = [];
   let peak = null;
@@ -1644,16 +2279,42 @@ export function capacityModel(lv, owned, pop) {
     hours.push(row);
     if (!peak || row.demand > peak.demand) peak = row;
   }
+  const peakRatio = peak ? peak.ratio : 0;
+  /* 🔴 `ok` NOW FAILS IN BOTH DIRECTIONS, AND THAT IS THE POINT.
+     It used to be `peak.ratio >= 1.25` — a floor with no ceiling — so it
+     reported ok:true for a level-40 STOCK kitchen at ratio 3.39 (a kitchen that
+     can physically cook 29% of its demand) while reporting ok:false for the
+     fully-kitted one at 0.74. The model endorsed the broken end of its own
+     range and flagged the healthy end. A wall you cannot climb is not a wall,
+     it is a wall you are standing in front of.
+     WALL_RATIO_MIN..MAX is the band a stock rack should sit in at the peak:
+     genuinely underwater (you WILL lose orders) but within reach of two hands
+     and the upgrade shop. Outside it in either direction is a reported problem. */
+  const lo = ECON.WALL_RATIO_MIN || 1.25;
+  const hi = ECON.WALL_RATIO_MAX || 2.0;
   return {
     slots,
+    handSlots,
     meanCookMs: Math.round(meanCookMs),
     meanOrderDishes: Math.round(meanOrderDishes * 100) / 100,
+    passCap: pCap,
+    jamFloor: Math.round(jamFloor * 10) / 10,
+    passSlack: Math.round(passSlack * 100) / 100,
+    rackPerHour: Math.round(rackPerHour * 10) / 10,
+    passPerHour: Math.round(passPerHour * 10) / 10,
+    bottleneck,
     capacityPerHour: Math.round(capacityPerHour * 10) / 10,
     hours,
     peak,
-    peakRatio: peak ? peak.ratio : 0,
-    // The wall exists when the busiest hour genuinely outruns a stock rack.
-    ok: !!peak && peak.ratio >= 1.25,
+    peakRatio,
+    // The wall exists when the busiest hour genuinely outruns a stock rack —
+    // and when the thing it outruns is the RACK, not a pass that deadlocked.
+    ok: !!peak && peakRatio >= lo && peakRatio <= hi && bottleneck === 'rack',
+    why: !peak ? 'no hours modelled'
+       : bottleneck === 'pass' ? 'the PASS binds before the rack does: ' + pCap + ' plates against a jam floor of ' + (Math.round(jamFloor * 10) / 10) + ' — orders strand instead of completing'
+       : peakRatio < lo ? 'peak demand never outruns the rack — there is no rush to answer'
+       : peakRatio > hi ? 'peak demand is more than ' + hi + '× capacity — unwinnable, not hard'
+       : '',
   };
 }
 
@@ -1780,29 +2441,133 @@ export function assertDataSane() {
   const tw = ECON.TIP_PATIENCE_W + ECON.TIP_QUALITY_W + ECON.TIP_POP_W;
   if (Math.abs(tw - 1) > 0.001) bad.push('ECON: tip weights must sum to 1 (got ' + tw + ')');
 
-  /* ── 🔴 NO EMPTY LEVEL-UPS. This used to be a comment asking the next person
-        to "run unlocksAt() in a loop after ANY retune of minLevels". Nobody
-        ran it and five consecutive blank LEVEL UP toasts shipped at 19–25,
-        right where the Road Train tier lands. A rule a file can check is worth
-        more than a rule a file asks you to remember.
-        The top five levels are exempt BY DESIGN: the last unlock is at
-        MAX_LEVEL−5 and the levels above it are the trophy for getting there.
-        If you extend the ladder, move the horizon with it. */
-  const horizon = ECON.MAX_LEVEL - 5;
+  /* ── 🔴 NO EMPTY LEVEL-UPS. THIS CHECK HAS NOW FAILED TWICE AND BOTH TIMES
+        THE HOLES MOVED INSTEAD OF CLOSING.
+        Round one: blank LEVEL UP toasts at 19, 21 and 23–25. Round two, after
+        the retune: 20, 36, 37, 38 and 39 — four consecutive dead level-ups
+        leading into the cap. The check existed; the check was scoped to
+        2..MAX_LEVEL−5, and the exemption was defended as "the top five levels
+        are the trophy for getting there".
+        🔴 THAT EXEMPTION IS GONE. A trophy is a thing you are handed, and four
+        blank toasts in a row is not a thing being handed to anybody — it is the
+        hole, wearing the comment as a hat. The horizon is now MAX_LEVEL itself:
+        every level from 2 to 40 must unlock SOMETHING, and level 40 earns its
+        place with the Flagship capstone rather than with an exemption.
+        If you extend the ladder past 40, you extend the unlocks with it. */
   const empty = [];
-  for (let lv = 2; lv <= horizon; lv++) {
+  for (let lv = 2; lv <= ECON.MAX_LEVEL; lv++) {
     const u = unlocksAt(lv);
     if (!u.recipes.length && !u.supplies.length && !u.upgrades.length && !u.convoys.length) empty.push(lv);
   }
   if (empty.length) bad.push('EMPTY LEVEL-UP at level(s) ' + empty.join(', ') + ' — unlocksAt() returns nothing and the toast will be blank');
 
+  /* ── 🔴 THE FIVE THINGS THE PLAYER ASKED FOR, BY NAME, ON THE FIRST SHIFT.
+        The request was "pizzas, burgers, hot dogs… serve npcs through drive
+        ways… setup shipment to send to another player's city on a convoy".
+        What shipped put burgers 36 real minutes away, the first convoy 48 and
+        pizza 2h24. That is not a bug any of the other checks in this function
+        could see, because every individual number was internally consistent —
+        which is exactly why it needs a check of its own that reads the REQUEST
+        rather than the table.
+        ⚠ This is a floor on the DESIGN, not a style rule. If a future retune
+        genuinely wants a food family gated, delete this check deliberately and
+        say why. Do not let it rot into a comment nobody runs. */
+  const DAY_ONE = { dogs: 'hot dogs', burgers: 'burgers', pizza: 'pizza' };
+  for (const cat in DAY_ONE) {
+    if (!RECIPES.some((r) => r.cat === cat && (r.minLevel || 1) === 1)) {
+      bad.push('🔴 NO ' + DAY_ONE[cat].toUpperCase() + ' ON THE FIRST SHIFT: the player named '
+        + DAY_ONE[cat] + ' by name and no ' + cat + ' recipe is minLevel 1');
+    }
+  }
+  if (!CONVOY_TIERS.some((t) => (t.minLevel || 1) === 1)) {
+    bad.push('🔴 NO CONVOY ON THE FIRST SHIFT: every tier is level-gated, so the Convoy tab opens as a dead LOCKED button');
+  }
+
+  /* ── 🔴 THE ENTRY CONVOY MUST FIT THE ENTRY KITCHEN. A twelve-box van against
+        an eight-plate pass is a load the player can never complete and no
+        screen explains why — measured live: 8 dishes on the pass produced
+        "SEND IT — 8 BOXES" against a 12-box van, with the missing four behind a
+        34,000-Cinder heat lamp at level 6. A cap the player cannot see is a cap
+        they read as a bug. */
+  for (const t of CONVOY_TIERS) {
+    if ((t.minLevel || 1) <= 1 && t.capacity > passCap(null)) {
+      bad.push('CONVOY_TIERS ' + t.id + ': capacity ' + t.capacity + ' exceeds the base PASS_CAP ('
+        + passCap(null) + ') — a level-1 player can never fill it');
+    }
+    if (t.transitMs < (ECON.CONVOY_MIN_TRANSIT_MS || 0)) {
+      bad.push('CONVOY_TIERS ' + t.id + ': transitMs ' + t.transitMs + ' is under CONVOY_MIN_TRANSIT_MS ('
+        + ECON.CONVOY_MIN_TRANSIT_MS + ') — that is a vending machine, not logistics');
+    }
+    if (t.capacity < (ECON.CONVOY_MIN_DISHES || 1)) {
+      bad.push('CONVOY_TIERS ' + t.id + ': capacity is below CONVOY_MIN_DISHES — the tier can never be launched');
+    }
+  }
+
+  /* ── 🔴 HONOURING A PROMISE MUST PAY MORE THAN IGNORING IT. §MODIFIERS in
+        drivethru.js judges 'honoured' | 'broken' | 'unproven' against what the
+        player actually built; the MOD_PAY_* keys price that verdict. An
+        `extra` costs real pantry units, so the floor on an honoured line has to
+        clear the priciest single unit in the game or honouring the fussiest
+        order on the cheapest dish still loses money. Recomputed from
+        SUPPLY_RECIPES so a price rise on patties cannot quietly re-open it. */
+  let dearest = 0, dearestId = '';
+  for (const sup of SUPPLY_RECIPES) {
+    const per = ((sup.cost && sup.cost.cinder) || 0) / Math.max(1, sup.out.qty);
+    if (per > dearest) { dearest = per; dearestId = sup.out.ing; }
+  }
+  if (!(ECON.MOD_PAY_HIT_MIN > dearest)) {
+    bad.push('🔴 MOD_PAY_HIT_MIN (' + ECON.MOD_PAY_HIT_MIN + ') does not clear the priciest pantry unit ('
+      + dearestId + ', ' + Math.round(dearest * 100) / 100 + ' Cinder) — honouring "extra ' + dearestId + '" LOSES money');
+  }
+  if (!(ECON.MOD_PAY_MISS < 0 && ECON.MOD_PAY_MISS <= -ECON.MOD_PAY_HIT)) {
+    bad.push('MOD_PAY_MISS must be negative and at least as large as MOD_PAY_HIT — otherwise ignoring the ticket is a small tax, not a mistake');
+  }
+  if (!(ECON.MOD_TIP_MISS < 0 && ECON.MOD_TIP_MISS <= -ECON.MOD_TIP_HIT)) {
+    bad.push('MOD_TIP_MISS must be negative and at least as large as MOD_TIP_HIT');
+  }
+  if (ECON.MOD_PAY_UNPROVEN !== 0 || ECON.MOD_TIP_UNPROVEN !== 0) {
+    bad.push('🔴 an UNPROVEN modifier must be worth exactly zero in both directions — a guess that moves money is worse than an honest blank');
+  }
+
+  /* ── 🔴 THE PANTRY MUST NOT BE BRICKABLE. Making PANTRY_CAP a true total
+        created an unrecoverable state: one ingredient bought to refusal and
+        every other bin is permanently unbuyable (measured: 894 of 900 with
+        roll=862, and buySupply('sup_patty') returned CAP forever, with the
+        refusal toast advising a cook-down that needed an ingredient that could
+        no longer be bought). PANTRY_BIN_PCT is what makes that arithmetically
+        impossible; these are the invariants that keep it that way. */
+  const binShare = ECON.PANTRY_BIN_PCT;
+  if (!(binShare > 0 && binShare < 0.5)) {
+    bad.push('PANTRY_BIN_PCT must be in (0, 0.5) — at 0.5 two maxed bins brick the pantry');
+  }
+  const binCap = Math.max(ECON.PANTRY_BIN_MIN, Math.round(ECON.PANTRY_CAP * binShare));
+  const binsToBrick = Math.ceil(ECON.PANTRY_CAP / Math.max(1, binCap));
+  if (binsToBrick < 5) {
+    bad.push('PANTRY SOFT-LOCK: only ' + binsToBrick + ' maxed bins fill the whole pantry — ordinary play can brick the kitchen');
+  }
+  // One tap must never be able to fill a bin to its ceiling.
+  let fattestBatch = 0;
+  for (const sup of SUPPLY_RECIPES) fattestBatch = Math.max(fattestBatch, sup.out.qty * ECON.SUPPLY_MAX_BATCHES);
+  if (fattestBatch > binCap) {
+    bad.push('SUPPLY_MAX_BATCHES: one tap buys ' + fattestBatch + ' units against a per-bin ceiling of '
+      + binCap + ' — a single fat-fingered tap fills a bin to refusal');
+  }
+
   // ── 🔴 the difficulty wall must actually exist ──
-  const cm = capacityModel(12, [], ECON.POP_START);
-  if (!cm.ok) {
-    bad.push('🔴 NO WALL: a stock rack at level 12 has ' + cm.slots + ' slots ≈ '
-      + cm.capacityPerHour + ' dishes/in-game-hour against a peak demand of '
-      + (cm.peak ? cm.peak.demand : 0) + ' (ratio ' + cm.peakRatio
-      + '). The rush the whole ECON header is built around does not exist in the code.');
+  /* 🔴 THE WALL, AT EVERY LEVEL A STOCK RACK IS A REAL CONFIGURATION.
+     This used to check level 12 alone, which is why a level-3 kitchen with a
+     ratio of 0.78 — no rush to answer at all — could ship unnoticed. 1..14 is
+     the span over which the menu and the stations open; past that a totally
+     un-upgraded kitchen is not a configuration anybody is actually in, so it is
+     allowed to be underwater (that IS the upgrade shop's job). */
+  for (let lv = 1; lv <= 14; lv++) {
+    const cm = capacityModel(lv, [], ECON.POP_START);
+    if (!cm.ok) {
+      bad.push('🔴 WALL BROKEN AT LEVEL ' + lv + ': ' + cm.slots + ' slots (' + cm.handSlots
+        + ' workable) ≈ ' + cm.capacityPerHour + ' dishes/in-game-hour, pass ' + cm.passPerHour
+        + '/hr, against a peak demand of ' + (cm.peak ? cm.peak.demand : 0) + ' — ratio '
+        + cm.peakRatio + ', bottleneck ' + cm.bottleneck + '. ' + cm.why);
+    }
   }
   // Upgrades must be able to CLOSE that gap, or the shop sells a promise it
   // cannot keep. A fully-kitted kitchen should comfortably clear the peak.

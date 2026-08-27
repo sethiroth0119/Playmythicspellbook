@@ -1280,9 +1280,6 @@ function judgeTicket(ticket) {
 
     for (const m of mods) {
       const result = judgeMod(m, item);
-      const worth = result === 'honoured' ? _num(m.tipHit, hit)
-                  : result === 'broken'   ? _num(m.tipMiss, miss)
-                  : meh;
       /* 🔴 max(PERCENTAGE, FLOOR × UNITS), not one or the other. The percentage
          is what makes an honoured promise on a Supreme worth more than one on a
          hot dog; the floor is what stops it being worth less than the
@@ -1294,18 +1291,16 @@ function judgeTicket(ticket) {
       const pop = result === 'honoured' ? popHit
                 : result === 'broken'   ? popMiss
                 : 0;
-      out.mul += worth;
       out.cinder += cinder;
       out.pop += pop;
       out[result === 'honoured' ? 'honoured' : (result === 'broken' ? 'broken' : 'unproven')]++;
       out.detail.push({
         id: m.id, label: m.label, kind: m.kind, ing: m.ing || null,
-        recipeId: item.recipeId, result, worth,
+        recipeId: item.recipeId, result,
         cinder: Math.round(cinder), pop: Math.round(pop * 100) / 100,
       });
     }
   }
-  out.mul = Math.max(0, out.mul);
   return out;
 }
 

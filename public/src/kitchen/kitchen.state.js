@@ -124,35 +124,40 @@ function ECb(key, fallback) {
 /* ───────────────────────────────────────────────────────────────────────────
    📋 ECON KEYS THIS FILE READS THAT kitchen.data.js DOES NOT DEFINE YET
    ───────────────────────────────────────────────────────────────────────────
-   45 of the ECON keys below come straight out of kitchen.data.js. These five do
-   not exist there yet, so `EC()` is falling back to the guard value shown. They
-   are all concepts this file introduced, so they want ADDING TO ECON rather than
-   living here — this list is the handover note, not an excuse:
+   🔴 REGENERATED THIS ROUND, MECHANICALLY, AND THE PREVIOUS VERSION OF THIS
+      LIST WAS WRONG IN BOTH DIRECTIONS — it named four keys that had since
+      landed in ECON (LAST_CALL_MS, SHIFT_GRACE_MS, TICKET_HARD_GRACE_MS,
+      LIKE_BIAS) and it was missing the ones this file had newly invented. A
+      handover note that has drifted is worse than none, because it reads as
+      verified. Regenerate it the way it was regenerated:
 
-     LAST_CALL_MS         45000   grace after the closing bell before any ticket
-                                  still on the board is written off. Ending the
-                                  instant the clock strikes bins food the player
-                                  is ten seconds from serving, which reads as
-                                  theft rather than as a deadline.
-     SHIFT_GRACE_MS        4000   quiet beat after openShift() before the first
-                                  walk-in. Being mid-order before the panel has
-                                  finished painting is a bad first second.
-     TICKET_HARD_GRACE_MS 20000   how long past dueAt state.js waits for
-                                  drivethru.js to reap its own car before doing
-                                  it anyway. A cooperation deadline (see tick()).
-     LIKE_BIAS              0.7   chance a walk-in orders from CUSTOMERS.likes
-                                  rather than the whole menu.
-     COUNTER_ENABLED       true   debug toggle to silence walk-ins.
+        node -e "import fs from 'node:fs';
+          const D=await import('./public/src/kitchen/kitchen.data.js');
+          const s=fs.readFileSync('./public/src/kitchen/kitchen.state.js','utf8');
+          const k=new Set(); for(const m of s.matchAll(/EC[b]?\(\s*'([A-Z0-9_]+)'/g)) k.add(m[1]);
+          console.log([...k].filter(x=>!(x in D.ECON)).sort().join(' '))" --input-type=module
 
-   🆕 ASKED FOR THIS ROUND, ALL SIX WITH **LIVE** GUARD VALUES. Read that twice:
-   the guards below are the measured, working numbers, NOT zeroes. POP_REVERT_
-   BELOW spent a whole round as dead data because its guard was 0 and the branch
-   could therefore never be taken, and the same trick applied here would ship a
-   report card that grades on nothing and a popularity meter with its rails back.
-   If kitchen.data.js defines them, data wins; if it never does, the game still
-   plays exactly as measured. They want moving to ECON all the same — they are
-   tuning, and tuning belongs where the designer is looking.
+      Against ECON's 153 keys, that returns exactly these ten:
 
+     COUNTER_ENABLED       true  debug toggle to silence walk-ins. Not tuning;
+                                 the only one here that can honestly stay.
+     DRY_CHECK_MS           500  🆕 throttle on the latched "are the doors shut"
+                                 read. dryCheck() prices a restock basket per
+                                 menu row and every price is a getRes() across
+                                 the bridge, so it must not run 60×/second. See
+                                 dryNow(). Busted early by any `rev` change.
+     RELIEF_AUTO_MS        3000  🆕 how long the kitchen must have been provably
+                                 stalled before the free relief parcel lands by
+                                 itself. See reliefWatch(). Firing on the
+                                 instant would drop a pallet into the ordinary
+                                 gap between plating one burger and the next.
+     GRADE_MIN_SHIFT_MS  300000  🆕 shortest shift that earns a LETTER at all.
+                                 Below it gradeFor() returns '—' and the report
+                                 shows the two axes alone. Measured: identical
+                                 play scored two S grades on a 120,000ms shift
+                                 and none on a full 780,000ms day, because CRAFT
+                                 starts near 1.000 and the SERVICE ceiling has
+                                 not had time to bind (r8/early.mjs).
      GRADE_CAP_DUTY        0.70  fraction of capacityModel()'s theoretical rack
                                  a real pair of thumbs sustains. The model says
                                  itself that it "ignores the player's hands
@@ -167,6 +172,16 @@ function ECb(key, fallback) {
                                  damping movement toward that rail. See
                                  bumpPop() — 0 restores the hard clamp and both
                                  of the dead zones that came with it.
+
+   🔴 EVERY GUARD ABOVE IS THE **LIVE, MEASURED** NUMBER, NOT A ZERO. Read that
+   twice. POP_REVERT_BELOW spent a whole round as dead data because its guard
+   was 0 and its branch could therefore never be taken; the same trick applied
+   to the GRADE_* family would ship a report card that grades on nothing. If
+   kitchen.data.js defines them, data wins; if it never does, the game still
+   plays exactly as measured. They want moving to ECON all the same — they are
+   tuning, and tuning belongs where the designer is looking. gradeFor()'s own
+   comment claims "the cuts are ECON keys"; that claim becomes true the moment
+   the five GRADE_* rows land, and not before.
 
    ✅ PANTRY_BIN_PCT / PANTRY_BIN_MIN were asked for by this file and LANDED in
    kitchen.data.js the same round — `binCapFor()` reads both, and the fallbacks
@@ -271,6 +286,14 @@ export const Kitchen = {
   upgrades: [],          // owned UPGRADES ids. SAVED. Feeds every DATA.*(…, owned)
                          // helper — slot counts, cook speed, pass size, tips.
 
+  /* 🪂 THE RELIEF RECEIPT. `shift.day` of the last free drop, 0 for never.
+     SAVED, and it HAS to be: the free parcel is once per in-game DAY, and a day
+     survives a panel close. Keyed on `shift.day` rather than on a shift counter
+     for the reason kitchen.data.js spells out — `closeShift(now,{forfeit:true})`
+     deliberately does not roll the day, so a per-shift counter would reset every
+     time the player shut and re-opened the panel, which is two taps. */
+  reliefDay: 0,
+
   stations: {},          // stationId → { slots: [slot|null, …] }
   hand: null,            // { recipeId, quality, mult } lifted off a station, or null
   pass: [],              // plated and waiting: [{id, recipeId, quality, mult, madeAt}]
@@ -324,9 +347,28 @@ export const Kitchen = {
   _seed: 1,              // deterministic RNG cursor (see rng())
   _nextCounter: 0,       // `now` at which the next walk-in ticket is due
   _lowSeen: {},          // pantry:low latch — one warning per ingredient per shift
-  _dry: false,           // 🔴 nothing cookable AND nothing affordable — see
-                         //    dryCheck(). DERIVED, never saved. drivethru.js
-                         //    reads this to stop the lane (see the HANDOVER).
+  /* 🔴 THE DOORS ARE SHUT. `dryCheck().dry` — nothing on the menu can be cooked
+     AND no basket of crates the player can actually pay for would change that.
+     DERIVED, never saved.
+
+     ⚠ THIS ANNOTATION USED TO SAY "drivethru.js reads this to stop the lane",
+       AND drivethru.js:4173 HAS SAID IN WRITING SINCE ROUND 4 THAT IT DOES NOT.
+       A comment in this file asserting a behaviour in somebody else's is exactly
+       the class of error that cost this feature 33 lost cars and ~28 popularity
+       a day on a kitchen the game had already proved could not cook. So this
+       comment now describes only what THIS file guarantees, which is:
+         • `_dry` is refreshed once per frame in tick(), BEFORE DriveThru.tick()
+           runs, so the lane reads this frame's truth and not last frame's;
+         • `State.isDry()` is the accessor, and it is the one drivethru.js should
+           gate `scheduleArrivals()` on (its handover O3). Whether it does is
+           drivethru.js's call and drivethru.js's line to write. */
+  _dry: false,
+  _stalled: false,       // nothing cookable RIGHT NOW, regardless of the wallet.
+                         // The relief gate (kitchen.data.js is explicit that it
+                         // is `cookable.length === 0` and NOT `dry`).
+  _stallSince: 0,        // `now` the current stall started; 0 while cooking is
+                         // possible. reliefWatch() reads it.
+  _dryAt: -Infinity,     // throttle stamp for the latched dry read (dryNow).
   _report: null,         // last day-end settlement report (shift:close payload)
   _init: false,
 };
@@ -519,6 +561,27 @@ function freshToday() {
        ever counts time that really elapsed cannot lie in either direction, and
        it rides `today` so mergeToday()/hydrate() carry it for free. */
     ms: 0,
+
+    /* 🔴 WHAT THE KITCHEN ATE OUT OF THE LIVE 14-ID LEDGER TODAY, AND WHAT IT
+       PUT BACK. The one screen that summarises a day showed served / walked /
+       burnt / Cinder / tips / XP and said NOTHING about live resources — i.e.
+       nothing about the feature the player actually asked for ("uses the food
+       and food type resources … from the other parts of the game"). A day of
+       real play burns roughly 450 food and the report card printed a Cinder
+       number and stopped. REF-B puts exactly this on its end-of-day screen.
+
+       `resSpent` is `{liveResId: units}` and is accumulated in the ONE place
+       resources leave — `spendCost()`, which both buySupply() and buyUpgrade()
+       go through, so a third spender cannot forget to book it.
+       `resGained` is the other direction: relief parcels and convoy claims.
+       `cinderSpent` is what the restocking cost, so the report can print the
+       whole cost of trading and not just the takings.
+
+       ⚠ THREE OBJECTS INSIDE A TALLY THAT mergeToday() FOLDS NUMERICALLY — see
+       mergeToday(), which now has to know the difference. That is the price of
+       putting a dict in `today`; the alternative was a fourth parallel tally
+       object nobody would reset. */
+    resSpent: {}, resGained: {}, cinderSpent: 0,
   };
 }
 
@@ -551,6 +614,9 @@ function clearService() {
   K._fx = [];
   K._lowSeen = {};
   K._dry = false;
+  K._stalled = false;
+  K._stallSince = 0;
+  K._dryAt = -Infinity;
 }
 
 /**
@@ -603,9 +669,11 @@ export function reset() {
   K.convoys = [];
   K.inbound = [];
   K.today = freshToday();
-  K.totals = { served: 0, lost: 0, burnt: 0, spoiled: 0, binned: 0, earned: 0, days: 0 };
+  K.totals = { served: 0, lost: 0, burnt: 0, spoiled: 0, binned: 0, earned: 0, days: 0, foodSpent: 0 };
+  K.reliefDay = 0;
   K.missing = false; K.offline = false; K.error = null;
   K._seq = 0; K._seed = 1; K._nextCounter = 0; K._report = null;
+  K._stallSince = 0; K._dryAt = -Infinity; K._stalled = false;
   clearService();
   /* A reset kitchen is a NEW kitchen, so it gets the same starting stock a new
      save does — otherwise "reset" hands you a kitchen you cannot cook in.
@@ -662,6 +730,12 @@ export function snapshot() {
     //    way to tell "never played" from "played, spent everything" once the
     //    player's xp is still 0, and the grant becomes a faucet. See hydrate().
     startGranted: !!K.startGranted,
+    /* 🪂 THE RELIEF RECEIPT — the day the last free drop landed. Saved for the
+       same reason `startGranted` is: without it the once-a-day parcel re-arms
+       on every panel open and the only free faucet in the feature becomes an
+       unbounded one. See buyRelief(). Additive — an old save has no key,
+       hydrate() reads 0, and the first drop of the day is still owed. */
+    reliefDay: Math.max(0, _int(K.reliefDay)),
   };
 }
 
@@ -841,7 +915,18 @@ export function hydrate(saved) {
     binned: Math.max(0, _int(t0.binned)),
     earned: Math.max(0, _int(t0.earned)),
     days: Math.max(0, _int(t0.days)),
+    /* 🥫 LIFETIME LIVE `food` OUT OF THE STASH. One number, not a dict, and
+       `food` specifically: it is the id 39 of the 41 supply lines want, it is
+       the one the ALL TIME strip has room for on a 360px screen, and it is the
+       answer to "what has this kitchen actually cost me". Additive — an absent
+       key reads 0 and an old save simply starts counting from today. */
+    foodSpent: Math.max(0, _int(t0.foodSpent)),
   };
+
+  /* 🪂 The relief receipt. Clamped to the day we are actually on: a save that
+     claims the drop was taken on day 900 would otherwise lock the only free
+     door for 899 in-game days. A receipt from the FUTURE is not a receipt. */
+  K.reliefDay = _clamp(_int(s.reliefDay), 0, Math.max(0, _int(K.shift.day)));
 
   K.v = 1;                                // migrations for v2 go HERE, above this line
   K.rev++;
@@ -916,6 +1001,10 @@ function pantryTake(needs, mult) {
   }
   return true;
 }
+
+/** The doors-shut answer is stale. Called wherever stock or the wallet moves —
+    see dryNow()'s note on why `rev` is not the key. */
+function dryDirty() { K._dryAt = -Infinity; }
 
 function pantryPut(id, n) {
   const v = _int(n);
@@ -1024,6 +1113,7 @@ export function dumpSupply(ingId, n) {
   K.pantry[ingId] = have - drop;
   if (K.pantry[ingId] <= 0) delete K.pantry[ingId];
   delete K._lowSeen[ingId];               // re-arm the low warning for this id
+  dryDirty();                             // stock moved — see dryNow()
   K.rev++;
   emit('pantry:buy', { supplyId: null, ing: ingId, qty: -drop, batches: 0, cost: {}, dumped: true });
   fx('bin', `-${drop} ${metaName(ingId) || ingId}`);
@@ -1126,6 +1216,14 @@ function spendCost(cost, mult) {
     if (key === 'cinder') takenCinder += want; else takenRes.push([key, want]);
   }
 
+  /* 🥫 BOOK IT ON THE DAY, HERE, WHERE THE RESOURCES ACTUALLY LEAVE.
+     The day report never mentioned the live ledger — see freshToday(). This is
+     the single narrowest point every live-resource spend in the feature passes
+     through (buySupply and buyUpgrade both call it), so booking it anywhere
+     else would be a second tally to keep in step by hand. Written only after
+     the unwind below has been ruled out, so a refunded purchase never appears
+     on the receipt. */
+
   // ── 3. UNWIND, IN REVERSE ───────────────────────────────────────────────
   if (failed) {
     for (let i = takenRes.length - 1; i >= 0; i--) {
@@ -1134,7 +1232,51 @@ function spendCost(cost, mult) {
     if (takenCinder > 0) { try { if (b.addGems) b.addGems(takenCinder); } catch (e) {} }
     return no('NO_PANTRY', 'That could not be paid for. Nothing was taken.');
   }
+  bookSpend(takenRes, takenCinder);
   return ok({ spent: cost });
+}
+
+/** The day's ledger line. Pure bookkeeping; called only on a settled spend. */
+function bookSpend(takenRes, takenCinder) {
+  if (!K.today.resSpent || typeof K.today.resSpent !== 'object') K.today.resSpent = {};
+  for (const pair of takenRes) {
+    const id = pair[0], n = _int(pair[1]);
+    if (!id || n <= 0) continue;
+    K.today.resSpent[id] = _int(K.today.resSpent[id]) + n;
+    if (id === 'food') K.totals.foodSpent = _int(K.totals.foodSpent) + n;
+  }
+  if (_int(takenCinder) > 0) K.today.cinderSpent = _int(K.today.cinderSpent) + _int(takenCinder);
+}
+
+/**
+ * "🥫 452 Food · 💧 118 Water · 🧬 34 DNA — out of your stash". → '' when the
+ * ledger did not move, so a caller can drop the whole row.
+ *
+ * Icons come from `bridge().meta(id)`, which is `_meta()` in the legacy app —
+ * the same source the Supplies sheet and the prep-counter strip draw from, so
+ * the receipt cannot label `dna` with a different glyph than the crate that
+ * spent it. Biggest first: on a 360px screen the tail is what gets clipped, so
+ * the tail must be the part that matters least.
+ */
+function resLineFor(today) {
+  const spent = (today && today.resSpent) || {};
+  const ids = Object.keys(spent).filter((id) => _int(spent[id]) > 0)
+    .sort((a, c) => _int(spent[c]) - _int(spent[a]));
+  if (!ids.length) return '';
+  const parts = ids.map((id) => {
+    let icon = '';
+    try { const m = bridge().meta ? bridge().meta(id) : null; if (m && m.icon) icon = m.icon + ' '; } catch (e) {}
+    return `${icon}${_int(spent[id]).toLocaleString()} ${metaName(id) || id}`;
+  });
+  return `${parts.join(' · ')} — out of your stash`;
+}
+
+/** The other direction — a relief parcel or a convoy landing. Same discipline:
+    only ever called once the units have been re-read out of the live ledger. */
+function bookGain(id, n) {
+  if (!K.today.resGained || typeof K.today.resGained !== 'object') K.today.resGained = {};
+  if (!id || _int(n) <= 0) return;
+  K.today.resGained[id] = _int(K.today.resGained[id]) + _int(n);
 }
 
 /**
@@ -1212,6 +1354,7 @@ export function buySupply(supplyId, batches) {
   const gained = _int(out.qty) * n;
   pantryPut(out.ing, gained);
   delete K._lowSeen[out.ing];             // re-arm the low warning for this id
+  dryDirty();                             // stock moved — see dryNow()
   K.rev++;
   emit('pantry:buy', { supplyId, ing: out.ing, qty: gained, batches: n, cost: sup.cost || {} });
   fx('buy', `+${gained} ${metaName(out.ing) || out.ing}`);
@@ -1287,16 +1430,56 @@ export function pantryLowList() {
  * Nothing in this file could tell the difference — grep for a guard returned
  * only the comments about the bug it was meant to prevent.
  *
- * → { dry, cookable:[recipeId], affordable:[supplyId], need:[liveResId], ing }
- *   `dry` is true ONLY when both doors are shut: nothing on the menu can be
- *   cooked AND no unlocked supply line can be paid for. Either one open and the
- *   player still has a move, which is all this asks.
+ * → { dry, stalled, cookable:[recipeId], reachable:[recipeId],
+ *     affordable:[supplyId], need:[liveResId], ing }
+ *
+ * 🔴 TWO DIFFERENT QUESTIONS, AND ONE FLAG WAS BEING ASKED BOTH OF THEM.
+ *
+ *   `stalled` — NOTHING ON THE MENU CAN BE COOKED RIGHT NOW. A statement about
+ *     the pantry alone. This is the gate kitchen.data.js's RELIEF block names in
+ *     writing ("`cookable.length === 0`") and it is the honest trigger for the
+ *     escape hatch, because a wallet full of Cinder does not put a bun on a
+ *     griddle.
+ *
+ *   `dry` — THE DOORS ARE SHUT. Stalled, AND no purchase the player can
+ *     actually pay for would change that. This is the one the lane and the
+ *     walk-ins gate on, because it is the one that means "sending this kitchen
+ *     another customer can only ever cost you".
+ *
+ * 🔴 AND `dry` USED TO MEAN NEITHER OF THOSE, WHICH IS THE BUG. It was
+ *    `affordable.length === 0` — is there ANY unlocked crate on the sheet the
+ *    player can pay for — and one cheap affordable crate therefore kept the
+ *    shift open forever while the kitchen served nothing. Measured, ten days,
+ *    a resourced account: from day 5 the player holds 79,579 Cinder, 654 water
+ *    and 1 food; `sal_ice` (9 Cinder, 3 water) is affordable forever, so `dry`
+ *    read FALSE while the kitchen served 0 and lost 87, 98, 89, 87, 97 and 90
+ *    tickets on six consecutive days. Water buys ice. **Ice is not a dish.**
+ *    kitchen.data.js:505-513 predicted this precise false negative and the
+ *    mitigation it specified was never built.
+ *
+ *    So the question is no longer "can you buy SOMETHING". It is "can you buy
+ *    your way to a DISH": `reachable` walks each recipe on the menu, prices the
+ *    cheapest basket of unlocked crates that would cover its shortfall, and
+ *    asks whether that WHOLE basket is payable in one go. Ice keeps nothing
+ *    open any more, because no basket containing only ice finishes a recipe.
+ *
+ * ⚠ THE BASKET SEARCH IS GREEDY PER INGREDIENT, NOT AN OPTIMISER, and it is
+ *   deliberately allowed to be wrong in exactly one direction. It picks, for
+ *   each short ingredient independently, the cheapest unlocked line that covers
+ *   the gap — so a combination it did not consider could occasionally be
+ *   payable when this says it is not. That error opens the relief door and
+ *   shuts the lane for at most one throttle window (see dryNow), both of which
+ *   the next purchase undoes. The opposite error — declaring a dead kitchen
+ *   OPEN — is the one that costs a player thirty-nine customers a day for eight
+ *   days, so the pessimistic direction is the correct place to be wrong.
  */
 export function dryCheck() {
   const cookable = [];
   for (const r of menuForLevel(K.level)) if (r && pantryHas(r.needs)) cookable.push(r.id);
   // The common case, and it exits before touching the bridge at all.
-  if (cookable.length) return { dry: false, cookable, affordable: [], need: [], ing: null };
+  if (cookable.length) {
+    return { dry: false, stalled: false, cookable, reachable: cookable.slice(), affordable: [], need: [], ing: null };
+  }
 
   const affordable = [], need = [];
   for (const sup of (Array.isArray(DATA.SUPPLY_RECIPES) ? DATA.SUPPLY_RECIPES : [])) {
@@ -1306,6 +1489,7 @@ export function dryCheck() {
     if (!short.length) { affordable.push(sup.id); continue; }
     for (const sh of short) if (sh.key !== 'cinder' && need.indexOf(sh.key) === -1) need.push(sh.key);
   }
+  const reachable = reachableRecipes();
   // The ingredient to NAME. `pantry:low` is the event this rides on (§6 is a
   // closed set) and render's toast reads `e.ing`, so it has to be a real
   // ingredient id or the player is told they are low on "null".
@@ -1316,7 +1500,55 @@ export function dryCheck() {
     }
     if (ing) break;
   }
-  return { dry: affordable.length === 0, cookable, affordable, need, ing };
+  return { dry: reachable.length === 0, stalled: true, cookable, reachable, affordable, need, ing };
+}
+
+/**
+ * Which dishes the player could put on a griddle if they went shopping first.
+ * → [recipeId]. Pure; the only thing it touches is `getRes`/`gems` through
+ *   costShortfall(), which is the same preflight the purchase itself uses.
+ *
+ * The pantry cap is deliberately NOT checked here. A cooler too full to accept
+ * the crate is a state `dumpSupply()` fixes in one tap, so it is not a closed
+ * door and must not be reported as one.
+ */
+function reachableRecipes() {
+  const supplies = Array.isArray(DATA.SUPPLY_RECIPES) ? DATA.SUPPLY_RECIPES : [];
+  const out = [];
+  for (const r of menuForLevel(K.level)) {
+    if (!r || !r.needs) continue;
+    const basket = {};
+    let routed = true, anything = false;
+    for (const id of Object.keys(r.needs)) {
+      const gap = _int(r.needs[id]) - _int(K.pantry[id]);
+      if (gap <= 0) continue;
+      anything = true;
+      /* The cheapest unlocked line that covers this gap, preferring one the
+         player can already pay for on its own — ranking on Cinder alone would
+         happily pick a line priced in a resource they have none of while a
+         dearer line they CAN pay for sits beside it, which is the shape of
+         wrongness that made the old flag useless. */
+      let best = null, bestKey = Infinity;
+      for (const sup of supplies) {
+        if (!sup || !sup.out || sup.out.ing !== id) continue;
+        if (_int(sup.minLevel || 1) > K.level) continue;
+        const per = _int(sup.out.qty);
+        if (per <= 0) continue;
+        const batches = Math.max(1, Math.ceil(gap / per));
+        const solo = costShortfall(sup.cost || {}, batches).length === 0 ? 0 : 1;
+        // sort key: affordable-on-its-own first, then Cinder.
+        const key = solo * 1e9 + _int((sup.cost || {}).cinder) * batches;
+        if (key < bestKey) { bestKey = key; best = { sup, batches }; }
+      }
+      if (!best) { routed = false; break; }
+      const c = best.sup.cost || {};
+      for (const k of Object.keys(c)) basket[k] = _int(basket[k]) + _int(c[k]) * best.batches;
+    }
+    if (!routed || !anything) continue;
+    if (costShortfall(basket, 1).length) continue;
+    out.push(r.id);
+  }
+  return out;
 }
 
 /**
@@ -1329,13 +1561,338 @@ export function dryCheck() {
  * the decision to close to the player, which is where a decision belongs.
  */
 function dryNow(t) {
+  /* ⏱ THROTTLED, BECAUSE THE ANSWER GOT EXPENSIVE. `reachableRecipes()` prices
+     a basket per menu row and every price is a `getRes()` across the bridge
+     into an 11.6 MB app; at 19 recipes that is ~80 bridge reads a frame for a
+     question whose answer cannot change between two frames unless the player
+     bought something — and buying bumps `rev`, which busts this cache. */
+  /* ⚠ THROTTLED ON TIME, INVALIDATED ON THE PANTRY — NOT ON `rev`. The obvious
+     cache key is `rev`, and it is wrong: `rev` bumps on every cook, plate,
+     ticket and lane movement, so a rev-gated cache never hits during play and
+     the throttle would do nothing at all. What actually changes this answer is
+     the pantry and the wallet, so `dryDirty()` is called from the three places
+     that move stock. (The cheap half of dryCheck — "is anything cookable" —
+     exits before touching the bridge at all, so the expensive path only runs in
+     the state where the throttle matters.) */
+  const now = _num(t, K.now);
+  if (now - _num(K._dryAt, -Infinity) < EC('DRY_CHECK_MS', 500)) return !!K._dry;
+  K._dryAt = now;
+
   const d = dryCheck();
+  /* THE STALL CLOCK. reliefWatch() needs "how long has there been nothing to
+     cook", not "is there nothing to cook" — a drop that lands the instant the
+     last bun is used would fire during the ordinary gap between plating a
+     burger and starting the next one. */
+  if (d.stalled) { if (!K._stallSince) K._stallSince = now; }
+  else K._stallSince = 0;
+  if (d.stalled !== !!K._stalled) { K._stalled = d.stalled; K.rev++; }
+
   if (d.dry !== !!K._dry) {
     K._dry = d.dry;
     K.rev++;
-    if (d.dry && d.ing) emit('pantry:low', { ing: d.ing, have: _int(K.pantry[d.ing]), dry: true, need: d.need });
+    /* 🔴 `dry` AND `need` RIDE THE EVENT SO THE TOAST CAN SAY THE TRUE THING.
+       The single moment the game could say "you are out of live food and no
+       crate on the sheet can be bought" it said "⚠ Low on Dog Roll", because
+       kitchen.render.js's toastLine drops both keys. They are in the payload;
+       the branch is render's to write (see stillOpen). */
+    if (d.dry && d.ing) emit('pantry:low', { ing: d.ing, have: _int(K.pantry[d.ing]), dry: true, stalled: true, need: d.need });
   }
   return d.dry;
+}
+
+/**
+ * 🚗 THE LANE'S ACCESSOR. → true while the doors are shut.
+ *
+ * 🔴 THIS IS THE ENTRY POINT drivethru.js's HANDOVER O3 ASKED FOR, AND IT IS THE
+ * WHOLE OF THIS FILE'S HALF OF THAT CONVERSATION. `Kitchen._dry` is refreshed in
+ * tick() BEFORE `DriveThru.tick()` is called (it used to be refreshed after, so
+ * a reader would have got last frame's answer), and this reads that latch — no
+ * recomputation, no bridge traffic, safe to call every frame from inside the
+ * lane's own spawn test.
+ *
+ * What it is FOR: `scheduleArrivals()` gating on it, and rolling `b.nextAt`
+ * forward the same way tick() rolls `_nextCounter`, so that re-stocking does not
+ * release a backlog of cars who "queued" while the kitchen was shut. Measured
+ * without it, one full level-1 day on a provably dry kitchen: counter tickets 0,
+ * LANE tickets 33, served 0, lost 33, popularity 50 → 21.5 — a drain with no
+ * counter-play, for customers the game had already proved it could not feed.
+ *
+ * ⚠ IT IS NOT A CLAIM THAT THE LANE READS IT. drivethru.js owns that line and
+ *   this file is not allowed to write it. See the `_dry` comment in §2.
+ *
+ * 🔴 AND IT IS NOT A DEAD EXPORT WAITING ON A STRANGER, WHICH IS THE OTHER HALF
+ *   OF THE SAME LESSON. tick()'s own walk-in gate reads THIS accessor and not
+ *   the raw field, so the counter door and the lane door are gated by one
+ *   function with one answer — the shape the last five rounds kept getting
+ *   wrong was two readers of one truth quietly disagreeing. It also means the
+ *   accessor is exercised every frame of every shift, so it cannot rot while it
+ *   waits for drivethru.js to take it up.
+ *
+ * There is deliberately NO `isStalled()` beside this. `dryCheck().stalled` is
+ * already exported, already in CONTRACT §1, and already the thing the Supplies
+ * sheet and the OPEN THE DOORS button want; a second latched wrapper for it
+ * would have been an export with nothing calling it, which is the exact defect
+ * kitchen.selftest.js exists to catch — and did catch, on this function's first
+ * draft.
+ */
+export function isDry() { return !!K._dry; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   🪂 §8.1b — THE RELIEF DROP. THE CONSUMER kitchen.data.js HAS BEEN WAITING FOR.
+   ═══════════════════════════════════════════════════════════════════════════
+   🔴 WHAT SHIPPED WITHOUT THIS FUNCTION, MEASURED, NOT ASSERTED.
+   `DATA.RELIEF` is three rows and 130 lines of design argument and it had ZERO
+   consumers: `grep -rn "RELIEF" public/src/kitchen/*.js` returned hits only
+   inside kitchen.data.js, `typeof State.buyRelief` was `undefined`, and the
+   word "relief" appeared in this file and in kitchen.render.js exactly zero
+   times. kitchen.data.js:578 said so out loud — "🔴 UNTIL THAT EXISTS THIS RUNG
+   IS INERT DATA" — and was ignored for a round.
+
+   The consequence on a brand-new offline account (r5p/run10.mjs, unmodified):
+       day 1: served 38 · lost 41
+       day 2: served  4 · lost 47 · pantry 0
+       day 3-10: served 0 · lost 36-41 EVERY DAY
+       WALLET minted 7,827 · burned 0 · LEDGER out {}
+   Eighteen minutes of play, then the feature is permanently over, with 7,827
+   Cinder in the wallet and all 41 crates refusing because every one of them
+   needs live `food`. Burned ZERO — there was nothing to spend it on.
+
+   🔴 AND THE FUNCTION ALONE IS NOT THE FIX, WHICH IS THE LESSON OF FIVE ROUNDS.
+   An exported action nobody calls is the same bug one level up — round 1
+   shipped two player verbs with no callers, round 3 shipped a verdict the till
+   ignored, round 5 shipped this table with no reader. So the FREE parcel has a
+   consumer INSIDE THIS FILE: `reliefWatch()` runs on the tick path and lands it
+   automatically once the kitchen has been provably stalled for RELIEF_AUTO_MS.
+   It cannot be dropped by another builder, it needs no button, and it works in
+   a headless test, which is how it gets proved.
+
+   ⚠ THE AUTO-LAND IS ONLY EVER THE FREE ROW, AND THAT IS NOT AN OVERSIGHT.
+     Spending 1,200 of the player's Cinder without asking would be theft, and a
+     purchase is a decision. `buyRelief()` is the door for the paid pallets and
+     it wants a button (see stillOpen). The free row is not a decision — it is
+     what turns up when your yard is empty — so the game simply gives it to you
+     and says so.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/** The rows, resolved through the data module's own lookup where it exists. */
+function reliefRows() {
+  try { return Array.isArray(DATA.RELIEF) ? DATA.RELIEF : []; } catch (e) { return []; }
+}
+function reliefRow(id) {
+  const f = DF('relief');
+  try { if (f) { const r = f(id); if (r) return r; } } catch (e) {}
+  return reliefRows().find((r) => r && r.id === id) || null;
+}
+/** The free, once-a-day parcel — whichever row the data file marks `free`. */
+function freeRelief() {
+  return reliefRows().find((r) => r && r.free && _int(r.minLevel || 1) <= K.level) || null;
+}
+
+/**
+ * 🪂 CINDER (or nothing) IN, LIVE 14-ID LEDGER RESOURCES OUT.
+ *
+ * The signature kitchen.data.js:562 specifies, implemented against the six
+ * numbered steps it writes out at :564-578.
+ *
+ * 🔴 IT DOES NOT TOUCH THE PANTRY AND MUST NOT. `buySupply()` cannot serve this
+ * rung: that function's whole job is `pantryPut(out.ing, …)`, and this one has
+ * to call `bridge().addRes(id, n)` — a different door, a different cap, a
+ * different failure mode. Putting the parcel's contents straight into the
+ * pantry would ALSO make the kitchen a closed second economy, which is the
+ * premise failure this whole ladder was rebuilt to avoid: the parcel lands in
+ * the ledger the city builder, the market and crafting can all see, and the
+ * kitchen then spends it through the same crates as everybody else.
+ *
+ * 🔴 addRes() IS CAPPED AND RETURNS WITHOUT ADDING WHEN THE STASH IS FULL
+ * (CONTRACT §7 — the confusion that destroyed 215 units of a real player's
+ * resources). So every leg is RE-READ with `getRes()` and a short landing is
+ * `{ok:false, code:'CAP'}` with everything put back — never a silent clamp.
+ *
+ * @returns {{ok:boolean, code:string, why:string, granted?:object}}
+ */
+export function buyRelief(reliefId, batches) {
+  const row = reliefRow(reliefId);
+  if (!row) return no('BAD_ARG', 'There is no such drop.');
+  const out = row.out || {};
+  if (!Object.keys(out).length) return no('BAD_ARG', 'That drop is empty.');
+  if (_int(row.minLevel || 1) > K.level) {
+    return no('LOCKED', `That drop unlocks at level ${_int(row.minLevel)}.`);
+  }
+
+  /* A `perDay` row is one parcel, full stop — batching it would defeat the
+     whole point of the gate in a single tap. */
+  const maxB = Math.max(1, _int(EC('SUPPLY_MAX_BATCHES', 20)));
+  const n = row.perDay ? 1 : _clamp(_int(batches || 1), 1, maxB);
+
+  // 🔴 `cookable.length === 0`, NOT `.dry` — kitchen.data.js:529 is explicit
+  //    about the difference and about why. A player who can still cook does not
+  //    need rescuing, and a working kitchen that could collect this would be
+  //    farming it.
+  if (row.whenDry && dryCheck().cookable.length > 0) {
+    return no('CLOSED', 'The drop only comes when there is nothing left to cook.');
+  }
+
+  if (row.perDay && _int(K.reliefDay) === _int(K.shift.day)) {
+    return no('CAP', "Today's drop has already been. The flight comes once a day.");
+  }
+
+  /* The cost dict may hold `cinder` and nothing else — the parcels are the ONE
+     Cinder-only door in the feature and a live-resource leg here would mean a
+     stranded player is asked for the very thing they have run out of. Refuse
+     the row rather than silently skipping the leg (spendCost's rule). */
+  const cost = row.cost || {};
+  for (const k of Object.keys(cost)) {
+    if (k !== 'cinder' && _int(cost[k]) !== 0) {
+      return no('BAD_ARG', 'That drop is priced in something a stranded kitchen would not have.');
+    }
+  }
+
+  const b = bridge();
+  const price = Math.max(0, _int(cost.cinder) * n);
+  if (price > 0) {
+    let have = 0;
+    try { have = _int(b.gems ? b.gems() : 0); } catch (e) { have = 0; }
+    if (have < price) {
+      return no('NO_PANTRY', `Not enough Cinder — you need ${price.toLocaleString()} and have ${have.toLocaleString()}.`);
+    }
+    let paid = false;
+    try { paid = b.spendGems ? b.spendGems(price) === true : false; } catch (e) { paid = false; }
+    if (!paid) return no('NO_PANTRY', 'That could not be paid for. Nothing was taken.');
+  }
+
+  // ── LAND IT, LEG BY LEG, RE-READING EVERY ONE ───────────────────────────
+  const granted = {};
+  const landed = [];
+  let short = null;
+  for (const id of Object.keys(out)) {
+    const want = _int(out[id]) * n;
+    if (want <= 0) continue;
+    let before = 0;
+    try { before = _int(b.getRes ? b.getRes(id) : 0); } catch (e) { before = 0; }
+    let called = false;
+    try { called = b.addRes ? b.addRes(id, want) !== false : false; } catch (e) { called = false; }
+    let after = before;
+    try { after = _int(b.getRes ? b.getRes(id) : before); } catch (e) { after = before; }
+    const got = Math.max(0, after - before);
+    if (got > 0) landed.push([id, got]);
+    if (!called || got < want) { short = { id, want, got }; break; }
+    granted[id] = got;
+  }
+
+  if (short) {
+    /* 🔴 UNWIND, AND THE INVERSE OF `addRes` IS `spendRes`. This is undoing an
+       ADDITION this call stack just made, so the cap rule in §7 points the
+       other way round from spendCost's: there, the undo of a deduction must be
+       uncapped (`refundRes`); here, the undo of an addition is an ordinary
+       deduction. Getting these two backwards is how the 215 units went. */
+    for (let i = landed.length - 1; i >= 0; i--) {
+      try { if (b.spendRes) b.spendRes(landed[i][0], landed[i][1]); } catch (e) {}
+    }
+    if (price > 0) { try { if (b.addGems) b.addGems(price); } catch (e) {} }
+    const label = metaName(short.id) || short.id;
+    return no('CAP', `Your stash is full — the ${label} would not fit. Nothing was taken, and nothing was charged.`);
+  }
+
+  if (row.perDay) K.reliefDay = _int(K.shift.day);
+  dryDirty();                             // the LEDGER moved — see dryNow()
+  for (const id of Object.keys(granted)) bookGain(id, granted[id]);
+  if (price > 0) K.today.cinderSpent = _int(K.today.cinderSpent) + price;
+  K.rev++;
+
+  const line = Object.keys(granted)
+    .map((id) => `+${granted[id]} ${metaName(id) || id}`)
+    .join(' · ');
+  /* CONTRACT §6 is a CLOSED event set and this file does not get to widen it
+     unilaterally, so the drop rides `pantry:buy` with `relief:true` — the same
+     move `dumpSupply()` made with a negative qty and `binPass()` made with
+     `cook:burnt`. `ing` stays null because there is no PANTRY ingredient here;
+     `granted` is the live-ledger payload. */
+  emit('pantry:buy', {
+    supplyId: row.id, relief: true, free: !!row.free, ing: null, qty: 0,
+    batches: n, cost: { cinder: price }, granted, line,
+  });
+  /* 🔴 THE PIXEL, AND IT NEEDS NOBODY'S COOPERATION. `Kitchen._fx` is drained
+     and drawn by kitchen.render.js:2435 for ANY `kind`, so this float-up lands
+     on screen with no change to any other file. That is deliberate: the last
+     five rounds all died on a value whose only consumer was somebody else's
+     unwritten line. A toast would be better and it is asked for in stillOpen;
+     this is the half that cannot fail to arrive. */
+  fx('relief', `${row.icon || '🪂'} ${line}`);
+  save(true);
+  return ok({ granted, spent: { cinder: price }, line, reliefId: row.id });
+}
+
+/**
+ * What the Supplies sheet should draw at the top of the ladder. READ ONLY.
+ *
+ * → { stalled, takenToday, day, rows:[{…row, available, why, cinder}] }
+ *   `available` is whether the button should be live; `why` is the refusal
+ *   sentence to put under a dead one. Render must not re-derive either — the
+ *   gates are `buyRelief`'s and there is to be exactly one copy of them.
+ */
+export function reliefOffer() {
+  const d = dryCheck();
+  const taken = _int(K.reliefDay) === _int(K.shift.day);
+  const rows = reliefRows().map((r) => {
+    let available = true, why = '';
+    if (_int(r.minLevel || 1) > K.level) { available = false; why = `Unlocks at level ${_int(r.minLevel)}.`; }
+    else if (r.whenDry && d.cookable.length > 0) { available = false; why = 'Only when there is nothing left to cook.'; }
+    else if (r.perDay && taken) { available = false; why = "Today's drop has already been."; }
+    else {
+      const price = _int((r.cost || {}).cinder);
+      let have = 0;
+      try { have = _int(bridge().gems ? bridge().gems() : 0); } catch (e) { have = 0; }
+      if (price > have) { available = false; why = `Needs ◈${price.toLocaleString()}; you have ◈${have.toLocaleString()}.`; }
+    }
+    return Object.assign({}, r, { available, why, cinder: _int((r.cost || {}).cinder) });
+  });
+  return { stalled: d.stalled, dry: d.dry, takenToday: taken, day: _int(K.shift.day), rows };
+}
+
+/**
+ * ⏱ THE CONSUMER. Called once a frame from tick().
+ *
+ * A stranded kitchen gets its free parcel WITHOUT having to find a button,
+ * because "the player never discovered the recovery" and "the recovery was
+ * never built" look identical from inside the game, and this feature has now
+ * shipped the second one five rounds running.
+ *
+ * The stall has to have LASTED. Firing the instant the last bun is used would
+ * drop a parcel into the ordinary gap between plating one burger and starting
+ * the next, which is not stranded, it is cooking.
+ */
+function reliefWatch(t) {
+  /* The three CHEAP gates first, off latched fields, because this runs on the
+     tick path sixty times a second and the fourth gate is not cheap. */
+  if (_int(K.reliefDay) === _int(K.shift.day)) return;      // already been today
+  if (!K._stalled || !K._stallSince) return;                // there is food to cook
+  const wait = Math.max(0, EC('RELIEF_AUTO_MS', 3000));
+  if (t - _num(K._stallSince, t) < wait) return;
+
+  /* 🔴 AND THEN THE SAME QUESTION THE BUTTON ASKS, THROUGH THE SAME FUNCTION.
+     An earlier draft re-derived the free row's gates here off `freeRelief()`,
+     which meant the automatic drop and the Supplies-sheet card could disagree
+     about whether a drop was owed — two readers of one truth, which is the
+     defect this whole round is about. `reliefOffer()` is the one answer; it is
+     what render draws and it is what this consumes. */
+  const offer = reliefOffer();
+  const row = offer.rows.find((x) => x && x.free && x.available);
+  if (!row) return;
+  const r = buyRelief(row.id, 1);
+  /* Whatever happened — landed, or refused because the stash is full — restart
+     the stall clock so this cannot retry sixty times a second. A CAP refusal is
+     a real state (a full stash and an empty pantry) and it will clear itself
+     when the player spends something. */
+  K._stallSince = t;
+  /* ⚠ ONLY `BAD_ARG` IS WORTH A TOAST, AND THE OTHERS ARE DELIBERATELY SILENT.
+     `CAP` is a real, self-clearing state (a full stash and an empty pantry).
+     `CLOSED` is a RACE and not a failure: `_stalled` is the throttled read and
+     buyRelief re-checks live, so a player who started cooking in the last half
+     second would be told "the drop only comes when there is nothing left to
+     cook" at the exact moment they were cooking — a toast that is wrong is
+     worse than a toast that is absent. `BAD_ARG` means the RELIEF table itself
+     is malformed, which is a developer's problem and must not be swallowed. */
+  if (!r.ok && r.code === 'BAD_ARG') emit('error', { code: r.code, why: r.why });
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1460,6 +2017,7 @@ export function startCook(stationId, slotIndex, recipeId, now) {
     nDone: false,       // ── emission latches, NOT state ──
     nBurn: false,
   };
+  dryDirty();           // the pantry just paid for this — see dryNow()
   K.rev++;
   emit('cook:start', { stationId, slot: i, recipeId: r.id });
   return ok({ stationId, slot: i });
@@ -2216,10 +2774,26 @@ function contentionOf(dish, item, wanters) {
  * and found it 0 times out of 88. A two-pass 2-opt over the board was written,
  * measured against that number, and dropped: it is a change with a real
  * regression surface across 148 currently-correct verdicts bought with nothing.
- * The honest residual is a DRIVE-THRU one and it is not in this file:
- * `judgeMod()` is all-or-nothing per line, so keeping one of two units reads
- * exactly like keeping neither. That is the thing worth fixing next, and it is
- * kitchen.data.js/drivethru.js's to fix.
+ *
+ * 🔴 RE-MEASURED AGAIN THIS ROUND, WITH THE LINE'S `qty` PRINTED THIS TIME —
+ * because "2 of 155 still read broken with a keeping plate on the pass" keeps
+ * being carried forward as if it were an open matcher bug, and it is not.
+ * r6/mis.mjs, twelve seeded days, every break classified at the instant of the
+ * commit: honoured 52, broken 103, of which a clean plate existed for exactly
+ * TWO, and both are:
+ *     1 clean plate vs qty 2 of chickenSandwich, mod no_pickle,  filled 2
+ *     1 clean plate vs qty 2 of pizzaPepperoni,  mod no_sauce,   filled 2
+ * The matcher took the clean plate AND one dirty one, which is the best
+ * assignment that physically exists — a second unit cannot be kept out of a
+ * plate nobody cooked. Changing the comparator cannot reach either case.
+ *
+ * The residual is a DRIVE-THRU one and it is not in this file: `judgeMod()` is
+ * all-or-nothing per line, so keeping one of two units reads exactly like
+ * keeping neither. Everything a per-UNIT verdict needs is already on the seam —
+ * `item.builds` is one build record PER UNIT in hand-over order (see SEAM 1 in
+ * takeDishes) and `fitScore(item, dish)` already scores a single plate — so the
+ * fix is a loop in drivethru.js and nothing here. Named, with the numbers, so
+ * the next reader stops re-opening the matcher.
  */
 function cmpCand(a, b) {
   if (a.pin !== b.pin) return b.pin - a.pin;      // 1. the player said so
@@ -2592,6 +3166,62 @@ export function serveTicket(ticketId, now) {
 }
 
 /**
+ * 💷 WHAT THIS ORDER WOULD PAY, RIGHT NOW. Pure read. → null when it cannot be
+ * answered honestly (no such ticket, already gone, or the pass cannot cover it).
+ *
+ * 🔴 THIS IS A CONSUMER THAT WAS ALREADY WRITTEN AND WAITING. `ticketWorth()`
+ * in kitchen.render.js:1014-1015 has been calling `State.quoteTicket(t.id, nowMs())`
+ * behind a `typeof … === 'function'` guard, and this file never exported it — so
+ * the SERVE button has been falling back to a plain "Serve" with no figure on
+ * it. Same failure shape as the relief drop, running the other way round: there
+ * the data existed with no consumer, here the consumer existed with no data.
+ * Both are "somebody shipped half a seam".
+ *
+ * 🔴 IT IS THE TILL'S OWN ARITHMETIC, NOT A SECOND COPY OF IT. Every term below
+ * is the same term `serveTicket()` uses, in the same order, off the same
+ * `planPass()` assignment — including staleness, which is a property of the
+ * instant the plate reaches the customer and therefore moves between frames.
+ * A price beside a button is read as a price; the previous attempt at this drew
+ * a per-line chip that was out by a factor of two. Print the till's number or
+ * print no number.
+ */
+export function quoteTicket(ticketId, now) {
+  const t = _num(now, K.now);
+  const ticket = K.tickets.find((x) => x && x.id === ticketId);
+  if (!ticket) return null;
+  if (ticket.state === 'served' || ticket.state === 'lost') return null;
+  const p = planPass(t).byTicket[ticket.id];
+  if (!p) return null;
+
+  let gross = 0, xp = 0, units = 0, qsum = 0;
+  for (const line of p.lines) {
+    const r = recipeOf(line.item.recipeId);
+    if (!r) continue;
+    let lq = 0, pn = 0, xn = 0;
+    for (const d of line.dishes) {
+      lq += _num(d.mult, 1) * stalenessMul(d, t);
+      units++;
+      if (d.quality !== 'raw') xn++;
+      if (d.quality === 'perfect') pn++;
+    }
+    gross += _num(r.basePrice, 0) * lq;
+    qsum += lq;
+    xp += _int(r.xp) * Math.max(0, xn - pn) + Math.round(_int(r.xp) * pn * EC('XP_PERFECT_MULT', 1.5));
+  }
+
+  const popFn = DF('popPayMul'), rushFn = DF('rushPayMul');
+  const popMult = popFn ? _num(popFn(K.popularity), 1)
+                        : EC('POP_PAY_FLOOR', 0.8) + (K.popularity / 100) * EC('POP_PAY_SPAN', 0.4);
+  const rushMult = rushFn ? _num(rushFn(K.shift.rush), 1) : 1;
+  const paid = Math.max(0, Math.round(gross * popMult * rushMult));
+  const onTime = t <= _num(ticket.dueAt, t);
+  if (onTime && units > 0) xp += _int(EC('XP_TICKET_BONUS', 6));
+  const avgQ = units > 0 ? (qsum / units) : 0;
+  const tip = tipFor(ticket, avgQ, t, paid);
+  return { paid, tip, total: paid + tip, xp, units, quality: avgQ, onTime, complete: !!p.complete };
+}
+
+/**
  * The tip.
  *
  * ⚠ CONTRACT AMBIGUITY, HANDLED DEFENSIVELY. §1 types `DriveThru.tipFor` as
@@ -2924,6 +3554,20 @@ function mergeToday(src) {
   const out = freshToday();
   if (src && typeof src === 'object') {
     for (const k of Object.keys(out)) {
+      /* ⚠ THE RESOURCE TALLIES ARE DICTS, NOT NUMBERS. `_num({food:12}, 0)` is
+         0, so folding them the numeric way would silently wipe a resumed
+         shift's ledger line — the exact "computed and never consumed" shape
+         this round exists to delete, one level down. */
+      if (out[k] && typeof out[k] === 'object') {
+        const d = src[k];
+        if (d && typeof d === 'object') {
+          for (const id of Object.keys(d)) {
+            const n = _int(d[id]);
+            if (n > 0) out[k][id] = n;
+          }
+        }
+        continue;
+      }
       const v = _num(src[k], 0);
       out[k] = (isFinite(v) && v > 0) ? v : 0;
     }
@@ -3034,6 +3678,41 @@ export function closeShift(now, opts) {
        to whole percent so render never has to think about it. */
     service: Math.round(parts.service * 100),
     craft: Math.round(parts.kitchen * 100),
+
+    /* 🥫 THE LOOP, ON THE RECEIPT. The one screen that summarises a day showed
+       SERVED · WALKED · BURNT · CINDER · TIPS · XP and said nothing whatsoever
+       about the live 14-id ledger — which is the feature the player asked for
+       in the first place ("uses the food and food type resources … that they
+       get from the other parts of the game"). On a resourced account a single
+       day burns roughly 450 food and the player was shown a Cinder number and
+       nothing else. The premise is legible on the Supplies sheet and on the
+       prep-counter strip and then vanishes at exactly the point a player forms
+       their model of what this business costs to run. REF-B puts it here.
+
+       `resSpent` / `resGained` are `{liveResId: units}`, `cinderSpent` is what
+       the restocking cost, and `foodSpent` is the lifetime total for the ALL
+       TIME strip. All four are read straight off the tallies; none of them is
+       re-derived, so the receipt cannot disagree with the ledger. */
+    resSpent: Object.assign({}, K.today.resSpent || {}),
+    resGained: Object.assign({}, K.today.resGained || {}),
+    cinderSpent: _int(K.today.cinderSpent),
+    foodSpent: _int((K.today.resSpent || {}).food),
+    /* 🔴 AND THE SENTENCE, PRE-BUILT, BECAUSE THE HALF OF THIS THAT LIVES IN
+       kitchen.render.js IS SOMEBODY ELSE'S LINE TO WRITE. Handing the screen a
+       dict means the screen decides the wording, the order, the units and the
+       icons — four chances to disagree with the Supplies sheet, which already
+       has a house style for this. `resLine` is empty when nothing moved, so the
+       row can be `${rep.resLine ? …row… : ''}` exactly like the waste line
+       above it. It is a DISPLAY string and it is deliberately the only one this
+       file produces beyond the `{why}` sentences the actions already return. */
+    resLine: resLineFor(K.today),
+    /* Net Cinder, because "earned 4,120" beside "spent 3,980" is the sentence,
+       and a player should not have to do that subtraction on a phone. */
+    net: _int(K.today.earned) + _int(K.today.tips) - _int(K.today.cinderSpent),
+    lifetime: {
+      served: _int(K.totals.served), days: _int(K.totals.days),
+      earned: _int(K.totals.earned), foodSpent: _int(K.totals.foodSpent),
+    },
   };
 
   K.shift.running = false;
@@ -3226,6 +3905,30 @@ function gradeParts(today) {
 /** The letter. `'—'` before anybody has walked through the door. */
 function gradeFor(today) {
   if (_int(today.served) + _int(today.lost) <= 0) return '—';
+
+  /* 🔴 A LETTER IS A CLAIM ABOUT THE PLAYER, AND IT WAS NOT COMPARABLE ACROSS
+     SHIFT LENGTHS — SHORT SHIFTS GRADED HIGHER. Same bot, 8 seeds, level 12,
+     varying ONLY how long the shift ran before the bell (r8/early.mjs):
+         120,000ms → service 0.705 craft 0.995 score 0.850   AABSAAAS
+         300,000ms → 0.798 / 0.914 / 0.851                   AAAAABAA
+         780,000ms → 0.882 / 0.864 / 0.873                   AAAAAAAA
+     Two S grades on a two-minute shift and none on a full day, from identical
+     play: CRAFT starts near 1.000 because nothing has had time to spoil yet and
+     the SERVICE ceiling has not had time to bind. The title screen prints
+     "Last shift B" as a persistent claim (kitchen.render.js:1635), so a
+     twenty-minute mobile session was systematically earning a better one than a
+     full day.
+
+     Two fixes were possible and this is the cheaper AND the more honest of
+     them: below a minimum traded fraction of a day, say so. Flooring the
+     denominator instead would grade a two-minute shift against a full day's
+     ceiling and hand a competent player a D for closing early, which is a
+     punishment for a thing that is not a mistake. The two axes are still in the
+     report and still worth reading; it is only the LETTER — the summary claim —
+     that needs a real sample behind it. */
+  const graded = EC('GRADE_MIN_SHIFT_MS', 300000);
+  if (graded > 0 && _num(today.ms, 0) > 0 && _num(today.ms, 0) < graded) return '—';
+
   const SCALE = ['D', 'C', 'B', 'A', 'S'];
   const score = gradeParts(today).score;
   let grade = 0;
@@ -3246,7 +3949,30 @@ function gradeFor(today) {
   else if (score >= EC('GRADE_MIN_A', 0.79)) grade = 3;
   else if (score >= EC('GRADE_MIN_B', 0.70)) grade = 2;
   else if (score >= EC('GRADE_MIN_C', 0.58)) grade = 1;
-  if (grade === 4 && _int(today.burnt) > 0) return SCALE[3];
+  /* 🔴 THE CLEAN-SHEET RIDER CHARGES FOR NEGLECT, NOT FOR STRUCTURE — AND IT
+     USED TO CHARGE FOR BOTH, WHICH PUT THE TOP LETTER OUT OF REACH FOR THE
+     FIRST 27 LEVELS NO MATTER HOW WELL THE PLAYER COOKED.
+     `today.burnt` is two different failures added together (see freshToday):
+     a SLOT that crossed burnAt, and a PLATE that rotted on the pass. Split
+     across 6 skill tiers × 12 seeds at level 12 (r8/gradeSpoil.mjs), the
+     frame-perfect zero-lag fifty-actions-a-second bot books **0.0 slot burns
+     and 5.1 spoiled plates**, and clean sheets are **0 of 72 shifts across
+     every tier**. Five of those shifts scored above GRADE_MIN_S and every one
+     was demoted here. Add `up_warmrail` — minLevel **27** — and spoilage halves
+     and S appears immediately (r8/gradeWR.mjs: AAAAAAASAASA).
+     So the rider was reading whether the player owns a level-27 upgrade, which
+     is not a foot put wrong; it is a shop.
+
+     And it is the same error this file has already fixed once, for `binPass`:
+     "mandatory play cannot be booked as incompetence". `spoilPass()` is the
+     AUTOMATIC version of that unjam — the game bins the plate on the player's
+     behalf, precisely because it "must not depend on the player knowing to use
+     it" — so charging the S for it charges the player for something the game
+     did. Slot burns stay: leaving a pizza on a griddle IS a foot wrong.
+     `spoiled` keeps its cost line on the report card, which is where a cost
+     belongs. */
+  const neglect = _int(today.burnt) - _int(today.spoiled);
+  if (grade === 4 && neglect > 0) return SCALE[3];
   return SCALE[grade];
 }
 
@@ -3392,6 +4118,22 @@ export function tick(dt, now) {
   // 2. STATIONS
   tickStations(t);
 
+  /* 2b. 🔴 ARE THE DOORS SHUT? — AND THE ANSWER IS TAKEN *BEFORE* THE LANE RUNS.
+     It used to be taken at step 4, after DriveThru.tick(), so anything reading
+     `K._dry` from inside the lane got LAST frame's answer. One frame is not much
+     on its own; it is a lot when the flag's whole job is to stop a spawn.
+     Refreshed whether or not the shift is running, so that `isStalled()` is true
+     the moment the panel opens on an empty pantry — which is when the relief
+     drop needs to land and when the OPEN THE DOORS button needs to know. */
+  dryNow(t);
+  // …and every door reads the ONE accessor. See isDry().
+  const dry = isDry();
+
+  /* 2c. 🪂 THE ESCAPE HATCH, CONSUMED. See reliefWatch(). This is the line that
+     was missing: kitchen.data.js has shipped the parcel since round 4 and
+     nothing anywhere called for it. */
+  reliefWatch(t);
+
   // 3. DRIVE-THRU (owns the lane; we only merge its events)
   if (K.shift.running && typeof DriveThru.tick === 'function') {
     try {
@@ -3401,10 +4143,11 @@ export function tick(dt, now) {
   }
 
   // 4. WALK-INS
-  /* 🔴 …UNLESS THE KITCHEN IS DRY. See dryCheck(). The interval is rolled
-     forward while the doors are shut so that stock arriving does not release a
-     backlog of customers who "queued" during a period when nothing was open. */
-  const dry = K.shift.running ? dryNow(t) : false;
+  /* 🔴 …UNLESS THE KITCHEN IS DRY. See dryCheck() — and note that `dry` now
+     means "no purchase you can pay for would produce a dish", not "no crate on
+     the sheet is affordable at any price". The interval is rolled forward while
+     the doors are shut so that stock arriving does not release a backlog of
+     customers who "queued" during a period when nothing was open. */
   if (dry) K._nextCounter = t + counterIntervalMs();
   if (!dry && K.shift.running && dayPctOf() < 1 && ECb('COUNTER_ENABLED', true)) {
     if (!K._nextCounter) K._nextCounter = t + counterIntervalMs();
@@ -3644,6 +4387,15 @@ export function simulate(seconds, actions, opts) {
   report.binned = _int(K.today.binned);
   report.spoiled = _int(K.today.spoiled);
   report.grade = gradeFor(K.today);
+  /* 🥫 THE LEDGER LINE, IN THE HARNESS TOO. The premise of the whole feature is
+     that live resources move; a headless report that cannot see them cannot
+     regress "LEDGER out {}" — which is exactly how a round shipped 188 dishes
+     with the ledger never moving once. */
+  report.resSpent = Object.assign({}, K.today.resSpent || {});
+  report.resGained = Object.assign({}, K.today.resGained || {});
+  report.cinderSpent = _int(K.today.cinderSpent);
+  report.reliefDay = _int(K.reliefDay);
+  report.dry = dryCheck();
   if (o.fresh) {
     const cov = startPantryCovers();
     report.firstRun = {

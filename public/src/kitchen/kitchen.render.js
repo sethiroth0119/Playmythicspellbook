@@ -186,7 +186,8 @@ let _reg = emptyReg();
 function emptyReg() {
   return { hud: {}, tickets: [], slots: [], cars: [], dishes: [], fx: null, road: null,
            passers: null, pin: null, pinRows: [], routes: [], led: [], line: null, lineRail: null,
-           laneNext: null, arrive: null, passRail: null, bub: null, bubTxt: null, bubTail: null };
+           laneNext: null, arrive: null, pass: null, passRail: null, stall: null,
+           bub: null, bubTxt: null, bubTail: null };
 }
 /* The pinned card's structural fingerprint. Module-level, NOT in `_reg`, so it
    survives a rebuildRegistry() — during a rush `paint()` runs several times a
@@ -194,8 +195,8 @@ function emptyReg() {
    eat the tap. It only rebuilds when the two cars, their fill or their verdict
    actually changed. */
 let _pinKey = '';
-/** Slow clock for the line's overflow probe — see updateLineMore(). */
-let _lineMoreAt = 0;
+/** Slow clock for the rail overflow probes — see updateRailMore(). */
+let _railMoreAt = 0;
 
 /* ═══════════════════════════════════════════════════════════════════════════
    OPEN / CLOSE
@@ -244,6 +245,16 @@ export function open() {
   _sel = null;
   _pending = null;
   _pick = null;
+  /* Per-panel view latches. `_passSeen` at -1 means "the shelf has not been
+     looked at yet", which suppresses the auto-scroll on the opening frame — a
+     kitchen that jumps its own pass sideways the instant it appears reads as
+     broken, and there is nothing NEW on the shelf when you have only just
+     arrived. `_stallKey`/`_railMoreAt` are fingerprints; a stale one from a
+     previous session would suppress the first honest paint. */
+  _passSeen = -1;
+  _stallKey = '';
+  _stallAt = 0;
+  _railMoreAt = 0;
   paint();
   return _root;
 }
@@ -266,6 +277,9 @@ export function close() {
   _reg = emptyReg();
   _laneW = 0;
   _laneAt = 0;
+  _passSeen = -1;
+  _stallKey = '';
+  _railMoreAt = 0;
 }
 
 function onResize() {
@@ -466,6 +480,36 @@ function shellHtml() {
 
   <div class="mk-body" id="mk-body"></div>
 
+  <!-- 🪂 THE STRANDED BAR — the one surface that tells a player the kitchen has
+       stopped, and hands them the door out in the same object.
+       ══════════════════════════════════════════════════════════════════════
+       🔴 THE DEFECT: A FRESH ACCOUNT COOKS 102 DISHES AND IS THEN DEAD FOREVER,
+       AND NOTHING ON SCREEN SAYS SO. Measured over ten days on a zero ledger:
+       day 1 served 38, day 2 served 4, days 3–10 served ZERO and lost 36–41
+       tickets EVERY DAY, while the wallet minted 7,827 Cinder and burned none,
+       because all 41 crates want live resources and there were none. What the
+       player was shown on that screen was "⚠ Low on Dog Roll" and, in gold, the
+       largest control on the page: OPEN THE DOORS.
+       kitchen.state.js now lands a free relief parcel automatically after
+       RELIEF_AUTO_MS of provable stall, and exposes "reliefOffer()" so a button
+       can ask for one. Neither is worth anything if the screen never mentions
+       that the kitchen has stopped — "the player never found the recovery" and
+       "the recovery was never built" look identical from inside the game, and
+       this feature has now shipped the second one five rounds running.
+       ⚠ IT IS "hidden" UNTIL "Kitchen._stalled", which is a LATCHED field the
+         sim refreshes on its own throttle and bumps "rev" on. Reading it costs
+         nothing; "dryCheck()" and "reliefOffer()" are only called in the state
+         where the bar is actually up.
+       ⚠ AND THE QUOTES IN THIS COMMENT ARE DOUBLE QUOTES ON PURPOSE. This block
+         lives INSIDE shellHtml()'s template literal, so one backtick here ends
+         the string and the whole module stops parsing — which is exactly what
+         the first draft of this comment did: "SyntaxError: Unexpected identifier
+         'reliefOffer'", the kitchen tile gone, and "node --check" on a .js file
+         silently clean because it parses it as CommonJS. Check modules as .mjs.
+         Every other comment in this function uses double quotes for the same
+         reason; see the arrival note above. -->
+  <div class="mk-stall" id="mk-stall" hidden></div>
+
   <div class="mk-strip" id="mk-strip"></div>
 
   <nav class="mk-tabs" role="tablist" aria-label="Kitchen sections">
@@ -575,6 +619,24 @@ export function paint() {
   updateCars(t0);
   updatePassers(t0);
   updatePass(t0);
+  paintStall(k, t0, true);
+  /* 🍽 The shelf brings a newly plated dish to the player before anything is
+     measured against it — otherwise the pill counts it as hidden for one whole
+     throttle period and then stops, which reads as a flicker. */
+  scrollPassToNewest();
+  scrollPassToPick();
+  /* 🔴 AND `updateRailMore` IS IN THE CATCH-UP PASS NOW, WITH ITS THROTTLE
+     CLEARED. It was the one updater missing from this block. The section
+     template ships `data-nav="0"`, so every structural repaint reset the pill to
+     `display:none` and it stayed hidden until the 320ms clock let the measure
+     run again: sampled at 80ms over 12s of live service, 8 rev bumps produced 12
+     display flips and the pill was hidden in 6.8% of frames — about once a
+     second during a rush, on the one control that makes two of five stations and
+     half the pass reachable. Clearing `_railMoreAt` is load-bearing: without it
+     the throttle swallows this call and the fix does nothing, which is the exact
+     shape of bug this round exists to stop shipping. */
+  _railMoreAt = 0;
+  updateRailMore(t0);
 }
 
 function viewKey() { return [_sheet || '-', _sel ? _sel.stationId + _sel.i : '-', _pick || '-'].join('|'); }
@@ -596,6 +658,12 @@ function rebuildRegistry() {
   _reg.laneNext = q('#mk-lane-next');
   _reg.line = q('.mk-sec-line');
   _reg.lineRail = q('.mk-sec-line .mk-rail');
+  /* The pass SECTION as well as its rail — updateRailMore() stamps `data-nav`
+     on the section and reads the overflow off the rail, and until this round
+     only the line had both halves registered, which is precisely why only the
+     line got the affordance. */
+  _reg.pass = q('.mk-sec-pass');
+  _reg.stall = q('#mk-stall');
   _reg.road = q('#mk-road');
   _reg.passers = q('#mk-passers');
   _reg.pin = q('#mk-pin');
@@ -927,10 +995,13 @@ function ticketHtml(t, k) {
 
   const ready = t.state === 'ready';
   const worth = ticketWorth(t);
+  const menu = ticketMenuValue(t);
   return `<div class="mk-tk" data-tk="${esc(t.id)}" data-src="${esc(t.source)}" data-state="${esc(t.state)}" data-urg="ok">
       <div class="mk-tk-top">
         <span class="mk-ic" aria-hidden="true">${t.icon || cust.icon || '🧑'}</span>
         <span class="mk-tk-who">${esc(t.name || cust.name || 'Customer')}</span>
+        ${menu ? `<span class="mk-tk-val" title="Menu price of this order — ${esc(fmtCinder(menu))}. What the till actually pays depends on how well you cook it, your popularity and the rush; the Serve button prints that figure once the plates are up."
+          >${esc(fmtCinder(menu))}</span>` : ''}
         <span class="mk-tk-src">${t.source === 'drive' ? '🚗 Lane' : '🚶 Counter'}</span>
       </div>
       ${t.line ? `<div class="mk-tk-line">“${esc(t.line)}”</div>` : ''}
@@ -1010,6 +1081,41 @@ function modChip(m, result, cinder) {
  *   pricing in the render layer is the same class of bug as the first, one
  *   refactor away from disagreeing with the till again. One number, one owner.
  */
+/**
+ * 🏷 WHAT THIS ORDER IS WORTH ON THE MENU — the number that was missing entirely.
+ *
+ * 🔴 THE BOARD CARRIED NO ECONOMIC INFORMATION AT ALL. Round 4's per-ticket
+ * "estimate" was wrong on 92% of tickets (median actual ÷ label 2.01, max 3.81),
+ * and round 5 fixed it by removing it — correctly — behind a `State.quoteTicket`
+ * that did not exist yet, so `ticketWorth()`'s null branch was the ONLY branch
+ * that ever ran. The result was a board on which a four-line corp order and a
+ * single hot dog looked identical, and the only way to learn one was worth five
+ * times the other was to leave the Line tab and read base prices off the Menu
+ * screen one recipe at a time. Both commercial references print the order's
+ * value on the ticket; it was the one thing they did that we did not.
+ *
+ * 🔴 AND IT IS A DIFFERENT CLAIM FROM THE SERVE BUTTON'S, ON PURPOSE. This is
+ * the sum of the MENU PRICES the customer is ordering — `recipe.basePrice ×
+ * qty`, the same figure the Menu sheet prints on the same dish's card. It is not
+ * a payout estimate and it is not a second copy of the till: quality, popularity
+ * and the rush all move the money, and `State.quoteTicket()` — the till's own
+ * arithmetic, exposed as a pure read — is what the Serve button prints once
+ * there are plates to price. Menu price before, till price at the moment of
+ * sale, which is how a menu and a receipt relate everywhere else.
+ * ⚠ DO NOT ADD MULTIPLIERS HERE. The instant this function starts applying
+ *   popPayMul or a quality guess it becomes the round-4 bug again — a second
+ *   copy of the pricing, one refactor from disagreeing with the till.
+ */
+function ticketMenuValue(t) {
+  let n = 0;
+  for (const it of ((t && t.items) || [])) {
+    const r = safe(() => DATA.recipe(it.recipeId), null);
+    if (!r) continue;
+    n += (Number(r.basePrice) || 0) * Math.max(0, it.qty | 0);
+  }
+  return n > 0 ? Math.round(n) : 0;
+}
+
 function ticketWorth(t) {
   if (!t || typeof State.quoteTicket !== 'function') return null;
   const v = safe(() => State.quoteTicket(t.id, nowMs()), null);
@@ -1022,27 +1128,63 @@ function lineHtml(k) {
   const stations = (Array.isArray(DATA.STATIONS) ? DATA.STATIONS : []).slice()
     .sort((a, bb) => (a.order || 0) - (bb.order || 0));
   const cards = stations.map((s) => stationHtml(k, s)).join('');
-  /* 🔴 `.mk-line-more` IS A BUTTON NOW, AND IT EXISTS ON THE PHONE.
-     It used to be an `aria-hidden` span inside `@media (min-width: 820px)`, so
-     it was desktop-only decoration. Measured at level 8 with all five stations
-     unlocked: at 390×844 and at 430×932 — the two most common modern phone
-     sizes — the FOUNTAIN was drawn 0 pixels wide and the PREP BOARD was an 8px
-     sliver at 0.28 alpha, `data-more` read "0", the pill computed
-     `display:none`, and the first ticket on the board was asking for a Fountain
-     Soda. Two of five stations were unreachable and nothing on the screen said
-     they existed. A player cannot learn a station is there by not seeing it.
-     So the pill is horizontal on a phone, it counts what is off the edge, and
-     it MOVES the rail when you press it — an affordance that is only a label is
-     half an affordance on a surface with no hover. `tabindex="-1"` because the
-     rail behind it is already keyboard-scrollable; this is a thumb control. */
+  /* 🔴 THE "MORE" PILL IS A BUTTON, IT EXISTS ON THE PHONE, AND IT LIVES IN THE
+     HEAD ROW — see railMoreHtml() for why the head and not the rail. */
   return `
-  <section class="mk-sec mk-sec-line" data-more="0">
+  <section class="mk-sec mk-sec-line" data-more="0" data-nav="0">
     <div class="mk-sec-head"><b>The Line</b><span class="mk-spacer"></span>
-      <span>${_sel ? 'building · tap a bin' : 'tap a pan to start'}</span></div>
+      <span class="mk-sec-say">${_sel ? 'building · tap a bin' : 'tap a pan to start'}</span>
+      ${railMoreHtml('line', 'pan')}</div>
     <div class="mk-hood" aria-hidden="true"></div>
     <div class="mk-rail" data-rail="line">${cards}</div>
-    <button class="mk-line-more" data-act="line-more" tabindex="-1">▸ more pans</button>
   </section>`;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ▸ "6 MORE PLATES" — ONE AFFORDANCE, BOTH RAILS, IN THE HEAD ROW.
+   ═══════════════════════════════════════════════════════════════════════════
+   🔴 DEFECT ONE — IT WAS BOLTED TO ONE SECTION BY ITS SELECTOR. Round 5 built
+   this for THE LINE and the shelf one section below it got nothing, so the pass
+   went on hiding plates in silence. Measured, 12 plates on the pass: 6 of 12
+   completely off screen at 390×844 (692px of hidden rail), 6 of 12 at 360×640
+   (853px), 5 of 12 at 1440×900 (1,114px), `scrollLeft` 0 at all three, under a
+   head reading "12 ON THE PASS · ROOM FOR 4". Those plates are on a spoil clock
+   and they are the objects a player pins to tickets — a plate you cannot see is
+   a plate that rots, and the game charges `today.spoiled` and popularity for it.
+   So the pill is a function now, it takes the rail's name and the noun for what
+   is on it, and BOTH rails get one. There is no `.mk-line-more`.
+
+   🔴 DEFECT TWO — THE FIX FOR THE LINE CREATED A NEW WAY TO LOSE FOOD. The pill
+   was `position: absolute; right: 4px; bottom: 6px; z-index: 5` over the rail,
+   and the comment above that rule claimed it "overlaps only the pull bar of a
+   card that is by definition less than half on screen". Measured with a real
+   touchscreen tap and a capture-phase pointerdown listener: at 390×844 and at
+   430×932 the DECK OVEN was 100% visible and its ⤴ PULL was 54% covered — the
+   tap went to the pill, which SCROLLS THE RAIL, so the pan the player was timing
+   out moved out from under their thumb and then burnt. At 360×640 the PREP
+   BOARD's PULL was 76% covered.
+   The proposed patch was `padding-right` on the rail so no card could sit under
+   the pill. That fixes the overlap and leaves the other half of the same finding
+   standing: the pill was ALSO clipped by `.mk-body`'s bottom edge to 72% at 430
+   and to 13% at 390, because it hangs off the bottom of a section whose bottom
+   is usually below the fold. An affordance you cannot see is not one.
+   So it is not absolutely positioned at all any more. It is an ordinary flex
+   child at the end of the head row — ABOVE the rail, so it is on screen whenever
+   the rail's first pixel is, and structurally incapable of overlapping anything,
+   because the head row is not the rail.
+
+   ⚠ THE HEAD ONLY GROWS TO A THUMB WHEN THE PILL IS ACTUALLY THERE. A 46px head
+     on every section at every moment would cost the cooking ~54 rendered px on a
+     360×640 phone that is already short (the play area is the other open finding
+     in this slice). kitchen.css floors the head on `.mk-sec[data-nav="1"]` only,
+     so a rail with nothing hidden costs exactly what it cost before.
+   ⚠ `tabindex="-1"` because the rail behind it is already keyboard-scrollable;
+     this is a thumb control, and putting it in the tab order would make Tab walk
+     through a scroll button before every station.
+   ═══════════════════════════════════════════════════════════════════════════ */
+function railMoreHtml(railName, noun) {
+  return `<button class="mk-rail-more" data-act="rail-more" data-rail="${esc(railName)}"
+    tabindex="-1" aria-label="Scroll to the rest of the ${esc(noun)}s">▸ more ${esc(noun)}s</button>`;
 }
 /**
  * ⚠ `data-slots` EXISTS FOR THE CSS AND FOR NOTHING ELSE, and it is worth the
@@ -1174,12 +1316,20 @@ function passHtml(k) {
   let wells = '';
   for (let i = 0; i < drawn; i++) wells += '<span class="mk-well" aria-hidden="true"></span>';
   if (room > drawn) wells += `<span class="mk-well mk-well-more" aria-hidden="true"><i>+${room - drawn}</i></span>`;
+  /* 🔴 AND THE SHELF SAYS WHEN IT IS HIDING SOMETHING. See railMoreHtml(): the
+     head's count is the number the sim enforces and it was, until this round,
+     printed above a rail that silently cut half the plates off the right edge.
+     The pill counts what is off the edge and MOVES the rail when pressed, and it
+     is a flex child of this head row rather than a thing floating over the
+     crockery — a control drawn on top of a plate is a control that bins the
+     wrong dish. `data-nav`/`data-more` are stamped by updateRailMore(). */
   return `
-  <section class="mk-sec mk-sec-pass">
+  <section class="mk-sec mk-sec-pass" data-more="0" data-nav="0">
     <div class="mk-pass">
       <div class="mk-sec-head flush"><b>The Pass</b><span class="mk-spacer"></span>
         ${n ? '' : '<span class="mk-hint">Pull a pan → then Plate</span>'}
-        <span>${n} on the pass · room for ${room}</span></div>
+        <span class="mk-sec-say">${n} on the pass · room for ${room}</span>
+        ${railMoreHtml('pass', 'plate')}</div>
       <div class="mk-pass-rail" data-rail="pass">${dishes}${wells}</div>
       ${pickerHtml(k)}
     </div>
@@ -1652,7 +1802,7 @@ function paintStrip(k) {
           ? `Day ${rep.day} graded ${esc(rep.grade)} · ${rep.served} served, ${rep.lost} lost`
           : `Day ${k.shift.day} · ${esc(safe(() => State.shiftClock().dayName, ''))}`}</span>
       </div>
-      <button class="mk-btn go" data-act="shift-open">Open the doors</button>`;
+      ${openDoorsHtml(k, '')}`;
   } else {
     /* 💀 🔥 and the money have MOVED UP to the HUD (see updateHud). What is left
        here is what the HUD has no room for: how the service is going and how
@@ -1668,6 +1818,87 @@ function paintStrip(k) {
       </div>
       <button class="mk-btn danger" data-act="shift-close">End shift</button>`;
   }
+}
+
+/* ── 🪂 THE STRANDED BAR ──────────────────────────────────────────────────────
+ * See the note on `#mk-stall` in shellHtml() for the ten-day measurement this
+ * exists for. Two jobs, both of which were missing entirely:
+ *   1. SAY WHAT HAPPENED. "Nothing left to cook" is a different sentence from
+ *      "⚠ Low on Dog Roll", and it is the true one.
+ *   2. PUT THE DOOR ON THE SAME OBJECT AS THE BAD NEWS. A hatch the player has
+ *      to go looking for in a 5,400px sheet is a hatch that does not exist.
+ *
+ * ⚠ THE GATE IS `cookable.length === 0`, WHICH IS `Kitchen._stalled` — NOT
+ *   `_dry`. kitchen.data.js:505 predicted the difference and it is not academic:
+ *   with 654 water in the stash `sal_ice` and `sup_ice` stay affordable forever,
+ *   so `dry` is false while the kitchen serves nothing and loses 90 tickets a
+ *   day. Ice is not a dish. `_stalled` is the flag that means "there is nothing
+ *   you can put on a pan", and it is the one a player needs told about.
+ * ⚠ EVERY GATE ON THE BUTTON IS `reliefOffer()`'s, NOT A SECOND COPY. The sim
+ *   owns whether a drop is owed; this file owns whether it is legible. Two
+ *   readers of one truth is the defect this whole round is about.
+ * ⚠ IT REBUILDS ON A FINGERPRINT, not on every pass. This bar carries a live
+ *   button and it sits directly above the strip, i.e. under the thumb; during a
+ *   rush `paint()` runs several times a second and re-innerHTML-ing a control
+ *   that often eats the tap. Same rule as the pinned window card.
+ */
+let _stallKey = '';
+let _stallAt = 0;
+function paintStall(k, t, force) {
+  const host = _reg.stall;
+  if (!host) return;
+  if (!force && t - _stallAt < 900) return;
+  _stallAt = t;
+
+  const stalled = !!(k && k._stalled);
+  if (!stalled) {
+    if (_stallKey !== '') { _stallKey = ''; host.hidden = true; host.innerHTML = ''; }
+    return;
+  }
+
+  const offer = safe(() => (typeof State.reliefOffer === 'function' ? State.reliefOffer() : null), null);
+  const free = offer ? (offer.rows || []).find((r) => r && r.free) : null;
+  const need = safe(() => (State.dryCheck ? State.dryCheck().need : []), []) || [];
+  const canDrop = !!(free && free.available && typeof State.buyRelief === 'function');
+
+  /* One line that names the resources the crates want and the player has none
+     of. `need` comes off dryCheck() already — round 5 computed it, put it in the
+     `pantry:low` payload and then printed none of it. */
+  const names = need.slice(0, 3)
+    .map((id) => safe(() => (b().meta ? (b().meta(id).name || id) : id), id));
+  const why = names.length
+    ? `Every crate on the sheet still wants ${names.join(', ')} and you have none.`
+    : 'No crate on the supplies sheet can be bought right now.';
+
+  const key = [canDrop, (free && free.why) || '', names.join(',')].join('|');
+  if (key === _stallKey) return;
+  _stallKey = key;
+
+  host.hidden = false;
+  host.innerHTML = `
+    <div class="mk-stall-txt">
+      <b>🪂 Nothing left to cook.</b>
+      <span>${esc(why)}</span>
+      ${(free && !free.available && free.why) ? `<span class="mk-stall-why">${esc(free.why)}</span>` : ''}
+    </div>
+    ${canDrop
+      ? `<button class="mk-btn go" data-act="relief" data-relief="${esc(free.id)}"
+           >${esc(free.icon || '🪂')} Take the drop · ${esc(reliefWords(free))}</button>`
+      : `<button class="mk-btn" data-act="tab" data-tab="supplies">🧺 Open supplies</button>`}`;
+}
+
+/** "+5 food · +4 water · free" — the parcel's own contents, named through the
+    bridge so two ids never share a fallback glyph (NULL_BRIDGE hands back 📦 for
+    several of them, and "📦 5 · 📦 4" is not a description of anything). */
+function reliefWords(row) {
+  const out = (row && row.out) || {};
+  const bits = [];
+  for (const id of Object.keys(out)) {
+    const nm = safe(() => (b().meta ? (b().meta(id).name || id) : id), id);
+    bits.push('+' + fmtNum(out[id]) + ' ' + String(nm).toLowerCase());
+  }
+  const cost = Math.round(Number(row && row.cinder) || 0);
+  return bits.join(' · ') + (cost > 0 ? ' · ' + fmtCinder(cost) : ' · free');
 }
 
 /* ── 📌 THE PINNED WINDOW ────────────────────────────────────────────────────
@@ -1990,7 +2221,8 @@ export function frame(dt, now, events) {
   updatePassers(t);
   updatePass(t);
   updateRoutes(t);
-  updateLineMore(t);
+  updateRailMore(t);
+  paintStall(k, t, false);
   /* ⚠ ON A SLOW CLOCK AND NOT ON RESIZE ALONE. `_uiAutoScale()` is also called
      from the legacy `render()`, which fires on a hundred things we get no event
      for (a Cinder change, a screen switch behind us), and it can change `zoom`
@@ -2002,28 +2234,39 @@ export function frame(dt, now, events) {
 }
 
 /**
- * 🔴 IS THE LINE ACTUALLY CUT OFF? Only the layout knows, and only at runtime.
+ * 🔴 IS THE RAIL ACTUALLY CUT OFF? Only the layout knows, and only at runtime.
  *
- * At 1440×900 — the size the brief names — all five stations now sit on one row
- * and nothing is clipped; on a short or narrow desktop window they wrap and the
- * bottom row can go under the fold. Round 2's answer was an unconditional 26px
- * fade, and the critic's verdict was that nobody reads it: a fade that is there
- * when nothing is hidden is a fade you learn to ignore, so it fails on the one
- * occasion it is telling the truth. This measures, and the chevron only lights
- * when there is genuinely a pan below.
+ * Round 2's answer for the line was an unconditional 26px fade, and the verdict
+ * was that nobody reads it: a fade that is there when nothing is hidden is a
+ * fade you learn to ignore, so it fails on the one occasion it is telling the
+ * truth. This MEASURES, and the pill only lights when there is genuinely a pan
+ * — or a plate — off the edge.
  *
- * ⚠ ON A SLOW CLOCK, like the road width above. `scrollHeight` forces a layout
- *   flush, and doing that once a frame right after this pass has written forty
- *   styles is exactly how the first draft of this file lost 30fps. Three times
- *   a second is instant to a human and free to the compositor.
+ * 🔴 IT RUNS OVER BOTH RAILS NOW, AND THAT IS THE ROUND'S BLOCKER. The body of
+ *   this function was correct and bound to one section by `_reg.line`, so the
+ *   pass — the shelf that holds perishable, tappable, assignable plates — hid up
+ *   to 6 of 12 of them with no pill, no arrow, no auto-scroll and, at desktop,
+ *   not even a fade. RAILS below is the whole of the change in behaviour; every
+ *   line under it is the code that was already written.
+ *
+ * ⚠ ON A SLOW CLOCK. `scrollWidth`/`scrollHeight` force a layout flush, and
+ *   doing that once a frame right after this pass has written forty styles is
+ *   exactly how the first draft of this file lost 30fps. Three times a second is
+ *   instant to a human and free to the compositor.
  */
-function updateLineMore(t) {
-  const sec = _reg.line, rail = _reg.lineRail;
+const RAILS = [
+  { sec: 'line', rail: 'lineRail', noun: 'pan' },
+  { sec: 'pass', rail: 'passRail', noun: 'plate' },
+];
+function updateRailMore(t) {
+  if (t - _railMoreAt < 320) return;
+  _railMoreAt = t;
+  for (const spec of RAILS) railMoreOne(_reg[spec.sec], _reg[spec.rail], spec.noun);
+}
+function railMoreOne(sec, rail, noun) {
   if (!sec || !rail) return;
-  if (t - _lineMoreAt < 320) return;
-  _lineMoreAt = t;
   /* 🔴 BOTH AXES. The old body asked only about `scrollHeight`, which is the
-     DESKTOP overflow — the phone rail scrolls sideways and always reported
+     DESKTOP overflow — a phone rail scrolls sideways and always reported
      "nothing hidden" no matter how many stations were off the right edge. That
      one missing term is the whole reason two of five stations were invisible
      and unannounced at 390px and 430px. */
@@ -2034,29 +2277,33 @@ function updateLineMore(t) {
      and a fade that is still on when there is nothing below it is the round-3
      finding all over again. But the PILL cannot use the same test: press it at
      the right-hand end of the rail and the remaining overflow is zero, so the
-     pill would vanish at the exact moment the first two stations are the ones
-     off screen — a player who used the control to get to the Fountain would
-     have no control left to get back to the griddle. `data-nav` asks the other
-     question ("does this rail scroll at all"), and the pill's arrow flips to
-     point back the way it will actually travel. */
+     pill would vanish at the exact moment the first plates are the ones off
+     screen — a player who used the control to reach the end would have no
+     control left to get back. `data-nav` asks the other question ("does this
+     rail scroll at all"), and the arrow flips to point the way it will travel. */
   const overX = (rail.scrollWidth - rail.clientWidth) > 6;
   const overY = (rail.scrollHeight - rail.clientHeight) > 6;
-  const more = (down || right) ? '1' : '0';
-  setData(sec, 'more', more);
+  setData(sec, 'more', (down || right) ? '1' : '0');
   setData(sec, 'nav', (overX || overY) ? '1' : '0');
   setData(sec, 'moredir', overX ? 'x' : (overY ? 'y' : ''));
-  const pill = sec.querySelector('.mk-line-more');
+  const pill = sec.querySelector('.mk-rail-more');
   if (!pill) return;
   if (!overX && !overY) { setText(pill, ''); return; }
   const wrapping = overX ? !right : !down;   // the next press goes back to the start
-  /* NAME THE NUMBER. "more pans" is a hint; "▸ 2 more" is a fact the player can
-     check against the five station names they can see in the Menu sheet. A card
-     counts as hidden when less than half of it is inside the rail's box — the
-     8px sliver at 0.28 alpha that started this finding is not a visible card by
-     any definition a player would recognise. */
+  /* NAME THE NUMBER. "more plates" is a hint; "▸ 6 more plates" is a fact the
+     player can check against the count in the same head row, two words to the
+     left. A child counts as hidden when less than half of it is inside the
+     rail's box — the 8px sliver at 0.28 alpha that started this finding is not a
+     visible card by any definition a player would recognise.
+     ⚠ EMPTY WELLS ARE NOT PLATES. The pass rail draws `room` well nodes beside
+       the dishes (passHtml), so counting every hidden CHILD here would report
+       "16 more plates" on a shelf holding four. `.mk-well` is skipped: the
+       number has to be the number of things the player can act on, or it is the
+       same class of lie as the head that said "room for 16" over six wells. */
   let hidden = 0;
   const rb = rail.getBoundingClientRect();
   for (const card of rail.children) {
+    if (card.classList && card.classList.contains('mk-well')) continue;
     const cb = card.getBoundingClientRect();
     if (!cb.width || !cb.height) continue;
     const vw = Math.max(0, Math.min(rb.right, cb.right) - Math.max(rb.left, cb.left));
@@ -2064,20 +2311,21 @@ function updateLineMore(t) {
     if (vw < cb.width * 0.5 || vh < cb.height * 0.5) hidden++;
   }
   const arrow = wrapping ? (overX ? '◂ ' : '▴ ') : (overX ? '▸ ' : '▾ ');
-  setText(pill, arrow + (hidden > 0 ? hidden + ' more ' + plural(hidden, 'pan') : 'more pans'));
+  setText(pill, arrow + (hidden > 0 ? hidden + ' more ' + plural(hidden, noun) : 'more ' + noun + 's'));
 }
 
 /**
- * 👉 THE PILL MOVES THE RAIL. One press = one station, wrapping back to the
- * start at the end, so five stations are reachable by thumb in four presses
+ * 👉 THE PILL MOVES THE RAIL. One press = one card, wrapping back to the start
+ * at the end, so five stations — or twelve plates — are reachable by thumb
  * without the player ever having to discover that the row scrolls at all.
- * ⚠ It scrolls by the width of the FIRST CARD, not by a hardcoded pixel step: a
- *   station card's width is a flex basis that changes with `data-slots`, and a
- *   fixed step lands the row mid-card, which is the state that looked broken in
- *   the first place.
+ * ⚠ It scrolls by the width of the FIRST CHILD, not by a hardcoded pixel step: a
+ *   station card's width is a flex basis that changes with `data-slots` and a
+ *   plate's width is `--mk-well` minus the gap, so a fixed step lands the row
+ *   mid-card, which is the state that looked broken in the first place.
  */
-function scrollLineMore() {
-  const rail = _reg.lineRail;
+function scrollRailMore(which) {
+  const spec = RAILS.find((r) => r.sec === which) || RAILS[0];
+  const rail = _reg[spec.rail];
   if (!rail) return;
   const card = rail.children && rail.children[0];
   const stepX = card ? Math.round(card.getBoundingClientRect().width + 8) : 180;
@@ -2088,8 +2336,64 @@ function scrollLineMore() {
     const maxY = rail.scrollHeight - rail.clientHeight;
     if (maxY > 6) rail.scrollTop = rail.scrollTop + 6 >= maxY ? 0 : Math.min(maxY, rail.scrollTop + Math.round(rail.clientHeight * 0.7));
   }
-  _lineMoreAt = 0;                 // re-measure on the very next frame
-  updateLineMore(nowMs());
+  _railMoreAt = 0;                 // re-measure on the very next frame
+  updateRailMore(nowMs());
+}
+
+/**
+ * 🍽 AND THE SHELF BRINGS THE NEW PLATE TO YOU.
+ *
+ * The pill is the control; this is the thing that means a player who never finds
+ * the control still never loses a plate they just made. Called from paint()'s
+ * catch-up pass: if the pass rail overflows and the LAST dish node is off the
+ * right edge, scroll it into view. `scrollLeft` is a plain write rather than
+ * `scrollIntoView` because that method scrolls every scrollable ancestor — on a
+ * phone `.mk-body` is one of them, and plating a burger would have yanked the
+ * whole kitchen down to the pass and away from the pans.
+ *
+ * ⚠ ONLY WHEN THE PASS GREW. `_passSeen` is the dish count this last ran at, so
+ *   a player who has deliberately scrolled back to look at an older plate is not
+ *   dragged to the right again on the next repaint — which is the behaviour that
+ *   makes auto-scroll hated everywhere else it appears.
+ */
+let _passSeen = -1;
+function scrollPassToNewest() {
+  const rail = _reg.passRail;
+  if (!rail) { _passSeen = -1; return; }
+  const k = K();
+  const n = (k.pass || []).length;
+  if (n === _passSeen) return;
+  const grew = n > _passSeen;
+  _passSeen = n;
+  if (!grew || !n) return;
+  const dishes = rail.querySelectorAll('.mk-dish');
+  const last = dishes[dishes.length - 1];
+  if (!last) return;
+  /* 🔴 `offsetLeft`, NOT A `getBoundingClientRect` DELTA, and the difference is
+     measurable. A rect delta is relative to WHERE THE RAIL HAPPENS TO BE
+     SCROLLED at the instant it is read, and this runs at the end of paint(),
+     which has just restored a saved `scrollLeft` — so the first cut nudged by
+     167px when the plate was 500 away and the 13th plate ended 0% visible at
+     360×640. `offsetLeft` is a layout coordinate: it does not move when the rail
+     does, so the arithmetic is the same on every frame it could run on. */
+  const want = last.offsetLeft + last.offsetWidth - rail.clientWidth + 10;
+  const max = rail.scrollWidth - rail.clientWidth;
+  if (want <= rail.scrollLeft) return;               // already fully on the shelf
+  rail.scrollLeft = Math.max(0, Math.min(max, want));
+}
+
+/** The same courtesy for the plate the player just picked: opening the picker on
+    a plate that is itself half off the rail is how the round-5 shelf lost them. */
+function scrollPassToPick() {
+  const rail = _reg.passRail;
+  if (!rail || !_pick) return;
+  const el = rail.querySelector('.mk-dish[data-dish="' + cssq(_pick) + '"]');
+  if (!el) return;
+  // Same layout-coordinate rule as scrollPassToNewest(), for the same reason.
+  const max = rail.scrollWidth - rail.clientWidth;
+  const right = el.offsetLeft + el.offsetWidth - rail.clientWidth + 10;
+  if (right > rail.scrollLeft) rail.scrollLeft = Math.max(0, Math.min(max, right));
+  else if (el.offsetLeft - 10 < rail.scrollLeft) rail.scrollLeft = Math.max(0, el.offsetLeft - 10);
 }
 
 function updateHud(t, force) {
@@ -2211,6 +2515,29 @@ function updateSlots(t) {
   }
 }
 
+/**
+ * 🔴 ON THE OVERLAY ROOT, NOT ON `.mk-road`, AND THAT IS THE WHOLE FIX.
+ *
+ * This used to be `setVar(_reg.road, '--mk-road-w', …)`. `paint()` rebuilds
+ * `#mk-band-lane`'s innerHTML, which destroys the road node and every inline
+ * custom property on it — so the measurement survived exactly until the next
+ * structural repaint, and during a rush that is several a second. Measured, one
+ * page, three reads: settled → the var reads "520px", `.mk-bub`'s cap is 340px,
+ * the bubble is 222px and two lines; immediately after `K.rev++; paint()` → the
+ * var is GONE, the CSS falls back to `300px * 0.68 = 204`, the bubble narrows to
+ * 133px, the same sentence wraps to THREE lines and the last one is cut through
+ * the glyphs. 17% of live bubble-frames were at the fallback and 5.4% were cut.
+ *
+ * `#mythic-kitchen-ov` is created in open() and never rebuilt, and the value
+ * inherits down to a road node that has just been created — which is exactly
+ * the move `updatePassWells()` already makes for `--mk-well`, for exactly the
+ * same reason, with the same measurement written above it. Two publishers, one
+ * rule: a number measured from the DOM goes on the node paint() cannot destroy.
+ */
+function publishRoadW() {
+  if (!_laneW) return;
+  setVar(_root, '--mk-road-w', _laneW + 'px');
+}
 function updateCars(t) {
   if (!_reg.cars.length) return;
   const k = K();
@@ -2232,7 +2559,7 @@ function updateCars(t) {
        resolves against the 360px device viewport while the road is laid out in a
        551px CSS space, which is exactly how a 300px cap computed to 259 and put
        the clip back. One number, measured once, in the file that measures it. */
-    if (_laneW) setVar(_reg.road, '--mk-road-w', _laneW + 'px');
+    if (_laneW) publishRoadW();
   }
   /* The countdown to the next arrival. Blank while the shift is shut and blank
      when the lane is full — a full lane is not waiting for anybody, and a
@@ -2489,7 +2816,18 @@ function toastLine(e) {
   switch (e.name) {
     case 'error':        return e.why || 'Something went wrong in the kitchen.';
     case 'level:up':     return `⭐ Level ${e.to}!` + (e.unlocked && e.unlocked.length ? ` ${rn(e.unlocked[0])} unlocked.` : '');
-    case 'pantry:low':   return `⚠ Low on ${safe(() => DATA.ingredient(e.ing).name, e.ing)}.`;
+    /* 🔴 `e.dry` AND `e.need` WERE IN THE PAYLOAD AND ON THE FLOOR. The single
+       moment the game could say "you are out of live resources and no crate on
+       the sheet can be bought" it said "⚠ Low on Dog Roll" — computed exactly by
+       kitchen.state.js, carried all the way here, and dropped by this line. */
+    case 'pantry:low': {
+      if (!e.dry) return `⚠ Low on ${safe(() => DATA.ingredient(e.ing).name, e.ing)}.`;
+      const want = (Array.isArray(e.need) ? e.need : []).slice(0, 3)
+        .map((id) => safe(() => (b().meta ? (b().meta(id).name || id) : id), id));
+      return want.length
+        ? `🪂 The line is dry. Nothing on the sheet can be bought without ${want.join(', ')} — check Supplies.`
+        : '🪂 The line is dry. Nothing on the supplies sheet can be bought — check Supplies.';
+    }
     case 'cook:burnt':   return `🔥 You burnt the ${rn(e.recipeId)}.`;
     case 'ticket:lost':  return '💀 They walked out.';
     case 'car:balk':     return `🚗 ${e.custName || 'Somebody'} drove past a full lane.`;
@@ -2552,9 +2890,9 @@ function onClick(ev) {
     case 'close':        doClose(); break;
     case 'tab':          setSheet(el.dataset.tab === 'line' ? null : el.dataset.tab); break;
     case 'sheet-close':  setSheet(null); break;
-    case 'line-more':    scrollLineMore(); break;
+    case 'rail-more':    scrollRailMore(el.dataset.rail); break;
 
-    case 'shift-open':   result(State.openShift(now), 'The kitchen is already open.'); paint(); break;
+    case 'shift-open':   doOpenShift(now); break;
     case 'shift-close':  askCloseShift(); break;
 
     case 'slot':         onSlot(el.dataset.st, Number(el.dataset.i) || 0, now); break;
@@ -2572,6 +2910,7 @@ function onClick(ev) {
     case 'assign':       doAssign(el.dataset.dish, el.dataset.tk || null); break;
     case 'plate-to':     doPlateTo(el.dataset.tk || null, now); break;
     case 'buy':          doBuy(el.dataset.supply, Number(el.dataset.n) || 1); break;
+    case 'relief':       doRelief(el.dataset.relief); break;
 
     case 'convoy-tier':  pickTier(el.dataset.tier); break;
     case 'convoy-step':  stepManifest(el.dataset.recipe, Number(el.dataset.d) || 0); break;
@@ -2606,6 +2945,56 @@ function doClose() {
   const api = window.MythicKitchen;
   if (api && typeof api.close === 'function') { try { api.close(); return; } catch (e) {} }
   close();
+}
+
+/**
+ * 🚪 THE BUTTON THAT USED TO INVITE A PLAYER INTO A DAY THEY COULD NOT PLAY.
+ *
+ * 🔴 MEASURED: on a dry screen every pantry bin reads a red 0, the ledger strip
+ * reads "0 Food · 0 Water · 0 DNA · 0 Supplies" — and the largest, gold, most
+ * inviting control on the page was OPEN THE DOORS, which starts a shift that
+ * serves 0 and loses 39 tickets. Both call sites emitted it with no test of
+ * whether anything could be cooked. It was raised as a MINOR two rounds ago and
+ * became load-bearing the moment the ten-day run showed every player ending on
+ * that screen.
+ *
+ * ⚠ THE TEST IS THE LATCHED `_stalled`, WHICH IS FREE. `dryCheck()` walks the
+ *   menu and, in the bad case, all 41 supply rows through the bridge; this
+ *   function is called from paintStrip on every shift event and from daySheet on
+ *   every sheet repaint. `Kitchen._stalled` is the same answer, refreshed by the
+ *   sim on its own 500ms clock, and reading it is a property read.
+ * ⚠ IT STILL OPENS. A refusal here would be worse than the lie: a player may
+ *   want the doors open while a convoy is inbound, and the kitchen is theirs.
+ *   The button says what it will get them, and doOpenShift() asks once.
+ */
+function openDoorsHtml(k, cls) {
+  const stalled = !!(k && k._stalled);
+  const day = (k && k.shift) ? k.shift.day : 1;
+  return `<button class="mk-btn ${stalled ? 'warn' : 'go'}${cls}" data-act="shift-open"
+      data-stalled="${stalled ? 1 : 0}"
+      title="${stalled ? 'There is nothing in the pantry you can cook — check Supplies first.' : 'Start the day'}"
+    >${stalled ? 'Open the doors — nothing to cook' : ('Open the doors' + (cls ? ' — day ' + day : ''))}</button>`;
+}
+
+/**
+ * And the confirm in front of it, for the one state where the answer is almost
+ * certainly no. Async, like askCloseShift(), and it degrades to "yes" if the
+ * host has no confirm — a missing dialog must never make a door unopenable.
+ */
+async function doOpenShift(now) {
+  const k = K();
+  if (k && k._stalled) {
+    let yes = true;
+    try {
+      if (b().confirm) {
+        yes = await b().confirm(
+          'There is nothing in the pantry you can cook. Customers will still arrive and walk out. Open anyway?');
+      }
+    } catch (e) { yes = true; }
+    if (!yes) { setSheet('supplies'); return; }
+  }
+  result(State.openShift(now), 'The kitchen is already open.');
+  paint();
 }
 
 async function askCloseShift() {
@@ -2848,6 +3237,39 @@ async function doBinPass(dishId) {
   paint();
 }
 
+/**
+ * 🪂 THE ESCAPE HATCH'S BUTTON. The consumer that did not exist.
+ *
+ * 🔴 THIS IS THE FIFTH ROUND RUNNING IN WHICH THE BIGGEST FINDING WAS A VALUE
+ * COMPUTED AND NEVER CONSUMED, and round 5's was this exact rung: `DATA.RELIEF`
+ * shipped as three rows and 130 lines of design argument with zero readers, so a
+ * fresh account cooked 102 dishes and was then permanently unable to cook
+ * anything ever again while holding 7,827 Cinder. kitchen.state.js has since
+ * built `buyRelief()` and `reliefOffer()`; this function and the two surfaces
+ * that call it (`paintStall`, `reliefCardHtml`) are the half that reaches a
+ * thumb. A hatch with no button is the bug, not the fix.
+ *
+ * ⚠ IT ASKS FOR NOTHING AND CHECKS NOTHING. Every gate — level, "only when there
+ *   is nothing left to cook", once a day, the price, and the stash-full unwind —
+ *   is inside buyRelief(), which re-reads live. This function's whole job is to
+ *   call it and to print what came back, including the refusal.
+ */
+function doRelief(reliefId) {
+  if (typeof State.buyRelief !== 'function') { toast('The relief flight is not running.'); return; }
+  const r = safe(() => State.buyRelief(reliefId, 1), null);
+  if (!r) { toast('The relief flight is not running.'); return; }
+  if (!r.ok) { toast(r.why || 'That drop is not available.'); }
+  else {
+    /* NAME WHAT LANDED, IN UNITS, in the toast as well as in the float — the
+       float is `fx('relief', …)` from the sim and rides the FX layer; this is
+       the line a player reads when their thumb is covering it. */
+    toast(`🪂 Relief drop — ${r.line || 'supplies landed'}. Buy a crate in Supplies.`);
+  }
+  _stallKey = '';                    // the bar's fingerprint is stale either way
+  paint();
+  if (_sheet) paintSheetNow();
+}
+
 function doBuy(supplyId, n) {
   const res = State.buySupply(supplyId, n);
   if (!res || !res.ok) { toast((res && res.why) || 'You cannot afford that.'); return; }
@@ -2936,6 +3358,17 @@ function setSheet(name) {
   if (!_sheet) _pending = null;
   const wrap = _root && _root.querySelector('#mk-sheet-wrap');
   if (wrap) wrap.hidden = !_sheet;
+  /* 🔴 THE ONE ELEMENT THAT READ AS STILL-LIVE UNDER A MODAL WAS THE DESTRUCTIVE
+     ONE. With the plate picker open, opening any tab sheet dimmed the whole
+     kitchen EXCEPT the picker: the red "🗑 BIN THIS HOT DOG — FREE THE WELL" row
+     and its DONE button rendered at full brightness on top of the scrim while
+     the tickets, the line and the pantry behind them dimmed correctly.
+     `elementFromPoint` at the row's centre returned the scrim, so it was already
+     unreachable — but a modal whose scrim visibly does not cover a delete button
+     is a modal a player will press through, and being right about the event path
+     is not the same as being honest about the picture.
+     The stylesheet cannot see `_sheet`, so it is stamped here. */
+  setData(_root, 'sheet', _sheet || '');
   paintTabs();
   if (_sheet) paintSheet();
   _paintedView = viewKey();
@@ -3083,16 +3516,102 @@ function suppliesSheet(k) {
      So in the dry state, and ONLY in the dry state, the dealer's section is
      lifted above the city's. In every other state the city leads, because the
      city IS the game and the dealer is the fallback. */
-  return banner + (dry ? scrapRows + coreHead + coreRows : coreHead + coreRows + scrapRows);
+  /* 🪂 RUNG THREE GOES ABOVE BOTH OF THEM WHEN IT IS OWED. See reliefCardHtml.
+     The ladder in kitchen.data.js is city crates → the scrap dealer → the relief
+     drop, and the third rung is the only one that does not ask for live food, so
+     it is the only one a stranded player can actually reach. It was shipped as
+     data with no consumer; this is the consumer. */
+  return reliefCardHtml(k) + banner + (dry ? scrapRows + coreHead + coreRows : coreHead + coreRows + scrapRows);
+}
+
+/**
+ * 🪂 THE RELIEF FLIGHT — the top of the restock ladder, and the reason a player
+ * whose 14-id ledger is empty is never permanently finished.
+ *
+ * 🔴 IT IS DRAWN AT ALL TIMES, NOT ONLY WHEN STALLED, AND THAT IS DELIBERATE. A
+ * door a player first learns about at the moment they are already stuck is a
+ * door they do not believe in — the whole failure this rung exists to prevent is
+ * "the recovery was never found", which is indistinguishable from "the recovery
+ * was never built". So the card is always on the sheet, and in the ordinary
+ * state the free row simply carries its own refusal ("Only when there is nothing
+ * left to cook"), which teaches the rule at the one moment the player is calm
+ * enough to read it.
+ *
+ * ⚠ `available` AND `why` ARE READ, NEVER RE-DERIVED. `reliefOffer()` runs the
+ *   identical gates `buyRelief()` enforces, so a live button here cannot refuse
+ *   and a dead one always says the true reason. The alternative — this file
+ *   testing `K.reliefDay`/level/dryness itself — is two readers of one truth,
+ *   which is how the automatic drop and the sheet would come to disagree.
+ */
+function reliefCardHtml(k) {
+  if (typeof State.reliefOffer !== 'function' || typeof State.buyRelief !== 'function') return '';
+  const offer = safe(() => State.reliefOffer(), null);
+  const rows = (offer && Array.isArray(offer.rows)) ? offer.rows : [];
+  if (!rows.length) return '';
+  const stalled = !!(offer && offer.stalled);
+
+  const list = rows.map((r) => {
+    const out = Object.keys(r.out || {})
+      .map((id) => {
+        const meta = safe(() => (b().meta ? b().meta(id) : null), null) || { name: id, icon: '📦' };
+        return `<span class="mk-chip" data-good="1">${esc(meta.icon || '📦')} ${esc(meta.name || id)} +${fmtNum(r.out[id])}</span>`;
+      }).join('');
+    const price = r.cinder > 0
+      ? `<span class="mk-chip"><span class="mk-coin"></span>${fmtNum(r.cinder)}</span>`
+      : '<span class="mk-chip" data-good="1">free</span>';
+    return `<div class="mk-row mk-relief-row" data-free="${r.free ? 1 : 0}" data-open="${r.available ? 1 : 0}">
+        <span class="mk-ic" aria-hidden="true">${esc(r.icon || '🪂')}</span>
+        <div class="mk-row-main">
+          <b>${esc(r.name || r.id)}${r.free ? ' <span class="mk-tag">free</span>' : ''}</b>
+          <span class="mk-card-sub">${r.free
+            ? 'once a day, and only when there is nothing left to cook'
+            : 'flown in — costs Cinder alone, so an empty stash can still pay for it'}</span>
+          <div class="mk-cost">${out}${price}</div>
+          ${r.available ? '' : `<span class="mk-twin" data-alt="1">${esc(r.why || '')}</span>`}
+        </div>
+        <div class="mk-buys">
+          <button class="mk-btn ${r.free ? 'go' : ''}" data-act="relief" data-relief="${esc(r.id)}"
+            ${r.available ? '' : 'disabled'} title="${esc(r.available ? 'Call it in' : (r.why || ''))}"
+            >${r.available ? 'Call it in' : '—'}</button>
+        </div>
+      </div>`;
+  }).join('');
+
+  return `<div class="mk-sec-head mk-relief-head flush" data-stalled="${stalled ? 1 : 0}"><b>🪂 The relief flight</b>
+      <span class="mk-spacer"></span><span>Cinder only · no live resources needed</span></div>
+    <div class="mk-relief" data-stalled="${stalled ? 1 : 0}">
+      <div class="mk-relief-say">${stalled
+        ? `<b>You have nothing left to cook.</b> This is the way back in: the drop is priced in
+           Cinder alone, so it works on an empty stash. It is a rescue, not a supply line —
+           it lands enough to get a pan going, and the city is still where a kitchen gets fed.`
+        : `Every other crate on this sheet is paid for in the live resources your city, your
+           businesses and your battles make. This one is not, so a kitchen with an empty stash
+           is never finished. The free drop comes once a day, and only when there is genuinely
+           nothing left to cook.`}</div>
+      ${list}
+    </div>`;
 }
 function supplyRow(k, s, owned, all) {
   const ing = safe(() => DATA.ingredient(s.out.ing), null) || {};
   const locked = (s.minLevel || 1) > k.level;
   const have = (k.pantry || {})[s.out.ing] | 0;
   const isScrap = s.kind === 'salvage';
+  /* 🔴 THE ROW ALREADY KNEW AND THE BUTTON DID NOT ASK. On a sheet where nothing
+     is affordable all 82 ×1/×5 controls rendered ENABLED — the cost chip beside
+     each one was already drawing the shortfall in red ("🥫 Food 3 /0") off the
+     same two reads — so a stranded player got 5,404px of live buttons that could
+     only ever answer with a toast. `_short` is the same comparison the chips
+     make, collected as it is made rather than computed a second time.
+     ⚠ IT IS AFFORDABILITY ONLY, NEVER THE PANTRY CAP. A cooler too full to take
+       the crate is a state `dumpSupply()` fixes in one tap, so it is not a closed
+       door and must not be drawn as one — that refusal stays a toast. */
+  const _short = { 1: false, 5: false };
+  const _lack = [];
   const chips = Object.keys(s.cost || {}).map((key) => {
     if (key === 'cinder') {
       const gems = safe(() => (b().gems ? b().gems() : 0), 0);
+      if (gems < s.cost[key]) { _short[1] = true; _lack.push('Cinder'); }
+      if (gems < s.cost[key] * 5) _short[5] = true;
       return `<span class="mk-chip" data-short="${gems < s.cost[key] ? 1 : 0}"><span class="mk-coin"></span>${fmtNum(s.cost[key])}</span>`;
     }
     /* The NAME goes in the chip, not just the icon. bridge().meta() can hand
@@ -3101,9 +3620,18 @@ function supplyRow(k, s, owned, all) {
        cost line the player cannot check. */
     const meta = safe(() => (b().meta ? b().meta(key) : null), null) || { name: key, icon: '📦' };
     const hv = safe(() => (b().getRes ? b().getRes(key) : 0), 0);
+    if (hv < s.cost[key]) { _short[1] = true; _lack.push(meta.name || key); }
+    if (hv < s.cost[key] * 5) _short[5] = true;
     return `<span class="mk-chip" data-short="${hv < s.cost[key] ? 1 : 0}">${esc(meta.icon || '📦')} ${esc(meta.name || key)}
         ${fmtNum(s.cost[key])}<span class="mk-of">/${fmtNum(hv)}</span></span>`;
   }).join('');
+  const refuse = _lack.length ? `You are short of ${_lack.join(', ')}.` : '';
+  const buyBtn = (n) => {
+    const dead = locked || _short[n];
+    const why = locked ? `Unlocks at level ${s.minLevel}.` : (n === 5 ? `Five crates: ${refuse}` : refuse);
+    return `<button class="mk-btn" data-act="buy" data-supply="${esc(s.id)}" data-n="${n}"
+        ${dead ? 'disabled aria-disabled="true"' : ''} title="${esc(dead ? why : 'Buy ' + n + ' crate' + (n === 1 ? '' : 's'))}">×${n}</button>`;
+  };
 
   /* 🌾 PROVENANCE. The cost chips above say WHAT this crate takes out of the
      stash; this line says where that comes from and whether the player has the
@@ -3137,7 +3665,8 @@ function supplyRow(k, s, owned, all) {
     if (sc) twin = `<span class="mk-twin" data-alt="1">or ${sc.out.qty} from the scrap dealer for ${esc(costWords(sc))}</span>`;
   }
 
-  return `<div class="mk-row mk-supply" data-kind="${isScrap ? 'salvage' : 'core'}" data-locked="${locked ? 1 : 0}">
+  return `<div class="mk-row mk-supply" data-kind="${isScrap ? 'salvage' : 'core'}" data-locked="${locked ? 1 : 0}"
+      data-afford="${(!locked && !_short[1]) ? 1 : 0}">
       <span class="mk-ic" aria-hidden="true">${isScrap ? '🛻' : (ing.icon || '🥫')}</span>
       <div class="mk-row-main">
         <b>${esc(ing.name || s.out.ing)}${isScrap ? ' <span class="mk-tag">scrap</span>' : ''}</b>
@@ -3146,10 +3675,7 @@ function supplyRow(k, s, owned, all) {
         ${from ? `<div class="mk-froms"><span class="mk-from-lab">${isScrap ? 'still takes' : 'made by'}</span>${from}</div>` : ''}
         ${twin}
       </div>
-      <div class="mk-buys">
-        <button class="mk-btn" data-act="buy" data-supply="${esc(s.id)}" data-n="1" ${locked ? 'disabled' : ''}>×1</button>
-        <button class="mk-btn" data-act="buy" data-supply="${esc(s.id)}" data-n="5" ${locked ? 'disabled' : ''}>×5</button>
-      </div>
+      <div class="mk-buys">${buyBtn(1)}${buyBtn(5)}</div>
       ${locked ? `<span class="mk-chip">🔒 Lv ${s.minLevel}</span>` : ''}
     </div>`;
 }
@@ -3657,6 +4183,10 @@ function reportCard(rep) {
   if (rep.spoiled) waste.push(`${rep.spoiled} spoiled on the pass`);
   if (rep.binned) waste.push(`${rep.binned} binned by you`);
   if (rep.turned) waste.push(`${rep.turned} waved off`);
+  /* 🥫 WHAT THE DAY ATE. See ledgerRowHtml(): the resources this kitchen burned
+     are the feature the player actually asked for and the accounting screen has
+     never mentioned them once. */
+  const ate = ledgerRowHtml(rep.resSpent, rep.cinderSpent, 'out of your stash');
   return `<div class="mk-report" data-grade="${esc(rep.grade || '-')}">
       <div class="mk-report-top">
         <span class="mk-grade">${esc(rep.grade || '—')}</span>
@@ -3671,7 +4201,44 @@ function reportCard(rep) {
         ${axis(crf, 'Craft', 'how close to perfect')}
       </div>
       <div class="mk-report-say">${esc(verdict)}</div>` : ''}
+      ${ate}
       ${waste.length ? `<div class="mk-report-waste">🗑 ${esc(waste.join(' · '))}</div>` : ''}
+    </div>`;
+}
+
+/**
+ * 🥫 THE RECEIPT'S OTHER HALF — what the day cost in LIVE RESOURCES.
+ *
+ * 🔴 THE ONE SCREEN THAT SUMMARISES A DAY NEVER MENTIONED THE LEDGER. THE DAY
+ * read "2 SERVED · 0 WALKED · 0 BURNT · 271 CINDER · 75 TIPS · 70 XP" while a
+ * single measured day burned roughly 450 food, 118 water and 34 dna out of the
+ * player's stash. The premise the player asked for — a kitchen fed by the city,
+ * the businesses and the battles — is legible on the Supplies sheet and on the
+ * prep-counter strip, and then completely absent from the place a player forms
+ * their model of what this business COSTS to run. REF-B puts exactly this on its
+ * end-of-day card. The convoy card already gets it right ("2 FOOD ON LANDING").
+ *
+ * ⚠ IT PRINTS NOTHING WHEN NOTHING MOVED, rather than a row of zeros. A day on
+ *   which the player bought no crates genuinely spent no resources, and six
+ *   tiles reading 0 would teach them the row is decoration.
+ * ⚠ `resSpent` IS THE SIM'S, ACCUMULATED IN THE ONE PLACE RESOURCES LEAVE. This
+ *   function sorts and names; it does not add anything up a second time.
+ */
+function ledgerRowHtml(resSpent, cinderSpent, lab) {
+  const spent = resSpent || {};
+  const ids = Object.keys(spent).filter((id) => (spent[id] | 0) > 0)
+    .sort((a, bb) => (spent[bb] | 0) - (spent[a] | 0));
+  const cin = Math.max(0, Math.round(Number(cinderSpent) || 0));
+  if (!ids.length && !cin) return '';
+  const tiles = ids.slice(0, 6).map((id) => {
+    const meta = safe(() => (b().meta ? b().meta(id) : null), null) || { name: id, icon: '📦' };
+    return `<span class="mk-ate-tile" title="${esc(meta.name || id)}"
+        >${esc(meta.icon || '📦')} <b>${fmtNum(spent[id] | 0)}</b> ${esc(String(meta.name || id).toUpperCase())}</span>`;
+  }).join('');
+  return `<div class="mk-ate">
+      <span class="mk-ate-lab">${esc(lab)}</span>
+      ${tiles}
+      ${cin ? `<span class="mk-ate-tile" title="Cinder spent on crates and drops"><span class="mk-coin"></span> <b>${fmtNum(cin)}</b> CINDER</span>` : ''}
     </div>`;
 }
 function daySheet(k) {
@@ -3684,19 +4251,25 @@ function daySheet(k) {
     <div class="mk-stats">
       ${stat(cur.served, 'served')}${stat(cur.lost, 'walked')}${stat(cur.burnt, 'burnt')}
       ${stat(fmtNum(cur.earned), 'cinder')}${stat(fmtNum(cur.tips), 'tips')}${stat(fmtNum(cur.xp || 0), 'xp')}
-    </div>`;
+    </div>
+    ${ledgerRowHtml(cur.resSpent, cur.cinderSpent, 'eaten today, out of your stash')}
+    ${ledgerRowHtml(cur.resGained, 0, 'landed today — convoys and relief')}`;
 
   const last = rep ? `<div class="mk-sec-head flush"><b>Last shift</b></div>
     ${reportCard(rep)}` : '';
 
+  /* `totals.food` is additive — an old save has no key and this degrades to the
+     three tiles it has always had rather than to a tile reading 0. */
+  const allFood = Number(k.totals && k.totals.food);
   const totals = `<div class="mk-sec-head flush"><b>All time</b></div>
     <div class="mk-stats">
       ${stat(fmtNum(k.totals.served), 'served')}${stat(fmtNum(k.totals.days), 'days')}${stat(fmtNum(k.totals.earned), 'cinder')}
+      ${isFinite(allFood) && allFood > 0 ? stat(fmtNum(allFood), 'food eaten') : ''}
     </div>`;
 
   const ctl = k.shift.running
     ? `<button class="mk-btn danger wide gap-t" data-act="shift-close">Ring the closing bell</button>`
-    : `<button class="mk-btn go wide gap-t" data-act="shift-open">Open the doors — day ${k.shift.day}</button>`;
+    : openDoorsHtml(k, ' wide gap-t');
 
   return today + last + totals + ctl;
 }

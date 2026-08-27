@@ -834,7 +834,7 @@
      player was being asked to cook at. The ramp is longer and stops higher — the
      gradient still reads as an edge, and a sliver caught in it is still a thing
      you can see. The affordance that actually FIXES the problem is the pill (see
-     `.mk-line-more`); this is the floor under it. */
+     `.mk-rail-more`); this is the floor under it. */
   -webkit-mask-image: linear-gradient(90deg, #000 0 calc(100% - 58px), rgba(0,0,0,.78) calc(100% - 24px), rgba(0,0,0,.46) 100%);
           mask-image: linear-gradient(90deg, #000 0 calc(100% - 58px), rgba(0,0,0,.78) calc(100% - 24px), rgba(0,0,0,.46) 100%);
 }
@@ -1210,9 +1210,35 @@
      BLOCKIFIES an out-of-flow box, so computed `display` came back `flow-root`
      even though the rule said `-webkit-box` and the clamp silently did nothing —
      two lines of box against three lines of text, cropped through the glyphs.
-     `line-height` is an exact ratio and `max-height` is an exact multiple of it,
-     so the cut can only ever fall BETWEEN lines. With the width above it takes
-     an authored line at SAY_MAX_CH to reach two, and nothing reaches three.
+
+   🔴 AND THEN THE REPLACEMENT DID THE SAME THING, FOR A REASON THIS COMMENT
+      USED TO DENY. It said: "`line-height` is an exact ratio and `max-height` is
+      an exact multiple of it, so the cut can only ever fall BETWEEN lines … and
+      nothing reaches three." Both halves were false against the shipped page.
+        (a) THE MULTIPLE DID NOT INCLUDE THE PADDING. `max-height: 3.75em` is
+            41.25px and the line box is 13.75px, so three lines fit EXACTLY — but
+            this element computes `box-sizing: border-box` with `padding: 3px
+            8px`, so the CONTENT box holds 41.25 − 6 = 35.25px = 2.56 lines. The
+            third line landed 3 CSS px below the bottom edge and `overflow:
+            hidden` cut it through the middle of the glyphs. The budget has to
+            carry the padding: `calc(3.75em + 6px)`, and if the padding ever
+            changes this number changes with it.
+        (b) THREE LINES ARE REACHABLE WHENEVER THE CAP IS NOT THE MEASURED
+            ASPHALT. `--mk-road-w` used to be published as an inline style on
+            `.mk-road`, and `paint()` rebuilds that node — so every structural
+            repaint dropped it and the cap fell to the CSS fallback (300 × 0.68 =
+            204px) until the 500ms slow clock refired. Measured over 25s of
+            ordinary play at 360×640: the bubble was up for 554 frames, 94 of
+            them (17%) at the fallback cap and 30 (5.4%) cut. Across all 309
+            beats the game really produces, 15 were cut — including the Night
+            Medic's "You want to know what an exhausted surgeon looks like?
+            Hello.", photographed at 6× DPR as a row of decapitated letter-tops
+            bleeding onto the asphalt. kitchen.render.js's publishRoadW() now
+            writes the var on `#mythic-kitchen-ov`, which paint() never rebuilds.
+      Two declarations from being right, both of them measured, neither of them
+      reasoned about. The fallback stays in the `var()` because a first frame
+      before the first measurement is real; with (a) fixed it is merely narrow
+      rather than cut.
    ════════════════════════════════════════════════════════════════════════ */
 #mythic-kitchen-ov .mk-bub[data-on="0"] { display: none; }
 #mythic-kitchen-ov .mk-bub {
@@ -1229,7 +1255,10 @@
   white-space: normal;
   width: max-content;
   max-width: min(340px, calc(var(--mk-road-w, 300px) * 0.68));
-  max-height: 3.75em;          /* 3 × line-height, exactly */
+  /* 3 × line-height PLUS the vertical padding — see (a) above. `box-sizing:
+     border-box` means max-height bounds the border box, and 3.75em of border box
+     is 2.56 lines of content box. */
+  max-height: calc(3.75em + 6px);
   overflow: hidden;
   box-shadow: 0 0 0 2px rgba(10,7,5,.62), 0 4px 10px rgba(0,0,0,.7);
 }
@@ -1777,8 +1806,28 @@
   padding-bottom: 4px;
   min-height: 66px;
   --mk-well-min: 62px;
-  -webkit-mask-image: linear-gradient(90deg, #000 0 calc(100% - 26px), rgba(0,0,0,.35) 100%);
-          mask-image: linear-gradient(90deg, #000 0 calc(100% - 26px), rgba(0,0,0,.35) 100%);
+  /* 🔴 NO `scroll-behavior: smooth`, AND IT WAS TRIED. The renderer nudges this
+     rail when a plate is added (scrollPassToNewest), and a smooth scroll is an
+     ANIMATION: `paint()` runs several times a second during a rush and restores
+     `scrollLeft` from a pre-paint read, so it captured the animation's current
+     position and cancelled it. Measured: the 13th plate ended 0% visible at
+     360×640 and 390×844 with smooth on, and 100% with it off. An instant scroll
+     that is always right beats a pretty one that loses a plate. */
+}
+#mythic-kitchen-ov .mk-pass-rail > * { scroll-snap-align: start; }
+/* 🔴 THE EDGE ONLY FADES WHEN SOMETHING IS BEHIND IT, AND IT FADES LIKE THE LINE
+   RAIL DOES. The old rule masked the last 26px to 0.35 alpha unconditionally, so
+   a shelf with nothing hidden wore the same edge as a shelf hiding six plates —
+   which is round 3's finding about the line, still standing on the pass. Worse,
+   the desktop override below turned it off entirely, so at 1440×900 five plates
+   were cut off behind a hard, unmarked edge. `data-more` is stamped by
+   updateRailMore() and means "there is more in the direction of travel"; the
+   ramp stops at 0.46 rather than 0.10 for the same reason it does on the line —
+   below about 0.4 a fade stops saying "scroll" and starts saying "nothing here",
+   about a plate the player is being charged for. */
+#mythic-kitchen-ov .mk-sec-pass[data-more="1"] .mk-pass-rail {
+  -webkit-mask-image: linear-gradient(90deg, #000 0 calc(100% - 46px), rgba(0,0,0,.78) calc(100% - 20px), rgba(0,0,0,.46) 100%);
+          mask-image: linear-gradient(90deg, #000 0 calc(100% - 46px), rgba(0,0,0,.78) calc(100% - 20px), rgba(0,0,0,.46) 100%);
 }
 /* 🔴 AND THE REPEATING BACKGROUND THEY USED TO BE IS GONE, BECAUSE IT COULD NOT
    COUNT. A `background-repeat: repeat-x` at one pitch draws however many wells
@@ -2136,10 +2185,21 @@
    screen is the only place a thumb reaches comfortably, and the top half stays
    visible so you can watch a griddle while you buy patties.
    ════════════════════════════════════════════════════════════════════════ */
+/* 🔴 z-index 20, NOT 6, AND THE PICKER GOES QUIET UNDER IT. With the plate
+   picker open, opening any tab sheet dimmed the whole kitchen EXCEPT the picker:
+   the red "🗑 BIN THIS HOT DOG — FREE THE WELL" row and its DONE button rendered
+   at full brightness on top of the scrim while the ticket column, the line and
+   the pantry behind them dimmed correctly. `elementFromPoint` at the row's
+   centre returned this element, so the button was already unreachable — but the
+   one element that reads as still-live under a modal was the DESTRUCTIVE one,
+   and being right about the event path is not the same as being honest about
+   the picture. A player presses what looks pressable.
+   The stylesheet cannot see the renderer's `_sheet`, so setSheet() stamps
+   `data-sheet` on the overlay root and the rule below reads it. */
 #mythic-kitchen-ov .mk-sheet-wrap {
   position: absolute;
   inset: 0;
-  z-index: 6;
+  z-index: 20;
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
@@ -2147,6 +2207,15 @@
   backdrop-filter: blur(2px);
 }
 #mythic-kitchen-ov .mk-sheet-wrap[hidden] { display: none; }
+/* ⚠ `pointer-events: none` as well as the dimming, so the inertness is a fact
+   about the element and not an accident of what happens to be painted over it.
+   The picker is NOT hidden: `_pick` survives the sheet, and a panel that
+   vanishes and reappears reads as having been closed by the sheet. */
+#mythic-kitchen-ov[data-sheet]:not([data-sheet=""]) .mk-picker {
+  opacity: .3;
+  filter: grayscale(.5);
+  pointer-events: none;
+}
 #mythic-kitchen-ov .mk-sheet {
   max-height: 78%;
   display: flex;
@@ -2345,7 +2414,11 @@
   position: absolute;
   inset: 0;
   pointer-events: none;
-  z-index: 5;
+  /* ⚠ ABOVE THE SHEET SCRIM (20), not under it. The relief drop's float-up is
+     emitted by a button that lives ON the Supplies sheet — at z-index 5 the one
+     confirmation that the parcel landed was painted behind the panel the player
+     was looking at. `pointer-events: none`, so nothing can be stolen by it. */
+  z-index: 30;
   overflow: hidden;
 }
 #mythic-kitchen-ov .mk-float {
@@ -2607,67 +2680,104 @@
 
 /* ── small shared bits ─────────────────────────────────────────────────── */
 /* ════════════════════════════════════════════════════════════════════════
-   ▸ "2 MORE PANS" — the affordance that was desktop-only while the phone was
-     the platform that needed it.
+   ▸ "6 MORE PLATES" — one affordance, both rails, IN THE HEAD ROW.
    ------------------------------------------------------------------------
-   🔴 TWO OF FIVE STATIONS WERE UNREACHABLE AND UNANNOUNCED. Measured at level 8,
-      shift open, five stations unlocked: 360×640 → Prep Board 69px visible (a
-      real half card, discoverable), Fountain 0px. 390×844 → Prep Board 8px at
-      0.28 alpha, Fountain 0px. 430×932 → the same. `data-more` read "0" because
-      updateLineMore() only ever asked about VERTICAL overflow, and this rule
-      read `display: none` at every phone width because the pill lived inside
-      `@media (min-width: 820px)`. There is no auto-scroll and there was no cue
-      of any kind, while the first ticket on the board asked for a Fountain Soda.
-      The player was being asked for a drink by a station they had no way to
-      learn existed.
-   🔴 SO IT IS A BUTTON, ON EVERY WIDTH, AND IT MOVES THE RAIL. The old comment
-      here argued the phone did not need it because the rail "has its own edge
-      fade" — that was the argument, and the measurement above is what it was
-      worth. A fade is not an affordance; it is at best a hint that one is
-      needed. It sits on the RIGHT edge on a phone (the direction the row
-      actually scrolls) and stays centred at the bottom on the desktop (the
-      direction it wraps), which is the whole of the difference between the two
-      layouts.
-   ⚠ It is `display: none` until `data-more="1"`, exactly as before: a pill that
-     is there when nothing is hidden is a pill the player learns to ignore, and
-     it then fails on the one occasion it is telling the truth.
+   🔴 IT WAS DESKTOP-ONLY WHILE THE PHONE WAS THE PLATFORM THAT NEEDED IT.
+      Measured at level 8, shift open, five stations unlocked: 360×640 → Prep
+      Board 69px visible, Fountain 0px. 390×844 → Prep Board 8px at 0.28 alpha,
+      Fountain 0px. `data-more` read "0" because the probe only ever asked about
+      VERTICAL overflow, and this rule read `display: none` at every phone width
+      because the pill lived inside `@media (min-width: 820px)`. There was no
+      auto-scroll and no cue of any kind, while the first ticket on the board was
+      asking for a Fountain Soda. Round 5 fixed that — for the LINE.
+
+   🔴 AND THE SHELF ONE SECTION BELOW IT GOT NOTHING. With 12 plates on the pass:
+      6 of 12 completely off screen at 390×844 (692px of hidden rail), 6 of 12 at
+      360×640 (853px), 5 of 12 at 1440×900 (1,114px), `scrollLeft` 0 at all
+      three, and the desktop rule below turned the edge mask OFF entirely. The
+      head read "12 ON THE PASS · ROOM FOR 4" above six plates and a hard cut.
+      Those plates spoil and they are what a player pins to tickets, so a hidden
+      plate is money the game then charges them for. The class is `.mk-rail-more`
+      now and both sections carry one; there is no `.mk-line-more`.
+
+   🔴 AND IT IS NOT POSITIONED OVER THE RAIL ANY MORE, BECAUSE IT WAS TAKING A
+      LIVE BUTTON'S TAP. The old rule was `position:absolute; right:4px;
+      bottom:6px; z-index:5`, and the comment on it claimed it "overlaps only the
+      pull bar of a card that is by definition less than half on screen".
+      Measured with a real touchscreen tap and a capture-phase listener: the DECK
+      OVEN was 100% visible at 390×844 and its ⤴ PULL was 54% covered — the tap
+      went to the pill, which SCROLLS THE RAIL, so the pan being timed slid out
+      from under the thumb. At 360×640 the PREP BOARD's PULL was 76% covered.
+      The same rule was ALSO clipped by `.mk-body`'s bottom edge to 72% at 430
+      and to 13% at 390, because it hung off the bottom of a section whose bottom
+      is usually below the fold — so it was both in the way and invisible.
+      It is an ordinary flex child of the section head now: above the rail, on
+      screen whenever the rail's first pixel is, and structurally incapable of
+      overlapping anything, because the head row is not the rail. No z-index, no
+      inset, nothing to reason about.
+
+   ⚠ IT IS HIDDEN UNTIL `data-nav="1"`: a pill that is there when nothing is
+     hidden is a pill the player learns to ignore, and it then fails on the one
+     occasion it is telling the truth.
    ════════════════════════════════════════════════════════════════════════ */
-#mythic-kitchen-ov .mk-line-more {
-  position: absolute;
-  /* ⚠ BOTTOM-RIGHT, NOT CENTRE-RIGHT. Vertically centred it landed across the
-     countdown on the half-visible pan — the one number a player times a pull
-     against — so the affordance for reaching a station was drawn on top of the
-     information from another one. At the bottom edge it overlaps only the pull
-     bar of a card that is by definition less than half on screen. */
-  right: 4px;
-  bottom: 6px;
-  z-index: 5;
+#mythic-kitchen-ov .mk-rail-more {
+  flex: 0 0 auto;
   display: none;
   align-items: center;
   justify-content: center;
-  min-width: 34px;
-  padding: 8px 7px;
+  margin-left: 6px;
+  padding: 3px 9px;
   border-radius: 999px;
   border: 1px solid rgba(255,182,72,.6);
-  background: linear-gradient(180deg, rgba(38,24,12,.97), rgba(14,9,6,.97));
+  background: linear-gradient(180deg, rgba(58,36,16,.98), rgba(20,13,8,.98));
   color: var(--mk-amber);
   font-size: 9.5px;
   font-weight: 800;
   letter-spacing: .06em;
   text-transform: uppercase;
   line-height: 1.15;
-  white-space: normal;
+  white-space: nowrap;
   text-align: center;
   cursor: pointer;
-  box-shadow: 0 2px 10px rgba(0,0,0,.7);
-  max-width: 40%;
+  box-shadow: 0 1px 6px rgba(0,0,0,.6);
 }
-/* ⚠ `data-nav`, NOT `data-more`. See updateLineMore(): `data-more` is "is
+/* ⚠ `data-nav`, NOT `data-more`. See updateRailMore(): `data-more` is "is
    anything still cut off in the direction of travel" and drives the desktop
    fade; the pill has to stay reachable at the far end of the rail too, or the
    control that took you to the Fountain leaves you with no way back. */
-#mythic-kitchen-ov .mk-sec-line[data-nav="1"] .mk-line-more { display: inline-flex; }
-#mythic-kitchen-ov .mk-line-more:active { background: rgba(255,182,72,.28); }
+#mythic-kitchen-ov .mk-sec[data-nav="1"] .mk-rail-more { display: inline-flex; }
+#mythic-kitchen-ov .mk-rail-more:active { background: rgba(255,182,72,.28); }
+/* On the pass the head is a LIT fascia (dark ink on cream) and an amber-on-black
+   pill in the middle of it reads as a hole punched in the label rail. Same
+   shape, same verb, inked for the ground it is actually on. */
+#mythic-kitchen-ov .mk-pass > .mk-sec-head > .mk-rail-more {
+  border-color: rgba(70,34,4,.55);
+  background: linear-gradient(180deg, #a4560d, #7a3b06);
+  color: #fff3e2;
+  box-shadow: 0 1px 2px rgba(0,0,0,.35);
+}
+/* ⚠ THE COUNT YIELDS BEFORE THE PILL DOES. `.mk-sec-say` is the "12 on the pass
+   · room for 4" / "tap a pan to start" text; on a 360px phone the head has to
+   carry a label, that sentence and a 46px control, and the half that can be
+   dropped without losing a verb is the sentence. It truncates with an ellipsis
+   rather than wrapping the head onto two lines. */
+#mythic-kitchen-ov .mk-sec-say {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 🔴 AND THE HEAD TIGHTENS ITS TRACKING BEFORE IT DROPS A WORD. Measured at
+   390×844 with the pill up, the pass head read "13 ON THE PASS · ROOM …" — the
+   count is the one number on that fascia that the sim actually enforces, and
+   ellipsing it to make room for a scroll button is trading the fact for the
+   affordance when both fit. `.mk-sec-head` is set at .14em of tracking, which is
+   ~26 characters × 1.5px of pure air; at .05em the same sentence, the same font
+   and the same pill all fit at 360, 390 and 430. Only on a section that is
+   actually carrying a pill — everywhere else the wide tracking is the look. */
+#mythic-kitchen-ov .mk-sec[data-nav="1"] > .mk-sec-head,
+#mythic-kitchen-ov .mk-sec[data-nav="1"] .mk-pass > .mk-sec-head { letter-spacing: .05em; }
+#mythic-kitchen-ov .mk-sec[data-nav="1"] .mk-sec-say { letter-spacing: .04em; font-size: 10.5px; }
 
 /* the nudge that replaced a sentence printed across the plates */
 #mythic-kitchen-ov .mk-hint {
@@ -3586,20 +3696,13 @@
     -webkit-mask-image: linear-gradient(180deg, #000 0 calc(100% - 34px), rgba(0,0,0,.25) 100%);
             mask-image: linear-gradient(180deg, #000 0 calc(100% - 34px), rgba(0,0,0,.25) 100%);
   }
-  /* ⚠ At this width the line WRAPS instead of scrolling, so the pill goes back
-     to the bottom centre and points down. It keeps its hit target and its
-     press — clicking it here pages the wrapped rows, which is the same verb. */
-  #mythic-kitchen-ov .mk-line-more {
-    left: 50%; right: auto; bottom: 2px; top: auto;
-    transform: translateX(-50%);
-    max-width: none;
-    z-index: 3;
-    min-width: 0;
-    padding: 3px 12px;
-    letter-spacing: .1em;
-    white-space: nowrap;
-  }
-  #mythic-kitchen-ov .mk-sec-line[data-nav="1"] .mk-line-more { display: inline-flex; }
+  /* ⚠ At this width the line WRAPS instead of scrolling and the pass rail is a
+     long horizontal shelf, so the pill says "▾ 2 more pans" on one and
+     "▸ 5 more plates" on the other — updateRailMore() picks the arrow off the
+     axis that actually overflows. It stays in the head row at every width: the
+     desktop version of the old rule pinned it to the bottom centre of the
+     section, which is over the pans there too. */
+  #mythic-kitchen-ov .mk-rail-more { padding: 3px 12px; letter-spacing: .1em; }
   #mythic-kitchen-ov .mk-sec-bins  { grid-area: bins;  min-height: 0; overflow-y: auto; }
 
   /* ⚠ The shelf hangs at the BOTTOM of its row, because that is where a
@@ -3782,8 +3885,6 @@
         rgba(255,206,140,.30), rgba(255,180,96,.16) 55%, rgba(255,234,184,.74) 84%,
         rgba(255,190,110,.36) 93%, transparent 97%),
       radial-gradient(50px 21px at calc(50% - 5px) 80px, rgba(0,0,0,.46), transparent 78%);
-    -webkit-mask-image: none;
-            mask-image: none;
   }
   #mythic-kitchen-ov .mk-dish { width: calc(var(--mk-well, var(--mk-well-min, 122px)) - 10px); height: 122px; padding-top: 12px; }
   #mythic-kitchen-ov .mk-dish::before { top: 56px; width: 92px; height: 38px; }
@@ -3910,14 +4011,27 @@
 #mythic-kitchen-ov[data-touch="1"] .mk-btn,
 #mythic-kitchen-ov[data-touch="1"] .mk-step,
 #mythic-kitchen-ov[data-touch="1"] .mk-hud-close,
-#mythic-kitchen-ov[data-touch="1"] .mk-line-more {
+#mythic-kitchen-ov[data-touch="1"] .mk-rail-more {
   min-width: var(--mk-tap);
 }
 #mythic-kitchen-ov[data-touch="1"] .mk-hud-close,
 #mythic-kitchen-ov[data-touch="1"] .mk-step {
   width: var(--mk-tap); height: var(--mk-tap);
 }
-#mythic-kitchen-ov[data-touch="1"] .mk-line-more { min-height: var(--mk-tap); }
+#mythic-kitchen-ov[data-touch="1"] .mk-rail-more { min-height: var(--mk-tap); }
+/* 🔴 AND THE HEAD ROW ONLY GROWS TO A THUMB WHEN IT IS ACTUALLY CARRYING ONE.
+   A 46px head on every section at every moment costs the cooking ~54 rendered px
+   on a 360×640 phone whose play area is 244px to begin with — which is the OTHER
+   open finding in this slice, and paying for one fix out of another is how round
+   5 shipped a keyhole. `[data-nav="1"]` is stamped by updateRailMore() only when
+   the rail genuinely scrolls, so a section with nothing hidden costs exactly what
+   it cost before this pill existed. */
+#mythic-kitchen-ov[data-touch="1"] .mk-sec[data-nav="1"] > .mk-sec-head,
+#mythic-kitchen-ov[data-touch="1"] .mk-sec[data-nav="1"] .mk-pass > .mk-sec-head {
+  min-height: var(--mk-tap);
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
 /* The wave-off on the window card is the narrowest button in the acts row (Serve
    takes the width it deserves as the primary verb), and it is also the one that
    costs popularity when it is missed — so it gets the floor on BOTH axes rather
@@ -4121,4 +4235,273 @@
   border-radius: 50%;
   border: 1px solid rgba(255,77,94,.55);
   background: rgba(24,12,12,.9);
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   🪂 THE STRANDED BAR, THE RELIEF FLIGHT, THE RECEIPT'S LEDGER ROW, AND THE
+      PRICE ON A TICKET — the four surfaces round 6 added.
+   ------------------------------------------------------------------------
+   Every one of them exists because a number that was already computed had
+   nowhere on the screen to land. That is the same sentence as the last five
+   rounds' biggest finding, so these rules are deliberately plain: nothing here
+   is decoration, and each block names the value it is the consumer of.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── 🪂 THE STRANDED BAR ─────────────────────────────────────────────────────
+   Sits between the body and the strip. `hidden` until `Kitchen._stalled`, so it
+   costs the play area NOTHING in the ordinary state — which matters, because the
+   360×640 play area is the other open finding in this slice and a permanent bar
+   would have paid for one fix out of another. When it IS up, the kitchen cannot
+   cook, so a band of the screen is exactly what the news is worth. */
+#mythic-kitchen-ov .mk-stall {
+  position: relative;
+  z-index: 3;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 8px 4px;
+  padding: 6px 9px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,182,72,.55);
+  background:
+    linear-gradient(180deg, rgba(255,182,72,.18), rgba(0,0,0,.5)),
+    linear-gradient(180deg, #2a1c0d, #150e08);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 4px 14px rgba(0,0,0,.6);
+}
+#mythic-kitchen-ov .mk-stall[hidden] { display: none; }
+#mythic-kitchen-ov .mk-stall-txt {
+  flex: 1 1 auto; min-width: 0;
+  display: flex; flex-direction: column; gap: 1px;
+}
+#mythic-kitchen-ov .mk-stall-txt > b { font-size: 12px; color: #ffd88a; letter-spacing: .02em; }
+#mythic-kitchen-ov .mk-stall-txt > span {
+  font-size: 10.5px; line-height: 1.3; color: #d8c6a4;
+  /* two lines, then stop — this bar must never push the pass off a short phone */
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+#mythic-kitchen-ov .mk-stall-why { color: #ffb4bb; }
+#mythic-kitchen-ov .mk-stall .mk-btn { flex: 0 0 auto; white-space: nowrap; }
+
+/* ── 🚪 "OPEN THE DOORS — NOTHING TO COOK" ───────────────────────────────────
+   The same node as the gold `go` button, wearing the other verdict. It is NOT
+   disabled: the kitchen is the player's and they may open it if they like (a
+   convoy may be inbound). It simply stops being the most inviting object on a
+   screen where every pantry bin reads a red 0. */
+#mythic-kitchen-ov .mk-btn.warn {
+  border-color: rgba(255,182,72,.55);
+  background: linear-gradient(180deg, rgba(255,182,72,.14), rgba(0,0,0,.45));
+  color: #ffd88a;
+  animation: none;
+}
+
+/* ── 🪂 THE RELIEF FLIGHT CARD, at the top of the Supplies sheet ─────────── */
+#mythic-kitchen-ov .mk-relief-head[data-stalled="1"] b { color: #ffd88a; }
+#mythic-kitchen-ov .mk-relief {
+  display: flex; flex-direction: column; gap: 6px;
+  margin-bottom: 10px;
+  padding: 8px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,182,72,.4);
+  background: linear-gradient(180deg, rgba(255,182,72,.10), rgba(0,0,0,.34));
+}
+/* When there is genuinely nothing to cook this card is the only thing on the
+   sheet that can help, so it stops being quiet. */
+#mythic-kitchen-ov .mk-relief[data-stalled="1"] {
+  border-color: rgba(255,182,72,.8);
+  box-shadow: 0 0 18px rgba(255,176,80,.28);
+}
+#mythic-kitchen-ov .mk-relief-say {
+  font-size: 11px; line-height: 1.45; color: #d8c6a4;
+}
+#mythic-kitchen-ov .mk-relief-say b { color: #ffd88a; }
+#mythic-kitchen-ov .mk-relief-row {
+  border-radius: 10px;
+  border: 1px solid var(--mk-line);
+  background: rgba(0,0,0,.3);
+  padding: 7px 8px;
+}
+#mythic-kitchen-ov .mk-relief-row[data-open="0"] { opacity: .68; }
+#mythic-kitchen-ov .mk-relief-row[data-free="1"][data-open="1"] {
+  border-color: rgba(95,217,122,.6);
+  background: rgba(95,217,122,.10);
+}
+#mythic-kitchen-ov .mk-chip[data-good="1"] {
+  border-color: rgba(154,209,122,.6);
+  background: rgba(154,209,122,.14);
+  color: #b8e39b;
+}
+
+/* ── 💰 WHAT THIS ORDER IS WORTH, ON THE TICKET ──────────────────────────────
+   The board carried NO economic information at all: a four-line corp order and
+   a single hot dog looked identical, and the only way to learn one was worth
+   five times the other was to leave the tab and read the Menu sheet one recipe
+   at a time. This is the MENU price of the order — not a payout estimate, which
+   is the mistake that cost round 4 — so it is inked as a price tag and not as a
+   till reading. The Serve button prints the till's own figure when there are
+   plates to price (State.quoteTicket). */
+#mythic-kitchen-ov .mk-tk-val {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .02em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px dashed rgba(255,214,138,.5);
+  color: #ffd88a;
+  background: rgba(0,0,0,.32);
+  white-space: nowrap;
+}
+
+/* ── 🥫 THE RECEIPT'S OTHER HALF ─────────────────────────────────────────────
+   THE DAY read "2 SERVED · 271 CINDER · 75 TIPS · 70 XP" while the shift ate
+   ~450 food, 118 water and 34 dna out of the player's stash. The premise the
+   player asked for is a kitchen FED BY the rest of the game, and the screen
+   where a player forms their model of what the business costs never mentioned
+   it. One row of tiles, drawn only when something actually moved. */
+#mythic-kitchen-ov .mk-ate {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px dashed var(--mk-line);
+}
+#mythic-kitchen-ov .mk-ate-lab {
+  flex: 0 0 100%;
+  font-size: 9.5px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--mk-dim);
+}
+#mythic-kitchen-ov .mk-ate-tile {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--mk-line);
+  background: rgba(0,0,0,.3);
+  font-size: 10px;
+  letter-spacing: .06em;
+  color: var(--mk-dim);
+  white-space: nowrap;
+}
+#mythic-kitchen-ov .mk-ate-tile b {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--mk-ink);
+}
+#mythic-kitchen-ov .mk-ate-tile .mk-coin { width: 1.1em; height: 1.1em; }
+
+/* ── 🚫 A CRATE THE PLAYER CANNOT PAY FOR ────────────────────────────────────
+   On a sheet where nothing was affordable all 82 ×1/×5 controls rendered live,
+   on a 5,404px page, every one of them answering with a toast. The row STAYS
+   readable and tappable-looking — the provenance line under it is the thing that
+   tells the player which building to go and build — it is only the two buttons
+   that stop pretending. `.mk-btn:disabled` already carries opacity .4; this adds
+   the thing opacity cannot say, which is that the door is shut rather than the
+   row being irrelevant. */
+#mythic-kitchen-ov .mk-supply[data-afford="0"] { opacity: .82; }
+#mythic-kitchen-ov .mk-supply[data-afford="0"] .mk-buys .mk-btn:disabled {
+  border-style: dashed;
+  border-color: rgba(255,77,94,.45);
+  color: #ffb4bb;
+  background: rgba(0,0,0,.35);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   📐 THE SHORT PHONE — buying the play area back from the chrome.
+   ------------------------------------------------------------------------
+   🔴 THE TOUCH FIX WAS PAID FOR OUT OF THE PLAY AREA. Measured at 360×640 with
+   a full lane: `.mk-body` was 256 rendered px inside a 640px viewport against an
+   894px scroll height — 27% of the kitchen visible at a time — because HUD (92)
+   + band (179) + strip (56) + tabs (57) took 384. The consequence at rest is
+   four station cards sliced through the middle with no PULL row at all, and, on
+   a line that is entirely on fire, not one BURNT pill and not one countdown: the
+   section needs ~190px and was being given ~100.
+
+   🔴 AND THE HONEST ARITHMETIC FIRST, BECAUSE THE OBVIOUS TARGET IS NOT
+      REACHABLE AND PRETENDING OTHERWISE WOULD BE THE FIFTH ROUND OF THAT. At 46
+      rendered px per control — which is the non-negotiable from last round — the
+      floor is: road 65 + a window card carrying two thumb buttons ≈ 70 + strip
+      with END SHIFT ≈ 52 + five 46px tabs ≈ 52 = 239px of chrome before the HUD
+      draws a single pixel. "Body ≥ 380 of 640" asks for 260px of chrome. It
+      cannot be had without deleting the road, the window verbs, or the tab bar.
+      So this block takes every pixel that CAN be taken without removing a
+      control or a number — and the other half of the fix is that the LINE stops
+      needing 190px on a short phone (see the pan rule at the bottom).
+
+   ⚠ NOTHING IN HERE REMOVES INFORMATION. Not the vault line, not the rush pips,
+     not the xp bar. Each rule is padding, leading or a layout that shares a row
+     instead of adding one. A HUD that drops a number to save 8px is a HUD that
+     will be re-added next round with a comment explaining why it was needed.
+   ⚠ 700px, not a width. This is about how TALL the phone is: a 430×932 has the
+     same 46px controls and no shortage at all (body 464). Gating on width would
+     compact a device that does not need it.
+   ════════════════════════════════════════════════════════════════════════ */
+@media (max-height: 700px) and (max-width: 819px) {
+  /* ── THE HUD: same five chips, same five numbers, tighter leading ────── */
+  #mythic-kitchen-ov .mk-hud { gap: 4px 6px; padding: 4px 8px; }
+  #mythic-kitchen-ov .mk-hud-pop,
+  #mythic-kitchen-ov .mk-hud-lvl,
+  #mythic-kitchen-ov .mk-hud-cash,
+  #mythic-kitchen-ov .mk-hud-clock { padding: 2px 7px; gap: 5px; }
+  #mythic-kitchen-ov .mk-face { font-size: 17px; }
+  #mythic-kitchen-ov .mk-clock { font-size: 13px; }
+  #mythic-kitchen-ov .mk-day { font-size: 9.5px; }
+  #mythic-kitchen-ov .mk-take { font-size: 17px; }
+  #mythic-kitchen-ov .mk-take-sub { font-size: 8.5px; }
+  #mythic-kitchen-ov .mk-rush > i { height: 9px; }
+
+  /* ── THE BAND: the two verbs share the card's rows instead of adding one ──
+     🔴 THE ACTS ROW WAS THE SINGLE MOST EXPENSIVE THING ON THE SCREEN. As a
+     full-width row under the order it costs 46 rendered px plus its gap, on top
+     of everything the card already draws. As a THIRD COLUMN beside the order
+     lines it costs nothing at all on a card that is already ~54px of text — the
+     buttons sit in the space to the right of a two-line order that was empty.
+     ⚠ THIS IS NOT ROUND 5'S REJECTED LAYOUT. That one stacked Serve OVER Wave
+       vertically in the third column, which is 2 × 46 + gap ≈ 100px and made the
+       card TALLER. They stay a horizontal pair; only the pair's row changes. */
+  #mythic-kitchen-ov .mk-pin { padding: 4px 8px 0; }
+  #mythic-kitchen-ov .mk-pin-card[data-slot="window"] {
+    grid-template-columns: auto minmax(0,1fr) auto;
+    grid-template-areas: "mood who acts" "mood items acts" "mood vow acts" "bar bar bar";
+    gap: 2px 6px;
+    padding: 4px 6px;
+  }
+  #mythic-kitchen-ov .mk-pin-card[data-slot="window"] > .mk-pin-acts {
+    grid-area: acts;
+    align-self: center;
+    margin: 0;
+  }
+  #mythic-kitchen-ov .mk-pin-it { font-size: 10px; }
+  #mythic-kitchen-ov .mk-pin-name { font-size: 11px; }
+
+  /* ── THE STRIP AND THE TABS: padding only; both keep their 46px controls ── */
+  #mythic-kitchen-ov .mk-strip { padding: 4px 8px; }
+  #mythic-kitchen-ov .mk-tabs { padding: 3px 6px; }
+  #mythic-kitchen-ov .mk-tab .mk-ic { font-size: 15px; }
+
+  /* ── AND THE LINE STOPS NEEDING 190px ────────────────────────────────────
+     🔴 THE OTHER HALF, AND THE HALF THAT ACTUALLY CLOSES THE FINDING. The pan is
+     `126px / zoom` tall because a 46px PULL bar was bolted to the bottom of a
+     pan drawn for a mouse. On a phone this short the pan's BODY does not need 80
+     rendered px to carry a name, a build stack, two meters and a flag — it needs
+     the bar (46, untouched, it is a control) and enough above it to read the
+     countdown and the BURNT pill. At 106 the whole line section — head, hood,
+     station label, pans, PULL bars, flags and meters — fits in what is left of
+     the body, which is the acceptance test this block exists for.
+     ⚠ THE BAR ITSELF IS NEVER TOUCHED. Every number below is the pan around it.
+       A control is 46 rendered px on every device, full stop. */
+  #mythic-kitchen-ov[data-touch="1"] .mk-slot {
+    min-height: calc(106px / var(--mk-z, 1));
+    padding-bottom: calc(62px / var(--mk-z, 1));
+  }
+  #mythic-kitchen-ov[data-touch="1"] .mk-slot[data-phase="empty"] { min-height: calc(84px / var(--mk-z, 1)); }
+  #mythic-kitchen-ov[data-touch="1"] .mk-slot-bars { bottom: calc(50px / var(--mk-z, 1)); }
+  #mythic-kitchen-ov[data-touch="1"] .mk-slot-flag { bottom: calc(60px / var(--mk-z, 1)); }
 }

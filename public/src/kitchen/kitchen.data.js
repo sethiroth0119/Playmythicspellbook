@@ -54,7 +54,8 @@
           instead of the water / dna / supplies the core line wanted;
        3. the RELIEF DROP (§🪂) — the only Cinder-only door in the feature, and
           what comes out of it is not pantry stock but live `food` and `water`
-          landing in the ledger at twelve times the game's own board price.
+          landing in the ledger at FIFTEEN times the game's own board price —
+          except for the bottom rung, which is free, dry-gated and once a day.
      assertDataSane() checks all of that: no crate may cost Cinder alone, no
      recipe may have an all-Cinder cheapest route, no recipe may be buildable
      without spending live `food`, and the Cinder → parcel → dish → Cinder loop
@@ -213,11 +214,14 @@ const _SUPPLY_CORE = [
         supplies / fuel / essence the core line wanted. It is the rung for a
         player whose farm is running but whose Gene Vault is not — you keep
         cooking without a dna line, and you pay a stranger for the privilege.
-     3. 🪂 THE RELIEF DROP (RELIEF, below). Cinder → LIVE RESOURCES, at roughly
-        twelve times what the game itself values them at. It is the only door in
-        the feature that takes Cinder alone, and what comes out the other side
-        is not pantry stock — it is `food`, `water`, `supplies` and `dna` landing
-        in the 14-id ledger, where the rest of the game can see them. That is the
+     3. 🪂 THE RELIEF DROP (RELIEF, below). Cinder → LIVE RESOURCES, at
+        FIFTEEN times what the game itself values them at — see
+        ECON.RELIEF_MARKUP, and ⚠ check the digit against the table rather
+        than trusting this sentence: it said "seven" for a round after the table
+        said twelve. It is the only door in the feature that takes Cinder alone,
+        and what comes out the other side is not pantry stock — it is `food` and
+        `water` landing in the 14-id ledger, where the rest of the game can see
+        them. That is the
         whole trick, and it is what lets both halves of the round's requirement
         be true at once: a player with an empty ledger is NEVER refused with no
         way out, and there is still no way to cook anything without spending
@@ -493,7 +497,7 @@ export const SUPPLY_RECIPES = _SUPPLY_CORE.concat(_SALVAGE_LINES);
 
    💸 THE PRICE IS DERIVED FROM THE GAME'S OWN VALUATION, NOT INVENTED.
       ECON.RES_RETAIL_CINDER is the cold-storage board (index.html:195218) and
-      ECON.RELIEF_MARKUP is the multiple of it a relief flight charges. Seven
+      ECON.RELIEF_MARKUP is the multiple of it a relief flight charges. FIFTEEN
       times retail reads as extortionate because it IS extortionate, and it is
       the number that keeps the loop shut: assertDataSane()'s RELIEF LOOP check
       recomputes, for EVERY recipe and by the CHEAPEST route the game offers,
@@ -501,7 +505,13 @@ export const SUPPLY_RECIPES = _SUPPLY_CORE.concat(_SALVAGE_LINES);
       pay multipliers the game hands out. It must not, for any dish, ever. If
       you lower RELIEF_MARKUP that check is what fails, and the correct response
       is to put it back rather than to soften the check.
-      ⚠ AND IT IS NOT AN ARBITRAGE DOOR FOR THE WIDER GAME EITHER. At seven
+      ⚠ THIS PARAGRAPH SAID "SEVEN" FOR A ROUND AFTER THE TABLE SAID TWELVE,
+        which is the same class of defect as the POP_WAVE inversion above: a
+        comment asserting a RELATIONSHIP that the data had stopped honouring.
+        It is written out as a word here and as a digit in ECON, and
+        assertDataSane() now checks the RATIO rather than either number, so the
+        wall is enforced even when the prose drifts again.
+      ⚠ AND IT IS NOT AN ARBITRAGE DOOR FOR THE WIDER GAME EITHER. At fifteen
         times the board price nobody buys `food` here to feed a Gene Vault; the
         Hydroponics Bay is two orders of magnitude cheaper per unit. This is a
         Cinder SINK in a game that has spent commits removing Cinder faucets
@@ -583,16 +593,28 @@ export const SUPPLY_RECIPES = _SUPPLY_CORE.concat(_SALVAGE_LINES);
       the table.
    ════════════════════════════════════════════════════════════════════════════ */
 const _RELIEF_RAW = [
-  /* 🪂 THE FREE STEP. `whenDry` + `perDay` are the two gates; see above. Sized
-     at roughly four Hot Dogs, which is deliberately not a shift — it is enough
-     to prove the kitchen still works and nowhere near enough to run it, and
-     that gap is the sentence the whole feature is built on: go and get some
-     real food. */
-  { id:'rel_drop',   name:'Relief Drop',  icon:'🪂', out:{ food:5,  water:4  }, minLevel:1,
+  /* 🪂 THE FREE STEP. `whenDry` + `perDay` are the two gates; see above.
+     🔴 SEVEN food IS NOT A FEEL, IT IS THE CHEAPEST COMPLETE CRATE SET ON THE
+        BOARD, AND IT WAS FIVE. The shop sells WHOLE crates, so a parcel is only
+        a rescue if it can buy a whole set for something on the level-1 menu:
+        sal_roll + sal_sausage + sal_mustard = 7 food + ◈110 → five Hot Dogs.
+        At 5 food it bought no complete set for any dish at any level, and the
+        measured result on a fresh account was days 3–10 serving 0, 1, 0, 2, 0,
+        2, 0, 1 while the drop landed every single morning. See
+        ECON.RELIEF_FREE_DAILY_CINDER_MAX for the whole derivation and for why
+        the ceiling moved with it.
+     Five Hot Dogs is still deliberately not a shift — it is enough to prove the
+     kitchen works and nowhere near enough to run it, and that gap is the
+     sentence the whole feature is built on: go and get some real food.
+     ⚠ It carries `water` it does not strictly need for the Hot Dog set, and
+       that is the fixed-pallet argument doing its job — the surplus is real
+       ledger stock the rest of the game can use, and it stops the parcel being
+       a shopping list tuned to one dish. */
+  { id:'rel_drop',   name:'Relief Drop',  icon:'🪂', out:{ food:7,  water:4  }, minLevel:1,
     free: true, whenDry: true, perDay: 1,
     blurb:'What the flight leaves when your yard is empty. One drop a day, and only when it is.' },
   { id:'rel_tin',    name:'Ration Tin',   icon:'🥫', out:{ food:2,  water:2  }, minLevel:1,
-    blurb:'One tin, one jerrycan. Twelve times what it is worth, and worth it exactly once.' },
+    blurb:'One tin, one jerrycan. Fifteen times what it is worth, and worth it exactly once.' },
   { id:'rel_pallet', name:'Relief Pallet',icon:'🪂', out:{ food:10, water:10 }, minLevel:1,
     blurb:'A whole pallet, air-dropped, at a price that tells you what it cost somebody else.' },
 ];
@@ -1615,6 +1637,23 @@ export const ECON = {
   POP_START: 50,
   POP_MIN: 0,
   POP_MAX: 100,
+  /* 🔴 THE HORIZON, NOT THE WALL. kitchen.state.js's bumpPop() damps a delta
+     by how much ROOM is left in the direction it pushes, but only inside the
+     last this-many points of that room:
+         room = delta > 0 ? (POP_MAX - pop) : (pop - POP_MIN)
+         if (room < POP_SOFT_MARGIN) delta *= room / POP_SOFT_MARGIN
+     WHY IT EXISTS: a bare add-and-clamp gave the meter two dead zones. Ten
+     consecutive days per skill tier, level 12 + heat lamp, GOD/EXPERT/GOOD
+     ended 93.8 / 93.5 / 92.0 — everybody roughly competent walked into the 100
+     rail and stopped — and SLOPPY read 24.4, 11.6, then EIGHT CONSECUTIVE DAYS
+     OF EXACTLY ZERO. A clamped meter is not feedback, it is a wall you have
+     already hit.
+     ⚠ 0 RESTORES THE HARD CLAMP AND BOTH DEAD ZONES WITH IT. This is not a
+       safety rail with a sensible "off"; it is the mechanic. It is declared
+       here rather than left as kitchen.state.js's fallback because it is
+       tuning, and tuning belongs where the designer is looking — but a ZERO
+       here is a regression, not a disable. */
+  POP_SOFT_MARGIN: 40,
   /* 🔴 POPULARITY IS SIGNED BY QUALITY, PER UNIT, WEIGHTED BY recipe.pop.
      serveTicket() computes the mean of a per-unit score across everything in
      the ticket: a raw unit scores POP_RAW, a good one POP_SERVE, a perfect one
@@ -1678,9 +1717,26 @@ export const ECON = {
                                         on top of the first, and the clean-day
                                         bonus (−decay × 2) could not reach it on
                                         any day that lost one ticket.
-       POP_BURN, POP_WAVE, POP_TURNAWAY, POP_BALK, POP_JAM, POP_JUMP: all scaled
-       by the same 0.55 as POP_LOST, so every RATIO the previous rounds tuned is
-       preserved exactly and only the magnitude moved.
+       POP_BURN, POP_TURNAWAY, POP_BALK, POP_JAM, POP_JUMP: scaled by 0.55.
+
+     🔴🔴 AND THAT LAST LINE USED TO INCLUDE POP_WAVE, AND IT WAS A LIE THAT
+        INVERTED THE ONLY DECISION IN THE DRIVE-THRU LANE. It read "POP_BURN,
+        POP_WAVE, POP_TURNAWAY, POP_BALK, POP_JAM, POP_JUMP: all scaled by the
+        same 0.55 as POP_LOST, so every RATIO the previous rounds tuned is
+        preserved exactly". Check the arithmetic the sentence is making a claim
+        about: POP_LOST went −3.5 → −1.0, which is 0.286, NOT 0.55. The
+        auxiliaries were scaled by 0.55 and POP_LOST by 0.286, so every ratio
+        AGAINST POP_LOST was silently doubled — and one of those ratios had a
+        design rule hanging off it. POP_WAVE went −2.0 → −1.1 while the thing
+        it is supposed to be CHEAPER THAN went −3.5 → −1.0, so waving a car
+        off came to cost 10% MORE than letting it time out. Meanwhile
+        drivethru.js:3367 and kitchen.render.js:2737 both still tell the player,
+        in the imperative, "wave early, eat a smaller hit" — a confirm dialog
+        in front of a choice that was strictly worse than doing nothing.
+        A comment that asserts a RATIO must be checked against the ratio. This
+        one was not, for a round, and the ladder below is now ASSERTED in
+        assertDataSane() ("THE FAILURE LADDER") so the next reader cannot
+        re-invert it by editing one line.
 
      🔴 WHY ALMOST ALL OF THE GAIN MOVED INTO POP_PERFECT_BONUS (0.10 good vs
         0.46 perfect, a 4.6× spread). Popularity is a per-ticket meter, so it is
@@ -1700,13 +1756,125 @@ export const ECON = {
        eight-seed spread. Measured after this retune, level 12, one perfect bot:
        popularity mean 74.3, sd 5.7, range 65..82 (it was mean 27.7, sd 23.0,
        range 0..69), and the 60-day curve breathes 74 → 100 → 54 → 0 → 36
-       instead of sitting on the floor from day 2 onward. */
+       instead of sitting on the floor from day 2 onward.
+
+     🔴🔴 THE TEN-DAY CURVE, RE-MEASURED AT TWELVE SEEDS, AND WHAT IT SAYS
+        ABOUT THE ONE ACCEPTANCE CRITERION THESE NUMBERS STILL DO NOT MEET.
+     ═══════════════════════════════════════════════════════════════════════════
+     Ten CONSECUTIVE days per skill tier, level 12 + heat lamp, twelve seeds,
+     day-10 popularity (scratch r9d/days12.mjs — the round-4 measurement, run at
+     enough seeds to have a standard error instead of an anecdote):
+         GOD     69.0  sd 2.5  se 0.7    meanQ 1.172   grades AAAAAASAAAAA
+         EXPERT  67.4  sd 5.5  se 1.6    meanQ 1.182   grades AAAAAAAAASAS
+         GOOD    64.5  sd 4.7  se 1.4    meanQ 1.170   grades ABSAAAAAAAAA
+         AVERAGE 27.9  sd 3.4  se 1.0    meanQ 1.029   grades BBCBBBBCCBCC
+         SLOPPY  17.0  sd 2.0  se 0.6    meanQ 0.942   grades CCCCCCCCCCBC
+     THE GOOD HALF: the meter is MONOTONE across all five tiers, the bottom is
+     alive (SLOPPY 17.0, never the pinned 0.0 of round 4), and GOOD→AVERAGE is
+     36.6 points. A player can read where they are.
+     THE HALF THAT IS NOT MET, AND WHY IT IS NOT A TUNING PROBLEM: the standing
+     acceptance bar is GOD/EXPERT/GOOD ≥8 points apart pairwise. They are 1.6,
+     2.9 and 4.5 apart. Look at the meanQ column before reaching for a constant:
+     **1.172 / 1.182 / 1.170 — the top three tiers cook IDENTICAL food.** GOD is
+     a fifty-actions-a-second zero-millisecond machine and GOOD is a 700ms
+     four-actions-a-second human, and at level 12 the RACK saturates before
+     either of their hands do, so they catch the same fraction of the perfect
+     window and lose the same fraction of their tickets. The only axis they
+     differ on is THROUGHPUT — GOD serves about 8% more dishes — and this meter
+     is deliberately blind to throughput (see "WHY THE MEAN AND NOT THE SUM",
+     three paragraphs up: summing would make reputation a function of order
+     size). No popularity constant can resolve three performances that are the
+     same on the axis the meter reads.
+     ⚠⚠ THREE LEVERS WERE SWEPT AND ALL THREE ARE RECORDED HERE SO THE NEXT
+        ROUND DOES NOT SPEND ITSELF RE-DERIVING THEM.
+       1. PERFECT_MS (r9d/sweep.mjs, 3 seeds, day-10 means). Non-monotone in the
+          middle and it collapses the bottom:
+            1200 → 69.1 / 66.7 / 64.7 / 25.2 / 17.5   (shipped)
+            1000 → 69.1 / 66.7 / 65.4 / 22.3 / 17.5
+             900 → 69.1 / 60.6 / 60.9 / 24.1 / 17.5   (EXPERT below GOOD)
+             800 → 69.1 / 63.2 / 35.8 / 17.4 / 17.5   (AVERAGE = SLOPPY)
+          No value separates the top three, and under 900 the meter stops being
+          able to tell a distracted human from a bad one. The block at
+          ECON.PERFECT_MS already argued 1,200 on phone grounds; this is the
+          same conclusion arrived at from the other end.
+       2. A UNIFORM SCALE ON EVERY POPULARITY MAGNITUDE (r9d/kscale.mjs,
+          r9d/kscale2.mjs, 5 seeds). Equilibrium is invariant under a uniform
+          scale — only the NOISE and the convergence rate move — so this is the
+          honest version of "damp the delta instead of accumulating":
+            k=1.0                 68.4 / 65.5 / 62.2 / 27.2 / 16.7  (sd 1.8 5.8 5.7 4.1 1.9)
+            k=0.5                 69.5 / 67.4 / 61.1 / 29.9 / 22.7  (AVERAGE pinned at 29.9 sd 0.7 — a NEW dead zone, on POP_REVERT_BELOW exactly as the old one sat on 2)
+            k=0.5, BELOW 15       69.5 / 67.4 / 61.1 / 27.5 / 12.6  (sd 2.9 3.6 3.4 2.3 1.0)
+            k=0.7, BELOW 21       70.9 / 66.6 / 61.0 / 29.0 / 14.7
+          The third row is the best of them: it cuts the mid-tier seed noise
+          almost in half and gets GOD−GOOD to 8.4. It was NOT shipped, and the
+          reason is written down rather than assumed: it buys 2 points on one
+          pair by halving fifteen constants AND the reversion threshold (whose
+          own derivation runs to forty lines), and in the same run GOOD's letter
+          column went ABSAA → CCAAA. The letter is the thing that finally
+          separates skill; trading it for two points of meter is the wrong way
+          round. If a future round wants it, take the whole row — the scale AND
+          the threshold — and re-run the letter distribution first.
+       3. POP_SOFT_MARGIN (r9d/margin.mjs, 5 seeds). It compresses the top by
+          damping the leaders more than the chasers, so the obvious move is to
+          shrink it — and it does the opposite of what that predicts, because
+          all three top tiers simply rise together into the rail:
+             40 → 68.4 / 65.5 / 62.2 / 27.2 / 16.7   (shipped)
+             25 → 75.7 / 75.7 / 73.1 / 24.9 / 13.5
+             15 → 85.4 / 85.1 / 81.1 / 22.6 /  7.4
+          At 15 the top three are within 4.3 of each other AND parked at 85.
+          40 is the measured best of the three on both separation and floor.
+     🔴 SO THE LEVER, IF THE CRITERION IS KEPT, IS THE RACK AND NOT THE METER.
+        The top three tiers converge because slots and cook times bind before
+        hands do. Make HANDS the binding constraint at high level — more slots
+        than two thumbs can service — and throughput separates, which shows up
+        in popularity through the demand loop (a faster kitchen sustains a
+        higher equilibrium) without touching a single POP_ constant. That is a
+        capacity question for UPGRADES and capacityModel(), not a tuning
+        question for this block. */
   POP_SERVE: 0.10,          // a good unit. × recipe.pop × popGainMul(upgrades)
   POP_PERFECT_BONUS: 0.36,  // extra, per unit, for the ones caught in the window
   POP_RAW: -0.35,           // 🔴 a raw unit COSTS reputation. See above.
   POP_LOST: -1.0,           // 🔴 STILL ASYMMETRIC — 2.2 perfect tickets to undo
   POP_BURN: -0.65,          //    one lost one. Just no longer six of them
-  POP_WAVE: -1.1,           //    against a decay you could never out-run.
+                            //    against a decay you could never out-run.
+  /* ✋ THE WAVE-OFF, RE-DERIVED FROM POP_LOST RATHER THAN INHERITED FROM A
+     SCALING THAT DID NOT APPLY TO IT. 0.57 × POP_LOST is the ratio the two
+     surviving comments in drivethru.js and kitchen.render.js are written
+     against (they quote the pre-retune pair, −2.0 against −3.5, which is
+     0.571), so pinning the ratio rather than the magnitude makes their
+     ARGUMENT true again at the current scale — wave early, eat the smaller
+     hit, free the slot, save the three cars behind. Both files still quote the
+     old absolute numbers in prose and are not this file's to edit; the ratio is.
+
+     ⚠ AND IT IS NOT THE CHEAPEST FAILURE, DELIBERATELY. A wave-off is an
+     abort of a customer who has already ORDERED, so it sits above every way of
+     losing somebody who never got that far. The whole ladder, as a fraction of
+     POP_LOST, smallest first — assertDataSane() checks this order holds:
+         BALK      0.14  drove past a full lane. Mostly a compliment.
+         JUMP      0.33  you let somebody cut. Everyone behind saw.
+         TURNAWAY  0.40  walked in, saw the board, walked out.
+         JAM       0.50  queued, never got to order, gave up.
+         WAVE      0.57  ← YOUR decision, on somebody who ordered.
+         BURN      0.65  you ruined food.
+         LOST      1.00  you took the order and never delivered it.
+     ⚠ It must stay strictly BELOW POP_BURN too: waving a car off to free the
+     window is triage, and ruining a pan is not.
+
+     🔴 MEASURED, TWO ARMS, AND THIS IS THE ONLY THING THAT SETTLES IT.
+     Identical seeds, identical cooking, level 12 + heat lamp, one full day
+     (scratch r9d/twoarm.mjs). Arm A never waves. Arm B waves the front car once
+     its patience is under 30% and its order is still not ready — "this one is
+     going to time out anyway and take the three behind it with it", which is
+     the decision the control exists for:
+         POP_WAVE −1.1 (shipped round 5)  B ahead on popularity 3/6 seeds,
+                                          mean 66.1 against 65.7 — a coin flip
+         POP_WAVE −0.57 (this)            B ahead 4/6 seeds,
+                                          mean 68.9 against 65.7
+     B serves MORE in both arms (freeing the window early is real upside on its
+     own), so at −1.1 the reputation charge was cancelling a benefit the player
+     had correctly earned. Re-run this before changing the number: a wave-off
+     that does not beat inaction is a confirm dialog in front of a trap. */
+  POP_WAVE: -0.57,          // = 0.57 × POP_LOST. See the ladder above.
   POP_DECAY_PER_DAY: -0.6,
   /* 🔴 MEAN REVERSION — THE RECOVERY THE OLD CURVE HAD NO ROOM FOR.
      A bad week should cost a bad week, not the account. These keys say: below
@@ -1806,6 +1974,95 @@ export const ECON = {
                      🔴 This is the number that makes drowning compound. */
   POP_BALK: -0.14,
   POP_TURNAWAY: -0.40,
+
+  /* ── 📋 THE REPORT CARD (kitchen.state.js gradeParts / gradeFor) ─────────
+     🔴🔴 THESE FIVE SPENT A ROUND BEING READ AND NEVER DECLARED, WHICH IS THE
+        MOST EXPENSIVE SHAPE A MISSING NUMBER HAS. gradeFor()'s own comment says
+        "The cuts are ECON keys, swept against the measured distribution" — and
+        `Object.keys(ECON).filter(k => k.startsWith('GRADE'))` returned `[]`
+        against 153 keys. Every number the day's letter is built from was
+        running on kitchen.state.js's `EC(key, fallback)` second argument, so a
+        designer looking for the grade cuts where BOTH comments said they were
+        found nothing, and the one file that is supposed to hold every number in
+        the feature held none of these. CLAUDE.md: "All operation pricing goes
+        through the one ECON table." A report card is pricing — it prices the
+        player.
+     ⚠ THE VALUES BELOW ARE THE LIVE, MEASURED ONES, COPIED OFF THE FALLBACKS
+       THEY REPLACE — NOT ZEROES AND NOT ROUND NUMBERS. Declaring a key with a
+       zero here is strictly worse than leaving it undeclared, because ECON WINS:
+       kitchen.state.js reads `EC('GRADE_MIN_S', 0.92)`, so a `GRADE_MIN_S: 0`
+       ships a report card that hands out S grades to everybody. POP_REVERT_BELOW
+       spent a whole round as dead data for exactly this reason. */
+  GRADE_MIN_SHIFT_MS: 300000,
+  /* ↑ The shortest shift that earns a LETTER at all; below it gradeFor()
+     returns '—' and the report shows the two axes alone. MEASURED: the same bot
+     on 8 seeds scored TWO S grades on a 120,000ms shift and NONE on a full
+     780,000ms day, from identical play — CRAFT starts near 1.000 because
+     nothing has had time to spoil and the SERVICE ceiling has not had time to
+     bind. The title screen prints "Last shift B" as a persistent claim about
+     the player, so a twenty-minute mobile session was systematically earning a
+     better one than a full day. 300,000ms is five in-game hours of a twelve-hour
+     day: enough sample for the ceiling to bind, short enough that a real phone
+     session still gets a letter. */
+  GRADE_CAP_DUTY: 0.70,
+  /* ↑ The fraction of capacityModel()'s theoretical rack a real pair of
+     thumbs sustains. 🔴 NOT A FUDGE — THE MISSING HALF OF THE MODEL, which
+     capacityModel() says about itself: it "ignores the player's hands
+     entirely". Its raw figure is every slot cooking 100% of the time with
+     nobody plating, serving or restocking — 26.9 dishes/hour at level 12
+     against 17.9 for a bot with a ZERO-millisecond reaction and fifty actions a
+     second. Grading against the underated rack made the ceiling unreachable by
+     50%, the denominator never bound, and the service axis went back to being
+     share-of-custom in a new hat. This is the one number here fitted to a
+     measurement rather than swept off a distribution. */
+  /* 🔴 THE FOUR LETTER CUTS ON gradeParts().score, SWEPT AND NOT TYPED. Round
+     4's were round numbers (0.98 / 0.90 / 0.75 / 0.55) fitted to nothing, and
+     the top three sat above the entire human range — 60 of 72 shifts graded B.
+     These came off the measured score distribution of six skill tiers × 12
+     seeds AT THE GAME'S OWN OUTPUT, plus a maxed kitchen and a day-one kitchen
+     for the ends:
+         0.58  DISTRACT tops out at 0.555, SLOPPY bottoms at 0.615
+         0.70  SLOPPY tops out at 0.690, AVERAGE straddles it
+         0.79  AVERAGE tops out at 0.785, GOD bottoms at 0.795
+         0.92  a level-20 all-owned clean sheet scores 0.94..0.99
+     ⚠ RE-SWEEP AFTER ANY MOVE TO PERFECT_MS, THE Q_* SCALE, GRADE_CAP_DUTY OR
+       capacityModel() — all four move the distribution these sit in, and a cut
+       that has stopped matching its distribution is the exact bug this replaced.
+     ⚠ assertDataSane() checks only that they are strictly ordered inside
+       (0,1]. It CANNOT check that they still match the distribution; nothing
+       pure can. That is what the sweep is for. */
+  GRADE_MIN_C: 0.58,
+  GRADE_MIN_B: 0.70,
+  GRADE_MIN_A: 0.79,
+  GRADE_MIN_S: 0.92,
+  /* 🔴 AND THE TOP LETTER IS REACHABLE BY SKILL AGAIN, WHICH IT WAS NOT.
+     The S rider ALSO requires a clean sheet, and it used to read `today.burnt`
+     — which is TWO different failures added together: a SLOT that crossed
+     burnAt (neglect) and a PLATE that rotted on the pass (structure, and the
+     game bins it FOR you). Split across 6 tiers × 12 seeds at level 12, the
+     frame-perfect fifty-actions-a-second bot books 0.0 slot burns and 5.1
+     spoiled plates, and clean sheets were 0 of 72 shifts across EVERY tier.
+     Adding `up_warmrail` — minLevel 27 — halved spoilage and S appeared
+     immediately. So the top of a five-letter scale was gated on owning a
+     level-27 upgrade, not on cooking well. kitchen.state.js now charges the
+     rider on `burnt − spoiled`; measured at level 12 + heat lamp on this data,
+     the GOD tier collects S grades on day 1, day 2 and day 8 of a ten-day run.
+     There is no ECON key for that split on purpose: it is a question about
+     which TALLY the rider reads, not a price. */
+  /* ── 🚪 THE DRY GATE (kitchen.state.js dryNow / reliefWatch) ──────────── */
+  DRY_CHECK_MS: 500,        // throttle on the latched "are the doors shut" read.
+                            // dryCheck() prices a restock basket per menu row and
+                            // every price is a getRes() across the bridge, so it
+                            // must not run 60×/second. Busted early by any `rev`
+                            // change, so a purchase is still felt immediately.
+  RELIEF_AUTO_MS: 3000,     // 🔴 how long the kitchen must have been PROVABLY
+                            // stalled before the free parcel lands by itself.
+                            // Firing on the instant would drop a pallet into the
+                            // ordinary gap between plating one burger and
+                            // starting the next, which is not a stranded player,
+                            // it is a busy one. See the RELIEF block: the drop is
+                            // gated on `cookable.length === 0`, and this is how
+                            // long that has to have been TRUE for.
 
   /* ── XP / LEVEL ──────────────────────────────────────────────────────────
      xpForLevel(lv) = XP_L1×n + XP_CURVE×n²   where n = lv−1  (so level 1 = 0).
@@ -2167,8 +2424,10 @@ export const ECON = {
      (every crate carries food now, and convoyGuardOk() has a fourth wall that
      measures that directly) — which is exactly why it must stay: it is the one
      that does not depend on the food legs being right. 2× is the smallest honest statement of "a convoy
-     moves value, it does not mint it". Today the margin is 7×; the check exists
-     so that a future cheap supply line cannot quietly close it. */
+     moves value, it does not mint it". Today the margin is 2.7x the bar
+     (◈21.33 against ◈8) — convoyGuardOk() prints both, so do not trust this
+     sentence over `__mk.debug()`. The check exists so that a future cheap
+     supply line cannot quietly close it. */
   CONVOY_CINDER_GUARD_MULT: 2.0,
   /* 🏷 WHAT A UNIT OF EACH LIVE RESOURCE IS WORTH IN CINDER ON THE OPEN MARKET.
      The game's own numbers (index.html:195218, the cold-storage board) and
@@ -2205,7 +2464,24 @@ export const ECON = {
        peak). The stricter bar costs 20% on this number and removes an argument
        about what a determined player can hold for how long. Take the argument
        off the table. */
-  RELIEF_MARKUP: 12,
+  RELIEF_MARKUP: 15,
+  /* 🔴 AND THE WALL NOW HAS A DECLARED THICKNESS INSTEAD OF JUST A SIGN.
+     RELIEF_MARKUP 12 satisfied "the loop must lose money" by 7% on the tightest
+     dish — the Margherita, end to end out of a Ration Tin, cost 1.070× its own
+     best-case payout. A guard whose margin is 7% is a guard that a routine
+     basePrice nudge flips, silently, into round 4's Cinder machine; and the
+     comment two blocks up was calling that same wall "seven times over" and
+     "absurd". Swept (scratch r9d/markup.mjs), tightest dish at each markup:
+         7× → 0.685×  (OPEN — this is the hole the previous round found)
+        12× → 1.070×
+        14× → 1.225×
+        15× → 1.302×  ← shipped
+        20× → 1.687×
+     The check below demands this multiple rather than merely ">1", so the
+     margin is a stated design quantity that a future edit trips 25% BEFORE the
+     printer actually opens. ⚠ If it ever fails, raise RELIEF_MARKUP or lower
+     the dish's price — do not lower this. */
+  RELIEF_LOOP_MIN_MARGIN: 1.25,
   /* 🔴 THE CEILING ON THE ONE FREE THING IN THE FEATURE. The free `rel_drop`
      (RELIEF, above) is gated on being genuinely dry and capped at one per
      in-game day, so it cannot be farmed by a working kitchen — but "cannot be
@@ -2216,12 +2492,45 @@ export const ECON = {
      car dealership — it was a Cinder faucet".
      So the drop is measured, not asserted: assertDataSane() takes the best dish
      the parcel can build, prices it at the BEST multipliers the game hands out,
-     and requires the whole day's yield to come in under this. 600 is chosen
-     against two anchors the game already has — the daily challenge pays 75 a
-     day (index.html:71026), and round 4's kitchen minted 5,660 a day out of
-     nothing. This sits between them and nearer the first, and it requires
-     actually cooking and selling a shift to collect. */
-  RELIEF_FREE_DAILY_CINDER_MAX: 600,
+     and requires the whole day's yield to come in under this.
+
+     🔴🔴 IT WAS 600, AND 600 MADE THIS CEILING AND THE FLOOR IT SITS OVER
+        CONTRADICT EACH OTHER — WITH THE FLOOR LOSING SILENTLY.
+     ═══════════════════════════════════════════════════════════════════════════
+     600 was picked against two anchors from OTHER systems (the daily challenge
+     pays 75; round 4's kitchen minted 5,660) and never against the one question
+     this rung exists to answer: DOES ONE DROP PUT A PLATE ON THE PASS?
+     Measured, whole crates, on this data (scratch r9d/dropsize.mjs):
+         the cheapest complete level-1 crate set is a Hot Dog —
+         sal_roll + sal_sausage + sal_mustard = 7 food + ◈110 → 5 hot dogs
+         burgerClassic 14 food ◈224 → 4 · pizzaMargherita 10 food ◈171 → 2
+     The parcel was 5 food. FIVE. It could not buy ONE crate set for ANY level-1
+     dish, on any day, ever — and the shop sells whole crates, so the 1.9
+     "dishes per parcel" the amortised guard reports is a number the player can
+     never spend. Measured end to end on a fresh 0-Cinder 0-resource account
+     with the drop WIRED and landing (r5p/run10.mjs): ten days, nine drops, 45
+     food in, and days 3–10 served 0, 1, 0, 2, 0, 2, 0, 1 while losing 36–54
+     tickets each. That is not a rescue, it is a drip feed with a parachute
+     drawn on it — the round-5 dead end at one dish a day instead of zero.
+     The floor is the REASON the rung exists, so the floor wins and the ceiling
+     is re-derived. 7 food is the smallest parcel that reaches one plate, and
+     7 food amortises to ◈776 a day at the guard's best-case multipliers.
+       LOWER BOUND  776 — below it the two guards contradict and the reach guard
+                          ("THE ESCAPE HATCH MUST ACTUALLY ESCAPE") is the one
+                          that must hold.
+       UPPER BOUND  a working shift. Measured this round, fresh account, day 1:
+                    7,579 Cinder minted in one twelve-minute shift.
+       SHIPPED      800 — 10.6% of a first shift at the guard's best case, and
+                    at the multipliers a STRANDED kitchen actually has
+                    (popularity 30, no rush, good-not-perfect, ordinary tip →
+                    1.058× against the guard's 2.734×) about ◈130 a day, 1.7%.
+     ⚠ THE OLD INSTRUCTION HERE — "shrink the parcel, do not raise the ceiling"
+       — STILL STANDS, WITH ONE ADDED CLAUSE: the parcel cannot shrink below the
+       cheapest complete level-1 crate set, and assertDataSane() now fails if it
+       does. If a future supply-line edit makes that set dearer, the parcel goes
+       UP and this number goes up with it. If it makes it cheaper, both come
+       down. They are one number wearing two hats; do not move one alone. */
+  RELIEF_FREE_DAILY_CINDER_MAX: 800,
 
   /* 🔴 THE TWO NUMBERS THAT KEEP THE SCRAP DEALER A FLOOR AND NOT A KITCHEN.
      See the _SALVAGE block. SHARE is how much of a level-40 board one rung may
@@ -2500,6 +2809,17 @@ export const ECON = {
   CONVOY_HOLD_MS: 5000,     // how long an arrived convoy is held on screen
                             // before it is claimable, so the arrival is a MOMENT
                             // rather than a number changing
+  /* 🔴 HOW LONG THE "A TRUCK JUST LANDED" STRIP STAYS UP. convoy.js has been
+     ASKING THIS FILE FOR THIS KEY IN WRITING since the arrival moment shipped —
+     `arriveMs()` reads `EC('CONVOY_ARRIVE_MS', holdMs())` and its comment says
+     "`ECON.CONVOY_ARRIVE_MS` wins when its owner adds it". It is here now.
+     ⚠ DECLARED AT THE VALUE THE FALLBACK ALREADY PRODUCED, ON PURPOSE. This is
+       a seam, not a retune: `holdMs()` returns CONVOY_HOLD_MS, so 5000 changes
+       nothing today and the two numbers can now move apart, which is the point
+       — the dock hold is "how long before you may claim" and this is "how long
+       the banner speaks for", and they are not the same question. convoy.js
+       clamps it to 1,000..60,000 whatever lands here. */
+  CONVOY_ARRIVE_MS: 5000,
 
   // ── FX / feel ───────────────────────────────────────────────────────────
   FLOAT_MS: 900,            // float-up lifetime
@@ -2641,8 +2961,10 @@ export function resRetail(id) {
  * Derived from ECON.RES_RETAIL_CINDER × ECON.RELIEF_MARKUP, never typed: two
  * hand-kept copies of one price diverge, and this one would diverge in the
  * direction of "the relief flight is cheap", which is the printer.
- * `costPerUnit` is carried so a renderer can print "◈ 28 a tin — seven times
- * what it is worth" without recomputing the markup and getting it wrong.
+ * `cinderPerUnit` is carried so a renderer can print "◈ 300 a tin — fifteen
+ * times what it is worth" without recomputing the markup and getting it wrong.
+ * (Both halves of that sentence used to be stale in the same comment: the field
+ * is `cinderPerUnit`, not `costPerUnit`, and the multiple was seven.)
  */
 export const RELIEF = _RELIEF_RAW.map((r) => {
   let retail = 0, units = 0;
@@ -3447,9 +3769,13 @@ export function convoyGuardOk() {
      shippable dish by the CHEAPEST AVAILABLE ROUTE must cost more Cinder than
      the food it delivers is worth. `food` is worth 4 (the game's own valuation,
      see _SALVAGE.resCinder), the cheapest salvage-buildable shippable dish is a
-     Hot Dog at ~25 Cinder, and CONVOY_CINDER_GUARD_MULT is the multiple of
-     retail that must hold — seven times over today, which is why the printer is
-     not merely closed but absurd. It is checked so that it STAYS absurd.
+     Hot Dog at 21.33 Cinder, and CONVOY_CINDER_GUARD_MULT is the multiple of
+     retail that must hold. Measured today: the bar is 1 dish x ◈4 x 2.0 = ◈8
+     and the cheapest route costs ◈21.33, so the wall stands at 2.7x the bar and
+     5.3x the raw value of the food delivered. ⚠ THE NUMBER IN THIS SENTENCE IS
+     PRINTED BY convoyGuardOk(), NOT TYPED — it said "seven times over" for a
+     round after the dealer's prices moved. Read it off `__mk.debug()`.
+     It is checked so that it STAYS absurd.
      ⚠ If a future line makes some cheap dish salvage-buildable, this is the
        check that fails. Do not raise the multiplier to silence it. */
   const foodValue = resRetail('food');
@@ -3841,10 +4167,17 @@ export function assertDataSane() {
     const loop = reliefRouteCost(r.id, parcel.id);
     if (!loop) continue;                       // this parcel cannot supply this dish
     const best = r.basePrice * bestMult;
-    if (!(loop.cinder > best)) {
-      bad.push('🔴 THE RELIEF LOOP IS A PRINTER: ' + r.id + ' costs ' + loop.cinder
+    /* ⚠ THE BAR IS A MARGIN, NOT A SIGN. `loop.cinder > best` is the point the
+       printer actually opens; at RELIEF_MARKUP 12 the tightest dish cleared it
+       by 7%, which is inside the noise of any ordinary price edit. See
+       ECON.RELIEF_LOOP_MIN_MARGIN. */
+    const bar = best * (ECON.RELIEF_LOOP_MIN_MARGIN || 1);
+    if (!(loop.cinder > bar)) {
+      bad.push('🔴 THE RELIEF LOOP IS ' + (loop.cinder > best ? 'TOO CLOSE TO A PRINTER' : 'A PRINTER')
+        + ': ' + r.id + ' costs ' + loop.cinder
         + ' Cinder end to end out of a ' + loop.parcelId + ' (' + loop.parcels + ' parcels, bound by '
         + loop.binding + ') against a best-case payout of ' + Math.round(best * 10) / 10
+        + ' × a required margin of ' + (ECON.RELIEF_LOOP_MIN_MARGIN || 1) + ' = ' + Math.round(bar * 10) / 10
         + ' — Cinder in, more Cinder out, with no city, no business and no battle involved');
     }
   }
@@ -3918,6 +4251,169 @@ export function assertDataSane() {
   if (grantedOnly.length >= Object.keys(ECON.START_PANTRY).length) {
     bad.push('🔴 THE FLOOR IS UNREACHABLE FROM THE GRUBSTAKE: the scrap dealer stocks none of the '
       + 'ingredients a new kitchen opens with');
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════════
+     🔴🔴 THE FAILURE LADDER. EVERY WAY OF LOSING CUSTOM, IN ORDER, AND THE
+        ONE PAIR THAT HAS A DESIGN RULE HANGING OFF IT.
+     ══════════════════════════════════════════════════════════════════════════
+     WHY THIS CHECK EXISTS AND WHY IT IS NOT PARANOIA: for one whole round the
+     drive-thru's only decision was strictly the WORSE choice. POP_WAVE was
+     −1.1 and POP_LOST was −1.0, so waving a car off cost 10% MORE than letting
+     it time out — while drivethru.js and kitchen.render.js BOTH told the player
+     in the imperative to "wave early, eat a smaller hit", and the control sat
+     behind a confirm dialog. Nothing caught it, because nothing was looking:
+     the inversion arrived through a blanket re-scale that applied 0.55 to the
+     auxiliary penalties and 0.286 to POP_LOST, and the comment describing that
+     re-scale asserted the ratios were "preserved exactly".
+     A ratio a comment argues from is a ratio a test can hold. So this holds it.
+     The order is a design statement, not an accident of tuning: the further a
+     customer got before you lost them, the more it costs.
+     ⚠ These are MAGNITUDES. Every entry must be negative in ECON; the check
+       compares |value| so a sign flip is caught as a separate failure. */
+  const LADDER = [
+    ['POP_BALK', 'drove past a full lane'],
+    ['POP_JUMP', 'you let somebody cut the queue'],
+    ['POP_TURNAWAY', 'walked in, saw the board, walked out'],
+    ['POP_JAM', 'queued, never got to order, gave up'],
+    ['POP_WAVE', 'YOU waved off somebody who had ordered'],
+    ['POP_BURN', 'you ruined food'],
+    ['POP_LOST', 'you took the order and never delivered it'],
+  ];
+  for (const [key] of LADDER) {
+    const v = ECON[key];
+    if (!(typeof v === 'number' && Number.isFinite(v))) { bad.push('ECON.' + key + ' is not a finite number'); continue; }
+    if (!(v < 0)) bad.push('ECON.' + key + ' must be NEGATIVE — every rung of the failure ladder is a cost (got ' + v + ')');
+  }
+  for (let i = 1; i < LADDER.length; i++) {
+    const [a, aw] = LADDER[i - 1], [b2, bw] = LADDER[i];
+    const va = Math.abs(ECON[a]), vb = Math.abs(ECON[b2]);
+    if (!(va < vb)) {
+      bad.push('🔴 THE FAILURE LADDER IS OUT OF ORDER: ' + a + ' (' + ECON[a] + ', ' + aw
+        + ') must cost STRICTLY LESS than ' + b2 + ' (' + ECON[b2] + ', ' + bw + '). '
+        + (a === 'POP_WAVE' || b2 === 'POP_WAVE'
+            ? 'The wave-off is the lane\'s only decision and two files tell the player it is the '
+              + 'cheaper one — if it is not, the game is arguing the player into a trap. '
+            : '')
+        + 'Fix the number, not this check.');
+    }
+  }
+
+  /* 🔴 THE REPORT CARD'S CUTS MUST BE A SCALE. Four cuts, strictly ascending,
+     inside (0,1] — gradeParts().score is a 0..1 blend, so a cut at 1.4 makes a
+     letter unreachable and a cut at 0 makes it universal. This CANNOT check
+     that the cuts still match the measured score distribution (nothing pure
+     can); see ECON.GRADE_MIN_C for how to re-sweep them. What it does catch is
+     the failure that actually shipped: a key declared here as a placeholder
+     zero, silently overriding kitchen.state.js's live fallback and grading
+     every shift an S. */
+  const CUTS = ['GRADE_MIN_C', 'GRADE_MIN_B', 'GRADE_MIN_A', 'GRADE_MIN_S'];
+  for (const k of CUTS) {
+    const v = ECON[k];
+    if (!(typeof v === 'number' && v > 0 && v <= 1)) {
+      bad.push('ECON.' + k + ' must be a number in (0,1] — the grade score is a 0..1 blend (got ' + v + ')');
+    }
+  }
+  for (let i = 1; i < CUTS.length; i++) {
+    if (!(ECON[CUTS[i - 1]] < ECON[CUTS[i]])) {
+      bad.push('ECON: the grade cuts must ascend — ' + CUTS[i - 1] + ' (' + ECON[CUTS[i - 1]]
+        + ') is not below ' + CUTS[i] + ' (' + ECON[CUTS[i]] + '), so one letter can never be awarded');
+    }
+  }
+  if (!(ECON.GRADE_CAP_DUTY > 0 && ECON.GRADE_CAP_DUTY <= 1)) {
+    bad.push('ECON.GRADE_CAP_DUTY must be in (0,1] — it derates capacityModel()\'s rack to what two '
+      + 'thumbs sustain, and at 0 the service axis divides by zero and grades nothing');
+  }
+  if (!(ECON.GRADE_MIN_SHIFT_MS >= 0)) bad.push('ECON.GRADE_MIN_SHIFT_MS must be >= 0');
+
+  /* 🔴 AND THE GENERAL FORM OF THAT WHOLE CLASS: no key in ECON may be
+     undefined or NaN. kitchen.state.js reads every price as `EC(key, fallback)`
+     and DATA WINS — so a key that exists with a broken value is strictly more
+     dangerous than a key that does not exist at all, because the fallback that
+     was keeping the game playable is now unreachable. Cheap, total, and it
+     catches a trailing comma edit that leaves a key holding `undefined`. */
+  for (const k in ECON) {
+    const v = ECON[k];
+    if (v === undefined) { bad.push('ECON.' + k + ' is undefined — it overrides a live fallback with nothing'); continue; }
+    if (typeof v === 'number' && !Number.isFinite(v)) bad.push('ECON.' + k + ' is not finite (' + v + ')');
+  }
+
+  /* 🔴🔴 THE ESCAPE HATCH MUST ACTUALLY ESCAPE, AND "IT IS IN THE TABLE" IS
+        NOT THAT. The free parcel exists so a player with an empty 14-id ledger
+        can always get back to COOKING — not back to holding resources. Those
+        are different sentences and only one of them is the requirement. A drop
+        of `{water:9}` would satisfy every guard above it: dry-gated, rate
+        limited, worth nothing, and completely useless.
+        So: at its own daily rate, the free parcel must convert into at least
+        one COMPLETE level-1 dish by a route the parcel can actually pay for.
+        `cheapestRoute(id, payableIn)` is what makes that honest — the dish has
+        to be buildable out of THIS parcel's ids and nothing else.
+     ⚠ THE TOLL IS REAL AND IS NOT CHECKED HERE, BECAUSE IT CANNOT BE. Turning
+       the parcel into pantry stock still costs CINDER at the crate (measured:
+       ◈110 of whole crates for the first Hot Dog, ◈235 for the first
+       Margherita), and there is no Cinder-free line in SUPPLY_RECIPES — nor can
+       there be, because invariant E is denominated in Cinder and a zero-Cinder
+       line would BE the cheapest route by definition. So the ladder's floor is
+       "an empty ledger", NOT "an empty ledger and an empty wallet": a player
+       at zero Cinder AND zero of all fourteen is still stuck, and the drop
+       lands in their yard unusable. It is reachable only by spending every
+       Cinder the kitchen minted, and the wider game has its own Cinder income —
+       but it is a REAL hole and it is written down here rather than implied,
+       because the last thing that was merely implied here shipped as a table
+       with no consumer. */
+  /* ⚠ AND IT IS ASKED IN WHOLE CRATES, WHICH IS THE ONLY UNIT THE SHOP SELLS
+        IN. This check was first written on `cheapestRoute()`, which amortises a
+        crate across the dishes it eventually makes — and on that model a 5-food
+        parcel "buys 1.9 Margheritas" and the guard passes. In the shop a
+        Margherita's crate set costs 10 food IN ONE GO, so 5 food bought nothing
+        at all, on any day, and the amortised guard would have certified the
+        dead end it was written to prevent. The faucet guard above KEEPS the
+        amortised model on purpose — "what is a drop worth per day if you keep
+        taking them" really is a long-run question and surplus really does carry
+        over — but "can today's drop put a plate on the pass" is a question
+        about one morning, and one morning buys whole crates. Two questions, two
+        models, and the difference between them is the bug. */
+  for (const p of RELIEF) {
+    if (!p.free) continue;
+    let reached = null;
+    for (const r of RECIPES) {
+      if ((r.minLevel || 1) !== 1) continue;
+      let food = 0, need = Object.create(null), yields = Infinity, ok = true;
+      for (const ing in r.needs) {
+        // Per ingredient, the whole-crate purchase that costs the LEAST of the
+        // parcel's binding resource — that is the route a stranded player takes.
+        let best = null, bestFood = Infinity;
+        for (const row of [_SUPPLY_BY_ING[ing], _SALVAGE_BY_ING[ing]]) {
+          if (!row) continue;
+          const batches = Math.ceil(r.needs[ing] / Math.max(1, row.out.qty));
+          const f = ((row.cost && row.cost.food) || 0) * batches;
+          if (f < bestFood) { bestFood = f; best = row; }
+        }
+        if (!best) { ok = false; break; }
+        const batches = Math.ceil(r.needs[ing] / Math.max(1, best.out.qty));
+        for (const k in (best.cost || {})) {
+          if (k === 'cinder') continue;
+          need[k] = (need[k] || 0) + best.cost[k] * batches;
+        }
+        food += ((best.cost && best.cost.food) || 0) * batches;
+        yields = Math.min(yields, Math.floor((best.out.qty * batches) / r.needs[ing]));
+      }
+      if (!ok) continue;
+      // Every live id the crate set wants must be on the parcel, in full.
+      let covered = true;
+      for (const k in need) if (!((p.out[k] || 0) * (p.perDay || 1) >= need[k])) { covered = false; break; }
+      if (!covered) continue;
+      if (!reached || food < reached.food) reached = { id: r.id, food, yields, need };
+    }
+    if (!reached) {
+      const sets = RECIPES.filter((r) => (r.minLevel || 1) === 1).map((r) => r.id).join(', ');
+      bad.push('🔴 THE FREE DROP DOES NOT REACH A DISH: ' + p.id + ' carries '
+        + JSON.stringify(p.out) + ' a day, and that does not buy ONE COMPLETE CRATE SET for any '
+        + 'level-1 recipe (' + sets + '). The shop sells whole crates, so a parcel that only covers '
+        + 'part of a set puts nothing on the pass — measured, a 5-food drop landed every morning for '
+        + 'eight days and the kitchen served 0, 1, 0, 2, 0, 2, 0, 1. Grow the parcel to the cheapest '
+        + 'complete set and move ECON.RELIEF_FREE_DAILY_CINDER_MAX with it; do not delete this check');
+    }
   }
 
   // ── the day clock must be self-consistent ──

@@ -1237,25 +1237,30 @@ function lineGross(item) {
 
 /**
  * Judge every modifier on a ticket, and PRICE the verdict.
- * → { mul, honoured, broken, unproven, cinder, pop,
- *     detail:[{id,label,kind,ing,recipeId,result,worth,cinder,pop}] }
+ * → { honoured, broken, unproven, cinder, pop,
+ *     detail:[{id,label,kind,ing,recipeId,result,cinder,pop}] }
  *
- * `mul` is the generosity multiplier §TIP folds into the blend. `cinder` is the
- * signed §SETTLEMENT in absolute Cinder and `pop` the signed word-of-mouth.
- * Exported through `modVerdict()` so the renderer draws the SAME three words on
- * the chip that the till pays out on — a verdict the player is told about after
- * the fact and cannot see coming is a mechanic they will never learn.
+ * `cinder` is the signed §SETTLEMENT in absolute Cinder and `pop` the signed
+ * word-of-mouth. Exported through `modVerdict()` so the renderer draws the SAME
+ * three words — and the SAME figure — on the chip that the till pays out on: a
+ * verdict the player is told about after the fact and cannot see coming is a
+ * mechanic they will never learn.
+ *
+ * ⚠ IT USED TO RETURN A THIRD NUMBER, `mul`, plus a per-row `worth`, and round
+ * 6 deleted both with the channel they fed. They were the generosity-blend
+ * multiplier: a second, invisible way for the same promise to move the same
+ * till, which is why the chip's figure and the money disagreed by up to 88%.
+ * Do not re-add either without a reader — `grep -rn "\.mul\b" public/src/kitchen/`
+ * returned nothing outside this file even while it was live, which is the
+ * shape of every defect this feature has shipped.
  *
  * 🔴 PURE. No mutation, no side effects, safe to call every frame from the
  * ticket chips and again from inside the payout. That purity is what lets the
  * money ride `tipFor()` without a double-settle guard.
  */
 function judgeTicket(ticket) {
-  const out = { mul: 1, honoured: 0, broken: 0, unproven: 0, cinder: 0, pop: 0, detail: [] };
+  const out = { honoured: 0, broken: 0, unproven: 0, cinder: 0, pop: 0, detail: [] };
   if (!ticket || !Array.isArray(ticket.items)) return out;
-  const hit = EC('MOD_TIP_HIT');
-  const miss = EC('MOD_TIP_MISS');
-  const meh = EC('MOD_TIP_UNPROVEN');
   const payHit = EC('MOD_PAY_HIT');
   const payFloor = EC('MOD_PAY_HIT_MIN');
   const payMiss = EC('MOD_PAY_MISS');
@@ -3089,6 +3094,60 @@ function laneIntervalMs(K) {
   return Math.max(EC('SPAWN_MIN_MS'), whole / laneShare);
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   🚪 §DRY — THE DOORS ARE SHUT, AND THE LANE NOW KNOWS IT.
+   ═══════════════════════════════════════════════════════════════════════════
+   🔴 WHAT THIS CLOSES, MEASURED ON THE SHIPPED CODE BEFORE THE FIX (my
+   scratchpad r6dt/dry.mjs, which reproduces the critic's r8/drygate3.mjs to the
+   digit). A level-1 kitchen with an empty pantry, an empty live-resource ledger
+   and ZERO Cinder — `dryCheck()` → {dry:true, cookable:[], affordable:[],
+   need:['supplies','dna']} — run for one full 780s day with no player actions:
+
+       counter tickets 0      ← kitchen.state.js gated its walk-ins correctly
+       LANE tickets   33      ← we did not
+       served 0 · lost 33 · popularity 50 → 21.5
+
+   Thirty-three customers admitted to a kitchen the game had ALREADY PROVED it
+   could not feed, at about −1 popularity each, with no counter-play: waving
+   costs popularity, letting them expire costs popularity, and there is no third
+   button. The same shift showed the contradiction on ONE screen — an empty
+   pantry, an empty wallet, and a lane header reading "2 CARS · ROOM FOR 2".
+
+   🔴 IT IS NOT A NEW IDEA, IT IS THE FIFTH ROUND OF THE SAME SHAPE. `_dry` has
+   existed in kitchen.state.js since round 4 with the annotation "drivethru.js
+   reads this to stop the lane", and this file's own handover (O3) has said in
+   writing since round 4 that it does NOT. Two files, one truth, disagreeing in
+   comments while a real player paid for it. Both halves are now written: the
+   test is below, and O3 is closed in the past tense at the bottom of this file.
+
+   ── WHY `State.isDry()` AND NOT `K._dry` ──────────────────────────────────
+   Same rule as everywhere else in this file: we read other people's state
+   through the door they opened, never off the object. `isDry()` (kitchen.state.js)
+   returns the latch that `tick()` refreshes at step 2b — BEFORE `DriveThru.tick()`
+   runs, deliberately, so what we read here is THIS frame's answer and not last
+   frame's. It is a plain boolean read, no recomputation and no bridge traffic,
+   so it is safe on the spawn path every frame. The same accessor gates state.js's
+   own walk-ins, so the counter door and the lane door cannot drift apart.
+
+   ⚠ AND IT IS GUARDED THREE WAYS, because rule 2 says we never throw:
+     • `typeof State.isDry === 'function'` — the import cycle means we must
+       never assume a binding exists at call time;
+     • `State.Kitchen === K` — `isDry()` reads the module-private singleton, NOT
+       the `K` we were handed. A harness or a replay running a DETACHED kitchen
+       must be judged on its own pantry, and reading the singleton's dryness
+       there would silently shut a lane that has plenty of food;
+     • try/catch, defaulting to FALSE. If we cannot prove the kitchen is dry we
+       let the customer in — the failure mode of a false negative is the lane we
+       had yesterday, and the failure mode of a false positive is a drive-thru
+       that never opens.
+   ═══════════════════════════════════════════════════════════════════════════ */
+function laneDry(K) {
+  try {
+    if (!K || State.Kitchen !== K) return false;
+    return (typeof State.isDry === 'function') ? !!State.isDry() : false;
+  } catch (e) { return false; }
+}
+
 function scheduleArrivals(K, now, out) {
   const b = book(K);
 
@@ -3099,6 +3158,21 @@ function scheduleArrivals(K, now, out) {
   const dayPct = pctFn ? _clamp(_num(pctFn(_num(K.shift.tMs, 0)), 0), 0, 1)
                        : _clamp(_num(K.shift.tMs, 0) / Math.max(1, EC('DAY_MS')), 0, 1);
   if (dayPct >= 1) return;
+
+  /* 🚪 §DRY — nobody new joins a lane the kitchen cannot serve.
+     🔴 THE ROLL-FORWARD IS HALF THE FIX AND IT IS THE HALF THAT IS EASY TO
+     MISS. A bare `if (dry) return;` leaves `b.nextAt` in the past, so the
+     instant a crate lands the lane fires a spawn on the FIRST frame and then
+     again the frame after that — the whole shut period arrives at once, and the
+     player is punished for restocking. Pushing the cursor a full interval ahead
+     every frame the doors are shut means the queue that forms after a restock
+     is the queue popularity says it should be. kitchen.state.js's tick() does
+     exactly this for `_nextCounter` (`if (dry) K._nextCounter = t + …`) and the
+     two doors must behave the same way or the player learns two rules.
+     ⚠ Cars ALREADY in the lane are untouched. They were let in while there was
+     stock, they are owed their food, and their patience is still running — the
+     dry gate is about who is ADMITTED, never about who is abandoned. */
+  if (laneDry(K)) { b.nextAt = now + laneIntervalMs(K); return; }
 
   if (!b.nextAt) { b.nextAt = now + EC('SHIFT_GRACE_MS'); return; }
   if (now < b.nextAt) return;
@@ -3512,31 +3586,37 @@ export function tipFor(K, car, quality, now) {
     if (live.special === 'grudge') gen *= EC('GRUDGE_TIP_MULT');
     if (live.special === 'favour') gen *= EC('FAVOUR_TIP_MULT');
 
-    /* §MODIFIERS scored — and 🔴 NOT AGAINST `quality`. Honouring a promise pays
-       MOD_TIP_HIT, breaking it costs MOD_TIP_MISS, and a promise the game
-       cannot yet verify is worth MOD_TIP_UNPROVEN, which is zero in either
-       direction. The old test — `quality >= MOD_WANT_Q` with both sides equal
-       to 1.0 — cleared every modifier on every non-raw dish, so obeying a
-       ticket paid LESS than ignoring it. Read the §MODIFIERS header; the
-       numbers that proved it are in there.
-
-       It reads the TICKET, not `car.mods`, because the check is PER LINE: "no
-       onions" is a promise about the burgers, not about the milkshake next to
-       them. `ticketFor()` recovers the ticket even from the `{carId}` stub
-       state.js passes once the car has left the lane. */
-    const ticket = ticketFor(K, live) || ticketFor(K, car);
-    const verdict = judgeTicket(ticket);
-    gen *= verdict.mul;
+    /* 🔴 THE PROMISE IS NOT IN THIS STACK, AND THAT IS THE ROUND-6 FIX.
+       `gen *= verdict.mul` used to sit here, multiplying the generosity blend by
+       MOD_TIP_HIT / MOD_TIP_MISS on top of the §SETTLEMENT that the chip had
+       already quoted — TWO channels for one promise, one of them invisible.
+       MEASURED before it was removed (scratchpad r6dt/settle.mjs, identical food
+       in each arm so the promise is the ONLY thing moving):
+           chip "+28" → the till moved +39      chip "−17" → the till moved −32
+       Breaking a promise cost nearly TWICE what the chip warned, on the one
+       surface the round built for making that choice — and the plate picker now
+       puts "✓ keeps no greens" beside "✗ breaks no greens", so there IS a
+       counterfactual on the card and the understatement had become a lie.
+       ONE promise, ONE channel, ONE number: §SETTLEMENT, in absolute Cinder,
+       priced from MOD_PAY_* and printed on the chip before the player commits.
+       ⚠ MOD_TIP_HIT / MOD_TIP_MISS / MOD_TIP_UNPROVEN are consequently read by
+       NOBODY. Deleting them from kitchen.data.js is the ask, and it is written
+       up as handover item O2 — a key with no reader is the fault, not the fix,
+       and it must not be "solved" by putting the second channel back. */
 
     /* THREE GUARDS, EACH DOING A DIFFERENT JOB. They were arrived at by
        measuring 4,000 samples per tier, not by feel, and collapsing them into
        one number re-breaks whichever job the survivor was not doing:
 
-         TIP_GEN_MAX    stops RUNAWAY MULTIPLICATION. Modifiers stack (two
-                        honoured mods is ×1.7 on their own), so the stack is
-                        unbounded in principle. Set high enough that it does
-                        not touch a normal customer — its job is to catch the
-                        pathological corner, not to shape the curve.
+         TIP_GEN_MAX    stops RUNAWAY MULTIPLICATION. Four independent factors
+                        multiply (personality × upgrades × set piece × set
+                        piece), so the stack is unbounded in principle. Set high
+                        enough that it does not touch a normal customer — its
+                        job is to catch the pathological corner, not to shape
+                        the curve. ⚠ It used to have a FIFTH factor, the
+                        modifier verdict, and that is why this row read
+                        "modifiers stack ×1.7 on their own"; the promise left
+                        this stack in round 6 and the sentence went with it.
          TIP_HARD_PCT   the DESIGN ceiling. kitchen.data.js calls TIP_MAX_PCT
                         "ceiling as a fraction of payout" and means ~35%; the
                         generosity stack legitimately pushes past that, but not
@@ -3547,18 +3627,16 @@ export function tipFor(K, car, quality, now) {
                         side of state.js's `v < 1` fraction test. If this one
                         ever binds, something above it is wrong.
 
-       ⚠ The common case is the one that had to stay sensitive, and it is.
-       MEASURED, everything else held identical — an ordinary Commuter at
-       popularity 50 on a burgerClassic carrying one "no greens", avgQ 1.0 in
-       all three cases, so the ONLY thing moving is the promise:
-             honoured  39.2% of the bill
-             unproven  29.0%      (the modifier moved nothing — by design)
-             broken    20.3%
-       That spread is the whole modifier mechanic and it lives nowhere near any
-       of these clamps. The previous version of this comment claimed ~32% vs
-       ~17%; it was wrong by a factor of thirty, because the check it described
-       always passed (§MODIFIERS). Numbers in this comment are re-measured when
-       the mechanic changes or they are deleted. */
+       ⚠ THE PROMISE USED TO BE MEASURED HERE AND IS NOT ANY MORE. This comment
+       carried a three-row table — honoured 39.2% of the bill / unproven 29.0% /
+       broken 20.3% — described as "the whole modifier mechanic". That spread was
+       the BLEND channel, which round 6 removed (see the note where
+       `gen *= verdict.mul` used to be): the tip is now promise-blind and the
+       whole mechanic is the §SETTLEMENT below, in Cinder, on the chip. Leaving
+       the table would have been a comment describing a channel that no longer
+       exists — which is the same fault as a value nothing consumes, one layer
+       up. What these clamps shape now is generosity: WHO the customer is, what
+       upgrades the player owns, and which set piece is running. */
     const pct = EC('TIP_MAX_PCT') * _clamp(blend, 0, 1)
               * _clamp(gen, 0, EC('TIP_GEN_MAX'));
     const tipPct = Math.min(pct, EC('TIP_HARD_PCT'));
@@ -3580,12 +3658,34 @@ export function tipFor(K, car, quality, now) {
        always drops a coin, and it is suspended for exactly one case: a promise
        the player BROKE. state.js reads a non-positive return as "no tip", so a
        badly broken ticket costs the whole tip — the largest punishment this
-       pipe can deliver, and the reason the HANDOVER asks for a payout hook. */
+       pipe can deliver, and the reason the HANDOVER asks for a payout hook.
+
+       🔴 THE FLOOR IS APPLIED TO THE TIP, NOT TO THE SUM, AND THAT ORDER IS THE
+       DIFFERENCE BETWEEN AN EXACT CHIP AND AN ALMOST-EXACT ONE. The old line
+       was `_clamp(tipPct + settle, MIN, MAX)`, which clamps a settled total
+       back UP to TIP_FRACTION_MIN — i.e. the floor quietly refunded part of a
+       punishment, on exactly the tickets where the punishment was the message.
+       Flooring the TIP first keeps what the floor is for ("a served car always
+       drops a coin") and leaves the settlement free to move the total all the
+       way to nothing, which is what the chip's red figure promised.
+
+       ⚠ TIP_FRACTION_MAX IS STILL A CEILING ON THE SUM and it is the one place
+       an honoured settlement can still be clipped: a cheap dish carrying an
+       honoured `extra` can price a settlement worth more than 95% of the bill.
+       It is rare, it errs downward, and it cannot be fixed from inside this
+       file — the payout hook (O1) is what removes it.
+
+       It judges the TICKET, not `car.mods`, because a promise is scored PER
+       LINE: "no onions" is about the burgers, not about the milkshake beside
+       them. `ticketFor()` recovers the ticket even from the `{carId}` stub
+       state.js passes once the car has already left the lane. */
+    const ticket = ticketFor(K, live) || ticketFor(K, car);
+    const verdict = judgeTicket(ticket);
     const est = payoutEstimate(K, ticket);
     const settle = est > 0 ? (_num(verdict.cinder, 0) / est) : 0;
-    const total = tipPct + settle;
+    const total = Math.max(tipPct, EC('TIP_FRACTION_MIN')) + settle;
     if (total <= 0) return 0;
-    return _clamp(total, EC('TIP_FRACTION_MIN'), EC('TIP_FRACTION_MAX'));
+    return Math.min(total, EC('TIP_FRACTION_MAX'));
   } catch (e) {
     return EC('TIP_FRACTION_MIN');   // rule 2: a bad tip beats a dead till
   }
@@ -3833,10 +3933,22 @@ export function laneView(K) {
  * `spare` is in LENGTH UNITS too, which is why the phrasing is "room for 1"
  * rather than "1 car" — a spare unit fits a hatchback and does not fit a rig,
  * and the lane should not promise what it cannot park.
+ *
+ * 🚪 AND IT REPORTS §DRY, BECAUSE THE HEADER WAS THE SURFACE THAT LIED. On the
+ * dry day measured in §DRY the screen carried an empty pantry, an empty wallet
+ * and "NEXT IN 56.2S · 2 CARS · ROOM FOR 2" — a promise of custom from a lane
+ * that was about to stop admitting anybody. Two fields answer it, and BOTH are
+ * consumed by code that already exists rather than waiting on somebody:
+ *   • `label` says "doors shut" instead of "room for N" — kitchen.render.js
+ *     prints `st.label` verbatim in the section head;
+ *   • `nextInMs` is ZERO while the doors are shut, and render's countdown is
+ *     already guarded `st.nextInMs > 0`, so the "next in 56.2s" line takes
+ *     itself off the screen with no change in anybody else's file.
+ * `dry` rides out beside them for anything that wants to style it.
  */
 export function laneStatus(K, now) {
   if (!K) {
-    return { cap: 0, used: 0, live: 0, spare: 0, full: false, label: 'Lane closed',
+    return { cap: 0, used: 0, live: 0, spare: 0, full: false, dry: false, label: 'Lane closed',
              nextInMs: 0, intervalMs: 0, stats: null };
   }
   const b = book(K);
@@ -3846,9 +3958,14 @@ export function laneStatus(K, now) {
   const live = (K.lane || []).filter((c) => c && c.state !== 'gone').length;
   const full = used >= cap;
   const spare = Math.max(0, cap - used);
+  const dry = laneDry(K);
 
+  /* The dry phrasing beats the full/room phrasing because it is the reason:
+     "3 cars · room for 1" on a shut kitchen is true about the tarmac and wrong
+     about the game. What the player needs to read is why nobody else is coming. */
   let label;
-  if (!live) label = full ? 'Lane blocked' : 'Lane clear';
+  if (dry) label = live ? `${live} car${live === 1 ? '' : 's'} · doors shut, no stock` : 'Doors shut · no stock';
+  else if (!live) label = full ? 'Lane blocked' : 'Lane clear';
   else label = `${live} car${live === 1 ? '' : 's'}` + (full ? ' · lane full' : ` · room for ${spare}`);
 
   return {
@@ -3857,8 +3974,10 @@ export function laneStatus(K, now) {
     spare,        // LENGTH UNITS
     live,         // CARS
     full,
+    dry,          // §DRY — the kitchen cannot cook and cannot buy its way out
     label,        // ← print this
-    nextInMs: Math.max(0, _num(b.nextAt, t) - t),
+    // 🚪 Zero while dry ON PURPOSE — see the header. There IS no next one.
+    nextInMs: dry ? 0 : Math.max(0, _num(b.nextAt, t) - t),
     intervalMs: Math.round(laneIntervalMs(K)),
     stats: b.stats,
   };

@@ -151,11 +151,44 @@ let _lastSheetPaint = 0;
    refreshes its numbers while the kitchen runs underneath it. */
 const SHEET_REPAINT_MS = 1500;
 
+/* ── 🚚 THE LOADING BAY'S VIEW STATE ─────────────────────────────────────────
+   All of this is VIEW state and none of it is game truth (§6): which truck the
+   player is standing in front of, how many of each dish they have dialled onto
+   it, and who they have addressed it to. `null` recipient is the explicit
+   practice run — see doConvoyLaunch, and see convoy.js's own warning that
+   passing `bridge().userId()` here was round 1's bug and made the entire
+   player-to-player network unreachable. */
+let _convoyTier = null;         // tierId the manifest panel is loading
+let _convoyWant = null;         // { recipeId: qty } from the steppers, null = fill it
+let _convoyTo = null;           // { id, name } chosen row, or null for a practice run
+let _convoyQ = '';              // what is typed in the find-a-player field
+let _convoyRows = [];           // last recipients() result
+let _convoyWhy = '';            // the quiet line under the field — NEVER a toast (§9)
+let _convoyBusy = false;        // a recipients() lookup is in flight
+/* 🔴 DEBOUNCE OFF THE SIM CLOCK, NOT off setTimeout. CONTRACT §3 allows this
+   file exactly one setTimeout (removing a finished float node) and a debounce
+   timer would be a second one. `frame()` already runs 60×/s with an authoritative
+   `now`, so a due-stamp costs nothing and cannot outlive the panel. */
+let _findDueAt = 0;
+let _findSeq = 0;               // ordering token: a slow reply must not overwrite a fast one
+/* 🔴 THE IN-FLIGHT GUARD on claiming. convoy.js recomputes `paidFood` after its
+   awaits and that is the SECOND wall; this is the first. Without it a double-tap
+   enters `claim()` twice concurrently and the only thing that saved round 1 was
+   the accident of statement order. */
+const _claiming = new Set();
+
 /* Node registry, rebuilt by paint(). frame() walks these and nothing else. */
 let _reg = emptyReg();
 function emptyReg() {
-  return { hud: {}, tickets: [], slots: [], cars: [], dishes: [], fx: null, road: null };
+  return { hud: {}, tickets: [], slots: [], cars: [], dishes: [], fx: null, road: null,
+           passers: null, pin: null, pinRows: [], routes: [] };
 }
+/* The pinned card's structural fingerprint. Module-level, NOT in `_reg`, so it
+   survives a rebuildRegistry() — during a rush `paint()` runs several times a
+   second and re-innerHTML-ing a card the player's thumb is on the way to would
+   eat the tap. It only rebuilds when the two cars, their fill or their verdict
+   actually changed. */
+let _pinKey = '';
 
 /* ═══════════════════════════════════════════════════════════════════════════
    OPEN / CLOSE
@@ -175,6 +208,10 @@ export function open() {
   document.body.appendChild(_root);
 
   _root.addEventListener('click', onClick);
+  /* The recipient field is the only text input in the feature. `input` (not
+     `change`) because the picker must answer while you type — a find-a-player
+     box that only searches on blur is a box nobody uses twice. */
+  _root.addEventListener('input', onInput);
   /* 🔴 Escape is bound on DOCUMENT, not on the overlay. Bound on the overlay it
      only fires while focus is inside it — and the very act of buying a crate
      rebuilds the sheet body, which destroys the focused button and drops focus
@@ -203,9 +240,11 @@ export function close() {
   _offs = [];
   if (_root) {
     try { _root.removeEventListener('click', onClick); } catch (e) {}
-
+    try { _root.removeEventListener('input', onInput); } catch (e) {}
     try { _root.remove(); } catch (e) {}
   }
+  _claiming.clear();
+  _findDueAt = 0;
   try { document.removeEventListener('keydown', onKeyDown, true); } catch (e) {}
   try { window.removeEventListener('resize', onResize); } catch (e) {}
   _root = null;
@@ -218,20 +257,150 @@ export function close() {
 function onResize() { _laneW = 0; _laneAt = 0; }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   🚧 WIRE_CSS — A STAGING AREA, NOT A STYLESHEET. DELETE ME NEXT ROUND.
+   ═══════════════════════════════════════════════════════════════════════════
+   CONTRACT §1: "kitchen.css owns all styling — no <style> string soup in JS."
+   That rule is right and this block is a knowing, temporary exception, so here
+   is the whole argument for it rather than a shrug.
+
+   This round wired six systems that were computing real data and drawing none
+   of it: the pinned lane card, per-line modifier chips, the drive-past, the
+   recipient picker, the manifest, the route strip, the depot hold. Every one of
+   them needs classes that do not exist in kitchen.css — and kitchen.css belongs
+   to another agent this round, who has already finished. Shipping the markup
+   naked would have meant screenshots of unstyled blocks, which is not "wired",
+   it is "broken in a new way".
+
+   🔴 EVERY RULE IN HERE IS WRAPPED IN `:where()` ON PURPOSE. `#id :where(.c)`
+      has the specificity of the id alone (1,0,0); kitchen.css writes
+      `#mythic-kitchen-ov .c` (1,1,0) and therefore BEATS this block on every
+      property it chooses to define. So the CSS owner can adopt these classes one
+      at a time, in any order, with no !important war and nothing to un-pick —
+      and when the last one lands this constant deletes in one edit.
+
+   The full class list is in the handover. Nothing in here is an economy number
+   or a timing; it is colour, box and position only.
+   ═══════════════════════════════════════════════════════════════════════════ */
+const WIRE_CSS = `<style id="mk-wire-css">
+#mythic-kitchen-ov :where(.mk-fails){display:flex;flex-direction:column;gap:2px;margin-left:2px}
+#mythic-kitchen-ov :where(.mk-fail){font-size:10px;font-variant-numeric:tabular-nums;color:#6f6558;white-space:nowrap;letter-spacing:.04em}
+#mythic-kitchen-ov :where(.mk-fail[data-on="1"]){color:#ff4d5e;text-shadow:0 0 8px rgba(255,77,94,.5)}
+#mythic-kitchen-ov :where(.mk-take-wrap){display:flex;flex-direction:column;min-width:0;line-height:1.1}
+#mythic-kitchen-ov :where(.mk-take){font-size:22px;font-weight:900;color:#ffd88a;font-variant-numeric:tabular-nums;text-shadow:0 2px 8px rgba(255,182,72,.35)}
+#mythic-kitchen-ov :where(.mk-take-sub){font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#a99c8c;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#mythic-kitchen-ov :where(.mk-take[data-pop="1"]){animation:mk-take-pop .5s ease}
+@keyframes mk-take-pop{0%{transform:scale(1)}30%{transform:scale(1.22);color:#5fd97a}100%{transform:scale(1)}}
+
+/* ── the pinned window ── */
+#mythic-kitchen-ov :where(.mk-pin){position:relative;z-index:3;flex:0 0 auto;display:flex;gap:6px;padding:6px 8px 0;overflow-x:auto}
+#mythic-kitchen-ov :where(.mk-pin:empty){display:none}
+#mythic-kitchen-ov :where(.mk-pin-card){flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:4px;padding:6px 8px;border-radius:10px;border:1px solid rgba(255,255,255,.14);background:linear-gradient(180deg,rgba(46,52,59,.92),rgba(20,17,15,.94));box-shadow:inset 0 1px 0 rgba(255,255,255,.14),0 5px 14px rgba(0,0,0,.5)}
+#mythic-kitchen-ov :where(.mk-pin-card[data-slot="next"]){flex:0 1 34%;opacity:.82}
+#mythic-kitchen-ov :where(.mk-pin-card[data-ready="1"]){border-color:rgba(95,217,122,.6);box-shadow:inset 0 1px 0 rgba(255,255,255,.14),0 0 16px rgba(95,217,122,.28)}
+#mythic-kitchen-ov :where(.mk-pin-card[data-mood="furious"]){border-color:rgba(255,77,94,.6)}
+#mythic-kitchen-ov :where(.mk-pin-top){display:flex;align-items:center;gap:5px;min-width:0}
+#mythic-kitchen-ov :where(.mk-pin-mood){font-size:19px;line-height:1;filter:drop-shadow(0 2px 3px rgba(0,0,0,.6))}
+#mythic-kitchen-ov :where(.mk-pin-veh){font-size:16px;line-height:1}
+#mythic-kitchen-ov :where(.mk-pin-name){font-size:12px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1 1 auto}
+#mythic-kitchen-ov :where(.mk-pin-where){font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:#ffb648;white-space:nowrap}
+#mythic-kitchen-ov :where(.mk-pin-line){font-size:10.5px;font-style:italic;color:#cbbfae;line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+#mythic-kitchen-ov :where(.mk-pin-items){display:flex;flex-direction:column;gap:2px}
+#mythic-kitchen-ov :where(.mk-pin-it){display:flex;align-items:center;gap:4px;font-size:11px;min-width:0;flex-wrap:wrap}
+#mythic-kitchen-ov :where(.mk-pin-it > b){font-variant-numeric:tabular-nums;color:#f6efe4}
+#mythic-kitchen-ov :where(.mk-pin-it[data-done="1"] > b){color:#5fd97a}
+#mythic-kitchen-ov :where(.mk-pin-acts){display:flex;gap:5px;margin-top:1px}
+/* ⚠ NOT .mk-bar. kitchen.css gives .mk-bar \`flex:1 1 auto\`, which in a COLUMN
+   card means flex-GROW:1 vertically — the patience bar ate the whole card and
+   rendered as a green blob. Measured at 390px, not reasoned about. */
+#mythic-kitchen-ov :where(.mk-pin-bar){position:relative;flex:0 0 6px;height:6px;border-radius:99px;overflow:hidden;background:rgba(0,0,0,.55);box-shadow:inset 0 1px 2px rgba(0,0,0,.7)}
+#mythic-kitchen-ov :where(.mk-pin-bar > i){position:absolute;inset:0 auto 0 0;display:block;width:0;border-radius:99px;background:#5fd97a}
+#mythic-kitchen-ov :where(.mk-pin-it .mk-mods-in){flex:1 1 100%;display:flex;flex-wrap:wrap;gap:3px;padding-left:18px}
+#mythic-kitchen-ov :where(.mk-badge-sp){font-size:9px;letter-spacing:.06em;padding:1px 5px;border-radius:99px;background:linear-gradient(180deg,#5b4620,#332612);border:1px solid rgba(255,182,72,.5);color:#ffd88a;white-space:nowrap}
+
+/* ── modifier chips: the promise, and whether it was kept ── */
+#mythic-kitchen-ov :where(.mk-mod){display:inline-flex;align-items:center;gap:3px;font-size:9.5px;letter-spacing:.03em;padding:1px 5px;border-radius:99px;white-space:nowrap;border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.42);color:#e6dccd}
+#mythic-kitchen-ov :where(.mk-mod[data-kind="hold"]){border-color:rgba(255,138,90,.55);color:#ffc4a8}
+#mythic-kitchen-ov :where(.mk-mod[data-kind="extra"]){border-color:rgba(127,255,196,.45);color:#b6f2d8}
+#mythic-kitchen-ov :where(.mk-mod[data-result="honoured"]){border-color:rgba(95,217,122,.85);background:rgba(95,217,122,.18);color:#9fe9b1}
+#mythic-kitchen-ov :where(.mk-mod[data-result="broken"]){border-color:rgba(255,77,94,.85);background:rgba(255,77,94,.2);color:#ffb4bb}
+#mythic-kitchen-ov :where(.mk-mods){display:flex;flex-wrap:wrap;gap:3px;margin:2px 0 0 20px}
+
+/* ── the ticket's spoken line ── */
+#mythic-kitchen-ov :where(.mk-tk-line){font-size:10px;font-style:italic;line-height:1.25;color:#bdb1a0;padding:1px 2px 3px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+#mythic-kitchen-ov :where(.mk-tk-mods){display:flex;flex-wrap:wrap;gap:3px;padding:0 2px 3px}
+
+/* ── the lane: fixtures, mood, badges, the drive-past, the wave ── */
+#mythic-kitchen-ov :where(.mk-fixture){position:absolute;top:4px;bottom:4px;width:46px;border-radius:8px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:10px;line-height:1.15;text-align:center;color:#ffe0a8;background:linear-gradient(180deg,#4a515a,#1d2126);border:1px solid rgba(255,255,255,.16);box-shadow:inset 0 1px 0 rgba(255,255,255,.25),0 4px 10px rgba(0,0,0,.5);z-index:2}
+#mythic-kitchen-ov :where(.mk-fixture > span){font-size:15px}
+#mythic-kitchen-ov :where(.mk-fixture[data-fx="window"]){right:4px;color:#bff0cf;border-color:rgba(95,217,122,.4)}
+#mythic-kitchen-ov :where(.mk-fixture[data-fx="speaker"]){left:4px}
+#mythic-kitchen-ov :where(.mk-car-mood){position:absolute;top:-4px;right:8px;font-size:14px;line-height:1;filter:drop-shadow(0 2px 3px rgba(0,0,0,.7));pointer-events:none}
+#mythic-kitchen-ov :where(.mk-car-badge){font-size:8.5px;letter-spacing:.04em;padding:0 4px;border-radius:99px;background:rgba(0,0,0,.65);border:1px solid rgba(255,182,72,.55);color:#ffd88a;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+#mythic-kitchen-ov :where(.mk-car-pips){display:flex;gap:2px;font-size:9px;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,.8))}
+#mythic-kitchen-ov :where(.mk-wave){position:absolute;top:-2px;left:2px;width:17px;height:17px;padding:0;border-radius:50%;border:1px solid rgba(255,77,94,.55);background:rgba(24,12,12,.9);color:#ff9aa4;font-size:10px;line-height:1;cursor:pointer;z-index:3}
+#mythic-kitchen-ov :where(.mk-passers){position:absolute;left:0;right:0;top:30px;height:30px;pointer-events:none;overflow:hidden;z-index:1}
+#mythic-kitchen-ov :where(.mk-passer){position:absolute;top:0;display:flex;align-items:center;gap:2px;font-size:13px;line-height:1;white-space:nowrap;filter:grayscale(.4) brightness(.72)}
+#mythic-kitchen-ov :where(.mk-passer > b){font-size:8px;font-weight:700;color:#7d7365;letter-spacing:.04em}
+
+/* ── the pass: bin a plate you cannot sell ── */
+#mythic-kitchen-ov :where(.mk-dish-bin){position:absolute;top:-2px;right:0;width:15px;height:15px;padding:0;border-radius:50%;border:1px solid rgba(255,255,255,.22);background:rgba(18,12,10,.85);color:#c9bcab;font-size:9px;line-height:1;cursor:pointer;opacity:.5;z-index:2}
+#mythic-kitchen-ov :where(.mk-dish:hover .mk-dish-bin){opacity:1;border-color:rgba(255,77,94,.7);color:#ff9aa4}
+
+/* ── the loading bay ── */
+#mythic-kitchen-ov :where(.mk-to){display:flex;flex-direction:column;gap:6px;padding:8px;border-radius:10px;border:1px solid rgba(103,216,255,.22);background:linear-gradient(180deg,rgba(20,30,38,.85),rgba(12,14,16,.9));margin-bottom:8px}
+#mythic-kitchen-ov :where(.mk-to-field){width:100%;box-sizing:border-box;padding:7px 9px;border-radius:8px;border:1px solid rgba(255,255,255,.18);background:rgba(0,0,0,.5);color:#f6efe4;font:inherit;font-size:13px}
+#mythic-kitchen-ov :where(.mk-to-field:focus){outline:none;border-color:rgba(103,216,255,.7);box-shadow:0 0 0 2px rgba(103,216,255,.18)}
+#mythic-kitchen-ov :where(.mk-to-rows){display:flex;flex-wrap:wrap;gap:5px}
+#mythic-kitchen-ov :where(.mk-to-chip){display:inline-flex;align-items:center;gap:5px;padding:5px 9px;border-radius:99px;border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.42);color:#e6dccd;font:inherit;font-size:12px;cursor:pointer;max-width:100%}
+#mythic-kitchen-ov :where(.mk-to-chip small){color:#8d8272;font-size:10px}
+#mythic-kitchen-ov :where(.mk-to-chip[data-on="1"]){border-color:rgba(103,216,255,.9);background:rgba(103,216,255,.2);color:#d6f4ff;box-shadow:0 0 12px rgba(103,216,255,.3)}
+#mythic-kitchen-ov :where(.mk-to-why){font-size:11px;color:#8d8272}
+
+#mythic-kitchen-ov :where(.mk-man){display:flex;flex-direction:column;gap:5px;padding:8px;border-radius:10px;border:1px solid rgba(255,182,72,.22);background:linear-gradient(180deg,rgba(38,28,18,.85),rgba(14,11,9,.9));margin-bottom:8px}
+#mythic-kitchen-ov :where(.mk-man-line){display:flex;align-items:center;gap:7px;font-size:12px}
+#mythic-kitchen-ov :where(.mk-man-line > .mk-nm){flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#mythic-kitchen-ov :where(.mk-step){width:26px;height:26px;padding:0;border-radius:7px;border:1px solid rgba(255,255,255,.2);background:linear-gradient(180deg,rgba(255,255,255,.1),rgba(0,0,0,.4));color:#f6efe4;font:inherit;font-size:14px;font-weight:800;line-height:1;cursor:pointer}
+#mythic-kitchen-ov :where(.mk-step:disabled){opacity:.3;cursor:default}
+#mythic-kitchen-ov :where(.mk-man-take){min-width:38px;text-align:center;font-variant-numeric:tabular-nums;font-weight:800;font-size:13px}
+#mythic-kitchen-ov :where(.mk-man-fill){position:relative;height:14px;border-radius:99px;overflow:hidden;background:rgba(0,0,0,.55);box-shadow:inset 0 1px 3px rgba(0,0,0,.8)}
+#mythic-kitchen-ov :where(.mk-man-fill > i){position:absolute;inset:0 auto 0 0;display:block;border-radius:99px;background:linear-gradient(90deg,#ff8a5a,#ffb648)}
+#mythic-kitchen-ov :where(.mk-man-fill > span){position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;text-shadow:0 1px 3px rgba(0,0,0,.9)}
+
+/* ── the route: five named legs between two markers ── */
+#mythic-kitchen-ov :where(.mk-route){position:relative;height:46px;margin:6px 0 2px}
+#mythic-kitchen-ov :where(.mk-route-rail){position:absolute;left:12px;right:12px;top:26px;height:5px;border-radius:99px;background:repeating-linear-gradient(90deg,rgba(255,255,255,.22) 0 8px,transparent 8px 16px),rgba(0,0,0,.5)}
+#mythic-kitchen-ov :where(.mk-route-leg){position:absolute;top:20px;transform:translateX(-50%);font-size:11px;line-height:1;opacity:.35;filter:grayscale(1)}
+#mythic-kitchen-ov :where(.mk-route-leg[data-passed="1"]){opacity:1;filter:none}
+#mythic-kitchen-ov :where(.mk-route-leg[data-hazard="1"][data-passed="1"]){text-shadow:0 0 9px rgba(255,77,94,.9)}
+#mythic-kitchen-ov :where(.mk-route-end){position:absolute;top:2px;font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:#a99c8c;max-width:44%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#mythic-kitchen-ov :where(.mk-route-end[data-e="a"]){left:0}
+#mythic-kitchen-ov :where(.mk-route-end[data-e="b"]){right:0;text-align:right}
+#mythic-kitchen-ov :where(.mk-truck){position:absolute;top:12px;left:0;transform:translateX(-50%);font-size:17px;line-height:1;z-index:2;filter:drop-shadow(0 2px 4px rgba(0,0,0,.8));animation:mk-wobble .9s ease-in-out infinite}
+@keyframes mk-wobble{0%,100%{transform:translateX(-50%) translateY(0) rotate(-1.5deg)}50%{transform:translateX(-50%) translateY(-1.5px) rotate(1.5deg)}}
+#mythic-kitchen-ov :where(.mk-route-note){font-size:10px;color:#a99c8c;padding-top:1px}
+#mythic-kitchen-ov :where(.mk-route-note[data-bad="1"]){color:#ffb4bb}
+#mythic-kitchen-ov :where(.mk-held){border-color:rgba(103,216,255,.4)}
+</style>`;
+
+/* ═══════════════════════════════════════════════════════════════════════════
    THE SHELL — built once, in open(). Everything inside #mk-body is rebuilt by
    paint(); the HUD, tabs and FX layer are permanent so their nodes survive and
    frame() can write to them without a lookup.
    ═══════════════════════════════════════════════════════════════════════════ */
 function shellHtml() {
-  return `
+  return WIRE_CSS + `
   <div class="mk-room" aria-hidden="true"></div>
 
   <header class="mk-hud">
-    <div class="mk-hud-pop" title="Popularity">
+    <div class="mk-hud-pop" title="Popularity, and what today has cost you">
       <span class="mk-face" id="mk-face">🙂</span>
       <div>
         <div class="mk-meter"><i id="mk-pop-bar"></i></div>
         <div class="mk-lab" id="mk-pop-lab">Popularity</div>
+      </div>
+      <div class="mk-fails" id="mk-fails" title="Walked out / burnt today">
+        <span class="mk-fail" data-on="0" id="mk-fail-lost">💀 0</span>
+        <span class="mk-fail" data-on="0" id="mk-fail-burnt">🔥 0</span>
       </div>
     </div>
 
@@ -241,10 +410,18 @@ function shellHtml() {
       <span class="mk-lab" id="mk-xp-lab">0/0</span>
     </div>
 
-    <div class="mk-hud-cash" title="Cinder">
+    <!-- 💰 THE MONEY ANCHOR. REF-B's loudest number is "$394.64" and it is the
+         till, not the bank. Ours led with the global Cinder wallet — a number
+         that reads 0 for most players and does not move while you cook — and
+         buried today's takings in an 11px chip at the bottom of the screen.
+         Takings lead now; the wallet is the small print under them. -->
+    <div class="mk-hud-cash" title="Today's takings, and your Cinder wallet">
       <span class="mk-coin" aria-hidden="true"></span>
-      <span class="mk-cash" id="mk-cash">0</span>
-      <span class="mk-lab">Cinder</span>
+      <div class="mk-take-wrap">
+        <span class="mk-take" id="mk-take">0</span>
+        <span class="mk-take-sub" id="mk-take-sub">today · ◈ 0 in the vault</span>
+      </div>
+      <span class="mk-cash mk-sr-cash" id="mk-cash" hidden>0</span>
     </div>
 
     <div class="mk-hud-clock" title="Shift clock">
@@ -257,6 +434,13 @@ function shellHtml() {
 
     <button class="mk-hud-close" data-act="close" aria-label="Close the kitchen">✕</button>
   </header>
+
+  <!-- 📌 THE PINNED WINDOW. The drive-thru is the headline feature and at 360px
+       it was fourth of five sections, below the fold, unreachable during the
+       one moment it matters. This is drivethru.js's own laneCard() — the car AT
+       the window and the one behind it, with the two player verbs on them — and
+       it never scrolls away. -->
+  <div class="mk-pin" id="mk-pin"></div>
 
   <div class="mk-body" id="mk-body"></div>
 
@@ -340,11 +524,14 @@ export function paint() {
   _paintedView = viewKey();
   /* One cheap pass so a fresh paint is never a frame behind: a ticket that
      appeared this instant must not show an empty countdown for 16ms. */
-  updateHud(nowMs(), true);
-  updateTickets(nowMs());
-  updateSlots(nowMs());
-  updateCars(nowMs());
-  updatePass(nowMs());
+  const t0 = nowMs();
+  updateHud(t0, true);
+  updateTickets(t0);
+  updateSlots(t0);
+  paintPin(k, t0, true);
+  updateCars(t0);
+  updatePassers(t0);
+  updatePass(t0);
 }
 
 function viewKey() { return [_sheet || '-', _sel ? _sel.stationId + _sel.i : '-'].join('|'); }
@@ -358,10 +545,14 @@ function rebuildRegistry() {
     face: q('#mk-face'), popBar: q('#mk-pop-bar'), popLab: q('#mk-pop-lab'),
     level: q('#mk-level'), xpBar: q('#mk-xp-bar'), xpLab: q('#mk-xp-lab'),
     cash: q('#mk-cash'), day: q('#mk-day'), clock: q('#mk-clock'),
+    take: q('#mk-take'), takeSub: q('#mk-take-sub'),
+    lost: q('#mk-fail-lost'), burnt: q('#mk-fail-burnt'),
     rush: _root.querySelectorAll('#mk-rush > i'),
   };
   _reg.fx = q('#mk-fx');
   _reg.road = q('#mk-road');
+  _reg.passers = q('#mk-passers');
+  _reg.pin = q('#mk-pin');
 
   for (const el of _root.querySelectorAll('.mk-tk')) {
     _reg.tickets.push({ id: el.dataset.tk, el, bar: el.querySelector('.mk-bar > i'), time: el.querySelector('.mk-tk-time') });
@@ -385,7 +576,14 @@ function rebuildRegistry() {
 
 /* ── 🚗 THE LANE ─────────────────────────────────────────────────────────── */
 function laneHtml(k) {
-  const cars = (k.lane || []).filter((c) => c && c.state !== 'gone');
+  /* ⚠ GONE CARS STAY ON SCREEN FOR LANE_EXIT_MS. Round 1 filtered them out the
+     instant `state` flipped, so a served customer VANISHED — no drive-off, no
+     veer, and `exitDir` (which the lane computes for exactly this) had nothing
+     to animate. They are drawn for as long as the lane says they still occupy
+     their slot, and updateCars() moves them out. */
+  const exitMs = EC('LANE_EXIT_MS', 900);
+  const cars = (k.lane || []).filter((c) => c
+    && (c.state !== 'gone' || (k.now - (Number(c.leftAt) || 0)) < exitMs));
   /* drivethru.js publishes a HUD chip of its own — take it. Its `cap`/`used`
      are in LENGTH units (a rig is two cars long) while `live` is a head-count,
      and it is the module's business to know the difference, not ours. */
@@ -403,16 +601,32 @@ function laneHtml(k) {
      reading: the DOM was correct in every probe. */
   const travel = laneTravel();
   const body = cars.length
-    ? cars.map((c) => carHtml(c, travel)).join('')
+    ? cars.map((c, i) => carHtml(c, travel, i === 0)).join('')
     : `<div class="mk-road-empty">${k.shift.running ? 'Lane clear. Someone will turn up.' : 'The lane is closed.'}</div>`;
+
+  /* 🔴 TWO FIXTURES, AND WHICH END EACH ONE IS ON IS NOT A DETAIL.
+     drivethru.js defines `pos 0` as the WINDOW and `LANE_LEN` as the mouth, and
+     carX() maps pos 0 to the RIGHT edge of the road. Round 1 drew exactly one
+     fixture — a box reading "ORDER HERE" — pinned to that right edge. So the
+     sign telling people where to order was standing at the hatch where food is
+     handed out, and the place cars actually order had no fixture at all. A
+     full-day probe put 900 order-phase frames at the speaker and 24 at the
+     window; the picture said the opposite.
+     Now: 🪟 WINDOW at pos 0 (right), 🔊 ORDER HERE at the mouth (left), and
+     laneTravel() reserves the width of BOTH so no car parks under either. */
+  const fixtures = `
+        <div class="mk-fixture" data-fx="speaker" aria-hidden="true"><span>🔊</span>ORDER<br>HERE</div>
+        <div class="mk-fixture" data-fx="window" aria-hidden="true"><span>🪟</span>WINDOW</div>`;
+
   return `
   <section class="mk-sec mk-sec-lane">
     <div class="mk-sec-head"><b>Drive-Thru</b><span class="mk-spacer"></span>
-      <span>${live} / ${cap} cars${st && st.full ? ' · FULL' : ''}</span></div>
+      <span>${esc(st ? st.label : (live + ' / ' + cap + ' cars'))}</span></div>
     <div class="mk-lane">
       <div class="mk-road" id="mk-road">
         ${body}
-        <div class="mk-speaker" aria-hidden="true"><span>🔊</span>ORDER<br>HERE</div>
+        <div class="mk-passers" id="mk-passers" aria-hidden="true"></div>
+        ${fixtures}
       </div>
     </div>
   </section>`;
@@ -427,23 +641,52 @@ function laneHtml(k) {
  * `carId || id`. Both readings render; neither builder can break the other.
  * This wants resolving in CONTRACT.md §2 before the next pass.
  */
-function carHtml(c, travel) {
+function carHtml(c, travel, isHead) {
   const car = (typeof DATA.car === 'function' ? (DATA.car(c.vehicle) || DATA.car(c.type) || DATA.car(c.carId)) : null) || {};
   const x = carX(c, travel);
   const cust = (typeof DATA.customer === 'function' ? DATA.customer(c.custId) : null) || {};
+  /* 🔴 SIX FIELDS THE LANE COMPUTED EVERY FRAME AND NOBODY DREW. drivethru.js's
+     §RENDER block is explicit about each: `mood` is the per-customer emoji face
+     (REF-B's popularity face, once per car, and the single best "who do I serve
+     next" signal on the screen); `special` is the set piece, and a set piece the
+     player cannot identify is just a random multiplier; the order pips say WHAT
+     they want without opening anything. `exitDir` is honoured in updateCars(). */
+  const mood = MOOD_FACE[c.mood] || '';
+  const badge = SPECIAL_BADGE[c.special] || '';
+  const pips = (c.items || []).slice(0, 4).map((it) => {
+    const r = (typeof DATA.recipe === 'function' ? DATA.recipe(it.recipeId) : null) || {};
+    return `<span>${r.icon || '🍽'}${(it.qty | 0) > 1 ? '×' + (it.qty | 0) : ''}</span>`;
+  }).join('');
+  /* The wave-off lives only on the HEAD car. It is the player's escape hatch —
+     "this raider is going to time out anyway and take three cars behind him with
+     him" — and it costs POP_WAVE, so it is deliberately a small 17px target you
+     have to mean, guarded by a confirm. Offering it on every car in the queue
+     would invite a mis-tap that costs popularity for no decision at all. */
+  const wave = isHead && c.state !== 'gone'
+    ? `<button class="mk-wave" data-act="wave" data-car="${esc(c.carId || c.id)}" title="Wave them off (costs popularity)" aria-label="Wave ${esc(c.name || 'this car')} off">✋</button>` : '';
   /* The bubble node ALWAYS exists and is hidden with an attribute. `car.say` is
      set by drivethru.js with its own expiry (`sayUntil`) and does NOT bump
      `rev` — rightly, it is chatter, not structure — so if the bubble were built
      at paint time the customer would say nothing until something unrelated
      repainted the lane. It is a per-frame textContent write instead. */
   return `<div class="mk-car" data-car="${esc(c.carId || c.id)}" data-state="${esc(c.state || 'rolling')}"
-      data-side="left" data-say="0" style="transform:translateX(${x}px)">
+      data-side="left" data-say="0" data-mood="${esc(c.mood || 'ok')}" style="transform:translateX(${x}px)">
       <div class="mk-bub"></div>
+      ${wave}
+      <span class="mk-car-mood" aria-hidden="true">${mood}</span>
       <div class="mk-car-body" aria-hidden="true">${c.vehicleIcon || car.icon || '🚗'}</div>
+      ${pips ? `<div class="mk-car-pips" aria-hidden="true">${pips}</div>` : ''}
       <div class="mk-car-name">${esc(c.name || cust.name || 'Customer')}</div>
+      ${badge ? `<span class="mk-car-badge">${esc(badge)}</span>` : ''}
       <div class="mk-bar"><i></i></div>
     </div>`;
 }
+/* The lane's own vocabulary, mirrored from drivethru.js §RENDER. ⚠ Mirrored and
+   not imported: these are PRESENTATION strings (see the URG_* note) and the
+   module exports its own copies only inside `laneCard()`, which the pinned strip
+   uses. Nothing here can change an outcome. */
+const MOOD_FACE = { happy: '😄', ok: '🙂', testy: '😠', furious: '🤬' };
+const SPECIAL_BADGE = { bulk: '📦 BULK', jump: '⚡ CUT IN', grudge: '😤 GRUDGE', favour: '💚 REGULAR' };
 
 /**
  * 🔴 THE LANE RUNS RIGHT-TO-LEFT AND `pos` IS INVERTED.
@@ -460,17 +703,22 @@ function carX(c, travel) {
   const len = Math.max(0.01, EC('LANE_LEN', 1));
   const p = (Number(c.pos) || 0) / len;
   const t = Number(travel) || 0;
-  return Math.round(Math.min(t, (1 - p) * t));
+  /* 🔴 THE MOUTH IS NOW A FIXTURE TOO, so x=0 is no longer the left kerb — it is
+     the left kerb PLUS the speaker box. Without the offset the last car in a
+     full lane parks on top of the ORDER HERE sign, which is the one place a car
+     genuinely cannot be. */
+  return Math.round(MOUTH_W + Math.min(t, (1 - p) * t));
 }
+/** ⚠ Reserves are wider than the fixtures they clear (46px each). `travel` is
+    measured to the car's LEFT edge, so a reserve equal to the box parks the
+    car's 76px-wide label underneath it and the customer at the window loses
+    their name. The extra clears the label too. */
+const MOUTH_W = 52;
 /** How far a car can move across the road, in px. One definition, two callers
     (the markup seed above and the per-frame update). */
 function laneTravel() {
-  /* ⚠ SPEAKER_W is wider than the speaker box (46px phone / 64px desktop) on
-     purpose. `travel` is measured to the car's LEFT edge, so a reserve equal to
-     the box parks the car's 76px-wide label underneath it and the customer at
-     the window loses their name. The extra clears the label too. */
-  const CAR_W = 76, SPEAKER_W = 84;
-  return Math.max(0, (_laneW || 0) - CAR_W - SPEAKER_W);
+  const CAR_W = 76, WINDOW_W = 84;
+  return Math.max(0, (_laneW || 0) - CAR_W - WINDOW_W - MOUTH_W);
 }
 function capLane(k) {
   try { if (typeof DATA.laneCap === 'function') return DATA.laneCap(k.upgrades || []); } catch (e) {}
@@ -481,7 +729,7 @@ function capLane(k) {
 function boardHtml(k) {
   const list = (k.tickets || []).filter((t) => t && (t.state === 'open' || t.state === 'ready'));
   const inner = list.length
-    ? list.map(ticketHtml).join('')
+    ? list.map((t) => ticketHtml(t, k)).join('')
     : `<div class="mk-empty">${k.shift.running ? 'No orders on the board. Enjoy it.' : 'Service is closed.'}</div>`;
   return `
   <section class="mk-sec mk-sec-board">
@@ -492,19 +740,43 @@ function boardHtml(k) {
     </div>
   </section>`;
 }
-function ticketHtml(t) {
+/**
+ * 🎫 REF-B'S ORDER SCREEN: an ITEMISED ticket, with the customer's own words at
+ * the top and the promises attached to the line they were made about.
+ *
+ * 🔴 "NO ONIONS" IS ONLY A MECHANIC IF THE PLAYER CAN SEE IT. drivethru.js has
+ * scored modifiers per line since this round — `hold` clears iff the ingredient
+ * is absent from every unit, `extra` iff it appears twice in every unit — and
+ * round 1 rendered none of it. A promise the ticket never states is not a
+ * promise, it is a hidden dice roll that quietly takes the player's tip.
+ *
+ * The verdict is LIVE: `modVerdict()` is a pure read, safe before anything is
+ * cooked, and it says 'unproven' until there is a dish to judge. Unproven is
+ * neutral by design (worth exactly 0) — it must never read as a failure, or a
+ * player who has not started that line yet is being told off for it.
+ */
+function ticketHtml(t, k) {
   const cust = (typeof DATA.customer === 'function' ? DATA.customer(t.custId) : null) || {};
+  const verdict = modResults(k, t);
   const items = (t.items || []).map((it) => {
     const r = (typeof DATA.recipe === 'function' ? DATA.recipe(it.recipeId) : null) || {};
     const pips = [];
     for (let i = 0; i < it.qty; i++) pips.push(`<i class="${i < it.filled ? 'on' : ''}"></i>`);
+    const mods = (Array.isArray(it.mods) ? it.mods : []).map((m) => modChip(m, verdict[modKey(m, it.recipeId)])).join('');
     return `<div class="mk-tk-it" data-done="${it.filled >= it.qty ? 1 : 0}">
         <span class="mk-ic" aria-hidden="true">${r.icon || '🍽'}</span>
         <span class="mk-nm">${esc(r.name || it.recipeId)}</span>
         <span class="mk-qt">${it.filled}/${it.qty}</span>
         <span class="mk-pips" aria-hidden="true">${pips.join('')}</span>
-      </div>`;
+      </div>${mods ? `<div class="mk-mods">${mods}</div>` : ''}`;
   }).join('');
+
+  /* Order-level mods that never landed on a line (a whole-ticket "well done")
+     still belong on the ticket — they score, so they must be readable. */
+  const seen = Object.create(null);
+  for (const it of (t.items || [])) for (const m of (it.mods || [])) seen[m.id] = 1;
+  const loose = (Array.isArray(t.mods) ? t.mods : []).filter((m) => m && !seen[m.id])
+    .map((m) => modChip(m, verdict[modKey(m, null)])).join('');
 
   const ready = t.state === 'ready';
   const worth = ticketWorth(t);
@@ -514,6 +786,8 @@ function ticketHtml(t) {
         <span class="mk-tk-who">${esc(t.name || cust.name || 'Customer')}</span>
         <span class="mk-tk-src">${t.source === 'drive' ? '🚗 Lane' : '🚶 Counter'}</span>
       </div>
+      ${t.line ? `<div class="mk-tk-line">“${esc(t.line)}”</div>` : ''}
+      ${loose ? `<div class="mk-tk-mods">${loose}</div>` : ''}
       <div class="mk-tk-items">${items}</div>
       <div class="mk-tk-foot">
         <div class="mk-bar"><i></i></div>
@@ -521,6 +795,27 @@ function ticketHtml(t) {
       </div>
       ${ready ? `<button class="mk-serve" data-act="serve" data-id="${esc(t.id)}">Serve · ${esc(fmtCinder(worth))}</button>` : ''}
     </div>`;
+}
+const MOD_MARK = { honoured: '✓', broken: '✗' };
+function modKey(m, recipeId) { return (m && m.id) + '|' + (recipeId || ''); }
+/** The lane's live per-line verdict, keyed so a ticket line can look itself up.
+    Degrades to an empty map (everything 'unproven') if drivethru.js is mid-rewrite. */
+function modResults(k, t) {
+  const out = Object.create(null);
+  if (!t || t.source !== 'drive' || !t.carId || typeof DriveThru.modVerdict !== 'function') return out;
+  const car = (k.lane || []).find((c) => c && (c.carId === t.carId || c.id === t.carId));
+  if (!car) return out;
+  const v = safe(() => DriveThru.modVerdict(k, car, k.now), null);
+  for (const d of ((v && v.detail) || [])) out[modKey(d, d.recipeId)] = d.result;
+  return out;
+}
+function modChip(m, result) {
+  if (!m) return '';
+  const ing = (m.ing && typeof DATA.ingredient === 'function') ? (DATA.ingredient(m.ing) || {}) : {};
+  const r = result || 'unproven';
+  return `<span class="mk-mod" data-kind="${esc(m.kind || '')}" data-result="${esc(r)}"
+      title="${esc(m.label || '')} — ${r === 'honoured' ? 'kept' : (r === 'broken' ? 'broken' : 'not judged yet')}"
+    >${ing.icon || (m.kind === 'hold' ? '🚫' : '➕')} ${esc(m.label || m.id)}${MOD_MARK[r] ? ' ' + MOD_MARK[r] : ''}</span>`;
 }
 /** Menu-price estimate for the SERVE button. Deliberately the undecorated base
     price sum: quoting the popularity- and rush-adjusted figure here would be a
@@ -635,8 +930,18 @@ function passHtml(k) {
 }
 function dishHtml(d) {
   const r = (typeof DATA.recipe === 'function' ? DATA.recipe(d.recipeId) : null) || {};
+  /* 🔴 THE BIN BUTTON, and it is not a nicety. The pass now genuinely HOLDS food
+     (the sim stopped it piping straight through), and a hard PASS_CAP means one
+     wrong dish nobody on the board wants is a plate the player cannot get rid
+     of. `spoilPass()` guarantees it eventually rots, so this is not the
+     soft-lock fix — but waiting ~100 seconds for a mistake to decay while the
+     dinner rush runs is a punishment with no decision in it. Binning it is the
+     decision: you paid for it, you choose whether the space is worth more. */
+  const canBin = typeof State.binPass === 'function';
   return `<div class="mk-dish" data-dish="${esc(d.id)}" data-q="${esc(d.quality || 'good')}"
       title="${esc(r.name || d.recipeId)}">
+      ${canBin ? `<button class="mk-dish-bin" data-act="binpass" data-id="${esc(d.id)}"
+        aria-label="Bin the ${esc(r.name || d.recipeId)}" title="Bin it">✕</button>` : ''}
       <span class="mk-ic" aria-hidden="true">${r.icon || '🍽'}</span>
       <span class="mk-q">${esc(d.quality || 'good')}</span>
       <span class="mk-fresh"><i></i></span>
@@ -765,16 +1070,157 @@ function paintStrip(k) {
       </div>
       <button class="mk-btn go" data-act="shift-open">Open the doors</button>`;
   } else {
+    /* 💀 🔥 and the money have MOVED UP to the HUD (see updateHud). What is left
+       here is what the HUD has no room for: how the service is going and how
+       full the lane is. Repeating the failure counters in two places just made
+       both copies quiet. */
+    const st = safe(() => (typeof DriveThru.laneStatus === 'function' ? DriveThru.laneStatus(k, k.now) : null), null);
+    const tips = k.today.tips | 0;
     strip.innerHTML = `
       <div class="mk-tallies">
-        <span class="mk-chip">✅ ${k.today.served}</span>
-        <span class="mk-chip">💀 ${k.today.lost}</span>
-        <span class="mk-chip">🔥 ${k.today.burnt}</span>
-        <span class="mk-chip"><span class="mk-coin"></span> ${fmtNum(k.today.earned + k.today.tips)}</span>
+        <span class="mk-chip">✅ ${k.today.served} served</span>
+        ${tips ? `<span class="mk-chip">🪙 ${fmtNum(tips)} tips</span>` : ''}
+        ${st && st.full ? '<span class="mk-chip">🚗 Lane full</span>' : ''}
       </div>
       <button class="mk-btn danger" data-act="shift-close">End shift</button>`;
   }
 }
+
+/* ── 📌 THE PINNED WINDOW ────────────────────────────────────────────────────
+ * The two cars that matter, under the HUD, above everything, never scrolled
+ * away. `DriveThru.laneCard()` hands the whole payload over already resolved —
+ * mood, set piece, patience, the spoken line, the itemised order with its
+ * per-line promises and a live verdict on each, and the two booleans that say
+ * whether SERVE and WAVE would actually succeed.
+ *
+ * 🔴 `canServe` / `canWave` GATE THE BUTTONS. drivethru.js computes them so a
+ *    renderer can disable a control rather than offer it and then toast a
+ *    refusal — a button that lies is worse than no button.
+ *
+ * ⚠ REBUILT ON A FINGERPRINT, NOT ON `rev`. During a rush the sim bumps `rev`
+ *   several times a second (every unit that fills a ticket does), and rebuilding
+ *   a card with a SERVE button on it that often eats taps. The fingerprint moves
+ *   only when something structural about these two cars changed; patience, mood
+ *   and the countdown are per-frame writes onto the nodes that are already there.
+ */
+function paintPin(k, t, force) {
+  const host = _reg.pin;
+  if (!host) return;
+  const card = safe(() => (typeof DriveThru.laneCard === 'function' ? DriveThru.laneCard(k, t) : null), null);
+  const slots = card ? [['window', card.window], ['next', card.next]] : [];
+  const live = slots.filter((s) => s[1]);
+  const key = live.map(([slot, c]) => [
+    slot, c.carId, c.ready ? 1 : 0, c.special || '', c.station || '', c.state || '',
+    (c.items || []).map((i) => i.recipeId + ':' + i.filled + '/' + i.qty
+      + ':' + (i.mods || []).map((m) => m.id + m.result).join(',')).join('|'),
+  ].join('~')).join('||');
+
+  if (force || key !== _pinKey) {
+    _pinKey = key;
+    host.innerHTML = live.map(([slot, c]) => pinCardHtml(slot, c)).join('');
+    _reg.pinRows = [];
+    for (const el of host.querySelectorAll('.mk-pin-card')) {
+      _reg.pinRows.push({
+        id: el.dataset.car, el,
+        mood: el.querySelector('.mk-pin-mood'),
+        bar: el.querySelector('.mk-pin-bar > i'),
+        where: el.querySelector('.mk-pin-where'),
+      });
+    }
+  }
+  updatePin(k, t);
+}
+/** WHERE the car physically is, in the player's words. The lane's `station` is
+    'speaker' | 'queue' | 'window' and the whole point of drawing two fixtures
+    was to make that legible — so the card says it too. */
+const STATION_WORD = { window: 'At the window', speaker: 'At the speaker', queue: 'In the queue' };
+function pinCardHtml(slot, c) {
+  const items = (c.items || []).map((it) => {
+    const mods = (it.mods || []).map((m) => modChip(m, m.result)).join('');
+    return `<div class="mk-pin-it" data-done="${it.filled >= it.qty ? 1 : 0}">
+        <span aria-hidden="true">${it.icon || '🍽'}</span>
+        <span class="mk-nm" style="flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.name)}</span>
+        <b>${it.filled | 0}/${it.qty | 0}</b>
+        ${mods ? `<span class="mk-mods-in">${mods}</span>` : ''}
+      </div>`;
+  }).join('');
+  const head = slot === 'window';
+  return `<div class="mk-pin-card" data-slot="${slot}" data-car="${esc(c.carId)}"
+      data-ready="${c.ready ? 1 : 0}" data-mood="${esc(c.mood || 'ok')}">
+      <div class="mk-pin-top">
+        <span class="mk-pin-mood" aria-hidden="true">${c.moodFace || '🙂'}</span>
+        <span class="mk-pin-veh" aria-hidden="true">${c.vehicleIcon || '🚗'}</span>
+        <span class="mk-pin-name">${esc(c.name || 'Customer')}</span>
+        ${c.specialLabel ? `<span class="mk-badge-sp">${esc(c.specialLabel)}</span>` : ''}
+        <span class="mk-pin-where">${head ? esc(STATION_WORD[c.station] || '') : 'NEXT'}</span>
+      </div>
+      ${head && c.line ? `<div class="mk-pin-line">“${esc(c.line)}”</div>` : ''}
+      ${items ? `<div class="mk-pin-items">${items}</div>` : `<div class="mk-pin-line">Still reading the board…</div>`}
+      <div class="mk-pin-bar"><i></i></div>
+      ${head ? `<div class="mk-pin-acts">
+        <button class="mk-btn go" data-act="serve-car" data-car="${esc(c.carId)}" ${c.canServe ? '' : 'disabled'}
+          style="flex:1 1 auto">${c.ready ? 'Serve' : 'Not ready'}</button>
+        <button class="mk-btn danger" data-act="wave" data-car="${esc(c.carId)}" ${c.canWave ? '' : 'disabled'}>✋ Wave off</button>
+      </div>` : ''}
+    </div>`;
+}
+function updatePin(k, t) {
+  if (!_reg.pinRows || !_reg.pinRows.length) return;
+  for (const row of _reg.pinRows) {
+    const c = (k.lane || []).find((x) => x && (x.carId === row.id || x.id === row.id));
+    if (!c) continue;
+    setText(row.mood, MOOD_FACE[c.mood] || '🙂');
+    setData(row.el, 'mood', c.mood || 'ok');
+    if (row.el.dataset.slot === 'window') setText(row.where, STATION_WORD[c.station] || '');
+    const p = patiencePct(k, c, t);
+    setStyle(row.bar, 'width', Math.round(p * 100) + '%');
+    setStyle(row.bar, 'background', p <= URG_LATE ? '#ff4d5e' : (p <= URG_WARN ? '#ffd166' : '#5fd97a'));
+  }
+}
+
+/* ── 🚗💨 THE DRIVE-PAST ─────────────────────────────────────────────────────
+ * 🔴 THE BIGGEST NUMBER IN THE BUSINESS, AND IT WAS COMPLETELY SILENT. One
+ * twelve-minute day at level 20 measured 74 cars balked against 64 served: more
+ * than half of all demand was turned away at the mouth of the lane with no
+ * event, no pixel and no sound. drivethru.js now records each one with a face
+ * and a vehicle; this drives them across the FAR side of the road — BEHIND the
+ * queue, never through it — and fades them out.
+ *
+ * ⚠ Built and destroyed in `frame()`, not in `paint()`. A passer-by lives ~2.6s
+ *   and bumps no `rev` (it is not structure, nothing can be done about it), so a
+ *   paint-time build would show them only if something unrelated repainted.
+ */
+function updatePassers(t) {
+  const host = _reg.passers;
+  if (!host) return;
+  const rows = safe(() => (typeof DriveThru.passersBy === 'function' ? DriveThru.passersBy(K(), t) : []), []) || [];
+  const seen = Object.create(null);
+  for (const p of rows) {
+    seen[p.id] = 1;
+    let el = host.querySelector('[data-p="' + cssq(p.id) + '"]');
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'mk-passer';
+      el.dataset.p = p.id;
+      el.innerHTML = `<span>${esc(p.vehicleIcon || '🚗')}</span><b>${esc(p.custName || '')} drove past</b>`;
+      let h = 0; for (const ch of String(p.id)) h = (h * 31 + ch.charCodeAt(0)) & 255;
+      el.style.top = (h % 3) * 9 + 'px';
+      host.appendChild(el);
+    }
+    // Right to left, same direction the lane runs, so it reads as traffic that
+    // looked at the queue and kept going rather than as a car arriving.
+    el.style.left = Math.round((1 - p.pct) * 100) + '%';
+    /* ⚠ CAPPED AT .7, deliberately. The drive-past shares its band of sky with
+       the speech bubble, and the ONE customer who is talking must always win
+       that fight — a balk is information, a bubble is the game asking for a
+       decision. It reads as traffic in the background, which is what it is. */
+    el.style.opacity = String(Math.max(0, Math.min(0.7, 1.05 - p.pct * 1.05)));
+  }
+  for (const el of host.querySelectorAll('.mk-passer')) if (!seen[el.dataset.p]) el.remove();
+}
+/** Attribute-selector escaping. Ids here are ours ('p12'), but a selector built
+    from data is a selector that will one day be built from data we do not own. */
+function cssq(v) { return String(v == null ? '' : v).replace(/["\\\]]/g, '\\$&'); }
 
 function paintTabs() {
   if (!_root) return;
@@ -808,13 +1254,19 @@ export function frame(dt, now, events) {
   }
 
   const k = K();
+  /* The recipient lookup's debounce lives on the sim clock (see _findDueAt).
+     Fired BEFORE the rev gate: a repaint must not swallow the player's typing. */
+  if (_findDueAt && t >= _findDueAt) { _findDueAt = 0; runFind(); }
   if (k.rev !== _paintedRev || viewKey() !== _paintedView) { paint(); return; }
 
   updateHud(t, false);
   updateTickets(t);
   updateSlots(t);
+  paintPin(k, t, false);
   updateCars(t);
+  updatePassers(t);
   updatePass(t);
+  updateRoutes(t);
   drainFx(t);
 }
 
@@ -847,6 +1299,39 @@ function updateHud(t, force) {
     _gems = safe(() => (b().gems ? b().gems() : 0), 0);
   }
   setText(h.cash, fmtNum(_gems));
+
+  /* 💰 THE ANCHOR. REF-B leads with "$394.64" and that number is the TILL. Ours
+     led with the Cinder wallet, which read 0 in every screenshot the critic took
+     and does not move while you cook, and buried today's takings in the fourth
+     of four identical 11px chips at the bottom of the screen.
+     ⚠ The Cinder wallet is NOT deleted, it is demoted — it is the currency
+     supplies are actually bought with, so a player mid-restock still needs it.
+     It rides the sub-line, and the hidden #mk-cash node stays because the whole
+     rest of this file (and any future HUD work) addresses it by id. */
+  const take = Math.max(0, (k.today.earned | 0) + (k.today.tips | 0));
+  if (h.take && h.take.textContent !== fmtNum(take)) {
+    // Pop on INCREASE only. A reset to zero at shift open is not a payday.
+    const rose = take > (Number(h.take.dataset.v) || 0);
+    setText(h.take, fmtNum(take));
+    h.take.dataset.v = String(take);
+    if (rose) {
+      h.take.dataset.pop = '0';
+      // Reading offsetWidth restarts the CSS animation. It is a layout read, but
+      // it happens at most once per sale, not once per frame.
+      try { void h.take.offsetWidth; } catch (e) {}
+      h.take.dataset.pop = '1';
+    }
+  }
+  const heldF = safe(() => (typeof Convoy.heldFood === 'function' ? Convoy.heldFood(k) : 0), 0);
+  setText(h.takeSub, 'today · ◈ ' + fmtNum(_gems) + ' in the vault'
+    + (heldF > 0 ? ' · 📦 ' + fmtNum(heldF) + ' held' : ''));
+
+  /* 💀 / 🔥 beside the face, red above zero. These two numbers ARE the "you are
+     losing" message and they were the least prominent pixels on a 1440px
+     screen. They belong next to the popularity meter they are draining. */
+  const lost = k.today.lost | 0, burnt = k.today.burnt | 0;
+  setText(h.lost, '💀 ' + lost);   setData(h.lost, 'on', lost > 0 ? '1' : '0');
+  setText(h.burnt, '🔥 ' + burnt); setData(h.burnt, 'on', burnt > 0 ? '1' : '0');
 
   const clock = safe(() => State.shiftClock(), null);
   if (clock) {
@@ -914,16 +1399,58 @@ function updateCars(t) {
     _laneAt = t;
   }
   const travel = laneTravel();
+
+  /* 🔴 ONE BUBBLE PER FRAME, AND WHICH ONE IS A GAMEPLAY DECISION.
+     `.mk-bub` is up to 190px of nowrap text centred on a 76px car; on a 364px
+     road with four cars, collision is the normal case, not the edge case — the
+     critic measured two bubbles at the same y overlapping by 26px and rendering
+     as "Two dogs and a large fries, pl…arge fries, pl…". The stylesheet now
+     staggers bubbles across three lines of sky, which stops them stacking, but
+     the real fix is upstream: show the ONE customer with the least patience
+     left, because that is also the one the player most needs to hear. Everyone
+     else goes quiet. Their line comes back the moment they are the urgent one. */
+  let loudest = null, loudestP = 2;
+  for (const row of _reg.cars) {
+    const c = (k.lane || []).find((x) => x && (x.carId === row.id || x.id === row.id));
+    if (!c || c.state === 'gone') continue;
+    if (!(c.say && t < (Number(c.sayUntil) || 0))) continue;
+    const p = patiencePct(k, c, t);
+    if (p < loudestP) { loudestP = p; loudest = row.id; }
+  }
+
   for (const row of _reg.cars) {
     const c = (k.lane || []).find((x) => x && (x.carId === row.id || x.id === row.id));
     if (!c) continue;
-    const x = carX(c, travel);
-    setStyle(row.el, 'transform', 'translateX(' + x + 'px)');
+    let x = carX(c, travel);
+    let opacity = '';
+    /* 🔴 exitDir — and the two cases are NOT decoration.
+       'forward': the car has the window and can physically drive out, so it
+         translates PAST the window and off the near end.
+       'aside':   it gave up mid-queue. It CANNOT drive forward — there are cars
+         in front of it — so it veers onto the shoulder and fades WHERE IT SITS.
+         Animating that one forward would show a hatchback driving through the
+         three cars ahead of it, which is exactly the picture the lane's own
+         blocking rule (it holds its slot for LANE_EXIT_MS) exists to avoid. */
+    if (c.state === 'gone') {
+      const gone = Math.max(0, t - (Number(c.leftAt) || t));
+      const k2 = Math.max(0, Math.min(1, gone / Math.max(1, EC('LANE_EXIT_MS', 900))));
+      if (c.exitDir === 'aside') {
+        setStyle(row.el, 'transform', 'translateX(' + x + 'px) translateY(' + Math.round(k2 * 16) + 'px)');
+        opacity = String(1 - k2);
+        x = null;
+      } else {
+        x = Math.round(x + k2 * 120);
+        opacity = String(1 - k2 * 0.9);
+      }
+    }
+    if (x !== null) setStyle(row.el, 'transform', 'translateX(' + x + 'px)');
+    setStyle(row.el, 'opacity', opacity);
     setData(row.el, 'state', c.state || 'rolling');
+    setData(row.el, 'mood', c.mood || 'ok');
     // Which way the order bubble hangs. See the .mk-bub[data-side] note in the
     // stylesheet: at the window a centred bubble disappears behind the speaker.
-    setData(row.el, 'side', x > travel * 0.55 ? 'right' : 'left');
-    const say = (c.say && t < (Number(c.sayUntil) || 0)) ? String(c.say) : '';
+    setData(row.el, 'side', (x === null ? 0 : x) > travel * 0.55 ? 'right' : 'left');
+    const say = (row.id === loudest && c.say && t < (Number(c.sayUntil) || 0)) ? String(c.say) : '';
     setData(row.el, 'say', say ? '1' : '0');
     if (say) setText(row.bub, say);
     const pat = patiencePct(k, c, t);
@@ -949,11 +1476,19 @@ function patiencePct(k, c, t) {
 function updatePass(t) {
   if (!_reg.dishes.length) return;
   const k = K();
+  /* The sim owns staleness now — `passStalePct(dish, now)` is its own number,
+     upgrade-aware, and reading it means the plate timer and the quality
+     multiplier can never disagree about when a dish went cold. The local
+     fallback below is only for a state.js mid-rewrite. */
+  const useSim = typeof State.passStalePct === 'function';
   const fresh = safe(() => (typeof DATA.passFreshMs === 'function' ? DATA.passFreshMs(k.upgrades || []) : EC('PASS_FRESH_MS', 75000)), EC('PASS_FRESH_MS', 75000));
   for (const row of _reg.dishes) {
     const d = (k.pass || []).find((x) => x.id === row.id);
     if (!d) continue;
-    const p = Math.max(0, Math.min(1, 1 - (t - (d.madeAt || t)) / Math.max(1, fresh)));
+    const stale = useSim
+      ? safe(() => State.passStalePct(d, t), 0)
+      : Math.max(0, Math.min(1, (t - (d.madeAt || t)) / Math.max(1, fresh)));
+    const p = Math.max(0, Math.min(1, 1 - stale));
     setStyle(row.fresh, 'width', Math.round(p * 100) + '%');
     setStyle(row.fresh, 'background', p <= 0.25 ? '#ff8a5a' : '#67d8ff');
   }
@@ -1010,6 +1545,13 @@ export function toastEvents(events) {
 const TOAST_RANK = {
   'error': 100, 'level:up': 95, 'convoy:arrive': 80, 'convoy:claim': 80,
   'pantry:low': 60, 'cook:burnt': 50, 'ticket:lost': 40, 'shift:close': 90,
+  /* 🚗 BELOW `ticket:lost` ON PURPOSE. A balk is the single largest thing
+     happening to the business — 74 turned away against 64 served in one measured
+     day — but a walked-out ORDER is worse than a car that never ordered, and the
+     rate limiter only lets one line per second through. So the balk is present
+     and audible without ever shouting over a lost sale. It is also drawn (see
+     updatePassers), which is where the volume really comes from. */
+  'car:balk': 30,
 };
 function toastLine(e) {
   if (!e || !e.name) return '';
@@ -1020,8 +1562,11 @@ function toastLine(e) {
     case 'pantry:low':   return `⚠ Low on ${safe(() => DATA.ingredient(e.ing).name, e.ing)}.`;
     case 'cook:burnt':   return `🔥 You burnt the ${rn(e.recipeId)}.`;
     case 'ticket:lost':  return '💀 They walked out.';
-    case 'convoy:arrive':return '🚚 A convoy has arrived.';
-    case 'convoy:claim': return '📦 Convoy claimed.';
+    case 'car:balk':     return `🚗 ${e.custName || 'Somebody'} drove past a full lane.`;
+    case 'convoy:arrive':return e.dir === 'in'
+      ? `🚚 A convoy from ${e.fromName || 'another kitchen'} has landed.`
+      : '🚚 Your convoy has arrived.';
+    case 'convoy:claim': return `📦 ${e.granted ? fmtNum(e.granted) + ' food unloaded.' : 'Convoy claimed.'}`;
     case 'shift:close':  return e.forfeit ? '' : `🔔 Day closed — grade ${(e.report && e.report.grade) || '—'}.`;
     default: return '';
   }
@@ -1087,11 +1632,35 @@ function onClick(ev) {
     case 'plate':        result(State.plateHand(now)); paint(); break;
     case 'drop':         State.dropHand(); paint(); break;
     case 'serve':        doServe(el.dataset.id, now); break;
+    case 'serve-car':    doServeCar(el.dataset.car, now); break;
+    case 'wave':         doWave(el.dataset.car, now); break;
+    case 'binpass':      doBinPass(el.dataset.id); break;
     case 'buy':          doBuy(el.dataset.supply, Number(el.dataset.n) || 1); break;
+
+    case 'convoy-tier':  pickTier(el.dataset.tier); break;
+    case 'convoy-step':  stepManifest(el.dataset.recipe, Number(el.dataset.d) || 0); break;
+    case 'convoy-fill':  _convoyWant = null; paintSheetNow(); break;
+    case 'convoy-clear': _convoyWant = {}; paintSheetNow(); break;
+    case 'convoy-to':    pickRecipient(el.dataset.to, el.dataset.name); break;
     case 'convoy-load':  doConvoyLaunch(el.dataset.tier, now); break;
     case 'convoy-claim': doConvoyClaim(el.dataset.id, now); break;
     default: break;
   }
+}
+
+/** The one text field in the feature. See the _findDueAt note: the debounce is a
+    due-stamp read by frame(), not a setTimeout, because CONTRACT §3 allows this
+    file exactly one timer and it is already spent on removing float nodes. */
+function onInput(ev) {
+  const el = ev.target;
+  if (!el || !el.dataset || el.dataset.act !== 'convoy-find') return;
+  _convoyQ = String(el.value || '');
+  _findDueAt = nowMs() + 260;
+  _convoyBusy = _convoyQ.trim().length >= 2;
+  // ⚠ Do NOT repaint the sheet here — it would destroy the field under the
+  //   player's thumb and drop focus mid-word. The rows repaint when the reply
+  //   lands, and the field is not part of what gets rebuilt (see paintRecipients).
+  paintRecipients();
 }
 
 /** Closing must ALSO stop the RAF loop and forfeit the shift (§9), and only
@@ -1188,9 +1757,92 @@ function doBin(ingId, now) {
   paint();
 }
 
+/**
+ * 🔴 THE LANE'S FRONT DOOR. This is the fix for the biggest hole in the feature.
+ *
+ * Round 1 served every ticket with `State.serveTicket()` — including drive-thru
+ * ones — which bypassed drivethru.js entirely. `serveCar()` and `waveCar()`, the
+ * module's only two player verbs, had ZERO callers anywhere in the repo. The
+ * measurable consequences, all of them from a real 12-minute day:
+ *   · 54 `car:served` events against `laneStatus().stats.served === 0`;
+ *   · `remember(K, car, 'served')` never ran, so the regulars ledger recorded
+ *     failures only, so `rollSpecial`'s `wronged = (lost+waved) > served` was
+ *     always true — the FAVOUR set piece fired 0 times in 822 arrivals;
+ *   · 36 of the 128 authored dialogue lines (every `served` line in the file)
+ *     were unreachable — 28% of the writing;
+ *   · no tip resolution, no modifier verdict, no voice at the window.
+ *
+ * 🔴 DO NOT ALSO CALL State.serveTicket(). `serveCar()` calls it internally. The
+ *    second call double-serves and returns {ok:false} on a sale that went
+ *    through, which reads to the player as "it failed" on a burger they were
+ *    just paid for.
+ */
 function doServe(id, now) {
+  const k = K();
+  const t = (k.tickets || []).find((x) => x && x.id === id);
+  if (t && t.source === 'drive' && t.carId && typeof DriveThru.serveCar === 'function') {
+    return doServeCar(t.carId, now);
+  }
   const res = State.serveTicket(id, now);
   if (!res || !res.ok) { toast((res && res.why) || 'That order is not ready.'); return; }
+  paint();
+}
+
+function doServeCar(carId, now) {
+  if (typeof DriveThru.serveCar !== 'function') { toast('The window will not open.'); return; }
+  const r = safe(() => DriveThru.serveCar(K(), carId, now), null);
+  if (!r || !r.ok) { toast((r && r.why) || 'That order is not ready.'); return; }
+  rewardMoment(r);
+  paint();
+}
+
+/**
+ * ✋ THE WAVE-OFF — the player's escape hatch, and the reason it is a decision.
+ * It costs POP_WAVE (−2.0) and produces NO lost ticket, against POP_LOST (−3.5)
+ * for letting them time out. So the maths says: wave early, eat the smaller hit,
+ * free the slot, save the three cars behind them. A control that costs the same
+ * as a failure is not a decision, which is why this one is cheaper — and why it
+ * is behind a confirm rather than under a thumb that is already tapping fast.
+ */
+async function doWave(carId, now) {
+  if (typeof DriveThru.waveCar !== 'function') { toast('There is nobody to wave off.'); return; }
+  let yes = true;
+  try { if (b().confirm) yes = await b().confirm('Wave them off? It costs popularity.'); } catch (e) { yes = true; }
+  if (!yes) return;
+  const r = safe(() => DriveThru.waveCar(K(), carId, nowMs()), null);
+  if (!r || !r.ok) { toast((r && r.why) || 'They have already gone.'); return; }
+  toast(`✋ You waved ${r.custName || 'them'} off. ${fmtPop(r.pop)} popularity.`);
+  paint();
+}
+function fmtPop(n) { const v = Number(n) || 0; return (v > 0 ? '+' : '') + v.toFixed(1); }
+
+/**
+ * 🎉 THE REWARD MOMENT. `serveCar()` returns a rich struct precisely so this can
+ * exist: what they paid, what they tipped, what they SAID, and — the part that
+ * makes modifiers a real mechanic — which promises you kept and which you broke.
+ * Round 1's only feedback for a sale was a float-up with a number on it.
+ */
+function rewardMoment(r) {
+  const kept = (r.mods || []).filter((m) => m && m.result === 'honoured');
+  const broke = (r.mods || []).filter((m) => m && m.result === 'broken');
+  let line = `${r.icon || '🚗'} ${r.custName || 'Served'} · ${fmtCinder(r.paid)}`;
+  if (r.tip > 0) line += ` +${fmtCinder(r.tip)} tip`;
+  if (broke.length) line += ` · ✗ ${esc0(broke[0].label)}`;
+  else if (kept.length) line += ` · ✓ ${esc0(kept[0].label)}`;
+  toast(line);
+  /* Their line is the payoff for reading the lane's voice all shift, and until
+     this round none of the 24 authored `served` lines could ever be reached.
+     It rides its own toast a beat later so it is not competing with the money —
+     `_lastToastAt` is nudged back so the rate limiter lets this one through. */
+  if (r.line) { _lastToastAt = 0; toast(`“${r.line}”`); }
+}
+/** toast() takes plain text, not HTML — this only strips, it does not escape. */
+function esc0(s) { return String(s == null ? '' : s); }
+
+function doBinPass(dishId) {
+  if (typeof State.binPass !== 'function') { toast('That plate will not move.'); return; }
+  const r = safe(() => State.binPass(dishId), null);
+  if (!r || !r.ok) { toast((r && r.why) || 'That plate is not on the pass.'); return; }
   paint();
 }
 
@@ -1209,32 +1861,60 @@ async function doConvoyLaunch(tierId, now) {
     return;
   }
   const k = K();
-  const items = {};
-  for (const d of (k.pass || [])) {
-    if (typeof DATA.shippable === 'function' && !DATA.shippable(d.recipeId)) continue;
-    items[d.recipeId] = (items[d.recipeId] || 0) + 1;
-  }
-  if (!Object.keys(items).length) { toast('Nothing on the pass can ride a convoy.'); return; }
+  const man = safe(() => (typeof Convoy.manifest === 'function' ? Convoy.manifest(k, tierId, _convoyWant) : null), null);
+  if (!man) { toast('That truck is not in the yard.'); return; }
+  if (!man.ok) { toast(man.why || 'That load will not go.'); return; }
 
-  const composed = safe(() => Convoy.compose(k, tierId, items), null);
+  const composed = safe(() => Convoy.compose(k, tierId, man.items), null);
   if (!composed || !composed.ok) { toast((composed && composed.why) || 'That load will not go.'); return; }
-  const to = safe(() => (b().userId ? b().userId() : null), null);
-  const out = await Promise.resolve(safe(() => Convoy.launch(k, composed.convoy, to, now), null));
+
+  /* 🔴 PASS THE CHOSEN ROW, NOT `bridge().userId()`. That single line was round
+     1's headline bug: it made `self` true on every launch, so the server leg was
+     never reached and the player-to-player feature — the one the player asked
+     for by name — did not exist in the running build. `null` here is the
+     EXPLICIT practice run, which is a choice the player made on a chip, not a
+     silent fallback. */
+  const out = await Promise.resolve(safe(() => Convoy.launch(k, composed.convoy, _convoyTo, now), null));
   if (!out || !out.ok) { toast((out && out.why) || 'The convoy did not leave.'); return; }
-  toast('🚚 Convoy away.');
-  _lastSheetPaint = 0;
-  paintSheet();
+
+  /* ⚠ `turnedBack` is a SUCCESS that is not a success: the truck went out and
+     came back. The player is owed the reason, not a cheerful "sent!". */
+  if (out.turnedBack) toast('🚚 ' + (out.why || 'The truck turned back.'));
+  else if (out.local) toast('🚚 Practice run away — it comes back to your own city.');
+  else toast(`🚚 On the road to ${_convoyTo ? _convoyTo.name : 'their city'}.`);
+
+  _convoyWant = null;               // the pass just emptied; start the next load fresh
+  paintSheetNow();
   paint();
 }
 
+/**
+ * 🔴 THE IN-FLIGHT GUARD. Round 1 had none: `doConvoyClaim` awaited `claim()`
+ * with nothing stopping a second tap entering concurrently, and the only thing
+ * that saved it was the accidental ordering of two statements inside convoy.js.
+ * The server-side first-claim flag and convoy.js's `paidFood` recompute are the
+ * SECOND and THIRD walls. This is the first one, and it is also the only one the
+ * player can see — the button says what it is doing.
+ */
 async function doConvoyClaim(id, now) {
   if (typeof Convoy.claim !== 'function') { toast('The loading bay is not built yet.'); return; }
-  const out = await Promise.resolve(safe(() => Convoy.claim(K(), id, now), null));
-  if (!out || !out.ok) { toast((out && out.why) || 'That convoy will not unload.'); return; }
-  toast('📦 Unloaded into the stash.');
-  _lastSheetPaint = 0;
-  paintSheet();
-  paint();
+  if (!id || _claiming.has(id)) return;
+  _claiming.add(id);
+  paintSheetNow();
+  try {
+    const out = await Promise.resolve(safe(() => Convoy.claim(K(), id, now), null));
+    if (!out || !out.ok) {
+      // CAP is not a failure — it is "your stash is full", and the food is now
+      // on the dock draining itself. Say that, not "it will not unload".
+      toast((out && out.why) || 'That convoy will not unload.');
+      return;
+    }
+    toast(`📦 ${fmtNum(out.granted || 0)} food unloaded into the stash.`);
+  } finally {
+    _claiming.delete(id);
+    paintSheetNow();
+    paint();
+  }
 }
 
 function result(res, fallbackWhy) {
@@ -1384,41 +2064,196 @@ function supplyRow(k, s) {
 function convoySheet(k) {
   const have = typeof Convoy.compose === 'function';
   const tiers = (Array.isArray(DATA.CONVOY_TIERS) ? DATA.CONVOY_TIERS : []);
-  const shipPass = (k.pass || []).filter((d) => (typeof DATA.shippable !== 'function') || DATA.shippable(d.recipeId));
 
   let banner = '';
   if (!have) banner = `<div class="mk-banner">🚧 The loading bay is still being built. Everything else in the kitchen works.</div>`;
   else if (k.missing) banner = `<div class="mk-banner">The convoy network is not set up yet — practice runs to your own city still work.</div>`;
   else if (k.offline) banner = `<div class="mk-banner">Signed out. Sign in to ship to other players; practice runs still work.</div>`;
+  if (!have) return banner;
 
-  const tierRows = tiers.map((tt) => {
-    const locked = (tt.minLevel || 1) > k.level;
-    const est = safe(() => (typeof Convoy.estimate === 'function' ? Convoy.estimate(tt.id, countItems(shipPass)) : null), null);
-    return `<div class="mk-row">
-        <span class="mk-ic" aria-hidden="true">${tt.icon || '🚚'}</span>
-        <div class="mk-row-main">
-          <b>${esc(tt.name)}</b>
-          <span class="mk-card-sub">${tt.capacity} boxes · ${Math.round(tt.transitMs / 60000)} min · fee ${Math.round((tt.feePct || 0) * 100)}%</span>
-          <span class="mk-card-sub">${esc(tt.blurb || '')}</span>
-          ${est ? `<div class="mk-cost"><span class="mk-chip">${est.dishes} ${plural(est.dishes, 'box', 'boxes')}</span><span class="mk-chip"><span class="mk-coin"></span>${fmtNum(est.feeCinder)}</span></div>` : ''}
-        </div>
-        <button class="mk-btn go" data-act="convoy-load" data-tier="${esc(tt.id)}"
-          ${(!have || locked || !shipPass.length) ? 'disabled' : ''}>Load</button>
-        ${locked ? `<span class="mk-chip">🔒 Lv ${tt.minLevel}</span>` : ''}
-      </div>`;
-  }).join('');
+  // Default to the biggest truck the player has actually unlocked.
+  if (!_convoyTier || !tiers.some((tt) => tt.id === _convoyTier && (tt.minLevel || 1) <= k.level)) {
+    const open = tiers.filter((tt) => (tt.minLevel || 1) <= k.level);
+    _convoyTier = (open[open.length - 1] || tiers[0] || {}).id || null;
+  }
 
-  const mine = (k.convoys || []).concat(k.inbound || []);
-  const active = mine.length ? mine.map((c) => convoyRow(k, c)).join('')
+  const man = safe(() => (typeof Convoy.manifest === 'function' ? Convoy.manifest(k, _convoyTier, _convoyWant) : null), null);
+
+  /* ── 1 · WHO IS IT FOR ─────────────────────────────────────────────────── */
+  const to = `<div class="mk-to">
+      <div class="mk-sec-head" style="padding-left:0"><b>1 · Where is it going?</b></div>
+      <input class="mk-to-field" data-act="convoy-find" type="text" autocomplete="off" spellcheck="false"
+        placeholder="Find a player by name…" value="${esc(_convoyQ)}" aria-label="Find a player to ship to">
+      <div class="mk-to-rows" id="mk-to-rows">${recipientChips()}</div>
+      <div class="mk-to-why" id="mk-to-why">${esc(recipientWhy())}</div>
+    </div>`;
+
+  /* ── 2 · WHICH TRUCK ───────────────────────────────────────────────────── */
+  const trucks = `<div class="mk-sec-head" style="padding-left:0"><b>2 · Which truck?</b></div>
+    <div class="mk-to-rows" style="margin-bottom:8px">${tiers.map((tt) => {
+      const locked = (tt.minLevel || 1) > k.level;
+      return `<button class="mk-to-chip" data-act="convoy-tier" data-tier="${esc(tt.id)}"
+          data-on="${tt.id === _convoyTier ? 1 : 0}" ${locked ? 'disabled' : ''}>
+          ${tt.icon || '🚚'} ${esc(tt.name)}
+          <small>${locked ? '🔒 Lv ' + tt.minLevel : (tt.capacity + ' boxes · ' + fmtEta(tt.transitMs))}</small>
+        </button>`;
+    }).join('')}</div>`;
+
+  /* ── 3 · THE MANIFEST ──────────────────────────────────────────────────── */
+  const lines = ((man && man.lines) || []).map((L) => `
+      <div class="mk-man-line">
+        <span aria-hidden="true">${L.icon || '🍽'}</span>
+        <span class="mk-nm">${esc(L.name)}</span>
+        <span class="mk-card-sub" style="white-space:nowrap">${L.have} on pass</span>
+        <button class="mk-step" data-act="convoy-step" data-recipe="${esc(L.recipeId)}" data-d="-1"
+          ${L.take <= 0 ? 'disabled' : ''} aria-label="One fewer ${esc(L.name)}">−</button>
+        <span class="mk-man-take">${L.take}</span>
+        <button class="mk-step" data-act="convoy-step" data-recipe="${esc(L.recipeId)}" data-d="1"
+          ${(L.take >= L.max || (man && man.dishes >= man.capacity)) ? 'disabled' : ''} aria-label="One more ${esc(L.name)}">+</button>
+      </div>`).join('');
+
+  const fillPct = man && man.capacity ? Math.round((man.dishes / man.capacity) * 100) : 0;
+  const dest = _convoyTo ? _convoyTo.name : 'your own city (practice)';
+  const manifest = `<div class="mk-man">
+      <div class="mk-sec-head" style="padding-left:0"><b>3 · What goes on it?</b>
+        <span class="mk-spacer"></span>
+        <button class="mk-btn" data-act="convoy-fill">Fill it</button>
+        <button class="mk-btn" data-act="convoy-clear">Empty</button></div>
+      ${lines || `<div class="mk-empty">Nothing on the pass can ride a convoy. Fries and shakes do not travel.</div>`}
+      <div class="mk-man-fill"><i style="width:${Math.min(100, fillPct)}%"></i>
+        <span>${man ? man.dishes : 0} / ${man ? man.capacity : 0} boxes · ${man ? fmtNum(man.food) : 0} food on landing</span></div>
+      <div class="mk-card-sub">Freight <span class="mk-coin"></span> ${man ? fmtNum(man.feeCinder) : 0}
+        · ${man ? fmtEta(man.transitMs) : '—'} on the road · to <b>${esc(dest)}</b></div>
+      <button class="mk-btn go wide" data-act="convoy-load" data-tier="${esc(_convoyTier || '')}"
+        ${(man && man.ok) ? '' : 'disabled'} style="margin-top:4px"
+        title="${esc((man && man.why) || '')}">
+        ${(man && man.ok) ? `Send it — ${man.dishes} ${plural(man.dishes, 'box', 'boxes')}` : esc(loadLabel(man))}</button>
+    </div>`;
+
+  /* ── 4 · ON THE ROAD, and 5 · THE DEPOT ────────────────────────────────── */
+  const boardRows = safe(() => (typeof Convoy.board === 'function' ? Convoy.board(k) : null), null)
+    || (k.convoys || []).concat(k.inbound || []);
+  const rolling = boardRows.filter((c) => c && c.state !== 'held');
+  const active = rolling.length ? rolling.map((c) => convoyRow(k, c)).join('')
     : `<div class="mk-empty">No convoys on the road.</div>`;
 
-  return banner
-    + `<div class="mk-banner">On the pass and shippable: <b>${shipPass.length}</b> ${plural(shipPass.length, 'box', 'boxes')}.
-        Fries and shakes do not travel.</div>`
-    + tierRows
+  /* 🔴 THE DEPOT HOLD MUST BE DRAWN OR THE FIX IS INVISIBLE. A short landing
+     (your stash was full) moves the row out of `inbound` and into `K.convoys`
+     as `state:'held'` — the truck is DELIVERED AND GONE and the food is on a
+     dock. Round 1's convoyRow rendered these with no Claim button and a negative
+     ETA, which read as a broken convoy rather than as food waiting for room. */
+  const heldRows = safe(() => (typeof Convoy.held === 'function' ? Convoy.held(k) : []), []) || [];
+  const depot = heldRows.length ? `
+    <div class="mk-sec-head" style="padding-left:0"><b>At the depot</b></div>
+    ${heldRows.map((h) => `<div class="mk-row mk-held">
+        <span class="mk-ic" aria-hidden="true">📦</span>
+        <div class="mk-row-main">
+          <b>${fmtNum(h.food)} food held</b>
+          <span class="mk-card-sub">Your stash was full when the truck from
+            ${esc(h.fromName || h.toName || 'the road')} landed. It unloads itself as you make room.</span>
+        </div>
+        <button class="mk-btn" data-act="convoy-claim" data-id="${esc(h.id)}"
+          ${_claiming.has(h.id) ? 'disabled' : ''}>${_claiming.has(h.id) ? 'Unloading…' : 'Retry'}</button>
+      </div>`).join('')}` : '';
+
+  return banner + to + trucks + manifest
     + `<div class="mk-sec-head" style="padding-left:0"><b>On the road</b></div>`
-    + active;
+    + active + depot;
 }
+
+/** The LOAD button's disabled label.
+    ⚠ `manifest().why` is a full sentence written to sit UNDER a field. Printed
+    on the button it wrapped to three shouty uppercase lines and repeated a
+    message the panel had already given two rows above. The sentence still rides
+    the `title`; the button says the short version. */
+const LOAD_LABEL = {
+  LOCKED: 'Truck locked', CAP: 'Too many on the road',
+  NO_PANTRY: 'Not enough Cinder', BAD_ARG: 'Pick a truck',
+};
+function loadLabel(man) {
+  if (!man) return 'Load a truck';
+  if (man.code === 'NOT_READY') return man.dishes > 0 ? `Load at least ${man.minDishes} boxes` : 'Nothing to load';
+  return LOAD_LABEL[man.code] || 'Load a truck';
+}
+
+/* ── THE RECIPIENT PICKER ────────────────────────────────────────────────────
+ * 🔴 THIS IS THE FEATURE THE PLAYER ASKED FOR BY NAME, AND IT DID NOT EXIST.
+ * Round 1 handed `bridge().userId()` to `launch()` as the recipient, so
+ * convoy.js computed `self = true` on every single launch, the server leg was
+ * never reached, `API.insertConvoy` was never called, and sql/038's tables, RLS,
+ * ledger and claim RPC were unreachable dead weight — while the panel showed a
+ * banner promising "sign in to ship to other players".
+ *
+ * ⚠ `null` IS THE PRACTICE RUN and it must stay an explicit, visible choice, not
+ *   a fallback. convoy.js refuses a NAMED recipient while signed out rather than
+ *   quietly downgrading it, because the player picked a person and silently
+ *   shipping to yourself instead is a lie with their boxes in it.
+ */
+function recipientChips() {
+  const k = K();
+  const rows = _convoyRows.length ? _convoyRows
+    : (safe(() => (typeof Convoy.recentPartners === 'function' ? Convoy.recentPartners(k, 6) : []), []) || []);
+  const practice = `<button class="mk-to-chip" data-act="convoy-to" data-to="" data-on="${_convoyTo ? 0 : 1}">
+      🏠 Practice run <small>your own city</small></button>`;
+  return practice + rows.map((r) => `<button class="mk-to-chip" data-act="convoy-to"
+      data-to="${esc(r.id)}" data-name="${esc(r.name)}" data-on="${_convoyTo && _convoyTo.id === r.id ? 1 : 0}">
+      ${r.kind === 'recent' ? '🤝' : '🧑'} ${esc(r.name)}${r.sub ? ` <small>${esc(r.sub)}</small>` : ''}</button>`).join('');
+}
+function recipientWhy() {
+  if (_convoyBusy) return 'Looking…';
+  if (_convoyWhy) return _convoyWhy;
+  return _convoyTo ? `Addressed to ${_convoyTo.name}.` : 'Practice runs come back to your own city.';
+}
+/** Repaint ONLY the chips and the hint. ⚠ Never the field itself — rebuilding it
+    while the player types drops focus mid-word and eats the caret position. */
+function paintRecipients() {
+  if (!_root) return;
+  const rows = _root.querySelector('#mk-to-rows');
+  const why = _root.querySelector('#mk-to-why');
+  if (rows) rows.innerHTML = recipientChips();
+  if (why) why.textContent = recipientWhy();
+}
+async function runFind() {
+  if (typeof Convoy.recipients !== 'function') { _convoyBusy = false; return; }
+  const seq = ++_findSeq;
+  const r = await Promise.resolve(safe(() => Convoy.recipients(_convoyQ, K()), null));
+  // ⚠ A slow reply for an old fragment must never overwrite a fast one for the
+  //   current fragment. Typing "kes" fires three lookups; only the last is true.
+  if (seq !== _findSeq || !_openFlag) return;
+  _convoyBusy = false;
+  _convoyRows = (r && r.rows) || [];
+  _convoyWhy = (r && r.why) || '';
+  paintRecipients();
+}
+function pickRecipient(id, name) {
+  _convoyTo = id ? { id, name: name || 'Survivor' } : null;
+  paintRecipients();
+}
+function pickTier(tierId) {
+  if (!tierId || tierId === _convoyTier) return;
+  _convoyTier = tierId;
+  // ⚠ The steppers are RELATIVE to a truck's capacity, so switching trucks with
+  //   a hand-dialled manifest can leave a load that no longer fits. Reset to
+  //   "fill it" rather than silently clamping numbers the player chose.
+  _convoyWant = null;
+  paintSheetNow();
+}
+function stepManifest(recipeId, d) {
+  if (!recipeId || !d) return;
+  const k = K();
+  const man = safe(() => Convoy.manifest(k, _convoyTier, _convoyWant), null);
+  if (!man) return;
+  // Materialise the current auto-fill into explicit numbers on the first tap, so
+  // "fill it minus one burger" is expressible.
+  const want = {};
+  for (const L of (man.lines || [])) want[L.recipeId] = L.take;
+  const L = (man.lines || []).find((x) => x.recipeId === recipeId);
+  const ceiling = L ? L.max : 0;
+  want[recipeId] = Math.max(0, Math.min(ceiling, (want[recipeId] | 0) + d));
+  _convoyWant = want;
+  paintSheetNow();
+}
+function paintSheetNow() { _lastSheetPaint = 0; paintSheet(); }
 /** "16 min" / "2h 10m" / "48s". ⚠ NOT fmtMs(): a convoy ETA of 16 minutes
     printed as "16:00" reads as a clock time, and players read it as 4pm. */
 function fmtEta(ms) {
@@ -1430,25 +2265,76 @@ function fmtEta(ms) {
 }
 function plural(n, one, many) { return n === 1 ? one : (many || (one + 's')); }
 
-function countItems(dishes) {
-  const items = {};
-  for (const d of dishes) items[d.recipeId] = (items[d.recipeId] || 0) + 1;
-  return items;
-}
+/**
+ * 🛣 THE ROUTE, not a progress bar.
+ *
+ * Round 1 drew a 1-D `.mk-bar` and the word "2h 10m out". convoy.js now models
+ * the trip as five named legs between two markers with deterministic incidents
+ * seeded off the SERVER's uuid, and `route(c, now)` hands the whole thing over
+ * pure and cheap enough for `frame()`. So: two markers, five lit-as-you-pass
+ * waypoints, a wobbling truck at `pct`, and the incident line under it.
+ *
+ * ⚠ `armed:false` means ECON.CONVOY_SPOIL_PCT is absent — the road is scenic
+ *   rather than dangerous. We say nothing about risk in that case rather than
+ *   promising stakes the data file has not funded.
+ */
 function convoyRow(k, c) {
   const tier = safe(() => DATA.convoyTier(c.tierId), null) || {};
-  const span = Math.max(1, (c.arrivesAt || 0) - (c.launchedAt || 0));
-  const pct = Math.max(0, Math.min(1, (k.now - (c.launchedAt || 0)) / span));
-  const arrived = c.state === 'arrived';
-  return `<div class="mk-row mk-convoy">
+  const r = safe(() => (typeof Convoy.route === 'function' ? Convoy.route(c, k.now) : null), null);
+  const arrived = c.state === 'arrived' || (r && r.arrived);
+  const inbound = c.dir === 'in';
+  const busy = _claiming.has(c.id);
+
+  const legs = r ? r.legs.map((L) => `<span class="mk-route-leg" data-passed="${L.passed ? 1 : 0}"
+      data-hazard="${L.hazard ? 1 : 0}" style="left:${railAt(L.at)}"
+      title="${esc(L.name)}${L.hazard ? ' — ' + esc(L.hazard.name) : ''}">${L.hazard && L.passed ? L.hazard.icon : (L.icon || '•')}</span>`).join('') : '';
+
+  const incident = r && r.incidents.length
+    ? `<div class="mk-route-note" data-bad="1">${r.incidents[r.incidents.length - 1].hazard.icon}
+        ${esc(r.incidents[r.incidents.length - 1].hazard.line)}${r.spoil ? ` — ${r.spoil} ${plural(r.spoil, 'box', 'boxes')} lost.` : ''}</div>`
+    : (r && r.armed && !arrived ? `<div class="mk-route-note">The road is quiet so far.</div>` : '');
+
+  return `<div class="mk-row mk-convoy" data-cv="${esc(c.id)}">
       <span class="mk-ic" aria-hidden="true">${tier.icon || '🚚'}</span>
       <div class="mk-row-main">
-        <b>${esc(c.toName || tier.name || 'Convoy')}</b>
-        <span class="mk-card-sub">${c.dishes || 0} ${plural(c.dishes || 0, 'box', 'boxes')} · ${arrived ? 'arrived — claim it' : fmtEta((c.arrivesAt || 0) - k.now) + ' out'}</span>
-        <div class="mk-bar" style="margin-top:5px"><i style="width:${Math.round(pct * 100)}%"></i></div>
+        <b>${inbound ? '⬅ ' : '➡ '}${esc(inbound ? (c.fromName || 'Another kitchen') : (c.toName || tier.name || 'Convoy'))}</b>
+        <span class="mk-card-sub" data-eta="1">${c.dishes || 0} ${plural(c.dishes || 0, 'box', 'boxes')} ·
+          ${arrived ? 'landed — claim it' : fmtEta((c.arrivesAt || 0) - k.now) + ' out'}</span>
+        ${r ? `<div class="mk-route">
+          <span class="mk-route-end" data-e="a">${r.origin.icon} ${esc(r.origin.name)}</span>
+          <span class="mk-route-end" data-e="b">${esc(r.dest.name)} ${r.dest.icon}</span>
+          <span class="mk-route-rail"></span>
+          ${legs}
+          <span class="mk-truck" data-truck="1" style="left:${railAt(r.pct)}">${tier.icon || '🚚'}</span>
+        </div>` : ''}
+        ${incident}
       </div>
-      ${arrived ? `<button class="mk-btn go" data-act="convoy-claim" data-id="${esc(c.id)}">Claim</button>` : ''}
+      ${arrived ? `<button class="mk-btn go" data-act="convoy-claim" data-id="${esc(c.id)}"
+        ${busy ? 'disabled' : ''}>${busy ? 'Unloading…' : 'Claim'}</button>` : ''}
     </div>`;
+}
+/** ⚠ The rail is inset 12px at each end, so a glyph positioned at a bare `pct%`
+    of the CONTAINER hangs half off the kerb at 0 and overshoots the far marker
+    at 1. Everything on the route is placed against the rail, not the box. */
+function railAt(p) {
+  const v = Math.max(0, Math.min(1, Number(p) || 0));
+  return 'calc(12px + ' + v.toFixed(4) + ' * (100% - 24px))';
+}
+/** The truck moves every frame; the rest of the row does not. Cheap-path only —
+    this is the whole reason `route()` is pure. */
+function updateRoutes(t) {
+  if (_sheet !== 'convoy' || !_root) return;
+  const k = K();
+  for (const el of _root.querySelectorAll('.mk-convoy[data-cv]')) {
+    const c = (k.convoys || []).concat(k.inbound || []).find((x) => x && x.id === el.dataset.cv);
+    if (!c) continue;
+    const truck = el.querySelector('.mk-truck');
+    if (truck) setStyle(truck, 'left', railAt(safe(() => Convoy.progress(c, t), 0)));
+    const eta = el.querySelector('[data-eta="1"]');
+    if (eta && c.state === 'transit') {
+      setText(eta, `${c.dishes || 0} ${plural(c.dishes || 0, 'box', 'boxes')} · ${fmtEta((c.arrivesAt || 0) - t)} out`);
+    }
+  }
 }
 
 /* ── 📊 THE DAY ──────────────────────────────────────────────────────────── */

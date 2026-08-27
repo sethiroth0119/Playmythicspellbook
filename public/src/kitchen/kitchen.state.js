@@ -246,7 +246,10 @@ export const Kitchen = {
   convoys: [],
   inbound: [],
 
-  today:  { served: 0, lost: 0, burnt: 0, earned: 0, tips: 0, xp: 0 },
+  /* Reset by openShift(). `turned` counts walk-ins turned away at a full board
+     (they also count in `lost`); `qsum`/`qunits` are the quality mix the day's
+     GRADE is computed from — see gradeFor(). */
+  today:  { served: 0, lost: 0, burnt: 0, turned: 0, earned: 0, tips: 0, xp: 0, qsum: 0, qunits: 0, raw: 0, perfect: 0 },
   totals: { served: 0, lost: 0, burnt: 0, earned: 0, days: 0 },
 
   missing: false,
@@ -404,7 +407,16 @@ export function shiftClock() {
    earning slower. That is the whole design, and it is tuned THERE, not here. */
 function rushNow() {
   const f = DF('rushAt');
-  return f ? _clamp(_num(f(K.shift.tMs), 1), 0.1, 10) : 1;
+  const base = f ? _num(f(K.shift.tMs), 1) : 1;
+  /* 🔴 DEMAND SCALES WITH THE KITCHEN, AND IT IS APPLIED HERE ON PURPOSE.
+     `K.shift.rush` is the ONE number both spawners read — this file's
+     counterIntervalMs() and drivethru.js's laneIntervalMs() — so scaling it here
+     is the only place the lane and the counter cannot end up disagreeing about
+     how busy the restaurant is. See ECON.DEMAND_* for why a level-1 hot dog
+     stand must not draw a level-12 crowd (it made the tutorial a 3.3× wall). */
+  const g = DF('demandScale');
+  const scale = g ? _num(g(K.level), 1) : 1;
+  return _clamp(base * scale, 0.05, 10);
 }
 
 /** ms between WALK-IN arrivals. The lane's share is drivethru.js's business;
@@ -467,7 +479,7 @@ export function init() {
   K.shift.running = false;
   K.shift.tMs = 0;
   K.shift.rush = 1;
-  K.today = { served: 0, lost: 0, burnt: 0, earned: 0, tips: 0, xp: 0 };
+  K.today = { served: 0, lost: 0, burnt: 0, turned: 0, earned: 0, tips: 0, xp: 0, qsum: 0, qunits: 0, raw: 0, perfect: 0 };
   K.error = null;
   K._events = [];
   K._report = null;
@@ -504,7 +516,7 @@ export function reset() {
   if (_start) for (const id of Object.keys(_start)) if (_int(_start[id]) > 0) K.pantry[id] = _int(_start[id]);
   K.convoys = [];
   K.inbound = [];
-  K.today = { served: 0, lost: 0, burnt: 0, earned: 0, tips: 0, xp: 0 };
+  K.today = { served: 0, lost: 0, burnt: 0, turned: 0, earned: 0, tips: 0, xp: 0, qsum: 0, qunits: 0, raw: 0, perfect: 0 };
   K.totals = { served: 0, lost: 0, burnt: 0, earned: 0, days: 0 };
   K.missing = false; K.offline = false; K.error = null;
   K._seq = 0; K._seed = 1; K._nextCounter = 0; K._report = null;
@@ -553,7 +565,18 @@ export function hydrate(saved) {
   const s = (saved && typeof saved === 'object') ? saved : {};
 
   K.shift.day = Math.max(1, _int(s.day || (s.shift && s.shift.day) || 1));
-  K.xp = Math.max(0, _int(s.xp));
+  /* 🔴 REFUSING THE SAVED `level` AND THEN TRUSTING THE SAVED `xp` CLOSED
+        NOTHING. The comment below is right about why a saved level cannot be
+        trusted — and the previous version stopped there, took `xp` verbatim and
+        derived the level from it, so a save carrying `xp: "999999999"` hydrated
+        straight to level 40 with the whole menu and every supply line open. The
+        door was locked and the window next to it was open.
+        This is NOT a security boundary — the save is local and a determined
+        player owns their own machine — but a guard that only half-works is worse
+        than no guard, because the comment above it claims the job is done.
+        Clamping to the top of the ladder costs one line and makes the claim true. */
+  const xpMax = xpForLevel(EC('MAX_LEVEL', 40));
+  K.xp = _clamp(Math.max(0, _int(s.xp)), 0, xpMax);
   // Level is DERIVED from total XP and then written to the field for render.
   // Trusting a saved `level` would let an edited save unlock the whole menu.
   K.level = Math.max(1, levelForXp(K.xp));
@@ -583,9 +606,23 @@ export function hydrate(saved) {
   }
   K.pantry = pantry;
 
-  K.upgrades = Array.isArray(s.upgrades)
-    ? s.upgrades.filter((u) => typeof u === 'string')
-    : [];
+  /* ⚠ AND THE SAME HOLE EXISTED IN THE UPGRADE LIST. Filtering on
+     `typeof === 'string'` let ANY id survive forever, so a hand-edited save
+     naming an upgrade granted its effect (every helper in kitchen.data.js reads
+     the owned list by id and never asks whether the id is real). Resolving each
+     id against DATA.upgrade() drops both hand-edits and, usefully, ids from a
+     future build the player has rolled back from — which would otherwise sit in
+     the save granting a slot count this version cannot draw.
+     Duplicates go too: `_sumEffect` adds a slot per OCCURRENCE, so a save with
+     the same id twice bought a lane it never paid for. */
+  const upSeen = Object.create(null);
+  K.upgrades = (Array.isArray(s.upgrades) ? s.upgrades : []).filter((u) => {
+    if (typeof u !== 'string' || upSeen[u]) return false;
+    const f = DF('upgrade');
+    if (f && !f(u)) return false;
+    upSeen[u] = 1;
+    return true;
+  });
 
   K.convoys = Array.isArray(s.convoys)
     ? s.convoys.filter((c) => c && typeof c === 'object').map((c) => Object.assign({}, c))
@@ -678,6 +715,15 @@ function pantryPut(id, n) {
   const v = _int(n);
   if (!id || v <= 0) return;
   K.pantry[id] = _int(K.pantry[id]) + v;
+}
+
+/** Every unit in the pantry, across every bin. THE number ECON.PANTRY_CAP caps
+    (see buySupply) — the cap is deliberately on the room in the back, not on the
+    size of any one shelf, because a walk-in cooler does not care what is in it. */
+function pantryTotal() {
+  let n = 0;
+  for (const id of Object.keys(K.pantry)) n += _int(K.pantry[id]);
+  return n;
 }
 
 /** The list of ids that are legal keys in a SUPPLY_RECIPES cost dict. */
@@ -789,17 +835,31 @@ export function buySupply(supplyId, batches) {
     return no('LOCKED', `That supply order unlocks at level ${_int(sup.minLevel)}.`);
   }
 
-  // 🔴 THE PANTRY IS CAPPED (ECON.PANTRY_CAP, plus upgrades) AND THE CHECK GOES
-  //    HERE, IN THE PREFLIGHT — never as a clamp after payment. Clamping would
-  //    charge full price for units that never landed, which is the same class of
-  //    bug as the addRes() stash-cap trap in §7: the money leaves, the goods do
-  //    not, and nothing on screen says so.
+  /* 🔴 THE PANTRY IS CAPPED (ECON.PANTRY_CAP, plus upgrades) AND THE CHECK GOES
+        HERE, IN THE PREFLIGHT — never as a clamp after payment. Clamping would
+        charge full price for units that never landed, which is the same class of
+        bug as the addRes() stash-cap trap in §7: the money leaves, the goods do
+        not, and nothing on screen says so.
+
+     🔴 THE CAP IS A TOTAL ACROSS THE WHOLE PANTRY, AND IT USED NOT TO BE.
+        kitchen.data.js has always documented PANTRY_CAP as "TOTAL units across
+        all ingredients"; this check compared ONE BIN against it. Measured: a bot
+        buying every supply line to refusal banked 13,044 units across 25 bins,
+        21.7× the documented cap, each bin stopping neatly at 600. Since a day
+        burns roughly 30 units of any one ingredient, 600-per-bin was twenty
+        shifts of stock — restocking stopped being a mid-shift decision after the
+        first visit, and up_walkin + up_walkin2 (198,000 Cinder between them,
+        "Buy the week, not the hour") sold headroom that was never scarce.
+        The comment was right and the code was wrong, which is the dangerous way
+        round: it read as verified. Summing is the fix, and the refusal message
+        names the TOTAL so the player can see which number bound. */
   const capFn = DF('pantryCap');
-  const pcap = Math.max(1, _int(capFn ? capFn(K.upgrades) : EC('PANTRY_CAP', 600)));
-  const after = _int(K.pantry[out.ing]) + _int(out.qty) * n;
+  const pcap = Math.max(1, _int(capFn ? capFn(K.upgrades) : EC('PANTRY_CAP', 900)));
+  const total = pantryTotal();
+  const after = total + _int(out.qty) * n;
   if (after > pcap) {
-    const room = Math.max(0, pcap - _int(K.pantry[out.ing]));
-    return no('CAP', `Your pantry only has room for ${room.toLocaleString()} more ${metaName(out.ing) || out.ing}.`);
+    const room = Math.max(0, pcap - total);
+    return no('CAP', `Pantry full — ${total.toLocaleString()} of ${pcap.toLocaleString()} units stored, room for ${room.toLocaleString()} more. Cook some of it down or buy a bigger cooler.`);
   }
 
   const paid = spendCost(sup.cost || {}, n);
@@ -982,6 +1042,27 @@ export function pullSlot(stationId, slotIndex, now) {
 
   const quality = qualityOf(slot, t);
   const build = scoreBuild(slot);
+
+  /* 🔴 A BURN PULLED OFF THE SURFACE STILL COUNTS AS A BURN, AND IT USED NOT TO.
+     `tickStations()` latches the burn when the slot CROSSES burnAt. But every
+     bot — and every fast player — pulls the slot in the same frame it goes
+     black, and `pullSlot` runs before `tick()` does. The slot was set to null,
+     the latch never fired, and the ruined dish cost the player nothing at all:
+     no POP_BURN, no `today.burnt`, no `cook:burnt` event, no toast.
+     Measured, this is why a reaction-lag sweep from 0 to 20 SECONDS reported
+     `burnt=0` at every single step while the food was demonstrably being binned.
+     The burn is a fact about the DISH, not about which code path noticed it, so
+     it is charged here too — once, guarded by the same latch, so a slot that
+     already burned on the clock is not charged twice. */
+  if (quality === 'burnt' && !slot.nBurn) {
+    slot.nBurn = true;
+    K.today.burnt++;
+    K.totals.burnt++;
+    bumpPop(EC('POP_BURN', -1.2), 'burnt');
+    emit('cook:burnt', { stationId, slot: i, recipeId: slot.recipeId, pulled: true });
+    fx('burn', 'burnt!', { stationId, slot: i });
+  }
+
   st.slots[i] = null;
   K.hand = {
     recipeId: slot.recipeId,
@@ -1006,7 +1087,9 @@ export function dropHand() {
 
 /**
  * Hand → pass. The pass is the row of finished dishes on the counter that
- * REF-A shows; tickets fill themselves from it (see fillTickets).
+ * REF-A shows. Plating does NOT serve anybody: the plate sits under the lamp,
+ * lights up the pips on every ticket that wants one, and only leaves when the
+ * player hands an order over (see THE PASS block below, and serveTicket).
  *
  * ⚠ A BURNT DISH CANNOT BE PLATED. It pays nothing by the §8.2 table, so
  * plating it would only ever be a mistake with no upside — and a customer
@@ -1018,7 +1101,7 @@ export function plateHand(now) {
   if (!K.hand) return no('NOT_READY', 'You are not holding anything.');
   if (K.hand.quality === 'burnt') return no('NOT_READY', 'That is burnt — bin it.');
   const capFn = DF('passCap');
-  const cap = Math.max(1, _int(capFn ? capFn(K.upgrades) : EC('PASS_CAP', 6)));
+  const cap = Math.max(1, _int(capFn ? capFn(K.upgrades) : EC('PASS_CAP', 8)));
   if (K.pass.length >= cap) return no('CAP', 'The pass is full — serve something first.');
   const dish = {
     id: 'd' + (++K._seq),
@@ -1143,10 +1226,13 @@ export function newTicket(k, opts) {
   const items = (o.items || []).map((it) => ({
     recipeId: it.recipeId,
     qty: Math.max(1, _int(it.qty || 1)),
-    filled: 0,
+    filled: 0,  // ⚠ PROVISIONAL until the ticket is served: it is "how much of
+                //   this line the pass can cover right now", rewritten every
+                //   tick by refreshReady(). takeDishes() freezes it at serve.
     qsum: 0,
     xn: 0,      // units that earn XP at all (raw ones do not)
     pn: 0,      // units that were PERFECT — they earn XP_PERFECT_MULT
+    rn: 0,      // units that were RAW — they COST popularity (ECON.POP_RAW)
   })).filter((it) => recipeOf(it.recipeId));
   if (!items.length) return null;
 
@@ -1202,10 +1288,49 @@ export function ticketPct(ticket, now) {
 
 /* Walk-in customers. The drive-thru lane is drivethru.js's; the ORDER BOARD is
    this file's, and REF-B's "Customer Orders / Table No. 1" is what it draws. */
+/**
+ * 🔴 THE SILENT OVERFLOW VALVE, AND WHY IT WAS THE WORST BUG IN THE FEATURE.
+ *
+ * This used to be `if (openTickets >= cap) return null;` — and that one line
+ * inverted the entire feedback loop the game is built on. A walk-in who arrived
+ * while the board was full was discarded with no event, no popularity cost and
+ * no lost sale, while `_nextCounter` had already been rolled forward, so the
+ * arrival was consumed as well. Measured on a level-12 stock kitchen at expert
+ * play, the board sat pinned at the cap for 13.7% of the day: every one of those
+ * frames was a customer THE GAME DECIDED NOT TO SEND. The punishment for
+ * drowning was fewer customers. Falling behind made the shift EASIER.
+ *
+ * Overload must express as PRESSURE, never as demand suppression. So a walk-in
+ * who cannot fit is a TURN-AWAY: they came in, looked at a board you have not
+ * cleared, and left. It costs ECON.POP_TURNAWAY reputation, it counts in
+ * `today.lost` so it reaches gradeFor() and the settlement report, and it emits
+ * a `ticket:lost` the renderer already knows how to toast.
+ *
+ * ⚠ IT IS A `ticket:lost`, NOT A NEW EVENT NAME. CONTRACT §6 fixes a closed set
+ *   of event names and this file does not get to widen it unilaterally; a lost
+ *   sale is exactly what this is, and `why:'turned-away'` carries the detail for
+ *   anyone who wants to draw it differently. `ticketId` is null because there
+ *   never was a ticket — render's toast path takes the name, not the id.
+ *
+ * ⚠ IT IS NOT `waveCar`'s POP_WAVE EITHER. Waving someone off is a DECISION the
+ *   player made; this is a consequence they let happen. Different sizes,
+ *   different lessons, different constants.
+ */
+function turnAway(now, why) {
+  K.today.lost++;
+  K.totals.lost++;
+  K.today.turned = _int(K.today.turned) + 1;
+  bumpPop(EC('POP_TURNAWAY', -1.0), 'turned-away');
+  K.rev++;
+  emit('ticket:lost', { ticketId: null, source: 'counter', carId: null, why: why || 'turned-away', turnedAway: true });
+  fx('lost', 'no room', {});
+  return null;
+}
+
 function spawnCounter(now) {
-  const cap = _int(EC('TICKET_CAP', 8));
+  const cap = _int(EC('TICKET_CAP', 12));
   const openTickets = K.tickets.filter((x) => x.state === 'open' || x.state === 'ready').length;
-  if (openTickets >= cap) return null;
+  if (openTickets >= cap) return turnAway(now, 'board-full');
 
   const menu = menuForLevel(K.level);
   if (!menu.length) return null;
@@ -1245,16 +1370,41 @@ function spawnCounter(now) {
   });
 }
 
-/**
- * Match finished dishes on the pass to the tickets that want them.
- *
- * ⚠ REJECTED: making the player drag each dish onto a ticket by hand. At 360px
- * that is a fiddly drag-and-drop nightmare on a touch screen, and the fun in
- * this genre lives in the cooking and the clock, not in the clerical work.
- * Dishes go to the ticket with the NEAREST due time — which is the choice a
- * competent cook would make anyway — and oldest dish first, because food does
- * not improve on the pass.
- */
+/* ═══════════════════════════════════════════════════════════════════════════
+   🍽 THE PASS — plating and serving are TWO decisions
+   ═══════════════════════════════════════════════════════════════════════════
+   🔴 THE PASS USED TO BE A PIPE AND IT HAD TO STOP BEING ONE.
+   The first build ran `fillTickets()` inside `tick()`: the instant a dish was
+   plated it was moved into the nearest-due ticket and the pass was empty again.
+   Measured over a full day — max pass depth 2 of 6, MEAN PLATE AGE 0.0 SECONDS,
+   and zero of 276 plate-frames past the freshness line. PASS_FRESH_MS,
+   PASS_STALE_MULT and the entire 34,000-Cinder `up_heatlamp` (passAdd:4,
+   freshMul:1.6) were constants describing a mechanic that could not occur.
+   REF-A's defining image — a row of finished pizzas SITTING on the pass while
+   the cook works the next order — had no mechanical existence at all.
+
+   THE FIX, and note what it deliberately does NOT do:
+     • `refreshReady()` runs every tick and only LOOKS. It assigns the plates on
+       the pass to the tickets that want them, nearest due date first, writes
+       `item.filled` so the ticket's pips light up as food lands, and flips a
+       fully-covered ticket to 'ready'. Nothing moves.
+     • `takeDishes()` runs inside `serveTicket()` and COMMITS: that is the tap
+       where the food leaves the pass, and it is where staleness is priced,
+       because staleness is a property of the moment you hand it over.
+   So a plate genuinely sits under the lamp, and cooking ahead into the 16:00
+   lull is a real strategy with a real decay attached to it.
+
+   ⚠ STILL REJECTED: making the player drag each dish onto a ticket by hand. At
+   360px that is a fiddly drag-and-drop nightmare on a touch screen, and the fun
+   in this genre lives in the cooking and the clock, not in the clerical work.
+   The player decides WHEN an order goes out, not which physical burger is in it.
+
+   ⚠ NEAREST DUE DATE HAS FIRST CLAIM, even on a ticket it does not complete.
+   The alternative — give each dish to whichever ticket it finishes — reads as
+   clever and plays as chaos: the board's order stops matching the board's
+   countdown and the player can no longer predict what pressing SERVE will do.
+   Oldest dish first within that, because food does not improve on the pass. */
+
 /**
  * The heat lamp. A dish left on the pass past PASS_FRESH_MS is worth
  * PASS_STALE_MULT of itself.
@@ -1263,39 +1413,166 @@ function spawnCounter(now) {
  * "too much complexity". kitchen.data.js ships PASS_FRESH_MS/PASS_STALE_MULT, and
  * it is right: without it, cooking a hundred burgers during the quiet hour and
  * coasting through the dinner rush is strictly optimal, which deletes the rush —
- * the one part of the day the whole design is built around.
+ * the one part of the day the whole design is built around. (It was also, until
+ * the pass stopped being a pipe, completely unreachable code.)
  */
 function stalenessMul(dish, now) {
   const f = DF('passFreshMs');
-  const fresh = _num(f ? f(K.upgrades) : EC('PASS_FRESH_MS', 75000), 75000);
+  const fresh = _num(f ? f(K.upgrades) : EC('PASS_FRESH_MS', 45000), 45000);
   if (fresh <= 0) return 1;
   const age = _num(now, K.now) - _num(dish.madeAt, 0);
   return age > fresh ? EC('PASS_STALE_MULT', 0.6) : 1;
 }
 
-function fillTickets(now) {
+/** How stale, 0..1, for the renderer's plate timer. 1 = past the line. */
+export function passStalePct(dish, now) {
+  const f = DF('passFreshMs');
+  const fresh = _num(f ? f(K.upgrades) : EC('PASS_FRESH_MS', 45000), 45000);
+  if (fresh <= 0) return 0;
+  return _clamp((_num(now, K.now) - _num(dish && dish.madeAt, 0)) / fresh, 0, 1);
+}
+
+/**
+ * 🔴 SPOILAGE — the pass's own escape valve, and it is load-bearing.
+ * Runs every tick, before refreshReady().
+ *
+ * A ticket that times out leaves its plates behind (see loseTicket), and nothing
+ * else on the board may want them. With a hard PASS_CAP those orphans are
+ * permanent: measured, the pass filled with eight of them, sat at cap for 77% of
+ * the day, and because a full pass makes `plateHand` refuse, the player's HAND
+ * jammed too and every slot on the rack burned down behind it. A dead board with
+ * no player action that can clear it is a soft lock, not a difficulty spike.
+ *
+ * There IS a player action now (`binPass`), but the game must not depend on the
+ * player knowing to use it, and food two minutes under a lamp is bin food in any
+ * real kitchen anyway. So it bins itself.
+ *
+ * ⚠ NO POPULARITY COST. Nobody was served a spoiled plate — it never left the
+ *   pass. The ingredients and the slot time are the price, and they are real.
+ *   It counts in `today.burnt` because waste should still cost you the S grade.
+ */
+function spoilPass(now) {
   if (!K.pass.length) return;
-  const open = K.tickets.filter((x) => x.state === 'open').sort((a, b) => a.dueAt - b.dueAt);
-  for (const ticket of open) {
+  const f = DF('passSpoilMs');
+  const life = _num(f ? f(K.upgrades) : EC('PASS_SPOIL_MS', 100000), 100000);
+  if (!(life > 0)) return;
+  for (let i = K.pass.length - 1; i >= 0; i--) {
+    const d = K.pass[i];
+    if (!d || (_num(now, K.now) - _num(d.madeAt, now)) < life) continue;
+    K.pass.splice(i, 1);
+    K.today.burnt++;
+    K.totals.burnt++;
+    K.rev++;
+    emit('cook:burnt', { stationId: null, slot: -1, recipeId: d.recipeId, spoiled: true });
+    fx('burn', 'binned — cold', { recipeId: d.recipeId });
+  }
+}
+
+/**
+ * Bin one plate off the pass by hand. Not in CONTRACT §1's export list, and
+ * this is the "say so" the contract asks for — it wants adding to §1 and it
+ * wants a tap target on the plate in kitchen.render.js.
+ *
+ * WHY IT EXISTS EVEN THOUGH spoilPass() ALREADY UNJAMS THE PASS: waiting two
+ * minutes for a wrong dish to rot while the dinner rush runs is a punishment
+ * with no decision in it. Binning it is the decision — you paid for it, you
+ * choose whether the space is worth more than the food.
+ */
+export function binPass(dishId) {
+  const i = K.pass.findIndex((d) => d && d.id === dishId);
+  if (i === -1) return no('BAD_ARG', 'That plate is not on the pass.');
+  const d = K.pass.splice(i, 1)[0];
+  K.today.burnt++;
+  K.totals.burnt++;
+  K.rev++;
+  emit('cook:burnt', { stationId: null, slot: -1, recipeId: d.recipeId, spoiled: true, binned: true });
+  fx('bin', 'binned', { recipeId: d.recipeId });
+  return ok({ recipeId: d.recipeId });
+}
+
+/**
+ * LOOK, DO NOT TOUCH. Runs every tick.
+ * Writes `item.filled` (how much of that line the pass can currently cover) and
+ * flips tickets between 'open' and 'ready'. It moves nothing and it charges
+ * nothing — `takeDishes()` does both, at the moment the player serves.
+ *
+ * 🔴 A TICKET CAN GO BACK TO 'open'. If a nearer-due order takes the last
+ * burger, a ticket that was 'ready' a frame ago is not any more, and the SERVE
+ * button has to disappear rather than sit there promising something the pass
+ * cannot deliver. The transition is two-way on purpose.
+ */
+function refreshReady(now) {
+  const board = K.tickets
+    .filter((x) => x.state === 'open' || x.state === 'ready')
+    .sort((a, b) => _num(a.dueAt) - _num(b.dueAt));
+  if (!board.length) return;
+  const used = Object.create(null);          // pass dish id → provisionally spoken for
+
+  for (const ticket of board) {
+    let complete = true;
     for (const item of ticket.items) {
-      while (item.filled < item.qty) {
-        const idx = K.pass.findIndex((d) => d.recipeId === item.recipeId);
-        if (idx === -1) break;
-        const dish = K.pass.splice(idx, 1)[0];
-        item.filled++;
-        item.qsum += _num(dish.mult, 1) * stalenessMul(dish, now);
-        if (dish.quality !== 'raw') item.xn++;
-        if (dish.quality === 'perfect') item.pn++;
-        K.rev++;
+      const need = Math.max(0, _int(item.qty));
+      let got = 0;
+      for (let i = 0; i < K.pass.length && got < need; i++) {
+        const d = K.pass[i];
+        if (!d || used[d.id] || d.recipeId !== item.recipeId) continue;
+        used[d.id] = 1;
+        got++;
+      }
+      if (got !== _int(item.filled)) { item.filled = got; K.rev++; }
+      if (got < need) complete = false;
+    }
+    const want = complete ? 'ready' : 'open';
+    if (ticket.state !== want) {
+      ticket.state = want;
+      K.rev++;
+      if (want === 'ready') {
+        emit('ticket:ready', { ticketId: ticket.id, source: ticket.source, carId: ticket.carId });
       }
     }
-    if (ticket.items.every((it) => it.filled >= it.qty)) {
-      ticket.state = 'ready';
-      K.rev++;
-      emit('ticket:ready', { ticketId: ticket.id, source: ticket.source, carId: ticket.carId });
-    }
-    if (!K.pass.length) break;
   }
+}
+
+/**
+ * COMMIT. Takes this ticket's dishes off the pass and prices them.
+ * → the array of dishes taken, or null if the pass cannot cover it (in which
+ *   case NOTHING is taken — the two-phase shape below is the whole point).
+ *
+ * `qsum` is the SUM of quality multipliers of the units handed over, and
+ * staleness is applied HERE rather than at plating time because a plate's age is
+ * a property of the instant it reaches the customer, not of when it was made.
+ */
+function takeDishes(ticket, now) {
+  const plan = [];
+  const spoken = Object.create(null);
+  for (const item of ticket.items) {
+    const need = Math.max(0, _int(item.qty));
+    const mine = [];
+    for (let i = 0; i < K.pass.length && mine.length < need; i++) {
+      const d = K.pass[i];
+      if (!d || spoken[d.id] || d.recipeId !== item.recipeId) continue;
+      spoken[d.id] = 1;
+      mine.push(d);
+    }
+    if (mine.length < need) return null;     // ← refuse before touching anything
+    plan.push([item, mine]);
+  }
+
+  const taken = [];
+  for (const [item, mine] of plan) {
+    item.filled = 0; item.qsum = 0; item.xn = 0; item.pn = 0; item.rn = 0;
+    for (const d of mine) {
+      const idx = K.pass.indexOf(d);
+      if (idx !== -1) K.pass.splice(idx, 1);
+      item.filled++;
+      item.qsum += _num(d.mult, 1) * stalenessMul(d, now);
+      if (d.quality === 'raw') item.rn++; else item.xn++;
+      if (d.quality === 'perfect') item.pn++;
+      taken.push(d);
+    }
+  }
+  K.rev++;
+  return taken;
 }
 
 /**
@@ -1314,7 +1591,18 @@ export function serveTicket(ticketId, now) {
   if (ticket.state === 'lost') return no('NOT_READY', 'They already walked out.');
   if (ticket.state !== 'ready') return no('NOT_READY', 'That order is not complete yet.');
 
-  let gross = 0, xp = 0, units = 0, qsum = 0, perfects = 0;
+  /* 🔴 THE FOOD LEAVES THE PASS HERE AND NOWHERE ELSE. `refreshReady()` only
+     looked; this is the commit, and it can still fail — a nearer-due order
+     served a frame ago may have taken the last burger out from under this one.
+     takeDishes() refuses without touching the pass in that case, and the ticket
+     drops back to 'open' so the SERVE button stops promising what is not there. */
+  const taken = takeDishes(ticket, t);
+  if (!taken) {
+    if (ticket.state === 'ready') { ticket.state = 'open'; K.rev++; }
+    return no('NOT_READY', 'The pass no longer has everything that order needs.');
+  }
+
+  let gross = 0, xp = 0, units = 0, qsum = 0, perfects = 0, raws = 0, popScore = 0;
   for (const it of ticket.items) {
     const r = recipeOf(it.recipeId);
     if (!r) continue;
@@ -1327,6 +1615,26 @@ export function serveTicket(ticketId, now) {
     units += it.filled;
     qsum += it.qsum;
     perfects += it.pn;
+    raws += _int(it.rn);
+
+    /* 🔴 REPUTATION IS SIGNED, PER UNIT, AND WEIGHTED BY `recipe.pop`.
+       Both halves of that fix a measured failure.
+       SIGNED: a bot that served 195 consecutive RAW dishes — half price, no xp,
+       visibly undercooked — finished the day at popularity 100.0 with an S grade
+       and a profit, because the old gain was a flat POP_SERVE per ticket with no
+       downside at all. Serving slop was the fastest route to a perfect rating.
+       WEIGHTED: every recipe has carried a `pop` weight (1.0 for a hot dog, 1.4
+       for a Supreme) and kitchen.data.js has always documented POP_SERVE as
+       "× recipe.pop" — and nothing in the feature read it. A Fountain Soda and a
+       Supreme moved the reputation meter by exactly the same amount, so the
+       expensive tier had no word-of-mouth reason to exist. One multiply. */
+    const perUnit = EC('POP_SERVE', 0.6);
+    const good = Math.max(0, it.xn - it.pn);
+    popScore += _num(r.pop, 1) * (
+        good * perUnit
+      + it.pn * (perUnit + EC('POP_PERFECT_BONUS', 0.4))
+      + _int(it.rn) * EC('POP_RAW', -0.8)
+    );
   }
   const popFn = DF('popPayMul'), rushFn = DF('rushPayMul');
   const popMult = popFn ? _num(popFn(K.popularity), 1)
@@ -1340,10 +1648,18 @@ export function serveTicket(ticketId, now) {
   const payout = Math.max(0, Math.round(gross * popMult * rushMult));
 
   const onTime = t <= _num(ticket.dueAt, t);
-  if (onTime && units > 0) xp += _int(EC('XP_TICKET_BONUS', 12));
+  if (onTime && units > 0) xp += _int(EC('XP_TICKET_BONUS', 6));
 
   const avgQ = units > 0 ? (qsum / units) : 0;
   const tip = tipFor(ticket, avgQ, t, payout);
+
+  // Day tallies the GRADE reads. `qsum`/`qunits` are the quality mix; without
+  // them gradeFor() can only see whether food arrived, which is how a raw-spam
+  // bot used to finish on an S. See gradeFor().
+  K.today.qsum = _num(K.today.qsum, 0) + qsum;
+  K.today.qunits = _int(K.today.qunits) + units;
+  K.today.raw = _int(K.today.raw) + raws;
+  K.today.perfect = _int(K.today.perfect) + perfects;
 
   // Pay. addGems is a bridge mutator and returns a boolean; a false here means
   // the payout did not land, which the player must be told about — the food has
@@ -1358,17 +1674,25 @@ export function serveTicket(ticketId, now) {
   K.today.served++; K.today.earned += payout; K.today.tips += tip; K.today.xp += xp;
   K.totals.served++; K.totals.earned += payout;
 
-  // Popularity: POP_SERVE for the sale, POP_PERFECT_BONUS on top for the units
-  // that were actually perfect, and upgrades multiply the gain.
+  /* Popularity: the MEAN of the per-unit scores summed above, times the
+     upgrade multiplier.
+     ⚠ MEAN, NOT SUM, and that is a design decision rather than an arithmetic
+     one. Summing would make a five-dish Vault Family order move reputation five
+     times as far as a hot dog, which turns word-of-mouth into a function of
+     order SIZE rather than of how well you cooked. A ticket is one reputation
+     event; what was in it decides which way it goes and how far.
+     🔴 popGainMul() only multiplies a GAIN. Applying a 1.35× signage bonus to a
+     negative score would make the Roadside Sign punish you harder for slop,
+     which is a trap dressed as an upgrade — you would be strictly worse off for
+     having bought it. Penalties are never scaled by a purchase. */
   const gainFn = DF('popGainMul');
-  const perfectShare = units > 0 ? (perfects / units) : 0;
-  const popGain = (EC('POP_SERVE', 0.6) + EC('POP_PERFECT_BONUS', 0.4) * perfectShare)
-                * _num(gainFn ? gainFn(K.upgrades) : 1, 1);
+  const popRaw = units > 0 ? (popScore / units) : 0;
+  const popGain = popRaw > 0 ? popRaw * _num(gainFn ? gainFn(K.upgrades) : 1, 1) : popRaw;
   bumpPop(popGain, 'served');
   addXp(xp);
 
   emit('pay', { ticketId: ticket.id, paid: payout, tip });
-  emit('ticket:served', { ticketId: ticket.id, source: ticket.source, carId: ticket.carId, paid: payout, tip, xp, quality: avgQ, onTime });
+  emit('ticket:served', { ticketId: ticket.id, source: ticket.source, carId: ticket.carId, paid: payout, tip, xp, quality: avgQ, raw: raws, perfect: perfects, pop: popGain, onTime });
   fx('pay', `+${(payout + tip).toLocaleString()}`, { ticketId: ticket.id });
 
   if (ticket.source === 'drive' && ticket.carId) {
@@ -1447,7 +1771,13 @@ function loseTicket(ticket, why, now) {
   if (!ticket || (ticket.state !== 'open' && ticket.state !== 'ready')) return false;
   ticket.state = 'lost';
 
-  // Anything already plated onto this ticket is in the bin with it.
+  /* ⚠ THE FOOD SURVIVES THE CUSTOMER, and that is deliberate. Since the pass
+     stopped being a pipe (see THE PASS), a ticket never holds physical dishes —
+     `item.filled` was only ever a claim on plates that are still sitting under
+     the lamp. So a walk-out costs the sale, the reputation and the clock, and
+     leaves you holding food that is now ageing toward PASS_STALE_MULT with
+     nobody to sell it to. That is a better punishment than binning it, because
+     it is one the player can still partly recover from. */
   K.today.lost++;
   K.totals.lost++;
   bumpPop(EC('POP_LOST', -3.5), 'lost');
@@ -1581,7 +1911,7 @@ export function openShift(now) {
   K.shift.tMs = 0;
   K.shift.running = true;
   K.shift.rush = rushNow();
-  K.today = { served: 0, lost: 0, burnt: 0, earned: 0, tips: 0, xp: 0 };
+  K.today = { served: 0, lost: 0, burnt: 0, turned: 0, earned: 0, tips: 0, xp: 0, qsum: 0, qunits: 0, raw: 0, perfect: 0 };
   K._report = null;
   K._nextCounter = t + EC('SHIFT_GRACE_MS', 4000);
   K.rev++;
@@ -1629,6 +1959,11 @@ export function closeShift(now, opts) {
     earned: K.today.earned,
     tips: K.today.tips,
     xp: K.today.xp,
+    turned: _int(K.today.turned),
+    raw: _int(K.today.raw),
+    perfect: _int(K.today.perfect),
+    // Mean quality multiplier of everything handed over, on the ECON.Q_* scale.
+    quality: _int(K.today.qunits) > 0 ? Math.round((K.today.qsum / K.today.qunits) * 100) / 100 : 0,
     popularity: K.popularity,
     forfeit: !!o.forfeit,
     grade: gradeFor(K.today),
@@ -1661,15 +1996,53 @@ export function closeShift(now, opts) {
   return true;
 }
 
+/**
+ * The day's grade.
+ *
+ * 🔴 IT USED TO READ ONLY served/(served+lost) AND `burnt === 0`, WHICH MEANT
+ * QUALITY DID NOT EXIST. A bot that served 195 consecutive RAW dishes finished
+ * on an S: every ticket went out complete and on time, nothing burned, and the
+ * grade had no way to notice that every plate was half-cooked. "Did food arrive"
+ * is a delivery metric, not a cooking one, and this is a cooking game.
+ *
+ * So the grade is now two axes and the WORSE one wins:
+ *   SERVICE  — the share of custom you actually served. Turn-aways count in
+ *              `lost`, so drowning shows up here even though no ticket existed.
+ *   KITCHEN  — the mean quality multiplier of everything handed over, on the
+ *              same scale as ECON.Q_* (raw 0.5, good 1.0, perfect 1.25).
+ * Taking the worse of the two is what makes both real: a perfect service record
+ * built out of raw food cannot buy an A, and neither can flawless cooking for
+ * the six customers you did not turn away.
+ *
+ * An S additionally requires a clean sheet — nothing burnt — because S is the
+ * "you did not put a foot wrong" grade and a bin full of charcoal is a foot
+ * wrong even if the customer never saw it.
+ */
 function gradeFor(today) {
-  const total = today.served + today.lost;
+  const total = _int(today.served) + _int(today.lost);
   if (!total) return '—';
-  const r = today.served / total;
-  if (r >= 0.98 && today.burnt === 0) return 'S';
-  if (r >= 0.9) return 'A';
-  if (r >= 0.75) return 'B';
-  if (r >= 0.55) return 'C';
-  return 'D';
+  const service = _int(today.served) / total;
+  const units = _int(today.qunits);
+  // No units served → no kitchen evidence either way, so service alone decides.
+  const meanQ = units > 0 ? (_num(today.qsum, 0) / units) : EC('Q_GOOD', 1);
+
+  const SCALE = ['D', 'C', 'B', 'A', 'S'];
+  let svc = 0;
+  if (service >= 0.98) svc = 4;
+  else if (service >= 0.90) svc = 3;
+  else if (service >= 0.75) svc = 2;
+  else if (service >= 0.55) svc = 1;
+
+  const good = EC('Q_GOOD', 1), raw = EC('Q_RAW', 0.5);
+  let kit = 0;
+  if (meanQ >= good + (EC('Q_PERFECT', 1.25) - good) * 0.5) kit = 4;   // ≥ half-perfect
+  else if (meanQ >= good * 0.98) kit = 3;                              // essentially all good
+  else if (meanQ >= good - (good - raw) * 0.35) kit = 2;               // a sloppy minority
+  else if (meanQ >= good - (good - raw) * 0.70) kit = 1;
+  const grade = Math.min(svc, kit);
+
+  if (grade === 4 && _int(today.burnt) > 0) return SCALE[3];
+  return SCALE[grade];
 }
 
 /** The last settlement report, for the end-of-day panel. */
@@ -1677,6 +2050,96 @@ export function lastReport() { return K._report; }
 
 /** The dishes this kitchen may currently cook. */
 export function menu() { return menuForLevel(K.level); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ⏱⏱ THE GAP FRAME — dropped time, dropped by EVERY clock
+   ═══════════════════════════════════════════════════════════════════════════
+   🔴 THE CLAMP ON ITS OWN PROTECTED NOTHING, AND THE COMMENT ABOVE IT SAID IT
+      DID, WHICH IS THE WORST VERSION OF THIS BUG.
+
+   ECON.MAX_DT_MS caps how much simulation one frame may advance. But only
+   `shift.tMs` was ever advanced from that clamped step. Every DEADLINE in the
+   kitchen — `doneAt`, `burnAt`, `dueAt`, `madeAt`, the lane's `balkAt` and
+   `expiresAt`, `_nextCounter` — is an ABSOLUTE stamp compared against `now`, and
+   `now` is the wall clock, which had jumped the whole forty seconds. Measured on
+   one 300,000ms frame after a five-minute background stall: two slots burnt,
+   four tickets lost, 16.4 popularity gone — while the HUD clock sat frozen at
+   15:00 because `tMs` had moved 250ms. The player came back to precisely the
+   dead restaurant the clamp was written to prevent, and the shift clock lied
+   about it afterwards.
+
+   THE HONEST RULE, and it is one sentence: **DROPPED TIME IS DROPPED FOR
+   EVERYTHING.** If the sim only advanced 250ms of a 40,000ms frame, then 39,750ms
+   did not happen, and nothing in the kitchen may have aged by it. The alternative
+   rules were both considered and both are worse:
+     • "let it all run" — the browser decides how much of your shift you lose by
+       how aggressively it throttles a background tab. Unwinnable and unfair, and
+       it is the behaviour we are fixing.
+     • "freeze the wall clock instead" — i.e. keep a private sim clock and convert
+       `now` at every entry point. Cleaner on paper; in practice `slotPhase(slot,
+       now)` and friends are called by the RENDERER with `Date.now()` and by
+       drivethru.js with the value we hand it, so the conversion would have to be
+       applied exactly once per call path and never twice. A double-converted
+       clock is silent and unbounded. Shifting the stamps is arithmetically the
+       same offset applied in a place that cannot be applied twice.
+
+   🔴 CONVOYS ARE THE ONE THING THAT MUST *NOT* BE SKEWED. CONTRACT §4: they are
+      a multi-hour freight promise and they advance on wall-clock while the panel
+      is shut, by design. Skewing `arrivesAt` would mean a truck arrives later
+      because you backgrounded the tab, which is the opposite of the promise.
+      They are absent from the list below on purpose — do not "fix" that.
+
+   ⚠ K.lane BELONGS TO drivethru.js. This reaches into it because state.js owns
+     `tick()` and therefore owns the clock, and a lane whose deadlines disagreed
+     with the board's would resolve the same customer twice. The alternative —
+     a `DriveThru.skew(K, ms)` entry point — is the better shape and wants adding
+     to CONTRACT §1; until it is there, the fields touched below are exactly the
+     absolute stamps drivethru.js writes, and nothing else.
+   ═══════════════════════════════════════════════════════════════════════════ */
+function skewClocks(ms, now) {
+  const d = _num(ms, 0);
+  if (!(d > 0)) return;
+
+  // Stations: the three stamps every phase is derived from.
+  for (const sid of Object.keys(K.stations || {})) {
+    const st = K.stations[sid];
+    if (!st || !st.slots) continue;
+    for (const slot of st.slots) {
+      if (!slot) continue;
+      slot.startedAt = _num(slot.startedAt, now) + d;
+      slot.doneAt = _num(slot.doneAt, now) + d;
+      slot.burnAt = _num(slot.burnAt, now) + d;
+    }
+  }
+  if (K.hand) K.hand.madeAt = _num(K.hand.madeAt, now) + d;
+
+  // The pass ages on the same clock, or a stall would turn every plate stale.
+  for (const dish of (K.pass || [])) if (dish) dish.madeAt = _num(dish.madeAt, now) + d;
+
+  // The board.
+  for (const tk of (K.tickets || [])) {
+    if (!tk) continue;
+    tk.placedAt = _num(tk.placedAt, now) + d;
+    tk.dueAt = _num(tk.dueAt, now) + d;
+  }
+
+  // The lane (see the ⚠ above). Zero means "not set yet" for several of these,
+  // so a zero is left alone rather than pushed into the future.
+  for (const car of (K.lane || [])) {
+    if (!car) continue;
+    for (const key of ['arrivedAt', 'orderedAt', 'expiresAt', 'balkAt', 'sayUntil', 'nagAt', 'leftAt']) {
+      const v = _num(car[key], 0);
+      if (v > 0) car[key] = v + d;
+    }
+  }
+  if (K._lane && _num(K._lane.nextAt, 0) > 0) K._lane.nextAt = _num(K._lane.nextAt, 0) + d;
+
+  // Our own schedulers.
+  if (_num(K._nextCounter, 0) > 0) K._nextCounter = _num(K._nextCounter, 0) + d;
+  if (isFinite(K._lastSave)) K._lastSave = _num(K._lastSave, now) + d;
+
+  // NOT K.convoys. See the 🔴 above.
+}
 
 /* ═══════════════════════════════════════════════════════════════════════════
    §3 — ⏱ THE TICK. THE ONLY ADVANCE.
@@ -1700,7 +2163,10 @@ export function tick(dt, now) {
   // backgrounded tab hands you a 40-second dt, which would expire every ticket
   // on the board in one frame and floor popularity for something the player did
   // not do. Two clamps is cheap. One missing clamp is a ruined save.
-  let step = _clamp(_num(dt, 16), 0, EC('MAX_DT_MS', 250));
+  const raw = _clamp(_num(dt, 16), 0, EC('GAP_MAX_MS', 86400000));
+  const step = Math.min(raw, EC('MAX_DT_MS', 250));
+  // 🔴 THE OTHER HALF OF THE CLAMP. See skewClocks().
+  if (raw > step) skewClocks(raw - step, t);
   K.now = t;
 
   // 1. CLOCK
@@ -1738,8 +2204,9 @@ export function tick(dt, now) {
     }
   }
 
-  // 5. PASS → BOARD, THEN EXPIRY
-  fillTickets(t);
+  // 5. PASS ↔ BOARD (look only — serveTicket does the moving), THEN EXPIRY
+  spoilPass(t);
+  refreshReady(t);
   for (const ticket of Array.from(K.tickets)) {
     if ((ticket.state === 'open' || ticket.state === 'ready') && t > _num(ticket.dueAt, Infinity)) {
       // A drive ticket whose car is still in the lane belongs to drivethru.js's
@@ -1815,7 +2282,7 @@ function tickStations(t) {
         K.rev++;
         K.today.burnt++;
         K.totals.burnt++;
-        bumpPop(EC('POP_BURN', -1.5), 'burnt');
+        bumpPop(EC('POP_BURN', -1.2), 'burnt');
         emit('cook:burnt', { stationId, slot: i, recipeId: slot.recipeId });
         fx('burn', 'burnt!', { stationId, slot: i });
       }
@@ -1843,10 +2310,12 @@ const SIM_EPOCH = 1700000000000;   // an arbitrary fixed epoch; the sim only eve
  * @param {Array|Function} actions
  *        Either a list of `{at:<seconds>, do:'startCook'|…, args:[…]}` or a
  *        function `(api, K, tSec, now) => void` invoked every step.
- * @param {object} opts  { step, seed, autoOpen, auto, quiet }
+ * @param {object} opts  { step, seed, autoOpen, auto, quiet, gap }
  *        `auto:true` runs a naive bot — cook whatever a ticket wants, pull it
  *        the moment it is done, plate, serve — which is enough to prove the loop
  *        closes end-to-end without anyone writing a script.
+ *        `gap:{at,ms}` injects ONE oversized frame at `at` seconds, which is the
+ *        regression for the background-stall bug: see report.gap.
  */
 export function simulate(seconds, actions, opts) {
   const o = opts || {};
@@ -1871,8 +2340,16 @@ export function simulate(seconds, actions, opts) {
   const report = {
     ticks: 0, events: [], counts: {}, violations: [], errors: [],
     days: 0, served: 0, lost: 0, burnt: 0, earned: 0, tips: 0,
+    gap: null,
   };
   let qi = 0;
+  /* 🔴 THE BACKGROUND-STALL REGRESSION, and it is a regression because it
+     shipped once. `gap:{at,ms}` hands tick() one oversized frame — exactly what
+     a backgrounded tab does when it comes back. Dropped time must be dropped by
+     EVERY clock (see skewClocks), so that frame must produce NO cook:burnt and
+     NO ticket:lost. Before the fix, one 300,000ms frame burnt 2 slots, lost 4
+     tickets and cost 16.4 popularity while the HUD clock stayed frozen. */
+  const gap = (o.gap && _num(o.gap.ms, 0) > 0) ? { at: _num(o.gap.at, 0), ms: _num(o.gap.ms, 0), done: false } : null;
 
   for (let elapsed = 0; elapsed < total; elapsed += stepMs) {
     t += stepMs;
@@ -1890,9 +2367,30 @@ export function simulate(seconds, actions, opts) {
     if (o.auto) { try { autopilot(t); } catch (e) { report.errors.push(String((e && e.message) || e)); } }
 
     let evs = [];
-    try { evs = tick(stepMs, t) || []; }
+    let gapFrame = false;
+    if (gap && !gap.done && tSec >= gap.at) {
+      report.gap = { popBefore: K.popularity };
+      gap.done = true;
+      gapFrame = true;
+      t += gap.ms;                       // the wall clock jumped; the sim must not
+    }
+    try { evs = tick(gapFrame ? (stepMs + gap.ms) : stepMs, t) || []; }
     catch (e) { report.errors.push('tick: ' + String((e && e.message) || e)); break; }
     report.ticks++;
+    if (gapFrame) {
+      const popBefore = report.gap ? report.gap.popBefore : K.popularity;
+      const c = {};
+      for (const ev of evs) c[ev.name] = (c[ev.name] || 0) + 1;
+      report.gap = {
+        ms: gap.ms,
+        events: c,
+        burnt: c['cook:burnt'] || 0,
+        lost: c['ticket:lost'] || 0,
+        popAfter: K.popularity,
+        popBefore,
+        ok: !c['cook:burnt'] && !c['ticket:lost'],
+      };
+    }
 
     for (const ev of evs) {
       report.counts[ev.name] = (report.counts[ev.name] || 0) + 1;
@@ -1931,6 +2429,16 @@ export function simulate(seconds, actions, opts) {
  * dumb bot cannot, the loop is not a game yet, it is a punishment.
  */
 function autopilot(now) {
+  /* 🔴 SERVE BEFORE PLATING, and this ordering is load-bearing now that the pass
+     holds stock instead of passing it through. With the pass at PASS_CAP a
+     plate has nowhere to go, `plateHand` refuses, the bot's hand stays full, it
+     can never pull again and every slot on the rack burns. That death spiral is
+     a REAL failure state a real player can walk into — but a bot that walks into
+     it every single day measures the bot, not the kitchen. Clearing the pass
+     first is what a cook does; it is not a cheat. */
+  const readyFirst = K.tickets.find((x) => x.state === 'ready');
+  if (readyFirst) serveTicket(readyFirst.id, now);
+
   // pull anything that is ready (or ruined), plate it, bin what is burnt
   if (!K.hand) {
     outer: for (const sid of Object.keys(K.stations)) {
@@ -1946,18 +2454,25 @@ function autopilot(now) {
     else plateHand(now);
   }
 
-  // serve anything ready
+  // serve anything else that became ready while we were plating
   const ready = K.tickets.find((x) => x.state === 'ready');
   if (ready) serveTicket(ready.id, now);
 
-  // start whatever the board is short of
+  /* Start whatever the board is short of.
+     ⚠ `it.filled` ALREADY COUNTS THE PASS. Since plating stopped auto-filling,
+     `filled` is written every tick by refreshReady() and means "how many of this
+     line the plates on the pass can currently cover" — so the old formula
+     `qty − filled − onPass − cooking` subtracted the same plate twice and the
+     bot under-cooked every multi-unit order into a deadlock: the ticket never
+     completed, its plates sat on the pass forever, the pass filled with orphans
+     and the rack jammed. Anyone else computing "still to cook" wants exactly
+     `qty − filled − cooking` and nothing else. */
   const wanted = [];
   for (const ticket of K.tickets) {
     if (ticket.state !== 'open') continue;
     for (const it of ticket.items) {
-      const onPass = K.pass.filter((d) => d.recipeId === it.recipeId).length;
       const cooking = countCooking(it.recipeId);
-      if (it.filled + onPass + cooking < it.qty) wanted.push(it.recipeId);
+      if (it.filled + cooking < it.qty) wanted.push(it.recipeId);
     }
   }
   for (const recipeId of wanted) {

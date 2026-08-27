@@ -93,18 +93,136 @@
 #mythic-kitchen-ov * { box-sizing: border-box; }
 #mythic-kitchen-ov button { font: inherit; color: inherit; }
 
-/* The tiled back wall. A real restaurant interior behind the counter is what
-   sells DEPTH; two repeating gradients and a vignette do it for nothing. */
+/* ════════════════════════════════════════════════════════════════════════
+   🏛 THE ROOM — the interior the player is standing in.
+   ------------------------------------------------------------------------
+   🔴 THIS IS THE BLOCK THAT DECIDES WHETHER WE READ AS A GAME.
+
+   v1 of this element was a 4.5%-white grid at `opacity:.5`, masked away 72%
+   down — about 2% white at its strongest. It did not appear in a single one
+   of the seven screenshots taken of it, which meant the whole feature was a
+   stack of cards floating on flat #0d0908 and read as an admin panel on a
+   dark theme. Both reference sims sell "you are standing in a restaurant"
+   before the player has read one label, and they do it with three things and
+   only three: a WALL that ends at a horizon, LIGHT falling from above onto
+   the working surface, and PEOPLE out in the room behind. All three are
+   below. All three are gradients: there are no image assets in this feature
+   and CLAUDE.md bans uploading any.
+
+   Three paint layers, which is all one element gets and is enough:
+     .mk-room          back wall + tiling + horizon + counter shadow + vignette
+     .mk-room::before  the floor — a real perspective plane, not a fake one
+     .mk-room::after   the heat lamps, their cones, and the seated diners
+
+   ⚠ It sits BEHIND everything (z-index 0 against the body's 2 and the hud's
+   4) and it is pointer-events:none. It must never be why a tap on a pan
+   missed. And it is STATIC on purpose: this is a full-viewport blurred
+   layer, and animating one of those costs a cheap phone more than every
+   sizzle on the line put together. The life in this screen comes from the
+   cars, the tickets and the griddles — not from the wallpaper.
+
+   ⚠ Alphas are deliberately restrained (7–24%). The room has to be visible
+   at a glance and still lose every legibility argument it has with a ticket
+   timer sitting on top of it.
+   ════════════════════════════════════════════════════════════════════════ */
 #mythic-kitchen-ov .mk-room {
   position: absolute;
   inset: 0;
+  z-index: 0;
   pointer-events: none;
-  opacity: .5;
+  overflow: hidden;
   background:
-    repeating-linear-gradient(0deg,  rgba(255,255,255,.045) 0 1px, transparent 1px 38px),
-    repeating-linear-gradient(90deg, rgba(255,255,255,.045) 0 1px, transparent 1px 38px);
-  -webkit-mask-image: linear-gradient(180deg, #000 0%, rgba(0,0,0,.35) 46%, transparent 72%);
-          mask-image: linear-gradient(180deg, #000 0%, rgba(0,0,0,.35) 46%, transparent 72%);
+    /* the room falls off into shadow at the corners */
+    radial-gradient(125% 95% at 50% 40%, transparent 40%, rgba(4,2,1,.62) 100%),
+    /* the shadow the counter throws back onto the wall, just under the horizon */
+    linear-gradient(180deg, transparent 0 33%, rgba(8,5,3,.55) 45%, rgba(8,5,3,.28) 53%, transparent 66%),
+    /* buries the tiling below the horizon so the floor can take the bottom half */
+    linear-gradient(180deg, transparent 0 30%, rgba(19,12,8,.88) 46%, #130c08 56%),
+    /* subway tile. A wide brick pitch, grout picked out in WARM light — a cool
+       grout line was drafted and instantly read as graph paper. */
+    repeating-linear-gradient(0deg,  rgba(255,214,160,.10) 0 1px, transparent 1px 34px),
+    repeating-linear-gradient(90deg, rgba(255,214,160,.07) 0 1px, transparent 1px 58px),
+    /* the wall: hot near the lamps, dark at the skirting */
+    linear-gradient(180deg, #4d3020 0%, #37220f 25%, #251610 40%, #170e08 52%, #0d0806 100%);
+}
+/* THE FLOOR. transform-origin is the horizon and the plane tips its lower
+   edge TOWARDS the viewer, so tiles grow as they come forward — that is what
+   a perspective floor is, and it is why the tile pitch is a single constant
+   here instead of a hand-tuned ramp of gradient stops. */
+#mythic-kitchen-ov .mk-room::before {
+  content: "";
+  position: absolute;
+  left: -60%; right: -60%;
+  top: 46%; bottom: -36%;
+  transform-origin: 50% 0;
+  transform: perspective(700px) rotateX(66deg);
+  background:
+    repeating-linear-gradient(90deg, rgba(255,198,132,.10) 0 2px, transparent 2px 74px),
+    repeating-linear-gradient(0deg,  rgba(255,198,132,.10) 0 2px, transparent 2px 74px),
+    linear-gradient(180deg, #2b1b11, #1b110a 55%, #120b06);
+  /* fade the far distance into the wall — a hard seam at the horizon is the
+     one thing that gives a CSS floor away */
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 14%, #000 66%, transparent 100%);
+          mask-image: linear-gradient(180deg, transparent 0, #000 14%, #000 66%, transparent 100%);
+}
+/* THE LAMPS AND THE PEOPLE. One blurred layer: distance is blur, and blurring
+   the bulbs and the diners with the same radius is what puts them in the same
+   room. A diner is a head circle over a shoulder ellipse — nothing more; at
+   this blur radius anything more detailed is wasted.
+
+   ⚠ TWO ROWS OF TABLES, and the reason is layout, not decor. Silhouettes on
+   the horizon alone were INVISIBLE in practice: at both widths the horizon
+   band is exactly where the order board and the station cards sit, so the
+   people were painted and then covered up. The near row (bigger, lower, on
+   the floor plane, so perspectively correct as a second row of tables closer
+   to the counter) lands in the one band that is reliably open at desktop —
+   between the bottom of the line and the top of the pass — which is the band
+   that used to be 810×180 of nothing. The far row still pays off on a phone
+   and behind the section headings. */
+#mythic-kitchen-ov .mk-room::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  filter: blur(2.6px);
+  background:
+    /* NEAR ROW — bigger, on the floor, BACKLIT (see the pools below) */
+    radial-gradient(24px 24px at 17% 58.4%, rgba(9,5,3,.94), transparent 76%),
+    radial-gradient(64px 34px at 17% 66.4%, rgba(9,5,3,.90), transparent 76%),
+    radial-gradient(21px 21px at 39% 60.6%, rgba(9,5,3,.90), transparent 76%),
+    radial-gradient(56px 31px at 39% 67.8%, rgba(9,5,3,.85), transparent 76%),
+    radial-gradient(25px 25px at 63% 57.8%, rgba(9,5,3,.94), transparent 76%),
+    radial-gradient(67px 35px at 63% 66.0%, rgba(9,5,3,.90), transparent 76%),
+    radial-gradient(21px 21px at 84% 60.8%, rgba(9,5,3,.88), transparent 76%),
+    radial-gradient(58px 32px at 84% 68.0%, rgba(9,5,3,.82), transparent 76%),
+    /* the table lamps on their tables, which is what makes them read as SEATED */
+    radial-gradient(30px 10px at 28% 69.4%, rgba(255,196,110,.26), transparent 76%),
+    radial-gradient(30px 10px at 74% 69.0%, rgba(255,196,110,.24), transparent 76%),
+    /* ⚠ THE POOLS ARE WHAT MAKE THE PEOPLE VISIBLE, and they are listed AFTER
+       the silhouettes because in a background list later means BEHIND. A dark
+       figure on a dark floor is not a silhouette, it is nothing — round 2
+       painted the near row and it could not be seen. Light behind them, then
+       they read. It is also just true: the dining room is the lit part and
+       you are stood in the dim service side of the counter. */
+    radial-gradient(25% 17% at 20% 64%, rgba(255,170,80,.26), transparent 72%),
+    radial-gradient(28% 19% at 52% 63%, rgba(255,178,88,.28), transparent 72%),
+    radial-gradient(25% 17% at 82% 64%, rgba(255,170,80,.25), transparent 72%),
+    /* FAR ROW — smaller, darker, sat right on the horizon */
+    radial-gradient(10px 10px  at 13% 43.4%, rgba(9,5,3,.88), transparent 72%),
+    radial-gradient(27px 15px  at 13% 47.0%, rgba(9,5,3,.82), transparent 72%),
+    radial-gradient(9px 9px    at 30% 44.4%, rgba(9,5,3,.78), transparent 72%),
+    radial-gradient(23px 13px  at 30% 47.4%, rgba(9,5,3,.72), transparent 72%),
+    radial-gradient(11px 11px  at 68% 43.0%, rgba(9,5,3,.88), transparent 72%),
+    radial-gradient(29px 16px  at 68% 46.6%, rgba(9,5,3,.82), transparent 72%),
+    radial-gradient(9px 9px    at 86% 44.4%, rgba(9,5,3,.72), transparent 72%),
+    radial-gradient(24px 13px  at 86% 47.4%, rgba(9,5,3,.66), transparent 72%),
+    /* the bulbs */
+    radial-gradient(17px 7px at 22% 9%, rgba(255,228,168,.85), rgba(255,168,70,.32) 62%, transparent 80%),
+    radial-gradient(17px 7px at 50% 7%, rgba(255,228,168,.88), rgba(255,168,70,.34) 62%, transparent 80%),
+    radial-gradient(17px 7px at 78% 9%, rgba(255,228,168,.85), rgba(255,168,70,.32) 62%, transparent 80%),
+    /* their cones, falling onto the pass */
+    radial-gradient(33% 54% at 22% 11%, rgba(255,178,86,.20), transparent 74%),
+    radial-gradient(38% 66% at 50% 9%,  rgba(255,188,98,.24), transparent 76%),
+    radial-gradient(33% 54% at 78% 11%, rgba(255,178,86,.20), transparent 74%);
 }
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -317,17 +435,33 @@
   overflow-x: auto;
   overflow-y: hidden;
   scroll-snap-type: x proximity;
+  /* so a snapped card lands inside the padding instead of flush on the bezel */
+  scroll-padding-inline: 10px;
   scrollbar-width: thin;
+  /* ⚠ A rail with no edge treatment HARD-CLIPS a card mid-word at the viewport
+     edge — round 1 shipped 'Commu…', 'Classic B' and 'DECK' sliced dead at
+     x=390 — and a hard cut reads as BROKEN LAYOUT, not as "there is more,
+     scroll". The fade deliberately does NOT go to zero: a card that vanishes
+     completely is a card the player never learns is there. 22% is enough to
+     say "something continues" and little enough to say "not here". */
+  -webkit-mask-image: linear-gradient(90deg, #000 0 calc(100% - 56px), rgba(0,0,0,.62) calc(100% - 22px), rgba(0,0,0,.10) 100%);
+          mask-image: linear-gradient(90deg, #000 0 calc(100% - 56px), rgba(0,0,0,.62) calc(100% - 22px), rgba(0,0,0,.10) 100%);
 }
 #mythic-kitchen-ov .mk-rail > * { scroll-snap-align: start; flex: 0 0 auto; }
 #mythic-kitchen-ov .mk-rail::-webkit-scrollbar { height: 5px; }
 #mythic-kitchen-ov .mk-rail::-webkit-scrollbar-thumb { background: rgba(255,255,255,.16); border-radius: 9px; }
 
+/* ⚠ NOT a dashed box. A dashed rectangle is the visual language of an unbuilt
+   wireframe, and round 1 had three of them on screen at once on the warmest
+   surfaces in the feature. An empty state here is a warm, lit, EMPTY SHELF —
+   it belongs to the room, not to the mockup. */
 #mythic-kitchen-ov .mk-empty {
   padding: 14px 12px;
-  border: 1px dashed rgba(255,255,255,.14);
+  border: 1px solid rgba(255,196,120,.16);
   border-radius: 10px;
-  color: var(--mk-faint);
+  background: linear-gradient(180deg, rgba(255,186,92,.07), rgba(0,0,0,.20));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+  color: #a08e77;
   font-size: 12px;
   text-align: center;
   min-width: 190px;
@@ -513,7 +647,11 @@
 }
 #mythic-kitchen-ov .mk-road {
   position: relative;
-  height: 84px;
+  /* ⚠ 106px, not 84px. The extra 22px buys the THREE BUBBLE LINES below —
+     without room above the roofs there is nowhere to stagger to and every
+     bubble has to fight for one strip of sky. It reads better as a road too:
+     84px was a kerb with cars wedged against the bezel. */
+  height: 108px;
   border-radius: 9px;
   overflow: hidden;
   background:
@@ -568,10 +706,11 @@
 
 #mythic-kitchen-ov .mk-car {
   position: absolute;
-  /* ⚠ 22px, not 6px: the order bubble is anchored `bottom:100%` off the car and
+  /* ⚠ 54px, not 6px: the order bubble is anchored `bottom:100%` off the car and
      the road clips its overflow, so a car parked at the top of the strip loses
-     its speech bubble to the bezel. */
-  top: 22px;
+     its speech bubble to the bezel. 54 leaves THREE bubble lines of clearance
+     (15px of text plus two 19px steps) — see the stagger below. */
+  top: 56px;
   left: 0;
   width: 76px;
   display: flex;
@@ -608,14 +747,60 @@
   color: #241a12;
   font-size: 11px;
   white-space: nowrap;
-  box-shadow: 0 3px 8px rgba(0,0,0,.5);
+  /* ⚠ the box-shadow lives with `max-width` in the collision block below, and
+     ONLY there. Two `box-shadow` declarations on one selector in one file is
+     how `.mk-slot-dish` ended up 24% smaller than the comment arguing for its
+     size — the later one wins silently and the earlier one reads as truth. */
 }
 /* The car at the window is by definition at the right-hand edge, which is
    exactly where a centred bubble gets eaten by the speaker box. `data-side` is
    set by updateCars() and flips the bubble to hang leftwards instead. */
 #mythic-kitchen-ov .mk-car[data-side="right"] .mk-bub { left: auto; right: 4px; transform: translate(0, -2px); }
 #mythic-kitchen-ov .mk-car[data-side="right"] .mk-bub::after { left: auto; right: 16px; transform: none; }
-#mythic-kitchen-ov .mk-bub { max-width: 190px; overflow: hidden; text-overflow: ellipsis; }
+/* 🔴 TWO CARS TALKING AT ONCE. A 190px nowrap bubble centred on a 76px car,
+   on a 364px road that holds up to four cars, collides as the NORMAL case —
+   round 1 measured two bubbles at x=138 and x=62 on the same line and the
+   result was 'Two dogs and a large fries, pl…' smeared through another
+   order. CSS can only do half of this:
+     · cap the width against the viewport, not against a constant, so a phone
+       bubble is never wider than half the road;
+     · make a bubble OPAQUE and give it a dark outer ring, so when two do
+       overlap one clearly sits ON TOP of the other and stays readable
+       instead of the two blending into mush;
+     · raise a talking car above a silent one.
+   The other half — only ever showing ONE bubble, on the car whose patience is
+   lowest — belongs to updateCars() and is named in the handover. */
+#mythic-kitchen-ov .mk-bub {
+  max-width: min(190px, 46vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  z-index: 3;
+  box-shadow: 0 0 0 2px rgba(10,7,5,.62), 0 4px 10px rgba(0,0,0,.7);
+}
+#mythic-kitchen-ov .mk-car[data-say="1"] { z-index: 3; }
+/* ⚠ AND THE HALF CSS *CAN* DO ABOUT IT: THREE LINES OF SKY.
+   Each car hangs its bubble one line higher than the car before it, cycling
+   every third. Two lines were tried first and were not enough — measured at
+   390px with every car talking, cars 1 and 3 still collided at x=147..199,
+   because the lane crowds up at the window and "adjacent" is not the only way
+   two cars end up 100px apart. Three lines and a max of four cars means the
+   only pair that can ever share a line is the 1st and the 4th, which are the
+   two furthest apart on the road by definition.
+
+   It costs 22px of road height and nothing else, it needs no renderer change,
+   and it degrades to "slightly wonky" rather than "unreadable" if the DOM
+   order ever stops tracking the lane order. A raised bubble grows a long thin
+   stem so it still visibly belongs to its own car. */
+#mythic-kitchen-ov .mk-car:nth-child(3n+2) .mk-bub { bottom: calc(100% + 19px); }
+#mythic-kitchen-ov .mk-car:nth-child(3n)   .mk-bub { bottom: calc(100% + 38px); }
+#mythic-kitchen-ov .mk-car:nth-child(3n+2) .mk-bub::after,
+#mythic-kitchen-ov .mk-car:nth-child(3n)   .mk-bub::after {
+  border-left-width: 2px;
+  border-right-width: 2px;
+  border-top-color: rgba(243,234,217,.5);
+}
+#mythic-kitchen-ov .mk-car:nth-child(3n+2) .mk-bub::after { border-top-width: 21px; }
+#mythic-kitchen-ov .mk-car:nth-child(3n)   .mk-bub::after { border-top-width: 40px; }
 #mythic-kitchen-ov .mk-bub::after {
   content: "";
   position: absolute;
@@ -693,48 +878,104 @@
   cursor: pointer;
   color: inherit;
 }
-/* surfaces, by station kind */
+/* ── SURFACES, BY STATION KIND ────────────────────────────────────────────
+   🔴 EVERY PAN IS A COOKING SURFACE, INCLUDING AN EMPTY ONE. In the reference
+   an idle griddle still looks like a hot griddle; round 1's idle pan was a
+   dashed rectangle with '＋ dish' in it, and at desktop six of ten pans are
+   empty in a normal opening — so PLACEHOLDER CHROME was the dominant visual
+   of the part of the game you actually play. Each surface below therefore
+   carries its material at full strength with nothing on it: griddle grooves
+   and a sear patch, fryer mesh and oil, a speckled deck stone, a scored prep
+   board, a frosted chiller. The dish that lands on it is a guest. */
 #mythic-kitchen-ov .mk-st[data-kind="heat"] .mk-slot {
   background:
-    radial-gradient(80% 120% at 50% 130%, rgba(255,120,40,.35), transparent 62%),
-    repeating-linear-gradient(90deg, rgba(255,255,255,.05) 0 1px, transparent 1px 9px),
-    linear-gradient(180deg, #34343a, #17171a);
+    /* the sear patch where the last twenty patties went */
+    radial-gradient(56% 34% at 50% 46%, rgba(84,52,30,.55), transparent 72%),
+    /* heat coming up through the plate */
+    radial-gradient(84% 120% at 50% 128%, rgba(255,124,42,.40), transparent 62%),
+    /* flat-top grooves, lit on one side like machined steel */
+    repeating-linear-gradient(90deg,
+      rgba(255,255,255,.085) 0 1px, rgba(0,0,0,.30) 1px 3px, transparent 3px 11px),
+    linear-gradient(180deg, #3a3a41, #17171a);
 }
 #mythic-kitchen-ov .mk-st[data-kind="fry"] .mk-slot {
   background:
-    radial-gradient(70% 90% at 50% 115%, rgba(255,190,70,.28), transparent 60%),
-    linear-gradient(180deg, #2c2820, #141210);
+    /* the basket mesh, sitting in the oil */
+    repeating-linear-gradient(58deg,  rgba(216,196,150,.13) 0 1px, transparent 1px 8px),
+    repeating-linear-gradient(-58deg, rgba(216,196,150,.13) 0 1px, transparent 1px 8px),
+    radial-gradient(72% 92% at 50% 112%, rgba(255,190,70,.34), transparent 62%),
+    linear-gradient(180deg, #3a3323, #141210);
 }
 #mythic-kitchen-ov .mk-st[data-kind="bake"] .mk-slot {
   background:
-    radial-gradient(90% 70% at 50% 120%, rgba(255,90,30,.42), transparent 58%),
-    repeating-linear-gradient(0deg, rgba(0,0,0,.28) 0 1px, transparent 1px 12px),
-    repeating-linear-gradient(90deg, rgba(0,0,0,.28) 0 1px, transparent 1px 24px),
-    linear-gradient(180deg, #3a2f28, #1c1512);
+    /* stone speckle */
+    radial-gradient(2px 2px at 22% 34%, rgba(255,232,198,.16), transparent 70%),
+    radial-gradient(2px 2px at 68% 22%, rgba(255,232,198,.13), transparent 70%),
+    radial-gradient(3px 2px at 44% 62%, rgba(255,232,198,.11), transparent 70%),
+    radial-gradient(2px 2px at 82% 70%, rgba(255,232,198,.12), transparent 70%),
+    /* the fire at the back of the deck */
+    radial-gradient(96% 74% at 50% 122%, rgba(255,96,30,.46), transparent 58%),
+    repeating-linear-gradient(0deg,  rgba(0,0,0,.30) 0 1px, transparent 1px 13px),
+    repeating-linear-gradient(90deg, rgba(0,0,0,.30) 0 1px, transparent 1px 26px),
+    linear-gradient(180deg, #40342b, #1c1512);
 }
 #mythic-kitchen-ov .mk-st[data-kind="build"] .mk-slot {
   background:
-    repeating-linear-gradient(90deg, rgba(0,0,0,.10) 0 6px, rgba(255,255,255,.03) 6px 12px),
-    linear-gradient(180deg, #6d4c31, #4a331f);
+    /* knife scores on the prep board */
+    repeating-linear-gradient(74deg, rgba(0,0,0,.16) 0 1px, transparent 1px 17px),
+    repeating-linear-gradient(90deg, rgba(0,0,0,.13) 0 7px, rgba(255,255,255,.035) 7px 13px),
+    linear-gradient(180deg, #775436, #4a331f);
 }
 #mythic-kitchen-ov .mk-st[data-kind="instant"] .mk-slot {
   background:
-    linear-gradient(180deg, rgba(103,216,255,.16), transparent 55%),
-    linear-gradient(180deg, #2b3238, #14181c);
+    /* frost creeping in from the corners of a cold well */
+    radial-gradient(60% 40% at 0% 0%,   rgba(190,238,255,.14), transparent 70%),
+    radial-gradient(60% 40% at 100% 0%, rgba(190,238,255,.11), transparent 70%),
+    linear-gradient(180deg, rgba(103,216,255,.18), transparent 58%),
+    linear-gradient(180deg, #2f373e, #14181c);
 }
 
+/* AN EMPTY PAN IS A PAN. The dashed border and the words '＋ dish' are gone:
+   what is left is the station's own surface (above) plus one low-contrast
+   ring that only lights up when you are about to touch it. The renderer still
+   emits the text — this file cannot change markup — so it is collapsed to a
+   zero-size box and the ring is drawn in its place. The slot keeps its full
+   84×116 tap target and its aria-label either way. */
 #mythic-kitchen-ov .mk-slot[data-phase="empty"] {
   padding-bottom: 6px;
-  border-style: dashed;
-  border-color: rgba(255,255,255,.20);
+  border-style: solid;
+  border-color: rgba(0,0,0,.5);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.07), inset 0 -12px 18px rgba(0,0,0,.35);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--mk-faint);
-  font-size: 12px;
-  letter-spacing: .06em;
 }
-#mythic-kitchen-ov .mk-slot[data-phase="empty"]:hover { border-color: var(--mk-amber); color: var(--mk-amber); }
+#mythic-kitchen-ov .mk-slot[data-phase="empty"] > span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,.16);
+  background: rgba(0,0,0,.22);
+  font-size: 0;                       /* hides '＋ dish', keeps it for a11y */
+  opacity: .5;
+  transition: opacity .15s ease, border-color .15s ease;
+}
+#mythic-kitchen-ov .mk-slot[data-phase="empty"] > span::before {
+  content: "＋";
+  font-size: 15px;
+  line-height: 1;
+  color: rgba(255,236,206,.65);
+}
+#mythic-kitchen-ov .mk-slot[data-phase="empty"]:hover > span,
+#mythic-kitchen-ov .mk-slot[data-phase="empty"]:focus-visible > span,
+#mythic-kitchen-ov .mk-slot[data-phase="empty"][data-sel="1"] > span {
+  opacity: 1;
+  border-color: var(--mk-amber);
+  background: rgba(255,182,72,.14);
+}
+#mythic-kitchen-ov .mk-slot[data-phase="empty"]:hover > span::before { color: var(--mk-amber); }
 #mythic-kitchen-ov .mk-slot[data-sel="1"] {
   outline: 2px solid var(--mk-amber);
   outline-offset: -2px;
@@ -744,14 +985,17 @@
 /* ⚠ padding-right leaves the corner free for `.mk-slot-flag`, which is
    absolutely positioned. Without it a long dish name runs underneath the
    countdown and both become unreadable at exactly the moment they matter. */
-#mythic-kitchen-ov .mk-slot-top { display: flex; align-items: center; gap: 5px; min-width: 0; }
+/* ⚠ CENTRED on a phone, left-aligned at the breakpoint. With no dish NAME on
+   a phone slot the icon was tucked in the top-left corner of an 84px pan with
+   the build stack centred underneath it — the food and its own picture were
+   not even in the same column. */
+#mythic-kitchen-ov .mk-slot-top { display: flex; align-items: center; justify-content: center; gap: 5px; min-width: 0; }
 /* ⚠ On a phone the pan is ~84px wide and a dish NAME in there is three
    truncated letters, which is worse than no name at all. The food is identified
    by its icon and by the build stack — which is how the reference games do it —
    and the name is still in the slot's aria-label for a screen reader. It comes
    back at the breakpoint, where there is room for it. */
 #mythic-kitchen-ov .mk-slot-name { display: none; }
-#mythic-kitchen-ov .mk-slot-dish { font-size: 21px; }
 #mythic-kitchen-ov .mk-slot-name {
   flex: 1 1 auto;
   min-width: 0;
@@ -801,10 +1045,69 @@
 #mythic-kitchen-ov .mk-slot[data-warn="1"] {
   animation: mk-burnwarn .5s steps(2, end) infinite;
 }
-#mythic-kitchen-ov .mk-slot[data-phase="burnt"] {
-  filter: grayscale(.55) brightness(.7);
-  box-shadow: inset 0 0 0 2px rgba(255,77,94,.8);
+/* 🔴 RUIN HAS TO BE UNMISTAKABLE. Round 1 dimmed the whole card with
+   `grayscale(.55) brightness(.7)` and drew a red hairline: a griddle of ten
+   BURNT items and a griddle of ten cooking ones were, at a glance, the same
+   picture — the hot dog was still a normal hot dog and the pan was still warm
+   brown. That reads as "disabled", not as "you destroyed that". So the ruin
+   is applied to the three things that are actually ruined, separately:
+
+     the PAN   chars to carbon, and the heat glow underneath it dies
+     the FOOD  blackens — a filter on `.mk-slot-dish` and on `.mk-build`, not
+               on the card, so the emoji and every laid layer go with it
+     the AIR   smokes: `.mk-sizzle` is re-tasked from fat spitting up off a
+               hot surface into grey smoke rising off a dead one
+
+   ⚠ Specificity: the per-kind surfaces are `#id .mk-st[data-kind] .mk-slot`
+   (0,3,0 after the id). A plain `.mk-slot[data-phase="burnt"]` LOSES to them
+   and the char never paints. Hence the `.mk-st` in the selector — it is not
+   decoration, it is the only reason this rule wins. */
+#mythic-kitchen-ov .mk-st .mk-slot[data-phase="burnt"] {
+  filter: none;
+  background:
+    /* carbon scale, catching the light in flecks */
+    radial-gradient(2px 2px at 30% 40%, rgba(255,255,255,.09), transparent 70%),
+    radial-gradient(2px 2px at 66% 58%, rgba(255,255,255,.07), transparent 70%),
+    repeating-linear-gradient(41deg, rgba(0,0,0,.55) 0 3px, rgba(255,255,255,.022) 3px 8px),
+    /* the last of the heat, going out underneath it */
+    radial-gradient(70% 56% at 50% 124%, rgba(126,32,10,.55), transparent 62%),
+    linear-gradient(180deg, #241a16, #0a0706);
+  border-color: rgba(255,77,94,.45);
+  box-shadow: inset 0 0 0 2px rgba(255,77,94,.85), inset 0 0 26px rgba(0,0,0,.9);
 }
+#mythic-kitchen-ov .mk-slot[data-phase="burnt"] .mk-slot-dish {
+  filter: grayscale(1) brightness(.30) contrast(1.5) drop-shadow(0 2px 3px rgba(0,0,0,.8));
+}
+#mythic-kitchen-ov .mk-slot[data-phase="burnt"] .mk-build {
+  filter: grayscale(1) brightness(.28) contrast(1.5) drop-shadow(0 3px 4px rgba(0,0,0,.6));
+}
+#mythic-kitchen-ov .mk-slot[data-phase="burnt"] .mk-slot-name { color: #8d7d78; }
+/* ⚠ and the meters stop celebrating. The burn meter's green→amber→red ramp is
+   a RUN-UP: at 100% on a dead pan it painted a full, bright, mostly-green bar
+   under a charred dish, which is the single most confusing pixel in the burnt
+   state. Both bars go out. */
+#mythic-kitchen-ov .mk-slot[data-phase="burnt"] .mk-bar { background: rgba(0,0,0,.6); }
+#mythic-kitchen-ov .mk-slot[data-phase="burnt"] .mk-bar.cook > i { background: rgba(120,96,88,.35); }
+#mythic-kitchen-ov .mk-slot[data-phase="burnt"] .mk-bar.burn > i { background: linear-gradient(90deg, #7d1226, #ff4d5e); }
+/* SMOKE. Same element as the sizzle, different substance: it fills the pan
+   instead of hugging the base, it is grey instead of white, and it travels
+   upward and fades instead of bobbing. */
+#mythic-kitchen-ov .mk-slot[data-phase="burnt"] .mk-sizzle {
+  inset: 0;
+  height: auto;
+  opacity: 1;
+  background:
+    radial-gradient(10px 13px at 27% 60%, rgba(154,150,146,.42), transparent 72%),
+    radial-gradient(13px 16px at 52% 46%, rgba(138,134,130,.38), transparent 74%),
+    radial-gradient(8px 12px  at 74% 66%, rgba(160,156,152,.34), transparent 72%);
+  animation: mk-smoke 2.8s linear infinite;
+}
+/* ⚠ NO text-transform. This one element prints two different things: the
+   phase words, which updateSlots() already writes as the literals 'PERFECT' /
+   'READY' / 'BURNT', and fmtCook()'s countdown, which is '10.2s'. Uppercasing
+   the lot turned the single number the player times a pull against into
+   '10.2S', which reads as a typo. The words are shouted at the source; the
+   unit is left alone. */
 #mythic-kitchen-ov .mk-slot-flag {
   position: absolute;
   left: 6px; bottom: 24px;
@@ -813,13 +1116,20 @@
   font-size: 11px;
   font-weight: 800;
   letter-spacing: .08em;
-  text-transform: uppercase;
-  background: rgba(0,0,0,.55);
+  background: rgba(0,0,0,.6);
   border: 1px solid currentColor;
+  font-variant-numeric: tabular-nums;
 }
 #mythic-kitchen-ov .mk-slot[data-phase="done"] .mk-slot-flag { color: var(--mk-ready); }
 #mythic-kitchen-ov .mk-slot[data-phase="done"][data-q="perfect"] .mk-slot-flag { color: #ffd166; }
-#mythic-kitchen-ov .mk-slot[data-phase="burnt"] .mk-slot-flag { color: var(--mk-danger); }
+/* a FILLED badge. An outlined red word on a charred pan is the quietest thing
+   on the card at exactly the moment it should be the loudest. */
+#mythic-kitchen-ov .mk-slot[data-phase="burnt"] .mk-slot-flag {
+  color: #fff2f3;
+  background: linear-gradient(180deg, #ff4d5e, #9d1024);
+  border-color: rgba(255,190,198,.8);
+  box-shadow: 0 2px 8px rgba(0,0,0,.6);
+}
 #mythic-kitchen-ov .mk-slot[data-phase="cooking"] .mk-slot-flag { color: var(--mk-amber); }
 
 /* the tiny corner "yank it out early" control */
@@ -870,57 +1180,171 @@
 #mythic-kitchen-ov .mk-lay[data-layer="fill"] { height: 8px; width: 104%; }
 #mythic-kitchen-ov .mk-lay[data-layer="spread"] { height: 4px; width: 92%; }
 #mythic-kitchen-ov .mk-lay[data-layer="top"]  { height: 5px; width: 98%; }
+/* ⚠ A GHOST IS A FAINT INGREDIENT, NOT AN EMPTY BOX. Drafted as a transparent
+   dashed rectangle, and on a screen with ten pans on it the result was a wall
+   of dashed placeholder chrome — the same wireframe language the empty pan and
+   the empty pass were speaking. Tinting it with the ingredient's own colour
+   says "this goes here next" in the language the laid layers already use, and
+   the dashed edge survives at a quarter of the contrast purely to say
+   "not yet". */
 #mythic-kitchen-ov .mk-lay.ghost {
-  background: transparent;
-  border: 1px dashed rgba(255,255,255,.28);
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--c, #caa) 26%, transparent),
+    color-mix(in srgb, var(--c, #caa) 12%, transparent));
+  border: 1px dashed rgba(255,255,255,.16);
   box-shadow: none;
 }
+/* 🔴 ONE DECLARATION. There used to be two — 21px up next to `.mk-slot-name`
+   and 16px down here — and because this one is later in the file it silently
+   won, shrinking the food by 24% against the comment that argued for it.
+   26px is the size at which an emoji stops being a label and starts being the
+   thing in the pan, which is what the reference does. */
 #mythic-kitchen-ov .mk-slot-dish {
-  font-size: 16px;
+  font-size: 26px;
   line-height: 1;
-  filter: drop-shadow(0 2px 3px rgba(0,0,0,.7));
+  filter: drop-shadow(0 3px 4px rgba(0,0,0,.75));
 }
 
 /* ════════════════════════════════════════════════════════════════════════
    🍽 THE PASS + WHAT IS IN YOUR HANDS
    ════════════════════════════════════════════════════════════════════════ */
+/* 🔴 THE PASS IS THE PHOTOGRAPH. REF-A's defining image is a row of finished
+   dishes laid out on a lit stainless shelf with a customer reaching for one.
+   Round 1 rendered a dashed grey box saying 'Nothing plated yet' — measured
+   810×85 at desktop, and EMPTY in every state captured, including a full
+   mid-rush with ten pans going. The single largest warm surface in the
+   reference was our smallest, coldest element.
+
+   So this is the warmest material in the file: a steel shelf with a lit front
+   edge, a heat lamp burning above it (the `0 -14px` amber spread, and the bar
+   in ::before), and the room's shadow pooling underneath. */
 #mythic-kitchen-ov .mk-pass {
+  position: relative;
   margin: 0 8px;
   border-radius: 12px;
   padding: 7px 8px 8px;
   background:
-    linear-gradient(180deg, rgba(255,196,110,.16), transparent 46%),
-    linear-gradient(180deg, var(--mk-steel1), var(--mk-steel3)), var(--mk-brush);
-  border: 1px solid rgba(255,255,255,.14);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.32), var(--mk-shadow);
+    linear-gradient(180deg, rgba(255,196,110,.24), rgba(255,150,60,.07) 32%, transparent 60%),
+    linear-gradient(180deg, var(--mk-steel0) 0%, var(--mk-steel1) 28%, var(--mk-steel3) 100%),
+    var(--mk-brush);
+  border: 1px solid rgba(255,255,255,.16);
+  box-shadow:
+    inset 0 2px 0 rgba(255,255,255,.35),
+    inset 0 -12px 22px rgba(0,0,0,.45),
+    0 -14px 26px -10px rgba(255,176,80,.45),
+    var(--mk-shadow);
 }
-#mythic-kitchen-ov .mk-pass-rail { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; min-height: 58px; }
+/* the heat-lamp element itself, sitting just off the front edge of the shelf */
+#mythic-kitchen-ov .mk-pass::before {
+  content: "";
+  position: absolute;
+  left: 12%; right: 12%; top: -2px;
+  height: 3px;
+  border-radius: 99px;
+  pointer-events: none;
+  background: linear-gradient(90deg,
+    transparent, rgba(255,206,140,.85), rgba(255,150,60,.95), rgba(255,206,140,.85), transparent);
+  box-shadow: 0 0 18px rgba(255,160,60,.6);
+}
+
+/* 🔴 THE WELLS ARE PAINTED, NOT RENDERED.
+   The shelf has to look like a shelf when it is empty, and the honest way to
+   do that is to draw the places food goes. They are a repeating background of
+   the rail, which costs no DOM, needs no renderer change, and cannot ever
+   drift out of sync with the dish count.
+   ⚠ The 62px pitch is `.mk-dish` width (56) + the flex gap (6). Move either
+   number and the plates stop landing in their wells — they are one constant
+   wearing two hats, and there is no way to say that in CSS.
+   `background-attachment: local` so the wells scroll WITH the dishes; the
+   default would nail them to the bezel and slide the food off them. */
+#mythic-kitchen-ov .mk-pass-rail {
+  position: relative;
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  min-height: 66px;
+  background-image:
+    radial-gradient(21px 11px at 28px 31px,
+      rgba(255,226,182,.26), rgba(255,214,160,.09) 58%, rgba(255,238,206,.34) 86%, transparent 92%),
+    radial-gradient(24px 12px at 28px 34px, rgba(0,0,0,.42), transparent 78%);
+  background-size: 62px 100%;
+  background-repeat: repeat-x;
+  background-attachment: local;
+  -webkit-mask-image: linear-gradient(90deg, #000 0 calc(100% - 26px), rgba(0,0,0,.25) 100%);
+          mask-image: linear-gradient(90deg, #000 0 calc(100% - 26px), rgba(0,0,0,.25) 100%);
+}
+/* The empty pass says its line ON the shelf, in lamplight, with the wells
+   showing through — not inside a dashed box parked over the first three of
+   them. */
+#mythic-kitchen-ov .mk-pass-rail .mk-empty {
+  flex: 1 1 auto;
+  align-self: center;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  color: rgba(255,214,164,.6);
+  text-shadow: 0 1px 4px rgba(0,0,0,.9);
+}
+
+/* A PLATED DISH. The plate is a real object drawn BEHIND the food and slightly
+   below it — that one relationship is the whole trick. An emoji sitting on a
+   lit ellipse reads as a dish that was cooked and put down; the same emoji in
+   a bordered rounded rectangle reads as an inventory slot, which is what
+   round 1 had. Quality is carried by the plate's rim and the word under it,
+   so nothing needs a box around it. */
 #mythic-kitchen-ov .mk-dish {
   position: relative;
   flex: 0 0 auto;
   width: 56px;
-  padding: 4px 3px 5px;
-  border-radius: 9px;
+  height: 58px;
+  padding: 4px 0 0;
+  border: 0;
+  background: none;
   text-align: center;
-  background: linear-gradient(180deg, rgba(255,255,255,.14), rgba(0,0,0,.3));
-  border: 1px solid rgba(255,255,255,.18);
 }
-#mythic-kitchen-ov .mk-dish .mk-ic { font-size: 19px; line-height: 1; display: block; }
+#mythic-kitchen-ov .mk-dish::before {
+  content: "";
+  position: absolute;
+  left: 50%; top: 17px;
+  width: 46px; height: 19px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: radial-gradient(closest-side, #f6eee0, #ddd1bc 60%, #a2977f 100%);
+  box-shadow: 0 4px 9px rgba(0,0,0,.6), inset 0 -2px 0 rgba(0,0,0,.13);
+}
+#mythic-kitchen-ov .mk-dish .mk-ic {
+  position: relative;
+  display: block;
+  font-size: 24px;
+  line-height: 1;
+  filter: drop-shadow(0 3px 3px rgba(0,0,0,.55));
+}
 #mythic-kitchen-ov .mk-dish .mk-q {
+  position: relative;
   display: block;
   font-size: 11px;
   letter-spacing: .05em;
   text-transform: uppercase;
-  margin-top: 2px;
+  margin-top: 12px;
+  text-shadow: 0 1px 3px rgba(0,0,0,.9);
 }
-#mythic-kitchen-ov .mk-dish[data-q="perfect"] { border-color: rgba(255,214,102,.7); box-shadow: 0 0 12px rgba(255,214,102,.25); }
+#mythic-kitchen-ov .mk-dish[data-q="perfect"]::before {
+  box-shadow: 0 4px 10px rgba(0,0,0,.55), 0 0 18px rgba(255,214,102,.55), inset 0 0 0 2px rgba(255,214,102,.85);
+}
 #mythic-kitchen-ov .mk-dish[data-q="perfect"] .mk-q { color: #ffd166; }
 #mythic-kitchen-ov .mk-dish[data-q="good"] .mk-q { color: var(--mk-ready); }
-#mythic-kitchen-ov .mk-dish[data-q="raw"] { border-color: rgba(255,138,90,.6); }
+#mythic-kitchen-ov .mk-dish[data-q="raw"]::before {
+  box-shadow: 0 4px 9px rgba(0,0,0,.55), inset 0 0 0 2px rgba(255,138,90,.8);
+}
 #mythic-kitchen-ov .mk-dish[data-q="raw"] .mk-q { color: #ff8a5a; }
+#mythic-kitchen-ov .mk-dish[data-q="burnt"] .mk-ic { filter: grayscale(1) brightness(.32) contrast(1.5); }
+#mythic-kitchen-ov .mk-dish[data-q="burnt"] .mk-q { color: var(--mk-danger); }
 #mythic-kitchen-ov .mk-dish .mk-fresh {
   position: absolute; left: 4px; right: 4px; bottom: 2px;
-  height: 3px; border-radius: 99px; background: rgba(0,0,0,.5);
+  height: 3px; border-radius: 99px; background: rgba(0,0,0,.55);
 }
 #mythic-kitchen-ov .mk-dish .mk-fresh > i {
   display: block; height: 100%; border-radius: 99px;
@@ -1384,6 +1808,11 @@
   0%, 100% { transform: translateY(0); opacity: .5; }
   50%      { transform: translateY(-3px); opacity: .8; }
 }
+@keyframes mk-smoke {
+  0%   { transform: translateY(10px) scale(.85); opacity: 0; }
+  22%  { opacity: .95; }
+  100% { transform: translateY(-26px) scale(1.35); opacity: 0; }
+}
 @keyframes mk-sheet-in {
   from { transform: translateY(18px); opacity: 0; }
   to   { transform: translateY(0); opacity: 1; }
@@ -1425,6 +1854,15 @@
     outline-offset: -3px;
   }
   #mythic-kitchen-ov .mk-tk[data-urg="late"] { border-color: var(--mk-danger); }
+  /* ⚠ the smoke ENDS at opacity 0, so a blanket `animation-duration:.001ms`
+     switches the burnt slot's only moving signal off entirely. The char, the
+     red ring and the filled BURNT badge already carry it — but smoke is what
+     you catch out of the corner of your eye, so it stays, held still. */
+  #mythic-kitchen-ov .mk-slot[data-phase="burnt"] .mk-sizzle {
+    animation: none !important;
+    transform: translateY(-8px);
+    opacity: .8;
+  }
 }
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -1452,7 +1890,16 @@
   #mythic-kitchen-ov .mk-body {
     display: grid;
     grid-template-columns: 340px minmax(0, 1fr) 320px;
-    grid-template-rows: auto minmax(0, 1fr) auto;
+    /* 🔴 THE ROWS ARE WHERE THE DESKTOP VOID WAS.
+       Round 1 ran `auto minmax(0,1fr) auto`: the LINE took every spare pixel
+       and then didn't use them, so at 1440×900 the centre column measured
+       810×526 of line with its stations ending at y≈529 — 810×180 of pure
+       black under them — sitting on an 810×85 pass. Over half the middle of
+       the kitchen was unpainted.
+       Now the line takes exactly what it needs (`minmax(0,auto)` — it can
+       still shrink and scroll when the window is short) and everything left
+       over goes to the PASS row, where it becomes either shelf or room. */
+    grid-template-rows: auto minmax(0, auto) minmax(178px, 1fr);
     /* The board is a TALL screen on the left (REF-B mounts it over the pass);
        the line runs down the middle and the pass sits at the END of the line,
        which is where a pass physically is. Putting the pass under the board
@@ -1467,13 +1914,29 @@
   }
   #mythic-kitchen-ov .mk-sec-lane  { grid-area: lane;  margin: 0; }
   #mythic-kitchen-ov .mk-sec-board { grid-area: board; min-height: 0; display: flex; flex-direction: column; }
-  #mythic-kitchen-ov .mk-sec-line  { grid-area: line;  min-height: 0; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
-  #mythic-kitchen-ov .mk-sec-board { min-height: 0; }
+  /* ⚠ the line SCROLLS when the window is short (the row is `minmax(0,auto)`),
+     and a station card sliced flat by the top of the pass reads as a bug. Same
+     fade, same reason as the rails. */
+  #mythic-kitchen-ov .mk-sec-line  {
+    grid-area: line;  min-height: 0; display: flex; flex-direction: column; gap: 8px; overflow-y: auto;
+    -webkit-mask-image: linear-gradient(180deg, #000 0 calc(100% - 26px), rgba(0,0,0,.18) 100%);
+            mask-image: linear-gradient(180deg, #000 0 calc(100% - 26px), rgba(0,0,0,.18) 100%);
+  }
   #mythic-kitchen-ov .mk-sec-bins  { grid-area: bins;  min-height: 0; overflow-y: auto; }
-  #mythic-kitchen-ov .mk-sec-pass  { grid-area: pass; }
+
+  /* ⚠ The shelf hangs at the BOTTOM of its row, because that is where a
+     counter is. Whatever height the shelf does not want is not a gap — it is
+     the restaurant, and `.mk-room` is painting it. */
+  #mythic-kitchen-ov .mk-sec-pass  {
+    grid-area: pass;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    min-height: 0;
+  }
 
   #mythic-kitchen-ov .mk-lane { margin: 0; }
-  #mythic-kitchen-ov .mk-road { height: 88px; }
+  #mythic-kitchen-ov .mk-road { height: 114px; }
   /* "no cars" — centred on the asphalt, not a box floating over it. */
 #mythic-kitchen-ov .mk-road-empty {
   position: absolute;
@@ -1493,17 +1956,35 @@
     overflow-x: hidden;
     overflow-y: auto;
     scroll-snap-type: none;
+    /* ⚠ the fade TURNS 90°, it does not go away. This rail runs downward here,
+       so the sideways mask would dim every ticket's right-hand edge for no
+       reason — but the reason the fade exists is unchanged: a ticket sliced
+       flat by the bottom of the column reads as broken layout, not as "there
+       are more orders below". */
+    -webkit-mask-image: linear-gradient(180deg, #000 0 calc(100% - 30px), rgba(0,0,0,.14) 100%);
+            mask-image: linear-gradient(180deg, #000 0 calc(100% - 30px), rgba(0,0,0,.14) 100%);
   }
   #mythic-kitchen-ov .mk-board .mk-tk { width: 100%; }
 
-  /* the line: stations wrap into a grid instead of a sideways rail */
+  /* ⚠ THE LINE WRAPS WITH FLEX, NOT WITH GRID.
+     `repeat(auto-fill, minmax(268px,1fr))` left a DEAD CELL: five stations in
+     a three-wide grid is one empty ~263×145 hole, and that hole was a third
+     of the round-1 void. Flex wrap has no such thing — the last line's items
+     share the leftover width between them, at every window size, with no
+     second breakpoint to maintain. `align-content: start` keeps the rows
+     packed at the top so the slack lands in the pass row instead of being
+     smeared as gaps between the griddles. */
   #mythic-kitchen-ov .mk-sec-line .mk-rail {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(268px, 1fr));
+    display: flex;
+    flex-wrap: wrap;
+    align-content: start;
     gap: 10px;
     overflow: visible;
     padding: 0;
+    -webkit-mask-image: none;
+            mask-image: none;
   }
+  #mythic-kitchen-ov .mk-sec-line .mk-rail > * { flex: 1 1 268px; min-width: 0; }
   /* 🔥 Landscape puts the pans SIDE BY SIDE, the way they sit on a real
      flat-top — three burgers across, not three burgers stacked. It is also what
      makes all five stations fit the column without scrolling: stacked slots at
@@ -1514,9 +1995,37 @@
   #mythic-kitchen-ov .mk-slot-flag { left: 7px; bottom: 26px; }
   #mythic-kitchen-ov .mk-slot-bars { left: 7px; right: 7px; bottom: 7px; }
   #mythic-kitchen-ov .mk-build { width: 56px; }
+  #mythic-kitchen-ov .mk-slot-dish { font-size: 32px; }
+  /* the name is back at this width, so the row goes back to reading left */
+  #mythic-kitchen-ov .mk-slot-top { justify-content: flex-start; }
   #mythic-kitchen-ov .mk-pull { top: auto; bottom: 25px; right: 5px; }
   #mythic-kitchen-ov .mk-hood { margin: 0 0 2px; }
-  #mythic-kitchen-ov .mk-pass { margin: 0; }
+
+  /* ── THE PASS, FULL SIZE ────────────────────────────────────────────────
+     This is the row the reference photograph is of, so at this width the
+     plates are the biggest objects on the screen: a 92px plate under a 44px
+     dish, laid out along a lit shelf, with the empty wells drawn at the same
+     pitch so a half-full pass still reads as a pass with places left on it.
+     ⚠ pitch = `.mk-dish` width (112) + gap (10) = 122, and the well's y is the
+     centre of the plate (56 + 38/2 = 75). Four numbers, one geometry — they
+     move together or the food floats off its plate. */
+  #mythic-kitchen-ov .mk-pass { margin: 0; padding: 9px 12px 12px; }
+  #mythic-kitchen-ov .mk-pass-rail {
+    gap: 10px;
+    min-height: 122px;
+    background-image:
+      radial-gradient(46px 19px at 61px 75px,
+        rgba(255,226,182,.26), rgba(255,214,160,.09) 58%, rgba(255,238,206,.34) 86%, transparent 92%),
+      radial-gradient(50px 21px at 61px 80px, rgba(0,0,0,.42), transparent 78%);
+    background-size: 122px 100%;
+    -webkit-mask-image: none;
+            mask-image: none;
+  }
+  #mythic-kitchen-ov .mk-dish { width: 112px; height: 122px; padding-top: 12px; }
+  #mythic-kitchen-ov .mk-dish::before { top: 56px; width: 92px; height: 38px; }
+  #mythic-kitchen-ov .mk-dish .mk-ic { font-size: 44px; }
+  #mythic-kitchen-ov .mk-dish .mk-q { margin-top: 42px; font-size: 12px; }
+  #mythic-kitchen-ov .mk-dish .mk-fresh { left: 12px; right: 12px; height: 4px; bottom: 4px; }
 
   /* bins stack vertically down the right-hand wall */
   #mythic-kitchen-ov .mk-sec-bins .mk-rail {
@@ -1525,6 +2034,8 @@
     overflow-y: auto;
     padding: 0;
     gap: 8px;
+    -webkit-mask-image: linear-gradient(180deg, #000 0 calc(100% - 30px), rgba(0,0,0,.14) 100%);
+            mask-image: linear-gradient(180deg, #000 0 calc(100% - 30px), rgba(0,0,0,.14) 100%);
   }
   #mythic-kitchen-ov .mk-shelf-row { flex-wrap: wrap; }
   #mythic-kitchen-ov .mk-shelf { width: 100%; }

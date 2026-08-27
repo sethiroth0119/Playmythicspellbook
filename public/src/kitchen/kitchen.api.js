@@ -30,6 +30,27 @@
    `const` in index.html. It is a LEXICAL global: it is not on `window`, and an
    ES module cannot see it. `window.Cloud` is `undefined`. The client arrives
    through `bridge().cloud` and NOWHERE ELSE.
+
+   ── 🔴 ROUND 2: THREE WRITES BECAME RPCs, AND WHY ───────────────────────────
+   `insertConvoy`, `claimConvoy` and `upsertStats` all go through SECURITY
+   DEFINER functions now, and the matching table grants are revoked in sql/038.
+   The reason is the same in all three cases: **a value the server has to own
+   was being supplied by the client.**
+
+     · LAUNCH  — round 1 posted `arrives_at` computed on the DEVICE clock, and
+                 the only server-side check was `arrives_at > now()`. A tampered
+                 client landed a truck in one millisecond (transit time is the
+                 one thing stopping a convoy being a vending machine), and a
+                 player whose clock ran slow could never ship at all. We now
+                 post a DURATION and the server computes the arrival.
+     · CLAIM   — round 1 got back only the convoy row, with no way to tell a
+                 first claim from a replay, so two tabs claiming one 40-box
+                 truck credited 80 food. The RPC now returns `first_claim` and
+                 `delivered_dishes`, and convoy.js pays on `delivered_dishes`
+                 and nothing else.
+     · STATS   — an upsert needs UPDATE on the row, and giving the client UPDATE
+                 on a table it does not own is a bigger door than a leaderboard
+                 is worth. The RPC pins `user_id = auth.uid()`.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 import * as BRIDGE from './kitchen.bridge.js';
@@ -67,9 +88,22 @@ function client() {
   } catch (e) { return null; }
 }
 
+/**
+ * ⚠ IT READS `code`, `details` AND `hint`, NOT JUST `message`. community.api.js
+ * matches on the message alone and gets away with it because PostgREST's
+ * table-missing message happens to contain the words "schema cache". An RPC
+ * that does not exist does NOT always say that — the message can be a bare
+ * "Could not find the function public.kitchen_convoy_launch(…)" with PGRST202
+ * only in `code`. Matching the message alone turned a SETUP state into a REAL
+ * ERROR, which is the one thing the header of this file says must never happen:
+ * the player got "something went wrong" instead of "the convoy network is not
+ * set up yet", and the launch path reported the wrong reason for turning back.
+ */
 function fail(e) {
   const msg = (e && (e.message || e.msg)) || String(e || '');
-  return { ok: false, missing: MISSING_RE.test(msg), error: msg };
+  const probe = [msg, e && e.code, e && e.details, e && e.hint]
+    .filter((x) => x != null).join(' ');
+  return { ok: false, missing: MISSING_RE.test(probe), error: msg };
 }
 const OFFLINE = { ok: false, missing: false, offline: true, error: 'not signed in' };
 
@@ -82,6 +116,14 @@ function who() {
   try { return String((b.displayName ? b.displayName() : '') || 'Survivor').slice(0, 40); } catch (e) { return 'Survivor'; }
 }
 const _int = (n) => { const v = Math.floor(Number(n)); return isFinite(v) ? v : 0; };
+
+/* PostgREST hands an RPC result back as either the object or a one-row array,
+   depending on how it resolves the return type. Every RPC below goes through
+   this so that difference cannot become a bug in one call site and not another. */
+function firstRow(data) {
+  if (Array.isArray(data)) return data[0] || null;
+  return data || null;
+}
 
 /* The columns every convoy read asks for. Written out rather than `select('*')`
    so that adding a column to the table in a later migration cannot change the
@@ -101,6 +143,12 @@ const CONVOY_COLS =
  * one. The security is `kc_sel` in sql/038 — RLS returns rows to the two
  * parties and nobody else, so removing this line would change nothing about
  * what a client can see. Never rely on it the other way round.
+ *
+ * ⚠ `.neq('state','claimed')` IS WHY THE DEPOT HOLD EXISTS. A claimed convoy
+ * never comes back down this pipe, so anything the client still needs to
+ * remember about it — a remainder that would not fit in the stash — has to be
+ * held locally in `K.convoys`, not left in `K.inbound` waiting for a refresh
+ * that will delete it. See convoy.js §4.
  */
 export async function listInbound(limit = 40) {
   const c = client(); if (!c) return { ...OFFLINE, rows: [] };
@@ -118,7 +166,8 @@ export async function listInbound(limit = 40) {
 }
 
 /** Trucks I sent. Claimed ones are INCLUDED — convoy.js reconciles against this
-    list to retire the ghost row a sender would otherwise keep forever. */
+    list to retire the ghost row a sender would otherwise keep forever, and
+    builds the recipient picker's "shipped before" shortlist from it. */
 export async function listOutbound(limit = 40) {
   const c = client(); if (!c) return { ...OFFLINE, rows: [] };
   const me = uid(); if (!me) return { ...OFFLINE, rows: [] };
@@ -138,39 +187,54 @@ export async function listOutbound(limit = 40) {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /**
- * Post a launched convoy.
+ * Launch a convoy. Name kept from CONTRACT §1; it is an RPC now, not an insert.
  *
- * 🔴 `from_user` IS PINNED TO `auth.uid()` HERE AND AGAIN IN RLS. The policy
- * `kc_ins` is `with check (from_user = auth.uid())`, so a tampered client that
- * posts somebody else's id gets a policy violation rather than the ability to
- * ship *from* another player's kitchen. This line is the convenience; the
- * policy is the security. Both, always.
+ * 🔴 THE CLIENT POSTS A DURATION, NEVER A TIMESTAMP. `kitchen_convoy_launch()`
+ * computes `arrives_at = now() + clamp(p_transit_ms)` on the SERVER clock and
+ * there is no INSERT policy or INSERT grant on `kitchen_convoys` any more, so
+ * this is the only way a row gets written. Round 1 sent
+ * `arrives_at: new Date(localArrival).toISOString()` and the server checked
+ * only `arrives_at > now()`, which meant:
+ *   · a tampered client could post `now() + 1ms` and skip transit entirely;
+ *   · a device clock 40 minutes slow FAILED the check on every single launch,
+ *     and the player's truck was silently renamed "(local run)" with no reason
+ *     given. Both of those are gone with the timestamp.
  *
- * ⚠ `dishes` IS SENDER-SUPPLIED and therefore is NOT trusted as an economy
- * fact by anybody. The recipient's payout is `dishes × ECON.CONVOY_FOOD_PER_DISH`
- * where that constant is tuned below the food embodied in one dish, sql/038
- * caps `dishes` with a CHECK constraint, and `kitchen_convoy_quota_ok()` rate
- * limits how many convoys one account can post. Three walls, because a client
- * number that turns into a live resource has to have more than one.
+ * 🔴 `from_user` is derived from `auth.uid()` INSIDE the function. There is no
+ * parameter for it and there must never be one: a caller-supplied sender id is
+ * the ability to ship *from* another player's kitchen.
+ *
+ * ⚠ `dishes` IS SENDER-SUPPLIED and therefore is NOT trusted as an economy fact
+ * by anybody. The recipient's payout is `delivered_dishes ×
+ * ECON.CONVOY_FOOD_PER_DISH` where that constant is tuned below the food
+ * embodied in one dish, the RPC clamps `dishes` to 1..500, and
+ * `kitchen_convoy_quota_ok()` rate limits how many convoys one account can
+ * post. Three walls, because a client number that turns into a live resource
+ * has to have more than one.
+ *
+ * → { ok, row }  `row` has the SERVER's `launched_at`/`arrives_at`; convoy.js
+ *                adopts them and corrects for device clock skew.
  */
 export async function insertConvoy(payload) {
   const c = client(); if (!c) return { ...OFFLINE, row: null };
   const me = uid(); if (!me) return { ...OFFLINE, row: null };
   const p = payload || {};
   if (!p.to_user) return { ok: false, error: 'no recipient', row: null };
+  if (p.to_user === me) return { ok: false, error: 'cannot ship to yourself', row: null };
   try {
-    const r = await c.from('kitchen_convoys').insert({
-      from_user: me,
-      to_user: p.to_user,
-      from_name: String(p.from_name || who()).slice(0, 40),
-      to_name: String(p.to_name || '').slice(0, 40) || null,
-      tier: String(p.tier || 'van').slice(0, 24),
-      items: (p.items && typeof p.items === 'object') ? p.items : {},
-      dishes: Math.max(1, _int(p.dishes)),
-      arrives_at: p.arrives_at,
-    }).select(CONVOY_COLS).maybeSingle();
+    const r = await c.rpc('kitchen_convoy_launch', {
+      p_to: p.to_user,
+      p_to_name: String(p.to_name || '').slice(0, 40) || null,
+      p_from_name: String(p.from_name || who()).slice(0, 40),
+      p_tier: String(p.tier || 'van').slice(0, 24),
+      p_items: (p.items && typeof p.items === 'object') ? p.items : {},
+      p_dishes: Math.max(1, _int(p.dishes)),
+      p_transit_ms: Math.max(0, _int(p.transit_ms)),
+    });
     if (r.error) return { ...fail(r.error), row: null };
-    return { ok: true, row: r.data || null };
+    const row = firstRow(r.data);
+    if (!row || !row.id) return { ok: false, error: 'no row returned', row: null };
+    return { ok: true, row };
   } catch (e) { return { ...fail(e), row: null }; }
 }
 
@@ -182,13 +246,27 @@ export async function insertConvoy(payload) {
  * community.api.js's `claimRewards`, and it exists because a double-click paid
  * twice. `kitchen_convoy_claim()` is SECURITY DEFINER, derives the actor from
  * `auth.uid()`, and appends its ledger row under a unique index on
- * (convoy_id, kind) — so a REPLAYED request returns the same row and writes
- * nothing, rather than paying a second time.
+ * (convoy_id, kind).
  *
- * ⚠ It deliberately does NOT raise on an already-claimed convoy. A client that
- * lost the response to its first call has to be able to ask again, or a stash
- * that filled up mid-unload would strand the remainder with no way to collect
- * it. Idempotency lives in the unique index, not in an exception.
+ * 🔴 IT RETURNS TWO FACTS AND THE SECOND ONE IS THE WHOLE FIX:
+ *     `firstClaim`      — was THIS call the one that delivered the convoy?
+ *     `deliveredDishes` — how many boxes THIS call delivered. **0 on a replay.**
+ *   Round 1 returned only the convoy row, which looks identical on a first
+ *   claim and on a replay, so convoy.js credited the stash both times: two tabs
+ *   on one 40-box truck produced 80 food out of nothing. Callers must pay on
+ *   `deliveredDishes` and on nothing else.
+ *
+ * ⚠ It still deliberately does NOT raise on an already-claimed convoy. A client
+ * that lost the response to its first call has to be able to ask again — and
+ * now it gets a truthful "you already have it" instead of a second payout.
+ * Idempotency lives in the unique index; the ANSWER lives in `first_claim`.
+ *
+ * ⚠ An older sql/038 (before this migration was re-run) returns a bare convoy
+ * row with no `first_claim` column. `firstClaim` is then `undefined` — NOT
+ * `false` — and convoy.js treats `undefined` as "cannot tell" and falls back to
+ * the row's own `dishes`. That is round 1's behaviour, on round 1's schema,
+ * which is the only honest thing to do with a server that cannot answer the
+ * question. Re-run sql/038 to close it.
  */
 export async function claimConvoy(convoyId) {
   const c = client(); if (!c) return { ...OFFLINE, row: null };
@@ -196,10 +274,17 @@ export async function claimConvoy(convoyId) {
   try {
     const r = await c.rpc('kitchen_convoy_claim', { p_id: convoyId });
     if (r.error) return { ...fail(r.error), row: null };
-    // The RPC returns the row itself; PostgREST hands back either the object or
-    // a one-row array depending on how it resolves the return type.
-    const row = Array.isArray(r.data) ? (r.data[0] || null) : (r.data || null);
-    return { ok: true, row };
+    const row = firstRow(r.data);
+    if (!row) return { ok: false, error: 'no row returned', row: null };
+    const known = Object.prototype.hasOwnProperty.call(row, 'first_claim');
+    return {
+      ok: true,
+      row,
+      firstClaim: known ? !!row.first_claim : undefined,
+      deliveredDishes: Object.prototype.hasOwnProperty.call(row, 'delivered_dishes')
+        ? Math.max(0, _int(row.delivered_dishes))
+        : Math.max(0, _int(row.dishes)),      // pre-migration server; see the note
+    };
   } catch (e) { return { ...fail(e), row: null }; }
 }
 
@@ -208,7 +293,8 @@ export async function claimConvoy(convoyId) {
  * is no insert/update/delete counterpart in this file and there is no policy
  * for one in sql/038, so adding one here would not work anyway. Balance is
  * `sum(amount)` — there is no balance column and there never will be
- * (CLAUDE.md, `corp_treasury`).
+ * (CLAUDE.md, `corp_treasury`). A launch row is `-dishes`, a claim row is
+ * `+dishes`, so a delivered convoy sums to zero.
  */
 export async function listConvoyLedger(convoyId, limit = 20) {
   const c = client(); if (!c) return { ...OFFLINE, rows: [] };
@@ -233,30 +319,52 @@ export async function listConvoyLedger(convoyId, limit = 20) {
    put a name on; it is not a ledger and it is not evidence.
    ═══════════════════════════════════════════════════════════════════════════ */
 
+/**
+ * Write my own scoreboard row.
+ *
+ * 🔴 AN RPC, NOT AN UPSERT. PostgREST's upsert compiles to
+ * `insert … on conflict (user_id) do update set user_id = excluded.user_id, …`,
+ * which needs an UPDATE grant on `user_id` — i.e. the ability to move a row to
+ * another player's id. That is impersonation on a public board, and it is the
+ * only real risk this table has. `kitchen_stats_upsert()` pins the id to
+ * `auth.uid()`, so sql/038 can revoke every client write grant on the table.
+ */
 export async function upsertStats(stats) {
   const c = client(); if (!c) return OFFLINE;
   const me = uid(); if (!me) return OFFLINE;
   const s = stats || {};
   try {
-    const r = await c.from('kitchen_stats').upsert({
-      user_id: me,
-      name: who(),
-      level: Math.max(1, _int(s.level) || 1),
-      served: Math.max(0, _int(s.served)),
-      days: Math.max(0, _int(s.days)),
-      popularity: Math.max(0, Math.min(100, _int(s.popularity))),
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'user_id' });
+    const r = await c.rpc('kitchen_stats_upsert', {
+      p_name: who(),
+      p_level: Math.max(1, _int(s.level) || 1),
+      p_served: Math.max(0, _int(s.served)),
+      p_days: Math.max(0, _int(s.days)),
+      p_pop: Math.max(0, Math.min(100, _int(s.popularity))),
+    });
     if (r.error) return fail(r.error);
     return { ok: true };
   } catch (e) { return fail(e); }
 }
 
+/**
+ * The board.
+ *
+ * 🔴 `user_id` IS DELIBERATELY NOT SELECTED, and sql/038 revokes the column
+ * grant so asking for it fails rather than quietly working again later. The
+ * policy has to be `using (true)` — a leaderboard nobody can read is not a
+ * leaderboard — and combined with `select('user_id,…')` that was a paginated
+ * dump of `auth.users` UUIDs to every signed-in player. The board never used
+ * the id for anything: it was selected and discarded. Rows are keyed on
+ * `name` + index by the renderer.
+ *
+ * ⚠ If a "this is me" highlight is ever wanted, do it SERVER-side with a view
+ * that exposes `user_id = auth.uid() as is_me`. Do not re-add the raw id.
+ */
 export async function listLeaderboard(limit = 25) {
   const c = client(); if (!c) return { ...OFFLINE, rows: [] };
   try {
     const r = await c.from('kitchen_stats')
-      .select('user_id,name,level,served,days,popularity,updated_at')
+      .select('name,level,served,days,popularity,updated_at')
       .order('served', { ascending: false })
       .limit(Math.max(1, Math.min(100, _int(limit) || 25)));
     if (r.error) return { ...fail(r.error), rows: [] };
@@ -272,11 +380,17 @@ export async function listLeaderboard(limit = 25) {
  * Find someone to ship to, by display name.
  *
  * ⚠ READS `user_profiles`, WHICH THIS FEATURE DOES NOT OWN. index.html already
- * runs exactly this query (`select user_id, display_name ... ilike`) for the
+ * runs exactly this query (`select user_id, display_name … ilike`) for the
  * friend search, so the table, its RLS and its read grant already exist and are
  * already exposed to every signed-in player. sql/038 therefore does NOT touch
  * `user_profiles` — adding a policy to a table another system owns is how you
  * silently widen someone else's security boundary while reviewing your own.
+ *
+ * 🔴 THIS IS NOT A "SEARCH THE PLAYERBASE" ENDPOINT. Two characters minimum, a
+ * hard `limit`, and the wildcards are stripped out of the fragment before it
+ * reaches `ilike`: a one-letter `'%a%'` is a full table scan that returns a
+ * random slice of everybody, which is neither useful to the player nor kind to
+ * the database, and `%`/`_` from the player would let them write the pattern.
  *
  * The self-exclusion is a UX filter (a practice run is the `null` recipient,
  * not a search result), never a security one.
@@ -285,9 +399,6 @@ export async function findPlayer(nameFragment, limit = 12) {
   const c = client(); if (!c) return { ...OFFLINE, rows: [] };
   const me = uid();
   const q = String(nameFragment || '').trim().slice(0, 40);
-  // Two characters minimum: a one-letter `ilike '%a%'` is a full table scan
-  // that returns a random slice of the entire playerbase, which is neither
-  // useful to the player nor kind to the database.
   if (q.length < 2) return { ok: true, rows: [] };
   try {
     let sel = c.from('user_profiles')

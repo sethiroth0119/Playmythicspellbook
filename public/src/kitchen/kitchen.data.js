@@ -203,7 +203,7 @@ const _SUPPLY_CORE = [
       pay. The ledger flows either way; the only question is how badly you are
       being fleeced on the way in.
 
-   ── THE LADDER, THREE RUNGS, ALL THREE MOVING THE 14-ID LEDGER ─────────────
+   ── THE LADDER, FOUR RUNGS, ALL FOUR MOVING THE 14-ID LEDGER ──────────────
      1. 🏙 THE CORE COUNTER (_SUPPLY_CORE, 25 lines). Full crate, cheapest
         Cinder, and the full resource spread — food AND water AND dna AND
         supplies AND fuel AND corruptedEssence. This is the city builder, the
@@ -222,10 +222,22 @@ const _SUPPLY_CORE = [
         and what comes out the other side is not pantry stock — it is `food` and
         `water` landing in the 14-id ledger, where the rest of the game can see
         them. That is the
-        whole trick, and it is what lets both halves of the round's requirement
-        be true at once: a player with an empty ledger is NEVER refused with no
-        way out, and there is still no way to cook anything without spending
-        live resources.
+        whole trick — as far as it goes.
+     4. 🤝 THE BARTER COUNTER (§🤝, below `ECON`). LIVE RESOURCES → pantry, at
+        the worst rate in the game and with NO CINDER LEG AT ALL. It is the only
+        door a player at ◈0 can open, and it exists because rung three's output
+        was not rung two's input: the free drop paid `food` and `water` into a
+        ledger every crate on this sheet refused to be paid in. Measured at HEAD
+        9d41440 that was a permanent, silent soft-lock — fourteen days, 112 food
+        banked, zero crates affordable, zero dishes cooked. Read §🤝 before you
+        touch a number in it; it is a zero-Cinder row, which is the exact thing
+        this file spent three rounds refusing to ship, and it is safe only
+        because it is the dearest rung by every measure that matters.
+
+     🔴 TOGETHER — AND ONLY TOGETHER — THE FOUR MAKE BOTH HALVES TRUE AT ONCE:
+        a player with an empty ledger AND an empty wallet is NEVER refused with
+        no way out, and there is still no way to cook anything without spending
+        live resources. Rung three alone was not enough and said it was.
 
    🔴 WHY RUNG 2 CHARGES THE FULL `food` AND NOT A DISCOUNTED ONE. The obvious
       design — "half a crate, half the food, and Cinder for the difference" —
@@ -439,19 +451,18 @@ const _SALVAGE_LINES = _SUPPLY_CORE
   .filter((s) => _SALVAGE.notStocked.indexOf(s.out.ing) === -1)
   .map(_salvageLine);
 
-/**
- * 📦 The restock counter the rest of the feature sees: the core lines that eat
- * the live ledger cheapest, then the scrap-dealer lines that eat it dearest.
- * 🔴 BOTH HALVES EAT IT. That sentence was the opposite way round for one round
- *    and it cost the feature its premise — see the §🗑 block.
- * 🔴 ORDER MATTERS AND IS LOAD-BEARING. `_SUPPLY_BY_ING` below takes the FIRST
- *    row it sees per ingredient, so the CORE line stays the canonical one — it
- *    is where INGREDIENTS[].batch and INGREDIENTS[].foodPerUnit come from, and
- *    foodPerUnit is what the whole convoy food-printer guard is built on. Put
- *    the salvage lines first and every covered ingredient silently reports a
- *    food cost of ZERO, which reads as "this dish is free" to convoyGuardOk().
- */
-export const SUPPLY_RECIPES = _SUPPLY_CORE.concat(_SALVAGE_LINES);
+/* 📦 `export const SUPPLY_RECIPES` USED TO BE HERE AND IS NOW DECLARED BELOW
+   ECON, and that move is not cosmetic. The counter gained a fourth rung this
+   round — the barter counter (§🤝) — whose prices are derived from the game's
+   own cold-storage board, `ECON.RES_RETAIL_CINDER`. `ECON` is a module `const`
+   declared 1,000 lines below this point, so pricing a barter line up here reads
+   it inside its temporal dead zone and the whole module throws AT IMPORT TIME,
+   on every page load of a 223k-line app (CONTRACT §1: "must not throw at import
+   time"). The declaration therefore lives immediately after ECON and
+   immediately before `_SUPPLY_BY_ID`, which is the first thing that reads it.
+   ⚠ If you add a fifth rung, put it there too, and leave this note here — the
+     next person to wonder why the export is not beside the table it starts
+     with deserves the answer without a bisect. */
 
 /* ════════════════════════════════════════════════════════════════════════════
    🪂 THE RELIEF DROP — RUNG THREE. THE ONLY CINDER-ONLY DOOR IN THE FEATURE,
@@ -587,29 +598,51 @@ export const SUPPLY_RECIPES = _SUPPLY_CORE.concat(_SALVAGE_LINES);
            of a real player's resources.
         6. `K.reliefDay = K.shift.day`, `K.rev++`, emit `pantry:buy`, `save(true)`.
 
-      🔴 UNTIL THAT EXISTS THIS RUNG IS INERT DATA AND REQUIREMENT (a) IS
-      CARRIED BY THE SCRAP DEALER ALONE — which is a floor only for a player who
-      still has SOME food. Say so out loud rather than assuming somebody read
-      the table.
+      🔴 IT EXISTS AS OF ROUND 6 (kitchen.state.js `buyRelief` / `reliefOffer`,
+      CONTRACT §1) AND WIRING IT WAS NOT ENOUGH. Round 6 shipped the whole path
+      end to end and the parcel still opened no door, because what it pays out —
+      `food` and `water` — was not the input of any crate on the sheet. Every
+      one of them wanted Cinder as well. The rung that closes that is §🤝, and
+      the check that will not let it re-open is the escape-hatch block at the
+      bottom of assertDataSane(): the crate set must be payable OUT OF THE
+      PARCEL ALONE. "It is wired" is not "the player can use it", which is the
+      same distinction as "it is in the table" and "somebody reads it".
    ════════════════════════════════════════════════════════════════════════════ */
 const _RELIEF_RAW = [
   /* 🪂 THE FREE STEP. `whenDry` + `perDay` are the two gates; see above.
-     🔴 SEVEN food IS NOT A FEEL, IT IS THE CHEAPEST COMPLETE CRATE SET ON THE
-        BOARD, AND IT WAS FIVE. The shop sells WHOLE crates, so a parcel is only
-        a rescue if it can buy a whole set for something on the level-1 menu:
-        sal_roll + sal_sausage + sal_mustard = 7 food + ◈110 → five Hot Dogs.
-        At 5 food it bought no complete set for any dish at any level, and the
-        measured result on a fresh account was days 3–10 serving 0, 1, 0, 2, 0,
-        2, 0, 1 while the drop landed every single morning. See
-        ECON.RELIEF_FREE_DAILY_CINDER_MAX for the whole derivation and for why
-        the ceiling moved with it.
-     Five Hot Dogs is still deliberately not a shift — it is enough to prove the
+     🔴 SEVEN food IS NOT A FEEL. IT WAS FIVE, IT BOUGHT NOTHING, AND THE
+        JUSTIFICATION IT SHIPPED WITH FOR SEVEN WAS ALSO WRONG — IN THE SAME
+        WAY, ONE ROUND LATER.
+        The shop sells WHOLE crates, so a parcel is only a rescue if it can buy
+        a whole set for something on the level-1 menu. At 5 food it bought no
+        complete set for any dish at any level, and the measured result on a
+        fresh account was days 3–10 serving 0, 1, 0, 2, 0, 2, 0, 1 while the
+        drop landed every single morning.
+        Seven was then derived from `sal_roll + sal_sausage + sal_mustard =
+        7 food + ◈110 → five Hot Dogs` — and that route wants ◈110 the stranded
+        player does not have. The comment named the food and dropped the Cinder,
+        exactly as the check under it did. MEASURED at HEAD 9d41440, ◈0, the
+        drop landing every morning for fourteen days: 112 food, 64 water, zero
+        crates affordable, zero dishes cooked, the kitchen silently shut.
+        Seven is now the number the BARTER counter is sized against (§🤝, and
+        `ECON.RELIEF_RESCUE_DAYS_MAX` is the check): the Hot Dog set costs
+        19 food + 6 water there and no Cinder, so a player at ◈0 with an empty
+        stash is cooking on the third drop, MEASURED and not asserted —
+        scratch r12s/ramp.mjs, day 2 buys the set and serves three.
+     ⚠ AND THE ◈110 SALVAGE ROUTE IS STILL THE POINT OF THE PARCEL, not a dead
+       sentence: once a bootstrapped kitchen has minted its first Cinder, the
+       SAME seven food buys five Hot Dogs through the scrap dealer instead of
+       roughly one through the counter. Rung four is a jump-start; rung two is
+       the road. That gap is what makes the ramp climb instead of level off.
+     Three Hot Dogs is deliberately not a shift — it is enough to prove the
      kitchen works and nowhere near enough to run it, and that gap is the
      sentence the whole feature is built on: go and get some real food.
-     ⚠ It carries `water` it does not strictly need for the Hot Dog set, and
-       that is the fixed-pallet argument doing its job — the surplus is real
-       ledger stock the rest of the game can use, and it stops the parcel being
-       a shopping list tuned to one dish. */
+     ⚠ It carries `water` the Hot Dog set barely needs, and that is the
+       fixed-pallet argument doing its job — the surplus is real ledger stock
+       the rest of the game can use, and it stops the parcel being a shopping
+       list tuned to one dish. `_BARTER.waterPct` is what stops the water half
+       being inert: before that knob existed, fourteen days of drops banked 64
+       water that nothing in the feature could spend. */
   { id:'rel_drop',   name:'Relief Drop',  icon:'🪂', out:{ food:7,  water:4  }, minLevel:1,
     free: true, whenDry: true, perDay: 1,
     blurb:'What the flight leaves when your yard is empty. One drop a day, and only when it is.' },
@@ -1830,7 +1863,60 @@ export const ECON = {
         in popularity through the demand loop (a faster kitchen sustains a
         higher equilibrium) without touching a single POP_ constant. That is a
         capacity question for UPGRADES and capacityModel(), not a tuning
-        question for this block. */
+        question for this block.
+
+     🔴🔴 ROUND 8 — AND THIS IS THE ANSWER, NOT ANOTHER SWEEP. THE ≥8-POINT
+        SEPARATION ACROSS THE TOP THREE TIERS CANNOT BE PRODUCED FROM THIS
+        TABLE, AND THE REASON IS NOT THE POPULARITY CONSTANTS. IT IS THAT THE
+        GAME CANNOT SEE THE DIFFERENCE IT IS BEING ASKED TO PAY FOR.
+        The acceptance has stood for four rounds as "GOD / EXPERT / GOOD must
+        finish ≥8 popularity points apart at day 10", where those tiers are bots
+        with 0ms, 300ms and 700ms reaction lag. Popularity has exactly two skill
+        inputs: how many units you SERVE (POP_SERVE) and how many of them you
+        caught in the window (POP_PERFECT_BONUS). MEASURED, L12 + heat lamp,
+        12 seeds (scratch r12s/lag.mjs — it prints the axis, not the letter):
+              tier          cooked   meanQ     CRAFT     served    pop
+              lag    0ms      220    1.1437    0.8575    120.4    68.1
+              lag  300ms      212    1.1419    0.8567    114.3    64.9
+              lag  700ms      206    1.1352    0.8458    116.3    65.6
+              lag 1300ms      204    1.0032    0.6708    113.1    46.1
+        The Q_ scale runs 1.00 (good) to 1.25 (perfect), so the whole quality
+        axis is 0.25 wide. A 300ms lag moves `meanQ` by **0.0018 — seven
+        tenths of one percent of the axis** — and moves CRAFT by 0.0008. The
+        serve count moves 5% and moves the WRONG WAY between 300 and 700.
+        There is no gain, damping or attractor that turns a 0.7% input
+        difference into 8 points of a 0..100 meter without saturating everything
+        below it: the multiplier required is ~400 points per unit of score,
+        which pins the top three at 100 and the bottom three at 0.
+
+        🔴 AND THE MECHANISM IS DELIBERATE AND LIVES IN A DIFFERENT KEY.
+        `PERFECT_MS` is 1200. The bots jitter their lag by 0.55–1.45×, so
+        300ms is a 165–435ms reaction and 700ms is 385–1015ms — BOTH ENTIRELY
+        INSIDE a 1,200ms window. 1300ms is 715–1885ms, which is the first tier
+        that spills out of it, and it is exactly the first tier the axis
+        separates (meanQ 1.1352 → 1.0032, a cliff). The game's quality
+        resolution IS `PERFECT_MS`, and everything faster than it is the same
+        player as far as the sim is concerned.
+        The only knob that would resolve 0ms from 300ms is a perfect band under
+        300ms — and `PERFECT_MIN_MS` (700) forbids exactly that, in writing and
+        with a check: "a band nobody can tap on a phone, which measures hardware
+        latency and not attention" (assertDataSane fires on it). Phones are the
+        main platform. Shrinking the band to win this criterion would trade the
+        skill the feature is actually about for a reflex test, on the platform
+        it is mostly played on.
+
+        🔴 SO, PLAINLY: THIS ACCEPTANCE CANNOT BE MET FROM A DATA TABLE AND
+        SHOULD NOT BE MET BY SHRINKING PERFECT_MS. What IS true today and is
+        worth holding (r6/days.mjs, ten consecutive days, two seeds, re-measured
+        this round): the ORDER is correct and no longer inverted — day-10 means
+        GOD 69.5 / EXPERT 65.7 / GOOD 57.3 — SLOPPY never pins at 0 (14.9–27.2),
+        and the recovery arm works (three SLOPPY days then an EXPERT climbs
+        27.2 → 74.2). GOD−GOOD is 12.2 points and clears the bar; GOD−EXPERT is
+        3.8 and cannot, because the two bots are not measurably different
+        players. If a future round still wants the top pair separated, the lever
+        is the one named directly above — make HANDS the binding constraint so
+        that a faster player physically cooks MORE, which the meter can already
+        see — and not any number in this block. */
   POP_SERVE: 0.10,          // a good unit. × recipe.pop × popGainMul(upgrades)
   POP_PERFECT_BONUS: 0.36,  // extra, per unit, for the ones caught in the window
   POP_RAW: -0.35,           // 🔴 a raw unit COSTS reputation. See above.
@@ -2015,25 +2101,65 @@ export const ECON = {
      50%, the denominator never bound, and the service axis went back to being
      share-of-custom in a new hat. This is the one number here fitted to a
      measurement rather than swept off a distribution. */
-  /* 🔴 THE FOUR LETTER CUTS ON gradeParts().score, SWEPT AND NOT TYPED. Round
-     4's were round numbers (0.98 / 0.90 / 0.75 / 0.55) fitted to nothing, and
-     the top three sat above the entire human range — 60 of 72 shifts graded B.
-     These came off the measured score distribution of six skill tiers × 12
-     seeds AT THE GAME'S OWN OUTPUT, plus a maxed kitchen and a day-one kitchen
-     for the ends:
-         0.58  DISTRACT tops out at 0.555, SLOPPY bottoms at 0.615
-         0.70  SLOPPY tops out at 0.690, AVERAGE straddles it
-         0.79  AVERAGE tops out at 0.785, GOD bottoms at 0.795
-         0.92  a level-20 all-owned clean sheet scores 0.94..0.99
+  /* 🔴 THE FOUR LETTER CUTS ON gradeParts().score, SWEPT AND NOT TYPED — AND
+     RE-SWEPT THIS ROUND, BECAUSE THE PREVIOUS SET'S OWN JUSTIFICATION HAD
+     STOPPED BEING TRUE BY MEASUREMENT.
+     ══════════════════════════════════════════════════════════════════════════
+     Round 4's were round numbers (0.98 / 0.90 / 0.75 / 0.55) fitted to nothing,
+     and the top three sat above the entire human range — 60 of 72 shifts graded
+     B. Their replacement was swept off the game's own output and then the game
+     moved underneath it. The comment that shipped with 0.79 read "AVERAGE tops
+     out at 0.785, GOD bottoms at 0.795". RE-MEASURED at HEAD 9d41440, six skill
+     tiers × 12 seeds, level 12 + heat lamp (scratch r8/grade.mjs, unmodified):
+         GOD      0.775 … 0.925    EXPERT  0.800 … 0.895
+         GOOD     0.775 … 0.905    AVERAGE 0.720 … 0.800
+         SLOPPY   0.610 … 0.680    DISTRACT 0.440 … 0.575
+     AVERAGE tops out at 0.800 and GOOD bottoms at 0.775, so 0.79 sat INSIDE the
+     overlap: AVERAGE graded A on 2 of 12 seeds — the same letter as the
+     frame-perfect bot — and the seed-pair inversions had gone 0/60 → 2/60.
+
+     🔴 AND HERE IS THE THING THE SWEEP PROVED, WHICH IS MORE USEFUL THAN THE
+        FOUR NUMBERS: **0/60 AND A SPREAD LETTER TABLE CANNOT BOTH BE HAD.**
+        Enumerated over every behaviourally distinct cut placement, on the two
+        rungs the acceptance names (L12+heatlamp and L20 all-owned):
+          • GOD spans 0.775–0.925 and GOOD spans 0.775–0.905 — the SAME range.
+            Adjacent tiers cross on 10 of the 60 seed-pairs. A cut placed
+            anywhere inside (0.775, 0.905] therefore inverts on some seed, by
+            construction and not by tuning.
+          • The only cut sets that reach 0/60 push A above 0.905, which collapses
+            EXPERT, GOOD and most of GOD onto a single letter and leaves A
+            unreachable at level 12. Measured: `AAASAAAAAAAA / AAAAAAAAAAAA /
+            AAAAAAAAAAAA` — a report card that has stopped saying anything.
+          • The best achievable table keeps ONE inversion, on the single seed
+            where the frame-perfect bot had its worst day of the twelve (GOD
+            seed 3 scores 0.775 against EXPERT's 0.850). That is a true fact
+            about that shift, not a miscalibrated cut, and pricing it away costs
+            the letter its whole top end.
+        So these four are swept to the best table, not to the round number:
+         0.59  DISTRACT tops out at 0.575, SLOPPY bottoms at 0.610 — 0.015 clear
+               of both, the widest gap on the whole distribution
+         0.73  AVERAGE straddles it (4 of 12 fall to C, which is the point: the
+               middle tier must be able to have a bad day), SLOPPY tops out at
+               0.680 so SLOPPY stays C
+         0.83  above AVERAGE's 0.800 ceiling, so A stops being a letter an
+               average player collects — and below the EXPERT/GOOD body, so A
+               stays the competent-play letter it is supposed to be
+         0.92  GOD's best seed scores 0.925 at L12 and a level-20 all-owned rack
+               scores 0.930–1.000, so S is reachable by play at both rungs
      ⚠ RE-SWEEP AFTER ANY MOVE TO PERFECT_MS, THE Q_* SCALE, GRADE_CAP_DUTY OR
        capacityModel() — all four move the distribution these sit in, and a cut
-       that has stopped matching its distribution is the exact bug this replaced.
+       that has stopped matching its distribution is the exact bug this is the
+       second fix for. The sweep is r8/grade.mjs + r8/gradeAny.mjs to capture,
+       then enumerate cut placements against the captured scores; do not type a
+       number and eyeball the letters.
      ⚠ assertDataSane() checks only that they are strictly ordered inside
        (0,1]. It CANNOT check that they still match the distribution; nothing
-       pure can. That is what the sweep is for. */
-  GRADE_MIN_C: 0.58,
-  GRADE_MIN_B: 0.70,
-  GRADE_MIN_A: 0.79,
+       pure can, because the distribution is the output of the whole sim. That
+       is what the sweep is for, and it is why this comment carries the measured
+       endpoints rather than an assertion about them. */
+  GRADE_MIN_C: 0.59,
+  GRADE_MIN_B: 0.73,
+  GRADE_MIN_A: 0.83,
   GRADE_MIN_S: 0.92,
   /* 🔴 AND THE TOP LETTER IS REACHABLE BY SKILL AGAIN, WHICH IT WAS NOT.
      The S rider ALSO requires a clean sheet, and it used to read `today.burnt`
@@ -2562,6 +2688,42 @@ export const ECON = {
        down. They are one number wearing two hats; do not move one alone. */
   RELIEF_FREE_DAILY_CINDER_MAX: 800,
 
+  /* 🔴🔴 HOW MANY DROPS THE ESCAPE HATCH MAY TAKE TO PUT ONE PLATE ON THE PASS,
+     AND IT IS THE NUMBER THAT WOULD HAVE CAUGHT ROUND 6'S BLOCKER.
+     The old check asked "does one day's parcel buy a complete crate set" and
+     IGNORED CINDER, because at the time no crate could be bought without it and
+     the note under the check said so out loud and shrugged. So the check
+     reported the escape hatch reaching a Hot Dog while the actual measured
+     answer for a player at ◈0 was: fourteen days, 112 food, 60 water, zero
+     crates affordable, zero dishes cooked (r9/dry12.mjs).
+     It now prices the set in WHOLE CRATES the parcel can actually pay for —
+     zero Cinder, and no live id the parcel does not carry — and asks how many
+     DAYS of drops that set costs. Days, not one day, because whole crates and a
+     fixed pallet do not divide evenly and a one-day bar would force the parcel
+     up until it became a shift's worth of stock, which is the faucet the
+     ceiling above exists to stop. The two bounds pull opposite ways ON PURPOSE:
+     RELIEF_FREE_DAILY_CINDER_MAX stops the drop being worth farming, this stops
+     it being worth nothing.
+       LOWER BOUND  1 would demand a parcel big enough to buy a whole crate set
+                    in one morning — measured, that is 19 food at the barter
+                    counter against a 7-food drop, so the parcel would have to
+                    nearly triple and the daily yield with it.
+       UPPER BOUND  a player who has to wait a week to cook one dish has been
+                    dead-ended with extra steps; the round-3 "slower dead end"
+                    this file has warned about since.
+       SHIPPED      4, against a measured 3 (day 1 mustard, day 2 rolls, day 3
+                    sausage, cook) — one day of headroom for a supply-line edit
+                    before the check fires and makes somebody look. */
+  RELIEF_RESCUE_DAYS_MAX: 4,
+
+  /* 🔴 HOW MANY DISHES THE BARTER COUNTER MAY REACH. See the §🤝 block: rung
+     four is a floor, and a floor that runs a menu is a kitchen. 1 is not a
+     round number — it is "the cheapest-in-food level-1 recipe and nothing
+     else", which is what `_barterTarget()` derives. Raise this and you are
+     deciding that a player with no city should be able to run a restaurant on
+     air, which is the round-4 failure in a fourth costume. */
+  BARTER_MENU_MAX: 1,
+
   /* 🔴 THE TWO NUMBERS THAT KEEP THE SCRAP DEALER A FLOOR AND NOT A KITCHEN.
      See the _SALVAGE block. SHARE is how much of a level-40 board one rung may
      run; VALUE_GAP is how much richer the dishes that need the city have to be.
@@ -2883,6 +3045,265 @@ export const ECON = {
 };
 
 /* ════════════════════════════════════════════════════════════════════════════
+   🤝 THE BARTER COUNTER — RUNG FOUR, AND THE ONLY DOOR IN THE FEATURE THAT
+      TAKES NO CINDER AT ALL.
+   ----------------------------------------------------------------------------
+   🔴🔴 THIS RUNG EXISTS BECAUSE RUNG THREE PAID OUT IN A CURRENCY THAT OPENED
+        NO DOOR, AND THIS FILE SAID SO IN WRITING AND DECLINED TO FIX IT.
+
+   MEASURED AT HEAD 9d41440 (scratch r9/dry12.mjs — GEMS=0, all fourteen live
+   ids at 0, pantry emptied, the shift re-opened every morning for fourteen
+   in-game days, no player actions):
+       day  1   food  14  water   8  ◈0   affordable 0   cookable 0
+       day  3   food  28  water  16  ◈0   affordable 0   cookable 0
+       day 14   food 112  water  64  ◈0   affordable 0   cookable 0   pop 41.6
+       dryCheck() → {dry:true, stalled:true, cookable:[], reachable:[],
+                     affordable:[], need:['supplies','dna'], ing:'roll'}
+       buySupply('sal_mustard',1) → {ok:false, code:'NO_PANTRY',
+                     why:'Not enough Cinder — you need 20 and have 0.'}
+   The free drop landed every single morning, forever, and every one of the 24
+   level-1 crates on the sheet — core AND scrap dealer — carries a Cinder leg.
+   The cheapest is `sal_mustard` at ◈20. So the escape hatch's OUTPUT was not
+   the INPUT of any door in the game, and round 6's genuine win (the dry gate)
+   is what made it SILENT: no cars, no walk-ins, no losses, no toast. The
+   restaurant simply stopped, with the stash filling up.
+
+   🔴 AND THIS FILE PREDICTED IT AND ARGUED ITSELF OUT OF FIXING IT. The old
+      note under assertDataSane()'s escape-hatch check read: "there is no
+      Cinder-free line in SUPPLY_RECIPES — nor CAN there be, because invariant E
+      is denominated in Cinder and a zero-Cinder line would BE the cheapest
+      route by definition… it is a REAL hole and it is written down here."
+      The first half of that is true and the second half does not follow.
+      Invariant E is denominated in Cinder because every rung ABOVE this one is
+      priced in Cinder. THIS rung is priced in FOOD, so it gets the
+      food-denominated form of the same invariant, and it gets it enforced
+      (§G in assertDataSane) rather than argued. A hole you have written down is
+      still a hole; the note was doing the job of a check.
+
+   ── WHAT WAS REJECTED, AND WHY, SO NOBODY RE-PROPOSES IT ───────────────────
+     ✗ PUT CINDER IN THE FREE DROP. That is round 4's Cinder machine with the
+       label changed: the parcel would mint the currency the ladder is priced
+       in, and the 14-id ledger goes back to being optional. The premise
+       (CONTRACT §8.1) is the thing that must survive, not the convenience.
+     ✗ DROP THE CINDER LEG OFF `sal_mustard` (or any existing crate). Identical
+       objection plus a second one: it makes the scrap dealer cheaper than the
+       farm for that ingredient, which is invariant E, which is the reason
+       nobody builds a Hydroponics Bay.
+     ✗ LET buySupply() TAKE PART-PAYMENT IN FOOD FOR A CINDER LEG. An exchange
+       rate hidden inside a purchase function is a second economy with no table
+       and no guard, and it would have to be read by the three files that price
+       a crate. One rung, one table, one set of invariants.
+
+   ── WHAT THIS RUNG IS ─────────────────────────────────────────────────────
+   You carry raw stock across the counter and swap it, in kind, for prepared
+   ingredients. No money changes hands and you are robbed on the rate. It is
+   priced in `food` and `water` AND NOTHING ELSE, because those are exactly the
+   two ids the free parcel carries — a rung the parcel cannot pay for is the
+   defect this rung exists to close, so the payable set is DERIVED from the
+   parcel rather than chosen (assertDataSane §G2 holds it there).
+
+   THE RATE IS THE WHOLE CORE PRICE, RE-DENOMINATED, TIMES A PREMIUM. Take the
+   core line's entire cost — its Cinder leg AND every live leg — value it at the
+   game's own cold-storage board (ECON.RES_RETAIL_CINDER, index.html:195218),
+   and charge that in food and water instead. Nothing is discounted: the dna in
+   a sausage and the supplies in a bun still get paid for, in food. That is what
+   makes this the DEAREST route in the game and not a way to launder a missing
+   Gene Vault, and it is why the numbers are derived and never typed — a
+   hand-kept copy of a price diverges, and this one would diverge in the
+   direction of "barter is cheap", which is the printer.
+
+   ── THE FOUR THINGS THAT KEEP IT A FLOOR (all checked, §G) ─────────────────
+     1. 🚫 NO CINDER LEG, EVER, and every leg it does have must be an id the
+        free parcel carries. Otherwise it is not an escape from a Cinder wall,
+        it is a second one.
+     2. 💸 DEAREST PER UNIT, ON THE GAME'S OWN BOARD, against BOTH the core line
+        and the scrap-dealer line. Measured today, board Cinder per unit:
+          roll     10.67  vs core  7.00  vs dealer  8.00
+          sausage  20.67  vs core 14.60  vs dealer 14.80
+          mustard   6.00  vs core  3.58  vs dealer  4.00
+        and in `food` alone — the currency the convoy printer guard is
+        denominated in — 1.667 / 3.667 / 1.000 per unit against a core rate of
+        0.500 / 0.600 / 0.167. Every barter unit embodies MORE live food than
+        the same unit bought any other way, which is the only direction that can
+        never open convoyGuardOk()'s fourth wall.
+     3. 📦 THE SMALLEST CRATE ON THE SHEET. Quarter crate against the dealer's
+        half and the farm's whole, so the same restock is four times the taps.
+     4. 🍽 IT REACHES EXACTLY ONE DISH, AND THAT IS DERIVED. It stocks the
+        ingredients of the CHEAPEST-IN-FOOD level-1 recipe — today the Hot Dog —
+        and nothing else. Not a typed list: a typed list silently fails to cover
+        a retuned menu, and an over-generous one turns the floor into the
+        kitchen. `ECON.BARTER_MENU_MAX` is the ceiling and assertDataSane()
+        holds it.
+
+   ── MEASURED RECOVERY, WHICH IS THE ONLY THING THAT MATTERS HERE ───────────
+   One set is 19 food + 6 water for three Hot Dogs, against a drop of 7 food +
+   4 water a day. A player at ◈0 with an empty ledger and an empty pantry:
+   day 1 buys the mustard, day 2 the rolls, day 3 the sausage and COOKS. Three
+   Hot Dogs is deliberately not a shift — it is the sentence "go and get some
+   real food" said in the only language a stranded kitchen can hear.
+   ⚠ AND IT IS DELIBERATELY NOT A LADDER YOU WOULD EVER CLIMB ON PURPOSE. Three
+     dogs a day is under 3% of a working shift, and the same food spent through
+     the core counter buys roughly seven times as much. Nobody with a farm ever
+     opens this counter; that is the design, not a shortfall.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* ingredient id → the CORE line that stocks it. Built straight off
+   `_SUPPLY_CORE` rather than off the concatenated export, which makes "a dealer
+   or barter row can never be canonical" STRUCTURAL instead of guarded.
+   🔴 IT USED TO BE A FIRST-WINS SCAN OVER SUPPLY_RECIPES WITH A `kind` SKIP,
+   and the history is worth keeping because the failure was silent: last-wins
+   would have made the dealer line canonical, `INGREDIENTS[].foodPerUnit` would
+   read the dealer's rounded-UP figure for roll, sausage, mustard, dough, sauce,
+   cheese and tomato, every recipe made of them would report `foodCost: 0`, and
+   convoyGuardOk() — whose entire job is to prove a convoy destroys food rather
+   than printing it — would have been comparing CONVOY_FOOD_PER_DISH against
+   zero and passing. A one-character difference between "the guard works" and
+   "the economy is dead". There is now no ordering to get wrong. */
+const _CORE_BY_ING = Object.create(null);
+for (const s of _SUPPLY_CORE) {
+  if (!s || !s.out || !s.out.ing) continue;
+  if (!_CORE_BY_ING[s.out.ing]) _CORE_BY_ING[s.out.ing] = s;
+}
+
+const _BARTER = {
+  /* Quarter crate. See floor 3 — friction, and the reason the counter can never
+     be a restock strategy. Rounds like `_SALVAGE.batchPct` does. */
+  batchPct: 0.25,
+  /* …but never so small the row is a joke; also what keeps a barter crate
+     strictly smaller than the dealer's half crate for every line. */
+  minBatch: 2,
+  /* THE COUNTER'S CUT, on top of a price that is already the whole core cost
+     re-denominated. 🔴 IT IS NOT THE ONLY THING MAKING THIS DEAR — most of the
+     penalty is structural, because the core line's Cinder leg is being paid in
+     food at ◈4 a unit. The premium is what guarantees a strict inequality
+     against the dealer on lines whose non-food legs are small; without it,
+     `bar_mustard` prices within a rounding error of `sal_mustard` and §G3
+     fires. One knob per idea. */
+  premium: 1.25,
+  /* THE SHARE OF THE PRICE TAKEN IN `water` RATHER THAN `food`.
+     🔴 NOT DECORATION AND NOT A ROUNDING. The free parcel is a fixed pallet
+     carrying food AND water (see the RELIEF block on why it is a pallet and not
+     a shopping list), and a rung priced in food alone leaves the water half of
+     every drop inert — measured before this knob existed, fourteen days of
+     drops banked 64 water that nothing in the feature could ever spend. A
+     surplus that sits in the 14-id ledger is fine; a surplus that is the only
+     thing the escape hatch pays you is the round-6 defect in miniature. */
+  waterPct: 0.25,
+};
+
+/** What one unit of a supply row costs, valued in Cinder on the game's own
+    cold-storage board. Cinder legs count at face; live legs at resRetail().
+    This is the ONE comparable number across three rungs priced in three
+    different currencies, and every §G inequality is denominated in it. */
+function _boardValuePerUnit(row) {
+  const c = (row && row.cost) || {};
+  let v = (c.cinder || 0);
+  for (const k in c) { if (k !== 'cinder') v += c[k] * resRetail(k); }
+  return v / Math.max(1, (row && row.out && row.out.qty) | 0 || 1);
+}
+
+/**
+ * The recipe the barter counter is built to reach: the CHEAPEST-IN-LIVE-FOOD
+ * level-1 recipe, priced off the core lines.
+ *
+ * 🔴 DERIVED, NOT TYPED, FOR THE SAME REASON `_SALVAGE.notStocked` IS AN
+ *    EXCLUSION LIST. A typed ingredient list is a list that silently stops
+ *    matching the menu: retune the level-1 board and the counter either stops
+ *    reaching any dish (the floor quietly vanishes) or starts reaching several
+ *    (the floor quietly becomes the kitchen). Both failures look fine in review.
+ *    Cheapest-in-food is the right axis because `food` is what the free parcel
+ *    mostly carries and what the whole premise is denominated in.
+ * ⚠ Reads `_RECIPES_RAW` and not `RECIPES`: RECIPES is normalised further down
+ *   the file and is in its temporal dead zone here. `_needsFromSteps` is a
+ *   hoisted function declaration, which is why calling it early is safe.
+ */
+function _barterTarget() {
+  let best = null, bestFood = Infinity;
+  for (const r of _RECIPES_RAW) {
+    if ((r.minLevel || 1) !== 1) continue;
+    const needs = _needsFromSteps(r.steps);
+    let food = 0, ok = true;
+    for (const id in needs) {
+      const core = _CORE_BY_ING[id];
+      if (!core) { ok = false; break; }
+      food += needs[id] * (((core.cost && core.cost.food) || 0) / Math.max(1, core.out.qty | 0));
+    }
+    if (ok && food < bestFood) { bestFood = food; best = { id: r.id, ings: Object.keys(needs) }; }
+  }
+  return best;
+}
+
+/**
+ * One barter line derived from a core line. Pure; no side effects.
+ *
+ * 🔴 BOTH LEGS ROUND **UP**, AND THAT DIRECTION IS THE GUARD — same argument as
+ *    `_salvageLine()`. Rounding down could let a barter-built dish embody less
+ *    live food than the same dish built from core lines, which is exactly the
+ *    gap a convoy claim pays into (convoyGuardOk()'s fourth wall). Up is the
+ *    counter's wastage and the only direction that cannot open the printer.
+ * 🔴 THE FOOD LEG HAS A FLOOR OF 1. A line that costs zero food is a Cinder-free
+ *    AND food-free crate, i.e. a free ingredient, i.e. an infinite economy. The
+ *    floor can never bind at today's prices; it is here so that it cannot.
+ */
+function _barterLine(core) {
+  const coreQty = Math.max(1, core.out.qty | 0);
+  const qty = Math.max(_BARTER.minBatch, Math.round(coreQty * _BARTER.batchPct));
+  const board = _boardValuePerUnit(core) * qty * _BARTER.premium;
+  const cost = {
+    food: Math.max(1, Math.ceil((board * (1 - _BARTER.waterPct)) / resRetail('food'))),
+  };
+  const water = Math.ceil((board * _BARTER.waterPct) / resRetail('water'));
+  if (water > 0) cost.water = water;
+  return {
+    id: 'bar_' + core.out.ing,
+    out: { ing: core.out.ing, qty },
+    cost,
+    /* 🔴 max(1, core's own level), exactly as `_salvageLine()` does it: a
+       fallback that unlocks before the thing it is a fallback FOR is the
+       "scrapyard outranks the city" bug wearing a different hat. Every level-1
+       recipe is built from level-1 core lines, so the floor still opens on the
+       first shift for everything the day-one menu needs. */
+    minLevel: Math.max(1, core.minLevel || 1),
+    /* 🔴 THE THREE FIELDS EVERY OTHER FILE NEEDS. `kind` lets the supplies sheet
+       group these under their own heading instead of printing them among the
+       city crates; `barterOf` points back at the core line so a row can say
+       "or bring your own"; `blurb` is the sentence. None is read by the sim —
+       buySupply() only ever looks at out/cost/minLevel — so a renderer that
+       ignores all three still works, it just reads worse.
+       ⚠ kitchen.render.js currently splits the sheet on `kind === 'salvage'`
+         alone, so today these rows draw in the CORE group. That is a grouping
+         bug in a file this one may not edit; see the handover. */
+    kind: 'barter',
+    barterOf: core.id,
+    blurb: 'Swapped across the counter, in kind. No money changes hands and the rate is robbery.',
+  };
+}
+
+const _BARTER_TARGET = _barterTarget();
+const _BARTER_LINES = ((_BARTER_TARGET && _BARTER_TARGET.ings) || [])
+  .map((id) => _CORE_BY_ING[id])
+  .filter(Boolean)
+  .map(_barterLine);
+
+/**
+ * 📦 The restock counter the rest of the feature sees: the core lines that eat
+ * the live ledger cheapest, then the scrap-dealer lines that eat it dearer,
+ * then the barter counter that eats it dearest of all.
+ * 🔴 ALL THREE EAT IT. That sentence was "both halves" for one round and the
+ *    opposite way round for the round before that, and each time it cost the
+ *    feature either its premise or its floor — see the §🗑 and §🤝 blocks.
+ * 🔴 ORDER STILL MATTERS FOR READING ORDER ONLY. `_SUPPLY_BY_ING` is no longer
+ *    built from this array (it comes off `_SUPPLY_CORE` directly, above), so a
+ *    reordering here can no longer make a fallback row canonical. The order is
+ *    kept because it is the order the sheet reads in: farm, scrapyard, counter.
+ */
+export const SUPPLY_RECIPES = _SUPPLY_CORE.concat(_SALVAGE_LINES, _BARTER_LINES);
+
+/** ingredient id → its barter line, or null. */
+const _BARTER_BY_ING = Object.create(null);
+for (const s of _BARTER_LINES) _BARTER_BY_ING[s.out.ing] = s;
+
+/* ════════════════════════════════════════════════════════════════════════════
    🧮 DERIVATION — the only work this module does at import time.
    ----------------------------------------------------------------------------
    Three maps and two normalising passes. No I/O, no DOM, no clock. Everything
@@ -2903,27 +3324,14 @@ function _index(arr) {
 }
 
 const _SUPPLY_BY_ID = _index(SUPPLY_RECIPES);
-// ingredient id → the supply row that stocks it. Built by scanning `out.ing`
-// rather than trusting INGREDIENTS[].supply, so a typo'd pointer surfaces as a
-// missing batch (loud, in assertDataSane) instead of as a silently wrong price.
-/* 🔴 FIRST ROW WINS, AND THAT LINE USED TO READ `= s` UNCONDITIONALLY. With one
-   supply row per ingredient the two spellings are identical, which is precisely
-   why this was safe to write the dangerous way for three rounds. The scrap
-   dealer (§_SALVAGE) adds a SECOND row per covered ingredient, and last-wins
-   would have made the dealer line canonical: `foodPerUnit` would read the
-   dealer's rounded-UP figure rather than the true one for roll,
-   sausage, mustard, dough, sauce, cheese and tomato, every recipe made of them
-   would report `foodCost: 0`, and convoyGuardOk() — whose entire job is to
-   prove a convoy destroys food rather than printing it — would have been
-   comparing CONVOY_FOOD_PER_DISH against zero and passing. A one-character
-   difference between "the guard works" and "the economy is dead". */
-const _SUPPLY_BY_ING = Object.create(null);
-for (const s of SUPPLY_RECIPES) {
-  if (!s || !s.out || !s.out.ing) continue;
-  if (s.kind === 'salvage') continue;          // belt: never canonical
-  if (_SUPPLY_BY_ING[s.out.ing]) continue;     // braces: first row wins anyway
-  _SUPPLY_BY_ING[s.out.ing] = s;
-}
+/* ingredient id → THE CANONICAL supply row that stocks it, which is always the
+   CORE line. Built up in the §🤝 block off `_SUPPLY_CORE` itself rather than by
+   scanning the concatenated export, so no fallback row can be canonical no
+   matter what order the rungs are concatenated in. The whole history of why
+   that mattered is on `_CORE_BY_ING`; the short version is that a last-wins
+   scan made `foodCost` read ZERO for seven ingredients and the convoy
+   food-printer guard compared its numerator against nothing. */
+const _SUPPLY_BY_ING = _CORE_BY_ING;
 /** ingredient id → its scrap-dealer line, or null. Render uses this to show
     the "or pay the dealer" price beside the real one; the sim never needs it. */
 const _SALVAGE_BY_ING = Object.create(null);
@@ -3051,6 +3459,18 @@ export function relief(id) { return _RELIEF_BY_ID[id] || null; }
  *   farming a loop minimises what they PAY, and the thing they pay in is the
  *   thing the loop is denominated in. Measure the exploit, not the intention.
  *
+ * 🔴 …AND SINCE THE BARTER COUNTER (§🤝) COSTS NO CINDER AT ALL, "MINIMISE
+ *   CINDER" NOW PICKS IT FOR EVERY INGREDIENT IT STOCKS AND REPORTS ◈0. That is
+ *   correct for the questions that ask "is there an all-Cinder path" (there is
+ *   not, and this proves it) and it is WRONG for any question that needs the
+ *   genuinely cheapest END-TO-END cost, because a barter unit is bought with
+ *   food and food has to come from somewhere. `reliefRouteCost()` used to be
+ *   built straight on this function and would have started reporting the
+ *   barter route — four times dearer end to end than the route an exploiter
+ *   would actually take — i.e. the guard would have read SAFER than the truth.
+ *   It now computes its own per-currency lower bound; see it, and do not add a
+ *   third caller here without asking which of the two questions you are asking.
+ *
  * ⚠ `payableIn` IS WHAT MAKES IT USABLE TWICE. Pass nothing and it answers
  *   "what is the cheapest this dish can be made for, at all" — which is the
  *   figure the ledger-cost and food-cost invariants need. Pass an array of live
@@ -3075,11 +3495,16 @@ export function cheapestRoute(recipeId, payableIn) {
   let cinder = 0; const res = Object.create(null); const rows = Object.create(null); let ok = true;
   for (const ing in r.needs) {
     const need = r.needs[ing];
-    const lines = [_SUPPLY_BY_ING[ing], _SALVAGE_BY_ING[ing]].filter(Boolean).filter((row) => {
-      if (!allow) return true;
-      for (const k in (row.cost || {})) if (k !== 'cinder' && !allow[k]) return false;
-      return true;
-    });
+    /* 🔴 THREE RUNGS, NOT TWO. The barter counter joined this list the round it
+       shipped; leaving it out would have made every guard built on this
+       function blind to the one rung that costs no Cinder, which is precisely
+       the shape of the bug the barter counter exists to close. */
+    const lines = [_SUPPLY_BY_ING[ing], _SALVAGE_BY_ING[ing], _BARTER_BY_ING[ing]]
+      .filter(Boolean).filter((row) => {
+        if (!allow) return true;
+        for (const k in (row.cost || {})) if (k !== 'cinder' && !allow[k]) return false;
+        return true;
+      });
     if (!lines.length) { ok = false; continue; }
     let best = null, bestC = Infinity;
     for (const row of lines) {
@@ -3100,7 +3525,8 @@ export function cheapestRoute(recipeId, payableIn) {
 /**
  * What one dish costs a player whose ENTIRE ledger came off a relief pallet —
  * the closed Cinder → parcel → dish loop, in Cinder.
- * → { cinder, parcels, binding } | null
+ * → { cinder, lineCinder, parcels, binding, parcelId, rows } | null
+ *
  * `binding` names the resource that forced the parcel count, which is the whole
  * reason the parcel is a fixed pallet rather than a shopping list: no dish
  * needs food and water in the ratio the pallet carries them, so the binding
@@ -3108,26 +3534,81 @@ export function cheapestRoute(recipeId, payableIn) {
  * the nominal one. If a dish needs something the parcels do not carry (dna,
  * supplies, fuel, essence) this returns null — that dish simply cannot be made
  * out of a relief drop, which is the point of keeping the parcel low-tier.
+ *
+ * 🔴🔴 IT IS A LOWER BOUND ON EVERY ROUTE, NOT THE COST OF ONE PARTICULAR
+ *      ROUTE, AND THAT CHANGED THE ROUND THE BARTER COUNTER SHIPPED.
+ *      It used to be one line — `cheapestRoute(recipeId, parcelIds)` — which
+ *      picks, per ingredient, the row with the least CINDER per unit. That was
+ *      the same question as "the cheapest way to close this loop" only while
+ *      every row had a Cinder leg. §🤝's rows have none, so cheapest-in-Cinder
+ *      now always picks barter, and barter is bought in FOOD, which the loop
+ *      buys from the parcel at fifteen times retail. Measured on the Hot Dog
+ *      the moment barter shipped: the barter route prices the loop at ◈1,275
+ *      while the route an actual exploiter takes (the scrap dealer) costs
+ *      ◈226 — so the guard would have reported the loop FIVE TIMES safer than
+ *      it is, and reported it in the direction that passes. A guard that gets
+ *      safer when you add a rung is not a guard.
+ *      So: minimise each currency INDEPENDENTLY across all three rungs — the
+ *      least Cinder any row charges, and separately the least of each parcel
+ *      resource any row charges. No single row need offer both, which is
+ *      exactly why the result is a floor under every real route rather than the
+ *      price of any one of them. Pessimistic, cheap, and it cannot be made
+ *      lenient by adding a rung.
+ * ⚠ The consequence to keep in mind when reading a failure: `rows` names the
+ *   least-Cinder row per ingredient for reporting, and the resource figures may
+ *   have come off DIFFERENT rows. That is deliberate. Do not "fix" it by
+ *   pinning both to one row — that is the version that went blind.
  */
 export function reliefRouteCost(recipeId, parcelId) {
   const parcel = parcelId ? _RELIEF_BY_ID[parcelId] : _bestParcel();
   if (!parcel) return null;
-  const route = cheapestRoute(recipeId, Object.keys(parcel.out));
-  if (!route.ok) return null;                  // the pallet cannot build it at all
+  const r = _RECIPE_BY_ID[recipeId];
+  if (!r) return null;
+  const ids = Object.keys(parcel.out);
+  let cinder = 0; const res = Object.create(null); const rows = Object.create(null);
+
+  for (const ing in r.needs) {
+    const need = r.needs[ing];
+    // Only rows this buyer could use at all: every live leg must be on the parcel.
+    const lines = [_SUPPLY_BY_ING[ing], _SALVAGE_BY_ING[ing], _BARTER_BY_ING[ing]]
+      .filter(Boolean)
+      .filter((row) => {
+        for (const k in (row.cost || {})) if (k !== 'cinder' && ids.indexOf(k) === -1) return false;
+        return true;
+      });
+    if (!lines.length) return null;            // the pallet cannot build it at all
+
+    let minC = Infinity, cheapest = null;
+    for (const row of lines) {
+      const per = ((row.cost && row.cost.cinder) || 0) / Math.max(1, row.out.qty);
+      if (per < minC) { minC = per; cheapest = row; }
+    }
+    cinder += minC * need;
+    rows[ing] = cheapest.id;
+
+    for (const k of ids) {
+      let minR = Infinity;
+      for (const row of lines) {
+        minR = Math.min(minR, ((row.cost && row.cost[k]) || 0) / Math.max(1, row.out.qty));
+      }
+      if (Number.isFinite(minR) && minR > 0) res[k] = (res[k] || 0) + minR * need;
+    }
+  }
+
   let parcels = 0, binding = null;
-  for (const id in route.res) {
+  for (const id in res) {
     const per = parcel.out[id] || 0;
     if (per <= 0) return null;
-    const n = route.res[id] / per;
+    const n = res[id] / per;
     if (n > parcels) { parcels = n; binding = id; }
   }
   return {
-    cinder: Math.round((route.cinder + parcels * parcel.cost.cinder) * 100) / 100,
-    lineCinder: route.cinder,
+    cinder: Math.round((cinder + parcels * parcel.cost.cinder) * 100) / 100,
+    lineCinder: Math.round(cinder * 1000) / 1000,
     parcels: Math.round(parcels * 1000) / 1000,
     binding,
     parcelId: parcel.id,
-    rows: route.rows,
+    rows,
   };
 }
 /** The cheapest PURCHASABLE parcel per unit — the one an optimiser would use.
@@ -3885,9 +4366,21 @@ export function convoyGuardOk() {
     if (!r.ship) continue;
     let f = 0, complete = true;
     for (const ing in r.needs) {
-      const row = _SALVAGE_BY_ING[ing] || _SUPPLY_BY_ING[ing];
-      if (!row) { complete = false; break; }
-      f += r.needs[ing] * (((row.cost && row.cost.food) || 0) / Math.max(1, row.out.qty));
+      /* 🔴 THE MINIMUM ACROSS EVERY RUNG, NOT "the dealer's row if he has one".
+         This read `_SALVAGE_BY_ING[ing] || _SUPPLY_BY_ING[ing]` — a PREFERENCE,
+         not a minimum — which was harmless only while there were exactly two
+         rungs and the dealer's food leg was always the dearer of the two. With
+         three rungs a preference can walk straight past the cheapest one, and
+         the cheapest one is the whole question this wall asks. It is a
+         minimum now, so a fourth rung joins it by being listed and cannot make
+         the wall report safer than it is. */
+      let per = Infinity;
+      for (const row of [_SUPPLY_BY_ING[ing], _SALVAGE_BY_ING[ing], _BARTER_BY_ING[ing]]) {
+        if (!row) continue;
+        per = Math.min(per, ((row.cost && row.cost.food) || 0) / Math.max(1, row.out.qty));
+      }
+      if (!Number.isFinite(per)) { complete = false; break; }
+      f += r.needs[ing] * per;
     }
     if (complete && f < binMin) { binMin = Math.round(f * 1000) / 1000; binWorst = r.id; }
   }
@@ -4209,6 +4702,103 @@ export function assertDataSane() {
         + ') needs level ' + (core.minLevel || 1) + ' — the cheap route opens before the real one');
     }
   }
+  /* ── 🔴 G — THE BARTER COUNTER (§🤝). SEVEN INVARIANTS, AND THEY ARE THE
+        FOOD-DENOMINATED FORM OF E, NOT AN EXEMPTION FROM IT. ─────────────────
+     E asks "is the fallback dearer in Cinder than the thing it falls back for".
+     Rung four charges no Cinder at all, so asked in Cinder E is vacuous for it
+     and E's loop deliberately does not walk these rows. Asked in the currency
+     the counter is actually priced in — the game's own board value per unit,
+     `_boardValuePerUnit()` — it is the same question and it is asked here.
+     🔴 A ZERO-CINDER ROW IS THE THING THIS FILE SPENT THREE ROUNDS REFUSING TO
+        SHIP. It is safe only while every one of these holds; if one of them
+        fires, the correct response is to fix the price, never to scope the
+        check around the row. */
+  const _freeParcel = RELIEF.filter((p) => p.free)[0] || null;
+  for (const s of _BARTER_LINES) {
+    const core = _SUPPLY_BY_ING[s.out.ing];
+    const sal = _SALVAGE_BY_ING[s.out.ing];
+    if (!core) { bad.push('barter line ' + s.id + ' has no core line behind it'); continue; }
+
+    // G1 — no Cinder leg, ever. The entire reason this rung exists.
+    if ((s.cost || {}).cinder) {
+      bad.push('🔴 THE BARTER COUNTER TAKES CINDER: ' + s.id + ' charges ◈'
+        + s.cost.cinder + '. Rung four exists so that a player at ◈0 with a full stash has a '
+        + 'door; one Cinder in its price and it is another wall');
+    }
+    // G2 — every leg must be an id the FREE parcel actually carries. Derived
+    //      from the parcel rather than assumed, because "the drop pays out what
+    //      no door takes" is exactly the defect this rung closes.
+    if (_freeParcel) {
+      for (const k in (s.cost || {})) {
+        if (!((_freeParcel.out[k] || 0) > 0)) {
+          bad.push('🔴 THE BARTER COUNTER WANTS SOMETHING THE DROP DOES NOT CARRY: ' + s.id
+            + ' costs `' + k + '` and ' + _freeParcel.id + ' pays out '
+            + JSON.stringify(_freeParcel.out) + ' — the escape hatch\'s output must be this '
+            + 'rung\'s input or the ladder has a rung with no step below it');
+        }
+      }
+    }
+    // G3 — dearest per unit on the game's own board, against BOTH other rungs.
+    const bv = _boardValuePerUnit(s), cv = _boardValuePerUnit(core);
+    if (!(bv > cv)) {
+      bad.push('🔴 THE BARTER COUNTER IS THE CHEAP ROUTE: ' + s.id + ' is ' + bv.toFixed(2)
+        + ' Cinder of board value per unit against the core line\'s ' + cv.toFixed(2)
+        + ' — the emergency rung must never be a strategy');
+    }
+    if (sal && !(bv > _boardValuePerUnit(sal))) {
+      bad.push('🔴 THE BARTER COUNTER UNDERCUTS THE SCRAP DEALER: ' + s.id + ' is ' + bv.toFixed(2)
+        + ' against ' + sal.id + '\'s ' + _boardValuePerUnit(sal).toFixed(2)
+        + ' — rung four is below rung three and the ladder is upside down');
+    }
+    // G4 — and dearest in `food` specifically, which is the currency
+    //      convoyGuardOk()'s food walls are denominated in. Cheaper in food than
+    //      the core line is a dish cheaper in food than `recipe.foodCost`, and
+    //      that gap is where a Cinder→food convoy printer lives.
+    const bf = ((s.cost && s.cost.food) || 0) / Math.max(1, s.out.qty);
+    const cf = ((core.cost && core.cost.food) || 0) / Math.max(1, core.out.qty);
+    if (!(bf > 0)) {
+      bad.push('🔴 A FOOD-FREE BARTER LINE: ' + s.id + ' costs no live `food`. With no Cinder leg '
+        + 'either, that is a free ingredient, which is an infinite economy');
+    } else if (cf > 0 && !(bf >= cf)) {
+      bad.push('🔴 THE BARTER COUNTER DISCOUNTS FOOD: ' + s.id + ' is ' + bf.toFixed(3)
+        + ' food/unit against the core line\'s ' + cf.toFixed(3)
+        + ' — see convoyGuardOk()\'s fourth wall; that gap is the printer');
+    }
+    // G5 — the smallest crate on the sheet, on both comparisons.
+    if (!(s.out.qty < core.out.qty)) {
+      bad.push('barter line ' + s.id + ' is not a smaller crate than the core line ('
+        + s.out.qty + ' vs ' + core.out.qty + ')');
+    }
+    if (sal && !(s.out.qty < sal.out.qty)) {
+      bad.push('barter line ' + s.id + ' is not a smaller crate than the scrap-dealer line ('
+        + s.out.qty + ' vs ' + sal.out.qty + ')');
+    }
+    // G6 — never opens before the line it is a fallback for.
+    if ((s.minLevel || 1) < (core.minLevel || 1)) {
+      bad.push('🔴 THE BARTER COUNTER OUTRANKS THE CITY: ' + s.id + ' unlocks at level '
+        + (s.minLevel || 1) + ' against ' + core.id + '\'s ' + (core.minLevel || 1));
+    }
+  }
+  /* G7 — THE FLOOR IS NOT THE KITCHEN, said about rung four the same way C says
+     it about rung three. Derived from the rows, so an added barter line cannot
+     quietly widen it. */
+  const barterMenu = RECIPES.filter((r) => Object.keys(r.needs).every((id) => !!_BARTER_BY_ING[id]));
+  if (!barterMenu.length) {
+    bad.push('🔴 THE BARTER COUNTER REACHES NO DISH: rung four stocks '
+      + _BARTER_LINES.map((x) => x.out.ing).join(', ') + ' and no recipe can be built from those '
+      + 'alone — a player at ◈0 with an empty stash has a counter that sells them nothing they '
+      + 'can cook, which is the round-6 defect with a fourth rung bolted on');
+  } else if (!barterMenu.some((r) => (r.minLevel || 1) === 1)) {
+    bad.push('🔴 THE BARTER COUNTER REACHES NOTHING ON DAY ONE: it builds '
+      + barterMenu.map((r) => r.id).join(', ') + ', none of them level 1');
+  }
+  if (barterMenu.length > ECON.BARTER_MENU_MAX) {
+    bad.push('🔴 THE BARTER FLOOR IS THE KITCHEN: rung four can build ' + barterMenu.length
+      + ' dishes (' + barterMenu.map((r) => r.id).join(', ') + ') against a ceiling of '
+      + ECON.BARTER_MENU_MAX + ' — a counter that takes no Cinder and runs a menu is a kitchen '
+      + 'that needs no city');
+  }
+
   /* ── 🔴 F — THE RELIEF LOOP MUST LOSE MONEY. ──────────────────────────────
      Rung three is the only door in the feature that takes Cinder alone, and it
      is safe ONLY because what it hands back is live resources at a punitive
@@ -4412,81 +5002,106 @@ export function assertDataSane() {
     if (typeof v === 'number' && !Number.isFinite(v)) bad.push('ECON.' + k + ' is not finite (' + v + ')');
   }
 
-  /* 🔴🔴 THE ESCAPE HATCH MUST ACTUALLY ESCAPE, AND "IT IS IN THE TABLE" IS
-        NOT THAT. The free parcel exists so a player with an empty 14-id ledger
-        can always get back to COOKING — not back to holding resources. Those
-        are different sentences and only one of them is the requirement. A drop
-        of `{water:9}` would satisfy every guard above it: dry-gated, rate
-        limited, worth nothing, and completely useless.
-        So: at its own daily rate, the free parcel must convert into at least
-        one COMPLETE level-1 dish by a route the parcel can actually pay for.
-        `cheapestRoute(id, payableIn)` is what makes that honest — the dish has
-        to be buildable out of THIS parcel's ids and nothing else.
-     ⚠ THE TOLL IS REAL AND IS NOT CHECKED HERE, BECAUSE IT CANNOT BE. Turning
-       the parcel into pantry stock still costs CINDER at the crate (measured:
-       ◈110 of whole crates for the first Hot Dog, ◈235 for the first
-       Margherita), and there is no Cinder-free line in SUPPLY_RECIPES — nor can
-       there be, because invariant E is denominated in Cinder and a zero-Cinder
-       line would BE the cheapest route by definition. So the ladder's floor is
-       "an empty ledger", NOT "an empty ledger and an empty wallet": a player
-       at zero Cinder AND zero of all fourteen is still stuck, and the drop
-       lands in their yard unusable. It is reachable only by spending every
-       Cinder the kitchen minted, and the wider game has its own Cinder income —
-       but it is a REAL hole and it is written down here rather than implied,
-       because the last thing that was merely implied here shipped as a table
-       with no consumer. */
-  /* ⚠ AND IT IS ASKED IN WHOLE CRATES, WHICH IS THE ONLY UNIT THE SHOP SELLS
-        IN. This check was first written on `cheapestRoute()`, which amortises a
-        crate across the dishes it eventually makes — and on that model a 5-food
-        parcel "buys 1.9 Margheritas" and the guard passes. In the shop a
-        Margherita's crate set costs 10 food IN ONE GO, so 5 food bought nothing
-        at all, on any day, and the amortised guard would have certified the
-        dead end it was written to prevent. The faucet guard above KEEPS the
-        amortised model on purpose — "what is a drop worth per day if you keep
-        taking them" really is a long-run question and surplus really does carry
-        over — but "can today's drop put a plate on the pass" is a question
-        about one morning, and one morning buys whole crates. Two questions, two
-        models, and the difference between them is the bug. */
+  /* 🔴🔴 THE ESCAPE HATCH MUST ACTUALLY ESCAPE — AND THE OLD VERSION OF THIS
+        CHECK CERTIFIED A KITCHEN THAT COULD NOT COOK FOR FOURTEEN DAYS.
+     ══════════════════════════════════════════════════════════════════════════
+     The free parcel exists so a player with an empty 14-id ledger can always
+     get back to COOKING — not back to HOLDING RESOURCES. Those are different
+     sentences and only one of them is the requirement. A drop of `{water:9}`
+     would satisfy every guard above this one: dry-gated, rate limited, worth
+     nothing, and completely useless.
+
+     🔴 SO WOULD `{food:7, water:4}`, WHICH IS WHAT SHIPPED, AND THIS CHECK
+        PASSED IT. The old version priced the crate set in whole crates (right,
+        and hard-won — see the ⚠ below) and then compared only the LIVE legs
+        against the parcel, because `for (const k in best.cost) if (k ===
+        'cinder') continue;`. Cinder was excluded by construction. Every crate
+        on the sheet had a Cinder leg, so the check was asking "could this
+        parcel buy the set if the money were free", the answer was yes, and the
+        answer to the question a stranded player actually asks was no. MEASURED
+        at HEAD 9d41440 (r9/dry12.mjs, ◈0, fourteen days): 112 food, 64 water,
+        `affordable: []` every morning, `cookable: []` every morning,
+        `buySupply('sal_mustard',1)` → "Not enough Cinder — you need 20 and have
+        0." The parcel landed every day into a kitchen that could never spend it.
+     🔴 AND THE FILE KNEW. The note that used to sit here read: "THE TOLL IS
+        REAL AND IS NOT CHECKED HERE, BECAUSE IT CANNOT BE… it is a REAL hole
+        and it is written down here rather than implied." A hole you have
+        written down is still a hole, and a check with a note explaining what it
+        does not check is a check that will be read as passing. The hole is
+        closed at the data (§🤝, the barter counter) and the note is now this
+        check: the crate set must be payable OUT OF THE PARCEL ALONE — zero
+        Cinder, and no live id the parcel does not carry.
+
+     ⚠ AND IT IS ASKED IN WHOLE CRATES, WHICH IS THE ONLY UNIT THE SHOP SELLS
+       IN. This half was written on `cheapestRoute()`, which amortises a crate
+       across the dishes it eventually makes — and on that model a 5-food parcel
+       "buys 1.9 Margheritas" and the guard passes, while in the shop a
+       Margherita's crate set costs 10 food IN ONE GO and 5 food bought nothing
+       at all on any day. The faucet guard above KEEPS the amortised model on
+       purpose — "what is a drop worth per day if you keep taking them" really
+       is a long-run question and surplus really does carry over — but "can the
+       drop put a plate on the pass" is a question about whole crates. Two
+       questions, two models, and the difference between them is the bug.
+
+     ⚠ IT IS ASKED IN DAYS, NOT IN ONE DAY, AND THAT IS THE OTHER HALF OF THE
+       BALANCE. Surplus carries over, so a set costing more than one parcel is
+       still an escape — just a slower one. Demanding one day would force the
+       parcel up until it was a shift's worth of stock, which is precisely the
+       faucet RELIEF_FREE_DAILY_CINDER_MAX exists to prevent. The two ceilings
+       squeeze from opposite sides; that is the design.
+       See ECON.RELIEF_RESCUE_DAYS_MAX. */
   for (const p of RELIEF) {
     if (!p.free) continue;
+    const per = p.out || {}, perDay = Math.max(1, p.perDay | 0);
+    const payable = (row) => {
+      for (const k in (row.cost || {})) if (!((per[k] || 0) > 0)) return false;
+      return true;    // `cinder` is not a key on any parcel, so it fails here.
+    };
     let reached = null;
     for (const r of RECIPES) {
       if ((r.minLevel || 1) !== 1) continue;
-      let food = 0, need = Object.create(null), yields = Infinity, ok = true;
+      const need = Object.create(null);
+      let ok = true;
       for (const ing in r.needs) {
-        // Per ingredient, the whole-crate purchase that costs the LEAST of the
-        // parcel's binding resource — that is the route a stranded player takes.
-        let best = null, bestFood = Infinity;
-        for (const row of [_SUPPLY_BY_ING[ing], _SALVAGE_BY_ING[ing]]) {
-          if (!row) continue;
+        /* Per ingredient, the whole-crate purchase that takes the FEWEST DAYS
+           of drops — that is the route a stranded player walks, and it is the
+           parcel's binding resource that decides it, not the food leg alone. */
+        let best = null, bestDays = Infinity;
+        for (const row of [_SUPPLY_BY_ING[ing], _SALVAGE_BY_ING[ing], _BARTER_BY_ING[ing]]) {
+          if (!row || !payable(row)) continue;
           const batches = Math.ceil(r.needs[ing] / Math.max(1, row.out.qty));
-          const f = ((row.cost && row.cost.food) || 0) * batches;
-          if (f < bestFood) { bestFood = f; best = row; }
+          let d = 0;
+          for (const k in row.cost) d = Math.max(d, (row.cost[k] * batches) / (per[k] * perDay));
+          if (d < bestDays) { bestDays = d; best = { row, batches }; }
         }
         if (!best) { ok = false; break; }
-        const batches = Math.ceil(r.needs[ing] / Math.max(1, best.out.qty));
-        for (const k in (best.cost || {})) {
-          if (k === 'cinder') continue;
-          need[k] = (need[k] || 0) + best.cost[k] * batches;
+        for (const k in best.row.cost) {
+          need[k] = (need[k] || 0) + best.row.cost[k] * best.batches;
         }
-        food += ((best.cost && best.cost.food) || 0) * batches;
-        yields = Math.min(yields, Math.floor((best.out.qty * batches) / r.needs[ing]));
       }
       if (!ok) continue;
-      // Every live id the crate set wants must be on the parcel, in full.
-      let covered = true;
-      for (const k in need) if (!((p.out[k] || 0) * (p.perDay || 1) >= need[k])) { covered = false; break; }
-      if (!covered) continue;
-      if (!reached || food < reached.food) reached = { id: r.id, food, yields, need };
+      let days = 0;
+      for (const k in need) days = Math.max(days, need[k] / (per[k] * perDay));
+      days = Math.ceil(days);
+      if (!reached || days < reached.days) reached = { id: r.id, days, need };
     }
+    const cap = ECON.RELIEF_RESCUE_DAYS_MAX;
     if (!reached) {
       const sets = RECIPES.filter((r) => (r.minLevel || 1) === 1).map((r) => r.id).join(', ');
-      bad.push('🔴 THE FREE DROP DOES NOT REACH A DISH: ' + p.id + ' carries '
-        + JSON.stringify(p.out) + ' a day, and that does not buy ONE COMPLETE CRATE SET for any '
-        + 'level-1 recipe (' + sets + '). The shop sells whole crates, so a parcel that only covers '
-        + 'part of a set puts nothing on the pass — measured, a 5-food drop landed every morning for '
-        + 'eight days and the kitchen served 0, 1, 0, 2, 0, 2, 0, 1. Grow the parcel to the cheapest '
-        + 'complete set and move ECON.RELIEF_FREE_DAILY_CINDER_MAX with it; do not delete this check');
+      bad.push('🔴 THE FREE DROP REACHES NO DISH A BROKE PLAYER CAN BUY: ' + p.id + ' carries '
+        + JSON.stringify(p.out) + ' a day and NOT ONE complete crate set for a level-1 recipe ('
+        + sets + ') can be paid for out of it — every route wants Cinder, or a live id the parcel '
+        + 'does not carry. MEASURED when this was last true: fourteen days of drops, 112 food, '
+        + '64 water, zero crates affordable, zero dishes cooked, popularity 50 → 41.6, and the '
+        + 'kitchen silently shut. Add a rung the parcel can pay for (see §🤝) — do NOT put Cinder '
+        + 'in the parcel, which is the round-4 Cinder machine with a new label');
+    } else if (reached.days > cap) {
+      bad.push('🔴 THE FREE DROP TAKES TOO LONG TO REACH A DISH: the cheapest complete crate set '
+        + p.id + ' can pay for is ' + reached.id + ' at ' + JSON.stringify(reached.need)
+        + ' = ' + reached.days + ' days of drops, against a ceiling of ' + cap
+        + '. A player who has to wait a week to cook one dish has been dead-ended with extra '
+        + 'steps. Cheapen the barter rung or grow the parcel — and move '
+        + 'ECON.RELIEF_FREE_DAILY_CINDER_MAX with it if you grow the parcel');
     }
   }
 

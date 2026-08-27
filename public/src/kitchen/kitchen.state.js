@@ -307,13 +307,27 @@ export const Kitchen = {
   upgrades: [],          // owned UPGRADES ids. SAVED. Feeds every DATA.*(…, owned)
                          // helper — slot counts, cook speed, pass size, tips.
 
-  /* 🪂 THE RELIEF RECEIPT. `shift.day` of the last free drop, 0 for never.
-     SAVED, and it HAS to be: the free parcel is once per in-game DAY, and a day
-     survives a panel close. Keyed on `shift.day` rather than on a shift counter
-     for the reason kitchen.data.js spells out — `closeShift(now,{forfeit:true})`
-     deliberately does not roll the day, so a per-shift counter would reset every
-     time the player shut and re-opened the panel, which is two taps. */
-  reliefDay: 0,
+  /* 🪂 THE RELIEF RECEIPT — `K.now` OF THE LAST FREE DROP, 0 FOR NEVER. SAVED.
+     🔴 IT USED TO BE `shift.day` AND THAT LOCKED THE ONE DOOR IT EXISTS TO OPEN.
+     The gate was `reliefDay === shift.day`, and `shift.day` only advances when a
+     day is COMPLETED — `closeShift(now,{forfeit:true})` deliberately does not
+     roll it (§4). So a stranded player at 0 Cinder took the drop, cooked five
+     hot dogs in ninety seconds, and their only route to the next parcel was to
+     hold the panel open and stare at a kitchen that cannot cook for eleven
+     minutes and twenty seconds — measured, doors open, lane correctly dry-gated
+     so literally nothing happened. Leaving and coming back never advanced it at
+     all, because a forfeit does not roll the day. That is the gap between "never
+     soft-locked" and "never stuck", and it made the escape hatch renewable only
+     for a player who did not need it.
+     So it is keyed on the WALL CLOCK, exactly like convoys (§4 makes this
+     argument for the one other thing that must advance while the panel is shut):
+     the cooldown runs down while you are away playing the city builder, which is
+     where the kitchen is supposed to be fed from in the first place. THE RATE IS
+     UNCHANGED — the cooldown is ECON.DAY_MS, one day's worth of clock, which is
+     the rate the `shift.day` gate was tuned at — so the
+     RELIEF_FREE_DAILY_CINDER_MAX bound on the only free faucet in the feature is
+     exactly as tight as it was. hydrate() migrates an old `reliefDay`. */
+  reliefAt: 0,
 
   stations: {},          // stationId → { slots: [slot|null, …] }
   hand: null,            // { recipeId, quality, mult } lifted off a station, or null
@@ -349,6 +363,26 @@ export const Kitchen = {
   //   before this literal is evaluated. That is the whole reason it is not a
   //   `const` arrow (same argument as the exports — see the header).
   today:  freshToday(),
+
+  /* 🥫 WHAT THE LIVE 14-ID LEDGER DID TODAY — AND IT IS DELIBERATELY NOT INSIDE
+     `today`, WHICH IS THE WHOLE OF ROUND 7'S HEADLINE BUG.
+     🔴 These three lived in `today` and `openShift()` does `K.today =
+     freshToday()`. The natural player loop is RESTOCK, THEN OPEN THE DOORS — so
+     a player who took the relief drop, called in three pallets and bought
+     fourteen crates (5,110 Cinder, 36 food out, 37 food and 34 water in) tapped
+     OPEN THE DOORS and THE DAY showed 0 SERVED · 0 WALKED · 0 BURNT · 0 CINDER ·
+     0 TIPS · 0 XP with no ledger row at all, because the receipt was emptied one
+     tap before it was drawn. Only a MID-shift restock survived, and mid-shift is
+     the awkward time — the sheet covers the line while cars queue.
+     The tallies in `today` are SHIFT-scoped and must reset when service starts;
+     the ledger line is DAY-scoped, because "what has this business cost me
+     today" does not stop being true because you opened the doors. That is
+     CONTRACT §4's own day/shift split, applied to the one row that was on the
+     wrong side of it. Cleared by the day roll and by reset(), never by
+     openShift(); NEVER SAVED, exactly like `today`. `day` stamps which day it
+     belongs to so a stale bucket cannot be read as this morning's. */
+  dayLedger: freshLedger(1),
+
   totals: { served: 0, lost: 0, burnt: 0, spoiled: 0, binned: 0, earned: 0, days: 0 },
 
   /* 🔴 THE STARTING-STOCK RECEIPT. See hydrate(): ECON.START_PANTRY is granted
@@ -581,6 +615,19 @@ function freshToday() {
   return {
     served: 0, lost: 0, burnt: 0, spoiled: 0, binned: 0, turned: 0,
     earned: 0, tips: 0, xp: 0, qsum: 0, qunits: 0, raw: 0, perfect: 0,
+
+    /* 🤝 THE PROMISES, WHICH ARE EXACT ON FIVE SURFACES AND WERE ABSENT FROM THE
+       SIXTH. 45.6% of drive-thru tickets carry a modifier ("no mayo", "extra
+       cheese", "well done"); the lane speaks it, the chip draws it, the till
+       pays it, the toast names it, the car's parting line reacts to it — and the
+       one screen that tells the player how their DAY went never mentioned it.
+       It is the single largest skill axis in the lane. Both references close the
+       day on a scorecard a player reads to decide what to do differently.
+       Booked in serveTicket() off the SAME verdict that pays MOD_XP_HIT, so the
+       row and the xp cannot disagree about what happened. `modCinder` is the
+       signed Cinder the promises themselves were worth — already inside
+       `earned`, so the report prints it as a breakdown and never adds it again. */
+    kept: 0, broken: 0, modCinder: 0,
     /* ⏱ MILLISECONDS THE KITCHEN WAS ACTUALLY OPEN TODAY, advanced in tick()
        off the same clamped step as `shift.tMs`. It exists because gradeParts()
        needs "how long were you trading" and `shift.tMs` is not that number: a
@@ -590,27 +637,45 @@ function freshToday() {
        it rides `today` so mergeToday()/hydrate() carry it for free. */
     ms: 0,
 
-    /* 🔴 WHAT THE KITCHEN ATE OUT OF THE LIVE 14-ID LEDGER TODAY, AND WHAT IT
-       PUT BACK. The one screen that summarises a day showed served / walked /
-       burnt / Cinder / tips / XP and said NOTHING about live resources — i.e.
-       nothing about the feature the player actually asked for ("uses the food
-       and food type resources … from the other parts of the game"). A day of
-       real play burns roughly 450 food and the report card printed a Cinder
-       number and stopped. REF-B puts exactly this on its end-of-day screen.
-
-       `resSpent` is `{liveResId: units}` and is accumulated in the ONE place
-       resources leave — `spendCost()`, which both buySupply() and buyUpgrade()
-       go through, so a third spender cannot forget to book it.
-       `resGained` is the other direction: relief parcels and convoy claims.
-       `cinderSpent` is what the restocking cost, so the report can print the
-       whole cost of trading and not just the takings.
-
-       ⚠ THREE OBJECTS INSIDE A TALLY THAT mergeToday() FOLDS NUMERICALLY — see
-       mergeToday(), which now has to know the difference. That is the price of
-       putting a dict in `today`; the alternative was a fourth parallel tally
-       object nobody would reset. */
-    resSpent: {}, resGained: {}, cinderSpent: 0,
+    /* 🥫 AND THE LIVE-LEDGER LINE IS NOT HERE. `resSpent` / `resGained` /
+       `cinderSpent` used to be three keys of this object and openShift() wiped
+       them one tap after the player spent 5,110 Cinder. They now live in
+       `K.dayLedger` — see the Kitchen literal for the whole argument, and
+       dayLedger() below for the one accessor everything writes through.
+       ⚠ DO NOT PUT THEM BACK. A dict inside a shift-scoped tally is the shape
+         of the bug: mergeToday() folds numerically, freshToday() is called by
+         openShift(), and both are correct for a COUNTER and wrong for a day's
+         receipt. */
   };
+}
+
+/**
+ * 🥫 THE DAY'S LIVE-LEDGER BUCKET. One shape, one place, same argument as
+ * freshToday() — and `day` is not decoration: it is what lets the guard in
+ * dayLedger() re-arm a stale bucket instead of showing yesterday's stash line
+ * as this morning's.
+ */
+function freshLedger(day) {
+  return { day: Math.max(1, _int(day) || 1), resSpent: {}, resGained: {}, cinderSpent: 0 };
+}
+
+/**
+ * The bucket for the day we are actually on, re-armed lazily.
+ *
+ * ⚠ EVERY WRITER GOES THROUGH THIS AND NOTHING ELSE. A second writer touching
+ *   `K.dayLedger` directly is how the day roll and the receipt would come to
+ *   disagree — the exact two-readers-of-one-truth shape reliefOffer() exists to
+ *   prevent one screen along. hydrate() can also move `shift.day` under us
+ *   (a different save, a bail record from another day), and the stamp catches
+ *   that for free.
+ */
+function dayLedger() {
+  const d = Math.max(1, _int(K.shift.day));
+  let L = K.dayLedger;
+  if (!L || typeof L !== 'object' || _int(L.day) !== d) L = K.dayLedger = freshLedger(d);
+  if (!L.resSpent || typeof L.resSpent !== 'object') L.resSpent = {};
+  if (!L.resGained || typeof L.resGained !== 'object') L.resGained = {};
+  return L;
 }
 
 /** Build (or rebuild) the station rack from STATIONS. Slot arrays are sized by
@@ -698,8 +763,9 @@ export function reset() {
   K.convoys = [];
   K.inbound = [];
   K.today = freshToday();
+  K.dayLedger = freshLedger(1);
   K.totals = { served: 0, lost: 0, burnt: 0, spoiled: 0, binned: 0, earned: 0, days: 0, foodSpent: 0 };
-  K.reliefDay = 0;
+  K.reliefAt = 0;
   K.missing = false; K.offline = false; K.error = null;
   K._seq = 0; K._seed = 1; K._nextCounter = 0; K._report = null;
   K._stallSince = 0; K._dryAt = -Infinity; K._stalled = false;
@@ -759,12 +825,13 @@ export function snapshot() {
     //    way to tell "never played" from "played, spent everything" once the
     //    player's xp is still 0, and the grant becomes a faucet. See hydrate().
     startGranted: !!K.startGranted,
-    /* 🪂 THE RELIEF RECEIPT — the day the last free drop landed. Saved for the
-       same reason `startGranted` is: without it the once-a-day parcel re-arms
-       on every panel open and the only free faucet in the feature becomes an
-       unbounded one. See buyRelief(). Additive — an old save has no key,
-       hydrate() reads 0, and the first drop of the day is still owed. */
-    reliefDay: Math.max(0, _int(K.reliefDay)),
+    /* 🪂 THE RELIEF RECEIPT — the WALL-CLOCK stamp of the last free drop. Saved
+       for the same reason `startGranted` is: without it the parcel re-arms on
+       every panel open and the only free faucet in the feature becomes an
+       unbounded one. See buyRelief() and reliefLeft(). Additive — an old save
+       has no key, hydrate() migrates its `reliefDay` to 0, and the first drop
+       is owed immediately, so nobody is worse off for the change. */
+    reliefAt: Math.max(0, _num(K.reliefAt, 0)),
   };
 }
 
@@ -952,10 +1019,25 @@ export function hydrate(saved) {
     foodSpent: Math.max(0, _int(t0.foodSpent)),
   };
 
-  /* 🪂 The relief receipt. Clamped to the day we are actually on: a save that
-     claims the drop was taken on day 900 would otherwise lock the only free
-     door for 899 in-game days. A receipt from the FUTURE is not a receipt. */
-  K.reliefDay = _clamp(_int(s.reliefDay), 0, Math.max(0, _int(K.shift.day)));
+  /* 🪂 THE RELIEF RECEIPT, AND ITS MIGRATION.
+     A save written before round 7 carries `reliefDay` (an in-game day number)
+     and no `reliefAt`. Reading that integer as an epoch would put the stamp in
+     1970 — harmless — but reading a FUTURE epoch would lock the only free door,
+     so both directions are handled: an old save migrates to 0 (the drop is owed
+     immediately; nobody is worse off for the change), and a stamp ahead of the
+     clock is discarded by reliefLeft(). A receipt from the future is not a
+     receipt. */
+  K.reliefAt = Math.max(0, _num(s.reliefAt, 0));
+
+  /* 🥫 The day's ledger bucket is NEVER SAVED (it is `today`'s neighbour, not
+     its child — see the Kitchen literal). What hydrate owes it is only the day
+     STAMP: a bucket booked under the previous save's day must not be drawn as
+     this one's morning.
+     🔴 CONDITIONAL, AND THE CONDITION IS THE POINT. init() calls hydrate() on
+     EVERY panel open, so wiping unconditionally here would re-file the same bug
+     one door along — restock, close the panel, re-open, and the receipt is empty
+     again. Same day → same bucket. */
+  if (!K.dayLedger || _int(K.dayLedger.day) !== _int(K.shift.day)) K.dayLedger = freshLedger(K.shift.day);
 
   K.v = 1;                                // migrations for v2 go HERE, above this line
   /* 🔴 THE SAVE INTERLOCK, SET HERE AND NOWHERE ELSE. `save()` refuses to write
@@ -1295,16 +1377,20 @@ function spendCost(cost, mult) {
   return ok({ spent: cost });
 }
 
-/** The day's ledger line. Pure bookkeeping; called only on a settled spend. */
+/** The day's ledger line. Pure bookkeeping; called only on a settled spend.
+    Writes the DAY bucket, not `today` — see the Kitchen literal's `dayLedger`. */
 function bookSpend(takenRes, takenCinder) {
-  if (!K.today.resSpent || typeof K.today.resSpent !== 'object') K.today.resSpent = {};
+  const L = dayLedger();
   for (const pair of takenRes) {
     const id = pair[0], n = _int(pair[1]);
     if (!id || n <= 0) continue;
-    K.today.resSpent[id] = _int(K.today.resSpent[id]) + n;
+    L.resSpent[id] = _int(L.resSpent[id]) + n;
+    /* 🥫 LIFETIME `food`, and the key is `foodSpent`. ⚠ IT IS SAVED UNDER THIS
+       NAME (snapshot().totals) — renaming it would zero the ALL TIME tile for
+       every existing save, so the renderer was the half that had to move. */
     if (id === 'food') K.totals.foodSpent = _int(K.totals.foodSpent) + n;
   }
-  if (_int(takenCinder) > 0) K.today.cinderSpent = _int(K.today.cinderSpent) + _int(takenCinder);
+  if (_int(takenCinder) > 0) L.cinderSpent = _int(L.cinderSpent) + _int(takenCinder);
 }
 
 /**
@@ -1317,8 +1403,8 @@ function bookSpend(takenRes, takenCinder) {
  * spent it. Biggest first: on a 360px screen the tail is what gets clipped, so
  * the tail must be the part that matters least.
  */
-function resLineFor(today) {
-  const spent = (today && today.resSpent) || {};
+function resLineFor(led) {
+  const spent = (led && led.resSpent) || {};
   const ids = Object.keys(spent).filter((id) => _int(spent[id]) > 0)
     .sort((a, c) => _int(spent[c]) - _int(spent[a]));
   if (!ids.length) return '';
@@ -1330,12 +1416,24 @@ function resLineFor(today) {
   return `${parts.join(' · ')} — out of your stash`;
 }
 
-/** The other direction — a relief parcel or a convoy landing. Same discipline:
-    only ever called once the units have been re-read out of the live ledger. */
+/**
+ * The other direction — units landing IN the live ledger. Same discipline as
+ * bookSpend(): only ever called once the units have been re-read out of the
+ * bridge, so the receipt can never claim more than actually arrived.
+ *
+ * ⚠ ONE CALLER TODAY, AND THE COMMENT USED TO CLAIM TWO. It said "a relief
+ *   parcel or a convoy landing"; a convoy claim pays out through convoy.js's own
+ *   `b.addRes('food', take)` (convoy.js:2234) and has never reached this
+ *   function, so the sheet's row was labelled "convoys and relief" over a number
+ *   that could only ever be relief. The label is now honest and the convoy leg
+ *   is a one-line ask in another builder's file — written out in the handover.
+ *   A comment that names a caller that does not exist is how the next reader
+ *   concludes the wiring is done.
+ */
 function bookGain(id, n) {
-  if (!K.today.resGained || typeof K.today.resGained !== 'object') K.today.resGained = {};
   if (!id || _int(n) <= 0) return;
-  K.today.resGained[id] = _int(K.today.resGained[id]) + _int(n);
+  const L = dayLedger();
+  L.resGained[id] = _int(L.resGained[id]) + _int(n);
 }
 
 /**
@@ -1818,8 +1916,9 @@ export function buyRelief(reliefId, batches) {
     return no('CLOSED', 'The drop only comes when there is nothing left to cook.');
   }
 
-  if (row.perDay && _int(K.reliefDay) === _int(K.shift.day)) {
-    return no('CAP', "Today's drop has already been. The flight comes once a day.");
+  if (row.perDay) {
+    const left = reliefLeft(K.now);
+    if (left > 0) return no('CAP', `The last drop has already been. The next flight is ${fmtMs(left)} away.`);
   }
 
   /* The cost dict may hold `cinder` and nothing else — the parcels are the ONE
@@ -1879,10 +1978,10 @@ export function buyRelief(reliefId, batches) {
     return no('CAP', `Your stash is full — the ${label} would not fit. Nothing was taken, and nothing was charged.`);
   }
 
-  if (row.perDay) K.reliefDay = _int(K.shift.day);
+  if (row.perDay) K.reliefAt = _num(K.now, 0);
   dryDirty();                             // the LEDGER moved — see dryNow()
   for (const id of Object.keys(granted)) bookGain(id, granted[id]);
-  if (price > 0) K.today.cinderSpent = _int(K.today.cinderSpent) + price;
+  if (price > 0) dayLedger().cinderSpent = _int(dayLedger().cinderSpent) + price;
   K.rev++;
 
   const line = Object.keys(granted)
@@ -1918,12 +2017,22 @@ export function buyRelief(reliefId, batches) {
  */
 export function reliefOffer() {
   const d = dryCheck();
-  const taken = _int(K.reliefDay) === _int(K.shift.day);
+  /* 🪂 WALL CLOCK, NOT `shift.day` — see the Kitchen literal. `takenToday` keeps
+     its name because it is what the sheet asks ("is the free row spent?"); what
+     changed is the clock it is answered on.
+     ⚠ THE COUNTDOWN RIDES `why` AND IS NOT A SECOND FIELD. A bare `nextIn`
+       number would be one more value computed here and read by nobody — this
+       feature's recurring defect, six rounds running. The refusal sentence is
+       what render already draws (the relief row's `mk-twin`, and the stall
+       bar's `mk-stall-why`), the sheet repaints every SHEET_REPAINT_MS, so the
+       clock visibly runs down where the player is looking. */
+  const left = reliefLeft(K.now);
+  const taken = left > 0;
   const rows = reliefRows().map((r) => {
     let available = true, why = '';
     if (_int(r.minLevel || 1) > K.level) { available = false; why = `Unlocks at level ${_int(r.minLevel)}.`; }
     else if (r.whenDry && d.cookable.length > 0) { available = false; why = 'Only when there is nothing left to cook.'; }
-    else if (r.perDay && taken) { available = false; why = "Today's drop has already been."; }
+    else if (r.perDay && taken) { available = false; why = `The next flight lands in ${fmtMs(left)}.`; }
     else {
       const price = _int((r.cost || {}).cinder);
       let have = 0;
@@ -1933,6 +2042,38 @@ export function reliefOffer() {
     return Object.assign({}, r, { available, why, cinder: _int((r.cost || {}).cinder) });
   });
   return { stalled: d.stalled, dry: d.dry, takenToday: taken, day: _int(K.shift.day), rows };
+}
+
+/**
+ * ⏳ HOW LONG UNTIL THE FREE PARCEL IS OWED AGAIN, IN MILLISECONDS. 0 = now.
+ *
+ * ONE reader of the cooldown, for the reason reliefOffer()'s own comment gives:
+ * the automatic drop on the tick path and the button on the Supplies sheet must
+ * never be able to disagree about whether a drop is owed.
+ * ⚠ THE PERIOD IS `ECON.DAY_MS` AND THAT IS DELIBERATELY NOT A NEW DIAL. The
+ *   rule is "the free flight comes once a day", DAY_MS is how long a day is, and
+ *   CLAUDE.md forbids an economy number living in this file — a private
+ *   `RELIEF_COOLDOWN_MS` here would be exactly that, and a fallback literal is
+ *   still a number the ECON table cannot tune. If the flight should ever run on
+ *   its own clock rather than the day's, that is one declared key in
+ *   kitchen.data.js and this one line; it is a handover ask, not a local edit.
+ * ⚠ A future stamp (a device clock wound back) reads as "owed now" rather than
+ *   as a lock lasting until the clock catches up. One extra free parcel is a
+ *   rounding error; a stranded player locked out for a week is the bug this
+ *   whole function exists to close.
+ */
+function fmtMs(ms) {
+  try { if (typeof BRIDGE.fmtMs === 'function') return BRIDGE.fmtMs(ms); } catch (e) {}
+  const sec = Math.max(0, Math.round(_num(ms, 0) / 1000));
+  return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0');
+}
+function reliefLeft(now) {
+  const at = _num(K.reliefAt, 0);
+  if (!(at > 0)) return 0;
+  const cool = Math.max(0, _int(EC('DAY_MS', 720000)));
+  const gone = _num(now, K.now) - at;
+  if (!(gone >= 0)) return 0;
+  return Math.max(0, cool - gone);
 }
 
 /**
@@ -1950,7 +2091,7 @@ export function reliefOffer() {
 function reliefWatch(t) {
   /* The three CHEAP gates first, off latched fields, because this runs on the
      tick path sixty times a second and the fourth gate is not cheap. */
-  if (_int(K.reliefDay) === _int(K.shift.day)) return;      // already been today
+  if (reliefLeft(t) > 0) return;                            // the flight is not due
   if (!K._stalled || !K._stallSince) return;                // there is food to cook
   const wait = Math.max(0, EC('RELIEF_AUTO_MS', 3000));
   if (t - _num(K._stallSince, t) < wait) return;
@@ -3339,6 +3480,22 @@ export function serveTicket(ticketId, now) {
       const v = DriveThru.modVerdict(K, car || { carId: ticket.carId }, t);
       const hit = Math.max(0, _int(v && v.honoured));
       if (hit > 0) xp += hit * _int(EC('MOD_XP_HIT', 3));
+
+      /* 🤝 AND THE DAY'S PROMISE TALLY, OFF THE SAME READING. See freshToday():
+         the promise is exact on five surfaces and was absent from the sixth, and
+         the sixth is the one screen a player reads to decide what to do
+         differently tomorrow. Booking it HERE rather than in serveCar() is not
+         convenience — this is post-commit (takeDishes() has already written
+         `built`/`pn`/`filled`), it is the same verdict object that pays the xp,
+         and it is inside the state file that owns `today`, so the row cannot
+         drift from the xp it sits beside or need a second exported verb.
+         ⚠ `modCinder` IS A BREAKDOWN, NOT AN ADDITION. The Cinder half of the
+           verdict is settled by drivethru's serveCar() on the tip line; this
+           number exists so the report can say what the promises were worth
+           INSIDE the takings, and nothing may ever add it to `earned`. */
+      K.today.kept = _int(K.today.kept) + hit;
+      K.today.broken = _int(K.today.broken) + Math.max(0, _int(v && v.broken));
+      K.today.modCinder = _int(K.today.modCinder) + Math.round(_num(v && v.cinder, 0));
     } catch (e) { /* a lane mid-rewrite must never cost the player their sale */ }
   }
 
@@ -3824,10 +3981,14 @@ function mergeToday(src) {
   const out = freshToday();
   if (src && typeof src === 'object') {
     for (const k of Object.keys(out)) {
-      /* ⚠ THE RESOURCE TALLIES ARE DICTS, NOT NUMBERS. `_num({food:12}, 0)` is
-         0, so folding them the numeric way would silently wipe a resumed
-         shift's ledger line — the exact "computed and never consumed" shape
-         this round exists to delete, one level down. */
+      /* ⚠ THE DICT BRANCH IS A FLOOR, NOT A LIVE PATH ANY MORE. `today` held
+         three `{liveResId: units}` dicts and `_num({food:12}, 0)` is 0, so
+         folding them numerically silently wiped a resumed shift's ledger line.
+         Round 7 moved the ledger out of `today` entirely (see `K.dayLedger`) —
+         which is the real fix, because openShift() was wiping it a tap earlier
+         anyway. The branch stays because freshToday() is the ONE definition of
+         the shape and a future tally that is a dict must not quietly become 0
+         the day somebody adds it. */
       if (out[k] && typeof out[k] === 'object') {
         const d = src[k];
         if (d && typeof d === 'object') {
@@ -3962,11 +4123,21 @@ export function closeShift(now, opts) {
        `resSpent` / `resGained` are `{liveResId: units}`, `cinderSpent` is what
        the restocking cost, and `foodSpent` is the lifetime total for the ALL
        TIME strip. All four are read straight off the tallies; none of them is
-       re-derived, so the receipt cannot disagree with the ledger. */
-    resSpent: Object.assign({}, K.today.resSpent || {}),
-    resGained: Object.assign({}, K.today.resGained || {}),
-    cinderSpent: _int(K.today.cinderSpent),
-    foodSpent: _int((K.today.resSpent || {}).food),
+       re-derived, so the receipt cannot disagree with the ledger.
+       🔴 OFF `K.dayLedger`, NOT `K.today` — the whole reason that bucket exists.
+       A player restocks and THEN opens the doors; openShift() resets `today` and
+       must not reset the day's receipt. */
+    resSpent: Object.assign({}, dayLedger().resSpent),
+    resGained: Object.assign({}, dayLedger().resGained),
+    cinderSpent: _int(dayLedger().cinderSpent),
+    foodSpent: _int(dayLedger().resSpent.food),
+
+    /* 🤝 THE PROMISES. Booked in serveTicket() off the verdict that pays the
+       modifier xp. `modCinder` is signed and is already inside `earned` — it is
+       printed as a breakdown of the takings, never added to them. */
+    kept: _int(K.today.kept),
+    broken: _int(K.today.broken),
+    modCinder: _int(K.today.modCinder),
     /* 🔴 AND THE SENTENCE, PRE-BUILT, BECAUSE THE HALF OF THIS THAT LIVES IN
        kitchen.render.js IS SOMEBODY ELSE'S LINE TO WRITE. Handing the screen a
        dict means the screen decides the wording, the order, the units and the
@@ -3975,10 +4146,10 @@ export function closeShift(now, opts) {
        row can be `${rep.resLine ? …row… : ''}` exactly like the waste line
        above it. It is a DISPLAY string and it is deliberately the only one this
        file produces beyond the `{why}` sentences the actions already return. */
-    resLine: resLineFor(K.today),
+    resLine: resLineFor(dayLedger()),
     /* Net Cinder, because "earned 4,120" beside "spent 3,980" is the sentence,
        and a player should not have to do that subtraction on a phone. */
-    net: _int(K.today.earned) + _int(K.today.tips) - _int(K.today.cinderSpent),
+    net: _int(K.today.earned) + _int(K.today.tips) - _int(dayLedger().cinderSpent),
     lifetime: {
       served: _int(K.totals.served), days: _int(K.totals.days),
       earned: _int(K.totals.earned), foodSpent: _int(K.totals.foodSpent),
@@ -4023,6 +4194,12 @@ export function closeShift(now, opts) {
     K.totals.days++;
     K.shift.day++;
     K.shift.tMs = 0;
+    /* 🥫 AND HERE — NOT IN openShift() — IS WHERE THE DAY'S LEDGER LINE ENDS.
+       The report two dozen lines up has already read it, so the receipt for the
+       day that just closed is complete and the new day starts at zero. This is
+       the ONE explicit clear; dayLedger()'s stamp guard is the safety net for
+       every other way `shift.day` can move. */
+    K.dayLedger = freshLedger(K.shift.day);
     emit('day:roll', { day: K.shift.day, report });
   }
 
@@ -4607,6 +4784,11 @@ export function simulate(seconds, actions, opts) {
      tickets and cost 16.4 popularity while the HUD clock stayed frozen. */
   const gap = (o.gap && _num(o.gap.ms, 0) > 0) ? { at: _num(o.gap.at, 0), ms: _num(o.gap.ms, 0), done: false } : null;
 
+  /* 🥫 RUN-SCOPED LEDGER TOTALS. See the day:roll fold below for why the run
+     needs its own accumulator and cannot just read `K.dayLedger` at the end. */
+  const runSpent = {}, runGained = {};
+  let runCinder = 0, restocks = 0;
+
   for (let elapsed = 0; elapsed < total; elapsed += stepMs) {
     t += stepMs;
     const tSec = elapsed / 1000;
@@ -4651,7 +4833,25 @@ export function simulate(seconds, actions, opts) {
     for (const ev of evs) {
       report.counts[ev.name] = (report.counts[ev.name] || 0) + 1;
       if (!o.quiet) report.events.push(ev);
-      if (ev.name === 'day:roll') report.days++;
+      /* 🥫 THE RUN'S LEDGER, FOLDED DAY BY DAY. `K.dayLedger` is day-scoped by
+         design, so reading it once at the end of a ten-day run would report the
+         LAST day and call nine days of spending zero — which is precisely the
+         "the harness cannot see the premise" failure this instrument exists to
+         catch. The day-roll report already carries the closed day's line, so
+         there is nothing to re-derive. */
+      if (ev.name === 'day:roll') {
+        report.days++;
+        const r = ev.report;
+        if (r) {
+          for (const id of Object.keys(r.resSpent || {})) runSpent[id] = (runSpent[id] || 0) + _int(r.resSpent[id]);
+          for (const id of Object.keys(r.resGained || {})) runGained[id] = (runGained[id] || 0) + _int(r.resGained[id]);
+          runCinder += _int(r.cinderSpent);
+        }
+      }
+      /* A restock is a `pantry:buy` that actually bought pantry stock. The relief
+         drop rides the same event (CONTRACT §6 is a closed set) and buys none,
+         and dumpSupply() rides it with a NEGATIVE qty — neither is a purchase. */
+      if (ev.name === 'pantry:buy' && !ev.relief && _int(ev.qty) > 0) restocks++;
     }
 
     // ── INVARIANTS (§11) ──────────────────────────────────────────────────
@@ -4682,10 +4882,30 @@ export function simulate(seconds, actions, opts) {
      that live resources move; a headless report that cannot see them cannot
      regress "LEDGER out {}" — which is exactly how a round shipped 188 dishes
      with the ledger never moving once. */
-  report.resSpent = Object.assign({}, K.today.resSpent || {});
-  report.resGained = Object.assign({}, K.today.resGained || {});
-  report.cinderSpent = _int(K.today.cinderSpent);
-  report.reliefDay = _int(K.reliefDay);
+  /* The CURRENT day's line, still open, plus the whole run's. */
+  report.resSpent = Object.assign({}, dayLedger().resSpent);
+  report.resGained = Object.assign({}, dayLedger().resGained);
+  report.cinderSpent = _int(dayLedger().cinderSpent);
+  for (const id of Object.keys(report.resSpent)) runSpent[id] = (runSpent[id] || 0) + _int(report.resSpent[id]);
+  for (const id of Object.keys(report.resGained)) runGained[id] = (runGained[id] || 0) + _int(report.resGained[id]);
+  runCinder += _int(report.cinderSpent);
+  report.resSpentRun = runSpent;
+  report.resGainedRun = runGained;
+  report.cinderSpentRun = runCinder;
+  report.restocks = restocks;
+  report.reliefAt = _num(K.reliefAt, 0);
+  report.reliefIn = reliefLeft(K.now);
+
+  /* 🔴 THE INVARIANT THAT WOULD HAVE CAUGHT ROUND 7'S BLOCKER, AND IT IS AN
+     INVARIANT RATHER THAN A NOTE BECAUSE A NOTE IS WHAT WE HAD. The receipt was
+     wiped by openShift() one tap after the player spent 5,110 Cinder, every
+     static check passed, and the harness could not see it because it read the
+     same emptied bucket. If crates were bought during this run, the run's ledger
+     line MUST be non-empty — whether the crates were bought before the doors
+     opened or after. `pantry:buy` counts only real purchases (see the fold). */
+  if (restocks > 0 && !Object.keys(runSpent).length && runCinder <= 0) {
+    report.violations.push(`${restocks} restock(s) bought and the run's ledger line is empty — see dayLedger()`);
+  }
   report.dry = dryCheck();
   if (o.fresh) {
     const cov = startPantryCovers();

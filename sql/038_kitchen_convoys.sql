@@ -1077,8 +1077,67 @@ language sql stable set search_path = pg_catalog, pg_temp as $$
    where n.nspname = 'public' and p.proname = p_name
 $$;
 
-revoke all on function public.kitchen_sql_strip(text) from public, anon, authenticated;
-revoke all on function public.kitchen_fn_body(text)   from public, anon, authenticated;
+-- ── 🔴 ROUND 7: THE VERIFY BLOCK'S FIRST BEHAVIOURAL INSTRUMENT ────────────
+-- Every check above reads the SOURCE of a function. That is a real advance on
+-- round 2's "does the object exist", and it is still not the same thing as
+-- RUNNING the function: a body can contain a guard that never executes.
+--
+-- WHY THIS EXISTS AT ALL. Round 6's verify block had 32 assertions and not one
+-- of them covered the three lines that decide WHO MAY TAKE WHOSE FOOD — the
+-- authorisation raises inside the two SECURITY DEFINER RPCs. That is the
+-- gravest possible blind spot in this file, because SECURITY DEFINER means
+-- those functions run with RLS BYPASSED: the policy engine that CLAUDE.md calls
+-- "the entire security boundary" is switched off inside them, and the `if …
+-- then raise` lines ARE the boundary. Demonstrated, not argued: line 974
+-- (`if c.to_user <> me then raise exception 'NOT_YOURS'`) was deleted, nothing
+-- else changed, the file re-applied — all 32 rows printed 'ok', and a third
+-- party then claimed a convoy addressed to somebody else:
+--     THIRD PARTY C CLAIMS THE A→B CONVOY | first_claim t | delivered_dishes 120
+--     LEDGER | claim  | cccccccc-…-003 | 120
+--     LEDGER | launch | bbbbbbbb-…-002 | -120
+-- A green verify table over a theft is precisely the failure this whole section
+-- was written to make impossible, one level up.
+--
+-- ⚠ SO IT RUNS A STATEMENT AND REPORTS WHAT IT RAISED, and nothing else. It is
+--   a diagnostic, not a fixture: it MUST only ever be handed statements that
+--   are expected to REFUSE, so it never writes a row. The checks that use it
+--   call the two RPCs with no signed-in user, which is exactly what the SQL
+--   editor is, so `auth.uid()` is null and both raise before touching anything.
+-- ⚠ NOT SECURITY DEFINER, and that is not an oversight. It runs dynamic SQL; as
+--   a definer function owned by postgres it would be a general-purpose
+--   privilege-escalation door bolted onto a game feature. Non-definer, it can
+--   do exactly what its caller could already do. Granted to nobody, like the
+--   two above.
+-- The comment-free source of a function with every run of whitespace collapsed
+-- to one space. WHY a second flattener: the ORDER checks below ask "does the
+-- authorisation raise come BEFORE the ledger insert", which needs a POSITION,
+-- and the obvious tool for that is `regexp_instr`. That function only exists
+-- from PostgreSQL 15, this file is applied BY HAND to a project whose server
+-- version the repo does not pin, and a verify block that ERRORS on an older
+-- server is a verify block that stops being run. `strpos` is as old as Postgres
+-- and works on a literal — so the body is flattened first, which makes the
+-- literal robust to any reindenting of the statement it is looking for.
+create or replace function public.kitchen_fn_flat(p_name text)
+returns text
+language sql stable set search_path = pg_catalog, pg_temp as $$
+  select regexp_replace(public.kitchen_fn_body(p_name), '\s+', ' ', 'g')
+$$;
+
+create or replace function public.kitchen_verify_raises(p_sql text)
+returns text
+language plpgsql volatile set search_path = pg_catalog, pg_temp as $$
+begin
+  execute p_sql;
+  return '(no error)';
+exception when others then
+  return sqlerrm;
+end;
+$$;
+
+revoke all on function public.kitchen_sql_strip(text)     from public, anon, authenticated;
+revoke all on function public.kitchen_fn_body(text)       from public, anon, authenticated;
+revoke all on function public.kitchen_fn_flat(text)       from public, anon, authenticated;
+revoke all on function public.kitchen_verify_raises(text) from public, anon, authenticated;
 
 
 -- ─── 6. RLS ────────────────────────────────────────────────────────────────
@@ -1339,6 +1398,142 @@ select 'claim reports first_claim',
                where n.nspname = 'public' and p.proname = 'kitchen_convoy_claim'
                  and p.proargnames @> array['first_claim','delivered_dishes']
             ) then 'ok' else 'CLAIM RPC IS PRE-FIX — REPLAY PAYS TWICE' end
+
+union all
+-- ══════════════════════════════════════════════════════════════════════════
+-- 🔴 THE AUTHORISATION CHECKS (round 7). THE SIX ROWS THIS BLOCK WAS MISSING.
+--
+-- Everything above this line guards the FAUCET — how much food can be created,
+-- how fast, by how many parallel calls. Nothing above this line guarded WHO,
+-- and `security definer` is the reason that is not covered by the policy checks
+-- fifty rows up: inside these two functions RLS IS BYPASSED. `kc_sel` cannot
+-- stop a third party claiming a convoy through `kitchen_convoy_claim()`,
+-- because `kitchen_convoy_claim()` does not consult it. CLAUDE.md's line — "a
+-- missing `using (auth.uid() = …)` is a data breach and looks fine in review" —
+-- describes these three `if … then raise` statements exactly, with the policy
+-- engine turned off.
+--
+-- MEASURED, BECAUSE A TRIPWIRE THAT HAS NEVER BEEN SEEN TO TRIP IS NOT A
+-- TRIPWIRE (§5b's rule, applied to §5b's own additions). Each of the three
+-- statement checks below was verified by deleting the ONE line it guards,
+-- leaving every comment in place, and re-applying this file:
+--   · delete `if c.to_user <> me …`      → 'claim checks the recipient' FAILS,
+--       and on the unpatched block all 32 rows printed 'ok' while user C
+--       claimed A's convoy to B for 120 boxes and the ledger recorded it.
+--   · delete `if c.arrives_at > now() …` → 'claim enforces transit' FAILS;
+--       the recipient can otherwise unload a six-hour rig one second after it
+--       launches, which deletes the mechanic the whole feature is built on.
+--   · delete `if p_to = me …`            → 'launch refuses self-ship' FAILS;
+--       a self-addressed convoy is one truck with two claim paths on it.
+-- And because a guard can also be defeated by MOVING it rather than removing
+-- it — which every regex above would happily pass — two more mutants, both of
+-- which leave all three statements present and intact:
+--   · move `if c.to_user <> me …` below the ledger insert → 'claim authorises
+--       before it pays' FAILS (and 'claim checks the recipient' still says ok,
+--       which is exactly why that row is not enough on its own).
+--   · move claim's `if me is null …` below the row lookup → 'rpcs refuse an
+--       unsigned caller' FAILS, printing what it actually got:
+--       `claim -> CONVOY_GONE / launch -> NOT_SIGNED_IN`. A source regex cannot
+--       see that at all; only calling the function can.
+--
+-- ⚠ THEY MATCH THE WHOLE STATEMENT, not the error code. `~ 'NOT_YOURS'` would
+--   be satisfied by the raise being moved somewhere it never runs, by a `when
+--   others` that swallows it, or by the string appearing in a `return`. The
+--   comment-stripped body must contain the literal `if … then raise
+--   exception '…'` — the guard, its condition and its refusal, in that order.
+select 'identity comes from auth',
+       case when public.kitchen_fn_body('kitchen_convoy_claim')
+                  ~ 'me\s+uuid\s*:=\s*auth\.uid\s*\(\s*\)'
+             and public.kitchen_fn_body('kitchen_convoy_launch')
+                  ~ 'me\s+uuid\s*:=\s*auth\.uid\s*\(\s*\)'
+             and not exists (
+                   select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                    where n.nspname = 'public'
+                      and p.proname in ('kitchen_convoy_claim','kitchen_convoy_launch')
+                      and p.proargnames && array['p_me','p_from_user','p_sender','p_as','p_user'])
+            then 'ok'
+            else 'AN RPC TAKES ITS CALLER''S IDENTITY FROM THE CALLER' end
+
+union all
+-- 🔴 WHO MAY UNLOAD A TRUCK. The recipient, and nobody else — not the sender,
+--    not a third party. Deleting this line is the theft reproduced above.
+select 'claim checks the recipient',
+       case when public.kitchen_fn_body('kitchen_convoy_claim')
+                  ~ 'if\s+c\.to_user\s*<>\s*me\s+then\s+raise\s+exception\s+''NOT_YOURS'''
+            then 'ok'
+            else 'ANY SIGNED-IN PLAYER CAN CLAIM ANY CONVOY' end
+
+union all
+-- 🔴 …AND IT MUST REFUSE BEFORE IT PAYS. A regex cannot tell a guard from a
+--    guard that runs after the money moves, and moving the raise below the
+--    ledger insert would satisfy the row above while paying the thief first and
+--    rolling back only if the raise is not caught upstream. Both positions are
+--    read off the same comment-stripped body, so this cannot drift from it.
+select 'claim authorises before it pays',
+       case when strpos(public.kitchen_fn_flat('kitchen_convoy_claim'), 'NOT_YOURS') > 0
+             and strpos(public.kitchen_fn_flat('kitchen_convoy_claim'),
+                        'insert into public.kitchen_convoy_ledger') > 0
+             and strpos(public.kitchen_fn_flat('kitchen_convoy_claim'), 'NOT_YOURS')
+               < strpos(public.kitchen_fn_flat('kitchen_convoy_claim'),
+                        'insert into public.kitchen_convoy_ledger')
+            then 'ok'
+            else 'THE LEDGER IS WRITTEN BEFORE THE CLAIMANT IS CHECKED' end
+
+union all
+-- 🔴 THE MECHANIC ITSELF. Transit is the only cost a convoy has that the sender
+--    cannot buy their way out of; a claim the instant it launches is the
+--    feature with its one constraint removed.
+select 'claim enforces transit',
+       case when public.kitchen_fn_body('kitchen_convoy_claim')
+                  ~ 'if\s+c\.arrives_at\s*>\s*now\s*\(\s*\)\s+then\s+raise\s+exception\s+''STILL_IN_TRANSIT'''
+            then 'ok'
+            else 'A CONVOY CAN BE CLAIMED THE INSTANT IT LAUNCHES' end
+
+union all
+-- 🔴 NO SELF-SHIP. A convoy from you to you is a row that both the sender's
+--    board and the recipient's board own, i.e. two claim paths on one truck —
+--    and the client's practice run already covers the honest version of that
+--    wish without ever reaching this table.
+select 'launch refuses self-ship',
+       case when public.kitchen_fn_body('kitchen_convoy_launch')
+                  ~ 'if\s+p_to\s*=\s*me\s+then\s+raise\s+exception\s+''NO_SELF_SHIP'''
+             and strpos(public.kitchen_fn_flat('kitchen_convoy_launch'), 'NO_SELF_SHIP') > 0
+             and strpos(public.kitchen_fn_flat('kitchen_convoy_launch'),
+                        'insert into public.kitchen_convoys') > 0
+             and strpos(public.kitchen_fn_flat('kitchen_convoy_launch'), 'NO_SELF_SHIP')
+               < strpos(public.kitchen_fn_flat('kitchen_convoy_launch'),
+                        'insert into public.kitchen_convoys')
+            then 'ok'
+            else 'A PLAYER CAN SHIP TO THEMSELVES — TWO CLAIM PATHS ON ONE TRUCK' end
+
+union all
+-- 🔴 THE FIRST BEHAVIOURAL ROW IN THIS BLOCK, and the answer to the objection
+--    that every check above it reads source rather than running it. Both RPCs
+--    are called for real, with no signed-in user — which is what the SQL editor
+--    is — and both must refuse BY NAME before they look at anything. A random
+--    uuid is passed deliberately: if the identity gate has moved below the row
+--    lookup, claim answers 'CONVOY_GONE' instead and this row fails.
+--    ⚠ NOTHING IS WRITTEN. These calls raise; that is the assertion.
+--    ⚠ AND IT DEPENDS ON WHO RUNS THE FILE. Run in the Supabase SQL editor
+--      there is no JWT, so `auth.uid()` is null and both RPCs refuse. Run it
+--      through a session that HAS a `request.jwt.claim.sub` set and this row
+--      reports what it actually got instead of 'ok' — which is a false alarm,
+--      not a defect, and the message names the codes so a reader can tell the
+--      two apart in one glance. Apply this file the way its header says to.
+select 'rpcs refuse an unsigned caller',
+       case when public.kitchen_verify_raises(
+                   'select public.kitchen_convoy_claim(''00000000-0000-4000-8000-000000000000''::uuid)')
+                 = 'NOT_SIGNED_IN'
+             and public.kitchen_verify_raises(
+                   'select public.kitchen_convoy_launch(''00000000-0000-4000-8000-000000000000''::uuid)')
+                 = 'NOT_SIGNED_IN'
+            then 'ok'
+            else 'AN RPC ANSWERED AN UNAUTHENTICATED CALLER: claim -> '
+                 || public.kitchen_verify_raises(
+                      'select public.kitchen_convoy_claim(''00000000-0000-4000-8000-000000000000''::uuid)')
+                 || ' / launch -> '
+                 || public.kitchen_verify_raises(
+                      'select public.kitchen_convoy_launch(''00000000-0000-4000-8000-000000000000''::uuid)') end
 
 union all
 -- The client must hold NO write privilege on the convoy table, by any route,

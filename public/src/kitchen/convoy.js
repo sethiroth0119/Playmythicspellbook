@@ -922,6 +922,13 @@ function shippablePass(K) {
  * auto-fill takes the pass in menu order, which is the same order
  * `clampToCapacity` trims in, so what the player sees is what leaves.
  *
+ * `forNetwork` — OPTIONAL FOURTH ARGUMENT (round 7), the same flag and the same
+ * meaning as `compose()`'s: `true` once the caller has chosen a real recipient,
+ * omitted while the destination is still undecided. It only reaches the
+ * in-flight cap. Pass `!!(recipient && recipient.id)`; pass nothing for the
+ * practice-run lane. See the note at the cap check below for what shipping
+ * without it looked like on screen.
+ *
  * → { tierId, tier, items, lines, dishes, capacity, transitMs, feeCinder,
  *     food, minDishes, ok, code, why }
  *
@@ -942,7 +949,7 @@ function shippablePass(K) {
  *   moves; the affordability VERDICT is what a caller wants, and that is `code`
  *   / `why`. Removed rather than re-published.
  */
-export function manifest(K, tierId, wanted) {
+export function manifest(K, tierId, wanted, forNetwork) {
   const t = tierOf(tierId);
   const blank = {
     tierId, tier: null, items: {}, lines: [], dishes: 0, capacity: 0,
@@ -992,14 +999,32 @@ export function manifest(K, tierId, wanted) {
 
     let code = 'OK', why = '';
     if (_int(K.level) < minLevel) { code = 'LOCKED'; why = 'The ' + (t.name || 'truck') + ' unlocks at level ' + minLevel + '.'; }
-    /* ⚠ THE PERMISSIVE COUNT, ON PURPOSE. This decides whether the SEND button
-       is live, and the panel does not tell us who the load is addressed to — so
-       counting unconfirmed launches here is precisely how round 5 disabled the
-       practice run. `launch()` holds the strict gate and refuses before spending
-       anything. The banner above this panel already says how many trucks are
-       unconfirmed, so the player is not surprised by that refusal. */
-    else if (activeOutbound(K, false) >= Math.max(1, _int(EC('CONVOY_MAX_ACTIVE', 3)))) {
-      code = 'CAP'; why = 'You already have ' + Math.max(1, _int(EC('CONVOY_MAX_ACTIVE', 3))) + ' convoys on the road.';
+    /* ⚠ THE COUNT FOLLOWS THE RECIPIENT, AND THE DEFAULT IS PERMISSIVE.
+       `forNetwork` is the same fourth argument `compose()` takes and it means
+       the same thing: the caller has already chosen a real recipient, so the
+       load will occupy a slot on the SERVER and an unconfirmed launch counts
+       against it. Omitted means "not decided yet" and the count is permissive,
+       because a strict default here is EXACTLY round 5's bug — three lost
+       receipts disabling the offline practice run underneath a banner promising
+       practice runs still work.
+       🔴 ROUND 7: THE ARGUMENT EXISTS BECAUSE ROUND 6 FIXED ONLY HALF OF THIS.
+       `compose()` grew its fourth argument and `launch()` passes it, so the
+       AUTHORITATIVE gate is right — but the renderer's pre-flight had no way to
+       forward the recipient it already holds, so with a real player selected the
+       SEND button read "SEND IT — 12 BOXES", and pressing it answered "3 trucks
+       are still waiting on the depot to confirm them". Nothing was spent and the
+       refusal named its way out, so it was safe rather than harmful; it was
+       still a button that says yes and then says no, on a screen whose own
+       banner had just said the trucks are unconfirmed. `launch()` stays the
+       gate. This only lets the LABEL agree with it once a recipient is chosen. */
+    else if (activeOutbound(K, forNetwork === true) >= Math.max(1, _int(EC('CONVOY_MAX_ACTIVE', 3)))) {
+      code = 'CAP';
+      const p = pending(K, _num(K.now, 0));
+      why = (forNetwork === true && p.count)
+        ? _trucks(p.count) + ' ' + (p.count === 1 ? 'is' : 'are')
+          + ' still waiting on the depot to confirm ' + (p.count === 1 ? 'it' : 'them')
+          + ', and that fills the yard. A practice run to your own city can still go out.'
+        : 'You already have ' + Math.max(1, _int(EC('CONVOY_MAX_ACTIVE', 3))) + ' convoys on the road.';
     } else if (!bins.length) { code = 'NOT_READY'; why = 'Nothing on the pass can ride a convoy — fries and shakes do not travel.'; }
     else if (dishes < minDishes) { code = 'NOT_READY'; why = 'Load at least ' + minDishes + ' boxes.'; }
     else if (feeCinder > purse) { code = 'NO_PANTRY'; why = 'Freight is ' + feeCinder + ' Cinder and you have ' + purse + '.'; }
@@ -1381,6 +1406,13 @@ export async function launch(K, convoy, toUserId, now) {
       id: row.id, tierId: row.tierId, dishes: row.dishes,
       toName: row.toName, self: to.self, feeCinder: paid, arrivesAt: row.arrivesAt,
     });
+    /* 🔴 …AND THE DISPATCH AS A CONDITION (§5c), for the same reason §5b posts
+       the arrival twice: the event above is one rate-limited toast that a
+       level-up in the same frame can outrank, and the row it announces renders
+       ten pixels below the fold of a 390×844 phone. This is the half the player
+       actually sees. Posted from the LOCAL truth and rewritten below if the
+       depot disagrees. */
+    noteDispatch(K, row, 'sent', t);
     forceSave(K);
 
     // 7 · THE SERVER LEG. Best effort, never fatal. A practice run skips it
@@ -1442,6 +1474,10 @@ export async function launch(K, convoy, toUserId, now) {
         row.state = 'pending';
         row.pendingSince = t;
         K.rev++;
+        // §5c: rewrite the dispatch strip the player is looking at RIGHT NOW.
+        // It said "On the road to Kestrel" one await ago and that is no longer
+        // a thing anybody can vouch for.
+        noteDispatch(K, row, 'pending', t);
         forceSave(K);
         netFail(K, res);
         /* 🔴 SAY SO, ON THE CLOSED EVENT SET. The launch ALSO raised
@@ -1485,6 +1521,10 @@ export async function launch(K, convoy, toUserId, now) {
         //    the time control reaches here the depot has answered and said no,
         //    which means no row was written and this cannot double-pay.
         turnBack(K, row);
+        // §5c: same rewrite. `turnBack()` has already renamed the recipient to
+        // "(turned back)", so the strip is built from the row AFTER it, and the
+        // card and the board row say the same thing.
+        noteDispatch(K, row, 'turnedBack', t);
         // ⚠ AFTER THE SAVE, NOT BEFORE. state.js's `save()` writes
         //   `K.error = null` on success, so recording the failure first is the
         //   same as not recording it. See the netFail() block for the measurement.
@@ -2008,8 +2048,26 @@ export function route(c, now) {
     let button = { show: false, label: '', disabled: true, pct: 1 };
     if (phase === 'arrived') {
       if (dock.docking) {
-        caption = 'landed — unloading';
-        button = { show: true, label: 'Unloading…', disabled: true, pct: dock.pct };
+        /* 🔴 'Docking', NOT 'Unloading…' — ROUND 7, AND THE REASON IS PIXELS.
+           This label is on screen for the five seconds a player spends staring
+           at a landed truck waiting for it to open, and at 390px it rendered as
+           the word "NLOADING". Measured off the live DOM before the change:
+           `{"btnText":"UNLOADING…","scrollW":115,"clientW":100,"clipped":true}`
+           at 390px with an ordinary sender name, and clipped at 360px too. The
+           button is a flex child that shrinks under `.mk-row-main` with
+           `overflow:hidden` and no ellipsis, so the difference is simply eaten.
+           A chopped word at the exact moment the player is waiting reads as a
+           broken build.
+           'Docking' is the file's own word for this beat (§5a calls it the dock
+           beat throughout) and it fits at 390 and 360 where the old one did not.
+           ⚠ IT IS NOT THE WHOLE FIX AND MUST NOT BE MISTAKEN FOR ONE. At 320px,
+             or at any width with a long sender name, a SHORTER label still
+             clips — measured `{"btnText":"DOCKING","scrollW":90,"clientW":82}`.
+             The shrink itself is the defect and it lives in kitchen.css, which
+             is another builder's file; the ask is recorded in the handover. The
+             next long label will clip too until that lands. */
+        caption = 'landed — docking';
+        button = { show: true, label: 'Docking', disabled: true, pct: dock.pct };
       } else {
         caption = 'landed — claim it';
         button = { show: true, label: 'Claim', disabled: false, pct: 1 };
@@ -2083,6 +2141,31 @@ export function route(c, now) {
     and the payout can never disagree about what the road took. */
 function spoilOf(c) {
   try { return Math.max(0, _int(routePlan(c).spoilFinal)); } catch (e) { return 0; }
+}
+
+/**
+ * The boxes that SURVIVE the road — `dishes − spoil`, and the ONE spelling of
+ * it. Three call sites need this number: the outbound `convoy:arrive` payload,
+ * the sender's arrival card, and the inbound `convoy:arrive` payload.
+ *
+ * 🔴 IT IS A FUNCTION HERE BECAUSE ROUND 6 PROVED THE ALTERNATIVE. `route()`
+ * used to publish it as `delivering` (with `spoilFinal` beside it). Round 6
+ * removed both — correctly, on evidence that no other FILE read them — and left
+ * two readers behind inside THIS file, at the outbound card and the inbound
+ * payload. The result shipped: the sender's arrival card, which exists
+ * precisely because the toast gets outranked and is the only convoy outcome a
+ * signed-out player can ever reach, read "undefined boxes handed over." on
+ * screen for a whole round, at zero page errors and with the self-test at
+ * 0 FAIL — because a checker that reads NAMES cannot see a property that is
+ * merely absent at RUN TIME. A cleanup aimed at dead fields killed live ones.
+ *
+ * The lesson is not "put the fields back". It is that a number three call sites
+ * need belongs in a named function that a caller either calls or does not,
+ * never in a per-frame render struct a future cleanup can retire out from
+ * under it. `spoilOf()` reads the memoised plan, so this is a map lookup.
+ */
+function deliveredOf(c) {
+  try { return Math.max(0, _int(c && c.dishes) - spoilOf(c)); } catch (e) { return 0; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -2384,7 +2467,7 @@ function claimableAt(c) {
  * The decision this round: it stays, because a truck that stops and instantly
  * becomes a number is the thing round 2's review objected to — and the drawing
  * of it stops being something a renderer has to remember. `route(c, now).button`
- * is `{ show:true, label:'Unloading…', disabled:true, pct }` for the whole beat
+ * is `{ show:true, label:'Docking', disabled:true, pct }` for the whole beat
  * and `{ show:true, label:'Claim', disabled:false, pct:1 }` after it, so the
  * only way to draw this wrong now is to ignore the button entirely.
  *
@@ -2452,8 +2535,16 @@ function arriveMs() {
 /* Ranked, because two trucks can land in one `catchUp()` and one strip has to
    win. Food actually landing in the stash outranks a truck stopping, and an
    inbound truck (yours) outranks the acknowledgement that somebody else has
-   theirs. */
-const ARRIVE_RANK = { claim: 30, in: 20, out: 10 };
+   theirs.
+
+   🔴 ROUND 7 ADDED `sent`, AND IT OUTRANKS EVERYTHING. Not because a dispatch
+   matters more than food landing, but because it is the ONE strip in this set
+   that the player caused with a tap they are still looking at. Every other kind
+   here is a background event; `sent` is the answer to a button. A moment that
+   answers a press must never be swallowed by something that happened on its
+   own — that is how a button comes to feel broken. It also expires in the same
+   five seconds as the rest, so it cannot sit on top of a landing for long. */
+const ARRIVE_RANK = { sent: 40, claim: 30, in: 20, out: 10 };
 
 /**
  * Post the arrival condition. Last writer of equal-or-higher rank wins, so a
@@ -2471,21 +2562,136 @@ function noteArrival(K, a, t) {
     const at = _num(t, _num(K.now, 0));
     const cur = K._arrival;
     const fresh = !cur || (at - _num(cur.at, 0)) >= arriveMs();
-    if (!fresh && (ARRIVE_RANK[cur.kind] || 0) > (ARRIVE_RANK[a.kind] || 0)) return;
+    /* 🔴 A LATER FACT ABOUT THE SAME TRUCK ALWAYS WINS, WHATEVER THE RANKS SAY.
+       Ranks exist to settle a fight between two DIFFERENT trucks competing for
+       one slot; two strips about one truck are not competing, they are a story
+       in order, and the second one is the true one. Without this line the §5c
+       dispatch card (rank 40, the highest) would suppress that same convoy's
+       own arrival card (rank 10) if the two landed inside the five-second
+       dwell — caught by rewinding a truck's clock in a harness so it arrived
+       seconds after SEND, where the card went on reading "Practice run away."
+       over a truck that was already home. Real transit is twenty minutes at the
+       shortest so no player could reach it, which is exactly the kind of
+       "unreachable" this feature has been wrong about before. It also makes the
+       pending / turned-back rewrites in `launch()` explicit instead of relying
+       on `>` being false for equal ranks. */
+    const sameRow = !!cur && a.id != null && String(cur.id) === String(a.id);
+    if (!sameRow && !fresh && (ARRIVE_RANK[cur.kind] || 0) > (ARRIVE_RANK[a.kind] || 0)) return;
     K._arrival = Object.assign({ at }, a);
     K.rev++;
+  } catch (e) {}
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   🔴 §5c — THE LAUNCH HAD NO MOMENT, AND IT IS THE VERB THE PLAYER ASKED FOR
+   ═══════════════════════════════════════════════════════════════════════════
+   Round 6's review, measured on a 390×844 phone with the real rAF loop running:
+   at the instant SEND is pressed, the truck the player just dispatched is
+   ENTIRELY BELOW THE FOLD —
+       AFTER SEND: {"rowTop":854,"rowBottom":956,"viewportH":844,"fullyVisible":false}
+   — origin marker, five leg glyphs, the truck sprite and the ETA line all
+   rendering ten pixels past the bottom edge. The only feedback was one
+   rate-limited toast, "🚚 On the road to Kestrel."
+
+   The board row is good; burying it is the finding. And the fix cannot be "the
+   renderer scrolls", on its own, for the reason §5b already had to learn once:
+   a moment that lives only in a toast is a moment that can be outranked, and a
+   moment that lives only in a scroll position is a moment that is gone the
+   first time the player has already scrolled. So a dispatch is a CONDITION, the
+   same shape an arrival is, written into `K._arrival` and read back by
+   `arrival()`. The renderer already draws that strip above the tabs, so the
+   dispatch lands above the fold with no new surface at all — and the strip
+   carries `id`, which is the row to scroll to, so the two halves agree.
+
+   ⚠ IT IS POSTED FROM THE LOCAL TRUTH, BEFORE THE NETWORK LEG. The row is on
+     the board and the fee is spent the moment step 6 runs; making the player
+     wait for the depot to render the answer to their own tap would be the
+     latency they pressed the button to avoid. When the depot then disagrees —
+     `pending`, or a turn-back — the SAME strip is rewritten with the true
+     sentence, which is why this is a function and not three copies of an
+     object literal. A dispatch card that keeps saying "on the road to Kestrel"
+     under a banner saying the depot never answered is the ghost convoy with
+     nicer typography.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Post (or re-post) the dispatch condition for `row`.
+ *
+ * `phase` is `'sent'` | `'pending'` | `'turnedBack'` and decides the sentence
+ * only — the numbers come off the row, so they cannot drift from the board.
+ *
+ * The strip's fields, for whoever draws it:
+ *   id         the convoy row's local id. THE THING TO SCROLL TO.
+ *   kind       always 'sent' (so `ARRIVE_RANK` can protect it)
+ *   phase      'sent' | 'pending' | 'turnedBack'
+ *   title/line finished sentences; `sub` is small print or ''
+ *   destName   who it is addressed to, already truncated
+ *   tierName   'Box truck' — the truck, for the icon row
+ *   dishes     boxes loaded          feeCinder  Cinder actually taken
+ *   food       what lands at the other end, on this convoy's terms
+ *   arrivesAt  🔴 AN ABSOLUTE TIMESTAMP, NOT A DURATION. The renderer counts
+ *              down every frame; a duration captured here would freeze at the
+ *              value it had when the button was pressed.
+ */
+function noteDispatch(K, row, phase, t) {
+  try {
+    if (!K || !row) return;
+    const dest = _str(row.toName || 'their city', 40);
+    /* ⚠ THE SINGULAR BRANCHES BELOW ARE UNREACHABLE TODAY and are kept anyway.
+       `compose()` refuses a load under `ECON.CONVOY_MIN_DISHES` (4 as shipped),
+       so `boxes === 1` cannot happen — I checked by trying it, and the launch
+       is refused before any strip is posted. They stay because the alternative
+       is a plural-only sentence that reads "1 boxes" the first time somebody
+       tunes that dial down, and a dead branch costs a byte where a wrong
+       sentence costs the player's trust in the number beside it. */
+    const boxes = Math.max(0, _int(row.dishes));
+    const tier = tierOf(row.tierId);
+    let title, line, sub = '';
+    if (phase === 'pending') {
+      title = 'Waiting on the depot.';
+      line = boxes + (boxes === 1 ? ' box is' : ' boxes are') + ' loaded and paid for.';
+      sub = 'Nothing unloads — by anybody — until the depot confirms this one.';
+    } else if (phase === 'turnedBack') {
+      title = 'The truck turned back.';
+      line = boxes + (boxes === 1 ? ' box is' : ' boxes are') + ' coming home to your own city.';
+      sub = 'It still lands, and it is yours to unload.';
+    } else if (row.self) {
+      title = 'Practice run away.';
+      line = boxes + (boxes === 1 ? ' box' : ' boxes') + ' out and back to your own city.';
+    } else {
+      title = 'On the road to ' + dest + '.';
+      line = boxes + (boxes === 1 ? ' box' : ' boxes') + ' left the pass.';
+    }
+    noteArrival(K, {
+      id: row.id, kind: 'sent', phase, icon: '🚚',
+      title, line, sub,
+      destName: dest,
+      tierName: (tier && tier.name) || 'Truck',
+      dishes: boxes,
+      feeCinder: Math.max(0, _int(row.feeCinder)),
+      food: Math.max(0, Math.floor(boxes * EC('CONVOY_FOOD_PER_DISH', 1))),
+      arrivesAt: _num(row.arrivesAt, 0),
+      xp: 0, incidents: 0, holdName: '', holdLine: '',
+    }, t);
   } catch (e) {}
 }
 
 /**
  * THE ARRIVAL STRIP, for the renderer. Pure; safe to call every frame.
  * → null, or
- *   { id, kind:'in'|'out'|'claim', icon, title, line, sub,
+ *   { id, kind:'in'|'out'|'claim'|'sent', icon, title, line, sub,
  *     dishes, food, feeCinder, xp, incidents, holdName, holdLine,
  *     msLeft, pct }        pct 0..1 = how far through its dwell it is
  *
  * `title` and `line` are finished sentences. `sub` is the small print and is
  * `''` when there is none. Nothing here needs formatting or pluralising.
+ *
+ * 🔴 `kind:'sent'` IS THE DISPATCH MOMENT (§5c) and carries three extra fields
+ * — `phase`, `destName`, `tierName`, `arrivesAt` — because it is the one kind
+ * drawn while the trip is still ahead of the player rather than behind them.
+ * `id` is the board row it belongs to, on every kind: that is the row to scroll
+ * to when the strip appears. Every other kind leaves the extras undefined, so
+ * branch on `kind === 'sent'`, never on their presence.
  */
 export function arrival(K, now) {
   try {
@@ -2554,15 +2760,21 @@ function arriveDue(K, now, out) {
     const r = route(c, t);
     /* ⚠ `spoilFinal` / `delivering` USED TO BE READ OFF `route()` HERE. They are
        the road's final cut and the boxes that survive it, and round 6 stopped
-       publishing them from `route()` because no OTHER file ever read them — but
-       this payload does need them, so they are re-derived from the one function
-       that owns the answer. `spoilOf()` is `routePlan().spoilFinal` and the plan
-       is memoised, so this is a map lookup, not a second roll. */
+       publishing them from `route()` because no OTHER file ever read them — so
+       they are re-derived from the two functions that own the answer,
+       `spoilOf()` / `deliveredOf()`, both of which read the memoised plan.
+       🔴 ROUND 7: `landed` IS COMPUTED ONCE, HERE, AND SPENT TWICE — by this
+       payload and by the arrival card thirty lines below. Round 6 fixed this
+       ONE statement and left the card reading the field that no longer exists,
+       which put the literal string "undefined boxes handed over." on the
+       payoff screen of the whole feature. Two derivations of one number is how
+       only one of them gets fixed. */
     const finalSpoil = spoilOf(c);
+    const landed = deliveredOf(c);
     raise(K, out, 'convoy:arrive', {
       id: c.id, dishes: _int(c.dishes), toName: c.toName || '', fromName: c.fromName || '',
       self: !!c.self, dir: 'out',
-      spoil: finalSpoil, delivered: Math.max(0, _int(c.dishes) - finalSpoil), food: r.food,
+      spoil: finalSpoil, delivered: landed, food: r.food,
       incidents: r.incidents.length,
       tierId: c.tierId || 'van',
       // The road, so the moment can say what the trip was.
@@ -2576,12 +2788,18 @@ function arriveDue(K, now, out) {
     /* 🔴 …AND THE SAME MOMENT AS A CONDITION (§5b), because the event above can
        be — and was measured being — dropped by the toast ranker in favour of the
        level-up this very arrival just caused. */
+    /* 🔴 AND THIS IS THE LINE ROUND 6 MISSED. It read `r.delivering`, which
+       round 6's own cleanup had stopped publishing eleven hundred lines up, so
+       the card printed "undefined boxes handed over." — measured on screen at
+       390×844 with zero page errors. `landed` is the local from the payload
+       above; the two halves of one moment can no longer disagree, and there is
+       no field here for a future cleanup to retire. */
     noteArrival(K, {
       id: c.id, kind: 'out', icon: '🚚',
       title: c.self
         ? 'Your practice run is back.'
         : _str(c.toName || 'They', 40) + ' took delivery.',
-      line: r.delivering + (r.delivering === 1 ? ' box' : ' boxes') + ' handed over.',
+      line: landed + (landed === 1 ? ' box' : ' boxes') + ' handed over.',
       sub: r.incidents.length ? (r.holdLine || '') : '',
       dishes: _int(c.dishes), food: 0,
       feeCinder: Math.max(0, _int(c.feeCinder)),
@@ -2625,9 +2843,17 @@ function arriveDue(K, now, out) {
     c.arrivedAt = t;              // ← the dock beat is measured from here (§5a)
     K.rev++;
     const r = route(c, t);
+    /* 🔴 THE SECOND READER ROUND 6 LEFT BEHIND, and it was not touched at all.
+       This payload said `spoil: r.spoilFinal, delivered: r.delivering`, both of
+       which have been `undefined` since round 6 removed them from `route()`.
+       Nothing SCREAMED here the way the sender's card did — the inbound card
+       below happens to read `r.food`, which `route()` still publishes, so the
+       direction was correct by luck — but any listener on `convoy:arrive`
+       reading the inbound half of the event got `undefined` for both. Same two
+       owning functions as the outbound branch, same numbers, one spelling. */
     raise(K, out, 'convoy:arrive', {
       id: c.id, dishes: _int(c.dishes), toName: c.toName || '', fromName: c.fromName || '',
-      self: false, dir: 'in', spoil: r.spoilFinal, delivered: r.delivering, food: r.food,
+      self: false, dir: 'in', spoil: spoilOf(c), delivered: deliveredOf(c), food: r.food,
       incidents: r.incidents.length,
       tierId: c.tierId || 'van',
       holdMs: r.holdMs, holdName: r.holdName, holdLine: r.holdLine,
@@ -3495,7 +3721,7 @@ export function recentPartners(K, limit) {
 
      state       route().phase  caption (tail of the sub-line)         button
      'transit'   'transit'      ''  ← renderer prints its own ETA      none
-     'arrived'   'arrived'      'landed — unloading'                   Unloading… (disabled, .pct fills)
+     'arrived'   'arrived'      'landed — docking'                     Docking (disabled, .pct fills)
        …docked                  'landed — claim it'                    Claim (armed)
      'delivered' 'delivered'    'delivered — {toName} has it'          none  🔴 absent, not refused
      'held'      'held'         'held at the depot: N food — …'        Unload

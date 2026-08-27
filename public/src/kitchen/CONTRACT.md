@@ -73,7 +73,7 @@ export const CUSTOMERS     // [{id,name,icon,patienceMs,tipBias,likes,order:{min
 export const CARS          // [{id,icon,name,seats,patienceMul,weight,len}]
 export const CONVOY_TIERS  // [{id,name,capacity,transitMs,feePct,minLevel}]
 export const DAY_NAMES, POP_FACES
-export const ECON          // ALL tuning. 165 keys. See §8.
+export const ECON          // ALL tuning. 167 keys. See §8.
                            // ⚠ THE COUNT DRIFTS EVERY ROUND AND HAS BEEN WRONG
                            //   TWICE. Read it, never remember it:
                            //   node -e "import('./public/src/kitchen/kitchen.data.js')
@@ -194,7 +194,13 @@ export function buyRelief(reliefId, batches)      // → {ok,code,why,granted,sp
                                            //   want a button.
 
 // ── cooking ──────────────────────────────────────────────────────────────
-export function canCook(recipeId)                        // → boolean
+export function canCook(recipeId)                        // → {ok,code,why}
+                           // 🔴 NOT a boolean, and THE FAILURE OBJECT IS TRUTHY.
+                           //   `if (canCook(id))` is true for a dish you cannot cook.
+                           //   Test `canCook(id).ok`. §1 said `boolean` for three rounds
+                           //   and two critics reported it before the self-test grew a
+                           //   return-shape check and named it. Fix §1, never the function —
+                           //   kitchen.render.js already reads the object correctly.
 export function startCook(stationId, slotIndex, recipeId, now) // → {ok,code,why}
 export function addStep(stationId, slotIndex, ingredientId, now)// → {ok,code,why}
                                            //   🔴 refuses to lay MORE of an ingredient
@@ -310,7 +316,7 @@ export function voiceAudit(budget)         // → {budget,over,max,ok}  every au
 Owns: composition, transit, arrival, claim. **The only part of the sim that advances on
 wall-clock while the panel is shut** (§4).
 ```js
-export function manifest(K, tierId, wanted)// → the loading screen's resolved payload
+export function manifest(K, tierId, wanted, forNetwork)// → the loading screen's resolved payload
 export function compose(K, tierId, items, forNetwork) // → {ok,code,why,convoy}
                                            //   🔴 FOUR ARGUMENTS. `forNetwork` is the
                                            //   in-flight cap's strict/permissive switch;

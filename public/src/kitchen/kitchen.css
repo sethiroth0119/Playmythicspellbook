@@ -3032,6 +3032,128 @@
      next to a Serve button is a third of the bar; the glyph alone is still a
      28px hit area, which is a thumb. */
   #mythic-kitchen-ov .mk-pin-acts .mk-btn.danger { font-size: 13px; padding: 3px 8px; }
+
+  /* ── 🍽 THE PASS IS PINNED TO THE BOTTOM OF THE PLAY AREA ────────────────
+     🔴 THE TICKET AND THE PLATE WERE NEVER ON SCREEN TOGETHER ON ANY PHONE,
+     AND THEY ARE THE TWO THINGS A PLAYER RECONCILES EVERY FEW SECONDS. The
+     ticket names the dish; the plate is the dish. Measured at 360×640 with a
+     full lane and twelve plates: `.mk-body` is 295 rendered px tall, its
+     content is 1027, and a sweep of every scroll offset found the board rail
+     146px visible with the pass at 0 for the whole top of the range, then the
+     board at 0 with the pass at 23–55 for the whole rest of it. ZERO offsets
+     with both over 40px, at 360×640 and at 390×844. The sections cannot fit
+     because the LINE sits between them in source order and the line is 630px
+     of pans; no amount of tightening closes a 630px hole.
+
+     So the pass stops being something you scroll to. It is pinned to the
+     bottom edge of the play area at every scroll position, which is where a
+     pass physically is, and the line scrolls UNDER it. At rest the player sees
+     the orders and the plates at once — REF-B's one-screen kitchen — and while
+     they are working the pans they can still see what is plated and how fresh
+     it is.
+
+     ⚠ `order`, AND IT IS LOAD-BEARING RATHER THAN COSMETIC. A `bottom: 0`
+       sticky box is pinned only while its own flow slot is below the fold; the
+       moment the scroll reaches that slot it settles into it. `.mk-sec-pass` is
+       THIRD of four in source order (board, line, pass, bins), so with nothing
+       else done it would unpin two thirds of the way down and then sit ON TOP
+       of the bins, which is the prep counter you tap to build a dish. Moving it
+       last in the FLEX order (the bins take its old slot) is what makes the pin
+       hold for the whole scroll and land exactly in its own slot at the end.
+       Source order is untouched, so the tab sequence and the screen reader
+       still read board → line → pass → bins.
+     ⚠ z-index against `.mk-sec`'s `position: relative` — every section is a
+       positioned box, so without this the pans would paint over the shelf.
+     ⚠ `scroll-snap-align: none`. Every `.mk-sec` is a snap target; a snap
+       target that never moves is a scroll position the thumb keeps sticking to.
+     ⚠ AND THE BODY'S FOLD-FADE GOES, ON THIS SIDE OF THE BREAKPOINT ONLY. That
+       mask exists to mark the one cut a phone lives with — content sliced flat
+       by the bottom of the scrollport — and with the shelf pinned there is no
+       such cut any more: content is occluded by an opaque lit object instead,
+       which is a stronger "there is more" signal than any gradient. Left in, it
+       did active harm — it runs to 50% alpha at 100%, so it would have dimmed
+       the brightest and most-read surface in the feature by half at ALL times,
+       and every arithmetic dodge (an opaque band the height of the shelf) needs
+       a number for a box whose height changes with the pill, the plate count
+       and the picker. The shelf's own top shadow is the edge marker now. */
+  #mythic-kitchen-ov .mk-sec-board { order: 1; }
+  #mythic-kitchen-ov .mk-sec-line  { order: 2; }
+  #mythic-kitchen-ov .mk-sec-bins  { order: 3; }
+  #mythic-kitchen-ov .mk-sec-pass {
+    order: 4;
+    position: sticky;
+    bottom: 0;
+    z-index: 4;
+    scroll-snap-align: none;
+    /* the gutters either side of `.mk-pass`'s 8px margin would otherwise show a
+       hard-cut strip of whatever is scrolling behind the shelf */
+    padding-bottom: 2px;
+    background: linear-gradient(180deg, transparent, rgba(9,6,4,.78) 26%, rgba(9,6,4,.95) 100%);
+  }
+  /* content sliding under the shelf reads as sliding under something, which is
+     the affordance the removed half of the fade used to carry */
+  #mythic-kitchen-ov .mk-sec-pass::after {
+    content: "";
+    position: absolute;
+    left: 0; right: 0; bottom: 100%;
+    height: 18px;
+    pointer-events: none;
+    background: linear-gradient(180deg, transparent, rgba(9,6,4,.72));
+  }
+  #mythic-kitchen-ov .mk-body {
+    -webkit-mask-image: none;
+            mask-image: none;
+    scroll-padding-bottom: calc(150px / var(--mk-z, 1));
+    /* 🔴 ZERO `padding-bottom`, AND IT IS THE PIN THAT NEEDS IT ZERO. A scroll
+       container's bottom padding moves the anchor a `bottom: 0` sticky child is
+       held against UP by exactly that amount. Measured twice: 239.7px of
+       padding parked the shelf 239.7px above the fold, floating in the middle
+       of the ticket board with the line scrolling past underneath it; the
+       inherited 10px then left a 10px strip of pan showing below the shelf,
+       which reads as the shelf not quite reaching the counter. The bins do not
+       need the padding back — the shelf is LAST in the flex order, so at full
+       scroll it settles into its own slot at the very end and everything above
+       it is reachable. */
+    padding-bottom: 0;
+  }
+  /* the picker opens INSIDE the pinned shelf and grows it upward. Capped so a
+     twelve-ticket board cannot push the shelf over the whole play area. */
+  #mythic-kitchen-ov .mk-picker { max-height: 46vh; overflow-y: auto; }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   📱↔ A PHONE ON ITS SIDE UNPINS THE SHELF, and this is the fifth media block
+   in the file rather than a line inside the fourth for a measured reason.
+   ------------------------------------------------------------------------
+   The pin above buys one thing: the ticket board and the plates on one screen.
+   It can only buy it if the play area is taller than the two of them. In
+   LANDSCAPE it is not: measured at 740×360, the HUD, the road, the window card,
+   the strip and the tab bar leave `.mk-body` 84 CSS px of scrollport, and the
+   shelf alone is 158 — so the pin held it against a bottom edge it was twice
+   too big for, the scroll container clipped everything but its fascia, and the
+   board it was supposed to sit beside was behind it.
+   🔴 IT CANNOT GO IN THE `max-height: 700px` BLOCK AT THE FOOT OF THIS FILE,
+   which is the obvious home for it and would have been wrong: 360×640 — a
+   PORTRAIT phone, and the exact viewport the pin was built for — is 640 tall
+   and matches that query too. The discriminator is landscape, not "short".
+   Below this line the shelf goes back to being scrolled content, which is what
+   it was, and the fold sweep is honest about the cost: on a phone lying down,
+   the ticket and the plate are still two scroll positions apart. ═══════════ */
+@media (max-width: 819px) and (max-height: 500px) {
+  #mythic-kitchen-ov .mk-sec-pass {
+    position: static;
+    order: 3;
+    background: none;
+    padding-bottom: 0;
+  }
+  #mythic-kitchen-ov .mk-sec-bins { order: 4; }
+  #mythic-kitchen-ov .mk-sec-pass::after { content: none; }
+  /* the fold-fade comes back with it — there is a hard bottom cut again */
+  #mythic-kitchen-ov .mk-body {
+    -webkit-mask-image: linear-gradient(180deg, #000 0 calc(100% - 60px), rgba(0,0,0,.50) 100%);
+            mask-image: linear-gradient(180deg, #000 0 calc(100% - 60px), rgba(0,0,0,.50) 100%);
+    padding-bottom: 10px;
+  }
 }
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -3626,7 +3748,16 @@
        than it was. That surplus lands in the pass row, which is the slack row,
        and the pass row is floor — see the back-of-house block below, which is
        what fills it. */
-    grid-template-rows: minmax(0, auto) minmax(150px, 1fr);
+    /* ⚠ 196, UP FROM 150, AND IT IS THE SHELF'S OWN ARITHMETIC. The row floor
+       has to be at least what the shelf cannot go under — 150px of plate + the
+       rail's 4px of padding + the slab's 9/12px + a 21px fascia = 200 — or the
+       slab overflows its row UPWARDS and paints over the bottom of the pans.
+       Measured at 820×900, where the line wraps to two rows and squeezes this
+       one to its floor: the shelf's top edge came out 33px ABOVE the line's
+       rail. The line is the row that gives way instead, and it can: it scrolls,
+       it says so with `data-more`, and CONTRACT §4's own note is that the one
+       thing that must never be pushed off is the pass. */
+    grid-template-rows: minmax(0, auto) minmax(200px, 1fr);
     /* The board is a TALL screen on the left (REF-B mounts it over the pass);
        the line runs down the middle and the pass sits at the END of the line,
        which is where a pass physically is. Putting the pass under the board
@@ -3645,7 +3776,23 @@
             mask-image: none;
   }
   /* the dining room is visible at this width — see the note on .mk-folk */
-  #mythic-kitchen-ov .mk-folk { display: block; }
+  /* 🔴 AND THE DINERS MOVE UP WITH THE SHELF, OR THEY ARE CSS NOBODY CAN SEE.
+     `--fy: 63.5% / --fy2: 67.5%` was measured against a shelf that started at
+     y=645 on a 900px window. The shelf starts at y=517 now, so those two
+     figures — five gradients and a lit table edge each, and the round-4 finding
+     they were built to close — would have been painted entirely BEHIND it. That
+     is the defect this feature keeps shipping, arriving in the one file where
+     it looks like a fix, so it is measured again rather than left: the open
+     strip runs 427 (the bottom of the line's pans) to 517 (the top of the
+     shelf), and 49.5% / 53% puts the heads at 445, the shoulders at 477 and the
+     far edge of their tables at 499 — inside it, with the head tops just
+     tucked behind the pans, which is where a person sitting BEYOND the counter
+     belongs. They stay clear of `.mk-boh`'s hatch horizontally (31% and 63% of
+     the viewport against the hatch's 44–56%), so the strip carries the
+     co-worker at the pass-through AND two customers in the room, side by side.
+     ⚠ If the shelf's `max-height` reserve (`calc(100% - 90px)`) ever changes,
+       these two numbers change with it. They are one geometry. */
+  #mythic-kitchen-ov .mk-folk { display: block; --fy: 49.5%; --fy2: 53%; }
   /* the back of house and the specials board are desktop-only for the same
      reason the diners are — see the block on .mk-boh */
   #mythic-kitchen-ov .mk-boh { display: block; }
@@ -3875,32 +4022,172 @@
      ⚠ pitch = `.mk-dish` width (112) + gap (10) = 122, and the well's y is the
      centre of the plate (56 + 38/2 = 75). Four numbers, one geometry — they
      move together or the food floats off its plate. */
-  #mythic-kitchen-ov .mk-pass { margin: 0; padding: 9px 12px 12px; }
+  /* 🔴 THE SLAB TAKES THE ROW, AND THE ROW IS THE THING THAT WAS EMPTY.
+     Measured at 1440×900 with a full lane and every pan lit: the line's pans end
+     at y=492 and the shelf did not start until y=645 — a 810×153 band, 11.8% of
+     the viewport, that `elementFromPoint` returned `.mk-sec-pass` for at all 81
+     sample points. It was the pass section's own PADDING. Below it the shelf was
+     161px of a 302px row and held the smallest objects on the screen, under a
+     ticket column (306×519) with two and a half times its area — in a game whose
+     reference sells itself on a photograph of finished food.
+     So the slab grows into the row it is already sitting in. `flex: 1 1 auto`
+     with `justify-content: flex-end` on the section (above) means it still hangs
+     at the BOTTOM, where a counter is; it just reaches up now.
+     ⚠ `max-height` KEEPS A LIT STRIP OF DINING ROOM. Taking the whole row would
+       have covered `.mk-boh` and `.mk-folk` — the back counter and the two
+       seated diners — which are painted at a percentage of the overlay and would
+       have become CSS nobody can ever see. That is the defect this feature keeps
+       shipping, in the one file where it would look like a fix. 90px is what is
+       left, and 90 × 810 = 72,900px² = 5.6% of the viewport, under the 6% the
+       band has to come below.
+     ⚠ `min-height` BEATS `max-height` IN CSS, DELIBERATELY RELIED ON HERE. On a
+       short window the pass row falls to its 150px floor, `calc(100% - 90px)`
+       goes to 60px, and a 60px shelf cannot hold a 122px plate. The min wins,
+       the shelf keeps its plate, and the strip is what gives way — which is the
+       right thing to lose first. */
+  #mythic-kitchen-ov .mk-pass {
+    margin: 0;
+    padding: 9px 12px 12px;
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 200px;
+    max-height: calc(100% - 90px);
+    /* 🔴 AND THE MATERIAL IS RE-CUT IN PIXELS FROM THE BOTTOM, because the
+       phone version is stated in PERCENTAGES of a box that is now three times
+       taller. `var(--mk-steel1) 28%` lands 45px down a 161px slab and 80px down
+       a 288px one, so growing the shelf turned a lit steel counter into a
+       288px wall of pale grey — measured by screenshot, and it was the whole
+       reason the first cut of this looked worse than the void it replaced.
+       A pass is a STEEL SHELF IN A DARK RECESS, not a steel panel: the last
+       236px are the counter and the panel behind it, everything above is
+       the shadowed back of the hatch with the lamps burning in it. Stated from
+       the bottom edge so the two never drift apart when the row resizes. */
+    background:
+      linear-gradient(180deg,
+        rgba(11,7,5,.94) 0 calc(100% - 236px),
+        rgba(20,13,9,.96) calc(100% - 236px),
+        var(--mk-steel0) calc(100% - 230px),
+        var(--mk-steel1) calc(100% - 150px),
+        var(--mk-steel3) 100%),
+      var(--mk-brush);
+  }
   #mythic-kitchen-ov .mk-pass-rail {
     gap: 10px;
-    min-height: 122px;
+    min-height: 154px;
     --mk-well-min: 122px;
-    background-image:
-      radial-gradient(46px 19px at calc(50% - 5px) 75px,
-        rgba(255,206,140,.30), rgba(255,180,96,.16) 55%, rgba(255,234,184,.74) 84%,
-        rgba(255,190,110,.36) 93%, transparent 97%),
-      radial-gradient(50px 21px at calc(50% - 5px) 80px, rgba(0,0,0,.46), transparent 78%);
+    /* the plates stand ON the shelf, so they hang from the bottom of whatever
+       height the rail is given rather than floating at the top of it */
+    flex: 1 1 auto;
+    align-items: flex-end;
+    /* 🔴 THE STRAY ELLIPSE IS GONE. This rule used to carry a `background-image`
+       of one plate-sized radial pair at `75px` from the rail's TOP — the last
+       remnant of the era when the wells were a painted background instead of
+       nodes (see the `--mk-well` block). It has been drawing a duplicate well
+       behind whichever plate happened to sit at the rail's centre ever since,
+       invisible only because the rail was exactly one plate tall. The moment the
+       rail became taller than a plate it would have been a lit dish floating in
+       mid air above the crockery. The wells are `.mk-well` elements; the rail
+       draws none. */
+    background-image: none;
   }
-  #mythic-kitchen-ov .mk-dish { width: calc(var(--mk-well, var(--mk-well-min, 122px)) - 10px); height: 122px; padding-top: 12px; }
-  #mythic-kitchen-ov .mk-dish::before { top: 56px; width: 92px; height: 38px; }
+  /* ── 🔥 THE HEAT LAMPS, AND THE AIR UNDER THEM ──────────────────────────
+     The slab reaches up now, so the shelf has headroom for the first time —
+     and a 166px wall of flat steel is not an improvement on 153px of flat
+     floor. This is what a pass actually has above it: a housing hung across
+     the front with the elements burning under it, and three cones of light
+     falling onto the crockery. It is the same three-part recipe as every other
+     lit object in this file (a dark body, a hot lip, a pool of light below),
+     and it is why the plates read as FINISHED FOOD BEING KEPT WARM rather than
+     as inventory on a rack — which is the frame REF-A leads with.
+     ⚠ `bottom: 166px` IS ARITHMETIC, NOT AN EYE: 150px of plate + the rail's
+       4px of bottom padding + the slab's 12px = the plate zone exactly, so in
+       the ordinary state the lamps hang clear above the crockery.
+     🔴 AND THE RAIL IS RAISED A LAYER, BECAUSE THAT ARITHMETIC STOPS BEING
+       TRUE THE MOMENT THE PICKER OPENS. `.mk-picker` is an in-flow child of
+       `.mk-pass`, so choosing a plate's customer takes ~126px out of the slab
+       and the rail — and the food in it — slides UP into the hood's box.
+       Measured at 1440×900 with the picker open: rail 544→683 against a hood
+       ending at 635, and the housing's lit element printed straight across the
+       top of five hot dogs. An abspos `::after` paints over a positioned
+       sibling that is EARLIER in DOM order, which the rail is. One line fixes
+       it in every state rather than in one: the rail takes `z-index: 1`, so the
+       plates are always in FRONT of the lamps and the light falls behind them
+       — which is the only way round that is physically true anyway.
+     ⚠ It collapses to nothing on a short window (top > bottom is an empty box)
+       and it is desktop-only anyway: on a phone the slab is exactly one plate
+       tall, there is no air above the shelf, and there is nothing to light. */
+  #mythic-kitchen-ov .mk-pass::after {
+    content: "";
+    position: absolute;
+    left: 10px; right: 10px;
+    top: 40px;
+    bottom: 166px;
+    pointer-events: none;
+    border-radius: 0 0 8px 8px;
+    background:
+      /* the housing: a dark bar hung under the fascia, its element glowing
+         along the bottom lip where a real one does */
+      linear-gradient(180deg,
+        transparent 0 4px,
+        rgba(14,9,6,.55) 4px 8px,
+        rgba(26,17,11,.94) 8px 22px,
+        rgba(255,150,54,.55) 22px 24px,
+        rgba(255,214,150,.95) 24px 26px,
+        transparent 26px),
+      /* the three cones, falling onto the shelf. They are wide and they reach
+         the crockery — a cone that fades out halfway down is a smudge on a
+         wall, which is the note `.mk-folk` had to learn twice. */
+      radial-gradient(26% 132% at 17% 3%, rgba(255,190,102,.42), rgba(255,170,80,.14) 58%, transparent 78%),
+      radial-gradient(29% 142% at 50% 3%, rgba(255,204,124,.50), rgba(255,178,88,.16) 58%, transparent 80%),
+      radial-gradient(26% 132% at 83% 3%, rgba(255,190,102,.42), rgba(255,170,80,.14) 58%, transparent 78%),
+      /* the tiled back of the hatch, catching just enough of the lamps to have
+         a surface. Warm grout, same pitch and same argument as `.mk-room`. */
+      repeating-linear-gradient(0deg,  rgba(255,206,150,.055) 0 1px, transparent 1px 30px),
+      repeating-linear-gradient(90deg, rgba(255,206,150,.04)  0 1px, transparent 1px 52px);
+  }
+
+  /* 🔴 150, NOT 122 — THE FOOD IS THE BIGGEST THING ON THE SCREEN OR THIS IS
+     NOT A COOKING GAME. The shelf reaches up now (see `.mk-pass` above), and
+     the plate that was the tallest thing in a 161px slab was the smallest
+     thing in a 288px one. 150 is what the plate zone can carry with the lamps
+     still clear above it. ALL EIGHT NUMBERS IN THIS BLOCK MOVE TOGETHER and
+     the ratios are written out so the next person can move them again without
+     measuring them back: the plate ellipse sits at 46.6% of the dish height,
+     the quality word 8px under its far rim, the build strip 28px into the
+     plate, and the well repeats the plate one shade dimmer. Break the ratios
+     and the food floats off its own crockery — which has happened twice. */
+  #mythic-kitchen-ov .mk-dish { width: calc(var(--mk-well, var(--mk-well-min, 122px)) - 10px); height: 150px; padding-top: 14px; }
+  #mythic-kitchen-ov .mk-dish::before { top: 70px; width: 92px; height: 38px; }
   /* 🔴 AND THE EMPTY WELL FOLLOWS THE PLATE, EXACTLY. The two are one geometry —
      same width off `--mk-well`, same height, same ellipse at the same y — and
      the first draft of this styled only `.mk-dish` here, which left a 58px-tall
      well beside a 122px plate: the drawn shelf ended in one small ellipse
      floating 40px above the crockery. If these four numbers stop matching the
      four in `.mk-dish` above, the food floats off its own shelf. */
-  #mythic-kitchen-ov .mk-well { width: calc(var(--mk-well, var(--mk-well-min, 122px)) - 10px); height: 122px; }
-  #mythic-kitchen-ov .mk-well::before { top: 56px; width: 88px; height: 36px; }
-  #mythic-kitchen-ov .mk-well-more > i { top: 62px; font-size: 14px; }
-  #mythic-kitchen-ov .mk-dish .mk-ic { font-size: 44px; }
-  #mythic-kitchen-ov .mk-dish .mk-q { margin-top: 42px; font-size: 12px; }
+  #mythic-kitchen-ov .mk-well { width: calc(var(--mk-well, var(--mk-well-min, 122px)) - 10px); height: 150px; }
+  #mythic-kitchen-ov .mk-well::before { top: 70px; width: 88px; height: 36px; }
+  #mythic-kitchen-ov .mk-well-more > i { top: 76px; font-size: 14px; }
+  /* 🔴 A TABLET IS BOTH, AND THE PLATE WAS BEING CUT IN HALF ON ONE.
+     `[data-touch="1"] .mk-dish, .mk-well { height: max(64px, 52px/zoom) }` in
+     the thumb block below is a floor written for a PHONE, where the dish is
+     58px. It is (1,2,0) and it sits later in the file than this media query, so
+     at 820–1100px with a coarse pointer — an iPad in portrait, and the host
+     scales those viewports too — it beat the desktop height and pinned the dish
+     to 64px while the plate ellipse, the quality word and the build strip
+     stayed at their desktop offsets: the ellipse alone runs 70→108px down a
+     64px box. `.mk-pass-rail` scrolls on x, which makes its y overflow clip, so
+     the crockery and the word under it were simply cut off. Measured at
+     820×900: dish 64px tall, `::before` starting 6px below its own bottom edge.
+     Restated here at (1,3,0) — through the rail, which is the parent both the
+     dish and the well always have — so the tablet gets the desktop plate whole.
+     A 150px plate is over three thumbs tall; there is nothing to floor. */
+  #mythic-kitchen-ov[data-touch="1"] .mk-pass-rail .mk-dish,
+  #mythic-kitchen-ov[data-touch="1"] .mk-pass-rail .mk-well { height: 150px; }
+  #mythic-kitchen-ov .mk-dish .mk-ic { font-size: 50px; }
+  #mythic-kitchen-ov .mk-dish .mk-q { margin-top: 48px; font-size: 12px; }
   #mythic-kitchen-ov .mk-dish .mk-fresh { left: 12px; right: 12px; height: 4px; bottom: 4px; }
-  #mythic-kitchen-ov .mk-dish-build { left: 26px; right: 26px; top: 84px; height: 5px; gap: 2px; }
+  #mythic-kitchen-ov .mk-dish-build { left: 26px; right: 26px; top: 98px; height: 5px; gap: 2px; }
   /* the ledger strip has a whole column to itself here, so the chips breathe */
   #mythic-kitchen-ov .mk-ledger { margin: 0 0 8px; }
   #mythic-kitchen-ov .mk-ledger-row { flex-wrap: wrap; overflow: visible; -webkit-mask-image: none; mask-image: none; }
@@ -4235,6 +4522,56 @@
   border-radius: 50%;
   border: 1px solid rgba(255,77,94,.55);
   background: rgba(24,12,12,.9);
+}
+
+/* ── 👍 THE FLOOR, RESTATED ONCE FOR EVERYTHING THAT IS A CONTROL ─────────
+   🔴 THIS IS THE SEVENTH ROUND OF THE SAME BUG AND THE SEVENTH FIX BESIDE IT,
+   SO THIS TIME THE SHAPE OF THE RULE CHANGES, NOT ITS NUMBER.
+
+   What happened, exactly. The floor above is a LIST OF CLASS NAMES
+   (`.mk-btn, .mk-serve, .mk-pick, .mk-to-chip, .mk-to-field, .mk-tab`) at
+   (1,2,0), written when those six were every control there was. Two rules then
+   restate a SMALLER height inside a container at the same or greater weight:
+   `.mk-buys .mk-btn { min-height: 30px }` (line ~2358) and the mouse floor's
+   `.mk-buys .mk-btn { min-height: 28px }` a few lines up, both (1,2,0) and both
+   LATER in the file. Anything that reuses `.mk-buys` therefore falls THROUGH
+   the touch floor onto the mouse floor. Round 6 added the relief rows that way
+   — `.mk-relief-row > .mk-buys > .mk-btn` — and the escape hatch you press when
+   the kitchen is dry, the one control that exists for the moment the player is
+   stuck, rendered 18.3 px tall at 360×640, 24.1 at 390×844 and 26.6 at 430×932
+   while the crate button BESIDE IT in the same `.mk-buys` rendered 46. 18.3 is
+   under WCAG 2.5.8's 24px absolute minimum for any pointer at all, mouse
+   included. Round 6's own fix was `.mk-supply .mk-buys .mk-btn` — scoped to the
+   neighbouring row class, which is what left the hole.
+
+   So the floor stops being a list of the classes that happen to exist today.
+   `render.js` dispatches EVERY verb through one delegated listener that does
+   `ev.target.closest('[data-act]')` (kitchen.render.js:3028) — plus one `input`
+   (the convoy recipient field). That is the complete interactive set of the
+   feature, by construction and not by enumeration, so that is the subject here:
+   a control is a thing with `data-act` on it, and every one of them is a thumb.
+   A future row can reuse any container class it likes and it cannot fall
+   through this.
+
+   ⚠ WEIGHT AND ORDER, both deliberate. `[data-act]:not(.mk-slot)` is (1,3,0) —
+     one id, one attribute for the gate, one for `data-act`, one class inside
+     `:not()` — so it outranks every container-scoped restatement in the file
+     rather than merely being later than the two that exist right now. Ordering
+     alone was the round-6 fix and ordering alone is what a seventh container
+     rule would beat.
+   ⚠ `.mk-slot` IS EXCLUDED BY NAME because its floor is BIGGER, not smaller
+     (126px/zoom at line ~4083, 106px in the short-landscape block at the foot
+     of this file). `min-height` cannot say "the larger of the two", so a
+     catch-all that swallowed the pan would SHRINK the one control that already
+     got this treatment properly. Anything else whose own floor exceeds
+     `--mk-tap` must be added here in the same way — and measured, not assumed.
+   ⚠ WIDTH IS ALREADY HANDLED ABOVE for the icon-only verbs (`.mk-btn`,
+     `.mk-step`, `.mk-hud-close`, `.mk-rail-more`, `.mk-wave`, `.mk-bin`), which
+     are the only ones that can get narrow; a text button's width comes from its
+     own label. The sweep in the handover measures BOTH axes anyway. */
+#mythic-kitchen-ov[data-touch="1"] [data-act]:not(.mk-slot),
+#mythic-kitchen-ov[data-touch="1"] input:not([type="checkbox"]):not([type="radio"]) {
+  min-height: var(--mk-tap);
 }
 
 

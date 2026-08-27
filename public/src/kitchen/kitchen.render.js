@@ -1547,7 +1547,25 @@ function handHtml(k) {
    its owner adds one, so this becomes a floor rather than a fork.
    ═══════════════════════════════════════════════════════════════════════════ */
 const RES_SOURCE_FLOOR = {
-  food:             { def: 'hydroponics',  name: 'Hydroponics Bay',  icon: '🥬', also: 'agri contracts, fishing hauls, site loot' },
+  /* 🔴 `food` IS THE SENTENCE THAT CARRIES THE PLAYER'S OWN REQUEST, AND IT
+     POINTED AT THE ONE BUILDING THAT CANNOT SUPPLY IT. A Hydroponics Bay is
+     45,000 Cinder for 45 food per 6h cycle — 180 food a real day
+     (/src/city/production.data.js:98) — while a steady in-game day of this
+     kitchen eats ~537 food, measured at level 7. The named building funded a
+     third of one twelve-minute shift, and the system that actually feeds this
+     kitchen — the Agricultural Op business, index.html:79737,
+     `yields:{food:2.4}` per worker-hour × 14 workers ≈ 800 food a real day —
+     was never mentioned. So the business leads and the Bay stays as the small
+     option, WITH THE RATIO ATTACHED, because a player who can size the gap for
+     themselves does not have to take our word for it. Same data shape as the
+     other thirteen rows: the provenance renderer is untouched.
+     ⚠ AND IT HAS TO FIT ON ONE LINE. `.mk-from` is `white-space: nowrap` and
+       `overflow: visible`, so a long `also` does not wrap — it runs off the row
+       and the sentence is simply not readable. A first draft of this row carried
+       the whole comparison in prose and measured 734 rendered px against a
+       505px row at 360. Measured, not guessed: this string keeps the stuck-state
+       chip inside the row at 360, 390 and 430. If you lengthen it, measure it. */
+  food:             { def: 'hydroponics',  name: 'Hydroponics Bay',  icon: '🥬', also: 'an Agricultural Op ≈ 800 food a day, 4× a Bay' },
   water:            { def: 'wellhead',     name: 'Water Reclaimer',  icon: '💧', also: 'site loot' },
   metal:            { def: 'foundry',      name: 'Smelting Foundry', icon: '🏭', also: 'salvage runs' },
   fuel:             { def: 'refinery',     name: 'Fuel Refinery',    icon: '⛽', also: 'raid spoils' },
@@ -2261,57 +2279,118 @@ const RAILS = [
 function updateRailMore(t) {
   if (t - _railMoreAt < 320) return;
   _railMoreAt = t;
-  for (const spec of RAILS) railMoreOne(_reg[spec.sec], _reg[spec.rail], spec.noun);
+  for (const spec of RAILS) railMoreOne(_reg[spec.sec], _reg[spec.rail], spec.noun, spec.sec);
 }
-function railMoreOne(sec, rail, noun) {
+/**
+ * 🍽 WHAT IS ACTUALLY HIDDEN ON A RAIL, AND WHICH WAY IT IS.
+ *
+ * 🔴 ONE MEASUREMENT FEEDS THE COUNT, THE PILL AND THE STEP, AND THAT IS THE
+ * WHOLE OF ROUND 7'S SECOND VISUAL BLOCKER. Round 6 excluded `.mk-well` from the
+ * COUNT and from neither the NAV TEST nor the DIRECTION, so:
+ *   (a) THE PILL WAS LIT ON AN EMPTY PASS. Fresh shift, 0 plates, identical at
+ *       360 / 390 / 430 / 1440: 16 wells, `data-nav="1"`, head reading
+ *       "0 ON THE PASS · ROOM FOR 16 ▸ MORE PLATES". `overX` was true only
+ *       because sixteen EMPTY wells overflowed. It is the first thing a player
+ *       sees on opening the kitchen, and kitchen.css's own rule says why it
+ *       matters: "a pill that is there when nothing is hidden is a pill the
+ *       player learns to ignore, and it then fails on the one occasion it is
+ *       telling the truth."
+ *   (b) THE ARROW POINTED AT THE WELLS AND AWAY FROM THE ROTTING PLATES. With 12
+ *       plates the shelf auto-scrolls to the newest, so the hidden plates are
+ *       indices 0–5 — the OLDEST, on the shortest spoil clock, the ones the game
+ *       charges `today.spoiled` and popularity for — and they are off the LEFT
+ *       edge while four empty wells sit to the right. The pill said "▸ 6 MORE
+ *       PLATES" and walking it stepped through the wells with the count going
+ *       UP: 6,7,8,9,10,10 across six presses before a wrap finally revealed one.
+ *
+ * So there is now ONE list — the non-well children less than half inside the
+ * rail's box — and everything reads it: the count, `data-nav`, the arrow, and
+ * `scrollRailMore()`'s target. A rail holding nothing the player can act on
+ * cannot report that it is hiding something, because the same list is empty.
+ *
+ * → { hidden, before, after, dirX, target, back } — `before`/`after` are the
+ *   nearest hidden card on each side, `target`/`back` are the resolved next
+ *   move, `dirX` says whether this rail is a horizontal one.
+ */
+function railHidden(rail, key) {
+  const out = { hidden: 0, before: null, after: null, dirX: true, target: null, back: false };
+  if (!rail) return out;
+  const rb = rail.getBoundingClientRect();
+  if (!rb.width || !rb.height) return out;
+  const canX = (rail.scrollWidth - rail.clientWidth) > 6;
+  const canY = (rail.scrollHeight - rail.clientHeight) > 6;
+  out.dirX = canX || !canY;
+  for (const card of rail.children) {
+    if (!card || (card.classList && card.classList.contains('mk-well'))) continue;
+    const cb = card.getBoundingClientRect();
+    if (!cb.width || !cb.height) continue;
+    const vw = Math.max(0, Math.min(rb.right, cb.right) - Math.max(rb.left, cb.left));
+    const vh = Math.max(0, Math.min(rb.bottom, cb.bottom) - Math.max(rb.top, cb.top));
+    if (vw >= cb.width * 0.5 && vh >= cb.height * 0.5) continue;
+    out.hidden++;
+    // Which side of the viewport is it on? `before` = needs a backwards step.
+    const before = out.dirX ? (cb.left < rb.left) : (cb.top < rb.top);
+    if (before) { if (!out.before || (out.dirX ? cb.left > out.before.getBoundingClientRect().left : cb.top > out.before.getBoundingClientRect().top)) out.before = card; }
+    else if (!out.after) out.after = card;
+  }
+  /* 🔴 BACKWARDS FIRST, AND THAT IS THE POINT OF (b). The plates behind you are
+     the old ones, on the shortest spoil clock; the ones ahead are the ones you
+     just made and watched arrive. So a fresh press walks BACK.
+     ⚠ AND THE DIRECTION IS STICKY, WHICH IS NOT A FLOURISH. "Back whenever
+       anything is behind" ping-pongs: reach the left end, the pill flips
+       forward, one press forward puts a plate behind you again, and the next
+       press comes straight back — two positions, forever, with the newest
+       plates unreachable. Sticky means the rail is walked to one end, flips, and
+       is walked to the other, which is what a carousel does and what a thumb
+       expects. Resolved HERE rather than in scrollRailMore() so the arrow the
+       player reads and the move the press makes are the same decision. */
+  let d = _railDir[key] || 'back';
+  if (d === 'back' && !out.before) d = 'fwd';
+  if (d === 'fwd' && !out.after) d = 'back';
+  if (d === 'back' && !out.before) d = 'fwd';
+  if (key) _railDir[key] = d;
+  out.back = d === 'back';
+  out.target = out.back ? out.before : out.after;
+  return out;
+}
+/* Which way each rail's pill is currently walking. View state, which is the one
+   kind of state this file is allowed to own (CONTRACT §6). */
+const _railDir = {};
+function railMoreOne(sec, rail, noun, key) {
   if (!sec || !rail) return;
   /* 🔴 BOTH AXES. The old body asked only about `scrollHeight`, which is the
      DESKTOP overflow — a phone rail scrolls sideways and always reported
      "nothing hidden" no matter how many stations were off the right edge. That
      one missing term is the whole reason two of five stations were invisible
      and unannounced at 390px and 430px. */
-  const down = (rail.scrollHeight - rail.clientHeight - rail.scrollTop) > 6;
-  const right = (rail.scrollWidth - rail.clientWidth - rail.scrollLeft) > 6;
-  /* 🔴 TWO FLAGS, NOT ONE, AND THE SECOND ONE IS A DEAD END THIS CLOSES.
-     `data-more` stays POSITION-AWARE because it drives the desktop edge fade,
-     and a fade that is still on when there is nothing below it is the round-3
-     finding all over again. But the PILL cannot use the same test: press it at
-     the right-hand end of the rail and the remaining overflow is zero, so the
-     pill would vanish at the exact moment the first plates are the ones off
-     screen — a player who used the control to reach the end would have no
-     control left to get back. `data-nav` asks the other question ("does this
-     rail scroll at all"), and the arrow flips to point the way it will travel. */
-  const overX = (rail.scrollWidth - rail.clientWidth) > 6;
-  const overY = (rail.scrollHeight - rail.clientHeight) > 6;
-  setData(sec, 'more', (down || right) ? '1' : '0');
-  setData(sec, 'nav', (overX || overY) ? '1' : '0');
-  setData(sec, 'moredir', overX ? 'x' : (overY ? 'y' : ''));
+  const h = railHidden(rail, key);
+  /* `data-more` drives the desktop EDGE FADE, so it is position-aware — and it
+     now asks about real cards too. A fade over four empty wells is the same lie
+     as a pill over them, one paint layer down. */
+  setData(sec, 'more', h.hidden > 0 ? '1' : '0');
+  /* 🔴 `data-nav` IS THE PILL, AND IT IS NOW THE SAME QUESTION AS THE COUNT.
+     It used to ask "does this rail scroll at all", which sixteen empty wells
+     answer yes to. The pill's job is to reach a card that is hidden; if no card
+     is hidden there is nothing to reach and no pill.
+     ⚠ THE OLD REASON FOR ASKING THE LOOSER QUESTION IS ALREADY COVERED. The
+       worry was that pressing to the far end would leave the player with no
+       control to get back — but at the far end the plates behind them ARE
+       hidden, so `hidden > 0` still holds and the arrow now points back at
+       them, which is where they wanted to go anyway. */
+  setData(sec, 'nav', h.hidden > 0 ? '1' : '0');
+  setData(sec, 'moredir', h.hidden > 0 ? (h.dirX ? 'x' : 'y') : '');
   const pill = sec.querySelector('.mk-rail-more');
   if (!pill) return;
-  if (!overX && !overY) { setText(pill, ''); return; }
-  const wrapping = overX ? !right : !down;   // the next press goes back to the start
-  /* NAME THE NUMBER. "more plates" is a hint; "▸ 6 more plates" is a fact the
+  if (!h.hidden) { setText(pill, ''); return; }
+  /* NAME THE NUMBER. "more plates" is a hint; "◂ 6 more plates" is a fact the
      player can check against the count in the same head row, two words to the
      left. A child counts as hidden when less than half of it is inside the
      rail's box — the 8px sliver at 0.28 alpha that started this finding is not a
      visible card by any definition a player would recognise.
-     ⚠ EMPTY WELLS ARE NOT PLATES. The pass rail draws `room` well nodes beside
-       the dishes (passHtml), so counting every hidden CHILD here would report
-       "16 more plates" on a shelf holding four. `.mk-well` is skipped: the
-       number has to be the number of things the player can act on, or it is the
-       same class of lie as the head that said "room for 16" over six wells. */
-  let hidden = 0;
-  const rb = rail.getBoundingClientRect();
-  for (const card of rail.children) {
-    if (card.classList && card.classList.contains('mk-well')) continue;
-    const cb = card.getBoundingClientRect();
-    if (!cb.width || !cb.height) continue;
-    const vw = Math.max(0, Math.min(rb.right, cb.right) - Math.max(rb.left, cb.left));
-    const vh = Math.max(0, Math.min(rb.bottom, cb.bottom) - Math.max(rb.top, cb.top));
-    if (vw < cb.width * 0.5 || vh < cb.height * 0.5) hidden++;
-  }
-  const arrow = wrapping ? (overX ? '◂ ' : '▴ ') : (overX ? '▸ ' : '▾ ');
-  setText(pill, arrow + (hidden > 0 ? hidden + ' more ' + plural(hidden, noun) : 'more ' + noun + 's'));
+     ⚠ EMPTY WELLS ARE NOT PLATES, IN ANY OF THE FOUR ANSWERS ABOVE. See
+       railHidden(). */
+  const arrow = h.back ? (h.dirX ? '◂ ' : '▴ ') : (h.dirX ? '▸ ' : '▾ ');
+  setText(pill, arrow + h.hidden + ' more ' + plural(h.hidden, noun));
 }
 
 /**
@@ -2327,14 +2406,35 @@ function scrollRailMore(which) {
   const spec = RAILS.find((r) => r.sec === which) || RAILS[0];
   const rail = _reg[spec.rail];
   if (!rail) return;
-  const card = rail.children && rail.children[0];
-  const stepX = card ? Math.round(card.getBoundingClientRect().width + 8) : 180;
-  const maxX = rail.scrollWidth - rail.clientWidth;
-  if (maxX > 6) {
-    rail.scrollLeft = rail.scrollLeft + 6 >= maxX ? 0 : Math.min(maxX, rail.scrollLeft + stepX);
+  /* 🔴 STEP TO THE NEAREST HIDDEN CARD, NOT BY ONE CARD WIDTH. Stepping blind
+     walked the pass rail through four empty warming wells — five dead presses at
+     390 and 1440, six at 360 — while the plates it was supposed to reach were
+     off the other edge going stale. railHidden() already knows which card and
+     which way; one press now lands it fully inside the box. */
+  const h = railHidden(rail, spec.sec);
+  if (!h.target) return;
+  const rb = rail.getBoundingClientRect();
+  const cb = h.target.getBoundingClientRect();
+  const pad = 10;
+  /* 🔴 RECTS ARE RENDERED PIXELS; `scrollLeft` IS LAYOUT PIXELS. index.html's
+     `_uiAutoScale` (index.html:209271) transforms the whole document by h/980 on
+     any viewport ≤1100px wide, so at 360×640 the pass rail measures 337px on
+     screen and reports `clientWidth` 516 — a factor of 0.653. Adding a rect
+     delta straight onto `scrollLeft` therefore travelled two thirds as far as it
+     meant to and left the target card 71% visible instead of whole. Converting
+     through the same ratio is the only thing that makes one press land. */
+  const scX = rb.width / Math.max(1, rail.clientWidth);
+  const scY = rb.height / Math.max(1, rail.clientHeight);
+  if (h.dirX) {
+    const maxX = Math.max(0, rail.scrollWidth - rail.clientWidth);
+    // Backwards → the card's LEFT edge to the rail's left. Forwards → its RIGHT
+    // edge to the rail's right. Either way the target ends up whole on screen.
+    const d = h.back ? (cb.left - rb.left) - pad : (cb.right - rb.right) + pad;
+    rail.scrollLeft = Math.max(0, Math.min(maxX, Math.round(rail.scrollLeft + d / (scX || 1))));
   } else {
-    const maxY = rail.scrollHeight - rail.clientHeight;
-    if (maxY > 6) rail.scrollTop = rail.scrollTop + 6 >= maxY ? 0 : Math.min(maxY, rail.scrollTop + Math.round(rail.clientHeight * 0.7));
+    const maxY = Math.max(0, rail.scrollHeight - rail.clientHeight);
+    const d = h.back ? (cb.top - rb.top) - pad : (cb.bottom - rb.bottom) + pad;
+    rail.scrollTop = Math.max(0, Math.min(maxY, Math.round(rail.scrollTop + d / (scY || 1))));
   }
   _railMoreAt = 0;                 // re-measure on the very next frame
   updateRailMore(nowMs());
@@ -2822,11 +2922,23 @@ function toastLine(e) {
        kitchen.state.js, carried all the way here, and dropped by this line. */
     case 'pantry:low': {
       if (!e.dry) return `⚠ Low on ${safe(() => DATA.ingredient(e.ing).name, e.ing)}.`;
+      /* 🔴 NOT WHILE THE PLAYER IS STANDING ON THE SHEET IT IS SENDING THEM TO.
+         The copy is right and the delivery was wrong: it fired with Supplies
+         already open and told the player to "check Supplies", and it renders as
+         a centred block over the middle of that sheet — in the 390×844 capture
+         it covered THE SCRAP DEALER header, its whole explanatory paragraph and
+         the top of the Dough row, i.e. exactly the content it was pointing at.
+         reactEvents() flashes the dry banner instead, which is the same sentence
+         in the place the player is already looking. */
+      if (_sheet === 'supplies') return '';
       const want = (Array.isArray(e.need) ? e.need : []).slice(0, 3)
         .map((id) => safe(() => (b().meta ? (b().meta(id).name || id) : id), id));
+      /* ⚠ NO TRAILING "— check Supplies". The stall bar's own 'Open supplies'
+         button (paintStall) is the call to action; a sentence pointing at a
+         screen the player cannot see is not one. */
       return want.length
-        ? `🪂 The line is dry. Nothing on the sheet can be bought without ${want.join(', ')} — check Supplies.`
-        : '🪂 The line is dry. Nothing on the supplies sheet can be bought — check Supplies.';
+        ? `🪂 The line is dry. Nothing on the sheet can be bought without ${want.join(', ')}.`
+        : '🪂 The line is dry. Nothing on the supplies sheet can be bought.';
     }
     case 'cook:burnt':   return `🔥 You burnt the ${rn(e.recipeId)}.`;
     case 'ticket:lost':  return '💀 They walked out.';
@@ -2846,10 +2958,42 @@ function reactEvents(events /*, now */) {
   if (!_sheet) return;
   for (const e of events) {
     if (!e || !e.name) continue;
+    /* 🪂 THE DRY NEWS, DELIVERED WHERE THE PLAYER IS. toastLine() deliberately
+       returns '' for this one while Supplies is open (see there); the sheet is
+       repainted so the banner is current, and then the banner is flashed. Same
+       information, no block of text over the rows it is talking about. */
+    if (_sheet === 'supplies' && e.name === 'pantry:low' && e.dry) {
+      _lastSheetPaint = 0; paintSheet(); flashDryBanner(); return;
+    }
     if ((_sheet === 'convoy' && e.name.indexOf('convoy:') === 0)
       || (_sheet === 'menu' && e.name === 'level:up')
       || (_sheet === 'day' && e.name === 'shift:close')) { _lastSheetPaint = 0; paintSheet(); return; }
   }
+}
+
+/**
+ * Pull the eye to the dry banner without printing a second copy of it.
+ *
+ * ⚠ NO setTimeout AND NO NEW CSS. CONTRACT §3 allows render a `setTimeout` only
+ *   to remove a finished animation node, and kitchen.css belongs to another
+ *   builder this round — so this is the Web Animations API, which cleans itself
+ *   up, degrades to nothing at all where it is unavailable, and cannot leave a
+ *   stuck inline style behind if the sheet is repainted mid-flash.
+ * → boolean: whether there was a banner to flash.
+ */
+function flashDryBanner() {
+  const el = _root && _root.querySelector('.mk-banner[data-dry="1"]');
+  if (!el) return false;
+  try { if (el.scrollIntoView) el.scrollIntoView({ block: 'nearest' }); } catch (e) {}
+  try {
+    if (typeof el.animate === 'function') {
+      el.animate(
+        [{ filter: 'brightness(1)' }, { filter: 'brightness(1.6)' }, { filter: 'brightness(1)' }],
+        { duration: 620, iterations: 2, easing: 'ease-in-out' },
+      );
+    }
+  } catch (e) { /* an engine without WAAPI still gets the scroll */ }
+  return true;
 }
 function onSimEvent(e) {
   if (!_openFlag) return;
@@ -3489,8 +3633,9 @@ function suppliesSheet(k) {
       ? `🔴 <b>Your stash is empty.</b> Every crate on this sheet — including the
          scrap dealer's — costs live resources your city buildings, your businesses
          and your battles produce. The dealer below is the cheap way back in: half
-         a crate, a Cinder surcharge, and still a little real food. There is no
-         crate anywhere that costs Cinder alone.`
+         a crate, a Cinder surcharge, and still a little real food. The only door
+         that takes Cinder alone is the relief flight above, and it is priced to
+         hurt.`
       : `🔴 <b>Nothing here is bought in.</b> Every crate is made out of the same 14
          resources your city buildings, your businesses and your battles produce —
          the line under each one says which building makes it and whether you have
@@ -4187,6 +4332,27 @@ function reportCard(rep) {
      are the feature the player actually asked for and the accounting screen has
      never mentioned them once. */
   const ate = ledgerRowHtml(rep.resSpent, rep.cinderSpent, 'out of your stash');
+  /* 🤝 THE PROMISES, ON THE ONE SCREEN THAT NEVER MENTIONED THEM.
+     45.6% of drive-thru tickets carry a modifier — "no mayo", "extra cheese",
+     "well done". The lane speaks it, the chip draws it, the till pays it, the
+     toast names it and the car's parting line reacts to it: exact on five
+     surfaces, absent from the sixth, which is the one a player reads to decide
+     what to do differently tomorrow. It is the single largest skill axis in the
+     lane and both references close the day on a scorecard that carries it.
+     ⚠ DRAWN ONLY WHEN A PROMISE WAS JUDGED. A row reading "0 kept · 0 broken"
+       on a day that had no fussy customers teaches the player the row is
+       decoration — the same rule ledgerRowHtml() follows for the stash line.
+     ⚠ `modCinder` IS A BREAKDOWN OF THE TAKINGS, NOT AN EXTRA. state.js books it
+       off the same verdict that pays the modifier xp; the Cinder itself is
+       already inside `earned` on the line above. It is signed, so a day of
+       broken promises prints a MINUS and the player can see what obedience was
+       worth. */
+  const kept = Math.max(0, rep.kept | 0), broke = Math.max(0, rep.broken | 0);
+  const modC = Math.round(Number(rep.modCinder) || 0);
+  const promise = (kept + broke) > 0
+    ? `<div class="mk-report-waste" data-kind="promise">🤝 Promises · ${kept} kept · ${broke} broken${
+        modC ? ` · <b>${modC > 0 ? '+' : '−'}${esc(fmtCinder(Math.abs(modC)))}</b>` : ''}</div>`
+    : '';
   return `<div class="mk-report" data-grade="${esc(rep.grade || '-')}">
       <div class="mk-report-top">
         <span class="mk-grade">${esc(rep.grade || '—')}</span>
@@ -4202,6 +4368,7 @@ function reportCard(rep) {
       </div>
       <div class="mk-report-say">${esc(verdict)}</div>` : ''}
       ${ate}
+      ${promise}
       ${waste.length ? `<div class="mk-report-waste">🗑 ${esc(waste.join(' · '))}</div>` : ''}
     </div>`;
 }
@@ -4244,6 +4411,24 @@ function ledgerRowHtml(resSpent, cinderSpent, lab) {
 function daySheet(k) {
   const rep = safe(() => State.lastReport(), null);
   const cur = k.today;
+  /* 🥫 `k.dayLedger`, NOT `k.today`, AND THAT IS THE FIX FOR THE SIX ZEROES.
+     The three ledger tallies used to live in `today`, and openShift() does
+     `K.today = freshToday()`. The natural loop is restock-then-open, so a player
+     who took the relief drop, called in three pallets and bought fourteen crates
+     — 5,110 Cinder, 36 food out, 37 food and 34 water in — tapped OPEN THE DOORS
+     and this screen drew no `.mk-ate` node at all. The counters above are
+     shift-scoped and SHOULD reset when service starts; the receipt is
+     day-scoped. Guarded to an empty bucket so a state module mid-rewrite costs
+     the row rather than the whole sheet. */
+  const led = (k.dayLedger && typeof k.dayLedger === 'object')
+    ? k.dayLedger : { resSpent: {}, resGained: {}, cinderSpent: 0 };
+  /* ⚠ "relief drops", NOT "convoys and relief", AND THE DIFFERENCE IS MEASURED.
+     `bookGain()` in kitchen.state.js has exactly one caller — buyRelief(). A
+     convoy claim pays out through convoy.js:2234's own `b.addRes('food', take)`
+     and never touches the day's ledger, so a label naming convoys would print a
+     number that cannot contain them. Closing that needs one line in convoy.js,
+     which is another builder's file this round; it is written out in the
+     handover. Until then the row says only what it can actually count. */
   const clock = safe(() => State.shiftClock(), null) || {};
   const stat = (v, lab) => `<div class="mk-stat"><b>${v}</b><span>${lab}</span></div>`;
 
@@ -4252,15 +4437,27 @@ function daySheet(k) {
       ${stat(cur.served, 'served')}${stat(cur.lost, 'walked')}${stat(cur.burnt, 'burnt')}
       ${stat(fmtNum(cur.earned), 'cinder')}${stat(fmtNum(cur.tips), 'tips')}${stat(fmtNum(cur.xp || 0), 'xp')}
     </div>
-    ${ledgerRowHtml(cur.resSpent, cur.cinderSpent, 'eaten today, out of your stash')}
-    ${ledgerRowHtml(cur.resGained, 0, 'landed today — convoys and relief')}`;
+    ${ledgerRowHtml(led.resSpent, led.cinderSpent, 'eaten today, out of your stash')}
+    ${ledgerRowHtml(led.resGained, 0, 'landed today — relief drops')}`;
 
   const last = rep ? `<div class="mk-sec-head flush"><b>Last shift</b></div>
     ${reportCard(rep)}` : '';
 
-  /* `totals.food` is additive — an old save has no key and this degrades to the
-     three tiles it has always had rather than to a tile reading 0. */
-  const allFood = Number(k.totals && k.totals.food);
+  /* 🥫 `totals.foodSpent`, AND THE KEY IS THE WHOLE FINDING. This read said
+     `k.totals.food` while kitchen.state.js has always written
+     `K.totals.foodSpent`, so `Number(undefined)` was NaN, the guard below always
+     dropped the tile, and the lifetime premise number — the one that says "your
+     city fed this kitchen" — has never once appeared on a screen for anybody.
+     Proven live: four crates in, `K.totals.foodSpent` 92, `k.totals.food`
+     undefined, tile renders false. The self-test reported 0 FAIL on that build,
+     because a property written in one file and read under a different name in
+     another is outside every check it has.
+     ⚠ THE STATE KEY IS THE ONE THAT MUST NOT MOVE: `foodSpent` is already in
+       snapshot().totals, so renaming it there would zero the tile for every
+       existing save. The renderer was the half that had to change.
+     Additive — an old save has no key and this degrades to the three tiles it
+     has always had rather than to a tile reading 0. */
+  const allFood = Number(k.totals && k.totals.foodSpent);
   const totals = `<div class="mk-sec-head flush"><b>All time</b></div>
     <div class="mk-stats">
       ${stat(fmtNum(k.totals.served), 'served')}${stat(fmtNum(k.totals.days), 'days')}${stat(fmtNum(k.totals.earned), 'cinder')}

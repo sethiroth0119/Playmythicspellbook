@@ -1943,17 +1943,17 @@ export const ECON = {
           1. With the base at the threshold the clamp always binds, so a
              per-loss term is unreachable by construction — a key that can
              never change an outcome.
-          2. 🔴 THE SHIPPED CALL SITE DOES NOT CALL popDayDelta(). It is
-             kitchen.state.js's closeShift day-roll, and it reassembles the
-             settle out of loose constants — `EC('POP_REVERT_BELOW')`,
+          2. ✅ ROUND 7: THE CALL SITE NOW CALLS popDayDelta(), AND UNTIL IT DID
+             THIS PARAGRAPH READ "THE SHIPPED CALL SITE DOES NOT". It was
+             kitchen.state.js's closeShift day-roll reassembling the settle out
+             of loose constants — `EC('POP_REVERT_BELOW')`,
              `EC('POP_REVERT_PER_DAY')`, `EC('POP_DECAY_PER_DAY')` — which is
              the exact shape popDayDelta() exists to replace and the exact shape
-             that let these keys ship as dead data for a round. A new key would
-             have been read by popDayDelta() and by nothing the player can
-             reach. So the fix goes through the constant that ALREADY has a call
-             site, and popDayDelta() is written to produce the identical number
-             so that whichever one a future reader wires, the game does not
-             change underneath them. See the ⚠ CONSUMER note on popDayDelta().
+             that let these keys ship as dead data for a round. Round 5 reported
+             that as CLOSED; kitchen.selftest.js then found popDayDelta() with
+             ZERO call sites, which is how a "fix" stays broken while reading
+             as done. There is now ONE copy of the settle and it is below.
+             A per-loss key would still be wrong for reason 1, so it stays out.
         Retuning rule: change this and re-run a MULTI-DAY curve, not a day. A
         single day cannot show a ratchet; a ratchet is what the second week
         looks like. */
@@ -2133,6 +2133,36 @@ export const ECON = {
   PATIENCE_MIN_MS: 20000,
   ORDER_MAX_ITEMS: 5,
   COUNTER_SHARE: 0.35,      // fraction of tickets that walk in rather than drive
+  /* 🔴 ROUND 7 — THE KEY THAT WAS BEING READ OUT OF THIN AIR. kitchen.state.js's
+     tick() gates the whole walk-in door on `ECb('COUNTER_ENABLED', true)` and
+     this table declared no such key, so the read resolved to `undefined`, the
+     NaN guard supplied `true`, and the counter has been running on a number
+     that lived in the READING file — which CLAUDE.md's `_opEcon` rule forbids
+     precisely because tuning it here did nothing. It is `true` because the
+     walk-in board is half the game (REF-B's "Customer Orders" panel); the flag
+     exists so a harness can isolate the LANE by silencing the counter, which is
+     how the drive-thru arrival curves were measured. Flip it to false and the
+     kitchen is drive-thru only — a legal, playable configuration, not a bug. */
+  COUNTER_ENABLED: true,
+  /* 🔴 HOW OFTEN AN ORDER GENERATOR ASKS FOR SOMETHING THE PANTRY CAN ACTUALLY
+     MAKE. `menuForLevel(lv, cookable)` has carried the filtered-menu argument
+     since round 5 and NOBODY PASSED IT — the ⚠⚠ block on that function measured
+     what that costs: 122 of 142 lost tickets on a stranded three-day account
+     (86%) contained a dish the kitchen could never make, and every LEVEL UP
+     made it worse by adding another way to be unfillable.
+
+     ⚠ IT IS A BIAS AND NOT A FILTER, and the number is what makes that true.
+       At 1.0 the board would only ever ask for what is already in the cooler,
+       the whole menu would stop mattering, and there would be no reason to
+       restock anything you were not already cooking. At 0 it is the shipped
+       bug. 0.75 leaves one order in four drawn from the full board, which is
+       the same shape — and the same reasoning — as LIKE_BIAS 0.7 one screen up:
+       enough pull that a stocked kitchen mostly gets served, enough noise that
+       running out of buns is still visible on the board within a minute.
+     ⚠ It never starves the board: menuForLevel() returns the UNFILTERED menu
+       when nothing is cookable, because no customer at all is a dead
+       restaurant. See that function's ⚠. */
+  COOKABLE_BIAS: 0.75,
 
   // ── TICKETS ─────────────────────────────────────────────────────────────
   TICKET_BASE_MS: 45000,
@@ -2755,7 +2785,16 @@ export const ECON = {
   MOD_POP_MISS: -0.50,      // detail of one ticket — but a broken promise is
                             // half a lost ticket's worth of word of mouth, on
                             // the same scale as POP_LOST (−1.0).
-  MOD_XP_HIT: 3,            // xp for getting a fussy order right
+  /* xp for getting a fussy order right.
+     ✅ ROUND 7 — CONSUMER WIRED. This shipped read-by-nobody for five rounds and
+     drivethru.js's handover O2 spelt out why: `addXp()` is module-private in
+     kitchen.state.js, so the lane physically could not pay it, and writing
+     `K.xp` from outside would skip the level-up emit, the unlock list and the
+     forced save. O2 offered two fixes and round 7 took the second — the
+     modifier xp is folded into `serveTicket()` beside the ticket bonus, where
+     `addXp()` is in scope — so no new export exists and the level ladder keeps
+     exactly one door. */
+  MOD_XP_HIT: 3,
 
   /* ── THE TIP RETURN (drivethru.js §TIP) ─────────────────────────────────── */
   TIP_GEN_MAX: 4.0,         // runaway guard on the GENEROSITY STACK (tipBias ×
@@ -2822,11 +2861,23 @@ export const ECON = {
   CONVOY_ARRIVE_MS: 5000,
 
   // ── FX / feel ───────────────────────────────────────────────────────────
-  FLOAT_MS: 900,            // float-up lifetime
-  SPARK_MS: 500,
+  FLOAT_MS: 900,            // float-up lifetime — kitchen.render.js drains
+                            // Kitchen._fx on this timer.
+  /* ⚠ `SPARK_MS: 500` USED TO SIT HERE AND ROUND 7 DELETED IT. There is no
+     spark: `grep -rn "spark" public/src/kitchen/` returned this row, and
+     nothing else — no emitter, no CSS keyframe, no renderer. It was a dial
+     wired to nothing, which is the same defect as a function nobody calls, and
+     the honest fix for a dial with no wire is to remove the dial. If a spark FX
+     is ever built, its lifetime comes back HERE and not as a literal in the
+     renderer. */
   BURN_WARN_MS: 3000,       // start flashing a slot this long before burnAt
 
-  // Content hung off ECON BY REFERENCE. Same objects, no second copy.
+  /* Content hung off ECON BY REFERENCE. Same objects, no second copy.
+     🔴 AND `dayName()` / `faceFor()` NOW READ THEM THROUGH ECON, not through the
+     module consts beside them. They did not, so both keys were declared and
+     read by nothing: a designer retuning ECON.POP_FACES got no faces, because
+     the only reader was looking at the other name for the same array. Same
+     object either way — the point is that the ECON row is the live one. */
   DAY_NAMES,
   POP_FACES,
 };
@@ -3192,22 +3243,25 @@ export function xpProgress(xp) {
  *     dead restaurant is the one state this whole feature has been trying to
  *     get rid of for three rounds.
  *
- * ⚠⚠ CONSUMER — NOBODY PASSES IT YET, AND THIS IS WHERE THE POPULARITY RATCHET
- *    ACTUALLY LIVES. kitchen.state.js wraps this in a LOCAL `menuForLevel(lv)`
- *    (kitchen.state.js:193) whose body is `DATA.menuForLevel(lv)` — one
- *    argument — so `spawnCounter` at :1789 draws every walk-in order from the
- *    full board with no reference to what is in the pantry, and there is no way
- *    to decline a counter ticket (`wave` exists for cars; nothing exists for
- *    the board). MEASURED THIS ROUND over twenty in-game days: raising
- *    ECON.POP_REVERT_PER_DAY to the threshold moved a stranded kitchen's
- *    popularity from "pinned on 2 for eighteen of twenty days, mean 3.6" to a
- *    flat 30 — the floor moved, which was the fix available in this file — but
- *    the meter still does not BREATHE, because the bot is still losing 45–90
- *    tickets a day to orders it cannot fill. Two edits close it: pass `cookable`
- *    through state.js's wrapper, and give `spawnCounter` a LIKE_BIAS-style roll
- *    (`rng() < ECON.COOKABLE_BIAS ? menuForLevel(lv, hot) : menuForLevel(lv)`)
- *    so the board still asks for things you are out of, just not 86% of the
- *    time. It is a bias, not a filter, for the reason in the ⚠ above.
+ * ✅ CONSUMER — WIRED IN ROUND 7, AND THIS COMMENT USED TO BE A LIE IN TWO
+ *    DIRECTIONS. It said "NOBODY PASSES IT YET" (true, for two rounds) and it
+ *    named `ECON.COOKABLE_BIAS`, WHICH DID NOT EXIST — kitchen.selftest.js's
+ *    COMMENT LIES check caught the second one. Both are closed:
+ *      • `ECON.COOKABLE_BIAS` (0.75) is declared in the table above;
+ *      • kitchen.state.js's local wrapper now takes the second argument, and
+ *        `spawnCounter()` rolls it exactly the way `LIKE_BIAS` is rolled:
+ *        `rng() < EC('COOKABLE_BIAS') ? menuForLevel(lv, hot) : menuForLevel(lv)`.
+ *    THE MEASUREMENT THAT MADE IT NECESSARY, kept because it is the argument:
+ *    over twenty in-game days, raising ECON.POP_REVERT_PER_DAY to the threshold
+ *    moved a stranded kitchen's popularity from "pinned on 2 for eighteen of
+ *    twenty days, mean 3.6" to a flat 30 — the floor moved, which was the fix
+ *    available in this file — but the meter still did not BREATHE, because the
+ *    bot was still losing 45–90 tickets a day to orders it could not fill.
+ *
+ * ⚠ ONE GENERATOR STILL DOES NOT PASS IT: drivethru.js's lane. That is the
+ *   other half and it is somebody else's file — see the round-7 handover. Until
+ *   it does, a stranded kitchen's LANE tickets are still drawn from the full
+ *   board while its COUNTER tickets are not.
  */
 export function menuForLevel(lv, cookable) {
   const L = Math.max(1, lv | 0);
@@ -3439,27 +3493,45 @@ export function spawnIntervalMs(pop, rush) {
 /** Weekday label. `day` is 1-based and persists forever, so day 1 is Monday. */
 export function dayName(day) {
   const d = Math.max(1, day | 0);
-  return DAY_NAMES[(d - 1) % DAY_NAMES.length];
+  // ⚠ THROUGH ECON, deliberately — see the "Content hung off ECON" note in the
+  //    table. Reading the module const instead is what left ECON.DAY_NAMES
+  //    declared and read by nothing for six rounds.
+  const names = ECON.DAY_NAMES;
+  return names[(d - 1) % names.length];
 }
 
 /** The emoji face for the popularity meter. Never null. */
 export function faceFor(pop) {
   const p = Math.min(ECON.POP_MAX, Math.max(ECON.POP_MIN, pop || 0));
-  let out = POP_FACES[0];
-  for (const f of POP_FACES) if (p >= f.min) out = f;
+  const faces = ECON.POP_FACES;      // ⚠ through ECON — see dayName().
+  let out = faces[0];
+  for (const f of faces) if (p >= f.min) out = f;
   return out;
 }
 
 /**
  * 🔴 THE WHOLE DAY-ROLL POPULARITY SETTLE, IN ONE SIGNED NUMBER.
  *
- * 🔴 CALL THIS AND NOTHING ELSE. kitchen.state.js's closeShift() day-roll used
- *    to be two lines — `bumpPop(EC('POP_DECAY_PER_DAY'))` and a clean-day bonus
- *    computed as `-EC('POP_DECAY_PER_DAY') * 2` — and that shape is precisely
- *    how POP_REVERT_BELOW / POP_REVERT_PER_DAY shipped as dead data for a round:
- *    a settle assembled from loose constants at the call site can silently be
- *    missing one of them, and reads fine. This returns the finished delta, so
- *    the only way to get it wrong is not to call it.
+ * ✅ CONSUMER: kitchen.state.js `closeShift()`, via `DF('popDayDelta')`. ONE
+ *    call, once per day roll, and there is no longer a second copy of the
+ *    arithmetic anywhere in the feature.
+ *
+ * 🔴 AND THAT SENTENCE IS THE POINT OF THIS FUNCTION, BECAUSE IT WAS FALSE FOR
+ *    TWO ROUNDS. closeShift()'s day-roll used to reassemble the settle from
+ *    loose constants — `bumpPop(EC('POP_DECAY_PER_DAY'))` plus a clean-day
+ *    bonus written out as `-EC('POP_DECAY_PER_DAY') * 2`, plus its own copy of
+ *    the revert clamp — which is precisely how POP_REVERT_BELOW /
+ *    POP_REVERT_PER_DAY shipped as dead data in the first place: a settle
+ *    assembled at the call site can silently be missing one of its terms and
+ *    still read fine. Round 5 declared the ratchet fixed; kitchen.selftest.js
+ *    then reported this function with ZERO CALL SITES. Returning the finished
+ *    delta means the only way to get it wrong is not to call it.
+ *
+ * ⚠ IT IS APPLIED AS ONE `bumpPop()`, NOT TWO. That is a real behavioural
+ *   difference and it is the correct one: bumpPop() damps movement within
+ *   POP_SOFT_MARGIN of a rail, so decay-then-bonus as two calls damped each leg
+ *   separately and the net drift near 0 and near 100 depended on the ORDER the
+ *   two lines happened to be written in. One settle, one damping.
  *
  * Three rules, in this order:
  *   1. Below ECON.POP_REVERT_BELOW the town forgets, INSTEAD of the decay, by
@@ -3489,10 +3561,12 @@ export function popDayDelta(pop, report) {
   const served = (r.served | 0), lost = (r.lost | 0);
   const decay = ECON.POP_DECAY_PER_DAY;
   /* 🔴 THE CLAMP IS THE MECHANIC, NOT A SAFETY RAIL. It is what makes the
-     reversion un-farmable (see ECON.POP_REVERT_PER_DAY) and it is BYTE-FOR-BYTE
-     the expression kitchen.state.js's day roll uses, so the two call sites
-     cannot drift while both exist. If you change one, change both — or better,
-     delete the other and call this. */
+     reversion un-farmable (see ECON.POP_REVERT_PER_DAY): the drift can never
+     carry a kitchen ABOVE the threshold, so there is nothing to farm.
+     ⚠ ROUND 7 DELETED THE SECOND COPY. This expression used to be duplicated
+       byte-for-byte in kitchen.state.js's day roll with a note saying "change
+       one, change both". That note is what a drifting duplicate always looks
+       like on the way in. There is one copy now; keep it that way. */
   const d0 = (p < ECON.POP_REVERT_BELOW)
     ? Math.min(ECON.POP_REVERT_PER_DAY, Math.max(0, ECON.POP_REVERT_BELOW - p))
     : decay;

@@ -23,15 +23,13 @@
 --                             has no INSERT, UPDATE or DELETE on it at all.
 --  2. kitchen_convoy_ledger   append-only movement log. Balance = sum(amount).
 --                             No balance column. No write policy. Ever.
---  3. kitchen_stats           cosmetic leaderboard. NEVER an economy source.
---  4. kitchen_convoy_launch() the ONE way a convoy is created. Computes
+--  3. kitchen_convoy_launch() the ONE way a convoy is created. Computes
 --                             arrives_at on the SERVER clock.
---  5. kitchen_convoy_claim()  the ONE way a convoy is claimed. SECURITY
+--  4. kitchen_convoy_claim()  the ONE way a convoy is claimed. SECURITY
 --                             DEFINER, atomic, and — new in this revision —
 --                             it REPORTS whether this call was the first, so a
 --                             replayed request cannot be paid twice.
---  6. kitchen_stats_upsert()  the ONE way a scoreboard row is written.
---  7. kitchen_convoy_tiers    the truck table, ON THE SERVER. New in round 3 and
+--  5. kitchen_convoy_tiers    the truck table, ON THE SERVER. New in round 3 and
 --                             it is the fix for the unpriced faucet: the launch
 --                             RPC used to take the box count and the transit
 --                             time from the client and clamp them GLOBALLY
@@ -321,19 +319,43 @@ create index if not exists kitchen_convoy_ledger_to_idx
   on public.kitchen_convoy_ledger (to_user, created_at desc);
 
 
--- Cosmetic scoreboard. 🔴 EVERY NUMBER IN HERE IS WRITTEN BY THE PLAYER'S OWN
--- CLIENT. It is a wall to put a name on. It is not a ledger, it is not
--- evidence, and nothing anywhere may read it back and grant anything.
-create table if not exists public.kitchen_stats (
-  user_id    uuid primary key references auth.users(id) on delete cascade,
-  name       text,
-  level      int not null default 1,
-  served     bigint not null default 0,
-  days       int not null default 0,
-  popularity int not null default 50,
-  updated_at timestamptz not null default now()
-);
-create index if not exists kitchen_stats_served_idx on public.kitchen_stats (served desc);
+-- ============================================================================
+-- 🔴 ROUND 6 — kitchen_stats IS REMOVED, AND THE REMOVAL IS PART OF THE FILE.
+-- ============================================================================
+-- The cosmetic scoreboard is gone: the table, its index, kitchen_stats_upsert(),
+-- the ks_sel policy, the six column grants and four of the verify assertions
+-- below. So are its two clients, kitchen.api.js `upsertStats` / `listLeaderboard`
+-- and convoy.js `publishStats` / `leaderboard`.
+--
+-- WHY, in one sentence: NO SCREEN IN THE GAME EVER SHOWED A ROW OF IT, through
+-- four consecutive reviews, and CLAUDE.md asks for every RLS policy to be read
+-- line by line — a review that has to walk past policies guarding a dead table
+-- is a review that gets skimmed. Round 5 had already made the upload
+-- demand-driven, which closed the real defect (every client posting its display
+-- name to a shared table on a 60-second heartbeat, for a page that does not
+-- exist) and left roughly sixty lines of fully secured surface protecting
+-- nothing. The board needs a screen, the screen belongs to kitchen.render.js,
+-- and it has been asked for since round 3. Drawn or dropped; this is dropped.
+--
+-- 🔴 THE DROPS ARE EXPLICIT AND THEY ARE NOT DECORATION. This migration has
+--    ALREADY BEEN APPLIED BY HAND to project ktsiasyjusesawtrwrjc, so simply
+--    deleting the `create table` would leave a live table in the database with
+--    a live policy on it and nothing in the repo describing either — the worst
+--    possible outcome for a file whose whole job is to be the truth about the
+--    schema. Re-running this file removes them for real. Idempotent: `if
+--    exists` on both, and the function signature is spelled out because
+--    `drop function` is ambiguous without it.
+--
+-- ⚠ NOTHING OF VALUE IS LOST WITH THE ROWS. Every number in this table was
+--   written by a player's own client and read back by nothing; it was never a
+--   ledger and never evidence, and the file said so where the table used to be.
+-- ⚠ IF THE BOARD IS EVER REBUILT, the two traps that bit round 1 are recorded
+--   in convoy.js §10: `user_id` must never be readable (a `using (true)` policy
+--   plus a table-wide select grant is a paginated dump of auth.users), and the
+--   write must be an RPC, never a PostgREST upsert (which needs UPDATE on
+--   `user_id` — the ability to move a row onto another player's id).
+drop function if exists public.kitchen_stats_upsert(text, int, bigint, int, int);
+drop table    if exists public.kitchen_stats;
 
 
 -- ============================================================================
@@ -987,48 +1009,18 @@ grant execute on function public.kitchen_convoy_claim(uuid) to authenticated;
 
 
 -- ============================================================================
--- 5. THE SCOREBOARD RPC.
+-- 5. THE SCOREBOARD RPC — REMOVED IN ROUND 6.
 -- ============================================================================
--- ⚠ WHY AN RPC FOR A COSMETIC TABLE. PostgREST's `.upsert()` compiles to
---   `insert … on conflict (user_id) do update set user_id = excluded.user_id, …`
---   which requires an UPDATE privilege on `user_id` — that is, the ability to
---   move a row onto another player's id. Impersonation on a public board is the
---   only real risk this table has, and it is not worth carrying to save one
---   function. With this in place the client holds NO write grant on
---   kitchen_stats at all.
-create or replace function public.kitchen_stats_upsert(
-  p_name   text,
-  p_level  int,
-  p_served bigint,
-  p_days   int,
-  p_pop    int
-)
-returns void
-language plpgsql security definer set search_path = public, pg_temp as $$
-declare me uuid := auth.uid();
-begin
-  if me is null then raise exception 'NOT_SIGNED_IN'; end if;
-  insert into public.kitchen_stats
-    (user_id, name, level, served, days, popularity, updated_at)
-  values
-    (me,
-     left(coalesce(nullif(btrim(p_name), ''), 'Survivor'), 40),
-     least(greatest(coalesce(p_level, 1), 1), 999),
-     least(greatest(coalesce(p_served, 0), 0), 1000000000),
-     least(greatest(coalesce(p_days, 0), 0), 1000000),
-     least(greatest(coalesce(p_pop, 50), 0), 100),
-     now())
-  on conflict (user_id) do update
-    set name       = excluded.name,
-        level      = excluded.level,
-        served     = excluded.served,
-        days       = excluded.days,
-        popularity = excluded.popularity,
-        updated_at = now();
-end $$;
-
-revoke all on function public.kitchen_stats_upsert(text, int, bigint, int, int) from public, anon;
-grant execute on function public.kitchen_stats_upsert(text, int, bigint, int, int) to authenticated;
+-- `kitchen_stats_upsert()` lived here. It is dropped where the table is dropped,
+-- above, so that the removal is one statement pair rather than two halves of a
+-- file that could get out of step. The argument is written out there.
+--
+-- ⚠ ITS ONE GOOD IDEA IS WORTH KEEPING IN VIEW: it existed because PostgREST's
+--   `.upsert()` compiles to `insert … on conflict (user_id) do update set
+--   user_id = excluded.user_id, …`, which requires UPDATE on `user_id` — the
+--   ability to move a row onto another player's id. Impersonation on a public
+--   board was the only real risk that table had. Any future board writes
+--   through an RPC that pins `user_id := auth.uid()`, or it does not ship.
 
 
 -- ============================================================================
@@ -1092,8 +1084,10 @@ revoke all on function public.kitchen_fn_body(text)   from public, anon, authent
 -- ─── 6. RLS ────────────────────────────────────────────────────────────────
 alter table public.kitchen_convoys       enable row level security;
 alter table public.kitchen_convoy_ledger enable row level security;
-alter table public.kitchen_stats         enable row level security;
 alter table public.kitchen_convoy_tiers  enable row level security;
+-- (kitchen_stats was the fourth. It is dropped above, so there is nothing left
+--  to enable RLS on and nothing left to write a policy for — which is the point
+--  of removing it rather than leaving it standing and unread.)
 
 -- ── kitchen_convoys ────────────────────────────────────────────────────────
 
@@ -1167,36 +1161,19 @@ revoke all on public.kitchen_convoy_ledger from anon, authenticated;
 revoke all on public.kitchen_convoy_ledger from public;
 grant select on public.kitchen_convoy_ledger to authenticated;
 
--- ── kitchen_stats ──────────────────────────────────────────────────────────
-
--- ks_sel  using (true)
--- LETS IN : any signed-in player reading the whole board. It is a leaderboard;
---           being readable is the entire feature, and `using (auth.uid() = …)`
---           on a leaderboard would be a leaderboard with one row in it.
--- KEEPS OUT: anonymous readers (`to authenticated`), and — this is the round-2
---           change — `user_id`. A `using (true)` policy grants nothing on its
---           own: what a role may read is the intersection of the policy and the
---           COLUMN GRANTS, and the grant below does not include `user_id`.
--- 🔴 WHY THAT MATTERS. Round 1 paired this policy with
---    `select('user_id,name,level,…')` in kitchen.api.js, which made the board a
---    paginated dump of auth.users UUIDs to every signed-in player. The board
---    never used the id — it was selected and discarded. Revoking the column is
---    what stops it quietly coming back the next time somebody types `*`.
-drop policy if exists ks_sel on public.kitchen_stats;
-create policy ks_sel on public.kitchen_stats for select to authenticated using (true);
-
--- 🔴 NO CLIENT WRITE POLICIES AND NO CLIENT WRITE GRANTS. Writing goes through
---    kitchen_stats_upsert(), which pins user_id = auth.uid(). ks_ins/ks_upd are
---    dropped rather than kept "just in case": a policy nobody needs is a door
---    nobody is watching.
-drop policy if exists ks_ins on public.kitchen_stats;
-drop policy if exists ks_upd on public.kitchen_stats;
-drop policy if exists ks_del on public.kitchen_stats;
-
-revoke all on public.kitchen_stats from anon, authenticated;
-revoke all on public.kitchen_stats from public;
-grant select (name, level, served, days, popularity, updated_at)
-  on public.kitchen_stats to authenticated;
+-- ── kitchen_stats ── REMOVED IN ROUND 6 ────────────────────────────────────
+-- `ks_sel` (`using (true)`), the ks_ins/ks_upd/ks_del drops, the revokes and the
+-- six-column grant were all here. They are gone with the table.
+--
+-- 🔴 THE ONE PARAGRAPH WORTH CARRYING FORWARD, because it is the subtlest thing
+--    in this whole file and it will be needed again if a board is ever built: a
+--    `using (true)` policy grants NOTHING on its own. What a role may read is
+--    the INTERSECTION of the policy and the COLUMN GRANTS. Round 1 paired
+--    `using (true)` with `select('user_id,name,level,…')` and a table-wide
+--    grant, and the leaderboard became a paginated dump of auth.users UUIDs to
+--    every signed-in player. The fix was not the policy — a leaderboard guarded
+--    by auth.uid() is a leaderboard with one row in it — it was revoking the
+--    COLUMN. Anyone rebuilding this must grant columns, never tables.
 
 -- ── kitchen_convoy_tiers ───────────────────────────────────────────────────
 -- 🔴 NO POLICY AND NO GRANT. NOT AN OVERSIGHT — THE POINT.
@@ -1261,18 +1238,35 @@ notify pgrst, 'reload schema';
 --   not a fire marshal.
 -- ============================================================================
 select 'tables' as check,
-       case when count(*) = 4 then 'ok' else 'MISSING (' || count(*) || '/4)' end as result
+       case when count(*) = 3 then 'ok' else 'MISSING (' || count(*) || '/3)' end as result
   from information_schema.tables
  where table_schema = 'public'
-   and table_name in ('kitchen_convoys','kitchen_convoy_ledger','kitchen_stats',
+   and table_name in ('kitchen_convoys','kitchen_convoy_ledger',
                       'kitchen_convoy_tiers')
+
+union all
+-- 🔴 ROUND 6. THE REMOVAL IS ASSERTED, NOT ASSUMED. This file has already been
+--    applied by hand to the live project, so 'the create statement is gone from
+--    the repo' says nothing at all about what is in the database. If this line
+--    is not 'ok' the drop above did not run and there is still a policy on a
+--    table nothing reads — which is the exact state round 6 removed.
+select 'stats table is gone',
+       case when count(*) = 0 then 'ok' else 'kitchen_stats IS STILL THERE — re-run this file' end
+  from information_schema.tables
+ where table_schema = 'public' and table_name = 'kitchen_stats'
+
+union all
+select 'stats rpc is gone',
+       case when count(*) = 0 then 'ok' else 'kitchen_stats_upsert IS STILL THERE — re-run this file' end
+  from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public' and p.proname = 'kitchen_stats_upsert'
 
 union all
 select 'rls enabled',
        case when bool_and(c.relrowsecurity) then 'ok' else 'RLS OFF SOMEWHERE' end
   from pg_class c join pg_namespace n on n.oid = c.relnamespace
  where n.nspname = 'public'
-   and c.relname in ('kitchen_convoys','kitchen_convoy_ledger','kitchen_stats',
+   and c.relname in ('kitchen_convoys','kitchen_convoy_ledger',
                      'kitchen_convoy_tiers')
 
 union all
@@ -1303,16 +1297,11 @@ select 'ledger policy predicate',
   from pg_policies where schemaname = 'public' and tablename = 'kitchen_convoy_ledger'
 
 union all
--- One SELECT policy on the scoreboard, and it is `true` ON PURPOSE — a
--- leaderboard guarded by auth.uid() is a leaderboard with one row in it. The
--- privacy here is the COLUMN GRANT (user_id is revoked), checked further down.
-select 'stats policy predicate',
-       case when count(*) = 1
-             and count(*) filter (where cmd = 'SELECT') = 1
-             and bool_and(coalesce(qual, '') = 'true')
-            then 'ok'
-            when count(*) <> 1 then 'CLIENT CAN WRITE STATS DIRECTLY'
-            else 'STATS POLICY CHANGED — re-read it against the column grants' end
+-- 🔴 ROUND 6: NO POLICY MAY SURVIVE THE TABLE. A `drop table` takes its policies
+--    with it, so this can only fail if somebody re-created kitchen_stats without
+--    re-reading why it went.
+select 'stats has no policy left',
+       case when count(*) = 0 then 'ok' else 'A POLICY GUARDS A TABLE NOTHING READS (' || count(*) || ')' end
   from pg_policies where schemaname = 'public' and tablename = 'kitchen_stats'
 
 union all
@@ -1330,16 +1319,16 @@ select 'double-claim lock',
  where schemaname = 'public' and indexname = 'kitchen_convoy_ledger_once'
 
 union all
--- All five functions present AND all five SECURITY DEFINER. A helper that lost
+-- All four functions present AND all four SECURITY DEFINER. A helper that lost
 -- `security definer` stops bypassing RLS and starts recursing.
+-- (It was five. `kitchen_stats_upsert` was the fifth and is dropped — round 6.)
 select 'security definer fns',
-       case when count(*) = 5 and bool_and(p.prosecdef) then 'ok'
-            else 'MISSING OR NOT DEFINER (' || count(*) || '/5)' end
+       case when count(*) = 4 and bool_and(p.prosecdef) then 'ok'
+            else 'MISSING OR NOT DEFINER (' || count(*) || '/4)' end
   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
  where n.nspname = 'public'
    and p.proname in ('is_convoy_party','kitchen_convoy_quota_ok',
-                     'kitchen_convoy_claim','kitchen_convoy_launch',
-                     'kitchen_stats_upsert')
+                     'kitchen_convoy_claim','kitchen_convoy_launch')
 
 union all
 -- 🔴 THE DOUBLE-PAYOUT CHECK. If this line is not 'ok' the claim RPC is still
@@ -1376,58 +1365,15 @@ select 'no ledger write grant',
    and a.privilege_type in ('INSERT','UPDATE','DELETE','TRUNCATE')
 
 union all
-select 'no client write grant on stats',
-       case when count(*) = 0 then 'ok' else 'CLIENT CAN WRITE STATS' end
-  from pg_class c
-  join pg_namespace n on n.oid = c.relnamespace
-  cross join lateral aclexplode(case when array_length(c.relacl, 1) > 0 then c.relacl end) a
-  left join pg_roles r on r.oid = a.grantee
- where n.nspname = 'public' and c.relname = 'kitchen_stats'
-   and coalesce(r.rolname, 'PUBLIC') in ('anon','authenticated','PUBLIC')
-   and a.privilege_type in ('INSERT','UPDATE','DELETE','TRUNCATE')
-
-union all
--- 🔴 THE UUID LEAK CHECK. A table-wide SELECT grant on kitchen_stats covers
---    every column, `user_id` included, and the `using (true)` policy then hands
---    the whole of auth.users' id space to any signed-in player.
-select 'stats: no table-wide select',
-       case when count(*) = 0 then 'ok' else 'STATS LEAKS user_id' end
-  from pg_class c
-  join pg_namespace n on n.oid = c.relnamespace
-  cross join lateral aclexplode(case when array_length(c.relacl, 1) > 0 then c.relacl end) a
-  left join pg_roles r on r.oid = a.grantee
- where n.nspname = 'public' and c.relname = 'kitchen_stats'
-   and coalesce(r.rolname, 'PUBLIC') in ('anon','authenticated','PUBLIC')
-   and a.privilege_type = 'SELECT'
-
-union all
-select 'stats: user_id not readable',
-       case when count(*) = 0 then 'ok' else 'STATS LEAKS user_id' end
-  from pg_attribute at
-  join pg_class c on c.oid = at.attrelid
-  join pg_namespace n on n.oid = c.relnamespace
-  cross join lateral aclexplode(case when array_length(at.attacl, 1) > 0 then at.attacl end) a
-  left join pg_roles r on r.oid = a.grantee
- where n.nspname = 'public' and c.relname = 'kitchen_stats'
-   and at.attname = 'user_id'
-   and coalesce(r.rolname, 'PUBLIC') in ('anon','authenticated','PUBLIC')
-   and a.privilege_type = 'SELECT'
-
-union all
-select 'stats: board is readable',
-       case when count(*) = 5 then 'ok'
-            else 'BOARD NOT READABLE (' || count(*) || '/5 cols)' end
-  from pg_attribute at
-  join pg_class c on c.oid = at.attrelid
-  join pg_namespace n on n.oid = c.relnamespace
-  cross join lateral aclexplode(case when array_length(at.attacl, 1) > 0 then at.attacl end) a
-  left join pg_roles r on r.oid = a.grantee
- where n.nspname = 'public' and c.relname = 'kitchen_stats'
-   and at.attname in ('name','level','served','days','popularity')
-   and coalesce(r.rolname, 'PUBLIC') = 'authenticated'
-   and a.privilege_type = 'SELECT'
-
-union all
+-- 🔴 ROUND 6: THE GRANT CHECKS FOR kitchen_stats ARE GONE WITH IT. There were
+--    four — 'no client write grant on stats', 'stats: no table-wide select',
+--    'stats: user_id not readable' and 'stats: board is readable' — and they
+--    were four of this block's assertions spent on a surface no screen reached.
+--    'stats table is gone' and 'stats has no policy left' above are what replaces
+--    them: one assertion that the whole thing is absent beats four that it is
+--    correctly locked. The lesson those four encoded (grant COLUMNS, never
+--    tables, and read the policy and the grants together) is written out in full
+--    where the ks_sel policy used to be, because it applies to any future board.
 select 'guard constraints',
        case when count(*) = 4 then 'ok' else 'MISSING (' || count(*) || '/4)' end
   from pg_constraint

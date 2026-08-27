@@ -137,10 +137,17 @@ function ECb(key, fallback) {
           const k=new Set(); for(const m of s.matchAll(/EC[b]?\(\s*'([A-Z0-9_]+)'/g)) k.add(m[1]);
           console.log([...k].filter(x=>!(x in D.ECON)).sort().join(' '))" --input-type=module
 
-      Against ECON's 153 keys, that returns exactly these ten:
+      🔴 ROUND 7 REGENERATED IT AGAIN AND THE HEADLINE IS THAT `COUNTER_ENABLED`
+      CAME OFF IT. kitchen.selftest.js reported it READ (tick(), the walk-in
+      door) and DECLARED BY NOBODY, so `ECb()` resolved `undefined`, took its
+      NaN guard, and the entire counter has been running on a number that lived
+      in THIS file — which is precisely what CLAUDE.md's `_opEcon` rule forbids,
+      because tuning it in ECON did nothing. The claim below that it was "the
+      only one here that can honestly stay" was wrong: a flag a harness flips is
+      still a knob, and knobs live in ECON. It is declared there now.
 
-     COUNTER_ENABLED       true  debug toggle to silence walk-ins. Not tuning;
-                                 the only one here that can honestly stay.
+      Against ECON's keys, that command now returns exactly these nine:
+
      DRY_CHECK_MS           500  🆕 throttle on the latched "are the doors shut"
                                  read. dryCheck() prices a restock basket per
                                  menu row and every price is a getRes() across
@@ -229,10 +236,24 @@ function xpForLevel(lv) {
   try { if (typeof DATA.xpForLevel === 'function') return Math.max(0, _int(DATA.xpForLevel(lv))); } catch (e) {}
   return 0;
 }
-function menuForLevel(lv) {
+/**
+ * 🔴 THE SECOND ARGUMENT IS THE ORDER-BOARD FIX AND THIS WRAPPER USED TO SWALLOW
+ * IT. kitchen.data.js's `menuForLevel(lv, cookable)` has taken a cookable-recipe
+ * filter since round 5 and its ⚠⚠ block measured what dropping it costs: on a
+ * stranded three-day account, 122 of 142 lost tickets — 86% — contained a dish
+ * that kitchen could never make, and every LEVEL UP made it worse by adding
+ * another way for an order to be unfillable. This wrapper declared one
+ * parameter, so the argument could not be passed even by a caller who wanted to.
+ *
+ * ⚠ PASS IT FROM ORDER GENERATORS ONLY (spawnCounter). The MENU BOARD, the
+ *   level-up toast and the restock sheet must keep calling it with one argument:
+ *   the player has to SEE the Bacon Melt they cannot stock, or the reason to go
+ *   and build a Gene Vault disappears from the game.
+ */
+function menuForLevel(lv, cookable) {
   try {
     if (typeof DATA.menuForLevel === 'function') {
-      const m = DATA.menuForLevel(lv);
+      const m = DATA.menuForLevel(lv, cookable);
       if (Array.isArray(m)) return m;
     }
   } catch (e) {}
@@ -369,7 +390,14 @@ export const Kitchen = {
   _stallSince: 0,        // `now` the current stall started; 0 while cooking is
                          // possible. reliefWatch() reads it.
   _dryAt: -Infinity,     // throttle stamp for the latched dry read (dryNow).
+  _cookable: [],         // latched dryCheck().cookable — the recipe ids the
+                         // pantry can make RIGHT NOW. spawnCounter() biases
+                         // walk-in orders toward it (ECON.COOKABLE_BIAS).
+                         // Refreshed beside _dry, on the same throttle.
   _report: null,         // last day-end settlement report (shift:close payload)
+  /* Raised by hydrate(). READ BY save(), which refuses to write until it is
+     true — see the interlock note there. Until round 7 it was written and never
+     read, which is a leak wearing a field's clothes. */
   _init: false,
 };
 
@@ -617,6 +645,7 @@ function clearService() {
   K._stalled = false;
   K._stallSince = 0;
   K._dryAt = -Infinity;
+  K._cookable = [];
 }
 
 /**
@@ -649,7 +678,7 @@ export function init() {
     }
   } catch (e) { /* a convoy module mid-write must not stop you cooking */ }
 
-  K._init = true;
+  // (`K._init` is raised by hydrate() above — see the interlock note there.)
   K.rev++;
   return K;
 }
@@ -929,6 +958,14 @@ export function hydrate(saved) {
   K.reliefDay = _clamp(_int(s.reliefDay), 0, Math.max(0, _int(K.shift.day)));
 
   K.v = 1;                                // migrations for v2 go HERE, above this line
+  /* 🔴 THE SAVE INTERLOCK, SET HERE AND NOWHERE ELSE. `save()` refuses to write
+     until this is true, because snapshot() would otherwise overwrite a real
+     profile with the default `K` literal. It belongs on hydrate() rather than
+     on init() because hydrate() is what makes `K` describe a REAL kitchen —
+     init(), reset() and simulate({fresh:true}) all reach it through here, so
+     there is one flag with one writer instead of three call sites remembering
+     to raise it. */
+  K._init = true;
   K.rev++;
   return K;
 }
@@ -948,6 +985,20 @@ export function save(force) {
   //    on the tick path any time a caller passed `now = 0` — exactly what a
   //    headless test does. `_lastSave` starts at -Infinity instead, so the first
   //    debounced save always fires and no clock is ever consulted here.
+  /* 🔴 NEVER WRITE A KITCHEN THAT WAS NEVER HYDRATED. `K` starts life as the
+     literal at the top of this file — day 1, level 1, empty pantry — and the
+     merge below writes snapshot() OVER whatever the bridge is holding. So a
+     save that lands before init() has read the profile does not "start fresh",
+     it DESTROYS a real save, silently, with no failure anywhere for the player
+     to see. Every ordinary path hydrates first (open() → init(), simulate() →
+     init()), which is exactly why this had never been noticed; the paths that
+     worry are a legacy call site poking an action before the panel has ever
+     been opened, and a save fired from a lifecycle handler during a failed
+     open.
+     ⚠ `_init` WAS A WRITE-ONLY FIELD UNTIL ROUND 7 — set by init(), read by
+       nothing, which kitchen.selftest.js flags as a leak rather than a field.
+       It was written as a guard and never used as one. This is the guard. */
+  if (!K._init) return false;
   if (!force && (K.now - K._lastSave) < EC('SAVE_DEBOUNCE_MS', 5000)) return true;
   K._lastSave = K.now;
   try {
@@ -1085,8 +1136,16 @@ export function pantryRoom() {
 /**
  * 🗑 DUMP STOCK OUT OF ONE BIN. No refund, ever.
  *
- * ⚠ NOT IN CONTRACT §1's EXPORT LIST — this is the "say so" the contract asks
- * for, and it wants adding to §1 alongside `binPass` and `addStep`.
+ * ✅ IN CONTRACT §1 SINCE ROUND 7. It was missing from the export list for two
+ * rounds, which is how it also ended up missing a caller.
+ *
+ * 🔴 CALLERS: `coolerWatch()` on the tick path — the automatic exit from a
+ * cooler with no room, and the reason a soft-lock is now impossible rather than
+ * merely documented as impossible — AND, once render grows the control, the
+ * player's own DUMP button on a bin. It had NEITHER until round 7:
+ * kitchen.selftest.js found it with zero call sites anywhere in the repo while
+ * two other comments in this file described it as "the exit" and "one tap".
+ * A recovery nobody can reach is the same defect as a recovery nobody wrote.
  *
  * WHY NO REFUND, AND WHY NO POPULARITY COST EITHER. The sunk purchase IS the
  * punishment — the player already paid live resources and Cinder for these
@@ -1348,7 +1407,28 @@ export function buySupply(supplyId, batches) {
   }
 
   const paid = spendCost(sup.cost || {}, n);
-  if (!paid.ok) return paid;
+  if (!paid.ok) {
+    /* 🛻 AND IF THE SCRAP DEALER STOCKS IT, SAY SO IN THE SAME BREATH.
+       `salvageFor()` is kitchen.data.js's lookup for the bin line covering an
+       ingredient — the ONE rung of the supply ladder priced in Cinder alone —
+       and it had no caller anywhere in the feature. This is the moment it is
+       for: the player has just been told "not enough Food", and the true next
+       sentence is "there is a line here you can pay for". Without it a stranded
+       player reads a refusal that is only two thirds of the truth and concludes
+       the sheet is shut.
+       ⚠ Only on a payment refusal, only when the dealer's line is a DIFFERENT
+         line from the one that just refused (otherwise it reads as "buy the
+         thing you cannot buy"), and only when its Cinder price is one they can
+         actually meet — a hint the player cannot act on is worse than none. */
+    const salv = DF('salvageFor');
+    const alt = (paid.code === 'NO_PANTRY' && salv) ? salv(out.ing) : null;
+    if (alt && alt.id !== sup.id && _int((alt.cost || {}).cinder) > 0
+        && costShortfall(alt.cost || {}, 1).length === 0) {
+      const what = metaName(out.ing) || out.ing;
+      return no('NO_PANTRY', `${paid.why} The scrap dealer has ${_int(alt.out.qty).toLocaleString()} ${what} for ◈${_int(alt.cost.cinder).toLocaleString()}.`);
+    }
+    return paid;
+  }
 
   // ── 4. ONLY NOW does the pantry change ──────────────────────────────────
   const gained = _int(out.qty) * n;
@@ -1579,6 +1659,12 @@ function dryNow(t) {
   K._dryAt = now;
 
   const d = dryCheck();
+  /* 🍳 THE LATCHED COOKABLE LIST, published on the same throttle for the same
+     reason: `spawnCounter()` biases what a walk-in asks for toward what the
+     cooler can actually make (ECON.COOKABLE_BIAS), and it must not price a
+     restock basket per arrival to find out. dryCheck() has already computed the
+     list — this is the one line that stops it being thrown away. */
+  K._cookable = d.cookable;
   /* THE STALL CLOCK. reliefWatch() needs "how long has there been nothing to
      cook", not "is there nothing to cook" — a drop that lands the instant the
      last bun is used would fire during the ordinary gap between plating a
@@ -1893,6 +1979,104 @@ function reliefWatch(t) {
      worse than a toast that is absent. `BAD_ARG` means the RELIEF table itself
      is malformed, which is a developer's problem and must not be swallowed. */
   if (!r.ok && r.code === 'BAD_ARG') emit('error', { code: r.code, why: r.why });
+}
+
+/**
+ * 🧊 THE OTHER SOFT-LOCK, AND THE CONSUMER `dumpSupply()` NEVER HAD.
+ *
+ * 🔴 WHAT THIS IS FOR, AND WHY IT IS NOT OPTIONAL. `dumpSupply()` shipped as
+ * the pantry recovery that was supposed to make a soft-lock impossible, and
+ * kitchen.selftest.js found it with ZERO CALL SITES — nothing in the feature,
+ * nothing in render, no button, no key. That is the relief-drop bug a second
+ * time, and TWO comments in this file were already leaning on the recovery as
+ * though a player could reach it:
+ *   • `reachableRecipes()`: "The pantry cap is deliberately NOT checked here. A
+ *     cooler too full to accept the crate is a state dumpSupply() fixes in one
+ *     tap, so it is not a closed door and must not be reported as one."
+ *   • `buySupply()`'s per-bin ceiling: "dumpSupply() is the exit."
+ * Both were false. And the first one is load-bearing: because the cap is not
+ * checked, `dryCheck()` reports `dry:false` for a full cooler — so the doors
+ * stay OPEN, cars and walk-ins keep arriving at a kitchen that cannot cook or
+ * restock, and every one of them is a lost ticket. It is the round-5 attrition
+ * failure wearing a different hat: not "no money", but "no room".
+ *
+ * ⚠ THE SHAPE OF THE BRICK. Total cap 900, per-bin ceiling ~135, so seven or
+ *   eight full bins of ingredients that do not between them complete a single
+ *   recipe fill the cooler outright: every purchase then refuses on CAP,
+ *   including the one crate that would let you cook the first bin down. Nothing
+ *   the player can do inside the game clears it.
+ *
+ * ── SO THE GAME CLEARS IT ITSELF, AND ON THE NARROWEST TERMS THAT WORK ──
+ * The precedent is `reliefWatch()` directly above: a recovery the player has to
+ * discover is indistinguishable, from inside the game, from a recovery that was
+ * never built. But dumping DESTROYS the player's property, which the free
+ * parcel does not, so every gate here is tighter than that one's:
+ *   1. The kitchen must be provably STALLED, and have been for RELIEF_AUTO_MS —
+ *      the same clock, for the same reason (the gap between plating one burger
+ *      and starting the next is not a soft-lock).
+ *   2. The cooler must be the thing blocking: no room for even the SMALLEST
+ *      crate on the unlocked sheet. If a purchase could land, this is not a
+ *      brick and the player's stock is not ours to touch.
+ *   3. It dumps from a bin no dish on the current menu needs before it touches
+ *      one that is wanted — dead weight first, always.
+ *   4. It frees ONE crate's worth of room and stops. Not the bin, not the
+ *      cooler. The player loses the minimum that restores a legal move.
+ * No Cinder is refunded and no popularity is charged, for the reasons written
+ * out on `dumpSupply()` itself.
+ */
+function coolerWatch(t) {
+  if (!K._stalled || !K._stallSince) return;              // there is food to cook
+  const wait = Math.max(0, EC('RELIEF_AUTO_MS', 3000));
+  if (t - _num(K._stallSince, t) < wait) return;
+
+  const lines = Array.isArray(DATA.SUPPLY_RECIPES) ? DATA.SUPPLY_RECIPES : [];
+  let smallest = Infinity, biggest = 0;
+  for (const sup of lines) {
+    if (!sup || !sup.out || _int(sup.minLevel || 1) > K.level) continue;
+    const q = _int(sup.out.qty);
+    if (q <= 0) continue;
+    if (q < smallest) smallest = q;
+    if (q > biggest) biggest = q;
+  }
+  if (!isFinite(smallest) || biggest <= 0) return;        // no sheet, nothing to fit
+
+  const room = pantryRoom();
+  if (room.room >= smallest) return;                      // gate 2: not the cooler's fault
+
+  /* Gate 3. `wanted` is every ingredient the CURRENT menu asks for — not the
+     cookable subset, because the whole point of restocking is to buy toward a
+     dish you cannot make yet. Anything outside it is stock no order can ever
+     consume, which is why it goes first. */
+  const wanted = Object.create(null);
+  for (const r of menuForLevel(K.level)) for (const id of Object.keys((r && r.needs) || {})) wanted[id] = true;
+  let pick = null, pickN = 0, pickDead = false;
+  for (const id of Object.keys(K.pantry)) {
+    const n = _int(K.pantry[id]);
+    if (n <= 0) continue;
+    const dead = !wanted[id];
+    // Dead weight beats wanted stock outright; within a class, the fullest bin.
+    if (!pick || (dead && !pickDead) || (dead === pickDead && n > pickN)) {
+      pick = id; pickN = n; pickDead = dead;
+    }
+  }
+  if (!pick) return;
+
+  // Gate 4: one crate's worth of headroom, no more.
+  const need = Math.max(1, Math.min(pickN, biggest - room.room));
+  const r = dumpSupply(pick, need);
+  K._stallSince = t;                       // whatever happened, do not retry at 60Hz
+  if (!r || !r.ok) return;
+  /* CONTRACT §6 is a closed event set, so this rides `pantry:low` — the event
+     the "you are out of X" toast already listens to — with the flags that say
+     WHICH state this is. `dumpSupply()` has already emitted the negative
+     `pantry:buy` that moves the numbers; this is the sentence.
+     ⚠ render must grow the branch (see the round-7 handover). The `fx` float
+       dumpSupply() raises lands on screen with nobody's cooperation, so the
+       player is never silently robbed even if that branch is never written. */
+  emit('pantry:low', {
+    ing: pick, have: _int(K.pantry[pick]), stalled: true, cooler: true,
+    dumped: _int(r.dumped), unused: pickDead,
+  });
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -2313,7 +2497,15 @@ function dueSpanFor(items, custMul) {
   return Math.max(EC('PATIENCE_MIN_MS', 20000), (base + per * units) * _num(custMul, 1) * upMul);
 }
 
-/** 0..1 of the promise burnt through. Render's countdown bar. */
+/**
+ * 0..1 of the promise burnt through. Render's countdown bar, and the patience
+ * term inside `tipFor()` — one definition, two readers.
+ *
+ * ⚠ kitchen.render.js:2482 STILL RE-DERIVES IT (`left/span`, the complement of
+ *   this). That is the third copy and it is somebody else's line to delete; see
+ *   the round-7 handover. Named here so the next reader knows the divergence is
+ *   known rather than accidental.
+ */
 export function ticketPct(ticket, now) {
   if (!ticket) return 0;
   const t = _num(now, K.now);
@@ -2368,7 +2560,26 @@ function spawnCounter(now) {
   const openTickets = K.tickets.filter((x) => x.state === 'open' || x.state === 'ready').length;
   if (openTickets >= cap) return turnAway(now, 'board-full');
 
-  const menu = menuForLevel(K.level);
+  /* 🔴 MOSTLY ASK FOR SOMETHING THE KITCHEN CAN ACTUALLY MAKE — the consumer
+     kitchen.data.js has been asking for in writing since round 5, rolled exactly
+     the way LIKE_BIAS is rolled twenty lines below.
+
+     ⚠ A BIAS, NOT A FILTER, and ECON.COOKABLE_BIAS is what keeps it one. At 1.0
+       the board would only ever want what is already in the cooler, the rest of
+       the menu would stop existing, and there would be no reason to restock
+       anything you were not already cooking. One order in four still comes off
+       the full board, so running out of buns is visible within a minute.
+     ⚠ menuForLevel() never returns an empty list: with nothing cookable it hands
+       back the unfiltered menu, because a customer who wants what you cannot
+       make is a lost ticket and NO customer at all is a dead restaurant. So this
+       cannot shut the doors — `dryCheck()` owns that decision and nothing else.
+     ⚠ THE COOKABLE LIST IS THE LATCHED ONE. `dryCheck()` prices a restock basket
+       across the bridge per menu row; calling it per arrival would put that on
+       the spawn path. `_cookable` is refreshed beside `_dry` in tick(). */
+  const hot = Array.isArray(K._cookable) ? K._cookable : null;
+  const menu = (hot && hot.length && rng() < EC('COOKABLE_BIAS', 0.75))
+    ? menuForLevel(K.level, hot)
+    : menuForLevel(K.level);
   if (!menu.length) return null;
   const cust = rpick(Array.isArray(DATA.CUSTOMERS) ? DATA.CUSTOMERS : []) || null;
   const spec = (cust && cust.order) || {};
@@ -3106,6 +3317,31 @@ export function serveTicket(ticketId, now) {
   const onTime = t <= _num(ticket.dueAt, t);
   if (onTime && units > 0) xp += _int(EC('XP_TICKET_BONUS', 6));
 
+  /* 🔴 THE MODIFIER XP, PAID HERE BECAUSE THIS IS THE ONLY PLACE IT CAN BE.
+     ECON.MOD_XP_HIT ("xp for getting a fussy order right") shipped read-by-
+     nobody for five rounds and drivethru.js's handover O2 says exactly why:
+     `addXp()` is module-private in THIS file, so the lane cannot pay it, and
+     writing `K.xp` from over there would skip the level-up emit, the unlock
+     list and the forced save. O2 offered two exits — export `awardXp()`, or
+     fold it in beside the ticket bonus — and this is the second, because a new
+     exported verb with one caller is the shape we are trying to stop shipping.
+
+     The Cinder and popularity halves of the same verdict are settled by
+     drivethru.js's `serveCar()`; only the xp leg comes home here, so nothing is
+     paid twice. Counter tickets have no modifiers and never reach this branch.
+     ⚠ `honoured` ONLY. A broken promise is already punished in Cinder
+       (MOD_PAY_MISS) and in reputation (MOD_POP_MISS); charging xp on top would
+       slow the level ladder for the same mistake a third time, and the ladder
+       is what unlocks the recipes that make the promise keepable. */
+  if (ticket.source === 'drive' && ticket.carId && typeof DriveThru.modVerdict === 'function') {
+    try {
+      const car = K.lane.find((c) => c && c.carId === ticket.carId);
+      const v = DriveThru.modVerdict(K, car || { carId: ticket.carId }, t);
+      const hit = Math.max(0, _int(v && v.honoured));
+      if (hit > 0) xp += hit * _int(EC('MOD_XP_HIT', 3));
+    } catch (e) { /* a lane mid-rewrite must never cost the player their sale */ }
+  }
+
   const avgQ = units > 0 ? (qsum / units) : 0;
   const tip = tipFor(ticket, avgQ, t, payout);
 
@@ -3246,8 +3482,12 @@ function tipFor(ticket, avgQ, now, payout) {
   // the food was (quality), and how well-liked the place is (popularity), summed
   // by TIP_*_W and scaled to at most TIP_MAX_PCT of the bill. tipBias is the
   // customer's own generosity; a Corp Suit tips 1.8× what a Raider does.
-  const span = Math.max(1, _num(ticket.dueAt) - _num(ticket.placedAt));
-  const patience = _clamp((_num(ticket.dueAt) - now) / span, 0, 1);
+  /* ⚠ THROUGH ticketPct(), NOT A THIRD COPY OF (dueAt − now) / span. This line
+     used to re-derive the countdown fraction itself, which meant the tip model
+     and the render bar could disagree about how much of the promise was left
+     the moment either one grew a clamp the other did not. `1 − ticketPct` IS
+     the remaining patience, by definition. */
+  const patience = _clamp(1 - ticketPct(ticket, now), 0, 1);
   const quality = _clamp(avgQ / Math.max(0.01, EC('Q_PERFECT', 1.25)), 0, 1);
   const pop = _clamp(K.popularity / 100, 0, 1);
   const blend = patience * EC('TIP_PATIENCE_W', 0.45)
@@ -3454,11 +3694,41 @@ export function xpProgress() {
    ═══════════════════════════════════════════════════════════════════════════ */
 export function ownsUpgrade(id) { return (K.upgrades || []).indexOf(id) !== -1; }
 
+/**
+ * The rack as the shop should draw it at this level: every UPGRADES row unlocked
+ * by `lv`, each already carrying `owned` and `locked`.
+ *
+ * 🔴 THROUGH kitchen.data.js's `upgradesForLevel()`, WHICH HAD NO CALLER AT ALL.
+ * It computes exactly these two flags from exactly these two rules, and this
+ * file was answering the same two questions with its own `ownsUpgrade()` tests
+ * a few lines below — two readers of one truth, which is the defect that has
+ * shipped in six consecutive rounds. `buyUpgrade()` now takes its gates from
+ * this list, so the row the shop greys out and the row the purchase refuses
+ * cannot disagree.
+ */
+function upgradeRack() {
+  const f = DF('upgradesForLevel');
+  if (f) {
+    try { const rows = f(K.level, K.upgrades); if (Array.isArray(rows)) return rows; } catch (e) {}
+  }
+  return [];
+}
+
 export function buyUpgrade(upgradeId) {
   const find = DF('upgrade');
   const list = Array.isArray(DATA.UPGRADES) ? DATA.UPGRADES : [];
-  const up = (find ? find(upgradeId) : null) || list.find((u) => u && u.id === upgradeId) || null;
+  /* The shop's own row first — it is the one carrying the resolved `owned` /
+     `locked` flags. Falling back to the raw table keeps a half-written data file
+     playable, and the three explicit tests below still hold in that case. */
+  const rack = upgradeRack();
+  const row = rack.find((u) => u && u.id === upgradeId) || null;
+  const up = row || (find ? find(upgradeId) : null) || list.find((u) => u && u.id === upgradeId) || null;
   if (!up) return no('BAD_ARG', 'No such upgrade.');
+  if (row && row.owned) return no('BAD_ARG', 'You already own that.');
+  if (row && row.locked) {
+    const pre = (find ? find(up.requires) : null) || null;
+    return no('LOCKED', `You need ${(pre && pre.name) || 'the previous upgrade'} first.`);
+  }
   if (ownsUpgrade(up.id)) return no('BAD_ARG', 'You already own that.');
   if (_int(up.minLevel || 1) > K.level) return no('LOCKED', `${up.name || 'That'} unlocks at level ${_int(up.minLevel)}.`);
   if (up.requires && !ownsUpgrade(up.requires)) {
@@ -3727,26 +3997,29 @@ export function closeShift(now, opts) {
     //    it, staying famous is a thing you keep doing rather than a thing you
     //    did. A clean day (nobody walked out, somebody was served) more than
     //    cancels the decay, which is the point.
-    /* 🔴 MEAN REVERSION — kitchen.data.js names THIS function as the consumer of
-       POP_REVERT_BELOW / POP_REVERT_PER_DAY and it was reading neither, so a bad
-       week compounded into a dead account: decay applies at every day roll, and
-       at popularity 4 a decay is the difference between climbing out and not.
-       Below the threshold the town's memory fades and reputation drifts back UP
-       toward it, INSTEAD of decaying — not a floor and not a gift, because the
-       drift is strictly smaller than one good day's service, so climbing out is
-       still something the player does. Above the threshold nothing changes and a
-       famous kitchen decays normally.
-       ⚠ BOTH KEYS DEFAULT TO ZERO. If the data file drops them the branch can
-       never be taken and the behaviour is exactly what it was — the fallbacks in
-       EC() are NaN guards, never tuning (see EC's header). */
-    const revertBelow = EC('POP_REVERT_BELOW', 0);
-    const revertPer = EC('POP_REVERT_PER_DAY', 0);
-    if (revertPer > 0 && K.popularity < revertBelow) {
-      bumpPop(Math.min(revertPer, revertBelow - K.popularity), 'day-revert');
-    } else {
-      bumpPop(EC('POP_DECAY_PER_DAY', -1.5), 'day-decay');
-    }
-    if (report.lost === 0 && report.served > 0) bumpPop(-EC('POP_DECAY_PER_DAY', -1.5) * 2, 'clean-day');
+    /* 🔴 MEAN REVERSION + DECAY + THE CLEAN-DAY BONUS, IN ONE CALL, AND THE
+       "ONE CALL" IS THE FIX. This block used to reassemble the whole settle out
+       of loose constants — its own copy of the revert clamp, its own
+       `EC('POP_DECAY_PER_DAY')`, its own `* 2` where POP_CLEAN_DAY_MULT lives —
+       while `DATA.popDayDelta()` sat beside it fully written, fully tuned and
+       CALLED BY NOBODY. Round 5 reported the popularity ratchet as CLOSED on
+       the strength of this block; kitchen.selftest.js then found popDayDelta()
+       with zero call sites, which is exactly how a settle stays broken while
+       reading as done — a call site assembling three terms by hand can be
+       missing one of them and look perfect. Now there is one copy of the
+       arithmetic and it lives with the numbers it reads.
+
+       ⚠ ONE bumpPop(), NOT TWO, AND THAT IS A REAL CHANGE. bumpPop() damps
+         movement inside POP_SOFT_MARGIN of a rail, so applying decay and then
+         the clean-day bonus as two calls damped each leg separately and the net
+         drift near 0 and near 100 depended on the order the lines happened to
+         be in. One settle, one damping, one `pop:change` event.
+       ⚠ THE FALLBACK IS NO MOVEMENT AT ALL, on purpose. If the data module is
+         half-written, popularity holding still is the honest degradation; a
+         locally re-derived decay here would be the duplicate coming straight
+         back in through the door marked "safety". */
+    const settle = DF('popDayDelta');
+    if (settle) bumpPop(_num(settle(K.popularity, report), 0), 'day-settle');
     K.totals.days++;
     K.shift.day++;
     K.shift.tMs = 0;
@@ -4134,6 +4407,13 @@ export function tick(dt, now) {
      nothing anywhere called for it. */
   reliefWatch(t);
 
+  /* 2d. 🧊 AND THE OTHER SOFT-LOCK — a cooler too full to accept any crate.
+     See coolerWatch(). `dumpSupply()` has been the documented exit from this
+     state since round 4 and had no caller at all, which made two comments in
+     this file — and the reason dryCheck() deliberately ignores the pantry cap —
+     into claims about a recovery nobody could reach. */
+  coolerWatch(t);
+
   // 3. DRIVE-THRU (owns the lane; we only merge its events)
   if (K.shift.running && typeof DriveThru.tick === 'function') {
     try {
@@ -4262,6 +4542,17 @@ const SIM_EPOCH = 1700000000000;   // an arbitrary fixed epoch; the sim only eve
                                    // uses differences, so the value is cosmetic.
 
 /**
+ * 🔬 THE HEADLESS HARNESS ENTRY POINT — a node/console tool, NOT a game verb.
+ *
+ * ⚠ IT HAS NO CALL SITE IN THE SHIPPED FEATURE AND MUST NOT GROW ONE. Nothing
+ *   the player touches may fast-forward the sim. It is reached two ways and
+ *   only two: `import { simulate } from './kitchen.state.js'` in a scratch
+ *   harness under node, and `__mk.sim.simulate(60, null, {auto:true})` from the
+ *   browser console (index.js publishes this module as `MythicKitchen.sim`).
+ *   Both were exercised in round 7 before this note was written — kitchen.
+ *   selftest.js's rule is that "it is a console tool" only counts if you have
+ *   actually run it from the console, and that rule is correct.
+ *
  * @param {number} seconds  wall-seconds of simulated time
  * @param {Array|Function} actions
  *        Either a list of `{at:<seconds>, do:'startCook'|…, args:[…]}` or a

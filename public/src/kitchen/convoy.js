@@ -69,10 +69,10 @@
         road" with nothing in between, and two hours of anticipation resolved
         into a toast that a level-up could outrank.
 
-     F. THE DEAD API IS WIRED OR GONE. `upsertStats` is called by this file's own
-        heartbeat, `listConvoyLedger` is read when the server says a convoy was
-        already unloaded, and `leaderboard()` is exported for the Day sheet. See
-        §10.
+     F. THE DEAD API IS WIRED OR GONE. `listConvoyLedger` is read when the
+        server says a convoy was already unloaded. (`upsertStats` and
+        `leaderboard()` were the other half of this item and round 6 finished it
+        the other way — see §10, which is now the tombstone.)
 
    ── 🔴 WHAT CHANGED IN ROUND 5, AND WHY ─────────────────────────────────────
    Round 4 closed the quota race on the server and then shipped a food printer
@@ -108,7 +108,39 @@
         costs a round trip, the other mints food.
 
      H. THE SCOREBOARD STOPPED UPLOADING TO A PAGE NOBODY OPENS. `publishStats`
-        is gated on `_boardRead` — see §10.
+        was gated on a `_boardRead` flag — a half-measure round 6 replaced with
+        the whole one. See §10.
+
+   ── 🔴 WHAT CHANGED IN ROUND 6, AND WHY ─────────────────────────────────────
+   Round 5 killed the ghost convoy and the review came back with the shape this
+   feature keeps shipping: the fix landed correctly and the STATE IT INTRODUCED
+   was never given a way out.
+
+     I. THE CURE HAD NO EXIT. `pending` counted toward the in-flight cap
+        unconditionally, so three ambiguous launches locked the whole Loading Bay
+        — including the offline PRACTICE RUN, which touches no depot and no
+        server slot — while the banner directly above the dead button promised
+        "practice runs still work". `activeOutbound(K, forNetwork)` now counts an
+        unconfirmed launch only against a load that actually needs the network,
+        `launch()` resolves the recipient BEFORE it composes so the strict gate
+        has the one fact it depends on, and the whole life cycle of `pending` is
+        written out on `activeOutbound`. There is deliberately NO expiry timer:
+        expiring a pending row means `turnBack()`, and turning back a row nobody
+        has confirmed is the ghost convoy with a clock on it.
+
+     J. THE AGGREGATE NOBODY READ. `pending(K, now)` was written as the surface
+        for that state and had no caller anywhere — the dead-code shape again. It
+        is no longer exported; it feeds `banner()`, which the renderer already
+        prints, at every rung of the ladder.
+
+     K. THE QUOTE AND THE COUNTDOWN AGREED AT LAST. The bay quotes a road time,
+        the server rolls a hold-up into `arrives_at`, and for 10–90% of the trip
+        the row's ETA contradicted the quote with nothing on screen. `route()`
+        now says it from the first frame — see the block above `route()`.
+
+     L. FIVE PUBLISHED FIELDS AND ONE EXPORTED FUNCTION WITH NO READER, ANSWERED
+        RATHER THAN RE-PUBLISHED. See `route()`, `manifest()`, `launch()`,
+        `claim()`, `recipients()` and §10.
 
    🔴 THE SIX HARD RULES THIS FILE LIVES UNDER
 
@@ -402,11 +434,42 @@ function netOk(K) {
  *   "The depot is not answering right now. Your trucks are safe — try again in
  *    a moment."
  * Never a toast: it is a condition, not an event, and it can last minutes.
+ *
+ * ⚠ NOT EXPORTED ANY MORE, AND THAT IS THE ROUND-6 ANSWER TO A FOUR-ROUND WARN.
+ *   It was in CONTRACT §1 and no other module ever named it — the self-test's
+ *   "used only inside convoy.js" shape. The renderer never wanted the raw error
+ *   string; it wanted the SENTENCE, and `banner()` is where the sentence and the
+ *   ORDER of the ladder live. An export nobody imports is a promise nobody
+ *   collects, so this is now what it always was: banner()'s third rung.
  */
-export function netError(K) {
+function netError(K) {
   try { return { error: (K && K._netError) || null, at: _num(K && K._netErrorAt, 0) }; }
   catch (e) { return { error: null, at: 0 }; }
 }
+
+/** "4 minutes" / "2 hours" / "under a minute". A wording helper, not a dial —
+    there is no number here a designer would ever want to tune. */
+function _forHowLong(ms) {
+  const m = Math.floor(Math.max(0, _num(ms, 0)) / 60000);
+  if (m < 1) return 'under a minute';
+  if (m < 60) return m + ' minute' + (m === 1 ? '' : 's');
+  const h = Math.round(m / 60);
+  return h + ' hour' + (h === 1 ? '' : 's');
+}
+
+/** "16 min" / "2h 10m" / "48s" — the same shape the row's ETA is printed in, so
+    a duration convoy.js writes into a caption cannot read differently from one
+    the renderer formats itself. */
+function _fmtEta(ms) {
+  const v = Math.max(0, _num(ms, 0));
+  if (v < 60000) return Math.round(v / 1000) + 's';
+  const m = Math.round(v / 60000);
+  if (m < 60) return m + ' min';
+  return Math.floor(m / 60) + 'h ' + (m % 60) + 'm';
+}
+
+/** `n` trucks / `1` truck. */
+function _trucks(n) { return n + (n === 1 ? ' truck' : ' trucks'); }
 
 /**
  * 🔴 THE WHOLE BANNER LADDER, IN ONE CALL, IN THE FILE THAT OWNS THE ORDER.
@@ -431,21 +494,64 @@ export function netError(K) {
  * ⚠ THE RENDERER STILL OWNS RUNG 0 ("the loading bay is still being built"),
  *   because that rung is "this module did not load", and a module that did not
  *   load cannot answer a question about itself.
+ *
+ * ── 🔴 ROUND 6: THE FIFTH RUNG, AND WHY IT EXISTS ──────────────────────────
+ * Round 5's critic, finding #2: `pending(K, now)` had been written as the
+ * aggregate surface for the unconfirmed-launch state, and no file in the repo
+ * ever named it — the dead-code shape this feature had shipped six rounds
+ * running. Worse, the heartbeat clears the network error the moment the depot
+ * answers `listInbound`, and `settlePending()` runs AFTER that, so a player
+ * could hold three unconfirmed trucks while this ladder read 'ok' and the panel
+ * said nothing at all. The only signal was a caption on one row, under a heading
+ * that still said ON THE ROAD.
+ *
+ * So `pending()` is no longer exported and no longer optional to draw: it feeds
+ * THIS function, which the renderer already prints. That is the difference
+ * between wiring something and hoping somebody wires it.
+ *
+ * ⚠ IT ALSO CHANGES THE FIRST THREE RUNGS RATHER THAN SITTING BELOW THEM. A
+ *   signed-out player with two unconfirmed trucks needs BOTH facts in the one
+ *   sentence they are given: they cannot ship to a person right now, AND two
+ *   loads they already paid for are unresolved. Printing only the first — which
+ *   is what a fifth rung placed under 'ok' would do — is how round 5's
+ *   screenshot ended up promising "practice runs still work" directly above a
+ *   dead SEND button. The lane is fixed (see `activeOutbound`); this is the half
+ *   that makes it legible instead of silent.
  */
 export function banner(K) {
   try {
     if (!K) return { rung: 'ok', text: '' };
+    const p = pending(K, _num(K.now, 0));
+    // The tail every rung shares. '' when there is nothing unconfirmed, which
+    // is the overwhelmingly normal case.
+    const tail = p.count
+      ? ' ' + _trucks(p.count) + ' you sent ' + (p.count === 1 ? 'is' : 'are')
+        + ' still unconfirmed (' + _forHowLong(p.oldestMs) + ') — nothing unloads until the depot answers.'
+      : '';
     if (K.missing) {
       return { rung: 'missing',
-        text: 'The convoy network is not set up yet — practice runs to your own city still work.' };
+        text: 'The convoy network is not set up yet — practice runs to your own city still work.' + tail };
     }
     if (K.offline) {
       return { rung: 'offline',
-        text: 'Signed out. Sign in to ship to other players; practice runs still work.' };
+        text: 'Signed out. Sign in to ship to other players; practice runs still work.' + tail };
     }
     if (netError(K).error) {
       return { rung: 'netError',
-        text: 'The depot is not answering right now. Your trucks are safe — try again in a moment.' };
+        text: p.count
+          ? 'The depot is not answering right now.' + tail + ' Practice runs still work.'
+          : 'The depot is not answering right now. Your trucks are safe — try again in a moment.' };
+    }
+    if (p.count) {
+      /* The depot IS answering and these are still unresolved — a launch whose
+         reply was lost, waiting on the next `settlePending()`. Normally seconds.
+         Said out loud anyway, because the dishes and the freight are already
+         spent and a player is owed the reason their board has a truck on it
+         they cannot do anything with. */
+      return { rung: 'pending',
+        text: _trucks(p.count) + ' ' + (p.count === 1 ? 'is' : 'are')
+            + ' waiting on the depot to confirm ' + (p.count === 1 ? 'it' : 'them')
+            + ' (' + _forHowLong(p.oldestMs) + '). Nothing unloads until it does; practice runs still work.' };
     }
     return { rung: 'ok', text: '' };
   } catch (e) { return { rung: 'ok', text: '' }; }
@@ -662,14 +768,20 @@ function feeFor(tierId, items, owned) {
 }
 
 /**
- * Pure, side-effect-free quote for the UI. CONTRACT §1 signature is
- * `(tierId, items)`; `owned` is an OPTIONAL third argument so a caller that
+ * Pure, side-effect-free quote for a load. `owned` is optional, so a caller that
  * has `K.upgrades` to hand gets the upgraded capacity and fee. A caller that
  * omits it sees the stock truck — a small under-quote for an upgraded player,
  * never an over-quote, which is the safe direction to be wrong in when the
  * number next to it is a price.
+ *
+ * ⚠ NO LONGER EXPORTED. It was in CONTRACT §1 and the round-6 self-test found it
+ *   NAMED NOWHERE — not by another module, not by its own file, not by
+ *   index.html. It was not dead code so much as an un-taken road: `manifest()`
+ *   had grown a second copy of the same five lines. `manifest()` calls this now,
+ *   so there is exactly one quote in the file, and the public surface is the one
+ *   the panel actually uses.
  */
-export function estimate(tierId, items, owned) {
+function estimate(tierId, items, owned) {
   const t = tierOf(tierId);
   if (!t) return { tierId, dishes: 0, transitMs: 0, feeCinder: 0, capacity: 0, items: {}, food: 0 };
   const cap = capacityOf(tierId, owned);
@@ -698,19 +810,56 @@ function passCounts(K) {
   return have;
 }
 
-/** Outbound trucks still on the road. The concurrency cap counts these only —
-    an arrived truck waiting to be unloaded is not occupying a driver, and a
-    HELD one is not on the road at all. */
-function activeOutbound(K) {
+/**
+ * Outbound trucks still on the road. The concurrency cap counts these only —
+ * an arrived truck waiting to be unloaded is not occupying a driver, and a
+ * HELD one is not on the road at all.
+ *
+ * `forNetwork` — is the load being counted for a REAL shipment (true) or for a
+ * practice run / an unknown recipient (false)?
+ *
+ * ── 🔴 ROUND 6. THE CURE HAD NO EXIT, AND THIS IS WHERE IT WAS SEALED IN. ──
+ * Round 5's headline finding. `pending` counted here unconditionally, with a
+ * comment that argued for it well — a pending truck probably IS occupying a
+ * server slot, and not counting it would let a flaky connection stack launches
+ * past the server's own wall and be refused one at a time with no explanation.
+ * All true, and all about a SHIPMENT TO ANOTHER PLAYER.
+ *
+ * A PRACTICE RUN HAS NO SERVER LEG AT ALL. `launch()` step 7 skips the network
+ * entirely for `to.self`, and sql/038's `to_user <> from_user` would reject it
+ * if it did not. So a pending row cannot possibly be occupying anything a
+ * practice run needs — and yet three ambiguous launches locked the entire
+ * Loading Bay, including the practice run, while the banner directly above the
+ * dead button promised "practice runs still work". Measured, on one phone
+ * screen: banner "Signed out. Sign in to ship to other players; practice runs
+ * still work." / SEND BUTTON {"txt":"TOO MANY ON THE ROAD","disabled":true}.
+ * CONTRACT §9 says rungs 1–3 must be playable; that was a signed-out player
+ * with a dead convoy tab and no way out of it that did not involve a server.
+ *
+ * 🔴 THE FIX IS NOT AN EXPIRY TIMER, AND THAT IS DELIBERATE. The tempting shape
+ * is "after N minutes, give up on the truck" — and giving up means `turnBack()`,
+ * which pays the sender for a load that may be on the road to somebody else.
+ * That is the ghost convoy with a clock on it. Round 5's brief says so in as
+ * many words: do NOT add a local give-up.
+ *
+ * THE LIFE CYCLE PENDING NOW HAS, WRITTEN OUT SO THE NEXT READER CAN SEE IT IS
+ * NOT A LEAK:
+ *   · RESOLVED — `settlePending()` on the very next heartbeat adopts the row
+ *     (the depot has it) or turns it back (the depot answered and does not).
+ *     That is the exit, it needs no player action, and it is the only one that
+ *     can pay anybody anything.
+ *   · WHILE UNRESOLVED — it holds a NETWORK slot (so a flaky connection cannot
+ *     stack real launches past the server's wall) and holds NOTHING ELSE. The
+ *     practice lane stays open at every rung of §9.
+ *   · ANNOUNCED — `banner()` says how many and for how long, at every rung, so
+ *     the state is never something the player has to infer from a refusal.
+ */
+function activeOutbound(K, forNetwork) {
   let n = 0;
-  // ⚠ 'pending' COUNTS. It is a truck that is probably on the road — that is
-  //   the whole reason it is not paid out — so it occupies a driver exactly
-  //   like a confirmed one. Not counting it would let a player with a flaky
-  //   connection stack launches past ECON.CONVOY_MAX_ACTIVE, and the server's
-  //   own wall 1 would then refuse them one at a time with no explanation.
   for (const c of (K.convoys || [])) {
     if (!c || c.dir === 'in') continue;
-    if (c.state === 'transit' || c.state === 'pending') n++;
+    if (c.state === 'transit') { n++; continue; }
+    if (c.state === 'pending' && forNetwork) n++;
   }
   return n;
 }
@@ -718,12 +867,15 @@ function activeOutbound(K) {
 /* ───────────────────────────────────────────────────────────────────────────
    THE MANIFEST — round 2's answer to "a convoy is a form, not an event".
 
-   ⚠ NOT IN CONTRACT §1's EXPORT LIST, and this note is the "say so" §0 asks
-   for. `shippablePass()` and `manifest()` are PURE READS over `K` with no
-   mutation and no side effects. They exist because the round-1 loader dumped
-   the entire pass onto the truck, which is not a decision — the player never
-   chose anything, so loading could not feel like an act. They want adding to §1
-   on the next pass.
+   It exists because the round-1 loader dumped the entire pass onto the truck,
+   which is not a decision — the player never chose anything, so loading could
+   not feel like an act.
+
+   ⚠ `manifest()` IS THE EXPORT; `shippablePass()` IS NOT, ANY MORE. Both are
+   pure reads over `K`. §1 listed both and only one of them ever crossed a file
+   boundary; the round-6 self-test called the other one out as "used only inside
+   convoy.js", which it is — it is `manifest()`'s bin builder, and `manifest()`
+   returns those bins as `lines`.
    ─────────────────────────────────────────────────────────────────────────── */
 
 /**
@@ -735,7 +887,7 @@ function activeOutbound(K) {
  * 4 legible to a player. Shipping is a LOSS for the pair and the manifest
  * should say so rather than hiding it behind a friendly "+40 food".
  */
-export function shippablePass(K) {
+function shippablePass(K) {
   const out = [];
   try {
     if (!K || typeof K !== 'object') return out;
@@ -771,16 +923,30 @@ export function shippablePass(K) {
  * `clampToCapacity` trims in, so what the player sees is what leaves.
  *
  * → { tierId, tier, items, lines, dishes, capacity, transitMs, feeCinder,
- *     food, purse, minDishes, ok, code, why }
+ *     food, minDishes, ok, code, why }
  *
  * `ok:false` here is a DISABLED BUTTON, not an error toast. `why` is the label
  * the wiring agent should put under the LOAD button.
+ *
+ * ⚠ `transitMs` IS THE DRIVING TIME AND NOTHING ELSE, which is round 5 finding
+ *   #3 answered honestly rather than by inventing an average. The server rolls a
+ *   HOLD-UP at launch and bakes it into `arrives_at`, so a quote that tried to
+ *   include it would be wrong for every individual truck instead of right for
+ *   the fleet. A hold-up is time the truck is STOPPED, not time on the road, and
+ *   the moment the row exists `route().caption` says so with the minutes on it —
+ *   see the block above `route()`. The number here is never contradicted in
+ *   silence, which is the actual complaint.
+ *
+ * ⚠ `purse` WAS RETURNED AND NOTHING READ IT (round 6 self-test). It is a
+ *   bridge read the caller can make for itself and a stale copy of a number that
+ *   moves; the affordability VERDICT is what a caller wants, and that is `code`
+ *   / `why`. Removed rather than re-published.
  */
 export function manifest(K, tierId, wanted) {
   const t = tierOf(tierId);
   const blank = {
     tierId, tier: null, items: {}, lines: [], dishes: 0, capacity: 0,
-    transitMs: 0, feeCinder: 0, food: 0, purse: 0,
+    transitMs: 0, feeCinder: 0, food: 0,
     minDishes: Math.max(1, _int(EC('CONVOY_MIN_DISHES', 4))),
     ok: false, code: 'BAD_ARG', why: 'That truck is not in the yard.',
   };
@@ -788,7 +954,6 @@ export function manifest(K, tierId, wanted) {
     if (!K || typeof K !== 'object' || !t) return blank;
 
     const bins = shippablePass(K);
-    const cap = capacityOf(tierId, K.upgrades);
     const minLevel = Math.max(1, _int(t.minLevel || 1));
     const minDishes = Math.max(1, _int(EC('CONVOY_MIN_DISHES', 4)));
 
@@ -802,9 +967,19 @@ export function manifest(K, tierId, wanted) {
     } else {
       for (const b of bins) wish[b.recipeId] = b.have;      // "fill it"
     }
-    const items = clampToCapacity(wish, cap);
-    const dishes = countOf(items);
-    const feeCinder = feeFor(tierId, items, K.upgrades);
+
+    /* 🔴 THE QUOTE IS `estimate()`'s, NOT A SECOND COPY OF IT. Round 5 had this
+       function re-deriving capacity, the clamp, the dish count, the freight fee
+       and the landing food inline — the same five lines `estimate()` already
+       owned — and `estimate()` itself then had ZERO call sites anywhere in the
+       repo (round 6 self-test, FAIL). Two implementations of one quote is how
+       the panel and the launch end up disagreeing about what a truck costs; one
+       of them being dead is the reason nobody noticed. */
+    const q = estimate(tierId, wish, K.upgrades);
+    const cap = q.capacity;
+    const items = q.items;
+    const dishes = q.dishes;
+    const feeCinder = q.feeCinder;
 
     let purse = 0;
     try { const b = bridge(); purse = _int(b.gems ? b.gems() : 0); } catch (e) { purse = 0; }
@@ -817,7 +992,13 @@ export function manifest(K, tierId, wanted) {
 
     let code = 'OK', why = '';
     if (_int(K.level) < minLevel) { code = 'LOCKED'; why = 'The ' + (t.name || 'truck') + ' unlocks at level ' + minLevel + '.'; }
-    else if (activeOutbound(K) >= Math.max(1, _int(EC('CONVOY_MAX_ACTIVE', 3)))) {
+    /* ⚠ THE PERMISSIVE COUNT, ON PURPOSE. This decides whether the SEND button
+       is live, and the panel does not tell us who the load is addressed to — so
+       counting unconfirmed launches here is precisely how round 5 disabled the
+       practice run. `launch()` holds the strict gate and refuses before spending
+       anything. The banner above this panel already says how many trucks are
+       unconfirmed, so the player is not surprised by that refusal. */
+    else if (activeOutbound(K, false) >= Math.max(1, _int(EC('CONVOY_MAX_ACTIVE', 3)))) {
       code = 'CAP'; why = 'You already have ' + Math.max(1, _int(EC('CONVOY_MAX_ACTIVE', 3))) + ' convoys on the road.';
     } else if (!bins.length) { code = 'NOT_READY'; why = 'Nothing on the pass can ride a convoy — fries and shakes do not travel.'; }
     else if (dishes < minDishes) { code = 'NOT_READY'; why = 'Load at least ' + minDishes + ' boxes.'; }
@@ -825,8 +1006,8 @@ export function manifest(K, tierId, wanted) {
 
     return {
       tierId, tier: t, items, lines, dishes, capacity: cap,
-      transitMs: Math.max(0, _int(t.transitMs)), feeCinder, purse, minDishes,
-      food: Math.max(0, Math.floor(dishes * EC('CONVOY_FOOD_PER_DISH', 1))),
+      transitMs: q.transitMs, feeCinder, minDishes,
+      food: q.food,
       ok: code === 'OK', code, why,
     };
   } catch (e) { return blank; }
@@ -835,8 +1016,22 @@ export function manifest(K, tierId, wanted) {
 /**
  * Validate a load against the truck, the level gate and the pass.
  * → {ok, code, why, convoy}   `convoy` is a DRAFT: no id, not in `K`, nothing spent.
+ *
+ * `forNetwork` — OPTIONAL fourth argument, `true` when the caller already knows
+ * this load is addressed to another player. Omitted means "not yet decided", and
+ * the count is then the PERMISSIVE one (see `activeOutbound`), because the
+ * authoritative gate is `launch()`, which resolves the recipient FIRST and calls
+ * back in here with the answer before a single Cinder is spent.
+ *
+ * ⚠ THE DEFAULT HAS TO BE THE PERMISSIVE ONE AND THAT IS NOT LAXITY. The only
+ *   caller that omits it is the renderer's pre-flight, whose job is to decide
+ *   whether the SEND button is live; it does not tell us who the load is for.
+ *   A strict default there is exactly round 5's bug — the practice run, which
+ *   needs no network at all, refused because of somebody else's lost receipt.
+ *   Nothing is spent on a pre-flight, `launch()` re-composes with the recipient
+ *   in hand, and a refusal there costs the player nothing and names its reason.
  */
-export function compose(K, tierId, items) {
+export function compose(K, tierId, items, forNetwork) {
   try {
     if (!K || typeof K !== 'object') return no('BAD_ARG', 'The kitchen is not open.');
     const t = tierOf(tierId);
@@ -848,8 +1043,13 @@ export function compose(K, tierId, items) {
     }
 
     const maxActive = Math.max(1, _int(EC('CONVOY_MAX_ACTIVE', 3)));
-    if (activeOutbound(K) >= maxActive) {
-      return no('CAP', 'You already have ' + maxActive + ' convoys on the road.');
+    if (activeOutbound(K, forNetwork === true) >= maxActive) {
+      const p = pending(K, _num(K.now, 0));
+      return no('CAP', (forNetwork === true && p.count)
+        ? _trucks(p.count) + ' ' + (p.count === 1 ? 'is' : 'are')
+          + ' still waiting on the depot to confirm ' + (p.count === 1 ? 'it' : 'them')
+          + ', and that fills the yard. A practice run to your own city can still go out.'
+        : 'You already have ' + maxActive + ' convoys on the road.');
     }
 
     // Intersect the wish-list with what is REALLY on the pass. render builds
@@ -1048,16 +1248,24 @@ export async function launch(K, convoy, toUserId, now) {
     if (!convoy || typeof convoy !== 'object') return no('BAD_ARG', 'There is no load to send.');
     const t = _num(now, _num(K.now, 0));
 
-    // 1 · RE-COMPOSE. Never trust a draft that has been round-tripped through
+    /* 1 · RESOLVE THE RECIPIENT — 🔴 FIRST, WHICH IS A ROUND-6 REORDERING AND
+           NOT A TIDY-UP. `compose()` holds the in-flight cap, and whether an
+           unconfirmed launch fills a slot depends entirely on whether THIS load
+           needs the network at all (see `activeOutbound`). Round 5 composed
+           first and resolved second, so the cap was decided without the one
+           fact it depends on — and refused the practice run, which is the only
+           thing a signed-out player can send. Nothing is spent between here and
+           step 4, so moving the question earlier costs nothing. */
+    const to = resolveTo(toUserId);
+
+    // 2 · RE-COMPOSE. Never trust a draft that has been round-tripped through
     //     the UI: it was built before an `await`, and the pass, the level and
     //     the upgrade list can all have moved since. compose() is idempotent,
-    //     so this is free when nothing changed.
-    const re = compose(K, convoy.tierId, convoy.items);
+    //     so this is free when nothing changed. `!to.self` is the strict count:
+    //     THIS is the authoritative gate, and it refuses before any spend.
+    const re = compose(K, convoy.tierId, convoy.items, !to.self);
     if (!re.ok) return re;
     const load = re.convoy;
-
-    // 2 · RESOLVE THE RECIPIENT.
-    const to = resolveTo(toUserId);
 
     // ⚠ A NAMED RECIPIENT WHILE SIGNED OUT IS REFUSED, NOT DOWNGRADED. Round 1
     //   silently turned every failed P2P launch into a practice run, which is
@@ -1300,9 +1508,14 @@ export async function launch(K, convoy, toUserId, now) {
         } else {
           why = 'The depot could not reach ' + (to.name || 'them') + '. The truck turned back to your own city.';
         }
+        /* ⚠ `quota` USED TO RIDE ALONG HERE AND NOTHING READ IT (round-6
+           self-test: "launch() returns `quota` and NO OTHER FILE reads
+           `.quota`"). It was a boolean restating a fact `why` already says in
+           the player's own language — "Too many of your trucks are still out.
+           Wait for one to land, then send this again." A caller that branched on
+           it could only have written that sentence again, worse. */
         return ok({
-          id: row.id, convoy: row, feeCinder: paid, local: true, turnedBack: true,
-          quota: !!(res && res.quota), why,
+          id: row.id, convoy: row, feeCinder: paid, local: true, turnedBack: true, why,
         });
       }
     }
@@ -1659,33 +1872,63 @@ function routePlan(c) {
  *
  * → {
  *     pct,          // 0..1 — where the truck is. Drive `left:` off this.
- *     etaMs,        // ms until it lands (0 once it has)
- *     phase,        // 🔴 'transit'|'arrived'|'delivered'|'held'|'claimed' — BRANCH ON THIS
+ *     phase,        // 🔴 'transit'|'arrived'|'delivered'|'held'|'claimed'|'pending'
  *     arrived,      // 🔴 REDEFINED — see the block below. "mine to unload."
  *     roadOver,     // the road is behind it, whoever it now belongs to
- *     claimable,    // a live CLAIM belongs on this row RIGHT NOW
- *     caption,      // the finished sub-line, '' while in transit (see below)
+ *     caption,      // the finished sub-line (see below)
  *     button,       // { show, label, disabled, pct } — the whole button, decided here
  *     origin, dest, // { name, icon } — the two markers
  *     legs,         // [{ i, at, name, icon, hazard|null, lost, passed }]
  *     incidents,    // legs with a hazard the truck has ALREADY reached
  *     spoil,        // boxes lost so far (incidents reached)
- *     spoilFinal,   // boxes this route will cost in total
  *     dishes,       // boxes loaded
- *     delivering,   // boxes that will actually land = dishes - spoilFinal
- *     food,         // live `food` that lands = delivering × CONVOY_FOOD_PER_DISH
+ *     food,         // live `food` that lands, after the road takes its cut
  *     armed,        // false when ECON.CONVOY_SPOIL_PCT is 0 (it is — see the
  *                   //   EC() note; box loss is off and the hold-up is the stake)
  *     holdMs,       // 🔴 ms the server held this truck up. 0 = a clean run.
- *     holdLeg,      // 1-based leg it happened on, clamped into `legs`. 0 = none.
  *     holdName,     // 'Checkpoint Nine' — where. '' when there was no hold-up.
  *     holdLine,     // the sentence for it. '' when there was no hold-up.
  *     holding,      // true while the truck is AT the hold-up right now
  *     held,         // true once the truck has passed it (it is in the past)
  *   }
  *
- * ⚠ `holdMs` IS ALREADY INSIDE `etaMs`. It is reported so the road can say what
- * happened, never so a caller can add it to anything. See §3a.
+ * ⚠ `holdMs` IS ALREADY INSIDE THE ARRIVAL TIME. It is reported so the road can
+ * say what happened, never so a caller can add it to anything. See §3a.
+ *
+ * ── 🔴 ROUND 6: FIVE FIELDS LEFT THIS RETURN VALUE, AND WHY ────────────────
+ * `etaMs`, `claimable`, `spoilFinal`, `delivering` and `holdLeg` were computed
+ * on every call — every frame, for every row — and the round-6 self-test found
+ * that NO OTHER FILE READ ANY OF THEM. That is the shape this feature has
+ * shipped six rounds running, and "I published the field" is not "the game uses
+ * the field". Each one was answered rather than deleted blind:
+ *   · `etaMs` — the renderer counts down from `c.arrivesAt` itself and always
+ *     has. It is now consumed HERE instead, to build the transit caption below.
+ *   · `claimable` — a second name for `button.disabled === false`, which is the
+ *     thing that actually reaches the screen. Two spellings of one verdict is
+ *     how round 3's board grew a Claim button on a delivered truck.
+ *   · `spoilFinal` / `delivering` — the road's final cut and the boxes that
+ *     survive it. `food` already IS `delivering × CONVOY_FOOD_PER_DISH`, which
+ *     is the number a player can act on; the intermediates are the working.
+ *   · `holdLeg` — an index into `legs`. `holdName` and `holdLine` are the leg,
+ *     resolved. Handing back the index as well is asking the caller to do a
+ *     lookup this function has already done.
+ *
+ * ── 🔴 ROUND 6: AND `caption` IS NO LONGER EMPTY FOR A HELD-UP TRUCK ───────
+ * Round 5's finding #3: the loading bay quotes a transit time, the server then
+ * rolls a hold-up and bakes it into `arrives_at`, and the row's ETA disagrees
+ * with the quote from the first frame — with nothing on screen to explain it
+ * until the truck physically reaches the checkpoint. Measured: quote "2h 0m on
+ * the road", row "40 boxes · 2h 54m out", `note: null` at 0% and at 35%, and the
+ * explanation arriving at 72%. The hold-up rate is 22–34% by tier, so this is
+ * not an edge case, and on a rig the unexplained window is hours long. A
+ * countdown that silently grew reads as a broken countdown.
+ *
+ * The fix is to say it at the top of the trip and keep saying it: while the
+ * truck has a hold-up it has not yet reached, `caption` carries the live ETA AND
+ * the minutes the road is taking. It stays a per-frame value — the renderer
+ * already re-reads `route()` every frame and writes `caption` into the sub-line
+ * — so the countdown does not freeze. The reveal of WHERE still waits for the
+ * truck to get there, which is the part that is worth waiting for.
  *
  * ── 🔴 WHY `arrived` MEANS SOMETHING DIFFERENT NOW ─────────────────────────
  * It used to be `c.state !== 'transit'`, which is a true statement about THE
@@ -1711,19 +1954,23 @@ function routePlan(c) {
  *
  * ⚠ `caption` IS THE TAIL OF THE SUB-LINE, NOT THE WHOLE OF IT. The row already
  *   prints "{n} boxes · " and then either an ETA or a state; `caption` is that
- *   second half, and it is `''` in transit precisely so the renderer keeps
- *   owning the countdown (it has `fmtEta` and it updates it every frame).
+ *   second half. It is `''` for an ORDINARY truck in transit, precisely so the
+ *   renderer keeps owning the countdown (it has `fmtEta` and it updates it every
+ *   frame) — and it is a live "{eta} out · held up ahead (+{n} min)" for one
+ *   whose arrival time has a hold-up in it, because that is the one case where
+ *   the countdown alone is misleading. `_fmtEta()` mirrors the renderer's
+ *   formatter exactly so the two halves of the sub-line cannot read differently.
  *
  * PURE and cheap enough for `frame()`. Safe against a null convoy.
  */
 export function route(c, now) {
   const empty = {
-    pct: 0, etaMs: 0,
-    phase: 'transit', arrived: false, roadOver: false, claimable: false, caption: '',
+    pct: 0,
+    phase: 'transit', arrived: false, roadOver: false, caption: '',
     button: { show: false, label: '', disabled: true, pct: 1 },
     origin: { name: 'Your kitchen', icon: '🍔' }, dest: { name: 'Their city', icon: '🏙' },
-    legs: [], incidents: [], spoil: 0, spoilFinal: 0, dishes: 0, delivering: 0, food: 0, armed: false,
-    holdMs: 0, holdLeg: 0, holdName: '', holdLine: '', holding: false, held: false,
+    legs: [], incidents: [], spoil: 0, dishes: 0, food: 0, armed: false,
+    holdMs: 0, holdName: '', holdLine: '', holding: false, held: false,
   };
   try {
     if (!c || typeof c !== 'object') return empty;
@@ -1754,7 +2001,10 @@ export function route(c, now) {
                 || c.state === 'held' || c.state === 'claimed'
                 || c.state === 'pending') ? c.state : 'transit';
     const dock = phase === 'arrived' ? docking(c, now) : { docking: false, pct: 1, msLeft: 0 };
-    let caption = '', claimable = false;
+    const etaMs = Math.max(0, _num(c.arrivesAt, 0) - _num(now, 0));
+    const holding = !!hl && pct < 1 && pct >= hl.at && pct < (hl.at + 0.05);
+    const passedHold = !!hl && pct >= (hl.at + 0.05);
+    let caption = '';
     let button = { show: false, label: '', disabled: true, pct: 1 };
     if (phase === 'arrived') {
       if (dock.docking) {
@@ -1762,9 +2012,17 @@ export function route(c, now) {
         button = { show: true, label: 'Unloading…', disabled: true, pct: dock.pct };
       } else {
         caption = 'landed — claim it';
-        claimable = true;
         button = { show: true, label: 'Claim', disabled: false, pct: 1 };
       }
+    } else if (phase === 'transit' && plan.holdMs > 0 && !holding && !passedHold) {
+      /* 🔴 THE QUOTE AND THE COUNTDOWN, RECONCILED IN THE ONE PLACE THE PLAYER
+         IS LOOKING. See the block above: `arrives_at` already contains this
+         hold-up, so the ETA the row is counting down is bigger than the "on the
+         road" figure the loading bay quoted, and until round 6 nothing said why
+         until the truck physically reached the checkpoint. It is still the ETA
+         that leads — that is the number the player came for — and the road's
+         share is named beside it. WHERE it happens is still a reveal. */
+      caption = _fmtEta(etaMs) + ' out · held up ahead (+' + _fmtEta(plan.holdMs) + ')';
     } else if (phase === 'delivered') {
       // 🔴 NO BUTTON. It is not refused, it is ABSENT: this truck is the
       //    recipient's now and the sender is being told so, not offered a
@@ -1786,7 +2044,6 @@ export function route(c, now) {
 
     return {
       pct,
-      etaMs: Math.max(0, _num(c.arrivesAt, 0) - _num(now, 0)),
       phase,
       // 🔴 "MINE TO UNLOAD", not "the road is over". See the block above.
       arrived: phase === 'arrived',
@@ -1794,7 +2051,6 @@ export function route(c, now) {
       //   reads `roadOver` as "draw the aftermath" would draw an ending for a
       //   trip whose beginning is still unconfirmed.
       roadOver: phase !== 'transit' && phase !== 'pending',
-      claimable,
       caption,
       button,
       origin: inbound
@@ -1806,13 +2062,10 @@ export function route(c, now) {
       legs,
       incidents,
       spoil,
-      spoilFinal: plan.spoilFinal,
       dishes: plan.dishes,
-      delivering,
       food: Math.max(0, Math.floor(delivering * EC('CONVOY_FOOD_PER_DISH', 1))),
       armed: plan.armed,
       holdMs: plan.holdMs,
-      holdLeg: plan.holdLeg,
       holdName: hl ? hl.name : '',
       holdLine: (hl && hl.hazard) ? hl.hazard.line : '',
       // ⚠ `holding` is a WINDOW, not an instant. The truck glyph moves in
@@ -1820,8 +2073,8 @@ export function route(c, now) {
       //   never true on any actual frame of a six-hour convoy. A window one
       //   twentieth of the road wide is what makes the hold-up something the
       //   player can catch happening instead of a state nobody ever observes.
-      holding: !!hl && pct < 1 && pct >= hl.at && pct < (hl.at + 0.05),
-      held: !!hl && pct >= (hl.at + 0.05),
+      holding,
+      held: passedHold,
     };
   } catch (e) { return empty; }
 }
@@ -2111,7 +2364,7 @@ function holdMs() {
  * When this truck's CLAIM button arms. Pure.
  * → epoch ms. `0` for anything that is not an arrived convoy.
  */
-export function claimableAt(c) {
+function claimableAt(c) {
   if (!c || c.state !== 'arrived') return 0;
   return _num(c.arrivedAt, _num(c.arrivesAt, 0)) + holdMs();
 }
@@ -2133,13 +2386,19 @@ export function claimableAt(c) {
  * of it stops being something a renderer has to remember. `route(c, now).button`
  * is `{ show:true, label:'Unloading…', disabled:true, pct }` for the whole beat
  * and `{ show:true, label:'Claim', disabled:false, pct:1 }` after it, so the
- * only way to draw this wrong now is to ignore the button entirely. `docking()`
- * stays exported for the debug panel and for anything that wants the raw number.
+ * only way to draw this wrong now is to ignore the button entirely.
+ *
+ * ⚠ AND THAT ARGUMENT FINISHES ITSELF IN ROUND 6: `docking()` and
+ *   `claimableAt()` are no longer exported. §1 listed both, four rounds of no
+ *   other module naming either of them, and the reason is written two paragraphs
+ *   up — the whole point of `route().button` is that nobody outside this file
+ *   should ever have to do the dock arithmetic. Keeping the raw numbers on the
+ *   public surface was an invitation to reconstruct the verdict a third time.
  *
  * ⚠ A HELD row (§4) is NOT docking — it has already been paid out by the server
  *   and is waiting on stash room, which is a different sentence entirely.
  */
-export function docking(c, now) {
+function docking(c, now) {
   const at = claimableAt(c);
   if (!at) return { docking: false, pct: 1, msLeft: 0 };
   const span = Math.max(1, holdMs());
@@ -2293,9 +2552,17 @@ function arriveDue(K, now, out) {
        is written down in §10 for whoever draws it. Until then it is at minimum a
        complete toast line, which is a floor, not the ceiling it should be. */
     const r = route(c, t);
+    /* ⚠ `spoilFinal` / `delivering` USED TO BE READ OFF `route()` HERE. They are
+       the road's final cut and the boxes that survive it, and round 6 stopped
+       publishing them from `route()` because no OTHER file ever read them — but
+       this payload does need them, so they are re-derived from the one function
+       that owns the answer. `spoilOf()` is `routePlan().spoilFinal` and the plan
+       is memoised, so this is a map lookup, not a second roll. */
+    const finalSpoil = spoilOf(c);
     raise(K, out, 'convoy:arrive', {
       id: c.id, dishes: _int(c.dishes), toName: c.toName || '', fromName: c.fromName || '',
-      self: !!c.self, dir: 'out', spoil: r.spoilFinal, delivered: r.delivering, food: r.food,
+      self: !!c.self, dir: 'out',
+      spoil: finalSpoil, delivered: Math.max(0, _int(c.dishes) - finalSpoil), food: r.food,
       incidents: r.incidents.length,
       tierId: c.tierId || 'van',
       // The road, so the moment can say what the trip was.
@@ -2583,18 +2850,37 @@ async function settlePending(K) {
   return changed;
 }
 
-/** Launches still waiting on a receipt. Pure read, for the renderer's banner
-    and for a headless test. → [{ id, toName, dishes, sinceMs }] */
-export function pending(K, now) {
-  const out = [];
+/**
+ * Launches still waiting on a receipt.
+ * → { rows:[{id,toName,dishes,sinceMs}], count, dishes, oldestMs }
+ *
+ * 🔴 THE AGGREGATE IS THE POINT, AND IT HAS A CONSUMER NOW. Round 5 shipped
+ * this returning a bare array, documented "for the renderer's banner", and no
+ * file anywhere named it — including the banner. `count` and `oldestMs` are the
+ * two numbers a sentence about this state needs, so they are counted here once:
+ * `banner()` reads them for every rung of the ladder, and `compose()` reads them
+ * to say WHY a real shipment is refused. (`activeOutbound()` deliberately does
+ * NOT go through here — it needs a per-row decision, not a total, and it walks
+ * `K.convoys` once for both kinds.)
+ *
+ * ⚠ NOT EXPORTED. It was, and CONTRACT §1 listed it, and four rounds of nobody
+ *   importing it is the answer to whether it is a cross-file API. What crosses
+ *   the file boundary is `banner().text`.
+ */
+function pending(K, now) {
+  const out = { rows: [], count: 0, dishes: 0, oldestMs: 0 };
   try {
     const t = _num(now, _num(K && K.now, 0));
     for (const c of ((K && K.convoys) || [])) {
       if (!c || c.state !== 'pending') continue;
-      out.push({
+      const since = Math.max(0, t - _num(c.pendingSince, 0));
+      out.rows.push({
         id: c.id, toName: c.toName || '', dishes: Math.max(0, _int(c.dishes)),
-        sinceMs: Math.max(0, t - _num(c.pendingSince, 0)),
+        sinceMs: since,
       });
+      out.count++;
+      out.dishes += Math.max(0, _int(c.dishes));
+      if (since > out.oldestMs) out.oldestMs = since;
     }
   } catch (e) {}
   return out;
@@ -2746,138 +3032,57 @@ function maybeSync(K, now, force) {
   try {
     Promise.resolve(refreshInbound(K))
       .then(() => { K._convoySyncing = false; }, () => { K._convoySyncing = false; })
-      // 🔴 THE SCOREBOARD RIDES THE SAME HEARTBEAT, and this is `upsertStats`'s
-      //    first and only call site. Round 2 shipped `kitchen_stats`, its
-      //    SECURITY DEFINER upsert, its `ks_sel` policy and five column grants —
-      //    roughly sixty lines of sql/038 and three of its verify checks — with
-      //    ZERO callers anywhere in the client. Dead API is a lie about what the
-      //    feature does, and secured dead API is worse: it looks like the part
-      //    somebody thought hardest about.
-      //    WHY HERE and not on `shift:close`, which is the obvious place: this
-      //    file owns the only recurring network cadence in the whole feature,
-      //    and hanging the board off it means one round trip's worth of
-      //    politeness covers both. `shift:close` is also a moment the panel is
-      //    being torn down, which is the worst moment to start a fetch.
-      //    ⚠ ROUND 5: `publishStats` NOW RETURNS WITHOUT WRITING until something
-      //      has actually read the board (`_boardRead`, set by `leaderboard()`).
-      //      Round 3's finding was that the board had no reader in any file and
-      //      the upload rode this heartbeat anyway — a player's display name
-      //      posted to a shared table every sixty seconds for a page that does
-      //      not exist. The call site stays exactly here; what changed is that
-      //      it is now a no-op until the read exists. See the block on
-      //      `_boardRead`.
-      .then(() => publishStats(K));
+      /* ⚠ THE SCOREBOARD USED TO RIDE THIS HEARTBEAT AND IT IS GONE (round 6).
+         `kitchen_stats`, `kitchen_stats_upsert()`, the `ks_sel` policy, six
+         column grants, an index and four verify assertions existed to serve
+         `leaderboard()`, whose only caller in four rounds was `listLeaderboard()`
+         and whose only caller was `leaderboard()`. Round 5 made the upload
+         demand-driven, which stopped the privacy leak and left roughly sixty
+         lines of reviewed SQL guarding a page that does not exist. CLAUDE.md
+         asks for every policy to be reviewed line by line; four of them
+         protected nothing. Drawn or dropped, and drawing it needs a screen in
+         kitchen.render.js, which this agent does not own and has asked for four
+         rounds running. So: dropped, here and in sql/038, in one edit. */;
   } catch (e) { K._convoySyncing = false; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   §10 — THE SCOREBOARD. Cosmetic, and cosmetic is load-bearing here.
+   §10 — THE SCOREBOARD: REMOVED IN ROUND 6. READ THIS BEFORE REBUILDING IT.
    ═══════════════════════════════════════════════════════════════════════════
-   🔴 NOTHING IN THIS SECTION IS EVER AN ECONOMY SOURCE. Every number on the
-   board was written by a player's own client, so it is a wall to put a name on.
-   It is not a ledger, it is not evidence, and nothing may read it back and grant
-   anything. sql/038 says the same thing in the same words above the table.
+   `leaderboard()`, `publishStats()`, `API.listLeaderboard()`, `API.upsertStats()`
+   and the whole `kitchen_stats` half of sql/038 — the table, the SECURITY
+   DEFINER upsert, the `ks_sel` policy, six column grants, an index and four of
+   the migration's verify assertions — are gone. They are gone TOGETHER, in one
+   edit, which is the only honest way to remove a client and its schema.
+
+   WHY, and it is not "it was unused" on its own:
+     · Round 3's review found the board had no reader in any file. Rounds 4 and 5
+       found the same thing. `leaderboard()` and `listLeaderboard()` had exactly
+       one caller each — each other — for four rounds.
+     · Round 5 made the upload demand-driven, which closed the real defect (every
+       client posting its display name to a shared table for a page that does not
+       exist) and left the rest standing: roughly sixty lines of reviewed SQL,
+       four verify assertions and a column-grant audit, all protecting a surface no
+       screen reaches. CLAUDE.md: "RLS is the entire security boundary — review
+       every policy line by line." Asking the next reviewer to re-read a policy
+       that guards nothing is how the ones that matter get skimmed.
+     · The board's screen belongs in kitchen.render.js, which has one owner and
+       it is not this file. Four rounds of asking is enough evidence about
+       whether it is coming.
+
+   🔴 IF IT IS EVER WANTED BACK, THE TWO TRAPS ARE WRITTEN DOWN SO THEY ARE NOT
+      REDISCOVERED THE EXPENSIVE WAY:
+     1. `user_id` MUST NOT BE READABLE. Round 1 paired `using (true)` with
+        `select('user_id,…')` and turned the board into a paginated dump of
+        `auth.users` UUIDs to every signed-in player. Key rows on `name`. If a
+        "this is me" highlight is wanted, do it server-side with a view exposing
+        `user_id = auth.uid() as is_me`.
+     2. NEVER A POSTGREST UPSERT. It compiles to `on conflict … do update set
+        user_id = excluded.user_id`, which needs an UPDATE grant on `user_id` —
+        the ability to move a row onto another player's id. It has to be an RPC
+        that pins `user_id := auth.uid()`.
+     And the third, which is this section's whole story: BUILD THE SCREEN FIRST.
    ═══════════════════════════════════════════════════════════════════════════ */
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   🔴 THE UPLOAD IS DEMAND-DRIVEN. NOTHING IS PUBLISHED TO A PAGE NOBODY OPENS.
-   ═══════════════════════════════════════════════════════════════════════════
-   ROUND 3 FINDING #6, UNCHANGED THROUGH ROUNDS 4 AND 5 AND NOW CLOSED FROM THIS
-   SIDE. `leaderboard()` and `API.listLeaderboard()` had exactly one caller each
-   — each other. No screen in the game displayed a single row of it. Meanwhile
-   `publishStats()` rode the 60-second heartbeat, so every client uploaded its
-   DISPLAY NAME, level, served count, days played and popularity to a shared
-   Supabase table, for the life of the account, for a page that does not exist.
-   sql/038 spends a policy, five column grants and three verify checks
-   protecting that surface. The critic's own words: "uploading player names for
-   a page that does not exist is the worse of the two states."
-
-   THE BOARD'S RENDERER IS NOT THIS FILE'S TO WRITE (kitchen.render.js has one
-   owner and it is not this agent), so the half that IS ours is the upload — and
-   the honest version of it is not "delete the call", it is "make the write
-   follow the read":
-
-     `_boardRead` is set by `leaderboard()` and by nothing else. Until something
-     in this build has actually READ the board, `publishStats()` returns without
-     writing a byte. The day the Day sheet calls `Convoy.leaderboard(25)`, the
-     very next heartbeat starts publishing with no other change anywhere.
-
-   ⚠ THE OBVIOUS OBJECTION, ANSWERED: "then a board only contains people who
-     have opened it." Yes — and that is a normal, defensible shape for an opt-in
-     wall of names (you appear once you have been to look), whereas "we upload
-     everybody's name to a page that does not exist" is not defensible at all.
-     If a populate-first board is ever wanted, the decision to publish a name
-     without the player ever seeing where it goes should be taken deliberately
-     and written down here, not inherited from a heartbeat.
-   ⚠ MODULE SCOPE, NOT `K`. It is a property of this BUILD (does a reader
-     exist?), not of the player's save, so it must not be persisted and must not
-     be per-kitchen. `reset()` does not clear it and should not.
-   ═══════════════════════════════════════════════════════════════════════════ */
-let _boardRead = false;
-
-/**
- * Publish my row. Best-effort, fire-and-forget, silent on every failure.
- *
- * ⚠ THROTTLED SEPARATELY FROM THE INBOUND POLL. The board moves on the scale of
- * a shift; the inbound list moves on the scale of a truck. Posting a scoreboard
- * row every sixty seconds forever is a write nobody asked for, so it goes out at
- * most every ten minutes and only when something actually changed. The signature
- * is what the board displays — level, served, days, popularity — so a player
- * sitting in the panel doing nothing writes exactly once.
- */
-function publishStats(K) {
-  try {
-    if (!K || typeof K !== 'object') return;
-    // 🔴 NO READER, NO WRITE. See the block above.
-    if (!_boardRead) return;
-    if (K.missing || K.offline) return;               // setup states: not a failure, just nothing to do
-    const t = _num(K.now, 0);
-    const totals = K.totals || {};
-    const sig = [_int(K.level), _int(totals.served), _int(totals.days), Math.round(_num(K.popularity, 0))].join('/');
-    if (K._statsSig === sig && K._statsAt && (t - K._statsAt) < 600000) return;
-    K._statsSig = sig;
-    K._statsAt = t;
-    Promise.resolve(API.upsertStats({
-      level: Math.max(1, _int(K.level) || 1),
-      served: Math.max(0, _int(totals.served)),
-      days: Math.max(0, _int(totals.days)),
-      popularity: _clamp(Math.round(_num(K.popularity, 50)), 0, 100),
-    })).then(() => {}, () => {});
-    // ⚠ Deliberately no `K.error` and no toast on failure. A scoreboard that
-    //   could not be written is not a thing the player did or can fix, and
-    //   CONTRACT §9 is explicit that a cosmetic table must never produce an
-    //   error state for the panel.
-  } catch (e) { /* rule 2 */ }
-}
-
-/**
- * The board, for the Day sheet.
- * → { ok, rows:[{name,level,served,days,popularity,updated_at}], missing, offline }
- *
- * 🔴 THERE IS NO `user_id` IN THESE ROWS AND THERE MUST NEVER BE ONE. sql/038
- * revokes the column grant outright — round 1 paired `using (true)` with
- * `select('user_id,…')` and turned the leaderboard into a paginated dump of
- * `auth.users` UUIDs to every signed-in player. Key rows on `name` + index.
- *
- * ⚠ AND THAT IS WHY THE BOARD CANNOT FEED THE RECIPIENT PICKER, which was the
- * obvious idea and is the wrong one: you cannot address a convoy to a row with
- * no id, and re-adding the id to make it possible would re-open the leak. The
- * picker stays on `recipients()` / `findPlayer()`.
- */
-export async function leaderboard(limit) {
-  try {
-    /* 🔴 THE READ IS WHAT AUTHORISES THE WRITE. Set before the await so that a
-       board opened on a dead network still counts: the player has asked to see
-       the wall, which is the consent this gate is about, and whether the fetch
-       succeeded is a different question entirely. */
-    _boardRead = true;
-    const r = await API.listLeaderboard(Math.max(1, _int(limit || 25)));
-    if (!r || !r.ok) {
-      return { ok: false, rows: [], missing: !!(r && r.missing), offline: !!(r && r.offline) };
-    }
-    return { ok: true, rows: r.rows || [], missing: false, offline: false };
-  } catch (e) { return { ok: false, rows: [], missing: false, offline: false }; }
-}
 
 /* ═══════════════════════════════════════════════════════════════════════════
    §7 — CLAIM: the only place `food` enters the live ledger
@@ -3066,7 +3271,18 @@ export async function claim(K, convoyId, now) {
           }
         } catch (e) { when = ''; }
         retire(K, c, t, 0, null);
-        return ok({ granted: 0, already: true, why: 'That convoy was already unloaded.' + when });
+        /* 🔴 A REFUSAL, NOT A CHEERFUL ZERO — AND THAT IS A ROUND-6 BUG FIX, not
+           a style change. This branch returned `ok({granted:0, already:true,
+           why:…})`. The renderer's success path prints
+           `📦 ${fmtNum(out.granted)} food unloaded into the stash.` and reads
+           `why` ONLY on `!ok` — so a player who tapped Claim on a truck their
+           other tab had already emptied was told "📦 0 food unloaded into the
+           stash", which reads as the feature being broken, while the sentence
+           that explains it (including the ledger's "unloaded 3 minutes ago")
+           was computed, fetched over the network, and thrown away. `already`
+           was the same fact in a boolean, read by nobody.
+           Nothing was delivered, so `ok:false` is also simply true. */
+        return no('NOT_READY', 'That convoy was already unloaded.' + when, { granted: 0 });
       }
     }
 
@@ -3135,16 +3351,24 @@ export async function claim(K, convoyId, now) {
  *
  * ```js
  * const r = await Convoy.recipients(fragment, K);
- * // r = { ok:true, rows:[…], offline:false, missing:false, searching:false, why:'' }
+ * // r = { ok:true, rows:[…], offline:false, missing:false, why:'' }
  * // row = { id:'<uuid>', name:'Kestrel', kind:'recent'|'player', sub:'shipped before' }
  * ```
  *
  * THE RENDERER'S SIDE OF THE DEAL:
  *   · Call it on input, debounced. It is cheap and it never throws.
- *   · `fragment` shorter than two characters returns RECENT partners only, with
- *     `searching:false` — that is not an error, it is the resting state of the
- *     picker, and the list is still useful because most convoys go to someone
- *     you have shipped to before.
+ *   · `fragment` shorter than two characters returns RECENT partners only —
+ *     that is not an error, it is the resting state of the picker, and the list
+ *     is still useful because most convoys go to someone you have shipped to
+ *     before. `why` says so ("Type two letters to find someone else.").
+ *
+ * ⚠ `searching` WAS PUBLISHED HERE FOR THREE ROUNDS AND NOTHING READ IT (round-6
+ *   self-test). It could not have been useful: it describes a round trip that
+ *   has ALREADY FINISHED by the time this promise resolves, so a picker driving
+ *   a spinner off it would light one the instant it should go out. The renderer
+ *   owns "am I waiting" — it is the side that knows a request is outstanding —
+ *   and it already does (`_convoyBusy`, set before the await and cleared after).
+ *   What comes back from here is the ANSWER: `rows` and `why`.
  *   · `rows` is ALREADY de-duplicated and already excludes me.
  *   · `why` is a sentence to put under the field: "Type two letters", "Sign in
  *     to ship to another player", "The convoy network is not set up yet",
@@ -3160,7 +3384,7 @@ export async function claim(K, convoyId, now) {
 export async function recipients(fragment, K) {
   const q = String(fragment == null ? '' : fragment).trim();
   const recents = recentPartners(K);
-  const base = { ok: true, rows: recents, offline: false, missing: false, searching: false, why: '' };
+  const base = { ok: true, rows: recents, offline: false, missing: false, why: '' };
   try {
     if (!myId()) {
       base.offline = true;
@@ -3172,8 +3396,6 @@ export async function recipients(fragment, K) {
       base.why = recents.length ? 'Type two letters to find someone else.' : 'Type two letters to find a player.';
       return base;
     }
-    base.searching = true;
-
     let r = null;
     try { r = await API.findPlayer(q); } catch (e) { r = null; }
     if (!r || !r.ok) {
@@ -3208,7 +3430,7 @@ export async function recipients(fragment, K) {
     return base;
   } catch (e) {
     // Rule 2: an async entry point that rejects reaches render as "undefined".
-    return { ok: true, rows: recents, offline: false, missing: false, searching: false, why: '' };
+    return { ok: true, rows: recents, offline: false, missing: false, why: '' };
   }
 }
 
@@ -3248,12 +3470,17 @@ export function recentPartners(K, limit) {
 /* ═══════════════════════════════════════════════════════════════════════════
    §11 — READ-ONLY VIEWS (for render and the debug panel)
    ═══════════════════════════════════════════════════════════════════════════
-   ⚠ NOT IN CONTRACT.md's EXPORT LIST, and this note is the "say so" §0 asks
-   for. They are pure reads over `K` with no mutation and no side effects, so
-   nothing downstream has to know they exist; they want adding to §1 on the next
-   pass: `shippablePass` `manifest` `route` `held` `heldFood` `board` `progress`
-   `history` `recentPartners` `claimableAt` `docking` `leaderboard` `netError`
-   `banner` `arrival` `pending`. (`ackArrival` mutates `K._arrival`, nothing else.)
+   ⚠ ROUND 6 CUT THIS SURFACE DOWN TO WHAT IS ACTUALLY IMPORTED, and CONTRACT §1
+   was edited in the same commit. `estimate` `shippablePass` `pending` `docking`
+   `claimableAt` `netError` `history` are now MODULE-INTERNAL: every one of them
+   was exported, listed in §1, and named by no other file for four rounds. That
+   is not a style complaint — an export is a promise that something across a file
+   boundary depends on this signature, and six parallel builders read §1 to find
+   out what they may rely on. What each of them was FOR now reaches the screen
+   through the function that was always the real answer: `banner()` carries the
+   depot's state and the pending trucks, `manifest()` carries the quote and the
+   bins, and `route()` carries the dock beat and the road. `leaderboard` is gone
+   outright (§10). (`ackArrival` mutates `K._arrival`, nothing else.)
 
    ── 🔴 THE SIX CONVOY STATES — AND WHY YOU SHOULD NOT BRANCH ON THEM ───────
    Round 3 wrote this table out and asked the renderer to honour it. It did not,
@@ -3289,7 +3516,10 @@ export function recentPartners(K, limit) {
    NOTHING and can claim NOTHING while the depot has not said whether the truck
    exists — because round 4's alternative (assume it does not, pay the sender)
    created 80 units of live `food` out of 40 dishes on any dropped connection.
-   `pending(K, now)` is the list, for a banner. Do not add a button to it.
+   `banner(K)` is what says so on screen — it names how many trucks are
+   unconfirmed and for how long, at every rung of the ladder. Do not add a button
+   to a pending row, and do not add a timer that gives up on one: both are the
+   ghost convoy wearing something friendlier.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /** Every truck on the board, mine and inbound, newest departure first.
@@ -3323,7 +3553,7 @@ export function progress(c, now) {
  * sums to zero and one still on the road sums to `-dishes`. There is no balance
  * column and there never will be (CLAUDE.md, `corp_treasury`).
  */
-export async function history(convoyId) {
+async function history(convoyId) {
   try {
     const r = await API.listConvoyLedger(convoyId);
     if (!r || !r.ok) return { ok: false, rows: [], missing: !!(r && r.missing), offline: !!(r && r.offline) };

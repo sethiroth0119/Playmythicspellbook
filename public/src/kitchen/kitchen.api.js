@@ -31,11 +31,12 @@
    ES module cannot see it. `window.Cloud` is `undefined`. The client arrives
    through `bridge().cloud` and NOWHERE ELSE.
 
-   ── 🔴 ROUND 2: THREE WRITES BECAME RPCs, AND WHY ───────────────────────────
-   `insertConvoy`, `claimConvoy` and `upsertStats` all go through SECURITY
-   DEFINER functions now, and the matching table grants are revoked in sql/038.
-   The reason is the same in all three cases: **a value the server has to own
-   was being supplied by the client.**
+   ── 🔴 ROUND 2: THE WRITES BECAME RPCs, AND WHY ─────────────────────────────
+   `insertConvoy` and `claimConvoy` go through SECURITY DEFINER functions now,
+   and the matching table grants are revoked in sql/038. The reason is the same
+   in both cases: **a value the server has to own was being supplied by the
+   client.** (`upsertStats` was the third, and round 6 deleted it with the table
+   it wrote to — see the STATS tombstone below.)
 
      · LAUNCH  — round 1 posted `arrives_at` computed on the DEVICE clock, and
                  the only server-side check was `arrives_at > now()`. A tampered
@@ -48,9 +49,10 @@
                  truck credited 80 food. The RPC now returns `first_claim` and
                  `delivered_dishes`, and convoy.js pays on `delivered_dishes`
                  and nothing else.
-     · STATS   — an upsert needs UPDATE on the row, and giving the client UPDATE
-                 on a table it does not own is a bigger door than a leaderboard
-                 is worth. The RPC pins `user_id = auth.uid()`.
+     · STATS   — (removed round 6.) An upsert needs UPDATE on the row, and
+                 giving the client UPDATE on a table it does not own is a bigger
+                 door than a leaderboard is worth. That trap is recorded in the
+                 tombstone below in case the board is ever rebuilt.
 
    ── 🔴 ROUND 3: THE CLIENT STOPPED SETTING THE PRICE ────────────────────────
    Round 2 moved the CLOCK to the server and left the SIZE with the client. The
@@ -89,6 +91,12 @@
        the RPC returns the row it already wrote instead of writing another.
      · `findConvoysByRef()` — the reconcile. It is what lets convoy.js hold a
        launch in `'pending'`, pay out nothing, and settle it on a fact.
+
+   ── 🔴 ROUND 6: THE DEAD SECURED SURFACE CAME OUT. ─────────────────────────
+   `upsertStats()` and `listLeaderboard()` are deleted, with `kitchen_stats` and
+   everything guarding it in sql/038. Four rounds of "each other is my only
+   caller" is a decision, not a backlog item. The reasoning and the two traps to
+   re-read before rebuilding are in the STATS block below and in convoy.js §10.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 import * as BRIDGE from './kitchen.bridge.js';
@@ -541,66 +549,26 @@ export async function listConvoyLedger(convoyId, limit = 20) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   STATS — cosmetic, and cosmetic is load-bearing here
+   STATS — REMOVED IN ROUND 6, WITH THE TABLE THEY TALKED TO
    ═══════════════════════════════════════════════════════════════════════════
-   🔴 `kitchen_stats` IS NEVER AN ECONOMY SOURCE. Every number in it is written
-   by the player's own client, so it is a scoreboard and nothing else. Nothing
-   may read it back and grant anything. It exists so the kitchen has a wall to
-   put a name on; it is not a ledger and it is not evidence.
+   `upsertStats()` and `listLeaderboard()` lived here and are gone, together with
+   `convoy.js`'s `leaderboard()` / `publishStats()` and the whole `kitchen_stats`
+   half of sql/038 — the table, `kitchen_stats_upsert()`, the `ks_sel` policy,
+   six column grants, an index and four of the migration's verify assertions.
+
+   THEY HAD EXACTLY ONE CALLER EACH, EACH OTHER, FOR FOUR ROUNDS. No screen in
+   the game ever showed a row. Round 5 closed the real defect (every client
+   posting its display name to a shared table on a 60-second heartbeat for a page
+   that does not exist) by making the write follow a read that never came, which
+   left a fully reviewed, fully secured surface protecting nothing. CLAUDE.md
+   asks for every RLS policy to be reviewed line by line; the fastest way to make
+   that review worse is to fill it with policies that guard dead tables.
+
+   The full argument, and the two traps to re-read before rebuilding any of it,
+   are in convoy.js §10. Nothing here is a comment about a decision that could
+   have gone the other way inside this file: the board needs a screen, and the
+   screen is kitchen.render.js's.
    ═══════════════════════════════════════════════════════════════════════════ */
-
-/**
- * Write my own scoreboard row.
- *
- * 🔴 AN RPC, NOT AN UPSERT. PostgREST's upsert compiles to
- * `insert … on conflict (user_id) do update set user_id = excluded.user_id, …`,
- * which needs an UPDATE grant on `user_id` — i.e. the ability to move a row to
- * another player's id. That is impersonation on a public board, and it is the
- * only real risk this table has. `kitchen_stats_upsert()` pins the id to
- * `auth.uid()`, so sql/038 can revoke every client write grant on the table.
- */
-export async function upsertStats(stats) {
-  const c = client(); if (!c) return OFFLINE;
-  const me = uid(); if (!me) return OFFLINE;
-  const s = stats || {};
-  try {
-    const r = await c.rpc('kitchen_stats_upsert', {
-      p_name: who(),
-      p_level: Math.max(1, _int(s.level) || 1),
-      p_served: Math.max(0, _int(s.served)),
-      p_days: Math.max(0, _int(s.days)),
-      p_pop: Math.max(0, Math.min(100, _int(s.popularity))),
-    });
-    if (r.error) return fail(r.error);
-    return { ok: true };
-  } catch (e) { return fail(e); }
-}
-
-/**
- * The board.
- *
- * 🔴 `user_id` IS DELIBERATELY NOT SELECTED, and sql/038 revokes the column
- * grant so asking for it fails rather than quietly working again later. The
- * policy has to be `using (true)` — a leaderboard nobody can read is not a
- * leaderboard — and combined with `select('user_id,…')` that was a paginated
- * dump of `auth.users` UUIDs to every signed-in player. The board never used
- * the id for anything: it was selected and discarded. Rows are keyed on
- * `name` + index by the renderer.
- *
- * ⚠ If a "this is me" highlight is ever wanted, do it SERVER-side with a view
- * that exposes `user_id = auth.uid() as is_me`. Do not re-add the raw id.
- */
-export async function listLeaderboard(limit = 25) {
-  const c = client(); if (!c) return { ...OFFLINE, rows: [] };
-  try {
-    const r = await c.from('kitchen_stats')
-      .select('name,level,served,days,popularity,updated_at')
-      .order('served', { ascending: false })
-      .limit(Math.max(1, Math.min(100, _int(limit) || 25)));
-    if (r.error) return { ...fail(r.error), rows: [] };
-    return { ok: true, rows: r.data || [] };
-  } catch (e) { return { ...fail(e), rows: [] }; }
-}
 
 /* ═══════════════════════════════════════════════════════════════════════════
    RECIPIENT PICKER

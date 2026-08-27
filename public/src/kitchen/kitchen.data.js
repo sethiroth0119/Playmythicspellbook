@@ -44,8 +44,16 @@
      memoryShards dna wood stone cloth
    They are earned in the city builder (hydroponics → food, wellhead → water,
    genevault → dna, bottling → energyDrink), by businesses (OPS_ECON agri /
-   fishing → food) and by battle salvage. SUPPLY_RECIPES turns them into pantry
-   stock. Nothing else does.
+   fishing → food) and by battle salvage. The CORE supply lines turn them into
+   pantry stock.
+   ⚠ AND THERE IS EXACTLY ONE OTHER DOOR, ADDED DELIBERATELY AND BOUNDED HARD:
+     the SKIP BIN (§🗑, below) sells a subset of the pantry for Cinder alone, so
+     a player whose ledger is empty is never locked out of their own kitchen.
+     It is a FLOOR, not a bypass — it has no meat counter, it is dearer per unit
+     than the real thing, and the dishes it can make are the cheap half of the
+     board. Read that block before you touch either table; three rounds of this
+     feature shipped a dead end and the fourth nearly shipped a Cinder printer
+     instead.
 
    🔴 PANTRY INGREDIENTS ARE NOT PROMOTED INTO `RESOURCES`, and that decision is
    load-bearing. /src/resources/chain.js is a 258-entry CATALOGUE, not a ledger,
@@ -58,8 +66,15 @@
    ════════════════════════════════════════════════════════════════════════════ */
 
 /* ════════════════════════════════════════════════════════════════════════════
-   📦 SUPPLY_RECIPES — live ledger → pantry. THE RESTOCK COUNTER.
+   📦 _SUPPLY_CORE — live ledger → pantry. THE RESTOCK COUNTER.
    ----------------------------------------------------------------------------
+   ⚠ THIS IS THE CORE HALF OF THE COUNTER, NOT ALL OF IT. The exported
+     `SUPPLY_RECIPES` is this table plus the derived skip-bin lines (§🗑 THE SKIP
+     BIN, immediately below). Everything downstream — buySupply(), the supplies
+     sheet, unlocksAt() — reads the export and therefore sees both. This half is
+     private because `INGREDIENTS[].batch` and `INGREDIENTS[].foodPerUnit` must
+     come from THESE rows and never from a skip-bin row; see `_SUPPLY_BY_ING`.
+
    ⚠ THIS TABLE IS DECLARED BEFORE INGREDIENTS ON PURPOSE. `INGREDIENTS[].batch`
      is DERIVED from `out.qty` down here rather than typed twice. Two hand-kept
      copies of the same number is precisely the divergence this file exists to
@@ -93,7 +108,7 @@
       only industrial DNA source and it eats food + medicine. Vat-grown patties
       is both the flavour and the sink that makes a Gene Vault worth building.
    ════════════════════════════════════════════════════════════════════════════ */
-export const SUPPLY_RECIPES = [
+const _SUPPLY_CORE = [
   // ── DRY STORE ─────────────────────────────────────────────────────────────
   { id:'sup_dough',   out:{ ing:'dough',   qty:10 }, cost:{ food:6,  water:2,          cinder:60 }, minLevel:1,  blurb:'Flour, water, a tired proofing box.' },
   { id:'sup_potato',  out:{ ing:'potato',  qty:12 }, cost:{ food:5,                    cinder:40  }, minLevel:1,  blurb:'Hydroponic spuds. Gritty, cheap, endless.' },
@@ -138,6 +153,176 @@ export const SUPPLY_RECIPES = [
   // (soda) still had to be given two units of a food-costed syrup.
   { id:'sup_ice',     out:{ ing:'ice',     qty:16 }, cost:{ water:5,                   cinder:16  }, minLevel:2,  blurb:'Crushed. Melts on the pass in ninety seconds.' },
 ];
+
+/* ════════════════════════════════════════════════════════════════════════════
+   🗑 THE SKIP BIN — THE FLOOR UNDER THE RESOURCE ECONOMY.
+   ----------------------------------------------------------------------------
+   🔴🔴 THIS IS THE ANSWER TO THE FEATURE'S OLDEST BUG, AND IT IS THE THIRD
+        ATTEMPT AT IT. Read the history before you retune anything here.
+
+     Round 1: a brand-new account (gems 0, salvage {}, pantry {}) opened the
+       kitchen and the FIRST tap returned "Not enough Food — you need 5 and have
+       0." Dead end, sixty seconds in.
+     Round 2: START_PANTRY was granted properly. The dead end moved to minute 5,
+       because 120 units is 21 dishes against a 51-ticket day and all 25 core
+       supply lines cost a live resource a new account holds ZERO of. The player
+       got a good five minutes and then hit the SAME SENTENCE.
+     Round 3 (this): the grubstake is sized against a whole shift (see
+       ECON.START_PANTRY) AND there is a route back that never closes.
+
+   🔴 WHY THIS IS NOT "BUY EVERYTHING WITH CINDER", WHICH WOULD BE WORSE THAN
+      THE SOFT LOCK. The player asked for a kitchen fed by what their businesses,
+      their city and their battles produce. If Cinder bought the whole pantry,
+      that request would be decorative and we would have failed it at a deeper
+      level than a dead end. So the skip bin is a FLOOR, not a bypass, and it is
+      floored in three independent ways, every one of them checked in
+      assertDataSane():
+
+      1. 🍽 IT HAS NO MEAT COUNTER AND NO SPECIALITIES. It stocks bread, dry
+         store, veg, condiments, ice, fry oil and scrap links — and NOT `patty`,
+         `chicken`, `bacon`, `mayo`, `milk`, `pepperoni`, `mushroom` or
+         `coffee`. Those are the Chiller's prime lines and the exotics, and they
+         are the city's. Which dishes that leaves cookable is a DERIVED fact,
+         not a list anybody types, and it comes out as SEVEN OF NINETEEN: the
+         Hot Dog, the Slaw Dog, the Margherita, Fries, the Side Salad, Onion
+         Rings and a Fountain Soda. What it does NOT leave you is EVERY BURGER,
+         three of the four pizzas, the Chili Dog, the nuggets, the chili cheese
+         fries, the shake and the iced coffee. Measured over the whole menu, the
+         dishes the bin can make average 54 Cinder and the ones it cannot
+         average 109. YOUR CITY IS WORTH 2.0× A DISH. That is the sentence the
+         whole design turns on, and it is a number, not a mood.
+         Its SHAPE matters as much as its size: the bin covers 2 of the 3 dishes
+         on a level-1 menu and 7 of the 19 on a level-40 one, so it is most of a
+         beginner's kitchen and a minority of a grown one. It keeps the doors
+         open; it never grows the business.
+      2. 💸 IT CHARGES YOU FOR WHAT YOUR CITY WOULD HAVE PUT IN FREE. The Cinder
+         price is the core line's own Cinder leg PLUS a per-unit surcharge for
+         every live resource that line would have eaten. It lands 1.16×–1.63×
+         the Cinder-per-unit of the core line, weighted so the surcharge is
+         heaviest exactly where the city matters most (`dna` 30 against `food`
+         2 — a scrap frank costs half again what a farmed one does, and that is
+         the Gene Vault talking). You are not saving money by skipping your
+         city; you are paying a stranger for it.
+         ⚠ THE SURCHARGE TABLE IS NOT A MARKET PRICE AND MUST NOT BE READ AS
+           ONE. The first draft used the game's own cold-storage valuations
+           (index.html:195218 — food 4, water 6, dna 42) on the grounds that
+           borrowing a real number beats inventing one. Measured, that is 27–83%
+           of the SALE PRICE of the cheap end of this menu, and it put the
+           Fountain Soda, the Side Salad and the Classic Burger UNDERWATER on
+           scraps: a stranded player cooking them went backwards. So the table
+           is derived from the constraint instead — ordered by the game's
+           relative valuation (dna ≫ fuel > energyDrink > supplies > water ≈
+           food), scaled until every dish the bin can make clears the WORST pay
+           multipliers the game can hand out. assertDataSane() is what holds it
+           there; if you raise a number here and a dish goes underwater, it
+           tells you which one.
+      3. 📦 HALF A CRATE AT A TIME. SALVAGE_BATCH_PCT halves `out.qty`, so the
+         same restock is twice the taps and twice the trips. Friction, not
+         economy — but it is the part the player FEELS, and feeling it is what
+         sends them to the city builder.
+
+   ⚠ AND THE ONE THAT NEARLY GOT MISSED: A CINDER-ONLY INGREDIENT PATH OPENS A
+     CINDER → FOOD PRINTER THROUGH THE CONVOY. A dish bought out of the skip bin
+     costs ZERO live `food`, and a claimed convoy pays CONVOY_FOOD_PER_DISH units
+     of `food` per dish. convoyGuardOk()'s original wall compares that payout
+     against `recipe.foodCost`, which is computed from the CORE lines and is
+     therefore blind to this route entirely. The wall still holds — a skip-bin
+     hot dog costs 21.4 Cinder to deliver 1 food that the game itself values at 4
+     (ECON.FOOD_RETAIL_CINDER), which is five times retail for a twenty-minute
+     round trip capped at three vans of twelve — but it holds by
+     arithmetic nobody had written down. convoyGuardOk() now checks that second,
+     Cinder-denominated wall explicitly (ECON.CONVOY_CINDER_GUARD_MULT). If you
+     ever make a salvage line cheap, that check is what stops you.
+
+   ⚠ THE LINES ARE DERIVED, NOT TYPED. Same rule as INGREDIENTS[].batch: two
+     hand-kept copies of one price diverge, and this one would diverge silently
+     in the direction of "the scrap dealer is cheaper than the farm", which is
+     the exact failure this whole block exists to prevent. Retune the KNOBS.
+   ════════════════════════════════════════════════════════════════════════════ */
+const _SALVAGE = {
+  /* 🔴 WHAT THE BIN DOES **NOT** HAVE. Stated as an exclusion, not a list of
+     inclusions, and that is deliberate: an inclusion list silently fails to
+     cover a NEW ingredient (the floor shrinks and nobody notices), while an
+     exclusion list silently covers one (which assertDataSane's share and value
+     checks catch immediately). Fail towards the loud direction.
+     These eight are the Chiller's prime lines and the exotics — the things a
+     scrapyard plausibly cannot get and a city plausibly makes. Everything else
+     is bread, dry store, veg, condiments, ice, fry oil and scrap links. */
+  notStocked: ['patty', 'chicken', 'bacon', 'mayo', 'milk', 'pepperoni', 'mushroom', 'coffee',
+    /* ⚠ `chili` IS HERE FOR AN ECONOMIC REASON, NOT A FLAVOUR ONE, AND THE
+       CHECK IS WHAT PUT IT HERE. It is a prepared item and the priciest
+       condiment on the board (11 Cinder/unit), and the Chili Dog carries two of
+       them on top of a frank and a handful of cheese against a 44% gross margin
+       — the second-thinnest on the whole menu. With chili in the bin,
+       assertDataSane() reported "THE FLOOR IS UNDERWATER: chiliDog costs 62.1
+       Cinder against a worst-case payout of 61.2", i.e. a stranded player
+       cooking the dish would go backwards by 0.9 Cinder and nothing on screen
+       would say so. The alternative fixes were both worse: softening the `dna`
+       surcharge weakens the one line that carries the premise, and raising the
+       Chili Dog's price to paper over it moves a live economy number to satisfy
+       a check. The pot is the kitchen's, not the scrapyard's. */
+    'chili'],
+  /* 🔴 THE SURCHARGE PER UNIT OF LIVE RESOURCE THE BIN SAVES YOU. NOT a market
+     price — see the long note above on why the cold-storage valuations were
+     tried and put half the cheap menu underwater. These are ORDERED by the
+     game's own relative valuation and SCALED by the floor invariant: every dish
+     the bin can make must still pay at POP_PAY_FLOOR × RUSH_PAY_MIN. The
+     ordering is what carries the premise (a scrap frank costs 1.52× a farmed
+     one because of the `dna` in it; a scrap tomato only 1.16×), and the scale is
+     what stops the floor being a slower dead end. */
+  resCinder: { food: 2, water: 2, supplies: 4, dna: 30, energyDrink: 4, fuel: 8, corruptedEssence: 25,
+               metal: 4, ammo: 5, medicine: 12, memoryShards: 50, wood: 2, stone: 2, cloth: 3 },
+  /* ⚠ THERE IS DELIBERATELY NO SEPARATE "dealer's markup" KNOB, AND THE FIRST
+     DRAFT HAD ONE. At 1.10 it did two jobs badly: the surcharge is already the
+     penalty, and stacking a flat 10% on top pushed the Hot Dog — the cheapest
+     thing a stranded player can cook — to within 0.4 Cinder of losing money at
+     the worst pay multipliers the game can hand out. A floor that can be
+     underwater is not a floor. One knob per idea: `resCinder` is the penalty and
+     `batchPct` is the friction, and both are visible in what they do. */
+  batchPct: 0.5,     // half a crate
+  minBatch: 3,       // …but never so small the row is a joke
+  minLevel: 1,       // 🔴 open on the first shift. A floor you unlock is not one.
+};
+
+/** One skip-bin line derived from a core line. Pure; no side effects. */
+function _salvageLine(core) {
+  const qty = Math.max(_SALVAGE.minBatch, Math.round((core.out.qty | 0) * _SALVAGE.batchPct));
+  let perUnit = ((core.cost && core.cost.cinder) || 0) / Math.max(1, core.out.qty);
+  for (const key in (core.cost || {})) {
+    if (key === 'cinder') continue;
+    perUnit += (core.cost[key] * (_SALVAGE.resCinder[key] || 0)) / Math.max(1, core.out.qty);
+  }
+  return {
+    id: 'sal_' + core.out.ing,
+    out: { ing: core.out.ing, qty },
+    cost: { cinder: Math.ceil(perUnit * qty) },
+    minLevel: _SALVAGE.minLevel,
+    /* 🔴 THE TWO FIELDS EVERY OTHER FILE NEEDS. `kind` lets the renderer group
+       these under one heading instead of doubling the length of a 25-row sheet
+       on a 360px phone; `salvageOf` points back at the core line so a row can
+       say "or bring your own" next to the real price. Neither is read by the
+       sim — buySupply() only ever looks at out/cost/minLevel — so a renderer
+       that ignores both still works, it just reads worse. */
+    kind: 'salvage',
+    salvageOf: core.id,
+    blurb: 'Scrap-dealer stock. Half a crate, and you pay for what your city would have grown.',
+  };
+}
+const _SALVAGE_LINES = _SUPPLY_CORE
+  .filter((s) => _SALVAGE.notStocked.indexOf(s.out.ing) === -1)
+  .map(_salvageLine);
+
+/**
+ * 📦 The restock counter the rest of the feature sees: the core lines that eat
+ * the live ledger, then the skip-bin lines that do not.
+ * 🔴 ORDER MATTERS AND IS LOAD-BEARING. `_SUPPLY_BY_ING` below takes the FIRST
+ *    row it sees per ingredient, so the CORE line stays the canonical one — it
+ *    is where INGREDIENTS[].batch and INGREDIENTS[].foodPerUnit come from, and
+ *    foodPerUnit is what the whole convoy food-printer guard is built on. Put
+ *    the salvage lines first and every covered ingredient silently reports a
+ *    food cost of ZERO, which reads as "this dish is free" to convoyGuardOk().
+ */
+export const SUPPLY_RECIPES = _SUPPLY_CORE.concat(_SALVAGE_LINES);
 
 /* ════════════════════════════════════════════════════════════════════════════
    🧊 SHELVES — how the bins are grouped on screen.
@@ -298,7 +483,13 @@ export const STATIONS = [
                    whether kitchen.state.js writes `doneAt + doneWindowMs` or
                    `doneAt + burnMs`, it gets the same instant. If you ever want
                    them to differ, delete one of them from the contract first.
-     Perfect window = the first ECON.PERFECT_FRACTION (⅓) of doneWindowMs.
+     Perfect window = ECON.PERFECT_MS (1,200ms), ABSOLUTE and the same on every
+                   station, ceilinged at PERFECT_FRACTION of doneWindowMs. It
+                   used to be the fraction alone, which made the most FORGIVING
+                   dishes the most rewarding (⅓ of a soda's 40s window is a 13s
+                   "perfect") and swallowed the whole human reaction band. See
+                   the long note at ECON.PERFECT_MS — that one number is the
+                   game's entire skill axis and it is not a per-recipe dial.
 
    Do NOT widen doneWindowMs to be kind. The window is the entire skill; a
    generous window turns a cooking game into a queue of buttons that eventually
@@ -619,10 +810,15 @@ export const CONVOY_TIERS = [
 
      ⚠ AND ITS CAPACITY WAS ARITHMETICALLY UNREACHABLE. Twelve boxes against a
      PASS_CAP of 8 meant a full van was impossible until a 34,000-Cinder heat
-     lamp at level 6, with nothing on screen saying so. The pass is now 14, so
-     twelve is loadable by the kitchen that owns the van. If you retune PASS_CAP
-     downward, assertDataSane() will now fail on this — the check exists because
-     "a cap the player cannot see is a cap they read as a bug".
+     lamp at level 6, with nothing on screen saying so. ECON.PASS_CAP is now 16,
+     so twelve is loadable by the kitchen that owns the van. If you retune
+     PASS_CAP downward, assertDataSane() will now fail on this — the check exists
+     because "a cap the player cannot see is a cap they read as a bug".
+     ⚠ THIS SENTENCE SAID "the pass is now 14" FOR A WHOLE ROUND AFTER PASS_CAP
+       LANDED ON 16. Nothing broke (16 ≥ 12 as surely as 14 ≥ 12) which is
+       exactly why it survived review — a stale number in a load-bearing comment
+       is invisible until the next tuner trusts it and derives 12 from it. The
+       cap is named, not copied, for that reason.
 
      ⚠ TRANSIT DROPPED 30 → 20 MINUTES, and the old comment's reasoning for the
      30-minute floor was wrong about which number is the guard. A short convoy
@@ -925,9 +1121,16 @@ export const POP_FACES = [
      and genuinely over it at 19:00. You learn, then you are tested.
    That is the brief exactly: the first shift is winnable and tense, and the
    dinner rush is not survivable on a stock rack. The gap IS the upgrade shop.
-   🔴 assertDataSane() now runs this for EVERY level 1..14 rather than for 12
-      alone. Checking one level is how a level-3 kitchen at ratio 0.78 — no rush
-      to answer at all — shipped inside a model that was reporting healthy.
+   🔴 assertDataSane() now runs this over a MATRIX, not a level. Checking one
+      level is how a level-3 kitchen at ratio 0.78 — no rush to answer at all —
+      shipped inside a model that was reporting healthy; checking one RACK is how
+      the model came to be reporting ok:false for levels 20–40 and for a maxed
+      kitchen while assertDataSane() returned []. Three racks, three bands:
+      STOCK at every level 1..40 (WALL_RATIO_MIN..MAX), the LEVEL-APPROPRIATE
+      rack sampled across the ladder and again two levels behind the shop
+      (WALL_KITTED_MIN..MAX), and the FULLY MAXED rack at popularity 100
+      (WALL_MAXED_MIN..MAX, two-sided — the ladder must clear the wall AND the
+      top of it must still have a rush to answer).
 
    ── AND WHEN YOU FALL BEHIND, IT MUST GET WORSE, NOT EASIER ──────────────
    🔴 TICKET_CAP IS NOT A DIFFICULTY VALVE. An earlier build silently discarded
@@ -1035,7 +1238,82 @@ export const ECON = {
   Q_GOOD: 1.0,
   Q_PERFECT: 1.25,
   Q_BURNT: 0,               // pays nothing AND costs POP_BURN.
-  PERFECT_FRACTION: 1 / 3,  // the first third of doneWindowMs is 'perfect'.
+  /* ═══════════════════════════════════════════════════════════════════════
+     🔴🔴 THE PERFECT WINDOW IS AN ABSOLUTE NUMBER OF MILLISECONDS, NOT A
+          FRACTION, AND THAT CHANGE IS THE WHOLE SKILL AXIS OF THE GAME.
+     ═══════════════════════════════════════════════════════════════════════
+     WHAT SHIPPED: `perfectMs = doneWindowMs × ⅓`. Median doneWindow across the
+     19 recipes is 8,000ms, so the median perfect window was 2,667ms — a player
+     2.6 SECONDS late still scored PERFECT and one 4 seconds late still scored
+     GOOD. The entire human reaction band fitted inside the top grade.
+
+     MEASURED, and this is the number that made it a blocker. Eight seeds per
+     tier at level 12 on a stock rack plus a heat lamp, one identical bot with
+     only its reaction lag and its taps-per-second changed:
+         GOD      (50 aps, 0ms lag)     popularity 74.2   grades BBBBBBBB
+         EXPERT   ( 6 aps, 250ms)                  73.0   grades BBBBBBBB
+         GOOD     ( 4 aps, 600ms)                  70.2   grades BBCBBBBB
+         AVERAGE  ( 3 aps, 1200ms)                 70.6   grades BBBBBBCB
+     3.6 popularity points between a machine and a distracted human, against a
+     SEED SPREAD OF 22.8 at fixed skill. Twenty-four shifts, twenty-four B's.
+     The day was not decided by the seed any more (round 2 fixed that) and it
+     was not decided by the player either. It was a constant.
+
+     🔴 WHY AN ABSOLUTE WINDOW AND NOT JUST A SMALLER FRACTION. A fraction ties
+        the window to doneWindowMs, and doneWindowMs is a FORGIVENESS dial, not
+        a skill dial: the soda's 40-second window exists so nobody loses a shift
+        to a warm drink, and ⅙ of it is still a 6.7-second "perfect" — free
+        points for parking a cup. Meanwhile the Bacon Melt's 7.5s window would
+        get a 1.25s one. The fraction made the most forgiving items the most
+        rewarding and the hardest items the harshest, which is backwards. An
+        absolute window says one honest thing instead: FROM THE MOMENT IT GOES
+        GREEN, YOU HAVE THIS LONG. Same on every station, learnable once.
+
+     🔴 WHY 1,200ms AND NOT 1,000, WHICH SEPARATES HARDER. Phones are the main
+        platform (CONTRACT §1, kitchen.css) and the player is using ONE THUMB on
+        a 360px screen. Measured with the SAME bots but a jittered reaction
+        (lag × U(0.55,1.45) redrawn per pan — a constant lag sitting on the
+        window boundary turns any window change into a step function and tells
+        you nothing about people):
+            PERFECT_MS 1200 → GOD 75.0 · EXPERT 72.2 · GOOD 69.3 · AVG 42.4
+            PERFECT_MS 1000 → GOD 75.0 · EXPERT 72.2 · GOOD 65.5 · AVG 35.1
+        At 1,000 a 700ms reaction — a sharp human on a good day — is already
+        being docked. At 1,200 the curve is monotone and the penalty starts
+        where distraction starts. Below about 800ms it stops measuring attention
+        and starts measuring hardware latency, and a game that grades your phone
+        is not a game of skill.
+        WHERE IT LANDS: reaction axis GOD→AVERAGE 32.6 popularity points against
+        a fixed-skill SEED SPREAD of 16.3 (sd 5.1). It was 3.6 against 22.8. The
+        player now moves the day twice as far as the dice do. Re-run
+        scratchpad/r5/skill.mjs after ANY change here and require that.
+
+     ⚠ AND THE HALF OF THE CRITIQUE THAT MEASURED OUT AT ZERO, RECORDED SO IT IS
+       NOT RE-PROPOSED: the same review asked for doneWindowMs to be cut on the
+       hot line (griddle/fryer → 4,500ms, oven → 7,000ms) on top of this. It was
+       tried — griddle/fryer 8000→6000, oven 12000→9000, hotDog 9000→7000 — and
+       measured across all five tiers it moved NOTHING in the human band: GOD
+       75.0/75.0, EXPERT 72.2/72.2, AVERAGE 42.4/42.4, identical to three
+       significant figures, because a player who reacts inside 2.6s never
+       reaches the burn line anyway. The ONLY tier it touched was a bot at 6
+       seconds of lag, whose burns doubled (35 → 74) and whose grade fell from C
+       to D. That is not resolution, it is a deeper hole for the one player
+       already drowning — and it costs every phone player the forgiveness that
+       lets them look at the drive-thru. The cut was reverted. The done window
+       is a FORGIVENESS dial; PERFECT_MS is the SKILL dial. Keep them separate.
+
+     ⚠ RENDER MUST PAINT THIS BAND. A 1.2s window the player cannot see is not
+       difficulty, it is a coin flip: the burn bar (burnPct) shows how close the
+       pan is to ruin and says NOTHING about where perfect ended. The band is
+       published per-recipe as `recipe.perfectMs` for exactly this reason.
+     ⚠ PERFECT_FRACTION IS STILL LIVE — it is now the CEILING, not the rule. It
+       stops a hypothetical 2-second done window (a future dish, an upgrade that
+       shortens the window) from having a perfect band longer than the window it
+       sits in. Today no recipe's window is short enough for it to bind, and
+       that is fine: a guard that is not currently binding is not dead, it is a
+       guard. kitchen.state.js also reads it as its NaN fallback. */
+  PERFECT_MS: 1200,         // the perfect band, in ms, on every station
+  PERFECT_MIN_MS: 700,      // …never squeezed below this by the ceiling below
+  PERFECT_FRACTION: 1 / 3,  // ceiling: perfect may never exceed ⅓ of the window.
                             // 🔴 Do NOT widen this to be kind. The window is the
                             //    whole skill; widened, cooking becomes a queue of
                             //    buttons that eventually go green on their own.
@@ -1158,18 +1436,38 @@ export const ECON = {
   POP_WAVE: -1.1,           //    against a decay you could never out-run.
   POP_DECAY_PER_DAY: -0.6,
   /* 🔴 MEAN REVERSION — THE RECOVERY THE OLD CURVE HAD NO ROOM FOR.
-     A bad week should cost a bad week, not the account. These two keys say:
-     below POP_REVERT_BELOW, the town's memory fades and reputation drifts back
-     toward it by POP_REVERT_PER_DAY at each day roll, INSTEAD of decaying.
+     A bad week should cost a bad week, not the account. These keys say: below
+     POP_REVERT_BELOW, the town's memory fades and reputation drifts back toward
+     it by POP_REVERT_PER_DAY at each day roll, INSTEAD of decaying.
      ⚠ NOT A FLOOR AND NOT A GIFT: it is strictly smaller than one good day's
      service, so climbing out is still something the player does — this only
      stops the hole being infinitely deep. Above the threshold it does nothing
      at all, so a famous kitchen still decays normally.
-     ⚠ CONSUMER: kitchen.state.js's closeShift() day-roll settle, where
-     POP_DECAY_PER_DAY is already applied. Until it reads these two keys the
-     retune above carries the fix on its own; this makes the floor case kind. */
+
+     🔴🔴 THESE KEYS SHIPPED A WHOLE ROUND AS DEAD DATA UNDER A NINE-LINE
+        COMMENT PRESENTING THEM AS THE FIX FOR THE RATCHET, AND NOTHING READ
+        THEM. `grep -rn POP_REVERT public/src/` returned four hits and all four
+        were in this file — three of them in the comment's own prose. The comment
+        even flagged the risk ("⚠ CONSUMER: … until it reads these two keys the
+        retune above carries the fix on its own") and shipped anyway, so the file
+        documented a mechanic the build did not have. A comment that describes
+        code that does not exist is worse than no comment: it reads as
+        verification, and CLAUDE.md's rule that comments carry the WHY assumes
+        the WHY is TRUE.
+     🔴 SO THE READ IS NOW A FUNCTION, NOT A CONSTANT. `popDayDelta(pop, report)`
+        at the bottom of this file is the ONE thing a day roll has to call, and
+        it returns the whole settle — revert-or-decay plus the clean-day bonus —
+        as a single signed number. Three keys can be forgotten one at a time; one
+        function call cannot be half-wired. The clean-day multiplier moved in
+        here at the same time, because it had been living as a literal `* 2` in
+        kitchen.state.js, which is the same CLAUDE.md violation wearing a
+        different hat. */
   POP_REVERT_BELOW: 30,     // popularity under this drifts back up instead of down
   POP_REVERT_PER_DAY: 2.0,  // …by this much per day roll, replacing the decay
+  POP_CLEAN_DAY_MULT: 2.0,  // a day with ZERO lost tickets pays back this many
+                            // days of decay. It is the only reward for the LAST
+                            // ticket of a shift, which otherwise pays the same
+                            // as the first.
   /* Two ways to lose custom WITHOUT losing a ticket, and they are not the same
      size because they are not the same failure.
        POP_BALK      a car reached a FULL LANE and drove past. Small: a queue out
@@ -1233,12 +1531,21 @@ export const ECON = {
      therefore unwinnable by construction: there was no amount of money that
      bought the last rung, which is exactly what assertDataSane()'s
      "UPGRADE LADDER DOES NOT CLEAR THE WALL" check exists to catch.
-     2100 is capacityModel(MAX_LEVEL, everything, 100) read backwards: the
-     interval at which the hardest hour lands just inside a maxed kitchen's
-     reach. It binds ONLY at the extreme — at level 12 on a stock rack the
-     interval is 2,166ms and this floor never touches it — so it costs the
-     early and middle game nothing. Re-derive it, do not nudge it. */
-  SPAWN_MIN_MS: 2100,       // hard floor; below this even a maxed kitchen drowns
+     🔴 AND ITS DERIVATION WAS ONE-SIDED, WHICH IS WHY IT LANDED A HAIR WRONG.
+     2,100 was capacityModel(MAX_LEVEL, everything, 100) read backwards — the
+     interval at which the hardest hour lands just inside a MAXED kitchen's
+     reach — and that ignores the other end entirely. Because this floor caps
+     arrivals, it also sets where the STOCK ratio plateaus from level 20 onward,
+     and at 2,100 that plateau was 2.26 against WALL_RATIO_MAX 2.25: one
+     hundredth past the file's own definition of "unwinnable, not hard", for
+     every level from 20 to 40. The model said so; nothing was calling the model
+     up there (see assertDataSane's wall matrix), so nobody heard it.
+     2,250 is the interval at which BOTH ends hold: stock peaks at 2.11 at every
+     level 1..40, and a fully-kitted rack at popularity 100 still clears its own
+     peak at 0.85. It binds ONLY at the extreme — at level 12 on a stock rack the
+     interval is 2,166ms and this floor never touches it — so it costs the early
+     and middle game nothing. Re-derive it from BOTH ends, do not nudge it. */
+  SPAWN_MIN_MS: 2250,       // hard floor; below this even a maxed kitchen drowns
   PATIENCE_ITEM_MS: 12000,  // added per item beyond the first
   PATIENCE_MIN_MS: 20000,
   ORDER_MAX_ITEMS: 5,
@@ -1445,23 +1752,52 @@ export const ECON = {
      to fix and it is being fixed; this table is the other half — the grant has
      to be worth having when it finally fires.)
 
-     SIZED, NOT GUESSED. ~8 hot dogs, ~10 burgers, ~7 pizzas ≈ 25 dishes, which
-     is roughly a third of a first shift. Long enough that the first thing the
-     player does is COOK — REF-A opens on a pizza, REF-B on a griddle full of
-     patties — and short enough that running out inside the first day is what
-     teaches restock, which was the one genuinely good idea in the old note.
-     `sauce`, `cheese` and `tomato` carry extra because they are each shared by
-     two of the three dishes and are what actually runs dry first.
+     🔴🔴 AND THEN IT WAS SIZED AGAINST A THIRD OF A DAY, WHICH MOVED THE DEAD
+        END INSTEAD OF CLOSING IT. That is the part worth recording, because the
+        first version of this paragraph was proud of the number it got wrong.
+        It said "~25 dishes, roughly a third of a first shift… running out
+        inside the first day is what teaches restock", and every clause of that
+        is defensible until you measure the other side of it: a fresh account
+        holds ZERO of all fourteen live resources, so when the 120 units ran out
+        there was no restock to teach. MEASURED on a real fresh profile, the
+        whole first session was 5.0 real minutes of a 12-minute day — served 13,
+        lost 9 — and then every one of the twenty-five core supply lines refused
+        with the exact sentence round 2 had shipped on screen one.
+
+     SIZED AGAINST A WHOLE DAY, AND DERIVED FROM A DISH COUNT RATHER THAN TYPED.
+     A competent level-1 player cooks 102–120 dishes across a full 12-minute day
+     (measured, four seeds, level pinned at 1 so only the three day-one dishes
+     are in play: 120/116/102/111 dishes, 59–67 tickets served). The grubstake is
+     102 of them — 32 hot dogs, 44 classic burgers, 26 margheritas — around 90%
+     of an average day. That is deliberate on both ends:
+       • It is enough that DAY ONE IS A DAY, not a demo. REF-A and REF-B both
+         give you an hour on the tutorial screen; five minutes and a refusal is
+         the same failure wearing a better coat.
+       • It is NOT enough to finish, so the restock lesson still lands — but it
+         lands in the last hour of a shift the player is already winning, with
+         a wallet holding ~12,000 Cinder, next to a skip bin that will sell them
+         a crate for 36. That is a lesson. The old one was an eviction.
+     Every shared line below is ARITHMETIC, not judgement:
+       sauce  = 44 burgers × 1 + 26 pizzas × 2   = 96
+       cheese = 26 pizzas × 2                    = 52
+       tomato = 44 burgers × 1 + 26 pizzas × 1   = 70
+     ⚠ ONION IS GONE, AND ITS ABSENCE IS THE POINT. The old table granted 8, and
+       measured play returned "leftover pantry {onion:8, …}" every single time,
+       because NO level-1 recipe uses an onion (chiliDog and the Double are 3
+       and 5 levels away). Eight units of visible, useless stock on the tutorial
+       screen is the game telling a new player it does not know what they can
+       cook. If you pull an onion recipe down to level 1, put the onions back —
+       assertDataSane() will tell you, loudly, if you forget.
 
      🛡 assertDataSane() checks this table against EVERY level-1 recipe, so a
      recipe pulled down to level 1 without a grubstake line for it is a reported
      problem rather than a first-run dead end. That check is the whole reason
      this number is safe to change. */
   START_PANTRY: {
-    roll:10, sausage:10, mustard:10,           // ~8 hot dogs
-    bun:10, patty:10, lettuce:10, onion:8,     // ~10 classic burgers
-    dough:8,                                   // ~7 margheritas
-    sauce:16, cheese:16, tomato:12,            // shared across all three
+    roll:32, sausage:32, mustard:32,           // 32 hot dogs
+    bun:44, patty:44, lettuce:44,              // 44 classic burgers
+    dough:26,                                  // 26 margheritas
+    sauce:96, cheese:52, tomato:70,            // shared — see the arithmetic above
   },
 
   // ── CONVOYS (CONTRACT §8.4) ─────────────────────────────────────────────
@@ -1495,6 +1831,29 @@ export const ECON = {
   CONVOY_XP_PER_DISH: 6,
   CONVOY_MAX_ACTIVE: 3,     // outbound at once, stock; up_truckbay does not raise
                             // this — capacity is the upgrade, not concurrency
+  /* 🔴 THE CINDER-DENOMINATED HALF OF THE FOOD-PRINTER GUARD. See
+     convoyGuardOk(). Producing a shippable dish by the CHEAPEST route the game
+     offers — which, since the skip bin exists, can be a route that spends no
+     live resources at all — must cost at least this multiple of what the food
+     it delivers is worth. 2× is the smallest honest statement of "a convoy
+     moves value, it does not mint it". Today the margin is 7×; the check exists
+     so that a future cheap supply line cannot quietly close it. */
+  CONVOY_CINDER_GUARD_MULT: 2.0,
+  /* What one unit of the live `food` resource is worth in Cinder ON THE OPEN
+     MARKET. This is the game's own number (index.html:195218, the cold-storage
+     board prices `food` at 4) and it is deliberately NOT the skip bin's internal
+     surcharge, which is a different question with a different answer — see
+     _SALVAGE.resCinder. It exists so the printer guard is measured against what
+     food is WORTH rather than against what the kitchen happens to charge for it. */
+  FOOD_RETAIL_CINDER: 4,
+
+  /* 🔴 THE TWO NUMBERS THAT KEEP THE SKIP BIN A FLOOR AND NOT A KITCHEN. See
+     the _SALVAGE block. SHARE is how much of a level-40 board Cinder alone may
+     run; VALUE_GAP is how much richer the dishes that need the city have to be.
+     Together they say: the bin keeps a small, cheap kitchen alive, and every
+     expensive thing on the board is something your city bought you. */
+  SALVAGE_SHARE_MAX: 0.55,  // at most this fraction of the full menu
+  SALVAGE_VALUE_GAP: 1.5,   // city-only dishes must average ≥ this × bin dishes
 
   /* ═══════════════════════════════════════════════════════════════════════
      🛡 THE MODEL'S OWN THRESHOLDS. capacityModel() reads these; nothing else
@@ -1511,6 +1870,32 @@ export const ECON = {
                             //    the modelled figure.
                             // 🔴 THE CEILING IS THE HALF THAT WAS MISSING. See
                             //    capacityModel()'s `ok`.
+  /* ── THE OTHER TWO RACKS THE MODEL HAS TO JUDGE, AND THE REASON THE GUARD
+        WAS ONLY ADVISORY UNTIL NOW. ─────────────────────────────────────────
+     WALL_RATIO_MIN..MAX above is the band for a STOCK rack, and it is the only
+     band the file had. Applying it to any other configuration is a category
+     error, which is exactly what happened: capacityModel() reported ok:false
+     for a fully-kitted level-40 kitchen at 0.91 — a kitchen that is COMFORTABLE
+     BECAUSE THE PLAYER BOUGHT COMFORT, which is the shop's entire promise —
+     and the only way to keep assertDataSane() green was to not call the model
+     for anything except a stock rack at levels 1..14. A guard you can only run
+     on a third of the range is a guard with an opinion, not a guard.
+     Three racks, three bands, all three checked (see assertDataSane):
+       STOCK            WALL_RATIO_MIN..MAX     you WILL lose orders
+       LEVEL-APPROPRIATE (everything unlocked by that level, which is what a
+                        player who keeps up with the shop is actually holding)
+                        WALL_KITTED_MIN..MAX    tight, never comfortable
+       FULLY MAXED      WALL_MAXED_MIN..MAX     the reward — but still a shift */
+  WALL_KITTED_MIN: 0.80,    // below this the shop has over-sold and the mid-game
+  WALL_KITTED_MAX: 1.70,    // is a walk; above it the shop is not keeping up
+  WALL_MAXED_MIN: 0.55,     // 🔴 a FLOOR on the endgame: if a maxed kitchen is
+                            //    this far under its own peak, the last fifteen
+                            //    levels of upgrades bought nothing anybody
+                            //    needed and the shop's top tier is decoration.
+  WALL_MAXED_MAX: 0.95,     // …and the ceiling that proves the ladder CLEARS
+                            //    the wall. Was a literal 0.95 inside
+                            //    assertDataSane(), which is the same "economy
+                            //    number outside ECON" rule this file exists for.
   PASS_HEADROOM: 1.25,      // the pass must clear TICKET_CAP × (meanOrder − 1)
                             // by this much before the rack counts as the
                             // bottleneck. See capacityModel() for the pigeonhole
@@ -1762,8 +2147,27 @@ const _SUPPLY_BY_ID = _index(SUPPLY_RECIPES);
 // ingredient id → the supply row that stocks it. Built by scanning `out.ing`
 // rather than trusting INGREDIENTS[].supply, so a typo'd pointer surfaces as a
 // missing batch (loud, in assertDataSane) instead of as a silently wrong price.
+/* 🔴 FIRST ROW WINS, AND THAT LINE USED TO READ `= s` UNCONDITIONALLY. With one
+   supply row per ingredient the two spellings are identical, which is precisely
+   why this was safe to write the dangerous way for three rounds. The skip bin
+   (§_SALVAGE) adds a SECOND row per covered ingredient, and last-wins would have
+   made the skip-bin line canonical: `foodPerUnit` would read 0 for roll,
+   sausage, mustard, dough, sauce, cheese and tomato, every recipe made of them
+   would report `foodCost: 0`, and convoyGuardOk() — whose entire job is to
+   prove a convoy destroys food rather than printing it — would have been
+   comparing CONVOY_FOOD_PER_DISH against zero and passing. A one-character
+   difference between "the guard works" and "the economy is dead". */
 const _SUPPLY_BY_ING = Object.create(null);
-for (const s of SUPPLY_RECIPES) if (s && s.out && s.out.ing) _SUPPLY_BY_ING[s.out.ing] = s;
+for (const s of SUPPLY_RECIPES) {
+  if (!s || !s.out || !s.out.ing) continue;
+  if (s.kind === 'salvage') continue;          // belt: never canonical
+  if (_SUPPLY_BY_ING[s.out.ing]) continue;     // braces: first row wins anyway
+  _SUPPLY_BY_ING[s.out.ing] = s;
+}
+/** ingredient id → its skip-bin line, or null. Render uses this to show the
+    "or pay retail" price beside the real one; the sim never needs it. */
+const _SALVAGE_BY_ING = Object.create(null);
+for (const s of _SALVAGE_LINES) _SALVAGE_BY_ING[s.out.ing] = s;
 
 /** 🥫 INGREDIENTS — normalised. `batch` is derived; never type it by hand. */
 export const INGREDIENTS = _INGREDIENTS_RAW.map(ing => {
@@ -1778,6 +2182,15 @@ export const INGREDIENTS = _INGREDIENTS_RAW.map(ing => {
   });
 });
 const _ING_BY_ID = _index(INGREDIENTS);
+
+/** ECON.PERFECT_MS, ceilinged by PERFECT_FRACTION of the window it sits in and
+    floored by PERFECT_MIN_MS — in that order, so the ceiling always wins. */
+function _perfectMsFor(doneWindowMs) {
+  const win = Math.max(0, doneWindowMs | 0);
+  const ceil = win * ECON.PERFECT_FRACTION;
+  const want = Math.min(ECON.PERFECT_MS, ceil);
+  return Math.round(Math.max(want, Math.min(ECON.PERFECT_MIN_MS, ceil)));
+}
 
 function _needsFromSteps(steps) {
   const n = Object.create(null);
@@ -1801,7 +2214,11 @@ export const RECIPES = _RECIPES_RAW.map(r => {
     // ⚠ burnMs === doneWindowMs, always. See the RECIPES block comment.
     burnMs: r.doneWindowMs,
     // Length of the 'perfect' band at the START of the done window.
-    perfectMs: Math.round(r.doneWindowMs * ECON.PERFECT_FRACTION),
+    // 🔴 ABSOLUTE, not a fraction — see ECON.PERFECT_MS for the measurements
+    //    that forced that. PERFECT_FRACTION is the ceiling and PERFECT_MIN_MS
+    //    the floor, in that order: a window too short to hold the floor gets the
+    //    ceiling rather than a perfect band longer than the window it lives in.
+    perfectMs: _perfectMsFor(r.doneWindowMs),
     // start → burnAt, for a renderer that wants one bar instead of two.
     totalMs: r.cookMs + r.doneWindowMs,
     foodCost: Math.round(foodCost * 1000) / 1000,
@@ -1824,6 +2241,27 @@ export function ingredient(id)  { return _ING_BY_ID[id]     || null; }
 export function station(id)     { return _STATION_BY_ID[id] || null; }
 export function supply(id)      { return _SUPPLY_BY_ID[id]  || null; }
 export function supplyFor(ingId){ return _SUPPLY_BY_ING[ingId] || null; }
+/** The skip-bin line for an ingredient, or null if the bin does not stock it.
+    Render: a null here is the sentence "your city is the only source of this". */
+export function salvageFor(ingId){ return _SALVAGE_BY_ING[ingId] || null; }
+/** Every recipe a player with an EMPTY live ledger can still cook, in menu
+    order. This is THE floor, computed rather than asserted — see _SALVAGE. */
+export function salvageMenu() {
+  return RECIPES.filter((r) => Object.keys(r.needs).every((id) => !!_SALVAGE_BY_ING[id]));
+}
+/** What one dish costs in Cinder if EVERY unit of it came out of the skip bin.
+    → number (Cinder), or Infinity when the bin cannot make it at all. */
+export function salvageCinderCost(recipeId) {
+  const r = _RECIPE_BY_ID[recipeId];
+  if (!r) return Infinity;
+  let sum = 0;
+  for (const id in r.needs) {
+    const s = _SALVAGE_BY_ING[id];
+    if (!s) return Infinity;
+    sum += r.needs[id] * (s.cost.cinder / Math.max(1, s.out.qty));
+  }
+  return Math.round(sum * 100) / 100;
+}
 export function customer(id)    { return _CUST_BY_ID[id]    || null; }
 export function car(id)         { return _CAR_BY_ID[id]     || null; }
 export function convoyTier(id)  { return _TIER_BY_ID[id]    || null; }
@@ -1861,14 +2299,51 @@ export function xpProgress(xp) {
   return { level: lv, into: total - base, need: span, pct: Math.min(1, (total - base) / span) };
 }
 
-/** RECIPES the player may cook at `lv`, in MENU ORDER (category, then tier). */
-export function menuForLevel(lv) {
+/**
+ * RECIPES the player may cook at `lv`, in MENU ORDER (category, then tier).
+ *
+ * 🔴 THE OPTIONAL SECOND ARGUMENT IS THE ORDER-BOARD FIX, AND IT IS NOT
+ *    COSMETIC. MEASURED, on a fresh account with an empty live ledger playing
+ *    three full days off the skip bin alone: 324 tickets placed, and 122 of the
+ *    142 lost ones — 86% — contained a dish that kitchen could NEVER make. Only
+ *    twenty losses were the player's. A ticket is all-or-nothing, so ONE
+ *    unstockable line poisons the whole order, and both order generators
+ *    (kitchen.state.js's counter and drivethru.js's lane) draw from this
+ *    function with no reference to what the kitchen can actually cook. The
+ *    result is that LEVELLING UP MAKES A STRANDED KITCHEN WORSE: every unlock
+ *    is a new way for a ticket to be unfillable. Popularity went 58 → 12 → 2
+ *    over two days for a player who was cooking the whole time and banking
+ *    Cinder every day.
+ *
+ * @param {number} lv
+ * @param {Set|Array|Object|Function} [cookable] recipe ids the kitchen can
+ *   currently make — a Set, an array, a `{id:true}` map, or a predicate.
+ *   WHEN PASSED, the menu is filtered to it. This is for the ORDER GENERATORS
+ *   only. Do NOT pass it when drawing the MENU BOARD or the upgrade/level-up
+ *   screens: the player must still SEE the Bacon Melt they cannot afford to
+ *   stock, or the reason to go and build a Gene Vault disappears from the game.
+ *   ⚠ It never returns an empty menu. If nothing is cookable the unfiltered
+ *     menu comes back, because a customer who orders something you cannot make
+ *     is a lost ticket and NO customer at all is a dead restaurant — and a
+ *     dead restaurant is the one state this whole feature has been trying to
+ *     get rid of for three rounds.
+ */
+export function menuForLevel(lv, cookable) {
   const L = Math.max(1, lv | 0);
   const catOrder = Object.create(null);
   for (const c of MENU_CATS) catOrder[c.id] = c.order;
-  return RECIPES
+  const all = RECIPES
     .filter(r => (r.minLevel || 1) <= L)
     .sort((a, b) => (catOrder[a.cat] - catOrder[b.cat]) || (a.tier - b.tier) || (a.basePrice - b.basePrice));
+  if (cookable == null) return all;
+  let has;
+  if (typeof cookable === 'function') has = (id) => !!cookable(id);
+  else if (cookable instanceof Set) has = (id) => cookable.has(id);
+  else if (Array.isArray(cookable)) has = (id) => cookable.indexOf(id) !== -1;
+  else if (typeof cookable === 'object') has = (id) => !!cookable[id];
+  else return all;
+  const hot = all.filter((r) => has(r.id));
+  return hot.length ? hot : all;
 }
 
 /**
@@ -1986,6 +2461,23 @@ export function convoyFeePct(tierId, owned) {
 }
 
 /** UPGRADES the player can see at `lv`, prerequisites resolved for greying-out. */
+/**
+ * 🔴 THE RACK A PLAYER AT THIS LEVEL IS ACTUALLY HOLDING — everything the shop
+ * has unlocked by then. Not "stock" (which past about level 6 is nobody) and not
+ * "everything in the file" (which is only true at 40). capacityModel() is
+ * meaningless without a rack to run it against, and picking the wrong rack is
+ * how the wall check ended up scoped to levels 1..14 and blind past them.
+ * ⚠ It deliberately ignores AFFORDABILITY. Modelling a budget would need a
+ *   whole earnings simulation inside a pure data file; the honest simplification
+ *   is "unlocked", and the band it is judged against (WALL_KITTED_*) is set wide
+ *   enough to absorb a player a few purchases behind. `lagLevels` exists for
+ *   exactly that sensitivity check.
+ */
+export function expectedUpgradesFor(lv, lagLevels) {
+  const L = Math.max(1, (lv | 0) - Math.max(0, lagLevels | 0));
+  return UPGRADES.filter((u) => (u.minLevel || 1) <= L).map((u) => u.id);
+}
+
 export function upgradesForLevel(lv, owned) {
   const L = Math.max(1, lv | 0);
   return UPGRADES
@@ -2075,6 +2567,44 @@ export function faceFor(pop) {
   let out = POP_FACES[0];
   for (const f of POP_FACES) if (p >= f.min) out = f;
   return out;
+}
+
+/**
+ * 🔴 THE WHOLE DAY-ROLL POPULARITY SETTLE, IN ONE SIGNED NUMBER.
+ *
+ * 🔴 CALL THIS AND NOTHING ELSE. kitchen.state.js's closeShift() day-roll used
+ *    to be two lines — `bumpPop(EC('POP_DECAY_PER_DAY'))` and a clean-day bonus
+ *    computed as `-EC('POP_DECAY_PER_DAY') * 2` — and that shape is precisely
+ *    how POP_REVERT_BELOW / POP_REVERT_PER_DAY shipped as dead data for a round:
+ *    a settle assembled from loose constants at the call site can silently be
+ *    missing one of them, and reads fine. This returns the finished delta, so
+ *    the only way to get it wrong is not to call it.
+ *
+ * Three rules, in this order:
+ *   1. Below ECON.POP_REVERT_BELOW the town forgets: +POP_REVERT_PER_DAY
+ *      INSTEAD of the decay. Not a floor, not a gift — strictly smaller than a
+ *      single decent day's service, so the climb is still the player's. It only
+ *      stops the hole being infinitely deep, which is what it was: measured, a
+ *      competent auto-player pinned at popularity 0 from day 3 through day 60.
+ *   2. Otherwise the normal ECON.POP_DECAY_PER_DAY applies, because fame is a
+ *      thing you keep doing rather than a thing you did once.
+ *   3. A CLEAN day (something served, nothing lost) pays back
+ *      POP_CLEAN_DAY_MULT days of decay on top of either branch. It is worth
+ *      having in the revert branch too — a stranded player who runs one flawless
+ *      short shift should climb faster than the town's own forgetting.
+ *
+ * @param {number} pop    popularity at the moment the bell rings, 0..100
+ * @param {object} report the day's settle: { served, lost }
+ * @returns {number} signed delta to apply ONCE per day roll. Never NaN.
+ */
+export function popDayDelta(pop, report) {
+  const p = Number.isFinite(pop) ? pop : ECON.POP_START;
+  const r = report || {};
+  const served = (r.served | 0), lost = (r.lost | 0);
+  const decay = ECON.POP_DECAY_PER_DAY;
+  let d = (p < ECON.POP_REVERT_BELOW) ? ECON.POP_REVERT_PER_DAY : decay;
+  if (lost === 0 && served > 0) d += -decay * ECON.POP_CLEAN_DAY_MULT;
+  return Number.isFinite(d) ? d : 0;
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -2330,12 +2860,48 @@ export function convoyGuardOk() {
     if (r.ship && r.foodCost < shipMin) shipMin = r.foodCost;
   }
   const perDish = ECON.CONVOY_FOOD_PER_DISH;
+
+  /* ═════════════════════════════════════════════════════════════════════════
+     🔴🔴 THE THIRD WALL, AND IT DID NOT EXIST UNTIL THE SKIP BIN DID.
+     ═════════════════════════════════════════════════════════════════════════
+     Both walls above are denominated in `food`, and both read `recipe.foodCost`,
+     which is derived from the CORE supply lines. The skip bin (§_SALVAGE) sells
+     the same ingredients for Cinder and NO live resources at all — so a dish
+     bought entirely out of it costs exactly ZERO food, delivers
+     CONVOY_FOOD_PER_DISH units of food on claim, and is invisible to every
+     `foodCost` comparison in this function. Cinder in, food out: a printer, and
+     the two existing walls would both have reported ok:true while it ran.
+     The wall that actually holds it shut is denominated in CINDER: producing a
+     shippable dish by the CHEAPEST AVAILABLE ROUTE must cost more Cinder than
+     the food it delivers is worth. `food` is worth 4 (the game's own valuation,
+     see _SALVAGE.resCinder), the cheapest salvage-buildable shippable dish is a
+     Hot Dog at ~25 Cinder, and CONVOY_CINDER_GUARD_MULT is the multiple of
+     retail that must hold — seven times over today, which is why the printer is
+     not merely closed but absurd. It is checked so that it STAYS absurd.
+     ⚠ If a future line makes some cheap dish salvage-buildable, this is the
+       check that fails. Do not raise the multiplier to silence it. */
+  const foodValue = ECON.FOOD_RETAIL_CINDER || 0;
+  const needCinder = perDish * foodValue * (ECON.CONVOY_CINDER_GUARD_MULT || 1);
+  let cinderMin = Infinity, cinderWorst = null;
+  for (const r of RECIPES) {
+    if (!r.ship) continue;
+    const c = salvageCinderCost(r.id);
+    if (c < cinderMin) { cinderMin = c; cinderWorst = r.id; }
+  }
+  const cinderOk = !(cinderMin < needCinder);   // Infinity (no salvage route) passes
+
   return {
-    ok: perDish < shipMin && perDish < anyMin,
+    ok: perDish < shipMin && perDish < anyMin && cinderOk,
     perDish,
     shippableMin: shipMin,
     anyMin,
     worst,
+    // The Cinder wall, reported so a test can print it rather than infer it.
+    foodValueCinder: foodValue,
+    cinderNeeded: Math.round(needCinder * 100) / 100,
+    cheapestSalvageDish: cinderWorst,
+    cheapestSalvageCinder: cinderMin === Infinity ? null : cinderMin,
+    cinderOk,
   };
 }
 
@@ -2420,6 +2986,25 @@ export function assertDataSane() {
     }
     if (!(r.basePrice > 0)) bad.push('RECIPES ' + r.id + ': basePrice must be > 0');
     if (!(r.cookMs > 0) || !(r.doneWindowMs > 0)) bad.push('RECIPES ' + r.id + ': bad timing');
+    /* 🔴 THE PERFECT BAND MUST BE HITTABLE AND MUST FIT. Two failures, both
+       silent, both introduced by the same kind of edit (a new dish with an
+       unusually short done window, or a nudge to PERFECT_MS):
+         • perfectMs > doneWindowMs — the whole window scores 'perfect' and the
+           skill axis for that dish quietly disappears. The ceiling
+           (PERFECT_FRACTION) is what stops it; this proves the ceiling ran.
+         • perfectMs below PERFECT_MIN_MS with room to spare — a band nobody can
+           tap on a phone, which measures hardware latency and not attention. */
+    const pw = r.perfectMs | 0;
+    const pCeil = r.doneWindowMs * ECON.PERFECT_FRACTION;
+    if (!(pw > 0)) bad.push('RECIPES ' + r.id + ': perfectMs is not positive — nothing can score perfect');
+    if (pw > Math.ceil(pCeil)) {
+      bad.push('RECIPES ' + r.id + ': perfect band ' + pw + 'ms exceeds PERFECT_FRACTION of its '
+        + r.doneWindowMs + 'ms done window (' + Math.round(pCeil) + 'ms) — the window stops grading anything');
+    }
+    if (pw < ECON.PERFECT_MIN_MS && pCeil >= ECON.PERFECT_MIN_MS) {
+      bad.push('RECIPES ' + r.id + ': perfect band is ' + pw + 'ms, under PERFECT_MIN_MS ('
+        + ECON.PERFECT_MIN_MS + ') with room for more — that is a reflex test on a phone, not a skill');
+    }
   }
 
   // ── the grubstake must actually cook the day-one dish ──
@@ -2429,6 +3014,126 @@ export function assertDataSane() {
     for (const id in r.needs) {
       if (!(ECON.START_PANTRY[id] >= r.needs[id])) bad.push('START_PANTRY cannot cook ' + r.id + ' (missing ' + id + ')');
     }
+  }
+
+  /* ── 🔴 THE GRUBSTAKE MUST FIT IN THE COOLER IT IS POURED INTO. hydrate()
+        grants START_PANTRY through the SAME two ceilings a purchase obeys — the
+        total and the per-bin share — and silently gives less when it does not
+        fit. A grubstake that is quietly truncated is a first shift that quietly
+        ends early, and nothing on any screen would say which line was clipped. */
+  const gsBinCap = Math.max(ECON.PANTRY_BIN_MIN, Math.round(ECON.PANTRY_CAP * ECON.PANTRY_BIN_PCT));
+  let gsTotal = 0;
+  for (const id in ECON.START_PANTRY) {
+    const n = ECON.START_PANTRY[id] | 0;
+    gsTotal += n;
+    if (!_ING_BY_ID[id]) bad.push('START_PANTRY stocks an ingredient that does not exist: ' + id);
+    if (n > gsBinCap) {
+      bad.push('START_PANTRY ' + id + ' is ' + n + ' against a per-bin ceiling of ' + gsBinCap
+        + ' — hydrate() will silently clip the grant');
+    }
+  }
+  if (gsTotal > ECON.PANTRY_CAP) {
+    bad.push('START_PANTRY totals ' + gsTotal + ' units against PANTRY_CAP ' + ECON.PANTRY_CAP
+      + ' — the grant cannot land in full');
+  }
+
+  /* ── 🔴🔴 THE FLOOR UNDER THE RESOURCE ECONOMY. Three invariants, and every
+        one of them is a bug this feature has actually shipped:
+          A. A PLAYER WITH AN EMPTY LEDGER CAN STILL COOK SOMETHING. Rounds 1
+             and 2 both shipped a state where they could not. If the skip bin
+             stops covering at least one level-1 recipe, the dead end is back.
+          B. THE FLOOR IS NOT THE KITCHEN. The bin must stay a MINORITY of a
+             grown menu and must stay on the CHEAP END of it. If Cinder ever
+             buys the whole board, or buys the expensive half of it, the
+             resource loop the player asked for becomes decorative — a deeper
+             failure than the soft lock, and a much quieter one.
+             ⚠ The first draft of this check was "the bin may cover NOTHING
+               above level 1", which is a cleaner sentence and the wrong rule.
+               Measured, it left a stranded player able to cook 2 of the 8
+               dishes their level had unlocked, and since a ticket is
+               all-or-nothing they filled 15 of 90 tickets a day and sat at
+               popularity 2 — technically not stuck and completely broken.
+               Levelling up made the game WORSE, because every dish you cannot
+               stock poisons every ticket it lands in. Share and value are the
+               honest axes; "level" was a proxy that measured the wrong thing.
+          C. THE FLOOR IS NEVER UNDERWATER. Every dish the bin can make must
+             pay for itself at the WORST pay multipliers the game can hand out
+             (POP_PAY_FLOOR × RUSH_PAY_MIN). A cheap route that loses money is
+             not a floor, it is a slower version of the same dead end. */
+  const salvMenu = salvageMenu();
+  if (!salvMenu.length) {
+    bad.push('🔴 NO FLOOR: the skip bin cannot make a single recipe, so a player with an empty '
+      + 'live ledger and an empty pantry has no route back to cooking at any price');
+  }
+  if (!salvMenu.some((r) => (r.minLevel || 1) === 1)) {
+    bad.push('🔴 NO FLOOR ON DAY ONE: the skip bin covers no level-1 recipe — a brand-new '
+      + 'account that runs out of the grubstake is stuck');
+  }
+  /* B — SHAPE. The bin must be most of a beginner's kitchen and a minority of a
+     grown one, and it must live on the cheap end of the board. Both are checked
+     from the derived coverable set, so an added ingredient or a changed
+     exclusion cannot quietly move them. */
+  const covered = Object.create(null);
+  for (const r of salvMenu) covered[r.id] = 1;
+  const topMenu = menuForLevel(ECON.MAX_LEVEL);
+  const share = topMenu.length ? (salvMenu.length / topMenu.length) : 0;
+  if (share > ECON.SALVAGE_SHARE_MAX) {
+    bad.push('🔴 THE FLOOR IS THE KITCHEN: the skip bin can make ' + salvMenu.length + ' of '
+      + topMenu.length + ' dishes (' + Math.round(share * 100) + '%, max '
+      + Math.round(ECON.SALVAGE_SHARE_MAX * 100) + '%) — Cinder alone runs most of the menu and '
+      + 'the live-resource loop the player asked for is decorative');
+  }
+  let inSum = 0, inN = 0, outSum = 0, outN = 0;
+  for (const r of topMenu) {
+    if (covered[r.id]) { inSum += r.basePrice; inN++; } else { outSum += r.basePrice; outN++; }
+  }
+  const inMean = inN ? inSum / inN : 0, outMean = outN ? outSum / outN : 0;
+  if (!outN) {
+    bad.push('🔴 THE FLOOR IS THE KITCHEN: there is no dish the skip bin cannot make');
+  } else if (!(inMean * ECON.SALVAGE_VALUE_GAP <= outMean)) {
+    bad.push('🔴 THE FLOOR IS NOT ON THE CHEAP END: skip-bin dishes average ' + Math.round(inMean)
+      + ' Cinder against ' + Math.round(outMean) + ' for the ones that need the city — the city '
+      + 'must be worth at least ' + ECON.SALVAGE_VALUE_GAP + '× a dish, or building it is optional');
+  }
+  for (const r of salvMenu) {
+    const cost = salvageCinderCost(r.id);
+    const worstPay = r.basePrice * ECON.POP_PAY_FLOOR * ECON.RUSH_PAY_MIN;
+    if (!(cost < worstPay)) {
+      bad.push('🔴 THE FLOOR IS UNDERWATER: ' + r.id + ' costs ' + cost
+        + ' Cinder out of the skip bin against a worst-case payout of '
+        + Math.round(worstPay * 10) / 10 + ' — a stranded player cooking it goes BACKWARDS');
+    }
+  }
+  /* And the other direction: the bin must never be the CHEAP route, or a player
+     with money simply never builds a Hydroponics Bay. Per unit, always dearer. */
+  for (const s of _SALVAGE_LINES) {
+    const core = _SUPPLY_BY_ING[s.out.ing];
+    if (!core) { bad.push('skip-bin line ' + s.id + ' has no core line behind it'); continue; }
+    const sp = s.cost.cinder / Math.max(1, s.out.qty);
+    const bp = ((core.cost && core.cost.cinder) || 0) / Math.max(1, core.out.qty);
+    if (!(sp > bp)) {
+      bad.push('🔴 THE SKIP BIN IS THE CHEAP ROUTE: ' + s.id + ' is ' + sp.toFixed(2)
+        + ' Cinder/unit against the core line\'s ' + bp.toFixed(2)
+        + ' — nobody would ever spend a resource again');
+    }
+    for (const k in s.cost) {
+      if (k !== 'cinder') bad.push('skip-bin line ' + s.id + ' costs a live resource (' + k
+        + ') — then it is not a route for a player who has none');
+    }
+    if (s.out.qty >= core.out.qty) {
+      bad.push('skip-bin line ' + s.id + ' is not a smaller crate than the core line ('
+        + s.out.qty + ' vs ' + core.out.qty + ')');
+    }
+  }
+  /* The grubstake and the floor have to be the same kitchen: every ingredient
+     the grant hands out that the bin does NOT stock is one the player can only
+     replace out of the live ledger. That is intentional (it is what makes the
+     Classic Burger need a supply chain) — but if it ever became ALL of them,
+     the floor would exist on paper and be unreachable in play. */
+  const grantedOnly = Object.keys(ECON.START_PANTRY).filter((id) => !_SALVAGE_BY_ING[id]);
+  if (grantedOnly.length >= Object.keys(ECON.START_PANTRY).length) {
+    bad.push('🔴 THE FLOOR IS UNREACHABLE FROM THE GRUBSTAKE: the skip bin stocks none of the '
+      + 'ingredients a new kitchen opens with');
   }
 
   // ── the day clock must be self-consistent ──
@@ -2553,28 +3258,88 @@ export function assertDataSane() {
       + binCap + ' — a single fat-fingered tap fills a bin to refusal');
   }
 
-  // ── 🔴 the difficulty wall must actually exist ──
-  /* 🔴 THE WALL, AT EVERY LEVEL A STOCK RACK IS A REAL CONFIGURATION.
-     This used to check level 12 alone, which is why a level-3 kitchen with a
-     ratio of 0.78 — no rush to answer at all — could ship unnoticed. 1..14 is
-     the span over which the menu and the stations open; past that a totally
-     un-upgraded kitchen is not a configuration anybody is actually in, so it is
-     allowed to be underwater (that IS the upgrade shop's job). */
-  for (let lv = 1; lv <= 14; lv++) {
-    const cm = capacityModel(lv, [], ECON.POP_START);
-    if (!cm.ok) {
-      bad.push('🔴 WALL BROKEN AT LEVEL ' + lv + ': ' + cm.slots + ' slots (' + cm.handSlots
+  /* ═══════════════════════════════════════════════════════════════════════
+     🔴🔴 THE DIFFICULTY WALL — CHECKED ON EVERY RACK, AT EVERY LEVEL.
+     ═══════════════════════════════════════════════════════════════════════
+     🔴 THIS CHECK WAS ADVISORY AND IT SHOWED. Round 2 asked for a capacity
+        model; it got a good one. Round 3 asked why nothing enforced it, and the
+        answer was in the scope: the model was called for a STOCK rack at levels
+        1..14 and nowhere else, while capacityModel(20..40, []) returned ok:false
+        ("peak demand is more than 2.25× capacity — unwinnable, not hard") and
+        capacityModel(40, ALL) returned ok:false from the other end. The file's
+        own model was saying "broken" in two places and assertDataSane() was
+        returning []. That is worse than having no model, because a green check
+        is read as a verified one.
+
+     🔴 WHY IT WAS SCOPED THAT WAY, AND WHY THE SCOPE WAS THE BUG: there is only
+        ONE band in the file (WALL_RATIO_MIN..MAX) and it describes a STOCK rack.
+        Judging a fully-kitted level-40 kitchen against it is a category error —
+        a kitten that comfortable is what the player SPENT 800,000 Cinder on.
+        The fix is not a wider band, it is three bands for three racks, which is
+        what WALL_RATIO_*, WALL_KITTED_* and WALL_MAXED_* now are.
+
+     WHAT MOVED TO MAKE THIS PASS HONESTLY, rather than by moving a threshold:
+     SPAWN_MIN_MS 2100 → 2250. The stock ratio plateaus from level 20 because
+     SPAWN_MIN_MS caps arrivals, and the plateau sat at 2.26 against a ceiling of
+     2.25 — one hundredth over "unwinnable". Its old derivation was one-sided
+     ("the interval at which the hardest hour lands just inside a MAXED
+     kitchen's reach") and a one-sided derivation is why it landed a hair wrong.
+     It is now the interval at which BOTH ends hold: stock stays inside the wall
+     band at every level (peak 2.11) and a maxed rack still clears it (0.85).
+     ═══════════════════════════════════════════════════════════════════════ */
+  const wallRow = (label, cm, lo, hi) => {
+    if (cm.bottleneck !== 'rack') {
+      bad.push('🔴 WALL BROKEN — ' + label + ': ' + cm.why);
+      return;
+    }
+    if (cm.peakRatio < lo || cm.peakRatio > hi) {
+      bad.push('🔴 WALL BROKEN — ' + label + ': ' + cm.slots + ' slots (' + cm.handSlots
         + ' workable) ≈ ' + cm.capacityPerHour + ' dishes/in-game-hour, pass ' + cm.passPerHour
         + '/hr, against a peak demand of ' + (cm.peak ? cm.peak.demand : 0) + ' — ratio '
-        + cm.peakRatio + ', bottleneck ' + cm.bottleneck + '. ' + cm.why);
+        + cm.peakRatio + ', wanted ' + lo + '..' + hi + '. '
+        + (cm.why || (cm.peakRatio < lo ? 'too easy for this rack' : 'too hard for this rack')));
     }
+  };
+  // 1. STOCK, every level. A stock rack is a real configuration early and a
+  //    hypothetical one late — but a hypothetical the player can BE in, and the
+  //    band is what stops the late game becoming arithmetically unwinnable for
+  //    somebody who banks their Cinder instead of spending it.
+  for (let lv = 1; lv <= ECON.MAX_LEVEL; lv++) {
+    wallRow('level ' + lv + ', STOCK rack', capacityModel(lv, [], ECON.POP_START),
+      ECON.WALL_RATIO_MIN, ECON.WALL_RATIO_MAX);
   }
-  // Upgrades must be able to CLOSE that gap, or the shop sells a promise it
-  // cannot keep. A fully-kitted kitchen should comfortably clear the peak.
+  /* 2. LEVEL-APPROPRIATE, across the ladder — the rack a player who keeps up
+        with the shop is holding. This is the configuration MOST play happens in
+        and NOTHING checked it before. Sampled rather than swept because the
+        interesting thing is the shape, and a sweep would bury a real failure in
+        forty near-identical lines. Two levels of purchase lag is checked too:
+        the band must absorb a player who is a couple of upgrades behind, or it
+        is describing a shopping list rather than a kitchen. */
+  for (const lv of [3, 6, 8, 12, 16, 20, 26, 32, ECON.MAX_LEVEL]) {
+    wallRow('level ' + lv + ', rack unlocked by then',
+      capacityModel(lv, expectedUpgradesFor(lv, 0), ECON.POP_START),
+      ECON.WALL_KITTED_MIN, ECON.WALL_KITTED_MAX);
+    wallRow('level ' + lv + ', rack two levels behind the shop',
+      capacityModel(lv, expectedUpgradesFor(lv, 2), ECON.POP_START),
+      ECON.WALL_KITTED_MIN, ECON.WALL_KITTED_MAX);
+  }
+  /* 3. FULLY MAXED at popularity 100 — the hardest hour the game can produce.
+        TWO-SIDED: the ceiling proves the ladder CLEARS the wall (there is an
+        amount of money that makes the dinner rush survivable), and the floor
+        proves the top of the ladder was worth climbing. A maxed kitchen at 0.30
+        would mean the last fifteen levels of upgrades sold comfort nobody was
+        short of, which is the failure the UPGRADES header warns about and which
+        nothing measured. */
   const cmMax = capacityModel(ECON.MAX_LEVEL, UPGRADES.map((u) => u.id), 100);
-  if (cmMax.peakRatio > 0.95) {
+  if (cmMax.peakRatio > ECON.WALL_MAXED_MAX) {
     bad.push('UPGRADE LADDER DOES NOT CLEAR THE WALL: fully kitted peak ratio is '
-      + cmMax.peakRatio + ' — there is no amount of money that makes the rush survivable.');
+      + cmMax.peakRatio + ' (max ' + ECON.WALL_MAXED_MAX
+      + ') — there is no amount of money that makes the rush survivable.');
+  }
+  if (cmMax.peakRatio < ECON.WALL_MAXED_MIN) {
+    bad.push('THE TOP OF THE LADDER BUYS NOTHING: fully kitted peak ratio is '
+      + cmMax.peakRatio + ' (min ' + ECON.WALL_MAXED_MIN
+      + ') — a maxed kitchen never has a rush to answer, so the late upgrades are decoration.');
   }
 
   // ── 🔴 the food printer ──

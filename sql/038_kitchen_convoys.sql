@@ -90,6 +90,23 @@
 --      against auth.users.created_at, so a fresh mule account cannot open with a
 --      burst it had no time to cook.
 --
+-- ── 🔴 THE ROUND-3 HOLE: NINE WALLS THAT ALL FAILED IN THE SAME INSTANT ────
+-- Walls 1..9 were reviewed, applied to a real database, and attacked one call
+-- at a time, and they held: a brand-new account launching SEQUENTIALLY got one
+-- truck and 120 boxes and was refused nine times. Then the same account launched
+-- SIXTY TIMES IN PARALLEL and got 22 trucks and 2,640 boxes (47 / 5,640 on the
+-- reviewer's hardware). Nothing was bypassed. Every wall was consulted and every
+-- wall said yes, because kitchen_convoy_quota_ok() is four SELECT counts and at
+-- READ COMMITTED sixty concurrent transactions all count the world as it was
+-- before any of them wrote. A rule enforced by reading is not enforced.
+--
+--  10. THE SERIALISER. `pg_advisory_xact_lock` keyed on the SENDER, taken at the
+--      top of the launch RPC, so one account's concurrent launches queue and the
+--      counts in walls 1..4 are finally taken against a world that includes the
+--      trucks that just left. Same account, same sixty parallel calls, with the
+--      lock: 1 truck / 120 boxes — identical to sequential. See the block in
+--      kitchen_convoy_launch(), and the verify check that fails if it is removed.
+--
 -- ── ⚠ RLS RECURSION ────────────────────────────────────────────────────────
 -- A policy on a table that itself queries that table can re-enter RLS and
 -- recurse. Everything below that needs to ask a question ABOUT kitchen_convoys
@@ -477,6 +494,14 @@ revoke all on function public.kitchen_convoy_quota_ok(int)        from public, a
 --      in the safe direction, every time.
 --    The global 500 / 12h clamps are KEPT as an outer wall underneath, so a tier
 --    row hand-edited to something silly in the SQL editor still cannot mint.
+--    ⚠ THE 12h WALL BOUNDS THE ROAD, NOT THE ARRIVAL. The hold-up rolled below
+--      is added AFTER the clamp, so `p_transit_ms = 2^63-1` lands at 12h plus up
+--      to the tier's `delay_max_pct` of it — measured at 13:28:30 on a van. That
+--      is deliberate and it is the safe direction: capping the TOTAL would mean
+--      silently discarding part of a hold-up that `delay_ms` says happened, and
+--      `arrives_at` disagreeing with `delay_ms` is the one thing the client
+--      cannot draw honestly. Every wall in this file exists to stop a SHORT
+--      road; a longer one only ever costs the sender.
 --
 -- ⚠ EVERY PARAMETER AFTER p_to CARRIES A DEFAULT. PostgREST resolves an RPC by
 --   the exact set of keys in the request body, so a client that is one deploy
@@ -508,6 +533,59 @@ declare
 begin
   if me is null    then raise exception 'NOT_SIGNED_IN'; end if;
   if p_to is null  then raise exception 'NO_RECIPIENT';  end if;
+
+  -- ══════════════════════════════════════════════════════════════════════════
+  -- 🔴 WALL 10 — THE SERIALISER. WITHOUT THIS LINE WALLS 1..4 ARE DECORATION.
+  -- ══════════════════════════════════════════════════════════════════════════
+  -- kitchen_convoy_quota_ok() is four SELECT counts and nothing else. Counts
+  -- read a SNAPSHOT. PostgREST runs every rpc() in its own transaction on a
+  -- pooled connection at READ COMMITTED, so sixty simultaneous calls from one
+  -- account each take their snapshot BEFORE any of the others has committed a
+  -- row — every one of them counts zero trucks and zero lifetime boxes, every
+  -- one of them passes all four walls, and all four walls fail in the same
+  -- instant. The quota is not wrong; it is simply being asked a question about
+  -- a world that has not happened yet.
+  --
+  -- MEASURED, on this exact file, on a real PostgreSQL 16, from one brand-new
+  -- account (auth.users.created_at = now(), lifetime budget 120 boxes):
+  --     SEQUENTIAL  60 launches → 1 truck  /   120 boxes  (2..60 LAUNCH_QUOTA)
+  --     CONCURRENT  60 launches → 22 trucks/ 2,640 boxes  ← 22× the budget
+  -- The critic measured 47 / 5,640 on their hardware. The number is whatever
+  -- the machine's parallelism buys; the hole is the same hole. And it is the
+  -- OPENING BURST that matters — the header of this file (see wall 9) stakes
+  -- itself on "a fresh mule account cannot open with a burst it had no time to
+  -- cook", and every one of those trucks writes a kitchen_convoy_ledger row,
+  -- so the laundering this table exists to prevent is done with our receipt.
+  --
+  -- ONE LINE CLOSES IT. An advisory lock keyed on the SENDER makes concurrent
+  -- launches from one account queue behind each other; at READ COMMITTED each
+  -- waiter's next statement takes a FRESH snapshot after the lock is released,
+  -- so the quota finally counts the trucks that were just committed.
+  --     CONCURRENT 60, WITH THIS LINE → 1 truck / 120 boxes  ← equals sequential
+  --
+  -- ⚠ IT IS `_xact_` AND THAT IS LOAD-BEARING. `pg_advisory_lock` is held for
+  --   the SESSION; on a pooled PostgREST connection that leaks a lock onto the
+  --   next request that happens to reuse the connection and eventually wedges
+  --   every launch by that sender forever. `pg_advisory_xact_lock` is released
+  --   by COMMIT or ROLLBACK, always, including on an exception.
+  -- ⚠ IT IS KEYED ON THE SENDER, NOT ON THE TABLE. Two different players never
+  --   contend, so this costs nothing under real load — the only thing it
+  --   serialises is one account against itself, which is exactly the shape of
+  --   the attack and never the shape of play.
+  -- ⚠ IT IS TAKEN HERE, BEFORE THE SWEEP, so everything this function reads or
+  --   writes on behalf of `me` is inside it. No deadlock is possible against
+  --   kitchen_convoy_claim(): claim takes a ROW lock and never takes this one,
+  --   so there is no cycle to close.
+  -- ⚠ WHAT IT DOES NOT COVER, said plainly: sixty DIFFERENT accounts launching
+  --   at once are sixty different keys and do not queue. That is correct — each
+  --   of them is still bounded by its own wall 9 lifetime budget, and the cost
+  --   of the attack becomes "register sixty accounts", which is an auth problem
+  --   and not this file's. Under REPEATABLE READ the snapshot is frozen for the
+  --   whole transaction and the lock cannot help; PostgREST is READ COMMITTED,
+  --   and if that ever changes this needs revisiting.
+  -- 🔴 THE VERIFY BLOCK AT THE BOTTOM FAILS IF THIS LINE IS DELETED. It has to:
+  --    removing it leaves a function that still passes every other check.
+  perform pg_advisory_xact_lock(hashtextextended('kitchen_convoy_launch:' || me::text, 0));
 
   -- 🔴 LAND WHAT HAS LANDED, FIRST. The server used to write 'arrived' nowhere
   --    at all, so a truck the recipient never unloaded held an in-flight slot
@@ -1192,6 +1270,22 @@ select 'launch clamps to the tier',
                  and p.prosrc like '%t.capacity%' and p.prosrc like '%t.transit_ms%'
             ) then 'ok'
             else 'LAUNCH RPC IS PRE-FIX — 500-BOX RIGS AT TEN MINUTES' end
+
+union all
+-- 🔴 THE SERIALISER (wall 10). Without it walls 1..4 are four SELECT counts read
+--    from a pre-burst snapshot and sixty parallel calls from ONE account put 22
+--    trucks and 2,640 boxes on the road against a lifetime budget of 120.
+--    Measured on this file, on a real PostgreSQL 16, before the lock was added.
+--    ⚠ `_xact_` is asserted specifically: `pg_advisory_lock` (session-scoped)
+--      would pass a naive "does it lock" test and then leak the lock onto the
+--      next request that reuses the pooled PostgREST connection.
+select 'launch serialises one sender',
+       case when exists (
+              select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+               where n.nspname = 'public' and p.proname = 'kitchen_convoy_launch'
+                 and p.prosrc like '%pg_advisory_xact_lock%'
+            ) then 'ok'
+            else 'QUOTA LOSES A RACE — 60 PARALLEL CALLS BEAT ALL FOUR WALLS' end
 
 union all
 -- 🔴 THE PRODUCTION LINK. The quota must see the box count, or it is round 2's

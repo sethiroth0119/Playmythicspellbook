@@ -231,6 +231,12 @@ export const Kitchen = {
     tMs: 0,              // ms elapsed inside the current in-game day
     running: false,      // service open → customers spawn
     rush: 1,             // demand multiplier from the day curve, recomputed each tick
+    /* 🔴 THE UNFINISHED SHIFT. null, or the record of a shift the player walked
+       out of: { day, tMs, owed, today }. See closeShift/openShift — this is the
+       whole of the anti-rewind, and `owed` is a COUNT of abandoned customers,
+       never a popularity number, because a number in a save file is an economy
+       constant that has escaped kitchen.data.js. */
+    bail: null,
   },
 
   level: 1,
@@ -294,6 +300,9 @@ export const Kitchen = {
   _seed: 1,              // deterministic RNG cursor (see rng())
   _nextCounter: 0,       // `now` at which the next walk-in ticket is due
   _lowSeen: {},          // pantry:low latch — one warning per ingredient per shift
+  _dry: false,           // 🔴 nothing cookable AND nothing affordable — see
+                         //    dryCheck(). DERIVED, never saved. drivethru.js
+                         //    reads this to stop the lane (see the HANDOVER).
   _report: null,         // last day-end settlement report (shift:close payload)
   _init: false,
 };
@@ -509,6 +518,7 @@ function clearService() {
   K.lane = [];
   K._fx = [];
   K._lowSeen = {};
+  K._dry = false;
 }
 
 /**
@@ -551,7 +561,7 @@ export function init() {
 export function reset() {
   K.v = 1;
   K.rev++;
-  K.shift = { day: 1, tMs: 0, running: false, rush: 1 };
+  K.shift = { day: 1, tMs: 0, running: false, rush: 1, bail: null };
   K.level = 1;
   K.xp = 0;
   K.popularity = 50;
@@ -601,6 +611,21 @@ export function snapshot() {
     upgrades: (K.upgrades || []).slice(),
     convoys: (K.convoys || []).map((c) => Object.assign({}, c)),
     totals: Object.assign({}, K.totals),
+    /* 🔴 THE UNFINISHED SHIFT — the one addition to §5's saved subset, and it is
+       deliberately NOT `shift.tMs`. §5 forbids saving the live shift clock and
+       is right to: a frozen clock restored days later is a lie. This is a
+       different thing — the record of a shift the player walked OUT of, valid
+       only for the day it names (hydrate() drops it otherwise), and it exists
+       because without it the anti-rewind above is defeated by pressing F5.
+       ⚠ WANTS ADDING TO CONTRACT §5. It is additive: an old save has no `bail`
+       key, hydrate() reads that as null, and the game behaves exactly as it
+       does today. */
+    bail: K.shift.bail ? {
+      day: _int(K.shift.bail.day),
+      tMs: Math.max(0, _num(K.shift.bail.tMs, 0)),
+      owed: Math.max(0, _int(K.shift.bail.owed)),
+      today: Object.assign({}, K.shift.bail.today),
+    } : null,
     // 🔴 THE STARTING-STOCK RECEIPT. Without this in the save, hydrate() has no
     //    way to tell "never played" from "played, spent everything" once the
     //    player's xp is still 0, and the grant becomes a faucet. See hydrate().
@@ -621,6 +646,22 @@ export function hydrate(saved) {
   const s = (saved && typeof saved === 'object') ? saved : {};
 
   K.shift.day = Math.max(1, _int(s.day || (s.shift && s.shift.day) || 1));
+
+  /* The unfinished shift (see snapshot()). Tolerant, clamped, and thrown away
+     unless it names the day we are actually on — a bail record from an older
+     day is a shift that has already been closed by the bell, and resuming into
+     it would restore an hour the player has already played.
+     ⚠ `owed` IS CLAMPED. A hand-edited save can only ever hurt its own owner
+     here, but an unbounded count would run the popularity charge to −Infinity
+     on the next open, and an unbounded number reaching arithmetic is how the
+     NaN `tMs` bug (see tick()) went unnoticed for a round. */
+  const rb = (s.bail && typeof s.bail === 'object') ? s.bail : null;
+  K.shift.bail = (rb && _int(rb.day) === K.shift.day && _num(rb.tMs, 0) > 0) ? {
+    day: K.shift.day,
+    tMs: _clamp(_num(rb.tMs, 0), 0, EC('DAY_MS', 720000) + EC('LAST_CALL_MS', 45000)),
+    owed: _clamp(_int(rb.owed), 0, Math.max(1, _int(EC('TICKET_CAP', 12))) * 4),
+    today: mergeToday(rb.today),
+  } : null;
   /* 🔴 REFUSING THE SAVED `level` AND THEN TRUSTING THE SAVED `xp` CLOSED
         NOTHING. The comment below is right about why a saved level cannot be
         trusted — and the previous version stopped there, took `xp` verbatim and
@@ -992,6 +1033,30 @@ function liveIds() {
  * Shared by buySupply() and buyUpgrade() so there is exactly one place this can
  * be got wrong, instead of two places that must be kept identical by hand.
  */
+/**
+ * READ-ONLY AFFORDABILITY. → [] when every leg can be paid, otherwise the legs
+ * that cannot, `[{key, want, have}]`.
+ *
+ * ⚠ EXTRACTED FROM spendCost's PREFLIGHT RATHER THAN COPIED BESIDE IT. The dry
+ * check below needs to ask "can this player buy their way out" for 25 supply
+ * lines without touching anything, and a second implementation of "can they
+ * afford it" is a second implementation that will drift from the one that takes
+ * the money. This is the same function the purchase preflights with.
+ */
+function costShortfall(cost, mult) {
+  const n = Math.max(1, _int(mult || 1));
+  const b = bridge();
+  const out = [];
+  for (const key of Object.keys(cost || {})) {
+    const want = _int(cost[key]) * n;
+    if (want <= 0) continue;
+    let have = 0;
+    try { have = (key === 'cinder') ? _int(b.gems ? b.gems() : 0) : _int(b.getRes ? b.getRes(key) : 0); } catch (e) { have = 0; }
+    if (have < want) out.push({ key, want, have });
+  }
+  return out;
+}
+
 function spendCost(cost, mult) {
   const n = Math.max(1, _int(mult || 1));
   const legal = liveIds();
@@ -1007,15 +1072,11 @@ function spendCost(cost, mult) {
   let takenCinder = 0;
 
   // ── 1. PREFLIGHT ────────────────────────────────────────────────────────
-  for (const key of Object.keys(cost || {})) {
-    const want = _int(cost[key]) * n;
-    if (want <= 0) continue;
-    let have = 0;
-    try { have = (key === 'cinder') ? _int(b.gems ? b.gems() : 0) : _int(b.getRes ? b.getRes(key) : 0); } catch (e) { have = 0; }
-    if (have < want) {
-      const label = (key === 'cinder') ? 'Cinder' : (metaName(key) || key);
-      return no('NO_PANTRY', `Not enough ${label} — you need ${want.toLocaleString()} and have ${have.toLocaleString()}.`);
-    }
+  const short = costShortfall(cost, n);
+  if (short.length) {
+    const sh = short[0];
+    const label = (sh.key === 'cinder') ? 'Cinder' : (metaName(sh.key) || sh.key);
+    return no('NO_PANTRY', `Not enough ${label} — you need ${sh.want.toLocaleString()} and have ${sh.have.toLocaleString()}.`);
   }
 
   // ── 2. TAKE ─────────────────────────────────────────────────────────────
@@ -1176,6 +1237,73 @@ export function pantryLowList() {
     }
   }
   return out;
+}
+
+/**
+ * 🔴 CAN THIS PLAYER MAKE ANY MOVE AT ALL? Pure. Mutates nothing.
+ *
+ * THE FAILURE IT WATCHES FOR, MEASURED: a brand-new account has an empty
+ * salvage ledger, and every supply line costs a live resource — so once the
+ * starting grant runs out there is no restock path at ANY price. c3_dry.mjs,
+ * gems 0 and every live resource 0: the pantry went dry 238 seconds into a
+ * 720-second shift and the remaining eight minutes were pure attrition —
+ * `served` frozen at 14, `lost` climbing past 27, popularity 53 → 20, grade D.
+ * The player did nothing wrong and could do nothing at all, and the game kept
+ * sending customers so it could keep charging them for it.
+ *
+ * A kitchen with no ingredients and no way to buy any is CLOSED, not failing.
+ * Nothing in this file could tell the difference — grep for a guard returned
+ * only the comments about the bug it was meant to prevent.
+ *
+ * → { dry, cookable:[recipeId], affordable:[supplyId], need:[liveResId], ing }
+ *   `dry` is true ONLY when both doors are shut: nothing on the menu can be
+ *   cooked AND no unlocked supply line can be paid for. Either one open and the
+ *   player still has a move, which is all this asks.
+ */
+export function dryCheck() {
+  const cookable = [];
+  for (const r of menuForLevel(K.level)) if (r && pantryHas(r.needs)) cookable.push(r.id);
+  // The common case, and it exits before touching the bridge at all.
+  if (cookable.length) return { dry: false, cookable, affordable: [], need: [], ing: null };
+
+  const affordable = [], need = [];
+  for (const sup of (Array.isArray(DATA.SUPPLY_RECIPES) ? DATA.SUPPLY_RECIPES : [])) {
+    if (!sup || !sup.out || !sup.out.ing) continue;
+    if (_int(sup.minLevel || 1) > K.level) continue;
+    const short = costShortfall(sup.cost || {}, 1);
+    if (!short.length) { affordable.push(sup.id); continue; }
+    for (const sh of short) if (sh.key !== 'cinder' && need.indexOf(sh.key) === -1) need.push(sh.key);
+  }
+  // The ingredient to NAME. `pantry:low` is the event this rides on (§6 is a
+  // closed set) and render's toast reads `e.ing`, so it has to be a real
+  // ingredient id or the player is told they are low on "null".
+  let ing = null;
+  for (const r of menuForLevel(K.level)) {
+    for (const id of Object.keys((r && r.needs) || {})) {
+      if (_int(K.pantry[id]) < _int(r.needs[id])) { ing = id; break; }
+    }
+    if (ing) break;
+  }
+  return { dry: affordable.length === 0, cookable, affordable, need, ing };
+}
+
+/**
+ * The latched, per-frame version. → true while the doors should be shut.
+ *
+ * ⚠ IT DOES NOT CLOSE THE SHIFT ITSELF. Ending the day out from under a player
+ * who still has four plates on the pass and two orders up would bin food they
+ * are ten seconds from selling. It stops NEW custom arriving — no ticket, so no
+ * POP_TURNAWAY and no POP_LOST for a customer who was never served — and leaves
+ * the decision to close to the player, which is where a decision belongs.
+ */
+function dryNow(t) {
+  const d = dryCheck();
+  if (d.dry !== !!K._dry) {
+    K._dry = d.dry;
+    K.rev++;
+    if (d.dry && d.ing) emit('pantry:low', { ing: d.ing, have: _int(K.pantry[d.ing]), dry: true, need: d.need });
+  }
+  return d.dry;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1391,7 +1519,7 @@ export function dropHand() {
  * silently handed a black pizza for zero Cinder reads as a bug, not a penalty.
  * You already paid the popularity for burning it; bin it and move on.
  */
-export function plateHand(now) {
+export function plateHand(now, forTicketId) {
   const t = _num(now, K.now);
   if (!K.hand) return no('NOT_READY', 'You are not holding anything.');
   if (K.hand.quality === 'burnt') return no('NOT_READY', 'That is burnt — bin it.');
@@ -1411,7 +1539,22 @@ export function plateHand(now) {
   K.pass.push(dish);
   K.hand = null;
   K.rev++;
-  return ok({ dish });
+  /* 📌 PLATE STRAIGHT TO AN ORDER. The second argument is optional and the
+     whole feature degrades to nothing without it — a renderer that never passes
+     it gets exactly the game the contract describes. With it, "tap the ticket
+     you are cooking for, then plate" is one gesture, which is the cheapest
+     possible answer to "not that burger, THAT burger" on a phone.
+     ⚠ A REFUSED PIN NEVER FAILS THE PLATING. The food is already on the pass by
+     the time we get here and pushing it back into the hand to punish a bad pin
+     would be a data-loss bug dressed up as strictness. The reason comes back in
+     `why` for a renderer that wants to say it; the plate is on the pass either
+     way. */
+  let pin = null, pinWhy = '';
+  if (forTicketId) {
+    const r = assignDish(dish.id, forTicketId);
+    if (r.ok) pin = forTicketId; else pinWhy = r.why || '';
+  }
+  return ok({ dish, assigned: pin, why: pinWhy });
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1697,10 +1840,21 @@ function spawnCounter(now) {
    So a plate genuinely sits under the lamp, and cooking ahead into the 16:00
    lull is a real strategy with a real decay attached to it.
 
-   ⚠ STILL REJECTED: making the player drag each dish onto a ticket by hand. At
-   360px that is a fiddly drag-and-drop nightmare on a touch screen, and the fun
-   in this genre lives in the cooking and the clock, not in the clerical work.
-   The player decides WHEN an order goes out, not which physical burger is in it.
+   ⚠ STILL REJECTED: making the player drag each dish onto a ticket by hand,
+   as the ONLY way to feed a ticket. At 360px that is a fiddly drag-and-drop
+   nightmare on a touch screen, and the fun in this genre lives in the cooking
+   and the clock, not in the clerical work.
+
+   🔴 BUT "the player decides WHEN an order goes out, not WHICH physical burger
+   is in it" WAS TOO STRONG, AND IT COST A ROUND. If the game will not let the
+   player choose the burger, then the game must choose it WELL — and it did not:
+   it took the first array match, which handed the careful no-lettuce burger to
+   the customer who never asked for one and then charged the player for breaking
+   a promise they had kept (measured: 68% of kept promises booked as broken).
+   So the rule now has two halves, and both are in WHO GETS WHICH PLATE below:
+   the automatic choice reads what the ticket actually asked for, and when it
+   still picks wrong, ONE OPTIONAL TAP overrides it (`assignDish`). Optional is
+   what keeps the rejection above intact — no plain order ever needs a pin.
 
    ⚠ NEAREST DUE DATE HAS FIRST CLAIM, even on a ticket it does not complete.
    The alternative — give each dish to whichever ticket it finishes — reads as
@@ -1892,18 +2046,264 @@ function setBuilds(item, arr) {
   return true;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   🎯 WHO GETS WHICH PLATE — ONE matcher, used by the look AND by the commit
+   ═══════════════════════════════════════════════════════════════════════════
+   🔴 THE BUG THIS EXISTS TO KILL: THE GAME TOLD YOU YOU BROKE A PROMISE YOU KEPT.
+
+   `refreshReady()` and `takeDishes()` each took "the first dish on the pass
+   whose recipeId matches". Nothing preferred the plate that kept the promise,
+   nothing even looked at the modifier — so an invisible array index decided the
+   verdict. Two cars, both ordering a Classic Burger, one of them saying "no
+   greens". Cook BOTH correctly, one plain and one without lettuce, plate them,
+   and which car gets which is decided by which one you happened to plate first.
+   Measured, identical player actions, only the PLATING ORDER reversed
+   (dt3/two.mjs vs dt3/two2.mjs): 111 paid / 0 tip / promise BROKEN against
+   107 paid / 64 tip / HONOURED. At scale — twelve seeded days at level 20 with
+   a bot that obeyed every hold modifier exactly — committed hold verdicts came
+   out honoured 44 / broken 95: 68% of promises the player KEPT were charged as
+   broken, leaving a perfect player 33 popularity WORSE OFF than one who never
+   assembled anything at all.
+
+   Being punished for something you did right, by a rule that appears nowhere on
+   screen and that no control can influence, is the single worst thing a cooking
+   game can do to a player. It was decided by array index.
+
+   ── THE RULES, IN ORDER, AND THE ORDER IS THE WHOLE DESIGN ────────────────
+     1. A PIN WINS.        `dish.forTicket` is the player saying out loud "this
+                           one is for them" (assignDish / plateHand(now, id)).
+                           Nothing outranks an instruction.
+     2. THEN FIT.          Amongst equals, the plate that KEEPS this line's
+                           promise beats the plate that breaks it.
+                           `DriveThru.fitScore(item, dish)` scores exactly that:
+                           +1 per honoured modifier, −1 per broken one, and 0
+                           for every plate on a line that carries no modifiers.
+     3. THEN CONTENTION.   A line that does not care which burger it gets takes
+                           the one nobody else is asking for BY NAME. This is
+                           the half a sort alone cannot do, and it is not
+                           theoretical: in dt3/two.mjs the PLAIN car is nearer
+                           due, so it picks first — without this rule it takes
+                           the careful no-lettuce burger and hands the lettuce
+                           one to the car that asked for no greens. One step of
+                           lookahead. It is the difference between the fix
+                           working in both plating orders and in only one.
+     4. THEN OLDEST FIRST. Food does not improve under the lamp.
+
+   🔴 IT IS A NO-OP ON A PLAIN BOARD, BY CONSTRUCTION. With no modifier and no
+   pin anywhere on the board the whole thing short-circuits to the FIFO walk it
+   has always been — same plates, same order, and not one extra fitScore() call
+   on the tick path. Unmodded play is unchanged, which is the only reason a
+   matcher is allowed to run sixty times a second.
+
+   ⚠ GREEDY, NOT OPTIMAL, AND DELIBERATELY SO. The provably correct answer is a
+   min-cost bipartite matching over (plates × lines) re-solved every frame.
+   Rejected twice over: it is cubic on the tick path for a board of 12 against a
+   pass of 24, and — much worse — its answers are unpredictable to a human.
+   "Nearest due date picks first, every time" is a rule a player can hold in
+   their head and steer with. "The solver rebalanced" is not a rule, it is a
+   shrug, and this whole section exists because the player could not see why
+   they were being judged.
+
+   ⚠ AND THE MATCHER IS NOT THE ONLY ANSWER — SEE `assignDish()` BELOW. Note
+   what that does and does not reverse of THE PASS's "STILL REJECTED: making the
+   player drag each dish onto a ticket by hand". What was rejected, and still
+   is, is drag-and-drop as the ONLY way to feed a ticket: at 360px that is
+   clerical work with a fiddly hit target, and it would make every plain order
+   into paperwork. A pin is optional, costs one tap, and exists for the case the
+   automatic choice gets wrong — so that the player's answer to "not that one,
+   THAT one" is a tap, and not an argument with an array index they cannot see.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Guarded fitScore. A line with no modifiers scores every plate 0, so the sort
+ * below is a no-op for it — that fast exit is why this is affordable per frame.
+ * A sibling module mid-rewrite returns a tie rather than throwing (rule 3).
+ */
+function fitOf(item, dish) {
+  const mods = (item && Array.isArray(item.mods)) ? item.mods : null;
+  if (!mods || !mods.length || !dish) return 0;
+  try {
+    if (typeof DriveThru.fitScore === 'function') return _num(DriveThru.fitScore(item, dish), 0);
+  } catch (e) { /* a tie beats a throw inside a sort */ }
+  return 0;
+}
+
+/**
+ * The pin, resolved. → the ticket id this plate is spoken for by, or null.
+ *
+ * 🔴 A PIN WHOSE TICKET HAS GONE IS CLEARED HERE, AND THAT IS LOAD-BEARING. A
+ * plate reserved for a customer who has been served, has walked out, or was
+ * dropped at a forfeit is a plate NOBODY can ever be handed — a soft-lock built
+ * out of a helpful feature, and exactly the shape of bug `spoilPass()` had to be
+ * written to escape. The reservation dies with the order it named.
+ */
+function livePin(dish, boardIds) {
+  const pin = dish && dish.forTicket;
+  if (!pin) return null;
+  if (boardIds[pin]) return pin;
+  dish.forTicket = null;
+  K.rev++;
+  return null;
+}
+
+/** How badly does SOMEBODY ELSE want this exact plate? Rule 3, one step deep. */
+function contentionOf(dish, item, wanters) {
+  let worst = 0;
+  for (const w of wanters) {
+    if (w === item || w.recipeId !== dish.recipeId) continue;
+    const f = fitOf(w, dish);
+    if (f > worst) worst = f;
+  }
+  return worst;
+}
+
+/** Rules 1→4, as one comparator. Lexicographic on purpose: there are no
+    weights to tune, so nobody can "balance" the promise against the queue. */
+function cmpCand(a, b) {
+  if (a.pin !== b.pin) return b.pin - a.pin;      // 1. the player said so
+  if (a.fit !== b.fit) return b.fit - a.fit;      // 2. keep the promise
+  if (a.cont !== b.cont) return a.cont - b.cont;  // 3. leave the contested plate
+  return a.i - b.i;                               // 4. oldest first
+}
+
+/**
+ * THE ASSIGNMENT. Decides who WOULD get what and moves nothing.
+ *
+ * 🔴 BOTH CALLERS USE THIS ONE FUNCTION, AND THAT IS THE POINT. The verdict
+ * drawn on the ticket chip came from `refreshReady()`'s assignment and the money
+ * came from `takeDishes()`'s, and the two used DIFFERENT rules: refreshReady
+ * walked the whole board with a `used` map, takeDishes looked at one ticket in
+ * isolation. So the chip could promise a kept promise and the till could pay a
+ * broken one on the same transaction. One matcher, one answer, both readers.
+ *
+ * → { board:[ticket…], byTicket:{ id: {ticket, lines:[{item,dishes[]}], complete} } }
+ */
+function planPass(now) {
+  const board = K.tickets
+    .filter((x) => x.state === 'open' || x.state === 'ready')
+    .sort((a, b) => _num(a.dueAt) - _num(b.dueAt));
+  const plan = { board, byTicket: Object.create(null) };
+  if (!board.length) return plan;
+
+  const boardIds = Object.create(null);
+  const wanters = [];                      // every line carrying a promise
+  for (const tk of board) {
+    boardIds[tk.id] = 1;
+    for (const it of tk.items) if (it && it.mods && it.mods.length) wanters.push(it);
+  }
+  /* Resolve every pin ONCE, here, rather than lazily inside the candidate loop.
+     A pin on a plate that no ticket on the board even orders would otherwise
+     never be reached and would keep the expensive path armed forever. */
+  let pinned = false;
+  for (const d of K.pass) if (d && livePin(d, boardIds)) pinned = true;
+  // 🔴 THE FAST EXIT. Nothing on this board cares which physical plate it gets,
+  //    so neither does the matcher: plain FIFO, no scoring, no sort, no cost.
+  const fancy = wanters.length > 0 || pinned;
+
+  const used = Object.create(null);         // pass dish id → spoken for
+  for (const ticket of board) {
+    const lines = [];
+    let complete = true;
+    for (const item of ticket.items) {
+      const need = Math.max(0, _int(item.qty));
+      const cands = [];
+      for (let i = 0; i < K.pass.length; i++) {
+        const d = K.pass[i];
+        if (!d || used[d.id] || d.recipeId !== item.recipeId) continue;
+        let pin = 0;
+        if (pinned && d.forTicket) {
+          if (d.forTicket !== ticket.id) continue;      // spoken for, by name
+          pin = 1;
+        }
+        cands.push({ d, i, pin, fit: 0, cont: 0 });
+        if (!fancy && cands.length >= need) break;      // the old FIFO, exactly
+      }
+      if (fancy && cands.length > 1) {
+        for (const c of cands) {
+          c.fit = fitOf(item, c.d);
+          c.cont = contentionOf(c.d, item, wanters);
+        }
+        cands.sort(cmpCand);
+      }
+      const mine = [];
+      for (let k = 0; k < cands.length && mine.length < need; k++) {
+        used[cands[k].d.id] = 1;
+        mine.push(cands[k].d);
+      }
+      if (mine.length < need) complete = false;
+      lines.push({ item, dishes: mine });
+    }
+    plan.byTicket[ticket.id] = { ticket, lines, complete };
+  }
+  return plan;
+}
+
+/**
+ * 📌 PIN ONE PLATE TO ONE ORDER — the player's override of rules 2–4.
+ *
+ * ⚠ NOT IN CONTRACT §1's EXPORT LIST. This is the "say so" the contract asks
+ * for: it wants adding to §1 beside `binPass`, `addStep` and `dumpSupply`.
+ *
+ * `assignDish(dishId, null)` un-pins. Pinning is idempotent and always
+ * reversible, because the one thing a steering control must never do is trap
+ * the player in a choice they made by mis-tapping a 360px screen.
+ *
+ * 🔴 IT REFUSES A PIN THE ORDER CANNOT USE, rather than accepting it and
+ * quietly doing nothing: a pin on a dish that customer did not order, or a
+ * fourth burger pinned to a two-burger line, would sit on the pass looking like
+ * an instruction while the matcher ignored it. A control that lies about
+ * whether it took effect is worse than no control.
+ */
+export function assignDish(dishId, ticketId) {
+  const dish = K.pass.find((d) => d && d.id === dishId);
+  if (!dish) return no('BAD_ARG', 'That plate is not on the pass.');
+
+  if (!ticketId) {
+    if (!dish.forTicket) return ok({ dishId, ticketId: null });
+    dish.forTicket = null;
+    K.rev++;
+    return ok({ dishId, ticketId: null });
+  }
+
+  const ticket = K.tickets.find((x) => x.id === ticketId && (x.state === 'open' || x.state === 'ready'));
+  if (!ticket) return no('BAD_ARG', 'That order is gone.');
+  const line = ticket.items.find((it) => it && it.recipeId === dish.recipeId);
+  if (!line) {
+    const r = recipeOf(dish.recipeId);
+    return no('BAD_ARG', `${(ticket.name || 'They')} did not order ${(r && r.name) || 'that'}.`);
+  }
+  let already = 0;
+  for (const d of K.pass) {
+    if (d && d !== dish && d.forTicket === ticketId && d.recipeId === dish.recipeId) already++;
+  }
+  const want = Math.max(1, _int(line.qty));
+  if (already >= want) {
+    return no('CAP', `That order only wants ${want}. Un-pin one first.`);
+  }
+  dish.forTicket = ticketId;
+  K.rev++;
+  return ok({ dishId, ticketId });
+}
+
+/** Which order a plate is pinned to, or null. Read-only, for the renderer. */
+export function assignmentOf(dishId) {
+  const dish = K.pass.find((d) => d && d.id === dishId);
+  return (dish && dish.forTicket) || null;
+}
+
 /**
  * LOOK, DO NOT TOUCH. Runs every tick.
- * Writes `item.filled` (how much of that line the pass can currently cover) and
- * flips tickets between 'open' and 'ready'. It moves nothing and it charges
- * nothing — `takeDishes()` does both, at the moment the player serves.
+ * Writes `item.filled` (how much of that line the pass can currently cover),
+ * `item.pn` and the provisional build record, and flips tickets between 'open'
+ * and 'ready'. It moves nothing and it charges nothing — `takeDishes()` does
+ * both, at the moment the player serves.
  *
  * 🔴 A TICKET CAN GO BACK TO 'open'. If a nearer-due order takes the last
  * burger, a ticket that was 'ready' a frame ago is not any more, and the SERVE
  * button has to disappear rather than sit there promising something the pass
  * cannot deliver. The transition is two-way on purpose.
  *
- * 🔴 IT ALSO WRITES THE PROVISIONAL BUILD RECORD (see SEAM 1 above), and it has
+ * 🔴 IT ALSO WRITES THE PROVISIONAL BUILD RECORD (see SEAM 1 below), and it has
  * to happen HERE rather than only at serve time: drivethru.js calls
  * `judgeTicket()` BEFORE `State.serveTicket()` — it has to, because serving
  * removes the ticket from the board and takes the mods with it — and
@@ -1911,30 +2311,33 @@ function setBuilds(item, arr) {
  * player only learns after the fact is a mechanic they will never learn at all.
  */
 function refreshReady(now) {
-  const board = K.tickets
-    .filter((x) => x.state === 'open' || x.state === 'ready')
-    .sort((a, b) => _num(a.dueAt) - _num(b.dueAt));
-  if (!board.length) return;
-  const used = Object.create(null);          // pass dish id → provisionally spoken for
-
-  for (const ticket of board) {
-    let complete = true;
-    for (const item of ticket.items) {
-      const need = Math.max(0, _int(item.qty));
-      let got = 0;
+  const plan = planPass(now);
+  for (const ticket of plan.board) {
+    const p = plan.byTicket[ticket.id];
+    if (!p) continue;
+    for (const line of p.lines) {
+      const item = line.item;
       const builds = [];
-      for (let i = 0; i < K.pass.length && got < need; i++) {
-        const d = K.pass[i];
-        if (!d || used[d.id] || d.recipeId !== item.recipeId) continue;
-        used[d.id] = 1;
+      let pn = 0;
+      for (const d of line.dishes) {
         builds.push(buildEvidence(d));
-        got++;
+        if (d.quality === 'perfect') pn++;
       }
       if (setBuilds(item, builds)) K.rev++;
-      if (got !== _int(item.filled)) { item.filled = got; K.rev++; }
-      if (got < need) complete = false;
+      if (line.dishes.length !== _int(item.filled)) { item.filled = line.dishes.length; K.rev++; }
+      /* 🔴 THE PROVISIONAL `pn`, AND IT IS NOT BOOKKEEPING. drivethru's
+         `judgeMod()` answers "well done" with `item.pn >= item.filled`, and `pn`
+         used to be written ONLY by takeDishes() — so for the entire life of a
+         ticket it was 0 and every `well_done` promise read 'broken'. Measured
+         (dt3/wd.mjs) on ONE perfect burger against "well done": the chip said ✗,
+         the reward toast said "✗ well done", popularity was docked 0.5 — and the
+         till, judging AFTER the commit wrote pn, paid the honoured tip of 56 on
+         the same transaction. Over twelve seeded days the shown verdict and the
+         paid verdict disagreed on 14 drive tickets, every one of them this.
+         The chip, the toast, the popularity and the Cinder now read one number. */
+      if (pn !== _int(item.pn)) { item.pn = pn; K.rev++; }
     }
-    const want = complete ? 'ready' : 'open';
+    const want = p.complete ? 'ready' : 'open';
     if (ticket.state !== want) {
       ticket.state = want;
       K.rev++;
@@ -1947,31 +2350,26 @@ function refreshReady(now) {
 
 /**
  * COMMIT. Takes this ticket's dishes off the pass and prices them.
- * → the array of dishes taken, or null if the pass cannot cover it (in which
- *   case NOTHING is taken — the two-phase shape below is the whole point).
+ * → the array of dishes taken, or null if the assignment cannot cover it (in
+ *   which case NOTHING is taken — the two-phase shape below is the whole point).
  *
  * `qsum` is the SUM of quality multipliers of the units handed over, and
  * staleness is applied HERE rather than at plating time because a plate's age is
  * a property of the instant it reaches the customer, not of when it was made.
+ *
+ * 🔴 IT ASKS `planPass()` — THE SAME QUESTION THE CHIP ASKED. It used to walk
+ * the pass itself, taking the first recipe match with no `used` map at all, so a
+ * ticket could physically be handed a plate that `refreshReady()` had already
+ * shown as belonging to somebody else. See the block at the top of this section.
  */
 function takeDishes(ticket, now) {
-  const plan = [];
-  const spoken = Object.create(null);
-  for (const item of ticket.items) {
-    const need = Math.max(0, _int(item.qty));
-    const mine = [];
-    for (let i = 0; i < K.pass.length && mine.length < need; i++) {
-      const d = K.pass[i];
-      if (!d || spoken[d.id] || d.recipeId !== item.recipeId) continue;
-      spoken[d.id] = 1;
-      mine.push(d);
-    }
-    if (mine.length < need) return null;     // ← refuse before touching anything
-    plan.push([item, mine]);
-  }
+  const plan = planPass(now);
+  const p = plan.byTicket[ticket.id];
+  if (!p || !p.complete) return null;      // ← refuse before touching anything
 
   const taken = [];
-  for (const [item, mine] of plan) {
+  for (const line of p.lines) {
+    const item = line.item;
     item.filled = 0; item.qsum = 0; item.xn = 0; item.pn = 0; item.rn = 0;
     /* 🔴 SEAM 1, THE COMMIT HALF. `refreshReady()` wrote a PROVISIONAL record
        every tick against whatever the pass happened to be holding; these are
@@ -1980,7 +2378,7 @@ function takeDishes(ticket, now) {
        because the provisional list can contain plates a nearer-due ticket took
        between the last look and this commit. */
     const builds = [];
-    for (const d of mine) {
+    for (const d of line.dishes) {
       const idx = K.pass.indexOf(d);
       if (idx !== -1) K.pass.splice(idx, 1);
       item.filled++;
@@ -2328,17 +2726,61 @@ export function openShift(now) {
   const t = _num(now, K.now);
   K.now = t;
   clearService();
+
+  /* 🔴 RESUME, DO NOT REWIND. See closeShift() for the whole argument. A shift
+     the player walked out of is picked back up where they left it — same hour,
+     same tallies — and the customers they abandoned are billed HERE, at the
+     moment it becomes clear they did not leave, they dodged. */
+  const bail = (K.shift.bail && _int(K.shift.bail.day) === _int(K.shift.day)) ? K.shift.bail : null;
+  K.shift.bail = null;
   // tMs 0 IS the opening bell — DATA.hourAt() maps 0..DAY_MS onto
   // OPEN_HOUR..CLOSE_HOUR, so there is no offset to apply here.
-  K.shift.tMs = 0;
+  K.shift.tMs = bail
+    ? _clamp(_num(bail.tMs, 0), 0, EC('DAY_MS', 720000) + EC('LAST_CALL_MS', 45000))
+    : 0;
   K.shift.running = true;
   K.shift.rush = rushNow();
-  K.today = freshToday();
+  K.today = bail ? mergeToday(bail.today) : freshToday();
   K._report = null;
   K._nextCounter = t + EC('SHIFT_GRACE_MS', 4000);
   K.rev++;
-  emit('shift:open', { day: K.shift.day, dayName: dayNameFor(K.shift.day) });
+  emit('shift:open', {
+    day: K.shift.day, dayName: dayNameFor(K.shift.day),
+    resumed: !!bail, tMs: K.shift.tMs, owed: bail ? _int(bail.owed) : 0,
+  });
+
+  /* THE DEFERRED BILL. One event carrying a count rather than N events: ten
+     toasts in a row for one decision is noise, and CONTRACT §6's `ticket:lost`
+     already takes a null ticketId (see turnAway) for a sale that never got a
+     ticket of its own. The popularity is priced from ECON here, at the moment
+     it is charged, and never stored. */
+  if (bail) {
+    const n = Math.max(0, _int(bail.owed));
+    if (n > 0) {
+      K.today.lost += n;
+      K.totals.lost += n;
+      // The same guard value loseTicket() uses, so a missing ECON key cannot
+      // make walking out cost a different amount than staying and losing them.
+      bumpPop(EC('POP_LOST', -3.5) * n, 'abandoned');
+      emit('ticket:lost', { ticketId: null, source: 'counter', carId: null, why: 'abandoned', count: n });
+      fx('lost', `${n} walked out`);
+    }
+  }
   return true;
+}
+
+/** A saved/kept `today` folded onto the canonical shape, numbers only. A tally
+    that arrived from a save cannot be trusted to have the right keys — or to
+    hold numbers at all — and `freshToday()` is the only definition of shape. */
+function mergeToday(src) {
+  const out = freshToday();
+  if (src && typeof src === 'object') {
+    for (const k of Object.keys(out)) {
+      const v = _num(src[k], 0);
+      out[k] = (isFinite(v) && v > 0) ? v : 0;
+    }
+  }
+  return out;
 }
 
 /**
@@ -2346,12 +2788,43 @@ export function openShift(now) {
  *
  * TWO DIFFERENT ENDINGS, and the difference matters:
  *  • `{forfeit:true}` — the player closed the panel. Open tickets are dropped
- *    with NO popularity penalty and the day does NOT advance. They did not fail
- *    those customers; the session ended. Punishing this would train players to
- *    leave the tab open forever, which is worse for everyone including us.
+ *    with NO popularity penalty CHARGED NOW, and the day does NOT advance. If
+ *    they never come back, that is the end of it: leaving is free, because
+ *    punishing an interruption trains players to leave the tab open forever.
  *  • no opts — the closing bell rang. Anyone still waiting walked out and it
  *    counts, the day advances, and a settlement report is emitted. THAT is the
  *    incentive to clear your board before close.
+ *
+ * 🔴 THE FORFEIT WAS A REWIND BUTTON, AND THAT IS THE BUG THIS FIXES.
+ * Dropping the board cost nothing and `openShift()` then set `tMs = 0` — which
+ * DATA.hourAt() maps to 10:00, the quietest of the twelve hours (rush 0.73
+ * against 2.66 at 19:00). index.js wires exactly this to the X in the corner of
+ * the overlay, so the panel's close button was "restart the day at the easiest
+ * hour, keep everything you earned, lose nothing". Measured (c3_bail.mjs, a
+ * weak player on 2.5s reactions, two full days of wall time, five seeds):
+ * sitting the bad shift out finished at popularity 28.8/18.1/31.3/28.1/32.8;
+ * tapping the X whenever the board reached 10 of 12 finished at
+ * 61.8/56.8/59.1/53.5/61.5 — roughly DOUBLE, on five seeds of five, with the
+ * day counter still stuck on 1 so no decay, no grade and no lost-ticket history
+ * was ever recorded. The one meter the HUD grades you on could be held near 60
+ * forever without ever running a rush.
+ *
+ * 🔴 SO THE COST IS DEFERRED, NOT WAIVED, AND THE DIFFERENCE IS WHETHER YOU
+ *    CAME BACK. `shift.bail` records the hour you walked out at, the tallies so
+ *    far, and HOW MANY customers you left standing. Never come back → nothing is
+ *    ever charged, exactly as §4 wants. Re-open the same day → it is a
+ *    RESUMPTION: the clock picks up where it stopped, the tallies continue, and
+ *    the abandoned customers are billed at ECON.POP_LOST apiece, which is what
+ *    they would have cost had you stayed. You did not leave; you dodged.
+ *    Rejected alternative: charging at the moment of forfeit. It reads simpler
+ *    and it taxes exactly the case §4 wrote three paragraphs to protect — the
+ *    person whose phone rang.
+ *
+ * ⚠ ONE HOLE, NAMED HONESTLY: `shift.bail` rides in the save (snapshot()), so it
+ *   survives a panel close and a page reload alike. What it cannot survive is a
+ *   save that never lands (signed out, storage refused). That degrades to
+ *   today's behaviour — free — and it costs a full reload of an 11.6 MB app per
+ *   dodge, which is a worse trade than simply playing the rush.
  */
 export function closeShift(now, opts) {
   const t = _num(now, K.now);
@@ -2368,6 +2841,14 @@ export function closeShift(now, opts) {
       if (x.carId) releaseCar(x.carId, 'forfeit', t);
     }
     K.tickets = [];
+    // The unfinished shift, so that coming back is a resumption and not a
+    // fresh, easier morning. `owed` is a COUNT — priced in openShift().
+    K.shift.bail = {
+      day: _int(K.shift.day),
+      tMs: Math.max(0, _num(K.shift.tMs, 0)),
+      owed: openTickets.length,
+      today: Object.assign({}, K.today),
+    };
   } else {
     for (const x of openTickets) loseTicket(x, 'closing', t);
   }
@@ -2407,7 +2888,25 @@ export function closeShift(now, opts) {
     //    it, staying famous is a thing you keep doing rather than a thing you
     //    did. A clean day (nobody walked out, somebody was served) more than
     //    cancels the decay, which is the point.
-    bumpPop(EC('POP_DECAY_PER_DAY', -1.5), 'day-decay');
+    /* 🔴 MEAN REVERSION — kitchen.data.js names THIS function as the consumer of
+       POP_REVERT_BELOW / POP_REVERT_PER_DAY and it was reading neither, so a bad
+       week compounded into a dead account: decay applies at every day roll, and
+       at popularity 4 a decay is the difference between climbing out and not.
+       Below the threshold the town's memory fades and reputation drifts back UP
+       toward it, INSTEAD of decaying — not a floor and not a gift, because the
+       drift is strictly smaller than one good day's service, so climbing out is
+       still something the player does. Above the threshold nothing changes and a
+       famous kitchen decays normally.
+       ⚠ BOTH KEYS DEFAULT TO ZERO. If the data file drops them the branch can
+       never be taken and the behaviour is exactly what it was — the fallbacks in
+       EC() are NaN guards, never tuning (see EC's header). */
+    const revertBelow = EC('POP_REVERT_BELOW', 0);
+    const revertPer = EC('POP_REVERT_PER_DAY', 0);
+    if (revertPer > 0 && K.popularity < revertBelow) {
+      bumpPop(Math.min(revertPer, revertBelow - K.popularity), 'day-revert');
+    } else {
+      bumpPop(EC('POP_DECAY_PER_DAY', -1.5), 'day-decay');
+    }
     if (report.lost === 0 && report.served > 0) bumpPop(-EC('POP_DECAY_PER_DAY', -1.5) * 2, 'clean-day');
     K.totals.days++;
     K.shift.day++;
@@ -2630,7 +3129,12 @@ export function tick(dt, now) {
   }
 
   // 4. WALK-INS
-  if (K.shift.running && dayPctOf() < 1 && ECb('COUNTER_ENABLED', true)) {
+  /* 🔴 …UNLESS THE KITCHEN IS DRY. See dryCheck(). The interval is rolled
+     forward while the doors are shut so that stock arriving does not release a
+     backlog of customers who "queued" during a period when nothing was open. */
+  const dry = K.shift.running ? dryNow(t) : false;
+  if (dry) K._nextCounter = t + counterIntervalMs();
+  if (!dry && K.shift.running && dayPctOf() < 1 && ECb('COUNTER_ENABLED', true)) {
     if (!K._nextCounter) K._nextCounter = t + counterIntervalMs();
     if (t >= K._nextCounter) {
       // Jitter, so arrivals do not arrive on a metronome. SPAWN_JITTER is the

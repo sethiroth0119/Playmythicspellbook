@@ -308,6 +308,200 @@
     radial-gradient(74px 34px at 47% calc(var(--fy2) - 4px), rgba(255,184,96,.22), transparent 74%);
 }
 
+
+/* ── 🍳 THE BACK OF HOUSE — the mid-floor, filled ─────────────────────────
+   🔴 THE VOID THIS CLOSES, measured twice: at 1440×900 idle, 305px of tiled
+   floor between the bottom of the line and the top of the pass; at 1280×860
+   mid-service, ~450px of empty brown — about a third of the frame — carrying
+   nothing. It is warm and it genuinely has depth, and it is also the one place
+   the build reads as an empty set rather than as a kitchen. REF-B fills exactly
+   that band with a co-worker, a rack of bottles and the clutter of a working
+   line.
+
+   The rule for what goes in it: DEPTH PROPS ONLY, and never anything that could
+   be mistaken for a control. A pass-through hatch to the back with a light in
+   it, somebody working at it, a shelf of sauce bottles and a stack of crates —
+   all sitting on the floor plane BEHIND the counter, all painted once, none of
+   them animated. It is `display:none` below the breakpoint for the same reason
+   `.mk-folk` is: on a phone the body is a solid stack of full-width cards and
+   there is no uncovered band tall enough to hold any of it, so it would render
+   as a smear behind a card edge.
+
+   ⚠ ITS OWN ELEMENT AT ITS OWN BLUR. Same argument as `.mk-folk`: `.mk-room`'s
+     three layers are full, and back-of-house clutter is NEARER than the diners,
+     so it wants a smaller radius. Sharing a layer is how round 2's people came
+     out as scuffs on the floor.
+   ⚠ The band is stated as a percentage of the OVERLAY, not of the body, because
+     the body's height changes with the band above it and the props must stay on
+     the floor rather than sliding up the wall when a card resizes. */
+#mythic-kitchen-ov .mk-boh {
+  /* THE BACK COUNTER ITSELF — a solid run of stainless standing on the floor,
+     not a wash of gradient. It is the object that turns "empty floor" into
+     "a room with a kitchen in it", and it works because it is a BOX with a lit
+     top lip and a shadow, which is the same three-part recipe every other steel
+     surface in this file uses. */
+  position: absolute;
+  left: 8%; right: 8%;
+  top: var(--by);
+  height: 52px;
+  display: none;
+  pointer-events: none;
+  filter: blur(.6px);
+  /* ⚠ 56%, MEASURED AGAINST THE VOID AND NOT CHOSEN FOR COMPOSITION. At 50% the
+     counter landed at y=450–502 on a 1440×900 window whose station row ends at
+     446 — tucked directly under the pans, so it read as their base and left the
+     actual empty band below it untouched. The band this element exists to fill
+     runs from the bottom of the line to the top of the pass (measured 446→648
+     at 1440×900, 480→665 at 1280×860), and 56% puts the counter inside it at
+     both. Lower again with the doors shut, so the specials board can hang above
+     it — see the note on .mk-slate. */
+  --by: 56%;
+
+  border-radius: 3px;
+  background:
+    /* drawer seams, so it reads as cabinetry rather than as a slab */
+    repeating-linear-gradient(90deg, rgba(0,0,0,.30) 0 2px, transparent 2px 78px),
+    linear-gradient(180deg, #59606a 0 5px, #3a4048 5px 42%, #21262c 100%),
+    var(--mk-brush);
+  box-shadow:
+    inset 0 2px 0 rgba(255,214,160,.55),          /* the lamp on its top lip   */
+    inset 0 -14px 20px rgba(0,0,0,.55),
+    0 16px 30px -8px rgba(0,0,0,.75),             /* its shadow on the floor   */
+    0 -10px 26px -12px rgba(255,176,80,.35);
+}
+/* THE PASS-THROUGH TO THE KITCHEN, and somebody working at it. Its own box, so
+   the hatch is a rectangle of light on the wall rather than a stripe across it —
+   the thing that made the first attempt read as three faint bars was trying to
+   cut full-width `linear-gradient` layers into columns with background-position.
+   ⚠ The head and the shoulders OVERLAP. Two ellipses with a gap between them is
+     not a person, it is two blobs — the same note as `.mk-folk`, learned twice. */
+#mythic-kitchen-ov .mk-boh::before {
+  content: "";
+  position: absolute;
+  left: 50%; bottom: 100%;
+  width: 168px; height: 74px;
+  transform: translateX(-50%);
+  border-radius: 4px 4px 0 0;
+  background:
+    /* the co-worker, rim-lit from inside the hatch */
+    radial-gradient(15px 17px at calc(50% + 6px) 30px, rgba(255,206,140,.55) 0 66%, transparent 78%),
+    radial-gradient(33px 22px at calc(50% + 7px) 55px, rgba(255,186,104,.38) 0 68%, transparent 80%),
+    radial-gradient(15px 17px at 50% 33px, #0a0603 0 68%, transparent 78%),
+    radial-gradient(33px 22px at 50% 58px, #0a0603 0 70%, transparent 80%),
+    /* the light coming through it */
+    linear-gradient(180deg, rgba(255,206,140,.26), rgba(255,166,80,.10) 62%, transparent);
+  box-shadow: inset 0 0 0 2px rgba(255,214,160,.22), 0 0 26px rgba(255,176,80,.18);
+}
+/* THE CRATE STACK AND THE BOTTLE SHELF — the clutter of a working line. Two
+   boxes and a shelf line, all with lit top edges, all standing ON the counter. */
+#mythic-kitchen-ov .mk-boh::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: 100%;
+  height: 40px;
+  background:
+    /* five sauce bottles on a shelf, left of the hatch */
+    radial-gradient(3px 3px  at 13%   14px, rgba(255,168,86,.8) 0 60%, transparent 80%),
+    radial-gradient(3px 3px  at 16.4% 14px, rgba(255,120,60,.75) 0 60%, transparent 80%),
+    radial-gradient(3px 3px  at 19.8% 14px, rgba(255,214,120,.75) 0 60%, transparent 80%),
+    radial-gradient(3px 3px  at 23.2% 14px, rgba(255,168,86,.7) 0 60%, transparent 80%),
+    radial-gradient(4px 12px at 13%   26px, #1b0d06 0 72%, transparent 84%),
+    radial-gradient(4px 12px at 16.4% 26px, #120a05 0 72%, transparent 84%),
+    radial-gradient(4px 12px at 19.8% 26px, #1b0d06 0 72%, transparent 84%),
+    radial-gradient(4px 12px at 23.2% 26px, #120a05 0 72%, transparent 84%),
+    radial-gradient(60px 18px at 18% 22px, rgba(255,170,84,.16), transparent 76%),
+    /* two crates, right of the hatch, lit along their top edges */
+    linear-gradient(180deg, transparent 0 8px,  rgba(255,206,140,.42) 8px 10px,  rgba(74,46,22,.92) 10px 24px, transparent 24px),
+    linear-gradient(180deg, transparent 0 24px, rgba(255,206,140,.30) 24px 26px, rgba(58,36,17,.92) 26px 40px, transparent 40px);
+  background-repeat: no-repeat;
+  background-size:
+    100% 100%, 100% 100%, 100% 100%, 100% 100%,
+    100% 100%, 100% 100%, 100% 100%, 100% 100%,
+    100% 100%,
+    82px 100%, 96px 100%;
+  background-position:
+    0 0, 0 0, 0 0, 0 0,
+    0 0, 0 0, 0 0, 0 0,
+    0 0,
+    78% 0, 76% 0;
+}
+
+/* ── 🪧 THE SPECIALS BOARD — only when the doors are shut ────────────────── */
+/* ⚠ 46%, AND THE POSITION IS A MEASUREMENT. Measured idle at 1440×900: the
+   station row ends at y=381 and the pass shelf starts at y=682, so the only band
+   this board can hang in without printing across a pan or a plate is 381–682.
+   The first cut put it at 26% (y=234) and it rendered "MYTHIC KITCHEN" straight
+   through the FLAT-TOP card — which is exactly the failure the wells and the
+   people were both fixed for, arriving a third time. 46% puts it on the wall
+   above the back counter, and the counter drops to 62% while the doors are shut
+   so the two never argue. */
+#mythic-kitchen-ov .mk-slate {
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  transform: translateX(-50%);
+  display: none;
+  min-width: 260px;
+  max-width: 42%;
+  padding: 12px 22px 14px;
+  border-radius: 6px;
+  text-align: center;
+  color: #e8d9bd;
+  /* a slate in a wooden frame, hung on the tiled wall, lit from above by the
+     same ceiling lamp that lights the pass */
+  border: 5px solid #3a2411;
+  background:
+    radial-gradient(120% 90% at 50% -10%, rgba(255,206,140,.18), transparent 66%),
+    linear-gradient(180deg, #16211c, #0c120f);
+  box-shadow:
+    0 18px 34px rgba(0,0,0,.62),
+    inset 0 1px 0 rgba(255,255,255,.10),
+    inset 0 0 40px rgba(0,0,0,.5);
+  opacity: .92;
+}
+#mythic-kitchen-ov .mk-slate[hidden] { display: none; }
+#mythic-kitchen-ov[data-shift="closed"] .mk-boh { --by: 62%; }
+/* 🪑 THE DINING ROOM STANDS DOWN BEFORE SERVICE, and that is the honest picture
+   rather than a dodge: nobody is sitting in a fast-food restaurant that has not
+   opened yet. It also clears the one band the specials board can occupy — the
+   diners sit at 63.5% and a board hung anywhere legible would have printed
+   across them. They come back the moment the doors do. */
+#mythic-kitchen-ov[data-shift="closed"] .mk-folk { display: none; }
+/* 🔴 AND THE ORDER BOARD STOPS BEING A 780px COLUMN OF BLACK. It spans both
+   body rows so that a busy service has somewhere to put twelve tickets — but
+   with the doors shut it holds one sentence ("Service is closed.") and stretches
+   it over the whole left third of the window, which is a bigger empty surface
+   than the floor this round was fixing. Closed, it hugs its own content and the
+   room shows through underneath it. */
+#mythic-kitchen-ov[data-shift="closed"] .mk-sec-board { justify-content: flex-start; }
+#mythic-kitchen-ov[data-shift="closed"] .mk-board { flex: 0 0 auto; }
+#mythic-kitchen-ov[data-shift="closed"] .mk-board .mk-rail { flex: 0 0 auto; }
+#mythic-kitchen-ov .mk-slate b {
+  display: block;
+  font-size: 19px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: #ffe0ad;
+  text-shadow: 0 0 18px rgba(255,186,92,.4);
+}
+#mythic-kitchen-ov .mk-slate span {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+  letter-spacing: .22em;
+  color: #9db3a4;
+}
+#mythic-kitchen-ov .mk-slate em {
+  display: block;
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(255,224,173,.28);
+  font-style: normal;
+  font-size: 12px;
+  color: #cbbfae;
+}
+#mythic-kitchen-ov .mk-slate em b { display: inline; font-size: 14px; letter-spacing: .06em; color: var(--mk-ready); }
+
 /* ════════════════════════════════════════════════════════════════════════
    🎛 HUD — popularity face + meter, LEVEL + XP, Cinder, day + clock.
    ------------------------------------------------------------------------
@@ -507,11 +701,40 @@
      ⚠ Cancelled at the breakpoint — desktop `.mk-body` is a fixed grid with
      `overflow:hidden` and nothing to scroll, so the mask there would just dim
      the bottom of the bins and the pass for no reason. */
-  -webkit-mask-image: linear-gradient(180deg, #000 0 calc(100% - 26px), rgba(0,0,0,.34) 100%);
-          mask-image: linear-gradient(180deg, #000 0 calc(100% - 26px), rgba(0,0,0,.34) 100%);
+  /* 🔴 AND A GRADIENT CUT IS STILL A CUT IF A HEADING LANDS IN IT. Round 3's
+     ramp ran the whole 26px in one step, so a section head that happened to
+     rest inside the band had the TOP of its glyphs at full opacity and the
+     BOTTOM at .34 — measured at 390×844 with "DRIVE-THRU / NEXT IN 8.2S · 3
+     CARS · ROOM FOR 2" at y≈735 inside a 727–753 band, and it read as text
+     sliced horizontally through its own x-height rather than as text dimmed.
+     Two changes, and they are two halves of one fix:
+       · THE RAMP IS LONG, SHALLOW AND SINGLE-SLOPE, and the number is the whole
+         argument. Round 3 dropped 0.66 of alpha across 26px = 0.025 per pixel,
+         so a heading resting in it lost 0.30 of alpha between the top of its
+         glyphs and the bottom — which IS what "sliced through the x-height"
+         looks like. A two-stage ramp was tried first and failed the same way in
+         its steep half: measured over a 13-position scroll sweep, worst delta
+         across a heading 0.137 at 360×640 but 0.306 at 390×844, because a
+         heading can land anywhere and "anywhere" eventually means the steep bit.
+         One slope, 0.50 over 60px = 0.0083 per pixel, caps the worst case at
+         ~0.13 for any heading at any scroll position — below the threshold at
+         which a gradient reads as an edge rather than as shading;
+       · `scroll-snap-type: y proximity` (with `scroll-snap-align: start` on
+         `.mk-sec`) means a section head cannot COME TO REST in the band at all
+         under a thumb. `scroll-padding-bottom` only ever helped programmatic
+         scrolls, which is not how anybody reads this screen. */
+  -webkit-mask-image: linear-gradient(180deg, #000 0 calc(100% - 60px), rgba(0,0,0,.50) 100%);
+          mask-image: linear-gradient(180deg, #000 0 calc(100% - 60px), rgba(0,0,0,.50) 100%);
+  scroll-snap-type: y proximity;
   /* so a section scrolled to by keyboard or by a snap lands clear of the fade */
-  scroll-padding-bottom: 30px;
+  scroll-padding-bottom: 60px;
 }
+/* ⚠ `start`, not `center`: these sections are taller than the window and a
+   centred snap would park a card's middle on screen with its head off the top.
+   `proximity` (not `mandatory`) so a deliberate half-scroll to peek at the next
+   section is still allowed — the snap is there to stop a heading landing in the
+   fade, not to take the scroll away from the player. */
+#mythic-kitchen-ov .mk-sec { scroll-snap-align: start; }
 /* The fade is a mask on the SCROLL CONTAINER, so it is fixed to the viewport
    edge and stays put while the content moves under it — which is the whole
    point: it marks the fold, not a piece of content. */
@@ -528,6 +751,15 @@
 }
 #mythic-kitchen-ov .mk-sec-head b { color: var(--mk-ink); font-weight: 700; letter-spacing: .1em; }
 #mythic-kitchen-ov .mk-sec-head .mk-spacer { flex: 1 1 auto; }
+/* ⚠ THE LABEL AND THE COUNT DO NOT WRAP; THE HINT BETWEEN THEM TRUNCATES.
+   Measured at 390px: "THE PASS / pull a dish, then plat… / 0 ON THE PASS · ROOM
+   FOR / 16" — the head broke across two lines and split its own number off the
+   end of its own sentence. A head is one line by definition; when it does not
+   fit, the thing that gives way has to be the nudge, never the label and never
+   the count, because those two are the only parts of it that are load-bearing. */
+#mythic-kitchen-ov .mk-sec-head > b,
+#mythic-kitchen-ov .mk-sec-head > span:last-child { white-space: nowrap; flex: 0 0 auto; }
+#mythic-kitchen-ov .mk-sec-head > .mk-hint { flex: 0 1 auto; }
 
 /* Horizontal rails. THE mobile primitive: everything wide scrolls sideways
    with snap points instead of shrinking into illegibility. */
@@ -750,11 +982,15 @@
 }
 #mythic-kitchen-ov .mk-road {
   position: relative;
-  /* ⚠ 106px, not 84px. The extra 22px buys the THREE BUBBLE LINES below —
-     without room above the roofs there is nowhere to stagger to and every
-     bubble has to fight for one strip of sky. It reads better as a road too:
-     84px was a kerb with cars wedged against the bezel. */
-  height: 108px;
+  /* ⚠ 100px, AND EVERY ONE OF THEM IS SPENT. The road left `.mk-body` this
+     round and joined the pinned window in the service band above the fold, so
+     its height now comes straight out of the SCROLLING budget for the cooking —
+     which is the trade the blocker was about, and it has to be paid honestly.
+     48px of sky (three wrapped bubble lines at 11px/1.25 plus its padding) and
+     52px of car (a 26px sprite, its name, its patience bar). The 8px that used
+     to be here came back from deleting the three-line bubble stagger; nothing
+     else in the road was reduced. */
+  height: 100px;
   border-radius: 9px;
   overflow: hidden;
   background:
@@ -788,32 +1024,21 @@
   font-size: 12px;
   color: var(--mk-faint);
 }
-#mythic-kitchen-ov .mk-speaker {
-  position: absolute;
-  right: 4px; top: 4px; bottom: 4px;
-  width: 46px;
-  border-radius: 8px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  font-size: 11px;
-  color: #ffe0a8;
-  text-align: center;
-  background: linear-gradient(180deg, var(--mk-steel1), var(--mk-steel3));
-  border: 1px solid rgba(255,255,255,.16);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.25), 0 4px 10px rgba(0,0,0,.5);
-}
-#mythic-kitchen-ov .mk-speaker span { font-size: 16px; }
+/* ⚠ `.mk-speaker` IS GONE. It was the round-1 single end cap — one box reading
+   "ORDER HERE" pinned to the RIGHT edge, which is the window. The lane draws two
+   `.mk-fixture`s now and the renderer emits neither `.mk-speaker` nor anything
+   that matches it, so this was ~20 lines of stylesheet describing a node that
+   does not exist. Dead CSS in a file whose whole job is to be auditable is worse
+   than no CSS. */
 
 #mythic-kitchen-ov .mk-car {
   position: absolute;
-  /* ⚠ 54px, not 6px: the order bubble is anchored `bottom:100%` off the car and
+  /* ⚠ 48px, not 6px: the order bubble is anchored `bottom:100%` off the car and
      the road clips its overflow, so a car parked at the top of the strip loses
-     its speech bubble to the bezel. 54 leaves THREE bubble lines of clearance
-     (15px of text plus two 19px steps) — see the stagger below. */
-  top: 56px;
+     its speech bubble to the bezel. 48 is exactly three WRAPPED lines of bubble
+     (3 × 13.75px of text plus 4px of padding plus the 2px tail) — the stagger
+     those 56px used to buy is gone; the clearance it needed is not. */
+  top: 48px;
   left: 0;
   width: 76px;
   display: flex;
@@ -838,80 +1063,77 @@
 }
 #mythic-kitchen-ov .mk-car .mk-bar { width: 54px; height: 5px; flex: 0 0 auto; }
 #mythic-kitchen-ov .mk-car[data-state="gone"] { opacity: .25; filter: grayscale(1); }
-#mythic-kitchen-ov .mk-car[data-say="0"] .mk-bub { display: none; }
+/* ════════════════════════════════════════════════════════════════════════
+   🗣 THE SPEECH BUBBLE — one node, owned by the road.
+   ------------------------------------------------------------------------
+   🔴 100% OF THE LANE'S SPOKEN LINES WERE CLIPPED, AND THE WRITING IS THE BEST
+   THING IN THIS FEATURE. Measured over a 120-step rush at 360×780: 42 distinct
+   bubbles, 42 clipped, every one rendered in a 132px box against 247–503px of
+   text — "Two of everything. The gate doesn't feed us…" cut after four words. At
+   1280 it was 57 of 58, because the old `max-width: min(190px, 46vw)` was
+   narrower than the SHORTEST authored line. Seventeen personalities × five mood
+   pools, 64 distinct lines in a five-minute shift, and the player never read a
+   whole sentence.
+
+   THREE THINGS WERE WRONG AND ALL THREE ARE HERE:
+
+   1 · `white-space: nowrap`. It was justified by two bubbles colliding, and that
+       justification is spent — updateCars() has shown exactly ONE bubble per
+       frame since round 3, so the collision it defended against cannot happen.
+   2 · THE ANCHOR. A bubble parented to a 76px car at `left:50%` cannot be kept
+       on the road, because a car does not know where the road ends. Probed at
+       360px: 7 of 10 lines printed over an end cap and 3 of 10 hung past the
+       kerb and were cut by the road's overflow. The road knows, so the road owns
+       the node and updateCars() clamps it between the two fixtures. It is the
+       LAST child of `.mk-road`, so it paints over both of them.
+   3 · THE CAP. `min(300px, 72vw)` computed to 259px, because the legacy page
+       renders this overlay under a `zoom`: `vw` resolves against the 360px
+       DEVICE viewport while the road is laid out in a 551px CSS space. The cap
+       is a fraction of the measured asphalt now (`--mk-road-w`, published by
+       updateCars) with a literal ceiling for very wide desktop roads, where a
+       900px-wide sentence is its own kind of unreadable.
+
+   ⚠ NOT `-webkit-line-clamp`, and this cost a measurement to find: Blink
+     BLOCKIFIES an out-of-flow box, so computed `display` came back `flow-root`
+     even though the rule said `-webkit-box` and the clamp silently did nothing —
+     two lines of box against three lines of text, cropped through the glyphs.
+     `line-height` is an exact ratio and `max-height` is an exact multiple of it,
+     so the cut can only ever fall BETWEEN lines. With the width above it takes
+     an authored line at SAY_MAX_CH to reach two, and nothing reaches three.
+   ════════════════════════════════════════════════════════════════════════ */
+#mythic-kitchen-ov .mk-bub[data-on="0"] { display: none; }
 #mythic-kitchen-ov .mk-bub {
   position: absolute;
-  bottom: 100%;
-  left: 50%;
-  transform: translate(-50%, -2px);
-  padding: 2px 7px;
+  top: 3px;
+  left: 0;
+  z-index: 4;
+  padding: 3px 8px;
   border-radius: 8px;
   background: #f3ead9;
   color: #241a12;
   font-size: 11px;
-  white-space: nowrap;
-  /* ⚠ the box-shadow lives with `max-width` in the collision block below, and
-     ONLY there. Two `box-shadow` declarations on one selector in one file is
-     how `.mk-slot-dish` ended up 24% smaller than the comment arguing for its
-     size — the later one wins silently and the earlier one reads as truth. */
-}
-/* The car at the window is by definition at the right-hand edge, which is
-   exactly where a centred bubble gets eaten by the speaker box. `data-side` is
-   set by updateCars() and flips the bubble to hang leftwards instead. */
-#mythic-kitchen-ov .mk-car[data-side="right"] .mk-bub { left: auto; right: 4px; transform: translate(0, -2px); }
-#mythic-kitchen-ov .mk-car[data-side="right"] .mk-bub::after { left: auto; right: 16px; transform: none; }
-/* 🔴 TWO CARS TALKING AT ONCE. A 190px nowrap bubble centred on a 76px car,
-   on a 364px road that holds up to four cars, collides as the NORMAL case —
-   round 1 measured two bubbles at x=138 and x=62 on the same line and the
-   result was 'Two dogs and a large fries, pl…' smeared through another
-   order. CSS can only do half of this:
-     · cap the width against the viewport, not against a constant, so a phone
-       bubble is never wider than half the road;
-     · make a bubble OPAQUE and give it a dark outer ring, so when two do
-       overlap one clearly sits ON TOP of the other and stays readable
-       instead of the two blending into mush;
-     · raise a talking car above a silent one.
-   The other half — only ever showing ONE bubble, on the car whose patience is
-   lowest — belongs to updateCars() and is named in the handover. */
-#mythic-kitchen-ov .mk-bub {
-  max-width: min(190px, 46vw);
+  line-height: 1.25;
+  white-space: normal;
+  width: max-content;
+  max-width: min(340px, calc(var(--mk-road-w, 300px) * 0.68));
+  max-height: 3.75em;          /* 3 × line-height, exactly */
   overflow: hidden;
-  text-overflow: ellipsis;
-  z-index: 3;
   box-shadow: 0 0 0 2px rgba(10,7,5,.62), 0 4px 10px rgba(0,0,0,.7);
 }
-#mythic-kitchen-ov .mk-car[data-say="1"] { z-index: 3; }
-/* ⚠ AND THE HALF CSS *CAN* DO ABOUT IT: THREE LINES OF SKY.
-   Each car hangs its bubble one line higher than the car before it, cycling
-   every third. Two lines were tried first and were not enough — measured at
-   390px with every car talking, cars 1 and 3 still collided at x=147..199,
-   because the lane crowds up at the window and "adjacent" is not the only way
-   two cars end up 100px apart. Three lines and a max of four cars means the
-   only pair that can ever share a line is the 1st and the 4th, which are the
-   two furthest apart on the road by definition.
-
-   It costs 22px of road height and nothing else, it needs no renderer change,
-   and it degrades to "slightly wonky" rather than "unreadable" if the DOM
-   order ever stops tracking the lane order. A raised bubble grows a long thin
-   stem so it still visibly belongs to its own car. */
-#mythic-kitchen-ov .mk-car:nth-child(3n+2) .mk-bub { bottom: calc(100% + 19px); }
-#mythic-kitchen-ov .mk-car:nth-child(3n)   .mk-bub { bottom: calc(100% + 38px); }
-#mythic-kitchen-ov .mk-car:nth-child(3n+2) .mk-bub::after,
-#mythic-kitchen-ov .mk-car:nth-child(3n)   .mk-bub::after {
-  border-left-width: 2px;
-  border-right-width: 2px;
-  border-top-color: rgba(243,234,217,.5);
-}
-#mythic-kitchen-ov .mk-car:nth-child(3n+2) .mk-bub::after { border-top-width: 21px; }
-#mythic-kitchen-ov .mk-car:nth-child(3n)   .mk-bub::after { border-top-width: 40px; }
-#mythic-kitchen-ov .mk-bub::after {
-  content: "";
+/* the tail. `left` is written by updateCars so it keeps pointing at the car that
+   said it even when the box has slid along the road to stay on the asphalt —
+   that pointer is the only thing tying a line to a face once the two are no
+   longer concentric. */
+#mythic-kitchen-ov .mk-bub > i {
   position: absolute;
-  top: 100%; left: 50%;
-  transform: translateX(-50%);
+  top: 100%;
+  left: 12px;
+  width: 0; height: 0;
   border: 5px solid transparent;
   border-top-color: #f3ead9;
+  transform: translateX(-50%);
 }
+#mythic-kitchen-ov .mk-car[data-say="1"] { z-index: 3; }
 
 /* ════════════════════════════════════════════════════════════════════════
    🔥 THE LINE — stations, slots, and the thing that is burning.
@@ -1355,9 +1577,22 @@
    do that is to draw the places food goes. They are a repeating background of
    the rail, which costs no DOM, needs no renderer change, and cannot ever
    drift out of sync with the dish count.
-   ⚠ The 62px pitch is `.mk-dish` width (56) + the flex gap (6). Move either
-   number and the plates stop landing in their wells — they are one constant
-   wearing two hats, and there is no way to say that in CSS.
+   🔴 THE PITCH IS ONE NUMBER NOW, AND THE RAIL ROUNDS TO IT.
+   Round 3 hard-coded 122px at desktop against a rail whose clientWidth was 874:
+   874 / 122 = 7.16, so the shelf ALWAYS ended in a 16%-cut plate hanging off the
+   right edge, at every window size that was not an exact multiple. A shelf with
+   a sliced well on it reads as a rendering fault, and the head above it was
+   meanwhile printing a capacity that the drawn wells contradicted.
+
+   So: `--mk-well-min` is the smallest pitch this width will accept, the renderer
+   divides the measured rail by it and writes the EXACT pitch back as
+   `--mk-well`, and both the tile AND the dish are sized off that one variable —
+   `width: calc(var(--mk-well) - <gap>)`. A whole number of wells always fits and
+   a plate can never drift off its well, because there is now no second number to
+   drift against. `--mk-well` falls back to `--mk-well-min` for the first frame
+   and for any environment where the measurement never happens.
+   ⚠ The well is centred on the DISH, not on the tile: the dish occupies
+     `pitch − gap` at the left of each tile, so its centre is `50% − gap/2`.
    `background-attachment: local` so the wells scroll WITH the dishes; the
    default would nail them to the bezel and slide the food off them. */
 #mythic-kitchen-ov .mk-pass-rail {
@@ -1374,12 +1609,13 @@
      it is — a lit steel dish under a heat lamp: a warm inner pool, a bright
      lip catching the lamp at 86%, and its own shadow beneath. Same geometry,
      more light. */
+  --mk-well-min: 62px;
   background-image:
-    radial-gradient(21px 11px at 28px 31px,
+    radial-gradient(21px 11px at calc(50% - 3px) 31px,
       rgba(255,206,140,.30), rgba(255,180,96,.16) 55%, rgba(255,234,184,.74) 84%,
       rgba(255,190,110,.36) 93%, transparent 97%),
-    radial-gradient(24px 12px at 28px 34px, rgba(0,0,0,.46), transparent 78%);
-  background-size: 62px 100%;
+    radial-gradient(24px 12px at calc(50% - 3px) 34px, rgba(0,0,0,.46), transparent 78%);
+  background-size: var(--mk-well, var(--mk-well-min)) 100%;
   background-repeat: repeat-x;
   background-attachment: local;
   -webkit-mask-image: linear-gradient(90deg, #000 0 calc(100% - 26px), rgba(0,0,0,.25) 100%);
@@ -1392,8 +1628,8 @@
    printed on top of two empty plate discs, grey on grey, for most of a shift's
    first minute and every time the board cleared. The largest warm surface in
    the feature spent that time looking like text on crockery. An empty pass is
-   a warm empty pass; the count in the head says "0 / 16 plated" in numbers,
-   which is the same sentence without the crockery. */
+   a warm empty pass; the count in the head says "0 on the pass · room for 16"
+   in numbers, which is the same sentence without the crockery. */
 
 /* A PLATED DISH. The plate is a real object drawn BEHIND the food and slightly
    below it — that one relationship is the whole trick. An emoji sitting on a
@@ -1404,7 +1640,8 @@
 #mythic-kitchen-ov .mk-dish {
   position: relative;
   flex: 0 0 auto;
-  width: 56px;
+  /* one pitch, minus the rail's own gap — see the --mk-well block above */
+  width: calc(var(--mk-well, var(--mk-well-min, 62px)) - 6px);
   height: 58px;
   padding: 4px 0 0;
   border: 0;
@@ -1946,6 +2183,18 @@
   22%  { opacity: .95; }
   100% { transform: translateY(-26px) scale(1.35); opacity: 0; }
 }
+/* the till, when it takes money. Pop on INCREASE only — a reset to zero at
+   shift open is not a payday, and the renderer decides which one it was. */
+@keyframes mk-take-pop {
+  0%   { transform: scale(1); }
+  30%  { transform: scale(1.22); color: var(--mk-ready); }
+  100% { transform: scale(1); }
+}
+/* a truck on a road, not a marker on a bar */
+@keyframes mk-wobble {
+  0%, 100% { transform: translateX(-50%) translateY(0) rotate(-1.5deg); }
+  50%      { transform: translateX(-50%) translateY(-1.5px) rotate(1.5deg); }
+}
 @keyframes mk-sheet-in {
   from { transform: translateY(18px); opacity: 0; }
   to   { transform: translateY(0); opacity: 1; }
@@ -2153,7 +2402,11 @@
 #mythic-kitchen-ov .mk-hint {
   font-size: 10px;
   letter-spacing: .06em;
-  color: var(--mk-faint);
+  /* ⚠ NOT --mk-faint. This hint sits on the PASS, which is the brightest steel
+     in the file, and #6f6558 on a lit shelf is a hint nobody can read — it was
+     the one piece of copy on the screen with less contrast than the wallpaper
+     behind it. It is still quieter than the count beside it, which is the job. */
+  color: #8b7f6d;
   text-transform: none;
   white-space: nowrap;
   overflow: hidden;
@@ -2195,6 +2448,578 @@
 }
 /* a limit the truck is not the cause of */
 #mythic-kitchen-ov .mk-card-sub[data-ceiling="1"] { color: #ffd166; }
+
+/* ════════════════════════════════════════════════════════════════════════
+   🚗 THE SERVICE BAND — the road and the window, above the fold, always.
+   ------------------------------------------------------------------------
+   🔴 THE BLOCKER: ON A PHONE THE DRIVE-THRU WAS NEVER ON SCREEN WHILE YOU
+   COOKED. Measured with three cars queued and the lane full, visible road
+   pixels inside `.mk-body` were 0 at 360×640, 2 at 390×844 and 6 at 430×932;
+   every car reported `inBody:false` and the one speech bubble `inView:false`.
+   The player named the drive-thru first, and on the device they will actually
+   play on they never saw a car, a face or a bubble during service.
+
+   It was not an accident and it was not laziness — round 3 put the lane fourth
+   of five ON PURPOSE, because at the top it pushed the cooking below the fold.
+   Both horns of that are bad: five sections totalling ~940px poured into a
+   385px window means something is always invisible, and choosing which of the
+   two headline surfaces to delete is not a choice anybody should have to make.
+
+   THE WAY OUT IS TO STOP PAYING FOR THE ROAD OUT OF THE SCROLLING BUDGET.
+   A road is not a document you read down a page; it is a status surface you
+   glance at, like the HUD. So it leaves `.mk-body` and joins the pinned window
+   card in one band that never scrolls, and the whole of `.mk-body` goes back to
+   the cooking. The band is paid for out of what the pin card already cost
+   (measured 115px at 360×640) plus the road's own 100 — and it pays for a good
+   part of that back by deleting what the road makes redundant:
+     · the NEXT preview card's itemisation → the car is ON the road with its
+       order drawn on it as pips;
+     · the window customer's spoken line inside the card → it is the bubble over
+       their own roof, which is where a spoken line belongs;
+     · 22px of bubble-stagger sky → only one bubble is ever shown now.
+
+   ⚠ ONE DOM, TWO LAYOUTS. Desktop lays the same two children side by side where
+     the lane already was. Nothing is re-parented per breakpoint — that rule is
+     the only reason one renderer can serve both widths.
+   ════════════════════════════════════════════════════════════════════════ */
+#mythic-kitchen-ov .mk-band {
+  position: relative;
+  z-index: 3;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+/* The lane section keeps its own chrome; it has simply changed parent. */
+#mythic-kitchen-ov .mk-band-lane { min-width: 0; }
+#mythic-kitchen-ov .mk-band-lane:empty { display: none; }
+/* ⚠ The head is 10px of type on a phone, not 11. It carries "NEXT IN 8.2S ·
+   3 CARS · ROOM FOR 2", which is the only thing on the screen that says
+   PRESSURE IS COMING rather than PRESSURE IS HERE — worth its line, not worth
+   a millimetre more than its line, in a band that is now costing the cooking. */
+#mythic-kitchen-ov .mk-band-lane .mk-sec-head { padding: 2px 10px 3px; font-size: 10px; }
+
+/* ── THE PINNED WINDOW ──────────────────────────────────────────────────────
+   The two cars that matter, with the two player verbs on them. On a phone this
+   collapses into ONE compact bar (see below); at the breakpoint it is a card
+   column beside the road. */
+#mythic-kitchen-ov .mk-pin {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+  padding: 5px 8px 0;
+  min-width: 0;
+}
+#mythic-kitchen-ov .mk-pin:empty { display: none; }
+#mythic-kitchen-ov .mk-pin-card {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--mk-line2);
+  background: linear-gradient(180deg, rgba(46,52,59,.92), rgba(20,17,15,.94));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 5px 14px rgba(0,0,0,.5);
+}
+#mythic-kitchen-ov .mk-pin-card[data-slot="next"] { flex: 0 1 34%; opacity: .82; }
+#mythic-kitchen-ov .mk-pin-card[data-ready="1"] {
+  border-color: rgba(95,217,122,.6);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 0 16px rgba(95,217,122,.28);
+}
+#mythic-kitchen-ov .mk-pin-card[data-mood="furious"] { border-color: rgba(255,77,94,.6); }
+#mythic-kitchen-ov .mk-pin-top { display: flex; align-items: center; gap: 5px; min-width: 0; }
+#mythic-kitchen-ov .mk-pin-mood { font-size: 19px; line-height: 1; filter: drop-shadow(0 2px 3px rgba(0,0,0,.6)); }
+#mythic-kitchen-ov .mk-pin-veh { font-size: 16px; line-height: 1; }
+#mythic-kitchen-ov .mk-pin-name {
+  font-size: 12px; font-weight: 800; min-width: 0; flex: 1 1 auto;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#mythic-kitchen-ov .mk-pin-where {
+  font-size: 9px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--mk-amber); white-space: nowrap;
+}
+#mythic-kitchen-ov .mk-pin-line {
+  font-size: 10.5px; font-style: italic; color: #cbbfae; line-height: 1.3;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+#mythic-kitchen-ov .mk-pin-items { display: flex; flex-direction: column; gap: 2px; }
+#mythic-kitchen-ov .mk-pin-it { display: flex; align-items: center; gap: 4px; font-size: 11px; min-width: 0; flex-wrap: wrap; }
+#mythic-kitchen-ov .mk-pin-it > b { font-variant-numeric: tabular-nums; color: var(--mk-ink); }
+#mythic-kitchen-ov .mk-pin-it[data-done="1"] > b { color: var(--mk-ready); }
+#mythic-kitchen-ov .mk-pin-it > .mk-nm { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#mythic-kitchen-ov .mk-pin-it .mk-mods-in { flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: 3px; padding-left: 18px; }
+#mythic-kitchen-ov .mk-pin-acts { display: flex; gap: 5px; margin-top: 1px; }
+/* WHAT THE NEXT CAR WANTS, AT A GLANCE — icons and counts, never the itemised
+   list with its fills and its promise chips. That list belongs to the board
+   ticket that has the Serve button on it, and printing it twice ~250px apart on
+   a 390px screen is what put the drive-thru below the fold in the first place.
+   The same pips are drawn on the car itself; this is the copy that survives when
+   the road is scrolled off on a very short window. */
+#mythic-kitchen-ov .mk-pin-pips { display: flex; flex-wrap: wrap; gap: 4px; font-size: 15px; line-height: 1.1; }
+#mythic-kitchen-ov .mk-pin-pips > span { filter: drop-shadow(0 1px 2px rgba(0,0,0,.7)); }
+/* ⚠ NOT `.mk-bar`. That class carries `flex: 1 1 auto`, which inside a COLUMN
+   card means flex-GROW:1 VERTICALLY — the patience bar ate the whole card and
+   rendered as a green blob. Measured at 390px, not reasoned about. */
+#mythic-kitchen-ov .mk-pin-bar {
+  position: relative; flex: 0 0 6px; height: 6px; border-radius: 99px;
+  overflow: hidden; background: rgba(0,0,0,.55); box-shadow: inset 0 1px 2px rgba(0,0,0,.7);
+}
+#mythic-kitchen-ov .mk-pin-bar > i {
+  position: absolute; inset: 0 auto 0 0; display: block; width: 0;
+  border-radius: 99px; background: var(--mk-ready);
+}
+#mythic-kitchen-ov .mk-badge-sp {
+  font-size: 9px; letter-spacing: .06em; padding: 1px 5px; border-radius: 99px;
+  background: linear-gradient(180deg, #5b4620, #332612);
+  border: 1px solid rgba(255,182,72,.5); color: #ffd88a; white-space: nowrap;
+}
+
+/* ── THE PHONE BAR ──────────────────────────────────────────────────────────
+   🔴 EVERY DECLARATION IN HERE IS BUYING BACK PIXELS FOR THE COOKING, and the
+   rule for what may be cut is the same one throughout: cut what the ROAD is now
+   saying better. The card stops being a stack and becomes a three-column grid —
+   face | who + what | the two verbs — with the patience bar spanning the foot.
+   The NEXT card goes entirely: it is the second car on the road, twelve pixels
+   above, with its own face and its own order drawn on it. */
+@media (max-width: 819px) {
+  #mythic-kitchen-ov .mk-pin-card[data-slot="next"] { display: none; }
+  #mythic-kitchen-ov .mk-pin-card[data-slot="window"] {
+    display: grid;
+    grid-template-columns: auto minmax(0,1fr) auto;
+    grid-template-areas: "mood who acts" "mood items acts" "bar bar bar";
+    align-items: center;
+    gap: 3px 6px;
+    padding: 5px 7px;
+  }
+  #mythic-kitchen-ov .mk-pin-card[data-slot="window"] > .mk-pin-top   { grid-area: who; }
+  #mythic-kitchen-ov .mk-pin-card[data-slot="window"] > .mk-pin-items { grid-area: items; }
+  #mythic-kitchen-ov .mk-pin-card[data-slot="window"] > .mk-pin-acts  { grid-area: acts; flex-direction: column; gap: 3px; margin: 0; }
+  #mythic-kitchen-ov .mk-pin-card[data-slot="window"] > .mk-pin-bar   { grid-area: bar; }
+  #mythic-kitchen-ov .mk-pin-card[data-slot="window"] > .mk-promise   { grid-area: who; justify-self: end; }
+  /* the quote is the bubble over their car now — see the band block above */
+  #mythic-kitchen-ov .mk-pin-card[data-slot="window"] > .mk-pin-line  { display: none; }
+  /* one line per dish, promises inline on it rather than wrapped under it */
+  #mythic-kitchen-ov .mk-pin-it { flex-wrap: nowrap; font-size: 10.5px; }
+  #mythic-kitchen-ov .mk-pin-it .mk-mods-in { flex: 0 1 auto; padding-left: 4px; flex-wrap: nowrap; overflow: hidden; }
+  #mythic-kitchen-ov .mk-pin-acts .mk-btn { padding: 4px 8px; font-size: 11px; }
+  /* ⚠ the WAVE button loses its words, not its target. 44px of "✋ Wave off"
+     next to a Serve button is a third of the bar; the glyph alone is still a
+     28px hit area, which is a thumb. */
+  #mythic-kitchen-ov .mk-pin-acts .mk-btn.danger { font-size: 13px; padding: 3px 8px; }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   🔧 THE WIRED SURFACES
+   ------------------------------------------------------------------------
+   Everything from here to the breakpoint used to live in a 134-line, ~15KB
+   `<style id="mk-wire-css">` string injected from kitchen.render.js. That was a
+   knowing exception to CONTRACT §1 ("kitchen.css owns all styling — a real
+   stylesheet, not inline soup"), taken for one round because six systems that
+   were computing real data and drawing none of it needed classes this file did
+   not have. Every rule in it was wrapped in `:where()` at specificity 1,0,0 so
+   that this file could adopt them one at a time with no !important war. They are
+   adopted, unwrapped, and the constant is deleted: an audit of the screen by
+   reading this file is a complete audit again.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── THE HUD'S FAILURE COUNTERS + THE TILL ─────────────────────────────── */
+#mythic-kitchen-ov .mk-fails { display: flex; flex-direction: column; gap: 2px; margin-left: 2px; }
+#mythic-kitchen-ov .mk-fail {
+  font-size: 10px; font-variant-numeric: tabular-nums; color: var(--mk-faint);
+  white-space: nowrap; letter-spacing: .04em;
+}
+#mythic-kitchen-ov .mk-fail[data-on="1"] { color: var(--mk-danger); text-shadow: 0 0 8px rgba(255,77,94,.5); }
+#mythic-kitchen-ov .mk-take-wrap { display: flex; flex-direction: column; min-width: 0; line-height: 1.1; }
+/* 💰 REF-B's loudest number is the TILL, not the bank. This is today's takings. */
+#mythic-kitchen-ov .mk-take {
+  font-size: 22px; font-weight: 900; color: #ffd88a;
+  font-variant-numeric: tabular-nums; text-shadow: 0 2px 8px rgba(255,182,72,.35);
+}
+#mythic-kitchen-ov .mk-take-sub {
+  font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--mk-dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#mythic-kitchen-ov .mk-take[data-pop="1"] { animation: mk-take-pop .5s ease; }
+
+/* ── MODIFIER CHIPS: the promise, and whether it was kept ──────────────── */
+#mythic-kitchen-ov .mk-mod {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 9.5px; letter-spacing: .03em; padding: 1px 5px; border-radius: 99px;
+  white-space: nowrap; border: 1px solid rgba(255,255,255,.2);
+  background: rgba(0,0,0,.42); color: #e6dccd;
+}
+#mythic-kitchen-ov .mk-mod[data-kind="hold"]  { border-color: rgba(255,138,90,.55); color: #ffc4a8; }
+#mythic-kitchen-ov .mk-mod[data-kind="extra"] { border-color: rgba(127,255,196,.45); color: #b6f2d8; }
+#mythic-kitchen-ov .mk-mod[data-result="honoured"] { border-color: rgba(95,217,122,.85); background: rgba(95,217,122,.18); color: #9fe9b1; }
+#mythic-kitchen-ov .mk-mod[data-result="broken"]   { border-color: rgba(255,77,94,.85);  background: rgba(255,77,94,.2);  color: #ffb4bb; }
+#mythic-kitchen-ov .mk-mods { display: flex; flex-wrap: wrap; gap: 3px; margin: 2px 0 0 20px; }
+/* 💰 the stake, on the chip. A verdict whose cost the player only meets after
+   the money has moved is a mechanic they never learn. Tabular so a column of
+   them lines up, and it inherits the chip's own verdict colour — the number and
+   the tick are one statement and must never disagree in colour. */
+#mythic-kitchen-ov .mk-mod-c { font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: 0; opacity: .95; }
+#mythic-kitchen-ov .mk-mod[data-result="unproven"] .mk-mod-c { opacity: .6; }
+#mythic-kitchen-ov .mk-promise { display: flex; gap: 6px; font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase; }
+#mythic-kitchen-ov .mk-promise [data-k="ok"]  { color: #9fe9b1; }
+#mythic-kitchen-ov .mk-promise [data-k="bad"] { color: #ffb4bb; font-weight: 800; }
+
+/* ── THE TICKET'S SPOKEN LINE ──────────────────────────────────────────────
+   🔴 THE CLAMP MUST CUT BETWEEN LINES, NOT THROUGH ONE. Measured live at 360px:
+   the box was 23px against a ~13px line box, so the second line got 10 of its 13
+   pixels and the customer's words were sliced through their own x-height — which
+   reads as a rendering fault, not as "there is more". A `-webkit-line-clamp`
+   only ellipsises the line it CUTS; when the box height is not a whole multiple
+   of the line box it also crops the last visible line, and that is what was
+   happening. So the height is stated as an exact multiple: `line-height` in a
+   unitless ratio, `max-height: calc(2 × 1.3em)`, and the padding outside it. */
+#mythic-kitchen-ov .mk-tk-line {
+  font-size: 10px; font-style: italic; color: #bdb1a0;
+  /* 🔴 PX, NOT A RATIO, AND MARGIN, NOT PADDING — both for the same reason.
+     `line-height: 13px` and `max-height: 26px` are ONE geometry: two line boxes,
+     stated as one number each so nothing can round between them. And the inset
+     is a MARGIN so that `box-sizing: border-box` (set on everything in this
+     overlay) cannot eat it out of the two lines — a `max-height` of exactly two
+     line boxes plus padding measured 22px of content against 2 × 13, i.e. 1.69
+     lines, which is the same crop through the glyphs wearing a different rule. */
+  line-height: 13px;
+  padding: 0;
+  margin: 1px 2px 3px;
+  /* 🔴 TWO THINGS CUT THIS LINE AND BOTH HAD TO GO.
+     (a) `.mk-tk` is a FLEX COLUMN, so this box was shrinkable: measured live at
+         360px it came out 23px tall against a 13px line box — the second line
+         got 10 of its 13 pixels and the customer's words were sliced through
+         their own x-height, which reads as a rendering fault rather than as a
+         clamp. `flex: 0 0 auto` is what stops a sibling stealing the pixels.
+     (b) `box-sizing: border-box` is set on everything in this overlay, so a
+         `max-height` of exactly two line boxes leaves two line boxes MINUS the
+         padding for the text — measured 22px of content against 2 × 13, i.e.
+         1.69 lines, which is the same crop wearing a different rule. The padding
+         is stated in the calc so the two can never drift apart.
+     Together the box is an exact multiple of the line box, so `-webkit-line-clamp`
+     cuts BETWEEN the lines and ellipsises the one it cuts. */
+  flex: 0 0 auto;
+  max-height: 26px;                 /* 2 × line-height, exactly */
+  /* ⚠ THE CLAMP IS THE ELLIPSIS, NOT THE HEIGHT. `.mk-tk` is a flex column, so
+     this box is a FLEX ITEM and Blink BLOCKIFIES one: computed `display` comes
+     back `flow-root` and `-webkit-line-clamp` silently does nothing. (Measured —
+     the same trap the speech bubble fell into for the same reason.) The
+     max-height above is what actually guarantees the cut lands between the
+     lines; the clamp stays because where it DOES apply it adds the ellipsis. */
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+#mythic-kitchen-ov .mk-tk-mods { display: flex; flex-wrap: wrap; gap: 3px; padding: 0 2px 3px; }
+
+/* ── THE LANE: fixtures, mood, badges, the drive-past, the wave ─────────── */
+/* 🔴 TWO FIXTURES, AND WHICH END EACH ONE IS ON IS NOT A DETAIL. `pos 0` is the
+   WINDOW and carX() maps it to the RIGHT edge; round 1 drew one box reading
+   "ORDER HERE" pinned to that right edge, so the sign telling people where to
+   order stood at the hatch where food is handed out. A full-day probe put 900
+   order-phase frames at the speaker and 24 at the window; the picture said the
+   opposite. Now: 🪟 WINDOW right, 🔊 ORDER HERE at the mouth, and the renderer
+   MEASURES both so no car parks underneath either. */
+#mythic-kitchen-ov .mk-fixture {
+  position: absolute; top: 4px; bottom: 4px; width: 46px;
+  border-radius: 8px; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 2px;
+  font-size: 10px; line-height: 1.15; text-align: center; color: #ffe0a8;
+  background: linear-gradient(180deg, var(--mk-steel1), var(--mk-steel3));
+  border: 1px solid rgba(255,255,255,.16);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.25), 0 4px 10px rgba(0,0,0,.5);
+  z-index: 2;
+}
+#mythic-kitchen-ov .mk-fixture > span { font-size: 15px; }
+#mythic-kitchen-ov .mk-fixture[data-fx="window"]  { right: 4px; color: #bff0cf; border-color: rgba(95,217,122,.4); }
+#mythic-kitchen-ov .mk-fixture[data-fx="speaker"] { left: 4px; }
+#mythic-kitchen-ov .mk-car-mood {
+  position: absolute; top: -4px; right: 8px; font-size: 14px; line-height: 1;
+  filter: drop-shadow(0 2px 3px rgba(0,0,0,.7)); pointer-events: none;
+}
+#mythic-kitchen-ov .mk-car-badge {
+  font-size: 8.5px; letter-spacing: .04em; padding: 0 4px; border-radius: 99px;
+  background: rgba(0,0,0,.65); border: 1px solid rgba(255,182,72,.55); color: #ffd88a;
+  white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+}
+#mythic-kitchen-ov .mk-car-pips { display: flex; gap: 2px; font-size: 9px; line-height: 1; filter: drop-shadow(0 1px 2px rgba(0,0,0,.8)); }
+/* the wave-off is deliberately small: it costs popularity, so it is a target
+   you have to MEAN, and it only ever appears on the head car. */
+#mythic-kitchen-ov .mk-wave {
+  position: absolute; top: -2px; left: 2px; width: 17px; height: 17px; padding: 0;
+  border-radius: 50%; border: 1px solid rgba(255,77,94,.55);
+  background: rgba(24,12,12,.9); color: #ff9aa4; font-size: 10px; line-height: 1;
+  cursor: pointer; z-index: 3;
+}
+#mythic-kitchen-ov .mk-lane-next {
+  font-size: 9.5px; letter-spacing: .08em; color: var(--mk-amber);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+#mythic-kitchen-ov .mk-lane-next:empty { display: none; }
+/* ⚠ 44px, not 30. Three rows of a ~13px sprite do not fit in 30 — the rows land
+   8px apart and every neighbouring pair overlaps, which is the pile this band
+   exists to stop. It sits BEHIND the queue (z-index 1). */
+#mythic-kitchen-ov .mk-passers {
+  position: absolute; left: 0; right: 0; top: 20px; height: 40px;
+  pointer-events: none; overflow: hidden; z-index: 1;
+}
+/* ⚠ --dx IS THE TIE-BREAK, NOT THE LAYOUT. drivethru.js hands each balk a row
+   so two cars turning away in the same frame never print on top of each other;
+   these few px only separate the case where a fourth balk forces a row to double
+   up. Defaults to 0 so a passer built before the property is set is still
+   placed correctly. */
+#mythic-kitchen-ov .mk-passer {
+  position: absolute; top: 0; display: flex; align-items: center; gap: 2px;
+  font-size: 13px; line-height: 1; white-space: nowrap;
+  filter: grayscale(.4) brightness(.72);
+  transform: translateX(var(--dx, 0px));
+}
+#mythic-kitchen-ov .mk-passer > b { font-size: 8px; font-weight: 700; color: #7d7365; letter-spacing: .04em; }
+#mythic-kitchen-ov .mk-passer[data-dup="1"] > b { display: none; }
+
+/* ── THE PASS: bin a plate you cannot sell ─────────────────────────────── */
+#mythic-kitchen-ov .mk-dish-bin {
+  position: absolute; top: -2px; right: 0; width: 15px; height: 15px; padding: 0;
+  border-radius: 50%; border: 1px solid rgba(255,255,255,.22);
+  background: rgba(18,12,10,.85); color: #c9bcab; font-size: 9px; line-height: 1;
+  cursor: pointer; opacity: .5; z-index: 2;
+}
+#mythic-kitchen-ov .mk-dish:hover .mk-dish-bin { opacity: 1; border-color: rgba(255,77,94,.7); color: #ff9aa4; }
+
+/* ── THE LOADING BAY: recipient, truck, manifest ────────────────────────── */
+#mythic-kitchen-ov .mk-to {
+  display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 10px;
+  border: 1px solid rgba(103,216,255,.22);
+  background: linear-gradient(180deg, rgba(20,30,38,.85), rgba(12,14,16,.9));
+  margin-bottom: 8px;
+}
+#mythic-kitchen-ov .mk-to-field {
+  width: 100%; padding: 7px 9px; border-radius: 8px;
+  border: 1px solid rgba(255,255,255,.18); background: rgba(0,0,0,.5);
+  color: var(--mk-ink); font: inherit; font-size: 13px;
+}
+#mythic-kitchen-ov .mk-to-field:focus { outline: none; border-color: rgba(103,216,255,.7); box-shadow: 0 0 0 2px rgba(103,216,255,.18); }
+#mythic-kitchen-ov .mk-to-rows { display: flex; flex-wrap: wrap; gap: 5px; }
+#mythic-kitchen-ov .mk-to-chip {
+  display: inline-flex; align-items: center; gap: 5px; padding: 5px 9px; border-radius: 99px;
+  border: 1px solid rgba(255,255,255,.2); background: rgba(0,0,0,.42); color: #e6dccd;
+  font: inherit; font-size: 12px; cursor: pointer; max-width: 100%;
+}
+#mythic-kitchen-ov .mk-to-chip small { color: #8d8272; font-size: 10px; }
+#mythic-kitchen-ov .mk-to-chip[data-on="1"] {
+  border-color: rgba(103,216,255,.9); background: rgba(103,216,255,.2); color: #d6f4ff;
+  box-shadow: 0 0 12px rgba(103,216,255,.3);
+}
+#mythic-kitchen-ov .mk-to-why { font-size: 11px; color: #8d8272; }
+#mythic-kitchen-ov .mk-man {
+  display: flex; flex-direction: column; gap: 5px; padding: 8px; border-radius: 10px;
+  border: 1px solid rgba(255,182,72,.22);
+  background: linear-gradient(180deg, rgba(38,28,18,.85), rgba(14,11,9,.9));
+  margin-bottom: 8px;
+}
+#mythic-kitchen-ov .mk-man-line { display: flex; align-items: center; gap: 7px; font-size: 12px; }
+#mythic-kitchen-ov .mk-man-line > .mk-nm { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#mythic-kitchen-ov .mk-step {
+  width: 26px; height: 26px; padding: 0; border-radius: 7px;
+  border: 1px solid rgba(255,255,255,.2);
+  background: linear-gradient(180deg, rgba(255,255,255,.1), rgba(0,0,0,.4));
+  color: var(--mk-ink); font: inherit; font-size: 14px; font-weight: 800; line-height: 1; cursor: pointer;
+}
+#mythic-kitchen-ov .mk-step:disabled { opacity: .3; cursor: default; }
+#mythic-kitchen-ov .mk-man-take { min-width: 38px; text-align: center; font-variant-numeric: tabular-nums; font-weight: 800; font-size: 13px; }
+#mythic-kitchen-ov .mk-man-fill {
+  position: relative; height: 14px; border-radius: 99px; overflow: hidden;
+  background: rgba(0,0,0,.55); box-shadow: inset 0 1px 3px rgba(0,0,0,.8);
+}
+#mythic-kitchen-ov .mk-man-fill > i { position: absolute; inset: 0 auto 0 0; display: block; border-radius: 99px; background: linear-gradient(90deg, var(--mk-hot), var(--mk-amber)); }
+#mythic-kitchen-ov .mk-man-fill > span {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 9.5px; letter-spacing: .09em; text-transform: uppercase; text-shadow: 0 1px 3px rgba(0,0,0,.9);
+}
+
+/* ── THE ROUTE: five named legs between two markers ─────────────────────── */
+#mythic-kitchen-ov .mk-route { position: relative; height: 46px; margin: 6px 0 2px; }
+#mythic-kitchen-ov .mk-route-rail {
+  position: absolute; left: 12px; right: 12px; top: 26px; height: 5px; border-radius: 99px;
+  background: repeating-linear-gradient(90deg, rgba(255,255,255,.22) 0 8px, transparent 8px 16px), rgba(0,0,0,.5);
+}
+#mythic-kitchen-ov .mk-route-leg { position: absolute; top: 20px; transform: translateX(-50%); font-size: 11px; line-height: 1; opacity: .35; filter: grayscale(1); }
+#mythic-kitchen-ov .mk-route-leg[data-passed="1"] { opacity: 1; filter: none; }
+#mythic-kitchen-ov .mk-route-leg[data-hazard="1"][data-passed="1"] { text-shadow: 0 0 9px rgba(255,77,94,.9); }
+#mythic-kitchen-ov .mk-route-end {
+  position: absolute; top: 2px; font-size: 9px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--mk-dim); max-width: 44%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#mythic-kitchen-ov .mk-route-end[data-e="a"] { left: 0; }
+#mythic-kitchen-ov .mk-route-end[data-e="b"] { right: 0; text-align: right; }
+#mythic-kitchen-ov .mk-truck {
+  position: absolute; top: 12px; left: 0; transform: translateX(-50%);
+  font-size: 17px; line-height: 1; z-index: 2;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,.8));
+  animation: mk-wobble .9s ease-in-out infinite;
+}
+#mythic-kitchen-ov .mk-route-note { font-size: 10px; color: var(--mk-dim); padding-top: 1px; }
+#mythic-kitchen-ov .mk-route-note[data-bad="1"] { color: #ffb4bb; }
+#mythic-kitchen-ov .mk-held { border-color: rgba(103,216,255,.4); }
+/* 🚚 THE DOCK BEAT. An arrived truck is held for CONVOY_HOLD_MS while it is
+   unloaded, and convoy.js publishes that as a DISABLED button with a `--pct`.
+   Drawing it as a filling bar inside the button is the difference between "the
+   arrival is a moment" and "the button told me off for pressing it", which is
+   what the whole beat surfaced as when nothing drew it. */
+#mythic-kitchen-ov .mk-btn[data-dock="1"] {
+  position: relative; overflow: hidden;
+  border-color: rgba(103,216,255,.45); color: #bfe9ff;
+}
+#mythic-kitchen-ov .mk-btn[data-dock="1"]::before {
+  content: ""; position: absolute; inset: 0 auto 0 0;
+  width: var(--pct, 0%); background: rgba(103,216,255,.22); pointer-events: none;
+}
+/* the third banner rung is an ERROR, not a setup state — it must not read like
+   the two calm ones above it (CONTRACT §9 is explicit about the other direction) */
+#mythic-kitchen-ov .mk-banner[data-rung="netError"] {
+  border-color: rgba(255,77,94,.45);
+  background: linear-gradient(180deg, rgba(255,77,94,.14), rgba(0,0,0,.24));
+  color: #ffcdd2;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   📌 THE PLATE PICKER — "not that burger, THAT burger"
+   ------------------------------------------------------------------------
+   The control for the one failure a cooking game must never have: telling a
+   player they broke a promise they kept. Which car got which identical plate
+   used to be decided by pass insertion order — invisible, unsteerable, and
+   worth 64 Cinder and 0.64 popularity on identical player actions. The sim now
+   matches on merit; this is the override for the case it still gets wrong, and
+   the only place the rule is ever VISIBLE.
+   ⚠ The whole plate is the hit target. A 15px pin button beside the 15px bin
+     button on a 56px disc is two mis-taps waiting to happen, and one of them
+     throws food away.
+   ════════════════════════════════════════════════════════════════════════ */
+#mythic-kitchen-ov .mk-dish[data-act="pick"] { cursor: pointer; }
+#mythic-kitchen-ov .mk-dish[data-picking="1"]::before {
+  box-shadow: 0 4px 10px rgba(0,0,0,.55), 0 0 0 2px var(--mk-amber), 0 0 18px rgba(255,182,72,.7);
+}
+/* who this plate is spoken for. It rides the plate itself, because the pin has
+   to be legible from the shelf — the whole point is that the player can see the
+   assignment without opening anything. */
+#mythic-kitchen-ov .mk-dish-for {
+  position: absolute; top: -2px; left: 0; z-index: 2;
+  min-width: 15px; height: 15px; padding: 0 2px;
+  border-radius: 99px; border: 1px solid rgba(255,182,72,.75);
+  background: rgba(28,18,8,.94); color: #ffd88a;
+  font-size: 9px; line-height: 13px; text-align: center;
+}
+#mythic-kitchen-ov .mk-dish[data-for="1"]::before {
+  box-shadow: 0 4px 9px rgba(0,0,0,.55), inset 0 0 0 2px rgba(255,182,72,.7);
+}
+#mythic-kitchen-ov .mk-picker {
+  display: flex; flex-direction: column; gap: 5px;
+  margin-top: 7px; padding: 7px 8px; border-radius: 10px;
+  border: 1px solid rgba(255,182,72,.45);
+  background: linear-gradient(180deg, rgba(255,182,72,.16), rgba(0,0,0,.42));
+  /* 🔴 NO ENTRANCE ANIMATION, AND THE REASON IS THE WHOLE TWO-SPEED RULE.
+     This panel is built inside `paint()`, and `paint()` re-runs on every `rev`
+     bump — which during a rush is SEVERAL TIMES A SECOND, because every unit
+     that fills a ticket bumps it. A 0.16s fade-in that starts from `opacity: 0`
+     therefore restarts before it finishes, over and over, and the panel spends
+     most of its life invisible. It looked exactly like a rendering fault and it
+     was caught by screenshot, not by reading: a probe read the node at
+     `opacity: 1` with its full text while the capture of the same screen showed
+     an empty bordered box. Anything rebuilt by paint() must be correct in its
+     FIRST painted frame; entrance animations belong to nodes that are built
+     once (see `.mk-arrive-card`, which is fingerprint-gated). */
+}
+#mythic-kitchen-ov .mk-pick-head { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+#mythic-kitchen-ov .mk-pick-head b { font-size: 12px; }
+#mythic-kitchen-ov .mk-pick-head .mk-spacer { flex: 1 1 auto; }
+#mythic-kitchen-ov .mk-pick {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 6px 8px; border-radius: 9px;
+  border: 1px solid var(--mk-line2);
+  background: linear-gradient(180deg, rgba(255,255,255,.07), rgba(0,0,0,.34));
+  color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+#mythic-kitchen-ov .mk-pick[data-on="1"] {
+  border-color: rgba(255,182,72,.9);
+  background: linear-gradient(180deg, rgba(255,182,72,.26), rgba(0,0,0,.34));
+}
+#mythic-kitchen-ov .mk-pick-ic { font-size: 19px; line-height: 1; }
+#mythic-kitchen-ov .mk-pick-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+#mythic-kitchen-ov .mk-pick-main b { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#mythic-kitchen-ov .mk-pick-main small { font-size: 10px; color: var(--mk-dim); }
+/* THE VERDICT, BEFORE THE CHOICE. This is the sentence the whole mechanic was
+   missing: not "you broke it", but "this plate keeps it / this plate breaks it",
+   while there is still time to pick the other one. */
+#mythic-kitchen-ov .mk-pick-fit {
+  flex: 0 0 auto; font-size: 9.5px; letter-spacing: .03em;
+  padding: 2px 6px; border-radius: 99px; white-space: nowrap;
+  border: 1px solid rgba(255,255,255,.2); background: rgba(0,0,0,.42); color: #e6dccd;
+  max-width: 42%; overflow: hidden; text-overflow: ellipsis;
+}
+#mythic-kitchen-ov .mk-pick-fit[data-fit="honoured"] { border-color: rgba(95,217,122,.85); background: rgba(95,217,122,.18); color: #9fe9b1; }
+#mythic-kitchen-ov .mk-pick-fit[data-fit="broken"]   { border-color: rgba(255,77,94,.85);  background: rgba(255,77,94,.2);  color: #ffb4bb; }
+
+/* 🍽 "PLATE → THEM" — the same decision one step earlier, in the hand bar. It
+   only appears when two or more open orders want this dish, because a chooser
+   with one option is a tax on every plate the player will ever put down. */
+#mythic-kitchen-ov .mk-hand-to { display: flex; gap: 4px; flex-wrap: wrap; min-width: 0; }
+#mythic-kitchen-ov .mk-hand[data-to="1"] { flex-wrap: wrap; }
+#mythic-kitchen-ov .mk-btn.to {
+  padding: 4px 8px; font-size: 11px;
+  border-color: rgba(255,182,72,.6); background: linear-gradient(180deg, rgba(255,182,72,.22), rgba(0,0,0,.34));
+  max-width: 128px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   🚚 THE ARRIVAL — a condition, not a line.
+   ------------------------------------------------------------------------
+   The toast ranker drops `convoy:arrive` (80) under `level:up` (95), and an
+   arrival is the single most likely thing in this feature to trigger a level-up
+   in the same frame BECAUSE it grants the xp that causes it. Measured through
+   the real render loop: a 40-box truck landing on a level boundary produced
+   `toasts: ["⭐ Level 40!"]` and nothing else — two hours of wall-clock
+   anticipation resolving into silence. A higher rank cannot fix a fight between
+   two things that both want one line; the answer is to stop competing for the
+   line. This is a surface, above the fold, that no ranker can reach.
+   ════════════════════════════════════════════════════════════════════════ */
+#mythic-kitchen-ov .mk-arrive { position: relative; z-index: 4; flex: 0 0 auto; padding: 6px 8px 0; }
+#mythic-kitchen-ov .mk-arrive[hidden] { display: none; }
+#mythic-kitchen-ov .mk-arrive-card {
+  position: relative; overflow: hidden;
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 9px 9px; border-radius: 11px;
+  border: 1px solid rgba(103,216,255,.55);
+  background: linear-gradient(180deg, rgba(28,54,68,.96), rgba(12,18,22,.96));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.16), 0 8px 22px rgba(0,0,0,.6), 0 0 26px rgba(103,216,255,.22);
+  animation: mk-arrive-in .22s ease;
+}
+#mythic-kitchen-ov .mk-arrive-card[data-kind="claim"] {
+  border-color: rgba(95,217,122,.6);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.16), 0 8px 22px rgba(0,0,0,.6), 0 0 26px rgba(95,217,122,.24);
+}
+#mythic-kitchen-ov .mk-arrive-ic { font-size: 26px; line-height: 1; filter: drop-shadow(0 3px 4px rgba(0,0,0,.7)); }
+#mythic-kitchen-ov .mk-arrive-txt { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+#mythic-kitchen-ov .mk-arrive-txt b { font-size: 13px; }
+#mythic-kitchen-ov .mk-arrive-txt span { font-size: 11px; color: #cbe7f4; }
+#mythic-kitchen-ov .mk-arrive-txt small { font-size: 10px; color: var(--mk-dim); }
+/* the dwell, drawn. It is draining, not filling: the strip is going away, and a
+   bar that empties says that without a word. */
+#mythic-kitchen-ov .mk-arrive-bar {
+  position: absolute; left: 0; bottom: 0; height: 3px; width: 100%;
+  background: linear-gradient(90deg, rgba(103,216,255,.9), rgba(127,255,196,.9));
+}
+@keyframes mk-arrive-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+
+/* ── PROVENANCE: the route the player can take TODAY ────────────────────── */
+/* `data-stuck="1"` is the state where this chip is load-bearing: no producer
+   built AND none of the resource held. Then the CHEAP route leads and the
+   building is the small print — pointing somebody holding 1,856 Cinder at a
+   120,000-Cinder building is not advice, it is a wall with a label on it. */
+#mythic-kitchen-ov .mk-from[data-stuck="1"] {
+  border-color: rgba(255,182,72,.55);
+  background: linear-gradient(180deg, rgba(255,182,72,.16), rgba(0,0,0,.3));
+  color: #ffd9a0;
+}
 
 /* ════════════════════════════════════════════════════════════════════════
    🖥 THE ONE BREAKPOINT — 820px and up.
@@ -2242,13 +3067,21 @@
        of pans its state readout back. The floor only has to be tall enough for
        the shelf itself; anything above that is the dining room, and `.mk-room`
        is painting it with people in it. */
-    grid-template-rows: auto minmax(0, auto) minmax(150px, 1fr);
+    /* ⚠ THE LANE ROW IS GONE FROM THIS GRID because the lane is gone from this
+       BOX — it lives in the service band above, beside the pinned window card,
+       which is where a road and the window you serve out of belong together.
+       Desktop loses nothing by it: the band occupies the same top strip the
+       `lane lane lane` row did, and the full-width pin row that used to sit
+       above `.mk-body` has folded into it, so the body is ~100px TALLER here
+       than it was. That surplus lands in the pass row, which is the slack row,
+       and the pass row is floor — see the back-of-house block below, which is
+       what fills it. */
+    grid-template-rows: minmax(0, auto) minmax(150px, 1fr);
     /* The board is a TALL screen on the left (REF-B mounts it over the pass);
        the line runs down the middle and the pass sits at the END of the line,
        which is where a pass physically is. Putting the pass under the board
        instead left a column of dead asphalt in the middle of the kitchen. */
     grid-template-areas:
-      "lane  lane  lane"
       "board line  bins"
       "board pass  bins";
     gap: 10px;
@@ -2263,7 +3096,32 @@
   }
   /* the dining room is visible at this width — see the note on .mk-folk */
   #mythic-kitchen-ov .mk-folk { display: block; }
-  #mythic-kitchen-ov .mk-sec-lane  { grid-area: lane;  margin: 0; }
+  /* the back of house and the specials board are desktop-only for the same
+     reason the diners are — see the block on .mk-boh */
+  #mythic-kitchen-ov .mk-boh { display: block; }
+  #mythic-kitchen-ov .mk-slate { display: block; }
+
+  /* ── THE BAND, LANDSCAPE ──────────────────────────────────────────────
+     Road left, the window customer right, on one line, where the lane row used
+     to be. The card column is clamped rather than fixed: below ~1100px a 380px
+     card is a third of the screen for two verbs, and above ~1500px a fixed one
+     leaves the road stretching to nothing useful. */
+  #mythic-kitchen-ov .mk-band {
+    flex-direction: row;
+    align-items: stretch;
+    gap: 10px;
+    padding: 10px 10px 0;
+  }
+  #mythic-kitchen-ov .mk-band-lane { flex: 1 1 auto; display: flex; flex-direction: column; }
+  #mythic-kitchen-ov .mk-band-lane .mk-sec-head { padding: 0 2px 5px; font-size: 11px; }
+  #mythic-kitchen-ov .mk-band-lane .mk-sec-lane { display: flex; flex-direction: column; flex: 1 1 auto; }
+  #mythic-kitchen-ov .mk-band-lane .mk-lane { flex: 1 1 auto; display: flex; }
+  #mythic-kitchen-ov .mk-band-lane .mk-road { flex: 1 1 auto; }
+  #mythic-kitchen-ov .mk-pin { flex: 0 0 clamp(260px, 26%, 380px); padding: 0; align-items: stretch; }
+  #mythic-kitchen-ov .mk-pin-card[data-slot="next"] { flex: 0 1 38%; }
+  #mythic-kitchen-ov .mk-arrive { padding: 8px 10px 0; }
+
+  #mythic-kitchen-ov .mk-sec-lane  { margin: 0; }
   #mythic-kitchen-ov .mk-sec-board { grid-area: board; min-height: 0; display: flex; flex-direction: column; }
   /* ⚠ the line SCROLLS when the window is short (the row is `minmax(0,auto)`),
      and a station card sliced flat by the top of the pass reads as a bug. Same
@@ -2321,17 +3179,14 @@
   }
 
   #mythic-kitchen-ov .mk-lane { margin: 0; }
-  #mythic-kitchen-ov .mk-road { height: 114px; }
-  /* "no cars" — centred on the asphalt, not a box floating over it. */
-#mythic-kitchen-ov .mk-road-empty {
-  position: absolute;
-  left: 10px; right: 58px; top: 50%;
-  transform: translateY(-50%);
-  text-align: center;
-  font-size: 12px;
-  color: var(--mk-faint);
-}
-#mythic-kitchen-ov .mk-speaker { width: 64px; }
+  /* ⚠ min-height, not height. The road is a flex child of the band here and has
+     to be allowed to match the window card beside it; a fixed height would leave
+     a strip of overlay showing under the asphalt at every card size but one. */
+  #mythic-kitchen-ov .mk-road { height: auto; min-height: 118px; }
+  /* the car sits on the road's own baseline rather than at a fixed offset, so a
+     taller band gives the bubbles more sky instead of stranding the queue */
+  #mythic-kitchen-ov .mk-car { top: auto; bottom: 12px; }
+  #mythic-kitchen-ov .mk-fixture { width: 60px; font-size: 11px; }
 
   /* the board becomes a real overhead screen: a vertical ticket column */
   #mythic-kitchen-ov .mk-board { margin: 0; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
@@ -2484,16 +3339,16 @@
   #mythic-kitchen-ov .mk-pass-rail {
     gap: 10px;
     min-height: 122px;
+    --mk-well-min: 122px;
     background-image:
-      radial-gradient(46px 19px at 61px 75px,
+      radial-gradient(46px 19px at calc(50% - 5px) 75px,
         rgba(255,206,140,.30), rgba(255,180,96,.16) 55%, rgba(255,234,184,.74) 84%,
         rgba(255,190,110,.36) 93%, transparent 97%),
-      radial-gradient(50px 21px at 61px 80px, rgba(0,0,0,.46), transparent 78%);
-    background-size: 122px 100%;
+      radial-gradient(50px 21px at calc(50% - 5px) 80px, rgba(0,0,0,.46), transparent 78%);
     -webkit-mask-image: none;
             mask-image: none;
   }
-  #mythic-kitchen-ov .mk-dish { width: 112px; height: 122px; padding-top: 12px; }
+  #mythic-kitchen-ov .mk-dish { width: calc(var(--mk-well, var(--mk-well-min, 122px)) - 10px); height: 122px; padding-top: 12px; }
   #mythic-kitchen-ov .mk-dish::before { top: 56px; width: 92px; height: 38px; }
   #mythic-kitchen-ov .mk-dish .mk-ic { font-size: 44px; }
   #mythic-kitchen-ov .mk-dish .mk-q { margin-top: 42px; font-size: 12px; }

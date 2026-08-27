@@ -372,6 +372,49 @@ export function netError(K) {
   catch (e) { return { error: null, at: 0 }; }
 }
 
+/**
+ * 🔴 THE WHOLE BANNER LADDER, IN ONE CALL, IN THE FILE THAT OWNS THE ORDER.
+ * → { rung, text }   `rung` is 'ok' | 'missing' | 'offline' | 'netError',
+ *                    `text` is '' on 'ok' and a finished sentence otherwise.
+ *
+ * WHY THIS EXISTS RATHER THAN THREE READS IN THE RENDERER. Round 2's review
+ * asked for an error rung; round 3 wrote the contract for it into the comment on
+ * `netError()` above — "the third rung, after `missing` and `offline` and never
+ * before them" — and then nothing read it. Measured with every `from()` and
+ * `rpc()` rejecting: `flags {"missing":false,"offline":false,"_netError":"Failed
+ * to fetch"}` and `banner: []`. A broken depot looked byte-identical to an empty
+ * one: inbound convoys silently stopped appearing and the recipient search
+ * silently returned nothing, with no sentence anywhere on screen.
+ *
+ * A prose contract in a comment is not a contract, it is a hope. The ORDER is
+ * the part that is easy to get wrong and impossible to see wrong — `missing` and
+ * `offline` are SETUP states and CONTRACT §9 is explicit that they must never
+ * read as failures — so the order now lives in code, once, here, and the
+ * renderer prints whatever string comes back.
+ *
+ * ⚠ THE RENDERER STILL OWNS RUNG 0 ("the loading bay is still being built"),
+ *   because that rung is "this module did not load", and a module that did not
+ *   load cannot answer a question about itself.
+ */
+export function banner(K) {
+  try {
+    if (!K) return { rung: 'ok', text: '' };
+    if (K.missing) {
+      return { rung: 'missing',
+        text: 'The convoy network is not set up yet — practice runs to your own city still work.' };
+    }
+    if (K.offline) {
+      return { rung: 'offline',
+        text: 'Signed out. Sign in to ship to other players; practice runs still work.' };
+    }
+    if (netError(K).error) {
+      return { rung: 'netError',
+        text: 'The depot is not answering right now. Your trucks are safe — try again in a moment.' };
+    }
+    return { rung: 'ok', text: '' };
+  } catch (e) { return { rung: 'ok', text: '' }; }
+}
+
 function forceSave(K) {
   try {
     if (typeof State.save === 'function' && State.Kitchen === K) return State.save(true) !== false;
@@ -1380,7 +1423,12 @@ function routePlan(c) {
  * → {
  *     pct,          // 0..1 — where the truck is. Drive `left:` off this.
  *     etaMs,        // ms until it lands (0 once it has)
- *     arrived,      // boolean
+ *     phase,        // 🔴 'transit'|'arrived'|'delivered'|'held'|'claimed' — BRANCH ON THIS
+ *     arrived,      // 🔴 REDEFINED — see the block below. "mine to unload."
+ *     roadOver,     // the road is behind it, whoever it now belongs to
+ *     claimable,    // a live CLAIM belongs on this row RIGHT NOW
+ *     caption,      // the finished sub-line, '' while in transit (see below)
+ *     button,       // { show, label, disabled, pct } — the whole button, decided here
  *     origin, dest, // { name, icon } — the two markers
  *     legs,         // [{ i, at, name, icon, hazard|null, lost, passed }]
  *     incidents,    // legs with a hazard the truck has ALREADY reached
@@ -1402,11 +1450,40 @@ function routePlan(c) {
  * ⚠ `holdMs` IS ALREADY INSIDE `etaMs`. It is reported so the road can say what
  * happened, never so a caller can add it to anything. See §3a.
  *
+ * ── 🔴 WHY `arrived` MEANS SOMETHING DIFFERENT NOW ─────────────────────────
+ * It used to be `c.state !== 'transit'`, which is a true statement about THE
+ * ROAD and a false one about THE BUTTON — and the button is what the only
+ * caller in the app used it for:
+ *     kitchen.render.js:  const arrived = c.state === 'arrived' || (r && r.arrived);
+ *                         … arrived ? '<button …>Claim</button>' : ''
+ * Round 3 added two more states. `delivered` is the SENDER's five-second
+ * acknowledgement of a truck that now belongs to the RECIPIENT; `held` is a
+ * load the server has ALREADY paid out, sitting on a dock waiting for stash
+ * room. Both are `!== 'transit'`, so both drew a live orange CLAIM button that
+ * could only ever refuse — measured: '➡ Kestrel / 40 boxes · landed — claim it'
+ * with a working button that answers "Kestrel took delivery — that one is
+ * theirs to unload." Two hours of anticipation resolving into a button that
+ * tells you off for pressing it.
+ *
+ * A boolean that has to be read together with a state string it does not
+ * mention is a shape that WILL be misread; it was, twice, by the same line.
+ * So the road's meaning moved to `roadOver`, `arrived` now means the one thing
+ * a caller ever actually asks ("is this mine to unload"), and the decision the
+ * renderer was reconstructing badly is made HERE, once, as `caption` and
+ * `button`. `phase` is the field to branch on if you need more than that.
+ *
+ * ⚠ `caption` IS THE TAIL OF THE SUB-LINE, NOT THE WHOLE OF IT. The row already
+ *   prints "{n} boxes · " and then either an ETA or a state; `caption` is that
+ *   second half, and it is `''` in transit precisely so the renderer keeps
+ *   owning the countdown (it has `fmtEta` and it updates it every frame).
+ *
  * PURE and cheap enough for `frame()`. Safe against a null convoy.
  */
 export function route(c, now) {
   const empty = {
-    pct: 0, etaMs: 0, arrived: false,
+    pct: 0, etaMs: 0,
+    phase: 'transit', arrived: false, roadOver: false, claimable: false, caption: '',
+    button: { show: false, label: '', disabled: true, pct: 1 },
     origin: { name: 'Your kitchen', icon: '🍔' }, dest: { name: 'Their city', icon: '🏙' },
     legs: [], incidents: [], spoil: 0, spoilFinal: 0, dishes: 0, delivering: 0, food: 0, armed: false,
     holdMs: 0, holdLeg: 0, holdName: '', holdLine: '', holding: false, held: false,
@@ -1423,10 +1500,50 @@ export function route(c, now) {
     const delivering = Math.max(0, plan.dishes - plan.spoilFinal);
     // The hold-up leg, if there is one, so the caller does not have to hunt.
     const hl = plan.holdLeg > 0 ? (legs[plan.holdLeg - 1] || null) : null;
+
+    /* ── THE ROW'S WHOLE VERDICT, DECIDED HERE (see the block above) ────────
+       One switch, five states, and the renderer branches on nothing. `dock` is
+       §5a's unloading beat: the truck has stopped and the doors are still shut,
+       which is a DISABLED button with a filling bar, never an armed one and
+       never a refusal the player has to discover by pressing it. */
+    const phase = (c.state === 'arrived' || c.state === 'delivered'
+                || c.state === 'held' || c.state === 'claimed') ? c.state : 'transit';
+    const dock = phase === 'arrived' ? docking(c, now) : { docking: false, pct: 1, msLeft: 0 };
+    let caption = '', claimable = false;
+    let button = { show: false, label: '', disabled: true, pct: 1 };
+    if (phase === 'arrived') {
+      if (dock.docking) {
+        caption = 'landed — unloading';
+        button = { show: true, label: 'Unloading…', disabled: true, pct: dock.pct };
+      } else {
+        caption = 'landed — claim it';
+        claimable = true;
+        button = { show: true, label: 'Claim', disabled: false, pct: 1 };
+      }
+    } else if (phase === 'delivered') {
+      // 🔴 NO BUTTON. It is not refused, it is ABSENT: this truck is the
+      //    recipient's now and the sender is being told so, not offered a
+      //    doomed action. It retires itself after one dock beat.
+      caption = 'delivered — ' + _str(c.toName || 'they', 40) + ' has it';
+    } else if (phase === 'held') {
+      // Already paid for on the server (§4). What is left is stash room, so the
+      // sentence is about the DOCK and the button is a retry, not a claim.
+      caption = 'held at the depot: ' + owedFood(c) + ' food — your stash was full';
+      button = { show: true, label: 'Unload', disabled: false, pct: 1 };
+    } else if (phase === 'claimed') {
+      caption = 'unloaded';
+    }
+
     return {
       pct,
       etaMs: Math.max(0, _num(c.arrivesAt, 0) - _num(now, 0)),
-      arrived: c.state !== 'transit',
+      phase,
+      // 🔴 "MINE TO UNLOAD", not "the road is over". See the block above.
+      arrived: phase === 'arrived',
+      roadOver: phase !== 'transit',
+      claimable,
+      caption,
+      button,
       origin: inbound
         ? { name: _str(c.fromName || 'Another kitchen', 40), icon: '🍔' }
         : { name: 'Your kitchen', icon: '🍔' },
@@ -1641,6 +1758,24 @@ function retire(K, c, t, granted, out) {
     id: c.id, granted: _int(granted), held: 0,
     dishes: _int(c.dishes), dir: c.dir === 'in' ? 'in' : 'out',
   });
+  /* 🔴 §5b. `convoy:claim` is rank 80 in the toast ranker, exactly like
+     `convoy:arrive`, so the actual PAYOUT — the food landing in the stash, which
+     is the entire point of the feature — is dropped by the same one-a-second
+     rule that ate the arrival. It gets the strip too, and it outranks both
+     landing notices because it is the only one carrying a number the player's
+     stash just changed by. Only when something actually landed: a `granted:0`
+     retire is bookkeeping (an already-claimed row being tidied off the board),
+     not a moment, and announcing it would be the panel congratulating the
+     player on nothing. */
+  if (_int(granted) > 0) {
+    noteArrival(K, {
+      id: c.id, kind: 'claim', icon: '📦',
+      title: 'Unloaded.',
+      line: '+' + _int(granted) + ' food' + (c.fromName ? ' from ' + _str(c.fromName, 40) : '') + '.',
+      sub: '', dishes: _int(c.dishes), food: _int(granted), feeCinder: 0, xp: 0,
+      incidents: 0, holdName: '', holdLine: '',
+    }, _num(t, 0));
+  }
   forceSave(K);
 }
 
@@ -1732,7 +1867,22 @@ export function claimableAt(c) {
  * Is this truck still being unloaded at the dock?
  * → { docking, pct, msLeft }   `pct` 0..1 for a little unloading bar.
  *
- * The renderer shows CLAIM disabled with "Unloading…" while `docking` is true.
+ * 🔴 THE HOLD LIVES, AND IT IS NO LONGER OPTIONAL FOR THE RENDERER TO DRAW.
+ * Round 3 shipped thirty lines of §5a describing beat 1 of the arrival and
+ * nothing drew it: `grep -n 'docking\|claimableAt' kitchen.render.js` returned
+ * nothing, the button rendered armed, and the beat surfaced ONLY as a refusal
+ * when the player pressed it ("They are still getting the doors open"). A beat
+ * whose entire purpose is to make an arrival feel like an event was experienced
+ * exclusively as a button saying no — which is worse than not having it.
+ *
+ * The decision this round: it stays, because a truck that stops and instantly
+ * becomes a number is the thing round 2's review objected to — and the drawing
+ * of it stops being something a renderer has to remember. `route(c, now).button`
+ * is `{ show:true, label:'Unloading…', disabled:true, pct }` for the whole beat
+ * and `{ show:true, label:'Claim', disabled:false, pct:1 }` after it, so the
+ * only way to draw this wrong now is to ignore the button entirely. `docking()`
+ * stays exported for the debug panel and for anything that wants the raw number.
+ *
  * ⚠ A HELD row (§4) is NOT docking — it has already been paid out by the server
  *   and is waiting on stash room, which is a different sentence entirely.
  */
@@ -1742,6 +1892,112 @@ export function docking(c, now) {
   const span = Math.max(1, holdMs());
   const left = Math.max(0, at - _num(now, 0));
   return { docking: left > 0, pct: _clamp(1 - (left / span), 0, 1), msLeft: left };
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   🔴 §5b — THE ARRIVAL SURFACE. WHY THE MOMENT IS A STATE AND NOT AN EVENT.
+   ───────────────────────────────────────────────────────────────────────────
+   The arrival has had exactly one channel since round 1 — a toast — and the
+   toast ranker eats it. kitchen.render.js:1918 drops anything ranked under 90
+   that lands within a second of another line, and `convoy:arrive` is 80 while
+   `level:up` is 95. That collision is not rare, it is SELF-INFLICTED: the
+   arrival itself grants `dishes × CONVOY_XP_PER_DISH` (a 40-box truck is 240
+   xp), which makes an arrival the single most likely thing in the whole feature
+   to trigger a level-up in the same frame. Measured, through the real render
+   loop: a 40-box truck landing on a level boundary produced
+   `AT LANDING toasts: ["⭐ Level 40!"]` — the convoy line never appeared at all,
+   the board read 'delivered', and six seconds later it was empty. The moment the
+   entire feature builds toward, silently not happening.
+
+   YOU CANNOT FIX THAT WITH A HIGHER RANK. A rank is a fight between two things
+   that both want the same one-line slot, and the fight can only be lost by one
+   of them. An arrival is not a line, it is a CONDITION — it is true for several
+   seconds and it should be drawn as its own surface, above the tabs, where no
+   ranker can reach it.
+
+   SO: `K._arrival` is that condition, and it is written HERE, in the state, at
+   the moment the truck lands. It survives the frame, it survives the toast
+   being dropped, and it survives the panel being shut when the truck landed
+   (`catchUp()` runs the same path on open). The toast stays as the fallback for
+   a player who is not looking at the panel; it is no longer the only channel.
+
+   ⚠ `_`-PREFIXED SO `snapshot()` NEVER SEES IT (CONTRACT §5). A banner is a
+     transient view condition; persisting it would re-announce yesterday's
+     convoy on tomorrow's first frame.
+   ⚠ IT EXPIRES ON `now`, NOT ON A TIMER. This file may not schedule anything
+     (rule 1), and it does not need to: `arrival()` is a read, and a read can
+     compare two numbers. That also means a backgrounded tab cannot leave a
+     stale strip on screen — it is already expired by the time anything paints.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/** How long the strip stays up. Falls back to the dock beat so this works with
+    the kitchen.data.js that exists today; `ECON.CONVOY_ARRIVE_MS` wins when its
+    owner adds it. The second argument is a NaN guard, not a tuning value. */
+function arriveMs() {
+  return _clamp(_int(EC('CONVOY_ARRIVE_MS', holdMs())), 1000, 60000);
+}
+
+/* Ranked, because two trucks can land in one `catchUp()` and one strip has to
+   win. Food actually landing in the stash outranks a truck stopping, and an
+   inbound truck (yours) outranks the acknowledgement that somebody else has
+   theirs. */
+const ARRIVE_RANK = { claim: 30, in: 20, out: 10 };
+
+/**
+ * Post the arrival condition. Last writer of equal-or-higher rank wins, so a
+ * claim that pays out during the same catch-up replaces the landing notice
+ * rather than being buried under it.
+ */
+function noteArrival(K, a, t) {
+  try {
+    if (!K || !a) return;
+    /* ⚠ `t` IS PASSED, NOT READ OFF `K.now`. `catchUp()` runs this whole path on
+       `open()` with the wall clock it was handed, and `K.now` is still whatever
+       the last tick of the last session left behind — hours or days stale. A
+       strip stamped with that is expired the instant it is written, which is the
+       one case that matters most: the truck landed while you were away. */
+    const at = _num(t, _num(K.now, 0));
+    const cur = K._arrival;
+    const fresh = !cur || (at - _num(cur.at, 0)) >= arriveMs();
+    if (!fresh && (ARRIVE_RANK[cur.kind] || 0) > (ARRIVE_RANK[a.kind] || 0)) return;
+    K._arrival = Object.assign({ at }, a);
+    K.rev++;
+  } catch (e) {}
+}
+
+/**
+ * THE ARRIVAL STRIP, for the renderer. Pure; safe to call every frame.
+ * → null, or
+ *   { id, kind:'in'|'out'|'claim', icon, title, line, sub,
+ *     dishes, food, feeCinder, xp, incidents, holdName, holdLine,
+ *     msLeft, pct }        pct 0..1 = how far through its dwell it is
+ *
+ * `title` and `line` are finished sentences. `sub` is the small print and is
+ * `''` when there is none. Nothing here needs formatting or pluralising.
+ */
+export function arrival(K, now) {
+  try {
+    const a = K && K._arrival;
+    if (!a) return null;
+    const span = Math.max(1, arriveMs());
+    const left = span - Math.max(0, _num(now, _num(K.now, 0)) - _num(a.at, 0));
+    if (left <= 0) return null;
+    return Object.assign({}, a, { msLeft: left, pct: _clamp(1 - (left / span), 0, 1) });
+  } catch (e) { return null; }
+}
+
+/**
+ * Dismiss the strip. `id` is optional and is checked when given, so a click on
+ * a strip that has already been replaced by a newer arrival cannot close the
+ * newer one. → true when something was actually cleared.
+ */
+export function ackArrival(K, id) {
+  try {
+    if (!K || !K._arrival) return false;
+    if (id != null && String(id) !== String(K._arrival.id)) return false;
+    K._arrival = null; K.rev++;
+    return true;
+  } catch (e) { return false; }
 }
 
 /**
@@ -1797,6 +2053,22 @@ function arriveDue(K, now, out) {
       turnedBack: !!c.turnedBack,
     });
 
+    /* 🔴 …AND THE SAME MOMENT AS A CONDITION (§5b), because the event above can
+       be — and was measured being — dropped by the toast ranker in favour of the
+       level-up this very arrival just caused. */
+    noteArrival(K, {
+      id: c.id, kind: 'out', icon: '🚚',
+      title: c.self
+        ? 'Your practice run is back.'
+        : _str(c.toName || 'They', 40) + ' took delivery.',
+      line: r.delivering + (r.delivering === 1 ? ' box' : ' boxes') + ' handed over.',
+      sub: r.incidents.length ? (r.holdLine || '') : '',
+      dishes: _int(c.dishes), food: 0,
+      feeCinder: Math.max(0, _int(c.feeCinder)),
+      xp: Math.max(0, _int(c.dishes)) * Math.max(0, _int(EC('CONVOY_XP_PER_DISH', 6))),
+      incidents: r.incidents.length, holdName: r.holdName, holdLine: r.holdLine,
+    }, t);
+
     /* A truck addressed to SOMEBODY ELSE is theirs to unload, so the sender's
        copy has to go — a row with a Claim button that can only ever fail is
        worse than no row.
@@ -1844,6 +2116,17 @@ function arriveDue(K, now, out) {
       // rather than a button that looks broken for five seconds.
       dockMs: holdMs(),
     });
+
+    /* §5b again, and this is the direction that matters most: an INBOUND truck
+       is the one the player is owed food by. It outranks the outbound notice. */
+    noteArrival(K, {
+      id: c.id, kind: 'in', icon: '🚚',
+      title: _str(c.fromName || 'Another kitchen', 40) + "'s convoy has landed.",
+      line: r.food + ' food waiting at the dock.',
+      sub: r.incidents.length ? (r.holdLine || '') : '',
+      dishes: _int(c.dishes), food: r.food, feeCinder: 0, xp: 0,
+      incidents: r.incidents.length, holdName: r.holdName, holdLine: r.holdLine,
+    }, t);
   }
 }
 
@@ -2543,21 +2826,32 @@ export function recentPartners(K, limit) {
    for. They are pure reads over `K` with no mutation and no side effects, so
    nothing downstream has to know they exist; they want adding to §1 on the next
    pass: `shippablePass` `manifest` `route` `held` `heldFood` `board` `progress`
-   `history` `recentPartners` `claimableAt` `docking` `leaderboard`.
+   `history` `recentPartners` `claimableAt` `docking` `leaderboard` `netError`
+   `banner` `arrival`. (`ackArrival` mutates `K._arrival` and nothing else.)
 
-   ── 🔴 THE FIVE CONVOY STATES, because there are five now and a renderer that
-      knows three will draw two of them wrong. ────────────────────────────────
-     'transit'   on the road. `route()` places the truck; ETA counts down.
-     'arrived'   landed and mine to unload. The CLAIM button is DISABLED while
-                 `docking(c, now).docking` is true (§5a) — show "Unloading…" and
-                 run `docking().pct` as a small bar. Then it arms.
-     'delivered' OUTBOUND ONLY, and it lasts one dock beat: the recipient has it.
-                 Caption the row "delivered — {toName} has it" and give it no
-                 button at all. It retires itself; do not remove it.
-     'held'      the depot hold (§4). The server has already paid this out and
-                 the stash was full. "Held at the depot: {held(K)…food} food —
-                 your stash was full." It drains itself as room appears.
-     'claimed'   over. It is filtered out of `board()`'s source arrays already.
+   ── 🔴 THE FIVE CONVOY STATES — AND WHY YOU SHOULD NOT BRANCH ON THEM ──────
+   Round 3 wrote this table out and asked the renderer to honour it. It did not,
+   and it was never going to: `kitchen.render.js` reconstructed the verdict from
+   `c.state === 'arrived' || route().arrived`, that expression is true for FOUR
+   of the five states, and so a delivered truck and a held load both got a live
+   CLAIM button that could only refuse. A rule written in a comment gets read
+   once; a rule written in a return value gets read every frame.
+
+   SO THE VERDICT IS COMPUTED FOR YOU. `route(c, now)` returns `phase`,
+   `caption` and `button` and they are already correct for all five states:
+
+     state       route().phase  caption (tail of the sub-line)         button
+     'transit'   'transit'      ''  ← renderer prints its own ETA      none
+     'arrived'   'arrived'      'landed — unloading'                   Unloading… (disabled, .pct fills)
+       …docked                  'landed — claim it'                    Claim (armed)
+     'delivered' 'delivered'    'delivered — {toName} has it'          none  🔴 absent, not refused
+     'held'      'held'         'held at the depot: N food — …'        Unload
+     'claimed'   'claimed'      'unloaded'                             none
+
+   `route().arrived` now means ONLY "mine to unload" and is false for
+   'delivered' and 'held', so even a renderer that never reads `phase` stops
+   drawing the button that scolds you. `roadOver` is the old meaning if you
+   genuinely want "the road is behind it".
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /** Every truck on the board, mine and inbound, newest departure first.

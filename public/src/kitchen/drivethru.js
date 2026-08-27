@@ -1134,15 +1134,50 @@ function judgeMod(mod, item) {
 
 /**
  * What one ticket line's food is worth before multipliers — the base the
- * settlement is a percentage OF.
+ * §SETTLEMENT is a percentage OF. MENU UNITS × basePrice, and NOT `qsum`.
  *
- * ⚠ `qsum` (the sum of the quality multipliers of the units actually handed
- * over) when state.js has committed it, `filled` while the order is still on
- * the board, `qty` before anything has been cooked. All three are the same
- * number in the ordinary case; taking whichever exists means the chips can draw
- * a live verdict on an unfilled line without inventing a price for it.
+ * 🔴 THE DEFECT THIS CLOSES: THE CHIP QUOTED ONE FIGURE AND THE TOAST CHARGED
+ * ANOTHER. This function used to prefer `item.qsum` — the sum of the QUALITY
+ * multipliers of the units handed over — "when state.js has committed it", and
+ * the comment claimed all three bases were "the same number in the ordinary
+ * case". They are not: a perfect unit contributes 1.25 to `qsum` and 1 to a
+ * count, a stale one less than 1. So the price base silently changed under the
+ * player at the exact instant they pressed SERVE. Measured over 12 seeded days,
+ * 468 drive tickets: the pre-serve chip and the reward toast named a DIFFERENT
+ * number of Cinder on 106 of them (23%) — chip "−42", toast "−58"; chip "+19",
+ * toast "+18" — while agreeing on the verdict word every single time. A price
+ * the player is quoted and then not charged is the same defect as a verdict
+ * they are shown and not paid on, one layer down.
+ *
+ * So the settlement is priced in UNITS, which are known from the moment the
+ * order is spoken and do not move: `filled` once anything has covered the line,
+ * `qty` before that. Chip and toast are then arithmetically the same number.
+ *
+ * ⚠ AND IT IS ALSO THE RIGHT BASIS ON ITS OWN TERMS. The promise is about what
+ * was ON the dish, not about how well it was cooked; quality is already paid
+ * for twice, in the payout (`basePrice × qsum`) and in the tip blend. Scaling
+ * the promise settlement by it a third time made an honoured "no onions" worth
+ * 25% more for being perfect and — worse — made BREAKING one on a perfect
+ * burger cost more than breaking it on a mediocre one.
  */
 function linePrice(item) {
+  const rec = recipeOf(item && item.recipeId);
+  if (!rec) return 0;
+  const units = _int(item.filled) || Math.max(1, _int(item.qty));
+  return Math.max(0, _num(rec.basePrice, 0) * units);
+}
+
+/**
+ * What state.js will price this line at — `basePrice × qsum`, mirroring
+ * `serveTicket()`. Used ONLY as the denominator in `payoutEstimate()`.
+ *
+ * ⚠ SEPARATE FROM `linePrice()` ON PURPOSE, and the two must not be merged
+ * back. `linePrice()` is a PRICE THE PLAYER IS QUOTED and therefore has to be
+ * stable across the commit; this is an ESTIMATE OF SOMEBODY ELSE'S ARITHMETIC
+ * and therefore has to track it, quality multiplier and all. One function
+ * serving both jobs is what quoted "−42" and charged "−58".
+ */
+function lineGross(item) {
   const rec = recipeOf(item && item.recipeId);
   if (!rec) return 0;
   const units = _num(item.qsum, 0) > 0 ? _num(item.qsum, 0)
@@ -2428,6 +2463,10 @@ function roll(K, dt) {
  * that only understands `state` still draws a correct lane.
  */
 function advanceCar(K, car, dt, now, out) {
+  // §READABILITY. Before anything else, and before the 'gone' bail: a compound
+  // utterance is spoken one bubble-sized beat at a time and an exiting car has
+  // to be allowed to finish its sentence.
+  drainSay(K, car, now);
   if (car.state === 'gone') { car.phase = 'exit'; return; }
 
   // ── mood, for the face over the car. Cheap, every frame, read by render. ──
@@ -2460,7 +2499,7 @@ function advanceCar(K, car, dt, now, out) {
       car.phase = 'order';
       car.state = 'ordering';
       car.orderStartedAt = now;
-      say(K, car, speakerLine(car), EC('LANE_ORDER_MS') + 1200);
+      say(K, car, speakerSegments(car), EC('LANE_ORDER_MS') + 1200);
       K.rev = _int(K.rev) + 1;
     } else if (now >= _num(car.balkAt, Infinity)) {
       // Jammed at the mouth of the lane and never got to speak. Their fault?
@@ -2526,11 +2565,203 @@ function advanceCar(K, car, dt, now, out) {
   if (now >= _num(car.expiresAt, Infinity)) giveUp(K, car, 'impatient', now, out);
 }
 
-/** Put a line on screen over the car. Render reads `say` / `sayUntil`. */
+/* ════════════════════════════════════════════════════════════════════════════
+   💬 §READABILITY — THE LANE'S WRITING, MEASURED AGAINST THE BOX IT LANDS IN.
+   ════════════════════════════════════════════════════════════════════════════
+   🔴 THE DEFECT: EVERY SPOKEN LINE IN THE LANE WAS CLIPPED ON A PHONE.
+   Measured live in headless Chromium over a 120-step rush at 360×780: 49 of 50
+   distinct bubbles clipped — a 166px box against 247–503px of text, every one
+   of them ending in an ellipsis inside the first four words. Seventeen
+   personalities, five mood pools, 272 authored lines, and the player never read
+   a whole sentence of any of them. The writing is the reason the lane is not a
+   spawn table, and it was invisible.
+
+   TWO CAUSES, AND THEY NEED TWO DIFFERENT OWNERS:
+
+     1. `white-space: nowrap` on `.mk-bub` (kitchen.css). NOT OUR FILE. The
+        exact change is written out in the HANDOVER and it is FIVE declarations,
+        not the one it looks like — measured in the running game, not in a
+        mock-up, and the difference matters:
+          · `white-space: normal` ALONE MAKES IT WORSE. `.mk-bub` is
+            `position:absolute` inside `.mk-car`, so the moment it is allowed
+            to wrap its shrink-to-fit width collapses to the CAR's 76px and
+            `max-width` never binds — measured live at 360px, 52 of 52 bubbles
+            still clipped, in a 77px box needing 45px of height against 31.
+          · `width: max-content` beside it restores the intended 166px box and
+            takes the clip rate to ZERO: 0/52 at 360, 0/59 at 390, 0/52 at 430,
+            0/55 at 1280, with nothing overflowing the viewport at any width.
+        The max-width, the shadow and the `data-side` flip all stay exactly as
+        they are. No re-layout, no widening, no new breakpoint — the width the
+        design already chose is enough the moment the text may use more than one
+        line of it and is not being squeezed by the sprite it hangs over.
+
+     2. LINE LENGTH, WHICH IS OURS. Individual authored lines are already
+        inside that budget (272 lines, longest 63 chars). The 131-character
+        monsters all came from ONE place: `speakerLine()` concatenates the
+        personality's opener with up to two spoken modifiers, so a Corp Suit
+        with two fussy requests says 131 characters in one breath. Measured
+        across five seeded 600s days, 875 spoken lines: 6.4% over 73 chars,
+        100% of those the compound order line.
+
+   🔴 THE FIX IS BEATS, NOT TRUNCATION. An ellipsis is what we are removing;
+   re-adding it in JS would be the same bug with a different owner. A customer
+   who has three sentences to say now says them one at a time, in the same
+   bubble, over the same total airtime — which is how a person talks, and which
+   makes the compound order READ as an order followed by conditions rather than
+   as a wall. `speakerLine()` still composes the whole utterance (the ticket
+   card draws it in full, where there is room); `say()` is the thing that
+   decides how much of it is on screen at once.
+
+   ⚠ REJECTED: shortening the writing to fit. The lines ARE the feature. The
+   longest single authored sentence is 63 characters, comfortably inside 73, so
+   nothing had to be cut — and if a future writer does exceed the budget,
+   `voiceAudit()` names the line rather than the player finding it clipped.
+   AFTER: 942 spoken lines over five seeded 600s days, longest 68, none over
+   budget, `voiceAudit()` clean.
+
+   These two constants are MEASURED FACTS ABOUT THE BUBBLE, not tuning — same
+   category as `POS_EPS` above, which is derived from LANE_ROLL_UNITS_S and also
+   lives here rather than in ECON. A designer retuning the economy has no
+   business in either.
+
+   🔴 IF THE BUBBLE CSS CHANGES, RE-MEASURE IN THE RUNNING GAME AND NOT IN A
+   MOCK-UP. A standalone page carrying a copy of the `.mk-bub` rule answered
+   "wrapping alone fixes it, capacity 73" — and it was WRONG about the first
+   half, because in the mock-up the bubble's containing block was the body and
+   in the game it is a 76px car. The character budget it gave was right; the CSS
+   conclusion it gave would have shipped a regression. Drive the real overlay.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/** Characters that fit in three wrapped lines of `.mk-bub` at 360px — measured
+    at 73 against the real selector (151.6px of content width, 11px type), with
+    five taken off for the font a real phone actually substitutes. */
+const SAY_MAX_CH = 68;
+/** No beat flashes past faster than this, however the airtime divides. Below
+    about a second and a half a wrapped three-line bubble cannot be read at all,
+    which would trade a clipped line for an unreadable one. */
+const SAY_MIN_MS = 1500;
+
+/**
+ * Split one utterance into bubble-sized BEATS.
+ *
+ * `text` is a string, or — better — the ARRAY OF SEGMENTS it was composed from.
+ * 🔴 THE SEGMENT LIST IS NOT AN OPTIMISATION, IT IS THE WRITING. Packing the
+ * flat string "Corp order. Full box, itemised, and I'll need it hot. No tomato.
+ * Long story, bad year. No onions. They repeat on me." by sentence gives beats
+ * that break BETWEEN a modifier and its own punchline —
+ *     "…and I'll need it hot. No tomato."  /  "Long story, bad year. No onions…"
+ * — which is worse than clipping, because it reads as two different people. Fed
+ * the segments (`speakerSegments()`), whole thoughts stay together and a beat
+ * boundary can only ever fall where the author already put one.
+ *
+ * Greedy: as many whole SEGMENTS as fit, then a new beat. A segment too long to
+ * fit alone is broken between whole sentences, and a single SENTENCE over the
+ * budget is shipped WHOLE and never cut — a sentence chopped mid-clause reads
+ * as a bug, an over-long one merely wraps to a fourth line, and `voiceAudit()`
+ * exists so the author finds that case before the player does.
+ */
+function beatsFor(text, budget) {
+  const cap = Math.max(24, _int(budget) || SAY_MAX_CH);
+  const segs = (Array.isArray(text) ? text : [text])
+    .map((x) => String(x == null ? '' : x).trim())
+    .filter(Boolean);
+  if (!segs.length) return [];
+  const out = [];
+  let acc = '';
+  const add = (piece) => {
+    const cand = acc ? acc + ' ' + piece : piece;
+    if (cand.length <= cap) { acc = cand; return; }
+    if (acc) out.push(acc);
+    acc = piece;
+  };
+  for (const seg of segs) {
+    if (seg.length <= cap) { add(seg); continue; }
+    const parts = seg.match(/[^.!?…]+[.!?…]+["'”’)]*\s*|[^.!?…]+$/g) || [seg];
+    for (const raw of parts) { const p = raw.trim(); if (p) add(p); }
+  }
+  if (acc) out.push(acc);
+  return out.length ? out : segs.slice();
+}
+
+/**
+ * → { budget, over:[{where,len,text}], max, ok } — every authored line that
+ * `beatsFor()` cannot get inside the bubble, i.e. every SINGLE SENTENCE longer
+ * than the budget. `ok` is the only state this file ships in, exactly like
+ * `econAudit()`, and for the same reason: a rule nothing checks is a rule that
+ * has already been broken somewhere you have not looked.
+ *
+ * Pure, cheap, no arguments needed. `debug()` in index.js should print it
+ * beside `econAudit()`.
+ */
+export function voiceAudit(budget) {
+  const cap = Math.max(24, _int(budget) || SAY_MAX_CH);
+  const over = [];
+  const look = (where, text) => {
+    for (const beat of beatsFor(text, cap)) {
+      if (beat.length > cap) over.push({ where, len: beat.length, text: beat });
+    }
+  };
+  try {
+    for (const id of Object.keys(VOICE)) {
+      for (const key of Object.keys(VOICE[id])) for (const t of VOICE[id][key]) look(id + '.' + key, t);
+    }
+    for (const key of Object.keys(GENERIC)) for (const t of GENERIC[key]) look('generic.' + key, t);
+    for (const sp of Object.keys(SPECIAL_VOICE)) {
+      for (const key of Object.keys(SPECIAL_VOICE[sp])) for (const t of SPECIAL_VOICE[sp][key]) look(sp + '.' + key, t);
+    }
+    for (const m of MODS) look('mod.' + m.id, m.say);
+  } catch (e) { /* rule 2 — an audit must never be the thing that throws */ }
+  let max = 0;
+  for (const o of over) if (o.len > max) max = o.len;
+  return { budget: cap, over, max, ok: over.length === 0 };
+}
+
+/**
+ * Put a line on screen over the car. Render reads `say` / `sayUntil`.
+ *
+ * The airtime the caller asked for is DIVIDED between the beats in proportion
+ * to their length, so a one-sentence nag is unchanged from before and only a
+ * compound order line takes longer to deliver — floored at SAY_MIN_MS, so the
+ * total can run over for a very long utterance rather than flashing.
+ *
+ * ⚠ A NEW LINE ALWAYS WINS. `_sayQ` is replaced, never appended to: if a
+ * customer's food lands while they are still listing their conditions, the
+ * thing they say about the food is what matters and the rest of the order is
+ * stale. Derived, never saved — the lane is not persisted (CONTRACT §5).
+ */
 function say(K, car, text, ms) {
-  if (!text) return;
-  car.say = String(text);
-  car.sayUntil = _num(K.now, 0) + Math.max(600, _num(ms, 2500));
+  if (!car || !text) return;
+  const beats = beatsFor(text, SAY_MAX_CH);
+  if (!beats.length) return;
+  const now = _num(K && K.now, 0);
+  const total = Math.max(600, _num(ms, 2500));
+  let chars = 0;
+  for (const b of beats) chars += b.length;
+  const span = (b) => Math.max(SAY_MIN_MS, Math.round(total * (b.length / Math.max(1, chars))));
+  car.say = beats[0];
+  car.sayUntil = now + span(beats[0]);
+  car._sayQ = beats.slice(1).map((b) => ({ t: b, ms: span(b) }));
+}
+
+/**
+ * Advance a multi-beat utterance. Called at the top of `advanceCar()`, so it
+ * runs for EVERY car including one already flagged 'gone' — a customer driving
+ * off mid-sentence with the rest of it swallowed is the same defect one frame
+ * later.
+ *
+ * ⚠ DELIBERATELY DOES NOT BUMP `K.rev`. Bubbles are drawn by `frame()` off
+ * `laneCard()`/`laneView()`, not by a structural repaint; the window nag has
+ * never bumped rev either, and a rev bump every 1.5s per talking car would
+ * repaint the ticket board through the whole rush.
+ */
+function drainSay(K, car, now) {
+  const q = car && car._sayQ;
+  if (!Array.isArray(q) || !q.length) return;
+  if (_num(now, 0) < _num(car.sayUntil, 0)) return;
+  const next = q.shift();
+  if (!next) return;
+  car.say = next.t;
+  car.sayUntil = _num(now, 0) + _num(next.ms, SAY_MIN_MS);
 }
 
 /** Which waiting pool this car draws from right now. */
@@ -2564,20 +2795,24 @@ function pickLine(K, car, key) {
  * off the base — a personality's opener is finished writing and this function
  * has no business editing it.
  */
-function speakerLine(car) {
-  const base = String(car._speaker || '').trim();
-  const mods = Array.isArray(car.mods) ? car.mods : [];
-  if (!mods.length) return base;
-  const said = [];
-  for (const m of mods) {
+function speakerSegments(car) {
+  const out = [];
+  const base = String((car && car._speaker) || '').trim();
+  if (base) out.push(base);
+  for (const m of (Array.isArray(car && car.mods) ? car.mods : [])) {
     let line = String((m && (m.say || m.label)) || '').trim();
     if (!line) continue;
     // A `say` authored without terminal punctuation still lands as a sentence.
     if (!/[.!?…]$/.test(line)) line += '.';
-    said.push(line);
+    out.push(line);
   }
-  if (!said.length) return base;
-  return base ? `${base} ${said.join(' ')}` : said.join(' ');
+  return out;
+}
+
+/** The same utterance as ONE string, for the ticket card, which has room and
+    wraps. The bubble is fed `speakerSegments()` instead — see `beatsFor()`. */
+function speakerLine(car) {
+  return speakerSegments(car).join(' ');
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -2771,6 +3006,10 @@ function scheduleArrivals(K, now, out) {
          result(State.serveTicket(t.id, now));
        }
 
+       // and in rewardMoment(r) — ONE line, replacing the two that print only
+       // the first kept OR the first broken promise and never its worth:
+       if (r.modLine) line += ` · ${esc0(r.modLine)}`;
+
        // a wave button on the head car, and in the onClick switch:
        case 'wave': doWave(el.dataset.car, now); break;
        async function doWave(carId, now) {
@@ -2785,11 +3024,61 @@ function scheduleArrivals(K, now, out) {
    that actually went through.
    ═══════════════════════════════════════════════════════════════════════════ */
 
+/* ── 💸 THE SETTLEMENT, IN ONE STRING THE RENDERER CAN PRINT VERBATIM. ──
+   🔴 WHY A PREFORMATTED STRING AND NOT JUST THE NUMBERS. Round 3 returned
+   `modCinder` and `modPop` "so `rewardMoment()` can say what the promise was
+   worth", left the formatting "to the renderer" — and nothing drew either one.
+   `grep -rn "modCinder|modPop"` found the two assignments and a handover note
+   admitting the toast ignored them. That is the third round running that a
+   value was computed and no caller consumed it, and the common factor is a
+   handover that asks somebody to make a decision rather than to paste a line.
+
+   So the decision is made HERE, once, in the file that knows what the numbers
+   mean, and the renderer's job is `line += ' · ' + r.modLine`. The numbers are
+   still returned separately for anything that wants to colour them.
+
+   THE FORMAT IS THE CHIP'S FORMAT, ON PURPOSE. `modChip()` prints a bare signed
+   figure — "+18" green, "−22" red — beside the promise WHILE the player can
+   still keep it. The toast has to print the same glyphs and the same figure or
+   the player cannot tell it is the same number, which is the entire point:
+       one promise   →  "✓ no greens +18 · +0.5 pop"
+       one broken    →  "✗ no greens −17 · −0.5 pop"
+       several       →  "✓2 ✗1 −4 · −0.5 pop"
+   UNPROVEN rows are counted in neither. They are worth exactly 0 in both
+   directions and `modChip()` already refuses to print a zero, because a "0" on
+   an untouched line reads as a penalty already taken. */
+function signedCinder(n) {
+  const v = Math.round(_num(n, 0));
+  return v ? ((v > 0 ? '+' : '−') + Math.abs(v)) : '';
+}
+function signedPop(n) {
+  const v = Math.round(_num(n, 0) * 100) / 100;
+  return v ? ((v > 0 ? '+' : '−') + Math.abs(v).toFixed(1)) : '';
+}
+function verdictLine(verdict) {
+  if (!verdict) return '';
+  const kept = _int(verdict.honoured), broke = _int(verdict.broken);
+  if (!(kept + broke)) return '';
+  let head;
+  if (kept + broke === 1) {
+    const row = (verdict.detail || []).find((d) => d && (d.result === 'honoured' || d.result === 'broken'));
+    head = ((row && row.result === 'honoured') ? '✓ ' : '✗ ') + ((row && row.label) || 'the order');
+  } else {
+    const bits = [];
+    if (kept) bits.push('✓' + kept);
+    if (broke) bits.push('✗' + broke);
+    head = bits.join(' ');
+  }
+  const money = signedCinder(verdict.cinder);
+  const pop = signedPop(verdict.pop);
+  return [head + (money ? ' ' + money : ''), pop ? pop + ' pop' : ''].filter(Boolean).join(' · ');
+}
+
 /**
  * Hand the food out of the window. THE reward moment.
  *
  * → { ok, code, why, paid, tip, xp, line, mods:[{label,result,worth}],
- *     honoured, broken, custName, icon }
+ *     honoured, broken, custName, icon, modCinder, modPop, modLine }
  *
  * Deliberately THIN on the money. `State.serveTicket()` is the payer: it prices
  * the ticket (§8.3), calls `bridge().addGems`, moves popularity, awards XP,
@@ -2824,9 +3113,12 @@ export function serveCar(K, carId, now) {
     if (!ticket) return fail('BAD_ARG', 'That order is gone.');
     if (ticket.state !== 'ready') return fail('NOT_READY', `${car.name}’s order is not complete yet.`);
 
-    // 🔴 BEFORE the till runs — serveTicket() removes the ticket from the board
-    //    on success and the per-line mods go with it.
-    const verdict = judgeTicket(ticket);
+    /* ⚠ THE PROVISIONAL VERDICT, AND IT IS A FALLBACK AND NOTHING ELSE.
+       `refreshReady()` judges against whatever the pass happens to be holding
+       this frame; that is what the chips draw and it is right for a chip. It is
+       NOT what the customer was handed. Keep it only so a verdict still exists
+       if a sibling file ever empties `ticket.items` on commit — see below. */
+    const provisional = judgeTicket(ticket);
 
     let res = null;
     try {
@@ -2839,6 +3131,38 @@ export function serveCar(K, carId, now) {
 
     // state.js's releaseCar() has already flipped this car to 'gone'. Dress it,
     // and book it (§SETTLE — idempotent, so the tick sweep will not double it).
+    /* ══ 🔴 THE VERDICT IS RE-JUDGED HERE, AFTER THE COMMIT. ══════════════
+       THE DEFECT THIS CLOSES, quoted so it cannot be softened: "the verdict on
+       screen and the verdict the till paid on are different verdicts, and the
+       popularity is charged on the wrong one."
+
+       `serveTicket()` calls `takeDishes()`, which REBUILDS `item.built`,
+       `item.filled`, `item.pn` and `item.qsum` from the plates that physically
+       left the pass — deliberately rebuilt rather than trimmed, because the
+       provisional list can contain plates a nearer-due ticket took between the
+       last look and this commit. Judging before that call answered a different
+       question about a different set of plates. Measured on one perfect burger
+       against "well done": the chip said ✗, the toast said "✗ well done",
+       popularity was docked 0.5 — and the till, which prices the tip AFTER the
+       commit through `tipFor()`, paid the honoured rate on the same
+       transaction. Over twelve seeded days the shown verdict {h:102,b:110,u:21}
+       and the paid verdict {h:116,b:96,u:21} disagreed on 14 drive tickets.
+
+       So: the money already read the committed evidence (`tipFor()` runs inside
+       `serveTicket()`, after `takeDishes()`), and now the popularity charge,
+       the returned detail and the reward toast read the SAME committed
+       evidence. One transaction, one verdict, four surfaces.
+
+       ⚠ `ticket` IS STILL A LIVE OBJECT. `serveTicket()` filters it out of
+       `K.tickets` on success, which is why this used to be judged early — but
+       filtering an array does not destroy the object we are holding a reference
+       to, and its `items` (mods, builds, filled, pn) are exactly as the commit
+       left them. The `provisional` fallback below covers the one way that could
+       stop being true: a future commit path that CLEARS `ticket.items`. If that
+       ever happens the chip's answer is still better than no answer. */
+    let verdict = judgeTicket(ticket);
+    if (!verdict.detail.length && provisional.detail.length) verdict = provisional;
+
     car.state = 'gone';
     car.phase = 'exit';
     car.leftAt = t;
@@ -2866,10 +3190,13 @@ export function serveCar(K, carId, now) {
       custName: car.name, icon: car.icon,
       line: car.say || '',
       honoured: verdict.honoured, broken: verdict.broken, unproven: verdict.unproven,
-      // What the promise itself was worth, so `rewardMoment()` can say so
-      // rather than leaving the player to infer it from a tip that moved.
+      /* What the promise itself was worth, judged on what actually went out of
+         the window (see the re-judge above). `modLine` is the same two numbers
+         already formatted the way `modChip()` formats them — see the block
+         above `serveCar()` for why this file does the formatting. */
       modCinder: Math.round(_num(verdict.cinder, 0)),
       modPop: Math.round(_num(verdict.pop, 0) * 100) / 100,
+      modLine: verdictLine(verdict),
       mods: verdict.detail,
     };
   } catch (e) {
@@ -3136,7 +3463,7 @@ export function tipFor(K, car, quality, now) {
 function payoutEstimate(K, ticket) {
   if (!ticket || !Array.isArray(ticket.items)) return 0;
   let gross = 0;
-  for (const it of ticket.items) gross += linePrice(it);
+  for (const it of ticket.items) gross += lineGross(it);
   if (!(gross > 0)) return 0;
   const popFn = DF('popPayMul'), rushFn = DF('rushPayMul');
   const popMult = popFn ? _num(popFn(_num(K && K.popularity, 50)), 1)
@@ -3749,10 +4076,57 @@ export function regulars(K) {
       is a note that the string got MORE accurate, in case a screenshot diff
       looks like a regression.
 
-   8. `serveCar()` RETURNS TWO NEW FIELDS for `rewardMoment()`: `modCinder` (the
-      §SETTLEMENT in Cinder, signed) and `modPop`. The reward toast currently
-      says which promise was kept or broken; saying what it was WORTH — "✓ no
-      greens +18" — is what turns one observation into a learned mechanic. That
-      is a renderer decision, not ours, which is why the number is returned
-      rather than formatted.
+   8. 🔴 `serveCar().modLine` — ONE LINE IN `rewardMoment()`, AND IT IS THE
+      LAST STEP OF THE MODIFIER MECHANIC. Round 3 returned `modCinder` and
+      `modPop` and left the wording to the renderer, and the renderer drew
+      neither — so the chip promised "+18" before the player pressed SERVE and
+      nothing ever confirmed the 18 had landed. The formatting decision has been
+      taken out of the handover and made here (see the block above `serveCar()`).
+      In kitchen.render.js `rewardMoment()`, DELETE these two lines:
+          if (broke.length) line += ` · ✗ ${esc0(broke[0].label)}`;
+          else if (kept.length) line += ` · ✓ ${esc0(kept[0].label)}`;
+      and REPLACE them with this one:
+          if (r.modLine) line += ` · ${esc0(r.modLine)}`;
+      `kept` and `broke` then have no other reader and can go too. This also
+      fixes the second half of that finding for free: the old code showed
+      `broke[0]` OR `kept[0]`, so a ticket that honoured two promises and broke
+      one read as a pure failure; `modLine` prints "✓2 ✗1 −4 · −0.5 pop".
+
+   8b. 🔴 THE BUBBLE MUST WRAP — FIVE DECLARATIONS IN ONE RULE, AND UNTIL
+      THEY LAND 98% OF THE LANE'S WRITING IS UNREADABLE ON A PHONE
+      (§READABILITY). This is the half of that defect this file cannot fix:
+      shortening the lines is done (nothing spoken now exceeds SAY_MAX_CH, and
+      the 131-character compound order is delivered in beats), and measured
+      live at 360px it changes the clip rate from 49/50 to 58/59. The text is
+      not the problem any more; the box is.
+
+      In kitchen.css, in the `#mythic-kitchen-ov .mk-bub` rule that carries
+      `white-space: nowrap` (the FIRST of the two `.mk-bub` blocks), replace
+      that one declaration with these five:
+          white-space: normal;
+          width: max-content;
+          display: -webkit-box;
+          -webkit-box-orient: vertical;
+          -webkit-line-clamp: 3;
+      Leave `overflow:hidden`, `text-overflow:ellipsis`, the second block's
+      `max-width: min(190px, 46vw)`, the box-shadow and the `data-side` flip
+      exactly as they are.
+
+      🔴 `width: max-content` IS NOT OPTIONAL AND IT IS THE ONE A REVIEWER
+      WILL DELETE AS REDUNDANT. `.mk-bub` is `position:absolute` inside
+      `.mk-car`. Dropping `nowrap` on its own hands the box shrink-to-fit sizing
+      against its containing block, which is the CAR — 76px — so `max-width`
+      never binds and the bubble gets NARROWER, not wider. MEASURED LIVE in the
+      running game at 360px: `white-space:normal` alone leaves 52 of 52 bubbles
+      clipped in a 77px box; with `width:max-content` beside it the box is the
+      intended 166×31 and the clip count is ZERO — 0/52 at 360px, 0/59 at 390,
+      0/52 at 430, 0/55 at 1280, nothing overflowing the viewport at any width.
+      That is the whole change and it needs no other edit anywhere.
+
+      ⚠ The `nowrap` was originally justified by two bubbles colliding. That
+      justification is spent: `updateCars()` shows only ONE bubble per frame
+      (the `loudest` pick), so the collision the cap defended against can no
+      longer happen. While you are in there, `loudest` should prefer a car in
+      the `order` phase over a merely impatient one — the order line is the one
+      with information in it, and it is spoken once.
    ═══════════════════════════════════════════════════════════════════════════ */

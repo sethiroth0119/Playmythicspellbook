@@ -32,6 +32,16 @@
    index.js hands this file a plain `view` object and gets a string back. There
    is no seam here to reach around, by construction.
 
+   📎 HOW THE CITATIONS IN THIS FILE ARE WRITTEN, AND THE BUG THAT SET THE RULE.
+   Comments here point at other files by SYMBOL first and line number second —
+   `index.js's selection()`, `index.html's _garageRig()` (164476). An earlier
+   revision of this file cited three of them by line alone and every one had
+   drifted by roughly 230 lines, which is worse than citing nothing: a confident
+   wrong pointer costs the next reader the search AND the trust. The symbol is
+   the address; the number is a hint. The same rule applies to claims ABOUT the
+   caller — this file now asserts no upstream guarantee it does not itself
+   enforce, which is a rule it learned the hard way in clip().
+
    ⛔ NO IMAGE OR VIDEO SURFACE ANYWHERE, and no image element whose source
    is bound to text that came from another player. Hosting user-supplied media
    carries a legal obligation this project has ruled out (CLAUDE.md, Out of
@@ -184,6 +194,40 @@ const tone = (n) => (n === null ? 'mt-dim' : (n > 0 ? 'mt-gold' : 'mt-bad'));
 const str = (v, d) => { const s = (v === undefined || v === null) ? '' : String(v); return s || (d === undefined ? '' : d); };
 const arr = (v) => (Array.isArray(v) ? v : []);
 const obj = (v) => ((v && typeof v === 'object') ? v : {});
+
+/* ── clip() ─ THE ERROR BUDGET, ENFORCED HERE BECAUSE NOTHING ELSE ENFORCES IT ─
+   🔴 PAST BUG, AND IT LIVED IN THIS FILE'S COMMENTS RATHER THAN ITS CODE.
+   The server-error banner below used to open with "index.js has already trimmed
+   it to 160 chars". index.js does not, and never did: classify() (index.js:191)
+   is the only writer of `S.error` and the whole of the treatment is
+
+       if (r.error && !S.error) S.error = String(r.why || r.error);
+
+   — a String(), no slice anywhere in the module. So `renderTransport({error:
+   'Z'.repeat(5000)})` emitted all five thousand characters into a banner that is
+   styled to sit ABOVE the tab body, pushing the depot card off the screen. The
+   panel whose entire job is to explain a failure legibly became the failure, and
+   the comment asserting otherwise is what stopped anyone looking.
+
+   REJECTED: "trust the caller and document the guarantee." A renderer that
+   asserts an upstream invariant it does not check is correct exactly until
+   someone edits the caller — and then it is a comment that actively misleads.
+   The clip costs one call and it belongs here, at the point where the string
+   stops being data and becomes pixels.
+
+   TRUNCATION IS VISIBLE. The ellipsis is appended and the banner says the text
+   was cut, because a server message that simply stops mid-word reads as the
+   SERVER having truncated it, which sends the next debugger after the wrong bug.
+
+   160 is the same budget index.html uses for the same job — `_msg.slice(0, 160)`
+   in `_bankEnsureCharter()`'s toast (79951) — one number, so a player who
+   reports a message from either surface reports a comparable amount of it. */
+const ERR_MAX = 160;
+function clip(v, max) {
+  const t = str(v).trim();
+  const n = (max === undefined || !(max > 0)) ? ERR_MAX : max;
+  return t.length <= n ? t : (t.slice(0, n - 1).replace(/\s+$/, '') + '…');
+}
 
 /* ════════════════════════════════════════════════════════════════════════════
    THE STYLESHEET
@@ -344,14 +388,16 @@ function field(id, label, opts) {
    but reaching it means the depot card, the fleet and the rate board all vanish
    because one carrier row had a shape nobody expected — and the player is then
    told "the depot screen could not be drawn" for a panel that was 90% fine.
-   The error text is SHOWN, not summarised: see the note on view.error below. */
+   The error text is SHOWN, not summarised — through the same clip() and the
+   same ERR_MAX as a server error, because a reader comparing two banners should
+   not have to wonder whether two different budgets cut them differently. */
 function safe(label, fn) {
   try {
     const s = fn();
     return (typeof s === 'string') ? s : '';
   } catch (e) {
     return banner('bad',
-      '⚠ The ' + label + ' could not be drawn: ' + str(e && e.message, String(e)).slice(0, 160),
+      '⚠ The ' + label + ' could not be drawn: ' + clip(str(e && e.message, String(e))),
       'Nothing was charged and no contract was changed. Reload the game; if it repeats, this is a bug in depot.render.js and the message above is the whole of it.');
   }
 }
@@ -398,19 +444,31 @@ function statusBanners(v) {
       'Open the Supabase SQL editor, paste sql/038 and run it. It is idempotent, so running it twice is safe.'));
   }
 
-  /* ⚠ THE REAL ERROR, VERBATIM. index.js has already trimmed it to 160 chars.
+  /* ⚠ THE REAL ERROR, IN THE SERVER'S OWN WORDS. Clipped, never rewritten.
      It is NOT replaced with a guessed cause, and there is a scar behind that:
-     index.html:79921-79926 records four wasted debugging sessions caused by a
-     toast telling an admin to run a .sql file they had already run. The rule
-     written there is "Name the real error instead of guessing at a cause", and
-     a renderer that swaps a server message for a friendlier theory is exactly
-     the mechanism that produced it. The friendly framing goes in `fix`, where
-     it cannot displace the evidence. */
-  const err = str(v.error).trim();
-  if (err) {
+     index.html's `_bankEnsureCharter()` carries the rule verbatim — "Name the
+     real error instead of guessing at a cause" (index.html:79943) — written on
+     top of four wasted debugging sessions caused by a toast telling an admin to
+     run a .sql file they had already run. A renderer that swaps a server message
+     for a friendlier theory is exactly the mechanism that produced that, so the
+     friendly framing goes in `fix`, where it cannot displace the evidence.
+
+     CLIPPING IS NOT REWRITING, and this file does the clipping itself — see
+     clip() for the "index.js already trimmed it" claim that was false and for
+     what it cost. The first 160 characters of a PostgREST error carry the
+     message; what follows is the hint, the detail and sometimes the entire
+     failing statement, none of which fits in a banner and all of which is still
+     on the failed request. `raw` is kept only to detect that a cut happened —
+     the banner says so rather than trailing off. */
+  const raw = str(v.error).trim();
+  if (raw) {
+    const err = clip(raw);
     out.push(banner('bad',
       '⚠ The freight service answered with an error: ' + err,
-      'That is the server’s own words, not a guess. Retry with Refresh; if it repeats, this message is what to report.'));
+      (err.length < raw.length
+        ? 'Shown to the first ' + ERR_MAX + ' characters of a longer message; the whole of it is on the failed request in the network tab. '
+        : '')
+      + 'That is the server’s own words, not a guess. Retry with Refresh; if it repeats, this message is what to report.'));
   }
 
   return out.join('');
@@ -540,9 +598,12 @@ export function renderDepot(view) {
    than from the tier, because rigs.data.js owns that ladder and a second copy
    here would let the panel promise a run the dispatcher does not grant.
 
-   'Hand-hauled' is the EXACT shipped label for the no-rig case
-   (index.html:164244 returns it from both the no-rig path and the catch). A
-   parallel name invented here would be a second vocabulary for one state. */
+   'Hand-hauled' is the EXACT shipped label for the no-rig case. index.html's
+   `_garageRig()` returns it from both the no-rig path (164476) and its catch
+   (164479), and the bridge repeats the same shape at 207985 — three sites, one
+   word. A parallel name invented here would be a second vocabulary for one
+   state, and the player would meet both. (Cited by function name, not by line
+   alone — see the note on citations in the header for why.) */
 function garageCard(garage, fleetCap) {
   const slot = N(garage.slotBonus) || 0;
   const run = N(garage.runBonus) || 0;
@@ -683,17 +744,29 @@ function fleetRow(row) {
     + '</div>';
 }
 
-/* 🪝 DEAD HOOK, LABELLED HONESTLY rather than left as a mystery.
-   `view.lot` is NOT in the pinned view shape, so this block renders nothing
-   today. It exists because index.js DOES handle a `register` action — grep its
-   onClick for `act === 'register'`, which calls registerRig(id) and reads its
-   vehicle id from data-mt-id ONLY, with no form-field fallback. That makes the
-   action unreachable from a panel that never draws an unregistered vehicle. The
-   missing half is a list of lot vehicles that are not yet fleet rigs; when
-   index.js adds `lot: [{vehicleId, name, rarityName, rarityColor, condition}]`
-   to the view, this draws it and the hook goes live with no change here.
-   Deliberately NOT solved by adding a "vehicle id" text box: asking a player to
-   type an internal id is a worse UI than not offering the action at all. */
+/* 🏷 THE LIVE HALF OF THE `register` ACTION — no longer a dead hook.
+   index.js's onClick handles `act === 'register'` and takes the vehicle id from
+   data-mt-id ONLY, with no form-field fallback, so the action is unreachable
+   unless something draws a button carrying that id. This is that something, and
+   for one revision it did not draw: the panel handled an action it never
+   offered.
+   index.js's `lotBlock()` now supplies `view.lot` in the shape read below,
+   verbatim — {vehicleId, name, rarityName, rarityColor, condition} — already
+   filtered to haul-class vehicles that are not registered rigs. This file adds
+   no filter of its own on purpose: a second opinion about what is registerable
+   would draw buttons index.js then refuses, and the refusal would be correct
+   while the button was wrong.
+   `view.lot` is still read through arr() rather than assumed, because it is NOT
+   in the pinned view shape this file was contracted against — a renderer that
+   throws on a key the contract does not promise dies on the first test literal.
+   REJECTED: a "vehicle id" text box as a way to reach the action without this
+   list. Asking a player to type an internal id is a worse UI than not offering
+   the action at all.
+   AN EMPTY LOT DRAWS NOTHING, deliberately, and that is not the blank-instead-
+   of-an-instruction failure this file exists to prevent: nothing is
+   registerable, and the fleet's own empty state one card up already names the
+   Prince Portfolios auction floor as where rigs come from. A second "nothing
+   here" box under it is noise, and noise is what makes real banners ignorable. */
 function lotBlock(v) {
   const lot = arr(v.lot);
   if (!lot.length) return '';
@@ -704,6 +777,11 @@ function lotBlock(v) {
       const id = str(it.vehicleId);
       return '<div class="mt-io">🚚 ' + esc(str(it.name, 'Unnamed rig'))
         + ' <span class="mt-chip" style="color:' + safeColor(it.rarityColor, '#cfd6e4') + '">' + esc(str(it.rarityName, 'unranked')) + '</span> '
+        /* Condition is shown BEFORE the click because registerRig() copies it
+           onto the fleet row and it sets the rig's runs/day for good — a player
+           registering a wreck should read that here, not discover it as a run
+           ladder on the fleet tab afterwards. */
+        + (str(it.condition) ? '<span class="mt-dim">' + esc(str(it.condition)) + '</span> ' : '')
         + btn('register', '➕ Register', { id: id, disabled: !id })
         + (id ? '' : ' <span class="mt-dim">— no vehicle id, so it cannot be registered from here.</span>')
         + '</div>';
@@ -728,18 +806,29 @@ function quoteForm(v) {
     + field('mt-cargo-n', 'Units', { type: 'number', value: f.units, placeholder: '0' })
     + field('mt-carrier', 'Carrier id', { value: f.carrierId, placeholder: 'blank = pick from the board' })
     + '<div>' + btn('quote', '💬 Get a quote') + btn('meridian', '🚚 Quote Meridian instead') + '</div>'
-    /* ⚠ KNOWN DEFECT, RECORDED HERE BECAUSE IT CANNOT BE FIXED HERE.
+    /* ✔ CLOSED — and the history stays because it is the reason `view.form`
+       exists at all, and the reason nobody may delete it as an unused key.
        index.js's paint() replaces the overlay's innerHTML after every action,
-       which destroys these five inputs and everything typed into them. So the
-       fields are blank again after each click, and a second "Get a quote"
-       press on an apparently-filled form is refused with "Pick where the cargo
-       is and where it is going". `view.form` above is the fix from this side:
-       the moment index.js echoes the last selection() back on the view, the
-       values survive the repaint. It is optional and absent today, and this
-       comment exists to be deleted by whoever adds it. Deliberately NOT worked
-       around by having this file remember the values in a module variable —
-       that would make a pure renderer stateful and give two places an opinion
-       about what the form says. */
+       which destroys these five inputs and everything typed into them. The
+       fields went blank after each click, so a second "Get a quote" press on a
+       visibly-filled form was refused with "Pick where the cargo is and where
+       it is going" — a correct action refused for a wrong reason, the failure
+       this whole file is organised against.
+       It is closed at BOTH ends, and both halves are load-bearing: selection()
+       falls back to S.form when a live field reads '' (index.js, `pick(...)`),
+       and buildView() echoes S.form back as `view.form`, which is what the
+       `value:` arguments above re-render. The echo alone would repaint values
+       that selection() then ignored.
+       REJECTED: having this file remember the values in a module variable. That
+       makes a pure renderer stateful and gives two places an opinion about what
+       the form says; index.js's own comment on `S.form` rejects it from the
+       other side too.
+       ⚠ REMAINING LIMIT, stated because it is not zero. S.form is written when
+       an ACTION is dispatched, and index.js repaints on a 15-second ticker as
+       well — so half-typed text that has never been submitted is still lost to
+       the next tick, and what comes back is the last submitted selection. That
+       is a much smaller loss than the refusal above; closing it would need an
+       input listener, which is the one thing this file does not do. */
     + banner('info',
       'A quote is a price at a moment, not a booking. The exchange re-prices the haul when you dispatch it and charges what IT computes.',
       'If the two ever differ, the server’s number is the real one — this panel cannot bind a price and does not pretend to.')
@@ -820,7 +909,8 @@ function carrierRow(c, isNpc) {
      routes.js returns code 'blocked' with its own reason and fix, and
      quoteCard() prints both. This branch exists so that if the board ever does
      carry the bit, the shipper learns it before spending a click on a quote
-     that cannot succeed. Grep contracts.js for `blacklist` before deleting it. */
+     that cannot succeed. Read contracts.js's "`blacklist` IS DELIBERATELY NOT
+     SELECTED" note (around :693) before deleting it. */
   const blocked = !!c.blocked;
   const cells = [];
 
@@ -834,7 +924,17 @@ function carrierRow(c, isNpc) {
      of what the pricing code does. */
   cells.push('<td class="mt-gold">' + fmt(tariff, '—') + '</td>');
   cells.push('<td>' + pctText(c.reliability) + '</td>');
-  cells.push('<td>' + (N(c.coverage) === null ? '—' : fmt(c.coverage) + ' pairs') + '</td>');
+  /* COVERAGE IS A COUNT FOR A PLAYER AND A SENTINEL FOR THE NPC, and printing
+     the sentinel as a count misleads in the one row that must not. routes.js's
+     MERIDIAN carries `coverage: 100` under the comment "every node pair,
+     always", and index.js passes it through untouched — so this column would
+     read "100 pairs" against the carrier whose entire guarantee is that there
+     is no pair it refuses, and a shipper comparing it against a player carrier
+     serving 140 would conclude Meridian could not take their route. The NPC row
+     prints what the number MEANS instead of what it is. */
+  cells.push('<td>' + (isNpc
+    ? 'every pair'
+    : (N(c.coverage) === null ? '—' : fmt(c.coverage) + ' pairs')) + '</td>');
   /* FREE BAYS IS A THREE-WAY COLUMN and collapsing it to two is the bug this
      file shipped: null = "not published" ('—'), 0 = "full" (red, plus the
      spelled-out row below), n = capacity. index.js makes the same call on the
@@ -1095,7 +1195,7 @@ export function renderTransport(view) {
     return '<div class="mt-wrap"><div class="mt-head"><h2>🚛 Freight Depot</h2>'
       + '<button class="mt-btn" type="button" data-mt="close" style="margin-top:0">✕ Close</button></div>'
       + banner('bad',
-        '⚠ The depot screen could not be drawn: ' + str(e && e.message, String(e)).slice(0, 160),
+        '⚠ The depot screen could not be drawn: ' + clip(str(e && e.message, String(e))),
         'Nothing was charged and no contract was changed. Reload the game; the message above is the whole of what went wrong.')
       + '</div>';
   }

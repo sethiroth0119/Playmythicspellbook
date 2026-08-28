@@ -343,12 +343,13 @@ export const CITY_PRODUCTION = [
             regard for halt state, so a "halted" depot keeps every bay, every
             fleet slot and its full reach.
          3. The fuel sink the doc wants is real, and it is somebody else's line.
-            sql/038's own header states it: "fuel burn and repair bills are
-            _opEcon()'s business and are deliberately absent" from the
-            migration. CLAUDE.md agrees — all operation pricing goes through
-            _opEcon(). A per-run burn priced HERE would be a second price for
-            one thing, which is the failure this catalog's cost dial exists to
-            prevent.
+            sql/038 says so where it defines transport_config: "Startup cost,
+            salaries, fuel burn and repair bills are that file's business and
+            are deliberately absent" — that file being index.html's OPS_ECON,
+            reached through _opEcon(), which CLAUDE.md names as the only place
+            operation pricing may live. A per-run burn priced HERE would be a
+            second price for one thing, which is the failure this catalog's
+            cost dial exists to prevent.
        So: no `inputs`, and when the per-run burn does ship it ships in
        _opEcon('transport') and this line stays null. The card losing a fuel
        chip is the whole cost of that. */
@@ -373,24 +374,74 @@ export const CITY_PRODUCTION = [
          radius   — reach in HOPS from the node the yard stands in. No depot in
                     reach of both endpoints ⇒ no quote, which is what stops one
                     player serving the planet from a single tile.
-       🔴 sql/038 HAS ITS OWN COPY OF TWO OF THESE AND THE SERVER'S COPY BINDS.
-       transport_dispatch() computes `least(2 * depot_level, max_bays)` and
-       transport_quote() computes `3 + depot_level`, as plpgsql literals — a
-       migration cannot import this catalog. So changing the multipliers below
-       WITHOUT editing sql/038 (v_reach in transport_quote, v_bays in
-       transport_dispatch) makes the panel promise bays and reach that dispatch
-       then refuses — this repo's worst bug class: shown one number, billed by
-       another. The two copies must move together, in one change.
-       ⚠ max_bays defaults to 6 and 2 × 3 is exactly 6, so the server's clamp is
-       invisible today and will bite the first person who raises the bays
-       multiplier without raising transport_config.max_bays. */
+       🔴 sql/038 RESTATES THIS LADDER AND THE SERVER'S COPY BINDS. A migration
+       cannot import this catalog, so the server states it again in SQL — but
+       ONCE, in transport_caps() (grep the name; that file grew ~800 lines this
+       round and every colon-and-number citation into it went stale): reach
+       `3 + depot_level`, bays `least(2 * depot_level, max_bays)`, fleet_cap
+       `least(4 * depot_level, max_fleet_rigs)`. Its header names itself the authority for
+       the CAPS and names this file the authority for what the building COSTS
+       AND DRAWS, and it records the draft it replaced: those three expressions
+       "were written out at four separate call sites in the first draft" — reach
+       in transport_quote, bays in transport_dispatch, both again in
+       transport_set_sheet's payload — because "Four copies of a formula is four
+       authorities."
+       ⚠ AN EARLIER VERSION OF THIS COMMENT DESCRIBED THAT DEAD DRAFT as if it
+       were the live server, and pointed a future editor at two call sites that
+       no longer compute anything. Corrected here rather than left to be
+       rediscovered: there is one function, and changing a multiplier below
+       WITHOUT editing transport_caps() makes this panel promise bays and reach
+       that dispatch then refuses — this repo's worst bug class: shown one
+       number, billed by another.
+       ⚠ THE SERVER CLAMPS WHERE THIS DOES NOT, AND ONE OF THE CLAMPS REFUSES A
+       WRITE. max_bays defaults to 6 and 2 × 3 is exactly 6, so that clamp is
+       invisible today and bites the first person who raises the bays multiplier
+       without raising transport_config.max_bays. fleet_cap is clamped the same
+       way against max_fleet_rigs and it is ENFORCED — by
+       transport_fleet_cap_guard(), the BEFORE INSERT trigger on transport_rigs,
+       which raises `fleet_cap` once a carrier's rigs reach it. So it is not a
+       display number: a generous fleetCap here becomes a registration a player
+       cannot make, after they have bought the rig.
+       ⚠ AN EARLIER VERSION OF THIS LINE NAMED THE INSERT POLICY trg_ins AS THE
+       ENFORCEMENT. Wrong, and wrong in the direction that matters: that clause
+       was a draft and has been deleted, under a heading in sql/038 that reads
+       "THE FLEET CAP IS NOT HERE, AND THIS IS THE LINE IT WAS WRONG ON TWICE"
+       — a `stable` helper called from a WITH CHECK cannot see the rows its own
+       statement is inserting, and 60 rigs went into a cap-4 charter to prove
+       it. Cite the trigger, not the policy.
+       ⚠ AND THE SERVER READS A COLUMN, NOT THIS FUNCTION: it caps off
+       `transport_companies.depot_level` — `int not null default 1 check
+       (depot_level between 1 and 3)` — which the client would send through
+       transport_set_sheet(). maxLevel above must stay 3; raising it here alone
+       would sell a level the server silently flattens.
+       🔴 AND NOTHING IN THE SHIPPED CLIENT EVER SENDS IT. contracts.js's
+       setTariff() is the only caller of transport_set_sheet and it passes
+       `p_depot_level: null`, which that function coalesces back to the stored
+       value. Every carrier is therefore depot_level 1 on the server whatever
+       this catalog says, so an UPGRADED yard's extra bays and reach exist only
+       on the client until a level-send path ships. That is not fixable from this
+       file — it is stated here because this is where the ladder is defined, and
+       depot.js's depotReady() is what puts it in front of the player (its
+       `drift` field). Do not "fix" it by shrinking the numbers below.
+       ⚠ AND NOTHING STOPS A PLAYER PLACING TWO OF THESE. renderBlueprints()
+       emits a Build button for every entry in this array with no already-built
+       test, and build() checks prereqs and cost and then pushes — there is no
+       uniqueness test on that path for ANY building. For most entries that is
+       fine (two farms is two farms). For this one it is a divergence, because
+       the server's fleet cap is per-carrier off one depot_level and has no
+       concept of a second yard. Deliberately NOT solved by adding a uniqueness
+       rule here: `unique: true` would be a new field that every other entry and
+       every read site would have to learn, to fix one building's problem, and
+       /src/city has no such concept today. It is reported instead, on the
+       transport side, by the module that knows what the server does. */
     effect: lv => ({ bays: 2 * lv, fleetCap: 4 * lv, radius: 3 + lv }),
     footprint: { w: 3, h: 3 },
     /* 💰 AUTHORED PRE-DIAL, like all 51 rows above it. buildingCostAt() applies
        RESOURCE_COST_MULT = 2.5 to every non-cinder leg and CINDER_COST_DIV = 3
-       to the cinder leg AT READ TIME, so these numbers are NOT the price: L1 is
-       charged as 35,000 cinder + 238 metal + 175 supplies + 125 stone + 75
-       fuel. Never hand-multiply a row to "fix" a price and never touch the two
+       to the cinder leg AT READ TIME, so these numbers are NOT the price. Worked
+       once, the way cost.js works its own example — RUN, not asserted:
+       buildingCostAt(def, 1) returns 35,000 cinder + 238 metal + 175 supplies +
+       125 stone + 75 fuel. Never hand-multiply a row to "fix" a price and never touch the two
        constants for one building — they are one knob for the whole catalog, and
        that is what keeps the UI and the spend from ever disagreeing.
        Priced against the Power Plant (the other 3×3 utility) and deliberately a

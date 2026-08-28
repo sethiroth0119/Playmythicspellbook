@@ -112,6 +112,16 @@ let _refreshToken = 0;       // stale-response guard, see refresh()
 let _tick = 0;               // ETA repaint interval id, cleared by close()
 let _starterSeeded = false;  // in-session starter-rig guard
 let _starterPending = false; // seeding was refused; retry on the next good read
+/* The starter-rig REFUSAL has been spoken once this session. seedStarter()'s
+   return is a player-facing refusal, not merely a `seeded` flag — refresh()
+   used to read `if (r && r.seeded)` and drop `why`/`fix` on the floor, so the
+   four sentences seedStarter writes ('spent', 'full', 'nobridge', generic)
+   were reachable from nowhere: the player was told to "free a slot and reopen
+   the Freight Depot" (index.html's founding toast) and the reopened depot said
+   nothing at all. Latched because refresh() runs on an every-action cadence and
+   an un-latched toast would be the same silence in the opposite key. Cleared
+   when a seed actually lands, so a later refusal can still be heard. */
+let _starterToldWhy = false;
 
 /* ── the seam ───────────────────────────────────────────────────────────────
    Re-derived on EVERY call rather than captured once, so a bridge that mounts
@@ -545,8 +555,30 @@ function carrierBlock() {
     id: c.id,
     name: c.name || 'Unnamed carrier',
     tariff: tariffOf(c),        // JSONB → number; see tariffOf()
-    reliability: num(c.reliability),
-    coverage: num(c.coverage),
+    /* 🔴 THE SAME "unknown is not zero" CALL AS freeBays BELOW, and these two
+       columns were shipped without it — the rate board therefore advertised
+       every newly founded player carrier as "0%" reliable and "0 pairs" served,
+       beside the NPC row printing 100% and "every pair". That is the strongest
+       possible argument for taking the Meridian quote at 2.5×, made about a
+       carrier the server has said nothing about.
+       It is `num` that defeats the renderer's three-way discipline, one file
+       upstream: depot.render.js's N() and pctText() both answer '—' for null,
+       but `num` is `Number(v)` with a finite test, and `Number(null)` is 0 —
+       not NaN — so a null reliability arrived there as a real zero and never
+       reached the '—' arm. The null has to be preserved HERE.
+       • `reliability` is NULL on every carrier until a haul settles: sql/038's
+         insert policy pins it null on purpose (a founder who could pick their
+         own opening reliability would start at 100% and never earn it) and
+         transport_settle is its only writer.
+       • `coverage` HAS NO COLUMN in transport_companies at all — listCarriers()
+         selects id, owner_id, name, home_node_id, depot_level, tariff,
+         reliability, status, created_at — so `c.coverage` is undefined and null
+         is the only honest value until such a column exists. `coverageCount` is
+         accepted alongside it so the day one is published under either name
+         this line already carries it. */
+    reliability: (c.reliability === null || c.reliability === undefined) ? null : num(c.reliability),
+    coverage: (c.coverage === undefined && c.coverageCount === undefined)
+      ? null : num(c.coverage !== undefined ? c.coverage : c.coverageCount),
     /* Unknown is NOT zero. `0 free bays` reads as "full" and would quietly
        route the shipper to Meridian at 2.5× over a column the rate board simply
        did not send. null renders as '—'; the real check is server-side anyway. */
@@ -711,10 +743,22 @@ async function refresh() {
      does not call refresh(), so this cannot loop. */
   const wantStarter = _starterPending || (!S.rigs.length && !!call(b.ownsCharter, false));
   if (wantStarter && okOf(rigs)) {
+    /* 🔴 seedStarter()'s RETURN IS A REFUSAL SENTENCE, NOT A FLAG, and reading
+       only `r.seeded` here silently discarded it. That was the regression this
+       arm was added to fix arriving in a new shape: index.html's founding toast
+       promises "free a slot and reopen the Freight Depot to claim it", the
+       reopen ran the seed, the seed refused with 'full' — and the panel printed
+       nothing, so the player was sent round the loop index.html's own comment
+       says the dedicated 'spent' sentence exists to prevent. Said ONCE per
+       session (`_starterToldWhy`) because this block runs on every refresh. */
     const r = await seedStarter(S.rigs);
     if (r && r.seeded) {
+      _starterToldWhy = false;
       const again = await acall(listMyRigs, { ok: false });
       if (token === _refreshToken && okOf(again)) S.rigs = rowsOf(again);
+    } else if (r && r.ok === false && r.why && !_starterToldWhy) {
+      _starterToldWhy = true;
+      try { b.toast('🚛 ' + reasonOf(r), 6200); } catch (e) {}
     }
   }
   paint();
@@ -842,6 +886,26 @@ async function seedStarter(knownRows) {
         ok: false,
         why: 'Your Prince Portfolios lot is full, so the starter rig has nowhere to park.',
         fix: 'Sell, scrap or strip a vehicle to free a slot, then reopen the Freight Depot — the rig is issued then.',
+      };
+    }
+    /* 'nocharter' IS NOT A RETRY, AND IT REACHED THE PLAYER AS ONE. The mint's
+       gate is `_transportOps().length` (index.html's grantStarterRig key), so
+       this code means "no Transportation Company was ever founded". Before this
+       arm existed it fell to the generic sentence below and read "No haul-class
+       rig in your lot to register yet (nocharter). Reopen the Freight Depot and
+       it will try to issue the rig onto your lot again." — a promise reopening
+       can never keep, which is the same class of sentence the retry wiring was
+       added to delete. It is admin-only in practice: refresh()'s trigger needs
+       ownsCharter(), which answers true for admins (see the gate note at
+       index.html's grantStarterRig), while the mint deliberately does not. The
+       flags above are left as they are on purpose — founding in this session
+       calls seedStarter() again through onCharterFounded(), and _starterPending
+       simply lets a refresh get there first. */
+    if (grant === 'nocharter') {
+      return {
+        ok: false,
+        why: 'You have not founded a Transportation Company, so there is no charter for a starter rig to come with.',
+        fix: 'Found the Transportation Company in Just Business — the rig is issued with the charter.',
       };
     }
     /* 'nobridge' is call()'s neutral for a bridge with no grantStarterRig at
@@ -1018,7 +1082,18 @@ function quoteRequest(b, sel, garage, npc) {
        direction a shipper with a small yard was refused a haul a large carrier
        could legally take. routes.js's
        precedence is not wrong — a caller holding a FRESHER copy of the SAME
-       yard should win — it was being handed a different party's yard. */
+       yard should win — it was being handed a different party's yard.
+
+       ⚠ AND `home_node_id` IS WRITE-ONCE, which is what makes an empty one here
+       permanent rather than merely wrong. transport_companies revokes UPDATE
+       and DELETE from anon and authenticated, and transport_set_sheet takes
+       p_company_id / p_tariff / p_status / p_depot_level / p_blacklist and no
+       home node — so nothing in this build can correct the column after the
+       insert. resolveDepot() decides `present` from nodeId ALONE, so a carrier
+       founded with an empty one answers 'no-depot' to every quote it will ever
+       be asked for, forever, leaving its owner with Meridian at the 2.5×
+       ceiling. The founding path therefore refuses to write a row with no
+       origin (see the 'found' action) instead of relying on a fallback here. */
     depot: Object.assign(
       { nodeId: row.home_node_id || row.homeNodeId || '' },
       call(depotEffect, { bays: 0, radius: 0 }, num(row.depot_level !== undefined ? row.depot_level : row.depotLevel))),
@@ -1173,8 +1248,56 @@ async function onClick(ev) {
       if (S.company) { b.toast('🚛 You already run a carrier on the exchange.'); return; }
       const name = fieldVal('mt-name').trim();
       if (!name) { b.toast('Your carrier needs a name shippers can find you by.'); return; }
+      /* 🔴 THE CHARTER'S ORIGIN IS THE CAMP NODE, AND IT IS WRITE-ONCE.
+         This used to send `{ name }` alone, leaving createCompany() to fall
+         back to `campNodeId()` — `Profile.campNodeId`, which is null for every
+         player who has never registered a camp on a Territory Wars node. A null
+         `home_node_id` is now FATAL rather than harmless: quoteRequest() builds
+         the quote's only depot from the carrier row and resolveDepot() decides
+         `present` by nodeId alone, so a carrier founded with no origin answers
+         'no-depot' to every quote — including its OWN OWNER's.
+         🔴 AND THERE IS NO WAY BACK. transport_companies has no UPDATE policy
+         (UPDATE/DELETE are revoked) and transport_set_sheet takes tariff,
+         status, depot_level and blacklist and NO home node — the column is
+         write-once at insert. So the wrong value here is permanent, and the
+         player's only carrier is Meridian at the 2.5× ceiling forever. That is
+         why this refuses to write the row rather than writing a hopeful one.
+
+         ⚠ CORRECTION, RECORDED RATHER THAN QUIETLY SWEPT UP. The first version
+         of this fix read the origin out of `depotReady().nodeId` and this
+         comment claimed the yard's node was a DIFFERENT and better node than
+         the camp's — "it is where the reach is granted from, while campNodeId
+         is wherever the city stands". That is FALSE in this build, and the
+         claim mattered because it justified a fallback chain and an error
+         message. depot.js's toDepots() stamps `nodeId = originNodeId()` on
+         EVERY depot row, and originNodeId() is literally `bridge().campNodeId()`
+         — see depot.js's own header note "THERE IS ONE CITY, SO EVERY DEPOT
+         SHARES ONE ORIGIN". Measured: with campNodeId 'N-CAMP' and a level-2
+         depot placed, depotReady() answers `nodeId:'N-CAMP'`; with campNodeId
+         null and the SAME depot placed it answers `{ok:false, code:'no-origin',
+         nodeId:''}`. So there was only ever one value, read two ways.
+         Two consequences, both applied here:
+           1. The depot read is gone. `(yard && yard.nodeId) || campNodeId()`
+              had a dead second operand whenever the yard resolved, and when the
+              yard REFUSED for a reason unrelated to the origin (no city loaded,
+              rows unreadable) it needlessly blocked a founding the camp node
+              could have supplied. campNodeId() is the single source; that is
+              also exactly what createCompany() falls back to, so the two sides
+              cannot disagree.
+           2. The refusal no longer borrows depot.js's sentence. It used to
+              print `reasonOf(yard)`, which for a player with no depot reads
+              "Build a Freight Depot in your city. It needs a Power Plant
+              first." — a building's worth of Cinder that changes NOTHING here,
+              after which the same click refuses again with 'no-origin'. The
+              blocker is the camp, so the sentence names the camp. Founding a
+              carrier does not require a yard at all; quoting from it does. */
+      const home = String(call(b.campNodeId, '') || '').trim();
+      if (!home) {
+        b.toast('🚛 Your carrier needs a map position to quote from, and nothing in this build can set one after the charter is filed. Plant your camp on a node first, then register.', 6600);
+        return;
+      }
       if (!(await b.confirm('Register "' + name + '" on the freight exchange?'))) return;
-      const r = await acall(createCompany, { ok: false }, { name });
+      const r = await acall(createCompany, { ok: false }, { name, homeNodeId: home });
       if (!okOf(r)) { b.toast('🚛 ' + reasonOf(r), 5200); return; }
       b.toast('🚛 ' + name + ' is on the exchange.');
       await refresh();

@@ -198,8 +198,10 @@ const obj = (v) => ((v && typeof v === 'object') ? v : {});
 /* ── clip() ─ THE ERROR BUDGET, ENFORCED HERE BECAUSE NOTHING ELSE ENFORCES IT ─
    🔴 PAST BUG, AND IT LIVED IN THIS FILE'S COMMENTS RATHER THAN ITS CODE.
    The server-error banner below used to open with "index.js has already trimmed
-   it to 160 chars". index.js does not, and never did: classify() (index.js:191)
-   is the only writer of `S.error` and the whole of the treatment is
+   it to 160 chars". index.js does not, and never did: classify() (index.js —
+   grep `function classify(`; the :191 this line used to carry landed on the
+   MISSING_RE paragraph a dozen lines above it, so the number is gone and the
+   token stays) is the only writer of `S.error` and the whole of the treatment is
 
        if (r.error && !S.error) S.error = String(r.why || r.error);
 
@@ -471,9 +473,13 @@ function statusBanners(v) {
   /* ⚠ THE REAL ERROR, IN THE SERVER'S OWN WORDS. Clipped, never rewritten.
      It is NOT replaced with a guessed cause, and there is a scar behind that:
      index.html's `_bankEnsureCharter()` carries the rule verbatim — "Name the
-     real error instead of guessing at a cause" (index.html:79943) — written on
-     top of four wasted debugging sessions caused by a toast telling an admin to
-     run a .sql file they had already run. A renderer that swaps a server message
+     real error instead of guessing at a cause" (grep `guessing at a cause`
+     inside `_bankEnsureCharter`; the sentence is WRAPPED across two `//` lines
+     there, which is why grepping it whole finds nothing, and the :79943 this
+     line used to carry was a dozen lines short of it besides) — written on top
+     of the four separate debugging sessions its own comment records, all caused
+     by a toast telling an admin to run a .sql file they had already run. A
+     renderer that swaps a server message
      for a friendlier theory is exactly the mechanism that produced that, so the
      friendly framing goes in `fix`, where it cannot displace the evidence.
 
@@ -709,8 +715,8 @@ function fleetRow(row) {
      below and `repairable` at the bottom — and two copies of one test is exactly
      how this card came to print "this rig will not repair" beside an ENABLED
      Repair button. It is a CONDITION, not a status: transport_repair refuses on
-     `condition = 'Salvage'` (sql/038_transport_companies.sql, transport_repair,
-     :2396 — grep `rig_is_salvage`; the line number moves, the token does not)
+     `condition = 'Salvage'` (sql/038_transport_companies.sql, transport_repair
+     — grep `rig_is_salvage`; the line number moves, the token does not)
      and 'salvage' is not in transport_rigs' status CHECK at all. The
      status disjunct is kept anyway as a tolerant read of a row that puts it
      there — it costs nothing, and the alternative is a rig the server calls
@@ -734,12 +740,20 @@ function fleetRow(row) {
   } else if (status === 'hauling' || status === 'assigned' || str(r.assignedTo)) {
     /* 🔴 THE RIG VOCABULARY IS THE SERVER'S, AND THIS ARM ONCE INVENTED ITS OWN.
        transport_rigs.status is CHECKed to ('idle','hauling','assigned','retired')
-       — sql/038_transport_companies.sql, the `create table transport_rigs`,
-       :596 — and transport_dispatch is the only thing that sends a rig out,
-       setting `status = 'hauling'` (:2018). This arm used to test
-       `status === 'in_transit'`, which is the CONTRACT ladder
-       (transport_contracts' own CHECK, :640), not the rig one; index.js's
-       fleetBlock passes the column through verbatim
+       — sql/038_transport_companies.sql, `create table if not exists
+       public.transport_rigs`, its `check (status in ('idle','hauling',` line
+       (that citation read `create table transport_rigs`, which greps to
+       NOTHING: every table in that file is declared if-not-exists and
+       schema-qualified) — and transport_dispatch is the
+       only thing that sends a rig out: grep
+       `create or replace function public.transport_dispatch` and read the
+       `update public.transport_rigs r` inside it, which sets status to 'hauling'
+       in the same statement that bumps runs_used. (Grep the function FIRST —
+       `update public.transport_rigs` appears several times in the file, and a
+       count is as perishable as a line number, so do not trust one here.) This
+       arm used to test `status === 'in_transit'`, which is the CONTRACT ladder
+       (transport_contracts' own `check (status in ('in_transit',` …), not the
+       rig one; index.js's fleetBlock passes the column through verbatim
        (`status: row.status || 'idle'`), so a rig that was genuinely hauling fell
        past here into the unknown-status arm below and the panel told the player
        that a perfectly normal rig was in a state this build had never heard of —
@@ -785,11 +799,16 @@ function fleetRow(row) {
 
   /* REPAIRABLE MIRRORS transport_repair()'s OWN REFUSALS, ONE FOR ONE, so the
      button is never offered for a call that cannot succeed. The RPC (sql/038,
-     `create or replace function public.transport_repair`, :2353) refuses THREE
-     things, and this expression is those three and nothing else:
-       `status = 'hauling'`    → `rig_in_transit` (:2386)
-       `status = 'retired'`    → `rig_retired`    (:2393)
-       `condition = 'Salvage'` → `rig_is_salvage` (:2396)
+     `create or replace function public.transport_repair`) refuses THREE things,
+     and this expression is those three and nothing else — grep each error token
+     INSIDE that function; the tokens are stable, the line numbers are not:
+       `status = 'hauling'`    → `rig_in_transit`
+       `status = 'retired'`    → `rig_retired`
+       `condition = 'Salvage'` → `rig_is_salvage`
+     ⚠ Grep inside the function, not across the file: `rig_in_transit` is also
+     raised by `transport_retire_rig`, whose test is a different one
+     (`status = 'hauling' or v_live > 0`). The three mirrored here are
+     transport_repair's.
      They matter more than a greyed button usually would, because contracts.js's
      repair() SPENDS FIRST — gcConfirm, spendGems(bill.cinder), takeRes(parts),
      persist — and only then calls the RPC, so an offered button on a rig the
@@ -1166,12 +1185,21 @@ function contractList(v) {
    rendering for it is how "my cargo says in transit forever" happens.
 
    🔴 THESE FIVE NAMES ARE transport_contracts' CHECK CONSTRAINT, NOT A GUESS.
-   sql/038_transport_companies.sql (the `create table transport_contracts`,
-   :640) reads `check (status in
-   ('in_transit','delivered','lost','late','refused'))`, and transport_settle
-   (:2255) is the ONLY writer of any of them: it sets status to 'delivered' or
-   'lost' AND settled_at in one UPDATE. There is no separate 'settled' state and
-   there has never been an 'arrived'.
+   sql/038_transport_companies.sql's `create table if not exists
+   public.transport_contracts` reads
+   `check (status in ('in_transit','delivered','lost','late','refused'))`, and
+   transport_settle is the ONLY writer of any of them: its
+   `set status = v_status, settled_at = now()` sets the status AND settled_at in
+   one UPDATE. There is no separate 'settled' state and there has never been an
+   'arrived'.
+   ⚠ THE GUARD IS NOT THE WRITER, and this comment used to imply it was. An
+   earlier revision cited one sql/038 line number for the sentence above, and
+   that number landed on `if v_ct.status <> 'in_transit'` — the retry guard,
+   several dozen lines ABOVE the UPDATE. A reader who followed it concluded the
+   guard was the settle writer, which is precisely the distinction the Settle
+   button further down turns on. Both are named as tokens here on purpose:
+   `if v_ct.status <> 'in_transit'` = guard, `set status = v_status,
+   settled_at = now()` = writer.
    An earlier revision of this map invented both — states the exchange cannot
    emit — and, following from that, worded 'delivered' as a step on the way to
    settling. Because 'delivered' is only ever REACHED by settling, that arm told
@@ -1182,13 +1210,42 @@ function contractList(v) {
    not deliver. The invented names are what made the drift invisible: nothing
    could ever hit those arms, so nothing ever looked wrong. If a name in here is
    not in the CHECK, it is a bug.
-   'late' and 'refused' are carried even though sql/038's own comment (:634,
-   immediately above that CHECK) says NOTHING PRODUCES THEM YET. That is
+   'late' and 'refused' are carried even though sql/038's own comment sitting
+   immediately above that CHECK says NOTHING PRODUCES THEM YET — grep that
+   phrase rather than a line number. That is
    deliberate and it is not dead code for its own sake: the constraint permits
    them, so on the day something starts writing one the panel must say what it
    is instead of dropping into the unknown-status arm below. Their wording
    claims nothing about money moving,
-   because sql/038 does not say. */
+   because sql/038 does not say.
+
+   🔴 STANDING RULE FOR EVERY sql/038 CITATION IN THIS FILE: NAME THE TOKEN,
+   NEVER THE LINE. sql/038 is applied BY HAND in the Supabase editor, so it is
+   edited and renumbered without anything in this repo noticing; routes.js
+   refuses line numbers into it outright for the same reason — grep
+   `No line numbers: that migration is` in routes.js's SHEET provenance
+   paragraph. This is not a style preference. A round of fixes added
+   colon-and-line citations back into the four comments around this one and
+   EVERY ONE of them was already wrong the day it was written: the
+   transport_rigs CHECK, transport_dispatch's `status = 'hauling'`,
+   transport_repair and its three error tokens, and the transport_settle
+   guard/writer pair all landed on unrelated comment prose, and the settle one
+   pointed a reader at the guard while calling it the writer. Cite a constraint
+   by its `check (…)` text, a function by
+   `create or replace function public.<name>`, and a refusal by its error token.
+   (An earlier draft of THIS paragraph quoted a sentence about stale citations
+   as coming from sql/038's own header. It is not there — grep found nothing.
+   Rejected and removed rather than left standing: a made-up citation inside the
+   rule against made-up citations is the worst possible place for one.)
+   ⚠ THE RULE IS NOT sql/038-ONLY. The two line citations this file carried into
+   OTHER files were both stale when they were checked: `classify() (index.js:191)`
+   in clip()'s header (classify is not there) and `(index.html:79943)` in the
+   server-error banner's (the quoted sentence is a dozen lines further on, and
+   wrapped across two comment lines so it never grepped whole). index.html is
+   ~11.6 MB and renumbers on every additive edit, so a line number into it is
+   stale on arrival. Both are now tokens. Cite a function by its `function
+   name(` / `create or replace function public.<name>` declaration and a rule by
+   a phrase short enough to survive a line wrap. */
 const CONTRACT_STATE = {
   in_transit: { kind: 'info', text: '🚚 On the road.', fix: 'Settle it once it arrives.' },
   /* Terminal. settled_at is written in the same UPDATE as this status, so a row
@@ -1236,8 +1293,12 @@ function contractRow(c) {
       'Refresh the depot. Nothing is lost — the haul exists on the exchange; this row simply has no handle on it.'))
     /* SETTLE IS OFFERED FOR EXACTLY ONE STATUS, because transport_settle guards
        on exactly one: `if v_ct.status <> 'in_transit'` returns `retried: true`
-       and moves nothing (sql/038, `transport_settle`, :2211). Enumerating the
-       terminal states here instead ('delivered', 'lost', …) would be a second
+       and moves nothing (sql/038, `transport_settle` — grep that
+       `if v_ct.status <> 'in_transit'`; it is the GUARD, and NOT the
+       `set status = v_status, settled_at = now()` writer further down the same
+       function. A stale line number here used to conflate the two, which read
+       as "the guard is what settles"). Enumerating the terminal states here
+       instead ('delivered', 'lost', …) would be a second
        copy of that predicate living in another language, and it would drift the
        first time 'late' or 'refused' is written — both are terminal under the
        server's test, and a list of terminal names would have left a live Settle

@@ -36441,7 +36441,16 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120w7';
+  // ⚠ IT IS FOUR KNOBS, NOT THREE, AND THE FOURTH HAS NO OTHER GUARD.
+  // public/version.txt, this constant and sw.js's CACHE_VERSION are the
+  // documented triple; the fourth is the cache-bust on the transport module's
+  // script tag (`src/transport/index.js?v=…`, near the end of this file), which
+  // is the ONLY cache-bust /src/transport gets — its sub-modules are imported by
+  // bare relative specifier and carry no query string of their own. Navigations
+  // bypass the service worker, so index.html always arrives fresh; leaving the
+  // ?v= behind therefore pairs a NEW index.html with OLD modules, which is the
+  // worse half of the failure and not the safe one. Move all four in one edit.
+  window.BUILD_VERSION = 'v120w8';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -208116,6 +208125,13 @@ window.MythicTransportBridge = {
          runs immediately after the charge), so the gate lives on this side
          where the licence lives. A module bug cannot hand a free vehicle to
          someone who never founded a Transportation Company.
+         ⚠ The gate is `_transportOps().length`, NOT `_transportOwnsCharter()`,
+         even though the latter is the licence-shaped helper and reads better
+         here. ownsCharter() answers TRUE for every admin, and the module's
+         reopen trigger is "charter + empty fleet" — an admin who has founded
+         nothing has an empty fleet, so the licence helper would mint a ~43k rig
+         onto their lot the first time they opened the Freight Depot. See the
+         note on the gate line below before merging the two.
        • IDEMPOTENT ONCE PER ACCOUNT, AND OBSERVATION ALONE WAS NOT ENOUGH.
          The helper returns 'already' while a haul-class truck is parked — but
          this key is called on EVERY depot open with an empty fleet, so that
@@ -208138,7 +208154,22 @@ window.MythicTransportBridge = {
      file has shipped before. */
   grantStarterRig: () => {
     try {
-      if (!_transportOwnsCharter()) return 'nocharter';
+      /* 🔴 _transportOps(), NOT _transportOwnsCharter(), AND THAT IS THE WHOLE
+         POINT — do NOT "simplify" the two back together. ownsCharter() opens
+         with `if (isAdmin()) return true;`, a deliberate convenience from when
+         it powered only a launcher badge and the read-only ownsCharter bridge
+         key. Used as the gate on a MINT it hands every admin a haul-class rig
+         (~43k of Cinder value at `price: fair`) merely for opening the Freight
+         Depot: /src/transport's reopen trigger is "charter + empty fleet", and
+         an admin who founded nothing legitimately has an empty fleet, so the
+         trigger fires and this was the only thing standing in front of it.
+         Before the retry key existed, ownsCharter's admin arm had never gated a
+         mint — the helper's one call site was inside `if (opId === 'transport')`
+         in _opAfterFound, which runs only after a real founding.
+         The banner above claims "a module bug cannot hand a free vehicle to
+         someone who never founded a Transportation Company"; that sentence is
+         only true while this line reads the operation rows. */
+      if (!_transportOps().length) return 'nocharter';
       const code = _transportGrantStarterRig();
       /* 'already' SAVES TOO, and that is not tidiness. 'already' is the branch
          that backfills `p.starterRigIssued` for a charter founded before that
@@ -223853,7 +223884,7 @@ render();
        routes.js, depot.js, contracts.js, transport.bridge.js) are imported by
        bare relative specifier and carry no query string of their own, so this
        tag is the only cache-bust the whole feature gets. -->
-<script type="module" src="src/transport/index.js?v=v120w7tr1"></script>
+<script type="module" src="src/transport/index.js?v=v120w8tr1"></script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the

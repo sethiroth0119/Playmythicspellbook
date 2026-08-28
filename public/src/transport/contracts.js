@@ -6,6 +6,30 @@
    convenience — there is exactly one place where this feature can spend a
    player's money or read another player's row, and this is it.
 
+   ─── HOW THIS FILE CITES OTHER FILES, and why there are no line numbers ─────
+   🔴 EVERY CROSS-FILE CITATION IN THIS FILE IS A NAMED SYMBOL. It did not start
+      that way, and the reason it is now is a measured failure rather than a
+      style preference: this header and the comments below carried hard line
+      numbers into index.html, index.js and depot.js, and a sweep on 2026-08-28
+      found that every index.html and every index.js number had rotted. Only
+      the depot.js one still landed, and it was rewritten as a symbol anyway so
+      it cannot be the next casualty. index.html had grown, so getTodayKey()
+      had moved 71039 → 71048, OPS_ECON 79732 → 79741, corpTreasuryDeposit()
+      79679 → 79688 and `_vmCreditSeller` 195581 → 195909; every index.js
+      number was pointing at unrelated prose, because index.js is edited in the
+      same rounds this file is. One of them was not even a comment:
+      repairBill()'s not_priced remedy printed a hard index.html line number
+      for OPS_ECON straight into the toast, so the one person actually trying
+      to act on it was handed a wrong address.
+   ⚠ SO: name the function, the branch or the table — `depotReady()`'s drift
+     `fix` line, index.js's 'tariff' branch, transport_rigs' status CHECK — and
+     let the reader grep. A symbol survives an edit in the other file; a number
+     is only true until the next commit, and index.html is 11.6 MB of moving
+     target. If a number is genuinely wanted as a scrolling hint, index.html's
+     own convention is to mark it soft with a `~` — but this file does not use
+     even that, because a soft wrong number still sends a reader to the wrong
+     place.
+
    ─── THE DEGRADATION CONTRACT ───────────────────────────────────────────────
    ⚠ THE TABLES DO NOT EXIST YET. sql/038_transport_companies.sql has never been
    run against ktsiasyjusesawtrwrjc — there is no CLI login in this repo, so it
@@ -38,9 +62,9 @@
        release. Crediting the carrier locally on settle would MINT Cinder: the
        shipper's payment was already burned by wallet_charge, so paying it out
        again on the client creates units nobody destroyed. That is precisely the
-       unattributable faucet index.html:64445-64452 was written about — a week
-       of production showing "+602,357 🔥 of reconcile gains… with nothing
-       attributing a single unit of it to a source".
+       unattributable faucet index.html's addGems() `reason` argument exists
+       for — a week of production showing "+602,357 🔥 of reconcile gains… with
+       nothing attributing a single unit of it to a source".
 
    ─── 📋 WHAT WAS ACTUALLY MEASURED, and on what, 2026-08-28 ────────────────
    Recorded because "the refund unwinds" is the claim money code in this repo
@@ -98,6 +122,22 @@
        parsed object each degraded to `{}` without throwing
      · registerRig() and createCompany() were driven against a PostgREST stub
        that fails their insert, and the sentence reached the caller
+   And the three refusal codes sql/038's own gap list named as missing from the
+   ERROR TABLE — `under_price_floor`, `units_below_min`, `rig_ran_today` — 98
+   more cases, all passing, driven against the raise payloads copied out of
+   sql/038 rather than paraphrased from them:
+     · EVERY entry in the table, not just the new three, returns a non-empty
+       why and fix off an empty `d` and off explain() called with no `d` at all,
+       with no 'undefined', 'NaN' or '[object Object]' reaching a sentence
+     · the quote refusal a player actually meets — `{price:5, floor:100,
+       units:1, hops:1}` — reads "under the exchange floor of 100 🔥 per
+       contract" instead of explain()'s unknown arm, and says "more than 1 unit"
+       rather than "1 units"
+     · fleet_cap's owner arm, its ceiling arm and the guard's bare non-owner
+       `{"error":"fleet_cap"}`, and charter_cap with and without its detail, name
+       NO remedy this build cannot perform — asserted by a regex over the fix
+       line, so the promise cannot creep back in unnoticed
+     · an unknown code still comes back containing its own code verbatim
    ⚠ WHAT THIS DOES NOT PROVE. No test ran against real PostgREST, so the
      argument-set claim below is argued from sql/038's declared signature, not
      demonstrated against a live schema cache. Nothing here has seen a real
@@ -116,13 +156,14 @@
    🔴 RIGS ARE NOT SOLD CROSS-PLAYER ON THE EXISTING P2P VEHICLE MARKET, and
       that market is not extended to do it. Two concrete reasons, both in the
       live code:
-        · `_vmCreditSeller` (index.html:195581-195589) is a documented no-op:
+        · `_vmCreditSeller` (in index.html) is a documented no-op:
           `if (sellerId === _vmMyId() …) addCinders(amount); // TODO: Supabase
           RPC for true cross-player credit.` A "sale" therefore destroys the
           buyer's Cinder and pays the seller nothing at all.
         · `Forge.vehicleMarket` rides each player's own `user_profiles.forge`
-          row (index.html:46725, 48138-48149), so a listing never leaves the
-          account that made it. There is no shared market to sell into.
+          row (index.html hydrates it there and merges it on cloud load), so a
+          listing never leaves the account that made it. There is no shared
+          market to sell into.
       Building fleet trading on that would have shipped a storefront where money
       vanishes and stock is invisible. Rigs come off the Prince Portfolios
       auction floor, which each player already runs against NPC sellers.
@@ -130,7 +171,7 @@
    ─── ANOTHER, smaller: the DAY KEY is not sent ──────────────────────────────
    `bridge().todayKey()` exists and is display-only. The runs/day counter and
    its day_key are computed from the DATABASE clock inside transport_dispatch(),
-   because index.html:71039's getTodayKey() is `new Date()` on the device with
+   because index.html's getTodayKey() is `new Date()` on the device with
    no anchor: moving the OS clock mints a fresh day. That is tolerable for a
    counter that only cheats the player themself, and not tolerable for a rate
    limit other players are paying Cinder against. Same call v120g0 made when
@@ -146,8 +187,8 @@ import { bridge, bridgeReady } from './transport.bridge.js';
    rate board with no carriers on it and a rate board whose table does not exist
    are two different sentences to the player — "nobody is carrying yet, found a
    charter" versus "run sql/038 in the Supabase editor" — and collapsing them
-   loses the only one an admin can act on. index.html:55405-55411 carries the
-   same rule in a comment on its own copy of this regex.
+   loses the only one an admin can act on. index.html's ResMarket.tableMissing
+   test carries the same rule in a comment on its own copy of this regex.
 
    Three families, three different missing things, all of them meaning "the
    schema is not there yet":
@@ -165,9 +206,10 @@ export const MISSING_RE =
 /* 🔴 THE NAMED-DEPENDENCY BRANCH, and it goes FIRST — before the generic
    missing-schema test above ever runs.
 
-   index.html:79918-79930 is a monument to getting this order wrong, in its own
-   words: "'does not exist' does NOT mean the RPC is missing. It also fires when
-   the function EXISTS but a table INSIDE it does not — which is exactly what
+   index.html's bank_open_cinder error branch is a monument to getting this
+   order wrong, in its own words: "'does not exist' does NOT mean the RPC is
+   missing. It also fires when the function EXISTS but a table INSIDE it does
+   not — which is exactly what
    happened: bank_open_cinder reads public.public_profiles, a table that never
    existed, so this branch told the admin to run a .sql file they had already
    run, FOUR SEPARATE TIMES. Name the real error instead of guessing at a
@@ -237,10 +279,11 @@ export function fail(e) {
       the yard's parking got the toast `🚛 fleet_cap`, and a player founding a
       fourth charter got `🚛 charter_cap` — the raw code, straight out of
       Postgres, in a toast. index.js's reasonOf() was not at fault; it prints
-      `r.error` only because there was no `why` to print. depot.js:906 states
-      the intended contract in as many words ("Registering a rig past the
-      exchange's cap is refused as 'fleet_cap'") as something the player is
-      supposed to be able to ACT on, and neither string existed anywhere in
+      `r.error` only because there was no `why` to print. depotReady()'s drift
+      `fix` line in depot.js states the intended contract in as many words
+      ("Registering a rig past the exchange's cap is refused as 'fleet_cap'")
+      as something the player is supposed to be able to ACT on, and neither
+      string existed anywhere in
       /src/transport. failCoded() below routes those two inserts through this
       same table, so there is still exactly one place a code becomes a
       sentence. The trigger codes are marked ⚡ where they appear.
@@ -279,8 +322,9 @@ const CODES = {
      🔴 THIS IS THE ONE BRANCH IN THIS FILE THAT IS ALLOWED TO SAY "RE-RUN
         SQL/038", and it says it because the server NAMED the missing thing
         rather than because this file guessed a cause. That is the whole lesson
-        of index.html:79918-79930, where "does not exist" was read as "the RPC
-        is missing" and sent an admin back to a migration they had already
+        of index.html's bank_open_cinder branch, where "does not exist" was
+        read as "the RPC is missing" and sent an admin back to a migration they
+        had already
         applied FOUR TIMES: the sin is guessing, not the advice. Here the guard
         raises `transport_config_missing` with the hint "The id=1 row of
         transport_config is gone. Re-run sql/038." — the file is idempotent and
@@ -309,6 +353,30 @@ const CODES = {
     why: n(d.units) + ' units is outside what one contract carries (max ' + n(d.max_units) + ').',
     fix: 'Split the load across two hauls.',
   }),
+  /* THE MINIMUM AND THE MAXIMUM ARE TWO CODES ON PURPOSE, and transport_quote
+     says why at its own raise site: folding "too small" into `bad_units` would
+     have printed bad_units' remedy — "split the load across two hauls" — at a
+     load that is too small, and that is not a vague answer, it is the OPPOSITE
+     of the fix, because each half is smaller and refused harder. So `bad_units`
+     keeps exactly the payload the shipped client already knows (units,
+     max_units) and this one carries `min_units`.
+     ⚠ LATENT, NOT DEAD. normCargo() below floors every manifest line to an
+       integer and drops anything under 1, and min_units_per_contract defaults
+       to 1, so nothing the panel can build reaches this today. It is written anyway because that default is an
+       operator-tunable column: raising it in the SQL editor makes this
+       reachable with no deploy, and sql/038's own gap list named this code as
+       missing from this table. */
+  units_below_min: (d) => {
+    const min = Number(d.min_units);
+    const got = Number(d.units);
+    return {
+      why: Number.isFinite(min)
+        ? 'A contract carries at least ' + n(min) + ' units'
+          + (Number.isFinite(got) ? '; that manifest is ' + n(got) + '.' : '.')
+        : 'That manifest is under the smallest load the exchange will carry.',
+      fix: 'Send more in one load — the minimum is per contract, so splitting the run makes it worse, not better.',
+    };
+  },
   bad_route: () => ({ why: 'Both ends of the route have to be real places.', fix: 'Pick an origin and a destination.' }),
   same_node: () => ({ why: 'The cargo is already there.', fix: 'Pick a different destination.' }),
   out_of_reach: (d) => ({
@@ -323,6 +391,48 @@ const CODES = {
     why: 'That haul prices at ' + n(d.price) + ' 🔥, over the exchange ceiling of ' + n(d.cap) + ' 🔥.',
     fix: 'Fewer units or fewer hops — the price is units × hops × the tariff.',
   }),
+  /* 🔴 THE FLOOR — the refusal a player meets AFTER the money dialog, which is
+        why it is worth this many lines. transport_quote refuses
+        `under_price_floor` when the price it built is below
+        transport_config.min_price_per_contract (default 100), at the same
+        single exit the ceiling refuses at, and transport_dispatch hands
+        transport_quote's refusal back verbatim.
+        THE BUG THIS CLOSES, recorded rather than quietly corrected: with no
+        entry here the code fell through to explain()'s unknown arm, so a
+        player quoted "5 🔥" for a 1-unit 1-hop haul, who then said yes to
+        gcConfirm() and had the cargo escrowed out of the stash, was answered
+        with "a code this build does not know". Every player tariff under
+        100 ÷ (units × hops) does this — which is most small hauls on the
+        board. It is exactly the "shown one number, refused by another" failure
+        routes.js's header forbids, delivered in the least readable form there
+        is.
+     ⚠ THIS ENTRY IS THE SAFETY NET, NOT THE FIX. The refusal belongs BEFORE
+       the confirm, in the SHEET mirror and priceRefusal() in routes.js — a
+       floor arm beside the ceiling arm those already share between the player
+       and Meridian paths. This table only guarantees that one which gets
+       through reads as a sentence instead of as a word.
+     ⚠ IT REFUSES, IT DOES NOT CLAMP, and the remedy must never imply the
+       exchange will round the fare up to the floor. sql/038 rejects clamping
+       in as many words at the raise site, because clamping charges a shipper
+       more than the sheet they were shown.
+     ⚠ AND MERIDIAN IS NOT OFFERED AS THE ESCAPE HATCH here, though it is the
+       remedy for `blacklisted` and `out_of_reach` two entries up. Meridian's
+       own minimum fare is 40 × 2.5 = exactly 100, sitting ON the floor: the
+       floor refuses nothing the NPC could sell, and the NPC cannot undercut it
+       either, so "ship with Meridian" would be advice that fails again. */
+  under_price_floor: (d) => {
+    const price = Number(d.price);
+    const floor = Number(d.floor);
+    const units = Number(d.units);
+    return {
+      why: Number.isFinite(price) && Number.isFinite(floor)
+        ? 'That haul prices at ' + n(price) + ' 🔥, under the exchange floor of ' + n(floor) + ' 🔥 per contract.'
+        : 'That haul prices under the exchange’s floor for a single contract.',
+      fix: Number.isFinite(units)
+        ? 'Send more than ' + n(units) + (Math.abs(units) === 1 ? ' unit' : ' units') + ' in one load — the floor is per contract, not per unit, so splitting the run cannot reach it.'
+        : 'Send more in one load — the floor is per contract, not per unit, so splitting the run cannot reach it.',
+    };
+  },
 
   /* ── carrier state ────────────────────────────────────────────────────── */
   no_such_carrier: () => ({ why: 'That carrier is no longer on the exchange.', fix: 'Refresh the rate board.' }),
@@ -350,12 +460,35 @@ const CODES = {
      The numbers are safe to print because sql/038 says so at the raise site:
      tco_sel is `using (true)`, so anybody can already count anybody's charters
      and the detail publishes nothing a query would not. Contrast fleet_cap
-     below, which is the same shape and is NOT in that position. */
+     below, which is the same shape and is NOT in that position.
+     🔴 AND THE REMEDY IS "THERE ISN'T ONE", because that is what is true. The
+        sentence this replaces — "Close an existing charter before founding
+        another" — was copied from the guard's own HINT and describes an action
+        that does not change the counted quantity: transport_charter_cap_guard
+        counts `count(*) … where c.owner_id = new.owner_id` with NO status
+        filter, so a charter set to 'closed' through transport_set_sheet still
+        occupies its slot, and DELETE on transport_companies is revoked with no
+        DELETE policy anywhere, so the row cannot leave either. Telling a player
+        to perform a ritual that provably does nothing is worse than telling
+        them the cap is the cap.
+     ⚠ THE SERVER HINT STILL SAYS THE OLD THING. It lives in sql/038, at
+       transport_charter_cap_guard's raise, and that file is not this seam's to
+       edit; until it is changed the two sides disagree and THIS is the true
+       half. The hint never reaches a player through this file — failCoded()
+       and explain() both read the DETAIL's code and this table, never HINT.
+     ⚠ REJECTED: filtering the guard's count to `status <> 'closed'` so the old
+       sentence becomes true. That is a rule change, not a copy fix — a closed
+       charter still carries reliability history and still passes the median's
+       sample gate — and it needs its own note in the migration that owns it.
+     Scored minor because the shipped panel refuses locally before the insert
+     ("You already run a carrier on the exchange") whenever myCompany() found a
+     row, so only a console reaches this guard — which is precisely the reader
+     most likely to act on a sentence. */
   charter_cap: (d) => ({
     why: Number.isFinite(Number(d.cap))
       ? 'You already hold ' + n(d.used != null ? d.used : d.cap) + ' of the ' + n(d.cap) + ' charters one player may run.'
       : 'You already hold every charter one player may run.',
-    fix: 'Close an existing charter before founding another — a second carrier is a second yard, not a bigger one.',
+    fix: 'A charter is permanent — closing one does not free the slot, and nothing in this build can delete it. This is the cap for the account.',
   }),
   blacklist_too_long: (d) => ({
     why: 'A refusal list holds ' + n(d.max) + ' shippers; that one has ' + n(d.sent) + '.',
@@ -364,8 +497,8 @@ const CODES = {
 
   /* ── the fleet ────────────────────────────────────────────────────────── */
   /* ⚡ transport_fleet_cap_guard, on INSERT into transport_rigs — the code
-     depot.js:906 already promises the player, and the one this file was
-     printing raw.
+     depotReady()'s drift `fix` line in depot.js already promises the player,
+     and the one this file was printing raw.
      🔴 THE SENTENCE IS WRITTEN OFF THE DETAIL AND NEVER OFF A FORMULA. The
         ladder is `least(4 × depot_level, max_fleet_rigs)` and sql/038 §2 is
         emphatic that transport_caps() is the ONE place it is evaluated —
@@ -379,18 +512,57 @@ const CODES = {
        ownCompanyId() — but the bare arm is handled rather than assumed away.
      The max_fleet_rigs line is worth its length: at the exchange ceiling a
      higher depot level buys NOTHING, and a player told "raise the depot" would
-     otherwise spend a level's worth of build cost to get the same four slots. */
+     otherwise spend a level's worth of build cost to get the same four slots.
+     🔴 THE FIX LINE NAMES NO REMEDY, AND THAT IS THE FIX — recorded here
+        because it reads like a regression otherwise. The round that added this
+        entry wrote "Retire a rig, or raise the Freight Depot level — each level
+        buys more slots", and BOTH of those doors are bricked up in this build:
+          · RETIRE — sql/038 ships transport_retire_rig and no client path calls
+            it. There is no retire button, no branch in index.js's onClick(),
+            and nothing in this file sends that RPC; index.js says so itself
+            where it reasons about listMyRigs(). The same round revoked DELETE
+            on transport_rigs, so the client has no fleet-shrinking verb left.
+          · DEPOT LEVEL — setTariff() below is the only caller of
+            transport_set_sheet and sends `p_depot_level: null`, which the
+            function coalesces back to the stored value, so every carrier is
+            depot_level 1 on the server forever and `least(4 × 1,
+            max_fleet_rigs)` never moves. depot.js and production.data.js both
+            already say it: nothing in this build ever WRITES depot_level.
+            Building a level-3 city yard changes nothing this guard reads.
+        A fluent sentence pointing at two doors that do not open is WORSE than
+        the bare `🚛 fleet_cap` it replaced, because the bare code at least sent
+        the player to an admin. So the sentence says what is true instead.
+     ⚠ REJECTED: wiring a retire button here to make the old sentence true. The
+       RPC exists and the wiring is small, but a button is a feature and this
+       table is a dictionary — and this round's brief is explicit that a
+       message promising something the build cannot do gets its MESSAGE fixed,
+       not a feature grown to fit it. When a retire path does land, this line
+       changes with it; `rig_ran_today` below is already sitting here for that
+       day.
+     🔴 STILL OPEN ELSEWHERE, AND SAY SO RATHER THAN LOOK CLOSED. renderFleet()
+        in depot.render.js prints an over-cap banner whose second line is
+        "Upgrade the Freight Depot, or retire a rig" — the SAME two bricked-up
+        doors this entry just stopped promising, and after this edit it is the
+        LAST copy of that promise a player can actually see, because that
+        banner renders on every fleet tab where fleet.length > cap while this
+        table is only reached on a refused INSERT. depot.render.js is a
+        different owner's file and is not this file's to edit, so the two
+        sides disagree on purpose until someone closes that one; do not read
+        this entry's silence as agreement with it, and do NOT re-soften this
+        sentence to match the banner. The correct direction is the banner
+        moving to what is written here. */
   fleet_cap: (d) => {
     const cap = Number(d.cap);
     const max = Number(d.max_fleet_rigs);
     const atCeiling = Number.isFinite(cap) && Number.isFinite(max) && cap >= max;
+    const parks = Number.isFinite(cap) ? 'Your yard parks ' + n(cap) + ' rigs' : 'Your yard is full';
     return {
       why: Number.isFinite(cap)
         ? 'Your yard has no parking left — all ' + n(cap) + ' fleet slots are taken.'
         : 'Your yard has no parking left.',
       fix: atCeiling
-        ? 'Retire a rig. A higher Freight Depot will not help: ' + n(max) + ' rigs is the exchange\'s own ceiling, and the depot ladder is already at it.'
-        : 'Retire a rig, or raise the Freight Depot level — each level buys more slots.',
+        ? parks + ', which is the exchange’s own ceiling of ' + n(max) + ' — no Freight Depot level raises it. This build also has no way to retire a rig, so that is the cap until a later update.'
+        : parks + ', and this build has no way to retire a rig, nor to raise the depot level the exchange reads. That is the cap until a later update.',
     };
   },
   no_rig_chosen: () => ({ why: 'No rig was assigned to that haul.', fix: 'Pick a rig from the yard.' }),
@@ -406,6 +578,27 @@ const CODES = {
     fix: 'Use another rig, repair this one to raise its ladder, or wait for the reset (server day ' + (d.day_key || 'UTC') + ').',
   }),
   rig_in_transit: () => ({ why: 'That rig is mid-haul.', fix: 'Settle the contract it is on first.' }),
+  /* Raised ONLY by transport_retire_rig, which refuses to park a rig that has
+     already worked today so the day's runs cannot be laundered by retiring and
+     re-registering. Distinct from `rig_out_of_runs` above, which is the DISPATCH
+     path's refusal off the same counter — same numbers, two different verbs.
+     ⚠ NOT REACHABLE IN THIS BUILD, and the sentence is worded so it does not
+       imply otherwise. Nothing in /src/transport calls transport_retire_rig
+       (see fleet_cap above), so no player can meet this code today. It is here
+       because sql/038's own gap list named it as missing from this table, and
+       because on the day a retire path lands the code must not arrive through
+       explain()'s unknown arm. Its presence is NOT evidence that a retire path
+       exists — do not read it as one, and do not point another message at it. */
+  rig_ran_today: (d) => {
+    const used = Number(d.used);
+    const cap = Number(d.cap);
+    return {
+      why: Number.isFinite(used) && Number.isFinite(cap)
+        ? 'That rig has already run today (' + n(used) + ' of ' + n(cap) + '), and a rig that has worked cannot be parked until the day rolls over.'
+        : 'That rig has already run today, and a rig that has worked cannot be parked until the day rolls over.',
+      fix: 'It clears on the server day (' + (d.day_key || 'UTC') + ') — the device clock is not what counts.',
+    };
+  },
   not_your_rig: () => ({ why: 'That rig is not in a fleet you own.', fix: 'Refresh the yard.' }),
   rig_is_salvage: () => ({
     why: 'That rig is Salvage — it is finished as freight.',
@@ -605,9 +798,10 @@ async function rpc(c, name, args) {
 /* 🔴 THE ORDER OF THESE THREE BRANCHES IS THE WHOLE POINT.
    1. A dependency this file knows by NAME. "does not exist" is ambiguous, and
       the ambiguity has already cost four debugging sessions here
-      (index.html:79918-79930): the function existed, a table inside it did not,
-      and the generic branch sent an admin back to a migration they had already
-      run. So a message that names wallet_charge or transport_config wins first.
+      (index.html's bank_open_cinder branch): the function existed, a table
+      inside it did not, and the generic branch sent an admin back to a
+      migration they had already run. So a message that names wallet_charge or
+      transport_config wins first.
    2. A genuinely absent RPC. ⚠ And it is reported HONESTLY: PostgREST resolves
       an RPC by the EXACT SET of named arguments, so "the migration was never
       applied" and "the installed function has a different parameter list" are
@@ -806,7 +1000,7 @@ function takeRes(b, legs, what) {
 
    ⚠ PROVISIONAL, AND THIS COMMENT EXISTS TO BE DELETED BY WHOEVER FIXES IT.
      Design §4 says repairs also consume PP_PARTS-mapped resources. PP_PARTS is
-     a `const` in index.html (~195346) and this module genuinely cannot see it
+     a `const` in index.html and this module genuinely cannot see it
      (the globals trap), and copying the sixteen-row table here would be a
      second parts catalog to drift against the first. So until
      `_opEcon('transport').repairParts` publishes a dict, a repair costs Cinder
@@ -818,7 +1012,7 @@ function repairBill(b) {
     return {
       ok: false, code: 'not_priced',
       why: 'Freight has no economy row yet, so a repair has no price.',
-      fix: 'Add a `transport` entry to OPS_ECON (index.html:79732) — this module will not invent one.',
+      fix: 'Add a `transport` entry to the OPS_ECON table in index.html — this module will not invent one.',
     };
   }
   const raw = (e.repairPerStep != null) ? e.repairPerStep : e.ratePerWorkerHr;
@@ -953,7 +1147,8 @@ export async function listContracts(role) {
 export async function createCompany(name, homeNodeId) {
   const c = client(); if (!c) return { ...OFFLINE, row: null, why: offWhy() };
   const b = bridge();
-  // The pinned contract is positional; index.js:614 calls createCompany({name}).
+  // The pinned contract is positional; index.js's 'found' branch in onClick()
+  // calls createCompany({ name, homeNodeId }) — an object, not two arguments.
   // Accepted rather than refused, because a two-file arity drift must degrade to
   // a working call, not to a company named "[object Object]".
   if (name && typeof name === 'object') {
@@ -1021,8 +1216,9 @@ export async function setTariff(tariff) {
   if (!uid) return { ...OFFLINE, row: null, why: offWhy() };
 
   /* A bare number is accepted and normalised to `{ base: n }`, and this is a
-     correctness fix rather than politeness: index.js:624 calls setTariff(5), and
-     transport_quote reads the rate as `(tariff->>'base')::numeric`. A jsonb `5`
+     correctness fix rather than politeness: index.js's 'tariff' branch calls
+     setTariff() with the bare number off the form field, and transport_quote
+     reads the rate as `(tariff->>'base')::numeric`. A jsonb `5`
      has no 'base' key, so the carrier would store a tariff, see it saved, and be
      refused `no_tariff_published` on every quote forever. */
   let sheet = tariff;
@@ -1054,9 +1250,10 @@ export async function setTariff(tariff) {
     if (!r.ok) return r;
     const d = r.data;
     /* `tariff` is handed back as the CLAMPED BASE NUMBER and the full sheet is
-       on `sheet`. The caller prints it (index.js:628 does fmtNum(num(r.tariff)))
-       and Number({}) is NaN, which would silently echo the requested rate — the
-       one thing that comment says not to do, since the server clamps to the
+       on `sheet`. The caller prints it — index.js's 'tariff' branch does
+       fmtNum(num(r.tariff, t)) — and Number({}) is NaN, which would silently
+       echo the requested rate, the one thing that comment says not to do, since
+       the server clamps to the
        Meridian ceiling. */
     const base = Number(d.tariff && d.tariff.base);
 
@@ -1068,9 +1265,9 @@ export async function setTariff(tariff) {
        INSIDE that object (sql/038 §2 — the depot ladder is evaluated in exactly
        one function so the number the owner is shown and the number the §2b
        guard enforces cannot drift). Nothing was visibly broken because
-       index.js:948 prints `r.tariff` and nothing else, which is precisely how
-       this survives: the next caller reads `r.fleetCap`, gets undefined, and
-       has no reason to suspect the seam.
+       index.js's 'tariff' branch prints `r.tariff` and nothing else, which is
+       precisely how this survives: the next caller reads `r.fleetCap`, gets
+       undefined, and has no reason to suspect the seam.
        Also lifted while here: `charter_slots_left`, which sql/038 §2 names
        as "exactly what a 'Found a charter' button needs to grey itself out",
        and which this function was dropping on the floor.
@@ -1122,8 +1319,9 @@ export async function setTariff(tariff) {
 export async function registerRig(vehicleId, rarity, condition) {
   const c = client(); if (!c) return { ...OFFLINE, row: null, why: offWhy() };
   const b = bridge();
-  // index.js:636 calls registerRig(id, { free:false }) and :490 calls it with
-  // { free:true, starter:true }. Second-argument-as-options is accepted.
+  // index.js's 'register' branch calls registerRig(id, { free:false, … }) and
+  // seedStarter() calls it with { free:true, starter:true, … }.
+  // Second-argument-as-options is accepted.
   let opts = {};
   if (rarity && typeof rarity === 'object') { opts = rarity; rarity = opts.rarity; }
   if (condition == null) condition = opts.condition;
@@ -1156,8 +1354,9 @@ export async function registerRig(vehicleId, rarity, condition) {
       .select('id,company_id,vehicle_id,rarity,condition,runs_cap,runs_used,status').maybeSingle();
     /* ⚡ failCoded, not fail: transport_rigs_cap raises `fleet_cap` (and
        `no_such_carrier`, and `transport_config_missing`) on this insert. This
-       is the exact refusal depot.js:906 promises the player is actionable, and
-       until failCoded() existed it arrived as the toast `🚛 fleet_cap`. */
+       is the exact refusal depotReady()'s drift `fix` line promises the player
+       is actionable, and until failCoded() existed it arrived as the toast
+       `🚛 fleet_cap`. */
     if (r.error) return { ...failCoded(r.error), row: null };
     return { ok: true, row: r.data || null };
   } catch (e) { return { ...failCoded(e), row: null }; }
@@ -1217,8 +1416,9 @@ export async function registerRig(vehicleId, rarity, condition) {
          the haul came back as `bad_cargo`, "there is nothing on that manifest
          to ship" — which blames the player for a form they filled in correctly
          and sends whoever debugs it to the resource picker, the one place the
-         bug is not. That is the four-times bug of index.html:79918-79930 in
-         miniature: a real, specific, fixable condition wearing a guessed cause.
+         bug is not. That is the four-times bug of index.html's
+         bank_open_cinder branch in miniature: a real, specific, fixable
+         condition wearing a guessed cause.
          The branch below names the actual defect instead — the call site passed
          the quote rather than the request it quoted — because a wrong caller is
          something a developer can fix in one line and an empty manifest is not.
@@ -1499,14 +1699,14 @@ export async function settle(contractId) {
    REPAIR — one rung up the condition ladder, paid for on this side.
 
    THE ONLY CINDER SPEND IN THIS FILE, and it is shaped exactly like
-   corpTreasuryDeposit() (index.html:79679-79699), which is this repo's settled
-   answer to "spend, then write": confirm → spendGems with its RETURN VALUE
+   corpTreasuryDeposit() (in index.html), which is this repo's settled answer
+   to "spend, then write": confirm → spendGems with its RETURN VALUE
    CHECKED → the server call → on failure, put the money back and toast the REAL
-   error. Never the raw arithmetic next door at index.html:196020
-   (`ppBuyVehicle`), which subtracts from the balance directly and so bypasses
-   whatever the real spend path does about persistence and tax exemption — the
-   sibling bug at index.html:195546-195549 is a misspelled helper that "ALWAYS
-   took the raw-subtraction fallback below and bypassed the real spend path".
+   error. Never the raw arithmetic next door in index.html's `ppBuyVehicle`,
+   which subtracts from the balance directly and so bypasses whatever the real
+   spend path does about persistence and tax exemption — the sibling bug in
+   index.html is the misspelled `spendCinderS` that "ALWAYS took the
+   raw-subtraction fallback below and bypassed the real spend path".
 
    ORDER OF THE LEGS, and it is the reverse of cost.js's for a reason. cost.js
    spends resources first and Cinder last because Cinder is the leg that can

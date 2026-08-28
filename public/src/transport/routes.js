@@ -158,6 +158,24 @@
                      'bad_hops'`.
                      ⚠ COUPLED: raise HOP_CROSS_REGION above 6 and every
                      cross-region quote this file prints becomes undispatchable.
+   A6 PRICE FLOOR    ⚠ THE NEWEST ENTRY, AND IT IS HERE BECAUSE ITS ABSENCE WAS
+                     THE BUG. transport_config grew min_price_per_contract (100)
+                     and min_units_per_contract (1); transport_quote grew
+                     `if v_price < v_cfg.min_price_per_contract then … 'under_
+                     price_floor'` at the same single exit as the ceiling, and
+                     transport_dispatch returns transport_quote's refusal
+                     verbatim. This side mirrored NEITHER column and tested
+                     NEITHER bound for a whole revision, so every player tariff
+                     below 100/(units × hops) quoted ok and was refused after
+                     the confirm dialog — measured: base 5, 1 unit, 1 hop
+                     returned `{ok:true, price:5}` here against an RPC refusal.
+                     now: both columns are in THE SHEET and priceRefusal()
+                     carries the floor arm beside the ceiling one, refusing
+                     rather than clamping up (sql/038's own note: clamping
+                     "would charge a shipper more than the sheet they were
+                     shown"). The NPC is untouched by it — see A1's numbers and
+                     the coupling note in meridianQuote's header: 40 × 2.5 lands
+                     exactly ON 100, which is where sql/038 got the 100 from.
 
    ── DIVERGENT ON PURPOSE, and the direction is stated ─────────────────────
    D1 REACH          server: `v_reach := (public.transport_caps(v_co.id)->>
@@ -404,6 +422,43 @@ const SHEET = {
   maxUnits: 5000,              // transport_config.max_units_per_contract
   maxTariffPerUnitHop: 500,    // transport_config.max_tariff_per_unit_hop
   maxPricePerContract: 5000000,// transport_config.max_price_per_contract
+  /* ⚠ THE TWO FLOORS ARRIVED LATE AND THIS MIRROR MISSED THEM FOR A WHOLE
+     REVISION — recorded rather than quietly added, because the miss is the
+     interesting part. transport_config grew min_units_per_contract and
+     min_price_per_contract, and transport_quote grew the matching
+     `units_below_min` and `under_price_floor` refusals, while the PROVENANCE
+     note above still claimed every column had been re-verified. Nothing here
+     noticed, because there is no build step that can compare this object to a
+     migration applied by hand in the SQL editor.
+     MEASURED against these modules before the fix, on the two-node ladder
+     N-A → N-B: `quote({cargoUnits:1, carrier:{tariff:{base:5}}})` returned
+     `{ok:true, price:5}`. That 5 went into index.js's dispatch confirm (the
+     `b.confirm('Ship for ' + fmtNum(price) + …)` in onClick()'s `act ===
+     'dispatch'` arm, which is the bridge's gcConfirm), the player said yes,
+     contracts.js escrowed the cargo, and only then did the RPC answer
+     `under_price_floor` — reaching reasonOf() as a code no CODES entry
+     translated, i.e. "quote that code verbatim to an admin". Shown one
+     number, refused by another, after the money dialog — the exact failure this
+     file's header spends paragraphs forbidding.
+     minPricePerContract IS enforced here, in priceRefusal(), beside the ceiling
+     it is the mirror image of, and contracts.js now carries the matching
+     `under_price_floor` CODES entry for the server's own reply — the two are
+     worded the same on purpose, so a player refused locally and a player
+     refused by the RPC read one sentence rather than two.
+     🔴 minUnits IS MIRRORED AND DELIBERATELY NOT ENFORCED. resolveInput()
+     already floors the manifest with `units = Math.max(1, Math.floor(…))` and
+     the server default is 1, so `units < minUnits` is unreachable from every
+     runtime path into this module. REJECTED: a units-floor arm in
+     routeRefusal() "for symmetry" — a refusal no input can produce is dead
+     machinery, and unreachable machinery added on spec is precisely what the
+     previous round did. It is written down here so that if
+     min_units_per_contract is ever tuned above 1 server-side, the next reader
+     knows the arm goes in beside the `too-much` one and why it is not there
+     yet. Note the server keeps its own `v_units <= 0` test as well as the
+     `< min` one, for the mirror-image reason: an operator tuning the column to
+     0 must not reopen the 0.000001-unit haul. */
+  minUnits: 1,                 // transport_config.min_units_per_contract
+  minPricePerContract: 100,    // transport_config.min_price_per_contract
   escortPct: 0,                // the coalesce default inside transport_quote's
                                // v_escort_pct — an unset sheet sells escorts for
                                // nothing, and matching that beats inventing a
@@ -1125,16 +1180,59 @@ function routeRefusal(q, h, base) {
   return null;
 }
 
-/* Over transport_config.max_price_per_contract — the server's `over_price_cap`,
-   the last check transport_quote makes before it returns a fare. Reachable only
-   on an enormous manifest, and the fix is always the same edit: send less at a
-   time. Shared because the NPC hits the same wall and must say the same thing. */
+/* THE TWO PRICE BOUNDS, in the server's own order: over
+   transport_config.max_price_per_contract is its `over_price_cap`, under
+   min_price_per_contract is its `under_price_floor`, and they are the last two
+   checks transport_quote makes before it returns a fare. Shared because the NPC
+   is subject to both walls too and must say the same thing at each — sql/038
+   put both of them at the SINGLE EXIT its two branches fall through to, over a
+   comment recording that the Meridian branch used to `return` early and thereby
+   stepped over the cap ("the one quote no player controls the one quote with no
+   price cap on it", 7,500,000,000 returned ok against a cap of 5,000,000). One
+   shared helper on this side is the same discipline: two call sites, one rule.
+
+   🔴 THE FLOOR REFUSES; IT DOES NOT CLAMP UP, and that is not a simplification.
+   sql/038's own note beside `if v_price < v_cfg.min_price_per_contract` says
+   clamping "would charge a shipper more than the sheet they were shown, which
+   is the one thing §4.2's 'the shipper is charged the price they were shown'
+   exists to prevent". A client that clamped up would ALSO be showing a price
+   its own quote sheet cannot justify, which is this file's whole failure mode.
+
+   ⚠ WHAT THE FLOOR IS FOR, so nobody deletes it as an annoyance: a dispatch is
+   a public act. It lands in a carrier's reliability denominator, holds a bay
+   for 25 minutes a hop, and spends one of a stranger's daily rig runs — so the
+   cheapest contract has to cost more than a loop. min_units_per_contract bounds
+   the cheapest INPUT; this bounds the cheapest OUTPUT, and they are not the
+   same check: a carrier posting base 1 sells a perfectly legal 1-unit 1-hop
+   haul for 1 Cinder with the unit floor fully satisfied.
+
+   ⚠ THE FIX LINE IS HONEST BUT NOT UNIVERSAL. Sending more in one load raises
+   `ceil(tariff × units × hops × escort)` toward the floor and clears it for any
+   ordinary sheet; at an absurd tariff (0.001 per unit·hop) even a full 5,000-
+   unit manifest cannot reach 100, and then the carrier's rate is the problem
+   rather than the manifest. It is not worth a second sentence in a toast —
+   REJECTED: computing and printing "you need N units", which would be this file
+   inverting a server formula to promise a specific remedy, i.e. a third pricing
+   authority to go wrong. */
 function priceRefusal(price, sheet, base) {
   const cap = Math.max(1, num(sheet.maxPricePerContract, SHEET.maxPricePerContract));
-  if (price <= cap) return null;
-  return shape({ ...base, code: 'over-price-cap', serverCode: 'over_price_cap',
-    reason: 'That haul prices at ' + price + ' 🔥, over the exchange ceiling of ' + cap + ' per contract.',
-    fix: 'Split the manifest and send it as more than one haul.' });
+  if (price > cap) {
+    return shape({ ...base, code: 'over-price-cap', serverCode: 'over_price_cap',
+      reason: 'That haul prices at ' + price + ' 🔥, over the exchange ceiling of ' + cap + ' per contract.',
+      fix: 'Split the manifest and send it as more than one haul.' });
+  }
+  /* Math.max(0, …) and not Math.max(1, …) as the ceiling uses: a sheet with the
+     floor set to 0 must DISABLE the check, matching the server, where §5's
+     verify query reports exactly that state as `floors_off` rather than
+     treating it as an error. A minimum of 1 here would refuse a legitimately
+     free-by-configuration haul that transport_quote would have booked. */
+  const floor = Math.max(0, num(sheet.minPricePerContract, SHEET.minPricePerContract));
+  if (price < floor) {
+    return shape({ ...base, code: 'under-price-floor', serverCode: 'under_price_floor',
+      reason: 'That haul prices at ' + price + ' 🔥, under the exchange floor of ' + floor + ' per contract.',
+      fix: 'Send more in one load — the floor is per contract, not per unit.' });
+  }
+  return null;
 }
 
 /* 💰 A player carrier's quote.
@@ -1296,6 +1394,24 @@ export function quote(input) {
      too-much        over max_units_per_contract; split the manifest
      over-price-cap  over max_price_per_contract; split the manifest
      no-illicit      the one ratified cargo class, and player carriers take it
+   ⚠ AND A SIXTH CODE THIS PATH CANNOT REACH, listed because priceRefusal() is
+   shared and a reader who greps `under-price-floor` will land in a helper both
+   quotes call. Under the ratified sheet the NPC's fare cannot fall below
+   min_price_per_contract, by arithmetic and not by a check: resolveMedian()
+   floors the median at meridian_base_floor (40), tariffMultOf() refuses any
+   multiplier ≤ 1 and substitutes the ratified 2.5, and fareOf() multiplies by
+   at least 1 unit and at least 1 hop — so the smallest fare this function can
+   print is ceil(40 × 2.5 × 1 × 1) = 100, which is EXACTLY the floor.
+   That is not a coincidence to be maintained by luck: sql/038 derives the 100
+   from those very numbers in min_price_per_contract's own provenance comment
+   ("meridian_base_floor (40) x meridian_tariff_mult (2.5) x
+   min_units_per_contract (1) x 1 hop… the floor refuses nothing the fallback
+   carrier could not already sell"). MEASURED on 2026-08-28: meridianQuote() at
+   1 unit / 1 hop returns price 100 — on the floor, not under it.
+   🔴 SO THE COUPLING IS REAL AND IT IS LOAD-BEARING: lower meridian_base_floor
+   or raise min_price_per_contract on one side only and the NPC starts refusing
+   the smallest hauls, which ends the guarantee this whole function exists for.
+   Those three columns move together, in both files, in one commit.
    Nothing on that list moves when a rival blacklists you, closes their charter,
    raises their tariff to infinity or deletes their depot. That is the whole
    guarantee, and it is why there is no reach check, no blocked check, no

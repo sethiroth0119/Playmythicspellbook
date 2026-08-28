@@ -411,7 +411,17 @@
 // answering and players were served stale /assets/ images indefinitely.
 // The manual per-deploy version bump below is the real freshness signal:
 // new bytes → install+activate → old caches reaped.
-const CACHE_VERSION = 'mythic-v120w7-transport-wiring';
+// ⚠ AND IT MOVES WITH THE OTHER THREE. v120w8 shipped HALF-BUMPED for a
+// revision: index.html's window.BUILD_VERSION and the transport script tag's
+// ?v= went to v120w8 while public/version.txt and this constant stayed on
+// v120w7. That is not cosmetic — index.html's update check compares
+// version.txt against BUILD_VERSION, so latest('v120w7') !== running('v120w8')
+// was permanently true: every player who was not mid-battle or typing took one
+// forced location.reload(), and __mythicUpdateReady stayed armed forever after,
+// which is verbatim the "reloaded on EVERY load" bug that check's own comment
+// says was fixed. Bump all four in ONE edit: public/version.txt, this
+// constant, window.BUILD_VERSION, and src/transport/index.js?v=.
+const CACHE_VERSION = 'mythic-v120w8-transport-wiring';
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

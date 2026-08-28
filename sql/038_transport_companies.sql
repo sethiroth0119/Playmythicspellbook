@@ -210,6 +210,124 @@
 --       and three consecutive applications clean with §5 returning exactly the
 --       `-- Expect:` row.
 --
+--    🔧 AND FOUR CORRECTIONS MADE AFTER THAT LIST WAS WRITTEN, in the audit
+--       pass that followed it. Two of the four exist BECAUSE the round above
+--       over-reached — it added server behaviour and wrote comments promising
+--       properties the code does not have — so each of these is the smallest
+--       correction that closes the thing, and two of them change no behaviour
+--       at all.
+--       WHAT WAS RUN, on a fresh 16.13 database with the same stubs (an
+--       auth.uid() reading the request GUC, a reduced wallet_charge over a stub
+--       balance table, and Supabase's default `grant all` to anon and
+--       authenticated replayed BEFORE the file, so the revokes in §3 have
+--       something to revoke): three consecutive applications clean, §5 returning
+--       exactly the `-- Expect:` row each time; (a) driven end to end as two
+--       separate `authenticated` roles, one paid haul and then the refusal from
+--       each side; (b) driven as `authenticated`, both the refused insert and a
+--       re-application over a pre-existing oversize row; the two new §5 columns
+--       driven by sabotaging what each watches and watching it fire. NOT
+--       re-driven: (c) and (d), which are comment corrections with no code
+--       behind them — the numbers quoted in those two are the audit's, not a
+--       fresh run's.
+--       ⚠ THE STUB CAVEATS IN ⚠ WHAT THIS DOES NOT PROVE APPLY UNCHANGED. This
+--         was the same reduced environment, and it still is not the live
+--         project's grant set.
+--
+--       a. THE THIRD READ CHANNEL ON A RIVAL'S FLEET, still open. Hole 5 above
+--          shut transport_caps and the round before shut trg_sel, but
+--          transport_dispatch's own refusal path re-reads the rig row as
+--          SECURITY DEFINER — bypassing trg_sel — and handed the SHIPPER
+--          'rig_out_of_runs' complete with cap, used and day_key, plus
+--          'rig_on_deployment' complete with assigned_to. One paid haul (the
+--          shipper's contract row carries rig_id, and tct_sel grants them that
+--          column) bought a free, precise, permanent poll of a stranger's daily
+--          counter that answers only when the rig is spent — the exact fact
+--          trg_sel says must not be published, and the read half of the DoS the
+--          new price floor exists to price. FIXED by giving that diagnosis the
+--          same owner/stranger split §2b's fleet-cap guard already uses: the
+--          CODES still go to everyone, the NUMBERS go only to the owner. §4.2
+--          carries the long note.
+--          AFTER, driven as two roles against a rig with runs_cap 1: the
+--          shipper's second dispatch returns `{"ok":false,"error":
+--          "rig_out_of_runs"}` and nothing else, with their wallet unmoved at
+--          999,400 after the one paid haul; the OWNER's same call still returns
+--          cap 1, used 1, remaining 0 and the day key. With assigned_to set by
+--          hand, the stranger gets a bare 'rig_on_deployment' and the owner
+--          gets it with 'assigned_to'. Nothing else in the regression moved.
+--
+--       b. THE COMPLETENESS CLAIM ON THE NEW name/home_node_id CHECK WAS WRONG
+--          BY ONE COLUMN — AND THE FIX FOR THAT WAS WRONG BY A SECOND ONE; see
+--          the follow-up at the end of this item. It enumerated every other
+--          client-supplied string in
+--          the migration and where each was bounded, and left out
+--          transport_rigs.vehicle_id — `text`, no CHECK, client INSERT grant,
+--          bounded only by contracts.js's `.slice(0, 64)`, the same client-side
+--          truncation this round had just demoted from enforcement for `name`.
+--          A 1,000,000-character value inserted cleanly. FIXED with
+--          transport_rigs_vehicle_id_ck (64) in §1, and the enumeration is now
+--          a checkable list rather than a claim. Smaller blast radius than the
+--          name case — trg_sel keeps rigs owner-only, so this was storage abuse
+--          rather than a payload on the rate board.
+--          🔴 AND THE REPLACEMENT LIST WAS ITSELF INCOMPLETE, by the same
+--            species of miss, on the entry directly below vehicle_id's. It
+--            names `tariff` as bounded by transport_companies_tariff_ck "plus
+--            transport_tariff_ok at the RPC" — but at that revision the
+--            constraint RANGE-checked three keys and the helper TYPE-checked
+--            the same three, and neither bounded SIZE or unknown keys. A
+--            1,000,060-character sheet inserted cleanly onto the one row
+--            tco_sel publishes `using (true)`, i.e. straight onto the rate
+--            board every client fetches — the exact hole the block was written
+--            to close, left inside the sentence that closed it. FIXED with a
+--            `length(tariff::text) <= 400` term in the same constraint, plus
+--            the repair that keeps the file re-runnable. The hole predates
+--            that round; the sentence that covered it did not.
+--            DRIVEN on a throwaway PostgreSQL 16 cluster with Supabase's
+--            documented default grants, as `authenticated`: the junk-key
+--            insert above and a 16kB max-scale `base` are both now "violates
+--            check constraint transport_companies_tariff_ck"; an honest
+--            `{base, escort_pct, illicit_pct}` sheet (50 chars) and the `{}`
+--            default are both still accepted; and with the 1,000,060-character
+--            row seeded in place and the constraint dropped, a full
+--            re-application healed it to 61 characters, kept its base of 2.5,
+--            and returned §5's `-- Expect:` row unchanged.
+--          AFTER: the vehicle_id insert is "violates check constraint
+--          transport_rigs_vehicle_id_ck", and the junk-key sheet is "violates
+--          check constraint transport_companies_tariff_ck". And the `left()`
+--          repair beside it was
+--          driven too, because the constraint alone would have cost this file
+--          its re-runnability on any cluster where that 1,000,000-character row
+--          had actually landed: with one such row in place, a full
+--          re-application succeeded, truncated it to 64, and §5 returned the
+--          `-- Expect:` row.
+--
+--       c. AND THE ROW COUNT THAT MULTIPLIES AGAINST IT IS NOW UNBOUNDED, which
+--          is this round's own doing and was not written down: revoking DELETE
+--          traded a resettable counter for rows that never leave. Retire →
+--          register loops accumulate 'retired' rows the fleet cap never counts
+--          (three loops against a 4-slot charter left 7 retired rows behind 1
+--          live one). Still the right trade; RECORDED at the departed trg_del
+--          in §3 rather than reversed.
+--
+--       d. A SAFETY PROPERTY ASSERTED ON runs_cap THAT THE CODE DOES NOT HAVE.
+--          The column's comment said the server honours
+--          `least(runs_cap, max_runs_per_rig)` "so if the two ever disagree the
+--          carrier gets FEWER runs than the UI promised". Both numbers are 10 —
+--          max_runs_per_rig's default and this column's own CHECK ceiling — so
+--          least() cannot clamp anything a client can write. The exploitable
+--          delta is ZERO (rarity and condition are claimed on the same row, and
+--          a derivation from them yields the top rung anyway); the defect is a
+--          security comment that stops the next reader looking. FIXED as a
+--          comment, and "claim a runs cap the rig cannot earn" is now in ⚖ THE
+--          LIMIT OF THE GUARANTEE where it belongs. REJECTED: lowering
+--          max_runs_per_rig to 3 to make the clamp bind — a live economy change
+--          made to render a sentence true.
+--
+--       Plus two verify columns and one widened predicate in §5, because three
+--       of this round's claims — the name CHECK, the two floors, and TRUNCATE
+--       being revoked from EVERY client role rather than just `authenticated` —
+--       were asserted in this header and checked by nothing at the bottom. See
+--       data_constraints, floors_off and residual_grants there.
+--
 --    ⚠ WHAT THIS DOES NOT PROVE.
 --      · The stub wallet_charge is a reduction of the real one (no tax leg, no
 --        wallet_ledger, no profile mirror) and the stub auth.uid() reads a GUC
@@ -230,31 +348,40 @@
 --        day key in this file has, and it is the reason all of them come from
 --        the database clock rather than the device.
 --      · Nothing in the client calls transport_retire_rig yet. Retiring a rig
---        is a button depot.render.js:656 already TALKS about ("retire a rig")
---        with no code behind it, and wiring it belongs in that file, not this
---        one.
---      · 🔴 THREE OF THIS ROUND'S CODES HAVE NO CLIENT COPY, and this file
---        cannot write it — public/src/transport/ belongs to another seam.
---        Recorded here rather than fixed here because a refusal a player
---        cannot read is a real defect even when the deny decision is correct,
---        and because the last cut of this round tried to dodge exactly this by
---        reusing an existing code, which produced worse copy than no copy (see
---        the 'bad_units' note in §4.1). What is open, precisely:
---          · 'units_below_min'   — no CODES entry (contracts.js:269+).
---          · 'under_price_floor' — no CODES entry.
---          · 'rig_ran_today'     — no CODES entry.
---        All three land on explain()'s unknown arm (contracts.js:461-472),
---        which prints the code verbatim and tells the player to quote it to an
---        admin. That arm exists for precisely this and is graceful by design,
---        so this is a copy gap, NOT a break — nothing throws, nothing lies.
---        Also: routes.js's client-side pre-quote guard (:1118-1124) mirrors
---        max_units and has no floor at all, so a below-floor quote makes the
---        round trip and comes back with a code the client cannot render. That
---        mirror is a convenience, never the enforcement (same posture as the
---        name `.slice(0, 40)` this round moved onto a server CHECK), so the
---        floor is not weakened by its absence there — only the instant
---        feedback is. Fixing all four is a few lines in contracts.js and
---        routes.js. Nobody has run these three refusals in front of a player.
+--        is a button depot.render.js already TALKS about — its fleet panel's
+--        "Upgrade the Freight Depot, or retire a rig" note — with no code
+--        behind it, and wiring it belongs in that file, not this one.
+--        RE-VERIFIED this round with `grep -rn transport_retire_rig
+--        public/src/`: four hits, all of them COMMENTS about this very gap
+--        (contracts.js's rig_ran_today entry and its RETIRE note, index.js's
+--        ledger note, depot.render.js's 'retired' branch). No call site.
+--      · ✅ THE THREE CODES THIS ROUND ADDED NOW HAVE CLIENT COPY — AND THE
+--        BULLET THAT SAID OTHERWISE WAS STILL HERE, WHICH IS THE REAL FINDING.
+--        This read "🔴 THREE OF THIS ROUND'S CODES HAVE NO CLIENT COPY" and
+--        listed 'units_below_min', 'under_price_floor' and 'rig_ran_today' as
+--        falling through to explain()'s unknown arm. True when written, FALSE
+--        as delivered: contracts.js's CODES table now defines all three, and
+--        routes.js's priceRefusal() carries the local under-price-floor mirror
+--        beside the ceiling it is the mirror image of — so a below-floor quote
+--        is refused BEFORE the money dialog rather than after it, which was
+--        the whole complaint.
+--        ⚠ WHY IT WENT STALE, because the mechanism matters more than the
+--          correction: the bullet cited another seam's file BY LINE NUMBER
+--          ("contracts.js:269+", "contracts.js:461-472", "routes.js
+--          (:1118-1124)") while that seam was being edited in parallel, and
+--          every one of those numbers pointed at unrelated code by the time
+--          the two halves were delivered together. Two other citations in this
+--          file rotted the same way in the same window. CROSS-FILE CITATIONS
+--          IN THIS FILE ARE NAMED SYMBOLS FROM HERE ON — a symbol survives an
+--          edit above it, a line number does not, and a confident wrong line
+--          number costs the next reader more than no citation at all.
+--          REJECTED: keeping the numbers and "just refreshing them" — that is
+--          the loop that produced this bullet twice.
+--        The one asymmetry that is still deliberate and is NOT a gap: routes.js
+--        mirrors `minUnits` as a documented constant and does not enforce it,
+--        because resolveInput() already floors the manifest at 1 and this
+--        file's own default is 1, so the arm would be unreachable. Its reason
+--        is written down beside the constant there.
 --      · The guards depend on a Postgres implementation detail — that a
 --        VOLATILE plpgsql function advances the command counter before each of
 --        its queries, so a BEFORE ROW trigger can see the rows its own
@@ -393,12 +520,20 @@
 --     arbitrary company id, publishing through PostgREST the exact number
 --     trg_sel and the §2b guard's split error message both refuse to publish.
 --
+--   · transport_dispatch's refusal path splits owner from stranger the same way
+--     the §2b guard does: every shipper still gets the CODE, only the owner
+--     gets cap / used / day_key / assigned_to. Closes: the THIRD read channel
+--     on a rival's yard — a SECURITY DEFINER re-read that bypasses trg_sel and
+--     answers a stranger's poll of a rig's daily counter, for the price of one
+--     haul, and only when the rig is spent.
+--
 --   · `truncate` (and `trigger`) on all five revokes, plus a length CHECK on
---     transport_companies.name and .home_node_id. Closes: TRUNCATE, which
---     consults no policy at all and emptied transport_config as
---     `authenticated`; and a multi-megabyte carrier name on the one
---     world-readable row in this file, bounded until now only by a
---     client-side `.slice(0, 40)`.
+--     transport_companies.name and .home_node_id, and one on
+--     transport_rigs.vehicle_id. Closes: TRUNCATE, which consults no policy at
+--     all and emptied transport_config as `authenticated`; a multi-megabyte
+--     carrier name on the one world-readable row in this file; and a
+--     multi-megabyte vehicle_id on the fleet table — all three bounded until
+--     now only by a client-side `.slice()`.
 --
 -- ─────────────────────────────────────────────────────────────────────────────
 -- ⚖ THE LIMIT OF THE GUARANTEE, stated plainly rather than implied.
@@ -427,26 +562,38 @@
 --                    to cost more than a loop
 --     · address    — the shipper is auth.uid(); the carrier is a company row;
 --                    neither is a parameter
---     · rate       — runs per rig per day, and free bays, both server-counted
+--     · rate       — runs per rig per day, and free bays, both server-COUNTED
 --                    AND now un-resettable: the row the counter lives on can no
 --                    longer be deleted (§3), and retiring it does not recycle
 --                    the slot within the day (§4.6). A charter's whole daily
 --                    output is therefore bounded by fleet_cap x
 --                    max_runs_per_rig, which is exactly what its largest legal
---                    fleet could do honestly
+--                    fleet could do honestly.
+--                    ⚠ COUNTED IS NOT SET, and this bullet used to blur the
+--                      two. runs_USED is the server's. runs_CAP is a CLIENT
+--                      CLAIM, bounded by its column CHECK (1..10) and by
+--                      nothing else — max_runs_per_rig is 10 as well, so the
+--                      least() at dispatch is a structural ceiling that clamps
+--                      nothing a client can actually write. The full note is on
+--                      the column itself in §1; the claim is listed below where
+--                      it belongs
 --     · time       — depart_at and arrive_at come from now(), so a contract
 --                    cannot arrive before the clock says it did
 --     · outcome    — delivered vs lost is rolled server-side against a
 --                    server-computed risk_pct
 --
 --   What a determined client can still do INSIDE those bounds: claim a rig it
---   does not own, claim a better condition than the rig has, claim a depot
---   level it has not built, claim hops it did not travel, and ship cargo it
---   does not hold. Each of those is bounded by something the server does own —
---   fleet size by the §2b guard against the depot's cap, runs by the counter in
---   §4.2,
---   hops and units and price by transport_config — so the blast radius is
---   bounded. BUT A BOUND IS NOT A RECOMPUTATION. A player who claims depot
+--   does not own, claim a better condition than the rig has, CLAIM A RUNS CAP
+--   THE RIG CANNOT EARN (added this round — it always belonged here beside
+--   condition, and the column's own comment used to imply a clamp caught it),
+--   claim a depot level it has not built, claim hops it did not travel, and
+--   ship cargo it does not hold. Each of those is bounded by something the
+--   server does own — fleet size by the §2b guard against the depot's cap, runs
+--   spent per day by the counter in §4.2, hops and units and price by
+--   transport_config — so the blast radius is bounded. ⚠ The runs CAP that
+--   counter is measured against is the WEAKEST of these: its only bound is the
+--   column's own CHECK, and the column says so.
+--   BUT A BOUND IS NOT A RECOMPUTATION. A player who claims depot
 --   level 3 they never built gets 6 bays and 12 fleet slots, and this file
 --   cannot tell. Closing that needs a server-side inventory and a server-side
 --   node graph, which is a different project.
@@ -534,23 +681,109 @@ alter table public.transport_companies add column if not exists blacklist    uui
 --    ever grants it back. Bounds are STRUCTURAL and deliberately loose. The
 --    tight, tunable ceiling is transport_config.max_tariff_per_unit_hop, and
 --    when the two disagree the config wins, because it is read at quote time.
+--    🔴 AND IT NEEDED A SIZE BOUND, WHICH IT DID NOT HAVE UNTIL NOW. The three
+--    terms below RANGE-check three keys and say nothing at all about the keys
+--    they do not name, so `tariff` was a jsonb bag with no bound on it — on the
+--    one row in this file that tco_sel publishes `using (true)`. MEASURED as
+--    `authenticated` on the stub cluster:
+--      insert into transport_companies (owner_id, name, home_node_id,
+--        depot_level, tariff)
+--      values (auth.uid(), 'Junk Co', 'n1', 1,
+--        jsonb_build_object('base', 2.5, 'escort_pct', 0, 'illicit_pct', 0,
+--                           'junk', repeat('Z', 1000000)))
+--    → INSERT 0 1, tariff_len 1,000,060. transport_tariff_ok at the RPC does
+--    not close it either: it TYPE-checks the same three keys and ignores the
+--    rest. contracts.js's carrier queries select `tariff` for every carrier on
+--    the rate board, so that is the identical multi-megabyte-payload-on-every-
+--    client's-fetch hole the name/home_node_id block below is about, reached
+--    through the column beside them.
+--    ⚠ THE ENUMERATION BELOW LISTED THIS COLUMN AS ALREADY BOUNDED, and that
+--      was the actual defect: the round that wrote "THE FULL LIST, so it can be
+--      checked rather than trusted" named `tariff`'s two guards without
+--      noticing that neither of them bounds SIZE. A completeness claim that is
+--      wrong is worse than no claim — it is the sentence that stops the next
+--      reader looking — and this is the SECOND column that list has been wrong
+--      about (vehicle_id was the first). Both are now bounded rather than
+--      re-worded.
+--    400 characters, not a key whitelist. The client only ever writes the three
+--    numeric keys setTariff() assembles, and MEASURED, that sheet is 55
+--    characters at this constraint's own range maxima and 68 with four decimal
+--    places on every one of them — so 400 is loose by most of an order of
+--    magnitude and cannot refuse an honest sheet.
+--    REJECTED: `tariff - array['base','escort_pct','illicit_pct'] = '{}'::jsonb`
+--    to forbid unknown keys outright — tighter, but it
+--    makes every future sheet key a migration, and this block's stated posture
+--    is that its bounds are STRUCTURAL and deliberately loose while the tunable
+--    ceiling lives in transport_config.
+--    ⚠ THE REPAIR RUNS FIRST, for the same reason the one at
+--      transport_rigs_vehicle_id_ck does: §5 claims "three applications clean",
+--      and a cluster where the 1,000,060-character sheet above had actually
+--      landed would otherwise fail this ADD CONSTRAINT for ever. It rebuilds
+--      the sheet from the three keys this file recognises and drops the rest,
+--      which is exactly what setTariff() would have sent. round(…, 4) is not
+--      decoration, and the exact reachable case is worth pinning down because
+--      the obvious version of it is NOT reachable: jsonb stores a JSON number
+--      as `numeric`, so a million-digit literal never becomes a jsonb value at
+--      all (measured: `value overflows numeric format` at the cast). What IS
+--      legal is numeric's own maximum scale — `{"base":1.<16383 zeros>}` is a
+--      well-formed 16kB sheet whose value is 1 and therefore passes all three
+--      RANGE terms. Measured: refused by the length term, and healed by
+--      round(…, 4) rather than trimmed keys, which on their own would have left
+--      that row too big to re-admit. Rejected here too: `not valid`,
+--      which would leave the offending row on the rate board while the
+--      constraint claimed otherwise.
+--      ⚠ The repair normalises scale, so a healed sheet reads `2.5000` rather
+--        than `2.5`. Cosmetic and confined to rows that were already junk —
+--        `(tariff->>'base')::numeric` is the same number, which is all
+--        transport_quote reads.
+update public.transport_companies
+   set tariff = jsonb_strip_nulls(jsonb_build_object(
+     'base', case when jsonb_typeof(tariff->'base') = 'number'
+                  then to_jsonb(round((tariff->>'base')::numeric, 4)) end,
+     'escort_pct', case when jsonb_typeof(tariff->'escort_pct') = 'number'
+                  then to_jsonb(round((tariff->>'escort_pct')::numeric, 4)) end,
+     'illicit_pct', case when jsonb_typeof(tariff->'illicit_pct') = 'number'
+                  then to_jsonb(round((tariff->>'illicit_pct')::numeric, 4)) end))
+ where jsonb_typeof(tariff) = 'object'
+   and length(tariff::text) > 400;
 alter table public.transport_companies drop constraint if exists transport_companies_tariff_ck;
 alter table public.transport_companies add constraint transport_companies_tariff_ck check (
   jsonb_typeof(tariff) = 'object'
+  and length(tariff::text) <= 400
   and coalesce((tariff->>'base')::numeric, 0)        between 0 and 100000
   and coalesce((tariff->>'escort_pct')::numeric, 0)  between 0 and 100
   and coalesce((tariff->>'illicit_pct')::numeric, 0) between 0 and 200
 );
--- 🔒 THE TWO STRINGS ON THE ONLY WORLD-READABLE ROW IN THIS FILE, and they were
---    the only client-supplied strings in the whole migration bounded by nothing
---    but the client. Every other one is bounded HERE: cargo by pg_column_size
---    (§4.2), from_node/to_node by `left(…, 40)` at insert (§4.2), client_ref by
---    `left(…, 64)`, the blacklist by array_length > 200 (§4.5). name and
+-- 🔒 THE TWO STRINGS ON THE ONLY WORLD-READABLE ROW IN THIS FILE. name and
 --    home_node_id were bounded only by contracts.js's `.slice(0, 40)` — a
 --    client-side truncation, which is the one kind of bound this file refuses
 --    to rely on anywhere else. tco_sel is `using (true)`, so a console that
 --    skips the slice writes a multi-megabyte name onto a row EVERY client
 --    fetches to draw the rate board.
+--    ⚠ THIS COMMENT USED TO SAY THESE WERE "THE ONLY CLIENT-SUPPLIED STRINGS
+--      IN THE WHOLE MIGRATION BOUNDED BY NOTHING BUT THE CLIENT" AND THEN
+--      ENUMERATE THE REST. THE ENUMERATION WAS WRONG BY ONE COLUMN, and it is
+--      corrected here rather than deleted because a completeness claim that is
+--      wrong is worse than no claim: it is the sentence that stops the next
+--      reader looking. transport_rigs.vehicle_id was missing from it —
+--      `text`, no CHECK, on a table with a client INSERT grant — and a
+--      1,000,000-character value inserted cleanly. It is bounded now by
+--      transport_rigs_vehicle_id_ck, added one section down beside the fleet
+--      table it belongs to.
+--    THE FULL LIST, so it can be checked rather than trusted. Every
+--    client-supplied string in this migration and where its bound lives:
+--      · name, home_node_id — HERE, transport_companies_name_ck (40).
+--      · vehicle_id         — transport_rigs_vehicle_id_ck (64), §1.
+--      · cargo              — pg_column_size at dispatch (§4.2).
+--      · from_node, to_node — `left(…, 40)` at insert (§4.2).
+--      · client_ref         — `left(…, 64)` at insert (§4.2).
+--      · blacklist          — array_length > 200 in transport_set_sheet (§4.5).
+--      · tariff             — transport_companies_tariff_ck (400 chars over the
+--                             whole sheet), above. Its three RANGE terms and
+--                             transport_tariff_ok at the RPC bound the three
+--                             KEYS; the length term is what bounds the bag,
+--                             and it was missing when this list first claimed
+--                             to be complete. See the block above it.
 --    Same idempotent shape as the tariff constraint above, and the same
 --    division of labour: 40 is what the client already truncates to, so this
 --    demotes that slice from the enforcement to the convenience it should
@@ -590,16 +823,52 @@ create table if not exists public.transport_rigs (
   -- translation layer exists between the auction floor and this table.
   condition   text not null default 'Clean'
                 check (condition in ('Pristine','Clean','Worn','Battered','Wrecked','Salvage')),
-  -- 🔴 DECLARED AUTHORITY. The ladder — 3/4/5/6/8/10 by rarity, times
-  --    PP_COND_MULT, floor, minimum 1 (design §3) — lives in rigs.data.js and
-  --    that is the authority for what a rig SHOULD do. This column is what the
-  --    client claims that ladder produced. The server honours
-  --    least(runs_cap, transport_config.max_runs_per_rig), so if the two ever
-  --    disagree the carrier gets FEWER runs than the UI promised. That is the
-  --    correct direction for this disagreement to fail in: the alternative
-  --    pays a carrier for runs the server never counted.
-  --    The 10 below is the design's Mythic maximum and is a structural bound,
-  --    not the ladder.
+  -- 🔴 DECLARED AUTHORITY, AND THE HONEST WORD FOR THIS COLUMN IS "CLAIM".
+  --    The ladder — 3/4/5/6/8/10 by rarity, times PP_COND_MULT, floor, minimum
+  --    1, then the flat Garage perk (design §3) — is rigs.data.js's
+  --    effectiveRuns() and that is the authority for what a rig SHOULD do.
+  --    This column is what the CLIENT says that ladder produced, and the server
+  --    cannot check it: the vehicle behind it lives in
+  --    Profile.princePortfolios.lot, a save blob. See ⚖ THE LIMIT OF THE
+  --    GUARANTEE in the header, which now lists this claim beside the others.
+  --
+  --    ⚠ THIS COMMENT USED TO SAY THE SERVER "honours least(runs_cap,
+  --      transport_config.max_runs_per_rig), so if the two ever disagree the
+  --      carrier gets FEWER runs than the UI promised. That is the correct
+  --      direction for this disagreement to fail in." THE DIRECTION IS RIGHT
+  --      AND THE CLAMP NEVER BINDS. max_runs_per_rig defaults to 10 and the
+  --      CHECK below stops at 10, so least() cannot reduce any value that got
+  --      into the row: it is a STRUCTURAL CEILING, not a live clamp, and the
+  --      only bound on a forged runs_cap is that CHECK. §4.2 keeps the least()
+  --      because it is the right expression the day an operator tunes
+  --      max_runs_per_rig DOWN — not because it is doing work today.
+  --      Corrected rather than quietly deleted: a security-relevant comment
+  --      asserting a safety property the code does not have is the exact
+  --      failure mode this file's header spends its whole length arguing
+  --      against, and this one sat on the very column the header points at
+  --      when it calls the rate server-owned.
+  --
+  --    CALIBRATION, so this is not read as bigger than it is. rarity and
+  --    condition on this same row are client-claimed too, so a server-side
+  --    derivation from the two columns beside this one would hand a
+  --    self-declared Mythic/Pristine rig the top of the ladder anyway —
+  --    floor(10 x 1.15) = 11, plus 1 for a tier-2 Garage, i.e. ABOVE the 10
+  --    written here, which is why contracts.js's registerRig() already sends
+  --    `Math.min(10, cap)` — named by SYMBOL, not by line: this citation read
+  --    "(:1142)" for one round and pointed at an unrelated note by the time the
+  --    two seams were delivered together. No honest registration has ever hit
+  --    the CHECK. The exploitable delta over the DISCLOSED envelope is zero. What
+  --    was wrong was the sentence, not the number.
+  --    What the server does own, exactly and un-resettably as of this round, is
+  --    runs_USED — the counter in §4.2, on a row §3 no longer lets anyone
+  --    delete. It does not own runs_CAP.
+  --    REJECTED: lowering max_runs_per_rig to the Common rung (3) so that
+  --    least() binds again. That makes the clamp real by cutting every honest
+  --    Mythic carrier's day from ten runs to three — a live economy change made
+  --    to render one comment true, on a feature no player has touched. If a
+  --    server-verifiable upgrade path ever lands, raise it from a floor then.
+  --    The 10 below is the design's Mythic rarity rung and is a structural
+  --    bound, not the ladder.
   runs_cap    int  not null default 3 check (runs_cap between 1 and 10),
   runs_used   int  not null default 0 check (runs_used >= 0),
   -- 'YYYY-MM-DD' in UTC, written from the DATABASE clock in §4. See the note on
@@ -623,6 +892,35 @@ alter table public.transport_rigs add column if not exists runs_cap     int  not
 alter table public.transport_rigs add column if not exists repairs_used int  not null default 0;
 alter table public.transport_rigs add column if not exists repair_day   text;
 alter table public.transport_rigs add column if not exists assigned_to  text;
+-- 🔒 THE STRING THE CONSTRAINT BLOCK IN THE CHARTER TABLE FORGOT. vehicle_id is
+--    `text` with no CHECK, on a table that HAS a client INSERT grant and a
+--    deliberately permissive trg_ins (it pins the counters, not the strings),
+--    and it was bounded by exactly one thing: contracts.js's
+--    `String(vehicleId).slice(0, 64)` — the same client-side truncation this
+--    round demoted from enforcement to convenience for `name`. Measured by the
+--    audit that found it, as `authenticated`: an insert carrying
+--    `repeat('A', 1000000)` was accepted, 1,000,000 characters and all. 64 is
+--    what the client already truncates to, so this makes that slice the
+--    convenience it is everywhere else in this file.
+--    ⚠ SMALLER BLAST RADIUS THAN THE NAME CASE, and worth saying so rather than
+--      leaving the next reader to re-derive whether this was urgent: trg_sel
+--      keeps rig rows owner-only, so unlike a carrier name this never reaches
+--      another player's screen. It is storage abuse, not a payload on the rate
+--      board — and see the note at the departed trg_del in §3 for why the ROW
+--      COUNT it multiplies against is now unbounded too.
+--    ⚠ THE `left()` REPAIR RUNS FIRST, AND IT IS NOT DECORATION. This file must
+--      survive being pasted a third time (§5 says "three applications clean"),
+--      and a cluster where the oversize row above was actually inserted would
+--      otherwise fail this ADD CONSTRAINT for ever. Truncating to 64 writes
+--      exactly what the client would have written. Rejected: `not valid`, which
+--      would leave the offending row in place and make the constraint mean
+--      something different from what it says.
+update public.transport_rigs set vehicle_id = left(vehicle_id, 64)
+ where length(vehicle_id) > 64;
+alter table public.transport_rigs drop constraint if exists transport_rigs_vehicle_id_ck;
+alter table public.transport_rigs add constraint transport_rigs_vehicle_id_ck check (
+  length(coalesce(vehicle_id, '')) <= 64
+);
 create index if not exists transport_rigs_company on public.transport_rigs (company_id, status);
 create index if not exists transport_rigs_owner   on public.transport_rigs (owner_id);
 
@@ -1432,9 +1730,21 @@ create policy trg_ins on public.transport_rigs for insert to authenticated
 --    day_key are columns of transport_rigs; DELETE was granted (only UPDATE was
 --    revoked); trg_del permitted it for any rig not currently 'hauling'; and
 --    trg_ins pins the replacement's runs_used at 0. Registration costs nothing
---    — contracts.js:917 says so in as many words — and the §2b fleet guard
---    counts LIVE ROWS, not registrations, so it never saw the churn. A carrier
---    at their daily cap settled a haul (the rig returns to 'idle' in §4.3),
+--    — the doc comment over contracts.js's registerRig() says so in as many
+--    words, "It costs NOTHING" — and the §2b fleet guard counts LIVE ROWS, not
+--    registrations, so it never saw the churn.
+--    ⚠ THIS CITATION HAS NOW BEEN WRONG TWICE, WHICH IS WHY IT NO LONGER
+--      CARRIES A NUMBER. It read ":917" (a line in the middle of the
+--      contract-list query), was "corrected" to ":1105" against HEAD, and by
+--      delivery the parallel edits in that seam had moved the sentence again
+--      so that :1105 was a note about pinned INSERT columns. Both times the
+--      number was confidently wrong and the claim underneath it was right.
+--      A named symbol survives an edit above it; a line number in another
+--      seam's file does not, and a confident wrong one costs the next reader
+--      more than no citation would. Same rule as the header's cross-file
+--      citation note. REJECTED, twice over now: refreshing the number.
+--    Back to the counter. A carrier at their daily cap settled a haul (the rig
+--    returns to 'idle' in §4.3),
 --    deleted the rig, re-inserted it, and had a full day's runs again. Two
 --    `.from('transport_rigs')` calls from a devtools console. Once the payout
 --    leg lands (see the header) that counter is the ONLY thing rate-limiting a
@@ -1457,9 +1767,31 @@ create policy trg_ins on public.transport_rigs for insert to authenticated
 --    from any client, and it is the right behaviour if a future migration ever
 --    reaches it.
 --    No client path regresses: nothing in /src/transport has ever issued a
---    delete against this table (depot.render.js:656 tells the owner to "retire
---    a rig" and there is no code behind that sentence yet). Wiring the button
---    to the new RPC is a client change and belongs in the client's own file.
+--    delete against this table. Re-verified this round by grep, not by memory:
+--    depot.render.js's fleet-panel note tells the owner to "Upgrade the Freight
+--    Depot, or retire a rig" and there is no code behind that sentence yet, and
+--    the only mentions of transport_retire_rig anywhere under public/src/ are
+--    comments about that gap. Wiring the button to the new RPC is a client
+--    change and belongs in the client's own file.
+--
+--    ⚠ AND THE OTHER HALF OF THE TRADE, which the paragraph above states only
+--      the good news of. A RESETTABLE COUNTER WAS TRADED FOR AN UNBOUNDED ROW
+--      COUNT. Retirement leaves the row behind on purpose — that is the whole
+--      mechanism — registration is free (contracts.js's registerRig(), checked)
+--      and the §2b fleet guard counts LIVE rows only, exactly so that a retired
+--      rig frees its slot. Those three together mean a retire → register loop
+--      accumulates 'retired' rows that no cap ever sees.
+--      Measured by the audit that found it: three loops against a
+--      depot-level-1 charter left 7 retired rows and 1 live one behind a
+--      fleet_cap of 4. Each row is now bounded in SIZE (the column CHECKs, and
+--      transport_rigs_vehicle_id_ck in §1); the NUMBER of them is bounded by
+--      nothing.
+--      Still the right trade — a reset button on the counter that will rate
+--      limit a carrier's income is worse than junk rows, and trg_sel keeps the
+--      junk private — but it IS a trade and it was not written down. If it
+--      ever matters the fix is a lifetime-registrations bound inside the §2b
+--      guard, NOT restoring DELETE: the reason DELETE is gone is the counter,
+--      and that reason does not weaken.
 drop policy if exists trg_del on public.transport_rigs;
 
 -- 🔴 NO UPDATE POLICY, for the same mechanical reason as the charter table and
@@ -1640,14 +1972,22 @@ begin
   --    'min_units' key. That was measured wrong across the seam. The client
   --    that is already deployed renders 'bad_units' as, verbatim,
   --    "<units> units is outside what one contract carries (max <max_units>).
-  --    Split the load across two hauls." (public/src/transport/contracts.js
-  --    :308-311). For a 0.5-unit quote that sentence is not merely unhelpful,
+  --    Split the load across two hauls." — the `bad_units` entry in
+  --    public/src/transport/contracts.js's CODES table (cited by SYMBOL, not by
+  --    line, for the reason the header's cross-file citation note gives).
+  --    For a 0.5-unit quote that sentence is not merely unhelpful,
   --    it is ACTIVELY WRONG ADVICE — splitting a too-small load makes each half
   --    smaller and refused harder — and the extra 'min_units' key rendered
-  --    nowhere. A separate code falls to explain()'s unknown arm (:461-472),
+  --    nowhere. A separate code fell to that file's explain() unknown arm,
   --    which prints the code verbatim and says to quote it to an admin. Being
   --    told a word you do not know is a bad message; being confidently told to
   --    do the opposite of the fix is a broken one. Prefer the unknown arm.
+  --    ⚠ PAST TENSE ON PURPOSE: that was the choice's cost when it was made,
+  --      and the client has since paid it off — CODES now carries its own
+  --      'units_below_min' entry, so the code no longer reaches the unknown
+  --      arm at all. The reasoning is kept because it is why the code is
+  --      SEPARATE, which is still the live decision; only the consequence
+  --      expired. See the header bullet on the three codes for the state.
   --    ⚠ 'bad_units' therefore keeps EXACTLY the meaning and EXACTLY the
   --      payload shape that shipped client already knows: over the max, with
   --      max_units and units. Do not put a min key back on it.
@@ -2071,21 +2411,75 @@ begin
     if not coalesce(v_ok, false) then
       -- Re-read to say WHICH refusal it was. "This rig cannot run" is the kind
       -- of message index.html:79921 is a monument to.
+      --
+      -- 🔒 AND THE NUMBERS IN IT GO ONLY TO THE OWNER. This is the same split,
+      --    written to the same rule, as the fleet-cap guard's refusal in §2b:
+      --    "AN ERROR MESSAGE IS A READ PATH… the counts go only to the owner;
+      --    everybody else gets the bare code." Grep that phrase in
+      --    transport_fleet_cap_guard for the original statement of it.
+      --
+      --    🔴 THIS WAS THE THIRD READ CHANNEL ON A RIVAL'S YARD, and it stayed
+      --       open after the other two were shut. trg_sel makes the rig rows
+      --       owner-only and transport_caps' fleet_used went owner-only in the
+      --       same round — but transport_dispatch is SECURITY DEFINER, so the
+      --       re-read below BYPASSES trg_sel, and p_rig_id arrives from the
+      --       SHIPPER, who is not the owner and was tested for nothing on this
+      --       path. Measured by the audit that found it, as two separate
+      --       `authenticated` roles: one paid haul through a rival's carrier
+      --       (at the 100-Cinder floor) is enough, because the shipper's own
+      --       contract row carries rig_id and tct_sel grants them that column —
+      --       no uuid guessing. The second dispatch against that rig returned
+      --       `{"error":"rig_out_of_runs","cap":1,"used":1,"remaining":0,
+      --       "day_key":"…"}` with the attacker's wallet UNCHANGED. So one
+      --       purchase bought a permanent, free, precise poll of a stranger's
+      --       daily counter — and it answers only when the rig is SPENT, which
+      --       is the precise fact trg_sel's comment says must not be published
+      --       ("knowing a carrier is out of runs is knowing exactly when to
+      --       undercut them"). It is also the read side of the DoS the price
+      --       floor was added to make expensive: knowing WHICH rigs are already
+      --       spent is what makes burning the rest efficient.
+      --
+      --    THE CODES STAY FOR EVERYONE, and only the numbers are gated. A
+      --    shipper is entitled to know their own dispatch was refused and in
+      --    what kind; they are not entitled to the counter behind it. The
+      --    already-deployed client degrades correctly with no detail keys:
+      --    contracts.js's rig_out_of_runs entry puts `d.cap` through n(), which
+      --    returns '?' for an absent value, and falls back to 'UTC' for
+      --    day_key, so the sentence still renders and nothing throws; its
+      --    rig_on_deployment entry never reads `assigned_to` at all, so
+      --    dropping that key from the stranger's arm changes no pixel.
+      --    ⚠ REJECTED: dropping the codes as well, or collapsing all four into
+      --      one. A refusal with no code lands on explain()'s unknown arm with
+      --      nothing for the player to quote to an admin, and a WRONG code is
+      --      worse still — that is the 'bad_units' mistake §4.1 records, made
+      --      one section UP in this same file and in this same round.
+      --    ⚠ 'rig_retired' and 'rig_not_in_fleet' remain bare membership probes
+      --      against a rig uuid for anyone who can guess one. Left as-is
+      --      deliberately: they carry no number, the shipper needs both to
+      --      understand their own refusal, and the uuid has to come from
+      --      somewhere — a contract they already paid for. Recorded rather than
+      --      closed so the next reader knows it was considered.
       select * into v_rig from public.transport_rigs where id = p_rig_id;
       if not found then
         return jsonb_build_object('ok', false, 'error', 'no_such_rig');
       elsif v_rig.company_id <> p_carrier_id then
         return jsonb_build_object('ok', false, 'error', 'rig_not_in_fleet');
       elsif v_rig.assigned_to is not null then
-        return jsonb_build_object('ok', false, 'error', 'rig_on_deployment',
-                                  'assigned_to', v_rig.assigned_to);
+        if public.is_transport_owner(p_carrier_id) then
+          return jsonb_build_object('ok', false, 'error', 'rig_on_deployment',
+                                    'assigned_to', v_rig.assigned_to);
+        end if;
+        return jsonb_build_object('ok', false, 'error', 'rig_on_deployment');
       elsif v_rig.status = 'retired' then
         return jsonb_build_object('ok', false, 'error', 'rig_retired');
       end if;
-      return jsonb_build_object('ok', false, 'error', 'rig_out_of_runs',
-                                'cap', least(v_rig.runs_cap, v_cfg.max_runs_per_rig),
-                                'used', v_rig.runs_used, 'remaining', 0,
-                                'day_key', v_today);
+      if public.is_transport_owner(p_carrier_id) then
+        return jsonb_build_object('ok', false, 'error', 'rig_out_of_runs',
+                                  'cap', least(v_rig.runs_cap, v_cfg.max_runs_per_rig),
+                                  'used', v_rig.runs_used, 'remaining', 0,
+                                  'day_key', v_today);
+      end if;
+      return jsonb_build_object('ok', false, 'error', 'rig_out_of_runs');
     end if;
   end if;
 
@@ -2772,8 +3166,8 @@ grant execute on function public.transport_retire_rig(uuid) to authenticated;
 --                  and ledger (contract, kind)
 --
 -- 🔴 THE NEGATIVE ASSERTIONS ARE THE POINT. A verify that only proves the good
---    policies exist never notices the dangerous one that came back. Six of the
---    columns below must read 0:
+--    policies exist never notices the dangerous one that came back. SEVEN of
+--    the columns below must read 0 (it was six until floors_off was added):
 --      · ledger_balance_cols catches the most likely future mistake — somebody
 --        adding a `balance` or `earnings` column to an append-only ledger
 --        because summing felt slow.
@@ -2810,16 +3204,31 @@ grant execute on function public.transport_retire_rig(uuid) to authenticated;
 --           it heals as rigs are retired), or the guard is gone. Check
 --           `triggers` and `disabled_triggers` in the same row before
 --           concluding anything.
+--      · floors_off is the seventh, and it is the only column here that reads
+--        a config VALUE rather than a schema object. The price and unit floors
+--        are the newest limits in this file and the easiest to undo — one
+--        UPDATE in the SQL editor, no schema change, nothing else in this row
+--        moves. §4.1's own comment anticipates it by name.
+--    And data_constraints is the one POSITIVE assertion added beside them, for
+--    the same reason: four CHECK constraints are the entire bound on four
+--    client-supplied values, each of them preceded by its own `drop constraint
+--    if exists`, and losing one is invisible everywhere else in this row.
 --
 -- Expect: tables 5 · policies 6 · helpers 4 · rpcs 6 · secdef 12 · triggers 2 ·
 --         guards 2 · no_rig_upd_del 0 · no_co_upd 0 · no_ledger_write 0 ·
 --         no_cfg_pol 0 · disabled_triggers 0 · guards_not_volatile 0 ·
 --         ledger_balance_cols 0 · residual_grants 0 · over_ceiling_sheets 0 ·
---         over_fleet_cap 0 · cfg_rows 1
+--         over_fleet_cap 0 · data_constraints 4 · floors_off 0 · cfg_rows 1
 -- Run on an empty database this returned exactly that row, three applications
 -- in. On the populated one it returned it too, except for over_fleet_cap — see
 -- the header: it read 1 while a deliberately unguarded charter was on the
 -- table, which is the only evidence anyone has that the column works.
+-- data_constraints and floors_off were added in a later pass and re-run the
+-- same way: three clean applications returning 4 and 0, and then each one
+-- driven positive by sabotaging exactly what it watches — the name CHECK
+-- dropped (data_constraints 3) and min_price_per_contract set to 0
+-- (floors_off 1). A verify column nobody has seen return the WRONG number is
+-- only half a verify column.
 select
   (select count(*) from pg_tables where schemaname = 'public'
      and tablename in ('transport_companies','transport_rigs',
@@ -2879,18 +3288,32 @@ select
   (select count(*) from information_schema.columns where table_schema = 'public'
      and table_name = 'transport_ledger'
      and column_name in ('balance','total','earnings','balance_after'))                as ledger_balance_cols,
-  -- 🔴 THE PRIVILEGE NO POLICY CAN SEE. Counts tables where `authenticated`
+  -- 🔴 THE PRIVILEGE NO POLICY CAN SEE. Counts tables where a CLIENT ROLE
   --    still holds any of the three grants the enumerated revokes used to miss.
   --    A non-zero here means one of the revokes in §3 was edited or a later
   --    migration re-granted ALL — and TRUNCATE bypasses RLS entirely, so no
   --    other column in this row would notice.
+  --    ⚠ `anon` JOINED `authenticated` HERE THIS ROUND, and the omission was a
+  --      real hole rather than tidiness: every revoke in §3 already names both
+  --      roles, but this column asked about only one of them. TRUNCATE is the
+  --      single command that consults no policy at all, so a later migration
+  --      re-granting ALL to `anon` would have made the append-only ledger
+  --      truncatable by every logged-out visitor holding the publishable key
+  --      while this column went on reading 0 — a verify that cannot see the
+  --      failure it was added for. Measured rather than reasoned: with `grant
+  --      truncate on public.transport_ledger to anon` in force on the 16.13
+  --      stub cluster, the old authenticated-only predicate returned 0 and this
+  --      one returns 1.
   (select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace
     where n.nspname = 'public'
       and c.relname in ('transport_companies','transport_rigs',
                         'transport_contracts','transport_ledger','transport_config')
       and (has_table_privilege('authenticated', c.oid, 'TRUNCATE')
         or has_table_privilege('authenticated', c.oid, 'TRIGGER')
-        or has_table_privilege('authenticated', c.oid, 'REFERENCES')))                 as residual_grants,
+        or has_table_privilege('authenticated', c.oid, 'REFERENCES')
+        or has_table_privilege('anon',          c.oid, 'TRUNCATE')
+        or has_table_privilege('anon',          c.oid, 'TRIGGER')
+        or has_table_privilege('anon',          c.oid, 'REFERENCES')))                 as residual_grants,
   -- The two data assertions. Both must be 0, and both name a limit this file
   -- once only claimed.
   (select count(*) from public.transport_companies c
@@ -2902,6 +3325,42 @@ select
      where (select count(*) from public.transport_rigs r
              where r.company_id = c.id and r.status <> 'retired')
            > (public.transport_caps(c.id)->>'fleet_cap')::int)                         as over_fleet_cap,
+  -- 🔴 THE TWO CLAIMS THIS FILE ASSERTED IN ITS HEADER AND CHECKED NOWHERE.
+  --    Both were added by the same round that added residual_grants "so the
+  --    claim is checked rather than asserted", and both were left out of it.
+  --    data_constraints: the four named CHECKs that are the ONLY bound on four
+  --    client-supplied values — the carrier name and home_node_id (the one
+  --    world-readable row), vehicle_id, the tariff object, and the ledger's
+  --    sign rule. `drop constraint if exists` runs one line above each `add`,
+  --    so a half-applied paste leaves the drop and loses the constraint, and
+  --    every other column in this row still reads exactly as specified.
+  --    contype = 'c' and the namespace join because conname is unique per
+  --    table, not per database.
+  --    floors_off: the price and unit floors are CONFIG, not schema, and §4.1
+  --    explicitly anticipates "a future operator tuning min_units_per_contract
+  --    to 0 in the SQL editor". Nothing else in this row can see that — the
+  --    columns still exist, the RPCs still reference them, and the floor is
+  --    simply gone. This is the only column that looks at their VALUES.
+  --    🔴 AND RE-RUNNING THIS FILE DOES NOT PUT A TUNED FLOOR BACK, which is
+  --       the whole reason this column has to exist rather than the paste being
+  --       the remedy. §1's config insert is `on conflict (id) do nothing`, on
+  --       purpose ("must not silently reset a ceiling somebody tuned in the SQL
+  --       editor after an incident"). Measured on the 16.13 stub cluster: with
+  --       min_price_per_contract set to 0, a full re-application restored the
+  --       dropped CHECK and the missed revoke — data_constraints back to 4,
+  --       residual_grants back to 0 — and floors_off STAYED 1. The paste heals
+  --       schema; only a human heals config.
+  --    ⚠ Both are hard 0/4. A 3 in data_constraints does not say WHICH one is
+  --      missing; query pg_constraint by name when it fires.
+  (select count(*) from pg_constraint k
+     join pg_class kc on kc.oid = k.conrelid
+     join pg_namespace kn on kn.oid = kc.relnamespace
+    where kn.nspname = 'public' and k.contype = 'c'
+      and k.conname in ('transport_companies_name_ck','transport_companies_tariff_ck',
+                        'transport_rigs_vehicle_id_ck','transport_ledger_sign_ck'))    as data_constraints,
+  (select count(*) from public.transport_config
+    where id = 1
+      and (min_units_per_contract <= 0 or min_price_per_contract <= 0))                 as floors_off,
   (select count(*) from public.transport_config where id = 1)                          as cfg_rows;
 
 -- ─── 5b. DATA STATE ────────────────────────────────────────────────────────

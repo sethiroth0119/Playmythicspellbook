@@ -1,0 +1,80 @@
+{
+"pieces": [
+{
+"id": "sql-038-schema",
+"title": "sql/038 \u2014 transport schema, RLS, definer helpers and the four RPCs",
+"files": [
+"sql/038_transport_companies.sql"
+],
+"bar_file": "sql/015_stadium_events.sql",
+"briefPath": "docs/gauntlet/briefs/sql-038-schema.md"
+},
+{
+"id": "rigs-catalog",
+"title": "rigs.data.js \u2014 the haul-class rig catalog and its runs/cargo maths",
+"files": [
+"public/src/transport/rigs.data.js"
+],
+"bar_file": "public/src/city/production.data.js",
+"briefPath": "docs/gauntlet/briefs/rigs-catalog.md"
+},
+{
+"id": "transport-seam",
+"title": "transport.bridge.js + index.js \u2014 the module-side seam and the entry point",
+"files": [
+"public/src/transport/transport.bridge.js",
+"public/src/transport/index.js"
+],
+"bar_file": "public/src/community/community.bridge.js",
+"briefPath": "docs/gauntlet/briefs/transport-seam.md"
+},
+{
+"id": "routes-pricing",
+"title": "routes.js \u2014 hops, reach, the quote, and the Meridian Haulage ceiling",
+"files": [
+"public/src/transport/routes.js"
+],
+"bar_file": "public/src/nodes/tiers.js",
+"briefPath": "docs/gauntlet/briefs/routes-pricing.md"
+},
+{
+"id": "contracts-api",
+"title": "contracts.js \u2014 every Supabase call, guarded, with the spend/refund discipline",
+"files": [
+"public/src/transport/contracts.js"
+],
+"bar_file": "public/src/city/cost.js",
+"briefPath": "docs/gauntlet/briefs/contracts-api.md"
+},
+{
+"id": "depot-building",
+"title": "Freight Depot \u2014 the city catalog entry and its transport-side reader",
+"files": [
+"public/src/city/production.data.js",
+"public/src/transport/depot.js"
+],
+"bar_file": "public/src/city/production.state.js",
+"briefPath": "docs/gauntlet/briefs/depot-building.md"
+},
+{
+"id": "depot-render",
+"title": "depot.render.js \u2014 the depot, fleet and Freight Exchange UI as pure string builders",
+"files": [
+"public/src/transport/depot.render.js"
+],
+"bar_file": "public/src/city/production.render.js",
+"briefPath": "docs/gauntlet/briefs/depot-render.md"
+},
+{
+"id": "legacy-wiring",
+"title": "index.html \u2014 the transport bridge, the charter op, the haul listings and the deploy knobs",
+"files": [
+"public/index.html",
+"public/version.txt",
+"public/sw.js"
+],
+"bar_file": "public/index.html",
+"briefPath": "docs/gauntlet/briefs/legacy-wiring.md"
+}
+]
+}

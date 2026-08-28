@@ -1,0 +1,980 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Mythic Spellbook patch notes for builds v119r8 to v120w6, 30 July to 13 August 2026.">
+<meta name="color-scheme" content="dark">
+<title>Ashfall Ledger</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Spectral:ital,wght@0,300;0,400;0,600;1,400&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<style>
+/* ═══ The page commits to one visual world — the game's own: plum-black ground,
+   inscriptional gold, parchment text. Every colour is painted explicitly so the
+   page holds on any host background. ═══ */
+:root{
+  --ground:#120e18; --ground-2:#0d0a12;
+  --surface:#1a1524; --surface-2:#221b2e;
+  --rule:#332941; --rule-soft:#251e31;
+  --parchment:#ece3d0; --body:#d6cbb8; --muted:#9a8fab;
+  --gold:#d4af37; --gold-bright:#ffd166; --gold-dim:#8a7330;
+  --ember:#ff8a5c; --sky:#6cd4ff; --leaf:#8fd48a;
+  --measure:68ch;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *{animation-duration:.01ms!important; transition-duration:.01ms!important}
+}
+body{
+  margin:0; background:var(--ground); color:var(--body);
+  font-family:'Spectral',Georgia,'Times New Roman',serif;
+  font-size:17px; line-height:1.62; -webkit-font-smoothing:antialiased;
+}
+::selection{background:rgba(212,175,55,.28); color:#fff}
+a{color:var(--gold-bright); text-underline-offset:3px}
+:focus-visible{outline:2px solid var(--gold-bright); outline-offset:3px; border-radius:2px}
+
+/* ── masthead plate ─────────────────────────────────────── */
+.plate{
+  border-bottom:1px solid var(--rule);
+  background:
+    radial-gradient(120% 140% at 50% -20%, rgba(212,175,55,.10), transparent 62%),
+    linear-gradient(180deg,#171122 0%, var(--ground) 100%);
+}
+.plate-in{max-width:1180px; margin:0 auto; padding:64px 28px 52px}
+.eyebrow{
+  font-family:'JetBrains Mono',ui-monospace,monospace; font-size:11px; font-weight:500;
+  letter-spacing:.22em; text-transform:uppercase; color:var(--gold); margin:0 0 22px;
+  display:flex; align-items:center; gap:14px;
+}
+.eyebrow::after{content:""; flex:1 1 60px; height:1px; min-width:30px;
+  background:linear-gradient(90deg,var(--gold-dim),transparent)}
+h1.title{
+  font-family:'Cinzel',Georgia,serif; font-weight:600; color:var(--parchment);
+  font-size:clamp(2.1rem,6.2vw,4.1rem); line-height:1.05; letter-spacing:.01em;
+  margin:0 0 8px; text-wrap:balance;
+}
+h1.title em{font-style:normal; color:var(--gold-bright)}
+.subtitle{
+  font-family:'Cinzel',Georgia,serif; font-size:clamp(.9rem,2.2vw,1.1rem); font-weight:500;
+  letter-spacing:.06em; color:var(--muted); margin:0 0 30px;
+}
+.standfirst{max-width:64ch; font-size:1.09rem; margin:0 0 32px; text-wrap:pretty}
+.standfirst strong{color:var(--parchment); font-weight:600}
+.meta{display:flex; gap:10px; flex-wrap:wrap; margin:0 0 30px; padding:0; list-style:none}
+.meta li{
+  font-family:'JetBrains Mono',monospace; font-size:11.5px; letter-spacing:.08em;
+  text-transform:uppercase; padding:6px 11px; border:1px solid var(--rule);
+  background:var(--surface); color:var(--muted); border-radius:2px;
+}
+.meta b{color:var(--gold-bright); font-weight:500}
+.tools{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
+button.tool{
+  font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:500;
+  letter-spacing:.10em; text-transform:uppercase; cursor:pointer; padding:11px 17px;
+  border-radius:2px; border:1px solid var(--gold-dim);
+  background:rgba(212,175,55,.09); color:var(--gold-bright);
+  transition:background .15s,border-color .15s,color .15s;
+}
+button.tool:hover{background:rgba(255,209,102,.17); border-color:var(--gold)}
+button.tool.ghost{border-color:var(--rule); background:var(--surface); color:var(--muted)}
+button.tool.ghost:hover{border-color:var(--gold-dim); color:var(--parchment)}
+button.tool.ok{border-color:var(--leaf); color:var(--leaf); background:rgba(143,212,138,.10)}
+.tool-note{font-size:13.5px; color:var(--muted); flex-basis:100%; margin:2px 0 0}
+
+/* ── plain-text drawer ──────────────────────────────────── */
+.raw{max-width:1180px; margin:0 auto; padding:0 28px}
+.raw-in{border:1px solid var(--rule); border-top:none; background:var(--ground-2); padding:18px}
+.raw-hd{font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--gold); margin:0 0 12px}
+.raw textarea{
+  width:100%; height:340px; resize:vertical; background:transparent; color:var(--body);
+  border:none; font-family:'JetBrains Mono',monospace; font-size:12.5px; line-height:1.6;
+}
+.raw textarea:focus{outline:none}
+
+/* ── shell: contents rail beside one reading column ─────── */
+.shell{max-width:1180px; margin:0 auto; padding:0 28px 90px;
+  display:grid; gap:52px; grid-template-columns:214px minmax(0,1fr)}
+@media (max-width:900px){.shell{grid-template-columns:minmax(0,1fr); gap:0}}
+.rail{position:sticky; top:0; align-self:start; padding:44px 0; max-height:100vh; overflow-y:auto}
+@media (max-width:900px){
+  .rail{position:static; max-height:none; padding:32px 0 28px; border-bottom:1px solid var(--rule)}
+}
+.rail h2{font-family:'JetBrains Mono',monospace; font-size:10.5px; font-weight:500;
+  letter-spacing:.2em; text-transform:uppercase; color:var(--gold); margin:0 0 16px}
+.rail ol{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:1px;
+  counter-reset:none}
+.rail a{display:block; padding:6px 0 6px 14px; font-size:14px; line-height:1.35;
+  color:var(--muted); text-decoration:none; border-left:2px solid var(--rule-soft);
+  transition:color .15s,border-color .15s}
+.rail a:hover{color:var(--parchment); border-left-color:var(--gold-dim)}
+.rail a.on{color:var(--gold-bright); border-left-color:var(--gold)}
+
+/* ── the document ───────────────────────────────────────── */
+.doc{padding:44px 0 0; max-width:var(--measure); min-width:0}
+.doc section{scroll-margin-top:20px}
+.doc h2{
+  font-family:'Cinzel',Georgia,serif; font-weight:600; color:var(--parchment);
+  font-size:clamp(1.5rem,3.6vw,2rem); line-height:1.16; margin:74px 0 6px;
+  padding-top:30px; border-top:1px solid var(--rule); position:relative; text-wrap:balance;
+}
+.doc h2::before{content:""; position:absolute; top:-1px; left:0; width:74px; height:2px;
+  background:linear-gradient(90deg,var(--gold),var(--gold-dim))}
+.doc section:first-child h2{margin-top:0}
+.doc h3{font-family:'Cinzel',Georgia,serif; font-weight:600; color:var(--gold-bright);
+  font-size:1.135rem; letter-spacing:.035em; margin:40px 0 12px; text-wrap:balance}
+.doc h4{font-family:'JetBrains Mono',monospace; font-size:11.5px; font-weight:500;
+  letter-spacing:.16em; text-transform:uppercase; color:var(--muted); margin:28px 0 10px}
+.doc p{margin:0 0 17px; text-wrap:pretty}
+.doc strong{color:var(--parchment); font-weight:600}
+.doc code{font-family:'JetBrains Mono',monospace; font-size:.86em; background:var(--surface-2);
+  border:1px solid var(--rule); border-radius:2px; padding:1px 5px; color:var(--gold-bright)}
+.doc hr{border:none; height:1px; background:var(--rule-soft); margin:40px 0 0}
+.doc ul{margin:0 0 18px; padding:0; list-style:none; display:flex; flex-direction:column; gap:11px}
+.doc ul li{position:relative; padding-left:20px}
+.doc ul li::before{content:"\25C6"; position:absolute; left:0; top:0;
+  color:var(--gold-dim); font-size:.66em; line-height:2.5}
+.doc ol{margin:0 0 18px; padding-left:22px; display:flex; flex-direction:column; gap:11px}
+.doc ol li::marker{color:var(--gold-dim); font-family:'JetBrains Mono',monospace; font-size:.85em}
+
+/* Change-kind chips. The tag is information, not decoration: it says whether an
+   entry is new behaviour, a fix, or something that was costing players real things. */
+.tag{display:inline-block; font-family:'JetBrains Mono',monospace; font-size:9.5px;
+  font-weight:700; letter-spacing:.14em; text-transform:uppercase; padding:2px 7px;
+  border-radius:2px; vertical-align:.14em; margin-right:9px; white-space:nowrap; border:1px solid}
+.tag-fix{color:var(--sky); border-color:rgba(108,212,255,.4); background:rgba(108,212,255,.10)}
+.tag-major{color:var(--ember); border-color:rgba(255,138,92,.45); background:rgba(255,138,92,.11)}
+li.tagged{padding-left:0}
+li.tagged::before{display:none}
+li.tagged:has(.tag-major), p.tagged:has(.tag-major){
+  border-left:2px solid rgba(255,138,92,.38); padding-left:18px}
+
+/* ── tables ─────────────────────────────────────────────── */
+.tw{overflow-x:auto; margin:0 0 22px; border:1px solid var(--rule); background:var(--surface)}
+.doc table{border-collapse:collapse; width:100%; min-width:340px; font-size:15px}
+.doc th{font-family:'JetBrains Mono',monospace; font-size:10.5px; font-weight:500;
+  letter-spacing:.14em; text-transform:uppercase; color:var(--gold); text-align:left;
+  padding:12px 16px; border-bottom:1px solid var(--rule); background:var(--surface-2);
+  white-space:nowrap}
+.doc td{padding:11px 16px; border-bottom:1px solid var(--rule-soft);
+  font-variant-numeric:tabular-nums}
+.doc tbody tr:last-child td{border-bottom:none}
+.doc td:first-child{color:var(--parchment)}
+.doc td strong{color:var(--gold-bright)}
+
+/* The headlines list is the page's one lifted element. */
+#headlines ul{background:var(--surface); border:1px solid var(--rule);
+  border-left:2px solid var(--gold); padding:24px 26px 24px 40px; gap:14px}
+#headlines ul li::before{color:var(--gold)}
+
+.colophon{max-width:1180px; margin:0 auto; padding:0 28px 72px;
+  font-family:'JetBrains Mono',monospace; font-size:11.5px; letter-spacing:.12em;
+  text-transform:uppercase; color:var(--muted)}
+.colophon span{display:block; max-width:var(--measure); padding-top:26px;
+  border-top:1px solid var(--rule)}
+</style>
+</head>
+<body>
+<header class="plate">
+  <div class="plate-in">
+    <p class="eyebrow">Mythic Spellbook &middot; Patch Notes</p>
+    <h1 class="title">The <em>Ashfall</em> Ledger</h1>
+    <p class="subtitle">Builds v119r8 &rarr; v120w6 &middot; 30 July &ndash; 13 August 2026</p>
+    <p class="standfirst">The largest run of changes the game has had. <strong>Four new systems</strong> &mdash; Communities, the Crafting Station, player-owned banks and the Node hierarchy &mdash; <strong>two new card types</strong>, a real supply chain underneath the whole economy, and a long list of fixes to saves, wallets and vaults that were quietly costing players things they had paid for.</p>
+    <ul class="meta">
+      <li>Live build <b>v120w6</b></li>
+      <li><b>263</b> commits</li>
+      <li><b>14</b> sections</li>
+      <li>Window <b>30 Jul &ndash; 13 Aug</b></li>
+    </ul>
+    <div class="tools">
+      <button class="tool" id="copyMd" type="button">Copy as Markdown</button>
+      <button class="tool" id="copyHtml" type="button">Copy as HTML</button>
+      <button class="tool ghost" id="showRaw" type="button" aria-expanded="false" aria-controls="rawWrap">Show plain text</button>
+      <p class="tool-note">Markdown for a CMS or a store post &middot; HTML to drop straight into the site.</p>
+    </div>
+  </div>
+</header>
+
+<div class="raw" id="rawWrap" hidden>
+  <div class="raw-in">
+    <p class="raw-hd">Select all &amp; copy</p>
+    <textarea id="rawText" readonly spellcheck="false" aria-label="Patch notes as plain markdown"></textarea>
+  </div>
+</div>
+
+<div class="shell">
+  <nav class="rail" aria-label="Contents">
+    <h2>Contents</h2>
+    <ol>
+      <li><a href="#headlines" data-for="headlines">Headlines</a></li>
+      <li><a href="#battle" data-for="battle">Battle</a></li>
+      <li><a href="#units-traits-and-decks" data-for="units-traits-and-decks">Units, Traits and Decks</a></li>
+      <li><a href="#communities-brand-new" data-for="communities-brand-new">Communities — brand new</a></li>
+      <li><a href="#notifications" data-for="notifications">Notifications</a></li>
+      <li><a href="#node-city" data-for="node-city">Node City</a></li>
+      <li><a href="#nodes-territory-and-the-district-map" data-for="nodes-territory-and-the-district-map">Nodes, Territory and the District Map</a></li>
+      <li><a href="#banking" data-for="banking">Banking</a></li>
+      <li><a href="#business-operations-and-the-economy" data-for="business-operations-and-the-economy">Business, Operations and the Economy</a></li>
+      <li><a href="#crafting-cosmetics-and-the-shop" data-for="crafting-cosmetics-and-the-shop">Crafting, Cosmetics and the Shop</a></li>
+      <li><a href="#roguelite-and-campaign" data-for="roguelite-and-campaign">Roguelite and Campaign</a></li>
+      <li><a href="#interface" data-for="interface">Interface</a></li>
+      <li><a href="#accounts-saves-and-stability" data-for="accounts-saves-and-stability">Accounts, Saves and Stability</a></li>
+      <li><a href="#for-creators-the-card-forge" data-for="for-creators-the-card-forge">For creators — the Card Forge</a></li>
+    </ol>
+  </nav>
+  <main class="doc" id="doc">
+<section id="headlines">
+<h2>Headlines</h2>
+<ul><li><strong>Communities</strong> — a civic layer above corporations, with binding votes, announcements, shared objectives and a reward pot.</li><li><strong>Enchantments and Curses</strong> — two new card types. Permanents that stay on the field and keep working.</li><li><strong>Trigger Chains</strong> — when several effects fire at once they now form a visible chain, and when they are all yours, <em>you</em> choose the order.</li><li><strong>The Crafting Station</strong> — salvage spare furniture into Craft Parts, then build booster packs, boxes, sleeves and dice skins.</li><li><strong>Player-owned banks</strong> — charter a bank, design your own loan products, and run the underwriting desk.</li><li><strong>The Node hierarchy</strong> — one capital, the rest towns. Towns feed the capital, and every node now has its own city.</li><li><strong>A supply chain</strong> — businesses consume what other businesses produce. Fuel and metal are load-bearing now.</li><li><strong>Your account is safer</strong> — a save bug that was wiping players who changed devices has been found and killed.</li></ul>
+</section>
+<section id="battle">
+<h2>⚔ Battle</h2>
+<h3>New card types</h3>
+<ul><li><strong>Enchantment</strong> — a permanent that stays on the field and keeps working. Unlike Location and Weather (one slot each), <strong>any number of Enchantments can be out at once</strong>, and each projects its auras until it is removed. They still cost energy, can still be negated, and can carry a one-shot arrival effect alongside their continuous auras. Eleven cards authored, including three <strong>Enchantment Units</strong> — living permanents that hold the field while projecting an aura.</li><li><strong>Curse</strong> — an Enchantment hung on the <em>opponent</em>. Curses can target the enemy hero, an enemy unit, or the whole enemy board, and carry a release condition so every curse has an exit.</li></ul>
+<h3>Trigger Chains</h3>
+<ul><li>Several effects firing off the same event now form <strong>one visible chain</strong> — LINK 1 / LINK 2 / LINK 3, with real card art — and resolve last-in-first-out.</li><li><strong>Choose your trigger order.</strong> When every link in the chain is yours, you order them yourself. The enemy’s triggers are never yours to order. There’s an AUTO button and a 20-second deadline, and clicking a picked card un-picks it and everything after it, so a misclick costs one click.</li><li><strong>⚡ Energy Surge</strong> — the connector between links is an animated gold beam with a charge travelling along it, and each link pulses as the charge lands. Honours reduced-motion settings.</li></ul>
+<h3>Rules and combat</h3>
+<ul><li><strong>Hand limit of 7.</strong> You may hold more than seven cards <em>during</em> your turn, but you cannot <strong>end</strong> your turn over the limit — and <strong>you</strong> choose what goes. The AI plays by the same rule and pitches its cheapest cards. Both hand counters now read <code>/7</code> and turn amber when you’re over. (If the turn timer force-ends your turn, the discard is automatic — a picker you can’t answer would hang the match.)</li><li><strong>Corrupted</strong> — a new status. A Corrupted unit can only attack <em>allied</em> units, and must attack.</li><li><strong>Born Ascended</strong> — a passive that lets a base unit count as a Kalon at all times without ever transforming. It gets the Kalon buffs, and it is a legal target for “destroy all Kalons” effects. That counterplay is the point.</li><li><strong>Global targeting</strong> — the radius clamp has been lifted.</li><li><strong>Absorption Kalon</strong> — many forms on one base.</li><li><strong>Milled cards now trigger.</strong> A card milled out of your deck fires its full “when this is sent to the graveyard” effect, exactly like one that died on the board. This is the entire engine behind send-to-graveyard archetypes, and it had never worked.</li><li><strong>Alternate play costs</strong> can now be paid from your <strong>hand</strong>, or from hand and graveyard as one pool. Plus Sacrifice Self, a Card Filter on Summon From Zone, and a summon-zone picker in every ability editor.</li><li><strong>Spells and traps get the full effect engine</strong> — every effect a unit could use is now available to them, and self-damage effects correctly hit your own hero.</li><li><strong>Every card type now charges the same play costs.</strong> A rejected play no longer eats its discard cost.</li><li><strong>Face-down cards</strong> — a new Set Face-Down effect, face-down flips now fire their effect instead of fizzling, and enemy set cards are visible on the board.</li><li><strong>Counters</strong> — counters can now be filtered by effect category (<code>counterScope</code>), plus punish counters and counter redirection.</li><li><strong>Multiplayer Verdict.</strong> When you cast a Verdict card in multiplayer, the ruling now goes to the <strong>human opponent</strong> instead of running the AI’s heuristic on their behalf. If they don’t answer within 20 seconds it falls back to the AI so the turn can never hang.</li><li><strong>New effect building blocks</strong> — Burn on Activation, Buff Per Card, Summon Lock, “for EACH named card in the graveyard”, and one general “…FOR EACH matching card” modifier that works with every effect.</li><li><strong>Weather and day/night effects</strong> now drive card behaviour.</li></ul>
+<h3>Battle fixes</h3>
+<ul><li class="tagged"><span class="tag tag-fix">Fixed</span><strong>Debuff auras were completely dead.</strong> Negative auras never applied to anything. Fixed.</li><li class="tagged"><span class="tag tag-fix">Fixed</span><strong>Player-side silence and root were never applied.</strong> Fixed.</li><li class="tagged"><span class="tag tag-fix">Fixed</span><strong>Archmage never discounted a single spell</strong> — and behind it, a shadowed function was silently killing <em>every</em> cost discount in the game.</li><li class="tagged"><span class="tag tag-fix">Fixed</span>The AI can now <strong>pay alternate costs</strong> on spells, traps and weather. Previously it declined every non-unit alternate-cost card outright, so it could never use an archetype’s alt-cost cards at all.</li><li class="tagged"><span class="tag tag-fix">Fixed</span><strong>Graveyard duplicates</strong> — a corpse and its own card were both being listed.</li><li class="tagged"><span class="tag tag-fix">Fixed</span>The board <strong>flickered on every click and every loot drop</strong>. Fixed.</li><li class="tagged"><span class="tag tag-fix">Fixed</span><strong>Cinematics could show a white screen</strong>, and the weather system could white out the board. Both fixed.</li><li class="tagged"><span class="tag tag-fix">Fixed</span>The <strong>Mimic Beacon</strong> was broken and has been removed.</li></ul>
+</section>
+<section id="units-traits-and-decks">
+<h2>🧬 Units, Traits and Decks</h2>
+<h3>Temperament</h3>
+<p>Every unit already had a nature (what it’s good at), a value profile (what it approves of), and a bond (how much it trusts you). <strong>Temperament is the fourth layer: <em>how</em> a unit forms that trust, plus one distinguishing quirk.</strong> Two units can share a nature and a value profile and still feel nothing alike.</p>
+<p>Eight temperaments, each with a different bonding curve:</p>
+<div class="tw"><table><thead><tr><th>Temperament</th><th>Quirk</th></tr></thead><tbody><tr><td><strong>Stoic</strong></td><td>Never suffers on the bench</td></tr><tr><td><strong>Ardent</strong></td><td>Burns bright on a kill</td></tr><tr><td><strong>Guarded</strong></td><td>Gains nothing for three battles, then opens up</td></tr><tr><td><strong>Vain</strong></td><td>Spotlight bonus, heavy fall penalty</td></tr><tr><td><strong>Devout</strong></td><td>Will never refuse to deploy</td></tr><tr><td><strong>Grim</strong></td><td>Hardens instead of grieving when an ally falls</td></tr><tr><td><strong>Kindly</strong></td><td>A win lifts every unit beside it</td></tr><tr><td><strong>Restless</strong></td><td>Bench hurts double, back-to-back fights reward</td></tr></tbody></table></div>
+<p>Temperament is <strong>derived from the card</strong>, not rolled — every player meets the same unit with the same temperament, so it’s a knowable property rather than a slot-machine pull. It shows on every unit surface and in the Deck Builder.</p>
+<h3>Shared history and Rapport</h3>
+<ul><li><strong>Shared history</strong> — units now log real milestones: first battle, 10 / 25 / 50 / 100 battles together, first kill, 25 kills, a last stand, each tier gained, sold, bought back, and surviving where others did not.</li><li><strong>Rapport</strong> — units now bond with <em>each other</em>, which loyalty never covered. Fighting and winning together builds it; surviving together builds it faster. Past the threshold, the pair gets <strong>+2 ATK / +2 DEF when deployed side by side</strong>.</li></ul>
+<h3>Faction Concord</h3>
+<p>A deck cohesion layer. Twenty factions rated across six tiers — <strong>sworn, warm, neutral, wary, hostile, feud</strong> — and a deck score computed from how your factions actually feel about each other, with a band and a breakdown of <em>which pairs</em> are helping or hurting.</p>
+<ul><li>20 warrior + 20 mage scores <strong>+15 (Sworn Company)</strong>. 20 goblinoid + 20 fairy scores <strong>−35 (At War With Itself)</strong>.</li><li>Mono-faction decks score neutral — a pure warrior deck is not a Sworn Company. The system rewards thoughtful multi-faction building.</li><li>Dragonkin is wary of everything it has no explicit stance toward. A dragon deck wants to be mono, and that’s deliberate.</li><li>There’s a <strong>Faction Concord page in the Codex</strong> so you can read the whole relationship table.</li></ul>
+<h3>Conditional traits</h3>
+<p>Ten new traits that <strong>read the world</strong> rather than baking a flat stat bonus at build time — evaluated live on every stat read:</p>
+<p><strong>Sunlit · Nocturne · Stormborn · Dry Ground · Cornered · Rearguard · Outcast · Oathkeeper · Vanguard · Glass Blade</strong></p>
+<p>They key off real state: time of day, weather, whether you’re indoors, how many enemies are adjacent, whether any enemy is within 3, whether you have faction kin nearby, and whether you’re the furthest-forward unit on the board. Trait count goes from 24 to 33.</p>
+<h3>Deck building</h3>
+<ul><li><strong>Owned / not-owned filters</strong> in the deck editor.</li><li class="tagged"><span class="tag tag-fix">Fixed</span>The deck list <strong>no longer jumps to the top</strong> every time you add or remove a card.</li><li><strong>Draft cards</strong> — new cards now stay invisible to players until they’re deliberately released, so cards still being tested and still waiting on art can’t go live by accident.</li><li>Card sets are <strong>published as downloadable JSON</strong> on the game origin.</li></ul>
+</section>
+<section id="communities-brand-new">
+<h2>🏛 Communities — brand new</h2>
+<p>Corporations hold ground. <strong>Communities hold corporations together.</strong> Everything on a community’s standings board is derived from systems that already exist in the game — territory held, contributions made, real activity.</p>
+<p><strong>Founding a community requires owning a corporation.</strong> Being a <em>member</em> of someone else’s corp doesn’t qualify; only its founder. If you don’t have one, the app tells you what you need and where to get it rather than showing you a form it will refuse.</p>
+<h3>The hub</h3>
+<p>The Guild Wire <em>is</em> the Community hub now. Nine tabs, with the Wire first and default:</p>
+<p><strong>Wire · Standings · Announcements · Votes · Objectives · Members · Corporations · Contributions · Rewards</strong></p>
+<h3>What’s in it</h3>
+<ul><li><strong>📣 Announcements</strong> — leadership posts, every member reads.</li><li><strong>🗳 Votes that actually change game state.</strong> Closing a vote <em>writes the winner onto the community</em> and the game reads it. Two binding kinds: <strong>war target</strong> sets the node the community pushes on, and <strong>levy</strong> sets the cut the community keeps from reward distributions (fixed rungs: 0 / 5 / 10 / 20%). Advisory votes are offered too, and the UI says plainly that they change nothing on their own. One member, one ballot; the tally is computed from the ballots and is readable community-wide, so anyone can audit it.</li><li><strong>🎯 Objectives</strong> point at real Territory Wars nodes. “Held” is read live from the war on every render, so it can never drift from the real map.</li><li><strong>💰 Rewards</strong> distribute from the community ledger by contribution share, and are <strong>claimed</strong> rather than pushed. Nothing here can reach into another player’s wallet.</li><li><strong>Live everything.</strong> The wire, announcements, votes and payouts now arrive <strong>without a reload</strong>, with typing indicators on the wire.</li><li><strong>Notifications</strong> name the community first — “Ashfall Compact · A vote is open” — because “new announcement” tells a player in four communities nothing. You are never notified for your own action.</li></ul>
+<h3>Community owners earn</h3>
+<ul><li><strong>100 Cinder</strong> for each member who joins from a new address, and <strong>10 Cinder</strong> per member who talks on the wire (at most once per 5 hours). Both paid to the owner, through the gift inbox, with a Claim button.</li><li>An owner earns <strong>nothing</strong> from their own joining or talking, and spamming the wire earns nobody anything extra.</li><li>The Rewards tab shows owners what their community earned them and why.</li></ul>
+<h3>Chat and org vault</h3>
+<ul><li><strong>World chat now posts through the server.</strong> Server-side profanity filtering, a server-side rate limit and a 500-character cap. The client can no longer write chat directly.</li><li><strong>The Guild Wire is server-only too</strong> — nothing but the server can post to it.</li><li><strong>Org vault</strong> — any member can withdraw, every move is logged, and members can trade with each other.</li></ul>
+</section>
+<section id="notifications">
+<h2>🔔 Notifications</h2>
+<ul><li><strong>Web Push.</strong> Announcements, open votes and payouts can now reach your phone <strong>with the game closed</strong>, not just with a tab open in the background.</li><li>Notifications carry the community name so they’re actionable from a lock screen, and repeat events replace rather than stack, so ten events aren’t ten things to dismiss.</li><li>Permission is asked by a <strong>button that says what it will do</strong>, never by a prompt on load.</li></ul>
+</section>
+<section id="node-city">
+<h2>🏙 Node City</h2>
+<h3>Thirteen new buildings</h3>
+<p><strong>Restaurant · Food Truck · Grocery · Club · Streetlight · Motor Pool · Fire Station · Smelter · Cannery · Warehouse · Power Station · Machine Shop · Clinic</strong> — shipped together with the demand economy behind them.</p>
+<h3>The city is alive</h3>
+<ul><li><strong>Civilian traffic.</strong> Saloons, hatchbacks, taxis and SUVs now drive your streets. Four vehicle classes had been built and were unable to appear in play; they’re scaled off housing, so a residential city gets real street life.</li><li><strong>Hover on any placed building</strong> to read its live output, crew, wear, socketed card and all three adjacency bonuses.</li></ul>
+<h3>Performance — the freeze is gone</h3>
+<ul><li class="tagged"><span class="tag tag-fix">Fixed</span><strong>Opening a big city froze the game.</strong> A full 24×24 city builds 5,482 meshes, and it was doing all of them in one uninterrupted block — the tab couldn’t paint or accept input for the whole run, so the browser went white and the OS offered to kill the page. <strong>It scaled with city size, so it hit the players who had built the most, hardest.</strong> The load now yields every grid row.</li><li>The quality governor was <strong>discarding exactly the stall frames</strong> that represent the freezing players actually report. It sees them now.</li><li>Citizens were the most expensive thing on the field — in a 60-agent crowd, 41 civilians cost more than three times what 19 vehicles did. Rebuilt to share materials, so bigger crowds cost far less.</li></ul>
+<h3>City management</h3>
+<ul><li><strong>Repairs card.</strong> After a siege or a fire-rain storm the damage is scattered across a 24×24 map. Every damaged building is now listed with its cost and tile, <strong>cheapest first</strong>, with a per-row button and <strong>Repair ALL</strong>. If the ledger runs dry mid-sweep it stops and tells you how many are still down.</li><li><strong>Road limits.</strong> Roads are cheap and buff every neighbour, so the optimal play was to pave the map. Roads now answer to a <strong>maintenance cap</strong> — base 40, <strong>+10 per Supply Depot</strong>, <strong>+8 per road-linked Convoy anchor</strong> — shown where roads are bought, on the road tile in the inspector, and in the needs panel at 85%. Existing roads over the cap are never removed; the limit only blocks new placement.</li><li><strong>A real city log.</strong> Toasts vanish in four seconds, so a raid that landed while you were in the build shop left no trace. Raids now log the <strong>defence breakdown</strong> behind the single number (static / soldiers / cards), the ammo shortfall and what it cost, the <strong>itemised loot</strong>, and which anchor was overrun against the soldier defence it needed. Weather logs what the front actually does to production. Filter chips split raids from weather, and the last 40 lines are saved with your city.</li><li><strong>The city can bank</strong>, and the city ledger <strong>holds earnings while the manager connects</strong> instead of dropping them.</li><li><strong>Autosave</strong> every 60 seconds, plus a flush when you leave the page.</li></ul>
+<h3>The Financial District</h3>
+<p>The retired Cinder Forge is back — as a <strong>financial district</strong>. Buildings that lift your Cinder earners, invest a slice of the takings across invented firms and <strong>other players' PRN nodes</strong>, and settle every 72 hours with real gains and <strong>real losses</strong>.</p>
+<p>Three risk tiers:</p>
+<div class="tw"><table><thead><tr><th>Tier</th><th>Range</th><th>Mean</th><th>Losing cycles</th></tr></thead><tbody><tr><td><strong>Conservative</strong></td><td>−10% … +35%</td><td>+13.8%</td><td>2.7%</td></tr><tr><td><strong>Balanced</strong></td><td>−35% … +80%</td><td>+18.8%</td><td>16.5%</td></tr></tbody></table></div>
+<p>This is not the old Forge. The old one minted currency out of fuel and metal with no customer, which is how one player reached ~16,000,000 🔥/day. These buildings generate nothing on their own — they only move money that the city actually earned.</p>
+<h3>City fixes and balance</h3>
+<ul><li class="tagged"><span class="tag tag-fix">Fixed</span><strong>Storms were out-damaging Fire Rain by 2.3×.</strong> Storm frequency was never the problem — a storm is supposed to be a <em>production modifier</em> (farms and outdoor work slow down) with lightning as flavour, and it was behaving like the worst destroyer in the game. Rebalanced to what it says it does.</li><li class="tagged"><span class="tag tag-fix">Fixed</span><strong>Producers now idle when the vault is full.</strong> Eight farms and no Cannery banked ~45 food/minute regardless of how much the population ate — and everything over the cap was <strong>silently discarded on arrival</strong> while “STASH FULL” spammed and food crowded every other resource out of a shared cap.</li><li><strong>Food balance</strong> — demand now scales with the same multiplier that supply already enjoyed.</li><li><strong>Node seam ×3.</strong> A node advertises what it is — “PRN — FUEL PRODUCTION” — and the city on top of it produced fuel at exactly the same rate as anyone else’s. A city now starts with <strong>×3 on the resource its own node produces</strong>, so specialising is the obvious play. The buff lands on the payout <em>and</em> on every rate preview in the UI.</li><li><strong>Two missing resources</strong> added, and <strong>Cinder finally shows its production</strong> in the city.</li><li>The <strong>city tier pill</strong> now says FREE only when you’re actually on a free camp.</li><li class="tagged"><span class="tag tag-fix">Fixed</span>Node City <strong>white screen</strong> on load — fixed.</li></ul>
+<h3>Coming: the resource chain</h3>
+<p>A <strong>258-entry industrial catalogue</strong> has been added behind the scenes — 26 categories, 60 raw / 98 intermediate / 100 finished goods — as the supply chain the city builder will run on. <strong>Nothing reads it yet, and that’s deliberate:</strong> a resource you can loot and be capped by but cannot sell, spend, make or see is worse than a missing one. Each resource goes live <em>with</em> its producer, one at a time.</p>
+<p>Groundwork that’s live now: the <strong>stash cap floor scales with the number of resource kinds</strong>, so collecting broadly will never get you trimmed as the catalogue rolls out.</p>
+</section>
+<section id="nodes-territory-and-the-district-map">
+<h2>🗺 Nodes, Territory and the District Map</h2>
+<h3>The Node hierarchy</h3>
+<ul><li><strong>One capital, the rest towns.</strong> A new <strong>🏛 Make capital</strong> control in the node drawer (owner only — a mayor runs a city, they don’t choose your capital).</li><li><strong>Towns feed the capital.</strong> Your capital’s accrual scales with the <strong>tier of every town you own</strong>, on the same Free → Eternal ladder that already decides a node’s share. Capped at +60%. Three Eternal towns is +21%. Towns aren’t lesser copies of the capital; they’re what makes having one worth it.</li><li><strong>Capital and town badges</strong> are visible to everyone.</li><li><strong>Every node has its own city.</strong> City saves are now node-scoped, so opening a town loads and saves <em>that town’s</em> city.</li></ul>
+<h3>Empire</h3>
+<ul><li><strong>City vs Town</strong> derived from earliest capture, plus an <strong>empire score and five tiers</strong>.</li><li><strong>Capital Cinder multiplier</strong> — city yield × nodes owned.</li><li>An <strong>owner-only green surge</strong> on the map, computed on your own device so it can never leak who owns what.</li><li><strong>Node Power scales with dollars</strong> — <strong>+100 Power per $10</strong> for owners, <strong>+25 per $10</strong> for players. A $50 owner purchase is 500 Power, exactly one node level.</li><li><strong>Node owners are past every Ruin Exchange gate.</strong></li></ul>
+<h3>AI corporations on the map</h3>
+<ul><li><strong>Six AI rivals</strong> now appear on the district map, each with an icon, a colour, a temperament and a plain-language dossier. They’re placed below the node markers so a corp badge can never intercept a click meant for a node, and every one carries an explicit AI tag so it’s never mistaken for another player’s holding.</li><li><strong>Player standing</strong> — seven tiers from <strong>Allied</strong> to <strong>Blacklisted</strong>, derived from live world state. Nodes held and camp registration lift it with everyone; then each corp reads a resource it actually cares about. The Trust and the Vein are mutually exclusive — corrupted essence pleases one and costs you the other.</li><li><strong>Startups</strong> and a real <strong>dossier drawer</strong>.</li><li class="tagged"><span class="tag tag-fix">Fixed</span>The corp pins are <strong>actually clickable</strong> now, and the node hover card no longer covers them.</li></ul>
+<h3>Trading with the AI corps</h3>
+<p>Two ways to do business, deliberately different in commitment:</p>
+<ul><li><strong>Spot trade</strong> — one sale per corp per day. They buy the resource they deal in at a price bent by your standing (the same ±15% band the market already uses), worth <strong>+2 rep</strong>. The offer rotates daily and every player sees the same one.</li><li><strong>Supply contract</strong> — “enter business”. Three timed deliveries, better per-unit than spot, 24 hours per run. Each delivery is <strong>+5 rep</strong>, and seeing the whole thing through is <strong>+8 more</strong>, because finishing should be worth more than the sum of the runs. Signing is gated on having the <em>first</em> delivery, not the whole run.</li><li><strong>Missing a window is the point.</strong> An overdue contract is torn up and costs <strong>12 standing</strong> — and that check runs whenever you come back, not only if you happen to open that one drawer.</li></ul>
+<h3>Convoys and logistics</h3>
+<ul><li><strong>Real convoys.</strong> The Logistics screen is wired to actual freight, and the trucks on the map haul real cargo.</li><li><strong>Rigs now haul</strong> — the Garage is wired into the convoy engine.</li><li>The convoy cap now covers <strong>every</strong> outbound run, including rescues and rival raids.</li></ul>
+<h3>Mayors</h3>
+<ul><li class="tagged"><span class="tag tag-fix">Fixed</span><strong>Mayors manage the owner’s city, not their own.</strong> Node managers spend the <strong>owner’s</strong> ledger, not theirs.</li><li class="tagged"><span class="tag tag-fix">Fixed</span><strong>Your own city is yours again</strong> — a shared local cache was crossing them over.</li><li class="tagged"><span class="tag tag-fix">Fixed</span><strong>Mayors were locked out</strong> of cities they’d been hired to run. Fixed.</li></ul>
+</section>
+<section id="banking">
+<h2>🏦 Banking</h2>
+<h3>Player-owned banks</h3>
+<p>Charter your own bank. Cinder never moves on the client — the <strong>30% reserve requirement</strong> and per-teller approval ceilings are enforced server-side.</p>
+<ul><li><strong>The Office of the Mint</strong> — tier cards, a burn-vs-stake split bar, an over-stake slider driving deposit capacity and seals, an acknowledgement gate, a medallion, and a sale listing.</li><li><strong>The Underwriting Desk</strong> — an in-tray, dossiers in four sections, collateral haircuts, an ember dial, and approve / counter / deny with a seal and a receipt. It opens for the <strong>owner and for tellers</strong>, which is how hiring feeds the desk.</li><li><strong>Charter ladder</strong> — 2,000 / 7,500 / 21,000 MT staked. Tier 1 burns nothing, so the advertised price is exactly what leaves your wallet. Cinder is <em>spent</em>; MT is <em>staked</em>, and the stake settles before the bank exists so a failed stake can never leave you owning a bank you didn’t pay for.</li><li><strong>Bank Row</strong> — the public directory.</li><li><strong>Hire Bank Tellers</strong> from your guild, in Guild &amp; Hiring — and the hire actually staffs the desk.</li><li>A bank earns <strong>interest, not resources</strong>, so it never feeds the commodity market.</li></ul>
+<h3>The Bank Back Office</h3>
+<p>Bank owners now build their own <strong>loan products</strong> — standing offers on their bank’s rate board.</p>
+<ul><li>The builder covers name, structure, currency, min/max principal, rate, term, minimum Ember score, concurrent-loan cap, accepted collateral classes and a note, with a live <strong>“as borrowers will see it”</strong> preview including a worked 100k example at the effective advance rate.</li><li><strong>Currency ceilings tighten as the money hardens:</strong></li></ul>
+<div class="tw"><table><thead><tr><th>Currency</th><th>Max rate</th><th>Max LTV</th><th>Max term</th><th>Requires</th></tr></thead><tbody><tr><td>Cinder</td><td>5%</td><td>100%</td><td>30 days</td><td>—</td></tr><tr><td>Aza</td><td>3.5%</td><td>75%</td><td>21 days</td><td>Charter II</td></tr><tr><td>Mythic</td><td>3%</td><td>60%</td><td>14 days</td><td>Charter III</td></tr></tbody></table></div>
+<ul><li><strong>Collateral policy</strong> — per-class haircut and max LTV, with the reason stated: real estate recovers best, cards worst. Bound and untradeable items are never eligible; if you can’t sell it after a default, it isn’t security.</li><li><strong>Bank identity</strong> — sigil, name, motto, and a live Registry preview.</li></ul>
+<h3>Bank of Ethos</h3>
+<ul><li><strong>A statement you can actually read.</strong> Every market sale, purchase and listing had always been recorded — there was just no way to see it. Now: <strong>All / Market / Bank filter chips</strong>, depth raised from 10 rows to <strong>40</strong>, and a <strong>sales rollup in the header</strong> (“you sold 6 things for 12,400”).</li><li><strong>Token &amp; Blockchain disclaimer</strong> shown before wallet linking.</li><li class="tagged"><span class="tag tag-fix">Fixed</span><strong>The exchange counter had never worked once.</strong> Fixed.</li><li class="tagged"><span class="tag tag-fix">Fixed</span><strong>Withdrawals were minting Cinder.</strong> Fixed.</li><li class="tagged"><span class="tag tag-fix">Fixed</span><strong>Cinder was accumulating in the wrong server table.</strong> Fixed.</li><li class="tagged"><span class="tag tag-fix">Fixed</span>A <strong>Cinder-bought bank was never actually chartered</strong>. Fixed.</li><li class="tagged"><span class="tag tag-fix">Fixed</span>Transfers were being <strong>double-logged</strong>, and 77 duplicate ledger rows have been cleaned up.</li><li class="tagged"><span class="tag tag-fix">Fixed</span>The bank was broken behind a table that had never existed, and the bank door / nav chain has been repaired.</li><li><strong>Money moved server-side.</strong> Bank of Ethos transfers and <strong>Aza</strong> — the real-money currency — are now settled atomically on the server.</li></ul>
+</section>
+<section id="business-operations-and-the-economy">
+<h2>🏭 Business, Operations and the Economy</h2>
+<h3>The supply chain</h3>
+<p>Before this, every business produced from nothing. Mining and construction were unrelated islands and no operation depended on any other. The economy is now <strong>two-tier</strong>:</p>
+<ul><li><strong>Primary extractors</strong> — mining, oil, agriculture, salvage, gas — have no inputs. They’re where matter enters the world, alongside node resource yield.</li><li><strong>Secondary industry</strong> consumes it — <strong>construction and fishing burn fuel, cars burn metal and fuel, research burns metal and fuel, medical burns food, smuggling burns fuel</strong>.</li></ul>
+<p><strong>It throttles, it doesn’t stall.</strong> Hold half the fuel a run needs and the operation runs at <strong>half</strong>, visibly, so you can go solve it. An operation that silently produced nothing would just read as broken. Wages are <strong>not</strong> throttled — pay is owed whether or not the supply line held.</p>
+<p>This makes fuel and metal load-bearing across the whole economy instead of being sellable numbers, and it wires node output directly into business viability. The supply chain is surfaced in the Operations UI.</p>
+<h3>The live market</h3>
+<ul><li><strong>Business gross now tracks what its output is actually worth</strong>, in a 0.5× – 2.2× band. Salaries are not scaled, so <strong>glutting your own output actually hurts</strong>.</li><li>Rarity is derived from base price, so rare goods are more fragile — their price assumes scarcity.</li><li>A 24-hour inflow at 3× normal flow trips a <strong>glut crash</strong>, with a tape entry explaining why.</li><li class="tagged"><span class="tag tag-fix">Fixed</span>Cards were priced at a flat 100 each regardless of rarity. Now priced by rarity.</li></ul>
+<h3>The Genetics Lab and the DNA Lab</h3>
+<ul><li><strong>New business: the Genetics Lab.</strong> It yields <strong>DNA</strong> — 2.0 per worker-hour across 8 staff, so 16/hour.</li><li><strong>DNA Lab cloning is now priced by rarity:</strong> common 180 · uncommon 300 · rare 600 · epic 900 · legendary 1200 · mythic 3600. At the old prices a single Memory Transfer bought a common outright, so cloning wasn’t a sink, it was a formality.</li><li><strong>Cloning now requires owning a Genetics Lab.</strong> The gating business is also the source: a common clone is about <strong>11 hours</strong> of a running lab, a mythic about <strong>9 days</strong>.</li></ul>
+<h3>Economy fixes — currency that was being minted from nothing</h3>
+<ul><li class="tagged"><span class="tag tag-fix">Fixed</span><strong>The car dealership NPC buyer queue has been removed.</strong> It was a Cinder faucet, and NPCs now pay <strong>market value</strong>, which kills the buy-low/flip-to-NPC loop.</li><li class="tagged"><span class="tag tag-fix">Fixed</span><strong>Camp Workshop now pays in resources, never currency.</strong> Two projects were straight alchemy — Memory Transfer turned 8 Memory Shards into Aza, and Forbidden Refinement turned 6 Corrupted Essence into 120 Cinder. Aza is bought with real money; that one was worse than an economy bug.</li><li class="tagged"><span class="tag tag-fix">Fixed</span><strong>Fuel no longer claims to affect price</strong> — it hasn’t for a while, and the UI was still saying so.</li><li class="tagged"><span class="tag tag-fix">Fixed</span><strong>Base Construction</strong> — a blank cost override no longer makes an upgrade resource-free.</li><li class="tagged"><span class="tag tag-fix">Fixed</span><strong>A refused business purchase no longer takes your Cinder.</strong></li><li><strong>Foundation Tax removed.</strong></li><li><strong>The Crafting Station now runs on looted resources</strong>, not furniture salvage.</li></ul>
+<h3>Admin economy tools</h3>
+<p>Every economy number is now <strong>authored, not hardcoded</strong> — a generic economy tuner, an Operations business editor, a crafting recipe editor, and full editability for the fishing fleet, the reclaim board and Black River.</p>
+</section>
+<section id="crafting-cosmetics-and-the-shop">
+<h2>🔨 Crafting, Cosmetics and the Shop</h2>
+<h3>The Crafting Station</h3>
+<p>Its own screen off the Card Shop tab strip, with three benches:</p>
+<ul><li><strong>SALVAGE</strong> breaks spare furniture down into 🔩 <strong>Craft Parts</strong>.</li><li><strong>CRAFT</strong> turns parts into <strong>booster packs (30)</strong>, <strong>booster boxes (210 for 8 — cheaper per pack)</strong>, <strong>card sleeves (120)</strong> and <strong>dice skins (150)</strong>.</li><li><strong>LOADOUT</strong> equips what you made.</li></ul>
+<p>Parts are deliberately a <strong>separate currency</strong> and only flow one way: furniture → parts → product. Salvage yield scales with what the piece cost but returns well under it — it’s for spares you regret, not a refund counter. Packs come from the live pack catalogue, so crafting always yields the <strong>current</strong> set. <strong>Exclusive cosmetics stay uncraftable</strong> — that promise is what makes them exclusive. Every failure refunds in full, and the message distinguishes “you own them all” from “none exist yet”.</p>
+<h3>Cosmetics</h3>
+<ul><li><strong>🎲 Dice skins</strong> — earned from crafting or the shop. Only <em>your</em> die is skinned; your opponent’s is untouched, and the pips stay readable over any art.</li><li><strong>Deck sleeves</strong> render on your card backs, with an equip picker in Settings.</li><li><strong>Exclusive cosmetics</strong> and <strong>Founder Drops</strong>.</li><li><strong>Tier entitlements</strong>, including cash-out allowance.</li></ul>
+<h3>Shop and items</h3>
+<ul><li class="tagged"><span class="tag tag-fix">Fixed</span><strong>The held-item picker now shows only what you own.</strong> Custom items were bypassing the inventory gate entirely, so every forged item in the game appeared in every player’s Held Item dropdown whether they owned it or not. (An item you have equipped but no longer own is still listed, so a loadout can’t silently break.)</li><li><strong>The Cinder Shop now sells held items</strong>, and is Camp-only.</li><li class="tagged"><span class="tag tag-fix">Fixed</span><strong>An audit found 11 unpaid rewards and an unbuyable shop.</strong> All fixed.</li><li class="tagged"><span class="tag tag-fix">Fixed</span><strong>Vault container images</strong> actually save now.</li><li><strong>Founder &amp; Node packages</strong> available through the shop, with exactly-once fulfilment.</li></ul>
+<h3>The Garage</h3>
+<p>Three convoy rigs, bought once with real money and <strong>owned permanently</strong>:</p>
+<div class="tw"><table><thead><tr><th>Rig</th><th>Price</th></tr></thead><tbody><tr><td><strong>Ironback Runner</strong></td><td>$20</td></tr><tr><td><strong>Ash Convoy Rig</strong></td><td>$60</td></tr><tr><td><strong>Warden Longhaul</strong></td><td>$99</td></tr></tbody></table></div>
+<p>Ownership is stored in three places — your local profile for instant offline reads, your cloud profile so it crosses your devices, and server-side, which is the only copy a wiped browser can be restored <em>from</em>. <strong>Restore runs on every sign-in</strong>, not just after a purchase, because a new device has a purchase record and an empty profile.</p>
+<p>There is now exactly <strong>one</strong> storefront for these. They had briefly been sold in two places, in two currencies, with two ownership records — that’s been unified onto the real-money rail.</p>
+<h3>Referrals</h3>
+<ul><li><strong>A referral card in your game profile</strong> — your code, a redeem box, and MT airdrop progress.</li><li><strong>Both sides are rewarded.</strong> Invite copy, local credit and an instant pack open when a friend redeems in-game.</li><li>Referral pack gifts land <strong>sealed in your Pack Opening inventory</strong> instead of auto-opening, so you get to open them yourself.</li><li><strong>Claim buttons on your profile</strong> for gift-inbox rewards.</li><li class="tagged"><span class="tag tag-fix">Fixed</span>Friendly errors for address-lock rejections instead of a raw failure.</li></ul>
+</section>
+<section id="roguelite-and-campaign">
+<h2>🗡 Roguelite and Campaign</h2>
+<ul><li><strong>The 3D Ascent map is now the default roguelite map.</strong> All 14 node types, relics, currency, heat/haul, dialogue and every placement keep working — the campaign model is still authoritative.</li><li><strong>A visual Campaign Builder</strong> — the node-graph editor reworked around the real 14 node types, with start/boss validation and per-node Name and Story fields. Edits merge by ID, so a visual change never drops enemy config, rewards, dialogue, infection zones or random-event pools.</li><li><strong>Story chaining</strong> — campaign outro text now appears on the victory screen above the next-chapter buttons, and the 3D departure node carries your camp intro.</li><li><strong>Onboarding rewritten.</strong></li><li class="tagged"><span class="tag tag-fix">Fixed</span>The <strong>Main Hub tutorial</strong> is no longer consumed by a sub-hub.</li><li><strong>Polycreation</strong> — a new modal, plus material sources and triggered hand abilities.</li></ul>
+</section>
+<section id="interface">
+<h2>🎨 Interface</h2>
+<ul><li><strong>The bunker console</strong> rebuilt — three columns and a command bar, with the room cards rebuilt to the reference design.</li><li><strong>The victory / defeat screen</strong> rebuilt.</li><li><strong>Deploy Slots</strong> rebuilt.</li><li><strong>The node modal</strong> reskinned — crest, stat triple and loss pills.</li><li><strong>Hero portraits and hero frame art fill their frames</strong> instead of letterboxing.</li><li><strong>Back buttons</strong> are in flow, under the title, and never overlap anything.</li><li><strong>Six capped page containers widened</strong>, and the Concord page now holds an even grid at every width.</li><li><strong>The camp resource strip</strong> stays one row tall on narrow screens.</li><li class="tagged"><span class="tag tag-fix">Fixed</span><strong>The auction listing modal could not be closed</strong> — neither the X nor Cancel worked. Fixed, and the auction modal now always opens dead centre.</li><li><strong>1,000,000 listing cap</strong> on auctions.</li><li class="tagged"><span class="tag tag-fix">Fixed</span>The <strong>giant gold pill on Choose Your Deck</strong> and a stranded AI pill — fixed.</li><li><strong>Battlefield art restored</strong>, and the admin’s battlefield art is wired into the board stage. The 3D map backdrop and the bank door are back.</li><li class="tagged"><span class="tag tag-fix">Fixed</span><strong>The cinematic main menu never loaded</strong> — it was requesting a three.js version that doesn’t exist. Fixed.</li><li class="tagged"><span class="tag tag-fix">Fixed</span><strong>The main menu was serving a stale cached copy.</strong> Fixed.</li><li><strong>Leaderboards have been removed</strong> from the game and camp.</li></ul>
+<h3>Broadcast</h3>
+<ul><li><strong>An Emergency Broadcast tile</strong> in the game menu, linking to your web profile and the feed.</li><li><strong>Share to Broadcast from the victory screen</strong> — post your result, with an optional clip.</li><li><strong>Clip recorder.</strong></li></ul>
+</section>
+<section id="accounts-saves-and-stability">
+<h2>🛡 Accounts, Saves and Stability</h2>
+<p>This is the section that matters most, because these were costing players real things.</p>
+<h3>The one that was wiping accounts</h3>
+<p class="tagged"><span class="tag tag-major">Critical fix</span><strong>Stale reset directives were wiping players who changed devices.</strong> A season reset published in July was still being applied — in August — to anyone who had missed it at the time: a new account, a new device, cleared storage, or a phone that hadn’t been opened in a week. The system was asking “has this player already taken this reset?” when it should have been asking whether the reset was still current.</p>
+<p>The measured exposure before the fix was <strong>379 player/directive pairs across 82 of 97 players</strong>. Five accounts in four days each applied all five historical resets within a single minute — the fingerprint of a device with no local record — every one ending on zero Cinder.</p>
+<p><strong>Both halves of this fault are now closed</strong>, and a related bug where a purge one-shot re-ran on every new device is fixed too.</p>
+<h3>Your vault</h3>
+<p class="tagged"><span class="tag tag-major">Critical fix</span><strong>Bought Vault Containers were vanishing.</strong> Two bugs, and the second is why it kept happening rather than happening once:</p>
+<ol><li>A one-time gear clean was throwing away the whole vault layout object — which holds two unrelated things: your <strong>items</strong> (correct to clear) and the <strong>size of your vault</strong>, bought with Aza at 25 / 60 / 120 per container. So a gear clean silently repossessed paid capacity, and a repossessed vault looks exactly like a normal new one, which is why this surfaced as player reports rather than as an error.</li><li>The “already done this” flag was never actually saved, so a new device, cleared site data or Safari’s storage eviction re-ran the “one-time” clean on an account that had already had it.</li></ol>
+<p><strong>Contents clear, capacity survives.</strong> And vault rows can now be restored from the admin panel without touching the database.</p>
+<h3>Your wallet</h3>
+<ul><li><strong>Cinder and Aza are now server-owned.</strong> Every faucet in the game routes through the wallet, and the last client-asserted money number has been closed out.</li><li><strong>A credit outbox</strong> — when a credit fails, the game now remembers <strong>what</strong> failed and how much, instead of just that something did. That’s the difference between a retry for the right amount and a “make my balance match” guess.</li><li><strong>Admin care packages</strong> — 500,000 Cinder plus 500 each of metal, supplies, water and food, delivered to your gift inbox and claimed like any other reward. Sent as five separate gifts so a player with a full vault can take the Cinder now and the resources later.</li><li>Every reward path is bounded and every refusal is recorded.</li></ul>
+<h3>Cross-device</h3>
+<ul><li class="tagged"><span class="tag tag-fix">Fixed</span><strong>A stale pending flag can no longer beat newer cloud data</strong>, so signing in on a second device won’t overwrite what you did on the first.</li></ul>
+<h3>Performance and delivery</h3>
+<ul><li class="tagged"><span class="tag tag-major">Critical fix</span><strong>The minifier was compressing the wrong script</strong> — 3.7 MB was shipping raw on every single deploy. Fixed.</li><li><strong>WebGL contexts</strong> are now released when panels close, instead of being held.</li><li><strong>A GPU soak test</strong> confirms the title screen does not leak (94 samples, −0.5 MB/hr).</li><li class="tagged"><span class="tag tag-fix">Fixed</span><strong>Multiplayer</strong> — four owner/position fields the perspective swap never swapped, so some effects read the wrong side of the board.</li></ul>
+</section>
+<section id="for-creators-the-card-forge">
+<h2>🔧 For creators — the Card Forge</h2>
+<ul><li><strong>Enchantment and Curse</strong> are both authorable from the Forge type dropdown.</li><li><strong>Zero-cost-in-hand</strong> can be authored from the card editor, and is signposted from the Effect Type dropdown.</li><li><strong>Spell and trap effect pickers are grouped</strong>, as are the effect dropdowns generally.</li><li><strong>A summon-zone picker</strong> in every ability editor.</li><li><strong>The draft flag</strong> — mark a card draft and it’s excluded from the published catalogue and hidden from every non-admin deck pool, while staying fully editable in the Forge.</li><li><strong>Card art overhaul</strong> — art now persists properly (including animated art), pasted URLs are verified before they’re stored and re-hosted onto our own storage, and there’s a proxy so a host that blocks us can’t hold our art hostage. The Card Art panel shows your sign-in state.</li><li><strong>Card set import</strong> — <code>importCards()</code> plus five authored archetype batches (control, counters, the lock/continuous shell, Verdict, and enchantments).</li></ul>
+</section>
+  </main>
+</div>
+
+<p class="colophon"><span>Mythic Spellbook &middot; builds v119r8 &rarr; v120w6 &middot; 263 commits</span></p>
+
+<script type="text/plain" id="src">
+# Mythic Spellbook — Patch Notes
+
+## Builds v119r8 → v120w6 · 30 July – 13 August 2026
+
+The largest run of changes the game has had. Four brand-new systems (Communities,
+the Crafting Station, player-owned banks and the Node hierarchy), two new card
+types, a real supply chain underneath the whole economy, and a long list of fixes
+to saves, wallets and vaults that were quietly costing players things they had
+paid for.
+
+---
+
+## Headlines
+
+- **Communities** — a civic layer above corporations, with binding votes, announcements, shared objectives and a reward pot.
+- **Enchantments and Curses** — two new card types. Permanents that stay on the field and keep working.
+- **Trigger Chains** — when several effects fire at once they now form a visible chain, and when they are all yours, *you* choose the order.
+- **The Crafting Station** — salvage spare furniture into Craft Parts, then build booster packs, boxes, sleeves and dice skins.
+- **Player-owned banks** — charter a bank, design your own loan products, and run the underwriting desk.
+- **The Node hierarchy** — one capital, the rest towns. Towns feed the capital, and every node now has its own city.
+- **A supply chain** — businesses consume what other businesses produce. Fuel and metal are load-bearing now.
+- **Your account is safer** — a save bug that was wiping players who changed devices has been found and killed.
+
+---
+
+## ⚔ Battle
+
+### New card types
+
+- **Enchantment** — a permanent that stays on the field and keeps working. Unlike Location and Weather (one slot each), **any number of Enchantments can be out at once**, and each projects its auras until it is removed. They still cost energy, can still be negated, and can carry a one-shot arrival effect alongside their continuous auras. Eleven cards authored, including three **Enchantment Units** — living permanents that hold the field while projecting an aura.
+- **Curse** — an Enchantment hung on the *opponent*. Curses can target the enemy hero, an enemy unit, or the whole enemy board, and carry a release condition so every curse has an exit.
+
+### Trigger Chains
+
+- Several effects firing off the same event now form **one visible chain** — LINK 1 / LINK 2 / LINK 3, with real card art — and resolve last-in-first-out.
+- **Choose your trigger order.** When every link in the chain is yours, you order them yourself. The enemy's triggers are never yours to order. There's an AUTO button and a 20-second deadline, and clicking a picked card un-picks it and everything after it, so a misclick costs one click.
+- **⚡ Energy Surge** — the connector between links is an animated gold beam with a charge travelling along it, and each link pulses as the charge lands. Honours reduced-motion settings.
+
+### Rules and combat
+
+- **Hand limit of 7.** You may hold more than seven cards *during* your turn, but you cannot **end** your turn over the limit — and **you** choose what goes. The AI plays by the same rule and pitches its cheapest cards. Both hand counters now read `/7` and turn amber when you're over. (If the turn timer force-ends your turn, the discard is automatic — a picker you can't answer would hang the match.)
+- **Corrupted** — a new status. A Corrupted unit can only attack *allied* units, and must attack.
+- **Born Ascended** — a passive that lets a base unit count as a Kalon at all times without ever transforming. It gets the Kalon buffs, and it is a legal target for "destroy all Kalons" effects. That counterplay is the point.
+- **Global targeting** — the radius clamp has been lifted.
+- **Absorption Kalon** — many forms on one base.
+- **Milled cards now trigger.** A card milled out of your deck fires its full "when this is sent to the graveyard" effect, exactly like one that died on the board. This is the entire engine behind send-to-graveyard archetypes, and it had never worked.
+- **Alternate play costs** can now be paid from your **hand**, or from hand and graveyard as one pool. Plus Sacrifice Self, a Card Filter on Summon From Zone, and a summon-zone picker in every ability editor.
+- **Spells and traps get the full effect engine** — every effect a unit could use is now available to them, and self-damage effects correctly hit your own hero.
+- **Every card type now charges the same play costs.** A rejected play no longer eats its discard cost.
+- **Face-down cards** — a new Set Face-Down effect, face-down flips now fire their effect instead of fizzling, and enemy set cards are visible on the board.
+- **Counters** — counters can now be filtered by effect category (`counterScope`), plus punish counters and counter redirection.
+- **Multiplayer Verdict.** When you cast a Verdict card in multiplayer, the ruling now goes to the **human opponent** instead of running the AI's heuristic on their behalf. If they don't answer within 20 seconds it falls back to the AI so the turn can never hang.
+- **New effect building blocks** — Burn on Activation, Buff Per Card, Summon Lock, "for EACH named card in the graveyard", and one general "…FOR EACH matching card" modifier that works with every effect.
+- **Weather and day/night effects** now drive card behaviour.
+
+### Battle fixes
+
+- 🐛 **Debuff auras were completely dead.** Negative auras never applied to anything. Fixed.
+- 🐛 **Player-side silence and root were never applied.** Fixed.
+- 🐛 **Archmage never discounted a single spell** — and behind it, a shadowed function was silently killing *every* cost discount in the game.
+- 🐛 The AI can now **pay alternate costs** on spells, traps and weather. Previously it declined every non-unit alternate-cost card outright, so it could never use an archetype's alt-cost cards at all.
+- 🐛 **Graveyard duplicates** — a corpse and its own card were both being listed.
+- 🐛 The board **flickered on every click and every loot drop**. Fixed.
+- 🐛 **Cinematics could show a white screen**, and the weather system could white out the board. Both fixed.
+- 🐛 The **Mimic Beacon** was broken and has been removed.
+
+---
+
+## 🧬 Units, Traits and Decks
+
+### Temperament
+
+Every unit already had a nature (what it's good at), a value profile (what it approves of), and a bond (how much it trusts you). **Temperament is the fourth layer: *how* a unit forms that trust, plus one distinguishing quirk.** Two units can share a nature and a value profile and still feel nothing alike.
+
+Eight temperaments, each with a different bonding curve:
+
+| Temperament | Quirk |
+|---|---|
+| **Stoic** | Never suffers on the bench |
+| **Ardent** | Burns bright on a kill |
+| **Guarded** | Gains nothing for three battles, then opens up |
+| **Vain** | Spotlight bonus, heavy fall penalty |
+| **Devout** | Will never refuse to deploy |
+| **Grim** | Hardens instead of grieving when an ally falls |
+| **Kindly** | A win lifts every unit beside it |
+| **Restless** | Bench hurts double, back-to-back fights reward |
+
+Temperament is **derived from the card**, not rolled — every player meets the same unit with the same temperament, so it's a knowable property rather than a slot-machine pull. It shows on every unit surface and in the Deck Builder.
+
+### Shared history and Rapport
+
+- **Shared history** — units now log real milestones: first battle, 10 / 25 / 50 / 100 battles together, first kill, 25 kills, a last stand, each tier gained, sold, bought back, and surviving where others did not.
+- **Rapport** — units now bond with *each other*, which loyalty never covered. Fighting and winning together builds it; surviving together builds it faster. Past the threshold, the pair gets **+2 ATK / +2 DEF when deployed side by side**.
+
+### Faction Concord
+
+A deck cohesion layer. Twenty factions rated across six tiers — **sworn, warm, neutral, wary, hostile, feud** — and a deck score computed from how your factions actually feel about each other, with a band and a breakdown of *which pairs* are helping or hurting.
+
+- 20 warrior + 20 mage scores **+15 (Sworn Company)**. 20 goblinoid + 20 fairy scores **−35 (At War With Itself)**.
+- Mono-faction decks score neutral — a pure warrior deck is not a Sworn Company. The system rewards thoughtful multi-faction building.
+- Dragonkin is wary of everything it has no explicit stance toward. A dragon deck wants to be mono, and that's deliberate.
+- There's a **Faction Concord page in the Codex** so you can read the whole relationship table.
+
+### Conditional traits
+
+Ten new traits that **read the world** rather than baking a flat stat bonus at build time — evaluated live on every stat read:
+
+**Sunlit · Nocturne · Stormborn · Dry Ground · Cornered · Rearguard · Outcast · Oathkeeper · Vanguard · Glass Blade**
+
+They key off real state: time of day, weather, whether you're indoors, how many enemies are adjacent, whether any enemy is within 3, whether you have faction kin nearby, and whether you're the furthest-forward unit on the board. Trait count goes from 24 to 33.
+
+### Deck building
+
+- **Owned / not-owned filters** in the deck editor.
+- 🐛 The deck list **no longer jumps to the top** every time you add or remove a card.
+- **Draft cards** — new cards now stay invisible to players until they're deliberately released, so cards still being tested and still waiting on art can't go live by accident.
+- Card sets are **published as downloadable JSON** on the game origin.
+
+---
+
+## 🏛 Communities — brand new
+
+Corporations hold ground. **Communities hold corporations together.** Everything on a community's standings board is derived from systems that already exist in the game — territory held, contributions made, real activity.
+
+**Founding a community requires owning a corporation.** Being a *member* of someone else's corp doesn't qualify; only its founder. If you don't have one, the app tells you what you need and where to get it rather than showing you a form it will refuse.
+
+### The hub
+
+The Guild Wire *is* the Community hub now. Nine tabs, with the Wire first and default:
+
+**Wire · Standings · Announcements · Votes · Objectives · Members · Corporations · Contributions · Rewards**
+
+### What's in it
+
+- **📣 Announcements** — leadership posts, every member reads.
+- **🗳 Votes that actually change game state.** Closing a vote *writes the winner onto the community* and the game reads it. Two binding kinds: **war target** sets the node the community pushes on, and **levy** sets the cut the community keeps from reward distributions (fixed rungs: 0 / 5 / 10 / 20%). Advisory votes are offered too, and the UI says plainly that they change nothing on their own. One member, one ballot; the tally is computed from the ballots and is readable community-wide, so anyone can audit it.
+- **🎯 Objectives** point at real Territory Wars nodes. "Held" is read live from the war on every render, so it can never drift from the real map.
+- **💰 Rewards** distribute from the community ledger by contribution share, and are **claimed** rather than pushed. Nothing here can reach into another player's wallet.
+- **Live everything.** The wire, announcements, votes and payouts now arrive **without a reload**, with typing indicators on the wire.
+- **Notifications** name the community first — "Ashfall Compact · A vote is open" — because "new announcement" tells a player in four communities nothing. You are never notified for your own action.
+
+### Community owners earn
+
+- **100 Cinder** for each member who joins from a new address, and **10 Cinder** per member who talks on the wire (at most once per 5 hours). Both paid to the owner, through the gift inbox, with a Claim button.
+- An owner earns **nothing** from their own joining or talking, and spamming the wire earns nobody anything extra.
+- The Rewards tab shows owners what their community earned them and why.
+
+### Chat and org vault
+
+- **World chat now posts through the server.** Server-side profanity filtering, a server-side rate limit and a 500-character cap. The client can no longer write chat directly.
+- **The Guild Wire is server-only too** — nothing but the server can post to it.
+- **Org vault** — any member can withdraw, every move is logged, and members can trade with each other.
+
+---
+
+## 🔔 Notifications
+
+- **Web Push.** Announcements, open votes and payouts can now reach your phone **with the game closed**, not just with a tab open in the background.
+- Notifications carry the community name so they're actionable from a lock screen, and repeat events replace rather than stack, so ten events aren't ten things to dismiss.
+- Permission is asked by a **button that says what it will do**, never by a prompt on load.
+
+---
+
+## 🏙 Node City
+
+### Thirteen new buildings
+
+**Restaurant · Food Truck · Grocery · Club · Streetlight · Motor Pool · Fire Station · Smelter · Cannery · Warehouse · Power Station · Machine Shop · Clinic** — shipped together with the demand economy behind them.
+
+### The city is alive
+
+- **Civilian traffic.** Saloons, hatchbacks, taxis and SUVs now drive your streets. Four vehicle classes had been built and were unable to appear in play; they're scaled off housing, so a residential city gets real street life.
+- **Hover on any placed building** to read its live output, crew, wear, socketed card and all three adjacency bonuses.
+
+### Performance — the freeze is gone
+
+- 🐛 **Opening a big city froze the game.** A full 24×24 city builds 5,482 meshes, and it was doing all of them in one uninterrupted block — the tab couldn't paint or accept input for the whole run, so the browser went white and the OS offered to kill the page. **It scaled with city size, so it hit the players who had built the most, hardest.** The load now yields every grid row.
+- The quality governor was **discarding exactly the stall frames** that represent the freezing players actually report. It sees them now.
+- Citizens were the most expensive thing on the field — in a 60-agent crowd, 41 civilians cost more than three times what 19 vehicles did. Rebuilt to share materials, so bigger crowds cost far less.
+
+### City management
+
+- **Repairs card.** After a siege or a fire-rain storm the damage is scattered across a 24×24 map. Every damaged building is now listed with its cost and tile, **cheapest first**, with a per-row button and **Repair ALL**. If the ledger runs dry mid-sweep it stops and tells you how many are still down.
+- **Road limits.** Roads are cheap and buff every neighbour, so the optimal play was to pave the map. Roads now answer to a **maintenance cap** — base 40, **+10 per Supply Depot**, **+8 per road-linked Convoy anchor** — shown where roads are bought, on the road tile in the inspector, and in the needs panel at 85%. Existing roads over the cap are never removed; the limit only blocks new placement.
+- **A real city log.** Toasts vanish in four seconds, so a raid that landed while you were in the build shop left no trace. Raids now log the **defence breakdown** behind the single number (static / soldiers / cards), the ammo shortfall and what it cost, the **itemised loot**, and which anchor was overrun against the soldier defence it needed. Weather logs what the front actually does to production. Filter chips split raids from weather, and the last 40 lines are saved with your city.
+- **The city can bank**, and the city ledger **holds earnings while the manager connects** instead of dropping them.
+- **Autosave** every 60 seconds, plus a flush when you leave the page.
+
+### The Financial District
+
+The retired Cinder Forge is back — as a **financial district**. Buildings that lift your Cinder earners, invest a slice of the takings across invented firms and **other players' PRN nodes**, and settle every 72 hours with real gains and **real losses**.
+
+Three risk tiers:
+
+| Tier | Range | Mean | Losing cycles |
+|---|---|---|---|
+| **Conservative** | −10% … +35% | +13.8% | 2.7% |
+| **Balanced** | −35% … +80% | +18.8% | 16.5% |
+
+This is not the old Forge. The old one minted currency out of fuel and metal with no customer, which is how one player reached ~16,000,000 🔥/day. These buildings generate nothing on their own — they only move money that the city actually earned.
+
+### City fixes and balance
+
+- 🐛 **Storms were out-damaging Fire Rain by 2.3×.** Storm frequency was never the problem — a storm is supposed to be a *production modifier* (farms and outdoor work slow down) with lightning as flavour, and it was behaving like the worst destroyer in the game. Rebalanced to what it says it does.
+- 🐛 **Producers now idle when the vault is full.** Eight farms and no Cannery banked ~45 food/minute regardless of how much the population ate — and everything over the cap was **silently discarded on arrival** while "STASH FULL" spammed and food crowded every other resource out of a shared cap.
+- **Food balance** — demand now scales with the same multiplier that supply already enjoyed.
+- **Node seam ×3.** A node advertises what it is — "PRN — FUEL PRODUCTION" — and the city on top of it produced fuel at exactly the same rate as anyone else's. A city now starts with **×3 on the resource its own node produces**, so specialising is the obvious play. The buff lands on the payout *and* on every rate preview in the UI.
+- **Two missing resources** added, and **Cinder finally shows its production** in the city.
+- The **city tier pill** now says FREE only when you're actually on a free camp.
+- 🐛 Node City **white screen** on load — fixed.
+
+### Coming: the resource chain
+
+A **258-entry industrial catalogue** has been added behind the scenes — 26 categories, 60 raw / 98 intermediate / 100 finished goods — as the supply chain the city builder will run on. **Nothing reads it yet, and that's deliberate:** a resource you can loot and be capped by but cannot sell, spend, make or see is worse than a missing one. Each resource goes live *with* its producer, one at a time.
+
+Groundwork that's live now: the **stash cap floor scales with the number of resource kinds**, so collecting broadly will never get you trimmed as the catalogue rolls out.
+
+---
+
+## 🗺 Nodes, Territory and the District Map
+
+### The Node hierarchy
+
+- **One capital, the rest towns.** A new **🏛 Make capital** control in the node drawer (owner only — a mayor runs a city, they don't choose your capital).
+- **Towns feed the capital.** Your capital's accrual scales with the **tier of every town you own**, on the same Free → Eternal ladder that already decides a node's share. Capped at +60%. Three Eternal towns is +21%. Towns aren't lesser copies of the capital; they're what makes having one worth it.
+- **Capital and town badges** are visible to everyone.
+- **Every node has its own city.** City saves are now node-scoped, so opening a town loads and saves *that town's* city.
+
+### Empire
+
+- **City vs Town** derived from earliest capture, plus an **empire score and five tiers**.
+- **Capital Cinder multiplier** — city yield × nodes owned.
+- An **owner-only green surge** on the map, computed on your own device so it can never leak who owns what.
+- **Node Power scales with dollars** — **+100 Power per $10** for owners, **+25 per $10** for players. A $50 owner purchase is 500 Power, exactly one node level.
+- **Node owners are past every Ruin Exchange gate.**
+
+### AI corporations on the map
+
+- **Six AI rivals** now appear on the district map, each with an icon, a colour, a temperament and a plain-language dossier. They're placed below the node markers so a corp badge can never intercept a click meant for a node, and every one carries an explicit AI tag so it's never mistaken for another player's holding.
+- **Player standing** — seven tiers from **Allied** to **Blacklisted**, derived from live world state. Nodes held and camp registration lift it with everyone; then each corp reads a resource it actually cares about. The Trust and the Vein are mutually exclusive — corrupted essence pleases one and costs you the other.
+- **Startups** and a real **dossier drawer**.
+- 🐛 The corp pins are **actually clickable** now, and the node hover card no longer covers them.
+
+### Trading with the AI corps
+
+Two ways to do business, deliberately different in commitment:
+
+- **Spot trade** — one sale per corp per day. They buy the resource they deal in at a price bent by your standing (the same ±15% band the market already uses), worth **+2 rep**. The offer rotates daily and every player sees the same one.
+- **Supply contract** — "enter business". Three timed deliveries, better per-unit than spot, 24 hours per run. Each delivery is **+5 rep**, and seeing the whole thing through is **+8 more**, because finishing should be worth more than the sum of the runs. Signing is gated on having the *first* delivery, not the whole run.
+- **Missing a window is the point.** An overdue contract is torn up and costs **12 standing** — and that check runs whenever you come back, not only if you happen to open that one drawer.
+
+### Convoys and logistics
+
+- **Real convoys.** The Logistics screen is wired to actual freight, and the trucks on the map haul real cargo.
+- **Rigs now haul** — the Garage is wired into the convoy engine.
+- The convoy cap now covers **every** outbound run, including rescues and rival raids.
+
+### Mayors
+
+- 🐛 **Mayors manage the owner's city, not their own.** Node managers spend the **owner's** ledger, not theirs.
+- 🐛 **Your own city is yours again** — a shared local cache was crossing them over.
+- 🐛 **Mayors were locked out** of cities they'd been hired to run. Fixed.
+
+---
+
+## 🏦 Banking
+
+### Player-owned banks
+
+Charter your own bank. Cinder never moves on the client — the **30% reserve requirement** and per-teller approval ceilings are enforced server-side.
+
+- **The Office of the Mint** — tier cards, a burn-vs-stake split bar, an over-stake slider driving deposit capacity and seals, an acknowledgement gate, a medallion, and a sale listing.
+- **The Underwriting Desk** — an in-tray, dossiers in four sections, collateral haircuts, an ember dial, and approve / counter / deny with a seal and a receipt. It opens for the **owner and for tellers**, which is how hiring feeds the desk.
+- **Charter ladder** — 2,000 / 7,500 / 21,000 MT staked. Tier 1 burns nothing, so the advertised price is exactly what leaves your wallet. Cinder is *spent*; MT is *staked*, and the stake settles before the bank exists so a failed stake can never leave you owning a bank you didn't pay for.
+- **Bank Row** — the public directory.
+- **Hire Bank Tellers** from your guild, in Guild & Hiring — and the hire actually staffs the desk.
+- A bank earns **interest, not resources**, so it never feeds the commodity market.
+
+### The Bank Back Office
+
+Bank owners now build their own **loan products** — standing offers on their bank's rate board.
+
+- The builder covers name, structure, currency, min/max principal, rate, term, minimum Ember score, concurrent-loan cap, accepted collateral classes and a note, with a live **"as borrowers will see it"** preview including a worked 100k example at the effective advance rate.
+- **Currency ceilings tighten as the money hardens:**
+
+| Currency | Max rate | Max LTV | Max term | Requires |
+|---|---|---|---|---|
+| Cinder | 5% | 100% | 30 days | — |
+| Aza | 3.5% | 75% | 21 days | Charter II |
+| Mythic | 3% | 60% | 14 days | Charter III |
+
+- **Collateral policy** — per-class haircut and max LTV, with the reason stated: real estate recovers best, cards worst. Bound and untradeable items are never eligible; if you can't sell it after a default, it isn't security.
+- **Bank identity** — sigil, name, motto, and a live Registry preview.
+
+### Bank of Ethos
+
+- **A statement you can actually read.** Every market sale, purchase and listing had always been recorded — there was just no way to see it. Now: **All / Market / Bank filter chips**, depth raised from 10 rows to **40**, and a **sales rollup in the header** ("you sold 6 things for 12,400").
+- **Token & Blockchain disclaimer** shown before wallet linking.
+- 🐛 **The exchange counter had never worked once.** Fixed.
+- 🐛 **Withdrawals were minting Cinder.** Fixed.
+- 🐛 **Cinder was accumulating in the wrong server table.** Fixed.
+- 🐛 A **Cinder-bought bank was never actually chartered**. Fixed.
+- 🐛 Transfers were being **double-logged**, and 77 duplicate ledger rows have been cleaned up.
+- 🐛 The bank was broken behind a table that had never existed, and the bank door / nav chain has been repaired.
+- **Money moved server-side.** Bank of Ethos transfers and **Aza** — the real-money currency — are now settled atomically on the server.
+
+---
+
+## 🏭 Business, Operations and the Economy
+
+### The supply chain
+
+Before this, every business produced from nothing. Mining and construction were unrelated islands and no operation depended on any other. The economy is now **two-tier**:
+
+- **Primary extractors** — mining, oil, agriculture, salvage, gas — have no inputs. They're where matter enters the world, alongside node resource yield.
+- **Secondary industry** consumes it — **construction and fishing burn fuel, cars burn metal and fuel, research burns metal and fuel, medical burns food, smuggling burns fuel**.
+
+**It throttles, it doesn't stall.** Hold half the fuel a run needs and the operation runs at **half**, visibly, so you can go solve it. An operation that silently produced nothing would just read as broken. Wages are **not** throttled — pay is owed whether or not the supply line held.
+
+This makes fuel and metal load-bearing across the whole economy instead of being sellable numbers, and it wires node output directly into business viability. The supply chain is surfaced in the Operations UI.
+
+### The live market
+
+- **Business gross now tracks what its output is actually worth**, in a 0.5× – 2.2× band. Salaries are not scaled, so **glutting your own output actually hurts**.
+- Rarity is derived from base price, so rare goods are more fragile — their price assumes scarcity.
+- A 24-hour inflow at 3× normal flow trips a **glut crash**, with a tape entry explaining why.
+- 🐛 Cards were priced at a flat 100 each regardless of rarity. Now priced by rarity.
+
+### The Genetics Lab and the DNA Lab
+
+- **New business: the Genetics Lab.** It yields **DNA** — 2.0 per worker-hour across 8 staff, so 16/hour.
+- **DNA Lab cloning is now priced by rarity:** common 180 · uncommon 300 · rare 600 · epic 900 · legendary 1200 · mythic 3600. At the old prices a single Memory Transfer bought a common outright, so cloning wasn't a sink, it was a formality.
+- **Cloning now requires owning a Genetics Lab.** The gating business is also the source: a common clone is about **11 hours** of a running lab, a mythic about **9 days**.
+
+### Economy fixes — currency that was being minted from nothing
+
+- 🐛 **The car dealership NPC buyer queue has been removed.** It was a Cinder faucet, and NPCs now pay **market value**, which kills the buy-low/flip-to-NPC loop.
+- 🐛 **Camp Workshop now pays in resources, never currency.** Two projects were straight alchemy — Memory Transfer turned 8 Memory Shards into Aza, and Forbidden Refinement turned 6 Corrupted Essence into 120 Cinder. Aza is bought with real money; that one was worse than an economy bug.
+- 🐛 **Fuel no longer claims to affect price** — it hasn't for a while, and the UI was still saying so.
+- 🐛 **Base Construction** — a blank cost override no longer makes an upgrade resource-free.
+- 🐛 **A refused business purchase no longer takes your Cinder.**
+- **Foundation Tax removed.**
+- **The Crafting Station now runs on looted resources**, not furniture salvage.
+
+### Admin economy tools
+
+Every economy number is now **authored, not hardcoded** — a generic economy tuner, an Operations business editor, a crafting recipe editor, and full editability for the fishing fleet, the reclaim board and Black River.
+
+---
+
+## 🔨 Crafting, Cosmetics and the Shop
+
+### The Crafting Station
+
+Its own screen off the Card Shop tab strip, with three benches:
+
+- **SALVAGE** breaks spare furniture down into 🔩 **Craft Parts**.
+- **CRAFT** turns parts into **booster packs (30)**, **booster boxes (210 for 8 — cheaper per pack)**, **card sleeves (120)** and **dice skins (150)**.
+- **LOADOUT** equips what you made.
+
+Parts are deliberately a **separate currency** and only flow one way: furniture → parts → product. Salvage yield scales with what the piece cost but returns well under it — it's for spares you regret, not a refund counter. Packs come from the live pack catalogue, so crafting always yields the **current** set. **Exclusive cosmetics stay uncraftable** — that promise is what makes them exclusive. Every failure refunds in full, and the message distinguishes "you own them all" from "none exist yet".
+
+### Cosmetics
+
+- **🎲 Dice skins** — earned from crafting or the shop. Only *your* die is skinned; your opponent's is untouched, and the pips stay readable over any art.
+- **Deck sleeves** render on your card backs, with an equip picker in Settings.
+- **Exclusive cosmetics** and **Founder Drops**.
+- **Tier entitlements**, including cash-out allowance.
+
+### Shop and items
+
+- 🐛 **The held-item picker now shows only what you own.** Custom items were bypassing the inventory gate entirely, so every forged item in the game appeared in every player's Held Item dropdown whether they owned it or not. (An item you have equipped but no longer own is still listed, so a loadout can't silently break.)
+- **The Cinder Shop now sells held items**, and is Camp-only.
+- 🐛 **An audit found 11 unpaid rewards and an unbuyable shop.** All fixed.
+- 🐛 **Vault container images** actually save now.
+- **Founder & Node packages** available through the shop, with exactly-once fulfilment.
+
+### The Garage
+
+Three convoy rigs, bought once with real money and **owned permanently**:
+
+| Rig | Price |
+|---|---|
+| **Ironback Runner** | $20 |
+| **Ash Convoy Rig** | $60 |
+| **Warden Longhaul** | $99 |
+
+Ownership is stored in three places — your local profile for instant offline reads, your cloud profile so it crosses your devices, and server-side, which is the only copy a wiped browser can be restored *from*. **Restore runs on every sign-in**, not just after a purchase, because a new device has a purchase record and an empty profile.
+
+There is now exactly **one** storefront for these. They had briefly been sold in two places, in two currencies, with two ownership records — that's been unified onto the real-money rail.
+
+### Referrals
+
+- **A referral card in your game profile** — your code, a redeem box, and MT airdrop progress.
+- **Both sides are rewarded.** Invite copy, local credit and an instant pack open when a friend redeems in-game.
+- Referral pack gifts land **sealed in your Pack Opening inventory** instead of auto-opening, so you get to open them yourself.
+- **Claim buttons on your profile** for gift-inbox rewards.
+- 🐛 Friendly errors for address-lock rejections instead of a raw failure.
+
+---
+
+## 🗡 Roguelite and Campaign
+
+- **The 3D Ascent map is now the default roguelite map.** All 14 node types, relics, currency, heat/haul, dialogue and every placement keep working — the campaign model is still authoritative.
+- **A visual Campaign Builder** — the node-graph editor reworked around the real 14 node types, with start/boss validation and per-node Name and Story fields. Edits merge by ID, so a visual change never drops enemy config, rewards, dialogue, infection zones or random-event pools.
+- **Story chaining** — campaign outro text now appears on the victory screen above the next-chapter buttons, and the 3D departure node carries your camp intro.
+- **Onboarding rewritten.**
+- 🐛 The **Main Hub tutorial** is no longer consumed by a sub-hub.
+- **Polycreation** — a new modal, plus material sources and triggered hand abilities.
+
+---
+
+## 🎨 Interface
+
+- **The bunker console** rebuilt — three columns and a command bar, with the room cards rebuilt to the reference design.
+- **The victory / defeat screen** rebuilt.
+- **Deploy Slots** rebuilt.
+- **The node modal** reskinned — crest, stat triple and loss pills.
+- **Hero portraits and hero frame art fill their frames** instead of letterboxing.
+- **Back buttons** are in flow, under the title, and never overlap anything.
+- **Six capped page containers widened**, and the Concord page now holds an even grid at every width.
+- **The camp resource strip** stays one row tall on narrow screens.
+- 🐛 **The auction listing modal could not be closed** — neither the X nor Cancel worked. Fixed, and the auction modal now always opens dead centre.
+- **1,000,000 listing cap** on auctions.
+- 🐛 The **giant gold pill on Choose Your Deck** and a stranded AI pill — fixed.
+- **Battlefield art restored**, and the admin's battlefield art is wired into the board stage. The 3D map backdrop and the bank door are back.
+- 🐛 **The cinematic main menu never loaded** — it was requesting a three.js version that doesn't exist. Fixed.
+- 🐛 **The main menu was serving a stale cached copy.** Fixed.
+- **Leaderboards have been removed** from the game and camp.
+
+### Broadcast
+
+- **An Emergency Broadcast tile** in the game menu, linking to your web profile and the feed.
+- **Share to Broadcast from the victory screen** — post your result, with an optional clip.
+- **Clip recorder.**
+
+---
+
+## 🛡 Accounts, Saves and Stability
+
+This is the section that matters most, because these were costing players real things.
+
+### The one that was wiping accounts
+
+🔴 **Stale reset directives were wiping players who changed devices.** A season reset published in July was still being applied — in August — to anyone who had missed it at the time: a new account, a new device, cleared storage, or a phone that hadn't been opened in a week. The system was asking "has this player already taken this reset?" when it should have been asking whether the reset was still current.
+
+The measured exposure before the fix was **379 player/directive pairs across 82 of 97 players**. Five accounts in four days each applied all five historical resets within a single minute — the fingerprint of a device with no local record — every one ending on zero Cinder.
+
+**Both halves of this fault are now closed**, and a related bug where a purge one-shot re-ran on every new device is fixed too.
+
+### Your vault
+
+🔴 **Bought Vault Containers were vanishing.** Two bugs, and the second is why it kept happening rather than happening once:
+
+1. A one-time gear clean was throwing away the whole vault layout object — which holds two unrelated things: your **items** (correct to clear) and the **size of your vault**, bought with Aza at 25 / 60 / 120 per container. So a gear clean silently repossessed paid capacity, and a repossessed vault looks exactly like a normal new one, which is why this surfaced as player reports rather than as an error.
+2. The "already done this" flag was never actually saved, so a new device, cleared site data or Safari's storage eviction re-ran the "one-time" clean on an account that had already had it.
+
+**Contents clear, capacity survives.** And vault rows can now be restored from the admin panel without touching the database.
+
+### Your wallet
+
+- **Cinder and Aza are now server-owned.** Every faucet in the game routes through the wallet, and the last client-asserted money number has been closed out.
+- **A credit outbox** — when a credit fails, the game now remembers **what** failed and how much, instead of just that something did. That's the difference between a retry for the right amount and a "make my balance match" guess.
+- **Admin care packages** — 500,000 Cinder plus 500 each of metal, supplies, water and food, delivered to your gift inbox and claimed like any other reward. Sent as five separate gifts so a player with a full vault can take the Cinder now and the resources later.
+- Every reward path is bounded and every refusal is recorded.
+
+### Cross-device
+
+- 🐛 **A stale pending flag can no longer beat newer cloud data**, so signing in on a second device won't overwrite what you did on the first.
+
+### Performance and delivery
+
+- 🔴 **The minifier was compressing the wrong script** — 3.7 MB was shipping raw on every single deploy. Fixed.
+- **WebGL contexts** are now released when panels close, instead of being held.
+- **A GPU soak test** confirms the title screen does not leak (94 samples, −0.5 MB/hr).
+- 🐛 **Multiplayer** — four owner/position fields the perspective swap never swapped, so some effects read the wrong side of the board.
+
+---
+
+## 🔧 For creators — the Card Forge
+
+- **Enchantment and Curse** are both authorable from the Forge type dropdown.
+- **Zero-cost-in-hand** can be authored from the card editor, and is signposted from the Effect Type dropdown.
+- **Spell and trap effect pickers are grouped**, as are the effect dropdowns generally.
+- **A summon-zone picker** in every ability editor.
+- **The draft flag** — mark a card draft and it's excluded from the published catalogue and hidden from every non-admin deck pool, while staying fully editable in the Forge.
+- **Card art overhaul** — art now persists properly (including animated art), pasted URLs are verified before they're stored and re-hosted onto our own storage, and there's a proxy so a host that blocks us can't hold our art hostage. The Card Art panel shows your sign-in state.
+- **Card set import** — `importCards()` plus five authored archetype batches (control, counters, the lock/continuous shell, Verdict, and enchantments).
+
+---
+
+*Mythic Spellbook · builds v119r8 → v120w6*
+</script>
+
+<script>
+(function () {
+  var md = document.getElementById('src').textContent.trim();
+  document.getElementById('rawText').value = md;
+
+  // ── contents rail: highlight the section being read ──
+  var links = {};
+  Array.prototype.forEach.call(document.querySelectorAll('.rail a'), function (a) {
+    links[a.dataset.for] = a;
+  });
+  if ('IntersectionObserver' in window) {
+    var current = null;
+    var io = new IntersectionObserver(function (items) {
+      items.forEach(function (it) {
+        if (!it.isIntersecting) return;
+        if (current) current.classList.remove('on');
+        current = links[it.target.id];
+        if (current) current.classList.add('on');
+      });
+    }, { rootMargin: '0px 0px -72% 0px', threshold: 0 });
+    Array.prototype.forEach.call(document.querySelectorAll('.doc section'), function (s) {
+      io.observe(s);
+    });
+  }
+
+  // ── copy ──
+  function flash(btn, msg) {
+    var was = btn.textContent, cls = btn.className;
+    btn.textContent = msg;
+    btn.className = cls + ' ok';
+    setTimeout(function () { btn.textContent = was; btn.className = cls; }, 1800);
+  }
+  function revealRaw() {
+    var w = document.getElementById('rawWrap');
+    w.hidden = false;
+    document.getElementById('showRaw').setAttribute('aria-expanded', 'true');
+    document.getElementById('showRaw').textContent = 'Hide plain text';
+    var ta = document.getElementById('rawText');
+    ta.focus();
+    ta.select();
+  }
+  function copy(text, btn) {
+    function manual() {           // clipboard refused — hand the text over instead
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      ta.parentNode.removeChild(ta);
+      if (ok) { flash(btn, 'Copied'); }
+      else { revealRaw(); flash(btn, 'Copy from below'); }
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { flash(btn, 'Copied'); }, manual);
+    } else { manual(); }
+  }
+
+  document.getElementById('copyMd').addEventListener('click', function () {
+    copy(md, this);
+  });
+  document.getElementById('copyHtml').addEventListener('click', function () {
+    var body = Array.prototype.map.call(
+      document.querySelectorAll('.doc section'),
+      function (s) { return s.outerHTML; }
+    ).join('\n');
+    copy('<article class="patch-notes">\n' + body + '\n</article>', this);
+  });
+  document.getElementById('showRaw').addEventListener('click', function () {
+    var w = document.getElementById('rawWrap');
+    if (w.hidden) { revealRaw(); }
+    else {
+      w.hidden = true;
+      this.setAttribute('aria-expanded', 'false');
+      this.textContent = 'Show plain text';
+    }
+  });
+})();
+</script>
+</body>
+</html>

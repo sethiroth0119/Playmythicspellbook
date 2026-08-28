@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120w6';
+  window.BUILD_VERSION = 'v120w7';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -207717,7 +207717,7 @@ window.MythicCityBridge = {
    the object.
 
    🔴 EVERY MUTATOR RETURNS A BOOLEAN (or the new value). That is not
-   decoration — the same point MythicTradeBridge makes at 207475. /src/dilemma
+   decoration — the same point MythicTradeBridge makes in its own header. /src/dilemma
    resolves a choice as a five-step transaction (cost → state → bond → grant →
    save) and decides from these return values whether to refund the Cinder it
    just took. A wrapper that swallowed a throw and returned `undefined` would
@@ -207801,9 +207801,9 @@ window.MythicDilemmaBridge = {
   now: () => { try { return Date.now(); } catch (e) { return 0; } },
 
   // ── Deck ──────────────────────────────────────────────────────────────────
-  lastDeck: () => {
-    try { const d = Profile.dilemma && Profile.dilemma.lastDeck; return (d && typeof d === 'object') ? d : null; } catch (e) { return null; }
-  },
+  /* 🔴 CLONED, NOT HANDED OVER — "THE STATE SEAM COPIES IN BOTH DIRECTIONS" above is the rule, and this accessor was the
+     one place still exempt from it: a live Profile.dilemma.lastDeck is a write handle into the save. An array answers null. */
+  lastDeck: () => { try { const d = Profile.dilemma && Profile.dilemma.lastDeck; return (d && typeof d === 'object' && !Array.isArray(d)) ? _dilemmaCloneState(d) : null; } catch (e) { return null; } },
   resolveDeckCard: (key) => { try { return resolveDeckCard(key) || null; } catch (e) { return null; } },
   /* 🔴 THE JOIN NOBODY SEES MISSING. Profile.decks[].cards holds DECK KEYS
      ('unit:goblin', 'custom:abc'); Profile.units is keyed by BARE CARD IDS
@@ -223774,7 +223774,7 @@ render();
        ONLY: the four sibling files are imported by bare relative specifier and
        carry no query string, which is exactly why sw.js serves /src/** network
        first. -->
-<script type="module" src="src/dilemma/index.js?v=v120w6dil3"></script>
+<script type="module" src="src/dilemma/index.js?v=v120w7dil4"></script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the

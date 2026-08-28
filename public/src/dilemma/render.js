@@ -13,9 +13,18 @@
    none; keep it that way.
 
    The two imports are deliberate and are the only ones the DAG (CONTRACT §0)
-   allows that do not break that rule:
+   allows that do not break that rule. Three names are taken from them, and no
+   more:
      • `DILEMMA_ECON.influenceCap`  — so the header can print "62 / 100" without
-       this file inventing a 100. No reward, bond or cooldown number is read.
+       this file inventing a 100.
+     • `DILEMMA_ECON.rosterMax`     — so the roster sub-line can say the list is
+       a SUBSET without this file inventing an 8. Round 5's low finding: the
+       modal printed "The deck you last took out" over the eight rows
+       `engine.rankRoster()` slices out of a deck that holds up to forty
+       (DECK_SIZE, index.html), and no surface said so. A display cap is the one
+       kind of number this file is allowed to read — it decides how much of the
+       panel is filled, not what anything is worth. 🔴 NO REWARD, BOND, COST OR
+       COOLDOWN NUMBER IS READ HERE, and none ever should be.
      • `engine.rank(value)`         — a pure array lookup over INFLUENCE_RANKS.
        No host, no I/O, no rng.
    `rewards.js` is deliberately NOT imported: its exports touch `spendGems` /
@@ -56,13 +65,19 @@ let _hover    = null;      // choice id under the cursor / keyboard focus, trans
 let _outcome  = null;      // the Result handed to paintOutcome()
 let _busy     = false;     // re-entrancy lock on the delegated click router
 let _opener   = null;      // element focus is restored to on close
-let _onKey    = null;      // the document-level Escape listener, so it can be removed
+let _onKey    = null;      // the document-level key listener (Escape + the
+                           // gesture stamps), so all close paths remove the same
+                           // one; bound to keydown AND keyup via keyBind/keyFree
 let _closing  = false;     // guards the close → onClose → close() re-entry
 let _settledAt = 0;        // Date.now() of the choose→outcome swap; see strayClose()
 let _panelGen  = 0;        // ++ on that same swap. The stray-close guard's real clock:
                            // a generation counter for "which controls are on screen".
 let _pressGen  = null;     // the _panelGen the pointer gesture in flight BEGAN in
-let _keyGen    = null;     // the _panelGen the activation key now held went DOWN in
+let _keyGen    = null;     // the _panelGen the activation key now in play went DOWN in
+let _keyLive   = false;    // true only while a key event's own task is still
+                           // running — i.e. while `_keyGen` describes something
+                           // that is happening rather than something that has
+                           // finished happening. See strayClose().
 
 /* ── esc ──────────────────────────────────────────────────────────────────
    LOCAL, deliberately. `escapeHtml()` is a top-level declaration in index.html
@@ -840,9 +855,30 @@ function rosterRowHtml(unit, choice) {
   const unknown = !unit.card;
 
   const icon = iconFor(unit);
-  const nameTitle = unknown
-    ? ' title="This card travelled with you, but its definition was never published on this device. It has no view here."'
-    : '';
+  /* 🔴 THE NAME IS ALWAYS ITS OWN TOOLTIP, because the CSS above clips it and
+     round 4 gave a tooltip only to the 'Unlisted' path. `.md-uname` is
+     `overflow:hidden;text-overflow:ellipsis;white-space:nowrap` — which is the
+     right call and is what keeps a 110-character Forge name inside its row —
+     but ellipsis DESTROYS the text, it does not defer it. Driven on a
+     109-character Forge name: the name box lays out 263px of a 665px
+     scrollWidth at 1280, 515px at 768 and 178px at 390 — and `title` was
+     `null` at all three, so the player read "Ser Aldebrandt of the Nine-…" with
+     no way to see the rest of a card they wrote themselves. A name the player
+     authored and cannot read back is the panel taking something away from
+     them.
+     ⚠ IT IS SET UNCONDITIONALLY, not only when the string looks long. Whether a
+     name is clipped depends on the viewport, the font that actually loaded and
+     the width the bond pill takes beside it — none of which this function can
+     see, and a guess that is wrong at 390px is a tooltip missing exactly where
+     the clipping is worst. An unnecessary tooltip on a short name costs a hover
+     hint; a missing one costs the name.
+     The unlisted sentence is APPENDED rather than replacing the name, because
+     that path is the one where the row shows a bare stored id and the player
+     most needs both halves: what it is called, and why it has no view. */
+  const fullName = String((unit.name || unit.id) || '');
+  const nameTitle = ' title="' + esc(fullName + (unknown
+    ? ' — this card travelled with you, but its definition was never published on this device. It has no view here.'
+    : '')) + '"';
 
   return `<div class="md-urow ${meta.cls}${quiet ? ' quiet' : ''}">
     <span class="md-uicon" aria-hidden="true">${esc(icon)}</span>
@@ -915,13 +951,57 @@ function rosterHtml() {
      §6.3's own reason for letting 'none' outrank. */
   const none = _roster.length === 0 || src === 'none';
 
+  /* 🔴 THE PANEL SHOWS EIGHT AND WAS SAYING "YOUR DECK". `engine.rankRoster()`
+     sorts by bond, then battles fought together, then deck order, and then
+     `.slice(0, DILEMMA_ECON.rosterMax)` — 8 today — while `DECK_SIZE`
+     (index.html) is 40 and, by rankRoster's own note, a full deck holds around
+     twenty distinct units. So for essentially every real player the sub-line
+     "The deck you last took out" named a whole deck over a list of eight, and
+     every companion who went past the wall without making that top eight had no
+     row, no stance and no bond movement, with nothing on screen to say why. The
+     band and the ledger were always truthful — they count and pay exactly the
+     rows that are shown — so this was the one surface over-claiming, and it was
+     the surface that names WHO is in the room.
+
+     ⚠ THE HONEST SENTENCE NEEDS THE CAP, WHICH IS WHY `rosterMax` IS IMPORTED.
+     The alternative was to phrase around it ("some of the deck"), which is
+     vaguer than the truth for no gain, or to have the engine report the
+     pre-slice total — a contract change to fetch a number this file can already
+     read from the same constant the slice uses. Reading the cap keeps the two
+     in lockstep: raise `rosterMax` and the sentence follows it without anyone
+     remembering to edit copy.
+
+     ⚠ AND IT ONLY CLAIMS A SUBSET WHEN THERE IS ONE. A deck of five companions
+     produces five rows, `_roster.length < rosterMax`, and the panel really is
+     showing all of them — telling that player they are seeing a selection would
+     be a fresh small lie told in the act of fixing one. At exactly the cap the
+     list MAY be complete (a deck of exactly eight units) and the wording is
+     written to survive that: "the eight closest to you" is true of eight
+     companions whether or not a ninth exists. It does not print a total it
+     cannot know — the deck's real unit count never crosses the seam.
+
+     ⚠ AND THE FALLBACK SENTENCE CHANGES BY ONE WORD, WHICH IS THE POINT. If
+     `rosterMax` ever arrives unreadable — a stale service-worker data.js, the
+     key renamed upstream — `max > 0` is false and no subset claim is made. What
+     it falls back to is NOT round 4's sentence: "The deck you last took out"
+     asserts the list is the deck, and that assertion is the defect. "FROM the
+     deck you last took out" is true of eight rows and of all five rows of a
+     five-companion deck alike, so the un-capped and the cap-unreadable paths
+     can share it safely. CONTRACT-R3 §6.0 again: with a signal missing this
+     file says less, never something false. */
+  const max = Number(DILEMMA_ECON && DILEMMA_ECON.rosterMax) || 0;
+  const capped = max > 0 && _roster.length >= max;
+
   const head = none
     ? `<h3 class="md-h3">Standing with you</h3>`
     : heuristic
     ? `<h3 class="md-h3">Your most-fought companions</h3>
        <p class="md-sub">No deck has gone into battle since the Heights started asking. These are the ones you have fought beside most.</p>`
+    : capped
+    ? `<h3 class="md-h3">Standing with you</h3>
+       <p class="md-sub">From the deck you last took out — the ${_roster.length} closest to you, not the whole deck. They can hear this too.</p>`
     : `<h3 class="md-h3">Standing with you</h3>
-       <p class="md-sub">The deck you last took out. They can hear this too.</p>`;
+       <p class="md-sub">From the deck you last took out. They can hear this too.</p>`;
 
   return `<div class="md-roster">${head}<div id="md-roster-body">${rosterRowsHtml(choice)}</div></div>`;
 }
@@ -1226,6 +1306,62 @@ function outcomeBodyHtml() {
   const lines = (Array.isArray(r.lines) ? r.lines : [])
     .map((l) => `<p class="ln">${esc(l)}</p>`).join('');
 
+  /* 🔴 THE ONE NUMBER THE PLAYER AGREED TO WAS THE ONE NUMBER THE RECEIPT DID
+     NOT MENTION. Every credit got a sentence — "🔥 The ward settled up on the
+     spot — 124 Cinder", the card, the standing move, a ledger row per companion
+     — and the 600 Cinder the choice actually charged appeared nowhere in the
+     aftermath. The wallet was correct and nothing here was a lie; it was an
+     asymmetry, which in a receipt reads as one. "Do not hide the cost" is the
+     stated reason the consequence band exists on the choose view (see the block
+     over `.md-cons`), and a receipt that drops it the moment the money is gone
+     honours that rule only while it is cheap.
+
+     🔴 IT IS SAFE TO STATE FLATLY BECAUSE A RECEIPT IMPLIES THE CHARGE STUCK.
+     `index.js`'s `resolve()` charges in step 1 and returns `null` — no Result,
+     no aftermath view — on every failure after it: an unaffordable or refused
+     charge toasts and returns null before anything moves, and a failed commit
+     refunds and returns null. render.js's own commit handler stays on the
+     choose view for a null. So there is no path on which this panel exists and
+     the money did not leave, and the line does not have to hedge.
+
+     ⚠ THE STRING IS `describe()`'s, VERBATIM, and that is the whole design.
+     This file must not compute a price: reading `choice.cost.cinder` here would
+     be a second extraction of a tuning number that `rewards.costOf()` already
+     owns, and CONTRACT §8.1's reason for routing effect copy through
+     `describe()` is precisely that the two would drift. Echoing the identical
+     string the commit bar showed also makes the receipt provably the same
+     number the player agreed to, rather than a recomputation that agrees today.
+
+     ⚠ KEY-AND-VALUE, NOT A SENTENCE, for the reason `consequenceHtml()` states
+     at length: this file cannot see rewards.js's wording, so any frame that
+     supplies its own noun collides the day someone edits `describeChoice`. The
+     key is deliberately the mirror of `ledgerHtml()`'s "What it cost them" —
+     money above, regard below, the same question asked twice.
+
+     A free choice has no cost line and gets none; `NO_EFFECT.costText` is `''`,
+     which is also what a throwing or missing `describe` handler yields through
+     `callH()`. A missing `choiceId` prints nothing rather than guessing at
+     `_selected` — §6.0, and `_selected` is view state that no longer has to
+     agree with what index.js resolved. */
+  let paidLine = '';
+  if (r.choiceId) {
+    const paidFor = choiceById(r.choiceId);
+    const ct = paidFor ? describeOf(paidFor).costText : '';
+    if (ct) {
+      /* ⚠ THE SPACE BETWEEN THE TWO SPANS IS DELIBERATE AND IS NOT IN THE BAND'S
+         COPY OF THIS SHAPE. `.md-cline` is `inline-flex`, so a whitespace-only
+         text node between flex items is not rendered — it costs nothing on
+         screen and the pixels are identical either way. It costs something in
+         `textContent`, which is what matters HERE and not there: this block is
+         `role="status" aria-live="polite"`, so a screen reader announces the
+         whole aftermath, and without the space the key and the value run
+         together as "What it cost youcosts 600". The consequence band is not
+         inside a live region and is left exactly as it is. */
+      paidLine = `<p class="ln"><span class="md-cline"><span class="k">What it cost you</span> `
+               + `<span class="v cost">${esc(ct)}</span></span></p>`;
+    }
+  }
+
   // Standing is printed as a movement, not as a fact, because the movement is
   // the thing the player just did. The rank name comes with it so the number
   // has something to mean.
@@ -1247,7 +1383,7 @@ function outcomeBodyHtml() {
   return `<div class="md-body">
     <div class="md-out" role="status" aria-live="polite">
       ${lead ? `<p class="lead">${esc(lead)}</p>` : ''}
-      ${lines}${standing}${warn}
+      ${paidLine}${lines}${standing}${warn}
     </div>
     ${ledgerHtml(r.bonds)}
     <p class="md-sub" style="margin-top:10px">${esc(d.district || 'Ethos Heights')} carries on. Something else will need deciding.</p>
@@ -1445,6 +1581,67 @@ function choiceById(id) {
    window alone: nothing the window used to block is now allowed. Neither half
    may be deleted on the grounds that the other exists (CONTRACT-R3 §0, rule 2).
 
+   🔴 AND FOR ONE ROUND THAT PARAGRAPH WAS FALSE, WHICH IS WHY `_keyLive` EXISTS.
+   Round 4 stamped `_keyGen` on `keydown` and never cleared it. `_keyGen` was
+   therefore not "the generation the key now held went down in", as its own
+   declaration claimed — it was "the generation of the last activation key ever
+   pressed in this panel", and it outlived the press by the whole life of the
+   modal. `strayClose()` sends every `detail === 0` click to that stamp, so
+   after a KEYBOARD commit a synthesised `#md-ack.click()` was attributed to a
+   keypress that had ended a second earlier and was refused — measured refused
+   at +1000 ms, +1080 ms and +1580 ms, i.e. permanently, while the identical
+   click after a MOUSE commit closed the modal because `_keyGen` was still
+   `null` and the floor decided. The outcome depended on which device committed,
+   which is the exact opposite of provenance, and the sentence above promised
+   the opposite of what the code did. A real keypress or any mousedown re-stamps
+   and recovers, so a sighted keyboard player was never locked out; an assistive
+   stack that only synthesises clicks was. On a file graded four rounds running
+   on comments being true, the comment is the defect.
+
+   THE FIX IS A LIVENESS GATE, NOT A CLEAR ON `keyup`, and the difference is a
+   measured one. Clearing `_keyGen` on `keyup` is the obvious three-line answer
+   and it does close the finding as reported — but it makes the guard depend on
+   a keyup ARRIVING, and this modal's whole reason for existing is that the
+   player is holding a key across a repaint. Driven: commit with Enter and never
+   send the keyup (alt-tab with the key down; a keyup swallowed upstream), wait
+   1200 ms, then `#md-ack.click()`. With the keyup clear, the click is refused
+   exactly as it is in round 4 — the defect is still there, hiding behind an
+   input the browser never delivered. With `_keyLive` it closes, because nothing
+   the flag depends on has to be a key event the window is still focused to
+   receive. Both builds recover on a real press; only one of them does not need
+   to.
+
+   So `_keyGen` is left alone and a second fact is recorded: `_keyLive`, true
+   only while a key event's own task is still on the stack. A key-generated
+   click is dispatched synchronously inside that task — keydown's default action
+   for Enter, keyup's for Space — so it sees `true`; a click synthesised from a
+   later task sees `false` and gets exactly what the paragraph above always
+   promised: no stamp, and the floor decides. `setTimeout(…, 0)` is the clearer
+   because a new macrotask is the one thing guaranteed to run AFTER a default
+   action dispatched in the current one; a microtask is not, since a checkpoint
+   runs between event listeners.
+
+   ⚠ ONE WORRY CHECKED AND DISMISSED, recorded so nobody re-derives it. A
+   `<button>` fires SPACE's activation click from its `keyup`, and a keyup
+   listener runs before that default action — so a Space press that began on the
+   commit bar and was released into the aftermath looked like it could carry an
+   old generation past a keyup-based clear. It cannot, and not because of
+   anything this file does: Chromium cancels the pending activation when the
+   element the press began on is removed, and `paint()` removes it. Probed both
+   orderings (Space down on `#md-commit`, then a mouse commit; and Space down,
+   then Enter commits) — the Space keyup produced NO click at all in either, and
+   the receipt survived on all three builds. That is a browser behaviour rather
+   than a guarantee, which is a second small reason to prefer a gate that does
+   not rest on it, but it is not the reason above and must not be quoted as one.
+
+   FAILURE DIRECTIONS, both stated. If the timer never runs, `_keyLive` sticks
+   `true` and the guard behaves exactly as round 4 did — recoverable by any real
+   keypress or mousedown, never a weld. If it runs early or twice, `_keyLive` is
+   `false`, the stamp is ignored and the floor decides — which is the same
+   behaviour as an unreadable gesture and is the direction this whole guard is
+   written to fail in. A boolean that only ever fails to `false` cannot lock a
+   player out of their own modal.
+
    ⌨ ESCAPE IS STILL NOT GATED, DELIBERATELY. `/src/battle/combat.js:918` states
    the principle this file already quotes: Escape is the one gesture that
    unambiguously means "stop showing me this". It is not a button activation, so
@@ -1459,7 +1656,10 @@ function choiceById(id) {
    unconditionally, so the guard self-heals on the very next thing the player
    does. An unreadable gesture, a throw inside the guard and a clock that jumps
    backwards all make it stop guarding rather than start blocking. Every path
-   fails towards the player being able to close their own modal.
+   fails towards the player being able to close their own modal. `_keyLive`
+   keeps that property and is why it is cleared by a TIMER rather than by
+   `keyup`: an alt-tab that eats the keyup cannot strand it, because nothing it
+   depends on is a key event the window has to still be focused to receive.
 
    Both close paths call this one function — the backdrop listener in
    `openModal()` and the `close` action in `onClick()` — because they are
@@ -1476,16 +1676,64 @@ function notePress(e) {
   try { if (!(Number(e && e.detail) >= 2)) _pressGen = _panelGen; } catch (e2) {}
 }
 
-/* `keydown`, on the document listener that already exists for Escape. Only the
-   two keys that can activate a focused button are stamped — those are the only
-   two that can produce this defect, and stamping every keystroke would let an
-   unrelated Tab refresh the stamp of an Enter that is still held down. */
+/* `keydown` AND `keyup`, on the document listener that already exists for
+   Escape. Only the two keys that can activate a focused button are watched —
+   those are the only two that can produce this defect, and stamping every
+   keystroke would let an unrelated Tab refresh the stamp of an Enter that is
+   still held down.
+
+   TWO SEPARATE FACTS, and keeping them apart is what round 4 got wrong:
+     • `_keyGen` — WHICH generation the press began in. Written on `keydown`
+       only, and only when `!e.repeat`, because an autorepeat is a continuation
+       of a press the player made before the swap, not a new one. It is never
+       cleared, because clearing it is not what makes the stamp safe to read —
+       `_keyLive` is — and a value that is only ever overwritten by a fresh
+       press cannot be left in a state that blocks anyone (see strayClose()'s
+       failure-direction paragraph).
+     • `_keyLive` — WHETHER a key event is what is happening RIGHT NOW. Raised
+       by both keydown and keyup, dropped one macrotask later, which is strictly
+       after any activation click the current key event dispatches as its
+       default action.
+   Neither one alone answers strayClose()'s question. `_keyGen` alone cannot
+   tell a live keypress from a finished one; `_keyLive` alone cannot tell which
+   panel the press belongs to. */
 function noteKey(e) {
   try {
     const k = e && e.key;
     if (k !== 'Enter' && k !== ' ' && k !== 'Spacebar') return;
-    if (!e.repeat) _keyGen = _panelGen;
+    if (e.type === 'keydown' && !e.repeat) _keyGen = _panelGen;
+    _keyLive = true;
+    /* The clear is scheduled, never conditional, and it does not check whether
+       the value it is clearing is still "its own". Two overlapping key events
+       schedule two clears and the later key's own click has already been
+       dispatched and read by the time either fires — and a `_keyLive` that
+       drops early only means the floor decides, which is this guard's safe
+       direction. A guard is not worth a bookkeeping token to get that exactly
+       right. If `setTimeout` is unavailable or refuses, drop the flag
+       immediately rather than leave it raised: unreadable provenance is a state
+       this file already handles correctly, a stuck flag is not. */
+    try { setTimeout(() => { _keyLive = false; }, 0); } catch (e2) { _keyLive = false; }
   } catch (e2) {}
+}
+
+/* 🔴 ONE FUNCTION, TWO EVENT NAMES, ONE PAIR OF HELPERS — because the listener
+   count is something this file gets audited on and a leaked keydown handler
+   that closes an overlay which is no longer there is a real and very quiet bug.
+   `noteKey()` needs `keyup` as well as `keydown` now, and the removal sites are
+   three (`openModal`'s pre-registration, the self-removal inside the handler,
+   and `closeModal`). Adding a second `removeEventListener` at each of them by
+   hand is three chances to write two lines where two are needed and one where
+   two are needed; add/remove through these and the pair cannot go out of step.
+   Both are `try`-wrapped per call so a throw on one phase still removes the
+   other — a half-removed pair is the leak, not a caught exception. */
+function keyBind(fn) {
+  try { document.addEventListener('keydown', fn, true); } catch (e) {}
+  try { document.addEventListener('keyup', fn, true); } catch (e) {}
+}
+function keyFree(fn) {
+  if (!fn) return;
+  try { document.removeEventListener('keydown', fn, true); } catch (e) {}
+  try { document.removeEventListener('keyup', fn, true); } catch (e) {}
 }
 
 function strayClose(ev) {
@@ -1493,8 +1741,13 @@ function strayClose(ev) {
     if (_view !== 'outcome') return false;
     // A pointer click reports `detail >= 1`; a click the browser synthesised
     // from a key on a focused button reports 0. That is how the gesture picks
-    // which stamp it is answerable to.
-    const from = (Number(ev && ev.detail) || 0) > 0 ? _pressGen : _keyGen;
+    // which stamp it is answerable to — and `detail === 0` is a NECESSARY but
+    // not a sufficient condition for "a key did this", which is the round-4
+    // defect in one line. `el.click()` reports 0 as well, so the key stamp is
+    // consulted only while a key event is actually in flight; otherwise there
+    // is no provenance to read and the floor below decides, exactly as the
+    // block comment promises.
+    const from = (Number(ev && ev.detail) || 0) > 0 ? _pressGen : (_keyLive ? _keyGen : null);
     if (from !== null && from !== _panelGen) return true;
     // Provenance unreadable (`from === null`) or agreeing: the floor decides.
     return _settledAt > 0 && (Date.now() - _settledAt) < SETTLE_MS;
@@ -1618,7 +1871,7 @@ export function openModal(instance, roster, handlers) {
     // a stamp about controls that no longer exist. `_panelGen` back to 0 and
     // both gesture stamps back to "unread" is the state strayClose() treats as
     // "there is nothing to guard yet".
-    _settledAt = 0; _panelGen = 0; _pressGen = null; _keyGen = null;
+    _settledAt = 0; _panelGen = 0; _pressGen = null; _keyGen = null; _keyLive = false;
 
     // Remember who opened us so focus can go home. index.html's `render()`
     // restores focus for an id'd text INPUT only — its `_focusSnap` block tests
@@ -1665,7 +1918,10 @@ export function openModal(instance, roster, handlers) {
        that is a gap in the reference file, not a house convention.
        The listener is held in `_onKey` so all THREE close paths remove the same
        one — a leaked keydown handler that closes an overlay which is no longer
-       there is a real and very quiet bug.
+       there is a real and very quiet bug. It is ONE function bound to keydown
+       and keyup, added and removed only through `keyBind`/`keyFree`, so the
+       audit that matters ("listeners on document: 1 while open, 0 after") is
+       now two numbers that move together and cannot be left half-removed.
 
        ⌨ CAPTURED, AND THE PHASE IS LOAD-BEARING NOW THAT IT ALSO CARRIES
        noteKey(). Round 3's listener was on the bubble phase, which is fine for
@@ -1678,22 +1934,35 @@ export function openModal(instance, roster, handlers) {
        well. Capture is the one phase nothing can be dropped before, and the
        cost is only that this Escape handler now runs first among document
        listeners. It still does not stopPropagation, so every other overlay's
-       handler sees the key exactly as it did before. */
-    if (_onKey) { try { document.removeEventListener('keydown', _onKey, true); } catch (e) {} }
+       handler sees the key exactly as it did before. The same argument carries
+       to the keyup half added this round: `_keyGen` and `_keyLive` are only
+       coherent if the SAME listener sees both phases of the same press, and
+       capture is the only phase that guarantees it. (A dropped keyup is
+       survivable on its own — `_keyLive` is cleared by its timer either way —
+       but a guard whose two facts can be written by different subsets of the
+       events is a guard nobody can reason about later.) */
+    keyFree(_onKey);
     _onKey = (e) => {
       try {
-        // Before the Escape test, and for every keydown, because the keys this
+        // Before the Escape test, and for every key event, because the keys this
         // has to see are the ones that never reach the branch below: Enter and
         // Space activate the focused button through the browser's own default
         // action, not through this listener. See strayClose().
         noteKey(e);
+        /* ⌨ ESCAPE ACTS ON keydown ONLY, now that this handler also hears
+           keyup. Closing on both would run the whole close path twice for one
+           press — harmless today only because `_closing` and `isOpen()` catch
+           the second, and "harmless because something downstream catches it" is
+           how a re-entrancy bug gets written. Escape's own behaviour is
+           unchanged from round 4: same key, same phase, same preventDefault. */
+        if (e.type !== 'keydown') return;
         if (e.key !== 'Escape' && e.key !== 'Esc') return;
-        if (!isOpen()) { document.removeEventListener('keydown', _onKey, true); return; }
+        if (!isOpen()) { keyFree(_onKey); return; }
         e.preventDefault();
         closeModal();
       } catch (e2) {}
     };
-    document.addEventListener('keydown', _onKey, true);
+    keyBind(_onKey);
 
     paint();
 
@@ -1723,7 +1992,7 @@ export function closeModal() {
   if (_closing) return true;
   _closing = true;
   try {
-    if (_onKey) { try { document.removeEventListener('keydown', _onKey, true); } catch (e) {} _onKey = null; }
+    keyFree(_onKey); _onKey = null;
     const ov = document.getElementById(OV);
     if (ov) ov.remove();
 
@@ -1736,7 +2005,7 @@ export function closeModal() {
     const h = _handlers;
     _instance = null; _roster = []; _handlers = null; _outcome = null;
     _view = 'choose'; _selected = null; _hover = null; _busy = false; _opener = null;
-    _settledAt = 0; _panelGen = 0; _pressGen = null; _keyGen = null;
+    _settledAt = 0; _panelGen = 0; _pressGen = null; _keyGen = null; _keyLive = false;
 
     try { if (h && typeof h.onClose === 'function') h.onClose(); } catch (e) {}
     return true;

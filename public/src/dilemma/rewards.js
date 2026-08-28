@@ -57,8 +57,10 @@
        credit as DELIVERED. Telling a player their reward failed when it landed
        is the lie that matters here; the other direction costs them nothing they
        were promised and is bounded by MAX_CINDER_GRANT on a gift.
-     • refundCost — unreadable ⇒ fall back to the mutator's boolean, and the
-       caller prints a different sentence for each.
+     • refundCost — the only leg that reads the balance TWICE before calling it
+       unreadable (`readGemsTwice`), because it is the only one that hangs a
+       truth claim on readability. Still unreadable ⇒ fall back to the mutator's
+       boolean, and the caller prints a different sentence for each.
    The `has(host, 'gems')` guard is totality, not a described degradation. The
    adapter defines `gems` unconditionally, so a service-worker index.html whose
    bridge has no `gems` key arrives here as `null`, never as a missing accessor
@@ -89,9 +91,8 @@
    `validateCorpus()`'s `maxPayingRatio` — the 0.5 "a dilemma that always pays
    is a vending machine" ratio — beside the three this file actually enforces.
    It does not belong there: grep across /src/dilemma finds exactly one caller
-   of `validateCorpus`,
-   `MythicDilemmas.debug()` in index.js, so nothing on the open or the resolve
-   path ever evaluates it. It is a DEVELOPER-TIME self-audit of the corpus and a
+   of `validateCorpus` — `MythicDilemmas.debug()` in index.js — so nothing on
+   the open or the resolve path ever evaluates it. It is a DEVELOPER-TIME self-audit of the corpus and a
    real one — rule R7 caps the paying ratio at `DILEMMA_ECON.maxPayingRatio` and
    `validateCorpus()` is what measures it — but a reviewer who trusted the
    four-way claim would have believed in a runtime guard that does not exist.
@@ -113,8 +114,7 @@
    because "every Cinder faucet used to land in wallet_ledger as either
    'addGems' or an anonymous reconcile blob… Neither says WHERE the money came
    from, so the Cinder supply could not be audited" (the `reason` note above
-   `addGems`, index.html).
-   Every credit from here reads `Dilemma: <dilemmaId>/<choiceId>` — greppable,
+   `addGems`, index.html). Every credit from here reads `Dilemma: <dilemmaId>/<choiceId>` — greppable,
    attributable, one row per decision. sql/034 is blunt that this is for
    AUDITABILITY and never for authorisation: "p_reason CARRIES NO AUTHORITY.
    It is a client-supplied string." The bound is the amount; the reason is the
@@ -335,7 +335,19 @@ function probOf(x, fallback) {
 
    The chance is SHOWN, not hidden. "Not every dilemma pays" is the mechanism
    the whole reward design rests on; a player who is not told the odds reads a
-   dry roll as a broken button. */
+   dry roll as a broken button.
+
+   ⚠ `affordable` IS ALWAYS null HERE, AND THAT IS NOT AN OVERSIGHT — said out
+   loud because a key initialised to null and never assigned reads as a half-
+   finished thought, and this round's rule is that a reader must not have to
+   guess. This function is PURE and takes no host, so it cannot price anything;
+   affordability needs the wallet and lives in `canAfford(host, choice)` below.
+   The key stays because it is part of the effect shape `NO_EFFECT` declares in
+   render.js, and dropping a key from a shape two files agree on, to tidy away a
+   null neither of them reads, is the sort of cross-file edit round 2 learned
+   not to make for cosmetics. Render gets affordability from its own handler
+   (`affordableOf` in render.js, wired to `canAfford` by index.js), never from
+   this key — which is exactly why it can stay null without lying to anybody. */
 export function describeChoice(choice, influenceValue) {
   const out = { costText: '', rewardText: '', influenceText: '', affordable: null };
   try {
@@ -431,16 +443,16 @@ export function describeChoice(choice, influenceValue) {
    Two shipped precedents conflict and picking one makes the ambiguity
    unreachable. `spendGems()` refuses when the player cannot afford it — right
    for a cost, wrong for a fine that must still land. `_reconApplyEffects`
-   (index.html) does a clamped direct
-   decrement instead, which the 0.6s `_gemsTaxTick` poll then bills 2% civic tax
-   on, a few lines below a comment arguing civic tax should not be booked on a
-   fine. Choosing "cost, always" keeps this feature on the one sanctioned path
+   (index.html) does a clamped direct decrement instead, which the 0.6s
+   `_gemsTaxTick` poll then bills 2% civic tax on, a few lines below a comment
+   arguing civic tax should not be booked on a fine. Choosing "cost, always" keeps this feature on the one sanctioned path
    and out of that argument. */
 
 /* Drives the DISABLED state of the button. This must exist, because
    `spendGems()` returning false is the ONLY thing that happens on insufficient
-   funds — no toast, no clamp, no render (`spendGems`, index.html). An ungated button
-   would simply do nothing when pressed, which reads as a broken feature.
+   funds — no toast, no clamp, no render (`spendGems`, index.html). An ungated
+   button would simply do nothing when pressed, which reads as a broken
+   feature.
 
    ⚠ AN UNREADABLE BALANCE DISABLES A PAID CHOICE, and that is the safe
    direction rather than a convenient one. We cannot price the call, so we do
@@ -599,10 +611,10 @@ export function payCost(host, choice) {
    index.js branches on this return to choose between "Your Cinder came back."
    and "the refund could not be confirmed." Round 1 returned
    `host.addGems(n, …) !== false`, which against the shipped stack is
-   CONSTANT TRUE: `addGems` returns undefined unconditionally
-   (`addGems`, index.html — there is no return statement on the
-   crediting path) and the bridge wrapper
-   is `try { addGems(n | 0, …); return true; } catch { return false; }`. So the
+   CONSTANT TRUE: `addGems` returns undefined unconditionally (`addGems`,
+   index.html — there is no return statement on the crediting path) and the
+   bridge wrapper is
+   `try { addGems(n | 0, …); return true; } catch { return false; }`. So the
    sentence was printed whether or not the money came back, and a driver proved
    it against an addGems that credited nothing. This was the one wallet mutator
    in the file that was neither verified nor clamped — and it is the refund
@@ -610,11 +622,12 @@ export function payCost(host, choice) {
    It now does both, the way `payCost` and `grant` do:
      • CLAMP to REFUND_CEILING, so `n | 0` on the far side of the bridge can
        never turn a large positive into a negative credit.
-     • VERIFY by reading the balance before and after. `true` iff the balance is
-       readable and rose by at least `n`, or the balance is unreadable and
-       `addGems` did not say `false`. When the wallet cannot be read there is
-       nothing better than the mutator's word, and the caller has a sentence for
-       exactly that case.
+     • VERIFY by reading the balance before and after — each read retried once
+       (`readGemsTwice`), so a single transient throw does not cost the
+       verification. `true` iff the balance is readable and rose by at least
+       `n`, or the balance is unreadable and `addGems` did not say `false`. When
+       the wallet cannot be read there is nothing better than the mutator's
+       word, and the caller has a sentence for exactly that case.
    The day `addGems` becomes a path that can decline — sql/034 states the
    planned real fix is per-faucet server RPCs, after which `wallet_credit` is
    revoked from `authenticated` — this boolean starts being the difference
@@ -622,17 +635,34 @@ export function payCost(host, choice) {
 
    ⚠ AND THE ONE CASE THIS STILL CANNOT SEE, stated rather than glossed, because
    a "there is no third outcome" claim that a driver can break is worth less
-   than an honest bound. When the balance is UNREADABLE **and** `addGems` credits
-   nothing while returning its usual undefined, this returns `true` and the
-   player reads "Your Cinder came back." over money that did not come back.
-   Driven, and it is the only surviving row of the sweep in which the report and
-   the wallet disagree. There is no fix from inside this function: with no
-   readable balance and a mutator that cannot decline, there is no third source
-   of truth to consult, and inventing pessimism ("assume it failed") would make
-   the far more common honest refund read as a failure. It shrank from round 1's
-   EVERY case to this intersection of two simultaneous host failures, and it
-   closes entirely the moment either the balance is readable or `addGems`
-   reports. That is the real state of it.
+   than an honest bound. When the balance is UNREADABLE and the credit silently
+   does nothing, this returns `true` and the player reads "Your Cinder came
+   back." over money that did not come back. Driven, and it is the only
+   surviving row of the sweep in which the report and the wallet disagree.
+   ⚠ BE EXACT ABOUT THE SECOND HALF OF THAT, because rounds 1-4 wrote it as an
+   "intersection of two simultaneous host failures" and that reads far rarer
+   than it is. Across the shipped stack `said` is `false` ONLY when something
+   THREW on the way to the wallet: the real `addGems` has no `return false` on
+   its crediting path at all (index.html), and the bridge wrapper is
+   `try { addGems(n | 0, …); return true; } catch { return false; }`
+   (`MythicDilemmaBridge.addGems`, index.html:208002). So `said` is not a second
+   independent failure that has to coincide — it is `true` by default, and the
+   fallback `return said` therefore carries exactly one bit: NOTHING THREW.
+   "Nothing threw" is not "the money arrived". The residual is one host failure
+   wide, not two: whenever the balance cannot be read, this function reports a
+   refund it did not witness. It is the same trade `grant()`'s LEG 2 documents
+   and makes on purpose, and the same sql/034 RPC work closes both.
+   WHAT ROUND 5 COULD DO FROM INSIDE THIS FUNCTION, and what it could not. It
+   could not invent a third source of truth — with no readable balance and a
+   mutator that cannot decline there is none, and inventing pessimism ("assume
+   it failed") would make the far more common honest refund read as a failure.
+   What it could do is stop treating ONE failed read as proof the balance is
+   unreadable; see `readGemsTwice` directly below, which narrows the residual to
+   a balance that is unreadable TWICE and leaves the deterministic causes
+   untouched. It shrank from round 1's EVERY case, to an unreadable balance, to
+   a balance that stays unreadable, and it closes entirely the moment either the
+   balance can be read once or `addGems` is given a way to report. That is the
+   real state of it.
 
    ⚠ FALSE FOR A FREE CHOICE, AND THE COPY PROBLEM THAT CAUSED IS NOT THIS
    FILE'S TO SOLVE. `costOf()` returns 0 for a free choice, so a failed commit
@@ -689,6 +719,40 @@ export function payCost(host, choice) {
    client/server divergence. This function only ever adds, and it only ever adds
    for a cost `payCost` would have taken — REFUND_CEILING, gating both, is what
    makes both halves of that sentence true rather than intended. */
+/* 🔴 ONE FAILED READ IS NOT PROOF THE BALANCE IS UNREADABLE — round 5, and it
+   is the only part of `refundCost`'s disclosed residual that could be closed
+   from inside this file. `readGems` collapses four different things to `null`
+   (see its header) and one of them is transient: the accessor THREW, which the
+   header names for the case where `Profile` is not yet assigned during boot. A
+   second attempt costs one pure read on the failing path only — `readGems`
+   never touches the wallet, which is what makes it safe to call twice around a
+   mutator in the first place — and it can only ever upgrade `null` to a number.
+   So it can only ever move this function OFF the fallback that reports a refund
+   it did not witness and ONTO the balance comparison that does witness it. It
+   cannot turn a landed refund into a reported failure: the comparison it
+   enables is the same one an already-readable balance gets.
+   ⚠ AND IT DOES NOT CLOSE THE RESIDUAL, it narrows it, which is the whole of
+   the claim. Of the four ways `readGems` answers `null`, a retry helps exactly
+   one: a missing accessor, a seam that answers `null` on purpose, and a
+   NaN/Infinity balance are all deterministic and answer `null` again. This is
+   engine.js's `ensureState` retry applied to the one remaining row where the
+   report and the wallet can disagree — same shape, same honest bound: the
+   single transient failure was the reachable one, and a seam that fails TWICE
+   IN A ROW is still read as unreadable.
+   ⚠ DELIBERATELY NOT APPLIED TO `payCost` OR `grant`. Not because it would hurt
+   them — it would not; the read is pure and the direction is the same — but
+   because neither of them hangs a truth claim on the balance being readable.
+   `payCost` treats the re-read as strictly non-authoritative (only ever turning
+   a false negative into a success), and `grant`'s LEG 2 predicate was rewritten
+   in round 4 to decide nothing at all on readability (CONTRACT-R3 §2.4). Both
+   were driven at length in round 4 against exactly the reads they make now.
+   Widening a fix past the defect it closes is how this file's money bugs got
+   their second and third shapes. */
+function readGemsTwice(host) {
+  const first = readGems(host);
+  return first !== null ? first : readGems(host);
+}
+
 export function refundCost(host, choice) {
   try {
     // 🔴 THE SAME EXPRESSION payCost uses, character for character.
@@ -747,19 +811,23 @@ export function refundCost(host, choice) {
     // is a save that did not persist, and the instance is not what failed.
     const cid = (choice && choice.id) ? String(choice.id) : 'unknown';
 
-    const before = readGems(host);
+    const before = readGemsTwice(host);
     // GENEROUS ON THE RETURN VALUE, STRICT ON THE BALANCE: `!== false`, because
     // a host adapter that returns undefined from a credit that actually worked
     // must not make this look like a failure. The re-read below is what decides
     // whenever it can decide.
     let said = false;
     try { said = host.addGems(n, 'Dilemma refund: ' + cid) !== false; } catch (e) { said = false; }
-    const after = readGems(host);
+    const after = readGemsTwice(host);
 
     // Every cost that reaches this point is one payCost would have charged in
     // full, so `n` IS the charge and the only open question is whether the
     // credit landed. Nothing below can refuse the credit after making it.
     if (before !== null && after !== null) return (after - before) >= n;
+    // ⚠ THE DISCLOSED RESIDUAL, and it is one line long so that it is obvious
+    // which line it is. `said` is `true` for any `addGems` that did not throw,
+    // so this reports a refund nobody witnessed. See the ⚠ block in the header
+    // above for exactly how wide that is and why there is nothing better here.
     return said;
   } catch (e) { return false; }
 }
@@ -838,32 +906,86 @@ export function influenceDelta(choice) {
   } catch (e) { return 0; }
 }
 
-/* 🃏 THE DOMAIN OF THE INERT-CARD CHECK — the two card kinds `host.cardById`
-   can actually answer for, and therefore the only kinds where its silence is
-   evidence of anything. Everything here is measured against the real tables,
-   not inferred: a driver walked all 75 cards `getCardPoolForPacks` returns and
-   asked `_cardDefById` about each one; it resolved 16 and the resolved set was
-   exactly `{unit: 16}`. 'summon' rides with 'unit' because a summon kind is
-   only ever produced for a CUSTOM card (getCardPoolForPacks tags archons and
-   fusion kalons that way in `_isSummonKind`, index.html) and every custom card
-   resolves through the 'custom:' key.
+/* 🃏 THE DOMAIN OF THE INERT-CARD CHECK — the card kinds on which
+   `host.cardById` answers for EVERY card the granter can hand out, and
+   therefore the only kinds where its silence is evidence of anything.
+   ⚠ THAT IS A NARROWER CLAIM THAN "THE KINDS THE VERIFIER CAN ANSWER FOR",
+   and the difference is round 5's correction to this block. `_cardDefById`
+   tries `resolveDeckCard('custom:' + id)` FIRST, and the 'custom' branch
+   reaches every Forge/Catalog card of any type — so the verifier can and does
+   answer for a custom spell. What cannot be read as evidence there is the KIND
+   TAG, not the verifier: `getCardPoolForPacks` labels a custom card
+   `c.type || 'unit'`, so one custom spell and nine built-in spells arrive at
+   this check wearing the same word and only the custom one resolves. A kind
+   earns a place below when it is UNMIXED — every card the granter can produce
+   under it resolves — because only then does a miss mean the id is bad rather
+   than the table unreachable.
+   Measured against the real tables rather than reasoned about. A driver walked
+   every entry `getCardPoolForPacks` returns and asked `_cardDefById` about
+   each one:
+
+     stock install, 75 cards      unit 16/16 · spell 0/9 · trap 0/20 ·
+                                  location 0/17 · weather 0/10 · wall 0/3
+     plus one Forge custom of     unit 17/17 · summon 1/1 · counter 1/1 ·
+     every authorable type, 83    spell 1/10 · trap 1/21 · location 1/18 ·
+                                  weather 1/11 · wall 1/4
+
+   The first row is why this check exists at all. The second is why the list is
+   the three words it is. `unit` is total on both sides — built-ins through the
+   'unit:' deck key, customs through 'custom:'. `summon` and `counter` are
+   total because `getCardPoolForPacks` pushes no built-in table under either
+   word, so a card wearing one is necessarily a custom and necessarily resolves
+   ('summon' is what `_isSummonKind` (index.html) tags archons and fusion
+   kalons; 'counter' is a Forge-only type `resolveDeckCard` routes through the
+   custom pool). The five that read MIXED are exactly the five built-in tables
+   `resolveDeckCard` has no key for.
+   ⚠ SO A FALSE NEGATIVE IS LEFT ON PURPOSE, and it is the trade, not an
+   oversight. A custom spell, trap, location, weather or wall whose id does not
+   resolve goes unchecked, though the verifier would have answered for it.
+   Closing it means checking those five kinds, which puts the 59 built-in cards
+   of those same kinds back under a verifier that misses all of them — the
+   78.7% false-alarm rate this list exists to end, pointed at the player again.
+   There is no third option from inside this file: the grant object is
+   `{ id, name, rarity, icon, kind }` (`MythicDilemmaBridge.grantCard`,
+   index.html) and carries no custom/built-in bit to split a mixed family on.
+   ONE PROXY WAS CONSIDERED AND REJECTED — `rarity`. Driven, no built-in card
+   carries a `rarity` field at all and `getRarity` answers `common` for all 75
+   of them, so "rarity above Common" really does imply "custom" today. It was
+   rejected because it is one-directional and dated: it says nothing about a
+   custom authored AT Common (driven — that card is indistinguishable from a
+   built-in here), and its truth is a measurement of somebody else's tables
+   rather than a property of this seam. That is precisely the kind of bound
+   round 4 caught this file asserting about the card pool and getting wrong.
+   A checked kind is a stated rule; a rarity sniff is a guess with a fuse.
+   And through the SHIPPED bridge the gap has nothing to find: the granter
+   picks its card out of `getCardPoolForPacks`, whose custom half is
+   `getAllCustomCards()`, and one statement later the verifier re-reads that
+   same filtered set — deletions and all — so a custom card the bridge minted
+   always resolves. Reaching the gap takes a granter that is not the bridge.
+   That is the whole of it — silence on a host we do not ship, against a false
+   alarm on four cards in five that we do.
    ⚠ THE LIST IS DUPLICATED RATHER THAN IMPORTED, for the reason data.js
    duplicates the rarity ids: UNIT_CARDS and its five siblings are top-level
    `const`s in index.html and a module cannot see them (CLAUDE.md, the globals
    trap). These are ids, not economy numbers, so DILEMMA_ECON is not where they
    belong — the ⚙ ONE TUNING TABLE rule in the header is about what a reward is
    WORTH, and this is about what the game can look up.
-   ⚠ THE UNKNOWN-KIND DEFAULT IS "CANNOT ANSWER", and it is chosen on the same
-   ground as every other fallback in this file: the direction that costs the
-   player nothing. A card family added upstream that this list has not heard of
-   simply stops being checked, which is quiet. The other default would put us
-   straight back into the 78.7% false-alarm rate this list exists to end, on a
-   whole new family, and the player would be the one reading it. A grant object
+   ⚠ THE UNKNOWN-KIND DEFAULT IS SILENCE, and it is chosen on the same ground
+   as every other fallback in this file: the direction that costs the player
+   nothing. Note that this is the one place the list is deliberately WORSE than
+   the rule above it — an unknown kind is, today, necessarily a custom-only
+   type and therefore unmixed, so the rule would admit it. Admitting it by
+   default would also admit the next BUILT-IN family somebody adds upstream,
+   and that one arrives mixed and starts crying wolf at the player. A new
+   family this list has not heard of simply stops being checked, which is
+   quiet; the alternative is the 78.7% rate again on a family nobody has
+   measured yet. Adding a word to the list is a deliberate act with a
+   measurement behind it, which is how 'counter' got here. A grant object
    with NO kind at all is treated as in-domain — the bridge always sets one
    (`pick.kind || card.type || 'unit'`), so a row without one did not come from
    the bridge, and a host that hand-rolls grant results is exactly the host this
    check is still for. */
-const CARD_KINDS_THE_VERIFIER_ANSWERS_FOR = Object.freeze(['unit', 'summon']);
+const CARD_KINDS_WHERE_A_MISS_IS_EVIDENCE = Object.freeze(['unit', 'summon', 'counter']);
 
 /* ════════════════════════════════════════════════════════════════════════════
    4. THE BASKET — grant()
@@ -919,10 +1041,9 @@ const CARD_KINDS_THE_VERIFIER_ANSWERS_FOR = Object.freeze(['unit', 'summon']);
    ledger ("their pile of it is real and inert"). The first line of defence is
    on the far side of the bridge, where grantCard picks the CARD OBJECT out of
    getCardPoolForPacks() and uses `pick.card.id`
-   (`MythicDilemmaBridge.grantCard`, index.html, over
-   `getCardPoolForPacks`). This is the second: after the grant, the id
-   is re-resolved through host.cardById() and a miss is reported as a failed
-   leg.
+   (`MythicDilemmaBridge.grantCard`, index.html, over `getCardPoolForPacks`).
+   This is the second: after the grant, the id is re-resolved through
+   host.cardById() and a miss is reported as a failed leg.
 
    🔴 AND THE SECOND LINE OF DEFENCE IS NARROWER THAN THE THING IT DEFENDS,
    which for one round made it a defect rather than a check. `host.cardById` is
@@ -950,8 +1071,11 @@ const CARD_KINDS_THE_VERIFIER_ANSWERS_FOR = Object.freeze(['unit', 'summon']);
    THE RULE THAT REPLACES IT is the rule LEG 2 already uses on the wallet, and
    using the same one twice is the point: A MISS IS EVIDENCE ONLY INSIDE THE
    VERIFIER'S DOMAIN. Outside it, a miss is silence, and silence is not a
-   finding. `CARD_KINDS_THE_VERIFIER_ANSWERS_FOR` above is that domain, measured
-   rather than assumed. Inside it the check keeps every tooth it had — a
+   finding. `CARD_KINDS_WHERE_A_MISS_IS_EVIDENCE` above is that domain, and the
+   block naming it is careful that the domain is the kinds where a miss DECIDES
+   something, not the kinds the verifier is able to answer for — the second set
+   is larger and reading it as the first is what the name used to invite.
+   Measured rather than assumed. Inside it the check keeps every tooth it had — a
    synthetic id with no definition still reports a failed leg, still names the
    inert row, and is still left behind because there is no take-back on the
    bridge. Outside it the grant is UNVERIFIABLE, which is not the same as bad,
@@ -1035,15 +1159,17 @@ export function grant(host, instance, choice, rolled) {
           checked = true;
           try { def = host.cardById(picked.id); } catch (e) { def = null; }
         }
-        // A miss only means something if the verifier could have answered. See
-        // the 🔴 SECOND LINE OF DEFENCE block above: `_cardDefById` tries the
-        // 'custom:' and 'unit:' deck keys and nothing else, so on a built-in
-        // spell, trap, location, weather or wall card its `null` is a statement
-        // about the lookup, not about the card. `String(...)` because `kind`
-        // crosses a host boundary and may be anything.
+        // A miss only DECIDES something on a kind every card of which the
+        // verifier resolves. See the 🔴 SECOND LINE OF DEFENCE block above:
+        // `_cardDefById` tries the 'custom:' and 'unit:' deck keys and nothing
+        // else, so 'spell', 'trap', 'location', 'weather' and 'wall' each
+        // carry built-ins it cannot reach ALONGSIDE customs it can, and on a
+        // mixed kind its `null` is a statement about which half the card came
+        // from rather than about the card. `String(...)` because `kind` crosses
+        // a host boundary and may be anything.
         const kind = String(picked.kind || '').trim().toLowerCase();
-        const answerable = !kind || CARD_KINDS_THE_VERIFIER_ANSWERS_FOR.indexOf(kind) >= 0;
-        if (checked && !def && answerable) {
+        const missIsEvidence = !kind || CARD_KINDS_WHERE_A_MISS_IS_EVIDENCE.indexOf(kind) >= 0;
+        if (checked && !def && missIsEvidence) {
           out.ok = false;
           out.why = 'The granted card id does not resolve to a definition on this device.';
           out.lines.push('⚠ Ouroboros logged the find and could not read it — the card sits in your collection, inert.');
@@ -1179,8 +1305,8 @@ export function grant(host, instance, choice, rolled) {
    The reason string every credit carries. Built defensively because it must
    never be blank or defaulted: `addGems` falls back to the literal 'addGems'
    when the reason is missing (`reason || 'addGems'`, index.html), and that
-   anonymous label is
-   precisely why the Cinder supply could not be audited in the first place.
+   anonymous label is precisely why the Cinder supply could not be audited in
+   the first place.
    A dilemma with a broken instance still produces an attributable row. */
 function choiceRef(instance, choice) {
   const d = (instance && instance.dilemma && instance.dilemma.id) ? String(instance.dilemma.id) : 'unknown';

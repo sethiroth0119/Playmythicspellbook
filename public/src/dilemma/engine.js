@@ -1073,16 +1073,77 @@ export function stanceTally(units, choice) {
 // SELECTION
 // ══════════════════════════════════════════════════════════════════════════
 
-/* The degradation ladder, as levels. Level 0 is the real policy; 1-3 are what
-   the Heights does when it has run out of new decisions rather than showing the
-   player a broken screen.
-     0 — influence band + the last `recentDepth` resolved + the 72h repeat cooldown
-     1 — drop the 72h cooldown            (the common case on a 12-entry corpus)
-     2 — drop the influence band too
-     3 — block only the immediately-previous dilemma
-   Level 3 is the floor and is never relaxed: handing a player the exact dilemma
+/* 🔴 THE DEGRADATION LADDER — AND THE ONE GATE IT IS NOT ALLOWED TO DROP.
+
+   Level 0 is the real policy; the rungs below it are what the Heights does when
+   it has run out of new decisions, rather than showing the player a broken
+   screen.
+     0 — influence band + the last `recentDepth` resolved
+     1 — drop the influence band            (the common case on a small corpus)
+     2 — block only the immediately-previous dilemma
+   Level 2 is the floor and is never relaxed: handing a player the exact dilemma
    they just resolved is the one outcome that reads as a bug rather than as a
-   quiet week. A corpus of one therefore returns null, and the caller says so. */
+   quiet week. A corpus of one therefore returns null, and the caller says so.
+
+   The 72h repeat lockout is NOT a rung. It applies at every level including the
+   floor, and it is enforced by `repeatBlocks()` below.
+
+   ⚠ ROUND 5 TOOK THE REPEAT GATE OFF THE LADDER, AND THE REASON IS MONEY.
+   It used to be rung 1 — `if (level <= 0)` — so `openDilemma()` dropped it the
+   moment level 0 came back empty, while `available()` (the hub tile's badge)
+   applied it always. index.html renders that badge from `available()`, but the
+   tile itself is present and clickable regardless and its click calls `open()`
+   unconditionally: the "nothing for you right now" toast only fires when
+   `open()` returns false, which it did not. Both answers were reachable and the
+   player was routed to the generous one.
+
+   Driven 2026-08-28 over 60 simulated days of EV-optimal play against the real
+   corpus and the real bridge — the engine picking, the bridge minting, nothing
+   modelled. A player who clicked only when the tile badged took 360 decisions
+   (6.00/day) and 43,417 Cinder (724/day). A player who simply clicked the tile
+   took 1,920 (32.00/day) and 209,649 Cinder (3,494/day) — 1,900 of those opens
+   against a dark badge, with `eh_ninth_street_main` served 141 times over the
+   run. 4.8x the faucet the badge described, and about 105,000 Cinder a month.
+
+   The fix was one decision and not one line: make the badge admit the 32/day, or
+   make the behaviour keep the badge's promise. This codebase does not get to
+   pick the first. `GEM_REWARDS` in index.html is zeroed under the comment "🚫 NO
+   CINDER FROM MATCHES — it will devalue our money", `/sql/AUDIT_farmed_cinder.sql`
+   exists because farming has been a real problem here, and CLAUDE.md routes all
+   pricing through `_opEcon()` precisely so payouts cannot drift. A modal that
+   pays 3,494 Cinder a day is a faucet whichever number the badge shows.
+
+   MEASURED AFTER, same drive, same day: the ordinary player and the disciplined
+   player take the SAME 400 decisions — 6.67/day, exactly the corpus bound of 20
+   dilemmas over the 72h window — for the same 43,431 Cinder, 724/day, and NOT
+   ONE open lands against a dark badge in either run. The disciplined player is
+   slightly better off than before (360 -> 400) because the badge no longer
+   answers a stricter question than the panel, and all 20 ids now get served
+   where 18 did, because rung 1 reaches the two the influence band was hiding.
+   ⚠ 724 Cinder/day IS A MEASUREMENT OF THIS CORPUS ON 2026-08-28, NOT A
+   CONSTANT. It moves if `DILEMMAS` grows, if `repeatCooldownMs` moves, or if
+   `cinderBand` is retuned — 6.67/day is `DILEMMAS.length / 3` and nothing in
+   this file enforces it. Re-drive it; do not trust this sentence in 2027.
+
+   🔴 WHY THIS GATE IS DIFFERENT FROM THE OTHER TWO, which is the whole reason
+   it can sit outside the ladder without dead-ending the feature. The band and
+   the `recent` list are STATE gates: they stay shut until the player's standing
+   or their history changes, and a player with nothing on offer changes neither,
+   so a ladder is the only thing that can ever reopen them. The repeat lockout
+   is a CLOCK gate — it opens by itself, at a time already fixed when it closed,
+   with the player doing nothing. Every entry it blocks is blocked for a bounded
+   stretch and then is not. Refusing to drop it costs at most one quiet stretch;
+   dropping it costs the economy. That asymmetry is the entire argument, and it
+   is why replacing rung 1 with nothing does not reintroduce a dead end.
+
+   ⚠ ROUND 4 LEANED ON THE OLD RUNG 1 AND WHAT IT ACTUALLY NEEDED WAS SOMETHING
+   ELSE. `cooldownBlocks()` cites this ladder for the claim that "a `seen` map
+   stamped a year ahead still opens a dilemma". True then, and it was true by
+   accident: what that case needs is not a ladder but a refusal to be governed by
+   a clock we do not share, which is a property of the gate and not of its
+   position. `repeatBlocks()` supplies it on its own account, which is the honest
+   place for it — and unlike the ladder it also bounds the farm rather than
+   handing it a free rung. */
 /* The influence gate, in one place. `eligible()`, `available()` and the pinned
    offer's re-check all ask the same question, and three copies of an inclusive
    band comparison is three chances for one of them to drift to `<` on a rewrite.
@@ -1094,46 +1155,147 @@ function withinBand(d, influenceValue) {
   return inf >= lo && inf <= hi;
 }
 
+/* 🔴 THE 72h REPEAT LOCKOUT, RANGE-BOUND AGAINST A CLOCK WE DO NOT SHARE.
+
+   `commit()` is the only writer of `seen[id]` and it writes exactly `now`, after
+   refusing to commit at all unless `now > 0`. So the distance between a stamp
+   and our clock IS the skew of the clock that wrote it, and one whole repeat
+   window is the widest distance a clock we share could have produced. Beyond
+   that the stamp is not ours to obey — the same reasoning `cooldownBlocks()`
+   applies to `nextAt`, in the form this field wants it.
+
+   Two failures it closes, one on each side of `now`:
+
+   • THE FUTURE STAMP. `now - seen[id] < repeatCooldownMs` was the old test, and
+     a stamp AHEAD of our clock gives a negative age, which is less than the
+     window forever. A device a year fast stamps every id it resolves a year
+     ahead and every one of them is then locked for a year. That was survivable
+     only because the ladder used to drop this gate one rung down; with the gate
+     off the ladder it would be a year-long dead feature, so the bound is not
+     optional any more — it is what makes taking the gate off the ladder safe.
+     Reachable without malice and without the cloud: one wrong device clock, and
+     `ensureState()` deliberately preserves such a stamp rather than repairing
+     it, because a read path must not write.
+
+   • THE DEAD CLOCK. `resolveNow()` answers 0 when `host.now()` throws, and
+     `num(undefined)` is 0, so `0 - 0 < repeatCooldownMs` blocked EVERY id that
+     had never been resolved — the whole corpus, on a broken clock. The old
+     ladder hid that too. `at > 0` is the guard: a dilemma with no stamp has not
+     been resolved, whatever the clock says, and `ensureState()` already deletes
+     any stamp of 0 or garbage so a surviving key always means a real resolution.
+
+   ⚠ WHY SYMMETRIC — `Math.abs` — WHEN `cooldownBlocks()` IS ONE-SIDED. They are
+   bounding different things. `cooldownBlocks` ignores a wait longer than its
+   window and thereby leaks a sliver of CADENCE to a fast clock, which is the
+   player-favourable direction for a gate that would otherwise disable the
+   feature. This gate is the faucet's ceiling, so leaking it is the direction
+   that costs money: a player who moves the clock forward, resolves, and moves it
+   back would have every stamp they just wrote sitting in the future and every
+   one of them ignored — the clock farm, with the lockout switched off for free.
+   Honouring a future stamp until our own clock passes it closes that.
+
+   The price is stated rather than hidden: a device S ms fast holds its lockouts
+   for `repeatCooldownMs + S` instead of `repeatCooldownMs`, so a fast clock
+   costs the player at most its own skew in extra quiet, and a skew of a whole
+   window or more costs nothing at all because the stamp falls out of range
+   entirely. The block can therefore never exceed `2 * repeatCooldownMs`, and it
+   always ends: real time walks out of the interval on its own. That bound is
+   what lets this gate sit outside the ladder.
+
+   ⚠ WHAT THIS BUYS AGAINST A PLAYER WHO OWNS THE CLOCK, MEASURED AND NOT
+   OVERSOLD. Round 4's verifier recorded, correctly, that bounding `nextAt`
+   doubled the throughput of the pre-existing clock farm: the jump-BACK leg of a
+   forward-then-back cycle started opening too. Searched over eleven jump sizes
+   in both shapes on 2026-08-28, the best strategy the adversary has fell from
+   562.56 resolutions per day of clock travel to 45.76 — a 12x cut — because the
+   leg round 4 opened up now lands on stamps it wrote itself and is refused. The
+   forward-only farm at the cadence step fell from 32.00 to 7.68, against an
+   honest 6.67: before this change the repeat gate contributed NOTHING to a
+   farmer's ceiling, since the ladder handed it back the moment level 0 emptied.
+   What is NOT closed, and cannot be: a jump of more than one repeat window puts
+   every stamp out of range, and a device that was a year fast and then corrected
+   is INDISTINGUISHABLE from a farmer who jumped a year and came back. The client
+   cannot tell them apart, so this file chooses the corrected device. Bounding
+   supply against someone who owns the clock is a server's job, and there is no
+   server here by design (CONTRACT R1: persist in `Profile`, security surface
+   zero). Recorded so nobody rediscovers the residual as a regression.
+
+   REJECTED — repairing an out-of-range stamp on sight. This is a read path:
+   `available()` runs twice per hub render and is documented as costing nothing,
+   and a self-heal that persists would put a write on the badge, which is the
+   mistake `ensureState()`'s write-back was gated to stop making. Ignoring it is
+   enough — the next `commit()` restamps on OUR clock. */
+function repeatBlocks(stamp, now) {
+  const at = num(stamp);
+  if (!(at > 0)) return false;
+  return Math.abs(num(now) - at) < DILEMMA_ECON.repeatCooldownMs;
+}
+
+/* The number of rungs, in one place, because `pickDilemma()` walks the ladder
+   and `hasEligible()` has to walk exactly the same one. Two loop bounds is two
+   chances for the badge and the panel to drift apart again, which is the defect
+   this round was called for. */
+const LADDER_FLOOR_LEVEL = 2;
+
+/* 🔴 ONE PREDICATE, AND THAT IS THE POINT. `poolAt()` builds the pool
+   `openDilemma()` draws from; `hasEligible()` answers the hub tile's badge.
+   Before this round they were two hand-copied transcriptions of the same rules
+   that had drifted apart on one of them, and drift in a predicate is invisible
+   in review — both functions read correct on their own. They now differ only in
+   what they do with the answer: collect it, or stop at the first yes. That
+   difference is the only reason there are two.
+
+   Arguments are pre-derived per call rather than re-read from `state` per
+   dilemma, because `available()` runs on every hub render and this is the hot
+   path. The pinned-offer branch in `openDilemma()` has a single dilemma in hand
+   and so calls `repeatBlocks()` directly instead — deliberately, and not for
+   convenience: a pin granted at a lower rung must not be re-judged at level 0,
+   or reopening a modal in degraded conditions would reroll it, which is the
+   round-1 bug the pin exists to close. */
+function admits(d, inf, recent, seen, now, level) {
+  if (!d || typeof d.id !== 'string') return false;
+  if (!Array.isArray(d.choices) || !d.choices.length) return false;
+  if (level <= 0 && !withinBand(d, inf)) return false;
+  if (level <= 1) {
+    if (recent.indexOf(d.id) !== -1) return false;
+  } else if (recent.length && recent[0] === d.id) {
+    return false;
+  }
+  // Every level, floor included. See the ladder note above.
+  if (repeatBlocks(seen[d.id], now)) return false;
+  return true;
+}
+
 function poolAt(state, now, level) {
   const out = [];
   const inf = clampInfluence(state.influence);
   const recent = Array.isArray(state.recent) ? state.recent : [];
   const seen = (state.seen && typeof state.seen === 'object') ? state.seen : {};
   const list = Array.isArray(DILEMMAS) ? DILEMMAS : [];
-  for (const d of list) {
-    if (!d || typeof d.id !== 'string') continue;
-    if (!Array.isArray(d.choices) || !d.choices.length) continue;
-
-    if (level <= 1 && !withinBand(d, inf)) continue;
-    if (level <= 2) {
-      if (recent.indexOf(d.id) !== -1) continue;
-    } else {
-      if (recent.length && recent[0] === d.id) continue;
-    }
-    if (level <= 0) {
-      if (now - num(seen[d.id]) < DILEMMA_ECON.repeatCooldownMs) continue;
-    }
-    out.push(d);
-  }
+  for (const d of list) if (admits(d, inf, recent, seen, now, level)) out.push(d);
   return out;
 }
 
 /* Allocation-free existence check for `available()`. The hub tile asks this on
    every render of the hub screen, and building (and discarding) the whole
    eligible array to learn whether its length is greater than zero is work
-   nobody reads. */
+   nobody reads.
+
+   ⚠ AND IT WALKS THE LADDER, which it did not before. The badge's question is
+   not "is anything eligible under the strictest rules" — it is "will the tile
+   open something", and that is `pickDilemma()`'s question, ladder and all. A
+   badge answering a stricter question than the panel is the same lie as one
+   answering a looser one; round 5's defect was the looser direction only because
+   the ladder happened to lean that way. Still allocation-free, and still one
+   pass in the case that matters: level 0 returns on its first hit and the extra
+   rungs are only walked when level 0 genuinely has nothing. */
 function hasEligible(state, now) {
   const inf = clampInfluence(state.influence);
   const recent = Array.isArray(state.recent) ? state.recent : [];
   const seen = (state.seen && typeof state.seen === 'object') ? state.seen : {};
   const list = Array.isArray(DILEMMAS) ? DILEMMAS : [];
-  for (const d of list) {
-    if (!d || typeof d.id !== 'string') continue;
-    if (!Array.isArray(d.choices) || !d.choices.length) continue;
-    if (!withinBand(d, inf)) continue;
-    if (recent.indexOf(d.id) !== -1) continue;
-    if (now - num(seen[d.id]) < DILEMMA_ECON.repeatCooldownMs) continue;
-    return true;
+  for (let level = 0; level <= LADDER_FLOOR_LEVEL; level++) {
+    for (const d of list) if (admits(d, inf, recent, seen, now, level)) return true;
   }
   return false;
 }
@@ -1175,11 +1337,18 @@ function resolveNow(host, now) {
    (see the atomic write), so a wait LONGER than one whole window cannot have
    been written by a clock we share. That is the entire test.
 
-   ⚠ The asymmetry that motivates it. Every other cooldown in this file already
-   degrades: a `seen` map stamped a year ahead still opens a dilemma, because
-   `poolAt`'s ladder drops the 72h repeat gate at level 1 (driven: all ids a
-   year ahead still opened `eh_ninth_street_main`). `nextAt` has no ladder — it
-   is one comparison with nothing behind it — so the range check IS its ladder.
+   ⚠ The asymmetry that motivates it. Every other gate in this file recovers
+   from a clock we do not share on its own account: a `seen` map stamped a year
+   ahead still opens a dilemma, because `repeatBlocks()` refuses a stamp further
+   than one repeat window from our clock. `nextAt` has nothing behind it — it is
+   one comparison — so this range check IS its recovery.
+   ⚠ ROUND 5 REWROTE THAT SENTENCE AND THE REASON MATTERS. It used to credit
+   `poolAt`'s ladder, which dropped the repeat gate one rung down; the ladder no
+   longer drops it (see the ladder note) because doing so was worth 4.8x the
+   intended faucet. The recovery survived the change because it was moved into
+   the gate rather than lost with the rung — but a reader checking this claim
+   against the ladder today would have found it false, which is exactly the kind
+   of load-bearing comment this file is not allowed to carry.
 
    REJECTED — clamping or rewriting `nextAt` when we see a bad one. This is a
    read path, and `available()` in particular is documented as costing nothing;
@@ -1235,7 +1404,7 @@ export function pickDilemma(host, now, rng) {
        from the timestamp alone. `state.resolved` is mixed in so two opens in
        the same millisecond after a resolution do not collide. */
     const r = (typeof rng === 'function') ? rng : makeRng(seedFrom('eh|pick|' + t + '|' + s.resolved));
-    for (let level = 0; level <= 3; level++) {
+    for (let level = 0; level <= LADDER_FLOOR_LEVEL; level++) {
       const pool = poolAt(s, t, level);
       if (!pool.length) continue;
       // The CAMP_RUN_EVENTS weight walk (`_campRollEvent`, index.html),
@@ -1467,15 +1636,29 @@ export function openDilemma(host, opts) {
     const pinAge = pin ? (now - num(pin.at)) : 0;
     if (pin && pinAge >= 0 && pinAge < DILEMMA_ECON.offerCooldownMs) {
       const pinned = (DILEMMA_BY_ID && DILEMMA_BY_ID[pin.id]) || null;
-      if (pinned && withinBand(pinned, s.influence)) {
+      /* ⚠ THE REPEAT GATE IS RE-ASKED HERE, and it is the same call `poolAt()`
+         makes. The pin is written on open and cleared by `commit()` in the same
+         atomic write, so on one device a live pin can never name a dilemma that
+         has already been resolved. A merged blob can: the hydration merge takes
+         the union of `seen` and can bring a foreign device's resolution back on
+         top of a local pin, and this branch is reached precisely when the
+         foreign clock also defeated `cooldownBlocks()`. Without this, that pair
+         replays a decision the player has already taken — the one outcome the
+         72h lockout exists to prevent — and it replays it while `available()`
+         says nothing waits, which is round 5's defect wearing a different hat.
+         Falling through re-rolls, which is correct and is not a reroll exploit:
+         the alternative on this branch is serving a spent dilemma. */
+      if (pinned && withinBand(pinned, s.influence)
+          && !repeatBlocks(s.seen && s.seen[pin.id], now)) {
         /* Replayed from the pin's OWN clock, not from now — the seed, the choice
            set and `openedAt` must be the ones the player was already looking at,
            or reopening would still be a reroll with extra steps. */
         return buildInstance(host, s, pinned, num(pin.seed) || seedFrom(pinned.id + ':' + num(pin.at)), num(pin.at));
       }
-      /* The pinned dilemma left the corpus (a trimmed data.js) or the player's
-         standing moved out of its band. Fall through and roll a fresh one rather
-         than offering a dilemma the Heights would no longer bring them. */
+      /* The pinned dilemma left the corpus (a trimmed data.js), the player's
+         standing moved out of its band, or it has since been resolved on another
+         device. Fall through and roll a fresh one rather than offering a dilemma
+         the Heights would no longer bring them. */
     }
 
     const d = pickDilemma(host, now);

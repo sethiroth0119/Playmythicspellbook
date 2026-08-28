@@ -2073,19 +2073,30 @@ function paintStall(k, t, force) {
 
   const offer = safe(() => (typeof State.reliefOffer === 'function' ? State.reliefOffer() : null), null);
   const free = offer ? (offer.rows || []).find((r) => r && r.free) : null;
-  const need = safe(() => (State.dryCheck ? State.dryCheck().need : []), []) || [];
+  const dry = safe(() => (State.dryCheck ? State.dryCheck() : null), null) || {};
+  const need = dry.need || [];
   const canDrop = !!(free && free.available && typeof State.buyRelief === 'function');
 
-  /* One line that names the resources the crates want and the player has none
-     of. `need` comes off dryCheck() already — round 5 computed it, put it in the
-     `pantry:low` payload and then printed none of it. */
+  /* 🔴 THE SENTENCE COMES FROM `needLine`, NOT FROM `need`, AND THAT DISTINCTION
+     IS THE WHOLE FINDING. Three consecutive rounds shipped a false line here.
+     Round 9 finally wrote a true one — `stallLine()` in kitchen.state.js, which
+     a critic exercised on every branch and could not make lie — and then this
+     renderer went on composing its own out of the raw `need` array, which is
+     built from a branch that EXCLUDES the very resources the player is short
+     of. So the tested sentence sat one field away, computed and unread, while
+     the screen kept printing the untested one: the exact defect this whole
+     gauntlet kept finding, in the fix for its own third-round instance.
+     ⚠ The local fallback stays for the case where the sim is older than this
+     file, and ONLY for that. If you are tempted to "improve" the wording, edit
+     stallLine() — it is the one with the test behind it. */
   const names = need.slice(0, 3)
     .map((id) => safe(() => (b().meta ? (b().meta(id).name || id) : id), id));
-  const why = names.length
-    ? `Every crate on the sheet still wants ${names.join(', ')} and you have none.`
-    : 'No crate on the supplies sheet can be bought right now.';
+  const why = dry.needLine
+    || (names.length
+      ? `Every crate on the sheet still wants ${names.join(', ')} and you have none.`
+      : 'No crate on the supplies sheet can be bought right now.');
 
-  const key = [canDrop, (free && free.why) || '', names.join(',')].join('|');
+  const key = [canDrop, (free && free.why) || '', why].join('|');
   if (key === _stallKey) return;
   _stallKey = key;
 

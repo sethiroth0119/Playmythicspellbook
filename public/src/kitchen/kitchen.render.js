@@ -684,7 +684,12 @@ function rebuildRegistry() {
   _reg.passRail = q('.mk-pass-rail');
 
   for (const el of _root.querySelectorAll('.mk-tk')) {
-    _reg.tickets.push({ id: el.dataset.tk, el, bar: el.querySelector('.mk-bar > i'), time: el.querySelector('.mk-tk-time') });
+    /* 🚗 THE SERVE BUTTON IS REGISTERED so the lane gate can be re-evaluated on
+       the FRAME beat and not only on a structural repaint — see updateTickets().
+       A car reaching the window is the moment the player is waiting for; it must
+       not wait on a rev bump to become pressable. */
+    _reg.tickets.push({ id: el.dataset.tk, el, bar: el.querySelector('.mk-bar > i'),
+                        time: el.querySelector('.mk-tk-time'), serve: el.querySelector('[data-act="serve"]') });
   }
   for (const el of _root.querySelectorAll('.mk-slot')) {
     if (el.dataset.phase === 'empty') continue;
@@ -951,19 +956,85 @@ function boardHtml(k) {
   const atWindow = pinnedTicketId(k);
   const all = (k.tickets || []).filter((t) => t && (t.state === 'open' || t.state === 'ready'));
   const list = all.filter((t) => t.id !== atWindow);
+  /* 🔴 THE CLOSED BOARD IS THE FIRST THING A NEW PLAYER EVER SEES, AND IT USED
+     TO SAY "Service is closed." AND NOTHING ELSE. See prepBoardHtml(). */
+  const pre = !k.shift.running && !list.length ? prepBoardHtml(k) : '';
   const inner = list.length
     ? list.map((t) => ticketHtml(t, k)).join('')
-    : `<div class="mk-empty">${!k.shift.running ? 'Service is closed.'
-        : (atWindow ? 'Only the one at the window. Get it out.' : 'No orders on the board. Enjoy it.')}</div>`;
+    : (pre || `<div class="mk-empty">${!k.shift.running ? 'Service is closed.'
+        : (atWindow ? 'Only the one at the window. Get it out.' : 'No orders on the board. Enjoy it.')}</div>`);
   return `
-  <section class="mk-sec mk-sec-board">
+  <section class="mk-sec mk-sec-board" data-pre="${pre ? 1 : 0}">
     <div class="mk-board">
-      <div class="mk-board-head">Customer Orders<span class="mk-spacer"></span>
+      <div class="mk-board-head">${pre ? 'On the menu today' : 'Customer Orders'}<span class="mk-spacer"></span>
+        ${pre ? '<span class="mk-board-note">tap one — the doors open and it goes on</span>' : ''}
         ${atWindow ? '<span class="mk-board-note">+1 at the window</span>' : ''}
-        <span class="mk-board-count">${all.length}</span></div>
+        ${pre ? '' : `<span class="mk-board-count">${all.length}</span>`}</div>
       <div class="mk-rail" data-rail="board">${inner}</div>
     </div>
   </section>`;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   🍕 THE FIRST FRAME HAS FOOD IN IT NOW
+   ═══════════════════════════════════════════════════════════════════════════
+   🔴 THE FRAME THAT DECIDES WHETHER ANYONE PLAYS IT CONTAINED NOTHING EDIBLE.
+   Measured on a clean open at 360×640 (r16v/FIRST-360x640.png, and I reproduced
+   it byte for byte in r17v before touching anything): `{level:1, shift:false,
+   tickets:0, pass:0}` — five empty pans with grey ＋ placeholders, a card
+   reading "Service is closed.", an empty pass fascia saying "0 ON THE PASS ·
+   ROOM FOR 16", "Kitchen closed · Day 1 · Monday", and four RED-outlined chips
+   reading 0 Food / 0 Water / 0 DNA / 0 Supplies as the brightest objects in the
+   lower half. Not one rendered dish anywhere. REF-A's first interaction is a
+   pizza; REF-B hands you a griddle full of patties on the tutorial screen. Ours
+   was the only frame in the comparison with nothing on it to eat, and it is the
+   one that decides whether the doors are ever opened at all.
+
+   🔴 AND WHY THIS IS THE MENU AND NOT A FAKE PLATE ON THE PASS. The obvious fix
+   — plate a demo dish and start a demo pan — is the renderer writing game truth,
+   which CONTRACT §0 rule 2 forbids outright and which would be a lie of exactly
+   the kind this round exists to delete: a plate on the pass that no pantry paid
+   for. What this draws is TRUE: these are the dishes this kitchen can cook right
+   now, at their real prices, with their real cook times, and the ones the pantry
+   cannot cover say so instead of pretending.
+
+   🔴 AND IT IS THE FIRST INTERACTION, NOT A PICTURE. `startCook()` refuses while
+   the shift is shut ("The kitchen is closed — start a shift first."), so a card
+   that only called it would be this round's OTHER defect in a new place: a lit
+   control that answers with a sentence. `doPrep()` opens the doors and puts the
+   dish on in one gesture, out of two verbs the renderer already calls, and the
+   head row says so in words before the tap. A player's first act in Mythic
+   Kitchen is now choosing a dish.
+
+   ⚠ NOT WHILE `_stalled`. With nothing cookable every card is disabled and
+     honest, and the stranded bar (`#mk-stall`) plus OPEN THE DOORS — which
+     already carries the "nothing to cook" caption and its confirm — remain the
+     surfaces for that state. This one must never talk a player through a door
+     into a shift that serves nobody.
+   ⚠ EIGHT MAX. The menu reaches nineteen dishes by level 16 and this rail is
+     one row on a phone; the level-1 menu is four, which is the case that matters
+     here. Beyond eight it stops being an invitation and becomes the Menu tab,
+     which already exists two taps away.
+*/
+function prepBoardHtml(k) {
+  const rows = safe(() => (typeof State.menu === 'function' ? State.menu() : null), null);
+  const list = (Array.isArray(rows) ? rows : []).filter((r) => r && (r.minLevel || 1) <= k.level).slice(0, 8);
+  if (!list.length) return '';
+  return list.map((r) => {
+    const can = safe(() => State.canCook(r.id), null);
+    const ok = !!(can && can.ok);
+    const secs = Math.max(1, Math.round((r.cookMs || 0) / 1000));
+    const sub = ok ? `${fmtCinder(r.basePrice)} · ${secs}s` : 'no stock';
+    return `<button class="mk-prep" data-act="${ok ? 'prep' : 'noop'}" data-recipe="${esc(r.id)}"
+        data-ok="${ok ? 1 : 0}" ${ok ? '' : 'disabled'}
+        title="${esc(r.name || r.id)} — ${ok
+          ? 'open the doors and put one on the ' + esc(safe(() => DATA.station(r.station).name, r.station) || 'line')
+          : esc((can && can.why) || 'You are out of ingredients for this.')}"
+      ><span class="mk-ic" aria-hidden="true">${r.icon || '🍽'}</span>
+        <b>${esc(r.name || r.id)}</b>
+        <em>${esc(sub)}</em>
+      </button>`;
+  }).join('');
 }
 /**
  * 🎫 REF-B'S ORDER SCREEN: an ITEMISED ticket, with the customer's own words at
@@ -1009,6 +1080,19 @@ function ticketHtml(t, k) {
   const ready = t.state === 'ready';
   const worth = ticketWorth(t);
   const menu = ticketMenuValue(t);
+  /* 💰 CACHED ON THE NODE so the per-frame gate sync in updateTickets() can
+     rebuild this button's caption without calling the till once per ticket per
+     frame — see serveGate() under this function.
+     ⚠ THE TILL FIGURE IS ON THE LIVE BUTTON ONLY, AND THAT IS DELIBERATE. A
+       first draft printed it on the queued caption too ("2ND IN THE LANE · ◈
+       257") and it was wrong twice over: measured at 390×844 it did not fit the
+       163px board column and wrapped into the pinned pass, and it put a SECOND
+       money figure two pixels from the head's menu chip (◈256) that differs from
+       it by the quality/rush/popularity multipliers. What a queued ticket is
+       worth is already on the ticket, in the head, once. The button's job while
+       the car is not at the window is to say WHERE THE CAR IS. */
+  const worthTxt = worth == null ? '' : ' · ' + fmtCinder(worth);
+  const gate = serveGate(t, k);
   return `<div class="mk-tk" data-tk="${esc(t.id)}" data-src="${esc(t.source)}" data-state="${esc(t.state)}" data-urg="ok">
       <div class="mk-tk-top">
         <span class="mk-ic" aria-hidden="true">${t.icon || cust.icon || '🧑'}</span>
@@ -1024,8 +1108,80 @@ function ticketHtml(t, k) {
         <div class="mk-bar"><i></i></div>
         <span class="mk-tk-time">—</span>
       </div>
-      ${ready ? `<button class="mk-serve" data-act="serve" data-id="${esc(t.id)}">Serve${worth == null ? '' : ' · ' + esc(fmtCinder(worth))}</button>` : ''}
+      ${ready ? `<button class="mk-serve" data-act="serve" data-id="${esc(t.id)}"
+        data-gate="${gate.can ? 'ok' : 'queue'}" data-worth="${esc(worthTxt)}"
+        ${gate.can ? '' : 'disabled'} title="${esc(gate.title)}"
+        >${gate.can ? 'Serve' + esc(worthTxt) : '🚗 ' + esc(gate.label)}</button>` : ''}
     </div>`;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   🔴 §GEOGRAPHY, ON THE BOARD — A BUTTON MAY NOT OFFER WHAT THE LANE REFUSES
+   ═══════════════════════════════════════════════════════════════════════════
+   THE DEFECT, MEASURED BY THREE CRITICS INDEPENDENTLY. The collect beat is gated
+   to the window — drivethru.js `serveCar()` refuses any car that is not
+   physically at it — and that gate landed in the state machine and NOT in the
+   picture. `boardHtml()` drops only the WINDOW car's ticket from the board, so
+   by construction every drive ticket still ON the board belongs to a car that is
+   somewhere else; this button was `${ready ? …}` and nothing more, so every one
+   of them rendered bright, full-width, green, PRICED and ENABLED — and every one
+   of them refused. In the real browser: 220 taps → 216 sentences and 4 sales
+   (r15p/refuse.mjs); 33 of 33 lit board buttons unservable (r16d/census.mjs);
+   and this file's own pre-fix baseline, 390×844, 16 sampled frames of a real
+   rush (r17v/rush.mjs): 25 enabled taps, 2 sales, 8.0% completion.
+
+   ⚠ AND NOTE THE SHAPE OF THE MISTAKE, BECAUSE IT IS THIS PROJECT'S OWN. Round 2
+     "FIXED THE PICTURE AND LEFT THE STATE MACHINE ALONE" — drivethru.js
+     §GEOGRAPHY quotes itself on it — and round 8 did the exact reverse. The
+     pinned window card in `pinCardHtml()` reads `c.canServe` and disables
+     correctly. The board never got the memo, and the board is the majority
+     surface: it fires thirty to forty-five times a day and it is the panel this
+     feature copied from the reference item for item, where a green READY ticket
+     is BY DEFINITION a ticket you can hand over.
+
+   WHY A DISABLED BUTTON THAT NAMES THE POSITION, AND NOT A REMOVED ONE. The
+   ticket must still show what it is worth; a ready order that loses its control
+   altogether reads as an order that has gone wrong. So the control stays, in the
+   same place, at the same size, and says the one thing the player needs — WHERE
+   IN THE QUEUE that car is. That sentence is not invented here: it is the
+   ordinal half of `queueWhy()`, the sentence the refusal toast was already
+   printing AFTER the tap. Surfacing it one control earlier turns a refusal into
+   an instruction — finish the head car, or wave them off.
+
+   ⚠ `!car` MUST READ AS TRUE, AND SO MUST A COUNTER TICKET. A walk-in has no
+     `carId` and is served by `State.serveTicket()`, which has no lane condition
+     anywhere in it; a drive ticket whose car has already left the lane is the
+     state layer's problem, and hiding its only control would strand it. Both
+     fall through to `can: true`. Invert that test and the whole board goes dead.
+   ⚠ THE ORDINAL IS DUPLICATED FROM drivethru.js, DELIBERATELY AND NARROWLY.
+     `queueWhy()` is module-private over there and nothing exports "where is this
+     car in the lane". So the BUTTON says the ordinal only ("2nd in the lane");
+     the blocker clause ("Corp Suit is at the window.") stays owned by the toast
+     and by this gate's `title`, which is the one place the two sentences meet.
+     The export this would rather call is written out in the handover. */
+const ORDINAL = ['', '1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th'];
+function serveGate(t, k) {
+  const ok = { can: true, label: '', title: 'Hand this order over.' };
+  if (!t || t.source !== 'drive' || !t.carId) return ok;
+  const lane = (k && Array.isArray(k.lane)) ? k.lane.filter(Boolean) : [];
+  const car = lane.find((c) => c && (c.carId === t.carId || c.id === t.carId));
+  if (!car) return ok;
+  if (car.station === 'window' && car.state !== 'gone') return ok;
+  const idx = lane.indexOf(car);
+  /* A head car that has not reached the window yet has no ordinal worth
+     printing ("1st in the lane" while being refused is a riddle), so it says
+     where it physically is instead — the same two words the pinned card uses. */
+  const label = (idx > 0 && ORDINAL[idx + 1]) ? ORDINAL[idx + 1] + ' in the lane'
+    : (car.station === 'speaker' ? 'At the speaker' : 'Pulling up');
+  const head = lane[0];
+  return {
+    can: false,
+    label,
+    title: (car.name || 'They') + ' is ' + label.toLowerCase() + '. '
+      + (head && head !== car
+        ? (head.state === 'gone' ? (head.name + ' is still pulling away.') : (head.name + ' is at the window.'))
+        : 'Only the car at the window can be handed food.'),
+  };
 }
 const MOD_MARK = { honoured: '✓', broken: '✗' };
 function modKey(m, recipeId) { return (m && m.id) + '|' + (recipeId || ''); }
@@ -2062,11 +2218,43 @@ function pinCardHtml(slot, c) {
         ${c.broken ? `<span data-k="bad">✗ ${c.broken} broken</span>` : ''}
       </div>` : ''}
       <div class="mk-pin-bar"><i></i></div>
-      ${head ? `<div class="mk-pin-acts">
+      ${head ? (c.served ? soldBandHtml(c) : `<div class="mk-pin-acts">
         <button class="mk-btn go" data-act="serve-car" data-car="${esc(c.carId)}" ${c.canServe ? '' : 'disabled'}
-          >${c.ready ? 'Serve' : 'Not ready'}</button>
+          >${c.ready ? ('Serve' + (c.worth != null ? ' · ' + esc(fmtCinder(c.worth)) : '')) : 'Not ready'}</button>
         <button class="mk-btn danger" data-act="wave" data-car="${esc(c.carId)}" ${c.canWave ? '' : 'disabled'}>✋ Wave off</button>
-      </div>` : ''}
+      </div>`) : ''}
+    </div>`;
+}
+/**
+ * ✅ THE SALE, ON THE CARD THAT MADE IT — and the reader `cardFor()` was written
+ * for and did not have.
+ *
+ * 🔴 WHAT THIS REPLACES: for the whole 1.5s a served car spends pulling away
+ * from the window, the biggest card on the screen captioned the sale that had
+ * just paid ◈289 with a DISABLED "Serve" and a DISABLED "✋ Wave off". The
+ * reward beat — the one the entire lane exists to deliver — ended on two grey
+ * refusals. drivethru.js froze the sale onto `car._served` last round precisely
+ * so this band could be drawn, wrote out the markup in its handover, and left
+ * `served` / `servedPaid` / `servedTip` / `servedLine` computed on every paint
+ * with no reader anywhere in this file. Four fields, one paragraph of
+ * justification each, zero consumers: this project's signature defect, sitting
+ * on its most important surface.
+ *
+ * ⚠ IT IS STILL `.mk-pin-acts`. The ≤819px block places that exact class into
+ *   the card's `acts` grid area; a new sibling class would be auto-placed into
+ *   whatever cell was going spare and would land on the order lines. Same box,
+ *   same area, different contents — `data-sold` is what the stylesheet reads.
+ * ⚠ `servedLine` IS ALREADY FORMATTED, and by the same code that formats the
+ *   reward toast, so the band under the toast and the toast agree word for word
+ *   rather than being two descriptions of one sale. It is empty on an order with
+ *   no promises attached, and then the band is just the money.
+ */
+function soldBandHtml(c) {
+  const paid = esc(fmtCinder(c.servedPaid || 0));
+  const tip = (c.servedTip | 0) > 0 ? ` +${esc(fmtCinder(c.servedTip))} tip` : '';
+  return `<div class="mk-pin-acts" data-sold="1">
+      <span class="mk-sold"><b>✅ Served · ${paid}${tip}</b>${
+        c.servedLine ? `<i>${esc(c.servedLine)}</i>` : ''}</span>
     </div>`;
 }
 function updatePin(k, t) {
@@ -2700,6 +2888,23 @@ function updateTickets(t) {
     setStyle(row.bar, 'width', Math.round(frac * 100) + '%');
     setText(row.time, fmtMs(left));
     setData(row.el, 'urg', frac <= URG_LATE ? 'late' : (frac <= URG_WARN ? 'warn' : 'ok'));
+    /* 🔴 THE LANE GATE, ON THE FRAME BEAT. serveGate() is the same read
+       `ticketHtml()` painted this button with; cars move between paints, so a
+       ticket whose customer has just pulled up must light up now rather than at
+       the next structural repaint — and, far more importantly, a ticket whose
+       customer has just been overtaken must go grey now rather than offering a
+       tap that would refuse. The till figure is not recomputed here: it is
+       cached on `data-worth` at paint time, because quoting eight tickets sixty
+       times a second to redraw a caption is exactly the kind of per-frame cost
+       CONTRACT §1 warns this function about. */
+    if (row.serve) {
+      const g = serveGate(tk, k);
+      const w = row.serve.dataset.worth || '';
+      if (row.serve.disabled === g.can) row.serve.disabled = !g.can;
+      setData(row.serve, 'gate', g.can ? 'ok' : 'queue');
+      setText(row.serve, g.can ? 'Serve' + w : '🚗 ' + g.label);
+      if (row.serve.title !== g.title) row.serve.title = g.title;
+    }
   }
 }
 
@@ -3178,6 +3383,7 @@ function onClick(ev) {
     case 'slot':         onSlot(el.dataset.st, Number(el.dataset.i) || 0, now); break;
     case 'pull':         ev.stopPropagation(); doPull(el.dataset.st, Number(el.dataset.i) || 0, now); break;
     case 'cook':         doCook(el.dataset.recipe, now); break;
+    case 'prep':         doPrep(el.dataset.recipe, now); break;
     case 'bin':          doBin(el.dataset.ing, now); break;
     case 'plate':        result(State.plateHand(now)); paint(); break;
     case 'drop':         State.dropHand(); paint(); break;
@@ -3352,6 +3558,34 @@ function doCook(recipeId, now) {
   _pending = null;
   _sel = { stationId: target.stationId, i: target.i };   // build onto what you just started
   setSheet(null);
+}
+
+/**
+ * 🍕 THE FIRST TAP OF THE GAME: pick a dish, the restaurant opens, it goes on.
+ *
+ * 🔴 IT IS TWO VERBS THE RENDERER ALREADY CALLS, IN ORDER, AND NOTHING ELSE.
+ * `State.openShift()` is what OPEN THE DOORS calls; `doCook()` is what the Menu
+ * sheet's cards call. This writes no game truth of its own — CONTRACT §0 rule 2
+ * — it only spends the player's one tap on both halves of an act that has always
+ * needed two, on the one screen where the second half is a foregone conclusion.
+ *
+ * ⚠ THE ORDER MATTERS AND SO DOES THE ABORT. `startCook()` refuses outright
+ *   while the shift is shut, so the doors must open FIRST; and if they refuse to
+ *   (`openShift()` returns its own `{ok:false,why}`), this must stop rather than
+ *   cook into a closed kitchen. The doors' own "nothing to cook" confirm is not
+ *   duplicated here on purpose: every card on this row is disabled when nothing
+ *   is cookable, so the state that confirm exists for cannot reach this path.
+ * ⚠ NO EXTRA TOAST ON SUCCESS. `openShift()` already emits the shift event the
+ *   toast path draws, and doCook() selects the pan it just filled so the bins
+ *   are already pointed at it. A third line here would be the same news twice.
+ */
+function doPrep(recipeId, now) {
+  const k = K();
+  if (k && !k.shift.running) {
+    if (!result(State.openShift(now), 'The doors will not open.')) return;
+  }
+  doCook(recipeId, now);
+  paint();
 }
 
 function doBin(ingId, now) {
@@ -4504,7 +4738,20 @@ function reportCard(rep) {
   const waste = [];
   if (rep.spoiled) waste.push(`${rep.spoiled} spoiled on the pass`);
   if (rep.binned) waste.push(`${rep.binned} binned by you`);
-  if (rep.turned) waste.push(`${rep.turned} waved off`);
+  /* 🔴 TWO DIFFERENT TALLIES WORE ONE NAME, AND IT WAS THE WRONG ONE. `turned`
+     is walk-ins TURNED AWAY at a full board — kitchen.state.js `turnAway()`,
+     charged POP_TURNAWAY, a consequence the player let happen. `waved` is cars
+     the player WAVED OFF at the window — drivethru.js `waveCar()`, charged
+     POP_WAVE, a decision they made. closeShift() has put both on the report
+     since last round (`waved: _int(K.today.waved)`, with a comment saying it
+     belongs "beside binned / spoiled / turned") and this line drew `turned`
+     under the wave-off's name, so the one number that makes the wave-off button
+     a decision with a visible price has never appeared on the receipt, and the
+     number that did appear was somebody else's. Two rows now, because they are
+     two different lessons: one says "clear the board faster", the other says
+     "that escape hatch cost you five customers today". */
+  if (rep.turned) waste.push(`${rep.turned} turned away at a full board`);
+  if (rep.waved) waste.push(`${rep.waved} waved off at the window`);
   /* 🥫 WHAT THE DAY ATE. See ledgerRowHtml(): the resources this kitchen burned
      are the feature the player actually asked for and the accounting screen has
      never mentioned them once. */
@@ -4599,13 +4846,24 @@ function daySheet(k) {
      the row rather than the whole sheet. */
   const led = (k.dayLedger && typeof k.dayLedger === 'object')
     ? k.dayLedger : { resSpent: {}, resGained: {}, cinderSpent: 0 };
-  /* ⚠ "relief drops", NOT "convoys and relief", AND THE DIFFERENCE IS MEASURED.
-     `bookGain()` in kitchen.state.js has exactly one caller — buyRelief(). A
-     convoy claim pays out through convoy.js:2234's own `b.addRes('food', take)`
-     and never touches the day's ledger, so a label naming convoys would print a
-     number that cannot contain them. Closing that needs one line in convoy.js,
-     which is another builder's file this round; it is written out in the
-     handover. Until then the row says only what it can actually count. */
+  /* 🚚 "CONVOYS AND RELIEF", AND THE PARAGRAPH THAT USED TO BE HERE IS DELETED
+     RATHER THAN EDITED. It argued, at length and as fact, that `bookGain()` had
+     "exactly one caller — buyRelief()" and that "a convoy claim never touches
+     the day's ledger", so a label naming convoys "would print a number that
+     cannot contain them". All of that stopped being true the round it was
+     written: kitchen.state.js `bookEvent()` books `convoy:claim`'s `granted`
+     through `bookGain('food', …)`, so `bookGain()` has two callers and this row
+     already contains convoy freight. Measured in the browser at 390×844 with
+     real taps: a landed practice convoy gives `resGained {"food":10}` and this
+     row drew "LANDED TODAY — RELIEF DROPS · 🥫 10 FOOD" one screen under an
+     arrival toast reading "Unloaded. +10 food from Survivor." The one screen in
+     the feature whose entire job is to say where the food came from was naming
+     the wrong door.
+     ⚠ THE MECHANISM LIVES IN kitchen.state.js bookEvent(), NOT HERE. Read it
+       there; do not re-describe it here, because a second description is what
+       went stale. If the two sources ever need separating on screen — "my city
+       sent this" and "I bought a rescue" are different sentences — that is a
+       second bucket off the event name, not a second label on one bucket. */
   const clock = safe(() => State.shiftClock(), null) || {};
   const stat = (v, lab) => `<div class="mk-stat"><b>${v}</b><span>${lab}</span></div>`;
 
@@ -4615,7 +4873,7 @@ function daySheet(k) {
       ${stat(fmtNum(cur.earned), 'cinder')}${stat(fmtNum(cur.tips), 'tips')}${stat(fmtNum(cur.xp || 0), 'xp')}
     </div>
     ${ledgerRowHtml(led.resSpent, led.cinderSpent, 'eaten today, out of your stash')}
-    ${ledgerRowHtml(led.resGained, 0, 'landed today — relief drops')}`;
+    ${ledgerRowHtml(led.resGained, 0, 'landed today — convoys and relief')}`;
 
   const last = rep ? `<div class="mk-sec-head flush"><b>Last shift</b></div>
     ${reportCard(rep)}` : '';

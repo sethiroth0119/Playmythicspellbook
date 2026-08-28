@@ -106,6 +106,29 @@
            the chip promised, what the meter moved against what the verdict
            quoted, what the stash gained against what the manifest said.
 
+        🔴 AND ROUND 8 WAS NOT ENOUGH EITHER, AND AGAIN THREE CRITICS SAID IT
+           INDEPENDENTLY IN ONE SENTENCE: "IT GUARDS WHAT LEAVES THE PLAYER AND
+           NEVER WHAT ARRIVES." Every value assertion round 8 added reads a
+           SPEND — the crate's cost, the wave-off's popularity, the promise's
+           settlement. Two one-line deletions in the middle of the premise
+           therefore scored BYTE-IDENTICAL to the shipped build: delete the
+           subtraction loop in `pantryTake()` and cooking consumes nothing
+           (`472 → 472` pantry units over 20 dishes against the repo's
+           `472 → 409`); drop the add line in `pantryPut()` and every crate in
+           the game arrives empty while the player is charged 18,186 Cinder and
+           1,302 food for it. A kitchen whose bins never empty never needs a
+           crate, never needs the fourteen live ids and never needs the city —
+           the two middle links of the chain the player asked for could be cut
+           in silence. Worse, the arm PAID a builder to delete round 8's own
+           headline fix: reverting the lane's window gate scored one warning
+           BETTER than shipping it, because the only line in the report that
+           touched the lane was a count of refusals the ungated build stops
+           producing. So round 9's assertions read the RECEIVING end — the bin
+           after the crate, the bin after the dish, the wallet after the sale,
+           the wallet after the freight, the stash after an INBOUND claim — and
+           the gate is asserted on the mechanism instead of inferred from a
+           symptom.
+
    ── THE SCORE (11) ───────────────────────────────────────────────────────
    🔴 The old headline COULD MOVE THE WRONG WAY: deleting the sole consumer of
       a live export took it from 64 WARN to 63. So the raw warning count is no
@@ -150,13 +173,42 @@
      zero page errors — and the static arm cannot see it by construction.
      E10 covers the one instance on the arrival card (it FAILs on the literal
      string `undefined`), and nothing covers the general case.
-   • **E10 lands a PRACTICE RUN, not an inbound shipment.** Offline there is no
-     server leg, so `claim()` takes its local branch: the payout line, the dock
-     beat, the arrival payload and the card are all real, and they are the same
-     lines both directions run through. What is NOT executed anywhere in this
-     file is `API.claimConvoy()`, `firstClaim`, the double-payout wall, the
-     depot hold's drain, or RLS. Those need a live database — sql/038's own
-     verify block is the instrument for them, not this one.
+   • **E10 lands a PRACTICE RUN; E19 lands an INBOUND one.** Offline `claim()`
+     takes its local branch — the payout line, the dock beat, the arrival
+     payload and the card, all shared by both directions — which is what E10
+     drives. 🔴 THIS BULLET USED TO SAY THE INBOUND SERVER LEG "needs a live
+     database", AND THAT WAS FALSE FOR TWO ROUNDS. kitchen.api.js:128-142 says
+     so in as many words and says why: every call in that file reaches the
+     network through `bridge().cloud.client` and nothing else, `cloud` is read
+     as a PROPERTY, and `signedIn()` is the only other gate — so a stub cloud on
+     the §7 bridge drives `API.claimConvoy()`, `firstClaim` and the
+     double-payout wall under plain node. E19 now does exactly that. A limit
+     declared falsely is worse than one left undeclared, because it tells the
+     next builder not to try. WHAT IS STILL OUTSIDE: RLS, the SQL itself, and
+     whether the real `kitchen_convoy_claim()` returns what E19's stub returns —
+     sql/038's own verify block is the instrument for those three, not this one.
+     Also still outside: `settlePending()`, the depot hold's `drainHeld()`, and
+     `listInbound()`'s mapping, none of which E19 exercises.
+   • **🔴 THE ARRIVALS THIS FILE STILL CANNOT SEE, NAMED.** Round 9 closed the
+     four that matter most — crate → bin (E15), bin → dish (E16), sale → wallet
+     (E20), freight → wallet (E18) — and these are the ones left, so nobody has
+     to re-derive the list:
+       · **the pass.** `launch()` takes the boxes off `K.pass` and `serveTicket()`
+         takes the plates off it, and nothing here reads `K.pass.length` either
+         side. A truck that ships food it never removed is a printing loop and
+         no assertion in this file would see it.
+       · **XP and the level.** An arrival grants `dishes × CONVOY_XP_PER_DISH`
+         and a sale grants its own; the info line prints the level it ended on
+         and nothing compares it to what was quoted.
+       · **the day's receipt as the PLAYER reads it.** E8 and E14 assert the
+         ledger bucket; `report.net`, the earned/tips line and the labels on
+         those rows are kitchen.render.js, which this arm never executes.
+       · **the pantry cap and the per-bin ceiling.** E15 buys ONE crate on an
+         empty shelf, so the refusal paths — the two walls that stop the cooler
+         being bricked — are never taken.
+       · **the stash cap on a claim.** E10's and E19's bridges answer
+         `resourceCap: 1e9`, so `holdRow()`, the short landing and the depot
+         hold's drain are never reached from here.
    • **E11's counterfactual needs an UNCLAMPED tip.** The §SETTLEMENT probe
      skips any sale where either reading pins to `TIP_FRACTION_MAX`, because a
      clamped pair is equal for a legitimate reason. If a run reports zero
@@ -272,6 +324,74 @@
      `noteArrival()`: `landed` → `r.delivering` (round 6's blocker, verbatim)
        EXECUTION 1 FAIL — "The arrival card the player is shown reads 'Your
                           practice run is back. undefined boxes handed over.'"
+
+   Round 9 added seven arms and proved every one of them the same way, in a full
+   copy of the tree at scratchpad/r17lab (index.html symlinked; the copy
+   reproduces the repo exactly at `0 FAIL 69 WARN 0 SKIP · UNWIRED 29/29`). ELEVEN
+   mutations, one at a time, everything else verbatim — the first four are the
+   critics' own knives, each of which scored BYTE-IDENTICAL to the shipped build
+   before this round:
+
+     `pantryTake()`: the subtraction loop deleted, `return true` kept
+       EXECUTION 1 FAIL — "COOKING DID NOT EAT THE BINS: `Hot Dog` needs
+                          {"roll":1,"sausage":1,"mustard":1} and the pantry
+                          actually lost {"roll":0,"sausage":0,"mustard":0}
+                          (472 → 472 units across all bins)."
+     `pantryPut()`: the `K.pantry[id] = … + v` line dropped
+       EXECUTION 1 FAIL — "THE CRATE WAS PAID FOR AND THE BIN DID NOT MOVE:
+                          `bar_roll` took {"food":5,"water":2} out of the stash
+                          and advertises 3 roll — the bin went 32 → 32 (Δ0)."
+     `serveCar()`: the window gate deleted (round 8's headline fix REVERTED)
+       EXECUTION 3 FAIL — "THE WINDOW GATE IS GONE: `Scavver` was at station
+                          `queue` (forced sample) and serveCar() paid out anyway
+                          — 58 Cinder, wallet moved 58, lane moved -1", plus E5
+                          and a NEW WARNING against the baseline.
+                          …against `0 FAIL 69 WARN` — one warning BETTER than
+                          the shipped build — in round 8.
+     `launch()`: `b.spendGems(fee)` → `(b.spendGems(0), true)`
+       EXECUTION 1 FAIL — "THE FREIGHT WAS QUOTED AND NOT TAKEN: the launch says
+                          it charged 48 Cinder and the wallet went 247279 →
+                          247279 (Δ0)."
+     `launch()`: `const fee = _int(load.feeCinder)` → `… + 5`
+       EXECUTION 1 FAIL — "The loading bay quoted 48 Cinder of freight and the
+                          launch charged 53."
+     `serveCar()`: the gate widened to refuse EVERYBODY (`!== 'nowhere'`)
+       EXECUTION 3 FAIL — "A car AT THE WINDOW was refused with the QUEUE's own
+                          sentence: `Scavver` — "…is still in the queue — not at
+                          the window yet." (8 time(s) this shift)", plus E4 and
+                          E5. The over-gate is invisible to any refusal count.
+     `queueWhy()`: the blocker branch always answers "X is at the window."
+       EXECUTION 1 FAIL — "The refusal names the wrong fact: `Raider` was
+                          refused for NOT being at the window and told "Raider
+                          is at the window.""
+     `claim()`: `if (res.firstClaim === false || ceilingDishes <= 0)` → `if (false)`
+       EXECUTION 1 FAIL — "THE DOUBLE-PAYOUT WALL IS DOWN: the depot answered
+                          `first_claim:false, delivered_dishes:0` and the claim
+                          still answered ok granted=0."
+     `claim()`: the inbound RPC replaced by a local `{ok:true, firstClaim:true}`
+       EXECUTION 4 FAIL — "One inbound claim made 0 call(s) to
+                          `kitchen_convoy_claim`", plus `claimConvoy` falling
+                          out as a DEAD EXPORT with zero call sites.
+     `serveCar()`: `modCinderTaken: …` → `modCinderTaken: 0`
+       EXECUTION 1 FAIL — "THE CHIP PROMISED -17 CINDER, THE TILL COULD ONLY
+                          TAKE 0, AND THE TOAST DID NOT SAY SO: "✗ no greens −17
+                          · −0.5 pop"."
+     `serveTicket()`: `addGems(payout + tip)` → `addGems(payout)`
+       EXECUTION 1 FAIL — "THE CARD AND THE WALLET DISAGREE ON 4 OF 4 LANE
+                          SALE(S): one reward card read ◈48 + ◈10 tip and the
+                          wallet moved by 48 · across the shift the cards
+                          totalled 659 and the wallet moved 558."
+
+   🔴 AND ROUND 9 MADE IT FIVE FINDINGS THIS FILE INVENTED ABOUT ITSELF. E17's
+   first draft sampled only the car AT the window with its `station` forced to
+   `queue` — which is `K.lane[0]`, so `queueWhy()` took its `head === car` early
+   return and the branch that names the BLOCKER never ran, and the `queueWhy()`
+   mutation above scored `0 FAIL 69 WARN`, byte-identical. It now also samples a
+   car really standing behind another one. And E19's first draft stubbed
+   `select/eq/order/limit` on the query builder; kitchen.api.js:334 chains
+   `.neq()`, so the arm reported "a catch block SWALLOWED TypeError: …eq(...).neq
+   is not a function" against a build with nothing wrong with it. The stub now
+   proxies every method. Both are commented at the fix.
 
    Two of those runs found bugs in THIS FILE rather than in the repo — the
    state-field check was matching its own assignments and had been quietly
@@ -1867,6 +1987,40 @@ function checkReturnShapes(W, F) {
         E14 a crate takes out of the stash exactly what  round 6's shape, one
             it advertises, and books exactly that on     layer down: the right
             the day ledger                               event, the wrong number
+      ── round 9: the same transactions, asserted at the RECEIVING end ────────
+        E15 the crate the player just paid for actually  round 8 (`pantryPut()`
+            arrives: the BIN rises by exactly `out.qty`   with its one add line
+                                                         deleted scored
+                                                         byte-identical)
+        E16 cooking EATS the bin: `startCook()` drops    round 8 (`pantryTake()`
+            every key of the recipe's `needs` by          with its subtraction
+            exactly `needs[k]`                           loop deleted scored
+                                                         byte-identical; 472 →
+                                                         472 units over 20
+                                                         dishes)
+        E17 the window gate, asked twice about ONE car   round 8 (deleting the
+            in ONE frame: queued → refused and free,      gate scored ONE WARNING
+            window → not refused with the queue's        BETTER than shipping
+            sentence, and the refusal must not claim     it, because the only
+            the car it refuses is at the window          line touching the lane
+                                                         was a refusal count)
+        E18 the freight quoted on the loading bay is     round 8 (`spendGems(fee)`
+            the freight the wallet loses                 → `spendGems(0)` scored
+                                                         byte-identical; it is
+                                                         the ONE price this
+                                                         feature charges)
+        E19 the INBOUND server leg, under plain node:    round 1 (40 food minted
+            the depot releases a truck and the stash      on a replayed claim)
+            rises by what the arrival quoted, in ONE
+            RPC call — and a FRESH row the depot
+            answers `first_claim:false` pays NOTHING
+        E20 the reward card's ◈ against the player's     round 2's defect in its
+            actual wallet, every lane sale               plainest form
+        E21 when the till cannot take what the chip      rounds 3-8 (a return key
+            promised, the toast must SAY so — the         whose stated purpose was
+            assertion `modCinderTaken`'s own comment      "so an assertion can
+            has been promising a reader for               compare the two", and
+            three rounds                                  no assertion existed)
 
    E8 is the answer to "a consumer that runs at the WRONG TIME". It is ONE
    instance of that class, hard-coded, not a general check — see the header's
@@ -2140,22 +2294,165 @@ async function checkExecution(W, F) {
       }
     }
 
+    /* ── 🔴 E17: THE WINDOW GATE, ASKED TWICE ABOUT ONE CAR IN ONE FRAME ───
+       ROUND 8 GATED THE COLLECT BEAT (`drivethru.js:3486` —
+       `if (car.station !== 'window') return fail('NOT_READY', queueWhy(K, car))`)
+       AND THIS FILE SCORED THE BUILD WITH THE GATE DELETED AS ONE WARNING
+       BETTER THAN THE ONE THAT SHIPS. Measured by round 8's lane critic in a
+       copied tree: reverting the fix took `0 FAIL 70 WARN` to `0 FAIL 69 WARN`,
+       because the only line in the whole report pointing at the lane was E5's
+       "More promise tickets were REFUSED (4) than served (2)" — refusals the
+       ungated build stops producing. A test that pays a builder a warning to
+       delete a fix is worse than no test on that axis, so the axis is now
+       asserted directly instead of inferred from a refusal count.
+
+       It is the settleProbe() trick applied to geography: take the car that IS
+       at the window with a ready ticket, ask `serveCar()` about it with its
+       `station` moved to `queue`, restore, and ask again for real. ONE FIELD
+       MOVES between the two readings, so the difference between them is the
+       gate and nothing else. Both halves are asserted, and both directions are
+       failures:
+         • the queued reading must be REFUSED and must move neither the wallet
+           nor the lane — that is M-A (the gate deleted) and M-B (`canServe`
+           losing its station condition);
+         • the window reading must not come back with the QUEUE's own sentence —
+           that is the over-gate, a lane that refuses everybody, which no count
+           of refusals can tell apart from a lane that is working;
+         • and the refusal must not tell the player the car it is refusing is
+           "at the window", which is M-E (`queueWhy()` naming the wrong fact).
+
+       ⚠ THE RESTORE IS IN A `finally`, for settleProbe()'s reason verbatim: this
+         mutates a LIVE car for the length of one call, and a restore on the
+         happy path only would leave the lane's head car parked in the queue
+         forever — the check CAUSING the defect it reports. */
+    const GATE_SAMPLES = 3;
+    /* The queue's own vocabulary. `queueWhy()` is the only thing that speaks it;
+       "…'s order is not complete yet." and "The till would not take that order."
+       are different refusals and must NOT match, or E17's second half fires on a
+       pass that legitimately changed under a car standing in the right place. */
+    const GATE_WHY = /(is at the window|in the lane|still in the queue|not at the window yet|still pulling away)/;
+    const gate = { rows: [], windowRefused: [], servedAtWindow: 0, heldBack: 0 };
+
+    /** One `serveCar()` reading, with the wallet and the lane read either side.
+        `kind` is which sample it is — see gateProbe() and queuedProbe(). */
+    function readServe(car, now, kind) {
+      const purseBefore = purse.gems;
+      const laneBefore = (K.lane || []).filter((c) => c && c.state !== 'gone').length;
+      const r = DT.serveCar(K, car.carId, now);
+      return {
+        kind,
+        name: String(car.name || '(unnamed)'),
+        station: String(car.station || ''),
+        /* Where in the lane, because `queueWhy()` has two branches and only the
+           second one names the blocker. See queuedProbe()'s block. */
+        idx: (K.lane || []).filter(Boolean).indexOf(car),
+        refused: !(r && r.ok),
+        code: String((r && r.code) || ''),
+        why: String((r && r.why) || ''),
+        paid: Number((r && r.paid) || 0) + Number((r && r.tip) || 0),
+        purseMoved: purse.gems - purseBefore,
+        laneMoved: (K.lane || []).filter((c) => c && c.state !== 'gone').length - laneBefore,
+      };
+    }
+
+    function gateProbe(car, now) {
+      const back = car.station;
+      try {
+        car.station = 'queue';
+        return readServe(car, now, 'forced');
+      } catch (e) {
+        return { kind: 'forced', name: String(car.name || '(unnamed)'), threw: String((e && e.message) || e) };
+      } finally {
+        try { car.station = back; } catch (x) {}
+      }
+    }
+
+    /* 🔴 AND A CAR THAT IS REALLY IN THE QUEUE, BECAUSE THE FORCED SAMPLE ONLY
+       WALKS HALF OF queueWhy(). The forced probe moves the car AT the window,
+       which is `K.lane[0]`, so `queueWhy()` takes its `head === car` early
+       return (drivethru.js:3376) and the branch that names the BLOCKER — the
+       one a player actually reads, "Scavver is 2nd in the lane. Raider is at
+       the window." — never runs. MEASURED: with only the forced sample, the M-E
+       mutation (`queueWhy()` always answering "X is at the window.") scored
+       `0 FAIL 69 WARN`, byte-identical to the shipped build. This sample is a
+       car with a READY ticket that the bot just declined to tap because it is
+       not at the window yet, which is the exact frame the player is looking at
+       when they tap the board button — and it needs no mutation at all. */
+    function queuedProbe(car, now) {
+      try { return readServe(car, now, 'queued'); }
+      catch (e) { return { kind: 'queued', name: String(car.name || '(unnamed)'), threw: String((e && e.message) || e) }; }
+    }
+
     function doServe(t, now) {
       const modded = isModded(t);
       if (t.source === 'drive' && t.carId) {
+        const car = (K.lane || []).find((c) => c && c.carId === t.carId) || null;
+        /* 🔴 THE BOT NOW HONOURS THE GATE, AND THAT IS ITEM 5 OF ROUND 9'S
+           BRIEF. Point 2 of this arm's header is "IT PLAYS THE PLAYER'S PATH":
+           the bot mirrors `doServe()`, and round 8 taught the RENDERER's pin
+           card to read `canServe` (kitchen.render.js:2066) while this bot kept
+           tapping a car standing third in the lane. The result was four
+           refusals against two sales and a WARN blessed in the baseline as "the
+           instrument lagging the fix". A car that is not at the window is a car
+           the player cannot hand food to, so asking is not mirroring the
+           player's path — it is inventing a door. The gate itself is asserted
+           by gateProbe() above, deliberately, so honouring it here cannot hide
+           its removal. */
+        if (car && car.station !== 'window') {
+          gate.heldBack++;
+          /* Keep sampling until there is at least one car with a car IN FRONT of
+             it, not merely one that has not reached the window yet: `queueWhy()`
+             answers "…is still in the queue — not at the window yet." for the
+             head of an empty lane and only names the blocker further back. The
+             second sentence is the one the player reads and the one M-E breaks. */
+          const q0 = gate.rows.filter((g) => g && g.kind === 'queued');
+          const wantBlocker = !q0.some((g) => g.idx > 0)
+            && (K.lane || []).filter(Boolean).indexOf(car) > 0;
+          if (q0.length < GATE_SAMPLES || wantBlocker) {
+            const q = call('queuedProbe', () => queuedProbe(car, now));
+            if (q) gate.rows.push(q);
+          }
+          return;
+        }
+        if (car && gate.rows.filter((g) => g && g.kind === 'forced').length < GATE_SAMPLES) {
+          const g = call('gateProbe', () => gateProbe(car, now));
+          if (g) gate.rows.push(g);
+        }
         const probe = modded ? call('settleProbe', () => settleProbe(t.id, t.carId, now)) : null;
         const popBefore = Number(K.popularity) || 0;
         const popMark = popEvents.length;
+        /* 🔴 E20: AND THE MONEY HAS TO ARRIVE IN THE WALLET. `paid` and `tip` are
+           what the reward card prints; `purse.gems` is the §7 bridge's real
+           balance — the same number `Profile.gems` is in the live game. Round 9
+           found that this file measured what LEAVES the player everywhere and
+           what ARRIVES nowhere, and the biggest arrival in the feature is the
+           one the lane exists to produce. E11 checks the promise's settlement
+           against the chip; nothing checked the sale against the till. */
+        const walletBefore = purse.gems;
         const r = call('serveCar', () => DT.serveCar(K, t.carId, now));
+        const walletDelta = purse.gems - walletBefore;
+        if (car && !(r && r.ok) && GATE_WHY.test(String((r && r.why) || ''))) {
+          gate.windowRefused.push({ name: String(car.name || '(unnamed)'), why: String(r.why || '') });
+        }
+        if (car && r && r.ok) gate.servedAtWindow++;
         if (r && r.ok) {
           tally.served++; tally.servedDrive++; if (modded) tally.moddedServed++;
           tally.tills.push({
             honoured: Number(r.honoured) || 0, broken: Number(r.broken) || 0,
             unproven: Number(r.unproven) || 0,
             modCinder: Number(r.modCinder) || 0, modPop: Number(r.modPop) || 0,
+            /* 🔴 E21. `modCinderTaken`'s own doc comment (drivethru.js:3617-3623)
+               says it is "returned separately … so an assertion can compare the
+               two", and for two rounds `grep -rn modCinderTaken` returned the
+               comment, the assignment, and this file's WARNING TEXT about it —
+               no assertion anywhere. A return key whose stated justification is
+               a reader that does not exist is a comment lie wearing a struct.
+               This is the reader it names. */
+            modCinderTaken: Number(r.modCinderTaken) || 0,
             modLine: String(r.modLine || ''),
             detail: (Array.isArray(r.mods) ? r.mods : []).map((d) => Number((d && d.cinder) || 0)),
             paid: Number(r.paid) || 0, tip: Number(r.tip) || 0,
+            walletDelta,
             probe,
             popDelta: Math.round(((Number(K.popularity) || 0) - popBefore) * 1e6) / 1e6,
             popWhys: popEvents.slice(popMark).map((e) => e.why),
@@ -2287,13 +2584,38 @@ async function checkExecution(W, F) {
         const c = CV.compose(K, tier.id, man.items);
         if (c && c.ok && c.convoy) {
           const before = (K.convoys || []).length;
+          /* 🔴 E18: THE ONE PRICE THIS FEATURE CHARGES, READ OFF THE WALLET.
+             `launch()` step 4 takes the freight with `b.spendGems(fee)`
+             (convoy.js:1337) and nothing anywhere asserted that it landed. Round
+             8's convoy critic changed that single line to `(b.spendGems(0),
+             true)` in a copied tree and scored `0 FAIL 70 WARN`, byte-identical,
+             with this arm's own info line still reading "freight 33 Cinder" —
+             the arm QUOTES the fee and never once asks whether it was taken.
+             Proven real through the player's door in the same brief: shipped
+             `100000 → 99776` for a 40-box Box Truck, mutant `100000 → 100000`,
+             same card, same toast, same board row.
+             So: the purse before, the purse after, and the quote on the button.
+             The wallet here is `purse.gems` — the memory-backed §7 bridge's own
+             balance, i.e. the same number `b.gems()` answers inside launch().
+             ⚠ Nothing on any branch refunds the fee: the turn-back path
+               (convoy.js:1576) keeps it deliberately, and the only refund in the
+               file is the impossible "pass changed" rollback, which also refuses
+               the launch. So an `ok` launch must ALWAYS have moved the wallet by
+               exactly what it says it took. */
+          const feeQuoted = Math.max(0, Number((c.convoy && c.convoy.feeCinder) || 0));
+          const purseBefore = purse.gems;
           const r = await CV.launch(K, c.convoy, 'u_selftest', K.now);
+          const purseAfter = purse.gems;
           const last = (K.convoys || [])[(K.convoys || []).length - 1] || {};
           launchedRow = (K.convoys || []).length > before ? last : null;
           launched = {
             ok: !!(r && r.ok), why: (r && r.why) || '', id: (r && r.id) || '',
             grew: (K.convoys || []).length - before,
             state: last.state || '(none)', boxes: last.dishes || 0,
+            feeQuoted,
+            feeSaid: Math.max(0, Number((r && r.feeCinder) || 0)),
+            feeTaken: purseBefore - purseAfter,
+            purseBefore, purseAfter,
             /* The quote the loading bay put on the button, kept so E10 can hold
                the landing against it. `manifest().food` is the load BEFORE the
                road takes its cut (`estimate()` says so in as many words), so it
@@ -2341,10 +2663,13 @@ async function checkExecution(W, F) {
          server leg entirely — so `claim()` takes the local branch. That is the
          right thing to exercise here for two reasons: it is the only convoy a
          signed-out player can ever land (CONTRACT §9 rungs 1–3), and the payout
-         line the mutation cut is SHARED by both directions. What it does NOT
-         cover is the inbound server leg — `claimConvoy()`, `firstClaim`, the
-         double-payout wall — which needs a live RPC and is stated as a limit in
-         the header. */
+         line the mutation cut is SHARED by both directions. The inbound server
+         leg — `claimConvoy()`, `firstClaim`, the double-payout wall — is E19,
+         forty lines below, driven under plain node against a stub `cloud` on
+         the §7 bridge. ⚠ THIS COMMENT USED TO SAY THAT LEG "needs a live RPC
+         and is stated as a limit in the header", which was false when it was
+         written: kitchen.api.js:128-142, committed in the same round, says the
+         opposite and reports having driven it. Do not restore the claim. */
     let landing = null;
     try {
       const c = launchedRow;
@@ -2384,6 +2709,132 @@ async function checkExecution(W, F) {
         };
       }
     } catch (e) { landing = { error: String((e && e.message) || e) }; }
+
+    /* ═══ E19 — 🔴 THE INBOUND SERVER LEG, DRIVEN UNDER PLAIN NODE ═════════
+       THE LIMIT THIS FILE DECLARED FOR TWO ROUNDS WAS FALSE, AND A FALSE LIMIT
+       IS WORSE THAN NO LIMIT BECAUSE IT TELLS THE NEXT BUILDER NOT TO TRY. The
+       header and E10's own block both said `API.claimConvoy()`, `firstClaim`
+       and the double-payout wall "need a live database". kitchen.api.js:128-142,
+       committed in the same round, says flatly that they do not, and says why:
+       EVERYTHING in that file reaches the network through
+       `bridge().cloud.client` and nothing else, `cloud` is read as a PROPERTY
+       (never called), and `signedIn()` is the only other gate. Round 8's convoy
+       critic then drove it under node against a 25-line stub — first claim
+       `{ok:true, firstClaim:true, deliveredDishes:40}`, replay
+       `{ok:true, firstClaim:false, deliveredDishes:0}`, `rpcCalls 2` — while
+       this file was still printing the limit. So the limit is deleted by being
+       CLOSED rather than by being reworded.
+
+       TWO ROWS, BECAUSE THE WALL IS NOT WHERE IT LOOKS. A second `claim()` on
+       the SAME row never reaches the server at all — `c.serverClaimed` short-
+       circuits it at convoy.js:3546 — so replaying one row tests the local
+       latch, not the wall. The wall is the case that latch cannot see: a FRESH
+       row whose truck another tab already emptied, where the server's unique
+       index on (convoy_id, kind) swallowed the ledger insert and
+       `delivered_dishes` comes back 0. Round 1 minted 40 food there. So row A
+       is answered `first_claim:true` and must PAY exactly what its arrival
+       quoted; row B is answered `first_claim:false, delivered_dishes:0` and
+       must pay NOTHING and say so.
+
+       ⚠ The stub is the §7 bridge's `cloud` property and nothing else — no
+         fake convoy.js, no patched api.js. `from()` answers an empty ledger so
+         the "it was unloaded N minutes ago" lookup takes its own guarded
+         fallback, which is the shipped behaviour when the ledger is unreadable.
+         The property is put back to `null` in a `finally`: everything after
+         this line must see the offline bridge it was written against. */
+    let inbound = null;
+    try {
+      const B = (globalThis.window && globalThis.window.MythicKitchenBridge) || null;
+      if (!B) {
+        inbound = { skipped: 'the memory bridge was not published' };
+      } else if (typeof CV.claim !== 'function' || typeof CV.tick !== 'function') {
+        inbound = { skipped: 'convoy.js publishes no claim()/tick()' };
+      } else {
+        const rpc = [];
+        let answer = () => ({ data: [], error: null });
+        /* 🔴 THE QUERY STUB ANSWERS ANY BUILDER METHOD, AND THE FIRST DRAFT DID
+           NOT — WHICH MADE THIS CHECK INVENT A FINDING ABOUT THE REPO. It
+           listed `select/eq/order/limit`, kitchen.api.js:334 chains `.neq()`,
+           and the arm reported "a catch block SWALLOWED TypeError:
+           …eq(...).neq is not a function" against a build with nothing wrong
+           with it. That is the failure mode this file is least allowed to have
+           (see E14's and E10's own notes), so the stub now proxies EVERY method
+           back to itself and carries `{data:[], error:null}` as its result. It
+           is deliberately not a thenable: `await` on it yields the object
+           itself, which is exactly the `{data, error}` shape every call site
+           reads. */
+        const chain = () => {
+          const res = { data: [], error: null };
+          const q = new Proxy(res, {
+            get(target, prop) {
+              if (typeof prop === 'symbol') return undefined;
+              if (prop === 'then') return undefined;
+              if (prop in target) return target[prop];
+              return () => q;
+            },
+          });
+          return q;
+        };
+        /* Only the claim RPC is answered with a row. Anything else this path
+           happens to call (a heartbeat, a sync) gets an empty result, so the
+           stub can never feed a fabricated row to a surface E19 is not about. */
+        B.cloud = { client: {
+          rpc: async (name, args) => {
+            const n = String(name);
+            if (n !== 'kitchen_convoy_claim') return { data: [], error: null };
+            rpc.push(n);
+            return answer(n, args);
+          },
+          from: () => chain(),
+        } };
+        const mkRow = (rid, dishes, at) => ({
+          // mapInbound()'s shape, field for field — see convoy.js:3036. `transit`
+          // is deliberate there and here: it is the FLIP that raises the arrival.
+          id: 'rx:' + rid, remoteId: rid, dir: 'in', self: false, tierId: 'van',
+          fromUserId: 'u_sender', toUserId: 'u_selftest',
+          toName: 'From Another kitchen', fromName: 'Another kitchen',
+          items: {}, dishes, launchedAt: at - 2000, arrivesAt: at - 1,
+          state: 'transit', feeCinder: 0, paidFood: 0, serverClaimed: false,
+          xpPaid: true, delayMs: 0, delayLeg: 0,
+        });
+        const land = async (rid, dishes, srvAnswer) => {
+          const at = Math.max(1, Number(K.now) || 1) + 5000;
+          const row = mkRow(rid, dishes, at);
+          K.inbound = (K.inbound || []).concat([row]);
+          const mark = convoyEvents.length;
+          CV.tick(K, 1, at);
+          const arr = convoyEvents.slice(mark).filter((e) => e && String(e.id) === row.id).pop() || null;
+          answer = srvAnswer;
+          const before = Number(stash.food) || 0;
+          const rpcBefore = rpc.length;
+          const res = await CV.claim(K, row.id, at + 61000);
+          return {
+            state: row.state, arrived: !!arr,
+            evFood: arr ? Number(arr.food) : null,
+            ok: !!(res && res.ok), code: (res && res.code) || '', why: (res && res.why) || '',
+            granted: Number((res && res.granted) || 0),
+            before, after: Number(stash.food) || 0, delta: (Number(stash.food) || 0) - before,
+            rpcCalls: rpc.length - rpcBefore,
+          };
+        };
+        const first = await land('srv_first', 12, (name, args) => ({
+          data: [{ id: (args && args.p_id) || 'srv_first', dishes: 12, first_claim: true, delivered_dishes: 12, delay_ms: 0, delay_leg: 0 }],
+          error: null,
+        }));
+        const replay = await land('srv_replay', 12, (name, args) => ({
+          data: [{ id: (args && args.p_id) || 'srv_replay', dishes: 12, first_claim: false, delivered_dishes: 0, delay_ms: 0, delay_leg: 0 }],
+          error: null,
+        }));
+        inbound = { first, replay, rpc: rpc.slice() };
+      }
+    } catch (e) {
+      inbound = { error: String((e && e.message) || e) };
+    } finally {
+      try {
+        const B = (globalThis.window && globalThis.window.MythicKitchenBridge) || null;
+        if (B) B.cloud = null;
+      } catch (x) {}
+    }
 
     /* ═══ E12 — THE WAVE-OFF COSTS WHAT IT SAYS IT COSTS ═══════════════════
        `waveCar()` is the player's escape hatch and the file argues at length
@@ -2514,7 +2965,29 @@ async function checkExecution(W, F) {
            crate as booking nothing — the check inventing its own finding, which
            is the failure mode this file is least allowed to have. */
         const ledBefore = Object.assign({}, execLedger(K3).resSpent);
+        /* 🔴 E15 — AND WHAT THE CRATE PUTS IN THE BIN. Everything either side of
+           this line measures what LEAVES the player; until round 9 nothing in
+           this file measured anything ARRIVING. Round 8's premise critic dropped
+           the `K.pantry[id] = … + v` line from `pantryPut()` (kitchen.state.js:1260)
+           in a copied tree, so every crate in the game arrives EMPTY, and scored
+           `0 FAIL 70 WARN 0 SKIP · UNWIRED 29/29` — byte-identical to the shipped
+           build — while E14 kept printing "`bar_roll` charged exactly what it
+           advertises", which was true and useless because it never asked whether
+           five rolls appeared. The player is charged 18,186 Cinder and 1,302 food
+           for crates that hand over nothing and the headline does not move by one
+           character.
+           `buySupply()` never part-fills — the pantry cap and the per-bin ceiling
+           are both PREFLIGHT refusals, and its own comment says clamping after
+           payment would be "the same class of bug as the addRes() stash-cap trap"
+           — so on `ok` the bin must rise by exactly `out.qty`, never less.
+           ⚠ Read as a NUMBER either side, not as a reference to `K3.pantry`. A
+             held object would be the E14 mistake again (see the note above), and
+             `pantryTake()` DELETES a bin at zero, so a missing key means 0. */
+        const outIng = String((row.out && row.out.ing) || '');
+        const outWant = Math.max(0, Number((row.out && (row.out.qty != null ? row.out.qty : row.out.n)) || 0));
+        const binBefore = Number(K3.pantry[outIng]) || 0;
         const r = call('buy one crate', () => State.buySupply(row.id, 1));
+        const binGot = (Number(K3.pantry[outIng]) || 0) - binBefore;
         const got = {}, led = {};
         for (const k of Object.keys(want)) {
           got[k] = before[k] - (Number(stash[k]) || 0);
@@ -2523,11 +2996,88 @@ async function checkExecution(W, F) {
         crate = {
           id: row.id, ok: !!(r && r.ok), why: (r && r.why) || '',
           want, got, led,
+          outIng, outWant, binBefore, binGot,
           stashMismatch: Object.keys(want).filter((k) => got[k] !== want[k]),
           ledgerMismatch: Object.keys(want).filter((k) => led[k] !== want[k]),
         };
       }
     } catch (e) { crate = { error: String((e && e.message) || e) }; }
+
+    /* ═══ E16 — 🔴 COOKING EATS THE BINS. THE OTHER MIDDLE LINK. ═══════════
+       THE CHAIN THE PLAYER ASKED FOR IS: the city and the battles fill the
+       fourteen live ids → a crate turns those into an ingredient in a bin → a
+       dish eats out of the bin → the dish goes out of the window or onto a
+       truck. E13 guards the first link on the sheet, E14 the crate's PRICE, E15
+       the crate's DELIVERY. This is the fourth link, and until round 9 it was
+       the only one no assertion in this file touched.
+
+       🔴 MEASURED, NOT ARGUED. Round 8's premise critic deleted the four-line
+          subtraction loop out of `pantryTake()` (kitchen.state.js:1246-1249) in
+          a full copy of the tree, keeping `return true`, so cooking consumes
+          NOTHING. Score: `0 FAIL 70 WARN 0 SKIP · UNWIRED 29 / baseline 29`,
+          identical in every field to the shipped build. Proven real on both
+          trees over 20 dishes on a fresh kitchen: repo `472 → 409` pantry units
+          with delta `{"cheese":-2,"dough":-1,"mustard":-19,"roll":-19,
+          "sauce":-2,"sausage":-19,"tomato":-1}`; mutant `472 → 472`, delta
+          `{}`. A kitchen whose bins never empty never needs a crate, never
+          needs the fourteen live ids, never needs the city — the entire premise
+          is severed by one deletion and the instrument reports clean. The only
+          tells were inside info lines nobody diffs: `restocks 26 → 24`,
+          `ledger out food 423 → 384`.
+
+       So: one fresh kitchen with the doors OPEN (`startCook()` refuses a shut
+       one), the cheapest covered level-1 dish, the bins read as NUMBERS either
+       side of one `startCook()` call, and a FAIL unless every bin fell by
+       exactly `needs[k]`. `pantryTake()` is all-or-nothing and takes `needs × 1`
+       here, so "exactly" is the whole assertion — a short take is as much a bug
+       as no take at all. */
+    let cook = null;
+    try {
+      if (typeof State.reset === 'function') call('reset', () => State.reset());
+      State.simulate(0.2, null, { seed: 606, quiet: true, fresh: true });
+      const K4 = State.Kitchen;
+      const covered = (needs) => {
+        if (!needs || typeof needs !== 'object' || !Object.keys(needs).length) return false;
+        for (const k of Object.keys(needs)) if ((Number(K4.pantry[k]) || 0) < (Number(needs[k]) || 0)) return false;
+        return true;
+      };
+      const freeSlot = (sid) => {
+        const st = K4.stations && K4.stations[sid];
+        if (!st || !Array.isArray(st.slots)) return -1;
+        return st.slots.findIndex((x) => !x);
+      };
+      const pickOne = () => (Array.isArray(DATA.RECIPES) ? DATA.RECIPES : []).filter((r) =>
+        r && r.station && covered(r.needs)
+        && Number(r.minLevel || 1) <= Math.max(1, Number(K4.level) || 1)
+        && freeSlot(r.station) >= 0)[0] || null;
+      let pick = pickOne();
+      if (!pick) {
+        // A brand-new save may not start with a full shelf. Stock it the way a
+        // player would — through the same door E14 just priced — and try again.
+        for (const sid of RESTOCK) call('E16 restock', () => State.buySupply(sid, 2));
+        pick = pickOne();
+      }
+      if (!pick) {
+        cook = { skipped: 'no level-' + Math.max(1, Number(K4.level) || 1) + ' dish was covered by the pantry on a fresh kitchen' };
+      } else {
+        const slot = freeSlot(pick.station);
+        const want = {};
+        for (const k of Object.keys(pick.needs)) want[k] = Number(pick.needs[k]) || 0;
+        const before = {};
+        for (const k of Object.keys(want)) before[k] = Number(K4.pantry[k]) || 0;
+        const unitsBefore = Object.keys(K4.pantry).reduce((a, k) => a + (Number(K4.pantry[k]) || 0), 0);
+        const r = call('startCook', () => State.startCook(pick.station, slot, pick.id, K4.now));
+        const got = {};
+        for (const k of Object.keys(want)) got[k] = before[k] - (Number(K4.pantry[k]) || 0);
+        const unitsAfter = Object.keys(K4.pantry).reduce((a, k) => a + (Number(K4.pantry[k]) || 0), 0);
+        cook = {
+          id: pick.id, name: String(pick.name || pick.id), station: pick.station,
+          ok: !!(r && r.ok), code: (r && r.code) || '', why: (r && r.why) || '',
+          want, got, unitsBefore, unitsAfter,
+          mismatch: Object.keys(want).filter((k) => got[k] !== want[k]),
+        };
+      }
+    } catch (e) { cook = { error: String((e && e.message) || e) }; }
 
     /* ── the verdicts ────────────────────────────────────────────────────── */
     F.info('EXECUTION', 'one ' + SHIFT_S + 's shift played through the PLAYER\'s doors (seed 1337, fresh account, memory-backed bridge) · '
@@ -2600,7 +3150,7 @@ async function checkExecution(W, F) {
     } else if (tally.moddedFiled > 0 && tally.moddedRefused.length > tally.moddedServed) {
       F.warn('EXECUTION', 'drivethru.js serveCar()',
         'More promise tickets were REFUSED (' + tally.moddedRefused.length + ') than served (' + tally.moddedServed + '). First refusal: "' + tally.moddedRefused[0] + '"',
-        'Some refusals are legitimate (the pass no longer covers the order). A majority is not.');
+        'Some refusals are legitimate (the pass no longer covers the order). A majority is not. ⚠ SINCE ROUND 9 THIS CANNOT BE THE WINDOW GATE: the bot skips a ticket whose car is not at the window (see doServe()), so every refusal counted here was asked of a car standing in the right place. The gate itself is E17.');
     }
 
     // E6 — a convoy must be composable.
@@ -2627,8 +3177,22 @@ async function checkExecution(W, F) {
       F.fail('EXECUTION', 'convoy.js launch()',
         'A composed convoy did not leave: ok=' + launched.ok + ', K.convoys grew by ' + launched.grew + '. "' + launched.why + '"',
         'The player asked for shipments to another city. Offline the honest answer is a truck that turns back — but it must still be a truck.');
+    } else if (launched && launched.feeTaken !== launched.feeSaid) {
+      // E18, first half: the receipt against the wallet.
+      F.fail('EXECUTION', 'convoy.js launch()',
+        'THE FREIGHT WAS QUOTED AND NOT TAKEN: the launch says it charged ' + launched.feeSaid
+        + ' Cinder and the wallet went ' + launched.purseBefore + ' → ' + launched.purseAfter
+        + ' (Δ' + (-launched.feeTaken) + ').',
+        'Freight is the ONLY price this feature charges — one `b.spendGems(fee)` at convoy.js:1337 — and until round 9 nothing in this file asserted it. A critic changed that line to `(b.spendGems(0), true)` and scored 0 FAIL 70 WARN, byte-identical, with this arm\'s own info line still reading "freight 33 Cinder": it QUOTED the fee and never asked whether it was taken. Through the player\'s door: shipped 100000 → 99776 on a 40-box Box Truck, mutant 100000 → 100000, same card, same toast, same board row. No branch of launch() refunds the fee — the turn-back keeps it deliberately — so an ok launch must always have moved the wallet by exactly what it says it took.');
+    } else if (launched && launched.feeSaid !== launched.feeQuoted) {
+      // E18, second half: the button's quote against the receipt.
+      F.fail('EXECUTION', 'convoy.js launch()',
+        'The loading bay quoted ' + launched.feeQuoted + ' Cinder of freight and the launch charged ' + launched.feeSaid + '.',
+        'compose() priced this exact load one line earlier and launch() re-composes the same items off the same pass, so these are two derivations of one number in one frame. The player commits on the quote; a launch that charges a different figure is the promise and the till disagreeing, which is round 2 with a truck instead of a burger.');
     } else if (launched) {
       F.info('EXECUTION', 'convoy launched: ' + launched.boxes + ' boxes, state `' + launched.state + '`, id ' + launched.id
+        + ' · freight quoted ' + launched.feeQuoted + ' Cinder, charged ' + launched.feeSaid
+        + ', wallet ' + launched.purseBefore + ' → ' + launched.purseAfter
         + (launched.why ? ' · "' + launched.why + '"' : ''));
     }
 
@@ -2716,6 +3280,41 @@ async function checkExecution(W, F) {
       }
     }
 
+    /* ── E19 — the inbound server leg. Read E19's block before touching it. ── */
+    if (inbound && inbound.error) {
+      F.fail('EXECUTION', 'convoy.js claim() (inbound)', 'THE INBOUND CLAIM PATH THREW: ' + inbound.error,
+        'This is the half of the feature the player asked for by name — "a convoy that will send the player food" — arriving. A throw here is every inbound truck stuck on the dock.');
+    } else if (inbound && inbound.skipped) {
+      F.warn('EXECUTION', 'convoy.js claim() (inbound)', 'E19 UNCHECKED this run (' + inbound.skipped + ').');
+    } else if (inbound) {
+      const f = inbound.first, r = inbound.replay;
+      if (!f.arrived) {
+        F.fail('EXECUTION', 'convoy.js arriveDue()',
+          'An INBOUND row whose `arrivesAt` is in the past did not raise `convoy:arrive` after a tick(); the row is `' + f.state + '`.',
+          'The inbound branch of arriveDue() is the only thing that puts a Claim button on somebody else\'s truck. Nothing downstream of it can happen.');
+      } else if (!f.ok || f.delta !== f.evFood || f.granted !== f.delta) {
+        F.fail('EXECUTION', 'convoy.js claim() (inbound)',
+          'AN INBOUND TRUCK THE DEPOT RELEASED DID NOT PAY: the arrival quoted ' + f.evFood
+          + ' food, the claim answered ' + (f.ok ? 'ok' : f.code) + ' granted=' + f.granted
+          + ', and the live stash went ' + f.before + ' → ' + f.after + ' (Δ' + f.delta + ').'
+          + (f.why ? ' It told the player: "' + f.why + '"' : ''),
+          'E10 lands a PRACTICE run, which has no server leg at all. This is the other direction — `API.claimConvoy()` → `first_claim` → `delivered_dishes` → `addRes` — and until round 9 this file declared it untestable without a database instead of driving it.');
+      } else if (f.rpcCalls !== 1) {
+        F.fail('EXECUTION', 'convoy.js claim() (inbound)',
+          'One inbound claim made ' + f.rpcCalls + ' call(s) to `kitchen_convoy_claim`.',
+          'The RPC is the one-shot that decides who gets paid. Calling it twice for one tap is how a retry turns into a second claim; calling it zero times means the payout came from somewhere other than the server, which rule 5 of convoy.js forbids outright.');
+      } else if (r.ok || r.granted !== 0 || r.delta !== 0) {
+        F.fail('EXECUTION', 'convoy.js claim() (inbound)',
+          'THE DOUBLE-PAYOUT WALL IS DOWN: the depot answered `first_claim:false, delivered_dishes:0` and the claim still answered '
+          + (r.ok ? 'ok' : r.code) + ' granted=' + r.granted + ' with the stash moving ' + r.before + ' → ' + r.after + ' (Δ' + r.delta + ').',
+          'Round 1 minted 40 food exactly here. `deliveredDishes` is what THIS call delivered — on a replay the server\'s unique index on (convoy_id, kind) swallowed the ledger insert and it comes back 0 — and convoy.js\'s rule 4 says nothing in that file may ever grant more than `deliveredDishes × perDish`. A fresh row is the case the local `serverClaimed` latch cannot see.');
+      } else {
+        F.info('EXECUTION', 'the INBOUND server leg ran under plain node: the depot released 12 boxes, the arrival quoted '
+          + f.evFood + ' food, the claim granted ' + f.granted + ' and the live stash went ' + f.before + ' → ' + f.after
+          + ' in ' + f.rpcCalls + ' RPC call · a fresh row the depot answered `first_claim:false` was refused ("' + r.why + '") with the stash unmoved.');
+      }
+    }
+
     /* ── E12 — the wave-off. ───────────────────────────────────────────── */
     if (waved && waved.error) {
       F.fail('EXECUTION', 'drivethru.js waveCar()', 'waveCar() THREW: ' + waved.error);
@@ -2751,7 +3350,7 @@ async function checkExecution(W, F) {
         tally.moddedServed + ' ticket(s) carrying a promise were served and NOT ONE produced an honoured or broken verdict — every promise came back unproven.',
         'The mechanic is then decoration: the chips draw, the toast prints, and nothing is ever kept or broken. A critic made `judgeMod()` answer "unproven" always and this file scored 0 FAIL.');
     } else {
-      let badSum = null, badSign = null, badLine = null, badPop = null, badSettle = null;
+      let badSum = null, badSign = null, badLine = null, badPop = null, badSettle = null, badTaken = null;
       let settleChecked = 0;
       for (const x of withVerdict) {
         // 1 · the total the toast prints IS the chips it is made of.
@@ -2772,6 +3371,16 @@ async function checkExecution(W, F) {
         // 4 · the popularity charge actually reached the meter, tagged as itself.
         if (!badPop && x.modPop && !x.popWhys.some((w) => /^promise-/.test(w))) badPop = { x };
         else if (!badPop && x.modPop && Math.abs(x.popPromise - x.modPop) > 0.011) badPop = { x };
+        /* 6 · WHEN THE TILL COULD NOT TAKE WHAT THE CHIP PROMISED, THE TOAST
+              HAS TO SAY SO. `shortfallPhrase()` (drivethru.js:3348) is the
+              invariant written down: within a Cinder, say nothing; outside it,
+              append "<n> taken (tip ran out|tip at its ceiling)". So a gap the
+              sentence does not name is the player reading a promise of −35 and
+              receiving −18 with nothing on screen to explain the difference.
+              ⚠ The tolerance is the SAME ±1 the phrase itself uses: the chip is
+                quoted off `payoutEstimate()` and the till rounds against the
+                real payout, so a 1-Cinder gap is arithmetic, not a defect. */
+        if (!badTaken && Math.abs(x.modCinder - x.modCinderTaken) > 1 && !/taken \(/.test(x.modLine)) badTaken = { x };
         // 5 · the settlement rides the tip line. See settleProbe()'s block.
         const p = x.probe;
         if (p && p.chip && p.withMods > 0 && p.without > 0
@@ -2811,15 +3420,45 @@ async function checkExecution(W, F) {
           + ' Cinder of a ' + badSettle.x.paid + ' payout when the promise was the only thing that changed.',
           'Round 2\'s headline finding, restored by a critic in round 7 with one deletion (`total = max(tipPct,MIN) + settle` → `max(tipPct,MIN)`): chip "✓ no greens +28", tip 32 instead of 60, 0 FAIL. §SETTLEMENT is the promise\'s ONLY Cinder channel — if it does not ride the tip line it does not exist.');
       }
-      if (!badSum && !badSign && !badLine && !badPop && !badSettle) {
+      if (badTaken) {
+        F.fail('EXECUTION', 'drivethru.js serveCar()',
+          'THE CHIP PROMISED ' + badTaken.x.modCinder + ' CINDER, THE TILL COULD ONLY TAKE ' + badTaken.x.modCinderTaken
+          + ', AND THE TOAST DID NOT SAY SO: "' + badTaken.x.modLine + '".',
+          '`shortfallPhrase()` exists precisely to name that gap ("−18 taken (tip ran out)") and `modCinderTaken` is returned, in its own comment\'s words, "so an assertion can compare the two". Measured by round 8\'s lane critic over five seeded days: 15 of 99 promise sales had quoted ≠ taken, and one report card read "🤝 Promises · +◈ 97" against ◈62 actually taken — a 56% overstatement on the one screen a player reads to decide what to do differently tomorrow.');
+      }
+      if (!badSum && !badSign && !badLine && !badPop && !badSettle && !badTaken) {
         const s = withVerdict.reduce((a, x) => a + x.modCinder, 0);
         F.info('EXECUTION', 'the till agreed with the chip on all ' + withVerdict.length + ' promise sale(s): '
-          + s + ' Cinder settled, popularity charged as `promise-*` on every one, and the settlement was isolated on the tip line for '
+          + s + ' Cinder settled (the till took ' + withVerdict.reduce((a, x) => a + x.modCinderTaken, 0)
+          + ' of it, and every gap the sentence must name was named), popularity charged as `promise-*` on every one, and the settlement was isolated on the tip line for '
           + settleChecked + ' of them.' + (settleChecked ? '' : ' ⚠ the tip-line isolation had no unclamped sample this run.'));
       }
       if (withVerdict.length && !settleChecked) {
         F.warn('EXECUTION', 'drivethru.js tipFor()',
           'No promise sale gave an unclamped reading of the tip line this run, so the §SETTLEMENT probe checked NOTHING. Treat "the promise is paid" as unverified, not as passing.');
+      }
+    }
+
+    /* ── E20 — THE SALE AGAINST THE WALLET. See the block in doServe(). ──
+       E11 asks whether the PROMISE was settled the way the chip said. This asks
+       the simpler question nothing in this file had ever asked: when the reward
+       card says "◈218", did 218 Cinder actually land in the player's wallet?
+       The bridge's `purse.gems` is the same balance `Profile.gems` is in the
+       live game (CONTRACT §7, `spendGems`/`addGems`), so the reading is the
+       player's own money and not a mirror of it. */
+    if (tills.length) {
+      const off = tills.filter((x) => Math.abs(x.walletDelta - (x.paid + x.tip)) > 1);
+      const totalCard = tills.reduce((a, x) => a + x.paid + x.tip, 0);
+      const totalTill = tills.reduce((a, x) => a + x.walletDelta, 0);
+      if (off.length) {
+        F.fail('EXECUTION', 'kitchen.state.js serveTicket()',
+          'THE CARD AND THE WALLET DISAGREE ON ' + off.length + ' OF ' + tills.length + ' LANE SALE(S): one reward card read ◈'
+          + Math.round(off[0].paid) + ' + ◈' + Math.round(off[0].tip) + ' tip and the wallet moved by ' + off[0].walletDelta
+          + ' · across the shift the cards totalled ' + Math.round(totalCard) + ' and the wallet moved ' + totalTill + '.',
+          'This is round 2\'s defect in its plainest form — a number drawn on the reward moment that the till never paid — and until round 9 nothing in this file compared the two. `paid`/`tip` are what kitchen.render.js:3427 prints; `purse.gems` is what the player can spend.');
+      } else {
+        F.info('EXECUTION', 'every lane sale reached the wallet: ' + tills.length + ' card(s) totalling ◈'
+          + Math.round(totalCard) + ' against a wallet that moved ' + totalTill + '.');
       }
     }
 
@@ -2852,8 +3491,89 @@ async function checkExecution(W, F) {
       F.fail('EXECUTION', 'kitchen.state.js buySupply()',
         '`' + crate.id + '` took ' + JSON.stringify(crate.got) + ' out of the stash and booked ' + JSON.stringify(crate.led) + ' on the day ledger.',
         'The receipt screen reads the ledger. A spend the day report cannot see is round 6\'s `today.resSpent` again with the numbers changed instead of the timing.');
+    } else if (crate && crate.binGot !== crate.outWant) {
+      F.fail('EXECUTION', 'kitchen.state.js pantryPut()',
+        'THE CRATE WAS PAID FOR AND THE BIN DID NOT MOVE: `' + crate.id + '` took ' + JSON.stringify(crate.got)
+        + ' out of the stash and advertises ' + crate.outWant + ' ' + crate.outIng
+        + ' — the bin went ' + crate.binBefore + ' → ' + (crate.binBefore + crate.binGot) + ' (Δ' + crate.binGot + ').',
+        'THIS FILE MEASURED WHAT LEAVES THE PLAYER FOR EIGHT ROUNDS AND NEVER ONCE WHAT ARRIVES. A critic dropped the `K.pantry[id] = … + v` line out of `pantryPut()` so every crate in the game arrives empty, and scored 0 FAIL 70 WARN — byte-identical — while E14 above kept printing "charged exactly what it advertises", which was true and useless. `buySupply()` refuses in preflight and never part-fills (its own comment: clamping after payment is "the same class of bug as the addRes() stash-cap trap"), so on ok the bin rises by exactly `out.qty` or the player has been charged for nothing.');
     } else if (crate) {
-      F.info('EXECUTION', '`' + crate.id + '` charged exactly what it advertises: ' + JSON.stringify(crate.want) + ' out of the stash and the same on the day ledger.');
+      F.info('EXECUTION', '`' + crate.id + '` charged exactly what it advertises: ' + JSON.stringify(crate.want)
+        + ' out of the stash and the same on the day ledger — and delivered ' + crate.binGot + ' ' + crate.outIng
+        + ' into the bin (' + crate.binBefore + ' → ' + (crate.binBefore + crate.binGot) + ').');
+    }
+
+    /* ── E16 — cooking eats the bins. Read E16's block before touching this. ── */
+    if (cook && cook.error) {
+      F.warn('EXECUTION', 'kitchen.state.js pantryTake()', 'The cook probe threw: ' + cook.error + ' — E16 was NOT checked.');
+    } else if (cook && cook.skipped) {
+      F.warn('EXECUTION', 'kitchen.state.js pantryTake()', 'E16 UNCHECKED this run (' + cook.skipped + ') — nothing asserted that cooking consumes anything.');
+    } else if (cook && !cook.ok) {
+      F.fail('EXECUTION', 'kitchen.state.js startCook()',
+        'A fresh kitchen with the doors open could not start `' + cook.name + '` on the ' + cook.station
+        + ' with every ingredient in the bin: ' + cook.code + ' "' + cook.why + '".',
+        'The pantry covered `needs` one line earlier — this arm checked. A refusal here is the first move of the game refusing a player who has done nothing wrong, which is round 5\'s blocker in a different door.');
+    } else if (cook && cook.mismatch.length) {
+      F.fail('EXECUTION', 'kitchen.state.js pantryTake()',
+        'COOKING DID NOT EAT THE BINS: `' + cook.name + '` needs ' + JSON.stringify(cook.want)
+        + ' and the pantry actually lost ' + JSON.stringify(cook.got)
+        + ' (' + cook.unitsBefore + ' → ' + cook.unitsAfter + ' units across all bins).',
+        'A critic deleted the four-line subtraction loop out of `pantryTake()`, keeping `return true`, and this file scored 0 FAIL 70 WARN · UNWIRED 29/29 — byte-identical to the shipped build — while 20 dishes cooked on a fresh kitchen burned 472 → 472 units instead of 472 → 409. A kitchen whose bins never empty never needs a crate, never needs the fourteen live ids and never needs the city: the two middle links of the whole premise can be deleted in silence. This is the assertion that stops that.');
+    } else if (cook) {
+      F.info('EXECUTION', 'cooking ate the bins: `' + cook.name + '` took exactly ' + JSON.stringify(cook.want)
+        + ' out of the pantry (' + cook.unitsBefore + ' → ' + cook.unitsAfter + ' units across all bins).');
+    }
+
+    /* ── E17 — the window gate, both directions. See gateProbe()'s block. ── */
+    const gateThrew = gate.rows.filter((g) => g && g.threw);
+    const gateServed = gate.rows.filter((g) => g && !g.threw && !g.refused);
+    const gatePaid = gate.rows.filter((g) => g && !g.threw && g.refused && (g.purseMoved !== 0 || g.laneMoved !== 0));
+    const gateLied = gate.rows.filter((g) => g && !g.threw && g.refused
+      && new RegExp(g.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s+is at the window').test(g.why));
+    if (!gate.rows.length) {
+      F.warn('EXECUTION', 'drivethru.js serveCar()',
+        'No car reached the window with a ready ticket this run, so E17 — the window gate — was NOT checked in either direction.',
+        'The gate is round 8\'s headline fix on this lane and it is the one assertion whose absence PAID a builder to delete it: reverting the gate scored one warning BETTER than the build that ships.');
+    } else if (gateThrew.length) {
+      F.fail('EXECUTION', 'drivethru.js serveCar()', 'The window-gate probe threw: ' + gateThrew[0].threw,
+        'serveCar() must answer a car that is not at the window with a refusal, not with a throw — the renderer routes a board tap straight into it.');
+    } else if (gateServed.length) {
+      F.fail('EXECUTION', 'drivethru.js serveCar()',
+        'THE WINDOW GATE IS GONE: `' + gateServed[0].name + '` was at station `' + gateServed[0].station
+        + '` (' + gateServed[0].kind + ' sample) and serveCar() paid out anyway — '
+        + gateServed[0].paid + ' Cinder, wallet moved ' + gateServed[0].purseMoved + ', lane moved ' + gateServed[0].laneMoved + '.',
+        'You hand food out of the window. drivethru.js:3486 is the one line that says so (`if (car.station !== \'window\') return fail(\'NOT_READY\', queueWhy(K, car))`); before it, 78% of lane sales went to a car that was not there. Deleting it USED to score one warning better than shipping it, because the only line in this report that touched the lane was a refusal count. This assertion is the same car in the same frame with one field moved, so no refusal count can launder it.');
+    } else if (gatePaid.length) {
+      F.fail('EXECUTION', 'drivethru.js serveCar()',
+        'A queued car was refused ("' + gatePaid[0].why + '") and the sale happened anyway: wallet moved '
+        + gatePaid[0].purseMoved + ' Cinder, lane moved ' + gatePaid[0].laneMoved + '.',
+        'A refusal that still takes the food out of the pass or the money out of the till is worse than no gate: the player is told no and charged yes.');
+    } else if (gateLied.length) {
+      F.fail('EXECUTION', 'drivethru.js queueWhy()',
+        'The refusal names the wrong fact: `' + gateLied[0].name + '` was refused for NOT being at the window and told "' + gateLied[0].why + '".',
+        'queueWhy() is the whole teaching surface of the queue — it is how a player learns that a drive-thru has one collection point. A refusal that says the car it just refused is at the window is a sentence that cannot be acted on.');
+    } else if (gate.windowRefused.length) {
+      F.fail('EXECUTION', 'drivethru.js serveCar()',
+        'A car AT THE WINDOW was refused with the QUEUE\'s own sentence: `' + gate.windowRefused[0].name
+        + '` — "' + gate.windowRefused[0].why + '" (' + gate.windowRefused.length + ' time(s) this shift).',
+        'This is the over-gate, and it is invisible to any count of refusals: a lane that refuses EVERYBODY looks exactly like a lane that is working plus some legitimate refusals. The gate must be a position test, not a wall.');
+    } else {
+      const forced = gate.rows.filter((g) => g.kind === 'forced');
+      const queued = gate.rows.filter((g) => g.kind === 'queued');
+      // Show the sample with a car in FRONT of it if there was one — that is the
+      // sentence the player reads, and the one queueWhy()'s second branch writes.
+      const shown = queued.filter((g) => g.idx > 0)[0] || queued[0] || null;
+      F.info('EXECUTION', 'the window gate holds both ways: ' + forced.length
+        + ' car(s) AT the window were refused the instant their station moved to `queue` and served on the spot when it moved back, and '
+        + queued.length + ' car(s) really standing in the lane with a ready ticket were refused'
+        + (shown ? ' ("' + shown.why + '" · lane positions sampled ' + JSON.stringify(queued.map((g) => g.idx)) + ')' : '')
+        + ' · ' + gate.servedAtWindow + ' sale(s) at the window · ' + gate.heldBack
+        + ' board ticket(s) the bot did NOT tap because their car was still in the lane.');
+      if (queued.length && !queued.some((g) => g.idx > 0)) {
+        F.warn('EXECUTION', 'drivethru.js queueWhy()',
+          'Every queued car sampled this run was at the FRONT of the lane, so `queueWhy()`\'s blocker branch — "X is 2nd in the lane. Y is at the window." — did not execute and its sentence was NOT checked.',
+          'The head-of-lane early return (drivethru.js:3376) is a different sentence with a different job. If this line is permanent, the sampling in doServe() needs to reach further back in the queue, not be re-baselined.');
+      }
     }
 
     if (!programmingErrors && !(report.errors || []).length && !tally.botThrew.length) {
@@ -2928,8 +3648,26 @@ const BASELINE = {
          honouring `canServe`, so it asks for refusals the player never can:
          kitchen.render.js:2066 renders the button `${c.canServe ? '' : 'disabled'}`.
          So this is the INSTRUMENT lagging the fix, not a defect the player meets.
-         Round 9 teaches the bot the gate, and then this line should return to 0. */
-  at: '2026-08-28 · round 8, re-verified by the lead against the settled tree',
+         Round 9 teaches the bot the gate, and then this line should return to 0.
+       🔴 ROUND 9 — AND THAT LAST SENTENCE WAS BLESSED ON A REASON THE REPO
+         CONTRADICTED, WHICH IS THE SAME ACT AS DELETING THE CHECK. Line 2066
+         is the PIN card's button and it is correctly gated; the CUSTOMER ORDERS
+         board has a SECOND serve button (kitchen.render.js:1027) with no
+         station test at all, and two critics measured it in the real browser —
+         220 taps, 216 produced a sentence instead of a sale; 33 of 33 board
+         `Serve · ◈N` buttons rendered on drive tickets would refuse. So the
+         bot was NOT lagging a fix the player already had; it was the only thing
+         in the repo telling the truth about the board.
+         WHAT ROUND 9 DID ABOUT IT, in this file and nowhere else (the board is
+         another builder's file): the bot now honours the gate, so this line IS
+         0 — and the gate is asserted DIRECTLY by E17 instead of being inferred
+         from a refusal count, so honouring it here cannot hide its removal. The
+         entry is deleted below rather than left at 1.
+         ⚠ THE ONE COUNT THAT MOVED. Everything else in this literal is
+           byte-identical to round 8's, UNWIRED and its list included. Five
+           builders were still editing under it when it was regenerated, exactly
+           as in round 7 — the lead re-verifies it against the settled tree. */
+  at: '2026-08-28 · round 9, self-test pass (re-verify against the settled tree)',
   unwired: 29,
   unwiredContract: 29,
   list: ['drivethru.js#arrivalPlan', 'drivethru.js#regulars', 'drivethru.js#spawn', 'kitchen.data.js#DATA', 'kitchen.data.js#POP_FACES', 'kitchen.data.js#cheapestRoute', 'kitchen.data.js#expectedUpgradesFor', 'kitchen.data.js#reliefRouteCost', 'kitchen.data.js#resRetail', 'kitchen.data.js#salvageCinderCost', 'kitchen.data.js#salvageMenu', 'kitchen.data.js#shelf', 'kitchen.data.js#speedMulFor', 'kitchen.data.js#unlocksAt', 'kitchen.render.js#toastEvents', 'kitchen.state.js#buyUpgrade', 'kitchen.state.js#dumpSupply', 'kitchen.state.js#hydrate', 'kitchen.state.js#ownsUpgrade', 'kitchen.state.js#pantryHas', 'kitchen.state.js#pantryRoom', 'kitchen.state.js#qMult', 'kitchen.state.js#reset', 'kitchen.state.js#scoreBuild', 'kitchen.state.js#seed', 'kitchen.state.js#simulate', 'kitchen.state.js#snapshot', 'kitchen.state.js#startPantryCovers', 'kitchen.state.js#ticketPct'],
@@ -2941,7 +3679,6 @@ const BASELINE = {
     'DEAD EXPORTS|kitchen.data.js': 11,
     'DEAD EXPORTS|kitchen.render.js': 1,
     'DEAD EXPORTS|kitchen.state.js': 14,
-    'EXECUTION|drivethru.js serveCar()': 1,
   },
 };
 

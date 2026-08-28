@@ -173,7 +173,7 @@ function ECb(key, fallback) {
                                  (17.9 dishes/hour against a modelled 26.9).
      GRADE_MIN_C           0.61  the four letter cuts on gradeParts().score.
      GRADE_MIN_B           0.75  Swept off the measured distribution — see the
-     GRADE_MIN_A           0.85  block in gradeFor() for what each one is
+     GRADE_MIN_A           0.83  block in gradeFor() for what each one is
      GRADE_MIN_S           0.92  pinned to and when to re-sweep them.
                                  ⚠ THESE FOUR WERE STALE HERE FOR A ROUND. The
                                  sweep moved them to 0.59/0.73/0.83 in
@@ -433,6 +433,28 @@ export const Kitchen = {
                          // is `cookable.length === 0` and NOT `dry`).
   _stallSince: 0,        // `now` the current stall started; 0 while cooking is
                          // possible. reliefWatch() reads it.
+  /* 🚪 THE DEFAULTED PROMISE, IN DISHES — and it is the whole of round 9's door
+     fix. `doorsShut()` used to compare cook-through against `boardOwed()`
+     ALONE, which is a SNAPSHOT: a ticket that times out LEAVES the board, so
+     the capacity it was holding was handed straight back to the next arrival
+     and the doors re-opened on a cooler that had not shrunk by a single unit.
+     Measured before (r15c/door2.mjs, nothing cooked, GEMS 0, empty stash,
+     pantry seeded with exactly N hot dogs' worth): lost 0/10/13/15/28/38 at
+     N = 0/1/2/3/6/12. ONE HOT DOG'S WORTH OF INGREDIENTS BOUGHT TEN ANGRY
+     CUSTOMERS, and the same flap is what welded the recovering player's meter
+     to POP_REVERT_BELOW for eleven consecutive days.
+     So the gate now REMEMBERS. Units go on here when a ticket is LOST (see
+     loseTicket) and come off ONE AT A TIME when a dish is actually PLATED (see
+     plateHand) — production is the only proof of capacity there is, and it is
+     the proof the snapshot was assuming without ever asking for.
+     ⚠ NOT ON A TURN-AWAY and NOT ON A WAVE-OFF. turnAway() fires on a FULL
+       BOARD, which is the opposite failure — the doors were right and the
+       player was behind — and waveCar() releases the promise by the player's
+       own decision. Only a defaulted promise is a promise the cooler still owes.
+     ⚠ EPHEMERAL. Cleared in clearService() with the rest of the service state;
+       a ghost that survived a night would shut tomorrow's doors on yesterday's
+       walk-outs. */
+  _ghost: 0,
   _dryAt: -Infinity,     // throttle stamp for the latched dry read (dryNow).
   _cookable: [],         // latched dryCheck().cookable — the recipe ids the
                          // pantry can make RIGHT NOW. spawnCounter() biases
@@ -824,6 +846,7 @@ function clearService() {
   K._dry = false;
   K._stalled = false;
   K._stallSince = 0;
+  K._ghost = 0;
   K._dryAt = -Infinity;
   K._cookable = [];
 }
@@ -1810,14 +1833,30 @@ function onHandDishes() {
 }
 
 /**
- * 🚪 → true while the doors should be shut. The whole gate, in four lines.
+ * 🚪 → true while the doors should be shut. The whole gate, in five lines.
  *
  * `cookThrough` is capped at exactly the count that would answer the question,
  * so a well-stocked lunch rush stops counting after a dozen or so plates rather
  * than walking the cooler.
+ *
+ * 🔴 IT USED TO BE A SNAPSHOT OF THE BOARD AND THAT MADE IT A FLAP. `boardOwed()`
+ * alone is "who is standing here RIGHT NOW", and a customer who walks out stops
+ * standing here — so the three dishes of capacity their ticket was holding were
+ * released to the next three arrivals, at a cooler that had not lost one unit.
+ * Measured on the shipped build with NOTHING cooked and the pantry seeded with
+ * exactly N hot dogs' worth (r15c/door.mjs), N = 0/1/2/3/6/12:
+ *     lost 0 / 10 / 13 / 15 / 28 / 38
+ * i.e. one hot dog's ingredients bought TEN angry customers, and twelve bought
+ * thirty-eight. The block's own header already claimed the opposite ("a cooler
+ * holding three dishes admits three customers"), and the recovering player paid
+ * for the gap: seeds 3 and 11 of the fourteen-day two-arm run finished on
+ * popularity welded to exactly 30.0 against a do-nothing arm's 41.6.
+ *
+ * So the promise the kitchen DEFAULTED on stays on the books (`K._ghost`) until
+ * the kitchen proves the capacity by plating something. See the field.
  */
 function doorsShut() {
-  const owed = boardOwed();
+  const owed = boardOwed() + Math.max(0, _int(K._ghost));
   const onHand = onHandDishes();
   const short = Math.max(0, owed - onHand);
   return (cookThrough(short + 1) + onHand - owed) < 1;
@@ -2791,6 +2830,50 @@ export function dropHand() {
 }
 
 /**
+ * 🗑 WAS THERE AN UNCOVERED LINE ON THE BOARD FOR THIS RECIPE, AT THIS INSTANT?
+ * → boolean. Pure; reads the board and the pass and nothing else.
+ *
+ * 🔴 WHY THE QUESTION MOVED HERE FROM binPass(). The CRAFT axis charges
+ * `today.wasted`, and round 8 decided which bins counted by asking "was the
+ * pass FULL at the moment of the bin" (`forced`). That is not a fact about the
+ * plate; it is a STATE THE PLAYER CONTROLS, and it was exploited immediately.
+ * Measured, L12+heatlamp, six seeds (r15c/launder.mjs): a bot that cooks filler
+ * into every free slot, plates all of it, and bins ONLY once `K.pass.length >=
+ * passCap()` scored **CRAFT 100.0 — a flawless kitchen — while binning 411.3
+ * plates a day and burning 961.3 units of live food**, against honest play's
+ * 2.8 binned, 472.3 food and CRAFT 87.7, with `today.wasted` at exactly 0. The
+ * fix for a maxable axis had produced a cheaper way to max it, on 4× the bins
+ * and 2× the food of the exploit it replaced.
+ *
+ * So the test is now about the PLATE and not about the pass: a dish cooked
+ * against a line nobody had ordered is speculative, and throwing speculation
+ * away is waste at any pass length. A dish cooked against a real order is not,
+ * and it stays free to bin however the board moves afterwards — which is the
+ * whole of the "breaking a jam is mandatory play" argument gradeParts() settled
+ * and which this must not re-open. An orphan whose customer walked out was
+ * `wanted` when it was made and is still free.
+ *
+ * ⚠ SUPPLY IS THE PASS, NOT THE RACK. Plates still cooking are themselves
+ *   speculative; counting them as supply would mark the FIRST plate of a rush
+ *   unwanted because five more are on the griddle behind it.
+ * ⚠ RAW `qty`, like boardOwed() and for the same reason: `item.filled` is a
+ *   per-frame claim rewritten by planPass(), and mixing the two clocks is how
+ *   the same plate gets counted twice in opposite directions.
+ */
+function wantedNow(recipeId) {
+  if (!recipeId) return false;
+  let want = 0;
+  for (const tk of (K.tickets || [])) {
+    if (!tk || (tk.state !== 'open' && tk.state !== 'ready')) continue;
+    for (const it of (tk.items || [])) if (it && it.recipeId === recipeId) want += Math.max(0, _int(it.qty));
+  }
+  if (want <= 0) return false;
+  let have = 0;
+  for (const d of (K.pass || [])) if (d && d.recipeId === recipeId) have++;
+  return want > have;
+}
+
+/**
  * Hand → pass. The pass is the row of finished dishes on the counter that
  * REF-A shows. Plating does NOT serve anybody: the plate sits under the lamp,
  * lights up the pips on every ticket that wants one, and only leaves when the
@@ -2817,9 +2900,24 @@ export function plateHand(now, forTicketId) {
     built: Array.isArray(K.hand.built) ? K.hand.built.slice() : [],
     assembled: !!K.hand.assembled,
     madeAt: t,
+    /* 🗑 DID THIS PLATE HAVE SOMEWHERE TO GO WHEN IT WAS MADE? Stamped HERE,
+       once, and read only by binPass(). See wantedNow() for the whole argument;
+       the short version is that a plate's honesty is a fact about the moment it
+       was cooked, and every other reading of it is a state the player controls.
+       ⚠ EPHEMERAL WITH THE PASS. `K.pass` is not in snapshot() (§5 saves no
+         service state), so this never has to survive a reload. */
+    wanted: wantedNow(K.hand.recipeId),
   };
   K.pass.push(dish);
   K.hand = null;
+  /* 🚪 THE GHOST PAYS DOWN ONE PLATE AT A TIME. A defaulted promise (see
+     loseTicket) holds the doors shut until the kitchen demonstrates it could
+     have kept it, and a finished dish on the pass is that demonstration —
+     the only one there is that does not depend on a customer being present to
+     take it. Without this the gate would need a serve to clear, and a kitchen
+     whose doors are shut has nobody to serve: the recovery would deadlock on
+     itself. */
+  if (_int(K._ghost) > 0) K._ghost = _int(K._ghost) - 1;
   K.rev++;
   /* 📌 PLATE STRAIGHT TO AN ORDER. The second argument is optional and the
      whole feature degrades to nothing without it — a renderer that never passes
@@ -3266,19 +3364,21 @@ function spoilPass(now) {
 export function binPass(dishId) {
   const i = K.pass.findIndex((d) => d && d.id === dishId);
   if (i === -1) return no('BAD_ARG', 'That plate is not on the pass.');
-  /* 🔴 WAS THIS BIN FORCED, OR WAS IT A CHOICE? Read BEFORE the splice, because
-     the answer is "was there anywhere else for the next plate to go", and one
-     line later there is. The whole argument for not punishing `binned` is that
-     breaking a jammed pass is MANDATORY play — and that argument only covers the
-     bins that were actually breaking a jam. A plate thrown away with room still
-     under the lamp is not unjamming anything; it is waste, and gradeParts()
-     charges exactly those in the CRAFT denominator. See `wasted` in
-     freshToday(). */
-  const cap = Math.max(1, _int(DF('passCap') ? DF('passCap')(K.upgrades) : EC('PASS_CAP', 6)));
-  const forced = K.pass.length >= cap;
+  /* 🔴 WAS THIS PLATE EVER GOING ANYWHERE? The whole argument for not punishing
+     `binned` is that breaking a jammed pass is MANDATORY play — and that
+     argument only covers plates that were cooked FOR somebody. It does not cover
+     a plate cooked into a free slot to fill it.
+     🔴 AND THE PREVIOUS TEST WAS THE WRONG ONE, MEASURED. It asked "was the pass
+        full" (`K.pass.length >= passCap()`), which the player controls outright:
+        keep the pass at cap and every bin is free. A bot doing exactly that
+        scored CRAFT 100.0 on 411.3 bins and 961.3 units of live food a day
+        (r15c/launder.mjs) — a cheaper version of the exploit round 8 wrote that
+        clause to close. The plate's own stamp cannot be gamed by pass length,
+        because it was written at the moment the plate was made. See wantedNow(),
+        `wasted` in freshToday(), and the CRAFT denominator in gradeParts(). */
   const d = K.pass.splice(i, 1)[0];
   K.today.binned = _int(K.today.binned) + 1;
-  if (!forced) K.today.wasted = _int(K.today.wasted) + 1;
+  if (!d.wanted) K.today.wasted = _int(K.today.wasted) + 1;
   K.totals.binned = _int(K.totals.binned) + 1;
   K.rev++;
   emit('cook:burnt', { stationId: null, slot: -1, recipeId: d.recipeId, spoiled: false, binned: true });
@@ -4079,6 +4179,14 @@ function loseTicket(ticket, why, now) {
      leaves you holding food that is now ageing toward PASS_STALE_MULT with
      nobody to sell it to. That is a better punishment than binning it, because
      it is one the player can still partly recover from. */
+  /* 🚪 AND THE DOOR KEEPS THE BILL. Every unit this customer was promised and
+     did not get stays counted against the cooler until the cooler proves it
+     could have made them — see `K._ghost` and doorsShut(). RAW `qty`, on the
+     same clock and for the same reason boardOwed() reads raw qty: `filled` is a
+     per-frame claim on plates that are still under the lamp, and those plates
+     survive the walk-out (see the note directly above), so they are counted
+     once, in onHandDishes(), and never subtracted here as well. */
+  for (const it of (ticket.items || [])) K._ghost = _int(K._ghost) + Math.max(0, _int(it.qty));
   K.today.lost++;
   K.totals.lost++;
   bumpPop(EC('POP_LOST', -3.5), 'lost');
@@ -4860,11 +4968,11 @@ function gradeFor(today) {
          0.75  clear of SLOPPY's ceiling (0.680) and INSIDE the AVERAGE band
                (0.720..0.800) on purpose, which is what puts AVERAGE on a C or
                worse for 6 seeds of 12 instead of never
-         0.85  inside the top three's band, because that is the only place an
+         0.83  inside the top three's band, because that is the only place an
                A/B line can be: GOOD 0.842, EXPERT 0.857 and GOD 0.876 cook
                within 0.02 of one another and no cut separates tiers that
                overlap (kitchen.data.js's POP_* block records that overlap as
-               its own open item, and it is why the ladder reads 3 of 60
+               its own open item, and it is why the ladder still reads 1 of 60
                non-monotone at these cuts on this bot)
          0.92  GOD's best seed is 0.925 and a level-20 all-owned clean sheet
                scores 0.94..0.99, so S stays rare and reachable
@@ -4876,7 +4984,7 @@ function gradeFor(today) {
      ECON.PERFECT_MS, the Q_* scale, GRADE_CAP_DUTY, capacityModel OR the CRAFT
      denominator, and move the fallbacks below in the same edit. */
   if (score >= EC('GRADE_MIN_S', 0.92)) grade = 4;
-  else if (score >= EC('GRADE_MIN_A', 0.85)) grade = 3;
+  else if (score >= EC('GRADE_MIN_A', 0.83)) grade = 3;
   else if (score >= EC('GRADE_MIN_B', 0.75)) grade = 2;
   else if (score >= EC('GRADE_MIN_C', 0.61)) grade = 1;
   /* 🔴 THE CLEAN-SHEET RIDER CHARGES FOR NEGLECT, NOT FOR STRUCTURE — AND IT

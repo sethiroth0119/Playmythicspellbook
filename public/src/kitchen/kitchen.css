@@ -926,6 +926,91 @@
   font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
 }
 #mythic-kitchen-ov .mk-board-head .mk-spacer { flex: 1 1 auto; }
+
+/* ── 🍕 ON THE MENU TODAY — the closed board, with food on it ────────────────
+   🔴 THE FIRST FRAME A NEW PLAYER SEES HAD NOTHING EDIBLE IN IT. Five empty
+   pans, an empty pass, a card reading "Service is closed." and four RED zero
+   chips as the brightest objects below the fold. The reference opens on a row of
+   finished pizzas. So the closed board draws the dishes this kitchen can cook,
+   as plated food rather than as a list: the emoji sits ON a lit plate ellipse,
+   the same object the pass draws, because an icon in a bordered box is an
+   inventory row and an icon on a plate is dinner. Same trick, same geometry and
+   the same argument as `.mk-dish` — see the block above it.
+
+   ⚠ IT IS A REAL CONTROL, SO IT CARRIES A REAL TAP TARGET. 96px wide and its
+     min-height comes off the same `--mk-tap` floor as every other control in the
+     feature (the restated floor near the end of this file covers `.mk-prep`).
+   ⚠ THE DISABLED CARD KEEPS ITS FOOD. A dish the pantry cannot cover is drawn
+     cold — the plate loses its light and the icon greys — but it stays on the
+     board, because "this is what we make, and we are out of it" is exactly the
+     sentence that sends a player to Supplies. It is the same rule the crate rows
+     follow: dim the control, never the information. */
+#mythic-kitchen-ov .mk-prep {
+  position: relative;
+  width: 96px;
+  padding: 6px 4px 7px;
+  border: 1px solid rgba(255,196,120,.20);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(255,186,92,.10), rgba(0,0,0,.28));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.07);
+  color: var(--mk-ink);
+  text-align: center;
+  cursor: pointer;
+  scroll-snap-align: start;
+}
+#mythic-kitchen-ov .mk-prep::before {
+  content: "";
+  position: absolute;
+  left: 50%; top: 24px;
+  width: 52px; height: 20px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: radial-gradient(closest-side, #f6eee0, #ddd1bc 60%, #a2977f 100%);
+  box-shadow: 0 4px 9px rgba(0,0,0,.6), inset 0 -2px 0 rgba(0,0,0,.13);
+}
+#mythic-kitchen-ov .mk-prep .mk-ic {
+  position: relative;
+  display: block;
+  font-size: 27px;
+  line-height: 1;
+  filter: drop-shadow(0 3px 3px rgba(0,0,0,.55));
+}
+#mythic-kitchen-ov .mk-prep > b {
+  position: relative;
+  display: block;
+  margin-top: 11px;
+  font-size: 11.5px;
+  font-weight: 800;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#mythic-kitchen-ov .mk-prep > em {
+  position: relative;
+  display: block;
+  font-style: normal;
+  font-size: 10.5px;
+  color: var(--mk-dim);
+  font-variant-numeric: tabular-nums;
+}
+/* ⚠ GROW, NEVER SHRINK, AND ONLY IN THIS RAIL. A level-1 menu is three dishes
+   and at 360px they left a third of the board empty beside them, which reads as
+   a row that failed to load rather than as a short menu. `1 0 96px` fills the
+   width when the menu is short and keeps every card at its full 96 when the menu
+   reaches nineteen, at which point the rail scrolls — which is what it is for.
+   It must outrank `.mk-rail > * { flex: 0 0 auto }` two hundred lines up, hence
+   the child selector. */
+#mythic-kitchen-ov .mk-rail > .mk-prep { flex: 1 0 96px; max-width: 148px; }
+#mythic-kitchen-ov .mk-prep[data-ok="1"] { border-color: rgba(255,196,120,.42); }
+#mythic-kitchen-ov .mk-prep[data-ok="1"]::before {
+  box-shadow: 0 4px 10px rgba(0,0,0,.55), 0 0 16px rgba(255,214,102,.35), inset 0 -2px 0 rgba(0,0,0,.13);
+}
+#mythic-kitchen-ov .mk-prep:active { transform: translateY(1px); }
+#mythic-kitchen-ov .mk-prep[data-ok="0"] { cursor: not-allowed; }
+#mythic-kitchen-ov .mk-prep[data-ok="0"] .mk-ic { filter: grayscale(.85) brightness(.7); }
+#mythic-kitchen-ov .mk-prep[data-ok="0"]::before { filter: brightness(.45) saturate(.4); }
+#mythic-kitchen-ov .mk-prep[data-ok="0"] > em { color: #d99; }
 #mythic-kitchen-ov .mk-board-count {
   padding: 1px 7px;
   border-radius: 99px;
@@ -1039,6 +1124,57 @@
   animation: mk-ready-pulse 1.4s ease-in-out infinite;
 }
 #mythic-kitchen-ov .mk-serve:active { transform: translateY(1px); }
+
+/* ── 🚗 THE READY TICKET WHOSE CAR IS NOT AT THE WINDOW ─────────────────────
+   🔴 THE ROUND'S HEADLINE DEFECT WAS THIS ONE CONTROL WEARING THIS ONE SKIN.
+   Every drive ticket left on the Customer Orders board belongs, by construction,
+   to a car that is somewhere else in the lane (`boardHtml()` removes only the
+   window car's), and until this round all of them rendered in the full green
+   ready gradient WITH THE PULSE ANIMATION ON — the loudest, most inviting object
+   on the screen — and every single one of them refused. Measured over sixteen
+   frames of a real rush at 390×844: 25 lit taps, 2 sales.
+
+   So the queued state does not merely dim: it stops being the same object. The
+   gradient goes, the pulse goes, the border stops being ready-green, and what is
+   left is a slab of the ticket's own material carrying a car glyph, the queue
+   position and the money — a LABEL that happens to be button-shaped, which is
+   what it now is. `opacity` alone was deliberately not used: at 40% the green is
+   still green and still the brightest thing in the column, which is the exact
+   mistake the pinned card's own `NOT READY` rule (in the ≤819px block) records
+   having made and fixed.
+   ⚠ IT KEEPS EVERY PIXEL OF ITS BOX. Same width, same min-height, same place in
+     the card, so the ticket does not reflow the instant a car moves up the lane
+     — a board that jumps under the thumb during a rush is how the wrong ticket
+     gets served. Only the paint changes. */
+#mythic-kitchen-ov .mk-serve[data-gate="queue"] {
+  background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(0,0,0,.4));
+  border-color: var(--mk-line2);
+  color: var(--mk-dim);
+  /* 🔴 THE CAPTION IS LONGER THAN THE ONE IT REPLACES AND THE COLUMN IS NOT.
+     "SERVE · ◈ 257" is 13 characters; "🚗 2ND IN THE LANE" is 18, in a board
+     column measured at 163 rendered px on a 390×844 phone (two tickets abreast).
+     At the ready button's 12px/.12em it wrapped to a second line that the pinned
+     pass then ate — the affordance said "2ND IN THE" and stopped. So the queued
+     state gets its own type: smaller, tighter, and permitted to wrap onto a
+     second line inside a box that keeps its own tap floor. Measured after: one
+     line at 360, 390, 430 and 1440. */
+  font-size: 11px;
+  letter-spacing: .02em;
+  line-height: 1.15;
+  white-space: normal;
+  padding: 6px 4px;
+  cursor: not-allowed;
+  animation: none;
+}
+#mythic-kitchen-ov .mk-serve[data-gate="queue"]:active { transform: none; }
+/* And the ticket stops claiming to be handable. `[data-state="ready"]` lights
+   the whole card ready-green with a green glow — true of the FOOD, misleading
+   about the ORDER while its customer is three cars back. The card stays lit
+   (the plates really are up) and loses the halo that means "press me". */
+#mythic-kitchen-ov .mk-tk[data-state="ready"]:has(.mk-serve[data-gate="queue"]) {
+  border-color: rgba(95,217,122,.28);
+  box-shadow: 0 0 0 1px rgba(95,217,122,.12), 0 6px 18px rgba(0,0,0,.55);
+}
 
 /* ════════════════════════════════════════════════════════════════════════
    🚗 THE DRIVE-THRU LANE
@@ -2661,6 +2797,20 @@
   background: linear-gradient(180deg, rgba(255,77,94,.14), rgba(0,0,0,.34));
 }
 #mythic-kitchen-ov .mk-led[data-out="1"] > b { color: #ffb4bb; }
+/* 🔴 …BUT NOT BEFORE THE PLAYER HAS PRESSED ANYTHING. With the doors shut on a
+   brand-new account these four chips read 0 Food / 0 Water / 0 DNA / 0 Supplies
+   in red outline and they were, measured, the brightest objects in the lower
+   half of the first frame anyone ever sees. Telling somebody in alarm-red that
+   they have nothing, before they have taken a single action, is the wrong first
+   sentence — and it is not urgent yet, because nothing is cooking and nobody is
+   waiting. The chip keeps its number and its provenance; it loses the alarm
+   until service starts, at which point empty really is the state whose answer is
+   "go and build something". `data-shift` is stamped on the root by paintRoom(). */
+#mythic-kitchen-ov[data-shift="closed"] .mk-led[data-out="1"] {
+  border-color: rgba(255,196,120,.30);
+  background: linear-gradient(180deg, rgba(255,186,92,.08), rgba(0,0,0,.30));
+}
+#mythic-kitchen-ov[data-shift="closed"] .mk-led[data-out="1"] > b { color: var(--mk-dim); }
 
 /* PROVENANCE, under a crate in Supplies. */
 #mythic-kitchen-ov .mk-froms {
@@ -2985,6 +3135,54 @@
 #mythic-kitchen-ov .mk-pin-it > .mk-nm { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #mythic-kitchen-ov .mk-pin-it .mk-mods-in { flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: 3px; padding-left: 18px; }
 #mythic-kitchen-ov .mk-pin-acts { display: flex; gap: 5px; margin-top: 1px; }
+
+/* ── ✅ THE SALE, FOR AS LONG AS THE CAR IS STILL THERE ──────────────────────
+   The reward beat used to end on two grey disabled buttons (see soldBandHtml()
+   in kitchen.render.js). This is the same box in the same grid area, so nothing
+   above or below it moves when the sale lands — the money simply replaces the
+   controls that have just done their job, and the row's height is the button
+   row's height, which is why the card does not jump under a thumb that is on
+   its way back to the pans.
+   ⚠ It is NOT a button and must never look like one: no cursor, no press
+     state, no tap target. It is a receipt. */
+#mythic-kitchen-ov .mk-pin-acts[data-sold="1"] { align-items: center; }
+#mythic-kitchen-ov .mk-sold {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  /* The row it replaces is a 28px control on a mouse and `--mk-tap` (46px) under
+     a thumb. Measured before this line: the band came out 21.8px against the
+     button row's 46 and the whole card shortened by 24px the instant a sale
+     landed — the pass and the pans jumped up under the thumb at the exact moment
+     the player's next tap was already travelling. Matching the floor is what
+     makes "nothing above or below it moves" true rather than intended. */
+  min-height: var(--mk-tap, 28px);
+  gap: 1px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(95,217,122,.55);
+  background: linear-gradient(180deg, rgba(95,217,122,.20), rgba(95,217,122,.06));
+}
+#mythic-kitchen-ov .mk-sold > b {
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: .06em;
+  color: var(--mk-ready);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#mythic-kitchen-ov .mk-sold > i {
+  font-style: normal;
+  font-size: 10.5px;
+  color: var(--mk-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 /* WHAT THE NEXT CAR WANTS, AT A GLANCE — icons and counts, never the itemised
    list with its fills and its promise chips. That list belongs to the board
    ticket that has the Serve button on it, and printing it twice ~250px apart on
@@ -4493,6 +4691,7 @@
 /* Everything that is already a real button just gets a floor under it. */
 #mythic-kitchen-ov[data-touch="1"] .mk-btn,
 #mythic-kitchen-ov[data-touch="1"] .mk-serve,
+#mythic-kitchen-ov[data-touch="1"] .mk-prep,
 #mythic-kitchen-ov[data-touch="1"] .mk-pick,
 #mythic-kitchen-ov[data-touch="1"] .mk-to-chip,
 #mythic-kitchen-ov[data-touch="1"] .mk-to-field,
@@ -4702,6 +4901,7 @@
      larger box can never steal a tap from another verb. */
 #mythic-kitchen-ov .mk-btn,
 #mythic-kitchen-ov .mk-serve,
+#mythic-kitchen-ov .mk-prep,
 #mythic-kitchen-ov .mk-tab,
 #mythic-kitchen-ov .mk-pick,
 #mythic-kitchen-ov .mk-to-chip,

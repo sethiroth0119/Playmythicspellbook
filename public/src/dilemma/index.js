@@ -162,10 +162,27 @@ function makeHost() {
     // ── Deck ───────────────────────────────────────────────────────────────
     /* engine.roster() reads `state.lastDeck` out of the persisted blob rather
        than calling this, because the blob is the thing that survives a reload
-       and the accessor is only a view onto it. It is exposed anyway: the
-       contract lists it, and `debug()` printing what the recorder actually
-       wrote is the fastest way to answer "why is my old deck in there?". */
-    lastDeck: () => { try { const d = B.lastDeck(); return (d && typeof d === 'object') ? d : null; } catch (e) { return null; } },
+       and the accessor is only a view onto it.
+       ⚠ THE OLD VERSION OF THIS COMMENT JUSTIFIED THE ACCESSOR WITH A CLAIM
+       ABOUT debug() THAT WAS SIMPLY FALSE — debug() read `st.lastDeck` out of
+       the normalised state blob and never called this at all, so the sentence
+       described a consumer that did not exist. Rather than delete the claim,
+       debug() now really does call it, and the two readings answer different
+       questions: `lastDeck` below is what engine.ensureState() NORMALISED, and
+       `lastDeckRaw` is what _dilemmaRecordDeck actually WROTE at battle start.
+       When those two disagree the normaliser is the thing to look at, and that
+       is exactly the session where somebody asks "why is my old deck in there?".
+       🔴 AND IT CLONES. index.html's accessor hands back Profile.dilemma.lastDeck
+       BY REFERENCE — a live sub-object of the Profile, `cards` array and all.
+       Every other read on this seam copies (see the header), and handing a
+       console session a live handle into the save is the exact shape of the bug
+       round 1 shipped through `state()`. cloneState() is reused rather than a
+       second cloner written: {id,name,heroId,at} are scalars and `cards` is an
+       array of strings, which is depth 2 of the depth-3 clone. */
+    lastDeck: () => {
+      try { const d = B.lastDeck(); return (d && typeof d === 'object' && !Array.isArray(d)) ? cloneState(d) : null; }
+      catch (e) { return null; }
+    },
     resolveDeckCard: (key) => { try { return B.resolveDeckCard(key) || null; } catch (e) { return null; } },
     /* 🔴 THE JOIN. `Profile.decks[].cards` holds DECK KEYS ('unit:goblin',
        'custom:abc'); `Profile.units` is keyed by BARE CARD IDS ('goblin').
@@ -174,17 +191,25 @@ function makeHost() {
        modal whose whole point is the roster. */
     deckKeyCardId: (key) => { try { return B.deckKeyCardId(key) || null; } catch (e) { return null; } },
     cardById: (id) => { try { return B.cardById(id) || null; } catch (e) { return null; } },
+    /* ⚠ NOTHING IN /src/dilemma CALLS THIS TODAY, and saying so is the point.
+       It is here because CONTRACT §3 names it and because the seam is specified
+       whole rather than as whatever the current consumers happen to need — the
+       bridge side carries the fact that matters (built-ins carry `elements`, an
+       array; a forged card may carry `element`, singular, so reading
+       card.element directly is undefined for every built-in in the game). The
+       bridge comment used to call it MANDATORY, which is a false word for an
+       accessor with no consumer; both halves now say the same true thing. */
     elementsOf: (card) => { try { const e = B.elementsOf(card); return Array.isArray(e) ? e : []; } catch (e) { return []; } },
     fallbackRoster: (n) => { try { const r = B.fallbackRoster(n); return Array.isArray(r) ? r : []; } catch (e) { return []; } },
 
     // ── Units, heroes, bond ────────────────────────────────────────────────
     /* READ-ONLY, AND THEY MUST STAY THAT WAY. Merely LOOKING at a card must
        not fabricate a progression row — window.MythicBridge states the rule for
-       Resonance at index.html:207034-207037 and this feature inherits it: a
+       Resonance at index.html:207105-207108 and this feature inherits it: a
        dilemma modal DISPLAYS units, and displaying is inspecting. The bridge
        side reaches Profile.units directly rather than through getUnitProfile,
        which returns a DETACHED object for a missing row and throws every
-       mutation on it away (getUnitProfile, index.html:73418-73429). Only
+       mutation on it away (getUnitProfile, index.html:73489-73500). Only
        adjustBond creates. */
     unitEntry: (id) => { try { return B.unitEntry(id) || null; } catch (e) { return null; } },
     heroEntry: (id) => { try { return B.heroEntry(id) || null; } catch (e) { return null; } },
@@ -249,10 +274,34 @@ function makeHost() {
        2,147,483,647 comes back negative.
        ⚠ bondOf() above keeps returning 0 for a missing row. That is a real
        answer, not a failed reading, and rewards.js does not treat it as one. */
-    gems: () => { try { const n = Number(B.gems()); return isFinite(n) ? Math.floor(n) : null; } catch (e) { return null; } },
+    gems: () => {
+      try {
+        /* 🔴 THE NULL TEST COMES BEFORE Number(), AND THAT IS THE WHOLE BUG.
+           Round 2 fixed the bridge to answer `null` for an unreadable balance
+           and then left `Number(B.gems())` standing one layer up. `Number(null)`
+           is 0 and `isFinite(0)` is true, so every unreadable balance arrived at
+           rewards.js as "the player has zero Cinder": the fix never reached the
+           consumer, and rewards.js's entire `before === null` family — the
+           disabled paid choice, the charge that must not be re-read into a
+           refusal, the credit that must not be reported as lost — stayed dead
+           code for a THIRD round while the nineteen lines of comment above this
+           accessor asserted the opposite. A comment that one coercion falsifies
+           is a defect, not documentation.
+           So: test for the sentinel FIRST, coerce second. `null` is not `0`.
+           `0` means the player has zero Cinder and nothing else.
+           `undefined` is folded in with it deliberately — a bridge older than
+           the null convention returns nothing at all from a failed read, and
+           "the accessor gave me no answer" is the same fact as "the accessor
+           said it could not read". Both are unreadable; neither is broke. */
+        const g = B.gems();
+        if (g === null || g === undefined) return null;
+        const n = Number(g);
+        return isFinite(n) ? Math.floor(n) : null;
+      } catch (e) { return null; }
+    },
     /* ⚠ Returns TRUE for n <= 0 and, on insufficient funds, returns false and
        does NOTHING ELSE — no toast, no clamp, no render (spendGems,
-       index.html:64490).
+       index.html:64561).
        rewards.canAfford() gates the button and this file toasts the refusal;
        an ungated button would simply do nothing when pressed. */
     spendGems: (n) => { try { return B.spendGems(n) === true; } catch (e) { return false; } },
@@ -261,7 +310,7 @@ function makeHost() {
        to Math.max(0, …) and returns early — a durable client/server divergence.
        ⚠ `reason` is passed through and never defaulted. addGems falls back to
        the literal 'addGems', and that anonymous label is precisely why the
-       Cinder supply could not be audited (index.html:64506-64513). */
+       Cinder supply could not be audited (index.html:64577-64584). */
     addGems: (n, reason) => { try { return B.addGems(n, reason) !== false; } catch (e) { return false; } },
     grantCard: (opts) => { try { const c = B.grantCard(opts); return (c && c.id) ? c : null; } catch (e) { return null; } },
 
@@ -270,6 +319,17 @@ function makeHost() {
        so there is not a single timing literal in /src/dilemma outside the one
        tuning table, which is the rule data.js sets and this file keeps. */
     toast: (m) => { try { B.toast(m); } catch (e) {} },
+    /* ⚠ `confirm` and `isAdmin` are CONTRACT-named surface with no consumer in
+       /src/dilemma either, for the same reason as elementsOf above. Neither is
+       removed: resplitting the seam to match today's call sites is how a bridge
+       ends up being edited every time a module grows a line. But neither is
+       dressed up as required, and a reader grepping for their callers should
+       find this sentence before they find nothing.
+       The wrappers still earn their keep the moment something does call them:
+       gcConfirm() is async and a bridge that throws synchronously would
+       otherwise reject rather than resolve false, and a bridge older than
+       isAdmin() has no such key at all — hence the typeof, which is the only
+       accessor in the adapter that needs one. */
     confirm: (m) => { try { return Promise.resolve(B.confirm(m)).then(v => !!v).catch(() => false); } catch (e) { return Promise.resolve(false); } },
     render: () => { try { B.render(); } catch (e) {} },
     isAdmin: () => { try { return (typeof B.isAdmin === 'function') ? !!B.isAdmin() : false; } catch (e) { return false; } },
@@ -333,7 +393,7 @@ let _busy = false;      // resolve re-entrancy lock; released in a finally
      4. grant        — Cinder and the card. Both persist themselves.
      5. save         — one save for the whole resolution rather than eight;
                        saveProfile() stringifies the entire Profile (50–200 ms,
-                       up to 800 ms on the slow path, index.html:70909-70913).
+                       up to 800 ms on the slow path, index.html:70980-70984).
                        A failure here is REPORTED, not unwound: the state
                        committed and the rewards landed, only the bond ticks are
                        at risk, and taking a granted card back off a player to
@@ -342,7 +402,28 @@ let _busy = false;      // resolve re-entrancy lock; released in a finally
 
    Nothing in here throws. The modal awaits this and paints whatever comes back;
    `null` means "aborted, already explained by a toast" and render.js keeps the
-   player on the choice list so they can pick something else. */
+   player on the choice list so they can pick something else.
+
+   🔴 THIS FUNCTION IS `async` AND CONTAINS NO `await`, AND THAT IS DELIBERATE
+   IN BOTH DIRECTIONS. It is declared async so render.js can await it without
+   caring whether the transaction ever grows an asynchronous step; it contains
+   no await because the read-modify-write above must not yield. index.html has
+   two other writers to Profile.dilemma — _dilemmaRecordDeck at battle start and
+   cloudFetchProfile's hydration merge — and a yield between ensureState() and
+   setState() would silently drop whichever of them landed in the gap.
+
+   ⚠ THE CONSEQUENCE, AND DO NOT "FIX" IT HERE. Because nothing yields, the
+   outcome view repaints inside one microtask, so the second click of an ordinary
+   double-click lands on a panel that has already been replaced under a
+   stationary cursor. This file's half of that holds and was measured at click
+   gaps of 40, 90, 150 and 300 ms: the `_busy` lock plus `inst.resolved` means
+   onChoose fires exactly once and the second click can never resolve anything.
+   What the second click CAN still hit is the backdrop or the acknowledge
+   button, which close the modal — so the player loses the receipt, not the
+   reward. The gate for that belongs in render.paintOutcome(), which is the only
+   layer that knows when the markup changed and where the cursor is. Adding an
+   `await` here to buy time would trade a cosmetic loss for the state hole this
+   whole transaction was rewritten to close. */
 async function resolve(choiceId) {
   const h = host();
   if (!h) return null;
@@ -386,14 +467,39 @@ async function resolve(choiceId) {
 
          It does NOT recover the 2% Foundation spend tax the _gemsTaxTick poll
          may already have billed on the original spend (_gemsTaxTick,
-         index.html:56849). That asymmetry is accepted rather than reaching for
+         index.html:56920). That asymmetry is accepted rather than reaching for
          _gemsTaxExempt, because putting a tax-suppression hole on the bridge to
          recover a few Cinder on a rare, already-reported path is the worse
-         trade. It is stated here rather than hidden. */
-      const back = refundCost(h, choice);
-      h.toast(back
-        ? '⚠ The Heights did not record your call. Your Cinder came back.'
-        : '⚠ The Heights did not record your call, and the refund could not be confirmed.');
+         trade. It is stated here rather than hidden.
+
+         🔴 THREE FORMS, NOT TWO, AND THE THIRD IS THE COMMON ONE.
+         rewards.refundCost() correctly returns false when there is nothing to
+         refund: `n <= 0` cannot be told apart from a failed addGems by the
+         return value alone, so it takes the honest direction and claims
+         nothing. It flagged the consequence and handed the copy across — "the
+         copy is index.js's to soften if anyone wants it softened" — and nobody
+         picked it up. The consequence is structural rather than incidental, so
+         it is stated as a rule and not as a count this file would have to keep
+         up to date: the great majority of choices in the corpus cost nothing,
+         and EVERY refusal is free by validateCorpus's R3, which makes charging
+         a player to walk away an authoring error. So "the refund could not be
+         confirmed" was never the edge message — it was the one a player met
+         every time they refused a dilemma and hit a save failure, told their
+         money might be gone over a call that took none.
+
+         The branch reads `choice.cost`, which is already in hand — no new
+         import, and nothing changes on the rewards side.
+         ⚠ AND refundCost() IS NO LONGER CALLED AT ALL FOR A FREE CHOICE. That
+         is the second half of the fix rather than an optimisation: it was doing
+         nothing but returning false into a sentence about money, and skipping
+         it takes an addGems-adjacent call off the commonest failure path in the
+         feature. */
+      const paid = !!(choice && choice.cost && Number(choice.cost.cinder) > 0);
+      const back = paid ? refundCost(h, choice) : false;
+      h.toast(
+        !paid  ? '⚠ The Heights did not record your call. Nothing was charged.'
+        : back ? '⚠ The Heights did not record your call. Your Cinder came back.'
+               : '⚠ The Heights did not record your call, and the refund could not be confirmed.');
       return null;
     }
     const influenceAfter = influenceOf(h);
@@ -413,8 +519,8 @@ async function resolve(choiceId) {
        (dilemma.id, openedAt, choiceId) alone — that much of a bug report is
        actionable. ⚠ WHICH CARD IS NOT. The identity is picked by three
        unseeded `Math.random()` sites inside the bridge's grantCard
-       (index.html:207945, 207951 — that one inside a six-iteration loop — and
-       207953), over a pool that depends on the player's own Forge settings. So
+       (index.html:208035, 208041 — that one inside a six-iteration loop — and
+       208043), over a pool that depends on the player's own Forge settings. So
        replaying the triple reproduces the land/band decision and a DIFFERENT
        card every run. Threading the rng through grantCard would make the
        stronger claim true; it was rejected as a bridge-surface change made to
@@ -493,7 +599,7 @@ function handlersFor(inst) {
     stance: (unit, choice) => stanceFor(unit, choice),
     preview: (unit, choice) => previewBond(unit, choice),
     /* 🏷 THE POLE LABEL, HANDED OVER RATHER THAN TRANSCRIBED. LQ_POLE_LABEL
-       (index.html:73050) is the game's own vocabulary — '⚔ Honor', '🕊 Mercy'.
+       (index.html:73121) is the game's own vocabulary — '⚔ Honor', '🕊 Mercy'.
        render.js may not call the bridge, and copying eight labels and their
        emoji into the render layer would put the player-facing spelling of the
        value system in two places that can drift. So it comes through the seam,
@@ -620,6 +726,15 @@ const MythicDilemmas = {
       recent: Array.isArray(st.recent) ? st.recent.slice() : [],
       resolved: Number(st.resolved) || 0,
       lastDeck: (st.lastDeck && st.lastDeck.id) ? st.lastDeck.id : (st.lastDeck ? '(keys only)' : null),
+      /* The recorder's own record, read through the accessor rather than out of
+         the normalised blob — the one place the two can be compared. Wrapped
+         because debug() must answer even when a half-built bridge cannot. */
+      lastDeckRaw: (() => {
+        try {
+          const d = h ? h.lastDeck() : null;
+          return d ? { id: d.id || null, cards: Array.isArray(d.cards) ? d.cards.length : 0, at: Number(d.at) || 0 } : null;
+        } catch (e) { return null; }
+      })(),
       rosterSize: MythicDilemmas.roster().length,
       corpusSize: DILEMMAS.length,
       corpus,

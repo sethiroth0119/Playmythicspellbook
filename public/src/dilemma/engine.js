@@ -33,9 +33,22 @@
    file and there must never be one — a second place to put the state back is a
    second place for that bug to come back.
 
+   🔴 `updatedAt` IS THE STAMP OF A DECISION, NOT OF A WRITE. Only a successful
+   `commit()` may advance it: `saveState()` refuses to touch it unless the
+   caller asks with `{ stamp: true }`, and `commit()` is the only caller that
+   asks. The cloud hydration merge in index.html ranks two blobs by `resolved`
+   FIRST and falls back to `updatedAt` only to break a tie, so a device that
+   opened the Heights and decided nothing can no longer outrank a device that
+   resolved. Those are two locks on one door and BOTH are load-bearing —
+   round 2 shipped a merge that trusted the stamp and, in the same commit, a
+   pin write that advanced it; each half was written correctly against a
+   contract that did not name the join, and the bug landed in neither file.
+   Removing either lock on the grounds that the other exists is how it comes
+   back. See `saveState()` and `openDilemma()`.
+
    ⚙ ONE TUNING TABLE. Every number a choice is worth lives in `DILEMMA_ECON`
-   in data.js and nowhere else — the `_opEcon()` habit as index.html:80536-80537
-   states it for CORP_LAWS. If you find yourself typing a magnitude here, it
+   in data.js and nowhere else — the `_opEcon()` habit as the CORP_LAWS header
+   states it (index.html:80551-80553). If you find yourself typing a magnitude here, it
    belongs there instead. The only bare numbers below are algorithm constants
    (FNV-1a's prime, mulberry32's mixing words), the four rung indices of the
    degradation ladder — which are branch labels, not dials — and the identity
@@ -46,8 +59,8 @@ import { DILEMMA_ECON, DILEMMAS, DILEMMA_BY_ID, DILEMMA_SCHEMA_VERSION, INFLUENC
 
 /* ── The value vocabulary ───────────────────────────────────────────────────
    Stance is derived from the SHIPPED value system: eight poles on four opposed
-   axes (LQ_AXES / LQ_POLE_AXIS, index.html:73028-73034) and the tuned
-   approve/oppose magnitudes in LQ_INTENSITY (index.html:73042-73046). Both
+   axes (`LQ_AXES` index.html:73043, `LQ_POLE_AXIS` index.html:73049) and the
+   tuned approve/oppose magnitudes in `LQ_INTENSITY` (index.html:73057-73061). Both
    arrive over the bridge as `host.values()`.
 
    🔴 THE MAGNITUDES ARE NEVER COPIED INTO THIS FILE, and that is a decision.
@@ -164,7 +177,8 @@ export function makeRng(seed) {
   };
 }
 
-/* The CAMP_RUN_EVENTS weight walk (index.html:65732-65735), generalised to
+/* The CAMP_RUN_EVENTS weight walk (`_campRollEvent`, index.html:65747-65750),
+   generalised to
    `[[value, weight], …]` and taking its randomness as an argument so nothing
    downstream of `openDilemma()` ever touches `Math.random()` directly. */
 export function pickWeighted(rows, rng) {
@@ -223,21 +237,40 @@ function defaultState() {
 /* A pinned offer that survived a reload, a corrupt blob or a cross-device merge
    has to load as "no offer", never as a throw and never as a half-record: an
    offer with no id would pin the player to nothing at all for the rest of the
-   45-minute window. `at <= 0` is treated as absent for the same reason
-   `ensureState` drops a `seen` stamp of 0 — a zero timestamp is indistinguishable
-   from never, and pretending otherwise arms a window that opened in 1970. */
+   45-minute window.
+
+   🔴 `at` MUST BE A POSITIVE, FINITE NUMBER — BOTH ENDS, and round 2 only
+   reasoned about one of them. A stamp of 0 is treated as absent for the same
+   reason `ensureState` drops a `seen` stamp of 0: a zero timestamp is
+   indistinguishable from never, and pretending otherwise arms a window that
+   opened in 1970. The symmetric case is the one that shipped broken — a stamp
+   this device's clock cannot have written is not a record either. `openDilemma`
+   measured the pin's age as `now - at` and a FUTURE stamp gives a negative age,
+   which satisfies `< offerCooldownMs` for the whole duration of the skew:
+   driven at one day ahead, eight opens spanning eighteen hours returned the
+   same dilemma eight times out of eight; at one year ahead, the same. This
+   function has no `now` in scope so it cannot range-check the future — it can
+   only reject a value that is not a timestamp at all, and `openDilemma()`'s
+   `age >= 0` test is the other half. Both are needed; neither is spare.
+
+   The coercion is written out rather than routed through `num()` because the
+   SHAPE is the point: `Number()` throws on a Symbol, and NaN / ±Infinity are
+   not clocks. Folding them to 0 and testing `> 0` gets the same answer today,
+   but it hides the rule from the next reader. */
 function normalizeOffer(o) {
   if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
   const id = (typeof o.id === 'string' && o.id) ? o.id : null;
-  const at = num(o.at);
-  if (!id || !(at > 0)) return null;
+  let at = 0;
+  try { const n = Number(o.at); if (isFinite(n) && n > 0) at = n; } catch (e) { at = 0; }
+  if (!id || !at) return null;
   return { id, seed: num(o.seed), at };
 }
 
 /* A recorded deck is only useful if it can still be READ. `_dilemmaRecordDeck`
    in index.html writes this at battle start and deliberately does not call
    saveProfile() (that would add a 50-200 ms stringify to the worst possible
-   moment, index.html:70895-70899), so a half-written or force-quit record is a
+   moment — `saveProfile`'s own perf note, index.html:70910-70912), so a
+   half-written or force-quit record is a
    real shape this has to survive. */
 function normalizeLastDeck(ld) {
   if (!ld || typeof ld !== 'object' || Array.isArray(ld)) return null;
@@ -268,7 +301,9 @@ function normalizeLastDeck(ld) {
    It writes the normalised object back through `host.setState()` so the rest of
    the session reads one shape, but it deliberately does NOT save: merely
    LOOKING at your standing must not cost a whole-Profile stringify. That is the
-   same split `resonanceGet`/`resonanceSet` draws at index.html:207019-207028. */
+   same split `resonanceGet`/`resonanceSet` draws at index.html:207034-207037
+   — the citation index.html's own dilemma bridge uses for the same rule, so
+   the two files now agree about the same function instead of disagreeing. */
 export function ensureState(host) {
   try {
     _absorbValues(host);
@@ -327,8 +362,41 @@ export function ensureState(host) {
    anything other than a plain `true` is a host we cannot vouch for, and the
    failure direction is player-favourable: the resolution aborts, the cost is
    handed back, and nothing was written. Over-reporting a save failure costs the
-   player a click. Under-reporting one costs them their standing. */
-export function saveState(host, state) {
+   player a click. Under-reporting one costs them their standing.
+
+   ────────────────────────────────────────────────────────────────────────────
+   🔴 `opts.stamp` — WHO IS ALLOWED TO MOVE `updatedAt`, AND WHY THE DEFAULT IS
+   "NO". One sentence governs this parameter and both owners of the seam must be
+   able to recite it:
+
+     `updatedAt` is the timestamp of the most recent DECISION, not of the most
+     recent WRITE. Only a successful `commit()` may advance it. `resolved` is
+     the count of decisions and is monotone. A blob that has decided more times
+     outranks a blob that has decided fewer, whatever either one's `updatedAt`
+     says.
+
+   `saveState(host, state)` therefore leaves `updatedAt` exactly as it found it
+   — it neither writes it nor deletes it, and the last real decision's stamp
+   (normalised by `ensureState`) rides through untouched. `saveState(host,
+   state, { stamp: true })` keeps the old behaviour, and `commit()` is the only
+   call site in the feature that passes it.
+
+   THE DEFAULT IS `false` ON PURPOSE, and the asymmetry is the reason. A write
+   that FAILS to stamp merely loses a cross-device merge it should not have won.
+   A write that stamps WRONGLY destroys standing the player earned. So the
+   caller who forgets the parameter gets the safe direction, not the dangerous
+   one. Round 2 is the whole argument: the wiring fixer removed a battle-start
+   stamp from a path that decides nothing, the engine fixer added a persisted
+   offer-pin write — carrying a stamp — to a path that decides nothing, both
+   read their contract correctly, and a stale desktop that merely OPENED the
+   Heights then outranked a phone that had resolved (influence 54 → 50,
+   resolved 1 → 0, an armed 45-minute cooldown → 0).
+
+   ⚠ This is the ENGINE's lock. index.html's hydration merge carries a second,
+   independent one — it ranks on `resolved` before it looks at `updatedAt` at
+   all — and neither may be removed on the grounds that the other exists. Each
+   is written to hold with the other reverted, and each is tested that way. */
+export function saveState(host, state, opts) {
   try {
     if (!state || typeof state !== 'object') return false;
 
@@ -346,7 +414,14 @@ export function saveState(host, state) {
     let prev = null;
     try { prev = host.state(); } catch (e) { prev = null; }
 
-    state.updatedAt = num(host.now());
+    /* The stamp, and ONLY when the caller has declared a decision. `!== true`
+       rather than `!opts.stamp` so a truthy-but-not-true value (a stray `1`
+       from a future refactor) reads as "did not say yes" — the same `=== true`
+       discipline this file applies to `setState` and `save` two lines below,
+       and for the same reason: the safe answer is the one an ambiguous host
+       gets. */
+    if (opts && opts.stamp === true) state.updatedAt = num(host.now());
+
     // A refused setState wrote NOTHING. There is nothing to unwind, and calling
     // setState again to "restore" would be the only write of the pair.
     if (host.setState(state) !== true) return false;
@@ -363,8 +438,35 @@ export function saveState(host, state) {
        If the restoring setState fails too, we still return false and we do NOT
        retry. A host that refuses two writes in a row is not one this file can
        repair from here, and `false` is the right answer either way: the caller
-       refunds, which is the player-favourable direction. */
-    if (prev) { try { host.setState(prev); } catch (e) { /* nothing further to try */ } }
+       refunds, which is the player-favourable direction.
+
+       ⚠ `Object.keys(prev).length`, not a bare `if (prev)`. `{}` is TRUTHY, and
+       `{}` is exactly what `host.state()` returns when it cannot read — the
+       sentinel `ensureState()` documents as "a stranger arriving in Ethos
+       Heights". Writing that back is not a rollback, it is a WIPE: driven
+       against a live blob at influence 88, resolved 40, recent ['a','b'] and a
+       recorded lastDeck, an unreadable snapshot plus a failing save left
+       `Profile.dilemma` as `{}` — the player's whole standing and their deck
+       record gone, on the one path whose entire purpose is to change nothing.
+       An empty snapshot carries no information to restore, so the honest move
+       is to restore nothing and still report the failure.
+
+       ⚠ THE RESIDUAL, STATED RATHER THAN HIDDEN. There is no third option from
+       inside this function: `{}` is the only value the snapshot offers and
+       writing it is the wipe. So on this one path — an unreadable snapshot AND
+       a failed save — the in-memory blob keeps the resolution the caller is
+       about to be told did not happen. Both branches driven side by side: the
+       shipped guard leaves influence 92 / resolved 41 with the deck record
+       intact; round 2's bare `if (prev)` leaves a zero-key blob with the
+       standing and the deck record GONE. Nothing reached disk in either case —
+       `save()` is what failed — so the damage window is until some other
+       system's `saveProfile()` fires, and a dirty blob that the next reload
+       overwrites from disk is strictly better than a wipe that the next save
+       makes permanent. Reachability is very low: the bridge's own `state()`
+       catches its throws and creates `Profile.dilemma = {}` before reading, so
+       an empty answer usually means the blob really is empty — in which case
+       declining to write it back changes nothing at all. */
+    if (prev && Object.keys(prev).length) { try { host.setState(prev); } catch (e) { /* nothing further to try */ } }
     return false;
   } catch (e) { return false; }
 }
@@ -374,7 +476,7 @@ export function influence(host) {
   catch (e) { return DILEMMA_ECON.influenceSeed; }
 }
 
-/* The named rung of the ladder, RESERVE_RANKS-style (index.html:56269-56276).
+/* The named rung of the ladder, `RESERVE_RANKS`-style (index.html:56284-56290).
    Display only — CONTRACT §9.3 is explicit that a name a player can say out
    loud is not one of Influence's two required consumers. Those are the
    eligibility band, the reward multiplier and the choice count. */
@@ -399,14 +501,15 @@ export function rank(value) {
    `_dilemmaRecordDeck` records EVERY key in the deck the player took into
    battle, but index.html's battle-end loop only creates a `Profile.units` row
    for units actually DEPLOYED (`cur._lastBattleFielded = true`,
-   index.html:152696, inside the fieldedSet walk). A twelve-card deck that
+   index.html:152711, inside the fieldedSet walk). A twelve-card deck that
    fielded four leaves eight companions with no profile row at all.
 
    Round 1 read those rows through `bondOf`, which answers 0 for a missing row,
    and printed them at "Wary 0" — the only surface in the game that shows a
    companion below BOND_NEW. The modal then previewed +3 and the resolve landed
    +103, because the bridge's `adjustBond` CREATES the row at BOND_NEW (100)
-   before applying the delta (index.html:73543-73545 is the shape it copies).
+   before applying the delta (`_rezEntry`'s create shape, index.html:73559-73561,
+   is what it copies).
    A unit that OBJECTED was reported as having warmed to the player by +94.
 
    So the row's baseline is the value the mutator will actually start from.
@@ -414,12 +517,23 @@ export function rank(value) {
    BOND_NEW is a bond constant and CONTRACT §0 puts every bond literal in
    DILEMMA_ECON or on the far side of the bridge.
 
-   ⚠ DEGRADATION, STATED. A service-worker-cached index.html predating
-   CONTRACT-R2 §5.3 has no `bondNew` accessor. There is nothing in this file
-   that can honestly recover the creation baseline without writing the literal
-   this file is forbidden to write, so such a row falls back to 0 and behaves
-   exactly as round 1 did — no better, and no worse. It self-heals the moment
-   the accessor exists. */
+   ⚠ THE `0` BRANCH IS UNREACHABLE THROUGH THE SHIPPED SEAM, AND ROUND 2'S
+   COMMENT HERE WAS WRONG ABOUT IT. It claimed that a service-worker-cached
+   index.html without a `bondNew` accessor would make this return 0 and "behave
+   exactly as round 1 did". It does not: index.js's adapter ALWAYS defines
+   `bondNew` and converts the missing-bridge-accessor TypeError into the literal
+   `100` by contract (CONTRACT-R2 §5.3), so `typeof host.bondNew` is a function
+   on every path this file can be reached from. Driven with `delete
+   bridge.bondNew`: newcomer rows still read 100. The behaviour is right; the
+   described failure mode is impossible.
+
+   The branch stays anyway, and NOT as a described degradation — as the
+   totality guard this file applies to every host accessor it touches. It is
+   here so `newcomerBase` is a total function of whatever it is handed, the same
+   way `stanceFor` answers Middle for a null unit. A comment that a single
+   coercion one layer up can falsify is a defect; a guard that is simply never
+   needed is a habit. Those are different things and this file only claims the
+   second one. */
 function newcomerBase(host) {
   try {
     if (typeof host.bondNew !== 'function') return 0;
@@ -467,7 +581,7 @@ function rosterRow(host, id, kind, card, order, fallback) {
   try { tier = host.bondTier(bond); } catch (e) { tier = null; }
 
   /* 🎭 Heroes carry no temperament and never have — `getUnitTemper` would
-     happily DERIVE one from the hero id (index.html:72662), and it would be a
+     happily DERIVE one from the hero id (`getUnitTemper`, index.html:72677), and it would be a
      lie in both directions: the pill would show a temperament the hero does not
      have, and `previewBond` would scale by a multiplier `adjustBond` is never
      going to apply, because adjustBond reads `entry.temper` and a hero entry has
@@ -480,7 +594,7 @@ function rosterRow(host, id, kind, card, order, fallback) {
   /* The reachable ceiling is snapshotted here, once, because `previewBond`
      takes no host (it runs per-unit per-choice on every repaint). ⚠ It is
      `bondCeilingFor(ENTRY)` — passing a NUMBER returns BOND_MAX through the
-     typeof-object guard at index.html:72569, which reads as "the clamp works"
+     typeof-object guard in `bondCeilingFor` (index.html:72584), which reads as "the clamp works"
      while silently ignoring saleCount and everSold. */
   let ceiling = 0;
   try { ceiling = num(host.bondCeiling(entry)); } catch (e) { ceiling = 0; }
@@ -488,7 +602,7 @@ function rosterRow(host, id, kind, card, order, fallback) {
 
   /* CAN legitimately be `[]`, and that is the COMMON case, not an edge case —
      see `stanceFor`. A null card (a forged card whose definition was never
-     published on this device, lookupCustomCard at index.html:51081) resolves the
+     published on this device, `lookupCustomCard` at index.html:51096) resolves the
      same way instead of throwing its way into the render pipeline. */
   let poles = [];
   try { const p = host.valueProfile(card); if (Array.isArray(p)) poles = p; } catch (e) { poles = []; }
@@ -519,9 +633,32 @@ function rankRoster(rows) {
              .slice(0, DILEMMA_ECON.rosterMax);
 }
 
-export function roster(host) {
+/* 🔴 THE ROSTER KNOWS WHICH LADDER IT CAME DOWN, AND ROUND 2 HAD NO WAY TO SAY
+   SO. `roster()` returns an ARRAY, and an empty array cannot distinguish "no
+   deck was ever recorded" from "this player owns no units" — so render's only
+   available test was `rows.length > 0 && rows.every(fallback)`, which is false
+   for `[]`, and a brand-new player read the heading "Standing with you — The
+   deck you last took out" directly above the body "No one is standing with you
+   yet." Two contradicting sentences, on the most common first-session path.
+
+   The fix is a NAME on the instance, not a flag on the rows: `rosterSource` is
+   `'deck' | 'heuristic' | 'none'` and it is set here, by the function that
+   actually took the branch. `'none'` outranks the other two — an empty roster
+   has no source worth naming, and a heading that describes a list with nothing
+   in it is the bug. `roster()` keeps its exported signature and its `[]`
+   failure value verbatim (CONTRACT §4 is frozen); this internal is what
+   `buildInstance` calls.
+
+   ⚠ `'none'` also covers the narrow case of a RECORDED deck that resolved to
+   zero rows — every key filtered out as a spell or an unresolvable `custom:`.
+   It does not fall through to the heuristic, and that is deliberate: the
+   heuristic answers "who have you fought beside most", which is a different
+   question from "who was in that deck", and silently substituting one for the
+   other is the relabelling this file's fallback comment exists to prevent.
+   Zero rows with an honest empty-state line beats a confident wrong list. */
+function rosterOf(host) {
   try {
-    if (!host) return [];
+    if (!host) return { rows: [], source: 'none' };
     const s = ensureState(host);
     const ld = s.lastDeck;
 
@@ -531,11 +668,11 @@ export function roster(host) {
       let order = 0;
 
       /* The hero enters the field separately from the deck — `buildStarterDeck`
-         strips `type === 'hero'` out of the card list at index.html:73794-73795
+         strips `type === 'hero'` out of the card list at index.html:73809-73810
          — so it is prepended rather than found among the keys.
          ⚠ KNOWN GAP, stated rather than worked around: `findHeroById` is not on
          the bridge (CONTRACT §6), and `cardById` (_cardDefById,
-         index.html:87378) only reaches custom + unit pools, so a BUILT-IN
+         index.html:87393) only reaches custom + unit pools, so a BUILT-IN
          starter hero resolves to null here and reads as Middle on every choice.
          Reaching past the bridge for STARTER_HEROES is the globals trap and is
          not an option; adding `heroById()` to §6 is the round-2 fix. */
@@ -573,7 +710,8 @@ export function roster(host) {
         seenIds[id] = 1;
         rows.push(rosterRow(host, id, 'unit', card, order++, false));
       }
-      return rankRoster(rows);
+      const deckRows = rankRoster(rows);
+      return { rows: deckRows, source: deckRows.length ? 'deck' : 'none' };
     }
 
     /* ── Fallback: no deck was ever recorded ────────────────────────────────
@@ -582,8 +720,8 @@ export function roster(host) {
        fielded.
        ⚠ `_lastBattleFielded` is NOT a last-roster record and must never be
        presented as one: it is set true only for units actually DEPLOYED
-       (index.html:152696) and cleared only for benched units that were in
-       s._deckUnitIds (index.html:152795), so a unit from a deck the player
+       (index.html:152711) and cleared only for benched units that were in
+       s._deckUnitIds (index.html:152810), so a unit from a deck the player
        abandoned keeps a stale `true` forever. It is a decaying heuristic, which
        is why every row carries `fallback: true` and render.js is required to
        relabel the section "your most-fought companions", never "your last
@@ -604,9 +742,20 @@ export function roster(host) {
       rows.push(rosterRow(host, id, 'unit', card, order++, true));
     }
     // A brand-new player has no units at all. `[]` is legal and the modal still
-    // opens — render.js prints one honest line rather than an empty box.
-    return rankRoster(rows);
-  } catch (e) { return []; }
+    // opens — render.js prints one honest line rather than an empty box, and
+    // `'none'` is what tells it to print that line WITHOUT a heading that
+    // describes a deck.
+    const heurRows = rankRoster(rows);
+    return { rows: heurRows, source: heurRows.length ? 'heuristic' : 'none' };
+  } catch (e) { return { rows: [], source: 'none' }; }
+}
+
+/* The CONTRACT §4 export, unchanged in signature and in failure value: the
+   units that react, at most `DILEMMA_ECON.rosterMax` of them, `[]` on any
+   failure. Callers that also need to know which ladder produced the list read
+   `instance.rosterSource`. */
+export function roster(host) {
+  try { return rosterOf(host).rows; } catch (e) { return []; }
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -622,7 +771,7 @@ function intensityRank(i) { const n = INTENSITY_ORDER.indexOf(i); return n < 0 ?
    embodies mercy would produce an incoherent dilemma no cheap validator can
    catch — deriving the far side from LQ_AXES makes that unwritable.
 
-   This is the shipped `_lqPoleVerdict(pole, st)` (index.html:73283-73295) turned
+   This is the shipped `_lqPoleVerdict(pole, st)` (index.html:73298-73310) turned
    inside out: there, a pole reads a battle; here, a unit reads a choice. That
    function's `null` return is literally this codebase's own name for the Middle
    stance, which is why Middle is a real answer here and not a shrug.
@@ -644,7 +793,8 @@ export function stanceFor(unit, choice) {
     const up = (unit && Array.isArray(unit.poles)) ? unit.poles : [];
     /* 🔴 THE HONEST FALLBACK, AND IT IS THE COMMON CASE.
        `_lqUnitValueProfile` returns `[]` whenever `_lqArchetypeDefault` finds
-       nothing (index.html:73089-73099) — and it finds nothing whenever the
+       nothing (`_lqUnitValueProfile` index.html:73104-73114, over
+       `_lqArchetypeDefault` index.html:73093-73100) — and it finds nothing whenever the
        joined class+archetype+passive+subclass+factions string is empty or
        matches none of the eight LQ_ARCHETYPE_POLE regexes. A Forge card
        authored with a name, an icon and stats — the ordinary shape of a custom
@@ -689,7 +839,7 @@ export function stanceFor(unit, choice) {
 
 /* ── BOND MAGNITUDE ─────────────────────────────────────────────────────────
    🔴 THIS IS THE RAW DELTA — THE ONE HANDED TO `adjustBond`, NOT THE ONE SHOWN.
-   `adjustBond` (index.html:72578-72599) applies the unit's temperament itself.
+   `adjustBond` (index.html:72593-72615) applies the unit's temperament itself.
    Passing it a temper-scaled number would scale a Vain unit's loss by 1.5 twice
    and land −27 where the table says −12. `previewBond()` below is the display
    half and does the scaling; this half must stay raw.
@@ -698,7 +848,7 @@ export function stanceFor(unit, choice) {
    3/6, zealous 5/10 — multiplied by how much the choice is ABOUT its poles
    (`choice.weight`, one of DILEMMA_ECON.choiceWeights). Inventing a second
    magnitude table for "a unit approved / a unit objected" when a tuned one
-   already ships is the parallel-system mistake index.html:80511 argues against.
+   already ships is the parallel-system mistake index.html:80526 argues against.
 
    Range: ±1 at mild/0.5 up to +8 / −12 at zealous/1.5, hard-capped at
    DILEMMA_ECON.bondCapPerResolve.
@@ -748,7 +898,7 @@ function rawDelta(unit, choice) {
   const signed = (st.stance === 'support' ? 1 : -1) * base * w;
   if (!signed) return 0;
 
-  // The same guard `adjustBond` uses at index.html:72593-72594, for the same
+  // The same guard `adjustBond` uses at index.html:72609, for the same
   // reason: a 0.5 weight must soften a reaction, never delete it.
   const guarded = signed > 0 ? Math.max(1, Math.round(signed)) : Math.min(-1, Math.round(signed));
   return clampAbs(guarded, DILEMMA_ECON.bondCapPerResolve);
@@ -773,7 +923,13 @@ function rawDelta(unit, choice) {
    • A unit whose ceiling has since been LOWERED — sold more than three times,
      or sold at all while Sworn is first-owner-only — sits above its cap, and
      `adjustBond` drops it to the cap on the next adjustment whatever the sign.
-     The preview returns that negative rather than promising a gain.
+     The preview returns that negative rather than promising a gain. It is
+     honest and, on its own, unexplained: a SUPPORTER reading "−551" has to be
+     told why. The two surfaces get that from the same two numbers — the roster
+     row already carries `bond` and `ceiling`, so render derives
+     `bond > ceiling > 0` there; the aftermath row has neither, so
+     `applyStances` reports `overCap` alongside the delta. One condition, three
+     surfaces, which is what keeps the preview and the receipt from disagreeing.
    • A NEWCOMER — a deck card carried into battle but never deployed, so it has
      no profile row yet — clamps from `bondNew()`, which is where the bridge's
      `adjustBond` is about to create it. That is the whole of the round-2 fix
@@ -800,6 +956,14 @@ export function previewBond(unit, choice) {
   } catch (e) { return 0; }
 }
 
+/* ⚙ EXPORTED, AND NOTHING IN `/src/dilemma` IMPORTS IT — the same is true of
+   `eligible()` below. Both are named in CONTRACT §4, so both stay: the seam is
+   specified as a whole rather than as whatever today's consumers happen to
+   reach for, and resplitting the export list is out of scope (CONTRACT-R2
+   §6.11). `render.js` computes its own tallies from `stanceFor` per row because
+   it already has the rows in hand, and `available()` uses the allocation-free
+   `hasEligible()` instead. Saying so here is cheaper than the next reader
+   grepping for a caller, finding none, and wondering whether it is dead. */
 export function stanceTally(units, choice) {
   const out = { support: 0, middle: 0, against: 0 };
   try {
@@ -923,7 +1087,8 @@ export function pickDilemma(host, now, rng) {
     for (let level = 0; level <= 3; level++) {
       const pool = poolAt(s, t, level);
       if (!pool.length) continue;
-      // The CAMP_RUN_EVENTS weight walk, index.html:65732-65735, verbatim in shape.
+      // The CAMP_RUN_EVENTS weight walk (`_campRollEvent`, index.html:65747-65750),
+      // verbatim in shape.
       const total = pool.reduce((a, d) => a + Math.max(0, num(d.weight)), 0);
       if (total <= 0) return pool[0];
       let x = num(r()) * total;
@@ -1090,7 +1255,7 @@ export function rollChoices(dilemma, influenceValue, rng) {
    Cinder — the pin records WHICH decision is on the table, never that it was
    taken. A player who opens the Heights and walks back out has changed nothing
    they can feel, which is the rule `resonanceGet` draws at
-   index.html:207019-207028. `available()` stays strictly read-only: it runs
+   index.html:207034-207037. `available()` stays strictly read-only: it runs
    twice per hub render and must never arm, persist or clear the pin. */
 export function openDilemma(host, opts) {
   try {
@@ -1120,8 +1285,28 @@ export function openDilemma(host, opts) {
        eligibility and not `recent`. */
     if (now < num(s.nextAt)) return null;
 
+    /* 🔴 THE AGE IS BOUND ONCE AND IT MUST BE NON-NEGATIVE.
+       Round 2 wrote `(now - num(pin.at)) < offerCooldownMs` and nothing else. A
+       pin stamped in the FUTURE gives a NEGATIVE age, and a negative number is
+       less than the cooldown forever — so the pin is replayed for the entire
+       duration of the skew and the player is stranded on one dilemma. Driven
+       with a pin one day ahead: eight opens spanning eighteen hours of real
+       time returned the same id eight out of eight; at one year ahead, the
+       same; at one hour ahead it self-healed once real time overtook the skew,
+       which is what confirms the mechanism rather than a coincidence.
+
+       It is reachable without malice and it is not a jailbroken-phone case. A
+       device whose date is fast writes the pin here, and before CONTRACT-R3 the
+       same write stamped `updatedAt` and won the cloud merge onto a
+       correct-clock device. The stamp is gone now (see `saveState`) and the
+       merge ranks on `resolved` first, so the pin can no longer travel by
+       outranking a real resolution — but a merged blob can still legitimately
+       carry a foreign `at`, so the range check stays. `normalizeOffer` rejects
+       an `at` that is not a timestamp at all; this rejects one that is a
+       timestamp from a clock we do not share. Neither half covers the other. */
     const pin = s.offer;
-    if (pin && (now - num(pin.at)) < DILEMMA_ECON.offerCooldownMs) {
+    const pinAge = pin ? (now - num(pin.at)) : 0;
+    if (pin && pinAge >= 0 && pinAge < DILEMMA_ECON.offerCooldownMs) {
       const pinned = (DILEMMA_BY_ID && DILEMMA_BY_ID[pin.id]) || null;
       if (pinned && withinBand(pinned, s.influence)) {
         /* Replayed from the pin's OWN clock, not from now — the seed, the choice
@@ -1149,14 +1334,34 @@ export function openDilemma(host, opts) {
        pinning against a dead clock would spend a whole-Profile stringify on a
        record the next load deletes, on EVERY open.
 
-       ⚠ AND IT STAMPS `updatedAt`, DELIBERATELY. The cloud hydration merge picks
-       influence / recent / nextAt / resolved wholesale by that stamp, so a write
-       that did not move the standing must not touch it — which is exactly why
-       CONTRACT-R2 §5.5 deletes the battle-start touch in `_dilemmaRecordDeck`.
-       This is the other case: the pin IS dilemma state, written on the device
-       the player is looking at, so claiming the later write is the correct one.
-       The distinction is "did a dilemma field change", not "did something
-       happen". */
+       🔴 AND IT MUST NOT STAMP `updatedAt`. ROUND 2 GOT THIS BACKWARDS AND THE
+       COMMENT THAT SAT HERE ARGUED FOR THE BUG.
+
+       The pin records WHICH decision is on the table. It never records that one
+       was taken. `saveState()` is called WITHOUT `{ stamp: true }` above, so
+       this write leaves the stamp exactly where the last real decision left it
+       — and that is the whole fix. The old comment reasoned that "the pin IS
+       dilemma state, written on the device the player is looking at, so
+       claiming the later write is the correct one"; index.html's merge comment,
+       written in the same round by a different owner, asserted the opposite
+       ("`updatedAt` now moves only inside saveState() … the later blob is
+       genuinely the one that decided last"). Both were half-arguments about a
+       join neither file owned, and between them they reopened the exact hole
+       CONTRACT-R2 §5.5 had just closed for `_dilemmaRecordDeck`: a stale
+       desktop that OPENED the Heights and decided nothing outranked a phone
+       that had resolved — influence 54 → 50, resolved 1 → 0, an armed
+       45-minute cooldown → 0, with only `seen` surviving because `seen` was the
+       one field with a per-field merge rule.
+
+       The distinction that settles it is "did `resolved` move", not "did a
+       field change" and not "did something happen". Opening is inspecting; the
+       pin is a field of a blob that has not decided anything new, so its write
+       is silent on the merge. `commit()` is the only writer that speaks.
+
+       This is the engine's lock. index.html's hydration merge holds a second,
+       independent one — it ranks on `resolved` before it consults `updatedAt`
+       at all — and the two are deliberately redundant. Deleting either because
+       the other exists is what round 2 proves you must not do. */
     if (now > 0) {
       s.offer = { id: d.id, seed, at: now };
       saveState(host, s);
@@ -1171,13 +1376,23 @@ export function openDilemma(host, opts) {
    in any field would be the bug the pin exists to prevent, wearing a disguise. */
 function buildInstance(host, state, dilemma, seed, openedAt) {
   const influenceAtOpen = clampInfluence(state.influence);
+  /* One call, two fields. Deriving the source separately would mean walking the
+     ladder twice and risking the list and its label disagreeing — which is the
+     class of bug this field exists to close, not one to reintroduce. */
+  const r = rosterOf(host);
   return {
     dilemma,
     choices: rollChoices(dilemma, influenceAtOpen, makeRng(seed)),
     seed,
     openedAt,
     influenceAtOpen,
-    roster: roster(host),
+    roster: r.rows,
+    /* 'deck' | 'heuristic' | 'none' — CONTRACT-R3 §6.3. Additive and optional
+       by contract: render.js is required to render correctly when it is absent
+       (a stale service-worker engine.js), and its fallback there must suppress
+       the sub-line rather than guess at one. A signal that does not arrive must
+       make render say NOTHING, never something false. */
+    rosterSource: r.source,
     resolved: false,
   };
 }
@@ -1193,11 +1408,14 @@ function buildInstance(host, state, dilemma, seed, openedAt) {
    path) stamps `bondScaled: true`.
 
    ⚠ `bondScaled: true` IS NOT COSMETIC. `saveProfile()` runs `_migrateBondScale`
-   (index.html:70880 → 72790) across every entry, and `_migrateBondEntry`
-   rewrites any unflagged `bond <= 100` as `round(100 + bond * 11)`. A row
+   on its first line (index.html:70895); `_migrateBondScale` is at
+   index.html:72805 and walks every entry, and
+   `_migrateBondEntry` (index.html:72799-72804) rewrites any unflagged
+   `bond <= 100` as `round(100 + bond * 11)`. A row
    created at BOND_NEW (100) without the flag becomes 1200 — instantly Sworn —
    on the very next save. The bridge does the create exactly as `_rezEntry` does
-   (index.html:73543-73545); this file's job is to never invent a second path.
+   (`_rezEntry`'s create shape, index.html:73559-73561); this file's job is to
+   never invent a second path.
 
    ⚠ THE DELTA HANDED OVER IS THE RAW ONE. `adjustBond` scales by temperament
    itself. Passing `previewBond()`'s output would apply a Vain unit's 1.5 loss
@@ -1234,16 +1452,71 @@ export function applyStances(host, instance, choice) {
       try { after = host.adjustBond(u.id, want, u.kind); } catch (e) { after = null; }
       const ok = (typeof after === 'number' && isFinite(after));
 
-      /* `delta` is what LANDED, never what was asked for, and `landed` is false
-         when the bridge refused (null) or when the ceiling ate the change. The
-         aftermath view prints these, and a resolution that claims a companion
-         warmed to you when their bond did not move is the kind of small lie a
-         player notices exactly once and then stops trusting the screen. */
+      /* `delta` is what LANDED, never what was asked for. A resolution that
+         claims a companion warmed to you when their bond did not move is the
+         kind of small lie a player notices exactly once and then stops trusting
+         the screen.
+
+         🔴 `landed` IS TWO-VALUED AND IT WAS CARRYING THREE MEANINGS. Round 2
+         wrote `landed: ok && after !== before`, which collapses "the bridge
+         refused the write" and "the ceiling absorbed it" into one `false`.
+         render.js's ledger could then only take its `!landed` arm and printed
+         "not recorded" for both — so a Sworn companion at 1200 who SUPPORTED
+         the call read "This one cannot move — their regard is already at its
+         ceiling" in the roster and "not recorded" in the receipt, in the same
+         modal, three seconds apart. The render owner saw the ambiguity, refused
+         to guess, and had no field to read; the engine owner was never told.
+         Neither could fix it alone, which is exactly why the field is specified
+         here rather than inferred there.
+
+         `status` is that field, and it is TOTAL — five values, no gaps, no
+         sixth meaning to be invented later:
+
+           'refused'   the bridge returned null / non-finite. Nothing was written.
+           'moved'     the bond moved, by `delta`.
+           'ceiling'   accepted, nothing moved, and we ASKED for a gain — the cap.
+           'floor'     accepted, nothing moved, we asked for a loss, and there was
+                       nothing left to take (`before <= 0`).
+           'unchanged' accepted, nothing moved, any other shape. This file will
+                       not guess which end, and says so rather than picking one.
+
+         🔴 INVARIANT, ASSERTED IN THE DRIVER ON EVERY PATH:
+         `landed === (status === 'moved')`. `landed` keeps today's exact value
+         because CONTRACT §4's `AppliedBond` names it; `status` is strictly more
+         informative and never contradicts it.
+
+         ⚠ 'not recorded' is render's copy for `'refused'` and for NOTHING else,
+         including a row with no `status` at all. A stale service-worker
+         engine.js that emits none must make the ledger print a blank note —
+         accurate but unexplained — rather than round 2's confident falsehood.
+
+         `overCap` answers the other question the receipt could not: WHY a unit
+         that agreed with you lost bond. A companion whose `bondCeilingFor` has
+         been LOWERED beneath its current bond (sold more than three times, or
+         sold at all while Sworn) is dropped to the cap by `adjustBond` on the
+         next adjustment whatever the sign. Driven at saleCount 6, bond 900,
+         ceiling 349: the roster reads "▲ Support −551", the receipt reads "▼
+         Cold Operator −551", and round 2 put nothing on either surface saying
+         why. It is computed from the SAME `before` this row reports and the
+         same `u.ceiling` `previewBond()` clamps against — one number feeding
+         three surfaces, which is the property that made 567 of 567 previews
+         match what landed. */
+      const moved = ok && after !== before;
+      let status;
+      if (!ok) status = 'refused';
+      else if (moved) status = 'moved';
+      else if (want > 0) status = 'ceiling';
+      else if (want < 0 && before <= 0) status = 'floor';
+      else status = 'unchanged';
+
+      const cap = num(u.ceiling);
       out.push({
         id: u.id, kind: u.kind, name: u.name,
         before, delta: ok ? (after - before) : 0, after: ok ? after : before,
         requested: want, stance: st.stance, reason: st.reason,
-        landed: ok && after !== before,
+        landed: moved,
+        status,
+        overCap: cap > 0 && num(before) > cap,
       });
     }
     return out;
@@ -1324,7 +1597,11 @@ export function commit(host, instance, choice, influenceDelta) {
        waiting when they try again. */
     s.offer = null;
 
-    if (saveState(host, s) !== true) return false;
+    /* 🔴 THE ONE STAMPING WRITE IN THE FEATURE. `{ stamp: true }` says a
+       DECISION was taken, which is the only thing `updatedAt` is allowed to
+       mean (see `saveState`). Every other `saveState` call in this file and in
+       index.js omits it and therefore leaves the stamp alone. */
+    if (saveState(host, s, { stamp: true }) !== true) return false;
 
     /* Only now. `true` from this function means the resolution is durably
        written, and index.js is entitled to spend bond and mint a card on it. */

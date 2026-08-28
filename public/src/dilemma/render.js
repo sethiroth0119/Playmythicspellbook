@@ -58,6 +58,7 @@ let _busy     = false;     // re-entrancy lock on the delegated click router
 let _opener   = null;      // element focus is restored to on close
 let _onKey    = null;      // the document-level Escape listener, so it can be removed
 let _closing  = false;     // guards the close → onClose → close() re-entry
+let _settledAt = 0;        // Date.now() of the choose→outcome swap; see paintOutcome()
 
 /* ── esc ──────────────────────────────────────────────────────────────────
    LOCAL, deliberately. `escapeHtml()` is a top-level declaration in index.html
@@ -152,9 +153,10 @@ const STANCE = {
 
 /* Middle is four different silences and the modal says which. 'no-opinion' is
    the COMMON one — a Forge card authored with a name, an icon and stats resolves
-   to no value poles at all — _lqUnitValueProfile returns [] when there is no
-   valueProfile, no legacy `values` and no archetype hit — index.html:73089-73098)
-   — so it gets the plainest, least apologetic wording of the four. */
+   to no value poles at all: `_lqUnitValueProfile` (index.html:73171-73181)
+   returns [] when there is no `valueProfile`, no legacy `values` and no
+   archetype hit — so it gets the plainest, least apologetic wording of the
+   four. */
 const MIDDLE_WORD = {
   torn:         'Torn',
   'no-opinion': 'No view',
@@ -168,7 +170,7 @@ const MIDDLE_WHY = {
   procedural:   'There is no side to take here.',
 };
 
-/* Pole names come from LQ_POLE_LABEL (`index.html:73035`) — "⚔ Honor", not
+/* Pole names come from `LQ_POLE_LABEL` (index.html:73117) — "⚔ Honor", not
    "Honor" — and they arrive through `handlers.poleLabel()`, which index.js
    builds off `values().poleLabel`. This file still may not call the bridge, and
    it still refuses to transcribe those eight labels and their emoji into a
@@ -356,9 +358,25 @@ export const DILEMMA_CSS = `
 #${OV} .md-choice.on .lb{color:#f6dc95}
 #${OV} .md-choice .ds{display:block;font-size:.86rem;line-height:1.5;color:#c9bc9c;overflow-wrap:anywhere}
 #${OV} .md-eff{display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;align-items:center}
+/* 🔴 \`overflow-wrap:anywhere\`, NOT \`break-word\`, AND THE DIFFERENCE IS THE
+   WHOLE FIX. These three chips carry \`describe()\`'s cost / reward / standing
+   strings, which are built in rewards.js — a file another agent edits, and the
+   one surface here whose text this file cannot see. Measured in Chromium with a
+   400-character unbreakable token in \`costText\`: the chips drove 3,673px past
+   \`.md-body\` at 1280x900 and 4,366px at 390x844, putting both \`.md-body\` and
+   \`.md-wrap\` into horizontal scroll.  With the rule: 0 escapes, 0 scroll, the
+   chip wrapping inside its own column at 553px / 335px. \`break-word\` would NOT have fixed it: it wraps at paint time but
+   leaves the min-content contribution at the full token, so a flex item's
+   \`min-width:auto\` still reserves the whole string and the row still overflows.
+   \`anywhere\` shrinks min-content to one character, which is what lets the flex
+   item actually give ground. Nothing in the shipped corpus is anywhere near
+   this — it is the guard for the day something player-authored reaches
+   describeChoice(), which is the failure this file's header argues you cannot
+   see coming. */
 #${OV} .md-tag{display:inline-flex;align-items:center;gap:.3rem;padding:.14rem .5rem;border-radius:5px;
   font-size:.72rem;font-weight:600;letter-spacing:.02em;background:rgba(255,255,255,.03);
-  border:1px solid var(--c,rgba(255,255,255,.16));color:#cfd8ea;font-variant-numeric:tabular-nums}
+  border:1px solid var(--c,rgba(255,255,255,.16));color:#cfd8ea;font-variant-numeric:tabular-nums;
+  min-width:0;max-width:100%;overflow-wrap:anywhere}
 #${OV} .md-tag.cost{--c:rgba(224,168,106,.55);color:#e8c48d}
 #${OV} .md-tag.rew{--c:rgba(212,175,55,.5);color:#f0cf7a}
 #${OV} .md-tag.up{--c:rgba(60,208,192,.55);color:#7fd8cc}
@@ -433,13 +451,45 @@ export const DILEMMA_CSS = `
 #${OV} .md-delta.nil{color:#6f665a}
 /* .bond-pill declares \`border:1px solid\` with NO colour at index.html:16034 —
    it is invisible without the tier colour supplied inline, which is exactly how
-   the live unit panel uses it at index.html:140362. Redeclared here rather than
-   inherited so the panel is correct in any host. */
+   the live unit panel uses it (the \`getBondTier\` pill, index.html:140444).
+   Redeclared here rather than inherited so the panel is correct in any host.
+
+   🔴 THESE TWO ARE \`white-space:nowrap\` AND THAT IS WHY THEY NEEDED CLIPPING.
+   The tier name comes from BOND_TIERS and the temper name from the temperament
+   table — dev-authored today, both of them, and both nonetheless measured
+   driving the panel sideways on a 400-character unbreakable token, each one on
+   its own: the pill 4,075px past \`.md-body\` at 1280 and 4,172px at 390, the
+   temper name 3,823px and 3,920px.  Both put \`.md-body\` into horizontal
+   scroll. Wrapping them is not the answer (a two-line pill wrecks the row
+   grid), so they clip instead. \`min-width:0\` is the load-bearing half and is
+   easy to leave out: these are flex items, their \`min-width:auto\` resolves to
+   min-content, and for nowrap text min-content is the WHOLE string — which
+   beats \`max-width\` outright, because min-width wins over max-width in the
+   cascade's used-value stage. Without it the \`overflow:hidden\` below never gets
+   a box small enough to clip anything. Measured, not reasoned: with the 400-char
+   token the pill's scrollWidth is 4,486px inside a 258px clientWidth and the
+   panel does not scroll; without \`min-width:0\` the same input drove it 4,075px
+   past \`.md-body\`.
+
+   ⚠ ONLY ONE OF THE TWO ACTUALLY ELLIPSISES, AND THE COMMENT SAYS SO RATHER
+   THAN THE RULE IMPLYING OTHERWISE. Both are flex items of \`.md-umeta\`, so both
+   are blockified — but \`.bond-pill\` is blockified to \`flex\` (from inline-flex)
+   and \`text-overflow\` does not reach the anonymous item inside a flex
+   container, so the pill CLIPS with no '…'. \`.md-temper\` is a plain span,
+   blockified to \`block\`, and does ellipsise. Measured computed values:
+   \`.bond-pill\` display flex / textOverflow ellipsis / scrollW 4486 vs clientW
+   258; \`.md-temper\` display block / scrollW 4253 vs clientW 260 with a visible
+   '…'. The declaration is kept on the pill because it costs nothing and becomes
+   live the day the pill's text is wrapped in its own element — but nobody
+   should read this rule and believe an ellipsis is on screen today. The FIX is
+   the clip; the ellipsis is a courtesy one of the two surfaces gets. */
 #${OV} .bond-pill{display:inline-flex;align-items:center;gap:3px;border:1px solid;
   background:rgba(0,0,0,.3);padding:.06rem .42rem;border-radius:3px;font-family:'Cinzel',serif;
   font-size:.66rem;font-weight:700;letter-spacing:.05em;cursor:help;
-  font-variant-numeric:tabular-nums;white-space:nowrap}
-#${OV} .md-temper{font-size:.68rem;color:#8d8370;letter-spacing:.03em;cursor:help}
+  font-variant-numeric:tabular-nums;white-space:nowrap;
+  min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+#${OV} .md-temper{font-size:.68rem;color:#8d8370;letter-spacing:.03em;cursor:help;
+  white-space:nowrap;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis}
 
 /* ── consequence + commit ──
    The consequence band sits OUTSIDE the scrolling body, pinned between it and
@@ -627,6 +677,44 @@ function choiceHtml(choice, idx) {
   </button>`;
 }
 
+/* 🔴 THE ICON IS GUARDED BEFORE IT IS CLAMPED, and the clamp is why this is
+   needed rather than instead of it. `.md-uicon`'s `overflow:hidden` stops a
+   player-authored icon field from painting across the name and the bond pill —
+   but what it leaves in the cell is the first ~26px of that field, and for the
+   field `<img src=x onerror=…>` that is the visible, escaped fragment `<im`.
+   Safe, and it still reads as a broken row in the one panel this modal exists
+   to show. So the row shows a card glyph instead of three characters of
+   somebody's markup, and the CSS clamp stays as the backstop for what this
+   cannot catch: one legitimate glyph that renders very wide.
+
+   ⚠ THE TEST IS SHAPE, NOT LENGTH, AND THAT IS A DELIBERATE DEPARTURE FROM THE
+   OBVIOUS RULE — measured, because the obvious rule is wrong on this codebase's
+   own data. `icon.length <= 2` reads as "one emoji" and is not: any emoji
+   carrying VARIATION SELECTOR-16 is THREE UTF-16 units, and a ZWJ sequence is
+   five. Run against the 385 distinct `icon:` literals in index.html, a length
+   rule discards 30 real ones — 🏛️ 🏚️ 🛡️ 🗡️ 👁️ 🕯️ 🏴‍☠️ 🧑‍🔧 among them, and
+   🏛️ is the DEFAULT DILEMMA ICON this feature's own header prints. Trading a
+   markup fragment for a wrong glyph on thirty shipped cards is not a fix.
+
+   What actually separates the two cases is that markup contains characters an
+   icon never does. `<`, `>`, `&`, quotes, `=`, a slash, a backtick, a control
+   character, or two ASCII letters in a row: every hostile field measured has at
+   least one; no emoji has any. Stripping the joiners then caps what survives at
+   three code points, so a lone letter or digit still passes and a word does
+   not. Measured on the same 385: 15 rejected, and every one of the 15 is a
+   genuine non-glyph — an `assets/…png` path or a word like 'sword'. All four
+   hostile fields the harness drives are rejected, `<im` included. */
+const ICON_UNSAFE = /[<>&"'=`\\/\u0000-\u001f]|[A-Za-z]{2}/;
+const ICON_JOINERS = /[\u200d\ufe0f\ufe0e]/g;
+function iconFor(unit) {
+  const dflt = (unit && unit.kind === 'hero') ? '🎖' : '🃏';
+  try {
+    const s = String((unit && unit.icon) || '');
+    if (!s || ICON_UNSAFE.test(s)) return dflt;
+    return Array.from(s.replace(ICON_JOINERS, '')).length <= 3 ? s : dflt;
+  } catch (e) { return dflt; }
+}
+
 function rosterRowHtml(unit, choice) {
   const st = stanceOf(unit, choice);
   const meta = STANCE[st.stance] || STANCE.middle;
@@ -657,9 +745,41 @@ function rosterRowHtml(unit, choice) {
      the field that settles it was on the row all along. */
   const stuck = (st.stance !== 'middle' && d === 0);
   const floored = stuck && st.stance === 'against' && (Number(unit.bond) || 0) <= 0;
+
+  /* 🔴 A SUPPORTER CAN PREVIEW −551, AND ROUND 2 SAID NOTHING ABOUT WHY.
+     `bondCeilingFor` LOWERS a companion's cap when it has been sold more than
+     three times, or sold at all while Sworn — and `adjustBond` then drops the
+     unit to that cap on the next adjustment WHATEVER THE SIGN. `previewBond`
+     clamps the same way and honestly returns the negative. Driven at
+     saleCount 6, bond 900, ceiling 349: the row read "▲ Support −551" with the
+     title "Their bond moves by −551 if you make this call." — true, and a
+     player reading it can only conclude the modal is broken or that agreeing
+     with them costs them. Neither is what happened.
+
+     This side needs NO SEAM. `bond` and `ceiling` are both already on the row
+     (engine's rosterRow), so the condition is derived here from the same two
+     numbers `previewBond` clamped against and the same two the aftermath row
+     reports as `overCap` — one condition, three surfaces, which is the property
+     that kept 567 of 567 previews matching what landed. The NUMBER is not
+     touched: it is correct and it is what will happen. Only the silence is the
+     defect, so only the sentence changes.
+
+     ⚠ MIDDLE IS EXCLUDED, AND THAT IS NOT TIDINESS. `applyStances` skips a
+     middle unit outright (`if (st.stance === 'middle') continue`), so no
+     `adjustBond` call is made for them and the lowered cap does NOT collect on
+     this decision. Telling an ambivalent companion's row "whatever you decide
+     now settles them back to their limit" would be the modal predicting a write
+     that is not going to happen — a new small lie in the sentence added to stop
+     one. They keep the ordinary "their bond does not move on this", which is
+     exactly what will occur. */
+  const cap = Number(unit.ceiling) || 0;
+  const over = st.stance !== 'middle' && cap > 0 && (Number(unit.bond) || 0) > cap;
+
   const dCls = d > 0 ? 'up' : d < 0 ? 'dn' : 'nil';
   const dTxt = d > 0 ? '+' + d : d < 0 ? '−' + Math.abs(d) : (stuck ? '0' : '·');
-  const dTitle = floored
+  const dTitle = over
+    ? 'They are holding more regard than they can keep. Whatever you decide now settles them back to their limit.'
+    : floored
     ? 'This one cannot fall further — their regard is already on the floor.'
     : stuck && st.stance === 'support'
     ? 'This one cannot move — their regard is already at its ceiling.'
@@ -671,17 +791,19 @@ function rosterRowHtml(unit, choice) {
     ? `<span class="md-temper" title="${esc(unit.temper.blurb || '')}">${esc(unit.temper.icon || '')} ${esc(unit.temper.name)}</span>` : '';
 
   /* A forged card whose definition was never published on THIS device resolves
-     to `card: null` (lookupCustomCard, index.html:51081) and engine falls back
+     to `card: null` (`lookupCustomCard`, index.html:51163) and engine falls back
      to printing the stored id. Left bare that reads as a bug in the player's own
      collection, so the row says what it is instead. Dropping the row was the
      other option and is worse: their deck would look shorter than it is. */
   const unknown = !unit.card;
+
+  const icon = iconFor(unit);
   const nameTitle = unknown
     ? ' title="This card travelled with you, but its definition was never published on this device. It has no view here."'
     : '';
 
   return `<div class="md-urow ${meta.cls}${quiet ? ' quiet' : ''}">
-    <span class="md-uicon" aria-hidden="true">${esc(unit.icon || (unit.kind === 'hero' ? '🎖' : '🃏'))}</span>
+    <span class="md-uicon" aria-hidden="true">${esc(icon)}</span>
     <span class="md-ucell">
       <span class="md-uname${unknown ? ' unknown' : ''}"${nameTitle}>${esc(unit.name || unit.id)}${
         unknown ? '<span class="tag">Unlisted</span>'
@@ -700,20 +822,49 @@ function rosterRowHtml(unit, choice) {
   </div>`;
 }
 
+/* ⚠ THE HEADING CHANGES WHEN THE ROSTER IS A GUESS, and that is a requirement,
+   not a nicety. The fallback ladder ranks Profile.units by `_lastBattleFielded`,
+   which is set true only for units actually DEPLOYED (index.html:152778) and
+   cleared only for benched units that were in `s._deckUnitIds`
+   (index.html:152877) — so a unit from a deck the player abandoned keeps a
+   stale `true` forever. It is a decaying heuristic. Calling it "your last deck"
+   would be the modal telling a small lie about the player's own collection,
+   which is the kind of thing a player notices and never trusts again.
+
+   🔴 AND THERE IS A THIRD CASE, WHICH ROUND 2 PRINTED AS THE FIRST ONE. A
+   brand-new player has no units and no recorded deck, so `roster()` returns
+   `[]` — and `[]` fails `every(fallback)` the same way a real deck does, so the
+   panel printed "Standing with you — The deck you last took out. They can hear
+   this too." directly above "No one is standing with you yet. Take a deck out
+   past the wall…". Two sentences contradicting each other, in the same box, on
+   the most common first-session path there is. An array cannot carry the
+   difference between "no deck was recorded" and "this player owns nothing", so
+   the engine now NAMES it: `instance.rosterSource` is 'deck' | 'heuristic' |
+   'none' (CONTRACT-R3 §6.3), set by the function that actually took the branch.
+
+   🔴 AND THE FALLBACK IS WRITTEN TO FIX F8 ON ITS OWN. `rosterSource` is
+   additive and optional by contract, so a stale service-worker engine.js will
+   hand this file an instance without it — and the round-2 lesson is that a
+   consumer which needs a signal to be honest is a consumer that will one day be
+   dishonest. So the no-signal path keeps the old derivation for the heading AND
+   suppresses the sub-line whenever the roster is empty, which is the single
+   clause that makes the contradiction impossible from here regardless of what
+   the engine says. The rule is §6.0's: a signal that does not arrive must make
+   this file say NOTHING, never something false. */
 function rosterHtml() {
   const choice = focusedChoice();
-  const fallback = _roster.length > 0 && _roster.every((u) => u && u.fallback);
 
-  /* ⚠ THE HEADING CHANGES WHEN THE ROSTER IS A GUESS, and that is a
-     requirement, not a nicety. The fallback ladder ranks Profile.units by
-     `_lastBattleFielded`, which is set true only for units actually DEPLOYED
-     (index.html:152696) and cleared only for benched units that were in
-     s._deckUnitIds (index.html:152795) — so a unit from a deck the player
-     abandoned keeps a stale `true` forever. It is a decaying heuristic.
-     Calling it "your last deck" would be the modal telling a small lie about
-     the player's own collection, which is the kind of thing a player notices
-     and never trusts again. */
-  const head = fallback
+  const src = _instance && typeof _instance.rosterSource === 'string' ? _instance.rosterSource : '';
+  const heuristic = src ? src === 'heuristic'
+                        : (_roster.length > 0 && _roster.every((u) => u && u.fallback));
+  // 'none' when the engine says so; and, with no signal at all, whenever there
+  // is nothing to describe. Both reach the same place: a heading with no claim
+  // under it, and `rosterRowsHtml`'s one honest line carrying the explanation.
+  const none = src ? src === 'none' : _roster.length === 0;
+
+  const head = none
+    ? `<h3 class="md-h3">Standing with you</h3>`
+    : heuristic
     ? `<h3 class="md-h3">Your most-fought companions</h3>
        <p class="md-sub">No deck has gone into battle since the Heights started asking. These are the ones you have fought beside most.</p>`
     : `<h3 class="md-h3">Standing with you</h3>
@@ -759,14 +910,31 @@ function consequenceHtml() {
   const eff = describeOf(choice);
   const can = affordableOf(choice);
 
-  // The two clamps are counted apart for the reason rosterRowHtml() gives: the
-  // band asserted "already at the ceiling" over a unit sitting on the floor, so
-  // the modal told the same lie twice in the same viewport.
-  let up = 0, dn = 0, still = 0, atCeiling = 0, atFloor = 0;
+  /* The clamps are counted apart for the reason rosterRowHtml() gives: the band
+     asserted "already at the ceiling" over a unit sitting on the floor, so the
+     modal told the same lie twice in the same viewport.
+
+     🔴 THE BAND AND THE ROW MUST AGREE, AND ON AN OVER-CAP SUPPORTER THEY DID
+     NOT. A companion whose ceiling was lowered beneath its bond previews a
+     large NEGATIVE even while it supports the call, so it fell into `dn` and
+     the band said "1 loses it" over a row whose own title now explains that
+     they are settling back to a limit. Counting them as a straightforward loss
+     is the same class of error as calling a floor a ceiling: the number is
+     right and the word for it is wrong. `over` is derived from exactly the
+     expression rosterRowHtml() uses, so the two cannot drift.
+
+     Only a SUPPORTER is pulled out. An over-cap unit that opposed the call is
+     losing bond for a reason the player can already read off its own stance,
+     and inventing a gentler word for that would be the modal excusing a
+     decision it should just report. */
+  let up = 0, dn = 0, still = 0, atCeiling = 0, atFloor = 0, settling = 0;
   for (const u of _roster) {
     const st = stanceOf(u, choice).stance;
     const d = previewOf(u, choice);
-    if (d > 0) up++; else if (d < 0) dn++;
+    const cap = Number(u.ceiling) || 0;
+    const over = cap > 0 && (Number(u.bond) || 0) > cap;
+    if (d < 0 && over && st === 'support') settling++;
+    else if (d > 0) up++; else if (d < 0) dn++;
     else if (st === 'middle') still++;
     else if (st === 'against' && (Number(u.bond) || 0) <= 0) atFloor++;
     else atCeiling++;
@@ -776,6 +944,10 @@ function consequenceHtml() {
   if (up)        bits.push('<b>' + up + '</b> ' + (up === 1 ? 'gains' : 'gain') + ' regard');
   if (dn)        bits.push('<b>' + dn + '</b> ' + (dn === 1 ? 'loses' : 'lose') + ' it');
   if (still)     bits.push('<b>' + still + '</b> ' + (still === 1 ? 'stays' : 'stay') + ' put');
+  // Participle, not a verb, matching `already at the ceiling` beside it — this
+  // clause and that one describe a STATE the unit is in rather than something
+  // the decision does to them, so neither of them conjugates.
+  if (settling)  bits.push('<b>' + settling + '</b> settling to their limit');
   if (atCeiling) bits.push('<b>' + atCeiling + '</b> already at the ceiling');
   if (atFloor)   bits.push('<b>' + atFloor + '</b> ' + (atFloor === 1 ? 'has' : 'have') + ' nothing left to lose');
 
@@ -854,10 +1026,20 @@ function paintFoot() {
 
 function chooseBodyHtml() {
   const d = _instance.dilemma || {};
-  // Two columns are worth it only when the choices can fill one. The threshold
-  // is the CHOICE COUNT, not a breakpoint — see the .md-solo rule for what a
-  // three-line roll looked like beside an eight-row roster.
-  const solo = (_instance.choices || []).length < 4;
+  /* Two columns are worth it only when the choices can fill one. The threshold
+     is the CHOICE COUNT, not a breakpoint — see the .md-solo rule for what a
+     three-line roll looked like beside an eight-row roster.
+
+     ⚠ `<= 4`, NOT `< 4`, AND ROUND 2 STOPPED ONE SHORT. Three and two choices
+     measured exactly 0 dead space once the stretch landed, so the mechanism was
+     right — but FOUR is the count BRIEF §1 calls the norm, and the default roll
+     at 1280x900 with an eight-row roster measured a 375px choices column
+     against a 484px roster: 108px of empty panel under the last choice, and the
+     first thing the eye lands on after the brief. The fix for a hole in the
+     uncommon case that leaves it open in the common one is not a fix. Five and
+     six still take the two-column height, which is correct: at five the column
+     already fills. */
+  const solo = (_instance.choices || []).length <= 4;
   return `<div class="md-body">
     ${d.wire ? `<p class="md-wire">${esc(d.wire)}</p>` : ''}
     <p class="md-brief">${esc(d.brief || '')}</p>
@@ -873,36 +1055,61 @@ function chooseBodyHtml() {
    Every number here is what LANDED, not what was previewed. `applyStances()`
    returns the real before/after out of `adjustBond`, which applies temperament
    and the ceiling, so even a preview that was wrong cannot become a lie the
-   player is told twice. When the bridge refused a change (`landed: false`) this
-   view says so rather than printing a movement that did not happen. */
+   player is told twice. When the bridge refused a change this view says so
+   rather than printing a movement that did not happen — but only when it can
+   tell a refusal from a clamp, which is what `status` is for; see the note
+   chain below. */
 function ledgerHtml(bonds) {
   if (!Array.isArray(bonds) || !bonds.length) return '';
   const rows = bonds.map((b) => {
-    const d = Number(b && b.delta) || 0;
+    // `landed` still decides the NUMBER, and only the number: on every path it
+    // equals `status === 'moved'` (the engine asserts that invariant), and on
+    // every non-moved path `after === before`, so this reads 0 either way. The
+    // WORD beside it comes from `status` alone.
     const landed = !(b && b.landed === false);
     const real = landed ? (Number(b.after) - Number(b.before)) : 0;
     const cls = real > 0 ? 'up' : real < 0 ? 'dn' : 'nil';
     const txt = real > 0 ? '+' + real : real < 0 ? '−' + Math.abs(real) : '0';
-    /* The clamp note splits on `before` and `stance` — the same two fields the
-       roster row uses, so the preview and the receipt cannot disagree about
-       which end a companion is pinned against. Calling the floor a ceiling was
-       the round-1 defect and the modal said it in three places; this is the
-       third.
+    /* 🔴 THE NOTE READS `status`, AND ROUND 2'S SPLIT WAS UNREACHABLE WITHOUT
+       IT. `landed` was `ok && after !== before` — one boolean carrying three
+       meanings: the bridge refused the write, the ceiling absorbed it, the
+       floor had nothing to give. Every one of the three took the `!landed` arm,
+       so a Sworn companion at 1200 who SUPPORTED the call read "This one cannot
+       move — their regard is already at its ceiling" in the roster and
+       "not recorded" in the receipt, in the same modal, three seconds apart —
+       the correct sentence and its contradiction, one scroll apart. The two new
+       arms below this file added in round 2 could never be reached from any
+       engine path. That was disclosed here rather than papered over, and this
+       is the round the seam was opened: `status` is
+       'moved' | 'ceiling' | 'floor' | 'unchanged' | 'refused' (CONTRACT-R3 §6.1)
+       and the engine, which is the only party that knows which of the three
+       happened, now says which.
 
-       ⚠ WHAT THIS BRANCH IS ACTUALLY WORTH, stated honestly. Under CONTRACT §5's
-       AppliedBond a clamped write reports `delta = after - before = 0` AND
-       `landed: false` ("the ceiling ate it"), so a clamped row takes the
-       `!landed` arm and prints 'not recorded' — `stuck` is unreachable through
-       today's engine. It is kept, and split, because `landed` conflates a
-       refused write with an eaten one, and the day that is separated this row
-       must already know which clamp it is looking at. What it must NOT do is
-       guess: 'nothing left to lose' is only ever printed off `landed === true`,
-       never inferred from a refusal, because a bridge that refused the write and
-       a floor that absorbed it look identical from here. */
-    const stuck = (real === 0 && d !== 0);
-    const note = !landed ? 'not recorded'
-      : (stuck && b.stance === 'against' && (Number(b.before) || 0) <= 0) ? 'nothing left to lose'
-      : stuck ? 'at the ceiling'
+       🔴 'NOT RECORDED' IS PRINTED OFF `status === 'refused'` AND OFF NOTHING
+       ELSE — including a row carrying no `status` at all. That is not
+       defensiveness for its own sake; it is what makes this half correct on its
+       own. `status` is additive and optional by contract, so a stale
+       service-worker engine.js will hand this ledger round-2's rows, and the
+       failure direction is fixed by CONTRACT-R3 §6.0: a signal that does not
+       arrive must make this file say NOTHING, never something false. A blank
+       note beside a real `+2` is accurate and unexplained. "not recorded"
+       beside a write that happened is a lie, and it is the exact lie this whole
+       section exists to stop telling. So the default is silence and `landed` is
+       never consulted for the WORD — only for the number.
+
+       `overCap` answers the other question the receipt could not: why a unit
+       that agreed with you lost 551. It is computed by the engine from the same
+       `before` this row reports and the same ceiling `previewBond` clamps
+       against, which is why the roster row above (`over`, in rosterRowHtml) and
+       this line cannot disagree. Absent, again: no note, never a wrong one. */
+    const status = (b && typeof b.status === 'string') ? b.status : '';
+    const overCap = !!(b && b.overCap);
+    const note =
+        status === 'refused'  ? 'not recorded'
+      : status === 'ceiling'  ? 'at the ceiling'
+      : status === 'floor'    ? 'nothing left to lose'
+      : status === 'moved' && overCap && real < 0 && b.stance === 'support'
+                              ? 'settled to their limit'
       : '';
     return `<div class="lr">
       <span aria-hidden="true">${real > 0 ? '▲' : real < 0 ? '▼' : '—'}</span>
@@ -1033,10 +1240,43 @@ function announce(msg) {
   } catch (e) {}
 }
 
+/* 🔴 A COMMIT MUST NOT BE ABLE TO DESTROY ITS OWN RECEIPT, AND IT COULD.
+   `resolve()` in index.js is declared `async` and contains zero `await`s, so
+   the whole resolution — pay, grant, bond, save — settles inside one microtask
+   and this repaint lands before the player's finger has come off the button.
+   The panel then SHRINKS under a stationary cursor: the choices column and the
+   roster are replaced by a short aftermath block, and whatever is now under
+   that cursor takes the second click of an ordinary double-click. On the commit
+   bar that is either the backdrop (`e.target === ov`) or `#md-ack`, which
+   carries `data-md="close"` — both of which close the modal. Measured in
+   Chromium at 1280x900 at click gaps of 40, 90, 150 and 300 ms: `onChoose`
+   fired exactly once every time (the `_busy` lock is fine and was never the
+   problem) and the overlay was gone every time. The resolution stands and the
+   rewards are granted; the player never sees the outcome line, the standing
+   move, the Cinder, the card, or the bond ledger the entire aftermath view
+   exists to show. Double-clicking a button that has just gone disabled-looking
+   is not a mis-click, it is the ordinary gesture.
+
+   So the swap is STAMPED and both close paths are gated on it for 400 ms.
+   400, not 250: the repro still closed at a 300 ms gap, and a window that ends
+   inside the measured range is not a fix. This is the same class of bug
+   `paintReactions()` documents for hover — the panel is replaced under a
+   pointer that has not moved — applied to the one repaint that cannot be
+   undone.
+
+   ⌨ ESCAPE IS DELIBERATELY NOT GATED. `/src/battle/combat.js:918` states the
+   principle this file already quotes: Escape is the one gesture that
+   unambiguously means "stop showing me this". Nobody double-taps Escape by
+   accident on a button, and a modal that ignores a key the player pressed on
+   purpose is a worse failure than the one being fixed here. */
 export function paintOutcome(result) {
   try {
     _outcome = (result && typeof result === 'object') ? result : {};
     _view = 'outcome';
+    // Stamped BEFORE paint(), not after: paint() is synchronous but it is also
+    // the thing that can throw, and a swap that half-happened still moved the
+    // controls under the cursor.
+    _settledAt = Date.now();
     paint();
     // Move focus to the one control that now exists. Without this the player's
     // focus is sitting on a button that no longer has a node, and Tab restarts
@@ -1059,6 +1299,19 @@ function choiceById(id) {
   return null;
 }
 
+/* TRUE for the 400 ms after the aftermath replaced the panel. One function so
+   the backdrop listener and the `close` action can never drift apart — they are
+   registered in two different places and are the two halves of the same guard.
+   `_settledAt` is 0 until a swap happens and is reset on open and on close, so
+   `Date.now() - 0` is roughly the age of the epoch and this is `false`
+   everywhere else. Wall-clock, not a timer: nothing has to be cancelled, and a
+   clock that jumps backwards mid-modal only ever makes the guard STOP guarding,
+   which fails towards the player being able to close their own modal. */
+const SETTLE_MS = 400;
+function justSettled() {
+  return _view === 'outcome' && _settledAt > 0 && (Date.now() - _settledAt) < SETTLE_MS;
+}
+
 /* Delegated on the overlay, `[data-md]`, community.render.js:596's shape.
    Delegation is not a style preference here: `paint()` replaces the whole
    panel, so a listener bound to a button would not survive the first repaint. */
@@ -1071,7 +1324,11 @@ async function onClick(ev) {
   // Read-only actions short-circuit BEFORE the lock, exactly as
   // community.render.js:601-604 does: closing or re-picking must not be
   // deadlocked by an in-flight resolution.
-  if (act === 'close') { closeModal(); return; }
+  // The settle guard — see paintOutcome(). `_settledAt` is 0 on the choose
+  // view, so this is inert everywhere except the 400 ms after the aftermath
+  // replaced the panel, which is the only window in which a close can be
+  // something the player did not mean.
+  if (act === 'close') { if (!justSettled()) closeModal(); return; }
   if (act === 'pick') {
     const id = el.getAttribute('data-id');
     if (!id || _busy) return;
@@ -1166,10 +1423,14 @@ export function openModal(instance, roster, handlers) {
     _outcome  = null;
     _busy     = false;
     _closing  = false;
+    _settledAt = 0;
 
-    // Remember who opened us so focus can go home. index.html's render() will
-    // only restore focus for an id'd text input (index.html:111029-111070), so a modal
-    // that does not do this leaves the player's focus on document.body.
+    // Remember who opened us so focus can go home. index.html's `render()`
+    // restores focus for an id'd text INPUT only — its `_focusSnap` block tests
+    // `tagName === 'INPUT' || 'TEXTAREA'` and skips everything else — so a modal
+    // that does not do this leaves the player's focus on document.body. (Cited
+    // by symbol on purpose: that block has moved twice in three rounds, and a
+    // citation that cannot rot beats one that is currently right.)
     try { _opener = document.activeElement || null; } catch (e) { _opener = null; }
 
     let ov = document.getElementById(OV);
@@ -1179,8 +1440,12 @@ export function openModal(instance, roster, handlers) {
       // Click-outside closes, matching every other overlay in the game. Two
       // listeners on the same node, as community.render.js:846-847 does: this
       // one is `ev.target === ov` only, so a click that lands anywhere inside
-      // the panel is untouched by it.
-      ov.addEventListener('click', (e) => { if (e.target === ov) closeModal(); });
+      // the panel is untouched by it. `justSettled()` is the same guard the
+      // `close` action carries — this is the backdrop half, and it is the one
+      // the double-click repro actually landed on: the aftermath panel is
+      // shorter than the choice panel, so the pixels under the commit bar
+      // become backdrop.
+      ov.addEventListener('click', (e) => { if (e.target === ov && !justSettled()) closeModal(); });
       ov.addEventListener('click', onClick);
       ov.addEventListener('mouseover', onOver);
       ov.addEventListener('mouseout', onOut);
@@ -1190,7 +1455,7 @@ export function openModal(instance, roster, handlers) {
     }
 
     /* ⌨ ESCAPE CLOSES. The self-removing document listener from
-       openInfoModal's onKey (index.html:111612); src/battle/combat.js:918
+       `openInfoModal`'s `onKey` (index.html:111694); src/battle/combat.js:918
        states the principle — "Escape is the one gesture that unambiguously means
        'stop showing me…'". The community overlay has no Escape handler at all
        (community.render.js:848-856 listens only for Enter on #mc-wmsg);
@@ -1250,6 +1515,7 @@ export function closeModal() {
     const h = _handlers;
     _instance = null; _roster = []; _handlers = null; _outcome = null;
     _view = 'choose'; _selected = null; _hover = null; _busy = false; _opener = null;
+    _settledAt = 0;
 
     try { if (h && typeof h.onClose === 'function') h.onClose(); } catch (e) {}
     return true;

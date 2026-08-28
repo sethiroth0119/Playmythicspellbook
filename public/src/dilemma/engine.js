@@ -48,7 +48,7 @@
 
    ⚙ ONE TUNING TABLE. Every number a choice is worth lives in `DILEMMA_ECON`
    in data.js and nowhere else — the `_opEcon()` habit as the CORP_LAWS header
-   states it (index.html:80551-80553). If you find yourself typing a magnitude here, it
+   states it (index.html:80596-80600). If you find yourself typing a magnitude here, it
    belongs there instead. The only bare numbers below are algorithm constants
    (FNV-1a's prime, mulberry32's mixing words), the four rung indices of the
    degradation ladder — which are branch labels, not dials — and the identity
@@ -59,8 +59,8 @@ import { DILEMMA_ECON, DILEMMAS, DILEMMA_BY_ID, DILEMMA_SCHEMA_VERSION, INFLUENC
 
 /* ── The value vocabulary ───────────────────────────────────────────────────
    Stance is derived from the SHIPPED value system: eight poles on four opposed
-   axes (`LQ_AXES` index.html:73043, `LQ_POLE_AXIS` index.html:73049) and the
-   tuned approve/oppose magnitudes in `LQ_INTENSITY` (index.html:73057-73061). Both
+   axes (`LQ_AXES` and `LQ_POLE_AXIS`, index.html) and the
+   tuned approve/oppose magnitudes in `LQ_INTENSITY` (index.html). Both
    arrive over the bridge as `host.values()`.
 
    🔴 THE MAGNITUDES ARE NEVER COPIED INTO THIS FILE, and that is a decision.
@@ -177,7 +177,7 @@ export function makeRng(seed) {
   };
 }
 
-/* The CAMP_RUN_EVENTS weight walk (`_campRollEvent`, index.html:65747-65750),
+/* The CAMP_RUN_EVENTS weight walk (`_campRollEvent`, index.html),
    generalised to
    `[[value, weight], …]` and taking its randomness as an argument so nothing
    downstream of `openDilemma()` ever touches `Math.random()` directly. */
@@ -269,7 +269,7 @@ function normalizeOffer(o) {
 /* A recorded deck is only useful if it can still be READ. `_dilemmaRecordDeck`
    in index.html writes this at battle start and deliberately does not call
    saveProfile() (that would add a 50-200 ms stringify to the worst possible
-   moment — `saveProfile`'s own perf note, index.html:70910-70912), so a
+   moment — `saveProfile`'s own perf note, index.html:70980-70985), so a
    half-written or force-quit record is a
    real shape this has to survive. */
 function normalizeLastDeck(ld) {
@@ -290,6 +290,15 @@ function normalizeLastDeck(ld) {
   };
 }
 
+/* "Did this read give us anything to work with?" — the three-part shape test
+   `saveState()` uses, plus a key count. It is a separate predicate because
+   `ensureState()` asks it twice and because the answer decides whether a
+   normalisation may be persisted; a rule that important should be one
+   expression with a name, not two copies of a boolean chain. */
+function _hasState(x) {
+  return !!x && typeof x === 'object' && !Array.isArray(x) && Object.keys(x).length > 0;
+}
+
 /* 🔴 ABSENT-TOLERANT ON LOAD. This project has shipped silent save bugs at
    least five times — index.html:46676-46683 records a player losing a
    120,000-Cinder Gene Vault to a key that was in neither cloud whitelist — so
@@ -301,15 +310,38 @@ function normalizeLastDeck(ld) {
    It writes the normalised object back through `host.setState()` so the rest of
    the session reads one shape, but it deliberately does NOT save: merely
    LOOKING at your standing must not cost a whole-Profile stringify. That is the
-   same split `resonanceGet`/`resonanceSet` draws at index.html:207034-207037
+   same split `resonanceGet`/`resonanceSet` draws at index.html:207105-207108
    — the citation index.html's own dilemma bridge uses for the same rule, so
    the two files now agree about the same function instead of disagreeing. */
 export function ensureState(host) {
   try {
     _absorbValues(host);
-    let s = null;
-    try { s = host.state(); } catch (e) { s = null; }
-    if (!s || typeof s !== 'object' || Array.isArray(s)) s = {};
+    /* 🔴 REMEMBER WHETHER THE READ ACTUALLY RETURNED ANYTHING, because the
+       write-back at the bottom of this function is only safe when it did.
+       `host.state()` answers `{}` for TWO different facts — "a stranger
+       arriving in Ethos Heights" and "the read failed" — and the seam is where
+       they merge: the adapter (index.js:140) and the bridge
+       (index.html:207781-207782) both catch their own throws and return `{}`.
+       This function cannot tell them apart, so it must not take an action that
+       is only correct for one of them. See the write-back for the driven cost
+       of getting that wrong. */
+    let raw = null;
+    try { raw = host.state(); } catch (e) { raw = null; }
+    /* ⚠ ONE RETRY, AND ONLY ON THE EMPTY ANSWER. The failure this guards is
+       TRANSIENT by name, and the second read is what turns it back into a
+       nothing-happened. It matters most on the paths the write-back gate below
+       cannot protect: `openDilemma()` and `commit()` persist the state they were
+       handed, and a default persisted there reaches disk and the cloud with
+       their own `save()`. Refusing to write on those paths is not an option —
+       an empty read is indistinguishable from a real first-time player, so a
+       refusal would take away every new player's first pin (reopening the
+       reroll the pin exists to close) and then their first resolution.
+       Re-reading is the one move that separates the two cases without guessing.
+       It costs a second shallow clone of an ≤8-key object, and only on the
+       empty path, which for an existing player does not happen at all. */
+    if (!_hasState(raw)) { try { raw = host.state(); } catch (e) { /* keep the first answer */ } }
+    const readable = _hasState(raw);
+    let s = readable ? raw : {};
 
     /* One schema version exists today. The branch is here so that shipping a v2
        is an edit in this function rather than an archaeology exercise across
@@ -343,8 +375,45 @@ export function ensureState(host) {
        seam clones (see the header), this stores a copy and leaves `s` ours to
        mutate — which is exactly what makes `saveState()`'s rollback snapshot
        survive its own `setState`. A refused setState is reported by saveState,
-       not here: merely LOOKING at your standing must not raise an error. */
-    try { host.setState(s); } catch (e) { /* a stale shape beats a thrown one */ }
+       not here: merely LOOKING at your standing must not raise an error.
+
+       🔴 AND IT IS GATED ON `readable`, BECAUSE OTHERWISE A READ BECOMES A WIPE.
+       This is the same `{}`-sentinel the unwind in `saveState()` guards, sitting
+       at the more reachable of the two sites: `saveState`'s snapshot only
+       matters when the save ALSO fails, while this line runs on every single
+       call, including the pure reads. Driven with ONE transient throw from
+       `state()` and nothing else failing, through `MythicDilemmas.available()`
+       — the hub tile's badge, which this file documents as read-only —
+       influence 88 / resolved 40 / seen{eh_old} / recent['eh_old'] / a recorded
+       lastDeck came back as influence 50 / resolved 0 / seen{} / recent[] /
+       lastDeck null, with zero save() calls: in memory at first, and permanent
+       the moment any other system fires `saveProfile()`. Through
+       `openDilemma()` the same hiccup carried its own save, so it reached disk
+       and the cloud immediately — that half is closed by the retry above, not
+       by this gate, because `openDilemma()` and `commit()` must be free to
+       write.
+
+       ⚠ THE RESIDUAL, STATED RATHER THAN HIDDEN. A seam that answers empty
+       TWICE IN A ROW is still read as a fresh player, and a resolution taken
+       against it still persists a defaulted blob. There is no move left at that
+       point: an empty answer carries no information, and a client that refuses
+       to write on it is a client no new player can ever use. Reachability of
+       the false empty is very low by construction — the bridge only answers
+       `{}` from a `_dilemmaCloneState` throw (index.html), which needs a
+       throwing getter on the blob — and the retry means it must now happen
+       twice inside one call.
+
+       A genuinely fresh player loses nothing by this: the normalised shape is
+       still returned and still used for the whole call, and the first real
+       write — `openDilemma()`'s pin or `commit()` — persists it in full. The
+       only thing skipped is a write that had no information behind it.
+
+       ⚠ `readable` is false for a garbage NON-object too (a string, an array),
+       which the old code repaired in place. Repairing it would in fact be safe,
+       and the branch is skipped anyway: the real seam cannot hand this function
+       one (index.js:140 guarantees an object), so it would be a second way into
+       this write that exists for no shipping host. */
+    if (readable) { try { host.setState(s); } catch (e) { /* a stale shape beats a thrown one */ } }
     return s;
   } catch (e) { return defaultState(); }
 }
@@ -398,7 +467,18 @@ export function ensureState(host) {
    is written to hold with the other reverted, and each is tested that way. */
 export function saveState(host, state, opts) {
   try {
-    if (!state || typeof state !== 'object') return false;
+    /* ⚠ `Array.isArray` too, and it is not pedantry — it is the same three-part
+       test `ensureState()` uses forty lines up, and the two must agree about
+       what a state blob IS. An array passes `typeof x === 'object'`; both sides
+       of the seam then map it to `{}` (index.js:140's shape test,
+       `_dilemmaCloneState` in index.html), `setState` returns `true` for
+       that empty object, and this function returned TRUE for a write that had
+       just erased `Profile.dilemma`. Driven: `saveState(host, [], {stamp:true})`
+       -> true, blob `{}`; `null` / `undefined` / `'x'` / `42` -> false. No
+       shipped caller can reach it — all three pass `ensureState()` output — but
+       this is an export, and reporting success for a write that destroyed the
+       blob is the exact direction the paragraph above forbids. */
+    if (!state || typeof state !== 'object' || Array.isArray(state)) return false;
 
     /* 🔴 THE ROLLBACK SNAPSHOT, AND IT LIVES HERE ON PURPOSE.
        Every state write in this feature goes through this function, so putting
@@ -476,7 +556,7 @@ export function influence(host) {
   catch (e) { return DILEMMA_ECON.influenceSeed; }
 }
 
-/* The named rung of the ladder, `RESERVE_RANKS`-style (index.html:56284-56290).
+/* The named rung of the ladder, `RESERVE_RANKS`-style (index.html).
    Display only — CONTRACT §9.3 is explicit that a name a player can say out
    loud is not one of Influence's two required consumers. Those are the
    eligibility band, the reward multiplier and the choice count. */
@@ -501,15 +581,15 @@ export function rank(value) {
    `_dilemmaRecordDeck` records EVERY key in the deck the player took into
    battle, but index.html's battle-end loop only creates a `Profile.units` row
    for units actually DEPLOYED (`cur._lastBattleFielded = true`,
-   index.html:152711, inside the fieldedSet walk). A twelve-card deck that
+   index.html:152782, inside the fieldedSet walk). A twelve-card deck that
    fielded four leaves eight companions with no profile row at all.
 
    Round 1 read those rows through `bondOf`, which answers 0 for a missing row,
    and printed them at "Wary 0" — the only surface in the game that shows a
    companion below BOND_NEW. The modal then previewed +3 and the resolve landed
    +103, because the bridge's `adjustBond` CREATES the row at BOND_NEW (100)
-   before applying the delta (`_rezEntry`'s create shape, index.html:73559-73561,
-   is what it copies).
+   before applying the delta — the create shape `_rezEntry` uses in index.html
+   is what it copies.
    A unit that OBJECTED was reported as having warmed to the player by +94.
 
    So the row's baseline is the value the mutator will actually start from.
@@ -581,7 +661,7 @@ function rosterRow(host, id, kind, card, order, fallback) {
   try { tier = host.bondTier(bond); } catch (e) { tier = null; }
 
   /* 🎭 Heroes carry no temperament and never have — `getUnitTemper` would
-     happily DERIVE one from the hero id (`getUnitTemper`, index.html:72677), and it would be a
+     happily DERIVE one from the hero id (`getUnitTemper`, index.html), and it would be a
      lie in both directions: the pill would show a temperament the hero does not
      have, and `previewBond` would scale by a multiplier `adjustBond` is never
      going to apply, because adjustBond reads `entry.temper` and a hero entry has
@@ -594,7 +674,7 @@ function rosterRow(host, id, kind, card, order, fallback) {
   /* The reachable ceiling is snapshotted here, once, because `previewBond`
      takes no host (it runs per-unit per-choice on every repaint). ⚠ It is
      `bondCeilingFor(ENTRY)` — passing a NUMBER returns BOND_MAX through the
-     typeof-object guard in `bondCeilingFor` (index.html:72584), which reads as "the clamp works"
+     typeof-object guard in `bondCeilingFor` (index.html), which reads as "the clamp works"
      while silently ignoring saleCount and everSold. */
   let ceiling = 0;
   try { ceiling = num(host.bondCeiling(entry)); } catch (e) { ceiling = 0; }
@@ -602,7 +682,7 @@ function rosterRow(host, id, kind, card, order, fallback) {
 
   /* CAN legitimately be `[]`, and that is the COMMON case, not an edge case —
      see `stanceFor`. A null card (a forged card whose definition was never
-     published on this device, `lookupCustomCard` at index.html:51096) resolves the
+     published on this device, `lookupCustomCard` in index.html) resolves the
      same way instead of throwing its way into the render pipeline. */
   let poles = [];
   try { const p = host.valueProfile(card); if (Array.isArray(p)) poles = p; } catch (e) { poles = []; }
@@ -655,7 +735,18 @@ function rankRoster(rows) {
    heuristic answers "who have you fought beside most", which is a different
    question from "who was in that deck", and silently substituting one for the
    other is the relabelling this file's fallback comment exists to prevent.
-   Zero rows with an honest empty-state line beats a confident wrong list. */
+   Zero rows with an honest empty-state line beats a confident wrong list.
+
+   ⚠ AND THE COST OF THAT CHOICE, NAMED. A player whose recorded deck was all
+   spells, who DOES own companions they have fought beside, gets
+   `rosterSource: 'none'` and no rows — and render's empty-state line ("No one
+   is standing with you yet") is then false for them. It is still the better of
+   the two lies available here: the heuristic's own sub-line ("no deck has gone
+   into battle since the Heights started asking") would be false too, and
+   falsely naming WHO is standing with you is worse than falsely saying nobody
+   is. Reachability is near zero — `normalizeLastDeck` already rejects a record
+   with neither a card nor a hero — but this line exists so the next reader
+   knows the copy over-claims on this path rather than discovering it. */
 function rosterOf(host) {
   try {
     if (!host) return { rows: [], source: 'none' };
@@ -668,11 +759,11 @@ function rosterOf(host) {
       let order = 0;
 
       /* The hero enters the field separately from the deck — `buildStarterDeck`
-         strips `type === 'hero'` out of the card list at index.html:73809-73810
+         strips `type === 'hero'` out of the card list in index.html
          — so it is prepended rather than found among the keys.
          ⚠ KNOWN GAP, stated rather than worked around: `findHeroById` is not on
          the bridge (CONTRACT §6), and `cardById` (_cardDefById,
-         index.html:87393) only reaches custom + unit pools, so a BUILT-IN
+         index.html) only reaches custom + unit pools, so a BUILT-IN
          starter hero resolves to null here and reads as Middle on every choice.
          Reaching past the bridge for STARTER_HEROES is the globals trap and is
          not an option; adding `heroById()` to §6 is the round-2 fix. */
@@ -720,8 +811,8 @@ function rosterOf(host) {
        fielded.
        ⚠ `_lastBattleFielded` is NOT a last-roster record and must never be
        presented as one: it is set true only for units actually DEPLOYED
-       (index.html:152711) and cleared only for benched units that were in
-       s._deckUnitIds (index.html:152810), so a unit from a deck the player
+       (index.html:152782) and cleared only for benched units that were in
+       s._deckUnitIds (index.html:152873), so a unit from a deck the player
        abandoned keeps a stale `true` forever. It is a decaying heuristic, which
        is why every row carries `fallback: true` and render.js is required to
        relabel the section "your most-fought companions", never "your last
@@ -771,7 +862,7 @@ function intensityRank(i) { const n = INTENSITY_ORDER.indexOf(i); return n < 0 ?
    embodies mercy would produce an incoherent dilemma no cheap validator can
    catch — deriving the far side from LQ_AXES makes that unwritable.
 
-   This is the shipped `_lqPoleVerdict(pole, st)` (index.html:73298-73310) turned
+   This is the shipped `_lqPoleVerdict(pole, st)` (index.html) turned
    inside out: there, a pole reads a battle; here, a unit reads a choice. That
    function's `null` return is literally this codebase's own name for the Middle
    stance, which is why Middle is a real answer here and not a shrug.
@@ -793,8 +884,8 @@ export function stanceFor(unit, choice) {
     const up = (unit && Array.isArray(unit.poles)) ? unit.poles : [];
     /* 🔴 THE HONEST FALLBACK, AND IT IS THE COMMON CASE.
        `_lqUnitValueProfile` returns `[]` whenever `_lqArchetypeDefault` finds
-       nothing (`_lqUnitValueProfile` index.html:73104-73114, over
-       `_lqArchetypeDefault` index.html:73093-73100) — and it finds nothing whenever the
+       nothing (`_lqUnitValueProfile` in index.html, over
+       `_lqArchetypeDefault` there) — and it finds nothing whenever the
        joined class+archetype+passive+subclass+factions string is empty or
        matches none of the eight LQ_ARCHETYPE_POLE regexes. A Forge card
        authored with a name, an icon and stats — the ordinary shape of a custom
@@ -839,7 +930,7 @@ export function stanceFor(unit, choice) {
 
 /* ── BOND MAGNITUDE ─────────────────────────────────────────────────────────
    🔴 THIS IS THE RAW DELTA — THE ONE HANDED TO `adjustBond`, NOT THE ONE SHOWN.
-   `adjustBond` (index.html:72593-72615) applies the unit's temperament itself.
+   `adjustBond` (index.html) applies the unit's temperament itself.
    Passing it a temper-scaled number would scale a Vain unit's loss by 1.5 twice
    and land −27 where the table says −12. `previewBond()` below is the display
    half and does the scaling; this half must stay raw.
@@ -848,7 +939,7 @@ export function stanceFor(unit, choice) {
    3/6, zealous 5/10 — multiplied by how much the choice is ABOUT its poles
    (`choice.weight`, one of DILEMMA_ECON.choiceWeights). Inventing a second
    magnitude table for "a unit approved / a unit objected" when a tuned one
-   already ships is the parallel-system mistake index.html:80526 argues against.
+   already ships is the parallel-system mistake index.html:80597 argues against.
 
    Range: ±1 at mild/0.5 up to +8 / −12 at zealous/1.5, hard-capped at
    DILEMMA_ECON.bondCapPerResolve.
@@ -898,7 +989,7 @@ function rawDelta(unit, choice) {
   const signed = (st.stance === 'support' ? 1 : -1) * base * w;
   if (!signed) return 0;
 
-  // The same guard `adjustBond` uses at index.html:72609, for the same
+  // The same guard `adjustBond` uses at index.html:72680, for the same
   // reason: a 0.5 weight must soften a reaction, never delete it.
   const guarded = signed > 0 ? Math.max(1, Math.round(signed)) : Math.min(-1, Math.round(signed));
   return clampAbs(guarded, DILEMMA_ECON.bondCapPerResolve);
@@ -1056,6 +1147,64 @@ function resolveNow(host, now) {
   try { return num(host.now()); } catch (e) { return 0; }
 }
 
+/* 🔴 THE 45-MINUTE CADENCE GATE, BOUND AT BOTH ENDS — AND THE UPPER BOUND IS
+   THE ONLY WAY BACK FROM A CLOCK WE DO NOT SHARE.
+
+   One rule, one function, because `available()` (the hub tile's badge) and
+   `openDilemma()` (the tile's click) both ask it and a badge that says nothing
+   is waiting over a panel that opens anyway is the same lie told twice.
+
+   Round 3 bounded the OFFER PIN's age and left this unbounded, and this is the
+   worse of the two: a future pin strands the player on one dilemma, a future
+   `nextAt` strands them on none. Driven on a SINGLE device with no cloud
+   involved — clock a year fast, one perfectly ordinary resolve, `commit()`
+   writes `nextAt = now + offerCooldownMs` = 31,538,700,000 ms past true now,
+   then NTP corrects the clock: with the bare `now < nextAt` test, six opens
+   over six days returned null, null, null, null, null, null, the hub tile never
+   badged, and nothing said why. Nothing in this file lowers `nextAt` except a
+   successful `commit()`, and `openDilemma()` returning null is exactly what
+   makes `commit()` unreachable — the feature is dead for the length of the skew
+   with no recovery short of editing the save. Cross-device it needs no fast
+   clock of your own: the hydration merge takes `nextAt: Math.max(cloud, local)`
+   (index.html:48182), so a foreign fast clock ALWAYS wins onto a correct-clock
+   device. Driven through that real merge block: merged `nextAt` 365 days out,
+   `available()` false, `openDilemma()` null.
+
+   The upper bound is `offerCooldownMs` itself and NOT a new number. `commit()`
+   is the only writer of this field and it writes exactly `now + offerCooldownMs`
+   (see the atomic write), so a wait LONGER than one whole window cannot have
+   been written by a clock we share. That is the entire test.
+
+   ⚠ The asymmetry that motivates it. Every other cooldown in this file already
+   degrades: a `seen` map stamped a year ahead still opens a dilemma, because
+   `poolAt`'s ladder drops the 72h repeat gate at level 1 (driven: all ids a
+   year ahead still opened `eh_ninth_street_main`). `nextAt` has no ladder — it
+   is one comparison with nothing behind it — so the range check IS its ladder.
+
+   REJECTED — clamping or rewriting `nextAt` when we see a bad one. This is a
+   read path, and `available()` in particular is documented as costing nothing;
+   a self-heal that persists would put a write on the hub tile's badge, which is
+   the mistake `ensureState()`'s write-back was just gated to stop making. It is
+   also unnecessary: ignoring the poisoned cooldown lets the player open, and
+   the first `commit()` overwrites `nextAt` on OUR clock. Driven — one resolve
+   after the correction re-armed it to now + 45 min, and the save is healthy
+   from then on.
+
+   ⚠ THE RESIDUAL, STATED RATHER THAN HIDDEN. A device S ms fast arms `nextAt`
+   at trueNow + S + 45min, so for the first S ms the wait exceeds the window and
+   this gate reads OPEN. A phone two minutes fast therefore hands back at most
+   two minutes of the window — at most one extra dilemma, after which the
+   cooldown is re-armed on our own clock and behaves. The alternative, a
+   tolerance added to the window, was rejected twice over: any tolerance is a
+   number invented here rather than derived from the one the writer uses, and
+   every millisecond of it is a millisecond the feature stays dead in the case
+   this function exists for. Leaking a sliver of cadence to a skewed clock is
+   the player-favourable direction; disabling the Heights is not. */
+function cooldownBlocks(state, now) {
+  const wait = num(state && state.nextAt) - num(now);
+  return wait > 0 && wait <= DILEMMA_ECON.offerCooldownMs;
+}
+
 export function eligible(host, now) {
   try {
     const s = ensureState(host);
@@ -1068,8 +1217,10 @@ export function available(host, now) {
     const s = ensureState(host);
     const t = resolveNow(host, now);
     // The 45-minute offer cooldown is checked FIRST because it is one
-    // comparison and it is the answer most of the time.
-    if (t < num(s.nextAt)) return false;
+    // comparison and it is the answer most of the time. `cooldownBlocks` and
+    // not a bare `t < s.nextAt`: a cooldown from a clock we do not share must
+    // not badge this tile dark forever. See the function.
+    if (cooldownBlocks(s, t)) return false;
     return hasEligible(s, t);
   } catch (e) { return false; }
 }
@@ -1087,7 +1238,7 @@ export function pickDilemma(host, now, rng) {
     for (let level = 0; level <= 3; level++) {
       const pool = poolAt(s, t, level);
       if (!pool.length) continue;
-      // The CAMP_RUN_EVENTS weight walk (`_campRollEvent`, index.html:65747-65750),
+      // The CAMP_RUN_EVENTS weight walk (`_campRollEvent`, index.html),
       // verbatim in shape.
       const total = pool.reduce((a, d) => a + Math.max(0, num(d.weight)), 0);
       if (total <= 0) return pool[0];
@@ -1255,7 +1406,7 @@ export function rollChoices(dilemma, influenceValue, rng) {
    Cinder — the pin records WHICH decision is on the table, never that it was
    taken. A player who opens the Heights and walks back out has changed nothing
    they can feel, which is the rule `resonanceGet` draws at
-   index.html:207034-207037. `available()` stays strictly read-only: it runs
+   index.html:207105-207108. `available()` stays strictly read-only: it runs
    twice per hub render and must never arm, persist or clear the pin. */
 export function openDilemma(host, opts) {
   try {
@@ -1282,8 +1433,16 @@ export function openDilemma(host, opts) {
        `commit()` clears the pin and arms `nextAt` in the SAME atomic write, so a
        pin that outlived its own resolution can only reach this line behind a
        `nextAt` that already blocks it. That is why the reuse test below checks
-       eligibility and not `recent`. */
-    if (now < num(s.nextAt)) return null;
+       eligibility and not `recent`.
+
+       ⚠ That last sentence is now one lock of two rather than the only one, and
+       deliberately so. `cooldownBlocks()` ignores a `nextAt` further out than a
+       whole window — otherwise a clock we do not share turns the Heights off
+       permanently — and a stale pin CAN therefore reach the branch below. It is
+       rejected there on its own account: the pin's age must be non-negative and
+       inside the window, which a pin written by that same foreign clock is not.
+       Neither guard covers the other. */
+    if (cooldownBlocks(s, now)) return null;
 
     /* 🔴 THE AGE IS BOUND ONCE AND IT MUST BE NON-NEGATIVE.
        Round 2 wrote `(now - num(pin.at)) < offerCooldownMs` and nothing else. A
@@ -1340,16 +1499,11 @@ export function openDilemma(host, opts) {
        The pin records WHICH decision is on the table. It never records that one
        was taken. `saveState()` is called WITHOUT `{ stamp: true }` above, so
        this write leaves the stamp exactly where the last real decision left it
-       — and that is the whole fix. The old comment reasoned that "the pin IS
-       dilemma state, written on the device the player is looking at, so
-       claiming the later write is the correct one"; index.html's merge comment,
-       written in the same round by a different owner, asserted the opposite
-       ("`updatedAt` now moves only inside saveState() … the later blob is
-       genuinely the one that decided last"). Both were half-arguments about a
-       join neither file owned, and between them they reopened the exact hole
-       CONTRACT-R2 §5.5 had just closed for `_dilemmaRecordDeck`: a stale
-       desktop that OPENED the Heights and decided nothing outranked a phone
-       that had resolved — influence 54 → 50, resolved 1 → 0, an armed
+       — and that is the whole fix. Round 2 stamped it, and this file and
+       index.html then each argued half of a join neither owned, which reopened
+       the hole CONTRACT-R2 §5.5 had just closed for `_dilemmaRecordDeck`: a
+       stale desktop that OPENED the Heights and decided nothing outranked a
+       phone that had resolved — influence 54 → 50, resolved 1 → 0, an armed
        45-minute cooldown → 0, with only `seen` surviving because `seen` was the
        one field with a per-field merge rule.
 
@@ -1408,13 +1562,13 @@ function buildInstance(host, state, dilemma, seed, openedAt) {
    path) stamps `bondScaled: true`.
 
    ⚠ `bondScaled: true` IS NOT COSMETIC. `saveProfile()` runs `_migrateBondScale`
-   on its first line (index.html:70895); `_migrateBondScale` is at
-   index.html:72805 and walks every entry, and
-   `_migrateBondEntry` (index.html:72799-72804) rewrites any unflagged
+   on its first line (index.html); `_migrateBondScale` is a top-level
+   function there that walks every entry, and
+   `_migrateBondEntry` (index.html) rewrites any unflagged
    `bond <= 100` as `round(100 + bond * 11)`. A row
    created at BOND_NEW (100) without the flag becomes 1200 — instantly Sworn —
    on the very next save. The bridge does the create exactly as `_rezEntry` does
-   (`_rezEntry`'s create shape, index.html:73559-73561); this file's job is to
+   (`_rezEntry`'s create shape in index.html); this file's job is to
    never invent a second path.
 
    ⚠ THE DELTA HANDED OVER IS THE RAW ONE. `adjustBond` scales by temperament

@@ -152,8 +152,41 @@ function makeHost() {
        drop whichever of them landed in the gap. It cannot today: resolve() is
        declared async for its callers' benefit and contains no `await`, and
        commit() does its own ensureState immediately before saveState. Do not
-       put an await between a state read and its write. */
-    setState: (s) => { try { return B.setState(cloneState(s)) === true; } catch (e) { return false; } },
+       put an await between a state read and its write.
+
+       🔴 AND IT REFUSES WHAT THE BRIDGE WOULD REFUSE, IN THE BRIDGE'S OWN
+       THREE-PART TEST. Until this round the body was
+       `return B.setState(cloneState(s)) === true`, and the strict `=== true`
+       made it look careful. It was not, and the direction of the mistake is the
+       one this file's header is written against. `cloneState()` maps null,
+       undefined, a number, a string, a boolean AND an array all to `{}` — a
+       perfectly valid blob — so the bridge's own
+       `if (!s || typeof s !== 'object' || Array.isArray(s)) return false`
+       (`MythicDilemmaBridge.setState`, index.html) never saw it, so it could
+       not fire. The adapter did not soften a refusal, it DELETED one:
+       `setState([1,2,3])` answered `true` while replacing influence, seen,
+       recent, the armed nextAt, the pinned offer and lastDeck with `{}`.
+       Measured against the real bridge, before the guard below existed:
+       `bridge.setState(x)` -> false with the blob byte-identical for all six of
+       null / undefined / 7 / "x" / [1,2] / true; `adapter.setState(x)` -> true
+       with `Profile.dilemma === {}` for all six. A wrapper that turns a refusal
+       into a success is the thing paragraph one of this file forbids, and this
+       file contained one: the coercion did not exist while the body was
+       `B.setState(s)` — a bad value reached the bridge and the bridge refused it
+       — it arrived WITH the clone that was added to close a different hole, and
+       survived a round of review after that. Adding a copy to a seam moves where
+       the validation has to live; it does not remove the need for it.
+       ⚠ Duplicated ON PURPOSE, exactly like cloneState() above: sw.js caches
+       index.html and /src/* separately, so this module can and does run against
+       a service-worker copy of index.html whose setState predates that guard.
+       Two copies of one three-part test is the price; do not collapse it. The
+       same test is in `state()` above and in engine.saveState (engine.js:481),
+       and all three must agree about what a state blob IS — an array is the
+       case that makes them disagree, because `typeof [] === 'object'`.
+       ⚠ No shipped caller is affected: ensureState(), saveState() and its
+       rollback all pass an object, so the only inputs this newly refuses are
+       inputs that were destroying the blob and calling it a save. */
+    setState: (s) => { try { if (!s || typeof s !== 'object' || Array.isArray(s)) return false; return B.setState(cloneState(s)) === true; } catch (e) { return false; } },
     save: () => { try { return B.save() === true; } catch (e) { return false; } },
     /* Time comes over the bridge so a test can pin it, and so there is exactly
        one clock in the feature. `Date.now()` here would be a second one. */
@@ -209,7 +242,7 @@ function makeHost() {
        dilemma modal DISPLAYS units, and displaying is inspecting. The bridge
        side reaches Profile.units directly rather than through getUnitProfile,
        which returns a DETACHED object for a missing row and throws every
-       mutation on it away (getUnitProfile, index.html:73489-73500). Only
+       mutation on it away (getUnitProfile, index.html). Only
        adjustBond creates. */
     unitEntry: (id) => { try { return B.unitEntry(id) || null; } catch (e) { return null; } },
     heroEntry: (id) => { try { return B.heroEntry(id) || null; } catch (e) { return null; } },
@@ -301,7 +334,7 @@ function makeHost() {
     },
     /* ⚠ Returns TRUE for n <= 0 and, on insufficient funds, returns false and
        does NOTHING ELSE — no toast, no clamp, no render (spendGems,
-       index.html:64561).
+       index.html).
        rewards.canAfford() gates the button and this file toasts the refusal;
        an ungated button would simply do nothing when pressed. */
     spendGems: (n) => { try { return B.spendGems(n) === true; } catch (e) { return false; } },
@@ -310,7 +343,7 @@ function makeHost() {
        to Math.max(0, …) and returns early — a durable client/server divergence.
        ⚠ `reason` is passed through and never defaulted. addGems falls back to
        the literal 'addGems', and that anonymous label is precisely why the
-       Cinder supply could not be audited (index.html:64577-64584). */
+       Cinder supply could not be audited (the `reason` note above `addGems`). */
     addGems: (n, reason) => { try { return B.addGems(n, reason) !== false; } catch (e) { return false; } },
     grantCard: (opts) => { try { const c = B.grantCard(opts); return (c && c.id) ? c : null; } catch (e) { return null; } },
 
@@ -393,7 +426,7 @@ let _busy = false;      // resolve re-entrancy lock; released in a finally
      4. grant        — Cinder and the card. Both persist themselves.
      5. save         — one save for the whole resolution rather than eight;
                        saveProfile() stringifies the entire Profile (50–200 ms,
-                       up to 800 ms on the slow path, index.html:70980-70984).
+                       up to 800 ms on the slow path, index.html:70980-70985).
                        A failure here is REPORTED, not unwound: the state
                        committed and the rewards landed, only the bond ticks are
                        at risk, and taking a granted card back off a player to
@@ -467,7 +500,7 @@ async function resolve(choiceId) {
 
          It does NOT recover the 2% Foundation spend tax the _gemsTaxTick poll
          may already have billed on the original spend (_gemsTaxTick,
-         index.html:56920). That asymmetry is accepted rather than reaching for
+         index.html). That asymmetry is accepted rather than reaching for
          _gemsTaxExempt, because putting a tax-suppression hole on the bridge to
          recover a few Cinder on a rare, already-reported path is the worse
          trade. It is stated here rather than hidden.
@@ -599,7 +632,7 @@ function handlersFor(inst) {
     stance: (unit, choice) => stanceFor(unit, choice),
     preview: (unit, choice) => previewBond(unit, choice),
     /* 🏷 THE POLE LABEL, HANDED OVER RATHER THAN TRANSCRIBED. LQ_POLE_LABEL
-       (index.html:73121) is the game's own vocabulary — '⚔ Honor', '🕊 Mercy'.
+       (index.html) is the game's own vocabulary — '⚔ Honor', '🕊 Mercy'.
        render.js may not call the bridge, and copying eight labels and their
        emoji into the render layer would put the player-facing spelling of the
        value system in two places that can drift. So it comes through the seam,
@@ -700,7 +733,53 @@ const MythicDilemmas = {
   state() { const h = host(); try { return h ? ensureState(h) : {}; } catch (e) { return {}; } },
   influence() { const h = host(); try { return h ? influenceOf(h) : 0; } catch (e) { return 0; } },
   rank() { try { return rankFor(MythicDilemmas.influence()); } catch (e) { return null; } },
-  roster() { const h = host(); try { return h ? roster(h) : []; } catch (e) { return []; } },
+  /* 🔴 COPIES TOO — because until this round the adapter's own `state()` comment
+     ("a console session can no longer do `MythicDilemmas.state().influence =
+     999999`") was true of `state()` and false of the method right here, and a
+     boast that holds for one accessor and not its neighbour is worse than no
+     boast at all: it tells a reader the class of hole is closed. `engine.rosterRow`
+     hangs the LIVE `Profile.units[id]` object on every row as `entry`
+     (engine.js:645-647, via the two bridge accessors `unitEntry` and
+     `heroEntry` in index.html, which read and never create), so
+     `__md.roster()[0].entry.bond = 1200` was a direct write into the save.
+     Measured: it landed. A direct `.bond` write is the one thing this feature is
+     forbidden to do — it goes around adjustBond, the temperament multiplier and
+     bondCeilingFor, which is the whole reason bond is reached through the bridge
+     and never through a property.
+     `delete row.entry.bondScaled` landed as well, and the consequence is stated
+     narrowly rather than dressed up, because an overclaim here would be the same
+     sin one paragraph later: an unflagged entry becomes eligible again for
+     `_migrateBondEntry` (index.html), which rescales only a bond of
+     100 or less, and only on a load where `_migrateBondScale`
+     (index.html) has not already stamped `Profile._bondScale`. On
+     most saves it merely re-stamps the flag. The `.bond` write is the damage;
+     this is the record of whether the rescale already ran, handed out writable.
+     Free to close, which is why it is closed at the boundary rather than deep:
+     nothing in the app consumes these rows. index.html reaches this module
+     through `available()` and `open()` only (index.html:114874-114879), and
+     `debug()` below reads `.length`. The ENGINE-internal `roster(h)` stays live
+     on purpose — `previewBond` only reads the row, and `applyStances` writes by
+     ID through `host.adjustBond` (engine.js:1606) rather than through the entry
+     it was handed — so this is a guard on the public surface, not a change to
+     the seam, and the preview/write agreement that surface depends on is
+     untouched.
+     ⚠ HOW DEEP, EXACTLY, because "a copy" is the kind of word that rots.
+     cloneState() is reused — a roster row is depth-3 data like the state blob —
+     so the row and its `entry`, `card`, `tier` and `temper` objects are fresh,
+     and every array on them is sliced. Anything an object nests BELOW that (a
+     card definition's `handActive.effect`, say) is still shared. Measured, on
+     the two that could reach persisted data: mutating `row.entry` no longer
+     moves `Profile.units[id]`, and `row.card.name = 'HACKED'` no longer moves
+     what `cardById()` returns — which matters because a FORGED card's definition
+     is Forge data, not a constant. `poles` is safe at every level for a reason
+     that is not this clone's doing and so is recorded here rather than assumed:
+     `_lqUnitValueProfile` mints a fresh `{pole,intensity}` per entry on every
+     call (index.html), so those objects were never the card's. */
+  roster() {
+    const h = host();
+    try { return h ? roster(h).map((r) => ((r && typeof r === 'object') ? cloneState(r) : r)) : []; }
+    catch (e) { return []; }
+  },
 
   bridgeReady() { return !!makeHost(); },
 

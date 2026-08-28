@@ -10,8 +10,8 @@
    `window`. An ES module cannot see them, and `window.Profile` is `undefined`
    however global `const Profile` looks. There is not one bare global below.
    Cinder moves only through `host.spendGems` / `host.addGems`, which are the
-   bridge's wrappers over the sanctioned helpers (`spendGems`,
-   index.html:64490-64505 / `addGems`, index.html:64514-64535).
+   bridge's wrappers over the sanctioned helpers (`spendGems` and `addGems` in
+   index.html).
    `Profile.gems` is never written, never read, never named except in comments.
 
    🔴 THE BALANCE READS `number | null`, AND THE DIFFERENCE IS THE FEATURE.
@@ -59,10 +59,10 @@
        were promised and is bounded by MAX_CINDER_GRANT on a gift.
      • refundCost — unreadable ⇒ fall back to the mutator's boolean, and the
        caller prints a different sentence for each.
-   The `has(host, 'gems')` guard stays and it is not belt-and-braces: `sw.js`
-   caches index.html and /src/* on separate keys, so a freshly-updated module
-   can and does run against a cached index.html whose bridge has no `gems`
-   accessor at all.
+   The `has(host, 'gems')` guard is totality, not a described degradation. The
+   adapter defines `gems` unconditionally, so a service-worker index.html whose
+   bridge has no `gems` key arrives here as `null`, never as a missing accessor
+   — driven. Only a host that is not that adapter can make `has` answer false.
 
    💰 WHY THE PAYOUTS ARE SMALL, AND WHAT ACTUALLY BOUNDS THEM.
    `sql/AUDIT_farmed_cinder.sql:15` exists because of a mint that "left NO
@@ -106,14 +106,14 @@
    that remain are quoted from a file that is under version control beside the
    quote, or derived at load from `DILEMMA_ECON`.
    The admin has already switched a Cinder faucet off once for exactly this
-   reason (`GEM_REWARDS` zeroed, index.html:64475-64487 — "it will devalue our
+   reason (`GEM_REWARDS` zeroed, index.html — "it will devalue our
    money"). This one is built so it never has to be switched off.
 
    🔥 EVERY CREDIT CARRIES A DISTINCT REASON. `addGems(n, reason)` exists
    because "every Cinder faucet used to land in wallet_ledger as either
    'addGems' or an anonymous reconcile blob… Neither says WHERE the money came
    from, so the Cinder supply could not be audited" (the `reason` note above
-   `addGems`, index.html:64506-64513).
+   `addGems`, index.html).
    Every credit from here reads `Dilemma: <dilemmaId>/<choiceId>` — greppable,
    attributable, one row per decision. sql/034 is blunt that this is for
    AUDITABILITY and never for authorisation: "p_reason CARRIES NO AUTHORITY.
@@ -122,7 +122,7 @@
 
    🔴 NO ROLLBACK, AND THAT IS THE DESIGN — see §"THE BASKET" above `grant()`.
    ⚙ ONE TUNING TABLE. Every number a reward is worth lives in `DILEMMA_ECON`
-   (data.js) and nowhere else — the `_opEcon()` habit as index.html:80551-80552
+   (data.js) and nowhere else — the `_opEcon()` habit as index.html:80622-80624
    states it for CORP_LAWS ("Every number a policy is worth lives in CORP_LAWS
    and nowhere else"). Strip the comments and the only bare numbers left below
    are 0, 1 and the 100 that is the definition of "per cent" — including in
@@ -160,8 +160,8 @@ function has(host, name) { return !!(host && typeof host[name] === 'function'); 
    `null` for "could not be read" — the distinction CONTRACT-R2 §2.1 settles and
    the header above narrates. Four different things arrive here as null and they
    are all the same answer to the only question a caller has:
-     • the host has no `gems` accessor at all (a service-worker-cached
-       index.html whose bridge predates it);
+     • the host has no `gems` accessor at all — which across the shipped seam
+       is only a stub host, never a stale bridge (see the header);
      • the accessor threw (`Profile` not yet assigned during boot);
      • it returned null, which is now the seam's own word for unreadable;
      • it returned NaN / Infinity / a string that is not a number.
@@ -218,12 +218,20 @@ const MAX_CINDER_GRANT = (() => {
    which decrements Profile.gems locally while `_serverMirrorCredit` clamps to
    Math.max(0, …) and returns early — the exact durable client/server
    divergence the comment above `refundCost` says this function avoids by "only
-   ever adding". One Math.min closes it.
+   ever adding". One Math.min closed it.
+   ⚠ AND IT IS NO LONGER A CLAMP ON EITHER SIDE — round 4. Both `payCost` and
+   `refundCost` now REFUSE a cost above this number rather than trimming it, so
+   the constant bounds which costs are transactable at all instead of bounding
+   an amount after the decision to move it. That is what makes "this function
+   only ever adds, and it only ever adds back a charge that was taken" a
+   property of the control flow instead of a property of one Math.min. Round 3
+   left the clamp on the credit and it minted 2,000 Cinder; see the block inside
+   `refundCost`.
 
    The number is read, never typed. CONTRACT-R2 §5.7 puts `maxChoiceCost` in
    DILEMMA_ECON and makes `validateCorpus`'s R8 refuse any authored cost above
-   it, so the clamp and the corpus can never disagree — that is the whole reason
-   the constant lives in the table (index.html:80551-80552 again).
+   it, so the two functions and the corpus can never disagree — that is the whole
+   reason the constant lives in the table (index.html:80622-80624 again).
    ⚠ THE FALLBACK IS DELIBERATELY NOT A COPY OF THAT NUMBER. Typing 2000 here
    would be a second copy of the contract, free to drift from data.js the first
    time somebody retunes it. When the key is unreadable — an older data.js
@@ -233,10 +241,13 @@ const MAX_CINDER_GRANT = (() => {
    integer the bridge's `n | 0` returns unchanged. That still makes a negative
    refund unreachable, which is the defect, and it can never shrink a refund
    below what `payCost` actually charged, which a guessed economy number could.
-   Be clear about what that costs: with the key missing, an absurd authored cost
-   is refunded in full instead of clamped. A refund is the player's own money
-   coming back — over-returning it is a disappointment for an auditor, where
-   under-returning it is a theft. */
+   Be clear about what that costs: with the key missing, any authored cost up to
+   `-1 >>> 1` becomes transactable — `payCost` charges it and `refundCost`
+   returns exactly it — and anything above that is refused by both. That is the
+   right failure for a missing key, because the two sides still agree on the
+   same number and the player is never short; what a guessed economy number
+   would buy instead is the two sides disagreeing about the same cost, which is
+   the defect this whole constant exists to prevent. */
 const REFUND_CEILING = (() => {
   try {
     const n = Math.floor(Number(DILEMMA_ECON.maxChoiceCost));
@@ -273,14 +284,14 @@ function cinderFor(choice, influenceValue) {
   if (!(num(band) > 0)) return 0;                       // an unknown band key pays nothing
   const raw = Math.round(num(band) * rewardMult(influenceValue));
   // Math.max(1, …) so a real reward can never round away to zero, mirroring the
-  // anti-rounding guard `adjustBond` uses on bond (index.html:72607-72609).
+  // anti-rounding guard `adjustBond` uses on bond (index.html:72680).
   return Math.min(MAX_CINDER_GRANT, Math.max(1, raw));
 }
 
 /* A choice's Cinder cost, normalised. Anything that is not a positive number is
    "no cost" — a cost leg that is present but zero is not a price, and letting
-   it through would call spendGems(0), which returns TRUE (`spendGems`,
-   index.html:64492)
+   it through would call spendGems(0), whose `if (amount <= 0) return true;`
+   guard makes that a reported success (`spendGems`, index.html)
    and reads in a log as a successful charge that never happened. */
 function costOf(choice) {
   const n = int(choice && choice.cost && choice.cost.cinder);
@@ -288,7 +299,7 @@ function costOf(choice) {
 }
 
 /* The six shipped rarity ids capitalise to their exact display names — verified
-   against `RARITIES` at index.html:39231-39238 (common → Common, … mythic →
+   against `RARITIES` in index.html (common → Common, … mythic →
    Mythic). Deriving the label rather than copying the table means a seventh
    rarity added upstream still reads sensibly here instead of showing an id. */
 function rarityLabel(id) {
@@ -354,18 +365,44 @@ export function describeChoice(choice, influenceValue) {
           // 'an Epic card', 'an Uncommon card' — two of the six shipped rarity
           // ids start with a vowel, and "a Epic card" in a gold modal reads as
           // machine output rather than as somebody telling you what happened.
-          // ⚠ THE RARITY IS A REQUEST, NOT A PROMISE, and this line is the one
-          // place in the feature that can overstate it. `grantCard` filters the
-          // pack pool by the requested rarity and, when that filter is empty,
-          // falls through to a DEFAULT_PACK_RARITY_WEIGHTS roll and finally to
-          // any lootable card (index.html:207944-207953). Driven against a pool
-          // with no Legendary in it: the modal read "a Legendary card" and an
-          // Uncommon arrived. Two things keep it honest rather than a third
-          // rewrite of this string: CONTRACT-R3 §3.2 caps authored requests at
-          // the four commonest rarities, which is where the pool is deepest;
-          // and the aftermath line below reports `picked.rarity` — WHAT CAME
-          // BACK — never what was asked for, so the player is never told the
-          // wrong thing about a card they are holding.
+          /* ⚠ THE RARITY IS A REQUEST, NOT A PROMISE, and this line is the one
+             place in the feature that can overstate it. `grantCard` filters the
+             pack pool by the requested rarity and, when that filter is empty,
+             falls through to a DEFAULT_PACK_RARITY_WEIGHTS roll and finally to
+             any lootable card (`grantCard`, index.html).
+             🔴 AND ON A STOCK INSTALL THE FILTER IS *ALWAYS* EMPTY ABOVE COMMON.
+             Round 3 defended this string by saying the authored rarities sit
+             "where the pool is deepest", quoting CONTRACT-R3 §3.2. Measured
+             against the real tables, the pool has NO depth at any rarity above
+             common: not one built-in card carries a `rarity` field, so
+             `getRarity(card)` (index.html) falls through to
+             RARITY_BY_ID.common for every one of the 75 poolable cards —
+             histogram `{common: 75}`, driven. Only Forge/Catalog customs carry
+             a rarity at all, and a custom-only install with nothing published
+             has no pool whatsoever. So `byRarity('epic')` is empty, the
+             weighted roll runs, and a Common arrives. Driven at 200 grants
+             each on the shipped corpus: "an Epic card (12%)" returned Common
+             200/200, "a Rare card (18%)" Common 200/200, "an Uncommon card
+             (11%)" Common 200/200. The disclosure was right; the bound it
+             claimed did not exist, and a comment that names a risk and then
+             asserts a false bound is worse than one that names the risk alone.
+             WHAT KEEPS THE PLAYER FROM BEING MISLED is one thing, not two, and
+             it is not this line: the aftermath line in `grant()` reports
+             `picked.rarity` — WHAT CAME BACK — never what was asked for, so
+             nobody is ever told the wrong thing about a card they are holding.
+             TWO ALTERNATIVES WERE CONSIDERED AND REJECTED. Printing the rarity
+             only when the pool can honour it needs the pool, and this function
+             is pure and takes no host — CONTRACT §4 freezes its signature at
+             `(choice, influenceValue)`, and widening it to reach a card table
+             from the preview path would put a mint-adjacent accessor in front
+             of a function the render layer calls on every repaint. Dropping the
+             rarity word outright would make the a/an article below dead code
+             and would break CONTRACT-R3 §8.2's promise to the corpus author
+             that `describeChoice` renders the rarity with an article, which
+             R11.9 authors content against. The honest move left is to say what
+             is true here, where the next person to touch this string will read
+             it. If the day comes that built-in cards carry rarities, this
+             paragraph is what tells them the measurement is stale. */
           const art = /^[aeiou]/i.test(lab) ? 'an ' : 'a ';
           parts.push((lab ? art + lab + ' card' : 'a card') + (cardP < 1 ? ' (' + pct(cardP) + '%)' : ''));
         }
@@ -378,7 +415,7 @@ export function describeChoice(choice, influenceValue) {
     if (inf > 0) out.influenceText = '+' + inf + ' standing';
     // U+2212 MINUS, not a hyphen: it sits on the same optical line as the plus
     // and this codebase already uses it for a computed subtraction in the camp
-    // log ("−${cut} threat, +rep", index.html:66010-66011).
+    // log ("−${cut} threat, +rep", index.html).
     else if (inf < 0) out.influenceText = '−' + Math.abs(inf) + ' standing';
 
     return out;
@@ -394,7 +431,7 @@ export function describeChoice(choice, influenceValue) {
    Two shipped precedents conflict and picking one makes the ambiguity
    unreachable. `spendGems()` refuses when the player cannot afford it — right
    for a cost, wrong for a fine that must still land. `_reconApplyEffects`
-   (`_reconApplyEffects`, index.html:216661-216662) does a clamped direct
+   (index.html) does a clamped direct
    decrement instead, which the 0.6s `_gemsTaxTick` poll then bills 2% civic tax
    on, a few lines below a comment arguing civic tax should not be booked on a
    fine. Choosing "cost, always" keeps this feature on the one sanctioned path
@@ -402,7 +439,7 @@ export function describeChoice(choice, influenceValue) {
 
 /* Drives the DISABLED state of the button. This must exist, because
    `spendGems()` returning false is the ONLY thing that happens on insufficient
-   funds — no toast, no clamp, no render (`spendGems`, index.html:64493). An ungated button
+   funds — no toast, no clamp, no render (`spendGems`, index.html). An ungated button
    would simply do nothing when pressed, which reads as a broken feature.
 
    ⚠ AN UNREADABLE BALANCE DISABLES A PAID CHOICE, and that is the safe
@@ -435,9 +472,9 @@ export function canAfford(host, choice) {
    This is the round-2 correction and it is the most important line in the file.
    Round 1 had it the other way round — "balance is the authority when we can
    read it" — and the balance is exactly the thing that can lie. `spendGems`
-   cannot: its only `return true` on a real charge (`spendGems`,
-   index.html:64504) is ten lines BELOW the decrement of `Profile.gems`
-   (index.html:64494), with nothing between them but the fire-and-forget cloud
+   cannot: its only `return true` on a real charge (index.html:64575) is ten
+   lines BELOW the decrement of `Profile.gems` (index.html:64565) — both
+   inside `spendGems` — with nothing between them but the fire-and-forget cloud
    write — so a `true` from it is a fact about what happened, not a report. A balance read is a
    fact about what the wallet says NOW, which is a different question the moment
    anything else in the tab has touched it.
@@ -497,7 +534,7 @@ export function canAfford(host, choice) {
    wallet and a generic "not enough" would read as us lying to them.
 
    The re-read is sound in the ordinary case because `spendGems` decrements
-   `Profile.gems` synchronously (`spendGems`, index.html:64494) and only fires
+   `Profile.gems` synchronously (`spendGems`, index.html) and only fires
    the cloud write afterwards; nothing — including the 0.6s tax poll — can run
    between two adjacent synchronous statements.
 
@@ -563,7 +600,7 @@ export function payCost(host, choice) {
    and "the refund could not be confirmed." Round 1 returned
    `host.addGems(n, …) !== false`, which against the shipped stack is
    CONSTANT TRUE: `addGems` returns undefined unconditionally
-   (`addGems`, index.html:64514-64535 — there is no return statement on the
+   (`addGems`, index.html — there is no return statement on the
    crediting path) and the bridge wrapper
    is `try { addGems(n | 0, …); return true; } catch { return false; }`. So the
    sentence was printed whether or not the money came back, and a driver proved
@@ -614,44 +651,95 @@ export function payCost(host, choice) {
    free choice at all, which takes a pointless `addGems`-adjacent call off the
    commonest failure path in the feature.
 
-   🔴 AND THE BOOLEAN NOW TELLS THE TRUTH ABOUT A SHORT REFUND. Round 2 clamped
-   `n` to REFUND_CEILING and then reported `(after - before) >= n` — a test
-   against the CLAMPED number, so an authored cost above the ceiling was charged
-   in full by `payCost`, refunded short here, and reported as confirmed. §5.1
-   closes that at the source: `payCost` now refuses such a cost before charging
-   anything, so this branch is unreachable through the shipped call path.
-   IT IS STILL CHECKED HERE. That redundancy is CONTRACT-R3's rule 2 and it is
-   deliberate — the round-2 lesson is that two owners can each implement their
-   half correctly and still leave the seam open, and this pair is one function
-   call apart in one file. If a charge above the ceiling ever happens again, by
-   any route, this function credits back everything it safely can and reports
-   `false`, so the caller prints "the refund could not be confirmed" rather than
-   "your Cinder came back." It never reports a shortfall as whole.
+   🔴 AND THE CEILING IS A GATE, NOT A CLAMP — round 4, and it is the third and
+   last shape of the same money defect. The history is worth keeping whole
+   because each round fixed the shape and left the mechanism:
+     • round 1/2 — `payCost` charged an authored 2500 in full, this function
+       clamped the credit to 2000 and returned TRUE, and index.js printed "Your
+       Cinder came back." over a net loss of 500. At 50000 the loss was 48,000.
+     • round 3 (§5.1) — `payCost` was taught to REFUSE a cost above the ceiling
+       before charging anything. Correct, and it made the clamp here strictly
+       worse: `clamped === true` now meant "nothing was charged", so the credit
+       sitting above the refusal was no longer a short refund but a MINT of
+       exactly REFUND_CEILING. Driven at cost 2500 on a 10,000 wallet: charged
+       0, credited 2,000, wallet 12,000, returned false.
+     • round 4 — the credit is gated on the same test `payCost` refuses on, and
+       the test runs BEFORE `addGems`. See the block inside the function body.
+   The two functions now refuse the same set of costs, in the same expression,
+   and the one that only ever adds cannot add for a cost the one that subtracts
+   would not take. That is the redundancy CONTRACT-R3 rule 2 asks for — the pair
+   is one call apart in one file — but it is redundancy in the REFUSAL, which
+   costs the player nothing when it is wrong, instead of in a credit, which is
+   what turned "belt and braces" into a faucet. It never reports a shortfall as
+   whole, and it no longer pays one out either.
 
    ⚠ THE 2% FOUNDATION SPEND TAX DOES NOT COME BACK, and that is stated rather
-   than hidden. `_gemsTaxTick` (index.html:56849-56895) polls every ~0.6s, sees
+   than hidden. `_gemsTaxTick` (index.html) polls every ~0.6s, sees
    any net decrease of Profile.gems, and bills civic tax on it — so by the time
    this runs, the tax on the original spend may already be booked. The clean fix
-   would be `_gemsTaxExempt` (index.html:56837), and it was deliberately NOT put
+   would be `_gemsTaxExempt` (index.html), and it was deliberately NOT put
    on the bridge: this path only runs on a save failure, which is rare and is
    already being reported to the player, and adding a tax-suppression hole to
    the bridge to recover a few Cinder on a failure path is a worse trade than
    eating the asymmetry. If refunds ever become routine, revisit this first.
 
    ⚠ NEVER a negative addGems. `addGems` guards on `amount === 0`
-   (index.html:64516), so a negative decrements Profile.gems locally while
+   (index.html), so a negative decrements Profile.gems locally while
    `_serverMirrorCredit` clamps to Math.max(0,…) and returns early — a durable
-   client/server divergence. This function only ever adds, and REFUND_CEILING
-   is what makes that sentence true rather than intended. */
+   client/server divergence. This function only ever adds, and it only ever adds
+   for a cost `payCost` would have taken — REFUND_CEILING, gating both, is what
+   makes both halves of that sentence true rather than intended. */
 export function refundCost(host, choice) {
   try {
     // 🔴 THE SAME EXPRESSION payCost uses, character for character.
     const n = Math.min(int(costOf(choice)), REFUND_CEILING);
-    // An authored cost the ceiling had to clamp cannot be returned in full, so
-    // whatever else happens below, this call cannot report a whole refund.
-    // Unreachable through payCost (§5.1); checked anyway, on purpose.
-    const clamped = int(costOf(choice)) > REFUND_CEILING;
     if (!(n > 0)) return false;                // nothing positive to credit back
+    /* 🔴 REFUSE THE SAME COSTS payCost REFUSES, AND REFUSE THEM BEFORE
+       CREDITING ANYTHING. This is round 4's money fix and it is a REORDERING,
+       not a new rule — the rule was already here and ran too late to be one.
+       Round 3 computed `clamped = int(costOf(choice)) > REFUND_CEILING`, called
+       `addGems(n, …)`, and only THEN returned false on it. Round 3's §5.1 had
+       just made `clamped === true` imply that `payCost` refused the same cost
+       and charged nothing, so the credit underneath it could no longer be a
+       refund of anything: it was a mint, and the `false` it returned only meant
+       the player was not told about it. Driven on all three adapters at an
+       authored cost of 2500 against a 10,000 wallet: payCost took 0, this
+       function credited 2,000 through the real bridge, and the wallet ended at
+       12,000 — 1.6× this file's own MAX_CINDER_GRANT, arriving through the one
+       function in the feature that never subtracts. Same at 50000, 2^31,
+       2^32+100, 1e12 and MAX_SAFE_INTEGER.
+       That is round 1's money defect in its third shape. Rounds 1 and 2 charged
+       2500 and returned 2000 (−500, reported as a confirmed refund); round 3
+       charged 0 and returned 2000 (+2000, reported as unconfirmed). The numbers
+       on the two sides had been made to agree; the ACTIONS had not.
+       So the ceiling is no longer a clamp on the credit at all — it is a gate in
+       front of it, and it is the same gate payCost keeps. The invariant that
+       makes this structural rather than a matter of statement order:
+
+         THIS FUNCTION CAN ONLY CREDIT A COST payCost WOULD HAVE CHARGED.
+         THERE IS NO PATH THROUGH IT THAT REACHES addGems ON ANY OTHER COST.
+
+       Reordering was chosen over deleting the branch because CONTRACT-R3's
+       rule 2 keeps the redundancy: the pair is still checked in both functions,
+       one call apart, so a future edit that reopens the ceiling on the charge
+       side cannot quietly reopen it here too.
+       ⚠ THE Math.min ABOVE IS NOW A NO-OP AND IT STAYS. Past this gate `n` is
+       always exactly `int(costOf(choice))`, so the clamp can never bind — it is
+       kept because it is the expression `payCost` computes character for
+       character, and because it is the last thing standing if somebody ever
+       deletes the gate. A clamp UNDER a refusal is harmless; the defect was a
+       credit under one. Do not "simplify" it away without also proving the
+       refusal above it cannot be removed.
+       ⚠ WHAT THIS GIVES UP, stated rather than glossed. If some future route
+       ever charges above the ceiling WITHOUT going through payCost, this
+       returns false and credits nothing, and that money stays gone. Round 3's
+       comment claimed the opposite branch "credits back everything it safely
+       can" — but a refund that does not know what was actually taken cannot
+       safely return a number it invented, and the number it invented was the
+       ceiling, every time, whatever the charge had been. A refund is bounded by
+       the charge or it is a faucet; there is no third reading. If such a route
+       is ever built, the fix belongs at the charge, not here. */
+    if (int(costOf(choice)) > REFUND_CEILING) return false;
     if (!has(host, 'addGems')) return false;
     // A refund is its own faucet in wallet_ledger and gets its own greppable
     // label. It carries the choice id but not a dilemma id, because refundCost
@@ -668,9 +756,9 @@ export function refundCost(host, choice) {
     try { said = host.addGems(n, 'Dilemma refund: ' + cid) !== false; } catch (e) { said = false; }
     const after = readGems(host);
 
-    // Credit first, report second: the player gets back everything this
-    // function can safely return even when it must call the result unconfirmed.
-    if (clamped) return false;
+    // Every cost that reaches this point is one payCost would have charged in
+    // full, so `n` IS the charge and the only open question is whether the
+    // credit landed. Nothing below can refuse the credit after making it.
     if (before !== null && after !== null) return (after - before) >= n;
     return said;
   } catch (e) { return false; }
@@ -685,8 +773,8 @@ export function refundCost(host, choice) {
    actionable. ⚠ The narrowing is round 2's: what is reproducible is whether a
    reward landed, how much Cinder, and whether a card was REQUESTED in which
    rarity band. WHICH card arrives is not — that is three `Math.random()` picks
-   inside the bridge's `grantCard` (index.html:207945, 207951, 207953) plus
-   `rollRarityFromWeights`' own (index.html:65016), all on the far side of a seam
+   inside the bridge's `grantCard` (index.html:208035, 208041, 208043) plus
+   `rollRarityFromWeights`' own (index.html), all on the far side of a seam
    this module does not thread an rng through. Threading one would be a
    bridge-surface change to make a comment true, so the comment was narrowed
    instead. Claiming the whole resolution was reproducible was an overreach.
@@ -750,6 +838,33 @@ export function influenceDelta(choice) {
   } catch (e) { return 0; }
 }
 
+/* 🃏 THE DOMAIN OF THE INERT-CARD CHECK — the two card kinds `host.cardById`
+   can actually answer for, and therefore the only kinds where its silence is
+   evidence of anything. Everything here is measured against the real tables,
+   not inferred: a driver walked all 75 cards `getCardPoolForPacks` returns and
+   asked `_cardDefById` about each one; it resolved 16 and the resolved set was
+   exactly `{unit: 16}`. 'summon' rides with 'unit' because a summon kind is
+   only ever produced for a CUSTOM card (getCardPoolForPacks tags archons and
+   fusion kalons that way in `_isSummonKind`, index.html) and every custom card
+   resolves through the 'custom:' key.
+   ⚠ THE LIST IS DUPLICATED RATHER THAN IMPORTED, for the reason data.js
+   duplicates the rarity ids: UNIT_CARDS and its five siblings are top-level
+   `const`s in index.html and a module cannot see them (CLAUDE.md, the globals
+   trap). These are ids, not economy numbers, so DILEMMA_ECON is not where they
+   belong — the ⚙ ONE TUNING TABLE rule in the header is about what a reward is
+   WORTH, and this is about what the game can look up.
+   ⚠ THE UNKNOWN-KIND DEFAULT IS "CANNOT ANSWER", and it is chosen on the same
+   ground as every other fallback in this file: the direction that costs the
+   player nothing. A card family added upstream that this list has not heard of
+   simply stops being checked, which is quiet. The other default would put us
+   straight back into the 78.7% false-alarm rate this list exists to end, on a
+   whole new family, and the player would be the one reading it. A grant object
+   with NO kind at all is treated as in-domain — the bridge always sets one
+   (`pick.kind || card.type || 'unit'`), so a row without one did not come from
+   the bridge, and a host that hand-rolls grant results is exactly the host this
+   check is still for. */
+const CARD_KINDS_THE_VERIFIER_ANSWERS_FOR = Object.freeze(['unit', 'summon']);
+
 /* ════════════════════════════════════════════════════════════════════════════
    4. THE BASKET — grant()
    ════════════════════════════════════════════════════════════════════════════
@@ -779,10 +894,10 @@ export function influenceDelta(choice) {
        LEG 1 — THE CARD, first, because it is the leg that can legitimately
                decline. grantCard() returns null whenever the pack pool is empty,
                which is legal any time Forge.useCustomOnlyPool is on with no
-               published customs (`getCardPoolForPacks`, index.html:64967, whose
-               built-in pools are skipped wholesale at 64994 when that toggle is
-               on). A declined card before any credit costs nothing and needs no
-               unwind.
+               published customs (`getCardPoolForPacks`, index.html, whose
+               built-in pools its `if (!customOnly)` branch skips wholesale when
+               that toggle is on). A declined card before any credit costs
+               nothing and needs no unwind.
        LEG 2 — THE CINDER, last, because it is the leg with no inverse. Nothing
                runs after it that could want it back.
 
@@ -797,20 +912,59 @@ export function influenceDelta(choice) {
    A failed leg 1 does NOT abort leg 2. Withholding the Cinder because our card
    grant misbehaved punishes the player for our bug.
 
-   🃏 THE INERT-CARD CHECK. Granting an id the game has no definition for is
-   worse than granting nothing: the row in cardCollection is real, permanent and
-   unusable — the same failure the repo already recorded for resource ids that
-   exist in a loot table and not in the ledger ("their pile of it is real and
-   inert"). The first line of defence is on the far side of the bridge, where
-   grantCard picks the CARD OBJECT out of getCardPoolForPacks() and uses
-   `pick.card.id`, so the id provably resolves (`MythicDilemmaBridge.grantCard`,
-   index.html:207934-207965, over `getCardPoolForPacks` at 64967). This is
-   the second: after the grant, the id is re-resolved through host.cardById()
-   (`_cardDefById`, index.html:87393) and a miss is reported as a failed leg.
-   Belt and braces, exactly as settle.js re-reads a balance after addRes().
-   ⚠ If the host cannot verify (no cardById accessor) we do NOT flag — an
-   unverifiable grant is not a bad grant, and crying wolf on a partial bridge
-   would make the honest signal worthless.
+   🃏 THE INERT-CARD CHECK, AND THE ROUND IT SPENT CRYING WOLF. Granting an id
+   the game has no definition for is worse than granting nothing: the row in
+   cardCollection is real, permanent and unusable — the same failure the repo
+   already recorded for resource ids that exist in a loot table and not in the
+   ledger ("their pile of it is real and inert"). The first line of defence is
+   on the far side of the bridge, where grantCard picks the CARD OBJECT out of
+   getCardPoolForPacks() and uses `pick.card.id`
+   (`MythicDilemmaBridge.grantCard`, index.html, over
+   `getCardPoolForPacks`). This is the second: after the grant, the id
+   is re-resolved through host.cardById() and a miss is reported as a failed
+   leg.
+
+   🔴 AND THE SECOND LINE OF DEFENCE IS NARROWER THAN THE THING IT DEFENDS,
+   which for one round made it a defect rather than a check. `host.cardById` is
+   `_cardDefById` (index.html), and its whole body is
+   `resolveDeckCard('custom:' + id) || resolveDeckCard('unit:' + id)` plus a
+   `getAllCustomCards()` sweep. `resolveDeckCard` (index.html) dispatches
+   on the KIND in the deck key, so 'custom:' reaches every Forge/Catalog card of
+   any type and 'unit:' reaches UNIT_CARDS — and no key at all is tried for the
+   other five built-in tables. `getCardPoolForPacks` pushes all six. So the
+   VERIFIER covers strictly less ground than the GRANTER, and the gap is not a
+   corner: driven over the real tables, the pool is 75 cards of which
+   `_cardDefById` resolves 16 (`{unit:16}`) and misses 59 — 9 spells, 20 traps,
+   17 locations, 10 weather, 3 walls, 78.7% of everything a player can be
+   handed. Driven through the real bridge at 200 grants on each of the five
+   shipped card rewards, the card landed in Profile.cardCollection 200/200 every
+   time and this check called it inert on 151-167 of them. A player who resolved
+   eh_ledge_market/take_the_licence received skyCitadel — a valid, playable
+   Location — and read "⚠ Ouroboros logged the find and could not read it — the
+   card sits in your collection, inert." The card was never even named, because
+   `out.card` had been nulled. The paragraph directly above this one had already
+   named that exact harm ("crying wolf … would make the honest signal
+   worthless") and the code did it anyway, four times in five, on the one reward
+   the owner asked for by name.
+
+   THE RULE THAT REPLACES IT is the rule LEG 2 already uses on the wallet, and
+   using the same one twice is the point: A MISS IS EVIDENCE ONLY INSIDE THE
+   VERIFIER'S DOMAIN. Outside it, a miss is silence, and silence is not a
+   finding. `CARD_KINDS_THE_VERIFIER_ANSWERS_FOR` above is that domain, measured
+   rather than assumed. Inside it the check keeps every tooth it had — a
+   synthetic id with no definition still reports a failed leg, still names the
+   inert row, and is still left behind because there is no take-back on the
+   bridge. Outside it the grant is UNVERIFIABLE, which is not the same as bad,
+   and the player gets the ordinary find line with the card named.
+   ⚠ The alternative — widening `_cardDefById` so it answers for all six tables
+   — is the better fix and it is deliberately NOT taken here. That function is
+   index.html, it is another owner's file, and it is read by battle, fusion,
+   grave and deck code that this feature has no business changing to make its
+   own warning quieter. Round 2's lesson was that a defect spanning two owners
+   is how bugs get reintroduced; this one is closed on one side of the seam.
+   ⚠ If the host cannot verify at all (no cardById accessor) we do NOT flag,
+   which is the same rule stated for a different reason — an unverifiable grant
+   is not a bad grant.
 
    `lines` are PLAIN TEXT in the house voice, one leading emoji each, no markup.
    They interpolate card names, which on a Forge card are player-authored, so
@@ -843,7 +997,7 @@ export function grant(host, instance, choice, rolled) {
          OF IT CAN FIRE. Round 2's version of this comment claimed the branch
          covered a THROWING accessor too. Driven in round 3, it does not: the
          bridge's `grantCard` already ends `catch (e) { return null; }`
-         (index.html:207964) and the adapter wraps it in a second try/catch that
+         (index.html) and the adapter wraps it in a second try/catch that
          also returns `null`, so a pool that blows up and a bridge accessor that
          has been deleted BOTH arrive here as `picked === null` — indistinguish-
          able from an empty pool, and both print "Nothing came out of the ruins
@@ -881,7 +1035,15 @@ export function grant(host, instance, choice, rolled) {
           checked = true;
           try { def = host.cardById(picked.id); } catch (e) { def = null; }
         }
-        if (checked && !def) {
+        // A miss only means something if the verifier could have answered. See
+        // the 🔴 SECOND LINE OF DEFENCE block above: `_cardDefById` tries the
+        // 'custom:' and 'unit:' deck keys and nothing else, so on a built-in
+        // spell, trap, location, weather or wall card its `null` is a statement
+        // about the lookup, not about the card. `String(...)` because `kind`
+        // crosses a host boundary and may be anything.
+        const kind = String(picked.kind || '').trim().toLowerCase();
+        const answerable = !kind || CARD_KINDS_THE_VERIFIER_ANSWERS_FOR.indexOf(kind) >= 0;
+        if (checked && !def && answerable) {
           out.ok = false;
           out.why = 'The granted card id does not resolve to a definition on this device.';
           out.lines.push('⚠ Ouroboros logged the find and could not read it — the card sits in your collection, inert.');
@@ -956,9 +1118,9 @@ export function grant(host, instance, choice, rolled) {
            as its one piece of evidence, and a reader should know how rare that
            value actually is. The bridge wrapper is
            `try { addGems(n | 0, …); return true; } catch { return false; }`
-           (index.html:207912), so it answers `true` for ANY non-throwing call,
-           and the real `addGems` has no `return false` in it at all
-           (index.html:64514-64535). Driven: a host mutator returning a literal
+           (`MythicDilemmaBridge.addGems`, index.html:208002), so it answers `true`
+           for ANY non-throwing call, and the real `addGems` has no `return false`
+           in it at all (index.html). Driven: a host mutator returning a literal
            `false` never reaches this file as `false`, because the bridge has
            already turned it into `true`. So a genuinely lost credit is reported
            as lost only when something THREW on the way to the wallet — and
@@ -1016,7 +1178,7 @@ export function grant(host, instance, choice, rolled) {
 /* ── Attribution ────────────────────────────────────────────────────────────
    The reason string every credit carries. Built defensively because it must
    never be blank or defaulted: `addGems` falls back to the literal 'addGems'
-   when the reason is missing (`reason || 'addGems'`, index.html:64534), and that
+   when the reason is missing (`reason || 'addGems'`, index.html), and that
    anonymous label is
    precisely why the Cinder supply could not be audited in the first place.
    A dilemma with a broken instance still produces an attributable row. */

@@ -16,33 +16,33 @@
 
    ⚙ ONE TUNING TABLE. Every number this feature is worth lives in
    `DILEMMA_ECON` below and nowhere else. That is the `_opEcon()` habit as
-   `index.html:80551-80553` states it for CORP_LAWS ("the render code reads it,
+   `index.html:80622-80624` states it for CORP_LAWS ("the render code reads it,
    the scorer reads it, the mood pressure reads it… one table, no literals
    downstream"). engine.js, rewards.js, render.js and index.js must not carry a
    reward, cost, bond, cooldown, count or clamp literal of their own.
 
    🔴 `_opEcon()` ITSELF IS NOT USED AND MUST NOT BE — do not "fix" this.
    CLAUDE.md says all *operation* pricing goes through `_opEcon()`, and that is
-   scoped to the word operation: `_opEcon(t)` (`index.html:80095`) is
+   scoped to the word operation: `_opEcon(t)` (index.html) is
    `OPS_ECON[t] || null` over the business-operation keys (`OPS_ECON`,
-   `index.html:79806`). It returns null for anything else, and adding a
+   index.html). It returns null for anything else, and adding a
    `dilemma` key would put a non-business into the Just Business catalog — that
-   catalog is built from `Object.keys(OPS_ECON)` (`index.html:80060`, built by the Creator ops-econ
-   overlay's `draw()`, `index.html:159780`), so a fake op would appear as a BUYABLE BUSINESS in the
+   catalog is built from `Object.keys(OPS_ECON)` (index.html, built by the Creator ops-econ
+   overlay's `draw()`, `index.html:159849`), so a fake op would appear as a BUYABLE BUSINESS in the
    shop. Not a risk; a certainty. The rule's spirit is honoured by the
    one-table discipline above, which is what CORP_LAWS does.
 
    ════════════════════════════════════════════════════════════════════════════
    VOICE — the rules, taken from the camp expedition log (`CAMP_LOOT_FLAVOR`,
-   `index.html:65678-65686`) and the Situation Board (`RECON_EVENTS`,
-   `index.html:216542`).
+   index.html) and the Situation Board (`RECON_EVENTS`,
+   index.html).
 
    🔴 ROUND ONE WROTE THESE RULES DOWN AND THEN BROKE THEM, WHICH IS WHY THEY
    ARE NOW MEASURED. The first corpus declared "eight to fourteen words is the
    beat" and "truncated fragments are correct and frequent — Gone. Halted." and
    then shipped a median outcome of TWENTY words, zero of one hundred and
    seventy-two lines under twelve, and not one single-word sentence in the whole
-   file. A rule that lives only in a comment is a rule that rots. Rules V1-V10
+   file. A rule that lives only in a comment is a rule that rots. Rules V1-V12
    in `validateCorpus()` are those rules again, as errors, counting words.
 
      1. Two clauses, rarely three. Eight to fourteen words is the beat. (V1, V2)
@@ -69,6 +69,18 @@
         nobody/Nobody fifty-three times in one hundred and seventy-two lines and
         hung twenty-one ", which …" riders off its sentences. Both are capped
         now (V8, V9). Vary the negation; drop the rider.
+    10. 🔴 AND THE WORST TIC IS NOT A WORD, IT IS A RHYTHM. Rules 1-9 all judge
+        a line on its own, and a corpus can pass every one of them and still be
+        written in a single tune. This one was: seventy-two of ninety-seven
+        outcomes were exactly two sentences with the sting in the second, and
+        forty-five of them opened on the word "The". Any one is a good line.
+        Nine in a row and the reader hears the shape before the sentence, which
+        is the sound of a machine and not of somebody telling you what happened.
+        Fixed by rewriting sixty-eight lines, and then BOUNDED, because it had
+        already been measured and deferred twice: the shares are now zero and
+        forty-five, and V11 and V12 hold the ceilings. Start on the thing that
+        happened. Let a line be one sentence, or three, when three is what it
+        is.
 
    ════════════════════════════════════════════════════════════════════════════
    WHAT MAKES A DILEMMA A DILEMMA — the authoring rules that matter most.
@@ -100,20 +112,20 @@
    A CHOICE DOES NOT NAME UNITS, IT NAMES POLES. It cannot name units: the
    player's deck is unknown when this file is written and is frequently full of
    Forge cards that did not exist yet. So a choice declares the value poles it
-   EMBODIES, from the shipped eight (`LQ_POLE_AXIS`, `index.html:73049`), and
+   EMBODIES, from the shipped eight (`LQ_POLE_AXIS`, index.html), and
    engine.js derives each companion's stance — support, middle, against — from
-   the unit's own `valueProfile` (`_lqUnitValueProfile`, `index.html:73104`).
+   the unit's own `valueProfile` (`_lqUnitValueProfile`, index.html).
    Opposition is derived from the AXIS, never authored: writing
    `oppose: ['mercy']` on a choice that also embodies mercy produces an
    incoherent entry no cheap validator could catch, and deriving it makes that
-   entry unwritable. It is `_lqPoleVerdict` (`index.html:73298`) turned inside
+   entry unwritable. It is `_lqPoleVerdict` (index.html) turned inside
    out — and that function's `null` return is this codebase's own name for the
    Middle stance.
 
    🔴 THE POLE BUDGET IS A BALANCE DECISION, SO IT IS CHECKED (R5, R6). Round
    one authored caution fifty-two times against valor sixteen, while valor is
    matched by one of the broadest regexes in the shipped archetype table
-   (`LQ_ARCHETYPE_POLE`, `index.html:73081` — warrior|vanguard|champion|fighter|
+   (`LQ_ARCHETYPE_POLE`, index.html — warrior|vanguard|champion|fighter|
    brawler|gladiator|knight|barbar|hunter|warlord|storm|bird). A deck of common
    melee archetypes therefore took a systematic net bond DRAIN from simply
    playing the feature, on the owner's headline mechanic, because of a ratio
@@ -147,15 +159,30 @@
    paths dead against shipped content. R11 makes their absence an error. It also
    fixes the shape: a card-carrying choice is always FREE (`grant()` cannot take
    a card back, so it must never share a row with a charge), never certain
-   (chance is open at zero and closed at a half), never above Epic, and never
-   stacked on the top Cinder band. And in this world a card is not a loot table
-   entry — it is Ouroboros technology, part of the connection that puts an
-   entity on the ground, and LORE.md says finding one "could fundamentally
-   change a Survivor's chances of living through their next expedition". So it
-   is authored onto a choice that plausibly puts a hand into the ruins or into
-   somebody's stock: a block gone into, a door walked through, a stall
-   impounded, a stair opened for the first time since the water. Never a civic
-   bonus. Never a thank-you.
+   (chance is open at zero and closed at a half), never behind a dead outer gate
+   (R11.10), and never stacked on the top Cinder band. And in this world a card
+   is not a loot table entry — it is Ouroboros technology, part of the connection
+   that puts an entity on the ground, and LORE.md says finding one "could
+   fundamentally change a Survivor's chances of living through their next
+   expedition". So it is authored onto a choice that plausibly puts a hand into
+   the ruins or into somebody's stock: a block gone into, a door walked through,
+   a stall impounded, a stair opened for the first time since the water. Never a
+   civic bonus. Never a thank-you.
+
+   🔴 AND THE ROW MAY NOT NAME A RARITY THE GAME CANNOT MINT. Round three
+   authored uncommon, rare and epic requests and `describeChoice` printed them
+   on the row before the player chose. Every built-in card in this codebase
+   resolves to Common — 75 poolable cards across six arrays, not one `rarity:`
+   field between them — so the game handed over a Common every time and the tag
+   was false on 56% of grants. Four of the five card rows now request nothing at
+   all, which is both the truth and the better line: what is behind that stair
+   has not been reached since the water, so nobody knows what it is. The fifth
+   is a market stall's impounded inventory and asks for `common`, the one band
+   the pool can fill. What makes a card an EVENT here is not a word on a tag; it
+   is that five rows in twenty entries can produce one, at a joint probability
+   between eleven and twenty per cent, behind a forty-five-minute cooldown. The
+   scarcity is real, so the line does not have to oversell it. CARD_RARITY_IDS
+   carries the measurement and the argument.
 
    ⚠ A UNIT WITH NO POLES IS THE COMMON CASE, NOT AN EDGE CASE. A Forge card
    with a name, an icon and stats resolves to `[]` and is Middle on everything.
@@ -217,8 +244,8 @@ export const DILEMMA_ECON = Object.freeze({
      It is also the lore: LORE.md says Cinder "isn't supposed to simply appear
      because somebody completed an arbitrary videogame task", and the admin has
      already switched a faucet off once for exactly that reason —
-     `GEM_REWARDS = { perBattle: 0, winBonus: 0, … }` at `index.html:64482`,
-     with the note "it will devalue our money" (`index.html:64476`). */
+     `GEM_REWARDS = { perBattle: 0, winBonus: 0, … }` in index.html,
+     with the note "it will devalue our money" directly above it. */
   cinderBand:       Object.freeze({ small: 120, mid: 400, large: 900 }),
   rewardFloorMult:  0.6,             // multiplier at influence 0
   rewardSpanMult:   0.8,             // + this * (influence/100)  ⇒ 1.0 at 50, 1.4 at 100
@@ -243,13 +270,13 @@ export const DILEMMA_ECON = Object.freeze({
    specific ask in the fiction, and "cover a week of payroll on Foundry Row" is
    honestly not the same number as "pay the grocer for a stolen loaf". Three
    bands would flatten exactly the distinction the dilemma is about. Costs also
-   only ever REMOVE Cinder through `spendGems()` (`index.html:64490`), which
+   only ever REMOVE Cinder through `spendGems()` (index.html), which
    refuses rather than going negative, so a mis-tuned cost cannot inflate
    anything — and R8 bounds it from above. */
 
 /* ────────────────────────────────────────────────────────────────────────────
    INFLUENCE_RANKS — standing with ONE city, given a name a player can say.
-   Modelled on RESERVE_RANKS (`index.html:56284`): ascending, `min: 0` on the
+   Modelled on RESERVE_RANKS (index.html): ascending, `min: 0` on the
    first row so a lookup can never miss and never returns null.
    ⚠ This ladder is DISPLAY. It is not one of Influence's three consumers (the
    gate band, the reward multiplier and the choice-count floor are). It is
@@ -311,8 +338,8 @@ export const INFLUENCE_RANKS = deepFreeze([
    and an argument about what that entity should be asked to do.
 
    `minInfluence` / `maxInfluence` are Influence's first consumer, and the shape
-   is not invented — it is `needMorale` on `RECON_EVENTS` (`index.html:216609`,
-   filtered by the RECON_EVENTS pool builder, `index.html:216689`) generalised to a band. Low standing means the
+   is not invented — it is `needMorale` on `RECON_EVENTS` (index.html),
+   read by that table's own pool filter and generalised to a band. Low standing means the
    Heights stops bringing you the decisions that matter. High standing means
    nobody asks you about a shop sign any more, which is its own quiet loss.
    ──────────────────────────────────────────────────────────────────────────── */
@@ -338,7 +365,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'The market runs dry and the traders remember it.',
         poles: ['mercy'], influence: 4,
         cost: null, reward: null,
-        outcome: '🚰 Clinic taps ran clear by dusk. The market shuttered early.',
+        outcome: '🚰 Clinic taps ran clear by dusk and the market shuttered early.',
       },
       {
         id: 'west_market', always: false, weight: 1,
@@ -346,7 +373,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'Trade keeps the crews paid and the clinic carries buckets.',
         poles: ['ambition'], influence: 4,
         cost: null, reward: { chance: 0.4, cinder: 'small', card: null },
-        outcome: '🪙 The stalls opened on time. At the clinic they carried water all night.',
+        outcome: '🪙 Stalls opened on time. At the clinic they carried water all night.',
       },
       {
         id: 'split_valve', always: false, weight: 1.5,
@@ -374,7 +401,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'You did not build this pipe.',
         poles: ['caution'], influence: -4,
         cost: null, reward: null,
-        outcome: '🌫 The valve stayed. By morning the street had stopped asking you.',
+        outcome: '🌫 Valve stayed shut. By morning the street had stopped asking you.',
       },
     ],
   },
@@ -397,7 +424,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'The furnaces cool and the shift goes home unpaid.',
         poles: ['mercy'], influence: 3,
         cost: null, reward: null,
-        outcome: '⚡ The lifts kept running. The Row costed out a cold restart.',
+        outcome: '⚡ Lifts kept running while the Row costed out a cold restart.',
       },
       {
         id: 'shed_homes', always: false, weight: 1,
@@ -405,7 +432,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'Quota is met and the stairwells go dark.',
         poles: ['ruthless', 'ambition'], influence: -3,
         cost: null, reward: { chance: 0.45, cinder: 'mid', card: null },
-        outcome: '⚡ The Row made quota. Upstairs they carried lamps for a week.',
+        outcome: '⚡ Quota made. Upstairs they carried lamps for a week.',
       },
       {
         id: 'rolling', always: false, weight: 1.5,
@@ -413,7 +440,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'Everyone loses an hour of the evening.',
         poles: ['temperance'], influence: 4,
         cost: null, reward: null,
-        outcome: '⚡ An hour each. Even.',
+        outcome: '⚡ Everyone dark an hour. Even.',
       },
       {
         id: 'let_it_trip', always: true, weight: 0.5,
@@ -444,7 +471,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'They see the shortfall and who signed for it.',
         poles: ['honor'], influence: 5,
         cost: null, reward: null,
-        outcome: '🧾 The crews read the ledger. Two foremen left the Row.',
+        outcome: '🧾 Crews read the ledger. A foreman left the Row. Then another.',
       },
       {
         id: 'stretch_it', always: false, weight: 1,
@@ -476,7 +503,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'It is not your ledger and not your Row.',
         poles: ['guile'], influence: -4,
         cost: null, reward: null,
-        outcome: '🌫 Payday came and went. Two families left the Row that week.',
+        outcome: '🌫 Payday came and went. A family left the Row that week. Unpaid.',
       },
     ],
   },
@@ -507,7 +534,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'The debt closes and the boy learns the price of nothing.',
         poles: ['ambition'], influence: 2,
         cost: { cinder: 200 }, reward: null,
-        outcome: '🪙 The grocer was made whole. The boy watched you pay. He took again in spring.',
+        outcome: '🪙 You made the grocer whole. The boy watched you pay. He took again in spring.',
       },
       {
         id: 'hand_to_ward', always: false, weight: 1,
@@ -515,7 +542,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'A file is opened and his sister is listed on it.',
         poles: ['honor'], influence: 1,
         cost: null, reward: null,
-        outcome: '📋 The ward opened a file. His sister is on it too.',
+        outcome: '📋 Ward clerks opened a file with his sister already on it.',
       },
       {
         id: 'look_the_other_way', always: true, weight: 0.5,
@@ -523,7 +550,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'It is bread, and it is not your shop.',
         poles: ['guile'], influence: -3,
         cost: null, reward: null,
-        outcome: '📪 The grocer stopped asking. He bars the door at dusk now.',
+        outcome: '📪 Grocer stopped asking after a week. He bars the door at dusk now.',
       },
     ],
   },
@@ -548,7 +575,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'The Yards lose her and the liaison loses the file.',
         poles: ['guile', 'mercy'], influence: 3,
         cost: null, reward: null,
-        outcome: '✨ She left on the night truck. Her mother stayed to answer questions.',
+        outcome: '✨ She left on the night truck and her mother stayed to answer questions.',
       },
       {
         id: 'hand_over', always: false, weight: 1,
@@ -572,7 +599,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'Cinder buys a clerical error that holds for a season.',
         poles: ['ambition'], influence: 1,
         cost: { cinder: 900 }, reward: null,
-        outcome: '🪙 The file went missing. The liaison now knows what you will pay.',
+        outcome: '🪙 File gone by Friday. Your liaison knows what you will pay now.',
       },
       {
         id: 'say_nothing_yards', always: true, weight: 0.5,
@@ -580,7 +607,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'You were not there and you saw no hands.',
         poles: ['guile'], influence: -2,
         cost: null, reward: null,
-        outcome: '🌫 The liaison asked again. Somebody answered.',
+        outcome: '🌫 He asked again. Somebody answered.',
       },
     ],
   },
@@ -611,7 +638,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'They write it down and the liaison reads it later.',
         poles: ['ambition'], influence: 4,
         cost: null, reward: null,
-        outcome: '🌀 The log filled in a fortnight. One dreamer stopped waking up.',
+        outcome: '🌀 Their log filled in a fortnight. One dreamer stopped waking up.',
       },
       {
         id: 'seal_the_blocks', always: false, weight: 1,
@@ -619,7 +646,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'Curfew, shutters, and nobody sleeps in the corridor.',
         poles: ['caution', 'ruthless'], influence: 4,
         cost: null, reward: null,
-        outcome: '🌀 The dreaming stopped. So did the market. Gone.',
+        outcome: '🌀 Dreaming stopped. So did the market. Gone.',
       },
       {
         id: 'call_his_ops', always: false, weight: 1,
@@ -627,7 +654,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'Operatives, lamps, and a report you will not read.',
         poles: ['honor', 'valor'], influence: 4,
         cost: null, reward: null,
-        outcome: '🛡 The squad walked the corridor twice. Two of them dream it now.',
+        outcome: '🛡 They walked the corridor twice. Two of them dream it now.',
       },
       {
         id: 'refuse_the_bleed', always: true, weight: 0.5,
@@ -652,15 +679,19 @@ export const DILEMMAS = deepFreeze([
     wire: '…kkzzt… Ouroboros window over the district at moonrise … one carrier … kkzzt…',
     brief: 'Ouroboros holds a window over the district tonight. One carrier, one card, one entity on the ground before the orbit moves on. Three people have asked for it.',
     choices: [
-      /* 🃏 CARD, common. The beam lifts stone off a stair that has been shut
-         since the water came, and what is behind it has not been reached by
-         anybody. Ordinary stock, which is why the rarity is named and low. */
+      /* 🃏 CARD, BAND NOT NAMED (rarity null). The beam lifts stone off a stair
+         that has been shut since the water came, and nothing behind it has been
+         reached by anybody — so nobody in the fiction knows what is down there
+         and this row must not pretend to. Round three wrote `rarity: 'common'`
+         here and justified it as "ordinary stock"; the stock is a room nobody
+         has opened. `null` is the honest request and it is also the only one
+         that lets the install's own pool answer. See CARD_RARITY_IDS. */
       {
         id: 'lift_the_stair', always: false, weight: 1,
         label: 'Summon something that can lift',
         desc: 'A collapsed stair, and forty people behind it.',
         poles: ['mercy'], influence: 3,
-        cost: null, reward: { chance: 0.4, cinder: 'small', card: { chance: 0.3, rarity: 'common' } },
+        cost: null, reward: { chance: 0.4, cinder: 'small', card: { chance: 0.3, rarity: null } },
         outcome: '🛰 Beam carried stone off the stair until dawn. Rooms behind had been shut since the water. Then it went.',
       },
       {
@@ -685,7 +716,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'A stronger summon, bought at the seller price.',
         poles: ['ambition'], influence: 1,
         cost: { cinder: 1200 }, reward: null,
-        outcome: '🪙 The card called something bigger. The stair cleared. The seller names his own price now.',
+        outcome: '🪙 Something bigger came down. The stair cleared by dawn. He names his own price now.',
       },
       {
         id: 'let_it_pass', always: true, weight: 0.5,
@@ -693,7 +724,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'The orbit comes round again in a season.',
         poles: ['temperance'], influence: -3,
         cost: null, reward: null,
-        outcome: '🌫 The window closed over an empty square. Nothing came down.',
+        outcome: '🌫 Moonrise over an empty square. Nothing came down.',
       },
     ],
   },
@@ -716,7 +747,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'Let the Governor see what the ward is hiding.',
         poles: ['honor', 'valor'], influence: 5,
         cost: null, reward: null,
-        outcome: '🏛 The column stopped at the burned block. The ward clerk was replaced by winter.',
+        outcome: '🏛 He stopped at the burned block. By winter the ward clerk had been replaced.',
       },
       {
         id: 'build_hoarding', always: false, weight: 1,
@@ -724,7 +755,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'Paint, boards, and a street that photographs well.',
         poles: ['guile'], influence: -2,
         cost: null, reward: { chance: 0.5, cinder: 'small', card: null },
-        outcome: '🎨 The boards went up overnight. Behind them nothing changed.',
+        outcome: '🎨 Boards up overnight, and behind them nothing changed.',
       },
       {
         id: 'ask_for_money', always: false, weight: 1,
@@ -740,7 +771,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'Tables, lamps, and a ward that owes you nothing.',
         poles: ['temperance'], influence: 2,
         cost: { cinder: 700 }, reward: null,
-        outcome: '🪙 The reception went well. The burned block ate cold that night.',
+        outcome: '🪙 Reception went well. On the burned block they ate cold. Again.',
       },
       {
         id: 'move_the_tenants', always: false, weight: 1,
@@ -748,7 +779,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'They come back to the same walls.',
         poles: ['ruthless'], influence: -1,
         cost: null, reward: null,
-        outcome: '🏛 They were gone for the visit. Two families did not come back.',
+        outcome: '🏛 Gone for the visit, every one of them. Two families did not come back.',
       },
       {
         id: 'say_nothing_gov', always: true, weight: 0.5,
@@ -756,7 +787,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'Let the ward stage whatever it likes.',
         poles: ['caution'], influence: -3,
         cost: null, reward: null,
-        outcome: '🔇 The column came and went. Nothing on that block moved.',
+        outcome: '🔇 They came and went and nothing on that block moved.',
       },
     ],
   },
@@ -787,7 +818,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'Somebody down there is being spoken to.',
         poles: ['guile'], influence: 4,
         cost: null, reward: null,
-        outcome: '🕯 An old caretaker. She has been going down for years.',
+        outcome: '🕯 It was the caretaker. She has been going down there for years.',
       },
       {
         id: 'call_foundation', always: false, weight: 1,
@@ -795,7 +826,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'They own the seal and they will own the street.',
         poles: ['honor'], influence: -2,
         cost: null, reward: { chance: 0.3, cinder: 'large', card: null },
-        outcome: '🏛 A containment team took the block for a month. The seal was left alone.',
+        outcome: '🏛 Containment took the block for a month. Nobody touched the seal.',
       },
       {
         id: 'open_it', always: false, weight: 1.5,
@@ -803,7 +834,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'Whatever is behind it has been patient.',
         poles: ['valor', 'ruthless'], influence: 1,
         cost: { cinder: 1800 }, reward: null,
-        outcome: '🚪 The door came open on a Tuesday. Three of the crew came back up.',
+        outcome: '🚪 It came open on a Tuesday. Three of the crew came back up.',
       },
       {
         id: 'leave_the_stair', always: true, weight: 0.5,
@@ -811,7 +842,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'The seal has held longer than the city has.',
         poles: ['caution'], influence: -2,
         cost: null, reward: null,
-        outcome: '🪨 Nothing changed at the door. The food kept going down.',
+        outcome: '🪨 Nothing changed at the door. The food kept going down. Nightly.',
       },
     ],
   },
@@ -834,7 +865,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'Four hundred beds and a ground nobody names.',
         poles: ['ambition', 'ruthless'], influence: -2,
         cost: null, reward: { chance: 0.4, cinder: 'mid', card: null },
-        outcome: '🏗 Foundations went in by autumn. The Sunday crowd stopped coming.',
+        outcome: '🏗 Foundations went in by autumn and the Sunday crowd stopped coming.',
       },
       {
         id: 'move_the_dead', always: false, weight: 1.5,
@@ -842,7 +873,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'Slow, costly in labour, and every stone named.',
         poles: ['mercy', 'honor'], influence: 5,
         cost: null, reward: null,
-        outcome: '⚱ It took the crews a season. Every stone got a name back.',
+        outcome: '⚱ It took the crews a season to give every stone a name back.',
       },
       {
         id: 'park_stays', always: false, weight: 1,
@@ -850,7 +881,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'The housing goes somewhere with worse light.',
         poles: ['temperance'], influence: 3,
         cost: null, reward: null,
-        outcome: '🌳 The plan moved north.',
+        outcome: '🌳 They will build north instead.',
       },
       {
         id: 'ignore_it', always: true, weight: 0.5,
@@ -858,7 +889,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'The survey is not your paperwork.',
         poles: ['caution'], influence: -3,
         cost: null, reward: null,
-        outcome: '🌫 The plan went through unread. The first cut turned up bone.',
+        outcome: '🌫 It went through unread. First cut turned up bone.',
       },
     ],
   },
@@ -879,7 +910,19 @@ export const DILEMMAS = deepFreeze([
         id: 'call_ops', always: false, weight: 1,
         label: 'Call H.I.S. OPS to take it',
         desc: 'Operatives, nets, and a truck with no windows.',
-        poles: ['honor'], influence: 3,
+        /* Raised from three to four so it TIES `watch_it` for the standing
+           maximum. R1's third clause (the lone top row) fired here and nowhere
+           else: `watch_it` was the only row in this entry with the best standing
+           AND the only row with a payout tag, so a player reading the two
+           numbers render prints had no call to make. The Yards mostly want the
+           thing gone, so the removal being worth as much as the curiosity is
+           what the street would actually pay for.
+           ⚠ Its pole stays `honor`. Re-poling it to `caution` would have taken
+           R10's valor/caution ratio from 1.75 to 1.40 and left honor/guile at
+           1.50 instead of the 1.75 this edit costs — and that is exactly the
+           "content decision made for arithmetic reasons" R10's own comment says
+           not to make. The ratio is stated below rather than engineered. */
+        poles: ['honor'], influence: 4,
         cost: null, reward: null,
         outcome: '🛡 They took it before dawn. Whoever it waited for never came out.',
       },
@@ -889,7 +932,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'Nothing lives there now, and nothing will.',
         poles: ['ruthless', 'valor'], influence: -2,
         cost: null, reward: null,
-        outcome: '🔥 The block burned two days. Four cleared buildings went with it.',
+        outcome: '🔥 It burned for two days and took four cleared buildings with it.',
       },
       {
         id: 'wards_and_lamps', always: false, weight: 1,
@@ -899,17 +942,22 @@ export const DILEMMAS = deepFreeze([
         cost: { cinder: 1000 }, reward: null,
         outcome: '🧪 It walks the Yards now.',
       },
-      /* 🃏 CARD, uncommon — and this is the vowel-initial one R11.9 requires,
-         so describeChoice's "an Uncommon card" article branch is exercised by
-         shipped content rather than merely defended against content that does
-         not exist. Whoever walked behind the specimen for a week followed it to
-         a door and then went in. No Cinder on this row: nobody paid them. */
+      /* 🃏 CARD, BAND NOT NAMED. Whoever walked behind the specimen for a week
+         followed it to a door and then went in. No Cinder on this row: nobody
+         paid them, and what they carried back out is whatever was behind that
+         door. Round three wrote `rarity: 'uncommon'` here for a reason that was
+         not fictional at all — it was the vowel-initial request the retired
+         R11.9 demanded, so `describeChoice` would have an "an Uncommon card"
+         to print. It printed it. The game then handed over a Common, every
+         time, because there is no uncommon card in the built-in pool to hand
+         over. Making a downstream branch live by writing a line the game cannot
+         honour is not keeping code live; it is buying coverage with a lie. */
       {
         id: 'watch_it', always: false, weight: 1.5,
         label: 'Follow it and learn what it wants',
         desc: 'Somebody walks behind it for a week.',
         poles: ['valor', 'guile'], influence: 4,
-        cost: null, reward: { chance: 0.45, cinder: null, card: { chance: 0.25, rarity: 'uncommon' } },
+        cost: null, reward: { chance: 0.45, cinder: null, card: { chance: 0.25, rarity: null } },
         outcome: '🧪 It goes to a door on Harrow. It stands there. Somebody went in after it left.',
       },
       /* Not a refusal in the comfortable sense — abandoning three streets is an
@@ -947,7 +995,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'It is her door and her name above it.',
         poles: ['honor', 'valor'], influence: 3,
         cost: null, reward: null,
-        outcome: '🪧 The sign stayed up. Two neighbours cross the street now.',
+        outcome: '🪧 Sign stayed up, and neighbours cross the street now.',
       },
       {
         id: 'ask_her_down', always: false, weight: 1.5,
@@ -963,7 +1011,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'It comes down at night and nobody sees who.',
         poles: ['ruthless', 'guile'], influence: -1,
         cost: null, reward: null,
-        outcome: '🪧 The sign was gone by morning. She never opened the shop again.',
+        outcome: '🪧 Gone by morning. She never reopened.',
       },
       {
         id: 'look_away', always: true, weight: 0.5,
@@ -971,7 +1019,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'Signs are not your business on this street.',
         poles: ['guile'], influence: -2,
         cost: null, reward: null,
-        outcome: '🧊 The argument found the street without you. Somebody broke the window.',
+        outcome: '🧊 It found the street without you. Somebody broke the window.',
       },
     ],
   },
@@ -1002,7 +1050,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'It hears what the watch cannot.',
         poles: ['valor', 'ambition'], influence: 4,
         cost: null, reward: null,
-        outcome: '🐕 It works the wall at night. It found something on Tuesday.',
+        outcome: '🐕 It works the wall at night, and on Tuesday it found something.',
       },
       {
         id: 'drive_it_off', always: false, weight: 1,
@@ -1010,7 +1058,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'The rations are already thin enough.',
         poles: ['ruthless'], influence: -2,
         cost: null, reward: null,
-        outcome: '🐕 They chased it into the dark. The youngest of the crew stopped speaking to them.',
+        outcome: '🐕 They chased it into the dark. The youngest stopped speaking to them. For weeks.',
       },
       {
         id: 'leave_it', always: true, weight: 0.5,
@@ -1018,7 +1066,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'It will move on or it will not.',
         poles: ['temperance'], influence: -2,
         cost: null, reward: null,
-        outcome: '🌫 It was gone by Friday. The crew still leave a bowl out.',
+        outcome: '🌫 Gone by Friday, though the crew still leave a bowl out.',
       },
     ],
   },
@@ -1037,12 +1085,13 @@ export const DILEMMAS = deepFreeze([
     wire: '…kkzzt… survey party overdue, river side … kkzzt…',
     brief: 'The reclamation map says the block between Third and the river is clear. It is not. A survey crew went in on Monday and two came back.',
     choices: [
-      /* 🃏 CARD, rarity null — the only row that asks the ruins rather than
-         asking for a band, which is what puts grantCard's weighted roll and its
-         any-lootable fallback on the live path (R11.7). This is the canonical
-         Survivor expedition in LORE.md's own words: leave civilization, enter
-         danger, discover something valuable, survive the journey home. Two
-         people did not, and the outcome line says so and stops there. */
+      /* 🃏 CARD, BAND NOT NAMED — this is the row the other three were rewritten
+         to look like. It is the canonical Survivor expedition in LORE.md's own
+         words: leave civilization, enter danger, discover something valuable,
+         survive the journey home. Two people did not, and the outcome line says
+         so and stops there. Asking the ruins rather than asking for a band is
+         what puts grantCard's weighted roll and its any-lootable fallback on
+         the live path (R11.7). */
       {
         id: 'clear_it_yourself', always: false, weight: 1.5,
         label: 'Take a crew in yourself',
@@ -1057,7 +1106,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'Paper, not rifles, and the block stays shut.',
         poles: ['caution', 'honor'], influence: 3,
         cost: null, reward: null,
-        outcome: '📋 The map was corrected. Four wards read it. The block waits.',
+        outcome: '📋 Corrected on paper. Four wards read it. The block waits.',
       },
       {
         id: 'hire_hunters', always: false, weight: 1,
@@ -1065,7 +1114,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'They ask no questions and keep the salvage.',
         poles: ['guile'], influence: 2,
         cost: { cinder: 1400 }, reward: null,
-        outcome: '🪙 Cleared in a night and stripped bare. The tenants came home to nothing.',
+        outcome: '🪙 Cleared in a night. Stripped bare. The tenants came home to nothing.',
       },
       {
         id: 'wall_it', always: false, weight: 1,
@@ -1073,7 +1122,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'Brick and wire, and the river side stays lost.',
         poles: ['caution', 'temperance'], influence: 5,
         cost: null, reward: null,
-        outcome: '🧱 The wall went up in a week. The river road is closed for good.',
+        outcome: '🧱 Up in a week, and the river road is closed for good.',
       },
       {
         id: 'call_ops_block', always: false, weight: 1,
@@ -1081,7 +1130,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'Operatives work it and the ward pays in access.',
         poles: ['ambition'], influence: -2,
         cost: null, reward: { chance: 0.4, cinder: 'mid', card: null },
-        outcome: '🛡 The sweep took three days. The ward signed something it has not read.',
+        outcome: '🛡 Three days to sweep it. The ward signed something it has not read.',
       },
       {
         id: 'leave_map', always: true, weight: 0.5,
@@ -1112,7 +1161,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'The pages go and the liaison remembers you helped.',
         poles: ['caution', 'ambition'], influence: 2,
         cost: null, reward: { chance: 0.35, cinder: 'mid', card: null },
-        outcome: '📄 The pages went into a bag. The clerk asked for a transfer.',
+        outcome: '📄 Pages into a bag, sealed. The clerk asked for a transfer.',
       },
       {
         id: 'copy_first', always: false, weight: 1.5,
@@ -1120,7 +1169,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'One set for the liaison, one for a drawer.',
         poles: ['guile'], influence: 5,
         cost: null, reward: null,
-        outcome: '📄 The redaction was signed. A second set sits in a drawer. Quietly.',
+        outcome: '📄 You signed the redaction. A second set sits in a drawer. Quietly.',
       },
       {
         id: 'refuse_order', always: false, weight: 1.5,
@@ -1128,7 +1177,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'The record stays whole and the liaison stops calling.',
         poles: ['honor', 'valor'], influence: 4,
         cost: null, reward: null,
-        outcome: '📄 The pages stayed. Barely.',
+        outcome: '📄 Pages stayed. Barely.',
       },
       {
         id: 'read_them_out', always: false, weight: 1,
@@ -1136,7 +1185,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'Whatever the street was, everybody hears it.',
         poles: ['ruthless'], influence: 5,
         cost: null, reward: null,
-        outcome: '📄 The ward heard the street name. Two families packed that night.',
+        outcome: '📄 You read the street name aloud. Two families packed that night.',
       },
       {
         id: 'operators_call', always: true, weight: 0.5,
@@ -1144,7 +1193,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'It is the ward record and the ward spine.',
         poles: ['caution'], influence: -3,
         cost: null, reward: null,
-        outcome: '🌫 The clerk signed it alone. He was moved to another ward.',
+        outcome: '🌫 He signed it alone. By spring he was in another ward.',
       },
     ],
   },
@@ -1167,7 +1216,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'The clerk keeps his place and everyone sees it.',
         poles: ['honor'], influence: 3,
         cost: null, reward: null,
-        outcome: '🏚 Eleven doors filled in order. The clerk moved in on Friday.',
+        outcome: '🏚 Eleven doors filled in order and the clerk moved in on Friday.',
       },
       {
         id: 'by_need', always: false, weight: 1.5,
@@ -1175,7 +1224,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'You rank strangers by how badly they are doing.',
         poles: ['mercy'], influence: 5,
         cost: null, reward: null,
-        outcome: '🏚 The worst cases went in first. The list holders have not forgiven it.',
+        outcome: '🏚 Worst cases went in first. List holders have not forgiven it.',
       },
       {
         id: 'lottery', always: false, weight: 1,
@@ -1183,7 +1232,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'No judgement, no favour, and no sense.',
         poles: ['temperance'], influence: -2,
         cost: null, reward: null,
-        outcome: '🏚 The draw was public. Two winners sold their door by spring.',
+        outcome: '🏚 Drawn in public, drawn fair. Two winners sold their door by spring.',
       },
       {
         id: 'fix_more_doors', always: false, weight: 1,
@@ -1191,7 +1240,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'Timber, glass and a month of trades.',
         poles: ['valor'], influence: 2,
         cost: { cinder: 1600 }, reward: null,
-        outcome: '🔨 Six more doors by the thaw. The ward stopped budgeting for repairs.',
+        outcome: '🔨 Six more doors by the thaw, and then the ward stopped budgeting for repairs.',
       },
       {
         id: 'clerk_off_list', always: false, weight: 1,
@@ -1230,7 +1279,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'They find what they came for, and other things.',
         poles: ['honor', 'caution'], influence: 2,
         cost: null, reward: { chance: 0.4, cinder: 'small', card: null },
-        outcome: '🛡 They took two people and a crate. Neither was what they announced.',
+        outcome: '🛡 They took two people and a crate, and neither was what they announced.',
       },
       {
         id: 'warn_first', always: false, weight: 1.5,
@@ -1238,7 +1287,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'Everyone gets a night to move what they have.',
         poles: ['mercy', 'guile'], influence: 5,
         cost: null, reward: null,
-        outcome: '🛡 The sweep found empty rooms. The squad leader knows why.',
+        outcome: '🛡 They found empty rooms and their squad leader knows why.',
       },
       {
         id: 'refuse_sweep', always: false, weight: 1,
@@ -1246,7 +1295,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'You use it here and not on whatever comes next.',
         poles: ['valor'], influence: 3,
         cost: null, reward: null,
-        outcome: '🛡 The operatives left. Angry.',
+        outcome: '🛡 Operatives left. Angry.',
       },
       {
         id: 'stand_aside', always: true, weight: 0.5,
@@ -1254,7 +1303,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'It is their squad and the ward decides.',
         poles: ['caution'], influence: -3,
         cost: null, reward: null,
-        outcome: '🌫 The sweep went floor to floor. Four doors did not open again.',
+        outcome: '🌫 Floor to floor, all night. Four doors did not open again.',
       },
     ],
   },
@@ -1285,7 +1334,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'They bring instruments and a cordon that never leaves.',
         poles: ['ambition', 'honor'], influence: 2,
         cost: null, reward: { chance: 0.3, cinder: 'large', card: null },
-        outcome: '🏛 The cordon is permanent. Two streets need a pass to go home.',
+        outcome: '🏛 That cordon is permanent now. Two streets need a pass to go home.',
       },
       {
         id: 'send_through', always: false, weight: 1.5,
@@ -1295,17 +1344,22 @@ export const DILEMMAS = deepFreeze([
         cost: { cinder: 1200 }, reward: null,
         outcome: '🚪 She came back coughing.',
       },
-      /* 🃏 CARD, epic — the highest band this feature may ever request, and the
-         only row that earns it, because it is the only row where somebody walks
-         through a door into another sky and comes back out. Not on the top
-         standing row: sealing the courtyard scores higher with the district,
-         and the player choosing the rescue is choosing it for its own sake. */
+      /* 🃏 CARD, BAND NOT NAMED, and this is the row where that matters most.
+         Somebody walks through a door into another sky and comes back out
+         carrying something. Round three wrote `rarity: 'epic'` here — the
+         biggest word the old list allowed — and the row then advertised "an
+         Epic card (12%)" before the player chose and minted a Common after.
+         The event is the door, not the word: what makes this a real find is
+         that hardly anything in the feature hands a card over at all, and this
+         row is one of five that ever can. Not on the top standing row either —
+         sealing the courtyard scores higher with the district, and the player
+         choosing the rescue is choosing it for its own sake. */
       {
         id: 'bring_back_one', always: false, weight: 1.5,
         label: 'Go in after the ones who went',
         desc: 'You do not know what is on the other side.',
         poles: ['mercy', 'valor'], influence: 3,
-        cost: null, reward: { chance: 0.4, cinder: null, card: { chance: 0.3, rarity: 'epic' } },
+        cost: null, reward: { chance: 0.4, cinder: null, card: { chance: 0.3, rarity: null } },
         outcome: '🚪 Two came out with you. The third is still walking that sky.',
       },
       {
@@ -1314,7 +1368,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'It was here before you and it is not yours.',
         poles: ['temperance'], influence: -4,
         cost: null, reward: null,
-        outcome: '⏳ The door is still open. Two more went through this week.',
+        outcome: '⏳ Still open, and two more went through this week.',
       },
     ],
   },
@@ -1337,7 +1391,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'Everyone eats less and the wall gets thicker.',
         poles: ['mercy', 'valor'], influence: 5,
         cost: null, reward: null,
-        outcome: '⛺ Everyone ate less by spring. The wall has never been better manned.',
+        outcome: '⛺ Everyone ate less by spring. The wall has never been better manned. Worth it.',
       },
       {
         id: 'take_the_useful', always: false, weight: 1,
@@ -1345,7 +1399,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'Trades in, and the rest walk back to the ruins.',
         poles: ['ruthless', 'ambition'], influence: -1,
         cost: null, reward: null,
-        outcome: '⛺ The camp gained four trades. The rest went south.',
+        outcome: '⛺ Camp gained four trades and the rest went south.',
       },
       {
         id: 'take_nine', always: false, weight: 1,
@@ -1369,7 +1423,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'The camp keeps what it already has.',
         poles: ['ruthless'], influence: -4,
         cost: null, reward: null,
-        outcome: '🌫 They walked south at first light. Some will be back armed.',
+        outcome: '🌫 They walked south at first light and some will be back armed.',
       },
     ],
   },
@@ -1392,7 +1446,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'Names on the cards go back to names on stones.',
         poles: ['honor', 'temperance'], influence: 5,
         cost: null, reward: null,
-        outcome: '🃏 The rule passed in a fortnight. Half the Ledge moved to the river.',
+        outcome: '🃏 Passed in a fortnight. Half the Ledge moved to the river.',
       },
       {
         id: 'buy_them_back', always: false, weight: 1,
@@ -1400,7 +1454,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'You pay a fair price for what was already theirs.',
         poles: ['mercy'], influence: 3,
         cost: { cinder: 1300 }, reward: null,
-        outcome: '🪙 The families got their cards. The seller doubled his prices by summer.',
+        outcome: '🪙 Families got their cards back. He doubled his prices by summer.',
       },
       {
         id: 'let_it_trade', always: false, weight: 1,
@@ -1410,20 +1464,26 @@ export const DILEMMAS = deepFreeze([
         cost: null, reward: { chance: 0.4, cinder: 'small', card: null },
         outcome: '🃏 Trade went on.',
       },
-      /* 🃏 CARD, rare — impounded stock, not a find. Half the box was pulled off
-         the dead and has a family waiting for it; the rest has no name on the
-         back and nobody to give it to. The stall's till comes in with it, which
-         is the small Cinder band and is exactly as comfortable as it sounds.
-         This row ties `write_the_rule` on standing and reaches the opposite
-         pole, so the ruthless call is the one that pays and the honourable one
-         is not — which is the entry, and is why R11 keeps cards off paid rows
-         but never off cold ones. */
+      /* 🃏 CARD, and THE ONLY ROW IN THE CORPUS THAT NAMES A BAND: `common`.
+         It is the only row whose card is not a find. This is impounded stock —
+         a market stall's inventory, counted by a clerk. Half the box was pulled
+         off the dead and has a family waiting for it; the rest has no name on
+         the back and nobody to give it to. Ordinary is the point, and `common`
+         is also the one request a stock install can actually honour, because it
+         is the one rarity `grantCard`'s byRarity filter finds anything under
+         (CARD_RARITY_IDS). So the single named request in the file sits on the
+         single row whose fiction is an inventory. The stall's till comes in
+         with it, which is the small Cinder band and is exactly as comfortable
+         as it sounds. This row ties `write_the_rule` on standing and reaches the
+         opposite pole, so the ruthless call is the one that pays and the
+         honourable one is not — which is the entry, and is why R11 keeps cards
+         off paid rows but never off cold ones. */
       {
         id: 'take_the_licence', always: false, weight: 1,
         label: 'Pull the seller licence',
         desc: 'One trader loses everything and the rest take note.',
         poles: ['ruthless'], influence: 5,
-        cost: null, reward: { chance: 0.5, cinder: 'small', card: { chance: 0.35, rarity: 'rare' } },
+        cost: null, reward: { chance: 0.5, cinder: 'small', card: { chance: 0.35, rarity: 'common' } },
         outcome: '🃏 His stall was gone by Tuesday. Half the box carried no name at all. River traders got the rest.',
       },
       {
@@ -1440,7 +1500,7 @@ export const DILEMMAS = deepFreeze([
         desc: 'Trade is not a thing you police.',
         poles: ['temperance'], influence: -2,
         cost: null, reward: null,
-        outcome: '🃏 The stalls stayed. A widow broke one with a bar.',
+        outcome: '🃏 Stalls stayed. A widow broke one with a bar.',
       },
     ],
   },
@@ -1510,18 +1570,22 @@ export const DILEMMA_BY_ID = Object.freeze(
      R8  the per-choice cost ceiling, shared with rewards.refundCost()
      R9  structural variety — corpus size, choice counts, eligibility, glyphs
      R10 axis balance over the per-dilemma standing MAXIMA — the play-line
-     R11 the card rewards exist, are free, are capped, and cover both grant paths
+     R11 the card rewards exist, can land, name only a band the pool can fill
      R13 at least half the corpus has an ACTION that costs standing
-     R14 the largest number on screen is not the answer in every entry
-     V1-V10 the voice, counted
-   (There is no R12. R11 grew nine numbered clauses of its own and renumbering
-   the rest would break every citation in the four files that quote these ids.)
+     R14 the largest STANDING on screen is not the answer in every entry
+     R15 no single row is worth a good outcome every time it is taken
+     V1-V10 the voice, counted, line by line
+     V11-V12 the voice, counted ACROSS lines — the metronome
+   (There is no R12. R11 grew numbered clauses of its own and renumbering the
+   rest would break every citation in the four files that quote these ids.
+   There is no R11.9 either, for a better reason: it was a live rule that made
+   the corpus lie, and the retirement note where it used to fire is the point.)
    ──────────────────────────────────────────────────────────────────────────── */
 
 const POLE_IDS = Object.freeze([
   'honor', 'guile', 'mercy', 'ruthless', 'valor', 'caution', 'ambition', 'temperance',
 ]);
-/* The four opposed pairs, exactly LQ_POLE_AXIS (`index.html:73049`). Duplicated
+/* The four opposed pairs, exactly LQ_POLE_AXIS (index.html). Duplicated
    rather than imported for the reason the whole feature exists: LQ_POLE_AXIS is
    a top-level `const` in index.html, a lexical global an ES module cannot see
    (CLAUDE.md, the globals trap). engine.js gets the real one through the bridge;
@@ -1535,24 +1599,78 @@ const POLE_PAIRS = Object.freeze([
   Object.freeze(['valor', 'caution']),
   Object.freeze(['ambition', 'temperance']),
 ]);
-/* 🃏 THE FOUR RARITIES THIS FEATURE MAY REQUEST, AND WHY IT IS NOT ALL SIX.
-   The six shipped rarity ids are RARITIES (`index.html:39231-39237`): common,
-   uncommon, rare, epic, legendary, mythic. A dilemma may request the first FOUR
-   and no more. A Legendary or a Mythic out of a forty-five-minute faucet is the
-   same argument DILEMMA_ECON.cinderBand already makes about Cinder —
-   `sql/AUDIT_farmed_cinder.sql:15` says farmed and earned "are the same integer
-   in the same column. There is no 'exploit' flag" — and a card is worse than
-   Cinder there, because it also changes what the player can field on the next
-   expedition. LORE.md is explicit that this is the stake: "Finding a powerful
+/* 🃏 THE ONE RARITY THIS FEATURE MAY REQUEST, AND WHY THE LIST USED TO HAVE
+   FOUR NAMES IN IT.
+
+   🔴 A RARITY IS A FILTER, NOT A PROMISE, AND ROUND THREE WROTE IT AS A PROMISE.
+   `grantCard` (index.html) does exactly three things with the id it is
+   handed: it filters the pack pool by it; if that filter is EMPTY it rolls
+   `DEFAULT_PACK_RARITY_WEIGHTS` (index.html) up to six times; and if
+   that finds nothing either it takes any lootable card at all. So an
+   unsatisfiable request is not refused and does not fail — it silently becomes
+   a different roll, and the player has already been shown the word.
+
+   AND ON A STOCK INSTALL EVERY REQUEST ABOVE COMMON IS UNSATISFIABLE. Measured,
+   not assumed: the six built-in pool arrays in index.html — UNIT_CARDS,
+   SPELL_CARDS, LOCATION_CARDS, TRAP_CARDS, WALL_CARDS and WEATHER_CARDS, each
+   a top-level `const` a grep for the name lands on —
+   hold 75 cards between them and NOT ONE of them carries a `rarity` field.
+   `getRarity` (index.html) is `RARITY_BY_ID[card && card.rarity] ||
+   RARITY_BY_ID.common`, so the histogram over that whole pool is
+   `{common: 75}`. Round three shipped requests for uncommon, rare and epic on
+   three of the five card rows and `describeChoice` printed them on the row
+   BEFORE the pick — "an Epic card (12%)" — while the game minted a Common
+   every single time. That is the one dishonesty this file's comments keep
+   promising not to commit, committed in the round that was called to deliver
+   cards.
+
+   SO THE LIST IS NOW WHAT THE SHIPPED GAME CAN ACTUALLY HAND OVER: `common`,
+   and `null` for "whatever the ruins hold", which is not in the list because it
+   is the absence of a request. Four of the five card rows ask for nothing and
+   read like it; the fifth is a stall inventory and asks for `common`, which is
+   the ONLY id whose byRarity filter is non-empty and therefore the only request
+   in the file that actually binds the grant.
+
+   ⚠ AND IT CAPS THE REQUEST, NOT THE GRANT — the old comment had this exactly
+   backwards. It argued the four-name cap kept "a Legendary or a Mythic out of a
+   forty-five-minute faucet". It cannot. Custom Forge and Catalog cards carry
+   whatever rarity their author gave them and they are in the same pack pool
+   (`getCardPoolForPacks`, index.html), so on an install with one custom
+   Legendary in it a `null` request reaches Legendary through the weighted roll
+   and the old `'epic'` request reached it through the SAME roll, because the
+   epic filter was empty and fell through. Naming a band never bounded the
+   outcome; it only bounded what we told the player. What is actually true is
+   narrower and worth having: on a stock install this feature cannot mint above
+   Common at all, because there is nothing above Common to mint.
+
+   Driven end to end against the real arrays and a verbatim reconstruction of
+   `grantCard`, 200,000 resolutions per card row: 145,664 cards minted, 75
+   distinct ids, delivered rarity Common 145,664 times, and ZERO grants whose
+   delivered rarity contradicted a named request. The same run with one custom
+   Legendary and one custom Mythic added: the four `null` rows deliver Legendary
+   1.4% and Mythic 0.26% of the time — the pool's own weighting, which is the
+   install's business and not this file's promise — while the one `'common'`
+   row delivers Common 35,224 of 35,224. That is the asymmetry stated above,
+   measured: naming `common` BINDS the grant; every other value, `null`
+   included, hands it to the pack weights.
+
+   The Cinder analogy the old comment leaned on does not carry across.
+   `sql/AUDIT_farmed_cinder.sql:15` is right that farmed and earned Cinder "are
+   the same integer in the same column", which is why DILEMMA_ECON.cinderBand
+   has a ceiling this file can enforce. A card's ceiling lives in a pool this
+   module cannot see and did not fill. LORE.md's stake — "Finding a powerful
    card in the ruins could fundamentally change a Survivor's chances of living
-   through their next expedition."
+   through their next expedition" — is met by SCARCITY, which R11.4 and R11.10
+   do bound, and not by a word on a tag.
+
    The list is DUPLICATED rather than imported for the reason the whole feature
    exists: RARITIES is a top-level `const` in index.html, a lexical global an ES
    module cannot see (CLAUDE.md, the globals trap). R11.5 checks against THIS
-   list, so if index.html ever renames or reorders a rarity, R11 is where it
-   surfaces rather than at the wallet. Not exported — `CONTRACT.md §2` freezes
-   this file's export list at six names and a seventh is a contract change. */
-const CARD_RARITY_IDS = Object.freeze(['common', 'uncommon', 'rare', 'epic']);
+   list, so if index.html ever starts shipping built-in cards with rarities,
+   this constant is the one line to widen and R11 is where the mismatch
+   surfaces. Not exported — `CONTRACT.md §2` freezes this file's export list at
+   six names and a seventh is a contract change. */
+const CARD_RARITY_IDS = Object.freeze(['common']);
 
 const SEV_IDS = Object.freeze(['quiet', 'pressing', 'grave']);
 const ID_RE = /^eh_[a-z0-9_]+$/;
@@ -1596,6 +1714,15 @@ const BRIEF_WORDS_MAX       = 45;
 const BRIEF_WORDS_MED_MAX   = 34;
 const NOBODY_RATIO_MAX      = 0.10;
 const WHICH_RIDERS_MAX      = 4;
+/* V11/V12 — the metronome ceilings. Both are shares of the outcome lines, both
+   are ceilings and not bans, and both are set with headroom above where the
+   corpus now measures (0 of 97 and 45 of 97) so that a future entry is free to
+   use either shape. They are not set where the corpus sits, because a bound
+   fitted to today's numbers is a bound that fails on the next honest edit. What
+   they refuse is the DEFAULT: the corpus they were written against was 49% and
+   74%. */
+const ARTICLE_OPEN_MAX_RATIO = 0.15;
+const TWO_SENTENCE_MAX_RATIO = 0.60;
 /* ── R10 / R13 / R14 — the TOP-ROW budget. These three exist because R6 was
    right and still missed the thing it was written to catch; see the block above
    R10 in validateCorpus() for the measurement that proved it. */
@@ -1608,7 +1735,14 @@ const MAX_UNIQUE_TOP_PCT    = 0.6;  // share of entries allowed a lone highest r
 const CARD_REWARDS_MIN      = 4;
 const CARD_REWARDS_MAX      = 6;
 const CARD_DILEMMAS_MIN     = 4;
-const CARD_CHANCE_MAX       = 0.5;  // a card is never certain and never common
+const CARD_CHANCE_MAX       = 0.5;  // a card is never certain and never frequent
+/* ── R15 — the per-row payout ceiling, named as a BAND rather than as a number
+   so that retuning DILEMMA_ECON.cinderBand retunes the rule with it and the two
+   can never disagree. R7 bounds how MANY rows pay; nothing bounded how much any
+   one of them was worth, which is the hole the round-3 critic walked through
+   with a free row carrying `{chance: 1, cinder: 'large'}` — 900 Cinder at
+   certainty, legal under every rule in the file. */
+const MAX_CHOICE_EV_BAND    = 'mid';
 
 /* 🔤 THE WORD COUNTER. Written once and used by every voice rule so two rules
    can never disagree about what a word is. The leading glyph is not a word; an
@@ -1626,6 +1760,21 @@ function wc(s) {
 const ONE_WORD_SENTENCE = /(^|[.!?…]["')\]]?\s+)[A-Za-z][A-Za-z'-]*[.!?]/;
 const NOBODY_RE = /\bnobody\b/i;
 const WHICH_RIDER_RE = /,\s+which\b/;
+/* V11/V12's two measurements. Every outcome opens with one emoji and a space
+   (enforced above), so "opens on an article" means the first WORD, and the
+   leading glyph plus any punctuation has to come off first — which is the same
+   thing wc() does for a different reason. Sentence counting splits on terminal
+   punctuation followed by a space, so "Gone." at the end of a line counts as
+   its own sentence, which is exactly the shape V4 rewards and V12 must be able
+   to see. An em dash does NOT end a sentence here; it is punctuation inside
+   one, per rule 5 of VOICE. */
+const ARTICLE_OPEN_RE = /^(?:the|a|an)\b/i;
+function stripGlyph(s) {
+  return String(s == null ? '' : s).replace(/^[^A-Za-z0-9"']+/, '');
+}
+function sentenceCount(s) {
+  return stripGlyph(s).split(/(?<=[.!?…])\s+/).filter(x => x.trim().length).length;
+}
 
 /* Median with the even case averaged. Returns 0 for an empty list rather than
    NaN — a NaN would make every comparison below silently false, which is the
@@ -1653,6 +1802,19 @@ function evOf(c) {
     ? DILEMMA_ECON.cinderBand[r.cinder] : 0;
   const ch = (typeof r.chance === 'number') ? r.chance : 1;
   return band * ch;
+}
+function hasCard(c) { return !!(c && c.reward && c.reward.card); }
+/* "a out-pays b ON THE ROW", which is not the same question as evOf's. render's
+   `choiceHtml` prints the Cinder tag and the card tag side by side, so a row
+   with a card and no Cinder still reads as the richer row next to one with
+   neither. evOf cannot say that — it deliberately values a card at zero,
+   because a card's worth is not expressible in Cinder and a rule that guessed
+   at it would be a rule nobody could check. This predicate does not guess
+   either: it only ever says "strictly more visible payout", never how much
+   more, which is all R1's third clause needs. */
+function paysMoreThan(a, b) {
+  if (evOf(a) > evOf(b)) return true;
+  return hasCard(a) && !hasCard(b) && evOf(a) >= evOf(b);
 }
 function isSubset(a, b) {
   for (let i = 0; i < a.length; i++) if (b.indexOf(a[i]) < 0) return false;
@@ -1687,7 +1849,9 @@ export function validateCorpus() {
     const cardRewardDilemmas = Object.create(null); // R11.2
     let cardRarityNull = 0;                       // R11.7
     let cardRarityNamed = 0;                      // R11.8
-    let cardRarityVowel = 0;                      // R11.9
+    /* R11.9's counter is GONE, not zeroed — see the retirement note at R11's
+       aggregate block. A counter nobody reads is the same class of thing as the
+       `!anyLoss` warning this file deleted a round ago. */
     const outcomes = [];                          // V1-V4, V8
     const labels = [];                            // V5
     const descs = [];                             // V6
@@ -1836,7 +2000,7 @@ export function validateCorpus() {
             if (r.cinder != null && !Object.prototype.hasOwnProperty.call(DILEMMA_ECON.cinderBand, r.cinder)) errors.push(cat + '.reward.cinder: must be a key of DILEMMA_ECON.cinderBand');
             /* ── R11. THE CARD REWARD, PER CHOICE. The owner asked for cards by
                NAME, and a card is the one reward in this feature with no
-               inverse: `grantCard` (`index.html:207934`) mints into
+               inverse: `grantCard` (index.html) mints into
                Profile.cardCollection and calls saveProfile(), and rewards.js
                spends a whole paragraph on the fact that there is no take-back.
                So the shape of a card-carrying choice is constrained harder than
@@ -1858,18 +2022,43 @@ export function validateCorpus() {
                 if (!(typeof r.card.chance === 'number' && r.card.chance > 0 && r.card.chance <= CARD_CHANCE_MAX)) {
                   errors.push(cat + '.reward.card.chance: ' + r.card.chance + ' — must be a number in (0, ' + CARD_CHANCE_MAX + '] (R11.4)');
                 }
-                /* R11.5 — null means "roll it", and null is a legal, useful
+                /* R11.5 — NO ROW MAY NAME A BAND THE SHIPPED POOL CANNOT FILL.
+                   `null` means "whatever the ruins hold" and is a legal, useful
                    value: it exercises grantCard's weighted branch and its
                    any-lootable fallback, which is the half of that accessor
-                   nothing else in the corpus reaches. */
+                   nothing else in the corpus reaches. A NAMED band is only
+                   legal when byRarity can actually return something under it,
+                   which on the built-in pool is `common` and nothing else — see
+                   CARD_RARITY_IDS for the measurement. This clause is the one
+                   that would have caught round three's 'uncommon' / 'rare' /
+                   'epic'; it did not, because the list it checks against had
+                   four names in it and only one of them was true. */
                 if (r.card.rarity === null || r.card.rarity === undefined) {
                   cardRarityNull++;
                 } else if (typeof r.card.rarity !== 'string' || CARD_RARITY_IDS.indexOf(r.card.rarity) < 0) {
                   errors.push(cat + '.reward.card.rarity: ' + JSON.stringify(r.card.rarity) +
-                    ' — must be null or one of ' + CARD_RARITY_IDS.join('/') + ' (R11.5)');
+                    ' — must be null, or a band the shipped card pool can actually fill (' +
+                    CARD_RARITY_IDS.join('/') + '); anything else is printed on the row before the pick and then not delivered (R11.5)');
                 } else {
                   cardRarityNamed++;
-                  if (/^[aeiou]/i.test(r.card.rarity)) cardRarityVowel++;
+                }
+                /* 🔴 R11.10 — THE OUTER GATE, WHICH IS THE FIELD THAT DECIDES
+                   WHETHER A CARD CAN LAND AT ALL, AND WHICH R11 DID NOT READ.
+                   `rollReward` tests `reward.chance` FIRST and returns "none"
+                   before it ever looks at `reward.card`, so a card sitting
+                   behind `chance: 0` is unreachable: zero cards in a million
+                   rolls, and `describeChoice` prints the empty string, so the
+                   row never even OFFERS one. Round three's R11.1 counted five
+                   card rewards on such a corpus and returned
+                   {ok:true, errors:[], warnings:[]} — the regression R11.1's own
+                   comment promises to turn this function red for was one
+                   character away and invisible. R11.4 bounded the NESTED chance
+                   and stopped there, which is the same mistake at one remove:
+                   a rule that counts a reward without checking that the reward
+                   can arrive is a rule that certifies dead content. */
+                if (!(typeof r.chance === 'number' && r.chance > 0 && r.chance <= 1)) {
+                  errors.push(cat + '.reward.chance: ' + r.chance +
+                    ' — a card-carrying reward must itself be able to land; rollReward gates on this before it reads reward.card, so at zero the card is unreachable and the row advertises nothing (R11.10)');
                 }
                 /* R11.3 — a card never rides on a charge. `grant()` cannot take
                    a card back and says so at length, so a row that both takes
@@ -1895,6 +2084,33 @@ export function validateCorpus() {
               }
             }
             if (r.cinder == null && r.card == null) errors.push(cat + '.reward: pays nothing — use null instead');
+
+            /* ── R15. NO SINGLE ROW IS WORTH MORE THAN A GOOD OUTCOME.
+               R7 bounds how MANY rows pay, because the BRIEF's vending machine
+               is a rate. Nothing bounded how much any ONE row was worth, and
+               that gap is not theoretical: the round-3 critic closed it by
+               writing `{ chance: 1, cinder: 'large' }` onto a free row — nine
+               hundred Cinder, at certainty, on a row that also tied the best
+               standing in its entry — and every rule in this file passed it
+               green. R1 could not see it because R1's tie clause only looks at
+               PAID rows; R4 could not, because the sibling it beat had disjoint
+               poles; R7 could not, because one more paying row barely moves a
+               corpus ratio.
+               The ceiling is the MID band, expressed as a band and not as a
+               number so cinderBand stays the single tuning table. The reasoning
+               is the band's own meaning: mid is what this feature calls a good
+               outcome, so a row whose EXPECTATION reaches it is a row paying a
+               good outcome every time it is taken, which is the vending machine
+               restated per-row. The corpus's largest is 270 (`study_it`, the
+               large band at 0.3), so there is real headroom and this is a
+               ceiling rather than a fitted bound — but it is not inert, and the
+               fixture above is the proof: it fires at 900. */
+            const evCeiling = DILEMMA_ECON.cinderBand[MAX_CHOICE_EV_BAND];
+            if (Number.isFinite(evCeiling) && evOf(c) > evCeiling) {
+              errors.push(cat + ': expected payout ' + evOf(c).toFixed(0) +
+                ' Cinder is above the "' + MAX_CHOICE_EV_BAND + '" band (' + evCeiling +
+                ') — one row may not be worth a good outcome every time it is taken (R15)');
+            }
           }
         }
 
@@ -1987,8 +2203,38 @@ export function validateCorpus() {
           new Set(c.poles).forEach(p => { if (POLE_IDS.indexOf(p) >= 0) topPoleCount[p]++; });
         });
         if (anyActionLoss) lossyActionEntries++;
-        if (top.length === 1) uniqueTopEntries++;
-        else {
+        if (top.length === 1) {
+          uniqueTopEntries++;
+          /* 🔴 R1's THIRD CLAUSE — THE LONE TOP ROW THAT ALSO OUT-PAYS.
+             R1's second clause asks "does paying buy the standing?" and is
+             gated on isPaid, and the round-3 critic was right that the same
+             SHAPE is legal on a free row. It is not the same DEFECT, and the
+             difference is worth stating because the corpus deliberately ships
+             two of them. A free row that TIES the top and out-pays is answered
+             by the row it ties with: R14's disjointness clause below forces the
+             two to reach different companions, so the player is trading bond
+             for money and that is a call. `take_the_licence` against
+             `write_the_rule` is the corpus's best fork and it is exactly this
+             shape; forcing them to tie on the payout tag as well would delete
+             the entry rather than fix it.
+             A LONE top row has no such answer. Nothing ties it, so there is no
+             bond trade; it is free, so there is no price; and if it also pays
+             more than every sibling then both numbers render prints point the
+             same way and the fiction is decoration. That is dominance with no
+             counterweight at all, and R4 misses it for the reason R4 always
+             misses these: the rows it beats have disjoint poles.
+             This fired on exactly one shipped row when it was written —
+             `watch_it` in eh_specimen_walks, the best standing in its entry and
+             the only payout in it — and that entry was rewritten rather than
+             the rule weakened. See `call_ops`. The payout comparison is
+             `paysMoreThan`, the row-visible one, not evOf: `watch_it` pays no
+             Cinder at all and an evOf-only test would have shrugged at it. */
+          const t = top[0];
+          if (t.reward != null && cs.every(s => s === t || paysMoreThan(t, s))) {
+            errors.push(at + ': "' + t.id + '" is the only choice at the top standing (' + mx +
+              ') and out-pays every other row — nothing ties it, it costs nothing, so both numbers on screen point at it (R1)');
+          }
+        } else {
           /* ── R14, second half. A tie at the top is only a choice if the two
              rows please DIFFERENT units. Two rows that share a pole tie on the
              number and then reach the same companions for bond, which is a
@@ -2029,7 +2275,7 @@ export function validateCorpus() {
     /* 🚫 R7 — THE VENDING-MACHINE GUARD, and it is an ERROR rather than a
        warning. The BRIEF says "a dilemma that always pays is a vending
        machine", and the admin has already acted on that instinct once in this
-       codebase: `index.html:64482` zeroes every match Cinder reward with the
+       codebase: `GEM_REWARDS` in index.html zeroes every match Cinder reward with the
        note "it will devalue our money". This is the mechanical form of the same
        instruction, checked over the WHOLE corpus rather than per entry, because
        the thing a player experiences is the rate across a session. */
@@ -2081,7 +2327,7 @@ export function validateCorpus() {
        derived from the corpus's pole budget, so an unbalanced budget is a
        silent, permanent bond bias applied to whole archetypes. Round one wrote
        caution fifty-two times against valor sixteen while LQ_ARCHETYPE_POLE's
-       valor regex (`index.html:73081`) is one of the broadest in the shipped
+       valor regex (index.html) is one of the broadest in the shipped
        table, so a deck of common melee archetypes lost bond for playing the
        feature at all. Nobody decided that. This rule means nobody can. */
     POLE_PAIRS.forEach(pair => {
@@ -2113,7 +2359,7 @@ export function validateCorpus() {
        with "+N standing" before the player has read a line of fiction, so the
        standing maximum is legible without the entry being read at all, and a
        player optimising for standing plays one pole every single time.
-       `LQ_ARCHETYPE_POLE` (`index.html:73081`) routes every berserker, raider,
+       `LQ_ARCHETYPE_POLE` (index.html) routes every berserker, raider,
        reaver, alien, swarm and vampiric class to `ruthless` and every mage,
        summoner, warlock, archon and necro class to `ambition`, so two of the
        broadest archetype buckets in the shipped table could not earn one point
@@ -2126,13 +2372,37 @@ export function validateCorpus() {
        So the population is the thing that had to change, not the threshold.
        R10 runs the same arithmetic as R6 over top(D) instead of over every
        choice, and the two together say: the corpus is balanced, AND the
-       play-line through it is balanced. The pair ratio is looser than R6's
-       (two to one rather than three to two) because there are only about
-       twenty-five pole slots up here against a hundred and thirty below, and a
-       tighter bound on a smaller sample would force content decisions for
+       play-line through it is balanced. The pair ratio is looser than R6's —
+       two to one rather than three to two — because top(D) is a much smaller
+       sample and a tighter bound on it would force content decisions for
        arithmetic reasons rather than fictional ones. The FLOOR is the half that
        matters: a pole that never tops a single dilemma is a pole an optimising
-       player never once supports. */
+       player never once supports.
+
+       ⚠ THE SENTENCE ABOVE USED TO CARRY ITS OWN MEASUREMENT AND THE
+       MEASUREMENT WAS WRONG. It said "only about twenty-five pole slots up here
+       against a hundred and thirty below". Counted: top(D) carries 46 pole
+       slots and all 97 choices carry 128 — 36%, not 19%. The number was
+       load-bearing, because it is the entire argument for loosening the ratio
+       from R6's 1.5 to 2.0 and this corpus measures 1.75 on three of its four
+       axes; at 1.5 it would fail. So the rule passes because of a loosening
+       whose stated reason was wrong by most of its own size. The loosening is
+       kept and the reason is now the plain one — a 46-slot sample moves by whole
+       ratio points when one row changes rank — but the false figure is recorded
+       here rather than quietly corrected, because a comment that argues from a
+       number nobody re-derived is the exact defect class this file's §7 exists
+       to end, and it happened here.
+
+       ⚠ AND R10 MEASURES THE AUTHORED CORPUS, NOT THE SCREEN. top(D) is the
+       maximum over every row an entry AUTHORS. `rollChoices` in engine.js
+       samples a subset of them per opening, so the set a player is shown is a
+       sample of this one and its pole balance is a sample of these numbers, not
+       these numbers. That is the same class of gap as R6's — a rule measuring
+       one population while the player lives in another — one level up, and it
+       is not closed here: closing it would mean duplicating the sampler in this
+       file, and two copies of a weighted sampler is a worse bug than a stated
+       limitation. The floor clause is the part that survives sampling intact:
+       a pole that tops nothing can never be sampled into a top row. */
     const topPoleTotal = POLE_IDS.reduce((a, p) => a + topPoleCount[p], 0);
     if (topPoleTotal > 0) {
       POLE_IDS.forEach(p => {
@@ -2176,11 +2446,41 @@ export function validateCorpus() {
        than reading a number, and the per-entry half of this rule (above) makes
        sure such a tie is a real fork and not two names for the same call.
        This is a CEILING, not a quota: an entry with one clearly best row is a
-       legitimate shape and most of the corpus is still allowed to be one. */
+       legitimate shape and most of the corpus is still allowed to be one.
+
+       ⚠ R14 BOUNDS THE STANDING TAG AND ONLY THE STANDING TAG. Say so here
+       rather than let the next reader assume otherwise, because `choiceHtml`
+       prints the cost, the payout and the standing on the same row and a tie on
+       one of three tags is not a tie on screen. Measured on this corpus: 9 of
+       20 entries have a lone standing maximum; 13 of 20 have a single best row
+       once the payout tag counts too. Four authored ties separate on money —
+       eh_ninth_street_main (`west_market` +48 against `east_clinic` nothing),
+       eh_specimen_walks and eh_zombie_block (the tied row carries the card) and
+       eh_ledge_market (`take_the_licence` +60 AND the card).
+       FOLDING THE PAYOUT INTO THIS COUNT WAS WRITTEN AND REJECTED, and the
+       honest reason is that it fails: 13 of 20 is 65% against a 60% cap, so
+       adopting it means stripping the payout difference out of at least two of
+       those four entries. Those differences are the best forks in the file —
+       in eh_ledge_market the ruthless call is the one that pays and the
+       honourable one is not, which IS the entry — and deleting a fork to make
+       a rule pass is the rule failing the corpus, not the corpus failing the
+       rule. R1's third clause takes the half of this concern that is a real
+       defect (a LONE top row that also out-pays has no counterweight at all)
+       and leaves the half that is a design decision, stated here with its
+       number so the next reader argues with the number rather than rediscovering
+       it.
+
+       ⚠ AND LIKE R10, THIS IS MEASURED OVER THE AUTHORED CORPUS. `rollChoices`
+       shows a player a sample of each entry's rows, so an authored tie can
+       arrive on screen with only one of its two halves in it and the on-screen
+       lone-maximum rate runs well above this ceiling. The rule still earns its
+       place — an authored tie is the only way a sampled tie can ever happen —
+       but it is a bound on what is WRITTEN, not on what is SEEN, and the same
+       argument against duplicating the sampler here applies verbatim. */
     if (DILEMMAS.length > 0 && !(uniqueTopEntries <= MAX_UNIQUE_TOP_PCT * DILEMMAS.length)) {
       errors.push('R14 top row: ' + uniqueTopEntries + ' of ' + DILEMMAS.length +
-        ' dilemmas have a single highest-standing action, above ' + MAX_UNIQUE_TOP_PCT +
-        ' — at most ' + Math.floor(MAX_UNIQUE_TOP_PCT * DILEMMAS.length) + ' may be that shape');
+        ' dilemmas have a single highest-standing ACTION as authored, above ' + MAX_UNIQUE_TOP_PCT +
+        ' — at most ' + Math.floor(MAX_UNIQUE_TOP_PCT * DILEMMAS.length) + ' may be that shape (standing tag only)');
     }
 
     /* ══ R11. THE CARD REWARDS EXIST, AND THEIR ABSENCE IS AN ERROR ═════════
@@ -2195,10 +2495,25 @@ export function validateCorpus() {
        rarity article, and the whole `grantCard` bridge accessor.
 
        R11.1 is the clause that makes that unrepeatable: a future trim that drops
-       the last card reward turns this function red. R11.9 is the second half of
-       what the failure actually was — it keeps the DOWNSTREAM code live, so the
-       article branch is exercised by shipped content rather than merely defended
-       against content that does not exist.
+       the last card reward turns this function red — but only in the company of
+       R11.10, which is the clause round three left out. R11.1 counts card
+       rewards. It does not ask whether one can arrive. On a corpus with all five
+       outer `reward.chance` values set to zero — one character each — R11.1
+       counted five, R11.2 counted five dilemmas, R11.5 through R11.8 were all
+       satisfied, this function returned green, and a million driven rolls
+       produced no card and no offer of one. A rule that counts a reward without
+       checking that the reward can land certifies dead content, which is the
+       failure it was written to end, wearing the validator's own colours.
+
+       🔴 AND THE SECOND HALF OF ROUND THREE'S FIX WAS WORSE THAN THE GAP.
+       R11.9 required a vowel-initial rarity so `describeChoice`'s article branch
+       would be reachable from shipped content. It made a dead branch live by
+       making it say something untrue: the shipped pool cannot mint above Common,
+       so "an Epic card (12%)" was printed on the row before the pick and a
+       Common was handed over after it, 56% of grants over a driven pass. R11.9
+       is retired — see the note where it used to fire — and R11.5 now says the
+       honest thing instead. Keeping a downstream branch warm is not a reason to
+       author a promise the game cannot keep.
 
        And a card is not a loot drop here. LORE.md: "A card isn't just a
        collectible; it can represent power." Ouroboros is the company behind the
@@ -2228,9 +2543,30 @@ export function validateCorpus() {
       if (cardRarityNamed < 1) {
         errors.push('R11.8 card rarity: no card reward names a rarity — grantCard\'s byRarity branch is unreachable from shipped content (R11)');
       }
-      if (cardRarityVowel < 1) {
-        errors.push('R11.9 card rarity: no card reward uses a vowel-initial rarity (uncommon or epic) — the a/an article branch in describeChoice is unreachable from shipped content (R11)');
-      }
+      /* 🔴 R11.9 IS RETIRED. THE NUMBER IS NOT REUSED AND THE CLAUSE IS NOT
+         REPLACED, BECAUSE IT SHOULD NEVER HAVE EXISTED.
+         It read: "at least one card reward uses a vowel-initial rarity
+         (uncommon or epic)", and its stated purpose was to keep the a/an
+         article branch in `describeChoice` exercised by shipped content instead
+         of merely defended against content that did not exist. It worked. Three
+         rows named uncommon, rare and epic, the article branch went live, and
+         the modal began telling players about Epic and Rare cards the game
+         cannot mint — 75 built-in poolable cards, zero `rarity:` fields between
+         them, every request above common falling through `grantCard`'s weighted
+         roll into a Common. The measurement is in CARD_RARITY_IDS above.
+         So the rule bought downstream coverage with a line the game could not
+         honour, and it did it in a validator whose entire job is to make
+         dishonest content unwritable. There is no honest version of it: the
+         only band the shipped pool can fill is `common`, which begins with a
+         consonant, so any rule demanding a vowel-initial REQUEST is a rule
+         demanding a false one. R11.5 now carries the true form of the same
+         concern — no row may name a band the pool cannot fill — and the article
+         branch is left as what it actually is: defensive code, correct for the
+         delivered rarity `grant()` reports in its aftermath line, and for
+         whatever a future pool holds.
+         The gap in the numbering is deliberate and stays. There is no R12
+         either, for the different and duller reason recorded in the inventory
+         at the top of this file. */
     }
 
     /* ── R9. STRUCTURAL VARIETY. Every clause here is a round-one measurement
@@ -2269,7 +2605,7 @@ export function validateCorpus() {
 
     /* ── V1-V10. THE VOICE, COUNTED. See the header: these are the rules the
        file already declared and then broke by a factor of two. The reference is
-       the camp expedition log (`index.html:65678-65686`), which runs at a
+       the camp expedition log (`CAMP_LOOT_FLAVOR`, index.html), which runs at a
        median of nine words and is full of fragments. */
     const oN = outcomes.length;
     if (oN) {
@@ -2296,6 +2632,41 @@ export function validateCorpus() {
       if (!(nobodyN <= NOBODY_RATIO_MAX * oN)) {
         errors.push('V8 tic: "nobody" appears in ' + nobodyN + ' of ' + oN + ' outcomes, max ' +
           Math.floor(NOBODY_RATIO_MAX * oN) + ' — vary the negation');
+      }
+
+      /* ── V11 AND V12. THE METRONOME.
+         🔴 THIS IS THE ONE VOICE PROBLEM THE FIRST THREE ROUNDS COULD NOT SEE,
+         BECAUSE EVERY RULE ABOVE MEASURES A LINE AND THE DEFECT IS IN THE GAP
+         BETWEEN LINES. Every V1-V10 bound passed while the corpus settled into
+         a single tune: 72 of 97 outcomes were exactly two sentences with the
+         sting in the second, and 45 of them opened on the word "The". Read one
+         line and it is good. Read nine in a row — which is what a player does
+         over an evening — and the ninth is audible before it is read, and a
+         voice you can predict stops sounding like a person.
+         An earlier round measured this, deferred it as a whole-file rewrite,
+         and bound only the lines it happened to touch. That is why the two
+         numbers barely moved across two rounds. They are now bounds, because
+         the deferral is the thing that let the tune survive being noticed
+         twice.
+         Both are CEILINGS on a share, not bans on a shape. Two sentences with a
+         sting in the second is the best shape this corpus has and roughly half
+         the file is still allowed to be it; the article opener is the natural
+         English sentence and one line in seven may start that way. What is
+         forbidden is the DEFAULT — reaching for the same bar every time because
+         it is the bar that worked last time.
+         Measured after the rewrite that motivated them: 0 of 97 opening on an
+         article, 45 of 97 at exactly two sentences, against 48 and 72 before.
+         The reference file does not have this problem for a dull reason worth
+         copying: its lines were written by different hands on different days. */
+      const articleN = outcomes.filter(o => ARTICLE_OPEN_RE.test(stripGlyph(o.s))).length;
+      if (!(articleN <= ARTICLE_OPEN_MAX_RATIO * oN)) {
+        errors.push('V11 metronome: ' + articleN + ' of ' + oN + ' outcomes open on "the", "a" or "an", max ' +
+          Math.floor(ARTICLE_OPEN_MAX_RATIO * oN) + ' — start on the thing that happened, not on the noun it happened to');
+      }
+      const twoSentN = outcomes.filter(o => sentenceCount(o.s) === 2).length;
+      if (!(twoSentN <= TWO_SENTENCE_MAX_RATIO * oN)) {
+        errors.push('V12 metronome: ' + twoSentN + ' of ' + oN + ' outcomes are exactly two sentences, max ' +
+          Math.floor(TWO_SENTENCE_MAX_RATIO * oN) + ' — the corpus has one beat and a reader hears it by the ninth line');
       }
     }
     labels.forEach(l => {
@@ -2355,7 +2726,7 @@ export function validateCorpus() {
   return { ok: errors.length === 0, errors: errors, warnings: warnings };
 }
 
-/* Local mirror of LQ_POLE_AXIS (`index.html:73049`), same reasoning as
+/* Local mirror of LQ_POLE_AXIS (index.html), same reasoning as
    POLE_PAIRS above: a lexical global an ES module cannot see, duplicated here
    ONLY so validateCorpus can catch a same-axis pole pair. */
 function axisOf(pole) {

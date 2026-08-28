@@ -58,7 +58,11 @@ let _busy     = false;     // re-entrancy lock on the delegated click router
 let _opener   = null;      // element focus is restored to on close
 let _onKey    = null;      // the document-level Escape listener, so it can be removed
 let _closing  = false;     // guards the close → onClose → close() re-entry
-let _settledAt = 0;        // Date.now() of the choose→outcome swap; see paintOutcome()
+let _settledAt = 0;        // Date.now() of the choose→outcome swap; see strayClose()
+let _panelGen  = 0;        // ++ on that same swap. The stray-close guard's real clock:
+                           // a generation counter for "which controls are on screen".
+let _pressGen  = null;     // the _panelGen the pointer gesture in flight BEGAN in
+let _keyGen    = null;     // the _panelGen the activation key now held went DOWN in
 
 /* ── esc ──────────────────────────────────────────────────────────────────
    LOCAL, deliberately. `escapeHtml()` is a top-level declaration in index.html
@@ -141,7 +145,7 @@ function affordableOf(choice) {
    ══════════════════════════════════════════════════════════════════════════ */
 
 /* Support / Middle / Against reuse the colour language this game already has
-   for a unit's inner state — `.dpx-chip` at index.html:16645-16652, where teal
+   for a unit's inner state — `.dpx-chip` in index.html, where teal
    ALREADY means bond, red means trauma and a bare hairline means neutral. A
    player who has opened a unit's detail panel has been taught this palette; a
    new one here would be a second vocabulary for the same idea. */
@@ -153,7 +157,7 @@ const STANCE = {
 
 /* Middle is four different silences and the modal says which. 'no-opinion' is
    the COMMON one — a Forge card authored with a name, an icon and stats resolves
-   to no value poles at all: `_lqUnitValueProfile` (index.html:73171-73181)
+   to no value poles at all: `_lqUnitValueProfile` (index.html)
    returns [] when there is no `valueProfile`, no legacy `values` and no
    archetype hit — so it gets the plainest, least apologetic wording of the
    four. */
@@ -170,7 +174,7 @@ const MIDDLE_WHY = {
   procedural:   'There is no side to take here.',
 };
 
-/* Pole names come from `LQ_POLE_LABEL` (index.html:73117) — "⚔ Honor", not
+/* Pole names come from `LQ_POLE_LABEL` (index.html) — "⚔ Honor", not
    "Honor" — and they arrive through `handlers.poleLabel()`, which index.js
    builds off `values().poleLabel`. This file still may not call the bridge, and
    it still refuses to transcribe those eight labels and their emoji into a
@@ -282,7 +286,19 @@ export const DILEMMA_CSS = `
 #${OV} .md-body{flex:1;overflow-y:auto;padding:14px 18px 18px}
 #${OV} .md-wire{font-size:.76rem;letter-spacing:.06em;color:#8d8370;font-style:italic;
   margin:0 0 10px;overflow-wrap:anywhere}
-#${OV} .md-brief{font-size:1rem;line-height:1.62;color:#efe3c4;margin:0 0 14px;max-width:78ch}
+/* \`.md-wire\` above already carries \`overflow-wrap:anywhere\`; \`.md-brief\` did
+   not, and it is the longer of the two. Both are dev-authored prose today, and
+   so were \`.bond-pill\` and \`.md-temper\` when round 3 hardened them on a
+   measured argument — leaving the widest prose surface in the panel out of the
+   same rule made the file's own standard inconsistent inside one file.
+   Measured before: a 400-character unbreakable token in \`dilemma.brief\` drove
+   \`P.md-brief\` to scrollWidth 3909 inside clientWidth 624, put \`.md-body\`
+   into a REAL horizontal scroll (scrollLeft accepted 2849 at 1280x900 and 3533
+   at 390x844) and pushed the roster off the right of the panel. \`max-width:78ch\`
+   does not help: it caps the box, not the min-content contribution of the text
+   inside it. */
+#${OV} .md-brief{font-size:1rem;line-height:1.62;color:#efe3c4;margin:0 0 14px;max-width:78ch;
+  overflow-wrap:anywhere}
 #${OV} .md-cols{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:14px;
   align-items:start;align-content:start}
 @media (max-width:880px){#${OV} .md-cols{grid-template-columns:1fr}}
@@ -372,7 +388,15 @@ export const DILEMMA_CSS = `
    item actually give ground. Nothing in the shipped corpus is anywhere near
    this — it is the guard for the day something player-authored reaches
    describeChoice(), which is the failure this file's header argues you cannot
-   see coming. */
+   see coming.
+
+   ⚠ THE SAME TEXT IS PRINTED TWICE AND BOTH RENDERINGS ARE GUARDED. These chips
+   are the choice-list copy; \`.md-cline .v\` in the consequence band is the same
+   describe() output again, pinned above the commit bar, and it needs the same
+   two properties for the same reason. Round 3 hardened this one alone and the
+   band overflowed for a whole round. If a third surface ever prints
+   describe()'s strings, it needs the rule too — the guard belongs to the TEXT,
+   not to this selector. */
 #${OV} .md-tag{display:inline-flex;align-items:center;gap:.3rem;padding:.14rem .5rem;border-radius:5px;
   font-size:.72rem;font-weight:600;letter-spacing:.02em;background:rgba(255,255,255,.03);
   border:1px solid var(--c,rgba(255,255,255,.16));color:#cfd8ea;font-variant-numeric:tabular-nums;
@@ -449,9 +473,9 @@ export const DILEMMA_CSS = `
 #${OV} .md-delta.up{color:#7fd8cc}
 #${OV} .md-delta.dn{color:#f0a3ac}
 #${OV} .md-delta.nil{color:#6f665a}
-/* .bond-pill declares \`border:1px solid\` with NO colour at index.html:16034 —
+/* .bond-pill declares \`border:1px solid\` with NO colour in index.html —
    it is invisible without the tier colour supplied inline, which is exactly how
-   the live unit panel uses it (the \`getBondTier\` pill, index.html:140444).
+   the live unit panel uses it (the \`getBondTier\` pill, index.html:140448).
    Redeclared here rather than inherited so the panel is correct in any host.
 
    🔴 THESE TWO ARE \`white-space:nowrap\` AND THAT IS WHY THEY NEEDED CLIPPING.
@@ -505,7 +529,25 @@ export const DILEMMA_CSS = `
 #${OV} .md-cline{display:inline-flex;align-items:baseline;gap:7px;min-width:0}
 #${OV} .md-cline .k{font-family:'Cinzel',serif;font-size:.66rem;letter-spacing:.13em;
   text-transform:uppercase;color:#8d8370;white-space:nowrap}
-#${OV} .md-cline .v{font-size:.87rem;color:#e0d2ae;font-variant-numeric:tabular-nums}
+/* 🔴 THE SECOND RENDERING OF describe()'s TEXT, AND ROUND 3 ONLY HARDENED THE
+   FIRST. \`.md-tag\` (above) and this are the two places costText / rewardText /
+   influenceText reach the screen, and the guard went on one of them. The miss
+   was structural rather than careless: the round-3 sweep counted surfaces
+   inside \`.md-body\`, and the consequence band is deliberately OUTSIDE it —
+   pinned between the scrolling body and the commit bar, for the reason the
+   block comment above gives. A rule about text this file cannot see has to
+   follow the TEXT, not the container.
+   \`min-width:0\` is the load-bearing half, exactly as it is on \`.bond-pill\`:
+   \`.md-cline\` already declares it, but \`.v\` is the flex item that actually
+   CARRIES the string, and a flex item's own \`min-width:auto\` resolves to
+   min-content and beats the parent's give. Measured with a 400-character token
+   in costText: SPAN.v.cost laid out 3279px wide, 2357px past \`.md-wrap\`'s
+   right edge, driving \`.md-wrap\` to scrollWidth 3522 against clientWidth 1078
+   — and \`.md-wrap\` is \`overflow:hidden\`, so the cost was silently CUT OFF the
+   right of the panel rather than scrolling into reach. Identical at 768 and
+   390. "Do not hide the cost" is the whole reason this band exists. */
+#${OV} .md-cline .v{font-size:.87rem;color:#e0d2ae;font-variant-numeric:tabular-nums;
+  min-width:0;overflow-wrap:anywhere}
 #${OV} .md-cline .v b{color:#f0cf7a;font-variant-numeric:tabular-nums}
 #${OV} .md-cline .v.cost{color:#e8c48d}
 #${OV} .md-cline .v.rew{color:#f0cf7a}
@@ -791,7 +833,7 @@ function rosterRowHtml(unit, choice) {
     ? `<span class="md-temper" title="${esc(unit.temper.blurb || '')}">${esc(unit.temper.icon || '')} ${esc(unit.temper.name)}</span>` : '';
 
   /* A forged card whose definition was never published on THIS device resolves
-     to `card: null` (`lookupCustomCard`, index.html:51163) and engine falls back
+     to `card: null` (`lookupCustomCard`, index.html) and engine falls back
      to printing the stored id. Left bare that reads as a bug in the player's own
      collection, so the row says what it is instead. Dropping the row was the
      other option and is worse: their deck would look shorter than it is. */
@@ -824,9 +866,9 @@ function rosterRowHtml(unit, choice) {
 
 /* ⚠ THE HEADING CHANGES WHEN THE ROSTER IS A GUESS, and that is a requirement,
    not a nicety. The fallback ladder ranks Profile.units by `_lastBattleFielded`,
-   which is set true only for units actually DEPLOYED (index.html:152778) and
+   which is set true only for units actually DEPLOYED (index.html:152782) and
    cleared only for benched units that were in `s._deckUnitIds`
-   (index.html:152877) — so a unit from a deck the player abandoned keeps a
+   (index.html:152881) — so a unit from a deck the player abandoned keeps a
    stale `true` forever. It is a decaying heuristic. Calling it "your last deck"
    would be the modal telling a small lie about the player's own collection,
    which is the kind of thing a player notices and never trusts again.
@@ -857,10 +899,21 @@ function rosterHtml() {
   const src = _instance && typeof _instance.rosterSource === 'string' ? _instance.rosterSource : '';
   const heuristic = src ? src === 'heuristic'
                         : (_roster.length > 0 && _roster.every((u) => u && u.fallback));
-  // 'none' when the engine says so; and, with no signal at all, whenever there
-  // is nothing to describe. Both reach the same place: a heading with no claim
-  // under it, and `rosterRowsHtml`'s one honest line carrying the explanation.
-  const none = src ? src === 'none' : _roster.length === 0;
+  /* An empty roster outranks whatever the engine called it, and the ORDER of
+     these two clauses is the fix. Round 3 wrote this as
+     `src ? src === 'none' : _roster.length === 0`, which suppressed the
+     sub-line on the no-signal path only — so an instance carrying
+     `rosterSource:'deck'` (or any value this file does not recognise) over an
+     empty roster still printed "The deck you last took out. They can hear this
+     too." directly above "No one is standing with you yet." The comment above
+     claimed the empty-roster clause held "regardless of what the engine says",
+     and it was one `||` short of being true. Today's `rosterOf()` returns
+     'none' whenever there are no rows so it was not reachable through the
+     shipped pair — but CLAUDE.md makes comments load-bearing, and an assertion
+     a stale service-worker engine could falsify is not a guarantee. It costs
+     nothing: an empty roster has no source worth naming, which is CONTRACT-R3
+     §6.3's own reason for letting 'none' outrank. */
+  const none = _roster.length === 0 || src === 'none';
 
   const head = none
     ? `<h3 class="md-h3">Standing with you</h3>`
@@ -923,17 +976,35 @@ function consequenceHtml() {
      right and the word for it is wrong. `over` is derived from exactly the
      expression rosterRowHtml() uses, so the two cannot drift.
 
-     Only a SUPPORTER is pulled out. An over-cap unit that opposed the call is
-     losing bond for a reason the player can already read off its own stance,
-     and inventing a gentler word for that would be the modal excusing a
-     decision it should just report. */
+     🔴 AND ROUND 3 PULLED OUT THE SUPPORTER ONLY, WHICH LEFT THE SAME
+     DISAGREEMENT STANDING ON AN OPPOSER. `rosterRowHtml`'s `over` covers every
+     non-middle stance, so an over-cap unit that OPPOSED the call got the row
+     title "whatever you decide now settles them back to their limit" while this
+     band, four inches below it, counted the same unit into `dn` and said "1
+     loses it". Driven at bond 900 / ceiling 349 / against: both sentences on
+     screen in one viewport, about one companion, disagreeing about what the
+     −551 was. CONTRACT-R3 §6.2 does say `stance === 'support'` in so many
+     words, and this DEPARTS from that text deliberately — the property round 2
+     graded on, and the one §6.2 was written to buy, is that the band and the
+     row agree; a literal reading that breaks the property it was written to
+     protect is a reading worth stating and leaving behind.
+
+     What is NOT laundered is the opposition. The band word covers both stances
+     because "settling to their limit" is the true account of the NUMBER in both
+     — 542 of that 551 is the lowered cap collecting, not the disagreement — but
+     the receipt below (`ledgerHtml`) keeps them apart in words, so an opposer's
+     line never reads as though the modal were excusing the decision. The row's
+     own stance chip still says "Against"; nothing is hidden, and the three
+     surfaces finally say the same thing. `over` is derived from EXACTLY the
+     expression rosterRowHtml() uses, character for character, so the two cannot
+     drift apart again. */
   let up = 0, dn = 0, still = 0, atCeiling = 0, atFloor = 0, settling = 0;
   for (const u of _roster) {
     const st = stanceOf(u, choice).stance;
     const d = previewOf(u, choice);
     const cap = Number(u.ceiling) || 0;
-    const over = cap > 0 && (Number(u.bond) || 0) > cap;
-    if (d < 0 && over && st === 'support') settling++;
+    const over = st !== 'middle' && cap > 0 && (Number(u.bond) || 0) > cap;
+    if (d < 0 && over) settling++;
     else if (d > 0) up++; else if (d < 0) dn++;
     else if (st === 'middle') still++;
     else if (st === 'against' && (Number(u.bond) || 0) <= 0) atFloor++;
@@ -1101,15 +1172,34 @@ function ledgerHtml(bonds) {
        that agreed with you lost 551. It is computed by the engine from the same
        `before` this row reports and the same ceiling `previewBond` clamps
        against, which is why the roster row above (`over`, in rosterRowHtml) and
-       this line cannot disagree. Absent, again: no note, never a wrong one. */
+       this line cannot disagree. Absent, again: no note, never a wrong one.
+
+       🔴 AND IT COVERS BOTH STANCES, WHICH IS A DELIBERATE DEPARTURE FROM
+       CONTRACT-R3 §6.2's LITERAL `stance === 'support'`. Round 3 implemented
+       that text exactly, and an over-cap unit that OPPOSED the call therefore
+       got the row tooltip "settles them back to their limit", the band's "1
+       loses it", and here an empty note beside −551 — the same silence F5 was
+       raised for, one stance over. The departure and its measurement are stated
+       rather than quietly taken, the way the icon guard's was.
+
+       The two stances get DIFFERENT WORDS, and that is the part worth keeping.
+       "settled to their limit" over an opposer would read as the modal
+       excusing the decision: it would account for the whole −551 as bookkeeping
+       and never mention that they were against you. "past their limit already"
+       accounts for the number without absolving the call, and the row above
+       still carries the stance chip. A row that somehow carries `overCap` with
+       no `stance` at all takes the settled wording, because that half is true
+       of every over-cap unit; §6.0 forbids saying something FALSE with a missing
+       signal, and this is incomplete rather than false. */
     const status = (b && typeof b.status === 'string') ? b.status : '';
     const overCap = !!(b && b.overCap);
     const note =
         status === 'refused'  ? 'not recorded'
       : status === 'ceiling'  ? 'at the ceiling'
       : status === 'floor'    ? 'nothing left to lose'
-      : status === 'moved' && overCap && real < 0 && b.stance === 'support'
-                              ? 'settled to their limit'
+      : status === 'moved' && overCap && real < 0
+                              ? (b.stance === 'against' ? 'past their limit already'
+                                                        : 'settled to their limit')
       : '';
     return `<div class="lr">
       <span aria-hidden="true">${real > 0 ? '▲' : real < 0 ? '▼' : '—'}</span>
@@ -1257,30 +1347,35 @@ function announce(msg) {
    exists to show. Double-clicking a button that has just gone disabled-looking
    is not a mis-click, it is the ordinary gesture.
 
-   So the swap is STAMPED and both close paths are gated on it for 400 ms.
-   400, not 250: the repro still closed at a 300 ms gap, and a window that ends
-   inside the measured range is not a fix. This is the same class of bug
-   `paintReactions()` documents for hover — the panel is replaced under a
+   So the swap opens a new GENERATION of controls, and both close paths refuse
+   any close whose gesture began in an older one. `strayClose()` carries the
+   whole argument, including why the 400 ms window round 3 shipped is kept as a
+   floor and why it was never sufficient on its own. This is the same class of
+   bug `paintReactions()` documents for hover — the panel is replaced under a
    pointer that has not moved — applied to the one repaint that cannot be
-   undone.
-
-   ⌨ ESCAPE IS DELIBERATELY NOT GATED. `/src/battle/combat.js:918` states the
-   principle this file already quotes: Escape is the one gesture that
-   unambiguously means "stop showing me this". Nobody double-taps Escape by
-   accident on a button, and a modal that ignores a key the player pressed on
-   purpose is a worse failure than the one being fixed here. */
+   undone, and with the keyboard added, because the focus move below is what
+   puts a close button under a key the player is still holding. */
 export function paintOutcome(result) {
   try {
     _outcome = (result && typeof result === 'object') ? result : {};
     _view = 'outcome';
-    // Stamped BEFORE paint(), not after: paint() is synchronous but it is also
-    // the thing that can throw, and a swap that half-happened still moved the
-    // controls under the cursor.
+    // Both BEFORE paint(), not after: paint() is synchronous but it is also the
+    // thing that can throw, and a swap that half-happened still moved the
+    // controls under the cursor and the key. A guard armed only on the success
+    // path is a guard that is off during the failure it would be needed for.
     _settledAt = Date.now();
+    _panelGen++;
     paint();
-    // Move focus to the one control that now exists. Without this the player's
-    // focus is sitting on a button that no longer has a node, and Tab restarts
-    // at the top of the document.
+    /* Move focus to the one control that now exists. Without this the player's
+       focus is sitting on a button that no longer has a node, and Tab restarts
+       at the top of the document.
+
+       ⚠ THIS LINE IS ALSO THE ONE THAT CREATES THE DEFECT strayClose() KILLS,
+       and it is kept anyway. Putting `#md-ack` under a key the player has not
+       released is the cost of not stranding a keyboard player on a removed
+       node; the answer is to teach the close path where the keystroke came
+       from, not to leave focus nowhere. Stated here so the next person to read
+       this function does not "fix" the autorepeat by deleting the focus move. */
     try {
       const ack = document.getElementById('md-ack');
       if (ack && typeof ack.focus === 'function') ack.focus();
@@ -1299,17 +1394,114 @@ function choiceById(id) {
   return null;
 }
 
-/* TRUE for the 400 ms after the aftermath replaced the panel. One function so
-   the backdrop listener and the `close` action can never drift apart — they are
+/* ── THE STRAY-CLOSE GUARD ──────────────────────────────────────────────────
+   🔴 A GUARD MEASURED IN MILLISECONDS IS THE WRONG SHAPE FOR THIS, AND THREE
+   ROUNDS OF THE SAME BUG ARE THE PROOF. What makes a second activation
+   unintended is not that it arrived FAST — a deliberate second click a quarter
+   of a second later is still deliberate — it is that the browser generated it
+   from a physical input the player made BEFORE the aftermath existed.
+
+   Round 2 had no guard. Round 3 shipped a 400 ms wall-clock window measured
+   from the swap, and the defect stepped straight over it: `paintOutcome()`
+   moves focus to `#md-ack` itself, Chromium then autorepeats the Enter the
+   player has not released onto that newly focused button, and one physical
+   press — made while the commit bar was still on screen — closes the receipt
+   the moment the window lapses. Measured at 1280x900 with `#md-commit` focused
+   and Enter held with no keyup between repeats: 200 ms held, the overlay
+   survived; 500 ms, 900 ms and 1500 ms, `onClose` fired and the panel was gone,
+   identical to having no guard at all. The resolution stands and the rewards
+   are granted, and the player never sees the outcome line, the standing move,
+   the Cinder, the card or the bond ledger — the exact loss the guard exists to
+   prevent, on the input path this file's own focus move creates.
+
+   So the rule is PROVENANCE, and the window survives only as a floor:
+
+     • Every panel layout has a GENERATION. `_panelGen` goes up when the choices
+       are replaced by the aftermath — the one moment different controls arrive
+       under a cursor and a key that have not moved.
+     • A gesture is stamped with the generation it BEGAN in. For the pointer
+       that is `mousedown`, where `event.detail` is the browser's own statement
+       of whether a press starts a sequence or continues one, so a double-click's
+       second press (`detail === 2`) inherits the first press's generation
+       instead of minting a fresh one. For the keyboard it is `keydown`, where
+       `e.repeat` says exactly the same thing: an autorepeat is not a new press,
+       so it inherits too.
+     • A close is honoured only if its gesture began in the generation that is
+       on screen now.
+
+   One rule, and it covers a held key, a double-click, a triple-click, a
+   click-drag whose press landed on the commit bar, and a click dispatched
+   mid-paint — with no number to tune, because the boundary is the PLATFORM's
+   definition of a single gesture rather than one this file invented. The 500 ms
+   discrete second click still closes, which is right: the key came up and the
+   press was made against the panel the player can see.
+
+   ⚠ THE 400 ms WINDOW IS KEPT AND IT IS NOT DECORATION. Provenance needs a
+   `mousedown` or a `keydown` to read. A click synthesised with no press in
+   front of it — `el.click()`, some assistive tech, a test driver — carries
+   neither, and this file must not invent an intention for it. Those fall
+   through to the floor, which is the guard round 3 measured and proved at gaps
+   of 40, 90, 150 and 300 ms. The two together are strictly stronger than the
+   window alone: nothing the window used to block is now allowed. Neither half
+   may be deleted on the grounds that the other exists (CONTRACT-R3 §0, rule 2).
+
+   ⌨ ESCAPE IS STILL NOT GATED, DELIBERATELY. `/src/battle/combat.js:918` states
+   the principle this file already quotes: Escape is the one gesture that
+   unambiguously means "stop showing me this". It is not a button activation, so
+   nothing repeats it onto a control this module has just moved under the
+   player's hand, and a modal that ignores a key pressed on purpose is a worse
+   failure than the one being fixed here.
+
+   FAILURE DIRECTION, stated because it is the reason to prefer this shape over
+   a boolean latch cleared on `keyup`. A latch that never gets its `keyup` —
+   alt-tab with the key down, a keyup swallowed by another handler — welds the
+   modal shut. A generation STAMP cannot: the next fresh press overwrites it
+   unconditionally, so the guard self-heals on the very next thing the player
+   does. An unreadable gesture, a throw inside the guard and a clock that jumps
+   backwards all make it stop guarding rather than start blocking. Every path
+   fails towards the player being able to close their own modal.
+
+   Both close paths call this one function — the backdrop listener in
+   `openModal()` and the `close` action in `onClick()` — because they are
    registered in two different places and are the two halves of the same guard.
-   `_settledAt` is 0 until a swap happens and is reset on open and on close, so
-   `Date.now() - 0` is roughly the age of the epoch and this is `false`
-   everywhere else. Wall-clock, not a timer: nothing has to be cancelled, and a
-   clock that jumps backwards mid-modal only ever makes the guard STOP guarding,
-   which fails towards the player being able to close their own modal. */
+   That is also why the round-2 fix worked on the button and not on the
+   backdrop: one of the two halves had been written and the other had not. */
 const SETTLE_MS = 400;
-function justSettled() {
-  return _view === 'outcome' && _settledAt > 0 && (Date.now() - _settledAt) < SETTLE_MS;
+
+/* `mousedown`, captured on the overlay so nothing inside the panel can swallow
+   it, and it dies with the node so there is nothing to leak. A fresh press
+   always overwrites the stamp, which is what makes it self-healing rather than
+   sticky; `detail >= 2` is the only thing that preserves the old one. */
+function notePress(e) {
+  try { if (!(Number(e && e.detail) >= 2)) _pressGen = _panelGen; } catch (e2) {}
+}
+
+/* `keydown`, on the document listener that already exists for Escape. Only the
+   two keys that can activate a focused button are stamped — those are the only
+   two that can produce this defect, and stamping every keystroke would let an
+   unrelated Tab refresh the stamp of an Enter that is still held down. */
+function noteKey(e) {
+  try {
+    const k = e && e.key;
+    if (k !== 'Enter' && k !== ' ' && k !== 'Spacebar') return;
+    if (!e.repeat) _keyGen = _panelGen;
+  } catch (e2) {}
+}
+
+function strayClose(ev) {
+  try {
+    if (_view !== 'outcome') return false;
+    // A pointer click reports `detail >= 1`; a click the browser synthesised
+    // from a key on a focused button reports 0. That is how the gesture picks
+    // which stamp it is answerable to.
+    const from = (Number(ev && ev.detail) || 0) > 0 ? _pressGen : _keyGen;
+    if (from !== null && from !== _panelGen) return true;
+    // Provenance unreadable (`from === null`) or agreeing: the floor decides.
+    return _settledAt > 0 && (Date.now() - _settledAt) < SETTLE_MS;
+  } catch (e) {
+    // The guard must never be the reason a player cannot close their own modal.
+    return false;
+  }
 }
 
 /* Delegated on the overlay, `[data-md]`, community.render.js:596's shape.
@@ -1324,11 +1516,10 @@ async function onClick(ev) {
   // Read-only actions short-circuit BEFORE the lock, exactly as
   // community.render.js:601-604 does: closing or re-picking must not be
   // deadlocked by an in-flight resolution.
-  // The settle guard — see paintOutcome(). `_settledAt` is 0 on the choose
-  // view, so this is inert everywhere except the 400 ms after the aftermath
-  // replaced the panel, which is the only window in which a close can be
-  // something the player did not mean.
-  if (act === 'close') { if (!justSettled()) closeModal(); return; }
+  // The stray-close guard — see strayClose(). It is inert on the choose view,
+  // so the only close it ever refuses is one whose gesture began before the
+  // aftermath arrived, which is the only kind of close the player did not mean.
+  if (act === 'close') { if (!strayClose(ev)) closeModal(); return; }
   if (act === 'pick') {
     const id = el.getAttribute('data-id');
     if (!id || _busy) return;
@@ -1423,7 +1614,11 @@ export function openModal(instance, roster, handlers) {
     _outcome  = null;
     _busy     = false;
     _closing  = false;
-    _settledAt = 0;
+    // Reset beside `_settledAt`: a stamp carried over from the last dilemma is
+    // a stamp about controls that no longer exist. `_panelGen` back to 0 and
+    // both gesture stamps back to "unread" is the state strayClose() treats as
+    // "there is nothing to guard yet".
+    _settledAt = 0; _panelGen = 0; _pressGen = null; _keyGen = null;
 
     // Remember who opened us so focus can go home. index.html's `render()`
     // restores focus for an id'd text INPUT only — its `_focusSnap` block tests
@@ -1440,13 +1635,21 @@ export function openModal(instance, roster, handlers) {
       // Click-outside closes, matching every other overlay in the game. Two
       // listeners on the same node, as community.render.js:846-847 does: this
       // one is `ev.target === ov` only, so a click that lands anywhere inside
-      // the panel is untouched by it. `justSettled()` is the same guard the
+      // the panel is untouched by it. `strayClose()` is the same guard the
       // `close` action carries — this is the backdrop half, and it is the one
       // the double-click repro actually landed on: the aftermath panel is
       // shorter than the choice panel, so the pixels under the commit bar
       // become backdrop.
-      ov.addEventListener('click', (e) => { if (e.target === ov && !justSettled()) closeModal(); });
+      ov.addEventListener('click', (e) => { if (e.target === ov && !strayClose(e)) closeModal(); });
       ov.addEventListener('click', onClick);
+      // Captured, so nothing inside the panel can swallow it: `mousedown` is
+      // where a pointer gesture's generation gets stamped, and a stamp that
+      // does not happen is a close strayClose() can no longer reason about.
+      // It lives on the overlay rather than on the document because the overlay
+      // is `position:fixed;inset:0` — every press that can reach a close path
+      // lands on it — and because a listener on a node that is removed on close
+      // cannot leak, which the Escape listener below has to work for.
+      ov.addEventListener('mousedown', notePress, true);
       ov.addEventListener('mouseover', onOver);
       ov.addEventListener('mouseout', onOut);
       ov.addEventListener('focusin', onOver);
@@ -1455,24 +1658,42 @@ export function openModal(instance, roster, handlers) {
     }
 
     /* ⌨ ESCAPE CLOSES. The self-removing document listener from
-       `openInfoModal`'s `onKey` (index.html:111694); src/battle/combat.js:918
+       `openInfoModal`'s `onKey` (index.html); src/battle/combat.js:918
        states the principle — "Escape is the one gesture that unambiguously means
        'stop showing me…'". The community overlay has no Escape handler at all
        (community.render.js:848-856 listens only for Enter on #mc-wmsg);
        that is a gap in the reference file, not a house convention.
        The listener is held in `_onKey` so all THREE close paths remove the same
        one — a leaked keydown handler that closes an overlay which is no longer
-       there is a real and very quiet bug. */
-    if (_onKey) { try { document.removeEventListener('keydown', _onKey); } catch (e) {} }
+       there is a real and very quiet bug.
+
+       ⌨ CAPTURED, AND THE PHASE IS LOAD-BEARING NOW THAT IT ALSO CARRIES
+       noteKey(). Round 3's listener was on the bubble phase, which is fine for
+       Escape (nothing in index.html stops keydown propagation — the one other
+       capture-phase Escape handler, `openWorldEventBriefing`'s in
+       index.html, does not call stopPropagation). It is NOT fine for the
+       generation stamp: a stamp that is swallowed leaves `_keyGen` holding the
+       generation of a press the player has already finished with, and
+       strayClose() would then refuse the player's NEXT deliberate Enter as
+       well. Capture is the one phase nothing can be dropped before, and the
+       cost is only that this Escape handler now runs first among document
+       listeners. It still does not stopPropagation, so every other overlay's
+       handler sees the key exactly as it did before. */
+    if (_onKey) { try { document.removeEventListener('keydown', _onKey, true); } catch (e) {} }
     _onKey = (e) => {
       try {
+        // Before the Escape test, and for every keydown, because the keys this
+        // has to see are the ones that never reach the branch below: Enter and
+        // Space activate the focused button through the browser's own default
+        // action, not through this listener. See strayClose().
+        noteKey(e);
         if (e.key !== 'Escape' && e.key !== 'Esc') return;
-        if (!isOpen()) { document.removeEventListener('keydown', _onKey); return; }
+        if (!isOpen()) { document.removeEventListener('keydown', _onKey, true); return; }
         e.preventDefault();
         closeModal();
       } catch (e2) {}
     };
-    document.addEventListener('keydown', _onKey);
+    document.addEventListener('keydown', _onKey, true);
 
     paint();
 
@@ -1502,7 +1723,7 @@ export function closeModal() {
   if (_closing) return true;
   _closing = true;
   try {
-    if (_onKey) { try { document.removeEventListener('keydown', _onKey); } catch (e) {} _onKey = null; }
+    if (_onKey) { try { document.removeEventListener('keydown', _onKey, true); } catch (e) {} _onKey = null; }
     const ov = document.getElementById(OV);
     if (ov) ov.remove();
 
@@ -1515,7 +1736,7 @@ export function closeModal() {
     const h = _handlers;
     _instance = null; _roster = []; _handlers = null; _outcome = null;
     _view = 'choose'; _selected = null; _hover = null; _busy = false; _opener = null;
-    _settledAt = 0;
+    _settledAt = 0; _panelGen = 0; _pressGen = null; _keyGen = null;
 
     try { if (h && typeof h.onClose === 'function') h.onClose(); } catch (e) {}
     return true;

@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120w6';
+  window.BUILD_VERSION = 'v120w7';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -79769,6 +79769,24 @@ const OPS_ECON = {
   // yields {} on purpose — a bank earns Cinder interest, not resources, so it
   // must never be swept up by the production-pressure hook (cxProduce).
   bank:         { startup: 1000000, ratePerWorkerHr: 1500, salaryPerWorkerHr: 400, maxWorkers: 8,  yields: {} },
+  // 🚛 Transportation Company — the licence to HAUL OTHER PLAYERS' FREIGHT.
+  // TWO PURCHASES, exactly like the bank above: this entry is the PAPERWORK,
+  // and the premises are the Freight Depot the owner plants in their city
+  // (src/city/production.data.js). A charter with no depot is a company with
+  // nowhere to load, which is the point — the building is the thing that has
+  // to be sited on real ground.
+  // Workers here are DRIVERS: one staffed worker licenses one rig, so
+  // maxWorkers is the fleet ceiling, and this table is the only place it is
+  // set. inputs { fuel } and nothing else: a carrier BURNS fuel to run and
+  // extracts nothing.
+  // yields {} on purpose — the bank's reason, word for word. A carrier earns
+  // Cinder in freight fees, not resources, so it must never be swept up by
+  // the production-pressure hook (cxProduce).
+  // ⚠ `yields: {}` IS NOT THE SAME AS OMITTING THE KEY. _opEcon() nested-
+  //   merges yields/inputs, and _opSettle feeds cxProduce() from the COMPUTED
+  //   map — so an operation that "produces" would move the Crash Exchange
+  //   price of a resource it never pulled out of the ground.
+  transport:    { startup: 650000, ratePerWorkerHr: 1000, salaryPerWorkerHr: 300, maxWorkers: 10, yields: {}, inputs: { fuel: 1.4 } },
 };
 // 🏦 The bank is the ONE operation with an alternate price: 1,000,000 Cinder,
 // OR a $200 stake in Mythic Token. MT is $0.10 (the Bank of Ethos quote price),
@@ -79987,6 +80005,10 @@ const OP_LABELS = {
      so a new operation without a label here is buyable but shows up in the shop
      as "genelab". */
   genelab: 'Genetics Lab',
+  // 🚛 Same rule, one op later: Object.keys(OPS_ECON) now yields
+  // 'transport', so without this line the Just Business shop sells a company
+  // called "transport".
+  transport: 'Transportation Company',
 };
 // 📦 Storage a staffed warehouse adds to the player's resource cap. Reads the
 // LIVE econ table via _opEcon, so an admin retune reaches this too. Counts the
@@ -80273,6 +80295,54 @@ function _opAfterFound(opId) {
       }
     } catch (_) {}
   }
+  /* 🚛 Transportation Company → the Freight Depot (/src/transport).
+     Two halves, and index.html owns only the first: mint the free starter rig
+     onto the Prince Portfolios lot, then TELL the module the charter landed.
+     Every byte of transport state — fleet, contracts, tariffs, routes — lives
+     in the module (CLAUDE.md: never add a new top-level system to this file),
+     which is why there is no _tpState() here and no rig table.
+     ⚠ NOT AWAITED, and not made async. _opAfterFound is called synchronously
+       from all three founding paths (_opCreateLocal ~79986, the corp Treasury
+       path ~82477 and the personal-Cinder path ~82602); making it async would
+       change the order the other two save in. onCharterFounded() is written to
+       always resolve and never throw for the same reason — a throw here would
+       abort the tail of a founding the player has already been charged for.
+     🔴 REJECTED HERE: widening ppIsUnlocked() (~196000) to accept a transport
+        charter, so a carrier could reach the auction floor their fleet is
+        bought on. The gap is real — a player who owns only this charter gets
+        the starter rig and no way to bid on a second — but that fix hands a
+        transport founder the WHOLE Car Dealership economy (the floor, the
+        strip-for-parts salvage faucet, the lot ladder) as a side effect of a
+        different purchase. That is a design change to another feature, not a
+        wiring hunk, and it belongs to whoever owns Prince Portfolios. Written
+        down here so the next reader does not re-derive it as a bug. */
+  if (opId === 'transport') {
+    try {
+      const _mt = (typeof window !== 'undefined' && window.MythicTransport) || null;
+      if (_mt && typeof _mt.onCharterFounded === 'function') {
+        const _rig = _transportGrantStarterRig();
+        try { saveProfile && saveProfile(); } catch (_) {} try { saveForge && saveForge(); } catch (_) {}
+        try { Promise.resolve(_mt.onCharterFounded({ free: true })).catch(function () {}); } catch (_) {}
+        // Name the actual outcome. "Your rig could not be parked" with no
+        // reason is the message that turns into a support ticket.
+        const _rigMsg = (_rig === 'ok' || _rig === 'already')
+          ? ' Your starter rig is parked on the lot.'
+          : (_rig === 'full')
+          ? ' ⚠ Your vehicle lot is full, so the starter rig could not be parked — free a slot and reopen the Freight Depot to claim it.'
+          : ' ⚠ The starter rig could not be issued yet (' + _rig + ') — open the Freight Depot and it will try again.';
+        showToast('🚛 TRANSPORTATION COMPANY chartered!' + _rigMsg + ' Plant a Freight Depot in your city, then open it from the main hub.', 8600);
+      } else {
+        /* 🔴 SAY IT OUT LOUD. The player has just paid the startup cost for a
+           business whose entire screen is an ES module that did not load — a
+           404, a first run with no network, or a service worker holding a bad
+           copy. The operation row is real and the charge is real; only the UI
+           is missing, and the charter survives a reload, so "reload" is the
+           actual fix rather than a guess at one. Silently founding a company
+           with no screen is how a player concludes the purchase vanished. */
+        showToast('⚠ Transportation Company founded — but the Freight Depot module did not load, so its screen is unavailable right now. Your charter is filed and safe; reload the game to reach it.', 9000);
+      }
+    } catch (_) {}
+  }
 }
 // True once the player has founded the Dojo operation (or is admin).
 function _dojoOwnsLicense() {
@@ -80296,6 +80366,140 @@ function _geneLabOwnsLicense() {
     if (typeof Operations !== 'undefined' && Operations.list && Operations.list.some(x => x && x.op_type === 'genelab')) return true;
   } catch (e) {}
   return false;
+}
+/* 🚛 TRANSPORTATION COMPANY — the three legacy-side helpers /src/transport
+   needs, and the whole of what this file knows about the feature. The rig
+   table, the rate board, the routes and the fleet are all in the module.
+
+   Every Transportation Company row this account holds, from BOTH op lists.
+   ⚠ NOT Operations.list alone, which is what _dojoOwnsLicense and
+     _geneLabOwnsLicense above read. Operations.list starts EMPTY and is only
+     populated once opFetch() has returned, so a predicate reading only it
+     answers false for the first seconds after every reload — and a feature
+     whose sole unlock hook is _opAfterFound is never told a second time. That
+     is precisely the failure ppIsUnlocked() (~196000) exists to heal: "a stale
+     cloud profile loaded with owned=false left the screen empty". The
+     personally-funded list lives on the PROFILE and is on disk at load, so the
+     union answers correctly from the first frame.
+   🔴 REJECTED: a stored `Profile.transportUnlocked` boolean, the manual-grant
+     escape hatch the other two predicates accept. Prince Portfolios shipped
+     exactly that (`p.owned`) and it is the flag that went stale and emptied the
+     screen. Ownership is DERIVED here so there is no second copy to disagree
+     with the operation rows; admin still gets in, through isAdmin() rather than
+     through a flag a bad save can clear. */
+function _transportOps() {
+  const out = [], seen = {};
+  const take = (list) => {
+    (list || []).forEach((o) => {
+      if (!o || o.op_type !== 'transport') return;
+      // A row with an explicit non-active status is a retired charter, not a
+      // charter. Rows with no status at all are the legacy shape and count.
+      if (o.status && o.status !== 'active') return;
+      const k = o.id ? String(o.id) : '';
+      if (k) { if (seen[k]) return; seen[k] = 1; }
+      out.push(o);
+    });
+  };
+  try { if (typeof Operations !== 'undefined' && Array.isArray(Operations.list)) take(Operations.list); } catch (e) {}
+  try { if (typeof _jbLocalOpsList === 'function') take(_jbLocalOpsList()); } catch (e) {}
+  return out;
+}
+// True once the player holds a Transportation Company charter (or is admin).
+// Same shape as _dojoOwnsLicense / _geneLabOwnsLicense — deliberately, so there
+// is one recognisable way in this file to ask "does this player hold that
+// licence" — and exposed to the module as MythicTransportBridge.ownsCharter().
+function _transportOwnsCharter() {
+  try {
+    if (typeof isAdmin === 'function' && isAdmin()) return true;
+    return _transportOps().length > 0;
+  } catch (e) {}
+  return false;
+}
+/* Drivers on the books. Summed across every charter row rather than read off
+   one, because the corp copy and the personally-funded copy of the same
+   operation both exist for the moment between founding and the opFetch() that
+   retires the local one — reading "the" row would double or halve the fleet
+   depending on which one it found.
+   Clamped to the econ table's maxWorkers so the depot can never advertise a
+   fleet ceiling the operation cannot staff. The clamp reads _opEcon(), never a
+   literal: an admin who retunes maxWorkers from the Operations Economy editor
+   must move this with it, and that only happens if it is asked for. */
+function _transportWorkers() {
+  try {
+    let n = 0;
+    _transportOps().forEach((o) => { n += (o && o.workers) | 0; });
+    const e = (typeof _opEcon === 'function') ? _opEcon('transport') : null;
+    const cap = (e && (e.maxWorkers | 0)) || 0;
+    return cap > 0 ? Math.min(n, cap) : n;
+  } catch (e) { return 0; }
+}
+/* 🚛 The free starter rig — "the rig every carrier starts with", the same
+   gift the Fishing Co. makes with wfBuyBoat('skiff', { free:true }) above.
+   INDEX.HTML MINTS IT, NOT THE MODULE, and the split is the point: the Prince
+   Portfolios lot is this file's state, and /src/transport is handed lot() and
+   setRigField() and nothing at all that CREATES a vehicle — so no bug in the
+   module can conjure a second free rig. The module's half is the recording
+   one: it registers whatever haul-class truck is on the lot to the fleet.
+   DETERMINISTIC, NOT rollRig(). The roll table runs up to a Mythic roadtrain
+   at 3.4M base value on roll weight 1, and a founding gift that can jackpot
+   turns a 650k purchase into a lottery ticket. Lowest common rig, every time.
+   Returns a CODE, not a boolean — 'ok' | 'already' | 'full' | 'nocatalog' |
+   'nomodule' | 'error' — because the founding toast has to tell the player
+   which of those happened, and "your rig could not be parked" with no reason
+   is the message that becomes a support ticket. */
+function _transportGrantStarterRig() {
+  try {
+    const MT = (typeof window !== 'undefined' && window.MythicTransport) || null;
+    if (!MT || typeof MT.rigCatalog !== 'function') return 'nomodule';
+    const cat = MT.rigCatalog() || [];
+    if (!cat.length) return 'nocatalog';
+    const base = cat.find((r) => r && r.rarity === 'common') || cat[0];
+    const p = ensurePrincePortfolios();
+    if (!Array.isArray(p.lot)) p.lot = [];
+    // Idempotent by OBSERVATION, not by a flag: founding fires from three call
+    // sites and _opAfterFound keeps no memory, so "the lot already holds a
+    // haul-class truck" is the guard. A flag here would be a fourth ownership
+    // boolean and could go stale exactly like p.owned did.
+    if (p.lot.some((v) => v && v.haul)) return 'already';
+    const cap = ppLotCap();
+    let slot = null;
+    /* First FREE slot, scanned — never `p.lot.length`. Vehicles are removed
+       from the MIDDLE of the lot (sold, scrapped, stripped), so length lands on
+       a slot that is still occupied and two cars share a parking space.
+       ppBuyVehicle (~196294) scans for this reason; _ppaWin (~196909) does not
+       and has that collision today. Copy the right neighbour, not the nearest. */
+    for (let i = 0; i < cap; i++) if (!p.lot.some((x) => x && x.slot === i)) { slot = i; break; }
+    if (slot == null) return 'full';
+    /* Field-for-field what ppBuyVehicle parks (~196301) — a _ppGenListing row
+       plus boughtAt/fuelLevel/listPrice/slot, minus isScam, which that path
+       deletes — with the three haul keys on top. The lot renderers, the sell
+       path and the strip path all read these; a row missing one of them renders
+       an empty cell rather than raising anything a player could report.
+       'Clean' is the 1.00 rung of PP_COND_MULT: a working truck, not a bargain
+       and not a prize. */
+    const condition = 'Clean';
+    const mileage = _ppBetween(1200, 60000);
+    const wear = Math.max(0.5, 1 - mileage / 600000);
+    const fair = Math.round(base.baseValue * PP_COND_MULT[condition] * wear);
+    p.lot.push({
+      id: _ppNewId('v'),
+      name: base.name, type: base.type,
+      color: _ppPick(PP_COLORS),
+      condition, mileage,
+      riskLevel: 'Low', price: fair,
+      estPartValue: Math.round(fair * 0.5),
+      rarity: base.rarity,
+      baseValue: base.baseValue,
+      sellerRating: 5,
+      haul: true, rigId: base.id, lotSlots: base.lotSlots | 0 || 1,
+      boughtAt: Date.now(),
+      fuelLevel: 0,
+      listPrice: Math.round(fair * 1.35 / 100) * 100,
+      slot: slot,
+    });
+    _ppLog('event', 'Starter rig ' + base.name + ' issued with the Transportation Company charter.');
+    return 'ok';
+  } catch (e) { return 'error'; }
 }
 // 🧹 CARD SHOP RESET (v118t1) — the storefront economy was wiped clean server
 // side (every shop, listing and sale removed) so everyone starts fresh. The
@@ -82284,13 +82488,22 @@ function _jbHandleAction(a) {
           // Avoid double-creating same op type for the same player.
           if ((Operations.list || []).some(function (x) { return x.op_type === a.op; })) { showToast('You already operate that.', 3400); _jbSendData(); return; }
           // Friendly name lookup so the modal says "Fishing Company" not "fishing".
-          const opNiceName = ({
-            mining: 'Mining Company', oil: 'Oil Company', construction: 'Construction Co.',
-            medical: 'Medical Corporation', agri: 'Agricultural Op.', research: 'Research Facility',
-            smuggling: 'Smuggling Network', salvage: 'Salvage Operation', gas: 'Gas Station Chain',
-            cars: 'Car Dealership', fishing: 'Fishing Company', cardshop: 'Card Shop',
-            dojo: 'Dojo', bank: 'Bank',
-          })[a.op] || (a.op.charAt(0).toUpperCase() + a.op.slice(1));
+          /* 🔴 THIS WAS A SECOND COPY OF OP_LABELS AND IT HAD ALREADY DRIFTED.
+             The inline map that used to sit here listed fourteen operations and
+             was missing BOTH of the two shipped after it. `warehouse` and
+             `genelab` fell through to the charAt fallback: warehouse survived
+             on luck (charAt happens to spell "Warehouse"), genelab did not —
+             the "Do You Want to Buy This Business?" modal said "Genelab" while
+             the shop list beside it, built from OP_LABELS, said "Genetics Lab".
+             `transport` would have been the third and worst: "Transport" is
+             not the name of the product.
+             Two authorities for one label means the catalog and the purchase
+             modal can name the same business differently; one authority cannot.
+             OP_LABELS wins because it is the copy the shop catalog and the
+             admin economy editor already read. The charAt fallback stays: it is
+             the same degraded answer OP_LABELS' other consumers give, so an
+             unlabelled op reads identically everywhere instead of two ways. */
+          const opNiceName = (OP_LABELS && OP_LABELS[a.op]) || (a.op.charAt(0).toUpperCase() + a.op.slice(1));
           const haveCR = (Profile.gems | 0);
           // 🏦 The bank already ran its own confirm (_bankFoundChoice showed the
           // Cinder-vs-MT choice with both balances). Asking a second time was a
@@ -82308,6 +82521,8 @@ function _jbHandleAction(a) {
                 ? '<div style="padding:0.55rem 0.7rem;background:linear-gradient(180deg,rgba(108,212,255,0.12),rgba(108,212,255,0.02));border-left:3px solid #6cd4ff;border-radius:4px;font-size:0.85rem;color:#cfe5ff">⛵ Funding this also unlocks the <b>Woods Fishing</b> maritime ops screen.</div>'
                 : a.op === 'cars'
                 ? '<div style="padding:0.55rem 0.7rem;background:linear-gradient(180deg,rgba(255,200,108,0.12),rgba(255,200,108,0.02));border-left:3px solid #ffc86c;border-radius:4px;font-size:0.85rem;color:#ffe6b3">🚗 Funding this also unlocks the <b>Prince Portfolios</b> car-dealership floor.</div>'
+                : a.op === 'transport'
+                ? '<div style="padding:0.55rem 0.7rem;background:linear-gradient(180deg,rgba(224,164,92,0.12),rgba(224,164,92,0.02));border-left:3px solid #e0a45c;border-radius:4px;font-size:0.85rem;color:#f2d6ac">🚛 Funding this also unlocks the <b>Freight Depot</b> — haul other players\' cargo for Cinder. Your first rig comes with the charter; plant a Freight Depot in your city to start loading.</div>'
                 : a.op === 'oil'
                 ? '<div style="padding:0.55rem 0.7rem;background:linear-gradient(180deg,rgba(232,161,58,0.12),rgba(232,161,58,0.02));border-left:3px solid #e8a13a;border-radius:4px;font-size:0.85rem;color:#ffd6a3">⛽ Funding this also unlocks the <b>Black River Petroleum</b> oil-extraction terminal.</div>'
                 : a.op === 'gas'
@@ -114702,6 +114917,25 @@ function renderTitle() {
             onclick: () => {
               try { window.MythicCommunity.open(); }
               catch (e) { showToast('⚠ The Community module did not load.', 3200); }
+            } }
+        : null),
+      // 🚛 Freight Depot — the Transportation Company screen. Lives in
+      // /src/transport as an ES module; this tile is the only thing index.html
+      // knows about it, exactly like Communities above. Hidden entirely if the
+      // module failed to load, so a broken module is a missing tile rather
+      // than a dead button.
+      // ⚠ Resolves to NULL when the module has not loaded — the tile list is
+      //   `.filter(Boolean)`ed. There is no `hidden` flag; returning null IS
+      //   the flag. A module that lands AFTER this list was built still gets a
+      //   tile: it fires `mythic:transport-ready` on registration and
+      //   index.html repaints once on that event (next to
+      //   MythicTransportBridge), so the tile is never stuck hidden.
+      ((typeof window !== 'undefined' && window.MythicTransport)
+        ? { id: 'btn-transport', icon: '🚛', name: 'Freight Depot', sub: 'Charter a carrier · haul cargo for Cinder', accent: '#e0a45c',
+            badge: (() => { try { return _transportOwnsCharter() ? 'Your carrier' : 'Freight'; } catch (e) { return 'Freight'; } })(),
+            onclick: () => {
+              try { window.MythicTransport.open(); }
+              catch (e) { showToast('⚠ The Transport module did not load.', 3200); }
             } }
         : null),
       // 🏦 Bank of Ethos — Camp Heights treasury sub-app (iframe). Node /
@@ -195312,6 +195546,19 @@ function _wfBindAdmin() {
 // for listings + lot positions + customers. Per-player state lives on
 // Profile.princePortfolios; admin photos on Forge.princePortfolios.
 // ============================================================================
+/* ⚠ DO NOT ADD HAUL RIGS TO THIS ARRAY. It is a SHARED NAME NAMESPACE and two
+   other systems key off it:
+     • the admin photo grid (~197736) stores listing and lot artwork as
+       `f.listingPhotos[v.name]` / `f.lotPhotos[v.name]`, so a rig name in here
+       claims a photo slot in a grid an admin curates for cars;
+     • `_ppaGenCar()` (~196775) picks from this SAME array for the auction
+       minigame and stamps PPA_RARITIES (~196737: Common/Rare/Epic/Legendary/
+       Mythic — capitalised, five tiers, no Uncommon), a different ladder from
+       the game's RARITIES. A rig listed here would carry two contradictory
+       rarities depending on which generator produced it.
+   The rig table is src/transport/rigs.data.js and reaches _ppGenListing()
+   through window.MythicTransport.rollRig(); module → window is the direction
+   that works, and it keeps the two name spaces separate by construction. */
 const PP_VEHICLE_NAMES = [
   { name: 'Vortex GT-7',     type: 'Sports Car',          baseValue: 184000 },
   { name: 'Ironback Mauler', type: 'Armored Vehicle',     baseValue: 240000 },
@@ -195908,7 +196155,24 @@ function _ppFairValue(v) {
 
 // --- Generators ---
 function _ppGenListing() {
-  const base = _ppPick(PP_VEHICLE_NAMES);
+  /* 🚛 HAUL-CLASS LISTINGS. The rig table lives in
+     src/transport/rigs.data.js and reaches this file the only direction that
+     works — module → window. NO MODULE, NO HAUL LISTINGS: an ordinary car
+     listing produced after this change is field-for-field the one produced
+     before it — same keys, same rarity rule, same callers, all of them
+     unconditional and argument-free (`grep -c "push(_ppGenListing())"` — 8
+     today, deliberately NOT pinned here: a list in a comment goes stale, and a
+     stale list inverts the very check it was written to make possible).
+     0.18 is the share of the floor that is freight and it is the only number
+     added here; WHICH rig is chosen is rolled by the module against its own
+     weights, so this file never holds a second copy of the rig odds. */
+  const RIGS = (typeof window !== 'undefined' && window.MythicTransport && typeof window.MythicTransport.rollRig === 'function') ? window.MythicTransport : null;
+  const wantHaul = !!(RIGS && _ppChance(0.18));
+  /* `||` and not a ternary: rollRig() answers null for an empty rig table (its
+     documented degenerate return), and a null `base` would throw inside the
+     generator that produces every listing on the floor. An unusable rig table
+     degrades to an ordinary car, which is the pre-feature behaviour. */
+  const base = (wantHaul && RIGS.rollRig()) || _ppPick(PP_VEHICLE_NAMES);
   const condition = _ppPick(PP_CONDITIONS);
   const risk = _ppPick(['Low','Low','Medium','Medium','Medium','High','High','Unknown']);
   const mileage = _ppBetween(1200, 280000);
@@ -195925,9 +196189,26 @@ function _ppGenListing() {
     name: base.name, type: base.type,
     color, condition, mileage,
     riskLevel: risk, price, estPartValue, isScam,
-    rarity: condition === 'Pristine' ? 'rare' : 'common',
+    /* A RIG'S RARITY COMES FROM THE RIG ENTRY; a car's still comes from its
+       condition, untouched. Condition stays a SEPARATE multiplier on runs/day
+       for a rig, and that separation is the whole decision the fleet buyer is
+       being offered — a Battered Legendary against a Pristine Rare is a real
+       trade. Folding condition into rarity would collapse it back into one
+       number and there would be nothing to choose. */
+    rarity: base.haul ? base.rarity : (condition === 'Pristine' ? 'rare' : 'common'),
     baseValue: base.baseValue,
     sellerRating: _ppBetween(1, 5),
+    /* Spread CONDITIONALLY so a car gains no new keys. The lot, the admin photo
+       grid, the sell path and strip-for-parts all iterate these rows, and an
+       always-present `haul: false` would be a new field in every one of them
+       for no reader.
+       ⚠ lotSlots is carried as FORWARD DATA ONLY and is deliberately NOT
+         enforced. The lot is one-vehicle-one-integer-slot in about a dozen
+         places (ppBuyVehicle ~196289/196294, vmCancelListing, vmBuyListing, the
+         auction cap ~196909, plus the render reads). Honouring it in the buy
+         path alone would let a 3-slot rig occupy one slot everywhere else, and
+         the cap would stop meaning anything at all. */
+    ...(base.haul ? { haul: true, rigId: base.id, lotSlots: base.lotSlots | 0 || 1 } : {}),
   };
 }
 /* (_ppGenBuyer lived here — it minted an NPC customer with a `reward` of
@@ -207502,6 +207783,291 @@ window.MythicCityBridge = {
      production.state.js will pick it up with no other change. */
   outputMultipliers: null,
 };
+/* ═══════════════════════════════════════════════════════════════════════════
+   🚛 TRANSPORT BRIDGE — the ONE seam between this file and /src/transport.
+
+   🔴 THE GLOBALS TRAP, A FIFTH TIME (CLAUDE.md). `Profile`, `Cloud`, `Corp`,
+   `Forge`, `Operations`, `RESOURCES`, `RARITIES`, `getRes`, `spendGems` and the
+   idle constants are top-level `const` / function declarations in this file.
+   They are global LEXICAL bindings and are NOT properties of window —
+   `window.Profile` is undefined however global `const Profile` looks — so an ES
+   module cannot see a single one of them. That trap has already cost real time
+   twice on the Node City bridge (FoundationReserve, then Profile). Everything
+   /src/transport needs is handed over HERE and nowhere else; when the module
+   needs something new it is ADDED TO THIS OBJECT, never reached for from
+   inside the module.
+
+   ⏱ EVERY ACCESSOR IS A FUNCTION, NOT A SNAPSHOT — every key below except the
+   last two. A value captured at construction time goes stale the moment the
+   player spends, loots or buys a rig, and a stale Cinder balance in front of a
+   spend is an affordability check that fails open.
+
+   🔴 EVERY MUTATOR RETURNS A BOOLEAN, and that is not decoration:
+   /src/transport unwinds a dispatch from these return values, and a wrapper
+   that returned `undefined` on success would make its rollback path fire on a
+   leg that actually worked. MythicCityBridge learned this the expensive way —
+   two of its mutators were `try { … } catch (e) {}`, which made the module's
+   refund-on-record-failure path dead code: a saveProfile() throw charged the
+   player 50,000 Cinder for a building that never persisted while build() still
+   returned {ok:true}. Nothing throws across this seam; the answer is the return
+   value.
+
+   ↩️ refundRes (UNCAPPED undo) and addRes (CAPPED add) are both here and the
+   distinction is a safety property, not a convenience. addRes returns WITHOUT
+   ADDING when the vault is full; a refund routed through it evaporated 95 metal
+   and 70 supplies in a driven test. Payouts go through addRes; the undo of a
+   deduction this call stack just made goes through refundRes.
+
+   ⚠ THE KEY SET IS PINNED. src/transport/transport.bridge.js ships a
+   NULL_BRIDGE with exactly these keys, which is what makes the module total
+   when this file never reaches it. A method added here and not there gives the
+   module a hole it only falls into on the machine where the bridge is missing —
+   the one case nobody is testing. Add to both, or to neither.
+   ═══════════════════════════════════════════════════════════════════════════ */
+window.MythicTransportBridge = {
+  /* ── Identity. A `get cloud()` accessor and not a captured reference, copying
+     MythicBridge above: Cloud.client is null until sign-in completes, so a
+     reference grabbed at construction time is permanently signed out. */
+  get cloud() { try { return (typeof Cloud !== 'undefined') ? Cloud : null; } catch (e) { return null; } },
+  signedIn: () => { try { return !!(Profile.cloud && Profile.cloud.signedIn && Cloud && Cloud.client); } catch (e) { return false; } },
+  userId: () => { try { return (Profile.cloud && Profile.cloud.userId) || null; } catch (e) { return null; } },
+  displayName: () => {
+    try { return (Profile.cloud && Profile.cloud.displayName) || (Profile.account && Profile.account.displayName) || 'Survivor'; }
+    catch (e) { return 'Survivor'; }
+  },
+
+  /* ── 🔥 Cinder. Routed through the real helpers — never mutate Profile.gems.
+     ⚠ ppBuyVehicle (~196299) does `Profile.gems = (Profile.gems | 0) - v.price`
+       and is exactly what CLAUDE.md forbids; 195796-195799 records the sibling
+       bug where a misspelled `spendCinderS` fell through to raw subtraction. It
+       is the nearest pattern to the lot code and it is not the one to copy. */
+  gems: () => { try { return Profile.gems | 0; } catch (e) { return 0; } },
+  spendGems: (n) => { try { return !!spendGems(n | 0); } catch (e) { return false; } },
+  /* `why` is addGems' optional second argument, and it is passed rather than
+     defaulted on purpose: an unattributed faucet cannot be audited, and
+     production already shows +602,357 🔥 of reconcile gains in one week with
+     nothing naming a source (see addGems, ~64454). Freight income is a new
+     faucet; it does not get to be the next anonymous one. */
+  addGems: (n, why) => { try { addGems(n | 0, why || 'transport'); return true; } catch (e) { return false; } },
+
+  /* ── Resources.
+     ⚠ 🔴 RESOURCES DO NOT LIVE ON `Profile.resources`. Reading that returns 0
+       for everything: _ensureResources() aliases the live store to
+       Profile.salvage and BLANKS Profile.resources after the one-time fold.
+       getRes / addRes / _refundRes / spendResources are the accessors and they
+       are the whole of what this bridge exposes.
+     🔴 A FUNCTION, not the bare array MythicCityBridge ships. The two existing
+       bridges already disagree about this exact key — MythicTradeBridge has
+       `resources: () => RESOURCES`, MythicCityBridge has `resources: RESOURCES`
+       — which is why /src/transport reads it tolerantly. Choosing the function
+       form leaves this bridge with exactly TWO non-function entries (the two
+       constants at the bottom), so "is every accessor a function?" is a rule a
+       reviewer can check by eye instead of an exception to remember.
+       Sliced, so nothing in the module can push a fifteenth resource into the
+       game's ledger definitions; the entries themselves are shared and are
+       read-only by convention. */
+  resources: () => { try { return (typeof RESOURCES !== 'undefined') ? RESOURCES.slice() : []; } catch (e) { return []; } },
+  getRes: (id) => { try { return getRes(id) | 0; } catch (e) { return 0; } },
+  spendRes: (id, n) => { try { return !!spendResources({ [id]: n | 0 }); } catch (e) { return false; } },
+  /* CAPPED add — the payout path. addRes() (~39524) returns silently when the
+     vault is full, so "did it land?" cannot be inferred from the call: it is
+     MEASURED here, before and after. What the ledger actually took, never what
+     was asked for.
+     `true` means SOMETHING landed, not that all of it did — a delivery that
+     overflows is a smaller delivery, which is the right reading for a payout
+     and the wrong one for an undo. A leg that must land in full reads getRes on
+     both sides itself.
+     ⚠ The `addRes` inside this arrow is the top-level FUNCTION, not the
+       property beside it: an object literal creates no scope and a property
+       name is not a binding, so this does not recurse. MythicTradeBridge above
+       has the same shape for the same reason. */
+  addRes: (id, n) => {
+    try {
+      const q = n | 0;
+      if (!id || q <= 0) return false;
+      const before = getRes(id) | 0;
+      addRes(id, q);
+      return (getRes(id) | 0) > before;
+    } catch (e) { return false; }
+  },
+  /* UNCAPPED undo — and it is deliberately NOT addRes. addRes enforces the
+     stash cap and adds nothing at all when the vault is full, which silently
+     destroys an unwind: routing a refund through it evaporated 95 metal and 70
+     supplies in a driven test. Only ever the reversal of a deduction this same
+     call stack just made — see the convention block on _refundRes (~39565). */
+  refundRes: (id, n) => { try { if (!id || (n | 0) <= 0) return false; _refundRes(id, n | 0); return true; } catch (e) { return false; } },
+
+  /* ── The operation. `_opEcon('transport')` is the ONLY place this business is
+     priced (CLAUDE.md: "All operation pricing goes through _opEcon()"), and it
+     is exposed rather than copied so an admin's Operations Economy override
+     reaches the depot screen too. Null for an unknown type: the module renders
+     an unknown startup cost rather than guessing one, because a guessed price
+     is a second price the shop can advertise while the charge does something
+     else. */
+  opEcon: (t) => { try { return _opEcon(t) || null; } catch (e) { return null; } },
+  // Falls back to the raw key, which is the same degraded answer the Just
+  // Business catalog gives for an op with no OP_LABELS entry — one wrong-looking
+  // name in two places beats two different wrong names.
+  opLabel: (t) => { try { return (OP_LABELS && OP_LABELS[t]) || String(t || ''); } catch (e) { return String(t || ''); } },
+  // Derived from the operation rows, never from a stored flag — see the block
+  // on _transportOps (~80390) for the stale-`p.owned` failure that rule exists
+  // to avoid.
+  ownsCharter: () => { try { return !!_transportOwnsCharter(); } catch (e) { return false; } },
+  charterWorkers: () => { try { return _transportWorkers() | 0; } catch (e) { return 0; } },
+
+  /* ── The Prince Portfolios lot, which is where fleet rigs actually live.
+     COPIES, never the live rows: the depot repaints from this and a module
+     holding the real objects could mutate a player's vehicle just by rendering
+     it. Shallow is enough — a lot row is flat (see ppBuyVehicle's Object.assign
+     build, ~196022) — and a deep clone would be paid on every repaint for
+     nothing. setRigField below is the ONLY writer. */
+  lot: () => { try { return (ensurePrincePortfolios().lot || []).map((v) => Object.assign({}, v)); } catch (e) { return []; } },
+  lotCap: () => { try { return ppLotCap() | 0; } catch (e) { return 0; } },
+  /* PP_COND_MULT is the authority for what a condition is worth. It is asked
+     for and never copied, because effective runs are floor(rarityRuns ×
+     condMult) — a drifted local copy would pay a carrier for runs the auction
+     floor does not believe their truck can make.
+     An unknown condition answers 1, which IS a guess and the only one on this
+     bridge. setRigField refuses to write a condition PP_COND_MULT does not
+     know, which is what keeps the guess unreachable in practice. */
+  condMult: (c) => { try { const m = Number(PP_COND_MULT[c]); return Number.isFinite(m) ? m : 1; } catch (e) { return 1; } },
+  conditions: () => { try { return PP_CONDITIONS.slice(); } catch (e) { return []; } },
+  /* The game's rarity ladder, copied per call so nothing can push a seventh
+     tier into it. Handed over rather than redeclared: the auction minigame
+     already runs a SECOND, incompatible ladder (PPA_RARITIES ~196737 —
+     capitalised, five tiers, no Uncommon), and a third copy inside
+     /src/transport is how a rig ends up carrying two contradictory rarities
+     depending on which generator produced it. */
+  rarities: () => { try { return RARITIES.map((r) => ({ id: r.id, name: r.name, color: r.color })); } catch (e) { return []; } },
+  /* 🔒 THE ONLY WRITER INTO A PLAYER'S LOT, AND ITS KEYS ARE ALLOW-LISTED.
+     A wrapper that accepted any key would be a generic Profile write with extra
+     steps — `setRigField(id, 'price', 9e9)` and `setRigField(id, 'isScam',
+     false)` would both be reachable from a module — and "what can
+     /src/transport change?" would stop having an answer. The five below are the
+     whole freight lifecycle: runs spent, the day they were spent on, which
+     contract holds the rig, wear, and parked-vs-hauling. Everything else
+     returns false and changes nothing.
+     ⚠ `condition` is VALUE-checked as well as key-checked. PP prices a vehicle
+       as baseValue × PP_COND_MULT[condition] × wear (_ppFairValue ~196141),
+       so a condition string PP does not know prices the truck NaN — and a NaN
+       price renders as a blank cell rather than as anything anyone reports. */
+  setRigField: (vehicleId, key, val) => {
+    try {
+      const ALLOWED = { runsUsed: 1, dayKey: 1, assignedTo: 1, condition: 1, status: 1 };
+      if (!vehicleId || !ALLOWED[key]) return false;
+      if (key === 'condition' && PP_COND_MULT[val] === undefined) return false;
+      const p = ensurePrincePortfolios();
+      const v = (p.lot || []).find((x) => x && (x.id === vehicleId || x.vehicleId === vehicleId));
+      if (!v) return false;
+      v[key] = val;
+      /* Persisted here rather than left to the caller. The module's only other
+         option is a separate save() call, and a field written but not saved is
+         the silent-save class of bug this project has shipped repeatedly — the
+         write returns false if the save throws, so the module's retry stays
+         live instead of believing a lost write. */
+      try { saveProfile(); } catch (e) { return false; }
+      return true;
+    } catch (e) { return false; }
+  },
+
+  /* 🔴 GARAGE RIGS ARE READ-ONLY HERE, AND THERE IS DELIBERATELY NO WAY TO
+     GRANT ONE. Garage rigs are a REAL-MONEY product ($20/$60/$99) whose pricing
+     authority is GARAGE_RIGS in worker.js — what Stripe actually charges. This
+     accessor exists for exactly one reason: so /src/transport can pay the
+     ratified fleet-wide perk to a player who has already bought one. The Vendor
+     Market handler (~162283) grants nothing on click and calls
+     garageCheckout(t.sku) instead, because granting on click would hand out a
+     $99 rig for free; the same rule crosses this seam.
+     _garageRig() returns the same {owned:false, name:'Hand-hauled', …} shape
+     from its no-rig path AND its catch, so the module never has to branch on
+     ownership to read it. The fallback below is that same shape, so a throw
+     does not become a different one. */
+  garageRig: () => { try { return _garageRig(); } catch (e) { return { owned: false, name: 'Hand-hauled', icon: '🧺', load: 1, risk: 0, speed: 1, tier: 0 }; } },
+
+  // ── Geography. A depot stands on real ground and routes cross real ground.
+  campNodeId: () => { try { return (Profile && Profile.campNodeId) || null; } catch (e) { return null; } },
+  /* Territory Wars nodes, flattened for routes.js's hop ladder. `regionId` is
+     DERIVED here: a node row carries `sectorId` and the SECTOR carries
+     `regionId` (~215479), and joining them here is what stops the module from
+     re-implementing the map's shape and drifting from it.
+     ⚠ `parentId` is emitted only when a node actually carries one, and today no
+       node does — the main/town distinction is per-player and derived from
+       capture order (~215705), not a property of the node. hops() therefore
+       lands on its region rungs for every pair, which is coarse rather than
+       broken. If node rows ever gain a real parent, this line starts supplying
+       it with no other change anywhere.
+     An empty array means THE MAP IS UNAVAILABLE, and routes.js reads it as the
+     unreachable sentinel rather than inventing endpoints nobody can deliver to.
+     Copies again, including the yield map — the war map owns those rows. */
+  twNodes: () => {
+    try {
+      const t = _twForge();
+      const regionOf = {};
+      (t.sectors || []).forEach((s) => { if (s && s.id) regionOf[s.id] = s.regionId || null; });
+      return (t.nodes || []).map((n) => ({
+        id: n.id,
+        name: n.name || String(n.id),
+        regionId: regionOf[n.sectorId] || null,
+        parentId: n.parentId || null,
+        resourceYield: Object.assign({}, n.resourceYield || {}),
+      }));
+    } catch (e) { return []; }
+  },
+  // Best-effort, and 0 when this client has no visibility — the module prints
+  // "—" rather than inventing a percentage, the same contract MythicBridge's
+  // corpRegionControl states.
+  regionControl: (regionId, corpId) => { try { return (typeof tw_regionControlPct === 'function') ? (tw_regionControlPct(regionId, corpId) | 0) : 0; } catch (e) { return 0; } },
+  // 🏢 Read-only, like every other bridge: carriers may be corp-flavoured but
+  // this module never writes a corporation.
+  myCorp: () => { try { return (Corp && Corp.mine) ? { id: Corp.mine.id, name: Corp.mine.name, tag: Corp.mine.tag, faction: Corp.mine.faction } : null; } catch (e) { return null; } },
+  /* 🏭 The city production module, for the Freight Depot's placement and
+     level. window.MythicCityProduction is a MODULE REGISTRATION and therefore
+     genuinely is on window — unlike `const Profile`, which is the trap this
+     banner is about; module → window is the direction that works. Null until
+     /src/city/index.js has loaded, which the depot reads as "no depot yet"
+     rather than as an error. */
+  cityProd: () => { try { return (typeof window !== 'undefined' && window.MythicCityProduction) || null; } catch (e) { return null; } },
+
+  // ── Persistence + chrome
+  save: () => { try { saveProfile(); return true; } catch (e) { return false; } },
+  toast: (m, ms) => { try { showToast(m, ms || 3600); } catch (e) {} },
+  confirm: (m) => { try { return gcConfirm(m); } catch (e) { return Promise.resolve(false); } },
+  render: () => { try { render(); } catch (e) {} },
+  isAdmin: () => { try { return !!(typeof isAdmin === 'function' && isAdmin()); } catch (e) { return false; } },
+  /* ⚠ DISPLAY ONLY — THIS VALUE MAY NEVER GATE A DISPATCH. getTodayKey()
+     (~71039) is `new Date()` in the player's LOCAL timezone with no anchor, so
+     moving the OS clock mints a fresh day. That is tolerable for a counter that
+     only cheats the player themself (the convoy daily cap) and NOT tolerable
+     for a carrier's runs/day, which other players pay Cinder for. The authority
+     for day_key / runs_used is the DATABASE clock inside transport_dispatch().
+     Same reasoning that moved world chat to the chat_send() RPC in v120g0: the
+     client keeps its copy purely as instant feedback, never as enforcement. */
+  todayKey: () => { try { return getTodayKey(); } catch (e) { return null; } },
+  /* ⏱ THE TWO NON-FUNCTION ENTRIES, AND THE ONLY TWO ON THIS BRIDGE. These are
+     the game's EXISTING idle contract, PASSED and never redeclared, so
+     transport cannot become a fourth idle policy beside the Bunkhouse, the city
+     Resting House and corp operations. Constants, so there is nothing that can
+     go stale between construction and use — which is why the function rule does
+     not apply to them. */
+  collectCdMs: (typeof OP_COLLECT_CD_MS !== 'undefined') ? OP_COLLECT_CD_MS : 6 * 3600000,
+  accrualCapH: (typeof OP_ACCRUAL_CAP_H !== 'undefined') ? OP_ACCRUAL_CAP_H : 36,
+};
+/* 🚛 …and the other half of the launcher tile's contract. /src/transport
+   dispatches `mythic:transport-ready` when it registers, precisely so the tile
+   does not have to poll: the tile resolves to null while window.MythicTransport
+   is absent, and a module that finishes loading AFTER the portal has painted
+   would otherwise leave the player with a missing tile until some unrelated
+   repaint happened to rebuild the list. Listening here is the index.html half;
+   a seam with a dispatcher and no listener is a capability added to one side.
+   ONCE, then the listener removes itself. render() is RAF-batched, and a
+   listener that repainted on every dispatch would be a repaint loop if the
+   module were ever re-registered (an admin re-import, a hot reload). */
+try {
+  window.addEventListener('mythic:transport-ready', function _mtrTileOnce() {
+    try { window.removeEventListener('mythic:transport-ready', _mtrTileOnce); } catch (e) {}
+    try { render(); } catch (e) {}
+  });
+} catch (e) {}
 /* 🏦 CITY → OPS VAULT.
    The city's top-bar resources ARE the camp ledger — production writes through
    the bridge straight into Profile.salvage — so there is no city-local pile to
@@ -223060,8 +223626,15 @@ render();
      spendGems/addGems and the existing 6h/36h idle constants. Without the
      bridge it registers, stays inert and warns once — the globals trap.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
-       other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/city/index.js?v=v120u0seam"></script>
+       other static asset, and a missed bump ships invisibly.
+     ⚠ BUMPED FOR TRANSPORT (v120w7) even though nothing in index.js changed:
+       the Freight Depot catalog entry ships in src/city/production.data.js in
+       this same deploy, and a sub-module carries NO ?v= of its own. sw.js:485
+       records the measured failure of exactly that mismatch — "it threw
+       'canFoundCommunity is not a function' while the file on the server
+       plainly had it". A stale catalog here would make ensureState() prune a
+       depot the player has already paid for. -->
+<script type="module" src="src/city/index.js?v=v120w7depot1"></script>
 <!-- 🤝 TRADING — player-to-player swaps + LOT listings for the Resource
      Exchange. Registers window.MythicTrading and is INERT until the Market's
      Resources tab renders. index.html keeps the Supabase calls (Cloud/Profile
@@ -223096,6 +223669,25 @@ render();
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
 <script type="module" src="src/resources/chain.js?v=v120w6chain2"></script>
+<!-- 🚛 TRANSPORTATION COMPANIES — the carrier charter, the fleet, the rate
+     board, the routes and the Freight Depot screen. Registers
+     window.MythicTransport (plus __mtr for the console) and is INERT until the
+     launcher tile opens it; nothing in it runs on boot.
+     Reads nothing by itself: window.MythicTransportBridge (defined next to
+     MythicCityBridge above) hands it Cinder, the resource accessors, _opEcon,
+     the Prince Portfolios lot and the war-map nodes. Without the bridge it
+     registers, stays inert and warns once — that is the globals trap, and it
+     is the whole reason a bridge exists.
+     ⚠ If this 404s the game is exactly the game it was before: no tile appears,
+       _opAfterFound's transport arm SAYS the module is missing instead of
+       silently founding a company with no screen, and _ppGenListing() rolls
+       ordinary cars. An absent module changes no payout.
+     ⚠ Bump ?v= on every change — the service worker serves /src/* network-first
+       but the HTTP cache still applies, and the sub-modules (rigs.data.js,
+       routes.js, depot.js, contracts.js, transport.bridge.js) are imported by
+       bare relative specifier and carry no query string of their own, so this
+       tag is the only cache-bust the whole feature gets. -->
+<script type="module" src="src/transport/index.js?v=v120w7tr1"></script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the

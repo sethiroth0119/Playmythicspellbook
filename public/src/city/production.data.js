@@ -288,6 +288,123 @@ export const CITY_PRODUCTION = [
       { cinder: 292000, metal: 205, supplies: 180, wood: 135, water: 100, dna: 7 },
     ],
   },
+  /* ══ THE FREIGHT DEPOT (transport r1) ═══════════════════════════════════
+     APPENDED, NOT SLOTTED IN WITH THE OTHER UTILITIES, deliberately. It is
+     `kind: 'utility'` because it yields nothing and enables instead — but the
+     header rule at the top of this file (storage → power → labour → producers)
+     is about what a NEW city is offered FIRST, and a freight yard is nowhere on
+     that path. Putting it third would hand a fresh player a charter building
+     before a farm. Appending keeps that order intact and keeps this diff purely
+     additive.
+
+     ⚠ THE ID COLLISION IS REAL AND IT IS WHY THIS SAYS `freightdepot`.
+     `depot` is ALREADY TAKEN — by the Supply Workshop above (id 'depot', a
+     `production` building that yields supplies), and `CITY_PREREQ.archive =
+     ['depot']` points at THAT one. Two ids a prefix apart is a hazard, so it is
+     written down: Supply Workshop is `depot`, the freight yard is
+     `freightdepot`, and NEITHER may be renamed to tidy the pair up.
+
+     🔴 WHY A RENAME IS NOT COSMETIC: A MISSING ID DELETES A PAID-FOR BUILDING.
+     ensureState() (production.state.js) filters s.placed down to the rows whose
+     defId still resolves through cityProdDef() and WRITES THE FILTERED ARRAY
+     BACK. The instant this entry stops existing — renamed, removed, or merely
+     absent from the bundle a stale service worker served against a fresh save —
+     every placed depot is erased from the save, permanently, after the player
+     paid for it. This file's own history, recorded in production.state.js:
+     "This project deleted paid-for buildings four rounds running."
+     So `freightdepot` is a PERMANENT id, and this entry must land in the same
+     deploy as anything that can place one — never one deploy behind it.
+
+     🔴 THREE OF THE FOUR effect() KEYS ARE READ BY NOTHING IN /src/city, AND
+     THAT IS THE DESIGN, NOT AN OVERSIGHT. cityBudget() reads exactly `power`,
+     `workers`, `storage` and `population` off def.effect(level) and discards
+     the rest — powerplant's authored `radius: 4` above is already dead in
+     precisely this way. `bays` / `fleetCap` / `radius` are read on the TRANSPORT
+     side, by src/transport/depot.js, which walks the placed rows and calls this
+     function itself. Do NOT "fix" that by teaching cityBudget() about bays: the
+     city budget is a power/crew/storage ledger and a freight number in it would
+     be a second authority for a value the server (sql/038) also derives.
+     This function is the SINGLE definition of the level table. Copy it nowhere. */
+  {
+    id: 'freightdepot', name: 'Freight Depot', kind: 'utility', emoji: '🚛', accent: '#e0a45c',
+    desc: 'Loading bays, fuel bowsers and a yard. Without one your charter is paperwork — and a working yard eats crew and power the rest of the city was using.',
+    maxLevel: 3,
+    /* ⛽ `inputs` IS OMITTED, AND THE DESIGN DOC'S `inputs: { fuel: 30 }` IS A
+       REJECTED DESIGN. Three verified facts, in the order that decides it:
+         1. It could never debit a unit. `inputs` is charged only inside
+            collect(), and collect() is unreachable for any def with
+            `yields: null` because pending() returns `{cycles: 0}` on its first
+            line for exactly that case.
+         2. It would still RENDER on the card and still raise a red ⛔ NO FUEL
+            halt through haltState(), whose wording is "burns 30 fuel per cycle"
+            — and there is no cycle. A halt that is worded falsely is bad; a
+            halt that is worded falsely AND stops nothing is worse. It would
+            stop nothing: cityBudget() and depot.js both read effect() with no
+            regard for halt state, so a "halted" depot keeps every bay, every
+            fleet slot and its full reach.
+         3. The fuel sink the doc wants is real, and it is somebody else's line.
+            sql/038's own header states it: "fuel burn and repair bills are
+            _opEcon()'s business and are deliberately absent" from the
+            migration. CLAUDE.md agrees — all operation pricing goes through
+            _opEcon(). A per-run burn priced HERE would be a second price for
+            one thing, which is the failure this catalog's cost dial exists to
+            prevent.
+       So: no `inputs`, and when the per-run burn does ship it ships in
+       _opEcon('transport') and this line stays null. The card losing a fuel
+       chip is the whole cost of that. */
+    yields: null, inputs: null,
+    /* ⚠ THIS IS A REAL CITY LOAD AND IT SCALES WITH LEVEL — the `desc` says so
+       because a player is owed the warning BEFORE they place it. cityBudget()
+       multiplies every `draw` leg by the row's level and sums it across ALL
+       placed rows, so a level-3 yard draws 54⚡, 24 crew, 12💧 and 42☣ — and 24
+       crew is an entire level-1 Tenement block's output. The deficit is
+       CITY-WIDE: haltState() reports NO_STAFF and BROWNOUT (a 0.4 throttle) on
+       every OTHER building, so upgrading this can visibly stop a player's
+       Foundry with no message that names the depot. Kept at the design doc's
+       numbers rather than quietly shaved, because a business that costs the
+       city nothing is not a business; the honest move is to say it out loud in
+       the desc and in the panel, not to hide it in the tuning. */
+    draw: { power: 18, water: 4, workers: 8, pollution: 14 },
+    /* 🚛 THE THREE THINGS THE BUILDING DECIDES, and the reason freight is a
+       building rather than a number:
+         bays     — SIMULTANEOUS in-transit contracts, independent of fleet
+                    size. Buying rigs alone does not scale a carrier.
+         fleetCap — how many rigs the yard can park.
+         radius   — reach in HOPS from the node the yard stands in. No depot in
+                    reach of both endpoints ⇒ no quote, which is what stops one
+                    player serving the planet from a single tile.
+       🔴 sql/038 HAS ITS OWN COPY OF TWO OF THESE AND THE SERVER'S COPY BINDS.
+       transport_dispatch() computes `least(2 * depot_level, max_bays)` and
+       transport_quote() computes `3 + depot_level`, as plpgsql literals — a
+       migration cannot import this catalog. So changing the multipliers below
+       WITHOUT editing sql/038 (v_reach in transport_quote, v_bays in
+       transport_dispatch) makes the panel promise bays and reach that dispatch
+       then refuses — this repo's worst bug class: shown one number, billed by
+       another. The two copies must move together, in one change.
+       ⚠ max_bays defaults to 6 and 2 × 3 is exactly 6, so the server's clamp is
+       invisible today and will bite the first person who raises the bays
+       multiplier without raising transport_config.max_bays. */
+    effect: lv => ({ bays: 2 * lv, fleetCap: 4 * lv, radius: 3 + lv }),
+    footprint: { w: 3, h: 3 },
+    /* 💰 AUTHORED PRE-DIAL, like all 51 rows above it. buildingCostAt() applies
+       RESOURCE_COST_MULT = 2.5 to every non-cinder leg and CINDER_COST_DIV = 3
+       to the cinder leg AT READ TIME, so these numbers are NOT the price: L1 is
+       charged as 35,000 cinder + 238 metal + 175 supplies + 125 stone + 75
+       fuel. Never hand-multiply a row to "fix" a price and never touch the two
+       constants for one building — they are one knob for the whole catalog, and
+       that is what keeps the UI and the spend from ever disagreeing.
+       Priced against the Power Plant (the other 3×3 utility) and deliberately a
+       little under it: this is the door into a whole business, not a capstone.
+       💡 THE STONE + WOOD LEGS ARE ON PURPOSE A SINK for the r12 material
+       chain — wood and stone got producers that round and almost nothing that
+       consumes them at scale. A yard is hardstanding, decking and dunnage, so
+       the fiction and the economy want the same thing here. */
+    cost: [
+      { cinder: 105000, metal: 95,  supplies: 70,  stone: 50,  fuel: 30 },
+      { cinder: 250000, metal: 215, supplies: 160, stone: 120, fuel: 70,  wood: 80 },
+      { cinder: 585000, metal: 460, supplies: 340, stone: 260, fuel: 155, wood: 175, memoryShards: 9 },
+    ],
+  },
 ];
 
 export const CITY_PRODUCTION_BY_ID = CITY_PRODUCTION.reduce((m, b) => { m[b.id] = b; return m; }, {});
@@ -335,6 +452,21 @@ export const CITY_PREREQ = {
   sump:        ['apothecary'],
   archive:     ['depot'],
   genevault:   ['apothecary'],
+  /* 🚛 THE FREIGHT DEPOT — GATED, AND NOT LEFT ABSENT. An absent id means
+     "buildable from turn one" (missingPrereqs() returns [] for it), which would
+     make a charter building the one thing in this catalog placeable on a bare
+     grid — no other building allows that, and a yard on an empty tile has no
+     grid to draw its 18⚡ from.
+     ⚠ THE GRAMMAR SAYS "the producer of its primary input" AND THAT WOULD SAY
+     `refinery` (fuel). Rejected, for two reasons. The depot declares no
+     `inputs` at all — see the entry — so pointing at the fuel producer would
+     gate the building on a line that does not exist; and refinery sits four
+     deep (powerplant → stonequarry → foundry → refinery), which buries the
+     entrance to a whole business behind the late game. What the depot actually
+     consumes, every hour, charged and enforced, is POWER. So it hangs off the
+     thing that makes power. One level deep, and acyclic: powerplant needs only
+     warehouse, and nothing needs the depot. */
+  freightdepot: ['powerplant'],
 };
 
 /* Which prerequisites are missing, given what the city already has placed.

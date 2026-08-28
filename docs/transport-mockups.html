@@ -1,0 +1,450 @@
+<title>The Freight Floor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Crimson+Text:ital,wght@0,400;0,600;1,400&family=Rajdhani:wght@500;600;700&display=swap">
+<style>
+/* ── The game's OWN tokens, lifted from public/index.html:95-131. This page
+      commits to one visual world on purpose: Mythic Spellbook is dark-only, and
+      rendering its UI on a light ground would misrepresent what ships. Every
+      colour is painted explicitly so the page holds on either host ground. */
+:root {
+  --bg-deep:   #0b0814;
+  --bg-mid:    #14101f;
+  --bg-panel:  #1a1530;
+  --bg-card:   #221a3a;
+  --gold:      #d4af37;
+  --gold-br:   #f5d76e;
+  --ember:     #e85d3c;
+  --blood:     #a02828;
+  --emerald:   #3aa86b;
+  --azure:     #4a8fd4;
+  --violet:    #8b5cf6;
+  --ink:       #e8e0d0;
+  --ink-dim:   #a89888;
+  --border:    #3a2f5c;
+  --border-br: #6b5499;
+  /* RARITIES, index.html:39231 — the ladder the rig table reuses rather than
+     inventing a parallel one. */
+  --r-common:    #9aa0a6;
+  --r-uncommon:  #5eb37a;
+  --r-rare:      #5a9bd4;
+  --r-epic:      #a070d9;
+  --r-legendary: #d4af37;
+  --r-mythic:    #e85d3c;
+  --panel-grad: linear-gradient(180deg, #0c1118, #070a0f);
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background:
+    radial-gradient(1200px 700px at 15% -10%, rgba(139,92,246,.10), transparent 60%),
+    radial-gradient(900px 600px at 95% 10%, rgba(212,175,55,.06), transparent 55%),
+    var(--bg-deep);
+  color: var(--ink);
+  font-family: "Crimson Text", Georgia, serif;
+  font-size: 16px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1140px; margin: 0 auto; padding: 3rem 1.5rem 6rem; }
+
+h1, h2, h3, h4 { font-family: "Cinzel", Georgia, serif; margin: 0; }
+.ui { font-family: "Rajdhani", "Segoe UI", sans-serif; }
+
+/* ── Masthead */
+.mast { border-bottom: 1px solid var(--border); padding-bottom: 1.4rem; margin-bottom: 1.2rem; }
+.eyebrow {
+  font-family: "Rajdhani", sans-serif; font-weight: 600;
+  font-size: .78rem; letter-spacing: .26em; text-transform: uppercase;
+  color: var(--gold); margin: 0 0 .7rem;
+}
+h1 { font-size: clamp(2.3rem, 6vw, 3.5rem); font-weight: 900; line-height: 1.02; color: var(--gold-br); text-wrap: balance; }
+.dek { margin: .9rem 0 0; max-width: 64ch; color: var(--ink-dim); font-size: 1.05rem; }
+
+.caveat {
+  margin: 1.6rem 0 3rem; padding: .85rem 1.1rem;
+  border: 1px dashed rgba(212,175,55,.42); background: rgba(212,175,55,.06);
+  border-radius: 5px; color: #e7d6a2; font-size: .95rem;
+}
+.caveat b { color: var(--gold-br); }
+
+h2 {
+  font-size: 1.55rem; font-weight: 700; color: var(--gold-br);
+  margin: 3.4rem 0 .3rem; letter-spacing: .02em;
+}
+.h2sub { color: var(--ink-dim); font-size: .95rem; margin: 0 0 1.2rem; max-width: 68ch; }
+
+/* ── The mock screen frame. Reads as a screen, not a card. */
+.screen {
+  border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+  background: var(--bg-mid); box-shadow: 0 16px 38px rgba(0,0,0,.62);
+}
+.screen-bar {
+  display: flex; align-items: center; gap: .6rem;
+  padding: .55rem .9rem; background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  font-family: "Rajdhani", sans-serif; font-weight: 600;
+  font-size: .82rem; letter-spacing: .13em; text-transform: uppercase; color: var(--ink-dim);
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border-br); flex: none; }
+.screen-body { padding: 1.1rem; }
+
+/* ── Vitals row, matching .cprod-vitals */
+.vitals { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.vital {
+  flex: 1 1 130px; padding: 8px 10px; border: 1px solid rgba(255,255,255,.12);
+  border-radius: 6px; background: var(--panel-grad);
+}
+.vital b { display: block; font-family: "Cinzel", serif; font-size: 1.05rem; color: #ffd166; }
+.vital span { font-family: "Rajdhani", sans-serif; font-size: .72rem; letter-spacing: .08em; opacity: .7; text-transform: uppercase; }
+.vital.is-bad b { color: #e0556a; }
+
+/* ── Building / rig cards, matching .cprod-card */
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(255px, 1fr)); gap: 10px; }
+.card {
+  border: 1px solid rgba(255,255,255,.12); border-left: 3px solid var(--acc, #d4af37);
+  border-radius: 6px; padding: 10px 12px; background: var(--panel-grad);
+}
+.card h4 { font-size: .98rem; color: var(--acc, #ffd166); margin-bottom: 2px; }
+.card .desc { font-size: .79rem; opacity: .72; line-height: 1.5; margin-bottom: 6px; }
+.io { font-family: "Rajdhani", sans-serif; font-size: .8rem; line-height: 1.7; margin: 4px 0; }
+.io em { font-style: normal; opacity: .6; letter-spacing: .06em; font-size: .7rem; text-transform: uppercase; margin-right: 5px; }
+.cost {
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; margin: 2px 4px 2px 0;
+  background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.12);
+  border-radius: 4px; white-space: nowrap; font-size: .78rem; font-family: "Rajdhani", sans-serif;
+}
+.cost.is-short { background: rgba(224,85,106,.10); color: #ffb3c0; }
+.btn {
+  margin-top: 8px; padding: 5px 10px; border-radius: 4px; font-family: "Rajdhani", sans-serif;
+  font-size: .82rem; font-weight: 600; letter-spacing: .04em;
+  background: transparent; border: 1px solid var(--acc, #d4af37); color: var(--acc, #d4af37);
+}
+.btn[disabled] { opacity: .4; border-color: #555; color: #777; }
+
+/* ── The halt banner. Deliberately loud, per production.render.js. */
+.halt {
+  margin-top: 8px; padding: 6px 8px; border-radius: 4px; font-size: .79rem; line-height: 1.5;
+  background: rgba(224,85,106,.12); border: 1px solid rgba(224,85,106,.45); color: #ffb3c0;
+}
+.halt.warn { background: rgba(255,194,74,.10); border-color: rgba(255,194,74,.45); color: #ffd79a; }
+.halt.ok   { background: rgba(154,209,122,.10); border-color: rgba(154,209,122,.40); color: #bfe6a8; }
+.halt b { display: block; font-family: "Rajdhani", sans-serif; letter-spacing: .05em; text-transform: uppercase; font-size: .72rem; }
+
+/* ── Rig rows */
+.rig { border-left-color: var(--rar); }
+.rig h4 { color: var(--rar); display: flex; align-items: baseline; gap: .5rem; flex-wrap: wrap; }
+.rar-tag {
+  font-family: "Rajdhani", sans-serif; font-size: .66rem; font-weight: 700;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--rar);
+  border: 1px solid var(--rar); border-radius: 3px; padding: 0 .35rem;
+}
+.runs { display: flex; gap: 3px; margin: 7px 0 4px; flex-wrap: wrap; }
+.pip { width: 15px; height: 15px; border-radius: 2px; border: 1px solid var(--rar); flex: none; }
+.pip.spent { background: var(--rar); opacity: .32; }
+.pip.lost  { border-style: dashed; opacity: .35; }
+.runs-note { font-family: "Rajdhani", sans-serif; font-size: .74rem; color: var(--ink-dim); }
+
+/* ── The rate board */
+.board { width: 100%; border-collapse: collapse; font-family: "Rajdhani", sans-serif; font-size: .88rem; }
+.board th {
+  text-align: left; padding: .45rem .6rem; font-size: .7rem; letter-spacing: .13em;
+  text-transform: uppercase; color: var(--ink-dim); border-bottom: 1px solid var(--border); font-weight: 600;
+}
+.board td { padding: .55rem .6rem; border-bottom: 1px solid rgba(255,255,255,.07); vertical-align: middle; }
+.board tr:last-child td { border-bottom: none; }
+.board .num { text-align: right; font-variant-numeric: tabular-nums; }
+.carrier { font-family: "Cinzel", serif; font-size: .92rem; color: var(--ink); }
+.npc td { background: rgba(224,93,60,.07); }
+.npc .carrier { color: var(--ember); }
+.rel { display: inline-block; min-width: 3.2rem; font-variant-numeric: tabular-nums; }
+.rel-hi { color: var(--emerald); } .rel-mid { color: #ffd166; } .rel-lo { color: #e0556a; }
+.pill {
+  font-size: .66rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+  border: 1px solid currentColor; border-radius: 3px; padding: 0 .35rem; white-space: nowrap;
+}
+.pill-ceiling { color: var(--ember); }
+.pill-you     { color: var(--azure); }
+.board-wrap { overflow-x: auto; }
+
+/* ── Convoy in transit */
+.convoy { border-left-color: var(--azure); }
+.track { position: relative; height: 5px; background: rgba(255,255,255,.09); border-radius: 3px; margin: .55rem 0 .35rem; }
+.track-fill { position: absolute; inset: 0 auto 0 0; background: linear-gradient(90deg, var(--azure), var(--gold)); border-radius: 3px; }
+.track-rig { position: absolute; top: -8px; transform: translateX(-50%); font-size: .95rem; }
+.legs { display: flex; justify-content: space-between; font-family: "Rajdhani", sans-serif; font-size: .74rem; color: var(--ink-dim); }
+.risk-hi { color: var(--ember); } .risk-mid { color: #ffd166; } .risk-lo { color: var(--emerald); }
+
+/* ── Annotation under each screen */
+.anno {
+  margin-top: .9rem; padding-left: .9rem; border-left: 2px solid var(--border-br);
+  color: var(--ink-dim); font-size: .94rem; max-width: 70ch;
+}
+.anno b { color: var(--ink); font-weight: 600; }
+.anno code { font-family: "Rajdhani", monospace; font-size: .88em; color: var(--gold); }
+
+footer { margin-top: 4rem; padding-top: 1.2rem; border-top: 1px solid var(--border); color: var(--ink-dim); font-size: .9rem; }
+footer code { color: var(--gold); }
+:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header class="mast">
+    <p class="eyebrow">Mythic Spellbook · transportation company</p>
+    <h1>The Freight Floor</h1>
+    <p class="dek">What the carrier business looks like in play: a depot you plant, a fleet you buy off
+    the Prince Portfolios auction floor, a public rate board other players hire you from, and freight
+    on the road that can be taken off you.</p>
+  </header>
+
+  <p class="caveat"><b>These are mockups, not screenshots.</b> Nothing renders yet — <code>depot.render.js</code>
+  is one of the eight pieces still in the gauntlet, and the migration has to be pasted into the Supabase
+  editor by hand before any of it has data behind it. The palette, fonts and component shapes here are
+  lifted from the real game (<code>index.html:95-131</code> and <code>production.render.js</code>), so this
+  is what it will resemble — not a separate visual language invented for a pitch.</p>
+
+  <h2>1 · The Freight Depot</h2>
+  <p class="h2sub">A placeable city building, in the blueprint list beside the Warehouse and Power Plant.
+  Its node is where your routes start.</p>
+
+  <div class="screen">
+    <div class="screen-bar"><span class="dot"></span> City · Production · Blueprints</div>
+    <div class="screen-body">
+      <div class="vitals">
+        <div class="vital"><b>142⚡</b><span>Power free</span></div>
+        <div class="vital is-bad"><b>-3👷</b><span>Crew free</span></div>
+        <div class="vital"><b>4,180 / 6,000</b><span>Storage</span></div>
+        <div class="vital"><b>☁47</b><span>Pollution</span></div>
+      </div>
+      <div class="grid">
+        <div class="card" style="--acc:#e0a45c">
+          <h4>🚛 Freight Depot</h4>
+          <p class="desc">Loading bays, fuel bowsers and a yard. Without one your charter is paperwork.</p>
+          <div class="io"><em>grants</em>2 bays · 4 fleet slots · reach 4 hops</div>
+          <div class="io"><em>inputs</em><span style="color:#e6b660">⛽ 30 Fuel</span></div>
+          <div class="io"><em>draw</em>⚡18 · 💧4 · 👷8 · ☁14</div>
+          <div class="io"><em>cost</em>
+            <span class="cost"><strong>¢</strong> 420,000</span>
+            <span class="cost" style="color:#b8c4d4">⛏ 260 Metal</span>
+            <span class="cost is-short">📦 180 Supplies <span style="opacity:.7">(have 94)</span></span>
+            <span class="cost" style="color:#e6b660">⛽ 120 Fuel</span>
+          </div>
+          <button class="btn" disabled>Not enough Supplies</button>
+        </div>
+        <div class="card" style="--acc:#e0a45c">
+          <h4>🚛 Freight Depot <span style="opacity:.6;font-size:.8rem">· Lv 2</span></h4>
+          <p class="desc">Placed at <b style="color:#e8e0d0">Kettledrum Reach</b> — your main node.</p>
+          <div class="io"><em>grants</em>4 bays · 8 fleet slots · reach 5 hops</div>
+          <div class="io"><em>bays</em>3 of 4 in use · 1 free</div>
+          <div class="halt warn">
+            <b>Running at 60%</b>
+            Fuel stock is below one day of runs. Two contracts will refuse to dispatch tonight
+            unless the yard is topped up.
+            <span style="display:block;margin-top:3px;opacity:.85;font-size:.74rem">Fix: deliver ⛽ 340 Fuel, or drop a run from the queue.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="anno">The <b>halt banner is deliberately loud</b> — that's not my choice, it's a rule the codebase
+  already learned: <i>"a halted building SAYS WHY, in the card, in words. An invisible halt reads as a bug
+  and this project has shipped that mistake before."</i> A fuel-starved depot is the most common way this
+  feature will look broken, so it says so and names the fix.</p>
+
+  <h2>2 · The Fleet</h2>
+  <p class="h2sub">Rigs are ordinary Prince Portfolios vehicles with a haul class, so they arrive through the
+  auction floor you already have — with its condition ladder, scam risk and strip-for-parts intact.</p>
+
+  <div class="screen">
+    <div class="screen-bar"><span class="dot"></span> Transport · Fleet · 5 rigs · 2 idle</div>
+    <div class="screen-body">
+      <div class="grid">
+        <div class="card rig" style="--rar:var(--r-common)">
+          <h4>🛻 Roachback Flatbed <span class="rar-tag">Common</span></h4>
+          <p class="desc">Clean · 41,200 mi · driver <b style="color:#e8e0d0">Sena Ruhl</b></p>
+          <div class="runs">
+            <span class="pip spent"></span><span class="pip spent"></span><span class="pip"></span>
+          </div>
+          <p class="runs-note">2 of 3 runs used today · ×1.00 cargo</p>
+        </div>
+        <div class="card rig" style="--rar:var(--r-rare)">
+          <h4>🚚 Kettledrum Freighter <span class="rar-tag">Rare</span></h4>
+          <p class="desc">Worn · 168,900 mi · driver <b style="color:#e8e0d0">Odie Vantt</b></p>
+          <div class="runs">
+            <span class="pip spent"></span><span class="pip"></span><span class="pip"></span>
+            <span class="pip lost"></span><span class="pip lost"></span>
+          </div>
+          <p class="runs-note">1 of 3 runs used · <span style="color:#ffd166">2 runs lost to condition</span> · ×1.70 cargo</p>
+          <div class="halt warn">
+            <b>Worn — 5 runs to Battered</b>
+            Below Worn every run rolls a breakdown that strands the cargo. Repair costs
+            ⛏ 40 Metal · 🔩 26 Scrap.
+          </div>
+        </div>
+        <div class="card rig" style="--rar:var(--r-legendary)">
+          <h4>🚛 Saint Corvid Roadtrain <span class="rar-tag">Legendary</span></h4>
+          <p class="desc">Pristine · 3,100 mi · <b style="color:#e0556a">no driver assigned</b></p>
+          <div class="runs">
+            <span class="pip"></span><span class="pip"></span><span class="pip"></span><span class="pip"></span>
+            <span class="pip"></span><span class="pip"></span><span class="pip"></span><span class="pip"></span>
+          </div>
+          <p class="runs-note">8 runs available · ×3.00 cargo · −22 risk · takes 2 lot slots</p>
+          <div class="halt">
+            <b>Idle — no driver</b>
+            An unstaffed rig sits in the yard. Your Transportation Co. has 10 worker slots and
+            all 10 are staffing other operations.
+            <span style="display:block;margin-top:3px;opacity:.85;font-size:.74rem">Fix: move a worker off the Salvage Operation, or hire.</span>
+          </div>
+        </div>
+        <div class="card rig" style="--rar:var(--r-mythic)">
+          <h4>🚛 The Cinder Line <span class="rar-tag">Mythic</span></h4>
+          <p class="desc">Not owned · seen once on the floor at ¢3,400,000</p>
+          <div class="runs">
+            <span class="pip lost"></span><span class="pip lost"></span><span class="pip lost"></span><span class="pip lost"></span>
+            <span class="pip lost"></span><span class="pip lost"></span><span class="pip lost"></span><span class="pip lost"></span>
+            <span class="pip lost"></span><span class="pip lost"></span>
+          </div>
+          <p class="runs-note">10 runs · ×4.20 cargo · 1% roll weight · 3 lot slots</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="anno">The pip row is the whole rarity mechanic in one glance: <b>solid = a run you still have,
+  faded = spent today, dashed = a run condition took off you.</b> Effective runs are
+  <code>floor(rarityRuns × PP_COND_MULT[condition])</code>, so the Worn Rare above shows 5 pips with 2 dashed
+  out. That's what makes a beaten Legendary a genuine choice against a Pristine Rare, using a multiplier
+  table Prince Portfolios already has.</p>
+
+  <h2>3 · The Freight Exchange</h2>
+  <p class="h2sub">The public rate board. Price discovery between carriers is the actual game here — one
+  number everyone can see and undercut.</p>
+
+  <div class="screen">
+    <div class="screen-bar"><span class="dot"></span> Transport · Exchange · Kettledrum Reach → Ashgate Flats · 3 hops · 240 ⛏ Metal</div>
+    <div class="screen-body board-wrap">
+      <table class="board">
+        <thead>
+          <tr>
+            <th>Carrier</th><th>Depot</th><th class="num">Quote</th><th class="num">ETA</th>
+            <th class="num">Risk</th><th class="num">Reliability</th><th>Bays</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="carrier">Vantt &amp; Daughters</td><td>Ashgate Flats</td>
+            <td class="num">¢ 18,400</td><td class="num">1h 40m</td>
+            <td class="num risk-lo">9%</td><td class="num"><span class="rel rel-hi">97%</span></td>
+            <td>2 free</td><td><button class="btn" style="--acc:#3aa86b">Ship</button></td>
+          </tr>
+          <tr>
+            <td class="carrier">Roachback Haulage <span class="pill pill-you">You</span></td><td>Kettledrum Reach</td>
+            <td class="num">¢ 19,100</td><td class="num">1h 55m</td>
+            <td class="num risk-lo">11%</td><td class="num"><span class="rel rel-hi">94%</span></td>
+            <td>1 free</td><td><button class="btn" disabled>Own carrier</button></td>
+          </tr>
+          <tr>
+            <td class="carrier">Sorrel Freight Co.</td><td>Ashgate Flats</td>
+            <td class="num">¢ 14,900</td><td class="num">3h 10m</td>
+            <td class="num risk-hi">31%</td><td class="num"><span class="rel rel-lo">61%</span></td>
+            <td>4 free</td><td><button class="btn">Ship</button></td>
+          </tr>
+          <tr>
+            <td class="carrier">The Widow's Line</td><td>Bone Crossing</td>
+            <td class="num">¢ 22,600</td><td class="num">2h 05m</td>
+            <td class="num risk-mid">18%</td><td class="num"><span class="rel rel-mid">83%</span></td>
+            <td style="color:#e0556a">none</td><td><button class="btn" disabled>Queue</button></td>
+          </tr>
+          <tr class="npc">
+            <td class="carrier">Meridian Haulage <span class="pill pill-ceiling">Ceiling</span></td><td>State</td>
+            <td class="num">¢ 46,000</td><td class="num">3h 04m</td>
+            <td class="num risk-mid">20%</td><td class="num"><span class="rel">—</span></td>
+            <td>always</td><td><button class="btn" style="--acc:#e85d3c">Ship</button></td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="halt ok" style="margin-top:12px">
+        <b>Meridian is a ceiling, not a competitor</b>
+        2.5× the median player tariff and 1.6× the trip time, no escort, no illicit freight.
+        It exists so a sole carrier can charge 2.4× and get rich, but cannot lock anyone out of the game.
+      </div>
+    </div>
+  </div>
+  <p class="anno">Sorrel is the design working: <b>cheapest quote, worst reliability, triple the risk.</b>
+  A carrier that undercuts on price and loses your cargo is a real option someone will take and regret,
+  and reliability is the asset the careful carrier is actually building. Note the board sorts on nothing
+  by default — the player picks what they're optimising.</p>
+
+  <h2>4 · Freight on the road</h2>
+  <p class="h2sub">A dispatched contract is a physical object on the war map, which is why it can be taken
+  off you.</p>
+
+  <div class="screen">
+    <div class="screen-bar"><span class="dot"></span> Corp · Logistics · 2 contracts in transit</div>
+    <div class="screen-body">
+      <div class="grid" style="grid-template-columns:1fr">
+        <div class="card convoy">
+          <h4 style="color:#4a8fd4">CV-418 · Kettledrum Reach → Ashgate Flats</h4>
+          <p class="desc">240 ⛏ Metal · hauled by <b style="color:#e8e0d0">Kettledrum Freighter</b> · 2 guards escorting</p>
+          <div class="track">
+            <div class="track-fill" style="width:62%"></div>
+            <span class="track-rig" style="left:62%">🚚</span>
+          </div>
+          <div class="legs"><span>Departed 1h 12m ago</span><span>ETA 43m</span></div>
+          <div class="io"><em>risk</em><span class="risk-mid">18%</span> · crossing <b style="color:#a89888">Ninth Vein</b> territory — toll ¢1,840</div>
+        </div>
+        <div class="card convoy" style="--acc:#e85d3c;border-left-color:#e85d3c">
+          <h4 style="color:#e85d3c">CV-207 · Bone Crossing → Kettledrum Reach</h4>
+          <p class="desc">180 ⛽ Fuel · hauled by <b style="color:#e8e0d0">Roachback Flatbed</b> · unescorted</p>
+          <div class="track">
+            <div class="track-fill" style="width:88%;background:linear-gradient(90deg,#e85d3c,#a02828)"></div>
+            <span class="track-rig" style="left:88%">🚚</span>
+          </div>
+          <div class="legs"><span>Departed 2h 40m ago</span><span>Intercepted</span></div>
+          <div class="halt">
+            <b>🏴 Raided — 64 Fuel taken</b>
+            Hexcarrigan's crew hit the convoy 12 minutes out. 116 ⛽ delivered.
+            Reliability on this route dropped to 91%.
+            <span style="display:block;margin-top:3px;opacity:.85;font-size:.74rem">An escort would have cost ¢1,200 and cut risk to 6%.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="anno">The raided contract is the point of the whole feature. Freight that cannot be taken is
+  just a delay timer — <b>the risk is what makes escorts worth buying, territory worth holding, and
+  reliability worth having.</b> The toll line on CV-418 is one line of maths that gives Territory Wars a
+  meaning for players who never fight.</p>
+
+  <h2>Where the money goes</h2>
+  <p class="h2sub">The one screen that isn't decorative: an append-only ledger, because
+  <code>balance = sum(amount)</code> and a carrier being paid by other players is a fraud target.</p>
+
+  <div class="screen">
+    <div class="screen-bar"><span class="dot"></span> Transport · Ledger · Roachback Haulage</div>
+    <div class="screen-body board-wrap">
+      <table class="board">
+        <thead><tr><th>When</th><th>Kind</th><th>Contract</th><th class="num">Amount</th><th class="num">Balance</th></tr></thead>
+        <tbody>
+          <tr><td>18:42</td><td>delivery</td><td>CV-418</td><td class="num" style="color:#3aa86b">+ 19,100</td><td class="num">218,640</td></tr>
+          <tr><td>18:42</td><td>region toll</td><td>CV-418</td><td class="num" style="color:#e0556a">− 1,840</td><td class="num">199,540</td></tr>
+          <tr><td>17:10</td><td>fuel</td><td>CV-207</td><td class="num" style="color:#e0556a">− 900</td><td class="num">201,380</td></tr>
+          <tr><td>17:04</td><td>partial delivery</td><td>CV-207</td><td class="num" style="color:#ffd166">+ 12,300</td><td class="num">202,280</td></tr>
+          <tr><td>16:55</td><td>driver wages</td><td>—</td><td class="num" style="color:#e0556a">− 2,400</td><td class="num">189,980</td></tr>
+        </tbody>
+      </table>
+      <div class="halt ok" style="margin-top:12px">
+        <b>Append-only</b>
+        The balance column is computed, never stored. A refund is a new row with a negative amount,
+        not an edit to an old one — so the history can always be re-derived and never silently rewritten.
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    Mockups only — no game code renders these yet. Palette and components taken from
+    <code>public/index.html:95-131</code> and <code>public/src/city/production.render.js</code>.
+    Mechanics from <code>docs/transport-company-design.md</code>.
+  </footer>
+</div>

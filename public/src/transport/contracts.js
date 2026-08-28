@@ -74,6 +74,30 @@
        stayed two failures with two fixes
      · a manifest of 80 against a fare quoted for 40 was refused before the
        escrow ran; a manifest of 10 against the same fare shipped
+   And the two seams below, 42 more cases, all passing, driven against
+   transport_set_sheet's REAL envelope shape and sql/038's REAL raise payloads
+   copied out of the file rather than paraphrased:
+     · setTariff read bays / fleet_cap / reach / fleet_used / fleet_slots_left
+       out of the nested `caps` object where the server actually puts them, and
+       charter_slots_left off the envelope — every one of them was `undefined`
+       before, read off the top level (see the note at the return itself)
+     · a `caps: null` (transport_caps' answer for a company that does not exist)
+       and a non-owner's caps object with its owner-only keys absent both came
+       back as null and NOT as 0, so `fleetCap > 0` is false when the number is
+       unknown instead of quietly true
+     · a `fleet_cap` raise with its owner detail produced "all 4 fleet slots are
+       taken" rather than the toast `🚛 fleet_cap`; the same code with the
+       NON-owner's bare `{"error":"fleet_cap"}` produced a sentence with no `?`
+       in it; a cap already equal to max_fleet_rigs said a higher depot will not
+       help instead of advising a level nobody can use
+     · charter_cap and transport_config_missing likewise, and neither set
+       `missing` — a capped fleet must not read as an unapplied migration
+     · a unique-constraint violation and an RLS refusal came back VERBATIM with
+       no `why` invented, and `relation … does not exist` kept `missing: true`
+     · a `details` carrying prose, malformed JSON, nothing at all, or an already
+       parsed object each degraded to `{}` without throwing
+     · registerRig() and createCompany() were driven against a PostgREST stub
+       that fails their insert, and the sentence reached the caller
    ⚠ WHAT THIS DOES NOT PROVE. No test ran against real PostgREST, so the
      argument-set claim below is argued from sql/038's declared signature, not
      demonstrated against a live schema cache. Nothing here has seen a real
@@ -200,6 +224,27 @@ export function fail(e) {
    its own `fix`. This list is copied from the `jsonb_build_object('ok', false,
    'error', …)` sites in sql/038 and NOTHING ELSE decides what a code means.
 
+   🔴 IT COVERS TWO SOURCES NOW, NOT ONE, AND THAT IS A BUG FIX RATHER THAN A
+      GENERALISATION. There are exactly two writes in this file that are NOT
+      RPCs — createCompany() and registerRig() are direct PostgREST inserts —
+      and sql/038 guards both of them with a BEFORE INSERT trigger rather than
+      a WITH CHECK (§2b: a `stable` helper inside a WITH CHECK reads the
+      pre-statement snapshot, so one `insert … select from generate_series`
+      walked past both caps). A trigger refuses by RAISING, so its code arrives
+      as an exception MESSAGE on `r.error` and never touches the jsonb envelope
+      rpc() unpacks. Those two paths therefore went through fail() alone, which
+      keeps `e.message` and nothing else: a player who registered one rig past
+      the yard's parking got the toast `🚛 fleet_cap`, and a player founding a
+      fourth charter got `🚛 charter_cap` — the raw code, straight out of
+      Postgres, in a toast. index.js's reasonOf() was not at fault; it prints
+      `r.error` only because there was no `why` to print. depot.js:906 states
+      the intended contract in as many words ("Registering a rig past the
+      exchange's cap is refused as 'fleet_cap'") as something the player is
+      supposed to be able to ACT on, and neither string existed anywhere in
+      /src/transport. failCoded() below routes those two inserts through this
+      same table, so there is still exactly one place a code becomes a
+      sentence. The trigger codes are marked ⚡ where they appear.
+
    ⚠ THE LIST CAN GO STALE, and staleness inverts the check: a code added to
      sql/038 and not added here falls through to the unknown arm, which prints
      the code verbatim. That is the correct direction to fail in — the player
@@ -212,7 +257,15 @@ export function fail(e) {
 
    The `d` argument is the RPC's own jsonb: sql/038 deliberately ships the
    numbers a client needs to write a sentence (cap, used, remaining, needed,
-   bays, reach), so the message states them instead of gesturing at them. */
+   bays, reach), so the message states them instead of gesturing at them. For a
+   ⚡ trigger code `d` is the parsed `detail` string instead — the guards build
+   it with the same jsonb_build_object and the same key names on purpose, so one
+   table reads both. ⚠ EVERY ENTRY MUST SURVIVE AN EMPTY `d`: the fleet guard
+   deliberately sends the bare `{"error":"fleet_cap"}` to a NON-owner, on the
+   grounds — its own words, in sql/038 §2b — that "an error message is a read
+   path" and a rival's yard size is competitive information. A sentence that
+   assumed `d.cap` would print "all ? slots" there, or throw into explain()'s
+   catch and lose the written message entirely. */
 const CODES = {
   not_authenticated: () => ({
     why: 'The freight service did not recognise your session.',
@@ -221,6 +274,28 @@ const CODES = {
   closed: () => ({
     why: 'The freight exchange is closed (transport_config.enabled is false).',
     fix: 'Nothing is wrong with your depot — an admin has the exchange switched off.',
+  }),
+  /* ⚡ Raised by BOTH §2b guards when the id=1 row of transport_config is gone.
+     🔴 THIS IS THE ONE BRANCH IN THIS FILE THAT IS ALLOWED TO SAY "RE-RUN
+        SQL/038", and it says it because the server NAMED the missing thing
+        rather than because this file guessed a cause. That is the whole lesson
+        of index.html:79918-79930, where "does not exist" was read as "the RPC
+        is missing" and sent an admin back to a migration they had already
+        applied FOUR TIMES: the sin is guessing, not the advice. Here the guard
+        raises `transport_config_missing` with the hint "The id=1 row of
+        transport_config is gone. Re-run sql/038." — the file is idempotent and
+        its config insert is `on conflict do nothing`, so re-running restores
+        the row and resets nothing an admin tuned.
+     ⚠ AND IT DOES NOT SET `missing`. Rejected: flagging this as a missing
+       schema so the panel raises its "run sql/038" banner. `missing` means the
+       TABLES are not there and the whole depot degrades to empty; here they
+       plainly are — the insert reached a trigger — and blanking a working
+       depot over one absent config row would hide the carrier's own fleet
+       behind a banner about installation. It is a refusal with a remedy, and
+       the remedy fits in the refusal. */
+  transport_config_missing: () => ({
+    why: 'Freight is installed, but its configuration row is missing, so the exchange cannot tell what its own caps are — and a missing cap must never read as "no cap".',
+    fix: 'Re-run sql/038_transport_companies.sql in the Supabase editor. It is idempotent and its config insert is `on conflict do nothing`, so it restores the id=1 row without resetting a ceiling anyone has tuned.',
   }),
 
   /* ── routing / quote ──────────────────────────────────────────────────── */
@@ -271,12 +346,53 @@ const CODES = {
   }),
   bad_tariff: () => ({ why: 'That rate sheet is not a tariff the exchange can read.', fix: 'A tariff is a positive number of Cinder per unit·hop.' }),
   bad_status: () => ({ why: 'A charter is open, paused or closed — nothing else.', fix: 'Pick one of the three.' }),
+  /* ⚡ transport_charter_cap_guard, on INSERT into transport_companies.
+     The numbers are safe to print because sql/038 says so at the raise site:
+     tco_sel is `using (true)`, so anybody can already count anybody's charters
+     and the detail publishes nothing a query would not. Contrast fleet_cap
+     below, which is the same shape and is NOT in that position. */
+  charter_cap: (d) => ({
+    why: Number.isFinite(Number(d.cap))
+      ? 'You already hold ' + n(d.used != null ? d.used : d.cap) + ' of the ' + n(d.cap) + ' charters one player may run.'
+      : 'You already hold every charter one player may run.',
+    fix: 'Close an existing charter before founding another — a second carrier is a second yard, not a bigger one.',
+  }),
   blacklist_too_long: (d) => ({
     why: 'A refusal list holds ' + n(d.max) + ' shippers; that one has ' + n(d.sent) + '.',
     fix: 'Drop some names before saving.',
   }),
 
   /* ── the fleet ────────────────────────────────────────────────────────── */
+  /* ⚡ transport_fleet_cap_guard, on INSERT into transport_rigs — the code
+     depot.js:906 already promises the player, and the one this file was
+     printing raw.
+     🔴 THE SENTENCE IS WRITTEN OFF THE DETAIL AND NEVER OFF A FORMULA. The
+        ladder is `least(4 × depot_level, max_fleet_rigs)` and sql/038 §2 is
+        emphatic that transport_caps() is the ONE place it is evaluated —
+        "four copies of a formula is four authorities, and the day one of them
+        is tuned the carrier is shown a fleet cap the server does not enforce".
+        So this states the cap the refusal itself carried and computes nothing.
+     ⚠ TWO SHAPES, because the guard has two arms: the owner gets cap/used/
+       max_fleet_rigs, a non-owner gets `{"error":"fleet_cap"}` and nothing
+       else, deliberately (fleet size is competitive information). Only the
+       owner arm can reach a client today — every insert here goes through
+       ownCompanyId() — but the bare arm is handled rather than assumed away.
+     The max_fleet_rigs line is worth its length: at the exchange ceiling a
+     higher depot level buys NOTHING, and a player told "raise the depot" would
+     otherwise spend a level's worth of build cost to get the same four slots. */
+  fleet_cap: (d) => {
+    const cap = Number(d.cap);
+    const max = Number(d.max_fleet_rigs);
+    const atCeiling = Number.isFinite(cap) && Number.isFinite(max) && cap >= max;
+    return {
+      why: Number.isFinite(cap)
+        ? 'Your yard has no parking left — all ' + n(cap) + ' fleet slots are taken.'
+        : 'Your yard has no parking left.',
+      fix: atCeiling
+        ? 'Retire a rig. A higher Freight Depot will not help: ' + n(max) + ' rigs is the exchange\'s own ceiling, and the depot ladder is already at it.'
+        : 'Retire a rig, or raise the Freight Depot level — each level buys more slots.',
+    };
+  },
   no_rig_chosen: () => ({ why: 'No rig was assigned to that haul.', fix: 'Pick a rig from the yard.' }),
   no_such_rig: () => ({ why: 'That rig is not in the fleet table.', fix: 'Refresh the yard — it may have been retired.' }),
   rig_not_in_fleet: () => ({ why: 'That rig belongs to a different carrier.', fix: 'Refresh the yard.' }),
@@ -353,6 +469,59 @@ function explain(code, d) {
     why: 'The freight service refused with a code this build does not know: "' + code + '".',
     fix: 'Quote that code verbatim to an admin — it is printed rather than guessed at on purpose.',
   };
+}
+
+/* The numbers a ⚡ trigger refusal carries, dug out of PostgREST's `details`.
+   sql/038's guards put a jsonb object in the exception DETAIL and the human
+   remedy in HINT, precisely so a client can write a sentence with real figures
+   — but `details` reaches supabase-js as a STRING, so it has to be parsed, and
+   a raise that carried no detail at all (or a future one that carries prose
+   there instead of jsonb) must degrade to an empty object rather than throw.
+   Returns {} on anything that is not a plain object, which is exactly what
+   every CODES entry is required to survive. */
+function parseDetail(details) {
+  if (details && typeof details === 'object' && !Array.isArray(details)) return details;
+  if (typeof details !== 'string') return {};
+  const s = details.trim();
+  if (s.charAt(0) !== '{') return {};              // prose, not a payload
+  try {
+    const o = JSON.parse(s);
+    return (o && typeof o === 'object' && !Array.isArray(o)) ? o : {};
+  } catch (e) { return {}; }
+}
+
+/* A bare refusal code and nothing else. `charter_cap` is one; "duplicate key
+   value violates unique constraint …" is not, and must never be handed to
+   explain(), which would announce it as "a code this build does not know" and
+   turn a perfectly legible Postgres sentence into a confusing one. */
+const CODE_RE = /^[a-z][a-z0-9_]{2,48}$/;
+
+/* ⚡ fail()'S TWIN FOR THE TWO DIRECT-INSERT PATHS. See the ERROR TABLE header:
+   createCompany() and registerRig() are PostgREST inserts, so sql/038's §2b
+   guards refuse them by RAISING, and the code lands as an exception MESSAGE
+   that fail() copies to `error` with no `why` beside it. index.js then prints
+   `String(r.error)` and the player reads `🚛 fleet_cap`.
+
+   🔴 THE TABLE IS STILL THE ONLY AUTHORITY. This adds no second list; it looks
+      the message up in CODES and, on a hit, merges that entry's sentences onto
+      the ordinary fail() envelope. On a miss NOTHING is invented — the envelope
+      comes back exactly as fail() built it, message verbatim, so an RLS refusal
+      or a unique-index violation still reads in the database's own words. That
+      is the same direction explain()'s unknown arm fails in and the opposite of
+      sql/037:16-23, where an unhandled code fell through to a generic "nothing
+      moved" that hid a hard crash for the life of the feature.
+
+   ⚠ `missing` IS LEFT WHERE fail() PUT IT. A trigger code never matches
+     MISSING_RE, so a capped fleet cannot masquerade as an unapplied migration —
+     which is the confusion MISSING_RE exists to prevent, and the reason `error`
+     keeps holding the raw code an admin can grep for rather than being
+     overwritten with prose. */
+export function failCoded(e) {
+  const base = fail(e);
+  const code = String((e && e.message) || '').trim();
+  if (!CODE_RE.test(code) || !Object.prototype.hasOwnProperty.call(CODES, code)) return base;
+  const m = explain(code, parseDetail(e && e.details));
+  return Object.assign(base, { code: code, why: m.why, fix: m.fix });
 }
 
 /* ═══ 3 · THE CHOKEPOINTS ══════════════════════════════════════════════════ */
@@ -811,9 +980,28 @@ export async function createCompany(name, homeNodeId) {
       .insert({ owner_id: uid, name: nm, home_node_id: home ? String(home).slice(0, 40) : null })
       .select('id,owner_id,name,home_node_id,depot_level,tariff,reliability,status,created_at')
       .maybeSingle();
-    if (r.error) return { ...fail(r.error), row: null };
+    /* ⚡ failCoded, not fail: this insert is guarded by transport_companies_cap,
+       which refuses a fourth charter by RAISING `charter_cap` rather than by
+       returning an envelope. Through fail() alone that reached the player as
+       the toast `🚛 charter_cap`. Anything the table does not know still comes
+       back verbatim. */
+    if (r.error) return { ...failCoded(r.error), row: null };
     return { ok: true, row: r.data || null };
-  } catch (e) { return { ...fail(e), row: null }; }
+  } catch (e) { return { ...failCoded(e), row: null }; }
+}
+
+/* A number out of a server envelope, or NULL — and null is load-bearing rather
+   than tidy. Every cap in this feature is a figure the server may legitimately
+   decline to state: transport_caps() answers NULL for a company that does not
+   exist, and omits its owner-only keys entirely for anybody else. Coercing
+   those to 0 would turn "unknown" into "none left" (a Found-a-charter button
+   greyed out forever) or, worse, into a confident claim about a rival's yard.
+   Coercing to NaN would leak `?` into every sentence n() writes. So: a finite
+   number, or null, and the caller compares. */
+function capNum(v) {
+  if (v == null) return null;
+  const x = Number(v);
+  return Number.isFinite(x) ? x : null;
 }
 
 /* THE RATE SHEET goes through transport_set_sheet(), never through an UPDATE.
@@ -871,9 +1059,45 @@ export async function setTariff(tariff) {
        one thing that comment says not to do, since the server clamps to the
        Meridian ceiling. */
     const base = Number(d.tariff && d.tariff.base);
+
+    /* 🔴 THE CAPS ARE NESTED, AND READING THEM FLAT RETURNED `undefined` FROM A
+       CALL SITE THAT LOOKED DESIGNED TO SUPPLY THEM. This used to say
+       `bays: d.bays, fleetCap: d.fleet_cap`. transport_set_sheet's envelope has
+       neither key: it returns `'caps', public.transport_caps(p_company_id)`,
+       and reach / bays / fleet_cap / fleet_used / fleet_slots_left all live
+       INSIDE that object (sql/038 §2 — the depot ladder is evaluated in exactly
+       one function so the number the owner is shown and the number the §2b
+       guard enforces cannot drift). Nothing was visibly broken because
+       index.js:948 prints `r.tariff` and nothing else, which is precisely how
+       this survives: the next caller reads `r.fleetCap`, gets undefined, and
+       has no reason to suspect the seam.
+       Also lifted while here: `charter_slots_left`, which sql/038 §2 names
+       as "exactly what a 'Found a charter' button needs to grey itself out",
+       and which this function was dropping on the floor.
+
+       ⚠ NULL IS AN ANSWER AND IT MEANS "THE SERVER DID NOT SAY", NEVER ZERO.
+         transport_caps() returns NULL for a company that does not exist, and
+         sql/038 spells out why every caller must compare the extracted value
+         rather than trust it: `null > 0` is null, so a caller who trusts it
+         REFUSES, which is the safe direction. capNum() keeps that property —
+         it hands back null rather than 0 or NaN — so `if (r.fleetCap > 0)` is
+         false when the number is unknown instead of quietly true.
+       ⚠ AND fleetUsed / fleetSlotsLeft ARE OWNER-ONLY KEYS. transport_caps
+         omits them entirely for a non-owner (a rival's fleet composition is
+         competitive information), so they come back null there too. Do not
+         "helpfully" default them to 0 — a 0 fleet_used is a claim about
+         somebody's yard, and a wrong one. This path is always the owner (the
+         RPC refuses anyone else four statements earlier), but the extraction
+         must not be the thing that assumes it. */
+    const caps = (d.caps && typeof d.caps === 'object' && !Array.isArray(d.caps)) ? d.caps : {};
     return {
       ok: true, tariff: Number.isFinite(base) ? base : 0, sheet: d.tariff || clean,
-      status: d.status, depotLevel: d.depot_level, bays: d.bays, fleetCap: d.fleet_cap, row: d,
+      status: d.status, depotLevel: d.depot_level,
+      bays: capNum(caps.bays), fleetCap: capNum(caps.fleet_cap), reach: capNum(caps.reach),
+      fleetUsed: capNum(caps.fleet_used), fleetSlotsLeft: capNum(caps.fleet_slots_left),
+      charterSlotsLeft: capNum(d.charter_slots_left),
+      blacklistCount: capNum(d.blacklist_count),
+      row: d,                                  // the raw envelope, caps and all
     };
   } catch (e) { return { ...fail(e), row: null }; }
 }
@@ -930,9 +1154,13 @@ export async function registerRig(vehicleId, rarity, condition) {
     row.company_id = id;
     const r = await c.from('transport_rigs').insert(row)
       .select('id,company_id,vehicle_id,rarity,condition,runs_cap,runs_used,status').maybeSingle();
-    if (r.error) return { ...fail(r.error), row: null };
+    /* ⚡ failCoded, not fail: transport_rigs_cap raises `fleet_cap` (and
+       `no_such_carrier`, and `transport_config_missing`) on this insert. This
+       is the exact refusal depot.js:906 promises the player is actionable, and
+       until failCoded() existed it arrived as the toast `🚛 fleet_cap`. */
+    if (r.error) return { ...failCoded(r.error), row: null };
     return { ok: true, row: r.data || null };
-  } catch (e) { return { ...fail(e), row: null }; }
+  } catch (e) { return { ...failCoded(e), row: null }; }
 }
 
 /* ═══ 7 · THE MONEY PATHS ══════════════════════════════════════════════════ */

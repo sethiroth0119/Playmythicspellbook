@@ -133,6 +133,32 @@ export const NULL_BRIDGE = {
   // copy here is how a rig ends up with two contradictory rarities.
   rarities: () => [],
   setRigField: () => false,
+  /* 🚛 THE ONE MINT, AND IT IS NARROW ON PURPOSE. index.html owns the Prince
+     Portfolios lot and is the only thing in the game that can create a vehicle;
+     this key is a request for ONE specific gift — "the rig every carrier starts
+     with" — and not a general vehicle writer. It exists because both sides used
+     to promise a retry that no code performed: `_transportGrantStarterRig()`
+     had a single call site inside _opAfterFound, so a player whose lot was full
+     at charter time was permanently rigless while the founding toast told them
+     to free a slot and reopen the depot. seedStarter() now calls this on that
+     reopen.
+     A CODE, NOT A BOOLEAN — 'ok' | 'already' | 'spent' | 'full' | 'nocharter' |
+     'nocatalog' | 'nomodule' | 'error' — because the refusal has to name which
+     of those happened; "your rig could not be parked" with no reason is the
+     message that becomes a support ticket. The null answer is 'nomodule',
+     which is literally true here: there is no legacy app on this side of the
+     seam. It is NOT 'error', because 'error' would mean the mint was attempted
+     and threw.
+     🔥 IT CAN NEVER MINT A SECOND RIG, AND THE GUARD THAT DOES THAT IS NOT THE
+     OBVIOUS ONE. 'already' (a haul-class truck is parked) reads like the bound
+     and is not one: seedStarter() calls this on EVERY depot open with an empty
+     fleet, and scrapping the truck clears 'already', so the first cut of this
+     key was a repeatable Cinder faucet — mint at ~43k `price`, scrap for 10%,
+     reopen, mint again. The real bound is durable and lives on the other side:
+     index.html records the mint (`p.starterRigIssued`) and answers 'spent'
+     forever after. Charter-gated there too, so a bug in this module cannot hand
+     a free vehicle to someone who never founded. */
+  grantStarterRig: () => 'nomodule',
 
   /* 🔴 GARAGE RIGS ARE A SEPARATE RAIL — RATIFIED, DO NOT RELITIGATE.
      Garage rigs are bought with REAL MONEY ($20/$60/$99) and are the player's

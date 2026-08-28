@@ -115,6 +115,101 @@
 --        37,500,000 and is REFUSED with 'over_price_cap' against a cap of
 --        5,000,000 — the NPC branch does not get an exemption
 --
+--    🔴 THE SIX HOLES *THIS* ROUND CLOSED, measured before and after on the
+--       same throwaway 16.13 cluster, same stubs, same day. Every one of them
+--       is the same species as the two the round before closed and the one the
+--       round before that: A LIMIT THE HEADER NAMED AND THE CODE DID NOT
+--       REACH. Three of these were named in this very header.
+--
+--       1. NO FLOOR ANYWHERE. Every lever in transport_config had a max and
+--          none had a min, and `units` is numeric under `check (units > 0)`.
+--          BEFORE: quote(1 hop, 0.000001 units) at base 60 returned ok:true,
+--          price 1, and dispatch charged 1 Cinder and wrote a real contract.
+--          The owner then self-hauled three of them and settled all three:
+--          reliability went to 100.0 and the charter ENTERED THE MERIDIAN
+--          MEDIAN — the NPC quote for a 1x1 haul moved off its floor of 100 to
+--          150. A perfect public reputation and a seat at the table that sets
+--          the price ceiling for the whole game, for 3 Cinder, paid to
+--          yourself.
+--          AFTER: 'units_below_min' with min_units 1; 0 contracts; reliability
+--          null;
+--          Meridian still on its floor at 100. And a base-1 carrier's 1-unit
+--          1-hop haul is refused with 'under_price_floor' (price 1, floor
+--          100) while their 100-unit haul at the same sheet prices at exactly
+--          100 and goes through. The floor is not a tax on small carriers; it
+--          is a floor under the CONTRACT.
+--          ⚠ 100 is not a taste: it is meridian_base_floor x
+--            meridian_tariff_mult x min_units x 1 hop, and quote(null,…,1,1)
+--            returns exactly 100. The cheapest contract this file will write
+--            is the cheapest one the NPC would have written anyway.
+--
+--       2. A CARRIER WAS THEIR OWN REFERENCE. Nothing checks
+--          `v_co.owner_id <> v_uid`, so the self-hauls in (1) counted in both
+--          public numbers. AFTER, with `k.shipper_id <> c.owner_id` in the
+--          reliability recompute and in the median's delivered-gate: a settled
+--          self-haul leaves reliability null and Meridian on its floor; the
+--          NEXT haul, from a real shipper, moves reliability to 100.0 and
+--          Meridian to 150. The exclusion is exact, not a blanket refusal.
+--
+--       3. THE RUN COUNTER WAS DELETABLE. runs_used lives on transport_rigs;
+--          only UPDATE was revoked; trg_del allowed a DELETE of any rig not
+--          'hauling'; trg_ins pins the replacement at 0; registration is free.
+--          BEFORE, against a rig with runs_cap 1: run it, settle, second
+--          dispatch refused 'rig_out_of_runs' — then `delete from
+--          transport_rigs` + `insert into transport_rigs`, two calls, and the
+--          next dispatch returned ok:true. AFTER: the DELETE is "permission
+--          denied for table transport_rigs"; transport_retire_rig refuses the
+--          same rig with 'rig_ran_today' (used 1, cap 10); a rig that has NOT
+--          run today retires cleanly and the slot frees (fleet_used 3 → 2);
+--          retiring twice returns retried:true; and retiring one with a haul
+--          in flight returns 'rig_in_transit'.
+--
+--       4. THE CHARGE-FAILURE UNWIND MOVED A BUSY RIG TO 'idle'. One rig can
+--          legally carry several hauls — §4.2's run claim accepts
+--          `status in ('idle','hauling')` on purpose — and the unwind set
+--          `status = 'idle'` flat. BEFORE, measured: two hauls in flight on one
+--          rig, then a THIRD shipper with 5 Cinder in their wallet gets
+--          'insufficient_cinder', and the rig a stranger never hired is now
+--          'idle' with 2 contracts still in the air. The owner then walked it
+--          straight through trg_del's `status <> 'hauling'` guard — one DELETE,
+--          and both live hauls were left with rig_id null and an arrival time
+--          nobody is driving towards, which is the exact harm that guard's
+--          comment names.
+--          AFTER: the same sequence leaves runs_used back at 2 and the status
+--          'hauling'; with no live haul the same path still returns the rig to
+--          'idle'; and §4.6 asks the CONTRACT ROWS, so it refuses with
+--          'rig_in_transit' either way. The run comes back in both cases —
+--          putting the `not exists` in the WHERE instead of on the status is
+--          the obvious shape and it silently eats the carrier's run.
+--
+--       5. transport_caps PUBLISHED A RIVAL'S YARD. BEFORE, as a stranger:
+--          `{"bays":6,"reach":6,"fleet_cap":12,"fleet_used":3,
+--          "fleet_slots_left":9}`. AFTER, the same call returns the first
+--          three keys and nothing else; the owner still gets all five. Both
+--          §2b guards still hold under the last-slot race (4 rigs against a
+--          cap of 4, 3 charters against a cap of 3) and a 9-row burst still
+--          lands 0, so nothing regressed by reading caps through an ownership
+--          test.
+--
+--       6. TRUNCATE, AND TWO UNBOUNDED STRINGS. BEFORE, as `authenticated`:
+--          `truncate public.transport_config` SUCCEEDED — cfg_rows 0 — after
+--          which every founding raised 'transport_config_missing' and every
+--          quote returned 'closed'. `truncate public.transport_ledger` was
+--          allowed too, and nothing references that table by FK so it needs no
+--          CASCADE. Also BEFORE: a 300,000-character name and a
+--          5,000-character home_node_id inserted cleanly onto the one
+--          world-readable row every client fetches for the rate board. AFTER:
+--          all three are "permission denied" / check-constraint violations,
+--          and §5's new residual_grants column reads 0.
+--
+--       AND THE FULL REGRESSION STILL PASSES on the changed file: 1,800
+--       charged once with the retry returning the same contract, settle twice
+--       writing one ledger row, blacklist → Meridian with no 'refused' row,
+--       every revoked write still "permission denied", set_sheet still
+--       clamping 9,999,999 to 500 and 500 to 100 and dropping an unknown key,
+--       and three consecutive applications clean with §5 returning exactly the
+--       `-- Expect:` row.
+--
 --    ⚠ WHAT THIS DOES NOT PROVE.
 --      · The stub wallet_charge is a reduction of the real one (no tax leg, no
 --        wallet_ledger, no profile mirror) and the stub auth.uid() reads a GUC
@@ -122,6 +217,44 @@
 --        documented, not a copy of the live project's.
 --      · Nothing was measured against real data, because there is none: no
 --        player has ever founded a carrier.
+--      · The price floor is a NEW ECONOMIC RULE and it has never been in front
+--        of a player. 100 Cinder is derived rather than guessed (it is exactly
+--        Meridian's own smallest legal fare) and it refuses nothing the NPC
+--        could not already sell, but the first thing a real market does with a
+--        floor is find the load size that sits on it. Watch `under_price_floor`
+--        in the logs before tuning anything else.
+--      · transport_retire_rig's 'rig_ran_today' refusal is likewise untested
+--        by anybody who wanted to retire a rig for an honest reason. It is a
+--        UTC day key, so a carrier in UTC-7 who runs a rig at 6pm cannot retire
+--        it until 5pm the next day. That is the same timezone edge every other
+--        day key in this file has, and it is the reason all of them come from
+--        the database clock rather than the device.
+--      · Nothing in the client calls transport_retire_rig yet. Retiring a rig
+--        is a button depot.render.js:656 already TALKS about ("retire a rig")
+--        with no code behind it, and wiring it belongs in that file, not this
+--        one.
+--      · 🔴 THREE OF THIS ROUND'S CODES HAVE NO CLIENT COPY, and this file
+--        cannot write it — public/src/transport/ belongs to another seam.
+--        Recorded here rather than fixed here because a refusal a player
+--        cannot read is a real defect even when the deny decision is correct,
+--        and because the last cut of this round tried to dodge exactly this by
+--        reusing an existing code, which produced worse copy than no copy (see
+--        the 'bad_units' note in §4.1). What is open, precisely:
+--          · 'units_below_min'   — no CODES entry (contracts.js:269+).
+--          · 'under_price_floor' — no CODES entry.
+--          · 'rig_ran_today'     — no CODES entry.
+--        All three land on explain()'s unknown arm (contracts.js:461-472),
+--        which prints the code verbatim and tells the player to quote it to an
+--        admin. That arm exists for precisely this and is graceful by design,
+--        so this is a copy gap, NOT a break — nothing throws, nothing lies.
+--        Also: routes.js's client-side pre-quote guard (:1118-1124) mirrors
+--        max_units and has no floor at all, so a below-floor quote makes the
+--        round trip and comes back with a code the client cannot render. That
+--        mirror is a convenience, never the enforcement (same posture as the
+--        name `.slice(0, 40)` this round moved onto a server CHECK), so the
+--        floor is not weakened by its absence there — only the instant
+--        feedback is. Fixing all four is a few lines in contracts.js and
+--        routes.js. Nobody has run these three refusals in front of a player.
 --      · The guards depend on a Postgres implementation detail — that a
 --        VOLATILE plpgsql function advances the command counter before each of
 --        its queries, so a BEFORE ROW trigger can see the rows its own
@@ -131,7 +264,7 @@
 --        without changing anything else a reader would look at.
 --
 --    WHAT APPLYING IT ACHIEVES: the tables exist, RLS and the revoked grants
---    deny every client write path that is not one of the five RPCs in §4, the
+--    deny every client write path that is not one of the six RPCs in §4, the
 --    two counting caps are allocated rather than announced, and a shipper who
 --    calls transport_dispatch is charged a SERVER-computed price and gets a
 --    contract row with a server-computed arrival time.
@@ -146,8 +279,8 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 🔒 SECURITY REVIEW — per bullet, the attack it closes. Not what it does.
 --
---   · `security definer` + `set search_path = public` on all eleven functions
---     — five RPCs, four helpers and the two §2b guards.
+--   · `security definer` + `set search_path = public` on all twelve functions
+--     — six RPCs, four helpers and the two §2b guards.
 --     Closes: a caller creating public.transport_config in a schema earlier on
 --     their own search_path and having the function read THEIR ceilings as the
 --     function owner. RUN_016 states the general form of this; it is worse here
@@ -226,6 +359,46 @@
 --   · A blocked dispatch does NOT write a 'refused' contract row. Closes: a
 --     rival looping transport_dispatch against a carrier to manufacture public
 --     refusals and destroy their reliability. See §4.2.
+--     ⚠ THAT BULLET WAS TRUE AND IT WAS NOT ENOUGH, and the two below are the
+--       rest of it. A rival never needed refusals: a SUCCESSFUL haul lands in
+--       the same reliability denominator, and with no floor under `units` a
+--       successful haul cost ONE CINDER. The door was bolted and the wall
+--       beside it was open.
+--
+--   · min_units_per_contract and min_price_per_contract, enforced in
+--     transport_quote — the minimum beside the maximum, and the price floor at
+--     THE SINGLE EXIT so neither branch can step over it. Closes: a 1-Cinder
+--     dispatch, and with it (a) buying 'lost' rows in a rival's reliability at
+--     1 Cinder a shot, (b) buying a seat in the Meridian median for 3 Cinder,
+--     (c) exhausting a 12-rig fleet's whole day for ~120 Cinder or filling
+--     every bay of a level-3 depot for 6. Measured, both directions, below.
+--
+--   · Reliability and the Meridian median both exclude contracts whose shipper
+--     IS the carrier's owner. Closes: a carrier being their own reference. The
+--     median's stated defence was "a delivery … costs some shipper a real
+--     dispatch fee through that carrier"; without this clause that shipper
+--     could be the attacker, paying themselves. Self-dealing is EXCLUDED, not
+--     forbidden — see §4.1.
+--
+--   · DELETE is revoked on transport_rigs and trg_del is gone; retirement is
+--     transport_retire_rig (§4.6), which refuses a rig that has run today.
+--     Closes: the daily run counter being resettable by deleting the row that
+--     carries it. Two `.from('transport_rigs')` calls gave a rig at its cap a
+--     fresh day. Note that counting the day's runs off the contract rows
+--     instead does NOT close it — `rig_id` is `on delete set null`, so the
+--     delete erases that evidence too.
+--
+--   · transport_caps emits fleet_used / fleet_slots_left ONLY to the owner.
+--     Closes: a SECURITY DEFINER helper granted to `authenticated`, taking an
+--     arbitrary company id, publishing through PostgREST the exact number
+--     trg_sel and the §2b guard's split error message both refuse to publish.
+--
+--   · `truncate` (and `trigger`) on all five revokes, plus a length CHECK on
+--     transport_companies.name and .home_node_id. Closes: TRUNCATE, which
+--     consults no policy at all and emptied transport_config as
+--     `authenticated`; and a multi-megabyte carrier name on the one
+--     world-readable row in this file, bounded until now only by a
+--     client-side `.slice(0, 40)`.
 --
 -- ─────────────────────────────────────────────────────────────────────────────
 -- ⚖ THE LIMIT OF THE GUARANTEE, stated plainly rather than implied.
@@ -247,10 +420,20 @@
 --   from transport_config:
 --     · price      — computed here from the carrier's stored tariff, never
 --                    accepted; clamped to the Meridian ceiling; refused above
---                    max_price_per_contract
+--                    max_price_per_contract and BELOW min_price_per_contract.
+--                    The floor is not symmetry for its own sake: a dispatch
+--                    spends a stranger's bay and a stranger's daily run and
+--                    lands in their public reliability, so the cheapest one has
+--                    to cost more than a loop
 --     · address    — the shipper is auth.uid(); the carrier is a company row;
 --                    neither is a parameter
 --     · rate       — runs per rig per day, and free bays, both server-counted
+--                    AND now un-resettable: the row the counter lives on can no
+--                    longer be deleted (§3), and retiring it does not recycle
+--                    the slot within the day (§4.6). A charter's whole daily
+--                    output is therefore bounded by fleet_cap x
+--                    max_runs_per_rig, which is exactly what its largest legal
+--                    fleet could do honestly
 --     · time       — depart_at and arrive_at come from now(), so a contract
 --                    cannot arrive before the clock says it did
 --     · outcome    — delivered vs lost is rolled server-side against a
@@ -357,6 +540,27 @@ alter table public.transport_companies add constraint transport_companies_tariff
   and coalesce((tariff->>'base')::numeric, 0)        between 0 and 100000
   and coalesce((tariff->>'escort_pct')::numeric, 0)  between 0 and 100
   and coalesce((tariff->>'illicit_pct')::numeric, 0) between 0 and 200
+);
+-- 🔒 THE TWO STRINGS ON THE ONLY WORLD-READABLE ROW IN THIS FILE, and they were
+--    the only client-supplied strings in the whole migration bounded by nothing
+--    but the client. Every other one is bounded HERE: cargo by pg_column_size
+--    (§4.2), from_node/to_node by `left(…, 40)` at insert (§4.2), client_ref by
+--    `left(…, 64)`, the blacklist by array_length > 200 (§4.5). name and
+--    home_node_id were bounded only by contracts.js's `.slice(0, 40)` — a
+--    client-side truncation, which is the one kind of bound this file refuses
+--    to rely on anywhere else. tco_sel is `using (true)`, so a console that
+--    skips the slice writes a multi-megabyte name onto a row EVERY client
+--    fetches to draw the rate board.
+--    Same idempotent shape as the tariff constraint above, and the same
+--    division of labour: 40 is what the client already truncates to, so this
+--    demotes that slice from the enforcement to the convenience it should
+--    always have been. btrim on the lower bound because a name of three spaces
+--    has length 3 and is not a name a shipper can find you by.
+alter table public.transport_companies drop constraint if exists transport_companies_name_ck;
+alter table public.transport_companies add constraint transport_companies_name_ck check (
+  length(name) <= 40
+  and length(btrim(name)) >= 1
+  and length(coalesce(home_node_id, '')) <= 40
 );
 create index if not exists transport_companies_board on public.transport_companies (status, home_node_id);
 create index if not exists transport_companies_owner on public.transport_companies (owner_id);
@@ -557,6 +761,31 @@ create table if not exists public.transport_config (
   meridian_base_floor     numeric not null default 40,
   max_hops                int     not null default 6,
   max_units_per_contract  numeric not null default 5000,
+  -- 🔒 THE FLOOR HALF OF THE PAIR, AND IT IS THE ONE THAT WAS MISSING. Every
+  --    lever in this table had a max and none had a min, and `units` is
+  --    `numeric` with only `check (units > 0)` under it — so p_units = 0.000001
+  --    at p_hops = 1 priced at ceil(1e-8) = 1. ONE CINDER, at any tariff,
+  --    including the 500 ceiling. That single fact was the root of three
+  --    attacks this file's own header claims are closed:
+  --      · §4.2 refuses to write a 'refused' contract row because "a rival
+  --        could loop this function against any carrier and destroy their
+  --        public reliability from a script" — but a SUCCESSFUL 1-Cinder
+  --        dispatch lands in the reliability denominator too (§4.3 counts
+  --        'delivered','late','lost','refused') and carries a server-rolled
+  --        16-24% loss chance at reach-limit hops. The rival did not need
+  --        refusals; they could buy 'lost' rows at 1 Cinder each. The defended
+  --        door was bolted and the wall beside it was open.
+  --      · the Meridian median's defence #2 (§4.1) says a sock charter must
+  --        DELIVER before it is sampled because "a charter is free; a delivery
+  --        is not — it costs some shipper a real dispatch fee". It cost 1
+  --        Cinder, paid by the attacker to their own charter.
+  --      · the SHIPPER picks p_rig_id (§4.2), so ~120 Cinder exhausted a
+  --        12-rig fleet's whole day and 6 Cinder filled every bay of a level-3
+  --        depot for 25 minutes a hop, on loop.
+  --    A floor does not make any of those impossible. It prices them, which is
+  --    the same argument §4.2 makes for why a refusal is only evidence if
+  --    making one costs the shipper something.
+  min_units_per_contract  numeric not null default 1,
   max_tariff_per_unit_hop numeric not null default 500,
   -- Provenance, not a guess: sql/034 measured the largest credit this game has
   -- ever issued (a 1,000,000 admin gift) and set the single-call ceiling on the
@@ -565,6 +794,16 @@ create table if not exists public.transport_config (
   -- there is no reason for one haul to move more than the largest sum this
   -- economy has ever moved in one call.
   max_price_per_contract  numeric not null default 5000000,
+  -- Provenance, not a guess, the same way max_price_per_contract has one. 100
+  -- is EXACTLY what Meridian charges for the smallest legal haul at its own
+  -- floor: meridian_base_floor (40) x meridian_tariff_mult (2.5) x
+  -- min_units_per_contract (1) x 1 hop. So the cheapest contract this file will
+  -- write is the cheapest contract the NPC would ever have written anyway, and
+  -- the floor refuses nothing the fallback carrier could not already sell.
+  -- Tune the three numbers it is derived from and this wants tuning with them;
+  -- it is a column rather than that expression so that a lowered Meridian floor
+  -- does not silently lower the price of griefing at the same time.
+  min_price_per_contract  numeric not null default 100,
   max_runs_per_rig        int     not null default 10,
   -- Enforced at rig registration by the BEFORE INSERT guard in §2b, which
   -- reads the depot ladder through transport_caps() so there is still only one
@@ -608,8 +847,10 @@ alter table public.transport_config add column if not exists meridian_time_mult 
 alter table public.transport_config add column if not exists meridian_base_floor     numeric not null default 40;
 alter table public.transport_config add column if not exists max_hops                int     not null default 6;
 alter table public.transport_config add column if not exists max_units_per_contract  numeric not null default 5000;
+alter table public.transport_config add column if not exists min_units_per_contract  numeric not null default 1;
 alter table public.transport_config add column if not exists max_tariff_per_unit_hop numeric not null default 500;
 alter table public.transport_config add column if not exists max_price_per_contract  numeric not null default 5000000;
+alter table public.transport_config add column if not exists min_price_per_contract  numeric not null default 100;
 alter table public.transport_config add column if not exists max_runs_per_rig        int     not null default 10;
 alter table public.transport_config add column if not exists max_fleet_rigs          int     not null default 12;
 alter table public.transport_config add column if not exists max_bays                int     not null default 6;
@@ -680,10 +921,16 @@ grant execute on function public.is_transport_owner(uuid) to authenticated;
 --      that table — the recursion CLAUDE.md names. A definer function bypasses
 --      RLS and therefore terminates.
 --
--- ⚠ 'retired' is currently UNREACHABLE: no UPDATE path to that column exists
---   (§3) and retiring a rig is a DELETE. The filter is here so that on the day
---   retirement becomes a status change, a scrapped rig does not go on holding a
---   fleet slot. Grep `'retired'` before wiring that.
+-- ⚠ 'retired' IS REACHABLE AS OF THIS ROUND, and this filter is what makes the
+--   change safe. It used to read "currently UNREACHABLE… the filter is here so
+--   that on the day retirement becomes a status change, a scrapped rig does not
+--   go on holding a fleet slot. Grep `'retired'` before wiring that." That day
+--   is this file: retiring a rig was a DELETE, DELETE was the reset button on
+--   the daily run counter (see the note where trg_del used to be, §3), and
+--   retirement is now transport_retire_rig in §4.6. The grep it asked for
+--   turned up four places and all four already handled 'retired' correctly —
+--   here, §4.2's run claim, §4.3's release, and §5's over_fleet_cap. The one
+--   that did NOT was transport_repair, which is fixed in §4.4.
 --
 -- ⚠ `fleet_used` AND `fleet_slots_left` ARE A UI HINT, NOT THE ENFORCEMENT,
 --   and the distinction is worth the two words. This function is `stable`: it
@@ -693,21 +940,55 @@ grant execute on function public.is_transport_owner(uuid) to authenticated;
 --   payload, and the wrong shape for a limit — which is the whole story of
 --   §2b. `fleet_cap` has no such caveat; it is a pure function of the row.
 --
+-- 🔴 AND THOSE TWO KEYS ARE OWNER-ONLY, WHICH IS A FIX AND NOT A PREFERENCE.
+--    This helper is SECURITY DEFINER, takes an ARBITRARY company id and is
+--    granted to `authenticated`, so PostgREST publishes it as
+--    `rpc/transport_caps` and ANY player could call it against ANY carrier.
+--    Company ids are trivially enumerable because tco_sel is `using (true)`.
+--    It was therefore handing out, to anybody who asked, the one number two
+--    other places in this same file go out of their way to withhold:
+--      · trg_sel (§3) restricts rig reads to the owner because "a rival's
+--        fleet composition is competitive information … knowing a carrier is
+--        out of runs is knowing exactly when to undercut them."
+--      · the fleet-cap guard (§2b) splits its refusal into an owner branch and
+--        a bare-code branch specifically so that "the guard would [not] hand
+--        out, through a refusal, exactly what the SELECT policy four sections
+--        down refuses to hand out through a query."
+--    The guard closed the refusal channel, the policy closed the query
+--    channel, and this function then answered the question directly. Note the
+--    asymmetry that makes the split the right shape rather than a blanket
+--    lock-out: reach / bays / fleet_cap are pure functions of depot_level,
+--    which tco_sel already publishes to the world, so gating them would hide
+--    nothing and would break the rate board's "free bays now" column (design
+--    §5). fleet_used is not derivable from any public column, and is the only
+--    thing here that is genuinely private.
+--    No server path regresses: the §2b guard runs its own count and reads only
+--    `fleet_cap`, transport_quote reads only `reach`, transport_dispatch reads
+--    only `bays`, and transport_set_sheet's payload is owner-only by
+--    construction — it refuses a non-owner four statements earlier.
+--
 -- Returns NULL for a company that does not exist, which is why every caller
 -- compares the extracted value rather than trusting it — `null > 0` is null,
 -- and a caller who trusts it instead REFUSES. That is the safe direction.
+-- ⚠ A NON-OWNER GETS AN OBJECT WITHOUT THOSE KEYS, NOT AN OBJECT WITH NULLS.
+--   `->>'fleet_used'` is null either way, so a client already written against
+--   the old shape reads null rather than 0 — the same safe direction. Do not
+--   "helpfully" fill them with 0: a 0 fleet_used is a claim about a rival's
+--   yard, and a wrong one.
 create or replace function public.transport_caps(p_company_id uuid)
 returns jsonb language sql stable security definer set search_path = public as $$
   select jsonb_build_object(
     'reach',      3 + c.depot_level,
     'bays',       least(2 * c.depot_level, f.max_bays),
-    'fleet_cap',  least(4 * c.depot_level, f.max_fleet_rigs),
-    'fleet_used', (select count(*) from public.transport_rigs r
-                    where r.company_id = c.id and r.status <> 'retired'),
-    'fleet_slots_left',
-      greatest(0, least(4 * c.depot_level, f.max_fleet_rigs)
-                  - (select count(*) from public.transport_rigs r
-                      where r.company_id = c.id and r.status <> 'retired')))
+    'fleet_cap',  least(4 * c.depot_level, f.max_fleet_rigs))
+    || case when public.is_transport_owner(c.id) then jsonb_build_object(
+         'fleet_used', (select count(*) from public.transport_rigs r
+                         where r.company_id = c.id and r.status <> 'retired'),
+         'fleet_slots_left',
+           greatest(0, least(4 * c.depot_level, f.max_fleet_rigs)
+                       - (select count(*) from public.transport_rigs r
+                           where r.company_id = c.id and r.status <> 'retired')))
+       else '{}'::jsonb end
     from public.transport_companies c
     cross join public.transport_config f
    where c.id = p_company_id and f.id = 1;
@@ -841,12 +1122,19 @@ grant execute on function public.transport_charter_slots_left() to authenticated
 --   a form. Written down because a deadlock nobody predicted reads like data
 --   loss at 3am.
 --
--- ⚠ INSERT ONLY, DELIBERATELY. Neither guard fires on UPDATE, because there is
---   no UPDATE path to guard: UPDATE is revoked on both tables and no policy
---   grants it (§3), and no function in §4 moves a rig between charters. A
---   trigger covering a path that does not exist is a claim nobody can test.
---   If a future migration adds a "transfer this rig" RPC, it adds the UPDATE
---   arm here in the same file.
+-- ⚠ INSERT ONLY, DELIBERATELY, AND THE TEST IS "COULD THIS UPDATE CONSUME A
+--   SLOT?" — not "does any UPDATE exist?". UPDATE is revoked on both tables and
+--   no policy grants it (§3), so the only writers are the definer functions in
+--   §4, and every one of them either leaves the counted set alone or SHRINKS
+--   it: transport_set_sheet touches the charter's sheet, §4.2 and §4.3 move a
+--   rig between 'idle' and 'hauling' (both counted, so the total does not
+--   move), and transport_retire_rig moves one OUT of the count. A guard that
+--   can only ever run to approve is a claim nobody can test.
+--   Two future changes must add the UPDATE arm here in the same file: a
+--   "transfer this rig to my other charter" RPC, and any un-retire — 'retired'
+--   is filtered out of the count, so bringing one back is an allocation and
+--   needs the lock and the count exactly as an INSERT does. §4.6 says the same
+--   thing from the other end.
 --
 -- ⚠ NO `grant execute` ON EITHER FUNCTION, and that is not an omission.
 --   EXECUTE on a trigger function is checked when the TRIGGER is created, not
@@ -1044,7 +1332,37 @@ create policy tco_ins on public.transport_companies for insert to authenticated
 --    DELETE — see the `on delete restrict` note on the contract table: a
 --    carrier who can delete their charter can delete their reputation.
 --    Retirement is status = 'closed'.
-revoke update, delete on public.transport_companies from anon, authenticated;
+--
+-- 🔴 `truncate` IS ON EVERY ONE OF THE FIVE REVOKES BELOW, and it is the one
+--    command every "WRITE: nobody" claim in this file was silent about.
+--    Supabase's default privileges grant ALL on tables in `public` to
+--    `authenticated`, and ALL includes TRUNCATE, REFERENCES and TRIGGER. This
+--    repo has already MEASURED the residue an enumerated revoke leaves behind:
+--    sql/028:11 and :174 record the observed grant set after exactly this
+--    pattern as "REFERENCES, SELECT, TRIGGER, TRUNCATE".
+--      · TRUNCATE consults NO POLICY AT ALL. `truncate public.transport_ledger`
+--        erases the append-only book this whole feature rests on — and nothing
+--        references transport_ledger by a foreign key, so it does not even need
+--        CASCADE. `truncate public.transport_config` removes the ceilings row,
+--        at which point §2b's guards raise 'transport_config_missing' on every
+--        registration and every quote returns 'closed'.
+--      · TRIGGER is enough on its own to attach a trigger to a table you do not
+--        own; ownership is not required, only the privilege plus EXECUTE on a
+--        function. Revoked for that reason rather than for tidiness.
+--      · REFERENCES is inert (adding a foreign key requires owning the
+--        referencing table) and is revoked with them because leaving one of the
+--        four measured residues in place invites the next reader to conclude
+--        the list was considered and this one was wanted.
+--      · SELECT is the fourth, and it is the one that is WANTED on four of the
+--        five tables — it is governed by the policies above. transport_config
+--        revokes it explicitly, and always did.
+--    ⚠ CALIBRATION, so nobody rewrites the threat model from this paragraph:
+--      this is NOT reachable from a devtools console. PostgREST has no TRUNCATE
+--      verb and players hold a JWT, not database credentials. It is defence in
+--      depth, and it is the only privilege this file's own "the denial does not
+--      depend on a policy staying deleted" argument did not actually cover.
+--      §5 now counts it rather than asserting it.
+revoke update, delete, truncate, trigger, references on public.transport_companies from anon, authenticated;
 
 -- FLEET · read. Your own rigs only. A rival's fleet composition is competitive
 -- information — how many rigs, what rarity, how many runs each has left today
@@ -1055,12 +1373,24 @@ create policy trg_sel on public.transport_rigs for select to authenticated
   using (public.is_transport_owner(company_id));
 
 -- Registering a rig is self-service, and every counter is PINNED AT ITS ZERO.
--- Without those four equalities the insert IS the exploit: a rig arriving with
+-- Without those equalities the insert IS the exploit: a rig arriving with
 -- runs_used = -1000 has a thousand free hauls, one arriving already 'hauling'
 -- occupies a bay it never earned, and one arriving with assigned_to set is
 -- invisible to a dispatch guard that refuses exactly that. The claimed values
 -- that remain — rarity, condition, runs_cap — are bounded by their CHECKs and
 -- again by the ceilings at dispatch time.
+--
+-- ⚠ day_key AND repair_day ARE PINNED TOO, AND THEY WERE NOT. The comment
+--   above used to say "every counter is PINNED AT ITS ZERO" and list four
+--   equalities while the two DAY KEYS those counters are compared against went
+--   unmentioned. It was only ever half true, and it was harmless only by
+--   luck — each unpinned key's partner counter WAS pinned, so §4.2's
+--   `r.day_key is distinct from v_today or r.runs_used < …` and §4.4's
+--   equivalent both landed on the zero rather than on the key. Half true by
+--   luck is the state this file spends its whole header arguing against: pin
+--   both, and the guard no longer depends on which side of that `or` fires.
+--   Null is the honest value for a rig that has never run, and it is what the
+--   column defaults to.
 --
 -- 🔴 THE FLEET CAP IS NOT HERE, AND THIS IS THE LINE IT WAS WRONG ON TWICE.
 --    The first draft of this file shipped max_fleet_rigs in transport_config,
@@ -1086,16 +1416,51 @@ create policy trg_ins on public.transport_rigs for insert to authenticated
   with check (owner_id = auth.uid()
               and public.is_transport_owner(company_id)
               and runs_used = 0 and repairs_used = 0
+              and day_key is null and repair_day is null
               and assigned_to is null
               and status = 'idle');
 
--- Retiring a rig is allowed; retiring one mid-haul is not, because the contract
--- would keep an arrival time nobody is driving towards. The contract's own
--- reference is `on delete set null`, so a retired rig leaves the delivery
--- record intact rather than taking it along.
+-- 🔴 NO DELETE POLICY ANY MORE, AND THE ONE THAT USED TO BE HERE IS THE THIRD
+--    CAP THIS FILE ANNOUNCED AND DID NOT HOLD. It read
+--      `create policy trg_del … using (owner_id = auth.uid() and status <> 'hauling')`
+--    and it was correct about the thing it was thinking about — you may not
+--    retire a rig mid-haul — while being the reset button for the thing the
+--    header calls one of the four the server genuinely owns: ":253 rate — runs
+--    per rig per day, and free bays, both server-counted."
+--
+--    THE COUNTER LIVED ON A ROW THE CLIENT COULD DESTROY. runs_used and
+--    day_key are columns of transport_rigs; DELETE was granted (only UPDATE was
+--    revoked); trg_del permitted it for any rig not currently 'hauling'; and
+--    trg_ins pins the replacement's runs_used at 0. Registration costs nothing
+--    — contracts.js:917 says so in as many words — and the §2b fleet guard
+--    counts LIVE ROWS, not registrations, so it never saw the churn. A carrier
+--    at their daily cap settled a haul (the rig returns to 'idle' in §4.3),
+--    deleted the rig, re-inserted it, and had a full day's runs again. Two
+--    `.from('transport_rigs')` calls from a devtools console. Once the payout
+--    leg lands (see the header) that counter is the ONLY thing rate-limiting a
+--    carrier's income.
+--
+--    ⚠ AND COUNTING THE DAY'S RUNS OFF THE CONTRACT ROWS INSTEAD DOES NOT FIX
+--      IT — which is worth writing down, because it is the obvious fix and it
+--      looks airtight. `transport_contracts.rig_id` is `on delete set null`
+--      (§1), so deleting the rig ALSO erases the contract-side evidence, and
+--      the re-inserted rig is a new uuid with no contracts against it either
+--      way. Any per-rig counter is resettable while the rig row is
+--      destroyable. The row has to stop being destroyable first.
+--
+--    SO RETIREMENT IS A STATUS CHANGE NOW, through transport_retire_rig in
+--    §4.6, and DELETE is revoked below. 'retired' was already in the CHECK
+--    ladder and already filtered out of transport_caps' fleet_used, so the
+--    fleet slot still frees exactly as it did — what does not happen any more
+--    is the row, and its counter, going away. The contract's `on delete set
+--    null` stays for the same reason it was written: it is now unreachable
+--    from any client, and it is the right behaviour if a future migration ever
+--    reaches it.
+--    No client path regresses: nothing in /src/transport has ever issued a
+--    delete against this table (depot.render.js:656 tells the owner to "retire
+--    a rig" and there is no code behind that sentence yet). Wiring the button
+--    to the new RPC is a client change and belongs in the client's own file.
 drop policy if exists trg_del on public.transport_rigs;
-create policy trg_del on public.transport_rigs for delete to authenticated
-  using (owner_id = auth.uid() and status <> 'hauling');
 
 -- 🔴 NO UPDATE POLICY, for the same mechanical reason as the charter table and
 --    with more at stake. Every column that decides money is on this row:
@@ -1103,9 +1468,13 @@ create policy trg_del on public.transport_rigs for delete to authenticated
 --    ladder, status holds the bay, and assigned_to is the battle interlock. A
 --    row-level UPDATE policy hands over all five together, whatever its comment
 --    says. Runs move only inside transport_dispatch; condition moves only
---    inside transport_repair. Revoked as well, so the denial survives an edit
+--    inside transport_repair; status moves only inside those two and
+--    transport_retire_rig. Revoked as well, so the denial survives an edit
 --    to this file.
-revoke update on public.transport_rigs from anon, authenticated;
+--    DELETE is revoked here as of this round — see the long note on the
+--    departed trg_del above. It is what turns "the counter is server-owned"
+--    from a sentence into a property.
+revoke update, delete, truncate, trigger, references on public.transport_rigs from anon, authenticated;
 
 -- CONTRACTS · read. BOTH SIDES, and both halves are load-bearing. The shipper
 -- must be able to watch their own cargo; the carrier must be able to see the
@@ -1125,7 +1494,7 @@ create policy tct_sel on public.transport_contracts for select to authenticated
 --    would set status = 'delivered' on a haul that never left, and reliability
 --    is derived from that column. The only writer is transport_dispatch /
 --    transport_settle, which run outside RLS and can prove what they wrote.
-revoke insert, update, delete on public.transport_contracts from anon, authenticated;
+revoke insert, update, delete, truncate, trigger, references on public.transport_contracts from anon, authenticated;
 
 -- LEDGER · read. The company's owner, and nobody else — not even the shipper
 -- who paid for the line item. A shipper can already read the price on their own
@@ -1143,7 +1512,7 @@ create policy tld_sel on public.transport_ledger for select to authenticated
 --    against someone else's company and permanently poison a sum() that has no
 --    UPDATE path to correct it; anyone who could delete could erase what they
 --    were paid. The only writer is transport_settle.
-revoke insert, update, delete on public.transport_ledger from anon, authenticated;
+revoke insert, update, delete, truncate, trigger, references on public.transport_ledger from anon, authenticated;
 revoke all on sequence public.transport_ledger_id_seq from anon, authenticated;
 
 -- CEILINGS · nobody, for any command. RLS is on and there is deliberately no
@@ -1154,16 +1523,16 @@ revoke all on sequence public.transport_ledger_id_seq from anon, authenticated;
 --   disagree with the first. Every number the UI needs to render a quote is
 --   returned inside transport_quote's own jsonb, so there is exactly one path
 --   and it is the one that also does the charging.
-revoke select, insert, update, delete on public.transport_config from anon, authenticated;
+revoke select, insert, update, delete, truncate, trigger, references on public.transport_config from anon, authenticated;
 
 
 -- ─── 4. RPCs ───────────────────────────────────────────────────────────────
 --
--- All five below — and the four helpers in §2, and the two guards in §2b — are
+-- All six below — and the four helpers in §2, and the two guards in §2b — are
 -- `security definer` with a pinned search_path and are revoked from public and
 -- anon immediately after each definition, with the full argument type list
 -- spelled out. A revoke naming a partial signature names a function that does
--- not exist: it succeeds, and it revokes nothing. The five here and the four in
+-- not exist: it succeeds, and it revokes nothing. The six here and the four in
 -- §2 are then granted to `authenticated`; the two guards are granted to nobody,
 -- because a trigger function is not called by the client that fires it.
 --
@@ -1256,7 +1625,38 @@ begin
     return jsonb_build_object('ok', false, 'error', 'bad_hops',
                               'max_hops', v_cfg.max_hops, 'hops', v_hops);
   end if;
-  if v_units <= 0 or v_units > v_cfg.max_units_per_contract then
+  -- 🔒 THE MINIMUM IS BESIDE THE MAXIMUM, which is where it should always have
+  --    been: `units` is numeric and had no lower bound but `> 0`, so 0.000001
+  --    units priced a haul at 1 Cinder. See min_units_per_contract in §1 for
+  --    the three attacks that bought.
+  --    The `<= 0` stays as well as the `< min`, and it is not redundant: a
+  --    future operator tuning min_units_per_contract to 0 in the SQL editor
+  --    would otherwise reopen the door, and the contract table's own
+  --    `check (units > 0)` would then answer with an opaque 23514 instead of
+  --    this refusal. Two bounds, both cheap.
+  --
+  -- 🔴 THE FLOOR GETS ITS OWN CODE, and this is a bug the FIRST cut of this
+  --    round shipped: the min branch was folded into 'bad_units' with an extra
+  --    'min_units' key. That was measured wrong across the seam. The client
+  --    that is already deployed renders 'bad_units' as, verbatim,
+  --    "<units> units is outside what one contract carries (max <max_units>).
+  --    Split the load across two hauls." (public/src/transport/contracts.js
+  --    :308-311). For a 0.5-unit quote that sentence is not merely unhelpful,
+  --    it is ACTIVELY WRONG ADVICE — splitting a too-small load makes each half
+  --    smaller and refused harder — and the extra 'min_units' key rendered
+  --    nowhere. A separate code falls to explain()'s unknown arm (:461-472),
+  --    which prints the code verbatim and says to quote it to an admin. Being
+  --    told a word you do not know is a bad message; being confidently told to
+  --    do the opposite of the fix is a broken one. Prefer the unknown arm.
+  --    ⚠ 'bad_units' therefore keeps EXACTLY the meaning and EXACTLY the
+  --      payload shape that shipped client already knows: over the max, with
+  --      max_units and units. Do not put a min key back on it.
+  if v_units <= 0 or v_units < v_cfg.min_units_per_contract then
+    return jsonb_build_object('ok', false, 'error', 'units_below_min',
+                              'min_units', v_cfg.min_units_per_contract,
+                              'units', v_units);
+  end if;
+  if v_units > v_cfg.max_units_per_contract then
     return jsonb_build_object('ok', false, 'error', 'bad_units',
                               'max_units', v_cfg.max_units_per_contract, 'units', v_units);
   end if;
@@ -1289,11 +1689,28 @@ begin
   --    1. Each row's base is clamped into [0, max_tariff_per_unit_hop] INSIDE
   --       the percentile, so a single absurd sheet cannot distort the ordering
   --       it is sorted into. Belt.
-  --    2. Only carriers that have actually DELIVERED something are sampled. A
-  --       charter is free; a delivery is not — it costs some shipper a real
-  --       dispatch fee through that carrier. This is what makes the sock-puppet
-  --       attack cost money instead of a loop, and it is why the filter is on
-  --       contracts rather than on, say, account age.
+  --    2. Only carriers that have actually DELIVERED something TO SOMEBODY
+  --       ELSE are sampled. A charter is free; a delivery is not — it costs
+  --       some shipper a real dispatch fee through that carrier. This is what
+  --       makes the sock-puppet attack cost money instead of a loop, and it is
+  --       why the filter is on contracts rather than on, say, account age.
+  --       🔴 `k.shipper_id <> c.owner_id` IS THE HALF THAT WAS MISSING, and
+  --          without it the sentence above was not true. Nothing in §4.2 stops
+  --          a carrier being a legal shipper to their own charter, so the
+  --          "real dispatch fee" was a payment the attacker made to themselves
+  --          — and with no floor on units it was ONE CINDER (see
+  --          min_units_per_contract in §1). Both halves of that are now fixed
+  --          and they are fixed independently, because either alone is enough
+  --          to make this an ENTRY TICKET rather than a cost: a floor without
+  --          this clause is a ticket you buy from yourself, and this clause
+  --          without a floor is a ticket you buy from a friend for 1 Cinder.
+  --       ⚠ SELF-DEALING IS EXCLUDED, NOT FORBIDDEN. Rejected: refusing a
+  --         dispatch where the shipper owns the carrier. A carrier moving
+  --         their own cargo on their own rigs is legitimate play and refusing
+  --         it would be a rule nobody outside this file could predict; what
+  --         must not happen is that the haul BUYS anything public. It buys
+  --         nothing: not a place in this median, and not a point of
+  --         reliability (§4.3 excludes it too, and §5b's drift column matches).
   --    3. THE RESULT IS FLOORED AND CEILINGED AGAINST CONFIG BELOW. This is the
   --       load-bearing one. 1 and 2 raise the price of the attack; only the
   --       floor makes the outcome of a successful attack harmless, because no
@@ -1314,7 +1731,8 @@ begin
      and jsonb_typeof(c.tariff->'base') = 'number'
      and (c.tariff->>'base')::numeric > 0
      and exists (select 1 from public.transport_contracts k
-                  where k.carrier_id = c.id and k.status = 'delivered');
+                  where k.carrier_id = c.id and k.status = 'delivered'
+                    and k.shipper_id <> c.owner_id);
 
   -- greatest() first, then least(): with no trading carrier at all the median
   -- is null and the floor is the answer, which is also the launch-day case —
@@ -1416,6 +1834,30 @@ begin
     return jsonb_build_object('ok', false, 'error', 'over_price_cap',
                               'carrier', v_kind,
                               'price', v_price, 'cap', v_cfg.max_price_per_contract,
+                              'units', v_units, 'hops', v_hops);
+  end if;
+
+  -- 🔴 AND THE FLOOR IS AT THE SAME SINGLE EXIT, for the identical reason the
+  --    ceiling is. Both branches build a price and neither returns one, so
+  --    there is no path that can step over this either — and the Meridian
+  --    branch gets no exemption from it any more than it gets one from the
+  --    cap. min_units_per_contract bounds the CHEAPEST INPUT; this bounds the
+  --    cheapest OUTPUT, and the two are not the same check: a carrier posting
+  --    base 1 sells a legal 1-unit 1-hop haul for 1 Cinder with the unit floor
+  --    fully satisfied. A dispatch is a public act — it lands in the
+  --    reliability denominator, it takes a bay for 25 minutes a hop, and it
+  --    spends one of a stranger's daily runs on a rig THE SHIPPER CHOSE — so
+  --    the cheapest one has to cost more than a loop.
+  --    ⚠ IT REFUSES; IT DOES NOT CLAMP UP. Clamping would charge a shipper
+  --      more than the sheet they were shown, which is the one thing §4.2's
+  --      "the shipper is charged the price they were shown" exists to prevent.
+  --      Refusing is what the ceiling does four lines up, and this is the same
+  --      shape pointed the other way: the remedy is a bigger load, which is a
+  --      sentence the client can write from `units` and `floor`.
+  if v_price < v_cfg.min_price_per_contract then
+    return jsonb_build_object('ok', false, 'error', 'under_price_floor',
+                              'carrier', v_kind,
+                              'price', v_price, 'floor', v_cfg.min_price_per_contract,
                               'units', v_units, 'hops', v_hops);
   end if;
 
@@ -1527,8 +1969,9 @@ begin
   end if;
 
   -- THE PRICE IS THE QUOTE. Not recomputed, not accepted, not adjusted. Every
-  -- refusal transport_quote can produce (bad_hops, bad_units, out_of_reach,
-  -- over_price_cap, no_tariff_published…) is returned verbatim, so a route the
+  -- refusal transport_quote can produce (bad_hops, bad_units, units_below_min,
+  -- under_price_floor, out_of_reach, over_price_cap, no_tariff_published…) is
+  -- returned verbatim, so a route the
   -- board would not quote is a route this cannot dispatch.
   --
   -- ⚠ The quote is taken BEFORE the charter row is locked below, so a tariff
@@ -1683,11 +2126,44 @@ begin
     -- burns one of the CARRIER'S runs for the day — a stranger's resource,
     -- destroyed by a failed purchase they never agreed to. It runs for the
     -- missing-wallet case too: nothing was charged there either.
+    --
+    -- 🔴 THE RUN COMES BACK UNCONDITIONALLY; THE STATUS DOES NOT. This used to
+    --    be `set … status = 'idle' where id = … and day_key = …` with nothing
+    --    else, and that flat assignment was a bug with a name in this file:
+    --    ONE RIG CAN CARRY MORE THAN ONE HAUL. The run claim above accepts
+    --    `r.status in ('idle','hauling')` on purpose — a rig is limited by its
+    --    runs and the charter by its bays, not one contract at a time — so a
+    --    rig with a second haul still in flight was moved to 'idle' by an
+    --    UNRELATED shipper's failed charge. That is not cosmetic: 'idle' is
+    --    exactly what the departed trg_del policy checked (`status <> 'hauling'`),
+    --    so a stranger's insufficient_cinder walked a mid-haul rig straight
+    --    past the guard whose stated purpose was that "retiring one mid-haul is
+    --    not [allowed], because the contract would keep an arrival time nobody
+    --    is driving towards." §4.6 asks the same question of the contract rows
+    --    rather than of this column, and this `case` stops writing the wrong
+    --    answer into it.
+    -- ⚠ THE `not exists` IS ON THE STATUS ONLY, NEVER ON THE WHOLE UPDATE.
+    --   Putting it in the WHERE (the obvious shape) skips the row entirely and
+    --   the carrier silently eats the run — which is the exact harm the unwind
+    --   was written to prevent, reintroduced by the fix for a different one.
+    -- ⚠ NO CONTRACT ROW FOR *THIS* DISPATCH EXISTS YET — the insert is leg 5
+    --   and this is the failure path of leg 4 — so every in_transit row this
+    --   sees belongs to some other, still-flying haul.
+    -- ⚠ A 'retired' RIG IS NOT RESURRECTED, mirroring the `status <> 'retired'`
+    --   guard §4.3 uses when it releases a rig. §4.6 refuses to retire a rig
+    --   with a live haul, so this is belt; it is here because the day that
+    --   refusal is relaxed, this line would otherwise un-retire scrap.
     if v_rig_id is not null then
-      update public.transport_rigs
-         set runs_used = greatest(0, runs_used - 1),
-             status    = 'idle'
-       where id = v_rig_id and day_key = v_today;
+      update public.transport_rigs r
+         set runs_used = greatest(0, r.runs_used - 1),
+             status    = case
+                           when r.status = 'retired' then r.status
+                           when exists (select 1 from public.transport_contracts k
+                                         where k.rig_id = r.id and k.status = 'in_transit')
+                             then r.status
+                           else 'idle'
+                         end
+       where r.id = v_rig_id and r.day_key = v_today;
     end if;
     if v_no_wallet then
       return jsonb_build_object('ok', false, 'error', 'wallet_rpc_missing',
@@ -1843,6 +2319,30 @@ begin
     --    §3, because SECURITY DEFINER runs as the function owner and outside
     --    RLS. That asymmetry is the point: the server may write it, no client
     --    may.
+    --    🔴 A CARRIER IS NOT THEIR OWN REFERENCE — `k.shipper_id <> c.owner_id`,
+    --       and it closes a pump AND a griefing lane at the same line, because
+    --       the denominator is a two-way door. Nothing in §4.2 checks
+    --       `v_co.owner_id <> v_uid`, so a carrier is a legal shipper to their
+    --       own charter (deliberately — see §4.1 on why that stays legal), and
+    --       before this clause every such haul landed in this fraction:
+    --         · pumping — self-haul on repeat and the number walks to 100%,
+    --           burying the losses the shipper who paid for them is entitled to
+    --           see. That is the whole asset design §5 says a carrier builds.
+    --         · griefing — the same denominator is what a RIVAL was buying into
+    --           at 1 Cinder a shot (see min_price_per_contract, §1). §4.2
+    --           refuses to write a 'refused' row precisely so a script cannot
+    --           move this number, and then a successful cheap haul moved it
+    --           anyway, because 'lost' is rolled server-side at 16-24% on a
+    --           reach-limit route.
+    --       Excluding self-dealt rows is the narrow fix for the first; the
+    --       price floor is the fix for the second; neither substitutes for the
+    --       other.
+    --    ⚠ THE SAME PREDICATE LIVES IN §5b's `drift` COLUMN AND MUST STAY
+    --      IDENTICAL TO THIS ONE. drift is defined as this cache minus a live
+    --      recompute and its pass condition is a hard 0, so a filter present in
+    --      one and absent from the other makes every self-dealing carrier read
+    --      as corruption for ever. Change them together, exactly like §2's
+    --      note on transport_caps' fleet_used and §2b's count.
     update public.transport_companies c
        set reliability = (
              select case when count(*) = 0 then null
@@ -1850,6 +2350,7 @@ begin
                                / count(*), 1) end
                from public.transport_contracts k
               where k.carrier_id = c.id
+                and k.shipper_id <> c.owner_id
                 and k.status in ('delivered', 'late', 'lost', 'refused')
            )
      where c.id = v_ct.carrier_id;
@@ -1927,6 +2428,13 @@ begin
   end if;
   if v_rig.status = 'hauling' then
     return jsonb_build_object('ok', false, 'error', 'rig_in_transit');
+  end if;
+  -- 'retired' WAS UNREACHABLE WHEN THIS FUNCTION WAS WRITTEN and §2 told the
+  -- next reader to grep before wiring it. §4.6 wires it, so this is that grep's
+  -- other end: nothing un-retires a rig, so repairing one buys a condition that
+  -- can never haul. Refusing is cheaper than explaining the receipt.
+  if v_rig.status = 'retired' then
+    return jsonb_build_object('ok', false, 'error', 'rig_retired');
   end if;
   if v_rig.condition = 'Salvage' then
     return jsonb_build_object('ok', false, 'error', 'rig_is_salvage');
@@ -2092,6 +2600,146 @@ revoke all on function public.transport_set_sheet(uuid, jsonb, text, integer, uu
 grant execute on function public.transport_set_sheet(uuid, jsonb, text, integer, uuid[]) to authenticated;
 
 
+-- ── 4.6 · transport_retire_rig — the setter the deleted DELETE policy needs ─
+-- 🔴 THIS FUNCTION IS WHY §3 CAN REVOKE DELETE ON THE FLEET TABLE, and it is
+--    the same argument transport_set_sheet makes about UPDATE one section up:
+--    RLS can only say yes or no to a whole row, and "yes" to a DELETE is "yes"
+--    to destroying the daily run counter that row carries.
+--    The full postmortem is where trg_del used to be in §3. The short version:
+--    runs_used and day_key live on transport_rigs; DELETE was granted; trg_del
+--    allowed it for any rig not 'hauling'; trg_ins pins the replacement at 0;
+--    registration is free; and §2b's fleet guard counts live rows, not
+--    registrations. Settle a haul, delete the rig, re-insert it, full day's
+--    runs again — two calls from a devtools console against the bound that is
+--    the only thing rate-limiting a carrier's income once the payout leg lands.
+--
+-- 🔴 WHY IT REFUSES A RIG THAT HAS RUN TODAY, which is the clause doing the
+--    actual work and is not obvious. Revoking DELETE alone does not close the
+--    hole; it only makes the hole cost one fleet slot. Retirement frees a slot
+--    (transport_caps filters 'retired'), registration is free, so retire →
+--    register → run → retire → register is the same unbounded loop wearing a
+--    different verb. With this clause a slot yields at most
+--    least(runs_cap, max_runs_per_rig) runs per UTC day no matter how many rigs
+--    pass through it, so a charter's whole daily output is bounded by
+--    fleet_cap x max_runs_per_rig — which is EXACTLY what the largest legal
+--    fleet could do honestly. The bound refuses nothing an honest carrier can
+--    reach and removes the loop entirely. That property is why the counter can
+--    stay on the rig row at all.
+--    ⚠ It is a DAY-KEY test, not a lifetime one: a rig that ran yesterday
+--      retires today without argument. Same database clock and same
+--      `to_char((now() at time zone 'utc')::date, …)` as §4.2 and §4.4 — a
+--      device clock here would hand the whole bound back to the client.
+--
+-- ⚠ ONE-WAY, AND THAT IS LOAD-BEARING. Nothing un-retires a rig: trg_ins pins
+--   a new row at 'idle', UPDATE is revoked, and no function here writes
+--   'retired' → anything. If a future migration adds an un-retire, it MUST run
+--   the §2b fleet guard's count first (that guard is INSERT-only, by the note
+--   in §2b, so it will not fire) or a carrier un-retires their way past
+--   fleet_cap. And it must not zero runs_used, or this refusal becomes bypassable.
+--
+-- ⚠ THE LIVE-HAUL CHECK ASKS THE CONTRACT ROWS, NOT THE RIG'S STATUS COLUMN.
+--   The status column is a cache of the same fact and it has been wrong before:
+--   §4.2's charge-failure unwind used to set a rig with a second haul in flight
+--   to 'idle' unconditionally, which is precisely how the departed trg_del was
+--   walked past. Both checks are here — status for the cheap answer, the
+--   contract rows for the true one — for the same "belt to the braces" reason
+--   §1 gives the ledger's unique index.
+create or replace function public.transport_retire_rig(p_rig_id uuid)
+returns jsonb
+language plpgsql security definer set search_path = public as $function$
+declare
+  v_uid   uuid := auth.uid();
+  v_rig   public.transport_rigs%rowtype;
+  v_cfg   public.transport_config%rowtype;
+  v_today text;
+  v_live  int;
+  v_ok    boolean;
+begin
+  if v_uid is null then
+    return jsonb_build_object('ok', false, 'error', 'not_authenticated');
+  end if;
+
+  select * into v_cfg from public.transport_config where id = 1;
+  if not found then
+    return jsonb_build_object('ok', false, 'error', 'closed');
+  end if;
+
+  -- Lock order, one direction everywhere (§4): the rig, then the contracts.
+  -- is_transport_owner only READS the charter, so this takes no charter lock
+  -- and cannot invert against transport_set_sheet's `for update`.
+  select * into v_rig from public.transport_rigs where id = p_rig_id for update;
+  if not found then
+    return jsonb_build_object('ok', false, 'error', 'no_such_rig');
+  end if;
+  if not public.is_transport_owner(v_rig.company_id) then
+    return jsonb_build_object('ok', false, 'error', 'not_your_rig');
+  end if;
+
+  -- Already retired? Hand back the state rather than erroring — RUN_016's rule
+  -- and the same one §4.2 and §4.3 follow, so a double-click or a retry after a
+  -- dropped connection is harmless rather than alarming. ('retried' is this
+  -- file's word for "this call was a repeat"; it is not 'retired' with the
+  -- letters moved, and both appear in this payload on purpose.)
+  if v_rig.status = 'retired' then
+    return jsonb_build_object('ok', true, 'retried', true, 'rig_id', p_rig_id,
+                              'status', 'retired',
+                              'caps', public.transport_caps(v_rig.company_id));
+  end if;
+
+  if v_rig.assigned_to is not null then
+    return jsonb_build_object('ok', false, 'error', 'rig_on_deployment',
+                              'assigned_to', v_rig.assigned_to);
+  end if;
+
+  select count(*) into v_live from public.transport_contracts k
+   where k.rig_id = p_rig_id and k.status = 'in_transit';
+  if v_rig.status = 'hauling' or v_live > 0 then
+    -- The reason the old DELETE policy existed, kept verbatim: a contract would
+    -- keep an arrival time nobody is driving towards.
+    return jsonb_build_object('ok', false, 'error', 'rig_in_transit',
+                              'in_transit', v_live);
+  end if;
+
+  v_today := to_char((now() at time zone 'utc')::date, 'YYYY-MM-DD');
+  if v_rig.day_key = v_today and v_rig.runs_used > 0 then
+    return jsonb_build_object('ok', false, 'error', 'rig_ran_today',
+                              'used', v_rig.runs_used,
+                              'cap', least(v_rig.runs_cap, v_cfg.max_runs_per_rig),
+                              'day_key', v_today);
+  end if;
+
+  -- Every condition re-tested in the WHERE, and the result CHECKED — §4.2 and
+  -- §4.4 both do this and for the same two reasons. One: the `for update` above
+  -- serialises two tabs today, and this is what keeps the guarantee if somebody
+  -- ever removes the lock. Two: a bare UPDATE that matches nothing is silent,
+  -- and returning ok:true for a retirement that did not happen is the shape of
+  -- refusal this file spends its header arguing against — so the miss is
+  -- re-read and reported rather than assumed impossible.
+  update public.transport_rigs r
+     set status = 'retired'
+   where r.id = p_rig_id
+     and r.status <> 'retired'
+     and r.status <> 'hauling'
+     and (r.day_key is distinct from v_today or r.runs_used = 0)
+  returning true into v_ok;
+
+  if not coalesce(v_ok, false) then
+    select * into v_rig from public.transport_rigs where id = p_rig_id;
+    return jsonb_build_object('ok', false, 'error', 'rig_not_retired',
+                              'status', coalesce(v_rig.status, 'gone'),
+                              'used', v_rig.runs_used, 'day_key', v_today);
+  end if;
+
+  return jsonb_build_object('ok', true, 'retried', false, 'rig_id', p_rig_id,
+                            'status', 'retired', 'was', v_rig.status,
+                            'caps', public.transport_caps(v_rig.company_id));
+end;
+$function$;
+
+revoke all on function public.transport_retire_rig(uuid) from public, anon;
+grant execute on function public.transport_retire_rig(uuid) to authenticated;
+
+
 -- ─── 5. VERIFY ─────────────────────────────────────────────────────────────
 --
 -- ⚠ COUNT THEM. sql/015's own verify note: "r9 asserted `policies = 6` when the
@@ -2100,16 +2748,21 @@ grant execute on function public.transport_set_sheet(uuid, jsonb, text, integer,
 --   by eye either — the query below was RUN, on the throwaway cluster the
 --   header describes, and every number here is what it returned.
 --     tables   5 — companies, rigs, contracts, ledger, config
---     policies 7 — tco_sel, tco_ins | trg_sel, trg_ins, trg_del | tct_sel |
---                  tld_sel. There is deliberately no *_upd anywhere, no policy
---                  of any kind on the ledger's write commands, and none at all
---                  on config.
+--     policies 6 — tco_sel, tco_ins | trg_sel, trg_ins | tct_sel | tld_sel.
+--                  There is deliberately no *_upd anywhere, no *_del ANYWHERE
+--                  either as of this round, no policy of any kind on the
+--                  ledger's write commands, and none at all on config.
+--                  🔴 IT WAS 7. trg_del is gone — it let a carrier delete and
+--                     re-insert a rig to reset the daily run counter that row
+--                     carries. Retirement is transport_retire_rig (§4.6) now.
+--                     A 7 here means the old policy came back with the file.
 --     helpers  4 — is_transport_owner, transport_caps, transport_tariff_ok,
 --                  transport_charter_slots_left. Two of the four exist because
 --                  a POLICY needs them and would recurse if inlined; all four
 --                  read a table no client may read.
---     rpcs     5 — quote, dispatch, settle, repair, set_sheet
---     secdef  11 — all of the above plus the two §2b trigger guards
+--     rpcs     6 — quote, dispatch, settle, repair, set_sheet, retire_rig
+--     secdef  12 — all of the above plus the two §2b trigger guards
+--                  (4 helpers + 6 RPCs + 2 guards; it was 11 at 5 RPCs)
 --     triggers 2 — transport_companies_cap, transport_rigs_cap. THE TWO CAPS
 --                  LIVE HERE AND NOWHERE ELSE, so a zero in this column is not
 --                  a cosmetic failure: it means the charter cap and the fleet
@@ -2131,6 +2784,15 @@ grant execute on function public.transport_set_sheet(uuid, jsonb, text, integer,
 --        trigger` leaves the trigger in pg_trigger, so a count of the triggers
 --        alone would still read 2. A restore from a dump taken with
 --        --disable-triggers that was never re-enabled looks exactly like this.
+--      · residual_grants is the privilege the enumerated revokes used to walk
+--        straight past. Supabase grants ALL on public tables to
+--        `authenticated`, ALL includes TRUNCATE, and TRUNCATE consults no
+--        policy at all — so it emptied the append-only ledger without touching
+--        a single thing the other five negative columns look at. sql/028:11
+--        measured the residue an enumerated revoke leaves ("REFERENCES,
+--        SELECT, TRIGGER, TRUNCATE"); this counts three of the four across all
+--        five tables, SELECT being the one that is wanted and governed by the
+--        policies above. See the long note on the revokes in §3.
 --      · over_ceiling_sheets and over_fleet_cap are DATA assertions, not
 --        schema ones, and they are here because both of those limits were once
 --        stated in this file's header and enforced by nothing. A cap that is
@@ -2149,11 +2811,11 @@ grant execute on function public.transport_set_sheet(uuid, jsonb, text, integer,
 --           `triggers` and `disabled_triggers` in the same row before
 --           concluding anything.
 --
--- Expect: tables 5 · policies 7 · helpers 4 · rpcs 5 · secdef 11 · triggers 2 ·
---         guards 2 · no_rig_upd 0 · no_co_upd 0 · no_ledger_write 0 ·
+-- Expect: tables 5 · policies 6 · helpers 4 · rpcs 6 · secdef 12 · triggers 2 ·
+--         guards 2 · no_rig_upd_del 0 · no_co_upd 0 · no_ledger_write 0 ·
 --         no_cfg_pol 0 · disabled_triggers 0 · guards_not_volatile 0 ·
---         ledger_balance_cols 0 · over_ceiling_sheets 0 · over_fleet_cap 0 ·
---         cfg_rows 1
+--         ledger_balance_cols 0 · residual_grants 0 · over_ceiling_sheets 0 ·
+--         over_fleet_cap 0 · cfg_rows 1
 -- Run on an empty database this returned exactly that row, three applications
 -- in. On the populated one it returned it too, except for over_fleet_cap — see
 -- the header: it read 1 while a deliberately unguarded charter was on the
@@ -2172,12 +2834,13 @@ select
   (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
      where n.nspname = 'public' and p.proname in
        ('transport_quote','transport_dispatch','transport_settle',
-        'transport_repair','transport_set_sheet'))                                    as rpcs,
+        'transport_repair','transport_set_sheet','transport_retire_rig'))             as rpcs,
   (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
      where n.nspname = 'public' and p.prosecdef and p.proname in
        ('is_transport_owner','transport_caps','transport_tariff_ok',
         'transport_charter_slots_left','transport_quote','transport_dispatch',
         'transport_settle','transport_repair','transport_set_sheet',
+        'transport_retire_rig',
         'transport_charter_cap_guard','transport_fleet_cap_guard'))                    as secdef,
   -- The caps themselves. `not tgisinternal` excludes the FK enforcement
   -- triggers Postgres creates for `references`, which are not ours to count.
@@ -2187,8 +2850,10 @@ select
       and t.tgname in ('transport_companies_cap','transport_rigs_cap'))                as triggers,
   (select count(*) from pg_indexes where schemaname = 'public'
      and indexname in ('transport_contracts_ref_uniq','transport_ledger_once'))       as guards,
+  -- DELETE joined UPDATE here when trg_del was removed: a DELETE policy on
+  -- this table is a reset button on the daily run counter, not a tidy-up.
   (select count(*) from pg_policies where schemaname = 'public'
-     and tablename = 'transport_rigs' and cmd = 'UPDATE')                              as no_rig_upd,
+     and tablename = 'transport_rigs' and cmd in ('UPDATE','DELETE'))                  as no_rig_upd_del,
   (select count(*) from pg_policies where schemaname = 'public'
      and tablename = 'transport_companies' and cmd in ('UPDATE','DELETE'))             as no_co_upd,
   (select count(*) from pg_policies where schemaname = 'public'
@@ -2214,6 +2879,18 @@ select
   (select count(*) from information_schema.columns where table_schema = 'public'
      and table_name = 'transport_ledger'
      and column_name in ('balance','total','earnings','balance_after'))                as ledger_balance_cols,
+  -- 🔴 THE PRIVILEGE NO POLICY CAN SEE. Counts tables where `authenticated`
+  --    still holds any of the three grants the enumerated revokes used to miss.
+  --    A non-zero here means one of the revokes in §3 was edited or a later
+  --    migration re-granted ALL — and TRUNCATE bypasses RLS entirely, so no
+  --    other column in this row would notice.
+  (select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public'
+      and c.relname in ('transport_companies','transport_rigs',
+                        'transport_contracts','transport_ledger','transport_config')
+      and (has_table_privilege('authenticated', c.oid, 'TRUNCATE')
+        or has_table_privilege('authenticated', c.oid, 'TRIGGER')
+        or has_table_privilege('authenticated', c.oid, 'REFERENCES')))                 as residual_grants,
   -- The two data assertions. Both must be 0, and both name a limit this file
   -- once only claimed.
   (select count(*) from public.transport_companies c
@@ -2252,10 +2929,14 @@ select c.id, c.name, c.status, c.depot_level,
        (select count(*) from public.transport_contracts k
          where k.carrier_id = c.id and k.status = 'lost')                                   as lost,
        c.reliability,
+       -- `k.shipper_id <> c.owner_id` mirrors §4.3's recompute EXACTLY. If the
+       -- two ever differ, every carrier who has hauled their own cargo reads as
+       -- drift for ever and this column stops meaning anything.
        coalesce(c.reliability, -1) - coalesce((
          select round(100.0 * count(*) filter (where k.status = 'delivered') / count(*), 1)
            from public.transport_contracts k
           where k.carrier_id = c.id
+            and k.shipper_id <> c.owner_id
             and k.status in ('delivered','late','lost','refused')
           having count(*) > 0), coalesce(c.reliability, -1))                                as drift,
        (select coalesce(sum(l.amount), 0) from public.transport_ledger l

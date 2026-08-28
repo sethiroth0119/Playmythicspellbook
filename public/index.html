@@ -80323,12 +80323,45 @@ function _opAfterFound(opId) {
         const _rig = _transportGrantStarterRig();
         try { saveProfile && saveProfile(); } catch (_) {} try { saveForge && saveForge(); } catch (_) {}
         try { Promise.resolve(_mt.onCharterFounded({ free: true })).catch(function () {}); } catch (_) {}
-        // Name the actual outcome. "Your rig could not be parked" with no
-        // reason is the message that turns into a support ticket.
+        /* Name the actual outcome. "Your rig could not be parked" with no
+           reason is the message that turns into a support ticket.
+           ⚠ THE TWO RETRY PROMISES BELOW ARE NOW TRUE, AND THEY WERE NOT.
+           "free a slot and reopen the Freight Depot to claim it" and "open the
+           Freight Depot and it will try again" both described a retry no code
+           performed: this was _transportGrantStarterRig's only call site, so
+           the grant ran at founding and never again, and a player whose lot was
+           full here stayed rigless forever. What makes them honest is
+           MythicTransportBridge.grantStarterRig (~208139), plus the trigger
+           that reaches it: /src/transport's refresh() runs seedStarter()
+           whenever the fleet reads back EMPTY and ownsCharter() is true, which
+           is what survives closing the game — its in-session `_starterPending`
+           flag does not. BOTH halves are load-bearing; if either is ever
+           removed, DELETE THESE TWO PROMISES IN THE SAME EDIT — a message
+           that tells a player to come back to a screen that cannot help them is
+           worse than one that says the rig is issued at founding only.
+           🔥 AND A THIRD PIECE HOLDS THE ECONOMY STILL WHILE THEY ARE TRUE.
+           A retry reachable on every depot open is also a re-MINT reachable on
+           every depot open, and the helper's only guard used to be "is a haul
+           truck parked?" — which scrapping clears. `p.starterRigIssued`
+           (~80528) is the durable bound that keeps this gift once per account;
+           the 'spent' sentence below is its refusal. Removing the flag does not
+           merely loosen a check, it reopens a Cinder faucet. */
         const _rigMsg = (_rig === 'ok' || _rig === 'already')
           ? ' Your starter rig is parked on the lot.'
           : (_rig === 'full')
           ? ' ⚠ Your vehicle lot is full, so the starter rig could not be parked — free a slot and reopen the Freight Depot to claim it.'
+          /* 'spent' MUST NOT FALL INTO THE RETRY SENTENCE BELOW. It means the
+             free rig was already issued for this account and has since left the
+             lot (sold, scrapped or stripped) — the one code here that no amount
+             of reopening the depot can change, because the durable bound
+             (`p.starterRigIssued`, ~80528) is what is refusing. Telling the
+             player "it will try again" would send them round a loop that cannot
+             end, which is the same false promise the retry wiring was added to
+             stop. Reachable at FOUNDING because _opAfterFound runs on a
+             re-found after a charter was retired, and the gift is once per
+             account, not once per charter row. */
+          : (_rig === 'spent')
+          ? ' Your free starter rig was already issued once and is no longer on your lot — the charter does not issue a second. Buy a haul-class rig from the Prince Portfolios floor and the Freight Depot will register it to your fleet.'
           : ' ⚠ The starter rig could not be issued yet (' + _rig + ') — open the Freight Depot and it will try again.';
         showToast('🚛 TRANSPORTATION COMPANY chartered!' + _rigMsg + ' Plant a Freight Depot in your city, then open it from the main hub.', 8600);
       } else {
@@ -80443,10 +80476,10 @@ function _transportWorkers() {
    DETERMINISTIC, NOT rollRig(). The roll table runs up to a Mythic roadtrain
    at 3.4M base value on roll weight 1, and a founding gift that can jackpot
    turns a 650k purchase into a lottery ticket. Lowest common rig, every time.
-   Returns a CODE, not a boolean — 'ok' | 'already' | 'full' | 'nocatalog' |
-   'nomodule' | 'error' — because the founding toast has to tell the player
-   which of those happened, and "your rig could not be parked" with no reason
-   is the message that becomes a support ticket. */
+   Returns a CODE, not a boolean — 'ok' | 'already' | 'spent' | 'full' |
+   'nocatalog' | 'nomodule' | 'error' — because the founding toast has to tell
+   the player which of those happened, and "your rig could not be parked" with
+   no reason is the message that becomes a support ticket. */
 function _transportGrantStarterRig() {
   try {
     const MT = (typeof window !== 'undefined' && window.MythicTransport) || null;
@@ -80456,11 +80489,43 @@ function _transportGrantStarterRig() {
     const base = cat.find((r) => r && r.rarity === 'common') || cat[0];
     const p = ensurePrincePortfolios();
     if (!Array.isArray(p.lot)) p.lot = [];
-    // Idempotent by OBSERVATION, not by a flag: founding fires from three call
-    // sites and _opAfterFound keeps no memory, so "the lot already holds a
-    // haul-class truck" is the guard. A flag here would be a fourth ownership
-    // boolean and could go stale exactly like p.owned did.
-    if (p.lot.some((v) => v && v.haul)) return 'already';
+    /* 🔴 TWO GUARDS, AND THE SECOND ONE IS A REAL BUG'S HEADSTONE.
+       (1) OBSERVATION — "the lot already holds a haul-class truck". Founding
+       fires from three call sites and _opAfterFound keeps no memory, so this is
+       what stops a double-found minting two rigs. It was ONCE the whole guard,
+       and the comment that used to stand here argued against adding a flag
+       ("a fourth ownership boolean that could go stale exactly like p.owned").
+       (2) A DURABLE RECORD — `p.starterRigIssued`.
+       🔥 WHY (2) HAD TO BE ADDED ANYWAY, AND WHY THE OLD ARGUMENT DOES NOT
+       COVER IT: observation only bounds the mint while the truck is STILL
+       PARKED. The moment this helper gained a second caller —
+       MythicTransportBridge.grantStarterRig (~208139), reached by
+       /src/transport's seedStarter() on every depot open where the fleet reads
+       back empty — the lot guard stopped being a bound at all, and the loop was
+       a REPEATABLE CINDER FAUCET: open the Freight Depot → a free rig is minted
+       at `price: fair` (~43k) → ppScrapVehicle (~196439) pays 10% of price
+       straight through addGems() → the lot holds no haul truck again → reopen
+       the depot → a NEW free rig. Four opens, four mints, ~17,200 🔥 from
+       nothing. (The fleet row is no bound either: transport_companies is not
+       created at founding but by the explicit "register on the exchange" action
+       (/src/transport/index.js ~1177), so between those two moments registerRig
+       returns `no_company` and the fleet stays legitimately empty.)
+       p.starterRigIssued is NOT a fourth OWNERSHIP boolean — that is what makes
+       it different from p.owned. It records an EVENT ("the gift was made"),
+       and an event has no other durable source once the vehicle it produced can
+       be sold, scrapped or stripped. Ownership can be re-derived from the lot;
+       "was this ever given?" cannot.
+       ⚠ (1) ALSO SETS (2), which backfills every charter founded before this
+       flag existed — otherwise their one parked rig scraps straight back into
+       the faucet. The cost of that backfill is stated and accepted: a player
+       who already had a BOUGHT haul truck on the lot at founding consumes the
+       gift without a mint. That is exactly what guard (1) has always done on
+       its own (it minted nothing and the founding toast still said "your
+       starter rig is parked"), and seedStarter() then registers that truck to
+       the fleet for free; the flag only makes the outcome durable instead of
+       re-openable by scrapping it. */
+    if (p.lot.some((v) => v && v.haul)) { p.starterRigIssued = true; return 'already'; }
+    if (p.starterRigIssued === true) return 'spent';
     const cap = ppLotCap();
     let slot = null;
     /* First FREE slot, scanned — never `p.lot.length`. Vehicles are removed
@@ -80497,6 +80562,13 @@ function _transportGrantStarterRig() {
       listPrice: Math.round(fair * 1.35 / 100) * 100,
       slot: slot,
     });
+    /* SET AFTER THE PUSH, NEVER BEFORE IT. Marking the gift spent and then
+       throwing on the way to parking it would leave the player with no rig and
+       no way to ever be issued one — the flag is a record of a mint that
+       HAPPENED, so it is written only once the row is on the lot. The caller
+       persists it (the bridge saves on 'ok'/'already', _opAfterFound saves
+       unconditionally right after the founding call). */
+    p.starterRigIssued = true;
     _ppLog('event', 'Starter rig ' + base.name + ' issued with the Transportation Company charter.');
     return 'ok';
   } catch (e) { return 'error'; }
@@ -196165,7 +196237,48 @@ function _ppGenListing() {
      stale list inverts the very check it was written to make possible).
      0.18 is the share of the floor that is freight and it is the only number
      added here; WHICH rig is chosen is rolled by the module against its own
-     weights, so this file never holds a second copy of the rig odds. */
+     weights, so this file never holds a second copy of the rig odds.
+
+     💰 AND IT MOVES A NUMBER IN AN EXISTING SYSTEM, WHICH IS THE PART THIS
+     BLOCK USED TO LEAVE OUT. Rig baseValues run 46,000–3,400,000
+     (src/transport/rigs.data.js); PP_VEHICLE_NAMES runs 9,200–388,000. `price`
+     and `estPartValue` are the two figures derived from base.baseValue below
+     (both off `fair`), so 18% of the floor now carries numbers up to ~9× the
+     car table's ceiling — and everything computed FROM `price` downstream moves
+     with them: ppScrapVehicle() (~196439) pays
+     `round(v.price * 0.10 / 100) * 100` straight through addGems(), so the
+     per-vehicle scrap refund's ceiling goes from ~35k to ~300k 🔥, and the
+     asking price ppBuyVehicle stamps on the parked row (~196418,
+     `v.price * 1.35`) rises with it too.
+     ⚠ `listPrice` is NOT one of this generator's keys — an earlier draft of
+     this block listed it beside `price` and `estPartValue`, and it is not
+     written until a row is parked (ppBuyVehicle ~196418, the auction ~197034,
+     the starter mint ~80562). The economic conclusion is unchanged; only the
+     place to look for it was wrong.
+     NOT AN EXPLOIT, and the reasoning is worth keeping so nobody "fixes" it
+     twice: scrapping is a 90% loss on what the player paid, so the loop is
+     strictly negative, and strip-for-parts yields PP_PARTS quantities that do
+     NOT scale with baseValue (~196496) — the salvage faucet is unchanged.
+     ⚠ THE ONE PLACE CINDER IS GENUINELY MINTED is the free starter rig, which
+     _transportGrantStarterRig (~80483) parks with `price: fair` (~43k for the
+     common rig at 'Clean') at zero cost: scrapping it pays ~4,300 🔥 that was
+     never spent. It is ONCE PER ACCOUNT, against a startup cost the player has
+     already paid, so it is a rounding error beside the charter and not a loop.
+     🔥 WHAT BOUNDS IT IS `p.starterRigIssued` (~80528), AND AN EARLIER DRAFT OF
+     THIS PARAGRAPH NAMED THE WRONG GUARD — it said the bound was the helper's
+     "the lot already holds a haul-class truck" test. That test only holds while
+     the truck is STILL PARKED, and scrapping is precisely what removes it. In
+     the same round that /src/transport gained the ability to ask for the mint
+     on every depot open (MythicTransportBridge.grantStarterRig ~208139), that
+     made this paragraph's own subject a REPEATABLE faucet: mint → scrap for 10%
+     of `price` → reopen the depot → mint again, ~4,300 🔥 per lap and no lap
+     limit. Nothing on the scrap path guards `v.haul`, and nothing here should:
+     scrapping a rig you own is a legitimate sale. The durable per-mint record
+     is the fix, and it is the ONLY reason the "once" in this paragraph is true.
+     If it is ever unwanted, mint that rig with `price: 0` (its
+     listPrice is derived from `fair`, not from `price`, so the lot still shows
+     a sane asking figure) rather than touching the derivation here, which the
+     other 82% of the floor also uses. */
   const RIGS = (typeof window !== 'undefined' && window.MythicTransport && typeof window.MythicTransport.rollRig === 'function') ? window.MythicTransport : null;
   const wantHaul = !!(RIGS && _ppChance(0.18));
   /* `||` and not a ternary: rollRig() answers null for an empty rig table (its
@@ -207983,6 +208096,59 @@ window.MythicTransportBridge = {
      ownership to read it. The fallback below is that same shape, so a throw
      does not become a different one. */
   garageRig: () => { try { return _garageRig(); } catch (e) { return { owned: false, name: 'Hand-hauled', icon: '🧺', load: 1, risk: 0, speed: 1, tier: 0 }; } },
+
+  /* 🚛 THE STARTER RIG'S RETRY — the ONE mint that crosses this seam, and the
+     reason it had to.
+     _transportGrantStarterRig() had exactly ONE call site: inside
+     `if (opId === 'transport')` in _opAfterFound (~80319), which runs at
+     FOUNDING and never again. Meanwhile that same block's toast tells a player
+     whose lot was full "free a slot and reopen the Freight Depot to claim it",
+     and /src/transport's seedStarter() answered its own refusal with "reopen
+     the Freight Depot once it lands" — and NOTHING on any reopen path could
+     make it land, because this bridge deliberately exposed no vehicle writer.
+     Both sides promised a retry that no code performed, so a player whose lot
+     was full at charter time was permanently rigless. This key is that retry.
+
+     🔴 IT IS A NAMED GIFT, NOT A VEHICLE WRITER, and the difference is the
+     whole safety argument for adding it:
+       • CHARTER-GATED HERE, not in the module. _transportGrantStarterRig has no
+         licence check of its own (it does not need one — its only other caller
+         runs immediately after the charge), so the gate lives on this side
+         where the licence lives. A module bug cannot hand a free vehicle to
+         someone who never founded a Transportation Company.
+       • IDEMPOTENT ONCE PER ACCOUNT, AND OBSERVATION ALONE WAS NOT ENOUGH.
+         The helper returns 'already' while a haul-class truck is parked — but
+         this key is called on EVERY depot open with an empty fleet, so that
+         guard held only until the player scrapped the truck. Adding this key
+         without a durable record turned the gift into a repeatable Cinder
+         faucet (mint → scrap for 10% of `price` → reopen → mint again). The
+         bound is now `p.starterRigIssued` (~80528), written when the rig is
+         actually parked; the helper answers 'spent' afterwards. If that flag is
+         ever removed, REMOVE THIS KEY IN THE SAME EDIT.
+       • THE MODULE DOES NOT CHOOSE THE RIG. The helper picks the lowest Common
+         deterministically and explicitly NOT rollRig(), so this cannot be
+         turned into a free roll at a 3.4M-baseValue Mythic roadtrain.
+       • setRigField's allow-list is untouched. "What can /src/transport
+         change?" still has an answer, and this is one more line of it.
+     A CODE, NOT A BOOLEAN — 'ok' | 'already' | 'spent' | 'full' | 'nocharter' |
+     'nocatalog' | 'nomodule' | 'error' — matching the helper, because the
+     player-facing refusal has to name which of those happened. Saved here and
+     not by the caller: the module has no way to persist a lot row, and a
+     minted vehicle that is never written is the silent-save class of bug this
+     file has shipped before. */
+  grantStarterRig: () => {
+    try {
+      if (!_transportOwnsCharter()) return 'nocharter';
+      const code = _transportGrantStarterRig();
+      /* 'already' SAVES TOO, and that is not tidiness. 'already' is the branch
+         that backfills `p.starterRigIssued` for a charter founded before that
+         flag existed; leaving it unsaved would let the backfill die with the
+         page and hand the scrap-and-reopen faucet back to exactly the players
+         it was added for. 'spent' writes nothing, so it needs no save. */
+      if (code === 'ok' || code === 'already') { try { saveProfile && saveProfile(); } catch (e) {} try { saveForge && saveForge(); } catch (e) {} }
+      return code;
+    } catch (e) { return 'error'; }
+  },
 
   // ── Geography. A depot stands on real ground and routes cross real ground.
   campNodeId: () => { try { return (Profile && Profile.campNodeId) || null; } catch (e) { return null; } },

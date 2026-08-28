@@ -22,13 +22,13 @@
    🔴 TWO ID DOMAINS, AND CONFUSING THEM IS A BUG THIS FILE HAS ALREADY SHIPPED.
    A rig has two identities and they are NOT interchangeable:
      • the VEHICLE id — 'v…', minted by index.html's `_ppNewId('v')` on the
-       Prince Portfolios lot (~80489). It is what `b.lot()` rows carry, what
+       Prince Portfolios lot (~80549). It is what `b.lot()` rows carry, what
        `setRigField()` takes, what the renderer stamps into `data-mt-id`, and
        what `registerRig()` stores in `transport_rigs.vehicle_id`.
      • the RIG ROW id — the uuid PRIMARY KEY of `transport_rigs`. It is what
-       every server RPC means by `p_rig_id`: sql/038:1307 declares
+       every server RPC means by `p_rig_id`: sql/038 ~2397 declares
        `transport_repair(p_rig_id uuid)` and looks it up as `transport_rigs.id`,
-       and `transport_dispatch` claims the run off `r.id = p_rig_id` at :1031.
+       and `transport_dispatch` claims the run off `r.id = p_rig_id` at ~2064.
    An earlier revision of this file sent the VEHICLE id to `repair()`, which
    forwards it as `p_rig_id`. That does not fail loudly — it comes back as
    `no_such_rig` for a rig sitting right there on screen, which reads as a
@@ -63,6 +63,15 @@ import { DEPOT_DEF_ID, depots, bestDepot, depotEffect, fleetCap, bays, depotRead
 import { TRANSPORT_CSS, renderTransport } from './depot.render.js';
 import { bridge, bridgeReady, esc, fmtNum } from './transport.bridge.js';
 
+/* 📌 PINNED, AND IT LIVES IN TWO FILES. This id is the ONLY thing joining the
+   element open() creates to the stylesheet that makes it a full-screen overlay:
+   depot.render.js keys `#mythic-transport-ov{position:fixed;inset:0;…}` to this
+   exact literal (depot.render.js:268, and its comment at :247 names this line
+   from the other side). CSS cannot import a constant, so the two copies are
+   held in agreement by these two comments and nothing else. Rename it here and
+   the panel renders as an unstyled block in the page flow — content visible,
+   nothing dismissable — which reads as "the depot screen is broken" rather than
+   as a missing rule. If it ever has to change, change BOTH in one edit. */
 const OV = 'mythic-transport-ov';
 const CSS_ID = 'mt-css';
 
@@ -261,9 +270,9 @@ function garageInfo(b) {
 
 /* ── what a registration has to carry ───────────────────────────────────────
    🔴 runs_cap IS THE CALLER'S TO SUPPLY, AND THIS FILE IS THAT CALLER.
-   contracts.js:845 says so in as many words and refuses to derive it: "the fix
+   contracts.js ~1111 says so in as many words and refuses to derive it: "the fix
    is for the caller to pass it, not for this file to grow a rarity table."
-   sql/038:276 declares `runs_cap int not null default 3`, so a registration
+   sql/038 ~603 declares `runs_cap int not null default 3`, so a registration
    that omits it books a MYTHIC rig — 10 runs a day, ~3.4M Cinder on the auction
    floor — at three runs a day, forever, because nothing on the server ever
    recomputes the column. The player would be paid a third of what they bought.
@@ -275,12 +284,12 @@ function garageInfo(b) {
 
    ⚠ AND IT IS A SNAPSHOT, WHICH IS A PROPERTY OF THE COLUMN AND NOT A BUG HERE.
    `transport_repair` moves `condition` up a rung and does NOT touch `runs_cap`
-   (sql/038:1357 — the UPDATE sets repairs_used, repair_day and condition only).
+   (sql/038 ~2456 — the UPDATE sets repairs_used, repair_day and condition only).
    So a rig repaired from Wrecked to Clean keeps the cap it was registered with.
    Closing that needs a server-side recompute or a `transport_set_runs_cap` RPC,
    both of which are a migration; until then fleetBlock() shows the SERVER'S
    number, not the ladder's, so the panel never promises a run the exchange will
-   refuse. Direction of failure chosen deliberately, and it matches sql/038:270:
+   refuse. Direction of failure chosen deliberately, and it matches sql/038 ~598:
    "if the two ever disagree the carrier gets FEWER runs than the UI promised."
 
    ⚠ The Garage perk IS folded in, via the tier. rigs.data.js:392 is explicit
@@ -295,7 +304,7 @@ function registrationFields(b, vehicleId, garage) {
   return {
     vehicle: veh,
     // rarity and condition come off the lot vehicle because index.html's
-    // `_transportGrantStarterRig()` (~80489) parks it carrying both, and the
+    // `_transportGrantStarterRig()` (~80483) parks it carrying both, and the
     // auction floor parks its winnings the same way. transport_rigs CHECKs both
     // columns, so a junk value is refused by Postgres rather than stored.
     rarity: veh.rarity || (def && def.rarity) || null,
@@ -364,11 +373,26 @@ function progressOf(row) {
    of leaving the correct behaviour resting on a coincidence.
    ⚠ IF YOU EVER CHANGE THIS TO fleetCap(garage.tier), DELETE THE
      `depot.fleetCap + garage.slotBonus` LINE IN buildView() IN THE SAME EDIT,
-     or a $99 rig starts granting two fleet slots. */
+     or a $99 rig starts granting two fleet slots.
+
+   🔴 NO `nodeId` ON THIS BLOCK ANY MORE, AND IT MUST NOT COME BACK. It used to
+   ride along here, off the pinned view shape, with a comment saying it was
+   "carried for quoteRequest(), which needs an origin for the reach test" — and
+   that carrying was the bug. quoteRequest() forwarded this — the SHIPPER's yard
+   — as the request's top-level `depot:`, which resolveInput() ranks ABOVE the
+   carrier's own yard, so a rival's reach was measured against the shipper's
+   radius (the full account is on `carrier.depot` in quoteRequest, ~931). The
+   parameter was deleted there, which left this key with no reader anywhere:
+   depot.render.js reads `v.depot` and never its nodeId. It is deleted rather
+   than left in place for the same reason the parameter was — an unused value
+   still in scope is what a future edit re-wires "helpfully", and re-wiring THIS
+   one re-opens a quote the server refuses as `out_of_reach`. Anything that
+   genuinely needs the player's own yard origin should call depotReady() and
+   read `nodeId` off it, which is where this was copied from. */
 function depotBlock(b, ready) {
   if (!ready) {
     return {
-      ok: false, level: 0, bays: 0, fleetCap: 0, radius: 0, nodeId: '',
+      ok: false, level: 0, bays: 0, fleetCap: 0, radius: 0,
       why: 'Freight is not wired up on this build — the transport bridge is missing.',
       fix: 'Reload the game. If it persists, index.html is missing its MythicTransportBridge block.',
     };
@@ -383,14 +407,10 @@ function depotBlock(b, ready) {
       bays: ('bays' in d) ? num(d.bays) : num(call(bays, 0)),
       fleetCap: ('fleetCap' in d) ? num(d.fleetCap) : num(call(fleetCap, 0, 0)),
       radius: num(d.radius),
-      // Not on the pinned view shape — carried for quoteRequest(), which needs
-      // an origin for the reach test. depotReady() already refuses with
-      // 'no-origin' when it is missing, so this is never a silent ''.
-      nodeId: String(d.nodeId || ''),
     };
   }
   return {
-    ok: false, level: 0, bays: num(call(bays, 0)), fleetCap: num(call(fleetCap, 0, 0)), radius: 0, nodeId: '',
+    ok: false, level: 0, bays: num(call(bays, 0)), fleetCap: num(call(fleetCap, 0, 0)), radius: 0,
     why: 'No Freight Depot in reach.',
     fix: 'Build a Freight Depot in one of your cities — without one the charter is paperwork.',
   };
@@ -441,7 +461,7 @@ function fleetBlock(b, garage) {
 
     /* 🔴 WHAT IS SHOWN IS WHAT THE SERVER WILL HONOUR, not what the rig is
        worth. `transport_dispatch` claims a run under
-       `runs_used < least(runs_cap, max_runs_per_rig)` (sql/038:1033), so the
+       `runs_used < least(runs_cap, max_runs_per_rig)` (sql/038 ~2068), so the
        stored column binds — and it is a SNAPSHOT that `transport_repair` does
        not update when it raises a rig's condition. Printing the ladder figure
        would promise runs the exchange refuses, which is the "shown one number,
@@ -636,10 +656,61 @@ async function refresh() {
   S.contracts = okOf(cons) ? rowsOf(cons) : [];
   S.loading = false;
 
-  // A seeding attempt that was refused because the fleet was unreadable retries
-  // here, now that it IS readable. seedStarter() does not call refresh(), so
-  // this cannot loop.
-  if (_starterPending && okOf(rigs)) {
+  /* ── the starter rig's reopen path ────────────────────────────────────────
+     TWO triggers, and the second one is the one that survives closing the game.
+       1. `_starterPending` — an attempt refused earlier IN THIS SESSION (the
+          fleet was unreadable, or the lot was full) retries now that the fleet
+          IS readable.
+       2. a charter + an EMPTY fleet — the durable trigger.
+
+     🔴 WHY (2) HAD TO BE ADDED. `_starterPending` is a module-level `let`
+     (see ~114) with no persistence anywhere, so it dies with the page. Until
+     this line, (1) was the ONLY reopen trigger, which meant: found the charter
+     with a full Prince Portfolios lot → get the 'full' refusal → close the game
+     → free a slot → reopen the Freight Depot → `_starterPending` is false on
+     the fresh module load → nothing seeds → rigless forever. index.html's
+     founding toast (~80352) promises precisely that flow ("free a slot and
+     reopen the Freight Depot to claim it"), so the promise was still false
+     across a restart even after grantStarterRig() made it true in-session.
+     🔴 REJECTED: persisting `_starterPending` (localStorage or a Profile flag
+     on THIS side). A retry flag owned by the module would be a second opinion
+     about a gift the module does not issue, and it would go stale exactly the
+     way `p.owned` did. The record of the gift belongs where the mint happens.
+
+     🔥 AND THIS TRIGGER IS NOT ITSELF A BOUND — READ THIS BEFORE LOOSENING IT.
+     "Empty fleet + charter" is a fine reason to ASK, and it is a terrible thing
+     to hang idempotency on. An empty fleet is an ORDINARY, LONG-LIVED state
+     here: `transport_companies` is not created at founding, it is created by
+     the explicit "register your carrier on the exchange" action (~1177), so
+     between founding and that click registerRig() answers `no_company`
+     (contracts.js ~1151) while listMyRigs() answers ok with zero rows. This
+     line therefore fires on EVERY depot open in that window. The first version
+     of this fix leaned on the minter's "the lot already holds a haul-class
+     truck" test to bound it, and that test only holds while the truck is still
+     PARKED — so the real loop was: open depot → free rig minted at ~43k → the
+     RPC refuses to record it → scrap the rig for ~4,300 🔥 (index.html's
+     ppScrapVehicle pays 10% of `price` through addGems, and nothing on that
+     path guards `v.haul`) → reopen → a NEW rig. Four opens, four mints.
+     What makes the ask safe is index.html's `p.starterRigIssued`: a durable
+     record of the MINT, written when the row is parked, answering 'spent'
+     forever after. `grantStarterRig()` is therefore safe to call as often as
+     this line likes, which is the only reason this line is allowed to be this
+     eager. If that flag is ever removed, this trigger must become a
+     once-per-session ask IN THE SAME EDIT.
+     ⚠ Note what is NOT relied on any more, and how close that already got.
+     An earlier draft rested this on "transport_rigs is append-only from this
+     client, so an empty fleet means never issued" — true of contracts.js today
+     (insert ~1155, update ~889, no delete) and ALREADY overtaken on the server:
+     sql/038 ships `transport_retire_rig` (~2647), which no client path calls
+     yet. It sets `status = 'retired'` rather than deleting, so the row survives
+     and listMyRigs() still counts it — but a future listMyRigs() that filtered
+     retired rigs out would make the fleet read empty for a carrier that plainly
+     had one. That would have re-opened the gift; it does not now, because the
+     fleet was never the bound.
+     Costs a `.length` on every other refresh and nothing else: seedStarter()
+     does not call refresh(), so this cannot loop. */
+  const wantStarter = _starterPending || (!S.rigs.length && !!call(b.ownsCharter, false));
+  if (wantStarter && okOf(rigs)) {
     const r = await seedStarter(S.rigs);
     if (r && r.seeded) {
       const again = await acall(listMyRigs, { ok: false });
@@ -662,7 +733,11 @@ async function refresh() {
    🔴 AND WHEN THE FLEET CANNOT BE READ, WE DO NOT SEED. Refusing costs the
    player one more click once they are online; seeding blind mints a duplicate
    free rig the moment the tables come back, and a duplicate asset is a support
-   conversation, not a bug fix. `_starterPending` makes refresh() retry it. */
+   conversation, not a bug fix. `_starterPending` makes refresh() retry it in
+   this session — and because that flag is only a `let`, refresh() ALSO calls
+   here on any read where the fleet comes back empty and the player holds a
+   charter, which is the trigger that survives closing the game. See the block
+   at the end of refresh(). */
 async function seedStarter(knownRows) {
   const b = B();
   if (b._null) return { ok: false, why: 'Freight is not wired up on this build.' };
@@ -680,25 +755,116 @@ async function seedStarter(knownRows) {
   }
   if (rows.length) { _starterPending = false; return { ok: true, seeded: false, why: 'Fleet already holds ' + rows.length + ' rig(s).' }; }
 
-  /* The vehicle itself is granted by index.html's founding hook, which owns the
-     Prince Portfolios lot. This module has no lot writer BY DESIGN — the bridge
-     exposes lot() and setRigField() and nothing that creates a vehicle — so a
-     second free rig cannot be conjured from here even by a bug in this file.
-     What happens here is the recording half: find the haul-class truck and
-     register it to the fleet. */
-  const veh = call(b.lot, []).find((v) => v && v.haul) || null;
+  /* The vehicle itself is minted by INDEX.HTML, which owns the Prince
+     Portfolios lot. This module still has no lot writer — the bridge exposes
+     lot(), lotCap(), setRigField() and, since the retry fix below,
+     grantStarterRig(): a NAMED, charter-gated, idempotent request for the one
+     specific gift, not a general "create a vehicle" verb. The distinction is
+     the whole safety property. A generic writer would be a rig minter reachable
+     from a feature module; grantStarterRig() cannot mint a second rig (a
+     parked haul truck answers 'already', and index.html's durable
+     `p.starterRigIssued` answers 'spent' for every call after the one that
+     actually parked one — the second of those is the load-bearing half, because
+     the first evaporates the moment the player scraps the truck), cannot
+     choose WHICH rig (index.html picks the lowest Common deterministically,
+     never rollRig(), so a founding gift cannot jackpot a 3.4M Mythic), and
+     cannot run for someone with no charter (the bridge checks
+     _transportOwnsCharter() first).
+     What happens here is still the recording half: find the haul-class truck
+     and register it to the fleet. */
+  const haulOnLot = () => call(b.lot, []).find((v) => v && v.haul) || null;
+  let veh = haulOnLot();
+  let grant = '';
   if (!veh) {
+    /* 🔴 ASK INDEX.HTML TO MINT IT — AND UNTIL THIS LINE EXISTED, BOTH SIDES
+       PROMISED A RETRY THAT NO CODE PERFORMED. `_transportGrantStarterRig()`
+       had exactly ONE call site, inside `if (opId === 'transport')` in
+       _opAfterFound, so it ran at FOUNDING and never again. Meanwhile
+       index.html's founding toast said "free a slot and reopen the Freight
+       Depot to claim it" and the refusal below said "reopen the Freight Depot
+       once it lands" — and nothing on any reopen path could make it land. A
+       player whose lot was full at charter time was permanently rigless and
+       `_starterPending` retried forever against a lot that would never gain a
+       truck. The fix is the bridge, not a lot writer here: index.html is still
+       the ONLY minter (`grantStarterRig` wraps its existing helper and refuses
+       anyone without a charter) and this module still cannot conjure a vehicle.
+
+       🔥 AND THE FIRST VERSION OF THIS LINE SHIPPED A CINDER FAUCET, which is
+       worth more than the fix it replaced. It leaned on the minter's "the lot
+       already holds a haul-class truck" test for idempotency — but this call
+       runs on EVERY depot open with an empty fleet, and an empty fleet is an
+       ordinary state for as long as the player has not registered on the
+       exchange (see refresh()). So: open depot → rig minted → registerRig
+       refuses `no_company` → scrap it for ~4,300 🔥 → reopen → mint again, with
+       no lap limit. index.html now records the mint durably
+       (`p.starterRigIssued`) and answers 'spent' afterwards, which is what
+       makes calling from here safe at this frequency. */
+    grant = String(call(b.grantStarterRig, 'nobridge'));
+    if (grant === 'ok' || grant === 'already') veh = haulOnLot();
+  }
+  if (!veh) {
+    /* 'spent' IS TERMINAL FOR THE MINT AND MUST NOT ARM `_starterPending` —
+       that flag exists to retry something that could still succeed, and this is
+       the one code here that no amount of reopening can change, because what is
+       refusing is a durable record rather than a transient lot state. Telling
+       the player "it will try again" would be the same false promise the retry
+       wiring was added to stop.
+       ⚠ `_starterSeeded` IS RELEASED THOUGH, which looks contradictory and is
+       not. It gates the whole function, including its RECORDING half, and that
+       half still has work to do: a player who buys a haul rig on the Prince
+       Portfolios floor should have it registered to the fleet free on the next
+       refresh, in this session, without a reload. Releasing it is safe now in a
+       way it would not have been before this round — re-entry can no longer
+       mint anything, because index.html's `p.starterRigIssued` is what answers,
+       and it answers 'spent' however many times it is asked. The cost is one
+       cheap synchronous bridge call per refresh, and only while the fleet is
+       empty. */
+    if (grant === 'spent') {
+      _starterSeeded = false;
+      _starterPending = false;
+      return {
+        ok: false,
+        why: 'Your charter’s free starter rig was already issued, and it is no longer on your Prince Portfolios lot.',
+        fix: 'The charter does not issue a second. Buy a haul-class rig on the Prince Portfolios floor and reopen the Freight Depot — it is registered to your fleet at no charge.',
+      };
+    }
     _starterSeeded = false; _starterPending = true;
+    /* THE CODE THE MINTER RETURNED IS THE REASON, not a second guess at it.
+       _transportGrantStarterRig answers 'ok' | 'already' | 'spent' | 'full' |
+       'nocatalog' | 'nomodule' | 'error', and the bridge adds 'nocharter' —
+       it returns a code and not a boolean precisely so the sentence can name
+       what happened, and re-deriving "is the lot full?" from lot()/lotCap()
+       here would be a second opinion that can disagree with the code that
+       actually tried to park it. 'full' is the only one the player can act on,
+       so it is the only one with its own sentence. */
+    if (grant === 'full') {
+      return {
+        ok: false,
+        why: 'Your Prince Portfolios lot is full, so the starter rig has nowhere to park.',
+        fix: 'Sell, scrap or strip a vehicle to free a slot, then reopen the Freight Depot — the rig is issued then.',
+      };
+    }
+    /* 'nobridge' is call()'s neutral for a bridge with no grantStarterRig at
+       all, which in the wild means a service worker serving THIS module beside
+       an older index.html. Reopening cannot fix that; a hard reload can, and
+       saying "reopen" at it would loop the player forever. */
+    if (grant === 'nobridge' || grant === 'nomodule') {
+      return {
+        ok: false,
+        why: 'This build cannot issue the starter rig — the depot screen and the game are out of step.',
+        fix: 'Hard-reload the game to fetch the current bundle, then open the Freight Depot again. Your charter is safe.',
+      };
+    }
     return {
       ok: false,
-      why: 'No haul-class rig in your lot to register yet.',
-      fix: 'The charter grants the starter rig onto the Prince Portfolios lot; reopen the Freight Depot once it lands.',
+      why: 'No haul-class rig in your lot to register yet' + (grant ? ' (' + grant + ')' : '') + '.',
+      fix: 'Reopen the Freight Depot and it will try to issue the rig onto your lot again.',
     };
   }
   const vid = veh.vehicleId || veh.id;
   /* 🔴 rarity, condition AND runsCap ARE SENT. Omitting them is not a cosmetic
-     gap: contracts.js:845 refuses to derive runs_cap and hands that job here,
-     and sql/038:276 defaults the column to 3. The starter rig is a Common
+     gap: contracts.js ~1111 refuses to derive runs_cap and hands that job here,
+     and sql/038 ~603 defaults the column to 3. The starter rig is a Common
      ('Clean', ladder 3) so this one happens to agree with the default today —
      which is exactly why it would have gone unnoticed until the first player
      registered something better. Both call sites now go through the same
@@ -813,7 +979,14 @@ function selection(el) {
    and safer — and sql/038's transport_dispatch re-derives all three from the
    rig it actually claims. Guessing upward would print an ETA the exchange then
    misses, which is the one direction that reads as the game lying. */
-function quoteRequest(b, sel, depot, garage, npc) {
+/* ⚠ NO `depot` PARAMETER, AND THAT IS THE FIX, NOT AN OMISSION. This function
+   used to take the SHIPPER's depotBlock() and forward it as the request's
+   top-level `depot:`, which resolveInput() ranks ABOVE the carrier's own yard —
+   see the two blocks inside. Deleting the parameter rather than ignoring it is
+   deliberate: an unused argument still in scope is the thing a future edit
+   re-wires "helpfully", and this one measured a rival's reach against the
+   shipper's radius. There is now nothing in here to re-wire. */
+function quoteRequest(b, sel, garage, npc) {
   const rows = Array.isArray(S.carriers) ? S.carriers : [];
   const row = npc ? null : (rows.find((c) => c && String(c.id) === String(sel.carrierId)) || null);
   const mine = !!(S.company && row && String(S.company.id) === String(row.id));
@@ -825,7 +998,27 @@ function quoteRequest(b, sel, depot, garage, npc) {
     /* The carrier's OWN yard decides reach, not the shipper's. `home_node_id`
        plus `depot_level` is everything listCarriers() publishes about it, and
        depotEffect() turns the level into the same bays/radius the owner sees —
-       one table, read twice, rather than a second reach rule on the board. */
+       one table, read twice, rather than a second reach rule on the board.
+
+       🔴 AND THIS BLOCK WAS DEAD FOR A YEAR OF READING BECAUSE OF THE LINE
+       BELOW. `resolveInput()` resolves the depot as
+       `i.depot || (carrier && (carrier.depot || carrier))` (routes.js:956) —
+       a top-level `depot:` on the request OUTRANKS this one. This function used
+       to send BOTH: this carrier block AND `depot: depotBlock(...)`, which is
+       the SHIPPER's yard — both former callers passed `depotBlock(b, !b._null)`,
+       and today only buildView() still builds one, for the Depot TAB.
+       So on every path where the shipper owned a Freight Depot, quote()'s two
+       reach tests (routes.js:1217) measured the RIVAL's haul against the
+       SHIPPER's radius, and this comment described code that never ran.
+       Measured: a rival with a reach-1 yard at N-A and a shipper with a reach-6
+       yard at N-A quoted N-A→N-C (5 hops) at {ok:true, price:500}; the server
+       then refused it `out_of_reach`, because transport_quote reads
+       `v_reach := (transport_caps(v_co.id)->>'reach')::int` off the CARRIER's
+       company row (sql/038 ~1785, inside transport_quote). And in the opposite
+       direction a shipper with a small yard was refused a haul a large carrier
+       could legally take. routes.js's
+       precedence is not wrong — a caller holding a FRESHER copy of the SAME
+       yard should win — it was being handed a different party's yard. */
     depot: Object.assign(
       { nodeId: row.home_node_id || row.homeNodeId || '' },
       call(depotEffect, { bays: 0, radius: 0 }, num(row.depot_level !== undefined ? row.depot_level : row.depotLevel))),
@@ -847,13 +1040,42 @@ function quoteRequest(b, sel, depot, garage, npc) {
     rigCargo: mine ? garage.load : 1,
     rigSpeed: mine ? garage.speed : 1,
     rigRisk: mine ? garage.risk : 0,
-    depot: depot && depot.nodeId ? { nodeId: depot.nodeId, radius: depot.radius, bays: depot.bays } : null,
+    /* 🔴 THE QUOTE'S DEPOT IS THE CARRIER'S, ALWAYS — see the block on
+       `carrier.depot` above for what sending the shipper's yard here cost.
+       Because `i.depot` outranks `carrier.depot` inside resolveInput(), the
+       only safe values for this key are the carrier's own yard or nothing:
+       anything else silently replaces the party whose reach is being measured.
+
+       ⚠ AND IT IS THE CARRIER ROW'S YARD EVEN FOR A SELF-HAUL, which is NOT an
+       oversight and is the one place this looks like a downgrade. depotBlock()
+       reads the player's CITY buildings, which can stand at level 3 (reach 6);
+       the server's reach is `3 + transport_companies.depot_level`, and
+       depot.js:57-62 records that NOTHING IN THIS BUILD EVER WRITES
+       depot_level (setTariff sends `p_depot_level: null` and
+       transport_set_sheet coalesces it to the existing value), so every carrier
+       alive is level 1 / reach 4 on the server no matter what their city shows.
+       Quoting a self-haul off the city yard would therefore promise the player
+       hauls their OWN dispatch is about to refuse — the "shown one number,
+       refused by another" failure. The row is what the server rules on, so the
+       row is what is quoted, for rivals and for yourself alike.
+       ⚠ This is the SAME divergence the Depot tab already reports rather than
+       hides: depotReady() sets `drift: 'level'` and states both numbers in its
+       banner precisely because the panel's reach is bigger than the one
+       dispatch honours. So a self-haul quoted at reach 4 beside a tile reading
+       6 is not a new inconsistency — it is that documented one arriving where
+       the player can act on it instead of several clicks later.
+
+       Meridian (npc → carrier === null) legitimately has no depot: the NPC is a
+       price CEILING that must always be able to carry, and meridianQuote() has
+       no reach test at all. `null` here resolves to `{present:false}` and its
+       path never asks. */
+    depot: carrier ? carrier.depot : null,
   };
 }
 
 /* WHICH RIG HAULS IT. `transport_dispatch` refuses a null p_rig_id for a player
-   carrier (sql/038:1007, `no_rig_chosen`) and claims the run under
-   `r.id = p_rig_id and r.company_id = p_carrier_id` (:1031) — so it must be a
+   carrier (sql/038 ~2040, `no_rig_chosen`) and claims the run under
+   `r.id = p_rig_id and r.company_id = p_carrier_id` (~2064) — so it must be a
    RIG ROW uuid inside THAT carrier's fleet.
 
    SELF-HAUL is the case this client can serve: the player's own yard is
@@ -871,16 +1093,36 @@ function quoteRequest(b, sel, depot, garage, npc) {
    NPC path works today and is what the refusal points at — the same reason
    Meridian exists: no shipper is ever left with nowhere to send their freight.
 
+   🔴 IT TAKES THE CARRIER THE QUOTE IS FOR, AND IT USED TO TAKE NOTHING.
+   The previous version filtered on `S.company.id` — the player's OWN charter —
+   with no reference to the carrier the quote was actually for, and NOTHING on
+   the quote path restricts the selection to your own company: carrierBlock()
+   lists every open carrier and the rate board's Quote button stamps that
+   carrier's id. So a player who owns a fleet and quoted a RIVAL sent their own
+   rig row as `p_rig_id` alongside the rival's `p_carrier_id`.
+   transport_dispatch claims the run under `r.id = p_rig_id and r.company_id =
+   p_carrier_id` (sql/038 ~2064) and diagnoses the miss as `rig_not_in_fleet`
+   (~2078) — AFTER the confirm dialog. The guard in the dispatch branch only
+   fires on an EMPTY rigId, which is precisely the case where the mismatch
+   cannot arise, so it never covered this. Filtering by the quoted carrier makes
+   the answer '' for anyone but yourself (their rigs are not selectable under
+   trg_sel anyway), which is what lets that guard print the sentence its own
+   comment promises, BEFORE the fare is agreed to instead of after.
+
    Ranked by runs remaining as the SERVER last reported them. The day key is
    NOT re-derived from the device clock to zero a used-up rig: index.html's
    getTodayKey() is unanchored local time, so it would hand the exchange a rig
    it is about to refuse. The pick is a hint; the WHERE clause is the ruling. */
-function ownRigRowId() {
+function ownRigRowId(carrierId) {
   try {
     const mine = S.company && S.company.id;
     if (!mine) return '';
+    /* Belt AND braces: the rig must sit in the fleet the RPC will check
+       (`carrierId`) and that fleet must be the player's own (`mine`). Either
+       test alone is one rename away from sending someone else's rig row. */
+    if (!carrierId || String(carrierId) !== String(mine)) return '';
     const candidates = S.rigs
-      .filter((r) => r && String(r.company_id) === String(mine)
+      .filter((r) => r && String(r.company_id) === String(carrierId)
         && (r.status === 'idle' || !r.status) && !r.assigned_to)
       .map((r) => ({ id: r.id, left: num(r.runs_cap) - num(r.runs_used) }))
       .sort((x, y) => y.left - x.left);
@@ -959,7 +1201,7 @@ async function onClick(ev) {
          the table defaults and drops runs_cap to 3 — so a Mythic rig bought for
          ~3.4M Cinder on the auction floor would haul three times a day instead
          of ten and nothing would ever correct it, because no server path
-         recomputes the column. contracts.js:845 names this hole and assigns the
+         recomputes the column. contracts.js ~1111 names this hole and assigns the
          fix to the caller in as many words. This is that caller. */
       const f = registrationFields(b, id, garageInfo(b));
       if (!f) {
@@ -992,8 +1234,11 @@ async function onClick(ev) {
       if (!sel.resId) { b.toast('Pick which resource is on the manifest.'); return; }
       if (!(sel.units > 0)) { b.toast('Say how much cargo you are shipping.'); return; }
 
-      const depot = depotBlock(b, !b._null);
-      const req = quoteRequest(b, sel, depot, garageInfo(b), npc);
+      /* depotBlock() is NOT read here any more. The shipper's own yard has no
+         say in whether a CARRIER can reach a route — see quoteRequest(). It is
+         still built for the Depot tab in buildView(), which is where a player's
+         own yard is genuinely the subject. */
+      const req = quoteRequest(b, sel, garageInfo(b), npc);
       /* The client quote is DISPLAY ONLY. transport_dispatch() re-derives reach,
          price, free bays, the driver, the fuel and the run budget server-side
          and charges what IT computes. Anything else is a price the client can
@@ -1019,7 +1264,11 @@ async function onClick(ev) {
         from: sel.from,
         to: sel.to,
         cargo: { [sel.resId]: sel.units },
-        rigId: npc ? '' : ownRigRowId(),
+        /* The rig is picked FOR THE CARRIER THIS QUOTE NAMES. `q.carrierId` is
+           the id resolveInput() resolved and shape() echoed back, so it is the
+           same value contracts.js sends as p_carrier_id; sel.carrierId is the
+           fallback for a refusal shape that carried none. See ownRigRowId(). */
+        rigId: npc ? '' : ownRigRowId(q.carrierId || sel.carrierId),
         carrierId: npc ? '' : q.carrierId,
         meridian: npc || !!q.meridian,
       });
@@ -1036,8 +1285,17 @@ async function onClick(ev) {
          printing the RPC's `no_rig_chosen` over a screen that never offered a
          rig to choose. See ownRigRowId() for why the gap is server-side. */
       if (!q.meridian && !q.rigId) {
-        b.toast('🚛 This build cannot book another carrier’s rig — their yard is not readable from here. '
-          + 'Take the Meridian Haulage quote, or haul it yourself with a rig in your own fleet.', 7000);
+        /* TWO DIFFERENT FACTS REACH THIS BRANCH and they need different
+           sentences, because one is "the feature does not exist yet" and the
+           other is "your own yard is busy" — printing the first at a player
+           whose own rigs are simply all out is how a working screen reads as
+           broken. `q.carrierId` is the carrier the quote was priced for. */
+        const own = !!(S.company && q.carrierId && String(q.carrierId) === String(S.company.id));
+        b.toast(own
+          ? '🚛 No rig in your fleet is free to take this haul — every one is out or has used its runs for the day. '
+            + 'Wait for one to land, or take the Meridian Haulage quote.'
+          : '🚛 This build cannot book another carrier’s rig — their yard is not readable from here. '
+            + 'Take the Meridian Haulage quote, or haul it yourself with a rig in your own fleet.', 7000);
         return;
       }
       const price = num(q.price);
@@ -1070,7 +1328,7 @@ async function onClick(ev) {
       if (!id) { b.toast('That rig has no vehicle id — refresh the depot.'); return; }
       /* 🔴 THE ID CROSSING. The button carries the VEHICLE id — depot.render.js
          stamps `data-mt-id` from `view.fleet[].vehicleId` — and repair()
-         forwards whatever it is given as `p_rig_id`, which sql/038:1307
+         forwards whatever it is given as `p_rig_id`, which sql/038 ~2397
          declares as a uuid and looks up in `transport_rigs.id`. Sending the
          vehicle id there is a `no_such_rig` on a rig sitting on screen. */
       const rid = rigRowId(id);

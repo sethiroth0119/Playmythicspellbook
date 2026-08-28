@@ -243,6 +243,30 @@ function clip(v, max) {
    instead of as a bolt-on. Only the accent and the namespace differ.
    ════════════════════════════════════════════════════════════════════════════ */
 export const TRANSPORT_CSS = `
+/* 🔴 THE OVERLAY RULE. THE ID BELOW IS index.js's, AND THIS COMMENT IS THE
+   ONLY THING JOINING THEM. index.js declares \`const OV = 'mythic-transport-ov'\`
+   and its open() creates <div id="mythic-transport-ov">, appends it to
+   document.body and attaches the click-outside close "matching every other
+   overlay in the game". It sets no inline style and paint() sets none either, so
+   the rule below is the ONLY thing that lifts the depot out of document flow.
+   For one revision it existed nowhere in the repo: index.js owned the element,
+   this file owned the stylesheet, and each half assumed the other had shipped
+   the rule. What the player got was an unstyled block appended to the end of
+   <body> — the depot drawn BELOW the entire game in normal flow, the page's
+   scroll height grown by the length of the panel, and the click-outside close
+   unreachable because the div was only ever as tall as its own content.
+   ⚠ IF OV IS EVER RENAMED, THIS SELECTOR IS ITS OTHER HALF. index.js carries the
+   matching note. A rename that touches only one file silently restores the bug
+   above, and it will look fine in review.
+   ⛔ REJECTED: copying community.render.js's \`display:flex;align-items:center\`
+   overlay wholesale. That works there because .mc is a height-capped dialog with
+   its own internal scroller; .mt-wrap is a plain column that grows with the
+   fleet and the rate board, so centring it would push the head and the tab bar
+   off the top of a long depot with no way to scroll back up to them. Block flow
+   plus \`overflow:auto\` here gives the same horizontal centring — .mt-wrap
+   already carries \`margin:0 auto\` — and keeps every row reachable. */
+#mythic-transport-ov{position:fixed;inset:0;z-index:2147483200;overflow:auto;
+  background:rgba(6,5,12,.86);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px)}
 .mt-wrap{--mt-acc:#e0a45c;display:flex;flex-direction:column;gap:12px;font-family:inherit;color:#dfe5ee;
   max-width:920px;margin:0 auto;padding:14px}
 .mt-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
@@ -681,6 +705,18 @@ function fleetRow(row) {
   const colour = safeColor(r.rarityColor, '#cfd6e4');
   const rarity = str(r.rarityName, str(r.rarity, 'unranked'));
 
+  /* Salvage is read ONCE, here, because it is tested in two places — the banner
+     below and `repairable` at the bottom — and two copies of one test is exactly
+     how this card came to print "this rig will not repair" beside an ENABLED
+     Repair button. It is a CONDITION, not a status: transport_repair refuses on
+     `condition = 'Salvage'` (sql/038_transport_companies.sql, transport_repair,
+     :2396 — grep `rig_is_salvage`; the line number moves, the token does not)
+     and 'salvage' is not in transport_rigs' status CHECK at all. The
+     status disjunct is kept anyway as a tolerant read of a row that puts it
+     there — it costs nothing, and the alternative is a rig the server calls
+     finished rendering as ready to haul. */
+  const salvaged = status === 'salvage' || /salvage/i.test(str(r.condition));
+
   const stops = [];
   /* A row with no vehicle id is UNADDRESSABLE, and index.js says why: vehicle id
      is what setRigField() takes and the only id the view row carries, so a
@@ -693,9 +729,25 @@ function fleetRow(row) {
   }
   if (status === 'retired') {
     stops.push(banner('bad', 'Retired — it is out of the fleet.', 'Register another rig from the auction floor.'));
-  } else if (status === 'salvage' || /salvage/i.test(str(r.condition))) {
+  } else if (salvaged) {
     stops.push(banner('bad', 'Salvage — this rig is finished as freight and will not repair.', 'Strip it for parts or sell it on, and register a replacement.'));
-  } else if (status === 'in_transit' || str(r.assignedTo)) {
+  } else if (status === 'hauling' || status === 'assigned' || str(r.assignedTo)) {
+    /* 🔴 THE RIG VOCABULARY IS THE SERVER'S, AND THIS ARM ONCE INVENTED ITS OWN.
+       transport_rigs.status is CHECKed to ('idle','hauling','assigned','retired')
+       — sql/038_transport_companies.sql, the `create table transport_rigs`,
+       :596 — and transport_dispatch is the only thing that sends a rig out,
+       setting `status = 'hauling'` (:2018). This arm used to test
+       `status === 'in_transit'`, which is the CONTRACT ladder
+       (transport_contracts' own CHECK, :640), not the rig one; index.js's
+       fleetBlock passes the column through verbatim
+       (`status: row.status || 'idle'`), so a rig that was genuinely hauling fell
+       past here into the unknown-status arm below and the panel told the player
+       that a perfectly normal rig was in a state this build had never heard of —
+       and `repairable` at the bottom of this function stayed true for it, which
+       cost real Cinder. Two ladders, one word apart. Read the CHECK constraint;
+       never borrow a vocabulary from a sibling table because the words rhyme.
+       'assigned' rides along because sql/038's assigned_to hook parks a rig the
+       same way — out of the fleet for the duration, not broken. */
     stops.push(banner('info', 'Out on a haul' + (str(r.assignedTo) ? ' (contract ' + esc(str(r.assignedTo)).slice(0, 24) + ')' : '') + '.', 'It comes free when that contract settles.'));
   } else if (status !== 'idle' && status !== '') {
     /* An unknown status SAYS SO rather than being drawn as idle. A rig the
@@ -731,7 +783,48 @@ function fleetRow(row) {
       'Refresh the yard. If it stays blank the fleet row is missing its runs columns; the rig is fine and the exchange still knows its ladder, this panel just cannot show it.'));
   }
 
-  const repairable = !!vid && status !== 'retired' && status !== 'in_transit';
+  /* REPAIRABLE MIRRORS transport_repair()'s OWN REFUSALS, ONE FOR ONE, so the
+     button is never offered for a call that cannot succeed. The RPC (sql/038,
+     `create or replace function public.transport_repair`, :2353) refuses THREE
+     things, and this expression is those three and nothing else:
+       `status = 'hauling'`    → `rig_in_transit` (:2386)
+       `status = 'retired'`    → `rig_retired`    (:2393)
+       `condition = 'Salvage'` → `rig_is_salvage` (:2396)
+     They matter more than a greyed button usually would, because contracts.js's
+     repair() SPENDS FIRST — gcConfirm, spendGems(bill.cinder), takeRes(parts),
+     persist — and only then calls the RPC, so an offered button on a rig the
+     server will refuse is a real Cinder-and-parts round trip out and back for
+     nothing.
+     Three bugs are recorded here rather than quietly corrected:
+       (1) this line tested `status !== 'in_transit'`, a contract status no rig
+           ever carries, so Repair rendered ENABLED on every rig mid-haul and
+           clicking it ran that whole spend/refuse/unwind loop;
+       (2) `salvaged` was not tested at all, so the salvage banner above and this
+           button contradicted each other two elements apart;
+       (3) this comment itself then said the RPC "refuses exactly two things" and
+           that 'retired' was "NOT a server refusal — it is this panel's own
+           rule". That was true when it was written and is FALSE now: the
+           `rig_retired` branch was added to transport_repair in the same round,
+           and its comment there explains why (nothing un-retires a rig, so
+           repairing one buys a condition that can never haul). No behaviour
+           changed — both halves disable Repair on 'retired' — but the sentence
+           invited the next reader to delete `status !== 'retired'` below as a
+           mere panel preference, and that would have re-opened the exact
+           spend/refuse/unwind loop bug (1) closed. A rule that is only this
+           panel's taste is deletable; every test below mirrors the server.
+     WHAT IS DELIBERATELY *NOT* TESTED HERE: an unrecognised status stays
+     repairable. The three above are a DENY list copied from the RPC, so a status
+     that is not on it is one the server will accept, and refusing it here would
+     be this panel inventing a refusal the exchange does not have — the same
+     class of mistake as (1), just in the other direction.
+     ⚠ That is the OPPOSITE call from contractRow()'s Settle button, which DOES
+     disable on an unrecognised status. The asymmetry is deliberate: see the
+     comment on that button. Each control mirrors the shape of its own RPC's
+     guard — a deny list here, a single positive test there.
+     REJECTED: making the two cards agree for symmetry's sake. Whichever one you
+     converted would stop matching its server function, which is the only thing
+     either mirror is for. */
+  const repairable = !!vid && !salvaged && status !== 'retired' && status !== 'hauling';
   return '<div class="mt-card" style="--acc:' + colour + '">'
     + '<h4>🚚 ' + esc(str(r.name, 'Unnamed rig')) + '</h4>'
     + line('rarity', '<span class="mt-chip" style="color:' + colour + '">' + esc(rarity) + '</span>'
@@ -910,7 +1003,8 @@ function carrierRow(c, isNpc) {
      quoteCard() prints both. This branch exists so that if the board ever does
      carry the bit, the shipper learns it before spending a click on a quote
      that cannot succeed. Read contracts.js's "`blacklist` IS DELIBERATELY NOT
-     SELECTED" note (around :693) before deleting it. */
+     SELECTED" note before deleting it — grep that phrase rather than a line
+     number, contracts.js moves under this file. */
   const blocked = !!c.blocked;
   const cells = [];
 
@@ -1069,12 +1163,45 @@ function contractList(v) {
 /* Status vocabulary. An UNRECOGNISED status says so out loud instead of being
    drawn as in-transit: a contract in a state this build has never heard of is
    exactly the thing a player needs told, and quietly picking the friendliest
-   rendering for it is how "my cargo says in transit forever" happens. */
+   rendering for it is how "my cargo says in transit forever" happens.
+
+   🔴 THESE FIVE NAMES ARE transport_contracts' CHECK CONSTRAINT, NOT A GUESS.
+   sql/038_transport_companies.sql (the `create table transport_contracts`,
+   :640) reads `check (status in
+   ('in_transit','delivered','lost','late','refused'))`, and transport_settle
+   (:2255) is the ONLY writer of any of them: it sets status to 'delivered' or
+   'lost' AND settled_at in one UPDATE. There is no separate 'settled' state and
+   there has never been an 'arrived'.
+   An earlier revision of this map invented both — states the exchange cannot
+   emit — and, following from that, worded 'delivered' as a step on the way to
+   settling. Because 'delivered' is only ever REACHED by settling, that arm told
+   the player to settle a haul that was already closed, beside a live Settle
+   button; transport_settle answered `retried: true` and credited nothing
+   (contracts.js's settle() checks `d.retried !== true` before touching the
+   stash), so a correct server reply read to the player as a delivery that would
+   not deliver. The invented names are what made the drift invisible: nothing
+   could ever hit those arms, so nothing ever looked wrong. If a name in here is
+   not in the CHECK, it is a bug.
+   'late' and 'refused' are carried even though sql/038's own comment (:634,
+   immediately above that CHECK) says NOTHING PRODUCES THEM YET. That is
+   deliberate and it is not dead code for its own sake: the constraint permits
+   them, so on the day something starts writing one the panel must say what it
+   is instead of dropping into the unknown-status arm below. Their wording
+   claims nothing about money moving,
+   because sql/038 does not say. */
 const CONTRACT_STATE = {
   in_transit: { kind: 'info', text: '🚚 On the road.', fix: 'Settle it once it arrives.' },
-  arrived: { kind: 'ok', text: '📥 Arrived.', fix: 'Settle it to move the cargo into your stash.' },
-  delivered: { kind: 'ok', text: '📥 Delivered.', fix: 'Settle it to close the contract out.' },
-  settled: { kind: 'ok', text: '✔ Settled.', fix: '' },
+  /* Terminal. settled_at is written in the same UPDATE as this status, so a row
+     that reads 'delivered' is a row that is already closed and paid. */
+  delivered: { kind: 'ok', text: '📥 Delivered — the cargo is in the stash.', fix: '' },
+  late: {
+    kind: 'warn', text: '⏰ Marked late.',
+    fix: 'Nothing left to do — the contract is closed. Lateness feeds the carrier’s reliability score, not your fare.',
+  },
+  refused: {
+    kind: 'bad', text: '🚫 Refused — the haul was not taken.',
+    fix: 'Nothing was carried. Quote it again on the rate board; another carrier, or Meridian Haulage, can take it.',
+  },
   lost: {
     kind: 'bad', text: '💥 Lost on the road.',
     /* Stated plainly because it is the rule, not a bug: a lost haul is not
@@ -1107,7 +1234,30 @@ function contractRow(c) {
     + (id ? '' : banner('bad',
       'This contract came back without an id, so it cannot be settled from here.',
       'Refresh the depot. Nothing is lost — the haul exists on the exchange; this row simply has no handle on it.'))
-    + btn('settle', '📥 Settle', { id: id, disabled: !id })
+    /* SETTLE IS OFFERED FOR EXACTLY ONE STATUS, because transport_settle guards
+       on exactly one: `if v_ct.status <> 'in_transit'` returns `retried: true`
+       and moves nothing (sql/038, `transport_settle`, :2211). Enumerating the
+       terminal states here instead ('delivered', 'lost', …) would be a second
+       copy of that predicate living in another language, and it would drift the
+       first time 'late' or 'refused' is written — both are terminal under the
+       server's test, and a list of terminal names would have left a live Settle
+       button under them. One predicate, mirrored from the guard, is the whole
+       fix.
+       An unrecognised status is therefore disabled too, deliberately: the banner
+       above refuses to guess what it means, and a button whose only possible
+       answer is `retried: true` is a control that cannot work.
+       ⚠ THIS IS NOT THE CALL THE FLEET CARD MAKES, and an earlier revision of
+       this comment claimed it was — "the same call the fleet card makes for a
+       rig status this build does not know". Measured against the code, it is
+       not: fleetRow() draws its unrecognised-status banner but leaves Repair
+       ENABLED, because transport_repair guards with a deny list of three
+       refusals and an unknown status is on none of them. transport_settle
+       guards with one positive test, so here an unknown status falls outside
+       the allow list. The two cards differ because the two RPCs differ; each
+       mirrors its own, and neither should be converted to match the other. */
+    + btn('settle', '📥 Settle', { id: id, disabled: !id || status !== 'in_transit' })
+    + ((id && status === 'in_transit') ? ''
+      : '<div class="mt-io mt-dim">Settle is unavailable for this contract — the banner above says why.</div>')
     + '</div>';
 }
 

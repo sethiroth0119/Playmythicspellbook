@@ -57,7 +57,7 @@ import {
 } from './routes.js';
 import {
   MISSING_RE, OFFLINE, myCompany, listCarriers, listMyRigs, listContracts,
-  createCompany, setTariff, registerRig, dispatch, settle, repair,
+  createCompany, setTariff, registerRig, dispatch, settle, repair, serverQuote,
 } from './contracts.js';
 import { DEPOT_DEF_ID, depots, bestDepot, depotEffect, fleetCap, bays, depotReady } from './depot.js';
 import { TRANSPORT_CSS, renderTransport } from './depot.render.js';
@@ -767,8 +767,8 @@ async function refresh() {
 
 /* ── the free starter rig ───────────────────────────────────────────────────
    🔴 IDEMPOTENT, AND NOT THEORETICALLY. index.html's `_opAfterFound` is
-   reachable from THREE call sites (79968, 82273, 82388) and the analogous cars
-   unlock guards itself with `if (!_pp.owned)` (~80217). Founding twice must not
+   reachable from THREE call sites — grep `_opAfterFound(` rather than trusting a number here, since this comment has already drifted once and the analogous cars
+   unlock guards itself with `if (!_pp.owned)`, which greps to exactly one place. Founding twice must not
    mint two free rigs. Two guards, because they fail differently:
      1. `_starterSeeded` — in-session, set BEFORE the first await, so two calls
         in the same tick cannot both read an empty fleet and both seed.
@@ -1307,7 +1307,15 @@ async function onClick(ev) {
     if (act === 'tariff') {
       const t = num(fieldVal('mt-tariff'));
       if (t <= 0) { b.toast('A tariff has to be a positive number of Cinder per unit·hop.'); return; }
-      const r = await acall(setTariff, { ok: false }, t);
+      /* The depot level rides along with the sheet. It is read HERE rather than
+         in contracts.js so that file keeps its one job — talking to Supabase —
+         and does not grow a dependency on depot.js and the city catalog.
+         Sending it is what makes a Freight Depot upgrade actually do something:
+         reach, bays and fleet cap are all derived server-side from
+         transport_companies.depot_level, and nothing published it before. */
+      const dr = call(depotReady, null);
+      const lvl = (dr && dr.level) ? dr.level : null;
+      const r = await acall(setTariff, { ok: false }, t, lvl);
       if (!okOf(r)) { b.toast('🚛 ' + reasonOf(r), 5200); return; }
       // Say what actually landed rather than what was asked for: the server
       // clamps to the Meridian ceiling, and a UI that echoes the request would
@@ -1421,13 +1429,60 @@ async function onClick(ev) {
             + 'Take the Meridian Haulage quote, or haul it yourself with a rig in your own fleet.', 7000);
         return;
       }
-      const price = num(q.price);
-      const cap = q.capped ? ' (capped at the Meridian ceiling)' : '';
-      if (!(await b.confirm('Ship for ' + fmtNum(price) + ' 🔥' + cap + '? ETA ' + (q.etaText || '—') + '.'))) return;
+      /* 🔴 THE DIALOG MUST QUOTE THE PRICE THAT WILL ACTUALLY BE CHARGED.
+         It did not. Measured end to end: the confirm read "Ship for 2,000 🔥?"
+         and the wallet was debited 20,000. routes.js prices from the carriers
+         this client can SEE; transport_quote prices from the median of carriers
+         that have DELIVERED, which no client can compute — and only the
+         server's number reaches wallet_charge. Wrong in both directions, and
+         only coincidentally right at launch when both sides fall to the same
+         floor. See serverQuote() in contracts.js for the full account.
+         So: one more round trip, at the one moment money is about to move. */
+      const sq = await acall(serverQuote, { ok: false }, q);
+
+      let price = num(q.price);
+      let capped = !!q.capped;
+      let estimated = false;
+      if (okOf(sq)) {
+        const d = (sq && sq.data) || {};
+        /* The server's own answer wins outright. Its price is what
+           transport_dispatch bills — that function does not re-price, it calls
+           transport_quote and uses the result verbatim. */
+        price = num(d.price);
+        capped = !!d.capped;
+        /* A refusal here is a refusal there. Stopping now costs the player
+           nothing; going on spends the escrow to be told the same thing. */
+      } else if (sq && sq.ok === false && sq.code && !sq.offline && !sq.missing) {
+        b.toast('🚛 ' + reasonOf(sq), 6000);
+        return;
+      } else {
+        /* Offline, or sql/038 not applied yet. Fall back to the client
+           estimate — but SAY SO. A silent fallback is the original bug with
+           extra steps: the number would be shown with the same confidence and
+           still not be the number charged. */
+        estimated = true;
+      }
+
+      const cap = capped ? ' (capped at the Meridian ceiling)' : '';
+      const ask = estimated
+        ? 'Ship for about ' + fmtNum(price) + ' 🔥' + cap + '? ETA ' + (q.etaText || '—')
+          + '.\n\n⚠ The exchange could not be reached to confirm the fare, so this is '
+          + 'this build\u2019s estimate. The price you are charged is the exchange\u2019s, '
+          + 'and it may differ.'
+        : 'Ship for ' + fmtNum(price) + ' 🔥' + cap + '? ETA ' + (q.etaText || '—') + '.';
+      if (!(await b.confirm(ask))) return;
+
       const r = await acall(dispatch, { ok: false }, q);
       if (!okOf(r)) { b.toast('🚛 ' + reasonOf(r), 6000); return; }
       S.quote = null;                 // a quote is a price at a moment, not a receipt
-      b.toast('🚛 Cargo dispatched.');
+      /* PRINT WHAT LANDED, not a bare acknowledgement. The old toast said
+         "Cargo dispatched." and never read r.price — the one field holding the
+         number actually taken. If the charge and the quoted fare ever diverge
+         again, this is where a player finds out, instead of from their balance. */
+      const paid = num(((r && r.data) || {}).price);
+      b.toast(paid > 0 && paid !== price
+        ? '🚛 Cargo dispatched — charged ' + fmtNum(paid) + ' 🔥 (quoted ' + fmtNum(price) + ').'
+        : '🚛 Cargo dispatched — charged ' + fmtNum(paid > 0 ? paid : price) + ' 🔥.');
       // The Cinder counter in the legacy HUD is now wrong until it repaints.
       try { b.render(); } catch (e) {}
       await refresh();
@@ -1514,6 +1569,24 @@ function startTicker() {
       try {
         if (!document.getElementById(OV)) { stopTicker(); return; }
         if (busy) return;              // never repaint out from under an action
+        /* 🔴 NEVER REPAINT UNDER SOMEONE'S HANDS. paint() does
+           `ov.innerHTML = html`, which destroys every <input> in the panel and
+           the focus with them. The Depot tab's two fields carry no `value`
+           attribute, so a half-typed carrier name or tariff was silently
+           erased every 15 seconds — long enough to look like the game eating
+           your input rather than like a refresh.
+           The test is index.html's own (see its focus guard): skip the timed
+           repaint entirely while a field is focused. A skipped tick costs a
+           15-second-stale figure; a taken one costs the player their sentence.
+           ⚠ Deliberately NOT a "preserve and restore the values" pass. That
+             needs every field to round-trip its own state and silently loses
+             selection and caret position, which reads as a subtler version of
+             the same bug. Not repainting is the honest fix. */
+        try {
+          const ae = document.activeElement;
+          const tag = ae && ae.tagName;
+          if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (ae && ae.isContentEditable)) return;
+        } catch (e) {}
         paint();
       } catch (e) { stopTicker(); }
     }, 15000);

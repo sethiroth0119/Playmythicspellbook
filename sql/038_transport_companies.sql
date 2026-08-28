@@ -352,7 +352,7 @@
 --        "Upgrade the Freight Depot, or retire a rig" note — with no code
 --        behind it, and wiring it belongs in that file, not this one.
 --        RE-VERIFIED this round with `grep -rn transport_retire_rig
---        public/src/`: four hits, all of them COMMENTS about this very gap
+--        public/src/`: five hits, all of them COMMENTS about this very gap
 --        (contracts.js's rig_ran_today entry and its RETIRE note, index.js's
 --        ledger note, depot.render.js's 'retired' branch). No call site.
 --      · ✅ THE THREE CODES THIS ROUND ADDED NOW HAVE CLIENT COPY — AND THE
@@ -2758,8 +2758,31 @@ begin
     'ok', true, 'retried', false, 'contract_id', v_ct.id, 'status', v_status,
     'amount', case when v_status = 'delivered' and v_ct.carrier_id is not null
                    then v_ct.price else 0 end,
-    'carrier_id', v_ct.carrier_id, 'carrier_balance', v_bal,
-    'risk_pct', v_ct.risk_pct, 'settled_at', now());
+    'carrier_id', v_ct.carrier_id,
+    'risk_pct', v_ct.risk_pct, 'settled_at', now())
+  -- 🔴 THE LEDGER'S OWN RLS SAYS OWNER-ONLY, AND THIS RETURN VALUE WAS WALKING
+  --    AROUND IT. tld_sel restricts the book to "the company's owner, and
+  --    nobody else — not even the shipper who paid for the line item". But
+  --    settle is SECURITY DEFINER, so summing the book in here and putting the
+  --    total in the envelope handed the shipper the exact figure that policy
+  --    exists to withhold: a rival's whole balance, free, on every haul bought.
+  --    Gated like §2 gated transport_caps' fleet_used and §4.2 gated the run
+  --    counter — the key is ABSENT for a non-owner, not null. A null would
+  --    still confirm the company exists and separate "not yours" from "no
+  --    rows", which is the same leak one step quieter.
+  --
+  -- ⚠ CONCATENATED, NOT A CONDITIONAL KEY INSIDE jsonb_build_object. The
+  --   obvious spelling — `case when … then 'carrier_balance' end, v_bal` — does
+  --   NOT drop the pair. Measured on PostgreSQL 16: it raises
+  --   `ERROR: argument 3: key must not be null`, which would have failed EVERY
+  --   settle, for the owner too, and turned an information leak into a feature
+  --   that cannot complete a delivery. `|| '{}'::jsonb` is the spelling that
+  --   actually omits a key.
+  || case
+       when v_ct.carrier_id is not null and public.is_transport_owner(v_ct.carrier_id)
+       then jsonb_build_object('carrier_balance', v_bal)
+       else '{}'::jsonb
+     end;
 end;
 $function$;
 

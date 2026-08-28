@@ -7,7 +7,8 @@
    player's money or read another player's row, and this is it.
 
    ─── HOW THIS FILE CITES OTHER FILES, and why there are no line numbers ─────
-   🔴 EVERY CROSS-FILE CITATION IN THIS FILE IS A NAMED SYMBOL. It did not start
+   🔴 EVERY CITATION INTO A FILE THAT MOVES (index.html, index.js, depot.js,
+   sql/038) IS A NAMED SYMBOL. It did not start
       that way, and the reason it is now is a measured failure rather than a
       style preference: this header and the comments below carried hard line
       numbers into index.html, index.js and depot.js, and a sweep on 2026-08-28
@@ -1208,7 +1209,7 @@ function capNum(v) {
 
    The RPC's parameters are all nullable and mean "leave this alone", so one
    field is sent without round-tripping the others and racing a second tab. */
-export async function setTariff(tariff) {
+export async function setTariff(tariff, depotLevel) {
   const c = client(); if (!c) return { ...OFFLINE, row: null, why: offWhy() };
   const b = bridge();
   let uid = null;
@@ -1244,8 +1245,31 @@ export async function setTariff(tariff) {
        them would not mean "use the default" — it would fail to find the function
        at all, and arrive here as a PGRST202 that looks exactly like an unapplied
        migration. */
+    /* 🔴 THE DEPOT LEVEL HAS TO TRAVEL, AND IT WAS PINNED AT null.
+       Every cap the exchange enforces — reach in transport_quote, bays in
+       transport_dispatch, fleet_cap in the transport_rigs insert trigger — is
+       computed by transport_caps() from transport_companies.depot_level. The
+       city building's level lived only in the player's save blob and NOTHING
+       ever published it, so the server sat at whatever the row was created
+       with. A player could pay the level-2 and level-3 costs in the city
+       (hundreds of thousands of Cinder plus metal, supplies and fuel) and buy
+       literally nothing: same reach, same bays, same fleet cap.
+       The server side already worked and was already bounded —
+       `greatest(1, least(3, coalesce(p_depot_level, v_co.depot_level)))` — so
+       this was only ever a client omission.
+       ⚠ `coalesce` on the server is why null is still the right value to send
+         when the caller does not know the level: it means "leave it alone",
+         not "reset it to 1". Only a level this client has actually READ off the
+         city is worth sending.
+       ⚠ KNOWN LIMIT, stated rather than hidden: the level is published when the
+         sheet is saved, not the moment the building finishes. A carrier who
+         upgrades their depot and never touches their tariff again keeps the old
+         caps until the next save. Publishing on every refresh would be a write
+         on a read path; the panel says so instead. */
+    const lvlRaw = Math.floor(Number(depotLevel));
+    const lvl = (Number.isFinite(lvlRaw) && lvlRaw >= 1 && lvlRaw <= 3) ? lvlRaw : null;
     const r = await rpc(c, 'transport_set_sheet', {
-      p_company_id: id, p_tariff: clean, p_status: null, p_depot_level: null, p_blacklist: null,
+      p_company_id: id, p_tariff: clean, p_status: null, p_depot_level: lvl, p_blacklist: null,
     });
     if (!r.ok) return r;
     const d = r.data;
@@ -1423,6 +1447,92 @@ export async function registerRig(vehicleId, rarity, condition) {
          the quote rather than the request it quoted — because a wrong caller is
          something a developer can fix in one line and an empty manifest is not.
    ════════════════════════════════════════════════════════════════════════════ */
+/* ════════════════════════════════════════════════════════════════════════════
+   💰 serverQuote() — ASK THE SERVER WHAT THIS HAUL COSTS, BEFORE ASKING THE
+   PLAYER TO AGREE TO IT.
+   ----------------------------------------------------------------------------
+   🔴 THE BUG THIS EXISTS TO CLOSE, measured end to end against a live database:
+   the confirm dialog said "Ship for 2,000 🔥?" and the wallet was debited
+   20,000. Both numbers were correct — they were just computed from different
+   samples. routes.js prices from the carrier rows listCarriers() can SEE;
+   transport_quote prices from the median of carriers that have actually
+   DELIVERED, which no client can compute because a shipper cannot read a rival's
+   contract history. On a normal board — one established carrier at base 400,
+   two shells undercutting at 20 to win their first job — the two medians are an
+   order of magnitude apart, and only the server's reaches wallet_charge.
+
+   It was wrong in BOTH directions and only coincidentally right at launch, when
+   no contract has been delivered anywhere and both sides fall to the same floor.
+
+   routes.js's own drift ledger (see its D3 entry) named this and prescribed the
+   remedy — "once a round trip has happened, prefer transport_quote's own
+   returned price over this file's". This is that remedy; until now it was a
+   comment describing something no code did.
+
+   ⚠ WHY THIS IS SAFE TO TRUST AS THE FINAL NUMBER. transport_dispatch does not
+     re-price. Its own comment is "THE PRICE IS THE QUOTE. Not recomputed, not
+     accepted, not adjusted" — it calls transport_quote internally with the same
+     six values and bills that. So the same six values sent from here return the
+     number that will actually be charged, and the dialog and the debit come
+     from one expression at last.
+
+   ⚠ REJECTED: reproducing the server's median on the client. routes.js's header
+     is right that it cannot be done — the client cannot see which carriers have
+     delivered — and an approximation would put us back to two numbers that
+     disagree, only with the disagreement now hidden behind a claim of accuracy.
+
+   ⚠ REJECTED: skipping the client quote entirely and only ever calling this.
+     The rate board has to price every carrier on screen to be a rate board, and
+     that is one RPC per row on every repaint. routes.js stays the DISPLAY
+     pricer; this is the CONFIRMATION pricer, called once, at the moment money
+     is about to move.
+
+   Degrades like every other call here: offline, or before sql/038 is applied,
+   the caller gets ok:false with `missing`/`offline` set and is expected to fall
+   back to the client estimate AND SAY SO. A silent fallback would recreate the
+   original bug with extra steps.
+   ════════════════════════════════════════════════════════════════════════════ */
+export async function serverQuote(carrierId, fromNode, toNode, hops, units, escort) {
+  const c = client(); if (!c) return { ...OFFLINE, why: offWhy() };
+
+  /* Object-in-first-position, matching dispatch() so both take the same shape
+     index.js already carries. Read defensively in every spelling the seam has
+     used, because a quote object crosses two module boundaries to get here. */
+  if (carrierId && typeof carrierId === 'object') {
+    const q = carrierId;
+    escort   = q.escort;
+    units    = q.cargoUnits != null ? q.cargoUnits : q.units;
+    hops     = q.hops;
+    toNode   = q.to   != null ? q.to   : (q.toNode   != null ? q.toNode   : q.to_node);
+    fromNode = q.from != null ? q.from : (q.fromNode != null ? q.fromNode : q.from_node);
+    carrierId = q.carrierId != null ? q.carrierId : q.carrier_id;
+  }
+
+  const h = Math.floor(Number(hops));
+  const u = Number(units);
+  /* Refused HERE rather than sent, so a malformed request reads as a client bug
+     with a client fix instead of arriving as the server's `bad_hops` over a form
+     the player filled in correctly. Same reasoning as dispatch()'s bad_cargo. */
+  if (!Number.isFinite(h) || h <= 0 || !Number.isFinite(u) || u <= 0) {
+    return { ok: false, missing: false, offline: false, error: 'bad_quote_request',
+             why: 'That haul has no distance or no load to price.',
+             fix: 'Pick an origin, a destination and an amount, then quote it again.' };
+  }
+
+  /* ⚠ p_carrier_id NULL IS MEANINGFUL, NOT MISSING — it is how the server is
+     asked for the Meridian Haulage fallback rather than for a player carrier.
+     Coercing a falsy id to undefined here would drop the argument from the
+     PostgREST call and resolve a different overload, or none. */
+  return await rpc(c, 'transport_quote', {
+    p_carrier_id: carrierId || null,
+    p_from_node: fromNode == null ? null : String(fromNode).slice(0, 40),
+    p_to_node: toNode == null ? null : String(toNode).slice(0, 40),
+    p_hops: h,
+    p_units: u,
+    p_escort: !!escort,
+  });
+}
+
 export async function dispatch(carrierId, rigId, fromNode, toNode, cargo, route) {
   const c = client(); if (!c) return { ...OFFLINE, row: null, why: offWhy() };
   const b = bridge();

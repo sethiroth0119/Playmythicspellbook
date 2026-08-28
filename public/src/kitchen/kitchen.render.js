@@ -169,6 +169,13 @@ let _convoyQ = '';              // what is typed in the find-a-player field
 let _convoyRows = [];           // last recipients() result
 let _convoyWhy = '';            // the quiet line under the field — NEVER a toast (§9)
 let _convoyBusy = false;        // a recipients() lookup is in flight
+/* 🧺 IS THE SUPPLIES SHEET'S EXPLANATION OPEN? View state, so it belongs to this
+   file (CONTRACT §1: "the only state render owns is view state"). It is a
+   module-level flag rather than a `<details open>` because paintSheet() rebuilds
+   the sheet's innerHTML on a 1.5s clock — a native disclosure would snap shut
+   under the player's thumb one and a half seconds after they opened it, which is
+   the same class of bug as the rail that scrolled back to zero mid-restock. */
+let _supplyInfo = false;
 /* 🔴 DEBOUNCE OFF THE SIM CLOCK, NOT off setTimeout. CONTRACT §3 allows this
    file exactly one setTimeout (removing a finished float node) and a debounce
    timer would be a second one. `frame()` already runs 60×/s with an authoritative
@@ -3397,6 +3404,7 @@ function onClick(ev) {
     case 'plate-to':     doPlateTo(el.dataset.tk || null, now); break;
     case 'buy':          doBuy(el.dataset.supply, Number(el.dataset.n) || 1); break;
     case 'relief':       doRelief(el.dataset.relief); break;
+    case 'supply-info':  _supplyInfo = !_supplyInfo; paintSheetNow(); break;
 
     case 'convoy-tier':  pickTier(el.dataset.tier); break;
     case 'convoy-step':  stepManifest(el.dataset.recipe, Number(el.dataset.d) || 0); break;
@@ -3998,27 +4006,44 @@ function suppliesSheet(k) {
      player asked for a kitchen FED BY the rest of the game, and this is the
      screen where that is either true or it is not. It is stated as a fact about
      every row and the scrap section below restates its own version of it. */
-  const banner = `<div class="mk-banner" data-dry="${dry ? 1 : 0}">Pantry <b>${held}</b> / ${cap} units.
-    ${dry
-      ? `🔴 <b>Your stash is empty.</b> Every crate on this sheet — including the
-         scrap dealer's — costs live resources your city buildings, your businesses
-         and your battles produce. The dealer below is the cheap way back in: half
-         a crate, a Cinder surcharge, and still a little real food. The only door
-         that takes Cinder alone is the relief flight above, and it is priced to
-         hurt.`
-      : `🔴 <b>Nothing here is bought in.</b> Every crate is made out of the same 14
-         resources your city buildings, your businesses and your battles produce —
-         the line under each one says which building makes it and whether you have
-         that building yet.`}
-    ${signedIn ? '' : ' Signed out: your kitchen still runs, it just does not sync.'}</div>`;
+  /* 🔴 THE SHOPPING SHELF THAT OPENED AS A TERMS-OF-SERVICE PAGE. Measured at
+     390×844 on a fresh account: eighteen rendered lines of prose — a 3.4-line
+     relief paragraph, a SIX-line banner and a 3.4-line dealer note — above three
+     crate rows, all three of them dead. Every sentence in it is true and
+     load-bearing, which is exactly why it kept growing; and it is still the
+     least game-like surface in the feature, against a reference whose equivalent
+     screen is a wall of ingredient bins and sauce bottles.
+     So the information is REORDERED, not deleted. What stays inline is the one
+     sentence that changes what the player does next; the rest is one tap away
+     behind ⓘ and stays open until they close it (`_supplyInfo`, view state, see
+     its declaration). Nothing was cut — `data-act="supply-info"` prints the
+     whole of it, both states, in the same words it always had. */
+  const info = `<button class="mk-info" data-act="supply-info" data-on="${_supplyInfo ? 1 : 0}"
+      aria-expanded="${_supplyInfo ? 'true' : 'false'}"
+      title="${_supplyInfo ? 'Hide the detail' : 'Where all of this comes from'}"
+    >${_supplyInfo ? 'ⓘ less' : 'ⓘ why'}</button>`;
+  const banner = `<div class="mk-banner" data-dry="${dry ? 1 : 0}">
+    <span class="mk-banner-lead">Pantry <b>${held}</b> / ${cap} units.
+      ${dry
+        ? '🔴 <b>Your stash is empty.</b> The scrap dealer below is the cheap way back in.'
+        : '🔴 <b>Nothing here is bought in.</b> Every crate is made out of your own 14 live resources.'}
+      ${signedIn ? '' : 'Signed out — the kitchen still runs, it just does not sync.'}</span>
+    ${info}
+    ${_supplyInfo ? `<div class="mk-banner-more">${dry
+      ? `Every crate on this sheet — including the scrap dealer's — costs live resources your
+         city buildings, your businesses and your battles produce. The dealer is half a crate,
+         a Cinder surcharge, and still a little real food. The only door that takes Cinder
+         alone is the relief flight above, and it is priced to hurt.`
+      : `They come from your city buildings, your businesses and your battles — the line under
+         each crate says which building makes it and whether you have that building yet. The
+         relief flight above is the one door that takes Cinder alone.`}</div>` : ''}</div>`;
 
   const coreHead = `<div class="mk-sec-head flush"><b>🏙 Your city</b>
     <span class="mk-spacer"></span><span>full crates · what your buildings make</span></div>`;
   const scrapHead = `<div class="mk-sec-head mk-scrap-head flush"><b>🛻 The scrap dealer</b>
     <span class="mk-spacer"></span><span>half a crate · paid in food</span></div>
-    <div class="mk-scrap-note">He will cover the Cinder side of anything your city would have grown.
-      What he cannot do is conjure food out of nothing — every line below still takes a little
-      out of the stash, which is why the way out of a dry pantry runs through the city.</div>`;
+    <div class="mk-scrap-note">He covers the Cinder side of anything your city would have grown.
+      He cannot conjure food out of nothing, so every line still takes a little out of the stash.</div>`;
 
   const coreRows = core.map((s) => supplyRow(k, s, owned, rows)).join('');
   const scrapRows = scrap.length ? scrapHead + scrap.map((s) => supplyRow(k, s, owned, rows)).join('') : '';
@@ -4105,13 +4130,10 @@ function reliefCardHtml(k) {
       <span class="mk-spacer"></span><span>Cinder only · no live resources needed</span></div>
     <div class="mk-relief" data-stalled="${stalled ? 1 : 0}">
       <div class="mk-relief-say">${stalled
-        ? `<b>You have nothing left to cook.</b> This is the way back in: the drop is priced in
-           Cinder alone, so it works on an empty stash. It is a rescue, not a supply line —
-           it lands enough to get a pan going, and the city is still where a kitchen gets fed.`
-        : `Every other crate on this sheet is paid for in the live resources your city, your
-           businesses and your battles make. This one is not, so a kitchen with an empty stash
-           is never finished. The free drop comes once a day, and only when there is genuinely
-           nothing left to cook.`}</div>
+        ? `<b>You have nothing left to cook.</b> This is the way back in — a rescue, not a
+           supply line. It lands enough to get one pan going.`
+        : `A kitchen with an empty stash is never finished. The free drop comes once a day, and
+           only when there is genuinely nothing left to cook.`}</div>
       ${list}
     </div>`;
 }

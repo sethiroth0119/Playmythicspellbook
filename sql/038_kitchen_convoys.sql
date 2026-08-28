@@ -413,19 +413,44 @@ on conflict (id) do update
 
 -- ─── 2. SECURITY DEFINER HELPERS (the anti-recursion layer) ────────────────
 
--- "Am I one of the two parties to this convoy?"
--- ⚠ SECURITY DEFINER because a policy that asks this question by selecting
---   kitchen_convoys re-enters RLS. Definer bypasses RLS and therefore
---   terminates. STABLE so a policy can call it once per row.
-create or replace function public.is_convoy_party(p_convoy uuid)
-returns boolean
-language sql stable security definer set search_path = public, pg_temp as $$
-  select exists (
-    select 1 from public.kitchen_convoys c
-     where c.id = p_convoy
-       and (c.from_user = auth.uid() or c.to_user = auth.uid())
-  );
-$$;
+-- 🔴 ROUND 8 — `is_convoy_party()` IS GONE, AND THAT IS A SECURITY FIX.
+-- ============================================================================
+-- It was the third disjunct of `kcl_sel` (§6), it was SECURITY DEFINER, and it
+-- was therefore the one piece of the boundary that ran with RLS BYPASSED and
+-- had no assertion looking at its body. A critic replaced that body with
+-- `select true` — one line, nothing else touched — re-applied this file, and
+-- ALL 38 ROWS OF THE VERIFY BLOCK PRINTED 'ok' while an unrelated signed-in
+-- player read the whole game's shipping history. Reproduced here on PG 16.13
+-- before the fix: player C, party to nothing, `select … from
+-- kitchen_convoy_ledger` returned
+--     89f860c3… | launch | aaaaaaaa…001 | bbbbbbbb…002 | -40
+--     89f860c3… | claim  | aaaaaaaa…001 | bbbbbbbb…002 |  40
+-- — who shipped to whom, how much, and when, for every player in the game,
+-- behind a green verify table.
+--
+-- 🔴 AND THE CLAUSE WAS PROVABLY DEAD, which is what makes deleting it the fix
+--    rather than merely one of two options. `kitchen_convoy_ledger.from_user`
+--    and `.to_user` are `uuid NOT NULL` (see the table above), and the only two
+--    writers in existence fill them with the convoy's own two parties:
+--    `kitchen_convoy_launch` inserts `(me, p_to)` and `kitchen_convoy_claim`
+--    inserts `(c.from_user, me)` where `me = c.to_user` is enforced one
+--    statement earlier by NOT_YOURS. So there is no reachable ledger row that
+--    `is_convoy_party(convoy_id)` lets in and `from_user = auth.uid() or
+--    to_user = auth.uid()` does not — the old comment's justification ("for
+--    rows written by a future `kind` that does not carry both parties") is
+--    impossible by the table's own constraint. Measured, not argued: with the
+--    clause and the helper both removed, A/B/C read 3+4 / 2+3 / 1+1 rows, the
+--    same three pairs as the shipped build.
+--
+-- ⚠ IF A FUTURE `kind` EVER NEEDS A ROW THAT DOES NOT NAME BOTH PARTIES, the
+--   answer is not this helper. Drop the NOT NULL, and then the policy needs a
+--   clause that is written out in the policy itself where `pg_policies.qual`
+--   shows it to a reviewer — not hidden inside a definer function where the
+--   only tripwire that could catch a change is one nobody wrote.
+--
+-- The `drop function` lives beside the policy in §6, not here: on a database
+-- that already has the old version, the function cannot be dropped until the
+-- policy that references it has been replaced.
 
 -- ============================================================================
 -- 🔴 THE THROTTLE. Four walls, and the last two are the production link.
@@ -529,9 +554,10 @@ language sql stable security definer set search_path = public, pg_temp as $$
           now()))) / 3600.0, 0);
 $$;
 
-grant execute on function public.is_convoy_party(uuid)            to authenticated;
+-- (`is_convoy_party`'s grant and revoke were here. They went with it — see the
+--  tombstone above. A grant left behind on a dropped function is a no-op, but a
+--  grant left behind on a function somebody later RE-CREATES is a live door.)
 grant execute on function public.kitchen_convoy_quota_ok(int)     to authenticated;
-revoke all on function public.is_convoy_party(uuid)               from public, anon;
 revoke all on function public.kitchen_convoy_quota_ok(int)        from public, anon;
 
 
@@ -1194,27 +1220,45 @@ grant select on public.kitchen_convoys to authenticated;
 
 -- ── kitchen_convoy_ledger ──────────────────────────────────────────────────
 
--- kcl_sel  using (from_user = auth.uid() or to_user = auth.uid()
---                 or public.is_convoy_party(convoy_id))
+-- kcl_sel  using (from_user = auth.uid() or to_user = auth.uid())
 -- LETS IN : the two parties to the movement, reading their own history.
 -- KEEPS OUT: everyone else, and EVERY WRITER — there is no insert, update or
 --            delete policy on this table at all, which is what makes
 --            "append-only" enforceable rather than aspirational. The only
 --            writers are kitchen_convoy_launch() and kitchen_convoy_claim(),
 --            both SECURITY DEFINER and both bypassing RLS.
--- ⚠ The predicate uses the DENORMALISED from_user/to_user columns first and the
---   helper only as a fallback. WHY: the ledger has no FK to kitchen_convoys
---   precisely so history outlives the convoy, and is_convoy_party() returns
---   false once the convoy row is gone — reading it alone would quietly lock a
---   player out of their own past. The helper stays in the OR for rows written
---   by a future `kind` that does not carry both parties.
+-- ⚠ IT READS THE DENORMALISED from_user/to_user COLUMNS AND NOTHING ELSE, and
+--   that is deliberate twice over. The ledger has no FK to kitchen_convoys
+--   precisely so history outlives the convoy — so a predicate that had to look
+--   the convoy up would quietly lock a player out of their own past the day a
+--   convoy row was removed. And both columns are `NOT NULL`, so every row names
+--   its two parties and there is nothing for a third clause to let in.
+-- 🔴 THE THIRD CLAUSE THAT USED TO BE HERE WAS THE HOLE. `or
+--    public.is_convoy_party(convoy_id)` put a SECURITY DEFINER function — RLS
+--    bypassed inside it — into the `using` clause of the one table that holds
+--    every player's shipping history, and no assertion in this file read its
+--    body. See the round-8 tombstone in §2 for the reproduction and for the
+--    proof that the clause could never let in a row the two above it did not.
+--    Two rows in the verify block now stand where it stood: `ledger policy
+--    names only the two parties` (the predicate calls no function but
+--    auth.uid()) and `no unguarded definer helper` (that this one has not come
+--    back). Both were confirmed to FAIL against the old shape.
+-- ⚠ Two direct column comparisons, no function call: like kc_sel this cannot
+--   recurse, and it is the predicate the (to_user, created_at) index serves.
 drop policy if exists kcl_sel on public.kitchen_convoy_ledger;
 create policy kcl_sel on public.kitchen_convoy_ledger for select to authenticated
   using (
     from_user = auth.uid()
     or to_user = auth.uid()
-    or public.is_convoy_party(convoy_id)
   );
+
+-- 🔴 AND NOW THE HELPER ITSELF, which is why this drop is HERE and not in §2.
+--    On a database that already has the old version, `is_convoy_party` cannot
+--    be dropped while the old kcl_sel still depends on it — Postgres refuses
+--    with a dependency error and the whole re-apply fails. The policy above has
+--    just been replaced, so by this line nothing references it. On a fresh
+--    database this is a no-op, which is what `if exists` is for.
+drop function if exists public.is_convoy_party(uuid);
 
 revoke all on public.kitchen_convoy_ledger from anon, authenticated;
 revoke all on public.kitchen_convoy_ledger from public;
@@ -1378,16 +1422,85 @@ select 'double-claim lock',
  where schemaname = 'public' and indexname = 'kitchen_convoy_ledger_once'
 
 union all
--- All four functions present AND all four SECURITY DEFINER. A helper that lost
+-- All three functions present AND all three SECURITY DEFINER. A helper that lost
 -- `security definer` stops bypassing RLS and starts recursing.
--- (It was five. `kitchen_stats_upsert` was the fifth and is dropped — round 6.)
+-- (It was five, then four. `kitchen_stats_upsert` was the fifth and went in
+--  round 6; `is_convoy_party` was the fourth and went in round 8 — §2 says why,
+--  and the row below asserts it has not come back.)
 select 'security definer fns',
-       case when count(*) = 4 and bool_and(p.prosecdef) then 'ok'
-            else 'MISSING OR NOT DEFINER (' || count(*) || '/4)' end
+       case when count(*) = 3 and bool_and(p.prosecdef) then 'ok'
+            else 'MISSING OR NOT DEFINER (' || count(*) || '/3)' end
   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
  where n.nspname = 'public'
-   and p.proname in ('is_convoy_party','kitchen_convoy_quota_ok',
+   and p.proname in ('kitchen_convoy_quota_ok',
                      'kitchen_convoy_claim','kitchen_convoy_launch')
+
+union all
+-- 🔴 ROUND 8. THE HELPER THAT COULD NOT BE CHECKED IS ASSERTED ABSENT.
+--    A SECURITY DEFINER function in a policy's `using` clause runs with RLS
+--    bypassed, so its body IS the boundary — and this file had no assertion
+--    that read it. `is_convoy_party` is deleted (§2) and its clause with it;
+--    this row is what stops it drifting back in as a "small helper" the next
+--    time somebody wants a fallback in kcl_sel. Asserting the ABSENCE is the
+--    only check that cannot itself be defeated by rewriting the body.
+select 'no unguarded definer helper',
+       case when count(*) = 0 then 'ok'
+            else 'is_convoy_party IS BACK — A SECURITY DEFINER BODY NO ASSERTION READS' end
+  from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public' and p.proname = 'is_convoy_party'
+
+union all
+-- 🔴 ROUND 8. THE LEDGER PREDICATE, READ RATHER THAN SMOKE-TESTED.
+--    `ledger policy predicate` fifty rows up asserts `qual like '%auth.uid()%'`
+--    — a smoke alarm, and it stayed green with the third clause in place
+--    because the first two disjuncts still mentioned auth.uid(). This row reads
+--    the WHOLE predicate: both parties named by direct comparison, and — the
+--    part that matters — NO FUNCTION CALL AT ALL except auth.uid() itself.
+--    Anything else in a `using` clause is a body a reviewer has to go and find,
+--    which is exactly how the old third clause survived six rounds of review.
+--    ⚠ The last test strips every `auth.uid()` and then looks for an identifier
+--      immediately followed by `(`. No `\s*` before the paren, deliberately:
+--      `pg_policies.qual` prints `OR (` with a space, and allowing whitespace
+--      there would make this row fail on the correct predicate.
+select 'ledger policy names only the two parties',
+       case when count(*) = 1 then 'ok'
+            else 'THE LEDGER POLICY LETS SOMETHING THROUGH THAT IS NOT auth.uid()' end
+  from pg_policies
+ where schemaname = 'public' and tablename = 'kitchen_convoy_ledger'
+   and policyname = 'kcl_sel'
+   and regexp_replace(coalesce(qual, ''), '\s+', ' ', 'g') ~ 'from_user = auth\.uid\(\)'
+   and regexp_replace(coalesce(qual, ''), '\s+', ' ', 'g') ~ 'to_user = auth\.uid\(\)'
+   and replace(regexp_replace(coalesce(qual, ''), '\s+', ' ', 'g'),
+               'auth.uid()', '') !~ '[a-zA-Z_][a-zA-Z_0-9]*\('
+
+union all
+-- 🔴 ROUND 8. THE OTHER DEFINER BODY NOBODY WAS READING.
+--    `kitchen_convoy_quota_ok` is SECURITY DEFINER too, and the two rows below
+--    it only ever asked whether it counts BOXES and whether it RELEASES landed
+--    trucks. Neither asks the authorisation question: WHOSE trucks is it
+--    counting? Every one of its four walls is scoped `from_user = auth.uid()`
+--    and wall 4 keys the lifetime budget on `u.id = auth.uid()`. Drop the
+--    scoping from any of them and the throttle stops being a per-player budget
+--    and starts counting the whole game — one busy hour and NOBODY can launch,
+--    which is a global outage that would read to every player as the feature
+--    being broken, and to this verify block as 'ok'.
+--    ⚠ It counts rather than pattern-matches: `n_raw = n_scoped` is the part
+--      that catches a wall whose scoping was deleted, because a body with three
+--      guarded walls and one unguarded one still matches any regex for the
+--      guarded shape.
+select 'quota counts only the caller',
+       case when q.n_scoped = 4 and q.n_raw = 4
+             and q.b ~ 'u\.id = auth\.uid\(\)'
+            then 'ok'
+            else 'THE THROTTLE COUNTS EVERY PLAYER''S TRUCKS, NOT THE CALLER''S' end
+  from (
+    select b,
+           (length(b) - length(replace(b, 'from_user = auth.uid()', '')))
+             / length('from_user = auth.uid()') as n_scoped,
+           (length(b) - length(replace(b, 'from_user', '')))
+             / length('from_user') as n_raw
+      from (select public.kitchen_fn_flat('kitchen_convoy_quota_ok') as b) src
+  ) q
 
 union all
 -- 🔴 THE DOUBLE-PAYOUT CHECK. If this line is not 'ok' the claim RPC is still

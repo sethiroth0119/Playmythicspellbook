@@ -14,6 +14,12 @@
         still occupies the window until it has physically pulled away.
      3. They order at the speaker, crawl to the window, and lose patience the
         entire time — including while stuck behind somebody else's mistake.
+        🔴 AND FOOD ONLY EVER GOES OUT OF THE WINDOW. Both ends of the lane are
+        gated to their fixture: you cannot order anywhere but the speaker box
+        and you cannot be served anywhere but the hatch. That is what makes the
+        queue a constraint the player plans around rather than a list with a
+        countdown — and it is what makes the wave-off a decision. See
+        §GEOGRAPHY and the guard chain in `serveCar()`.
      4. They are PEOPLE: a name, a vehicle, a mood, a personality that decides
         what they order and how long they will tolerate you, and five pools of
         dialogue (ordering, waiting, ABOUT TO LEAVE, served, leaving) that
@@ -273,13 +279,19 @@ function DF(name) {
                                  Canon builds lay 1; asking for extra means
                                  laying it twice. 🔴 THIS IS THE CHECK — see
                                  §MODIFIERS. There is no quality bar any more.
-     MOD_TIP_HIT                 tip multiplier bonus for an HONOURED promise
-     MOD_TIP_MISS                …and the penalty for a BROKEN one
-     MOD_TIP_UNPROVEN             …and what an UNPROVABLE one is worth, which
-                                 is nothing in either direction. 🔴 Zero, not
-                                 a small bonus and not a small penalty: see
-                                 §MODIFIERS on why a mod nobody can check must
-                                 never be able to move money.
+     MOD_TIP_HIT                 ⚰ DEAD, AND AWAITING DELETION FROM
+     MOD_TIP_MISS                kitchen.data.js. These were the second,
+     MOD_TIP_UNPROVEN            invisible channel: `gen *= verdict.mul`
+                                 multiplied the generosity blend by them on top
+                                 of the §SETTLEMENT the chip had already quoted.
+                                 Round 6 removed the channel; this round removed
+                                 the last two fields that carried them
+                                 (`mkMod()`'s `tipHit` / `tipMiss`). Nothing in
+                                 the feature reads any of the three now, and
+                                 kitchen.data.js still runs a live self-audit
+                                 asserting a relationship between two of them —
+                                 a designer being told their tuning is valid for
+                                 a dial that is not connected. See the handover.
 
      MOD_PAY_HIT                 🔴 THE SETTLEMENT, as a fraction of the
      MOD_PAY_HIT_MIN                 honoured LINE's price, with a per-honoured-
@@ -295,9 +307,17 @@ function DF(name) {
      MOD_PAY_UNPROVEN            🔴 zero. Always zero. See §MODIFIERS.
      MOD_POP_HIT                 word of mouth, per honoured line…
      MOD_POP_MISS                …and per broken one. Charged by `serveCar()`.
-     MOD_XP_HIT                  ⚠ STILL READ BY NOBODY, re-verified round 5.
-                                 There is no path from this file to `addXp()`.
-                                 See handover item O2.
+     MOD_XP_HIT                  ✅ PAID. xp for getting a fussy order right, and
+                                 it is `serveTicket()` that pays it —
+                                 kitchen.state.js:3874, `xp += hit *
+                                 _int(EC('MOD_XP_HIT', 3))`, off the same
+                                 verdict this file re-judges after the commit.
+                                 ⚠ THIS ROW CLAIMED THE KEY HAD NO READER,
+                                 "re-verified round 5", for a whole round after
+                                 that line landed. A comment asserting an area is dead is
+                                 the instrument the next builder reads to decide
+                                 where to spend a round; re-grep before you
+                                 believe one, including this one.
 
    ── THE TIP RETURN (§TIP) ────────────────────────────────────────────────
      TIP_GEN_MAX                 runaway guard on the GENEROSITY STACK (tipBias
@@ -866,10 +886,14 @@ function voiceFor(custId, key, special, r, avoid) {
    ── 🔴 AND IT IS PRICED, NOT JUST SCORED (§SETTLEMENT) ────────────────────
    Judging the promise honestly is half the job. The other half is that it has
    to be worth something, and round 2's version moved only the tip BLEND
-   (MOD_TIP_HIT/MISS), which is a fraction of a fraction. kitchen.data.js added
+   (MOD_TIP_HIT/MISS), which is a fraction of a fraction — a channel round 6
+   removed outright and this round finished removing (see the TIP row in
+   §SETTLEMENT and handover O2). kitchen.data.js added
    four MOD_PAY_* keys and two MOD_POP_* keys this round precisely so the verdict
-   moves real Cinder and real word-of-mouth; `settleMods()` below is where they
-   are read and `tipFor()` is where the Cinder is delivered. See §SETTLEMENT for
+   moves real Cinder and real word-of-mouth; `judgeTicket()` below is where they
+   are read (there is no `settleMods()` and there never was — this sentence named
+   a function that was renamed before it shipped) and `tipFor()` is where the
+   Cinder is delivered. See §SETTLEMENT for
    why the delivery pipe is the tip line and what would be better.
 
    ⚠ A MODIFIER JUDGES THE PROMISE, NOT THE RECIPE, AND THAT IS DELIBERATE.
@@ -1021,10 +1045,20 @@ function mkMod(m) {
     label: m.label,
     ing: m.ing || null,
     say: m.say,
-    // What this promise is worth either way. Held on the mod so a renderer can
-    // show the stakes on the chip without knowing the ECON table.
-    tipHit: m.kind === 'gift' ? 0 : EC('MOD_TIP_HIT'),
-    tipMiss: m.kind === 'gift' ? 0 : EC('MOD_TIP_MISS'),
+    /* ⚠ `tipHit` / `tipMiss` USED TO BE STAMPED HERE, ON EVERY MODIFIER IN THE
+       GAME, and they are gone. The comment above them said "held on the mod so
+       a renderer can show the stakes on the chip without knowing the ECON
+       table" — but the chip has read `detail[].cinder` off `judgeTicket()`
+       since round 4, and after round 6 removed the `gen *= verdict.mul` channel
+       these two fields had no reader anywhere:
+       `grep -rn 'tipHit\|tipMiss' public/src/kitchen/*.js` returned the two
+       assignments and eleven comments and no read at all. They were the last
+       thing keeping MOD_TIP_HIT / MOD_TIP_MISS / MOD_TIP_UNPROVEN alive in
+       kitchen.data.js — three ECON keys whose only consumers were two dead
+       fields, with a LIVE self-audit enforcing a relationship between them,
+       which is a designer being told their tuning is valid for a dial that is
+       not connected. Deleting those three keys and their two validator branches
+       is the other half and it is somebody else's file; see the handover. */
     // `no_rush` is the exception that proves the mechanic: it asks for nothing
     // and pays nothing, it just makes the customer patient.
     patienceMult: m.id === 'no_rush' ? EC('MOD_NORUSH_PATIENCE_MULT') : EC('MOD_PATIENCE_MULT'),
@@ -1127,9 +1161,13 @@ function judgeMod(mod, item) {
      POP      MOD_POP_HIT / MOD_POP_MISS, per line, charged by `serveCar()`.
               Small — one detail of one ticket — but a broken promise is worth
               about a quarter of a lost ticket in word of mouth.
-     TIP      MOD_TIP_HIT / MOD_TIP_MISS, unchanged, on the generosity blend.
-              It is what makes an honoured promise feel different at every
-              price point instead of being a flat coupon.
+     TIP      ⚰ THERE IS NO TIP CHANNEL ANY MORE, AND THIS ROW IS KEPT AS THE
+              RECORD BECAUSE IT READ "MOD_TIP_HIT / MOD_TIP_MISS, unchanged, on
+              the generosity blend" FOR A ROUND AFTER IT STOPPED BEING TRUE.
+              Round 6 deleted `gen *= verdict.mul`. TWO channels for one promise
+              meant the chip quoted one number and the till moved another —
+              chip "−17" → till −32, on the one surface built for making that
+              choice. ONE promise, ONE channel: the CINDER row above.
 
    🔴 WHY MISS > HIT IN BOTH CURRENCIES. kitchen.data.js sets MOD_PAY_MISS
    -0.25 against MOD_PAY_HIT 0.12 and asserts the relation. A broken promise is
@@ -1161,25 +1199,23 @@ function judgeMod(mod, item) {
      • a badly broken promise can take the whole tip to zero and no further,
        because state.js reads a non-positive return as "no tip" and there is no
        way to reach into the payout from here.
-     • 🔴 AND THE PROMISE MOVES THE TILL TWICE, ONLY ONE OF WHICH IS ON THE
-       CHIP. The settlement is delivered on the tip line AND `gen *= verdict.mul`
-       has already multiplied the generosity blend by MOD_TIP_HIT / MOD_TIP_MISS.
-       MEASURED, round 5, one Commuter / one burgerClassic / one "no greens",
-       everything else held identical and controlled against an ignore run that
-       carries no promise at all (scratchpad r5dt/settle.mjs):
-           settlement channel alone (MOD_TIP_* zeroed on the mod)
-               chip "+28" → the tip moves +27      chip "−17" → the tip moves −18
-           both channels, i.e. what ships
-               chip "+28" → the till moves +34     chip "−17" → the till moves −32
-       So the chip's figure IS delivered, to a Cinder of rounding — and then the
-       blend moves it again, unshown. Honouring pays MORE than advertised; a
-       break costs about TWICE what the chip warned. Nothing on screen argues
-       with itself (there is no counterfactual on the card), so this is an
-       understatement of stakes and not a lie — but it is the direction a player
-       can least learn from, and it is O1's second half.
-       ⚠ THE POPULARITY HALF HAS NO SUCH GAP: the same run charges +0.14 / −0.50
-       and the chip and the toast both print +0.1 / −0.5, which is MOD_POP_HIT
-       and MOD_POP_MISS exactly. One channel, one number, four surfaces.
+     • ✅ AND THE PROMISE USED TO MOVE THE TILL TWICE, ONLY ONE OF WHICH WAS ON
+       THE CHIP. This bullet described the live build for two rounds and then
+       described a deleted one for a third, which is the reason the handover
+       block above it now carries a date and a commit. WHAT IT WAS: the
+       settlement rode the tip line AND `gen *= verdict.mul` had already
+       multiplied the generosity blend by MOD_TIP_HIT / MOD_TIP_MISS — measured
+       round 5, one Commuter / one burgerClassic / one "no greens", everything
+       else held identical, chip "+28" → till +34 and chip "−17" → till −32, so
+       breaking a promise cost nearly twice what the chip warned. Round 6
+       deleted the second channel. RE-MEASURED TODAY over 238 controlled A/B
+       pairs (scratchpad r15d/exact.mjs): chip == delivered EXACTLY on 196,
+       within a Cinder of rounding on 227, and the 11 that differ are the two
+       CLAMPS above and nothing else — every one of them now says so in the
+       toast (`shortfallPhrase()`).
+       ⚠ THE POPULARITY HALF NEVER HAD THE GAP AND STILL DOES NOT: 238 of 238
+       exact to 0.005, which is MOD_POP_HIT and MOD_POP_MISS straight through.
+       One channel, one number, four surfaces.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /**
@@ -1378,7 +1414,13 @@ export function modVerdict(K, car, now) {
     const ticket = ticketFor(K, live || car);
     return judgeTicket(ticket);
   } catch (e) {
-    return { mul: 1, honoured: 0, broken: 0, unproven: 0, cinder: 0, pop: 0, detail: [] };
+    /* ⚠ THE SAME SHAPE `judgeTicket()` RETURNS, AND IT USED NOT TO BE. This
+       line read `{ mul: 1, … }` for a round after 9d41440 deleted the four
+       PRODUCER lines of the `mul` channel — a fallback handing back a key the
+       real path no longer produces, which the self-test dutifully reported
+       every run as "modVerdict() returns 'mul' and NO OTHER FILE reads '.mul'".
+       A stale catch is the quietest way for a deleted channel to stay alive. */
+    return { honoured: 0, broken: 0, unproven: 0, cinder: 0, pop: 0, detail: [] };
   }
 }
 
@@ -3267,7 +3309,7 @@ function signedPop(n) {
   const v = Math.round(_num(n, 0) * 100) / 100;
   return v ? ((v > 0 ? '+' : '−') + Math.abs(v).toFixed(1)) : '';
 }
-function verdictLine(verdict) {
+function verdictLine(verdict, trace) {
   if (!verdict) return '';
   const kept = _int(verdict.honoured), broke = _int(verdict.broken);
   if (!(kept + broke)) return '';
@@ -3283,14 +3325,84 @@ function verdictLine(verdict) {
   }
   const money = signedCinder(verdict.cinder);
   const pop = signedPop(verdict.pop);
-  return [head + (money ? ' ' + money : ''), pop ? pop + ' pop' : ''].filter(Boolean).join(' · ');
+  return [head + (money ? ' ' + money : ''), shortfallPhrase(verdict, trace), pop ? pop + ' pop' : '']
+    .filter(Boolean).join(' · ');
+}
+
+/* 🔴 WHEN THE TILL COULD NOT DELIVER WHAT THE CHIP QUOTED, SAY SO IN THE SAME
+   TOAST. See the trace stamped in `tipFor()` for the measurement and for why
+   the shortfall exists at all (it is the payout hook, handover O1).
+
+   The rule is the one the whole §SETTLEMENT block is built on — one promise,
+   one channel, one number — with the honest addition that the number has a
+   ceiling and a floor the chip cannot see. A player who was warned "−100" and
+   watched −62 leave the till has been told the truth twice: what the promise
+   was worth, and what the pipe could take. Silence there is how a mechanic
+   quietly stops meaning what it says.
+
+   ⚠ A ONE-CINDER GAP IS ROUNDING, NOT A SHORTFALL. `taken` is computed against
+   `payoutEstimate()` and the till rounds against the real payout, so the two
+   land within a Cinder of each other on 227 of 238 controlled pairs. Printing
+   "−17 taken" beside "−18" would be noise that trains the player to ignore the
+   line that matters. */
+function shortfallPhrase(verdict, trace) {
+  if (!trace) return '';
+  const promised = Math.round(_num(verdict.cinder, 0));
+  const taken = Math.round(_num(trace.taken, 0));
+  if (Math.abs(promised - taken) <= 1) return '';
+  /* ⚠ SHORT, BECAUSE IT RIDES A TOAST THAT ALREADY CARRIES A NAME, A PAYOUT, A
+     TIP, A VERDICT AND A POPULARITY DELTA. The long form — "…taken, the tip was
+     already at its ceiling" — pushed the reward line past what a 390px toast
+     shows before the customer's parting line lands on top of it. */
+  const why = promised < 0 ? 'tip ran out' : 'tip at its ceiling';
+  return `${signedCinder(taken) || '0'} taken (${why})`;
+}
+
+/* ── 🪟 WHY THIS CAR CANNOT BE SERVED YET, IN THE PLAYER'S WORDS. ──────────
+   A refusal that only says "no" teaches nothing. This one names the position
+   AND the car that is in the way, because the whole point of gating the collect
+   beat is to make the queue a thing the player reasons about: "Night Medic is
+   3rd in the lane. Commuter is at the window." tells them what to do next
+   (finish the Commuter, or wave them off) in the same breath as refusing them.
+   ⚠ It reads the lane and nothing else, and it never throws — an unknown lane
+   degrades to the short sentence rather than to a crash inside a refusal. */
+const ORDINAL = ['', '1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th'];
+function queueWhy(K, car) {
+  try {
+    const lane = (K && Array.isArray(K.lane)) ? K.lane.filter(Boolean) : [];
+    const idx = lane.indexOf(car);
+    const head = lane[0];
+    const where = (idx > 0 && ORDINAL[idx + 1]) ? ` is ${ORDINAL[idx + 1]} in the lane` : ' is still in the queue';
+    if (!head || head === car) return `${car.name}${where} — not at the window yet.`;
+    // A served car holds the window for LANE_EXIT_MS. Say so; "still pulling
+    // away" is a wait, and a wait the player can see ending is not a refusal
+    // they will read as a bug.
+    const blocker = head.state === 'gone'
+      ? `${head.name} is still pulling away.`
+      : `${head.name} is at the window.`;
+    return `${car.name}${where}. ${blocker}`;
+  } catch (e) {
+    return 'They have not reached the window yet.';
+  }
 }
 
 /**
  * Hand the food out of the window. THE reward moment.
  *
  * → { ok, code, why, paid, tip, xp, line, mods:[{label,result,worth}],
- *     honoured, broken, custName, icon, modCinder, modPop, modLine }
+ *     honoured, broken, unproven, custName, icon,
+ *     modCinder, modCinderTaken, modPop, modLine }
+ *
+ * 🔴 IT REFUSES A CAR THAT IS NOT AT THE WINDOW. The fourth beat is gated to
+ * its fixture exactly as the first one is (§GEOGRAPHY, and the guard chain
+ * below); a queued car's ready ticket comes back `{ok:false, code:'NOT_READY'}`
+ * with a sentence naming the position AND the car in the way. `laneCard()`
+ * carries the same condition on `.canServe` / `.atWindow` so a renderer never
+ * has to offer the control and then toast the refusal.
+ *
+ * ⚠ `modCinder` IS THE CHIP'S FIGURE AND `modCinderTaken` IS THE TILL'S. They
+ * are equal on 227 of 238 controlled pairs; where they are not, the settlement
+ * hit one of the two clamps `tipFor()` documents, and `modLine` says so.
  *
  * Deliberately THIN on the money. `State.serveTicket()` is the payer: it prices
  * the ticket (§8.3), calls `bridge().addGems`, moves popularity, awards XP,
@@ -3324,6 +3436,54 @@ export function serveCar(K, carId, now) {
     if (!car) return fail('BAD_ARG', 'That car has already gone.');
     if (car.state === 'gone') return fail('BAD_ARG', 'That car has already gone.');
     if (!car.ticketId) return fail('NOT_READY', `${car.name} has not ordered yet.`);
+    /* 🔴 §GEOGRAPHY, THE FOURTH BEAT. YOU HAND FOOD OUT OF THE WINDOW.
+       The brief's beats are ORDER → PAY → WAIT → COLLECT. Beat one has been
+       gated to its fixture since round 2 (`advanceCar()` will not let a car
+       speak anywhere but the speaker box, and `compact()` will not let it drive
+       past the sign before it has). Beat FOUR was gated to nothing at all: this
+       guard chain checked the kitchen, the car, the ticket and the ticket's
+       state and never once asked WHERE THE CAR WAS, so any ready drive ticket
+       could be served from its board card with the customer parked at the
+       ORDER HERE panel three cars from the hatch.
+
+       MEASURED THROUGH THE PLAYER'S OWN PATH before this line existed
+       (scratchpad r15d/where.mjs, five seeded 720s days at level 20, serving
+       exactly as kitchen.render.js's doServe() does): 161 of 197 lane sales —
+       81.7% — went to a car that was not at the window, and the queue-position
+       histogram was {0:38, 1:56, 2:53, 3:50}, i.e. the MODAL sale was made to
+       the second car in the lane and 50 of them to the fourth. Worst single
+       case: `{"name":"Commuter","station":"speaker","posFromWindow":3,
+       "queueAhead":["Gate Guard@window","Gate Guard@queue","Gate Guard@queue"],
+       "paid":309}` — served, paid and driven off, from the speaker box, over
+       the heads of three cars, while the car AT the window read "Not ready".
+
+       That is the same failure §GEOGRAPHY already fixed at the other end of the
+       same lane and describes as "ROUND 2 FIXED THE PICTURE AND LEFT THE STATE
+       MACHINE ALONE, so the two disagreed in a way the player could read". Every
+       element of the lane — the two fixtures, the FIFO slots, the length units,
+       LANE_EXIT_MS holding the window, the wave-off priced at POP_WAVE with the
+       stated rationale "free the slot, save the three cars behind them" — exists
+       to teach that a drive-thru is a queue with ONE collection point. The serve
+       verb ignored all of it on four sales in five.
+
+       ⚠ AND THE THROUGHPUT COST WAS MEASURED, NOT ASSUMED — §GEOGRAPHY's own
+       standard, and the answer is the interesting part. Same five seeds, same
+       bot, three policies:
+           ungated (what shipped)                 197 lane sales · 224 lost · end pop 42.6
+           gated, bot never waves anybody off      89 lane sales · 253 lost · end pop 27.1
+           gated, bot waves a blocking head car   184 lane sales · 115 lost · end pop 54.2
+       So the gate does not cost throughput. It costs INDIFFERENCE. With the
+       collect beat ungated the lane is a parallel ticket list and the wave-off
+       is decoration; with it gated the head car is a decision every time, and a
+       player who uses the escape hatch this file already ships and already
+       prices ends the day with 7% fewer sales, HALF the lost tickets, 10% more
+       Cinder and 12 more popularity than the ungated build. A player who taps
+       whatever is ready and never waves loses half the lane — which is the
+       correct shape for a mechanic, and is exactly what §GEOGRAPHY found when it
+       serialised the speaker (32% → 65% finish rate).
+       Re-run: `node r15d/where.mjs <seed>` must print an EMPTY 'SERVED PAST THE
+       FRONT OF THE QUEUE' list and a 100%-window histogram. */
+    if (car.station !== 'window') return fail('NOT_READY', queueWhy(K, car));
 
     const ticket = ticketOf(K, car.ticketId);
     if (!ticket) return fail('BAD_ARG', 'That order is gone.');
@@ -3398,6 +3558,51 @@ export function serveCar(K, carId, now) {
       car._modPopped = true;
       if (verdict.pop) bumpPop(K, null, verdict.pop, verdict.broken ? 'promise-broken' : 'promise-kept');
     }
+
+    /* ── 🧾 THE CLAMP TRACE, READ BACK. See `tipFor()` for what it is and why
+       it is stamped on the car. Accepted ONLY if it was computed for THIS
+       ticket on THIS frame; a stale one — a quote drawn last frame for the car
+       behind — is dropped rather than believed. */
+    const trace = (car._tipTrace && car._tipTrace.at === t && car._tipTrace.ticketId === ticket.id)
+      ? car._tipTrace : null;
+    car._tipTrace = null;
+    const modLine = verdictLine(verdict, trace);
+
+    /* ══ ✅ FREEZE THE CARD AT THE MOMENT OF SALE. ════════════════════════
+       🔴 THE DEFECT: FOR THE FULL 1.5s OF LANE_EXIT_MS AFTER EVERY LANE SALE,
+       THE BIGGEST CARD ON SCREEN UNDID THE SALE. `serveTicket()` filters the
+       ticket out of `K.tickets`, so on the very next paint `ticketFor()`
+       returned null, `cardFor()`'s verdict went null and its `lines` fell back
+       to `car.items` — while the served car keeps its window slot for
+       LANE_EXIT_MS and therefore keeps the pinned card. CAPTURED FRAME BY
+       FRAME on a Corp Suit whose serve had just paid ◈289 (scratchpad
+       r8dt/shot2.mjs, 390×844, the shipped page): t+150ms, t+600ms and
+       t+1200ms all read `🍗 Chicken Sandwich 0/1 · ⚪ no mayo · 🥬 no greens ·
+       Not ready [disabled]` — where the frame BEFORE the click read `1/1`,
+       `⚪ no mayo ✓ +28`, `🥬 no greens ✓ +28`, `✓ 2 KEPT`, `SERVE`. So at the
+       payoff moment the toast said "✓2 +56" and the card directly beneath it
+       said the order was unfilled, the promises unjudged and the customer not
+       ready. It is round 6's re-judge fix landing on the toast and not on the
+       card.
+
+       Nothing here needs computing: `res` and `verdict` are the sale, and this
+       is the one instant at which they are both true. So they are frozen onto
+       the car — ours outright (rule 3) — and `cardFor()` returns THEM for as
+       long as the car is still driving away, instead of re-deriving a card from
+       a ticket that no longer exists.
+       ⚠ The item lines go through the SAME builder the live card uses, so a
+       frozen card and a live one cannot drift into two shapes. */
+    car._served = {
+      at: t,
+      paid: _int(res.paid),
+      tip: _int(res.tip),
+      honoured: _int(verdict.honoured),
+      broken: _int(verdict.broken),
+      unproven: _int(verdict.unproven),
+      cinder: Math.round(_num(verdict.cinder, 0)),
+      line: modLine,
+      items: itemCardsFor(ticket, car, verdict),
+    };
     K.rev = _int(K.rev) + 1;
 
     return {
@@ -3411,8 +3616,14 @@ export function serveCar(K, carId, now) {
          already formatted the way `modChip()` formats them — see the block
          above `serveCar()` for why this file does the formatting. */
       modCinder: Math.round(_num(verdict.cinder, 0)),
+      /* 🔴 AND WHAT THE TILL COULD ACTUALLY TAKE. Equal to `modCinder` on 227
+         of 238 controlled pairs; the exceptions are the two documented clamps
+         (see `tipFor()`), and on those `modLine` says so out loud. Returned
+         separately so a caller can colour the difference without re-deriving
+         it, and so an assertion can compare the two. */
+      modCinderTaken: trace ? Math.round(_num(trace.taken, 0)) : Math.round(_num(verdict.cinder, 0)),
       modPop: Math.round(_num(verdict.pop, 0) * 100) / 100,
-      modLine: verdictLine(verdict),
+      modLine,
       mods: verdict.detail,
     };
   } catch (e) {
@@ -3662,13 +3873,20 @@ export function tipFor(K, car, quality, now) {
        punishment, on exactly the tickets where the punishment was the message.
        Flooring the TIP first keeps what the floor is for ("a served car always
        drops a coin") and leaves the settlement free to move the total all the
-       way to nothing, which is what the chip's red figure promised.
+       way TO NOTHING.
 
-       ⚠ TIP_FRACTION_MAX IS STILL A CEILING ON THE SUM and it is the one place
-       an honoured settlement can still be clipped: a cheap dish carrying an
-       honoured `extra` can price a settlement worth more than 95% of the bill.
-       It is rare, it errs downward, and it cannot be fixed from inside this
-       file — the payout hook (O1) is what removes it.
+       ⚠ AND NO FURTHER, WHICH IS THE HONEST VERSION OF THAT SENTENCE. This
+       comment used to end "…all the way to nothing, which is what the chip's
+       red figure promised". It moves the total to nothing; the chip's red
+       figure can be worth MORE than nothing is worth, and the difference was
+       being forgiven in silence. Both ceilings are real and both err downward:
+       TIP_FRACTION_MAX clips an honoured settlement on a cheap dish carrying an
+       `extra` (2 of 97 promise sales over five seeded days), and the zero floor
+       inside kitchen.state.js's wrapper clips a doubly-broken one (6 of 97).
+       NEITHER can be fixed from inside this file — the payout hook (O1) is what
+       removes both — so what this file does instead is REFUSE TO REPEAT A
+       NUMBER THE TILL DID NOT MOVE: the trace below records promised against
+       taken, and `verdictLine()` prints the shortfall in the toast.
 
        It judges the TICKET, not `car.mods`, because a promise is scored PER
        LINE: "no onions" is about the burgers, not about the milkshake beside
@@ -3678,9 +3896,47 @@ export function tipFor(K, car, quality, now) {
     const verdict = judgeTicket(ticket);
     const est = payoutEstimate(K, ticket);
     const settle = est > 0 ? (_num(verdict.cinder, 0) / est) : 0;
-    const total = Math.max(tipPct, EC('TIP_FRACTION_MIN')) + settle;
-    if (total <= 0) return 0;
-    return Math.min(total, EC('TIP_FRACTION_MAX'));
+    const base = Math.max(tipPct, EC('TIP_FRACTION_MIN'));
+    const wanted = base + settle;
+    const out = wanted <= 0 ? 0 : Math.min(wanted, EC('TIP_FRACTION_MAX'));
+
+    /* ── 🧾 WHAT THE PIPE COULD ACTUALLY DELIVER, WRITTEN DOWN. ────────────
+       🔴 THE DEFECT: THE CHIP'S RED FIGURE CAN BE BIGGER THAN THE WHOLE TIP,
+       so a badly broken promise is punished LESS than the player was warned.
+       The settlement rides out as a fraction ADDED TO THE TIP, and
+       kitchen.state.js's `tipFor()` wrapper ends `return Math.max(0,
+       Math.round(v))` — a negative fraction is read as "no tip", never as a
+       charge. So once |settlement| exceeds the tip, the excess is silently
+       forgiven. MEASURED over 238 controlled A/B pairs differing only in
+       whether the ticket still carried its mods at the instant of sale
+       (scratchpad r8dt/exact.mjs): chip == delivered EXACTLY on 196, within 1
+       Cinder on 227, and 11 off by more — every one of them a double-broken
+       promise whose tip had clamped to zero. Worst: chickenSandwich ×2, both
+       promises broken, `chip -100, delivered -62` — a 38% shortfall on the
+       warning, in the direction a player is least able to learn from.
+
+       THE REAL FIX IS THE PAYOUT HOOK (handover O1) and it is not ours to
+       write. What IS ours is refusing to let the toast repeat a number the
+       till did not move. So the two figures are recorded HERE, where both are
+       known and exact, and `serveCar()` reads them back and says so.
+
+       ⚠ WHY ON THE CAR AND NOT ON THE TICKET. `K.lane` is ours outright
+       (rule 3); `K.tickets` belongs to kitchen.state.js and we touch it through
+       two doors only. And WHY IT IS SAFE despite `tipFor()` also running on
+       every frame behind `quoteTicket()`: the stamp carries the `now` and the
+       ticket id it was computed for, and `serveCar()` passes the SAME `t` into
+       `State.serveTicket()`, so it accepts the trace only when both match. A
+       quote for a different ticket, or for a different frame, is ignored rather
+       than believed. */
+    if (live && typeof live === 'object' && (verdict.honoured || verdict.broken)) {
+      live._tipTrace = {
+        at: t,
+        ticketId: ticket ? ticket.id : null,
+        promised: Math.round(_num(verdict.cinder, 0)),
+        taken: Math.round((out - base) * est),
+      };
+    }
+    return out;
   } catch (e) {
     return EC('TIP_FRACTION_MIN');   // rule 2: a bad tip beats a dead till
   }
@@ -4050,11 +4306,24 @@ export function laneStatus(K, now) {
  *   { carId, name, icon, vehicleIcon, vehicleName, mood, moodFace, special,
  *     specialLabel, exitDir, state, phase, station, patience (0..1), ready,
  *     say, line, items:[{recipeId, name, icon, qty, filled, mods:[{label, ing,
- *     ingIcon, result}]}], canServe, canWave }
+ *     ingIcon, result, cinder}]}], honoured, broken,
+ *     menu, worth, served, servedPaid, servedTip, servedLine,
+ *     atWindow, canServe, canWave }
  *
  * `canServe` / `canWave` are the two buttons. `canServe` is true only when
- * `serveCar()` would succeed, so a renderer can disable the button rather than
- * offering it and then toasting a refusal.
+ * `serveCar()` would succeed — which since this round includes BEING AT THE
+ * WINDOW — so a renderer can disable the button rather than offering it and
+ * then toasting a refusal. `atWindow` is the same condition on its own, so the
+ * caption can say why.
+ *
+ * 💰 `menu` is the order at list price; `worth` is what the till pays if you
+ * hand it over now (`State.quoteTicket().paid`, the till's own arithmetic — see
+ * `quoteWorth()`). Two different claims, deliberately.
+ *
+ * ✅ `served` and the three fields beside it are the FROZEN SALE, true only
+ * while a served car is still pulling away from the window. See the freeze in
+ * `serveCar()` for the defect they close. ⚠ kitchen.render.js does not draw
+ * them yet — handover O8, with the markup written out.
  */
 export function laneCard(K, now) {
   const empty = { window: null, next: null, waiting: 0, label: 'Lane closed', full: false, balking: 0 };
@@ -4079,14 +4348,19 @@ export function laneCard(K, now) {
 const MOOD_FACE = { happy: '😄', ok: '🙂', testy: '😠', furious: '🤬' };
 const SPECIAL_LABEL = { bulk: '📦 Bulk order', jump: '⚡ Cut in', grudge: '😤 Second chance', favour: '💚 Regular' };
 
-function cardFor(K, car, now) {
-  if (!car) return null;
-  const ticket = ticketFor(K, car);
-  const verdict = ticket ? judgeTicket(ticket) : null;
-  const ready = !!(ticket && ticket.state === 'ready');
-
+/**
+ * The itemised lines of ONE card, in the shape the pinned strip draws.
+ *
+ * 🔴 EXTRACTED SO THE SALE CAN BE FROZEN IN THE SAME SHAPE THE LIVE CARD USES.
+ * `serveCar()` calls this once, at the instant of the sale, and stores the
+ * result on `car._served`; `cardFor()` calls it every frame while the order is
+ * live. One builder, so a card that has just been paid for and a card that has
+ * not cannot drift into two different layouts — which is precisely how the
+ * window card ended up reverting to "0/1, unjudged" a frame after a ◈289 sale.
+ */
+function itemCardsFor(ticket, car, verdict) {
   const items = [];
-  const lines = (ticket && Array.isArray(ticket.items)) ? ticket.items : (car.items || []);
+  const lines = (ticket && Array.isArray(ticket.items)) ? ticket.items : ((car && car.items) || []);
   for (const it of lines) {
     if (!it) continue;
     const rec = recipeOf(it.recipeId) || {};
@@ -4112,6 +4386,74 @@ function cardFor(K, car, now) {
       }),
     });
   }
+  return items;
+}
+
+/**
+ * 💰 WHAT THE TILL WILL PAY FOR THIS ORDER RIGHT NOW — the till's own number,
+ * or nothing at all.
+ *
+ * 🔴 THE ONE CARD THE PLAYER SERVES A LANE CUSTOMER FROM CARRIED NO MONEY.
+ * `pinnedTicketId()` (kitchen.render.js) deliberately drops the window car's
+ * board copy — "while they are at the window their board copy stands down" — so
+ * the priced board button is BY CONSTRUCTION unreachable for the car at the
+ * window, and the window card's own button was a bare "Serve". Measured across
+ * five seeded days, 22% of lane sales are made from that card, and one of them
+ * paid ◈289 off a button that named no figure at all. kitchen.render.js's own
+ * rule is "PRINT THE TILL'S NUMBER, OR PRINT NO NUMBER"; this is that number,
+ * reached through the same `State.quoteTicket()` the board button uses, so
+ * there is no second copy of the pricing anywhere.
+ *
+ * ⚠ `typeof`-GUARDED ACROSS THE IMPORT CYCLE, like every other State call in
+ * this file, and it returns null rather than a guess when the read is not
+ * there. A null is what makes the button fall back to a plain "Serve".
+ */
+function quoteWorth(ticket, now) {
+  try {
+    if (!ticket || typeof State.quoteTicket !== 'function') return null;
+    const q = State.quoteTicket(ticket.id, now);
+    const n = Math.round(_num(q && q.paid, 0));
+    return n > 0 ? n : null;
+  } catch (e) { return null; }
+}
+
+/**
+ * 🏷 WHAT THE CUSTOMER IS ORDERING, AT MENU PRICE — the same claim the board
+ * ticket's head makes, in the same units, so the two cards describing one order
+ * do not describe it differently.
+ *
+ * ⚠ NO MULTIPLIERS, EVER. `basePrice × qty` and nothing else. The instant this
+ * starts applying popPayMul or a quality guess it becomes round 4's bug — a
+ * second copy of the pricing, one refactor from disagreeing with the till.
+ * The till's figure is `quoteWorth()` above and it is a different claim.
+ */
+function menuWorth(items) {
+  let n = 0;
+  for (const it of (items || [])) {
+    const rec = recipeOf(it && it.recipeId);
+    if (!rec) continue;
+    n += _num(rec.basePrice, 0) * Math.max(0, _int(it.qty));
+  }
+  return n > 0 ? Math.round(n) : 0;
+}
+
+function cardFor(K, car, now) {
+  if (!car) return null;
+  const ticket = ticketFor(K, car);
+  const verdict = ticket ? judgeTicket(ticket) : null;
+  const ready = !!(ticket && ticket.state === 'ready');
+
+  /* ══ ✅ THE SALE, HELD ON SCREEN FOR AS LONG AS THE CAR IS STILL THERE. ══
+     See the freeze in `serveCar()` for the measurement. While a served car is
+     driving out of the window it keeps the pinned card for LANE_EXIT_MS, and
+     the live derivation below has nothing left to derive from — the ticket has
+     been filtered out of `K.tickets`. So the frozen sale answers instead: the
+     filled counts, the resolved promise chips, what it paid and what it tipped.
+     ⚠ ONLY for `reason === 'served'`. A car that timed out or was waved off has
+     no sale to show and correctly falls through to the live path, which for
+     them is the order they never got. */
+  const sold = (car.state === 'gone' && car.reason === 'served' && car._served) ? car._served : null;
+  const items = sold ? sold.items : itemCardsFor(ticket, car, verdict);
 
   return {
     carId: car.carId,
@@ -4128,13 +4470,44 @@ function cardFor(K, car, now) {
     phase: car.phase,
     station: car.station,
     patience: patiencePct(car, now),
-    ready,
+    /* ⚠ A SOLD CARD IS `ready`, AND THIS IS A STOPGAP WITH A NAME ON IT.
+       The order WAS filled — that is what "ready" means — and until
+       kitchen.render.js draws the `served` band (see `servedLine` below and the
+       ask in this file's handover), `ready` is the flag its button caption
+       reads. `false` here makes a card that has just paid ◈289 caption itself
+       "Not ready" for 1.5s, which is the defect this freeze exists to stop.
+       Delete this branch the moment the renderer reads `served`. */
+    ready: sold ? true : ready,
     say: (now < _num(car.sayUntil, 0)) ? (car.say || '') : '',
     line: (ticket && ticket.line) || car._speaker || '',
     items,
-    honoured: verdict ? verdict.honoured : 0,
-    broken: verdict ? verdict.broken : 0,
-    canServe: ready && car.state !== 'gone',
+    honoured: sold ? sold.honoured : (verdict ? verdict.honoured : 0),
+    broken: sold ? sold.broken : (verdict ? verdict.broken : 0),
+    /* 💰 THE TWO FIGURES, AND THEY ARE DIFFERENT CLAIMS ON PURPOSE.
+       `menu` is what they ordered at list price — the same number the board
+       ticket prints in its head. `worth` is what the till pays if you hand it
+       over now, which only exists once there are plates to price. Menu price
+       before, receipt price at the moment of sale, exactly how a menu and a
+       receipt relate everywhere else. On a sold card `worth` is no longer a
+       quote at all: it is what the customer actually paid. */
+    menu: menuWorth(items),
+    worth: sold ? sold.paid : (ready ? quoteWorth(ticket, now) : null),
+    /* ✅ THE SALE ITSELF, for as long as the car is still pulling away.
+       `servedLine` is already formatted — it is the same sentence the reward
+       toast printed, so the card under the toast and the toast agree word for
+       word. Draw it in place of the Serve / Wave off pair. */
+    served: !!sold,
+    servedPaid: sold ? sold.paid : 0,
+    servedTip: sold ? sold.tip : 0,
+    servedLine: sold ? sold.line : '',
+    /* 🔴 §GEOGRAPHY, THE FOURTH BEAT — the button may not offer what
+       `serveCar()` will refuse. The collect beat is gated to the window (see
+       the guard chain in `serveCar()`), so `canServe` carries the same
+       condition and a renderer that disables on it can never present a control
+       that toasts a refusal. `atWindow` is exposed separately so the caption
+       can say WHY rather than just going grey. */
+    atWindow: car.station === 'window',
+    canServe: ready && car.state !== 'gone' && car.station === 'window',
     canWave: car.state !== 'gone',
   };
 }
@@ -4223,7 +4596,13 @@ export function regulars(K) {
        ready to be a handover item.
      • EVERY claim here is a grep away from being checked. Check it. Two rounds
        running, the thing this block asserted about another file was false.
-   Last swept: round 5, against the shipped code, item by item.
+   Last swept: ROUND 8, against HEAD a2b7c59 plus this round's edits, item by item,
+   with every grep in it re-run rather than re-read. Four paragraphs of the previous
+   sweep had gone false — O2 and O3 were describing work that had landed, O1's
+   measurement table was two commits stale and its closing instruction argued
+   against the shipped design, and the ECON glossary called MOD_XP_HIT unread. That
+   is the exact failure mode this block's own rule was written to stop, one round
+   after it was written. Date the sweep and name the commit, or it happens again.
 
    ── OPEN ────────────────────────────────────────────────────────────────
 
@@ -4245,56 +4624,80 @@ export function regulars(K) {
       here (`judgeTicket(ticket).cinder`, rounded). It DELETES `payoutEstimate()`,
       which today re-derives state.js's own payout formula and is therefore the
       one place in this file that silently goes wrong if a fourth payout
-      multiplier is ever added. With the hook, TIP_FRACTION_MAX stops binding on
-      cheap dishes carrying an honoured `extra`, and a broken promise can cost
-      more than the whole tip.
+      multiplier is ever added.
 
-      ⚠ AND IT WOULD MAKE THE CHIP EXACT, WHICH IT IS NOT TODAY. MEASURED, round
-      5, one Commuter, one burgerClassic, one "no greens", everything else held
-      identical (scratchpad r5dt/settle.mjs, controlled against an ignore run
-      that carries no promise at all):
-          settlement channel alone (MOD_TIP_* zeroed)
-              chip "+28" → tip moves +27      chip "−17" → tip moves −18
-          both channels, i.e. what ships
-              chip "+28" → till moves +34     chip "−17" → till moves −32
-      So the figure the chip prints IS delivered, to a Cinder of rounding — and
-      then MOD_TIP_HIT / MOD_TIP_MISS move the generosity blend a SECOND time on
-      top of it, unshown. Honouring therefore pays more than advertised (fine)
-      and BREAKING costs about twice what the chip warned (not fine, and it is
-      the direction a player is least able to learn from). Nothing on screen
-      contradicts itself — there is no counterfactual on the card — so this is an
-      understatement of stakes rather than a lie, which is why it is a handover
-      item and not a defect fix. The two honest resolutions both live in other
-      people's files or in a design call:
-        (a) take the hook, pay the settlement out of the PAYOUT, and leave the
-            tip blend as the only thing riding the tip; or
-        (b) decide the blend is part of the promise and show the total.
-      Do not resolve it by deleting `gen *= verdict.mul` — that strands
-      MOD_TIP_HIT / MOD_TIP_MISS / MOD_TIP_UNPROVEN as three more dead ECON keys,
-      which is the fault O2 is already about.
+      🔴 WHAT IT IS WORTH, MEASURED TODAY AND NOT IN ROUND 5. This item used to
+      carry a table headed "both channels, i.e. what ships / chip +28 → till
+      moves +34, chip −17 → till moves −32" and a closing instruction reading
+      "Do not resolve it by deleting `gen *= verdict.mul`". BOTH WERE STALE:
+      round 6 deleted exactly that line, so the table described a build two
+      commits old and the instruction argued against the shipped design. The
+      second channel is gone; ONE promise, ONE channel, ONE number. Re-measured
+      over 238 controlled A/B pairs differing only in whether the ticket still
+      carries its mods at the instant of sale (scratchpad r15d/exact.mjs):
 
-   O2. 🔴 ECON.MOD_XP_HIT IS STILL READ BY NOBODY. kitchen.data.js ships it at
-      3 xp (getting a fussy order right) and there is no path from this file to
-      `addXp()` — it is module-private in kitchen.state.js, levels are derived
-      inside it, and writing `K.xp` from here would skip the level-up emit, the
-      unlock list and the forced save. Either export
-      `awardXp(n, why) → boolean` or fold the modifier xp into `serveTicket()`
-      beside O1's hook. Verified still true this round:
-      `grep -rn "MOD_XP_HIT\\|awardXp" public/src/kitchen/` returns the ECON row
-      and these comments, nothing else. A shipped key nothing reads is a designer
-      tuning a number that does not exist.
+          chip == delivered EXACTLY            196 of 238
+          within 1 Cinder (est vs real payout)  227 of 238
+          off by more                            11 of 238
+          popularity: chip == delivered        238 of 238
+          today.modCinder == chip              238 of 238
 
-   O3. 🔴 kitchen.state.js SAYS THIS FILE READS `K._dry`. IT DOES NOT.
-      kitchen.state.js's `Kitchen` literal annotates `_dry` with "drivethru.js
-      reads this to stop the lane (see the HANDOVER)". `grep -n "_dry"
-      drivethru.js` returns nothing. Either the lane should stop spawning when
-      the kitchen is provably dry — which is a real design question, because a
-      lane that keeps filling with people you cannot feed is a popularity drain
-      with no counter-play — or that annotation should be corrected. This file
-      will take the behaviour the moment somebody decides which; it is one test
-      in `scheduleArrivals()`. Named here because a comment in SOMEBODY ELSE'S
-      file asserting something about THIS one is exactly the class of error this
-      round was spent deleting.
+      ALL ELEVEN ARE CLAMPS, AND THE HOOK IS WHAT REMOVES THEM. The settlement
+      is delivered as a fraction ADDED TO THE TIP, and kitchen.state.js's
+      `tipFor()` wrapper ends `Math.max(0, Math.round(v))`, so a broken promise
+      can take the whole tip and NOT ONE CINDER MORE; TIP_FRACTION_MAX clips the
+      other end. Worst case measured: chickenSandwich ×2, both promises broken,
+      `chip −100, delivered −62` — a 38% shortfall on the warning. In real
+      seeded play it is rare (6 of 97 promise sales hit the zero floor, 2 of 97
+      the ceiling), and until the hook lands this file no longer lets the toast
+      repeat a figure the till did not move: `tipFor()` records promised against
+      taken and `verdictLine()` prints "✗2 −100 · −62 taken (tip ran out)".
+      That is a disclosure, not a fix. With the hook, a broken promise can cost
+      more than the tip, the clamps stop binding, and the disclosure deletes
+      along with `payoutEstimate()` and `shortfallPhrase()`.
+
+   O2. 🔴 DELETE MOD_TIP_HIT / MOD_TIP_MISS / MOD_TIP_UNPROVEN FROM
+      kitchen.data.js, AND THE TWO VALIDATOR BRANCHES THAT TEST THEM.
+      (This slot was "MOD_XP_HIT is read by nobody" for two rounds after it
+      stopped being true — see C11. The key that is actually dead is this one.)
+      Round 6 removed `gen *= verdict.mul`, the only channel those three keys
+      ever fed. This round removed the last two fields that carried them,
+      `mkMod()`'s `tipHit` / `tipMiss`, which were stamped onto every modifier
+      object in the game and read by nothing. So:
+        · kitchen.data.js:3128-3130 — the three ECON rows, and the paragraph at
+          :3086 that explains a channel that no longer exists;
+        · kitchen.data.js:5539-5542 — `assertDataSane()` currently FAILS a
+          designer whose MOD_TIP_MISS is not "negative and at least as large as
+          MOD_TIP_HIT", which is a live audit of a dial that is not connected;
+        · CONTRACT.md §1's ECON key count note, in the same edit, as §1's own
+          rule requires.
+      ASSERT IT: `grep -rn 'MOD_TIP_' public/src/kitchen/` returns nothing
+      outside comments written in the past tense, and `assertDataSane()` still
+      returns []. ⚠ Not our file, either of them; this is the whole item.
+
+   O3. 🔴 THE BOARD TICKET STILL OFFERS A SERVE BUTTON ON A CAR THAT IS NOT AT
+      THE WINDOW. The collect beat is now gated (see the guard chain in
+      `serveCar()` and §GEOGRAPHY): a queued car's ready ticket is refused with
+      "Old Timer is 4th in the lane. Commuter is at the window." PROVEN ON
+      SCREEN, 390×844, the shipped page (scratchpad r15d/queue2.mjs): lane
+      [Commuter@window, Gate Guard@queue, Courier@queue, Old Timer@speaker],
+      board button reads `Serve · ◈ 110`, one click → till ◈ 0 → ◈ 0, the Old
+      Timer does not move, and that sentence is the only thing that happens.
+      Correct, and still a button offering a control it cannot honour.
+      THIS FILE ALREADY HANDS OVER THE ANSWER and cannot draw it:
+      `laneCard().window.atWindow` and `.canServe` both carry the condition. The
+      board, though, is built from `k.tickets` and never sees a car. The exact
+      shape wanted in kitchen.render.js `ticketHtml()`:
+
+          // beside `const ready = …`, using the lane the renderer already reads
+          const car = t.source === 'drive' && t.carId
+            ? (k.lane || []).find((c) => c && c.carId === t.carId) : null;
+          const atWindow = !car || car.station === 'window';
+          // …and on the button
+          ${ready && !atWindow ? '<button class="mk-serve" disabled>In the queue</button>' : …}
+
+      ⚠ `!car` MUST READ AS TRUE. A counter ticket has no car and must keep its
+      button. Do not invert that test.
 
    O4. ⚠ `extra` MODIFIERS ARE GATED ON THE RECIPE, NOT ON THE MODIFIER, and it
       is a data question as much as a code one. `State.addStep()` refuses to lay
@@ -4359,7 +4762,89 @@ export function regulars(K) {
       §RENDER stops claiming the rule. Do not resolve it by deleting
       `laneView()`; the CONTRACT lists it.
 
+   O8. 🔴 THE WINDOW CARD NOW CARRIES THE SALE AND THE MONEY, AND
+      kitchen.render.js DRAWS NEITHER YET. `cardFor()` hands the pinned strip
+      four new fields and every one of them is a value with no consumer until
+      somebody draws it — which is the fault this file has shipped more often
+      than any other, so it is named here with the markup written out rather
+      than left as a decision:
+
+        `worth`  — `State.quoteTicket(ticket.id, now).paid`, the till's OWN
+                   number, reached through the same read the board button uses.
+                   kitchen.render.js:2032 becomes
+                     >${c.ready && c.worth != null ? 'Serve · ' + fmtCinder(c.worth)
+                                                  : (c.ready ? 'Serve' : 'Not ready')}<
+                   ⚠ 22% of lane sales are made from this card and its button
+                   has never named a figure; one of them paid ◈289. The board
+                   card for the same order prints TWO.
+        `menu`   — the order at list price, the same claim `ticketMenuValue()`
+                   makes in the board ticket's head. Put it in `.mk-pin-top` so
+                   the two cards describing one order use the same units.
+        `served` + `servedPaid` / `servedTip` / `servedLine` — the frozen sale.
+                   While `served` is true, draw a green band in place of the
+                   Serve / Wave off pair:
+                     ✅ SERVED · ◈ {servedPaid} +◈ {servedTip} tip · {servedLine}
+                   `servedLine` is the SAME sentence `rewardMoment()` printed,
+                   so the toast and the card under it agree word for word.
+        `atWindow` — false while the head car is still rolling in. Caption the
+                   disabled button "Pulling up" rather than greying it silently.
+
+      ⚠ AND DELETE THE STOPGAP WHEN YOU DO. `cardFor()` currently returns
+      `ready: true` on a sold card purely so the existing button captions itself
+      "Serve" instead of "Not ready" over a sale that has already happened; the
+      branch is commented and names this item. It goes the moment `served` is
+      drawn.
+      ASSERT IT: `node r15d/card.mjs` and `node r15d/shot2.mjs` — the t+150 /
+      t+600 / t+1200ms dumps must contain SERVED and the paid figure.
+
    ── CLOSED, KEPT AS THE RECORD ───────────────────────────────────────
+   C11. ✅ ECON.MOD_XP_HIT IS PAID. It spent two rounds listed here as "read by
+      nobody" — one of them AFTER it had a reader. `serveTicket()` pays it at
+      kitchen.state.js:3874 (`xp += hit * _int(EC('MOD_XP_HIT', 3))`), off the
+      same verdict this file re-judges after the commit, which is the second of
+      the two options the old item offered and needs no new export. The ECON
+      glossary row at the top of this file said the same false thing and was
+      corrected in the same edit.
+
+   C12. ✅ THE LANE STOPS WHEN THE KITCHEN IS DRY, AND kitchen.state.js's
+      annotation was right all along. The old item said "kitchen.state.js SAYS
+      THIS FILE READS `K._dry`. IT DOES NOT. `grep -n '_dry' drivethru.js`
+      returns nothing." That grep now returns four hits: `laneDry()` gates
+      `scheduleArrivals()` on `State.isDry()` — the door, not the field — and
+      the thirty-line block above it explains why it must be the door. Proven by
+      the round-5 probe, unmodified: DRY DAY → lane tickets 0, cars ever in
+      lane 0.
+
+   C13. ✅ THE COLLECT BEAT IS GATED TO THE WINDOW. `serveCar()` refused nothing
+      positional for six rounds, so 161 of 197 lane sales over five seeded days
+      — 81.7% — handed hot food to a car that was not at the window, 50 of them
+      to the FOURTH car in the lane, one of them from the speaker box over the
+      heads of three cars for ◈309. The picture, the FIFO slots, the length
+      units, LANE_EXIT_MS and the wave-off all existed to teach a queue with one
+      collection point, and the verb ignored every one of them. One line closes
+      it and §GEOGRAPHY had already written its shape at the other end of the
+      same lane. Re-measured after: 100% window on all five seeds, and the
+      throughput cost is in the comment beside the guard — it costs half the
+      lane to a player who never waves anybody off, and 7% to one who does.
+
+   C14. ✅ THE WINDOW CARD NO LONGER UNDOES THE SALE. For the full 1.5s of
+      LANE_EXIT_MS after every lane sale the biggest card on screen reverted to
+      "0/1, promises unjudged, Not ready" — `serveTicket()` filters the ticket
+      out of `K.tickets`, so `cardFor()` had nothing left to derive from while
+      the served car still held the pinned card. `serveCar()` now freezes the
+      sale onto the car and `cardFor()` returns it. Live at 390×844 on the
+      shipped page (r15d/shot2.mjs), the same Corp Suit whose serve pays ◈289:
+      t+150 / t+600 / t+1200ms all read "🍗 Chicken Sandwich 1/1 · ⚪ no mayo
+      ✓+28 · 🥬 no greens ✓+28 · ✓ 2 kept". ⚠ The green SERVED band itself is
+      O8 and is not drawn yet.
+
+   C15. ✅ THE `mul` CHANNEL IS GONE TO THE LAST FIELD. 9d41440 deleted its four
+      producer lines and left three mentions behind: `modVerdict()`'s catch
+      still handed back `{ mul: 1, … }`, and `mkMod()` still stamped `tipHit` /
+      `tipMiss` onto every modifier in the game under a comment claiming a
+      renderer used them. Nothing read any of the three. All three deleted; the
+      three ECON keys they kept alive are O2, in somebody else's file.
+
 
    C1. ✅ ECON KEYS — ALL 36 OF THEM, PLUS THIS FILE'S OWN FOUR. `EC()` takes ONE
       argument and reads ECON. LANE_SPEAKER_POS, PASSBY_STAGGER_MS, PASSBY_LANES

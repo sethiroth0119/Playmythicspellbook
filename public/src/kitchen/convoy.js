@@ -1048,13 +1048,31 @@ export function manifest(K, tierId, wanted, forNetwork) {
  * authoritative gate is `launch()`, which resolves the recipient FIRST and calls
  * back in here with the answer before a single Cinder is spent.
  *
- * ⚠ THE DEFAULT HAS TO BE THE PERMISSIVE ONE AND THAT IS NOT LAXITY. The only
- *   caller that omits it is the renderer's pre-flight, whose job is to decide
- *   whether the SEND button is live; it does not tell us who the load is for.
- *   A strict default there is exactly round 5's bug — the practice run, which
- *   needs no network at all, refused because of somebody else's lost receipt.
- *   Nothing is spent on a pre-flight, `launch()` re-composes with the recipient
- *   in hand, and a refusal there costs the player nothing and names its reason.
+ * ⚠ THE DEFAULT HAS TO BE THE PERMISSIVE ONE AND THAT IS NOT LAXITY. A caller
+ *   that omits it has not told us who the load is for, and a strict default
+ *   there is exactly round 5's bug — the practice run, which needs no network
+ *   at all, refused because of somebody else's lost receipt. Nothing is spent
+ *   on a pre-flight, `launch()` re-composes with the recipient in hand, and a
+ *   refusal there costs the player nothing and names its reason.
+ *
+ * 🔴 THE RENDERER STILL OMITS IT, THREE ROUNDS RUNNING, AND THAT IS THE ONE
+ *    OUTSTANDING HALF OF THIS. `kitchen.render.js:3432`, `:3436` and `:3881`
+ *    call `manifest()` / `compose()` with THREE arguments while `_convoyTo` —
+ *    the chosen recipient — is in scope at every one of them. Measured in round
+ *    7 with three unconfirmed trucks and a real player selected:
+ *        button says {"txt":"SEND IT — 12 BOXES","disabled":false}
+ *      → tap → "3 trucks are still waiting on the depot to confirm them, and
+ *        that fills the yard. A practice run to your own city can still go
+ *        out."   (convoy count 3 · pass 12 · gems 99856 — nothing spent)
+ *    Safe, because `launch()` is the gate and it refuses before it charges; a
+ *    button that says yes and then says no all the same. THE FIX IS ONE
+ *    ARGUMENT AT EACH OF THE THREE CALL SITES:
+ *        Convoy.manifest(K, tierId, wanted, !!(_convoyTo && _convoyTo.id))
+ *        Convoy.compose (K, tierId, items,  !!(_convoyTo && _convoyTo.id))
+ *    With the Practice-run chip selected `_convoyTo` is null, the flag is
+ *    false, and the label goes back to `SEND IT — 12 BOXES`. This side of the
+ *    seam is finished: `manifest()` forwards the flag into
+ *    `activeOutbound(K, forNetwork === true)` and so does `compose()`.
  */
 export function compose(K, tierId, items, forNetwork) {
   try {
@@ -2048,24 +2066,40 @@ export function route(c, now) {
     let button = { show: false, label: '', disabled: true, pct: 1 };
     if (phase === 'arrived') {
       if (dock.docking) {
-        /* 🔴 'Docking', NOT 'Unloading…' — ROUND 7, AND THE REASON IS PIXELS.
+        /* 🔴 'Docking', NOT 'Unloading…' — ROUND 7, AND THE LABEL WAS THE WRONG
+           HALF OF THE FIX. Read this before shortening it again.
            This label is on screen for the five seconds a player spends staring
-           at a landed truck waiting for it to open, and at 390px it rendered as
-           the word "NLOADING". Measured off the live DOM before the change:
+           at a landed truck waiting for it to open. At 390px 'Unloading…'
+           rendered as the word "NLOADING" — measured off the live DOM,
            `{"btnText":"UNLOADING…","scrollW":115,"clientW":100,"clipped":true}`
-           at 390px with an ordinary sender name, and clipped at 360px too. The
-           button is a flex child that shrinks under `.mk-row-main` with
-           `overflow:hidden` and no ellipsis, so the difference is simply eaten.
-           A chopped word at the exact moment the player is waiting reads as a
-           broken build.
-           'Docking' is the file's own word for this beat (§5a calls it the dock
-           beat throughout) and it fits at 390 and 360 where the old one did not.
-           ⚠ IT IS NOT THE WHOLE FIX AND MUST NOT BE MISTAKEN FOR ONE. At 320px,
-             or at any width with a long sender name, a SHORTER label still
-             clips — measured `{"btnText":"DOCKING","scrollW":90,"clientW":82}`.
-             The shrink itself is the defect and it lives in kitchen.css, which
-             is another builder's file; the ask is recorded in the handover. The
-             next long label will clip too until that lands. */
+           — so round 7 shortened it to 'Docking', the file's own word for this
+           beat (§5a calls it the dock beat throughout).
+           🔴 AND THE NEXT LABEL CLIPPED, WHICH IS EXACTLY WHAT THE ROUND-6 BRIEF
+              SAID WOULD HAPPEN. Round 7 measured the shipped build:
+              `BTN GEOM {"rowW":364,"btnW":62.19,"btnText":"DOCKING","scrollW":79,
+               "clientW":60}` with `BTN CSS {"flex":"0 1 auto","flexShrink":"1",
+               "minWidth":"auto","whiteSpace":"normal","overflow":"hidden"}` —
+              19px of a 79px word eaten by a 60px box with no ellipsis, and the
+              screenshot has both the D and the G sliced off.
+           ⚠ SO THE STRING IS NOT THE BUG AND MUST NOT BE TOUCHED AGAIN. The bug
+             was that the button is a flex child of `.mk-row-main` that was
+             allowed to shrink below its own text, and it lived in kitchen.css.
+             🔴 ROUND 8: THE BOX WAS FIXED AND THE LABEL STAYS. Re-measured off
+                the live DOM through the player's own door (a landed 40-box
+                inbound truck, the convoy tab, the dock beat):
+                  390px  BTN CSS {"flex":"0 0 auto","flexShrink":"0",
+                                  "minWidth":"max-content","whiteSpace":"nowrap"}
+                         BTN GEOM {"btnText":"DOCKING","scrollW":97,"clientW":97}
+                  360px  {"btnText":"DOCKING","scrollW":97,"clientW":97}
+                  320px  {"btnText":"DOCKING","scrollW":97,"clientW":97}
+                and with a 37-character sender name at 360px the row gives up
+                the space instead of the button: same 97/97, `overflowsRight`
+                false. `scrollWidth <= clientWidth` is the test and it passes at
+                every width the game supports.
+             So a longer label would now fit as well — and 'Docking' still
+             stays, because §5a calls this beat the dock beat everywhere else
+             and the word should match the mechanic, not the pixel budget it no
+             longer has to fit. */
         caption = 'landed — docking';
         button = { show: true, label: 'Docking', disabled: true, pct: dock.pct };
       } else {
@@ -2087,9 +2121,20 @@ export function route(c, now) {
       //    doomed action. It retires itself after one dock beat.
       caption = 'delivered — ' + _str(c.toName || 'they', 40) + ' has it';
     } else if (phase === 'held') {
-      // Already paid for on the server (§4). What is left is stash room, so the
-      // sentence is about the DOCK and the button is a retry, not a claim.
-      caption = 'held at the depot: ' + owedFood(c) + ' food — your stash was full';
+      /* Already paid for on the server (§4). What is left is whether the stash
+         will take it, so the sentence is about the DOCK and the button is a
+         retry, not a claim.
+         ⚠ IT NAMES THE MECHANISM, NOT A CAUSE — 'your stash was full' was here
+           and it is the same untruth `shortLandingWhy()` exists to kill: a
+           credit that does nothing while the vault has room lands a truck on
+           this dock too, and this caption is on screen for as long as it sits
+           there. It CANNOT ask `stashFull()` either: `route()` runs for every
+           row on every frame and `resourceCap()`/`resourceUnits()` re-read the
+           whole stash through the legacy app (see `maybeDrain`'s note on why
+           the drain is throttled for exactly that reason). So it says the one
+           thing that is true in both worlds and is what the player needs to
+           know: the food is here and it loads itself. */
+      caption = 'held at the depot: ' + owedFood(c) + ' food — it loads itself as room appears';
       button = { show: true, label: 'Unload', disabled: false, pct: 1 };
     } else if (phase === 'claimed') {
       caption = 'unloaded';
@@ -2221,6 +2266,61 @@ function owedFood(c) {
   const perDish = Math.max(0, _num(EC('CONVOY_FOOD_PER_DISH', 1), 1));
   const gross = Math.max(0, Math.floor(Math.max(0, dishes - spoilOf(c)) * perDish));
   return Math.max(0, gross - Math.max(0, _int(c && c.paidFood)));
+}
+
+/**
+ * Is the stash ACTUALLY full? true / false / null when we cannot tell.
+ *
+ * ⚠ THREE-VALUED ON PURPOSE. `resourceCap()` and `resourceUnits()` both
+ * answer 0 on the null seam and on any bridge that does not model a cap, and 0
+ * means "we do not know", never "the vault is empty" and never "the vault is
+ * full". A two-valued version of this would have to guess, and both guesses
+ * make the sentence below a lie in one direction.
+ */
+function stashFull() {
+  try {
+    const b = bridge();
+    const cap = _int(b.resourceCap ? b.resourceCap() : 0);
+    if (cap <= 0) return null;
+    return _int(b.resourceUnits ? b.resourceUnits() : 0) >= cap;
+  } catch (e) { return null; }
+}
+
+/**
+ * 🔴 WHY THE FOOD DID NOT ALL GO IN — AND IT HAS TO BE TRUE.
+ *
+ * ROUND 7, MEASURED BY A CRITIC WITH A KNIFE: they changed the payout line of
+ * `claim()` — `b.addRes('food', owed)` → `b.addRes('food', 0)` — so the truck
+ * lands, the player taps UNLOAD, and NOTHING is handed over. The build then
+ * told them **"Your stash filled up — 12 food is held at the depot"** on a
+ * stash with 3,616 of a 1,000,000,000 cap free. Nothing was lost (the hold is
+ * real and drains itself), but the sentence named a cause that was not the
+ * cause, and a player reading it goes and sells resources to make room that
+ * already exists. A wrong number is a bug; a wrong REASON sends the player to
+ * fix the wrong thing.
+ *
+ * So the sentence is derived from the stash rather than from the branch: we
+ * only say "full" when it reads full AFTER the credit. When the vault had room
+ * and the credit still did nothing, the honest sentence is that it would not go
+ * in — which is also the sentence the mutant above would have printed, and the
+ * one a self-test can tell apart from the real thing.
+ *
+ * ⚠ EVERY BRANCH ENDS THE SAME WAY, and that is the part the player needs: the
+ *   food is at the depot, it is not lost, and `drainHeld()` loads it without
+ *   being asked. See §4.
+ */
+function shortLandingWhy(landed, left) {
+  const full = stashFull();
+  const tail = ' food is held at the depot and will load itself as you make room.';
+  if (_int(landed) > 0) {
+    return full === true
+      ? 'Your stash filled up — ' + left + tail
+      : 'Only ' + _int(landed) + ' food would go in — ' + left + tail;
+  }
+  return full === true
+    ? 'Your stash is full — ' + left + tail
+    : 'The stash would not take it — ' + left
+      + ' food is waiting at the depot. Nothing is lost; it loads itself as soon as it can.';
 }
 
 /** Every truck sitting on the dock with food that would not fit. Pure read. */
@@ -3399,7 +3499,11 @@ export async function claim(K, convoyId, now) {
       const left = owedFood(c);
       if (landed > 0 && left <= 0) return ok({ granted: landed });
       if (landed > 0) return no('CAP', 'Took ' + landed + ' food — ' + left + ' is still held at the depot.', { granted: landed, held: left });
-      return no('CAP', 'Your stash is still full — ' + left + ' food is held at the depot.', { granted: 0, held: left });
+      // ⚠ NOT a hardcoded "your stash is still full". This is the RETRY button
+      //   on a truck that is already paid for, and it is pressed most often by
+      //   somebody who has just made room — so if the credit did nothing while
+      //   the vault has space, saying "full" sends them to empty it again.
+      return no('CAP', shortLandingWhy(0, left), { granted: 0, held: left });
     }
 
     if (c.state !== 'arrived' || _num(c.arrivesAt, Infinity) > t) {
@@ -3551,8 +3655,9 @@ export async function claim(K, convoyId, now) {
       //    of the CONTRACT.
       holdRow(K, found, t, landed);
       const left = owedFood(c);
-      return no('CAP', 'Your stash filled up — ' + left + ' food is held at the depot and will load itself as you make room.',
-        { granted: landed, held: left });
+      // The sentence is read off the stash, not off this branch — see
+      // `shortLandingWhy()` for the mutant that proved why.
+      return no('CAP', shortLandingWhy(landed, left), { granted: landed, held: left });
     }
 
     retire(K, c, t, landed, null);

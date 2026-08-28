@@ -73,7 +73,7 @@ export const CUSTOMERS     // [{id,name,icon,patienceMs,tipBias,likes,order:{min
 export const CARS          // [{id,icon,name,seats,patienceMul,weight,len}]
 export const CONVOY_TIERS  // [{id,name,capacity,transitMs,feePct,minLevel}]
 export const DAY_NAMES, POP_FACES
-export const ECON          // ALL tuning. 167 keys. See §8.
+export const ECON          // ALL tuning. 168 keys. See §8.
                            // ⚠ THE COUNT DRIFTS EVERY ROUND AND HAS BEEN WRONG
                            //   TWICE. Read it, never remember it:
                            //   node -e "import('./public/src/kitchen/kitchen.data.js')

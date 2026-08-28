@@ -1905,18 +1905,77 @@ export const ECON = {
         skill the feature is actually about for a reflex test, on the platform
         it is mostly played on.
 
-        🔴 SO, PLAINLY: THIS ACCEPTANCE CANNOT BE MET FROM A DATA TABLE AND
-        SHOULD NOT BE MET BY SHRINKING PERFECT_MS. What IS true today and is
-        worth holding (r6/days.mjs, ten consecutive days, two seeds, re-measured
-        this round): the ORDER is correct and no longer inverted — day-10 means
-        GOD 69.5 / EXPERT 65.7 / GOOD 57.3 — SLOPPY never pins at 0 (14.9–27.2),
-        and the recovery arm works (three SLOPPY days then an EXPERT climbs
-        27.2 → 74.2). GOD−GOOD is 12.2 points and clears the bar; GOD−EXPERT is
-        3.8 and cannot, because the two bots are not measurably different
-        players. If a future round still wants the top pair separated, the lever
-        is the one named directly above — make HANDS the binding constraint so
-        that a faster player physically cooks MORE, which the meter can already
-        see — and not any number in this block. */
+        🔴 ROUND 8, THE FOURTH TIME THIS WAS ASKED FOR: THE ONE REMAINING LEVER
+        THAT WAS STILL OPEN HAS BEEN MEASURED, AND IT IS EMPTY.
+        ══════════════════════════════════════════════════════════════════════
+        kitchen.state.js's bumpPop() header hands the job to this file by name:
+        "what separates them has to come from weighting the PERFECT share harder
+        — POP_SERVE 0.10 against POP_PERFECT_BONUS 0.36 and POP_LOST −1.0. Those
+        are kitchen.data.js's numbers." So the share was measured, which nobody
+        had done. L12 + heat lamp, six seeds, one full day (r14d/share.mjs):
+              tier      served   lost   units   perfect   PERFECT SHARE
+              GOD        118.3   26.3   210.2    210.2       100.0%
+              EXPERT     116.0   27.2   203.7    203.7       100.0%
+              GOOD       116.0   29.0   197.7    194.5        98.4%
+              AVERAGE    111.3   25.0   195.5     71.3        36.5%
+              SLOPPY      96.8   30.0   171.8      0.0         0.0%
+        🔴 THERE IS NO SHARE TO WEIGHT. The top three catch 100%, 100% and 98.4%
+        of their pulls inside the window, because 1200ms > every jittered
+        reaction any of them makes. POP_PERFECT_BONUS could be 0.36 or 36 and
+        those three rows would move together and by the same factor. The lever
+        state.js hands over does not exist, and that sentence there should now
+        read "measured empty" rather than "that file's job".
+
+        🔴 AND THE REASON IS THE RACK, NOT THE METER, WHICH IS ALSO MEASURED NOW.
+        The GOD bot takes FIFTY actions a second and the GOOD bot takes four — a
+        12× difference in hands — and it buys 2%:
+              L12 + heat lamp   served 118.3 / 116.0 / 116.0   (GOD/EXPERT/GOOD)
+              L20 fully kitted  served 241.8 / 238.8 / 231.8
+        Even with every upgrade in the game bought, the three are 4% apart, and
+        the perfect share only starts to separate there (100 / 98.9 / 86.8).
+        `capacityModel()` says the bottleneck is `rack` at both rungs and it is
+        right: the slots are full, so extra hands have nowhere to go. THREE
+        PLAYERS WHO PRODUCE THE SAME OUTPUT CANNOT BE GIVEN DIFFERENT
+        REPUTATIONS BY A REPUTATION FORMULA — the formula is not where the
+        information is missing.
+
+        🔴 SO, PLAINLY, AND THIS IS THE FILE'S ANSWER RATHER THAN A DEFERRAL:
+        THIS ACCEPTANCE CANNOT BE MET FROM A DATA TABLE. Not by POP_SERVE, not
+        by POP_PERFECT_BONUS, not by POP_LOST, not by a damped attractor in
+        popDayDelta() (an attractor still has to be told WHICH tier it is
+        attracting toward, and the only signals available — served, lost, mean
+        quality — are the ones measured above at 2%, 5% and 0.7% apart), and not
+        by shrinking PERFECT_MS, which is forbidden in writing at 700ms and
+        checked by assertDataSane().
+
+        WHAT WOULD, WRITTEN OUT SO THE NEXT ROUND CAN COST IT PROPERLY: make
+        HANDS the binding constraint instead of the rack, so that a faster
+        player physically cooks MORE and the meter can see it. Concretely that
+        is more slots per station or shorter cookMs at the same demand — i.e.
+        moving capacityModel()'s bottleneck off `rack` — and it is a change to
+        the WALL bands (WALL_RATIO_*, WALL_KITTED_*, WALL_MAXED_*) and to
+        SPAWN_MIN_MS, not to any key in this block. It is a re-tuning of the
+        difficulty curve, it will move the grade ladder and every number in the
+        GRADE_MIN_* sweep with it, and it should be a round's whole subject
+        rather than a paragraph in one.
+
+        WHAT IS TRUE TODAY AND IS WORTH HOLDING (r6/days.mjs, ten consecutive
+        days, two seeds, re-measured this round): the ORDER is correct and no
+        longer inverted — ten-day means GOD 70.2 / EXPERT 67.3 / GOOD 64.0 /
+        AVERAGE 33.9 / SLOPPY 19.4, day-10 means GOD 69.5 / EXPERT 65.7 /
+        GOOD 57.3 — SLOPPY never pins at 0 (14.9–27.2), and the recovery arm
+        works (three SLOPPY days then an EXPERT climbs 27.2 → 74.2). GOD−GOOD is
+        12.2 points at day 10 and clears the bar; GOD−EXPERT is 3.8 and cannot,
+        because the two bots are not measurably different players.
+
+        ⚠ AND THE GRADE CANNOT BUY IT EITHER, WHICH WAS THE LAST PLACE LEFT TO
+          LOOK. The letter reads the DAY's score rather than a carried-over
+          meter, so it does not saturate — but a cut placed to separate EXPERT
+          from GOOD was swept this round and lands inside their shared score
+          range, trading five extra seed-pair inversions for the appearance of a
+          difference. The measurement and the rejection are written out at
+          GRADE_MIN_A. Two instruments, two different shapes, the same answer:
+          the information is not there to display. */
   POP_SERVE: 0.10,          // a good unit. × recipe.pop × popGainMul(upgrades)
   POP_PERFECT_BONUS: 0.36,  // extra, per unit, for the ones caught in the window
   POP_RAW: -0.35,           // 🔴 a raw unit COSTS reputation. See above.
@@ -1929,8 +1988,47 @@ export const ECON = {
      against (they quote the pre-retune pair, −2.0 against −3.5, which is
      0.571), so pinning the ratio rather than the magnitude makes their
      ARGUMENT true again at the current scale — wave early, eat the smaller
-     hit, free the slot, save the three cars behind. Both files still quote the
-     old absolute numbers in prose and are not this file's to edit; the ratio is.
+     hit, free the slot, save the three cars behind.
+
+     🔴 AND THE ECON HALF OF THAT STANDOFF IS ANSWERED HERE, IN THE FOURTH ROUND
+        OF IT, BECAUSE "not this file's to edit" WAS NOT AN ANSWER.
+        drivethru.js:3436 and kitchen.render.js:3270 argue the decision in the
+        imperative from "POP_WAVE −2.0 against POP_LOST −3.5". Those two numbers
+        are in no version of this table. A reader who greps POP_WAVE gets three
+        answers and two are wrong, which is the same class of defect as a value
+        computed and never consumed — a statement with nothing behind it.
+        The question the last three rounds left open was WHICH SIDE MOVES.
+        MEASURED, and the answer is neither the magnitudes nor a rescale:
+          • −2.0 / −3.5 is 0.571 and −0.57 / −1.00 is 0.570. THE RATIO IS
+            ALREADY THE SAME. The prose's argument — wave early, it is the
+            cheaper of the two — is TRUE at today's scale and always was. Only
+            the magnitudes are stale.
+          • Rescaling ECON up to −2.0 / −3.5 to make the prose literal means 3.5×
+            the WHOLE ladder (the order check below forces the rest to follow),
+            and popularity is clamped 0..100. MEASURED, ten consecutive days ×
+            two seeds, L12 + heat lamp, everything else identical
+            (scratch r14d/scale.mjs, which is r6/days.mjs with one scale hook):
+                          shipped ×1            prose's ×3.5
+                GOD       67.9 … 75.5           4.7 … 23.1
+                AVERAGE   22.9 … 49.1           0.9 … 12.5
+                SLOPPY    14.9 … 27.2           0.3 …  3.5
+            SLOPPY is welded to the floor again — the eight-consecutive-days-of-
+            exactly-zero failure POP_REVERT_PER_DAY was written to end — and a
+            frame-perfect kitchen finishes its tenth day on 8.2/100. The prose
+            is not worth the meter.
+        SO THE NUMBERS STAY AND THE PROSE CHANGES, and the two sentences the
+        lane's builder and the renderer's builder should paste — they own those
+        files, this one does not — are exactly these:
+            drivethru.js:3436   "At POP_WAVE against POP_LOST the maths says:
+                                 wave early…"   (drop the parenthetical; the
+                                 ratio is what is pinned, and it is pinned in
+                                 kitchen.data.js's failure ladder)
+            render.js:3270      "It costs POP_WAVE and produces NO lost ticket,
+                                 against POP_LOST."
+        If a magnitude is wanted in prose after all, the only two that are true
+        today are −0.57 and −1.00, and assertDataSane()'s LADDER check will not
+        catch them going stale again — it holds the ORDER, not the text. That is
+        the argument for quoting no number at all.
 
      ⚠ AND IT IS NOT THE CHEAPEST FAILURE, DELIBERATELY. A wave-off is an
      abort of a customer who has already ORDERED, so it sits above every way of
@@ -2135,30 +2233,100 @@ export const ECON = {
             seed 3 scores 0.775 against EXPERT's 0.850). That is a true fact
             about that shift, not a miscalibrated cut, and pricing it away costs
             the letter its whole top end.
-        So these four are swept to the best table, not to the round number:
-         0.59  DISTRACT tops out at 0.575, SLOPPY bottoms at 0.610 — 0.015 clear
-               of both, the widest gap on the whole distribution
-         0.73  AVERAGE straddles it (4 of 12 fall to C, which is the point: the
-               middle tier must be able to have a bad day), SLOPPY tops out at
-               0.680 so SLOPPY stays C
-         0.83  above AVERAGE's 0.800 ceiling, so A stops being a letter an
-               average player collects — and below the EXPERT/GOOD body, so A
-               stays the competent-play letter it is supposed to be
-         0.92  GOD's best seed scores 0.925 at L12 and a level-20 all-owned rack
-               scores 0.930–1.000, so S is reachable by play at both rungs
+        So these four are swept to the best table, not to the round number.
+
+     🔴 ROUND 8 FINISHED THE JOB, AND THE HALF THAT WAS LEFT WAS THE ONE THAT
+        DECIDES WHETHER THE LETTER SAYS ANYTHING.
+        ══════════════════════════════════════════════════════════════════════
+        Round 7 moved C/B/A from 0.58/0.70/0.79 to 0.59/0.73/0.83, which fixed
+        the inversions (2/60 → 1/60 at the time) and put AVERAGE's bad days back
+        on the board (0/12 → 4/12). It left A at 0.83, and 0.83 sits BELOW the
+        whole EXPERT and GOOD body — so at level 12 the shipped table read
+        `EXPERT AAAAAABAAAAA` against `GOOD AAABAABAAAAA`. A report card that
+        gives a 300ms player and a 700ms player the same eleven A's is not
+        grading; the three top tiers were separated by nothing but the seed.
+
+        RE-SWEPT ACROSS THREE RACKS THIS ROUND rather than one, because the cut
+        that reads best at level 12 is not automatically the cut that reads
+        right on a new kitchen or a maxed one, and round 7 swept one. The sweep
+        is scratch r14d/ab.mjs — the REAL gradeFor(), S-rider and all, with the
+        four cuts overridden between runs, six tiers × 12 seeds × three racks =
+        216 shifts per candidate. Score ranges first (r14d/cut2.mjs):
+             rack               GOD          EXPERT       GOOD
+             L4  stock        0.750-0.915  0.755-0.875  0.725-0.895
+             L12 +heatlamp    0.775-0.925  0.800-0.895  0.775-0.905
+             L20 fully kitted 0.925-1.000  0.870-0.995  0.860-0.960
+             rack               AVERAGE      SLOPPY       DISTRACT
+             L4  stock        0.645-0.795  0.605-0.700  0.485-0.600
+             L12 +heatlamp    0.720-0.800  0.610-0.680  0.440-0.575
+             L20 fully kitted 0.755-0.840  0.695-0.745  0.490-0.575
+        SHIPPED (0.59/0.73/0.83/0.92) against CHOSEN (0.61/0.75/0.83/0.92),
+        over all 180 seed-pairs, both measured live:
+             seed-pair inversions        6/180   →   6/180   (unchanged)
+             AVERAGE C-or-worse          4/36    →   8/36    ← the open question
+             EXPERT  B-or-better        36/36    →  36/36    (unchanged)
+             GOD     A-or-better        35/36    →  35/36    (unchanged)
+             DISTRACT D                 31/36    →  33/36
+             SLOPPY   C                 34/36    →  35/36
+             distinct letters            ABCDS   →   ABCDS
+        Strictly better or equal on every axis. The two deliberate calls:
+         0.61  DISTRACT (a six-second reaction) must be a D on every rack, and
+               at 0.59 it collected FIVE C's across the three — all of them on
+               the lower racks, where the whole board scores lower. 0.61 clears
+               DISTRACT's 0.600 ceiling on the stock rack by 0.010 and costs
+               SLOPPY exactly one D, on its single worst seed of thirty-six.
+               0.63 was rejected: it hands SLOPPY four D's and stops the bottom
+               two tiers being different letters at all.
+         0.75  ↑ THE ANSWER TO THE OPEN QUESTION. AVERAGE is the middle of the
+               human range and its letter should be the one that MOVES; at 0.73
+               it was B on 32 of 36. At 0.75 it is an exact coin flip at level
+               12 (CBCBCBCBCBCB — 6C/6B) and a clean B once the kitchen is fully
+               kitted. "Average play is a B when your kitchen is good and a C
+               when it is not" is a sentence about the upgrade ladder as much as
+               about the player, and it is the one the report card should be
+               making. 0.74 was swept too and lands at 7/36 — the same shape,
+               one seed short of the coin flip.
+         0.83  UNMOVED, AND THIS IS THE INTERESTING REJECTION. A=0.85 was tried
+               because 0.83 sits UNDER the whole EXPERT/GOOD body and collapses
+               them onto A (at L12: EXPERT AAAAAABAAAAA against GOOD
+               AABBAABAAABA — the letter barely separates a 300ms player from a
+               700ms one). 0.85 does cut through it — EXPERT 6A/6B, GOOD 4A/8B
+               — and it costs FIVE EXTRA INVERSIONS, 6/180 → 11/180, because
+               those two tiers OCCUPY THE SAME SCORE RANGE (see the table above,
+               and see POP_SERVE's block for the measurement that says the two
+               bots are not measurably different players). A cut placed inside
+               an overlap does not resolve the overlap; it just picks a different
+               seed to be wrong on. Buying a visible difference between two
+               players who are not different is buying a lie, so A stays where
+               it is. Do not re-propose it without first making HANDS the binding
+               constraint — that is the change that would make the two tiers
+               genuinely different, and it is written out at POP_SERVE.
+         0.92  UNMOVED. GOD's best L12 seed scores 0.925 and a level-20 all-owned
+               rack scores 0.925-1.000, so S is reachable by play at both rungs
+               and is 12/12 for GOD when fully kitted. Nothing in the sweep
+               improved on it and two candidates that moved it made S either
+               unreachable at L12 or automatic at L20.
+     🔴 WHAT THE SWEEP STILL CANNOT BUY, RECORDED SO IT IS NOT RE-ATTEMPTED:
+        zero inversions. GOD spans 0.775-0.925 and GOOD spans 0.775-0.905 at
+        L12 — the SAME range — so a cut anywhere inside it inverts on some seed
+        by construction. 6/180 is the floor for a table that still has five
+        letters in it; the sets that reach zero put A above 0.905 and collapse
+        the top three onto one letter again.
      ⚠ RE-SWEEP AFTER ANY MOVE TO PERFECT_MS, THE Q_* SCALE, GRADE_CAP_DUTY OR
        capacityModel() — all four move the distribution these sit in, and a cut
        that has stopped matching its distribution is the exact bug this is the
-       second fix for. The sweep is r8/grade.mjs + r8/gradeAny.mjs to capture,
+       third fix for. The sweep is r8/grade.mjs + r8/gradeAny.mjs to capture,
        then enumerate cut placements against the captured scores; do not type a
-       number and eyeball the letters.
+       number and eyeball the letters. And sweep ALL THREE RACKS: round 7 swept
+       one and shipped a cut that read fine at level 12 and gave DISTRACT a C on
+       a stock kitchen.
      ⚠ assertDataSane() checks only that they are strictly ordered inside
        (0,1]. It CANNOT check that they still match the distribution; nothing
        pure can, because the distribution is the output of the whole sim. That
        is what the sweep is for, and it is why this comment carries the measured
        endpoints rather than an assertion about them. */
-  GRADE_MIN_C: 0.59,
-  GRADE_MIN_B: 0.73,
+  GRADE_MIN_C: 0.61,
+  GRADE_MIN_B: 0.75,
   GRADE_MIN_A: 0.83,
   GRADE_MIN_S: 0.92,
   /* 🔴 AND THE TOP LETTER IS REACHABLE BY SKILL AGAIN, WHICH IT WAS NOT.
@@ -2732,6 +2900,40 @@ export const ECON = {
   SALVAGE_SHARE_MAX: 0.55,  // at most this fraction of the full menu
   SALVAGE_VALUE_GAP: 1.5,   // city-only dishes must average ≥ this × bin dishes
 
+  /* 🔴 HOW MANY OF THE FOURTEEN THE KITCHEN ACTUALLY EATS, AS A FLOOR.
+     ═══════════════════════════════════════════════════════════════════════
+     The other premise checks ask "does EVERY crate cost SOMETHING live". They
+     are all satisfied by a kitchen that runs on `food` and nothing else — and
+     the request was not "a resource", it was "the different types of resources
+     that they get from the other parts of the game". A retune that quietly
+     collapses eleven ids down to two passes B, B2, C, D, E and every §G, and
+     turns the city builder and the battle screen back into one faucet.
+
+     MEASURED, this round, and this is the census nobody had written down
+     (scratch r14d/loop2.mjs — a real bridge, a real 14-id ledger, ten days,
+     the autopilot restocking and buying every upgrade it can afford):
+        THROUGH THE RESTOCK COUNTER (42 lines take food, 15 water, 8 dna,
+          3 supplies, 1 energyDrink, 1 fuel, 1 corruptedEssence)
+        THROUGH THE UPGRADE SHOP    (metal on 39 upgrades, supplies on 22,
+          fuel on 13, stone on 12, wood on 6, cloth on 6)
+        UNION: 11 of 14. Ten days of play moved 9 of them for real —
+          food 5,794 · water 1,671 · dna 579 · metal 266 · supplies 246 ·
+          energyDrink 192 · fuel 159 · wood 30 · corruptedEssence 7 — with
+          `stone` and `cloth` sitting behind the level-11 and level-12
+          upgrades the run had not reached.
+     ⚠ THE THREE THE KITCHEN DOES NOT TAKE ARE `ammo`, `medicine` AND
+       `memoryShards`, AND THAT IS LEFT DELIBERATE RATHER THAN PATCHED. There
+       is no honest culinary or shop-fitting leg for ammunition, and a leg
+       invented to make a number read 14 is a price fitted to a check instead
+       of to a dish — the exact failure the `_SALVAGE.resCinder` note warns
+       about. If a future round wants them in, they belong on a NEW door (a
+       high-tier speciality line, a licence, a repair) with its own reason, not
+       bolted onto an existing crate.
+     🔴 SO THIS IS A FLOOR, NOT A TARGET. 11 is what ships; the check fires the
+        moment the kitchen stops eating one of them, which is the shape a
+        "simplify the costs" edit has. Fix the table, not the floor. */
+  LEDGER_BREADTH_MIN: 11,
+
   /* ═══════════════════════════════════════════════════════════════════════
      🛡 THE MODEL'S OWN THRESHOLDS. capacityModel() reads these; nothing else
         should. They are here rather than as literals in the function for the
@@ -3264,18 +3466,42 @@ function _barterLine(core) {
        recipe is built from level-1 core lines, so the floor still opens on the
        first shift for everything the day-one menu needs. */
     minLevel: Math.max(1, core.minLevel || 1),
-    /* 🔴 THE THREE FIELDS EVERY OTHER FILE NEEDS. `kind` lets the supplies sheet
-       group these under their own heading instead of printing them among the
-       city crates; `barterOf` points back at the core line so a row can say
-       "or bring your own"; `blurb` is the sentence. None is read by the sim —
-       buySupply() only ever looks at out/cost/minLevel — so a renderer that
-       ignores all three still works, it just reads worse.
-       ⚠ kitchen.render.js currently splits the sheet on `kind === 'salvage'`
-         alone, so today these rows draw in the CORE group. That is a grouping
-         bug in a file this one may not edit; see the handover. */
+    /* 🔴 THE THREE FIELDS EVERY OTHER FILE NEEDS — AND ROUND 7 SHIPPED TWO OF
+       THEM WITH NO READER, INSIDE THE FIX FOR ROUND 6's BLOCKER. `grep -rn
+       "barterOf" public/src/kitchen/` returned the line that writes it and the
+       comment that describes it, and nothing else, in the round whose whole
+       subject was values computed and consumed by nobody. That is not an
+       oversight to note; it is the defect, so both are wired here rather than
+       left as an offer:
+         • `kind` keys `_BARTER_BY_ING` (below), which the free-drop rescue
+           check walks, and it is what the supplies sheet groups on.
+         • `barterOf` resolves the core line for §G's seven invariants and for
+           §B2's premise check, and it names the same core line the derived
+           `blurb` below is written from — which is the half the player can
+           actually see, because a check nobody looks at is only half a
+           consumer. Delete either field and assertDataSane() reports it by
+           name — measured, not asserted: `barterOf: null` → 6 findings ("A
+           DERIVED CRATE WITH NO CORE LINE BEHIND IT" ×3 from §B2 and "barter
+           line … has no core line behind it" ×3 from §G); `kind: 'barter'`
+           dropped → 2 findings, because the rung falls out of `_BARTER_BY_ING`
+           and the free-drop rescue check reports the drop reaching no dish.
+       ⚠ kitchen.render.js still splits the sheet on `kind === 'salvage'` alone,
+         so these rows draw under the CORE heading with the city crates. That is
+         a grouping bug in a file this one may not edit; the handover names the
+         two lines. It is why the blurb has to carry the comparison itself. */
     kind: 'barter',
     barterOf: core.id,
-    blurb: 'Swapped across the counter, in kind. No money changes hands and the rate is robbery.',
+    /* 🔴 THE SENTENCE IS DERIVED FROM `barterOf`, NOT TYPED, and that is the
+       whole reason the field exists. The old blurb — "Swapped across the
+       counter, in kind. No money changes hands and the rate is robbery" —
+       asserted the robbery and never showed it, on a sheet where "Dog Roll"
+       already appears three times with the same icon and the same bold name.
+       Naming the city crate's size and the food price beside it is the one
+       thing that tells the player WHICH Dog Roll they are looking at, and it
+       cannot drift, because it is read off the row it is comparing against. */
+    blurb: qty + ' where your city crate gives ' + coreQty + ', at ' + cost.food
+      + ' food against ' + (((core.cost && core.cost.food) || 0) || 'none')
+      + '. Robbery — and the one door open at \u25c80.',
   };
 }
 
@@ -3299,9 +3525,18 @@ const _BARTER_LINES = ((_BARTER_TARGET && _BARTER_TARGET.ings) || [])
  */
 export const SUPPLY_RECIPES = _SUPPLY_CORE.concat(_SALVAGE_LINES, _BARTER_LINES);
 
-/** ingredient id → its barter line, or null. */
+/** ingredient id → its barter line, or null.
+    🔴 KEYED OFF THE ROW'S OWN `kind`, NOT OFF `_BARTER_LINES`, AND THAT IS THE
+    POINT. `kind` is the field the supplies sheet groups on, so it has to be
+    right on every row; building the lookup off the private array instead would
+    leave `kind` a decoration that the sim never depends on, and a decoration is
+    what a mislabelled row looks like right up until the screen draws it in the
+    wrong section. Reading it here means a row whose `kind` is wrong is a row
+    the free-drop rescue check (§ESCAPE) cannot find, which fails loudly.
+    ⚠ Walks the EXPORT, so it also picks up a fifth rung added later without
+      anyone remembering to add a fourth private array to this line. */
 const _BARTER_BY_ING = Object.create(null);
-for (const s of _BARTER_LINES) _BARTER_BY_ING[s.out.ing] = s;
+for (const s of SUPPLY_RECIPES) if (s.kind === 'barter') _BARTER_BY_ING[s.out.ing] = s;
 
 /* ════════════════════════════════════════════════════════════════════════════
    🧮 DERIVATION — the only work this module does at import time.
@@ -3333,9 +3568,10 @@ const _SUPPLY_BY_ID = _index(SUPPLY_RECIPES);
    food-printer guard compared its numerator against nothing. */
 const _SUPPLY_BY_ING = _CORE_BY_ING;
 /** ingredient id → its scrap-dealer line, or null. Render uses this to show
-    the "or pay the dealer" price beside the real one; the sim never needs it. */
+    the "or pay the dealer" price beside the real one; the sim never needs it.
+    Keyed off `kind` for the same reason `_BARTER_BY_ING` is — see the note there. */
 const _SALVAGE_BY_ING = Object.create(null);
-for (const s of _SALVAGE_LINES) _SALVAGE_BY_ING[s.out.ing] = s;
+for (const s of SUPPLY_RECIPES) if (s.kind === 'salvage') _SALVAGE_BY_ING[s.out.ing] = s;
 
 /** 🥫 INGREDIENTS — normalised. `batch` is derived; never type it by hand. */
 export const INGREDIENTS = _INGREDIENTS_RAW.map(ing => {
@@ -4607,6 +4843,103 @@ export function assertDataSane() {
         + 'the businesses and the battles the player asked for');
     }
   }
+  /* ── 🔴 B2 — THE SENTENCE ON THE SUPPLIES SHEET, HELD AS AN INVARIANT. ────
+     B above is asked one row at a time, and TWO THIRDS OF THE ROWS ARE NOT
+     TYPED. `_SALVAGE_LINES` and `_BARTER_LINES` are COMPUTED from the core
+     table, so one deleted line inside `_salvageLine()` takes the live leg off
+     twenty crates in a single keystroke. MEASURED, round 7, by a critic who
+     did exactly that: dropping `if (primary) cost[primary] = …` turned
+     `sal_dough {cinder:36, food:3}` into `{cinder:36}` on all twenty salvage
+     rows — the round-4 regression restored — and the point of the exercise was
+     that the FEATURE'S OWN GATE could not tell the two builds apart.
+
+     🔴 WHAT MAKES THIS ONE WORTH ADDING ON TOP OF B. B fires on that mutation,
+        loudly (55 findings), and it fires as fifty-five downstream sentences
+        about relief printers and convoy guards — the cascade, not the cause.
+        This one names the cause in one line, per row, and points at the screen:
+        kitchen.render.js states as a FACT to the player that "Every crate on
+        this sheet — including the scrap dealer's — costs live resources your
+        city buildings, your businesses and your battles produce." That sentence
+        IS the player's request, rendered. B says a crate must cost SOMETHING
+        live; B2 says a DERIVED crate must cost the same live id its core line
+        costs, at no lower a rate per unit — which is the only form of the rule
+        that survives a fallback rung being re-derived.
+
+     🔴 AND IT IS ALSO WHERE `kind` / `salvageOf` / `barterOf` ARE CONSUMED.
+        Those three fields were computed for a renderer, and for `barterOf` no
+        renderer ever read it. A field that only a comment reads is the defect
+        this feature has shipped in five separate places; wiring the back
+        reference into the check that needs the core line is what makes it a
+        field rather than a note. Break the pointer and this loop says so. */
+  const DERIVED_RUNG = { salvage: 'the scrap dealer', barter: 'the barter counter' };
+  for (const s of SUPPLY_RECIPES) {
+    const kind = s.kind || 'core';
+    if (kind === 'core') continue;
+    const rung = DERIVED_RUNG[kind];
+    if (!rung) {
+      bad.push('SUPPLY_RECIPES ' + s.id + ': unknown kind "' + kind + '" — kitchen.render.js groups '
+        + 'the sheet on this field, so a row it does not recognise draws in the wrong section');
+      continue;
+    }
+    const backRef = s.salvageOf || s.barterOf || null;
+    const core = backRef ? _SUPPLY_BY_ID[backRef] : null;
+    if (!core) {
+      bad.push('🔴 A DERIVED CRATE WITH NO CORE LINE BEHIND IT: ' + s.id + ' is ' + rung + '\'s row '
+        + 'and its back reference (' + (backRef || 'missing') + ') resolves to nothing — the row can '
+        + 'no longer say what your city would have charged, and nothing can check its price');
+      continue;
+    }
+    if (core.out.ing !== s.out.ing) {
+      bad.push('SUPPLY_RECIPES ' + s.id + ': back reference points at ' + core.id + ', which stocks '
+        + core.out.ing + ' and not ' + s.out.ing);
+      continue;
+    }
+    /* The live id the core line is denominated in — food wherever it has any,
+       otherwise its largest live leg. Exactly what `_salvagePrimary()` derives,
+       called on the core line rather than re-typed, so the check and the price
+       can never disagree about which resource "in kind" means. */
+    const primary = _salvagePrimary(core);
+    if (!primary) continue;          // a core line with no live leg at all: B's finding, not this one
+    const per  = ((s.cost && s.cost[primary]) || 0) / Math.max(1, s.out.qty);
+    const cper = ((core.cost && core.cost[primary]) || 0) / Math.max(1, core.out.qty);
+    if (!(per > 0)) {
+      bad.push('🔴 ' + s.id + ' HAS STOPPED EATING THE LEDGER: ' + rung + ' sells ' + s.out.ing
+        + ' for ' + JSON.stringify(s.cost) + ', with no `' + primary + '` in it, while the city line '
+        + core.id + ' pays ' + cper.toFixed(3) + ' ' + primary + '/unit. kitchen.render.js tells the '
+        + 'player as a FACT that every crate on this sheet costs live resources their city, '
+        + 'businesses and battles produce — you have just made that sentence false. This is the '
+        + 'round-4 regression: the last time it shipped, ten days and 188 dishes moved the 14-id '
+        + 'ledger zero times. Put the leg back in _salvageLine()/_barterLine(); do not scope this '
+        + 'check around the row');
+    } else if (cper > 0 && !(per >= cper)) {
+      bad.push('🔴 ' + s.id + ' DISCOUNTS `' + primary + '`: ' + per.toFixed(3) + '/unit against '
+        + core.id + '\'s ' + cper.toFixed(3) + '. A fallback cheaper IN KIND than the line it falls '
+        + 'back for is a dish that embodies less live ' + primary + ' than recipe.foodCost claims, '
+        + 'and that gap is where a Cinder→resource printer lives — see convoyGuardOk()\'s fourth wall');
+    }
+  }
+  /* 🔴 B3 — AND THE BREADTH OF IT, because B and B2 are both satisfied by a
+     kitchen that eats `food` and nothing else. See ECON.LEDGER_BREADTH_MIN for
+     the measured census and for why three of the fourteen are deliberately
+     out. Counted across BOTH doors the ledger leaves by — the restock counter
+     and the upgrade shop — because "the kitchen is fed by the rest of your
+     game" is a claim about the whole feature and not about one screen. */
+  const LIVE_SEEN = Object.create(null);
+  for (const row of SUPPLY_RECIPES) for (const k in (row.cost || {})) {
+    if (k !== 'cinder' && LIVE.indexOf(k) !== -1) LIVE_SEEN[k] = 1;
+  }
+  for (const u of UPGRADES) for (const k in (u.cost || {})) {
+    if (k !== 'cinder' && LIVE.indexOf(k) !== -1) LIVE_SEEN[k] = 1;
+  }
+  const seenIds = Object.keys(LIVE_SEEN);
+  if (seenIds.length < (ECON.LEDGER_BREADTH_MIN | 0)) {
+    bad.push('🔴 THE KITCHEN HAS STOPPED EATING THE LEDGER BROADLY: the restock counter and the '
+      + 'upgrade shop between them name only ' + seenIds.length + ' of the 14 live ids ('
+      + seenIds.sort().join(', ') + ') against a floor of ' + ECON.LEDGER_BREADTH_MIN
+      + '. The player asked for a kitchen fed by "the different types of resources that they get '
+      + 'from the other parts of the game" — one id is a faucet with extra steps, and every other '
+      + 'premise check in this function passes a kitchen that runs on food alone');
+  }
   /* 🔴 …AND THE SAME THING SAID AT THE DISH LEVEL, because a per-crate check
      can be satisfied while some particular dish still has an all-Cinder path
      through a combination of crates nobody looked at. */
@@ -4662,7 +4995,13 @@ export function assertDataSane() {
   }
   // E — never the cheap route, and never a bigger crate, and food is paid in food.
   for (const s of _SALVAGE_LINES) {
-    const core = _SUPPLY_BY_ING[s.out.ing];
+    /* Through the row's own `salvageOf`, not through the ingredient index. Same
+       reason B2 does it: the back reference is the thing render prints the
+       "your city: 10 for ◈60 + 6 food" chip from, so the invariants have to
+       break when it breaks — a pointer nothing depends on is a pointer that
+       rots. `_SUPPLY_BY_ID` and not `_SUPPLY_BY_ING`: the reference names a
+       ROW, and B2 has already proved it names the row for this ingredient. */
+    const core = _SUPPLY_BY_ID[s.salvageOf] || null;
     if (!core) { bad.push('scrap-dealer line ' + s.id + ' has no core line behind it'); continue; }
     const sp = s.cost.cinder / Math.max(1, s.out.qty);
     const bp = ((core.cost && core.cost.cinder) || 0) / Math.max(1, core.out.qty);
@@ -4715,7 +5054,8 @@ export function assertDataSane() {
         check around the row. */
   const _freeParcel = RELIEF.filter((p) => p.free)[0] || null;
   for (const s of _BARTER_LINES) {
-    const core = _SUPPLY_BY_ING[s.out.ing];
+    // Through `barterOf`, for the reason written out on the E loop above.
+    const core = _SUPPLY_BY_ID[s.barterOf] || null;
     const sal = _SALVAGE_BY_ING[s.out.ing];
     if (!core) { bad.push('barter line ' + s.id + ' has no core line behind it'); continue; }
 

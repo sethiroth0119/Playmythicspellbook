@@ -125,6 +125,21 @@ function bridge() {
  * with nothing in the console. That failure is silent and total, which is
  * exactly the kind this file exists to prevent.
  */
+/* 🔴 AND IT IS THE INJECTION POINT, WHICH IS WORTH WRITING DOWN because two
+   rounds of self-test declared the opposite. Everything in this file reaches
+   the network through `bridge().cloud.client` and nothing else — so a headless
+   harness that publishes a `window.MythicKitchenBridge` carrying
+   `cloud: { client: { rpc, from } }` drives every call below, including the
+   INBOUND CLAIM, with no server and no browser. The self-test's honest-limits
+   list says the inbound server leg "needs a live RPC and is stated as a limit";
+   it does not. Round 8 drove it end to end under plain node against a stub
+   whose `rpc('kitchen_convoy_claim')` answers a row: first claim → `{ok:true,
+   granted:40}` and the stash 140→180 with exactly one RPC call; replay
+   (`first_claim:false, delivered_dishes:0`) → `NOT_READY "That convoy was
+   already unloaded."` and the stash unmoved. Two things make it work and both
+   are deliberate: `cloud` is read as a PROPERTY (see above), and `signedIn()`
+   is the only other gate. Do not add a `typeof window === 'undefined'` bail
+   anywhere in this file — that would close the door this note is about. */
 function client() {
   const b = bridge();
   try {

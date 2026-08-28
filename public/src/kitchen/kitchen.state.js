@@ -171,10 +171,20 @@ function ECb(key, fallback) {
                                  entirely"; this is that correction, measured
                                  against a zero-reaction bot's real throughput
                                  (17.9 dishes/hour against a modelled 26.9).
-     GRADE_MIN_C           0.58  the four letter cuts on gradeParts().score.
-     GRADE_MIN_B           0.70  Swept off the measured distribution — see the
-     GRADE_MIN_A           0.79  block in gradeFor() for what each one is
+     GRADE_MIN_C           0.61  the four letter cuts on gradeParts().score.
+     GRADE_MIN_B           0.75  Swept off the measured distribution — see the
+     GRADE_MIN_A           0.85  block in gradeFor() for what each one is
      GRADE_MIN_S           0.92  pinned to and when to re-sweep them.
+                                 ⚠ THESE FOUR WERE STALE HERE FOR A ROUND. The
+                                 sweep moved them to 0.59/0.73/0.83 in
+                                 kitchen.data.js and this inventory, gradeFor()'s
+                                 derivation block and the EC() fallbacks all
+                                 still read the old ladder — three places
+                                 documenting a distribution that no longer
+                                 existed, and a half-written data file would have
+                                 silently restored the pre-sweep grade. If you
+                                 move a cut, move all four copies in the same
+                                 edit or delete the ones you will not maintain.
      POP_SOFT_MARGIN         40  how close to POP_MIN/POP_MAX the meter starts
                                  damping movement toward that rail. See
                                  bumpPop() — 0 restores the hard clamp and both
@@ -490,6 +500,8 @@ export function emit(name, payload) {
   //   slowly accumulates events nobody will ever read.
   if (K._events.length > 256) K._events.shift();
   K._events.push(ev);
+  // 🔴 THE ANNOUNCEMENT IS THE BOOKING. See bookEvent().
+  bookEvent(ev);
   // ⚠ A throwing subscriber must not take the sim with it. Render is the main
   //    subscriber and render touches the DOM, which fails in ways the sim has
   //    no business caring about.
@@ -502,6 +514,88 @@ function fire(set, ev) {
   for (const fn of Array.from(set)) {
     try { fn(ev); } catch (e) { /* a broken listener is not a broken kitchen */ }
   }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   🧾 THE ANNOUNCEMENT IS THE BOOKING — three tallies this file owns and cannot
+      reach from where they happen.
+   ═══════════════════════════════════════════════════════════════════════════
+   🔴 THE PROBLEM, AND WHY IT IS NOT SOLVED WITH A NEW EXPORT.
+   `Kitchen` may only be mutated by this file, drivethru.js and convoy.js
+   (CONTRACT §0 rule 2) — and all three of the numbers below are produced inside
+   the other two:
+
+     • a WAVED car          drivethru.js waveCar()  → today.waved
+     • a convoy's FREIGHT   convoy.js launch()      → dayLedger().cinderSpent
+     • a convoy LANDING     convoy.js claim()/drip  → dayLedger().resGained
+
+   Every previous round's answer was "export a booker and ask the other builder
+   to call it", and the measured result of that shape is in the baseline: 29
+   exports in this feature have no consumer outside their own module, and
+   `bookGain()`'s own comment spent a round claiming a convoy caller that did not
+   exist. An export nobody calls is not a wiring; it is a promise, and this
+   feature has shipped six of them.
+
+   🔴 SO IT BOOKS OFF THE ANNOUNCEMENT INSTEAD, WHICH ALREADY EXISTS AND ALREADY
+      CARRIES THE NUMBER. Both other modules raise through `State.emit()` when
+   they are driving the real singleton (drivethru.js:1487, convoy.js:341 — both
+   say so in writing, because a returned-only event never reaches a subscriber).
+   The payloads were already complete:
+       car:leave      { reason:'waved' }
+       convoy:launch  { feeCinder: paid }      ← the fee that actually cleared
+       convoy:claim   { granted: landed }      ← re-read out of the bridge and
+                                                 CLAMPED, never the amount owed
+   so the receipt cannot claim more than arrived — which is the discipline
+   bookGain() was written to enforce and can now enforce for a caller in another
+   file without that file changing a line.
+
+   ⚠ EXACTLY-ONCE, AND HERE IS WHY IT IS. `emit()` is called once per event.
+     `car:leave` with `reason:'waved'` is raised in exactly one place
+     (drivethru.js waveCar); releaseCar() here raises the same name with
+     'served' | 'lost' | 'forfeit' and is filtered out by the reason test.
+     `convoy:claim` is raised once per landing PASS with the units that landed on
+     that pass (partial, drip and retire are mutually exclusive branches), so the
+     sum over the events is the sum that reached the stash.
+
+   ⚠ IF convoy.js LATER ADDS ITS OWN `State.bookLedger()` CALLS, DELETE THIS
+     BRANCH IN THE SAME EDIT. Two writers of one number is the failure this
+     feature has fought for seven rounds; the whole point of the seam is that
+     there is one. There is deliberately no `bookLedger` export for it to call.
+   ═══════════════════════════════════════════════════════════════════════════ */
+function bookEvent(ev) {
+  try {
+    if (!ev) return;
+    if (ev.name === 'car:leave') {
+      /* 🚗 THE LANE'S ONLY DECISION HAS TO COST SOMETHING HONEST. A waved car
+         incremented neither `served` nor `lost`, so it left the SERVICE
+         denominator entirely and a bot that waved everything it was not ready
+         for scored the BEST service mark on the board (r9/wave.mjs: SVC 93.8 on
+         58 served, against 84.3 on 114.5 for honest play). It is booked here and
+         charged in gradeParts(); the POPULARITY price stays POP_WAVE where
+         drivethru.js sets it, because "how much custom did you turn down" and
+         "how angry is the town" are different questions. */
+      /* ⚠ DAY TALLY ONLY, NO `totals.waved`. `K.totals` is rebuilt from a fixed
+         key list in hydrate() and reset(), so a lifetime counter added here and
+         nowhere else would be silently zeroed on every reload — a tally that
+         lies is worse than a tally that is absent. The grade and the receipt
+         both want the DAY. */
+      if (String(ev.reason || '') === 'waved') K.today.waved = _int(K.today.waved) + 1;
+      return;
+    }
+    if (ev.name === 'convoy:launch') {
+      const fee = _int(ev.feeCinder);
+      if (fee > 0) dayLedger().cinderSpent = _int(dayLedger().cinderSpent) + fee;
+      return;
+    }
+    if (ev.name === 'convoy:claim') {
+      // `granted` is what the bridge actually accepted this pass. A truck whose
+      // load is held at the depot because the stash is full raises granted:0 and
+      // must not appear on the receipt as a delivery.
+      const got = _int(ev.granted);
+      if (got > 0) bookGain('food', got);
+      return;
+    }
+  } catch (e) { /* a tally must never be able to stop an event reaching render */ }
 }
 
 /** Float-up / spark hints for the renderer. Render consumes and CLEARS this. */
@@ -615,6 +709,27 @@ function freshToday() {
   return {
     served: 0, lost: 0, burnt: 0, spoiled: 0, binned: 0, turned: 0,
     earned: 0, tips: 0, xp: 0, qsum: 0, qunits: 0, raw: 0, perfect: 0,
+
+    /* 🚗 CARS THE PLAYER WAVED OFF, AND IT WAS THE ONE OUTCOME NOTHING COUNTED.
+       `waveCar()` deliberately does not call loseTicket() — a wave-off is a
+       DECISION, not a failure, and charging it POP_LOST would make it not a
+       decision. That is right about popularity and it was wrong about the
+       GRADE: with no tally at all a waved customer left the SERVICE denominator
+       entirely, so refusing people RAISED the mark. Measured, L12+heatlamp, six
+       seeds, full days (r9/wave.mjs): waving everything not already plated
+       scored SVC 93.8 — the best of the three lines on the board — on 58 served
+       against honest play's 84.3 on 114.5. The report card read best for the
+       run that turned away half its customers.
+       Booked in bookEvent() off `car:leave`, because drivethru.js owns
+       waveCar() and this file may not edit it; see the block above bookEvent()
+       for why that is a seam and not a trick. */
+    waved: 0,
+
+    /* 🗑 PLATES BINNED WITH ROOM STILL ON THE PASS — a SUBSET of `binned`, and
+       the only part of it the grade charges for. `binned` stays whole for the
+       report's cost line; this is the half that was a CHOICE rather than an
+       unjam. Written by binPass(), read by gradeParts(). See both. */
+    wasted: 0,
 
     /* 🤝 THE PROMISES, WHICH ARE EXACT ON FIVE SURFACES AND WERE ABSENT FROM THE
        SIXTH. 45.6% of drive-thru tickets carry a modifier ("no mayo", "extra
@@ -1394,41 +1509,22 @@ function bookSpend(takenRes, takenCinder) {
 }
 
 /**
- * "🥫 452 Food · 💧 118 Water · 🧬 34 DNA — out of your stash". → '' when the
- * ledger did not move, so a caller can drop the whole row.
- *
- * Icons come from `bridge().meta(id)`, which is `_meta()` in the legacy app —
- * the same source the Supplies sheet and the prep-counter strip draw from, so
- * the receipt cannot label `dna` with a different glyph than the crate that
- * spent it. Biggest first: on a 360px screen the tail is what gets clipped, so
- * the tail must be the part that matters least.
- */
-function resLineFor(led) {
-  const spent = (led && led.resSpent) || {};
-  const ids = Object.keys(spent).filter((id) => _int(spent[id]) > 0)
-    .sort((a, c) => _int(spent[c]) - _int(spent[a]));
-  if (!ids.length) return '';
-  const parts = ids.map((id) => {
-    let icon = '';
-    try { const m = bridge().meta ? bridge().meta(id) : null; if (m && m.icon) icon = m.icon + ' '; } catch (e) {}
-    return `${icon}${_int(spent[id]).toLocaleString()} ${metaName(id) || id}`;
-  });
-  return `${parts.join(' · ')} — out of your stash`;
-}
-
-/**
  * The other direction — units landing IN the live ledger. Same discipline as
  * bookSpend(): only ever called once the units have been re-read out of the
  * bridge, so the receipt can never claim more than actually arrived.
  *
- * ⚠ ONE CALLER TODAY, AND THE COMMENT USED TO CLAIM TWO. It said "a relief
- *   parcel or a convoy landing"; a convoy claim pays out through convoy.js's own
- *   `b.addRes('food', take)` (convoy.js:2234) and has never reached this
- *   function, so the sheet's row was labelled "convoys and relief" over a number
- *   that could only ever be relief. The label is now honest and the convoy leg
- *   is a one-line ask in another builder's file — written out in the handover.
- *   A comment that names a caller that does not exist is how the next reader
- *   concludes the wiring is done.
+ * ✅ TWO CALLERS NOW, AND THE SECOND ONE IS THE POINT. For two rounds this
+ *   comment named "a relief parcel or a convoy landing" while `buyRelief()` was
+ *   the only caller: a convoy claim paid out through convoy.js's own
+ *   `b.addRes('food', landed)` and never reached this function, so the day's
+ *   receipt printed `0 CINDER` and no ledger row at all after a truck had put
+ *   ten food in the stash and taken forty Cinder of freight out of the wallet
+ *   (measured in the browser, real taps: PLAYER FOOD 500 → 510, GEMS 20,000 →
+ *   19,960, `dayLedger {resSpent:{},resGained:{},cinderSpent:0}`).
+ *   The convoy leg now arrives through bookEvent() off the `convoy:claim`
+ *   event convoy.js ALREADY raises, carrying the CLAMPED `granted` — so the
+ *   wiring is a fact in this file rather than a request in a handover. Read the
+ *   block above bookEvent() before adding a third writer.
  */
 function bookGain(id, n) {
   if (!id || _int(n) <= 0) return;
@@ -1592,6 +1688,141 @@ export function pantryLowList() {
   return out;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   🚪 SERVICEABLE CAPACITY — THE ONLY HONEST ANSWER TO "SHOULD SOMEBODY WALK IN"
+   ═══════════════════════════════════════════════════════════════════════════
+   The door does not ask whether the player could go shopping. It asks whether
+   this kitchen can feed ONE MORE PERSON than it has already promised to feed:
+
+       headroom = (dishes the cooler can still cook)
+                + (dishes already plated, cooking, or in hand)
+                − (dishes the open board has ordered)
+
+   and the doors are shut while that is below one. Three things follow, and each
+   of them is a bug this feature has actually shipped:
+
+     • A kitchen one basket away from a single hot dog stops taking a full
+       level-1 day's arrivals, so following the escape hatch's own advice stops
+       costing 553 walk-outs (see dryCheck).
+     • A kitchen that has run its cooler dry mid-shift stops taking new custom
+       the moment it can no longer serve it, instead of bleeding until the bell.
+     • Six finished plates under the lamp with an empty board keep the doors
+       OPEN even with an empty cooler, because six plates can feed six people.
+       "Nothing left to cook" and "nothing left to sell" are different states and
+       the old flag could not tell them apart.
+
+   ⚠ NO NEW ECON KEY, AND THAT IS DELIBERATE. The threshold is ONE — "can I feed
+     one more person than I have already promised". That is a structural fact
+     about the board, not a price, so there is nothing here for a designer to
+     tune and nothing for CLAUDE.md's "all pricing goes through ECON" to catch.
+     A tunable floor was written and dropped: every value above 1 shuts the doors
+     on a kitchen that demonstrably CAN serve the next customer, which is the
+     round-6 failure (a game refusing custom it could take) wearing the round-7
+     fix's clothes.
+
+   ⚠ IT NEVER CLOSES THE SHIFT, exactly like the flag it feeds. tick() rolls
+     `_nextCounter` forward while it is true and drivethru.js does the same with
+     `b.nextAt`, so re-stocking does not release a backlog of customers who
+     "queued" while the kitchen was shut. See isDry().
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * How many dishes the pantry alone could still put out, counted no further than
+ * `limit` because the caller only ever needs a comparison.
+ *
+ * ⚠ GREEDY, CHEAPEST-RECIPE-FIRST, AND NOT AN OPTIMISER. Ingredients are shared
+ *   across recipes, so "how many dishes can this cooler make" is a bin-packing
+ *   question and the exact answer is not worth a frame. Taking the recipe with
+ *   the fewest total units each round is the standard approximation and it errs
+ *   LOW — it can miss a combination that would have fitted one more plate in.
+ *   Low is the safe direction here: the cost of undercounting is that the doors
+ *   shut one customer early and re-open on the next purchase; the cost of
+ *   overcounting is the fifty-arrivals-on-three-buns bug this replaces.
+ *
+ * ⚠ NO BRIDGE READS. The whole point of keeping this off the wallet is that it
+ *   is cheap enough to run on the common path, where the old `cookable.length`
+ *   exit used to return before touching the bridge at all.
+ */
+function cookThrough(limit) {
+  const cap = Math.max(0, _int(limit));
+  if (cap <= 0) return 0;
+  const menu = [];
+  for (const r of menuForLevel(K.level)) {
+    if (r && r.needs && Object.keys(r.needs).length) menu.push(r);
+  }
+  if (!menu.length) return 0;
+
+  const stock = Object.create(null);
+  for (const r of menu) {
+    for (const id of Object.keys(r.needs)) {
+      if (stock[id] === undefined) stock[id] = _int(K.pantry[id]);
+    }
+  }
+
+  let n = 0;
+  while (n < cap) {
+    let pick = null, cheapest = Infinity;
+    for (const r of menu) {
+      let can = true, units = 0;
+      for (const id of Object.keys(r.needs)) {
+        const want = _int(r.needs[id]);
+        if (_int(stock[id]) < want) { can = false; break; }
+        units += want;
+      }
+      if (can && units < cheapest) { cheapest = units; pick = r; }
+    }
+    if (!pick) break;
+    for (const id of Object.keys(pick.needs)) stock[id] = _int(stock[id]) - _int(pick.needs[id]);
+    n++;
+  }
+  return n;
+}
+
+/**
+ * Dishes the open board has ordered, and dishes that already exist to fill them.
+ *
+ * ⚠ RAW `qty`, NOT `qty − filled`. `item.filled` is planPass()'s claim on plates
+ *   that are ALREADY on the pass and it is refreshed a frame at a time, so
+ *   subtracting it here and then adding the pass again below would count the
+ *   same plate twice — in opposite directions, on two different clocks. Raw
+ *   demand against everything physically in the kitchen is one clock and one
+ *   count.
+ */
+function boardOwed() {
+  let owed = 0;
+  if (!Array.isArray(K.tickets)) return 0;
+  for (const tk of K.tickets) {
+    if (!tk || (tk.state !== 'open' && tk.state !== 'ready')) continue;
+    for (const it of (tk.items || [])) owed += Math.max(0, _int(it.qty));
+  }
+  return owed;
+}
+
+/** Plated, cooking, or in the player's hand — food that needs no more pantry. */
+function onHandDishes() {
+  let n = (Array.isArray(K.pass) ? K.pass.length : 0) + (K.hand ? 1 : 0);
+  for (const sid of Object.keys(K.stations || {})) {
+    const st = K.stations[sid];
+    if (!st || !st.slots) continue;
+    for (const s of st.slots) if (s) n++;
+  }
+  return n;
+}
+
+/**
+ * 🚪 → true while the doors should be shut. The whole gate, in four lines.
+ *
+ * `cookThrough` is capped at exactly the count that would answer the question,
+ * so a well-stocked lunch rush stops counting after a dozen or so plates rather
+ * than walking the cooler.
+ */
+function doorsShut() {
+  const owed = boardOwed();
+  const onHand = onHandDishes();
+  const short = Math.max(0, owed - onHand);
+  return (cookThrough(short + 1) + onHand - owed) < 1;
+}
+
 /**
  * 🔴 CAN THIS PLAYER MAKE ANY MOVE AT ALL? Pure. Mutates nothing.
  *
@@ -1609,9 +1840,9 @@ export function pantryLowList() {
  * only the comments about the bug it was meant to prevent.
  *
  * → { dry, stalled, cookable:[recipeId], reachable:[recipeId],
- *     affordable:[supplyId], need:[liveResId], ing }
+ *     affordable:[supplyId], need:[liveResId|'cinder'], needLine, ing }
  *
- * 🔴 TWO DIFFERENT QUESTIONS, AND ONE FLAG WAS BEING ASKED BOTH OF THEM.
+ * 🔴 THREE DIFFERENT QUESTIONS, AND ONE FLAG HAS NOW BEEN ASKED ALL THREE.
  *
  *   `stalled` — NOTHING ON THE MENU CAN BE COOKED RIGHT NOW. A statement about
  *     the pantry alone. This is the gate kitchen.data.js's RELIEF block names in
@@ -1619,27 +1850,46 @@ export function pantryLowList() {
  *     escape hatch, because a wallet full of Cinder does not put a bun on a
  *     griddle.
  *
- *   `dry` — THE DOORS ARE SHUT. Stalled, AND no purchase the player can
- *     actually pay for would change that. This is the one the lane and the
- *     walk-ins gate on, because it is the one that means "sending this kitchen
- *     another customer can only ever cost you".
+ *   `reachable` — COULD THIS PLAYER SHOP THEIR WAY TO A DISH? A statement about
+ *     the WALLET. It is the right answer to "is this account a dead end", which
+ *     is what the Supplies sheet and the relief flight need to know, and it is
+ *     the WRONG answer to "should fifty people walk in" — see below.
  *
- * 🔴 AND `dry` USED TO MEAN NEITHER OF THOSE, WHICH IS THE BUG. It was
- *    `affordable.length === 0` — is there ANY unlocked crate on the sheet the
- *    player can pay for — and one cheap affordable crate therefore kept the
- *    shift open forever while the kitchen served nothing. Measured, ten days,
- *    a resourced account: from day 5 the player holds 79,579 Cinder, 654 water
- *    and 1 food; `sal_ice` (9 Cinder, 3 water) is affordable forever, so `dry`
- *    read FALSE while the kitchen served 0 and lost 87, 98, 89, 87, 97 and 90
- *    tickets on six consecutive days. Water buys ice. **Ice is not a dish.**
- *    kitchen.data.js:505-513 predicted this precise false negative and the
- *    mitigation it specified was never built.
+ *   `dry` — THE DOORS ARE SHUT. Now a statement about SERVICEABLE CAPACITY:
+ *     everything this cooler can still cook, plus everything already plated or
+ *     on a griddle, is already spoken for by somebody standing at the counter.
+ *     See doorsShut(). This is the one the lane and the walk-ins gate on.
  *
- *    So the question is no longer "can you buy SOMETHING". It is "can you buy
- *    your way to a DISH": `reachable` walks each recipe on the menu, prices the
- *    cheapest basket of unlocked crates that would cover its shortfall, and
- *    asks whether that WHOLE basket is payable in one go. Ice keeps nothing
- *    open any more, because no basket containing only ice finishes a recipe.
+ * 🔴 `dry` HAS BEEN WRONG TWICE, IN OPPOSITE DIRECTIONS, AND THIS IS THE SECOND
+ *    CORRECTION.
+ *
+ *    ROUND 6 — it was `affordable.length === 0`, "is there ANY unlocked crate
+ *    the player can pay for", so one cheap affordable crate kept the shift open
+ *    forever while the kitchen served nothing. Measured, ten days, a resourced
+ *    account: from day 5 the player holds 79,579 Cinder, 654 water and 1 food;
+ *    `sal_ice` (9 Cinder, 3 water) is affordable forever, so `dry` read FALSE
+ *    while the kitchen served 0 and lost 87, 98, 89, 87, 97 and 90 tickets on
+ *    six consecutive days. Water buys ice. **Ice is not a dish.**
+ *
+ *    ROUND 7 — the fix for that was `reachable.length === 0`, which moved the
+ *    question from "can you buy something" to "can you buy your way to a dish"
+ *    and killed the ice case. It also opened the doors the INSTANT a stranded
+ *    player could theoretically shop, which punished the recovery this game
+ *    prescribes harder than ignoring it. Same seed, fourteen days, GEMS 0 /
+ *    empty ledger / empty pantry, both arms re-opening every morning
+ *    (c7sim/rec.mjs vs c7sim/rec3.mjs, reproduced on seeds 3, 11 and 21):
+ *        do nothing, never assemble a basket → served 0, lost 0, pop 41.6
+ *        do exactly what the escape hatch asks → 24 served against 553 LOST,
+ *          41–53 walking out on each of eleven consecutive days, popularity
+ *          welded to exactly 30.0 by the revert rail from day 4
+ *    One basket bought fifty arrivals at a kitchen holding three hot dogs. It
+ *    was not the stranded account only: `simulate(720,{auto:true})` on a wallet
+ *    with a million of everything ended ALL FIVE seeds `dry:false, stalled:true,
+ *    cookable:[]` with 24–32 lost, because the doors stay open on an empty
+ *    cooler as long as the sheet is theoretically shoppable.
+ *
+ *    So the doors no longer read the wallet at all. `reachable` keeps its job —
+ *    it is what the SHEET is for — and `doorsShut()` answers the door.
  *
  * ⚠ THE BASKET SEARCH IS GREEDY PER INGREDIENT, NOT AN OPTIMISER, and it is
  *   deliberately allowed to be wrong in exactly one direction. It picks, for
@@ -1654,18 +1904,55 @@ export function pantryLowList() {
 export function dryCheck() {
   const cookable = [];
   for (const r of menuForLevel(K.level)) if (r && pantryHas(r.needs)) cookable.push(r.id);
+
+  // 🚪 THE DOOR TEST — SERVICEABLE CAPACITY. Pantry, pass and board only; it
+  //    does not touch the bridge, so it is as cheap on the common path as the
+  //    old `cookable.length` exit was.
+  const shut = doorsShut();
+
   // The common case, and it exits before touching the bridge at all.
   if (cookable.length) {
-    return { dry: false, stalled: false, cookable, reachable: cookable.slice(), affordable: [], need: [], ing: null };
+    return { dry: shut, stalled: false, cookable, reachable: cookable.slice(), affordable: [], need: [], needLine: '', ing: null };
   }
 
-  const affordable = [], need = [];
+  /* 🔴 `need` IS "WHAT IS IN THE PLAYER'S WAY", AND IT USED TO BE NEITHER TRUE
+     NOR SAFE. Two defects, both measured, both on the one sentence a stranded
+     player is given:
+       1. It was a UNION over every crate the player could not afford, so a
+          resource that blocks ONE crate was reported as blocking all of them.
+          Measured on the day-14 recoverer (L1, empty pantry, food 45, water 58,
+          ◈834): `need` came back ["supplies","dna"] while TWENTY-ONE crates on
+          that same sheet were buyable — and render.js:1885 prints it verbatim
+          as "Every crate on the sheet still wants Supplies, DNA and you have
+          none."
+       2. It EXCLUDED Cinder by construction (`sh.key !== 'cinder'`), so the one
+          wall the relief flight exists to describe could never appear in it —
+          the un-done half of round 6's blocker.
+     So it is now an INTERSECTION, it includes Cinder, and it is only built when
+     literally nothing on the sheet is affordable. That makes render's sentence
+     TRUE whenever it renders: every crate really is blocked, by every id named,
+     and the player really does hold none of it.
+     ⚠ WHAT THAT DOES NOT FIX, NAMED HONESTLY: render's OTHER branch — the
+       empty-`need` fallback "No crate on the supplies sheet can be bought right
+       now" — is false whenever `affordable.length > 0`, and no value of `need`
+       can make it true, because the two sentences are the two halves of a
+       question the shipped renderer does not ask. That is what `needLine` below
+       is for, and swapping render.js:1885-1888 onto it is a one-line change in
+       a file this round may not touch. */
+  const affordable = [], blocked = [];
   for (const sup of (Array.isArray(DATA.SUPPLY_RECIPES) ? DATA.SUPPLY_RECIPES : [])) {
     if (!sup || !sup.out || !sup.out.ing) continue;
     if (_int(sup.minLevel || 1) > K.level) continue;
     const short = costShortfall(sup.cost || {}, 1);
     if (!short.length) { affordable.push(sup.id); continue; }
-    for (const sh of short) if (sh.key !== 'cinder' && need.indexOf(sh.key) === -1) need.push(sh.key);
+    blocked.push({ sup, keys: short.map((sh) => sh.key) });
+  }
+  let need = [];
+  if (!affordable.length && blocked.length) {
+    // Every id that is short on EVERY blocked crate, and that the player holds
+    // none of — the two things render's sentence claims out loud.
+    need = blocked[0].keys.filter((k) => blocked.every((b) => b.keys.indexOf(k) !== -1)
+                                      && heldNone(k));
   }
   const reachable = reachableRecipes();
   // The ingredient to NAME. `pantry:low` is the event this rides on (§6 is a
@@ -1678,7 +1965,87 @@ export function dryCheck() {
     }
     if (ing) break;
   }
-  return { dry: reachable.length === 0, stalled: true, cookable, reachable, affordable, need, ing };
+  return {
+    dry: shut, stalled: true, cookable, reachable, affordable, need,
+    needLine: stallLine(reachable, affordable, blocked, need), ing,
+  };
+}
+
+/** → true when the player holds none of a live resource (or no Cinder). */
+function heldNone(key) {
+  try {
+    const b = bridge();
+    if (key === 'cinder') return _int(b.gems ? b.gems() : 0) <= 0;
+    return _int(b.getRes ? b.getRes(key) : 0) <= 0;
+  } catch (e) { return false; }
+}
+
+/**
+ * 🪂 THE ONE SENTENCE A STALLED PLAYER GETS, AND IT HAS TO BE TRUE.
+ *
+ * 🔴 WHY THIS FUNCTION EXISTS AT ALL, MEASURED. The stall banner had two
+ * branches and BOTH of them were false in the state the whole escape hatch was
+ * built for. Real page, 390×844, the day-14 recoverer (level 1, empty pantry,
+ * food 45 / water 58 / ◈834): it read "Every crate on the sheet still wants
+ * Supplies, DNA and you have none" while `dryCheck().affordable.length === 21`.
+ * The other branch, `simulate(720,{auto:true})` seed 1, ended `need:[]` with 36
+ * affordable lines and therefore rendered "No crate on the supplies sheet can be
+ * bought right now." Both statements were the opposite of what the very same
+ * object already knew.
+ *
+ * ⚠ IT IS A DISPLAY STRING PRODUCED BY THE SIM, WHICH THIS FILE DOES EXACTLY
+ *   TWICE (the other is `report.resLine`… which round 8 deleted, see
+ *   closeShift, because it had no reader). The rule that makes it right here
+ *   rather than in render: THE ORDER OF THE BRANCHES IS THE ANSWER, and the
+ *   order can only be got right by something that can see `reachable`,
+ *   `affordable` and the Cinder wall at once. Handing render three arrays and
+ *   hoping it asks about them in the right order is how the shipped sentence
+ *   came to contradict the sheet 200px below it.
+ *
+ * → '' when nothing is stalled. Never null; render can print it raw.
+ */
+function stallLine(reachable, affordable, blocked, need) {
+  const name = (id) => metaName(id) || id;
+  const supName = (id) => {
+    try {
+      const sup = DATA.supply ? DATA.supply(id) : null;
+      const ing = sup && sup.out ? ingredientOf(sup.out.ing) : null;
+      return (ing && ing.name) || id;
+    } catch (e) { return id; }
+  };
+  // 1. The strongest true thing: a whole dish is one shopping trip away.
+  if (reachable && reachable.length) {
+    const r = recipeOf(reachable[0]);
+    return `The stash still covers a ${(r && r.name) || 'dish'} — buy the crates for it on the Supplies sheet.`;
+  }
+  // 2. Something is buyable, but not enough of it to finish a recipe. Say both
+  //    halves; telling a player "nothing can be bought" while 21 rows are green
+  //    is the defect this whole function exists to end.
+  if (affordable && affordable.length) {
+    return `${affordable.length} crate${affordable.length === 1 ? ' is' : 's are'} within reach on the Supplies sheet`
+         + ` — start with ${supName(affordable[0])} — but no single dish is covered yet.`;
+  }
+  // 3. Nothing is buyable and ONE wall blocks the whole sheet. Cinder counts as
+  //    a wall here — it is the relief flight's entire subject and `need` filtered
+  //    it out by construction for two rounds.
+  if (need && need.length) {
+    const names = need.filter((k) => k !== 'cinder').map(name);
+    const coin = need.indexOf('cinder') !== -1 ? ' (and Cinder)' : '';
+    if (names.length) return `Every crate on the sheet wants ${names.slice(0, 3).join(', ')}${coin} and there is none in the stash.`;
+    /* ⚠ CINDER ALONE, AND IT IS A FALLBACK RATHER THAN A LIVE BRANCH TODAY —
+       said out loud so nobody deletes it as dead or trusts it as reached. It
+       needs every unlocked crate to be priced in Cinder, and the barter counter
+       (`kind:'barter'`, three rows, zero Cinder) means no shipped SUPPLY_RECIPES
+       table can be. Remove those rows and this is the state a player lands in,
+       which is precisely when a wrong sentence would matter most. */
+    return 'Every crate left is priced in Cinder and the wallet is empty. The relief flight is the door that takes Cinder alone.';
+  }
+  // 4. Blocked, but by different things on different rows — so no single
+  //    sentence about "every crate" is true. Point at the sheet instead.
+  if (blocked && blocked.length) {
+    return 'No crate on the Supplies sheet is affordable right now — the sheet shows what each one is short of.';
+  }
+  return 'There is nothing on the Supplies sheet at this level.';
 }
 
 /**
@@ -1779,7 +2146,7 @@ function dryNow(t) {
        crate on the sheet can be bought" it said "⚠ Low on Dog Roll", because
        kitchen.render.js's toastLine drops both keys. They are in the payload;
        the branch is render's to write (see stillOpen). */
-    if (d.dry && d.ing) emit('pantry:low', { ing: d.ing, have: _int(K.pantry[d.ing]), dry: true, stalled: true, need: d.need });
+    if (d.dry && d.ing) emit('pantry:low', { ing: d.ing, have: _int(K.pantry[d.ing]), dry: true, stalled: d.stalled, need: d.need });
   }
   return d.dry;
 }
@@ -2899,8 +3266,19 @@ function spoilPass(now) {
 export function binPass(dishId) {
   const i = K.pass.findIndex((d) => d && d.id === dishId);
   if (i === -1) return no('BAD_ARG', 'That plate is not on the pass.');
+  /* 🔴 WAS THIS BIN FORCED, OR WAS IT A CHOICE? Read BEFORE the splice, because
+     the answer is "was there anywhere else for the next plate to go", and one
+     line later there is. The whole argument for not punishing `binned` is that
+     breaking a jammed pass is MANDATORY play — and that argument only covers the
+     bins that were actually breaking a jam. A plate thrown away with room still
+     under the lamp is not unjamming anything; it is waste, and gradeParts()
+     charges exactly those in the CRAFT denominator. See `wasted` in
+     freshToday(). */
+  const cap = Math.max(1, _int(DF('passCap') ? DF('passCap')(K.upgrades) : EC('PASS_CAP', 6)));
+  const forced = K.pass.length >= cap;
   const d = K.pass.splice(i, 1)[0];
   K.today.binned = _int(K.today.binned) + 1;
+  if (!forced) K.today.wasted = _int(K.today.wasted) + 1;
   K.totals.binned = _int(K.totals.binned) + 1;
   K.rev++;
   emit('cook:burnt', { stationId: null, slot: -1, recipeId: d.recipeId, spoiled: false, binned: true });
@@ -3127,25 +3505,39 @@ function contentionOf(dish, item, wanters) {
  * measured against that number, and dropped: it is a change with a real
  * regression surface across 148 currently-correct verdicts bought with nothing.
  *
- * 🔴 RE-MEASURED AGAIN THIS ROUND, WITH THE LINE'S `qty` PRINTED THIS TIME —
- * because "2 of 155 still read broken with a keeping plate on the pass" keeps
- * being carried forward as if it were an open matcher bug, and it is not.
- * r6/mis.mjs, twelve seeded days, every break classified at the instant of the
- * commit: honoured 52, broken 103, of which a clean plate existed for exactly
- * TWO, and both are:
- *     1 clean plate vs qty 2 of chickenSandwich, mod no_pickle,  filled 2
- *     1 clean plate vs qty 2 of pizzaPepperoni,  mod no_sauce,   filled 2
- * The matcher took the clean plate AND one dirty one, which is the best
- * assignment that physically exists — a second unit cannot be kept out of a
- * plate nobody cooked. Changing the comparator cannot reach either case.
+ * 🔴 RE-MEASURED A THIRD TIME IN ROUND 8, WITH THE LINE'S `qty` PRINTED, AND
+ * THE ANSWER IS THE SAME ONE ON DIFFERENT DISHES — which is the evidence that
+ * matters, because it means the shape is structural and not a lucky seed.
+ * r6/mis.mjs with `qty` and `filled` added to its dump (r14s/mis.mjs), twelve
+ * seeded days, every break classified at the instant of the commit:
+ *     honoured 44 · broken 95 · unproven 0
+ *     of the broken: a clean plate existed for exactly TWO
+ *         1 clean plate vs qty 2 of burgerClassic, mod no_lettuce, filled 2
+ *         1 clean plate vs qty 2 of slawDog,       mod no_slaw,    filled 2
+ * Round 7 measured the identical shape on chickenSandwich/no_pickle and
+ * pizzaPepperoni/no_sauce. Every instance across three rounds is ONE clean plate
+ * against a line that ordered TWO. The matcher took the clean plate AND one
+ * dirty one, which is the best assignment that physically exists — a second unit
+ * cannot be kept out of a plate nobody cooked.
  *
- * The residual is a DRIVE-THRU one and it is not in this file: `judgeMod()` is
- * all-or-nothing per line, so keeping one of two units reads exactly like
- * keeping neither. Everything a per-UNIT verdict needs is already on the seam —
- * `item.builds` is one build record PER UNIT in hand-over order (see SEAM 1 in
- * takeDishes) and `fitScore(item, dish)` already scores a single plate — so the
- * fix is a loop in drivethru.js and nothing here. Named, with the numbers, so
- * the next reader stops re-opening the matcher.
+ * 🔴 SO IT CANNOT BE CLOSED HERE, AND THAT IS A FINDING, NOT A DEFERRAL.
+ * There is no ordering of rules 1→4 that reaches either case: the comparator
+ * chooses WHICH plate a line gets, and both of these lines are unkeepable at any
+ * assignment because the kitchen only cooked one clean unit. The one shape a
+ * comparator change COULD fix — a line spending the last clean plate on a
+ * promise it cannot keep anyway while a rival line could have been kept whole —
+ * was measured at 0 of 88 in round 6, and a two-pass 2-opt over the board was
+ * written against that number and dropped: a real regression surface across 137
+ * currently-correct verdicts, bought with nothing.
+ *
+ * The residual is a DRIVE-THRU one: `judgeMod()` is all-or-nothing per LINE, so
+ * keeping one of two units reads exactly like keeping neither. Everything a
+ * per-UNIT verdict needs is already on the seam — `item.builds` is one build
+ * record PER UNIT in hand-over order (see SEAM 1 in takeDishes) and
+ * `fitScore(item, dish)` already scores a single plate — so the fix is
+ * `judgeMod(K, car, now)` returning a per-unit tally instead of one verdict, and
+ * it is a loop in drivethru.js and nothing here. Named, with three rounds of
+ * numbers, so the next reader stops re-opening the matcher.
  */
 function cmpCand(a, b) {
   if (a.pin !== b.pin) return b.pin - a.pin;      // 1. the player said so
@@ -4093,6 +4485,13 @@ export function closeShift(now, opts) {
     tips: K.today.tips,
     xp: K.today.xp,
     turned: _int(K.today.turned),
+    /* 🚗 CARS THE PLAYER WAVED OFF. It is a cost line and it belongs beside
+       `binned` / `spoiled` / `turned`: the day's report told the player how many
+       customers walked out and never how many they turned away themselves,
+       which is the one number that makes the wave-off button a decision with a
+       visible price. gradeParts() charges it in the SERVICE denominator off the
+       same tally, so the letter and the line cannot disagree. */
+    waved: _int(K.today.waved),
     raw: _int(K.today.raw),
     perfect: _int(K.today.perfect),
     // Mean quality multiplier of everything handed over, on the ECON.Q_* scale.
@@ -4138,22 +4537,26 @@ export function closeShift(now, opts) {
     kept: _int(K.today.kept),
     broken: _int(K.today.broken),
     modCinder: _int(K.today.modCinder),
-    /* 🔴 AND THE SENTENCE, PRE-BUILT, BECAUSE THE HALF OF THIS THAT LIVES IN
-       kitchen.render.js IS SOMEBODY ELSE'S LINE TO WRITE. Handing the screen a
-       dict means the screen decides the wording, the order, the units and the
-       icons — four chances to disagree with the Supplies sheet, which already
-       has a house style for this. `resLine` is empty when nothing moved, so the
-       row can be `${rep.resLine ? …row… : ''}` exactly like the waste line
-       above it. It is a DISPLAY string and it is deliberately the only one this
-       file produces beyond the `{why}` sentences the actions already return. */
-    resLine: resLineFor(dayLedger()),
+    /* 🔴 `resLine` AND `lifetime` WERE HERE AND ARE GONE, WHICH IS THE FIX AND
+       NOT A DELETION OF WORK. `resLineFor()` built a complete formatted
+       sentence — "🥫 452 Food · 💧 118 Water · 🧬 34 DNA — out of your stash",
+       with a `bridge().meta(id)` lookup per resource — on EVERY day close, and
+       `grep -rn "resLine" public/src/kitchen/*.js` returned the producer and its
+       own comment and nothing else. Two rounds. The receipt already draws that
+       exact row from `resSpent` through render's `ledgerRowHtml`, so this was a
+       SECOND producer of one sentence: the shape that lets the Supplies sheet
+       and the receipt come to disagree about what a day cost. `lifetime` was
+       the same shape one field along — the day sheet reads `k.totals` directly.
+       ⚠ IF A RENDERER WANTS EITHER BACK, IT DRAWS THEM FROM `resSpent` /
+         `k.totals`, which are already on the object. Do not re-add a formatter
+         here; that is how this started. */
     /* Net Cinder, because "earned 4,120" beside "spent 3,980" is the sentence,
-       and a player should not have to do that subtraction on a phone. */
+       and a player should not have to do that subtraction on a phone.
+       🔴 STILL UNDRAWN, AND STILL KEPT, WHICH IS A DIFFERENT CALL FROM THE TWO
+       ABOVE: it is a NUMBER a renderer can place anywhere, not a sentence that
+       competes with an existing row, and once the convoy freight books through
+       bookEvent() it is the only figure on the receipt that nets the day. */
     net: _int(K.today.earned) + _int(K.today.tips) - _int(dayLedger().cinderSpent),
-    lifetime: {
-      served: _int(K.totals.served), days: _int(K.totals.days),
-      earned: _int(K.totals.earned), foodSpent: _int(K.totals.foodSpent),
-    },
   };
 
   K.shift.running = false;
@@ -4304,7 +4707,22 @@ function gradeParts(today) {
   const served = _int(today.served);
   const dishes = _int(today.qunits);
   const burnt = _int(today.burnt);
-  const total = served + _int(today.lost);
+  /* 🔴 A WAVED CAR IS REACHABLE DEMAND AND IT WAS LEAVING THE DENOMINATOR.
+     SERVICE is explicitly "the share of the custom you could physically have
+     served that you did serve", and `waveCar()` books neither `served` nor
+     `lost` — deliberately, because a wave-off is a decision and not a failure.
+     With no third tally the waved customer vanished from the fraction entirely,
+     so REFUSING PEOPLE RAISED THE MARK. Measured, L12+heatlamp, six seeds, full
+     days (r9/wave.mjs): wave everything not already plated → SVC 93.8, the
+     BEST of three lines, on 58 served; the designed late wave-off → 87.5 on
+     115; never wave → 84.3 on 114.5. The report card read best for the run that
+     turned away half its customers and worst for honest play.
+     `turned` is deliberately NOT added: turnAway() already increments `lost`,
+     so counting it again would charge a full board twice.
+     The POPULARITY price stays where drivethru.js sets it (POP_WAVE, not
+     POP_LOST) — "how much custom did you turn down" and "how angry is the town"
+     are different questions and only the first one belongs in this fraction. */
+  const total = served + _int(today.lost) + _int(today.waved);
 
   /* ── SERVICE ────────────────────────────────────────────────────────────
      Everything here is in DISHES, not tickets, because the capacity model is
@@ -4345,8 +4763,42 @@ function gradeParts(today) {
   /* ── KITCHEN ──────────────────────────────────────────────────────────── */
   const rawQ = EC('Q_RAW', 0.5);
   const span = EC('Q_PERFECT', 1.25) - rawQ;
-  const cooked = dishes + burnt;
-  const meanQ = cooked > 0 ? (_num(today.qsum, 0) / cooked) : EC('Q_GOOD', 1);
+  /* 🔴 A BINNED PLATE USED TO LEAVE THE NUMERATOR AND THE DENOMINATOR, WHICH
+     MADE THE AXIS TRIVIALLY MAXABLE. `binned` was excluded on the argument
+     above — binning is a DECISION and mandatory play cannot be booked as
+     incompetence — and that argument is right about PUNISHING it and wrong
+     about letting it VANISH. Measured, L12+heatlamp, six seeds (c7sim/degen):
+     a "purist" bot that drops every hand not pulled in the perfect window and
+     bins any plate going stale scored **CRAFT 100.0 — a flawless kitchen** —
+     while binning 96.8 plates and burning through 551 units of live food a day
+     against honest play's 2.8 binned, 472 food and CRAFT 87.7. The report card
+     handed a perfect cooking mark to the most wasteful player on the board and
+     could not tell the two apart on that axis.
+
+     🔴 SO IT CHARGES `wasted`, NOT `binned`, AND THE DIFFERENCE IS THE WHOLE
+        FIX. A unit here counts at Q_RAW — it WAS cooked, it WAS worth
+     something, it reached nobody — which is exactly zero on the normalised
+     scale: it neither rewards nor doubly punishes, it simply stops being free.
+     But charging EVERY bin re-opens the argument this function already settled:
+     breaking a jammed pass is mandatory play, and binPass() only books `wasted`
+     when the pass had ROOM at the moment of the bin (see binPass), so an unjam
+     is still free and a thrown-away plate is not.
+
+     ⚠ THE FIRST DRAFT CHARGED ALL OF `binned` AND THE LADDER PAID FOR IT.
+       Measured both ways: charging every bin took r8/grade.mjs from 1/60
+       non-monotone to 3/60 and r8/gradeAny.mjs at L20 all-owned from 0/60 to
+       4/60, because the triage bots bin 0.6–2.4 plates a day PURELY to unjam a
+       full pass and GOOD/EXPERT/GOD sit within 0.01 of each other on this axis —
+       so a term that varies with unjam frequency reorders three tiers that are
+       statistically tied. Charging only the voluntary half leaves every one of
+       those bins uncounted and the ladder where it was.
+     `burnt` stays at zero, where neglect belongs, and `binned` keeps its whole
+     cost line on the report where a cost belongs. The LETTER still does not
+     punish binning — that is the clean-sheet rider's business and it reads
+     `burnt`. */
+  const wasted = _int(today.wasted);
+  const cooked = dishes + burnt + wasted;
+  const meanQ = cooked > 0 ? ((_num(today.qsum, 0) + wasted * rawQ) / cooked) : EC('Q_GOOD', 1);
   const kitchen = span > 0 ? _clamp((meanQ - rawQ) / span, 0, 1) : 0;
 
   return { service, kitchen, score: (service + kitchen) / 2 };
@@ -4384,21 +4836,49 @@ function gradeFor(today) {
   let grade = 0;
   /* 🔴 THE CUTS ARE SWEPT, NOT TYPED. Round 4's were round numbers
      (0.98/0.90/0.75/0.55) fitted to nothing, and the top three of them sat
-     above the entire human range. These four came off the measured score
+     above the entire human range. These four come off the measured score
      distribution of six skill tiers × 12 seeds AT THE GAME'S OWN OUTPUT — not a
-     model of it — plus a maxed kitchen and a day-one kitchen for the ends:
-         0.58  DISTRACT tops out at 0.555, SLOPPY bottoms at 0.615
-         0.70  SLOPPY tops out at 0.690, AVERAGE straddles it
-         0.79  AVERAGE tops out at 0.785, GOD bottoms at 0.795
-         0.92  a level-20 all-owned clean sheet scores 0.94..0.99
-     Re-sweep them (scratch r7/realcuts.mjs) after ANY move to ECON.PERFECT_MS,
-     the Q_* scale, GRADE_CAP_DUTY or capacityModel — all four shift the
-     distribution these sit in, and a cut that has stopped matching its
-     distribution is exactly the bug this function had. */
+     model of it — plus a maxed kitchen for the top end.
+
+     🔴 AND THE JUSTIFICATION UNDER THEM WAS A ROUND OUT OF DATE, WHICH IS THE
+        EXACT BUG THIS BLOCK ALREADY HAD ONCE. It carried three sentences of
+        the form "cut X: tier P tops out at p, tier Q bottoms at q" quoting the
+        round-4 ladder's endpoints — measured claims about a distribution that
+        had moved twice since — over `EC()` fallbacks still defaulting to that
+        same pre-sweep ladder, so a half-written data file restored the old
+        grade in silence. A cut whose
+        stated evidence no longer measures is worse than an undocumented cut,
+        because the next reader trusts it. Re-measured, r8/grade.mjs, level 12 +
+        heatlamp, 12 seeds, re-run in round 8 against the moved CRAFT
+        denominator (see gradeParts) — tier mean [min..max] of
+        gradeParts().score:
+         DISTRACT 0.506 [0.440..0.575]      SLOPPY  0.652 [0.610..0.680]
+         AVERAGE  0.753 [0.720..0.800]      GOOD    0.842 [0.775..0.905]
+         EXPERT   0.857 [0.800..0.895]      GOD     0.876 [0.775..0.925]
+        and the cuts kitchen.data.js currently holds sit against it like this:
+         0.61  clear of DISTRACT's ceiling (0.575) and on SLOPPY's floor (0.610)
+         0.75  clear of SLOPPY's ceiling (0.680) and INSIDE the AVERAGE band
+               (0.720..0.800) on purpose, which is what puts AVERAGE on a C or
+               worse for 6 seeds of 12 instead of never
+         0.85  inside the top three's band, because that is the only place an
+               A/B line can be: GOOD 0.842, EXPERT 0.857 and GOD 0.876 cook
+               within 0.02 of one another and no cut separates tiers that
+               overlap (kitchen.data.js's POP_* block records that overlap as
+               its own open item, and it is why the ladder reads 3 of 60
+               non-monotone at these cuts on this bot)
+         0.92  GOD's best seed is 0.925 and a level-20 all-owned clean sheet
+               scores 0.94..0.99, so S stays rare and reachable
+     ⚠ THE FALLBACKS BELOW ARE A COPY AND COPIES ROT. They were read out of
+       ECON at the moment this was written; ECON WINS at runtime, so a drift
+       here is invisible until kitchen.data.js is half-written. Re-read them
+       whenever you touch this function.
+     Re-sweep the cuts themselves (scratch r8/grade.mjs) after ANY move to
+     ECON.PERFECT_MS, the Q_* scale, GRADE_CAP_DUTY, capacityModel OR the CRAFT
+     denominator, and move the fallbacks below in the same edit. */
   if (score >= EC('GRADE_MIN_S', 0.92)) grade = 4;
-  else if (score >= EC('GRADE_MIN_A', 0.79)) grade = 3;
-  else if (score >= EC('GRADE_MIN_B', 0.70)) grade = 2;
-  else if (score >= EC('GRADE_MIN_C', 0.58)) grade = 1;
+  else if (score >= EC('GRADE_MIN_A', 0.85)) grade = 3;
+  else if (score >= EC('GRADE_MIN_B', 0.75)) grade = 2;
+  else if (score >= EC('GRADE_MIN_C', 0.61)) grade = 1;
   /* 🔴 THE CLEAN-SHEET RIDER CHARGES FOR NEGLECT, NOT FOR STRUCTURE — AND IT
      USED TO CHARGE FOR BOTH, WHICH PUT THE TOP LETTER OUT OF REACH FOR THE
      FIRST 27 LEVELS NO MATTER HOW WELL THE PLAYER COOKED.

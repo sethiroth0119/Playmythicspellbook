@@ -277,6 +277,19 @@ export function close() {
   _reg = emptyReg();
   _laneW = 0;
   _laneAt = 0;
+  /* ⚠ THE PITCH LATCHES GO TOO, AND ONE OF THEM WAS ALREADY WRONG. `_wellW` is
+     "the rail width the pitch was last computed for" and `_pitchPub` is the
+     value published for it; both are compared against on every frame and both
+     are keyed to a `_root` that close() has just destroyed. Left standing, a
+     player who shuts the kitchen and reopens it at the SAME width got an early
+     return and a brand-new overlay that never had `--mk-well` written on it at
+     all — the shelf falling back to `--mk-well-min` and drawing a sliced well on
+     the kerb, which is the exact defect the pitch measurement exists to remove.
+     Every other cross-session fingerprint in this function is cleared for the
+     same reason; these two were missed. */
+  _wellW = 0;
+  _wellAt = 0;
+  _pitchPub = '';
   _passSeen = -1;
   _stallKey = '';
   _railMoreAt = 0;
@@ -1173,11 +1186,15 @@ function lineHtml(k) {
    the rail's first pixel is, and structurally incapable of overlapping anything,
    because the head row is not the rail.
 
-   ⚠ THE HEAD ONLY GROWS TO A THUMB WHEN THE PILL IS ACTUALLY THERE. A 46px head
+   ⚠ THE HEAD ONLY GROWS TO A THUMB WHEN THERE IS SOMETHING TO REACH. A 46px head
      on every section at every moment would cost the cooking ~54 rendered px on a
      360×640 phone that is already short (the play area is the other open finding
-     in this slice). kitchen.css floors the head on `.mk-sec[data-nav="1"]` only,
-     so a rail with nothing hidden costs exactly what it cost before.
+     in this slice). kitchen.css floors the head on `.mk-sec[data-more="1"]` —
+     "a real card is cut off" — so a rail with nothing hidden costs exactly what
+     it cost before. It is deliberately NOT `data-nav`, which additionally asks
+     whether the pill is reachable and is therefore computed from a hit test
+     inside this head row: sizing the row off it made the measurement move the
+     thing it was measuring. See the note beside that rule in kitchen.css.
    ⚠ `tabindex="-1"` because the rail behind it is already keyboard-scrollable;
      this is a thumb control, and putting it in the tab order would make Tab walk
      through a scroll button before every station.
@@ -1323,8 +1340,25 @@ function passHtml(k) {
      is a flex child of this head row rather than a thing floating over the
      crockery — a control drawn on top of a plate is a control that bins the
      wrong dish. `data-nav`/`data-more` are stamped by updateRailMore(). */
+  /* 🔴 `data-plated` — HOW MUCH FOOD IS ON THE SHELF, FOR THE STYLESHEET.
+     `data-more`/`data-nav` answer "is anything CUT OFF", which is 0 both for an
+     empty shelf and for a shelf holding three plates that all fit, so neither
+     can tell the stylesheet the one thing it needs to know: whether this object
+     currently contains any food at all. Round 7 measured what that costs. On a
+     phone the shelf is PINNED to the bottom of the play area (kitchen.css's
+     ≤819px block), and at 360×640 an EMPTY one took 90px of a 305px scrollport
+     and covered five of the six pans the head above it was telling the player to
+     tap — the doors had just opened, there was nothing plated, and the largest
+     lit object on the screen was a counter with nothing on it. At 1440×900 the
+     same empty shelf measured 271,628px² = 21% of the viewport: sixteen empty
+     rings under a fascia reading "0 on the pass · room for 16", the biggest and
+     coldest thing in a picture whose whole claim is a warm kitchen interior.
+     So the count is stamped and kitchen.css shrinks an empty shelf back to a lit
+     strip, giving the room to the pans — which is where the food is at that
+     moment. It is the COUNT and not a boolean because a future rule may well
+     want to know "one plate" from "twelve". */
   return `
-  <section class="mk-sec mk-sec-pass" data-more="0" data-nav="0">
+  <section class="mk-sec mk-sec-pass" data-more="0" data-nav="0" data-plated="${n}">
     <div class="mk-pass">
       <div class="mk-sec-head flush"><b>The Pass</b><span class="mk-spacer"></span>
         ${n ? '' : '<span class="mk-hint">Pull a pan → then Plate</span>'}
@@ -2377,9 +2411,66 @@ function railMoreOne(sec, rail, noun, key) {
        control to get back — but at the far end the plates behind them ARE
        hidden, so `hidden > 0` still holds and the arrow now points back at
        them, which is where they wanted to go anyway. */
-  setData(sec, 'nav', h.hidden > 0 ? '1' : '0');
-  setData(sec, 'moredir', h.hidden > 0 ? (h.dirX ? 'x' : 'y') : '');
   const pill = sec.querySelector('.mk-rail-more');
+  /* 🔴 AND A PILL NOBODY CAN PRESS IS NOT DRAWN, WHICH IS THE OTHER HALF OF
+     ROUND 7'S SECOND BLOCKER. On a phone the pass is PINNED to the bottom of
+     the play area (kitchen.css's ≤819px block, and it is the right trade — it
+     is what puts the ticket and the plate on one screen). Anything the player
+     scrolls under it is occluded, and a head row caught ON its top edge is the
+     bad case: measured at 360×640 with a full lane and twelve plates, the
+     LINE's head sat at 457–503 under a shelf starting at 411, `data-nav="1"`,
+     a 46px pill reporting "▸ 1 more pan" — of which about 4 rendered pixels
+     were showing. A real touchscreen tap at its centre fired
+     `rail-more | ◂ 6 more plates`: the PASS's pill, one layer up. So the game
+     announced a control, gave it a thumb-sized box, painted a sliver of it, and
+     answered the press by scrolling a different rail.
+     A sliver of a control is worse than no control. If the head row is not
+     reachable the pill does not light — and the moment the player scrolls the
+     line into view it lights, whole, at its full 46px, because `data-nav` is
+     re-derived on the same 320ms clock the count is.
+     ⚠ IT ASKS THE PAGE, IT DOES NOT MODEL THE PAGE. "Is the pass pinned over
+       this head" would be a second copy of a layout decision that lives in
+       kitchen.css and changes at two breakpoints; one `elementFromPoint` asks
+       the compositor what is actually on top and is right at every width, in
+       landscape (where the shelf is NOT pinned) and for whatever gets pinned
+       next.
+     ⚠ IT PROBES THE HEAD, NOT THE PILL, AND THAT IS LOAD-BEARING. A hidden pill
+       has a 0×0 rect, so a probe at the pill's own centre would answer "not
+       mine" forever and the control could never come back. The head row is
+       always laid out.
+     🔴 AND THE PROBE POINT IS A CONSTANT OFFSET FROM THE HEAD'S TOP, NOT ITS
+       CENTRE, BECAUSE THE FIRST CUT OSCILLATED AT 3Hz. `data-nav` is also what
+       floors the head at a thumb (kitchen.css), so the head is ~51 rendered px
+       tall while the pill is shown and 12 while it is not. Probing the head's
+       MIDDLE therefore moved the probe 20px every time the answer changed: with
+       the shelf pinned just under it the middle of the SHORT head cleared the
+       shelf and the middle of the TALL head did not, so the pill flipped on,
+       off, on, off on the 320ms clock — measured as two harnesses at the same
+       viewport and the same scroll disagreeing about whether the pill existed.
+       A measurement that moves what it is measuring is not a measurement. The
+       head's TOP does not move (it is the section's top, and what precedes it
+       is unchanged), so the probe hangs off that: 24 rendered px down is where
+       the pill's own centre sits when it is drawn, and it is the same point in
+       both states.
+     ⚠ 24 is HALF THE THUMB FLOOR IN RENDERED PIXELS, which is what a rect and
+       `elementFromPoint` both speak — `--mk-tap` is 46 CSS px divided by the
+       host zoom precisely so that it renders at 46, so half of it is 23–24
+       whatever `_uiAutoScale` is doing. It is not divided again here.
+     ⚠ Two rails, so this costs two hit tests per 320ms, on the clock that is
+       already flushing layout for `scrollWidth`. */
+  let reachable = true;
+  if (pill && h.hidden > 0) {
+    const hd = pill.parentNode;
+    const r = hd && hd.getBoundingClientRect ? hd.getBoundingClientRect() : null;
+    if (r && r.width > 8) {
+      const x = Math.round(r.right - Math.min(24, r.width / 2));
+      const y = Math.round(r.top + 24);
+      const top = safe(() => document.elementFromPoint(x, y), null);
+      reachable = !!(top && (top === hd || hd.contains(top) || sec.contains(top)));
+    }
+  }
+  setData(sec, 'nav', (h.hidden > 0 && reachable) ? '1' : '0');
+  setData(sec, 'moredir', h.hidden > 0 ? (h.dirX ? 'x' : 'y') : '');
   if (!pill) return;
   if (!h.hidden) { setText(pill, ''); return; }
   /* NAME THE NUMBER. "more plates" is a hint; "◂ 6 more plates" is a fact the
@@ -2451,10 +2542,32 @@ function scrollRailMore(which) {
  * phone `.mk-body` is one of them, and plating a burger would have yanked the
  * whole kitchen down to the pass and away from the pans.
  *
- * ⚠ ONLY WHEN THE PASS GREW. `_passSeen` is the dish count this last ran at, so
- *   a player who has deliberately scrolled back to look at an older plate is not
- *   dragged to the right again on the next repaint — which is the behaviour that
- *   makes auto-scroll hated everywhere else it appears.
+ * ⚠ ONLY WHEN THE COUNT CHANGED. `_passSeen` is the dish count this last ran at,
+ *   so a player who has deliberately scrolled back to look at an older plate is
+ *   not dragged anywhere on the next repaint — which is the behaviour that makes
+ *   auto-scroll hated everywhere else it appears. The count moving IS the
+ *   player's own action (they plated, served, binned or let one spoil), and that
+ *   is the only moment this is allowed to touch the rail.
+ *
+ * 🔴 AND IT CLAMPS IN BOTH DIRECTIONS, WHICH IS ROUND 7'S FIRST BLOCKER AND THE
+ *   THIRD TIME A FIX HAS LANDED ONE STEP FROM IT. Rounds 6 and 7 corrected the
+ *   hidden COUNT, the nav test and the arrow DIRECTION and never touched the
+ *   resting scroll POSITION, which is the same value expressed a fourth way.
+ *   `if (!grew || !n) return;` meant every plate taken OFF the pass made the
+ *   pass show LESS food: serving, binning and spoiling all shrink the rail's
+ *   CONTENT while `passHtml()` backfills an empty `.mk-well` for each one, so
+ *   `scrollWidth` does not shrink, the browser never clamps, and paint()
+ *   restores a `scrollLeft` parked past the end of the remaining food. Measured
+ *   with the real `binPass` verb from a full pass of 12 at 390×844 — 12 plates
+ *   6 visible, then 11→5, 10→4, 9→3, 8→2, 7→1, 6→0 with `scrollLeft` frozen at
+ *   423 and six empty wells filling a shelf holding six plates. Identical at
+ *   1440×900 (7→0, frozen at 624) and 360×640 (6→0, frozen at 521).
+ *   Serving is the most-pressed verb in the game and it was answered by the
+ *   counter emptying, under a fascia stating in words how many plates were on it.
+ *   So: GREW pulls the newest plate forward onto the shelf (never back, or a
+ *   player reading an old plate gets yanked); SHRANK pulls the shelf back to the
+ *   newest plate (never forward, same reason). One `want`, applied in whichever
+ *   direction the count actually moved.
  */
 let _passSeen = -1;
 function scrollPassToNewest() {
@@ -2465,10 +2578,12 @@ function scrollPassToNewest() {
   if (n === _passSeen) return;
   const grew = n > _passSeen;
   _passSeen = n;
-  if (!grew || !n) return;
   const dishes = rail.querySelectorAll('.mk-dish');
   const last = dishes[dishes.length - 1];
-  if (!last) return;
+  /* An empty pass has nothing to be scrolled to, and leaving the rail parked
+     mid-shelf would open the next shift on wells 4–9 of a shelf that starts at
+     well 1. Home it. */
+  if (!n || !last) { rail.scrollLeft = 0; return; }
   /* 🔴 `offsetLeft`, NOT A `getBoundingClientRect` DELTA, and the difference is
      measurable. A rect delta is relative to WHERE THE RAIL HAPPENS TO BE
      SCROLLED at the instant it is read, and this runs at the end of paint(),
@@ -2476,10 +2591,10 @@ function scrollPassToNewest() {
      167px when the plate was 500 away and the 13th plate ended 0% visible at
      360×640. `offsetLeft` is a layout coordinate: it does not move when the rail
      does, so the arithmetic is the same on every frame it could run on. */
-  const want = last.offsetLeft + last.offsetWidth - rail.clientWidth + 10;
-  const max = rail.scrollWidth - rail.clientWidth;
-  if (want <= rail.scrollLeft) return;               // already fully on the shelf
-  rail.scrollLeft = Math.max(0, Math.min(max, want));
+  const max = Math.max(0, rail.scrollWidth - rail.clientWidth);
+  const want = Math.max(0, Math.min(max, last.offsetLeft + last.offsetWidth - rail.clientWidth + 10));
+  if (grew) { if (want > rail.scrollLeft) rail.scrollLeft = want; }
+  else if (want < rail.scrollLeft) rail.scrollLeft = want;
 }
 
 /** The same courtesy for the plate the player just picked: opening the picker on
@@ -2788,7 +2903,7 @@ function patiencePct(k, c, t) {
    ⚠ ON THE SAME SLOW CLOCK AS THE ROAD, and for the same reason: `clientWidth`
      forces a layout flush, and doing that once a frame right after this pass has
      written forty styles is how the first draft of this file lost 30fps. */
-let _wellW = 0, _wellAt = 0;
+let _wellW = 0, _wellAt = 0, _pitchPub = '';
 function updatePassWells(t) {
   const rail = _reg.passRail;
   if (!rail) return;
@@ -2826,7 +2941,28 @@ function updatePassWells(t) {
      once on `#mythic-kitchen-ov`, which is created in open() and never rebuilt,
      it inherits down to a rail that has just been created. Measured, not
      reasoned about: the first version read `--mk-well: ""` on every probe. */
-  setVar(_root, '--mk-well', (w / n).toFixed(2) + 'px');
+  const pitch = (w / n).toFixed(2) + 'px';
+  if (pitch === _pitchPub) return;
+  _pitchPub = pitch;
+  setVar(_root, '--mk-well', pitch);
+  /* 🔴 AND THE SHELF IS RE-HOMED, BECAUSE CHANGING THE PITCH MOVES EVERY PLATE.
+     `.mk-dish` is `width: calc(var(--mk-well) - gap)`, so the line above relays
+     out the whole rail under a `scrollLeft` that was computed against the OLD
+     plate width — and `scrollPassToNewest()` will not fix it on the next frame,
+     because the dish COUNT has not changed and that is its whole guard.
+     It bites on the first paint of a shift, which is the worst possible moment:
+     the fallback pitch is `--mk-well-min` (62px), the measured one at 390×844 is
+     70.5, and twelve plates therefore slide 174 layout px to the right the
+     instant the real number lands. Measured on a live shift with a full lane —
+     the newest plate, the one the player just made, sat at x 393 in a 390px
+     viewport with `scrollLeft` frozen at the value that had been right for the
+     narrower plate. Resetting `_passSeen` is what lets the clamp run at all;
+     without it this call is swallowed by the same guard, which is the exact
+     shape of the bug this round exists to stop shipping (see the note on
+     `_railMoreAt` in paint()). */
+  _passSeen = -1;
+  scrollPassToNewest();
+  scrollPassToPick();
 }
 
 function updatePass(t) {
@@ -3695,6 +3831,15 @@ function reliefCardHtml(k) {
   if (!rows.length) return '';
   const stalled = !!(offer && offer.stalled);
 
+  /* 🔴 A DISABLED CONTROL SAYS A WORD, AND IT USED TO SAY AN EM DASH. The dead
+     state's entire label was "—", and round 6's thumb floor then made that a
+     46×46 button containing one 9px glyph, sitting beside "Needs ◈300; you have
+     ◈0." — a target the player has to reason about in order to discover it is
+     not a target. "Locked" is the word the recipe cards already use for the same
+     condition. The REASON is untouched and still arrives from exactly one place:
+     reliefOffer()'s own "why", carried on the title attribute and drawn in the
+     .mk-twin line above the button. See this function's header for why this file
+     must never re-derive that sentence. */
   const list = rows.map((r) => {
     const out = Object.keys(r.out || {})
       .map((id) => {
@@ -3717,7 +3862,7 @@ function reliefCardHtml(k) {
         <div class="mk-buys">
           <button class="mk-btn ${r.free ? 'go' : ''}" data-act="relief" data-relief="${esc(r.id)}"
             ${r.available ? '' : 'disabled'} title="${esc(r.available ? 'Call it in' : (r.why || ''))}"
-            >${r.available ? 'Call it in' : '—'}</button>
+            >${r.available ? 'Call it in' : 'Locked'}</button>
         </div>
       </div>`;
   }).join('');
@@ -3973,9 +4118,41 @@ function convoySheet(k) {
             : esc(safe(() => Convoy.route(h, k.now).button.label, 'Unload'))}</button>
       </div>`).join('')}` : '';
 
-  return banner + to + trucks + manifest
-    + `<div class="mk-sec-head flush"><b>On the road</b></div>`
-    + active + depot;
+  /* 🔴 THE TAB OPENS ON THE TRUCK THE PLAYER CAN UNLOAD, NOT ON A FORM.
+     The order used to be unconditional — banner, then the three-step send form,
+     then the road — and the send form is 660px tall. Measured at 390×844 with a
+     landed truck carrying a live CLAIM button: `{"rowTop":867,"rowVisible":
+     false}`, i.e. the one control that finishes the round trip the player asked
+     for by name sat 23px BELOW an 844px screen, under a form for a shipment
+     they have not decided to make. "A convoy that will send the player food" is
+     half the feature and its payoff was one scroll further down than the
+     feature's own paperwork.
+     So when a truck is AT THE DOCK the road goes first and the form follows.
+     ⚠ THE ORDER IS DECIDED BY THE ROUTE, NOT BY "IS THERE A TRUCK". `route()`
+       raises `button.show` for exactly three states — Docking, Claim and
+       Unload (convoy.js:2104/2107/2138) — and leaves it false for the whole
+       drive. A truck two hours out is not something to act on, and hoisting the
+       road for it would push the send form down for the entire two hours it is
+       driving, which is the state the player is in almost all of the time.
+     ⚠ `show`, NOT `show && !disabled`, AND THE FIVE SECONDS ARE THE REASON. The
+       dock beat is `{show:true, label:'Docking', disabled:true}` — a truck that
+       has LANDED and is being unloaded, with a bar filling inside its own
+       button. That is the most watchable moment the feature has and it is the
+       one a stricter test scrolls off the bottom of the phone: measured at
+       390×844 mid-beat, hoisting only on `!disabled` left the row at
+       `rowTop 891` of an 844px screen, five seconds of the payoff spent looking
+       at a form.
+     ⚠ `depot` RIDES WITH THE ROAD in the hoisted case, because held food is the
+       same verb (an Unload button) on the same object; splitting them would put
+       one claim above the form and one below it. */
+  const roadHead = `<div class="mk-sec-head flush"><b>On the road</b></div>`;
+  const road = roadHead + active + depot;
+  const form = to + trucks + manifest;
+  const atTheDock = heldRows.length > 0 || rolling.some((c) => safe(() => {
+    const bt = Convoy.route(c, k.now).button;
+    return !!(bt && bt.show);
+  }, false));
+  return banner + (atTheDock ? road + form : form + road);
 }
 
 /** The LOAD button's disabled label.

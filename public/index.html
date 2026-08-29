@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120w7';
+  window.BUILD_VERSION = 'v120w8';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -46656,6 +46656,36 @@ async function cloudSyncProfile() {
       __campNodeHire__:      (Profile.campNodeHire && typeof Profile.campNodeHire === 'object') ? Profile.campNodeHire : {},
       __campRoute__:         (Profile.campRoute && typeof Profile.campRoute === 'object') ? Profile.campRoute : null,
       __recon__:             (Profile.recon && typeof Profile.recon === 'object') ? Profile.recon : null,
+      /* 🏕 CAMP LIVE STATE — the camp's IDENTITY already travelled (name,
+         node, prestige, workforce, survivor, traits, route, contrib); what was
+         HAPPENING inside it did not. Every field below was localStorage-ONLY:
+         written by loadProfile out of hg_profile and never uploaded, so it
+         existed on exactly one device. Sign in anywhere else and the camp came
+         back with its fortify level, MIA roster, memorial, upkeep clock and
+         PAID overclock/repair windows all reset to zero — the account was
+         there, the camp was there, and everything happening in it was gone.
+         ⚠ Both halves or nothing. A key that is uploaded but not read back in
+           cloudFetchProfile is not a save, it is dead weight in the row —
+           `node _syncaudit.mjs` fails the build on either half going missing.
+         ⚠ The clocks are merged with MAX on the way back in, NEVER adopted
+           blindly. See the hydration block for why an earlier tick is not a
+           harmless stale value but a double charge. */
+      __campDefense__:       (Profile.campDefense | 0) || 0,
+      __campLastTick__:      (typeof Profile.campLastTick     === 'number') ? Profile.campLastTick     : 0,
+      __campRaidLastTick__:  (typeof Profile.campRaidLastTick === 'number') ? Profile.campRaidLastTick : 0,
+      __campPoweredUntil__:  (typeof Profile.campPoweredUntil === 'number') ? Profile.campPoweredUntil : 0,
+      __campRepairUntil__:   (typeof Profile.campRepairUntil  === 'number') ? Profile.campRepairUntil  : 0,
+      __campMissing__:       Array.isArray(Profile.campMissing) ? Profile.campMissing : [],
+      __memorial__:          Array.isArray(Profile.memorial)    ? Profile.memorial    : [],
+      __campRival__:         (Profile.campRival       && typeof Profile.campRival       === 'object') ? Profile.campRival       : null,
+      __campConsumeFrac__:   (Profile.campConsumeFrac && typeof Profile.campConsumeFrac === 'object') ? Profile.campConsumeFrac : {},
+      __campTrickleFrac__:   (Profile.campTrickleFrac && typeof Profile.campTrickleFrac === 'object') ? Profile.campTrickleFrac : {},
+      /* 🔬 Research projects and ⛺ the Bunkhouse — both paid progression that
+         never travelled. Research levels cost resources and real time; the
+         Bunkhouse is a BUILT structure. Losing either on a device change is
+         the same class of bug as the furniture and rigs fixed above. */
+      __research__:          (Profile.research  && typeof Profile.research  === 'object') ? Profile.research  : null,
+      __bunkhouse__:         (Profile.bunkhouse && typeof Profile.bunkhouse === 'object') ? Profile.bunkhouse : null,
       // 🧬 Camp traits copied off the chosen survivor at pick time. Travels
       // with the account so admin-side trait edits don't retroactively change
       // an existing player's character creation.
@@ -47975,6 +48005,102 @@ async function cloudFetchProfile() {
       if (f.__campRoute__ && typeof f.__campRoute__ === 'object') Profile.campRoute = f.__campRoute__;
       if (f.__recon__ && typeof f.__recon__ === 'object') Profile.recon = f.__recon__;
       if (Array.isArray(f.__campTraits__))         Profile.campTraits     = f.__campTraits__.slice();
+      /* 🏕 CAMP LIVE STATE — the other half of the __camp*__ keys in
+         cloudSyncProfile. The merge rules are deliberately NOT uniform, because
+         these fields fail in different directions:
+
+         • CLOCKS AND WINDOWS take MAX (the same rule __containerCooldowns__
+           uses below). An earlier value is not a harmless stale read: winding
+           campLastTick backwards re-charges upkeep for a window the player has
+           already paid, and campRaidLastTick backwards re-fires a raid that
+           already happened. MAX also keeps the longer of two paid
+           overclock/repair windows instead of the unluckier one.
+         • campDefense takes MAX — a fortify level is bought, so a stale cloud
+           copy must never lower it.
+         • memorial UNIONS by (ts|name). It is append-only, so a survivor who
+           died on either device stays dead and merging can only ever add.
+         • campMissing does NOT union, and that asymmetry is the point: MIA
+           entries are REMOVED when a survivor is rescued, so a union would
+           resurrect people who already came home. The cloud copy fills it only
+           on a device with no roster of its own — the fresh-install case this
+           whole block exists for.
+         • campRival and the two carry fractions follow the same
+           local-wins-if-present rule. Sub-unit rounding and live rival state
+           belong to the device actually playing the camp; the cloud copy is
+           there to seed a new one, not to fight an active one. */
+      const _maxNum = (cloud, local) => {
+        const c = (typeof cloud === 'number' && isFinite(cloud)) ? cloud : 0;
+        const l = (typeof local === 'number' && isFinite(local)) ? local : 0;
+        return c > l ? c : l;
+      };
+      if (typeof f.__campDefense__      === 'number') Profile.campDefense      = Math.max(0, _maxNum(f.__campDefense__, Profile.campDefense) | 0);
+      if (typeof f.__campLastTick__     === 'number') Profile.campLastTick     = _maxNum(f.__campLastTick__,     Profile.campLastTick);
+      if (typeof f.__campRaidLastTick__ === 'number') Profile.campRaidLastTick = _maxNum(f.__campRaidLastTick__, Profile.campRaidLastTick);
+      if (typeof f.__campPoweredUntil__ === 'number') Profile.campPoweredUntil = _maxNum(f.__campPoweredUntil__, Profile.campPoweredUntil);
+      if (typeof f.__campRepairUntil__  === 'number') Profile.campRepairUntil  = _maxNum(f.__campRepairUntil__,  Profile.campRepairUntil);
+      // 🕯 KIA memorial — union by (ts|name), oldest first. Never drops a local
+      // entry, so a death recorded on this device survives the merge too.
+      if (Array.isArray(f.__memorial__) && f.__memorial__.length) {
+        const _mem  = Array.isArray(Profile.memorial) ? Profile.memorial.slice() : [];
+        const _seen = new Set(_mem.map(e => (e && e.ts) + '|' + (e && e.name)));
+        f.__memorial__.forEach(e => {
+          if (!e || typeof e !== 'object') return;
+          const k = e.ts + '|' + e.name;
+          if (!_seen.has(k)) { _seen.add(k); _mem.push(e); }
+        });
+        _mem.sort((a, b) => ((a && a.ts) || 0) - ((b && b.ts) || 0));
+        Profile.memorial = _mem;
+      }
+      // 🌫 MIA roster — seed a device that has none; never merge (see above).
+      if (Array.isArray(f.__campMissing__) && f.__campMissing__.length
+          && !(Array.isArray(Profile.campMissing) && Profile.campMissing.length)) {
+        Profile.campMissing = f.__campMissing__.slice();
+      }
+      if (f.__campRival__ && typeof f.__campRival__ === 'object'
+          && !(Profile.campRival && typeof Profile.campRival === 'object')) {
+        Profile.campRival = f.__campRival__;
+      }
+      if (f.__campConsumeFrac__ && typeof f.__campConsumeFrac__ === 'object'
+          && !(Profile.campConsumeFrac && typeof Profile.campConsumeFrac === 'object')) {
+        Profile.campConsumeFrac = f.__campConsumeFrac__;
+      }
+      if (f.__campTrickleFrac__ && typeof f.__campTrickleFrac__ === 'object'
+          && !(Profile.campTrickleFrac && typeof Profile.campTrickleFrac === 'object')) {
+        Profile.campTrickleFrac = f.__campTrickleFrac__;
+      }
+      /* 🔬 RESEARCH — completed levels merge with MAX per project id, so a
+         stale cloud row can never un-complete research the player paid for.
+         The in-flight project is adopted only when this device has none: a
+         second device must not cancel or restart a run already going. */
+      if (f.__research__ && typeof f.__research__ === 'object') {
+        if (!Profile.research || typeof Profile.research !== 'object') Profile.research = { completed: {}, active: null };
+        if (!Profile.research.completed || typeof Profile.research.completed !== 'object') Profile.research.completed = {};
+        const _rc = f.__research__.completed;
+        if (_rc && typeof _rc === 'object') {
+          for (const id in _rc) {
+            const cv = _rc[id] | 0, lv = Profile.research.completed[id] | 0;
+            if (cv > lv) Profile.research.completed[id] = cv;
+          }
+        }
+        if (!Profile.research.active && f.__research__.active) Profile.research.active = f.__research__.active;
+      }
+      /* ⛺ BUNKHOUSE — `built` only ever goes up; it is a paid structure and no
+         cloud copy may un-build it. The house sub-object keeps the LOCAL copy
+         when there is one, but its clocks take MAX either way: an earlier
+         lastCollect would let the same billet payout be claimed twice by
+         hopping devices. */
+      if (f.__bunkhouse__ && typeof f.__bunkhouse__ === 'object') {
+        const _cb = f.__bunkhouse__;
+        const _lb = (Profile.bunkhouse && typeof Profile.bunkhouse === 'object') ? Profile.bunkhouse : null;
+        const _house = (_lb && _lb.house && typeof _lb.house === 'object')
+          ? _lb.house
+          : ((_cb.house && typeof _cb.house === 'object') ? _cb.house : null);
+        if (_house && _cb.house && typeof _cb.house === 'object') {
+          _house.lastAt      = _maxNum(_cb.house.lastAt,      _house.lastAt);
+          _house.lastCollect = _maxNum(_cb.house.lastCollect, _house.lastCollect);
+        }
+        Profile.bunkhouse = { built: ((_lb && _lb.built) || _cb.built) ? 1 : 0, house: _house };
+      }
       // 🕒 Container cooldown maps — MERGE the higher (later) expiry per id so
       // a stale cloud copy never resets a fresh local cooldown back to 0.
       if (f.__containerCooldowns__ && typeof f.__containerCooldowns__ === 'object') {

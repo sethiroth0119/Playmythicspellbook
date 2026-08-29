@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120w6';
+  window.BUILD_VERSION = 'v120w7';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -112061,12 +112061,15 @@ try {
     const fsBtn      = document.getElementById('app-tb-fs');
 
     // --- Install button visibility + click handler.
-    // 🕙 Auto-hide after 10s once shown — players complained it stayed in the
-    // way for the whole session. Hidden flag is per-session; refresh to see
-    // it again. The fade keeps it briefly visible to anyone who actually
-    // wants to install, then gets out of the way.
+    // 🕙 This used to auto-hide after 10s, because players complained it sat in
+    // the way for a whole session. That was the right call when EVERY player saw
+    // it — but /src/install/gate.js now does the actual selling, with a
+    // full-screen wall, so by the time anyone sees this chip they have either
+    // clicked "Continue in the browser instead" or they are on a browser that
+    // cannot install at all. That is a small, self-selected group, and for them
+    // the chip is the ONLY route back to installing. Hiding it after ten seconds
+    // left them no way in, so it now stays put.
     let _installAutoHidden = false;
-    let _installHideTimer = null;
     function _refreshInstallBtn() {
       if (!window.PWA) return;
       // Hide when already-installed OR no prompt available AND not iOS (iOS
@@ -112082,21 +112085,26 @@ try {
       } else {
         installBtn.querySelector('span').textContent = 'Install App';
       }
-      // Start the auto-hide countdown once we ACTUALLY made the button visible
-      // (and haven't already). Subsequent _refreshInstallBtn calls don't reset
-      // the timer — the player only gets one 10s window per page load.
-      if (show && !_installHideTimer) {
-        _installHideTimer = setTimeout(() => {
-          _installAutoHidden = true;
-          _installHideTimer = null;
-          installBtn.hidden = true;
-        }, 10000);
-      }
+      // No auto-hide timer any more — see the note above. _installAutoHidden is
+      // kept because the gate flips it (via __mg.installChipOff) when a player
+      // explicitly dismisses the chip.
     }
     if (window.PWA && typeof window.PWA.onInstallStateChange === 'function') {
       window.PWA.onInstallStateChange(_refreshInstallBtn);
     }
     _refreshInstallBtn();
+    // Support/console escape for a player who wants the chip gone for good on
+    // this device. Not a visible affordance on purpose — the chip is the only
+    // way back to installing for anyone who dismissed the gate, so it should
+    // take a deliberate act to lose it.
+    try {
+      window.__mg = window.__mg || {};
+      window.__mg.installChipOff = function () {
+        _installAutoHidden = true;
+        installBtn.hidden = true;
+        return 'install chip hidden for this session';
+      };
+    } catch (e) {}
     installBtn.onclick = async function () {
       // iOS — no prompt event, show the canonical Safari instructions.
       if (window.PWA.isIOS && window.PWA.isIOS() && !window.PWA.installEvent) {
@@ -223023,6 +223031,23 @@ render();
     if (localStorage.getItem('hg_threeSprites') === '1') _boardOn();
   } catch (e) {}
 </script>
+<!-- 📲 INSTALL GATE — the installed app is how Mythic is meant to be played.
+     In a browser this puts a full-screen "Install Mythic" wall over the game; the
+     only way past it is to install. See public/src/install/gate.js for the whole
+     rationale, but two rules matter from out here:
+       1. It walls ONLY browsers that can actually finish an install. Firefox
+          desktop, Discord/Instagram/Facebook in-app browsers, Chrome-on-iOS and
+          incognito all fall through to 'none' and play in the browser exactly as
+          they did before — walling them is a bounce, not a funnel.
+       2. It is never a trap. "Continue in the browser instead" appears the moment
+          a player declines the native dialog, and on a timer regardless.
+     Loaded FIRST of the module tags so the wall goes up ahead of the other
+     features. Reads nothing from this file except window.PWA (a real window
+     property — the globals trap in CLAUDE.md); if it 404s or throws, the game
+     plays in the browser as before.
+     ⚠ Bump ?v= on every change — the service worker caches /src/* like any
+       other static asset, and a missed bump ships invisibly. -->
+<script type="module" src="src/install/gate.js?v=v120w7gate1"></script>
 <!-- 🏛 COMMUNITY — the first feature to live OUTSIDE this file. See CLAUDE.md.
      Loaded as an ES module (deferred by definition, so it cannot delay boot)
      and registered on window.MythicCommunity. It is inert until opened, and

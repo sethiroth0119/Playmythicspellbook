@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120w6';
+  window.BUILD_VERSION = 'v120x0';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -111357,7 +111357,10 @@ function _renderImpl() {
     return renderDataPanel();
   }
   if (App.screen === 'ultimateAdmin') return renderUltimateAdmin();
-  if (App.screen === 'rlcList')    return renderRlcList();
+  if (App.screen === 'rlcList') {
+    try { if (window.MythicMissions && window.MythicMissions.render()) return; } catch (e) {}
+    return renderRlcList();
+  }
   if (App.screen === 'rlcMap')     return renderRlcMap();
   if (App.screen === 'rlcDeckPick') return renderRlcDeckPick();
   if (App.screen === 'rlcDraft')   return renderRlcDraft();
@@ -183516,7 +183519,20 @@ function getCampaignsForSurface(surface) {
     && _campaignPlacement(c) === surface
   );
 }
-function _rlcCampaign(id) { return getAllCampaigns().find(c => c && c.id === id) || null; }
+function _rlcCampaign(id) {
+  const found = getAllCampaigns().find(c => c && c.id === id);
+  if (found) return found;
+  // 🗺 Generated mission-map runs (msn_*). They are NOT in getAllCampaigns()
+  // and deliberately never will be: there is one per district per faction per
+  // grip per day, so enumerating them is meaningless. The id IS the recipe
+  // (see /src/missions/graph.js), so the module rebuilds the campaign from it
+  // on demand — which is also what lets an in-progress run survive a reload
+  // and a map tick without anything being persisted.
+  try {
+    if (window.MythicMissions && window.MythicMissions.owns(id)) return window.MythicMissions.campaign(id);
+  } catch (e) {}
+  return null;
+}
 function _rlcNode(camp, nodeId) { return camp && Array.isArray(camp.nodes) ? camp.nodes.find(n => n && n.id === nodeId) || null : null; }
 function _rlcCur(run) {
   const c = _rlcCampaign(run && run.campaignId);
@@ -207306,6 +207322,60 @@ window.cityCardConsume = function (id) {
     showToast('🏗 A card was consumed to raise the structure.', 3500);
   } catch (e) {}
 };
+/* 🗺 THE MISSION MAP BRIDGE — for /src/missions/*.js (the roguelite map).
+   🔴 THE GLOBALS TRAP, again (CLAUDE.md). `Profile`, `App`, `rlcStartRun`,
+   `_rlcCampaign`, `render`, `gcConfirm` and `getAllDeckableCards` are all
+   top-level `const` / function declarations in this file. An ES module cannot
+   see a single one of them. Everything /src/missions needs is handed over
+   HERE, explicitly, exactly as MythicBridge does for /src/community.
+
+   ⚠ THE MODULE OWNS THE MAP; THIS FILE STILL OWNS THE RUN. The map decides
+   which district is raided and hands back a campaign id — everything after
+   that (rlcStartRun → rlcEnterNode → rlcStartBattle → relics, haul, heat,
+   death stakes) is the engine below, untouched. That split is deliberate: the
+   run engine is the part of this file least safe to reach into, so the map
+   reaches into it exactly four times and never mid-run.
+
+   ⚠ Grip is never written from here. The module credits a survived raid by
+   POLLING Profile.rlcCompleted when the map next renders, so there is no new
+   call site inside the run flow that could forget to fire — and dying, which
+   never reaches rlcCompleted, can never take ground. */
+window.MythicMissionBridge = {
+  profile: () => Profile,
+  saveProfile: () => { try { saveProfile(); } catch (e) {} },
+  root: () => { try { return document.getElementById('app'); } catch (e) { return null; } },
+  toast: (m, ms) => { try { showToast(m, ms || 3600); } catch (e) {} },
+  confirm: (m) => { try { return gcConfirm(m); } catch (e) { return Promise.resolve(false); } },
+  render: () => { try { render(); } catch (e) {} },
+  goCamp: () => { try { App.screen = 'camp'; render(); } catch (e) {} },
+  isAdmin: () => { try { return !!(typeof isAdmin === 'function' && isAdmin()); } catch (e) { return false; } },
+  // ── the run engine, and only these four doors into it ──
+  startRun: (id) => {
+    try {
+      if (!_rlcCampaign(id)) return false;   // never leave the player on a dead button
+      rlcStartRun(id);
+      return true;
+    } catch (e) { try { console.warn('[missions] startRun failed', e); } catch (e2) {} return false; }
+  },
+  activeRun: () => {
+    try {
+      const r = Profile.rlcRun;
+      if (!r || r.isComplete || r.isFailed || !_rlcCampaign(r.campaignId)) return null;
+      return { campaignId: r.campaignId, heroHP: r.heroHP, maxHP: r.maxHP, cleared: (r.completed || []).length };
+    } catch (e) { return null; }
+  },
+  resumeRun: () => { try { App.screen = 'rlcMap'; render(); } catch (e) {} },
+  abandonRun: () => { try { rlcAbandonRun(); } catch (e) {} },
+  campaignName: (id) => { try { return (_rlcCampaign(id) || {}).name || 'Run'; } catch (e) { return 'Run'; } },
+  // Reward pool for generated nodes. The module has no card model and should
+  // not grow one — it samples keys and renderRlcReward does the rarity roll.
+  cardKeys: () => {
+    try {
+      return (typeof getAllDeckableCards === 'function' ? getAllDeckableCards() : [])
+        .map(p => p && p.key).filter(Boolean);
+    } catch (e) { return []; }
+  },
+};
 /* ⛺ THE HOUSE BRIDGE — for /src/resonance/house.camp.js (the Bunkhouse).
    🔴 THE GLOBALS TRAP, again (CLAUDE.md). `Profile`, `spendGems`, `saveProfile`,
    `gcConfirm`, `render` and the two idle constants are top-level `const` /
@@ -223096,6 +223166,20 @@ render();
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
 <script type="module" src="src/resources/chain.js?v=v120w6chain2"></script>
+<!-- 🗺 MISSION MAP — the roguelite campaign LIST, replaced by a map of ruined
+     New York. Registers window.MythicMissions; index.html's half of the seam is
+     window.MythicMissionBridge (next to MythicHouseBridge), one fallback inside
+     _rlcCampaign and one branch in the 'rlcList' router.
+     ⚠ IT REPLACES ONE SCREEN, NOT THE MODE. rlcMap / rlcDeckPick / rlcReward /
+       rlcMedical / rlcShop / rlcEvent / rlcResult and the whole run engine are
+       untouched — a district hands back a campaign id and rlcStartRun takes it
+       from there. Faction pressure rides entirely on the generated campaign's
+       `difficulty` string, which _rlcDiffBand and _rlcDiffBonus already read.
+     ⚠ If this 404s, render() reports false and renderRlcList() draws the old
+       campaign list. That is the intended failure mode.
+     ⚠ Bump ?v= on every change — the service worker caches /src/* like any
+       other static asset, and a missed bump ships invisibly. -->
+<script type="module" src="src/missions/index.js?v=r13msn1"></script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the

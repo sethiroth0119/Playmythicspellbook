@@ -1,0 +1,113 @@
+<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%}#app{height:100%}</style></head>
+<body><div id="app"></div>
+<!-- 🧪 MISSION MAP HARNESS — drives /src/missions with a stand-in bridge, so
+     the module can be exercised without booting the 11.6MB app.
+       python3 -m http.server 8765          (from the repo root)
+       open http://localhost:8765/_msn_harness.html
+     Green = pass. Add #map to the URL to hide the report and just look at the
+     map. Checks the 40 generated graphs for orphans, dangling edges, stray
+     start nodes and an unreachable finalBoss, plus determinism, the
+     difficulty strings index.html's own regexes match on, and the
+     raid -> grip -> faction-push loop. -->
+<script>
+// A stand-in for index.html's half of the seam, so the module can be driven
+// without booting an 11.6MB single-page app.
+window.__profile = { rlcCompleted: [], rlcRun: null };
+window.__started = [];
+window.MythicMissionBridge = {
+  profile: () => window.__profile,
+  saveProfile: () => {},
+  root: () => document.getElementById('app'),
+  toast: (m) => console.log('[toast]', m),
+  confirm: async () => true,
+  render: () => { try { window.MythicMissions.render(); } catch (e) { console.error(e); } },
+  goCamp: () => console.log('[goCamp]'),
+  isAdmin: () => false,
+  startRun: (id) => { window.__started.push(id); return true; },
+  activeRun: () => null,
+  resumeRun: () => {}, abandonRun: () => {},
+  campaignName: () => 'Run',
+  cardKeys: () => ['c_alpha','c_beta','c_gamma','c_delta','c_eps','c_zeta'],
+};
+</script>
+<script type="module">
+import api from './public/src/missions/index.js';
+const out = [];
+const ok  = (c,m) => out.push((c?'PASS  ':'FAIL  ')+m);
+
+// 1. the screen draws
+ok(api.render() === true, 'map renders');
+ok(!!document.querySelector('.msn-pin'), 'district pins mounted');
+ok(document.querySelectorAll('.msn-pin').length === api.sites.length, 'a pin per district ('+api.sites.length+')');
+
+// 2. every district generates a sound run graph, at every grip
+let bad = 0, totalNodes = 0;
+for (const site of api.sites) {
+  for (const [fac,grip] of [[null,0],['scum',30],['anomalies',60],['scp',95]]) {
+    const id = 'msn_'+site.id+'_'+(fac||'none')+'_'+grip+'_1';
+    const c = api.campaign(id);
+    if (!c) { bad++; out.push('FAIL  no campaign for '+id); continue; }
+    const ids = new Set(c.nodes.map(n=>n.id));
+    totalNodes += c.nodes.length;
+    // every connection resolves
+    for (const n of c.nodes) for (const t of n.connections) if (!ids.has(t)) { bad++; out.push('FAIL  dangling edge '+id+' '+n.id+'->'+t); }
+    // exactly one start (no incoming, non-boss) — more would let the player skip in
+    const incoming = new Set(); c.nodes.forEach(n=>n.connections.forEach(t=>incoming.add(t)));
+    const starts = c.nodes.filter(n=>!incoming.has(n.id) && n.type!=='boss' && n.type!=='finalBoss');
+    if (starts.length !== 1) { bad++; out.push('FAIL  '+id+' has '+starts.length+' start nodes'); }
+    // the finalBoss must be reachable from the start, or the run cannot end
+    const seen=new Set([starts[0] && starts[0].id]); let grew=true;
+    while(grew){ grew=false; c.nodes.forEach(n=>{ if(seen.has(n.id)) n.connections.forEach(t=>{ if(!seen.has(t)){seen.add(t);grew=true;} }); }); }
+    const boss = c.nodes.find(n=>n.type==='finalBoss');
+    if (!boss || !seen.has(boss.id)) { bad++; out.push('FAIL  '+id+' finalBoss unreachable'); }
+    if (seen.size !== c.nodes.length) { bad++; out.push('FAIL  '+id+' has '+(c.nodes.length-seen.size)+' orphan nodes'); }
+  }
+}
+ok(bad === 0, 'all 40 generated graphs sound ('+totalNodes+' nodes total)');
+
+// 3. determinism — the id is the whole recipe
+const a = JSON.stringify(api.campaign('msn_midtown_scp_88_3').nodes.map(n=>[n.id,n.type,n.connections]));
+api.campaign('msn_harlem_scum_20_9');                       // bust the memo
+const b = JSON.stringify(api.campaign('msn_midtown_scp_88_3').nodes.map(n=>[n.id,n.type,n.connections]));
+ok(a === b, 'same id regenerates the same graph');
+
+// 4. grip drives difficulty, which is what index.html reads for loot + levels
+const soft = api.campaign('msn_village_none_0_1'), hard = api.campaign('msn_village_scp_95_1');
+ok(soft.difficulty === 'Normal',    'survivor-held district reads Normal (got '+soft.difficulty+')');
+ok(hard.difficulty === 'Nightmare', 'stronghold reads Nightmare (got '+hard.difficulty+')');
+ok(hard.nodes.length > soft.nodes.length, 'a held district runs longer ('+soft.nodes.length+' -> '+hard.nodes.length+')');
+ok(/night|brutal/.test(hard.difficulty.toLowerCase()), "matches index.html's _rlcDiffBonus regex (+8 levels)");
+ok(hard.nodes.some(n=>n.scp), 'a Foundation stronghold plants the sealing node');
+
+// 5. rewards are populated, or the reward screen has nothing to offer
+const battles = hard.nodes.filter(n=>n.type==='battle'||n.type==='elite'||n.type==='finalBoss');
+ok(battles.length>0 && battles.every(n=>n.reward.cardKeys.length>0), 'every fight carries a reward pool');
+
+// 6. the loop: surviving a raid takes ground, and only surviving does
+const before = api.state.gripOf('hells');
+window.__profile.rlcCompleted.push('msn_hells_scum_71_1');
+api.state.creditRuns(window.__profile.rlcCompleted);
+const after = api.state.gripOf('hells');
+ok(after < before, 'a survived raid cuts grip ('+before+' -> '+after+')');
+api.state.creditRuns(window.__profile.rlcCompleted);
+ok(api.state.gripOf('hells') === after, 'the same run is never credited twice');
+
+// 7. the factions answer
+const g0 = api.sites.map(s=>api.state.gripOf(s.id)).reduce((a,b)=>a+b,0);
+for (let i=0;i<5;i++) api.state.tick(true);
+const g1 = api.sites.map(s=>api.state.gripOf(s.id)).reduce((a,b)=>a+b,0);
+ok(g1 > g0, 'five ticks push the factions forward ('+g0+' -> '+g1+')');
+
+// 8. deploy hands a resolvable id to the run engine
+api.render();
+document.getElementById('msn-go').click();
+await new Promise(r=>setTimeout(r,40));
+ok(window.__started.length===1, 'deploy calls startRun once');
+ok(!!api.campaign(window.__started[0]), 'the id deploy sent resolves to a campaign ('+window.__started[0]+')');
+
+document.title = out.some(l=>l.startsWith('FAIL')) ? 'HARNESS FAIL' : 'HARNESS PASS';
+const pre = document.createElement('pre');
+pre.id='res'; pre.style.cssText='position:fixed;inset:0;background:#000;color:#0f0;font:12px monospace;padding:16px;z-index:99;overflow:auto;margin:0';
+pre.textContent = out.join('\n') + '\n\n' + document.title;
+document.body.appendChild(pre);
+</script></body></html>

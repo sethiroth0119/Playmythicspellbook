@@ -1,12 +1,22 @@
 <title>Ruined Manhattan</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Barlow:wght@400;500;600;700&display=swap">
 <style>
   :root{
     --bg:#06080c; --panel:#0d121b; --rim:rgba(120,180,220,.20);
     --ink:#e8edf5; --dim:#7d8ba0; --faint:#4a5568;
     --surv:#3d8bfd; --scum:#c3d63f; --anom:#a855f7; --scp:#ff5a3c; --gold:#e0b356;
+    --ui:'Chakra Petch',ui-sans-serif,system-ui,sans-serif;
+    --tx:'Barlow',ui-sans-serif,system-ui,-apple-system,sans-serif;
   }
   *{box-sizing:border-box}
-  body{background:var(--bg);color:var(--ink);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+  body{background:var(--bg);color:var(--ink);font:400 14.5px/1.55 var(--tx)}
+  /* instrumentation type — labels, readouts, controls */
+  .hud h1,.lg,.clock,.ph .k,.ph h2,.pin .nm,.band,button,.grip .lbl,.slider .lbl,.bar .hint{
+    font-family:var(--ui)}
+  /* anywhere digits stack in a column they have to line up */
+  .lg b,.clock b,.row b,.grip .lbl,.pin .mn,.log .d{font-variant-numeric:tabular-nums}
+  :focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+  @media (prefers-reduced-motion:reduce){ *{animation:none!important;transition:none!important} }
 
   .app{display:grid;grid-template-columns:1fr 320px;grid-template-rows:auto 1fr auto;
        height:100vh;max-height:100vh}
@@ -14,7 +24,7 @@
 
   .hud{grid-column:1/-1;display:flex;align-items:center;gap:18px;flex-wrap:wrap;
        padding:10px 18px;background:linear-gradient(#0c1119,#080b11);border-bottom:1px solid var(--rim)}
-  .hud h1{margin:0;font-size:13px;letter-spacing:.22em;text-transform:uppercase;font-weight:800;color:var(--gold)}
+  .hud h1{margin:0;font-size:13px;letter-spacing:.2em;text-transform:uppercase;font-weight:700;color:var(--gold)}
   .hud .sep{flex:1}
   .legend{display:flex;gap:14px;flex-wrap:wrap}
   .lg{display:flex;align-items:center;gap:6px;font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
@@ -40,7 +50,7 @@
              transition:transform .14s ease, box-shadow .14s ease}
   .pin:hover .card{transform:translateY(-2px)}
   .pin.sel .card{box-shadow:0 0 0 1px var(--c),0 0 24px -3px var(--c)}
-  .pin .nm{font-size:11.5px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;
+  .pin .nm{font-size:11.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
            display:flex;align-items:center;gap:6px}
   .pin .mn{font-size:10.5px;color:var(--dim);letter-spacing:.04em;margin-top:1px}
   .pin .gp{margin-top:4px;height:2px;background:rgba(255,255,255,.10)}
@@ -50,7 +60,7 @@
   @media (max-width:900px){ .panel{border-left:0;border-top:1px solid var(--rim)} }
   .ph{padding:12px 16px 10px;border-bottom:1px solid rgba(255,255,255,.06)}
   .ph .k{font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--faint)}
-  .ph h2{margin:2px 0 0;font-size:19px;font-weight:800}
+  .ph h2{margin:2px 0 0;font-size:20px;font-weight:700;letter-spacing:.01em;text-wrap:balance}
   .ph .poi{margin-top:3px;font-size:12.5px;color:var(--dim)}
   .pb{padding:12px 16px;overflow-y:auto;flex:1;min-height:0}
   .row{display:flex;justify-content:space-between;align-items:baseline;
@@ -195,7 +205,7 @@ const D = [
   {id:'chelsea',name:'Chelsea',       poi:'Rail Depot',        icon:'🏭', hBase:0.66,ruin:0.24, pin:{dx:-132,dy: 30}},
   {id:'village',name:'The Village',   poi:'Corner Market',     icon:'🛒', hBase:0.46,ruin:0.22, pin:{dx:-120,dy: 46}},
   {id:'soho',   name:'SoHo',          poi:'Ironworks',         icon:'🔨', hBase:0.50,ruin:0.26, pin:{dx: 104,dy: 46}},
-  {id:'battery',name:'The Battery',   poi:'Reserve Vault',     icon:'🏦', hBase:0.92,ruin:0.34, pin:{dx:-100,dy: 40}},
+  {id:'battery',name:'The Battery',   poi:'Reserve Vault',     icon:'🏦', hBase:0.92,ruin:0.34, pin:{dx: -26,dy: 66}},
 ];
 const DBY={}; D.forEach(d=>DBY[d.id]=d);
 function districtAt(gx,gy){
@@ -557,6 +567,7 @@ document.getElementById('endDay').onclick=()=>{
 const ash=[];
 for(let i=0;i<90;i++) ash.push({x:Math.random(),y:Math.random(),
   s:0.15+Math.random()*0.5, r:0.6+Math.random()*1.3, a:0.10+Math.random()*0.28});
+const STILL = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 let t0=0;
 function tick(t){
   const dt=Math.min(50,t-t0); t0=t;
@@ -579,7 +590,7 @@ function tick(t){
     fx.globalAlpha=p.a; fx.fillRect(p.x*VIEW.w,p.y*VIEW.h,p.r,p.r);
   });
   fx.globalAlpha=1;
-  requestAnimationFrame(tick);
+  if (!STILL) requestAnimationFrame(tick);   // one static frame is enough
 }
 
 /* ═══ wiring ════════════════════════════════════════════════════════════ */

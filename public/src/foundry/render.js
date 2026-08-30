@@ -77,10 +77,10 @@ export const FOUNDRY_CSS = `
 .fdy-trim input{width:100%;margin:8px 0 4px}
 .fdy-trim .ends{display:flex;justify-content:space-between;font-size:11px;color:#8d97a8}
 .fdy-inv{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px}
-.fdy-i{background:#161a21;border:1px solid #262c36;border-radius:10px;padding:9px 11px;display:flex;align-items:center;gap:9px}
+.fdy-i{background:#161a21;border:1px solid #262c36;border-radius:10px;padding:9px 11px;display:flex;align-items:center;gap:9px;min-height:52px}
 .fdy-i .ic{font-size:19px}
 .fdy-i .nm{flex:1;min-width:0}
-.fdy-i .nm b{display:block;font-size:13px;color:#e6e9ef;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fdy-i .nm b{display:block;font-size:13px;color:#e6e9ef;line-height:1.25;overflow-wrap:anywhere}
 .fdy-i .nm span{font-size:11px;color:#8d97a8}
 .fdy-i .qt{font-size:15px;font-weight:700;color:#fff}
 .fdy-i.liab{border-color:#6b4a24;background:#1b1610}
@@ -199,7 +199,12 @@ function machineCard(st, h, def) {
 
   return `<div class="fdy-card ${cls}">
     <h4>${def.emoji} ${esc(def.name)}<span class="fdy-lv">Lv ${s.lv}/${def.maxLevel}</span></h4>
-    <div class="fdy-state ${tone}">${s.on ? esc(s.haltText) : 'Switched off'}${s.halt === HALT.OK && s.on ? ` · ×${s.speed.toFixed(2)} speed` : ''}</div>
+    <div class="fdy-state ${tone}">${s.on ? esc(s.haltText) : 'Switched off'}${
+      /* Speed is only meaningful for a machine that runs batches. The Scrap Yard
+         is storage and the Powerhouse is a grid — both were reporting things like
+         "Running · ×0.78 speed", which invites the player to wonder why their
+         warehouse is running slowly and what they should do about it. */
+      s.halt === HALT.OK && s.on && def.kind === 'converter' ? ` · ×${s.speed.toFixed(2)} speed` : ''}</div>
     <div class="fdy-bar"><i class="${condCls}" style="width:${s.cond.toFixed(0)}%"></i></div>
     <div class="fdy-cost">Condition ${s.cond.toFixed(0)}%${def.power ? ` · draws ${def.power} power` : ''}</div>
     ${recipeUi}
@@ -223,10 +228,17 @@ export function renderYard(st, h) {
   const rows = MATERIALS.map(m => ({ m, s: stockOf(st, m.id) })).filter(x => x.s.qty >= 1);
   if (!rows.length) return `${renderVitals(st, h)}<div class="fdy-empty">The yard is empty. Buy feedstock from Supply, then give your machines a recipe.</div>`;
   const group = (title, list) => list.length ? `<div class="fdy-sec">${title}</div><div class="fdy-inv">${list.map(({ m, s }) => {
-    const [lab, col] = gradeLabel(s.purity);
     const liab = DISPOSAL_IDS.indexOf(m.id) >= 0;
+    /* 🔴 NO GRADE ON A LIABILITY. gradeLabel is honest arithmetic but nonsense as
+       a label here — slag came out of a clean furnace charge, so the yard proudly
+       announced "Slag · Pristine · 96%" for a material whose entire role is to
+       cost money to remove. Grade is a claim about how good a pile is, and these
+       piles are not good at any purity. Say what the player can do instead. */
+    const sub = liab
+      ? `<span style="color:#e0a860">No buyer · haul it</span>`
+      : (([lab, col]) => `<span style="color:${col}">${esc(lab)} · ${pct(s.purity)}</span>`)(gradeLabel(s.purity));
     return `<div class="fdy-i ${liab ? 'liab' : ''}"><span class="ic">${m.icon}</span>
-      <span class="nm"><b>${esc(m.name)}</b><span style="color:${col}">${esc(lab)} · ${pct(s.purity)}</span></span>
+      <span class="nm"><b>${esc(m.name)}</b>${sub}</span>
       <span class="qt">${n(s.qty)}</span></div>`;
   }).join('')}</div>` : '';
   return renderVitals(st, h)

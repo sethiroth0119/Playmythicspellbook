@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120x0';
+  window.BUILD_VERSION = 'v120x1';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -46479,6 +46479,9 @@ async function cloudSyncProfile() {
       __princePortfolios__: (Profile.princePortfolios && typeof Profile.princePortfolios === 'object') ? Profile.princePortfolios : {},
       // ⛽ Black River Petroleum — admin photos (maps / crew / upgrades).
       blackRiver: (Forge.blackRiver && typeof Forge.blackRiver === 'object') ? Forge.blackRiver : { mapPhotos: {}, crewPhotos: {}, enabled: true },
+      // ♻️ The Foundry — ADMIN config: per-machine .glb overrides + econ tuning.
+      //    Global, unlike Profile.foundry (the player's own line).
+      foundry: (Forge.foundry && typeof Forge.foundry === 'object') ? Forge.foundry : { models: {}, econ: {} },
       // ⛽ Per-player oil-co state (truck, crew, refineries, loan, futures, log).
       __blackRiver__: (Profile.blackRiver && typeof Profile.blackRiver === 'object') ? Profile.blackRiver : {},
       // ♻️ The Foundry — per-player line state (machines, inventory, trim,
@@ -47680,6 +47683,8 @@ async function cloudFetchProfile() {
       if (f.__princePortfolios__ && typeof f.__princePortfolios__ === 'object') Profile.princePortfolios = _preferRicherObj(f.__princePortfolios__, Profile.princePortfolios);
       // ⛽ Black River Petroleum.
       if (f.blackRiver && typeof f.blackRiver === 'object') Forge.blackRiver = f.blackRiver;
+      // ♻️ The Foundry admin config (machine .glb overrides + econ tuning).
+      if (f.foundry && typeof f.foundry === 'object') Forge.foundry = f.foundry;
       // ⛽ Black River Petroleum state — richer-wins so just-hired crew, a
       // newly-leased rig, hull repairs, oil futures etc. survive a refresh.
       if (f.__blackRiver__ && typeof f.__blackRiver__ === 'object') {
@@ -207511,6 +207516,45 @@ window.MythicFoundryBridge = {
   // ── Chrome
   toast: (m, ms) => { try { showToast(m, ms || 3600); } catch (e) {} },
   confirm: (m) => { try { return gcConfirm(m); } catch (e) { return Promise.resolve(false); } },
+
+  /* ══ 3D FLOOR ═══════════════════════════════════════════════════════════
+     🔴 EVERY ONE OF THESE IS A REUSE, NOT A NEW CAPABILITY. The walkable card
+     shop already solved lazy-loading Three, decoding compressed .glb, caching
+     and cloning model templates, ticking animation mixers, and uploading to the
+     models bucket with a size-limit error a human can act on. /src/foundry gets
+     the SAME functions rather than a second implementation — a private GLB
+     loader in the Foundry would miss the Draco/Meshopt patch and the LRU, and
+     would be discovered as "why are Foundry models blurry/slow" months later.
+
+     They are function DECLARATIONS in this file, so a module cannot see them
+     (the globals trap). Hence the wrappers. */
+  isAdmin: () => { try { return !!(typeof isAdmin === 'function' && isAdmin()); } catch (e) { return false; } },
+  /* Lazy — the r128 build is only fetched when a player actually walks in, so
+     opening the flat Blueprint view costs no 3D payload at all. */
+  loadThree: (cb) => { try { _csLoadThree(cb); } catch (e) { try { cb(false); } catch (e2) {} } },
+  loadModel: (url) => { try { return _cs3DLoadModel(url); } catch (e) { return Promise.reject(e); } },
+  autoplay: (root, clips, opts) => { try { _cs3DAutoplay(root, clips, opts); } catch (e) {} },
+  uploadModel: (file) => { try { return _csShopUploadModel(file); } catch (e) { return Promise.reject(e); } },
+  /* 🎨 Admin model assignments live on the FORGE (global admin config), not the
+     Profile — one admin swaps a machine's .glb and every player sees it, which
+     is the whole point. Rides `foundry` on the forge cloud whitelist. */
+  forgeFoundry: () => {
+    try {
+      if (!Forge.foundry || typeof Forge.foundry !== 'object') Forge.foundry = { models: {}, econ: {} };
+      if (!Forge.foundry.models || typeof Forge.foundry.models !== 'object') Forge.foundry.models = {};
+      return Forge.foundry;
+    } catch (e) { return { models: {}, econ: {} }; }
+  },
+  /* 🔴 ADMIN-GATED HERE, NOT IN THE MODULE. The editor UI is only rendered for
+     admins, but UI is not a security boundary — anyone can call the bridge from
+     a console. The check that matters is the one on the write path. */
+  saveForge: (f) => {
+    try {
+      if (!(typeof isAdmin === 'function' && isAdmin())) return false;
+      if (!f || typeof f !== 'object') return false;
+      Forge.foundry = f; saveForge(); return true;
+    } catch (e) { return false; }
+  },
 };
 window.MythicCityBridge = {
   // ── Resources. Accessors, never snapshots — a captured value goes stale the
@@ -223206,7 +223250,7 @@ render();
        that is bankable but unmakeable is "worse than missing").
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/foundry/index.js?v=v120x0foundry1"></script>
+<script type="module" src="src/foundry/index.js?v=v120x1foundry2"></script>
 <script>
 /* ♻️ FOUNDRY LAUNCH + OFFLINE CATCH-UP.
    openFoundry() is the single entry point — wire any button/menu row to it.

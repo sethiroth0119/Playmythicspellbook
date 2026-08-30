@@ -88,6 +88,76 @@ export const FOUNDRY_CSS = `
 .fdy-sec{font-size:12px;text-transform:uppercase;letter-spacing:.7px;color:#7b8494;margin:16px 0 8px;font-weight:700}
 .fdy-sec:first-child{margin-top:0}
 @media(max-width:560px){.fdy-grid{grid-template-columns:1fr}.fdy-body{padding:10px}}
+
+/* ══ 3D FLOOR CHROME ═══════════════════════════════════════════════════════
+   Everything overlaid on the walkable shed. The rule for all of it: the canvas
+   is the content, so chrome sits at the edges and never boxes the view in. */
+.fdy-3d{position:absolute;inset:0;overflow:hidden;background:#0b0d11}
+.fdy-3d canvas{position:absolute;inset:0}
+/* Crosshair — a dot, not a reticle. It marks where "forward" is without
+   pretending this is a shooter. */
+.fdy-x2{position:absolute;left:50%;top:50%;width:5px;height:5px;margin:-2.5px 0 0 -2.5px;border-radius:50%;background:#ffffff5c;pointer-events:none}
+/* The walk-up prompt. Anchored low-centre because that is where the eye already
+   is when you are steering, and it must never cover the machine you walked to. */
+.fdy-prompt{position:absolute;left:50%;bottom:74px;transform:translateX(-50%);max-width:min(92%,460px);
+  background:#12161ceb;border:1px solid #333c48;border-radius:12px;padding:10px 15px;color:#e6e9ef;
+  font-size:13.5px;text-align:center;cursor:pointer;display:none;backdrop-filter:blur(7px);
+  box-shadow:0 10px 34px #0009}
+.fdy-prompt b{display:block;font-size:15px;margin-bottom:2px}
+.fdy-prompt .k{display:inline-block;border:1px solid #4a5563;border-radius:5px;padding:0 6px;margin-right:6px;
+  font:600 11px/1.6 ui-monospace,monospace;color:#9fb4d8}
+.fdy-prompt .st{font-size:12px;color:#8d97a8}
+.fdy-prompt .st.warn{color:#ffb86b}.fdy-prompt .st.bad{color:#ff8a8a}.fdy-prompt .st.ok{color:#7fd6a0}
+/* Mobile thumb pad. Hidden on pointer:fine — a mouse user has WASD and the pad
+   would just eat screen. */
+.fdy-pad{position:absolute;left:14px;bottom:14px;display:grid;grid-template-columns:repeat(3,44px);
+  grid-template-rows:repeat(2,44px);gap:5px;opacity:.85}
+.fdy-pad button{background:#151a21d9;border:1px solid #333c48;color:#cfd6e4;border-radius:9px;font-size:15px;
+  touch-action:none;-webkit-user-select:none;user-select:none}
+.fdy-pad button:active{background:#2a3340}
+.fdy-pad .sp{visibility:hidden}
+@media(pointer:fine){.fdy-pad{display:none}}
+/* Top-left HUD: the three numbers you steer by, always visible so you never
+   have to open a panel to learn the line is browning out. */
+.fdy-hud{position:absolute;left:12px;top:12px;display:flex;gap:7px;flex-wrap:wrap;max-width:calc(100% - 24px);pointer-events:none}
+.fdy-hud i{background:#11151bd9;border:1px solid #2a323d;border-radius:9px;padding:5px 10px;font-style:normal;font-size:12px;color:#b9c4d4}
+.fdy-hud i b{color:#fff;font-weight:700}
+.fdy-hud i.bad{border-color:#8a3a3a;color:#ff9a9a}
+.fdy-hud i.warn{border-color:#8a5a2a;color:#ffbe80}
+/* Mode switch + admin entry, top-right. */
+.fdy-modes{position:absolute;right:12px;top:12px;display:flex;gap:6px}
+.fdy-modes button{background:#151a21d9;border:1px solid #333c48;color:#cfd6e4;border-radius:9px;padding:6px 11px;font-size:12px;cursor:pointer}
+.fdy-modes button:hover{background:#222a34}
+
+/* ══ POP-UP PANEL ══════════════════════════════════════════════════════════
+   The whole point of the 3D mode: a panel that ARRIVES when you walk up to a
+   machine, rather than a tab strip that is always there. It scales out of the
+   middle and dims the shed behind, so the room is still visibly running while
+   you work — which is what stops it feeling like the flat UI with a picture
+   behind it. */
+.fdy-pop{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:18px;
+  background:#05070ab8;backdrop-filter:blur(3px);z-index:20}
+.fdy-pop-in{width:min(760px,100%);max-height:100%;overflow-y:auto;background:#0f1319;border:1px solid #2b333f;
+  border-radius:15px;box-shadow:0 26px 70px -12px #000;animation:fdyPop .17s cubic-bezier(.2,.9,.3,1)}
+@keyframes fdyPop{from{opacity:0;transform:translateY(12px) scale(.965)}to{opacity:1;transform:none}}
+@media(prefers-reduced-motion:reduce){.fdy-pop-in{animation:none}}
+.fdy-pop-top{position:sticky;top:0;display:flex;align-items:center;gap:9px;padding:12px 15px;
+  background:#131820;border-bottom:1px solid #262e39;border-radius:15px 15px 0 0}
+.fdy-pop-top h3{margin:0;font-size:16px;flex:1;min-width:0}
+.fdy-pop-top .sub{font-size:12px;color:#8d97a8;font-weight:400}
+.fdy-pop-body{padding:14px 15px 17px}
+/* Inside a popup a machine card is the ONLY card, so it drops its own frame —
+   a card inside a card reads as a mistake. Its <h4> goes too: the popup header
+   already names the machine, and printing "Blast Furnace" twice, six lines
+   apart, reads as a rendering bug rather than as emphasis. The level moves to
+   the header's .sub so nothing is lost with it. */
+.fdy-pop-body .fdy-card{border:0;background:transparent;padding:0}
+/* ⚠ SCOPED TO .fdy-solo, NOT TO EVERY CARD IN A POPUP. Unscoped, this rule also
+   hid the <h4> of every row in the admin model editor — which is where the
+   machine's NAME lives — leaving seventeen identical anonymous forms. Only the
+   single-machine popup has a header that already says the name. */
+.fdy-pop-body .fdy-solo .fdy-card>h4{display:none}
+.fdy-pop-body .fdy-grid{grid-template-columns:1fr}
 `;
 
 /* Purity → a word, because "0.83" is not a thing a player has an opinion about
@@ -160,7 +230,12 @@ export function renderTrim(st) {
   </div>`;
 }
 
-function machineCard(st, h, def) {
+/* 🔴 EXPORTED SO THE 3D FLOOR CAN REUSE IT VERBATIM.
+   world.js opens this same card in a popup when you walk up to a machine. Two
+   renderers for one card would mean every change to a cost line, a halt reason
+   or a recipe dropdown gets made twice — and the copy nobody is looking at
+   would quietly rot. If the 3D card needs to look different, that is CSS. */
+export function machineCard(st, h, def) {
   const s = machineStatus(st, def.id);
   if (!s) {
     const cost = nextCost(def, 0);
@@ -221,6 +296,31 @@ export function renderLine(st, h, line) {
   const defs = machinesForLine(line);
   return `${renderVitals(st, h)}${renderAlert(st, h)}${renderTrim(st)}
     <div class="fdy-grid">${defs.map(d => machineCard(st, h, d)).join('')}</div>`;
+}
+
+/* ── Control Room ────────────────────────────────────────────────────────── */
+/* The whole-line view, for the desk you walk to rather than a machine you
+   operate. Deliberately NOT a fourth copy of the vitals strip: it adds the power
+   breakdown and the trim dial, which are the only two things that are a property
+   of the LINE rather than of one machine. */
+export function renderControl(st, h) {
+  const cp = powerCapacity(st), dm = powerDemand(st);
+  const rows = MACHINES.map(d => ({ d, s: machineStatus(st, d.id) })).filter(x => x.s);
+  const drawing = rows.filter(x => x.d.power && x.s.on && x.s.cond > 0);
+  const trouble = rows.filter(x => x.s.halt !== HALT.OK);
+  return `${renderVitals(st, h)}${renderAlert(st, h)}${renderTrim(st)}
+    <div class="fdy-sec">Grid load</div>
+    <div class="fdy-card">
+      <div class="fdy-bar" style="height:9px"><i class="${dm > cp ? 'bad' : ''}" style="width:${Math.min(100, cp ? (dm / cp) * 100 : 100).toFixed(0)}%"></i></div>
+      <div class="fdy-cost">${n(dm)} drawn of ${n(cp)} available${dm > cp ? ' — <span class="no">short ' + n(dm - cp) + '</span>' : ''}</div>
+      <div class="fdy-flow">${drawing.length ? drawing.map(x => `${x.d.emoji} ${esc(x.d.name)} <b>${x.d.power}</b>`).join(' · ') : 'Nothing is drawing power.'}</div>
+    </div>
+    <div class="fdy-sec">Line status</div>
+    ${trouble.length ? `<div class="fdy-grid">${trouble.map(x => `<div class="fdy-card ${x.s.halt === HALT.BROKEN ? 'broke' : 'halt'}">
+        <h4>${x.d.emoji} ${esc(x.d.name)}</h4>
+        <div class="fdy-state ${x.s.halt === HALT.BROKEN ? 'bad' : 'warn'}">${esc(x.s.haltText)}</div>
+        <div class="fdy-cost">Condition ${x.s.cond.toFixed(0)}%</div></div>`).join('')}</div>`
+      : '<div class="fdy-empty">Every machine on the line is running.</div>'}`;
 }
 
 /* ── Yard ────────────────────────────────────────────────────────────────── */
@@ -284,4 +384,4 @@ export function renderTaps(st, h) {
   }).join('')}</div>`;
 }
 
-export default { FOUNDRY_CSS, renderLine, renderYard, renderSupply, renderTaps, renderVitals, renderAlert, gradeLabel, esc };
+export default { FOUNDRY_CSS, renderLine, renderYard, renderSupply, renderTaps, renderControl, machineCard, renderVitals, renderAlert, gradeLabel, esc };

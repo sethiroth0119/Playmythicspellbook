@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120w6';
+  window.BUILD_VERSION = 'v120x0';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -46481,6 +46481,10 @@ async function cloudSyncProfile() {
       blackRiver: (Forge.blackRiver && typeof Forge.blackRiver === 'object') ? Forge.blackRiver : { mapPhotos: {}, crewPhotos: {}, enabled: true },
       // ⛽ Per-player oil-co state (truck, crew, refineries, loan, futures, log).
       __blackRiver__: (Profile.blackRiver && typeof Profile.blackRiver === 'object') ? Profile.blackRiver : {},
+      // ♻️ The Foundry — per-player line state (machines, inventory, trim,
+      //    lastTick). Everything the crush/refine chain owns; nothing here is a
+      //    ledger resource. See window.MythicFoundryBridge.
+      __foundry__: (Profile.foundry && typeof Profile.foundry === 'object') ? Profile.foundry : {},
       // ⛽ Ethos Fuel Command — admin photos + cross-player Gas Stations directory.
       fuelCommand: (Forge.fuelCommand && typeof Forge.fuelCommand === 'object') ? Forge.fuelCommand : { stationPhotos: {}, directory: { listings: [], pendingPayouts: [] }, enabled: true },
       // ⛽ Per-player gas-station state (fuel, pump, upgrades, loan, hedge, public listing, log).
@@ -47689,6 +47693,16 @@ async function cloudFetchProfile() {
           const le = _localBR && _localBR.extraction, ce = f.__blackRiver__ && f.__blackRiver__.extraction;
           const merged = _osimMergeExtraction(le, ce); if (merged) Profile.blackRiver.extraction = merged;
         } catch (e) {}
+      }
+      /* ♻️ The Foundry. Reconciled by LATEST SAVE (lastTick), NOT richer-wins.
+         The line is ONE coherent idle snapshot: inventory, machine condition and
+         the clock only make sense together. _preferRicherObj would happily take
+         a stale cloud copy whose inventory happened to list more keys and rewind
+         a more-recent line from another device — the exact failure the Extraction
+         Field hit, which is why `extraction` gets the same treatment two blocks
+         up. A rewound lastTick would then re-run hours already banked. */
+      if (f.__foundry__ && typeof f.__foundry__ === 'object') {
+        Profile.foundry = _foundryMergeState(Profile.foundry, f.__foundry__);
       }
       // ⛽ Ethos Fuel Command — gas station chain.
       if (f.fuelCommand && typeof f.fuelCommand === 'object') Forge.fuelCommand = f.fuelCommand;
@@ -167061,6 +167075,19 @@ const CAMP_BUILDINGS = [
     x: 14, y: 9,  w: 4, h: 3, color: '#b86bff', glyph: '🗝',
     door: { x: 16, y: 9 },
     route: () => { App.screen = 'rlcList'; render(); } },
+  /* ♻️ THE FOUNDRY — trash crushing + refining. Footprint x8-11, y10-12, which
+     is clear of every other building on the 20x15 map: vendor x3-6/y2-4, bunker
+     x14-17/y2-4, deck x3-6/y9-11, roguelite x14-17/y9-11, tent x9-10/y5-6. The
+     door sits one tile below the footprint, matching the others.
+     ⚠ Unlike its neighbours this route does NOT set App.screen. The Foundry is a
+     full-screen overlay owned by /src/foundry (the same shape Black River uses),
+     so it mounts itself over whatever is showing and tears itself down on close.
+     Routing the camp screen away underneath it would leave the player somewhere
+     else when they close the panel. */
+  { id: 'foundry',   name: 'The Foundry',     icon: 'assets/artwork/gameicons/camp%20icon.png',
+    x: 8,  y: 10, w: 4, h: 3, color: '#c2725a', glyph: '🗜️',
+    door: { x: 10, y: 13 },
+    route: () => { try { openFoundry(); } catch (e) {} } },
   { id: 'tent',      name: 'Hero Rest Tent',  icon: 'assets/artwork/gameicons/camp%20icon.png',
     x: 9,  y: 5,  w: 2, h: 2, color: '#88c4ff', glyph: '⛺',
     door: { x: 10, y: 7 },
@@ -198720,6 +198747,14 @@ function _osimEstDayKey() { try { return new Intl.DateTimeFormat('en-CA', { time
 function _osimDailyRollover() { if (!_osimState) return false; const today = _osimEstDayKey(); if (_osimState.dayKey === today) return false; const first = !_osimState.dayKey; _osimState.dayKey = today; if (first) return false; _osimSeedPRN(); (_osimState.stations || []).forEach(s => { s.price = s.base || s.price; }); _osimState.priceEvent = null; if (_osimOpenFlag) { _osimToast('📅 New trading day (EST) — PRN contracts refreshed, prices reset.', 'good'); _osimRenderEventBar(); if (_osimCurrentPanel === 'network' && _O('modal').classList.contains('on')) _osimRenderNetwork(); if (_osimCurrentPanel === 'sell' && _O('modal').classList.contains('on')) _osimRenderSell(); } return true; }
 // Reconcile two Extraction snapshots (local vs cloud) — newest save wins so a
 // stale cloud copy can't rewind a field saved more recently on another device.
+/* ♻️ Foundry snapshot reconcile — newest lastTick wins. Modelled on
+   _osimMergeExtraction (below) and for the same reason: an idle line is a single
+   snapshot, so the LATER save is the true one on every field at once. */
+function _foundryMergeState(local, cloud) {
+  if (!local || typeof local !== 'object') return (cloud && typeof cloud === 'object') ? cloud : {};
+  if (!cloud || typeof cloud !== 'object') return local;
+  return ((cloud.lastTick | 0) > (local.lastTick | 0)) ? cloud : local;
+}
 function _osimMergeExtraction(a, b) { if (!a || typeof a !== 'object') return (b && typeof b === 'object') ? b : null; if (!b || typeof b !== 'object') return a; return ((b.lastTick | 0) > (a.lastTick | 0)) ? b : a; }
 
 // ── REGISTRIES (mutable: admin can add keys via Forge config) ───────────────
@@ -207411,6 +207446,71 @@ window.MythicTradeBridge = {
   },
   save: () => { try { saveProfile(); return true; } catch (e) { return false; } },
   toast: (m, ms) => { try { showToast(m, ms || 3600); } catch (e) {} },
+};
+/* ♻️ THE FOUNDRY BRIDGE — for /src/foundry/*.js (trash crushing + refining).
+   🔴 THE GLOBALS TRAP, a fourth time (CLAUDE.md). `Profile`, `getRes`, `addRes`,
+   `spendGems`, `spendResources` and `Forge` are top-level `const` / function
+   declarations in this file — global LEXICAL bindings. An ES module cannot see
+   any of them, and `window.Profile` is undefined however global `const Profile`
+   looks. Everything /src/foundry touches arrives through here and nowhere else;
+   if the Foundry needs something new, it is ADDED HERE rather than reached for.
+
+   🔴 THE FOUNDRY DOES NOT PROMOTE ANY RESOURCE. Its intermediates (shredded
+   waste, ferrous stream, pig iron, steel, heavy ends, biogas …) live entirely in
+   `Profile.foundry.inv` and are invisible to RESOURCES, the market, the vault and
+   every cost renderer — deliberately. RESOURCES_NEXT.md: a resource that can be
+   banked but not made, sold or spent is "worse than missing, because the
+   player's pile of it is real and inert", and promoting the ~15 ids this feature
+   would need is a four-site change EACH. So the Foundry pays out through TAPS
+   into ids the ledger ALREADY has — metal, fuel, supplies — and takes payment in
+   Cinder. The only ledger surface below is what those taps and contracts need.
+
+   ⚠ refundRes vs addRes is the safety story, same as the trade bridge: addRes
+   enforces the stash cap and declines into a full vault, so it can never be an
+   undo. src/city/cost.js unwinds failed builds through refundRes. */
+window.MythicFoundryBridge = {
+  // ── Readers
+  gems: () => { try { return Profile.gems | 0; } catch (e) { return 0; } },
+  getRes: (id) => { try { return getRes(id) | 0; } catch (e) { return 0; } },
+  resName: (id) => { try { return (_meta(id) || {}).name || id; } catch (e) { return id; } },
+  // ── Mutators. Truthy / units-landed = it happened.
+  spendGems: (n) => { try { return !!spendGems(n | 0); } catch (e) { return false; } },
+  addGems: (n) => { try { addGems(n | 0); return true; } catch (e) { return false; } },
+  spendRes: (id, n) => { try { return !!spendResources({ [id]: n | 0 }); } catch (e) { return false; } },
+  addRes: (id, n) => { try { addRes(id, n | 0); return true; } catch (e) { return false; } },
+  refundRes: (id, n) => { try { _refundRes(id, n | 0); return true; } catch (e) { return false; } },
+  // ── Persistence. Absent-tolerant: a save with no `foundry` key hydrates as an
+  //    empty object, never as a throw. Rides __foundry__ on the cloud whitelist.
+  foundryState: () => {
+    try {
+      if (!Profile.foundry || typeof Profile.foundry !== 'object') Profile.foundry = {};
+      return Profile.foundry;
+    } catch (e) { return {}; }
+  },
+  /* 🔴 RETURN FALSE ON FAILURE — DO NOT SWALLOW IT. The Foundry refunds a build
+     whose save did not persist, and that path is dead code if this reports
+     success regardless. MythicCityBridge carries the same note for the same
+     reason: a swallowed throw once charged a player 50,000 Cinder for a
+     building that never existed. */
+  save: () => { try { saveProfile(); return true; } catch (e) { return false; } },
+  // ⏱ The game's EXISTING idle contract, passed and never redeclared, so the
+  //    Foundry cannot become a third idle policy.
+  accrualCapH: (typeof OP_ACCRUAL_CAP_H !== 'undefined') ? OP_ACCRUAL_CAP_H : 36,
+  /* 🎛 Admin econ overrides (feed prices, tap rates, disposal). CLAUDE.md says
+     operation pricing goes through _opEcon(); production has no such path yet
+     (src/city/production.data.js carries the same caveat), so this is the single
+     seam to repoint at one when it lands. Keys look like 'feed.crudeOil',
+     'tap.steel', 'disposal.slag'. */
+  econ: (k) => {
+    try {
+      const t = Forge.foundry && Forge.foundry.econ;
+      const v = t && t[k];
+      return (typeof v === 'number' && isFinite(v)) ? v : undefined;
+    } catch (e) { return undefined; }
+  },
+  // ── Chrome
+  toast: (m, ms) => { try { showToast(m, ms || 3600); } catch (e) {} },
+  confirm: (m) => { try { return gcConfirm(m); } catch (e) { return Promise.resolve(false); } },
 };
 window.MythicCityBridge = {
   // ── Resources. Accessors, never snapshots — a captured value goes stale the
@@ -223096,6 +223196,38 @@ render();
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
 <script type="module" src="src/resources/chain.js?v=v120w6chain2"></script>
+<!-- ♻️ THE FOUNDRY — trash crushing + refining (waste → scrap → steel → sheet;
+     crude → gasoline/diesel/aviation; organics → biogas → grid fuel). Registers
+     window.MythicFoundry and is INERT until something calls .open().
+     ⚠ IT PROMOTES NOTHING. Its intermediates live in Profile.foundry.inv and
+       are invisible to RESOURCES, the market and every cost renderer; it pays
+       out through TAPS into metal / fuel / supplies, which the ledger already
+       has. See window.MythicFoundryBridge for why (RESOURCES_NEXT.md: a pile
+       that is bankable but unmakeable is "worse than missing").
+     ⚠ Bump ?v= on every change — the service worker caches /src/* like any
+       other static asset, and a missed bump ships invisibly. -->
+<script type="module" src="src/foundry/index.js?v=v120x0foundry1"></script>
+<script>
+/* ♻️ FOUNDRY LAUNCH + OFFLINE CATCH-UP.
+   openFoundry() is the single entry point — wire any button/menu row to it.
+   The catch-up call is the important half: the line accrues on the WALL CLOCK,
+   so it has to bank what happened while the player was away even if they never
+   open the panel. Without it a factory only runs while you are looking at it.
+   Deferred to load + idle so it can never sit in front of first paint, and
+   fully guarded so an absent or broken module cannot stop the game booting. */
+function openFoundry() {
+  try {
+    if (window.MythicFoundry && window.MythicFoundry.open) return window.MythicFoundry.open();
+    showToast('The Foundry is still loading — try again in a moment.');
+  } catch (e) { try { showToast('The Foundry could not open.'); } catch (e2) {} }
+  return false;
+}
+try {
+  window.addEventListener('load', () => {
+    setTimeout(() => { try { if (window.MythicFoundry) window.MythicFoundry.catchUp(); } catch (e) {} }, 1200);
+  });
+} catch (e) {}
+</script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the

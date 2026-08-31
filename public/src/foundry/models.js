@@ -51,6 +51,8 @@ export const LAYOUT = {
   furnace:    { x: -14, z: -7, ry:  Math.PI / 2 },
   converter:  { x:  -9, z: -10, ry: 0 },
   mill:       { x:  -3, z: -10, ry: 0 },
+  // End of the metal road, next to the Mill it shares a feedstock with.
+  caster:     { x:   3, z: -10, ry: 0 },
   // ── East aisle: the refinery ────────────────────────────────────────────
   still:      { x:  14, z:  3, ry: -Math.PI / 2 },
   cracker:    { x:  14, z: -2, ry: -Math.PI / 2 },
@@ -200,6 +202,23 @@ const BUILDERS = {
     const glow = box(T, 1.9, 0.12, 0.1, c, { emissive: c, emissiveIntensity: 1 }); glow.position.set(0, 0.55, 1.02); g.add(glow);
     return { group: g, glow };
   },
+  caster(T, c) {
+    const g = new T.Group();
+    // A tilting ladle over a row of moulds — reads as "metal comes out here".
+    const furnaceBody = cyl(T, 0.95, 1.1, 1.5, 0x6b5340, 18); furnaceBody.position.set(-1.1, 1.4, 0); g.add(furnaceBody);
+    const spout = cyl(T, 0.2, 0.34, 0.8, 0x8a6a48, 12); spout.rotation.z = -0.7; spout.position.set(-0.25, 1.7, 0); g.add(spout);
+    // The pour itself, emissive so a running Caster is obvious across the shed.
+    const pour = cyl(T, 0.1, 0.14, 1.0, 0xffb04a, 8, { emissive: 0xff8a1a, emissiveIntensity: 1.8 });
+    pour.position.set(0.1, 1.0, 0); g.add(pour);
+    const bed = box(T, 3.0, 0.5, 1.6, 0x33383f); bed.position.set(0.9, 0.45, 0); g.add(bed);
+    [-0.2, 0.7, 1.6].forEach((x, i) => {
+      const ingot = box(T, 0.7, 0.26, 1.0, 0xc8b48a, { metalness: 0.7, roughness: 0.35 });
+      ingot.position.set(x, 0.82, 0); g.add(ingot);
+      if (!i) g.userData.flare = pour;
+    });
+    const glow = box(T, 3.8, 0.14, 0.1, c, { emissive: c, emissiveIntensity: 1 }); glow.position.set(0, 0.42, 1.4); g.add(glow);
+    return { group: g, glow };
+  },
   ewaste(T, c) {
     const g = new T.Group();
     const bench = box(T, 3.0, 0.16, 1.2, 0x39424f); bench.position.y = 1.0; g.add(bench);
@@ -310,7 +329,7 @@ const FOOT = {
   shredder:{w:3.2,d:2.6}, sorter:{w:5.6,d:2.0}, baler:{w:3.0,d:3.0}, furnace:{w:3.4,d:3.4},
   converter:{w:3.6,d:2.8}, mill:{w:4.8,d:2.4}, recycler:{w:3.2,d:2.6}, ewaste:{w:3.4,d:1.8},
   still:{w:2.6,d:2.6}, cracker:{w:3.2,d:2.6}, digester:{w:3.4,d:3.4}, blender:{w:3.0,d:1.6},
-  powerhouse:{w:4.8,d:3.4}, yard:{w:4.6,d:1.6},
+  powerhouse:{w:4.8,d:3.4}, yard:{w:4.6,d:1.6}, caster:{w:4.2,d:2.8},
   // The three desks. Same table so blocks() needs no station branch.
   supply:{w:2.8,d:1.3}, weigh:{w:2.8,d:1.3}, control:{w:2.8,d:1.3},
 };

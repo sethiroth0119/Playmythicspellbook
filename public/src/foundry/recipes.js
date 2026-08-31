@@ -68,6 +68,19 @@ export const MATERIALS = [
   { id: 'aluminum',      name: 'Aluminum',        icon: '⛓️', color: '#c4ccd8', chain: 'aluminum',     tap: 'metal', tapRate: 1.2 },
   { id: 'copper',        name: 'Copper',          icon: '🟠', color: '#d08a5a', chain: 'copper',       tap: 'metal', tapRate: 1.4 },
 
+  /* 🪙 THE BUILDING'S DEDICATED METAL PRODUCT — the best Metal-per-unit here.
+     🔴 WHY A MATERIAL AND NOT A DIRECT WRITE TO THE LEDGER. "A station that
+     produces Metal" is tempting to implement as a recipe that outputs the live
+     `metal` id straight into the player's stores. It must not be: taps.js is the
+     ONLY door between the Foundry and the real economy, and the value of that is
+     that "what can this feature do to my account?" has a one-file answer. A
+     second door inside a recipe would also skip the stash-cap handling that
+     cashOut earns the hard way — an ingot poured into a full vault would simply
+     evaporate. So the Caster makes ingots, and ingots tap like everything else.
+     Rate 2.0 makes it the highest tap in the catalogue, which is the point: it
+     is what you build when Metal is what you want. */
+  { id: 'metalIngot',    name: 'Metal Ingot',     icon: '🪙', color: '#c8b48a', chain: null,           tap: 'metal', tapRate: 2.0 },
+
   // ── Recycling side-streams (they pay, which is what makes sorting worth it)
   /* 🔴 THESE THREE TAP TO `supplies`, NOT `metal`, AND THAT IS THE WHOLE POINT
      OF SORTING. The crush line only wants the ferrous fraction; without a buyer
@@ -156,6 +169,17 @@ export function yieldAtPurity(purity) {
      secs    — seconds per batch at machine level 1, before speed modifiers.
      note    — shown in the UI. Say what the machine is FOR, not what it does.
 
+   🔴 THE CASTER IS TWO DIFFERENT ANSWERS TO "I NEED METAL", ON PURPOSE.
+   `castScrap` reaches Metal with ONE machine after the crusher — no furnace, no
+   converter, no mill — and pays badly for the privilege: 12 scrap becomes 3
+   ingots (~6 Metal) where the full chain turns the same 12 into ~8. That gap is
+   deliberate and must stay negative, or the three machines in between become
+   decorative and the whole crush line collapses to "crush, cast, sell".
+   `castReject` is the opposite end: it consumes the reject streams the furnace
+   will not take and pays the best rate in the building, which is what finally
+   makes the Magnetic Sorter worth its power draw. `castAlloy` is the premium
+   pour for players who dedicate a furnace to non-ferrous.
+
    🔴 JOINT PRODUCTS ARE THE POINT, NOT A COMPLICATION. `distill` emits gasoline
    AND diesel AND heavyEnds from one batch — you cannot dial crude straight into
    the fuel you happen to want. That is what stops the refinery being a single
@@ -227,6 +251,32 @@ export const RECIPES = [
     in: { electronicWaste: 8 }, out: { recycledElectronics: 4, copper: 2, nonFerrousStream: 2 },
     purity: 0.78, secs: 44,
     note: 'Boards are the densest copper in the yard. Slow, fiddly, worth it.',
+  },
+
+  {
+    id: 'castScrap', machine: 'caster', name: 'Cast · Scrap Melt',
+    in: { scrapMetal: 12, coal: 4 }, out: { metalIngot: 3 }, purity: { inherit: true }, secs: 34, gradeSensitive: true,
+    note: 'The short road to Metal — one machine instead of three, at a third of the yield.',
+  },
+  {
+    id: 'castReject', machine: 'caster', name: 'Cast · Reject Bar',
+    /* 🔴 FED FROM THE SORTER, NOT FROM SMELTED METAL, and that is the fix that
+       makes this machine work at all. The first cut took aluminium + copper,
+       which only `remeltNonFerrous` and the E-Waste Line produce — and the
+       furnace can only run ONE recipe, so a player smelting pig iron (i.e. every
+       player) had no aluminium and the Caster simply never ran. A 24h economy
+       run came out byte-identical with the machine built, which is how it was
+       caught. Non-ferrous stream and recyclate come straight off the Sorter and
+       the Recyclate Baler, so this always has something to eat. */
+    in: { nonFerrousStream: 6, recycledMetal: 4, coal: 2 }, out: { metalIngot: 8 },
+    purity: { inherit: true, bonus: 0.04 }, secs: 30, gradeSensitive: true,
+    note: 'Pours the Sorter\'s reject stream into dense bar — what finally makes sorting pay in Metal.',
+  },
+  {
+    id: 'castAlloy', machine: 'caster', name: 'Cast · Alloy Bar',
+    in: { aluminum: 4, copper: 3 }, out: { metalIngot: 9 },
+    purity: { inherit: true, bonus: 0.06 }, secs: 30, gradeSensitive: true,
+    note: 'The premium pour. Needs a furnace on non-ferrous or a running E-Waste Line to feed it.',
   },
 
   // ══ REFINERY LINE — three genuinely different routes to fuel ════════════

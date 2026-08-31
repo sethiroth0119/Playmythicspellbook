@@ -280,6 +280,21 @@ export const MACHINES = [
     ],
   },
   {
+    id: 'caster', name: 'Casting Line', kind: 'converter', emoji: '🪙', accent: '#c8b48a', line: 'crush', separator: false,
+    /* The end of the metal road: everything that is going to become Metal ends
+       up here as bar. Two recipes — a cheap direct melt from scrap, and the
+       non-ferrous pool that pays the best rate in the building. See the note in
+       recipes.js for why the short road has to stay the worse deal. */
+    desc: 'Pours bar. The building\'s dedicated Metal source, and the best rate in the yard.',
+    maxLevel: 4, power: 70, wear: 0.12, burn: 0.18, buffer: 85,
+    cost: [
+      { cinder: 110000, metal: 260, stone: 120, fuel: 70, memoryShards: 4 },
+      { cinder: 258000, metal: 570, stone: 265, fuel: 160, memoryShards: 9 },
+      { cinder: 595000, metal: 1200, stone: 570, fuel: 365, memoryShards: 19 },
+      { cinder: 1285000, metal: 2560, stone: 1220, fuel: 785, memoryShards: 40 },
+    ],
+  },
+  {
     id: 'ewaste', name: 'E-Waste Line', kind: 'converter', separator: true, emoji: '📟', accent: '#7fb8ff', line: 'crush',
     desc: 'Board stripping. The densest copper in the yard, at the slowest cycle.',
     maxLevel: 3, power: 38, wear: 0.07, burn: 0.02, buffer: 70,

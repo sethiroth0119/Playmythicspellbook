@@ -19,13 +19,14 @@
    makes an injection bug ship.
    ════════════════════════════════════════════════════════════════════════════ */
 
-import { MATERIALS, matById, matName, matIcon, recipesFor, recipeById, normIn, normOut, TAPS } from './recipes.js';
-import { MACHINES, machineById, machinesForLine, repairCost, COND_WORN } from './machines.js';
+import { MATERIALS, matById, matName, matIcon, recipesFor, recipeById, normIn, normOut, TAPS, tapFor } from './recipes.js';
+import { MACHINES, machineById, machinesForLine, repairCost, COND_WORN, buildSeconds, fmtDur } from './machines.js';
 import {
   HALT, machineState, isBuilt, builtMachines, stockOf, qtyOf,
-  storageCap, storageUsed, powerCapacity, powerDemand, machineStatus, nextCost,
+  storageCap, storageUsed, powerCapacity, powerDemand, machineStatus, nextCost, fuelOnHand, buildInfo,
 } from './state.js';
 import { FEED_PRICES, FEED_GRADE, CONTRACT_SIZES, DISPOSAL_IDS, feedPrice, contractCost, tapPreview, haulCost } from './taps.js';
+import { ratePerHour, STATION_INFO, purposeOf } from './guide.js';
 
 export const esc = (s) => String(s == null ? '' : s).replace(/[<>&"']/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[c]));
 const n = (x) => Math.floor(Number(x) || 0).toLocaleString();
@@ -88,6 +89,24 @@ export const FOUNDRY_CSS = `
 .fdy-sec{font-size:12px;text-transform:uppercase;letter-spacing:.7px;color:#7b8494;margin:16px 0 8px;font-weight:700}
 .fdy-sec:first-child{margin-top:0}
 @media(max-width:560px){.fdy-grid{grid-template-columns:1fr}.fdy-body{padding:10px}}
+
+/* The machine briefing — a label column and a value column, so Needs / Makes /
+   Burns / Rate line up and can be read down rather than parsed. */
+.fdy-brief{margin-top:9px;padding:9px 10px;background:#11151b;border:1px solid #232a33;border-radius:9px}
+.fdy-b-row{display:flex;gap:9px;font-size:12px;line-height:1.65;color:#b9c4d4}
+.fdy-b-row+.fdy-b-row{margin-top:3px}
+.fdy-b-row .k{flex:0 0 46px;color:#7b8494;text-transform:uppercase;font-size:10px;letter-spacing:.7px;padding-top:3px}
+.fdy-b-row b{color:#fff}
+.fdy-b-row i{font-style:normal;color:#7b8494}
+.fdy-b-row .no{color:#e08a8a}
+.fdy-brief .fdy-flow{margin-top:6px;padding-top:6px;border-top:1px solid #202730}
+.fdy-build{margin-top:9px;padding:9px 10px;background:#101822;border:1px solid #24384d;border-radius:9px}
+.fdy-build .fdy-bar i{background:#5aa9e6}
+/* What a desk is for, at the top of its own panel. */
+.fdy-what{background:#12161d;border:1px solid #252d38;border-radius:11px;padding:11px 13px;margin-bottom:13px}
+.fdy-what h3{margin:0 0 3px;font-size:14.5px}
+.fdy-what p{margin:0;color:#8d97a8;font-size:12.7px;line-height:1.55}
+.fdy-what .tip{margin-top:7px;padding-top:7px;border-top:1px solid #212832;color:#b9a06a;font-size:12.3px}
 
 /* ══ 3D FLOOR CHROME ═══════════════════════════════════════════════════════
    Everything overlaid on the walkable shed. The rule for all of it: the canvas
@@ -211,6 +230,10 @@ export function renderAlert(st, h) {
     const liab = DISPOSAL_IDS.filter(i => qtyOf(st, i) >= 1);
     return `<div class="fdy-alert"><b>🏗️ The yard is full.</b> ${liab.length ? 'Haul the ' + liab.map(i => esc(matName(i))).join(' and ') + ', sell finished stock, or upgrade the Scrap Yard.' : 'Sell finished stock or upgrade the Scrap Yard.'}</div>`;
   }
+  if (fuelOnHand(st) < 1) {
+    const burners = MACHINES.filter(d => (d.burn || 0) > 0 && machineStatus(st, d.id));
+    if (burners.length) return `<div class="fdy-alert"><b>⛽ Out of fuel.</b> Every machine burns fuel to run and the tanks are empty. Refine some at the Distillation Column, or buy diesel at the Supply Office to get going again.</div>`;
+  }
   for (const d of MACHINES) {
     const s = machineStatus(st, d.id);
     if (!s) continue;
@@ -243,7 +266,7 @@ export function machineCard(st, h, def) {
       <h4>${def.emoji} ${esc(def.name)}<span class="fdy-lv">not built</span></h4>
       <div class="fdy-desc">${esc(def.desc)}</div>
       ${costHtml(h, cost)}
-      <div class="fdy-row"><button class="fdy-btn pri" data-fdy-build="${esc(def.id)}">Build</button></div>
+      <div class="fdy-row"><button class="fdy-btn pri" data-fdy-build="${esc(def.id)}">Build · ${esc(fmtDur(buildSeconds(cost)))}</button></div>
     </div>`;
   }
   const cls = s.halt === HALT.BROKEN ? 'broke' : (s.halt !== HALT.OK ? 'halt' : '');
@@ -283,11 +306,15 @@ export function machineCard(st, h, def) {
     <div class="fdy-bar"><i class="${condCls}" style="width:${s.cond.toFixed(0)}%"></i></div>
     <div class="fdy-cost">Condition ${s.cond.toFixed(0)}%${def.power ? ` · draws ${def.power} power` : ''}</div>
     ${recipeUi}
-    ${up ? costHtml(h, up) : ''}
+    ${s.building ? `<div class="fdy-build">
+        <div class="fdy-bar" style="height:8px"><i style="width:${(s.building.pct * 100).toFixed(0)}%"></i></div>
+        <div class="fdy-cost">${s.building.fresh ? 'Building' : 'Upgrading to Lv ' + s.building.to} — <b>${esc(s.building.text)}</b> left of ${esc(fmtSecs(s.building.secs))}</div>
+      </div>` : machineDetail(st, h, def, s)}
+    ${up && !s.building ? costHtml(h, up) : ''}
     <div class="fdy-row">
-      ${up ? `<button class="fdy-btn" data-fdy-up="${esc(def.id)}">Upgrade</button>` : ''}
-      ${rep ? `<button class="fdy-btn" data-fdy-rep="${esc(def.id)}">Repair (${n(Object.values(rep).reduce((a, b) => a + b, 0))})</button>` : ''}
-      <button class="fdy-btn" data-fdy-tog="${esc(def.id)}">${s.on ? 'Switch off' : 'Switch on'}</button>
+      ${up && !s.building ? `<button class="fdy-btn" data-fdy-up="${esc(def.id)}">Upgrade${up ? ' · ' + esc(fmtDur(buildSeconds(up))) : ''}</button>` : ''}
+      ${rep && !s.building ? `<button class="fdy-btn" data-fdy-rep="${esc(def.id)}">Repair (${n(Object.values(rep).reduce((a, b) => a + b, 0))})</button>` : ''}
+      ${!s.building ? `<button class="fdy-btn" data-fdy-tog="${esc(def.id)}">${s.on ? 'Switch off' : 'Switch on'}</button>` : ''}
     </div>
   </div>`;
 }
@@ -297,6 +324,73 @@ export function renderLine(st, h, line) {
   return `${renderVitals(st, h)}${renderAlert(st, h)}${renderTrim(st)}
     <div class="fdy-grid">${defs.map(d => machineCard(st, h, d)).join('')}</div>`;
 }
+
+/* 📖 THE MACHINE BRIEFING — what it needs, what it makes, how fast, and why you
+   should care. Everything here answers a question a player was otherwise left to
+   work out from a recipe line and a stopwatch:
+     "10 → 9 per batch, 26s"  becomes  "≈1,240 shredded waste an hour".
+   Per-hour is the unit a factory owner thinks in; per-batch is an implementation
+   detail of the simulation.
+
+   ⚠ RATES ARE LIVE, NOT NOMINAL. They fold in the machine's condition, the trim
+   dial and whether the grid is browning out — so a number here always matches
+   what the line will actually deliver in the next hour, and a rate that has
+   halved is itself the symptom that sends a player looking for the cause. */
+function rateRow(icons, perHr) {
+  const parts = Object.keys(perHr).filter(k => perHr[k] > 0.05)
+    .map(k => `${matIcon(k)} <b>${n(Math.round(perHr[k]))}</b> ${esc(matName(k))}`);
+  return parts.length ? parts.join(' · ') : '—';
+}
+
+export function machineDetail(st, h, def, s) {
+  if (!s || !s.recipe || s.building) return '';
+  const now = ratePerHour(st, def.id);
+  if (!now) return '';
+  const next = (s.lv < def.maxLevel) ? ratePerHour(st, def.id, s.lv + 1) : null;
+
+  // Inputs, with what you actually hold — a shortfall is the usual reason a
+  // machine is stopped, so show the gap rather than making them go and look.
+  const needs = Object.keys(now.inputs).map(k => {
+    const have = Math.floor(qtyOf(st, k));
+    const short = have < Math.ceil(now.recipe.in[k] || 0);
+    return `<span class="${short ? 'no' : ''}">${matIcon(k)} ${esc(matName(k))} <b>${n(Math.round(now.inputs[k]))}</b>/hr <i>(${n(have)} held)</i></span>`;
+  }).join(' · ');
+
+  // Anything this machine makes that has a buyer, collectable right here.
+  const takes = Object.keys(now.outputs).map(k => {
+    const t = tapFor(k); if (!t) return null;
+    const p = tapPreview(st, h, k, 1e9);
+    if (!p || p.units <= 0) return `<button class="fdy-btn" disabled>${matIcon(k)} ${esc(matName(k))} — none yet</button>`;
+    return `<button class="fdy-btn pri" data-fdy-take="${esc(k)}">Take ${n(p.pays)} ${esc(h.resName(t.to) || t.to)}<span style="opacity:.7"> · ${n(p.units)} ${esc(matName(k))}</span></button>`;
+  }).filter(Boolean);
+
+  // Why it matters, once it reaches the real ledger.
+  let good = '';
+  const purpose = purposeOf(st, def.id);
+  if (purpose && purpose.length) {
+    good = purpose.map(pr => {
+      const city = pr.uses.city.map(c => esc(c.name)).join(', ');
+      const ops = pr.uses.ops.map(o => esc(o.name)).join(', ');
+      const bits = [];
+      if (city) bits.push(`<b>City:</b> ${city}`);
+      if (pr.uses.builds) bits.push(`<b>${pr.uses.builds}</b> building costs`);
+      if (ops) bits.push(`<b>Ops:</b> ${ops}`);
+      return bits.length ? `<div class="fdy-flow">⇢ Its ${esc(h.resName(pr.res) || pr.res)} feeds — ${bits.join(' · ')}</div>` : '';
+    }).join('');
+  }
+
+  return `<div class="fdy-brief">
+    <div class="fdy-b-row"><span class="k">Needs</span><span>${needs || '—'}</span></div>
+    <div class="fdy-b-row"><span class="k">Makes</span><span>${rateRow(null, now.outputs)}</span></div>
+    ${now.fuelPerHr > 0.05 ? `<div class="fdy-b-row"><span class="k">Burns</span><span class="${fuelOnHand(st) < (def.burn || 0) ? 'no' : ''}">⛽ <b>${n(Math.round(now.fuelPerHr))}</b> fuel/hr <i>(${n(Math.floor(fuelOnHand(st)))} in the tanks)</i></span></div>` : ''}
+    <div class="fdy-b-row"><span class="k">Rate</span><span><b>${now.bph.toFixed(1)}</b> batches/hr · one every ${esc(fmtSecs(now.secsPerBatch))}${
+      next ? ` <i>→ Lv ${next.lv}: <b>${next.bph.toFixed(1)}</b>/hr (+${Math.round((next.bph / now.bph - 1) * 100)}%)</i>` : ' <i>· max level</i>'}</span></div>
+    ${good}
+    ${takes.length ? `<div class="fdy-row" style="margin-top:9px">${takes.join('')}</div>` : ''}
+  </div>`;
+}
+
+function fmtSecs(x) { x = Math.max(0, x); return x < 60 ? x.toFixed(0) + 's' : (x / 60).toFixed(1) + 'm'; }
 
 /* ── Control Room ────────────────────────────────────────────────────────── */
 /* The whole-line view, for the desk you walk to rather than a machine you
@@ -308,7 +402,7 @@ export function renderControl(st, h) {
   const rows = MACHINES.map(d => ({ d, s: machineStatus(st, d.id) })).filter(x => x.s);
   const drawing = rows.filter(x => x.d.power && x.s.on && x.s.cond > 0);
   const trouble = rows.filter(x => x.s.halt !== HALT.OK);
-  return `${renderVitals(st, h)}${renderAlert(st, h)}${renderTrim(st)}
+  return `${renderVitals(st, h)}${renderAlert(st, h)}${whatIs('control')}${renderTrim(st)}
     <div class="fdy-sec">Grid load</div>
     <div class="fdy-card">
       <div class="fdy-bar" style="height:9px"><i class="${dm > cp ? 'bad' : ''}" style="width:${Math.min(100, cp ? (dm / cp) * 100 : 100).toFixed(0)}%"></i></div>
@@ -349,6 +443,12 @@ export function renderYard(st, h) {
 }
 
 /* ── Supply ──────────────────────────────────────────────────────────────── */
+function whatIs(key) {
+  const i = STATION_INFO[key]; if (!i) return '';
+  return `<div class="fdy-what"><h3>${esc(i.title)}</h3><p>${esc(i.what)}</p>
+    <div class="tip">💡 ${esc(i.tip)}</div></div>`;
+}
+
 export function renderSupply(st, h) {
   const cards = Object.keys(FEED_PRICES).map(id => {
     const m = matById(id); if (!m) return '';
@@ -367,14 +467,14 @@ export function renderSupply(st, h) {
       <div class="fdy-desc">No buyer wants it. It fills the yard until you pay to move it.</div>
       <div class="fdy-row"><button class="fdy-btn" data-fdy-haul="${esc(id)}">Haul all · ${n(haulCost(h, st, id))} Cinder</button></div></div>`;
   }).join('')}</div>` : '';
-  return `${renderVitals(st, h)}<div class="fdy-sec">Supply contracts</div><div class="fdy-grid">${cards}</div>${haul}`;
+  return `${renderVitals(st, h)}${whatIs('supply')}<div class="fdy-sec">Supply contracts</div><div class="fdy-grid">${cards}</div>${haul}`;
 }
 
 /* ── Taps ────────────────────────────────────────────────────────────────── */
 export function renderTaps(st, h) {
   const rows = TAPS.map(t => ({ t, p: tapPreview(st, h, t.from, 1e9) })).filter(x => x.p && x.p.units > 0);
-  if (!rows.length) return `${renderVitals(st, h)}<div class="fdy-empty">Nothing finished yet. Steel, sheet and the fuels pay out here.</div>`;
-  return renderVitals(st, h) + `<div class="fdy-grid">${rows.map(({ t, p }) => {
+  if (!rows.length) return `${renderVitals(st, h)}${whatIs('weigh')}<div class="fdy-empty">Nothing finished yet. Steel, sheet and the fuels pay out here.</div>`;
+  return renderVitals(st, h) + whatIs('weigh') + `<div class="fdy-grid">${rows.map(({ t, p }) => {
     const m = matById(t.from); const [lab, col] = gradeLabel(p.purity);
     return `<div class="fdy-card">
       <h4>${m.icon} ${esc(m.name)}<span class="fdy-lv">${n(p.units)} held</span></h4>
@@ -384,4 +484,4 @@ export function renderTaps(st, h) {
   }).join('')}</div>`;
 }
 
-export default { FOUNDRY_CSS, renderLine, renderYard, renderSupply, renderTaps, renderControl, machineCard, renderVitals, renderAlert, gradeLabel, esc };
+export default { FOUNDRY_CSS, renderLine, renderYard, renderSupply, renderTaps, renderControl, machineCard, machineDetail, renderVitals, renderAlert, gradeLabel, esc };

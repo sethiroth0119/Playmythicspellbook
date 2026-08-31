@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120x1';
+  window.BUILD_VERSION = 'v120x2';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -223250,7 +223250,7 @@ render();
        that is bankable but unmakeable is "worse than missing").
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/foundry/index.js?v=v120x1foundry2"></script>
+<script type="module" src="src/foundry/index.js?v=v120x2foundry3"></script>
 <script>
 /* ♻️ FOUNDRY LAUNCH + OFFLINE CATCH-UP.
    openFoundry() is the single entry point — wire any button/menu row to it.

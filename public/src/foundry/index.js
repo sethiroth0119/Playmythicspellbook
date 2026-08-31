@@ -267,7 +267,7 @@ function after(res) {
 /* ── Events ───────────────────────────────────────────────────────────────── */
 function onClick(ev) {
   const st = state(), h = host(); if (!st || !h) return;
-  const t = ev.target.closest('[data-fdy-tab],[data-fdy-build],[data-fdy-up],[data-fdy-rep],[data-fdy-tog],[data-fdy-buy],[data-fdy-sell],[data-fdy-haul],[data-fdy-close],[data-fdy-mode],[data-fdy-popclose],[data-fdy-adminmodels],[data-fdy-msave],[data-fdy-mclear],[data-fdy-upload]');
+  const t = ev.target.closest('[data-fdy-tab],[data-fdy-build],[data-fdy-up],[data-fdy-rep],[data-fdy-tog],[data-fdy-buy],[data-fdy-sell],[data-fdy-take],[data-fdy-haul],[data-fdy-close],[data-fdy-mode],[data-fdy-popclose],[data-fdy-adminmodels],[data-fdy-msave],[data-fdy-mclear],[data-fdy-upload]');
   if (!t) return;
   ev.preventDefault();
   const g = (k) => t.getAttribute(k);
@@ -301,8 +301,11 @@ function onClick(ev) {
   if (g('data-fdy-tog')) return after(toggleMachine(st, h, g('data-fdy-tog')));
   if (g('data-fdy-buy')) return after(buyFeed(st, h, g('data-fdy-buy'), parseInt(t.getAttribute('data-q'), 10) || 0));
   if (g('data-fdy-haul')) return after(haul(st, h, g('data-fdy-haul')));
-  if (g('data-fdy-sell')) {
-    const id = g('data-fdy-sell');
+  /* Take-at-the-machine and Sell-at-the-Weighbridge are the SAME operation —
+     cashOut into the live ledger. Two code paths would be two places for the
+     stash-cap clamp handling to drift. Only the button's wording differs. */
+  if (g('data-fdy-sell') || g('data-fdy-take')) {
+    const id = g('data-fdy-sell') || g('data-fdy-take');
     const r = cashOut(st, h, id, 1e9);
     if (r.ok) h.toast('Sold ' + r.units.toLocaleString() + ' ' + matName(id) + ' for ' + r.paid.toLocaleString() + ' ' + h.resName(r.to) + '.', 3600);
     return after(r);

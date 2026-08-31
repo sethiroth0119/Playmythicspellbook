@@ -33,7 +33,7 @@
 
 import { MACHINES, machineById } from './machines.js';
 import { machineStatus, isBuilt, HALT, powerCapacity, powerDemand } from './state.js';
-import { FLOOR, SPAWN, LAYOUT, STATIONS, build as buildModel, overrideFor, blockRadius, interactRadius, blocks, srgb } from './models.js';
+import { FLOOR, SPAWN, LAYOUT, STATIONS, build as buildModel, overrideFor, blockRadius, interactRadius, blocks, pushOut, srgb } from './models.js';
 
 /* Glow colour per machine state. This table IS the reason to render a floor at
    all: from the far end of the shed a player should be able to see that the
@@ -48,6 +48,12 @@ const STATE_COLOR = {
   [HALT.NO_RECIPE]:    { hex: 0x8d97a8, pulse: 0.0,  run: false },
   [HALT.BROWNOUT]:     { hex: 0x5aa9e6, pulse: 0.55, run: true },
   [HALT.BROKEN]:       { hex: 0xff5a5a, pulse: 0.9,  run: false },
+  // A dry machine reads amber like the other supply stalls, but slower — it is
+  // a shortage, not a fault, and should not compete with a breakdown for the eye.
+  [HALT.NO_FUEL]:      { hex: 0xd8a05a, pulse: 0.35, run: false },
+  // Under construction: the same cyan the ghost pad used, so a site you are
+  // waiting on reads as continuous with the pad you started from.
+  [HALT.BUILDING]:     { hex: 0x5aa9e6, pulse: 0.5,  run: false },
 };
 const OFF_COLOR   = { hex: 0x3a4048, pulse: 0, run: false };
 const GHOST_COLOR = 0x5aa9e6;
@@ -308,6 +314,21 @@ export function createWorld(host, opts) {
   function tick(now) {
     raf = requestAnimationFrame(tick);
     const dt = Math.min(0.05, last ? (now - last) / 1000 : 0.016); last = now; tSec += dt;
+
+    /* 🔴 UNSTICK FIRST, EVERY FRAME, PAUSED OR NOT.
+       You do not have to walk into a machine to end up inside one: stand on an
+       empty pad and press Build, and the walkable ghost becomes a solid body
+       around you. Collision alone then traps you for good — every candidate
+       position is inside the box, so every move is refused. Running the ejection
+       before movement means the trap lasts a single frame.
+       It runs while paused too, because a build started from a pop-up completes
+       with the panel still open; being freed only after you close it would look
+       like the game had let you go as a favour. */
+    for (const rec of spots) {
+      if (rec.isGhost) continue;
+      const out = pushOut(rec.id, rec.ry, camera.position.x, camera.position.z, rec.x, rec.z);
+      if (out) { camera.position.x = out.x; camera.position.z = out.z; break; }
+    }
 
     /* 🔴 PAUSED FREEZES INPUT, NOT THE FACTORY. An early cut returned early here
        and rendered a still frame behind the pop-up, which made the shed look

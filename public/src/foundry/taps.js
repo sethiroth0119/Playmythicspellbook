@@ -33,12 +33,21 @@ import { stockOf, takeStock, mergeStock, storageCap, storageUsed } from './state
 export const FEED_PRICES = {
   residentialWaste: 4,
   commercialWaste: 7,
-  industrialWaste: 15,
+  industrialWaste: 13,
   electronicWaste: 24,
   organicWaste: 3,
-  crudeOil: 30,
+  crudeOil: 22,
   coal: 11,
   limestone: 8,
+  /* 🔴 THE BOOTSTRAP CONTRACT — DO NOT REMOVE.
+     Every converter burns fuel per batch, but a brand-new Foundry has no fuel
+     and no way to refine any: the Distillation Column costs more than a starting
+     player has, and even once built it needs fuel to run itself. Without a fuel
+     you can BUY, turn one is a deadlock.
+     Priced above what the same diesel would tap for (1.2 x ~110), so buying fuel
+     to burn is a bad deal you grow out of the moment your own still runs. That
+     gap is the progression: buy fuel, then make fuel, then sell fuel. */
+  diesel: 150,
 };
 
 /* 🔴 CALIBRATED AGAINST THE REAL TRADER PRICES, NOT BY FEEL.
@@ -53,7 +62,12 @@ export const FEED_PRICES = {
    near break-even. That gap IS the reward for playing well.
    ⚠ Re-measure against the trader table after ANY change to tap rates, recipe
    yields, or the purity curve — all four multiply together, and eyeballing one
-   in isolation is how the first pass went wrong. */
+   in isolation is how the first pass went wrong.
+   ⚠ CRUDE CAME DOWN 30 → 22 WHEN MACHINES STARTED BURNING FUEL. A good part of
+   the refinery's output is now consumed by the line itself rather than sold, so
+   at the old price crude was being charged at full rate for a product the player
+   only half gets to keep, and a whole 24h day of well-run production came out at
+   0.96x — a loss for playing correctly. */
 
 /* Minimum contract size. Buying one unit at a time turns a supply decision into
    a clicking exercise, and it makes the "can I afford to run for an hour?"
@@ -145,6 +159,7 @@ export const FEED_GRADE = {
   crudeOil: 0.82,
   coal: 0.78,
   limestone: 0.8,
+  diesel: 0.86,   // refinery-grade, bought clean
 };
 
 /* ── OUT: taps ───────────────────────────────────────────────────────────── */

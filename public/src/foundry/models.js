@@ -334,9 +334,46 @@ export function blocks(id, ry, px, pz, cx, cz) {
   const lx = dx * c - dz * s, lz = dx * s + dz * c;
   return Math.abs(lx) < f.w / 2 + PLAYER_R && Math.abs(lz) < f.d / 2 + PLAYER_R;
 }
+/* 🔴 THE UNSTICK. Returns the shortest push that gets a point OUT of a body, or
+   null if it is already clear.
+
+   You can end up inside a machine without ever walking into one: stand on an
+   empty pad, press Build, and the walkable ghost becomes a solid body around
+   you. Collision alone then traps you permanently — every candidate move is
+   inside the box, so every move is rejected, and the only way out is to close
+   the panel. That is the bug this exists for, and blocking the build while a
+   player stands there would only trade it for "why can't I build here?".
+
+   Pushing along the axis of SMALLEST penetration is what makes the ejection feel
+   like being nudged aside rather than flung: from just inside the north face you
+   pop out north, not out the long end of a conveyor. */
+export function pushOut(id, ry, px, pz, cx, cz) {
+  const f = footprintOf(id);
+  const hw = f.w / 2 + PLAYER_R, hd = f.d / 2 + PLAYER_R;
+  const dx = px - cx, dz = pz - cz;
+  const c = Math.cos(-ry || 0), sn = Math.sin(-ry || 0);
+  const lx = dx * c - dz * sn, lz = dx * sn + dz * c;
+  const ox = hw - Math.abs(lx), oz = hd - Math.abs(lz);
+  if (ox <= 0 || oz <= 0) return null;               // already outside
+  /* 🔴 CLEAR THE FACE BY EPS, DO NOT LAND ON IT. Pushing to exactly ±hw put the
+     point on the boundary, where `blocks` is false only by a strict <. Rotating
+     that back into world space and re-testing reintroduced float error, and 971
+     of 3,583 interior points tested as STILL STUCK — the unstick silently did
+     nothing for a quarter of the floor. 2 cm is imperceptible and unambiguous. */
+  const EPS = 0.02;
+  let nlx = lx, nlz = lz;
+  // Ties go to x so the choice is deterministic; dead centre (lx === 0) takes
+  // the positive face rather than needing a special case.
+  if (ox <= oz) nlx = (lx >= 0 ? 1 : -1) * (hw + EPS);
+  else nlz = (lz >= 0 ? 1 : -1) * (hd + EPS);
+  // Back to world space (inverse of the -ry rotation above).
+  const ic = Math.cos(ry || 0), is = Math.sin(ry || 0);
+  return { x: cx + (nlx * ic - nlz * is), z: cz + (nlx * is + nlz * ic) };
+}
+
 /* Still a circle — a prompt that only appears inside a rectangle would feel
    arbitrary, and generous is the right failure mode for "can I reach this?". */
 export function interactRadius(id) { const f = footprintOf(id); return Math.max(f.w, f.d) * 0.5 + 2.2; }
 export function blockRadius(id) { const f = footprintOf(id); return Math.max(f.w, f.d) * 0.5 + PLAYER_R; }
 
-export default { FLOOR, SPAWN, LAYOUT, STATIONS, build, overrideFor, footprintOf, blockRadius, interactRadius, blocks, PLAYER_R, srgb };
+export default { FLOOR, SPAWN, LAYOUT, STATIONS, build, overrideFor, footprintOf, blockRadius, interactRadius, blocks, pushOut, PLAYER_R, srgb };

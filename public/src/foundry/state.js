@@ -27,6 +27,7 @@ import {
 import {
   MACHINES, machineById, BROWNOUT_SPEED, conditionSpeed,
   trimSpeed, trimPurity, levelSpeed, levelBuffer, repairCost,
+  buildSeconds, fmtDur, FUEL_ORDER,
 } from './machines.js';
 
 export const STATE_VERSION = 1;
@@ -52,6 +53,8 @@ export const HALT = {
   STORAGE_FULL: 'storage-full',
   BROKEN: 'broken',
   BROWNOUT: 'brownout',
+  BUILDING: 'building',
+  NO_FUEL: 'no-fuel',
 };
 
 export const HALT_TEXT = {
@@ -62,6 +65,8 @@ export const HALT_TEXT = {
   [HALT.STORAGE_FULL]: 'Yard is full',
   [HALT.BROKEN]: 'Broken — needs repair',
   [HALT.BROWNOUT]: 'Brownout — not enough power',
+  [HALT.BUILDING]: 'Under construction',
+  [HALT.NO_FUEL]: 'Out of fuel',
 };
 
 /* ── Stock helpers ───────────────────────────────────────────────────────── */
@@ -139,11 +144,62 @@ export function machineState(st, id) {
        fast recipes ran fine, so the line looked half-alive. Every field
        runMachine touches has to survive this function. */
     carryMs: Math.max(0, Number(m.carryMs) || 0),
+    /* Like carryMs, this MUST survive the normaliser — runMachine, machineStatus
+       and powerDemand all decide what to do from it. */
+    build: (m.build && typeof m.build === 'object') ? m.build : null,
   };
 }
 
 export const isBuilt = (st, id) => !!machineState(st, id);
 export const builtMachines = (st) => MACHINES.filter(d => isBuilt(st, d.id));
+
+/* ⏳ CONSTRUCTION. A machine under construction EXISTS (it occupies its spot and
+   the player has already paid) but does not run, draw power, or wear.
+
+   🔴 THE COST IS TAKEN AT THE START, NOT ON COMPLETION. Paying up front is what
+   makes a long build a commitment rather than a free reservation, and it means
+   there is no window where a player can queue six builds they cannot afford and
+   have five of them fail an hour later with nothing to show. It also keeps the
+   refund path identical to the instant-build one it replaced. */
+export function buildInfo(st, id, nowMs) {
+  const m = st.machines && st.machines[id];
+  const b = m && m.build;
+  if (!b || typeof b !== 'object') return null;
+  const now = Number(nowMs) || Date.now();
+  const left = Math.max(0, (Number(b.done) || 0) - now);
+  const secs = Math.max(1, Number(b.secs) || 1);
+  return {
+    left, leftS: Math.ceil(left / 1000), secs,
+    to: b.to | 0, fresh: !!b.fresh,
+    pct: Math.max(0, Math.min(1, 1 - (left / (secs * 1000)))),
+    text: fmtDur(Math.ceil(left / 1000)),
+  };
+}
+
+/* Finish anything whose timer has elapsed by `nowMs`. Called once per simulated
+   slice so a build that completes mid-catch-up produces for the rest of the
+   window, rather than all builds landing at the end of it. Returns the ids that
+   finished, so the caller can tell the player what happened while they were away. */
+export function settleBuilds(st, nowMs) {
+  const now = Number(nowMs) || Date.now();
+  const done = [];
+  for (const id in st.machines) {
+    const m = st.machines[id];
+    const b = m && m.build;
+    if (!b || typeof b !== 'object') continue;
+    if ((Number(b.done) || 0) > now) continue;
+    // `to` is the level the work was paying for; a fresh build lands at 1.
+    m.lv = Math.max(1, b.to | 0);
+    /* A finished machine starts at full condition even on an upgrade — you have
+       just rebuilt it. Not resetting here would let a player upgrade a 12%
+       machine and get a level-4 wreck for full price. */
+    m.cond = 100;
+    m.carryMs = 0;
+    delete m.build;
+    done.push(id);
+  }
+  return done;
+}
 
 /* ── Capacity ────────────────────────────────────────────────────────────── */
 
@@ -166,7 +222,7 @@ export function storageUsed(st) {
    to exist before the crush line can run at full speed. */
 export function powerCapacity(st) {
   const p = machineState(st, 'powerhouse');
-  if (!p || !p.on || p.cond <= 0) return 0;
+  if (!p || !p.on || p.cond <= 0 || p.build) return 0;
   const def = machineById('powerhouse');
   const hasFuel = def.burns.some(f => qtyOf(st, f) > 0);
   if (!hasFuel) return 0;
@@ -179,9 +235,31 @@ export function powerDemand(st) {
     if (d.kind !== 'converter') continue;
     const m = machineState(st, d.id);
     if (!m || !m.on || m.cond <= 0 || !m.recipe) continue;
+    // A construction site draws nothing. Counting it would brown out the whole
+    // line for an hour because one machine is being BUILT, which reads as a bug.
+    if (m.build) continue;
     n += d.power | 0;
   }
   return n;
+}
+
+/* ⛽ FUEL ON HAND, across every fuel the building will burn. */
+export function fuelOnHand(st) {
+  let n = 0;
+  for (const f of FUEL_ORDER) n += qtyOf(st, f);
+  return n;
+}
+
+/* Draw `want` units, cheapest-value fuel first. Returns what it actually got —
+   the caller decides whether a short draw is a halt or a partial burn. */
+function drawFuel(st, want) {
+  let need = want, got = 0;
+  for (const f of FUEL_ORDER) {
+    if (need <= 1e-9) break;
+    const t = takeStock(st, f, need);
+    got += t; need -= t;
+  }
+  return got;
 }
 
 /* ── Ordering ────────────────────────────────────────────────────────────── */
@@ -237,18 +315,21 @@ export function runOrder(st) {
 /* Per-machine status for the UI. Pure — it must not mutate, because render.js
    calls it on every repaint and a status read that quietly consumed inputs
    would make the factory run faster the more you looked at it. */
-export function machineStatus(st, id) {
+export function machineStatus(st, id, nowMs) {
   const def = machineById(id);
   const m = machineState(st, id);
   if (!def || !m) return null;
   const cap = powerCapacity(st), dem = powerDemand(st);
   const brown = dem > cap;
   let halt = HALT.OK;
-  if (m.cond <= 0) halt = HALT.BROKEN;
+  const bi = buildInfo(st, id, nowMs);
+  if (bi) halt = HALT.BUILDING;
+  else if (m.cond <= 0) halt = HALT.BROKEN;
   else if (def.kind === 'converter' && !m.recipe) halt = HALT.NO_RECIPE;
   else if (def.kind === 'converter') {
     const r = recipeById(m.recipe);
     if (!r) halt = HALT.NO_RECIPE;
+    else if ((def.burn || 0) > 0 && fuelOnHand(st) < def.burn) halt = HALT.NO_FUEL;
     else if (!canRun(st, r)) halt = HALT.STARVED;
     else if (bufferFull(st, def, m, r)) halt = HALT.BUFFER_FULL;
     // Same NET rule the run loop uses — a status that said STORAGE_FULL while
@@ -257,8 +338,9 @@ export function machineStatus(st, id) {
     else if (brown) halt = HALT.BROWNOUT;
   }
   return {
-    def, ...m, halt, haltText: HALT_TEXT[halt],
-    speed: effectiveSpeed(st, def, m, brown),
+    def, ...m, halt, haltText: bi ? ('Under construction — ' + bi.text + ' left') : HALT_TEXT[halt],
+    building: bi,
+    speed: bi ? 0 : effectiveSpeed(st, def, m, brown),
     buffer: levelBuffer(def, m.lv),
     brownout: brown,
   };
@@ -323,6 +405,7 @@ function fracLedger(st, id) {
 function runMachine(st, def, ms, brown, room) {
   const m = machineState(st, def.id);
   if (!m || !m.on || m.cond <= 0) return 0;
+  if (m.build) return 0;                 // under construction — not yet a machine
   const r = m.recipe ? recipeById(m.recipe) : null;
   if (!r) return 0;
 
@@ -334,8 +417,13 @@ function runMachine(st, def, ms, brown, room) {
   let batches = 0;
   const cap = levelBuffer(def, m.lv);
 
+  const burn = def.burn || 0;
   while (budget >= perBatchMs) {
     if (!canRun(st, r)) break;
+    /* ⛽ Fuel is checked BEFORE the inputs are taken and drawn only once the
+       batch is committed, so a machine that runs dry never half-consumes a
+       batch's feedstock and leaves the player short with nothing to show. */
+    if (burn > 0 && fuelOnHand(st) < burn) break;
     if (cap) {
       let held = 0;
       for (const k in normOut(r)) held += qtyOf(st, k);
@@ -367,6 +455,7 @@ function runMachine(st, def, ms, brown, room) {
     if ((room.left + inSum) < outSum) break;
 
     for (const k in need) takeStock(st, k, need[k]);
+    if (burn > 0) { drawFuel(st, burn); room.left += burn; }
     room.left += inSum;
 
     const frac = fracLedger(st, def.id);
@@ -445,11 +534,15 @@ export function tick(st, h, nowMs) {
      Device clock changes and timezone-shifted resumes both produce one. Clamp to
      zero and re-anchor, rather than letting a subtraction run the line in
      reverse or a huge negative become a huge positive downstream. */
-  if (elapsed < 0) { st.lastTick = now; return { elapsedMs: 0, batches: 0, capped: false, produced: {} }; }
+  if (elapsed < 0) { st.lastTick = now; return { elapsedMs: 0, batches: 0, capped: false, produced: {}, finished: settleBuilds(st, now) }; }
 
   const capped = elapsed > capMs;
   if (capped) elapsed = capMs;
-  if (elapsed < 1000) { st.lastTick = now; return { elapsedMs: 0, batches: 0, capped: false, produced: {} }; }
+  /* 🔴 SETTLE EVEN ON A SUB-SECOND TICK. The UI repaints every few seconds, so
+     without this a build finishing while the player watches would not land until
+     something else moved the clock a full second — the timer would visibly hit
+     zero and the machine would sit there inert. */
+  if (elapsed < 1000) { st.lastTick = now; return { elapsedMs: 0, batches: 0, capped: false, produced: {}, finished: settleBuilds(st, now) }; }
 
   const before = {};
   for (const k in st.inv) before[k] = st.inv[k].qty;
@@ -459,7 +552,16 @@ export function tick(st, h, nowMs) {
   if (slices > MAX_SLICES) { slices = MAX_SLICES; sliceMs = elapsed / slices; }
 
   let batches = 0;
+  const finished = [];
+  /* Walk a simulated clock alongside the slices so a build that completes part
+     way through an offline window starts producing for the REST of that window.
+     Settling them all at the end instead would silently cost a player hours of
+     output on anything they left building overnight. */
+  let simNow = (Number(st.lastTick) || now);
   for (let i = 0; i < slices; i++) {
+    simNow += sliceMs;
+    const justDone = settleBuilds(st, simNow);
+    if (justDone.length) finished.push.apply(finished, justDone);
     const order = runOrder(st);
     const brown = powerDemand(st) > powerCapacity(st);
     const room = { left: Math.max(0, storageCap(st) - storageUsed(st)) };
@@ -472,8 +574,12 @@ export function tick(st, h, nowMs) {
     const d = Math.round(st.inv[k].qty - (before[k] || 0));
     if (d > 0) produced[k] = d;
   }
+  // A build whose timer sat inside the clamped-away part of a very long absence
+  // must still land — settle once more against the real clock.
+  const late = settleBuilds(st, now);
+  if (late.length) finished.push.apply(finished, late);
   st.lastTick = now;
-  return { elapsedMs: elapsed, batches, capped, produced };
+  return { elapsedMs: elapsed, batches, capped, produced, finished };
 }
 
 /* ── Player actions. Every one returns { ok, why } — never throws. ───────── */
@@ -509,7 +615,15 @@ export function nextCost(def, lv) {
   return (def.cost && def.cost[i]) || null;
 }
 
-export function build(st, h, machineId) {
+/* 🔴 `nowMs` IS NOT DECORATION. build/upgrade stamp a completion time and tick()
+   compares it against the clock IT was handed. Hard-coding Date.now() here made
+   the two disagree the moment anything drove the simulation from a clock of its
+   own — a headless run of a 2-minute build advanced 8 simulated hours and the
+   machine was still "1m left", because its deadline had been stamped in real
+   time while the world moved in simulated time. Production passes nothing and
+   gets Date.now(); a test or a replay passes its own clock and both halves
+   agree. Any future writer of a timestamp into state must take the same param. */
+export function build(st, h, machineId, nowMs) {
   const def = machineById(machineId);
   if (!def) return { ok: false, why: 'Unknown machine.' };
   if (isBuilt(st, machineId)) return { ok: false, why: 'Already built.' };
@@ -517,9 +631,18 @@ export function build(st, h, machineId) {
   if (!cost) return { ok: false, why: 'No build cost defined.' };
   const paid = h.spendCost(cost);
   if (!paid.ok) return { ok: false, why: paid.why };
-  st.machines[machineId] = { lv: 1, cond: 100, recipe: null, on: true, carryMs: 0 };
+  const secs = buildSeconds(cost);
+  const now = Number(nowMs) || Date.now();
+  st.machines[machineId] = {
+    lv: 1, cond: 100, recipe: null, on: true, carryMs: 0,
+    /* Construction starts now and the machine is inert until it lands. `fresh`
+       marks a first build so the UI can say "Building" rather than "Upgrading",
+       and so the world can show a site instead of a working machine. */
+    build: { done: now + secs * 1000, secs, to: 1, fresh: true },
+  };
   // Default to the first recipe so a freshly built machine is not a mystery box
-  // sitting at "No recipe selected" — the player can change it immediately.
+  // sitting at "No recipe selected" — the player can change it immediately, and
+  // it starts producing the moment construction finishes rather than idling.
   const rs = recipesFor(machineId);
   if (rs.length) st.machines[machineId].recipe = rs[0].id;
   if (!h.save()) {
@@ -530,31 +653,41 @@ export function build(st, h, machineId) {
     delete st.machines[machineId];
     return { ok: false, why: 'Could not save — the build was refunded.' };
   }
-  return { ok: true };
+  return { ok: true, secs, building: true };
 }
 
-export function upgrade(st, h, machineId) {
+export function upgrade(st, h, machineId, nowMs) {
   const def = machineById(machineId);
   const m = machineState(st, machineId);
   if (!def || !m) return { ok: false, why: 'That machine is not built yet.' };
   if (m.lv >= (def.maxLevel | 0)) return { ok: false, why: 'Already at maximum level.' };
   const cost = nextCost(def, m.lv);
   if (!cost) return { ok: false, why: 'No upgrade cost defined.' };
+  if (m.build) return { ok: false, why: 'Already under construction.' };
   const paid = h.spendCost(cost);
   if (!paid.ok) return { ok: false, why: paid.why };
-  st.machines[machineId].lv = m.lv + 1;
+  /* 🔴 THE LEVEL DOES NOT MOVE UNTIL THE WORK IS DONE, and the machine is OFFLINE
+     while it happens. Granting the level immediately and letting it keep running
+     would make an upgrade strictly free — you would take the higher output the
+     instant you could afford it and never weigh anything. Losing the machine's
+     output for the duration is the cost that makes "upgrade now or after this
+     batch?" a real question. */
+  const secs = buildSeconds(cost);
+  const now = Number(nowMs) || Date.now();
+  st.machines[machineId].build = { done: now + secs * 1000, secs, to: m.lv + 1, fresh: false };
   if (!h.save()) {
     h.refundCost(cost);
-    st.machines[machineId].lv = m.lv;
+    delete st.machines[machineId].build;
     return { ok: false, why: 'Could not save — the upgrade was refunded.' };
   }
-  return { ok: true, lv: m.lv + 1 };
+  return { ok: true, lv: m.lv + 1, secs, building: true };
 }
 
 export function repair(st, h, machineId) {
   const def = machineById(machineId);
   const m = machineState(st, machineId);
   if (!def || !m) return { ok: false, why: 'That machine is not built yet.' };
+  if (m.build) return { ok: false, why: 'It is still being built.' };
   if (m.cond >= 100) return { ok: false, why: 'Already in perfect condition.' };
   const cost = repairCost(def, m.cond);
   const paid = h.spendCost(cost);
@@ -570,9 +703,9 @@ export function repair(st, h, machineId) {
 
 export default {
   STATE_VERSION, HALT, HALT_TEXT,
-  ensureState, machineState, isBuilt, builtMachines,
+  ensureState, machineState, isBuilt, builtMachines, buildInfo, settleBuilds,
   stockOf, qtyOf, mergeStock, takeStock,
-  storageCap, storageUsed, powerCapacity, powerDemand, runOrder,
+  storageCap, storageUsed, powerCapacity, powerDemand, runOrder, fuelOnHand,
   machineStatus, tick,
   setTrim, setRecipe, toggleMachine, build, upgrade, repair, nextCost,
 };

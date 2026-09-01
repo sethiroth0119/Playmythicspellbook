@@ -9,7 +9,7 @@
      believed the file was already live. Only a CONTENT change moves the hash
      and forces a re-upload, so bump this stamp whenever the city 404s, and
      probe it (grep NC_BUILD on the served page) to prove the deploy landed. -->
-<script>window.NC_BUILD = "v120i2-city";</script>
+<script>window.NC_BUILD = "v120x0-vocation";</script>
 <!-- ════════════════════════════════════════════════════════════════════════
      NODE CITY — SimCity-style settlement layer for Mythic Spellbook.
      Three.js WebGPU (auto-falls back to WebGL2). Realistic sun/moon cycle.
@@ -529,6 +529,13 @@
   .cpname{display:block;font-size:12.5px;}
   .cpmeta{display:block;font-size:10px;color:var(--mist);}
   .cpempty{font-size:11.5px;color:var(--mist);padding:8px 0;}
+  /* 🧑‍🌾 Aptitude line in the picker. The list is sorted best-first, so the
+     border-tint is what makes that ordering legible at a glance rather than
+     something the player has to infer from the numbers. */
+  .cpvoc{display:block;font-size:10px;margin-top:2px;}
+  .cpcard.apt{border-color:rgba(122,214,140,.55);background:#111a15;}
+  .cpcard.apt .cpvoc{color:#7ad68c;}
+  .cpcard.flat .cpvoc{color:var(--mist);opacity:.75;}
 
   /* ── Toasts ── */
   /* ⚠ z-index 9850, not 9. Toasts are the ONLY feedback several dossier actions
@@ -1576,19 +1583,29 @@ const MythicCityBridge = (() => {
   // type ∈ Hero|Unit|Kalon|Spell|Equipment|Artifact|Relic|Structure.
   // assignCard(id, on) marks a card as city-assigned (lock it from decks/
   // market while slotted); consumeCard(id) burns it (Structure builds).
+  /* 🧑‍🌾 `level` and `vocation` are the two fields the city's aptitude maths
+     reads (the parent supplies them from Profile.units + the account's vocation
+     salt — see cityCardCollection in index.html). They are LITERAL here rather
+     than derived, because fetchCards runs before /src/vocation mounts and
+     because a mock whose values move between reloads is useless for checking a
+     multiplier. The spread is chosen to cover every branch of aptitude() in one
+     standalone city: a perfect match (c5 Lv 50 nature Farmhand → ×2.00 in a
+     Farm), a clashing element (c1 lava Farmhand — scorched fields), a low
+     level (c4 Lv 3), an
+     off-vocation card (c3), and one card with no vocation at all (c9). */
   const MOCK_CARDS = [
-    { id: 'c1',  name: 'Emberling Kalon',       type: 'Kalon',     element: 'fire',  power: 18, rarity: 'rare' },
-    { id: 'c2',  name: 'Tidecaller Kalon',      type: 'Kalon',     element: 'water', power: 14, rarity: 'uncommon' },
-    { id: 'c3',  name: 'Warden Aeric',          type: 'Hero',      element: 'earth', power: 22, rarity: 'epic' },
-    { id: 'c4',  name: 'Scout Lyra',            type: 'Hero',      element: 'wind',  power: 12, rarity: 'common' },
-    { id: 'c5',  name: 'Stoneheart Golem',      type: 'Unit',      element: 'earth', power: 16, rarity: 'rare' },
-    { id: 'c6',  name: 'Rain Sigil',            type: 'Spell',     element: 'water', power: 10, rarity: 'common' },
-    { id: 'c7',  name: 'Forge Blessing',        type: 'Spell',     element: 'fire',  power: 15, rarity: 'uncommon' },
-    { id: 'c8',  name: 'Wardplate',             type: 'Equipment', element: 'earth', power: 13, rarity: 'uncommon' },
-    { id: 'c9',  name: "Seeker's Lantern",      type: 'Equipment', element: 'light', power: 11, rarity: 'common' },
-    { id: 'c10', name: 'Obsidian Shard',        type: 'Artifact',  element: 'dark',  power: 20, rarity: 'epic' },
-    { id: 'c11', name: 'Ethos Foundation Stone',type: 'Structure', element: 'light', power: 25, rarity: 'legendary' },
-    { id: 'c12', name: 'Kalon Den Blueprint',   type: 'Structure', element: 'earth', power: 19, rarity: 'epic' },
+    { id: 'c1',  name: 'Emberling Kalon',       type: 'Kalon',     element: 'lava',  power: 18, rarity: 'rare',      level: 40, vocation: 'farmhand' },
+    { id: 'c2',  name: 'Tidecaller Kalon',      type: 'Kalon',     element: 'water', power: 14, rarity: 'uncommon',  level: 22, vocation: 'waterwarden' },
+    { id: 'c3',  name: 'Warden Aeric',          type: 'Hero',      element: 'earth', power: 22, rarity: 'epic',      level: 35, vocation: 'constable' },
+    { id: 'c4',  name: 'Scout Lyra',            type: 'Hero',      element: 'wind',  power: 12, rarity: 'common',    level: 3,  vocation: 'forester' },
+    { id: 'c5',  name: 'Stoneheart Golem',      type: 'Unit',      element: 'nature',power: 16, rarity: 'rare',      level: 50, vocation: 'farmhand' },
+    { id: 'c6',  name: 'Rain Sigil',            type: 'Spell',     element: 'water', power: 10, rarity: 'common',    level: 8,  vocation: 'cook' },
+    { id: 'c7',  name: 'Forge Blessing',        type: 'Spell',     element: 'fire',  power: 15, rarity: 'uncommon',  level: 27, vocation: 'metallurgist' },
+    { id: 'c8',  name: 'Wardplate',             type: 'Equipment', element: 'earth', power: 13, rarity: 'uncommon',  level: 15, vocation: 'prospector' },
+    { id: 'c9',  name: "Seeker's Lantern",      type: 'Equipment', element: 'light', power: 11, rarity: 'common',    level: 12, vocation: null },
+    { id: 'c10', name: 'Obsidian Shard',        type: 'Artifact',  element: 'void',  power: 20, rarity: 'epic',      level: 44, vocation: 'riftwarden' },
+    { id: 'c11', name: 'Ethos Foundation Stone',type: 'Structure', element: 'light', power: 25, rarity: 'legendary', level: 50, vocation: 'polymath' },
+    { id: 'c12', name: 'Kalon Den Blueprint',   type: 'Structure', element: 'earth', power: 19, rarity: 'epic',      level: 30, vocation: 'hauler' },
   ];
   B.fetchCards = async () => {
     if (B.mode === 'parent') {
@@ -2304,6 +2321,49 @@ const BUILDINGS = {
               svc: { need: 'safety', supply: 0.25 },
               desc: 'Platforms, a signal box and a freight shed. The only thing in the city that can move a crowd of thousands in one cycle — worth +2,500 to a stadium’s arrival capacity, twenty Motor Pools’ worth.' },
 };
+
+/* ══ 🧑‍🌾 EVERY WORKING BUILDING GETS A CARD SOCKET ═══════════════════════════
+   Until vocations landed, four buildings in the whole city had a socket — the
+   Arena, the Player Shop, the Kalon Stable and the Stadium — and a socketed
+   card meant one flat thing everywhere (+power/100, see socketBoost). A unit's
+   speciality had nothing to attach to: there was no Farm to put a Farmhand in.
+
+   So sockets open up to everything that DOES WORK. The rule is one line and is
+   deliberately derived rather than hand-listed, because a hand-list is a thing
+   that goes stale the next time somebody adds a building:
+
+     a building gets a socket ⟺ it has `gen` or `svc`
+
+   which is exactly the set whose output tileMult() multiplies. Anything else
+   would print an aptitude the tick ignores:
+     · Warehouse       — `stockCap` is a flat capacity, never multiplied.
+     · Kalon Stable    — a card SINK (kalonCityBoost), not a rate. Already has
+                         its own socket and is deliberately left as it was.
+     · Stadium         — earns only through a scheduled event. Same: untouched.
+     · Financial desks — `fin` lifts other tiles; their own rate is nil.
+     · 🔴 Resting House — the one that would actively HURT. It has `use` and no
+                         `gen`, so a multiplier there makes it eat more rations
+                         and produce nothing extra. A good roll must never be a
+                         punishment; `gen || svc` excludes it for free.
+   ⚠ `sockets` is only ever ADDED, never overwritten, so the four buildings that
+     already had one keep exactly the socket they had. */
+for (const _bid in BUILDINGS) {
+  const _bd = BUILDINGS[_bid];
+  if (!_bd || _bd.sockets) continue;
+  // 🔴 …AND NEVER AN OPERATION. The Just Business blueprints register themselves
+  //    into BUILDINGS further down this file (see OP_BP / opsKeyOf), three of
+  //    them with an `svc`, so this rule would hand them sockets too. They must
+  //    not have one: an operation is already staffed by workers the player HIRED
+  //    in Just Business, sited on a plot with its own efficiency bonus, and
+  //    settled through the parent's ledger rather than by this tick. A second,
+  //    unrelated staffing story on the same tile is confusion, not depth.
+  //    They are excluded TODAY only because this loop runs before they exist —
+  //    which is an accident of ordering, and accidents of ordering get moved.
+  //    The guard is explicit so the exclusion survives the move.
+  if (_bd.opType) continue;
+  if (_bd.gen || _bd.svc) _bd.sockets = 1;
+}
+
 /* 🏗 BUILD SECTIONS — what each placeable is FOR. Anything in BUILD_ORDER
    that is missing from a section falls into "Other" automatically, so adding a
    building to BUILDINGS can never make it unreachable in the shop. */
@@ -16516,7 +16576,13 @@ function tileMult(x, z, t, staff, powered) {
         * (def.crew ? staff : 1) * weatherMult(t.type)
         * (gov.mayorName ? MAYOR_PROD : 1)
         * kalonCityBoost()
-        * (1 + socketBoost(t));
+        * (1 + socketBoost(t))
+        /* 🧑‍🌾 The socketed card's APTITUDE for this specific building — see
+           aptitudeMult(). Multiplicative and deliberately INSIDE the cap below,
+           for the same reason FIN_BOOST_EACH is: a bonus that dodged
+           TILE_MULT_CAP is how the old Cinder Forge happened. ×1 when there is
+           no card, no vocation match, or no module. */
+        * aptitudeMult(t);
   if (t.type === 'arena') m *= Math.max(.3, wellbeing.morale / 50);   // crowds follow morale
   /* 💹 THE FINANCIAL DISTRICT'S LIFT. Only Cinder EARNERS feel it — a farm does
      not sell anything, so an investment house has nothing to leverage there.
@@ -16527,8 +16593,8 @@ function tileMult(x, z, t, staff, powered) {
   if (def.powerNeed) m *= powered;
   /* 🧯 THE CEILING. Everything above is MULTIPLICATIVE and, until this line,
      unbounded: adjacency × 2^(lvl-1) × staffing × weather × mayor × Kalon ×
-     (1 + sockets) × morale × power, and then tileOutputFactor() multiplies the
-     result again by commerce/labour/efficiency. Each term is individually
+     (1 + sockets) × aptitude × morale × power, and then tileOutputFactor()
+     multiplies the result again by commerce/labour/efficiency. Each term is individually
      reasonable. The product was not — it is how one player reached ~16,000,000
      🔥/day, roughly 27x above what the per-building caps should have allowed.
 
@@ -17350,9 +17416,42 @@ function insFactors(x, z, t) {
   if (kb !== 1) f.push({ l: '🐲 Stabled Kalons, city-wide', v: kb });
   const sb = socketBoost(t);
   if (sb) { const c = cardById(t.card); f.push({ l: '🃏 ' + logEsc(c ? c.name : 'Socketed card') + ' — ⚡' + (c ? c.power : 0), v: 1 + sb }); }
+  /* 🧑‍🌾 Aptitude is its OWN row, not folded into the socket row above, because
+     the two answer different questions: the socket row is "this card is worth
+     ⚡n anywhere", this one is "…and it is a Farmhand, standing in a Farm". A
+     player who cannot see which leg produced the number cannot act on it —
+     which is the whole reason this card decomposes tileMult at all. */
+  const ap = cardAptitude(t);
+  if (ap && ap.mult > 1) {
+    const el = ap.elem === 'attuned' ? ' · <span class="on">' + logEsc(ap.element) + ' in tune</span>'
+             : ap.elem === 'clash'   ? ' · <span class="dn">' + logEsc(ap.element) + ' fights the work</span>' : '';
+    f.push({ l: ap.voc.icon + ' ' + logEsc(ap.voc.name) + ' — knows this work · Lv ' + ap.level + el, v: ap.mult });
+  }
   if (t.type === 'arena') f.push({ l: '😊 City morale ' + Math.round(wellbeing.morale) + ' — crowds follow it', v: Math.max(.3, wellbeing.morale / 50) });
   if (def.powerNeed) f.push({ l: (game.power.factor < 1 ? '⚡ BROWNOUT — grid ' : '⚡ Powered — grid ') +
     game.power.gen.toFixed(1) + ' / ' + game.power.demand.toFixed(1) + ' per min', v: game.power.factor });
+  /* 🧯 THE CEILING, SHOWN AS A ROW. tileMult() clamps its product to
+     TILE_MULT_CAP; this card did not, so a capped tile printed rows that
+     multiplied to more than the total in its own prose line, with nothing to
+     say where the difference went.
+
+     That was survivable while ×5 was hard to reach. Aptitude makes it easy —
+     it is worth up to a doubling on its own — so a player can now slot the
+     perfect unit into an already-maxed building, watch the output not move, and
+     have the panel show them a ×2.00 row that the economy silently ignored.
+     "Your best card did nothing and here is no reason why" is the single worst
+     thing this feature could tell someone. The row is the reason.
+
+     ⚠ It is computed from THESE ROWS, not from tileMult, so the card stays
+       internally consistent. Note that means it does not know about finBoost,
+       which tileMult applies to Cinder earners and this list has never carried
+       — a pre-existing gap in the decomposition, not one this row introduces,
+       and one that only ever makes the ceiling row slightly conservative. */
+  const capProd = f.reduce((a, o) => a * o.v, 1);
+  if (capProd > TILE_MULT_CAP + 1e-9) {
+    f.push({ l: '🧯 City output ceiling — no single tile may earn more than ×' + TILE_MULT_CAP +
+      '. Bonuses past this point are not paid.', v: TILE_MULT_CAP / capProd });
+  }
   return { b, f, lvlMul };
 }
 /* The city-conditions row is kept OUT of insFactors' product because it is not
@@ -17605,6 +17704,27 @@ function insSystems(t, x, z) {
   if (def.sockets) {
     const c = t.card && cardById(t.card);
     rows.push(insFac('🃏 Card socket', c ? '<span class="hl">' + logEsc(c.name) + '</span> ⚡' + c.power : 'empty'));
+    /* 🧑‍🌾 Two rows, and the EMPTY case gets one too. A socket that says only
+       "empty" tells a player nothing about what to put in it; naming the trades
+       that suit this building is the entire discoverability of the feature —
+       otherwise the only way to learn that a Farm wants a Farmhand is to own
+       one already. */
+    if (VOC) {
+      if (c) {
+        const a = cardAptitude(t);
+        rows.push(insFac('🧑‍🌾 Aptitude here', a && a.mult > 1
+            ? '<span class="hl">' + VOC.aptitudeLabel(a) + '</span>'
+            : '<span class="dn">×1.00</span>',
+          a && a.mult > 1 ? 'up' : ''));
+        rows.push(insFac('&nbsp;&nbsp;↳ why', '<span style="opacity:.85">' +
+          logEsc(VOC.aptitudeWhy(a, 'the ' + def.name)) + '</span>'));
+      } else {
+        const want = VOC.VOCATIONS.filter(v => VOC.covers(v, t.type, BUILDINGS));
+        if (want.length) rows.push(insFac('🧑‍🌾 Wants',
+          want.map(v => v.icon + ' ' + logEsc(v.name)).join(' · ') +
+          ' <span style="opacity:.7">— up to ×' + VOC.APT.CAP.toFixed(2) + ' at Lv ' + VOC.APT.LVL_MAX + ' in tune</span>'));
+      }
+    }
   }
   if (def.powerNeed) rows.push(insFac('⚡ Grid draw', (def.powerNeed * t.lvl).toFixed(2) + '/min'));
   if (def.stockCap) rows.push(insFac('🏬 Storage added', '+' + def.stockCap * t.lvl + ' each good'));
@@ -18123,9 +18243,17 @@ function openInspect(k) {
           t.card = null; computeLinks(); openInspect(selectedKey); saveSoon();
         } else openCardPicker('Slot a card into the ' + def.name, c => c.type !== 'Structure', (c) => {
           t.card = c.id; MythicCityBridge.assignCard(c.id, true);
-          toast('🃏 ' + c.name + ' now empowers the ' + def.name + ' (+' + c.power + (def.gen ? '% output' : ' defense') + ').', 'good');
+          /* 🧑‍🌾 Say what the player actually got. The old line reported only the
+             flat +power leg, which after vocations would have understated a
+             matched unit by up to a full doubling — a toast that disagrees with
+             the dossier is how a player learns not to trust either. */
+          const a = cardAptitude(t);
+          const base = '🃏 ' + c.name + ' now empowers the ' + def.name + ' (+' + c.power + (def.gen ? '% output' : ' defense') + ')';
+          toast(a && a.mult > 1
+            ? base + ' — ' + a.voc.icon + ' ' + a.voc.name + ', output ' + VOC.aptitudeLabel(a) + '.'
+            : base + '.', 'good');
           computeLinks(); openInspect(selectedKey); saveSoon();
-        });
+        }, t.type);
       };
     } else if (t.type === 'resthouse') {
       /* 🛏 Its own dialog rather than a fourth dossier tab: billeting is six
@@ -19388,7 +19516,8 @@ async function moraleTick(dtSec) {
   if (pop > 0) {
     /* 🍽 DEMAND FOLLOWS SUPPLY — the asymmetry this fixes.
        Every producer in the city is multiplied by tileMult (adjacency × level ×
-       staffing × weather × mayor × Kalon × sockets, capped at TILE_MULT_CAP=5).
+       staffing × weather × mayor × Kalon × sockets × aptitude, capped at
+       TILE_MULT_CAP=5).
        Consumption was a FLAT per-citizen rate multiplied by nothing at all. So
        supply scaled 5x with development and demand scaled 1x, and a fully
        buffed farm fed FIVE HUNDRED citizens. Food filled the shared 2,000-unit
@@ -19605,6 +19734,50 @@ function freeCards() { const used = assignedCardIds(); return CARDS.filter(c => 
 function socketBoost(t) {                          // slotted card → building boost
   const c = t.card && cardById(t.card);
   return c ? c.power / 100 : 0;
+}
+
+/* ══ 🧑‍🌾 VOCATIONS — the socketed card's APTITUDE for THIS building ═════════
+   socketBoost() above is the old, flat story: any card in any socket is worth
+   +power/100, so a Lv-50 nature unit and a Lv-1 void unit were interchangeable
+   in a Farm. Aptitude is the answer to the question that story never asked —
+   is this unit any good at THIS JOB?
+
+   Three legs, all of them the player's own progression:
+     · VOCATION — a per-unit speciality naming the buildings it has a knack for.
+     · ELEMENT  — does its element suit the work (a nature unit on a Farm) or
+                  fight it (a lava unit on a Farm)?
+     · LEVEL    — a veteran out-works a rookie at the same bench.
+   Full match at Lv 50 is ×2.00 — a doubled building — and that ceiling is
+   clamped in the module, not emergent, because it is a promise the dossier
+   prints to the player.
+
+   🔴 THE MATHS IS NOT HERE. It lives in /src/vocation/vocation.js, which
+   index.html imports too: the same file decides the number this city pays and
+   the number the game's own UI shows, so the two cannot drift. This function is
+   only the lookup.
+
+   🔴 THE GLOBALS TRAP (CLAUDE.md), for the fifth module in this file. `VOC` is
+   assigned by an `await import()` in boot(); `BUILDINGS`, `game` and cardById
+   are top-level `const` in this module script and invisible from inside the
+   module, which is why BUILDINGS is PASSED as the third argument rather than
+   reached for. Until that import resolves — and forever, if it 404s — `VOC` is
+   null and every path here returns "no aptitude", i.e. the exact pre-vocation
+   behaviour. Nothing about this feature is allowed to be load-bearing. */
+let VOC = null;
+
+function cardAptitude(t) {
+  if (!VOC || !t || !t.card) return null;
+  const c = cardById(t.card);
+  if (!c) return null;
+  try { return VOC.aptitude(c, t.type, BUILDINGS); } catch (e) { return null; }
+}
+/* The factor tileMult() multiplies in. 1 when there is no card, no module, or
+   no match — never below 1. A clashing element reduces the BONUS a matched unit
+   earns; it can never make a socketed building worse than an empty one, because
+   a socket that punishes you is a socket nobody uses twice. */
+function aptitudeMult(t) {
+  const a = cardAptitude(t);
+  return (a && a.mult > 1) ? a.mult : 1;
 }
 function kalonCityBoost() {                        // stabled Kalons → global prod
   let n = 0;
@@ -19888,14 +20061,49 @@ $('topbar').addEventListener('click', (ev) => {
   openVaultPanel(id);
 });
 
-function openCardPicker(title, filter, onPick) {
-  const pool = freeCards().filter(filter || (() => true));
+/* `forType` is OPTIONAL and additive — the House and the Stadium call this with
+   three arguments and are unaffected. When a building type IS given, every card
+   is scored for its aptitude AT THAT BUILDING, the list is sorted best-first and
+   each row says why.
+
+   🔴 THE SORT IS THE FEATURE. A player with 200 cards will never find the one
+   Farmhand among them by reading; without the ordering, a vocation is a fact
+   they own and cannot use. Ties fall back to raw power so the list is stable and
+   the old "strongest card first" instinct still reads correctly at the bottom. */
+function openCardPicker(title, filter, onPick, forType) {
+  let pool = freeCards().filter(filter || (() => true));
+  const aptOf = (c) => {
+    if (!VOC || !forType) return null;
+    try { return VOC.aptitude(c, forType, BUILDINGS); } catch (e) { return null; }
+  };
+  if (VOC && forType) {
+    pool = pool.slice().sort((a, b) => {
+      const am = (aptOf(a) || { mult: 1 }).mult, bm = (aptOf(b) || { mult: 1 }).mult;
+      return (bm - am) || ((b.power | 0) - (a.power | 0));
+    });
+  }
+  const vocLine = (c) => {
+    const a = aptOf(c);
+    if (!a) return '';
+    if (!a.voc) return '<span class="cpvoc">— no vocation</span>';
+    const cls = a.mult > 1 ? 'apt' : 'flat';
+    const tail = a.mult > 1
+      ? ' — output <b>' + VOC.aptitudeLabel(a) + '</b>' +
+        (a.elem === 'attuned' ? ' · element in tune' : a.elem === 'clash' ? ' · element fights it' : '')
+      : ' — no knack for this work';
+    return '<span class="cpvoc" data-cls="' + cls + '">' + a.voc.icon + ' ' + a.voc.name + ' · Lv ' + a.level + tail + '</span>';
+  };
+  const rowCls = (c) => {
+    const a = aptOf(c);
+    return a ? (a.mult > 1 ? ' apt' : ' flat') : '';
+  };
   const box2 = document.createElement('div');
   box2.id = 'cardpicker';
   box2.innerHTML = '<div class="cpbox"><h3 class="display">' + title + '</h3><div class="cplist">' +
     (pool.length ? pool.map(c =>
-      '<button class="cpcard" data-cid="' + c.id + '"><span class="cpname">' + c.name + '</span>' +
-      '<span class="cpmeta">' + c.type + ' · ' + c.element + ' · ⚡' + c.power + ' · ' + c.rarity + '</span></button>').join('')
+      '<button class="cpcard' + rowCls(c) + '" data-cid="' + c.id + '"><span class="cpname">' + c.name + '</span>' +
+      '<span class="cpmeta">' + c.type + ' · ' + c.element + ' · ⚡' + c.power + ' · ' + c.rarity + '</span>' +
+      vocLine(c) + '</button>').join('')
       : '<div class="cpempty">No unassigned cards available.</div>') +
     '</div><button class="pbtn" id="cp-close">Close</button></div>';
   document.body.appendChild(box2);
@@ -20145,6 +20353,12 @@ function tipHtml(k, t) {
   if (def.sockets) {
     const c = t.card && cardById(t.card);
     h += '🃏 ' + (c ? '<span class="hl">' + logEsc(c.name) + '</span> (⚡' + c.power + ')' : 'socket empty') + '<br>';
+    // 🧑‍🌾 One line, and only when it is actually earning something — the hover
+    // card is already dense (output + consumption + service + crew + garrison +
+    // socket + wear + bonus row) and a row that always reads ×1.00 is noise.
+    const a = cardAptitude(t);
+    if (a && a.mult > 1) h += '🧑‍🌾 ' + a.voc.icon + ' ' + logEsc(a.voc.name) +
+      ' — output <span class="hl">' + VOC.aptitudeLabel(a) + '</span><br>';
   }
   /* 🛏 The rest-quality coupling has to be readable WITHOUT opening anything.
      A player whose cards train slowly must be able to see, on hover, that it
@@ -24075,6 +24289,32 @@ function animate() {
      🔴 THE GLOBALS TRAP (CLAUDE.md). Everything below is a top-level `const`
      in this module script and is therefore invisible to an ES module. The ctx
      object IS the hand-over; there is no `window.game`. */
+  /* ══ 🧑‍🌾 VOCATIONS ══════════════════════════════════════════════════════
+     Mounted FIRST of the three modules and awaited, because tileMult() consults
+     it on the very first economyTick — including the offline catch-up further
+     down, which replays hours of production. Letting that catch-up run before
+     the import resolved would pay an absence at pre-vocation rates and then
+     switch to boosted rates the moment the player's first live tick landed,
+     which reads as the city quietly cheating them.
+
+     🔴 It is PURE — data and arithmetic, no DOM, no I/O — so unlike the House
+     and the Stadium below there is no ctx to hand over and nothing here for the
+     globals trap to bite. BUILDINGS is passed per call (see cardAptitude), not
+     captured.
+
+     ⚠ A failure leaves VOC null, which is a complete and tested state: every
+       aptitude reads ×1.00, sockets keep their old +power/100 boost, and the
+       city behaves exactly as it did before this feature existed. */
+  try {
+    VOC = await import('../src/vocation/vocation.js?v=' + (window.NC_BUILD || 'voc1'));
+    /* The one consistency check between the vocation catalog and this file's
+       BUILDINGS. A vocation naming a building that does not exist, or one whose
+       output tileMult never touches, would print an aptitude on the dossier
+       that the tick then ignores — a wrong number, which is worse than no
+       number. Surfaced here at mount rather than left to be noticed in play. */
+    const bad = VOC.auditBuildings(BUILDINGS);
+    if (bad.length) console.warn('[Vocation] catalog references buildings that cannot use a multiplier:', bad);
+  } catch (e) { VOC = null; console.warn('[Vocation] not mounted (non-fatal):', e); }
   try {
     const mod = await import('../src/resonance/house.city.js?v=' + (window.NC_BUILD || 'r8'));
     const HOUSE = mod.mount({
@@ -24270,6 +24510,25 @@ function animate() {
        multiply to exactly the multiplier the economy uses; that claim is only
        worth anything if a test can check it, so both sides are exposed. */
     insFactors, tileMult, staffingRatio, bonusesFor,
+    /* 🧑‍🌾 VOCATIONS. The aptitude multiplier is decided by three things a
+       driver cannot otherwise reach — the module (a private `let VOC`), the
+       card list (a private `let CARDS`) and the tile's own type — so without a
+       seam the only way to check that a Farmhand actually doubles a Farm is to
+       read the DOM and trust it. `socket()` is the same two lines the inspect
+       panel's button runs, exposed so a test can slot a card without a click on
+       a canvas that never paints. */
+    voc: () => VOC,
+    cards: () => CARDS.slice(),
+    apt: (k) => (game.tiles[k] ? cardAptitude(game.tiles[k]) : null),
+    aptMult: (k) => (game.tiles[k] ? aptitudeMult(game.tiles[k]) : 1),
+    socket: (k, cardId) => {
+      const t = game.tiles[k]; if (!t) return null;
+      if (t.card) MythicCityBridge.assignCard(t.card, false);
+      t.card = cardId || null;
+      if (cardId) MythicCityBridge.assignCard(cardId, true);
+      computeLinks();
+      return cardAptitude(t);
+    },
     /* 🎮 Camera handles, so WASD panning can be tested without a compositing
        browser. The Browser pane never paints, which means the animate loop
        never runs and nothing that only shows up through RAF can be observed —

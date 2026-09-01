@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120w6';
+  window.BUILD_VERSION = 'v120x0';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -46425,6 +46425,11 @@ async function cloudSyncProfile() {
       __gemsOwned__:       (Profile.gemsOwned && typeof Profile.gemsOwned === 'object') ? Profile.gemsOwned : {},
       // 🏙 Cards slotted into Node City sockets — {cardId: true}; cross-device.
       __cityCards__:       (Profile.cityCards && typeof Profile.cityCards === 'object') ? Profile.cityCards : {},
+      /* 🧑‍🌾 The vocation salt — ONE string, and the reason a card has the same
+         city vocation on every device the player signs in on. Vocations are
+         derived from (salt, cardId), so without this a phone and a desktop
+         would disagree about every unit's speciality. See _vocSalt(). */
+      __vocationSalt__:    (typeof Profile.vocationSalt === 'string') ? Profile.vocationSalt : '',
       // 💼 Personally-funded Just Business operations — cross-device.
       __jbLocalOps__:      Array.isArray(Profile.jbLocalOps) ? Profile.jbLocalOps : [],
       // 🥋 Dojo — the business licence + the owner's unlisted move stock.
@@ -47527,6 +47532,16 @@ async function cloudFetchProfile() {
       // on another device must survive, a fresh device adopts the cloud set).
       if (f.__cityCards__ && typeof f.__cityCards__ === 'object') {
         try { Profile.cityCards = Object.assign({}, f.__cityCards__, (Profile.cityCards && typeof Profile.cityCards === 'object') ? Profile.cityCards : {}); } catch (e) {}
+      }
+      /* 🧑‍🌾 Vocation salt — CLOUD WINS, unlike every merge around it. This is
+         not a quantity to be maxed or a set to be unioned: it is the account's
+         single answer to "which vocation does each of my cards have", and two
+         devices holding different answers is the one outcome that must not
+         survive. Local-wins would leave them permanently disagreeing; adopting
+         the cloud's costs at most a one-time re-roll on a device that minted
+         its own before ever syncing, after which every device agrees. */
+      if (typeof f.__vocationSalt__ === 'string' && f.__vocationSalt__) {
+        try { Profile.vocationSalt = f.__vocationSalt__; } catch (e) {}
       }
       // 🧬 Breeding rest timers — MAX-per-key merge (the LATER ready-time wins,
       // so hopping devices can never dodge a cooldown).
@@ -72480,6 +72495,58 @@ function ensureUnitTrait(cardId, card, isAi) {
     try { saveProfile(); } catch (e) {}
   }
   return p.trait;
+}
+
+/* ═══ 🧑‍🌾 VOCATIONS — the CIVIC half of the trait idea ═════════════════════
+   A unit's TRAIT above says what it is good at in a fight. Its VOCATION says
+   what it is good at in the CITY: which of node-city's buildings it has a knack
+   for. Slotted into a building its vocation covers, the tile's whole output
+   multiplier rises — by more if the unit's ELEMENT suits the work, and by more
+   again the higher its LEVEL. Full match at Lv 50 doubles the building.
+
+   The catalog, the weights and every magnitude live in /src/vocation/vocation.js
+   and are shared byte-for-byte with node-city, which does the actual maths on
+   the tick. This file owns only the two things a module cannot reach: the
+   player's salt (Profile) and the card lookup.
+
+   🔴 WHY A SALT AND NOT A ROLLED-AND-SAVED FIELD, unlike `trait` directly above.
+   ensureUnitTrait writes one row and saves, which is correct because it fires
+   when ONE card is obtained or fielded. The city bridge is the opposite shape:
+   cityCardCollection() walks the player's ENTIRE collection every time a socket
+   panel opens. Doing the trait dance there would stamp and save up to 500 rows
+   on first open — or, if made lazy, hand the picker a list where most cards had
+   no vocation and the numbers changed as the player scrolled. One salt per
+   account plus the card id is deterministic, free to evaluate, and just as
+   random BETWEEN players as an independent roll, which is the property that
+   made per-player traits interesting in the first place.
+
+   ⚠ It is minted LAZILY, on first use. A brand-new device that mints before its
+     first cloud fetch adopts the account's real salt on that fetch (see
+     __vocationSalt__ in the cloud merge) — a one-time re-roll on that device,
+     after which every device agrees forever. Cloud-wins is deliberate: local-
+     wins would leave two devices permanently disagreeing about the same card. */
+function _vocSalt() {
+  try {
+    if (typeof Profile.vocationSalt === 'string' && Profile.vocationSalt) return Profile.vocationSalt;
+    const V = window.MythicVocation;
+    if (!V) return null;                    // module absent → no vocations, no save
+    Profile.vocationSalt = V.makeSalt();
+    try { saveProfile(); } catch (e) {}
+    return Profile.vocationSalt;
+  } catch (e) { return null; }
+}
+/* This unit's vocation id, or null when the module has not loaded. `card` is
+   optional and only read for an admin-restricted card.vocationPool, mirroring
+   card.traitPool on the combat roll. NEVER writes a unit row. */
+function unitVocation(cardId, card) {
+  try {
+    const V = window.MythicVocation;
+    if (!V || !cardId) return null;
+    const salt = _vocSalt();
+    if (salt == null) return null;
+    const v = V.vocationForCard(cardId, salt, card && card.vocationPool);
+    return v ? v.id : null;
+  } catch (e) { return null; }
 }
 
 // 💗 Companion Loyalty — 0–1200, six tiers that get progressively harder to reach.
@@ -140302,9 +140369,15 @@ function renderUnitModal() {
             : renderStatBars(u.stats, { currentHp: u.currentHp, maxHp: u.maxHp })}
         </div>
 
-        ${(!faceHidden && (u.trait || u.nature || (isPlayer && u.bond != null))) ? `
+        ${/* 🧑‍🌾 `isPlayer && MythicVocation` joins the gate because a vocation is
+              now one of the things this section can be the ONLY home for: a
+              freshly-pulled card that has not been fielded has no trait and no
+              nature yet, and would have hidden its city speciality behind an
+              empty condition. Every block inside guards itself, so a truthy gate
+              with nothing to show is not possible. */ ''}
+        ${(!faceHidden && (u.trait || u.nature || (isPlayer && u.bond != null) || (isPlayer && window.MythicVocation))) ? `
         <div class="modal-section">
-          <div class="modal-section-title">🧬 Traits & Nature</div>
+          <div class="modal-section-title">🧬 Traits, Nature & Vocation</div>
           <div style="display:flex;flex-direction:column;gap:8px">
             ${u.trait ? (() => {
               const tr = (typeof getTrait === 'function') ? getTrait(u.trait) : null;
@@ -140347,6 +140420,39 @@ function renderUnitModal() {
                 </div>
                 <div style="height:6px;background:rgba(255,255,255,0.1);border-radius:3px;overflow:hidden;margin-top:6px"><div style="height:100%;width:${pct}%;background:${t.color}"></div></div>
                 <div class="small-text" style="color:#bfae87;margin-top:4px">+${Math.floor(bond100(u.bond) / 10)}% crit · ×${(getBondTier(u.bond).xpMul || 1)} XP gain from loyalty.</div>
+              </div>`;
+            })() : ''}
+            ${/* 🧑‍🌾 VOCATION — the CIVIC counterpart of the trait above it, and the
+                  only place outside the city where a player can read it. Without
+                  this card the only way to learn that a unit is a Farmhand is to
+                  open Node City and scroll a socket picker, which is a strange
+                  place to keep a permanent fact about a card you own.
+                  ⚠ PLAYER-SIDE ONLY. An enemy's civic speciality is not a fact
+                    about this battle and would be noise in an already dense modal.
+                  ⚠ Absent module → nothing renders. Same rule as everywhere else:
+                    this feature is never load-bearing. */ ''}
+            ${(isPlayer && window.MythicVocation) ? (() => {
+              const V = window.MythicVocation;
+              const cid = u.originalCardId || u.cardId;
+              const vid = (typeof unitVocation === 'function') ? unitVocation(cid, u) : null;
+              const vo = vid && V.getVocation(vid);
+              if (!vo) return '';
+              const col = V.VOC_RARITY_COLOR[vo.rarity] || '#9aa0a6';
+              const lv = Math.max(1, u.level || 1);
+              // The number the city would actually pay for this unit at its best
+              // building today — the whole point of showing the card here is that
+              // it answers "is this worth stationing?" without a trip to the city.
+              const best = V.aptitude({ vocation: vid, elements: getElementsOf(u), level: lv }, (vo.buildings === '*' ? 'farm' : vo.buildings[0]));
+              const where = vo.buildings === '*' ? 'any working building' : vo.buildings.length + ' building' + (vo.buildings.length === 1 ? '' : 's');
+              return `<div style="border:1px solid ${col}55;border-left:4px solid ${col};border-radius:8px;padding:9px 12px;background:linear-gradient(90deg,${col}1f,rgba(20,12,40,0.4))">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                  <span style="font-size:1.3rem;line-height:1">${vo.icon}</span>
+                  <strong style="color:#f6d97a;font-family:'Cinzel',serif;font-size:1.02rem">${escapeHtml(vo.name)}</strong>
+                  <span style="font-size:0.66rem;font-weight:700;color:${col};border:1px solid ${col};border-radius:4px;padding:1px 6px">${vo.rarity.toUpperCase()}</span>
+                  <span class="ink-dim small-text" style="margin-left:auto">CITY VOCATION</span>
+                </div>
+                <div class="small-text" style="color:#d8c7f0;margin-top:5px;line-height:1.45">${escapeHtml(vo.desc || '')}</div>
+                <div class="small-text" style="color:#bfae87;margin-top:4px">🏙 Works ${where} in Node City — at Lv ${lv}${best.elem === 'attuned' ? ', element in tune' : best.elem === 'clash' ? ', element out of tune there' : ''} that is <strong style="color:#7be0a0">${V.aptitudeLabel(best)}</strong> output. Rises to ×${V.APT.CAP.toFixed(2)} at Lv ${V.APT.LVL_MAX} in a building its element suits.</div>
               </div>`;
             })() : ''}
           </div>
@@ -207277,10 +207383,26 @@ window.cityCardCollection = async function () {
       if (!c) { try { c = (typeof UNIT_CARDS !== 'undefined' && UNIT_CARDS.find((x) => x.id === id)) || (typeof SPELL_CARDS !== 'undefined' && SPELL_CARDS.find((x) => x.id === id)) || null; } catch (e) {} }
       if (!c) { try { const h = (typeof findHeroById === 'function') ? findHeroById(id) : null; if (h) c = Object.assign({}, h, { type: 'hero' }); } catch (e) {} }
       if (!c) continue;
-      let el = '';
-      try { const es = (typeof getElementsOf === 'function') ? getElementsOf(c) : null; el = (es && es[0]) || c.element || ''; } catch (e) { el = c.element || ''; }
+      let els = [];
+      try { els = ((typeof getElementsOf === 'function') ? getElementsOf(c) : null) || []; } catch (e) { els = []; }
+      if (!els.length && c.element) els = [c.element];
+      els = els.map((e) => String(e || '').toLowerCase()).filter(Boolean);
+      const el = els[0] || '';
       const power = Math.max(1, Math.min(30, Math.round(c.atk ? (c.atk + ((c.hp | 0) / 10)) : (((c.cost | 0) + 1) * 4))));
-      out.push({ id, name: c.name || id, type: c.kalonForm ? 'Kalon' : (TYPE[c.type] || 'Unit'), element: String(el).toLowerCase(), power, rarity: c.rarity || 'common' });
+      /* 🧑‍🌾 THE THREE FIELDS THE CITY'S APTITUDE MATHS NEEDS, and no more.
+         `elements` is the FULL list, not just els[0]: a dual-element card that
+         is attuned on its second element must still read as attuned, and
+         collapsing it to one here would silently lose half of every hybrid.
+         `level` is the unit's real progression (Profile.units), defaulted to 1
+         for a card that has never been fielded — never faked upward.
+         `vocation` is derived, never stored; see unitVocation(). All three are
+         additive: an older city build ignores them and behaves exactly as it
+         did before. */
+      let lvl = 1;
+      try { const up = Profile.units && Profile.units[id]; if (up && up.level > 0) lvl = up.level | 0; } catch (e) {}
+      out.push({ id, name: c.name || id, type: c.kalonForm ? 'Kalon' : (TYPE[c.type] || 'Unit'),
+                 element: String(el).toLowerCase(), elements: els, power, rarity: c.rarity || 'common',
+                 level: lvl, vocation: unitVocation(id, c) });
       if (out.length >= 500) break;
     }
     return out;
@@ -223096,6 +223218,24 @@ render();
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
 <script type="module" src="src/resources/chain.js?v=v120w6chain2"></script>
+<!-- 🧑‍🌾 VOCATIONS — what a unit is GOOD AT when you put it to work in the
+     city builder. A second, independent roll alongside the combat TRAIT: it
+     names the BUILDINGS a unit has a knack for, and its ELEMENT and LEVEL decide
+     how much that knack is worth (up to a doubled building at Lv 50 in tune).
+     Registers window.MythicVocation: pure data + arithmetic, no DOM, no I/O, no
+     globals. node-city/index.html imports the SAME file for the tick maths, so
+     the number the city pays and the number this file shows cannot drift.
+     ⚠ THE ROLL IS DERIVED, NOT STORED. Profile.vocationSalt (one string per
+       account) plus the card id is the whole of it — see the module header for
+       why stamping 500 rows through the city bridge was rejected.
+     ⚠ If this 404s the city degrades to the old behaviour exactly: sockets keep
+       their +power/100 boost and every aptitude reads ×1.00. Nothing throws.
+     ⚠ Bump ?v= on every change — the service worker caches /src/* like any
+       other static asset, and a missed bump ships invisibly. -->
+<script type="module">
+  import * as Voc from './src/vocation/vocation.js?v=v120x0voc1';
+  try { window.MythicVocation = Voc; } catch (e) {}
+</script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the

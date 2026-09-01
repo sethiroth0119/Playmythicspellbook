@@ -24203,6 +24203,53 @@ function animate() {
      left. If the catch-up did NOT run, this is the whole of the House's
      absence pay, capped per billet at the same 36h. */
   try { if (window.MythicHouse) window.MythicHouse.settleOffline(); } catch (e) {}
+  /* ══ 🦠 THE OUTBREAK ═══════════════════════════════════════════════════════
+     Viruses that this city's NAMED CITIZENS catch. Mounted LAST, after the
+     citizen roster exists and after the offline catch-up, because it needs
+     both: people to infect, and an honest elapsed time to advance them by.
+
+     🔴 THE GLOBALS TRAP, and this is the FIFTH module to hit it: `game`,
+     `vitals`, `cityPop`, `popCap` and `computeCoverage` are top-level `const`
+     in THIS module script and are invisible to an ES module. The ctx object
+     below IS the hand-over. There is no `window.game`.
+
+     🔴 NOTE WHAT IS NOT HANDED OVER: nothing that writes to `game.tiles`, and
+     nothing that can remove a citizen. A virus in this game cannot damage,
+     demolish or un-crew a building, and it cannot kill anybody — the roster is
+     a SUBSET of a population counter this module does not own, so removing a
+     person would desync the HUD's population against the staffing ratio. The
+     only write it gets is `nudge`, the sanctioned mood seam, which is exactly
+     what the life-events module gets. See the header of /src/plague/outbreak.js.
+
+     ⚠ The cure for what emerges here is mixed in the 3D containment lab
+       (/src/biolab), reached from the game's Medical Corporation operation.
+       This module only makes people ill and reports it. */
+  try {
+    const omod = await import('../src/plague/outbreak.city.js?v=' + (window.NC_BUILD || 'plague1'));
+    const OUTBREAK = omod.mount({
+      citizens: () => (window.MythicCitizens ? window.MythicCitizens.list() : []),
+      nudge: (id, d) => (window.MythicCitizens ? window.MythicCitizens.nudge(id, d) : false),
+      vitals: () => vitals,
+      coverage: () => (game.cov && game.cov.pct) || {},
+      pop: () => cityPop(),
+      popCap: () => popCap(),
+      cityId: () => (MythicCityBridge && MythicCityBridge.mode ? 'nc:' + MythicCityBridge.mode : 'nc'),
+      toast, logEvent: (m) => { try { logEvent('city', m); } catch (e) {} },
+      /* How long the player was away, so a returning city's outbreak is where
+         it should be rather than frozen at the moment they left. Capped inside
+         the module at the game's existing 36h unattended contract — passed,
+         never redeclared, the same discipline the House mount uses. */
+      awayMs: (function () { try { return (_awayReport && _awayReport.awayMs) || 0; } catch (e) { return 0; } })(),
+    });
+    // Advanced from the same economy block everything else ticks on.
+    {
+      const _obBase = vitalsTick;
+      vitalsTick = function (dtSec) {
+        _obBase.apply(this, arguments);
+        try { OUTBREAK.tick(dtSec); } catch (e) { console.warn('[outbreak] tick', e); }
+      };
+    }
+  } catch (e) { console.warn('[Outbreak] not mounted (non-fatal):', e); }
   /* 🔬 DIAGNOSTICS SEAM. This is a <script type="module">, so NOTHING in it is
      on window — which means the consumption layer cannot be inspected, stepped
      or regression-tested from a console without one. Same pattern as the main

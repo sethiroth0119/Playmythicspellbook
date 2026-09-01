@@ -197,7 +197,7 @@ export function canWorkAt(cardId, k) {
    no recall step, because "recall then post" is two clicks for one decision. */
 export function post(cardId, k) {
   const m = memberOf(cardId);
-  if (!m) return 'That unit is not on the crew.';
+  if (!m) return 'That unit is not on the work crew.';
   if (m.post === k) return null;
   const chk = canWorkAt(cardId, k);
   if (!chk.ok) return chk.why;
@@ -420,7 +420,7 @@ export function avgCondition() {
    place this one by hand. */
 export function enlist(cardId) {
   const crew = state();
-  if (!cardId || crew.some(m => m.card === cardId)) return 'Already on the crew.';
+  if (!cardId || crew.some(m => m.card === cardId)) return 'Already on the work crew.';
   if (crew.length >= crewCap()) return 'No beds left — build Housing or a Resting House.';
   crew.push({ card: cardId, cond: W.WORK.COND_MAX, post: null });
   invalidate();
@@ -597,9 +597,9 @@ export function renderPanel() {
   const el = document.getElementById('crewbody');
   if (!el || !CTX) return;
   const crew = state(), cap = crewCap(), idle = idleIds().length;
-  let h = '<div class="ccap"><span>👷 On the crew</span><span><b>' + crew.length + '</b> / ' + cap + ' beds</span></div>';
+  let h = '<div class="ccap"><span>👷 On the work crew</span><span><b>' + crew.length + '</b> / ' + cap + ' beds</span></div>';
   if (!crew.length) {
-    h += '<div class="cempty">Nobody is on the crew yet. Enlist units, then <b>post each one to a building</b> — a unit only helps the building you put it in, and only if it has the trade that building needs.</div>';
+    h += '<div class="cempty">Nobody is on the work crew yet. Enlist units, then <b>post each one to a building</b> — a unit only helps the building you put it in, and only if it has the trade that building needs.</div>';
   } else {
     for (const m of crew.slice(0, 6)) {
       const c = cardOf(m.card), prof = profileOf(m.card);
@@ -616,9 +616,9 @@ export function renderPanel() {
     //    decision the player has not made and a bed they are paying rations for;
     //    it is the only state here that is always worth acting on.
     if (idle) h += '<div class="cidle">💤 <b>' + idle + '</b> idle — ' + (idle === 1 ? 'it is' : 'they are') + ' eating and doing nothing.</div>';
-    h += '<div class="cfoot">🍱 Eats <b>' + demandPerMin().toFixed(2) + '</b> rations/min. Short rations lower Condition, and a worn crew works slower.</div>';
+    h += '<div class="cfoot">🍱 Eats <b>' + demandPerMin().toFixed(2) + '</b> rations/min. Short rations lower Condition, and a worn work crew works slower.</div>';
   }
-  h += '<button class="hbtn ember" id="crew-open" style="width:100%;margin-top:8px">👷 Manage crew</button>';
+  h += '<button class="hbtn ember" id="crew-open" style="width:100%;margin-top:8px">👷 Manage work crew</button>';
   el.innerHTML = h;
   const b = document.getElementById('crew-open');
   if (b) b.onclick = () => open();
@@ -648,7 +648,8 @@ function dialogHtml() {
   return '<div class="cbox">' +
     '<h3>👷 WORK CREW</h3>' +
     '<div class="csub">Enlist units, then <b>post each one to a building</b>. A unit only lifts the building you put it in, and only if it has a trade that building needs — its <b>suitability level</b> decides how much, and its own level, its passives and its condition scale the rest. ' +
-      'A building takes as many workers as it has crew posts, and tops out at <b>' + W.multLabel(1 + W.WORK.BOOST_CAP) + '</b> output.</div>' +
+    'These are <b>not</b> the 👷 hired hands that staff the city, and not the 🏗 build gangs that raise it: a posted unit works on top of a building\'s staffing, never instead of it. ' +
+      'A building takes as many posts as it has staffed jobs, and tops out at <b>' + W.multLabel(1 + W.WORK.BOOST_CAP) + '</b> output.</div>' +
     '<div class="cstat">' +
       '<span>🛏 Beds <b>' + crew.length + ' / ' + cap + '</b> <span style="opacity:.7">(' + parts.base + ' base + ' +
         parts.housing + ' housing + ' + parts.rest + ' resting house' + (parts.capped ? ', capped at ' + CREW_MAX : '') + ')</span></span>' +
@@ -656,7 +657,7 @@ function dialogHtml() {
       '<span>❤️ Condition <b>' + Math.round(avgCondition()) + '%</b></span>' +
       '<span class="' + (idle ? 'warn' : '') + '">💤 Idle <b>' + idle + '</b></span>' +
     '</div>' +
-    (rows || '<div class="csub">The crew is empty. Enlist a unit, then post it to a building that needs its trade.</div>') +
+    (rows || '<div class="csub">The work crew is empty. Enlist a unit, then post it to a building that needs its trade.</div>') +
     '<div class="cfoot2">' +
       '<button class="pbtn" id="crew-add"' + (crew.length >= cap ? ' disabled' : '') + '>' +
         (crew.length >= cap ? '🛏 No beds left — build Housing' : '➕ Enlist a unit') + '</button>' +
@@ -665,8 +666,8 @@ function dialogHtml() {
     '</div>' +
     '<div class="cnote">Beds come from 🏠 Housing (+' + CREW_PER_HOUSING + ' a level) and 🛏 the Resting House (+' +
       CREW_PER_RESTHOUSE + ' a level). <b>Auto-fill only fills EMPTY posts with IDLE units</b> — it never moves anyone you placed, and it cannot see which resource you are actually short of, so it is a starting point rather than an answer. ' +
-      'A crew member on short rations loses Condition and slows down, but never stops — the floor is ' + Math.round(W.WORK.COND_FLOOR * 100) + '% of its normal pace. ' +
-      'Units on the crew cannot also be socketed, billeted or stood in the defense deck.</div>' +
+      'A work-crew member on short rations loses Condition and slows down, but never stops — the floor is ' + Math.round(W.WORK.COND_FLOOR * 100) + '% of its normal pace. ' +
+      'Units on the work crew cannot also be socketed, billeted or stood in the defense deck.</div>' +
     '</div>';
 }
 
@@ -705,7 +706,7 @@ function pickHtml() {
             (o.work ? ' · ' + (W.getWork(o.work) || {}).icon + ' ' + (W.getWork(o.work) || {}).name + ' ' + o.suit : '') +
             (o.ok || o.here ? '' : ' · <b>' + esc(o.why) + '</b>') + '</span>' +
         '</button>').join('')
-        : '<div class="psub">Nothing standing needs a crew yet.</div>') +
+        : '<div class="psub">Nothing standing needs a work crew yet.</div>') +
       '<div class="pfoot">' + (postOf(PICK.forCard) ? '<button class="pbtn" id="pk-recall">↩ Recall to idle</button>' : '') +
         '<button class="pbtn" id="pk-close">Close</button></div></div>';
   }
@@ -733,7 +734,7 @@ function pickHtml() {
           (o.postedAt && !o.here ? ' · now at ' + esc(tileName(o.postedAt)) : '') +
           (o.ok ? '' : ' · <b>' + esc(o.why) + '</b>') + '</span>' +
       '</button>').join('')
-      : '<div class="psub">Nobody is on the crew. Enlist someone first.</div>') +
+      : '<div class="psub">Nobody is on the work crew. Enlist someone first.</div>') +
     '<div class="pfoot"><button class="pbtn" id="pk-close">Close</button></div></div>';
 }
 
@@ -813,7 +814,7 @@ function onClick(ev) {
     const c = cardOf(id);
     if (dismiss(id)) {
       try { CTX.assignCard(id, false); } catch (e) {}
-      after('👷 ' + ((c && c.name) || id) + ' left the crew.');
+      after('👷 ' + ((c && c.name) || id) + ' left the work crew.');
     }
     return;
   }
@@ -833,7 +834,7 @@ function onClick(ev) {
         const err = enlist(c.id);
         if (err) { try { CTX.toast('👷 ' + err, 'bad'); } catch (e) {} return; }
         try { CTX.assignCard(c.id, true); } catch (e) {}
-        after('👷 ' + c.name + ' joined the crew — idle. Post it to a building to put it to work.');
+        after('👷 ' + c.name + ' joined the work crew — idle. Post it to a building to put it to work.');
         // Straight into the "where does it work" question, because that is the
         // decision the player just created for themselves.
         openPostPicker(c.id);

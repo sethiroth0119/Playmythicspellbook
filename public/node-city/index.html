@@ -9,7 +9,7 @@
      believed the file was already live. Only a CONTENT change moves the hash
      and forces a re-upload, so bump this stamp whenever the city 404s, and
      probe it (grep NC_BUILD on the served page) to prove the deploy landed. -->
-<script>window.NC_BUILD = "v120x5-city-and-crew";</script>
+<script>window.NC_BUILD = "v120x6-crewnaming";</script>
 <!-- ════════════════════════════════════════════════════════════════════════
      NODE CITY — SimCity-style settlement layer for Mythic Spellbook.
      Three.js WebGPU (auto-falls back to WebGL2). Realistic sun/moon cycle.
@@ -3180,7 +3180,7 @@ const BUILDINGS = {
      cleaner, at a higher price and lower output. Two crew instead of four. */
   gas:      { name: 'Gas Plant',     ico: '🔥', cost: { cinder: 185, metal: 58, supplies: 20 }, pop: 2, crew: 2,
               gen: { power: 7.5 }, use: { fuel: 0.45 },
-              desc: 'Two pressure vessels and a compact turbine hall. Half the fuel of a Coal Plant for most of the power, a quarter of the smoke, and two crew instead of four — the sensible plant, and priced like it.' },
+              desc: 'Two pressure vessels and a compact turbine hall. Half the fuel of a Coal Plant for most of the power, a quarter of the smoke, and two hands instead of four — the sensible plant, and priced like it.' },
   /* 🛢 Between the two on every axis, deliberately. */
   oil:      { name: 'Oil Plant',     ico: '🛢️', cost: { cinder: 165, metal: 52, supplies: 16 }, pop: 3, crew: 3,
               gen: { power: 8.0 }, use: { fuel: 0.95 },
@@ -24057,7 +24057,7 @@ function computeLinks() {
   try {
     if (CREW) {
       const cleared = CREW.validate();
-      for (const c of cleared) toast('👷 ' + c.name + ' was sent back to the crew — ' + c.why, 'bad');
+      for (const c of cleared) toast('👷 ' + c.name + ' was sent back to the work crew — ' + c.why, 'bad');
       CREW.renderPanel();
     }
   } catch (e) {}
@@ -26140,15 +26140,25 @@ function bldNextFreeSec(now) {
 /* ONE refusal sentence, written once and shared by the placement gate and the
    upgrade gate — two copies of a player-facing message drift, and this one has
    two branches to keep in step. */
+/* 🏗 "BUILD GANG", NOT "CREW". This city has three different groups of people
+   working in it, and until this rename all three were called a crew:
+     · STAFFING   — the anonymous workers you HIRE. One city-wide pool.
+     · BUILD GANG — the teams that ERECT buildings. Two at a time, on a timer.
+     · WORK CREW  — the named UNITS you post to a finished building.
+   "Every crew is working — 2 / 2 on site" sat one panel away from
+   "Work crew 1 / 2 posted", and nothing on screen said they were different
+   things. Only PLAYER-FACING copy is renamed: `bldCrewLoad`, `bldSlots` and
+   the rest keep their identifiers, because renaming live internals across an
+   actively-moving branch buys nothing a comment cannot. */
 function bldCrewBusyMsg() {
   const busy = bldCrewLoad(), slots = bldSlots(), next = bldNextFreeSec();
-  return '🏗 Every crew is working — ' + busy + ' / ' + slots + ' on site. ' +
+  return '🏗 Every build gang is out — ' + busy + ' / ' + slots + ' on site. ' +
     (Number.isFinite(next)
       ? 'The next one frees in ' + fmtCountdown(next) + '.'
       /* Every slot is held by an order still paying for itself this instant —
          a burst of clicks. There is no deadline to name yet, so name the truth
          instead of printing a countdown of nothing. */
-      : 'The last crew was taken a moment ago.');
+      : 'The last build gang was taken a moment ago.');
 }
 /* The sentence BOTH municipal-ceiling refusals end with — the placement gate
    and the upgrade gate. One copy, because two copies of a player-facing message
@@ -26176,7 +26186,7 @@ function bldCoHint() {
    file's own "two copies of a player-facing message drift" rule allows. */
 function bldCeilingMsg(lead) {
   const C = bldCfg(); if (!C) return '';
-  return '🔒 ' + lead + ' — more than the free Municipal Works crew will take on (' +
+  return '🔒 ' + lead + ' — more than the free Municipal Works gang will take on (' +
          fmtCountdown(C.municipal.maxSec) + '). ' + bldCoHint();
 }
 /* 🚦 THE SAME ANSWER, ASKED *BEFORE* THE PLAYER SPENDS — for any surface that
@@ -26578,7 +26588,7 @@ async function bldConfirmLong(what, durSec) {
   if (!C || !(durSec > (C.confirmOverSec | 0))) return true;
   const msg = what + ' takes ' + fmtCountdown(durSec) + ' to build — it would be finished at about '
     + bldLandLabel(durSec) + '.\n\n'
-    + 'The full cost is charged now and a crew is tied up for the whole job. '
+    + 'The full cost is charged now and a build gang is tied up for the whole job. '
     /* 📦 NOT "a 100% refund" ANY MORE, AND THE CAVEAT IS NOT WEASELLING. The
        Cinder always comes back whole (addCinders has no ceiling); the materials
        go through addRes, which clamps to the vault. Promising 100% here and
@@ -26665,7 +26675,7 @@ function renderBuildBoard() {
      hold no crew (bldCrewLoad), so counting them here would tell a player their
      crews are full while a build button was still going to say yes. */
   const _devN = bldDevSites();
-  $('bldcrews').innerHTML = '<b>' + Math.max(0, bldActive() - _devN) + ' / ' + bldSlots() + '</b> crews working' +
+  $('bldcrews').innerHTML = '<b>' + Math.max(0, bldActive() - _devN) + ' / ' + bldSlots() + '</b> build gangs out' +
     (_devN ? ' · <b>' + _devN + '</b> zoned site' + (_devN === 1 ? '' : 's') + ' going up without one.' : '.');
   if (!jobs.length) { renderBuildBoard._sig = null; $('bldlist').innerHTML = ''; return; }
   const sig = jobs.map(([k, t]) => k + ':' + t.bld.k + ':' + t.bld.l).join('|');
@@ -27720,7 +27730,7 @@ function insFactors(x, z, t) {
     '%</span> · <span class="' + (b.cluster ? 'on' : '') + '">🏘️ cluster +' + Math.round(b.cluster * 100) +
     '%</span> · <span class="' + (b.anchor ? 'on' : '') + '">🔮 anchor +' + Math.round(ANCHOR_ADJ * 100) +
     '%</span>', v: b.mult });
-  if (def.crew) f.push({ l: '👷 Staffing — ' + game.army.workers + ' workers for ' + crewNeeded() + ' crew jobs', v: staffingRatio() });
+  if (def.crew) f.push({ l: '👷 Staffing — ' + game.army.workers + ' hired workers for ' + crewNeeded() + ' staffed jobs', v: staffingRatio() });
   const wm = weatherMult(t.type);
   if (wm !== 1) f.push({ l: WEATHER[wx.type].ico + ' ' + WEATHER[wx.type].name + ' weather', v: wm });
   if (gov.mayorName) f.push({ l: '🏛️ Mayor ' + logEsc(gov.mayorName) + ' in office', v: MAYOR_PROD });
@@ -27816,7 +27826,7 @@ function insTopline(k, t, x, z, mult, om) {
     const maxW = cat && cat.maxWorkers ? cat.maxWorkers | 0 : 0;
     const w = opR.workers | 0;
     out.push({ e: 'Staff', v: w + (maxW ? '<small> / ' + maxW + '</small>' : ''),
-      d: maxW && w >= maxW ? 'fully crewed' : maxW ? 'hire in Just Business' : 'on the licence' });
+      d: maxW && w >= maxW ? 'fully staffed' : maxW ? 'hire in Just Business' : 'on the licence' });
     const eff = (typeof opsSiteEffFor === 'function') ? opsSiteEffFor(x, z, t) : 1;
     out.push({ e: 'City plot', v: '<span style="color:var(--valid)">+' + Math.round((eff - 1) * 100) + '<small>%</small></span>',
       d: eff > 1 ? 'roads, neighbours and light' : 'build roads beside it to earn a bonus' });
@@ -28069,7 +28079,7 @@ function crewPostWarning(k) {
     const pct = (game.cov.pct || {})[need];
     if (!(pct >= 1)) return null;
     const nm = (NEED_META[need] || {}).name || need;
-    return nm + ' coverage is already ' + Math.round(pct * 100) + '%. A crew here raises this building\'s ' +
+    return nm + ' coverage is already ' + Math.round(pct * 100) + '%. A work crew here raises this building\'s ' +
       (def.svc.input ? resName(def.svc.input) : 'input') + ' draw and buys no extra ' + nm +
       ' — post them somewhere the city is actually short.';
   } catch (e) { return null; }
@@ -28093,12 +28103,12 @@ function insSystems(t, x, z) {
     const _ck = key(x, z);
     const cps = CREW.powersAt(_ck);
     const _warn = crewPostWarning(_ck);
-    if (_warn) rows.push(insFac('⚠ Crew here is wasted', '<span class="dn">' + logEsc(_warn) + '</span>', 'dn'));
+    if (_warn) rows.push(insFac('⚠ A work crew here is wasted', '<span class="dn">' + logEsc(_warn) + '</span>', 'dn'));
     rows.push(insFac('👷 Posts filled', cps.length + ' / ' + CREW.slotsAt(_ck) +
       (CREW.freeSlotsAt(_ck) > 0 ? ' <span style="opacity:.7">— use 👷 Post a worker below</span>' : ''),
       CREW.freeSlotsAt(_ck) > 0 ? 'dn' : 'up'));
     if (cps.length) {
-      rows.push(insFac('👷 Crew output', '<span class="hl">' + CREW.work.multLabel(CREW.work.multFrom(cps)) + '</span>', 'up'));
+      rows.push(insFac('👷 Work crew output', '<span class="hl">' + CREW.work.multLabel(CREW.work.multFrom(cps)) + '</span>', 'up'));
       for (const p of cps) {
         const w = CREW.work.getWork(p.work);
         rows.push(insFac('&nbsp;&nbsp;↳ ' + logEsc(p.name),
@@ -28109,7 +28119,7 @@ function insSystems(t, x, z) {
           p.cond < 65 ? 'dn' : ''));
       }
     } else {
-      rows.push(insFac('👷 Crew here', '<span class="dn">nobody</span> <span style="opacity:.7">— post a unit with this trade and its output rises</span>'));
+      rows.push(insFac('👷 Work crew here', '<span class="dn">nobody</span> <span style="opacity:.7">— post a unit with this trade and its output rises</span>'));
     }
   }
   if (def.powerNeed) rows.push(insFac('⚡ Grid draw', (def.powerNeed * t.lvl).toFixed(2) + '/min'));
@@ -28338,7 +28348,7 @@ function insRosterCard(k, def) {
       '<div class="ins-desc" style="margin:0"><b>Nobody works here yet.</b> ' +
       'The city puts names to a slice of its population, and that roster fills the seats it can reach as it grows — ' +
       'this building’s ' + (seats === 1 ? 'seat has' : seats + ' seats have') + ' not been taken yet. ' +
-      'The building is still crewed out of the city labour pool, so its output is unaffected.</div>');
+      'The building is still staffed out of the city labour pool, so its output is unaffected.</div>');
   }
   let sum = 0, known = 0;
   const rows = roster.map((c) => {
@@ -28387,9 +28397,18 @@ function insWorkPane(t, x, z, mult, om) {
       const wk = CREW.work.getWork(w); return wk ? wk.icon + ' ' + logEsc(wk.name) : logEsc(w);
     }).join(' · ');
     let body = insFac('👷 Trades it needs', needs) +
-      insFac('👷 Posts filled', ps.length + ' / ' + slots, ps.length ? 'up' : 'dn');
+      /* ⚠ SAY THAT THESE ARE NOT THE HIRED HANDS. The post count is `def.crew`,
+         the same number the Staffing card below prints as "hired hands needed",
+         so a player could reasonably read a filled post as one of those seats
+         taken. It is not: the building still draws its full staffing from the
+         city pool, and a posted unit works alongside them and makes them
+         better. One line, because the alternative is a wrong mental model that
+         nothing on screen ever corrects. */
+      insFac('👷 Posts filled', ps.length + ' / ' + slots +
+        ' <span style="opacity:.7">— on top of hired staffing, not instead of it</span>',
+        ps.length ? 'up' : 'dn');
     if (ps.length) {
-      body += insFac('📈 Output from the crew', '<span class="hl">' + CREW.work.multLabel(CREW.work.multFrom(ps)) + '</span>', 'up');
+      body += insFac('📈 Output from the work crew', '<span class="hl">' + CREW.work.multLabel(CREW.work.multFrom(ps)) + '</span>', 'up');
       for (const pw of ps) {
         const wk = CREW.work.getWork(pw.work);
         body += insFac('&nbsp;&nbsp;↳ ' + logEsc(pw.name),
@@ -28407,7 +28426,7 @@ function insWorkPane(t, x, z, mult, om) {
       body += insAlert('bad', '🔥', 'Repair it before posting anyone',
         'A failed building produces nothing, so a unit posted here would work for no return. Repair it and this card will let you staff it.');
     } else if (warn) {
-      body += insAlert('warn', '⚠', 'A crew here would be wasted', warn);
+      body += insAlert('warn', '⚠', 'A work crew here would be wasted', warn);
     } else if (!ps.length) {
       body += insAlert('warn', '👷', 'Nobody is posted here',
         'This building runs at its base rate until you post a unit with one of the trades above. A unit only lifts the building you put it in.');
@@ -28433,12 +28452,16 @@ function insWorkPane(t, x, z, mult, om) {
         costs = insFac('At full staffing it would supply', insRate(def.svc.supply * full * fed) + ' ' +
           NEED_META[def.svc.need].ico + '/min <span class="fl">(now ' + insRate(def.svc.supply * mult * fed) + ')</span>'); }
     }
-    out.push(insCardHtml('Crew', def.crew + ' 👷 needed here',
+    /* 👷 "STAFFING", NOT "CREW" — see bldCrewBusyMsg's header for the three-way
+     collision this resolves. These are the anonymous hands you HIRE from one
+     city-wide pool; the card above this one is the named units you POST, and
+     the two used to share a word on the same tab. */
+  out.push(insCardHtml('Staffing', def.crew + ' 👷 hired hands needed',
       insVitRow('👷 City staffing', Math.round(s * 100) + '%', s,
-        game.army.workers + ' workers hired against ' + crewNeeded() + ' crew jobs across the city. Output of every crewed building is multiplied by this.') +
+        game.army.workers + ' workers hired against ' + crewNeeded() + ' staffed jobs across the city. Output of every staffed building is multiplied by this.') +
       insFac('This building needs', def.crew + ' 👷') +
       (def.pop ? insFac('Occupies', def.pop + ' population') : '') + costs +
-      (s < 1 ? insAlert('warn', '👷', 'Understaffed — every crewed building is running at ' + Math.round(s * 100) + '%',
+      (s < 1 ? insAlert('warn', '👷', 'Understaffed — every staffed building is running at ' + Math.round(s * 100) + '%',
         'Hire workers from the People panel. Staffing is one city-wide pool: it is shared out evenly, not queued per building.') : '')));
   }
   if (def.popCap) {
@@ -28467,10 +28490,12 @@ function insWorkPane(t, x, z, mult, om) {
   if (def.crew) out.push(insRosterCard(key(x, z), def));
   if (!out.length && !lead.length) return '';
   const foot = def.crew
-    ? 'Hired workers are one city-wide labour pool — hiring anywhere lifts every crewed building at once. ' +
-      'Posted CREW UNITS are the opposite: each one lifts only the building you put it in. ' +
-      'crewed building at once, and the names above hold this building\u2019s seats without changing what it makes.'
-    : 'This building draws no crew, so nobody is posted to it.';
+    ? 'Three groups work in this city and they are not the same people. ' +
+      '👷 STAFFING is the anonymous hands you hire — one city-wide pool, so hiring anywhere lifts every staffed building at once. ' +
+      '🏗 BUILD GANGS raise the buildings and then leave. ' +
+      'Your WORK CREW is the named units you post here, on top of the staffing rather than instead of it — each lifts only the building you put it in. ' +
+      'staffed building at once, and the names above hold this building\u2019s seats without changing what it makes.'
+    : 'This building needs no staffing, so nobody can be posted to it.';
   return '<div>' + lead.join('') + out.join('') + '<div class="ins-desc" style="margin-top:12px">' + foot + '</div></div>';
 }
 
@@ -31951,7 +31976,7 @@ function renderArmy() {
         '<div class="ucstats">' +
           '<span class="ucstat" title="Defence multiplier for this rank">🛡 ×' + rk.mult.toFixed(1) + '</span>' +
           '<span class="ucstat" title="Garrison slots used / capacity">⚔ ' + game.army.soldiers + '/' + garrisonCap() + '</span>' +
-          '<span class="ucstat" title="Crew staffing across your producers">🔧 ' + staffed + '%</span>' +
+          '<span class="ucstat" title="Staffing across your producers">🔧 ' + staffed + '%</span>' +
         '</div>' +
       '</div>' +
     '</div>' +
@@ -34267,7 +34292,7 @@ function opsDecorateShop() {
        Four clicks 15 ms apart against a 40 ms bridge = four jobs on two slots,
        silently, with no refusal shown. See _pendingOrders. */
     if (!zc && bldCrewLoad() >= bldSlots()) {
-      toast(bldCrewBusyMsg() + (bldCoTiles().length ? '' : ' A 🏗 Construction Co. adds crews.'), 'bad');
+      toast(bldCrewBusyMsg() + (bldCoTiles().length ? '' : ' A 🏗 Construction Co. adds build gangs.'), 'bad');
       return;
     }
     /* 🔒 THE MUNICIPAL CEILING BINDS A ZONED ORDER TOO, and that is deliberate:
@@ -36479,7 +36504,7 @@ function ctTerms(c) {
     { k: 'work', w: .20, v: !t ? .25 : t.damaged ? .15 : cl(typeof staffingRatio === 'function' ? staffingRatio() : 1),
       lab: 'Their own work',
       src: t ? (t.damaged ? 'their building is wrecked' : 'city staffing')
-             : emp ? 'no crewed tile — the ' + emp.name + ' pays them'
+             : emp ? 'no staffed tile — the ' + emp.name + ' pays them'
                    : 'no seat anywhere' },
     { k: 'safe', w: .15, v: Number.isFinite(+cov.safety) ? cl(+cov.safety) : cl((+vitals.security || 0) / 100),
       lab: 'Safety', src: Number.isFinite(+cov.safety) ? 'safety coverage' : 'security vitals' },
@@ -36572,7 +36597,7 @@ function ctLines(c, W, terms) {
                tone: '', why: 'def.svc.need = ' + W.svc.need });
   } else {
     out.push({ text: 'I hold a seat at the ' + W.name + '.', tone: '',
-               why: 'job = ' + W.k + ', a crewed building with no output of its own' });
+               why: 'job = ' + W.k + ', a staffed building with no output of its own' });
   }
 
   // 3. what is actually weighing on them: the WEAKEST of the four mood terms
@@ -36602,9 +36627,9 @@ function ctLines(c, W, terms) {
                         : 'It is having nothing to do that wears at me. Not the money — the days.')
                  : W.t.damaged ? 'It is the state of the ' + W.name + ' that wears at me.'
                  : 'We are spread far too thin. The city has hands for ' + Math.round(staffingRatio() * 100) +
-                   '% of the crew jobs in it.',
+                   '% of the staffed jobs in it.',
                tone: 'dn', why: !W
-                 ? (emp ? 'no crewed tile (term fixed at 25%) — the ' + emp.name + ' still pays them'
+                 ? (emp ? 'no staffed tile (term fixed at 25%) — the ' + emp.name + ' still pays them'
                         : 'no seat (term fixed at 25%)')
                  : W.t.damaged ? 'workplace damaged (term fixed at 15%)'
                  : 'staffingRatio() = ' + Math.round(staffingRatio() * 100) + '%' });
@@ -36658,8 +36683,8 @@ function ctHtml(c0) {
       (W.t.lvl > 1 ? ' · level ' + W.t.lvl : '')
     : ctEmp
       ? 'On the books at the <b>' + esc(ctEmp.name) + '</b> · ' + esc(ctEmp.indIco + ' ' + ctEmp.indName) +
-        ' · no crewed tile of their own'
-      : '<b>No work right now.</b> They are one of the city’s named citizens with no crewed seat.') + '</div>';
+        ' · no staffed tile of their own'
+      : '<b>No work right now.</b> They are one of the city’s named citizens with no staffed seat.') + '</div>';
 
   /* 🗂 THE CITIZEN DOSSIER — /src/citizen. Who they live with, where that
      is, who pays them and where they are walking, each row naming the live

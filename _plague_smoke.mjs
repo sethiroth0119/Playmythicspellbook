@@ -1,11 +1,34 @@
 /* Drives the plague domain layer headless. No DOM, no bridge, no three.js. */
-import * as S from '/home/user/Playmythicspellbook/public/src/plague/strains.js';
-import * as C from '/home/user/Playmythicspellbook/public/src/plague/cures.js';
-import * as O from '/home/user/Playmythicspellbook/public/src/plague/outbreak.js';
-import * as L from '/home/user/Playmythicspellbook/public/src/plague/logistics.js';
+import * as S from './public/src/plague/strains.js';
+import * as C from './public/src/plague/cures.js';
+import * as O from './public/src/plague/outbreak.js';
+import * as L from './public/src/plague/logistics.js';
+/* hazmat.js is pure — no DOM, no three.js — so the suit is testable here, and
+   after a shipped clock bug made it unobtainable it very much needs to be. */
+import * as HZ from './public/src/biolab/hazmat.js';
+import { stationByKey } from './public/src/biolab/stations.js';
 
 let fails = 0;
 const ok = (c, m) => { console.log((c ? '  PASS ' : '  FAIL ') + m); if (!c) fails++; };
+
+/* ── a controllable clock ──────────────────────────────────────────────────
+   🔴 outbreak.js drives every STAGE off absolute Date.now() timestamps, on
+   purpose: it is what makes a doubled tick (the live loop overlapping a
+   catch-up) advance nobody twice. The consequence for a test is that passing
+   a big `dtMs` moves nothing — an index case sits in incubation forever,
+   incubating people do not transmit, and the outbreak looks inert when it is
+   only frozen. Advance THIS instead of trusting dtMs alone.
+
+   🔴 IT IS PINNED TO A FIXED EPOCH, NOT TO Date.now(). The spread roll seeds
+   off `Math.floor(now / 60000)`, so starting the clock at the real current
+   time makes every outcome depend on what time of day the suite is run — this
+   file genuinely passed in the morning and failed in the afternoon before it
+   was pinned. A test whose result moves with the wall clock is worse than no
+   test: it trains you to re-run until it goes green. */
+const REAL_NOW = Date.now;
+let CLOCK = 1767225600000;          // 2026-01-01T00:00:00Z — arbitrary, but FIXED
+Date.now = () => CLOCK;
+const advance = (ms) => { CLOCK += ms; };
 
 // ── a fake city: 30 named citizens across 5 workplaces, bad health coverage
 const roster = [];
@@ -42,7 +65,13 @@ strain.contagion = 0.9; strain.severity = 4;
 O.introduce(host, st, strain, 2, 'test');
 ok(O.caseCount(st, strain.id) === 2, 'two index cases seeded');
 let peak = 2;
-for (let i = 0; i < 40; i++) { O.tick(host, st, 30 * 60000); peak = Math.max(peak, O.caseCount(st, strain.id)); }
+// Move the clock AND pass the matching dt — the two together are what a real
+// half-hour of play looks like to the model.
+for (let i = 0; i < 40; i++) {
+  advance(30 * 60000);
+  O.tick(host, st, 30 * 60000);
+  peak = Math.max(peak, O.caseCount(st, strain.id));
+}
 console.log('  peak cases=' + peak + ' of ' + roster.length + '; now=' + O.caseCount(st));
 ok(peak > 2, 'it spread');
 ok(peak <= Math.ceil(roster.length * O.TUNING.CEILING_SHARE) + 1, 'it never took the whole city');
@@ -148,6 +177,84 @@ O.tick(host, st, 1000);
 console.log('  cases before retire=' + cases + '  after=' + O.caseCount(st, strain.id));
 ok(O.caseCount(st, strain.id) === 0, 'clearing the strain clears every carrier');
 ok(roster.length === 30, 'and still nobody was deleted');
+
+console.log('\n=== 11. the hazmat suit can actually be put on ===');
+/* 🔴 REGRESSION. This shipped broken: startDon() stamped Date.now() while the
+   run loop fed tick() performance.now(), so `now - startedAt` was about minus
+   1.7 trillion and no seal could ever latch. The HUD read the wall clock, so
+   the first bar filled to 100% and froze — the suit was unobtainable and the
+   symptom read as a stuck progress bar. Drive it on the wall clock, the way
+   the fixed loop does. */
+{
+  const suit = HZ.emptySuit();
+  let t = Date.now();
+  const at = { atAirlock: true, inHot: false };
+  HZ.startDon(suit, t);
+  ok(!!suit.donning, 'pressing E at the airlock starts a seal');
+  ok(suit.donning.startedAt === t, 'and stamps it with the clock it was handed');
+
+  // Advance in 100ms beats, exactly as the frame loop does.
+  let guard = 0;
+  while (!suit.sealed && guard++ < 400) {
+    t += 100;
+    HZ.tick(suit, 100, Object.assign({ now: t }, at));
+  }
+  const total = SEAL_MS();
+  ok(suit.sealed, 'ONE press seals all four in sequence (took ' + (guard * 100) + 'ms)');
+  ok(guard * 100 >= total, 'and it took at least the full ' + total + 'ms of donning time');
+  ok(HZ.sealCount(suit) === HZ.SEALS.length, 'all four seals are set');
+
+  // The gate is the whole point of the suit.
+  const bench = stationByKey('synthesis');
+  ok(bench && bench.hot, 'the synthesis bench is a hot-zone station');
+  ok(HZ.gate(suit, bench) === null, 'a sealed suit opens the hot bench');
+  ok(typeof HZ.gate(HZ.emptySuit(), bench) === 'string', 'no suit is refused, with a reason');
+  ok(HZ.gate(suit, stationByKey('sequencer')) === null, 'cold stations never need the suit');
+
+  // Walking away mid-seal interrupts, but never un-does a finished seal.
+  const s2 = HZ.emptySuit();
+  let t2 = Date.now();
+  HZ.startDon(s2, t2);
+  t2 += 3000; HZ.tick(s2, 3000, { now: t2, atAirlock: true, inHot: false });
+  const done = HZ.sealCount(s2);
+  ok(done >= 1, 'first seal landed after 3s');
+  t2 += 5000; HZ.tick(s2, 5000, { now: t2, atAirlock: false, inHot: false });
+  ok(!s2.donning, 'walking away interrupts the seal in progress');
+  ok(HZ.sealCount(s2) === done, 'but the seals already finished are kept');
+  ok(!s2.autoDon, 'and the sequence does not resume by itself');
+}
+
+console.log('\n=== 12. exposure only accrues when it should ===');
+{
+  const bare = HZ.emptySuit();
+  let t = Date.now();
+  for (let i = 0; i < 20; i++) { t += 1000; HZ.tick(bare, 1000, { now: t, atAirlock: false, inHot: true }); }
+  console.log('  20s in the hot zone unsuited -> exposure ' + bare.exposure);
+  ok(bare.exposure > 0.12, 'working the hot zone unsuited passes the contamination threshold');
+
+  const sealed = HZ.emptySuit();
+  sealed.sealed = true; for (const s of HZ.SEALS) sealed.seals[s.key] = true;
+  let t3 = Date.now();
+  for (let i = 0; i < 20; i++) { t3 += 1000; HZ.tick(sealed, 1000, { now: t3, atAirlock: false, inHot: true }); }
+  console.log('  20s in the hot zone SEALED   -> exposure ' + sealed.exposure);
+  ok(sealed.exposure < 0.12, 'a sealed suit stays under it');
+  ok(sealed.exposure > 0, 'but is a filter, not immunity');
+
+  const clean = HZ.emptySuit();
+  let t4 = Date.now();
+  for (let i = 0; i < 20; i++) { t4 += 1000; HZ.tick(clean, 1000, { now: t4, atAirlock: false, inHot: false }); }
+  ok(clean.exposure === 0, 'the clean half of the room costs nothing');
+
+  // And the payoff: exposure has to reach the batch, or the suit is a costume.
+  const strainX = S.makeStrain('suit-check', { pressure: 0.4 });
+  const mix = { medicine: 12, water: 8, cloth: 6 };
+  const good = C.formulate(strainX, mix, { sequenced: true, centrifuge: 0.8, synthesis: 0.8, assayed: true, exposure: 0, sealed: true });
+  const dirty = C.formulate(strainX, mix, { sequenced: true, centrifuge: 0.8, synthesis: 0.8, assayed: true, exposure: bare.exposure, sealed: false });
+  ok(dirty.contaminated && !good.contaminated, 'the exposure the suit prevents lands on the BATCH');
+  ok(dirty.risk > good.risk, 'and raises what you are about to ship');
+}
+
+function SEAL_MS() { let n = 0; for (const s of HZ.SEALS) n += s.ms; return n; }
 
 console.log('\n' + (fails ? '❌ ' + fails + ' FAILURES' : '✅ ALL CHECKS PASSED'));
 process.exit(fails ? 1 : 0);

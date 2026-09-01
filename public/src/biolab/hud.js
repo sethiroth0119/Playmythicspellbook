@@ -223,14 +223,19 @@ export function refresh(nodes, st) {
       fill.style.width = on ? '100%' : '0';
     }
   }
+  /* 🔴 SAY WHAT TO DO, NOT JUST WHAT IS TRUE. The donning line used to read
+     "⏳ Zip and tape the torso…" and stop there, which told a player nothing
+     about whether to wait, walk away, or press the key again — and when a
+     clock bug froze the sequence, there was nothing on screen to contradict
+     the filled bar. Every state now names the next action. */
   const n = sealCount(suit);
   nodes.sealtxt.textContent = suit.sealed
     ? '✅ SEALED — hot-zone benches will run.'
     : suit.donning
-      ? '⏳ ' + suit.donning.icon + ' ' + suit.donning.label + '…'
+      ? '⏳ ' + suit.donning.icon + ' ' + suit.donning.label + '… (' + (n + 1) + '/' + SEALS.length + ') — stand still.'
       : n === 0
-        ? '❌ No suit. Hot benches refuse.'
-        : n + ' of ' + SEALS.length + ' seals — finish at the airlock.';
+        ? '❌ No suit. Stand in the airlock and press E.'
+        : n + ' of ' + SEALS.length + ' seals — press E at the airlock to resume.';
 
   // ── exposure
   const band = exposureBand(suit.exposure);

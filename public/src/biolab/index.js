@@ -213,13 +213,14 @@ function commit(run) {
     HUD.toast(run.nodes, '⚠ The lab is not connected to your ledger — nothing can be mixed. Reload the game.', 'bad');
     return;
   }
+  /* A batch mixed at a HOT bench is sealed-or-not by what the suit was doing
+     during the work, which is the state the suit is in right now. Exposure is
+     read live for the same reason — cures.js turns both into lost purity,
+     lost stability and the contaminated flag. */
   const craft = Object.assign({}, run.craft, {
     exposure: run.suit.exposure,
-    sealed: run.suit.sealed || !run.suit.everSealed ? run.suit.sealed : false,
+    sealed: !!run.suit.sealed,
   });
-  // A batch mixed at a HOT bench is sealed-or-not by what the suit was doing
-  // during the work, which is the state the suit is in right now.
-  craft.sealed = !!run.suit.sealed;
   const r = PL.craftBatch(run.strain.id, run.mix, craft);
   if (!r.ok) {
     if (r.why === 'short') {
@@ -351,9 +352,21 @@ async function openDispatch(run) {
 
 /* ══ THE LOOP ══════════════════════════════════════════════════════════════ */
 
-function frame(run, now) {
+/* `now` is a FRAME clock (performance.now) and is used only to derive dt.
+   `wall` is the WALL clock (Date.now) and is the one the suit runs on.
+
+   🔴 THESE ARE TWO DIFFERENT TIME ORIGINS AND MIXING THEM WAS A SHIPPED
+   BLOCKER. startDon() stamps Date.now(); this function used to hand tick()
+   the performance.now() value, so the comparison inside was `5000 -
+   1756700000000 >= 2600` and no seal could ever latch. The HUD reads the wall
+   clock too, so the first bar filled to 100% and stopped — the suit was
+   simply unobtainable, and it looked like a stuck progress bar rather than a
+   unit mismatch. Anything time-based that the HUD also renders must be handed
+   `wall`, not `now`. */
+function frame(run, now, wall) {
   const dt = run.lastFrame ? Math.min(100, now - run.lastFrame) : 16;
   run.lastFrame = now;
+  const wallNow = wall || Date.now();
 
   const modalUp = HUD.modalOpen(run.nodes);
   // 🔴 MOVEMENT FREEZES WHILE A PANEL IS OPEN. Without this the player walks
@@ -366,7 +379,7 @@ function frame(run, now) {
   const atAirlock = !!(run.near && run.near.station.key === 'suitup');
   const hot = inHotZone(p.x, p.z);
 
-  const evs = HZ.tick(run.suit, dt, { now, atAirlock, inHot: hot });
+  const evs = HZ.tick(run.suit, dt, { now: wallNow, atAirlock, inHot: hot });
   for (const ev of evs) {
     if (ev.kind === 'seal') HUD.toast(run.nodes, '✅ ' + ev.label + ' — sealed.', 'good');
     else if (ev.kind === 'sealed') HUD.toast(run.nodes, '🥽 SUIT SEALED. The hot zone will let you work.', 'good');
@@ -568,7 +581,11 @@ const api = {
      the live state and `_step(ms)` advances one frame by hand, which is the
      only way any of this is verifiable in this environment. */
   _run: () => RUN,
-  _step: (ms) => { if (RUN) frame(RUN, (RUN.lastFrame || 0) + (ms || 16)); },
+  /* `wall` is injectable precisely because the suit runs on the wall clock:
+     without it a driver cannot advance a seal without really waiting 2.6
+     seconds, which is why the clock-mismatch blocker went unnoticed. Drive a
+     full donning with _step(16, Date.now() + n) for increasing n. */
+  _step: (ms, wall) => { if (RUN) frame(RUN, (RUN.lastFrame || 0) + (ms || 16), wall); },
   _interact: () => { if (RUN) interact(RUN); },
   _preview: () => (RUN ? preview(RUN) : null),
 };

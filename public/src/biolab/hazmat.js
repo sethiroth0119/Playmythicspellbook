@@ -48,6 +48,11 @@ export function emptySuit() {
     seals: {},            // key -> true
     sealed: false,        // all four
     donning: null,        // { key, startedAt, ms }
+    /* Once the player has COMMITTED to donning, the remaining seals chain
+       automatically for as long as they stay at the airlock. One press, then
+       stand still — see startDon. Cleared by an interruption, so resuming is
+       a deliberate act rather than something that restarts on its own. */
+    autoDon: false,
     lastAtAirlock: 0,
     exposure: 0,          // 0..1, the number cures.js consumes
     breaches: 0,          // times the player entered hot unsealed
@@ -66,13 +71,33 @@ export function nextSeal(suit) {
   return null;
 }
 
-/* Begin (or continue) donning. Returns the seal being worked, or null if the
-   suit is already complete. Called on the interact key while at the airlock. */
+/* Begin (or resume) donning. Returns the seal being worked, or null if the
+   suit is already complete. Called on the interact key while at the airlock.
+
+   🔴 `now` MUST BE WALL-CLOCK (Date.now()), because that is what tick()
+   compares it against. This was a shipped blocker once: the run loop fed
+   tick() a performance.now() timestamp while this function stamped
+   Date.now(), so `now - startedAt` was about minus 1.7 trillion and no seal
+   could EVER latch. The HUD reads the same wall clock, so the bar filled to
+   100% and then sat there — the suit was unobtainable and the symptom looked
+   like a stuck progress bar rather than a clock bug. If you change either
+   clock, change both.
+
+   ⚠ ONE PRESS DOES THE WHOLE SUIT. Requiring four separate presses was the
+   original behaviour and it read as broken: the first bar filled, nothing
+   visibly happened, and there was nothing on screen to say "press it again".
+   The cost of the airlock is meant to be the twelve seconds of standing
+   still, not the button. */
 export function startDon(suit, now) {
   if (suit.sealed) return null;
   if (suit.donning) return suit.donning;
   const s = nextSeal(suit);
   if (!s) return null;
+  suit.autoDon = true;
+  // Stamped here too, so a player who presses and immediately steps out gets
+  // the full grace window rather than an instant interruption against a
+  // lastAtAirlock that was still 0.
+  suit.lastAtAirlock = now;
   suit.donning = { key: s.key, label: s.label, icon: s.icon, startedAt: now, ms: s.ms };
   return suit.donning;
 }
@@ -83,6 +108,7 @@ export function doff(suit) {
   suit.seals = {};
   suit.sealed = false;
   suit.donning = null;
+  suit.autoDon = false;
   suit.doffed = true;
   // A clean doff vents the surface contamination. It never zeroes exposure —
   // what the batch already caught, it caught.
@@ -111,7 +137,13 @@ export function tick(suit, dtMs, ctx) {
           suit.sealed = true;
           suit.everSealed = true;
           suit.doffed = false;
+          suit.autoDon = false;
           events.push({ kind: 'sealed' });
+        } else if (suit.autoDon) {
+          // Chain straight into the next seal. See startDon: one press, then
+          // stand still. `now` is the wall clock the comparison above uses.
+          const nx = nextSeal(suit);
+          if (nx) suit.donning = { key: nx.key, label: nx.label, icon: nx.icon, startedAt: now, ms: nx.ms };
         }
       }
     } else if (now - (suit.lastAtAirlock || 0) > TUNING.GRACE_MS) {
@@ -121,6 +153,9 @@ export function tick(suit, dtMs, ctx) {
          respect it. */
       events.push({ kind: 'interrupted', key: suit.donning.key });
       suit.donning = null;
+      // Resuming is a deliberate act. Without this the sequence would restart
+      // itself the moment the player wandered back within reach.
+      suit.autoDon = false;
     }
   } else if (ctx.atAirlock) {
     suit.lastAtAirlock = now;

@@ -422,7 +422,15 @@ export function build(THREE, canvas) {
 
       const sealed = !!(st.suit && st.suit.sealed);
 
-      if (chars.active) {
+      /* 🔴 GATE ON WHAT LOADED, NOT ON WHAT IS SHOWING. This read
+         `if (chars.active)` and was unreachable by construction: `active` is
+         set ONLY by showCharacter(), which is called ONLY inside this branch,
+         so it started null and stayed null forever. Both models could load
+         perfectly and the player still saw the fallback boxes — which is
+         exactly what shipped, and it looks identical to a failed download, so
+         the symptom pointed at the assets instead of at four characters of
+         condition. */
+      if (chars.bare || chars.suit) {
         /* ── the imported characters ──────────────────────────────────────
            Model choice IS the suit read-out: the researcher walks in, and the
            moment the fourth seal closes they are the Hazard Sentinel. No
@@ -436,6 +444,10 @@ export function build(THREE, canvas) {
            sliding, which is the whole reason to blend rather than switch. */
         showCharacter(sealed ? 'suit' : 'bare');
         const c = chars.active;
+        // showCharacter refuses a state it has no model for. Both are
+        // backfilled by loadCharacters, so this should be unreachable — but a
+        // throw here happens every frame, and the box is a fine answer.
+        if (!c) { avatar.position.y = 0; renderer.render(scene, cam); return; }
         const speed = Math.hypot(p.vx, p.vz);
         const full = 5.2;                          // player.js SPEED
         const frac = Math.max(0, Math.min(1, speed / full));

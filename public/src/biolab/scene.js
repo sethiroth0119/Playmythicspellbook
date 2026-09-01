@@ -253,6 +253,100 @@ function makeAvatar(THREE, M) {
    Returns null on any failure. The caller keeps the box avatar, so a blocked
    CDN, a 404 on the model, or a GPU that refuses skinning all degrade to the
    lab that shipped before these models existed rather than to a blank room. */
+/* ── inline a GLB's textures as data: URIs ────────────────────────────────
+   🔴 THIS EXISTS BECAUSE OF `connect-src`. A GLB stores its texture inside the
+   binary chunk, and three.js turns that into a `blob:` URL and then FETCHES
+   it — r128 picks ImageBitmapLoader, which is fetch-based, on every browser
+   but Firefox. A page served with a strict Content-Security-Policy refuses
+   that: "Refused to connect to 'blob:…' because it violates the following
+   Content Security Policy directive: connect-src". The GLB parses, the
+   texture load rejects, the whole parse rejects, and the caller sees only
+   "the model did not load" — pointing at the file, which is fine.
+
+   Rewriting the image to a `data:` URI before parsing removes the blob and
+   the fetch together: the image becomes an ordinary `<img src="data:…">`,
+   which is what an Artifact page is explicitly built to allow. It is also
+   harmless everywhere else — the game has no CSP and simply takes the same
+   path.
+
+   Returns the original buffer untouched on any doubt. A texture that fails to
+   inline is a texture that still works the old way; a corrupted rewrite is a
+   model that never loads again. */
+function inlineGlbTextures(buf) {
+  try {
+    const dv = new DataView(buf);
+    if (dv.getUint32(0, true) !== 0x46546c67) return buf;      // not a GLB
+    const total = dv.getUint32(8, true);
+    let off = 12, json = null, jsonStart = 0, jsonLen = 0, binStart = 0, binLen = 0;
+    while (off < total && off + 8 <= buf.byteLength) {
+      const len = dv.getUint32(off, true);
+      const type = dv.getUint32(off + 4, true);
+      if (type === 0x4e4f534a) {
+        jsonStart = off + 8; jsonLen = len;
+        json = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, jsonStart, jsonLen)));
+      } else if (type === 0x004e4942) { binStart = off + 8; binLen = len; }
+      off += 8 + len;
+    }
+    if (!json || !json.images || !json.images.length || !binLen) return buf;
+
+    let changed = false;
+    for (const img of json.images) {
+      if (img.uri || img.bufferView == null) continue;
+      const v = json.bufferViews[img.bufferView];
+      if (!v) continue;
+      const bytes = new Uint8Array(buf, binStart + (v.byteOffset || 0), v.byteLength);
+      // btoa needs a binary string; chunked so a megabyte texture cannot blow
+      // the argument limit on String.fromCharCode.
+      let s = '';
+      for (let i = 0; i < bytes.length; i += 0x8000) {
+        s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      }
+      img.uri = 'data:' + (img.mimeType || 'image/png') + ';base64,' + btoa(s);
+      delete img.bufferView;
+      delete img.mimeType;                 // a uri-based image must not carry one
+      changed = true;
+    }
+    if (!changed) return buf;
+
+    /* Re-emit the container. The BIN chunk is kept verbatim — the image's old
+       bufferView is now unreferenced, which is legal and costs only the bytes
+       we were shipping anyway. Rewriting the buffer to drop them would mean
+       renumbering every accessor for no benefit at load time. */
+    let jsonStr = JSON.stringify(json);
+    while (jsonStr.length % 4) jsonStr += ' ';
+    const jsonBytes = new TextEncoder().encode(jsonStr);
+    const out = new ArrayBuffer(12 + 8 + jsonBytes.length + 8 + binLen);
+    const o = new DataView(out);
+    const ob = new Uint8Array(out);
+    o.setUint32(0, 0x46546c67, true); o.setUint32(4, 2, true); o.setUint32(8, out.byteLength, true);
+    o.setUint32(12, jsonBytes.length, true); o.setUint32(16, 0x4e4f534a, true);
+    ob.set(jsonBytes, 20);
+    o.setUint32(20 + jsonBytes.length, binLen, true);
+    o.setUint32(24 + jsonBytes.length, 0x004e4942, true);
+    ob.set(new Uint8Array(buf, binStart, binLen), 28 + jsonBytes.length);
+    return out;
+  } catch (e) {
+    try { console.warn('[biolab] texture inline skipped:', e); } catch (e2) {}
+    return buf;
+  }
+}
+
+/* Parse with the <img>-based texture loader rather than ImageBitmapLoader.
+   r128's GLTFParser picks ImageBitmapLoader whenever `createImageBitmap`
+   exists, and that one uses fetch() — the exact call `connect-src` refuses.
+   The parser is constructed synchronously inside parse(), so hiding the global
+   for the duration of that call is enough, and it is restored immediately. */
+function parseWithImgLoader(L, bytes, onLoad, onErr) {
+  const had = Object.prototype.hasOwnProperty.call(window, 'createImageBitmap');
+  const prev = window.createImageBitmap;
+  try { window.createImageBitmap = undefined; } catch (e) {}
+  try {
+    L.parse(bytes, '', onLoad, onErr);
+  } finally {
+    try { if (had) window.createImageBitmap = prev; else delete window.createImageBitmap; } catch (e) {}
+  }
+}
+
 function loadCharacter(THREE, def) {
   return new Promise((resolve) => {
     let done = false;
@@ -265,7 +359,13 @@ function loadCharacter(THREE, def) {
         try { finish(prepareCharacter(THREE, gltf)); }
         catch (e) { try { console.warn('[biolab] model prep', e); } catch (e2) {} finish(null); }
       };
-      const onErr = (e) => { try { console.warn('[biolab] model load', def.url, e); } catch (e2) {} finish(null); };
+      /* ⚠ SAY WHICH PATH FAILED. This used to print def.url whichever route ran,
+         so a texture rejecting inside parse() was reported as the model file
+         failing to download — and four rounds were spent looking at the file. */
+      const onErr = (via) => (e) => {
+        try { console.warn('[biolab] model ' + via + ' failed for ' + def.key + ':', e); } catch (e2) {}
+        finish(null);
+      };
 
       let bytes = null;
       try {
@@ -273,8 +373,22 @@ function loadCharacter(THREE, def) {
         if (bank && bank[def.key]) bytes = bank[def.key];
       } catch (e) {}
 
-      if (bytes) L.parse(bytes, '', onLoad, onErr);
-      else L.load(def.url, onLoad, undefined, onErr);
+      if (bytes) {
+        parseWithImgLoader(L, inlineGlbTextures(bytes), onLoad, onErr('parse'));
+      } else {
+        /* Fetched from the server: pull the bytes ourselves so the same
+           texture-inlining runs on this path too, and fall back to the
+           loader's own fetch if that is not possible. */
+        fetch(def.url).then((r) => {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.arrayBuffer();
+        }).then((ab) => {
+          parseWithImgLoader(L, inlineGlbTextures(ab), onLoad, onErr('parse'));
+        }).catch(() => {
+          try { L.load(def.url, onLoad, undefined, onErr('fetch ' + def.url)); }
+          catch (e) { finish(null); }
+        });
+      }
     } catch (e) { finish(null); }
   });
 }

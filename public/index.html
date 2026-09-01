@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120x1';
+  window.BUILD_VERSION = 'v120x2';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -140476,7 +140476,7 @@ function renderUnitModal() {
                 </div>
                 ${prof.suits.map(suit).join('')}
                 ${pas ? `<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px">${pas}</div>` : ''}
-                <div class="small-text" style="color:#bfae87;margin-top:6px;line-height:1.45">Put this unit on the city's <b>work crew</b> and it walks to whatever building suits it best. A higher suitability, a higher unit level and a well-fed crew all raise what it is worth there — a fully-worked building tops out at <b>${W.multLabel(1 + W.WORK.BOOST_CAP)}</b> output.</div>
+                <div class="small-text" style="color:#bfae87;margin-top:6px;line-height:1.45">Enlist this unit on the city's <b>work crew</b> and <b>post it</b> to a building that needs one of these trades — it only lifts the building you put it in. A higher suitability, a higher unit level and a well-fed crew all raise what it is worth there; a fully-worked building tops out at <b>${W.multLabel(1 + W.WORK.BOOST_CAP)}</b> output.</div>
               </div>`;
             })() : ''}
           </div>
@@ -223261,7 +223261,7 @@ render();
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
 <script type="module">
-  import * as Work from './src/work/work.js?v=v120x1work1';
+  import * as Work from './src/work/work.js?v=v120x2work2';
   try { window.MythicWork = Work; } catch (e) {}
 </script>
 <!-- battle-board round 1 -->

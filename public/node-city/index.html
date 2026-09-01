@@ -9,7 +9,7 @@
      believed the file was already live. Only a CONTENT change moves the hash
      and forces a re-upload, so bump this stamp whenever the city 404s, and
      probe it (grep NC_BUILD on the served page) to prove the deploy landed. -->
-<script>window.NC_BUILD = "v120x1-workcrew";</script>
+<script>window.NC_BUILD = "v120x2-crewposts";</script>
 <!-- ════════════════════════════════════════════════════════════════════════
      NODE CITY — SimCity-style settlement layer for Mythic Spellbook.
      Three.js WebGPU (auto-falls back to WebGL2). Realistic sun/moon cycle.
@@ -818,6 +818,10 @@
     <div id="insft">
       <button class="pbtn ember" id="btn-upgrade"></button>
       <button class="pbtn" id="btn-action" style="display:none"></button>
+      <!-- 👷 Its OWN button rather than sharing #btn-action, because the Duel
+           Arena and the Player Shop have both a card socket and crew posts, and
+           one contextual button cannot offer two unrelated things. -->
+      <button class="pbtn" id="btn-crew" style="display:none"></button>
       <button class="pbtn" id="btn-repair" style="display:none"></button>
       <button class="pbtn" id="btn-rotate">🔄 Rotate — 0°</button>
       <span class="grow"></span>
@@ -16472,15 +16476,23 @@ function computeLinks() {
     computeLinks._last = now;
     for (const a of game.anchors) MythicCityBridge.pushNodeBoost(a.node.id, a.link);
   }
-  /* 👷 RE-MATCH THE CREW. computeLinks() already runs on every place, demolish,
-     repair and failure, which is exactly the set of events that changes what
-     jobs exist — so hanging the reassignment here means a newly-built Smelting
-     Works pulls the right unit off the mine in the same frame it goes up,
-     without a second set of hooks to keep in step with this one.
-     ⚠ NOT per tick. The pass is O(crew × slots) and the answer only changes
-       when the city's shape does; running it on the tick would also make the
-       panel's "where is everyone" flicker for no reason. */
-  try { if (CREW) { CREW.assign(); CREW.renderPanel(); } } catch (e) {}
+  /* 👷 VALIDATE THE POSTS — and validate ONLY. computeLinks() already runs on
+     every place, demolish, repair and failure, which is exactly the set of
+     events that can invalidate a post, so this is where a worker standing in a
+     building that no longer exists gets sent home.
+
+     🔴 IT DOES NOT REASSIGN. Posting is the player's decision now; a pass that
+     re-solved the city here would quietly overwrite a deliberate allocation
+     every time they laid a road. The only thing that ever moves a worker
+     without being asked is this function sending one home, and it SAYS SO —
+     silently stopping a worker is indistinguishable from a bug. */
+  try {
+    if (CREW) {
+      const cleared = CREW.validate();
+      for (const c of cleared) toast('👷 ' + c.name + ' was sent back to the crew — ' + c.why, 'bad');
+      CREW.renderPanel();
+    }
+  } catch (e) {}
 }
 function citySync() {
   if (!game.anchors.length) return 0;
@@ -17758,7 +17770,11 @@ function insSystems(t, x, z) {
     rows.push(insFac('👷 Work it needs', CREW.work.workNeeds(t.type).map(w => {
       const x2 = CREW.work.getWork(w); return x2 ? x2.icon + ' ' + logEsc(x2.name) : logEsc(w);
     }).join(' · ')));
-    const cps = CREW.powersAt(key(x, z));
+    const _ck = key(x, z);
+    const cps = CREW.powersAt(_ck);
+    rows.push(insFac('👷 Posts filled', cps.length + ' / ' + CREW.slotsAt(_ck) +
+      (CREW.freeSlotsAt(_ck) > 0 ? ' <span style="opacity:.7">— use 👷 Post a worker below</span>' : ''),
+      CREW.freeSlotsAt(_ck) > 0 ? 'dn' : 'up'));
     if (cps.length) {
       rows.push(insFac('👷 Crew output', '<span class="hl">' + CREW.work.multLabel(CREW.work.multFrom(cps)) + '</span>', 'up'));
       for (const p of cps) {
@@ -17771,7 +17787,7 @@ function insSystems(t, x, z) {
           p.cond < 65 ? 'dn' : ''));
       }
     } else {
-      rows.push(insFac('👷 Crew here', '<span class="dn">nobody</span> <span style="opacity:.7">— enlist a unit with this trade and it will walk here itself</span>'));
+      rows.push(insFac('👷 Crew here', '<span class="dn">nobody</span> <span style="opacity:.7">— post a unit with this trade and its output rises</span>'));
     }
   }
   if (def.powerNeed) rows.push(insFac('⚡ Grid draw', (def.powerNeed * t.lvl).toFixed(2) + '/min'));
@@ -18265,6 +18281,25 @@ function openInspect(k) {
   // contextual action button(s)
   const act = $('btn-action');
   act.style.display = 'none'; act.onclick = null;
+  /* 👷 POST A WORKER. Shown on every building the crew can actually work,
+     alongside whatever else that building offers — the Arena has both this and
+     a card socket, and they mean different things. Hidden while damaged for the
+     same reason the socket is: a dead building has no work to give.
+     The count is on the button because "2 / 3" is the whole reason a player
+     opens it, and making them read the dossier first to find that out is a
+     click they should not have to spend. */
+  const crewBtn = $('btn-crew');
+  if (crewBtn) {
+    crewBtn.style.display = 'none'; crewBtn.onclick = null;
+    try {
+      if (CREW && !t.damaged && CREW.takesWork(selectedKey)) {
+        const used = CREW.postsAt(selectedKey).length, slots = CREW.slotsAt(selectedKey);
+        crewBtn.style.display = 'block';
+        crewBtn.textContent = '👷 Post a worker — ' + used + ' / ' + slots;
+        crewBtn.onclick = () => CREW.openTilePicker(selectedKey);
+      }
+    } catch (e) {}
+  }
   if (!t.damaged) {
     /* 🏟 The Stadium gets its own dialog rather than a dossier tab, for the
        same reason the Resting House does: the readiness checklist, three
@@ -24381,14 +24416,24 @@ function animate() {
       openCardPicker, saveSoon, toast, updateHUD,
       assignCard: (id, on) => MythicCityBridge.assignCard(id, on),
       salt: () => _workSalt,
+      /* Repaint the open dossier after a post. Without it the panel a player is
+         looking at — the one whose button they just pressed — keeps showing the
+         old post count and the old multiplier until they close and reopen it,
+         which reads as the click not having worked. */
+      refreshInspect: () => { try { if (selectedKey && $('inspect').classList.contains('open')) openInspect(selectedKey); } catch (e) {} },
       /* 🌙 The clock two work passives care about. estClock() is this city's
          real EST hour (see §updateSky) — the SAME clock the lamps and the sky
          run on, so a Nocturnal unit speeds up exactly when the street lights
          come on rather than on a second, invisible schedule of its own. */
       isNight: () => { try { const h = estClock().h; return h < 6 || h >= 19; } catch (e) { return false; } },
     });
-    CREW.load(_crewSave);
+    /* load() returns the posts it had to drop — a building demolished in another
+       session, or one that changed under a standing post. Reported, never
+       swallowed: a player who comes back to a smaller crew output deserves the
+       one line that explains it. */
+    const _dropped = CREW.load(_crewSave) || [];
     CREW.reconcile();
+    for (const d of _dropped.slice(0, 4)) toast('👷 ' + d.name + ' lost its post while you were away — ' + d.why, 'bad');
     CREW.renderPanel();
   } catch (e) { CREW = null; console.warn('[Crew] not mounted (non-fatal):', e); }
   try {
@@ -24588,16 +24633,19 @@ function animate() {
     insFactors, tileMult, staffingRatio, bonusesFor,
     /* 👷 THE WORK CREW. Everything that decides a crew multiplier is private to
        this file or to the module — `CREW` itself, the private `CARDS` list, the
-       assignment cache — so without a seam the only way to check that a Lv 4
-       Planting unit actually doubles a Farm is to read the DOM and trust it.
-       `enlist` is the same call the dialog's button makes, exposed so a test can
-       staff a city without clicking a canvas that never paints. */
+       roster — so without a seam the only way to check that a Lv 4 Planting unit
+       actually doubles a Farm is to read the DOM and trust it. `enlist` and
+       `post` are the same two calls the dialog's buttons make, exposed so a test
+       can staff a city without clicking a canvas that never paints. */
     crew: () => CREW,
     cards: () => CARDS.slice(),
     crewMult: (k) => crewMult(k),
     crewPowers: (k) => (CREW ? CREW.powersAt(k) : []),
-    crewJobs: () => (CREW ? CREW._jobs() : {}),
+    crewPosts: () => (CREW ? Object.fromEntries(CREW.state().map(m => [m.card, m.post])) : {}),
     enlist: (id) => (CREW ? CREW.enlist(id) : 'no module'),
+    postCrew: (id, k) => (CREW ? CREW.post(id, k) : 'no module'),
+    unpostCrew: (id) => (CREW ? CREW.unpost(id) : false),
+    autoFill: () => (CREW ? CREW.autoFill() : 0),
     dismissCrew: (id) => (CREW ? CREW.dismiss(id) : false),
     socket: (k, cardId) => {
       const t = game.tiles[k]; if (!t) return null;

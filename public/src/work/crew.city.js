@@ -1,25 +1,35 @@
 /* ══════════════════════════════════════════════════════════════════════════
    👷 THE WORK CREW — the city half of work suitability.
    ──────────────────────────────────────────────────────────────────────────
-   You do not staff a building. You keep a CREW, and the crew finds its own
-   work: every reassignment matches each unit to the job it is best at, across
-   the whole city, and a building's output rises with the workers standing in
-   it. Take a unit out and the city re-shuffles around the hole.
+   Units are enlisted onto a crew (beds cap it) and then POSTED, by the player,
+   to a specific building. What a post is worth is decided by the unit's
+   suitability for THAT building's trade, its level, its passives and its
+   condition — so the interesting question is never "do I have enough units", it
+   is "my one Lv 4 Kindling hand: Smelting Works, or Power Station?"
 
-   That is the entire design, and it is deliberately NOT "slot a card into a
-   building". Per-building slots make the player do the optimiser's job by hand
-   — thirty buildings, twenty units, re-solved every time they build anything —
-   and the busywork scales with how well the city is doing, which is exactly
-   backwards. Assignment is a matching problem; the game should solve it.
+   🔴 ASSIGNMENT IS THE PLAYER'S, NOT THE SOLVER'S — and that is a reversal of
+   how this shipped a round ago. The first version matched the whole crew to the
+   whole city automatically, greedily, on every change. It worked, and it was
+   boring: a city with enough units played itself, and the only decision left was
+   how many units to enlist. Handing the matching back to the player turns three
+   flat facts (a unit's trades, a building's trade, the bed cap) into a real
+   allocation problem with scarcity on both sides.
+
+   What survives from the automatic version is `autoFill()`, and it is
+   deliberately weak: it fills EMPTY posts with UNPOSTED units and never moves
+   anybody the player placed. It is a first-turn convenience and a way to mop up
+   after building six things at once, not a solver — it is greedy, it cannot see
+   which resource the player is actually short of, and a player who cares will
+   beat it. That is the intended relationship.
 
    What this file owns:
      · the roster and its cap (beds — see crewCap)
-     · the assignment pass, and the cache the tick reads
+     · the posts, and the rules about what may be posted where
      · upkeep: rations in, CONDITION out
-     · the crew panel and dialog
+     · the crew panel, the crew dialog and both assignment pickers
    What it does NOT own: the rules. Suitabilities, passives, levels, the
-   arithmetic and the ceiling are all /src/work/work.js, which index.html also
-   imports so the game and the city can never disagree about a unit.
+   arithmetic and the ×2.00 ceiling are all /src/work/work.js, which index.html
+   also imports so the game and the city can never disagree about a unit.
 
    🔴 THE GLOBALS TRAP (CLAUDE.md). `game`, `BUILDINGS`, `CARDS`, `cardById`
    and `MythicCityBridge` are top-level `const` inside node-city/index.html's
@@ -85,6 +95,9 @@ export function state() {
   for (const m of g.crew) {
     if (typeof m.cond !== 'number' || !isFinite(m.cond)) m.cond = W.WORK.COND_MAX;
     m.cond = Math.max(0, Math.min(W.WORK.COND_MAX, m.cond));
+    // `post` is a tile key or null. Never trusted on load — validate() is what
+    // decides whether the tile it names still exists and still wants work.
+    if (typeof m.post !== 'string' || !m.post) m.post = null;
   }
   return g.crew;
 }
@@ -117,96 +130,206 @@ export function profileOf(id) {
 }
 function memberOf(id) { return state().find(m => m.card === id) || null; }
 
-/* ── THE ASSIGNMENT PASS ──────────────────────────────────────────────────
-   Greedy, deterministic, and re-run only when something structural changes —
-   never per tick. On each pass:
+/* ── POSTS ────────────────────────────────────────────────────────────────
+   One crew member, one building. A building offers `def.crew` posts (min 1) —
+   reusing the building's OWN crew figure is the whole reason a Farm takes two
+   hands and a Gas Station one without a second table to keep in step with the
+   first.
 
-     1. Every undamaged building whose output the tick multiplies offers
-        `def.crew` job slots (min 1). Reusing the building's OWN crew figure is
-        the whole reason a Farm takes two hands and a Gas Station one without a
-        second table to keep in step with the first.
-     2. Score every (member, slot) pair by workPower.
-     3. Repeatedly take the best remaining pair. Stop when nothing scores.
+   🔴 A UNIT MAY ONLY BE POSTED WHERE IT CAN ACTUALLY WORK. Letting the player
+   put a Lv 4 miner in a Restaurant "for zero" is not freedom, it is a trap: the
+   post looks filled, the building looks staffed, and the output does not move.
+   post() refuses it and says why, and the pickers show unsuitable units greyed
+   with the reason rather than hiding them — "why can't I use this one" has to
+   be answerable from the screen where the question occurs.
 
-   🔴 GREEDY, NOT OPTIMAL, AND THAT IS THE RIGHT CALL. The optimal assignment is
-   the Hungarian algorithm; on ≤20 workers and ≤60 slots it would be perfectly
-   affordable. It is not used because a player has to be able to PREDICT this.
-   "My best miner went to the mine" is a rule someone can hold in their head and
-   plan around. An optimal solver will happily move that miner to the quarry to
-   free a better global total, and the player — who cannot see the objective
-   function — reads it as the game shuffling their crew at random. Legibility
-   beats a few percent of throughput.
-
-   ⚠ TIES BREAK ON ROSTER ORDER, which is enlist order, which is stable. Without
-     that a re-render could reorder two equal workers and make the panel flicker
-     between two correct answers. */
-let _jobs = {};              // tileKey -> [cardId, …]
-let _idle = [];              // cardIds with no job
+   ⚠ EVERY READ GOES THROUGH validate() FIRST. A post is a reference to a tile,
+     and tiles are demolished, replaced and damaged behind its back. An unchecked
+     post survives as a worker standing in a building that no longer exists,
+     occupying a slot nothing can free. */
 let _multCache = null;       // tileKey -> mult, invalidated once per tick
 
-function jobSlots() {
-  const out = [];
-  for (const [k, t] of Object.entries(G().tiles || {})) {
-    if (!t || t.damaged) continue;
-    const def = defOf(t.type); if (!def) continue;
-    if (!W.workNeeds(t.type).length) continue;
-    // A building the tick does not multiply cannot use a crew, whatever the
-    // work table says. work.js's auditBuildings warns about the mismatch at
-    // mount; this is the belt to that braces.
-    if (!def.gen && !def.svc) continue;
-    const slots = Math.max(1, def.crew | 0);
-    for (let i = 0; i < slots; i++) out.push(k);
+export function slotsAt(k) {
+  const t = G().tiles[k]; if (!t) return 0;
+  const def = defOf(t.type); if (!def) return 0;
+  if (!W.workNeeds(t.type).length) return 0;
+  // A building the tick does not multiply cannot use a crew, whatever the work
+  // table says. work.js's auditBuildings warns about the mismatch at mount;
+  // this is the belt to that braces.
+  if (!def.gen && !def.svc) return 0;
+  return Math.max(1, def.crew | 0);
+}
+export function takesWork(k) { return slotsAt(k) > 0; }
+export function postsAt(k) { return state().filter(m => m.post === k).map(m => m.card); }
+export function freeSlotsAt(k) { return Math.max(0, slotsAt(k) - postsAt(k).length); }
+export function postOf(cardId) { const m = memberOf(cardId); return m ? m.post : null; }
+/** Crew with no post. Surfaced loudly — an idle unit is a decision not yet made. */
+export function idleIds() { return state().filter(m => !m.post).map(m => m.card); }
+
+/** Can this unit work that building, and what at? {ok, why, work, level} */
+export function canWorkAt(cardId, k) {
+  const t = G().tiles[k];
+  if (!t) return { ok: false, why: 'That building is gone.' };
+  const def = defOf(t.type);
+  if (!takesWork(k)) return { ok: false, why: (def ? def.name : 'This building') + ' has no work a crew can do.' };
+  if (t.damaged) return { ok: false, why: 'Damaged — repair it before posting anyone.' };
+  const prof = profileOf(cardId);
+  if (!prof) return { ok: false, why: 'Not in your collection.' };
+  const best = W.bestWorkAt(prof, t.type);
+  if (!best) {
+    const needs = W.workNeeds(t.type).map(x => { const w = W.getWork(x); return w ? w.name : x; }).join(' or ');
+    return { ok: false, why: 'No ' + needs + ' suitability.' };
   }
-  return out;
+  return { ok: true, work: best.type, level: best.level };
 }
 
-export function assign() {
+/* Post a unit. Moving one that is already posted is a post to the new tile —
+   no recall step, because "recall then post" is two clicks for one decision. */
+export function post(cardId, k) {
+  const m = memberOf(cardId);
+  if (!m) return 'That unit is not on the crew.';
+  if (m.post === k) return null;
+  const chk = canWorkAt(cardId, k);
+  if (!chk.ok) return chk.why;
+  if (freeSlotsAt(k) <= 0) {
+    const def = defOf((G().tiles[k] || {}).type);
+    const n = slotsAt(k);
+    return (def ? def.name : 'That building') + ' is fully staffed (' + n + ' post' + (n === 1 ? '' : 's') + '). Recall someone first.';
+  }
+  m.post = k;
+  invalidate();
+  return null;
+}
+export function unpost(cardId) {
+  const m = memberOf(cardId);
+  if (!m || !m.post) return false;
+  m.post = null;
+  invalidate();
+  return true;
+}
+
+/* ── VALIDATE ─────────────────────────────────────────────────────────────
+   Run on every structural change (the host hangs it off computeLinks, which
+   already fires on place / demolish / repair / failure). Clears posts that have
+   become impossible and REPORTS them, because a worker who quietly stopped
+   working is indistinguishable from a bug — the host toasts the list. */
+export function validate() {
+  const cleared = [];
+  const seen = {};
+  for (const m of state()) {
+    if (!m.post) continue;
+    const chk = canWorkAt(m.card, m.post);
+    let why = chk.ok ? null : chk.why;
+    if (!why) {
+      // Over-capacity can only happen when a building is DOWNGRADED or replaced
+      // under standing posts; the last ones in are the ones that lose the post.
+      const n = (seen[m.post] = (seen[m.post] | 0) + 1);
+      if (n > slotsAt(m.post)) why = 'There is no longer a post free there.';
+    }
+    if (why) { cleared.push({ card: m.card, name: (cardOf(m.card) || {}).name || m.card, why }); m.post = null; }
+  }
+  invalidate();
+  return cleared;
+}
+
+/* ── AUTO-FILL ────────────────────────────────────────────────────────────
+   The old automatic matcher, kept on a short leash. It places UNPOSTED units
+   into EMPTY posts, greedily, best pair first — and it never touches a unit the
+   player posted or a post the player filled. That boundary is the whole design:
+   the convenience exists so a fresh city and a six-building spree do not cost
+   twenty dialogs, and it must never quietly undo a decision.
+
+   It is also, deliberately, not very good. It optimises one number (total
+   contribution) and cannot see which resource the city is actually short of, so
+   a player who is paying attention will beat it. That is the intended
+   relationship between the button and the game. */
+export function autoFill() {
   const crew = state();
-  _jobs = {}; _idle = []; _multCache = null;
-  const slots = jobSlots();
-  const free = crew.map(m => m.card);
+  const free = crew.filter(m => !m.post).map(m => m.card);
+  if (!free.length) return 0;
+  const open = Object.keys(G().tiles || {}).filter(k => freeSlotsAt(k) > 0);
+  if (!open.length) return 0;
+  const room = {}; for (const k of open) room[k] = freeSlotsAt(k);
   const taken = new Set();
-  const usedSlot = new Map();          // tileKey -> how many of its slots are filled
-
-  const slotCount = {};
-  for (const k of slots) slotCount[k] = (slotCount[k] | 0) + 1;
-
+  let placed = 0;
   while (true) {
     let best = null;
     for (const id of free) {
       if (taken.has(id)) continue;
       const prof = profileOf(id); if (!prof) continue;
       const m = memberOf(id);
-      for (const k in slotCount) {
-        if ((usedSlot.get(k) | 0) >= slotCount[k]) continue;
-        const t = G().tiles[k]; if (!t) continue;
+      for (const k in room) {
+        if (room[k] <= 0) continue;
+        const t = G().tiles[k]; if (!t || t.damaged) continue;
         const p = W.workPower(null, prof, t.type, { night: night(), condition: m ? m.cond : 100 });
         if (p.power <= 0) continue;
+        // Ties break on roster order, which is enlist order, which is stable —
+        // so the same city always auto-fills the same way and the button is not
+        // a source of churn.
         if (!best || p.power > best.power + 1e-12) best = { id, k, power: p.power };
       }
     }
     if (!best) break;
-    taken.add(best.id);
-    usedSlot.set(best.k, (usedSlot.get(best.k) | 0) + 1);
-    (_jobs[best.k] = _jobs[best.k] || []).push(best.id);
+    taken.add(best.id); room[best.k]--; memberOf(best.id).post = best.k; placed++;
   }
-  _idle = free.filter(id => !taken.has(id));
-  try { G().crewJobs = Object.assign({}, _jobs); } catch (e) {}
-  return { jobs: _jobs, idle: _idle };
+  invalidate();
+  return placed;
+}
+
+/* ── Suggestions, for the two pickers ─────────────────────────────────────
+   Both return everything the UI needs to explain a choice, INCLUDING the
+   options that are refused: a picker that silently omits a unit leaves the
+   player wondering where it went. */
+
+/** Every crew member scored for one building. Best first, blocked ones last. */
+export function candidatesFor(k) {
+  const t = G().tiles[k];
+  const out = [];
+  for (const m of state()) {
+    const prof = profileOf(m.card); if (!prof) continue;
+    const chk = canWorkAt(m.card, k);
+    const p = (chk.ok && t) ? W.workPower(null, prof, t.type, { night: night(), condition: m.cond }) : null;
+    out.push({
+      card: m.card, name: (cardOf(m.card) || {}).name || m.card, profile: prof,
+      cond: m.cond, here: m.post === k, postedAt: m.post,
+      ok: chk.ok, why: chk.why || '', power: p ? p.power : 0, work: p ? p.work : null, suit: p ? p.suit : 0,
+      speed: p ? p.speed : 1,
+    });
+  }
+  return out.sort((a, b) => (b.ok - a.ok) || (b.power - a.power));
+}
+
+/** Every building scored for one unit. Best first, full/blocked ones last. */
+export function postsFor(cardId) {
+  const prof = profileOf(cardId);
+  const m = memberOf(cardId);
+  const out = [];
+  for (const k of Object.keys(G().tiles || {})) {
+    if (!takesWork(k)) continue;
+    const t = G().tiles[k], def = defOf(t.type);
+    const chk = canWorkAt(cardId, k);
+    const p = (chk.ok && prof) ? W.workPower(null, prof, t.type, { night: night(), condition: m ? m.cond : 100 }) : null;
+    const full = freeSlotsAt(k) <= 0 && m && m.post !== k;
+    out.push({
+      key: k, name: def ? def.name : t.type, ico: def ? def.ico : '🏭',
+      here: m && m.post === k, full, ok: chk.ok && !full, why: full ? 'Fully staffed' : (chk.why || ''),
+      slots: slotsAt(k), used: postsAt(k).length,
+      power: p ? p.power : 0, work: p ? p.work : null, suit: p ? p.suit : 0,
+    });
+  }
+  return out.sort((a, b) => (b.ok - a.ok) || (b.power - a.power));
 }
 
 /** Which cards are working this tile. */
-export function workersAt(k) { return (_jobs[k] || []).slice(); }
-/** Which cards have no job — shown in the panel, because idle hands are a bug the player can fix. */
-export function idleIds() { return _idle.slice(); }
-/** Where one card is working, or null. */
-export function jobOf(id) { for (const k in _jobs) if (_jobs[k].indexOf(id) >= 0) return k; return null; }
+export function workersAt(k) { return postsAt(k); }
+/** Where one card is posted, or null. */
+export function jobOf(id) { return postOf(id); }
 
 /** Every worker's contribution at this tile, decomposed for the UI. */
 export function powersAt(k) {
   const t = G().tiles[k]; if (!t) return [];
   const out = [];
-  for (const id of (_jobs[k] || [])) {
+  for (const id of postsAt(k)) {
     const prof = profileOf(id); if (!prof) continue;
     const m = memberOf(id);
     const p = W.workPower(null, prof, t.type, { night: night(), condition: m ? m.cond : 100 });
@@ -221,8 +344,8 @@ export function powersAt(k) {
 /* The multiplier the tick applies. Memoised per tick because tileMult() is
    called for every tile from three places (the power pre-pass, the main pass
    and cityDemandScale) and this would otherwise re-roll every worker's maths
-   three times per building per second. Invalidated by upkeep() — the only
-   thing that moves condition — and by assign(). */
+   three times per building per second. Invalidated by upkeep() — the only thing
+   that moves condition — and by every post change. */
 export function multAt(k) {
   if (!_multCache) _multCache = {};
   if (k in _multCache) return _multCache[k];
@@ -279,15 +402,18 @@ export function avgCondition() {
   return c.reduce((a, m) => a + m.cond, 0) / c.length;
 }
 
-/* ── Roster changes ───────────────────────────────────────────────────────
-   Both paths reassign immediately: a player who enlists a miner must see the
-   mine's number move in the same frame, or they cannot tell the system worked. */
+/* ── Roster changes ──────────────────────────────────────────────────────
+   🔴 ENLISTING NO LONGER PUTS ANYONE TO WORK. A new crew member arrives IDLE
+   and stays idle until the player posts it, which is the point of the rework:
+   the interesting act is the posting, so enlisting must not silently perform
+   it. The dialog says so and offers Auto-fill for anyone who does not want to
+   place this one by hand. */
 export function enlist(cardId) {
   const crew = state();
   if (!cardId || crew.some(m => m.card === cardId)) return 'Already on the crew.';
   if (crew.length >= crewCap()) return 'No beds left — build Housing or a Resting House.';
-  crew.push({ card: cardId, cond: W.WORK.COND_MAX });
-  assign();
+  crew.push({ card: cardId, cond: W.WORK.COND_MAX, post: null });
+  invalidate();
   return null;
 }
 export function dismiss(cardId) {
@@ -295,30 +421,34 @@ export function dismiss(cardId) {
   const i = crew.findIndex(m => m.card === cardId);
   if (i < 0) return false;
   crew.splice(i, 1);
-  assign();
+  invalidate();
   return true;
 }
 /* 🔴 A CARD THAT LEAVES THE COLLECTION MUST LEAVE THE CREW. Sold, traded or
    consumed cards are removed by the host on the next card refresh; without this
-   the roster keeps a ghost that occupies a bed and a job slot forever, and the
-   panel renders its raw id. Returns how many were dropped. */
+   the roster keeps a ghost that occupies a bed and a post forever, and the panel
+   renders its raw id. Returns how many were dropped. */
 export function reconcile() {
   const crew = state();
   const before = crew.length;
   const alive = new Set((CTX && CTX.cards ? CTX.cards() : []).map(c => c && c.id).filter(Boolean));
   const kept = crew.filter(m => alive.has(m.card));
-  if (kept.length !== before) { G().crew = kept; assign(); }
+  if (kept.length !== before) { G().crew = kept; invalidate(); }
   return before - kept.length;
 }
 
 /* ── Persistence ──────────────────────────────────────────────────────────
-   Condition rides the save. It is the one piece of crew state the city cannot
-   recompute — the roster is ids and the assignment is derived, but "this unit
-   has been on short rations for an hour" exists nowhere else, and dropping it
-   would hand every returning player a perfectly-rested crew regardless of the
-   city they left behind. */
+   The POST and the CONDITION both ride the save, and both must.
+   · The post IS the player's decision. Recomputing it on load — even with
+     autoFill, which would look identical on a simple city — would silently
+     overwrite a deliberate allocation with a greedy one every time they came
+     back, which is the single worst thing this feature could do.
+   · Condition is the one piece of crew state the city cannot recompute: "this
+     unit has been on short rations for an hour" is not derivable from the
+     tiles, and dropping it would hand every returning player a perfectly rested
+     crew regardless of the city they left behind. */
 export function save() {
-  return state().map(m => ({ c: m.card, k: Math.round(m.cond) }));
+  return state().map(m => ({ c: m.card, k: Math.round(m.cond), p: m.post || null }));
 }
 export function load(raw) {
   const g = G();
@@ -326,13 +456,27 @@ export function load(raw) {
     ? raw.filter(r => r && r.c).slice(0, CREW_MAX).map(r => ({
         card: String(r.c),
         cond: Math.max(0, Math.min(W.WORK.COND_MAX, Number(r.k) == null ? W.WORK.COND_MAX : Number(r.k))),
+        post: (typeof r.p === 'string' && r.p) ? r.p : null,
       }))
     : [];
   state();
-  assign();
+  // validate(), not autoFill(): a post whose building is gone is dropped, and
+  // nothing else is touched. The host reports whatever came back.
+  return validate();
 }
 
-/* ══ UI ═══════════════════════════════════════════════════════════════════ */
+/* ══ UI ═══════════════════════════════════════════════════════════════════
+   Three surfaces, and they exist because assignment is now a decision:
+     · the LEFT-COLUMN PANEL — who is posted where, and how many are idle.
+     · the CREW DIALOG — the roster, with Post / Move / Recall on every row.
+     · the two PICKERS — "who works here" (opened from a building) and "where
+       does this one work" (opened from a crew row). Both are the same decision
+       from opposite ends, and a player will want each at different moments:
+       one when they have just built something, the other when they have just
+       pulled a good card.
+   Both pickers show REFUSED options with the reason rather than hiding them.
+   "Why can't I use this unit here" has to be answerable on the screen where the
+   question occurs, or the rule is folklore. */
 const CSS = `
 #crewbody .ccap{display:flex;justify-content:space-between;align-items:baseline;font-size:11px;
   color:var(--mist);margin-bottom:6px;}
@@ -342,30 +486,33 @@ const CSS = `
 #crewbody .cm:first-of-type{border-top:none;}
 #crewbody .cmtop{display:flex;justify-content:space-between;gap:6px;font-size:11.5px;color:var(--bone);}
 #crewbody .cmjob{font-size:10px;color:var(--gold);}
-#crewbody .cmjob.idle{color:#e08a80;}
+#crewbody .cmjob.idle{color:#e0a85f;}
 #crewbody .cmsuit{font-size:10px;color:var(--mist);}
 #crewbody .cbar{height:4px;background:rgba(255,255,255,.10);border-radius:2px;overflow:hidden;margin-top:2px;}
 #crewbody .cbar i{display:block;height:100%;background:#7ad68c;}
 #crewbody .cbar.low i{background:#e0a85f;} #crewbody .cbar.crit i{background:#e08a80;}
 #crewbody .cempty{font-size:11px;color:var(--mist);line-height:1.45;padding:4px 0 6px;}
+#crewbody .cidle{font-size:10.5px;color:#e0a85f;margin-top:6px;}
 #crewbody .cfoot{font-size:10px;color:var(--mist);margin-top:6px;line-height:1.4;}
 
 #crewmod{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;
   background:rgba(8,6,12,.78);backdrop-filter:blur(3px);}
-#crewmod .cbox{width:min(560px,94vw);max-height:86vh;overflow-y:auto;background:var(--panel-solid);
+#crewmod .cbox{width:min(600px,94vw);max-height:86vh;overflow-y:auto;background:var(--panel-solid);
   border:1px solid var(--edge);border-radius:12px;padding:16px 18px;}
 #crewmod h3{font-size:13px;color:var(--gold);margin-bottom:4px;}
 #crewmod .csub{font-size:11px;color:var(--mist);line-height:1.5;margin-bottom:10px;}
 #crewmod .cstat{display:flex;flex-wrap:wrap;gap:10px;font-size:11px;color:var(--mist);
   border:1px solid var(--edge);border-radius:8px;padding:7px 10px;margin-bottom:10px;}
 #crewmod .cstat b{color:var(--bone);}
+#crewmod .cstat .warn{color:#e0a85f;}
 #crewmod .row{border:1px solid var(--edge);border-radius:9px;padding:8px 10px;margin-bottom:6px;}
-#crewmod .row.idle{border-color:rgba(224,138,128,.45);}
+#crewmod .row.idle{border-color:rgba(224,168,95,.5);background:rgba(224,168,95,.05);}
 #crewmod .rtop{display:flex;justify-content:space-between;align-items:center;gap:8px;}
 #crewmod .rn{font-size:12.5px;color:var(--bone);}
 #crewmod .rlv{font-size:10px;color:var(--mist);}
+#crewmod .racts{display:flex;gap:5px;flex:0 0 auto;}
 #crewmod .rjob{font-size:10.5px;color:var(--gold);margin-top:3px;}
-#crewmod .rjob.idle{color:#e08a80;}
+#crewmod .rjob.idle{color:#e0a85f;}
 #crewmod .chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:5px;}
 #crewmod .chip{font-size:10px;border:1px solid var(--edge);border-radius:5px;padding:1px 6px;color:var(--bone);}
 #crewmod .chip.suit{border-color:rgba(212,175,55,.5);color:#e8d49a;}
@@ -375,12 +522,32 @@ const CSS = `
 #crewmod .cbar2 i{display:block;height:100%;background:#7ad68c;}
 #crewmod .cbar2.low i{background:#e0a85f;} #crewmod .cbar2.crit i{background:#e08a80;}
 #crewmod .cbtn{background:#1a1530;border:1px solid var(--edge);border-radius:6px;color:var(--bone);
-  font-size:10.5px;padding:3px 9px;cursor:pointer;}
+  font-size:10.5px;padding:3px 9px;cursor:pointer;white-space:nowrap;}
 #crewmod .cbtn:hover:not(:disabled){border-color:var(--gold);}
+#crewmod .cbtn.on{border-color:rgba(212,175,55,.75);color:var(--gold);}
 #crewmod .cbtn:disabled{opacity:.4;cursor:default;}
-#crewmod .cfoot2{display:flex;gap:8px;margin-top:12px;}
-#crewmod .cfoot2 .pbtn{margin-top:0;flex:1;}
+#crewmod .cfoot2{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;}
+#crewmod .cfoot2 .pbtn{margin-top:0;flex:1 1 30%;}
 #crewmod .cnote{font-size:10.5px;color:var(--mist);margin-top:9px;line-height:1.45;}
+
+#crewpick{position:fixed;inset:0;z-index:70;display:flex;align-items:center;justify-content:center;
+  background:rgba(8,6,12,.8);backdrop-filter:blur(3px);}
+#crewpick .pbox{width:min(520px,94vw);max-height:84vh;overflow-y:auto;background:var(--panel-solid);
+  border:1px solid var(--edge);border-radius:12px;padding:15px 17px;}
+#crewpick h3{font-size:12.5px;color:var(--gold);margin-bottom:3px;}
+#crewpick .psub{font-size:10.5px;color:var(--mist);line-height:1.5;margin-bottom:9px;}
+#crewpick .opt{display:block;width:100%;text-align:left;background:#120e1c;border:1px solid var(--edge);
+  border-radius:8px;padding:8px 10px;margin-bottom:5px;color:var(--bone);cursor:pointer;}
+#crewpick .opt:hover:not(:disabled){border-color:var(--gold);}
+#crewpick .opt.good{border-color:rgba(122,214,140,.5);}
+#crewpick .opt.here{border-color:rgba(212,175,55,.8);background:#1a1530;}
+#crewpick .opt:disabled{opacity:.45;cursor:default;}
+#crewpick .on1{display:flex;justify-content:space-between;gap:8px;font-size:12px;}
+#crewpick .ogain{color:#7ad68c;font-variant-numeric:tabular-nums;}
+#crewpick .ogain.nil{color:#e08a80;}
+#crewpick .o2{display:block;font-size:10px;color:var(--mist);margin-top:2px;}
+#crewpick .pfoot{display:flex;gap:8px;margin-top:10px;}
+#crewpick .pfoot .pbtn{margin-top:0;flex:1;}
 `;
 let cssDone = false;
 function ensureCss() {
@@ -389,14 +556,18 @@ function ensureCss() {
 }
 
 function condClass(c) { return c < 30 ? ' crit' : c < 65 ? ' low' : ''; }
-function jobLabel(id) {
-  const k = jobOf(id);
-  if (!k) return { txt: 'Idle — nothing here suits it', idle: true };
+function tileName(k) {
   const t = G().tiles[k]; const def = defOf(t && t.type);
+  return def ? def.ico + ' ' + def.name : (k || '—');
+}
+function jobLabel(id) {
+  const k = postOf(id);
+  if (!k) return { txt: 'Idle — not posted anywhere', idle: true };
+  const t = G().tiles[k];
   const prof = profileOf(id);
-  const best = prof && W.bestWorkAt(prof, t && t.type);
+  const best = prof && t && W.bestWorkAt(prof, t.type);
   const w = best && W.getWork(best.type);
-  return { txt: (def ? def.ico + ' ' + def.name : k) + (w ? ' · ' + w.icon + ' ' + w.name + ' ' + best.level : ''), idle: false };
+  return { txt: tileName(k) + (w ? ' · ' + w.icon + ' ' + w.name + ' ' + best.level : ''), idle: false, key: k };
 }
 function suitChips(prof) {
   return (prof.suits || []).map(s => {
@@ -413,22 +584,26 @@ function passiveChips(prof) {
 export function renderPanel() {
   const el = document.getElementById('crewbody');
   if (!el || !CTX) return;
-  const crew = state(), cap = crewCap();
+  const crew = state(), cap = crewCap(), idle = idleIds().length;
   let h = '<div class="ccap"><span>👷 On the crew</span><span><b>' + crew.length + '</b> / ' + cap + ' beds</span></div>';
   if (!crew.length) {
-    h += '<div class="cempty">Nobody is working the city yet. Put units on the crew and they will find their own jobs — a Kindling unit walks to the furnace, a Planting unit to the fields.</div>';
+    h += '<div class="cempty">Nobody is on the crew yet. Enlist units, then <b>post each one to a building</b> — a unit only helps the building you put it in, and only if it has the trade that building needs.</div>';
   } else {
     for (const m of crew.slice(0, 6)) {
       const c = cardOf(m.card), prof = profileOf(m.card);
       const j = jobLabel(m.card);
       h += '<div class="cm">' +
         '<div class="cmtop"><span>' + esc(c ? c.name : m.card) + '</span><span class="cmsuit">' + Math.round(m.cond) + '%</span></div>' +
-        '<div class="cmjob' + (j.idle ? ' idle' : '') + '">' + esc(j.txt) + '</div>' +
+        '<div class="cmjob' + (j.idle ? ' idle' : '') + '">' + (j.idle ? '💤 ' : '🏭 ') + esc(j.txt) + '</div>' +
         (prof ? '<div class="cmsuit">' + esc(W.suitsLabel(prof)) + '</div>' : '') +
         '<div class="cbar' + condClass(m.cond) + '"><i style="width:' + Math.round(m.cond) + '%"></i></div>' +
         '</div>';
     }
     if (crew.length > 6) h += '<div class="cfoot">…and ' + (crew.length - 6) + ' more.</div>';
+    // 🔴 IDLE IS THE ONE THING THIS PANEL SHOUTS ABOUT. An unposted unit is a
+    //    decision the player has not made and a bed they are paying rations for;
+    //    it is the only state here that is always worth acting on.
+    if (idle) h += '<div class="cidle">💤 <b>' + idle + '</b> idle — ' + (idle === 1 ? 'it is' : 'they are') + ' eating and doing nothing.</div>';
     h += '<div class="cfoot">🍱 Eats <b>' + demandPerMin().toFixed(2) + '</b> rations/min. Short rations lower Condition, and a worn crew works slower.</div>';
   }
   h += '<button class="hbtn ember" id="crew-open" style="width:100%;margin-top:8px">👷 Manage crew</button>';
@@ -438,17 +613,20 @@ export function renderPanel() {
 }
 
 function dialogHtml() {
-  const crew = state(), cap = crewCap(), parts = capParts();
+  const crew = state(), cap = crewCap(), parts = capParts(), idle = idleIds().length;
   const rows = crew.map(m => {
     const c = cardOf(m.card), prof = profileOf(m.card);
     if (!prof) return '';
     const j = jobLabel(m.card);
-    const k = jobOf(m.card);
-    const p = k ? powersAt(k).find(x => x.card === m.card) : null;
+    const p = j.key ? powersAt(j.key).find(x => x.card === m.card) : null;
     return '<div class="row' + (j.idle ? ' idle' : '') + '">' +
       '<div class="rtop"><span class="rn">' + esc(c ? c.name : m.card) +
         ' <span class="rlv">Lv ' + prof.level + (c && c.element ? ' · ' + esc(c.element) : '') + '</span></span>' +
-        '<button class="cbtn" data-crew-drop="' + esc(m.card) + '">Dismiss</button></div>' +
+        '<span class="racts">' +
+          '<button class="cbtn' + (j.idle ? ' on' : '') + '" data-crew-post="' + esc(m.card) + '">' + (j.idle ? '📍 Post' : '↔ Move') + '</button>' +
+          (j.idle ? '' : '<button class="cbtn" data-crew-recall="' + esc(m.card) + '">Recall</button>') +
+          '<button class="cbtn" data-crew-drop="' + esc(m.card) + '">Dismiss</button>' +
+        '</span></div>' +
       '<div class="rjob' + (j.idle ? ' idle' : '') + '">' + (j.idle ? '💤 ' : '🏭 ') + esc(j.txt) +
         (p ? ' — worth <b>+' + Math.round(p.power * 100) + '%</b> to it' : '') + '</div>' +
       '<div class="chips">' + suitChips(prof) + passiveChips(prof) + '</div>' +
@@ -457,27 +635,26 @@ function dialogHtml() {
   }).join('');
   return '<div class="cbox">' +
     '<h3>👷 WORK CREW</h3>' +
-    '<div class="csub">Units on the crew work the city on their own. Every time you build, demolish or change the roster, ' +
-      'each of them is matched to the job it is <b>best</b> at — a unit\'s element decides what it is born to do, its ' +
-      '<b>suitability level</b> decides how good it is, and its own level and condition scale the rest. ' +
-      'A fully-worked building tops out at <b>' + W.multLabel(1 + W.WORK.BOOST_CAP) + '</b> output.</div>' +
+    '<div class="csub">Enlist units, then <b>post each one to a building</b>. A unit only lifts the building you put it in, and only if it has a trade that building needs — its <b>suitability level</b> decides how much, and its own level, its passives and its condition scale the rest. ' +
+      'A building takes as many workers as it has crew posts, and tops out at <b>' + W.multLabel(1 + W.WORK.BOOST_CAP) + '</b> output.</div>' +
     '<div class="cstat">' +
       '<span>🛏 Beds <b>' + crew.length + ' / ' + cap + '</b> <span style="opacity:.7">(' + parts.base + ' base + ' +
         parts.housing + ' housing + ' + parts.rest + ' resting house' + (parts.capped ? ', capped at ' + CREW_MAX : '') + ')</span></span>' +
       '<span>🍱 Rations <b>' + demandPerMin().toFixed(2) + '/min</b></span>' +
       '<span>❤️ Condition <b>' + Math.round(avgCondition()) + '%</b></span>' +
-      '<span>💤 Idle <b>' + idleIds().length + '</b></span>' +
+      '<span class="' + (idle ? 'warn' : '') + '">💤 Idle <b>' + idle + '</b></span>' +
     '</div>' +
-    (rows || '<div class="csub">The crew is empty. Enlist a unit and it will walk to whichever building suits it.</div>') +
+    (rows || '<div class="csub">The crew is empty. Enlist a unit, then post it to a building that needs its trade.</div>') +
     '<div class="cfoot2">' +
       '<button class="pbtn" id="crew-add"' + (crew.length >= cap ? ' disabled' : '') + '>' +
         (crew.length >= cap ? '🛏 No beds left — build Housing' : '➕ Enlist a unit') + '</button>' +
+      '<button class="pbtn" id="crew-auto"' + (idle ? '' : ' disabled') + '>🪄 Auto-fill empty posts</button>' +
       '<button class="pbtn" id="crew-close">Close</button>' +
     '</div>' +
     '<div class="cnote">Beds come from 🏠 Housing (+' + CREW_PER_HOUSING + ' a level) and 🛏 the Resting House (+' +
-      CREW_PER_RESTHOUSE + ' a level). A crew member on short rations loses Condition and slows down, but never stops — ' +
-      'the floor is ' + Math.round(W.WORK.COND_FLOOR * 100) + '% of its normal pace. Units on the crew cannot also be ' +
-      'socketed, billeted or stood in the defense deck.</div>' +
+      CREW_PER_RESTHOUSE + ' a level). <b>Auto-fill only fills EMPTY posts with IDLE units</b> — it never moves anyone you placed, and it cannot see which resource you are actually short of, so it is a starting point rather than an answer. ' +
+      'A crew member on short rations loses Condition and slows down, but never stops — the floor is ' + Math.round(W.WORK.COND_FLOOR * 100) + '% of its normal pace. ' +
+      'Units on the crew cannot also be socketed, billeted or stood in the defense deck.</div>' +
     '</div>';
 }
 
@@ -492,19 +669,139 @@ export function render() {
   el.addEventListener('click', onClick);
 }
 
+/* ── The two pickers ──────────────────────────────────────────────────────
+   One component, two directions. `opts.forCard` asks "where does this unit
+   work"; `opts.forTile` asks "who works here". Both list refused options,
+   disabled, with the reason on the row. */
+let PICK = null;
+function closePick() { const b = document.getElementById('crewpick'); if (b) b.remove(); PICK = null; }
+
+function pickHtml() {
+  if (!PICK) return '';
+  if (PICK.forCard) {
+    const c = cardOf(PICK.forCard), prof = profileOf(PICK.forCard);
+    const opts = postsFor(PICK.forCard);
+    return '<div class="pbox"><h3>📍 Where does ' + esc(c ? c.name : PICK.forCard) + ' work?</h3>' +
+      '<div class="psub">' + (prof ? esc(W.suitsLabel(prof)) : '') + ' · Lv ' + (prof ? prof.level : 1) +
+      '<br>Only buildings that need one of its trades can take it. The figure is what this unit would add to that building right now.</div>' +
+      (opts.length ? opts.map(o =>
+        '<button class="opt' + (o.here ? ' here' : o.ok ? ' good' : '') + '"' + (o.ok || o.here ? '' : ' disabled') +
+          ' data-pick-tile="' + esc(o.key) + '">' +
+          '<span class="on1"><span>' + o.ico + ' ' + esc(o.name) + (o.here ? ' <b>· posted here</b>' : '') + '</span>' +
+          '<span class="ogain' + (o.ok || o.here ? '' : ' nil') + '">' + (o.ok || o.here ? '+' + Math.round(o.power * 100) + '%' : '—') + '</span></span>' +
+          '<span class="o2">' + o.used + ' / ' + o.slots + ' posts filled' +
+            (o.work ? ' · ' + (W.getWork(o.work) || {}).icon + ' ' + (W.getWork(o.work) || {}).name + ' ' + o.suit : '') +
+            (o.ok || o.here ? '' : ' · <b>' + esc(o.why) + '</b>') + '</span>' +
+        '</button>').join('')
+        : '<div class="psub">Nothing standing needs a crew yet.</div>') +
+      '<div class="pfoot">' + (postOf(PICK.forCard) ? '<button class="pbtn" id="pk-recall">↩ Recall to idle</button>' : '') +
+        '<button class="pbtn" id="pk-close">Close</button></div></div>';
+  }
+  const k = PICK.forTile;
+  const t = G().tiles[k], def = defOf(t && t.type);
+  const needs = W.workNeeds(t ? t.type : '').map(x => { const w = W.getWork(x); return w ? w.icon + ' ' + w.name : x; }).join(' · ');
+  const cands = candidatesFor(k);
+  return '<div class="pbox"><h3>👷 Who works the ' + esc(def ? def.name : k) + '?</h3>' +
+    '<div class="psub">Needs ' + needs + ' · <b>' + postsAt(k).length + ' / ' + slotsAt(k) + '</b> posts filled' +
+    '<br>The figure is what each unit would add to THIS building. Anyone already posted elsewhere moves here.</div>' +
+    (cands.length ? cands.map(o =>
+      '<button class="opt' + (o.here ? ' here' : o.ok ? ' good' : '') + '"' + (o.ok ? '' : ' disabled') +
+        ' data-pick-card="' + esc(o.card) + '">' +
+        '<span class="on1"><span>' + esc(o.name) + ' <span style="opacity:.7">Lv ' + o.profile.level + '</span>' +
+          (o.here ? ' <b>· posted here</b>' : '') + '</span>' +
+        '<span class="ogain' + (o.ok ? '' : ' nil') + '">' + (o.ok ? '+' + Math.round(o.power * 100) + '%' : '—') + '</span></span>' +
+        '<span class="o2">' + esc(W.suitsLabel(o.profile)) + ' · ' + Math.round(o.cond) + '% condition' +
+          (o.postedAt && !o.here ? ' · now at ' + esc(tileName(o.postedAt)) : '') +
+          (o.ok ? '' : ' · <b>' + esc(o.why) + '</b>') + '</span>' +
+      '</button>').join('')
+      : '<div class="psub">Nobody is on the crew. Enlist someone first.</div>') +
+    '<div class="pfoot"><button class="pbtn" id="pk-close">Close</button></div></div>';
+}
+
+function renderPick() {
+  if (!PICK) return;
+  const box = document.getElementById('crewpick');
+  const html = pickHtml();
+  if (box) { box.innerHTML = html; return; }
+  const el = document.createElement('div');
+  el.id = 'crewpick'; el.innerHTML = html;
+  (document.getElementById('wrap') || document.body).appendChild(el);
+  el.addEventListener('click', onPickClick);
+}
+
+/** "Where does this unit work?" — opened from a crew row. */
+export function openPostPicker(cardId) { if (!CTX) return; ensureCss(); PICK = { forCard: cardId }; renderPick(); }
+/** "Who works here?" — opened from a building's dossier. */
+export function openTilePicker(k) {
+  if (!CTX) return;
+  if (!takesWork(k)) { try { CTX.toast('👷 Nothing here for a crew to do.', 'bad'); } catch (e) {} return; }
+  ensureCss(); PICK = { forTile: k }; renderPick();
+}
+
+function after(msg, bad) {
+  try { if (msg) CTX.toast(msg, bad ? 'bad' : 'good'); } catch (e) {}
+  try { CTX.saveSoon(); } catch (e) {}
+  try { CTX.updateHUD && CTX.updateHUD(); } catch (e) {}
+  try { CTX.refreshInspect && CTX.refreshInspect(); } catch (e) {}
+  renderPanel(); render(); renderPick();
+}
+
+function onPickClick(ev) {
+  const box = document.getElementById('crewpick');
+  if (ev.target === box || ev.target.id === 'pk-close') { closePick(); render(); return; }
+  if (ev.target.id === 'pk-recall' && PICK && PICK.forCard) {
+    const c = cardOf(PICK.forCard);
+    if (unpost(PICK.forCard)) after('👷 ' + ((c && c.name) || PICK.forCard) + ' is off duty.');
+    closePick(); render(); return;
+  }
+  const tileBtn = ev.target.closest('[data-pick-tile]');
+  if (tileBtn && PICK && PICK.forCard) {
+    const err = post(PICK.forCard, tileBtn.dataset.pickTile);
+    const c = cardOf(PICK.forCard);
+    after(err || '👷 ' + ((c && c.name) || '') + ' posted to the ' + tileName(tileBtn.dataset.pickTile).replace(/^\S+\s/, '') + '.', !!err);
+    if (!err) closePick();
+    render();
+    return;
+  }
+  const cardBtn = ev.target.closest('[data-pick-card]');
+  if (cardBtn && PICK && PICK.forTile) {
+    const id = cardBtn.dataset.pickCard;
+    const c = cardOf(id);
+    // Clicking the unit already posted here recalls it — the row says "posted
+    // here", so the only thing left to do with it is take it off.
+    if (postOf(id) === PICK.forTile) { unpost(id); after('👷 ' + ((c && c.name) || id) + ' is off duty.'); renderPick(); return; }
+    const err = post(id, PICK.forTile);
+    after(err || '👷 ' + ((c && c.name) || id) + ' posted to the ' + tileName(PICK.forTile).replace(/^\S+\s/, '') + '.', !!err);
+    if (!err && freeSlotsAt(PICK.forTile) <= 0) closePick();
+    return;
+  }
+}
+
 function onClick(ev) {
   const box = document.getElementById('crewmod');
   if (ev.target === box || ev.target.id === 'crew-close') { close(); return; }
+  const move = ev.target.closest('[data-crew-post]');
+  if (move) { openPostPicker(move.dataset.crewPost); return; }
+  const recall = ev.target.closest('[data-crew-recall]');
+  if (recall) {
+    const c = cardOf(recall.dataset.crewRecall);
+    if (unpost(recall.dataset.crewRecall)) after('👷 ' + ((c && c.name) || '') + ' is off duty.');
+    return;
+  }
   const drop = ev.target.closest('[data-crew-drop]');
   if (drop) {
     const id = drop.dataset.crewDrop;
     const c = cardOf(id);
     if (dismiss(id)) {
       try { CTX.assignCard(id, false); } catch (e) {}
-      try { CTX.toast('👷 ' + ((c && c.name) || id) + ' left the crew.', 'good'); } catch (e) {}
-      try { CTX.saveSoon(); } catch (e) {}
-      render(); renderPanel(); try { CTX.updateHUD && CTX.updateHUD(); } catch (e) {}
+      after('👷 ' + ((c && c.name) || id) + ' left the crew.');
     }
+    return;
+  }
+  if (ev.target.id === 'crew-auto') {
+    const n = autoFill();
+    after(n ? '🪄 Auto-filled ' + n + ' post' + (n === 1 ? '' : 's') + ' with idle units. Nobody you posted was moved.'
+            : '🪄 Nothing to fill — every idle unit lacks a trade any empty post needs.', !n);
     return;
   }
   if (ev.target.id === 'crew-add') {
@@ -517,30 +814,25 @@ function onClick(ev) {
         const err = enlist(c.id);
         if (err) { try { CTX.toast('👷 ' + err, 'bad'); } catch (e) {} return; }
         try { CTX.assignCard(c.id, true); } catch (e) {}
-        const j = jobLabel(c.id);
-        try {
-          CTX.toast(j.idle
-            ? '👷 ' + c.name + ' joined the crew — but nothing standing suits it yet. Build something in its trade.'
-            : '👷 ' + c.name + ' joined the crew and went straight to the ' + j.txt.replace(/^\S+\s/, '') + '.', 'good');
-        } catch (e) {}
-        try { CTX.saveSoon(); } catch (e) {}
-        render(); renderPanel(); try { CTX.updateHUD && CTX.updateHUD(); } catch (e) {}
+        after('👷 ' + c.name + ' joined the crew — idle. Post it to a building to put it to work.');
+        // Straight into the "where does it work" question, because that is the
+        // decision the player just created for themselves.
+        openPostPicker(c.id);
       }, true);
     } catch (e) {}
   }
 }
 
 export function open() { if (!CTX) return; ensureCss(); OPEN = true; render(); }
-export function close() { const b = document.getElementById('crewmod'); if (b) b.remove(); OPEN = false; }
+export function close() { closePick(); const b = document.getElementById('crewmod'); if (b) b.remove(); OPEN = false; }
 
-/* One line for the tile hover card. Empty when nobody is working the tile —
-   the hover card is already dense and a row that always reads ×1.00 is noise. */
+/* One line for the tile hover card. Says how many posts are FILLED, not just
+   the multiplier — "1 / 2 posted" is the actionable half. */
 export function tipLine(k) {
-  const ps = powersAt(k);
-  if (!ps.length) return '';
-  const m = W.multFrom(ps);
-  if (m <= 1.0001) return '';
-  return '👷 ' + ps.length + ' on the crew — output <span class="hl">' + W.multLabel(m) + '</span><br>';
+  if (!takesWork(k)) return '';
+  const ps = powersAt(k), slots = slotsAt(k);
+  if (!ps.length) return '👷 <span class="dn">no crew posted</span> — ' + slots + ' post' + (slots === 1 ? '' : 's') + ' free<br>';
+  return '👷 ' + ps.length + ' / ' + slots + ' posted — output <span class="hl">' + W.multLabel(W.multFrom(ps)) + '</span><br>';
 }
 
 export function mount(ctx) {
@@ -548,14 +840,18 @@ export function mount(ctx) {
   ensureCss();
   const bad = W.auditBuildings((CTX.BUILDINGS) || {});
   if (bad.length) { try { console.warn('[Crew] work table vs BUILDINGS:', bad); } catch (e) {} }
-  assign();
+  validate();
   const api = {
-    work: W, state, crewIds, count, crewCap, capParts, assign, workersAt, idleIds, jobOf,
+    work: W, state, crewIds, count, crewCap, capParts,
+    // posts
+    slotsAt, takesWork, postsAt, freeSlotsAt, postOf, idleIds, canWorkAt, post, unpost,
+    validate, autoFill, candidatesFor, postsFor, workersAt, jobOf,
     powersAt, multAt, invalidate, upkeep, demandPerMin, avgCondition,
-    enlist, dismiss, reconcile, save, load, open, close, render, renderPanel, tipLine,
+    enlist, dismiss, reconcile, save, load,
+    open, close, render, renderPanel, tipLine, openPostPicker, openTilePicker,
     profileOf, suitsLabel: (id) => { const p = profileOf(id); return p ? W.suitsLabel(p) : ''; },
-    // 🔬 test seam — the driver cannot reach CTX or the assignment cache.
-    _ctx: () => CTX, _jobs: () => Object.assign({}, _jobs),
+    // 🔬 test seam — the driver cannot reach CTX from outside the module.
+    _ctx: () => CTX,
   };
   try { window.MythicCrew = api; } catch (e) {}
   return api;

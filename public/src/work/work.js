@@ -1,8 +1,9 @@
 /* ════════════════════════════════════════════════════════════════════════════
    👷 WORK SUITABILITY — what a unit is good at when you put it to work.
    ----------------------------------------------------------------------------
-   Palworld's base loop, in this city. You do not staff a building; you keep a
-   CREW, and the crew finds its own work.
+   Palworld's base loop, in this city — with the assignment left in the player's
+   hands. You enlist units onto a CREW (beds cap it) and then POST each one to a
+   building, and a unit only lifts the building you put it in.
 
    The whole model is three rolls per unit, all permanent, all read-only here:
 

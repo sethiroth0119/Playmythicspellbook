@@ -256,5 +256,71 @@ console.log('\n=== 12. exposure only accrues when it should ===');
 
 function SEAL_MS() { let n = 0; for (const s of HZ.SEALS) n += s.ms; return n; }
 
+console.log('\n=== 13. the retune actually bites ===');
+/* 🔴 THE REGRESSION THAT MATTERS FOR TUNING. The first pass landed near R₀ 1.1:
+   an outbreak infected about one extra person and burned out before a player
+   finished a session, so the cure had nothing urgent to be about. These bounds
+   are two-sided ON PURPOSE — an outbreak that is too weak is boring, and one
+   that always takes the whole city removes the decision. Both are failures. */
+{
+  const fresh = () => {
+    const r = [];
+    for (let i = 0; i < 40; i++) r.push({ id: 'q' + i, name: 'Q' + i, job: 'w' + (i % 8), mood: 65 });
+    return r;
+  };
+  const run = (contagion) => {
+    const roll = fresh();
+    const h = Object.assign({}, host, { citizens: () => roll });
+    const s2 = O.emptyState();
+    const v = S.makeStrain('bite:' + contagion, { pressure: 0.5 });
+    v.contagion = contagion; v.severity = 3;
+    O.introduce(h, s2, v, O.TUNING.SEED_INFECTIONS, 'test');
+    let peak = O.caseCount(s2, v.id), everSick = new Set(O.infectedIds(s2, v.id));
+    for (let i = 0; i < 60; i++) {
+      advance(5 * 60000);
+      O.tick(h, s2, 5 * 60000);
+      for (const k of O.infectedIds(s2, v.id)) everSick.add(k);
+      peak = Math.max(peak, O.caseCount(s2, v.id));
+    }
+    return { peak, total: everSick.size, roster: roll.length };
+  };
+
+  const mild = run(0.35);
+  const nasty = run(0.80);
+  console.log('  contagion 0.35 -> peak ' + mild.peak + ', ' + mild.total + '/' + mild.roster + ' infected over the run');
+  console.log('  contagion 0.80 -> peak ' + nasty.peak + ', ' + nasty.total + '/' + nasty.roster + ' infected over the run');
+
+  ok(mild.total > O.TUNING.SEED_INFECTIONS * 2,
+     'a moderate strain grows well past its index cases (R0 comfortably > 1)');
+  ok(nasty.total > mild.total, 'a virulent strain does more damage than a moderate one');
+  const cap = Math.ceil(nasty.roster * O.TUNING.CEILING_SHARE) + 1;
+  ok(nasty.peak <= cap, 'and still never exceeds the ceiling (' + nasty.peak + ' <= ' + cap + ')');
+  /* 🔴 A VIRULENT STRAIN LEFT UNCURED FOR FIVE HOURS *SHOULD* REACH EVERYONE.
+     That is the threat the cure exists to answer, and capping it would make
+     ignoring an outbreak a viable strategy. The invariant worth defending is
+     the one above — CONCURRENT cases stay under the ceiling, so the city
+     always keeps some workforce and the labour drag stays bounded — plus this
+     one: a MODERATE strain must not sweep the city on its own, or the player's
+     clinics and water never mattered in the first place. */
+  ok(mild.total < mild.roster, 'a moderate strain does NOT reach everyone — infrastructure still matters');
+  ok(nasty.peak < nasty.roster, 'even a virulent one never has the whole city down at once');
+
+  // The economic bite. A quarter of the roster symptomatic must cost real output.
+  const roll = fresh();
+  const h = Object.assign({}, host, { citizens: () => roll });
+  const s3 = O.emptyState();
+  const v = S.makeStrain('drag-test', { pressure: 0.5 });
+  v.contagion = 0.8; v.severity = 4;
+  O.introduce(h, s3, v, 12, 'test');
+  advance(O.TUNING.INCUBATE_MS + 60000);
+  O.tick(h, s3, O.TUNING.INCUBATE_MS + 60000);
+  const rep = O.report(h, s3);
+  console.log('  ' + rep.cases + '/' + rep.roster + ' ill -> healthDrag ' + rep.healthDrag +
+              ' (cap ' + O.TUNING.WORKFORCE_DRAG_MAX + ')');
+  ok(rep.healthDrag > 0, 'sick citizens produce a real drag on the city health vital');
+  ok(rep.healthDrag <= O.TUNING.WORKFORCE_DRAG_MAX, 'and it is bounded — an outbreak can never zero a city');
+  ok(O.report(h, O.emptyState()).healthDrag === 0, 'a healthy city pays nothing');
+}
+
 console.log('\n' + (fails ? '❌ ' + fails + ' FAILURES' : '✅ ALL CHECKS PASSED'));
 process.exit(fails ? 1 : 0);

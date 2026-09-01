@@ -42,9 +42,32 @@ tags, and the `medical` / `transport` entries in `cityEnterBusiness`.
    outbreak; that is deliberate, because a system with an unavoidable floor
    teaches players that building correctly does not pay.
 2. **NPCs catch it.** Named citizens go incubating → symptomatic → critical →
-   recovered → immune. It spreads along the *workplace* graph the city already
-   models. **Nobody dies and no building is ever touched** — see the three
-   inherited rules at the top of `outbreak.js`.
+   recovered → immune, on an 8 / 20 / 30-minute clock, and it spreads along the
+   *workplace* graph the city already models. **Nobody dies and no building is
+   ever touched** — see the three inherited rules at the top of `outbreak.js`.
+
+   Transmission is written as an explicit R₀ rather than a magic coefficient:
+
+   ```
+   secondary infections per case = contagion × CONTACTS_PER_HR × infectious_hours
+   ```
+
+   A moderate strain (contagion 0.35) lands near **R₀ 2.0**, a virulent one near
+   4.5. Measured on a 40-citizen roster over five uncured hours: moderate reaches
+   27 of 40, virulent reaches all 40. Retune `CONTACTS_PER_HR`, not the formula.
+
+   Sick citizens also **cost the city output**. `labour` in node-city is a Liebig
+   minimum over food / water / health, so an outbreak is expressed as a drag on
+   the health vital and flows through the multipliers the city already has — no
+   new economic term, and "Limited by: HEALTH" appears on the Vital Signs panel
+   by itself. Bounded by `WORKFORCE_DRAG_MAX` (0.35); set it to 0 to make
+   outbreaks purely social again.
+
+   Three rails survive the tuning: concurrent cases never exceed `CEILING_SHARE`
+   (0.72) so the city always keeps a workforce, immunity stays long so an ignored
+   outbreak burns out instead of cycling forever, and a *moderate* strain never
+   reaches everyone — otherwise the player's clinics and clean water never
+   mattered.
 3. **You cure it in the lab.** Walk to the Sequencer to read the strain's four
    axes. Suit up at the airlock. Spin, mix, assay, package.
 4. **You can get it wrong.** A batch that is unstable or contaminated is graded

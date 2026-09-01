@@ -30,26 +30,81 @@ import { makeStrain, familyOf, rngFrom, hash32 } from './strains.js';
 
 export const V = 1;
 
+/* ══ TUNING ════════════════════════════════════════════════════════════════
+   🔴 RETUNED TO BITE. The first pass was epidemiologically tidy and dramatically
+   inert: stages ran on 40/90/150 real minutes and R₀ landed near 1.1, so a
+   typical outbreak infected about one extra person and burned out before the
+   player finished a session. Nothing visibly happened while you watched, and
+   the cure you had just built had nothing to be urgent about.
+
+   The shape of the fix is that an outbreak now runs on a SESSION clock rather
+   than an afternoon clock, and each case reliably makes more than one more.
+   What did NOT change is every safety rail: nobody dies, no tile is touched,
+   the ceiling still stops it short of the whole city, and immunity still lets
+   an ignored outbreak burn itself out rather than running forever.
+   ══════════════════════════════════════════════════════════════════════════ */
 export const TUNING = {
   /* Emergence. `MIN_POP` keeps a brand-new city from getting sick before it
      has anyone to get sick; `COOLDOWN_MS` is the floor between wild strains so
-     a badly-run city degrades rather than avalanches. */
+     a badly-run city degrades rather than avalanches.
+     ⚠ The cooldown came down from 6h to 2h and the base chance more than
+       doubled: a filthy city should be able to have a SECOND problem while the
+       first is still running, because triage is the interesting decision and
+       one-at-a-time never produces it. */
   MIN_POP: 40,
-  COOLDOWN_MS: 6 * 3600000,
-  BASE_CHANCE_PER_HR: 0.05,      // at zero pressure. Multiplied by pressure below.
+  COOLDOWN_MS: 2 * 3600000,
+  BASE_CHANCE_PER_HR: 0.12,      // at zero pressure. Multiplied by pressure below.
   MAX_ACTIVE_WILD: 3,            // concurrent WILD strains. Iatrogenic ones ignore this.
-  // Spread
-  SEED_INFECTIONS: 2,            // people infected when a strain emerges
-  SPREAD_PER_TICK_MAX: 3,        // hard cap so a tick can never convert the city
-  INCUBATE_MS: 40 * 60000,
-  SYMPTOM_MS: 90 * 60000,
-  RECOVER_MS: 150 * 60000,
+
+  /* ── the stage clock, on a SESSION scale ────────────────────────────────
+     Was 40 / 90 / 150 minutes, which meant a player who watched an outbreak
+     start saw precisely nothing happen before they logged off. At 8 / 20 / 30
+     a case incubates, turns symptomatic, spreads and resolves inside a single
+     sitting — you can watch the curve move, which is the whole reason to model
+     it per-citizen instead of as a counter. */
+  INCUBATE_MS: 8 * 60000,
+  SYMPTOM_MS: 20 * 60000,
+  RECOVER_MS: 30 * 60000,
+  /* Immunity is deliberately LONG relative to the new stage clock. It is the
+     pressure valve: it is what lets an ignored outbreak burn out instead of
+     cycling through the same people forever, and shortening it is how you turn
+     a hard system into an unwinnable one. Left alone on purpose. */
   IMMUNE_MS: 24 * 3600000,
+
+  /* ── transmission ───────────────────────────────────────────────────────
+     🔴 R₀ IS THE NUMBER THAT MATTERS, and it is now explicit rather than
+     buried in a magic 0.5. Expected secondary infections per case is
+
+         contagion × CONTACTS_PER_HR × infectious_hours
+
+     With the stage clock above, infectious_hours ≈ (20 + 0.4 × 30) / 60 ≈ 0.53,
+     so a moderate strain (contagion 0.35) lands near R₀ 2.0 and a virulent one
+     (0.8) near 4.5. Above 1 means it grows; 2 means it grows visibly without
+     being instantly unmanageable. Retune THIS, not the coefficient it replaced. */
+  CONTACTS_PER_HR: 11,
+  SEED_INFECTIONS: 3,            // was 2 — two index cases fizzled too often
+  /* Per-tick cap. It exists for the OFFLINE catch-up, where `hours` is large
+     enough to saturate the roll for every sick citizen at once; online, at a
+     20-second cadence, it effectively never binds. Raised with the rest so a
+     long absence returns a proportionate problem rather than a token one. */
+  SPREAD_PER_TICK_MAX: 5,
+
   // Mood cost per stage. Applied through nudge(), the sanctioned seam.
-  MOOD: { incubating: -2, symptomatic: -9, critical: -18 },
-  // The share of the roster an outbreak may reach. Above this it burns out on
-  // its own — an outbreak that takes the whole city has no drama left in it.
-  CEILING_SHARE: 0.55,
+  MOOD: { incubating: -3, symptomatic: -12, critical: -26 },
+
+  /* The share of the roster an outbreak may reach. Above this it burns out on
+     its own — an outbreak that takes the whole city has no drama left in it,
+     and there is no decision left to make once everyone is already sick.
+     Raised, but the rail stays: it can never be 1. */
+  CEILING_SHARE: 0.72,
+
+  /* 🏭 THE ECONOMIC BITE. Sick citizens are a labour shortage, and the city
+     already models labour as a Liebig minimum over food/water/HEALTH — so an
+     outbreak is expressed as a drag on the health vital and flows through the
+     multipliers the city already has. `WORKFORCE_DRAG_MAX` caps how far that
+     can go: at 0.35 a total outbreak costs about a third of the health input,
+     never the city. Set it to 0 to make outbreaks purely social again. */
+  WORKFORCE_DRAG_MAX: 0.35,
 };
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -322,7 +377,10 @@ export function tick(host, st, dtMs) {
     if (!strain || strain.curedAt) continue;
     const cases = caseCount(st, strain.id);
     if (cases >= Math.ceil(roster.length * TUNING.CEILING_SHARE)) continue;
-    const p = clamp(strain.contagion * hours * 0.5, 0, 0.85);
+    // Expected secondary infections per hour for this carrier. See the R₀ note
+    // on CONTACTS_PER_HR — this is the one line that decides whether an
+    // outbreak grows or fizzles, and it is written to be read as that.
+    const p = clamp(strain.contagion * TUNING.CONTACTS_PER_HR * hours, 0, 0.9);
     const r = rngFrom('spread:' + czId + ':' + Math.floor(now / 60000));
     if (r() > p) continue;
     const me = byId[czId];
@@ -423,6 +481,16 @@ export function report(host, st) {
        applied: this module does not own the city's economy and must not reach
        into it. The adapter decides whether to use it. */
     workforceLoss: +clamp(cases / Math.max(1, roster.length) * 0.7, 0, 0.6).toFixed(3),
+    /* 🏭 The health-vital drag the city should actually apply, 0..1. Separate
+       from `workforceLoss` because that is the RAW measure (what share of the
+       named workforce is down) while this is the BOUNDED penalty, capped by
+       WORKFORCE_DRAG_MAX so a total outbreak can never zero a city's output.
+       Critical cases count double: someone critically ill is not at work at
+       all, where someone symptomatic is working badly. */
+    healthDrag: +clamp(
+      (strains.reduce((a, s) => a + s.stages.symptomatic + s.stages.critical * 2, 0)
+        / Math.max(1, roster.length)) * TUNING.WORKFORCE_DRAG_MAX,
+      0, TUNING.WORKFORCE_DRAG_MAX).toFixed(3),
   };
 }
 

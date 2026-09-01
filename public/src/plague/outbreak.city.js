@@ -86,6 +86,8 @@ export function tick(dtSec) {
   LAST = now;
   let r = null;
   try { r = PL.cityTick(host(), dt); } catch (e) { try { console.warn('[outbreak] tick', e); } catch (e2) {} }
+  // Refreshed on this beat rather than per call — see healthDrag's header.
+  refreshDrag();
   if (r && r.events && r.events.length) announce(r.events);
   return r;
 }
@@ -139,6 +141,31 @@ export function banner() {
 
 export function report() { return CTX ? PL.cityReport(host()) : null; }
 
+/* 🏭 THE ECONOMIC BITE, cached. 0..1 drag on the city's HEALTH vital.
+   ──────────────────────────────────────────────────────────────────────────
+   The city's `labour` multiplier is a Liebig minimum over food / water /
+   health, so a workforce that is off sick is most honestly expressed as a
+   health shortfall — it flows through the multipliers the city already has,
+   and the Vital Signs panel names HEALTH as the binding constraint on its own.
+   No new economic term was invented for this.
+
+   🔴 IT MUST BE CHEAP. node-city calls cityOutputMultipliers() for every tile
+   every economy tick, and report() walks the whole roster. Recomputing it per
+   call turned a 200-tile city into a stutter, so it is refreshed on the
+   outbreak's own 20-second beat and read from cache in between.
+
+   ⚠ NEVER SHIP AN INVISIBLE PENALTY (node-city:19217). The banner above says
+   how many citizens are ill and the panel says HEALTH is what is limiting the
+   city; between them the player can see the whole of this. */
+let DRAG = 0;
+export function healthDrag() { return DRAG; }
+function refreshDrag() {
+  try {
+    const r = PL.cityReport(host());
+    DRAG = (r && +r.healthDrag) || 0;
+  } catch (e) { DRAG = 0; }
+}
+
 /* Is this citizen ill, and with what? node-city's citizen dossier and chat
    bubbles call this. Returns null for a healthy person — never a stub object,
    because a stub is what makes a caller print "Healthy: false". */
@@ -174,7 +201,7 @@ function escapeHtml(t) {
 }
 
 const api = {
-  mount, tick, banner, report, infectionOf, tipLine, TICK_SEC,
+  mount, tick, banner, report, infectionOf, tipLine, healthDrag, TICK_SEC,
   /* 🔬 Test seam. The city's loop is RAF-driven and RAF does not fire in this
      environment's Browser pane (CLAUDE.md), so without these the outbreak is
      unobservable. `advance(ms)` runs the model directly at any elapsed time. */

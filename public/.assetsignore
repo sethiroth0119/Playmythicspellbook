@@ -39,6 +39,22 @@ assets/3d models/**/*.glb
 # 14.8 MiB — comfortably under Cloudflare's 25 MiB per-asset cap.
 !assets/3d models/Binder table.glb
 
+# EXCEPTION: the containment lab's two characters, on exactly the same grounds.
+# You ARE the researcher and you BECOME the sentinel the moment the hazmat suit
+# seals, so they are a fixture every player gets rather than a per-owner upload
+# — and an avatar fetched from a third-party bucket is an avatar that is a grey
+# box whenever that bucket is slow.
+# 0.65 MiB EACH. That is 23x under the cap and 20x smaller than the exception
+# directly above, so the rule these two skip is not protecting anything here:
+# it exists to stop 30-50 MiB models aborting the deploy, and `_glbpack.mjs`
+# is why these are not that — the four uploaded files were 30 MiB together with
+# 95% of every byte in one 2048px PNG, merged per character and recompressed to
+# 1024px WebP.
+# ⚠ RE-CHECK ON ANY RE-EXPORT. If either grows past a few MiB, pack it again or
+#   move it to the `models` bucket. Do not widen this to `models/**/*.glb`.
+!models/lab/researcher.glb
+!models/lab/sentinel.glb
+
 # Belt-and-suspenders: any other oversized model formats that land in assets.
 *.glb.zip
 

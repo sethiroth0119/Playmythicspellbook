@@ -25,6 +25,68 @@
 
 import { ROOM, HOT_Z, STATIONS } from './stations.js';
 
+/* ── the character models ─────────────────────────────────────────────────
+   Two GLBs, one per state: the researcher you arrive as, and the Hazard
+   Sentinel you become once the suit is sealed. Each carries BOTH clips
+   (walking + running) — the four uploaded files were 30 MB together and 95%
+   of every byte was one 2048² PNG, so `_glbpack.mjs` merged each walk/run
+   pair and recompressed the texture to 1024px WebP. 30 MB → 1.31 MB, and one
+   fetch per character instead of two.
+
+   🔴 THE SUIT COSTS YOU SPEED, and that is why both clips are used rather
+   than just the walk. A sealed hazmat suit is heavy: suited you move at
+   SUIT_SPEED of normal, which lands you in the walk cycle, while the unsuited
+   researcher runs. So the suit is a real trade — it protects the batch and it
+   slows you down — and the animation is the readout for it rather than
+   decoration. Set SUIT_SPEED to 1 to remove the penalty; the crossfade then
+   simply never reaches the walk end. */
+/* ⚠ ROOT-RELATIVE, matching CS_ROOM_MODEL / CS_STATIONS in index.html. A bare
+   `models/…` would resolve against the PAGE's url rather than the origin, so it
+   would work from `/` and quietly 404 from anywhere else. */
+export const MODELS = {
+  bare: { url: '/models/lab/researcher.glb', key: 'researcher' },
+  suit: { url: '/models/lab/sentinel.glb', key: 'sentinel' },
+};
+export const SUIT_SPEED = 0.72;
+
+/* Clip names as exported. Matched loosely (case-insensitive substring) so a
+   re-export from Meshy with a slightly different name still binds instead of
+   silently animating nothing. */
+const CLIP_WALK = 'walk';
+const CLIP_RUN = 'run';
+
+/* 🔴 WHICH WAY THE MODEL FACES. `avatar.rotation.y` is set to
+   `atan2(vx, vz)`, which is 0 when walking toward +z — so at yaw 0 the mesh
+   must face +z. Exporters disagree about this and there is no way to detect it
+   from the file, so it is ONE constant with a live setter
+   (`MythicBioLab._setModelYaw`) rather than something buried in a matrix. If
+   the character moonwalks, this is the only thing to change. */
+export let MODEL_YAW = 0;
+export function setModelYaw(rad) { MODEL_YAW = +rad || 0; return MODEL_YAW; }
+
+/* Target height in metres. The room is built to human scale and the uploads
+   are not, so every model is normalised to this rather than trusting its
+   export units. */
+const MODEL_HEIGHT = 1.75;
+
+/* GLTFLoader is not in the three.min.js bundle — it is an example file. Pinned
+   to 0.128.0 to match the r128 core loaded above; a mismatched loader against
+   an older core is a class of bug that shows up as an empty scene with no
+   error. jsDelivr is used because it is on the Artifact CSP allowlist as well
+   as being reachable from the game. */
+export function ensureGltfLoader() {
+  return new Promise((resolve) => {
+    try {
+      if (window.THREE && window.THREE.GLTFLoader) { resolve(true); return; }
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js';
+      s.onload = () => resolve(!!(window.THREE && window.THREE.GLTFLoader));
+      s.onerror = () => resolve(false);
+      document.head.appendChild(s);
+    } catch (e) { resolve(false); }
+  });
+}
+
 export function ensureThree() {
   return new Promise((resolve) => {
     try {
@@ -96,6 +158,91 @@ function makeAvatar(THREE, M) {
   g.add(body, head, visor, armL, armR, legL, legR);
   g.userData = { body, head, visor, armL, armR, legL, legR };
   return g;
+}
+
+/* ── loading one character ────────────────────────────────────────────────
+   Two sources, in order of preference:
+
+     1. `window.MythicBioLabModels[key]` — an ArrayBuffer already in memory.
+        The self-contained preview build embeds both GLBs this way and calls
+        `parse()`, because an Artifact page cannot fetch its own assets.
+     2. the URL, fetched normally. This is the path the game takes.
+
+   Returns null on any failure. The caller keeps the box avatar, so a blocked
+   CDN, a 404 on the model, or a GPU that refuses skinning all degrade to the
+   lab that shipped before these models existed rather than to a blank room. */
+function loadCharacter(THREE, def) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; resolve(v); } };
+    // Never let a hung fetch keep the player staring at a box forever.
+    setTimeout(() => finish(null), 15000);
+    try {
+      const L = new THREE.GLTFLoader();
+      const onLoad = (gltf) => {
+        try { finish(prepareCharacter(THREE, gltf)); }
+        catch (e) { try { console.warn('[biolab] model prep', e); } catch (e2) {} finish(null); }
+      };
+      const onErr = (e) => { try { console.warn('[biolab] model load', def.url, e); } catch (e2) {} finish(null); };
+
+      let bytes = null;
+      try {
+        const bank = (typeof window !== 'undefined') && window.MythicBioLabModels;
+        if (bank && bank[def.key]) bytes = bank[def.key];
+      } catch (e) {}
+
+      if (bytes) L.parse(bytes, '', onLoad, onErr);
+      else L.load(def.url, onLoad, undefined, onErr);
+    } catch (e) { finish(null); }
+  });
+}
+
+/* Normalise an imported character: stand it on the floor, scale it to human
+   height, and bind its two clips. Everything here is measured from the model
+   rather than assumed, because these are third-party exports and their units,
+   origin and clip names are all things that can move between re-exports. */
+function prepareCharacter(THREE, gltf) {
+  const root = gltf.scene || (gltf.scenes && gltf.scenes[0]);
+  if (!root) return null;
+
+  root.traverse((o) => {
+    if (o.isMesh || o.isSkinnedMesh) {
+      o.castShadow = false; o.receiveShadow = false;
+      /* Skinned meshes are culled against their bind-pose bounds, so a limb
+         swinging outside them makes the whole character flicker out at the
+         edge of frame. Cheaper to skip the test than to recompute bounds. */
+      o.frustumCulled = false;
+    }
+  });
+
+  // Measure, then scale to MODEL_HEIGHT and sit the feet on y=0.
+  const box = new THREE.Box3().setFromObject(root);
+  const size = new THREE.Vector3(); box.getSize(size);
+  const h = size.y || 1;
+  const s = MODEL_HEIGHT / h;
+  root.scale.setScalar(s);
+  root.position.y = -box.min.y * s;
+
+  // A wrapper so yaw can be applied to the character without fighting the
+  // avatar group's own rotation, which follows the player's heading.
+  const holder = new THREE.Group();
+  holder.add(root);
+
+  const mixer = new THREE.AnimationMixer(root);
+  const clips = gltf.animations || [];
+  const pick = (want) => clips.find((c) => (c.name || '').toLowerCase().indexOf(want) >= 0) || null;
+  const walkClip = pick(CLIP_WALK) || clips[0] || null;
+  const runClip = pick(CLIP_RUN) || clips[1] || walkClip;
+
+  const walk = walkClip ? mixer.clipAction(walkClip) : null;
+  const run = runClip ? mixer.clipAction(runClip) : null;
+  for (const a of [walk, run]) {
+    if (!a) continue;
+    a.play();
+    a.setEffectiveWeight(0);        // weights are driven per frame by speed
+    a.setLoop(THREE.LoopRepeat, Infinity);
+  }
+  return { holder, root, mixer, walk, run, height: MODEL_HEIGHT };
 }
 
 export function build(THREE, canvas) {
@@ -197,6 +344,32 @@ export function build(THREE, canvas) {
   const avatar = makeAvatar(THREE, M);
   scene.add(avatar);
 
+  /* 🔴 THE BOX AVATAR IS THE FALLBACK, NOT A PLACEHOLDER TO BE DELETED. It is
+     what the room shows while the GLBs are in flight, and what it keeps
+     showing if they never arrive — a blocked CDN, a 404, an Artifact page that
+     cannot fetch its own assets. It also still carries the suit read-out in
+     its materials, so the hazmat rule stays legible in every one of those
+     cases. Removing it turns a slow network into an invisible player. */
+  const chars = { bare: null, suit: null, active: null, loaded: false };
+  const charRig = new THREE.Group();
+  avatar.add(charRig);
+
+  function showCharacter(which) {
+    const want = chars[which];
+    if (!want || chars.active === want) return;
+    for (const k of ['bare', 'suit']) {
+      const c = chars[k];
+      if (c && c.holder.parent) charRig.remove(c.holder);
+    }
+    charRig.add(want.holder);
+    chars.active = want;
+    // The boxes hand over the moment a real character is on screen.
+    for (const k of Object.keys(avatar.userData)) {
+      const o = avatar.userData[k];
+      if (o && o.isMesh) o.visible = false;
+    }
+  }
+
   /* ── camera. Fixed isometric-ish follow, no orbit control on purpose: the
      room has one readable angle and letting a player rotate into a wall is a
      bug report waiting to happen. It LERPS toward the player rather than
@@ -207,6 +380,31 @@ export function build(THREE, canvas) {
 
   const api = {
     THREE, renderer, scene, camera: cam, avatar, stations: stationMeshes, mats: M,
+    chars,
+    /* Kicked off by index.js AFTER the room is already on screen and walkable.
+       Loading these before the first frame would trade a playable lab for a
+       loading screen, to gain a character the player cannot see yet anyway. */
+    async loadCharacters() {
+      if (chars.loaded) return chars;
+      chars.loaded = true;
+      if (!(await ensureGltfLoader())) {
+        try { console.warn('[biolab] GLTFLoader unavailable — keeping the box avatar.'); } catch (e) {}
+        return chars;
+      }
+      // Both at once: 1.3 MB together, and the suit one is needed the moment
+      // the fourth seal closes, which can be eleven seconds in.
+      const [bare, suit] = await Promise.all([
+        loadCharacter(THREE, MODELS.bare),
+        loadCharacter(THREE, MODELS.suit),
+      ]);
+      chars.bare = bare; chars.suit = suit;
+      if (!bare && !suit) { try { console.warn('[biolab] no character models loaded — box avatar stands.'); } catch (e) {} }
+      // A single model loading is enough to use it for both states; better a
+      // researcher in the hot zone than a box.
+      if (!chars.bare) chars.bare = chars.suit;
+      if (!chars.suit) chars.suit = chars.bare;
+      return chars;
+    },
     resize() {
       try {
         renderer.setSize(window.innerWidth, window.innerHeight, false);
@@ -222,23 +420,52 @@ export function build(THREE, canvas) {
       avatar.position.set(p.x, 0, p.z);
       avatar.rotation.y = p.facing;
 
-      // Walk bob + arm swing. Cheap, and it is the difference between a box
-      // sliding and a person walking.
-      const sw = p.moving ? Math.sin(p.bob) * 0.5 : 0;
-      const u = avatar.userData;
-      u.armL.rotation.x = sw; u.armR.rotation.x = -sw;
-      u.legL.rotation.x = -sw * 0.8; u.legR.rotation.x = sw * 0.8;
-      avatar.position.y = p.moving ? Math.abs(Math.sin(p.bob)) * 0.06 : 0;
-
-      // The suit, made visible. This is the readout the whole minigame turns on.
       const sealed = !!(st.suit && st.suit.sealed);
-      const partial = st.suit ? Object.keys(st.suit.seals || {}).length : 0;
-      const suitMat = sealed ? M.suitOn : M.suitOff;
-      u.body.material = partial >= 2 ? suitMat : M.suitOff;
-      u.legL.material = u.legR.material = partial >= 1 ? suitMat : M.suitOff;
-      u.armL.material = u.armR.material = partial >= 3 ? suitMat : M.suitOff;
-      u.head.material = sealed ? suitMat : M.suitOff;
-      u.visor.visible = sealed;
+
+      if (chars.active) {
+        /* ── the imported characters ──────────────────────────────────────
+           Model choice IS the suit read-out: the researcher walks in, and the
+           moment the fourth seal closes they are the Hazard Sentinel. No
+           material swap, no icon — the thing on screen is a different person
+           in a different suit, which reads at this camera distance in a way a
+           colour change never did.
+
+           Walk and run crossfade on actual speed rather than on a flag, so a
+           suited player (SUIT_SPEED of normal) settles into the walk cycle and
+           an unsuited one runs. Feet therefore match ground speed instead of
+           sliding, which is the whole reason to blend rather than switch. */
+        showCharacter(sealed ? 'suit' : 'bare');
+        const c = chars.active;
+        const speed = Math.hypot(p.vx, p.vz);
+        const full = 5.2;                          // player.js SPEED
+        const frac = Math.max(0, Math.min(1, speed / full));
+        // 0 at a standstill, 1 at a full unsuited sprint.
+        const runW = Math.max(0, Math.min(1, (frac - SUIT_SPEED * 0.9) / (1 - SUIT_SPEED * 0.9)));
+        const moveW = Math.min(1, frac / 0.35);    // fade both out when idling
+        if (c.walk) c.walk.setEffectiveWeight(moveW * (1 - runW));
+        if (c.run) c.run.setEffectiveWeight(moveW * runW);
+        /* ⚠ The mixer is advanced even while standing still. Both weights are
+           0 then, but the clips must stay in phase or the first step after a
+           pause snaps to a random pose. */
+        c.mixer.update(Math.max(0, dt) / 1000);
+        c.holder.rotation.y = MODEL_YAW;
+        avatar.position.y = 0;
+      } else {
+        // Box fallback: hand-animated swing, and the suit shown in materials.
+        const sw = p.moving ? Math.sin(p.bob) * 0.5 : 0;
+        const u = avatar.userData;
+        u.armL.rotation.x = sw; u.armR.rotation.x = -sw;
+        u.legL.rotation.x = -sw * 0.8; u.legR.rotation.x = sw * 0.8;
+        avatar.position.y = p.moving ? Math.abs(Math.sin(p.bob)) * 0.06 : 0;
+
+        const partial = st.suit ? Object.keys(st.suit.seals || {}).length : 0;
+        const suitMat = sealed ? M.suitOn : M.suitOff;
+        u.body.material = partial >= 2 ? suitMat : M.suitOff;
+        u.legL.material = u.legR.material = partial >= 1 ? suitMat : M.suitOff;
+        u.armL.material = u.armR.material = partial >= 3 ? suitMat : M.suitOff;
+        u.head.material = sealed ? suitMat : M.suitOff;
+        u.visor.visible = sealed;
+      }
 
       // Airlock seal lamps.
       try {

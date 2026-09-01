@@ -98,7 +98,13 @@ function resolveAxis(px, pz, boxes, axis) {
   return axis === 'x' ? px : pz;
 }
 
-export function step(p, input, dtMs) {
+/* `speedMul` scales walking speed — 1 by default, so every existing caller and
+   every test is unchanged. The lab passes SUIT_SPEED while the hazmat suit is
+   sealed: the suit is heavy, and that cost is what makes suiting up a decision
+   rather than a formality you always take. It is also what drives the
+   walk/run animation blend in scene.js, so the feet match the ground. */
+export function step(p, input, dtMs, speedMul) {
+  const mul = Number.isFinite(+speedMul) ? Math.max(0, +speedMul) : 1;
   const dt = Math.max(0, Math.min(100, +dtMs || 0)) / 1000;   // clamp: a tab that
   // was backgrounded must not deliver a two-second frame and shove the player
   // through a wall. 100ms is ~6 frames of catch-up, which is plenty.
@@ -108,8 +114,8 @@ export function step(p, input, dtMs) {
   p.moving = mag > 0.05;
   if (p.moving) {
     // Screen intent → world metres. See SCREEN_X_TO_WORLD.
-    p.vx = ax * SCREEN_X_TO_WORLD * SPEED;
-    p.vz = az * SPEED;
+    p.vx = ax * SCREEN_X_TO_WORLD * SPEED * mul;
+    p.vz = az * SPEED * mul;
     p.facing = Math.atan2(p.vx, p.vz);
     p.bob = (p.bob + dt * 9 * mag) % (Math.PI * 2);
   } else {

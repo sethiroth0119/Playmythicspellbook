@@ -18,7 +18,7 @@
    in the <script type="module"> list next to the other features.
    ══════════════════════════════════════════════════════════════════════════ */
 
-import { ensureThree, build } from './scene.js';
+import { ensureThree, build, SUIT_SPEED, setModelYaw } from './scene.js';
 import { makePlayer, makeInput, step, attachInput } from './player.js';
 import { STATIONS, OBJECTIVES, stationByKey, nearest, inHotZone } from './stations.js';
 import * as HZ from './hazmat.js';
@@ -372,7 +372,9 @@ function frame(run, now, wall) {
   // 🔴 MOVEMENT FREEZES WHILE A PANEL IS OPEN. Without this the player walks
   // out of the airlock while donning, or out of a hot bench mid-mix, and the
   // state the panel is describing stops being true underneath it.
-  if (!modalUp) step(run.player, run.input, dt);
+  // A sealed suit is heavy. See SUIT_SPEED in scene.js — this is also what
+  // puts the character into the walk cycle rather than the run.
+  if (!modalUp) step(run.player, run.input, dt, run.suit.sealed ? SUIT_SPEED : 1);
 
   const p = run.player;
   run.near = nearest(p.x, p.z, 3.2);
@@ -445,6 +447,16 @@ export async function open(opts) {
   if (!RUN || RUN !== run) return { ok: false };        // closed during the load
   if (THREE) {
     try { run.scene = build(THREE, nodes.canvas); } catch (e) { run.scene = null; }
+  }
+  /* Characters load AFTER the room is up and walkable, deliberately not
+     awaited: the box avatar covers the gap, and trading a playable lab for a
+     loading screen to gain a model the player has not looked at yet is a bad
+     trade. They pop in when they arrive. */
+  if (run.scene && run.scene.loadCharacters) {
+    run.scene.loadCharacters().then((c) => {
+      if (!RUN || RUN !== run) return;
+      if (c && (c.bare || c.suit)) HUD.toast(nodes, '🧑‍🔬 Field team model loaded.', '');
+    }).catch(() => {});
   }
   if (!run.scene) {
     run.flat = true;
@@ -588,6 +600,11 @@ const api = {
   _step: (ms, wall) => { if (RUN) frame(RUN, (RUN.lastFrame || 0) + (ms || 16), wall); },
   _interact: () => { if (RUN) interact(RUN); },
   _preview: () => (RUN ? preview(RUN) : null),
+  /* 🔄 If the character walks backwards, this is the one knob. `rotation.y` is
+     set from atan2(vx, vz), so at yaw 0 the mesh must face +z — and exporters
+     disagree about which way that is. Try Math.PI first. It applies live. */
+  _setModelYaw: (rad) => setModelYaw(rad),
+  _chars: () => (RUN && RUN.scene ? RUN.scene.chars : null),
 };
 
 try { if (typeof window !== 'undefined') window.MythicBioLab = api; } catch (e) {}

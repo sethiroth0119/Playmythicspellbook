@@ -382,6 +382,19 @@ console.log('\n=== 14. WASD goes where the key says ===');
   console.log('  straight ' + straight.toFixed(3) + '  vs diagonal ' + diagLen.toFixed(3));
   ok(Math.abs(diagLen - straight) < 0.001, 'walking diagonally is not faster than walking straight');
 
+  /* The suit's weight. It is what puts the character into the walk cycle
+     instead of the run, so if this ever returns to 1 the animation blend
+     silently stops meaning anything. */
+  const suited = makePlayer(); suited.x = 0; suited.z = 0;
+  const mi = makeInput(); mi.keys.w = true;
+  step(suited, mi, 100, 0.72);
+  console.log('  unsuited ' + w.z.toFixed(3) + '  vs suited ' + suited.z.toFixed(3));
+  ok(suited.z < w.z && suited.z > 0, 'a sealed hazmat suit slows you down');
+  ok(Math.abs(suited.z - w.z * 0.72) < 0.001, 'by exactly the multiplier it was given');
+  const dflt = makePlayer(); dflt.x = 0; dflt.z = 0;
+  step(dflt, mi, 100);
+  ok(dflt.z === w.z, 'and omitting the multiplier changes nothing');
+
   // Walls hold.
   const wall = makePlayer(); wall.x = 0; wall.z = 0;
   const wi = makeInput(); wi.keys.w = true;

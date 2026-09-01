@@ -20,6 +20,12 @@
 *.otf binary
 *.zip binary
 *.psd binary
+# 3D models. Almost all .glb are gitignored (see .gitignore), but the
+# containment lab's two characters are an explicit exception and ship in the
+# repo — and a GLB is a binary container whose JSON chunk length is a byte
+# count. Line-ending rewriting on Windows would shift every offset after it and
+# produce a file that parses as garbage rather than one that obviously fails.
+*.glb binary
 
 # HTML and JS are text — let Git normalize line endings as needed
 *.html text

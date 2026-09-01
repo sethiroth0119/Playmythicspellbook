@@ -111,6 +111,11 @@ export function setCamera(y, back) {
    screen rather than in the console. */
 const GLTF_VENDOR = '/src/biolab/gltfloader.vendor.js';
 const GLTF_CDN = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js';
+/* Which route actually worked, for the diagnostic readout. Three rounds of
+   "it still shows a box" went by without anyone being able to see which of
+   four sources had been tried, so it is recorded rather than inferred. */
+export let GLTF_VIA = null;
+export function gltfVia() { return GLTF_VIA; }
 
 function injectScript(src) {
   return new Promise((resolve) => {
@@ -126,25 +131,41 @@ function injectScript(src) {
 
 export async function ensureGltfLoader() {
   try {
-    if (window.THREE && window.THREE.GLTFLoader) return true;
+    if (window.THREE && window.THREE.GLTFLoader) { GLTF_VIA = GLTF_VIA || 'already-present'; return true; }
 
-    // 2 — source text handed over in memory (the preview build).
+    /* 2 — source text handed over in memory (the preview build).
+       🔴 INLINE FIRST, BLOB SECOND, AND THAT ORDER IS A CSP FIX. A page served
+       with a strict Content-Security-Policy refuses `blob:` script URLs unless
+       blob: is explicitly in script-src — measured: "Refused to load the
+       script 'blob:…' because it violates the following Content Security
+       Policy directive". Assigning the source to a script element's
+       textContent is governed by 'unsafe-inline' instead, which any page that
+       already runs its own inline scripts must have. Blob is kept as the
+       fallback for the reverse policy (nonce-based CSP with blob: allowed). */
     try {
       const libs = window.MythicBioLabLibs;
-      if (libs && typeof libs.gltf === 'string' && libs.gltf.length) {
-        const url = URL.createObjectURL(new Blob([libs.gltf], { type: 'text/javascript' }));
+      const src = libs && typeof libs.gltf === 'string' ? libs.gltf : '';
+      if (src) {
+        try {
+          const s = document.createElement('script');
+          s.textContent = src;
+          document.head.appendChild(s);
+          if (window.THREE && window.THREE.GLTFLoader) { GLTF_VIA = 'inline'; return true; }
+        } catch (e) {}
+        const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
         const ok = await injectScript(url);
         try { URL.revokeObjectURL(url); } catch (e) {}
-        if (ok) return true;
+        if (ok) { GLTF_VIA = 'blob'; return true; }
       }
     } catch (e) {}
 
     // 3 — the copy that ships with the game.
-    if (await injectScript(GLTF_VENDOR)) return true;
+    if (await injectScript(GLTF_VENDOR)) { GLTF_VIA = 'vendored'; return true; }
     try { console.warn('[biolab] vendored GLTFLoader did not load — falling back to the CDN.'); } catch (e) {}
 
     // 4 — last resort.
-    return await injectScript(GLTF_CDN);
+    if (await injectScript(GLTF_CDN)) { GLTF_VIA = 'cdn'; return true; }
+    return false;
   } catch (e) { return false; }
 }
 

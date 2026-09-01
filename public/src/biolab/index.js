@@ -18,7 +18,7 @@
    in the <script type="module"> list next to the other features.
    ══════════════════════════════════════════════════════════════════════════ */
 
-import { ensureThree, build, SUIT_SPEED, setModelYaw, setCamera } from './scene.js';
+import { ensureThree, build, SUIT_SPEED, setModelYaw, setCamera, gltfVia } from './scene.js';
 import { makePlayer, makeInput, step, attachInput } from './player.js';
 import { STATIONS, OBJECTIVES, stationByKey, nearest, inHotZone } from './stations.js';
 import * as HZ from './hazmat.js';
@@ -615,6 +615,9 @@ const api = {
   /* 🎥 Chase-camera framing, live. `_setCamera(10.5, 9)` is the shipped value;
      larger numbers pull back toward the old box-avatar framing. */
   _setCamera: (y, back) => setCamera(y, back),
+  // Which of the four GLTFLoader sources actually worked — 'inline', 'blob',
+  // 'vendored', 'cdn', 'already-present', or null if none did.
+  _gltfVia: () => gltfVia(),
   _chars: () => (RUN && RUN.scene ? RUN.scene.chars : null),
 };
 

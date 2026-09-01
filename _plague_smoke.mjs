@@ -7,6 +7,8 @@ import * as L from './public/src/plague/logistics.js';
    after a shipped clock bug made it unobtainable it very much needs to be. */
 import * as HZ from './public/src/biolab/hazmat.js';
 import { stationByKey } from './public/src/biolab/stations.js';
+/* player.js is pure too — position, velocity, collision, no DOM. */
+import { makePlayer, makeInput, step, SCREEN_X_TO_WORLD } from './public/src/biolab/player.js';
 
 let fails = 0;
 const ok = (c, m) => { console.log((c ? '  PASS ' : '  FAIL ') + m); if (!c) fails++; };
@@ -320,6 +322,65 @@ console.log('\n=== 13. the retune actually bites ===');
   ok(rep.healthDrag > 0, 'sick citizens produce a real drag on the city health vital');
   ok(rep.healthDrag <= O.TUNING.WORKFORCE_DRAG_MAX, 'and it is bounded — an outbreak can never zero a city');
   ok(O.report(h, O.emptyState()).healthDrag === 0, 'a healthy city pays nothing');
+}
+
+console.log('\n=== 14. WASD goes where the key says ===');
+/* 🔴 REGRESSION. A moved right and D moved left. axisOf() returns SCREEN
+   intent, but the camera looks along world +z, and three.js builds that basis
+   as xAxis = cross(up, eye − target) = (−1,0,0) — so screen-right is world −x.
+   Mapping `d` straight to +x sent the player the wrong way. The z half was
+   correct by luck, which is exactly why only half the controls felt wrong.
+
+   These assertions are written in SCREEN terms (what the player sees) and then
+   converted, so they stay true if the camera ever moves and SCREEN_X_TO_WORLD
+   is updated with it — and fail loudly if the constant is edited alone. */
+{
+  // Screen-right, in world metres, per the camera convention.
+  const RIGHT = SCREEN_X_TO_WORLD;      // world x delta for "right on screen"
+  const press = (key) => {
+    const p = makePlayer();
+    p.x = 0; p.z = 0;                   // open floor, away from every collider
+    const input = makeInput();
+    input.keys[key] = true;
+    step(p, input, 100);
+    return p;
+  };
+
+  const d = press('d');
+  const a = press('a');
+  const w = press('w');
+  const s = press('s');
+  console.log('  d -> x ' + d.x.toFixed(2) + '   a -> x ' + a.x.toFixed(2) +
+              '   w -> z ' + w.z.toFixed(2) + '   s -> z ' + s.z.toFixed(2));
+
+  ok(Math.sign(d.x) === Math.sign(RIGHT) && d.x !== 0, 'D moves RIGHT on screen');
+  ok(Math.sign(a.x) === -Math.sign(RIGHT) && a.x !== 0, 'A moves LEFT on screen');
+  ok(w.z > 0, 'W moves UP the screen (world +z, away from the camera)');
+  ok(s.z < 0, 'S moves DOWN the screen (world −z, toward the camera)');
+  ok(Math.abs(d.x) === Math.abs(a.x), 'left and right are the same speed');
+  ok(Math.abs(w.z) === Math.abs(s.z), 'up and down are the same speed');
+  ok(a.x === -d.x, 'and A is exactly the opposite of D');
+
+  // The thumbstick shares the code path, so it must agree with the keys.
+  const stick = makePlayer(); stick.x = 0; stick.z = 0;
+  const si = makeInput(); si.stickX = 1;          // thumb pushed right
+  step(stick, si, 100);
+  ok(Math.sign(stick.x) === Math.sign(d.x), 'the touch stick agrees with the keyboard');
+
+  // Diagonals must not be faster than straight lines — the classic bug.
+  const diag = makePlayer(); diag.x = 0; diag.z = 0;
+  const di = makeInput(); di.keys.w = true; di.keys.d = true;
+  step(diag, di, 100);
+  const straight = Math.abs(w.z);
+  const diagLen = Math.hypot(diag.x, diag.z);
+  console.log('  straight ' + straight.toFixed(3) + '  vs diagonal ' + diagLen.toFixed(3));
+  ok(Math.abs(diagLen - straight) < 0.001, 'walking diagonally is not faster than walking straight');
+
+  // Walls hold.
+  const wall = makePlayer(); wall.x = 0; wall.z = 0;
+  const wi = makeInput(); wi.keys.w = true;
+  for (let i = 0; i < 200; i++) step(wall, wi, 100);
+  ok(Number.isFinite(wall.z) && Math.abs(wall.z) < 100, 'you cannot walk out of the room');
 }
 
 console.log('\n' + (fails ? '❌ ' + fails + ' FAILURES' : '✅ ALL CHECKS PASSED'));

@@ -19,6 +19,26 @@ import { ROOM, colliders } from './stations.js';
 export const SPEED = 5.2;             // metres/sec, walking
 export const RADIUS = 0.42;           // the player's collision radius
 
+/* ── screen space → world space ───────────────────────────────────────────
+   🔴 SHIPPED BACKWARDS ONCE: A MOVED RIGHT AND D MOVED LEFT.
+
+   axisOf() returns the player's SCREEN intent — `ax` is "how far right on the
+   screen", `az` is "how far up the screen" — because that is what a key press
+   and a thumb on a stick actually mean. Turning that into world metres needs
+   the camera's orientation, and the camera is fixed (scene.js: positioned at
+   z − 13.5 and looking at z + 2.5, so its view direction is world +z).
+
+   Three.js builds a lookAt basis as xAxis = cross(up, eye − target). Here that
+   is cross((0,1,0), (0,0,−1)) = (−1, 0, 0), so:
+
+       screen right = world −x        screen up = world +z
+
+   The z half was right by luck; the x half was not, and mapping `d` to world
+   +x sent the player left. Anyone who moves the camera must revisit THIS
+   constant — it is the only place the two spaces are reconciled, and a second
+   sign flip hidden somewhere downstream is how this bug comes back. */
+export const SCREEN_X_TO_WORLD = -1;
+
 export function makePlayer() {
   return {
     x: 0, z: -15.5,                   // just outside the airlock, facing in
@@ -37,13 +57,17 @@ export function makeInput() {
   return { keys: {}, stickX: 0, stickY: 0, interact: false, _interactEdge: false };
 }
 
+/* Returns SCREEN intent, not world direction: `ax` is how far right on the
+   screen the player is asking to go, `az` how far up. step() converts. Keeping
+   this in screen space is what lets the keyboard and the thumbstick share one
+   code path — both of them mean "right", neither means "+x". */
 export function axisOf(input) {
   let ax = 0, az = 0;
   const k = input.keys;
-  if (k.w || k.ArrowUp) az += 1;
-  if (k.s || k.ArrowDown) az -= 1;
-  if (k.a || k.ArrowLeft) ax -= 1;
-  if (k.d || k.ArrowRight) ax += 1;
+  if (k.w || k.ArrowUp) az += 1;      // up the screen
+  if (k.s || k.ArrowDown) az -= 1;    // down the screen
+  if (k.a || k.ArrowLeft) ax -= 1;    // left on the screen
+  if (k.d || k.ArrowRight) ax += 1;   // right on the screen
   ax += input.stickX;
   az += input.stickY;
   const m = Math.hypot(ax, az);
@@ -83,7 +107,8 @@ export function step(p, input, dtMs) {
 
   p.moving = mag > 0.05;
   if (p.moving) {
-    p.vx = ax * SPEED;
+    // Screen intent → world metres. See SCREEN_X_TO_WORLD.
+    p.vx = ax * SCREEN_X_TO_WORLD * SPEED;
     p.vz = az * SPEED;
     p.facing = Math.atan2(p.vx, p.vz);
     p.bob = (p.bob + dt * 9 * mag) % (Math.PI * 2);

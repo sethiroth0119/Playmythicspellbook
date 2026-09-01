@@ -215,13 +215,38 @@ function prepareCharacter(THREE, gltf) {
     }
   });
 
-  // Measure, then scale to MODEL_HEIGHT and sit the feet on y=0.
-  const box = new THREE.Box3().setFromObject(root);
-  const size = new THREE.Vector3(); box.getSize(size);
-  const h = size.y || 1;
+  /* ── scale ────────────────────────────────────────────────────────────
+     🔴 MEASURE THE GEOMETRY, NOT THE WORLD BOX. `Box3.setFromObject` walks
+     matrixWorld, which for these exports includes an armature scale of ~0.01
+     — but a SKINNED mesh does not render at that size. GLTFLoader binds with
+     `bindMatrix = mesh.matrixWorld` while the model is still unplaced, and the
+     baked inverseBindMatrices then undo the armature scale, so the vertices
+     come out in GEOMETRY space and are scaled only by what we set here.
+
+     Measuring the world box (0.017 m) instead of the geometry box (1.7 m)
+     asked for a 103x scale-up of something already the right size. The result
+     was a 175-metre researcher with the camera inside its shin, drawing 3,043
+     triangles the player could not identify as anything — the room looked
+     empty, which reads exactly like a model that failed to load. It was fully
+     loaded and fully drawn the whole time.
+
+     ⚠ THE UNION IS OVER GEOMETRY BOUNDING BOXES IN BIND POSE. That is the
+       space the skinned result lives in, so it is the only measurement that
+       predicts the rendered height. */
+  const gbox = new THREE.Box3();
+  const tmp = new THREE.Box3();
+  root.traverse((o) => {
+    if (!(o.isMesh || o.isSkinnedMesh) || !o.geometry) return;
+    if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+    if (o.geometry.boundingBox) { tmp.copy(o.geometry.boundingBox); gbox.union(tmp); }
+  });
+  const size = new THREE.Vector3();
+  gbox.getSize(size);
+  const h = size.y > 0.0001 ? size.y : 1;
   const s = MODEL_HEIGHT / h;
   root.scale.setScalar(s);
-  root.position.y = -box.min.y * s;
+  // Feet on the floor, in the same space the height was measured in.
+  root.position.y = -gbox.min.y * s;
 
   // A wrapper so yaw can be applied to the character without fighting the
   // avatar group's own rotation, which follows the player's heading.

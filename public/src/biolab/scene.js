@@ -69,22 +69,83 @@ export function setModelYaw(rad) { MODEL_YAW = +rad || 0; return MODEL_YAW; }
    export units. */
 const MODEL_HEIGHT = 1.75;
 
-/* GLTFLoader is not in the three.min.js bundle — it is an example file. Pinned
-   to 0.128.0 to match the r128 core loaded above; a mismatched loader against
-   an older core is a class of bug that shows up as an empty scene with no
-   error. jsDelivr is used because it is on the Artifact CSP allowlist as well
-   as being reachable from the game. */
-export function ensureGltfLoader() {
+/* ── the chase camera ─────────────────────────────────────────────────────
+   Offset from the player, in metres. This was (0, 15.5, -13.5) — framed when
+   the avatar was six boxes and the room was the only thing worth looking at.
+   A 1.75 m character at that distance is about thirty pixels tall: you cannot
+   tell the researcher from the sentinel, which defeats the entire point of the
+   suit being the model.
+   Pulled in to roughly two-thirds. The whole hot zone and every station still
+   fit, and the character now reads as a person.
+   ⚠ TUNE HERE, live, with `MythicBioLab._setCamera(y, back)`. Going much
+     closer starts clipping the far benches out of frame at 52° FOV. */
+export let CAM_HEIGHT = 10.5;
+export let CAM_BACK = -9.0;
+export function setCamera(y, back) {
+  if (Number.isFinite(+y)) CAM_HEIGHT = +y;
+  if (Number.isFinite(+back)) CAM_BACK = -Math.abs(+back);
+  return { height: CAM_HEIGHT, back: CAM_BACK };
+}
+
+/* ── GLTFLoader ───────────────────────────────────────────────────────────
+   Not in the three.min.js bundle — it is an example file, and it must be
+   loaded AFTER the r128 core because its body touches THREE.Loader.prototype
+   at definition time.
+
+   🔴 THE VENDORED COPY IS TRIED FIRST, AND THAT ORDER IS THE FIX. This used to
+   go straight to jsDelivr, and a CDN that does not answer produced a SILENT
+   failure indistinguishable from a broken model: the box avatar stayed, with
+   nothing on screen saying why. Reported twice as "the model has not loaded"
+   when the models were fine.
+
+   Three sources, in order:
+     1. already present — another system in the game may have loaded it
+        (the Card Shop does, and patches it for Draco);
+     2. `window.MythicBioLabLibs.gltf`, source text handed over in memory —
+        how the self-contained preview supplies it, since an Artifact page
+        cannot fetch its own assets;
+     3. the vendored copy at /src/biolab/, same-origin;
+     4. jsDelivr, last, as a courtesy for a build where the vendored file was
+        pruned.
+   Only if ALL of them fail does it give up — and the caller now says so on
+   screen rather than in the console. */
+const GLTF_VENDOR = '/src/biolab/gltfloader.vendor.js';
+const GLTF_CDN = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js';
+
+function injectScript(src) {
   return new Promise((resolve) => {
     try {
-      if (window.THREE && window.THREE.GLTFLoader) { resolve(true); return; }
       const s = document.createElement('script');
-      s.src = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js';
+      s.src = src;
       s.onload = () => resolve(!!(window.THREE && window.THREE.GLTFLoader));
       s.onerror = () => resolve(false);
       document.head.appendChild(s);
     } catch (e) { resolve(false); }
   });
+}
+
+export async function ensureGltfLoader() {
+  try {
+    if (window.THREE && window.THREE.GLTFLoader) return true;
+
+    // 2 — source text handed over in memory (the preview build).
+    try {
+      const libs = window.MythicBioLabLibs;
+      if (libs && typeof libs.gltf === 'string' && libs.gltf.length) {
+        const url = URL.createObjectURL(new Blob([libs.gltf], { type: 'text/javascript' }));
+        const ok = await injectScript(url);
+        try { URL.revokeObjectURL(url); } catch (e) {}
+        if (ok) return true;
+      }
+    } catch (e) {}
+
+    // 3 — the copy that ships with the game.
+    if (await injectScript(GLTF_VENDOR)) return true;
+    try { console.warn('[biolab] vendored GLTFLoader did not load — falling back to the CDN.'); } catch (e) {}
+
+    // 4 — last resort.
+    return await injectScript(GLTF_CDN);
+  } catch (e) { return false; }
 }
 
 export function ensureThree() {
@@ -400,8 +461,9 @@ export function build(THREE, canvas) {
      bug report waiting to happen. It LERPS toward the player rather than
      tracking exactly, which hides the collision resolver's tiny corrections. */
   const cam = new THREE.PerspectiveCamera(52, window.innerWidth / window.innerHeight, 0.1, 200);
-  const camOff = new THREE.Vector3(0, 15.5, -13.5);
-  cam.position.set(camOff.x, camOff.y, camOff.z);
+  // Read live from CAM_HEIGHT / CAM_BACK so _setCamera tunes it without a
+  // reload — see the note on those constants.
+  cam.position.set(0, CAM_HEIGHT, CAM_BACK);
 
   const api = {
     THREE, renderer, scene, camera: cam, avatar, stations: stationMeshes, mats: M,
@@ -412,8 +474,14 @@ export function build(THREE, canvas) {
     async loadCharacters() {
       if (chars.loaded) return chars;
       chars.loaded = true;
+      /* 🔴 REPORT THE REASON, DO NOT JUST FALL BACK. Every failure below used
+         to end as a console.warn and a box avatar, which is why "the model has
+         not loaded" was reported twice with no way to tell whether the loader,
+         the fetch or the model was at fault. `chars.why` carries it out to the
+         caller, which puts it on screen. */
       if (!(await ensureGltfLoader())) {
-        try { console.warn('[biolab] GLTFLoader unavailable — keeping the box avatar.'); } catch (e) {}
+        chars.why = 'GLTFLoader could not be loaded (vendored copy and CDN both failed).';
+        try { console.warn('[biolab] ' + chars.why); } catch (e) {}
         return chars;
       }
       // Both at once: 1.3 MB together, and the suit one is needed the moment
@@ -423,7 +491,10 @@ export function build(THREE, canvas) {
         loadCharacter(THREE, MODELS.suit),
       ]);
       chars.bare = bare; chars.suit = suit;
-      if (!bare && !suit) { try { console.warn('[biolab] no character models loaded — box avatar stands.'); } catch (e) {} }
+      if (!bare && !suit) {
+        chars.why = 'The character models did not load (' + MODELS.bare.url + ').';
+        try { console.warn('[biolab] ' + chars.why); } catch (e) {}
+      }
       // A single model loading is enough to use it for both states; better a
       // researcher in the hot zone than a box.
       if (!chars.bare) chars.bare = chars.suit;
@@ -531,7 +602,7 @@ export function build(THREE, canvas) {
       stripe.material.color.setHex(danger ? 0xff4d5e : COL.hazard);
 
       // Camera follow.
-      const want = { x: p.x * 0.35 + camOff.x, y: camOff.y, z: p.z + camOff.z };
+      const want = { x: p.x * 0.35, y: CAM_HEIGHT, z: p.z + CAM_BACK };
       const k2 = 1 - Math.pow(0.0025, Math.max(0, dt) / 1000);
       cam.position.x += (want.x - cam.position.x) * k2;
       cam.position.y += (want.y - cam.position.y) * k2;

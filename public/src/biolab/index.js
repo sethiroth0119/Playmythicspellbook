@@ -18,7 +18,7 @@
    in the <script type="module"> list next to the other features.
    ══════════════════════════════════════════════════════════════════════════ */
 
-import { ensureThree, build, SUIT_SPEED, setModelYaw } from './scene.js';
+import { ensureThree, build, SUIT_SPEED, setModelYaw, setCamera } from './scene.js';
 import { makePlayer, makeInput, step, attachInput } from './player.js';
 import { STATIONS, OBJECTIVES, stationByKey, nearest, inHotZone } from './stations.js';
 import * as HZ from './hazmat.js';
@@ -455,8 +455,16 @@ export async function open(opts) {
   if (run.scene && run.scene.loadCharacters) {
     run.scene.loadCharacters().then((c) => {
       if (!RUN || RUN !== run) return;
-      if (c && (c.bare || c.suit)) HUD.toast(nodes, '🧑‍🔬 Field team model loaded.', '');
-    }).catch(() => {});
+      if (c && (c.bare || c.suit)) { HUD.toast(nodes, '🧑‍🔬 Field team model loaded.', ''); return; }
+      /* 🔴 SAY SO ON SCREEN. A silent fall back to the box avatar is
+         indistinguishable from a bug, and was reported as one twice. The
+         player gets the reason and the game keeps working. */
+      HUD.toast(nodes, '⚠ ' + ((c && c.why) || 'Character models unavailable') +
+        ' — using the placeholder figure. Everything else works.', 'warn');
+    }).catch((e) => {
+      if (!RUN || RUN !== run) return;
+      HUD.toast(nodes, '⚠ Character models failed to load — using the placeholder figure.', 'warn');
+    });
   }
   if (!run.scene) {
     run.flat = true;
@@ -604,6 +612,9 @@ const api = {
      set from atan2(vx, vz), so at yaw 0 the mesh must face +z — and exporters
      disagree about which way that is. Try Math.PI first. It applies live. */
   _setModelYaw: (rad) => setModelYaw(rad),
+  /* 🎥 Chase-camera framing, live. `_setCamera(10.5, 9)` is the shipped value;
+     larger numbers pull back toward the old box-avatar framing. */
+  _setCamera: (y, back) => setCamera(y, back),
   _chars: () => (RUN && RUN.scene ? RUN.scene.chars : null),
 };
 

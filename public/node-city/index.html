@@ -9,7 +9,7 @@
      believed the file was already live. Only a CONTENT change moves the hash
      and forces a re-upload, so bump this stamp whenever the city 404s, and
      probe it (grep NC_BUILD on the served page) to prove the deploy landed. -->
-<script>window.NC_BUILD = "v120w9-districts";</script>
+<script>window.NC_BUILD = "v120x9-crewnaming";</script>
 <!-- ════════════════════════════════════════════════════════════════════════
      NODE CITY — SimCity-style settlement layer for Mythic Spellbook.
      Three.js WebGPU (auto-falls back to WebGL2). Realistic sun/moon cycle.
@@ -533,6 +533,14 @@
   .cpname{display:block;font-size:12.5px;}
   .cpmeta{display:block;font-size:10px;color:var(--mist);}
   .cpempty{font-size:11.5px;color:var(--mist);padding:8px 0;}
+  /* 👷 Work profile in the picker. The list is sorted best-first, so the
+     border-tint is what makes that ordering legible at a glance rather than
+     something the player has to infer from the numbers. */
+  .cpvoc{display:block;font-size:10px;margin-top:2px;color:#e8d49a;}
+  .cpcard.apt{border-color:rgba(122,214,140,.55);background:#111a15;}
+  .cpcard.flat .cpvoc{color:var(--mist);opacity:.8;}
+  .cppass{display:inline-block;margin-right:5px;}
+  .cppass.good{color:#7ad68c;} .cppass.bad{color:#e08a80;}
 
   /* ── Toasts ── */
   /* ⚠ z-index 9850, not 9. Toasts are the ONLY feedback several dossier actions
@@ -736,6 +744,15 @@
     <h2>Population &amp; Garrison</h2>
     <div id="armybody"></div>
   </div>
+  <!-- 👷 THE WORK CREW. Rendered entirely by /src/work/crew.city.js; this is
+       only the mount point, exactly as #govbody is for governance. It sits
+       directly under Population & Garrison because the two answer the same
+       question from opposite ends — that card is the anonymous labour you HIRE,
+       this one is the named units you COMMIT. -->
+  <div class="card" id="crewcard">
+    <h2>Work Crew</h2>
+    <div id="crewbody"></div>
+  </div>
   <div class="card" id="campcard">
     <h2>Camp Upkeep Coverage</h2>
     <div id="campup"></div>
@@ -907,6 +924,10 @@
     <div id="insft">
       <button class="pbtn ember" id="btn-upgrade"></button>
       <button class="pbtn" id="btn-action" style="display:none"></button>
+      <!-- 👷 Its OWN button rather than sharing #btn-action, because the Duel
+           Arena and the Player Shop have both a card socket and crew posts, and
+           one contextual button cannot offer two unrelated things. -->
+      <button class="pbtn" id="btn-crew" style="display:none"></button>
       <button class="pbtn" id="btn-repair" style="display:none"></button>
       <button class="pbtn" id="btn-rotate">🔄 Rotate — 0°</button>
       <span class="grow"></span>
@@ -2113,19 +2134,32 @@ const MythicCityBridge = (() => {
   // type ∈ Hero|Unit|Kalon|Spell|Equipment|Artifact|Relic|Structure.
   // assignCard(id, on) marks a card as city-assigned (lock it from decks/
   // market while slotted); consumeCard(id) burns it (Structure builds).
+  /* 👷 `level` and `rarity` are what the work model reads off a card besides its
+     element (see /src/work/work.js) — the parent supplies them from
+     Profile.units and the card catalog. They are LITERAL here rather than
+     derived: standalone has no Profile to read, and a mock whose values move
+     between reloads is useless for checking a multiplier.
+     ⚠ THE SUITABILITIES ARE DELIBERATELY NOT HARD-CODED. They are rolled from
+       (salt, card id, element) exactly as they are for a real player, so a
+       standalone city exercises the real roll — including the case nobody would
+       think to write by hand: a card that rolls nothing useful for the city you
+       actually built. The elements below are spread across the work table on
+       purpose — lava and fire for Kindling, water and ice for Watering, nature
+       for Planting, earth and metal for Mining and Handiwork, storm for
+       Generating, wind for Lumbering and Transporting. */
   const MOCK_CARDS = [
-    { id: 'c1',  name: 'Emberling Kalon',       type: 'Kalon',     element: 'fire',  power: 18, rarity: 'rare' },
-    { id: 'c2',  name: 'Tidecaller Kalon',      type: 'Kalon',     element: 'water', power: 14, rarity: 'uncommon' },
-    { id: 'c3',  name: 'Warden Aeric',          type: 'Hero',      element: 'earth', power: 22, rarity: 'epic' },
-    { id: 'c4',  name: 'Scout Lyra',            type: 'Hero',      element: 'wind',  power: 12, rarity: 'common' },
-    { id: 'c5',  name: 'Stoneheart Golem',      type: 'Unit',      element: 'earth', power: 16, rarity: 'rare' },
-    { id: 'c6',  name: 'Rain Sigil',            type: 'Spell',     element: 'water', power: 10, rarity: 'common' },
-    { id: 'c7',  name: 'Forge Blessing',        type: 'Spell',     element: 'fire',  power: 15, rarity: 'uncommon' },
-    { id: 'c8',  name: 'Wardplate',             type: 'Equipment', element: 'earth', power: 13, rarity: 'uncommon' },
-    { id: 'c9',  name: "Seeker's Lantern",      type: 'Equipment', element: 'light', power: 11, rarity: 'common' },
-    { id: 'c10', name: 'Obsidian Shard',        type: 'Artifact',  element: 'dark',  power: 20, rarity: 'epic' },
-    { id: 'c11', name: 'Ethos Foundation Stone',type: 'Structure', element: 'light', power: 25, rarity: 'legendary' },
-    { id: 'c12', name: 'Kalon Den Blueprint',   type: 'Structure', element: 'earth', power: 19, rarity: 'epic' },
+    { id: 'c1',  name: 'Emberling Kalon',       type: 'Kalon',     element: 'lava',   power: 18, rarity: 'rare',      level: 40 },
+    { id: 'c2',  name: 'Tidecaller Kalon',      type: 'Kalon',     element: 'water',  power: 14, rarity: 'uncommon',  level: 22 },
+    { id: 'c3',  name: 'Warden Aeric',          type: 'Hero',      element: 'earth',  power: 22, rarity: 'epic',      level: 35 },
+    { id: 'c4',  name: 'Scout Lyra',            type: 'Hero',      element: 'wind',   power: 12, rarity: 'common',    level: 3  },
+    { id: 'c5',  name: 'Stoneheart Golem',      type: 'Unit',      element: 'nature', power: 16, rarity: 'rare',      level: 50 },
+    { id: 'c6',  name: 'Rain Sigil',            type: 'Spell',     element: 'ice',    power: 10, rarity: 'common',    level: 8  },
+    { id: 'c7',  name: 'Forge Blessing',        type: 'Spell',     element: 'fire',   power: 15, rarity: 'uncommon',  level: 27 },
+    { id: 'c8',  name: 'Wardplate',             type: 'Equipment', element: 'metal',  power: 13, rarity: 'uncommon',  level: 15 },
+    { id: 'c9',  name: "Seeker's Lantern",      type: 'Equipment', element: 'light',  power: 11, rarity: 'common',    level: 12 },
+    { id: 'c10', name: 'Obsidian Shard',        type: 'Artifact',  element: 'storm',  power: 20, rarity: 'epic',      level: 44 },
+    { id: 'c11', name: 'Ethos Foundation Stone',type: 'Structure', element: 'light',  power: 25, rarity: 'legendary', level: 50 },
+    { id: 'c12', name: 'Kalon Den Blueprint',   type: 'Structure', element: 'earth',  power: 19, rarity: 'epic',      level: 30 },
   ];
   B.fetchCards = async () => {
     if (B.mode === 'parent') {
@@ -2134,6 +2168,30 @@ const MythicCityBridge = (() => {
     }
     if (B.mode === 'message') { return (await rpc('fetchCards', {})) || []; }
     return MOCK_CARDS.map(c => ({ ...c }));
+  };
+  /* 👷 THE WORK SALT.  ◄◄ CLAUDE CODE HOOK ◄◄
+     One string per ACCOUNT. Every unit's work suitabilities and passives are
+     derived from (salt, card id) rather than stored — see the roll note in
+     /src/work/work.js for why 500 rows are not written on first open — so this
+     string is the whole of what has to persist, and two devices holding
+     different salts is the one outcome that must not happen. In `parent` mode
+     the game owns it (window.cityWorkSalt, cloud-synced with the profile);
+     standalone keeps its own in localStorage so an offline city is stable
+     across reloads rather than re-rolling the roster on every F5. */
+  const WORKSALTKEY = 'mythic_city_worksalt_v1';
+  B.getWorkSalt = async () => {
+    if (B.mode === 'parent') {
+      try { if (typeof P.cityWorkSalt === 'function') return (await P.cityWorkSalt()) || ''; } catch (e) {}
+      return '';
+    }
+    if (B.mode === 'message') { try { return (await rpc('workSalt', {})) || ''; } catch (e) { return ''; } }
+    let v = null;
+    try { v = localStorage.getItem(WORKSALTKEY); } catch (e) {}
+    if (!v) {
+      v = Math.floor(Math.random() * 0xffffffff).toString(36) + Math.floor(Math.random() * 0xffffffff).toString(36);
+      try { localStorage.setItem(WORKSALTKEY, v); } catch (e) {}
+    }
+    return v;
   };
   B.assignCard = async (id, on) => {
     if (B.mode === 'parent') { try { if (typeof P.cityCardAssign === 'function') P.cityCardAssign(id, on); } catch (e) {} return; }
@@ -3122,7 +3180,7 @@ const BUILDINGS = {
      cleaner, at a higher price and lower output. Two crew instead of four. */
   gas:      { name: 'Gas Plant',     ico: '🔥', cost: { cinder: 185, metal: 58, supplies: 20 }, pop: 2, crew: 2,
               gen: { power: 7.5 }, use: { fuel: 0.45 },
-              desc: 'Two pressure vessels and a compact turbine hall. Half the fuel of a Coal Plant for most of the power, a quarter of the smoke, and two crew instead of four — the sensible plant, and priced like it.' },
+              desc: 'Two pressure vessels and a compact turbine hall. Half the fuel of a Coal Plant for most of the power, a quarter of the smoke, and two hands instead of four — the sensible plant, and priced like it.' },
   /* 🛢 Between the two on every axis, deliberately. */
   oil:      { name: 'Oil Plant',     ico: '🛢️', cost: { cinder: 165, metal: 52, supplies: 16 }, pop: 3, crew: 3,
               gen: { power: 8.0 }, use: { fuel: 0.95 },
@@ -3156,6 +3214,31 @@ const BUILDINGS = {
               gen: { power: 6.5 },
               desc: 'A tipping hall, a bunker crane and a tall thin stack. Burns the city’s rubbish for power, so it costs nothing to run and grows with the town — but there is only so much rubbish, and a second one shares the first one’s. Cleaner than coal in the ground and nearly as bad in the air.' },
 };
+
+/* ══ 👷 WHY THERE ARE STILL ONLY FOUR CARD SOCKETS ═════════════════════════
+   An earlier pass gave a socket to every building with `gen` or `svc`, so that
+   a unit's speciality had somewhere to attach. The work-crew system replaced
+   that and the sockets came back out, deliberately:
+
+   Per-building sockets make the player hand-solve a matching problem — thirty
+   buildings against twenty units, re-solved every time they build anything —
+   and the busywork grows with how well the city is doing, which is backwards.
+   Worse, running both at once gave one tile two unrelated ways to receive one
+   card, and no way for the player to tell which of the two numbers they were
+   looking at.
+
+   So the two systems now mean different things and never overlap:
+     · THE CREW staffs the city. Units are enlisted to the CITY, and the
+       assignment pass walks each to the building it is best at. See
+       /src/work/crew.city.js.
+     · A SOCKET is a NAMED HEADLINER, and only these four ever wanted one: the
+       Duel Arena and the Player Shop put a specific card's face on the thing,
+       the Kalon Stable is a card sink, and the Stadium's slot feeds its Match
+       Quality. All four keep the flat +power/100 they always had.
+   A card cannot be in both at once — assignedCardIds() already enforces exactly
+   that for the defense deck, expeditions and House billets, and the crew joins
+   that list. */
+
 /* 🏗 BUILD SECTIONS — what each placeable is FOR. Anything in BUILD_ORDER
    that is missing from a section falls into "Other" automatically, so adding a
    building to BUILDINGS can never make it unreachable in the shop. */
@@ -23961,6 +24044,23 @@ function computeLinks() {
     computeLinks._last = now;
     for (const a of game.anchors) MythicCityBridge.pushNodeBoost(a.node.id, a.link);
   }
+  /* 👷 VALIDATE THE POSTS — and validate ONLY. computeLinks() already runs on
+     every place, demolish, repair and failure, which is exactly the set of
+     events that can invalidate a post, so this is where a worker standing in a
+     building that no longer exists gets sent home.
+
+     🔴 IT DOES NOT REASSIGN. Posting is the player's decision now; a pass that
+     re-solved the city here would quietly overwrite a deliberate allocation
+     every time they laid a road. The only thing that ever moves a worker
+     without being asked is this function sending one home, and it SAYS SO —
+     silently stopping a worker is indistinguishable from a bug. */
+  try {
+    if (CREW) {
+      const cleared = CREW.validate();
+      for (const c of cleared) toast('👷 ' + c.name + ' was sent back to the work crew — ' + c.why, 'bad');
+      CREW.renderPanel();
+    }
+  } catch (e) {}
 }
 function citySync() {
   if (!game.anchors.length) return 0;
@@ -24254,7 +24354,13 @@ function tileMult(x, z, t, staff, powered) {
         * (def.crew ? staff : 1) * weatherMult(t.type)
         * (gov.mayorName ? MAYOR_PROD : 1)
         * kalonCityBoost()
-        * (1 + socketBoost(t));
+        * (1 + socketBoost(t))
+        /* 👷 What the work crew posted to this building is worth — see
+           crewMult(). Multiplicative and deliberately INSIDE the cap below, for
+           the same reason FIN_BOOST_EACH is: a bonus that dodged TILE_MULT_CAP
+           is how the old Cinder Forge happened. ×1 with no crew, no matching
+           suitability, or no module. */
+        * crewMult(key(x, z));
   if (isMoraleVenue(t.type)) m *= moraleVenueMult();   // crowds follow morale — arena AND its op twin
   /* 💹 THE FINANCIAL DISTRICT'S LIFT. Only Cinder EARNERS feel it — a farm does
      not sell anything, so an investment house has nothing to leverage there.
@@ -24281,8 +24387,8 @@ function tileMult(x, z, t, staff, powered) {
   else { const pf = pwFactorOf(x, z); if (pf !== null) m *= pf; }
   /* 🧯 THE CEILING. Everything above is MULTIPLICATIVE and, until this line,
      unbounded: adjacency × 2^(lvl-1) × staffing × weather × mayor × Kalon ×
-     (1 + sockets) × morale × power, and then tileOutputFactor() multiplies the
-     result again by commerce/labour/efficiency. Each term is individually
+     (1 + sockets) × crew × morale × power, and then tileOutputFactor()
+     multiplies the result again by commerce/labour/efficiency. Each term is individually
      reasonable. The product was not — it is how one player reached ~16,000,000
      🔥/day, roughly 27x above what the per-building caps should have allowed.
 
@@ -24765,6 +24871,15 @@ async function economyTick(dtMin) {
     const L = LEGACY_SERVICE[t.type];
     if (L) supply[L.need] += L.supply * mult;
   }
+  /* 👷 THE CREW EATS. Deliberately AFTER every building has drawn its inputs,
+     so a city that is short does not starve its kitchens to feed its workers —
+     the crew is the flexible cost and the service layer is not. It draws
+     through the SAME svcDraw closure the kitchens use, which is what makes the
+     rations-then-raw-food fallback one rule in this city instead of two.
+     ⚠ This also invalidates the crew's per-tick multiplier cache, because it is
+       the only thing that moves condition. */
+  try { if (CREW) CREW.upkeep(dtMin, svcDraw); } catch (e) {}
+
   // Non-building supply that no tile owns.
   supply.water += Math.max(0, waterNetRaw);      // ⚠ un-throttled on purpose — see above
   supply.safety += game.army.soldiers * 0.10 * rankMult();
@@ -26025,15 +26140,25 @@ function bldNextFreeSec(now) {
 /* ONE refusal sentence, written once and shared by the placement gate and the
    upgrade gate — two copies of a player-facing message drift, and this one has
    two branches to keep in step. */
+/* 🏗 "BUILD GANG", NOT "CREW". This city has three different groups of people
+   working in it, and until this rename all three were called a crew:
+     · STAFFING   — the anonymous workers you HIRE. One city-wide pool.
+     · BUILD GANG — the teams that ERECT buildings. Two at a time, on a timer.
+     · WORK CREW  — the named UNITS you post to a finished building.
+   "Every crew is working — 2 / 2 on site" sat one panel away from
+   "Work crew 1 / 2 posted", and nothing on screen said they were different
+   things. Only PLAYER-FACING copy is renamed: `bldCrewLoad`, `bldSlots` and
+   the rest keep their identifiers, because renaming live internals across an
+   actively-moving branch buys nothing a comment cannot. */
 function bldCrewBusyMsg() {
   const busy = bldCrewLoad(), slots = bldSlots(), next = bldNextFreeSec();
-  return '🏗 Every crew is working — ' + busy + ' / ' + slots + ' on site. ' +
+  return '🏗 Every build gang is out — ' + busy + ' / ' + slots + ' on site. ' +
     (Number.isFinite(next)
       ? 'The next one frees in ' + fmtCountdown(next) + '.'
       /* Every slot is held by an order still paying for itself this instant —
          a burst of clicks. There is no deadline to name yet, so name the truth
          instead of printing a countdown of nothing. */
-      : 'The last crew was taken a moment ago.');
+      : 'The last build gang was taken a moment ago.');
 }
 /* The sentence BOTH municipal-ceiling refusals end with — the placement gate
    and the upgrade gate. One copy, because two copies of a player-facing message
@@ -26061,7 +26186,7 @@ function bldCoHint() {
    file's own "two copies of a player-facing message drift" rule allows. */
 function bldCeilingMsg(lead) {
   const C = bldCfg(); if (!C) return '';
-  return '🔒 ' + lead + ' — more than the free Municipal Works crew will take on (' +
+  return '🔒 ' + lead + ' — more than the free Municipal Works gang will take on (' +
          fmtCountdown(C.municipal.maxSec) + '). ' + bldCoHint();
 }
 /* 🚦 THE SAME ANSWER, ASKED *BEFORE* THE PLAYER SPENDS — for any surface that
@@ -26463,7 +26588,7 @@ async function bldConfirmLong(what, durSec) {
   if (!C || !(durSec > (C.confirmOverSec | 0))) return true;
   const msg = what + ' takes ' + fmtCountdown(durSec) + ' to build — it would be finished at about '
     + bldLandLabel(durSec) + '.\n\n'
-    + 'The full cost is charged now and a crew is tied up for the whole job. '
+    + 'The full cost is charged now and a build gang is tied up for the whole job. '
     /* 📦 NOT "a 100% refund" ANY MORE, AND THE CAVEAT IS NOT WEASELLING. The
        Cinder always comes back whole (addCinders has no ceiling); the materials
        go through addRes, which clamps to the vault. Promising 100% here and
@@ -26550,7 +26675,7 @@ function renderBuildBoard() {
      hold no crew (bldCrewLoad), so counting them here would tell a player their
      crews are full while a build button was still going to say yes. */
   const _devN = bldDevSites();
-  $('bldcrews').innerHTML = '<b>' + Math.max(0, bldActive() - _devN) + ' / ' + bldSlots() + '</b> crews working' +
+  $('bldcrews').innerHTML = '<b>' + Math.max(0, bldActive() - _devN) + ' / ' + bldSlots() + '</b> build gangs out' +
     (_devN ? ' · <b>' + _devN + '</b> zoned site' + (_devN === 1 ? '' : 's') + ' going up without one.' : '.');
   if (!jobs.length) { renderBuildBoard._sig = null; $('bldlist').innerHTML = ''; return; }
   const sig = jobs.map(([k, t]) => k + ':' + t.bld.k + ':' + t.bld.l).join('|');
@@ -27605,7 +27730,7 @@ function insFactors(x, z, t) {
     '%</span> · <span class="' + (b.cluster ? 'on' : '') + '">🏘️ cluster +' + Math.round(b.cluster * 100) +
     '%</span> · <span class="' + (b.anchor ? 'on' : '') + '">🔮 anchor +' + Math.round(ANCHOR_ADJ * 100) +
     '%</span>', v: b.mult });
-  if (def.crew) f.push({ l: '👷 Staffing — ' + game.army.workers + ' workers for ' + crewNeeded() + ' crew jobs', v: staffingRatio() });
+  if (def.crew) f.push({ l: '👷 Staffing — ' + game.army.workers + ' hired workers for ' + crewNeeded() + ' staffed jobs', v: staffingRatio() });
   const wm = weatherMult(t.type);
   if (wm !== 1) f.push({ l: WEATHER[wx.type].ico + ' ' + WEATHER[wx.type].name + ' weather', v: wm });
   if (gov.mayorName) f.push({ l: '🏛️ Mayor ' + logEsc(gov.mayorName) + ' in office', v: MAYOR_PROD });
@@ -27613,11 +27738,51 @@ function insFactors(x, z, t) {
   if (kb !== 1) f.push({ l: '🐲 Stabled Kalons, city-wide', v: kb });
   const sb = socketBoost(t);
   if (sb) { const c = cardById(t.card); f.push({ l: '🃏 ' + logEsc(c ? c.name : 'Socketed card') + ' — ⚡' + (c ? c.power : 0), v: 1 + sb }); }
+  /* 👷 The crew is its OWN row, not folded into the socket row above, because
+     the two answer different questions: the socket row is "this card is worth
+     ⚡n anywhere", this one is "…and two of your units are working this Farm
+     because farming is what they are good at". A player who cannot see which
+     leg produced the number cannot act on it — the whole reason this card
+     decomposes tileMult at all. Each worker is NAMED: "output is up 60%" is a
+     fact, "the Stoneheart Golem is why" is something the player can move. */
+  if (CREW) {
+    const cps = CREW.powersAt(key(x, z));
+    if (cps.length) {
+      const cm = CREW.work.multFrom(cps);
+      if (cm > 1.0001) f.push({ l: '👷 Work crew — ' + cps.map(p => {
+        const w = CREW.work.getWork(p.work);
+        return logEsc(p.name) + ' <span class="on">' + (w ? w.icon + ' ' + w.name + ' ' + p.suit : '') + '</span>' +
+               (p.cond < 65 ? ' <span class="dn">(' + Math.round(p.cond) + '% condition)</span>' : '');
+      }).join(' · '), v: cm });
+    }
+  }
   // Same predicate and same expression as tileMult(), on purpose: this row IS
   // that term, and the two spent this project's whole life as separate literals.
   if (isMoraleVenue(t.type)) f.push({ l: '😊 City morale ' + Math.round(wellbeing.morale) + ' — crowds follow it', v: moraleVenueMult() });
   if (def.powerNeed) f.push({ l: (game.power.factor < 1 ? '⚡ BROWNOUT — grid ' : '⚡ Powered — grid ') +
     game.power.gen.toFixed(1) + ' / ' + game.power.demand.toFixed(1) + ' per min', v: game.power.factor });
+  /* 🧯 THE CEILING, SHOWN AS A ROW. tileMult() clamps its product to
+     TILE_MULT_CAP; this card did not, so a capped tile printed rows that
+     multiplied to more than the total in its own prose line, with nothing to
+     say where the difference went.
+
+     That was survivable while ×5 was hard to reach. Aptitude makes it easy —
+     it is worth up to a doubling on its own — so a player can now slot the
+     perfect unit into an already-maxed building, watch the output not move, and
+     have the panel show them a ×2.00 row that the economy silently ignored.
+     "Your best card did nothing and here is no reason why" is the single worst
+     thing this feature could tell someone. The row is the reason.
+
+     ⚠ It is computed from THESE ROWS, not from tileMult, so the card stays
+       internally consistent. Note that means it does not know about finBoost,
+       which tileMult applies to Cinder earners and this list has never carried
+       — a pre-existing gap in the decomposition, not one this row introduces,
+       and one that only ever makes the ceiling row slightly conservative. */
+  const capProd = f.reduce((a, o) => a * o.v, 1);
+  if (capProd > TILE_MULT_CAP + 1e-9) {
+    f.push({ l: '🧯 City output ceiling — no single tile may earn more than ×' + TILE_MULT_CAP +
+      '. Bonuses past this point are not paid.', v: TILE_MULT_CAP / capProd });
+  }
   return { b, f, lvlMul };
 }
 /* The city-conditions row is kept OUT of insFactors' product because it is not
@@ -27661,7 +27826,7 @@ function insTopline(k, t, x, z, mult, om) {
     const maxW = cat && cat.maxWorkers ? cat.maxWorkers | 0 : 0;
     const w = opR.workers | 0;
     out.push({ e: 'Staff', v: w + (maxW ? '<small> / ' + maxW + '</small>' : ''),
-      d: maxW && w >= maxW ? 'fully crewed' : maxW ? 'hire in Just Business' : 'on the licence' });
+      d: maxW && w >= maxW ? 'fully staffed' : maxW ? 'hire in Just Business' : 'on the licence' });
     const eff = (typeof opsSiteEffFor === 'function') ? opsSiteEffFor(x, z, t) : 1;
     out.push({ e: 'City plot', v: '<span style="color:var(--valid)">+' + Math.round((eff - 1) * 100) + '<small>%</small></span>',
       d: eff > 1 ? 'roads, neighbours and light' : 'build roads beside it to earn a bonus' });
@@ -27891,11 +28056,71 @@ function insContribution(t, x, z, mult) {
   return insCardHtml('City contribution', 'live coverage', rows.join(''));
 }
 
+/* ⚠ POSTING INTO A BUILDING THAT IS ALREADY DOING ITS JOB.
+   A service building converts stock into COVERAGE, and coverage is a ratio that
+   the vitals clamp — once a need is met, more supply buys nothing. But the crew
+   multiplier scales the building's INPUT DRAW all the same, so posting two units
+   into a Grocery in a city that is already fed costs about two rations a minute
+   and returns exactly zero. Measured, not assumed: 7.50 → 17.37 rations over
+   five minutes with food coverage pinned at 1.50 both times.
+
+   This is not new — levelling that Grocery up does the same thing, and has since
+   the service layer shipped. What is new is that the crew makes it a ONE-CLICK
+   mistake, and it is the likeliest way for a player to conclude that the crew
+   broke their food supply. So it is surfaced rather than fixed: the draw is
+   correct (a busier shop moves more stock), the player just needs to be able to
+   see that this particular post is waste before they make it.
+   Returns a sentence, or null when posting here is fine. */
+function crewPostWarning(k) {
+  try {
+    const t = game.tiles[k]; if (!t) return null;
+    const def = BUILDINGS[t.type]; if (!def || !def.svc) return null;
+    const need = def.svc.need;
+    const pct = (game.cov.pct || {})[need];
+    if (!(pct >= 1)) return null;
+    const nm = (NEED_META[need] || {}).name || need;
+    return nm + ' coverage is already ' + Math.round(pct * 100) + '%. A work crew here raises this building\'s ' +
+      (def.svc.input ? resName(def.svc.input) : 'input') + ' draw and buys no extra ' + nm +
+      ' — post them somewhere the city is actually short.';
+  } catch (e) { return null; }
+}
+
 function insSystems(t, x, z) {
   const def = BUILDINGS[t.type], rows = [];
   if (def.sockets) {
     const c = t.card && cardById(t.card);
     rows.push(insFac('🃏 Card socket', c ? '<span class="hl">' + logEsc(c.name) + '</span> ⚡' + c.power : 'empty'));
+  }
+  /* 👷 THE CREW BLOCK, and the EMPTY case gets one too. A building with nobody
+     on it that says nothing tells the player nothing about what to put there;
+     naming the trades it needs is the entire discoverability of the system —
+     otherwise the only way to learn that a Smelting Works wants a Kindling unit
+     is to already own one and happen to notice. */
+  if (CREW && CREW.work.workNeeds(t.type).length && (def.gen || def.svc)) {
+    rows.push(insFac('👷 Work it needs', CREW.work.workNeeds(t.type).map(w => {
+      const x2 = CREW.work.getWork(w); return x2 ? x2.icon + ' ' + logEsc(x2.name) : logEsc(w);
+    }).join(' · ')));
+    const _ck = key(x, z);
+    const cps = CREW.powersAt(_ck);
+    const _warn = crewPostWarning(_ck);
+    if (_warn) rows.push(insFac('⚠ A work crew here is wasted', '<span class="dn">' + logEsc(_warn) + '</span>', 'dn'));
+    rows.push(insFac('👷 Posts filled', cps.length + ' / ' + CREW.slotsAt(_ck) +
+      (CREW.freeSlotsAt(_ck) > 0 ? ' <span style="opacity:.7">— use 👷 Post a worker below</span>' : ''),
+      CREW.freeSlotsAt(_ck) > 0 ? 'dn' : 'up'));
+    if (cps.length) {
+      rows.push(insFac('👷 Work crew output', '<span class="hl">' + CREW.work.multLabel(CREW.work.multFrom(cps)) + '</span>', 'up'));
+      for (const p of cps) {
+        const w = CREW.work.getWork(p.work);
+        rows.push(insFac('&nbsp;&nbsp;↳ ' + logEsc(p.name),
+          (w ? w.icon + ' ' + logEsc(w.name) + ' ' + p.suit : '') +
+          ' <span style="opacity:.75">· Lv ' + p.profile.level + ' · ' + Math.round(p.cond) + '% condition' +
+          (Math.abs(p.speed - 1) > 0.001 ? ' · ' + (p.speed > 1 ? '+' : '') + Math.round((p.speed - 1) * 100) + '% passives' : '') +
+          '</span> <b>+' + Math.round(p.power * 100) + '%</b>',
+          p.cond < 65 ? 'dn' : ''));
+      }
+    } else {
+      rows.push(insFac('👷 Work crew here', '<span class="dn">nobody</span> <span style="opacity:.7">— post a unit with this trade and its output rises</span>'));
+    }
   }
   if (def.powerNeed) rows.push(insFac('⚡ Grid draw', (def.powerNeed * t.lvl).toFixed(2) + '/min'));
   if (def.stockCap) rows.push(insFac('🏬 Storage added', '+' + def.stockCap * t.lvl + ' each good'));
@@ -28123,7 +28348,7 @@ function insRosterCard(k, def) {
       '<div class="ins-desc" style="margin:0"><b>Nobody works here yet.</b> ' +
       'The city puts names to a slice of its population, and that roster fills the seats it can reach as it grows — ' +
       'this building’s ' + (seats === 1 ? 'seat has' : seats + ' seats have') + ' not been taken yet. ' +
-      'The building is still crewed out of the city labour pool, so its output is unaffected.</div>');
+      'The building is still staffed out of the city labour pool, so its output is unaffected.</div>');
   }
   let sum = 0, known = 0;
   const rows = roster.map((c) => {
@@ -28143,7 +28368,76 @@ function insRosterCard(k, def) {
 }
 
 function insWorkPane(t, x, z, mult, om) {
-  const def = BUILDINGS[t.type], out = [];
+  const def = BUILDINGS[t.type], out = [], lead = [];
+  /* ══ 👷 THE WORK CREW — POSTED HERE, AND HOW TO POST MORE ═════════════════
+     🔴 THIS CARD IS THE HOME OF THE FEATURE, and it is in the Workforce tab
+     because that is where a player goes when they want to know who works a
+     building. It first shipped as a footer button beside Repair and Demolish,
+     and that was simply wrong: a player looking at a farm and asking "where do
+     I put my units" reads the tab called WORKFORCE, not the button row.
+
+     ⚠ IT RENDERS EVEN WHEN THE BUILDING IS DAMAGED, and that is deliberate. The
+       footer button hid itself on a damaged tile — so on the one building a
+       player was most likely to be poking at, the entire feature vanished with
+       no explanation and no way to discover it existed. Posting is still
+       refused while damaged (canWorkAt says so), but the card SAYS that
+       instead of disappearing. A control that is absent teaches nothing; a
+       control that is present and explains itself teaches the rule.
+
+     ⚠ IT IS FIRST IN THE TAB, ahead of the city-staffing and named-citizen
+       cards that were here before it. Those two are read-outs — they describe a
+       pool the player cannot aim and a roster that fills itself. This one is the
+       only thing on the tab they can ACT on, and it shipped underneath both,
+       which is how a player ends up saying they cannot find anywhere to assign
+       units. Actionable first. */
+  if (CREW && CREW.takesWork(key(x, z))) {
+    const ck = key(x, z);
+    const slots = CREW.slotsAt(ck), ps = CREW.powersAt(ck), warn = crewPostWarning(ck);
+    const needs = CREW.work.workNeeds(t.type).map(w => {
+      const wk = CREW.work.getWork(w); return wk ? wk.icon + ' ' + logEsc(wk.name) : logEsc(w);
+    }).join(' · ');
+    let body = insFac('👷 Trades it needs', needs) +
+      /* ⚠ SAY THAT THESE ARE NOT THE HIRED HANDS. The post count is `def.crew`,
+         the same number the Staffing card below prints as "hired hands needed",
+         so a player could reasonably read a filled post as one of those seats
+         taken. It is not: the building still draws its full staffing from the
+         city pool, and a posted unit works alongside them and makes them
+         better. One line, because the alternative is a wrong mental model that
+         nothing on screen ever corrects. */
+      insFac('👷 Posts filled', ps.length + ' / ' + slots +
+        ' <span style="opacity:.7">— on top of hired staffing, not instead of it</span>',
+        ps.length ? 'up' : 'dn');
+    if (ps.length) {
+      body += insFac('📈 Output from the work crew', '<span class="hl">' + CREW.work.multLabel(CREW.work.multFrom(ps)) + '</span>', 'up');
+      for (const pw of ps) {
+        const wk = CREW.work.getWork(pw.work);
+        body += insFac('&nbsp;&nbsp;↳ ' + logEsc(pw.name),
+          (wk ? wk.icon + ' ' + logEsc(wk.name) + ' ' + pw.suit : '') +
+          ' <span style="opacity:.75">· Lv ' + pw.profile.level + ' · ' + Math.round(pw.cond) + '% condition' +
+          (Math.abs(pw.speed - 1) > 0.001 ? ' · ' + (pw.speed > 1 ? '+' : '') + Math.round((pw.speed - 1) * 100) + '% passives' : '') +
+          '</span> <b>+' + Math.round(pw.power * 100) + '%</b>',
+          pw.cond < 65 ? 'dn' : '');
+      }
+    }
+    if (bldSite(t)) {
+      body += insAlert('warn', '🏗', 'Still a construction site',
+        'Nothing is standing here yet, so there is no work to do and a unit posted here would eat rations for nothing. The moment it tops out, this card will let you staff it.');
+    } else if (t.damaged) {
+      body += insAlert('bad', '🔥', 'Repair it before posting anyone',
+        'A failed building produces nothing, so a unit posted here would work for no return. Repair it and this card will let you staff it.');
+    } else if (warn) {
+      body += insAlert('warn', '⚠', 'A work crew here would be wasted', warn);
+    } else if (!ps.length) {
+      body += insAlert('warn', '👷', 'Nobody is posted here',
+        'This building runs at its base rate until you post a unit with one of the trades above. A unit only lifts the building you put it in.');
+    }
+    body += '<div style="margin-top:10px"><button class="hbtn ember" data-crew-open="' + ck +
+      '"' + (t.damaged || bldSite(t) ? ' disabled' : '') + ' style="width:100%">👷 ' +
+      (bldSite(t) ? 'Nothing standing to work in yet'
+        : t.damaged ? 'Repair before posting'
+        : (ps.length ? 'Change who works here' : 'Post a worker here')) + '</button></div>';
+    lead.push(insCardHtml('Work crew', ps.length + ' / ' + slots + ' posted', body));
+  }
   if (def.crew) {
     const s = staffingRatio();
     // What understaffing costs THIS building, in its own units — the same mult
@@ -28158,12 +28452,16 @@ function insWorkPane(t, x, z, mult, om) {
         costs = insFac('At full staffing it would supply', insRate(def.svc.supply * full * fed) + ' ' +
           NEED_META[def.svc.need].ico + '/min <span class="fl">(now ' + insRate(def.svc.supply * mult * fed) + ')</span>'); }
     }
-    out.push(insCardHtml('Crew', def.crew + ' 👷 needed here',
+    /* 👷 "STAFFING", NOT "CREW" — see bldCrewBusyMsg's header for the three-way
+     collision this resolves. These are the anonymous hands you HIRE from one
+     city-wide pool; the card above this one is the named units you POST, and
+     the two used to share a word on the same tab. */
+  out.push(insCardHtml('Staffing', def.crew + ' 👷 hired hands needed',
       insVitRow('👷 City staffing', Math.round(s * 100) + '%', s,
-        game.army.workers + ' workers hired against ' + crewNeeded() + ' crew jobs across the city. Output of every crewed building is multiplied by this.') +
+        game.army.workers + ' workers hired against ' + crewNeeded() + ' staffed jobs across the city. Output of every staffed building is multiplied by this.') +
       insFac('This building needs', def.crew + ' 👷') +
       (def.pop ? insFac('Occupies', def.pop + ' population') : '') + costs +
-      (s < 1 ? insAlert('warn', '👷', 'Understaffed — every crewed building is running at ' + Math.round(s * 100) + '%',
+      (s < 1 ? insAlert('warn', '👷', 'Understaffed — every staffed building is running at ' + Math.round(s * 100) + '%',
         'Hire workers from the People panel. Staffing is one city-wide pool: it is shared out evenly, not queued per building.') : '')));
   }
   if (def.popCap) {
@@ -28190,12 +28488,15 @@ function insWorkPane(t, x, z, mult, om) {
      still matters: crew is one city-wide pool for the purposes of OUTPUT, and
      naming somebody changes nothing about what the building makes. */
   if (def.crew) out.push(insRosterCard(key(x, z), def));
-  if (!out.length) return '';
+  if (!out.length && !lead.length) return '';
   const foot = def.crew
-    ? 'Output is still driven by one city-wide labour pool — hiring a worker anywhere lifts every ' +
-      'crewed building at once, and the names above hold this building\u2019s seats without changing what it makes.'
-    : 'This building draws no crew, so nobody is posted to it.';
-  return '<div>' + out.join('') + '<div class="ins-desc" style="margin-top:12px">' + foot + '</div></div>';
+    ? 'Three groups work in this city and they are not the same people. ' +
+      '👷 STAFFING is the anonymous hands you hire — one city-wide pool, so hiring anywhere lifts every staffed building at once. ' +
+      '🏗 BUILD GANGS raise the buildings and then leave. ' +
+      'Your WORK CREW is the named units you post here, on top of the staffing rather than instead of it — each lifts only the building you put it in. ' +
+      'staffed building at once, and the names above hold this building\u2019s seats without changing what it makes.'
+    : 'This building needs no staffing, so nobody can be posted to it.';
+  return '<div>' + lead.join('') + out.join('') + '<div class="ins-desc" style="margin-top:12px">' + foot + '</div></div>';
 }
 
 function insBuildOverview(k, t, x, z, mult, om) {
@@ -28473,6 +28774,18 @@ function openInspect(k) {
   if (finPane) panes += '<div class="pane one" role="tabpanel" id="inspane-fi" data-tab="fi" aria-labelledby="instab-fi" tabindex="0">' + finPane + '</div>';
   if (canPaint) panes += '<div class="pane one" role="tabpanel" id="inspane-pa" data-tab="pa" aria-labelledby="instab-pa" tabindex="0">' + (function () { try { return window.MythicPalette.paneHtml(k) || ''; } catch (e) { return ''; } })() + '</div>';
   $('inspanes').innerHTML = panes;
+  /* 👷 One delegated listener, attached once. #inspanes is rebuilt with
+     innerHTML on every render, so a per-button onclick would be thrown away
+     each time — the flag on the element is what keeps this to a single bind. */
+  const _panes = $('inspanes');
+  if (_panes && !_panes._crewBound) {
+    _panes._crewBound = true;
+    _panes.addEventListener('click', (ev) => {
+      const b = ev.target.closest('[data-crew-open]');
+      if (!b || b.disabled) return;
+      try { if (CREW) CREW.openTilePicker(b.dataset.crewOpen); } catch (e) {}
+    });
+  }
   // 🎨 The colour pane is live DOM (a canvas picker and its handlers), so it is
   //    built AFTER the innerHTML that would otherwise throw its listeners away.
   if (canPaint) { try { window.MythicPalette.bindPane(k); } catch (e) { console.warn('[palette] pane', e); } }
@@ -28482,6 +28795,32 @@ function openInspect(k) {
   // contextual action button(s)
   const act = $('btn-action');
   act.style.display = 'none'; act.onclick = null;
+  /* 👷 POST A WORKER. Shown on every building the crew can actually work,
+     alongside whatever else that building offers — the Arena has both this and
+     a card socket, and they mean different things. Hidden while damaged for the
+     same reason the socket is: a dead building has no work to give.
+     The count is on the button because "2 / 3" is the whole reason a player
+     opens it, and making them read the dossier first to find that out is a
+     click they should not have to spend. */
+  const crewBtn = $('btn-crew');
+  if (crewBtn) {
+    crewBtn.style.display = 'none'; crewBtn.onclick = null;
+    try {
+      if (CREW && CREW.takesWork(selectedKey)) {
+        const used = CREW.postsAt(selectedKey).length, slots = CREW.slotsAt(selectedKey);
+        crewBtn.style.display = 'block';
+        /* ⚠ SHOWN ON A DAMAGED TILE TOO, disabled with the reason on it. It used
+           to hide, which meant the feature disappeared entirely from the exact
+           building a player was most likely to be inspecting — a control that is
+           absent cannot teach the rule that made it absent. */
+        crewBtn.disabled = !!(t.damaged || bldSite(t));
+        crewBtn.textContent = bldSite(t) ? '👷 Workforce — still a site'
+          : t.damaged ? '👷 Workforce — repair first'
+          : '👷 Post a worker — ' + used + ' / ' + slots;
+        crewBtn.onclick = crewBtn.disabled ? null : () => CREW.openTilePicker(selectedKey);
+      }
+    } catch (e) {}
+  }
   /* 🏗 bldSite, NOT bldBusy. There is nothing to walk into, socket a card into,
      billet a card in, plan an event in or lease on a foundation pad, and every
      one of these actions writes state that the completion sweep would then have
@@ -29789,6 +30128,12 @@ function vitalsTick(dtSec) {
     vitalTrend.output = 0;
   }
   renderVitals();
+  /* 👷 The crew panel rides the vitals beat rather than getting its own timer.
+     Condition only moves on the economy tick, and this is the panel refresh
+     that already follows it — a second interval would drift against the numbers
+     it is drawing. Assignment is NOT recomputed here; that is computeLinks's
+     job, and doing it on a beat would make "where is everyone" flicker. */
+  try { if (CREW) CREW.renderPanel(); } catch (e) {}
 }
 function trendMeasured() { return _trendSpan >= TREND_MIN_SPAN_SEC; }
 // Small helper so the clamp reads once and cannot drift between the three uses.
@@ -30435,7 +30780,8 @@ async function moraleTick(dtSec) {
   if (pop > 0) {
     /* 🍽 DEMAND FOLLOWS SUPPLY — the asymmetry this fixes.
        Every producer in the city is multiplied by tileMult (adjacency × level ×
-       staffing × weather × mayor × Kalon × sockets, capped at TILE_MULT_CAP=5).
+       staffing × weather × mayor × Kalon × sockets × crew, capped at
+       TILE_MULT_CAP=5).
        Consumption was a FLAT per-citizen rate multiplied by nothing at all. So
        supply scaled 5x with development and demand scaled 1x, and a fully
        buffed farm fed FIVE HUNDRED citizens. Food filled the shared 2,000-unit
@@ -30649,6 +30995,10 @@ function assignedCardIds() {
   /* A card asleep in the Resting House is committed exactly like a socketed
      one — it cannot also headline the arena or stand in the defense deck. */
   try { if (_houseBilleted) for (const id of _houseBilleted()) set.add(id); } catch (e) {}
+  /* 👷 …and neither can one on the work crew. A unit cannot be milling timber in
+     the sawmill AND headlining the arena AND holding the wall; the roster is a
+     commitment, which is the whole reason the bed cap means anything. */
+  try { if (CREW) for (const id of CREW.crewIds()) set.add(id); } catch (e) {}
   return set;
 }
 function freeCards() { const used = assignedCardIds(); return CARDS.filter(c => !used.has(c.id)); }
@@ -30656,6 +31006,33 @@ function socketBoost(t) {                          // slotted card → building 
   const c = t.card && cardById(t.card);
   return c ? c.power / 100 : 0;
 }
+
+/* ══ 👷 THE WORK CREW, as the economy sees it ══════════════════════════════
+   socketBoost() above is the flat, card-in-a-slot story and is unchanged. This
+   is the other one: units enlisted to the CITY, matched to the building each is
+   best at, lifting that building by the sum of what its workers are worth.
+
+   Everything that decides the number — a unit's work suitabilities and their
+   LEVELS, its work passives (good and bad), its own level, its condition, and
+   the ×2.00 ceiling — lives in /src/work/work.js, which index.html imports too.
+   The roster, the assignment pass and the upkeep live in /src/work/crew.city.js.
+   Neither is here, on purpose: the game and the city must never be able to
+   disagree about what a unit is good at.
+
+   🔴 THE GLOBALS TRAP (CLAUDE.md), for the fifth module in this file. `CREW` is
+   assigned by an `await import()` in boot(); `BUILDINGS`, `game` and cardById
+   are top-level `const` in this module script and invisible from inside a
+   module, which is why they are handed over in a ctx object rather than reached
+   for. Until that import resolves — and forever, if it 404s — `CREW` is null and
+   every path here returns 1, i.e. the exact pre-crew behaviour. Nothing about
+   this feature is allowed to be load-bearing. */
+let CREW = null;
+
+function crewMult(k) {
+  if (!CREW || !k) return 1;
+  try { const m = CREW.multAt(k); return (m > 1 && isFinite(m)) ? m : 1; } catch (e) { return 1; }
+}
+
 function kalonCityBoost() {                        // stabled Kalons → global prod
   let n = 0;
   for (const t of Object.values(game.tiles)) {
@@ -31002,14 +31379,51 @@ $('topbar').addEventListener('click', (ev) => {
   openVaultPanel(id);
 });
 
-function openCardPicker(title, filter, onPick) {
-  const pool = freeCards().filter(filter || (() => true));
+/* `showWork` is OPTIONAL and additive — the House and the Stadium call this with
+   three arguments and are unaffected. When it is set, every card also prints its
+   WORK PROFILE: its suitabilities with levels, and its work passives.
+
+   🔴 THAT IS THE ONLY NUMBER WORTH CHOOSING A CREW MEMBER ON. The meta line
+   below prints ⚡power, which is a BATTLE stat and has nothing whatever to do
+   with how well a unit mills timber — a player picking their strongest card for
+   the sawmill is being actively misled by this dialog. The list is also sorted
+   by best suitability level so the units that can actually work rise to the top;
+   with two hundred cards an unsorted list makes a good roll unfindable, and a
+   fact the player owns but cannot find is a fact they do not have. */
+function openCardPicker(title, filter, onPick, showWork) {
+  let pool = freeCards().filter(filter || (() => true));
+  const profOf = (c) => {
+    if (!showWork || !CREW) return null;
+    try { return CREW.profileOf(c.id) || null; } catch (e) { return null; }
+  };
+  if (showWork && CREW) {
+    pool = pool.slice().sort((x, y) => {
+      const px = profOf(x), py = profOf(y);
+      const bx = px && px.suits.length ? px.suits[0].level : 0;
+      const by = py && py.suits.length ? py.suits[0].level : 0;
+      // Ties on suitability fall back to unit LEVEL, not power: between two Lv 3
+      // miners the veteran is genuinely the better hire.
+      return (by - bx) || ((py ? py.level : 0) - (px ? px.level : 0));
+    });
+  }
+  const workLine = (c) => {
+    const p = profOf(c);
+    if (!p) return '';
+    const pas = (p.passives || []).map(x => '<span class="cppass ' + (x.good ? 'good' : 'bad') + '">' + x.icon + ' ' + x.name + '</span>').join('');
+    return '<span class="cpvoc">' + CREW.work.suitsLabel(p) + '</span>' + (pas ? '<span class="cpvoc">' + pas + '</span>' : '');
+  };
+  const rowCls = (c) => {
+    const p = profOf(c);
+    if (!p) return '';
+    return (p.suits.length && p.suits[0].level >= 3) ? ' apt' : ' flat';
+  };
   const box2 = document.createElement('div');
   box2.id = 'cardpicker';
   box2.innerHTML = '<div class="cpbox"><h3 class="display">' + title + '</h3><div class="cplist">' +
     (pool.length ? pool.map(c =>
-      '<button class="cpcard" data-cid="' + c.id + '"><span class="cpname">' + c.name + '</span>' +
-      '<span class="cpmeta">' + c.type + ' · ' + c.element + ' · ⚡' + c.power + ' · ' + c.rarity + '</span></button>').join('')
+      '<button class="cpcard' + rowCls(c) + '" data-cid="' + c.id + '"><span class="cpname">' + c.name + '</span>' +
+      '<span class="cpmeta">' + c.type + ' · ' + c.element + ' · ⚡' + c.power + ' · ' + c.rarity + '</span>' +
+      workLine(c) + '</button>').join('')
       : '<div class="cpempty">No unassigned cards available.</div>') +
     '</div><button class="pbtn" id="cp-close">Close</button></div>';
   document.body.appendChild(box2);
@@ -31284,6 +31698,11 @@ function tipHtml(k, t) {
      A player whose cards train slowly must be able to see, on hover, that it
      is because the district is out of rations — §6 is the whole point of the
      building and an invisible penalty is indistinguishable from a bug. */
+  /* 👷 One line, and only when the crew is actually earning something — the
+     hover card is already dense (output + consumption + service + crew +
+     garrison + socket + wear + bonus row) and a row that reads ×1.00 on every
+     un-crewed tile in the city is noise. */
+  try { if (CREW) h += CREW.tipLine(k); } catch (e) {}
   if (t.type === 'resthouse') { try { if (window.MythicHouse) h += window.MythicHouse.tipLine(t); } catch (e) {} }
   if (t.type === 'stadium') { try { if (window.MythicStadium) h += window.MythicStadium.tipLine(t); } catch (e) {} }
   if (t.type === 'lot') h += (t.tenant ? '🪧 Leased to <span class="hl">' + logEsc(t.tenant) + '</span> — +' + LOT_RENT_PER_MIN + ' 🔥/min<br>' : '🪧 Vacant — lease it for rent<br>');
@@ -31557,7 +31976,7 @@ function renderArmy() {
         '<div class="ucstats">' +
           '<span class="ucstat" title="Defence multiplier for this rank">🛡 ×' + rk.mult.toFixed(1) + '</span>' +
           '<span class="ucstat" title="Garrison slots used / capacity">⚔ ' + game.army.soldiers + '/' + garrisonCap() + '</span>' +
-          '<span class="ucstat" title="Crew staffing across your producers">🔧 ' + staffed + '%</span>' +
+          '<span class="ucstat" title="Staffing across your producers">🔧 ' + staffed + '%</span>' +
         '</div>' +
       '</div>' +
     '</div>' +
@@ -33873,7 +34292,7 @@ function opsDecorateShop() {
        Four clicks 15 ms apart against a 40 ms bridge = four jobs on two slots,
        silently, with no refusal shown. See _pendingOrders. */
     if (!zc && bldCrewLoad() >= bldSlots()) {
-      toast(bldCrewBusyMsg() + (bldCoTiles().length ? '' : ' A 🏗 Construction Co. adds crews.'), 'bad');
+      toast(bldCrewBusyMsg() + (bldCoTiles().length ? '' : ' A 🏗 Construction Co. adds build gangs.'), 'bad');
       return;
     }
     /* 🔒 THE MUNICIPAL CEILING BINDS A ZONED ORDER TOO, and that is deliberate:
@@ -36085,7 +36504,7 @@ function ctTerms(c) {
     { k: 'work', w: .20, v: !t ? .25 : t.damaged ? .15 : cl(typeof staffingRatio === 'function' ? staffingRatio() : 1),
       lab: 'Their own work',
       src: t ? (t.damaged ? 'their building is wrecked' : 'city staffing')
-             : emp ? 'no crewed tile — the ' + emp.name + ' pays them'
+             : emp ? 'no staffed tile — the ' + emp.name + ' pays them'
                    : 'no seat anywhere' },
     { k: 'safe', w: .15, v: Number.isFinite(+cov.safety) ? cl(+cov.safety) : cl((+vitals.security || 0) / 100),
       lab: 'Safety', src: Number.isFinite(+cov.safety) ? 'safety coverage' : 'security vitals' },
@@ -36178,7 +36597,7 @@ function ctLines(c, W, terms) {
                tone: '', why: 'def.svc.need = ' + W.svc.need });
   } else {
     out.push({ text: 'I hold a seat at the ' + W.name + '.', tone: '',
-               why: 'job = ' + W.k + ', a crewed building with no output of its own' });
+               why: 'job = ' + W.k + ', a staffed building with no output of its own' });
   }
 
   // 3. what is actually weighing on them: the WEAKEST of the four mood terms
@@ -36208,9 +36627,9 @@ function ctLines(c, W, terms) {
                         : 'It is having nothing to do that wears at me. Not the money — the days.')
                  : W.t.damaged ? 'It is the state of the ' + W.name + ' that wears at me.'
                  : 'We are spread far too thin. The city has hands for ' + Math.round(staffingRatio() * 100) +
-                   '% of the crew jobs in it.',
+                   '% of the staffed jobs in it.',
                tone: 'dn', why: !W
-                 ? (emp ? 'no crewed tile (term fixed at 25%) — the ' + emp.name + ' still pays them'
+                 ? (emp ? 'no staffed tile (term fixed at 25%) — the ' + emp.name + ' still pays them'
                         : 'no seat (term fixed at 25%)')
                  : W.t.damaged ? 'workplace damaged (term fixed at 15%)'
                  : 'staffingRatio() = ' + Math.round(staffingRatio() * 100) + '%' });
@@ -36264,8 +36683,8 @@ function ctHtml(c0) {
       (W.t.lvl > 1 ? ' · level ' + W.t.lvl : '')
     : ctEmp
       ? 'On the books at the <b>' + esc(ctEmp.name) + '</b> · ' + esc(ctEmp.indIco + ' ' + ctEmp.indName) +
-        ' · no crewed tile of their own'
-      : '<b>No work right now.</b> They are one of the city’s named citizens with no crewed seat.') + '</div>';
+        ' · no staffed tile of their own'
+      : '<b>No work right now.</b> They are one of the city’s named citizens with no staffed seat.') + '</div>';
 
   /* 🗂 THE CITIZEN DOSSIER — /src/citizen. Who they live with, where that
      is, who pays them and where they are walking, each row naming the live
@@ -37737,6 +38156,99 @@ function animate() {
   let _bldDeferredFinish = null;
   try { _bldDeferredFinish = bldNormalize(true); } catch (e) { console.warn('[city] bldNormalize', e); }
 
+  /* ══ 👷 THE WORK CREW ═══════════════════════════════════════════════════
+     Mounted FIRST of the three modules and awaited, because tileMult() consults
+     it on the very first economyTick — including the offline catch-up further
+     down, which replays hours of production. Letting that catch-up run before
+     the import resolved would pay an absence at un-crewed rates and then switch
+     to crewed rates on the player's first live tick, which reads as the city
+     quietly cheating them out of the hours they were away.
+
+     🔴 THE GLOBALS TRAP, and this is the fifth module to hit it. `game`,
+     `BUILDINGS`, `CARDS`, `cardById`, `key` and `MythicCityBridge` are top-level
+     `const` in THIS module script and are invisible to an ES module. The ctx
+     object below IS the hand-over; there is no `window.game`.
+
+     Note what is NOT handed over: nothing that writes to the ledger. The crew
+     spends rations, and it does that through the `svcDraw` closure economyTick
+     passes it at call time — the same one the kitchens use — so there is one
+     feeding rule in this city rather than two that drift.
+
+     ⚠ A failure leaves CREW null, which is a complete and tested state: every
+       crew multiplier reads 1.00, the panel stays empty, and the city behaves
+       exactly as it did before this feature existed. */
+  try {
+    const cmod = await import('../src/work/crew.city.js?v=' + (window.NC_BUILD || 'crew1'));
+    let _workSalt = '';
+    try { _workSalt = (await MythicCityBridge.getWorkSalt()) || ''; } catch (e) { _workSalt = ''; }
+    /* 🔴 `CREW` IS THE OBJECT mount() RETURNS, NOT THE MODULE NAMESPACE — the
+       same shape house.city.js is used through. The namespace carries only the
+       module's own exports; the mount object also carries `work` (the rules) and
+       the private lookups this file reads on every dossier render. Assigning the
+       namespace here left CREW.work undefined and every crew row silently
+       vanished behind its own try/catch, which is precisely the kind of failure
+       that ships looking like "the feature just does nothing". */
+    CREW = cmod.mount({
+      game, BUILDINGS,
+      cardById, cards: () => CARDS,
+      openCardPicker, saveSoon, toast, updateHUD,
+      assignCard: (id, on) => MythicCityBridge.assignCard(id, on),
+      salt: () => _workSalt,
+      /* Repaint the open dossier after a post. Without it the panel a player is
+         looking at — the one whose button they just pressed — keeps showing the
+         old post count and the old multiplier until they close and reopen it,
+         which reads as the click not having worked. */
+      refreshInspect: () => { try { if (selectedKey && $('inspect').classList.contains('open')) openInspect(selectedKey); } catch (e) {} },
+      /* ⚠ "Posting here would be waste" — see crewPostWarning. Computed HERE
+         because coverage, NEED_META and the vitals clamp are all city internals
+         the module has no business knowing; it just prints the sentence at the
+         moment the player is choosing. */
+      postWarning: (k) => { try { return crewPostWarning(k); } catch (e) { return null; } },
+      /* 🏗 The hard veto, as opposed to postWarning's advice. A building whose
+         `bld` phase is still a SITE has nothing standing to work in — the
+         economy already skips it (`bldSite(t)` gates production), so a unit
+         posted there would draw rations and return nothing at all. An UPGRADING
+         building is standing and working, so it is deliberately not vetoed;
+         that asymmetry is the same one bldSite/bldBusy exists to express. */
+      postBlocked: (k) => {
+        try {
+          const t = game.tiles[k];
+          if (!t) return 'That building is gone.';
+          if (bldSite(t)) return 'Still a construction site — nothing is standing here to work in yet.';
+          return null;
+        } catch (e) { return null; }
+      },
+      /* 🌙 The clock two work passives care about. estClock() is this city's
+         real EST hour (see §updateSky) — the SAME clock the lamps and the sky
+         run on, so a Nocturnal unit speeds up exactly when the street lights
+         come on rather than on a second, invisible schedule of its own. */
+      isNight: () => { try { const h = estClock().h; return h < 6 || h >= 19; } catch (e) { return false; } },
+    });
+    /* 🧩 THE SAVE SHELF, not a hand-rolled stash. An earlier cut of this parked
+       the crew rows in a module-scope `_crewSave` during loadState and handed
+       them over here — which worked, and was a fourth copy of a problem this
+       branch had already solved properly. register() replays the stash to a
+       module that mounts AFTER loadState (which this one does), so the ordering
+       that made the stash necessary is handled one level down, and serialize()
+       never has to learn that the crew exists.
+       load() returns the posts it had to drop — a building demolished in
+       another session, or one that changed under a standing post. Reported,
+       never swallowed: a player who comes back to a smaller crew output
+       deserves the one line that explains it. */
+    try {
+      window.MythicCitySave.register('crew', {
+        save: () => CREW.save(),
+        load: (payload) => {
+          const dropped = CREW.load(payload) || [];
+          CREW.reconcile();
+          for (const d of dropped.slice(0, 4)) toast('👷 ' + d.name + ' lost its post while you were away — ' + d.why, 'bad');
+          CREW.renderPanel();
+        },
+      });
+    } catch (e) { console.warn('[Crew] save shelf unavailable — the roster will not persist:', e); }
+    CREW.reconcile();
+    CREW.renderPanel();
+  } catch (e) { CREW = null; console.warn('[Crew] not mounted (non-fatal):', e); }
   try {
     const mod = await import('../src/resonance/house.city.js?v=' + (window.NC_BUILD || 'r8'));
     const HOUSE = mod.mount({
@@ -38995,6 +39507,30 @@ function animate() {
        multiply to exactly the multiplier the economy uses; that claim is only
        worth anything if a test can check it, so both sides are exposed. */
     insFactors, tileMult, staffingRatio, bonusesFor,
+    /* 👷 THE WORK CREW. Everything that decides a crew multiplier is private to
+       this file or to the module — `CREW` itself, the private `CARDS` list, the
+       roster — so without a seam the only way to check that a Lv 4 Planting unit
+       actually doubles a Farm is to read the DOM and trust it. `enlist` and
+       `post` are the same two calls the dialog's buttons make, exposed so a test
+       can staff a city without clicking a canvas that never paints. */
+    crew: () => CREW,
+    cards: () => CARDS.slice(),
+    crewMult: (k) => crewMult(k),
+    crewPowers: (k) => (CREW ? CREW.powersAt(k) : []),
+    crewPosts: () => (CREW ? Object.fromEntries(CREW.state().map(m => [m.card, m.post])) : {}),
+    enlist: (id) => (CREW ? CREW.enlist(id) : 'no module'),
+    postCrew: (id, k) => (CREW ? CREW.post(id, k) : 'no module'),
+    unpostCrew: (id) => (CREW ? CREW.unpost(id) : false),
+    autoFill: () => (CREW ? CREW.autoFill() : 0),
+    dismissCrew: (id) => (CREW ? CREW.dismiss(id) : false),
+    socket: (k, cardId) => {
+      const t = game.tiles[k]; if (!t) return null;
+      if (t.card) MythicCityBridge.assignCard(t.card, false);
+      t.card = cardId || null;
+      if (cardId) MythicCityBridge.assignCard(cardId, true);
+      computeLinks();
+      return t.card;
+    },
     /* 🎮 Camera handles, so WASD panning can be tested without a compositing
        browser. The Browser pane never paints, which means the animate loop
        never runs and nothing that only shows up through RAF can be observed —

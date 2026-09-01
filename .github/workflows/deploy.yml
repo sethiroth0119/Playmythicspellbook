@@ -27,4 +27,26 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # 🔴 PIN WRANGLER 4, OR EVERY DEPLOY FAILS AND THE SITE FREEZES.
+          # wrangler-action defaults to 3.90.0. Support for `wrangler.jsonc`
+          # landed in 3.91.0 — so the default reads NO config at all, never sees
+          # `main: worker.js`, and dies with "Missing entry-point". Every push to
+          # main failed this way from 2026-08-13 onward (765 runs, zero
+          # successes on this page of history) while the workflow reported
+          # nothing wrong except a red tick nobody was watching, and production
+          # sat frozen on whatever was last deployed by hand.
+          # The repo already declares "wrangler": "^4" in devDependencies; this
+          # is only CI catching up with it. Do not remove the pin — the action's
+          # default is what broke it.
+          wranglerVersion: '4'
+          # 🗜 MINIFY FIRST, exactly as `npm run deploy` does locally.
+          # The action's bare `deploy` uploads public/index.html raw — 11.5 MB
+          # against the 9.0 MB every hand-deploy has shipped, because deploy.mjs
+          # runs build.mjs first. Fixing CI without this would have quietly made
+          # the first working deploy in three weeks the heaviest one ever
+          # served. A minify failure correctly fails the deploy rather than
+          # shipping a broken bundle.
+          preCommands: |
+            npm install --no-audit --no-fund
+            node build.mjs minify
           command: deploy

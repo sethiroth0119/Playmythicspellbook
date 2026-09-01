@@ -36466,7 +36466,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120w9';
+  window.BUILD_VERSION = 'v120x9';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -46722,6 +46722,11 @@ async function cloudSyncProfile() {
       __gemsOwned__:       (Profile.gemsOwned && typeof Profile.gemsOwned === 'object') ? Profile.gemsOwned : {},
       // 🏙 Cards slotted into Node City sockets — {cardId: true}; cross-device.
       __cityCards__:       (Profile.cityCards && typeof Profile.cityCards === 'object') ? Profile.cityCards : {},
+      /* 👷 The work salt — ONE string, and the reason a card has the same work
+         suitabilities on every device the player signs in on. They are derived
+         from (salt, cardId), so without this a phone and a desktop would
+         disagree about what every unit is good at. See _workSalt(). */
+      __workSalt__:        (typeof Profile.workSalt === 'string') ? Profile.workSalt : '',
       // 💼 Personally-funded Just Business operations — cross-device.
       __jbLocalOps__:      Array.isArray(Profile.jbLocalOps) ? Profile.jbLocalOps : [],
       // 🥋 Dojo — the business licence + the owner's unlisted move stock.
@@ -47824,6 +47829,16 @@ async function cloudFetchProfile() {
       // on another device must survive, a fresh device adopts the cloud set).
       if (f.__cityCards__ && typeof f.__cityCards__ === 'object') {
         try { Profile.cityCards = Object.assign({}, f.__cityCards__, (Profile.cityCards && typeof Profile.cityCards === 'object') ? Profile.cityCards : {}); } catch (e) {}
+      }
+      /* 👷 Work salt — CLOUD WINS, unlike every merge around it. This is not a
+         quantity to be maxed or a set to be unioned: it is the account's single
+         answer to "what is each of my cards good at", and two devices holding
+         different answers is the one outcome that must not survive. Local-wins
+         would leave them permanently disagreeing; adopting the cloud's costs at
+         most a one-time re-roll on a device that minted its own before ever
+         syncing, after which every device agrees forever. */
+      if (typeof f.__workSalt__ === 'string' && f.__workSalt__) {
+        try { Profile.workSalt = f.__workSalt__; } catch (e) {}
       }
       // 🧬 Breeding rest timers — MAX-per-key merge (the LATER ready-time wins,
       // so hopping devices can never dodge a cooldown).
@@ -72800,6 +72815,130 @@ function ensureUnitTrait(cardId, card, isAi) {
   }
   return p.trait;
 }
+
+/* ═══ 👷 WORK SUITABILITY — the CIVIC half of the trait idea ══════════════
+   A unit's TRAIT above says what it is good at in a fight. Its WORK PROFILE
+   says what it is good at in the CITY: one to four kinds of work, each at a
+   level 1-4, plus nought to three work passives that make it faster, slower,
+   hungrier or hardier. Its ELEMENT decides which work it is born to — a fire
+   unit tends Kindling, a water unit Watering, a nature unit Planting — so the
+   element on a card finally predicts something outside a battle.
+
+   The catalog, the weights, the roll and every magnitude live in
+   /src/work/work.js and are shared byte-for-byte with node-city, which runs the
+   crew off them. This file owns only the two things a module cannot reach: the
+   player's salt (Profile) and the card lookup.
+
+   🔴 WHY A SALT AND NOT A ROLLED-AND-SAVED FIELD, unlike `trait` directly above.
+   ensureUnitTrait writes one row and saves, which is correct because it fires
+   when ONE card is obtained or fielded. The city bridge is the opposite shape:
+   cityCardCollection() walks the player's ENTIRE collection every time a crew
+   panel or a card picker opens. Doing the trait dance there would stamp and save
+   up to 500 rows on first open — or, if made lazy, hand the picker a roster
+   whose suitabilities appeared as the player scrolled. One salt per account plus
+   the card id is deterministic, free to evaluate, and just as random BETWEEN
+   players as an independent roll, which is the property that made per-player
+   traits interesting in the first place.
+
+   ⚠ It is minted LAZILY, on first use. A brand-new device that mints before its
+     first cloud fetch adopts the account's real salt on that fetch (see
+     __workSalt__ in the cloud merge) — a one-time re-roll on that device, after
+     which every device agrees forever. Cloud-wins is deliberate: local-wins
+     would leave two devices permanently disagreeing about the same card. */
+function _workSalt() {
+  try {
+    if (typeof Profile.workSalt === 'string' && Profile.workSalt) return Profile.workSalt;
+    const W = window.MythicWork;
+    if (!W) return null;                    // module absent → no work profiles, no save
+    Profile.workSalt = W.makeSalt();
+    try { saveProfile(); } catch (e) {}
+    return Profile.workSalt;
+  } catch (e) { return null; }
+}
+/* This unit's work profile, or null when the module has not loaded. NEVER
+   writes a unit row. `card` supplies the element and rarity the roll is steered
+   by; `level` comes from the unit's real progression. */
+function unitWorkProfile(cardId, card) {
+  try {
+    const W = window.MythicWork;
+    if (!W || !cardId) return null;
+    const salt = _workSalt();
+    if (salt == null) return null;
+    let els = [];
+    try { els = ((typeof getElementsOf === 'function') ? getElementsOf(card) : null) || []; } catch (e) {}
+    if (!els.length && card && card.element) els = [card.element];
+    let lv = 1;
+    try { const up = Profile.units && Profile.units[cardId]; if (up && up.level > 0) lv = up.level | 0; } catch (e) {}
+    return W.profileFor({ id: cardId, elements: els, rarity: (card && card.rarity) || 'common', level: lv }, salt);
+  } catch (e) { return null; }
+}
+
+/* ══ 👷 THE WORK PANEL, ONE COPY ═══════════════════════════════════════════
+   The bordered "Work Suitability" box, shared by every screen that shows a
+   card. It was written twice before this — once in the in-battle unit
+   inspector and once in the collection view — and was about to be written
+   twice more for the hand card and the pack reveal. Four copies of a forty-line
+   template is how a panel ends up saying four slightly different things about
+   the same unit, and this file already carries that scar in other places.
+
+   Returns ONLY the inner box. Each caller wraps it in its own section markup,
+   because the four screens use four different section classes (`ccm-section`,
+   `modal-section`, `pcd-section`, and none at all) and forcing one on them
+   would make the panel look foreign on three screens out of four.
+
+   Returns '' — never a broken box — when the module is absent, the card has no
+   id, or the unit rolled nothing. Callers can safely interpolate it directly.
+   `opts.level` overrides the level (a battle unit carries its own); otherwise
+   it comes from Profile.units, defaulting to 1 for a card never fielded. */
+function _cityWorkPanelHtml(card, opts) {
+  try {
+    const W = window.MythicWork;
+    if (!W || !card || !card.id) return '';
+    const o = opts || {};
+    const prof = (typeof unitWorkProfile === 'function') ? unitWorkProfile(card.id, card) : null;
+    if (!prof || !prof.suits.length) return '';
+    const lvl = (o.level != null && o.level > 0) ? Math.max(1, o.level | 0) : prof.level;
+    const rows = prof.suits.map((sv) => {
+      const w = W.getWork(sv.type); if (!w) return '';
+      /* Pips, not a bare number. "Kindling 3" means nothing to somebody who has
+         never opened the city; three filled of four means something instantly,
+         and it makes two units comparable at a glance. */
+      const pips = Array.from({ length: W.WORK.SUIT_MAX }, (_, i) =>
+        '<span style="display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:2px;background:' +
+        (i < sv.level ? '#f6d97a' : 'rgba(255,255,255,0.13)') + '"></span>').join('');
+      return '<div style="display:flex;align-items:center;gap:8px;margin-top:5px">' +
+        '<span style="font-size:1.05rem;line-height:1;width:1.4rem">' + w.icon + '</span>' +
+        '<strong style="color:#e8d49a;font-size:0.92rem;min-width:6.4rem">' + escapeHtml(w.name) + '</strong>' +
+        '<span style="line-height:1">' + pips + '</span>' +
+        (o.compact ? '' : '<span class="ink-dim small-text" style="margin-left:auto;text-align:right">' + escapeHtml(w.desc) + '</span>') +
+        '</div>';
+    }).join('');
+    const pas = (prof.passives || []).map((pv) => {
+      const pc = pv.good ? '#7be0a0' : '#ff8a8a';
+      return '<span class="ccm-tag" style="border-color:' + pc + ';color:' + pc + ';display:inline-block;margin:2px 4px 0 0;padding:1px 7px;border:1px solid ' + pc + ';border-radius:5px;font-size:.7rem" title="' +
+        escapeHtml(pv.desc) + '">' + pv.icon + ' ' + escapeHtml(pv.name) + '</span>';
+    }).join('');
+    const col = '#7ec8e0';
+    return '<div style="border:1px solid ' + col + '55;border-left:4px solid ' + col +
+      ';border-radius:8px;padding:9px 12px;background:linear-gradient(90deg,' + col + '1f,rgba(20,12,40,0.4))">' +
+      '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+        '<span style="font-size:1.2rem;line-height:1">🏙</span>' +
+        '<strong style="color:#f6d97a;font-family:\'Cinzel\',serif">Work Suitability</strong>' +
+        '<span class="ink-dim small-text" style="margin-left:auto">NODE CITY · Lv ' + lvl + '</span>' +
+      '</div>' + rows +
+      (pas ? '<div style="margin-top:8px">' + pas + '</div>' : '') +
+      (o.compact ? '' :
+        '<div class="small-text" style="color:#bfae87;margin-top:7px;line-height:1.45">Enlist this unit on the city\'s <b>work crew</b> and <b>post it</b> to a building that needs one of these trades — it lifts only the building you put it in, on top of that building\'s hired staffing rather than instead of it. A fully-worked building tops out at <b>' +
+        W.multLabel(1 + W.WORK.BOOST_CAP) + '</b> output.</div>') +
+      '</div>';
+  } catch (e) { return ''; }
+}
+
+/* 🏙 The city runs the crew in its own frame and needs the same salt, so the
+   node-city bridge asks for it here (MythicCityBridge.getWorkSalt →
+   window.cityWorkSalt). Minting on demand is safe: the value is idempotent once
+   minted and is cloud-synced with the rest of the profile. */
+window.cityWorkSalt = async function () { try { return _workSalt() || ''; } catch (e) { return ''; } };
 
 // 💗 Companion Loyalty — 0–1200, six tiers that get progressively harder to reach.
 // A fresh card opens at Neutral (100). Each tier carries its XP-gain multiplier (§2).
@@ -140883,9 +141022,15 @@ function renderUnitModal() {
             : renderStatBars(u.stats, { currentHp: u.currentHp, maxHp: u.maxHp })}
         </div>
 
-        ${(!faceHidden && (u.trait || u.nature || (isPlayer && u.bond != null))) ? `
+        ${/* 👷 `isPlayer && MythicWork` joins the gate because the work profile is
+              now one of the things this section can be the ONLY home for: a
+              freshly-pulled card that has never been fielded has no trait and no
+              nature yet, and would have hidden what it is good at behind an
+              empty condition. Every block inside guards itself, so a truthy gate
+              with nothing to show is not possible. */ ''}
+        ${(!faceHidden && (u.trait || u.nature || (isPlayer && u.bond != null) || (isPlayer && window.MythicWork))) ? `
         <div class="modal-section">
-          <div class="modal-section-title">🧬 Traits & Nature</div>
+          <div class="modal-section-title">🧬 Traits, Nature & Work</div>
           <div style="display:flex;flex-direction:column;gap:8px">
             ${u.trait ? (() => {
               const tr = (typeof getTrait === 'function') ? getTrait(u.trait) : null;
@@ -140930,6 +141075,28 @@ function renderUnitModal() {
                 <div class="small-text" style="color:#bfae87;margin-top:4px">+${Math.floor(bond100(u.bond) / 10)}% crit · ×${(getBondTier(u.bond).xpMul || 1)} XP gain from loyalty.</div>
               </div>`;
             })() : ''}
+            ${/* 👷 THE WORK PROFILE — the CIVIC counterpart of the trait above it,
+                  and the only place outside Node City where a player can read it.
+                  Without this card the only way to learn that a unit is a Lv 3
+                  Kindling hand is to open the city and scroll a picker, which is
+                  a strange place to keep a permanent fact about a card you own —
+                  and it is a fact that should influence which packs a player
+                  chases, i.e. a decision they make in THIS screen.
+                  ⚠ PLAYER-SIDE ONLY. An enemy's trade is not a fact about this
+                    battle and would be noise in an already dense modal.
+                  ⚠ Absent module → nothing renders. Same rule as everywhere
+                    else: this feature is never load-bearing. */ ''}
+            ${/* 👷 The unit's CITY trades, beside its battle trait. Player-side
+                  only — an enemy's trade is not a fact about this battle and
+                  would be noise in an already dense modal. Compact: mid-fight
+                  there is no room for each trade's description or the
+                  how-to-post explainer, and no reason to read them here.
+                  The panel is _cityWorkPanelHtml, shared with the collection,
+                  hand and pack views. `u.level` is the BATTLE unit's level, so
+                  it is passed rather than re-read from Profile. */ ''}
+            ${isPlayer ? _cityWorkPanelHtml({ id: u.originalCardId || u.cardId, element: u.element,
+                elements: (typeof getElementsOf === 'function' ? getElementsOf(u) : null), rarity: u.rarity },
+                { level: u.level, compact: true }) : ''}
           </div>
         </div>` : ''}
 
@@ -143467,6 +143634,16 @@ function renderCardDetailModal() {
             ${handHtml}
             ${inGraveHtml}
             ${onResHtml}
+            ${/* 👷 What this unit does in the CITY, on the card you are about to
+                  play. Compact — mid-battle there is no room for each trade's
+                  description or the how-to-post explainer, and the player is
+                  not making a city decision here; it is the same reminder the
+                  collection view gives, sized for a battle modal.
+                  Shared panel, see _cityWorkPanelHtml. Units only. */ ''}
+            ${(card.type === 'unit' && window.MythicWork) ? (() => {
+                const w = _cityWorkPanelHtml(card, { compact: true });
+                return w ? '<div class="cd-divider"></div>' + w : '';
+              })() : ''}
             ${(!card.desc && !passivesHtml && !onPlayHtml && !counterHtml && !handHtml && !inGraveHtml && !onResHtml)
               ? '<div class="cd-rules ink-dim">No card effect.</div>' : ''}
           </div>
@@ -164062,6 +164239,19 @@ function renderPackCardDetailModal() {
           ${c.desc ? `<div class="pcd-desc">${escapeHtml(c.desc)}</div>` : '<div class="pcd-desc ink-dim">No description.</div>'}
           ${statsBlock}
           ${passiveBlock}
+          ${/* 👷 The city trades, at the moment the card is pulled. This is
+                where a player forms their opinion of a pull, and until now that
+                opinion could only be about the battle stats — a unit that rolls
+                🔥 Kindling 4 is a real find for a city, and finding out three
+                menus later is finding out too late.
+                ⚠ NOT compact: unlike the battle modals there is room here, and
+                  a pack reveal is exactly where the trade descriptions earn
+                  their space — it may be the first time this player has seen
+                  the system at all. Shared panel, see _cityWorkPanelHtml. */ ''}
+          ${(c && (c.type === 'unit') && window.MythicWork) ? (() => {
+              const w = _cityWorkPanelHtml(c);
+              return w ? `<div class="pcd-section"><div class="pcd-section-title">👷 City Work</div>${w}</div>` : '';
+            })() : ''}
           <div class="pcd-meta-grid">
             <div class="pcd-meta-row"><span>Type</span><strong>${escapeHtml(String(c.type || 'card'))}</strong></div>
             <div class="pcd-meta-row"><span>Cost</span><strong>${(c.cost | 0)} ⚡</strong></div>
@@ -188427,6 +188617,46 @@ function renderCollectionCardModal(active) {
     return `<div class="ccm-section"><div class="ccm-section-title">🧬 Trait & Nature</div>${traitCard}${natureCard}</div>`;
   })();
 
+  /* ══ 👷 CITY WORK — what this unit is good at OUTSIDE a battle ═══════════
+     The 🧬 Trait & Nature section above says what it does in a fight. This says
+     what it does in Node City: which trades it can work, how good it is at
+     each, and the work passives that make it faster, slower, hungrier or
+     hardier. Both are permanent per-unit facts, so they belong in the same
+     place — and this is the screen a player is actually on when they are
+     deciding whether a pull was worth having.
+
+     🔴 IT SHIPPED IN THE WRONG MODAL FIRST. The work card went into
+     renderUnitModal() — the IN-BATTLE unit inspector — which is not where
+     anyone looks at a card they own. This is openCardDetailView(), the
+     collection view with Release and the learnset, and it is the one the
+     player actually opens. Both now carry it.
+
+     ⚠ OWNED UNITS ONLY, matching the Trait & Nature block directly above:
+       that section refuses to show for an unowned unit and says why, so this
+       one does too rather than inventing a second rule on the same screen.
+     ⚠ Absent module → nothing renders. Same as everywhere else this feature
+       touches: it is never load-bearing. */
+  /* 👷 CITY WORK — what this unit is good at OUTSIDE a battle. The 🧬 section
+     above says what it does in a fight; this says which trades it can work in
+     Node City and how good it is at each. Same permanent per-unit facts, same
+     screen, so they sit together — and this is the view a player is actually on
+     when deciding whether a pull was worth having.
+     The panel itself is _cityWorkPanelHtml, shared with three other card views.
+     ⚠ OWNED UNITS ONLY, matching the Trait & Nature block directly above: it
+       refuses for an unowned unit and says why, so this does too rather than
+       inventing a second rule on one screen. */
+  const cityWorkHtml = (() => {
+    try {
+      if ((c.type || data.kind) !== 'unit' || !window.MythicWork) return '';
+      if (ownedCount <= 0) {
+        return '<div class="ccm-section"><div class="ccm-section-title">👷 City Work</div>' +
+          '<div class="ink-dim small-text">Own this unit to see the trades it can work in Node City — every player\'s roll is different.</div></div>';
+      }
+      const panel = _cityWorkPanelHtml(c);
+      return panel ? '<div class="ccm-section"><div class="ccm-section-title">👷 City Work</div>' + panel + '</div>' : '';
+    } catch (e) { return ''; }
+  })();
+
   // ---- Elements + factions rows ----
   const elemRow = elems.length
     ? `<div class="ccm-tag-row">${elems.map(e => ELEMENT_DATA[e]
@@ -188497,6 +188727,7 @@ function renderCollectionCardModal(active) {
             ${factionRow}
             ${statsHtml}
             ${traitNatureHtml}
+            ${cityWorkHtml}
             ${(typeof _lqUnitValueProfile === 'function' && (c.type || data.kind) === 'unit' && _lqUnitValueProfile(c).length) ? `<div class="ccm-meta-block" style="margin-top:.5rem"><div class="small-text ink-dim" style="letter-spacing:.06em;text-transform:uppercase;font-size:.66rem;margin-bottom:3px">🎭 Companion Values</div>${_lqValueTagsHtml(c, (Profile.units && Profile.units[c.id]) || null)}</div>` : ''}
             ${(typeof _unitTemperPanelHtml === 'function' && (c.type || data.kind) === 'unit') ? _unitTemperPanelHtml(c, (Profile.units && Profile.units[c.id]) || null) : ''}
             ${passiveHtml}
@@ -207178,15 +207409,25 @@ function _openNodeCity(nodeId, _resolved) {
   }
   const f = document.createElement('iframe');
   f.id = 'node-city-frame';
-  /* 🔴 THIS IS A DEPLOY KNOB — the FIFTH, and it is not on CLAUDE.md's list.
+  /* 🔴 THIS WAS A DEPLOY KNOB — THE FIFTH, AND IT IS NOW DERIVED SO IT CANNOT
+     GO STALE AGAIN.
      sw.js is network-first for navigations and for /src/, and CACHE-FIRST for
      everything else. The city page is loaded here as an iframe SUB-RESOURCE,
      not as a navigation, so it takes the cache-first branch: this ?v= is the
-     only thing in the URL that can bust it. It sat at 120t9 through an entire
-     rewrite of the city and its economy — bump it with the other four or a
-     returning player can be served the old city out of cache while every
-     other knob says the deploy landed. */
-  f.src = 'node-city/index.html?v=120w9';
+     only thing in the URL that can bust it.
+
+     It had already sat at 120t9 through an entire rewrite of the city and its
+     economy, and the comment that recorded that then failed to save the very
+     next round: the work-crew deploy bumped version.txt, BUILD_VERSION,
+     CACHE_VERSION and NC_BUILD, and left this literal at 120w9. A returning
+     player would have been served the new game shell around the OLD city — the
+     whole feature invisible, with every other knob reporting the deploy landed.
+
+     A knob that must be hand-bumped in lockstep with another knob is not a
+     knob, it is a bug with a comment. BUILD_VERSION is already bumped on every
+     deploy and is set far above this line, so deriving from it makes the cache
+     bust automatic and takes this off the list for good. */
+  f.src = 'node-city/index.html?v=' + (window.BUILD_VERSION || 'dev');
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);
@@ -208363,10 +208604,28 @@ window.cityCardCollection = async function () {
       if (!c) { try { c = (typeof UNIT_CARDS !== 'undefined' && UNIT_CARDS.find((x) => x.id === id)) || (typeof SPELL_CARDS !== 'undefined' && SPELL_CARDS.find((x) => x.id === id)) || null; } catch (e) {} }
       if (!c) { try { const h = (typeof findHeroById === 'function') ? findHeroById(id) : null; if (h) c = Object.assign({}, h, { type: 'hero' }); } catch (e) {} }
       if (!c) continue;
-      let el = '';
-      try { const es = (typeof getElementsOf === 'function') ? getElementsOf(c) : null; el = (es && es[0]) || c.element || ''; } catch (e) { el = c.element || ''; }
+      let els = [];
+      try { els = ((typeof getElementsOf === 'function') ? getElementsOf(c) : null) || []; } catch (e) { els = []; }
+      if (!els.length && c.element) els = [c.element];
+      els = els.map((e) => String(e || '').toLowerCase()).filter(Boolean);
+      const el = els[0] || '';
       const power = Math.max(1, Math.min(30, Math.round(c.atk ? (c.atk + ((c.hp | 0) / 10)) : (((c.cost | 0) + 1) * 4))));
-      out.push({ id, name: c.name || id, type: c.kalonForm ? 'Kalon' : (TYPE[c.type] || 'Unit'), element: String(el).toLowerCase(), power, rarity: c.rarity || 'common' });
+      /* 👷 THE TWO EXTRA FIELDS THE CITY'S WORK MODEL NEEDS, and no more. It
+         rolls a unit's suitabilities itself, from (salt, id, element, rarity) —
+         all of which it now has — so nothing about the roll is sent over the
+         bridge and the two sides cannot disagree about a unit.
+         `elements` is the FULL list, not just els[0]: a dual-element card gets
+         both its trades weighted, and collapsing it to one here would silently
+         throw away half of every hybrid.
+         `level` is the unit's real progression (Profile.units), defaulted to 1
+         for a card that has never been fielded — never faked upward.
+         Both are additive: an older city build ignores them and behaves exactly
+         as it did before. */
+      let lvl = 1;
+      try { const up = Profile.units && Profile.units[id]; if (up && up.level > 0) lvl = up.level | 0; } catch (e) {}
+      out.push({ id, name: c.name || id, type: c.kalonForm ? 'Kalon' : (TYPE[c.type] || 'Unit'),
+                 element: String(el).toLowerCase(), elements: els, power, rarity: c.rarity || 'common',
+                 level: lvl });
       if (out.length >= 500) break;
     }
     return out;
@@ -224249,6 +224508,26 @@ render();
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
 <script type="module" src="src/resources/chain.js?v=v120w6chain2"></script>
+<!-- 👷 WORK SUITABILITY — what a unit is good at when you put it to WORK in
+     the city, as distinct from what it is good at in a fight. Every unit rolls
+     one to four kinds of work, each at a level 1-4, plus nought to three work
+     passives (good AND bad). Its ELEMENT decides which work it is born to, its
+     unit LEVEL and its condition scale the rest.
+     Registers window.MythicWork: pure data + arithmetic, no DOM, no I/O, no
+     globals. node-city/index.html imports the SAME file for the tick maths and
+     runs the crew off it (/src/work/crew.city.js), so what this page tells a
+     player about a unit and what the city actually pays for it cannot drift.
+     ⚠ THE ROLLS ARE DERIVED, NOT STORED. Profile.workSalt (one string per
+       account) plus the card id is the whole of it — see the module header for
+       why stamping 500 profile rows through the city bridge was rejected.
+     ⚠ If this 404s the city simply has no crew: every crew multiplier reads
+       1.00, this page shows no work card, and nothing throws.
+     ⚠ Bump ?v= on every change — the service worker caches /src/* like any
+       other static asset, and a missed bump ships invisibly. -->
+<script type="module">
+  import * as Work from './src/work/work.js?v=v120x2work2';
+  try { window.MythicWork = Work; } catch (e) {}
+</script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the

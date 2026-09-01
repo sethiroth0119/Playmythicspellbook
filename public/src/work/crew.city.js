@@ -546,6 +546,8 @@ const CSS = `
 #crewpick .ogain{color:#7ad68c;font-variant-numeric:tabular-nums;}
 #crewpick .ogain.nil{color:#e08a80;}
 #crewpick .o2{display:block;font-size:10px;color:var(--mist);margin-top:2px;}
+#crewpick .pwarn{font-size:10.5px;line-height:1.5;color:#e0a85f;border:1px solid rgba(224,168,95,.45);
+  background:rgba(224,168,95,.08);border-radius:8px;padding:7px 9px;margin-bottom:9px;}
 #crewpick .pfoot{display:flex;gap:8px;margin-top:10px;}
 #crewpick .pfoot .pbtn{margin-top:0;flex:1;}
 `;
@@ -701,9 +703,16 @@ function pickHtml() {
   const t = G().tiles[k], def = defOf(t && t.type);
   const needs = W.workNeeds(t ? t.type : '').map(x => { const w = W.getWork(x); return w ? w.icon + ' ' + w.name : x; }).join(' · ');
   const cands = candidatesFor(k);
+  /* ⚠ The host's "this post would be waste" check, shown BEFORE the choice
+     rather than after it. The decision point is this dialog; a warning that only
+     appears on the dossier afterwards is a warning the player reads once they
+     have already spent the post. */
+  let warn = null;
+  try { warn = (CTX.postWarning && CTX.postWarning(k)) || null; } catch (e) { warn = null; }
   return '<div class="pbox"><h3>👷 Who works the ' + esc(def ? def.name : k) + '?</h3>' +
     '<div class="psub">Needs ' + needs + ' · <b>' + postsAt(k).length + ' / ' + slotsAt(k) + '</b> posts filled' +
     '<br>The figure is what each unit would add to THIS building. Anyone already posted elsewhere moves here.</div>' +
+    (warn ? '<div class="pwarn">⚠ ' + esc(warn) + '</div>' : '') +
     (cands.length ? cands.map(o =>
       '<button class="opt' + (o.here ? ' here' : o.ok ? ' good' : '') + '"' + (o.ok ? '' : ' disabled') +
         ' data-pick-card="' + esc(o.card) + '">' +

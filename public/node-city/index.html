@@ -9,7 +9,7 @@
      believed the file was already live. Only a CONTENT change moves the hash
      and forces a re-upload, so bump this stamp whenever the city 404s, and
      probe it (grep NC_BUILD on the served page) to prove the deploy landed. -->
-<script>window.NC_BUILD = "v120x2-crewposts";</script>
+<script>window.NC_BUILD = "v120x3-crewposts";</script>
 <!-- ════════════════════════════════════════════════════════════════════════
      NODE CITY — SimCity-style settlement layer for Mythic Spellbook.
      Three.js WebGPU (auto-falls back to WebGL2). Realistic sun/moon cycle.
@@ -17755,6 +17755,35 @@ function insContribution(t, x, z, mult) {
   return insCardHtml('City contribution', 'live coverage', rows.join(''));
 }
 
+/* ⚠ POSTING INTO A BUILDING THAT IS ALREADY DOING ITS JOB.
+   A service building converts stock into COVERAGE, and coverage is a ratio that
+   the vitals clamp — once a need is met, more supply buys nothing. But the crew
+   multiplier scales the building's INPUT DRAW all the same, so posting two units
+   into a Grocery in a city that is already fed costs about two rations a minute
+   and returns exactly zero. Measured, not assumed: 7.50 → 17.37 rations over
+   five minutes with food coverage pinned at 1.50 both times.
+
+   This is not new — levelling that Grocery up does the same thing, and has since
+   the service layer shipped. What is new is that the crew makes it a ONE-CLICK
+   mistake, and it is the likeliest way for a player to conclude that the crew
+   broke their food supply. So it is surfaced rather than fixed: the draw is
+   correct (a busier shop moves more stock), the player just needs to be able to
+   see that this particular post is waste before they make it.
+   Returns a sentence, or null when posting here is fine. */
+function crewPostWarning(k) {
+  try {
+    const t = game.tiles[k]; if (!t) return null;
+    const def = BUILDINGS[t.type]; if (!def || !def.svc) return null;
+    const need = def.svc.need;
+    const pct = (game.cov.pct || {})[need];
+    if (!(pct >= 1)) return null;
+    const nm = (NEED_META[need] || {}).name || need;
+    return nm + ' coverage is already ' + Math.round(pct * 100) + '%. A crew here raises this building\'s ' +
+      (def.svc.input ? resName(def.svc.input) : 'input') + ' draw and buys no extra ' + nm +
+      ' — post them somewhere the city is actually short.';
+  } catch (e) { return null; }
+}
+
 function insSystems(t, x, z) {
   const def = BUILDINGS[t.type], rows = [];
   if (def.sockets) {
@@ -17772,6 +17801,8 @@ function insSystems(t, x, z) {
     }).join(' · ')));
     const _ck = key(x, z);
     const cps = CREW.powersAt(_ck);
+    const _warn = crewPostWarning(_ck);
+    if (_warn) rows.push(insFac('⚠ Crew here is wasted', '<span class="dn">' + logEsc(_warn) + '</span>', 'dn'));
     rows.push(insFac('👷 Posts filled', cps.length + ' / ' + CREW.slotsAt(_ck) +
       (CREW.freeSlotsAt(_ck) > 0 ? ' <span style="opacity:.7">— use 👷 Post a worker below</span>' : ''),
       CREW.freeSlotsAt(_ck) > 0 ? 'dn' : 'up'));
@@ -24421,6 +24452,11 @@ function animate() {
          old post count and the old multiplier until they close and reopen it,
          which reads as the click not having worked. */
       refreshInspect: () => { try { if (selectedKey && $('inspect').classList.contains('open')) openInspect(selectedKey); } catch (e) {} },
+      /* ⚠ "Posting here would be waste" — see crewPostWarning. Computed HERE
+         because coverage, NEED_META and the vitals clamp are all city internals
+         the module has no business knowing; it just prints the sentence at the
+         moment the player is choosing. */
+      postWarning: (k) => { try { return crewPostWarning(k); } catch (e) { return null; } },
       /* 🌙 The clock two work passives care about. estClock() is this city's
          real EST hour (see §updateSky) — the SAME clock the lamps and the sky
          run on, so a Nocturnal unit speeds up exactly when the street lights

@@ -75,12 +75,14 @@ const MODEL_HEIGHT = 1.75;
    A 1.75 m character at that distance is about thirty pixels tall: you cannot
    tell the researcher from the sentinel, which defeats the entire point of the
    suit being the model.
-   Pulled in to roughly two-thirds. The whole hot zone and every station still
-   fit, and the character now reads as a person.
-   ⚠ TUNE HERE, live, with `MythicBioLab._setCamera(y, back)`. Going much
-     closer starts clipping the far benches out of frame at 52° FOV. */
-export let CAM_HEIGHT = 10.5;
-export let CAM_BACK = -9.0;
+   Pulled in twice, to a little over half the original distance. The character
+   now reads as a person rather than a smudge, which is the entire point of
+   the suit BEING the model.
+   ⚠ TUNE HERE, live, with `MythicBioLab._setCamera(y, back)`. This is about
+     as close as the 52° FOV takes without the bench you are standing at
+     leaving frame; `_setCamera(15.5, 13.5)` restores the original wide shot. */
+export let CAM_HEIGHT = 8.4;
+export let CAM_BACK = -7.2;
 export function setCamera(y, back) {
   if (Number.isFinite(+y)) CAM_HEIGHT = +y;
   if (Number.isFinite(+back)) CAM_BACK = -Math.abs(+back);

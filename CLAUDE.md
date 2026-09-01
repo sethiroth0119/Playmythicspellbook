@@ -34,6 +34,18 @@ assume `window.Foo` exists because `const Foo` does.
 - User-facing errors use `showToast()`. Confirmations use `gcConfirm()` (async).
 - No new npm dependencies without asking.
 
+## 🏙 The city economy (`public/src/economy/`)
+Registered as `window.MythicEconomy`; wired into `node-city/index.html` via one tick hook,
+one save field and one panel. **See ECONOMY.md before changing any of it.**
+- **Cinder is never minted.** `sim.js` asserts a closed loop every tick and suspends the
+  payout if it breaks. This is the structural guard against the retired Cinder Forge bug.
+- **All economy numbers live in `ECON` (`tuning.js`)** — the `_opEcon()` pattern.
+- **No resource price is written down anywhere.** Prices derive from the recipe graph.
+- **Never `addRes()` a chain resource.** The 258 ids in `/src/resources/chain.js` are not in
+  index.html's `RESOURCES`; the economy holds its own inventory. Only the audited Cinder
+  payout crosses the bridge.
+- `economy/bank.js` is simulated firm credit and is **not** `player_banks` — never join them.
+
 ## Existing systems to reuse, not rebuild
 - `Corp.*` — roster, requests, roles, treasury. **Communities sit ABOVE corps.**
 - `chat_messages` — rooms + DMs + RLS already exist. Community channels are rooms.
@@ -78,10 +90,24 @@ therefore terminate.
 
 ## Verifying (this environment)
 - Syntax-check index.html with `node _synckcheck.mjs` — **not** `build.mjs`.
-- The Browser pane does not composite: `requestAnimationFrame` never fires, so `render()`
-  (RAF-batched) does nothing and canvas rects read 0×0. Call renderers directly, and for
-  canvas work inject a `requestAnimationFrame = cb => setTimeout(cb,16)` shim into a
-  throwaway copy of the page.
+- Also check every ES module with `node .gauntlet/modcheck.mjs` — `_synckcheck.mjs` does
+  NOT look under `public/src`, and a module that fails to parse is reported at runtime as
+  "not mounted (non-fatal)", which is indistinguishable from the module being absent.
+- Before committing a tree other agents are writing to, run `node .gauntlet/precommit-scan.mjs`.
+  It refuses a line marked as deliberately broken. Both syntax gates pass on those.
+- The Browser pane barely composites: `requestAnimationFrame` fires at about **0.56 Hz**
+  (measured: 3 callbacks in 5,343 ms) — **not "never", which is worse than never, because
+  it makes the failure intermittent.** `render()` is RAF-batched, so it effectively does
+  nothing inside a synchronous driver and canvas rects read 0×0. Call renderers directly,
+  and for canvas work inject a `requestAnimationFrame = cb => setTimeout(cb,16)` shim into
+  a throwaway copy of the page.
+  🔴 **Any A/B of the rendered frame MUST call `renderer.render()` between the two reads,
+  and must `drawImage` in the same task** (`preserveDrawingBuffer` is off, so the buffer is
+  gone by the next task and `readPixels` returns zeros). An A/B that flips `.visible` and
+  reads the framebuffer returns the frame from *before* the flip — for **any** layer — and
+  reports a confident, wrong zero. That cost two overlays a "cannot be photographed"
+  verdict; driven properly they move 78% of the crop against a control of exactly 0.
+  See `.gauntlet/README.md` item 6.
 - Deploy bumps three knobs together or the update check breaks: `public/version.txt`,
   `window.BUILD_VERSION`, `sw.js` `CACHE_VERSION`. Verify the EDGE with curl, never the
   deploy log, and poll — propagation across PoPs takes up to a couple of minutes.

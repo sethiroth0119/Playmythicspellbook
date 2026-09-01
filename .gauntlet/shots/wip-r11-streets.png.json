@@ -1,0 +1,23 @@
+{
+  "streets": 11,
+  "before": "Lower Prudence Boulevard",
+  "renamed": true,
+  "after": "Chevron Row",
+  "panel": true,
+  "saveKeys": [
+    "v",
+    "n",
+    "t",
+    "tr",
+    "ob"
+  ],
+  "labelGroupsInScene": 0,
+  "addr": {
+    "ok": false,
+    "why": "isroad",
+    "street": "Chevron Row",
+    "source": "streets",
+    "crossing": true,
+    "axis": "x"
+  }
+}

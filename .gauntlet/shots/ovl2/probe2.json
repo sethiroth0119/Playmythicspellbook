@@ -1,0 +1,85 @@
+{
+  "tightTile": [
+    10,
+    13
+  ],
+  "rects": {
+    "district": {
+      "x0": 111,
+      "x1": 1489,
+      "y0": 188,
+      "y1": 900
+    },
+    "tight": {
+      "x0": 546,
+      "x1": 806,
+      "y0": 355,
+      "y1": 535
+    }
+  },
+  "lv": {
+    "district": {
+      "changed": 766317,
+      "of": 981136,
+      "pct": 78.11,
+      "meanDelta": 44.34,
+      "maxDelta": 143
+    },
+    "tight": {
+      "changed": 37086,
+      "of": 46800,
+      "pct": 79.24,
+      "meanDelta": 54.86,
+      "maxDelta": 143
+    },
+    "control": {
+      "changed": 0,
+      "of": 981136,
+      "pct": 0,
+      "meanDelta": 0,
+      "maxDelta": 0
+    },
+    "controlTight": {
+      "changed": 0,
+      "of": 46800,
+      "pct": 0,
+      "meanDelta": 0,
+      "maxDelta": 0
+    }
+  },
+  "water": {
+    "district": {
+      "changed": 134466,
+      "of": 981136,
+      "pct": 13.71,
+      "meanDelta": 7.18,
+      "maxDelta": 177
+    },
+    "tight": {
+      "changed": 35179,
+      "of": 46800,
+      "pct": 75.17,
+      "meanDelta": 54.66,
+      "maxDelta": 164
+    },
+    "control": {
+      "changed": 0,
+      "of": 981136,
+      "pct": 0,
+      "meanDelta": 0,
+      "maxDelta": 0
+    },
+    "controlTight": {
+      "changed": 0,
+      "of": 46800,
+      "pct": 0,
+      "meanDelta": 0,
+      "maxDelta": 0
+    }
+  },
+  "rafProbe": "pending",
+  "raf": {
+    "fires": 3,
+    "ms": 5343
+  }
+}

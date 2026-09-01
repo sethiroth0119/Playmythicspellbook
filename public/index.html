@@ -6828,12 +6828,18 @@
   @media (max-width: 1300px){ .bp-wrap.bsx{ width:248px; } }
   /* 🪪 Rail-width mirror. `.cbx-float` is anchored beside the rail but is its
      SIBLING, so it can't read a custom property set on `.bp-wrap` — it has to
-     come from a shared ancestor. ⚠ Keep these three values identical to the
-     `.bp-wrap.bsx` widths directly above; if they drift, the character box
-     drifts off the rail's border. */
-  :root{ --bpw: 300px; }
-  @media (max-width: 1500px){ :root{ --bpw: 274px; } }
-  @media (max-width: 1300px){ :root{ --bpw: 248px; } }
+     come from a shared ancestor.
+     ⚠ THE THREE `:root{ --bpw }` DECLARATIONS THAT USED TO LIVE HERE (300/274/
+     248px) ARE GONE ON PURPOSE. src/battle/hud.css now derives --bpw,
+     --btl-rail-w AND --r3-rail-r-real from ONE number per breakpoint, and also
+     sets `.bp-wrap.bsx`'s width from that same number, so the rail and the
+     character box cannot drift apart any more. Re-adding a --bpw here would
+     recreate exactly the two-sources-of-truth bug the comment above warns
+     about — it would still LOSE to hud.css (same :root specificity, hud.css is
+     the last stylesheet), so it would only mislead the next reader.
+     The `.bp-wrap.bsx` widths directly above are likewise overridden by
+     hud.css; they remain as the no-hud.css fallback, matching
+     `var(--bpw, 300px)` at `.cbx-float`. */
   /* the rail hides itself under 1100px (phones) — the floating box goes too */
   @media (max-width: 1100px){ .cbx-float{ display:none; } }
   /* 📖 READABLE RIGHT RAIL (v118x0). The rail had NO fit logic: ~970px of content
@@ -7078,6 +7084,17 @@
    The 560px design was built for a 1920 desktop. On a 1440-wide screen — a
    Surface Pro 13" is exactly that at 2× — 560 + 214 + margins left the board
    about 630px, which is why it looked crushed. */
+/* ⚠ --btl-rail-w below is NOT the value the battle screen runs on any more.
+   src/battle/chrome.css overrode it (440/320/280) and src/battle/hud.css now
+   overrides BOTH (336/300/272 at 1500/1300), deriving --btl-rail-w,
+   --r3-rail-r-real and --bpw from one number per breakpoint. hud.css is the
+   last stylesheet, and media queries add no specificity, so its :root wins at
+   every width — including inside the 1599/1279 brackets below, which are
+   narrower brackets but earlier source. These stay as the no-stylesheet
+   fallback ONLY. Editing them will not move the rails; edit hud.css.
+   --btl-rail-r is a different variable and still live (see the warning at the
+   `.bp-wrap` fallback further up: it does NOT describe the rail's real width —
+   --r3-rail-r-real does). */
 :root {
   --btl-rail-w: 560px;    /* left rail */
   --btl-rail-r: 214px;    /* right rail */
@@ -13772,7 +13789,15 @@
      ──────────────────────────────────────────────────────────────────── */
   #battle-event-feed {
     position: fixed;
-    top: 92px; left: 50%;
+    /* ⚠ This used to be a hard `top: 92px`, which is exactly the band the two
+       hero banners now occupy (src/battle/hud.css) — the chips stacked BEHIND
+       them at z-index 2147481000 and read as garbage. `--hud-banner-h` is
+       declared on :root by hud.css (140px, 118px on short screens, 92px below
+       1100px where the banner band is abandoned) and the 92px fallback keeps
+       the old position if hud.css ever fails to load. hud.css also carries the
+       same rule and wins on source order; this is the belt to that's braces,
+       so the ticker is correct even if the stylesheet order is reshuffled. */
+    top: calc(var(--hud-banner-h, 92px) + 8px); left: 50%;
     transform: translateX(-50%);
     display: flex; flex-direction: column; align-items: center;
     gap: 6px;
@@ -36441,7 +36466,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120x4';
+  window.BUILD_VERSION = 'v120x5';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -39297,6 +39322,142 @@ const RESOURCES = [
   { id: 'wood',             name: 'Wood',             icon: '🪵', color: '#c08a4a' },
   { id: 'stone',            name: 'Stone',            icon: '🪨', color: '#a8a29a' },
   { id: 'cloth',            name: 'Cloth',            icon: '🧵', color: '#e0b8c8' },
+
+  /* ══ 🧰 THE CHAIN PROMOTION (v120t9 — 56 ids; 71 after the extraction round) ═
+     🔴 THIS LIST IS DERIVED, NOT CHOSEN. The rule, in one line:
+
+         promote = { every `out` id of ECO_BUILDING_MAP (ops join included) }
+                   ∩ MythicResourceChain.NEW_IDS
+
+     i.e. exactly the catalogue ids that now have a REAL PRODUCER standing behind
+     them, because this round wired 19 more buildings into the economy. Nothing
+     was hand-picked and nothing was promoted "because it looked useful".
+
+     WHY THAT RULE AND NOT "PROMOTE THE 245". RESOURCES_NEXT.md quotes the r12
+     notes on an id that is bankable but unmakeable — "worse than missing,
+     because the player's pile of it is real and inert" — and promoting the whole
+     catalogue would reproduce that 245 times in one commit. A resource is
+     promoted TOGETHER WITH ITS PRODUCER, never before it. That is why this block
+     is 56 rows and not 245, and why every row below also has:
+       • a producer in /src/city/production.data.js (CITY_PRODUCTION), and
+       • a terroir tier (the slot bag in /src/city/terroir.js re-derives to 70).
+
+     ⚠ NAME / ICON / COLOUR ARE COPIED VERBATIM FROM src/resources/chain.js and
+       must stay that way. node-city's RES_META seeds itself from that same
+       catalogue, so the two windows agree by construction; a "nicer" icon typed
+       in here alone would put a different glyph on the same resource in the camp
+       and in the city. The icons repeat within a category (all ten agriculture
+       ids are 🌾) because the catalogue assigns per-category glyphs — that is
+       its choice, not a defect introduced here, and it is not worth a hand
+       mirror of 56 emoji in two files to change.
+
+     ⚠ THIS DOES NOT MAKE THEM ECONOMY-WRITABLE. /src/economy still holds its own
+       inventory of all 258 chain ids and still writes NONE of them through
+       addRes/spendRes (economy/index.js §"never addRes a chain resource").
+       Promotion changes what the CAMP can hold, price, show and make. It does
+       not change how the closed loop accounts internally, and the gate
+       (tools/economy-tests/run.mjs round0p) asserts that boundary is intact.
+
+     ⚠ THE COUNT IS NOW 85 (14 legacy + 71 promoted). Every derived site follows
+       for free — RESOURCE_IDS, _ensureResources, the market guard,
+       resourceCostHtml/_normCost/_facCostAt, the admin editors and
+       MythicCityBridge.resources → terroir (whose slot bag re-derives through
+       slotsFor(), which is why a promotion no longer silently switches terroir
+       off).
+     🔴 …AND THE STASH FLOOR DOES **NOT** SCALE WITH THIS LIST ANY MORE. The
+       line above used to say "the stash floor scales itself (_resStashFloor:
+       143 × 70 = 10,010)" and that sentence is now false: `_resStashFloor()`
+       counts LOOT_RES_IDS, not RESOURCE_IDS, and LOOT_RES_IDS is the legacy 14,
+       so the floor is 143 × 14 = 2,002 and this round does not move it by one
+       unit. round0q asserts exactly that ("the legacy-14 allowance is its
+       pre-promotion value, NOT the 10,010 the promotion silently granted"), and
+       the wrong figure is corrected here rather than left standing beside a
+       green gate that contradicts it.
+     ⚠ THE 15 NEWEST ROWS ARE THE EXTRACTION ROUND, and they are here for the
+       same derived reason as the other 56: node-city gained a Water Intake, a
+       Deep Mine, a Strategic Minerals Works, a Cane & Seed Croft and a Deep
+       Rift Bore, so `rawWater`, the deep and strategic minerals, `quartz`,
+       `sugarCrops` and four of the five deep anomalous seams acquired a real
+       producer and were promoted WITH it, never before it. `seeds`,
+       `soulEnergy` and `rareMinerals` are worked by those same buildings and
+       are deliberately NOT here: they are outside `chain.NEW_IDS`, so the
+       derivation does not reach them and hand-adding one would be exactly the
+       drift round0p exists to catch.
+     ⚠ DO NOT EDIT THIS BLOCK BY HAND. round0p re-runs the derivation above
+       against the shipped node-city map and goes RED on any drift, in either
+       direction. Add a building to ECO_BUILDING_MAP and the gate will tell you
+       exactly which row to add here. */
+  { id: 'aluminumOre',            name: 'Aluminum Ore',            icon: '🪨', color: '#a8a29a' },
+  { id: 'anomalousEnergy',        name: 'Anomalous Energy',        icon: '🟣', color: '#b06bff' },
+  { id: 'anomalousMatter',        name: 'Anomalous Matter',        icon: '🟣', color: '#b06bff' },
+  { id: 'arcaneCrystal',          name: 'Arcane Crystal',          icon: '🟣', color: '#b06bff' },
+  { id: 'beverages',              name: 'Beverages',               icon: '🍞', color: '#e0a86a' },
+  { id: 'boosterPacks',           name: 'Booster Packs',           icon: '🃏', color: '#d4af37' },
+  { id: 'bread',                  name: 'Bread',                   icon: '🍞', color: '#e0a86a' },
+  { id: 'cannedFood',             name: 'Canned Food',             icon: '🍞', color: '#e0a86a' },
+  { id: 'cardStock',              name: 'Card Stock',              icon: '🃏', color: '#d4af37' },
+  { id: 'cardboard',              name: 'Cardboard',               icon: '🪵', color: '#c08a4a' },
+  { id: 'cars',                   name: 'Cars',                    icon: '🚗', color: '#e08a5a' },
+  { id: 'clay',                   name: 'Clay',                    icon: '🪨', color: '#a8a29a' },
+  { id: 'coal',                   name: 'Coal',                    icon: '⚡', color: '#ffcf6b' },
+  { id: 'cobalt',                 name: 'Cobalt',                  icon: '🪨', color: '#a8a29a' },
+  { id: 'constructionComponents', name: 'Construction Components', icon: '🧱', color: '#c2725a' },
+  { id: 'copperOre',              name: 'Copper Ore',              icon: '🪨', color: '#a8a29a' },
+  { id: 'corn',                   name: 'Corn',                    icon: '🌾', color: '#d9c46a' },
+  { id: 'cotton',                 name: 'Cotton',                  icon: '🌾', color: '#d9c46a' },
+  { id: 'crudeOil',               name: 'Crude Oil',               icon: '⚡', color: '#ffcf6b' },
+  { id: 'dimensionalMaterial',    name: 'Dimensional Material',    icon: '🟣', color: '#b06bff' },
+  { id: 'electricity',            name: 'Electricity',             icon: '⚡', color: '#ffcf6b' },
+  { id: 'fabric',                 name: 'Fabric',                  icon: '🧥', color: '#e0b8c8' },
+  { id: 'freshFish',              name: 'Fresh Fish',              icon: '🐟', color: '#6fc0d8' },
+  { id: 'freshWater',             name: 'Fresh Water',             icon: '💧', color: '#7fd6ff' },
+  { id: 'fruit',                  name: 'Fruit',                   icon: '🌾', color: '#d9c46a' },
+  { id: 'gasoline',               name: 'Gasoline',                icon: '⚡', color: '#ffcf6b' },
+  { id: 'goldOre',                name: 'Gold Ore',                icon: '🪨', color: '#a8a29a' },
+  { id: 'gravel',                 name: 'Gravel',                  icon: '🪨', color: '#a8a29a' },
+  { id: 'herbs',                  name: 'Herbs',                   icon: '🌾', color: '#d9c46a' },
+  { id: 'householdGoods',         name: 'Household Goods',         icon: '🧥', color: '#e0b8c8' },
+  { id: 'limestone',              name: 'Limestone',               icon: '🪨', color: '#a8a29a' },
+  { id: 'lithium',                name: 'Lithium',                 icon: '🪨', color: '#a8a29a' },
+  { id: 'lumber',                 name: 'Lumber',                  icon: '🪵', color: '#c08a4a' },
+  { id: 'machineParts',           name: 'Machine Parts',           icon: '⚙️', color: '#b0b7c3' },
+  { id: 'maintenanceParts',       name: 'Maintenance Parts',       icon: '🚗', color: '#e08a5a' },
+  { id: 'metalComponents',        name: 'Metal Components',        icon: '⛓️', color: '#9fb4d8' },
+  { id: 'mythicResidue',          name: 'Mythic Residue',          icon: '🟣', color: '#b06bff' },
+  { id: 'naturalGas',             name: 'Natural Gas',             icon: '⚡', color: '#ffcf6b' },
+  { id: 'nickelOre',              name: 'Nickel Ore',              icon: '🪨', color: '#a8a29a' },
+  { id: 'packagingMaterial',      name: 'Packaging Material',      icon: '🃏', color: '#d4af37' },
+  { id: 'pigIron',                name: 'Pig Iron',                icon: '⛓️', color: '#9fb4d8' },
+  { id: 'plantFiber',             name: 'Plant Fiber',             icon: '🌾', color: '#d9c46a' },
+  { id: 'platinumOre',            name: 'Platinum Ore',            icon: '🪨', color: '#a8a29a' },
+  { id: 'potatoes',               name: 'Potatoes',                icon: '🌾', color: '#d9c46a' },
+  { id: 'preparedMeals',          name: 'Prepared Meals',          icon: '🍞', color: '#e0a86a' },
+  { id: 'printedCards',           name: 'Printed Cards',           icon: '🃏', color: '#d4af37' },
+  { id: 'quartz',                 name: 'Quartz',                  icon: '🪨', color: '#a8a29a' },
+  { id: 'rareEarthMinerals',      name: 'Rare Earth Minerals',     icon: '🪨', color: '#a8a29a' },
+  { id: 'rawWater',               name: 'Raw Water',               icon: '💧', color: '#7fd6ff' },
+  { id: 'realityFragments',       name: 'Reality Fragments',       icon: '🟣', color: '#b06bff' },
+  { id: 'realityMatter',          name: 'Reality Matter',          icon: '🟣', color: '#b06bff' },
+  { id: 'recycledMetal',          name: 'Recycled Metal',          icon: '♻️', color: '#86e08a' },
+  { id: 'researchChemicals',      name: 'Research Chemicals',      icon: '💊', color: '#ff8aa0' },
+  { id: 'researchEquipment',      name: 'Research Equipment',      icon: '🛡️', color: '#7fa8c8' },
+  { id: 'rice',                   name: 'Rice',                    icon: '🌾', color: '#d9c46a' },
+  { id: 'sand',                   name: 'Sand',                    icon: '🪨', color: '#a8a29a' },
+  { id: 'seafood',                name: 'Seafood',                 icon: '🐟', color: '#6fc0d8' },
+  { id: 'seaweed',                name: 'Seaweed',                 icon: '🐟', color: '#6fc0d8' },
+  { id: 'shellfish',              name: 'Shellfish',               icon: '🐟', color: '#6fc0d8' },
+  { id: 'silica',                 name: 'Silica',                  icon: '🪨', color: '#a8a29a' },
+  { id: 'silverOre',              name: 'Silver Ore',              icon: '🪨', color: '#a8a29a' },
+  { id: 'soybeans',               name: 'Soybeans',                icon: '🌾', color: '#d9c46a' },
+  { id: 'sportingGoods',          name: 'Sporting Goods',          icon: '🧥', color: '#e0b8c8' },
+  { id: 'sugarCrops',             name: 'Sugar Crops',             icon: '🌾', color: '#d9c46a' },
+  { id: 'timber',                 name: 'Timber',                  icon: '🪵', color: '#c08a4a' },
+  { id: 'tires',                  name: 'Tires',                   icon: '🚗', color: '#e08a5a' },
+  { id: 'titanium',               name: 'Titanium',                icon: '🪨', color: '#a8a29a' },
+  { id: 'tungsten',               name: 'Tungsten',                icon: '🪨', color: '#a8a29a' },
+  { id: 'vegetables',             name: 'Vegetables',              icon: '🌾', color: '#d9c46a' },
+  { id: 'wheat',                  name: 'Wheat',                   icon: '🌾', color: '#d9c46a' },
+  { id: 'zincOre',                name: 'Zinc Ore',                icon: '🪨', color: '#a8a29a' },
 ];
 // 🍞 Consumable resources — keyed by resource id. `effect(amount)` mutates
 // Profile state. The inventory modal renders a USE button for any resource
@@ -39355,6 +39516,120 @@ const CONSUMABLE_RESOURCES = {
 // no-op stub so any lingering caller is harmless; no ticker is registered.
 function _tickSatiation() { /* survival needs removed — no-op */ }
 const RESOURCE_IDS = RESOURCES.map(r => r.id);
+
+/* ══ 🎁 THE LOOT POOL IS NOT THE LEDGER ═══════════════════════════════════════
+   🔴 THE DEFECT THIS BLOCK EXISTS FOR, MEASURED ON THE COMMIT BEFORE IT.
+   RESOURCES answers ONE question: "what can the camp HOLD?". Three random-reward
+   sites were reading RESOURCE_IDS to answer a completely DIFFERENT one — "what
+   does a scavenging run BRING BACK?" — and the two answers were the same array
+   only for as long as the ledger happened to BE the 14 camp staples. The chain
+   promotion took RESOURCES 14 → 70, and with NO CODE CHANGE at any of the three
+   sites it diluted every pool 5× in a single commit — measured by evaluating the
+   shipped draw expression at each site on three trees, share of draws that is
+   one of the 14 the player can actually use:
+
+                          f8563fad (14)   8587778 (70, pre-fix)   with this block
+     _campGrantLoot         100.00%           20.04%                  100.00%
+     _smugglerDeal          100.00%           20.07%                  100.00%
+     container resPool      100.00%           20.12%                  100.00%
+     _resStashFloor()        2,002            10,010                   2,002
+
+   round0q in tools/economy-tests/run.mjs re-measures all three on every gate run
+   and prints these percentages; ECON_TEST_SABOTAGE=loot-ledger re-commits the
+   pre-fix draw and reprints the middle column.
+
+   So every expedition's food / ammo / water / metal / supplies income fell to
+   ×0.20 overnight, and 4 drops in 5 became an id the player has no consumer
+   for: not in CONSUMABLE_RESOURCES, in no craft recipe, and /src/economy is
+   FORBIDDEN to spend it (Rule 2 — the chain is never addRes/spendRes'd from the
+   economy). A drop you cannot eat, burn, craft or spend is not income; against a
+   shared stash ceiling it is a tax.
+
+   ── THE MECHANISM, AND WHY NOT THE OTHER TWO ────────────────────────────────
+   An explicit, WEIGHTED ALLOW-LIST. `LOOT_RES_IDS` names what the field yields;
+   every other ledger id is drawn at `LOOT_RES_WEIGHTS.offPool`.
+
+   · NOT "exclude whatever is in the chain catalogue". That set lives only on
+     `window.MythicResourceChain`, an ES module imported at the BOTTOM of this
+     file. A loot table whose composition depends on whether a module has
+     finished loading is the same accident one level down: a slow or failed load
+     and the pool is silently all 70 again.
+   · NOT "filter by whether something has a consumer". Craft recipes and facility
+     costs are ADMIN-AUTHORED AT RUNTIME (Forge.campCosts / getAllCraftRecipes),
+     so the pool would shift under a player the moment an admin publishes a
+     catalog — a loot table nobody can reason about or pin.
+
+   An allow-list is the only one of the three that is a DECISION rather than a
+   side-effect, and the only one a future promotion cannot move on its own.
+
+   ⚠ ADDING AN ID TO RESOURCES DOES NOT ADD IT TO LOOT, ON PURPOSE. That is the
+     whole point. round0q fails if a ledger id is neither in this list nor
+     justified by the chain derivation, so the next promotion has to SAY which
+     it is instead of silently taking a fifth of everyone's food.
+   ⚠ THE WEIGHTS BELOW ARE THE CONFIG HOME. No call site may name a number. */
+const LOOT_RES_WEIGHTS = {
+  /* The camp staples, at the pre-promotion rate: an expedition brings home
+     exactly what it brought home before the ledger grew. 1 is not arbitrary —
+     it is "unchanged", which is the only defensible target for a promotion that
+     was never meant to be an economy change. */
+  pool: 1,
+  /* Everything else in RESOURCES. Zero on purpose: chain goods are MADE in the
+     city (CITY_PRODUCTION → host.addRes, see /src/city/production.state.js) and
+     are not lying in a ruin. Kept as a NUMBER rather than an `if` so a future
+     round that wants a trickle changes one value here and round0q reprints the
+     composition it moved to, instead of someone editing a call site. */
+  offPool: 0,
+};
+/* Weight resolution. Ids are repeated `weight × this` times in the draw bag, so
+   a plain uniform pick over the bag IS a weighted pick over the ledger — the
+   same one-line `arr[Math.floor(rnd()*arr.length)]` every call site already had,
+   with no float accumulation and no second RNG draw (the smuggler board is
+   deterministic per window and must keep consuming exactly one rng() per pick). */
+const LOOT_WEIGHT_SCALE = 20;
+/* 🔴 A LITERAL, DELIBERATELY, AND IT MUST STAY ONE.
+   The first draft computed this as `RESOURCE_IDS.filter(id => !CHAIN.has(id))`,
+   which is derived from the very array whose growth caused the bug — the pool
+   would have re-widened on the next promotion and this comment would have been
+   a lie. These are the 14 ids the camp could scavenge before the promotion, they
+   are what the loot quantities and the stash floor were tuned against, and if
+   this list ever changes that is a design decision worth a red gate. */
+const LOOT_RES_IDS = ['food', 'ammo', 'water', 'medicine', 'energyDrink', 'supplies', 'metal',
+                      'fuel', 'corruptedEssence', 'memoryShards', 'dna', 'wood', 'stone', 'cloth'];
+let _lootBag = null, _lootBagFor = -1;
+function _lootResBag() {
+  if (_lootBag && _lootBagFor === RESOURCE_IDS.length) return _lootBag;
+  const inPool = new Set(LOOT_RES_IDS);
+  const bag = [];
+  for (const id of RESOURCE_IDS) {
+    const w = inPool.has(id) ? LOOT_RES_WEIGHTS.pool : LOOT_RES_WEIGHTS.offPool;
+    const n = Math.max(0, Math.round(w * LOOT_WEIGHT_SCALE));
+    for (let i = 0; i < n; i++) bag.push(id);
+  }
+  /* 🔴 NEVER HAND BACK AN EMPTY BAG. Every call site does bag[floor(r*len)] and
+     would get `undefined` — i.e. addRes(undefined, n), a resource key of
+     "undefined" in Profile.salvage that counts against the cap forever. If both
+     weights are ever set to 0, or LOOT_RES_IDS is emptied, degrade to the old
+     whole-ledger behaviour: diluted is survivable, corrupt is not. */
+  _lootBag = bag.length ? bag : RESOURCE_IDS.slice();
+  _lootBagFor = RESOURCE_IDS.length;
+  return _lootBag;
+}
+/* Pick one lootable resource id. `rnd` is optional and takes a 0..1 generator so
+   the deterministic smuggler board can pass its own seeded PRNG; it consumes
+   exactly one draw, same as the _smugPick it replaced. */
+function _lootResPick(rnd) {
+  const bag = _lootResBag();
+  const r = (typeof rnd === 'function') ? rnd() : Math.random();
+  return bag[Math.floor(r * bag.length)];
+}
+/* The same bag as RESOURCES ROWS, for the container-reward site, which needs
+   name/icon/colour and picks with an exclusion. Rows repeat exactly as ids do,
+   so a uniform pick over this array is the identical weighted draw. */
+function _lootResRows() {
+  const byId = {};
+  for (const r of RESOURCES) byId[r.id] = r;
+  return _lootResBag().map(id => byId[id]).filter(Boolean);
+}
 // Resources ARE the salvage ledger. _ensureResources aliases Profile.salvage
 // and one-time-folds any legacy Profile.resources into it so no progress is
 // lost when the two economies merge.
@@ -39441,11 +39716,33 @@ const RES_STASH_BASE = 2000;
    ⚠ RES_STASH_BASE stays as a hard floor underneath it. A player can never end
      up with less room than they have today, whatever happens to the ledger.
    ⚠ Vault rows and Warehouse staff still stack ON TOP, unchanged — see the two
-     branches below. This only moves the base they start from. */
+     branches below. This only moves the base they start from.
+
+   ══ 🔴 CORRECTION (v120t9-loot). "143 × 14 = 2,002, so today's number is
+      unchanged" WAS TRUE PER KIND AND FALSE IN TOTAL, and the promotion proved
+      it. getResourceUnits() sums EVERY resource against ONE ceiling, so the
+      denominator moving 14 → 70 moved the FLOOR 2,002 → 10,010 (live-confirmed)
+      — and a player who only ever collects the legacy 14 could suddenly hold
+      10,010 of them. That is a 5× stash buff nobody designed, handed to every
+      account including ones that never open the city.
+
+      SO THE DENOMINATOR IS NOW THE LOOT POOL, NOT THE LEDGER, and the reasoning
+      above survives intact because it was always about the wrong set:
+        · The rule exists so BREADTH FORCED ON THE PLAYER is not punished. After
+          the loot fix the only kinds a player accumulates without choosing to
+          are the ones loot pays in — LOOT_RES_IDS, which is exactly the set the
+          143 was calibrated against. 14 × 143 = 2,002, unchanged, as promised.
+        · The other 56 arrive ONLY from CITY_PRODUCTION, which the player builds
+          on purpose — and the same catalogue sells the Warehouse whose entire
+          stated job is raising this ceiling (`_cityProdStorage()` → storageBonus,
+          added on top a few lines below). Growing the FREE floor for city kinds
+          pays twice for the same problem.
+        · Still derived, not a literal: it tracks LOOT_RES_IDS.length, so widening
+          the loot pool widens the floor with it and this stays one edit. */
 const RES_STASH_PER_KIND = 143;
 function _resStashFloor() {
   try {
-    const kinds = (typeof RESOURCE_IDS !== 'undefined' && RESOURCE_IDS.length) ? RESOURCE_IDS.length : 14;
+    const kinds = (typeof LOOT_RES_IDS !== 'undefined' && LOOT_RES_IDS.length) ? LOOT_RES_IDS.length : 14;
     return Math.max(RES_STASH_BASE, kinds * RES_STASH_PER_KIND);
   } catch (e) { return RES_STASH_BASE; }
 }
@@ -60647,7 +60944,8 @@ function openCityHall() {
           '<div class="small-text" style="color:#8a7a4a;margin-top:6px">↑ pay taxes/fees · support the Reserve · keep ops running &nbsp;·&nbsp; ↓ smuggling · member crimes/raids · dodged taxes.' + (owner ? '' : ' Only the founder/CEO can file.') + '</div>' +
         '</div>';
       const rows = CITY_LICENSES.map(L => {
-        const has = held.indexOf(L.id) >= 0;
+        const has = cityHoldsLicense(L.id);
+        const viaNodes = cityLicenseByNodes(L.id);
         const resStr = Object.keys(L.res).length ? Object.keys(L.res).map(k => L.res[k] + '× ' + ((_meta(k).name) || k)).join(' · ') : '—';
         const meets = L.illicit || comp >= L.minCompliance;
         let right;
@@ -60657,7 +60955,9 @@ function openCityHall() {
            removed". The rows were never gone; the client drew the empty state
            with total confidence. When the read failed, say so. */
         if (Corp.licensesUnknown && !has) right = '<span class="small-text" style="color:#e0c070;white-space:nowrap">⚠ could not load</span>';
-        else if (has) right = '<span style="color:#7fe0a0;font-weight:800;white-space:nowrap">✓ HELD</span>';
+        else if (has) right = viaNodes
+          ? '<span style="color:#7fe0a0;font-weight:800;white-space:nowrap" title="Granted because your corporation operates a Reserve node">✓ HELD <span class="small-text" style="color:#9fc48a;font-weight:600">· via nodes</span></span>'
+          : '<span style="color:#7fe0a0;font-weight:800;white-space:nowrap">✓ HELD</span>';
         else if (!owner) right = '<span class="small-text" style="color:#8a7a4a;white-space:nowrap">founder files</span>';
         else if (!meets) right = '<span class="small-text" style="color:#ff9a6b;white-space:nowrap">🔒 need ' + L.minCompliance + '</span>';
         else right = '<button data-ch-license="' + esc(L.id) + '" style="cursor:pointer;border-radius:7px;padding:0.4rem 0.8rem;border:1px solid rgba(212,175,55,0.5);background:rgba(212,175,55,0.14);color:#ffcf5a;font-weight:800;white-space:nowrap">File →</button>';
@@ -60665,7 +60965,10 @@ function openCityHall() {
           '<div style="font-size:1.3rem">' + L.icon + '</div>' +
           '<div style="flex:1;min-width:0"><div style="color:#ffe6b0;font-weight:800">' + esc(L.name) + (L.illicit ? ' <span class="small-text" style="color:#e0a0ff">· ILLICIT</span>' : '') + '</div>' +
             '<div class="small-text" style="color:#b59a66">' + esc(L.blurb) + '</div>' +
-            '<div class="small-text" style="color:#8a7a4a">Fee ' + L.cinder.toLocaleString() + ' 🔥 · ' + resStr + (L.illicit ? '' : ' · min compliance ' + L.minCompliance) + '</div></div>' +
+            // "Fee 0 🔥" reads like a bug, not a decision. Say what is true.
+            '<div class="small-text" style="color:#8a7a4a">' + (L.cinder > 0 ? 'Fee ' + L.cinder.toLocaleString() + ' 🔥' : 'No fee') + ' · ' + resStr +
+              (L.illicit ? '' : ' · min compliance ' + L.minCompliance) +
+              (viaNodes ? ' · <span style="color:#9fc48a">waived — you operate a Reserve node</span>' : '') + '</div></div>' +
           right +
         '</div>';
       }).join('');
@@ -61435,10 +61738,15 @@ function _nodeTierCtx() { return { pledgeTierId: NodeTierState.pledgeTierId }; }
 // The node whose tier speaks for this player. Their best one; null when they
 // own none, which the module resolves to Free — "no node in the city" is a
 // real tier, not an error.
-function _myTierNode() {
+// ⚠ `userId` is optional and defaults to ME. It exists because the tier pill on
+//   a node city has to be able to ask "what does the OWNER of THIS city own?" —
+//   a hired mayor is looking at somebody else's city, and answering with the
+//   mayor's own nodes there would be a confident wrong number. Every other
+//   caller passes nothing and keeps the original meaning.
+function _myTierNode(userId) {
   try {
     const T = (typeof window !== 'undefined') ? window.MythicNodeTiers : null;
-    const me = (Profile.cloud && Profile.cloud.userId) || null;
+    const me = userId || (Profile.cloud && Profile.cloud.userId) || null;
     const mine = ((FoundationReserve && FoundationReserve.nodes) || [])
       .filter((n) => n && n.owner_id === me);
     /* 🏙 CITY NODES COUNT TOO, and in practice they are the ones that matter:
@@ -61457,9 +61765,14 @@ function _myTierNode() {
       }
     } catch (e) {}
     if (!mine.length || !T) return mine[0] || null;
+    // ⚠ Rank with the PLEDGE context only when the subject is me. pledge_purchases
+    //   is readable for yourself and nobody else, so folding my pledge into a
+    //   ranking of ANOTHER player's nodes would sort their nodes by my purchases.
+    const _rankCtx = (!userId || userId === ((Profile.cloud && Profile.cloud.userId) || null))
+      ? _nodeTierCtx() : {};
     let best = mine[0], bestRank = -1;
     for (const n of mine) {
-      const rank = T.TIERS.findIndex((x) => x.id === T.resolveTier(n, _nodeTierCtx()).id);
+      const rank = T.TIERS.findIndex((x) => x.id === T.resolveTier(n, _rankCtx).id);
       if (rank > bestRank) { bestRank = rank; best = n; }
     }
     return best;
@@ -61753,7 +62066,9 @@ async function nodeEstablish(typeId, fromTreasury) {
   if (!initCloud() || !Profile.cloud || !Profile.cloud.signedIn) { showToast('☁ Sign in to operate Reserve nodes.', 3000); return false; }
   if (!Corp.mine) { showToast('🏛️ Only registered corporations operate Reserve nodes — found or join one in City Hall.', 4600); return false; }
   const reqLic = NODE_REQUIRED_LICENSE[t.id];
-  if (reqLic && (Corp.licenses || []).indexOf(reqLic) < 0) {
+  // cityHoldsLicense, not a raw Corp.licenses read — a corp already operating a
+  // Reserve node holds Construction by derivation. See the helper's header.
+  if (reqLic && !cityHoldsLicense(reqLic)) {
     const lic = _cityLicense(reqLic);
     showToast('📜 ' + t.name + ' needs your corporation to hold the ' + (lic ? lic.name : reqLic + ' license') + '. File for it in City Hall → Licensing.', 6000);
     return false;
@@ -65816,12 +66131,16 @@ function _campGrantLoot(tier, mul) {
   out.push(`<span class="cinder-icon"></span> ${gem} salvage`);
   // 🧰 Survival resources — the loot run hauls back raw materials. More on
   // riskier tiers; quantities scale with the loot multiplier + Intel Center.
-  if (typeof RESOURCE_IDS !== 'undefined') {
+  /* 🎁 Drawn from the LOOT POOL, not from RESOURCE_IDS. Reading the ledger here
+     is what made every haul 80% chain goods the day RESOURCES grew — see "THE
+     LOOT POOL IS NOT THE LEDGER" next to RESOURCE_IDS. The drop COUNT and the
+     quantities are untouched; only which ids are eligible changed. */
+  if (typeof _lootResPick === 'function') {
     const tierMul = (tier === 'deepRun') ? 3 : (tier === 'raid') ? 2 : 1;
     const drops = 2 + Math.floor(Math.random() * 3) + (tier === 'deepRun' ? 2 : tier === 'raid' ? 1 : 0);
     const got = {};
     for (let i = 0; i < drops; i++) {
-      const rid = RESOURCE_IDS[Math.floor(Math.random() * RESOURCE_IDS.length)];
+      const rid = _lootResPick();
       const qty = Math.max(1, Math.round((2 + Math.random() * 4) * tierMul * lm * (1 + qBonus)));
       addRes(rid, qty); got[rid] = (got[rid] || 0) + qty;
     }
@@ -77132,7 +77451,16 @@ function _rollUnitSalvage(unit) {
     // dump the same resource 5 times in one body.
     try {
       if (typeof SALVAGE_RES !== 'undefined' && SALVAGE_RES.length) {
-        const campSet = (typeof RESOURCE_IDS !== 'undefined') ? new Set(RESOURCE_IDS) : new Set();
+        /* 🎁 "Exotic" means "not one of the staples the rolls above already
+           handed out", so the set to subtract is the LOOT POOL — not
+           RESOURCE_IDS, which answers the unrelated "what can the camp hold?".
+           Behaviour is IDENTICAL today (SALVAGE_RES ∩ the 56 promoted chain ids
+           is empty — measured, 136 exotics either way), but the old form was a
+           live instance of the same class as the loot dilution: the next
+           promotion of an id that IS in SALVAGE_RES — leather, ironOre,
+           steelPlating — would have deleted it from the exotic table without
+           anyone touching this line. round0q pins the size. */
+        const campSet = (typeof LOOT_RES_IDS !== 'undefined') ? new Set(LOOT_RES_IDS) : new Set();
         const exotic = SALVAGE_RES.filter(r => r && r.id && !campSet.has(r.id));
         if (exotic.length) {
           // Base 55% chance, scaled by rarity/level. Guaranteed for any
@@ -79810,7 +80138,16 @@ const NODE_ACCRUAL_CAP_H = 24 * 7;
 const OPS_ECON = {
   mining:       { startup: 400000, ratePerWorkerHr: 900,  salaryPerWorkerHr: 220, maxWorkers: 12, yields: { metal: 2.2 } },
   oil:          { startup: 500000, ratePerWorkerHr: 1300, salaryPerWorkerHr: 320, maxWorkers: 10, yields: { fuel: 2.6 } },
-  construction: { startup: 350000, ratePerWorkerHr: 800,  salaryPerWorkerHr: 200, maxWorkers: 12, yields: { metal: 2.0 }, inputs: { fuel: 0.5 } },
+  /* 🏗 CONSTRUCTION CO. — startup 0, and that zero is a product decision, not a
+     placeholder. City building timers put every Cinder earner (gas station
+     1h53, arena 3h23) above the free Municipal Works ceiling, so the Co. is the
+     thing that unlocks income — and it was priced at 350,000 🔥, which is node
+     income a player without a node does not have. Charging for the key to the
+     door you need the key to open is a wall, not a gate. Everything else about
+     the business (wages, output, yields, inputs, the 12-worker cap) is
+     unchanged; only the licence fee is gone. See OPS_FREE_LICENCE below — it is
+     what stops a stale published admin override from putting the fee back. */
+  construction: { startup: 0,      ratePerWorkerHr: 800,  salaryPerWorkerHr: 200, maxWorkers: 12, yields: { metal: 2.0 }, inputs: { fuel: 0.5 } },
   medical:      { startup: 450000, ratePerWorkerHr: 1000, salaryPerWorkerHr: 260, maxWorkers: 10, yields: { medicine: 0.9 }, inputs: { food: 0.8 } },
   agri:         { startup: 300000, ratePerWorkerHr: 700,  salaryPerWorkerHr: 170, maxWorkers: 14, yields: { food: 2.4 } },
   research:     { startup: 700000, ratePerWorkerHr: 1700, salaryPerWorkerHr: 430, maxWorkers: 8,  yields: { memoryShards: 0.25 }, inputs: { metal: 0.6, fuel: 0.3 } },
@@ -79847,6 +80184,36 @@ const OPS_ECON = {
   // yields {} on purpose — a bank earns Cinder interest, not resources, so it
   // must never be swept up by the production-pressure hook (cxProduce).
   bank:         { startup: 1000000, ratePerWorkerHr: 1500, salaryPerWorkerHr: 400, maxWorkers: 8,  yields: {} },
+  /* 🚌🚆 PUBLIC TRANSPORT — the two licences that unlock the city builder's
+     transit layer (stops, stations, track, player-drawn routes; the system
+     lives in public/src/transit/).
+
+     💱 THE SCALE, stated once because it is the decision a reader will
+        question. node-city's own building costs run on roughly a ÷2,000
+        divisor against this table — the design pack's 2,400,000 🔥 Stadium is
+        ~1,200 ₵ of city Cinder. So 2,000,000 and 10,000,000 cannot be city
+        building costs; at that divisor a bus company would cost 1,000 ₵, less
+        than a Cinder Trust. They are CORPORATE-scale figures, and this is the
+        corporate table — where a Stadium really is 2.4M and a Bank is 1M. A
+        Bus Company at 2M and a Rail Operator at 10M is a coherent rung on
+        exactly the ladder a player already climbs to buy a Construction Co.
+        What city Cinder buys is the infrastructure, priced in BUILDINGS.
+
+     ⚠ THESE TWO NUMBERS ARE THE ONLY COPY. Everything downstream — the City
+       Hall price, the padlock on the city build menu, the transit panel's
+       "buy it for N 🔥" line — reads them through _opEcon(), so an admin
+       retune in the Operations Economy editor reaches all three.
+
+     `yields: {}` on purpose, exactly as the Bank does: a transport operator
+     earns fares, not goods, so it must never be swept up by the production
+     pressure hook. `inputs` is real — a fleet burns fuel, and rail eats metal
+     for track and wheels, which is what ties these to the rest of the chain.
+     Payback sits beside the premium ops: fully staffed, bus nets ~14k 🔥/hr
+     (≈142h) and rail ~54k 🔥/hr (≈185h), against the Bank's ≈114h. The more
+     expensive licence takes longer, which is the shape the rest of the table
+     already has. */
+  bus:          { startup: 2000000,  ratePerWorkerHr: 1400, salaryPerWorkerHr: 520, maxWorkers: 16, yields: {}, inputs: { fuel: 0.9 } },
+  rail:         { startup: 10000000, ratePerWorkerHr: 3600, salaryPerWorkerHr: 900, maxWorkers: 20, yields: {}, inputs: { fuel: 1.2, metal: 0.4 } },
 };
 // 🏦 The bank is the ONE operation with an alternate price: 1,000,000 Cinder,
 // OR a $200 stake in Mythic Token. MT is $0.10 (the Bank of Ethos quote price),
@@ -80027,13 +80394,36 @@ function _ownsBankOp() {
         || ((typeof _jbLocalOpsList === 'function' ? _jbLocalOpsList() : []) || []).some(o => o && o.op_type === 'bank');
   } catch (e) { return false; }
 }
-async function _opCreateLocal(opType, cost) {
+/* `fundedBy` is optional and only ever a LABEL — nothing branches on it, it is
+   there so a support question about a row can be answered. It was implied by
+   `cost` alone (paid ⇒ personal, unpaid ⇒ an MT bank stake) until zero-price
+   licences existed and made "unpaid" ambiguous; passing it explicitly beats
+   widening that inference again. */
+async function _opCreateLocal(opType, cost, fundedBy) {
   if ((Operations.list || []).some(function (x) { return x && x.op_type === opType; })) { showToast('You already operate that.', 3400); return false; }
+  /* 🔴 LAST LINE BEFORE A PERMANENT ROW, AND IT NOW GUARDS THE FREE CASE ITSELF.
+     The guard above re-reads `Operations.list`, which is EMPTY for exactly the
+     reason the caller was fooled — a corp_operations read that errored — so it
+     cannot catch this on its own. Two callers pass 'free-licence'; one of them
+     shipped without the refusal and wrote a duplicate row (measured: INSERTS=1
+     on a `{code:'42501'}` read against a player who already held the licence).
+     Closing only that caller leaves the next one to rediscover it, so the
+     REFUSAL LIVES AT THE WRITE as well: a licence that costs nothing may not be
+     created against books we cannot vouch for.
+     ⚠ SCOPED TO FREE GRANTS ON PURPOSE. A PAID founding (personal Cinder, or
+       the MT bank stake at cost 0 with no `fundedBy`) has already taken the
+       player's money by the time it reaches here — refusing it would charge
+       them for nothing. Those paths are unchanged. */
+  if ((cost | 0) <= 0 && fundedBy === 'free-licence'
+      && !(Operations._fetched && !Operations.fetchFailed)) {
+    try { console.warn('[ops] free licence refused — operations list unread or unreadable', opType); } catch (e) {}
+    return false;
+  }
   const localOp = {
     id: 'local_' + opType + '_' + Date.now(),
     corp_id: (Corp.mine && Corp.mine.id) || 'local',
     op_type: opType, level: 1, workers: 0, status: 'active',
-    meta: { lastCollect: Date.now(), localOnly: true, fundedBy: cost ? 'personal' : 'mt-stake' },
+    meta: { lastCollect: Date.now(), localOnly: true, fundedBy: fundedBy || (cost ? 'personal' : 'mt-stake') },
     created_at: new Date().toISOString(),
   };
   _jbLocalOpsList().push(localOp);
@@ -80065,6 +80455,10 @@ const OP_LABELS = {
      so a new operation without a label here is buyable but shows up in the shop
      as "genelab". */
   genelab: 'Genetics Lab',
+  // 🚌🚆 The transit licences. Same rule as genelab above — an operation with
+  // no label here is buyable but shows up in the shop as "bus".
+  bus: 'Bus Company',
+  rail: 'Rail Operator',
 };
 // 📦 Storage a staffed warehouse adds to the player's resource cap. Reads the
 // LIVE econ table via _opEcon, so an admin retune reaches this too. Counts the
@@ -80096,11 +80490,26 @@ function getOpsEconOverrides() {
   } catch (e) {}
   return null;
 }
+/* 🏗 FREE LICENCES — operations whose startup fee is ZERO by product decision.
+   The table above already says 0 for these; this exists because the table is
+   only HALF of the price. `getOpsEconOverrides()` merges an admin/published
+   override on top of it, and a Catalog published before this change still
+   carries `construction: { startup: 350000 }`. Without the clamp below, every
+   player who has ever received that catalog would keep paying the old fee and
+   the "free" flow in the city would silently refuse itself with `not-free`.
+   So the clamp is the enforcement and the table entry is the documentation.
+   ⚠ Free means free to ACQUIRE. Wages, inputs and the operation's own economy
+     are untouched, and the city still charges a 15-minute build and a crew slot
+     to SITE one. This must never be read as "the business is free to run". */
+const OPS_FREE_LICENCE = { construction: 1 };
 function _opEcon(t) {
   const base = OPS_ECON[t] || null;
   if (!base) return null;
   const ov = getOpsEconOverrides();
   const o = ov && ov[t];
+  // No override → the table value stands, and for a free licence that value is
+  // already 0. Returning `base` itself (not a copy) is deliberate and unchanged
+  // — several callers have always received the live row.
   if (!o || typeof o !== 'object') return base;
   const merged = Object.assign({}, base, o);
   // `yields` is a nested map — merge it too, so overriding one resource doesn't
@@ -80113,10 +80522,19 @@ function _opEcon(t) {
   if (o.inputs && typeof o.inputs === 'object') {
     merged.inputs = Object.assign({}, base.inputs || {}, o.inputs);
   }
+  // 🏗 A free licence stays free THROUGH an override. See OPS_FREE_LICENCE.
+  // This is the last word on the price and the only place it is decided, which
+  // is what keeps every call site (Just Business, the city manifest, the city
+  // build menu) honest without one of them hardcoding a zero.
+  if (OPS_FREE_LICENCE[t]) merged.startup = 0;
   return merged;
 }
 try { window.__mg = window.__mg || {}; window.__mg.opsEcon = { table: OPS_ECON, live: _opEcon, computed: _opComputed }; } catch (e) {}
-const Operations = { list: [], _fetched: 0 };
+/* `_fetched` is "when did a TRUSTWORTHY read last complete" — 0 means never, and
+   opFetch() only stamps it when the cloud leg actually succeeded. `fetchFailed`
+   is the other half of the same answer. Both are read by cityOpsGrantFree, which
+   must never hand out a licence against a list it cannot vouch for. */
+const Operations = { list: [], _fetched: 0, fetchFailed: false };
 // 💾 Personally-funded businesses live on the PROFILE (Profile.jbLocalOps,
 // cloud-synced via __jbLocalOps__). They used to be pushed into Operations.list
 // in MEMORY ONLY — the very next fetch (or a reload) wiped them even though the
@@ -80127,23 +80545,61 @@ function _jbLocalOpsList() {
   if (!Array.isArray(Profile.jbLocalOps)) Profile.jbLocalOps = [];
   return Profile.jbLocalOps;
 }
+/* 🔴 A POSTGREST ERROR IS NOT AN EMPTY TABLE, AND THIS FUNCTION USED TO SAY IT
+   WAS. The supabase-js client RESOLVES with `{ data: null, error: {…} }` on an
+   RLS refusal, a bad column or a 5xx — it does not throw. The line here read
+   `if (r && !r.error && Array.isArray(r.data)) cloud = r.data;`, so an error
+   response left `cloud` as `[]` and fell through to the success path. The
+   caller in corpFetchMine then ran `await opFetch(); Operations.fetchFailed =
+   false;` and recorded a SUCCESSFUL read of a table it had never read.
+   WHAT THAT COST, reproduced against the shipped source with a
+   `{code:'42501', message:'permission denied for table corp_operations'}`
+   response and a player who already held the cloud licence:
+       healthy read   → fetchFailed false, list 1 row,  grant refused, 0 rows written
+       error  read    → fetchFailed FALSE, list 0 rows, grant ISSUED, 1 row written
+   The city sees no Construction Co., the free-licence auto-grant fires, and
+   `_opCreateLocal` INSERTs a second permanent `corp_operations` row (:80229)
+   beside the one that was already there. Durable, in the database, from a
+   transient RLS blip.
+   SO THE READ NOW REPORTS ITSELF. `fetchFailed` is owned here and here only —
+   the caller no longer clears it — and it is true whenever ANY leg of the cloud
+   answer was not proven good. `_fetched` is stamped only on a trustworthy read,
+   so "never read" and "read failed" stay distinguishable from "read clean and
+   empty", which is the distinction cityOpsGrantFree turns on. */
 async function opFetch() {
   try {
     let cloud = [];
-    if (Corp.mine && initCloud() && Profile.cloud && Profile.cloud.signedIn) {
+    /* Starts true and is DEMOTED, never promoted: every path that could not
+       prove it saw the player's rows has to land on false. */
+    let cloudOk = true;
+    const signedIn = !!(Profile.cloud && Profile.cloud.signedIn);
+    if (Corp.mine && initCloud() && signedIn) {
+      cloudOk = false;
       const r = await Cloud.client.from('corp_operations').select('*').eq('corp_id', Corp.mine.id).limit(40);
-      if (r && !r.error && Array.isArray(r.data)) cloud = r.data;
+      if (r && !r.error && Array.isArray(r.data)) { cloud = r.data; cloudOk = true; }
+      else { try { console.warn('[ops] corp_operations read failed', (r && r.error) || r); } catch (e2) {} }
+    } else if (signedIn && Corp._memberErr) {
+      /* The SAME hole one table upstream. `Corp.mine` is null here not because
+         the player has no corporation but because the corp_members lookup
+         errored (:81238) — so there may be corp rows we simply cannot see, and
+         claiming a clean read of them is the identical mistake. */
+      cloudOk = false;
     }
     const locals = _jbLocalOpsList();
     const cloudTypes = {};
     cloud.forEach((x) => { if (x && x.op_type) cloudTypes[x.op_type] = 1; });
-    const keep = locals.filter((x) => x && x.op_type && !cloudTypes[x.op_type]);
-    if (keep.length !== locals.length) { Profile.jbLocalOps = keep; try { saveProfile(); } catch (e) {} }
+    /* ⚠ AND THE DE-DUPE ONLY RUNS ON A TRUSTED READ. Dropping a local row
+       because the corp "does not own" that type, on the strength of a read that
+       failed, deletes the player's own operation. */
+    const keep = cloudOk ? locals.filter((x) => x && x.op_type && !cloudTypes[x.op_type]) : locals.slice();
+    if (cloudOk && keep.length !== locals.length) { Profile.jbLocalOps = keep; try { saveProfile(); } catch (e) {} }
     Operations.list = cloud.concat(keep);
-    Operations._fetched = Date.now();
+    Operations.fetchFailed = !cloudOk;
+    if (cloudOk) Operations._fetched = Date.now();
     return Operations.list;
   } catch (e) {
     Operations.list = _jbLocalOpsList().slice();
+    Operations.fetchFailed = true;
     return Operations.list;
   }
 }
@@ -80921,7 +81377,15 @@ try {
 const CITY_LICENSES = [
   { id: 'mining',       name: 'Mining License',       icon: '⛏',  cinder: 80000,  res: { metal: 200 },                              minCompliance: 50, blurb: 'Permits Mining Reserve nodes.' },
   { id: 'oil',          name: 'Oil License',          icon: '⛽', cinder: 120000, res: { fuel: 300, metal: 150 },                   minCompliance: 60, blurb: 'Permits Fuel Reserve nodes.' },
-  { id: 'construction', name: 'Construction License', icon: '🏗', cinder: 100000, res: { metal: 300 },                              minCompliance: 55, blurb: 'Permits Manufacturing & Storage nodes.' },
+  /* 🏗 NO FEE, BY DECISION. Construction is the one licence that gates a
+     player's whole industrial chain — Manufacturing and Storage nodes, and
+     through them the city's Construction Co. Charging 100,000 🔥 for the
+     permission to start building put the entry fee on the wrong side of the
+     thing it unlocks. The 300× Metal and the compliance floor stay: the cost
+     is meant to be materials and standing, not cash.
+     ⚠ THIS IS THE ONLY LICENCE WITH cinder: 0. The other eight are unchanged
+       and deliberately so — do not "tidy" them to match. */
+  { id: 'construction', name: 'Construction License', icon: '🏗', cinder: 0,      res: { metal: 300 },                              minCompliance: 55, blurb: 'Permits Manufacturing & Storage nodes.' },
   { id: 'medical',      name: 'Medical License',      icon: '⚕️', cinder: 90000,  res: { medicine: 60, supplies: 120 },             minCompliance: 50, blurb: 'Permits Supply Reserve nodes.' },
   { id: 'agriculture',  name: 'Agriculture License',  icon: '🌾', cinder: 60000,  res: { water: 200, food: 150 },                   minCompliance: 40, blurb: 'Food & biomass operations (ops update).' },
   { id: 'logistics',    name: 'Logistics License',    icon: '🚚', cinder: 70000,  res: { fuel: 180, supplies: 120 },                minCompliance: 45, blurb: 'Permits Convoy Reserve nodes.' },
@@ -80930,6 +81394,45 @@ const CITY_LICENSES = [
   { id: 'smuggling',    name: 'Smuggling License',    icon: '🕶', cinder: 60000,  res: {},                                          minCompliance: 0,  illicit: true, blurb: 'Off-ledger trade. No compliance gate — flagged by the Foundation.' },
 ];
 function _cityLicense(id) { return CITY_LICENSES.find(l => l.id === id) || null; }
+/* 📜 A LICENCE CAN BE HELD, OR IT CAN BE EARNED BY WHAT YOU ALREADY OPERATE.
+   A corporation that runs ANY Reserve node holds the Construction License
+   outright — no fee, no materials, no compliance floor. The reasoning is that
+   the licence permits Manufacturing and Storage nodes, so a corp already
+   operating in the Reserve has self-evidently cleared the bar the permit
+   exists to test; making it re-apply (and blocking it on a compliance score it
+   may not have yet) locked established players out of the industry their own
+   nodes feed.
+
+   🔴 DERIVED, NOT WRITTEN. This does NOT insert a corp_licenses row. That
+      matters for three reasons: the insert policy requires the founder, so a
+      non-founder member would silently fail; an RPC that rejects would leave
+      the entitlement half-granted; and a row written from node ownership would
+      outlive the node that justified it. Reading it live means the entitlement
+      is exactly as true as the node list is, and it costs nothing to revoke.
+
+   ⚠ It also survives a failed corp_licenses read on purpose. `licensesUnknown`
+     deliberately shows "could not load" rather than "not held" (see the render)
+     — but a node-derived grant does not depend on that read at all, so it stays
+     correct while the shelf is unknown.
+
+   ⚠ CONSTRUCTION ONLY. The other eight licences are unaffected; owning a node
+     grants no entitlement to Mining, Oil, Research or anything else. */
+function cityHoldsLicense(id) {
+  try {
+    if ((Corp.licenses || []).indexOf(id) >= 0) return true;
+    if (id !== 'construction') return false;
+    return ((FoundationReserve && FoundationReserve.nodes) || []).length > 0;
+  } catch (e) { return false; }
+}
+// True only when the hold comes from node ownership rather than a filed permit —
+// used to label the row honestly instead of claiming the corp filed for it.
+function cityLicenseByNodes(id) {
+  try {
+    return id === 'construction'
+      && (Corp.licenses || []).indexOf(id) < 0
+      && ((FoundationReserve && FoundationReserve.nodes) || []).length > 0;
+  } catch (e) { return false; }
+}
 // Reserve-node type → required corporation licence.
 const NODE_REQUIRED_LICENSE = { mining: 'mining', fuel: 'oil', mfg: 'construction', storage: 'construction', supply: 'medical', convoy: 'logistics', security: 'security', research: 'research' };
 async function cityHallApplyLicense(licId) {
@@ -81178,7 +81681,13 @@ async function _corpEnsureRun() {
         // buildings against this list and used to delete every sited building
         // when it came back empty. Record the failure so cityOpsState can say
         // "I do not know" instead of "you own nothing".
-        try { await opFetch(); Operations.fetchFailed = false; } catch (e) { Operations.list = []; Operations.fetchFailed = true; }
+        /* ⚠ THE FLAG IS NO LONGER CLEARED HERE. This line used to read
+           `await opFetch(); Operations.fetchFailed = false;` — which recorded a
+           successful read whenever opFetch did not THROW, and a PostgREST
+           `{error}` response resolves rather than throwing. opFetch owns the
+           flag now and sets it both ways; the catch stays as defence against a
+           throw from anywhere else in the call. */
+        try { await opFetch(); } catch (e) { Operations.list = []; Operations.fetchFailed = true; }
       }
     } else if (!Corp._memberErr) {
       // Only wipe when the lookup SUCCEEDED and genuinely found nothing. A
@@ -82294,6 +82803,72 @@ function _jbHandleAction(a) {
         try {
           const e = _opEcon(a.op);
           if (!e) { showToast('⚠ Unknown operation type: ' + a.op, 3600); _jbSendData(); return; }
+
+          /* 🏗 A ZERO-PRICE LICENCE IS ISSUED, NOT SOLD — take the money paths
+             out of the way before either of them can run.
+             This is not cosmetic. `chargeCinderAtomic(0)` returns
+             { ok:false, reason:'bad_amount' } by design (:57027), so the
+             personal path would refuse a free business with "Startup failed:
+             bad_amount"; and the corp path would insert a 0-Cinder
+             `op_startup` row into corp_treasury, an append-only ledger, for a
+             transaction that never happened. Neither is a payment, so neither
+             runs. No confirm either — a modal asking a player to approve
+             spending nothing is noise.
+             🔴 NOTHING IS MINTED, MOVED OR REFUNDED HERE. There is no
+                addGems/_opTreasuryRow/chargeCinderAtomic on this branch at all.
+                A player who ALREADY PAID 350,000 🔥 keeps the operation they
+                bought and is NOT compensated: after the fact a paid licence and
+                a granted one are the same row, so a refund would be a faucet
+                pointed at a charge nobody can identify. */
+          /* 🔴 THE FOURTH ROUTE TO THE SAME FREE ROW, AND THE ONE THAT WAS LEFT
+                OPEN. cityOpsGrantFree grew a `known()` refusal because a
+                swallowed PostgREST error makes "you don't own one" a lie; the
+                city's three entry points (cityOpsGrantFree ← opsAcquireFree ←
+                opsGrantNodeLicences) were funnelled through it. THIS branch —
+                the Just Business "Found" button — was not, and it reaches the
+                identical `_opCreateLocal(…, 'free-licence')` INSERT.
+                MEASURED against the shipped source, `{code:'42501'}` on the
+                corp_operations read, player ALREADY holding the cloud licence:
+                  cityOpsGrantFree  error → fetchFailed=true, INSERTS=0, refused
+                  opFound (here)    error → fetchFailed=true, INSERTS=1, and the
+                                            player is toasted "licence issued"
+                One click, one permanent duplicate corp_operations row, and
+                nothing in the codebase ever removes one. `fetchFailed` was
+                CORRECTLY true the whole time — this branch simply never asked.
+                SO IT ASKS NOW, by delegating rather than by growing a second
+                copy of the refusal: cityOpsGrantFree already owns the price
+                re-check, the ownership test, the read-before-write and the
+                idempotence. A fifth caller should route here too. */
+          if ((e.startup | 0) <= 0) {
+            /* Authoritative when it says YES — a row we can see is a row that
+               exists — and worth nothing when it says NO, which is the whole
+               bug. So a hit short-circuits and a miss decides nothing. */
+            const _held = (typeof _opsAllRows === 'function')
+              ? _opsAllRows() : (Operations.list || []);
+            if (_held.some(function (x) { return x && x.op_type === a.op; })) {
+              showToast('You already operate that.', 3400); _jbSendData(); return;
+            }
+            /* ⚠ The fallback for a missing grant function is the REFUSAL, never
+               the old inline create. Re-opening the hole because a helper went
+               missing is how this defect survived its own fix once already. */
+            const _g = (typeof window.cityOpsGrantFree === 'function')
+              ? await window.cityOpsGrantFree(a.op)
+              : { ok: false, error: 'no-grant-fn' };
+            if (_g && _g.ok && _g.existed === false) {
+              /* cityOpsGrantFree issues the success toast itself — one row, one
+                 message, wherever the licence was claimed from. */
+            } else if (_g && _g.ok) {
+              showToast('You already operate that.', 3400);
+            } else if (_g && _g.error === 'not-free') {
+              showToast('⚠ That operation is no longer free — reopen Just Business for the current price.', 4200);
+            } else {
+              /* unknown-state: we could not read the player's operations, so we
+                 do not know whether granting would duplicate. Costs them a
+                 retry; granting wrongly costs a permanent row. */
+              showToast('⚠ Could not read your operations just now — try again in a moment.', 4200);
+            }
+            _jbSendData(); return;
+          }
 
           // 🏦 BANK — the one operation you can buy two ways. Ask first, because
           // the two prices are not interchangeable: Cinder is SPENT, MT is
@@ -103255,7 +103830,13 @@ const _BME_TORDER = Object.keys(_BME_TERRAIN);
 // _bbMapFromEditor converts one to the other WITHOUT touching the stored
 // format, so the editor keeps saving exactly what it saves today.
 // ═══════════════════════════════════════════════════════════════════════════
-const BB_VER = 'v119k4';
+// ⚠ MUST match `window.BB_BUILD` at the top of public/battle-board/index.html
+// EXACTLY. It is the iframe's cache-buster (?v=BB_VER) AND the value the stage
+// self-heal below compares against; if they diverge the self-heal reloads the
+// frame once and then every client keeps serving the STALE board from the edge
+// cache forever. Bump both together, in the same commit. This is not a deploy
+// bump — version.txt / BUILD_VERSION / sw.js CACHE_VERSION are separate knobs.
+const BB_VER = 'v120w9';
 // terrain key → board tile type. Anything unlisted is plain ground.
 const BB_TERRAIN_TYPE = { water:'hazard', lava:'hazard', blight:'hazard' };
 // editor prop key → the board's billboard prop vocabulary
@@ -155923,13 +156504,23 @@ function renderMarketStock() {
 // the facilities whitelist and can't be reset by a reload.
 // ============================================================================
 const SMUGGLER_WINDOW_MS = 12 * 3600000;            // rotates every 12 hours
-/* 🔁 DERIVED, not copied. This was a hand-maintained duplicate of the 11 ids
-   in RESOURCES; a twelfth resource would have been silently un-smuggleable.
-   RESOURCE_IDS is declared far earlier in source order, so the guard is only
-   here for the standalone-parse case. */
-const SMUGGLER_RES = (typeof RESOURCE_IDS !== 'undefined' && RESOURCE_IDS.length)
-  ? RESOURCE_IDS.slice()
-  : ['food', 'ammo', 'water', 'medicine', 'energyDrink', 'supplies', 'metal', 'fuel', 'corruptedEssence', 'memoryShards', 'dna'];
+/* 🔁 SMUGGLER_RES IS GONE — it was `RESOURCE_IDS.slice()`.
+   That was written to fix a real bug (a hand-kept duplicate of the 11 ids, so a
+   twelfth resource was silently un-smuggleable) and it over-corrected: deriving
+   the smuggler's goods from the LEDGER meant the chain promotion made ~80% of
+   all deals want or pay in a resource no camp player can produce or use.
+   Sampling the whole board — 6 deals (the Lv4 maximum, see _smugglerDealCount)
+   × 20,000 windows = 122,010 resource legs — the legacy share went from 100% to
+   20.07% in a single commit. round0q re-measures exactly that.
+
+   The board now draws from the loot pool via `_lootResPick(rng)`, which takes
+   the deterministic per-window PRNG and consumes EXACTLY ONE draw — the same as
+   the `_smugPick(rng, …)` it replaces — so the rest of every deal (value,
+   quantities, want/give split) is bit-identical to before. Only the ids move.
+   ⚠ THE LEG COUNT IS THE PROOF OF THAT CLAIM, not decoration: the sample yields
+     122,010 resource legs before the change and 122,010 after. A pick that
+     consumed a second rng() would desynchronise every downstream branch and the
+     count would move. It does not. */
 const SMUGGLER_WANT_RARITY = ['common', 'uncommon', 'rare'];
 function _smugglerWindow() { return Math.floor(Date.now() / SMUGGLER_WINDOW_MS); }
 // Deterministic PRNG (mulberry32) so a given (window,index) always yields the
@@ -155971,7 +156562,7 @@ function _smugglerDeal(i) {
   // WANT side — mostly resources (the sink), sometimes Cinder or a spare card.
   const wr = rng();
   let want;
-  if (wr < 0.6) want = { kind: 'res', id: _smugPick(rng, SMUGGLER_RES), qty: _smugInt(rng, 8, 14) + Math.round(value / 6) };
+  if (wr < 0.6) want = { kind: 'res', id: _lootResPick(rng), qty: _smugInt(rng, 8, 14) + Math.round(value / 6) };
   else if (wr < 0.82) want = { kind: 'cinder', amount: Math.round(value * _smugInt(rng, 3, 6)) };
   else want = { kind: 'cardDup', rarity: _smugPick(rng, SMUGGLER_WANT_RARITY) };
   // GIVE side — pay in Cinder, resources, or (occasionally) a card.
@@ -155979,12 +156570,12 @@ function _smugglerDeal(i) {
   let give;
   if (want.kind === 'cardDup') {
     if (gr < 0.5) give = { kind: 'cinder', amount: Math.round(value * _smugInt(rng, 6, 10)) };
-    else give = { kind: 'res', id: _smugPick(rng, SMUGGLER_RES), qty: Math.round(value / 3) + _smugInt(rng, 5, 15) };
+    else give = { kind: 'res', id: _lootResPick(rng), qty: Math.round(value / 3) + _smugInt(rng, 5, 15) };
   } else if (gr < 0.4) {
     give = { kind: 'cinder', amount: Math.round(value * _smugInt(rng, 4, 8)) };
   } else if (gr < 0.8) {
-    let id = _smugPick(rng, SMUGGLER_RES);
-    if (want.kind === 'res' && id === want.id) id = _smugPick(rng, SMUGGLER_RES);
+    let id = _lootResPick(rng);
+    if (want.kind === 'res' && id === want.id) id = _lootResPick(rng);
     give = { kind: 'res', id, qty: Math.round(value / 4) + _smugInt(rng, 6, 18) };
   } else {
     const pool = _smugglerCardPool();
@@ -156116,11 +156707,131 @@ function _smugglerTrade(i) {
 // so nothing is dead weight. Lives on the Black Market screen. Pure local —
 // uses the existing getRes/addRes/spendResources sinks + addCinders.
 // ============================================================================
+/* ══ 💰 EVERY LEDGER ID HAS A PRICE SOMEBODY CHOSE ═════════════════════════════
+   🔴 THE DEFECT THIS BLOCK EXISTS FOR, MEASURED ON THE COMMIT BEFORE IT.
+   This table used to hold 11 entries and `_resCinderValue` ended in `|| 3`. That
+   was fine while RESOURCES was 11 rows. Then the chain promotion took RESOURCES
+   to 70 and `_refineryList()` — which returns ALL of RESOURCES — put 59 rows on
+   the Refinery shelf whose sale price nobody had ever chosen. `|| 3` was not a
+   crash guard any more; it was the price of 59 goods, 56 of them promoted in a
+   single commit that never mentioned pricing.
+
+   What that was worth, measured against the shipped producer shelf:
+
+     a tier-0 chain building (CHAIN_TIER[0] in /src/city/production.data.js)
+     eats {fuel:10} = 40 🔥 of input per cycle and yields 40 units.
+       sell the 10 fuel directly        10 × 4 =  40 🔥
+       sell the 40 units at `|| 3`      40 × 3 = 120 🔥   ← 3.000×
+     Over one 36 h OFFLINE_CAP collect (6 cycles) that is 720 🔥 gross for
+     240 🔥 of fuel — +480 🔥 per building per collect, forever, and
+     `_refinerySellRes` pays it through `addCinders` → `addGems` → Profile.gems,
+     i.e. REAL currency. 47 of the 56 promoted producers were Cinder-positive.
+
+   ── THE RULE THESE 59 NUMBERS COME FROM ─────────────────────────────────────
+   🔴 NONE OF THEM WAS CHOSEN BY HAND. Each is the INPUT-PARITY price of the
+   building that makes it:
+
+       value(out) = max(1, floor( Σ inputs.qty × value(input) / yield ))
+
+   i.e. dumping one cycle's output recovers AT MOST what that cycle's inputs
+   would have fetched at the Refinery, and never more. The dump channel is
+   value-neutral by construction; a producer's payoff is the RESOURCE — to build
+   with, to trade, to feed the chain — never the Cinder you get for binning it.
+   That is the only shape that leaves refining a decision instead of a faucet.
+
+   The arithmetic, straight off CITY_PRODUCTION (all inputs are legacy ids, so
+   there is no circularity — a chain price never feeds another chain price):
+     tier 0   {fuel:10} = 40 🔥  / yield 40  = 1.000 → 1     out/in 1.000
+     tier 1   {fuel:12,water:15} = 78 🔥 / yield 28 = 2.786 → 2   out/in 0.718
+     tier 2   {fuel:15,supplies:12} = 96 🔥 / yield 16 = 6.000 → 6  out/in 1.000
+     wood     timberyard   {fuel:12} = 48 🔥 / 55 = 0.873 → 1  out/in 1.146
+     stone    stonequarry  {fuel:18,water:10} = 92 🔥 / 60 = 1.533 → 1  out/in 0.652
+     cloth    textilemill  {water:20,food:8} = 56 🔥 / 26 = 2.154 → 2  out/in 0.929
+
+   ⚠ WHY THE PRICES RISE WITH TIER WHILE THE YIELD FALLS: that is the shelf's
+     own shape (production.data.js: "Output falls and price rises with tier,
+     which is the only shape that makes refining a decision"). Deriving from the
+     shelf reproduces it for free. Nobody decided that a tier-2 good is worth 6.
+
+   ⚠ `wood` STILL COMES OUT AT 1.146×, AND IT CANNOT BE FIXED HERE. The Timber
+     Yard makes 55 wood from 48 🔥 of fuel, so parity would be 0.87 and this
+     table clamps at 1 (`max(1, …)` — a price of 0 would divide by zero in
+     `_refineryYield`). The clamp is the residue, down from the 3.438× it was
+     worth at `|| 3`. Fixing it properly means retuning the Timber Yard, which is
+     a balance change and not this round's. round0t §4 pins the integers
+     (55 out 🔥 / 48 in 🔥) so it cannot drift further.
+
+   🗺 ⚠ AND PARITY HERE WAS NOT ENOUGH ON ITS OWN — the other half of this defect
+     was NOT in this file. `pending()` multiplied a building's YIELD by the
+     terroir factor while `collect()` charged its INPUTS flat, so a player's real
+     ratio was parity × tf, and tf reaches 4.800 on the node's own seam: every
+     one of these 59 goods was still a 4.8× Cinder faucet for anyone standing on
+     good ground, and the hand-priced legacy shelf was 38.4×. Repricing could not
+     reach it — the amplification is a MULTIPLIER on whatever number is written
+     here, and pricing against 4.800 puts a tier-0 good at 0.208🔥, which
+     `addGems`'s `Math.floor` pays as literally 0. It is fixed in
+     public/src/city/production.state.js, which now charges the cycle's inputs by
+     the same factor it scaled the output by; round0t §3b RUNS that module and
+     measures the ledger delta rather than trusting either file.
+
+   🔴 THE TABLE IS A MIRROR AND THE GATE IS WHAT MAKES IT SAFE. The derivation
+   above lives in an ES module (/src/city/production.data.js) that this file
+   CANNOT import — the globals trap, and worse, a module loads asynchronously, so
+   a "compute the prices when the chain module arrives" design would leave every
+   sale before that moment falling through `|| 3` again. So the numbers are
+   written out here and round0t of tools/economy-tests/run.mjs RE-DERIVES all 59
+   from the shipped CITY_PRODUCTION and fails on ANY drift, in either direction.
+   Same discipline as PROMOTED_CHAIN_IDS / round0p. DO NOT EDIT THESE BY HAND —
+   retune CHAIN_TIER and let the gate tell you the new number.
+
+   ⚠ THE `|| 3` BELOW IS NOW A CRASH GUARD AND NOTHING ELSE. round0t asserts that
+     every id in RESOURCES has an own entry here, so no shipped id can reach it.
+     It stays because `_resCinderValue` is also called with ids off the wire
+     (broker deals, admin editors) and a division by undefined in
+     `_refineryYield` would be worse than a wrong price. */
 const RESOURCE_CINDER_VALUE = {
+  // ── the r12 camp staples — shipped prices, chosen by hand, unchanged ───────
   food: 2, water: 2, ammo: 3, supplies: 3, metal: 3, energyDrink: 4, fuel: 4, medicine: 5,
   corruptedEssence: 8, memoryShards: 10, dna: 10,
+  // ── construction raws (r12) — input parity off their own producers ────────
+  wood: 1, stone: 1, cloth: 2,
+  // ── chain tier 0 — 45 raws, parity 40🔥 / 40 units ────────────────────────
+  aluminumOre: 1, anomalousEnergy: 1, arcaneCrystal: 1, clay: 1, coal: 1,
+  copperOre: 1, corn: 1, cotton: 1, crudeOil: 1, freshFish: 1,
+  fruit: 1, gravel: 1, herbs: 1, limestone: 1, mythicResidue: 1,
+  naturalGas: 1, nickelOre: 1, plantFiber: 1, potatoes: 1, rice: 1,
+  sand: 1, seafood: 1, seaweed: 1, shellfish: 1, silica: 1,
+  soybeans: 1, timber: 1, vegetables: 1, wheat: 1, zincOre: 1,
+  /* ⛏ THE EXTRACTION ROUND — 15 more tier-0 raws, and every one of them is 1
+     for the same DERIVED reason as the thirty above and not because a rare
+     mineral "feels" cheap: the price is `max(1, floor(inputValue / yield))` off
+     their own generated producer, and CHAIN_TIER[0] is 10 fuel (40🔥) for 40
+     units on all of them. round0t re-derives exactly that and reddens on any
+     hand-chosen figure.
+     ⚠ SCARCITY IS ALREADY PRICED, TWICE, AND NOT HERE. `DEPOSITS[].yield` in
+       /src/economy/recipes.js gives platinum 5/labour-day against coal's 88,
+       and prices.js derives the city market price off the recipe graph. This
+       table is the CAMP refinery's swap rate, whose only input is what the
+       ledger building costs to run — a third opinion on how precious platinum
+       is would be a number with no model behind it and two systems to disagree
+       with. */
+  anomalousMatter: 1, cobalt: 1, dimensionalMaterial: 1, goldOre: 1, lithium: 1,
+  platinumOre: 1, quartz: 1, rareEarthMinerals: 1, rawWater: 1, realityFragments: 1,
+  realityMatter: 1, silverOre: 1, sugarCrops: 1, titanium: 1, tungsten: 1,
+  // ── chain tier 1 — 17 intermediates, parity 78🔥 / 28 units ───────────────
+  beverages: 2, boosterPacks: 2, bread: 2, cannedFood: 2, cardStock: 2,
+  cardboard: 2, constructionComponents: 2, electricity: 2, freshWater: 2, gasoline: 2,
+  lumber: 2, metalComponents: 2, packagingMaterial: 2, pigIron: 2, preparedMeals: 2,
+  printedCards: 2, recycledMetal: 2,
+  // ── chain tier 2 — 9 finished goods, parity 96🔥 / 16 units ───────────────
+  cars: 6, fabric: 6, householdGoods: 6, machineParts: 6, maintenanceParts: 6,
+  researchChemicals: 6, researchEquipment: 6, sportingGoods: 6, tires: 6,
 };
 const REFINERY_CONVERT_SPREAD = 0.6;   // 40% smuggler cut on resource→resource swaps
+/* ⚠ The `|| 3` is a CRASH GUARD, not a price — see the block above. Every id in
+   RESOURCES has an own entry, asserted by round0t; only an id from off the wire
+   can reach the fallback, and it must return something non-zero because
+   `_refineryYield` divides by it. */
 function _resCinderValue(id) { return RESOURCE_CINDER_VALUE[id] || 3; }
 function _refineryList() { return (typeof RESOURCES !== 'undefined' ? RESOURCES : []).filter(r => r && r.id); }
 // How much of `toId` you get for `amt` of `fromId` (value-matched, minus the cut).
@@ -169817,7 +170528,22 @@ function _campLootContainer(containerId) {
     ] : [],
   } : { rarity, name: 'Hidden Card', class: 'Survivor', sigil: '?', stats: [] };
   // 📦 Pick 2 random resources + an item.
-  const resPool = (typeof RESOURCES !== 'undefined' && Array.isArray(RESOURCES)) ? RESOURCES : [];
+  /* 🎁 The weighted LOOT-POOL rows, not the raw RESOURCES array — a container in
+     a ruin pays in what a scavenger finds. Reading RESOURCES here made 80% of
+     container slots a chain good the moment the ledger grew; see "THE LOOT POOL
+     IS NOT THE LEDGER" next to RESOURCE_IDS. Rows repeat by weight, so the
+     uniform pick below is the weighted draw and the exclusion still works. */
+  /* 🔴 NO `|| RESOURCES` FALLBACK HERE, AND THAT IS THE POINT.
+     The first version of this fix kept the old expression as a guard:
+       (typeof _lootResRows === 'function') ? _lootResRows() : RESOURCES
+     `_lootResRows` is a hoisted top-level declaration in this same file, so the
+     right-hand branch was DEAD — and what it was dead code FOR was the exact bug
+     above: the whole 70-id ledger, 80% of it unusable. A guard whose fallback is
+     the defect re-arms it the moment anything makes the guard true, and nothing
+     would have reported it. round0q asserts this line names no ledger array.
+     The never-empty degradation lives inside _lootResBag(), which is one place
+     and is tested; it does not need a second, worse copy here. */
+  const resPool = _lootResRows();
   const lo = Math.max(0, cont.resMin | 0) || 1;
   const hi = Math.max(lo, cont.resMax | 0) || 5;
   const pick = (excludeId) => {
@@ -169828,7 +170554,14 @@ function _campLootContainer(containerId) {
     return { id: r.id, name: r.name, sigil: r.icon || '◆', color: r.color || null, amount: lo + Math.floor(Math.random() * (hi - lo + 1)), rarity: 'rare' };
   };
   const res1 = pick();
-  const res2 = pick(res1 ? res1.name : null);
+  /* 🔴 `res1.id`, NOT `res1.name`. This line passed the DISPLAY NAME ("Canned
+     Food") to a parameter that filters on `r.id !== excludeId` ("cannedFood"),
+     so the filter removed nothing and the two container slots have ALWAYS been
+     able to roll the same resource twice. Pre-existing — it predates the chain
+     promotion — and worth ~1/|pool| of every container being a visible duplicate
+     while the code right above it reads as though duplicates were handled.
+     round0t draws the real `pick` expression and asserts res1 !== res2. */
+  const res2 = pick(res1 ? res1.id : null);
   // 🎒 Roll an item — admin can pin a category or leave null for random.
   let itemDef = null;
   try {
@@ -180565,7 +181298,11 @@ function mountSpectatorOverlays() {
   if (!opp) {
     opp = document.createElement('div');
     opp.id = 'spec-opp-hand';
-    opp.style.cssText = 'position:fixed;top:84px;left:50%;transform:translateX(-50%);z-index:9050;max-width:min(96vw,1040px);pointer-events:none';
+    // ⚠ top was a hard 84px — the same top-centre band the hero banners now
+    // occupy (src/battle/hud.css --hud-banner-h). Spectating overlays a real
+    // battle screen, so the face-up opponent hand landed on top of the banners.
+    // The 84px fallback keeps the pre-HUD position if hud.css is absent.
+    opp.style.cssText = 'position:fixed;top:calc(var(--hud-banner-h, 84px) + 8px);left:50%;transform:translateX(-50%);z-index:9050;max-width:min(96vw,1040px);pointer-events:none';
     document.body.appendChild(opp);
   }
   opp.innerHTML = _specOppHandHtml();
@@ -206571,7 +207308,15 @@ function _openNodeCity(nodeId, _resolved) {
   }
   const f = document.createElement('iframe');
   f.id = 'node-city-frame';
-  f.src = 'node-city/index.html?v=120t9';
+  /* 🔴 THIS IS A DEPLOY KNOB — the FIFTH, and it is not on CLAUDE.md's list.
+     sw.js is network-first for navigations and for /src/, and CACHE-FIRST for
+     everything else. The city page is loaded here as an iframe SUB-RESOURCE,
+     not as a navigation, so it takes the cache-first branch: this ?v= is the
+     only thing in the URL that can bust it. It sat at 120t9 through an entire
+     rewrite of the city and its economy — bump it with the other four or a
+     returning player can be served the old city out of cache while every
+     other knob says the deploy landed. */
+  f.src = 'node-city/index.html?v=120w9';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);
@@ -206623,58 +207368,126 @@ function _openNodeCity(nodeId, _resolved) {
    It never arrives, because the two ids are not the same kind of thing:
      • App._cityNodeId is a TERRITORY-WAR node — 'N-25' (tw_node_owners.node_id)
      • FoundationReserve.nodes are PRN rows — economy_nodes.id, a UUID
-   economy_nodes carries no column referencing a TW node, so the lookup cannot
-   match, ever. It could not match BEFORE this pill existed either: the original
-   code did the same find(), got null, and handed null to resolveTier — which
-   answers the player's PLEDGE tier, or Free. That produced a stable, correct-
-   for-the-data answer, and I turned it into a permanent "checking…" plus a
-   nodeFetch() every 8s (each one an extra corpEnsure round-trip) for every
-   player with a city open. That is strictly worse than what it replaced.
+   economy_nodes carries no column referencing a TW node (checked again against
+   sql/029 and sql/033 — there is still none), so THAT lookup cannot match, ever.
+   Removing the "checking…" state was right. Keeping the dead find() was not.
 
-   So the fallback is the answer, not a placeholder: no resolvable PRN means the
-   rate really is the pledge/Free tier, and the pill should say so plainly. The
-   find() stays, so the day a TW node does carry a PRN reference the pill starts
-   showing it with no further change.
+   🔴 AND THE FIND() WAS LOOKING IN THE WRONG TABLE THE WHOLE TIME.
+   The note above concluded "a link between a TW node and a PRN does not exist,
+   so the node's own tier is unknowable". That conclusion was wrong, and it made
+   the pill say FREE to every player who owns a node. The join that does exist is
+   the trivial one: App._cityNodeId is a TW node id, and _twForge().nodes is
+   keyed by exactly those ids — SAME ID SPACE, no schema change needed. A TW node
+   carries `tier` directly, and tiers.js's resolveTier already accepts that shape
+   (it reads `node.tier` OR `node.meta.tier`, deliberately, for this reason). The
+   old code simply searched the PRN array with a TW id and never searched the TW
+   array at all. See _cityTierResolve below. */
+/* 🎯 WHERE THE PILL'S NUMBER COMES FROM, AND WHICH OF THE THREE WAYS IT CAME.
+   Returns { node, tier, path, kind, subjectIsMe }. `path` is not decoration —
+   it is printed into the tooltip, because the last bug in this pill was an
+   unexplained number ("checking tier…") that nobody could reason about. If the
+   pill ever looks wrong again, hovering it says which branch produced it.
 
-   ⚠ What this does NOT do is make the pill reflect the NODE's tier on a node
-     city — the original request. That needs a link between a TW node and a PRN,
-     which does not exist in the schema. Inventing one in the client would just
-     be a guess wearing a number. */
+     'city-node'  — this city's own TW node carries a tier. The honest join.
+     'owner-best' — it does not, so we answer with the best tier among the nodes
+                    the city's owner actually holds (PRNs + owned city nodes).
+                    "The level of the node they own" is still well defined even
+                    when this city cannot be tied to one specific node.
+     'pledge'     — they hold no node at all. resolveTier(null) then answers the
+                    pledge tier, or Free.
+   ⚠ 'pledge' IS THE CORRECT ANSWER for a player with no nodes, not a failure
+     mode. Do not "fix" it into something louder.
+   ⚠ The subject is the CITY'S OWNER, not the viewer — a hired mayor is looking
+     at somebody else's city. pledge_purchases is only readable for yourself, so
+     when the subject is not me the pledge context is dropped rather than
+     substituting mine; that is why 'pledge' on someone else's city says Free. */
+function _cityTierResolve() {
+  const T = (typeof window !== 'undefined') ? window.MythicNodeTiers : null;
+  if (!T) return null;
+  const meId = (Profile.cloud && Profile.cloud.userId) || null;
+  const subject = App._cityOwnerId || meId || null;
+  const subjectIsMe = !App._cityOwnerId || (!!meId && App._cityOwnerId === meId);
+  const ctx = subjectIsMe ? _nodeTierCtx() : {};
+  // PATH A — this city's own node, found in the id space App._cityNodeId is
+  // actually from. Only counts when a tier is really stamped on it: an untiered
+  // node tells us nothing about its owner's standing, and treating "no tier set"
+  // as an answer would print Free over a player who has a node elsewhere.
+  try {
+    const twNodes = (typeof _twForge === 'function') ? ((_twForge() || {}).nodes || []) : [];
+    const cityNode = App._cityNodeId
+      ? (twNodes.find((n) => n && n.id === App._cityNodeId) || null) : null;
+    if (cityNode && cityNode.tier && T.tierById(cityNode.tier)) {
+      return { node: cityNode, tier: T.resolveTier(cityNode, ctx), path: 'city-node', kind: 'tw', subjectIsMe };
+    }
+  } catch (e) {}
+  // PATH B — the owner's own nodes. _myTierNode already ranks PRNs and owned
+  // city nodes together and returns the best; reusing it means there is one
+  // ranker in this file, not two that can disagree about a player's rate.
+  try {
+    const best = _myTierNode(subject);
+    if (best) {
+      const prn = ((FoundationReserve && FoundationReserve.nodes) || []).indexOf(best) >= 0;
+      return { node: best, tier: T.resolveTier(best, ctx), path: 'owner-best', kind: prn ? 'prn' : 'tw', subjectIsMe };
+    }
+  } catch (e) {}
+  // PATH C — no node anywhere. The pledge tier, or Free, and that is the truth.
+  return { node: null, tier: T.resolveTier(null, ctx), path: 'pledge', kind: null, subjectIsMe };
+}
+/* The tooltip text for each path. Split out so the pill and its 2s resync build
+   the same string from the same place. */
+function _cityTierWhy(res, T) {
+  const who = res.subjectIsMe ? 'you' : (App._cityOwnerName || 'the owner');
+  const nm = (res.node && (res.node.name || res.node.id)) || 'the node';
+  if (res.path === 'city-node') return 'Read from THIS CITY\'S node (' + nm + '). ';
+  if (res.path === 'owner-best') {
+    return 'No tier is set on this city\'s node, so this is the best tier among the nodes '
+      + who + ' own' + (res.subjectIsMe ? '' : 's') + ' — ' + nm + '. ';
+  }
+  return res.subjectIsMe
+    ? 'You hold no node, so this is your pledge rate. '
+    : 'No node is visible for ' + who + ' from here, so this is the Free rate. ';
+}
 function _cityTierPill() {
   const T = (typeof window !== 'undefined') ? window.MythicNodeTiers : null;
   if (!T) return;                                    // module absent → no pill, no feature
   const old = document.getElementById('node-city-tier');
   if (old) { try { old.remove(); } catch (e) {} }
-  /* 🔌 THE PILL STATES THE RATE THE PLAYER ACTUALLY EARNS AT.
-     A previous pass split this into "free camp" vs "not loaded yet" and printed
-     "checking tier…" for the second. That was wrong about the data: the find()
-     below compares a TERRITORY-WAR node id ('N-25') against economy_nodes.id
-     (a UUID), so it never matches and "not loaded yet" never resolves — see the
-     note on the removed _cityTierEnsureNodes above. The pill sat on "checking"
-     forever and re-fetched every 8 seconds.
-     resolveTier(null) is not a fallback here, it is the correct answer: with no
-     resolvable PRN the rate IS the player's pledge tier, or Free. The find()
-     stays so a real PRN reference would be picked up automatically if one is
-     ever added to the schema. */
-  const _nodes = (FoundationReserve && FoundationReserve.nodes) || [];
-  const node = _nodes.find((n) => n && n.id === App._cityNodeId) || null;
-  const tier = T.resolveTier(node, _nodeTierCtx());
+  const res = _cityTierResolve();
+  if (!res) return;
+  const tier = res.tier, node = res.node;
   const canEdit = (typeof isAdmin === 'function') && isAdmin();
   const p = document.createElement('button');
   p.id = 'node-city-tier';
   p.textContent = '🔌 ' + tier.name + ' · ' + tier.rate + '%' + (canEdit ? ' ✎' : '');
-  // Remember what we drew, so the 2s refresh can skip a no-op rebuild.
-  try { App._cityTierKey = tier.id + ':' + tier.rate + ':' + (canEdit ? 1 : 0); } catch (e) {}
-  p.title = (node
-      ? 'Node tier — '
-      : 'Your tier — no PRN is attached to this city, so this is your pledge rate. ')
+  // Remember what we drew, so the 2s refresh can skip a no-op rebuild. `path` is
+  // part of the key: the rate can stay 5% while the REASON changes (the admin
+  // stamps this city's node with the tier the owner already had), and the
+  // tooltip would otherwise keep explaining the old branch.
+  try { App._cityTierKey = tier.id + ':' + tier.rate + ':' + res.path + ':' + (canEdit ? 1 : 0); } catch (e) {}
+  p.title = '🔌 ' + tier.name + ' — ' + _cityTierWhy(res, T)
     + tier.rate + '% Cinder pool share, ' + (tier.rate + T.RESOURCE_BONUS_PCT) + '% resource generation.'
     + (canEdit ? ' Click to assign.' : '');
-  p.style.cssText = 'position:fixed;top:52px;left:16px;z-index:2147483301;padding:6px 13px;border-radius:999px;'
+  /* 📐 BOTTOM-LEFT, AND NOT BY TASTE. This was top:52px, stacked under the owner
+     badge — directly on top of the city's own top-left content, and WHICH thing
+     it covered changed with the width:
+       · ≥ ~1700px  #topbar fits on one row, --topbarh is 60px, #leftcol starts at
+                    60 — the pill (52…82) sat across the "VITAL SIGNS" heading and
+                    made it unreadable. That is the reported bug.
+       · ≤ ~1600px  #topbar WRAPS, --topbarh becomes ~103px, #leftcol drops clear —
+                    and the pill instead covered the second row of resource chips
+                    (City Time at 16,55…120,90 at 1600 wide).
+     So no top offset works at every width: the two things it can hit move in
+     opposite directions. Nudging the number would just choose which width to be
+     broken at. The bottom-left corner is the one part of the city that is empty
+     BY CONSTRUCTION at every width — #leftcol is `max-height:calc(100% -
+     var(--topbarh) - 140px)`, so it never reaches the bottom band, and every
+     bottom-anchored city element (#buildbar, #toasts, #ctrlhint) is centred with
+     left:50%. Nothing to collide with, at any width, in either wrap state. */
+  p.style.cssText = 'position:fixed;bottom:16px;left:16px;z-index:2147483301;padding:6px 13px;border-radius:999px;'
     + 'font-family:Cinzel,serif;font-weight:700;font-size:11.5px;letter-spacing:.07em;color:#0f0b04;'
     + 'background:linear-gradient(180deg,' + tier.accent + ',rgba(0,0,0,.25));border:1px solid rgba(0,0,0,.4);'
     + 'box-shadow:0 6px 20px rgba(0,0,0,.5);cursor:' + (canEdit ? 'pointer' : 'default');
-  if (canEdit) p.onclick = () => { try { _cityTierModal(node); } catch (e) {} };
+  if (canEdit) p.onclick = () => { try { _cityTierModal(node, res.kind); } catch (e) {} };
   document.body.appendChild(p);
 }
 /* 🔁 Keep the pill honest as data arrives. FoundationReserve.nodes lands after
@@ -206688,19 +207501,32 @@ function _cityTierPillSync() {
     if (!document.getElementById('node-city-tier')) return;   // city not open
     const T = (typeof window !== 'undefined') ? window.MythicNodeTiers : null;
     if (!T) return;
-    const _nodes = (FoundationReserve && FoundationReserve.nodes) || [];
-    const node = _nodes.find((n) => n && n.id === App._cityNodeId) || null;
+    const res = _cityTierResolve();
+    if (!res) return;
     const canEdit = (typeof isAdmin === 'function') && isAdmin();
-    const tier = T.resolveTier(node, _nodeTierCtx());
-    const key = tier.id + ':' + tier.rate + ':' + (canEdit ? 1 : 0);
+    // Same key _cityTierPill stamps, built the same way — see the note there on
+    // why `path` is in it.
+    const key = res.tier.id + ':' + res.tier.rate + ':' + res.path + ':' + (canEdit ? 1 : 0);
     if (key === App._cityTierKey) return;                     // nothing changed
     _cityTierPill();
   } catch (e) {}
 }
-function _cityTierModal(node) {
+function _cityTierModal(node, kind) {
   const T = (typeof window !== 'undefined') ? window.MythicNodeTiers : null;
   if (!T) return;
   if (!node) { showToast('🔌 No PRN is attached to this city — its owner is on the Free tier (0.5%). Nothing to assign.', 5600); return; }
+  /* ⚠ THIS MODAL WRITES TO economy_nodes AND ONLY economy_nodes.
+     Now that the pill can resolve a TERRITORY-WARS node (the 'city-node' path),
+     it can hand one here — and `update … .eq('id','N-05')` on economy_nodes
+     matches nothing and returns no error. That is the silent-no-op trap
+     _cityTierAssign already guards against, and it would have shown the
+     "run sql/029" toast, which is the wrong diagnosis entirely. TW node tiers
+     are owned by the City Nodes admin panel (it sets node.tier and publishes
+     it); say so rather than opening a dialog that cannot save. */
+  if (kind === 'tw') {
+    showToast('🔌 ' + (node.name || node.id) + ' is a City Node — set its tier in City Nodes → Admin → Node, not here.', 6000);
+    return;
+  }
   const esc = (s) => (typeof escapeHtml === 'function') ? escapeHtml(String(s == null ? '' : s)) : String(s == null ? '' : s);
   const cur = T.resolveTier(node, _nodeTierCtx());
   const ov = document.createElement('div');
@@ -207349,6 +208175,189 @@ window.cityFetchMarketNodes = async () => {
     }).filter(n => n.id);
   } catch (e) { return []; }
 };
+/* ════════════════════════════════════════════════════════════════════════════
+   🤝 CITY-TO-CITY TRADE — the three network operations, and the ONLY place they
+   may live.  (sql/038_city_economy_trade.sql)
+   ----------------------------------------------------------------------------
+   /src/economy/trade.js holds ZERO Supabase calls by design and must keep
+   holding zero: `Cloud`, `Profile` and `App` are top-level `const` in this file
+   — global LEXICAL bindings, invisible to an ES module (CLAUDE.md, the globals
+   trap, which has already cost this project real time twice). So the module
+   computes what to publish and what to buy, and these three functions are the
+   only things that talk to the database. Exactly the seam
+   /src/trading/index.js already uses for the player market.
+
+   🔴 sql/038 IS NOT APPLIED. Every one of these must therefore be a graceful
+      no-answer TODAY: publish returns false, discover returns [], fill returns
+      null, and the city trades against its simulated neighbours exactly as it
+      did before this existed. Guarded per CLAUDE.md — "the app MUST still work
+      offline / before tables exist". None of them ever throws into the iframe.
+
+   ⚠ NO PII CROSSES. What goes out is the city's node, its earned
+     specializations and what it trades; what comes back adds a display name
+     from public_profiles, which exists to be public. Never owner_id, never
+     anything from auth.users.
+   ════════════════════════════════════════════════════════════════════════════ */
+function _cityTradeClient() {
+  try {
+    if (typeof initCloud !== 'function' || !initCloud()) return null;
+    if (!Cloud || !Cloud.client) return null;
+    if (!Profile.cloud || !Profile.cloud.signedIn || !Profile.cloud.userId) return null;
+    return Cloud.client;
+  } catch (e) { return null; }
+}
+/* 📤 PUBLISH. One row per (owner, node) — the table's own unique key — so this
+   is an upsert and not an insert that grows forever.
+   ⚠ OWNER ONLY. A hired mayor must not publish the city they are managing: RLS
+     stamps owner_id = auth.uid(), so a mayor's publish would file the OWNER's
+     node under the MAYOR's account and put two cities in the market claiming
+     the same ground. `cityOwnerIdentity().isOwner` is the same authority answer
+     the governance panel uses. */
+window.cityTradePublish = async function (payload) {
+  try {
+    const sb = _cityTradeClient();
+    if (!sb || !payload || typeof payload !== 'object') return false;
+    const nodeId = payload.nodeId != null ? String(payload.nodeId) : '';
+    if (!nodeId) return false;
+    let ident = {};
+    try { ident = window.cityOwnerIdentity() || {}; } catch (e) {}
+    if (ident.isOwner === false) return false;
+    const me = Profile.cloud.userId;
+    const specs = Array.isArray(payload.specs) ? payload.specs.map(String).slice(0, 12) : [];
+    const clean = (o) => {
+      const out = {};
+      if (o && typeof o === 'object') for (const k in o) {
+        const v = Number(o[k]);
+        // A NaN written into jsonb comes back as NaN for every reader of this
+        // row. Numbers only, and only real ones.
+        if (isFinite(v) && v > 0) out[String(k)] = Math.round(v * 100) / 100;
+      }
+      return out;
+    };
+    const prof = await sb.from('city_profiles').upsert({
+      owner_id: me, node_id: nodeId,
+      city_name: (Profile.name || Profile.username || 'Unnamed City') + '',
+      specializations: specs,
+      sells: clean(payload.sells), buys: clean(payload.buys),
+      economy_day: payload.day | 0,
+      population: Math.max(0, payload.population | 0),
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'owner_id,node_id' }).select('id').maybeSingle();
+    /* A missing table (42P01) lands here as an error, not a throw. Return false
+       and say nothing: until the migration runs this is the NORMAL answer and a
+       console line every twenty minutes is noise, not a signal. */
+    if (!prof || prof.error || !prof.data || !prof.data.id) return false;
+    const cityId = prof.data.id;
+
+    /* Offers are REPLACED, not accumulated. A standing offer is a snapshot of
+       what the city has today; yesterday's is not a second, additional pledge.
+       Delete-then-insert is safe under the table's RLS because both statements
+       are scoped to owner_id = auth.uid() — a buyer's fill goes through the
+       SECURITY DEFINER RPC and never touches this path.
+       ⚠ Deliberately drops rows that other players had partly filled. The
+         alternative — keeping them — would leave a filled-against offer alive
+         after the goods behind it were consumed by the city itself. */
+    const rows = Array.isArray(payload.offers) ? payload.offers : [];
+    await sb.from('city_trade_offers').delete().eq('owner_id', me).eq('city_id', cityId);
+    const ins = rows.filter(r => r && (r.side === 'sell' || r.side === 'buy') &&
+                                  typeof r.res === 'string' && isFinite(+r.units) && +r.units > 0)
+                    .slice(0, 24)
+                    .map(r => ({
+                      owner_id: me, city_id: cityId, side: r.side, resource_id: r.res,
+                      units: Math.round(+r.units * 100) / 100,
+                      unit_price: Math.max(0, Math.round((+r.unitPrice || 0) * 100) / 100),
+                      urgent: !!r.urgent,
+                    }));
+    if (ins.length) { const w = await sb.from('city_trade_offers').insert(ins); if (w && w.error) return false; }
+    return true;
+  } catch (e) { return false; }
+};
+/* 📥 DISCOVER. Other players' cities, shaped exactly as trade.js's partner
+   record — {id, name, nodeId, specs[], sells{}, buys{}, offers[]}.
+   ⚠ OTHER PLAYERS ONLY (`.neq('owner_id', me)`). city_trade_fill() refuses a
+     self-fill anyway ("cannot fill your own offer" — otherwise a player could
+     launder goods between two of their own cities and farm the spread), so
+     filtering here just stops us wasting RPCs discovering ourselves.
+   ⚠ Returns [] on any failure, which trade.js reads as "no real neighbours"
+     and answers with its simulated ones. */
+window.cityTradeDiscover = async function () {
+  try {
+    const sb = _cityTradeClient();
+    if (!sb) return [];
+    const me = Profile.cloud.userId;
+    const r = await sb.from('city_profiles')
+      .select('id, owner_id, node_id, city_name, specializations, sells, buys, updated_at')
+      .neq('owner_id', me)
+      .order('updated_at', { ascending: false })
+      .limit(24);
+    if (!r || r.error || !Array.isArray(r.data) || !r.data.length) return [];
+    const ids = r.data.map(c => c && c.id).filter(Boolean);
+    /* The open sell offers of those cities, in ONE query rather than one per
+       city. `filled_units < units` cannot be expressed as a column filter in
+       PostgREST, so the open test is applied here — the partial index on the
+       table has the same predicate, so this is reading what that index covers. */
+    const byCity = {};
+    try {
+      const o = await sb.from('city_trade_offers')
+        .select('id, city_id, side, resource_id, units, filled_units, unit_price, urgent, expires_at')
+        .in('city_id', ids).eq('side', 'sell').limit(240);
+      if (o && !o.error && Array.isArray(o.data)) {
+        const now = Date.now();
+        for (const row of o.data) {
+          if (!row || !row.city_id) continue;
+          const units = (+row.units || 0) - (+row.filled_units || 0);
+          if (!(units > 0)) continue;
+          if (row.expires_at && Date.parse(row.expires_at) <= now) continue;
+          (byCity[row.city_id] = byCity[row.city_id] || []).push({
+            offerId: row.id, res: String(row.resource_id || ''),
+            units, unitPrice: +row.unit_price || 0, urgent: !!row.urgent,
+          });
+        }
+      }
+    } catch (e) { /* offers are optional; a city with none is still a partner */ }
+    return r.data.map(c => ({
+      id: String(c.id),
+      /* The city's own published name. NEVER an owner id — showing a raw
+         account id would be both ugly and an identifier leak — and never a
+         fabricated one either: an unnamed city gets null and trade.js derives a
+         deterministic map name for it. */
+      name: (typeof c.city_name === 'string' && c.city_name.trim()) ? c.city_name.trim() : null,
+      nodeId: c.node_id != null ? String(c.node_id) : String(c.id),
+      specs: Array.isArray(c.specializations) ? c.specializations : [],
+      sells: (c.sells && typeof c.sells === 'object') ? c.sells : {},
+      buys:  (c.buys  && typeof c.buys  === 'object') ? c.buys  : {},
+      offers: byCity[c.id] || [],
+      /* 🔴 EXPLICIT. trade.js will not overwrite a partner whose `simulated` is
+         false, and undefined is not an answer — see refreshPartners(). */
+      simulated: false,
+    })).filter(c => c.id);
+  } catch (e) { return []; }
+};
+/* 🤝 FILL. The counterparty path, and the only write a buyer is allowed to make
+   to somebody else's offer.
+   🔴 RETURNS THE ROW UNCHANGED. `filled` may legitimately be LESS than `units` —
+      the RPC takes `for update` on the row precisely so that two players
+      filling the last 40 units cannot both be told 40. trade.js credits
+      `filled` and nothing else; anything this function did to "simplify" the
+      answer (a boolean, the requested count) would put the double-ship straight
+      back in.
+   ⚠ `.rpc()` on a `returns table` function resolves to an ARRAY of rows. Taking
+     [0] here is not a convenience — treating the array itself as the row would
+     make `row.filled` undefined, which trade.js correctly refuses, and every
+     real fill would silently credit nothing. */
+window.cityTradeFill = async function (offerId, units) {
+  try {
+    const sb = _cityTradeClient();
+    if (!sb) return null;
+    const n = Number(units);
+    if (!offerId || !isFinite(n) || n <= 0) return null;
+    const r = await sb.rpc('city_trade_fill', { p_offer_id: String(offerId), p_units: n });
+    if (!r || r.error) return null;
+    const row = Array.isArray(r.data) ? r.data[0] : r.data;
+    return (row && typeof row === 'object') ? row : null;
+  } catch (e) { return null; }
+};
+
 window.citySpendCinders = (n) => {
   try {
     n = Math.floor(n) || 0; if (n <= 0) return false;
@@ -207392,6 +208401,83 @@ window.cityReport = function (r) {
     const civ = Math.max(0, Math.min(200, Math.round(r.reconPerHr * 25)));
     if (civ > 0 && typeof _twAddNodeContribution === 'function') _twAddNodeContribution(Profile.campNodeId, 0, 0, civ);
   } catch (e) {}
+};
+// ─── 🃏 THE CITY'S PRINT RUN → the Foundation Reserve (REPORTING ONLY) ───────
+// node-city's closed-loop economy pushes one of these per closed ECONOMIC DAY
+// (~20 real minutes) via MythicCityBridge.pushCardOutput → ecoDailyClose →
+// MythicEconomy.cardOutput(). It is the Ouroboros volume the city's own supply
+// chain actually printed: { day, spanned, units, value, exported, packs }.
+//
+// 🔴 IT MINTS NOTHING, AND IT MUST NOT. No Cinder, no gems, no reserve_
+//    contributions row, no Reserve points, no cloud write of any kind. The city
+//    economy audits a closed loop on every tick and its ONE ledger write is its
+//    own audited payout; paying anything out of a SIMULATED production figure
+//    would be a second, unaudited faucet — the exact shape of the retired Cinder
+//    Forge, which produced a ~16,000,000/day player. This function therefore
+//    only ever writes to a counter that no other system spends.
+//
+// THE BOUND — deliberately explicit, and deliberately visible when it bites:
+//   1. CITY_PRINT_UNITS_PER_DAY is the most one economic day may contribute.
+//      A bigger day is recorded AT the cap and `cappedDays` is incremented, so
+//      clipping shows up in the record instead of silently flattening.
+//   2. CITY_PRINT_LIFETIME_UNITS is the ceiling on the running total. AT THE
+//      BOUND the total stops moving entirely, `atCap` latches true, and further
+//      days still increment `days` (so the city is visibly still printing) while
+//      adding nothing. Nothing downstream reads past the cap, because nothing
+//      downstream reads it at all yet — which is the point: the ceiling exists
+//      BEFORE anyone is tempted to hang a reward off the number.
+//   3. One report per calendar-day-number per session, `spanned` notwithstanding
+//      — an offline catch-up that jumped 3 economic days credits ONE.
+const CITY_PRINT_UNITS_PER_DAY = 5000;      // per economic day
+const CITY_PRINT_LIFETIME_UNITS = 5000000;  // hard ceiling on the running total
+window.cityCardOutput = function (r) {
+  try {
+    if (!r || typeof r !== 'object') return null;
+    // Infinity survives `|| 0` and a truthy string survives `Math.floor(x || 0)`
+    // — both have bitten this codebase — so demand a finite number outright.
+    const num = (v) => (typeof v === 'number' && isFinite(v) && v > 0) ? v : 0;
+    const day = (typeof r.day === 'number' && isFinite(r.day)) ? Math.floor(r.day) : null;
+    if (day === null) return null;
+
+    const P = (Profile.cityPrint && typeof Profile.cityPrint === 'object') ? Profile.cityPrint : {};
+    const rec = {
+      units:      num(P.units),
+      value:      num(P.value),
+      days:       num(P.days),
+      cappedDays: num(P.cappedDays),
+      lastDay:    (typeof P.lastDay === 'number' && isFinite(P.lastDay)) ? Math.floor(P.lastDay) : -1,
+      atCap:      !!P.atCap,
+    };
+    if (day <= rec.lastDay) return rec;          // already counted this close
+    rec.lastDay = day;
+    rec.days += 1;
+
+    // A zero day still advances `days` (the chain ran and printed nothing —
+    // see ecoDailyClose in node-city for why that is the honest reading today)
+    // but must not cost a Profile write every 20 minutes forever.
+    const rawUnits0 = num(r.units);
+    if (rawUnits0 <= 0 && num(r.value) <= 0) {
+      Profile.cityPrint = rec; FoundationReserve.cityPrint = rec; return rec;
+    }
+
+    const rawUnits = rawUnits0;
+    const capped = Math.min(rawUnits, CITY_PRINT_UNITS_PER_DAY);
+    if (rawUnits > capped) rec.cappedDays += 1;
+    // Value is scaled by exactly the fraction of units that survived the cap, so
+    // the two numbers can never tell different stories about the same day.
+    const keep = rawUnits > 0 ? capped / rawUnits : 0;
+    const headroom = Math.max(0, CITY_PRINT_LIFETIME_UNITS - rec.units);
+    const admit = Math.min(capped, headroom);
+    if (admit < capped) rec.atCap = true;        // the lifetime ceiling, latched
+    rec.units += admit;
+    rec.value += num(r.value) * keep * (capped > 0 ? admit / capped : 0);
+    rec.value = Math.round(rec.value);
+
+    Profile.cityPrint = rec;
+    FoundationReserve.cityPrint = rec;           // read-only dashboard figure
+    try { saveProfile(); } catch (e) {}
+    return rec;
+  } catch (e) { return null; }
 };
 // The card collection, mapped to the city's socket schema. Type mapping:
 // hero→Hero, kalon-capable→Kalon, unit→Unit, spell→Spell, trap/counter→Artifact,
@@ -208036,9 +209122,76 @@ window.cityOpsCityHall = function () {
     return { ok: true };
   } catch (e) { return { ok: false }; }
 };
+/* 🏗 THE FREE-LICENCE COUNTER AT CITY HALL. The city calls this for an
+   operation whose price has resolved to ZERO — today that is the Construction
+   Co. and nothing else. Two callers, one seam: a node holder is granted it at
+   city boot without ever seeing the gate, and everybody else collects it by
+   clicking the locked card, which is the same City Hall door as before.
+
+   🔴 THE PRICE IS RE-CHECKED HERE, AGAINST _opEcon, AND ANY NON-ZERO PRICE IS
+      REFUSED. The city is an iframe with its own cached manifest, and this is
+      the last line before an operation row exists — so it must be impossible to
+      talk this function into handing out something that costs money. If an
+      admin ever retunes the fee back, every free path in the city shuts off by
+      itself and the ordinary paid flow returns, with no second edit.
+   🔴 NO CINDER MOVES, IN EITHER DIRECTION. There is no chargeCinderAtomic, no
+      _opTreasuryRow and no addGems on this path; the row is created at cost 0
+      through the SAME _opCreateLocal seam the MT bank purchase has always used.
+      A player who already paid for a Construction Co. keeps it and is NOT
+      refunded — see the opFound branch for why inventing one would be a faucet.
+   IDEMPOTENT BY OWNERSHIP, never by a flag. _opsAllRows() spans the corp list
+   AND the profile-local list, and the profile-local list is on disk before any
+   network call, so booting twice with a node held cannot produce two licences
+   even offline.
+
+   🔴 …AND OWNERSHIP IS ONLY IDEMPOTENT IF THE BOOKS CAN BE READ. This header
+      used to close its remaining seam — "a corp row that exists in the cloud
+      but has not been fetched yet" — with "the opFetch() below", and that was
+      true only for a fetch that THREW. supabase-js resolves an RLS refusal or a
+      5xx as `{ data:null, error:{…} }`, and opFetch treated that as an empty
+      table; `held()` then answered "no" about rows it had never seen and this
+      function granted a SECOND Construction Co., writing a permanent
+      corp_operations row (:80229). Measured against the shipped source, error
+      response, player already holding the cloud licence: grant issued,
+      `{ok:true, existed:false}`, one row written.
+      SO THE READ MUST NOW SAY SO, AND AN UNPROVEN READ REFUSES. opFetch owns
+      `fetchFailed`/`_fetched`; below, a state we cannot vouch for returns
+      `unknown-state` and writes nothing. The callers (city boot for a node
+      holder, the locked-card click) both retry, so a refusal costs a player
+      nothing but a later grant — where granting wrongly costs a duplicate row
+      that no code path removes. */
+window.cityOpsGrantFree = async function (opType) {
+  try {
+    const t = String(opType || '');
+    const e = (typeof _opEcon === 'function') ? _opEcon(t) : null;
+    if (!e) return { ok: false, error: 'unknown-op' };
+    if ((e.startup | 0) > 0) return { ok: false, error: 'not-free' };
+    const held = () => _opsAllRows().some((o) => o && o.op_type === t);
+    if (held()) return { ok: true, existed: true };
+    /* "Do we actually know what this player owns?" — a completed read that
+       reported no failure. Anything else (never read, or read and failed) is
+       unknown, and unknown may not grant. */
+    const known = () => !!Operations._fetched && !Operations.fetchFailed;
+    // Read the list before writing to it. Granting against a list we have never
+    // read is how a player ends up with a local row beside a corp row.
+    if (!known()) { try { if (typeof opFetch === 'function') await opFetch(); } catch (e2) {} }
+    if (held()) return { ok: true, existed: true };
+    /* 🔴 THE REFUSAL. Held-ness above is authoritative when it says YES (a row
+       we can see is a row that exists); it is worthless when it says NO against
+       a failed read. So the last gate before a permanent row gets written is
+       whether the list is trustworthy at all. Not an error to the player — the
+       caller retries on the ops beat, and the locked card stays clickable. */
+    if (!known()) return { ok: false, error: 'unknown-state' };
+    const made = await _opCreateLocal(t, 0, 'free-licence');
+    if (!made) return { ok: true, existed: true };
+    try { showToast('🏗 ' + ((OP_LABELS && OP_LABELS[t]) || t) + ' licence issued — free. Place it in your city from the build menu.', 6000); } catch (e2) {}
+    return { ok: true, existed: false };
+  } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+};
 try {
   window.__mg = window.__mg || {};
   window.__mg.ops = { state: () => window.cityOpsState(), site: window.cityOpsSite, hall: window.cityOpsCityHall,
+                      grantFree: window.cityOpsGrantFree,
                       unsite: window.cityOpsUnsite, setEff: window.cityOpsSetSiteEff,
                       setLab: window.cityOpsSetLab, enter: window.cityEnterBusiness,
                       siteEff: (id) => _opSiteEff(_opRowById(id)),
@@ -223209,7 +224362,7 @@ render();
      bridge it registers, stays inert and warns once — the globals trap.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/city/index.js?v=v120u0seam"></script>
+<script type="module" src="src/city/index.js?v=v120t9chainprod1"></script>
 <!-- 🤝 TRADING — player-to-player swaps + LOT listings for the Resource
      Exchange. Registers window.MythicTrading and is INERT until the Market's
      Resources tab renders. index.html keeps the Supabase calls (Cloud/Profile
@@ -223281,6 +224434,30 @@ render();
 <link rel="stylesheet" href="src/battle/units.css?v=120k6">
 <link rel="stylesheet" href="src/battle/chrome.css?v=120k6">
 <link rel="stylesheet" href="src/battle/alive.css?v=120k6">
+<!-- 🛡 HUD RELAYOUT — hero banners on top, player cluster right, foe cluster left,
+     hex END TURN bottom-right, dark/gold ornate skin (battlefield overhaul).
+     ⚠ hud.css MUST stay AFTER chrome.css. chrome.css was the battle layout's
+       authority only because it was the last of the four battle sheets; hud.css
+       beats it on plain source order at equal specificity, not with !important.
+       Move it above chrome.css and the whole relayout silently reverts to the
+       old rails. (draw.css / frames.css / idle.css load after this point but
+       declare none of the rail variables, so they are not in the argument.)
+     ⚠ hud.css owns `--bpw` / `--btl-rail-w` / `--r3-rail-r-real` now, derived
+       from ONE number per breakpoint. The legacy `--bpw` declarations further up
+       this file lose on source order and are dead — do not add a second list, or
+       `.cbx-float` drifts off the pile rail again.
+     hud.js is a MutationObserver re-layout, not a one-shot: renderBattle() does a
+     full `root.innerHTML =` rebuild every state change, so it re-parents the LIVE
+     nodes (never clones — every id and every listener bound by bindBattleEvents /
+     bindBattlePiles has to survive) after each render, rAF-coalesced and keyed so
+     a no-op render costs nothing. It must never touch .board-area / .bb-catch /
+     #bb-stage-host / .bb-stage / .wx-canvas — all board clicks travel
+     .bb-catch → postMessage → iframe pickTile, with no error if you break it.
+     The three STAGE modules (vista/tilefx/dressing) are NOT loaded here — the
+     battle-board iframe loads them itself.
+     Bump ?v= on every change — the service worker caches these like any asset. -->
+<link rel="stylesheet" href="src/battle/hud.css?v=120w9">
+<script type="module" src="src/battle/hud.js?v=120w9"></script>
 <script src="src/battle/combat.js?v=120m4" defer></script>
 <script src="src/battle/targeting.js?v=120k6" defer></script>
 <link rel="stylesheet" href="src/sprites/frames.css?v=120k3">

@@ -1084,6 +1084,17 @@ const OPERATIONS = [
   // STASH FULL. This catalog is hardcoded here, so a type added to OPS_ECON in
   // index.html is invisible until it is listed in this array too.
   { id: 'warehouse',    name: 'Warehouse',           cat: 'Logistics', icon: '📦', focus: 'Raise your resource storage ceiling', produces: ['Storage capacity', 'Holding fees'], startup: '280,000 Cinder',                                     maint: 'Staff wages · +260 cap / worker', risk: 'Low' },
+  /* 🚌🚆 PUBLIC TRANSPORT. Owning one of these unlocks the city builder's
+     transit layer: the Bus Company lets you put up stops and draw bus routes,
+     the Rail Operator lets you lay track, raise stations and run trains. The
+     `startup` strings here are DISPLAY COPY only — the price a player is
+     actually charged comes from OPS_ECON via _opEcon() in index.html, which is
+     also what the card's own buy button reads. Keep them in step by eye; the
+     money never comes from this array. See the warehouse note above: this
+     catalog is hardcoded, so a type added to OPS_ECON is invisible until it is
+     listed here too. */
+  { id: 'bus',          name: 'Bus Company',         cat: 'Logistics', icon: '🚌', focus: 'Move your citizens without cars',      produces: ['Bus routes', 'Fares'],              startup: '2,000,000 Cinder',                                   maint: 'Driver wages · fuel · depot',     risk: 'Low' },
+  { id: 'rail',         name: 'Rail Operator',       cat: 'Logistics', icon: '🚆', focus: 'Track, stations and rolling stock',    produces: ['Rail lines', 'Fares'],              startup: '10,000,000 Cinder',                                  maint: 'Crew wages · fuel · track',       risk: 'Medium' },
 ];
 const OP_CATS = ['All', 'Industry', 'Energy', 'Medical', 'Research', 'Logistics', 'Retail', 'Finance', 'Illicit'];
 

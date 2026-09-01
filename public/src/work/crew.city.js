@@ -173,6 +173,16 @@ export function canWorkAt(cardId, k) {
   const def = defOf(t.type);
   if (!takesWork(k)) return { ok: false, why: (def ? def.name : 'This building') + ' has no work a crew can do.' };
   if (t.damaged) return { ok: false, why: 'Damaged — repair it before posting anyone.' };
+  /* 🔴 THE HOST'S VETO, asked before anything about the unit. The city knows
+     states this module must never learn — a foundation pad with nothing
+     standing on it yet is the first, and there will be others. Asking rather
+     than re-deriving is the same rule `postWarning` follows: coverage, build
+     phases and the vitals clamp are city internals, and a copy of them in here
+     is a copy that goes stale the round after somebody adds a third state. */
+  try {
+    const veto = CTX.postBlocked && CTX.postBlocked(k);
+    if (veto) return { ok: false, why: veto };
+  } catch (e) {}
   const prof = profileOf(cardId);
   if (!prof) return { ok: false, why: 'Not in your collection.' };
   const best = W.bestWorkAt(prof, t.type);

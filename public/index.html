@@ -36466,7 +36466,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120x7';
+  window.BUILD_VERSION = 'v120x8';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -188557,6 +188557,68 @@ function renderCollectionCardModal(active) {
     return `<div class="ccm-section"><div class="ccm-section-title">🧬 Trait & Nature</div>${traitCard}${natureCard}</div>`;
   })();
 
+  /* ══ 👷 CITY WORK — what this unit is good at OUTSIDE a battle ═══════════
+     The 🧬 Trait & Nature section above says what it does in a fight. This says
+     what it does in Node City: which trades it can work, how good it is at
+     each, and the work passives that make it faster, slower, hungrier or
+     hardier. Both are permanent per-unit facts, so they belong in the same
+     place — and this is the screen a player is actually on when they are
+     deciding whether a pull was worth having.
+
+     🔴 IT SHIPPED IN THE WRONG MODAL FIRST. The work card went into
+     renderUnitModal() — the IN-BATTLE unit inspector — which is not where
+     anyone looks at a card they own. This is openCardDetailView(), the
+     collection view with Release and the learnset, and it is the one the
+     player actually opens. Both now carry it.
+
+     ⚠ OWNED UNITS ONLY, matching the Trait & Nature block directly above:
+       that section refuses to show for an unowned unit and says why, so this
+       one does too rather than inventing a second rule on the same screen.
+     ⚠ Absent module → nothing renders. Same as everywhere else this feature
+       touches: it is never load-bearing. */
+  const cityWorkHtml = (() => {
+    try {
+      if ((c.type || data.kind) !== 'unit') return '';
+      const W = window.MythicWork;
+      if (!W) return '';
+      if (ownedCount <= 0) {
+        return `<div class="ccm-section"><div class="ccm-section-title">👷 City Work</div>` +
+          `<div class="ink-dim small-text">Own this unit to see the trades it can work in Node City — every player's roll is different.</div></div>`;
+      }
+      const prof = (typeof unitWorkProfile === 'function') ? unitWorkProfile(c.id, c) : null;
+      if (!prof || !prof.suits.length) return '';
+      const rows = prof.suits.map(sv => {
+        const w = W.getWork(sv.type); if (!w) return '';
+        // Pips, not a bare number: "Kindling 3" means nothing to a new player,
+        // three filled of four means something the instant they see it.
+        const pips = Array.from({ length: W.WORK.SUIT_MAX }, (_, i) =>
+          `<span style="display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:2px;background:${i < sv.level ? '#f6d97a' : 'rgba(255,255,255,0.13)'}"></span>`).join('');
+        return `<div style="display:flex;align-items:center;gap:8px;margin-top:5px">
+          <span style="font-size:1.05rem;line-height:1;width:1.4rem">${w.icon}</span>
+          <strong style="color:#e8d49a;font-size:0.92rem;min-width:6.4rem">${escapeHtml(w.name)}</strong>
+          <span style="line-height:1">${pips}</span>
+          <span class="ink-dim small-text" style="margin-left:auto;text-align:right">${escapeHtml(w.desc)}</span>
+        </div>`;
+      }).join('');
+      const pas = (prof.passives || []).map(pv => {
+        const pc = pv.good ? '#7be0a0' : '#ff8a8a';
+        return `<span class="ccm-tag" style="border-color:${pc};color:${pc}" title="${escapeHtml(pv.desc)}">${pv.icon} ${escapeHtml(pv.name)}</span>`;
+      }).join('');
+      const col = '#7ec8e0';
+      return `<div class="ccm-section"><div class="ccm-section-title">👷 City Work</div>
+        <div style="border:1px solid ${col}55;border-left:4px solid ${col};border-radius:8px;padding:9px 12px;background:linear-gradient(90deg,${col}1f,rgba(20,12,40,0.4))">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span style="font-size:1.2rem;line-height:1">🏙</span>
+            <strong style="color:#f6d97a;font-family:'Cinzel',serif">Work Suitability</strong>
+            <span class="ink-dim small-text" style="margin-left:auto">NODE CITY · Lv ${prof.level}</span>
+          </div>
+          ${rows}
+          ${pas ? `<div class="ccm-tag-row" style="margin-top:8px">${pas}</div>` : ''}
+          <div class="small-text" style="color:#bfae87;margin-top:7px;line-height:1.45">Enlist this unit on the city's <b>work crew</b> and <b>post it</b> to a building that needs one of these trades — it lifts only the building you put it in, on top of that building's hired staffing rather than instead of it. A higher suitability, a higher unit level and a well-fed crew all raise what it is worth; a fully-worked building tops out at <b>${W.multLabel(1 + W.WORK.BOOST_CAP)}</b> output.</div>
+        </div></div>`;
+    } catch (e) { return ''; }
+  })();
+
   // ---- Elements + factions rows ----
   const elemRow = elems.length
     ? `<div class="ccm-tag-row">${elems.map(e => ELEMENT_DATA[e]
@@ -188627,6 +188689,7 @@ function renderCollectionCardModal(active) {
             ${factionRow}
             ${statsHtml}
             ${traitNatureHtml}
+            ${cityWorkHtml}
             ${(typeof _lqUnitValueProfile === 'function' && (c.type || data.kind) === 'unit' && _lqUnitValueProfile(c).length) ? `<div class="ccm-meta-block" style="margin-top:.5rem"><div class="small-text ink-dim" style="letter-spacing:.06em;text-transform:uppercase;font-size:.66rem;margin-bottom:3px">🎭 Companion Values</div>${_lqValueTagsHtml(c, (Profile.units && Profile.units[c.id]) || null)}</div>` : ''}
             ${(typeof _unitTemperPanelHtml === 'function' && (c.type || data.kind) === 'unit') ? _unitTemperPanelHtml(c, (Profile.units && Profile.units[c.id]) || null) : ''}
             ${passiveHtml}

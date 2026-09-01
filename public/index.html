@@ -36466,7 +36466,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120x8';
+  window.BUILD_VERSION = 'v120x9';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -72871,6 +72871,67 @@ function unitWorkProfile(cardId, card) {
     try { const up = Profile.units && Profile.units[cardId]; if (up && up.level > 0) lv = up.level | 0; } catch (e) {}
     return W.profileFor({ id: cardId, elements: els, rarity: (card && card.rarity) || 'common', level: lv }, salt);
   } catch (e) { return null; }
+}
+
+/* ══ 👷 THE WORK PANEL, ONE COPY ═══════════════════════════════════════════
+   The bordered "Work Suitability" box, shared by every screen that shows a
+   card. It was written twice before this — once in the in-battle unit
+   inspector and once in the collection view — and was about to be written
+   twice more for the hand card and the pack reveal. Four copies of a forty-line
+   template is how a panel ends up saying four slightly different things about
+   the same unit, and this file already carries that scar in other places.
+
+   Returns ONLY the inner box. Each caller wraps it in its own section markup,
+   because the four screens use four different section classes (`ccm-section`,
+   `modal-section`, `pcd-section`, and none at all) and forcing one on them
+   would make the panel look foreign on three screens out of four.
+
+   Returns '' — never a broken box — when the module is absent, the card has no
+   id, or the unit rolled nothing. Callers can safely interpolate it directly.
+   `opts.level` overrides the level (a battle unit carries its own); otherwise
+   it comes from Profile.units, defaulting to 1 for a card never fielded. */
+function _cityWorkPanelHtml(card, opts) {
+  try {
+    const W = window.MythicWork;
+    if (!W || !card || !card.id) return '';
+    const o = opts || {};
+    const prof = (typeof unitWorkProfile === 'function') ? unitWorkProfile(card.id, card) : null;
+    if (!prof || !prof.suits.length) return '';
+    const lvl = (o.level != null && o.level > 0) ? Math.max(1, o.level | 0) : prof.level;
+    const rows = prof.suits.map((sv) => {
+      const w = W.getWork(sv.type); if (!w) return '';
+      /* Pips, not a bare number. "Kindling 3" means nothing to somebody who has
+         never opened the city; three filled of four means something instantly,
+         and it makes two units comparable at a glance. */
+      const pips = Array.from({ length: W.WORK.SUIT_MAX }, (_, i) =>
+        '<span style="display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:2px;background:' +
+        (i < sv.level ? '#f6d97a' : 'rgba(255,255,255,0.13)') + '"></span>').join('');
+      return '<div style="display:flex;align-items:center;gap:8px;margin-top:5px">' +
+        '<span style="font-size:1.05rem;line-height:1;width:1.4rem">' + w.icon + '</span>' +
+        '<strong style="color:#e8d49a;font-size:0.92rem;min-width:6.4rem">' + escapeHtml(w.name) + '</strong>' +
+        '<span style="line-height:1">' + pips + '</span>' +
+        (o.compact ? '' : '<span class="ink-dim small-text" style="margin-left:auto;text-align:right">' + escapeHtml(w.desc) + '</span>') +
+        '</div>';
+    }).join('');
+    const pas = (prof.passives || []).map((pv) => {
+      const pc = pv.good ? '#7be0a0' : '#ff8a8a';
+      return '<span class="ccm-tag" style="border-color:' + pc + ';color:' + pc + ';display:inline-block;margin:2px 4px 0 0;padding:1px 7px;border:1px solid ' + pc + ';border-radius:5px;font-size:.7rem" title="' +
+        escapeHtml(pv.desc) + '">' + pv.icon + ' ' + escapeHtml(pv.name) + '</span>';
+    }).join('');
+    const col = '#7ec8e0';
+    return '<div style="border:1px solid ' + col + '55;border-left:4px solid ' + col +
+      ';border-radius:8px;padding:9px 12px;background:linear-gradient(90deg,' + col + '1f,rgba(20,12,40,0.4))">' +
+      '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+        '<span style="font-size:1.2rem;line-height:1">🏙</span>' +
+        '<strong style="color:#f6d97a;font-family:\'Cinzel\',serif">Work Suitability</strong>' +
+        '<span class="ink-dim small-text" style="margin-left:auto">NODE CITY · Lv ' + lvl + '</span>' +
+      '</div>' + rows +
+      (pas ? '<div style="margin-top:8px">' + pas + '</div>' : '') +
+      (o.compact ? '' :
+        '<div class="small-text" style="color:#bfae87;margin-top:7px;line-height:1.45">Enlist this unit on the city\'s <b>work crew</b> and <b>post it</b> to a building that needs one of these trades — it lifts only the building you put it in, on top of that building\'s hired staffing rather than instead of it. A fully-worked building tops out at <b>' +
+        W.multLabel(1 + W.WORK.BOOST_CAP) + '</b> output.</div>') +
+      '</div>';
+  } catch (e) { return ''; }
 }
 
 /* 🏙 The city runs the crew in its own frame and needs the same salt, so the
@@ -141025,41 +141086,17 @@ function renderUnitModal() {
                     battle and would be noise in an already dense modal.
                   ⚠ Absent module → nothing renders. Same rule as everywhere
                     else: this feature is never load-bearing. */ ''}
-            ${(isPlayer && window.MythicWork) ? (() => {
-              const W = window.MythicWork;
-              const cid = u.originalCardId || u.cardId;
-              const prof = (typeof unitWorkProfile === 'function') ? unitWorkProfile(cid, u) : null;
-              if (!prof || !prof.suits.length) return '';
-              const col = '#7ec8e0';
-              const suit = (s2) => {
-                const w = W.getWork(s2.type);
-                if (!w) return '';
-                // The bar is the point of the row: "Kindling 3" means nothing to
-                // a new player, four pips out of four means something instantly.
-                const pips = Array.from({ length: W.WORK.SUIT_MAX }, (_, i) =>
-                  `<span style="display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:2px;background:${i < s2.level ? '#f6d97a' : 'rgba(255,255,255,0.13)'}"></span>`).join('');
-                return `<div style="display:flex;align-items:center;gap:8px;margin-top:5px">
-                  <span style="font-size:1.05rem;line-height:1;width:1.4rem">${w.icon}</span>
-                  <strong style="color:#e8d49a;font-size:0.92rem;min-width:6.4rem">${escapeHtml(w.name)}</strong>
-                  <span style="line-height:1">${pips}</span>
-                  <span class="ink-dim small-text" style="margin-left:auto">${escapeHtml(w.desc)}</span>
-                </div>`;
-              };
-              const pas = (prof.passives || []).map(p => {
-                const pc = p.good ? '#7be0a0' : '#ff8a8a';
-                return `<span class="passive-pill" style="border-color:${pc};color:${pc}" title="${escapeHtml(p.desc)}">${p.icon} ${escapeHtml(p.name)}</span>`;
-              }).join('');
-              return `<div style="border:1px solid ${col}55;border-left:4px solid ${col};border-radius:8px;padding:9px 12px;background:linear-gradient(90deg,${col}1f,rgba(20,12,40,0.4))">
-                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                  <span style="font-size:1.3rem;line-height:1">👷</span>
-                  <strong style="color:#f6d97a;font-family:'Cinzel',serif;font-size:1.02rem">Work Suitability</strong>
-                  <span class="ink-dim small-text" style="margin-left:auto">NODE CITY</span>
-                </div>
-                ${prof.suits.map(suit).join('')}
-                ${pas ? `<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px">${pas}</div>` : ''}
-                <div class="small-text" style="color:#bfae87;margin-top:6px;line-height:1.45">Enlist this unit on the city's <b>work crew</b> — the named units you post yourself, not the hired hands that staff a building — and <b>post it</b> to a building that needs one of these trades — it only lifts the building you put it in. A higher suitability, a higher unit level and a well-fed crew all raise what it is worth there; a fully-worked building tops out at <b>${W.multLabel(1 + W.WORK.BOOST_CAP)}</b> output.</div>
-              </div>`;
-            })() : ''}
+            ${/* 👷 The unit's CITY trades, beside its battle trait. Player-side
+                  only — an enemy's trade is not a fact about this battle and
+                  would be noise in an already dense modal. Compact: mid-fight
+                  there is no room for each trade's description or the
+                  how-to-post explainer, and no reason to read them here.
+                  The panel is _cityWorkPanelHtml, shared with the collection,
+                  hand and pack views. `u.level` is the BATTLE unit's level, so
+                  it is passed rather than re-read from Profile. */ ''}
+            ${isPlayer ? _cityWorkPanelHtml({ id: u.originalCardId || u.cardId, element: u.element,
+                elements: (typeof getElementsOf === 'function' ? getElementsOf(u) : null), rarity: u.rarity },
+                { level: u.level, compact: true }) : ''}
           </div>
         </div>` : ''}
 
@@ -143597,6 +143634,16 @@ function renderCardDetailModal() {
             ${handHtml}
             ${inGraveHtml}
             ${onResHtml}
+            ${/* 👷 What this unit does in the CITY, on the card you are about to
+                  play. Compact — mid-battle there is no room for each trade's
+                  description or the how-to-post explainer, and the player is
+                  not making a city decision here; it is the same reminder the
+                  collection view gives, sized for a battle modal.
+                  Shared panel, see _cityWorkPanelHtml. Units only. */ ''}
+            ${(card.type === 'unit' && window.MythicWork) ? (() => {
+                const w = _cityWorkPanelHtml(card, { compact: true });
+                return w ? '<div class="cd-divider"></div>' + w : '';
+              })() : ''}
             ${(!card.desc && !passivesHtml && !onPlayHtml && !counterHtml && !handHtml && !inGraveHtml && !onResHtml)
               ? '<div class="cd-rules ink-dim">No card effect.</div>' : ''}
           </div>
@@ -164192,6 +164239,19 @@ function renderPackCardDetailModal() {
           ${c.desc ? `<div class="pcd-desc">${escapeHtml(c.desc)}</div>` : '<div class="pcd-desc ink-dim">No description.</div>'}
           ${statsBlock}
           ${passiveBlock}
+          ${/* 👷 The city trades, at the moment the card is pulled. This is
+                where a player forms their opinion of a pull, and until now that
+                opinion could only be about the battle stats — a unit that rolls
+                🔥 Kindling 4 is a real find for a city, and finding out three
+                menus later is finding out too late.
+                ⚠ NOT compact: unlike the battle modals there is room here, and
+                  a pack reveal is exactly where the trade descriptions earn
+                  their space — it may be the first time this player has seen
+                  the system at all. Shared panel, see _cityWorkPanelHtml. */ ''}
+          ${(c && (c.type === 'unit') && window.MythicWork) ? (() => {
+              const w = _cityWorkPanelHtml(c);
+              return w ? `<div class="pcd-section"><div class="pcd-section-title">👷 City Work</div>${w}</div>` : '';
+            })() : ''}
           <div class="pcd-meta-grid">
             <div class="pcd-meta-row"><span>Type</span><strong>${escapeHtml(String(c.type || 'card'))}</strong></div>
             <div class="pcd-meta-row"><span>Cost</span><strong>${(c.cost | 0)} ⚡</strong></div>
@@ -188576,46 +188636,24 @@ function renderCollectionCardModal(active) {
        one does too rather than inventing a second rule on the same screen.
      ⚠ Absent module → nothing renders. Same as everywhere else this feature
        touches: it is never load-bearing. */
+  /* 👷 CITY WORK — what this unit is good at OUTSIDE a battle. The 🧬 section
+     above says what it does in a fight; this says which trades it can work in
+     Node City and how good it is at each. Same permanent per-unit facts, same
+     screen, so they sit together — and this is the view a player is actually on
+     when deciding whether a pull was worth having.
+     The panel itself is _cityWorkPanelHtml, shared with three other card views.
+     ⚠ OWNED UNITS ONLY, matching the Trait & Nature block directly above: it
+       refuses for an unowned unit and says why, so this does too rather than
+       inventing a second rule on one screen. */
   const cityWorkHtml = (() => {
     try {
-      if ((c.type || data.kind) !== 'unit') return '';
-      const W = window.MythicWork;
-      if (!W) return '';
+      if ((c.type || data.kind) !== 'unit' || !window.MythicWork) return '';
       if (ownedCount <= 0) {
-        return `<div class="ccm-section"><div class="ccm-section-title">👷 City Work</div>` +
-          `<div class="ink-dim small-text">Own this unit to see the trades it can work in Node City — every player's roll is different.</div></div>`;
+        return '<div class="ccm-section"><div class="ccm-section-title">👷 City Work</div>' +
+          '<div class="ink-dim small-text">Own this unit to see the trades it can work in Node City — every player\'s roll is different.</div></div>';
       }
-      const prof = (typeof unitWorkProfile === 'function') ? unitWorkProfile(c.id, c) : null;
-      if (!prof || !prof.suits.length) return '';
-      const rows = prof.suits.map(sv => {
-        const w = W.getWork(sv.type); if (!w) return '';
-        // Pips, not a bare number: "Kindling 3" means nothing to a new player,
-        // three filled of four means something the instant they see it.
-        const pips = Array.from({ length: W.WORK.SUIT_MAX }, (_, i) =>
-          `<span style="display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:2px;background:${i < sv.level ? '#f6d97a' : 'rgba(255,255,255,0.13)'}"></span>`).join('');
-        return `<div style="display:flex;align-items:center;gap:8px;margin-top:5px">
-          <span style="font-size:1.05rem;line-height:1;width:1.4rem">${w.icon}</span>
-          <strong style="color:#e8d49a;font-size:0.92rem;min-width:6.4rem">${escapeHtml(w.name)}</strong>
-          <span style="line-height:1">${pips}</span>
-          <span class="ink-dim small-text" style="margin-left:auto;text-align:right">${escapeHtml(w.desc)}</span>
-        </div>`;
-      }).join('');
-      const pas = (prof.passives || []).map(pv => {
-        const pc = pv.good ? '#7be0a0' : '#ff8a8a';
-        return `<span class="ccm-tag" style="border-color:${pc};color:${pc}" title="${escapeHtml(pv.desc)}">${pv.icon} ${escapeHtml(pv.name)}</span>`;
-      }).join('');
-      const col = '#7ec8e0';
-      return `<div class="ccm-section"><div class="ccm-section-title">👷 City Work</div>
-        <div style="border:1px solid ${col}55;border-left:4px solid ${col};border-radius:8px;padding:9px 12px;background:linear-gradient(90deg,${col}1f,rgba(20,12,40,0.4))">
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <span style="font-size:1.2rem;line-height:1">🏙</span>
-            <strong style="color:#f6d97a;font-family:'Cinzel',serif">Work Suitability</strong>
-            <span class="ink-dim small-text" style="margin-left:auto">NODE CITY · Lv ${prof.level}</span>
-          </div>
-          ${rows}
-          ${pas ? `<div class="ccm-tag-row" style="margin-top:8px">${pas}</div>` : ''}
-          <div class="small-text" style="color:#bfae87;margin-top:7px;line-height:1.45">Enlist this unit on the city's <b>work crew</b> and <b>post it</b> to a building that needs one of these trades — it lifts only the building you put it in, on top of that building's hired staffing rather than instead of it. A higher suitability, a higher unit level and a well-fed crew all raise what it is worth; a fully-worked building tops out at <b>${W.multLabel(1 + W.WORK.BOOST_CAP)}</b> output.</div>
-        </div></div>`;
+      const panel = _cityWorkPanelHtml(c);
+      return panel ? '<div class="ccm-section"><div class="ccm-section-title">👷 City Work</div>' + panel + '</div>' : '';
     } catch (e) { return ''; }
   })();
 

@@ -108,6 +108,15 @@ therefore terminate.
   reports a confident, wrong zero. That cost two overlays a "cannot be photographed"
   verdict; driven properly they move 78% of the crop against a control of exactly 0.
   See `.gauntlet/README.md` item 6.
-- Deploy bumps three knobs together or the update check breaks: `public/version.txt`,
-  `window.BUILD_VERSION`, `sw.js` `CACHE_VERSION`. Verify the EDGE with curl, never the
-  deploy log, and poll — propagation across PoPs takes up to a couple of minutes.
+- Deploy bumps **four** knobs together or the update check breaks — this list said three
+  and was wrong, which is what let the iframe bug below through: `public/version.txt`,
+  `window.BUILD_VERSION`, `sw.js` `CACHE_VERSION`, and `node-city/index.html`'s
+  `window.NC_BUILD` (the city is a separate page with its own module imports; leave it
+  and the city serves stale modules while every other knob says the deploy landed).
+  ⚠ There *was* a fifth — the `?v=` on the node-city iframe `src` in index.html. It now
+  derives from `BUILD_VERSION` and needs no bump. Do not turn it back into a literal: it
+  sat stale on `main` from 120t9 through v120w6, and because sw.js is cache-first for
+  iframe SUB-RESOURCES a stale value serves the whole old city inside a new shell, with
+  nothing on screen to indicate it.
+  Verify the EDGE with curl, never the deploy log, and poll — propagation across PoPs
+  takes up to a couple of minutes.

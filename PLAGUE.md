@@ -18,6 +18,12 @@ public/src/plague/           the domain. Pure except for state.js.
   state.js                   the ONLY file that spends, saves or touches Supabase
   index.js                   window.MythicPlague
 
+public/src/ward/             the Medical Corporation. The far end of the pipe.
+  triage.js                  patients, dose costs, coverage — the reservoir rule
+  intake.js                  what is in the crate, and whether you open it
+  hud.js                     the clinic screen (deliberately not the lab's)
+  index.js                   window.MythicWard
+
 public/src/biolab/           the 3D minigame.
   stations.js                the floor plan, as data. HOT_Z is the clean/hot line
   hazmat.js                  the suit: four seals, and the exposure that outlives it
@@ -76,6 +82,50 @@ tags, and the `medical` / `transport` entries in `cityEnterBusiness`.
    what you mixed, on purpose.
 5. **You ship it.** A cure in the lab has cured nobody. Hire a player-owned
    haulier to run it to a player-owned Medical Corporation.
+
+6. **Somebody else decides whether it goes into people.** The crate stops at
+   the ward door. The lab owner chooses whether to screen it, who among the
+   patients gets the doses, and whether to administer it at all.
+
+## The ward
+
+Arrival and administration are **separate**, and that split is the whole Medical
+Corporation feature. Before it, a lab was a mailbox: paid automatically on
+arrival, no decision, no game, while the shipper ate every consequence alone.
+
+- `collect()` — the drive is over. Re-grade for the cold chain, pay the
+  **carrier** (they drove it either way), put the crate at the door.
+- `administerBatch()` — the ward's call. Pays the **lab**, treats patients,
+  retires a strain, and is the only thing that can release a mutant.
+
+Three decisions, each with a real price:
+
+**Screen, or don't.** A crate arrives opaque. You see the *dispatch* grade —
+what the shipper claimed before the drive — and the carrier's integrity, which
+is a reason for suspicion, not a measurement. Screening costs Medicine and
+reveals what actually arrived. Those two grades differ exactly when the cold
+chain broke, which is the case worth catching, so showing the arrived grade for
+free would delete the decision.
+
+**Triage.** A critical patient takes 2 doses, a symptomatic one takes 1, and
+incubating cases are invisible — you cannot pre-empt an outbreak with a
+well-timed crate. Measured: 6 doses treats **6 people, or 3 critical ones**.
+Treating the sickest costs double and does not slow the spread, because someone
+that ill is not at work infecting anyone. The efficient play abandons them. The
+game does not resolve that for the player and must not.
+
+**Coverage — the rule everything turns on.** A viable cure only *retires* a
+strain if it reached ≥80% of active cases, counting the incubating ones the ward
+cannot see. Under-dose and the untreated are a reservoir: the strain survives a
+cure that was chemically perfect. Without this, one dose clears an outbreak and
+dose count is decoration.
+
+**Refusing** an iatrogenic crate is the only clean way to stop it — and it
+forfeits the lab's cut, so it is never a free out. Two players can now each have
+genuinely acted, and each can genuinely blame the other.
+
+Nothing strands: a crate nobody opens is administered by ward staff after six
+hours on the default plan, which is deliberately *not* the optimal one.
 
 ## The hazmat rule
 

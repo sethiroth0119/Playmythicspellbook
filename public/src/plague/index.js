@@ -48,15 +48,62 @@ function warnOnce() {
    "my good batch landed first" stops being true after a reload. */
 export function settleDue(host) {
   if (!State.ready()) { warnOnce(); return { ok: false, settled: 0, results: [] }; }
+  const h = host || nullHost();
   const due = State.dueShipments().slice().sort((a, b) => (a.dispatchedAt || 0) - (b.dispatchedAt || 0));
   const results = [];
   for (const s of due) {
     try {
-      const r = State.collect(host || nullHost(), s.id);
+      const r = State.collect(h, s.id);
       if (r.ok) results.push(r);
     } catch (e) {}
   }
-  return { ok: true, settled: results.length, results };
+
+  /* 🔴 NOTHING MAY STRAND AT THE WARD DOOR. A crate is opened by the player in
+     the ward (that is the Medical Corporation minigame), but a player who
+     never visits — or who owns no lab at all — must not leave an outbreak
+     unresolved forever waiting on a click they are never going to make.
+
+     After WARD_GRACE_MS the ward staff open it on the DEFAULT triage plan,
+     which treats the critical first and is deliberately not the optimal play
+     (triage.js). So skipping the ward costs you the choice and the better
+     outcome; it never costs you the resolution.
+
+     ⚠ The staff plan is computed here rather than in the ward module, because
+       /src/plague must not depend on /src/ward — the ward is a consumer of
+       this layer. It is the same critical-first ordering, written once more in
+       eight lines rather than inverting the dependency. */
+  const staffed = [];
+  for (const s of State.wardOverdue()) {
+    try {
+      const r = State.administerBatch(h, s.id, staffPlan(h, s), { byStaff: true });
+      if (r.ok) { r.notes.unshift('🛏 Nobody worked the ward, so staff opened the crate on standing orders.'); staffed.push(r); }
+    } catch (e) {}
+  }
+
+  return { ok: true, settled: results.length, opened: staffed.length, results: results.concat(staffed) };
+}
+
+/* Critical first, then longest-ill, until the doses run out. Mirrors
+   triage.defaultPlan; see the note in settleDue on why it is not imported. */
+function staffPlan(host, ship) {
+  try {
+    const st = State.outbreakState();
+    const roster = (host.citizens && host.citizens()) || [];
+    const known = {}; for (const c of roster) if (c && c.id != null) known[String(c.id)] = 1;
+    const rows = [];
+    for (const id of Object.keys(st.infections || {})) {
+      const inf = st.infections[id];
+      if (!inf || inf.strainId !== ship.strainId) continue;
+      if (inf.stage !== 'symptomatic' && inf.stage !== 'critical') continue;
+      if (roster.length && !known[id]) continue;
+      rows.push({ id, stage: inf.stage, since: inf.since || 0, cost: inf.stage === 'critical' ? 2 : 1 });
+    }
+    rows.sort((a, b) => (b.stage === 'critical') - (a.stage === 'critical') || a.since - b.since);
+    const budget = Math.max(0, ((ship.result && ship.result.dosesDelivered) | 0));
+    const out = []; let spent = 0;
+    for (const p of rows) { if (spent + p.cost > budget) continue; out.push(p.id); spent += p.cost; }
+    return out;
+  } catch (e) { return []; }
 }
 
 /* The city if it is in this window, otherwise a host with nobody in it. The
@@ -83,6 +130,9 @@ export function status() {
     ready: true,
     transit: State.inTransit().length,
     due: State.dueShipments().length,
+    // Crates at the ward door waiting on a decision — the badge the Medical
+    // Corporation's tile should carry.
+    atWard: State.awaitingWard().length,
     held: State.heldBatches().length,
     strains: active.length,
     worst: active.slice().sort((a, b) => b.severity - a.severity)[0] || null,
@@ -114,6 +164,12 @@ const api = {
   inTransit: State.inTransit,
   dueShipments: State.dueShipments,
   collect: State.collect,
+  // 🛏 The ward's verbs — the Medical Corporation's half of the pipe.
+  awaitingWard: State.awaitingWard,
+  wardOverdue: State.wardOverdue,
+  screenCrate: State.screenCrate,
+  refuseCrate: State.refuseCrate,
+  administerBatch: State.administerBatch,
   claimPayouts: State.claimPayouts,
   settleDue,
   status,

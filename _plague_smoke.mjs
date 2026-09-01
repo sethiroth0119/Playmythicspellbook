@@ -9,6 +9,12 @@ import * as HZ from './public/src/biolab/hazmat.js';
 import { stationByKey } from './public/src/biolab/stations.js';
 /* player.js is pure too — position, velocity, collision, no DOM. */
 import { makePlayer, makeInput, step, SCREEN_X_TO_WORLD } from './public/src/biolab/player.js';
+/* The ward's two model files are pure as well. */
+import * as TR from './public/src/ward/triage.js';
+import * as IN from './public/src/ward/intake.js';
+/* Imported only for CLEAR_THRESHOLD: state.js mirrors it for the auto-settle
+   path (it must not depend on /src/ward), so the two are asserted to agree. */
+import * as PLS from './public/src/plague/state.js';
 
 let fails = 0;
 const ok = (c, m) => { console.log((c ? '  PASS ' : '  FAIL ') + m); if (!c) fails++; };
@@ -381,6 +387,126 @@ console.log('\n=== 14. WASD goes where the key says ===');
   const wi = makeInput(); wi.keys.w = true;
   for (let i = 0; i < 200; i++) step(wall, wi, 100);
   ok(Number.isFinite(wall.z) && Math.abs(wall.z) < 100, 'you cannot walk out of the room');
+}
+
+console.log('\n=== 15. the ward: triage, coverage and the reservoir ===');
+{
+  const ward = [];
+  for (let i = 0; i < 24; i++) ward.push({ id: 'w' + i, name: 'Ward' + i, job: 'j' + (i % 4), mood: 55 });
+  const h = Object.assign({}, host, { citizens: () => ward });
+  const wst = O.emptyState();
+  const v = S.makeStrain('ward-test', { pressure: 0.5 });
+  v.contagion = 0.6; v.severity = 4;
+  O.introduce(h, wst, v, 10, 'test');
+  // Push them out of incubation so the ward can actually see them.
+  advance(O.TUNING.INCUBATE_MS + 60000);
+  O.tick(h, wst, O.TUNING.INCUBATE_MS + 60000);
+
+  /* Force a few to critical. Left to the clock they would all still be freshly
+     symptomatic, and the whole triage trade-off — critical patients cost twice
+     and do not slow the spread — would go untested. */
+  {
+    let n = 0;
+    for (const k of O.infectedIds(wst, v.id)) {
+      if (n++ >= 3) break;
+      wst.infections[k].stage = 'critical';
+    }
+  }
+
+  const list = TR.patients(wst, ward, v.id);
+  const active = O.infectedIds(wst, v.id).length;
+  console.log('  ' + active + ' active cases, ' + list.length + ' of them treatable');
+  ok(list.length > 0, 'the ward has treatable patients');
+  ok(list.length <= active, 'and never more than the city actually has');
+  ok(list.every((p) => p.stage !== 'incubating'), 'incubating cases are invisible to the ward');
+  ok(list.length === 0 || list[0].stage === 'critical' || !list.some((p) => p.stage === 'critical'),
+     'critical patients sort to the top');
+
+  // Dose economics: critical costs double.
+  const crit = list.find((p) => p.stage === 'critical');
+  const symp = list.find((p) => p.stage === 'symptomatic');
+  ok(!!crit && !!symp, 'the ward holds both critical and symptomatic patients');
+  ok(crit.cost === symp.cost * 2, 'a critical patient costs twice a symptomatic one');
+  ok(list[0].stage === 'critical', 'and the sickest are at the top of the list');
+
+  // A plan must fit the crate.
+  const DOSES = 6;
+  const wide = TR.widestPlan(list, DOSES);
+  const deep = TR.defaultPlan(list, DOSES);
+  const pw = TR.priceOf(list, wide), pd = TR.priceOf(list, deep);
+  console.log('  ' + DOSES + ' doses -> widest treats ' + pw.treated + ', sickest-first treats ' + pd.treated);
+  ok(pw.doses <= DOSES && pd.doses <= DOSES, 'neither plan overspends the crate');
+  /* 🔴 THE TRADE-OFF, ASSERTED. With criticals in the ward the two plans MUST
+     diverge: treating the sickest costs two doses a head and therefore reaches
+     strictly fewer people. If these ever come out equal the trade-off has been
+     tuned away and the triage screen is a formality. */
+  ok(pw.treated > pd.treated, 'treating the most people reaches strictly more than treating the sickest');
+  ok(pd.rows.some((p) => p.stage === 'critical'), 'the sickest-first plan does treat the critical patients');
+  ok(pw.rows.every((p) => p.stage === 'symptomatic'), 'the widest plan abandons them — that is the cost');
+
+  // Over-assigning is trimmed, not rejected, and the drop list is reported.
+  const everyone = list.map((p) => p.id);
+  const f = TR.fit(list, everyone, DOSES);
+  ok(f.spent <= DOSES, 'an over-long plan is trimmed to the crate');
+  ok(f.dropped.length > 0, 'and says which patients did not fit');
+  ok(f.accepted.length + f.dropped.length <= everyone.length, 'without inventing patients');
+
+  /* 🔴 THE RULE THE WHOLE WARD TURNS ON. A chemically perfect cure that
+     reaches too few people must NOT retire the strain — the untreated are a
+     reservoir. Without this, one dose clears an outbreak and dose count is
+     decoration. */
+  const under = TR.coverage(active, Math.floor(active * 0.4));
+  const enough = TR.coverage(active, Math.ceil(active * TR.CLEAR_THRESHOLD));
+  console.log('  coverage 40% clears=' + under.clears + '; ' +
+              Math.round(TR.CLEAR_THRESHOLD * 100) + '% clears=' + enough.clears);
+  ok(!under.clears, 'under-dosing does NOT retire the strain');
+  ok(enough.clears, 'reaching the threshold does');
+  ok(under.shortfall > 0, 'and the shortfall names how many more were needed');
+  ok(TR.coverage(0, 0).clears, 'a strain with no active cases is trivially covered');
+
+  // The threshold is mirrored in state.js for the auto-settle path; they must agree.
+  ok(TR.CLEAR_THRESHOLD === PLS.CLEAR_THRESHOLD,
+     'triage.js and state.js agree on the clearance threshold (' + TR.CLEAR_THRESHOLD + ')');
+}
+
+console.log('\n=== 16. the crate is opaque until you screen it ===');
+{
+  const strainZ = S.makeStrain('crate-test', { pressure: 0.4 });
+  const good = C.formulate(strainZ, { medicine: 14, water: 10, cloth: 6, supplies: 6 },
+    { sequenced: true, centrifuge: 0.85, synthesis: 0.85, assayed: true, exposure: 0, sealed: true });
+  const batch = { strainName: strainZ.name, strainIsolate: strainZ.isolate, f: Object.assign({}, good, { grade: good.grade.key }) };
+
+  // A crate that left as a cure and broke its chain on the way.
+  const ship = L.newShipment({ batchId: 'b9', carrierId: 'c9', labId: 'l9', fee: 5000,
+    integrity: 0.28, doses: good.doses, etaMs: 1, labShare: 0.18 });
+  ship.carrierName = 'Ninebar'; ship.labName = 'Thornfield';
+  const arr = L.arrive(ship, good);
+  ship.result = {
+    dosesDelivered: arr.arrived.doses, dosesLost: arr.dosesLost, coldChainBroken: arr.coldChainBroken,
+    arrivedGrade: arr.arrived.grade.key, dispatchedGrade: good.grade.key,
+    arrivedStability: arr.arrived.stability, arrivedPurity: arr.arrived.purity, arrivedRisk: arr.arrived.risk,
+  };
+
+  const sealed = IN.crateView(ship, batch, false);
+  const opened = IN.crateView(ship, batch, true);
+  console.log('  dispatched ' + good.grade.label + ' -> arrived ' + arr.arrived.grade.label +
+              ' (integrity ' + ship.integrity + ')');
+
+  ok(sealed.arrivedGrade === undefined, 'an unscreened crate does NOT leak what actually arrived');
+  ok(sealed.dispatchGrade.key === good.grade.key, 'it shows only what the shipper declared');
+  ok(sealed.suspicion === 'high', 'a bad carrier is flagged as suspicious before opening');
+  ok(opened.arrivedGrade.key === arr.arrived.grade.key, 'screening reveals the real grade');
+  ok(typeof IN.carrierNote(sealed) === 'string' && IN.carrierNote(sealed).length > 0, 'and the carrier note reads');
+
+  // Screening costs, and refusing has a price — or there is no decision.
+  ok(IN.screenCost(60) > IN.screenCost(10), 'screening a bigger crate costs more');
+  ok(IN.screenCost(0) >= 1, 'and is never free');
+  const o1 = IN.options(sealed, 900);
+  const o2 = IN.options(opened, 900);
+  ok(o1.administer.danger, 'administering unscreened is flagged as a gamble');
+  ok(o1.refuse.forfeits === 900, 'refusing forfeits the lab cut — it is not a free out');
+  ok(o2.administer.pays === 900, 'administering is what pays the lab');
+  ok(typeof o2.administer.why === 'string' && o2.administer.why.length > 0, 'and every option says why');
 }
 
 console.log('\n' + (fails ? '❌ ' + fails + ' FAILURES' : '✅ ALL CHECKS PASSED'));

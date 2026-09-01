@@ -373,15 +373,32 @@ export function shipments() { return blob().shipments.slice().reverse(); }
 export function inTransit() { return blob().shipments.filter((s) => s && s.status === 'in_transit').reverse(); }
 export function dueShipments() { return blob().shipments.filter(LG.isDue); }
 
-/* ══ COLLECT — arrival, administration, and the moment a bad cure becomes a
-   virus. This is the payoff of the whole chain and the one function that can
-   introduce an iatrogenic strain into the city. ═══════════════════════════ */
+/* ══ COLLECT — THE CRATE REACHES THE WARD DOOR, AND STOPS THERE. ════════════
+   🔴 THIS USED TO ADMINISTER TOO, AND SPLITTING IT IS THE WHOLE MEDICAL
+   CORPORATION FEATURE. When arrival and administration were one function, the
+   lab at the far end was a mailbox: it was paid automatically and made no
+   decision, so the player who owned it had no game to play and the shipper ate
+   every consequence alone. Now:
+
+       collect()          the drive is over. Re-grade for the cold chain, pay
+                          the CARRIER (they drove it either way), mark the
+                          shipment `delivered`, and put the crate at the door.
+       administerBatch()  the ward's call — see below. This is what pays the
+                          LAB, treats patients, retires a strain, and is the
+                          only thing that can release a mutant.
+
+   ⚠ NOTHING CAN STRAND. A crate nobody opens is administered by ward staff
+   after WARD_GRACE_MS on the default triage plan (settleDue), so a player who
+   never visits the ward gets the old behaviour and the outbreak still resolves
+   — they simply do not get to choose, and the staff plan is deliberately not
+   the optimal one (see triage.js's defaultPlan). */
+export const WARD_GRACE_MS = 6 * 3600000;   // the game's existing OP_COLLECT_CD_MS
+
 export function collect(host, shipmentId) {
-  const B = bridge();
   const b = blob();
   const ship = b.shipments.find((s) => s && s.id === shipmentId);
   if (!ship) return { ok: false, error: 'No such shipment.' };
-  if (ship.status !== 'in_transit') return { ok: false, error: 'Already settled.' };
+  if (ship.status !== 'in_transit') return { ok: false, error: 'Already received.' };
   if (!LG.isDue(ship)) return { ok: false, error: 'Still on the road — ' + LG.etaText(ship) + ' out.' };
 
   const batch = batchById(ship.batchId);
@@ -390,81 +407,247 @@ export function collect(host, shipmentId) {
   const res = LG.arrive(ship, Object.assign({}, batch.f, { grade: GRADES[batch.f.grade] || GRADES.inert }));
   const plan = LG.settle(ship, res);
 
-  // The strain this batch was built for. It may already be retired by another
-  // batch that landed first — administering into a cleared strain is inert,
-  // never an error, and never spawns anything.
-  const strain = OB.strainById(b.outbreak, ship.strainId);
-  let outcome = null;
-  const notes = [];
-
-  if (!strain) {
-    notes.push('The register no longer carries that isolate. The doses were logged and shelved.');
-  } else if (strain.curedAt) {
-    notes.push('💉 ' + strain.name + ' was already cleared before this crate arrived. The doses went to the archive.');
-  } else if (!plan.dosesDelivered) {
-    notes.push('📦 Nothing survived the drive. The crate arrived empty of anything usable.');
-  } else {
-    outcome = administer(strain, res.arrived, { seed: ship.id });
-    if (outcome.cleared) {
-      OB.retire(b.outbreak, strain.id, Date.now());
-      notes.push(outcome.headline + ' — ' + outcome.detail);
-    } else {
-      if (outcome.relief > 0) {
-        const n = OB.relieve(b.outbreak, strain.id, outcome.relief);
-        notes.push(outcome.headline + ' — ' + n + ' case' + (n === 1 ? '' : 's') + ' eased.');
-      } else {
-        notes.push(outcome.headline + ' — ' + outcome.detail);
-      }
-      if (outcome.resistanceGain) {
-        const r = OB.addResistance(b.outbreak, strain.id, outcome.resistanceGain);
-        if (r > 0) notes.push('🧪 ' + strain.name + ' is now ' + Math.round(r * 100) + '% resistant to formulations like this one.');
-      }
-    }
-    /* 🔴 THE MUTANT. A cure that was supposed to help has just introduced a
-       NEW virus into the same city, through the same door a wild one uses.
-       It is announced loudly because the player has to be able to connect it
-       to the batch they shipped — a silent mutation would read as the game
-       spawning a random outbreak. */
-    if (outcome.mutant) {
-      OB.introduce(host, b.outbreak, outcome.mutant, 3,
-        'shed by ' + batch.id + ', a ' + (GRADES[batch.f.grade] || GRADES.inert).label.toLowerCase() + ' batch');
-      notes.push('☣️ ' + outcome.mutant.name + ' (' + outcome.mutant.isolate + ') came out of your own crate. ' +
-                 'It is a child of ' + strain.name + ' and it is now in the city.');
-    }
-  }
-
   ship.status = 'delivered';
   ship.settledAt = Date.now();
   ship.result = {
     lost: res.lost, dosesDelivered: plan.dosesDelivered, dosesLost: res.dosesLost,
-    coldChainBroken: res.coldChainBroken, arrivedGrade: res.arrived.grade.key,
+    coldChainBroken: res.coldChainBroken,
+    arrivedGrade: res.arrived.grade.key,
     dispatchedGrade: batch.f.grade,
-    cleared: !!(outcome && outcome.cleared),
-    mutantId: (outcome && outcome.mutant) ? outcome.mutant.id : null,
+    /* The measured numbers, stored so the ward's assay reads what ACTUALLY
+       arrived rather than re-deriving it. Re-deriving would let a later
+       reagent retune silently rewrite a crate that is already on the dock. */
+    arrivedStability: res.arrived.stability,
+    arrivedPurity: res.arrived.purity,
+    arrivedRisk: res.arrived.risk,
+    arrivedEfficacy: res.arrived.efficacy,
     ratingDelta: plan.ratingDelta,
+    // Filled in by administerBatch. Absent means "still at the door".
+    cleared: null, mutantId: null,
   };
+  batch.status = 'delivered';
+  // 🔬 The ward has not looked at it yet. Screening is a choice; see intake.js.
+  ship.screened = false;
+  ship.wardDueAt = Date.now() + WARD_GRACE_MS;
+
+  persist();
+  // The CARRIER is paid here — they completed the drive whatever is in the box.
+  // The lab's cut is withheld until the crate is actually opened.
+  settleWaybill(ship, { payCarrier: plan.payCarrier, payLab: 0, ratingDelta: plan.ratingDelta }).catch(() => {});
+
+  return {
+    ok: true, shipment: ship, result: res, plan,
+    atWard: true,
+    coldChainBroken: res.coldChainBroken,
+    notes: [plan.dosesDelivered > 0
+      ? '📦 ' + plan.dosesDelivered + ' doses received at ' + ship.labName + '. They are at the ward door, unopened.'
+      : '📦 Nothing survived the drive. The crate arrived empty of anything usable.'],
+  };
+}
+
+/* Crates at the ward door: delivered, not yet opened, not yet refused. */
+export function awaitingWard() {
+  return blob().shipments.filter((s) => s && s.status === 'delivered').reverse();
+}
+export function wardOverdue() {
+  const now = Date.now();
+  return blob().shipments.filter((s) => s && s.status === 'delivered' && (s.wardDueAt || 0) <= now);
+}
+
+/* Pay for looking. Returns false if the reagents were not there — the ward can
+   genuinely be too poor to screen, which is when the gamble gets interesting. */
+export function screenCrate(shipmentId, cost) {
+  const B = bridge();
+  const b = blob();
+  const ship = b.shipments.find((s) => s && s.id === shipmentId);
+  if (!ship || ship.status !== 'delivered') return { ok: false, error: 'That crate is not at the door.' };
+  if (ship.screened) return { ok: true, already: true };
+  const n = Math.max(1, cost | 0);
+  if ((B.getRes('medicine') | 0) < n) {
+    return { ok: false, error: 'The assay needs ' + n + ' Medicine and the ward has ' + (B.getRes('medicine') | 0) + '.' };
+  }
+  if (!B.spendRes('medicine', n)) return { ok: false, error: 'The reagent draw failed.' };
+  ship.screened = true;
+  if (!persist()) { try { B.refundRes('medicine', n); } catch (e) {} ship.screened = false; return { ok: false, error: 'The assay would not record — your reagents were returned.' }; }
+  return { ok: true, cost: n };
+}
+
+/* Refuse the crate. Nobody is treated, the lab is not paid, and nothing comes
+   out of it. The only clean way to stop an iatrogenic batch — and it costs. */
+export function refuseCrate(shipmentId, why) {
+  const b = blob();
+  const ship = b.shipments.find((s) => s && s.id === shipmentId);
+  if (!ship || ship.status !== 'delivered') return { ok: false, error: 'That crate is not at the door.' };
+  ship.status = 'refused';
+  ship.refusedAt = Date.now();
+  ship.refusedWhy = String(why || '');
+  const batch = batchById(ship.batchId);
+  if (batch) batch.status = 'destroyed';
+  persist();
+  return {
+    ok: true, shipment: ship,
+    notes: ['🔥 Crate refused and incinerated. Nobody was treated, and nothing came out of it.'],
+  };
+}
+
+/* ══ ADMINISTER — the ward's call, and the only door a mutant comes through.
+   `assign` is the list of citizen ids the ward chose to treat. Coverage decides
+   whether a chemically viable cure actually RETIRES the strain: under-dose and
+   the untreated are a reservoir that carries it on. See triage.js. ═════════ */
+export function administerBatch(host, shipmentId, assign, opts) {
+  const B = bridge();
+  const b = blob();
+  const o = opts || {};
+  const ship = b.shipments.find((s) => s && s.id === shipmentId);
+  if (!ship) return { ok: false, error: 'No such shipment.' };
+  if (ship.status !== 'delivered') return { ok: false, error: 'That crate has already been dealt with.' };
+
+  const batch = batchById(ship.batchId);
+  if (!batch) { ship.status = 'lost'; persist(); return { ok: false, error: 'The manifest lost its batch.' }; }
+
+  const r = ship.result || {};
+  const arrived = Object.assign({}, batch.f, {
+    stability: r.arrivedStability != null ? r.arrivedStability : batch.f.stability,
+    purity: r.arrivedPurity != null ? r.arrivedPurity : batch.f.purity,
+    risk: r.arrivedRisk != null ? r.arrivedRisk : batch.f.risk,
+    efficacy: r.arrivedEfficacy != null ? r.arrivedEfficacy : batch.f.efficacy,
+    doses: r.dosesDelivered | 0,
+    contaminated: !!batch.f.contaminated || (r.arrivedStability != null && r.arrivedStability < 30),
+    grade: GRADES[r.arrivedGrade] || GRADES[batch.f.grade] || GRADES.inert,
+  });
+
+  const strain = OB.strainById(b.outbreak, ship.strainId);
+  const treated = Array.isArray(assign) ? assign.map(String) : [];
+  const notes = [];
+  let outcome = null;
+
+  if (!strain) {
+    notes.push('The register no longer carries that isolate. The doses were logged and shelved.');
+  } else if (strain.curedAt) {
+    notes.push('💉 ' + strain.name + ' was already cleared before this crate was opened. The doses went to the archive.');
+  } else if (!(r.dosesDelivered | 0)) {
+    notes.push('📦 The crate held nothing usable.');
+  } else {
+    outcome = administer(strain, arrived, { seed: ship.id });
+
+    /* 🔴 COVERAGE GATES THE CLEARANCE. `activeCases` counts every case the
+       city has, INCLUDING incubating ones the ward could not see — a reservoir
+       you cannot see is still a reservoir, and it is why shipping late cannot
+       be fixed by shipping better. */
+    const activeCases = OB.infectedIds(b.outbreak, strain.id).length;
+    const cov = coverageOf(activeCases, treated.length);
+
+    if (outcome.cleared && cov.clears) {
+      OB.retire(b.outbreak, strain.id, Date.now());
+      notes.push(outcome.headline + ' — ' + outcome.detail);
+    } else if (outcome.cleared) {
+      /* The cure worked on everyone it reached and the strain survived anyway,
+         in the people it did not. This is the most instructive failure in the
+         feature and it is stated plainly rather than as a shrug. */
+      clearTreated(b.outbreak, treated, strain);
+      notes.push('💉 Every patient you treated is clear — but ' + cov.shortfall +
+        ' more case' + (cov.shortfall === 1 ? '' : 's') + ' needed the dose. ' +
+        strain.name + ' is still in the city, carried by the people you could not reach.');
+      OB.addResistance(b.outbreak, strain.id, 0.03);
+    } else {
+      if (outcome.relief > 0 && treated.length) {
+        const n = OB.relieve(b.outbreak, strain.id, outcome.relief);
+        notes.push(outcome.headline + ' — ' + Math.min(n, treated.length) + ' patient' +
+          (treated.length === 1 ? '' : 's') + ' eased.');
+      } else {
+        notes.push(outcome.headline + ' — ' + outcome.detail);
+      }
+      if (outcome.resistanceGain) {
+        const rr = OB.addResistance(b.outbreak, strain.id, outcome.resistanceGain);
+        if (rr > 0) notes.push('🧪 ' + strain.name + ' is now ' + Math.round(rr * 100) + '% resistant to formulations like this one.');
+      }
+    }
+
+    /* 🔴 THE MUTANT. A cure that was supposed to help has just introduced a
+       NEW virus into the same city, through the same door a wild one uses.
+       It is announced loudly because someone has to be able to connect it to
+       the crate they opened — a silent mutation reads as the game inventing an
+       outbreak. And it is HERE, not at arrival, because refusing the crate has
+       to be able to prevent it. */
+    if (outcome.mutant) {
+      OB.introduce(host, b.outbreak, outcome.mutant, 3,
+        'shed by ' + batch.id + ', administered at ' + ship.labName);
+      notes.push('☣️ ' + outcome.mutant.name + ' (' + outcome.mutant.isolate + ') came out of that crate. ' +
+                 'It is a child of ' + strain.name + ' and it is now in the city.');
+    }
+  }
+
+  ship.status = 'administered';
+  ship.administeredAt = Date.now();
+  ship.treated = treated.length;
+  ship.byStaff = !!o.byStaff;
+  ship.result.cleared = !!(outcome && outcome.cleared);
+  ship.result.mutantId = (outcome && outcome.mutant) ? outcome.mutant.id : null;
   batch.status = 'administered';
 
-  /* 💊 The shipper's own return. A landed dose is Medicine on the ledger —
-     the lab made something real out of it, and it is the resource the game
-     already has for exactly this. Credited through addRes, which respects the
-     stash cap; a clamp here is a smaller delivery, not a failure, because the
-     doses were genuinely produced either way. */
+  /* 💊 The return. A landed dose becomes Medicine on the ledger — the resource
+     the game already has for exactly this. Credited through addRes, which
+     respects the stash cap; a clamp is a smaller delivery, not a failure. */
   let medicine = 0;
-  if (plan.dosesDelivered > 0 && res.arrived.grade.key !== 'iatrogenic') {
-    medicine = Math.max(1, Math.round(plan.dosesDelivered * 0.25 * (0.5 + res.arrived.efficacy)));
+  if ((r.dosesDelivered | 0) > 0 && arrived.grade.key !== 'iatrogenic') {
+    medicine = Math.max(1, Math.round((r.dosesDelivered | 0) * 0.25 * (0.5 + arrived.efficacy)));
     try { B.addRes('medicine', medicine); } catch (e) {}
   }
 
   persist();
-  settleWaybill(ship, plan).catch(() => {});
+  // NOW the lab is paid — it did the work. See the note on collect().
+  payLab(ship).catch(() => {});
 
   return {
-    ok: true, shipment: ship, result: res, plan, outcome,
-    notes, medicine,
-    coldChainBroken: res.coldChainBroken,
+    ok: true, shipment: ship, outcome, notes, medicine,
+    treated: treated.length,
     mutant: (outcome && outcome.mutant) || null,
   };
+}
+
+/* Coverage, inlined rather than imported: /src/plague must not depend on
+   /src/ward (the ward is a consumer of this layer, not the other way round),
+   and the auto-settle path has to compute it with no ward loaded at all.
+   ⚠ THE THRESHOLD LIVES IN triage.js AND IS MIRRORED HERE. If you change one,
+     change both — the smoke test asserts they agree. */
+export const CLEAR_THRESHOLD = 0.8;
+function coverageOf(activeCases, treatedCount) {
+  const total = Math.max(0, activeCases | 0);
+  if (total <= 0) return { share: 1, clears: true, shortfall: 0 };
+  const treated = Math.max(0, Math.min(treatedCount | 0, total));
+  const share = treated / total;
+  return { share, clears: share >= CLEAR_THRESHOLD, shortfall: Math.max(0, Math.ceil(total * CLEAR_THRESHOLD) - treated) };
+}
+
+/* Clear only the people who actually got a dose. Everyone else stays ill —
+   that is what makes the reservoir real rather than a message about one. */
+function clearTreated(st, ids, strain) {
+  const now = Date.now();
+  for (const id of ids) {
+    const inf = st.infections[id];
+    if (!inf || inf.strainId !== strain.id) continue;
+    st.immune[id] = { strainId: strain.id, until: now + OB.TUNING.IMMUNE_MS };
+    delete st.infections[id];
+  }
+}
+
+async function payLab(ship) {
+  const B = bridge();
+  try {
+    const c = B.client();
+    if (!c || !B.signedIn()) return;
+    const mineIds = {};
+    try { for (const o of (B.myOps() || [])) if (o && o.id != null) mineIds[String(o.id)] = 1; } catch (e) {}
+    // A player never pays themselves — see settleWaybill.
+    if (mineIds[String(ship.labId)]) return;
+    const cut = Math.round((ship.fee | 0) * Math.max(0, Math.min(0.5, +ship.labShare || 0.18)));
+    if (cut <= 0) return;
+    await c.from('cure_payouts').insert([{
+      shipment_id: ship.id, op_id: String(ship.labId), corp_id: ship.labCorpId,
+      role: 'lab', amount: cut, rating_delta: 0,
+      payer_id: B.userId(), payer_name: B.displayName(),
+    }]);
+  } catch (e) {}
 }
 
 async function settleWaybill(ship, plan) {
@@ -510,7 +693,13 @@ async function settleWaybill(ship, plan) {
         role: 'carrier', amount: selfCarrier ? 0 : plan.payCarrier, rating_delta: plan.ratingDelta,
         payer_id: B.userId(), payer_name: B.displayName() });
     }
-    if (!selfLab) {
+    /* 🔴 THE LAB IS NOT PAID HERE ANY MORE. Arrival pays the carrier, who drove
+       it whatever is in the box; the lab's cut is filed by payLab() when the
+       crate is actually OPENED. That is what gives refusal a price — if the
+       lab were paid on arrival, refusing an iatrogenic crate would be free and
+       there would be no decision in it. A zero-amount row is skipped rather
+       than filed, or it would sit unclaimable in the ledger forever. */
+    if (!selfLab && (plan.payLab | 0) > 0) {
       rows.push({ shipment_id: ship.id, op_id: String(ship.labId), corp_id: ship.labCorpId,
         role: 'lab', amount: plan.payLab, rating_delta: 0,
         payer_id: B.userId(), payer_name: B.displayName() });

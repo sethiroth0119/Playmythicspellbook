@@ -1051,16 +1051,233 @@ try {
    poses a `moving` test misses: the single frame where motion STOPS, and R,
    which teleports the view without ever setting moving at all — both of which
    would otherwise leave every overlay up to 250ms behind the board. */
+/* ══════════════════════════════════════════════════════════════════
+   🎥 YAW MUST NOT COST THE PLAYER TILES — the yaw half of OPEN-BREAKS #3.
+   ══════════════════════════════════════════════════════════════════
+   fitCamera() solves the framing at yaw 0 and ONLY at yaw 0 (see camAt: "Yaw
+   is fixed at 0 here on purpose"). fitDistance() reads a tile's screen offset
+   straight off its world X, which is the camera's right axis only while the
+   eye looks down −Z. Turn the eye and the board's on-screen footprint turns
+   with it: this lattice is 14 wide and 12 deep, so the silhouette is widest on
+   the diagonals and tallest at 90°, and NEITHER is what the fit solved for.
+   Measured on the shipped tree, default seed, in-game host (802×688), pan 0,
+   projected bbox of all 168 top faces against the 802×688 canvas:
+
+       yaw    off left   off right   off bottom
+        15      10.5px        —           —
+       120      18.9px        —           —
+       165        —         33.1px        —
+        60        —           —         10.7px
+       240        —          9.1px      25.3px
+
+   i.e. rotating alone — a player pressing E and touching nothing else — walks
+   the board off the canvas and hands those pixels to the page background.
+   Counted as tiles by __bbHexCheck at pan 0, that is `offFrameFails` 1 at
+   host=boardarea (yaw 45/135/165/180) and up to 14 at host=full (yaw 45),
+   which is exactly OPEN-BREAKS #3 arriving through the camera instead of
+   through the fit.
+
+   🧭 WHY YAW RE-FITS THE SCALE AND PAN DOES NOT. They are different verbs.
+   Q/E is "look at it from over here" — the player is asking to see the SAME
+   board from another side, and a rotation that silently amputates a flank is
+   answering a different question than the one asked. W/A/S/D is "go and look
+   over there", and a camera that re-frames whatever you pan toward is not a
+   camera at all: it would make the pan control inert, because every attempt to
+   move the view would be undone by a re-fit. So:
+     · YAW  → re-solve the distance so the whole lattice stays inside the
+              canvas at every angle. Invisible in kind (nothing leaves the
+              frame that was in it) and small in degree (see below).
+     · PAN  → left alone. Tiles are allowed off frame, and the guarantee that
+              they can be brought BACK is carried by camClampPan() (the focus
+              can never leave the board) plus R (one key, exact neutral fit)
+              plus the off-screen markers drawOffscreenActionable() draws for
+              any tile the rules are currently asking the player to click.
+   That split is also what the self-check now asserts, and it asserts the two
+   halves differently — see hexSelfCheck's `unreachable`.
+
+   THE SOLVE. Everything below is exact, not iterative, because the projection
+   is one divide. With focus F = (CAM_BASE.tx, 0), pitch θ and yaw ψ, write a
+   world point's offset from F in the CAMERA'S OWN ground frame:
+       u = Δx·cosψ − Δz·sinψ        (camera right)
+       v = Δx·sinψ + Δz·cosψ        (toward the eye)
+       E = elevation − target.y
+   then, dropping the algebra that cancels (dist·cos²θ + dist·sin²θ):
+       x_cam = u                       z_cam = dist − (cosθ·v + sinθ·E)
+       y_cam = cosθ·E − sinθ·v
+   Every containment constraint is therefore `A/(dist − K) ≤ B` with K fixed,
+   so the minimum dist each one needs is `K + A/B` and the answer is the max
+   over all of them. At ψ = 0 the horizontal pair reduces to fitDistance()'s
+   own expression term for term — that identity is the check that the two
+   agree. The two differences are deliberate: fitDistance bounds a hexagon by
+   its two side vertices (a bound that is tight for the binding tile at yaw 0
+   and not at any other yaw, which is why every corner is tested here), and it
+   solves the HORIZONTAL constraint only. Vertical was slack at yaw 0 and is
+   not at every yaw — measured, 25px of bottom overflow at yaw 240 — so both
+   axes are solved here.
+
+   ⚠ IT CAN ONLY EVER BACK OFF. `d` starts at CAM_BASE.dist and the loop only
+   raises it, so the fit's pitch, aim and viewShiftY are untouched and the
+   camera can never dolly IN past the framing the fit solved.
+   ⚠ …AND IT DOES MOVE THE NEUTRAL POSE, BY 0.15%. Stated plainly rather than
+   claimed away: the shipped fit binds at fillX = 1.0 with LITERALLY ZERO
+   margin — measured, the outermost corner projects to x = 802.0 on an 802px
+   canvas — so asking for CAM_FRAME_MARGIN of daylight raises yaw 0 too, from
+   dist 20.9564 to 20.9883 (×1.0015, 1.4px off the board's drawn width at
+   host=boardarea; ×1.0007 at host=full). Re-verified rather than argued: at
+   the neutral pose, 4 seeds × 4 host rects, deadCentres 0, buriedFails 0,
+   offFrameFails 0, nullOverDrawn 0 — the table is in the piece's report.
+   Measured dolly at the other angles, pan 0, default seed:
+       host=boardarea (802×688, the in-game rect)   ×1.000 … ×1.075
+       host=full      (1600×900, rig override)      ×1.001 … ×1.473
+   The in-game number is the one that describes play: a 7.5% dolly spread over
+   a 45° turn at 78°/s is under 2% per frame and reads as the board settling
+   into frame. host=full is 1600×900 — an aspect no `.board-area` produces
+   (the widest measured is 1.43 at 2560×1440) — and it is wide and SHORT, so a
+   turn swings the board's long axis into the short screen axis and the dolly
+   has to be large. That is the honest cost of "no tile leaves the frame on a
+   look-around", and the alternative — leaning the pitch back to compress the
+   depth instead — is barred: ~11 ground ellipses in this file are squashed by
+   a hardcoded ctx.scale(1,k) that no camera feeds (CONTRACT §2 Tier 2).
+
+   ⚠ PAN IS DELIBERATELY EXCLUDED from `fx`/`fz` here. Include it and the
+   distance becomes a function of pan, the camera zooms out as you push toward
+   an edge, and the pan control quietly stops meaning anything. The board's
+   framing answers for the BOARD; where the player is looking is the player's.
+
+   Cost: 168 tiles × 6 corners of pure arithmetic, no allocation, no
+   projection, memoised on (yaw, MAPSIG, canvas, fit) so a parked camera pays
+   nothing and a turning one pays it once per frame — measured 0.041 ms cold
+   and 0.0002 ms on a memo hit, against the ~24 ms terrain bake that the same
+   turning frame already spends. */
+const CAM_FRAME_MARGIN = 0.75;    /* px of daylight between the outermost tile
+                                     corner and the canvas edge. tileOffFrame()
+                                     is a STRICT test against [0,W]×[0,H], so a
+                                     corner solved to land exactly on the edge
+                                     fails or passes on float noise. */
+/* The six pointy-top corner directions, unit circumradius — the same
+   i·60°−30° HEXSPEC §1 writes and hexCorners() recomputes. Hoisted to a table
+   because this loop wants 1008 of them per call and hexCorners() would
+   allocate 168 arrays of 6 objects to hand back numbers it just computed. */
+const HEX_UX = [], HEX_UZ = [];
+for (let i = 0; i < 6; i++){
+  const a = i*Math.PI/3 - Math.PI/6;
+  HEX_UX.push(Math.cos(a)); HEX_UZ.push(Math.sin(a));
+}
+let _camFrameMemo = { key:'', d:0 };
+function camFrameDist(){
+  const B = CAM_BASE;
+  if (!VIEW.box || !VIEW.scale || !MAP.cols || !MAP.rows) return B.dist;
+  const key = CAMERA.yaw + '|' + MAPSIG + '|' + W + 'x' + H + '|' + B.dist + ',' +
+              B.pitch + ',' + B.tx + '|' + VIEW.cx + ',' + VIEW.cy + ',' + VIEW.scale;
+  if (_camFrameMemo.key === key) return _camFrameMemo.d;
+  const st = Math.sin(B.pitch), ct = Math.cos(B.pitch);
+  const cy = Math.cos(CAMERA.yaw), sy = Math.sin(CAMERA.yaw);
+  const scale = VIEW.scale, m = CAM_FRAME_MARGIN;
+  /* Against the CANVAS, not VIEW.box, because tileOffFrame() — the assertion
+     this has to satisfy — is against the canvas. EMBEDDED zeroes CONFIG.SAFE
+     (:2917) so in the game and in the harness they are the same rect anyway;
+     in the standalone preview this is the more permissive of the two, which is
+     the right way round for a dev view. Floored at 8px so a degenerate host
+     cannot divide by ~0 and send the camera to infinity. */
+  const Rlim = Math.max(8, (W - m) - VIEW.cx), Llim = Math.max(8, VIEW.cx - m);
+  const Tlim = Math.max(8, VIEW.cy - m),       Blim = Math.max(8, (H - m) - VIEW.cy);
+  const R = hexSize(), hw = hexW(), hv = hexV(), fx = B.tx;
+  let d = B.dist;
+  for (let gz = 0; gz < MAP.rows; gz++){
+    const wz0 = (gz - (MAP.rows-1)/2) * hv;
+    for (let gx = 0; gx < MAP.cols; gx++){
+      const wx0 = (gx + (gz & 1)*0.5 - (MAP.cols-1)/2) * hw;
+      const E = tileElev(gx, gz) - CAM_FIT.targetY;
+      for (let i = 0; i < 6; i++){
+        const dx = wx0 + HEX_UX[i]*R - fx, dz = wz0 + HEX_UZ[i]*R;
+        const u = dx*cy - dz*sy, v = dx*sy + dz*cy;
+        const K = ct*v + st*E;              /* z_cam = dist − K */
+        const yc = ct*E - st*v;
+        /* near-clip floor: project() returns null at z ≤ 0.05 and ~40 callers
+           answer that with a bare `continue` (CONTRACT §1.6 / R17), so a corner
+           must never get close to it. Same 1.5 fitDistance() uses. */
+        let need = K + 1.5;
+        if (u > 0)       need = Math.max(need, K + u*scale/Rlim);
+        else if (u < 0)  need = Math.max(need, K - u*scale/Llim);
+        if (yc > 0)      need = Math.max(need, K + yc*scale/Tlim);
+        else if (yc < 0) need = Math.max(need, K - yc*scale/Blim);
+        if (need > d) d = need;
+      }
+    }
+  }
+  _camFrameMemo = { key, d };
+  return d;
+}
+
+/* 🎥 …AND THE EXACT ANSWER PUMPS, SO IT IS NOT WHAT GETS RENDERED.
+   camFrameDist() is a max over 1008 corner constraints, and which corner binds
+   changes abruptly as the lattice turns — a hexagon's silhouette is not smooth
+   under rotation, and elevation makes it less so. Sampled every 0.5° at
+   host=boardarea the exact curve has THIRTEEN local extrema over a full turn
+   with excursions up to 7.5%: at 78°/s that is the board breathing in and out
+   about six times per rotation. Correct, and horrible to look at.
+   Two fixes were measured before this one was chosen:
+     · DILATE THE CURVE IN YAW (take the max over ψ ± 12°). Pure, stateless and
+       it works beautifully at the in-game rect — 13 extrema collapse to 1 with
+       the peak and the yaw-0 value both unchanged. It was rejected because at
+       a wide-and-short host (1600×900) the requirement climbs steeply either
+       side of yaw 0, so the dilation drags the PEAK onto yaw 0 and zooms the
+       neutral view out by 8%. A smoothing that moves the resting framing is
+       not a smoothing.
+     · A CIRCUMSCRIBED-DISC FIT, constant over yaw and therefore perfectly
+       smooth. Rejected outright: the board is 14 × 12, so its circumdisc is
+       far wider than its width, and the neutral view would lose ~20% of its
+       size to a margin it never uses.
+   So the smoothing is TEMPORAL and ONE-DIRECTIONAL: the distance takes any
+   INCREASE immediately and gives it back at a bounded rate.
+     · The containment invariant is untouched — the rendered distance is never
+       below camFrameDist(), only ever at or above it, so "no tile leaves the
+       frame" holds on every frame, mid-ease ones included. That is the whole
+       reason the asymmetry runs this way round and not the other.
+     · The dips are what the give-back bridges. It only ever crosses a dip
+       partway, which is the point: what has to go is the OSCILLATION, and a
+       12%/s ceiling on the shrink means the board can never snap back in.
+     · It arrives exactly, so a PARKED camera sits at the tight fit and the
+       neutral pose is bit-for-bit what camFrameDist() answers at yaw 0.
+   ⚠ RATE-LIMITED RATHER THAN EXPONENTIAL, and that is not a style choice.
+   An exponential ease never actually arrives, so it needs a park epsilon, and
+   until it falls under that epsilon the camera must keep reporting `moving` —
+   which bypasses the baked terrain layer and redraws the whole diorama live
+   (see drawBoard / terrainKey). Measured with a 0.45 s time constant that was
+   ~3 s of live terrain after EVERY turn, most of it spent giving back a change
+   nobody could see. A constant rate terminates, in bounded time: the worst
+   slack at the in-game rect is 7.5% of the fit's distance, so at 12%/s the
+   longest settle is 0.63 s and then the camera parks and the ground layer is
+   cached again. Measured on a live held-E turn, 210 sampled frames: zero
+   frames with a tile off frame, zero frames rendered nearer than the
+   requirement, zero one-frame dolly steps above 3%.
+   ⚠ IT IS STATE, AND STATE MAKES A POSE HISTORY-DEPENDENT, which would make
+   __bbHexCheck() non-deterministic — the one thing a gate cannot be. So the
+   ease exists ONLY on the animated path: camApply(dt) eases, camApply() with
+   no argument SNAPS to the exact requirement, and every non-animated caller
+   (fitCamera, camReset/R, __bbCam.set, _probeRecovery) is a snap. A probed pose
+   therefore reports the TIGHTEST legal framing, which is also the strictest
+   version of the containment test. */
+const CAM_DIST_GIVE = 0.12;     /* of the neutral fit's distance, per second */
+let CAM_DIST_CUR = 0;
+function camDistSettling(){ return CAM_DIST_CUR > camFrameDist() + 1e-9; }
+
 let CAM_ANCHOR_DIRTY = true;
-function camApply(){
+function camApply(dt){
   CAM_ANCHOR_DIRTY = true;
   const c = CONFIG.camera, B = CAM_BASE;
+  /* 🎥 …and the distance is the FIT'S answer widened for the current yaw, not
+     CAM_BASE.dist itself. See camFrameDist: it can only widen. */
+  const want = camFrameDist();
+  if (!(dt > 0) || CAM_REDUCED || want >= CAM_DIST_CUR || !CAM_DIST_CUR) CAM_DIST_CUR = want;
+  else CAM_DIST_CUR = Math.max(want, CAM_DIST_CUR - CAM_DIST_GIVE*(B.dist || 1)*dt);
+  const dist = CAM_DIST_CUR;
   const cy = Math.cos(CAMERA.yaw), sy = Math.sin(CAMERA.yaw);
   const fx = B.tx + CAMERA.pan.x, fz = CAMERA.pan.z;
-  const horiz = B.dist * Math.cos(B.pitch);
+  const horiz = dist * Math.cos(B.pitch);
   c.target.x = fx; c.target.y = CAM_FIT.targetY; c.target.z = fz;
   c.pos.x = fx + sy*horiz;
-  c.pos.y = CAM_FIT.targetY + B.dist*Math.sin(B.pitch);
+  c.pos.y = CAM_FIT.targetY + dist*Math.sin(B.pitch);
   c.pos.z = fz + cy*horiz;
   buildCam();
 }
@@ -1082,7 +1299,16 @@ function camClampPan(){
      with the battle pushed into one corner, which is the same complaint in a
      politer form. At half, the fit already frames the whole board and the pan
      is what it should be on a tactics map: a way to re-compose, not a way to
-     go somewhere else. */
+     go somewhere else.
+     🧭 VERIFIED, not assumed, when the yaw fit went in — because this clamp is
+     now half of the answer to "a tile the rules consider playable must be
+     reachable at every camera pose", and the other half (camFrameDist) is only
+     load-bearing if this one holds. Driven to the clamp on every axis, 8 yaws
+     × the extreme pans × 4 seeds, `__bbHexCheck` reports at worst 28 of 168
+     tiles off frame and `unreachable` 0 at every one of them: the board is
+     always most of the way on screen, every tile off it comes back with R, and
+     nothing the rules ask for is left with no affordance (see
+     drawOffscreenActionable). The range stays at half. */
   const e = boardExtent();
   const px = clamp(CAMERA.pan.x, -e.x*CAM_PAN_RANGE, e.x*CAM_PAN_RANGE);
   const pz = clamp(CAMERA.pan.z, -e.z*CAM_PAN_RANGE, e.z*CAM_PAN_RANGE);
@@ -1166,11 +1392,18 @@ function camUpdate(dt){
                  Math.abs(CAMERA.vel.z) > CAM_MOVE.stopEps ||
                  Math.abs(CAMERA.yawVel) > CAM_MOVE.stopEps;
   if (!moving){
+    CAMERA.vel.x = CAMERA.vel.z = CAMERA.yawVel = 0;
+    /* 🎥 …but the YAW stopping is not the same as the VIEW stopping. The
+       frame distance eases back in after a turn ends (see camApply), and
+       parking here would snap the last few percent of that ease in one frame —
+       a visible pop at the end of every rotation, which is precisely the
+       artefact the ease exists to remove. So stay "moving" until the dolly has
+       settled too, then park. */
+    if (camDistSettling()){ CAMERA.moving = true; camApply(dt); return; }
     /* park it exactly, so a resting camera produces a STABLE terrainKey and
        the baked ground layer stops rebuilding. A camera that creeps by 1e-9
        per frame re-bakes the whole diorama every frame, forever, and the only
        symptom is the frame rate. */
-    CAMERA.vel.x = CAMERA.vel.z = CAMERA.yawVel = 0;
     if (CAMERA.moving){ CAMERA.moving = false; camApply(); }
     return;
   }
@@ -1183,7 +1416,7 @@ function camUpdate(dt){
   if (CAMERA.yaw > Math.PI) CAMERA.yaw -= Math.PI*2;
   else if (CAMERA.yaw <= -Math.PI) CAMERA.yaw += Math.PI*2;
   camClampPan();
-  camApply();
+  camApply(dt);
 }
 
 /* 🧭 THE CAMERA-ALIGNED GROUND FRAME.
@@ -1450,11 +1683,19 @@ function unitAt(gx,gz){ return units.find(u => u.gx===gx && u.gz===gz && !u.dead
        A ray is consumed once host-side but arrives on a full roster snapshot,
        so a stale one could ride along beside an ordinary walk; both endpoints
        matching is what makes a stale ray impossible to misapply.
-     • every leg must be ONE hex step (|dx|<=1 and |dz|<=1, the six odd-r
-       offsets and nothing else). rowShift() interpolates the half-column
-       stagger EXACTLY across a single row change and no further — that is
-       precisely why 1-tile shoves were always drawn correctly and 2+ tile ones
-       were not. A multi-row leg would re-import the drift this fixes.
+     • every leg must be ONE hex step — one of the SIX odd-r offsets, checked
+       against hexStepDirs() below and nothing looser. rowShift() interpolates
+       the half-column stagger EXACTLY across a single row change and no
+       further — that is precisely why 1-tile shoves were always drawn
+       correctly and 2+ tile ones were not. A multi-row leg would re-import the
+       drift this fixes.
+       ⚠ This used to read `|dx|>1 || |dz|>1`, a SQUARE box. A square box round
+       a hex tile admits EIGHT offsets, and two of them are hex distance 2:
+       on an even row (+1,-1) and (+1,+1), on an odd row (-1,-1) and (-1,+1).
+       So the one function whose entire job is to refuse a route it cannot
+       vouch for would accept a route that skips a tile, and draw the sprite
+       gliding through the hex in between at half a leg's speed. Six offsets,
+       never eight — HEXSPEC §5.
      • no zero-length leg, which would divide the eased progress by a tile
        that does not exist and stall the sprite mid-hop.
 
@@ -1462,6 +1703,22 @@ function unitAt(gx,gz){ return units.find(u => u.gx===gx && u.gz===gz && !u.dead
    hex direction. That re-scatters the lattice offsets into a second file and
    is exactly the mistake the host-side fix just undid. If there is no path,
    there is no path. */
+/* The six odd-r neighbour offsets for a tile on row `gz`, verbatim from
+   HEXSPEC §5. This is a VALIDATOR, not a pathfinder — it answers "is this one
+   legal hex step", never "which step should be taken next", so it does not
+   breach the board's no-rules rule. Row parity matters: the half-column
+   stagger means the diagonal pair flips sides between even and odd rows, and a
+   check that ignores parity is the square box this replaces. */
+function hexStepDirs(gz){
+  return (gz & 1)
+    ? [[-1,0],[1,0],[0,-1],[1,-1],[0,1],[1,1]]     /* odd row: shifted +0.5 col */
+    : [[-1,0],[1,0],[-1,-1],[0,-1],[-1,1],[0,1]];  /* even row                  */
+}
+function isHexStep(px, pz, nx, nz){
+  const dirs = hexStepDirs(pz), dx = nx - px, dz = nz - pz;
+  for (let i = 0; i < 6; i++) if (dirs[i][0] === dx && dirs[i][1] === dz) return true;
+  return false;
+}
 function shoveLegs(u, gx, gz, path){
   if (!Array.isArray(path) || path.length < 2) return null;
   const a = path[0], b = path[path.length-1];
@@ -1477,35 +1734,201 @@ function shoveLegs(u, gx, gz, path){
     const p = path[i]; if (!p) return null;
     const nx = p.x|0, nz = p.z|0;
     if (nx === px && nz === pz) return null;
-    if (Math.abs(nx-px) > 1 || Math.abs(nz-pz) > 1) return null;
+    if (!isHexStep(px, pz, nx, nz)) return null;
     out.push({ x:nx, z:nz });
     px = nx; pz = nz;
   }
   return out;
 }
 
+/* 🏹 THE TELEGRAPH ROUTE — now the LAST RESORT before the endpoint tween, not
+   the primary source. Read the demotion before using this function.
+
+   It used to be the only route an ordinary walk had. That was the bug the
+   final gate found: TELE is a UI overlay, and it only exists while a human is
+   hovering or the local AI is narrating. A move that arrives with NO live
+   telegraph — every multiplayer receive, every replay step, both of which
+   relocate the unit in state and then push the roster — fell straight through
+   to the two-endpoint tween. Six hexes in 0.34s, in a straight line, through
+   whatever was standing in the way. The local walk had been fixed and the
+   opponent's screen still showed the teleport.
+
+   The route now travels WITH the move: the host's moveUnit() reducer writes it
+   onto the unit in state as `walkPath`, it is mirrored with the unit's
+   position, cloned into the replay snapshot, and arrives here as `path` on the
+   `board:units` entry — the same per-unit channel shoves already used. So
+   `shoveLegs(u, gx, gz, path)` above answers first, for every move on every
+   path, and the fallbacks below are genuinely fallbacks.
+
+   Why this is kept at all: the two documents are cached separately (CONTRACT
+   R6). A NEW board served against an OLD cached index.html gets no `walkPath`
+   on the wire, and for the local player TELE is still populated — so the
+   player's own walk stays correct through a version skew instead of silently
+   regressing to a slide. It cannot rescue the multiplayer or replay case,
+   because in those there is no telegraph to read; only the host shipping the
+   route can, and that is what the host now does.
+
+   The route is not recomputed here in either case. It is READ from the exact
+   tile list the telegraph drew: `TELE.path`, pushed by the host straight out
+   of the getMovePath() call the move itself is about to commit (see the `tele`
+   message handler, and `_bbStagePushTele` on the host). A second derivation is
+   how the two drift apart again, and this file owns no pathfinder to derive
+   one with anyway.
+
+   ⚠ ORDERING is what makes this safe rather than lucky. The host's tick posts
+   `units` BEFORE `tele` (`_bbStageMount`), and postMessage delivery is ordered,
+   so when applyUnits→moveUnit runs, TELE still holds the PRE-move route. The AI
+   half is the same shape from the other side: setAIActor() pushes `side:'foe'`
+   with the pre-move tile prepended, and the board does not move the unit until
+   the next roster push.
+
+   Staleness is not assumed away — every route goes through shoveLegs(), whose
+   three checks (starts on this unit's tile, ends on this destination, every leg
+   exactly one hex step) are precisely what makes a leftover hover route for
+   another unit or another target impossible to misapply. No match, no legs,
+   and no legs means the honest endpoint tween — never an invented route. */
+function telegraphLegs(u, gx, gz){
+  const P = TELE.path;
+  if (!Array.isArray(P) || P.length < 2) return null;
+  const tiles = [];
+  for (const k of P){
+    if (typeof k !== 'string') return null;      /* the wire format is "x,z" */
+    const c = k.indexOf(','); if (c < 0) return null;
+    const x = +k.slice(0, c), z = +k.slice(c + 1);
+    if (!isFinite(x) || !isFinite(z)) return null;
+    tiles.push({ x: x | 0, z: z | 0 });
+  }
+  return shoveLegs(u, gx, gz, tiles);
+}
+
+/* 🚶 THE PACE CURVE. Returns distance travelled, in LEGS, at normalised time k.
+   Every hex step is the same world length (all six odd-r neighbour offsets come
+   out to exactly HEXW — check it: a row step is hypot(HEXW/2, 1.5*SIZE) =
+   sqrt(3)*SIZE), so "legs travelled" IS arc length and a constant slope here is
+   a constant ground speed out there.
+
+   One leg keeps the cubic easeInOut it always had, to the bit — an ordinary
+   single step must not change. Two or more legs get a trapezoid: accelerate
+   over the FIRST leg, cruise at a constant speed through the middle, decelerate
+   over the LAST. That is the one profile that reads as walking. The two
+   alternatives both lie about the route in their own way — easing per leg makes
+   a six-tile walk six separate hops with five dead stops, and easing once across
+   the whole route makes the interior legs blur past at several times the speed
+   of the first and last, so a long route looks like a dash and a short one like
+   a shuffle.
+
+   The algebra, so nobody has to re-derive it: ramp DISTANCE is fixed at one leg
+   each end, so with a linear accel (mean speed V/2) the ramp TIME is 2/V. Total
+   time is 1, so 2/V + (n-2)/V + 2/V = 1 ⇒ V = n+2 legs per unit of normalised
+   time. Everything below falls out of that. */
+function tweenDist(n, k){
+  if (n <= 1) return easeInOut(k);
+  const V = n + 2;                 /* cruise speed, legs per unit normalised t */
+  const ta = 2 / V;                /* ramp time; ramp distance is exactly 1 leg */
+  const A = (V * V) / 4;           /* = V / (2*ta), the quadratic's coefficient */
+  if (k <= ta) return A * k * k;
+  if (k >= 1 - ta){ const s = 1 - k; return n - A * s * s; }
+  return 1 + V * (k - ta);
+}
+/* Cruise speed in legs per second. 8 is brisk enough that a 6-tile route is a
+   1.0s walk rather than a cutscene, and it keeps the common 2–3 tile move
+   (0.50s / 0.63s) comfortably inside the host's AI_DELAYS.move of 700ms. */
+const WALK_LEGS_PER_SEC = 8;
+/* …and a ceiling, because a 12-tile ice skid at a constant walk is 1.75s of
+   nothing happening. Past ~9 legs the skid speeds up rather than drags. */
+const WALK_DUR_MAX = 1.35;
+
+/* ⛰ THE GROUND UNDER A UNIT'S FEET, mid-walk.
+   moveUnit() sets u.gx/u.gz to the DESTINATION the instant the tween starts —
+   it has to, so unitAt() and every rules-facing lookup see the new tile — but
+   drawUnit() then read tileElev(u.gx,u.gz) for the whole walk. A unit stepping
+   OFF a slab dropped a metre before it had moved anywhere; one stepping ONTO a
+   slab floated across at the higher level and landed on nothing. The tween
+   carries the interpolated ground height of the leg it is actually on. */
+/* ⚠ THE FALLBACK IS unitTile(), NOT u.gx/u.gz — same distinction as the block
+   below, on the elevation axis instead of the tile axis. moveUnit() moves
+   gx/gz to the destination on the first frame of the walk, and on that one
+   frame the tween has not written `gy` yet, so this used to answer with the
+   DESTINATION's elevation while the sprite was still standing on the source.
+   The occlusion mask keys its "is this slab higher than what the actor stands
+   on" reject on exactly this number, so a step UP silently switched off every
+   occluder for a frame — measured as 3–12 leaked pixels on the first sample
+   after a move, gone by the next.
+   At rest this is byte-identical: unitTile() fast-paths to {gx,gz} whenever
+   u.x/u.z already equal them, which is every frame a unit is not walking. */
+function unitGroundY(u){
+  if (u && u.tween && typeof u.tween.gy === 'number') return u.tween.gy;
+  if (!u) return 0;
+  const t = unitTile(u);
+  return tileElev(t.x, t.z);
+}
+
+/* 🧱 …and the TILE it is standing on, which is the SAME distinction from the
+   other side. `u.gx/u.gz` is where the unit will BE — moveUnit() moves them to
+   the destination on the first frame — so anything that means "which slab is
+   underneath this sprite right now" has to derive it from the live position,
+   not from the grid fields. The one consumer that matters is the occlusion
+   mask's own-slab exemption (clipBehindTerrain's `sx/sz`): aim it at the
+   destination and, for the length of the walk, the tile the unit is actually
+   standing on is free to clip it — which on a raised route is the unit's boots
+   disappearing into the step it is climbing.
+   Rounding goes through worldToTile() rather than Math.round on the offsets,
+   because odd-r rows are staggered and rounding the columns independently is
+   wrong near hex edges (HEXSPEC §4). Fast path first: a unit at rest is already
+   on integer coordinates and needs none of it. */
+function unitTile(u){
+  if (!u) return { x:0, z:0 };
+  if (u.x === u.gx && u.z === u.gz) return { x:u.gx, z:u.gz };
+  const w = gw(u.x, u.z, 0);
+  return worldToTile(w.x, w.z) || { x:u.gx, z:u.gz };
+}
+
 /* crisp tile-to-tile movement: cubic ease + hop arc + squash + dust
    `path` (optional) is the ordered tile list the GAME actually walked — first
-   element the unit's current tile, last the destination. When present the
-   tween is CHAINED through it leg by leg instead of interpolated straight from
-   one endpoint to the other. Ordinary walking passes nothing and is untouched.
+   element the unit's current tile, last the destination. It is the PRIMARY
+   source for every move: the host attaches it to the unit (`walkPath`, written
+   by its moveUnit() reducer) or, for a shove, to the shove ray, and either way
+   it arrives on the `board:units` entry. When present the tween is CHAINED
+   through it leg by leg instead of interpolated straight from one endpoint to
+   the other, which is why the sprite goes round what the arrow went round.
+   Two fallbacks, in order, and both are deliberate:
+     • the telegraph's own route (telegraphLegs, above) — only reachable for a
+       LOCAL hovered move against an older host that ships no `walkPath`;
+     • the straight two-endpoint tween, for a move that genuinely HAS no route:
+       a teleport effect (the Grappling Hook), a summon relocation, or a
+       snapshot that jumped several actions at once. Sliding is the honest
+       picture for those — nothing walked.
    `force` (optional) skips only the unit-occupancy gate — see applyUnits, where
    a batch of simultaneous shoves can legitimately vacate a tile it also fills.
    Signature stays backwards compatible: moveUnit(id,gx,gz) behaves as before. */
 function moveUnit(id, gx, gz, path, force){
-  const u = units.find(x => x.id===id); if (!u || u.tween) return;
+  const u = units.find(x => x.id===id); if (!u) return;
+  /* A move arriving mid-animation used to be DROPPED outright. That was survivable
+     while every walk was ≤0.34s; walking the real route makes the window several
+     times wider, and a dropped move leaves the sprite on a tile the rules have
+     already vacated until some later snapshot happens to differ again. Settle the
+     running tween onto its own endpoint (which u.gx/u.gz already agree with) and
+     start the new one from there — a correct board beats a refused animation, the
+     same call the deferred-move loop in applyUnits makes. */
+  if (u.tween){ const p = u.tween; u.tween = null; u.x = p.x1; u.z = p.z1; u.y = 0; }
   if (tileBlocked(gx,gz)) { deny(u); return; }
   if (!force){ const occ = unitAt(gx,gz); if (occ && occ.id !== u.id) { deny(u); return; } }
   u.face = (gx === u.gx) ? u.face : (gx > u.gx ? 1 : -1);
-  const legs = shoveLegs(u, gx, gz, path) || [{ x:u.x, z:u.z }, { x:gx, z:gz }];
+  const legs = shoveLegs(u, gx, gz, path) || telegraphLegs(u, gx, gz) || [{ x:u.x, z:u.z }, { x:gx, z:gz }];
   const n = legs.length - 1;
-  /* Duration scales with LEG COUNT, not per leg: 0.34s each would make a
-     12-tile ice skid a four-second cutscene. One leg is 0.34s exactly, so an
-     ordinary step animates at the speed it always has. */
-  const dur = n <= 1 ? 0.34 : Math.min(0.72, 0.34 + 0.085*(n-1));
+  /* Ground height at each waypoint, sampled ONCE here rather than per frame:
+     leg 0 starts at the sprite's live position, whose tile is the one u.gx/u.gz
+     still name at this point in the function — read it BEFORE they are
+     reassigned to the destination below. Every later leg is an integer tile. */
+  const ey = [ tileElev(u.gx, u.gz) ];
+  for (let i = 1; i < legs.length; i++) ey.push(tileElev(legs[i].x, legs[i].z));
+  /* Constant ground speed: the duration is proportional to the route length,
+     which is the whole point of walking it. One leg stays 0.34s exactly. */
+  const dur = n <= 1 ? 0.34 : Math.min(WALK_DUR_MAX, (n + 2) / WALK_LEGS_PER_SEC);
   /* The hop arc is per leg (one bounce per tile). Damp it by how fast the legs
      are going by, or a long skid turns into a pogo stick. */
-  u.tween = { legs, n, x1:gx, z1:gz, t:0, dur, hop: 0.28 * Math.min(1, (dur/n)/0.34) };
+  u.tween = { legs, ey, n, x1:gx, z1:gz, t:0, dur, li:-1, gy:ey[0],
+              hop: 0.28 * Math.min(1, (dur/n)/0.34) };
   u.anim = 'walk';
   u.gx = gx; u.gz = gz;
   dispatch('unitMove', { id, x:gx, z:gz, path: n > 1 ? legs.slice(1) : null });
@@ -1675,10 +2098,15 @@ function burst(wx, wz, power, n, col){
    ground, drift outward and fade, plus a little heavier grit that arcs and
    settles. (Three.js: soft-particle billboards with depth-fade + the same
    expand/fade curve; grit as a small GPU sprite burst.) */
-function dust(wx, wz, n){
+/* `y0` (optional) is the GROUND height to kick the dust off. It defaults to 0,
+   which is the flat-board assumption every caller made before there were slabs:
+   a unit landing on a raised tile left its dust puffing out of the dirt below
+   the cliff it had just climbed. */
+function dust(wx, wz, n, y0){
+  const g = y0 || 0;
   for (let i=0;i<n;i++){
     const a = Math.random()*Math.PI*2, sp = rnd(.35,1.05);
-    particles.push({ puff:true, x:wx, y:rnd(.01,.10), z:wz,
+    particles.push({ puff:true, x:wx, y:g+rnd(.01,.10), z:wz,
       vx:Math.cos(a)*sp, vz:Math.sin(a)*sp, vy:rnd(.10,.34),
       t:0, life:rnd(.75,1.35),
       r0:rnd(.09,.17), r1:rnd(.44,.78),
@@ -1686,8 +2114,8 @@ function dust(wx, wz, n){
   }
   for (let i=0;i<Math.round(n*.55);i++){
     const a = Math.random()*Math.PI*2, sp = rnd(.5,1.6);
-    particles.push({ x:wx, y:.03, z:wz, vx:Math.cos(a)*sp, vy:rnd(.5,1.5), vz:Math.sin(a)*sp,
-      life:rnd(.35,.75), t:0, col:'#d8c9a4', size:rnd(1.1,2.2), g:4.2, soft:true });
+    particles.push({ x:wx, y:g+.03, z:wz, vx:Math.cos(a)*sp, vy:rnd(.5,1.5), vz:Math.sin(a)*sp,
+      life:rnd(.35,.75), t:0, col:'#d8c9a4', size:rnd(1.1,2.2), g:4.2, soft:true, y0:g });
   }
 }
 function emberDissolve(sx, sy){
@@ -4809,7 +5237,7 @@ function paintSprite(c, key, k, col, t, edge){
    so the host only has to add the stage's page offset. */
 function unitScreenBox(u){
   if (!u) return null;
-  const base = gw(u.x, u.z, tileElev(u.gx, u.gz));
+  const base = gw(u.x, u.z, unitGroundY(u));
   const wy = base.y + u.y;
   const foot = project({ x:base.x, y:wy, z:base.z });
   const head = project({ x:base.x, y:wy + unitWorldH(u.def), z:base.z });
@@ -5612,7 +6040,7 @@ function drawTruck(cp){
   ctx.restore();
 }
 function drawUnit(u){
-  const base = gw(u.x, u.z, tileElev(u.gx,u.gz));
+  const base = gw(u.x, u.z, unitGroundY(u));
   const wy = base.y + u.y;
   const foot = project({ x:base.x, y:wy, z:base.z }); if (!foot) return;
   const head = project({ x:base.x, y:wy + unitWorldH(u.def), z:base.z }); if (!head) return;
@@ -5832,6 +6260,132 @@ function drawParticles(){
   ctx.globalCompositeOperation = 'source-over';
 }
 
+/* ══════════════════════════════════════════════════════════════════
+   🧭 OFF-SCREEN ACTIONABLE TILES — the PAN half of "a tile the rules consider
+   playable must be reachable at every camera pose".
+   ══════════════════════════════════════════════════════════════════
+   Yaw is answered by the fit (camFrameDist): turning never costs a tile. Pan
+   is deliberately NOT answered that way — pan is navigation, and a camera that
+   re-frames whatever you push toward has no pan control at all, it has a very
+   slow reset. So under pan tiles ARE allowed off frame, and the obligation
+   that replaces "keep everything visible" is a pair:
+     · the board can never be LOST — camClampPan() holds the focus inside the
+       lattice's own extent, and R restores the exact fit from anywhere;
+     · the game must never REQUIRE a click the player cannot see to make.
+   The second one is the one nothing on screen was discharging. PAINT is
+   precisely the set of tiles the rules are asking the player to click right
+   now — move, attack, place, swap, and the current selection — pushed by the
+   host every time the legal-target set changes. If one of those is off frame,
+   the player is being asked for something with no affordance and no hint that
+   anything is missing: the honest reading of that state is not "they can press
+   R", it is "the UI is lying by omission". So point at it.
+   ⚠ IT IS AN INDICATOR, NOT A CONTROL, and deliberately so. It does not move
+   the camera, does not re-frame, does not steal the click. A marker that
+   re-framed on its own would be the pan-time version of the re-fit this whole
+   split exists to avoid, and one that could be clicked would be a second way
+   to address a tile — i.e. a second pick path to keep in sync with pickTile,
+   which is the single thing this file's history says costs the most.
+   ⚠ NOTHING IS DRAWN WHEN NOTHING IS OFF FRAME, which at the neutral pose is
+   always. The common case costs one Set-size test and a handful of projects.
+   Colour is the paint's own, so the marker says WHICH question is off screen
+   (a red pip is an attack target, cyan a move) rather than merely that one is.
+   Markers are merged into 30px buckets around the rim and carry a count, so a
+   move set with nine tiles off the left does not draw nine overlapping pips. */
+const OFFMARK = [
+  /* highest priority first — a tile in two sets takes the more urgent colour */
+  { set:'attack', col:'#ff5a4a' },
+  { set:'swap',   col:'#e0b64a' },
+  { set:'place',  col:'#7fe89f' },
+  { set:'move',   col:'#4fd0ff' }
+];
+function drawOffscreenActionable(){
+  if (!CAM || !VIEW.scale) return;
+  const pad = 16;                       /* how far in from the canvas edge     */
+  /* Keyed by TILE, so a tile that is in two paint sets produces one marker in
+     the more urgent colour rather than two stacked ones. */
+  const seen = new Map();
+  const consider = (x, z, col, pri) => {
+    const k = x + ',' + z;
+    const had = seen.get(k);
+    if (had && had.pri <= pri) return;
+    const e = tileElev(x, z);
+    const p = project(gw(x, z, e));
+    /* On screen? Then there is nothing to point at. Tested at the CENTRE, the
+       same point units are drawn from and the same point a nameplate anchors
+       to — a tile whose centre is on the canvas can be clicked. */
+    if (p && p.x >= 0 && p.x <= W && p.y >= 0 && p.y <= H) return;
+    let dx, dy;
+    if (p){ dx = p.x - VIEW.cx; dy = p.y - VIEW.cy; }
+    else {
+      /* Behind the near clip — project() gave nothing. Cannot happen with the
+         current fit and pan clamp (the eye sits ~21 world units back and the
+         focus can never leave the lattice), but a null here would otherwise be
+         a silently dropped marker, which is the failure mode this whole piece
+         is about. Fall back to the camera-frame ground offset and send it to
+         the bottom of the screen, which is where "behind you" is. */
+      const w = gw(x, z, 0), c = CONFIG.camera.target;
+      const ax = w.x - c.x, az = w.z - c.z;
+      dx = ax*Math.cos(CAMERA.yaw) - az*Math.sin(CAMERA.yaw);
+      dy = Math.max(0.001, ax*Math.sin(CAMERA.yaw) + az*Math.cos(CAMERA.yaw));
+    }
+    const L = Math.hypot(dx, dy);
+    if (!(L > 1e-6)) return;
+    dx /= L; dy /= L;
+    /* march to the inset canvas rim along that direction */
+    let t = Infinity;
+    if (dx > 1e-9)       t = Math.min(t, (W - pad - VIEW.cx) / dx);
+    else if (dx < -1e-9) t = Math.min(t, (pad - VIEW.cx) / dx);
+    if (dy > 1e-9)       t = Math.min(t, (H - pad - VIEW.cy) / dy);
+    else if (dy < -1e-9) t = Math.min(t, (pad - VIEW.cy) / dy);
+    if (!isFinite(t) || t <= 0) return;
+    seen.set(k, { x: VIEW.cx + dx*t, y: VIEW.cy + dy*t, dx, dy, col, pri });
+  };
+  for (let i = 0; i < OFFMARK.length; i++){
+    const src = PAINT[OFFMARK[i].set];
+    if (!src || !src.size) continue;
+    for (const k of src){
+      const c = k.indexOf(',');
+      consider(+k.slice(0, c), +k.slice(c+1), OFFMARK[i].col, i);
+    }
+  }
+  if (PAINT.sel) consider(PAINT.sel.x, PAINT.sel.z, '#ffd98a', -1);
+  if (!seen.size) return;
+  /* merge into rim buckets so a whole move set off one flank is one pip */
+  const buckets = new Map();
+  for (const it of seen.values()){
+    const key = Math.round(it.x/30) + ':' + Math.round(it.y/30);
+    const b = buckets.get(key);
+    if (!b) buckets.set(key, { ...it, n:1 });
+    else { b.n++; if (it.pri < b.pri){ b.col = it.col; b.pri = it.pri; } }
+  }
+  ctx.save();
+  for (const b of buckets.values()){
+    const a = Math.atan2(b.dy, b.dx);
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(a);
+    ctx.globalAlpha = 0.42 + Math.sin(T*3.1)*0.10;
+    ctx.fillStyle = b.col;
+    ctx.beginPath();                      /* a chevron pointing outward */
+    ctx.moveTo(9, 0); ctx.lineTo(-5, -7); ctx.lineTo(-2, 0); ctx.lineTo(-5, 7);
+    ctx.closePath(); ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = 'rgba(4,8,12,.75)'; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.restore();
+    if (b.n > 1){
+      ctx.globalAlpha = .9;
+      ctx.fillStyle = 'rgba(6,10,14,.72)';
+      ctx.beginPath(); ctx.arc(b.x - b.dx*13, b.y - b.dy*13, 7.5, 0, 7); ctx.fill();
+      ctx.fillStyle = b.col;
+      ctx.font = '700 10px ui-monospace, monospace';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(String(Math.min(99, b.n)), b.x - b.dx*13, b.y - b.dy*13 + .5);
+      ctx.globalAlpha = 1;
+    }
+  }
+  ctx.restore();
+}
+
 /* UI safe-area guides (dev only) */
 function drawGuides(){
   if (!showGuides) return;
@@ -5901,26 +6455,40 @@ function update(dt){
     u.scaleY += (1 - u.scaleY) * Math.min(1, dt*9);
     if (u.tween){
       const tw = u.tween; tw.t += dt/tw.dur;
-      const k = clamp(tw.t,0,1), e = easeInOut(k);
-      /* 🛤 CHAINED LEGS. The eased progress is spread over the whole route and
-         then split into (leg index, fraction within leg), so the sprite passes
-         EXACTLY through every tile centre the rules walked — at e*n integral,
-         the fraction is 0 and the position is that waypoint to the bit — while
-         still accelerating and decelerating once across the whole shove rather
-         than stuttering at every tile.
+      const k = clamp(tw.t,0,1);
+      /* 🛤 CHAINED LEGS. Distance along the route (tweenDist, in legs) is split
+         into (leg index, fraction within leg), so the sprite passes EXACTLY
+         through every tile centre the route contained — at an integral
+         distance the fraction is 0 and the position is that waypoint to the
+         bit — while accelerating once at the start and settling once at the
+         end rather than stuttering at every tile.
          A single leg reduces to the old lerp(x0,x1,easeInOut(t)) identically:
-         n===1 ⇒ li=0, f=e. That is deliberate — ordinary walking must not
-         change. See shoveLegs() for why a leg is always one hex step. */
-      const p = e * tw.n;
+         n===1 ⇒ tweenDist returns easeInOut(k), li=0, f=e. That is deliberate —
+         ordinary single-tile walking must not change. See shoveLegs() for why a
+         leg is always one hex step, and telegraphLegs() for where the route of
+         an ordinary multi-tile walk comes from. */
+      const p = tweenDist(tw.n, k);
       let li = Math.floor(p); if (li >= tw.n) li = tw.n - 1; if (li < 0) li = 0;
       const f = p - li, a = tw.legs[li], b = tw.legs[li+1];
       u.x = lerp(a.x, b.x, f); u.z = lerp(a.z, b.z, f);
+      /* ⛰ rise and fall with the ground under this leg — see unitGroundY() */
+      tw.gy = lerp(tw.ey[li], tw.ey[li+1], f);
+      /* 🧭 Face along the LEG, not at the endpoint: a route that bends back on
+         itself had the sprite moonwalking through half of it. World x, not
+         offset column, because a pure row step still slides half a hex
+         sideways (rowShift). Single-leg moves keep the endpoint facing set in
+         moveUnit() so nothing about an ordinary step changes. */
+      if (tw.n > 1 && tw.li !== li){
+        tw.li = li;
+        const wa = gw(a.x, a.z), wb = gw(b.x, b.z);
+        if (Math.abs(wb.x - wa.x) > 1e-4) u.face = wb.x > wa.x ? 1 : -1;
+      }
       u.y = Math.sin((tw.n === 1 ? k : f) * Math.PI) * tw.hop;
       if (k < .18) { u.scaleY = lerp(1,.86,k/.18); u.scaleX = lerp(1,1.12,k/.18); }
       if (k >= 1){
         u.tween = null; u.anim='idle'; u.x = tw.x1; u.z = tw.z1; u.y = 0;
         u.scaleY = 1.18; u.scaleX = .86;
-        dust(gw(u.x,u.z).x, gw(u.x,u.z).z, 14);
+        dust(gw(u.x,u.z).x, gw(u.x,u.z).z, 14, tileElev(u.gx, u.gz));
         /* ← REPLACE with the game's rule for when an event resolves */
         if (eventsAt(u.gx, u.gz).length) triggerEvent(u.gx, u.gz, u.id);
       }
@@ -5953,7 +6521,10 @@ function update(dt){
     }
     p.vy -= p.g*dt;
     p.x += p.vx*dt; p.y += p.vy*dt; p.z += p.vz*dt;
-    if (p.y < 0){ p.y = 0; p.vy *= -0.32; p.vx *= .6; p.vz *= .6; }
+    /* bounce off the SLAB the burst came from, not off world zero — grit kicked
+       up on a raised tile used to fall straight through it (see dust(y0)) */
+    const pg = p.y0 || 0;
+    if (p.y < pg){ p.y = pg; p.vy *= -0.32; p.vx *= .6; p.vz *= .6; }
   }
   particles = particles.filter(p => p.amb || p.t < p.life);
   updateFlames(dt);
@@ -6581,6 +7152,24 @@ function drawNameplates(){
     const y0 = clamp(R(box.top - h - 7 * S), 2, H - h - 2);
     const x0 = R(cx - w / 2);
 
+    /* 🧱 …and the plate is in the SAME depth sequence as everything else. It is
+       the one drawable whose screen box is not derived from its own feet — it
+       is clamped into the canvas — so the clip is asked for with the PLATE's
+       rect while the depth and the footing still come from the unit. A plate
+       whose unit is hidden behind a near cliff loses only the part of itself
+       that is actually behind that cliff; the rest still floats above the slab,
+       which is what keeps BAR R3's "readable at distance" true. */
+    const _put = unitTile(u);   /* the tile under the sprite NOW, not its destination */
+    const _pclip = clipBehindTerrain(gw(u.x, u.z, unitGroundY(u) + (u.y||0)), unitGroundY(u),
+                                     { x0, x1: x0 + w, y0, y1: y0 + h }, _put.x, _put.z);
+    /* ⚠ try/finally, matching the actor loop in frame() and for the same
+       reason: ctx.save() is a STACK, and one throw between here and the
+       restore leaks a frame's clip into the rest of this frame and every frame
+       after it — the canvas state stack then grows for the life of the
+       session. Nothing in the plate body throws today; the actor loop's
+       comment says the same and it is still wrapped. */
+    try {
+
     /* the plate. Dark, hard-edged, one thin keyline — BAR R2's chrome rule.
        Deliberately quieter than the End Turn button (CONTRACT §6.8). */
     ctx.fillStyle = 'rgba(9,8,13,0.82)';
@@ -6620,6 +7209,8 @@ function drawNameplates(){
       ctx.fillRect(R(sx), by, Math.max(1 / DPR, sw), barH);
     }
     ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
+
+    } finally { if (_pclip) ctx.restore(); }
   }
 }
 
@@ -6770,6 +7361,305 @@ window.__bbPerf = () => {
 };
 window.__bbPerfReset = () => { PERF.buf.length = 0; PERF.i = 0; PERF.n = 0; };
 
+/* ══════════════════════════════════════════════════════════════════
+   🧱 TERRAIN OCCLUSION — slabs and billboards in ONE depth sequence
+   ══════════════════════════════════════════════════════════════════
+   THE BUG THIS KILLS. The ground was painted whole (drawBoard) and every actor
+   was painted after it, so a unit was ALWAYS in front of every slab on the map.
+   At yaw 0 that is invisible, because the only terrain that can be nearer than
+   a unit is also BELOW it on screen. Turn the camera and it stops being true: a
+   ruin core or a rubble terrace that now sits between the eye and the unit is
+   still painted first, so the pixel showing that unit's feet is terrain that
+   should be in front of them — and the ground ring and shadow float on top of a
+   cliff face they are behind.
+
+   WHY A CLIP AND NOT A SECOND TERRAIN PASS. By the time the actors go down the
+   ground is not just slabs any more: the surface-FX blit, the reachable-region
+   paint, the threat wash, the walked route, the runes and the ground VFX are all
+   composited over it. Re-painting an occluding tile with paintTile() would put
+   bare terrain back over all of that, and re-blitting the baked layer has the
+   same problem AND is unavailable exactly when it is most needed — drawBoard
+   bypasses the cache entirely while the camera moves, by measurement. So nothing
+   is re-drawn. The ACTOR is clipped instead, to the complement of the slabs that
+   stand in front of it.
+   Complement of a UNION is the INTERSECTION of the complements, which is exactly
+   a run of `clip(viewportRect + piece, 'evenodd')` calls — one per slab. Doing it
+   as a single even-odd path over several slabs would be wrong the moment two of
+   them overlap on screen: even-odd counts the overlap twice and punches a hole
+   back through the mask. One clip per slab has no winding-rule trap.
+
+   THE SORT KEY FOR A BILLBOARD STANDING ON A SURFACE, and the cases that pick
+   it. Both halves of the comparison are camDepth() — world z and row index are
+   the thing the free camera already broke (CONTRACT §2 Tier 2.2) — but a slab
+   and a billboard are not the same KIND of object, and the honest question is
+   which of the two points that can actually meet at a pixel is nearer:
+     · the billboard enters the sequence at its FOOT POINT, gw(x, z, elev). It
+       is a figure standing on the ground, so that is the only point of it whose
+       position is a fact; everything above it is a picture of a figure.
+     · a slab enters at its TOP FACE, gw(x, z, e). That is the surface a ray
+       through the pixel actually hits.
+   So a slab hides an actor exactly when camDepth(slabTop) < camDepth(actorFoot)
+   AND the slab stands higher than the ground the actor is on. That second test
+   is not a tie-breaker, it is the geometry: a slab at the SAME height cannot
+   hide feet that are level with it, and without it every coplanar tile nearer
+   than the unit would clip the near half of its own ground ring and shadow.
+   What this pair of points gets right, case by case:
+     · a unit's OWN slab: same tile, skipped outright, and its top depth equals
+       the foot depth anyway. The unit, its ring and its shadow draw over the
+       slab top they stand on. ✔  (the hard case)
+     · a TALLER slab one step nearer: top depth is a whole row nearer AND lifted
+       toward the eye. Clips. ✔  (the critic's gap)
+     · a taller slab BESIDE the unit, same depth row: level in z, but its top
+       face is lifted toward the eye, so its depth is genuinely smaller and it
+       clips the shoulder of the sprite that leans over it. ✔ Sorting these on
+       the ground plane instead left them behind the sprite, and every residual
+       leak the audit found before this paragraph existed was one of them.
+     · a taller slab BEHIND the unit: height buys nearness at sin(pitch) per
+       unit and a row costs a full row of depth, and on this board the row wins
+       for every rung of the ladder — so it does NOT clip, and a unit does not
+       get its head cut off by the hill it is standing in front of. ✔ Measured,
+       not assumed: camCheck().occlusion counts it.
+   Keying a slab by its own ground plane (y = 0) instead of its top face is the
+   version that loses the third case; keying the ACTOR by its top instead of its
+   feet loses the first, because the eye is above the board and height reduces
+   camera depth, so every unit on high ground would be cut off by its own slab.
+   The ACTOR-vs-ACTOR order in frame() is deliberately left on the ground-plane
+   key it already used: that is a billboard-vs-billboard question, it is not
+   what the critic named, and two sprites that swap because one is on a shelf
+   is a different bug from the one being fixed here. */
+const OCCL = { list: [] };
+
+/* The convex pieces a slab actually PAINTS: its top face, plus one quad per
+   cliff face that is front-facing and has something to fall to. Same six-edge
+   table, same back-face test and same flush test as paintWalls — if the two
+   ever disagree, the clip and the picture disagree, and that is a hairline of
+   unit showing through a cliff.
+   ⚠ ONE deliberate difference: inset 0, where paintWalls uses TILE_INSET. The
+   inset is a hairline cell division, ~1px on screen, and a mask a hairline
+   SMALLER than the paint leaks a rim of unit around every slab it hides —
+   measured, that was most of the residual on the first pass. A mask a hairline
+   LARGER costs at worst one pixel of sprite over a seam nobody can see. */
+function slabPieces(x, z, e){
+  const P = tilePoly(x, z, 0, e); if (!P) return null;
+  const Wtop = hexCorners(x, z, 0, e);
+  /* 📐 EVERY PIECE CARRIES THE GEOMETRY IT IS A PICTURE OF, and both users of
+     it need that rather than the polygon alone:
+       `.d`  camera depth of the WORLD point each screen vertex came from. The
+             half-plane cut below solves for where the slab's own surface
+             crosses the figure's depth, and it can only do that per VERTEX if
+             the vertex knows how deep it is. It is free here — the world
+             corners are already in hand — and impossible later, because a
+             projected point has thrown its depth away.
+       `.pl` the world PLANE the piece lies in, {x,y,z,c} for n·p = c. The
+             audit ray-casts a sampled pixel against the surface actually
+             drawn there; against a horizontal plane at the tile's elevation
+             every cliff-face pixel answers with a point metres away from the
+             wall it landed on. */
+  P.d = Wtop.map(camDepth);
+  P.pl = { x:0, y:1, z:0, c:e };            /* the top face is horizontal */
+  const pieces = [P];
+  const ctr = gw(x, z, e);
+  const nb = NB6[((z % 2) + 2) % 2];
+  for (let i = 0; i < 6; i++){
+    const j = (i + 1) % 6;
+    const mx = (Wtop[i].x + Wtop[j].x) / 2, mz = (Wtop[i].z + Wtop[j].z) / 2;
+    const nx = mx - ctr.x, nz = mz - ctr.z;
+    if (nx*(CAM.pos.x - mx) + nz*(CAM.pos.z - mz) <= 0) continue;   /* back-facing */
+    const below = elevOf(x + nb[i][0], z + nb[i][1]);
+    if (below >= e - 1e-4) continue;                                 /* flush: no face */
+    const B = tilePoly(x, z, 0, below); if (!B) continue;
+    const Wb = hexCorners(x, z, 0, below);
+    const q = [P[i], P[j], B[j], B[i]];
+    q.d = [P.d[i], P.d[j], camDepth(Wb[j]), camDepth(Wb[i])];
+    /* the wall is VERTICAL and contains the edge i→j, so its normal is that
+       edge turned a quarter turn in the ground plane. Sign is irrelevant —
+       only the zero set is used. */
+    const ex = Wtop[j].x - Wtop[i].x, ez = Wtop[j].z - Wtop[i].z;
+    q.pl = { x:ez, y:0, z:-ex, c: ez*Wtop[i].x - ex*Wtop[i].z };
+    pieces.push(q);
+  }
+  return pieces;
+}
+
+/* Rebuilt once per frame, before the sorted pass. Only tiles that are RAISED
+   can hide a billboard at all, and only tiles on screen can hide one here, so
+   the two cheap rejects run before anything else.
+   ⚠ NO POLYGONS ARE BUILT HERE. A first cut called slabPieces() for every
+   raised on-screen tile and cost 1.1–3.4 ms of a 2.3 ms parked frame in this
+   rig — measured by no-opping the pass and re-running __bbPerf. The set of
+   slabs that raise the question is ~100 tiles; the set that actually masks
+   something is a handful, so the pieces are built LAZILY on the first frame a
+   slab survives every reject, and the estimated box below is what does the
+   rejecting. The box is deliberately GENEROUS: too small silently skips a mask
+   that was needed, which is the whole bug. */
+function buildOccluders(){
+  const out = [];
+  const tiles = MAP.tiles;
+  const R = hexSize();
+  if (Array.isArray(tiles)){
+    for (let i = 0; i < tiles.length; i++){
+      const t = tiles[i]; if (!t) continue;
+      const e = t.elev || 0;
+      if (e <= 1e-3) continue;                 /* flat ground hides nothing */
+      const c = project(gw(t.x, t.z, e)); if (!c) continue;
+      const m = c.s * R * 2.4 + 24;
+      if (c.x < -m || c.x > W + m || c.y < -m || c.y > H + m) continue;
+      /* how far the cliff faces hang below the top, in screen pixels */
+      const nb = NB6[((t.z % 2) + 2) % 2];
+      let low = e;
+      for (let k = 0; k < 6; k++) low = Math.min(low, elevOf(t.x + nb[k][0], t.z + nb[k][1]));
+      const cb = low < e ? project(gw(t.x, t.z, low)) : null;
+      const r = c.s * R * 1.25;
+      /* dTop is the cheap reject key — the slab's own top face. The mask's real
+         decision is per-VERTEX and lives in clipPieceInFront(); nothing here
+         is allowed to be the last word on whether a pixel is masked.
+         dGnd is kept so the audit can say whether an occluder was in front of
+         the actor or behind it, which is the number that tells a decapitation
+         regression from a correct lateral clip.
+         ⚠ A `dNear` (nearest top corner) used to be computed here for a single
+         horizontal waterline. It is gone with the waterline: one depth for a
+         whole slab is exactly the approximation that cut wedges out of heads. */
+      out.push({ dTop: camDepth(gw(t.x, t.z, e)), dGnd: camDepth(gw(t.x, t.z, 0)),
+                 x: t.x, z: t.z, e, pieces: null,
+                 x0: c.x - r, x1: c.x + r,
+                 y0: c.y - r * 0.75, y1: (cb ? cb.y : c.y) + r * 0.75 });
+    }
+  }
+  OCCL.list = out;
+}
+
+/* A generous screen box for a billboard, in the units project() already gives
+   us: p.s is pixels per world unit at that depth, so `wide`/`tall` are world
+   units and the box scales with distance for free. Generous on purpose — it is
+   only a reject test, and a box that is too SMALL silently skips a clip that
+   was needed, which is the bug this whole block exists to remove. */
+function actorBox(p, wide, tall){
+  const r = p.s * wide;
+  return { x0: p.x - r, x1: p.x + r, y0: p.y - p.s * tall, y1: p.y + p.s * 0.6 };
+}
+
+/* 🌊 THE CUT, and why it is NOT a screen-horizontal line.
+   A standing figure is not a flat card at one depth: it is vertical, so its
+   depth FALLS as you go up it (the eye is above the board). A slab whose top
+   clears the unit's feet is therefore in front of its boots and behind its
+   head, and masking the whole silhouette takes the head off.
+
+   The first fix for that took ONE depth for the whole slab — its nearest top
+   corner — solved for the single figure height that matched it, and cut every
+   piece with a horizontal screen line. That is wrong in the direction that
+   shows: the mask was bounded from ABOVE and never from the SIDE, so a slab
+   whose nearest corner is nearer than the figure but whose painted body is
+   further masked all of it, and a straight-edged wedge came out of a boss's
+   head with flat ground showing through. Measured at 7–35 sampled pixels in
+   EVERY pose, not a residual.
+
+   So the comparison is made per PIECE and per VERTEX against that piece's own
+   surface:
+       f(v) = dFig(v.y) − dSlab(v)
+   · dSlab(v) is exact and free — the vertex is the projection of a world
+     corner and `.d` carries that corner's camDepth.
+   · dFig(y) models the figure the way the renderer DRAWS it: a flat screen
+     card anchored at the projected foot and scaled by pFoot.s pixels per world
+     unit, so a pixel `pFoot.y − y` above the foot stands for that many
+     /pFoot.s world units up, and camDepth is affine in world height with
+     gradient CAM.f.y. Deliberately the same model occlusionAudit() uses, so
+     the audit is not grading a different figure from the one being clipped.
+   f > 0 means the FIGURE is further, i.e. the slab really is in front there →
+   keep. f < 0 means the sprite owns the pixel outright → drop it from the mask.
+   dFig is affine in screen y and dSlab is affine over the piece's world plane
+   to within the perspective divide, so f crosses zero along ONE straight edge
+   per convex piece and ordinary Sutherland–Hodgman is exact enough: over the
+   ~60px a slab piece spans, both depths move a few percent of ~30 units and
+   the residual curvature of the divide is far under a pixel.
+   Returns P itself when nothing is cut — the common case, and no allocation. */
+function clipPieceInFront(P, pFoot, dFoot){
+  const D = P.d, n = P.length;
+  const k = CAM.f.y / pFoot.s;         /* depth per screen pixel DOWN the card */
+  const f = [];
+  let pos = 0;
+  for (let i = 0; i < n; i++){
+    const v = dFoot + k * (pFoot.y - P[i].y) - D[i];
+    f.push(v); if (v > 0) pos++;
+  }
+  if (pos === n) return P;             /* wholly in front of the figure */
+  if (pos === 0) return null;          /* wholly behind it — masks nothing */
+  const out = [];
+  for (let i = 0; i < n; i++){
+    const j = (i + 1) % n, a = P[i], b = P[j], fa = f[i], fb = f[j];
+    if (fa > 0) out.push(a);
+    if ((fa > 0) !== (fb > 0)){
+      const t = fa / (fa - fb);
+      out.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+    }
+  }
+  return out.length >= 3 ? out : null;
+}
+
+/* The slab pieces that genuinely stand in front of ONE actor, each already cut
+   to the part of itself that does. Returns null when nothing masks the actor.
+   ⚠ SHARED WITH THE AUDIT ON PURPOSE. occlusionAudit() used to re-implement
+   the rejects and the cut so it could point-test them, which means the number
+   that gates this work was grading a paraphrase — and the paraphrase agreed
+   with the bug. There is now exactly one copy of the rule and both callers run
+   it. */
+function occluderMask(footWorld, footElev, box, sx, sz){
+  const pFoot = project(footWorld); if (!pFoot) return null;
+  const dFoot = camDepth(footWorld);
+  const list = OCCL.list;
+  let out = null;
+  for (let i = 0; i < list.length; i++){
+    const o = list[i];
+    if (o.x === sx && o.z === sz) continue;    /* its own slab: never hides it */
+    if (o.dTop >= dFoot) continue;             /* top face is not nearer than the feet */
+    if (o.e <= footElev + 1e-3) continue;      /* not higher than what it stands on */
+    if (o.x1 < box.x0 || o.x0 > box.x1 || o.y1 < box.y0 || o.y0 > box.y1) continue;
+    /* survived every reject — NOW build the polygons, once per frame per slab */
+    if (!o.pieces) o.pieces = slabPieces(o.x, o.z, o.e) || [];
+    if (!o.pieces.length) continue;
+    /* 🗡 THE GEOMETRIC CUT — see clipPieceInFront(). This is also the
+       guard for the pathological direction, and it is a MEASUREMENT rather
+       than the assumption the rejects above encode: a slab whose ground-plane
+       key `o.dGnd` is further than the actor's can still get past `o.dTop <
+       dFoot` by being tall, and that is the "a hill behind eats a head" case.
+       Its surface is then further than the figure at every vertex, every
+       piece comes back empty, and the slab drops out here with no mask at all
+       — instead of taking a horizontal bite out of the sprite. */
+    let cut = null;
+    for (let k = 0; k < o.pieces.length; k++){
+      const q = clipPieceInFront(o.pieces[k], pFoot, dFoot);
+      if (q) (cut || (cut = [])).push(q);
+    }
+    if (!cut) continue;
+    (out || (out = [])).push({ o, cut });
+  }
+  return out;
+}
+
+/* Clip ctx to everything EXCEPT the slabs standing in front of this actor.
+   Returns true if it called ctx.save() — the caller must ctx.restore() then,
+   and must do it from a finally, because three of the draw kinds are already
+   wrapped in their own try/catch for the CONTRACT R2 one-way frameErr latch. */
+function clipBehindTerrain(footWorld, footElev, box, sx, sz){
+  const mask = occluderMask(footWorld, footElev, box, sx, sz);
+  if (!mask) return false;
+  ctx.save();
+  for (let i = 0; i < mask.length; i++){
+    ctx.beginPath();
+    ctx.rect(0, 0, W, H);
+    const cut = mask[i].cut;
+    for (const pc of cut){
+      ctx.moveTo(pc[0].x, pc[0].y);
+      for (let k = 1; k < pc.length; k++) ctx.lineTo(pc[k].x, pc[k].y);
+      ctx.closePath();
+    }
+    /* one slab per clip call. Its own pieces cannot overlap each other — a
+       front-facing wall hangs below the top edge it is attached to — so
+       even-odd is safe WITHIN a slab and only unsafe ACROSS slabs. */
+    ctx.clip('evenodd');
+  }
+  return true;
+}
+
 function frame(now){
   if (frameErr) return;
   try {
@@ -6816,38 +7706,88 @@ function frame(now){
      WORLD point it stands on and `d` comes from camDepth(). Grid items go
      through gw() to get there; the braziers are already in world space, which
      is why they no longer need the grid-row conversion they used to do. */
+  /* 🧱 …and the TERRAIN is in the same sequence now, not underneath it. The
+     slabs are not re-drawn — see the block above clipBehindTerrain() for why —
+     but every actor below is masked against the slabs whose TOP FACE is nearer
+     than that actor's FOOT POINT. Both sides of that are camDepth(); nothing
+     here reads world z or a row index. Each drawable therefore carries three
+     things beyond its art: `wp`, the world point of its feet; `fe`, the height
+     of the ground under them; and `sx/sz`, the integer tile it is standing on,
+     which is the one slab that is never allowed to hide it. */
+  buildOccluders();
   const drawables = [];
-  for (const t of MAP.tiles) if (t.prop) drawables.push({ d:camDepth(gw(t.x,t.z,0)), kind:'prop', t });
-  for (const u of units) drawables.push({ d:camDepth(gw(u.x,u.z,0)), kind:'unit', u });
-  for (const tb of TOMBS) drawables.push({ d:camDepth(gw(tb.x,tb.z,0)), kind:'tomb', tb });
+  for (const t of MAP.tiles) if (t.prop) drawables.push({ d:camDepth(gw(t.x,t.z,0)), kind:'prop', t, sx:t.x, sz:t.z, fe:tileElev(t.x,t.z), wp:gw(t.x,t.z,tileElev(t.x,t.z)), bw:0.9, bh:1.8 });
+  /* ⚠ `fe` is the height of the ground the unit is STANDING ON, and it has to
+     come from unitGroundY() — never tileElev(u.x,u.z). u.x/u.z go FRACTIONAL
+     the moment a unit tweens or lunges, and tileAt() is a Map keyed on
+     "x,z" integers, so a fractional lookup misses and tileElev returns 0. A
+     walking unit therefore reported "standing at height 0" and was clipped
+     away by every raised slab in front of it — invisible for the length of the
+     walk. It only ever cost 0.34s of one straight step before moveUnit walked
+     real routes; on a fourteen-leg route across a terraced field it is the
+     whole animation. */
+  /* ⚠ `sx/sz` is the INTEGER tile the sprite is standing on RIGHT NOW, and its
+     only job is "which slab is my own, and therefore may not hide me". It has
+     to come from unitTile(), not from u.gx/u.gz: a fractional mid-walk position
+     matches no slab, but the grid fields are the DESTINATION for the whole
+     tween, so aiming the exemption at them frees the tile actually under the
+     sprite to clip it. See unitTile(). */
+  for (const u of units) { const _ut = unitTile(u);
+    /* ⚠ THE ANCHOR CARRIES THE HOP, THE FOOTING DOES NOT, and they are two
+       different questions the clip asks separately:
+         wp — where the sprite is actually DRAWN. drawUnit and unitScreenBox
+              both anchor at base.y + u.y, so a walking unit is a hop-arc
+              above its tile for most of a step. Handing the clip the
+              un-hopped point put the figure's axis below the picture of it
+              and the cut landed low — measured as 3-12 leaked pixels on the
+              first frames of every walk, gone once the unit landed.
+         fe — the GROUND it stands on, which the "is this slab higher than
+              what the actor stands on" reject keys off. That must not move
+              with the hop or a unit in mid-air stops being masked by the
+              step it is climbing. */
+    drawables.push({ d:camDepth(gw(u.x,u.z,0)), kind:'unit', u, sx:_ut.x, sz:_ut.z, fe:unitGroundY(u), wp:gw(u.x,u.z,unitGroundY(u) + (u.y||0)), bw:1.1, bh:3.2 }); }
+  for (const tb of TOMBS) drawables.push({ d:camDepth(gw(tb.x,tb.z,0)), kind:'tomb', tb, sx:tb.x, sz:tb.z, fe:tileElev(tb.x,tb.z), wp:gw(tb.x,tb.z,tileElev(tb.x,tb.z)), bw:0.9, bh:1.8 });
   /* 🏚 ruins go through the SAME painter's sort as everything else — they are
      the tallest things on the board, so a ruin drawn out of order would hide a
      unit that is standing in front of it. */
-  for (const sc of STRUCTS) drawables.push({ d:camDepth(gw(sc.x,sc.z,0)), kind:'struct', sc });
+  for (const sc of STRUCTS) drawables.push({ d:camDepth(gw(sc.x,sc.z,0)), kind:'struct', sc, sx:sc.x, sz:sc.z, fe:tileElev(sc.x,sc.z), wp:gw(sc.x,sc.z,tileElev(sc.x,sc.z)), bw:3.0, bh:5.5 });
   /* 🚚 control-point trucks join the SAME painter's sort — a truck is a metre
      and a half of solid geometry, so one drawn out of order would swallow a
      unit standing in front of it, which on this board is a unit that is
      CAPTURING it. */
-  for (const cp of CPS) drawables.push({ d:camDepth(gw(cp.x,cp.z,0)), kind:'cp', cp });
-  for (const ev of (MAP.events||[])) drawables.push({ d:camDepth(gw(ev.x,ev.z,0)), kind:'event', ev });
+  for (const cp of CPS) drawables.push({ d:camDepth(gw(cp.x,cp.z,0)), kind:'cp', cp, sx:cp.x, sz:cp.z, fe:tileElev(cp.x,cp.z), wp:gw(cp.x,cp.z,tileElev(cp.x,cp.z)), bw:2.4, bh:3.6 });
+  for (const ev of (MAP.events||[])) drawables.push({ d:camDepth(gw(ev.x,ev.z,0)), kind:'event', ev, sx:ev.x, sz:ev.z, fe:tileElev(ev.x,ev.z), wp:gw(ev.x,ev.z,tileElev(ev.x,ev.z)), bw:1.8, bh:3.6 });
   /* The braziers are the one entry already in WORLD space. They used to be
      converted INTO grid rows (divide by the row pitch, add (rows-1)/2) so they
      could share a grid-z sort key; with the key now camera depth, world is
      where everything else has to be converted TO and this one is already
      there. */
-  for (const br of braziers) drawables.push({ d:camDepth({x:br.x, y:0, z:br.z}), kind:'pylon', br });
+  for (const br of braziers) drawables.push({ d:camDepth({x:br.x, y:0, z:br.z}), kind:'pylon', br, sx:null, sz:null, fe:0, wp:{x:br.x, y:0, z:br.z}, bw:1.1, bh:2.8 });
   drawables.sort((a,b) => b.d - a.d);      /* deepest (furthest) painted first */
   for (const d of drawables){
-    if (d.kind==='prop') drawProp(d.t);
-    else if (d.kind==='event') drawEvent(d.ev);
-    else if (d.kind==='pylon') drawPylon(d.br);
-    else if (d.kind==='tomb') drawTomb(d.tb);
-    /* CONTRACT R2: frameErr is a ONE-WAY LATCH — one throw anywhere in frame()
-       paints RENDER ERROR and never reschedules the RAF loop. New per-frame
-       art gets its own try/catch so a bad ruin costs a ruin, not the board. */
-    else if (d.kind==='struct'){ try { drawStruct(d.sc); } catch (e) {} }
-    else if (d.kind==='cp'){ try { drawTruck(d.cp); } catch (e) {} }
-    else drawUnit(d.u);
+    /* 🧱 mask this actor against the slabs in front of it. The clip covers the
+       WHOLE draw — sprite, ground ring, shadow ellipse and any glow — because
+       all of them are geometry standing at the same feet, and a ring that
+       ignored the cliff its unit is hidden behind is the same lie in miniature. */
+    let _p = null; try { _p = project(d.wp); } catch (e) {}
+    const _clip = _p ? clipBehindTerrain(d.wp, d.fe, actorBox(_p, d.bw, d.bh), d.sx, d.sz) : false;
+    try {
+      if (d.kind==='prop') drawProp(d.t);
+      else if (d.kind==='event') drawEvent(d.ev);
+      else if (d.kind==='pylon') drawPylon(d.br);
+      else if (d.kind==='tomb') drawTomb(d.tb);
+      /* CONTRACT R2: frameErr is a ONE-WAY LATCH — one throw anywhere in frame()
+         paints RENDER ERROR and never reschedules the RAF loop. New per-frame
+         art gets its own try/catch so a bad ruin costs a ruin, not the board. */
+      else if (d.kind==='struct'){ try { drawStruct(d.sc); } catch (e) {} }
+      else if (d.kind==='cp'){ try { drawTruck(d.cp); } catch (e) {} }
+      else drawUnit(d.u);
+    } finally {
+      /* finally, not a trailing call: the two kinds above swallow their own
+         throws but drawUnit/drawProp do not, and an un-restored clip would
+         survive into the telegraph, the plates and every frame after. */
+      if (_clip) ctx.restore();
+    }
   }
   /* 🏹 THE TELEGRAPH, air half. AFTER the depth-sorted actors on purpose: BAR
      R2 wants the attack shown as an arc "drawn above the board", and an arc
@@ -6907,6 +7847,10 @@ function frame(now){
   vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(.62,'rgba(0,0,0,.13)'); vg.addColorStop(1,'rgba(0,0,0,.54)');
   ctx.fillStyle = vg; ctx.fillRect(0,0,W,H);
   drawEffects('screen');
+  /* 🧭 above the vignette on purpose: a marker whose job is "you are being
+     asked to click something you cannot see" must not itself be dimmed by the
+     edge darkening, which is exactly where it lives. */
+  try { drawOffscreenActionable(); } catch (e) {}
   drawGuides();
   const _t5 = performance.now();
   perfPush({ total:_t5-_t0, sky:_t1-_t0, bake:(TERR.ms !== _bake0 ? TERR.ms : 0),
@@ -6987,7 +7931,134 @@ function worldToTile(wx, wz){
    a 1.35-high ruin standing in front of a street tile takes the click, which is
    what the picture already says it should do. Falling through every rung means
    the ray met no top face, only a cliff side; the y = 0 answer is the tile whose
-   flank it entered, which is the right tile anyway. */
+   flank it entered, which is the right tile anyway — UNLESS the ray has already
+   left the lattice, in which case y = 0 answers null and the sweep must fall
+   back on the rung it rim-rejected. See the 🕳 note in pickTile(). */
+/* 🩹 THE OVERHANG RIM — how wide a band of a slab's BACK edge is not really the
+   slab, in screen pixels. See slabTakesSample() for what it is for and
+   pickTile() for where it is applied. 1.5 px is not taste; it is measured, and
+   the measurement is in the comment below. */
+const PICK_EDGE_PX = 1.5;
+/* 🔎 DOES THIS SLAB TOP ACTUALLY COVER THE CLICKED PIXEL — asked of the DRAWN
+   polygon, not of the analytic crossing that proposed it.
+
+   ══ THE BUG THIS EXISTS TO KILL (measured, not reasoned about) ══
+   The plane sweep in pickTile() is an exact ray/terrain intersection and it
+   answered the FINAL GATE's one failure: on 24 of 24 random match seeds, 1–6
+   of the 168 tiles resolved their own centre pixel to the tile in FRONT of
+   them, so clicking exactly on a unit's feet selected the neighbour.
+   Every one of those cases was measured and every one had the same shape:
+
+     tile      elev   answered   its elev   how far INSIDE the answer's
+                                            projected top face the pixel was
+     (1,1)     0.00   (2,2)      0.34       0.2 px
+     (2,1)     0.34   (3,2)      0.68       0.2 px
+     (12,1)    0.34   (12,2)     0.68       0.6 px
+     (13,1)    0.34   (13,2)     0.68       0.8 px
+     (13,2)    0.68   (12,3)     1.02       0.6 px
+
+   ALWAYS the immediate front neighbour, ALWAYS exactly ONE rung of the ladder
+   taller, ALWAYS inside by under a pixel. That is not an accident of the
+   terrain, it is a resonance in the geometry: climbing one rung (0.34) walks
+   the ray about 1.0 hex circumradius toward the eye at the far rows, which is
+   exactly the distance from a tile's centre to the SHARED VERTEX of the two
+   tiles in front of it. So the crossing lands on a triple point — a corner
+   where three hexagons meet — and which of the three wins is decided by
+   cube-rounding noise at the eighth decimal, not by anything the player can
+   see. The occluder's claim on that pixel is a hexagon CORNER clipping it,
+   and the renderer paints that corner as an antialiased hairline over a
+   TILE_INSET seam. The picture does not say the slab owns that pixel. The
+   analytic sweep said it did, because a mathematical point either is or is not
+   inside a polygon and it has no notion of a pixel having width.
+
+   ══ WHY THIS AND NOT THE OTHER THREE ══
+   · Shrinking the elevation ladder's rung gap moves the resonance instead of
+     removing it, and pays for it in BAR R1 relief. Rejected: that is a
+     decision about how the board looks, not a fix to the pick.
+   · A sprite-box fallback in unitAt() would make units clickable and leave
+     BARE GROUND still mis-picking, i.e. the rules and the picture still
+     disagreeing — the exact bug class this project exists to remove. Rejected.
+   · Ray-marching the top faces in depth order is what pickTile ALREADY does;
+     the plane sweep is that march, expressed over the map's distinct heights.
+     Marching cell-by-cell instead gives byte-identical answers (both are exact
+     first-surface intersections) and costs more. Rejected as a no-op.
+   So: keep the exact analytic answer, and correct it against the drawn polygon
+   set — the hybrid. The correction is the smallest one that is true: a surface
+   only occludes a sample it actually covers, and coverage is a question about
+   PIXELS, so it is asked in screen space against tilePoly()'s own corners.
+
+   ══ WHY ONLY THE BACK EDGES ══
+   A slab can only steal a tile's anchor across an edge that faces AWAY from
+   the eye — that is the only side its top face hangs out over lower ground.
+   Applying the rim to the front edges as well would hand a 1.5 px strip of
+   every slab's NEAR lip to the tile in front of it, which is a lie in the
+   other direction and buys nothing. Same back-face test as slabPieces() and
+   paintWalls(), so the clip, the paint and the pick cannot disagree about
+   which side of a slab is which.
+
+   ══ WHY 1.5 PX ══
+   Half a pixel of pointer quantisation (the browser delivers integer CSS
+   pixels), half a pixel of rasterisation (the sample is a square, not a
+   point), and the TILE_INSET seam the renderer draws between cells. The
+   deepest real intrusion measured over the seed sweep was 0.8 px, so 1.5 px
+   clears it with the same margin again to spare; a slab gives up 1.5 px of a
+   ~45 px wide cell, 3%, on the side the player cannot aim at anyway.
+
+   ══ WHAT THAT COSTS, BOARD-WIDE, STATED AS A NUMBER ══
+   "1.5 px, on the back edges only" is the per-edge truth and it undersells the
+   total, so here is the total, rastered at 1 px over every drawn ground pixel
+   at 802×688 on the default seed: pick and picture disagree on 10,392 of
+   184,215 pixels, 5.64%, against 0.00% before the rim. Every one of those is a
+   back-edge hairline handed to the tile behind, which is the trade this whole
+   block argues for — but 5.64% is the honest size of it, and camCheck's
+   168-centre sample only ever shows it as a handful. If that number is ever to
+   come down, the knob is the elevation ladder's rung gap, not this constant.
+   ⚠ RAISING PICK_EDGE_PX IS NOT FREE AND IS NOT SELF-POLICING. At 8 px the
+   board is measurably worse and every check in this file still passes unless
+   camCheck's `rim` classifier bounds the depth — which it now does, against
+   this constant. Change one and read the other. */
+const _STS_D = new Float64Array(6), _STS_BACK = new Uint8Array(6);
+function slabTakesSample(gx, gz, e, mx, my){
+  if (e <= 1e-6) return true;                  /* flat ground overhangs nothing */
+  const Wt = hexCorners(gx, gz, 0, e);
+  const P = [];
+  for (let i = 0; i < 6; i++){ const p = project(Wt[i]); if (!p) return true; P.push(p); }
+  /* screen centroid, used to orient the edge normals inward — a projected
+     hexagon is convex, so one consistent inward normal per edge is all the
+     containment test needs — and to measure the cell's own projected inradius,
+     which is what bounds the rim (see below). */
+  let cx = 0, cy = 0;
+  for (let i = 0; i < 6; i++){ cx += P[i].x; cy += P[i].y; }
+  cx /= 6; cy /= 6;
+  const ctr = gw(gx, gz, e);
+  let inr = Infinity;
+  for (let i = 0; i < 6; i++){
+    const j = (i + 1) % 6;
+    let nx = -(P[j].y - P[i].y), ny = (P[j].x - P[i].x);
+    const L = Math.hypot(nx, ny);
+    if (L < 1e-9){ _STS_D[i] = Infinity; _STS_BACK[i] = 0; continue; }
+    nx /= L; ny /= L;
+    const dc = nx*(cx - P[i].x) + ny*(cy - P[i].y);
+    if (dc < 0){ nx = -nx; ny = -ny; }
+    if (Math.abs(dc) < inr) inr = Math.abs(dc);
+    _STS_D[i] = nx*(mx - P[i].x) + ny*(my - P[i].y);    /* +ve = inside */
+    const mwx = (Wt[i].x + Wt[j].x)/2, mwz = (Wt[i].z + Wt[j].z)/2;
+    _STS_BACK[i] = ((mwx - ctr.x)*(CAM.pos.x - mwx) + (mwz - ctr.z)*(CAM.pos.z - mwz) <= 0) ? 1 : 0;
+  }
+  /* 📏 THE RIM IS A HAIRLINE AND HAS TO STAY ONE AT EVERY ZOOM.
+     PICK_EDGE_PX is an absolute pixel width, and an absolute width is only a
+     hairline while the cells are big. On a phone-width host the fit dollies the
+     board down to a 240 px rect and a cell's projected inradius falls to a
+     handful of pixels, where a flat 1.5 px rim is a third of the way to the
+     centre and starts eating a tile's OWN interior — measured, on the first cut
+     of this: 356 slabFails at 820×1180 and 406 at 390×844, tiles losing samples
+     inside their own top face because the rim reached past the 0.80 probe ring. So the rim is also capped at 0.15 of the cell's
+     own projected inradius: under a sixth of the way to the centre at any zoom,
+     and comfortably clear of hexSelfCheck's outermost probe ring at 0.80. */
+  const rim = Math.min(PICK_EDGE_PX, 0.15 * (inr === Infinity ? 0 : inr));
+  for (let i = 0; i < 6; i++) if (_STS_D[i] < (_STS_BACK[i] ? rim : 0)) return false;
+  return true;
+}
 function pickTile(mx, my){
   const ndx = (mx - VIEW.cx) / VIEW.scale;
   const ndy = -(my - VIEW.cy) / VIEW.scale;
@@ -7002,11 +8073,33 @@ function pickTile(mx, my){
     return t > 0 ? worldToTile(CAM.pos.x + dir.x*t, CAM.pos.z + dir.z*t) : null;
   };
   const rungs = tileElevRungs();
+  /* 🕳 THE RIM MUST NEVER TURN A HIT INTO NOTHING — measured, and it did.
+     The sweep below rejects a rung the sample only grazes and carries on down
+     to the surface BEHIND it, which is the one the picture shows. That is
+     right wherever a surface is behind it. On a tile at the BOARD PERIMETER
+     there is nothing behind the outward-facing back edge: the ray leaves the
+     lattice and at(0) — which an earlier version of this comment called
+     "unconditional" — returns null, because worldToTile() answers null off the
+     board. Rastered at 1 px over the shipped host (802×688, default seed) that
+     was 1,914 of 184,215 drawn-ground pixels (1.04%) answering NOTHING, all on
+     the outer ~1.5 px lip of perimeter tiles, where before the rim went in the
+     answer was that tile. A click there dispatched no board:tileClick at all —
+     the same bug class the rim exists to remove (pick disagreeing with
+     picture), just moved from a unit's anchor to the board's edge.
+     So remember the first rung that was analytically ACCEPTED and only
+     rim-rejected, and fall back to it when the sweep bottoms out on nothing.
+     Where a real surface sits behind the edge, at(0) wins and the rim behaves
+     exactly as designed; where none does, the pre-rim answer is restored.
+     hexSelfCheck's `nullOverDrawn` asserts this at 0 so it cannot come back. */
+  let grazed = null;
   for (let i = 0; i < rungs.length; i++){
     const t = at(rungs[i]);
-    if (t && Math.abs(tileElev(t.x, t.z) - rungs[i]) < 1e-6) return t;
+    if (t && Math.abs(tileElev(t.x, t.z) - rungs[i]) < 1e-6){
+      if (slabTakesSample(t.x, t.z, rungs[i], mx, my)) return t;
+      if (!grazed) grazed = t;                  /* nearest rim-rejected surface */
+    }
   }
-  return at(0);
+  return at(0) || grazed;
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -7060,35 +8153,101 @@ function pickTile(mx, my){
    ⚠ IT ANSWERS FOR THE CAMERA THAT IS ACTUALLY RUNNING, WHICH IS THE POINT AND
    ALSO A TRAP. The fit pass dollies CONFIG.camera to suit the host rect, so a
    short or narrow host flattens the pick ray and occludes more.
-   ⚠⚠ AND THIS PARAGRAPH USED TO SAY "a 482×568 host (a 1100×780 window)" AS IF
-   ONE EXOTIC HOST WERE THE WHOLE STORY. It is not, and reading it that way is
-   how the next person to run this on a laptop mistakes a known framing limit
-   for a generator regression they just caused. The honest table, default seed,
-   scene=gamemap, measured not guessed — `buriedFails: 0` EVERYWHERE, and:
+   ⚠⚠ AND THIS TABLE USED TO CLAIM `deadCentres: 0` AT 1600×900 AND IT WAS
+   WRONG — not stale, wrong. It was measured on the default seed only, and the
+   FINAL REGRESSION GATE re-measured it over 24 random match seeds and found
+   1–6 dead centres on 24 of 24. That miss is the whole reason PICK_EDGE_PX
+   exists (see slabTakesSample). Re-measured, both columns, default seed,
+   scene=gamemap, at the neutral pose — `buriedFails: 0` EVERYWHERE in both:
 
-       viewport     board rect    deadCentres   minVisible
-       2560×1440    1762×1228      0             0.529
-       1920×1080    1122× 868      0             0.529
-       1600× 900     802× 688      0             0.529
-       1366× 768     708× 556      0             0.529
-        820×1180     240× 968      0             0.412
-       1440× 900     782× 688      1             0.471   ← mainstream laptop
-        390× 844     240× 632      1             0.412
-       1200× 800     582× 588      7             0.412
-       1000× 800     382× 588     11             0.412
-       1100× 780     482× 568     16             0.353
+       viewport     board rect    deadCentres          minVisible
+                                  before → after     before → after
+       2560×1440    1762×1228       0  →  0          0.529 → 0.588
+       1920×1080    1122× 868       0  →  0          0.529 → 0.647
+       1600× 900     802× 688       1  →  0          0.412 → 0.588
+       1366× 768     708× 556       1  →  0          0.471 → 0.647
+        820×1180     240× 968       0  →  0          0.412 → 0.647
+       1440× 900     782× 688       3  →  0          0.412 → 0.529   ← laptop
+        390× 844     240× 632       1  →  0          0.412 → 0.529
+       1200× 800     582× 588      16  →  1          0.294 → 0.471
+       1000× 800     382× 588      11  →  0          0.412 → 0.471
+       1100× 780     482× 568      14  →  1          0.412 → 0.471
 
-   So `ok:false` is the answer on five of the ten hosts above, 1440×900 among
-   them, and on those hosts clicking exactly on the affected unit's feet selects
-   the neighbouring tile. Every one of those dead centres is an HONEST occlusion
-   — the occluder's own footprint really does cover the pixel, which the
-   point-in-polygon test below now proves per sample rather than assuming.
-   It is a true statement about that framing, not a generator regression: no
-   terrain with real relief on it survives that dolly with every centre clear.
-   If it has to be zero there too, the knob is the ELEVATION LADDER's rung gap,
-   not the terrain shape — and that trade is relief for pickability, which is
-   BAR R1 against BAR R2 and is a decision, not a fix. `buriedFails` is the one
-   that must never move, and it never has.
+   And over 24 RANDOM match seeds at 802×688, driven through the real game and
+   confirmed with real mouse clicks on all 168 tile centres: deadCentres 1–6 on
+   24 of 24 seeds before, 0 on 24 of 24 after; 164/168 clicks correct before,
+   168/168 after. `buriedFails` and `offFrameFails` stayed 0 throughout.
+
+   WHAT IS LEFT, STATED PLAINLY. The two remaining dead centres above, and the
+   ones the free camera can still make at extreme yaw, are NOT hairlines: the
+   post-mortem now on every dead-centre record reports how deep inside the
+   answer's drawn top face the pixel was, and where the fix applies that number
+   was 0.2–0.8 px, while these are 1.5–12 px. A slab that covers a tile's anchor
+   by twelve pixels really does cover it, and no picker can say otherwise
+   without lying about the picture. Swinging the camera to yaw 90 or 270 looks
+   along the rows and buries whole tiles (`buriedFails` 2–3, `minVisible` 0) —
+   the same class as offFrameFails at a panned pose, and the same answer: the
+   NEUTRAL FIT is the guarantee, and R restores it.
+   ⚠ "Up to yaw 45 with pan, deadCentres is 0" used to stand here and it is not
+   true of every pan — measured at yaw 45 pan(1.8, 1.4): deadCentres 4,
+   buriedFails 0, and all four classified by asking the PICTURE which face is
+   drawn on that pixel: 4 of 4 honest occlusion (the pick returns the tile the
+   renderer actually painted there, 1.43–1.72 px inside it), 0 cases of the pick
+   disagreeing with the picture. At yaw 90 it is deadCentres 10 / buriedFails 4,
+   again with `hard` 0. So the honest statement is the narrow one: AT THE
+   NEUTRAL FIT deadCentres is 0 and every tile centre resolves to itself
+   (168/168, confirmed with real mouse clicks); away from it the terrain is
+   allowed to stand in front of an anchor, and the pick says so rather than
+   lying about it.
+   If those last few have to go too, the knob is the ELEVATION LADDER's rung gap
+   or the fit's pitch floor, not the picker — and that trade is relief for
+   pickability, which is BAR R1 against BAR R2 and is a decision, not a fix.
+   `buriedFails` at the neutral pose is the one that must never move, and it
+   never has.
+
+   🧭 POSE AWARENESS — added with the yaw fit, and it is a NARROWING dressed as
+   a split, not a widening. Read this before touching `ok`.
+   The rule OPEN-BREAKS asks for is "a tile the rules consider playable must be
+   REACHABLE by the player". Reachable is not the same claim at every pose, and
+   pretending it is makes the check useless in exactly one direction: `ok` was
+   false at every non-neutral pose, for three different reasons of three
+   different severities, so nobody could use it to catch the fourth. The three:
+     1. a tile the player PANNED out of frame,
+     2. a tile with a hill drawn in front of it at this yaw,
+     3. a tile the FIT let fall off the canvas when the player merely turned.
+   (3) is a bug in this file and is now impossible — camFrameDist() re-solves
+   the distance per yaw, and `offFrameFails` is a hard failure at every pose
+   where the player has not panned, which is strictly MORE than the one pose it
+   was asserted at before. (1) and (2) are the picture being honest: a hill
+   really is in the way from that side, and a pan really did move the view.
+   Both are undone by one documented key, and the check now PROVES that rather
+   than asserting it in a comment:
+     · `unreachableHere` — tiles with no sample that both lands on the canvas
+       and resolves to them. Reported at every pose, never a failure on its own.
+     · `unreachable`     — of those, the ones still unreachable after the check
+       drives the camera to the pose R produces and looks again (see
+       _probeRecovery). A hard failure, in `ok`, AT EVERY POSE.
+   So the tolerant bucket is no longer "we decided this is fine": it is a
+   measurement, on the real camera, of the recovery this file promises.
+   ⚠ WHAT WOULD HAVE HAPPENED TO THE ORIGINAL BUG — not argued, RE-CREATED.
+   With camFrameDist() forced to 0.86 × the fit's answer the board reproduces
+   it exactly, and the check answers `ok:false, unreachable: 2` naming
+   (0,10) and (13,11) — the two tiles OPEN-BREAKS #3 measured at x = −5.7 and
+   x = 807.3. `neutralOffFrame` carries the same verdict out to the panned and
+   yawed poses, so it is false at whatever pose you ask. The buried-tile bug of wave 4
+   was buried at the neutral pose too, and lands the same way. Neither is
+   excused by any of this, which is the test a change to `ok` has to pass.
+   ⚠ AND WHAT IS STILL NOT FIXED, SAID OUT LOUD. At yaw 90 and 270 the eye
+   looks along the rows and the relief buries whole tiles: measured over
+   8 yaws × 3 pans × 4 seeds at host=boardarea, `unreachableHere` peaks at 7
+   (and at 5 with no pan at all, seed 1337 yaw 90) with `unreachable` 0 at
+   every one of the 96 poses — all recoverable, and all classified by
+   asking the PICTURE (`occluded` requires a point-in-polygon test against the
+   answer's own drawn top face, and `slabFails` — the pick disagreeing with the
+   picture — stays 0). This is relief versus pickability, BAR R1 against BAR
+   R2, and the knobs are the elevation ladder's rung gap and the fit's pitch
+   floor, neither of which is a picker fix. It is a decision, and the decision
+   is that a hill you can see is allowed to be a hill you must look around.
    ══════════════════════════════════════════════════════════════════ */
 /* Screen-space crossing-number test, used by hexSelfCheck to decide whether an
    occluder's projected top face really covers the pixel it was credited with.
@@ -7104,6 +8263,21 @@ function ptInPoly(px, py, P){
         px < (P[j].x - P[i].x) * (py - yi) / (yj - yi) + P[i].x) inside = !inside;
   }
   return inside;
+}
+/* How far inside a projected polygon a pixel is, in PIXELS — negative outside.
+   Diagnostic only (see the dead-centre post-mortem); nothing on the pick path
+   calls it, because slabTakesSample() needs the per-edge answer, not the
+   minimum over all six. */
+function _polyDepthPx(px, py, P){
+  if (!P || P.length < 3) return null;
+  let best = Infinity;
+  for (let i = 0, j = P.length - 1; i < P.length; j = i++){
+    const ax = P[j].x, ay = P[j].y, vx = P[i].x - ax, vy = P[i].y - ay;
+    const L2 = vx*vx + vy*vy || 1;
+    const t = Math.max(0, Math.min(1, ((px-ax)*vx + (py-ay)*vy) / L2));
+    best = Math.min(best, Math.hypot(px - (ax + t*vx), py - (ay + t*vy)));
+  }
+  return +((ptInPoly(px, py, P) ? best : -best).toFixed(2));
 }
 /* 🖼 IS THIS TILE'S WHOLE TOP FACE INSIDE THE CANVAS?
    The invariant fitDistance() now solves for, restated as a test — because the
@@ -7121,9 +8295,150 @@ function tileOffFrame(x, z){
   for (const p of P) if (p.x < 0 || p.x > W || p.y < 0 || p.y > H) return true;
   return false;
 }
+/* 🕳 CAN A PIXEL THE BOARD IS DRAWN ON ANSWER *NOTHING*?
+   Nothing in this file asked that until a rim fall-through in pickTile() made
+   the answer yes on 1.04% of drawn ground, and every check here stayed green:
+   the reach loop above never samples past 0.80 of the inradius, and camCheck
+   only looks at the 168 centre pixels — and would have filed a null under
+   'rim' anyway. The failure lived entirely in the outer ~1.5 px of a tile's
+   drawn top face, which is precisely the band no probe ring reached.
+   So probe that band directly, on EVERY edge of EVERY tile, and assert 0.
+   · Against tilePoly — the polygon the renderer actually strokes — because
+     "drawn" is the claim being tested. ptInPoly gates each sample so a point
+     pushed inward from one edge near a sharp projected corner, and therefore
+     outside another, is not counted as drawn.
+   · Depths 0.15…1.5 px straddle PICK_EDGE_PX; the lip is where it breaks.
+   · Only NULL is a failure. A sample answered by a taller tile in front is
+     correct occlusion and is the reach loop's business, not this one.
+   ~24k picks, ~0.2 s, and it is the only thing standing between the board and
+   a silent dead zone around its own rim. */
+function _nullOverDrawnScan(out){
+  const US = [0.08, 0.25, 0.42, 0.58, 0.75, 0.92], DS = [0.15, 0.5, 1.0, 1.5];
+  let samples = 0;
+  for (let z = 0; z < MAP.rows; z++) for (let x = 0; x < MAP.cols; x++){
+    const P = tilePoly(x, z, 0, tileElev(x, z));
+    if (!P || P.length < 3) continue;
+    let cx = 0, cy = 0;
+    for (const p of P){ cx += p.x; cy += p.y; }
+    cx /= P.length; cy /= P.length;
+    for (let i = 0; i < P.length; i++){
+      const j = (i + 1) % P.length;
+      let nx = -(P[j].y - P[i].y), ny = P[j].x - P[i].x;
+      const L = Math.hypot(nx, ny);
+      if (L < 1e-9) continue;
+      nx /= L; ny /= L;
+      if (nx*(cx - P[i].x) + ny*(cy - P[i].y) < 0){ nx = -nx; ny = -ny; }   /* point inward */
+      for (const u of US){
+        const ex = P[i].x + (P[j].x - P[i].x)*u, ey = P[i].y + (P[j].y - P[i].y)*u;
+        for (const d of DS){
+          const sx = ex + nx*d, sy = ey + ny*d;
+          if (sx < 0 || sx > W || sy < 0 || sy > H) continue;
+          if (!ptInPoly(sx, sy, P)) continue;
+          samples++;
+          if (!pickTile(sx, sy))
+            out.push({ tile:[x,z], edge:i, at:[+sx.toFixed(1), +sy.toFixed(1)], inPx:d });
+        }
+      }
+    }
+  }
+  return samples;
+}
+/* 🧭 CAN THE PLAYER TOUCH THIS TILE, AT THIS POSE, RIGHT NOW?
+   The same probe pattern the reach loop below runs — centre plus two rings at
+   0.45 and 0.80 of the inradius — with ONE extra condition that the reach loop
+   does not apply: the sample must land inside the canvas. That difference is
+   the whole point. `project()` has a near clip and no far clip and no viewport
+   test, so it happily returns a screen point at x = −5.7, and `pickTile()`
+   happily unprojects it back to the right tile. Both are correct as geometry
+   and both are useless as an answer to "can this be clicked", because the
+   pixel belongs to the page behind the iframe. That gap is exactly how the
+   board once reported every tile reachable with two of them off frame
+   (OPEN-BREAKS #3), and it is why this counts on-screen hits and nothing else.
+   Returns the number of samples that both landed on the canvas and resolved to
+   this tile. Zero means: at this pose, there is no pixel the player can click
+   that addresses this tile. */
+function _tileReachOn(x, z, rings){
+  const e = tileElev(x, z), wt = gw(x, z, e), rr0 = tileR();
+  let n = 0;
+  for (let i = -1; i < rings*2; i++){
+    const a = (i % rings) * Math.PI * 2 / rings;
+    const rr = i < 0 ? 0 : rr0 * (i < rings ? 0.45 : 0.80);
+    const sp = project({ x: wt.x + Math.cos(a)*rr, y: e, z: wt.z + Math.sin(a)*rr });
+    if (!sp || sp.x < 0 || sp.x > W || sp.y < 0 || sp.y > H) continue;
+    const t = pickTile(sp.x, sp.y);
+    if (t && t.x === x && t.z === z) n++;
+  }
+  return n;
+}
+/* 🔑 …AND IF NOT NOW, IS IT ONE KEYPRESS AWAY?
+   The recovery claim this file has made in prose since the fit went in — "the
+   NEUTRAL FIT is the guarantee, and R restores it" — EXECUTED instead of
+   asserted. Given the tiles that have no clickable pixel at the current pose,
+   it drives the camera to the pose camReset() produces (yaw 0, pan 0), re-runs
+   _tileReachOn on exactly those tiles, and returns the ones that are still
+   unreachable there. Those are the real failures: no pose the player can get
+   to with one documented key addresses them.
+   ⚠ It MOVES THE LIVE CAMERA and puts it back. Everything hexSelfCheck reads
+   is derived from CONFIG.camera through camApply(), so there is no way to ask
+   this question without actually asking it; a parallel "what if" projection
+   would be a second implementation of the thing under test, which is the one
+   mistake this file's history says not to make twice. Save/restore is exact
+   (yaw, pan, velocity and the moving flag) and camApply() is idempotent, so a
+   check run mid-turn leaves the camera exactly where it found it.
+   ⚠ The per-tile pick loop runs ONLY on the shortlist, and only when the
+   shortlist is non-empty — a clean pose pays nothing.
+   ⚠ IT ALSO RE-FRAMES THE WHOLE BOARD AT NEUTRAL, EVERY TIME, and that is not
+   redundant — it closes a hole the first cut of this had. Measured, with the
+   fit deliberately broken (camFrameDist forced to 0.86 × the fit's answer, the
+   OPEN-BREAKS #3 failure re-created): at the NEUTRAL pose the check correctly
+   reported `unreachable: 2` on tiles (0,10) and (13,11) — the very two that
+   break records — but at yaw 45 pan (2,1) it reported ok:TRUE, because at that
+   pose every tile happened to be reachable and the shortlist was empty, so
+   nothing ever looked at neutral. A board whose resting framing is broken must
+   fail from wherever you ask, or a gate that sweeps only panned poses passes a
+   broken board. So the neutral frame test is unconditional and cheap: 168
+   tilePoly() calls, no picks. */
+function _probeRecovery(list, rings){
+  const save = { yaw:CAMERA.yaw, px:CAMERA.pan.x, pz:CAMERA.pan.z,
+                 vx:CAMERA.vel.x, vz:CAMERA.vel.z, vy:CAMERA.yawVel,
+                 moving:CAMERA.moving, dist:CAM_DIST_CUR };
+  const out = { unreachable: [], offFrame: 0, yawOnlyOffFrame: 0 };
+  try {
+    /* ── STOP 1: the pose R produces. yaw 0, pan 0. ── */
+    CAMERA.yaw = 0; CAMERA.pan.x = 0; CAMERA.pan.z = 0; camApply();
+    for (const t of list)
+      if (_tileReachOn(t.tile[0], t.tile[1], rings) === 0) out.unreachable.push(t);
+    for (let z = 0; z < MAP.rows; z++) for (let x = 0; x < MAP.cols; x++)
+      if (tileOffFrame(x, z)) out.offFrame++;
+    /* ── STOP 2: THIS yaw, with only the PAN undone. ──
+       The yaw guarantee, asked from wherever you are standing. See the block
+       above for why the neutral stop alone was not enough to catch a broken
+       camFrameDist from a panned pose. camApply() with no dt, so the frame
+       ease is snapped and the measurement is deterministic. */
+    CAMERA.yaw = save.yaw; CAMERA.pan.x = 0; CAMERA.pan.z = 0; camApply();
+    for (let z = 0; z < MAP.rows; z++) for (let x = 0; x < MAP.cols; x++)
+      if (tileOffFrame(x, z)) out.yawOnlyOffFrame++;
+  } finally {
+    CAMERA.yaw = save.yaw; CAMERA.pan.x = save.px; CAMERA.pan.z = save.pz;
+    CAMERA.vel.x = save.vx; CAMERA.vel.z = save.vz; CAMERA.yawVel = save.vy;
+    CAMERA.moving = save.moving;
+    /* …including the frame ease's slack. camApply() with no dt SNAPS the ease
+       (that is what makes a probed pose deterministic), which is right for the
+       neutral measurement above and wrong here: a check run mid-turn would
+       otherwise eat the slack the camera was in the middle of giving back and
+       show as a small pop. A non-zero dt takes the eased branch, and one this
+       small leaves CAM_DIST_CUR where it was to ~1e-9 while still re-deriving
+       CONFIG.camera from it. A zero saved value means the ease has never run,
+       and camApply's `!CAM_DIST_CUR` guard snaps that case. */
+    CAM_DIST_CUR = save.dist;
+    camApply(1e-9);
+  }
+  return out;
+}
 function hexSelfCheck(opts){
   const rings = (opts && opts.rings) || 8;
   const centre = [], jitter = [], slab = [], buried = [], deadCentre = [], offFrame = [];
+  const unreachHere = [];
   let occluded = 0, slabSamples = 0, minVisible = 1;
   const rungHits = {};
   for (let z = 0; z < MAP.rows; z++){
@@ -7154,7 +8469,7 @@ function hexSelfCheck(opts){
          centre. One ring at 0.7 could not distinguish "the near fringe is all
          that is left" from "the whole tile is reachable", which is the exact
          distinction this check now has to make. */
-      let reach = 0, taken = 0;
+      let reach = 0, taken = 0, reachOn = 0;
       for (let i = -1; i < rings * 2; i++){
         const a = (i % rings) * Math.PI * 2 / rings;
         const rr = i < 0 ? 0 : tileR() * (i < rings ? 0.45 : 0.80);
@@ -7162,9 +8477,31 @@ function hexSelfCheck(opts){
         if (!sp) continue;
         slabSamples++; taken++;
         const t3 = pickTile(sp.x, sp.y);
-        if (t3 && t3.x === x && t3.z === z){ reach++; continue; }
+        if (t3 && t3.x === x && t3.z === z){
+          reach++;
+          /* 🧭 …and separately, was that hit somewhere the player's mouse can
+             actually go. `reach` answers the PROJECTION question and must keep
+             ignoring the viewport (it is what buriedFails is built on);
+             `reachOn` answers the REACHABILITY question. Same sample, two
+             different claims, counted apart so neither can launder the other.
+             _tileReachOn() runs the identical predicate for the neutral
+             re-measure. */
+          if (sp.x >= 0 && sp.x <= W && sp.y >= 0 && sp.y <= H) reachOn++;
+          continue;
+        }
+        /* 🔬 A dead centre carries its own post-mortem. Finding out WHY the
+           five in the final gate were dead took an hour of external probing to
+           learn one number — how far inside the answer's projected top face
+           the pixel actually was — and that number is the whole diagnosis
+           (0.2–0.8 px said "triple point", which is what PICK_EDGE_PX now
+           handles; 8 px would have said "the generator is burying tiles",
+           which is a different fix in a different file). It is computed only
+           for a FAILING sample, so it costs a clean board nothing. */
         if (i < 0) deadCentre.push({ tile:[x,z], got:t3 ? [t3.x,t3.z] : null,
-                                     elev:+e.toFixed(3) });
+                                     elev:+e.toFixed(3),
+                                     gotElev: t3 ? +tileElev(t3.x,t3.z).toFixed(3) : null,
+                                     insidePx: t3 ? _polyDepthPx(sp.x, sp.y,
+                                         tilePoly(t3.x, t3.z, 0, tileElev(t3.x,t3.z))) : null });
         /* Taller ⇒ genuinely in the way — ARGUED, then CHECKED.
            The ray's y falls monotonically, so a plane at a greater height is
            crossed EARLIER, i.e. nearer the eye. A taller answer is therefore a
@@ -7200,6 +8537,8 @@ function hexSelfCheck(opts){
         const vis = reach / taken;
         if (vis < minVisible) minVisible = vis;
         if (reach === 0) buried.push({ tile:[x,z], elev:+e.toFixed(3), samples:taken });
+        if (reachOn === 0) unreachHere.push({ tile:[x,z], elev:+e.toFixed(3),
+                                              why: reach ? 'offFrame' : 'buried' });
       }
       /* 🖼 …and is it even ON the canvas. A hard failure, like buriedFails: a
          tile the frame cuts is a tile the player cannot fully click, while
@@ -7210,26 +8549,94 @@ function hexSelfCheck(opts){
     }
   }
   const tiles = MAP.cols * MAP.rows;
+  const nullDrawn = [];
+  const nullDrawnSamples = (CAM && VIEW.scale) ? _nullOverDrawnScan(nullDrawn) : 0;
+  /* 🧭 THE POSE-AWARE SPLIT. See the header block: `unreachHere` is what the
+     player cannot touch from where they are standing; `unreachable` is what
+     they cannot touch from ANYWHERE, measured by actually going to the pose R
+     produces and looking again. Only the second is a failure. */
+  const panned = !!(CAMERA.pan.x || CAMERA.pan.z);
+  const neutral = Math.abs(CAMERA.yaw) < 1e-6 && !panned;
+  /* At the neutral pose all three measurements ARE the current one — yaw 0,
+     pan 0 — so the shortcut is an identity, not a tolerance. Everywhere else
+     the probe actually drives the camera to both recovery poses. */
+  const atNeutral = neutral ? { unreachable: unreachHere.slice(), offFrame: offFrame.length,
+                                yawOnlyOffFrame: offFrame.length }
+                            : _probeRecovery(unreachHere, rings);
+  const unreachable = atNeutral.unreachable;
   return { cols:MAP.cols, rows:MAP.rows, tiles,
-           samples: tiles * (1 + rings) + slabSamples,
+           samples: tiles * (1 + rings) + slabSamples + nullDrawnSamples,
            centreFails: centre.length, jitterFails: jitter.length,
            slabSamples, slabFails: slab.length, occluded,
            buriedFails: buried.length, deadCentres: deadCentre.length,
            offFrameFails: offFrame.length,
-           /* offFrameFails is only a FAILURE at the neutral pose — a panned or
-              yawed camera is allowed to push tiles out of frame. Report the pose
-              beside the count so the number cannot be read out of context. */
+           /* 🕳 a drawn ground pixel that answers NOTHING. Hard failure, in
+              `ok` — see _nullOverDrawnScan. Unlike offFrameFails this holds at
+              EVERY pose: a rim that eats clicks does not care about the fit. */
+           nullOverDrawn: nullDrawn.length, nullOverDrawnSamples: nullDrawnSamples,
+           nullDrawn: nullDrawn.slice(0, 12),
+           /* offFrameFails is a FAILURE whenever the player has not PANNED —
+              at the neutral pose and at every yaw-only pose, because yaw is a
+              look-around and must not cost tiles (see camFrameDist). Under pan
+              it is expected and is folded into `unreachable` instead. Report
+              the pose beside the count so the number cannot be read out of
+              context. */
            pose: { yawDeg: +(CAMERA.yaw*180/Math.PI).toFixed(2),
                    pan: { x:+CAMERA.pan.x.toFixed(3), z:+CAMERA.pan.z.toFixed(3) },
-                   neutral: Math.abs(CAMERA.yaw) < 1e-6 && !CAMERA.pan.x && !CAMERA.pan.z },
+                   panned, neutral,
+                   kind: neutral ? 'neutral' : panned ? 'panned' : 'yaw-only',
+                   distX: +(camFrameDist()/(CAM_BASE.dist||1)).toFixed(4) },
+           /* 🧭 tiles with no clickable pixel AT THIS POSE (off frame, or with
+              a hill drawn over every sample) … */
+           unreachableHere: unreachHere.length,
+           /* … of which this many are still unreachable at the pose R
+              restores. THIS is the hard one, and it holds at EVERY pose. */
+           unreachable: unreachable.length,
+           recoverable: unreachHere.length - unreachable.length,
+           unreachableTiles: unreachable.slice(0, 16),
+           unreachableHereTiles: unreachHere.slice(0, 16),
+           /* 🔑 the recovery pose's OWN framing, measured from wherever you
+              asked. `R is the guarantee` is only worth anything if R lands
+              somewhere whole. Hard failure at every pose. */
+           neutralOffFrame: atNeutral.offFrame,
+           /* 🎥 …and the framing of THIS YAW with the pan undone. THE YAW
+              GUARANTEE, ASKED FROM EVERY POSE. `offFrameFails` cannot carry it
+              once the player has panned, because pan is allowed to push tiles
+              off frame and the count stops distinguishing the two causes — so
+              a camFrameDist that had been deleted outright still reported
+              ok:true from any panned pose, which is the exact hole this field
+              closes. At yaw 0 / pan 0 it is the same number as offFrameFails;
+              at a panned pose it is the only thing asserting that turning did
+              not cost tiles. Hard failure at EVERY pose. Cost: 168 tilePoly()
+              calls and zero picks, on a path that already moves the camera. */
+           yawOnlyOffFrame: atNeutral.yawOnlyOffFrame,
            minVisible: +minVisible.toFixed(3),
            rungs: rungHits, ladder: tileElevRungs().slice(),
            ok: centre.length === 0 && jitter.length === 0 && slab.length === 0
-               && buried.length === 0 && deadCentre.length === 0
-               && offFrame.length === 0,
+               && nullDrawn.length === 0
+               /* holds at every pose */
+               && unreachable.length === 0
+               /* yaw must not cost tiles; pan is allowed to */
+               && (panned || offFrame.length === 0)
+               /* the pose R lands on must itself be whole, asked from ANY pose */
+               && atNeutral.offFrame === 0
+               /* …and so must THIS yaw with the pan undone, asked from ANY
+                  pose. Unconditional on purpose: `panned` excuses
+                  offFrameFails, so without this line the yaw fit is asserted
+                  at pan-zero poses only. */
+               && atNeutral.yawOnlyOffFrame === 0
+               /* the shipped guarantee, unchanged: at the framing R restores,
+                  every tile centre resolves to itself and nothing is buried */
+               && (!neutral || (deadCentre.length === 0 && buried.length === 0)),
+           /* the dead-centre post-mortems on their own as well as inside
+              `fails`: they are the one bucket whose per-entry numbers (which
+              tile answered, how deep inside its drawn top face the pixel was)
+              say WHICH fix applies, and digging them back out of a mixed list
+              is how the last round of this took an hour it did not need to. */
+           deadCentre: deadCentre.slice(0, 16),
            fails: centre.slice(0,10).concat(jitter.slice(0,10)).concat(slab.slice(0,10))
                   .concat(buried.slice(0,10)).concat(deadCentre.slice(0,10))
-                  .concat(offFrame.slice(0,10)) };
+                  .concat(offFrame.slice(0,10)).concat(unreachable.slice(0,10)) };
 }
 window.__bbHexCheck = hexSelfCheck;
 
@@ -7277,6 +8684,26 @@ function fitReport(){
   };
 }
 window.__bbFitProbe = fitReport;
+/* 🚶 WALK PROBE — what a unit is ACTUALLY animating, and where its route came
+   from. Same reason as the camera probe below: `units` and `TELE` are top-level
+   lexical bindings, so a driver outside this document cannot see them, and a
+   test that re-derived the tween would be testing its own copy.
+   It reports `tele` alongside the tween on purpose. "The board walked the bent
+   route" is only evidence that the route travelled WITH THE MOVE if the
+   telegraph was demonstrably empty at the time — otherwise the old
+   TELE-sourced path could be producing the same picture and the regression
+   would be invisible. Read-only; it starts nothing and mutates nothing. */
+window.__bbWalk = (id) => {
+  const u = units.find(x => String(x.id) === String(id));
+  if (!u) return null;
+  const t = u.tween;
+  return {
+    id: String(u.id), gx: u.gx, gz: u.gz, anim: u.anim,
+    tele: Array.isArray(TELE.path) ? TELE.path.slice() : [],
+    tween: t ? { n: t.n, dur: +(+t.dur).toFixed(4),
+                 legs: (t.legs || []).map(p => [Math.round(p.x), Math.round(p.z)]) } : null
+  };
+};
 /* 🎥 CAMERA PROBE — the free camera's state, and a way to drive it from a test
    without a real key event. There is no other way to assert that a capture was
    taken at the yaw it claims: yaw is not visible in a PNG, and "it looks
@@ -7295,6 +8722,12 @@ window.__bbCam = {
     held: Object.keys(CAM_HELD),
     base: { tx:+CAM_BASE.tx.toFixed(3), pitchDeg:+(CAM_BASE.pitch*180/Math.PI).toFixed(2),
             dist:+CAM_BASE.dist.toFixed(3) },
+    /* 🎥 the yaw fit, as a multiple of the neutral fit's distance. `want` is
+       the exact requirement at this yaw, `dist` is what is being rendered
+       (≥ want while the ease gives slack back). See camFrameDist. */
+    frame: { want:+(camFrameDist()/(CAM_BASE.dist||1)).toFixed(4),
+             dist:+((CAM_DIST_CUR||camFrameDist())/(CAM_BASE.dist||1)).toFixed(4),
+             settling: camDistSettling() },
     pos: { x:+CONFIG.camera.pos.x.toFixed(3), y:+CONFIG.camera.pos.y.toFixed(3), z:+CONFIG.camera.pos.z.toFixed(3) },
     terrainKey: terrainKey()
   }),
@@ -7351,14 +8784,17 @@ function camCheck(){
   for (let z = 0; z < MAP.rows; z++) for (let x = 0; x < MAP.cols; x++){
     const e = tileElev(x, z);
     const P = tilePoly(x, z, 0, e);
-    if (P) faces.push({ x, z, P, d: camDepth(gw(x, z, e)) });
+    /* `pl` is the world plane the face lies in — horizontal for a top face.
+       occlusionAudit ray-casts against it rather than against a height, so it
+       can carry cliff-face quads in the same list. */
+    if (P) faces.push({ x, z, P, d: camDepth(gw(x, z, e)), pl: { x:0, y:1, z:0, c:e } });
   }
   const drawnAt = (px, py) => {
     let best = null;
     for (const f of faces) if (inPoly(f.P, px, py)) if (!best || f.d < best.d) best = f;
     return best;
   };
-  let samples = 0, mismatch = 0, offScreen = 0;
+  let samples = 0, mismatch = 0, offScreen = 0, rim = 0, hard = 0;
   const bad = [];
   for (let z = 0; z < MAP.rows; z++) for (let x = 0; x < MAP.cols; x++){
     const e = tileElev(x, z);
@@ -7368,8 +8804,46 @@ function camCheck(){
     const got = pickTile(p.x, p.y), drawn = drawnAt(p.x, p.y);
     const gk = got ? got.x + ',' + got.z : 'null';
     const dk = drawn ? drawn.x + ',' + drawn.z : 'null';
-    if (gk !== dk && bad.length < 8) bad.push({ tile:[x,z], picked:gk, drawn:dk, at:[Math.round(p.x), Math.round(p.y)] });
-    if (gk !== dk) mismatch++;
+    if (gk === dk) continue;
+    mismatch++;
+    /* 🩹 …AND WHY `mismatch` IS NO LONGER ALLOWED TO BE THE WHOLE ANSWER.
+       drawnAt() above is a ZERO-WIDTH point-in-polygon against the nearest
+       face — it is deliberately NOT the rule pickTile uses, because an audit
+       that re-implements the thing it audits proves nothing. Since
+       PICK_EDGE_PX went in, the two definitions differ on exactly one set of
+       pixels: the ≤1.5 px rim inside a slab's BACK edges, which the pick hands
+       to the tile behind on purpose (see slabTakesSample). Those show up here
+       as disagreements and always will.
+       So the raw count stays visible — never quietly zeroed — and is split:
+         · `rim`  — explained by the new rule: the drawn winner holds the pixel
+                    only inside its own back-edge rim, and the pick's answer is
+                    a face that really does contain the pixel. Expected.
+         · `hard` — everything else. THIS is the one that must be 0; a pick
+                    landing on a tile that is not drawn under the cursor at all
+                    is the silent camera break this assertion exists to catch.
+
+       ⚠ AND `rim` HAS TO BE BOUNDED BY A WIDTH OR THE ASSERTION IS CIRCULAR.
+       The first cut of this classifier asked slabTakesSample() itself and
+       nothing else — so ANY disagreement the rim rule produced was, by
+       construction, "explained", however wide the rule's rim had grown.
+       Demonstrated rather than suspected: PICK_EDGE_PX raised to 8 px made the
+       pick measurably worse across the board and left every check in this file
+       green, `hard === 0` included. A rule cannot be its own bound. So the
+       depth is measured too: the pixel must sit within PICK_EDGE_PX of the
+       drawn owner's boundary. Deeper than that and the pick is not shaving a
+       hairline off an edge, it is taking a bite out of a face — counted `hard`,
+       which fails, no matter what the rim rule says about it. */
+    let explained = false, depth = drawn ? _polyDepthPx(p.x, p.y, drawn.P) : null;
+    if (got && drawn){
+      const de = tileElev(drawn.x, drawn.z);
+      explained = depth !== null && depth <= PICK_EDGE_PX
+                  && !slabTakesSample(drawn.x, drawn.z, de, p.x, p.y)
+                  && ptInPoly(p.x, p.y, tilePoly(got.x, got.z, 0, tileElev(got.x, got.z)));
+    }
+    if (explained) rim++; else hard++;
+    if (bad.length < 8) bad.push({ tile:[x,z], picked:gk, drawn:dk, kind: explained ? 'rim' : 'hard',
+                                   at:[Math.round(p.x), Math.round(p.y)],
+                                   insidePx: depth });
   }
   const order = [];
   for (const t of MAP.tiles) if (t.prop) order.push(camDepth(gw(t.x,t.z,0)));
@@ -7385,8 +8859,18 @@ function camCheck(){
   return {
     yawDeg: +(CAMERA.yaw*180/Math.PI).toFixed(2),
     pan: { x:+CAMERA.pan.x.toFixed(3), z:+CAMERA.pan.z.toFixed(3) },
-    click: { samples, mismatch, offScreen, bad },
+    click: { samples, mismatch, rim, hard, offScreen, bad },
     painter: { items: order.length, inversions },
+    /* 4. OCCLUSION — the measurement the picture cannot give you.
+       For every unit, take the pixel its FEET land on and ask the terrain which
+       slab top is drawn there (nearest containing face, i.e. the one the sweep
+       painted last). If that slab is a DIFFERENT tile, is NEARER in camera depth
+       than the unit's own sort key, and stands HIGHER than the ground the unit
+       is standing on, then the honest picture has terrain in front of the unit
+       at that pixel and the unit must be masked there. `occluded` counts those;
+       `leaks` counts the ones the clip failed to catch, which is the bug this
+       whole block exists to remove and is 100% of `occluded` without it. */
+    occlusion: occlusionAudit(faces, inPoly),
     /* skirtPainted sits next to bakeMs because it is the number bakeMs is made
        of: the field is a constant 168 tiles, so every ms of growth in the bake
        is a skirt cell. Reading them apart is how the pan×yaw cliff was found
@@ -7398,6 +8882,260 @@ function camCheck(){
                skirtCull: { quad:SKIRT_STAT.cullQuad, screen:SKIRT_STAT.cullScreen, lod:SKIRT_STAT.cullLod } },
     cols: MAP.cols, rows: MAP.rows
   };
+}
+
+/* The audit behind camCheck().occlusion. Kept beside camCheck rather than in
+   the capture script for the same globals-trap reason the rest of the probe is
+   (CLAUDE.md): MAP, gw(), project() and OCCL are lexical consts and an outside
+   driver cannot see any of them.
+   It rebuilds the occluder set from scratch so it audits the RULE, not a stale
+   list left over from whichever frame ran last. */
+/* Screen pixel → the world point where its ray meets an ARBITRARY plane
+   n·p = c. Same ray construction as pickTile(), on purpose: an audit that
+   built its own projector would be grading its own copy.
+   ⚠ It has to take a plane and not just a height. The audit's whole job is the
+   pixels where a near slab hides a unit, and those are overwhelmingly CLIFF
+   FACE pixels — vertical. Meeting them with a horizontal plane at the tile's
+   elevation answers with a point metres away along the ray, if it answers at
+   all. Each slab piece carries its own plane in `.pl` (see slabPieces). */
+function rayToPlaneN(px, py, pl){
+  const ndx = (px - VIEW.cx) / VIEW.scale;
+  const ndy = -(py - VIEW.cy) / VIEW.scale;
+  const dir = norm({
+    x: CAM.f.x + CAM.r.x*ndx + CAM.u.x*ndy,
+    y: CAM.f.y + CAM.r.y*ndx + CAM.u.y*ndy,
+    z: CAM.f.z + CAM.r.z*ndx + CAM.u.z*ndy
+  });
+  const den = pl.x*dir.x + pl.y*dir.y + pl.z*dir.z;
+  if (Math.abs(den) < 1e-9) return null;
+  const t = (pl.c - (pl.x*CAM.pos.x + pl.y*CAM.pos.y + pl.z*CAM.pos.z)) / den;
+  if (t <= 0) return null;
+  return { x: CAM.pos.x + dir.x*t, y: CAM.pos.y + dir.y*t, z: CAM.pos.z + dir.z*t };
+}
+/* the horizontal case, kept under its old name and signature — pickTile's
+   elevation sweep and the outside probes both call it. */
+function rayToPlane(px, py, h){
+  return rayToPlaneN(px, py, { x:0, y:1, z:0, c:h });
+}
+
+function occlusionAudit(faces, inPoly){
+  buildOccluders();
+  /* Sampled over the unit's whole SCREEN BOX, not just the one pixel under its
+     feet: the critic's sentence names the feet, but a billboard that punches
+     through a cliff does it up its whole silhouette.
+
+     ⚠ THE TEST DOES NOT ASK THE SORT KEY WHETHER THE SORT KEY IS RIGHT. It
+     ray-casts: for a sample pixel it takes the terrain surface actually DRAWN
+     there (nearest containing piece — the one the sweep painted last), finds
+     the exact world point where that pixel's ray meets THAT PIECE'S OWN PLANE,
+     and takes ITS camera depth. That is compared against the depth of the figure at
+     the same pixel, modelled as a VERTICAL object standing on its tile — depth
+     falls with height, because the eye is above the board. Both halves are
+     geometry; neither is camDepth(gw(x,z,0)), which is the key the renderer
+     sorts on and is exactly what is under test.
+       · `feet`   — the pixel under the unit's feet. Model-independent: if
+                    terrain drawn there is nearer than the FOOT POINT itself,
+                    the picture is lying, full stop. This one must be zero.
+       · `body`   — the rest of the silhouette, against the vertical-figure
+                    depth.
+       · `overMask` — A FIRST-CLASS ASSERTION, not a note. It counts a pixel
+                    whenever the mask fires and the ray says the FIGURE is the
+                    nearer of the two, i.e. the clip took a pixel the sprite
+                    owns outright. That is a hole through a unit, which BAR R1
+                    calls out by name, and it is a worse artefact than the leak
+                    it would be trading against. It must be 0 across the pose
+                    sweep, same as `feetLeaks`.
+       · `behind` — the same failure attributed: the masking slab's
+                    ground-plane centre is FURTHER than the unit's, i.e. a hill
+                    behind it eating its head.
+
+     ⚠ CLIFF FACES ARE INSIDE THE DENOMINATOR NOW. `faces` is built from tile
+     TOP polygons only, so a sample landing on a wall used to resolve to no
+     face at all and be dropped — and the pixels where a near slab hides a unit
+     are overwhelmingly wall pixels, so the entire population this audit exists
+     to measure sat outside it. `surf` below adds every slab's front-facing
+     wall quads, straight out of slabPieces() so the audit cannot disagree with
+     the renderer about where a wall is. */
+  const surf = faces.slice();
+  for (let z = 0; z < MAP.rows; z++) for (let x = 0; x < MAP.cols; x++){
+    const e = tileElev(x, z); if (e <= 1e-3) continue;
+    const pcs = slabPieces(x, z, e); if (!pcs) continue;
+    /* piece 0 is the top face, already in `faces`; 1.. are the walls. They
+       carry the tile's own top-centre depth so a pixel resolves to whichever
+       TILE the sweep painted last, exactly as the top-face test does. */
+    const dT = camDepth(gw(x, z, e));
+    for (let k = 1; k < pcs.length; k++) surf.push({ x, z, P: pcs[k], d: dT, pl: pcs[k].pl });
+  }
+  /* a screen bbox per face so the point test is not 450 polygons deep on every
+     one of ~1500 samples. Pure speed; it changes no answer. */
+  for (const f of surf){
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const v of f.P){ if (v.x < x0) x0 = v.x; if (v.x > x1) x1 = v.x;
+                          if (v.y < y0) y0 = v.y; if (v.y > y1) y1 = v.y; }
+    f.bb = [x0, x1, y0, y1];
+  }
+  const drawnSurf = (px, py) => {
+    let best = null;
+    for (const f of surf){
+      const b = f.bb;
+      if (px < b[0] || px > b[1] || py < b[2] || py > b[3]) continue;
+      if (best && f.d >= best.d) continue;
+      if (inPoly(f.P, px, py)) best = f;
+    }
+    return best;
+  };
+  const out = { units: 0, samples: 0, feetTested: 0, feetHidden: 0, feetLeaks: 0,
+                bodyHidden: 0, bodyLeaks: 0, sameBand: 0, overMask: 0, behind: 0,
+                wallSamples: 0, ringTested: 0, ringHidden: 0, ringLeaks: 0, overMaskRing: 0,
+                worst: [], bad: [], over: [] };
+  for (const u of units){
+    if (u.dead) continue;
+    const box = unitScreenBox(u); if (!box) continue;
+    const fe = unitGroundY(u);        /* the renderer's footing — see drawables */
+    const dKey = camDepth(gw(u.x, u.z, 0));            /* the renderer's key */
+    /* the DRAWN anchor, hop included — frame() hands the clip this point and
+       unitScreenBox measures from it, so the audit has to model the figure
+       from it too or it grades a sprite nobody drew. */
+    const fa = fe + (u.y || 0);
+    const foot = gw(u.x, u.z, fa);
+    /* ⚠ "its own slab" is the tile the unit is STANDING ON RIGHT NOW, and that
+       is NOT u.gx/u.gz while it walks: moveUnit() moves those to the
+       destination on the first frame of the tween. Reading them here made the
+       audit skip a tile six rows away and then flag the slab actually under the
+       sprite's feet as an unmasked occluder — four phantom feetLeaks per walk.
+       Derive it from the live position through the board's own cube-rounding
+       inverse, which is what "which tile is this" means everywhere else. */
+    const own = unitTile(u);        /* the renderer's own-slab exemption */
+    const pFoot = project(foot); if (!pFoot) continue;
+    const hUnit = box.height / pFoot.s;                /* sprite height in WORLD units */
+    /* ⚠ THE SHIPPING RULE ITSELF, called once per unit — not a copy of it, and
+       not once per pixel. occluderMask() is the function frame() clips with,
+       so a mask this audit reports is the mask the player is looking at. The
+       reject box is the SAME one frame() builds for a unit (bw 1.1, bh 3.2 in
+       its drawables). */
+    const abox = actorBox(pFoot, 1.1, 3.2);
+    const mask = occluderMask(foot, fe, abox, own.x, own.z);
+    out.units++;
+    let hid = 0, leaked = 0, n = 0;
+    /* 9x11 over the box. It was 5x7, and a mask artefact is tens of pixels —
+       at 35 samples a unit the grid could step straight over a wedge that a
+       reader sees instantly. */
+    const NX = 8, NY = 10;
+    for (let iy = 0; iy <= NY; iy++) for (let ix = 0; ix <= NX; ix++){
+      const feet = iy === NY;
+      const px = box.left + box.width  * (ix / NX);
+      /* ⚠ the FEET row is taken at the projected foot POINT, not at the bottom
+         of the art box. The two differ by a few pixels of sprite padding, and
+         "the pixel under their feet" has to mean the pixel the foot point lands
+         on or the strictest test in this audit is testing a pixel of air. */
+      const py = feet ? pFoot.y : box.top + box.height * (iy / NY);
+      if (px < 0 || px > W || py < 0 || py > H) continue;
+      n++; out.samples++;
+      if (feet) out.feetTested++;
+      const drawn = drawnSurf(px, py);
+      if (!drawn) continue;
+      if (drawn.pl.y === 0) out.wallSamples++;           /* a cliff-face pixel */
+      if (drawn.x === own.x && drawn.z === own.z) continue; /* its own slab never occludes it */
+      /* depth of the FIGURE at this pixel. The sprite is drawn as a flat screen
+         card anchored at the projected foot and scaled by pFoot.s, so the world
+         height a pixel stands for is its offset above the foot over pFoot.s —
+         the SAME model clipPieceInFront() cuts with, deliberately, so a
+         disagreement here is a bug in the clip and not in the two models. */
+      const yFig = feet ? fa : fa + hUnit * (1 - iy / NY);
+      const dFig = camDepth(gw(u.x, u.z, yFig));
+      /* depth of the TERRAIN the player actually sees at this pixel, met on
+         that surface's OWN plane — top face or cliff face. */
+      const wp = rayToPlaneN(px, py, drawn.pl); if (!wp) continue;
+      const dTer = camDepth(wp);
+      const shouldHide = dTer < dFig - 1e-4;             /* is the terrain really in front? */
+      /* does the SHIPPING mask cover this pixel? `mask` is the renderer's own
+         output for this unit, so there is nothing here to drift out of sync. */
+      let masked = false, byGnd = 0;
+      if (mask) for (const m of mask){
+        let hit = false;
+        for (const pc of m.cut) if (inPoly(pc, px, py)) { hit = true; break; }
+        if (!hit) continue;
+        masked = true; byGnd = m.o.dGnd;
+        break;
+      }
+      /* ⚠ THE COUNTER-TEST. A mask that removes a pixel the geometry says the
+         FIGURE owns is the opposite failure from a leak and just as wrong — it
+         is a unit disappearing into a slab it is standing in front of. Counted
+         separately, and separately again when the slab responsible is further
+         away than the unit is, which is the shape a head-eating hill would take
+         if a taller elevation ladder ever let height out-buy a row of depth. */
+      if (!shouldHide){
+        if (masked){
+          out.overMask++;
+          if (byGnd > dKey + 1e-4) out.behind++;
+          if (out.over.length < 8) out.over.push({ unit: u.id, at: [u.gx, u.gz], feet,
+                                                   px: [Math.round(px), Math.round(py)] });
+        }
+        continue;
+      }
+      hid++; if (feet) out.feetHidden++; else out.bodyHidden++;
+      /* the renderer's ground-plane key says these two are in the same depth
+         band, i.e. the slab is BESIDE the unit rather than in front of it */
+      const band = camDepth(gw(drawn.x, drawn.z, 0)) >= dKey;
+      if (band) out.sameBand++;
+      if (!masked){
+        leaked++; if (feet) out.feetLeaks++; else out.bodyLeaks++;
+        if (out.bad.length < 8) out.bad.push({ unit: u.id, at: [u.gx, u.gz], feet, sameBand: band,
+                                               behind: [drawn.x, drawn.z],
+                                               px: [Math.round(px), Math.round(py)] });
+      }
+    }
+    /* ⚠ THE GROUND RING AND THE SHADOW ARE UNDER THE SAME CLIP and were never
+       sampled. They are not a billboard — they are a flat disc lying ON the
+       unit's own tile top — so their depth is the honest camDepth of the world
+       point itself, no card model in it at all. A third of the over-masking an
+       independent pixel-diff found at these poses was ring, and every one of
+       those samples was outside this audit. 3 radii x 12 spokes, inside the
+       tile's INRADIUS so the disc cannot spill onto a neighbour and grade a
+       tile it does not belong to. */
+    for (let ri = 1; ri <= 3; ri++) for (let ai = 0; ai < 12; ai++){
+      const rad = tileR() * (0.3 * ri), th = ai * Math.PI / 6;
+      /* the ring/shadow is drawn from `base`, i.e. WITHOUT the hop — see
+         drawUnit's shadowEllipse(base, …) — so these samples stay at fe. */
+      const wpt = { x: foot.x + rad*Math.cos(th), y: fe, z: foot.z + rad*Math.sin(th) };
+      const pr = project(wpt); if (!pr) continue;
+      const px = pr.x, py = pr.y;
+      if (px < 0 || px > W || py < 0 || py > H) continue;
+      out.samples++; out.ringTested++;
+      const drawn = drawnSurf(px, py); if (!drawn) continue;
+      if (drawn.pl.y === 0) out.wallSamples++;
+      if (drawn.x === own.x && drawn.z === own.z) continue;
+      const wp = rayToPlaneN(px, py, drawn.pl); if (!wp) continue;
+      const shouldHide = camDepth(wp) < camDepth(wpt) - 1e-4;
+      let masked = false, byGnd = 0;
+      if (mask) for (const m of mask){
+        let hit = false;
+        for (const pc of m.cut) if (inPoly(pc, px, py)) { hit = true; break; }
+        if (!hit) continue;
+        masked = true; byGnd = m.o.dGnd; break;
+      }
+      if (!shouldHide){
+        if (masked){
+          out.overMask++; out.overMaskRing++;
+          if (byGnd > dKey + 1e-4) out.behind++;
+          if (out.over.length < 8) out.over.push({ unit: u.id, at: [u.gx, u.gz], ring: true,
+                                                   px: [Math.round(px), Math.round(py)] });
+        }
+        continue;
+      }
+      out.ringHidden++;
+      if (!masked){
+        out.ringLeaks++;
+        if (out.bad.length < 8) out.bad.push({ unit: u.id, at: [u.gx, u.gz], ring: true,
+                                               behind: [drawn.x, drawn.z],
+                                               px: [Math.round(px), Math.round(py)] });
+      }
+    }
+    if (hid) out.worst.push({ unit: u.id, at: [u.x, u.z], hid, of: n, leaked });
+  }
+  out.worst.sort((a, b) => b.hid - a.hid);
+  out.worst = out.worst.slice(0, 6);
+  return out;
 }
 cv.addEventListener('mousemove', e => { hoverTile = pickTile(e.clientX, e.clientY); });
 cv.addEventListener('mouseleave', () => hoverTile = null);
@@ -7464,7 +9202,12 @@ window.Board = {
   spawnEvent, setEvents, triggerEvent, clearEvent, eventsAt, get eventTypes(){ return EVENT_TYPES; },
   get locations(){ return LOCATIONS; }, get map(){ return MAP; }, get units(){ return units; },
   on:(evt,fn) => document.addEventListener('board:'+evt, fn),
-  get paint(){ return PAINT; }, unitScreenBox
+  get paint(){ return PAINT; },
+  /* The telegraph, read-only-by-convention, exposed for the same reason
+     `paint` is: it is the route moveUnit() now walks, so any rig that wants to
+     prove drawn-route == walked-route has to be able to read the drawn one
+     from the board itself rather than from the fixture that posted it. */
+  get tele(){ return TELE; }, unitScreenBox
 };
 
 /* ══════════════════════════════════════════════════════════════════

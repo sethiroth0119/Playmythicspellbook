@@ -71,3 +71,4 @@ mythic-game-api/
 # Cloudflare upload for the same reason (public/.assetsignore). File stays on
 # disk; compress or convert to a sprite sheet if it is ever wanted in-game.
 public/assets/Units/unit frames/New units/*.gif
+scratchpad/

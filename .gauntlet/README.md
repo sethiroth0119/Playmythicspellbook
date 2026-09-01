@@ -172,9 +172,25 @@ set the pose:
 ```js
 __harness.cam().set(90, 0, 0)   // yaw 90°, no pan, no easing (the clamp still runs)
 __harness.cam().get()           // { yawDeg, pan, vel, moving, reduced, terrainKey, … }
-__harness.cam().check()         // { click:{samples,mismatch}, painter:{inversions},
-                                //   terrain:{registered,bakeMs} }
+__harness.cam().check()         // { click:{samples,mismatch,rim,hard,offScreen,bad},
+                                //   painter:{inversions}, terrain:{registered,bakeMs} }
 ```
+
+⚠ **`click.mismatch` is no longer the assertion — `click.hard` is.** Since `PICK_EDGE_PX`
+went in (`battle-board/index.html`, `slabTakesSample`) the pick deliberately hands the
+≤1.5 px band inside a slab's BACK edges to the tile behind it, so `mismatch` is nonzero by
+design and stays visible rather than being zeroed. It is split:
+
+* `rim` — the drawn owner holds the pixel only inside its own back-edge rim (depth
+  measured, and **bounded by `PICK_EDGE_PX`** — that bound is what stops the classifier
+  excusing an arbitrarily wide rim), and the pick's answer really does contain the pixel.
+  Expected.
+* `hard` — everything else. **This is the one that must be 0.**
+
+Board-wide the rim trade costs 5.64% of drawn ground pixels (10,392 / 184,215 rastered at
+1 px, 802×688, default seed); `camCheck` only samples the 168 tile centres, so it surfaces
+that as a handful. The invariant that must hold at every pose is that no drawn ground pixel
+answers **nothing** — `__bbHexCheck().nullOverDrawn`, asserted 0 and folded into `ok`.
 
 `__harness.state().camSent` counts `board:camera` posts that left the parent, and
 `__harness.rects()` returns the newest `board:rects` payload as the HOST sees it — which is

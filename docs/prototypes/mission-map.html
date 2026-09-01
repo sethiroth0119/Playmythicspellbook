@@ -1,0 +1,613 @@
+<title>Ruined Manhattan</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Barlow:wght@400;500;600;700&display=swap">
+<style>
+  :root{
+    --bg:#06080c; --panel:#0d121b; --rim:rgba(120,180,220,.20);
+    --ink:#e8edf5; --dim:#7d8ba0; --faint:#4a5568;
+    --surv:#3d8bfd; --scum:#c3d63f; --anom:#a855f7; --scp:#ff5a3c; --gold:#e0b356;
+    --ui:'Chakra Petch',ui-sans-serif,system-ui,sans-serif;
+    --tx:'Barlow',ui-sans-serif,system-ui,-apple-system,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{background:var(--bg);color:var(--ink);font:400 14.5px/1.55 var(--tx)}
+  /* instrumentation type — labels, readouts, controls */
+  .hud h1,.lg,.clock,.ph .k,.ph h2,.pin .nm,.band,button,.grip .lbl,.slider .lbl,.bar .hint{
+    font-family:var(--ui)}
+  /* anywhere digits stack in a column they have to line up */
+  .lg b,.clock b,.row b,.grip .lbl,.pin .mn,.log .d{font-variant-numeric:tabular-nums}
+  :focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+  @media (prefers-reduced-motion:reduce){ *{animation:none!important;transition:none!important} }
+
+  .app{display:grid;grid-template-columns:1fr 320px;grid-template-rows:auto 1fr auto;
+       height:100vh;max-height:100vh}
+  @media (max-width:900px){ .app{grid-template-columns:1fr;grid-template-rows:auto 56vh auto auto;height:auto;max-height:none} }
+
+  .hud{grid-column:1/-1;display:flex;align-items:center;gap:18px;flex-wrap:wrap;
+       padding:10px 18px;background:linear-gradient(#0c1119,#080b11);border-bottom:1px solid var(--rim)}
+  .hud h1{margin:0;font-size:13px;letter-spacing:.2em;text-transform:uppercase;font-weight:700;color:var(--gold)}
+  .hud .sep{flex:1}
+  .legend{display:flex;gap:14px;flex-wrap:wrap}
+  .lg{display:flex;align-items:center;gap:6px;font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
+  .lg i{width:9px;height:9px;border-radius:2px;display:block;box-shadow:0 0 8px currentColor}
+  .lg b{color:var(--ink);font-variant-numeric:tabular-nums;font-weight:700}
+  .clock{font-size:11.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+  .clock b{color:var(--ink)}
+
+  .stage{position:relative;overflow:hidden;
+      background:radial-gradient(120% 90% at 50% 45%, #141c28 0%, #0a0e14 58%, #06080c 100%)}
+  .stage canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+  #fx{pointer-events:none}
+  #pins{position:absolute;inset:0;pointer-events:none}
+  .vig{position:absolute;inset:0;pointer-events:none;
+       background:radial-gradient(72% 62% at 50% 48%,transparent 42%,rgba(0,0,0,.58) 100%)}
+  .scan{position:absolute;inset:0;pointer-events:none;opacity:.14;
+        background:repeating-linear-gradient(0deg,rgba(140,200,255,.10) 0 1px,transparent 1px 3px)}
+
+  .pin{position:absolute;transform:translate(-50%,-50%);pointer-events:auto;cursor:pointer;white-space:nowrap}
+  .pin .card{background:rgba(8,12,18,.92);border:1px solid var(--c);border-left-width:3px;
+             padding:4px 10px 5px;backdrop-filter:blur(3px);
+             box-shadow:0 4px 14px rgba(0,0,0,.65), inset 0 0 18px rgba(0,0,0,.4);
+             transition:transform .14s ease, box-shadow .14s ease}
+  .pin:hover .card{transform:translateY(-2px)}
+  .pin.sel .card{box-shadow:0 0 0 1px var(--c),0 0 24px -3px var(--c)}
+  .pin .nm{font-size:11.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+           display:flex;align-items:center;gap:6px}
+  .pin .mn{font-size:10.5px;color:var(--dim);letter-spacing:.04em;margin-top:1px}
+  .pin .gp{margin-top:4px;height:2px;background:rgba(255,255,255,.10)}
+  .pin .gp i{display:block;height:100%;background:var(--c);box-shadow:0 0 6px var(--c)}
+
+  .panel{background:var(--panel);border-left:1px solid var(--rim);display:flex;flex-direction:column;overflow:hidden}
+  @media (max-width:900px){ .panel{border-left:0;border-top:1px solid var(--rim)} }
+  .ph{padding:12px 16px 10px;border-bottom:1px solid rgba(255,255,255,.06)}
+  .ph .k{font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--faint)}
+  .ph h2{margin:2px 0 0;font-size:20px;font-weight:700;letter-spacing:.01em;text-wrap:balance}
+  .ph .poi{margin-top:3px;font-size:12.5px;color:var(--dim)}
+  .pb{padding:12px 16px;overflow-y:auto;flex:1;min-height:0}
+  .row{display:flex;justify-content:space-between;align-items:baseline;
+       padding:6px 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:12.5px}
+  .row span{color:var(--dim);letter-spacing:.04em}
+  .row b{font-weight:700;font-variant-numeric:tabular-nums}
+  .grip{margin:14px 0 4px}
+  .grip .lbl{display:flex;justify-content:space-between;font-size:10.5px;letter-spacing:.16em;
+             text-transform:uppercase;color:var(--faint);margin-bottom:5px}
+  .track{height:7px;background:rgba(255,255,255,.07);overflow:hidden}
+  .track i{display:block;height:100%;transition:width .45s cubic-bezier(.4,0,.2,1)}
+  .band{margin-top:8px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+        padding:4px 8px;display:inline-block;border:1px solid currentColor}
+  .haul{margin-top:12px;font-size:12.5px;color:var(--dim);line-height:1.7}
+  .haul b{color:var(--ink)}
+  .acts{display:flex;gap:8px;margin-top:14px}
+  button{font:inherit;font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;
+         padding:9px 12px;cursor:pointer;background:rgba(255,255,255,.05);color:var(--ink);
+         border:1px solid rgba(255,255,255,.16);transition:.14s}
+  button:hover:not(:disabled){background:rgba(255,255,255,.11);border-color:rgba(255,255,255,.34)}
+  button:disabled{opacity:.35;cursor:not-allowed}
+  button.pri{background:rgba(61,139,253,.16);border-color:var(--surv);color:#bcd8ff}
+  button.pri:hover:not(:disabled){background:rgba(61,139,253,.28)}
+  .slider{margin-top:14px}
+  .slider .lbl{font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--faint);margin-bottom:6px}
+  input[type=range]{width:100%;accent-color:var(--gold)}
+  .log{border-top:1px solid rgba(255,255,255,.08);padding:10px 16px;max-height:168px;
+       overflow-y:auto;font-size:11.5px;line-height:1.65;color:var(--dim)}
+  .log div{padding:2px 0}
+  .log .d{color:var(--faint)}
+  .log b{color:var(--ink);font-weight:600}
+
+  .bar{grid-column:1/-1;display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:10px 18px;
+       background:linear-gradient(#080b11,#0c1119);border-top:1px solid var(--rim)}
+  .bar .hint{font-size:11.5px;color:var(--faint)}
+  .bar .sep{flex:1}
+  .endday{background:rgba(224,179,86,.14);border-color:var(--gold);color:#f3d99b;padding:11px 22px;font-size:12px}
+  .endday:hover:not(:disabled){background:rgba(224,179,86,.26)}
+</style>
+
+<div class="app">
+  <header class="hud">
+    <h1>◆ Sector Map — New York</h1>
+    <div class="legend" id="legend"></div>
+    <div class="sep"></div>
+    <div class="clock">Day <b id="day">14</b> · <b id="dow">Sunday</b></div>
+  </header>
+
+  <div class="stage" id="stage">
+    <canvas id="city"></canvas>
+    <canvas id="fx"></canvas>
+    <div class="scan"></div><div class="vig"></div>
+    <div id="pins"></div>
+  </div>
+
+  <aside class="panel">
+    <div class="ph">
+      <div class="k">Selected district</div>
+      <h2 id="dName">—</h2>
+      <div class="poi" id="dPoi">Click a district on the map</div>
+    </div>
+    <div class="pb" id="pbody"></div>
+    <div class="log" id="log"></div>
+  </aside>
+
+  <footer class="bar">
+    <span class="hint">Click a district · RAID pushes it back toward the survivors · END DAY lets the factions answer</span>
+    <div class="sep"></div>
+    <button class="endday" id="endDay">End Day ▸</button>
+  </footer>
+</div>
+
+<script>
+(function(){
+'use strict';
+/* ═══════════════════════════════════════════════════════════════════════
+   PROTOTYPE — mission-select map for the roguelite mode.
+
+   There is no city artwork here. The island, the street grid, and every
+   building and its height come out of a seeded hash, so the same seed
+   draws the same New York for every player, on every device, forever.
+
+   THE LOAD-BEARING IDEA: grip is not a tint on the district. It is the
+   PERCENTAGE OF THAT DISTRICT'S BUILDINGS wearing the faction colour.
+   Blocks flip one at a time, spreading out from an epicentre, so a
+   contested district genuinely looks contested instead of washed.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+function hash2(x,y,s){                       // deterministic; same in → same out
+  let h = (x|0)*374761393 + (y|0)*668265263 + (s|0)*1442695041;
+  h = Math.imul(h ^ (h>>>13), 1274126177);
+  return ((h ^ (h>>>16))>>>0) / 4294967296;
+}
+
+/* ── the camera ────────────────────────────────────────────────────────
+   A true 45° isometric, expressed as two basis vectors: U is one grid
+   step across the island, V is one step downtown. Kept general because a
+   skewed camera was tried here to fill the frame better — it does, and it
+   also flattens every building into a chip. Diamonds read as mass. */
+const TW=18, TH=9;
+const UX=TW/2, UY=TH/2, VX=-TW/2, VY=TH/2;
+function pX(gx,gy){ return gx*UX + gy*VX; }
+function pY(gx,gy){ return gx*UY + gy*VY; }
+const DEPTH = (gx,gy)=> gx*UY + gy*VY;      // painter's-algorithm key
+
+const F = {
+  survivors:{ id:'survivors', name:'Survivors',      color:'#3d8bfd' },
+  scum:     { id:'scum',      name:'The Scum',       color:'#c3d63f' },
+  anomalies:{ id:'anomalies', name:'The Anomalies',  color:'#a855f7' },
+  scp:      { id:'scp',       name:'SCP Foundation', color:'#ff5a3c' },
+};
+
+/* ── the island ──────────────────────────────────────────────────────── */
+const GW = 34, GH = 84, CX = 17;
+function halfWidth(gy){
+  let hw;
+  if (gy < 13)      hw = 6.2;                 // Harlem
+  else if (gy < 33) hw = 7.6;                 // the Uppers + the park
+  else if (gy < 46) hw = 7.2;                 // Midtown
+  else if (gy < 55) hw = 6.4;                 // Chelsea
+  else if (gy < 65) hw = 5.6;                 // the Village
+  else if (gy < 75) hw = 4.6;                 // SoHo
+  else              hw = 4.6 - (gy-75)*0.52;  // Battery, tapering to a point
+  hw += (hash2(0,gy,7)-0.5)*1.3;              // ragged shoreline
+  return Math.max(0.6, hw);
+}
+function centerX(gy){ return CX + Math.sin(gy*0.055)*2.2; }
+function onIsland(gx,gy){ return Math.abs(gx-centerX(gy)) <= halfWidth(gy); }
+// Central Park is a rectangular hole in the grid — which is what it is in
+// real life, and the single cheapest thing that says "New York".
+function inPark(gx,gy){ return gy>=16 && gy<=32 && Math.abs(gx-centerX(gy)) <= 2.2; }
+function broadwayX(gy){ return centerX(gy) - 2.6 + (gy/GH)*5.2; }
+
+/* ── districts ───────────────────────────────────────────────────────── */
+const D = [
+  {id:'harlem', name:'Harlem',        poi:'Schoolhouse',       icon:'🏫', hBase:0.46,ruin:0.26, pin:{dx:  96,dy:-52}},
+  {id:'uws',    name:'Upper West',    poi:'Supermarket',       icon:'🛒', hBase:0.66,ruin:0.20, pin:{dx:-116,dy:-28}},
+  {id:'park',   name:'The Green',     poi:'Containment Scar',  icon:'⚠️', hBase:0.00,ruin:0.00, pin:{dx: 118,dy:-50}},
+  {id:'ues',    name:'Upper East',    poi:'St. Vale Hospital', icon:'🏥', hBase:0.68,ruin:0.18, pin:{dx: 134,dy:-60}},
+  {id:'hells',  name:"Hell's Kitchen",poi:'Ladder 21',         icon:'🚒', hBase:0.56,ruin:0.38, pin:{dx:-134,dy: -6}},
+  {id:'midtown',name:'Midtown',       poi:'Grid Substation',   icon:'⚡', hBase:1.00,ruin:0.30, pin:{dx: 142,dy: 40}},
+  {id:'chelsea',name:'Chelsea',       poi:'Rail Depot',        icon:'🏭', hBase:0.66,ruin:0.24, pin:{dx:-132,dy: 30}},
+  {id:'village',name:'The Village',   poi:'Corner Market',     icon:'🛒', hBase:0.46,ruin:0.22, pin:{dx:-120,dy: 46}},
+  {id:'soho',   name:'SoHo',          poi:'Ironworks',         icon:'🔨', hBase:0.50,ruin:0.26, pin:{dx: 104,dy: 46}},
+  {id:'battery',name:'The Battery',   poi:'Reserve Vault',     icon:'🏦', hBase:0.92,ruin:0.34, pin:{dx: -26,dy: 66}},
+];
+const DBY={}; D.forEach(d=>DBY[d.id]=d);
+function districtAt(gx,gy){
+  const c = centerX(gy);
+  if (inPark(gx,gy))  return 'park';
+  if (gy < 13)        return 'harlem';
+  if (gy < 33)        return gx < c ? 'uws' : 'ues';
+  if (gy < 46)        return gx < c ? 'hells' : 'midtown';
+  if (gy < 55)        return 'chelsea';
+  if (gy < 65)        return 'village';
+  if (gy < 75)        return 'soho';
+  return 'battery';
+}
+
+const state = {
+  day:14, sel:'hells', fort:{},
+  grip:{
+    harlem:{f:'scum',g:38},     uws:{f:'anomalies',g:22}, park:{f:'anomalies',g:96},
+    ues:{f:null,g:0},           hells:{f:'scum',g:71},    midtown:{f:'scp',g:88},
+    chelsea:{f:null,g:0},       village:{f:null,g:0},     soho:{f:'scum',g:14},
+    battery:{f:'scp',g:57},
+  },
+};
+const ADJ = {
+  harlem:['uws','ues'], uws:['harlem','park','hells'], park:['uws','ues','midtown'],
+  ues:['harlem','park','midtown'], hells:['uws','midtown','chelsea'],
+  midtown:['park','ues','hells','chelsea'], chelsea:['hells','midtown','village'],
+  village:['chelsea','soho'], soho:['village','battery'], battery:['soho'],
+};
+
+/* ═══ generate the city, once ═══════════════════════════════════════════ */
+const cells=[], builds=[], water=[], dmeta={};
+D.forEach(d=>dmeta[d.id]={cells:0,gx:0,gy:0,ax:0,ay:0});
+
+for (let gy=-5; gy<GH+5; gy++) for (let gx=-9; gx<GW+9; gx++){
+  if (onIsland(gx,gy)) continue;
+  const d = Math.abs(gx-centerX(gy)) - halfWidth(gy);
+  if (d>0 && d<8) water.push({gx,gy,a:Math.max(0,1-d/8)});
+}
+for (let gy=0; gy<GH; gy++) for (let gx=0; gx<GW; gx++){
+  if (!onIsland(gx,gy)) continue;
+  const did = districtAt(gx,gy), park = did==='park';
+  const road = !park && ((gx%3===0) || (gy%4===0) || Math.round(broadwayX(gy))===gx);
+  cells.push({gx,gy,did,road,park});
+  const m=dmeta[did]; m.cells++; m.gx+=gx; m.gy+=gy;
+  if (park || road) continue;
+  const d = DBY[did];
+  // a spine of towers down the middle of Midtown and the Financial District
+  const spine = 1 - Math.min(1, Math.abs(gx-centerX(gy))/4.5);
+  let h = (0.30 + hash2(gx,gy,3)*0.85 + spine*0.55) * d.hBase * 46;
+  const ruined = hash2(gx,gy,9) < d.ruin;
+  if (ruined) h *= 0.42;
+  builds.push({gx,gy,did,h:Math.max(7,h),ruined,lit:hash2(gx,gy,11)<0.36,roll:0});
+}
+D.forEach(d=>{ const m=dmeta[d.id]; if(m.cells){ m.gx/=m.cells; m.gy/=m.cells; } });
+
+// flip ORDER: mostly noise, partly distance from the district's epicentre,
+// so a faction grows outward with a ragged edge rather than a clean radius.
+builds.forEach(b=>{
+  const m=dmeta[b.did];
+  b.roll = 0.62*hash2(b.gx,b.gy,21) + 0.38*Math.min(1, Math.hypot(b.gx-m.gx,b.gy-m.gy)/13);
+});
+// normalise per district so grip% maps to exactly that share of blocks
+D.forEach(d=>{
+  const arr = builds.filter(b=>b.did===d.id).sort((a,b)=>a.roll-b.roll);
+  arr.forEach((b,i)=>{ b.roll = arr.length>1 ? i/(arr.length-1) : 0; });
+});
+
+const cellIdx = new Map(); cells.forEach(c=>cellIdx.set(c.gx+','+c.gy,c));
+water.sort((a,b)=>DEPTH(a.gx,a.gy)-DEPTH(b.gx,b.gy));
+cells.sort((a,b)=>DEPTH(a.gx,a.gy)-DEPTH(b.gx,b.gy));
+builds.sort((a,b)=>DEPTH(a.gx,a.gy)-DEPTH(b.gx,b.gy));
+
+// pin anchor = the district's highest point on screen
+D.forEach(d=>{
+  const m=dmeta[d.id]; let top=1e9, tx=pX(m.gx,m.gy);
+  builds.forEach(b=>{ if(b.did===d.id){ const t=pY(b.gx,b.gy)-b.h; if(t<top){top=t; tx=pX(b.gx,b.gy);} } });
+  m.ax = d.id==='park' ? pX(m.gx,m.gy) : tx;
+  m.ay = top<1e9 ? top : pY(m.gx,m.gy);
+});
+
+/* ═══ colour ════════════════════════════════════════════════════════════ */
+function shade(hex,k,mixDark){
+  let r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);
+  r=Math.round(r*k); g=Math.round(g*k); b=Math.round(b*k);
+  if (mixDark){ r=Math.round(r*(1-mixDark)+9*mixDark); g=Math.round(g*(1-mixDark)+13*mixDark); b=Math.round(b*(1-mixDark)+20*mixDark); }
+  return 'rgb('+r+','+g+','+b+')';
+}
+const FACE={};
+Object.keys(F).forEach(k=>{ const c=F[k].color; FACE[k]={
+  i:{t:shade(c,1.00), l:shade(c,0.54,0.16), r:shade(c,0.31,0.30)},
+  r:{t:shade(c,0.60,0.34), l:shade(c,0.34,0.44), r:shade(c,0.20,0.52)} }; });
+function holderOf(b){ const s=state.grip[b.did]; if(!s.f) return 'survivors';
+  return (b.roll*100 < s.g) ? s.f : 'survivors'; }
+
+/* ═══ canvas ════════════════════════════════════════════════════════════ */
+const stage=document.getElementById('stage'), city=document.getElementById('city'),
+      fxc=document.getElementById('fx'), pins=document.getElementById('pins');
+const ctx=city.getContext('2d'), fx=fxc.getContext('2d');
+let VIEW={s:1,ox:0,oy:0,w:0,h:0};
+
+function computeView(){
+  const r=stage.getBoundingClientRect();
+  VIEW.w=Math.max(320,r.width); VIEW.h=Math.max(240,r.height);
+  const dpr=Math.min(2,window.devicePixelRatio||1);
+  [city,fxc].forEach(cv=>{ cv.width=Math.round(VIEW.w*dpr); cv.height=Math.round(VIEW.h*dpr); });
+  ctx.setTransform(dpr,0,0,dpr,0,0); fx.setTransform(dpr,0,0,dpr,0,0);
+
+  let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9;
+  cells.forEach(c=>{
+    for (const [a,b] of [[0,0],[1,0],[1,1],[0,1]]){
+      const x=pX(c.gx+a,c.gy+b), y=pY(c.gx+a,c.gy+b);
+      if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y;
+    }
+  });
+  y0 -= 70;                                       // headroom for the towers
+  const cw=x1-x0, ch=y1-y0;
+  // The label cards fan above and below the island; fitting the geometry
+  // alone pushed Harlem and The Battery off the frame.
+  const PAD_X = Math.min(272, VIEW.w*0.23), PAD_Y = Math.min(104, VIEW.h*0.15);
+  VIEW.s = Math.min((VIEW.w-PAD_X)/cw, (VIEW.h-PAD_Y)/ch);
+  VIEW.ox = (VIEW.w-cw*VIEW.s)/2 - x0*VIEW.s;
+  VIEW.oy = (VIEW.h-ch*VIEW.s)/2 - y0*VIEW.s;
+}
+const SX=(gx,gy)=>pX(gx,gy)*VIEW.s+VIEW.ox;
+const SY=(gx,gy,h)=>(pY(gx,gy)-(h||0))*VIEW.s+VIEW.oy;
+function poly(c,pts,fill){
+  c.beginPath(); c.moveTo(pts[0],pts[1]);
+  for(let i=2;i<pts.length;i+=2) c.lineTo(pts[i],pts[i+1]);
+  c.closePath(); c.fillStyle=fill; c.fill();
+}
+// one cell's footprint, as four screen points
+function quad(gx,gy,h){
+  const S=VIEW.s, ux=UX*S, uy=UY*S, vx=VX*S, vy=VY*S;
+  const x=SX(gx,gy), y=SY(gx,gy,h);
+  return [x,y, x+ux,y+uy, x+ux+vx,y+uy+vy, x+vx,y+vy];
+}
+
+function drawCity(){
+  const S=VIEW.s;
+  ctx.clearRect(0,0,VIEW.w,VIEW.h);
+
+  // the rivers — without them the island has no silhouette, it just floats
+  water.forEach(c=>{
+    const q=quad(c.gx,c.gy,0);
+    const sh=0.5+0.5*Math.sin(c.gx*0.7+c.gy*0.4);
+    ctx.globalAlpha=c.a*c.a*0.95;
+    poly(ctx,q,'rgb('+Math.round(13+sh*10)+','+Math.round(32+sh*20)+','+Math.round(55+sh*28)+')');
+  });
+  ctx.globalAlpha=1;
+
+  // ground: the street grid has to read, or it isn't a city
+  cells.forEach(c=>{
+    const st=state.grip[c.did], on=state.sel===c.did;
+    let fill;
+    if (c.park)      fill = st.f ? shade(F[st.f].color,0.26,0.62) : '#172a1b';
+    else if (c.road) fill = on ? '#2f3a4a' : '#242c3a';
+    else             fill = on ? '#181f2b' : '#121925';
+    poly(ctx,quad(c.gx,c.gy,0),fill);
+  });
+
+  // district seams — a lit line wherever two districts meet, so the map
+  // reads as plates instead of one undifferentiated mass
+  ctx.lineWidth=Math.max(1,1.1*S); ctx.strokeStyle='rgba(150,190,230,.30)';
+  cells.forEach(c=>{
+    const q=quad(c.gx,c.gy,0);
+    const e=cellIdx.get((c.gx+1)+','+c.gy), so=cellIdx.get(c.gx+','+(c.gy+1));
+    if (!e || e.did!==c.did){ ctx.beginPath(); ctx.moveTo(q[2],q[3]); ctx.lineTo(q[4],q[5]); ctx.stroke(); }
+    if (!so||so.did!==c.did){ ctx.beginPath(); ctx.moveTo(q[6],q[7]); ctx.lineTo(q[4],q[5]); ctx.stroke(); }
+  });
+
+  // the park's overgrowth, where the grid used to be
+  cells.forEach(c=>{
+    if (!c.park || hash2(c.gx,c.gy,31)>0.5) return;
+    const q=quad(c.gx,c.gy,0);
+    const cx=(q[0]+q[4])/2, cy=(q[1]+q[5])/2;
+    const st=state.grip[c.did], r=(3.0+hash2(c.gx,c.gy,33)*3.2)*S;
+    ctx.fillStyle = st.f ? shade(F[st.f].color,0.44,0.38) : '#254c2b';
+    ctx.beginPath(); ctx.ellipse(cx,cy-r*0.45,r,r*0.62,0,0,7); ctx.fill();
+  });
+
+  // the buildings, far → near
+  builds.forEach(b=>{
+    const g=quad(b.gx,b.gy,0), h=b.h*S, f=FACE[holderOf(b)][b.ruined?'r':'i'];
+    const t=[g[0],g[1]-h, g[2],g[3]-h, g[4],g[5]-h, g[6],g[7]-h];
+    poly(ctx,[t[2],t[3], t[4],t[5], g[4],g[5], g[2],g[3]], f.r);   // one wall
+    poly(ctx,[t[6],t[7], t[4],t[5], g[4],g[5], g[6],g[7]], f.l);   // the other
+    poly(ctx,t, f.t);                                              // roof
+    if (b.lit && !b.ruined && h>12){
+      ctx.fillStyle='rgba(255,232,176,.6)';
+      ctx.fillRect((t[6]+g[4])/2-1, (t[7]+g[5])/2-h*0.18, Math.max(1,1.5*S), Math.max(1,1.5*S));
+    }
+  });
+
+  drawLeaders();
+  positionPins();
+}
+
+/* ═══ pick buffer — exact hover, buildings included ═════════════════════ */
+const pick=document.createElement('canvas'), pctx=pick.getContext('2d',{willReadFrequently:true});
+let pickIdx=[];
+function drawPick(){
+  pick.width=Math.round(VIEW.w); pick.height=Math.round(VIEW.h);
+  pctx.setTransform(1,0,0,1,0,0); pctx.clearRect(0,0,pick.width,pick.height);
+  pickIdx=D.map(d=>d.id);
+  const col=id=>'rgb('+((pickIdx.indexOf(id)+1)*20)+',0,0)';
+  cells.forEach(c=>poly(pctx,quad(c.gx,c.gy,0),col(c.did)));
+  builds.forEach(b=>{
+    const g=quad(b.gx,b.gy,0), h=b.h*VIEW.s, c=col(b.did);
+    const t=[g[0],g[1]-h, g[2],g[3]-h, g[4],g[5]-h, g[6],g[7]-h];
+    poly(pctx,[t[2],t[3],t[4],t[5],g[4],g[5],g[2],g[3]],c);
+    poly(pctx,[t[6],t[7],t[4],t[5],g[4],g[5],g[6],g[7]],c);
+    poly(pctx,t,c);
+  });
+}
+function districtAtPx(px,py){
+  if(px<0||py<0||px>=pick.width||py>=pick.height) return null;
+  const d=pctx.getImageData(px,py,1,1).data;
+  if(!d[3]) return null;
+  return pickIdx[Math.round(d[0]/20)-1] || null;
+}
+
+/* ═══ pins ══════════════════════════════════════════════════════════════ */
+const pinEls={};
+D.forEach(d=>{
+  const el=document.createElement('div'); el.className='pin';
+  el.innerHTML='<div class="card"><div class="nm"><span class="ic"></span><span class="tx"></span></div>'+
+               '<div class="mn"></div><div class="gp"><i></i></div></div>';
+  el.onclick=()=>select(d.id); pins.appendChild(el); pinEls[d.id]=el;
+});
+function pinPos(d){
+  const m=dmeta[d.id];
+  const ax=m.ax*VIEW.s+VIEW.ox, ay=m.ay*VIEW.s+VIEW.oy;
+  const k=Math.min(1.25,Math.max(0.80,VIEW.s*1.4));
+  return {ax,ay,x:ax+d.pin.dx*k,y:ay+d.pin.dy*k};
+}
+function positionPins(){
+  D.forEach(d=>{ const p=pinPos(d), el=pinEls[d.id];
+    el.style.left=p.x+'px'; el.style.top=p.y+'px'; });
+}
+function drawLeaders(){
+  D.forEach(d=>{
+    const p=pinPos(d), s=state.grip[d.id];
+    const c=s.f?F[s.f].color:F.survivors.color;
+    ctx.strokeStyle=c; ctx.globalAlpha=state.sel===d.id?0.9:0.4;
+    ctx.lineWidth=Math.max(1,1.1*VIEW.s);
+    ctx.beginPath(); ctx.moveTo(p.ax,p.ay); ctx.lineTo(p.x,p.y); ctx.stroke();
+    ctx.globalAlpha=1; ctx.fillStyle=c;
+    ctx.beginPath(); ctx.arc(p.ax,p.ay,Math.max(2.2,2.6*VIEW.s),0,7); ctx.fill();
+  });
+}
+function paintPins(){
+  D.forEach(d=>{
+    const s=state.grip[d.id], el=pinEls[d.id], fac=s.f?F[s.f]:F.survivors;
+    el.style.setProperty('--c',fac.color);
+    el.classList.toggle('sel',state.sel===d.id);
+    el.querySelector('.ic').textContent=d.icon;
+    el.querySelector('.tx').textContent=d.name;
+    el.querySelector('.mn').textContent=s.f?(fac.name+' · '+s.g+'%'):('Secure · '+d.poi);
+    el.querySelector('.gp i').style.width=(s.f?s.g:100)+'%';
+  });
+}
+
+/* ═══ panel ═════════════════════════════════════════════════════════════ */
+const HAUL={0:['Normal','food · water · supplies','#7d8ba0'],
+            25:['Hard','ammo · fuel · metal · medicine','#e0b356'],
+            50:['Hard +','fuel · medicine · corrupted essence','#ff8c42'],
+            90:['Stronghold','SCP samples · memory shards · DNA','#ff5a3c']};
+const bandFor=g=> g>=90?HAUL[90] : g>=50?HAUL[50] : g>=25?HAUL[25] : HAUL[0];
+
+function renderPanel(){
+  const d=DBY[state.sel], s=state.grip[state.sel];
+  const fac=s.f?F[s.f]:F.survivors, band=bandFor(s.f?s.g:0), lvl=Math.floor((s.f?s.g:0)/25);
+  document.getElementById('dName').textContent=d.name;
+  document.getElementById('dPoi').textContent=d.icon+'  '+d.poi;
+  document.getElementById('pbody').innerHTML=
+    '<div class="row"><span>Controlled by</span><b style="color:'+fac.color+'">'+fac.name+'</b></div>'+
+    '<div class="row"><span>Enemy levels</span><b>'+(lvl?'+'+lvl:'—')+'</b></div>'+
+    '<div class="row"><span>AI profile</span><b>'+(s.f&&s.g>=90?'Brutal':'Hard')+'</b></div>'+
+    '<div class="grip"><div class="lbl"><span>Faction grip</span><span>'+(s.f?s.g:0)+' / 100</span></div>'+
+      '<div class="track"><i style="width:'+(s.f?s.g:0)+'%;background:'+fac.color+';box-shadow:0 0 10px '+fac.color+'"></i></div>'+
+      '<div class="band" style="color:'+band[2]+'">'+band[0]+'</div></div>'+
+    '<div class="haul"><b>Expected haul</b><br>'+band[1]+'</div>'+
+    '<div class="acts"><button class="pri" id="raid"'+(s.f?'':' disabled')+'>▸ Raid</button>'+
+      '<button id="hold"'+(s.f?' disabled':'')+'>Fortify</button></div>'+
+    '<div class="slider"><div class="lbl">Scrub grip — watch the blocks flip</div>'+
+      '<input type="range" min="0" max="100" value="'+(s.f?s.g:0)+'" id="gslide"'+(s.f?'':' disabled')+'></div>';
+
+  const raid=document.getElementById('raid');
+  if(raid) raid.onclick=()=>{
+    const cut=12+Math.round(Math.random()*10);
+    s.g=Math.max(0,s.g-cut);
+    log('<b>'+d.name+'</b> raided — '+fac.name+' grip <b>−'+cut+'</b>'+
+        (s.g===0?' · <b style="color:#3d8bfd">district secured</b>':''));
+    if(!s.g) s.f=null;
+    refresh();
+  };
+  const hold=document.getElementById('hold');
+  if(hold) hold.onclick=()=>{
+    state.fort[state.sel]=2;
+    log('<b>'+d.name+'</b> fortified — factions are half as likely to seed here for 2 days');
+    refresh();
+  };
+  const gs=document.getElementById('gslide');
+  if(gs) gs.oninput=()=>{ s.g=+gs.value; if(!s.g) s.f=null; refresh(true); };
+}
+function select(id){ state.sel=id; refresh(); }
+
+function renderLegend(){
+  const c={survivors:0,scum:0,anomalies:0,scp:0};
+  builds.forEach(b=>c[holderOf(b)]++);
+  document.getElementById('legend').innerHTML=Object.keys(F).map(k=>
+    '<div class="lg"><i style="background:'+F[k].color+';color:'+F[k].color+'"></i>'+
+    F[k].name+' <b>'+Math.round(c[k]/builds.length*100)+'%</b></div>').join('');
+}
+
+const logEl=document.getElementById('log');
+function log(html){
+  const div=document.createElement('div');
+  div.innerHTML='<span class="d">D'+state.day+'</span> · '+html;
+  logEl.prepend(div);
+  while(logEl.children.length>40) logEl.lastChild.remove();
+}
+
+/* ═══ END DAY — the factions answer ═════════════════════════════════════ */
+const DOW=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+// each faction pushes differently — this is the whole personality budget
+const PUSH={
+  scum:      {rate:[4,9], spread:0.45, seed:[8,16]},   // fast, wide, shallow
+  anomalies: {rate:[2,6], spread:0.30, seed:[14,26]},  // jumpy, deep when it lands
+  scp:       {rate:[2,4], spread:0.22, seed:[10,18]},  // slow, relentless, sticky
+};
+document.getElementById('endDay').onclick=()=>{
+  state.day++;
+  document.getElementById('day').textContent=state.day;
+  document.getElementById('dow').textContent=DOW[state.day%7];
+  const held=D.filter(d=>state.grip[d.id].f);
+  held.forEach(d=>{
+    const s=state.grip[d.id], p=PUSH[s.f];
+    const before=s.g;
+    s.g=Math.min(100, s.g + p.rate[0]+Math.round(Math.random()*(p.rate[1]-p.rate[0])));
+    if(before<100 && s.g===100)
+      log('<b style="color:'+F[s.f].color+'">'+F[s.f].name+'</b> holds <b>'+d.name+'</b> outright — stronghold');
+    if(Math.random()<p.spread){
+      const cand=(ADJ[d.id]||[]).filter(n=>!state.grip[n].f && !(state.fort[n]>0 && Math.random()<0.5));
+      if(cand.length){
+        const n=cand[Math.floor(Math.random()*cand.length)], ns=state.grip[n];
+        ns.f=s.f; ns.g=p.seed[0]+Math.round(Math.random()*(p.seed[1]-p.seed[0]));
+        log('<b style="color:'+F[s.f].color+'">'+F[s.f].name+'</b> pushes into <b>'+DBY[n].name+'</b> — grip <b>'+ns.g+'</b>');
+      }
+    }
+  });
+  Object.keys(state.fort).forEach(k=>{ if(--state.fort[k]<=0) delete state.fort[k]; });
+  if(!held.length) log('Quiet night. Nothing moved.');
+  refresh();
+};
+
+/* ═══ ambient ═══════════════════════════════════════════════════════════ */
+const ash=[];
+for(let i=0;i<90;i++) ash.push({x:Math.random(),y:Math.random(),
+  s:0.15+Math.random()*0.5, r:0.6+Math.random()*1.3, a:0.10+Math.random()*0.28});
+const STILL = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+let t0=0;
+function tick(t){
+  const dt=Math.min(50,t-t0); t0=t;
+  fx.clearRect(0,0,VIEW.w,VIEW.h);
+  D.forEach(d=>{                                     // fires where grip is high
+    const s=state.grip[d.id]; if(!s.f||s.g<20) return;
+    const m=dmeta[d.id], n=Math.min(5,Math.round(s.g/22));
+    for(let i=0;i<n;i++){
+      const jx=(hash2(i,0,d.id.length*7)-0.5)*7, jy=(hash2(i,1,d.id.length*7)-0.5)*7;
+      const x=pX(m.gx+jx,m.gy+jy)*VIEW.s+VIEW.ox, y=pY(m.gx+jx,m.gy+jy)*VIEW.s+VIEW.oy;
+      const fl=0.55+0.45*Math.sin(t/(240+i*70)+i), R=(20+i*5)*VIEW.s*fl;
+      fx.fillStyle='rgba(255,150,60,'+(0.055*fl*(s.g/100))+')';
+      fx.beginPath(); fx.arc(x,y,R,0,7); fx.fill();
+    }
+  });
+  fx.fillStyle='rgb(200,214,232)';
+  ash.forEach(p=>{
+    p.y-=p.s*dt/2400; p.x+=p.s*dt/9000;
+    if(p.y<-0.02){ p.y=1.02; p.x=Math.random(); }
+    fx.globalAlpha=p.a; fx.fillRect(p.x*VIEW.w,p.y*VIEW.h,p.r,p.r);
+  });
+  fx.globalAlpha=1;
+  if (!STILL) requestAnimationFrame(tick);   // one static frame is enough
+}
+
+/* ═══ wiring ════════════════════════════════════════════════════════════ */
+function refresh(skipPick){ drawCity(); if(!skipPick) drawPick(); paintPins(); renderPanel(); renderLegend(); }
+stage.addEventListener('mousemove',e=>{
+  const r=stage.getBoundingClientRect();
+  stage.style.cursor=districtAtPx(Math.round(e.clientX-r.left),Math.round(e.clientY-r.top))?'pointer':'default';
+});
+stage.addEventListener('click',e=>{
+  const r=stage.getBoundingClientRect();
+  const id=districtAtPx(Math.round(e.clientX-r.left),Math.round(e.clientY-r.top));
+  if(id) select(id);
+});
+window.addEventListener('resize',()=>{ computeView(); refresh(); });
+
+computeView(); refresh();
+log('Field team standing by. <b>'+builds.length+'</b> structures surveyed.');
+requestAnimationFrame(t=>{ t0=t; tick(t); });
+})();
+</script>

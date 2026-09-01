@@ -36466,7 +36466,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120x6';
+  window.BUILD_VERSION = 'v120x7';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -207308,15 +207308,25 @@ function _openNodeCity(nodeId, _resolved) {
   }
   const f = document.createElement('iframe');
   f.id = 'node-city-frame';
-  /* 🔴 THIS IS A DEPLOY KNOB — the FIFTH, and it is not on CLAUDE.md's list.
+  /* 🔴 THIS WAS A DEPLOY KNOB — THE FIFTH, AND IT IS NOW DERIVED SO IT CANNOT
+     GO STALE AGAIN.
      sw.js is network-first for navigations and for /src/, and CACHE-FIRST for
      everything else. The city page is loaded here as an iframe SUB-RESOURCE,
      not as a navigation, so it takes the cache-first branch: this ?v= is the
-     only thing in the URL that can bust it. It sat at 120t9 through an entire
-     rewrite of the city and its economy — bump it with the other four or a
-     returning player can be served the old city out of cache while every
-     other knob says the deploy landed. */
-  f.src = 'node-city/index.html?v=120w9';
+     only thing in the URL that can bust it.
+
+     It had already sat at 120t9 through an entire rewrite of the city and its
+     economy, and the comment that recorded that then failed to save the very
+     next round: the work-crew deploy bumped version.txt, BUILD_VERSION,
+     CACHE_VERSION and NC_BUILD, and left this literal at 120w9. A returning
+     player would have been served the new game shell around the OLD city — the
+     whole feature invisible, with every other knob reporting the deploy landed.
+
+     A knob that must be hand-bumped in lockstep with another knob is not a
+     knob, it is a bug with a comment. BUILD_VERSION is already bumped on every
+     deploy and is set far above this line, so deriving from it makes the cache
+     bust automatic and takes this off the list for good. */
+  f.src = 'node-city/index.html?v=' + (window.BUILD_VERSION || 'dev');
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);

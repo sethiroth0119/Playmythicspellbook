@@ -29,6 +29,8 @@ const NULL_BRIDGE = {
   resumeRun: () => {},
   abandonRun: () => {},
   campaignName: () => '',
+  // the admin's hand-built campaigns — the map is their surface now
+  authoredCampaigns: () => [],
   // reward pool for generated nodes; empty is safe (the reward screen falls
   // back to its own pool rather than showing nothing)
   cardKeys: () => [],

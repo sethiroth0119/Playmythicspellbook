@@ -89,16 +89,31 @@ const ENCOUNTERS = {
   ],
 };
 
-/* Sample n reward keys from whatever the game says is deckable. An empty pool
-   is safe — renderRlcReward falls back rather than showing an empty screen. */
+/* Sample n reward keys from whatever the game says is deckable.
+
+   ⚠ THE POOL IS LEGITIMATELY EMPTY ON A BARE INSTALL. Forge.useCustomOnlyPool
+   is the production default and hides the built-in mockup cards, so until a
+   catalogue is published getAllDeckableCards() returns nothing. That is not a
+   bug to paper over — there are genuinely no cards to give. What WOULD be a
+   bug is a run that silently pays nothing for it, so hasCards() lets the
+   generator compensate in Cinder instead (see CARDLESS_CINDER below), and the
+   map says plainly that no catalogue is published rather than leaving the
+   player to notice empty reward screens. */
+function cardPool() {
+  try { return bridge().cardKeys() || []; } catch (e) { return []; }
+}
+export function hasCards() { return cardPool().length > 0; }
 function rewardCards(r, n) {
-  let pool = [];
-  try { pool = bridge().cardKeys() || []; } catch (e) { pool = []; }
+  const pool = cardPool();
   if (!pool.length) return [];
   const out = [];
   for (let i = 0; i < n; i++) out.push(pool[Math.floor(r()*pool.length) % pool.length]);
   return out;
 }
+/* What a card reward is worth in Cinder when there are no cards. Deliberately
+   modest: it keeps a run from being pointless, it is not meant to make a
+   card-less install the profitable way to play. */
+const CARDLESS_CINDER = { battle: 14, elite: 26, finalBoss: 55 };
 
 function healOptions() {
   return { options: [
@@ -129,6 +144,7 @@ export function generate(id) {
   const band = bandFor(site, grip);
   const r    = rng(hashStr(id));
 
+  const cards = hasCards();
   const lvl  = 1 + enemyLevelFor(grip);
   const rows = poi.nodes + (grip >= 50 ? 1 : 0) + (grip >= 90 ? 1 : 0);
   const widths = layout(r, rows);
@@ -218,14 +234,14 @@ export function generate(id) {
         node.name = pick(r, spots);
         node.enemy.name = mobName; node.enemyLevel = String(lvl);
         node.reward.cardKeys = rewardCards(r, 6);
-        node.reward.currency = range(r, 12, 22) + Math.round(grip/6);
+        node.reward.currency = range(r, 12, 22) + Math.round(grip/6) + (cards ? 0 : CARDLESS_CINDER.battle);
         break;
       case 'elite':
         node.name = pick(r, spots) + ' — Held';
         node.enemy.name = (fac ? fac.name + ' Elite' : 'Elite Holdout');
         node.enemyLevel = String(lvl + 1);
         node.reward.cardKeys = rewardCards(r, 8);
-        node.reward.currency = range(r, 26, 40) + Math.round(grip/4);
+        node.reward.currency = range(r, 26, 40) + Math.round(grip/4) + (cards ? 0 : CARDLESS_CINDER.elite);
         // 🔴 The Foundation's node is the one that SEALS. This flag is what
         // RLC_HEAT_SCP_LOCK reads mid-run: carry enough contraband past it and
         // the route closes, so smuggling becomes a routing decision.
@@ -238,7 +254,7 @@ export function generate(id) {
         node.enemy.name = bossName;
         node.enemyLevel = String(lvl + 2);
         node.reward.cardKeys = rewardCards(r, 10);
-        node.reward.currency = range(r, 60, 90) + grip;
+        node.reward.currency = range(r, 60, 90) + grip + (cards ? 0 : CARDLESS_CINDER.finalBoss);
         break;
       case 'medical':  node.name = 'Aid Station'; break;
       case 'market':   node.name = 'Scavenger Trade'; break;
@@ -278,9 +294,9 @@ export function generate(id) {
     // clutter is exactly what placement exists to prevent.
     placement: 'hidden',
     isPublished: true, isBuiltIn: true, isGenerated: true,
-    _band: band.key, _site: site.id, _faction: faction, _grip: grip,
+    _band: band.key, _site: site.id, _faction: faction, _grip: grip, _noCards: !cards,
     nodes,
-    finalReward: { cardKeys: rewardCards(r, 3), currency: 40 + grip },
+    finalReward: { cardKeys: rewardCards(r, 3), currency: 40 + grip + (cards ? 0 : 60) },
     createdAt: Date.now(), updatedAt: Date.now(),
   };
 }

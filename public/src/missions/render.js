@@ -15,9 +15,10 @@ import { bridge, esc } from './bridge.js';
 import { city, bounds, pX, pY, hash2, TW, TH, UX, UY, VX, VY } from './city.js';
 import { SITES, SITE_BY_ID, MISSION_POI, FACTIONS, bandFor, enemyLevelFor } from './poi.js';
 import * as S from './state.js';
-import { missionId } from './graph.js';
+import { missionId, hasCards } from './graph.js';
 
 let sel = 'hells';
+let drawer = false;        // the Story Runs panel
 let view = { s:1, ox:0, oy:0, w:0, h:0 };
 let pickCv = null, pickCtx = null, pickIds = [];
 let loopTok = 0;
@@ -93,6 +94,23 @@ function css(){
   .msn-bar .h{font-size:11.5px;color:#4a5568}
   .msn-run{display:flex;align-items:center;gap:10px;padding:6px 12px;border:1px solid #e0b356;
        background:rgba(224,179,86,.12);font-size:12px;color:#f3d99b}
+  .msn-note{margin-top:12px;font-size:12px;line-height:1.6;color:#e0b356;
+       border-left:2px solid #e0b356;padding:6px 0 6px 10px;background:rgba(224,179,86,.07)}
+  .msn-story{position:absolute;left:0;right:0;bottom:0;max-height:64%;overflow-y:auto;
+       background:rgba(8,12,18,.96);border-top:1px solid rgba(224,179,86,.5);
+       padding:14px 18px 18px;backdrop-filter:blur(4px)}
+  .msn-story h3{margin:0 0 3px;font-size:12px;letter-spacing:.2em;text-transform:uppercase;
+       color:#e0b356;font-family:'Chakra Petch',ui-sans-serif,system-ui,sans-serif}
+  .msn-story .sub{font-size:11.5px;color:#4a5568;margin-bottom:12px}
+  .msn-story .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(268px,1fr));gap:10px}
+  .msn-card{border:1px solid rgba(255,255,255,.14);border-left:3px solid #b86bff;
+       background:rgba(255,255,255,.035);padding:9px 12px 11px}
+  .msn-card.lk{border-left-color:#4a5568;opacity:.6}
+  .msn-card .t{font-size:12.5px;font-weight:700;display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+  .msn-card .d{font-size:11.5px;color:#7d8ba0;margin:3px 0 8px;line-height:1.5}
+  .msn-card .tag{font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;
+       padding:1px 6px;border:1px solid currentColor}
+  .msn-card button{width:100%;padding:7px 10px}
   @media (prefers-reduced-motion:reduce){ .msn *{transition:none!important} }`;
   document.head.appendChild(el);
 }
@@ -227,13 +245,29 @@ function hit(x,y){
 }
 
 /* ── panel ───────────────────────────────────────────────────────────────── */
-function panelHtml(){
+function storyCard(c, wide){
+  const B = bridge();
+  const tag = c.cleared ? '<span class="tag" style="color:#5eb37a">Cleared</span>'
+            : c.draft   ? '<span class="tag" style="color:#e0b356">Draft</span>' : '';
+  return '<div class="msn-card' + (c.locked ? ' lk' : '') + '">'
+    + '<div class="t">' + esc(c.name) + tag + '</div>'
+    + '<div class="d">' + esc(c.description || '') + (c.description ? '<br>' : '')
+    + esc(c.difficulty) + ' · ' + c.nodes + ' nodes</div>'
+    + (c.locked
+        ? '<button disabled>🔒 Clear ' + esc(c.requires) + ' first</button>'
+        : '<button class="go" data-story="' + esc(c.id) + '">▸ ' + (c.cleared ? 'Replay' : 'Deploy') + '</button>')
+    + '</div>';
+}
+
+function panelHtml(authored){
   const site = SITE_BY_ID[sel], poi = MISSION_POI[site.poi];
   const h = S.hold(sel), fac = h.f ? FACTIONS[h.f] : FACTIONS.survivors;
   const grip = h.f ? (h.g|0) : 0;
   const band = bandFor(site, grip);
   const lvl = enemyLevelFor(grip) + (band.key==='brutal' ? 8 : (band.key==='hard'||band.key==='harder') ? 4 : 0);
   const seal = S.sealed(sel);
+  // Campaigns the admin pinned to THIS district, offered alongside the raid.
+  const pinned = (authored || []).filter(c => c.site === sel);
   return `
     <div class="msn-ph">
       <div class="k msn-ui">Selected district</div>
@@ -256,6 +290,9 @@ function panelHtml(){
         <button class="go" id="msn-go">▸ Deploy</button>
         <button id="msn-fort" ${h.f ? 'disabled' : ''}>Fortify</button>
       </div>
+      ${hasCards() ? '' : '<div class="msn-note"><b>No card catalogue published.</b> Raids pay extra Cinder in place of card rewards until one is. Admins: publish a catalogue in the Forge.</div>'}
+      ${pinned.length ? '<div class="msn-grip"><div class="l msn-ui"><span>Story runs here</span></div>' +
+        pinned.map(c => storyCard(c)).join('') + '</div>' : ''}
     </div>`;
 }
 
@@ -271,6 +308,11 @@ export function screen(){
 
   const run = B.activeRun();
   const cen = S.census(city().builds);
+  // 📜 The admin's hand-built campaigns. The map replaced the list that used
+  // to be their only surface, so it carries them now — pinned to a district
+  // when one is set on them, and in the drawer either way.
+  const authored = B.authoredCampaigns() || [];
+  const loose = authored.filter(c => !c.site || !SITE_BY_ID[c.site]);
 
   root.innerHTML = `
   <div class="msn">
@@ -286,14 +328,20 @@ export function screen(){
     <div class="msn-stage" id="msn-stage">
       <canvas id="msn-city"></canvas><canvas id="msn-fx"></canvas>
       <div class="msn-vig"></div><div class="msn-pins" id="msn-pins"></div>
+      ${drawer ? `<div class="msn-story" id="msn-drawer">
+        <h3>Story Runs</h3>
+        <div class="sub">${authored.length ? 'Hand-built campaigns. Ones pinned to a district also appear in its panel.' : 'None published yet. Admins build these in the Forge → Roguelite Campaigns.'}</div>
+        <div class="grid">${authored.map(c => storyCard(c)).join('')}</div>
+      </div>` : ''}
     </div>
-    <aside class="msn-panel" id="msn-panel">${panelHtml()}
+    <aside class="msn-panel" id="msn-panel">${panelHtml(authored)}
       <div class="msn-log" id="msn-log">${lines.length ? lines.map(l => '<div>'+esc(l)+'</div>').join('') : '<div>The city is quiet. It will not stay that way.</div>'}</div>
     </aside>
     <footer class="msn-bar">
       <button id="msn-back">← Camp</button>
       <span class="h">Click a district · Deploy to raid it · survive the run and the survivors take ground back</span>
       <div class="msn-sep"></div>
+      ${authored.length ? `<button id="msn-story">📜 Story Runs · ${authored.length}${loose.length ? '' : ' pinned'}</button>` : ''}
     </footer>
   </div>`;
 
@@ -345,6 +393,16 @@ export function screen(){
   if (fort) fort.onclick = () => {
     if (S.fortify(sel)) { B.toast('🛡 ' + SITE_BY_ID[sel].name + ' fortified — the factions will find it harder to seed here.'); B.render(); }
   };
+  const story = document.getElementById('msn-story');
+  if (story) story.onclick = () => { drawer = !drawer; B.render(); };
+  // One handler for every story-run button, in the panel and the drawer alike.
+  document.querySelectorAll('[data-story]').forEach(btn => {
+    btn.onclick = async () => {
+      const id = btn.getAttribute('data-story');
+      if (run && !(await B.confirm('Deploying will abandon your current run. Continue?'))) return;
+      if (!B.startRun(id)) B.toast('⚠ That campaign could not be opened — it may have no map yet.');
+    };
+  });
   const cont = document.getElementById('msn-cont'); if (cont) cont.onclick = () => B.resumeRun();
   const ab = document.getElementById('msn-aband'); if (ab) ab.onclick = () => B.abandonRun();
 

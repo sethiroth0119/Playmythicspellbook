@@ -114566,8 +114566,22 @@ function renderTitle() {
       // 🚧 Old chapter "Campaign" hidden from EVERYONE (incl. admin) for now —
       // it will be removed/replaced by the Roguelite system. Portal + screens
       // are gated below; the renderCampaign* code is left intact for later.
-      { id: 'btn-rlc', icon: '<img src="assets/artwork/gameicons/roguelitestory.png" alt="Roguelite" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Roguelite', sub: 'Branching runs · build a deck from rewards', accent: '#b86bff',
-        badge: (Profile.rlcRun && !Profile.rlcRun.isComplete && !Profile.rlcRun.isFailed) ? '▶ Run in progress' : ((getPlayableCampaigns().length) ? `${getPlayableCampaigns().length} available` : null),
+      // 🗺 The gate now opens the mission map, not a campaign list, so the
+      // tile says so — and the badge counts districts under faction control
+      // rather than "N campaigns available", a number the map does not have.
+      { id: 'btn-rlc', icon: '<img src="assets/artwork/gameicons/roguelitestory.png" alt="Sector Map" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Sector Map', sub: 'Raid the city · take districts back from the factions', accent: '#b86bff',
+        badge: (Profile.rlcRun && !Profile.rlcRun.isComplete && !Profile.rlcRun.isFailed) ? '▶ Run in progress' : (() => {
+          // Falls back to the old campaign count if the module never loaded —
+          // which is also when the gate falls back to the campaign list.
+          try {
+            const M = window.MythicMissions;
+            if (M && M.sites && M.state) {
+              const held = M.sites.filter(st => M.state.gripOf(st.id) > 0).length;
+              return held ? `${held} of ${M.sites.length} districts held` : '✦ City secure';
+            }
+          } catch (e) {}
+          return (getPlayableCampaigns().length) ? `${getPlayableCampaigns().length} available` : null;
+        })(),
         alertBadge: !!(Profile.rlcRun && !Profile.rlcRun.isComplete && !Profile.rlcRun.isFailed),
         onclick: () => { App.screen = 'rlcList'; render(); } },
       { id: 'btn-daily',    icon: '<img src="assets/artwork/gameicons/daily%20Challenge.png" alt="Daily Challenge" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Daily Challenge',  sub: dailyDone ? '✓ Today done' : (getTodayChallenge().name || 'New each day'), accent: '#ffb070',
@@ -184655,6 +184669,18 @@ function renderRlcAdmin() {
             <option value="br_vip"    ${ed.placement === 'br_vip'    ? 'selected' : ''}>🆘 Black River → VIP Rescue Run</option>
           </optgroup>
         </select></label>
+        <label style="display:block;margin:0 0 8px"><span class="small-text ink-dim">🗺 Pin to a mission-map district — the district offers this run instead of a generated raid. Unpinned campaigns still appear in the map's <strong>Story Runs</strong> drawer, so nothing is ever unreachable.</span><br><select data-rlc-path="missionSite" style="width:100%;padding:0.4rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px">
+          <option value="">— Not pinned (Story Runs drawer) —</option>
+          ${(() => {
+            // Districts come from /src/missions. If the module never loaded we
+            // still render the field with whatever the campaign already has,
+            // so opening the Builder can never silently drop a saved pin.
+            let sites = [];
+            try { sites = (window.MythicMissions && window.MythicMissions.sites) || []; } catch (e) { sites = []; }
+            if (!sites.length && ed.missionSite) sites = [{ id: ed.missionSite, name: ed.missionSite }];
+            return sites.map(st => `<option value="${escapeHtml(String(st.id))}" ${ed.missionSite === st.id ? 'selected' : ''}>${escapeHtml(st.name || st.id)}</option>`).join('');
+          })()}
+        </select></label>
         <label style="display:block;margin:0 0 8px"><span class="small-text ink-dim">🔒 Requires this campaign cleared first (chains acts / unlocks the next section)</span><br><select data-rlc-path="requiresCampaignId" style="width:100%;padding:0.4rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><option value="">— None (always available) —</option>${(Array.isArray(Forge.campaigns) ? Forge.campaigns : []).filter(c => c && c.id !== ed.id).map(c => `<option value="${escapeHtml(String(c.id))}" ${ed.requiresCampaignId === c.id ? 'selected' : ''}>${escapeHtml(c.name || c.id)}</option>`).join('')}</select></label>
         <label style="display:block;margin:0 0 8px"><span class="small-text ink-dim">📖 Closing text — shown on the victory screen, leading into whatever comes next<br>(the <em>opening</em> is the “Intro text” field above)</span><br><textarea data-rlc-path="outroText" rows="2" style="width:100%;padding:0.4rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px;resize:vertical" placeholder="The reservoir is ours — but the lights to the north are still on.">${escapeHtml(String(ed.outroText || ''))}</textarea></label>
         <div class="small-text ink-dim">Chain campaigns by pointing the next one's <strong>🔒 Requires</strong> at this campaign — this closing text then hands straight over to it on the victory screen.</div>
@@ -207367,6 +207393,36 @@ window.MythicMissionBridge = {
   resumeRun: () => { try { App.screen = 'rlcMap'; render(); } catch (e) {} },
   abandonRun: () => { try { rlcAbandonRun(); } catch (e) {} },
   campaignName: (id) => { try { return (_rlcCampaign(id) || {}).name || 'Run'; } catch (e) { return 'Run'; } },
+  /* 📜 THE ADMIN'S OWN CAMPAIGNS. The map REPLACED renderRlcList, which was
+     the only surface these had — so without this they would be orphaned the
+     moment the map ships, and every hand-built campaign in the Campaign
+     Builder would quietly become unreachable. The map lists them in its Story
+     Runs drawer, and pins one to a district when the admin sets a district on
+     it. Lock state is resolved HERE because requiresCampaignId chains are
+     resolved against Profile.rlcCompleted, which the module cannot see. */
+  authoredCampaigns: () => {
+    try {
+      const done = Array.isArray(Profile.rlcCompleted) ? Profile.rlcCompleted : [];
+      const all = getAllCampaigns();
+      const adm = (typeof isAdmin === 'function') && isAdmin();
+      return (typeof getPlayableCampaigns === 'function' ? getPlayableCampaigns() : []).map(c => {
+        const reqId = c.requiresCampaignId || '';
+        const reqCamp = reqId ? all.find(x => x && x.id === reqId) : null;
+        return {
+          id: c.id,
+          name: c.name || 'Untitled Campaign',
+          description: c.description || '',
+          difficulty: c.difficulty || 'Normal',
+          nodes: (c.nodes || []).length,
+          site: (typeof c.missionSite === 'string') ? c.missionSite : '',
+          cleared: done.indexOf(c.id) >= 0,
+          locked: !adm && !!(reqId && done.indexOf(reqId) < 0),
+          requires: (reqCamp && reqCamp.name) || (reqId ? 'the previous campaign' : ''),
+          draft: !c.isPublished,
+        };
+      });
+    } catch (e) { return []; }
+  },
   // Reward pool for generated nodes. The module has no card model and should
   // not grow one — it samples keys and renderRlcReward does the rarity roll.
   cardKeys: () => {

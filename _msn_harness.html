@@ -27,8 +27,18 @@ window.MythicMissionBridge = {
   activeRun: () => null,
   resumeRun: () => {}, abandonRun: () => {},
   campaignName: () => 'Run',
-  cardKeys: () => ['c_alpha','c_beta','c_gamma','c_delta','c_eps','c_zeta'],
+  cardKeys: () => window.__cards,
+  authoredCampaigns: () => window.__authored,
 };
+window.__cards = ['c_alpha','c_beta','c_gamma','c_delta','c_eps','c_zeta'];
+window.__authored = [
+  { id:'camp_pinned', name:'The Hollow Bazaar', description:'A there-and-back smuggling route.',
+    difficulty:'Hard', nodes:7, site:'soho', cleared:false, locked:false, requires:'', draft:false },
+  { id:'camp_loose',  name:'Whispers of the Dawn', description:'Act one.',
+    difficulty:'Normal', nodes:5, site:'', cleared:false, locked:false, requires:'', draft:false },
+  { id:'camp_locked', name:'The Glacial Heart', description:'Act three.',
+    difficulty:'Nightmare', nodes:9, site:'', cleared:false, locked:true, requires:'Act Two', draft:false },
+];
 </script>
 <script type="module">
 import api from './public/src/missions/index.js';
@@ -104,6 +114,39 @@ document.getElementById('msn-go').click();
 await new Promise(r=>setTimeout(r,40));
 ok(window.__started.length===1, 'deploy calls startRun once');
 ok(!!api.campaign(window.__started[0]), 'the id deploy sent resolves to a campaign ('+window.__started[0]+')');
+
+// 9. the admin's authored campaigns are never orphaned by the map
+api.render();
+const pinnedBtn = document.querySelector('.msn-panel [data-story]');
+api.select('soho'); api.render();
+ok(!!document.querySelector('.msn-panel [data-story="camp_pinned"]'), 'a pinned campaign shows in its district panel');
+ok(!document.querySelector('.msn-panel [data-story="camp_loose"]'), 'an unpinned campaign does not');
+ok(!!document.getElementById('msn-story'), 'the Story Runs button appears when campaigns exist');
+document.getElementById('msn-story').click();
+await new Promise(r=>setTimeout(r,30));
+const inDrawer = id => !!document.querySelector('#msn-drawer [data-story="'+id+'"]');
+ok(inDrawer('camp_pinned') && inDrawer('camp_loose'), 'the drawer lists every authored campaign');
+ok(document.querySelectorAll('#msn-drawer .msn-card.lk').length===1, 'a locked campaign renders locked');
+ok(!document.querySelector('#msn-drawer [data-story="camp_locked"]'), 'a locked campaign has no deploy button');
+
+// 10. deploying a story run hands the engine the campaign's own id
+window.__started.length = 0;
+document.querySelector('#msn-drawer [data-story="camp_loose"]').click();
+await new Promise(r=>setTimeout(r,40));
+ok(window.__started[0]==='camp_loose', 'story deploy passes the authored id through untouched');
+
+// 11. an empty card catalogue pays Cinder instead of nothing
+const withCards = api.campaign('msn_soho_scum_40_2');
+window.__cards = [];
+api.campaign('msn_harlem_none_0_1');                        // bust the memo
+const noCards = api.campaign('msn_soho_scum_40_2');
+const cinder = c => c.nodes.reduce((a,n)=>a+(n.reward.currency|0),0);
+ok(noCards._noCards === true && withCards._noCards === false, 'the run knows whether a catalogue exists');
+ok(cinder(noCards) > cinder(withCards), 'a card-less run pays more Cinder ('+cinder(withCards)+' -> '+cinder(noCards)+')');
+ok(document.querySelectorAll('.msn-note').length === 0, 'no catalogue warning while cards exist');
+api.render();
+ok(!!document.querySelector('.msn-note'), 'the map says so when no catalogue is published');
+window.__cards = ['c_alpha','c_beta','c_gamma','c_delta','c_eps','c_zeta'];
 
 document.title = out.some(l=>l.startsWith('FAIL')) ? 'HARNESS FAIL' : 'HARNESS PASS';
 const pre = document.createElement('pre');

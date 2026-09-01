@@ -123,7 +123,27 @@ function healOptions() {
   ] };
 }
 
-/* ── the graph ───────────────────────────────────────────────────────────
+/* 🏔 THE 3D ASCENT MAP IS THE DEFAULT RENDERER, so these node types are a
+   contract, not a free choice. _rlcAscentOn() in index.html returns true
+   unless a campaign sets useAscentMap === false — "the Ascent map IS the
+   roguelite map now" — which means every generated run is handed to
+   _ascentMapFromCampaign() and drawn in 3D, with the classic 2D board only a
+   button away rather than the default.
+
+   That converter maps our types through ASCENT_TYPE_MAP, and every type used
+   below is in it: rest and medical become camp, market becomes shop, treasure
+   and convoy become treasure, event and randomEvent become mystery, battle
+   and elite keep their names, finalBoss becomes boss. ADDING A TYPE THAT IS
+   NOT IN THAT TABLE would leave it unmapped in the 3D manifest — so if you
+   add one here, add it there too.
+
+   Verified rather than assumed: all 40 district-by-faction campaigns were run
+   through the real converter in the real page — 40/40 produced a valid
+   manifest (9–27 nodes) with a boss and no flat edges, which matters because
+   the 3D runtime only lets a player walk to a HIGHER tier and two connected
+   same-tier nodes would be unreachable.
+
+   ── the graph ───────────────────────────────────────────────────────────
    A lattice: one approach, a few rows of 1–3 nodes, one final objective.
    Every node past row 0 is guaranteed a parent, because a node with no
    incoming edge reads as a start node to _rlcStartNodes and would let the

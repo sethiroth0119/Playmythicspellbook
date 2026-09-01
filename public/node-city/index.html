@@ -9,7 +9,7 @@
      believed the file was already live. Only a CONTENT change moves the hash
      and forces a re-upload, so bump this stamp whenever the city 404s, and
      probe it (grep NC_BUILD on the served page) to prove the deploy landed. -->
-<script>window.NC_BUILD = "v120x3-crewposts";</script>
+<script>window.NC_BUILD = "v120x4-crewworkforce";</script>
 <!-- ════════════════════════════════════════════════════════════════════════
      NODE CITY — SimCity-style settlement layer for Mythic Spellbook.
      Three.js WebGPU (auto-falls back to WebGL2). Realistic sun/moon cycle.
@@ -18044,7 +18044,62 @@ function insRosterCard(k, def) {
 }
 
 function insWorkPane(t, x, z, mult, om) {
-  const def = BUILDINGS[t.type], out = [];
+  const def = BUILDINGS[t.type], out = [], lead = [];
+  /* ══ 👷 THE WORK CREW — POSTED HERE, AND HOW TO POST MORE ═════════════════
+     🔴 THIS CARD IS THE HOME OF THE FEATURE, and it is in the Workforce tab
+     because that is where a player goes when they want to know who works a
+     building. It first shipped as a footer button beside Repair and Demolish,
+     and that was simply wrong: a player looking at a farm and asking "where do
+     I put my units" reads the tab called WORKFORCE, not the button row.
+
+     ⚠ IT RENDERS EVEN WHEN THE BUILDING IS DAMAGED, and that is deliberate. The
+       footer button hid itself on a damaged tile — so on the one building a
+       player was most likely to be poking at, the entire feature vanished with
+       no explanation and no way to discover it existed. Posting is still
+       refused while damaged (canWorkAt says so), but the card SAYS that
+       instead of disappearing. A control that is absent teaches nothing; a
+       control that is present and explains itself teaches the rule.
+
+     ⚠ IT IS FIRST IN THE TAB, ahead of the city-staffing and named-citizen
+       cards that were here before it. Those two are read-outs — they describe a
+       pool the player cannot aim and a roster that fills itself. This one is the
+       only thing on the tab they can ACT on, and it shipped underneath both,
+       which is how a player ends up saying they cannot find anywhere to assign
+       units. Actionable first. */
+  if (CREW && CREW.takesWork(key(x, z))) {
+    const ck = key(x, z);
+    const slots = CREW.slotsAt(ck), ps = CREW.powersAt(ck), warn = crewPostWarning(ck);
+    const needs = CREW.work.workNeeds(t.type).map(w => {
+      const wk = CREW.work.getWork(w); return wk ? wk.icon + ' ' + logEsc(wk.name) : logEsc(w);
+    }).join(' · ');
+    let body = insFac('👷 Trades it needs', needs) +
+      insFac('👷 Posts filled', ps.length + ' / ' + slots, ps.length ? 'up' : 'dn');
+    if (ps.length) {
+      body += insFac('📈 Output from the crew', '<span class="hl">' + CREW.work.multLabel(CREW.work.multFrom(ps)) + '</span>', 'up');
+      for (const pw of ps) {
+        const wk = CREW.work.getWork(pw.work);
+        body += insFac('&nbsp;&nbsp;↳ ' + logEsc(pw.name),
+          (wk ? wk.icon + ' ' + logEsc(wk.name) + ' ' + pw.suit : '') +
+          ' <span style="opacity:.75">· Lv ' + pw.profile.level + ' · ' + Math.round(pw.cond) + '% condition' +
+          (Math.abs(pw.speed - 1) > 0.001 ? ' · ' + (pw.speed > 1 ? '+' : '') + Math.round((pw.speed - 1) * 100) + '% passives' : '') +
+          '</span> <b>+' + Math.round(pw.power * 100) + '%</b>',
+          pw.cond < 65 ? 'dn' : '');
+      }
+    }
+    if (t.damaged) {
+      body += insAlert('bad', '🔥', 'Repair it before posting anyone',
+        'A failed building produces nothing, so a unit posted here would work for no return. Repair it and this card will let you staff it.');
+    } else if (warn) {
+      body += insAlert('warn', '⚠', 'A crew here would be wasted', warn);
+    } else if (!ps.length) {
+      body += insAlert('warn', '👷', 'Nobody is posted here',
+        'This building runs at its base rate until you post a unit with one of the trades above. A unit only lifts the building you put it in.');
+    }
+    body += '<div style="margin-top:10px"><button class="hbtn ember" data-crew-open="' + ck +
+      '"' + (t.damaged ? ' disabled' : '') + ' style="width:100%">👷 ' +
+      (t.damaged ? 'Repair before posting' : (ps.length ? 'Change who works here' : 'Post a worker here')) + '</button></div>';
+    lead.push(insCardHtml('Work crew', ps.length + ' / ' + slots + ' posted', body));
+  }
   if (def.crew) {
     const s = staffingRatio();
     // What understaffing costs THIS building, in its own units — the same mult
@@ -18091,12 +18146,13 @@ function insWorkPane(t, x, z, mult, om) {
      still matters: crew is one city-wide pool for the purposes of OUTPUT, and
      naming somebody changes nothing about what the building makes. */
   if (def.crew) out.push(insRosterCard(key(x, z), def));
-  if (!out.length) return '';
+  if (!out.length && !lead.length) return '';
   const foot = def.crew
-    ? 'Output is still driven by one city-wide labour pool — hiring a worker anywhere lifts every ' +
+    ? 'Hired workers are one city-wide labour pool — hiring anywhere lifts every crewed building at once. ' +
+      'Posted CREW UNITS are the opposite: each one lifts only the building you put it in. ' +
       'crewed building at once, and the names above hold this building\u2019s seats without changing what it makes.'
     : 'This building draws no crew, so nobody is posted to it.';
-  return '<div>' + out.join('') + '<div class="ins-desc" style="margin-top:12px">' + foot + '</div></div>';
+  return '<div>' + lead.join('') + out.join('') + '<div class="ins-desc" style="margin-top:12px">' + foot + '</div></div>';
 }
 
 function insBuildOverview(k, t, x, z, mult, om) {
@@ -18306,6 +18362,18 @@ function openInspect(k) {
   if (hasLedger) panes += '<div class="pane" role="tabpanel" id="inspane-lg" data-tab="lg" aria-labelledby="instab-lg" tabindex="0">' + insLedgerPane(t, x, z, mult, om) + '</div>';
   if (finPane) panes += '<div class="pane one" role="tabpanel" id="inspane-fi" data-tab="fi" aria-labelledby="instab-fi" tabindex="0">' + finPane + '</div>';
   $('inspanes').innerHTML = panes;
+  /* 👷 One delegated listener, attached once. #inspanes is rebuilt with
+     innerHTML on every render, so a per-button onclick would be thrown away
+     each time — the flag on the element is what keeps this to a single bind. */
+  const _panes = $('inspanes');
+  if (_panes && !_panes._crewBound) {
+    _panes._crewBound = true;
+    _panes.addEventListener('click', (ev) => {
+      const b = ev.target.closest('[data-crew-open]');
+      if (!b || b.disabled) return;
+      try { if (CREW) CREW.openTilePicker(b.dataset.crewOpen); } catch (e) {}
+    });
+  }
   insSelect(insTab, false);
   $('inspanes').scrollTop = 0;
   if (!wasOpen) { try { $('insx').focus(); } catch (e) {} }
@@ -18323,11 +18391,16 @@ function openInspect(k) {
   if (crewBtn) {
     crewBtn.style.display = 'none'; crewBtn.onclick = null;
     try {
-      if (CREW && !t.damaged && CREW.takesWork(selectedKey)) {
+      if (CREW && CREW.takesWork(selectedKey)) {
         const used = CREW.postsAt(selectedKey).length, slots = CREW.slotsAt(selectedKey);
         crewBtn.style.display = 'block';
-        crewBtn.textContent = '👷 Post a worker — ' + used + ' / ' + slots;
-        crewBtn.onclick = () => CREW.openTilePicker(selectedKey);
+        /* ⚠ SHOWN ON A DAMAGED TILE TOO, disabled with the reason on it. It used
+           to hide, which meant the feature disappeared entirely from the exact
+           building a player was most likely to be inspecting — a control that is
+           absent cannot teach the rule that made it absent. */
+        crewBtn.disabled = !!t.damaged;
+        crewBtn.textContent = t.damaged ? '👷 Workforce — repair first' : '👷 Post a worker — ' + used + ' / ' + slots;
+        crewBtn.onclick = t.damaged ? null : () => CREW.openTilePicker(selectedKey);
       }
     } catch (e) {}
   }

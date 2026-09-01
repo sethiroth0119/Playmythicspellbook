@@ -219,10 +219,19 @@ export function rankLabs(list, opts) {
         // an empty lab receives the crate and cannot open it.
         capacity: Math.max(20, Math.round(40 * (l.level | 0 || 1) * (0.4 + staffing))),
         staffing: +staffing.toFixed(2),
-        /* 🏥 A lab with nobody in it does not administer. The batch sits.
-           This is the medical player's job, and it is the hook the Medical
-           Corporation minigame will hang on. */
-        canAdminister: staffing > 0.05,
+        /* 🏥 STAFFING BUYS CAPACITY, NOT PERMISSION — and this used to claim
+           otherwise. `canAdminister: staffing > 0.05` was written before the
+           ward existed, when a lab administered by itself and an empty one
+           genuinely could not. Now the OWNER administers by hand in the ward,
+           so an unstaffed lab administers perfectly well; it just takes small
+           shipments (see `capacity`, which already floors at 20).
+
+           🔴 IT WAS ALSO FALSE IN PRODUCTION ON DAY ONE: every `medical`
+           operation in the live database has zero workers, so every lab on the
+           board would have carried a warning saying it could not do the one
+           thing it can. A warning that is wrong for every row trains players
+           to ignore warnings. */
+        understaffed: staffing <= 0.05,
       };
     })
     .sort((a, b) => b.capacity - a.capacity);

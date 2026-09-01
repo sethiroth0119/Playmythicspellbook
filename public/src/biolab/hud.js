@@ -469,7 +469,7 @@ export function dispatchPanel(ctx) {
         '<div class="bl-item' + (sel.labId === l.id ? ' sel' : '') + '" data-act="pick-lab" data-id="' + esc(l.id) + '">' +
         '<b>🏥 ' + esc(l.name) + '</b>' + (l.mine ? ' <span style="color:#86e08a">· yours</span>' : ' · ' + esc(l.ownerName)) +
         '<div class="meta">takes up to ' + num(l.capacity) + ' doses · ' + l.workers + ' staff · L' + l.level +
-        (l.canAdminister ? '' : ' · <span style="color:#ff8a94">unstaffed — it cannot administer</span>') + '</div></div>').join('')
+        (l.understaffed ? ' · <span style="color:#d9b184">unstaffed — small shipments only</span>' : '') + '</div></div>').join('')
     : '<div class="bl-empty">No player-owned Medical Corporation is receiving.<br>' +
       'The lab at the far end is where doses become treatment — without one, the crate has nowhere to go.</div>';
 

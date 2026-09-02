@@ -33,9 +33,9 @@ are kept automatically; only the geometry is swapped for your model.
 
 Free model sources: Quaternius, Poly Pizza, Kenney, Sketchfab (download as `.glb`).
 
-## ⚒ World Forge project library
+## ⚒ Athena Engine project library
 
-`manifest.json` in this folder lists models the **World Forge** map creator offers
+`manifest.json` in this folder lists models the **Athena Engine** map creator offers
 under *Library → Models → Project*. Add an entry per file:
 
 ```json

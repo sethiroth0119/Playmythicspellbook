@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════════════════
-   mapforge.editor.js — World Forge, the in-game 3D map creator.
+   mapforge.editor.js — Athena Engine (World Forge), the in-game 3D map creator.
 
    A full-screen overlay: sculpt + paint a heightfield, place props and .glb
    models with a gizmo, set water / sky / sun, walk the map in Play mode,
@@ -53,7 +53,9 @@ export async function openEditor(opts) {
     paintIdx: 0, propId: 'tree', propTint: null, assetId: null,
     scatter: { count: 6, jitterRot: true, jitterScale: 0.3, avoidWater: true },
     selectedId: null, gizmoMode: 'translate', snap: false, undo: [], redo: [], playing: false,
-    showGrid: false, showMarkers: true,
+    showGrid: false, showMarkers: true, showColliders: false,
+    hotkeys: (() => { try { return localStorage.getItem('mf_hotkeys') === 'default' ? 'default' : 'unreal'; } catch (e) { return 'unreal'; } })(),
+    rmb: false, gizmoSpace: 'world', snapSize: 1,
   };
   const teardown = [];
   ED = { root, S, close: () => close(false), toast, get map() { return S.map; }, get world() { return world; }, camera: null, scene: null, renderer: null };
@@ -98,6 +100,17 @@ export async function openEditor(opts) {
   const pointer = new THREE.Vector2();
   const brushRing = makeBrushRing(THREE); scene.add(brushRing);
   let ghost = null;
+  // collider outlines: the selected object's (gold) and, on demand, everyone's
+  const colSel = new THREE.Box3Helper(new THREE.Box3(), 0xffd23f); colSel.visible = false; colSel.material.depthTest = false; colSel.material.transparent = true; colSel.material.opacity = 0.9; scene.add(colSel);
+  const colAll = new THREE.Group(); colAll.visible = false; scene.add(colAll);
+  function drawColliders() {
+    const o = objById(S.selectedId), c = o && world.colliders.get(o.id);
+    colSel.visible = !!c && !S.playing;
+    if (c) colSel.box.set(new THREE.Vector3(c.minX, c.bottom, c.minZ), new THREE.Vector3(c.maxX, c.top, c.maxZ));
+    while (colAll.children.length) { const k = colAll.children.pop(); k.geometry && k.geometry.dispose(); }
+    colAll.visible = S.showColliders && !S.playing;
+    if (colAll.visible) world.colliders.forEach(c => { const h = new THREE.Box3Helper(new THREE.Box3(new THREE.Vector3(c.minX, c.bottom, c.minZ), new THREE.Vector3(c.maxX, c.top, c.maxZ)), 0x5fd38a); h.material.transparent = true; h.material.opacity = 0.55; colAll.add(h); });
+  }
 
   // camera controls — real OrbitControls when the addon loaded, a small
   // built-in orbit otherwise, both driven through the same `controls` shape
@@ -105,7 +118,7 @@ export async function openEditor(opts) {
   let gizmo = null;
   if (THREE.TransformControls) {
     gizmo = new THREE.TransformControls(camera, renderer.domElement);
-    gizmo.setSize(0.9);
+    gizmo.setSize(0.9); gizmo.setSpace('world');
     gizmo.addEventListener('dragging-changed', (e) => { controls.enabled = !e.value; if (e.value) beginObjectEdit(); else endObjectEdit(); });
     gizmo.addEventListener('objectChange', onGizmoChange);
     scene.add(gizmo);
@@ -156,6 +169,7 @@ export async function openEditor(opts) {
   function setTool(t) {
     S.tool = t;
     $$('.mf-tools button[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === t));
+    const gs = $('#mf-gm-select'); if (gs) gs.classList.toggle('on', t === 'select');
     if (t !== 'select' && gizmo) gizmo.detach();
     if (t === 'select' && gizmo && S.selectedId) { const r = world.objects.get(S.selectedId); if (r) gizmo.attach(r); }
     refreshGhost();
@@ -199,6 +213,7 @@ export async function openEditor(opts) {
   function onPointerDown(ev) {
     if (S.playing) return;
     renderer.domElement.focus();
+    if (ev.button === 2) S.rmb = true;
     if (ev.button !== 0) return;
     if (gizmo && gizmo.dragging) return;
     if (gizmo && gizmo.object && gizmo.axis) return;     // clicked the gizmo itself (axis goes stale after detach — hence the .object check)
@@ -236,6 +251,7 @@ export async function openEditor(opts) {
     }
   }
   function onPointerUp(ev) {
+    if (ev.button === 2) { S.rmb = false; fly.keys = {}; }
     if (!stroke.active) return;
     stroke.active = false;
     try { renderer.domElement.releasePointerCapture(ev.pointerId); } catch (e) {}
@@ -252,6 +268,7 @@ export async function openEditor(opts) {
   cv.addEventListener('pointermove', onPointerMove);
   cv.addEventListener('pointerup', onPointerUp);
   cv.addEventListener('pointerleave', () => { stroke.hit = null; });
+  window.addEventListener('pointerup', (e) => { if (e.button === 2) { S.rmb = false; fly.keys = {}; } });
   cv.addEventListener('contextmenu', e => e.preventDefault());
 
   /* Sculpting runs per FRAME while the button is held so the rate is
@@ -274,6 +291,7 @@ export async function openEditor(opts) {
     const after = { objects: clone(S.map.objects), assets: clone(S.map.assets) };
     if (JSON.stringify(after) !== JSON.stringify(stroke.objBefore)) { pushUndo({ type: 'objects', before: stroke.objBefore, after }); setDirty(true); }
     stroke.objBefore = null;
+    drawColliders();
   }
   function makeObject(p, extra) {
     const isGlb = S.propId === 'glb';
@@ -316,6 +334,7 @@ export async function openEditor(opts) {
   }
   function select(id) {
     S.selectedId = id;
+    setTimeout(drawColliders, 0);
     if (gizmo) { const r = id ? world.objects.get(id) : null; if (r && S.tool === 'select') { gizmo.attach(r); gizmo.setMode(S.gizmoMode); } else gizmo.detach(); }
     renderInspector();
   }
@@ -326,10 +345,12 @@ export async function openEditor(opts) {
       else r.position.y = world.heightAt(r.position.x, r.position.z);
     }
     o.p = [r.position.x, r.position.y, r.position.z]; o.r = [r.rotation.x, r.rotation.y, r.rotation.z]; o.s = [r.scale.x, r.scale.y, r.scale.z];
+    world.updateCollider(o.id); drawColliders();
     setDirty(true); renderInspector();
   }
   function regroundAll() {
     S.map.objects.forEach(o => { if (o.g) { o.p[1] = world.heightAt(o.p[0], o.p[2]); const r = world.objects.get(o.id); if (r) r.position.y = o.p[1]; } });
+    world.updateAllColliders(); drawColliders();
   }
   function duplicateSelected() {
     const o = objById(S.selectedId); if (!o) return;
@@ -463,14 +484,14 @@ export async function openEditor(opts) {
 
   /* ═══ PLAY MODE ═══ — the shared first-person walker (mapforge.player.js) */
   const play = { savedCam: null, savedTarget: null };
-  const player = createPlayer(THREE, { world: { get map() { return S.map; }, get terrain() { return world.terrain; }, heightAt: (x, z) => world.heightAt(x, z), spawns: () => world.spawns() }, camera, dom: renderer.domElement, onUnlock: () => stopPlay() });
+  const player = createPlayer(THREE, { world: { get map() { return S.map; }, get terrain() { return world.terrain; }, heightAt: (x, z) => world.heightAt(x, z), groundAt: (x, z, f) => world.groundAt(x, z, f), resolveMove: (...a) => world.resolveMove(...a), spawns: () => world.spawns() }, camera, dom: renderer.domElement, onUnlock: () => stopPlay() });
   ED.play = player;
   function startPlay() {
     if (S.playing) return;
     S.playing = true; canvasHost.classList.add('play');
     play.savedCam = camera.position.clone(); play.savedTarget = controls.target.clone();
     controls.enabled = false; if (gizmo) gizmo.detach(); brushRing.visible = false; if (ghost) ghost.visible = false;
-    world.setMarkersVisible(false);
+    world.setMarkersVisible(false); colSel.visible = false; colAll.visible = false;
     const sp = world.spawns()[0];
     player.start(sp ? null : { pos: new THREE.Vector3(controls.target.x, 0, controls.target.z), yaw: Math.atan2(camera.position.x - controls.target.x, camera.position.z - controls.target.z) + Math.PI });
     $('#mf-play').classList.add('on'); $('#mf-play').textContent = '■ Stop';
@@ -478,7 +499,7 @@ export async function openEditor(opts) {
   function stopPlay() {
     if (!S.playing) return;
     S.playing = false; canvasHost.classList.remove('play');
-    player.stop();
+    player.stop(); drawColliders();
     controls.enabled = true; camera.position.copy(play.savedCam); controls.target.copy(play.savedTarget); controls.update();
     world.setMarkersVisible(S.showMarkers);
     $('#mf-play').classList.remove('on'); $('#mf-play').textContent = '▶ Play';
@@ -499,7 +520,13 @@ export async function openEditor(opts) {
     if ((e.ctrlKey || e.metaKey) && k === 'y') { e.preventDefault(); redo(); return; }
     if ((e.ctrlKey || e.metaKey) && k === 's') { e.preventDefault(); save(); return; }
     if ((e.ctrlKey || e.metaKey) && k === 'd') { e.preventDefault(); duplicateSelected(); return; }
-    if (['w', 'a', 's', 'd', 'q', 'e', 'shift'].includes(k) && !e.ctrlKey && !e.metaKey && !e.altKey) { fly.keys[k] = true; if (k !== 'shift') e.preventDefault(); return; }
+    const mod = e.ctrlKey || e.metaKey || e.altKey;
+    if (S.hotkeys === 'unreal') {
+      // Unreal: W/A/S/D fly only while the right mouse button is held; otherwise
+      // Q select, W move, E rotate, R scale — the viewport hotkeys Unreal users have in their hands.
+      if (S.rmb && ['w', 'a', 's', 'd', 'q', 'e', 'shift'].includes(k) && !mod) { fly.keys[k] = true; if (k !== 'shift') e.preventDefault(); return; }
+      if (!mod) { switch (k) { case 'q': setTool('select'); e.preventDefault(); return; case 'w': setGizmoMode('translate'); e.preventDefault(); return; case 'e': setGizmoMode('rotate'); e.preventDefault(); return; case 'r': setGizmoMode('scale'); e.preventDefault(); return; case 'end': dropSelected(); e.preventDefault(); return; } }
+    } else if (['w', 'a', 's', 'd', 'q', 'e', 'shift'].includes(k) && !mod) { fly.keys[k] = true; if (k !== 'shift') e.preventDefault(); return; }
     switch (k) {
       case '1': setTool('select'); break; case '2': setTool('sculpt'); break; case '3': setTool('paint'); break;
       case '4': setTool('place'); break; case '5': setTool('scatter'); break; case '6': setTool('erase'); break;
@@ -527,8 +554,16 @@ export async function openEditor(opts) {
     if (k.w) mv.add(fwd); if (k.s) mv.sub(fwd); if (k.d) mv.add(right); if (k.a) mv.sub(right); if (k.e) mv.y += 1; if (k.q) mv.y -= 1;
     mv.multiplyScalar(speed); camera.position.add(mv); controls.target.add(mv);
   }
-  function setGizmoMode(m) { S.gizmoMode = m; if (gizmo) gizmo.setMode(m); $$('.mf-gizmo button[data-gm]').forEach(b => b.classList.toggle('on', b.dataset.gm === m)); }
-  function applySnap() { if (!gizmo) return; gizmo.setTranslationSnap(S.snap ? 1 : null); gizmo.setRotationSnap(S.snap ? THREE.MathUtils.degToRad(15) : null); gizmo.setScaleSnap(S.snap ? 0.25 : null); $('#mf-snap').classList.toggle('on', S.snap); }
+  function setGizmoMode(m) { S.gizmoMode = m; if (gizmo) gizmo.setMode(m); if (S.tool !== 'select') setTool('select'); $$('.mf-gizmo button[data-gm]').forEach(b => b.classList.toggle('on', b.dataset.gm === m)); }
+  function applySnap() { if (!gizmo) return; gizmo.setTranslationSnap(S.snap ? S.snapSize : null); gizmo.setRotationSnap(S.snap ? THREE.MathUtils.degToRad(15) : null); gizmo.setScaleSnap(S.snap ? 0.25 : null); $('#mf-snap').classList.toggle('on', S.snap); }
+  function setGizmoSpace(sp) { S.gizmoSpace = sp; if (gizmo) gizmo.setSpace(sp); $('#mf-space').textContent = sp === 'local' ? '⟲ Local' : '🌐 World'; }
+  function dropSelected() { const o = objById(S.selectedId); if (!o) return; beginObjectEdit(); o.p[1] = world.heightAt(o.p[0], o.p[2]); o.g = true; world.refreshObject(o); endObjectEdit(); setDirty(true); renderInspector(); }
+  function setHotkeys(h) { S.hotkeys = h === 'default' ? 'default' : 'unreal'; try { localStorage.setItem('mf_hotkeys', S.hotkeys); } catch (e) {} $('#mf-hotkeys').value = S.hotkeys; renderToolbar(); renderHud(); }
+  function renderToolbar() {
+    const u = S.hotkeys === 'unreal';
+    $('#mf-gm-select').innerHTML = '↖ Select <kbd>' + (u ? 'Q' : '1') + '</kbd>';
+    $$('.mf-gizmo button[data-gm]').forEach(b => { const m = b.dataset.gm; b.innerHTML = (m === 'translate' ? '✥ Move' : m === 'rotate' ? '⟳ Rotate' : '⤢ Scale') + ' <kbd>' + (u ? { translate: 'W', rotate: 'E', scale: 'R' }[m] : { translate: 'T', rotate: 'R', scale: 'C' }[m]) + '</kbd>'; });
+  }
   function togglePlay() { S.playing ? stopPlay() : startPlay(); }
 
   /* ═══ SAVE / LOAD ═══ */
@@ -575,7 +610,7 @@ export async function openEditor(opts) {
         m.id = uid('map_'); m.name = (m.name + ' (imported)').slice(0, 80);
         if (S.dirty && !(await askConfirm('Discard unsaved changes and open the imported map?'))) return;
         loadDoc(m, null); setDirty(true); toast('Imported — save it to keep it.');
-      } catch (e) { toast('That file is not a World Forge map.', 3200); }
+      } catch (e) { toast('That file is not an Athena Engine map.', 3200); }
     };
     rd.readAsText(file);
   }
@@ -614,7 +649,8 @@ export async function openEditor(opts) {
     const b = S.brush;
     const tool = { select: 'Select', sculpt: 'Sculpt · ' + S.sculptMode, paint: 'Paint · ' + PAINT[S.paintIdx].label, place: 'Place · ' + propLabel(), scatter: 'Scatter · ' + propLabel(), erase: 'Erase' }[S.tool];
     $('#mf-hud-tool').innerHTML = '<b>' + esc(tool) + '</b>' + (S.tool === 'sculpt' || S.tool === 'paint' || S.tool === 'scatter' ? ' · radius ' + b.radius.toFixed(1) + 'm' : '') + (S.snap ? ' · snap' : '');
-    $('#mf-hud-help').innerHTML = { select: 'Click an object · <b>T/R/C</b> move/rotate/scale · <b>F</b> focus · <b>Del</b> remove · <b>Ctrl+D</b> duplicate', sculpt: 'Drag to raise · <b>Shift</b> lower · <b>Ctrl</b> smooth · <b>Alt</b> flatten · <b>[ ]</b> radius', paint: 'Drag to paint the selected layer · <b>[ ]</b> radius', place: 'Click the ground to place · pick a prop in the Library', scatter: 'Drag to scatter several props · <b>[ ]</b> radius', erase: 'Click an object to remove it' }[S.tool];
+    const gk = S.hotkeys === 'unreal' ? '<b>W/E/R</b> move/rotate/scale · <b>RMB+WASD</b> fly' : '<b>T/R/C</b> move/rotate/scale · <b>WASD</b> fly';
+    $('#mf-hud-help').innerHTML = { select: 'Click an object · ' + gk + ' · <b>F</b> focus · <b>Del</b> remove · <b>Ctrl+D</b> duplicate', sculpt: 'Drag to raise · <b>Shift</b> lower · <b>Ctrl</b> smooth · <b>Alt</b> flatten · <b>[ ]</b> radius', paint: 'Drag to paint the selected layer · <b>[ ]</b> radius', place: 'Click the ground to place · pick a prop in the Library', scatter: 'Drag to scatter several props · <b>[ ]</b> radius', erase: 'Click an object to remove it' }[S.tool];
   }
   function propLabel() { if (S.propId === 'glb') { const a = S.map.assets.find(x => x.id === S.assetId); return a ? a.label : 'model'; } return (PROP_BY_ID[S.propId] || {}).label || S.propId; }
   function renderBrush() {
@@ -629,7 +665,7 @@ export async function openEditor(opts) {
   }
   let libCat = 'Nature';
   function renderLibrary() {
-    const cats = ['Nature', 'Structures', 'Props', 'Markers', 'Models'];
+    const cats = ['Nature', 'Structures', 'Props', 'Ruins', 'Markers', 'Models'];
     $('#mf-cats').innerHTML = cats.map(c => '<button data-cat="' + c + '" class="' + (c === libCat ? 'on' : '') + '">' + c + '</button>').join('');
     $$('#mf-cats button').forEach(b => b.onclick = () => { libCat = b.dataset.cat; renderLibrary(); });
     const grid = $('#mf-props'), models = $('#mf-models');
@@ -670,6 +706,10 @@ export async function openEditor(opts) {
       <div class="mf-row"><label>Uniform</label><input type="range" id="mf-o-uni" min="0.05" max="6" step="0.05" value="${Math.max(0.05, Math.min(6, o.s[0]))}"><span class="v" id="mf-o-uni-v">${f(o.s[0])}×</span></div>
       ${meta.tint ? `<div class="mf-row"><label>Tint</label><input type="color" id="mf-o-tint" value="${o.c || '#ffffff'}"><button id="mf-o-untint" style="flex:1">Default colour</button></div>` : ''}
       <div class="mf-row"><label>Grounded</label><input type="checkbox" id="mf-o-ground" ${o.g ? 'checked' : ''}><span class="mf-hint" style="margin:0">follows the terrain height</span></div>
+      <div class="mf-col ${world.isSolid(o) ? 'solid' : ''}">
+        <div class="mf-row" style="margin-bottom:5px"><label>Collision</label><span class="st">${world.isSolid(o) ? '● Solid — blocks the player' : '○ None — walk through'}</span></div>
+        <div class="mf-btns">${world.isSolid(o) ? '<button id="mf-o-col-off">－ Remove collision</button>' : '<button id="mf-o-col-on" class="primary">＋ Add collision</button>'}<select id="mf-o-cs" ${world.isSolid(o) ? '' : 'disabled'}><option value="box" ${o.cs !== 'cyl' ? 'selected' : ''}>Box</option><option value="cyl" ${o.cs === 'cyl' ? 'selected' : ''}>Cylinder</option></select></div>
+      </div>
       ${o.t === 'glb' ? (() => { const clips = world.clipsOf(o.id); const known = clips.length ? clips : ((S.map.assets.find(a => a.id === o.a) || {}).anims || []); const cur = o.anim && o.anim.clip; return known.length ? `
       <div class="mf-row"><label>Animation</label><select id="mf-o-anim"><option value="">— none —</option>${known.map(c => '<option value="' + esc(c) + '"' + (c === cur ? ' selected' : '') + '>' + esc(c) + '</option>').join('')}</select></div>
       <div class="mf-row"><label>Speed</label><input type="range" id="mf-o-aspeed" min="0" max="4" step="0.05" value="${o.anim ? o.anim.speed : 1}"><span class="v" id="mf-o-aspeed-v">${(o.anim ? o.anim.speed : 1).toFixed(2)}×</span></div>
@@ -695,6 +735,10 @@ export async function openEditor(opts) {
       const sp = box.querySelector('#mf-o-aspeed'); sp.oninput = () => { applyAnim(); setDirty(true); }; sp.onpointerdown = () => beginObjectEdit(); sp.onchange = () => endObjectEdit();
     }
     box.querySelector('#mf-o-drop').onclick = () => commit(() => { o.p[1] = world.heightAt(o.p[0], o.p[2]); });
+    const colOn = box.querySelector('#mf-o-col-on'), colOff = box.querySelector('#mf-o-col-off'), cs = box.querySelector('#mf-o-cs');
+    if (colOn) colOn.onclick = () => { beginObjectEdit(); world.setCollision(o.id, true); endObjectEdit(); setDirty(true); renderInspector(); toast('Collision added — it now blocks the player in Play.'); };
+    if (colOff) colOff.onclick = () => { beginObjectEdit(); world.setCollision(o.id, false); endObjectEdit(); setDirty(true); renderInspector(); toast('Collision removed — the player walks through it.'); };
+    cs.onchange = () => { beginObjectEdit(); world.setCollision(o.id, null, cs.value); endObjectEdit(); setDirty(true); };
     box.querySelector('#mf-o-dup').onclick = duplicateSelected;
     box.querySelector('#mf-o-focus').onclick = focusSelected;
     box.querySelector('#mf-o-del').onclick = () => { beginObjectEdit(); removeObject(o.id); endObjectEdit(); };
@@ -820,13 +864,19 @@ export async function openEditor(opts) {
   $('#mf-close').onclick = () => close(false);
   $('#mf-overview').onclick = frameOverview;
   $$('.mf-gizmo button[data-gm]').forEach(b => b.onclick = () => setGizmoMode(b.dataset.gm));
+  $('#mf-gm-select').onclick = () => setTool('select');
   $('#mf-snap').onclick = () => { S.snap = !S.snap; applySnap(); renderHud(); };
+  $('#mf-snapsize').onchange = e => { S.snapSize = +e.target.value || 1; applySnap(); };
+  $('#mf-space').onclick = () => setGizmoSpace(S.gizmoSpace === 'world' ? 'local' : 'world');
+  $('#mf-colview').onclick = () => { S.showColliders = !S.showColliders; $('#mf-colview').classList.toggle('on', S.showColliders); drawColliders(); };
+  $('#mf-hotkeys').onchange = e => setHotkeys(e.target.value);
+  $('#mf-hotkeys').value = S.hotkeys; renderToolbar();
   if (!gizmo) { $$('.mf-gizmo button[data-gm]').forEach(b => { b.disabled = true; b.title = 'TransformControls did not load — drag objects on the ground, or type values in the inspector'; }); }
 
   renderBrush(); renderPalette(); renderLibrary(); renderInspector(); setTool('select'); setGizmoMode('translate'); showTab('object'); renderUndo();
   setDirty(freshStart ? false : S.dirty);
   loading.remove();
-  if (freshStart) setTimeout(() => toast('Welcome to World Forge — press H for the controls.', 4000), 400);
+  if (freshStart) setTimeout(() => toast('Welcome to Athena Engine — press H for the controls.', 4000), 400);
 
   /* ═══ LOOP ═══ */
   let raf = 0, last = performance.now(), fpsN = 0, fpsT = 0;
@@ -836,6 +886,7 @@ export async function openEditor(opts) {
     const dt = Math.min(0.05, (now - last) / 1000); last = now;
     if (S.playing) playFrame(dt);
     else { flyFrame(dt); controls.update(); applyStrokeFrame(dt); }
+    if (gizmo && gizmo.object && !gizmo.object.parent) gizmo.detach();   // object removed from under the gizmo (undo, API) — never let it complain
     // brush ring + ghost follow the cursor over the terrain
     const showRing = !S.playing && stroke.hit && (S.tool === 'sculpt' || S.tool === 'paint' || S.tool === 'scatter');
     brushRing.visible = !!showRing;
@@ -899,14 +950,14 @@ function makeControls(THREE, camera, dom) {
 
 const TEMPLATE = `
 <div class="mf-top">
-  <span class="brand">⚒ World Forge</span>
+  <span class="brand">⚒ Athena Engine</span>
   <span class="name"><input type="text" maxlength="80" placeholder="Map name"></span>
   <span class="state">New map</span>
   <span class="spacer"></span>
   <span class="grp"><button id="mf-undo" title="Undo (Ctrl+Z)">↶</button><button id="mf-redo" title="Redo (Ctrl+Y)">↷</button></span>
   <span class="grp"><button id="mf-overview" title="Frame the whole map">⌂ Overview</button><button id="mf-play" title="Walk the map (P)">▶ Play</button></span>
   <span class="grp"><button id="mf-save" class="primary" title="Save (Ctrl+S)">💾 Save</button><button id="mf-save-local" title="Save a copy on this device only">⇩ Device</button><button id="mf-export" title="Download as JSON">⤓ Export</button><button id="mf-import" title="Open a JSON export">⤒ Import</button><input type="file" id="mf-file" accept=".json,application/json" hidden></span>
-  <span class="grp"><button id="mf-help-btn" title="Controls (H)">?</button><button id="mf-close" class="danger" title="Close the editor">✕</button></span>
+  <span class="grp"><select id="mf-hotkeys" title="Hotkey scheme"><option value="unreal">Unreal hotkeys</option><option value="default">Simple hotkeys</option></select><button id="mf-help-btn" title="Controls (H)">?</button><button id="mf-close" class="danger" title="Close the editor">✕</button></span>
 </div>
 <div class="mf-left">
   <div class="mf-sec"><h3>Tools</h3>
@@ -950,18 +1001,19 @@ const TEMPLATE = `
   </div>
 </div>
 <div class="mf-canvas">
-  <div class="mf-gizmo"><button data-gm="translate" title="Move (T)">✥ Move</button><button data-gm="rotate" title="Rotate (R)">⟳ Rotate</button><button data-gm="scale" title="Scale (C)">⤢ Scale</button><button id="mf-snap" title="Snap to grid (X)">⌗ Snap</button></div>
+  <div class="mf-gizmo"><button id="mf-gm-select" title="Select tool">↖ Select</button><button data-gm="translate" title="Move">✥ Move</button><button data-gm="rotate" title="Rotate">⟳ Rotate</button><button data-gm="scale" title="Scale">⤢ Scale</button><span class="sep"></span><button id="mf-snap" title="Snap to grid (X)">⌗ Snap</button><select id="mf-snapsize" title="Snap size"><option value="0.25">¼ m</option><option value="0.5">½ m</option><option value="1" selected>1 m</option><option value="2">2 m</option><option value="5">5 m</option></select><button id="mf-space" title="Gizmo space: world / local">🌐 World</button><span class="sep"></span><button id="mf-colview" title="Show every collider">▢ Colliders</button></div>
   <div class="mf-hud"><div class="chip" id="mf-hud-tool"></div><div class="chip" id="mf-hud-help"></div><div class="chip"><span id="mf-hud-stats"></span> · <span id="mf-hud-fps"></span></div></div>
-  <div class="mf-playhud"><div class="ret"></div><div class="msg">WASD move · Space jump · Shift run · <b>Esc</b> back to the editor</div></div>
+  <div class="mf-playhud"><div class="ret"></div><div class="msg"><b>W</b> forward · <b>S</b> back · <b>A</b> left · <b>D</b> right · <b>Space</b> jump · <b>Shift</b> run · mouse looks · <b>Esc</b> back to the editor</div></div>
   <div class="mf-toast"></div>
   <div class="mf-help"><div class="box">
-    <h2>World Forge — controls</h2>
+    <h2>Athena Engine — controls</h2>
     <table>
       <tr><td>Camera</td><td><kbd>Right-drag</kbd> orbit · <kbd>Middle-drag</kbd> / <kbd>Shift</kbd>+right pan · <kbd>Wheel</kbd> zoom · <kbd>W A S D</kbd> fly, <kbd>Q</kbd>/<kbd>E</kbd> down/up, <kbd>Shift</kbd> faster</td></tr>
       <tr><td>Tools</td><td><kbd>1</kbd> Select <kbd>2</kbd> Sculpt <kbd>3</kbd> Paint <kbd>4</kbd> Place <kbd>5</kbd> Scatter <kbd>6</kbd> Erase</td></tr>
       <tr><td>Sculpt</td><td>Left-drag raises. Hold <kbd>Shift</kbd> to lower, <kbd>Ctrl</kbd> to smooth, <kbd>Alt</kbd> to flatten to the height you started on. <kbd>[</kbd> <kbd>]</kbd> brush radius</td></tr>
-      <tr><td>Objects</td><td>Click to select · <kbd>T</kbd> move <kbd>R</kbd> rotate <kbd>C</kbd> scale <kbd>X</kbd> snap · <kbd>F</kbd> focus · <kbd>Ctrl+D</kbd> duplicate · <kbd>Del</kbd> remove · drag the green gizmo arrow up to lift an object off the ground</td></tr>
-      <tr><td>Play</td><td><kbd>P</kbd> walk the map from the first Player Spawn marker · <kbd>Esc</kbd> returns</td></tr>
+      <tr><td>Objects</td><td>Click to select · Unreal hotkeys: <kbd>Q</kbd> select <kbd>W</kbd> move <kbd>E</kbd> rotate <kbd>R</kbd> scale, <kbd>RMB</kbd>+<kbd>WASD</kbd> fly, <kbd>End</kbd> drop to floor (Simple scheme: <kbd>T</kbd>/<kbd>R</kbd>/<kbd>C</kbd>, WASD always flies) · <kbd>X</kbd> snap · <kbd>F</kbd> focus · <kbd>Ctrl+D</kbd> duplicate · <kbd>Del</kbd> remove · drag the green arrow to lift an object</td></tr>
+      <tr><td>Collision</td><td>Select an object → <b>Add / Remove collision</b> in the inspector (box or cylinder). Solid things block you in Play; low ones are stepped onto, so crates and bridges are walkable. <b>▢ Colliders</b> shows them all.</td></tr>
+      <tr><td>Play</td><td><kbd>P</kbd> walk the map from the first Player Spawn marker · <kbd>W</kbd> forward <kbd>S</kbd> back <kbd>A</kbd> left <kbd>D</kbd> right (arrow keys too) · <kbd>Space</kbd> jump · <kbd>Shift</kbd> run · mouse looks · <kbd>Esc</kbd> returns</td></tr>
       <tr><td>File</td><td><kbd>Ctrl+S</kbd> save · <kbd>Ctrl+Z</kbd> / <kbd>Ctrl+Y</kbd> undo / redo · Export writes a .world.json you can Import anywhere</td></tr>
       <tr><td>Water</td><td>One global water level (Water tab). Sculpt below it to make lakes and rivers; Scatter skips underwater ground.</td></tr>
       <tr><td>Models</td><td>Drag a <kbd>.glb</kbd> onto the canvas, or Library → Models → Project / URL. Animated models: select the object and pick a clip, speed and loop in the inspector.</td></tr>
@@ -969,7 +1021,7 @@ const TEMPLATE = `
     </table>
     <div style="text-align:right;margin-top:10px"><button data-close="1" class="primary">Got it</button></div>
   </div></div>
-  <div class="mf-loading"><div>⚒ Loading World Forge</div><div class="sub">fetching three.js…</div></div>
+  <div class="mf-loading"><div>⚒ Loading Athena Engine</div><div class="sub">fetching three.js…</div></div>
 </div>
 <div class="mf-right">
   <div class="mf-tabs"><button data-tab="object">Object</button><button data-tab="terrain">Terrain</button><button data-tab="water">Water</button><button data-tab="sky">Sky</button><button data-tab="maps">Maps</button></div>
@@ -1007,7 +1059,7 @@ const TEMPLATE = `
   </div>
   <div class="mf-tab" data-tab="sky">
     <div class="mf-sec"><h3>Time of day</h3>
-      <div class="mf-row"><label>Preset</label><select id="mf-e-preset"><option value="day">Day</option><option value="dawn">Dawn</option><option value="dusk">Dusk</option><option value="night">Night</option><option value="overcast">Overcast</option></select></div>
+      <div class="mf-row"><label>Preset</label><select id="mf-e-preset"><option value="day">Day</option><option value="dawn">Dawn</option><option value="dusk">Dusk</option><option value="night">Night</option><option value="overcast">Overcast</option><option value="wasteland">Wasteland</option><option value="fallout">Fallout night</option></select></div>
       <div class="mf-row"><label>Sun height</label><input type="range" id="mf-e-sunEl" min="-10" max="90" step="1"><span class="v" id="mf-e-sunEl-v"></span></div>
       <div class="mf-row"><label>Sun angle</label><input type="range" id="mf-e-sunAz" min="0" max="360" step="1"><span class="v" id="mf-e-sunAz-v"></span></div>
       <div class="mf-row"><label>Sun power</label><input type="range" id="mf-e-sunIntensity" min="0" max="3" step="0.05"><span class="v" id="mf-e-sunIntensity-v"></span></div>

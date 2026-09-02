@@ -1,4 +1,4 @@
-/* ⚒ WORLD FORGE — the 3D map creator. Entry point.
+/* ⚒ ATHENA ENGINE (World Forge) — the 3D map creator + mini-game engine. Entry point.
 
    Registers window.MythicMapForge and stays INERT until open() is called
    (the admin panel button in index.html, or ?mapforge=1 on the URL). three.js
@@ -29,7 +29,8 @@ const MythicMapForge = {
   maps: { list: api.listMaps, load: api.loadMap, save: api.saveMap, remove: api.deleteMap, setLive: api.setLive, loadLive: api.loadLive },
 };
 
-try { window.MythicMapForge = MythicMapForge; } catch (e) {}
+// Athena Engine is the product name; MythicMapForge stays as the API alias index.html already wires.
+try { window.AthenaEngine = MythicMapForge; window.MythicMapForge = MythicMapForge; } catch (e) {}
 
 // Deep link: /?mapforge=1 (optionally &map=<id>&src=cloud|local) opens straight
 // into the editor once the page has settled.

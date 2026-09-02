@@ -30,6 +30,12 @@ export const PAINT = [
   { id: 'mud',    label: 'Mud',        color: '#5b4a35' },
   { id: 'ash',    label: 'Ash',        color: '#3a3a3a' },
   { id: 'ember',  label: 'Ember',      color: '#c2451c' },
+  // post-apocalyptic city set (appended — never reorder)
+  { id: 'asphalt',  label: 'Asphalt',   color: '#3d3f44' },
+  { id: 'concrete', label: 'Concrete',  color: '#8d8a84' },
+  { id: 'rust',     label: 'Rust',      color: '#7a3b1e' },
+  { id: 'toxic',    label: 'Toxic',     color: '#5fbf3a' },
+  { id: 'soot',     label: 'Soot',      color: '#1f2022' },
 ];
 
 export const ENV_PRESETS = {
@@ -38,6 +44,10 @@ export const ENV_PRESETS = {
   dusk:     { skyTop: '#2c2352', skyBottom: '#ff8a5c', fogColor: '#c47a62', fogNear: 40,  fogFar: 240, sunEl: 8,  sunAz: 260, sunIntensity: 0.9,  sunColor: '#ff9e6a', ambient: '#6a5aa8', ambientIntensity: 0.45, groundColor: '#3b2e22' },
   night:    { skyTop: '#050716', skyBottom: '#16223f', fogColor: '#0e1526', fogNear: 30,  fogFar: 200, sunEl: 35, sunAz: 200, sunIntensity: 0.35, sunColor: '#a9c4ff', ambient: '#3b4b7a', ambientIntensity: 0.35, groundColor: '#0f1420' },
   overcast: { skyTop: '#6b7280', skyBottom: '#b8bec8', fogColor: '#aeb4bd', fogNear: 30,  fogFar: 220, sunEl: 60, sunAz: 0,   sunIntensity: 0.55, sunColor: '#e8ecf2', ambient: '#aab4c4', ambientIntensity: 0.75, groundColor: '#4a4a44' },
+  // the wasteland: dust-choked afternoon, sun a dull coin behind haze
+  wasteland:{ skyTop: '#6e5a48', skyBottom: '#c9a274', fogColor: '#b8946a', fogNear: 18,  fogFar: 150, sunEl: 28, sunAz: 230, sunIntensity: 0.8,  sunColor: '#ffb86b', ambient: '#8a7a68', ambientIntensity: 0.6,  groundColor: '#3a2f26' },
+  // after the fallout: green-tinged night, everything lit from the sky
+  fallout:  { skyTop: '#06110c', skyBottom: '#1f3a2a', fogColor: '#132419', fogNear: 15,  fogFar: 120, sunEl: 40, sunAz: 120, sunIntensity: 0.3,  sunColor: '#9be7a7', ambient: '#3f6b4e', ambientIntensity: 0.5,  groundColor: '#0e1a12' },
 };
 
 export function uid(prefix) {
@@ -153,6 +163,9 @@ export function normalizeObject(o, assetIds) {
     n: o.n ? String(o.n).slice(0, 60) : undefined,
     g: o.g !== false,
     anim: normalizeAnim(o.anim),
+    // collision: undefined = the prop's default (see PROP_CATALOG.col), true/false = the builder's choice
+    col: typeof o.col === 'boolean' ? o.col : undefined,
+    cs: o.cs === 'cyl' ? 'cyl' : undefined,          // collider shape: box (default) or cylinder
   };
 }
 

@@ -120,3 +120,14 @@
 .mf-map .t .tag.live{color:#ffd23f;border-color:rgba(255,210,63,.6);background:rgba(255,210,63,.1);font-weight:700}
 .mf-canvas.drop::after{content:"Drop .glb to add it to this map";position:absolute;inset:12px;border:2px dashed var(--mf-gold);border-radius:10px;display:flex;align-items:center;justify-content:center;color:#ffe9a8;background:rgba(11,13,20,.55);font-size:15px;pointer-events:none}
 #mf-root code{font:11px ui-monospace,monospace;background:#0a0c12;border:1px solid var(--mf-line);border-radius:4px;padding:0 4px;color:#ffe9a8}
+.mf-gizmo{flex-wrap:wrap;align-items:center;max-width:calc(100% - 20px)}
+.mf-gizmo .sep{width:1px;height:22px;background:var(--mf-line);margin:0 3px}
+.mf-gizmo kbd{font:10px ui-monospace,monospace;color:var(--mf-dim);margin-left:2px}
+.mf-gizmo select{background:rgba(11,13,20,.82);width:auto;padding:4px 6px;border-radius:6px}
+.mf-top select{width:auto;padding:5px 6px;background:var(--mf-panel2);border-radius:6px}
+.mf-col{border:1px solid var(--mf-line);border-radius:7px;padding:8px 9px;margin:4px 0 8px}
+.mf-col.solid{border-color:rgba(95,211,138,.45)}
+.mf-col .st{color:var(--mf-dim);font-size:12px}
+.mf-col.solid .st{color:var(--mf-ok)}
+.mf-col select{flex:0 0 96px}
+#mf-root .mf-gizmo select,#mf-root .mf-top select{width:auto}

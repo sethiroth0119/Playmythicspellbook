@@ -1,10 +1,13 @@
-# ⚒ World Forge — the 3D map creator
+# ⚒ Athena Engine — the 3D map creator and mini-game engine
+
+(Product name: **Athena Engine**. The code lives in `/src/mapforge/` and the API
+object is `window.AthenaEngine`, with `window.MythicMapForge` as an alias.)
 
 `/src/mapforge/` is a free-form 3D world editor inside the game: sculpt and paint a
 heightfield, set a water level, place props and your own `.glb` models with a
 move/rotate/scale gizmo, tune sun/sky/fog, walk the map in Play mode, save it.
 
-**Open it:** Pricing Admin panel → "⚒ Open World Forge", or `/?mapforge=1`
+**Open it:** Pricing Admin panel → "⚒ Open Athena Engine", or `/?mapforge=1`
 (`&map=<id>&src=cloud|local` opens a saved map). Press **H** inside for controls.
 
 It is separate from the legacy *Battlemap Editor* in index.html, which paints the
@@ -58,6 +61,42 @@ device's local copy → an empty flat world (`onMissing` fires), so a mini-game
 never crashes on a missing map. `mode`: `'fps'` (default, pointer-lock on
 click), `'orbit'`, or `'none'`. Pass `{ map }` or `{ id, source }` to bypass
 the lookup.
+
+## Collision
+
+Every object is either **solid** or not. Props ship with a sensible default
+(walls, rocks, buildings solid; grass, flowers, markers, roads not) and custom
+`.glb` models are solid. Select an object → **＋ Add collision / － Remove
+collision** in the inspector, box or cylinder shape; **▢ Colliders** in the
+viewport toolbar outlines all of them. Stored as `objects[].col` (true/false,
+absent = prop default) and `objects[].cs` (`"cyl"` or absent = box).
+
+Runtime: one world-space box per solid object, from its rendered bounds
+("simple collision"). The player treats a collider taller than a 0.55 m step
+as a wall (slid along, axis-separated) and a lower one as ground, so crates and
+bridges are walkable. `world.groundAt(x, z, feet)`, `world.resolveMove(...)`,
+`world.setCollision(id, on, shape)`, `world.colliders` (Map).
+
+## Hotkeys
+
+Two schemes, switchable in the top bar and remembered per device.
+**Unreal** (default): `Q` select, `W` move, `E` rotate, `R` scale, `End` drop
+to floor, right-mouse + `WASD` flies. **Simple**: `T`/`R`/`C` for the gizmo,
+`WASD` always flies, `Q`/`E` down/up. Both: `1`–`6` tools, `F` focus,
+`X` snap (size in the toolbar), World/Local gizmo space, `Ctrl+Z/Y`, `Del`,
+`Ctrl+D`, `P` play, `H` help.
+
+Play: `W` forward, `S` back, `A` left, `D` right (arrow keys too), `Space`
+jump, `Shift` run, mouse looks, `Esc` returns.
+
+## Post-apocalyptic set
+
+Library → **Ruins**: ruined tower, collapsed block, rubble, cracked road,
+overpass, wrecked car, bent lamp post, concrete barrier, barricade, container,
+radio mast, dead billboard, burnt tree, oil drum, scrap heap, crater,
+generator, energy pylon, drone wreck, bunker door, supply crate. Paint layers
+Asphalt, Concrete, Rust, Toxic, Soot. Sky presets **Wasteland** and
+**Fallout night**.
 
 ## Models and animation
 

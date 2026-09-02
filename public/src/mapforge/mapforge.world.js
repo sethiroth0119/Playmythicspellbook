@@ -10,7 +10,7 @@
 
 import { createTerrain } from './mapforge.terrain.js';
 import { createWater } from './mapforge.water.js';
-import { buildProp, PROP_BY_ID } from './mapforge.props.js';
+import { buildProp, PROP_BY_ID, collides } from './mapforge.props.js';
 
 export function buildWorld(THREE, map, opts) {
   opts = opts || {};
@@ -25,6 +25,7 @@ export function buildWorld(THREE, map, opts) {
   group.add(terrain.mesh, water.mesh, sky, sun, sun.target, hemi, objectsGroup);
 
   const objects = new Map();        // id → root Object3D
+  const colliders = new Map();      // id → world-space collider (see updateCollider)
   const mixers = new Map();         // id → { mixer, action, clip }
   const assetCache = new Map();     // assetId → Promise<{ template, size, clips }>
   const sunDir = new THREE.Vector3(0, 1, 0);
@@ -108,6 +109,7 @@ export function buildWorld(THREE, map, opts) {
     objectsGroup.add(root);
     root.updateMatrixWorld(true);   // raycastable NOW, not after the next render — a click right after placing must hit
     objects.set(o.id, root);
+    updateCollider(o.id);
     if (o.t === 'glb') {
       loadAsset(o.a).then(({ template, clips }) => {
         if (objects.get(o.id) !== root) return;      // removed while loading
@@ -116,6 +118,7 @@ export function buildWorld(THREE, map, opts) {
         root.add(real);
         root.userData.mfPending = false; root.userData.mfClips = clips;
         root.updateMatrixWorld(true);
+        updateCollider(o.id);
         setAnim(o.id, o.anim);
         if (opts.onAssetLoaded) opts.onAssetLoaded(o.id, root);
       }).catch(() => { root.userData.mfError = true; });
@@ -125,7 +128,7 @@ export function buildWorld(THREE, map, opts) {
   function removeObject(id) {
     const root = objects.get(id); if (!root) return;
     stopAnim(id);
-    objectsGroup.remove(root); objects.delete(id);
+    objectsGroup.remove(root); objects.delete(id); colliders.delete(id);
   }
   function applyTransform(root, o) {
     root.position.set(o.p[0], o.p[1], o.p[2]);
@@ -140,8 +143,58 @@ export function buildWorld(THREE, map, opts) {
     }
     applyTransform(root, o);
     root.updateMatrixWorld(true);
+    updateCollider(o.id);
     if (o.t === 'glb') setAnim(o.id, o.anim);
     return root;
+  }
+
+  /* ── collision ──
+     "Simple collision" the Unreal way: one world-space box (or cylinder) per
+     solid object, taken from its rendered bounds. The player treats a
+     collider as a wall where it is taller than a step and as ground where it
+     is not, so crates are climbed, bridges are walked, walls stop you.
+     Recomputed whenever an object is added, moved or reshaped (cheap: one
+     Box3 per change, never per frame). */
+  const STEP = 0.55, _bb = new THREE.Box3();
+  function objDoc(id) { return map.objects.find(o => o.id === id) || null; }
+  function updateCollider(id) {
+    const root = objects.get(id), o = objDoc(id);
+    if (!root || !o || !collides(o)) { colliders.delete(id); return null; }
+    root.updateMatrixWorld(true);
+    _bb.setFromObject(root);
+    if (_bb.isEmpty()) { colliders.delete(id); return null; }
+    const c = { id, shape: o.cs === 'cyl' ? 'cyl' : 'box', minX: _bb.min.x, maxX: _bb.max.x, minZ: _bb.min.z, maxZ: _bb.max.z, bottom: _bb.min.y, top: _bb.max.y,
+      cx: (_bb.min.x + _bb.max.x) / 2, cz: (_bb.min.z + _bb.max.z) / 2, r: Math.max(_bb.max.x - _bb.min.x, _bb.max.z - _bb.min.z) / 2 };
+    colliders.set(id, c);
+    return c;
+  }
+  function updateAllColliders() { colliders.clear(); objects.forEach((r, id) => updateCollider(id)); }
+  function footprint(c, x, z, pad) {
+    if (c.shape === 'cyl') { const dx = x - c.cx, dz = z - c.cz; const rr = c.r + pad; return dx * dx + dz * dz < rr * rr; }
+    return x > c.minX - pad && x < c.maxX + pad && z > c.minZ - pad && z < c.maxZ + pad;
+  }
+  /* Ground under a point for something standing at `feet`: terrain, or the
+     top of any collider it is on / can step onto. */
+  function groundAt(x, z, feet) {
+    let g = terrain.heightAt(x, z);
+    if (feet == null) return g;
+    colliders.forEach(c => { if (c.top > g && c.top <= feet + STEP && c.bottom <= feet + STEP && footprint(c, x, z, 0.1)) g = c.top; });
+    return g;
+  }
+  /* Slide a capsule-ish body (radius, height) from (x0,z0) toward (x1,z1);
+     axis-separated so walls are slid along, not stuck to. */
+  function resolveMove(x0, z0, x1, z1, feet, height, radius) {
+    height = height || 1.7; radius = radius || 0.35;
+    const blocked = (x, z) => { let hit = false; colliders.forEach(c => { if (hit) return; if (c.bottom < feet + height && c.top > feet + STEP && footprint(c, x, z, radius)) hit = true; }); return hit; };
+    let nx = x1; if (blocked(nx, z0)) nx = x0;
+    let nz = z1; if (blocked(nx, nz)) nz = z0;
+    return { x: nx, z: nz, blocked: nx !== x1 || nz !== z1 };
+  }
+  function setCollision(id, on, shape) {
+    const o = objDoc(id); if (!o) return;
+    if (on != null) o.col = on;
+    if (shape != null) o.cs = shape === 'cyl' ? 'cyl' : undefined;
+    updateCollider(id);
   }
 
   /* ── animation ──
@@ -202,6 +255,7 @@ export function buildWorld(THREE, map, opts) {
   const api = {
     map, group, terrain, water, sky, sun, hemi, objects, objectsGroup, mixers,
     addObject, removeObject, refreshObject, applyTransform, loadAsset, setAnim, stopAnim,
+    colliders, updateCollider, updateAllColliders, groundAt, resolveMove, setCollision, isSolid: (o) => collides(o),
     /* clips available on a placed .glb (empty until it has loaded) */
     clipsOf: (id) => { const r = objects.get(id); return r && r.userData.mfClips ? r.userData.mfClips.map(c => c.name) : []; },
     applyEnv, applyWater: (w) => water.apply(w),

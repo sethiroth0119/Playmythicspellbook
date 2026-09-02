@@ -10,7 +10,7 @@ export function createPlayer(THREE, opts) {
   const { world, camera, dom } = opts;
   const P = {
     active: false, yaw: 0, pitch: 0, vy: 0, pos: new THREE.Vector3(), keys: {}, grounded: false, lockedAt: 0,
-    eye: opts.eye || 1.7, speed: opts.speed || 6, runSpeed: opts.runSpeed || 11, jump: opts.jump || 7.5, gravity: opts.gravity || 22,
+    eye: opts.eye || 1.7, radius: opts.radius || 0.35, speed: opts.speed || 6, runSpeed: opts.runSpeed || 11, jump: opts.jump || 7.5, gravity: opts.gravity || 22,
     sensitivity: opts.sensitivity || 0.0022, pointerLock: opts.pointerLock !== false,
   };
   const map = () => world.map;
@@ -68,9 +68,11 @@ export function createPlayer(THREE, opts) {
     const inWater = m.water.on && P.pos.y + 0.9 < m.water.level;
     if (mv.lengthSq()) {
       mv.normalize().multiplyScalar((k.shift ? P.runSpeed : P.speed) * (inWater ? 0.45 : 1) * dt);
-      P.pos.x = Math.max(-half, Math.min(half, P.pos.x + mv.x)); P.pos.z = Math.max(-half, Math.min(half, P.pos.z + mv.z));
+      let nx = Math.max(-half, Math.min(half, P.pos.x + mv.x)), nz = Math.max(-half, Math.min(half, P.pos.z + mv.z));
+      if (world.resolveMove) { const r = world.resolveMove(P.pos.x, P.pos.z, nx, nz, P.pos.y, P.eye, P.radius); nx = r.x; nz = r.z; }
+      P.pos.x = nx; P.pos.z = nz;
     }
-    const ground = world.heightAt(P.pos.x, P.pos.z);
+    const ground = world.groundAt ? world.groundAt(P.pos.x, P.pos.z, P.pos.y) : world.heightAt(P.pos.x, P.pos.z);
     if (inWater) { P.vy += (k.space ? 6 : -2) * dt; P.vy *= 0.92; if (P.pos.y + 0.9 > m.water.level - 0.2 && P.vy > 0 && !k.space) P.vy = 0; }
     else { P.vy -= P.gravity * dt; if (P.grounded && k.space) { P.vy = P.jump; P.grounded = false; } }
     P.pos.y += P.vy * dt;

@@ -78,6 +78,15 @@ let _keyLive   = false;    // true only while a key event's own task is still
                            // running — i.e. while `_keyGen` describes something
                            // that is happening rather than something that has
                            // finished happening. See strayClose().
+let _keysDown  = { Enter: false, Space: false };
+                           // which activation keys are physically DOWN right
+                           // now. `_keyLive` alone cannot answer that: an
+                           // autorepeat's click does NOT run inside the
+                           // keydown's task (measured — see strayClose()), so
+                           // the key outlives the flag that was meant to
+                           // describe it. Two named slots rather than a set,
+                           // because these are the only two keys noteKey()
+                           // watches and a bounded pair cannot accumulate.
 
 /* ── esc ──────────────────────────────────────────────────────────────────
    LOCAL, deliberately. `escapeHtml()` is a top-level declaration in index.html
@@ -1598,28 +1607,64 @@ function choiceById(id) {
    stack that only synthesises clicks was. On a file graded four rounds running
    on comments being true, the comment is the defect.
 
-   THE FIX IS A LIVENESS GATE, NOT A CLEAR ON `keyup`, and the difference is a
-   measured one. Clearing `_keyGen` on `keyup` is the obvious three-line answer
-   and it does close the finding as reported — but it makes the guard depend on
-   a keyup ARRIVING, and this modal's whole reason for existing is that the
-   player is holding a key across a repaint. Driven: commit with Enter and never
-   send the keyup (alt-tab with the key down; a keyup swallowed upstream), wait
-   1200 ms, then `#md-ack.click()`. With the keyup clear, the click is refused
-   exactly as it is in round 4 — the defect is still there, hiding behind an
-   input the browser never delivered. With `_keyLive` it closes, because nothing
-   the flag depends on has to be a key event the window is still focused to
-   receive. Both builds recover on a real press; only one of them does not need
-   to.
+   THE FIX IS NOT A CLEAR ON `keyup` OF `_keyGen` ITSELF, and that much of
+   round 5's reasoning survived contact. Clearing the STAMP on `keyup` is the
+   obvious three-line answer and it does close the finding as reported — but the
+   stamp is the only thing that says WHICH panel the press belongs to, and a
+   guard that throws it away depends on a keyup ARRIVING to be correct at all.
+   Driven: commit with Enter and never send the keyup (alt-tab with the key
+   down; a keyup swallowed upstream), wait 1200 ms, then `#md-ack.click()` —
+   with the keyup clear the click is refused exactly as it is in round 4, the
+   defect still there, hiding behind an input the browser never delivered.
+   `_keysDown` is a keyup dependency too, and this paragraph does not pretend
+   otherwise: a lost keyup leaves it stuck `true` and that same synthesised
+   click is refused. The difference is what a stuck flag COSTS. It is one
+   boolean, it is not the stamp, and three ordinary things clear it — the next
+   real `keyup`, any `mousedown` (the hand has moved to the pointer), and
+   `closeModal()`. A real keypress additionally re-stamps `_keyGen` to the panel
+   on screen, so the very next thing the player does in either device recovers.
+   Nothing here can weld the modal shut; see FAILURE DIRECTIONS below, which is
+   driven, not asserted.
 
-   So `_keyGen` is left alone and a second fact is recorded: `_keyLive`, true
-   only while a key event's own task is still on the stack. A key-generated
-   click is dispatched synchronously inside that task — keydown's default action
-   for Enter, keyup's for Space — so it sees `true`; a click synthesised from a
-   later task sees `false` and gets exactly what the paragraph above always
-   promised: no stamp, and the floor decides. `setTimeout(…, 0)` is the clearer
-   because a new macrotask is the one thing guaranteed to run AFTER a default
-   action dispatched in the current one; a microtask is not, since a checkpoint
-   runs between event listeners.
+   So `_keyGen` is left alone and a second fact is recorded — but it took TWO
+   attempts to record the right one, and the first is written out here because
+   it is the kind of mistake that reads as obviously correct.
+
+   🔴 ATTEMPT ONE WAS `_keyLive` ALONE, AND IT REGRESSED THE VERY DEFECT ABOVE.
+   The reasoning was: a key-generated click is the key event's own default
+   action, so it must be dispatched synchronously inside that event's task; set
+   a flag on the key event, clear it in `setTimeout(…, 0)`, and only a click
+   from inside the task sees `true`. The premise is FALSE FOR AUTOREPEAT in
+   Chromium and the falsity is measurable in two minutes: focus a plain
+   `<button>`, mirror this exact pair of handlers, hold Enter. Clicks #1 and #2
+   see `true`; clicks #3 onward — the whole rest of the hold — see `false`,
+   because the repeat's activation click is queued rather than run under the
+   keydown that produced it. (`SCRATCH/gauntlet/signoff6/t3d_live.mjs` is that
+   probe; SPACE is not affected, it fires one click from `keyup`.) With
+   `_keyLive` as the only gate, a held Enter past the 400 ms floor sailed
+   through with `from === null` and destroyed the receipt at 600/900/1200/2000/
+   3000 ms — round 3's defect, restored, on the input path this file's own
+   focus move creates.
+
+   THE FACT THAT HAD TO BE RECORDED IS "A KEY IS DOWN", AND IT IS RECORDED
+   DIRECTLY, by the events that state it, not inferred from a timer: `_keysDown`
+   is set on `keydown` and cleared on the matching `keyup` (and on any
+   `mousedown`, which means the player's hand has moved to the pointer). An
+   autorepeat click lands with the key still down, reads the stamp, and is
+   refused — round 4's behaviour, which was right for this case all along.
+
+   `_keyLive` is KEPT ALONGSIDE IT, because it is what closes the round-4 defect
+   the paragraph above describes: after `keyup`, `_keysDown` is false, and a
+   click synthesised from a later task — `el.click()`, an assistive stack, a
+   test driver — sees both flags down, gets no stamp, and the floor decides,
+   exactly as the ⚠ paragraph above always promised. `_keyLive` also covers the
+   one moment `_keysDown` cannot: the SPACE activation click, which is dispatched
+   from `keyup`'s own default action, i.e. after the key has already come up.
+   Two flags because there are two facts — "a key is down" and "a key event is
+   happening right now" — and neither implies the other. `setTimeout(…, 0)` is
+   still the right clearer for the second one: a new macrotask is the one thing
+   guaranteed to run after a default action dispatched in the current one, and a
+   microtask is not, since a checkpoint runs between event listeners.
 
    ⚠ ONE WORRY CHECKED AND DISMISSED, recorded so nobody re-derives it. A
    `<button>` fires SPACE's activation click from its `keyup`, and a keyup
@@ -1634,13 +1679,21 @@ function choiceById(id) {
    than a guarantee, which is a second small reason to prefer a gate that does
    not rest on it, but it is not the reason above and must not be quoted as one.
 
-   FAILURE DIRECTIONS, both stated. If the timer never runs, `_keyLive` sticks
-   `true` and the guard behaves exactly as round 4 did — recoverable by any real
-   keypress or mousedown, never a weld. If it runs early or twice, `_keyLive` is
-   `false`, the stamp is ignored and the floor decides — which is the same
-   behaviour as an unreadable gesture and is the direction this whole guard is
-   written to fail in. A boolean that only ever fails to `false` cannot lock a
-   player out of their own modal.
+   FAILURE DIRECTIONS, all of them stated, and the sticky one DRIVEN because it
+   is the only direction that could hurt anyone. If the timer never runs,
+   `_keyLive` sticks `true`; if a keyup is never delivered, `_keysDown` sticks
+   `true`. Either way the guard behaves exactly as round 4 did: `detail === 0`
+   closes are answerable to a stamp that names an older panel, so they are
+   refused. That is recoverable and was driven that way, with real input and no
+   variable poked by hand: commit with Enter, never send the keyup, wait
+   1200 ms, and a synthesised `#md-ack.click()` is refused — then ONE `mousedown`
+   on inert panel text (which does not itself close anything) makes the next
+   identical click close the modal, and in the other run ONE complete real Enter
+   closes it outright. If instead a flag drops early
+   or twice, the stamp is ignored and the floor decides — the same behaviour as
+   an unreadable gesture, which is the direction this whole guard is written to
+   fail in. Flags that only ever fail to "no provenance", plus a stamp that any
+   fresh press overwrites, cannot lock a player out of their own modal.
 
    ⌨ ESCAPE IS STILL NOT GATED, DELIBERATELY. `/src/battle/combat.js:918` states
    the principle this file already quotes: Escape is the one gesture that
@@ -1649,17 +1702,16 @@ function choiceById(id) {
    player's hand, and a modal that ignores a key pressed on purpose is a worse
    failure than the one being fixed here.
 
-   FAILURE DIRECTION, stated because it is the reason to prefer this shape over
-   a boolean latch cleared on `keyup`. A latch that never gets its `keyup` —
-   alt-tab with the key down, a keyup swallowed by another handler — welds the
-   modal shut. A generation STAMP cannot: the next fresh press overwrites it
-   unconditionally, so the guard self-heals on the very next thing the player
-   does. An unreadable gesture, a throw inside the guard and a clock that jumps
-   backwards all make it stop guarding rather than start blocking. Every path
-   fails towards the player being able to close their own modal. `_keyLive`
-   keeps that property and is why it is cleared by a TIMER rather than by
-   `keyup`: an alt-tab that eats the keyup cannot strand it, because nothing it
-   depends on is a key event the window has to still be focused to receive.
+   FAILURE DIRECTION, stated because it is the reason the guard is a generation
+   STAMP and not a boolean latch that decides on its own. A latch that never
+   gets its `keyup` — alt-tab with the key down, a keyup swallowed by another
+   handler — would weld the modal shut if the latch itself were the answer. A
+   stamp cannot: the next fresh press overwrites it unconditionally, so the
+   guard self-heals on the very next thing the player does, and the flags only
+   decide WHETHER the stamp is consulted. An unreadable gesture, a throw inside
+   the guard and a clock that jumps backwards all make it stop guarding rather
+   than start blocking. Every path fails towards the player being able to close
+   their own modal.
 
    Both close paths call this one function — the backdrop listener in
    `openModal()` and the `close` action in `onClick()` — because they are
@@ -1673,7 +1725,15 @@ const SETTLE_MS = 400;
    always overwrites the stamp, which is what makes it self-healing rather than
    sticky; `detail >= 2` is the only thing that preserves the old one. */
 function notePress(e) {
-  try { if (!(Number(e && e.detail) >= 2)) _pressGen = _panelGen; } catch (e2) {}
+  try {
+    if (!(Number(e && e.detail) >= 2)) _pressGen = _panelGen;
+    /* A press on the pointer means the hand is on the pointer, so whatever this
+       file still believes about a held key is stale — and this is the clear
+       that does not need an event the window has to be focused to receive. It
+       runs on the second press of a double-click too: `detail >= 2` preserves
+       the POINTER stamp deliberately, and has nothing to say about keys. */
+    _keysDown.Enter = false; _keysDown.Space = false;
+  } catch (e2) {}
 }
 
 /* `keydown` AND `keyup`, on the document listener that already exists for
@@ -1682,26 +1742,49 @@ function notePress(e) {
    keystroke would let an unrelated Tab refresh the stamp of an Enter that is
    still held down.
 
-   TWO SEPARATE FACTS, and keeping them apart is what round 4 got wrong:
+   THREE SEPARATE FACTS. Round 4 recorded one of them and round 5 recorded two,
+   and each missing one is a shipped defect; they are listed with what each can
+   and cannot answer, because that is the part that keeps getting collapsed:
      • `_keyGen` — WHICH generation the press began in. Written on `keydown`
        only, and only when `!e.repeat`, because an autorepeat is a continuation
        of a press the player made before the swap, not a new one. It is never
-       cleared, because clearing it is not what makes the stamp safe to read —
-       `_keyLive` is — and a value that is only ever overwritten by a fresh
-       press cannot be left in a state that blocks anyone (see strayClose()'s
-       failure-direction paragraph).
+       cleared, because clearing it is not what makes the stamp safe to read
+       (the flags below are) and a value that is only ever overwritten by a
+       fresh press cannot be left in a state that blocks anyone — see
+       strayClose()'s failure-direction paragraph.
+     • `_keysDown` — WHETHER that key is still physically down. Set on `keydown`
+       (repeat included: a repeat is proof the key is still down), cleared on
+       the matching `keyup` and by any `mousedown`. This is the one that makes
+       an autorepeat's click readable. It is PER-KEY because "is down" is a
+       per-key fact and a shared flag would be cleared by the other key's
+       `keyup` — Space tapped while Enter is held. Honest note, because the
+       counterfactual was driven and did NOT fail: a shared flag survives that
+       gesture anyway, since the held key's next autorepeat re-raises it ~33 ms
+       later. That is the repeat rate outrunning the guard, not the guard being
+       right, and two named slots cost nothing to not depend on it.
      • `_keyLive` — WHETHER a key event is what is happening RIGHT NOW. Raised
-       by both keydown and keyup, dropped one macrotask later, which is strictly
-       after any activation click the current key event dispatches as its
-       default action.
-   Neither one alone answers strayClose()'s question. `_keyGen` alone cannot
-   tell a live keypress from a finished one; `_keyLive` alone cannot tell which
-   panel the press belongs to. */
+       by both keydown and keyup, dropped one macrotask later. It is what makes
+       SPACE readable, because a `<button>` dispatches Space's activation click
+       from `keyup`'s default action — after `_keysDown` has correctly gone
+       false.
+   No one of them answers strayClose()'s question. `_keyGen` alone cannot tell a
+   live keypress from a finished one; the flags alone cannot tell which panel
+   the press belongs to; and `_keyLive` alone does not survive autorepeat, which
+   is exactly the gesture this guard exists for. */
 function noteKey(e) {
   try {
     const k = e && e.key;
     if (k !== 'Enter' && k !== ' ' && k !== 'Spacebar') return;
-    if (e.type === 'keydown' && !e.repeat) _keyGen = _panelGen;
+    const slot = (k === 'Enter') ? 'Enter' : 'Space';
+    if (e.type === 'keydown') {
+      if (!e.repeat) _keyGen = _panelGen;
+      _keysDown[slot] = true;
+    } else if (e.type === 'keyup') {
+      // Named rather than `else`, because keyBind() is the kind of helper
+      // someone extends with a third event later; a `blur` arriving here must
+      // not be silently read as "the key came up".
+      _keysDown[slot] = false;
+    }
     _keyLive = true;
     /* The clear is scheduled, never conditional, and it does not check whether
        the value it is clearing is still "its own". Two overlapping key events
@@ -1747,7 +1830,16 @@ function strayClose(ev) {
     // consulted only while a key event is actually in flight; otherwise there
     // is no provenance to read and the floor below decides, exactly as the
     // block comment promises.
-    const from = (Number(ev && ev.detail) || 0) > 0 ? _pressGen : (_keyLive ? _keyGen : null);
+    //
+    // "In flight" is two conditions ORed and both are load-bearing.
+    // `_keysDown` catches the autorepeat click, which does NOT run inside its
+    // own keydown's task (signoff6/t3d_live.mjs: on a plain focused button,
+    // clicks #3 onward through a held Enter see `_keyLive === false`), and
+    // `_keyLive` catches SPACE's click, which a `<button>` dispatches from
+    // `keyup`'s default action, after `_keysDown` has correctly gone false.
+    // Dropping either one re-opens a defect this file has already shipped.
+    const keyLive = _keyLive || _keysDown.Enter || _keysDown.Space;
+    const from = (Number(ev && ev.detail) || 0) > 0 ? _pressGen : (keyLive ? _keyGen : null);
     if (from !== null && from !== _panelGen) return true;
     // Provenance unreadable (`from === null`) or agreeing: the floor decides.
     return _settledAt > 0 && (Date.now() - _settledAt) < SETTLE_MS;
@@ -1868,10 +1960,14 @@ export function openModal(instance, roster, handlers) {
     _busy     = false;
     _closing  = false;
     // Reset beside `_settledAt`: a stamp carried over from the last dilemma is
-    // a stamp about controls that no longer exist. `_panelGen` back to 0 and
-    // both gesture stamps back to "unread" is the state strayClose() treats as
-    // "there is nothing to guard yet".
+    // a stamp about controls that no longer exist. `_panelGen` back to 0, both
+    // gesture stamps back to "unread" and both held-key flags down is the state
+    // strayClose() treats as "there is nothing to guard yet". `_keysDown` is
+    // reset here as well as in closeModal() precisely because it is the one
+    // piece of this guard that can be left `true` by an input that never
+    // arrived; opening a dilemma is a second guaranteed clear.
     _settledAt = 0; _panelGen = 0; _pressGen = null; _keyGen = null; _keyLive = false;
+    _keysDown.Enter = false; _keysDown.Space = false;
 
     // Remember who opened us so focus can go home. index.html's `render()`
     // restores focus for an id'd text INPUT only — its `_focusSnap` block tests
@@ -2006,6 +2102,7 @@ export function closeModal() {
     _instance = null; _roster = []; _handlers = null; _outcome = null;
     _view = 'choose'; _selected = null; _hover = null; _busy = false; _opener = null;
     _settledAt = 0; _panelGen = 0; _pressGen = null; _keyGen = null; _keyLive = false;
+    _keysDown.Enter = false; _keysDown.Space = false;
 
     try { if (h && typeof h.onClose === 'function') h.onClose(); } catch (e) {}
     return true;

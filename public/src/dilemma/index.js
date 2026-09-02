@@ -224,6 +224,26 @@ function makeHost() {
        modal whose whole point is the roster. */
     deckKeyCardId: (key) => { try { return B.deckKeyCardId(key) || null; } catch (e) { return null; } },
     cardById: (id) => { try { return B.cardById(id) || null; } catch (e) { return null; } },
+    /* 🃏 HOW MANY CARDS THE RUINS COULD ACTUALLY YIELD, right now. Read live —
+       a player can publish a Forge card while the modal is open, and a size
+       answered from a snapshot would go on hiding a reward that had become
+       deliverable.
+
+       🔴 null IS NOT ZERO HERE, AND THE DIFFERENCE IS THE WHOLE POINT. `null`
+       means "this bridge cannot tell me" — an older index.html still being
+       served from the service-worker cache has no `cardPoolSize` at all, and
+       `B.cardPoolSize()` then throws. Zero means "I asked, and the pool is
+       empty". Only the second may gate an advertisement; treating an unanswered
+       question as an empty pool would silently strip real card rewards off
+       every choice for anyone running a cached page. Same asymmetry the `gems()`
+       accessor was fixed for, and it took three rounds to get that one right. */
+    cardPoolSize: () => {
+      try {
+        if (typeof B.cardPoolSize !== 'function') return null;
+        const n = Number(B.cardPoolSize());
+        return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : null;
+      } catch (e) { return null; }
+    },
     /* ⚠ NOTHING IN /src/dilemma CALLS THIS TODAY, and saying so is the point.
        It is here because CONTRACT §3 names it and because the seam is specified
        whole rather than as whatever the current consumers happen to need — the
@@ -526,8 +546,32 @@ async function resolve(choiceId) {
          is the second half of the fix rather than an optimisation: it was doing
          nothing but returning false into a sentence about money, and skipping
          it takes an addGems-adjacent call off the commonest failure path in the
-         feature. */
-      const paid = !!(choice && choice.cost && Number(choice.cost.cinder) > 0);
+         feature.
+
+         ⚠ "FREE" IS rewards.js's WORD TO DEFINE, NOT THIS FILE'S — round 5.
+         The predicate was `Number(choice.cost.cinder) > 0` here while
+         `rewards.costOf()` has always been `int(…) > 0`, and the two files
+         disagreed about exactly one shape: a FRACTIONAL authored cost. At
+         `cost: { cinder: 0.5 }` costOf() floors to 0, payCost() takes nothing
+         and refundCost() has nothing to credit — but `Number(0.5) > 0` said
+         money had moved, so this branch called refundCost(), got back the
+         `false` it structurally had to get, and told the player "the refund
+         could not be confirmed" over a charge that never happened. Round 4's
+         money verifier drove it end to end (t10_frac.mjs) against a corpus copy
+         whose only difference was that cost: wallet 10,000 → 10,000, nothing
+         resolved, that sentence.
+         validateCorpus's R8 does reject a fractional cost — but its only caller
+         in the running app is `MythicDilemmas.debug()`, which rewards.js:535-538
+         says of itself: "a developer-time promise, not a runtime one". This
+         branch runs at runtime, and a runtime sentence about the player's money
+         may not rest on a validator production never calls.
+         Worth stating because it bounds what was ever at risk: `Math.floor(x)
+         > 0` implies `x > 0`, so the old gate could only over-report a charge,
+         never miss one. No refund was ever skipped over money that was taken —
+         the defect was a false alarm, not a lost refund.
+         `costWasCharged()` is now the single predicate; its comment carries the
+         mirroring rule and why `Math.floor` alone would not have closed it. */
+      const paid = costWasCharged(choice);
       const back = paid ? refundCost(h, choice) : false;
       h.toast(
         !paid  ? '⚠ The Heights did not record your call. Nothing was charged.'
@@ -619,6 +663,43 @@ function makeResolveRng(inst, choice) {
   return makeRng(seedFrom(String((inst && inst.seed) || 0) + ':' + String((choice && choice.id) || '')));
 }
 
+/* 🔴 "DID THE PLAYER ACTUALLY PAY?" — AND rewards.js OWNS THE ANSWER.
+   Only meaningful after `payCost()` has returned ok: it answers what payCost
+   CHARGED, not what the corpus author typed.
+
+   This is a MIRROR of `rewards.costOf()` (rewards.js:296-299) — same answer on
+   every input — and it is a mirror rather than a call for one reason only:
+   costOf is module-private and this file may not edit rewards.js. If it is ever
+   exported, delete this and call it. That is strictly better, because the whole
+   failure it closes was two files computing "is there a cost" differently while
+   printing one sentence about it.
+
+   ⚠ THE `Number.isFinite` IS NOT DECORATION, AND `Math.floor` ALONE DOES NOT
+   CLOSE THIS. costOf() runs through `int()`, which runs through `num()`, which
+   collapses a NON-FINITE Number to 0 — so `cost: { cinder: Infinity }` is a FREE
+   choice as far as every money path in rewards.js is concerned. A bare
+   `Math.floor(Number(x)) > 0` answers true for it and re-opens the identical
+   false-alarm sentence one shape further out. The guard is what makes the two
+   files agree on every input instead of on the one input a verifier drove.
+
+   THE PAIRING RULE, in payCost/refundCost's own words: IF costOf() IS EVER
+   EDITED, THIS MUST BE EDITED WITH IT. What the agreement buys, stated as the
+   invariant this branch actually needs — past payCost's ceiling gate, which
+   refuses anything above REFUND_CEILING BEFORE charging and so aborts resolve()
+   at step 1 — is that inside the commit-failure branch
+
+     costWasCharged(choice) === true   ⇔   refundCost() has a credit to make.
+
+   Both sides are now `costOf(choice) > 0`, so the branch can no longer promise
+   a refund that cannot exist, nor skip one that can.
+
+   ⚠ IT IS NOT AN AFFORDABILITY TEST. It says a price exists and was taken; it
+   says nothing about the wallet. That question is `canAfford()`'s. */
+function costWasCharged(choice) {
+  const c = Number(choice && choice.cost && choice.cost.cinder);
+  return Number.isFinite(c) && Math.floor(c) > 0;
+}
+
 /* ════════════════════════════════════════════════════════════════════════════
    4. THE HANDLER SEAM
    ════════════════════════════════════════════════════════════════════════════
@@ -628,6 +709,60 @@ function makeResolveRng(inst, choice) {
    each one is already total on its own — render.js's callH() still supplies a
    typed fallback on top, which is belt and braces rather than duplication. */
 function handlersFor(inst) {
+  /* ONE affordability answer, used twice below. Written once so the `describe`
+     effect line and the `affordable` button gate cannot disagree about the same
+     choice in the same repaint — which is the only way a modal can grey a
+     button out and print a price the player can meet beside it. */
+  const affordableFor = (choice) => { const h = host(); return h ? canAfford(h, choice) : false; };
+
+  /* 🃏 THE CARD ADVERTISEMENT, GATED ON THE POOL THAT WOULD HAVE TO FILL IT.
+
+     🔴 THE DEFECT THIS EXISTS FOR. index.html force-sets
+     `Forge.useCustomOnlyPool = true` on every boot, and the custom-only branch
+     of `getCardPoolForPacks` suppresses every built-in array — so on a stock
+     install with nothing published the pack pool is EMPTY while UNIT_CARDS
+     still holds 16 cards. The first run of this feature inside the real game
+     measured the consequence: the modal advertised six distinct card promises
+     across the corpus ("a card (20%)", "a Common card (18%)", …) and 35 real
+     resolutions of card-advertised choices delivered ZERO cards, every one of
+     them ending on "🌫 Nothing came out of the ruins this time." The delivery
+     side was never wrong — `grantCard` returns null on an empty pool and the
+     receipt says so honestly. It was the ADVERTISEMENT that promised a thing
+     the install could not produce.
+
+     WHY THE GATE IS HERE AND NOT IN rewards.js. `describeChoice` is pure and
+     takes no host — CONTRACT §4 freezes its signature at
+     `(choice, influenceValue)` — and the render layer calls it on every
+     repaint, so putting a mint-adjacent accessor behind it was rejected. This
+     handler is the one place that both calls `describeChoice()` and holds a
+     host, which is what index.html's `cardPoolSize()` comment says it is for.
+     ⚠ That accessor shipped one round before this line did, and NOTHING READ IT
+     — a fix whose second half lived in a file its owner did not hold, which is
+     the same shape that cost this feature two earlier rounds. This is that
+     second half.
+
+     WHY IT NULLS THE FIELD RATHER THAN EDITING THE STRING. Handing
+     `describeChoice` a choice whose reward carries no card makes the advert
+     derive from the same fact the grant does, through the code that already
+     formats every other reward. Stripping the clause out of the finished
+     `rewardText` would be a second formatter, drifting from the first the day
+     anyone changes the separator.
+     ⚠ A card-ONLY reward correctly falls to an empty `rewardText` here. That is
+     honest — on this install the choice really does pay nothing — and it is why
+     the clone is of `reward` and not of the whole choice: `cost`, `influence`
+     and every stance field must survive untouched, because only the promise of
+     a card is in question, never the price of one. */
+  const advertisable = (choice) => {
+    try {
+      const r = choice && choice.reward;
+      if (!r || typeof r !== 'object' || !r.card) return choice;
+      const h = host();
+      // Only an explicit, answered zero gates. null = "cannot tell" = advertise.
+      if (!h || h.cardPoolSize() !== 0) return choice;
+      return Object.assign({}, choice, { reward: Object.assign({}, r, { card: null }) });
+    } catch (e) { return choice; }
+  };
+
   return {
     stance: (unit, choice) => stanceFor(unit, choice),
     preview: (unit, choice) => previewBond(unit, choice),
@@ -656,9 +791,53 @@ function handlersFor(inst) {
       } catch (e) { return String(p || ''); }
     },
     /* The influence the dilemma OPENED at, matching the value rollReward() is
-       given at resolve. One number, quoted once, paid once. */
-    describe: (choice) => describeChoice(choice, inst.influenceAtOpen),
-    affordable: (choice) => { const h = host(); return h ? canAfford(h, choice) : false; },
+       given at resolve. One number, quoted once, paid once.
+
+       🔴 AND THE ONE LAYER WHERE `affordable` CAN HONESTLY BE FILLED IN.
+       describeChoice() returns that key initialised to null and never assigns
+       it, and is straight about why (rewards.js:340-350): it is a PURE function
+       that takes no host, so it cannot price anything. Round 4's money verifier
+       did not object to the null being wrong there — it objected that a field
+       which is ALWAYS null and read by nobody is a trap for the next person, who
+       will assume it means something. A null read as a falsy answer greys every
+       button in the modal, which is exactly the failure the true-default below
+       exists to prevent.
+       Deleting the key was the alternative. It is part of the effect shape
+       render.js declares in NO_EFFECT (render.js:137) and rewards.js constructs
+       on both of its return paths, so removing it reaches into two files this
+       round does not own, to tidy away a null neither of them reads — the sort
+       of cross-file edit for cosmetics round 2 learned not to make, and not one
+       this file could make anyway. It is ASSIGNED instead,
+       here, in the only layer that both calls describeChoice() and holds a host,
+       and from the SAME `affordableFor` the handler below is, so a reader who
+       does reach for `describe().affordable` gets the identical answer the
+       button was greyed by rather than a null.
+       ⚠ RENDER STILL DOES NOT READ IT, and that is deliberate, not a leftover.
+       render.js asks `affordableOf()` (render.js:151-155), which goes through the
+       `affordable` handler and DEFAULTS TO TRUE when it is missing — that
+       default is what stops a bridgeless modal from disabling every button, and
+       reading the fact off the effect object instead would lose it, because a
+       null there is indistinguishable from a false. This assignment makes the
+       field TRUE; it does not make it load-bearing, and nothing should be
+       rewired onto it.
+       Object.assign rather than writing through the returned object:
+       describeChoice() constructs its result at exactly two sites — the `out`
+       literal at rewards.js:352, which every normal return hands back, and the
+       catch's own literal at :434 — so what arrives here is always freshly
+       allocated and a mutation would be safe TODAY. "Safe today" is how a
+       memoisation added over there becomes a bug over here.
+       Object.assign rather than naming the keys, so a key rewards.js adds later
+       survives this seam instead of being silently dropped by it. */
+    describe: (choice) => {
+      const d = describeChoice(advertisable(choice), inst.influenceAtOpen);
+      // Total by construction: describeChoice() cannot return a non-object
+      // today, and if it ever does, render.js's describeOf() falls back to
+      // NO_EFFECT — which is a better outcome than an Object.assign throwing
+      // inside the handler seam.
+      if (!d || typeof d !== 'object') return d;
+      return Object.assign({}, d, { affordable: affordableFor(choice) });
+    },
+    affordable: affordableFor,
     onChoose: (choiceId) => resolve(choiceId),
     onClose: () => { _instance = null; },
   };

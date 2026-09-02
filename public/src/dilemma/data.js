@@ -710,9 +710,22 @@ export const DILEMMAS = deepFreeze([
         cost: null, reward: { chance: 0.35, cinder: 'mid', card: null },
         outcome: '🏛 Whatever they called stayed inside the cordon. The carrier was paid and sent home.',
       },
+      /* 🪙 THE LABEL NAMES THE SUMMON, NOT THE CARD, AND THAT IS LOAD-BEARING.
+         This row charges 1,200 Cinder and carries `reward: null` because R11.3
+         keeps cards off paid rows — a card cannot be refunded, so it can never
+         ride on a charge. Round three labelled it "Buy a card off the Ledge for
+         it", and the first in-game run caught what that does to a player: "a
+         card" is the exact string `describeChoice` prints for a card that lands
+         in the collection, and the sibling row four lines up (`lift_the_stair`)
+         prints "a card (12%)" in its own consequence footer. Read together, the
+         paid row reads as the way to buy that card outright — and what 1,200
+         Cinder actually buys is a cleared stair and an empty collection, with no
+         "May return" line at all. The Ledge sells the card; what the player gets
+         for the money is what comes down the beam. Do NOT close this the other
+         way by hanging a card reward here: validateCorpus rejects it (R11.3). */
       {
         id: 'buy_the_card', always: false, weight: 1,
-        label: 'Buy a card off the Ledge for it',
+        label: 'Buy the stronger summon off the Ledge',
         desc: 'A stronger summon, bought at the seller price.',
         poles: ['ambition'], influence: 1,
         cost: { cinder: 1200 }, reward: null,

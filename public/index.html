@@ -207771,6 +207771,63 @@ function _dilemmaCloneState(s) {
   }
   return out;
 }
+
+/* 🃏 ONE POOL, TWO CALLERS — `grantCard()` picks out of it and `cardPoolSize()`
+   counts it, and they may never disagree about what is grantable.
+
+   WHY THIS EXISTS AS A FUNCTION AT ALL, rather than the filter staying inline
+   in grantCard where it was. The dilemma modal advertises a card reward with a
+   percentage ("a card (20%)"), and on a STOCK INSTALL that percentage was a
+   promise the configuration was structurally incapable of keeping. Measured in
+   the real page, signed out and offline: `Forge.useCustomOnlyPool` is forced
+   true on every boot by the production override at 68464, getCardPoolForPacks
+   skips every built-in table behind its `if (!customOnly)` branch (65064),
+   Catalog.cards and Forge.customCards are both 0 — so the pool is 0 entries
+   while UNIT_CARDS.length is 16 in the same page, and grantCard returned null on
+   202 real commits against advertised rates that should have paid ~30. Publish
+   nine catalog cards and the identical choice paid 9 in 32. The plumbing was
+   never broken; the pool was empty, and nothing on this seam could SAY so.
+   This function is the thing that can say so.
+
+   🔴 AND THE BUILT-IN FALLBACK WAS THE OTHER OPTION AND IS REJECTED, MEASURED.
+   The tempting one-liner is "when the custom pool is empty, rebuild it from
+   UNIT_CARDS/SPELL_CARDS/…" — one accessor, one file, and every install can pay
+   a card. It is rejected because the card it pays would be INVISIBLE. Driven in
+   the real page on a stock custom-only install owning goblin ×10: renderCollection
+   (187474) builds every tab through `mergeByKind`, whose custom-only branch is
+   `return allCustom.filter(…)` — the Inventory rendered "Units 0 · Spells 0 ·
+   Traps 0 … No cards in this category" over a collection of 80 owned built-in
+   ids, and the deck builder's pool is the same set ("No custom cards in the pool
+   yet", 210380). So a built-in minted here lands in Profile.cardCollection as a
+   permanent row the player can never see, never deck and never disenchant —
+   which is precisely the "their pile of it is real and inert" harm the reward
+   code already refuses elsewhere, and there is no take-back on this bridge. A
+   card that cannot be seen is worse than a card that was never promised. The
+   settings toggle says what the override means in one line: "Custom-only pool is
+   ON — built-ins hidden everywhere" (120280). Everywhere includes here.
+
+   So the answer to "may a dilemma mint a built-in card?" is NO, and the honest
+   consequence is that the MODAL must stop advertising a card on an install with
+   no pool. That is a sentence rewards.js writes (`describeChoice`, which is pure
+   and takes no host), so this side of the seam ships the fact and the module
+   side gates on it. `cardPoolSize()` below is that fact.
+
+   ⚠ IT APPLIES grantCard's OWN FILTER, not getCardPoolForPacks' raw length. An
+   admin-only card is in the pack pool — neither getCardPoolForPacks nor openPack
+   nor _rollLootCard consults the Forge obtainability gates (read all three; there
+   is no call) — and grantCard deliberately does not inherit that hole. A size
+   that counted cards grantCard would then refuse would be a NEW way of promising
+   a card that cannot arrive, one layer further in.
+   ⚠ Heroes are never here. getCardPoolForPacks's includeHeroes branch is
+   literally `if (false && …)` (65076), left as a decision rather than deleted. */
+function _dilemmaCardPool() {
+  if (typeof getCardPoolForPacks !== 'function') return null;
+  const raw = getCardPoolForPacks({ includeHeroes: false }) || [];
+  return raw.filter((p) => {
+    if (!p || !p.card || !p.card.id) return false;
+    try { return (typeof isForgeLootable !== 'function') || isForgeLootable('card', p.card.id); } catch (e) { return true; }
+  });
+}
 window.MythicDilemmaBridge = {
 
   // ── Persisted state ───────────────────────────────────────────────────────
@@ -207814,8 +207871,58 @@ window.MythicDilemmaBridge = {
   /* ⚠ _cardDefById, NOT _lqCard. _lqCard (72909) searches ONLY Forge.customCards
      and returns null for every built-in UNIT_CARDS entry, which is why the
      shipped values system only ever evaluates custom cards. A deck of built-ins
-     must not come back opinion-less for that reason. */
-  cardById: (id) => { try { return _cardDefById(id) || null; } catch (e) { return null; } },
+     must not come back opinion-less for that reason.
+
+     🦸 AND THE HERO FALLBACK, WHICH IS THE WHOLE REASON THE PLAYER'S OWN HERO
+     STOPPED READING AS A STRANGER. _cardDefById's entire body is
+     `resolveDeckCard('custom:' + id) || resolveDeckCard('unit:' + id)` plus a
+     getAllCustomCards() sweep (87464) — it never looks at STARTER_HEROES, and a
+     hero is not in UNIT_CARDS. engine.js asks this accessor for the hero row
+     (`host.cardById(ld.heroId)`, engine.js:772) because the hero enters the
+     field separately from the deck and is prepended rather than found among the
+     card keys. So a BUILT-IN starter hero came back null, render.js's
+     `unknown = !unit.card` went true, and the roster painted the player's own
+     Sir Cedric in the Unlisted treatment — italic grey, a "Unlisted" tag, and
+     the tooltip "this card travelled with you, but its definition was never
+     published on this device. It has no view here." Driven in the real page on
+     a saved deck whose heroId is 'cedric': that sentence was printed in the
+     same tick in which `findHeroById('cedric').name` returned "Sir Cedric".
+     Side by side with a deliberately nonexistent `unit:ghost_nobody`, the real
+     hero and the ghost were painted identically. The hero also had no opinions
+     — stance "— No view" on 48/48 (dilemma × choice) pairs, bond moving 0/48 —
+     because valueProfile() has nothing to read off a null card. And render.js's
+     `.tag.hero` "Hero" label (render.js:887) was dead code for every built-in
+     hero, because `unknown` always won that ternary.
+
+     ⚠ findHeroById (54684), NOT a bare STARTER_HEROES scan. It applies the
+     custom-hero precedence rule the deck pickers use — with useCustomOnlyPool
+     ON (the production default, forced at 68464) a CUSTOM hero sharing a
+     starter's id must win, or the modal names one hero while the deck builder
+     shows another. That is the "Vex shows as Zarra" symptom the comment at
+     54676 was written for, and a second lookup order here would re-open it.
+
+     ⚠ ORDER MATTERS AND _cardDefById STAYS FIRST. Every id this accessor is
+     asked about is a UNIT id except one; putting the hero lookup first would
+     make a card/hero id collision resolve as the hero for the whole roster.
+     Only ids no card definition answers for reach the fallback, and on this
+     seam that set is exactly "the hero".
+
+     The alternative was a separate `heroById()` accessor with engine.js pointing
+     its hero row at it — engine.js:767 calls that "the round-2 fix" by name.
+     It is not taken because it needs an edit in a file this owner does not own,
+     and round 2's lesson was that a defect split across two owners is how bugs
+     get reintroduced. This closes it on one side of the seam, changes no module
+     line, and every other caller of cardById is strictly unaffected: heroes are
+     never in the pack pool (getCardPoolForPacks's includeHeroes branch is
+     literally `if (false && …)`, 65076), so rewards.js's inert-card verifier
+     (rewards.js:1158-1160) can never be handed a hero id to re-resolve. */
+  cardById: (id) => {
+    try {
+      return _cardDefById(id)
+          || ((typeof findHeroById === 'function') ? findHeroById(id) : null)
+          || null;
+    } catch (e) { return null; }
+  },
   /* ⚠ NOTHING IN /src/dilemma CALLS THIS. It used to say "MANDATORY", which is
      a false word for an accessor with no consumer, and the same is true of
      `confirm` and `isAdmin` below. None of the three is removed: all three are
@@ -208000,11 +208107,49 @@ window.MythicDilemmaBridge = {
      It is for AUDITABILITY, never for authorisation: sql/034 is blunt about it
      ("p_reason CARRIES NO AUTHORITY. It is a client-supplied string."). */
   addGems: (n, reason) => { try { addGems(n | 0, String(reason || 'Dilemma')); return true; } catch (e) { return false; } },
+  /* 🃏 HOW MANY CARDS THIS INSTALL CAN ACTUALLY HAND OUT — the signal that lets
+     the modal stop promising one it cannot deliver.
+
+     THE DEFECT IT CLOSES, ON THIS SIDE OF THE SEAM. rewards.js prints the card
+     leg of a choice's consequence block as "a card (20%)" from the authored
+     odds alone, and grantCard was returning null 202 commits out of 202 on a
+     stock install because the pack pool is empty there (the measurement, and why
+     a built-in fallback is the wrong answer, are in `_dilemmaCardPool` above).
+     A percentage that can only ever resolve to "nothing came out of the ruins"
+     is the modal taking a fact away from the player.
+     This is the fact. `describeChoice()` is a PURE function that takes no host
+     (rewards.js:340-350), so the module's own layer must carry it across —
+     index.js's `describe` handler is the one place that both calls
+     describeChoice() and holds a host, and it is already the place that fills in
+     `affordable` for exactly the same reason (index.js:763). A card clause
+     gated on `cardPoolSize() === 0` says nothing rather than something false.
+
+     ⚠ THE SAME POOL grantCard PICKS FROM, by construction — one builder, two
+     callers. Two filters that agree today are two filters that disagree the day
+     one of them is edited, and the failure that lands on the player is a modal
+     promising a card the granter will refuse.
+     ⚠ `null` MEANS "UNREADABLE", 0 MEANS "EMPTY", and the difference decides
+     opposite behaviours: a reader that cannot tell them apart must SHOW the card
+     clause (an unverifiable promise is not a false one — the same rule
+     rewards.js applies to its inert-card check, where a miss outside the
+     verifier's domain is silence rather than a finding). Only a hard 0 licenses
+     suppressing it. This mirrors `gems()` above, which is the bridge's one other
+     accessor allowed to say "unreadable", and for the same reason: collapsing an
+     unreadable answer onto a real value is how round 1 lost a player's money.
+     ⚠ IT IS NOT CACHED. An admin can publish a catalog, or forge a card, in the
+     same session the modal is open, and a size answered from a snapshot would
+     go on hiding a reward that had become deliverable. The pool build is a
+     filter over a few dozen entries and this is called once per rendered
+     choice — the same order of work as the four state clones the tile already
+     pays per render, and stated for the same reason: it is the price of the
+     invariant, not something to optimise away. */
+  cardPoolSize: () => { try { const p = _dilemmaCardPool(); return p ? p.length : null; } catch (e) { return null; } },
   /* 🃏 THE CARD GRANT. _rollLootCard (77253-77287) is the model — pool from
      getCardPoolForPacks, up to six rarity rolls, uniform fallback, increment
      Profile.cardCollection, save — with two deliberate differences:
-       • IT FILTERS isForgeLootable('card', id). Neither getCardPoolForPacks nor
-         openPack nor _rollLootCard consults the Forge obtainability gates at
+       • IT FILTERS isForgeLootable('card', id) — now via `_dilemmaCardPool`,
+         which is also what cardPoolSize() counts. Neither getCardPoolForPacks
+         nor openPack nor _rollLootCard consults the Forge obtainability gates at
          all (read all three bodies; there is no call), so an admin-only card can
          already drop from a pack today. Not inheriting that hole is a one-line
          improvement over the paths this copies.
@@ -208018,18 +208163,16 @@ window.MythicDilemmaBridge = {
      Forge.useCustomOnlyPool suppresses every built-in array
      (getCardPoolForPacks, 65038; the customOnly branch at 65040), so a
      custom-only install with nothing published has no pool. The module reads
-     null as "the ruins were bare", not as an error.
+     null as "the ruins were bare", not as an error — and that delivery-side
+     sentence is honest and stays. It is the ADVERTISEMENT that was not, which is
+     what cardPoolSize() above is for.
      ⚠ Heroes are never here. getCardPoolForPacks's includeHeroes branch is
      literally `if (false && …)` (65076), left as a decision rather than deleted. */
   grantCard: (opts) => {
     try {
-      if (typeof getCardPoolForPacks !== 'function') return null;
       const want = (opts && opts.rarity) ? String(opts.rarity) : null;
-      const pool = (getCardPoolForPacks({ includeHeroes: false }) || []).filter((p) => {
-        if (!p || !p.card || !p.card.id) return false;
-        try { return (typeof isForgeLootable !== 'function') || isForgeLootable('card', p.card.id); } catch (e) { return true; }
-      });
-      if (!pool.length) return null;
+      const pool = _dilemmaCardPool();
+      if (!pool || !pool.length) return null;
       const byRarity = (rid) => pool.filter((p) => { try { return getRarity(p.card).id === rid; } catch (e) { return false; } });
       let pick = null;
       if (want) { const m = byRarity(want); if (m.length) pick = m[Math.floor(Math.random() * m.length)]; }

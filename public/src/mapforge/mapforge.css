@@ -107,3 +107,11 @@
 @media (max-width:1100px){#mf-root{grid-template-columns:200px 1fr 260px}}
 @media (max-width:800px){#mf-root{grid-template-columns:1fr;grid-template-rows:46px 1fr 42vh;grid-template-areas:"top" "canvas" "right"}
   .mf-left{display:none}.mf-right{border-left:none;border-top:1px solid var(--mf-line)}}
+.mf-sub{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--mf-dim);margin:4px 0 4px}
+.mf-asset .tag{font-size:9.5px;letter-spacing:.06em;color:var(--mf-dim);border:1px solid var(--mf-line);border-radius:10px;padding:1px 6px}
+.mf-asset .rl{color:var(--mf-blue);padding:0 4px}
+.mf-asset small{color:var(--mf-dim);font-size:10px}
+.mf-gamehead{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--mf-gold);margin:8px 0 4px}
+.mf-map .t .tag.live{color:#ffd23f;border-color:rgba(255,210,63,.6);background:rgba(255,210,63,.1);font-weight:700}
+.mf-canvas.drop::after{content:"Drop .glb to add it to this map";position:absolute;inset:12px;border:2px dashed var(--mf-gold);border-radius:10px;display:flex;align-items:center;justify-content:center;color:#ffe9a8;background:rgba(11,13,20,.55);font-size:15px;pointer-events:none}
+#mf-root code{font:11px ui-monospace,monospace;background:#0a0c12;border:1px solid var(--mf-line);border-radius:4px;padding:0 4px;color:#ffe9a8}

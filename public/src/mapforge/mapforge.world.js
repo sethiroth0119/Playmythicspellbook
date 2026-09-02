@@ -2,10 +2,11 @@
 
    This is the RUNTIME half and it is deliberately editor-free: the game can
    call buildWorld(window.THREE, mapJson, { scene }) from anywhere that has a
-   scene (the 3D battle board, a hub, node-city) and get back terrain, water,
-   sky, lights and every placed object, plus heightAt(x,z) for walking on it.
-   The editor uses this exact function and layers its tools on top, which is
-   what guarantees "what you built is what the game loads". */
+   scene (the 3D battle board, a hub, node-city, any mini-game) and get back
+   terrain, water, sky, lights and every placed object, plus heightAt(x,z)
+   for walking on it and animation playback for .glb models. The editor uses
+   this exact function and layers its tools on top, which is what guarantees
+   "what you built is what the game loads". */
 
 import { createTerrain } from './mapforge.terrain.js';
 import { createWater } from './mapforge.water.js';
@@ -24,7 +25,8 @@ export function buildWorld(THREE, map, opts) {
   group.add(terrain.mesh, water.mesh, sky, sun, sun.target, hemi, objectsGroup);
 
   const objects = new Map();        // id → root Object3D
-  const assetCache = new Map();     // assetId → Promise<{ template, size }>
+  const mixers = new Map();         // id → { mixer, action, clip }
+  const assetCache = new Map();     // assetId → Promise<{ template, size, clips }>
   const sunDir = new THREE.Vector3(0, 1, 0);
   let time = 0, markersVisible = opts.markers !== false, gltfLoader = null;
 
@@ -35,16 +37,21 @@ export function buildWorld(THREE, map, opts) {
     return gltfLoader;
   }
 
-  /* A .glb template: loaded once per asset, recentred on XZ with its base at
-     y = 0 (the same convention as /models/README.md) and NOT rescaled — the
-     object's stored scale is the only scale, so editor and game agree. */
+  /* A .glb template: loaded once per asset — from its URL, or parsed from the
+     embedded base64 when the file was dropped in from disk — recentred on XZ
+     with its base at y = 0 (the /models/README.md convention) and NOT
+     rescaled: the object's stored scale is the only scale, so editor and game
+     agree. Animation clips ride along with the template. */
   function loadAsset(assetId) {
     if (assetCache.has(assetId)) return assetCache.get(assetId);
     const asset = (map.assets || []).find(a => a.id === assetId);
     const p = (async () => {
       const L = loader();
-      if (!asset || !L) throw new Error(asset ? 'GLTFLoader unavailable' : 'unknown asset');
-      const g = await new Promise((res, rej) => L.load(asset.url, res, undefined, rej));
+      if (!asset) throw new Error('unknown asset');
+      if (!L) throw new Error('GLTFLoader unavailable');
+      const g = asset.data
+        ? await new Promise((res, rej) => L.parse(b64ToBuffer(asset.data), '', res, rej))
+        : await new Promise((res, rej) => L.load(asset.url, res, undefined, rej));
       const scene = g.scene || (g.scenes && g.scenes[0]);
       if (!scene) throw new Error('empty glb');
       scene.updateMatrixWorld(true);
@@ -53,20 +60,39 @@ export function buildWorld(THREE, map, opts) {
       const wrap = new THREE.Group();
       scene.position.set(-c.x, -bb.min.y, -c.z);
       wrap.add(scene);
-      wrap.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
-      return { template: wrap, size };
+      wrap.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false; } });
+      const clips = (g.animations || []).filter(a => a && a.duration > 0);
+      // remember the clip names on the asset so the UI can offer them next time
+      // without loading the file (and so exports carry them)
+      if (clips.length && !asset.anims) asset.anims = clips.map(cl => cl.name || 'clip');
+      return { template: wrap, size, clips };
     })();
     p.catch(() => {});
     assetCache.set(assetId, p);
     return p;
   }
 
+  /* SkinnedMesh + clone: three's Object3D.clone does not rebind skeletons, so
+     an animated character must go through SkeletonUtils-style cloning. This is
+     that algorithm inlined (r128 has it only as an example addon). */
+  function cloneTemplate(tpl) {
+    const clone = tpl.clone();
+    const srcBones = {}, dstBones = {};
+    tpl.traverse(n => { if (n.isBone) srcBones[n.name] = n; });
+    clone.traverse(n => { if (n.isBone) dstBones[n.name] = n; });
+    const srcSkinned = [], dstSkinned = [];
+    tpl.traverse(n => { if (n.isSkinnedMesh) srcSkinned.push(n); });
+    clone.traverse(n => { if (n.isSkinnedMesh) dstSkinned.push(n); });
+    dstSkinned.forEach((dst, i) => {
+      const src = srcSkinned[i]; if (!src) return;
+      const bones = src.skeleton.bones.map(b => dstBones[b.name] || b);
+      dst.bind(new THREE.Skeleton(bones, src.skeleton.boneInverses), dst.matrixWorld);
+    });
+    return clone;
+  }
+
   function makeBody(o) {
-    if (o.t === 'glb') {
-      const body = buildProp(THREE, 'placeholder');
-      body.userData.mfPending = true;
-      return body;
-    }
+    if (o.t === 'glb') { const body = buildProp(THREE, 'placeholder'); body.userData.mfPending = true; return body; }
     return buildProp(THREE, o.t, o.c);
   }
 
@@ -83,12 +109,14 @@ export function buildWorld(THREE, map, opts) {
     root.updateMatrixWorld(true);   // raycastable NOW, not after the next render — a click right after placing must hit
     objects.set(o.id, root);
     if (o.t === 'glb') {
-      loadAsset(o.a).then(({ template }) => {
+      loadAsset(o.a).then(({ template, clips }) => {
         if (objects.get(o.id) !== root) return;      // removed while loading
         root.remove(body);
-        const real = template.clone();
+        const real = cloneTemplate(template);
         root.add(real);
-        root.userData.mfPending = false;
+        root.userData.mfPending = false; root.userData.mfClips = clips;
+        root.updateMatrixWorld(true);
+        setAnim(o.id, o.anim);
         if (opts.onAssetLoaded) opts.onAssetLoaded(o.id, root);
       }).catch(() => { root.userData.mfError = true; });
     }
@@ -96,6 +124,7 @@ export function buildWorld(THREE, map, opts) {
   }
   function removeObject(id) {
     const root = objects.get(id); if (!root) return;
+    stopAnim(id);
     objectsGroup.remove(root); objects.delete(id);
   }
   function applyTransform(root, o) {
@@ -111,7 +140,44 @@ export function buildWorld(THREE, map, opts) {
     }
     applyTransform(root, o);
     root.updateMatrixWorld(true);
+    if (o.t === 'glb') setAnim(o.id, o.anim);
     return root;
+  }
+
+  /* ── animation ──
+     One AnimationMixer per animated object; `anim` = { clip, speed, loop }.
+     Passing nothing stops the object. Mixers advance in update(dt). */
+  function stopAnim(id) {
+    const m = mixers.get(id); if (!m) return;
+    try { m.mixer.stopAllAction(); m.mixer.uncacheRoot(m.mixer.getRoot()); } catch (e) {}
+    mixers.delete(id);
+  }
+  function setAnim(id, anim) {
+    const root = objects.get(id); if (!root) return false;
+    const clips = root.userData.mfClips || [];
+    const cur = mixers.get(id);
+    if (!anim || !anim.clip) { stopAnim(id); return true; }
+    const clip = clips.find(c => c.name === anim.clip) || (anim.clip === '*' ? clips[0] : null);
+    if (!clip) { stopAnim(id); return false; }
+    if (cur && cur.clip === clip) {
+      cur.action.setEffectiveTimeScale(anim.speed == null ? 1 : anim.speed);
+      applyLoop(cur.action, anim.loop);
+      return true;
+    }
+    stopAnim(id);
+    const body = root.children[0]; if (!body) return false;
+    const mixer = new THREE.AnimationMixer(body);
+    const action = mixer.clipAction(clip);
+    action.setEffectiveTimeScale(anim.speed == null ? 1 : anim.speed);
+    applyLoop(action, anim.loop);
+    action.play();
+    mixers.set(id, { mixer, action, clip });
+    return true;
+  }
+  function applyLoop(action, loop) {
+    if (loop === 'once') { action.setLoop(THREE.LoopOnce, 1); action.clampWhenFinished = true; }
+    else if (loop === 'pingpong') action.setLoop(THREE.LoopPingPong, Infinity);
+    else action.setLoop(THREE.LoopRepeat, Infinity);
   }
 
   function applyEnv(env) {
@@ -134,11 +200,15 @@ export function buildWorld(THREE, map, opts) {
   }
 
   const api = {
-    group, terrain, water, sky, sun, hemi, objects, objectsGroup,
-    addObject, removeObject, refreshObject, applyTransform, loadAsset,
+    map, group, terrain, water, sky, sun, hemi, objects, objectsGroup, mixers,
+    addObject, removeObject, refreshObject, applyTransform, loadAsset, setAnim, stopAnim,
+    /* clips available on a placed .glb (empty until it has loaded) */
+    clipsOf: (id) => { const r = objects.get(id); return r && r.userData.mfClips ? r.userData.mfClips.map(c => c.name) : []; },
     applyEnv, applyWater: (w) => water.apply(w),
     heightAt: (x, z) => terrain.heightAt(x, z),
     spawns: () => map.objects.filter(o => o.t === 'spawn'),
+    /* every object of a type — e.g. world.find('enemy') for a mini-game's spawner */
+    find: (type) => map.objects.filter(o => o.t === type),
     setMarkersVisible(v) { markersVisible = !!v; objects.forEach(r => { if (r.userData.mfMarker) r.visible = markersVisible; }); },
     /* After the grid is resized or regenerated: water covers the new size,
        shadows cover it, grounded objects land on the new surface. */
@@ -146,9 +216,11 @@ export function buildWorld(THREE, map, opts) {
     update(dt, camera) {
       time += dt;
       water.update(time, sunDir);
+      mixers.forEach(m => m.mixer.update(dt));
       if (camera) sky.position.copy(camera.position);
     },
     dispose() {
+      mixers.forEach((m, id) => stopAnim(id));
       terrain.dispose(); water.dispose();
       try { sky.geometry.dispose(); sky.material.dispose(); } catch (e) {}
       objects.clear();
@@ -158,6 +230,17 @@ export function buildWorld(THREE, map, opts) {
   applyEnv(map.env);
   water.apply(map.water);
   return api;
+}
+
+export function b64ToBuffer(b64) {
+  const bin = atob(b64), u = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+  return u.buffer;
+}
+export function bufferToB64(buf) {
+  const u = new Uint8Array(buf); let s = '';
+  for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
+  return btoa(s);
 }
 
 /* Gradient sky dome with a soft sun glow. Camera-following, fog-free,

@@ -54,6 +54,7 @@ export function newMap(opts) {
     id: opts.id || uid('map_'),
     name: opts.name || 'Untitled world',
     description: '',
+    game: String(opts.game || 'sandbox').slice(0, 40),   // which mini-game this world belongs to
     terrain: {
       n, cell,
       heights: new Array(verts).fill(0),
@@ -78,6 +79,7 @@ export function normalize(raw) {
   m.id = typeof raw.id === 'string' && raw.id ? raw.id : m.id;
   m.name = String(raw.name || m.name).slice(0, 80);
   m.description = String(raw.description || '').slice(0, 2000);
+  m.game = gameId(raw.game) || 'sandbox';
 
   const t = raw.terrain || {};
   const n = clampInt(t.n, 16, 160, 64);
@@ -116,9 +118,17 @@ export function normalize(raw) {
     groundColor: hex(e.groundColor, p.groundColor),
   };
 
+  /* An asset is EITHER a URL (a file under /models/ or any CORS-enabled host)
+     OR an embedded .glb (`data`, base64) dropped in from disk. `anims` caches
+     the clip names found in the file so the inspector can list them before
+     the model has loaded. */
   m.assets = (Array.isArray(raw.assets) ? raw.assets : []).map(a => a && typeof a === 'object' ? ({
-    id: String(a.id || uid('a_')), label: String(a.label || 'Model').slice(0, 60), url: String(a.url || '').slice(0, 1000),
-  }) : null).filter(a => a && a.url);
+    id: String(a.id || uid('a_')), label: String(a.label || 'Model').slice(0, 60),
+    url: a.url ? String(a.url).slice(0, 1000) : undefined,
+    data: (typeof a.data === 'string' && a.data.length) ? a.data : undefined,
+    anims: Array.isArray(a.anims) ? a.anims.map(x => String(x).slice(0, 80)).slice(0, 64) : undefined,
+    size: Number.isFinite(+a.size) ? +a.size : undefined,
+  }) : null).filter(a => a && (a.url || a.data));
 
   const assetIds = new Set(m.assets.map(a => a.id));
   m.objects = (Array.isArray(raw.objects) ? raw.objects : []).map(o => normalizeObject(o, assetIds)).filter(Boolean);
@@ -142,8 +152,21 @@ export function normalizeObject(o, assetIds) {
     c: o.c ? hex(o.c, null) || undefined : undefined,
     n: o.n ? String(o.n).slice(0, 60) : undefined,
     g: o.g !== false,
+    anim: normalizeAnim(o.anim),
   };
 }
+
+export const LOOP_MODES = ['repeat', 'once', 'pingpong'];
+export function normalizeAnim(a) {
+  if (!a || typeof a !== 'object' || !a.clip) return undefined;
+  return { clip: String(a.clip).slice(0, 80), speed: clampNum(a.speed, 0, 8, 1), loop: LOOP_MODES.includes(a.loop) ? a.loop : 'repeat' };
+}
+export function gameId(v) { return String(v == null ? '' : v).trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40); }
+
+/* Bytes of an asset as stored: embedded data dominates. Used for the
+   "this map is getting heavy" warnings and the cloud row cap. */
+export function assetBytes(a) { return a && a.data ? Math.round(a.data.length * 0.75) : 0; }
+export function embeddedBytes(m) { return (m.assets || []).reduce((n, a) => n + assetBytes(a), 0); }
 
 /* Deep copy suitable for storage/export. Heights are rounded to cm so the
    JSON stays compact without visibly changing the terrain. */

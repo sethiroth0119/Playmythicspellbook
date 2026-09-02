@@ -10,6 +10,8 @@
 
 import { openEditor, closeEditor, isOpen, current } from './mapforge.editor.js';
 import { buildWorld } from './mapforge.world.js';
+import { mountWorld } from './mapforge.engine.js';
+import { createPlayer } from './mapforge.player.js';
 import { newMap, normalize, serialize, PAINT, ENV_PRESETS, MAP_VERSION } from './mapforge.format.js';
 import { PROP_CATALOG } from './mapforge.props.js';
 import * as api from './mapforge.api.js';
@@ -21,8 +23,10 @@ const MythicMapForge = {
   isOpen,
   editor: current,
   buildWorld,
+  /* the engine entry for mini-games: await MythicMapForge.engine.mount(el, { game: 'card-shop' }) */
+  engine: { mount: mountWorld, createPlayer },
   format: { newMap, normalize, serialize, PAINT, ENV_PRESETS, PROP_CATALOG },
-  maps: { list: api.listMaps, load: api.loadMap, save: api.saveMap, remove: api.deleteMap },
+  maps: { list: api.listMaps, load: api.loadMap, save: api.saveMap, remove: api.deleteMap, setLive: api.setLive, loadLive: api.loadLive },
 };
 
 try { window.MythicMapForge = MythicMapForge; } catch (e) {}

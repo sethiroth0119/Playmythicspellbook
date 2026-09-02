@@ -1,0 +1,5 @@
+{
+  "_readme": "World Forge project library. Every entry shows up under Library → Models → Project. Drop the .glb next to this file, add a line here, deploy. Y-up, metres, origin at the base. `anims` is optional and only a hint — the editor reads the real clip names from the file.",
+  "models": [
+  ]
+}

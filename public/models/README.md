@@ -32,3 +32,22 @@ Each station has `x, z` (position), `ry` (facing), `scale`. The label + accent g
 are kept automatically; only the geometry is swapped for your model.
 
 Free model sources: Quaternius, Poly Pizza, Kenney, Sketchfab (download as `.glb`).
+
+## ⚒ World Forge project library
+
+`manifest.json` in this folder lists models the **World Forge** map creator offers
+under *Library → Models → Project*. Add an entry per file:
+
+```json
+{ "models": [
+  { "id": "oak_big",   "label": "Big oak",        "url": "/models/oak_big.glb",   "cat": "Nature" },
+  { "id": "knight",    "label": "Knight (idle/walk/attack)", "url": "/models/knight.glb", "cat": "Characters", "anims": ["Idle", "Walk", "Attack"] }
+] }
+```
+
+Files here are **game assets shipped with a deploy**, which is the right home
+for anything a mini-game depends on. Dropping a `.glb` straight onto the editor
+canvas also works: it is embedded into that map's document (fine for trying
+things out; use this folder for production so the map stays small and the
+file is cached by the CDN). Animated models keep their clips — pick one in the
+inspector.

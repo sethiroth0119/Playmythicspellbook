@@ -120132,6 +120132,15 @@ function renderPricingAdmin() {
       </div>
 
       <div class="settings-section">
+        <div class="settings-section-title">⚒ World Forge — 3D Map Creator</div>
+        <div class="settings-section-desc">
+          Build free-form 3D worlds: sculpt and paint terrain, set a water level, drop props and your own <strong>.glb</strong> models with a move/rotate/scale gizmo, tune sun, sky and fog, then walk the map in Play mode. Maps save to the cloud (once <code>sql/038_world_maps.sql</code> is applied) or to this device, and export as JSON. Lives in <code>/src/mapforge/</code>; it is separate from the Battlemap Editor above, which paints the fixed battle grid.
+        </div>
+        <button id="open-map-creator" class="btn-secondary" style="margin-top:0.7rem;width:100%;background:linear-gradient(180deg,#e7c757,#d4af37);color:#1a1206;font-weight:800;border:1px solid #e7c757">⚒ Open World Forge</button>
+        <div class="small-text ink-dim" style="margin-top:0.5rem">Also reachable at <code>?mapforge=1</code>. Press <strong>H</strong> inside for the controls.</div>
+      </div>
+
+      <div class="settings-section">
         <div class="settings-section-title">🖤 Black Market Prices (Admin)</div>
         <div class="settings-section-desc">What the Black Market pays players per <strong>duplicate</strong> card, by rarity. Blank = use the built-in default (shown as the placeholder). These ride the published catalog — after saving, click <strong>📚 Publish</strong> so every player gets the new rates. Players obtain duplicates by opening packs / clearing content; the 2nd+ copy of any card is sellable here.</div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.6rem;margin-top:0.6rem">
@@ -120971,6 +120980,17 @@ function renderPricingAdmin() {
   // 🗺️ Open the Battlemap Editor (Phase 2) — terrain paint + 3D model placement.
   const bmeBtn = document.getElementById('open-battlemap-editor');
   if (bmeBtn) bmeBtn.onclick = () => { try { _bmeOpen(); } catch (e) { try { console.warn('[bme] open failed', e); } catch (_) {} } };
+
+  // ⚒ World Forge — the free-form 3D map creator (/src/mapforge, an ES module).
+  //    window.MythicMapForge is registered by that module; if it has not loaded
+  //    (404, blocked script) the button says so rather than doing nothing.
+  const mfBtn = document.getElementById('open-map-creator');
+  if (mfBtn) mfBtn.onclick = () => {
+    try {
+      if (window.MythicMapForge && window.MythicMapForge.open) window.MythicMapForge.open();
+      else showToast('World Forge is still loading — try again in a moment.', 2600);
+    } catch (e) { try { console.warn('[mapforge] open failed', e); } catch (_) {} }
+  };
 
   // ⛧ Preview the new Mythic Summon ritual VFX (unwired — preview only).
   document.querySelectorAll('[data-vsm-prev]').forEach(btn => {
@@ -223096,6 +223116,20 @@ render();
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
 <script type="module" src="src/resources/chain.js?v=v120w6chain2"></script>
+<!-- ⚒ WORLD FORGE — the 3D map creator (terrain, water, props, .glb models,
+     gizmo, sky, Play mode). Registers window.MythicMapForge and is INERT until
+     opened from the admin panel button or ?mapforge=1: three.js (the r128
+     global build the battle board already uses) is fetched on open, never at
+     boot. It reads the legacy app only through window.MythicBridge (signed-in
+     state, Supabase client, toasts, confirm) — the globals trap — and works
+     with no bridge at all, saving to this device.
+     Cloud saves need sql/038_world_maps.sql; until then it says so and saves
+     locally. buildWorld() is exported for the game to load a map into any
+     r128 scene — docs/map-forge.md.
+     ⚠ If this 404s nothing changes — the button reports "still loading".
+     ⚠ Bump ?v= on every change — the service worker caches /src/* like any
+       other static asset, and a missed bump ships invisibly. -->
+<script type="module" src="src/mapforge/index.js?v=mf1"></script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the

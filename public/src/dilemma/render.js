@@ -291,8 +291,35 @@ export const DILEMMA_CSS = `
 #${OV} .md-place{font-family:'Cinzel',serif;font-size:.7rem;letter-spacing:.14em;
   text-transform:uppercase;color:var(--md-acc);display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
 #${OV} .md-place .dot{color:#5c5343}
+/* 🔴 THE CLOSE ✕ IS DRAWN, NOT TYPED, AND THAT IS THE FIX.
+   It used to be the literal character U+2715 as the button's text. A text
+   glyph's size, weight and even its COLOUR belong to whichever font the
+   browser picks for it, and this modal inherits the host page's stack — so
+   the fallback differs per machine. Reported from a real screenshot: the ✕
+   came out white and nearly filling its box, where the same build here draws
+   it amber and comfortably inside. Both are "correct" font fallback; neither
+   is a layout bug, which is why measuring the old rule in this Chromium found
+   the glyph perfectly centred (offset 0.0/0.0) and proved nothing.
+   Two rotated bars owe nothing to a font: they are exactly 13x1.5, they take
+   currentColor so the hover and focus states still drive them, and they
+   cannot be swapped for an emoji face that ignores the colour property.
+   ⚠ The button is deliberately EMPTY. Its accessible name comes from
+   aria-label (see the markup), so there is no text for a screen reader to
+   read twice and nothing for a font to reinterpret.
+   ⚠⚠ NO BACKTICKS IN THIS COMMENT, EVER. Everything from DILEMMA_CSS's opening
+   backtick to its closing one is a template literal, so a backtick used as
+   quoting punctuation inside a comment HERE ends the CSS string early. Two of
+   them balance out, which means node --check still passes and the stylesheet
+   is silently cut into pieces at runtime — this exact comment was written that
+   way once and the modal lost every rule below this point. Quote CSS
+   identifiers with plain words instead. */
 #${OV} .md-x{background:none;border:1px solid rgba(210,164,78,.5);color:#e2c37a;border-radius:8px;
-  width:32px;height:32px;flex:none;cursor:pointer;font-size:1rem;font-family:inherit}
+  width:32px;height:32px;flex:none;cursor:pointer;padding:0;position:relative}
+#${OV} .md-x::before,#${OV} .md-x::after{content:'';position:absolute;left:50%;top:50%;
+  width:13px;height:1.5px;margin:-.75px 0 0 -6.5px;background:currentColor;border-radius:1px}
+#${OV} .md-x::before{transform:rotate(45deg)}
+#${OV} .md-x::after{transform:rotate(-45deg)}
+@media (forced-colors:active){#${OV} .md-x::before,#${OV} .md-x::after{background:ButtonText}}
 #${OV} .md-x:hover{border-color:#f6dc95;color:#f6dc95}
 #${OV} .md-x:focus-visible,#${OV} button:focus-visible{outline:2px solid #f6dc95;outline-offset:2px}
 
@@ -700,7 +727,7 @@ function headerHtml() {
         esc((r && r.icon) || '👤')} ${esc((r && r.name) || 'Unknown Face')}</span>
       <span class="nm">Standing ${inf} / ${DILEMMA_ECON.influenceCap}</span>
     </span>
-    <button class="md-x" data-md="close" aria-label="Close" title="Close">✕</button>
+    <button class="md-x" data-md="close" aria-label="Close" title="Close"></button>
   </div>`;
 }
 

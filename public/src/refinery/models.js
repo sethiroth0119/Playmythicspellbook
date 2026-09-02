@@ -140,25 +140,35 @@ export function preload(slot) {
   if (!L) { cache.set(slot, { status: 'error', root: null, clips: [], err: '3D loader unavailable', url }); return Promise.resolve(null); }
 
   const p = new Promise(resolve => {
+    /* ⚠ ONE SETTLE GATE, AND THE SUCCESS PATH DOES NOT CLAIM IT EARLY.
+       This used to set `settled = true` before normalise() ran, so a model
+       that FAILED to normalise — an export with no visible geometry, a flat
+       one, anything the guards below reject — reached fail(), hit its own
+       `if (settled) return`, and the promise NEVER RESOLVED. The slot stuck on
+       'pending' forever, preloadAll() never settled, and the .then(rebuild)
+       that redraws the yard with everyone's other models never fired. One bad
+       url from an admin would have quietly frozen the model registry for every
+       player, with a spinner and no error. */
     let settled = false;
-    const fail = (msg) => {
-      if (settled) return; settled = true;
+    const settle = (fn) => { if (settled) return; settled = true; fn(); };
+    const fail = (msg) => settle(() => {
       cache.set(slot, { status: 'error', root: null, clips: [], err: String(msg || 'load failed'), url });
       try { console.warn('[refinery/models] ' + slot + ': ' + msg); } catch (e) {}
       resolve(null);
-    };
+    });
+    const ready = (root, clips) => settle(() => {
+      cache.set(slot, { status: 'ready', root, clips: clips || [], url });
+      resolve(root);
+    });
     /* A url that never answers would leave the slot 'pending' forever and the
        admin panel would show a spinner with no explanation. */
     const timer = setTimeout(() => fail('timed out after 20s'), 20000);
     try {
       L.load(url, (gltf) => {
         clearTimeout(timer);
-        if (settled) return; settled = true;
         try {
-          const root = normalise(gltf.scene || gltf.scenes[0], SLOTS[slot]);
-          cache.set(slot, { status: 'ready', root, clips: gltf.animations || [], url });
-          resolve(root);
-        } catch (e) { fail(e && e.message); }
+          ready(normalise(gltf.scene || gltf.scenes[0], SLOTS[slot]), gltf.animations);
+        } catch (e) { fail((e && e.message) || 'could not be prepared'); }
       }, null, (e) => { clearTimeout(timer); fail((e && (e.message || e.type)) || 'network error'); });
     } catch (e) { clearTimeout(timer); fail(e && e.message); }
   });

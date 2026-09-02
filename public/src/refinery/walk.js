@@ -240,6 +240,9 @@ export function setWorld(self, { blockers, interactables, interiors }) {
   self.blockers = blockers || [];
   self.interactables = interactables || [];
   self.interiors = interiors || [];
+  // The yard just changed shape. If it changed shape around the player, get
+  // them out before they discover it by not being able to walk.
+  return eject(self);
 }
 
 /* ── STEP ═════════════════════════════════════════════════════════════════ */
@@ -362,12 +365,62 @@ function animateProcedural(self, dt) {
   }
 }
 
+/* ⚠ A MOVE THAT ESCAPES A BLOCKER IS ALWAYS ALLOWED.
+   This used to be a flat "is the destination inside a footprint?" test, which
+   is correct right up until the player is ALREADY inside one — and then every
+   direction is inside it too, so every step is refused and the operator is
+   stuck forever. Building does exactly that: you stand on the plot to press E,
+   and the unit you commission lands on your head.
+   eject() below is the belt; this is the braces. Even if a player ends up
+   inside geometry by some route nobody predicted, walking away from its centre
+   still works, so no state of the world can permanently trap them. */
 function blocked(self, x, z) {
   for (const b of self.blockers) {
     const dx = x - b.x, dz = z - b.z;
-    if (dx * dx + dz * dz < b.r * b.r) return true;
+    const dest2 = dx * dx + dz * dz;
+    const r2 = b.r * b.r;
+    if (dest2 >= r2) continue;                       // destination is clear of this one
+    const cx = self.pos.x - b.x, cz = self.pos.z - b.z;
+    const here2 = cx * cx + cz * cz;
+    if (here2 < r2 && dest2 > here2) continue;       // already inside, and heading out
+    return true;
   }
   return false;
+}
+
+/* Shove the player clear of anything they are standing inside. Called whenever
+   the world changes, because the world changing is how they get inside
+   something in the first place — commissioning a unit on the plot you are
+   stood on is the whole point of the build flow.
+   Iterates: pushing out of one footprint can put you inside its neighbour, and
+   a single pass would leave you in the second one. */
+export function eject(self) {
+  if (!self) return false;
+  let pushed = false;
+  for (let pass = 0; pass < 10; pass++) {
+    let moved = false;
+    for (const b of self.blockers) {
+      const dx = self.pos.x - b.x, dz = self.pos.z - b.z;
+      const d = Math.hypot(dx, dz);
+      if (d >= b.r) continue;
+      const out = b.r - d + 0.4;                     // clear it, with a margin
+      if (d < 1e-4) {
+        // Dead centre, so there is no "away" — pick a direction and commit.
+        self.pos.x += out;
+      } else {
+        self.pos.x += (dx / d) * out;
+        self.pos.z += (dz / d) * out;
+      }
+      moved = pushed = true;
+    }
+    if (!moved) break;
+  }
+  if (pushed) {
+    self.group.position.copy(self.pos);
+    self.vel.set(0, 0, 0);
+    self.speed = 0;
+  }
+  return pushed;
 }
 
 /* ── FOCUS ════════════════════════════════════════════════════════════════

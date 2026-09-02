@@ -38,11 +38,20 @@ const GROUND = 76;
 const YARD_SPAN = 88;
 const YARD_CX = 2, YARD_CZ = 3;
 const FENCE = 44;
+/* ⚠ THE GATE AND THE SPAWN ARE THE SAME POINT, and it is a verified one.
+   `_refinery_layout.mjs` at the repo root flood-fills the site and reports
+   whether a candidate spawn is clear and whether every plot and the office
+   door can be walked to from it. The old spawn was hard-coded at (0, 36) and, once the
+   site plan moved, sat INSIDE a parked truck — the player started the game
+   wedged. Re-run that script after moving anything.
+   The vehicle exit stays at x = 0: trucks leave down the spine, people come
+   in through the personnel gate, which is how a real site is laid out. */
+const GATE = { x: 17, z: 41 };
 
 /* The office sits on the apron, between the loading bays and the gate, so a
    player walks past it on the way in and out. Interior bounds are what the
    roof fade and the camera pull-in key off. */
-const OFFICE = { x: 30, z: 33, w: 13, d: 10, h: 6.4, rot: 0 };
+const OFFICE = { x: 33, z: 34, w: 13, d: 10, h: 6.4, rot: 0 };
 /* Half-width of the doorway. Generous on purpose: a door you have to line
    yourself up with is a door players walk past. */
 const DOOR_HALF = 1.9;
@@ -88,7 +97,7 @@ export function init(canvasHost, opts) {
      the operator behind it, so the first thing a player saw was the back wall
      of a shed rather than the yard they came to run. */
   player = Walk.create(scene, camera, {
-    x: 0, z: 36,
+    x: GATE.x, z: GATE.z - 2,
     onInteract: (it) => { if (hooks.onInteract) hooks.onInteract(it); },
     onEnter: (nowIn) => { if (hooks.onEnter) hooks.onEnter(nowIn); },
   });
@@ -144,7 +153,9 @@ function buildGround() {
   const post = new T.MeshStandardMaterial({ color: 0x3a3e45, roughness: 0.95 });
   for (let i = -FENCE; i <= FENCE; i += 8) {
     [[i, -FENCE], [i, FENCE], [-FENCE, i], [FENCE, i]].forEach(([x, z]) => {
-      if (Math.abs(x) < 5 && z > 0) return;      // the gate
+        // Two gaps in the south fence: the vehicle exit on the spine, and the
+      // personnel gate the player walks in through.
+      if (z > 0 && (Math.abs(x) < 5 || Math.abs(x - GATE.x) < 5)) return;
       const p = new T.Mesh(new T.BoxGeometry(0.28, 2.6, 0.28), post);
       p.position.set(x, 1.3, z); p.castShadow = true; scene.add(p);
     });
@@ -557,7 +568,7 @@ function buildFlare() {
   flame.position.y = 20; g.add(flame);
   const glow = new T.PointLight(0xff7a2f, 0, 34);
   glow.position.y = 20; g.add(glow);
-  g.position.set(30, 0, -22);
+  g.position.set(-14, 0, -34);
   g.userData.flame = flame; g.userData.glow = glow;
   root.add(g);
   flare = g;

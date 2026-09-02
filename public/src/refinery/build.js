@@ -161,23 +161,56 @@ export function commission(id) {
    two ever disagree, a player builds a tank and it appears somewhere else.
    Keep them in step: scene.js reads this function for both. */
 export function plotPosition(id, index) {
-  switch (id) {
-    case 'crudeTank': return { x: -25 + (index % 2) * 9,  z: -16 + Math.floor(index / 2) * 10 };
-    case 'cdu':       return { x: -6 + index * 8,          z: -4 };
-    case 'cracker':   return { x: 14 + index * 7,          z: -12 };
-    case 'reformer':  return { x: 22 + index * 7,          z: -14 };
-    case 'treater':   return { x: 14 + index * 7,          z: -1 };
-    case 'alky':      return { x: 23 + index * 7,          z: -2 };
-    case 'blendTank': return { x: -24 + index * 8,         z: 8 };
-    case 'storeTank': return { x: 6 + (index % 5) * 7,     z: 10 + Math.floor(index / 5) * 8 };
-    case 'bay':       return { x: -21 + index * 13,        z: 25 };
-    case 'truck':     return { x: -26 + index * 6,         z: 32 };
-    case 'lab':       return { x: 28, z: 20 };
-    case 'automation':return { x: 28, z: 27 };
-    case 'pumps':     return { x: -14 + index * 3.4,       z: 2.5 };
-    default:          return { x: 0, z: 0 };
-  }
+  const g = PLOT_GRID[id];
+  if (!g) return { x: 0, z: 0 };
+  const col = index % g.cols;
+  const row = Math.floor(index / g.cols);
+  return { x: g.x + col * g.dx, z: g.z + row * g.dz };
 }
+
+/* ⚠ THIS IS A SITE PLAN, NOT A PILE OF MAGIC NUMBERS — AND IT IS CHECKED.
+   The first version computed each type's position with its own ad-hoc
+   expression, and at full build-out produced FORTY-THREE overlapping
+   footprints: the laboratory and the automation suite ignored their index
+   entirely so every copy stacked in one spot, the automation suite stood
+   inside the office, product tanks were 7 units apart with 3.6-unit radii, and
+   the loading bays sat on top of the parked trucks. Overlapping footprints are
+   not merely ugly — a blocker inside a blocker is how a player gets wedged.
+
+   Every type now has ONE grid: an origin, a column count, and the pitch
+   between plots. Pitches are all wider than the sum of the two radii they
+   separate, and the zones are laid out so a walk from the gate reads as a
+   plant: crude in the west, process across the north, blending and product in
+   the middle, logistics and the office on the southern apron.
+
+   `_refinery_layout.mjs` at the repo root checks every pair at full build-out,
+   including the office box, and flood-fills the site to prove the spawn and
+   every plot are reachable on foot. Run it after touching any number here. */
+const PLOT_GRID = {
+  // ── West: the crude farm. Biggest footprints, so the widest pitch.
+  crudeTank:  { x: -36, z: -24, cols: 2, dx: 10, dz: 10 },   // 6 · r4.4
+
+  // ── North: the process row.
+  cracker:    { x:   8, z: -32, cols: 2, dx:  8, dz:  8 },   // 2 · r2.4
+  reformer:   { x:  26, z: -32, cols: 2, dx:  8, dz:  8 },   // 2 · r2.4
+  cdu:        { x:   6, z: -20, cols: 3, dx:  9, dz:  9 },   // 3 · r3.4
+  treater:    { x:   8, z:  -9, cols: 2, dx:  8, dz:  8 },   // 2 · r2.4
+  alky:       { x:  26, z:  -9, cols: 1, dx:  8, dz:  8 },   // 1 · r2.4
+  pumps:      { x:   6, z:   0, cols: 5, dx:  4, dz:  4 },   // 5 · r1.6
+
+  // ── Centre: blending west of the product farm, so the bench is on the way
+  //    from the crude tanks to the tank farm.
+  blendTank:  { x: -40, z:   6, cols: 2, dx: 10, dz: 10 },   // 4 · r3.4
+  storeTank:  { x: -20, z:   8, cols: 5, dx:  9, dz:  9 },   // 10 · r3.6
+
+  // ── South: the apron. Bays on the road, trucks parked behind them.
+  bay:        { x: -28, z:  30, cols: 4, dx: 14, dz: 14 },   // 4 · r5.2
+  truck:      { x: -30, z:  39, cols: 8, dx:  6, dz:  6 },   // 8 · r2.6
+
+  // ── East: the support buildings, clear of the office.
+  lab:        { x:  40, z:  -2, cols: 1, dx:  8, dz:  8 },   // 4 · r3.2  (east fence line)
+  automation: { x:  30, z:   0, cols: 1, dx:  8, dz:  8 },   // 3 · r3.2
+};
 
 /* Every plot that could be built on right now: one per type that is under its
    maximum. The player sees a marked-out pad wherever expansion is possible. */

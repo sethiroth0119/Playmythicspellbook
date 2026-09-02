@@ -43,7 +43,11 @@
 
 /* ── Body: yard on the left, work panel on the right ───────────────────── */
 .hp-body { flex: 1 1 auto; display: flex; min-height: 0; }
+/* The yard is the screen. Panels open over it when you interact with
+   something and close back to it — there is no standing side column. */
 .hp-yard { flex: 1 1 58%; min-width: 0; position: relative; background: #0b0c0d; }
+.hp-yard.hp-yard-full { flex: 1 1 100%; }
+.hp-yard-full .hp-yard-canvas { inset: 0; border-radius: 0; border: none; }
 .hp-yard-canvas { position: absolute; inset: 8px; border-radius: 8px; overflow: hidden; border: 1px solid #22252a; }
 .hp-yard-fallback { position: absolute; inset: 8px; display: flex; align-items: center; justify-content: center;
   text-align: center; color: #8d959e; padding: 24px; border: 1px dashed #2c3036; border-radius: 8px; }
@@ -231,7 +235,10 @@
 /* Camera toggle + the control legend. */
 .hp-yardctl { position: absolute; left: 14px; top: 14px; z-index: 6; display: flex;
   align-items: center; gap: 10px; flex-wrap: wrap; }
-.hp-keys { font-size: 10px; color: #6f7780; letter-spacing: .04em; pointer-events: none; }
+/* Readable over the yard, which is dark but not black. #6f7780 vanished
+   against the asphalt. */
+.hp-keys { font-size: 10.5px; color: #9aa2ab; letter-spacing: .04em; pointer-events: none;
+  background: rgba(11,12,13,.72); border: 1px solid #24272c; border-radius: 5px; padding: 4px 9px; }
 .hp-keys b { color: #e8a13a; }
 @media (pointer: coarse) { .hp-keys { display: none; } }
 
@@ -312,4 +319,24 @@
   .hp-modal { padding: 10px; }
   .hp-bom { grid-template-columns: 20px 1fr auto; }
   .hp-bom .hv { grid-column: 2 / -1; text-align: left; }
+}
+
+
+/* ── Panel modals ────────────────────────────────────────────────────────
+   Every station panel opens here, so they all share one frame, one close
+   affordance and one Esc. Sized to hold a full bench without the page
+   scrolling behind it. */
+.hp-modal-box { width: min(720px, 100%); max-height: min(88vh, 100%); }
+.hp-modal-hd .hp-esc { font-size: 10px; letter-spacing: .04em; }
+@media (max-width: 720px) { .hp-modal-hd .hp-esc { display: none; } }
+
+/* The office terminal's own tabs — contracts, plant, ledger all live on the
+   same desk, so they are tabs within one panel rather than three walk-ups. */
+.hp-subtabs { padding: 0 0 10px; gap: 4px; }
+.hp-subtabs .hp-tab { border-bottom: 1px solid #2c3036; border-radius: 6px; }
+.hp-subtabs .hp-tab.on { border-color: #a9772a; }
+
+@media (max-width: 900px) {
+  .hp-yard { flex: 1 1 100%; }
+  .hp-modal-box { width: 100%; max-height: 100%; }
 }

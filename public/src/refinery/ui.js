@@ -20,7 +20,7 @@ import * as Models from './models.js';
 import * as Walk from './walk.js';
 
 let el = null;                 // #hp-overlay
-let tab = 'intake';
+
 let run = null;                // live Sim run, or null
 let runTimer = 0, sessionTimer = 0;
 let bench = {};                // componentId -> litres on the bench
@@ -104,6 +104,7 @@ function showFallback() {
 
 export function close() {
   if (!el) return;
+  try { window.removeEventListener('keydown', escHandler); } catch (e) {}
   try { clearInterval(sessionTimer); } catch (e) {}
   try { clearInterval(runTimer); } catch (e) {}
   sessionTimer = runTimer = 0;
@@ -130,8 +131,9 @@ function onInteract(it) {
   if (!it) return;
   if (it.act === 'build') { openBuild(it.buildId); return; }
   if (it.act === 'door') { return; }            // the door opens on approach
-  if (it.tab === 'contracts') { openContracts(); return; }
-  if (it.tab) { tab = it.tab; paint(); }
+  if (it.tab === 'contracts') { officeTab = 'contracts'; openPanel('office'); return; }
+  if (it.tab === 'ledger') { officeTab = 'ledger'; openPanel('office'); return; }
+  if (it.tab) openPanel(it.tab);
 }
 
 /* Stepping in or out of the office. The roof handles itself in the scene; this
@@ -171,7 +173,11 @@ function shell() {
       '<button class="hp-x" id="hp-close">✕ Leave Yard</button>' +
     '</div>' +
     '<div class="hp-body">' +
-      '<div class="hp-yard">' +
+      /* ⚠ NO STANDING SIDE PANEL. The yard used to share the screen with a
+         tab strip that was always showing something, which meant the walking
+         was decoration next to a menu. Panels now open only when you go and
+         interact with the thing they belong to, and close back to the yard. */
+      '<div class="hp-yard hp-yard-full">' +
         '<div class="hp-yard-canvas" id="hp-yard-canvas"></div>' +
         /* The walking HUD. Sits over the canvas and is the only thing telling
            the player what pressing E will do, so it is never hidden. */
@@ -183,10 +189,6 @@ function shell() {
         '<div class="hp-stick" id="hp-stick" hidden><i></i></div>' +
         '<button class="hp-ebtn" id="hp-ebtn" hidden>E</button>' +
         '<div id="hp-flash"></div>' +
-      '</div>' +
-      '<div class="hp-side">' +
-        '<div class="hp-tabs" id="hp-tabs"></div>' +
-        '<div class="hp-pane" id="hp-pane"></div>' +
       '</div>' +
     '</div>';
 }
@@ -201,18 +203,22 @@ const TABS = [
   ['ledger',  '📊 Ledger'],
 ];
 
+function escHandler(e) {
+  if (e.key !== 'Escape' || !el) return;
+  if (modal) { e.preventDefault(); closeModal(); return; }
+  close();
+}
+
 function bind() {
   el.querySelector('#hp-close').onclick = () => { close(); };
   // Delegated, bound once — see the note in paint().
-  el.querySelector('#hp-tabs').addEventListener('click', e => {
-    const t = e.target.closest('[data-tab]');
-    if (!t) return;
-    tab = t.dataset.tab;
-    paint();
-  });
+
   // Esc leaves the yard. The overlay is fixed and full-screen, so without this
   // there is no keyboard exit at all.
-  el.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
+  /* Esc backs OUT one level: a panel first, the yard only when nothing is
+     open. Closing the whole feature out from under an open panel is the kind
+     of thing that loses a blend somebody was halfway through. */
+  window.addEventListener('keydown', escHandler);
   el.tabIndex = -1; el.focus();
 }
 
@@ -221,47 +227,67 @@ export function paint() {
   if (!el) return;
   const s = St.S();
   chips(s);
-  /* ⚠ DO NOT REWRITE THE TAB STRIP UNLESS IT CHANGED, and never rebind its
-     handlers. paint() runs on the session tick, and replacing innerHTML under
-     a pointer that is mid-click detaches the node the click was going to land
-     on — the click is simply lost. The strip now re-renders only when its
-     markup actually differs, and the click handler is DELEGATED to the
-     container (bound once in bind()) so it survives every rebuild. */
-  const strip = TABS.map(([id, label]) => {
-    let dot = '';
-    if (id === 'ship') { const n = s.contracts.filter(c => c.batchId).length; if (n) dot = '<span class="dot">' + n + '</span>'; }
-    if (id === 'blend') { const n = s.contracts.filter(c => !c.batchId).length; if (n) dot = '<span class="dot">' + n + '</span>'; }
-    return '<div class="hp-tab' + (tab === id ? ' on' : '') + '" data-tab="' + id + '">' + label + dot + '</div>';
-  }).join('');
-  const tabsEl = el.querySelector('#hp-tabs');
-  if (tabsEl.innerHTML !== strip) tabsEl.innerHTML = strip;
-
-  const pane = el.querySelector('#hp-pane');
-  /* 🔴 SAY SO WHEN A PANE THROWS. This used to be a bare assignment: an
-     exception anywhere in a pane builder aborted paint() with the PREVIOUS
-     pane still on screen, so a crash was indistinguishable from a tab that
-     simply did not respond. (It hid exactly that for real: paneRun called
-     Sim.envelope, which lives in data.js.) A visible error is worse-looking
-     and enormously better. */
+  syncYard();
+  if (!modalTab) return;                 // nothing open — the yard is the screen
+  const body = el.querySelector('#hp-modal-body');
+  if (!body) return;
+  /* 🔴 SAY SO WHEN A PANE THROWS. A bare assignment aborted paint() with the
+     previous content still on screen, so a crash was indistinguishable from a
+     panel that simply did not respond. (It hid exactly that once: paneRun
+     called Sim.envelope, which lives in data.js.) */
   try {
-    pane.innerHTML =
-        tab === 'intake' ? paneIntake(s)
-      : tab === 'run'    ? paneRun(s)
-      : tab === 'blend'  ? paneBlend(s)
-      : tab === 'ship'   ? paneShip(s)
-      : tab === 'stock'  ? paneStock(s)
-      : tab === 'yard'   ? paneYard(s)
-      :                    paneLedger(s);
+    body.innerHTML = paneFor(modalTab, s);
   } catch (err) {
-    try { console.error('[refinery] pane "' + tab + '" failed:', err); } catch (e) {}
-    pane.innerHTML = '<div class="hp-card bad"><h3>⚠ This panel failed to draw</h3>' +
+    try { console.error('[refinery] panel "' + modalTab + '" failed:', err); } catch (e) {}
+    body.innerHTML = '<div class="hp-card bad"><h3>⚠ This panel failed to draw</h3>' +
       '<div class="hp-muted">Nothing was charged and nothing was lost — the rest of the yard still works. ' +
       'Details are in the browser console.</div><div class="hp-muted" style="margin-top:8px;color:#e8593a">' +
       esc(String((err && err.message) || err)) + '</div></div>';
     return;
   }
-  wire(pane, s);
-  syncYard();
+  wire(body, s);
+  wireAdmin(body);
+  const hd = el.querySelector('#hp-modal-title');
+  if (hd) hd.textContent = PANEL_TITLE[modalTab] || 'Hidn Petro';
+}
+
+/* Which builder draws which panel. The office is a set of tabs rather than one
+   pane, because the paperwork — contracts, the plant catalogue, the company
+   ledger — all lives on the same desk. */
+const PANEL_TITLE = {
+  intake: '🛢 Crude Intake', run: '🏭 The Column', blend: '⚗️ Blending Bench',
+  ship: '🚛 Dispatch', stock: '📦 Tank Farm & Units', office: '🖥 Office Terminal',
+};
+const OFFICE_TABS = [['contracts', '📄 Contracts'], ['plant', '🏗 Plant'], ['ledger', '📊 Ledger']];
+let officeTab = 'contracts';
+
+function paneFor(t, s) {
+  if (t === 'intake') return paneIntake(s);
+  if (t === 'run')    return paneRun(s);
+  if (t === 'blend')  return paneBlend(s);
+  if (t === 'ship')   return paneShip(s);
+  if (t === 'stock')  return paneStock(s);
+  if (t === 'office') {
+    const strip = '<div class="hp-tabs hp-subtabs">' + OFFICE_TABS.map(([id, label]) =>
+      '<div class="hp-tab' + (officeTab === id ? ' on' : '') + '" data-otab="' + id + '">' + label + '</div>').join('') + '</div>';
+    const body = officeTab === 'contracts' ? paneBoard(s)
+               : officeTab === 'plant'     ? paneYard(s)
+               :                             paneLedger(s);
+    return strip + body;
+  }
+  return paneLedger(s);
+}
+
+/* Open a panel. Everything that is not the yard goes through here, so there is
+   exactly one way a panel can be on screen and exactly one way it closes. */
+function openPanel(t) {
+  openModal(
+    '<div class="hp-modal-hd"><b id="hp-modal-title">' + esc(PANEL_TITLE[t] || 'Hidn Petro') + '</b>' +
+      '<span class="hp-muted hp-esc">Esc or ✕ to get back to the yard</span>' +
+      '<button class="hp-btn sm" data-close>✕ Close</button></div>' +
+    '<div class="hp-modal-body" id="hp-modal-body"></div>');
+  modalTab = t;
+  paint();
 }
 
 function chips(s) {
@@ -360,7 +386,7 @@ function paneRun(s) {
   if (!run) {
     let h = '<div class="hp-card"><h3>🏭 Distillation <span class="r">' + (s.equip.cdu | 0) + ' column' + ((s.equip.cdu | 0) === 1 ? '' : 's') + '</span></h3>' +
       '<div class="hp-muted">Pick a barrel and take the column. The ideal temperature and pressure <b style="color:#e8a13a">drift</b> as the feed heats through and the heavy ends arrive — you are tracking a target, not holding a number.</div></div>';
-    if (!s.crude.length) return h + '<div class="hp-card hp-muted">No crude in the tanks. Buy a shipment on the Intake tab.</div>';
+    if (!s.crude.length) return h + '<div class="hp-card hp-muted">No crude in the tanks. Walk to a crude tank and take a shipment.</div>';
     for (const sh of s.crude) {
       const env = envelope(sh.api, s.equip);
       h += '<div class="hp-offer"><div class="hd"><b>' + esc(sh.gradeName) + '</b>' +
@@ -434,7 +460,7 @@ function runHint(r, sev) {
 /* Live gauge patching — see the note at the top of the file about why this is
    not a full repaint. */
 function patchRun() {
-  if (!el || tab !== 'run' || !run) return;
+  if (!el || modalTab !== 'run' || !run) return;
   const env = run.env;
   const set = (k, v, lo, hi, dp, unit) => {
     const rd = el.querySelector('[data-g-read="' + k + '"]');
@@ -476,7 +502,7 @@ function startRun(shipmentId) {
   const sh = s.crude.find(c => c.id === shipmentId);
   if (!sh) return;
   run = Sim.startRun(sh);
-  tab = 'run'; paint();
+  openPanel('run');
   clearInterval(runTimer);
   runTimer = setInterval(() => {
     if (!run) { clearInterval(runTimer); runTimer = 0; return; }
@@ -497,7 +523,7 @@ function finishRun() {
       .map(([k, v]) => (STREAMS[k] ? STREAMS[k].ico : '') + ' ' + fmt(v) + ' L ' + (STREAMS[k] ? STREAMS[k].name : k)).join(' · ');
     flash('Run complete — ' + Math.round(res.q * 100) + '% cut quality');
     St.toast('🏭 Column settled: ' + got, 6200);
-    tab = 'stock';
+    if (modalTab) openPanel('stock');
   }
   paint();
 }
@@ -674,6 +700,7 @@ function paneBlend(s) {
 
 let touchMode = false;
 let modal = null;              // the one overlay-within-the-overlay
+let modalTab = null;           // which panel it is showing, if any
 
 /* ── THE WALKING HUD ─────────────────────────────────────────────────────
    Overview toggle, and a thumbstick that only appears on a touch device. The
@@ -688,28 +715,23 @@ function bindYardHud() {
     const pr = el.querySelector('#hp-prompt'); if (pr && on) pr.hidden = true;
   };
 
-  touchMode = matchMedia('(pointer: coarse)').matches
-              && !matchMedia('(pointer: fine)').matches
-              && (navigator.maxTouchPoints || 0) > 0;
+  /* ⚠ WAIT FOR AN ACTUAL TOUCH. Every media-query and capability heuristic
+     for "is this a touch device" reports true somewhere it should not —
+     headless Chromium, desktop browsers with a trackpad, laptops with a
+     touchscreen and a keyboard — and each false positive puts a thumbstick
+     over a yard nobody is going to thumb. The first real touchstart is the
+     only signal that is never wrong, so the controls stay hidden until then. */
   const stick = el.querySelector('#hp-stick');
   const eb = el.querySelector('#hp-ebtn');
-  if (!touchMode || !stick) return;
-  stick.hidden = false;
-  if (eb) { eb.hidden = false; eb.onclick = () => { const p = Yard.getPlayer(); if (p) Walk.interact(p); }; }
-
-  /* A device that turns out to have a keyboard does not need a thumbstick over
-     its yard. Some desktop browsers and every headless one report a coarse
-     pointer, so the media query alone is not enough — the first real keypress
-     settles it. */
-  const hideOnKey = (e) => {
-    if (e.key && e.key.length && !e.metaKey && !e.ctrlKey) {
-      stick.hidden = true;
-      const b = el && el.querySelector('#hp-ebtn'); if (b) b.hidden = true;
-      touchMode = false;
-      window.removeEventListener('keydown', hideOnKey);
-    }
+  if (!stick) return;
+  const showTouch = () => {
+    if (touchMode) return;
+    touchMode = true;
+    stick.hidden = false;
+    if (eb) eb.hidden = false;
   };
-  window.addEventListener('keydown', hideOnKey);
+  window.addEventListener('touchstart', showTouch, { passive: true, once: true });
+  if (eb) eb.onclick = () => { const p = Yard.getPlayer(); if (p) Walk.interact(p); };
 
   const knob = stick.querySelector('i');
   let id = null, cx = 0, cy = 0;
@@ -757,6 +779,7 @@ function openModal(html, onWire) {
 }
 function closeModal() {
   if (modal) { try { modal.remove(); } catch (e) {} modal = null; }
+  modalTab = null;
   const p = Yard.getPlayer();
   if (p && !Yard.isOverview()) p.enabled = true;
   // Hand focus back to the yard, or the operator is unresponsive after every
@@ -785,29 +808,8 @@ function paneBoard(s) {
   return h;
 }
 
-/* ── THE OFFICE TERMINAL ─────────────────────────────────────────────────
-   The same board, opened by walking to the desk and pressing E. That is the
-   point of moving it off a tab: a contract is something you go and sign for,
-   and the office becomes somewhere you have a reason to be. */
-function openContracts() {
-  openModal(
-    '<div class="hp-modal-hd"><b>🖥 Contract Terminal</b>' +
-      '<span class="hp-muted">Hidn Petro · head office</span>' +
-      '<button class="hp-btn sm" data-close>✕ Close</button></div>' +
-    '<div class="hp-modal-body" id="hp-modal-body">' + paneBoard(St.S()) + '</div>',
-    wireBoard);
-}
-function wireBoard(m) {
-  const redraw = () => {
-    const body = m.querySelector('#hp-modal-body');
-    if (body) { body.innerHTML = paneBoard(St.S()); wireBoard(m); }
-  };
-  m.querySelectorAll('[data-take]').forEach(b => b.onclick = () => {
-    if (C.accept(b.dataset.take)) { flash('Contract signed — the spec is on the bench'); redraw(); paint(); }
-  });
-  const re = m.querySelector('#hp-reoffer');
-  if (re) re.onclick = () => { C.rollOffers(5); redraw(); };
-}
+/* The board is drawn by paneBoard() above and opened as the Contracts tab of
+   the office terminal — see paneFor(). Accepting is wired in wire(). */
 
 /* ═══ 4 · SHIPPING ═══════════════════════════════════════════════════════ */
 function paneShip(s) {
@@ -815,7 +817,7 @@ function paneShip(s) {
     '<div class="hp-muted">A tanker carries ' + fmt(St.TRUCK_L) + ' L. Bays limit how many can load at once; trucks limit how many can be out at once. Priority buys time, not capacity.</div></div>';
 
   const ready = s.batches.filter(b => b.approved);
-  if (!ready.length) h += '<div class="hp-card hp-muted">Nothing approved for shipping. Approve a batch on the Blend tab.</div>';
+  if (!ready.length) h += '<div class="hp-card hp-muted">Nothing approved for shipping. Approve a batch at a blending tank.</div>';
   for (const b of ready) {
     const job = s.contracts.find(c => c.batchId === b.id);
     if (!job) continue;
@@ -893,7 +895,7 @@ function paneStock(s) {
       (owned ? '<div class="act">' +
         '<button class="hp-btn sm" data-conv="' + cv.id + '" data-cvl="2000"' + (feed < 2000 ? ' disabled' : '') + '>Run 2,000 L</button>' +
         '<button class="hp-btn pri sm" data-conv="' + cv.id + '" data-cvl="all"' + (feed < 100 ? ' disabled' : '') + '>Run all ' + fmt(feed) + ' L</button></div>'
-      : '<div class="sub" style="color:#c2452d;margin-top:5px">Locked — build the ' + esc(EQUIPMENT[cv.unit] ? EQUIPMENT[cv.unit].name : cv.unit) + ' on the Yard tab.</div>') +
+      : '<div class="sub" style="color:#c2452d;margin-top:5px">Locked — its plot is marked out in the yard. Walk over and build the ' + esc(EQUIPMENT[cv.unit] ? EQUIPMENT[cv.unit].name : cv.unit) + '.</div>') +
     '</div>';
   }
   h += '</div>';
@@ -1132,6 +1134,7 @@ function wireAdmin(pane) {
 /* ═══ WIRING ═════════════════════════════════════════════════════════════ */
 function wire(pane, s) {
   const on = (sel, fn) => pane.querySelectorAll(sel).forEach(n => n.onclick = () => fn(n));
+  on('[data-otab]', n => { officeTab = n.dataset.otab; paint(); });
 
   // Intake
   on('#hp-reroll', () => { rollMarket(); paint(); });
@@ -1161,8 +1164,9 @@ function wire(pane, s) {
 
   // Blend
   on('#hp-reoffer', () => { C.rollOffers(5); paint(); });
+  on('[data-take]', n => { if (C.accept(n.dataset.take)) { flash('Contract signed — the spec is on the bench'); paint(); } });
   on('[data-bench]', n => { benchContract = n.dataset.bench; bench = {}; lastTest = null; paint(); });
-  on('[data-goship]', () => { tab = 'ship'; paint(); });
+  on('[data-goship]', () => openPanel('ship'));
   on('[data-drop]', async n => {
     if (!(await St.confirmAsync('Abandon this contract? You pay the penalty and take a reputation hit.'))) return;
     C.abandon(n.dataset.drop); paint();
@@ -1204,7 +1208,7 @@ function wire(pane, s) {
   on('[data-approve]', n => {
     const b = s.batches.find(x => x.id === n.dataset.approve);
     const job = s.contracts.find(c => c.batchId === b.id);
-    if (B.approve(b, job)) { tab = 'ship'; paint(); }
+    if (B.approve(b, job)) openPanel('ship');
   });
 
   // Ship
@@ -1315,7 +1319,9 @@ function sessionTick() {
      one, and dropped any click that landed in the same frame. The clocks are
      now patched in place and the pane is only rebuilt when the game state
      genuinely changed. */
-  if (dirty && !(tab === 'run' && run)) paint();
+  // Never repaint the run panel from under a live run — it is patched in
+  // place four times a second by patchRun().
+  if (dirty && !(modalTab === 'run' && run)) paint();
   else { chips(St.S()); tickClocks(); syncYard(); }
 }
 

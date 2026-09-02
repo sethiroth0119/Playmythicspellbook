@@ -167,6 +167,61 @@ export function log(level, msg) {
   if (s.log.length > 80) s.log.length = 80;
 }
 
+/* ═══ GAME RESOURCES ═════════════════════════════════════════════════════
+   The camp salvage ledger — the fourteen live resources — reached through the
+   bridge, never touched directly. Construction spends these; see build.js for
+   why the other 245 catalogued ids are deliberately not spendable here.
+   Absent bridge = zero of everything, which makes every build unaffordable
+   rather than free. That is the correct failure direction. */
+export function getRes(id) {
+  const b = bridge();
+  if (b && b.getRes) { try { return b.getRes(id) | 0; } catch (e) { return 0; } }
+  return _mockRes[id] || 0;
+}
+export function spendRes(id, n) {
+  n = Math.max(0, Math.round(n || 0));
+  if (n === 0) return true;
+  const b = bridge();
+  if (b && b.spendRes) { try { return !!b.spendRes(id, n); } catch (e) { return false; } }
+  if ((_mockRes[id] || 0) < n) return false;
+  _mockRes[id] -= n; return true;
+}
+/* ⚠ REFUND, NOT ADD. addRes enforces the stash cap and returns without adding
+   when the vault is full, which silently destroys an unwind — the city bridge
+   records the same lesson. A refund returns units the player held moments ago
+   and must not be capped away. */
+export function refundRes(id, n) {
+  n = Math.max(0, Math.round(n || 0));
+  if (n === 0) return;
+  const b = bridge();
+  if (b && b.refundRes) { try { b.refundRes(id, n); return; } catch (e) {} }
+  _mockRes[id] = (_mockRes[id] || 0) + n;
+}
+/* Stand-in stores, so the module is playable and testable with no game
+   attached. Generous on purpose — the mock exists to exercise the build flow,
+   not to be balanced against. */
+const _mockRes = { metal: 900, stone: 600, supplies: 500, wood: 300, cloth: 200,
+                   fuel: 400, corruptedEssence: 180, memoryShards: 120 };
+
+/* ═══ MODEL URLS ═════════════════════════════════════════════════════════
+   Admin-authored, cloud-synced through Forge — see models.js. */
+export function modelUrls() {
+  const b = bridge();
+  if (b && b.modelUrls) { try { return b.modelUrls() || {}; } catch (e) { return {}; } }
+  return _mockModels;
+}
+export function setModelUrl(slot, url) {
+  const b = bridge();
+  if (b && b.setModelUrl) { try { return !!b.setModelUrl(slot, url); } catch (e) { return false; } }
+  if (url) _mockModels[slot] = url; else delete _mockModels[slot];
+  return true;
+}
+const _mockModels = {};
+export function isAdmin() {
+  const b = bridge();
+  try { return !!(b && b.isAdmin && b.isAdmin()); } catch (e) { return false; }
+}
+
 /* ═══ CAPACITY ═══════════════════════════════════════════════════════════
    Capacity is the reason equipment is physical rather than cosmetic: a
    shipment you cannot store is a shipment you cannot accept. */

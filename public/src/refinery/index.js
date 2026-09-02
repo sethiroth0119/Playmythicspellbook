@@ -24,6 +24,8 @@ import * as St from './state.js';
 import * as UI from './ui.js';
 import * as C from './contracts.js';
 import { GRADES } from './data.js';
+import * as Models from './models.js';
+import * as Yard from './scene.js';
 
 const CSS_ID = 'hp-refinery-css';
 const CSS_HREF = new URL('./refinery.css', import.meta.url).href;
@@ -124,7 +126,22 @@ export const grades = Object.freeze(Object.fromEntries(
 
 try {
   window.MythicRefinery = { open, close, unlocked, summary, status, wholesaleIndex, grades, version: 'r1' };
-  try { window.__mg = window.__mg || {}; window.__mg.refinery = window.MythicRefinery; } catch (e) {}
+  try {
+    window.__mg = window.__mg || {};
+    window.__mg.refinery = window.MythicRefinery;
+    /* The model registry, exposed for admin scripting and for testing a
+       replacement model without clicking through the panel. Read-only in
+       spirit: setUrl still refuses a non-admin at the bridge. */
+    window.__mgModels = Models;
+    /* The live yard, for debugging a placement or a walk path from the
+       console. `where()` is the one people actually want. */
+    window.__mgYard = {
+      scene: Yard,
+      player: () => Yard.getPlayer(),
+      where: () => { const p = Yard.getPlayer(); return p ? { x: +p.pos.x.toFixed(1), z: +p.pos.z.toFixed(1), inside: p.inside, facing: +(p.group.rotation.y).toFixed(2), focus: p.focus && p.focus.label } : null; },
+      teleport: (x, z) => { const p = Yard.getPlayer(); if (p) { p.pos.x = x; p.pos.z = z; } },
+    };
+  } catch (e) {}
 } catch (e) {
   try { console.warn('[refinery] could not register:', e); } catch (e2) {}
 }

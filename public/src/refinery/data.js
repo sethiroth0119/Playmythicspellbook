@@ -210,7 +210,7 @@ export const EQUIPMENT = {
   blendTank:  { id: 'blendTank',  name: 'Blending Tank',       ico: '⚗️', base: 26000, growth: 2.10, max: 4,  cat: 'process', desc: 'Each tank is one contract you can have in progress. One tank = one job at a time.' },
   bay:        { id: 'bay',        name: 'Loading Bay',         ico: '🚏', base: 19000, growth: 1.90, max: 4,  cat: 'logistics', desc: 'A truck can only load at a free bay. Bays, not trucks, are what cap your dispatch rate.' },
   truck:      { id: 'truck',      name: 'Tanker Truck',        ico: '🚛', base: 22000, growth: 1.55, max: 8,  cat: 'logistics', desc: 'Carries 9,000 L. More trucks means more deliveries in flight, not faster ones.' },
-  cdu:        { id: 'cdu',        name: 'Distillation Column', ico: '🏭', base: 0,     growth: 2.40, max: 3,  cat: 'process', desc: 'Raises the throughput ceiling and the pressure the yard can safely hold.' },
+  cdu:        { id: 'cdu',        name: 'Distillation Column', ico: '🏭', base: 47000, growth: 2.40, max: 3,  cat: 'process', desc: 'Raises the throughput ceiling and the pressure the yard can safely hold.' },
   cracker:    { id: 'cracker',    name: 'Cracking Unit',       ico: '💥', base: 92000, growth: 2.20, max: 2,  cat: 'process', desc: 'UNLOCKS Cat Gasoline. Converts heavy residue into light ends — the only way heavy crude pays.' },
   reformer:   { id: 'reformer',   name: 'Catalytic Reformer',  ico: '♻️', base: 118000,growth: 2.20, max: 2,  cat: 'process', desc: 'UNLOCKS Reformate. Without it, Premium grade is mathematically out of reach.' },
   treater:    { id: 'treater',    name: 'Hydrotreater',        ico: '🧼', base: 78000, growth: 2.00, max: 2,  cat: 'process', desc: 'UNLOCKS the Hydrotreated Cut and lets you buy sour crude nobody else can run.' },

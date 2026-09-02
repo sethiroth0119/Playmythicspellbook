@@ -15,6 +15,9 @@ import * as Sim from './sim.js';
 import * as C from './contracts.js';
 import * as B from './blend.js';
 import * as Yard from './scene.js';
+import * as Build from './build.js';
+import * as Models from './models.js';
+import * as Walk from './walk.js';
 
 let el = null;                 // #hp-overlay
 let tab = 'intake';
@@ -64,7 +67,7 @@ export function open(onClose) {
   const holder = el.querySelector('#hp-yard-canvas');
   const startYard = () => {
     try {
-      if (Yard.init(holder, { onPick })) { Yard.start(); syncYard(); }
+      if (Yard.init(holder, { onInteract, onEnter, onFrame })) { Yard.start(); syncYard(); bindYardHud(); }
       else showFallback();
     } catch (e) { try { console.warn('[refinery] 3D yard failed:', e); } catch (e2) {} showFallback(); }
   };
@@ -120,13 +123,42 @@ export function close() {
   if (closing) { try { closing(); } catch (e) {} closing = null; }
 }
 
-function onPick(pick) {
-  if (!pick) return;
-  const map = { crudeTank: 'intake', cdu: 'run', pumps: 'run', blendTank: 'blend', lab: 'blend',
-                storeTank: 'stock', bay: 'ship', truck: 'ship', cracker: 'stock', reformer: 'stock',
-                treater: 'stock', alky: 'stock', automation: 'run' };
-  const t = map[pick.id];
-  if (t) { tab = t; paint(); }
+/* ═══ WALKING UP TO THINGS ════════════════════════════════════════════════
+   The yard hands us whatever the operator is standing in front of. Most units
+   simply open their panel; a build plot and the office door do something else. */
+function onInteract(it) {
+  if (!it) return;
+  if (it.act === 'build') { openBuild(it.buildId); return; }
+  if (it.act === 'door') { return; }            // the door opens on approach
+  if (it.tab === 'contracts') { openContracts(); return; }
+  if (it.tab) { tab = it.tab; paint(); }
+}
+
+/* Stepping in or out of the office. The roof handles itself in the scene; this
+   is only about telling the player where they are. */
+function onEnter(now) {
+  if (now === 'office') flash('🏢 Head office — the terminal on the desk has the contract board');
+}
+
+/* Called every rendered frame with the current focus. Cheap by construction:
+   it writes text only when the focus actually changed, because this runs 60
+   times a second and a DOM write per frame is how a smooth yard becomes a
+   janky one. */
+let lastFocusId = null;
+function onFrame(f) {
+  if (!el) return;
+  const id = f ? (f.id + '|' + f.label) : null;
+  if (id === lastFocusId) return;
+  lastFocusId = id;
+  const p = el.querySelector('#hp-prompt');
+  const eb = el.querySelector('#hp-ebtn');
+  if (!p) return;
+  if (!f) { p.hidden = true; if (eb) eb.hidden = !touchMode; return; }
+  const warn = f.act === 'build' && !f.ready;
+  p.hidden = false;
+  p.className = 'hp-prompt' + (warn ? ' warn' : '');
+  p.innerHTML = '<b>E</b> <span>' + esc(f.label) + '</span>' + (f.hint ? '<i>' + esc(f.hint) + '</i>' : '');
+  if (eb) eb.hidden = false;
 }
 
 /* ═══ SHELL ══════════════════════════════════════════════════════════════ */
@@ -139,7 +171,19 @@ function shell() {
       '<button class="hp-x" id="hp-close">✕ Leave Yard</button>' +
     '</div>' +
     '<div class="hp-body">' +
-      '<div class="hp-yard"><div class="hp-yard-canvas" id="hp-yard-canvas"></div><div id="hp-flash"></div></div>' +
+      '<div class="hp-yard">' +
+        '<div class="hp-yard-canvas" id="hp-yard-canvas"></div>' +
+        /* The walking HUD. Sits over the canvas and is the only thing telling
+           the player what pressing E will do, so it is never hidden. */
+        '<div class="hp-prompt" id="hp-prompt" hidden></div>' +
+        '<div class="hp-yardctl">' +
+          '<button class="hp-btn sm" id="hp-view">🔭 Overview</button>' +
+          '<span class="hp-keys">WASD move · Shift run · drag to look · <b>E</b> interact</span>' +
+        '</div>' +
+        '<div class="hp-stick" id="hp-stick" hidden><i></i></div>' +
+        '<button class="hp-ebtn" id="hp-ebtn" hidden>E</button>' +
+        '<div id="hp-flash"></div>' +
+      '</div>' +
       '<div class="hp-side">' +
         '<div class="hp-tabs" id="hp-tabs"></div>' +
         '<div class="hp-pane" id="hp-pane"></div>' +
@@ -490,9 +534,9 @@ function paneBlend(s) {
         '</div></div>';
     }
   }
-  h += '<div class="hp-row" style="margin-top:8px"><button class="hp-btn sm" id="hp-board">📄 Show the contract board</button></div></div>';
+  h += '<div class="hp-row" style="margin-top:8px"><span class="hp-muted">Contracts are signed at the <b style="color:#e8a13a">terminal in the office</b> \u2014 walk over and press E.</span></div></div>';
 
-  if (showBoard) h += paneBoard(s);
+
 
   // ── The bench itself.
   const target = job ? GRADES[job.grade] : GRADES.regular;
@@ -628,7 +672,95 @@ function paneBlend(s) {
   return h;
 }
 
-let showBoard = false;
+let touchMode = false;
+let modal = null;              // the one overlay-within-the-overlay
+
+/* ── THE WALKING HUD ─────────────────────────────────────────────────────
+   Overview toggle, and a thumbstick that only appears on a touch device. The
+   stick is pointer-events based rather than touch-events, so it works with a
+   stylus and a trackpad too. */
+function bindYardHud() {
+  const view = el.querySelector('#hp-view');
+  if (view) view.onclick = () => {
+    const on = !Yard.isOverview();
+    Yard.setOverview(on);
+    view.textContent = on ? '🚶 Walk the yard' : '🔭 Overview';
+    const pr = el.querySelector('#hp-prompt'); if (pr && on) pr.hidden = true;
+  };
+
+  touchMode = matchMedia('(pointer: coarse)').matches
+              && !matchMedia('(pointer: fine)').matches
+              && (navigator.maxTouchPoints || 0) > 0;
+  const stick = el.querySelector('#hp-stick');
+  const eb = el.querySelector('#hp-ebtn');
+  if (!touchMode || !stick) return;
+  stick.hidden = false;
+  if (eb) { eb.hidden = false; eb.onclick = () => { const p = Yard.getPlayer(); if (p) Walk.interact(p); }; }
+
+  /* A device that turns out to have a keyboard does not need a thumbstick over
+     its yard. Some desktop browsers and every headless one report a coarse
+     pointer, so the media query alone is not enough — the first real keypress
+     settles it. */
+  const hideOnKey = (e) => {
+    if (e.key && e.key.length && !e.metaKey && !e.ctrlKey) {
+      stick.hidden = true;
+      const b = el && el.querySelector('#hp-ebtn'); if (b) b.hidden = true;
+      touchMode = false;
+      window.removeEventListener('keydown', hideOnKey);
+    }
+  };
+  window.addEventListener('keydown', hideOnKey);
+
+  const knob = stick.querySelector('i');
+  let id = null, cx = 0, cy = 0;
+  const R = 46;
+  stick.addEventListener('pointerdown', e => {
+    id = e.pointerId; stick.setPointerCapture(id);
+    const r = stick.getBoundingClientRect();
+    cx = r.left + r.width / 2; cy = r.top + r.height / 2;
+    e.preventDefault();
+  });
+  stick.addEventListener('pointermove', e => {
+    if (e.pointerId !== id) return;
+    let dx = e.clientX - cx, dy = e.clientY - cy;
+    const d = Math.hypot(dx, dy) || 1;
+    const k = Math.min(1, d / R);
+    dx = dx / d * k; dy = dy / d * k;
+    knob.style.transform = 'translate(' + (dx * R) + 'px,' + (dy * R) + 'px)';
+    const p = Yard.getPlayer();
+    if (p) { Walk.setStick(p, dx, dy); Walk.setRunning(p, k > 0.86); }
+  });
+  const end = e => {
+    if (id !== null && e.pointerId !== id) return;
+    id = null; knob.style.transform = '';
+    const p = Yard.getPlayer();
+    if (p) { Walk.setStick(p, 0, 0); Walk.setRunning(p, false); }
+  };
+  stick.addEventListener('pointerup', end);
+  stick.addEventListener('pointercancel', end);
+}
+
+/* ── MODALS ──────────────────────────────────────────────────────────────
+   One at a time, over the whole overlay, and always closable. Movement is
+   suspended while one is open or the operator wanders off while you read. */
+function openModal(html, onWire) {
+  closeModal();
+  const p = Yard.getPlayer(); if (p) p.enabled = false;
+  modal = document.createElement('div');
+  modal.className = 'hp-modal';
+  modal.innerHTML = '<div class="hp-modal-box">' + html + '</div>';
+  el.appendChild(modal);
+  modal.addEventListener('click', e => { if (e.target === modal) closeModal(); });
+  modal.querySelectorAll('[data-close]').forEach(b => b.onclick = closeModal);
+  if (onWire) onWire(modal);
+  return modal;
+}
+function closeModal() {
+  if (modal) { try { modal.remove(); } catch (e) {} modal = null; }
+  const p = Yard.getPlayer();
+  if (p && !Yard.isOverview()) p.enabled = true;
+}
+
 function paneBoard(s) {
   let h = '<div class="hp-card"><h3>📄 Contract Board <span class="r">market ×' + (s.marketIndex || 1).toFixed(2) + '</span></h3>' +
     '<div class="hp-muted">Stations bid on what their traffic actually burns. A district full of freight wants diesel; a performance trade wants premium. Your wholesale reputation of <b style="color:#9fe6e6">' + St.repWholesale() + '</b> is worth roughly ' +
@@ -645,8 +777,32 @@ function paneBoard(s) {
       (o.own ? ' · <b style="color:#7bc043">your station — 55% cash, the rest lands in your pumps</b>' : '') + '</div>' +
       '<div class="act"><button class="hp-btn pri sm" data-take="' + o.id + '">Accept</button></div></div>';
   }
-  h += '<div class="hp-row"><button class="hp-btn sm" id="hp-reoffer">↻ New offers</button></div></div>';
+  h += '<div class="hp-row"><button class="hp-btn sm" id="hp-reoffer">↻ Put the word out for new offers</button></div></div>';
   return h;
+}
+
+/* ── THE OFFICE TERMINAL ─────────────────────────────────────────────────
+   The same board, opened by walking to the desk and pressing E. That is the
+   point of moving it off a tab: a contract is something you go and sign for,
+   and the office becomes somewhere you have a reason to be. */
+function openContracts() {
+  openModal(
+    '<div class="hp-modal-hd"><b>🖥 Contract Terminal</b>' +
+      '<span class="hp-muted">Hidn Petro · head office</span>' +
+      '<button class="hp-btn sm" data-close>✕ Close</button></div>' +
+    '<div class="hp-modal-body" id="hp-modal-body">' + paneBoard(St.S()) + '</div>',
+    wireBoard);
+}
+function wireBoard(m) {
+  const redraw = () => {
+    const body = m.querySelector('#hp-modal-body');
+    if (body) { body.innerHTML = paneBoard(St.S()); wireBoard(m); }
+  };
+  m.querySelectorAll('[data-take]').forEach(b => b.onclick = () => {
+    if (C.accept(b.dataset.take)) { flash('Contract signed — the spec is on the bench'); redraw(); paint(); }
+  });
+  const re = m.querySelector('#hp-reoffer');
+  if (re) re.onclick = () => { C.rollOffers(5); redraw(); };
 }
 
 /* ═══ 4 · SHIPPING ═══════════════════════════════════════════════════════ */
@@ -761,17 +917,28 @@ function paneYard(s) {
     h += '<div class="hp-card"><h3>' + label + '</h3>';
     for (const e of EQUIP_LIST.filter(x => x.cat === cat)) {
       const owned = St.count(e.id), maxed = owned >= e.max;
-      const cost = St.nextCost(e.id);
       const cond = St.condition(e.id);
       const rep = St.repairCost(e.id);
+      /* ⚠ THE SAME BILL OF MATERIALS THE BUILD PLOT USES. This list used to
+         charge Cinder alone, at the undiscounted equipment price — so the yard
+         had two different prices for the same unit depending on whether you
+         bought it from a menu or walked to the plot. Everything goes through
+         build.js now, and this panel is the reference sheet for it. */
+      const c = Build.BOM[e.id] ? Build.costFor(e.id) : null;
+      const ready = Build.BOM[e.id] ? Build.canBuild(e.id) : (St.cinder() >= St.nextCost(e.id));
+      const bits = c ? [ '🔥 ' + fmt(c.cinder) ]
+          .concat(Object.keys(c.res).map(r => (Build.MATERIALS[r] ? Build.MATERIALS[r].icon : '•') + ' ' + fmt(c.res[r])))
+          .concat(Object.keys(c.yard).map(y => ((STREAMS[y] || COMPONENTS[y] || {}).ico || '•') + ' ' + fmt(c.yard[y]) + ' L'))
+        : ['🔥 ' + fmt(St.nextCost(e.id))];
       h += '<div class="hp-offer"><div class="hd"><b>' + e.ico + ' ' + esc(e.name) + '</b>' +
         '<span class="hp-muted">' + owned + ' / ' + e.max + '</span>' +
-        (maxed ? '<span class="pay" style="color:#7bc043">MAX</span>' : '<span class="pay">🔥 ' + fmt(cost) + '</span>') + '</div>' +
+        (maxed ? '<span class="pay" style="color:#7bc043">MAX</span>' : '') + '</div>' +
         '<div class="sub">' + esc(e.desc) + '</div>' +
+        (maxed ? '' : '<div class="sub" style="margin-top:5px">Needs ' + bits.join(' · ') + '</div>') +
         (owned > 0 ? '<div style="margin-top:6px"><div class="hp-barlbl"><span>Condition</span><b style="color:' + (cond > 70 ? '#7bc043' : cond > 40 ? '#e8a13a' : '#e8593a') + '">' + Math.round(cond) + '%</b></div>' +
           '<div class="hp-bar"><i style="width:' + cond + '%;background:' + (cond > 70 ? '#7bc043' : cond > 40 ? '#e8a13a' : '#e8593a') + '"></i></div></div>' : '') +
         '<div class="act">' +
-          (maxed ? '' : '<button class="hp-btn pri sm" data-build="' + e.id + '"' + (St.cinder() >= cost ? '' : ' disabled') + '>Commission</button>') +
+          (maxed ? '' : '<button class="hp-btn pri sm" data-plan="' + e.id + '">' + (ready ? '🏗 Commission' : 'See what it needs') + '</button>') +
           (rep > 0 ? '<button class="hp-btn sm" data-fixup="' + e.id + '">🔧 Overhaul · 🔥' + fmt(rep) + '</button>' : '') +
         '</div></div>';
     }
@@ -786,6 +953,7 @@ function paneYard(s) {
       '<div></div><div class="qt">' + (t.t <= cur ? '✓' : '') + '</div></div>';
   }
   h += '</div>';
+  h += paneAdmin();
   return h;
 }
 
@@ -821,6 +989,142 @@ function paneLedger(s) {
   return h;
 }
 
+
+/* ═══ THE BUILD PLOT ══════════════════════════════════════════════════════
+   Walk onto a marked plot, press E, and see the bill of materials for the
+   thing that goes there. Every line says what you have against what it needs,
+   so "cannot afford" is never the whole answer — you can see it is the stone
+   you are short of, and by how much.
+   ⚠ Costs come from build.js and are drawn from the LIVE fourteen resources
+   plus the yard's own streams. See the note at the top of that file for why
+   the other 245 catalogued ids are deliberately not spendable. */
+function openBuild(id) {
+  const e = EQUIPMENT[id];
+  if (!e) return;
+  openModal(buildHtml(id), (m) => wireBuild(m, id));
+}
+function buildHtml(id) {
+  const e = EQUIPMENT[id];
+  const owned = St.count(id);
+  const c = Build.costFor(id);
+  const miss = Build.shortfall(id);
+  const missOf = {};
+  miss.forEach(x => { missOf[x.id] = x; });
+  const ok = miss.length === 0;
+
+  const line = (icon, name, need, have, unit) => {
+    const short = have < need;
+    return '<div class="hp-bom' + (short ? ' short' : '') + '">' +
+      '<span class="ic">' + icon + '</span>' +
+      '<span class="nm">' + esc(name) + '</span>' +
+      '<span class="qt">' + fmt(need) + (unit || '') + '</span>' +
+      '<span class="hv">' + (short ? 'have ' + fmt(have) : '✓') + '</span></div>';
+  };
+
+  let rows = line('🔥', 'Cinder (labour & contractors)', c.cinder, St.cinder(), '');
+  for (const r in c.res) {
+    const M = Build.MATERIALS[r] || { name: r, icon: '•', use: '' };
+    rows += line(M.icon, M.name + (M.use ? ' — ' + M.use : ''), c.res[r], St.getRes(r), '');
+  }
+  for (const y in c.yard) {
+    const meta = STREAMS[y] || COMPONENTS[y] || { name: y, ico: '•' };
+    rows += line(meta.ico || '•', meta.name + ' — from your own tanks', c.yard[y], Math.floor(St.stock(y)), ' L');
+  }
+
+  return '<div class="hp-modal-hd"><b>' + e.ico + ' Build ' + esc(e.name) + ' #' + (owned + 1) + '</b>' +
+      '<span class="hp-muted">' + owned + ' of ' + e.max + ' built</span>' +
+      '<button class="hp-btn sm" data-close>✕ Close</button></div>' +
+    '<div class="hp-modal-body">' +
+      '<div class="hp-card"><div class="hp-muted">' + esc(e.desc) + '</div></div>' +
+      '<div class="hp-card"><h3>📋 Bill of Materials</h3>' + rows +
+        (ok ? '<div class="hp-muted" style="margin-top:10px;color:#7bc043">Everything is on site. The crew can start today.</div>'
+            : '<div class="hp-muted" style="margin-top:10px;color:#e8a13a">Short on ' +
+              miss.map(x => esc(x.name)).join(', ') + '. Materials come from your camp stores; the litres come off your own run.</div>') +
+      '</div>' +
+      '<div class="hp-row"><button class="hp-btn pri" id="hp-do-build"' + (ok ? '' : ' disabled') + '>🏗 Commission it</button>' +
+        '<button class="hp-btn sm" data-close>Not yet</button></div>' +
+    '</div>';
+}
+function wireBuild(m, id) {
+  const b = m.querySelector('#hp-do-build');
+  if (b) b.onclick = () => {
+    if (!Build.commission(id)) { const box = m.querySelector('.hp-modal-box'); if (box) box.innerHTML = buildHtml(id); wireBuild(m, id); return; }
+    closeModal();
+    flash('🏗 ' + EQUIPMENT[id].name + ' commissioned');
+    try { Yard.rebuild(); } catch (e) {}
+    paint();
+  };
+}
+
+/* ═══ ADMIN — THE MODEL REGISTRY ══════════════════════════════════════════
+   Every visible object in the yard is a slot with a url. Setting one writes to
+   Forge, which is the game's cloud-synced admin catalogue, so the change
+   reaches EVERY player rather than the admin's own browser. Clearing a url
+   returns the slot to its built-in primitives.
+   Gated on isAdmin(); nothing here renders for a normal player. */
+function paneAdmin() {
+  if (!St.isAdmin()) return '';
+  const urls = Models.urls();
+  let h = '<div class="hp-card" style="border-color:#7a4a9e">' +
+    '<h3>👑 Model Registry <span class="r">admin · applies to every player</span></h3>' +
+    '<div class="hp-muted">Paste a <b>.glb</b> or <b>.gltf</b> url for any slot. It is stored on the shared Forge catalogue, so the next time anyone loads the yard they get your model. Clearing a slot returns it to the built-in shape. Models are measured and re-scaled on load, so the export units do not matter.</div></div>';
+
+  for (const grp of Models.SLOT_GROUPS) {
+    h += '<div class="hp-card"><h3>' + esc(grp) + '</h3>';
+    for (const id of Models.SLOT_IDS) {
+      const slot = Models.SLOTS[id];
+      if (slot.group !== grp) continue;
+      const url = urls[id] || '';
+      const st = Models.status(id);
+      const err = Models.errorFor(id);
+      const badge = st === 'ready' ? '<span style="color:#7bc043">● custom</span>'
+                  : st === 'pending' ? '<span style="color:#e8a13a">● loading</span>'
+                  : st === 'error' ? '<span style="color:#e8593a">● failed</span>'
+                  : '<span style="color:#8d959e">○ built-in</span>';
+      h += '<div class="hp-slot">' +
+        '<div class="hd"><b>' + esc(slot.label) + '</b><span class="meta">' + badge +
+          ' · normalised to ' + slot.height + ' units high</span></div>' +
+        (slot.note ? '<div class="hp-err">' + esc(slot.note) + '</div>' : '') +
+        (err ? '<div class="hp-err" style="color:#e8593a">' + esc(err) + '</div>' : '') +
+        '<div class="hp-row" style="gap:6px;margin-top:5px">' +
+          '<input type="url" class="hp-input" data-slot="' + id + '" placeholder="https://…/' + id + '.glb" value="' + esc(url) + '">' +
+          '<button class="hp-btn sm" data-setslot="' + id + '">Apply</button>' +
+          (url ? '<button class="hp-btn sm" data-clearslot="' + id + '">Clear</button>' : '') +
+        '</div></div>';
+    }
+    h += '</div>';
+  }
+  return h;
+}
+function wireAdmin(pane) {
+  pane.querySelectorAll('[data-setslot]').forEach(b => b.onclick = () => {
+    const id = b.dataset.setslot;
+    const inp = pane.querySelector('[data-slot="' + id + '"]');
+    const v = (inp && inp.value || '').trim();
+    /* Only http(s). A data: or blob: url would work for the admin and be
+       meaningless to every other player, which is the opposite of what this
+       panel is for — so it is refused with the reason rather than accepted
+       and silently useless. */
+    if (v && !/^https?:\/\//i.test(v)) {
+      St.toast('Model urls must be http(s) — a data: or blob: url only exists in your own browser.', 5200);
+      return;
+    }
+    if (!Models.setUrl(id, v)) { St.toast('Could not save that — are you signed in as an admin?', 4200); return; }
+    Models.invalidate(id);
+    Models.preload(id).then(() => { try { Yard.rebuild(); } catch (e) {} paint(); });
+    St.toast(v ? '🎨 ' + Models.SLOTS[id].label + ' updated for every player.' : 'Reverted to the built-in shape.', 4000);
+    paint();
+  });
+  pane.querySelectorAll('[data-clearslot]').forEach(b => b.onclick = () => {
+    const id = b.dataset.clearslot;
+    Models.setUrl(id, '');
+    Models.invalidate(id);
+    try { Yard.rebuild(); } catch (e) {}
+    St.toast('Reverted to the built-in shape.', 3200);
+    paint();
+  });
+}
+
 /* ═══ WIRING ═════════════════════════════════════════════════════════════ */
 function wire(pane, s) {
   const on = (sel, fn) => pane.querySelectorAll(sel).forEach(n => n.onclick = () => fn(n));
@@ -852,9 +1156,7 @@ function wire(pane, s) {
   });
 
   // Blend
-  on('#hp-board', () => { showBoard = !showBoard; paint(); });
   on('#hp-reoffer', () => { C.rollOffers(5); paint(); });
-  on('[data-take]', n => { if (C.accept(n.dataset.take)) { showBoard = false; paint(); } });
   on('[data-bench]', n => { benchContract = n.dataset.bench; bench = {}; lastTest = null; paint(); });
   on('[data-goship]', () => { tab = 'ship'; paint(); });
   on('[data-drop]', async n => {
@@ -924,8 +1226,14 @@ function wire(pane, s) {
   on('[data-spotsell]', n => { if (B.sellSpot(n.dataset.spotsell, 500)) paint(); });
 
   // Yard
-  on('[data-build]', n => { if (St.buyEquip(n.dataset.build)) { try { Yard.rebuild(); } catch (e) {} paint(); } });
+  on('[data-plan]', n => {
+    const id = n.dataset.plan;
+    // Same modal the build plot opens, so the two routes cannot drift apart.
+    if (Build.BOM[id]) { openBuild(id); return; }
+    if (St.buyEquip(id)) { try { Yard.rebuild(); } catch (e) {} paint(); }
+  });
   on('[data-fixup]', n => { if (St.repair(n.dataset.fixup)) paint(); });
+  wireAdmin(pane);
 }
 
 /* Patch just the numbers under the bench sliders. Repainting the whole pane

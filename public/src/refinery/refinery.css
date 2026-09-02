@@ -199,3 +199,117 @@
   .hp-comp .hd .px { margin-left: 0; flex-basis: 100%; }
   .hp-comp .sl { grid-template-columns: 1fr 70px; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   WALKING THE YARD — the HUD, the modals, the bill of materials.
+   The yard is a place now, so it needs the furniture a place needs: a prompt
+   that says what E does, a way back to the overview, and a thumbstick on
+   touch. All of it sits over the canvas and none of it steals the pointer
+   except where it means to.
+   ═════════════════════════════════════════════════════════════════════════ */
+
+/* The interaction prompt. Bottom-centre of the yard, where a player's eye
+   already is when they walk up to something. */
+.hp-prompt {
+  position: absolute; left: 50%; bottom: 58px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 9px; pointer-events: none; z-index: 6;
+  background: rgba(11,12,13,.92); border: 1px solid #a9772a; border-radius: 7px;
+  padding: 8px 14px; max-width: min(420px, 84%);
+  box-shadow: 0 8px 26px rgba(0,0,0,.66);
+}
+.hp-prompt.warn { border-color: #a9552a; }
+.hp-prompt b {
+  font-family: 'Oswald', sans-serif; font-size: 13px; color: #0b0c0d;
+  background: #f0c75e; border-radius: 4px; padding: 1px 8px; line-height: 1.5; flex-shrink: 0;
+}
+.hp-prompt span { font-family: 'Oswald', sans-serif; font-size: 13.5px; letter-spacing: .05em;
+  text-transform: uppercase; color: #f3e7c8; }
+.hp-prompt i { font-style: normal; font-size: 10.5px; color: #8d959e; border-left: 1px solid #2c3036;
+  padding-left: 9px; margin-left: 2px; }
+.hp-prompt.warn i { color: #e8a13a; }
+
+/* Camera toggle + the control legend. */
+.hp-yardctl { position: absolute; left: 14px; top: 14px; z-index: 6; display: flex;
+  align-items: center; gap: 10px; flex-wrap: wrap; }
+.hp-keys { font-size: 10px; color: #6f7780; letter-spacing: .04em; pointer-events: none; }
+.hp-keys b { color: #e8a13a; }
+@media (pointer: coarse) { .hp-keys { display: none; } }
+
+/* Thumbstick + the E button, touch only. */
+.hp-stick {
+  position: absolute; left: 18px; bottom: 18px; width: 112px; height: 112px; z-index: 7;
+  border-radius: 50%; border: 1px solid #2c3036; background: rgba(11,12,13,.55);
+  touch-action: none; display: grid; place-items: center;
+}
+.hp-stick i { width: 46px; height: 46px; border-radius: 50%; display: block;
+  background: linear-gradient(180deg,#f0c75e,#b8791f); border: 1px solid #6b4a12;
+  box-shadow: 0 2px 10px rgba(0,0,0,.6); transition: transform .06s linear; }
+.hp-ebtn {
+  position: absolute; right: 20px; bottom: 26px; z-index: 7;
+  width: 74px; height: 74px; border-radius: 50%; cursor: pointer;
+  font-family: 'Oswald', sans-serif; font-size: 24px; font-weight: 600; color: #fff2dc;
+  background: linear-gradient(180deg,#b8791f,#8a5714); border: 2px solid #d99a35;
+  box-shadow: 0 6px 20px rgba(0,0,0,.6);
+}
+.hp-ebtn:active { filter: brightness(1.2); }
+
+/* ── Modals: the contract terminal, the build plot ────────────────────── */
+.hp-modal {
+  position: absolute; inset: 0; z-index: 30; display: flex;
+  align-items: center; justify-content: center; padding: 22px;
+  background: rgba(6,7,9,.78);
+}
+.hp-modal-box {
+  width: min(640px, 100%); max-height: 100%; display: flex; flex-direction: column;
+  background: #101216; border: 1px solid #2c3036; border-radius: 9px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.75); overflow: hidden;
+}
+.hp-modal-hd {
+  display: flex; align-items: center; gap: 11px; flex-wrap: wrap;
+  padding: 13px 15px; border-bottom: 1px solid #2c3036;
+  background: linear-gradient(180deg,#1d2024,#15171a); flex-shrink: 0;
+}
+.hp-modal-hd b { font-family: 'Oswald', sans-serif; font-size: 15px; color: #fff;
+  letter-spacing: .05em; text-transform: uppercase; }
+.hp-modal-hd .hp-btn { margin-left: auto; }
+.hp-modal-body { padding: 14px; overflow-y: auto; }
+.hp-modal-body::-webkit-scrollbar { width: 9px; }
+.hp-modal-body::-webkit-scrollbar-thumb { background: #2c3036; border-radius: 9px; }
+
+/* ── Bill of materials. One row per line item; short lines say how short. ── */
+.hp-bom {
+  display: grid; grid-template-columns: 22px 1fr auto 76px; gap: 9px; align-items: baseline;
+  padding: 6px 0; border-bottom: 1px solid #1e2126; font-size: 12px;
+}
+.hp-bom:last-child { border-bottom: none; }
+.hp-bom .ic { font-size: 13px; }
+.hp-bom .nm { color: #d8dde2; }
+.hp-bom .qt { font-family: 'Oswald', sans-serif; font-size: 14px; color: #f0c75e;
+  font-variant-numeric: tabular-nums; }
+.hp-bom .hv { text-align: right; font-size: 10.5px; color: #7bc043; }
+.hp-bom.short .nm { color: #b9bfc7; }
+.hp-bom.short .qt { color: #e8593a; }
+.hp-bom.short .hv { color: #e8593a; }
+
+/* ── Admin model slots ────────────────────────────────────────────────── */
+.hp-slot { padding: 9px 0; border-bottom: 1px solid #1e2126; }
+.hp-slot:last-child { border-bottom: none; }
+.hp-slot .hd { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
+.hp-slot .hd b { font-size: 12.5px; color: #d8dde2; font-weight: 500; }
+.hp-slot .hd .meta { font-size: 10px; color: #8d959e; }
+.hp-input {
+  flex: 1 1 auto; min-width: 0; background: #0d0e10; border: 1px solid #2c3036;
+  color: #d8dde2; border-radius: 5px; padding: 7px 9px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px;
+}
+.hp-input:focus { outline: none; border-color: #a9772a; }
+
+@media (max-width: 900px) {
+  .hp-prompt { bottom: 12px; font-size: 12px; }
+  .hp-yardctl { left: 10px; top: 10px; }
+  .hp-stick { width: 96px; height: 96px; left: 12px; bottom: 12px; }
+  .hp-ebtn { width: 62px; height: 62px; right: 12px; bottom: 18px; font-size: 20px; }
+  .hp-modal { padding: 10px; }
+  .hp-bom { grid-template-columns: 20px 1fr auto; }
+  .hp-bom .hv { grid-column: 2 / -1; text-align: left; }
+}

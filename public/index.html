@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120x0';
+  window.BUILD_VERSION = 'v120x1';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -49981,6 +49981,7 @@ function _applyCatalogRow(data) {
   if (rawMoves.__prince_portfolios__ && typeof rawMoves.__prince_portfolios__ === 'object') Catalog.princePortfolios = rawMoves.__prince_portfolios__;
   if (rawMoves.__black_river__       && typeof rawMoves.__black_river__       === 'object') Catalog.blackRiver       = rawMoves.__black_river__;
   if (rawMoves.__fuel_command__      && typeof rawMoves.__fuel_command__      === 'object') Catalog.fuelCommand      = rawMoves.__fuel_command__;
+  if (rawMoves.__refinery_models__   && typeof rawMoves.__refinery_models__   === 'object') Catalog.refineryModels   = rawMoves.__refinery_models__;
   if (rawMoves.__item_grid_uniform__ && typeof rawMoves.__item_grid_uniform__ === 'object') Catalog.itemGridUniform  = rawMoves.__item_grid_uniform__;
   if (rawMoves.__ai_behavior__       && typeof rawMoves.__ai_behavior__       === 'object') Catalog.aiBehavior       = rawMoves.__ai_behavior__;
   if (Array.isArray(rawMoves.__custom_ultimates__)) Catalog.ultimates = rawMoves.__custom_ultimates__;
@@ -50634,6 +50635,11 @@ async function cloudPublishCatalog(opts) {
       __prince_portfolios__: (Forge.princePortfolios && typeof Forge.princePortfolios === 'object') ? Forge.princePortfolios : { listingPhotos: {}, lotPhotos: {}, customerPhotos: {}, enabled: true },
       __black_river__:       (Forge.blackRiver       && typeof Forge.blackRiver       === 'object') ? Forge.blackRiver       : { mapPhotos: {}, crewPhotos: {}, enabled: true },
       __fuel_command__:      (Forge.fuelCommand      && typeof Forge.fuelCommand      === 'object') ? Forge.fuelCommand      : { stationPhotos: {}, directory: { listings: [], pendingPayouts: [] }, enabled: true },
+      // 🛢 Hidn Petro model registry — slot → .glb url. This is the line that
+      // makes "change the model and it changes for everyone" true: without it
+      // the urls would sit on the admin's own user_profiles.forge row and no
+      // other player would ever read them.
+      __refinery_models__:   (Forge.refineryModels   && typeof Forge.refineryModels   === 'object') ? Forge.refineryModels   : {},
       // 🧊 Item-grid uniform sizing — admin-set on the ITEMS tab.
       __item_grid_uniform__: {
         on: !!Forge.itemGridUniform,
@@ -207595,6 +207601,68 @@ window.MythicRefineryBridge = {
         refinery with no source of crude is a locked door with no key. */
   brOwned: () => { try { return !!brIsUnlocked(); } catch (e) { return false; } },
 
+  /* ══ CONSTRUCTION MATERIALS ═════════════════════════════════════════════
+     The camp salvage ledger. Building a unit spends the SAME metal, stone and
+     supplies as everything else in the game, which is the point — the
+     refinery is not a separate economy with its own private currency.
+     ⚠ Only the fourteen LIVE resources are spendable here. /src/resources/
+     chain.js catalogues another 245 industrial ids (steelBeam, industrialPump
+     …) with no producer, and RESOURCES_NEXT.md is explicit that a resource a
+     player holds but cannot obtain is "worse than missing". Pricing a Cracking
+     Unit in those would be pricing it in something nobody can ever have. */
+  getRes: (id) => { try { return getRes(id) | 0; } catch (e) { return 0; } },
+  spendRes: (id, n) => {
+    // spendResources re-checks affordability itself and returns false rather
+    // than going negative, which is what makes build.js's unwind correct.
+    try { return !!spendResources({ [id]: n | 0 }); } catch (e) { return false; }
+  },
+  /* ↩️ NOT addRes. addRes enforces the stash cap and returns without adding
+     when the vault is full, which would silently destroy a build unwind — the
+     city bridge above records the same lesson in the same words. */
+  refundRes: (id, n) => { try { _refundRes(id, n); } catch (e) {} },
+
+  /* ══ THE MODEL REGISTRY ═════════════════════════════════════════════════
+     WHY Forge AND NOT INDEXEDDB. `Forge` is the game's admin-authored,
+     CLOUD-SYNCED catalogue — the same object carrying Black River's machine
+     models, the map photos and the tuned economy tables. An admin writes a url
+     here, saveForge() pushes it, and every player's next load pulls the same
+     model. That is what "change it for everyone" has to mean.
+     The Extraction Field also keeps UPLOADED BYTES in IndexedDB; that path is
+     deliberately not offered here, because IndexedDB is per-device by
+     definition and an upload that only the admin can see is the exact opposite
+     of the thing being asked for. Urls are hosted wherever the admin likes. */
+  modelUrls: () => {
+    /* Local admin edits win, then the published catalogue — the same
+       richer-wins order getBrEcon() uses. An admin sees their change the
+       instant they make it; every other player sees it once it is published.
+       ⚠ A PLAYER MUST NEVER GET AN EMPTY OBJECT JUST BECAUSE THEY ARE NOT THE
+       ADMIN. Returning Forge unconditionally would do exactly that, and the
+       whole registry would silently be admin-only. */
+    try {
+      const local = (Forge.refineryModels && typeof Forge.refineryModels === 'object') ? Forge.refineryModels : null;
+      if (local && Object.keys(local).length) return local;
+      const pub = (Catalog.refineryModels && typeof Catalog.refineryModels === 'object') ? Catalog.refineryModels : null;
+      if (pub && Object.keys(pub).length) return pub;
+    } catch (e) {}
+    return {};
+  },
+  setModelUrl: (slot, url) => {
+    try {
+      if (!(typeof isAdmin === 'function' && isAdmin())) return false;
+      if (!slot || typeof slot !== 'string') return false;
+      if (!Forge.refineryModels || typeof Forge.refineryModels !== 'object') Forge.refineryModels = {};
+      const u = String(url || '').trim();
+      // http(s) only. A data: or blob: url resolves in the admin's browser and
+      // nowhere else, so accepting one would look like it worked and reach no
+      // other player at all.
+      if (u && !/^https?:\/\//i.test(u)) return false;
+      if (u) Forge.refineryModels[slot] = u.slice(0, 600);
+      else delete Forge.refineryModels[slot];
+      saveForge();
+      return true;
+    } catch (e) { return false; }
+  },
+
   /* ══ THE ECONOMY HOOKS ══════════════════════════════════════════════════
      These four are what make the yard part of the world rather than a toy. */
 
@@ -223328,7 +223396,7 @@ render();
        untouched and still the fallback.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/refinery/index.js?v=v120x0refinery1"></script>
+<script type="module" src="src/refinery/index.js?v=v120x1walk1"></script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the

@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120w6';
+  window.BUILD_VERSION = 'v120x5';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -44566,6 +44566,12 @@ const Profile = {
   // reset on refresh even if the shared reserve_tax_log table is unreachable.
   // { total, byRes:{}, byMarket:{}, recent:[{resource,sale_value,tax_amount,market_type,created_at}] }
   frTaxLedger: null,
+  // 🎖 INFLUENCE — the camp's standing track (/src/influence).
+  //   { xp, lastAt, hosted, pending } — the ladder, the envoy clock, the count
+  //   of visitors hosted, and any visitor still at the gate. Created lazily by
+  //   MythicInfluenceBridge.state(); declared here so the shape is documented
+  //   with the rest of the Profile rather than only inside a module.
+  influence: null,
   coupons: [],                  // [{ code, value, ts }] — claimed admin coupons (history)
   deckByHero: {},               // LEGACY — kept for migration; real source of truth is `decks` below
   decks: [],                    // Array<{ id, name, heroId, cards: [cardKey, ...], createdAt }> — named decks the player builds
@@ -46602,6 +46608,16 @@ async function cloudSyncProfile() {
       // 💰 Foundation Tax ledger — this player's permanent 2%-tax record. Rides
       // the forge JSONB so the Reserve / Treasury figures survive new devices.
       __frTaxLedger__:     (Profile.frTaxLedger    && typeof Profile.frTaxLedger    === 'object') ? Profile.frTaxLedger    : null,
+      /* 🎖 INFLUENCE — the standing ladder, the envoy clock and any visitor
+         still standing at the gate.
+         🔴 WITHOUT THIS IT IS A localStorage-ONLY FIELD, which is the exact
+         fault every neighbour in this block was added to fix: the Cinder and
+         cards an envoy pays are already cloud-synced (addGems / cardCollection),
+         so signing in on a second device would restore the REWARDS and lose the
+         track that earned them — back to level 1 with a fresh clock. A fresh
+         clock is also a free envoy per device, which makes it an exploit and not
+         only a loss. Piggybacks the forge JSONB; no migration. */
+      __influence__:       (Profile.influence      && typeof Profile.influence      === 'object') ? Profile.influence      : null,
       // 👤 FULL ACCOUNT PORTABILITY — every remaining progression field that
       // wasn't already cloud-synced. Without these, signing in on another
       // computer rebuilt a HALF account (heroes + cinder came back but story
@@ -47851,6 +47867,26 @@ async function cloudFetchProfile() {
         if (mL.recent.length > 60) mL.recent.length = 60;
         Profile.frTaxLedger = mL;
         try { if (typeof _frRebuildTaxStats === 'function') _frRebuildTaxStats(FoundationReserve.taxStats); } catch (e) {}
+      }
+      /* 🎖 INFLUENCE restore. Every field merges in the direction that cannot
+         hand out a reward twice:
+           xp / hosted — MAX, so a stale cloud row can never demote a ladder.
+           lastAt      — MAX, i.e. the LATER stamp wins. That is deliberately the
+                         stingy direction: an envoy spent on device A must not be
+                         re-granted on device B, and taking the earlier stamp
+                         would do exactly that on every sign-in.
+           pending     — cloud fills ONLY when this device has no visitor, the
+                         same policy as __sideDeck__ / __socketedGems__, so a
+                         freshly dealt local envoy is never clobbered by an old
+                         cloud one. */
+      if (f.__influence__ && typeof f.__influence__ === 'object') {
+        const cI = f.__influence__;
+        if (!Profile.influence || typeof Profile.influence !== 'object') Profile.influence = { xp: 0, lastAt: 0, hosted: 0, pending: null };
+        const lI = Profile.influence;
+        lI.xp     = Math.max(lI.xp     | 0, cI.xp     | 0);
+        lI.hosted = Math.max(lI.hosted | 0, cI.hosted | 0);
+        lI.lastAt = Math.max(lI.lastAt | 0, cI.lastAt | 0);
+        if (!lI.pending && cI.pending && typeof cI.pending === 'object') lI.pending = cI.pending;
       }
       // 👤 FULL ACCOUNT PORTABILITY restore — rebuilds the COMPLETE account on
       // any device. Accumulating / permanent fields use non-destructive merges
@@ -156636,6 +156672,28 @@ function renderCamp() {
           ${truced
             ? `<span style="color:#5fae7a;font-size:0.8rem">🤝 Truce — ${truceLeft}h left</span>`
             : `<button class="btn-mini" data-truce="1" title="Pay ${tcost} 🔥 — pause raids 3 days, ease threat" style="border-color:#5fae7a55;color:#9ad17a">🤝 Broker Truce (${tcost} 🔥)</button>`}
+          ${(() => {
+            /* 🎖 INFLUENCE — the camp's standing, and the door envoys come
+               through. Guarded on the module: /src/influence is an ES module and a
+               404 must cost the FEATURE, never the status bar. Prints nothing at
+               all when the module is absent, so the row simply has one item less. */
+            try {
+              const MI = window.MythicInfluence;
+              if (!MI || typeof MI.status !== 'function') return '';
+              const st = MI.status();
+              const waiting = st.waiting | 0;
+              // Same ETA string the modal prints — MI publishes the formatter so
+              // this bar and /src/influence can never disagree about "2d 3h".
+              const eta = (typeof MI.formatEta === 'function') ? MI.formatEta(st.nextMs) : '';
+              const when = waiting
+                ? (waiting + ' waiting at the gate')
+                : ('next arrives in about ' + eta);
+              const tip = 'Influence ' + st.level + ' — ' + st.name + '. Envoys arrive at your camp carrying Cinder, cards, '
+                        + 'recruits or supply convoys; what they bring follows your node tier, your Influence level and your '
+                        + 'Foundation Reserve rep. ' + when + '.';
+              return `<button class="btn-mini" data-influence="1" title="${escapeHtml(tip)}" style="border-color:#d4af3755;color:${waiting ? '#ffe08a' : '#c9b27a'}">${st.icon} Influence ${st.level}${waiting ? ' · ' + waiting + ' ✦' : ''}</button>`;
+            } catch (e) { return ''; }
+          })()}
           <span style="color:#9fb4d8;font-size:0.8rem">🟠 ${deployed}</span>
           <span style="color:#d4af37;font-size:0.8rem">🌫 ${mia} MIA</span>
           <span style="color:#e0879a;font-size:0.8rem">🕯 ${lost}</span>
@@ -156927,6 +156985,12 @@ function renderCamp() {
       if (!(await gcConfirm(`Send this unit to strike ${_campRival().name}? 6h op — it cripples their threat & builds your reputation, but a failed raid can get them killed.`))) return;
       if (campStartActivity(el.dataset.strike, 'raidRival')) render();
     };
+  });
+  // 🎖 Influence — open the envoy modal. The module owns the entire flow
+  //    (rolling, paying, persisting); this is only the door, and it stays a
+  //    no-op if /src/influence never loaded.
+  document.querySelectorAll('[data-influence]').forEach(el => {
+    el.onclick = () => { try { if (window.MythicInfluence) window.MythicInfluence.open(); } catch (e) {} };
   });
   document.querySelectorAll('[data-truce]').forEach(el => {
     el.onclick = () => { if (typeof campBrokerTruce === 'function' && campBrokerTruce()) render(); };
@@ -207412,6 +207476,192 @@ window.MythicTradeBridge = {
   save: () => { try { saveProfile(); return true; } catch (e) { return false; } },
   toast: (m, ms) => { try { showToast(m, ms || 3600); } catch (e) {} },
 };
+/* 🎖 THE INFLUENCE BRIDGE — the ONE seam between this file and /src/influence.
+   🔴 THE GLOBALS TRAP, a fifth time (CLAUDE.md). `Profile`, `Forge`,
+   `FoundationReserve`, `RESOURCES`, `addGems`, `addRes`, `getResourceCap` and
+   `frRankFor` are top-level `const` / function declarations here — global
+   LEXICAL bindings, NOT properties of window. An ES module cannot see a single
+   one of them. Everything /src/influence needs is handed over below, and it
+   never guesses at a bare global.
+
+   ⚠ Every accessor is a FUNCTION. Reserve rep, the node tier and the stash
+     headroom all move while the modal is open; a captured snapshot would price
+     an envoy against a world that has since changed — and the stash one would
+     re-introduce exactly the silent over-cap loss the refusal path exists to
+     prevent.
+
+   ⚠ THE THREE INPUTS ARE READ, NEVER WRITTEN. Influence consumes the node
+     tier and Reserve rep; it must never be able to move either, or a reward
+     loop would feed its own difficulty. The only things it writes are
+     Profile.influence, the wallet (through addGems) and the stash (through
+     addRes) — all via the existing, audited helpers. */
+let _infNodeTierMemo = { at: 0, val: null };
+window.MythicInfluenceBridge = {
+  /* Lives on the Profile so it rides the existing save + cloud sync. No new
+     table: this feature has no cross-player surface, and a table would be RLS
+     attack surface bought for nothing. */
+  state: () => {
+    try {
+      if (!Profile.influence || typeof Profile.influence !== 'object') Profile.influence = { xp: 0, lastAt: 0, hosted: 0, pending: null };
+      return Profile.influence;
+    } catch (e) { return null; }
+  },
+  save: () => { try { saveProfile(); } catch (e) {} },
+  render: () => { try { render(); } catch (e) {} },
+  toast: (m, ms) => { try { showToast(m, ms || 4200); } catch (e) {} },
+
+  /* ☁ THE SERVER SEAM (sql/038). `Cloud` is a top-level `const` here and
+     therefore invisible to a module — the globals trap again — so the module
+     cannot reach Supabase itself and asks through these two.
+
+     ⚠ NEVER THROWS. Every failure shape the module has to tell apart —
+       signed out, offline, sql/038 not applied — comes back as a returned
+       error object, because a rejected promise inside a click handler is how a
+       modal ends up permanently stuck on "Settling…". */
+  signedIn: () => {
+    try { return !!(Profile.cloud && Profile.cloud.signedIn && typeof initCloud === 'function' && initCloud() && Cloud && Cloud.client); }
+    catch (e) { return false; }
+  },
+  rpc: async (fn, args) => {
+    try {
+      if (typeof initCloud !== 'function' || !initCloud() || !Cloud || !Cloud.client) return { error: { message: 'no client' } };
+      if (!(Profile.cloud && Profile.cloud.signedIn)) return { error: { message: 'signed out' } };
+      return await Cloud.client.rpc(String(fn), args || {});
+    } catch (e) { return { error: { message: (e && e.message) || 'rpc threw' } }; }
+  },
+  /* 💰 THE SERVER ALREADY PAID — this only catches the DISPLAY up.
+     influence_resolve() credits user_progress.cinder (the canonical wallet) via
+     wallet_credit before it returns, and wallet_credit itself raises the
+     user_profiles.gems mirror. Calling addGems() here as well would pay the
+     same envoy twice: once for real, and once into the local mirror that the
+     MAX(server, local) adopt in cloudFetchProfile later reconciles UP into a
+     second real credit. So this RAISES the local number to the canonical one
+     and never adds to it — and it only ever moves UP, so a stale reply cannot
+     take Cinder away from a player who has earned some since. */
+  syncCinder: (balance) => {
+    try {
+      const b = Math.max(0, balance | 0);
+      if (b > (Profile.gems | 0)) { Profile.gems = b; saveProfile(); }
+      return Profile.gems | 0;
+    } catch (e) { return 0; }
+  },
+
+  // 🔥 Cinder. The LOCAL (offline) path only — the server path never calls this.
+  //    Routed through the real helper so the named-faucet audit trail and the
+  //    server mirror both happen; never Profile.gems directly.
+  gems: () => { try { return Profile.gems | 0; } catch (e) { return 0; } },
+  addGems: (n, reason) => { try { addGems(n | 0, reason || 'influence_envoy'); return true; } catch (e) { return false; } },
+  /* 🃏 The pool an envoy can draw from. Custom cards are flagged so the module
+     can prefer them (the feature was specified around "the custom cards
+     created"), and the admin obtainment locks are honoured HERE rather than in
+     the module: 🎁-off or 👑 admin-only means a card cannot drop from loot or
+     packs, and an envoy is loot. Heroes are already excluded by
+     getCardPoolForPacks — a duplicate hero has nowhere to go. */
+  cardPool: () => {
+    try {
+      const pool = (typeof getCardPoolForPacks === 'function') ? getCardPoolForPacks() : [];
+      const customIds = new Set();
+      try {
+        const cc = (typeof getAllCustomCards === 'function') ? getAllCustomCards() : (Forge.customCards || []);
+        (cc || []).forEach((c) => { if (c && c.id) customIds.add(c.id); });
+      } catch (e) {}
+      return (pool || [])
+        .filter((e) => e && e.card && e.card.id && e.card.type !== 'hero')
+        .filter((e) => { try { return (typeof isForgeLootable !== 'function') || isForgeLootable(e.kind, e.card.id); } catch (e2) { return true; } })
+        .map((e) => ({ card: e.card, kind: e.kind, custom: customIds.has(e.card.id) }));
+    } catch (e) { return []; }
+  },
+  cardArt: (id) => { try { return (Forge.cardArt && Forge.cardArt[id]) || (typeof Catalog !== 'undefined' && Catalog.cardArt && Catalog.cardArt[id]) || null; } catch (e) { return null; } },
+  rarityMeta: (id) => { try { return RARITY_BY_ID[String(id || '').toLowerCase()] || RARITY_BY_ID.common; } catch (e) { return null; } },
+  ownedCount: (id) => { try { return (Profile.cardCollection && Profile.cardCollection[id]) | 0; } catch (e) { return 0; } },
+  /* 💰 WHAT A RECRUIT IS WORTH IF THE PLAYER SELLS THEM INSTEAD OF SIGNING
+     THEM. This is the PLAYER MARKET's number, not one this feature invents:
+     DVS already blends real play counts, the local sales log and open listings
+     into a suggested Cinder value, and the Trading Post prices against the same
+     engine. marketSuggestedPriceForCard is the fallback for a card DVS has not
+     valued yet (a brand-new custom), so a sale always has a price. */
+  cardMarketValue: (card) => {
+    try {
+      if (!card || !card.id) return 0;
+      const v = (typeof dvsGet === 'function') ? dvsGet(card.id) : null;
+      if (v && v.cinder > 0) return Math.max(1, v.cinder | 0);
+      return Math.max(1, (typeof marketSuggestedPriceForCard === 'function') ? marketSuggestedPriceForCard(card) | 0 : 20);
+    } catch (e) { return 20; }
+  },
+  /* 🃏 Minting a card. Mirrors craftCard's write-through: a granted card and a
+     spent envoy have to reach the cloud together, or a reload can hand the
+     player back the envoy without the card (or the reverse). */
+  grantCard: (id) => {
+    try {
+      if (!id) return false;
+      if (!Profile.cardCollection) Profile.cardCollection = {};
+      Profile.cardCollection[id] = (Profile.cardCollection[id] | 0) + 1;
+      try { if (typeof saveProgressCloud === 'function') saveProgressCloud().catch(() => {}); else saveProfile(); }
+      catch (e) { try { saveProfile(); } catch (_) {} }
+      return true;
+    } catch (e) { return false; }
+  },
+  // 📦 The camp stash. addRes clamps at the cap and drops the surplus SILENTLY,
+  //    which is why the module checks headroom itself and refuses a convoy it
+  //    cannot land whole rather than accepting a quietly-shortened one.
+  resources: () => { try { return (typeof RESOURCES !== 'undefined') ? RESOURCES.slice() : []; } catch (e) { return []; } },
+  getRes: (id) => { try { return getRes(id) | 0; } catch (e) { return 0; } },
+  addRes: (id, n) => { try { addRes(id, n | 0); } catch (e) {} },
+  /* ⚠ NOT window.cityResourceHeadroom. That one reports free = 0 while a
+     hired mayor's ledger is stalled, which is right for a city producing into
+     someone else's stores and wrong here — an envoy walks into the PLAYER's
+     camp and its convoy lands in the player's own vault regardless. */
+  resourceHeadroom: () => {
+    try {
+      const cap = (typeof getResourceCap === 'function') ? getResourceCap() | 0 : 0;
+      const units = (typeof getResourceUnits === 'function') ? getResourceUnits() | 0 : 0;
+      if (!(cap > 0)) return { cap: 0, units: units, free: Infinity };   // no known ceiling — never refuse on a number we do not have
+      return { cap: cap, units: units, free: Math.max(0, cap - units) };
+    } catch (e) { return { cap: 0, units: 0, free: Infinity }; }
+  },
+  // 🏛 Foundation Reserve standing. Read-only, and 0 before the fetch lands —
+  //    an envoy for a signed-out player is humbler, never broken.
+  repPoints: () => { try { return Math.max(0, Math.round(FoundationReserve.myPoints || 0)); } catch (e) { return 0; } },
+  repRank: () => {
+    try {
+      const pts = Math.max(0, Math.round(FoundationReserve.myPoints || 0));
+      const r = frRankFor(pts).rank;
+      return { name: r.name, icon: r.icon, index: Math.max(0, RESERVE_RANKS.indexOf(r)) };
+    } catch (e) { return { name: 'Resource Runner', icon: '🎒', index: 0 }; }
+  },
+  /* 🔌 The node the player actually operates. _myTierNode already picks the
+     BEST of their PRN rows and their owned city nodes, and resolveTier already
+     folds in the founder package they paid for — so "node level" here is the
+     same number the PRN payout uses, not a second opinion about it. */
+  /* 🔌 The node tier INFLUENCE uses — and deliberately NOT the same resolution
+     the PRN payout uses.
+
+     🔴 PLEDGE ONLY, NO NODE OVERRIDE. `_myTierNode()` resolves through
+     `economy_nodes.meta.tier`, and en_ins/en_upd let a player write `meta` on
+     any node they own — so that path is forgeable. sql/038 dropped it from the
+     server-side standing for exactly that reason, and this has to match: if the
+     modal's NODE meter advertised a Titan tier the payout no longer honours,
+     the feature would be lying to honest players and flattering forged ones.
+
+     ⚠ This changes NOTHING about PRN payouts. _nodeTierPoolShare / _opSettle
+       keep their own resolution; this accessor is Influence's alone.
+     ⚠ An admin tier override no longer reaches Influence. Restoring it means
+       putting the override somewhere `authenticated` cannot write. */
+  nodeTier: () => {
+    try {
+      const now = Date.now();
+      if (_infNodeTierMemo.at && (now - _infNodeTierMemo.at) < 30000) return _infNodeTierMemo.val;
+      const T = window.MythicNodeTiers;
+      if (!T) return { id: 'free', name: 'Free', rate: 0.5, rankIndex: 0, rankCount: 7 };
+      // resolveTier(null, ctx) = "no node" → the paid pledge tier, else Free.
+      const t = T.resolveTier(null, _nodeTierCtx());
+      const idx = T.TIERS.findIndex((x) => x.id === t.id);
+      const val = { id: t.id, name: t.name, rate: t.rate, rankIndex: Math.max(0, idx), rankCount: T.TIERS.length };
+      _infNodeTierMemo = { at: now, val: val };
+      return val;
+    } catch (e) { return { id: 'free', name: 'Free', rate: 0.5, rankIndex: 0, rankCount: 7 }; }
+  },
+};
 window.MythicCityBridge = {
   // ── Resources. Accessors, never snapshots — a captured value goes stale the
   //    moment the player loots or spends.
@@ -223080,6 +223330,29 @@ render();
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
 <script type="module" src="src/nodes/tiers.js?v=v120t9n2"></script>
+<!-- 🎖 INFLUENCE — the standing track for a player and their camp, and the
+     envoys it brings to the gate (Cinder / a card / a recruit / a convoy).
+     Registers window.MythicInfluence. index.html's half of the seam is
+     window.MythicInfluenceBridge, defined next to MythicCityBridge above, and
+     one button in the CAMP STATUS bar.
+     ⚠ IT READS ITS THREE INPUTS AND WRITES NONE OF THEM. Node tier and
+       Foundation Reserve rep are consumed, never moved — a reward loop that
+       could raise its own difficulty inputs would compound without limit.
+     ⚠ THE PAYOUTS ARE THE SERVER'S (sql/038). influence_claim/_resolve own the
+       clock, the RNG, the level, the standing and every amount, and credit the
+       canonical wallet themselves — so this file's bridge exposes `rpc` and a
+       `syncCinder` that only ever raises the DISPLAY. It deliberately does NOT
+       let the module call addGems on that path: the server has already paid,
+       and crediting again would pay one envoy twice.
+     ⚠ Before sql/038 is applied the module degrades to an offline envoy that
+       hands out cards and resources but NEVER Cinder — money needs a server to
+       name the amount. Cinder stays capped at 50,000 per envoy, below the
+       wallet_credit single-credit bound (sql/034).
+     ⚠ If this 404s the camp loses the Influence button and nothing else —
+       every call site checks window.MythicInfluence first.
+     ⚠ Bump ?v= on every change — the service worker caches /src/* like any
+       other static asset, and a missed bump ships invisibly. -->
+<script type="module" src="src/influence/index.js?v=v120x5inf6"></script>
 <!-- 🧰 RESOURCE CHAIN — the 258-entry industrial catalogue behind the city
      builder (water → agriculture → … → containment → civic). Registers
      window.MythicResourceChain: pure data, no I/O, no globals, and NOTHING in

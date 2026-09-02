@@ -403,7 +403,8 @@ export async function openEditor(opts) {
   }
 
   /* ═══ PLAY MODE ═══ */
-  const play = { yaw: 0, pitch: 0, vy: 0, pos: new THREE.Vector3(), keys: {}, savedCam: null, savedTarget: null, grounded: false };
+  const play = { yaw: 0, pitch: 0, vy: 0, pos: new THREE.Vector3(), keys: {}, savedCam: null, savedTarget: null, grounded: false, lockedAt: 0 };
+  ED.play = play;
   function startPlay() {
     if (S.playing) return;
     S.playing = true; canvasHost.classList.add('play');
@@ -427,10 +428,15 @@ export async function openEditor(opts) {
     $('#mf-play').classList.remove('on'); $('#mf-play').textContent = '▶ Play';
     if (S.selectedId) select(S.selectedId);
   }
-  function onPointerLockChange() { if (S.playing && document.pointerLockElement !== cv) stopPlay(); }
+  function onPointerLockChange() { if (document.pointerLockElement === cv) play.lockedAt = performance.now(); else if (S.playing) stopPlay(); }
   document.addEventListener('pointerlockchange', onPointerLockChange);
   teardown.push(() => document.removeEventListener('pointerlockchange', onPointerLockChange));
-  function onMouseMovePlay(e) { if (!S.playing || document.pointerLockElement !== cv) return; play.yaw -= e.movementX * 0.0022; play.pitch = Math.max(-1.5, Math.min(1.5, play.pitch - e.movementY * 0.0022)); }
+  function onMouseMovePlay(e) {
+    if (!S.playing || document.pointerLockElement !== cv) return;
+    // Browsers can emit one huge synthetic movement as the cursor recentres on
+    // lock; taking it as input snaps the view to the sky. Ignore that burst.
+    if (performance.now() - play.lockedAt < 150 || Math.abs(e.movementX) > 300 || Math.abs(e.movementY) > 300) return;
+    play.yaw -= e.movementX * 0.0022; play.pitch = Math.max(-1.5, Math.min(1.5, play.pitch - e.movementY * 0.0022)); }
   document.addEventListener('mousemove', onMouseMovePlay);
   teardown.push(() => document.removeEventListener('mousemove', onMouseMovePlay));
   function playFrame(dt) {
@@ -574,6 +580,8 @@ export async function openEditor(opts) {
     try { if (opts.onClose) opts.onClose(); } catch (e) {}
   }
   ED.close = () => close(false);
+  // For code that edits S.map directly (tests, future game hooks): refresh the chrome.
+  ED.refresh = () => { renderStats(); renderInspector(); renderLibrary(); };
 
   /* ═══ UI RENDERERS ═══ */
   function renderHud() {

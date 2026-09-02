@@ -759,6 +759,10 @@ function closeModal() {
   if (modal) { try { modal.remove(); } catch (e) {} modal = null; }
   const p = Yard.getPlayer();
   if (p && !Yard.isOverview()) p.enabled = true;
+  // Hand focus back to the yard, or the operator is unresponsive after every
+  // modal because the keyboard is still pointed at a button that no longer
+  // exists.
+  try { const c = el && el.querySelector('#hp-yard-canvas canvas'); if (c) c.focus({ preventScroll: true }); } catch (e) {}
 }
 
 function paneBoard(s) {

@@ -99,6 +99,12 @@ export function init(canvasHost, opts) {
   Models.preloadAll().then(() => { if (!disposed) rebuild(); }).catch(() => {});
 
   rebuild();
+  /* ⚠ TAKE FOCUS. Keyboard events go to the focused document, and an artifact
+     (or any iframe embed) does not have it until something inside is clicked.
+     Without this the operator simply does not move and there is nothing on
+     screen explaining why. preventScroll matters too: focusing a canvas inside
+     a scrolling panel otherwise jumps the page. */
+  try { renderer.domElement.focus({ preventScroll: true }); } catch (e) {}
   window.addEventListener('resize', onResize);
   return true;
 }

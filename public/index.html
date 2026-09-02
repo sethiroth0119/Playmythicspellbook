@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120w6';
+  window.BUILD_VERSION = 'v120x0';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -167112,6 +167112,10 @@ const CAMP_ROUTE_OPTIONS = {
   lab:              { label: 'The Lab',                icon: '🧪', go: () => { if (typeof _labGate === 'function' && !_labGate()) return; App.screen = 'lab'; App.labTab = 'fuse'; App.labParentA = null; App.labParentB = null; } },
   blackRiver:       { label: 'Oil Extraction (BRP)',   icon: '🛢', go: () => { App.screen = 'blackRiver'; } },
   fuelCommand:      { label: 'Gas Station Run (FC)',   icon: '⛽', go: () => { App.screen = 'fuelCommand'; } },
+  // 🛢 The refinery is an OVERLAY, not a screen, so this route opens it in
+  //    place rather than assigning App.screen. Same pattern as the Real Estate
+  //    Office below: the player never leaves where they were.
+  crackingYard:     { label: 'The Cracking Yard (Refinery)', icon: '🛢', go: () => { setTimeout(() => { try { if (window.MythicRefinery && window.MythicRefinery.unlocked()) window.MythicRefinery.open(); else showToast('🛢 You need Black River Petroleum before you can run a refinery.', 4200); } catch (e) {} }, 50); } },
   woodsFishing:     { label: 'Woods Fishing',          icon: '🎣', go: () => { App.screen = 'woodsFishing'; } },
   princePortfolios: { label: 'Car Dealership (PP)',    icon: '🚗', go: () => { App.screen = 'princePortfolios'; } },
   justBusiness:     { label: 'Just Business (hub)',    icon: '💼', go: () => { App.screen = 'justBusiness'; } },
@@ -199343,6 +199347,21 @@ function _brRenderRefinery(s) {
         ? '<button class="br-btn br-btn-primary" id="br-extraction-field" style="margin-top:6px">⛏ Enter Extraction Field</button>'
         : '<button class="br-btn" disabled style="margin-top:6px">⛏ Enter Extraction Field</button><p class="br-muted" style="margin-top:8px;color:#cf6868">⚠ Build a refinery first to open the Extraction Field.</p>') +
     '</div>' +
+    // 🛢 THE CRACKING YARD — the deep refinery. This panel and the one-click
+    //    "Refine Batch ×1" above are deliberately BOTH here: the button is the
+    //    version for a player who wants crude turned into product without
+    //    thinking about it, and the yard is for the player who wants to run a
+    //    fuel company. Neither replaces the other.
+    //    Feature-detected — if /src/refinery/index.js failed to load, this
+    //    block simply does not render and the tab is exactly what it was.
+    ((typeof window !== 'undefined' && window.MythicRefinery && window.MythicRefinery.unlocked())
+      ? '<div class="br-panel" style="border-color:rgba(232,161,58,0.55);background:linear-gradient(160deg,rgba(46,32,10,0.55),rgba(8,11,18,0.6))">' +
+          '<h3>🛢 The Cracking Yard <span style="color:#f0c75e;font-size:0.7em;letter-spacing:0.12em">3D · HIDN PETRO</span></h3>' +
+          '<p class="br-muted">Run the plant properly. Inspect a crude assay, desalt it, take the column by hand — temperature, pressure and flow, with a sweet spot that <b style="color:#e8a13a">drifts</b> as the barrel heats through. Then blend the cuts to hit a gas station\'s spec without overspending, test it, correct it, and put it on a truck.</p>' +
+          '<p class="br-muted" style="margin-top:6px;color:#8d959e">' + escapeHtml(window.MythicRefinery.summary()) + '</p>' +
+          '<button class="br-btn br-btn-primary" id="br-cracking-yard" style="margin-top:6px">🛢 Enter the Cracking Yard</button>' +
+        '</div>'
+      : '') +
     '<div class="br-panel">' +
       '<h3>📦 Refined Inventory</h3>' +
       '<div class="br-grid2">' +
@@ -199358,6 +199377,15 @@ function _brBindRefinery() {
   if (b) b.onclick = () => { if (brBuildRefinery()) render(); };
   const ef = document.getElementById('br-extraction-field');
   if (ef) ef.onclick = () => { try { _osimOpen(); } catch (e) { console.warn('[osim]', e); showToast('⚠ Could not enter the Extraction Field — check console.', 3200); } };
+  const cy = document.getElementById('br-cracking-yard');
+  if (cy) cy.onclick = () => {
+    try {
+      if (!(window.MythicRefinery && window.MythicRefinery.open)) { showToast('⚠ The refinery module is not loaded.', 3200); return; }
+      // The yard is a full-screen overlay, not a screen — it repaints the BRP
+      // tab underneath it on close so the summary line is current.
+      window.MythicRefinery.open(() => { try { if (App.screen === 'blackRiver') render(); } catch (e) {} });
+    } catch (e) { console.warn('[refinery]', e); showToast('⚠ Could not enter the Cracking Yard — check console.', 3200); }
+  };
 }
 
 function _brRenderMarket(s) {
@@ -207501,6 +207529,194 @@ window.MythicCityBridge = {
      `outputMultipliers: (defId) => cityOutputMultipliers(defId)` and
      production.state.js will pick it up with no other change. */
   outputMultipliers: null,
+};
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   🛢 REFINERY BRIDGE — the ONLY seam between index.html and /src/refinery.
+   ---------------------------------------------------------------------------
+   ⚠ THE GLOBALS TRAP, AGAIN. `Profile`, `Forge`, `Operations` and the gem
+   helpers are top-level `const`/`function` in this file — lexical bindings the
+   module cannot see (this has already cost real time twice; see CLAUDE.md).
+   Everything the yard needs is handed over here, as ACCESSORS rather than
+   snapshots, because a captured Profile.gems goes stale the moment the player
+   spends anything anywhere else in the game.
+
+   WHERE THE REFINERY SITS. It is the missing middle of a chain that already
+   existed: Black River Petroleum pulls crude out of the ground, Ethos Fuel
+   Command sells fuel at the pump, and until now nothing connected them except
+   brRefineBatch() — 40 crude in, a fixed yield out, an 18% fire roll. That
+   button still works and is untouched. This is the version for a player who
+   wants to actually run the plant.
+
+   EVERY HOOK BELOW IS OPTIONAL. With no Fuel Command, no directory and no
+   district nodes the yard generates NPC customers and plays identically. That
+   is the same degrade-to-empty rule the Supabase paths follow — a feature that
+   throws because a sibling feature is not installed is a bug, not a gate. */
+window.MythicRefineryBridge = {
+  /* ── The save. Absent-tolerant by construction: a profile with no refinery
+        key hydrates as {} and /src/refinery/state.js fills in every default. */
+  state: () => {
+    try {
+      if (!Profile.refinery || typeof Profile.refinery !== 'object') Profile.refinery = {};
+      return Profile.refinery;
+    } catch (e) { return {}; }
+  },
+  /* 🔴 RETURN FALSE ON FAILURE, DO NOT SWALLOW IT — the same lesson the city
+     bridge records above. A silent save failure charged a player for a
+     building that never persisted. The module's callers check this. */
+  save: () => { try { saveProfile(); return true; } catch (e) { return false; } },
+
+  /* ── Cinder. Routed through the real helpers; Profile.gems is never touched
+        directly from a module. spendGems takes only an amount, so the reason
+        string is dropped here rather than passed to a signature that has no
+        slot for it — the yard keeps its own log. */
+  gems: () => { try { return Profile.gems | 0; } catch (e) { return 0; } },
+  spendGems: (n, why) => {
+    try {
+      if (!spendGems(n)) return false;
+      try { _serverMirrorCharge(n, why || 'Refinery'); } catch (e) {}
+      return true;
+    } catch (e) { return false; }
+  },
+  addGems: (n, why) => { try { addGems(n, why || 'Refinery'); } catch (e) {} },
+
+  /* ── Chrome. */
+  toast: (m, ms) => { try { showToast(m, ms || 3600); } catch (e) {} },
+  confirm: (m) => { try { return gcConfirm(m); } catch (e) { return Promise.resolve(false); } },
+  isAdmin: () => { try { return !!(typeof isAdmin === 'function' && isAdmin()); } catch (e) { return false; } },
+
+  /* ── 3D. The yard is a sibling of the Extraction Field and deliberately uses
+        the SAME legacy r128 global (window.THREE) the rest of the game's 3D
+        already loaded. Handing over the loader rather than letting the module
+        import 'three' is what keeps a second engine out of the page. */
+  loadThree: (cb) => { try { _csLoadThree(cb); } catch (e) { try { cb(false); } catch (e2) {} } },
+
+  /* ── Gate. The refinery unlocks with Black River Petroleum, because a
+        refinery with no source of crude is a locked door with no key. */
+  brOwned: () => { try { return !!brIsUnlocked(); } catch (e) { return false; } },
+
+  /* ══ THE ECONOMY HOOKS ══════════════════════════════════════════════════
+     These four are what make the yard part of the world rather than a toy. */
+
+  /* Your own gas station, if you run one. Its NPC traffic IS its demand, and
+     it is the only customer that pays in fuel instead of Cinder. */
+  ownStation: () => {
+    try {
+      if (typeof fcIsUnlocked !== 'function' || !fcIsUnlocked()) return null;
+      const s = ensureFuelCommand();
+      return {
+        name: (s.publicListing && s.publicListing.label) || 'Your Station',
+        place: 'Your forecourt',
+        traffic: s.npc | 0,
+        fuel: s.fuel | 0,
+        cap: s.fuelCap | 0,
+      };
+    } catch (e) { return null; }
+  },
+
+  /* Other players' stations, straight off the public Gas Stations directory
+     that Fuel Command already publishes. Read-only — the refinery never writes
+     to another player's listing. `rep` is their station reputation, which is
+     why a well-run station's contracts are worth taking. */
+  directory: () => {
+    try {
+      const f = (Forge.fuelCommand && Forge.fuelCommand.directory) || null;
+      const rows = (f && Array.isArray(f.listings)) ? f.listings : [];
+      const me = (Profile.cloud && Profile.cloud.userId) ? Profile.cloud.userId : 'local';
+      /* 🔒 THIS IS THE TRUST BOUNDARY. Station and owner names are typed by
+         OTHER PLAYERS and arrive through the shared directory, so they are
+         sanitised HERE, once, rather than relied upon to be safe at each of
+         the dozen places the refinery prints them. The module escapes on
+         render and showToast escapes by default, so this is defence in depth
+         — but the length cap is doing real work on its own: nothing stops a
+         player naming their station 400 characters, and the contract cards
+         have no answer to that. */
+      const clean = (v, fallback, max) => {
+        let t = String(v == null ? '' : v).replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').trim();
+        if (!t) return fallback;
+        return t.length > max ? t.slice(0, max - 1) + '…' : t;
+      };
+      return rows.filter(l => l && l.online).map(l => ({
+        id: l.ownerId,
+        name: clean(l.stationName, clean(l.ownerName, 'Player', 24) + ' Station', 36),
+        place: clean(l.ownerName, 'Player', 24) + '’s chain',
+        own: l.ownerId === me,
+        /* Stock is the honest demand signal: a station that is nearly dry
+           needs fuel, one that is full does not. A listing with no stock
+           figure is treated as averagely thirsty rather than skipped. */
+        traffic: Math.max(30, 140 - Math.min(120, (l.stock | 0) / 12)),
+        rep: l.rep | 0,
+      }));
+    } catch (e) { return []; }
+  },
+
+  /* District nodes → NPC fuel demand. Sheltered civilians are the closest
+     thing this game has to a population figure, and vehicles-per-capita is
+     what turns "20,000 people live here" into "this district burns fuel".
+     The ratio is deliberately low (one vehicle per eight residents): a
+     post-collapse district is not a commuter suburb. */
+  demandNodes: () => {
+    try {
+      const t = (typeof _twForge === 'function') ? _twForge() : null;
+      const nodes = (t && Array.isArray(t.nodes)) ? t.nodes : [];
+      const out = [];
+      for (const n of nodes.slice(0, 12)) {
+        if (!n || !n.id) continue;
+        let civ = 0;
+        try {
+          const r = (typeof _twNodeRecon === 'function') ? _twNodeRecon(n)
+                  : (typeof _twNodeReconEnsure === 'function') ? _twNodeReconEnsure(n) : null;
+          civ = (r && (r.civiliansSaved | 0)) || 0;
+        } catch (e) {}
+        if (civ < 400) continue;
+        out.push({ id: n.id, name: n.name || n.label || n.id, vehicles: Math.round(civ / 8) });
+      }
+      return out;
+    } catch (e) { return []; }
+  },
+
+  /* Fuel actually arriving at YOUR station. This is the payoff for supplying
+     yourself: the litres land in the underground tanks Fuel Command sells out
+     of, so the refinery keeps the station stocked and the station's margin is
+     yours too. Returns how much the tanks could physically take — the yard
+     sells the overflow at wholesale rather than pretending it vanished.
+     ⚠ Fuel Command counts in BARRELS, the refinery in LITRES. FC_L_PER_BBL is
+     the only place that conversion lives; getting it wrong here would silently
+     multiply a player's station stock by 159. */
+  fillOwnStation: (litres, gradeId) => {
+    try {
+      if (typeof fcIsUnlocked !== 'function' || !fcIsUnlocked()) return 0;
+      const s = ensureFuelCommand();
+      const L_PER_BBL = 159;
+      const room = Math.max(0, (s.fuelCap | 0) - (s.fuel | 0));
+      const bbl = Math.min(room, Math.floor(Math.max(0, litres) / L_PER_BBL));
+      if (bbl <= 0) return 0;
+      s.fuel = (s.fuel | 0) + bbl;
+      /* A station selling refinery-grade fuel earns a quality note — this is
+         the "good fuel has consequences too" half of the reputation loop. */
+      if (gradeId === 'premium' || gradeId === 'midgrade') {
+        s.repQuality = Math.min(100, (s.repQuality | 0) + 1);
+      }
+      try { _fcLog('good', 'Refinery delivery: +' + bbl.toLocaleString() + ' bbl of ' + String(gradeId || 'fuel') + '.'); } catch (e) {}
+      try { saveProfile(); } catch (e) {}
+      return bbl * L_PER_BBL;
+    } catch (e) { return 0; }
+  },
+
+  /* Every delivery, announced. Right now this feeds refined product back into
+     the camp salvage ledger the same way brSell() does — the oil company is a
+     real supplier for the rest of the game, and the refinery should be too.
+     Deliberately a SMALL fraction: the contract already paid, and paying twice
+     for one batch would make refining strictly better than every other way of
+     getting fuel. */
+  onDelivered: (info) => {
+    try {
+      if (!info || !(info.litres > 0)) return;
+      if (typeof addRes === 'function') {
+        addRes('fuel', Math.max(1, Math.floor(info.litres / 900)));
+      }
+    } catch (e) {}
+  },
 };
 /* 🏦 CITY → OPS VAULT.
    The city's top-bar resources ARE the camp ledger — production writes through
@@ -223096,6 +223312,23 @@ render();
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
 <script type="module" src="src/resources/chain.js?v=v120w6chain2"></script>
+<!-- 🛢 HIDN PETRO — THE CRACKING YARD. The refinery that sits BETWEEN Black
+     River Petroleum (crude out of the ground) and Ethos Fuel Command (fuel at
+     the pump). Registers window.MythicRefinery and is INERT until opened from
+     the BRP Refinery Complex tab.
+     Reads nothing by itself: window.MythicRefineryBridge (defined next to
+     MythicCityBridge above) hands it Profile.refinery, the gem helpers, the
+     three.js loader, the gas-station directory and the district population
+     that becomes NPC fuel demand. Without the bridge it registers, warns once
+     and plays against a mock wallet — the globals trap.
+     ⚠ It brings its own stylesheet (/src/refinery/refinery.css), injected on
+       first open so a player who never enters the yard never pays for it.
+     ⚠ If this 404s the game is unchanged: brRefineBatch() — the one-click
+       40-crude-in, fixed-yield-out button this is the deep version of — is
+       untouched and still the fallback.
+     ⚠ Bump ?v= on every change — the service worker caches /src/* like any
+       other static asset, and a missed bump ships invisibly. -->
+<script type="module" src="src/refinery/index.js?v=v120x0refinery1"></script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the

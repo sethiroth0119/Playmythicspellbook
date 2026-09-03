@@ -339,6 +339,56 @@ export function shelfUnits(stock) {
   return n;
 }
 
+/* ── prophylaxis ───────────────────────────────────────────────────────────
+   What the medicine NPCs bought does for the CITY. Every dose sold in the
+   last PROPHYLAXIS_MS protects roughly one citizen, weighted by product —
+   a vaccine is the point of the whole feature, salve does nothing — and
+   coverage is doses over population. It comes back as a 0..1 factor that
+   outbreak.js multiplies wild-outbreak pressure by (1 − factor).
+
+   🔴 IT IS A DISCOUNT ON PRESSURE, NEVER A FLOOR-BREAKER OR A CURE. A city
+   with real sanitation problems and a full pharmacy is still at risk; it is
+   at LESS risk, and it can see by how much. Capped at PROPHYLAXIS_MAX so
+   the counter can never replace clinics and clean water — those are the
+   building answer, this is the business answer, and both should pay. */
+export const PROPHYLAXIS = {
+  WINDOW_MS: 6 * 3600000,          // a dose protects for six hours of wall time
+  WEIGHT: { vaccine: 1.0, serum: 0.55, antiviral: 0.35, tonic: 0.3, salve: 0 },
+  PER_POP: 1.6,                    // coverage needed for the full effect (doses/pop)
+  MAX: 0.7,
+};
+export function prophylaxisOf(sales, pop, now) {
+  const t = Number.isFinite(+now) ? +now : Date.now();
+  const cut = t - PROPHYLAXIS.WINDOW_MS;
+  const people = Math.max(1, +pop || 0);
+  let protectedN = 0;
+  for (const row of (sales || [])) {
+    if (!row || !(row.at >= cut) || !row.sold) continue;
+    // Linear fade over the window: a dose sold five hours ago is nearly spent.
+    const fresh = clamp((row.at - cut) / PROPHYLAXIS.WINDOW_MS, 0, 1);
+    for (const pid of Object.keys(row.sold)) protectedN += (row.sold[pid] | 0) * (PROPHYLAXIS.WEIGHT[pid] || 0) * fresh;
+  }
+  const coverage = protectedN / (people * PROPHYLAXIS.PER_POP);
+  return +clamp(coverage * PROPHYLAXIS.MAX, 0, PROPHYLAXIS.MAX).toFixed(3);
+}
+
+/* ── wholesale ─────────────────────────────────────────────────────────────
+   A lot is shelf stock sold to ANOTHER player's hospital and hauled there by
+   a player-owned Transportation Company — the same trucks that move cures,
+   with the same consequence: what arrives is what the cold chain left.
+   `integrity` is logistics.integrityOf's number; quality and units both
+   suffer from a bad chain, deterministically from the lot id so a reload
+   cannot reroll the drive. */
+export function wholesaleArrive(lot, integrity, seedStr) {
+  const integ = clamp(+integrity || 0.5, 0, 1);
+  const s = Math.abs(hash(String(seedStr || (lot && lot.id) || 'lot'))) % 1000 / 1000;
+  const loss = (1 - integ) * (0.5 + s);                      // 0 at perfect, up to 1.5× the shortfall
+  const units = Math.max(0, Math.round((lot.units | 0) * clamp(1 - loss * 0.6, 0, 1)));
+  const quality = +clamp((+lot.quality || 0) * (1 - loss * 0.45), 0, 1).toFixed(3);
+  return { units, unitsLost: Math.max(0, (lot.units | 0) - units), quality, integrity: integ,
+    note: loss > 0.5 ? '🧊 The chain slipped — the lot arrived weaker and lighter than it left.' : '🧊 Chain held.' };
+}
+
 function hash(s) {
   let h = 2166136261 >>> 0;
   for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }

@@ -53,6 +53,15 @@ function host() {
        stop looking miserable about it. Degrading, never throwing. */
     nudge: (id, d) => { try { return !!(c.nudge && c.nudge(id, d)); } catch (e) { return false; } },
     cityId: () => { try { return (c.cityId && c.cityId()) || 'city'; } catch (e) { return 'city'; } },
+    /* 💊 What the pharmacy counter sold recently, as a 0..1 discount on wild
+       pressure. Resolved late and by duck type — the pharmacy mounts after
+       this module — and 0 whenever it is absent. */
+    prophylaxis: () => {
+      try {
+        const P = (typeof window !== 'undefined') && window.MythicPharmacy;
+        return (P && typeof P.prophylaxis === 'function') ? (+P.prophylaxis() || 0) : 0;
+      } catch (e) { return 0; }
+    },
   };
 }
 

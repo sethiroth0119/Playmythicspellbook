@@ -109,19 +109,37 @@ export function tipLine(t) {
     const ctx = context();
     const rate = PH.customersPerMin(ctx);
     const share = ctx.dispensaries.length ? 1 / ctx.dispensaries.length : 1;
+    const pr = prophylaxis();
     return '<div style="color:#8fd4c8">💊 Retailing ' + units + ' units of hospital medicine · ~' +
       (rate * share * 20).toFixed(1) + ' sales per city day here' +
-      (ctx.cases > 0 ? ' · <span style="color:#ffb0ba">outbreak demand</span>' : '') + '</div>';
+      (ctx.cases > 0 ? ' · <span style="color:#ffb0ba">outbreak demand</span>' : '') +
+      (pr > 0 ? ' · prophylaxis −' + Math.round(pr * 100) + '% outbreak pressure' : '') + '</div>';
   } catch (e) { return ''; }
+}
+
+/* 💊 The counter's effect on the city: doses sold in the last six hours,
+   weighted by product, over population — see pharma.prophylaxisOf. Read by
+   outbreak.js through the host adapter every pressure check, so it is
+   cached on the sales beat rather than recomputed per call. */
+let PROPH = { at: 0, v: 0 };
+export function prophylaxis() {
+  try {
+    if (!HS.ready()) return 0;
+    const now = Date.now();
+    if (now - PROPH.at < 5000) return PROPH.v;
+    let pop = 0; try { pop = +(CTX && CTX.pop && CTX.pop()) || 0; } catch (e) {}
+    PROPH = { at: now, v: PH.prophylaxisOf(HS.sales(), pop, now) };
+    return PROPH.v;
+  } catch (e) { return 0; }
 }
 
 export function report() {
   const ctx = context();
-  return { ctx, ratePerMin: PH.customersPerMin(ctx), shelf: HS.ready() ? HS.stock() : {}, units: HS.ready() ? HS.shelfUnits() : 0 };
+  return { ctx, ratePerMin: PH.customersPerMin(ctx), shelf: HS.ready() ? HS.stock() : {}, units: HS.ready() ? HS.shelfUnits() : 0, prophylaxis: prophylaxis() };
 }
 
 const api = {
-  mount, tick, tipLine, report, context,
+  mount, tick, tipLine, report, context, prophylaxis,
   /* 🔬 Test seam. RAF is dead in this environment's Browser pane, so the
      counter is driven by hand here: `_sell(mins)` runs that many city minutes. */
   _sell: (mins) => HS.counterTick(mins, context()),

@@ -32,7 +32,13 @@
 
 import * as PL from '../plague/state.js';
 import * as OB from '../plague/outbreak.js';
+import * as LG from '../plague/logistics.js';
 import * as PH from './pharma.js';
+
+/* Corp operations have uuid ids; personal ones ('local_…', 'company_…') do
+   not, and a payout addressed to a personal op is unclaimable (see
+   settleWaybill in /src/plague/state.js). Listing is refused for those. */
+const IS_UUID = /^[0-9a-fA-F-]{36}$/;
 
 export const V = 1;
 
@@ -49,8 +55,10 @@ function emptyBlob() {
     stock: {},                      // pid -> { units, quality, family, lineName }
     sales: [],                      // the city's counter log (append-only, capped)
     runs: [],                       // compounding runs (append-only, capped)
-    stats: { made: 0, spoiled: 0, sold: 0, earned: 0, runs: 0 },
+    stats: { made: 0, spoiled: 0, sold: 0, earned: 0, runs: 0, wholesaleUnits: 0, wholesaleCinder: 0 },
     seen: {},                       // shipmentId -> 1, so sweep() is idempotent
+    lots: [],                       // lots I listed (escrowed off the shelf)
+    orders: [],                     // lots I bought, on the road or landed
   };
 }
 
@@ -78,6 +86,8 @@ export function blob() {
       if (Array.isArray(raw.runs)) b.runs = raw.runs.filter((x) => x && x.id).slice(-60);
       if (raw.stats && typeof raw.stats === 'object') b.stats = Object.assign(b.stats, raw.stats);
       if (raw.seen && typeof raw.seen === 'object') b.seen = Object.assign({}, raw.seen);
+      if (Array.isArray(raw.lots)) b.lots = raw.lots.filter((x) => x && x.id).slice(-60);
+      if (Array.isArray(raw.orders)) b.orders = raw.orders.filter((x) => x && x.id).slice(-60);
     } catch (e) {}
   }
   CACHE = b;
@@ -276,6 +286,192 @@ export function earnedSince(ms) {
   let cinder = 0, units = 0;
   for (const s of blob().sales) if (s && s.at >= cut) { cinder += s.cinder | 0; units += s.units | 0; }
   return { cinder, units };
+}
+
+/* ══ WHOLESALE — the Loading Dock ══════════════════════════════════════════
+   Shelf stock sold to ANOTHER player's hospital, hauled by a player-owned
+   Transportation Company. The lot row lives in Supabase (sql/039); the units
+   live on each player's shelf. Every call here is guarded and the whole dock
+   degrades to "the board is offline" — listing refuses rather than escrowing
+   units into a row that never existed.
+
+   🔴 ESCROW FIRST, PUBLISH SECOND, UN-ESCROW ON FAILURE. The units leave the
+   shelf the moment the seller lists, so the city counter cannot sell them out
+   from under a buyer; if the insert fails they come straight back. */
+
+export function myMedicalOp() {
+  try { return (bridge().myOps() || []).find((o) => o && o.op_type === 'medical' && (o.status || 'active') === 'active') || null; } catch (e) { return null; }
+}
+export function online() { const B = bridge(); try { return !!(B.signedIn() && B.client()); } catch (e) { return false; } }
+
+export function lots() { return blob().lots.slice().reverse(); }
+export function orders() { return blob().orders.slice().reverse(); }
+export function lotById(id) { for (const l of blob().lots) if (l && l.id === id) return l; return null; }
+
+export async function listLot(pid, units, askPerUnit) {
+  const B = bridge();
+  if (!ready()) return { ok: false, error: 'The dock is not connected to the game.' };
+  if (!online()) return { ok: false, error: 'The wholesale board needs you signed in.' };
+  const op = myMedicalOp();
+  if (!op) return { ok: false, error: 'No Medical Corporation licence to sell from.' };
+  if (!IS_UUID.test(String(op.id))) return { ok: false, error: 'Wholesale needs a CORP-funded Medical Corporation — a personally-funded one cannot be paid through the ledger.' };
+  const b = blob();
+  const s = b.stock[pid];
+  const n = Math.max(0, Math.min(units | 0, s ? s.units | 0 : 0));
+  if (!PH.PRODUCTS[pid] || !n) return { ok: false, error: 'Nothing of that on the shelf.' };
+  const ask = Math.max(0, Math.round(+askPerUnit || 0));
+  if (!ask) return { ok: false, error: 'Set an asking price.' };
+
+  // escrow
+  const quality = +s.quality || 0;
+  s.units -= n; if (s.units <= 0) delete b.stock[pid];
+  const lot = { id: 'lot_' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36), productId: pid, units: n, quality, ask, status: 'listed', at: Date.now(), opId: String(op.id) };
+  b.lots.push(lot); if (b.lots.length > 60) b.lots.splice(0, b.lots.length - 60);
+  persist();
+
+  try {
+    const r = await B.client().from('pharma_lots').insert({
+      id: lot.id, seller_id: B.userId(), seller_name: B.displayName(), seller_op_id: lot.opId,
+      product: pid, units: n, quality, ask, status: 'listed',
+    });
+    if (r && r.error) throw new Error(r.error.message || 'insert failed');
+  } catch (e) {
+    // un-escrow: the offer never existed
+    PH.addToShelf(blob().stock, pid, n, quality, null);
+    const i = blob().lots.indexOf(lot); if (i >= 0) blob().lots.splice(i, 1);
+    persist();
+    return { ok: false, error: 'The board would not take the listing (' + String((e && e.message) || e).slice(0, 80) + ') — your units are back on the shelf.' };
+  }
+  return { ok: true, lot };
+}
+
+export async function withdrawLot(id) {
+  const B = bridge();
+  const lot = lotById(id);
+  if (!lot || lot.status !== 'listed') return { ok: false, error: 'That lot is not listed.' };
+  if (!online()) return { ok: false, error: 'Withdrawing needs you signed in.' };
+  try {
+    const r = await B.client().from('pharma_lots').update({ status: 'withdrawn' }).eq('id', id).eq('status', 'listed').select('id');
+    if (r && r.error) throw new Error(r.error.message);
+    if (!r || !Array.isArray(r.data) || !r.data.length) {
+      // Already sold under us — reconcile instead of un-escrowing sold goods.
+      await pollWholesale();
+      return { ok: false, error: 'That lot was already bought. It is on its way to the buyer.' };
+    }
+  } catch (e) { return { ok: false, error: 'Withdraw failed: ' + String((e && e.message) || e).slice(0, 80) }; }
+  lot.status = 'withdrawn'; lot.withdrawnAt = Date.now();
+  PH.addToShelf(blob().stock, lot.productId, lot.units, lot.quality, null);
+  persist();
+  return { ok: true, lot };
+}
+
+/* Other players' listed lots. Empty when offline or the table is absent. */
+export async function fetchBoard() {
+  const B = bridge();
+  if (!online()) return { ok: false, online: false, rows: [] };
+  try {
+    const uid = B.userId();
+    const r = await B.client().from('pharma_lots')
+      .select('id, seller_id, seller_name, seller_op_id, product, units, quality, ask, created_at')
+      .eq('status', 'listed').order('created_at', { ascending: false }).limit(60);
+    if (r && r.error) throw new Error(r.error.message);
+    return { ok: true, online: true, rows: (r.data || []).filter((x) => x && x.seller_id !== uid && PH.PRODUCTS[x.product]) };
+  } catch (e) { return { ok: false, online: true, rows: [], error: String((e && e.message) || e) }; }
+}
+
+/* The haul quote for a lot: the carrier's own econ row, units as "doses",
+   quality as the stability the cold chain works against. */
+export function quoteLot(row, carrier, coldPack) {
+  return LG.quote(carrier, { econ: bridge().opEcon('transport') || {}, doses: row.units | 0, distance: carrier && carrier.mine ? 1 : 2, stability: Math.round((+row.quality || 0) * 100), coldPack: !!coldPack });
+}
+
+export async function buyLot(row, carrier, coldPack) {
+  const B = bridge();
+  if (!ready()) return { ok: false, error: 'The dock is not connected to the game.' };
+  if (!online()) return { ok: false, error: 'Buying needs you signed in.' };
+  const op = myMedicalOp();
+  if (!op) return { ok: false, error: 'No Medical Corporation to deliver to.' };
+  if (!row || !carrier || !carrier.id) return { ok: false, error: 'Pick a lot and a carrier.' };
+  if (row.seller_id === B.userId()) return { ok: false, error: 'That is your own lot.' };
+  const q = quoteLot(row, carrier, coldPack);
+  const goods = Math.round((row.units | 0) * Math.max(0, +row.ask || 0));
+  const total = goods + q.fee;
+  if (total > (B.gems() | 0)) return { ok: false, error: 'Not enough Cinder (' + total.toLocaleString() + ' 🔥 needed: ' + goods.toLocaleString() + ' goods + ' + q.fee.toLocaleString() + ' haul).' };
+  if (!B.spendGems(total)) return { ok: false, error: 'The payment did not go through.' };
+
+  const arrivesAt = Date.now() + q.etaMs;
+  try {
+    const r = await B.client().from('pharma_lots').update({
+      status: 'sold', buyer_id: B.userId(), buyer_name: B.displayName(), buyer_op_id: String(op.id),
+      carrier_op_id: String(carrier.id), carrier_corp_id: carrier.corpId || null, carrier_name: carrier.name,
+      fee: q.fee, integrity: q.integrity, arrives_at: new Date(arrivesAt).toISOString(), sold_at: new Date().toISOString(),
+    }).eq('id', row.id).eq('status', 'listed').select('id');
+    if (r && r.error) throw new Error(r.error.message);
+    if (!r || !Array.isArray(r.data) || !r.data.length) throw new Error('gone');
+  } catch (e) {
+    try { B.addGems(total); } catch (e2) {}
+    return { ok: false, error: String((e && e.message) || e) === 'gone' ? 'Somebody bought that lot first. Your Cinder was returned.' : 'The purchase failed — your Cinder was returned.' };
+  }
+
+  /* 🔴 A PLAYER NEVER PAYS THEMSELVES for the haul (settleWaybill's rule):
+     a self-owned carrier gets no payout row — the fee was their own crew's
+     wages. The seller is always somebody else here (checked above). */
+  const mineIds = {}; try { for (const o of (B.myOps() || [])) if (o && o.id != null) mineIds[String(o.id)] = 1; } catch (e) {}
+  const order = { id: row.id, productId: row.product, units: row.units | 0, quality: +row.quality || 0, ask: +row.ask || 0, goods, fee: q.fee,
+    sellerName: row.seller_name || 'Survivor', sellerOpId: row.seller_op_id, carrierId: String(carrier.id), carrierCorpId: carrier.corpId || null, carrierName: carrier.name,
+    selfCarrier: !!mineIds[String(carrier.id)], integrity: q.integrity, arrivesAt, at: Date.now(), status: 'in_transit' };
+  const b = blob();
+  b.orders.push(order); if (b.orders.length > 60) b.orders.splice(0, b.orders.length - 60);
+  persist();
+  // The seller is paid for the goods NOW — the sale is done; the haul is the buyer's risk.
+  try {
+    await B.client().from('cure_payouts').insert([{ shipment_id: row.id, op_id: String(row.seller_op_id), corp_id: null, role: 'wholesale', amount: goods, rating_delta: 0, payer_id: B.userId(), payer_name: B.displayName() }]);
+  } catch (e) {}
+  return { ok: true, order, quote: q };
+}
+
+/* The sweep the settle poll and the dock both run: land my orders that are
+   due, and notice my lots that sold. Idempotent. */
+export async function pollWholesale() {
+  const B = bridge();
+  if (!ready()) return { ok: false, landed: 0, sold: 0 };
+  const b = blob();
+  let landed = 0, sold = 0;
+  const now = Date.now();
+  for (const o of b.orders) {
+    if (!o || o.status !== 'in_transit' || (o.arrivesAt || 0) > now) continue;
+    const a = PH.wholesaleArrive({ id: o.id, units: o.units, quality: o.quality }, o.integrity, o.id);
+    o.status = 'received'; o.receivedAt = now; o.unitsArrived = a.units; o.qualityArrived = a.quality; o.note = a.note;
+    if (a.units > 0) PH.addToShelf(b.stock, o.productId, a.units, a.quality, { strainName: 'wholesale from ' + o.sellerName });
+    b.stats.wholesaleUnits = (b.stats.wholesaleUnits | 0) + a.units;
+    landed++;
+    try { B.toast('🚚 ' + a.units + ' × ' + PH.PRODUCTS[o.productId].name + ' landed from ' + o.sellerName + '. ' + a.note, 6000); } catch (e) {}
+    if (online()) {
+      try { await B.client().from('pharma_lots').update({ status: 'received', received_at: new Date(now).toISOString() }).eq('id', o.id); } catch (e) {}
+      if (!o.selfCarrier) {
+        try {
+          await B.client().from('cure_payouts').insert([{ shipment_id: o.id, op_id: o.carrierId, corp_id: o.carrierCorpId, role: 'carrier', amount: o.fee, rating_delta: a.integrity > 0.8 ? 1 : a.integrity > 0.6 ? 0 : -1, payer_id: B.userId(), payer_name: B.displayName() }]);
+        } catch (e) {}
+      }
+    }
+  }
+  if (online()) {
+    const listed = b.lots.filter((l) => l && l.status === 'listed');
+    if (listed.length) {
+      try {
+        const r = await B.client().from('pharma_lots').select('id, status, buyer_name, sold_at').in('id', listed.map((l) => l.id)).in('status', ['sold', 'received']);
+        for (const row of ((r && r.data) || [])) {
+          const l = lotById(row.id); if (!l || l.status !== 'listed') continue;
+          l.status = 'sold'; l.buyerName = row.buyer_name || 'Survivor'; l.soldAt = row.sold_at ? Date.parse(row.sold_at) : now;
+          b.stats.wholesaleCinder = (b.stats.wholesaleCinder | 0) + l.units * l.ask;
+          sold++;
+          try { B.toast('💰 ' + l.buyerName + ' bought your ' + l.units + ' × ' + PH.PRODUCTS[l.productId].name + ' — ' + (l.units * l.ask).toLocaleString() + ' 🔥 is in the ledger to claim.', 6000); } catch (e) {}
+        }
+      } catch (e) {}
+    }
+  }
+  if (landed || sold) persist();
+  return { ok: true, landed, sold };
 }
 
 /* Does this player hold the licences the building's doors open onto? */

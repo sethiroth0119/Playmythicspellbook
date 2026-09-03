@@ -262,11 +262,44 @@ whichever window persisted last is the truth and nothing overwrites it.
 No SQL. Cure lines, the shelf and the counter log are facts about one
 player's business and one player's city, and live on the profile.
 
+### Prophylaxis — what the medicine does for the city
+
+Doses NPCs actually bought protect them. `pharma.prophylaxisOf` weights the
+last six hours of counter sales (vaccine 1.0, serum 0.55, tablets 0.35,
+tonic 0.3, salve 0), fades them linearly, divides by population, and hands
+back a 0..1 factor capped at 0.7. `outbreak.pressureOf` multiplies wild
+pressure by `(1 − factor)` when the host offers one — the city adapter reads
+it off `MythicPharmacy` by duck type, so a city with no hospital is exactly
+as it was. It is a discount, never a floor-breaker: clinics and clean water
+are still the building answer, this is the business answer, and both pay.
+The desk and the clinic tooltip both print it.
+
+### Wholesale — the Loading Dock
+
+Shelf stock sold to ANOTHER player's hospital, hauled by a player-owned
+Transportation Company (`sql/039_pharma_wholesale.sql`, apply after 038).
+
+- **Listing escrows.** The units leave the seller's shelf the moment they
+  list, so the city counter cannot sell them under a buyer; if the insert
+  fails they come straight back. Listing refuses offline, and refuses for a
+  personally-funded medical op, because the payout row it would produce is
+  unclaimable (settleWaybill's rule).
+- **Buying is an UPDATE** `where status = 'listed'`; two buyers racing the
+  same lot means the second sees zero rows and refunds itself. The buyer
+  pays goods + haul up front; the seller's `wholesale` payout row is filed at
+  the sale, the carrier's `carrier` row on arrival, both claimed through the
+  existing `claimPayouts` sweep. A self-owned carrier files no row.
+- **What lands is what the cold chain left.** `pharma.wholesaleArrive` takes
+  units and quality off a bad haul, deterministically from the lot id.
+- **The state machine is a trigger** (`pharma_lots_lock`): the offer is
+  immutable once listed; listed→sold needs a buyer, a destination, a carrier
+  and an arrival; sold→received changes only the stamp; nothing else moves.
+
 ## Next
 
-- **Vaccines sold should buy the city something.** The counter could hand
-  `outbreak.js` a prophylaxis factor from doses dispensed; today a vaccine is
-  only Cinder.
-- **Other players' clinics.** The shelf is retailed only in its owner's city.
-  A wholesale leg — selling stock to another player's Medical Corporation
-  through the same haulier system — is the obvious market to open.
+- **Reputation for sellers.** A lot's arrived quality is known to the buyer;
+  a seller rating in the board view would let the market punish bad shelf
+  stock the way `rating` punishes bad hauliers.
+- **The haulier still decides nothing** on a wholesale lot either — the same
+  gap the cure leg has. `haul_post` / `haul_board` in the existing transport
+  system is the job board that would fix both.

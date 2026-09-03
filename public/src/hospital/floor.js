@@ -61,6 +61,12 @@ export const STATIONS = [
     blurb: 'Turn a cure line into tablets, serum, vaccine, salve or tonic. Titrate carefully — the dial is the yield.',
   },
   {
+    key: 'dock', name: 'Loading Dock', icon: '🚚', short: 'DOCK',
+    pos: [-11.5, 12.5], size: [2.2, 3.2], color: 0xd8a13a, hot: false,
+    prompt: 'Trade wholesale',
+    blurb: 'Sell shelf stock to other players\' hospitals, or buy theirs. A player-owned haulier moves every lot.',
+  },
+  {
     key: 'labdoor', name: 'Lab Corridor', icon: '⚗️', short: 'LAB',
     pos: [11.5, 12.5], size: [2.2, 3.2], color: 0xd8825a, hot: false,
     prompt: 'Walk through to the containment lab',

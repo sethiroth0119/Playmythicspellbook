@@ -167,7 +167,7 @@ function gradeChip(key) {
 }
 
 export function deskPanel(ctx) {
-  const { stats, day, week, atWard, transit, openLines, units, econ, sales, ownsResearch, ownsMedical } = ctx;
+  const { stats, day, week, atWard, transit, openLines, units, econ, sales, ownsResearch, ownsMedical, city } = ctx;
   const rate = econ ? num(econ.ratePerWorkerHr) : '—';
   const log = (sales || []).slice(0, 8).map((s) =>
     '<div class="hp-log">' + new Date(s.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' · ' +
@@ -187,7 +187,12 @@ export function deskPanel(ctx) {
       kpi(num(atWard), 'CRATES AT THE DOOR', atWard ? '#e0a860' : '#dde4ee') +
       kpi(num(transit), 'ON THE ROAD') +
       kpi(num(stats.runs | 0), 'RUNS · ALL TIME') +
+      kpi('+' + num(stats.wholesaleCinder | 0) + ' 🔥', 'WHOLESALE · ALL TIME', '#d8b45a') +
+      (city && city.prophylaxis > 0 ? kpi('−' + Math.round(city.prophylaxis * 100) + '%', 'OUTBREAK PRESSURE', '#8fd4c8') : '') +
     '</div>' +
+    (city && city.prophylaxis > 0
+      ? '<p class="sub">💊 Prophylaxis: the vaccine, serum and tablets your clinics sold in the last six hours are cutting the city\'s wild-outbreak pressure by ' + Math.round(city.prophylaxis * 100) + '%. It fades as the doses do.</p>'
+      : '<p class="sub">💊 Vaccine, serum and tablets sold to NPCs protect them: every dose your clinics move discounts the city\'s wild-outbreak pressure for six hours. Salve does not.</p>') +
     '<p class="sub">Prices are shares of this operation\'s own rate (' + rate + ' 🔥 per worker-hour). Staff it and level it in Just Business and every product on the counter is worth more.</p>' +
     (log ? '<h4 style="font-size:10px;letter-spacing:.14em;color:#8b93a3;margin:10px 0 6px">RECENT SALES</h4>' + log
          : '<div class="bl-empty">Nothing sold yet. Put medicine on the shelf and open your city — a Clinic or a Med Lab retails it.</div>') +
@@ -299,6 +304,49 @@ export function dialPanel(ctx) {
       '<button class="bl-btn" data-act="close">ABANDON</button></div>' +
     (result != null ? '<p class="sub" style="margin-top:10px">Titration <b style="color:' + (result > 0.7 ? '#8fd4c8' : result > 0.4 ? '#e0a860' : '#ff8a94') + '">' + pct(result) + '</b>. ' +
       (result > 0.7 ? 'Clean dose.' : result > 0.4 ? 'Uneven — some of the run will be lost.' : 'Off the band. Re-titrate unless you like waste.') + '</p>' : '');
+}
+
+/* ── the loading dock ───────────────────────────────────────────────────── */
+export function dockPanel(ctx) {
+  const { stock, econ, lots, orders, board, sel, carriers, quote, online, canSell, why } = ctx;
+  const mine = (lots || []).filter((l) => l.status === 'listed');
+  const stocked = PRODUCT_IDS.filter((pid) => stock[pid] && stock[pid].units > 0);
+  const listForm = !stocked.length
+    ? '<div class="bl-empty">Nothing on the shelf to list. Compound a run first.</div>'
+    : !canSell ? '<div class="bl-empty">' + esc(why) + '</div>'
+    : '<div class="hp-shelf">' + stocked.map((pid) => '<div class="hp-prod' + (sel.sellPid === pid ? ' sel' : '') + '" data-act="sell-pick" data-id="' + esc(pid) + '"><b>' + esc(PRODUCTS[pid].icon + ' ' + PRODUCTS[pid].name) + '</b><div class="meta">' + num(stock[pid].units) + ' on the shelf · quality ' + pct(stock[pid].quality) + ' · counter price ' + num(unitPrice(pid, stock[pid].quality, econ)) + ' 🔥</div></div>').join('') + '</div>' +
+      (sel.sellPid && stock[sel.sellPid]
+        ? '<div class="hp-ctl"><span style="font-size:11px;color:#8b93a3">units</span><input type="number" min="1" max="' + stock[sel.sellPid].units + '" value="' + Math.min(sel.sellUnits | 0 || 1, stock[sel.sellPid].units) + '" data-act="sell-units">' +
+          '<span style="font-size:11px;color:#8b93a3">ask 🔥/unit</span><input type="number" min="1" value="' + (sel.sellAsk | 0 || unitPrice(sel.sellPid, stock[sel.sellPid].quality, econ)) + '" data-act="sell-ask">' +
+          '<button class="bl-btn pri" data-act="sell-list">LIST THE LOT</button></div>'
+        : '');
+  const myLots = mine.length
+    ? '<div class="bl-list">' + mine.map((l) => '<div class="bl-item"><b>' + esc(PRODUCTS[l.productId].icon + ' ' + num(l.units) + ' × ' + PRODUCTS[l.productId].name) + '</b><div class="meta">quality ' + pct(l.quality) + ' · asking ' + num(l.ask) + ' 🔥/unit · listed ' + new Date(l.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + '</div><div class="bl-row" style="margin-top:6px"><button class="bl-btn" data-act="withdraw" data-id="' + esc(l.id) + '">WITHDRAW</button></div></div>').join('') + '</div>'
+    : '';
+  const recent = (lots || []).filter((l) => l.status === 'sold').slice(0, 4).map((l) => '<div class="hp-log">💰 ' + esc(l.buyerName || 'Somebody') + ' bought ' + num(l.units) + ' × ' + esc(PRODUCTS[l.productId].name) + ' → <b>' + num(l.units * l.ask) + ' 🔥</b> (claimed on the next payout sweep)</div>').join('');
+  const inbound = (orders || []).filter((o) => o.status === 'in_transit').map((o) => '<div class="bl-item"><b>🚚 ' + esc(o.carrierName) + ' → you</b><div class="meta">' + num(o.units) + ' × ' + esc(PRODUCTS[o.productId].name) + ' from ' + esc(o.sellerName) + ' · integrity ' + pct(o.integrity) + ' · ' + (o.arrivesAt <= Date.now() ? '<b style="color:#8fd4c8">LANDING</b>' : 'arrives in ' + Math.max(1, Math.round((o.arrivesAt - Date.now()) / 60000)) + 'm') + '</div></div>').join('');
+  const landed = (orders || []).filter((o) => o.status === 'received').slice(0, 3).map((o) => '<div class="hp-log">📦 ' + num(o.unitsArrived) + ' × ' + esc(PRODUCTS[o.productId].name) + ' landed from ' + esc(o.sellerName) + ' · quality ' + pct(o.qualityArrived) + '</div>').join('');
+  const boardHtml = !online
+    ? '<div class="bl-empty">The board is offline — sign in to see what other hospitals are selling.</div>'
+    : !(board && board.length)
+      ? '<div class="bl-empty">No other hospital is selling right now.</div>'
+      : '<div class="bl-list">' + board.map((r) => '<div class="bl-item' + (sel.buyId === r.id ? ' sel' : '') + '" data-act="buy-pick" data-id="' + esc(r.id) + '"><b>' + esc(PRODUCTS[r.product].icon + ' ' + num(r.units) + ' × ' + PRODUCTS[r.product].name) + '</b> · ' + esc(r.seller_name || 'Survivor') + '<div class="meta">quality ' + pct(r.quality) + ' · ' + num(r.ask) + ' 🔥/unit · ' + num((r.units | 0) * (+r.ask || 0)) + ' 🔥 for the lot</div></div>').join('') + '</div>';
+  const carriersHtml = sel.buyId
+    ? ((carriers && carriers.length)
+      ? '<h4 style="font-size:10px;letter-spacing:.14em;color:#8b93a3;margin:10px 0 6px">THE CARRIER</h4><div class="bl-list">' + carriers.map((c) => '<div class="bl-item' + (sel.carrierId === c.id ? ' sel' : '') + '" data-act="buy-carrier" data-id="' + esc(c.id) + '"><b>🚚 ' + esc(c.name) + '</b>' + (c.mine ? ' <span style="color:#86e08a">· yours</span>' : ' · ' + esc(c.ownerName)) + '<div class="meta">integrity ' + pct(c.quote.integrity) + ' · ' + num(c.quote.fee) + ' 🔥 haul</div></div>').join('') + '</div>'
+      : '<div class="bl-empty">No player is running a Transportation Company right now — a lot cannot haul itself.</div>')
+    : '';
+  return '<h3>🚚 LOADING DOCK — WHOLESALE</h3>' +
+    '<p class="sub">Sell finished medicine to other players\' hospitals, or buy theirs. The buyer hires a player-owned haulier, and what lands is what the cold chain left. The seller is paid for the goods on the sale; the carrier for the drive on arrival.</p>' +
+    '<h4 style="font-size:10px;letter-spacing:.14em;color:#8b93a3;margin:12px 0 6px">SELL · LIST FROM YOUR SHELF</h4>' + listForm + myLots + recent +
+    '<h4 style="font-size:10px;letter-spacing:.14em;color:#8b93a3;margin:14px 0 6px">BUY · THE BOARD</h4>' + boardHtml + carriersHtml +
+    (quote ? '<div class="bl-item" style="border-color:#2f6f5c;margin-top:8px"><b>ORDER</b><div class="meta">' + num(quote.goods) + ' 🔥 goods + ' + num(quote.fee) + ' 🔥 haul = <b>' + num(quote.goods + quote.fee) + ' 🔥</b> · ' + quote.hours + 'h on the road · integrity ' + pct(quote.integrity) + '</div></div>' : '') +
+    (sel.buyId ? '<div class="bl-row"><label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#8b93a3"><input type="checkbox" data-act="buy-coldpack"' + (sel.coldPack ? ' checked' : '') + '> insulated cold-pack (+35% haul, +10% integrity)</label></div>' : '') +
+    (inbound || landed ? '<h4 style="font-size:10px;letter-spacing:.14em;color:#8b93a3;margin:14px 0 6px">INBOUND</h4><div class="bl-list">' + inbound + '</div>' + landed : '') +
+    '<div class="bl-row">' +
+      '<button class="bl-btn pri" data-act="buy-go"' + (quote ? '' : ' disabled') + '>BUY &amp; DISPATCH</button>' +
+      '<button class="bl-btn" data-act="refresh">REFRESH</button>' +
+      '<button class="bl-btn" data-act="close">CLOSE</button></div>';
 }
 
 export function labDoorPanel(ownsResearch) {

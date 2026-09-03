@@ -143,7 +143,15 @@ export function pressureOf(host) {
       (1 - clamp(water, 0, 1)) * 0.22 +
       (1 - clamp(food, 0, 1)) * 0.12 +
       clamp(density - 0.7, 0, 0.7) * 0.29;
-    return +clamp(p, 0, 1).toFixed(3);
+    /* 💊 PROPHYLAXIS. Medicine the city's clinics actually SOLD to NPCs
+       (/src/hospital/pharma.js prophylaxisOf) discounts the pressure. It
+       arrives through the host, optional, 0 when no hospital exists — so a
+       city with no Medical Corporation is exactly as it was. It is a
+       multiplier, so it cannot lift a clean city's zero and cannot by itself
+       take a filthy one to zero (capped inside pharma.js). */
+    let proph = 0;
+    try { proph = clamp(+(host.prophylaxis && host.prophylaxis()) || 0, 0, 0.9); } catch (e) { proph = 0; }
+    return +clamp(p * (1 - proph), 0, 1).toFixed(3);
   } catch (e) { return 0; }
 }
 

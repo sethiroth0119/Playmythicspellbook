@@ -192,5 +192,46 @@ otherP.shipments.push({ id: 'shp_city', status: 'in_transit' });
 Profile.plague = otherP;
 ok(PL.shipments().some((s) => s.id === 'shp_city'), 'plague state has the same staleness check');
 
+console.log('\n=== 10. prophylaxis: sold doses discount outbreak pressure ===');
+import('./public/src/plague/outbreak.js').then(() => {});
+const OBm = await import('./public/src/plague/outbreak.js');
+const dirtyHost = { citizens: () => [], vitals: () => ({ health: 30 }), coverage: () => ({ health: 0.25, water: 0.55, food: 0.7 }), pop: () => 800, popCap: () => 900 };
+const base = OBm.pressureOf(dirtyHost);
+const salesLog = [{ at: CLOCK - 60000, sold: { vaccine: 120, antiviral: 100, salve: 500 } }];
+const proph = PH.prophylaxisOf(salesLog, 300, CLOCK);
+console.log('  base pressure ' + base + ', prophylaxis ' + proph);
+ok(proph > 0.2 && proph <= PH.PROPHYLAXIS.MAX, 'a wave of vaccine sales gives real prophylaxis, capped');
+ok(PH.prophylaxisOf([{ at: CLOCK, sold: { salve: 9999 } }], 300, CLOCK) === 0, 'salve protects nobody');
+ok(PH.prophylaxisOf(salesLog, 300, CLOCK + PH.PROPHYLAXIS.WINDOW_MS + 1) === 0, 'and it fades out after the window');
+ok(PH.prophylaxisOf(salesLog, 300, CLOCK + PH.PROPHYLAXIS.WINDOW_MS / 2) < proph, 'it fades gradually, not on a cliff');
+const withP = OBm.pressureOf(Object.assign({}, dirtyHost, { prophylaxis: () => proph }));
+ok(withP < base && Math.abs(withP - +(base * (1 - proph)).toFixed(3)) < 0.002, 'pressure is discounted by exactly (1 − prophylaxis): ' + base + ' → ' + withP);
+ok(OBm.pressureOf(Object.assign({}, dirtyHost, { prophylaxis: () => 5 })) > 0, 'a runaway factor is clamped — it can never zero a filthy city');
+const cleanHost = Object.assign({}, dirtyHost, { coverage: () => ({ health: 1, water: 1, food: 1 }), vitals: () => ({ health: 100 }), pop: () => 100 });
+ok(OBm.pressureOf(Object.assign({}, cleanHost, { prophylaxis: () => 0.5 })) === OBm.pressureOf(cleanHost), 'a clean city is unchanged by it');
+
+console.log('\n=== 11. wholesale: the cold chain and the escrow ===');
+const lot = { id: 'lot_1', units: 40, quality: 0.8 };
+const perfect = PH.wholesaleArrive(lot, 0.97, 'a');
+const awful = PH.wholesaleArrive(lot, 0.3, 'a');
+ok(perfect.units >= 38 && perfect.quality >= 0.78, 'a good chain delivers nearly everything (' + perfect.units + ' @ ' + perfect.quality + ')');
+ok(awful.units < perfect.units && awful.quality < perfect.quality && awful.unitsLost > 0, 'a bad chain costs units and quality (' + awful.units + ' @ ' + awful.quality + ')');
+ok(JSON.stringify(PH.wholesaleArrive(lot, 0.5, 'x')) === JSON.stringify(PH.wholesaleArrive(lot, 0.5, 'x')), 'arrival is deterministic from the lot');
+// The state layer, offline: nothing may escrow into a board that is not there.
+const shelfSnap = JSON.stringify(HS.stock());
+let w = await HS.listLot('serum', 3, 50);
+ok(!w.ok && /signed in/.test(w.error) && JSON.stringify(HS.stock()) === shelfSnap, 'listing offline refuses and escrows nothing');
+ok((await HS.fetchBoard()).rows.length === 0, 'the board is empty offline');
+w = await HS.buyLot({ id: 'x', units: 1, ask: 1, seller_id: 'other' }, { id: 'c' }, false);
+ok(!w.ok && Profile.gems === gemsBefore + rr.cinder, 'buying offline refuses and spends nothing');
+// A landed order is shelved by the poll, even offline (the goods are already paid for).
+const before10 = HS.shelfUnits();
+HS.blob().orders.push({ id: 'lot_in', productId: 'vaccine', units: 30, quality: 0.9, ask: 100, goods: 3000, fee: 500, sellerName: 'Bob', carrierId: 'c1', carrierName: 'Haul', selfCarrier: true, integrity: 0.9, arrivesAt: CLOCK - 1, at: CLOCK - 3600000, status: 'in_transit' });
+HS.persist();
+const pw = await HS.pollWholesale();
+ok(pw.landed === 1 && HS.stock().vaccine && HS.stock().vaccine.units > 20 && HS.shelfUnits() > before10, 'a due order lands on the shelf, minus what the chain took');
+ok((await HS.pollWholesale()).landed === 0 && HS.orders()[0].status === 'received', 'and only once');
+ok(HS.stats().wholesaleUnits === HS.stock().vaccine.units, 'the desk counts it');
+
 console.log('\n' + (fails ? '❌ ' + fails + ' FAILURES' : '✅ ALL CHECKS PASSED'));
 process.exit(fails ? 1 : 0);

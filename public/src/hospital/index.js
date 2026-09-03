@@ -93,6 +93,7 @@ function interact(run) {
   if (s.key === 'stock') return openStock(run);
   if (s.key === 'compound') return openCompound(run);
   if (s.key === 'labdoor') return openLabDoor(run);
+  if (s.key === 'dock') return openDock(run);
 }
 
 /* The hazmat gate speaks lab: "airlock", "hot zone", "suit". Same rule, this
@@ -119,7 +120,7 @@ function openDesk(run) {
     stats: HS.stats(), day: HS.earnedSince(24 * 3600000), week: HS.earnedSince(7 * 24 * 3600000),
     atWard: PL.ready() ? PL.awaitingWard().length : 0, transit: PL.ready() ? PL.inTransit().length : 0,
     openLines: HS.openLines().length, units: HS.shelfUnits(), econ: HS.econ(), sales: HS.sales(),
-    ownsResearch: HS.ownsType('research'), ownsMedical: HS.ownsType('medical'),
+    ownsResearch: HS.ownsType('research'), ownsMedical: HS.ownsType('medical'), city: cityReport(),
   }), (act) => {
     if (act === 'close') { HUD.closeModal(run.nodes); run.panel = null; return; }
     if (act === 'go-ward') { HUD.closeModal(run.nodes); run.panel = null; return openWard(run); }
@@ -159,13 +160,25 @@ function openVault(run) {
   render();
 }
 
+/* The counter runs INSIDE the city iframe, so from the game window the
+   pharmacy module is reached through the frame (same-origin). Null when the
+   city is not open, which the panels state rather than guess around. */
+function pharmacyModule() {
+  try {
+    if (typeof window === 'undefined') return null;
+    if (window.MythicPharmacy) return window.MythicPharmacy;
+    const f = document.getElementById('node-city-frame');
+    const w = f && f.contentWindow;
+    return (w && w.MythicPharmacy) || null;
+  } catch (e) { return null; }
+}
 function cityReport() {
   try {
-    const P = (typeof window !== 'undefined') && window.MythicPharmacy;
+    const P = pharmacyModule();
     if (!P || typeof P.report !== 'function') return null;
     const r = P.report();
     const boost = 1 + Math.min(PH.TUNING.OUTBREAK_BOOST_MAX, (r.ctx.cases | 0) * PH.TUNING.OUTBREAK_BOOST_PER_CASE);
-    return { dispensaries: r.ctx.dispensaries.length, ratePerMin: r.ratePerMin, cases: r.ctx.cases | 0, boost };
+    return { dispensaries: r.ctx.dispensaries.length, ratePerMin: r.ratePerMin, cases: r.ctx.cases | 0, boost, prophylaxis: +r.prophylaxis || 0 };
   } catch (e) { return null; }
 }
 
@@ -261,6 +274,79 @@ function commit(run, line, p, units, titration) {
   }
   if (r.line.status === 'spent') HUD.toast(run.nodes, '🧊 That cure line is spent.', '');
   openCompound(run);
+}
+
+/* ── the loading dock ───────────────────────────────────────────────────── */
+async function openDock(run) {
+  run.panel = 'dock';
+  const sel = run.dockSel || (run.dockSel = { sellPid: null, sellUnits: 10, sellAsk: 0, buyId: null, carrierId: null, coldPack: false });
+  let board = [], carriers = [], online = HS.online();
+  const refresh = async () => {
+    await HS.pollWholesale();
+    const b = await HS.fetchBoard();
+    online = b.online; board = b.rows;
+    if (sel.buyId && !board.find((r) => r.id === sel.buyId)) sel.buyId = null;
+    const row = board.find((r) => r.id === sel.buyId);
+    if (row) {
+      const m = await PL.fetchMarket({ doses: row.units, stability: Math.round(row.quality * 100), coldPack: sel.coldPack, distance: 1 });
+      carriers = m.carriers;
+      if (sel.carrierId && !carriers.find((c) => c.id === sel.carrierId)) sel.carrierId = null;
+    } else carriers = [];
+  };
+  const quoteNow = () => {
+    const row = board.find((r) => r.id === sel.buyId);
+    const c = carriers.find((x) => x.id === sel.carrierId);
+    if (!row || !c) return null;
+    const q = HS.quoteLot(row, c, sel.coldPack);
+    return Object.assign({ goods: Math.round((row.units | 0) * (+row.ask || 0)) }, q);
+  };
+  const canSell = (() => {
+    if (!HS.online()) return { ok: false, why: 'The wholesale board needs you signed in.' };
+    const op = HS.myMedicalOp();
+    if (!op) return { ok: false, why: 'No Medical Corporation licence to sell from.' };
+    if (!/^[0-9a-fA-F-]{36}$/.test(String(op.id))) return { ok: false, why: 'Wholesale needs a CORP-funded Medical Corporation — a personally-funded one cannot be paid through the ledger.' };
+    return { ok: true, why: '' };
+  })();
+  const render = () => {
+    if (!RUN || RUN !== run || run.panel !== 'dock') return;
+    HUD.modal(run.nodes, HUD.dockPanel({ stock: HS.stock(), econ: HS.econ(), lots: HS.lots(), orders: HS.orders(), board, sel, carriers, quote: quoteNow(), online, canSell: canSell.ok, why: canSell.why }), async (act, id, e, el) => {
+      if (act === 'close') { HUD.closeModal(run.nodes); run.panel = null; return; }
+      if (act === 'refresh') { await refresh(); return render(); }
+      if (act === 'sell-pick') { sel.sellPid = id; sel.sellAsk = 0; return render(); }
+      if (act === 'sell-units') { sel.sellUnits = Math.max(1, parseInt(el.value, 10) || 1); return; }
+      if (act === 'sell-ask') { sel.sellAsk = Math.max(1, parseInt(el.value, 10) || 1); return; }
+      if (act === 'sell-list') {
+        const ask = sel.sellAsk || PH.unitPrice(sel.sellPid, (HS.stock()[sel.sellPid] || {}).quality || 0, HS.econ());
+        const r = await HS.listLot(sel.sellPid, sel.sellUnits, ask);
+        HUD.toast(run.nodes, r.ok ? '🏷 Listed ' + r.lot.units + ' × ' + PH.PRODUCTS[r.lot.productId].name + ' at ' + r.lot.ask + ' 🔥/unit.' : '⚠ ' + r.error, r.ok ? 'good' : 'bad');
+        if (r.ok) sel.sellPid = null;
+        return render();
+      }
+      if (act === 'withdraw') {
+        const r = await HS.withdrawLot(id);
+        HUD.toast(run.nodes, r.ok ? '↩ Lot withdrawn — the units are back on the shelf.' : '⚠ ' + r.error, r.ok ? '' : 'warn');
+        return render();
+      }
+      if (act === 'buy-pick') { sel.buyId = id; sel.carrierId = null; await refresh(); return render(); }
+      if (act === 'buy-carrier') { sel.carrierId = id; return render(); }
+      if (act === 'buy-coldpack') { sel.coldPack = !!(el && el.checked); await refresh(); return render(); }
+      if (act === 'buy-go') {
+        const row = board.find((r) => r.id === sel.buyId);
+        const c = carriers.find((x) => x.id === sel.carrierId);
+        const r = await HS.buyLot(row, c, sel.coldPack);
+        if (!r.ok) { HUD.toast(run.nodes, '⚠ ' + r.error, 'bad'); return render(); }
+        run.done.stock = true;
+        HUD.toast(run.nodes, '🚚 Bought. ' + c.name + ' is on the road — ' + r.quote.hours + 'h to your dock.', 'good');
+        toastGame('🚚 Wholesale lot bought from ' + r.order.sellerName + '. It lands at your Medical Corporation in ' + r.quote.hours + 'h.', 5200);
+        sel.buyId = null; sel.carrierId = null;
+        await refresh();
+        return render();
+      }
+    });
+  };
+  HUD.modal(run.nodes, '<h3>🚚 LOADING DOCK</h3><p class="sub">Raising the board…</p>', () => {});
+  await refresh();
+  render();
 }
 
 function openLabDoor(run) {
@@ -436,7 +522,10 @@ export function isOpen() { return !!RUN; }
 const api = {
   open, close, isOpen,
   pharma: PH, state: HS, stations: STATIONS,
-  sweep: HS.sweep,
+  /* The settle poll's hook: book staff-opened crates AND land wholesale
+     orders that are due / notice lots that sold. The second half is async and
+     best-effort; the first is synchronous and returns as before. */
+  sweep: () => { const r = HS.sweep(); try { HS.pollWholesale().catch(() => {}); } catch (e) {} return r; },
   /* 🔬 Test seam, same reason as the lab's: the Browser pane never composites
      so nothing behind requestAnimationFrame is observable without one. */
   _run: () => RUN,

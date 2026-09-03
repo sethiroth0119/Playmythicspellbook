@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120x7';
+  window.BUILD_VERSION = 'v120x8';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -206483,7 +206483,7 @@ function _openNodeCity(nodeId, _resolved) {
   }
   const f = document.createElement('iframe');
   f.id = 'node-city-frame';
-  f.src = 'node-city/index.html?v=120x7';
+  f.src = 'node-city/index.html?v=120x8';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);
@@ -223309,7 +223309,7 @@ render();
      ⚠ IT IS INERT UNTIL SOMETHING CALLS IT. No timer, no socket, no DOM.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/plague/index.js?v=v120x1plague2"></script>
+<script type="module" src="src/plague/index.js?v=v120x8plague3"></script>
 <!-- 🧬 BIOLAB — the 3D containment lab. Walk to the stations; the hot-zone
      benches refuse to run until the hazmat suit is SEALED (four steps, at the
      airlock, standing still), and working them unsuited contaminates the
@@ -223337,7 +223337,7 @@ render();
        own floor plan — one renderer for both rooms.
      ⚠ Prices are shares of _opEcon('medical').ratePerWorkerHr; no Cinder
        figure lives in the module. Bump ?v= on every change. -->
-<script type="module" src="src/hospital/index.js?v=v120x7hospital1"></script>
+<script type="module" src="src/hospital/index.js?v=v120x8hospital2"></script>
 <!-- 🏥 THE WARD — the Medical Corporation's interior, and the far end of the
      pipe the containment lab feeds. Crates arrive from player-owned hauliers;
      the ward screens them, triages who gets the doses, and decides whether a

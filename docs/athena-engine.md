@@ -98,6 +98,32 @@ generator, energy pylon, drone wreck, bunker door, supply crate. Paint layers
 Asphalt, Concrete, Rust, Toxic, Soot. Sky presets **Wasteland** and
 **Fallout night**.
 
+## VFX and weather
+
+`mapforge.vfx.js` is a GPU particle system: a particle's whole life is a
+function of time in the vertex shader (start, velocity, gravity, wind,
+turbulence, rebirth with a fresh hash), so an emitter is one draw call and no
+per-frame CPU work. Sprites are drawn on a canvas at startup; nothing is
+hosted. Fire is additive, smoke and weather are alpha-blended and take the
+scene fog.
+
+- **Emitters** — Library → VFX: fire, blaze, smoke, black smoke, steam, ground
+  fog, sparks, toxic gas, dust, light motes. Select one for intensity, size
+  and tint (`objects[].fx = { i, s }`, tint in `c`). Fire carries a flickering
+  point light; eight lights are budgeted, the rest still glow.
+- **Built-in effects** — campfire (fire), crater (toxic gas), generator
+  (sparks), wrecked car and burnt tree (smoke), energy pylon (motes) carry
+  their effect at a fixed offset; the inspector switches it off
+  (`fx.off = true`).
+- **Weather** — Sky tab: none, rain, storm (with lightning: a flash light and
+  random bolts), snow, ash fall, dust storm; amount, wind direction and speed
+  (`env.weather`, `weatherIntensity`, `windDir`, `windSpeed`). Weather lives
+  in a box that travels with the camera and wraps. Wind pushes every smoke
+  column too.
+- Runtime: `world.emitters`, `world.weather`, `world.refreshFx(id)`,
+  `world.setFxEnabled(false)` for a low-end mode; `mount({ onLightning })`
+  is forwarded to the storm.
+
 ## Models and animation
 
 - **Project library** — put `.glb` files in `/models/`, list them in

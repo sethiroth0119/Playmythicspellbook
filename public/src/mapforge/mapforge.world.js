@@ -11,6 +11,7 @@
 import { createTerrain } from './mapforge.terrain.js';
 import { createWater } from './mapforge.water.js';
 import { buildProp, PROP_BY_ID, collides } from './mapforge.props.js';
+import { createEmitter, createWeather, windVector, EMITTERS } from './mapforge.vfx.js';
 
 export function buildWorld(THREE, map, opts) {
   opts = opts || {};
@@ -26,6 +27,8 @@ export function buildWorld(THREE, map, opts) {
 
   const objects = new Map();        // id → root Object3D
   const colliders = new Map();      // id → world-space collider (see updateCollider)
+  const emitters = new Map();       // id → emitter (fx_* objects and props with a built-in effect)
+  let weather = null; const wind = new THREE.Vector3(); let fxOn = opts.fx !== false; let lightBudget = 0;
   const mixers = new Map();         // id → { mixer, action, clip }
   const assetCache = new Map();     // assetId → Promise<{ template, size, clips }>
   const sunDir = new THREE.Vector3(0, 1, 0);
@@ -94,7 +97,45 @@ export function buildWorld(THREE, map, opts) {
 
   function makeBody(o) {
     if (o.t === 'glb') { const body = buildProp(THREE, 'placeholder'); body.userData.mfPending = true; return body; }
+    if (o.t.startsWith('fx_')) return buildProp(THREE, 'fxmarker');
     return buildProp(THREE, o.t, o.c);
+  }
+
+  /* ── VFX ──
+     An fx_* object IS an emitter (its body is just the pickable handle); a
+     prop with `fx` in the catalogue (campfire, crater, wrecked car…) carries
+     its effect as a child at the declared offset. Point lights are budgeted
+     (r128 recompiles every material when the light count changes, and eight
+     is plenty) — the rest of the fires still glow through their additive
+     flames, they just do not cast light. */
+  const LIGHT_BUDGET = 8;
+  function attachFx(o, root) {
+    detachFx(o.id);
+    if (!fxOn) return;
+    const meta = PROP_BY_ID[o.t]; const tune = o.fx || {};
+    let kind = null, off = { x: 0, y: 0, z: 0 }, base = 1;
+    if (meta && meta.fxKind) kind = meta.fxKind;
+    else if (meta && meta.fx && !tune.off) { kind = meta.fx.kind; off = meta.fx; base = meta.fx.scale || 1; }
+    if (!kind || !EMITTERS[kind]) return;
+    const wantsLight = !!EMITTERS[kind].light && lightBudget < LIGHT_BUDGET;
+    const em = createEmitter(THREE, kind, { scale: base * (tune.s || 1), intensity: tune.i || 1, tint: o.t.startsWith('fx_') ? o.c : undefined, light: wantsLight });
+    if (em.light) lightBudget++;
+    em.group.position.set(off.x || 0, off.y || 0, off.z || 0);
+    root.add(em.group);
+    emitters.set(o.id, em);
+  }
+  function detachFx(id) {
+    const em = emitters.get(id); if (!em) return;
+    if (em.light) lightBudget = Math.max(0, lightBudget - 1);
+    if (em.group.parent) em.group.parent.remove(em.group);
+    em.dispose(); emitters.delete(id);
+  }
+  function setWeather(env) {
+    if (weather) { group.remove(weather.group); weather.dispose(); weather = null; }
+    wind.copy(windVector(THREE, env));
+    if (!fxOn || !env.weather || env.weather === 'none') return;
+    weather = createWeather(THREE, env.weather, { intensity: env.weatherIntensity || 1, onFlash: opts.onLightning });
+    if (weather) group.add(weather.group);
   }
 
   function addObject(o) {
@@ -104,6 +145,8 @@ export function buildWorld(THREE, map, opts) {
     root.userData = { mfId: o.id, mfType: o.t, mfMarker: !!(PROP_BY_ID[o.t] && PROP_BY_ID[o.t].marker) };
     const body = makeBody(o);
     root.add(body);
+    if (o.t.startsWith('fx_')) { root.userData.mfFxHandle = body; body.visible = markersVisible; }
+    attachFx(o, root);
     applyTransform(root, o);
     if (root.userData.mfMarker) root.visible = markersVisible;
     objectsGroup.add(root);
@@ -127,7 +170,7 @@ export function buildWorld(THREE, map, opts) {
   }
   function removeObject(id) {
     const root = objects.get(id); if (!root) return;
-    stopAnim(id);
+    stopAnim(id); detachFx(id);
     objectsGroup.remove(root); objects.delete(id); colliders.delete(id);
   }
   function applyTransform(root, o) {
@@ -141,6 +184,7 @@ export function buildWorld(THREE, map, opts) {
     if (o.t !== 'glb' && root.children[0] && root.children[0].userData.mfProp === o.t) {
       root.remove(root.children[0]); root.add(buildProp(THREE, o.t, o.c));
     }
+    attachFx(o, root);
     applyTransform(root, o);
     root.updateMatrixWorld(true);
     updateCollider(o.id);
@@ -250,6 +294,8 @@ export function buildWorld(THREE, map, opts) {
       opts.scene.fog = new THREE.Fog(new THREE.Color(env.fogColor), env.fogNear, env.fogFar);
       opts.scene.background = new THREE.Color(env.skyBottom);
     }
+    const w = weather ? weather.kind : 'none', wi = weather ? weather.intensity : 1;
+    if ((env.weather || 'none') !== w || (env.weatherIntensity || 1) !== wi) setWeather(env); else wind.copy(windVector(THREE, env));
   }
 
   const api = {
@@ -263,7 +309,11 @@ export function buildWorld(THREE, map, opts) {
     spawns: () => map.objects.filter(o => o.t === 'spawn'),
     /* every object of a type — e.g. world.find('enemy') for a mini-game's spawner */
     find: (type) => map.objects.filter(o => o.t === type),
-    setMarkersVisible(v) { markersVisible = !!v; objects.forEach(r => { if (r.userData.mfMarker) r.visible = markersVisible; }); },
+    setMarkersVisible(v) { markersVisible = !!v; objects.forEach(r => { if (r.userData.mfMarker) r.visible = markersVisible; if (r.userData.mfFxHandle) r.userData.mfFxHandle.visible = markersVisible; }); },
+    emitters, get weather() { return weather; }, wind,
+    /* re-tune an emitter after the inspector changes o.fx / o.c */
+    refreshFx(id) { const o = objDoc(id), r = objects.get(id); if (o && r) attachFx(o, r); },
+    setFxEnabled(v) { fxOn = !!v; objects.forEach((r, id) => { const o = objDoc(id); if (o) attachFx(o, r); }); setWeather(map.env); },
     /* After the grid is resized or regenerated: water covers the new size,
        shadows cover it, grounded objects land on the new surface. */
     onTerrainRebuilt() { water.resize(terrain.size); applyEnv(map.env); },
@@ -271,10 +321,13 @@ export function buildWorld(THREE, map, opts) {
       time += dt;
       water.update(time, sunDir);
       mixers.forEach(m => m.mixer.update(dt));
+      emitters.forEach(em => em.update(time, wind));
+      if (weather && camera) weather.update(time, dt, camera.position, wind);
       if (camera) sky.position.copy(camera.position);
     },
     dispose() {
       mixers.forEach((m, id) => stopAnim(id));
+      emitters.forEach((em, id) => detachFx(id)); if (weather) { weather.dispose(); weather = null; }
       terrain.dispose(); water.dispose();
       try { sky.geometry.dispose(); sky.material.dispose(); } catch (e) {}
       objects.clear();

@@ -131,3 +131,5 @@
 .mf-col.solid .st{color:var(--mf-ok)}
 .mf-col select{flex:0 0 96px}
 #mf-root .mf-gizmo select,#mf-root .mf-top select{width:auto}
+.mf-fx{border:1px solid rgba(255,179,71,.35);border-radius:7px;padding:8px 9px;margin:4px 0 8px}
+.mf-fx .st{color:#ffb347;font-size:12px;flex:1}

@@ -71,7 +71,7 @@ export function newMap(opts) {
       paint: new Array(verts).fill(0),
     },
     water: { on: true, level: -0.6, color: '#2e6f9e', opacity: 0.78, wave: 0.12, speed: 1 },
-    env: Object.assign({ preset: 'day', shadows: true }, ENV_PRESETS.day),
+    env: Object.assign({ preset: 'day', shadows: true, weather: 'none', weatherIntensity: 1, windDir: 45, windSpeed: 1.5 }, ENV_PRESETS.day),
     assets: [],
     objects: [],
     meta: { created: Date.now(), updated: Date.now(), author: opts.author || '' },
@@ -126,6 +126,10 @@ export function normalize(raw) {
     sunIntensity: clampNum(e.sunIntensity, 0, 4, p.sunIntensity), sunColor: hex(e.sunColor, p.sunColor),
     ambient: hex(e.ambient, p.ambient), ambientIntensity: clampNum(e.ambientIntensity, 0, 3, p.ambientIntensity),
     groundColor: hex(e.groundColor, p.groundColor),
+    // weather + wind (mapforge.vfx.js); wind also pushes emitter smoke
+    weather: ['rain', 'storm', 'snow', 'ash', 'duststorm'].includes(e.weather) ? e.weather : 'none',
+    weatherIntensity: clampNum(e.weatherIntensity, 0.1, 3, 1),
+    windDir: clampNum(e.windDir, 0, 360, 45), windSpeed: clampNum(e.windSpeed, 0, 20, 1.5),
   };
 
   /* An asset is EITHER a URL (a file under /models/ or any CORS-enabled host)
@@ -166,9 +170,16 @@ export function normalizeObject(o, assetIds) {
     // collision: undefined = the prop's default (see PROP_CATALOG.col), true/false = the builder's choice
     col: typeof o.col === 'boolean' ? o.col : undefined,
     cs: o.cs === 'cyl' ? 'cyl' : undefined,          // collider shape: box (default) or cylinder
+    fx: normalizeFx(o.fx),                            // emitter tuning for fx_* objects / attached effects
   };
 }
 
+export function normalizeFx(f) {
+  if (!f || typeof f !== 'object') return undefined;
+  const out = { i: clampNum(f.i, 0.1, 4, 1), s: clampNum(f.s, 0.2, 6, 1) };
+  if (f.off === true) out.off = true;        // a prop's built-in effect switched off
+  return out;
+}
 export const LOOP_MODES = ['repeat', 'once', 'pingpong'];
 export function normalizeAnim(a) {
   if (!a || typeof a !== 'object' || !a.clip) return undefined;

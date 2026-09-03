@@ -24,6 +24,7 @@ import { buildWorld, bufferToB64 } from './mapforge.world.js';
 import { createPlayer } from './mapforge.player.js';
 import { newMap, normalize, serialize, clone, uid, PAINT, ENV_PRESETS, LOOP_MODES, resampleTerrain, gameId, assetBytes, embeddedBytes } from './mapforge.format.js';
 import { PROP_CATALOG, PROP_BY_ID, buildProp } from './mapforge.props.js';
+import { WEATHERS } from './mapforge.vfx.js';
 import * as api from './mapforge.api.js';
 import { confirm as askConfirm, signedIn, displayName, isAdmin, bridge } from './mapforge.bridge.js';
 
@@ -665,7 +666,7 @@ export async function openEditor(opts) {
   }
   let libCat = 'Nature';
   function renderLibrary() {
-    const cats = ['Nature', 'Structures', 'Props', 'Ruins', 'Markers', 'Models'];
+    const cats = ['Nature', 'Structures', 'Props', 'Ruins', 'VFX', 'Markers', 'Models'];
     $('#mf-cats').innerHTML = cats.map(c => '<button data-cat="' + c + '" class="' + (c === libCat ? 'on' : '') + '">' + c + '</button>').join('');
     $$('#mf-cats button').forEach(b => b.onclick = () => { libCat = b.dataset.cat; renderLibrary(); });
     const grid = $('#mf-props'), models = $('#mf-models');
@@ -706,6 +707,12 @@ export async function openEditor(opts) {
       <div class="mf-row"><label>Uniform</label><input type="range" id="mf-o-uni" min="0.05" max="6" step="0.05" value="${Math.max(0.05, Math.min(6, o.s[0]))}"><span class="v" id="mf-o-uni-v">${f(o.s[0])}×</span></div>
       ${meta.tint ? `<div class="mf-row"><label>Tint</label><input type="color" id="mf-o-tint" value="${o.c || '#ffffff'}"><button id="mf-o-untint" style="flex:1">Default colour</button></div>` : ''}
       <div class="mf-row"><label>Grounded</label><input type="checkbox" id="mf-o-ground" ${o.g ? 'checked' : ''}><span class="mf-hint" style="margin:0">follows the terrain height</span></div>
+      ${(meta.fxKind || meta.fx) ? (() => { const f = o.fx || { i: 1, s: 1 }; const built = !!meta.fx; return `
+      <div class="mf-fx"><div class="mf-row" style="margin-bottom:5px"><label>Effect</label><span class="st">✨ ${esc(meta.fxKind ? (PROP_BY_ID[o.t].label) : meta.fx.kind)}${built ? ' (built in)' : ''}</span>${built ? '<input type="checkbox" id="mf-o-fxon" ' + (f.off ? '' : 'checked') + ' title="Effect on/off">' : ''}</div>
+        <div class="mf-row"><label>Intensity</label><input type="range" id="mf-o-fxi" min="0.1" max="4" step="0.1" value="${f.i}"><span class="v" id="mf-o-fxi-v">${f.i.toFixed(1)}×</span></div>
+        <div class="mf-row"><label>Size</label><input type="range" id="mf-o-fxs" min="0.2" max="6" step="0.1" value="${f.s}"><span class="v" id="mf-o-fxs-v">${f.s.toFixed(1)}×</span></div>
+        ${meta.fxKind ? '<div class="mf-row"><label>Tint</label><input type="color" id="mf-o-fxc" value="' + (o.c || '#ff8a1a') + '"><button id="mf-o-fxuntint" style="flex:1">Default colour</button></div>' : ''}
+      </div>`; })() : ''}
       <div class="mf-col ${world.isSolid(o) ? 'solid' : ''}">
         <div class="mf-row" style="margin-bottom:5px"><label>Collision</label><span class="st">${world.isSolid(o) ? '● Solid — blocks the player' : '○ None — walk through'}</span></div>
         <div class="mf-btns">${world.isSolid(o) ? '<button id="mf-o-col-off">－ Remove collision</button>' : '<button id="mf-o-col-on" class="primary">＋ Add collision</button>'}<select id="mf-o-cs" ${world.isSolid(o) ? '' : 'disabled'}><option value="box" ${o.cs !== 'cyl' ? 'selected' : ''}>Box</option><option value="cyl" ${o.cs === 'cyl' ? 'selected' : ''}>Cylinder</option></select></div>
@@ -735,6 +742,14 @@ export async function openEditor(opts) {
       const sp = box.querySelector('#mf-o-aspeed'); sp.oninput = () => { applyAnim(); setDirty(true); }; sp.onpointerdown = () => beginObjectEdit(); sp.onchange = () => endObjectEdit();
     }
     box.querySelector('#mf-o-drop').onclick = () => commit(() => { o.p[1] = world.heightAt(o.p[0], o.p[2]); });
+    const fxi = box.querySelector('#mf-o-fxi');
+    if (fxi) {
+      const fxs = box.querySelector('#mf-o-fxs'), fxon = box.querySelector('#mf-o-fxon'), fxc = box.querySelector('#mf-o-fxc');
+      const applyFx = () => { o.fx = { i: +fxi.value, s: +fxs.value }; if (fxon && !fxon.checked) o.fx.off = true; box.querySelector('#mf-o-fxi-v').textContent = (+fxi.value).toFixed(1) + '×'; box.querySelector('#mf-o-fxs-v').textContent = (+fxs.value).toFixed(1) + '×'; world.refreshFx(o.id); setDirty(true); };
+      [fxi, fxs].forEach(el => { el.onpointerdown = () => beginObjectEdit(); el.oninput = applyFx; el.onchange = () => endObjectEdit(); });
+      if (fxon) fxon.onchange = () => { beginObjectEdit(); applyFx(); endObjectEdit(); };
+      if (fxc) { fxc.onpointerdown = () => beginObjectEdit(); fxc.oninput = () => { o.c = fxc.value; world.refreshFx(o.id); setDirty(true); }; fxc.onchange = () => endObjectEdit(); box.querySelector('#mf-o-fxuntint').onclick = () => commit(() => { delete o.c; world.refreshFx(o.id); }); }
+    }
     const colOn = box.querySelector('#mf-o-col-on'), colOff = box.querySelector('#mf-o-col-off'), cs = box.querySelector('#mf-o-cs');
     if (colOn) colOn.onclick = () => { beginObjectEdit(); world.setCollision(o.id, true); endObjectEdit(); setDirty(true); renderInspector(); toast('Collision added — it now blocks the player in Play.'); };
     if (colOff) colOff.onclick = () => { beginObjectEdit(); world.setCollision(o.id, false); endObjectEdit(); setDirty(true); renderInspector(); toast('Collision removed — the player walks through it.'); };
@@ -760,7 +775,8 @@ export async function openEditor(opts) {
   function renderSkyTab() {
     const e = S.map.env; $('#mf-e-preset').value = e.preset;
     ['skyTop', 'skyBottom', 'fogColor', 'sunColor', 'ambient', 'groundColor'].forEach(k => { $('#mf-e-' + k).value = e[k]; });
-    [['fogNear', 0], ['fogFar', 0], ['sunEl', 0], ['sunAz', 0], ['sunIntensity', 2], ['ambientIntensity', 2]].forEach(([k, d]) => { $('#mf-e-' + k).value = e[k]; $('#mf-e-' + k + '-v').textContent = (+e[k]).toFixed(d); });
+    [['fogNear', 0], ['fogFar', 0], ['sunEl', 0], ['sunAz', 0], ['sunIntensity', 2], ['ambientIntensity', 2], ['weatherIntensity', 1], ['windDir', 0], ['windSpeed', 1]].forEach(([k, d]) => { $('#mf-e-' + k).value = e[k]; $('#mf-e-' + k + '-v').textContent = (+e[k]).toFixed(d) + (k === 'windDir' ? '°' : k === 'windSpeed' ? ' m/s' : k === 'weatherIntensity' ? '×' : ''); });
+    $('#mf-e-weather').value = e.weather || 'none';
     $('#mf-e-shadows').checked = e.shadows !== false;
   }
   async function renderMapsTab() {
@@ -837,7 +853,8 @@ export async function openEditor(opts) {
   wBind('on', 'on'); wBind('level', 'level'); wBind('color', 'color'); wBind('opacity', 'opacity'); wBind('wave', 'wave'); wBind('speed', 'speed');
   // sky tab
   const eBind = (key) => { const el = $('#mf-e-' + key); const h = () => { const e = S.map.env; e[key] = el.type === 'checkbox' ? el.checked : el.type === 'color' ? el.value : +el.value; world.applyEnv(e); settingsChanged(); renderSkyTab(); }; el.oninput = h; el.onchange = h; };
-  ['skyTop', 'skyBottom', 'fogColor', 'fogNear', 'fogFar', 'sunEl', 'sunAz', 'sunIntensity', 'sunColor', 'ambient', 'ambientIntensity', 'groundColor', 'shadows'].forEach(eBind);
+  ['skyTop', 'skyBottom', 'fogColor', 'fogNear', 'fogFar', 'sunEl', 'sunAz', 'sunIntensity', 'sunColor', 'ambient', 'ambientIntensity', 'groundColor', 'shadows', 'weatherIntensity', 'windDir', 'windSpeed'].forEach(eBind);
+  $('#mf-e-weather').onchange = e => { S.map.env.weather = e.target.value; world.applyEnv(S.map.env); settingsChanged(); };
   $('#mf-e-preset').onchange = e => { const p = ENV_PRESETS[e.target.value]; if (!p) return; Object.assign(S.map.env, p, { preset: e.target.value }); world.applyEnv(S.map.env); settingsChanged(); renderSkyTab(); };
 
   // maps tab
@@ -1012,6 +1029,7 @@ const TEMPLATE = `
       <tr><td>Tools</td><td><kbd>1</kbd> Select <kbd>2</kbd> Sculpt <kbd>3</kbd> Paint <kbd>4</kbd> Place <kbd>5</kbd> Scatter <kbd>6</kbd> Erase</td></tr>
       <tr><td>Sculpt</td><td>Left-drag raises. Hold <kbd>Shift</kbd> to lower, <kbd>Ctrl</kbd> to smooth, <kbd>Alt</kbd> to flatten to the height you started on. <kbd>[</kbd> <kbd>]</kbd> brush radius</td></tr>
       <tr><td>Objects</td><td>Click to select · Unreal hotkeys: <kbd>Q</kbd> select <kbd>W</kbd> move <kbd>E</kbd> rotate <kbd>R</kbd> scale, <kbd>RMB</kbd>+<kbd>WASD</kbd> fly, <kbd>End</kbd> drop to floor (Simple scheme: <kbd>T</kbd>/<kbd>R</kbd>/<kbd>C</kbd>, WASD always flies) · <kbd>X</kbd> snap · <kbd>F</kbd> focus · <kbd>Ctrl+D</kbd> duplicate · <kbd>Del</kbd> remove · drag the green arrow to lift an object</td></tr>
+      <tr><td>VFX</td><td>Library → <b>VFX</b> places fire, smoke, steam, fog, sparks, gas, dust and motes; select one for intensity, size and tint. Campfires, craters, generators and wrecks carry their own effect (switch it off in the inspector). Sky tab → <b>Weather</b>: rain, storm with lightning, snow, ash, dust storm, plus wind.</td></tr>
       <tr><td>Collision</td><td>Select an object → <b>Add / Remove collision</b> in the inspector (box or cylinder). Solid things block you in Play; low ones are stepped onto, so crates and bridges are walkable. <b>▢ Colliders</b> shows them all.</td></tr>
       <tr><td>Play</td><td><kbd>P</kbd> walk the map from the first Player Spawn marker · <kbd>W</kbd> forward <kbd>S</kbd> back <kbd>A</kbd> left <kbd>D</kbd> right (arrow keys too) · <kbd>Space</kbd> jump · <kbd>Shift</kbd> run · mouse looks · <kbd>Esc</kbd> returns</td></tr>
       <tr><td>File</td><td><kbd>Ctrl+S</kbd> save · <kbd>Ctrl+Z</kbd> / <kbd>Ctrl+Y</kbd> undo / redo · Export writes a .world.json you can Import anywhere</td></tr>
@@ -1072,6 +1090,13 @@ const TEMPLATE = `
       <div class="mf-row"><label>Fog</label><input type="color" id="mf-e-fogColor"></div>
       <div class="mf-row"><label>Fog near</label><input type="range" id="mf-e-fogNear" min="1" max="600" step="1"><span class="v" id="mf-e-fogNear-v"></span></div>
       <div class="mf-row"><label>Fog far</label><input type="range" id="mf-e-fogFar" min="10" max="1500" step="5"><span class="v" id="mf-e-fogFar-v"></span></div>
+    </div>
+    <div class="mf-sec"><h3>Weather &amp; wind</h3>
+      <div class="mf-row"><label>Weather</label><select id="mf-e-weather">${Object.keys(WEATHERS).map(k => '<option value="' + k + '">' + WEATHERS[k] + '</option>').join('')}</select></div>
+      <div class="mf-row"><label>Amount</label><input type="range" id="mf-e-weatherIntensity" min="0.2" max="3" step="0.1"><span class="v" id="mf-e-weatherIntensity-v"></span></div>
+      <div class="mf-row"><label>Wind dir</label><input type="range" id="mf-e-windDir" min="0" max="360" step="5"><span class="v" id="mf-e-windDir-v"></span></div>
+      <div class="mf-row"><label>Wind</label><input type="range" id="mf-e-windSpeed" min="0" max="20" step="0.5"><span class="v" id="mf-e-windSpeed-v"></span></div>
+      <p class="mf-hint">Storm adds lightning. Wind bends every smoke column and drives rain, snow and ash. Place local effects from Library → VFX: fire, smoke, steam, ground fog, sparks, toxic gas, dust, motes.</p>
     </div>
     <div class="mf-sec"><h3>Ambient</h3>
       <div class="mf-row"><label>Sky light</label><input type="color" id="mf-e-ambient"></div>

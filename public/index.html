@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120w6';
+  window.BUILD_VERSION = 'v120x6';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -79769,6 +79769,24 @@ const OPS_ECON = {
   // yields {} on purpose — a bank earns Cinder interest, not resources, so it
   // must never be swept up by the production-pressure hook (cxProduce).
   bank:         { startup: 1000000, ratePerWorkerHr: 1500, salaryPerWorkerHr: 400, maxWorkers: 8,  yields: {} },
+  /* 🚚 TRANSPORTATION COMPANY — the haulage licence, and the missing middle of
+     the supply chain. Every other secondary industry here CONSUMES what the
+     primaries make (see the SUPPLY CHAIN note above), but nothing has ever
+     MOVED anything: a resource teleported from producer to consumer. This is
+     the operation that carries goods, and its first real customer is the cure
+     chain — /src/plague/logistics.js prices every shipment off THIS row and
+     nowhere else, so an admin retune here reaches the shipping quotes on the
+     same tick it reaches the operation.
+     ⚠ yields {} on purpose. A haulier earns FEES, not matter; giving it a
+       resource yield would make it a second salvage op and let a player mint
+       goods by shipping to themselves. Its output is other players' cargo
+       arriving intact — which is `integrityOf()` in logistics.js, not a number
+       in this table.
+     Sized between `salvage` (250k, the cheap entry business) and `cars` (450k):
+     it needs to be reachable early, because a cure that cannot be shipped is a
+     dead end for the player who cured it. Fuel input mirrors `fishing` — a
+     truck burns what a boat burns. */
+  transport:    { startup: 320000, ratePerWorkerHr: 780,  salaryPerWorkerHr: 195, maxWorkers: 12, yields: {}, inputs: { fuel: 0.9 } },
 };
 // 🏦 The bank is the ONE operation with an alternate price: 1,000,000 Cinder,
 // OR a $200 stake in Mythic Token. MT is $0.10 (the Bank of Ethos quote price),
@@ -79987,6 +80005,7 @@ const OP_LABELS = {
      so a new operation without a label here is buyable but shows up in the shop
      as "genelab". */
   genelab: 'Genetics Lab',
+  transport: 'Transportation Company',
 };
 // 📦 Storage a staffed warehouse adds to the player's resource cap. Reads the
 // LIVE econ table via _opEcon, so an admin retune reaches this too. Counts the
@@ -207412,6 +207431,79 @@ window.MythicTradeBridge = {
   save: () => { try { saveProfile(); return true; } catch (e) { return false; } },
   toast: (m, ms) => { try { showToast(m, ms || 3600); } catch (e) {} },
 };
+/* 🦠 PLAGUE BRIDGE — the seam for /src/plague and /src/biolab (viruses, cures,
+   the 3D containment lab, and shipping to player-owned Medical Corporations).
+
+   🔴 THE GLOBALS TRAP, a fifth time (CLAUDE.md). `Profile`, `Cloud`, `Corp`,
+   `RESOURCES`, `getRes`/`addRes`/`spendResources`/`_refundRes`, `spendGems`
+   and `_opEcon` are all top-level `const`/function declarations in this file —
+   global LEXICAL bindings that are NOT on `window`. /src/plague reads NOTHING
+   by itself; this object is the entire hand-over. If a cure module ever needs
+   something new, ADD IT HERE.
+
+   🔴 `refundRes` vs `addRes` IS THE SAFETY STORY, and it is the same one
+   MythicTradeBridge documents. `craftBatch()` spends reagents, then records
+   the batch, and puts every unit back if the record fails. That undo MUST be
+   uncapped — routing it through addRes would let the stash cap eat a refund
+   of resources the player never actually stopped owning.
+
+   🔴 ALL OPERATION PRICING GOES THROUGH `_opEcon()` (CLAUDE.md). `opEcon` is
+   handed over rather than the OPS_ECON table, so shipping quotes read the LIVE
+   row — admin overrides included — and no Cinder figure is ever written inside
+   the module.
+
+   ⚠ Every accessor is a FUNCTION. Profile.gems and the resource ledger change
+   constantly; a captured value would go stale the moment the player spends. */
+window.MythicPlagueBridge = {
+  // ── identity / cloud. All best-effort: the whole feature works signed out.
+  signedIn: () => { try { return !!(Profile.cloud && Profile.cloud.signedIn && Cloud && Cloud.client); } catch (e) { return false; } },
+  userId: () => { try { return (Profile.cloud && Profile.cloud.userId) || null; } catch (e) { return null; } },
+  displayName: () => {
+    try { return (Profile.cloud && Profile.cloud.displayName) || (Profile.account && Profile.account.displayName) || 'Survivor'; }
+    catch (e) { return 'Survivor'; }
+  },
+  client: () => { try { return (Cloud && Cloud.ready && Cloud.client) ? Cloud.client : null; } catch (e) { return null; } },
+
+  // ── resources. Reagents are RESOURCES ids (the live 14), never SALVAGE_RES.
+  resources: () => { try { return (typeof RESOURCES !== 'undefined') ? RESOURCES : []; } catch (e) { return []; } },
+  getRes: (id) => { try { return getRes(id) | 0; } catch (e) { return 0; } },
+  spendRes: (id, n) => { try { return !!spendResources({ [id]: n | 0 }); } catch (e) { return false; } },
+  addRes: (id, n) => { try { addRes(id, n | 0); return true; } catch (e) { return false; } },
+  // ↩️ UNCAPPED UNDO. See the note above — never swap this for addRes.
+  refundRes: (id, n) => { try { _refundRes(id, n | 0); return true; } catch (e) { return false; } },
+
+  // ── Cinder. Routed through the real helpers; never mutate Profile.gems.
+  gems: () => { try { return Profile.gems | 0; } catch (e) { return 0; } },
+  spendGems: (n) => { try { return !!spendGems(n | 0); } catch (e) { return false; } },
+  addGems: (n) => { try { addGems(n | 0); } catch (e) {} },
+
+  // ── operations. The LIVE econ row, and the player's own rows from BOTH
+  //    lists (corp_operations + the Profile mirror) — the same pair
+  //    _warehouseCapacity walks, deduped by _opsAllRows.
+  opEcon: (t) => { try { return (typeof _opEcon === 'function') ? _opEcon(t) : null; } catch (e) { return null; } },
+  myOps: () => {
+    try {
+      return (_opsAllRows() || []).map((o) => ({
+        id: o.id, corp_id: o.corp_id, op_type: o.op_type,
+        level: o.level | 0 || 1, workers: o.workers | 0, status: o.status || 'active',
+      }));
+    } catch (e) { return []; }
+  },
+  myCorp: () => { try { return (Corp && Corp.mine) ? { id: Corp.mine.id, name: Corp.mine.name, tag: Corp.mine.tag } : null; } catch (e) { return null; } },
+
+  /* ── persistence. ONE blob on the profile.
+     ⚠ It rides the ordinary profile save, which is already cloud-synced, so
+       there is no new save path to keep in step and nothing to migrate — an
+       absent Profile.plague simply means "no outbreak has ever happened here",
+       which is the correct starting state for every existing player. */
+  plagueState: () => { try { return Profile.plague || null; } catch (e) { return null; } },
+  setPlagueState: (s) => { try { Profile.plague = s; return true; } catch (e) { return false; } },
+  save: () => { try { saveProfile(); return true; } catch (e) { return false; } },
+
+  toast: (m, ms) => { try { showToast(m, ms || 3600); } catch (e) {} },
+  confirm: async (m) => { try { return !!(await gcConfirm(m)); } catch (e) { return false; } },
+  render: () => { try { render(); } catch (e) {} },
+};
 window.MythicCityBridge = {
   // ── Resources. Accessors, never snapshots — a captured value goes stale the
   //    moment the player loots or spends.
@@ -207864,9 +207956,56 @@ window.cityEnterBusiness = function (opType) {
       cardshop: () => { App._cardShopReturn = 'campOps'; App.screen = 'cardShop'; },
       dojo:     () => { App._dojoTab = 'mine'; App.screen = 'dojoShop'; },
       bank:     () => { try { _udwState().loaded = false; } catch (e) {} App.screen = 'bankDesk'; },
+      /* 🏥 THE WARD — the Medical Corporation's interior (/src/ward). Crates
+         arrive from player-owned hauliers; the ward decides whether to screen
+         them, who gets the doses, and whether a suspect batch goes into people
+         at all. It is where the iatrogenic call now lives.
+         ⚠ THE WARD IS NOT THE BENCH. A Medical Corporation RECEIVES cures; the
+           containment lab where they are MIXED is `research` below. Routing
+           both here (as an earlier build did) conflated the two ends of the
+           pipe and left the medical player with no game of their own — which
+           is the whole reason the ward exists. The ward cross-links to the
+           bench with its own button.
+         ⚠ These interiors are OVERLAYS, not screens: they mount on top of
+           whatever is behind them, so there is no App.screen to set and
+           nothing to route back from — close() simply removes them. If a
+           module never loaded (a 404 against the service worker) the guard
+           returns false and the dashboard is unchanged. */
+      medical:  () => {
+        if (!(window.MythicWard && typeof window.MythicWard.open === 'function')) return false;
+        try { window.MythicWard.open(); } catch (e) { return false; }
+        return true;
+      },
+      /* ⚗️ THE CONTAINMENT LAB — the 3D hazmat minigame (/src/biolab), where
+         cures are actually made. A Research Facility is the licence for it.
+         ⚠ It is `async` and this router is not, so the open() promise is
+           deliberately not awaited; a failure inside surfaces its own message. */
+      research: () => {
+        if (!(window.MythicBioLab && typeof window.MythicBioLab.open === 'function')) return false;
+        try { window.MythicBioLab.open(); } catch (e) { return false; }
+        return true;
+      },
+      /* 🚚 The haulier's interior is the DISPATCH side of the bench — the board
+         where waybills are read and runs are collected. Same overlay, because
+         a transport player and a shipper are looking at the same cargo from
+         opposite ends. */
+      transport: () => {
+        if (!(window.MythicBioLab && typeof window.MythicBioLab.open === 'function')) return false;
+        try { window.MythicBioLab.open({ at: 'dispatch' }); } catch (e) { return false; }
+        return true;
+      },
     };
     const go = routes[opType];
     if (!go) return { ok: false, error: 'no-interior' };
+    /* The overlay interiors mount ON TOP of the city rather than replacing it,
+       so they must not close it out from under themselves. Only the screen
+       routes leave. */
+    const isOverlay = (opType === 'medical' || opType === 'transport' || opType === 'research');
+    if (isOverlay) {
+      if (go() === false) return { ok: false, error: 'no-interior' };
+      try { showToast('🚪 Entering ' + ((OP_LABELS && OP_LABELS[opType]) || opType) + '.', 3200); } catch (e) {}
+      return { ok: true, overlay: true };
+    }
     try { _closeNodeCity(); } catch (e) {}
     // The city fades over 400ms; routing inside that window is what every other
     // leave-the-city action does (see cityQueueDuel / cityOpenMarket).
@@ -209027,6 +209166,31 @@ async function _rushCheck() {
   } catch (e) {}
 }
 try { setInterval(() => { try { _rushCheck(); } catch (e) {} try { _mayorPayClaim(); } catch (e) {} }, 92000); setTimeout(() => { try { _rushCheck(); } catch (e) {} try { _mayorPayClaim(); } catch (e) {} }, 12000); } catch (e) {}
+/* 🚚 CURE SHIPMENTS — land on a clock, and the player is almost never in the
+   lab when they do. This is the catch-up, on the same poll as the mayor
+   stipend for the same reason: an arrival that only resolves when you happen
+   to walk back into the room is an arrival players will miss and then report
+   as lost cargo.
+
+   🔴 A LANDING CAN INTRODUCE A VIRUS. A batch that broke its cold chain
+   arrives iatrogenic and sheds a strain into the city (see collect() in
+   /src/plague/state.js), so this poll is genuinely load-bearing — it is the
+   only path by which a player's own bad decision comes back to them. The
+   module toasts every consequence itself; nothing is settled silently.
+
+   ⚠ Guarded to a no-op if the module never loaded, and `settleDue` refuses
+     when the bridge is missing, so this can never be the thing that breaks
+     boot. */
+function _plagueSettle() {
+  try {
+    const P = window.MythicPlague;
+    if (!P || typeof P.settleDue !== 'function' || !P.ready()) return;
+    P.settleDue(null);
+    // Earnings addressed to a transport or medical operation this player owns.
+    try { P.claimPayouts(); } catch (e) {}
+  } catch (e) {}
+}
+try { setInterval(_plagueSettle, 97000); setTimeout(_plagueSettle, 15000); } catch (e) {}
 // — Gem drop: rolled when a battlefield EVENT resolves during an active rush. —
 function _rushRollGemDrop() {
   try {
@@ -223096,6 +223260,48 @@ render();
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
 <script type="module" src="src/resources/chain.js?v=v120w6chain2"></script>
+<!-- 🦠 PLAGUE — viruses the city's named citizens catch, cures mixed from the
+     REAL 14-resource ledger, the mistake that spawns a NEW strain, and the
+     shipping leg through a player-owned Transportation Company to a
+     player-owned Medical Corporation. Registers window.MythicPlague.
+     Reads nothing by itself: window.MythicPlagueBridge (defined next to
+     MythicCityBridge above) hands it the resource accessors, the Cinder
+     helpers, _opEcon, the player's operation rows and one Profile slot.
+     Without the bridge it registers, stays inert and warns once — the
+     globals trap.
+     ⚠ IT IS INERT UNTIL SOMETHING CALLS IT. No timer, no socket, no DOM.
+     ⚠ Bump ?v= on every change — the service worker caches /src/* like any
+       other static asset, and a missed bump ships invisibly. -->
+<script type="module" src="src/plague/index.js?v=v120x1plague2"></script>
+<!-- 🧬 BIOLAB — the 3D containment lab. Walk to the stations; the hot-zone
+     benches refuse to run until the hazmat suit is SEALED (four steps, at the
+     airlock, standing still), and working them unsuited contaminates the
+     batch rather than merely scolding you — which is how a cure becomes the
+     next outbreak. Registers window.MythicBioLab, opened by
+     cityEnterBusiness('medical').
+     ⚠ It lazy-loads the legacy r128 three.js global (the same build the VFX
+       and the pack opener use), NOT the import-map 0.171 WebGPU entry — see
+       the header of scene.js before changing that.
+     ⚠ If WebGL is unavailable it opens in FLAT mode: the room is gone, every
+       station is still there, and the suit gate still applies. The 3D layer is
+       the presentation of the feature, never the feature.
+     ⚠ Bump ?v= on every change — the service worker caches /src/* like any
+       other static asset. -->
+<script type="module" src="src/biolab/index.js?v=v120x6biolab7"></script>
+<!-- 🏥 THE WARD — the Medical Corporation's interior, and the far end of the
+     pipe the containment lab feeds. Crates arrive from player-owned hauliers;
+     the ward screens them, triages who gets the doses, and decides whether a
+     suspect batch goes into people at all.
+     🔴 IT EXISTS BECAUSE A LAB USED TO BE A MAILBOX — paid automatically on
+        arrival, no decision, no game, while the shipper ate every consequence
+        alone. /src/plague/state.js now splits arrival from administration, and
+        this is what plays the second half. Two players can each have acted.
+     ⚠ Nothing strands: a crate nobody opens is administered by ward staff
+       after six hours on the default triage plan (settleDue), which is
+       deliberately not the optimal play.
+     ⚠ Bump ?v= on every change — the service worker caches /src/* like any
+       other static asset. -->
+<script type="module" src="src/ward/index.js?v=v120x1ward1"></script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the

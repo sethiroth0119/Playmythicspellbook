@@ -52,6 +52,20 @@ public/assets/Units/unit frames/Mythic Spellbook units/Last units/Bonus units/Ne
 # Raw 3D model sources. Runtime models are served from the Supabase `models`
 # bucket, never the Pages bundle (see public/.assetsignore for the why).
 *.glb
+# EXCEPTION: the containment lab's two characters. Same reasoning as the Binder
+# table exception in .assetsignore — these are the fixture EVERY player gets
+# (you ARE the researcher; you BECOME the sentinel when the suit seals), so
+# they cannot depend on a per-owner Storage upload, and a lab that loads its
+# own avatar over a third-party bucket is a lab that shows a box when that
+# bucket is slow.
+# They are also small enough that the rule above is not protecting anything:
+# 0.65 MiB each against a 25 MiB cap, and 20x smaller than the exception that
+# already ships. `_glbpack.mjs` got them there — the four uploads were 30 MiB
+# together and 95% of every byte was one 2048px PNG; merging each walk/run pair
+# and recompressing to 1024px WebP made it 1.31 MiB for both.
+# ⚠ KEEP THEM SMALL. If a re-export pushes either past a few MiB, pack it again
+#   or move it to the bucket — do not widen this exception.
+!public/models/lab/*.glb
 # Oversized audio masters dropped into assets/Audio (~50-100 MiB each).
 public/assets/Audio/*.wav
 # Local-only working directories.

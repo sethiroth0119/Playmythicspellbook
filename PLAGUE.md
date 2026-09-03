@@ -278,8 +278,11 @@ nobody beds walks out again after twelve minutes and the desk counts it.
 - **Treatment.** A wound takes one bandage per severity point; a sickness
   takes one shelf unit of a relief product (the outbreak's family first) or
   two raw Medicine. Treatment runs on the wall clock in bed; better medicine
-  heals faster; the fee is fixed at treatment from the econ row and paid on
-  discharge.
+  heals faster. **A healed patient pays a random 500–5,000 Cinder** — rolled
+  once per patient from their id, severity leaning it upward — the moment
+  they are discharged, then walks out. This band is the owner's explicit call
+  and the one Cinder figure in the building not derived from `_opEcon`; it
+  lives in `patients.js` TUNING as `FEE_MIN` / `FEE_MAX`.
 - **Bandages** are rolled at the Supply Bench: 2 cloth + 1 water per batch
   of 3. Live resource ids only.
 - **Patient models** rotate at random from `patients.models.js`; a look is

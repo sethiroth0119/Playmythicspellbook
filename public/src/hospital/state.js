@@ -679,7 +679,7 @@ export function treat(patientId) {
   }
   const now = Date.now();
   p.status = 'treating'; p.treatedAt = now; p.doneAt = now + PT.treatmentMs(p, quality);
-  p.quality = quality; p.fee = PT.feeOf(p, econ(), quality); p.used = used;
+  p.quality = quality; p.fee = PT.feeOf(p); p.used = used;
   persist();
   return { ok: true, patient: p, used, ms: p.doneAt - now };
 }

@@ -251,8 +251,14 @@ ok(pS.ailment === 'sickness' && pS.name === 'Cit One' && pS.strainId === strainS
 ok(PT.needsOf(pA).bandages === pA.severity && PT.needsOf(pS).kind === 'medicine', 'wounds need bandages per severity; sickness needs medicine');
 ok(PT.reliefProduct(pS, { salve: { units: 5 }, antiviral: { units: 1, family: null } }) === 'antiviral', 'salve does not treat sickness; antiviral does');
 ok(PT.reliefProduct(pS, { antiviral: { units: 1, family: null }, serum: { units: 1, family: strainS.family } }) === 'serum', 'the family-matching product is preferred');
-ok(PT.feeOf(pS, ECON.medical, 0.9) > PT.feeOf(pA, ECON.medical, 0.9) || pA.severity > pS.severity, 'sickness pays more than a wound of the same severity');
-ok(PT.feeOf(pA, null, 0.9) === 0, 'no econ row → no fee, never a hardcoded figure');
+{
+  const fees = []; for (let i = 0; i < 200; i++) fees.push(PT.feeOf(PT.makePatient('fee' + i, { now: CLOCK, models: 1, sickShare: 0.5 })));
+  ok(fees.every((f) => f >= PT.TUNING.FEE_MIN && f <= PT.TUNING.FEE_MAX), 'every fee is inside the ' + PT.TUNING.FEE_MIN + '–' + PT.TUNING.FEE_MAX + ' band');
+  ok(new Set(fees).size > 50 && Math.max(...fees) > 4500 && Math.min(...fees) < 1000, 'and it is random across patients (spread ' + Math.min(...fees) + '–' + Math.max(...fees) + ')');
+  ok(PT.feeOf(pA) === PT.feeOf(pA2), 'but fixed for a given patient — a reload cannot reroll it');
+  const crit = PT.makePatient('c', { now: CLOCK, models: 1 }); crit.severity = 3; crit.id = 'same'; const minor = Object.assign({}, crit, { severity: 1 });
+  ok(PT.feeOf(crit) >= PT.feeOf(minor), 'a worse case rolls no lower than a minor one on the same roll');
+}
 ok(PT.treatmentMs(pA, 1) < PT.treatmentMs(pA, 0), 'better medicine heals faster');
 ok(PT.patienceLeft(pA, CLOCK + PT.TUNING.PATIENCE_MS + 1) === 0 && PT.patienceLeft(pA, CLOCK) === 1, 'patience runs out on the clock');
 ok(PT.arrivalsPerMin({ pop: 300, cases: 10 }) > PT.arrivalsPerMin({ pop: 300, cases: 0 }), 'an outbreak brings more patients');

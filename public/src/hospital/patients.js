@@ -11,8 +11,8 @@
    🔴 NOTHING HERE SPENDS, SAVES OR TOUCHES THE DOM. state.js owns every
    write. This file decides who arrives, what they need and what they pay.
 
-   🔴 NOT ONE CINDER FIGURE IS WRITTEN HERE. Fees are shares of the medical
-   op's own `ratePerWorkerHr` (CLAUDE.md: pricing goes through _opEcon).
+   ⚠ THE ONE CINDER FIGURE IN THIS BUILDING: the patient fee band (TUNING
+   FEE_MIN..FEE_MAX), an explicit owner's call — see the note on it.
 
    ⚠ The patient models rotate at random from PATIENT_MODELS (patients.models
    .js); a patient's `look` is fixed at arrival so a reload cannot reroll it.
@@ -34,9 +34,15 @@ export const TUNING = {
   WOUND_MS_PER_SEV: 80000,          // treatment time in bed, wall time
   SICK_MS_PER_SEV: 130000,
   OFFLINE_ARRIVALS_MAX: 6,          // a night away fills the lobby, not the street
-  // Fees, as shares of ratePerWorkerHr per severity point.
-  FEE_WOUND: 0.35,
-  FEE_SICK: 0.55,
+  /* 💰 THE FEE. A healed patient pays a RANDOM amount of Cinder in this band,
+     rolled once per patient (from their id, so a reload cannot reroll it) and
+     paid the moment they are discharged, after which they walk out. The band
+     is the owner's explicit design call (requested 2026-09-03: "make 5000
+     cinder, make it rng") and is the ONE Cinder figure in this building that
+     does not derive from _opEcon — kept here, named, so it is a knob and not
+     a buried constant. Severity nudges the roll upward, never past the cap. */
+  FEE_MIN: 500,
+  FEE_MAX: 5000,
   // Bandages: cloth and water in, dressings out. Live resource ids only.
   BANDAGE_RECIPE: { cloth: 2, water: 1 },
   BANDAGE_YIELD: 3,
@@ -117,12 +123,13 @@ export function treatmentMs(p, quality) {
   return Math.round(base * (1.1 - 0.35 * q));
 }
 
-export function feeOf(p, econ, quality) {
-  const rate = Math.max(0, +(econ && econ.ratePerWorkerHr) || 0);
-  if (!rate || !p) return 0;
-  const q = clamp(+quality || 0.5, 0, 1);
-  const share = p.ailment === 'wound' ? TUNING.FEE_WOUND : TUNING.FEE_SICK;
-  return Math.max(1, Math.round(rate * share * p.severity * (0.75 + 0.5 * q)));
+export function feeOf(p) {
+  if (!p) return 0;
+  const r = rng('fee:' + p.id)();
+  // Severity leans the roll upward: a critical case rolls in the upper half.
+  const floor = clamp((p.severity - 1) / 4, 0, 0.5);
+  const t = floor + (1 - floor) * r;
+  return Math.round(TUNING.FEE_MIN + (TUNING.FEE_MAX - TUNING.FEE_MIN) * t);
 }
 
 export function patienceLeft(p, now) {

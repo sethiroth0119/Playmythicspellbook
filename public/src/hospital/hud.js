@@ -267,7 +267,7 @@ export function bayPanel(ctx) {
   };
   const selP = patients.find((p) => p.id === sel.patientId);
   return '<h3>🛏 WARD BAY — PATIENTS</h3>' + tabs +
-    '<p class="sub">Whoever walks in waits in the lobby. Give them a bed, then treat them: bandages for a wound, medicine off the shelf for a sickness. They pay on discharge. Nobody waits forever.</p>' +
+    '<p class="sub">Whoever walks in waits in the lobby. Give them a bed, then treat them: bandages for a wound, medicine off the shelf for a sickness. A healed patient pays ' + num(PT.TUNING.FEE_MIN) + '–' + num(PT.TUNING.FEE_MAX) + ' 🔥 (rolled per patient, the worse the case the higher) and walks out. Nobody waits forever.</p>' +
     '<h4 style="font-size:10px;letter-spacing:.14em;color:#8b93a3;margin:10px 0 6px">LOBBY · ' + waitingRows.length + ' WAITING</h4>' +
     (waitingRows.length ? '<div class="bl-list">' + waitingRows.map(card).join('') + '</div>' : '<div class="bl-empty">Nobody in the lobby.</div>') +
     '<h4 style="font-size:10px;letter-spacing:.14em;color:#8b93a3;margin:12px 0 6px">BEDS · ' + bedRows.length + ' OF ' + beds.length + ' IN USE</h4>' +

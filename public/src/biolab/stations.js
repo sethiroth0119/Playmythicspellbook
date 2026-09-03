@@ -69,14 +69,17 @@ export function isHot(k) { const s = stationByKey(k); return !!(s && s.hot); }
 
 /* Is a world point inside the hot zone? The suit rule, the floor colour and
    the exposure meter all ask this one function. */
-export function inHotZone(x, z) { return z > HOT_Z; }
+export function inHotZone(x, z, hotZ) { return z > (Number.isFinite(+hotZ) ? +hotZ : HOT_Z); }
 
 /* Nearest station within `reach` metres of (x, z), or null. Returned with the
    distance so the HUD can fade the prompt in rather than pop it. */
-export function nearest(x, z, reach) {
+/* ⚠ `list` is optional and defaults to the lab. /src/hospital has its own
+   floor plan and passes its own table, so one proximity rule serves both rooms
+   and a "close enough" that differs between them cannot exist. */
+export function nearest(x, z, reach, list) {
   const R = Number.isFinite(+reach) ? +reach : 3.0;
   let best = null, bestD = Infinity;
-  for (const s of STATIONS) {
+  for (const s of (list || STATIONS)) {
     // Distance to the bench's footprint, not its centre — walking to the end
     // of a 6.4m bench should still count as being at it.
     const hx = s.size[0] / 2, hz = s.size[1] / 2;
@@ -91,10 +94,11 @@ export function nearest(x, z, reach) {
 /* Solid boxes the player cannot walk through: the benches themselves plus the
    room's four walls. Returned as {x,z,hx,hz} so player.js can do one cheap
    AABB sweep per axis and never needs to know what a station is. */
-export function colliders() {
-  const out = STATIONS
-    // The airlock is a doorway, not furniture — you walk INTO it.
-    .filter((s) => s.key !== 'suitup')
+export function colliders(list) {
+  const out = (list || STATIONS)
+    // The airlock is a doorway, not furniture — you walk INTO it. Any station
+    // flagged `frame` (the hospital's scrub station) is the same shape.
+    .filter((s) => s.key !== 'suitup' && !s.frame)
     .map((s) => ({ x: s.pos[0], z: s.pos[1], hx: s.size[0] / 2 + 0.25, hz: s.size[1] / 2 + 0.25, key: s.key }));
   return out;
 }

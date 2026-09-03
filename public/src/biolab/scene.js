@@ -23,7 +23,7 @@
    step the scene by hand.
    ══════════════════════════════════════════════════════════════════════════ */
 
-import { ROOM, HOT_Z, STATIONS } from './stations.js';
+import { ROOM as ROOM_LAB, HOT_Z as HOT_Z_LAB, STATIONS as STATIONS_LAB } from './stations.js';
 
 /* ── the character models ─────────────────────────────────────────────────
    Two GLBs, one per state: the researcher you arrive as, and the Hazard
@@ -190,7 +190,7 @@ export function ensureThree() {
   });
 }
 
-const COL = {
+const COL_LAB = {
   floorClean: 0x1c2430,
   floorHot: 0x2a1d24,
   wall: 0x141a23,
@@ -202,7 +202,7 @@ const COL = {
 /* One shared material cache. A station is a handful of boxes and there are six
    of them; building fresh materials per mesh would be forty draw-call state
    changes for a room that should be one. */
-function mats(THREE) {
+function mats(THREE, COL) {
   const m = (c, o) => new THREE.MeshLambertMaterial(Object.assign({ color: c }, o || {}));
   return {
     floorClean: m(COL.floorClean),
@@ -468,7 +468,22 @@ function prepareCharacter(THREE, gltf) {
   return { holder, root, mixer, walk, run, height: MODEL_HEIGHT };
 }
 
-export function build(THREE, canvas) {
+/* `plan` is optional. Without it this builds the containment lab exactly as
+   before. /src/hospital passes `{ room, hotZ, stations, colors, bg }` and gets
+   the same renderer, camera, character rig and suit read-out over its own
+   floor — one scene builder for both rooms, so a camera or character fix
+   lands in both at once rather than in whichever one somebody remembered.
+   A station with `frame: true` is drawn as an airlock frame (lamps and all);
+   `s.key === 'suitup'` keeps meaning that for the lab. */
+export function build(THREE, canvas, plan) {
+  const P = plan || {};
+  const ROOM = P.room || ROOM_LAB;
+  const HOT_Z = Number.isFinite(+P.hotZ) ? +P.hotZ : HOT_Z_LAB;
+  const STATIONS = Array.isArray(P.stations) ? P.stations : STATIONS_LAB;
+  const COL = Object.assign({}, COL_LAB, P.colors || {});
+  const BG = Number.isFinite(+P.bg) ? +P.bg : 0x0a0e14;
+  const isFrame = (s) => s.key === 'suitup' || !!s.frame;
+  const frameKey = (STATIONS.find(isFrame) || {}).key || 'suitup';
   let renderer;
   try {
     renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
@@ -479,10 +494,10 @@ export function build(THREE, canvas) {
   renderer.setSize(window.innerWidth, window.innerHeight, false);
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0a0e14);
-  scene.fog = new THREE.Fog(0x0a0e14, 26, 52);
+  scene.background = new THREE.Color(BG);
+  scene.fog = new THREE.Fog(BG, 26, 52);
 
-  const M = mats(THREE);
+  const M = mats(THREE, COL);
 
   // ── lighting. Cheap and flat: a hemisphere for the room, one key for shape,
   //    and a sickly green fill over the hot zone so the two halves of the room
@@ -491,7 +506,7 @@ export function build(THREE, canvas) {
   const key = new THREE.DirectionalLight(0xffffff, 0.55);
   key.position.set(8, 18, -6);
   scene.add(key);
-  const hotFill = new THREE.PointLight(0x7fe0a0, 0.8, 30);
+  const hotFill = new THREE.PointLight(COL.hotFill || 0x7fe0a0, 0.8, 30);
   hotFill.position.set(0, 5, 8);
   scene.add(hotFill);
 
@@ -529,7 +544,7 @@ export function build(THREE, canvas) {
     const g = new THREE.Group();
     const mat = new THREE.MeshLambertMaterial({ color: s.color });
     const [w, d] = s.size;
-    if (s.key === 'suitup') {
+    if (isFrame(s)) {
       // The airlock is a frame you stand inside, not a bench.
       g.add(box(THREE, M.trim, w, 0.14, d, 0, 0.07, 0));
       g.add(box(THREE, mat, 0.3, 3.0, 0.3, -w / 2, 1.5, 0));
@@ -714,7 +729,7 @@ export function build(THREE, canvas) {
 
       // Airlock seal lamps.
       try {
-        const lamps = (stationMeshes.suitup && stationMeshes.suitup.group.userData.lamps) || [];
+        const lamps = (stationMeshes[frameKey] && stationMeshes[frameKey].group.userData.lamps) || [];
         const order = ['legs', 'torso', 'gloves', 'hood'];
         for (let i = 0; i < lamps.length; i++) {
           const on = !!(st.suit && st.suit.seals && st.suit.seals[order[i]]);
@@ -734,7 +749,7 @@ export function build(THREE, canvas) {
       // hot zone unsuited. It is peripheral, constant, and impossible to
       // misread as anything but "get out or suit up".
       const danger = st.suit && st.suit.inHot && !sealed;
-      hotFill.color.setHex(danger ? 0xff4d5e : 0x7fe0a0);
+      hotFill.color.setHex(danger ? 0xff4d5e : (COL.hotFill || 0x7fe0a0));
       hotFill.intensity = danger ? 1.1 + Math.sin(Date.now() / 140) * 0.5 : 0.8;
       stripe.material.color.setHex(danger ? 0xff4d5e : COL.hazard);
 

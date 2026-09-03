@@ -9,7 +9,7 @@
      believed the file was already live. Only a CONTENT change moves the hash
      and forces a re-upload, so bump this stamp whenever the city 404s, and
      probe it (grep NC_BUILD on the served page) to prove the deploy landed. -->
-<script>window.NC_BUILD = "v120i2-city";</script>
+<script>window.NC_BUILD = "v120x7-city";</script>
 <!-- ════════════════════════════════════════════════════════════════════════
      NODE CITY — SimCity-style settlement layer for Mythic Spellbook.
      Three.js WebGPU (auto-falls back to WebGL2). Realistic sun/moon cycle.
@@ -16795,6 +16795,10 @@ async function economyTick(dtMin) {
      module. Guarded because the module is loaded asynchronously and the city
      must tick normally on any browser or build where it never arrives. */
   try { if (window.MythicHouse) window.MythicHouse.tick(dtMin); } catch (e) {}
+  /* 💊 The pharmacy counter sells on the same beat, for the same reason: the
+     offline catch-up slices THIS function, so an absence pays the counter at
+     the demand the city actually had, with no second formula to keep in step. */
+  try { if (window.MythicPharmacy) window.MythicPharmacy.tick(dtMin); } catch (e) {}
 }
 
 /* h:mm:ss past an hour, m:ss under it. A 2-hour cycle rendered through the old
@@ -20152,6 +20156,8 @@ function tipHtml(k, t) {
      building and an invisible penalty is indistinguishable from a bug. */
   if (t.type === 'resthouse') { try { if (window.MythicHouse) h += window.MythicHouse.tipLine(t); } catch (e) {} }
   if (t.type === 'stadium') { try { if (window.MythicStadium) h += window.MythicStadium.tipLine(t); } catch (e) {} }
+  // 💊 Clinics and Med Labs retail the Medical Corporation's medicine — say so.
+  if (t.type === 'clinic' || t.type === 'medlab') { try { if (window.MythicPharmacy) h += window.MythicPharmacy.tipLine(t); } catch (e) {} }
   if (t.type === 'lot') h += (t.tenant ? '🪧 Leased to <span class="hl">' + logEsc(t.tenant) + '</span> — +' + LOT_RENT_PER_MIN + ' 🔥/min<br>' : '🪧 Vacant — lease it for rent<br>');
   if (t.wear) h += '🏚️ Wear ' + Math.round(t.wear) + '%<br>';
   if (t.type === 'road') h += '🛤️ Road network ' + roadUsed() + ' / ' + roadCap() + '<br>';
@@ -21389,7 +21395,9 @@ function opsMock() {
   return opsMock._m;
 }
 function opsMockSave() { try { localStorage.setItem(OPS_MOCK_KEY, JSON.stringify(opsMock())); } catch (e) {} }
-const OPS_INTERIORS = { cardshop: 1, dojo: 1, bank: 1 };
+// 🏥 medical → the hospital (/src/hospital); research → the containment lab;
+//    transport → the dispatch bay. All three are overlays in the parent game.
+const OPS_INTERIORS = { cardshop: 1, dojo: 1, bank: 1, medical: 1, research: 1, transport: 1 };
 function opsMockState() {
   const m = opsMock();
   return {
@@ -21836,7 +21844,10 @@ function opsInspectAction(k) {
   if (OPS_INTERIORS[opType]) {
     return { opType, row, eff,
       label: '🚪 ENTER BUSINESS',
-      note: 'Opens ' + (opType === 'cardshop' ? 'your Card Shop' : opType === 'dojo' ? 'the Dojo Shop and the Tutor' : 'the Underwriting Desk') + ' in the game.',
+      note: 'Opens ' + (opType === 'cardshop' ? 'your Card Shop' : opType === 'dojo' ? 'the Dojo Shop and the Tutor'
+        : opType === 'medical' ? 'the hospital — ward, containment vault, compounding clean room and stockroom'
+        : opType === 'research' ? 'the containment lab, where cures are mixed'
+        : opType === 'transport' ? 'the dispatch bay' : 'the Underwriting Desk') + ' in the game.',
       run: async () => {
         const r = await opsEnterBusiness(opType);
         if (!r || !r.ok) toast('🚪 That interior opens inside the full game (bridge: ' + MythicCityBridge.mode + ').', 'bad');
@@ -24224,6 +24235,19 @@ function animate() {
      ⚠ The cure for what emerges here is mixed in the 3D containment lab
        (/src/biolab), reached from the game's Medical Corporation operation.
        This module only makes people ill and reports it. */
+  /* 🔴 THE PLAGUE BRIDGE COMES FROM THE PARENT. /src/plague/state.js reads
+     window.MythicPlagueBridge, and this iframe has no such object of its own —
+     so without this line the outbreak ran on the NULL bridge: nothing it did
+     ever reached Profile.plague, the ward in the game window never saw a
+     single city case, and a strain seeded here vanished on reload. Same-origin,
+     so the parent's object is reachable directly; every other mode (standalone,
+     message) keeps the inert bridge, which is the documented degraded state.
+     The pharmacy counter below needs the same hand-over for the same reason. */
+  try {
+    if (!window.MythicPlagueBridge && MythicCityBridge.mode === 'parent' && window.parent.MythicPlagueBridge) {
+      window.MythicPlagueBridge = window.parent.MythicPlagueBridge;
+    }
+  } catch (e) {}
   try {
     const omod = await import('../src/plague/outbreak.city.js?v=' + (window.NC_BUILD || 'plague1'));
     const OUTBREAK = omod.mount({
@@ -24278,6 +24302,27 @@ function animate() {
       };
     }
   } catch (e) { console.warn('[Outbreak] not mounted (non-fatal):', e); }
+  /* ══ 💊 THE PHARMACY COUNTER ═══════════════════════════════════════════════
+     Where NPCs buy the medicine the player's Medical Corporation compounded
+     (/src/hospital). The hospital MAKES it; this city's Clinics and Med Labs
+     RETAIL it — a city with neither sells nothing. Mounted after the outbreak
+     because demand reads the outbreak's active cases.
+
+     🔴 THE GLOBALS TRAP, sixth time. `game`, `cityPop`, `staffingRatio` and
+     `insHalted` are top-level in this module script; the ctx IS the hand-over
+     and it hands over READERS ONLY — the counter never writes a tile. Cinder
+     goes through the parent's bridge (addGems), never a balance here. */
+  try {
+    const pmod = await import('../src/hospital/pharmacy.city.js?v=' + (window.NC_BUILD || 'r1') + 'ph1');
+    pmod.mount({
+      tiles: () => game.tiles,
+      halted: (t) => { try { return !!insHalted(t); } catch (e) { return false; } },
+      pop: () => cityPop(),
+      staffing: () => staffingRatio(),
+      cityId: () => (MythicCityBridge && MythicCityBridge.mode ? 'nc:' + MythicCityBridge.mode : 'nc'),
+      toast, logEvent: (m) => { try { logEvent('city', m); } catch (e) {} },
+    });
+  } catch (e) { console.warn('[Pharmacy] not mounted (non-fatal):', e); }
   /* 🔬 DIAGNOSTICS SEAM. This is a <script type="module">, so NOTHING in it is
      on window — which means the consumption layer cannot be inspected, stepped
      or regression-tested from a console without one. Same pattern as the main

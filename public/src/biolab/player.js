@@ -103,13 +103,17 @@ function resolveAxis(px, pz, boxes, axis) {
    sealed: the suit is heavy, and that cost is what makes suiting up a decision
    rather than a formality you always take. It is also what drives the
    walk/run animation blend in scene.js, so the feet match the ground. */
-export function step(p, input, dtMs, speedMul) {
+/* `plan` is optional: `{ room, colliders }` for a room that is not the lab.
+   The hospital passes its own floor plan; every existing caller passes nothing
+   and walks the lab exactly as before. */
+export function step(p, input, dtMs, speedMul, plan) {
   const mul = Number.isFinite(+speedMul) ? Math.max(0, +speedMul) : 1;
+  const room = (plan && plan.room) || ROOM;
   const dt = Math.max(0, Math.min(100, +dtMs || 0)) / 1000;   // clamp: a tab that
   // was backgrounded must not deliver a two-second frame and shove the player
   // through a wall. 100ms is ~6 frames of catch-up, which is plenty.
   const { ax, az, mag } = axisOf(input);
-  const boxes = colliders();
+  const boxes = (plan && Array.isArray(plan.colliders)) ? plan.colliders : colliders();
 
   p.moving = mag > 0.05;
   if (p.moving) {
@@ -134,7 +138,7 @@ export function step(p, input, dtMs, speedMul) {
 
   // Walls. The airlock end is open to the corridor the player entered from,
   // so the −z wall sits a little further out than the room's nominal depth.
-  const hw = ROOM.w / 2 - RADIUS, hd = ROOM.d / 2 - RADIUS;
+  const hw = room.w / 2 - RADIUS, hd = room.d / 2 - RADIUS;
   p.x = Math.max(-hw, Math.min(hw, nx));
   p.z = Math.max(-hd, Math.min(hd, nz));
   return p;

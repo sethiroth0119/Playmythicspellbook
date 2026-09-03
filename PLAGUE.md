@@ -206,9 +206,67 @@ In-browser, both modules carry a test seam (`MythicBioLab._run/_step/_interact`,
 never composites — `requestAnimationFrame` does not fire, so anything reachable
 only through the render loop is otherwise unobservable (CLAUDE.md).
 
+## The hospital — the Medical Corporation minigame
+
+`/src/hospital` is the building the Medical Corporation licence buys. It is
+what opens from Just Business → My Companies → Medical Corporation, and from
+the city's ENTER BUSINESS on a sited `medical` operation. The ward above is
+one room in it.
+
+```
+public/src/hospital/
+  floor.js            the floor plan, as data. HOT_Z is the sterile line
+  pharma.js           cure lines, five products, compounding, pricing, the NPC counter — pure
+  state.js            the ONLY file here that spends, saves or reads the game
+  hud.js              the 2D layer; borrows the lab's chrome (bl-root hp-root)
+  index.js            window.MythicHospital — the 3D walk
+  pharmacy.city.js    the node-city adapter: Clinics and Med Labs retail the shelf
+_hospital_smoke.mjs   66 headless checks
+```
+
+The loop it closes:
+
+1. **A crate the ward administers leaves a cure line** in the Containment
+   Vault: the leftover doses plus a fifth of the crate as retained samples,
+   carrying the ARRIVED numbers. An iatrogenic or refused crate leaves
+   nothing — a product compounded from it would be a way to sell the mutant.
+   `sweep()` books them idempotently from the ward, the hospital door and the
+   game's settle poll, so a crate STAFF opened still reaches the vault.
+2. **The Compounding Lab turns a line into medicine.** Five products —
+   Field Salve (from anything), Antiviral Tablets, Immune Serum, Nerve Tonic
+   (neural lines only), Vaccine Dose (stable viable lines only). Each costs
+   samples and per-unit resources from the live 14. The titration dial sets
+   the yield; the line sets the quality.
+3. **The clean room is the hazmat rule, reused whole.** Same four seals at
+   the scrub station, same exposure meter, same gate. Compounding ungowned
+   puts the exposure on the product; past 0.35 the run fails sterility and
+   is destroyed, inputs and samples included.
+4. **The city sells it.** `pharmacy.city.js` ticks on node-city's own
+   `economyTick`. Every Clinic and Med Lab standing retails the shelf to
+   NPCs; the Cinder lands through the bridge. A city with neither sells
+   nothing — the hospital makes medicine, the city's buildings retail it.
+   Outbreak cases send people to the counter (up to 3×), and the product
+   that treats the current family sells first.
+
+**Prices are shares of `_opEcon('medical').ratePerWorkerHr`.** Not one
+Cinder figure lives in the module; staff and level the operation and every
+product is worth more.
+
+**Two windows share the profile slots.** The city builder is an iframe with
+its own copy of `/src/plague/state.js`, and it now receives the parent's
+`MythicPlagueBridge` — before this the outbreak in the city ran on the null
+bridge and never reached the ward. Both `blob()` readers refuse a cached copy
+the moment the slot holds a different object than the one they read, so
+whichever window persisted last is the truth and nothing overwrites it.
+
+No SQL. Cure lines, the shelf and the counter log are facts about one
+player's business and one player's city, and live on the profile.
+
 ## Next
 
-The Medical Corporation minigame is the far end of this pipe. The hook is
-already there: `rankLabs()` computes each lab's `capacity` and `canAdminister`
-from its staffing, and an unstaffed lab receives the crate and cannot open it.
-That is the medical player's job, and it is what their minigame is for.
+- **Vaccines sold should buy the city something.** The counter could hand
+  `outbreak.js` a prophylaxis factor from doses dispensed; today a vaccine is
+  only Cinder.
+- **Other players' clinics.** The shelf is retailed only in its owner's city.
+  A wholesale leg — selling stock to another player's Medical Corporation
+  through the same haulier system — is the obvious market to open.

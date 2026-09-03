@@ -116,6 +116,9 @@ const COMPANY_PAGES = {
   cars:    { label: 'Prince Portfolios',      ico: '🚗', action: 'openPrincePortfolios' },
   oil:     { label: 'Black River Petroleum',  ico: '⛽', action: 'openBlackRiver' },
   gas:     { label: 'Ethos Fuel Command',     ico: '⛽', action: 'openFuelCommand' },
+  // 🏥 The Medical Corporation's 3D interior (/src/hospital): ward intake,
+  //    the containment vault, the compounding clean room, the stockroom.
+  medical: { label: 'Medical Corporation',    ico: '🏥', action: 'openHospital' },
 };
 
 function Sidebar({ route, setRoute, mailCount, blackCount }) {

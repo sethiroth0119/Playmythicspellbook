@@ -79,12 +79,23 @@ function emptyBlob() {
 }
 
 let CACHE = null;
+let CACHE_RAW = null;
 
+/* 🔴 TWO WINDOWS SHARE THIS SLOT. The city builder is an iframe, same-origin,
+   with its OWN copy of this module — and node-city now hands it the parent's
+   bridge, so its outbreak ticks land on the same Profile.plague the ward in
+   the game window reads. A cache that was simply "filled once" would let
+   whichever window persisted second overwrite the other's changes with a
+   stale copy. So the cache is valid only while the slot still holds the exact
+   object it was read from (or the one persist() wrote); the moment the other
+   window has written, `raw !== CACHE_RAW` and it is re-read. Every mutation in
+   this file is a synchronous read-modify-write on the one thread both windows
+   share, which is what makes this check sufficient. */
 export function blob() {
-  if (CACHE) return CACHE;
   const B = bridge();
   let raw = null;
   try { raw = B.plagueState(); } catch (e) { raw = null; }
+  if (CACHE && raw === CACHE_RAW) return CACHE;
   const b = emptyBlob();
   if (raw && typeof raw === 'object') {
     try {
@@ -95,18 +106,21 @@ export function blob() {
     } catch (e) {}
   }
   CACHE = b;
+  CACHE_RAW = raw;
   return b;
 }
 
 export function persist() {
   const B = bridge();
   try {
-    if (B.setPlagueState(blob()) === false) return false;
+    const b = blob();
+    if (B.setPlagueState(b) === false) return false;
+    CACHE_RAW = b;               // the slot now holds our object
     return B.save() !== false;
   } catch (e) { return false; }
 }
 
-export function resetCache() { CACHE = null; }
+export function resetCache() { CACHE = null; CACHE_RAW = null; }
 
 /* ══ THE CITY SIDE ═════════════════════════════════════════════════════════
    `cityTick` is what node-city's adapter calls. It is the only path that

@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120x6';
+  window.BUILD_VERSION = 'v120x7';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -81828,6 +81828,29 @@ function _jbHandleAction(a) {
       return;
     }
     // 🚗 Prince Portfolios — fired by the sidebar "Car Dealership" entry.
+    // 🏥 Medical Corporation — fired by the sidebar "My Companies" entry.
+    //    The hospital is an OVERLAY (not a screen), and the JB iframe sits at
+    //    z-index 2147483300, so the iframe has to go: leave to the title the
+    //    way the other companies do, open the building on top of it, and
+    //    route straight back into Just Business when it closes.
+    if (a.kind === 'openHospital') {
+      _jbLeaving = true;
+      try {
+        const ff = document.getElementById('jb-frame');
+        if (ff) { ff.style.opacity = '0'; ff.style.transform = 'scale(.986)'; }
+      } catch (e) {}
+      setTimeout(function () {
+        _jbLeaving = false;
+        try {
+          App.screen = 'title';
+          if (typeof render === 'function') render();
+          const H = window.MythicHospital;
+          if (!H || typeof H.open !== 'function') { showToast('🏥 The hospital did not load — reload the game.', 4200); return; }
+          H.open({ onClose: function () { try { App.screen = 'justBusiness'; render(); } catch (e) {} } });
+        } catch (e) {}
+      }, 360);
+      return;
+    }
     if (a.kind === 'openPrincePortfolios') {
       _jbLeaving = true;
       try {
@@ -206460,7 +206483,7 @@ function _openNodeCity(nodeId, _resolved) {
   }
   const f = document.createElement('iframe');
   f.id = 'node-city-frame';
-  f.src = 'node-city/index.html?v=120t9';
+  f.src = 'node-city/index.html?v=120x7';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);
@@ -207498,6 +207521,11 @@ window.MythicPlagueBridge = {
        which is the correct starting state for every existing player. */
   plagueState: () => { try { return Profile.plague || null; } catch (e) { return null; } },
   setPlagueState: (s) => { try { Profile.plague = s; return true; } catch (e) { return false; } },
+  /* 🏥 The Medical Corporation's own slot (/src/hospital/state.js): cure
+     lines in the vault, the dispensary shelf, the counter log. Same rules as
+     Profile.plague — rides the ordinary save, absent means "never traded". */
+  pharmaState: () => { try { return Profile.pharma || null; } catch (e) { return null; } },
+  setPharmaState: (s) => { try { Profile.pharma = s; return true; } catch (e) { return false; } },
   save: () => { try { saveProfile(); return true; } catch (e) { return false; } },
 
   toast: (m, ms) => { try { showToast(m, ms || 3600); } catch (e) {} },
@@ -207972,6 +208000,13 @@ window.cityEnterBusiness = function (opType) {
            module never loaded (a 404 against the service worker) the guard
            returns false and the dashboard is unchanged. */
       medical:  () => {
+        /* 🏥 THE HOSPITAL (/src/hospital) is the Medical Corporation's interior
+           now — the 3D building whose ward door opens the intake/triage screen
+           above. The ward alone is the fallback for a build where the hospital
+           module did not arrive, so the crate decision is never unreachable. */
+        if (window.MythicHospital && typeof window.MythicHospital.open === 'function') {
+          try { window.MythicHospital.open(); return true; } catch (e) {}
+        }
         if (!(window.MythicWard && typeof window.MythicWard.open === 'function')) return false;
         try { window.MythicWard.open(); } catch (e) { return false; }
         return true;
@@ -209188,6 +209223,8 @@ function _plagueSettle() {
     P.settleDue(null);
     // Earnings addressed to a transport or medical operation this player owns.
     try { P.claimPayouts(); } catch (e) {}
+    // 🏥 A crate the staff opened is a cure line in the hospital's vault.
+    try { if (window.MythicHospital) window.MythicHospital.sweep(); } catch (e) {}
   } catch (e) {}
 }
 try { setInterval(_plagueSettle, 97000); setTimeout(_plagueSettle, 15000); } catch (e) {}
@@ -223287,7 +223324,20 @@ render();
        the presentation of the feature, never the feature.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset. -->
-<script type="module" src="src/biolab/index.js?v=v120x6biolab7"></script>
+<script type="module" src="src/biolab/index.js?v=v120x7biolab8"></script>
+<!-- 🏥 HOSPITAL — the Medical Corporation's 3D interior (/src/hospital), and
+     the business the cure pipe ends in. Crates a haulier delivered and the
+     ward opened leave CURE LINES in the containment vault; the compounding
+     clean room (the hazmat rule, reused whole) turns a line into tablets,
+     serum, vaccine, salve or tonic; the Clinics and Med Labs in the player's
+     city retail them to NPCs for Cinder (/src/hospital/pharmacy.city.js runs
+     the counter inside node-city). Registers window.MythicHospital, opened by
+     cityEnterBusiness('medical') and by Just Business → My Companies.
+     ⚠ It reuses the lab's scene builder, walker and character rig with its
+       own floor plan — one renderer for both rooms.
+     ⚠ Prices are shares of _opEcon('medical').ratePerWorkerHr; no Cinder
+       figure lives in the module. Bump ?v= on every change. -->
+<script type="module" src="src/hospital/index.js?v=v120x7hospital1"></script>
 <!-- 🏥 THE WARD — the Medical Corporation's interior, and the far end of the
      pipe the containment lab feeds. Crates arrive from player-owned hauliers;
      the ward screens them, triages who gets the doses, and decides whether a

@@ -274,6 +274,10 @@ function commit() {
     for (const n of r.notes) toastGame(n, 6500);
     if (r.mutant) toastGame('☣️ ' + r.mutant.name + ' was released at ' + ship.labName + '.', 9000);
     run.view = 'intake'; run.sel = null; run.assign = [];
+    /* 🏥 The hospital's vault books every administered crate as a cure line.
+       Told here so the line exists before the player walks over to it;
+       sweep() is idempotent and the settle poll calls it too. */
+    try { if (window.MythicHospital && typeof window.MythicHospital.sweep === 'function') window.MythicHospital.sweep(); } catch (err) {}
     render();
   };
 

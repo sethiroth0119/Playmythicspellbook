@@ -14,6 +14,10 @@
    Every other room in the building is clean-side. The scrub station is the
    airlock under another name, and the stripe on the floor is the same line.
 
+   ⚠ NO LAB IN THIS BUILDING. The containment lab is the Research Facility —
+   a different business that SHIPS to this one. The ward bay in the west wing
+   is where beds stand (beds.js owns the slots) and patients lie.
+
    Coordinates are metres in a room ROOM.w × ROOM.d centred on the origin.
    The lobby is at −z; the sterile wing is everything past z > HOT_Z.
    ══════════════════════════════════════════════════════════════════════════ */
@@ -31,20 +35,32 @@ export const STATIONS = [
     blurb: 'What the business made, what the city bought, and what is waiting on you.',
   },
   {
-    key: 'ward', name: 'The Ward', icon: '🛏', short: 'WARD',
-    pos: [-9.5, -6], size: [4.2, 3.0], color: 0x9fb4d8, hot: false,
+    key: 'bay', name: 'Ward Bay', icon: '🛏', short: 'BAY',
+    pos: [-8.3, -10.2], size: [3.6, 1.4], color: 0x9fb4d8, hot: false,
+    prompt: 'Run the ward',
+    blurb: 'Patients wait in the lobby for a bed. Place beds in the bay, admit them, and treat wounds and sickness.',
+  },
+  {
+    key: 'ward', name: 'Crate Intake', icon: '📦', short: 'INTAKE',
+    pos: [9.5, -9], size: [3.6, 2.2], color: 0x9fb4d8, hot: false,
     prompt: 'Open intake and triage',
-    blurb: 'Crates from hauliers stop here. Screen them, choose who gets the doses, or refuse the box.',
+    blurb: 'Cure crates from hauliers stop here. Screen them, choose who gets the doses, or refuse the box.',
+  },
+  {
+    key: 'supply', name: 'Supply Bench', icon: '🩹', short: 'SUPPLY',
+    pos: [10.5, 4.5], size: [3.4, 2.0], color: 0xd8b45a, hot: false,
+    prompt: 'Roll bandages',
+    blurb: 'Cloth and clean water into dressings. Every wound in the ward takes one per severity.',
   },
   {
     key: 'vault', name: 'Containment Vault', icon: '🧊', short: 'VAULT',
-    pos: [9.5, -6], size: [4.0, 2.6], color: 0x7fd6ff, hot: false,
+    pos: [10, -2.5], size: [4.0, 2.6], color: 0x7fd6ff, hot: false,
     prompt: 'Inspect the cure stock',
     blurb: 'Every cure a haulier delivered and the ward opened leaves a sample line here. This is the raw material.',
   },
   {
     key: 'stock', name: 'Dispensary Stockroom', icon: '📦', short: 'STOCK',
-    pos: [-9.5, 2.5], size: [4.0, 2.6], color: 0xd8b45a, hot: false,
+    pos: [-9.5, 4.8], size: [4.0, 2.0], color: 0xd8b45a, hot: false,
     prompt: 'Check the shelves',
     blurb: 'Finished medicine, on its way to the clinics and med labs in your city, where NPCs buy it.',
   },
@@ -65,12 +81,6 @@ export const STATIONS = [
     pos: [-11.5, 12.5], size: [2.2, 3.2], color: 0xd8a13a, hot: false,
     prompt: 'Trade wholesale',
     blurb: 'Sell shelf stock to other players\' hospitals, or buy theirs. A player-owned haulier moves every lot.',
-  },
-  {
-    key: 'labdoor', name: 'Lab Corridor', icon: '⚗️', short: 'LAB',
-    pos: [11.5, 12.5], size: [2.2, 3.2], color: 0xd8825a, hot: false,
-    prompt: 'Walk through to the containment lab',
-    blurb: 'The research side of the building, where cures are actually mixed. A Research Facility licence opens it.',
   },
 ];
 
@@ -98,7 +108,8 @@ export const PLAN = {
 /* The objective list, in the order a competent shift does them. Nothing
    enforces the order except the sterile gate. */
 export const OBJECTIVES = [
-  { key: 'ward', text: 'Clear the ward door', why: 'Crates nobody opens are opened by staff — badly.' },
+  { key: 'bay', text: 'Bed and treat the patients', why: 'A patient nobody beds walks back out.' },
+  { key: 'ward', text: 'Clear the crate intake', why: 'Crates nobody opens are opened by staff — badly.' },
   { key: 'vault', text: 'Check the vault', why: 'You can only compound what a haulier delivered.' },
   { key: 'scrub', text: 'Gown up', why: 'Required before the clean room will run.' },
   { key: 'compound', text: 'Compound a run', why: 'Cure lines become medicine here.' },

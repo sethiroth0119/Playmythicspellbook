@@ -34,6 +34,8 @@ import * as PL from '../plague/state.js';
 import * as OB from '../plague/outbreak.js';
 import * as LG from '../plague/logistics.js';
 import * as PH from './pharma.js';
+import * as PT from './patients.js';
+import * as BD from './beds.js';
 
 /* Corp operations have uuid ids; personal ones ('local_…', 'company_…') do
    not, and a payout addressed to a personal op is unclaimable (see
@@ -55,10 +57,15 @@ function emptyBlob() {
     stock: {},                      // pid -> { units, quality, family, lineName }
     sales: [],                      // the city's counter log (append-only, capped)
     runs: [],                       // compounding runs (append-only, capped)
-    stats: { made: 0, spoiled: 0, sold: 0, earned: 0, runs: 0, wholesaleUnits: 0, wholesaleCinder: 0 },
+    stats: { made: 0, spoiled: 0, sold: 0, earned: 0, runs: 0, wholesaleUnits: 0, wholesaleCinder: 0, treated: 0, turnedAway: 0, fees: 0, bandagesMade: 0 },
     seen: {},                       // shipmentId -> 1, so sweep() is idempotent
     lots: [],                       // lots I listed (escrowed off the shelf)
     orders: [],                     // lots I bought, on the road or landed
+    beds: [],                       // placed beds: { slot, itemId, name, url, at }
+    patients: [],                   // in the building: waiting, in a bed, treating
+    recent: [],                     // discharged and walked-out, capped
+    bandages: 0,                    // dressings on the supply shelf
+    ptAcc: 0, ptLast: 0, ptSeq: 0,  // the walk-in accumulator
   };
 }
 
@@ -88,6 +95,11 @@ export function blob() {
       if (raw.seen && typeof raw.seen === 'object') b.seen = Object.assign({}, raw.seen);
       if (Array.isArray(raw.lots)) b.lots = raw.lots.filter((x) => x && x.id).slice(-60);
       if (Array.isArray(raw.orders)) b.orders = raw.orders.filter((x) => x && x.id).slice(-60);
+      if (Array.isArray(raw.beds)) b.beds = raw.beds.filter((x) => x && BD.slotAt(x.slot)).slice(0, BD.SLOTS.length);
+      if (Array.isArray(raw.patients)) b.patients = raw.patients.filter((x) => x && x.id).slice(-40);
+      if (Array.isArray(raw.recent)) b.recent = raw.recent.filter((x) => x && x.id).slice(-40);
+      b.bandages = Math.max(0, raw.bandages | 0);
+      b.ptAcc = +raw.ptAcc || 0; b.ptLast = +raw.ptLast || 0; b.ptSeq = raw.ptSeq | 0;
     } catch (e) {}
   }
   CACHE = b;
@@ -472,6 +484,215 @@ export async function pollWholesale() {
   }
   if (landed || sold) persist();
   return { ok: true, landed, sold };
+}
+
+/* ══ BEDS — bought through the decoration market, placed in the bay ═══════
+   The catalogue, the inventory and the spend are the GAME's (furniture_catalog,
+   Profile.furnitureOwned, _csBuyFurniture), reached through three bridge
+   accessors. This file only decides which owned bed stands in which slot. */
+
+export async function bedCatalogue() {
+  const B = bridge();
+  let rows = [];
+  try { if (typeof B.furnitureCatalog === 'function') rows = (await B.furnitureCatalog()) || []; } catch (e) { rows = []; }
+  const out = BD.bedRows(rows).map((r) => ({ id: String(r.id).replace(/^fc_/, ''), name: r.name || 'Bed', ico: r.ico || '🛏', url: r.url || '', price: r.price | 0, currency: r.currency || 'cinder', blurb: r.details || '', builtin: false }));
+  return [Object.assign({ price: BD.cotPrice(econ()), currency: 'cinder', url: '' }, BD.COT)].concat(out);
+}
+export function ownedBeds() {
+  const B = bridge();
+  let owned = {};
+  try { if (typeof B.furnitureOwned === 'function') owned = B.furnitureOwned() || {}; } catch (e) { owned = {}; }
+  return owned;
+}
+function adjustOwned(id, delta) {
+  const B = bridge();
+  try { return typeof B.adjustOwned === 'function' ? !!B.adjustOwned(id, delta) : false; } catch (e) { return false; }
+}
+
+export function buyBed(item) {
+  const B = bridge();
+  if (!ready()) return { ok: false, error: 'The market is not connected to the game.' };
+  if (!item) return { ok: false, error: 'Pick a bed.' };
+  if (item.id === 'cot') {
+    const price = BD.cotPrice(econ());
+    if (!price) return { ok: false, error: 'The cot has no price without the operation\'s econ row.' };
+    if (price > (B.gems() | 0)) return { ok: false, error: 'A ward cot is ' + price.toLocaleString() + ' 🔥 — not enough Cinder.' };
+    if (!B.spendGems(price)) return { ok: false, error: 'The payment did not go through.' };
+    if (!adjustOwned('cot', 1)) { try { B.addGems(price); } catch (e) {} return { ok: false, error: 'The cot would not record — your Cinder was returned.' }; }
+    return { ok: true, item, price };
+  }
+  // A catalogue bed goes through the game's own furniture purchase, which
+  // taxes the spend and records it in Profile.furnitureOwned like any other.
+  let ok = false;
+  try { ok = typeof B.buyFurniture === 'function' ? !!B.buyFurniture(item) : false; } catch (e) { ok = false; }
+  return ok ? { ok: true, item, price: item.price | 0 } : { ok: false, error: 'The purchase did not go through.' };
+}
+
+export function beds() { return blob().beds.slice(); }
+export function placeBed(item, slot) {
+  const b = blob();
+  const s = BD.slotAt(slot);
+  if (!item || !s) return { ok: false, error: 'No such slot.' };
+  if (BD.bedAt(b.beds, s.index)) return { ok: false, error: 'That slot already has a bed.' };
+  if ((ownedBeds()[item.id] | 0) <= 0) return { ok: false, error: 'You do not own one of those. Buy it first.' };
+  if (!adjustOwned(item.id, -1)) return { ok: false, error: 'The inventory would not release it.' };
+  const bed = { slot: s.index, itemId: item.id, name: item.name || 'Bed', url: item.url || '', at: Date.now() };
+  b.beds.push(bed);
+  if (!persist()) { const i = b.beds.indexOf(bed); if (i >= 0) b.beds.splice(i, 1); adjustOwned(item.id, 1); return { ok: false, error: 'The bed would not record — it is back in your inventory.' }; }
+  return { ok: true, bed };
+}
+export function pickUpBed(slot) {
+  const b = blob();
+  const bed = BD.bedAt(b.beds, slot);
+  if (!bed) return { ok: false, error: 'No bed there.' };
+  if (b.patients.some((p) => p && (p.status === 'inbed' || p.status === 'treating') && (p.bedSlot | 0) === (slot | 0))) return { ok: false, error: 'Somebody is in that bed.' };
+  const i = b.beds.indexOf(bed); b.beds.splice(i, 1);
+  if (!adjustOwned(bed.itemId, 1)) { b.beds.splice(i, 0, bed); return { ok: false, error: 'The inventory would not take it back.' }; }
+  persist();
+  return { ok: true, bed };
+}
+
+/* ══ BANDAGES ══════════════════════════════════════════════════════════════ */
+export function bandages() { return blob().bandages | 0; }
+export function craftBandages(batches) {
+  const B = bridge();
+  if (!ready()) return { ok: false, error: 'The bench is not connected to the game.' };
+  const cost = PT.bandageCost(batches);
+  if (!cost.batches) return { ok: false, error: 'Set a batch count.' };
+  const short = {};
+  for (const id of Object.keys(cost.res)) if ((B.getRes(id) | 0) < cost.res[id]) short[id] = cost.res[id] - (B.getRes(id) | 0);
+  if (Object.keys(short).length) return { ok: false, why: 'short', shortfall: short, error: 'Not enough cloth and water.' };
+  const spent = [];
+  try { for (const id of Object.keys(cost.res)) { if (!B.spendRes(id, cost.res[id])) throw new Error(id); spent.push([id, cost.res[id]]); } }
+  catch (e) { for (const [id, n] of spent) { try { B.refundRes(id, n); } catch (e2) {} } return { ok: false, error: 'The draw failed — nothing was taken.' }; }
+  const b = blob();
+  b.bandages = (b.bandages | 0) + cost.made;
+  b.stats.bandagesMade = (b.stats.bandagesMade | 0) + cost.made;
+  if (!persist()) { b.bandages -= cost.made; for (const [id, n] of spent) { try { B.refundRes(id, n); } catch (e2) {} } return { ok: false, error: 'The batch would not record — your cloth and water were returned.' }; }
+  return { ok: true, made: cost.made, bandages: b.bandages };
+}
+
+/* ══ PATIENTS ══════════════════════════════════════════════════════════════
+   patientsTick() is the walk-in clock: it runs every second the building is
+   open and once, capped, on the way in, so a night away fills the lobby
+   rather than the street. Everything is timestamp-driven so a doubled tick
+   advances nobody twice. */
+export function patients() { return blob().patients.filter((p) => p && p.status !== 'left' && p.status !== 'done'); }
+export function recentPatients() { return blob().recent.slice().reverse(); }
+export function waiting() { return patients().filter((p) => p.status === 'waiting'); }
+export function inBeds() { return patients().filter((p) => p.status === 'inbed' || p.status === 'treating'); }
+
+export function patientsTick(ctx) {
+  if (!ready()) return { events: [] };
+  const b = blob();
+  const c = ctx || {};
+  const now = +c.now || Date.now();
+  const events = [];
+  let changed = false;
+
+  // ── arrivals
+  const last = b.ptLast || now;
+  const elapsedMin = Math.max(0, Math.min(36 * 60, (now - last) / 60000));
+  b.ptLast = now;
+  const catchUp = elapsedMin > 5;
+  b.ptAcc = (+b.ptAcc || 0) + PT.arrivalsPerMin(c) * elapsedMin;
+  const cap = PT.lobbyCap(b.beds.length);
+  let made = 0;
+  while (b.ptAcc >= 1) {
+    b.ptAcc -= 1;
+    if (patients().length >= cap) { b.ptAcc = Math.min(b.ptAcc, 0.99); break; }
+    if (catchUp && made >= PT.TUNING.OFFLINE_ARRIVALS_MAX) { b.ptAcc = 0; break; }
+    b.ptSeq = (b.ptSeq | 0) + 1;
+    const cases = Math.max(0, c.cases | 0);
+    const sickShare = cases > 0 ? Math.min(0.85, 0.25 + cases * 0.04) : 0.1;
+    const p = PT.makePatient(String(b.ptSeq) + ':' + now, { now, models: Math.max(1, c.models | 0), sickShare, roster: c.roster || [], strain: c.strain || null });
+    b.patients.push(p);
+    events.push({ kind: 'arrive', patient: p });
+    made++; changed = true;
+  }
+
+  // ── patience, and treatments completing
+  for (const p of b.patients) {
+    if (!p) continue;
+    if (p.status === 'waiting' && PT.patienceLeft(p, now) <= 0) {
+      p.status = 'left'; p.leftAt = now;
+      b.stats.turnedAway = (b.stats.turnedAway | 0) + 1;
+      events.push({ kind: 'left', patient: p }); changed = true;
+    } else if (p.status === 'treating' && (p.doneAt || 0) <= now) {
+      p.status = 'done'; p.dischargedAt = now;
+      const fee = p.fee | 0;
+      if (fee > 0) { try { bridge().addGems(fee); } catch (e) {} }
+      b.stats.treated = (b.stats.treated | 0) + 1;
+      b.stats.fees = (b.stats.fees | 0) + fee;
+      events.push({ kind: 'done', patient: p, fee }); changed = true;
+    }
+  }
+  // Walked-out and discharged patients move to the recent log (the scene
+  // still animates them to the door off `recent` for a moment).
+  const gone = b.patients.filter((p) => p && (p.status === 'left' || p.status === 'done'));
+  if (gone.length) {
+    b.patients = b.patients.filter((p) => p && p.status !== 'left' && p.status !== 'done');
+    for (const p of gone) b.recent.push(p);
+    if (b.recent.length > 40) b.recent.splice(0, b.recent.length - 40);
+  }
+  if (changed || elapsedMin > 0.5) persist();
+  return { events, arrived: made };
+}
+
+export function admit(patientId, slot) {
+  const b = blob();
+  const p = b.patients.find((x) => x && x.id === patientId);
+  if (!p || p.status !== 'waiting') return { ok: false, error: 'That patient is not waiting.' };
+  if (!BD.bedAt(b.beds, slot)) return { ok: false, error: 'There is no bed in that slot.' };
+  if (b.patients.some((q) => q && q !== p && (q.status === 'inbed' || q.status === 'treating') && (q.bedSlot | 0) === (slot | 0))) return { ok: false, error: 'That bed is taken.' };
+  p.bedSlot = slot | 0; p.status = 'inbed'; p.admittedAt = Date.now();
+  persist();
+  return { ok: true, patient: p };
+}
+
+/* Treat a patient in a bed. Wounds take bandages; sickness takes one shelf
+   unit of a relief product (the family match first), or two raw Medicine.
+   The fee is fixed HERE, from the econ row and the quality of what went in,
+   and paid when the treatment completes. */
+export function treat(patientId) {
+  const B = bridge();
+  const b = blob();
+  const p = b.patients.find((x) => x && x.id === patientId);
+  if (!p || p.status !== 'inbed') return { ok: false, error: 'That patient is not in a bed.' };
+  const need = PT.needsOf(p);
+  let quality = 0.5, used = '';
+  if (need.kind === 'bandages') {
+    if ((b.bandages | 0) < need.bandages) return { ok: false, error: 'Needs ' + need.bandages + ' bandage' + (need.bandages === 1 ? '' : 's') + '; the shelf has ' + (b.bandages | 0) + '. Roll more at the Supply Bench.' };
+    b.bandages -= need.bandages; quality = 0.6; used = need.bandages + ' bandage' + (need.bandages === 1 ? '' : 's');
+  } else {
+    const pid = PT.reliefProduct(p, b.stock);
+    if (pid) {
+      const s = b.stock[pid];
+      quality = +s.quality || 0.5; s.units -= 1; if (s.units <= 0) delete b.stock[pid];
+      used = '1 × ' + PH.PRODUCTS[pid].name;
+    } else if ((B.getRes('medicine') | 0) >= need.medicine) {
+      if (!B.spendRes('medicine', need.medicine)) return { ok: false, error: 'The medicine draw failed.' };
+      quality = 0.4; used = need.medicine + ' raw Medicine';
+    } else {
+      return { ok: false, error: 'Nothing to treat a sickness with — compound antivirals, serum or vaccine, or hold ' + need.medicine + ' Medicine.' };
+    }
+  }
+  const now = Date.now();
+  p.status = 'treating'; p.treatedAt = now; p.doneAt = now + PT.treatmentMs(p, quality);
+  p.quality = quality; p.fee = PT.feeOf(p, econ(), quality); p.used = used;
+  persist();
+  return { ok: true, patient: p, used, ms: p.doneAt - now };
+}
+
+export function sendAway(patientId) {
+  const b = blob();
+  const p = b.patients.find((x) => x && x.id === patientId);
+  if (!p || p.status === 'treating') return { ok: false, error: 'Not while they are being treated.' };
+  p.status = 'left'; p.leftAt = Date.now();
+  b.stats.turnedAway = (b.stats.turnedAway | 0) + 1;
+  b.patients = b.patients.filter((x) => x !== p); b.recent.push(p);
+  persist();
+  return { ok: true };
 }
 
 /* Does this player hold the licences the building's doors open onto? */

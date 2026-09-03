@@ -32,6 +32,10 @@ import { ROOM, HOT_Z, STATIONS, PLAN, stationByKey } from './floor.js';
 import * as HUD from './hud.js';
 import * as HS from './state.js';
 import * as PH from './pharma.js';
+import * as PT from './patients.js';
+import * as BD from './beds.js';
+import { PATIENT_MODELS } from './patients.models.js';
+import { mountPatients } from './scene.patients.js';
 import * as PL from '../plague/state.js';
 
 let RUN = null;
@@ -50,7 +54,10 @@ function injectCss() {
 function B() { return HS.bridge(); }
 function toastGame(m, ms) { try { B().toast(m, ms); } catch (e) {} }
 
-const WALK_PLAN = { room: ROOM, colliders: colliders(STATIONS) };
+const STATION_BOXES = colliders(STATIONS);
+/* Beds are furniture you walk around, so the walk plan is rebuilt when the
+   bay changes rather than fixed at import. */
+function walkPlan() { return { room: ROOM, colliders: STATION_BOXES.concat(BD.bedColliders(HS.ready() ? HS.beds() : [])) }; }
 
 function newRun() {
   const p = makePlayer();
@@ -74,7 +81,8 @@ function chipText() {
   try {
     const n = PL.ready() ? PL.awaitingWard().length : 0;
     const lines = HS.ready() ? HS.openLines().length : 0;
-    return (n ? '📦 ' + n + ' crate' + (n === 1 ? '' : 's') + ' at the door · ' : '') + '🧊 ' + lines + ' cure line' + (lines === 1 ? '' : 's');
+    const w = HS.ready() ? HS.waiting().length : 0, ib = HS.ready() ? HS.inBeds().length : 0, bn = HS.ready() ? HS.beds().length : 0;
+    return '🤕 ' + w + ' waiting · 🛏 ' + ib + '/' + bn + (n ? ' · 📦 ' + n + ' crate' + (n === 1 ? '' : 's') : '') + ' · 🧊 ' + lines + ' line' + (lines === 1 ? '' : 's');
   } catch (e) { return ''; }
 }
 
@@ -92,8 +100,9 @@ function interact(run) {
   if (s.key === 'vault') return openVault(run);
   if (s.key === 'stock') return openStock(run);
   if (s.key === 'compound') return openCompound(run);
-  if (s.key === 'labdoor') return openLabDoor(run);
   if (s.key === 'dock') return openDock(run);
+  if (s.key === 'bay') return openBay(run);
+  if (s.key === 'supply') return openSupply(run);
 }
 
 /* The hazmat gate speaks lab: "airlock", "hot zone", "suit". Same rule, this
@@ -120,11 +129,12 @@ function openDesk(run) {
     stats: HS.stats(), day: HS.earnedSince(24 * 3600000), week: HS.earnedSince(7 * 24 * 3600000),
     atWard: PL.ready() ? PL.awaitingWard().length : 0, transit: PL.ready() ? PL.inTransit().length : 0,
     openLines: HS.openLines().length, units: HS.shelfUnits(), econ: HS.econ(), sales: HS.sales(),
-    ownsResearch: HS.ownsType('research'), ownsMedical: HS.ownsType('medical'), city: cityReport(),
+    ownsMedical: HS.ownsType('medical'), city: cityReport(),
+    waiting: HS.waiting().length, inBeds: HS.inBeds().length, beds: HS.beds().length,
   }), (act) => {
     if (act === 'close') { HUD.closeModal(run.nodes); run.panel = null; return; }
     if (act === 'go-ward') { HUD.closeModal(run.nodes); run.panel = null; return openWard(run); }
-    if (act === 'go-lab') { HUD.closeModal(run.nodes); run.panel = null; return goLab(run); }
+    if (act === 'go-bay') { HUD.closeModal(run.nodes); run.panel = null; return openBay(run); }
   });
   render();
 }
@@ -349,23 +359,110 @@ async function openDock(run) {
   render();
 }
 
-function openLabDoor(run) {
-  run.panel = 'labdoor';
-  HUD.modal(run.nodes, HUD.labDoorPanel(HS.ownsType('research')), (act) => {
-    if (act === 'close') { HUD.closeModal(run.nodes); run.panel = null; return; }
-    if (act === 'go-lab') { HUD.closeModal(run.nodes); run.panel = null; return goLab(run); }
-  });
+/* ── the ward bay: patients and beds ────────────────────────────────────── */
+async function openBay(run) {
+  run.panel = 'bay';
+  const sel = run.baySel || (run.baySel = { tab: 'patients', patientId: null, slot: null, itemId: 'cot' });
+  let catalog = [];
+  const render = () => {
+    if (!RUN || RUN !== run || run.panel !== 'bay') return;
+    HUD.modal(run.nodes, HUD.bayPanel({ patients: HS.patients(), beds: HS.beds(), owned: HS.ownedBeds(), catalog, econ: HS.econ(), bandages: HS.bandages(), stock: HS.stock(), sel, now: Date.now(), tab: sel.tab }), (act, id) => {
+      if (act === 'close') { HUD.closeModal(run.nodes); run.panel = null; return; }
+      if (act === 'tab') { sel.tab = id; return render(); }
+      if (act === 'pick-patient') { sel.patientId = id; return render(); }
+      if (act === 'pick-slot') { sel.slot = parseInt(id, 10); return render(); }
+      if (act === 'pick-item') { sel.itemId = id; return render(); }
+      if (act === 'buy-bed') {
+        const it = catalog.find((x) => x.id === sel.itemId);
+        const r = HS.buyBed(it);
+        HUD.toast(run.nodes, r.ok ? '🛏 Bought ' + it.name + '. Pick a slot and place it.' : '⚠ ' + r.error, r.ok ? 'good' : 'bad');
+        return render();
+      }
+      if (act === 'place-bed') {
+        const it = catalog.find((x) => x.id === sel.itemId);
+        const r = HS.placeBed(it, sel.slot);
+        HUD.toast(run.nodes, r.ok ? '🛏 ' + it.name + ' placed in slot ' + (sel.slot + 1) + '.' : '⚠ ' + r.error, r.ok ? 'good' : 'bad');
+        return render();
+      }
+      if (act === 'pickup-bed') {
+        const r = HS.pickUpBed(sel.slot);
+        HUD.toast(run.nodes, r.ok ? '↩ Bed picked up — back in your inventory.' : '⚠ ' + r.error, r.ok ? '' : 'bad');
+        return render();
+      }
+      if (act === 'admit') {
+        const free = BD.SLOTS.filter((s) => BD.bedAt(HS.beds(), s.index) && !HS.inBeds().some((p) => (p.bedSlot | 0) === s.index));
+        if (!free.length) return;
+        const r = HS.admit(sel.patientId, free[0].index);
+        HUD.toast(run.nodes, r.ok ? '🛏 ' + r.patient.name + ' is in bed ' + (free[0].index + 1) + '.' : '⚠ ' + r.error, r.ok ? 'good' : 'bad');
+        run.done.bay = true;
+        return render();
+      }
+      if (act === 'treat') {
+        const r = HS.treat(sel.patientId);
+        if (r.ok) {
+          HUD.toast(run.nodes, '🩺 Treating ' + r.patient.name + ' with ' + r.used + ' — ' + Math.ceil(r.ms / 60000) + ' min. Pays ' + r.patient.fee.toLocaleString() + ' 🔥 on discharge.', 'good');
+        } else HUD.toast(run.nodes, '⚠ ' + r.error, 'bad');
+        return render();
+      }
+      if (act === 'send-away') {
+        const r = HS.sendAway(sel.patientId);
+        HUD.toast(run.nodes, r.ok ? '🚪 Sent away untreated.' : '⚠ ' + r.error, r.ok ? 'warn' : 'bad');
+        sel.patientId = null;
+        return render();
+      }
+    });
+  };
+  render();
+  run.bayRender = render;
+  try { catalog = await HS.bedCatalogue(); } catch (e) { catalog = []; }
+  render();
 }
 
-function goLab(run) {
-  const L = (typeof window !== 'undefined') && window.MythicBioLab;
-  if (!L || typeof L.open !== 'function') { HUD.toast(run.nodes, 'The containment lab did not load.', 'bad'); return; }
-  const back = run.returnTo;
-  close();
-  try { L.open(); } catch (e) {}
-  // The lab closes back onto whatever was behind it; the hospital reopens
-  // itself only if the caller asked for a return route.
-  if (back) try { back(); } catch (e) {}
+function openSupply(run) {
+  run.panel = 'supply';
+  const sel = run.supplySel || (run.supplySel = { batches: 3 });
+  const haveRes = () => { const o = {}; for (const id of Object.keys(PT.TUNING.BANDAGE_RECIPE)) { try { o[id] = B().getRes(id) | 0; } catch (e) { o[id] = 0; } } return o; };
+  const render = () => HUD.modal(run.nodes, HUD.supplyPanel({ bandages: HS.bandages(), have: haveRes(), batches: sel.batches }), (act, id, e, el) => {
+    if (act === 'close') { HUD.closeModal(run.nodes); run.panel = null; return; }
+    if (act === 'batches=') { sel.batches = Math.max(1, Math.min(20, parseInt(el.value, 10) || 1)); return render(); }
+    if (act === 'roll') {
+      const r = HS.craftBandages(sel.batches);
+      HUD.toast(run.nodes, r.ok ? '🩹 Rolled ' + r.made + ' bandages — ' + r.bandages + ' on the shelf.' : '⚠ ' + r.error, r.ok ? 'good' : 'bad');
+      return render();
+    }
+  });
+  render();
+}
+
+/* What the walk-in clock needs to know about the world: the city's size and
+   its outbreak (through the city iframe when it is open, else the plague
+   ledger), the citizen roster for sick patients' names, and how many looks
+   the patients can wear. */
+function patientCtx() {
+  let pop = 0, cases = 0, roster = [], strain = null;
+  try { const r = cityReport(); if (r) { cases = r.cases | 0; } } catch (e) {}
+  try {
+    const f = document.getElementById('node-city-frame');
+    const w = f && f.contentWindow;
+    const O = (w && w.MythicOutbreak) || window.MythicOutbreak;
+    if (O && typeof O._host === 'function') { const h = O._host(); roster = h.citizens() || []; pop = h.pop() | 0; }
+  } catch (e) {}
+  try {
+    const list = PL.ready() ? PL.activeStrains() : [];
+    strain = list.slice().sort((a, b) => b.severity - a.severity)[0] || null;
+    if (!cases && strain) { const st = PL.outbreakState(); cases = Object.keys(st.infections || {}).length; }
+  } catch (e) {}
+  return { now: Date.now(), pop, cases, roster, strain, models: PATIENT_MODELS.length };
+}
+
+function patientBeat(run) {
+  const r = HS.patientsTick(patientCtx());
+  for (const ev of (r && r.events) || []) {
+    if (ev.kind === 'arrive') HUD.toast(run.nodes, '🚪 ' + ev.patient.name + ' walked in — ' + PT.ailmentLabel(ev.patient) + '.', ev.patient.severity >= 3 ? 'warn' : '');
+    else if (ev.kind === 'left') HUD.toast(run.nodes, '🚪 ' + ev.patient.name + ' gave up waiting and left untreated.', 'bad');
+    else if (ev.kind === 'done') { HUD.toast(run.nodes, '💚 ' + ev.patient.name + ' discharged — +' + (ev.fee | 0).toLocaleString() + ' 🔥.', 'good'); toastGame('💚 ' + ev.patient.name + ' left your hospital well. +' + (ev.fee | 0).toLocaleString() + ' 🔥', 4200); }
+  }
+  if (r && r.events && r.events.length && run.panel === 'bay' && run.bayRender) run.bayRender();
 }
 
 function doConfirm(msg, then) {
@@ -392,7 +489,15 @@ function frame(run, now, wall) {
   }
 
   const modalUp = HUD.modalOpen(run.nodes);
-  if (!modalUp) step(run.player, run.input, dt, run.suit.sealed ? SUIT_SPEED : 1, WALK_PLAN);
+  if (!modalUp) step(run.player, run.input, dt, run.suit.sealed ? SUIT_SPEED : 1, walkPlan());
+
+  // The walk-in clock, once a second. Timestamp-driven inside, so a slow
+  // frame or a long tab-away cannot double anybody.
+  run.ptAcc = (run.ptAcc || 0) + dt;
+  if (run.ptAcc >= 1000) { run.ptAcc = 0; try { patientBeat(run); } catch (e) {} }
+  // The bay panel's progress bars move with the treatments.
+  run.bayAcc = (run.bayAcc || 0) + dt;
+  if (run.bayAcc >= 5000) { run.bayAcc = 0; if (run.panel === 'bay' && run.bayRender && run.baySel && run.baySel.tab === 'patients') run.bayRender(); }
 
   const p = run.player;
   run.near = nearest(p.x, p.z, 3.2, STATIONS);
@@ -422,6 +527,7 @@ function frame(run, now, wall) {
   if (run.hudAcc > 1500) { run.hudAcc = 0; run.chip = chipText(); run.shelfText = shelfText(); }
 
   HUD.refresh(run.nodes, run);
+  if (run.people) { try { run.people.sync(HS.ready() ? HS.patients().concat(HS.recentPatients().filter((p) => (p.leftAt || p.dischargedAt || 0) > Date.now() - 12000)) : [], HS.ready() ? HS.beds() : [], dt); } catch (e) {} }
   if (run.scene) { try { run.scene.frame(dt, run); } catch (e) {} }
 }
 
@@ -448,11 +554,14 @@ export async function open(opts) {
   RUN = run;
 
   try { HS.sweep(); } catch (e) {}
+  // The lobby fills for the time away, capped — see patientsTick.
+  try { const r = HS.patientsTick(patientCtx()); if (r && r.arrived) HUD.toast(nodes, '🚪 ' + r.arrived + ' patient' + (r.arrived === 1 ? '' : 's') + ' walked in while you were away.', 'warn'); } catch (e) {}
   run.chip = chipText(); run.shelfText = shelfText();
 
   const THREE = o.flat ? null : await ensureThree();
   if (!RUN || RUN !== run) return { ok: false };
   if (THREE) { try { run.scene = build(THREE, nodes.canvas, PLAN); } catch (e) { run.scene = null; } }
+  if (run.scene) { try { run.people = mountPatients(run.scene); } catch (e) { run.people = null; } }
   if (run.scene && run.scene.loadCharacters) {
     run.scene.loadCharacters().then((c) => {
       if (!RUN || RUN !== run) return;
@@ -490,9 +599,10 @@ export async function open(opts) {
   try {
     const n = PL.ready() ? PL.awaitingWard().length : 0;
     if (n) HUD.toast(nodes, '📦 ' + n + ' crate' + (n === 1 ? '' : 's') + ' at the ward door waiting on a decision.', 'good');
+    const w = HS.waiting().length, bedsN = HS.beds().length;
+    if (w) HUD.toast(nodes, '🤕 ' + w + ' patient' + (w === 1 ? '' : 's') + ' waiting in the lobby' + (bedsN ? '.' : ' — and no beds. Buy one at the Ward Bay.'), bedsN ? '' : 'warn');
     const lines = HS.openLines().length;
     if (lines) HUD.toast(nodes, '🧊 ' + lines + ' cure line' + (lines === 1 ? '' : 's') + ' in the vault. Gown up and compound.', '');
-    else HUD.toast(nodes, '🧊 The vault is empty. Cures arrive by haulier from a Research Facility.', '');
   } catch (e) {}
 
   run.raf = requestAnimationFrame(loop);
@@ -510,6 +620,7 @@ export function close() {
   try { if (run.raf) cancelAnimationFrame(run.raf); } catch (e) {}
   try { if (run.detach) run.detach(); } catch (e) {}
   try { if (run.onResize) window.removeEventListener('resize', run.onResize); } catch (e) {}
+  try { if (run.people) run.people.dispose(); } catch (e) {}
   try { if (run.scene) run.scene.dispose(); } catch (e) {}
   try { run.root.remove(); } catch (e) {}
   try { HS.persist(); } catch (e) {}
@@ -521,7 +632,7 @@ export function isOpen() { return !!RUN; }
 
 const api = {
   open, close, isOpen,
-  pharma: PH, state: HS, stations: STATIONS,
+  pharma: PH, patients: PT, beds: BD, state: HS, stations: STATIONS,
   /* The settle poll's hook: book staff-opened crates AND land wholesale
      orders that are due / notice lots that sold. The second half is async and
      best-effort; the first is synchronous and returns as before. */

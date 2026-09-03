@@ -17,6 +17,8 @@ import { SEALS, sealCount, exposureBand } from '../biolab/hazmat.js';
 import { OBJECTIVES } from './floor.js';
 import { PRODUCTS, PRODUCT_IDS, canMake, maxUnits, runCost, unitPrice, familyLabel } from './pharma.js';
 import { GRADES } from '../plague/cures.js';
+import * as PT from './patients.js';
+import { SLOTS, bedAt, cotPrice } from './beds.js';
 
 export const esc = BL.esc;
 export const modal = BL.modal;
@@ -167,16 +169,23 @@ function gradeChip(key) {
 }
 
 export function deskPanel(ctx) {
-  const { stats, day, week, atWard, transit, openLines, units, econ, sales, ownsResearch, ownsMedical, city } = ctx;
+  const { stats, day, week, atWard, transit, openLines, units, econ, sales, ownsMedical, city, waiting, inBeds, beds } = ctx;
   const rate = econ ? num(econ.ratePerWorkerHr) : '—';
   const log = (sales || []).slice(0, 8).map((s) =>
     '<div class="hp-log">' + new Date(s.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' · ' +
     Object.keys(s.sold).map((pid) => (PRODUCTS[pid] ? PRODUCTS[pid].icon : '💊') + ' ' + s.sold[pid]).join(' · ') +
     ' → <b>+' + num(s.cinder) + ' 🔥</b></div>').join('');
   return '<h3>🏥 FRONT DESK</h3>' +
-    '<p class="sub">The Medical Corporation, in numbers. Cures arrive by haulier from a Research Facility\'s containment lab; ' +
-    'the ward opens them; the vault keeps a line of each; the clean room turns lines into medicine; the clinics and med labs ' +
-    'in your city sell it to NPCs for Cinder.</p>' +
+    '<p class="sub">The Medical Corporation, in numbers. Patients walk in off the street and wait for a bed; cures arrive by haulier ' +
+    'from a Research Facility\'s containment lab — a different business that ships to this one; the vault keeps a line of each; ' +
+    'the clean room turns lines into medicine; your city\'s clinics sell it to NPCs.</p>' +
+    '<div class="hp-kpi">' +
+      kpi(num(waiting | 0), 'WAITING FOR A BED', waiting ? '#e0a860' : '#dde4ee') +
+      kpi(num(inBeds | 0) + '/' + num(beds | 0), 'BEDS IN USE') +
+      kpi(num(stats.treated | 0), 'TREATED · ALL TIME', '#8fd4c8') +
+      kpi('+' + num(stats.fees | 0) + ' 🔥', 'PATIENT FEES', '#8fd4c8') +
+      kpi(num(stats.turnedAway | 0), 'WALKED OUT UNTREATED', stats.turnedAway ? '#ff8a94' : '#dde4ee') +
+    '</div>' +
     (!ownsMedical ? '<div class="bl-warn">⚠ No Medical Corporation licence on this account. You can walk the building, but nothing here will trade until one is bought in Just Business → Found a Business.</div>' : '') +
     '<div class="hp-kpi">' +
       kpi('+' + num(day.cinder) + ' 🔥', 'SOLD · 24H', '#8fd4c8') +
@@ -197,9 +206,92 @@ export function deskPanel(ctx) {
     (log ? '<h4 style="font-size:10px;letter-spacing:.14em;color:#8b93a3;margin:10px 0 6px">RECENT SALES</h4>' + log
          : '<div class="bl-empty">Nothing sold yet. Put medicine on the shelf and open your city — a Clinic or a Med Lab retails it.</div>') +
     '<div class="bl-row">' +
-      (ownsResearch ? '<button class="bl-btn" data-act="go-lab">⚗️ CONTAINMENT LAB</button>' : '') +
-      '<button class="bl-btn" data-act="go-ward">🛏 THE WARD</button>' +
+      '<button class="bl-btn" data-act="go-bay">🛏 WARD BAY</button>' +
+      '<button class="bl-btn" data-act="go-ward">📦 CRATE INTAKE</button>' +
       '<button class="bl-btn" data-act="close">CLOSE</button></div>';
+}
+
+/* ── the ward bay: beds and patients ────────────────────────────────────── */
+export function bayPanel(ctx) {
+  const { patients, beds, owned, catalog, econ, bandages, stock, sel, now, tab } = ctx;
+  const t = tab || 'patients';
+  const tabs = '<div class="bl-row" style="margin:0 0 10px">' +
+    ['patients', 'beds'].map((k) => '<button class="bl-btn' + (t === k ? ' pri' : '') + '" data-act="tab" data-id="' + k + '">' + (k === 'patients' ? '🤕 PATIENTS' : '🛏 BEDS') + '</button>').join('') + '</div>';
+  const bedOf = (slot) => bedAt(beds, slot);
+  const occupant = (slot) => patients.find((p) => (p.status === 'inbed' || p.status === 'treating') && (p.bedSlot | 0) === slot);
+
+  if (t === 'beds') {
+    const rows = SLOTS.map((s) => {
+      const b = bedOf(s.index), occ = occupant(s.index);
+      return '<div class="bl-item' + (sel.slot === s.index ? ' sel' : '') + '" data-act="pick-slot" data-id="' + s.index + '"><b>Slot ' + (s.index + 1) + '</b> · ' +
+        (b ? esc(b.name) + (occ ? ' · <span style="color:#e0a860">' + esc(occ.name) + '</span>' : ' · empty') : '<span style="color:#5f6878">no bed</span>') + '</div>';
+    }).join('');
+    const items = (catalog || []).map((it) => {
+      const n = owned[it.id] | 0;
+      return '<div class="hp-prod' + (sel.itemId === it.id ? ' sel' : '') + '" data-act="pick-item" data-id="' + esc(it.id) + '"><b>' + esc(it.ico + ' ' + it.name) + '</b>' +
+        '<div class="meta">' + esc(it.blurb || '') + '</div><div class="meta">' + num(it.price) + ' ' + (it.currency === 'aza' ? '🪙' : '🔥') + ' · <b style="color:' + (n ? '#8fd4c8' : '#5f6878') + '">' + n + ' owned</b>' + (it.builtin ? ' · built-in' : ' · decoration market') + '</div></div>';
+    }).join('');
+    const it = (catalog || []).find((x) => x.id === sel.itemId);
+    const slotHasBed = sel.slot != null && !!bedOf(sel.slot);
+    return '<h3>🛏 WARD BAY — BEDS</h3>' + tabs +
+      '<p class="sub">Beds come from the decoration market — the same furniture catalogue the Card Shop and your Dwelling buy from — and stand in the bay\'s ten slots. Buy one, pick a slot, place it. Pick it up again and it goes back to your inventory.</p>' +
+      '<h4 style="font-size:10px;letter-spacing:.14em;color:#8b93a3;margin:10px 0 6px">THE CATALOGUE</h4><div class="hp-shelf">' + (items || '<div class="bl-empty">No beds in the market.</div>') + '</div>' +
+      '<h4 style="font-size:10px;letter-spacing:.14em;color:#8b93a3;margin:10px 0 6px">THE SLOTS</h4><div class="bl-list">' + rows + '</div>' +
+      '<div class="bl-row">' +
+        '<button class="bl-btn pri" data-act="buy-bed"' + (it ? '' : ' disabled') + '>BUY ' + (it ? esc(it.name.toUpperCase()) : 'A BED') + '</button>' +
+        '<button class="bl-btn" data-act="place-bed"' + (it && sel.slot != null && !slotHasBed && (owned[it.id] | 0) > 0 ? '' : ' disabled') + '>PLACE IN SLOT ' + (sel.slot != null ? sel.slot + 1 : '—') + '</button>' +
+        '<button class="bl-btn danger" data-act="pickup-bed"' + (slotHasBed && !occupant(sel.slot) ? '' : ' disabled') + '>PICK UP</button>' +
+        '<button class="bl-btn" data-act="close">CLOSE</button></div>';
+  }
+
+  const waitingRows = patients.filter((p) => p.status === 'waiting');
+  const bedRows = patients.filter((p) => p.status === 'inbed' || p.status === 'treating');
+  const freeBeds = SLOTS.filter((s) => bedOf(s.index) && !occupant(s.index));
+  const card = (p) => {
+    const need = PT.needsOf(p);
+    const relief = need.kind === 'medicine' ? PT.reliefProduct(p, stock) : null;
+    const canTreat = need.kind === 'bandages' ? (bandages | 0) >= need.bandages : !!relief || true;
+    const needText = need.kind === 'bandages'
+      ? need.bandages + ' bandage' + (need.bandages === 1 ? '' : 's') + ' (have ' + (bandages | 0) + ')'
+      : (relief ? '1 × ' + PRODUCTS[relief].name + ' off the shelf' : need.medicine + ' raw Medicine (no relief product on the shelf)');
+    const pl = PT.patienceLeft(p, now);
+    const prog = p.status === 'treating' ? Math.max(0, Math.min(1, 1 - ((p.doneAt || 0) - now) / Math.max(1, (p.doneAt || 0) - (p.treatedAt || 0)))) : 0;
+    return '<div class="bl-item' + (sel.patientId === p.id ? ' sel' : '') + '" data-act="pick-patient" data-id="' + esc(p.id) + '">' +
+      '<b>' + esc(p.name) + '</b> · ' + esc(PT.ailmentLabel(p)) +
+      '<div class="meta">' + (p.status === 'waiting'
+        ? 'waiting in the lobby · patience <b style="color:' + (pl > 0.5 ? '#8fd4c8' : pl > 0.2 ? '#e0a860' : '#ff8a94') + '">' + Math.round(pl * 100) + '%</b> · needs ' + esc(needText)
+        : p.status === 'inbed' ? 'in bed ' + ((p.bedSlot | 0) + 1) + ' · needs ' + esc(needText)
+        : 'in bed ' + ((p.bedSlot | 0) + 1) + ' · treating with ' + esc(p.used || '') + ' · ' + Math.round(prog * 100) + '% · pays ' + num(p.fee) + ' 🔥 on discharge') + '</div>' +
+      (p.status === 'treating' ? '<div class="bl-bar" style="margin-top:6px"><i style="width:' + Math.round(prog * 100) + '%;background:#8fd4c8"></i></div>' : '') +
+      '</div>';
+  };
+  const selP = patients.find((p) => p.id === sel.patientId);
+  return '<h3>🛏 WARD BAY — PATIENTS</h3>' + tabs +
+    '<p class="sub">Whoever walks in waits in the lobby. Give them a bed, then treat them: bandages for a wound, medicine off the shelf for a sickness. They pay on discharge. Nobody waits forever.</p>' +
+    '<h4 style="font-size:10px;letter-spacing:.14em;color:#8b93a3;margin:10px 0 6px">LOBBY · ' + waitingRows.length + ' WAITING</h4>' +
+    (waitingRows.length ? '<div class="bl-list">' + waitingRows.map(card).join('') + '</div>' : '<div class="bl-empty">Nobody in the lobby.</div>') +
+    '<h4 style="font-size:10px;letter-spacing:.14em;color:#8b93a3;margin:12px 0 6px">BEDS · ' + bedRows.length + ' OF ' + beds.length + ' IN USE</h4>' +
+    (bedRows.length ? '<div class="bl-list">' + bedRows.map(card).join('') : '<div class="bl-empty">' + (beds.length ? 'Every bed is empty.' : 'No beds placed — open the BEDS tab.') + '</div>') + (bedRows.length ? '</div>' : '') +
+    '<div class="bl-row">' +
+      '<button class="bl-btn pri" data-act="admit"' + (selP && selP.status === 'waiting' && freeBeds.length ? '' : ' disabled') + '>ADMIT TO BED ' + (freeBeds.length ? freeBeds[0].index + 1 : '—') + '</button>' +
+      '<button class="bl-btn pri" data-act="treat"' + (selP && selP.status === 'inbed' ? '' : ' disabled') + '>TREAT</button>' +
+      '<button class="bl-btn danger" data-act="send-away"' + (selP && selP.status !== 'treating' ? '' : ' disabled') + '>SEND AWAY</button>' +
+      '<button class="bl-btn" data-act="close">CLOSE</button></div>';
+}
+
+/* ── the supply bench: bandages ─────────────────────────────────────────── */
+export function supplyPanel(ctx) {
+  const { bandages, have, batches } = ctx;
+  const n = Math.max(1, batches | 0);
+  const cost = PT.bandageCost(n);
+  const line = Object.keys(cost.res).map((id) => '<span style="color:' + ((have[id] | 0) < cost.res[id] ? '#ff8a94' : '#dde4ee') + '">' + id + ' ' + num(cost.res[id]) + '/' + num(have[id] | 0) + '</span>').join(' · ');
+  const short = Object.keys(cost.res).some((id) => (have[id] | 0) < cost.res[id]);
+  return '<h3>🩹 SUPPLY BENCH</h3>' +
+    '<p class="sub">Roll bandages: ' + Object.keys(PT.TUNING.BANDAGE_RECIPE).map((id) => PT.TUNING.BANDAGE_RECIPE[id] + ' ' + id).join(' + ') + ' per batch of ' + PT.TUNING.BANDAGE_YIELD + '. A wound takes one per severity point.</p>' +
+    '<div class="hp-kpi">' + kpi(num(bandages | 0), 'ON THE SHELF', '#8fd4c8') + kpi(num(cost.made), 'THIS BATCH WOULD MAKE') + '</div>' +
+    '<div class="hp-ctl"><span style="font-size:11px;color:#8b93a3">batches</span><input type="range" min="1" max="20" value="' + n + '" data-act="batches="><input type="number" min="1" max="20" value="' + n + '" data-act="batches="></div>' +
+    '<div class="bl-item"><div class="meta">Costs ' + line + '</div></div>' +
+    '<div class="bl-row"><button class="bl-btn pri" data-act="roll"' + (short ? ' disabled' : '') + '>ROLL ' + num(cost.made) + ' BANDAGES</button><button class="bl-btn" data-act="close">CLOSE</button></div>';
 }
 
 export function vaultPanel(ctx) {
@@ -349,12 +441,3 @@ export function dockPanel(ctx) {
       '<button class="bl-btn" data-act="close">CLOSE</button></div>';
 }
 
-export function labDoorPanel(ownsResearch) {
-  return '<h3>⚗️ LAB CORRIDOR</h3>' +
-    (ownsResearch
-      ? '<p class="sub">Through here is the containment lab — the Research Facility side of the building, where cures are actually mixed and shipped.</p>' +
-        '<div class="bl-row"><button class="bl-btn pri" data-act="go-lab">WALK THROUGH</button><button class="bl-btn" data-act="close">STAY</button></div>'
-      : '<div class="bl-empty">Locked. The containment lab is a <b>Research Facility</b> licence — found one in Just Business, or buy cures from a player who has.<br><br>' +
-        'A Medical Corporation without its own lab is still a business: other players\' hauliers deliver here.</div>' +
-        '<div class="bl-row"><button class="bl-btn" data-act="close">CLOSE</button></div>');
-}

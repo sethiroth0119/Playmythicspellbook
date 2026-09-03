@@ -349,7 +349,7 @@ function parseWithImgLoader(L, bytes, onLoad, onErr) {
   }
 }
 
-function loadCharacter(THREE, def) {
+export function loadCharacter(THREE, def) {
   return new Promise((resolve) => {
     let done = false;
     const finish = (v) => { if (!done) { done = true; resolve(v); } };
@@ -399,7 +399,7 @@ function loadCharacter(THREE, def) {
    height, and bind its two clips. Everything here is measured from the model
    rather than assumed, because these are third-party exports and their units,
    origin and clip names are all things that can move between re-exports. */
-function prepareCharacter(THREE, gltf) {
+export function prepareCharacter(THREE, gltf) {
   const root = gltf.scene || (gltf.scenes && gltf.scenes[0]);
   if (!root) return null;
 

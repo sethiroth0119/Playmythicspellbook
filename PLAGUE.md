@@ -262,6 +262,32 @@ whichever window persisted last is the truth and nothing overwrites it.
 No SQL. Cure lines, the shelf and the counter log are facts about one
 player's business and one player's city, and live on the profile.
 
+### The ward bay — patients, beds and bandages
+
+NPCs walk into the building on their own (`patients.js`): a floor of
+wasteland wounds, plus the city's sick when there is an outbreak, who carry
+the strain and a citizen's name. They wait in the lobby for a bed; a patient
+nobody beds walks out again after twelve minutes and the desk counts it.
+
+- **Beds are the decoration system's.** The same `furniture_catalog` the
+  Card Shop and the Dwelling buy from (`func = 'bed'`), the same
+  `Profile.furnitureOwned` inventory, the same taxed spend, through three
+  bridge accessors. The hospital adds only which SLOT a bed stands in
+  (`beds.js`, ten slots in the west wing). A built-in Ward Cot, priced off
+  the medical op's rate, means the ward is never un-buildable offline.
+- **Treatment.** A wound takes one bandage per severity point; a sickness
+  takes one shelf unit of a relief product (the outbreak's family first) or
+  two raw Medicine. Treatment runs on the wall clock in bed; better medicine
+  heals faster; the fee is fixed at treatment from the econ row and paid on
+  discharge.
+- **Bandages** are rolled at the Supply Bench: 2 cloth + 1 water per batch
+  of 3. Live resource ids only.
+- **Patient models** rotate at random from `patients.models.js`; a look is
+  fixed at arrival. Empty list → tinted box figures. Drop `.glb` files in
+  `/public/models/hospital/patients/`.
+- **No lab in this building.** The containment lab is the Research Facility
+  — a different business that ships to this one. The corridor is gone.
+
 ### Prophylaxis — what the medicine does for the city
 
 Doses NPCs actually bought protect them. `pharma.prophylaxisOf` weights the

@@ -38,6 +38,11 @@ globalThis.window = { MythicPlagueBridge: {
   plagueState: () => Profile.plague, setPlagueState: (s) => { Profile.plague = s; return true; },
   pharmaState: () => Profile.pharma, setPharmaState: (s) => { Profile.pharma = s; return true; },
   save: () => { saves++; return true; }, toast: () => {}, confirm: async () => true,
+  // the decoration market, stand-in
+  furnitureCatalog: async () => [{ id: 'fc_9', name: 'Brass Bed', ico: '🛏️', url: '', price: 800, currency: 'cinder', func: 'bed' }, { id: 'fc_10', name: 'Lamp', ico: '💡', url: '', price: 50, currency: 'cinder', func: '' }],
+  furnitureOwned: () => Object.assign({}, Profile.furniture || {}),
+  buyFurniture: (item) => { const price = item.price | 0; if (Profile.gems < price) return false; Profile.gems -= price; Profile.furniture = Profile.furniture || {}; Profile.furniture[item.id.replace(/^fc_/, '')] = (Profile.furniture[item.id.replace(/^fc_/, '')] | 0) + 1; return true; },
+  adjustOwned: (id, d) => { Profile.furniture = Profile.furniture || {}; const n = (Profile.furniture[id] | 0) + d; if (n < 0) return false; Profile.furniture[id] = n; return true; },
 } };
 
 const PL = await import('./public/src/plague/state.js');
@@ -232,6 +237,82 @@ const pw = await HS.pollWholesale();
 ok(pw.landed === 1 && HS.stock().vaccine && HS.stock().vaccine.units > 20 && HS.shelfUnits() > before10, 'a due order lands on the shelf, minus what the chain took');
 ok((await HS.pollWholesale()).landed === 0 && HS.orders()[0].status === 'received', 'and only once');
 ok(HS.stats().wholesaleUnits === HS.stock().vaccine.units, 'the desk counts it');
+
+console.log('\n=== 12. patients: who walks in, and what they need ===');
+const PT = await import('./public/src/hospital/patients.js');
+const BD = await import('./public/src/hospital/beds.js');
+const pA = PT.makePatient('s1', { now: CLOCK, models: 3, sickShare: 0, roster: [] });
+const pA2 = PT.makePatient('s1', { now: CLOCK, models: 3, sickShare: 0, roster: [] });
+ok(JSON.stringify(pA) === JSON.stringify(pA2), 'a patient is deterministic from the seed (name, look, ailment)');
+ok(pA.ailment === 'wound' && pA.look >= 0 && pA.look < 3, 'no outbreak → a wound; look drawn from the model list');
+const strainS = S.makeStrain('sick-1', { pressure: 0.5 });
+const pS = PT.makePatient('s2', { now: CLOCK, models: 3, sickShare: 1, roster: [{ id: 'c1', name: 'Cit One' }], strain: strainS });
+ok(pS.ailment === 'sickness' && pS.name === 'Cit One' && pS.strainId === strainS.id, 'an outbreak sends a named citizen in sick with the strain');
+ok(PT.needsOf(pA).bandages === pA.severity && PT.needsOf(pS).kind === 'medicine', 'wounds need bandages per severity; sickness needs medicine');
+ok(PT.reliefProduct(pS, { salve: { units: 5 }, antiviral: { units: 1, family: null } }) === 'antiviral', 'salve does not treat sickness; antiviral does');
+ok(PT.reliefProduct(pS, { antiviral: { units: 1, family: null }, serum: { units: 1, family: strainS.family } }) === 'serum', 'the family-matching product is preferred');
+ok(PT.feeOf(pS, ECON.medical, 0.9) > PT.feeOf(pA, ECON.medical, 0.9) || pA.severity > pS.severity, 'sickness pays more than a wound of the same severity');
+ok(PT.feeOf(pA, null, 0.9) === 0, 'no econ row → no fee, never a hardcoded figure');
+ok(PT.treatmentMs(pA, 1) < PT.treatmentMs(pA, 0), 'better medicine heals faster');
+ok(PT.patienceLeft(pA, CLOCK + PT.TUNING.PATIENCE_MS + 1) === 0 && PT.patienceLeft(pA, CLOCK) === 1, 'patience runs out on the clock');
+ok(PT.arrivalsPerMin({ pop: 300, cases: 10 }) > PT.arrivalsPerMin({ pop: 300, cases: 0 }), 'an outbreak brings more patients');
+ok(PT.bandageCost(2).made === 6 && PT.bandageCost(2).res.cloth === 4, 'bandages: 2 cloth + 1 water per batch of 3');
+ok(BD.SLOTS.length === 10 && BD.freeSlots([{ slot: 0 }]).length === 9, 'ten slots; a placed bed takes one');
+ok(BD.bedColliders([{ slot: 0 }]).length === 1 && BD.cotPrice(ECON.medical) > 0 && BD.cotPrice(null) === 0, 'a placed bed is a collider; the cot is priced off the econ row');
+
+console.log('\n=== 13. the ward: buy, place, admit, treat, discharge ===');
+const cat = await HS.bedCatalogue();
+ok(cat.length === 2 && cat[0].id === 'cot' && cat[1].id === '9', 'the catalogue is the cot plus the market\'s beds only (the lamp is not a bed)');
+const g0 = Profile.gems;
+let br = HS.buyBed(cat[0]);
+ok(br.ok && Profile.gems === g0 - BD.cotPrice(ECON.medical) && HS.ownedBeds().cot === 1, 'buying a cot spends Cinder into the shared furniture inventory');
+br = HS.buyBed(cat[1]);
+ok(br.ok && HS.ownedBeds()['9'] === 1, 'a market bed goes through the game\'s own furniture purchase');
+ok(!HS.placeBed(cat[0], 99).ok, 'no such slot');
+let pr2 = HS.placeBed(cat[0], 0);
+ok(pr2.ok && HS.beds().length === 1 && HS.ownedBeds().cot === 0, 'placing takes the bed out of the inventory');
+ok(!HS.placeBed(cat[0], 1).ok, 'and you cannot place one you no longer own');
+pr2 = HS.placeBed(cat[1], 1);
+ok(pr2.ok && HS.beds().length === 2, 'the market bed stands in slot 2');
+// walk-ins
+const hb = HS.blob(); hb.ptLast = CLOCK; hb.ptAcc = 0;
+CLOCK += 30 * 60000;
+let tk = HS.patientsTick({ now: CLOCK, pop: 300, cases: 0, roster: [], strain: null, models: 3 });
+console.log('  after 30 min away: ' + tk.arrived + ' walked in, lobby ' + HS.waiting().length);
+ok(tk.arrived >= 2 && tk.arrived <= PT.TUNING.OFFLINE_ARRIVALS_MAX, 'a half hour away fills the lobby, capped');
+ok(HS.waiting().length <= PT.lobbyCap(2), 'the lobby never exceeds beds + ' + PT.TUNING.QUEUE_OVER_BEDS);
+const first = HS.waiting()[0];
+ok(!HS.treat(first.id).ok, 'you cannot treat a patient who has no bed');
+let ad = HS.admit(first.id, 0);
+ok(ad.ok && HS.inBeds().length === 1 && first.status === 'inbed', 'admitted to bed 1');
+ok(!HS.admit(HS.waiting()[0].id, 0).ok, 'and the bed is now taken');
+ok(!HS.pickUpBed(0).ok, 'a bed with a patient in it cannot be picked up');
+// bandages
+ledger.cloth = 1; ledger.water = 10;
+ok(!HS.craftBandages(1).ok, 'rolling bandages without cloth refuses');
+ledger.cloth = 10;
+const cb = HS.craftBandages(2);
+ok(cb.ok && HS.bandages() === 6 && ledger.cloth === 6, 'two batches: 6 bandages for 4 cloth');
+// treat
+const wounded = first.ailment === 'wound' ? first : null;
+if (wounded) {
+  const tr = HS.treat(wounded.id);
+  ok(tr.ok && HS.bandages() === 6 - wounded.severity && wounded.status === 'treating' && wounded.fee > 0, 'a wound is dressed with bandages and the fee is fixed');
+} else {
+  const tr = HS.treat(first.id);
+  ok(tr.ok && first.status === 'treating', 'a sickness is treated off the shelf or with raw medicine');
+}
+const gBefore = Profile.gems;
+CLOCK = first.doneAt + 1;
+tk = HS.patientsTick({ now: CLOCK, pop: 300, cases: 0, roster: [], strain: null, models: 3 });
+ok(tk.events.some((e) => e.kind === 'done') && Profile.gems === gBefore + first.fee && HS.stats().treated === 1, 'on discharge the patient pays and leaves');
+ok(HS.inBeds().length === 0 && HS.recentPatients()[0].id === first.id, 'the bed is free again and the visit is in the log');
+// impatience
+CLOCK += PT.TUNING.PATIENCE_MS + 1;
+const wBefore = HS.waiting().length;
+tk = HS.patientsTick({ now: CLOCK, pop: 0, cases: 0, roster: [], strain: null, models: 3 });
+ok(wBefore > 0 && HS.stats().turnedAway >= wBefore && tk.events.some((e) => e.kind === 'left'), 'patients nobody beds walk out, and the desk counts it');
+ok(HS.pickUpBed(0).ok && HS.ownedBeds().cot === 1, 'an empty bed can be picked up back into the inventory');
 
 console.log('\n' + (fails ? '❌ ' + fails + ' FAILURES' : '✅ ALL CHECKS PASSED'));
 process.exit(fails ? 1 : 0);

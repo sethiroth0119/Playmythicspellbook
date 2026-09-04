@@ -15966,6 +15966,11 @@ let mode = 'inspect', placeType = null, selectedKey = null;
    surprise rather than a convenience. */
 let placeRot = 0;
 const $ = id => document.getElementById(id);
+/* 🦠 The outbreak module's handle and the save slice loadState parked for
+   it. Declared here because loadState runs BEFORE the module is mounted —
+   the city has to be able to read a plague out of a save it cannot yet
+   hand to anything. Null until mount(); every call site guards. */
+let PLAGUE = null, _plaguePending = null;
 
 /* ════════════════════════════════════════════════════════════════════════
    7a. THE CITY LOG — toasts vanish in four seconds, and a raid that happened
@@ -16556,6 +16561,12 @@ async function economyTick(dtMin) {
      ⚠ Deliberately NOT folded into tileMult(): tileMult also feeds the power
        pre-pass, and scaling power generation by a factor that is itself derived
        from power coverage is a feedback loop. See §9b4. */
+  /* 🦠 The epidemic runs on the SAME dtMin the economy just ran on, so the
+     offline catch-up slices an outbreak at exactly the resolution it slices
+     production — no parallel offline formula and nothing to keep in sync.
+     Ticked BEFORE the multipliers are computed so this minute's output already
+     reflects this minute's sickness. */
+  try { if (PLAGUE) PLAGUE.tick(dtMin); } catch (e) {}
   const OM = cityOutputMultipliers();
 
   /* ⚡ POWER PRE-PASS. The main loop needs the brownout factor, and the factor
@@ -19167,6 +19178,19 @@ function cityOutputMultipliers(over) {
   efficiency = 1 + (efficiency - 1) * severity;
   commerce   = 1 + (commerce - 1) * severity;
 
+  /* 🦠 SICKNESS IS A LABOUR PROBLEM, so it multiplies LABOUR rather than
+     sitting beside it as a fourth leg. That placement is the whole point: it
+     flows into BOTH `resources` and `cinder` automatically, it is already
+     scaled by how much of the city is actually infected (see labourMul in
+     plague.data.js), and it inherits the OUT_FLOOR clamps below — so even a
+     city at 100% Hollow Sleep still limps rather than producing a hard zero
+     and locking itself out of ever researching a cure.
+     ⚠ NOT scaled by `severity` like the three legs above. Severity spares a
+       small city most of the penalty from bad vitals, which is right for a
+       hamlet with poor trade and wrong for a hamlet with a plague: a virus in
+       a village of twelve is MORE of a labour event, not less. */
+  try { if (PLAGUE) labour *= PLAGUE.outputMul(); } catch (e) {}
+
   const resources = Math.max(OUT_FLOOR_RES, labour * efficiency);
   const cinder    = Math.max(OUT_FLOOR_CIN, labour * efficiency * commerce);
   // The headline figure. The mean of the two, which is what the panel prints.
@@ -20591,6 +20615,12 @@ function serialize() {
        named citizens". Never a population figure — these people are a SUBSET
        of npcPop, so nothing here may be added to any count. */
     cits: citSave(),
+    /* 🦠 THE EPIDEMIC. MUST ride the save, for exactly the reason `ramp` below
+       must: an outbreak that resets on reload turns F5 into a cure, and a
+       player who finds that out stops engaging with the whole system. Absent
+       on load ⇒ a healthy city, which is the correct reading of a save written
+       before this existed. */
+    plague: (function () { try { return PLAGUE ? PLAGUE.save() : _plaguePending; } catch (e) { return null; } })(),
     /* 📖 The life log — a bounded ring of who left, who arrived and who
        found work, so the city REMEMBERS its people between sessions. Absent
        on load ⇒ an empty log and nothing else changes (see lifeLoad). */
@@ -21198,6 +21228,9 @@ async function loadState() {
        no tile is touched. */
     try { citLoad(s.cits); citRefresh(true); } catch (e) { console.warn('[citizens] load', e); }
     try { lifeLoad(s.life); } catch (e) { console.warn('[life] load', e); }
+    /* 🦠 Parked, not applied: the outbreak module mounts AFTER loadState (it is
+       a dynamic import and this function is synchronous). mount() drains this. */
+    try { _plaguePending = s.plague || null; if (PLAGUE) { PLAGUE.load(_plaguePending); _plaguePending = null; } } catch (e) { console.warn('[plague] load', e); }
     // A clean, complete load. This is the ONLY place that licenses an empty save.
     _loadDone = true; _loadFailed = false;
   } catch (e) {
@@ -21226,10 +21259,13 @@ async function loadState() {
      after a merge and the wrappers look odd, that is why: a wrapper survives a
      rewrite of the function it wraps.
 
-   🔴 WHAT THIS IS NOT. There is no infection state machine, no district
-     spread, no global contamination and no world events here. Those are steps
-     10–13 of the doc and they are deliberately NOT built: step 8 is the whole
-     pitch in miniature, and it has to be fun before the rest is worth writing.
+   🔴 WHAT THIS IS NOT — UPDATED. This section still has no infection state
+     machine, no district spread and no world events, and it never will: those
+     are steps 10–13 and they now live in their own module,
+     `/src/city/plague.city.js`, mounted from boot() beside the House and the
+     Stadium. This layer is unchanged and stays the licence-to-building bridge
+     it always was. What DID change is that containment is no longer a purely
+     local number — see the note in section 8.
    ════════════════════════════════════════════════════════════════════ */
 const OPS_PREFIX = 'op_';
 /* 💱 SCALE. The corporate economy quotes per-CYCLE draws (mining "power 40,
@@ -21908,15 +21944,22 @@ function opsAugmentInspect(k) {
      output for 12 points of containment, available at every tier, which is the
      "push one tier higher" temptation expressed as a switch you can see.
 
-   WHAT CONTAINMENT ACTUALLY COSTS YOU TODAY. The outbreak engine is steps
-   10–13 and is NOT built, so containment is not allowed to be a number with no
-   consequence:
+   WHAT CONTAINMENT ACTUALLY COSTS YOU. This comment used to end "no districts,
+   no infection counts, no world state — that is deliberate and it is where
+   this round stops", and that is no longer true. There are now THREE costs:
      · buyers discount contaminated product — the sale price scales
        0.25 + 0.75 × containment, so 60% containment is a 30% pay cut;
      · a CONTAINMENT INCIDENT can take the facility offline (the same `damaged`
-       state a raid produces) and burn the batch.
-   Both are local to the facility. No districts, no infection counts, no world
-   state — that is deliberate and it is where this round stops.
+       state a raid produces) and burn the batch;
+     · 🟣 and below 55%, a sited lab leaks VIOLET WITHER into the city — the
+       tier-3 virus in `/src/city/plague.data.js`, whose pressure scales with
+       this lab's tier. This is the consequence the doc was always describing
+       and the reason the dial exists.
+   ⚠ The outbreak hangs off SUSTAINED low containment, never off an incident.
+     Incidents are already random, so triggering a plague from one would make
+     the plague random too — and a random plague punishes nothing and teaches
+     nothing. Overdrive is a switch and a lapsed investment is a supply
+     decision: both are things the player DID. Keep it that way.
    ════════════════════════════════════════════════════════════════════════ */
 const OPS_TIERS = [
   { n: 1, name: 'Back-Room Cut',  xPerMin: 4,  base: 96, heat: 'LOW',      risk: 0.3 },
@@ -24171,6 +24214,102 @@ function animate() {
       spendCinders: (n) => MythicCityBridge.spendCinders(n),
     });
   } catch (e) { console.warn('[Stadium] not mounted (non-fatal):', e); }
+  /* ══ 🦠 PUBLIC HEALTH — THE OUTBREAK ENGINE ═════════════════════════════
+     Steps 10–13 of smuggling-and-contamination.md, the ones section 12b and
+     section 8 both said out loud were not built. They are now: six viruses
+     with real vectors, and cures synthesised at the RESEARCH FACILITY that
+     have to be SHIPPED TO THE MEDICAL CORP. before they cure anybody.
+
+     🔴 THE GLOBALS TRAP, and this is the FIFTH module to hit it. `game`,
+     `vitals`, `wellbeing`, `cityPop`, `popCap`, `stockOf` and `opsLab` are
+     top-level `const` in THIS module script and are invisible to an ES
+     module. The ctx object below IS the hand-over.
+
+     Note what is NOT handed over, same stance as the Stadium: no raw write
+     access to `game.stock`. The module gets spendStock/addStock, which are a
+     pair with an inverse, because a cure batch has to be able to fail and
+     leave the city's books where it found them. */
+  try {
+    const pmod = await import('../src/city/plague.city.js?v=' + (window.NC_BUILD || 'r13'));
+    PLAGUE = pmod.mount({
+      game, vitals, wellbeing,
+      pop: () => cityPop(), popCap: () => popCap(),
+      stockOf,
+      canAfford: (c) => Object.keys(c).every((r) => stockOf(r) >= c[r]),
+      spendStock: (c) => {
+        if (!Object.keys(c).every((r) => stockOf(r) >= c[r])) return false;
+        for (const r in c) game.stock[r] = Math.max(0, stockOf(r) - c[r]);
+        return true;
+      },
+      addStock: (c) => { for (const r in c) game.stock[r] = stockOf(r) + c[r]; },
+      /* 🧠 Memory Shards are a GAME-ledger resource, not city stock — read off
+         the 2-second HUD mirror, spent through the bridge. Async, which is why
+         startResearch is. */
+      shardsOf: () => (game.res.memoryShards | 0),
+      spendShards: (n) => MythicCityBridge.spendRes({ memoryShards: n }),
+      /* 🏭 Sited operations, counted off the board. A damaged building is not
+         a working one — a Research Facility that a raid knocked offline must
+         not keep synthesising, and a wrecked clinic must not keep dosing. */
+      countOp: (type) => {
+        let n = 0;
+        for (const t of Object.values(game.tiles)) {
+          if (t.type === opsKeyOf(type) && !t.damaged) n++;
+        }
+        return n;
+      },
+      /* 🫁 Ashlung's vector: how many HEAVY operations this city runs. The
+         list is the four the doc calls dirty, and it is deliberately not
+         "every op" — a Card Shop does not give anyone a lung condition. */
+      heavyOps: () => {
+        let n = 0;
+        for (const t of Object.values(game.tiles)) {
+          const ot = opsTypeOf(t.type);
+          if (ot && (ot === 'mining' || ot === 'oil' || ot === 'salvage' || ot === 'smuggling') && !t.damaged) n++;
+        }
+        return n;
+      },
+      shardsHandled: () => (game.res.memoryShards | 0) > 0,
+      /* 🟣 THE CONTAINMENT LINK. Section 8 promised containment "is not allowed
+         to be a number with no consequence" and could only offer two, both
+         local to the facility. This is the third, and it is the one the doc
+         was actually describing: sustained low containment on a sited Anomaly
+         Lab is what lets Violet Wither into the city. Reports the WORST sited
+         lab, because a player running two labs is exposed by the leakier. */
+      lab: () => {
+        let worst = null;
+        for (const k of Object.keys(game.tiles)) {
+          const t = game.tiles[k];
+          if (opsTypeOf(t.type) !== 'smuggling' || t.damaged) continue;
+          const row = opsRowForKey(k); if (!row) continue;
+          /* ⚠ READ-ONLY, and deliberately NOT opsLab(row): that function
+             CACHES into OPS.live as a side effect, so calling it here every
+             five city-minutes would fight opsLabTick over which lab is live
+             and could hand the tick a different lab than the one it is
+             ticking. This is the same absent-tolerance without the write. */
+          const live = (OPS.live && OPS.live.id === row.id) ? OPS.live.lab : null;
+          const l = live || (row.lab && typeof row.lab === 'object' ? row.lab : null);
+          const tier = Math.max(1, Math.min(5, (l && l.tier | 0) || 1));
+          const c = Number(l && l.containment);
+          const containment = Number.isFinite(c) ? Math.max(0, Math.min(100, c)) : OPS_TIERS[tier - 1].base;
+          if (!worst || containment < worst.containment) worst = { sited: true, containment, tier };
+        }
+        return worst || { sited: false, containment: 100, tier: 1 };
+      },
+      /* ⚰️ Deaths come out of the SOFT citizenry, floored at POP_MIN for the
+         same reason coverage decline is: a city never fully empties. */
+      killPop: (n) => { game.pop.npc = Math.max(POP_MIN, game.pop.npc - n); },
+      /* 🩺 Pushed as a DELTA onto the running vital, so the city's own
+         VITAL_LERP still owns the number and a cured city climbs back out on
+         its own schedule rather than being snapped to a level. */
+      nudgeVital: (k, d) => { if (Number.isFinite(vitals[k])) vitals[k] = THREE.MathUtils.clamp(vitals[k] + d, 0, 100); },
+      nudgeMorale: (d) => { wellbeing.morale = THREE.MathUtils.clamp(wellbeing.morale + d, 0, 100); },
+      logEvent, toast, saveSoon, updateHUD,
+      confirm: (msg) => (typeof gcConfirm === 'function' ? gcConfirm(msg) : Promise.resolve(confirm(msg))),
+    });
+    // Load the slice the save already read (loadState ran above; it stashes it).
+    try { PLAGUE.load(_plaguePending); } catch (e) {}
+    _plaguePending = null;
+  } catch (e) { console.warn('[Plague] not mounted (non-fatal):', e); }
   /* ⏳ OFFLINE CATCH-UP — must run HERE, and the order is load-bearing:
        • after loadState(), or there is no savedAt and no city to run;
        • after refreshLedgerMirror(), because economyTick's input gate reads

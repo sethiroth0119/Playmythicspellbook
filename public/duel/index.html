@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mythic Spellbook — Duel of Roses (prototype)</title>
+<!-- ⚠ public/ is the deploy root. This page is served at /duel/ and its modules
+     at /src/duel/*.js — absolute paths, because a relative one would resolve
+     against /duel/ and 404 silently (the same trap battle-board documents). -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&family=EB+Garamond:ital,wght@0,500;1,500&display=swap" rel="stylesheet">
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/src/duel/duel.css">
+</head>
+<body>
+<div id="app"></div>
+<script type="module" src="/src/duel/main.js"></script>
+</body>
+</html>

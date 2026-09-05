@@ -13,7 +13,10 @@
     "whoami": "wrangler whoami",
     "deploy:all": "node deploy-all.mjs",
     "deploy:market": "node deploy-all.mjs --market",
-    "deploy:check": "node deploy-all.mjs --dry"
+    "deploy:check": "node deploy-all.mjs --dry",
+    "duel:data": "node tools/extract-duel-data.mjs",
+    "duel:check": "node tools/extract-duel-data.mjs --check",
+    "duel:test": "node tools/duel-selftest.mjs"
   },
   "devDependencies": {
     "terser": "^5.48.0",

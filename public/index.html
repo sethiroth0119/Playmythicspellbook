@@ -1316,6 +1316,17 @@
     box-shadow: 0 0 4px rgba(90,230,140,0.7);
   }
   .fuel-badge .fuel-pip.spent { background: rgba(255,255,255,0.16); box-shadow: none; }
+  /* ⚠ LAST COUNTER — fuel is lethal, so the turn before a unit runs dry has to
+     be unmissable. The whole badge goes red and pulses; the surviving pip
+     pulses with it. Without this the only warning is a tooltip nobody hovers,
+     and the unit is simply gone at end of turn. */
+  .fuel-badge.fuel-low { border-color: rgba(255,110,80,0.85); background: rgba(60,10,6,0.82); }
+  .fuel-badge.fuel-low .fuel-pip:not(.spent) {
+    background: linear-gradient(180deg, #ffb08a, #e8452a);
+    box-shadow: 0 0 6px rgba(255,110,60,0.95);
+    animation: fuelLowPulse 0.9s ease-in-out infinite;
+  }
+  @keyframes fuelLowPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
   .unit.stalled { filter: grayscale(0.72) brightness(0.72); }
   .unit.stalled .fuel-badge { border-color: rgba(255,120,90,0.6); }
 
@@ -36521,7 +36532,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120w7';
+  window.BUILD_VERSION = 'v120w8';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -37454,24 +37465,30 @@ const PASSIVES = {
   // 🪨 Geomancer — anti-field passive. Carriers shatter enemy locations.
   geomancer:     { id: 'geomancer',     name: 'Geomancer',                            desc: '20% chance/turn to destroy the opponent\'s active Location field' },
 
-  // ⛽ ===== FUEL — a tank that burns down every turn =====
+  // ⛽ ===== FUEL — a tank that burns down every turn, and a clock =====
   // A fuelled unit loses ONE Fuel counter at the end of each of its owner's
-  // turns. At zero it STALLS: it cannot move and cannot attack until something
-  // refuels it. It does NOT die — a stalled machine is a board state you can
-  // recover from, and recovering it is exactly what Fuel Restore is for.
+  // turns and is DESTROYED the moment it hits zero. That makes it a real
+  // liability rather than a soft debuff: a fuelled body is on a timer from the
+  // turn it lands, and keeping it alive means keeping it fuelled.
+  // ⚠ The end-of-turn order is BURN → RESTORE → DESTROY, so a unit standing in
+  // a Fuel Restore circle is refilled BEFORE the sweep and never dies to the
+  // burn that emptied it. Destroying on the burn instead would kill a 1-tank
+  // unit inside the circle, which is exactly the unit the circle exists for.
+  // Heroes are exempt from the destruction — they stall instead — the same
+  // carve-out purgeAscended / takeControl / the Execute counter all make.
   // Three separate passives rather than one passive plus a number because
   // PASSIVES entries carry no per-card parameters: the Forge picker is a flat
   // dropdown, so the tank SIZE has to be the passive.
   // Engine: window.MythicFuel (src/battle/effects.js). Ticked from endPlayerTurn
-  // / endAITurn; gated in getValidMoves + executeMove.
+  // / endAITurn, deaths resolved by _fuelResolveDeaths.
   fuel1:        { id: 'fuel1',        name: 'Fuel (1)',  cat: 'mobility',
-    desc: '⛽ Runs on 1 Fuel counter. Loses 1 at the end of your turn; at 0 it STALLS (cannot move or attack) until refuelled.' },
+    desc: '⛽ Runs on 1 Fuel counter. Loses 1 at the end of your turn and is DESTROYED at 0 — refuel it or lose it.' },
   fuel2:        { id: 'fuel2',        name: 'Fuel (2)',  cat: 'mobility',
-    desc: '⛽⛽ Runs on 2 Fuel counters. Loses 1 at the end of your turn; at 0 it STALLS (cannot move or attack) until refuelled.' },
+    desc: '⛽⛽ Runs on 2 Fuel counters. Loses 1 at the end of your turn and is DESTROYED at 0 — refuel it or lose it.' },
   fuel3:        { id: 'fuel3',        name: 'Fuel (3)',  cat: 'mobility',
-    desc: '⛽⛽⛽ Runs on 3 Fuel counters. Loses 1 at the end of your turn; at 0 it STALLS (cannot move or attack) until refuelled.' },
+    desc: '⛽⛽⛽ Runs on 3 Fuel counters. Loses 1 at the end of your turn and is DESTROYED at 0 — refuel it or lose it.' },
   fuelRestore:  { id: 'fuelRestore',  name: 'Fuel Restore', cat: 'aura',
-    desc: '🟢 Projects a green circle 2 tiles wide. At the end of your turn every ALLY inside it — this unit included — refills to FULL Fuel.' },
+    desc: '🟢 Projects a green circle 2 tiles wide. At the end of your turn every ALLY inside it — this unit included — refills to FULL Fuel, saving it from running dry.' },
   // 🌊 Amphibious — the non-fish way into the Sea. Aquatic is a FACTION, so a
   // construct or a hero that should wade needs an explicit opt-in rather than a
   // faction it has no business carrying. It grants ENTRY only: the "cannot be
@@ -102117,6 +102134,39 @@ const startTurn = (state, who) => {
   s.log = log; return s;
 };
 
+/* ⛽💥 Run every unit the Fuel tick just emptied through the normal death
+   pipeline. window.MythicFuel marks them dead and lists their ids on
+   `state._fuelKilled`, but it cannot fire `_battleOnUnitKilled` itself — that
+   function and everything it reaches (panic rolls, ultimate charge, bond XP,
+   on-death triggers) are index.html lexical bindings the module cannot see.
+   Without this, a fuel death would be a corpse the rest of the game never
+   learned about: no death triggers, no charge, no grave effects.
+
+   `killer` is null — nobody killed it, it ran out — which is the same shape
+   the DoT / status death path already passes, so _battleOnUnitKilled's
+   "proxy via the opposing hero" branch credits it exactly as it does a poison
+   kill. Also re-checks game over, because a fuel death can be the last unit
+   standing. */
+function _fuelResolveDeaths(state) {
+  try {
+    const ids = (state && state._fuelKilled) || [];
+    if (!ids.length) return state;
+    state._fuelKilled = [];
+    for (const id of ids) {
+      const victim = (state.units || []).find(u => u && u.id === id);
+      if (!victim || victim._fuelDeathHandled) continue;
+      victim._fuelDeathHandled = true;
+      try { if (typeof _battleOnUnitKilled === 'function') _battleOnUnitKilled(state, null, victim); } catch (e) {}
+    }
+    try {
+      (state.units || []).forEach(u => {
+        if (u && !u.alive && u.isHero) state.gameOver = u.owner === 'player' ? 'ai' : 'player';
+      });
+    } catch (e) {}
+  } catch (e) { try { console.warn('[fuel] death resolution failed', e); } catch (_) {} }
+  return state;
+}
+
 const endPlayerTurn = (state) => {
   let s = { ...state, turn: 'ai', selection: null };
   // ⛽🔵 END-OF-TURN MECHANICS (window.MythicFuel / window.MythicCounters).
@@ -102124,6 +102174,7 @@ const endPlayerTurn = (state) => {
   // so a trigger that reads "while this unit is stalled" sees the tank state
   // this turn actually produced rather than last turn's.
   try { if (window.MythicFuel) s = window.MythicFuel.tickSide(s, 'player'); } catch (e) {}
+  s = _fuelResolveDeaths(s);
   try { if (window.MythicCounters) s = window.MythicCounters.grantTick(s, 'player'); } catch (e) {}
   // ⚡ turnEnd triggers (player's turn ending). actorOwner = 'player'.
   try { if (typeof _fireTriggers === 'function') s = _fireTriggers(s, 'turnEnd', { actorOwner: 'player', side: 'player' }); } catch (e) {}
@@ -102145,6 +102196,7 @@ const endAITurn = (state) => {
   // BEFORE the turn pointer flips so the burn belongs to the turn that is
   // ending, exactly like the hand-limit discard above.
   try { if (window.MythicFuel) s = window.MythicFuel.tickSide(s, 'ai'); } catch (e) {}
+  s = _fuelResolveDeaths(s);
   try { if (window.MythicCounters) s = window.MythicCounters.grantTick(s, 'ai'); } catch (e) {}
   s = { ...s, turn: 'player', turnNumber: s.turnNumber + 1, selection: null };
   // ⏳ END-OF-TURN GRAVE ABILITIES — processed as the owner's next turn begins
@@ -142382,10 +142434,12 @@ function renderBoard() {
                 const f = window.MythicFuel.ensure(occupant);
                 let pips = '';
                 for (let i = 0; i < f.max; i++) pips += `<span class="fuel-pip${i < f.left ? '' : ' spent'}"></span>`;
-                const t = f.left > 0
+                const t = f.left > 1
                   ? `Fuel ${f.left}/${f.max} — loses 1 at the end of your turn.`
-                  : `Out of Fuel — STALLED. Cannot move or attack until refuelled.`;
-                return `<div class="fuel-badge" title="${escapeHtml(t)}">${pips}</div>`;
+                  : f.left === 1
+                    ? `Fuel 1/${f.max} — LAST COUNTER. It is destroyed at the end of your turn unless it is refuelled or standing in a Fuel Restore circle.`
+                    : `Out of Fuel — destroyed at the end of your turn.`;
+                return `<div class="fuel-badge${f.left <= 1 ? ' fuel-low' : ''}" title="${escapeHtml(t)}">${pips}</div>`;
               } catch (e) { return ''; }
             })()}
             ${(function () {
@@ -223676,7 +223730,7 @@ render();
 <link rel="stylesheet" href="src/battle/units.css?v=120k6">
 <link rel="stylesheet" href="src/battle/chrome.css?v=120k6">
 <link rel="stylesheet" href="src/battle/alive.css?v=120k6">
-<script src="src/battle/effects.js?v=120w7" defer></script>
+<script src="src/battle/effects.js?v=120w8" defer></script>
 <script src="src/battle/combat.js?v=120m4" defer></script>
 <script src="src/battle/targeting.js?v=120k6" defer></script>
 <link rel="stylesheet" href="src/sprites/frames.css?v=120k3">

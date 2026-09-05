@@ -5,14 +5,25 @@
  * architecture rule ("new features go in public/src/<feature>/"):
  *
  *   ⛽ FUEL          — a unit burns one Fuel counter at the end of every one of
- *                      its owner's turns. At 0 it STALLS (cannot move or act)
- *                      until something refuels it. It does NOT die: a stalled
- *                      machine is a recoverable board state, a dead one is not,
- *                      and the whole point of Fuel Restore is to recover it.
+ *                      its owner's turns. Hitting 0 DESTROYS it. Between ticks
+ *                      a unit sitting at 0 is stalled (cannot move or act); in
+ *                      ordinary play it never survives to be seen that way,
+ *                      because the end-of-turn sweep destroys it in the same
+ *                      pass that emptied it. HEROES are the one exception —
+ *                      they stall instead of dying, for the same reason every
+ *                      other destroy effect in the game exempts them: hero
+ *                      death is the loss condition, and losing the match to a
+ *                      counter running out is not a play anyone can answer.
  *   🟢 FUEL RESTORE  — an aura unit. Every ALLY (itself included) inside its
  *                      green circle is topped back up to full at the end of the
- *                      owner's turn — AFTER the burn, so a unit that spends the
- *                      whole turn in the circle never runs down.
+ *                      owner's turn.
+ *                      ⚠ ORDER MATTERS AND IT IS BURN → RESTORE → DESTROY.
+ *                      Destroying on the burn would kill a 1-tank unit standing
+ *                      in the circle before the circle could refill it, which
+ *                      makes Fuel Restore useless for exactly the units that
+ *                      need it most. Only a unit still empty AFTER the refill
+ *                      is destroyed, so the circle is a real lifeline at every
+ *                      tank size.
  *   🌊 SEA           — a deep-water surface. Ground units cannot enter it at
  *                      all. Fliers pass over and stay hittable by anything that
  *                      can already hit a flier. An AQUATIC unit standing in the
@@ -106,8 +117,13 @@
 
     left: function (unit) { var f = Fuel.ensure(unit); return f ? (f.left | 0) : 0; },
 
-    /* Out of fuel = STALLED. The engine treats this like a skipped turn:
-       no movement, no attacks. It is NOT death — refuelling brings it back. */
+    /* Sitting at 0 fuel: no movement, no attacks. Reaching 0 at end of turn is
+       DEATH (see tickSide), so in ordinary play nothing is ever seen in this
+       state. It still exists, and the engine still gates on it, for two cases
+       the destroy sweep does not cover: a hero, which is exempt from the
+       destruction, and any future effect that drains fuel mid-turn — such a
+       unit is inert until the sweep or a refuel reaches it, rather than
+       acting on an empty tank. */
     isStalled: function (unit) { return Fuel.uses(unit) && Fuel.left(unit) <= 0; },
 
     /* Radius of a unit's green Fuel Restore circle, 0 when it has none. */
@@ -134,35 +150,41 @@
       return out;
     },
 
-    /* END OF `owner`'s TURN. Burn one counter from every fuelled unit on that
-       side, THEN refill anything sitting inside a friendly green circle. Burn
-       first so the log reads in the order the player watches it happen, and so
-       a unit that walked out of the circle this turn actually loses its
-       counter. Mutates `state.units` in place and returns the state. */
+    /* END OF `owner`'s TURN, in three phases: BURN → RESTORE → DESTROY.
+       See the ORDER MATTERS note at the top of the file for why the destroy
+       sweep runs last rather than folding into the burn.
+
+       Units that ran out are marked dead here (alive:false, currentHp:0) and
+       ALSO listed on `state._fuelKilled`. The caller in index.html reads that
+       list and runs each one through `_battleOnUnitKilled`, because the death
+       pipeline — panic rolls, ultimate charge, bond XP, on-death triggers —
+       lives in index.html's lexical scope and nothing in this file can see it.
+       Marking dead without firing that pipeline would produce a corpse the
+       rest of the game never learns about.
+
+       Mutates `state.units` in place and returns the state. */
     tickSide: function (state, owner) {
       try {
         var units = (state && state.units) || [];
         var i, u;
-        // 1) Burn.
+        state._fuelKilled = [];
+        // 1) BURN one counter from every fuelled unit on this side.
         for (i = 0; i < units.length; i++) {
           u = units[i];
           if (!alive(u) || u.owner !== owner || !Fuel.uses(u)) continue;
           var f = Fuel.ensure(u);
           if (f.left <= 0) continue;
           f.left = Math.max(0, f.left - 1);
-          if (f.left === 0) {
-            pushLog(state, '⛽ ' + (u.name || 'A unit') + ' runs dry — STALLED until it is refuelled.',
-                    owner === 'player' ? 'red' : 'green');
-          }
         }
-        // 2) Refill inside friendly green circles.
+        // 2) RESTORE — refill anything inside a friendly green circle. This is
+        //    the last chance an empty unit gets before the sweep below.
         var sources = [];
         for (i = 0; i < units.length; i++) {
           u = units[i];
           if (alive(u) && u.owner === owner && Fuel.restoreRadius(u)) sources.push(u);
         }
         if (sources.length) {
-          var refilled = 0;
+          var refilled = 0, rescued = 0;
           for (i = 0; i < units.length; i++) {
             u = units[i];
             if (!alive(u) || u.owner !== owner || !Fuel.uses(u)) continue;
@@ -173,13 +195,32 @@
             if (!inCircle) continue;
             var fu = Fuel.ensure(u);
             if (fu.left >= fu.max) continue;
+            if (fu.left === 0) rescued++;
             fu.left = fu.max;
             refilled++;
           }
           if (refilled) {
-            pushLog(state, '🟢 Fuel Restore tops up ' + refilled + ' unit' + (refilled === 1 ? '' : 's') + ' to full.',
+            pushLog(state, '🟢 Fuel Restore tops up ' + refilled + ' unit' + (refilled === 1 ? '' : 's') + ' to full'
+                    + (rescued ? ' — ' + rescued + ' pulled back from an empty tank.' : '.'),
                     owner === 'player' ? 'green' : 'red');
           }
+        }
+        // 3) DESTROY anything still empty. Heroes are exempt (they stall), the
+        //    same carve-out every other destroy effect in the game makes.
+        for (i = 0; i < units.length; i++) {
+          u = units[i];
+          if (!alive(u) || u.owner !== owner || !Fuel.uses(u)) continue;
+          if (Fuel.ensure(u).left > 0) continue;
+          if (u.isHero) {
+            pushLog(state, '⛽ ' + (u.name || 'The hero') + ' is out of Fuel — stalled until refuelled.',
+                    owner === 'player' ? 'red' : 'green');
+            continue;
+          }
+          u.alive = false;
+          u.currentHp = 0;
+          state._fuelKilled.push(u.id);
+          pushLog(state, '⛽💥 ' + (u.name || 'A unit') + ' runs dry and is DESTROYED.',
+                  owner === 'player' ? 'red' : 'green');
         }
       } catch (e) { try { console.warn('[fuel] tick failed', e); } catch (_) {} }
       return state;

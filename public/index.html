@@ -1250,6 +1250,86 @@
   }
   @keyframes surfCrackGlow { 0%,100% { opacity: 0.45; } 50% { opacity: 0.95; } }
 
+  /* 🌊 SEA — DEEP water, not a puddle. Read the difference at a glance: the
+     puddle (.surf-water) is a thin translucent film with one expanding ripple;
+     the Sea is dark, opaque at the centre, and never shows the ground through
+     it, because a ground unit can't be standing there at all. Three stacked
+     layers do the work — a depth gradient, drifting caustics, and a slow swell
+     — all on transform/opacity so the tile costs nothing to animate. */
+  .surf-sea {
+    background:
+      radial-gradient(ellipse at 50% 34%, rgba(86,172,224,0.42), transparent 62%),
+      radial-gradient(ellipse at 50% 60%, rgba(22,74,132,0.86), rgba(6,26,58,0.96) 78%);
+    box-shadow: inset 0 0 26px rgba(3,16,38,0.9), inset 0 6px 14px rgba(140,214,255,0.16);
+  }
+  .surf-sea::before {
+    content: ''; position: absolute; inset: 0;
+    background:
+      repeating-linear-gradient(102deg, transparent 0 9px, rgba(170,226,255,0.20) 9px 10px, transparent 10px 21px),
+      repeating-linear-gradient(-74deg, transparent 0 13px, rgba(126,198,246,0.14) 13px 14px, transparent 14px 29px);
+    mix-blend-mode: screen;
+    animation: surfSeaCaustic 7s ease-in-out infinite;
+  }
+  .surf-sea::after {
+    content: ''; position: absolute; left: -12%; right: -12%; top: 30%; height: 42%;
+    border-radius: 50%;
+    background: radial-gradient(ellipse at 50% 50%, rgba(196,240,255,0.24), transparent 70%);
+    animation: surfSeaSwell 5.2s ease-in-out infinite;
+  }
+  @keyframes surfSeaCaustic { 0%,100% { opacity: 0.4; transform: translateX(-4%); }
+                              50%     { opacity: 0.9; transform: translateX(4%); } }
+  @keyframes surfSeaSwell   { 0%,100% { transform: translateY(-8%) scaleY(0.86); opacity: 0.5; }
+                              50%     { transform: translateY(9%)  scaleY(1.14); opacity: 0.95; } }
+
+  /* 🟢 FUEL RESTORE AURA — the green circle. Drawn on the TILE, beneath units
+     and above the surface, so a unit standing in it is plainly inside the ring
+     rather than hidden by it. `.enemy` recolours it so you can tell whose
+     depot is whose without reading a tooltip. */
+  .tile.fuel-aura::before {
+    content: ''; position: absolute; inset: 6%;
+    border-radius: 50%;
+    border: 1.5px dashed rgba(96,232,140,0.55);
+    background: radial-gradient(circle at 50% 50%, rgba(64,220,120,0.16), transparent 72%);
+    box-shadow: inset 0 0 12px rgba(80,236,140,0.28);
+    pointer-events: none; z-index: 2;
+    animation: fuelAuraPulse 2.8s ease-in-out infinite;
+  }
+  .tile.fuel-aura.enemy-aura::before {
+    border-color: rgba(255,150,120,0.5);
+    background: radial-gradient(circle at 50% 50%, rgba(232,110,80,0.14), transparent 72%);
+    box-shadow: inset 0 0 12px rgba(240,120,90,0.24);
+  }
+  @keyframes fuelAuraPulse { 0%,100% { opacity: 0.55; } 50% { opacity: 1; } }
+
+  /* ⛽ FUEL PIPS — the tank, on the unit. Reads left-to-right; a spent pip goes
+     hollow rather than disappearing so the tank SIZE stays legible at 0. */
+  .fuel-badge {
+    position: absolute; left: 2px; bottom: 15px;
+    display: flex; gap: 2px; align-items: center;
+    padding: 1px 3px; border-radius: 4px;
+    background: rgba(8,10,18,0.72); border: 1px solid rgba(120,200,255,0.3);
+    z-index: 12; pointer-events: none;
+  }
+  .fuel-badge .fuel-pip {
+    width: 4px; height: 8px; border-radius: 1px;
+    background: linear-gradient(180deg, #7ee8a2, #2f9c5c);
+    box-shadow: 0 0 4px rgba(90,230,140,0.7);
+  }
+  .fuel-badge .fuel-pip.spent { background: rgba(255,255,255,0.16); box-shadow: none; }
+  .unit.stalled { filter: grayscale(0.72) brightness(0.72); }
+  .unit.stalled .fuel-badge { border-color: rgba(255,120,90,0.6); }
+
+  /* 🔵 COUNTER BADGE — named counters sitting on a card. */
+  .counter-badge {
+    position: absolute; right: 2px; bottom: 15px;
+    display: flex; gap: 2px; align-items: center;
+    font-size: 0.6rem; line-height: 1; font-weight: 700; color: #dff0ff;
+    padding: 1px 4px; border-radius: 999px;
+    background: rgba(12,22,48,0.82); border: 1px solid rgba(120,180,255,0.5);
+    box-shadow: 0 0 6px rgba(90,150,255,0.35);
+    z-index: 12; pointer-events: none;
+  }
+
   .news-list { display: flex; flex-direction: column; gap: 0.45rem; }
   .news-row {
     display: block;
@@ -36441,7 +36521,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120w6';
+  window.BUILD_VERSION = 'v120w7';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -37373,6 +37453,31 @@ const PASSIVES = {
   xenoBond:      { id: 'xenoBond',      name: 'Xeno Bond',      faction: 'alien',     desc: 'Immune to Infected; 25% chance to Infect targets on hit (3t)' },
   // 🪨 Geomancer — anti-field passive. Carriers shatter enemy locations.
   geomancer:     { id: 'geomancer',     name: 'Geomancer',                            desc: '20% chance/turn to destroy the opponent\'s active Location field' },
+
+  // ⛽ ===== FUEL — a tank that burns down every turn =====
+  // A fuelled unit loses ONE Fuel counter at the end of each of its owner's
+  // turns. At zero it STALLS: it cannot move and cannot attack until something
+  // refuels it. It does NOT die — a stalled machine is a board state you can
+  // recover from, and recovering it is exactly what Fuel Restore is for.
+  // Three separate passives rather than one passive plus a number because
+  // PASSIVES entries carry no per-card parameters: the Forge picker is a flat
+  // dropdown, so the tank SIZE has to be the passive.
+  // Engine: window.MythicFuel (src/battle/effects.js). Ticked from endPlayerTurn
+  // / endAITurn; gated in getValidMoves + executeMove.
+  fuel1:        { id: 'fuel1',        name: 'Fuel (1)',  cat: 'mobility',
+    desc: '⛽ Runs on 1 Fuel counter. Loses 1 at the end of your turn; at 0 it STALLS (cannot move or attack) until refuelled.' },
+  fuel2:        { id: 'fuel2',        name: 'Fuel (2)',  cat: 'mobility',
+    desc: '⛽⛽ Runs on 2 Fuel counters. Loses 1 at the end of your turn; at 0 it STALLS (cannot move or attack) until refuelled.' },
+  fuel3:        { id: 'fuel3',        name: 'Fuel (3)',  cat: 'mobility',
+    desc: '⛽⛽⛽ Runs on 3 Fuel counters. Loses 1 at the end of your turn; at 0 it STALLS (cannot move or attack) until refuelled.' },
+  fuelRestore:  { id: 'fuelRestore',  name: 'Fuel Restore', cat: 'aura',
+    desc: '🟢 Projects a green circle 2 tiles wide. At the end of your turn every ALLY inside it — this unit included — refills to FULL Fuel.' },
+  // 🌊 Amphibious — the non-fish way into the Sea. Aquatic is a FACTION, so a
+  // construct or a hero that should wade needs an explicit opt-in rather than a
+  // faction it has no business carrying. It grants ENTRY only: the "cannot be
+  // attacked while submerged" rule stays exclusive to true Aquatic units.
+  amphibious:   { id: 'amphibious',   name: 'Amphibious', cat: 'mobility',
+    desc: '🌊 May enter Sea tiles like an Aquatic unit. Does NOT grant the Aquatic submerged-untargetable rule.' },
 
   // 🪤 ===== TRAP / WALL / SURFACE / WEATHER COUNTER-PLAY PASSIVES =====
   // These give players reactive tools so battlefield hazards (traps, walls,
@@ -74857,6 +74962,24 @@ const SURFACE_TYPES = {
            desc: 'Consecrated ground — a unit that ends its turn here is Blessed (+3 to all stats).' },
   cracked:{ id: 'cracked', name: 'Cracked Earth', icon: '🪨', standStatus: { id: 'stumble', dur: 1 },
            desc: 'Unstable, fractured ground — a unit that steps onto it may stumble and lose its turn.' },
+  // 🌊 SEA — deep water, and the only surface that is TERRAIN rather than a
+  // hazard. It deals no damage and applies no status; what it does is decide
+  // who may stand there and who may be hit there. See window.MythicSea
+  // (src/battle/effects.js) for the three rules:
+  //   • no Flying, no Aquatic  → cannot enter the tile at all
+  //   • Flying                 → passes over, still hittable by ranged / magic
+  //   • Aquatic, submerged     → untouchable except by STORM-element moves
+  // `defaultTurns: 99` makes a painted Sea effectively permanent: a coastline
+  // that evaporated after 3 turns would strand any ground unit that had
+  // rerouted around it, and terrain is not a timer.
+  // ⚠ Sea deliberately does NOT appear in the elemental reactions in
+  // _resolveSurfaceForMove — those all test `here.type === 'water'` (the
+  // puddle). One fireball does not flash an ocean into steam, one ice shard
+  // does not freeze it over, and a storm bolt does not electrify it: Storm's
+  // interaction with the Sea is the aquatic-targeting rule instead. To drain
+  // it, use the 🌊🥤 Absorb Surface effect.
+  sea:   { id: 'sea',   name: 'Sea',       icon: '🌊', isSea: true, defaultTurns: 99,
+           desc: 'Deep water. Ground units cannot enter it. Flying units pass over and can still be hit by ranged attacks. An Aquatic unit in the Sea cannot be attacked at all — only Storm-element moves reach it.' },
 };
 
 function _boardDims(state) {
@@ -74871,7 +74994,11 @@ function _surfaceAt(state, x, y) {
 function _setSurface(state, x, y, type, turns) {
   if (!state || !state.board || !state.board[y] || !state.board[y][x]) return;
   if (!type) { delete state.board[y][x].surface; return; }
-  state.board[y][x].surface = { type: type, turnsLeft: Math.max(1, (turns | 0) || 3) };
+  // A surface with `defaultTurns` (the Sea) uses it whenever the caller did not
+  // name a duration — terrain must not inherit the 3-turn hazard default.
+  const _sdef = (typeof SURFACE_TYPES !== 'undefined' && SURFACE_TYPES[type]) || null;
+  const _fallback = (_sdef && _sdef.defaultTurns) ? _sdef.defaultTurns : 3;
+  state.board[y][x].surface = { type: type, turnsLeft: Math.max(1, (turns | 0) || _fallback) };
 }
 function _clearSurface(state, x, y) {
   if (state && state.board && state.board[y] && state.board[y][x]) delete state.board[y][x].surface;
@@ -83562,6 +83689,10 @@ const getValidMoves = (unit, units, weather, board) => {
   // line blocks Move Piece, drag-to-move, and the AI from relocating it.
   if (unit && unit.isWall) return [];
   if ((unit.statusEffects || []).some(e => STATUS_EFFECTS[e.type] && STATUS_EFFECTS[e.type].skipTurn)) return [];
+  // ⛽ STALLED — a unit that has burned its last Fuel counter cannot move at
+  // all. Same shape as the skipTurn statuses above (zero tiles, no path), so
+  // Move Piece, drag-to-move and the AI are all covered by this one line.
+  try { if (window.MythicFuel && window.MythicFuel.isStalled(unit)) return []; } catch (e) {}
   const speed = getMoveRange(unit, weather);
   // Fall back to App.state.board if the caller didn't pass one (keeps legacy call sites working)
   if (!board) board = (App.state && App.state.board) || null;
@@ -83592,6 +83723,13 @@ const getValidMoves = (unit, units, weather, board) => {
       if (visited.has(key)) continue;
       if (getOccupant({ x: nx, y: ny }, units)) continue;
       if (board && board[ny] && board[ny][nx] && board[ny][nx].wall) continue;
+      // 🌊 SEA — deep water is impassable to anything that is not Flying or
+      // Aquatic. `continue` (not "enter but don't expand"): unlike a
+      // zone-of-control tile the Sea is not a legal DESTINATION either, so a
+      // ground unit must route entirely around it.
+      try {
+        if (window.MythicSea && window.MythicSea.blocksMove({ board: board }, unit, nx, ny)) continue;
+      } catch (e) {}
       // 🪦 Glowing tombstones block movement until they expire / revive
       if (typeof tileBlockedByTombstone === 'function' && App.state && tileBlockedByTombstone(App.state, nx, ny)) continue;
       visited.set(key, dist + 1);
@@ -85156,6 +85294,26 @@ const ONPLAY_TYPES = [
   // the AI auto-selects the best match.
   { id: 'searchDeck',    label: '🔍 Search Deck (find a card → add to hand)', needs: ['searchDeckType'] },
   { id: 'paintSurface',  label: '🌋 Paint Surface (lay a battlefield hazard)', needs: ['surfaceType', 'radius'] },
+  // 🌊🥤 ABSORB SURFACE — the counter-play to the Sea, and to every other
+  // surface. Drinks the tiles dry in `radius`, and heals the card's owner-side
+  // caster `amount` HP PER TILE absorbed, so soaking a wide sea is a real play
+  // rather than a slow cleanup. Leave the Hazard Type on Sea to make a
+  // dedicated water-drinker; pick another type (or none) for a generic sponge.
+  // Distinct from Clear Surfaces, which wipes indiscriminately and gains nothing.
+  { id: 'absorbSurface', label: '🌊🥤 Absorb Surface (drink up Sea / hazard tiles — heals per tile)', needs: ['surfaceType', 'radius', 'amount'] },
+  // ⛽ REFUEL — top Fuel counters back up on units in radius. `amount` 0 = fill
+  // to FULL (the common case); a positive amount adds exactly that many. This
+  // is the active, one-shot sibling of the Fuel Restore aura passive.
+  { id: 'refuel',        label: '⛽ Refuel (restore Fuel counters to units in radius)', needs: ['radius', 'amount', 'tSide'] },
+  // 🔵 ADD / REMOVE COUNTERS — the authorable half of the counter system. The
+  // KIND of counter comes from this card's own 🔵 Counters block (name, icon,
+  // cap), so one card defines a counter and its effects move that same counter
+  // around. `tSide` picks who receives them; radius bounds the sweep. Card-shaped
+  // permanents you control (your Location, your Enchantments, the Weather) are
+  // included when the side is 'ally' — "location cards can have counters" is
+  // this line.
+  { id: 'addCounters',    label: '🔵 Add Counters (place this card\'s counters on units / locations)', needs: ['amount', 'radius', 'tSide'] },
+  { id: 'removeCounters', label: '🔴 Remove Counters (strip counters off targets)', needs: ['amount', 'radius', 'tSide'] },
   // 🗑 Discard — force the OPPONENT to drop N random cards from their hand.
   // This used to be welded onto the Panicked status (a unit panicking would
   // also nuke a random card from the player's hand). That was too punishing
@@ -85348,7 +85506,8 @@ const ONPLAY_TYPE_GROUPS = [
   { label: '🃏 Cards & Hand',       ids: ['drawCards','drawFiltered','searchDeck','discardCards','discardSelf','peekHand','peekDiscard','peekBanish','stealCard','cheapenHand','scry','inspire','shuffleToDeck','copyLastMove'] },
   { label: '⚰️ Graveyard & Void',   ids: ['millSelf','millSearch','millEnemy','surveil','deckToGrave','reviveGrave','graveToHand','selfToHand','banishGrave','vanishGraveRandom','vanishGravePick','vanishGraveUnit','negateGraveyard','graveSteal','voidFromGrave','banishDeck','banishHand','drawFromVoid','recycleVoid'] },
   { label: '🌟 Summon & Sacrifice', ids: ['summon','summonSelf','summonFromZone','setFromZone','polycreate','sacrifice','sacrificeSelf','sacrificeToSummon','sacrificeNearby','tributeDraw','sendMatching'] },
-  { label: '🌦 Field, Weather & Day-Night', ids: ['setWeather','setTimeOfDay','clearWeather','weatherLock','paintSurface','clearSurfaces','clearWalls','clearTraps','revealTraps','destroyLocation'] },
+  { label: '🌦 Field, Weather & Day-Night', ids: ['setWeather','setTimeOfDay','clearWeather','weatherLock','paintSurface','absorbSurface','clearSurfaces','clearWalls','clearTraps','revealTraps','destroyLocation'] },
+  { label: '⛽🔵 Fuel & Counters', ids: ['refuel','addCounters','removeCounters'] },
   { label: '🔒 Locks, Reveal & Utility', ids: ['negateField','costSeal','callLock','sealSlot','delayedBlast','verdict','scanAllEnemies','scanAllTurn'] },
 ];
 // Render the grouped <optgroup> option list for a given selected id. Any effect
@@ -90939,6 +91098,10 @@ function _afxClassicLine(eff, card) {
       case 'bounce':        return "Returns the target to its owner's hand.";
       case 'destroyUnit':   return 'Destroys the target outright.';
       case 'paintSurface':  return eff.surface ? `Paints ${eff.surface} across the ground.` : 'Paints a hazard across the ground.';
+      case 'absorbSurface': return 'Drinks the surface off the surrounding tiles.';
+      case 'refuel':        return 'Refuels nearby units.';
+      case 'addCounters':   return 'Places counters on nearby cards.';
+      case 'removeCounters':return 'Strips counters off nearby cards.';
       case 'summonGrave':   return 'Summons a unit out of the graveyard.';
       default:              return '';
     }
@@ -94274,6 +94437,106 @@ function _applyOnPlayOneRaw(state, unit, card) {
     else       log.push({ msg: `⏱ ${unit.name} flash-scans — no enemy targets in sight.`, color: 'amber' });
     return { ...state, log };
   }
+  // 🌊🥤 ===== ABSORB SURFACE — drink the Sea (or any hazard) dry =====
+  // Removes matching surface tiles in radius and heals the absorbing unit for
+  // `amount` per tile. Leaving surfaceType blank absorbs EVERY surface, which
+  // is the generic-sponge authoring. Capped healing at maxHp like every other
+  // heal path so a wide sea cannot overheal.
+  if (eff.type === 'absorbSurface') {
+    const _aType = eff.surfaceType || 'sea';
+    const _perTile = Math.max(0, eff.amount | 0);
+    let drank = 0;
+    try {
+      if (window.MythicSea) drank = window.MythicSea.absorb(state, unit.pos.x, unit.pos.y, radius, _aType === 'any' ? null : _aType);
+    } catch (e) {}
+    const _sCfg = (typeof SURFACE_TYPES !== 'undefined' && SURFACE_TYPES[_aType]) || null;
+    const _sName = _sCfg ? (_sCfg.name || _aType) : 'surface';
+    if (drank > 0) {
+      let healed = 0;
+      if (_perTile > 0) {
+        state.units = state.units.map(u => {
+          if (u.id !== unit.id || !u.alive) return u;
+          const before = u.currentHp | 0;
+          const after = Math.min(u.maxHp | 0, before + _perTile * drank);
+          healed = after - before;
+          return { ...u, currentHp: after };
+        });
+      }
+      log.push({ msg: `🌊 ${unit.name} drinks up ${drank} ${_sName} tile${drank === 1 ? '' : 's'}`
+        + (healed > 0 ? ` and heals ${healed} HP!` : '!'), color: owner === 'player' ? 'green' : 'red' });
+    } else {
+      log.push({ msg: `🌊 ${unit.name} finds no ${_sName} to absorb.`, color: 'amber' });
+    }
+    return { ...state, log };
+  }
+  // ⛽ ===== REFUEL — top Fuel counters back up =====
+  if (eff.type === 'refuel') {
+    const _side = eff.tSide || 'ally';
+    const _add = eff.amount | 0;          // 0 = fill to full
+    let n = 0, pumped = 0;
+    try {
+      if (window.MythicFuel) {
+        state.units = state.units.map(u => {
+          if (!u || !u.alive || !u.pos) return u;
+          if (_side === 'ally' && u.owner !== owner) return u;
+          if (_side === 'enemy' && u.owner === owner) return u;
+          if (Math.max(Math.abs(u.pos.x - unit.pos.x), Math.abs(u.pos.y - unit.pos.y)) > radius) return u;
+          if (!window.MythicFuel.uses(u)) return u;
+          // Clone before refuelling: `refuel` mutates unit.fuel in place, and
+          // mutating the object still sitting in the previous state would make
+          // the change invisible to any renderer diffing on identity.
+          const c = { ...u, fuel: u.fuel ? { ...u.fuel } : null };
+          const got = window.MythicFuel.refuel(c, _add || null);
+          if (got > 0) { n++; pumped += got; }
+          return c;
+        });
+      }
+    } catch (e) {}
+    if (n > 0) log.push({ msg: `⛽ ${unit.name} refuels ${n} unit${n === 1 ? '' : 's'} (+${pumped} Fuel).`, color: owner === 'player' ? 'green' : 'red' });
+    else       log.push({ msg: `⛽ ${unit.name} finds nothing to refuel.`, color: 'amber' });
+    return { ...state, log };
+  }
+  // 🔵🔴 ===== ADD / REMOVE COUNTERS =====
+  // The counter KIND comes from this card's own 🔵 Counters block. A card with
+  // no block still works — it falls back to the generic 'charge' counter — so
+  // an admin can wire the effect first and name the counter afterwards.
+  if (eff.type === 'addCounters' || eff.type === 'removeCounters') {
+    const _sign = eff.type === 'addCounters' ? 1 : -1;
+    const _n = Math.max(1, eff.amount | 0) * _sign;
+    const _side = eff.tSide || 'ally';
+    let tok = null, touched = 0, moved = 0;
+    try {
+      if (window.MythicCounters) {
+        tok = window.MythicCounters.tokenOf(unit) || window.MythicCounters.tokenOf(eff) || null;
+        const _tid = tok ? tok.id : null;
+        (state.units || []).forEach(u => {
+          if (!u || !u.alive || !u.pos) return;
+          if (_side === 'ally' && u.owner !== owner) return;
+          if (_side === 'enemy' && u.owner === owner) return;
+          if (Math.max(Math.abs(u.pos.x - unit.pos.x), Math.abs(u.pos.y - unit.pos.y)) > radius) return;
+          const d = window.MythicCounters.add(state, u, _n, _tid);
+          if (d) { touched++; moved += Math.abs(d); }
+        });
+        // 🌋 Card-shaped permanents you control take counters too — this is the
+        // "not just units, location cards can have counters" half of the spec.
+        if (_side !== 'enemy') {
+          window.MythicCounters.permanentsFor(state, owner).forEach(pm => {
+            const d = window.MythicCounters.add(state, pm.card, _n, _tid, pm.kind);
+            if (d) { touched++; moved += Math.abs(d); }
+          });
+        }
+      }
+    } catch (e) {}
+    const _nm = (tok && tok.name) || 'Counter';
+    const _ic = (tok && tok.icon) || '🔵';
+    if (touched > 0) {
+      log.push({ msg: `${_ic} ${unit.name} ${_sign > 0 ? 'places' : 'strips'} ${moved} ${_nm}${moved === 1 ? '' : 's'} `
+        + `${_sign > 0 ? 'on' : 'from'} ${touched} card${touched === 1 ? '' : 's'}.`, color: owner === 'player' ? 'green' : 'red' });
+    } else {
+      log.push({ msg: `${_ic} ${unit.name} finds nothing to put ${_nm}s on.`, color: 'amber' });
+    }
+    return { ...state, log };
+  }
   // 🧹 ===== Clear surface hazards in radius =====
   if (eff.type === 'clearSurfaces') {
     let cleaned = 0;
@@ -97313,6 +97576,14 @@ const buildUnit = (cardData, owner, pos, heroPassive, levelOverride, xpOverride)
     flipEffect: (cardData.flipEffect && typeof cardData.flipEffect === 'object') ? cardData.flipEffect : null,
     // 🎯 Reactive ambush ({type,amount}) — strikes the enemy that springs the trap.
     ambushEffect: (cardData.ambushEffect && typeof cardData.ambushEffect === 'object') ? cardData.ambushEffect : null,
+    // 🔵 Counters — the card's authored counter block travels onto the board
+    // unit so the engine can read its name / cap / cost without a card lookup.
+    // The COUNTS themselves do NOT live here: they live in state._counters, keyed
+    // by unit id, because units are spread-copied on nearly every reducer pass
+    // and a count riding along on the object is one missed spread from being
+    // silently reset. See src/battle/effects.js.
+    counterToken: (cardData.counterToken && typeof cardData.counterToken === 'object')
+      ? { ...cardData.counterToken } : null,
     isFaceDown: false,
     placedThisTurn: false,
   };
@@ -99201,6 +99472,28 @@ const executeMove = (state, attacker, target, move) => {
     log.push({ msg: `${attacker.name}'s ${move.name} hits nothing — ${target.name} is not on the battlefield!`, color: 'amber' });
     s.log = log; return s;
   }
+  // ⛽ STALLED — out of Fuel means out of the fight until refuelled. Checked
+  // here rather than only in the UI so the AI, a charged release and a trap
+  // reaction all obey it too. The attacker is NOT marked as having acted: it
+  // did nothing, and marking it would hide the stall behind a spent turn.
+  try {
+    if (window.MythicFuel && window.MythicFuel.isStalled(attacker)) {
+      log.push({ msg: `⛽ ${attacker.name} is out of Fuel — it cannot act until it is refuelled.`, color: 'amber' });
+      s.log = log; return s;
+    }
+  } catch (e) {}
+  // 🌊 SUBMERGED — an Aquatic unit standing in the Sea cannot be attacked at
+  // all; only STORM-element moves reach it. Deliberately placed ABOVE the
+  // flying check and with no Unblockable / Skyguard escape hatch: those two
+  // passives answer FLIGHT, and the whole point of the rule is that nothing
+  // but Storm answers deep water.
+  try {
+    if (target && window.MythicSea && window.MythicSea.hidesFromAttack(s, target, move, attacker)) {
+      s.units = s.units.map(u => u.id === attacker.id ? markAttackerActed(u) : u);
+      log.push({ msg: `🌊 ${target.name} is submerged — only Storm attacks can reach it in the Sea.`, color: 'amber' });
+      s.log = log; return s;
+    }
+  } catch (e) {}
   // Attack — flying check first (skipped for Unblockable / Skyguard attackers)
   if (target && isEffectivelyFlying(target) && !canMoveHitTarget(move, target) && !hasPassive(attacker, 'unblockable') && !hasPassive(attacker, 'skyguard')) {
     s.units = s.units.map(u => u.id === attacker.id ? markAttackerActed(u) : u);
@@ -99736,6 +100029,10 @@ const executeMove = (state, attacker, target, move) => {
     // / hero-KO end-game checks all reuse the existing helpers so collateral plays
     // exactly like a primary hit.
     for (const splash of secondaries) {
+      // 🌊 Splash cannot wash a submerged Aquatic unit out of the Sea either.
+      try {
+        if (window.MythicSea && window.MythicSea.hidesFromAttack(s, splash, move, attacker)) continue;
+      } catch (e) {}
       if (isEffectivelyFlying(splash) && !canMoveHitTarget(move, splash)) {
         log.push({ msg: `${splash.name} is too high — splash misses!`, color: 'amber' });
         continue;
@@ -100281,6 +100578,12 @@ function getMovePath(unit, units, weather, target) {
       const occ = getOccupant({ x: nx, y: ny }, units);
       if (occ && occ.id !== unit.id) continue;
       if (board && board[ny] && board[ny][nx] && board[ny][nx].wall) continue;
+      // 🌊 Must mirror getValidMoves exactly — a path that walks through the
+      // Sea to a tile getValidMoves called legal would teleport a ground unit
+      // across water it is not allowed to touch.
+      try {
+        if (window.MythicSea && window.MythicSea.blocksMove({ board: board }, unit, nx, ny)) continue;
+      } catch (e) {}
       visited.set(key, { dist: dist + 1, parent: { x: pos.x, y: pos.y } });
       queue.push({ pos: { x: nx, y: ny }, dist: dist + 1 });
     }
@@ -101816,6 +102119,12 @@ const startTurn = (state, who) => {
 
 const endPlayerTurn = (state) => {
   let s = { ...state, turn: 'ai', selection: null };
+  // ⛽🔵 END-OF-TURN MECHANICS (window.MythicFuel / window.MythicCounters).
+  // Fuel burns down and green circles refill BEFORE the turnEnd triggers fire,
+  // so a trigger that reads "while this unit is stalled" sees the tank state
+  // this turn actually produced rather than last turn's.
+  try { if (window.MythicFuel) s = window.MythicFuel.tickSide(s, 'player'); } catch (e) {}
+  try { if (window.MythicCounters) s = window.MythicCounters.grantTick(s, 'player'); } catch (e) {}
   // ⚡ turnEnd triggers (player's turn ending). actorOwner = 'player'.
   try { if (typeof _fireTriggers === 'function') s = _fireTriggers(s, 'turnEnd', { actorOwner: 'player', side: 'player' }); } catch (e) {}
   // ⚰ In-Grave tick (player's turn ending) — fires before we transition the
@@ -101832,6 +102141,11 @@ const endAITurn = (state) => {
   // ✋ HAND LIMIT for the AI — applied to the state BEFORE the turn flips, so
   // the discard belongs to the turn that is ending, exactly like the player's.
   let s = (typeof _aiEnforceHandLimit === 'function') ? _aiEnforceHandLimit(state) : state;
+  // ⛽🔵 Same end-of-turn mechanics for the AI side. Applied to the state
+  // BEFORE the turn pointer flips so the burn belongs to the turn that is
+  // ending, exactly like the hand-limit discard above.
+  try { if (window.MythicFuel) s = window.MythicFuel.tickSide(s, 'ai'); } catch (e) {}
+  try { if (window.MythicCounters) s = window.MythicCounters.grantTick(s, 'ai'); } catch (e) {}
   s = { ...s, turn: 'player', turnNumber: s.turnNumber + 1, selection: null };
   // ⏳ END-OF-TURN GRAVE ABILITIES — processed as the owner's next turn begins
   // (equivalent timing, one clean hook): any grave card with an 'endTurn'
@@ -103973,7 +104287,12 @@ const _BB_SURFACE_FX = {
   caltrops: 'caltrops',    ice: 'ice',              blood: 'blood',
   steam: 'gas',            rift: 'void',            acid: 'toxic',
   poison: 'mire',          electrified: 'electric', holy: 'holy',
-  cracked: 'crack'
+  cracked: 'crack',
+  // 🌊 The 3D board has no dedicated deep-water shader, so the Sea borrows the
+  // puddle decal. That is a deliberate downgrade, not an oversight: the flat
+  // DOM board renders the real .surf-sea art, and a MISSING mapping here would
+  // trip the drift assert below and draw nothing at all in 3D.
+  sea: 'puddle'
 };
 // ⚠ DERIVE THIS FROM `SURFACE_TYPES`, NOT FROM THE CSS `.surf-*` CLASSES.
 // The first version was built from the stylesheet, which has 15 classes — but
@@ -125537,6 +125856,67 @@ function renderCardEditor() {
   // with the "Counter Unit" toggle enabled (hybrid units that can pop from
   // hand as counters while also deploying to the field). The descriptive
   // header changes between the two modes so it's clear which scope applies.
+  // 🔵 COUNTER TOKENS — Yu-Gi-Oh-style named counters that SIT ON a card.
+  // ⚠ NOT the same thing as the ⏱ Counter card below it, and the two are
+  // deliberately adjacent so nobody wires the wrong one:
+  //   • ⏱ Counter card  = a card you hold in hand and play to NEGATE something.
+  //   • 🔵 Counters      = little markers stacked on a card, which a card may
+  //                        later REMOVE to pay for an ability or a negation.
+  // Shown for EVERY card type on purpose — the spec is explicit that a location
+  // card holds counters just as a unit does. Runtime lives in
+  // src/battle/effects.js (window.MythicCounters); counts are stored in
+  // state._counters, never on the card.
+  const _ct = (card.counterToken && typeof card.counterToken === 'object') ? card.counterToken : {};
+  const _ctOn = !!(card.counterToken && _ct.id);
+  const counterTokenBlock = `
+    <div class="editor-field full" style="background:rgba(90,150,255,0.09);border:1px dashed rgba(120,180,255,0.55);padding:0.55rem 0.7rem;border-radius:4px;color:#cfe4ff;font-size:0.85rem">
+      🔵 <strong>Counters</strong> — named markers this card can carry (Spell Counters, Charge Counters, Bounty…).
+      Any card type can hold them, and this card can hand them to itself, to other cards, or to enemies.
+      Tick <em>Can be spent to counter</em> to let the stack pay for a negation <strong>instead of energy</strong>.
+      <span class="ink-dim">This is not the ⏱ Counter <em>card</em> type — that one is played from hand to negate.</span>
+    </div>
+    <div class="editor-field full">
+      <label class="cs-toggle" style="display:inline-flex;align-items:center;gap:0.4rem;cursor:pointer">
+        <input type="checkbox" id="ed-ctok-on" ${_ctOn ? 'checked' : ''}>
+        <span>Enable counters on this card</span>
+      </label>
+    </div>
+    <div class="editor-field"><label>Counter name</label>
+      <input id="ed-ctok-name" type="text" maxlength="24" placeholder="e.g. Spell Counter" value="${escapeHtml(_ct.name || '')}"></div>
+    <div class="editor-field"><label>Icon</label>
+      <input id="ed-ctok-icon" type="text" maxlength="4" style="text-align:center" value="${escapeHtml(_ct.icon || '🔵')}"></div>
+    <div class="editor-field"><label>Starts with</label>
+      <input id="ed-ctok-start" type="number" min="0" max="99" value="${_ct.start | 0}"></div>
+    <div class="editor-field"><label>Maximum (0 = no cap)</label>
+      <input id="ed-ctok-max" type="number" min="0" max="99" value="${_ct.max | 0}"></div>
+    <div class="editor-field"><label>Gives counters to</label>
+      <select id="ed-ctok-grantto">
+        ${[['self','Itself only'],['allies','Your cards (units + locations)'],['enemies','Enemy units'],['any','Any card on the field']]
+          .map(o => `<option value="${o[0]}" ${(_ct.grantTo || 'self') === o[0] ? 'selected' : ''}>${o[1]}</option>`).join('')}
+      </select></div>
+    <div class="editor-field"><label>Gives how many</label>
+      <input id="ed-ctok-grantamt" type="number" min="0" max="99" value="${(_ct.grantAmount == null ? 1 : _ct.grantAmount) | 0}"></div>
+    <div class="editor-field"><label>Gives them when</label>
+      <select id="ed-ctok-granton">
+        ${[['never','Never (only the Add Counters effect places them)'],['turnEnd','End of your turn (automatically)']]
+          .map(o => `<option value="${o[0]}" ${(_ct.grantOn || 'never') === o[0] ? 'selected' : ''}>${o[1]}</option>`).join('')}
+      </select></div>
+    <div class="editor-field full">
+      <label class="cs-toggle" style="display:inline-flex;align-items:center;gap:0.4rem;cursor:pointer">
+        <input type="checkbox" id="ed-ctok-cancounter" ${_ct.canCounter ? 'checked' : ''}>
+        <span>Can be spent to counter — remove counters instead of paying energy</span>
+      </label>
+    </div>
+    <div class="editor-field"><label>Counters removed per negation</label>
+      <input id="ed-ctok-cost" type="number" min="1" max="99" value="${(_ct.counterCost == null ? 1 : _ct.counterCost) | 0}"></div>
+    <div class="editor-field full">
+      <label>What may they be spent to counter? (leave all unticked = anything this card already counters)</label>
+      <div style="display:flex;flex-wrap:wrap;gap:0.35rem;margin-top:0.3rem">
+        ${COUNTER_TRIGGERS.map(c => `<label style="display:inline-flex;align-items:center;gap:0.3rem;background:rgba(20,26,48,0.6);border:1px solid rgba(120,180,255,0.4);padding:0.3rem 0.55rem;border-radius:4px;font-size:0.82rem;cursor:pointer"><input type="checkbox" data-ctok-target="${c.id}" ${(Array.isArray(_ct.counterTargets) && _ct.counterTargets.indexOf(c.id) >= 0) ? 'checked' : ''}> ${c.label}</label>`).join('')}
+      </div>
+    </div>
+  `;
+
   const _isCounterUnit = (type === 'unit' && card.isCounterUnit);
   const counterBlock = (type === 'counter' || _isCounterUnit) ? `
     <div class="editor-field full" style="background:rgba(255,90,90,0.08);border:1px dashed rgba(255,140,80,0.55);padding:0.55rem 0.7rem;border-radius:4px;color:#ffcfa0;font-size:0.85rem">
@@ -125768,6 +126148,7 @@ function renderCardEditor() {
         ${wallBlock}
         ${locationBlock}
         ${summonBlock}
+        ${counterTokenBlock}
         ${counterBlock}
         ${(type === 'spell' || type === 'trap') ? `
           <div class="editor-field full" style="border-top:1px dashed rgba(212,175,55,0.35);padding-top:0.7rem;margin-top:0.4rem"><label style="font-weight:700;color:#ffd166">⚡ Activation Cost (Yu-Gi-Oh-style — pay to activate this ${type})</label><div class="small-text ink-dim">The player picks what to pay before the ${type} resolves; it can't be activated unless the cost can be paid.</div></div>
@@ -127714,6 +128095,37 @@ function captureEditorIntoCard(card) {
     delete card.isSummon;
     delete card.deckable;
   }
+  // 🔵 Counter TOKENS — the markers a card carries (see counterTokenBlock).
+  // Saved for every card type, and stripped entirely when the toggle is off so
+  // a disabled block leaves no dead `counterToken` on the card for the engine
+  // to trip over. The token id is derived from the NAME rather than typed:
+  // two cards that both say "Spell Counter" must share one pool, or "remove 2
+  // Spell Counters" cannot be paid from a partner card.
+  const _ctokOn = document.getElementById('ed-ctok-on');
+  if (_ctokOn && _ctokOn.checked) {
+    const _v = (id, dflt) => { const el = document.getElementById(id); return el ? el.value : dflt; };
+    const _n = (id, dflt) => { const x = parseInt(_v(id, ''), 10); return isFinite(x) ? x : dflt; };
+    const _name = String(_v('ed-ctok-name', '') || 'Counter').trim() || 'Counter';
+    const _slug = _name.toLowerCase().replace(/[^a-z0-9]+/g, '') || 'charge';
+    const _cc = document.getElementById('ed-ctok-cancounter');
+    card.counterToken = {
+      id: _slug,
+      name: _name,
+      icon: String(_v('ed-ctok-icon', '🔵') || '🔵').slice(0, 4),
+      start: Math.max(0, Math.min(99, _n('ed-ctok-start', 0))),
+      max: Math.max(0, Math.min(99, _n('ed-ctok-max', 0))),
+      grantTo: _v('ed-ctok-grantto', 'self'),
+      grantAmount: Math.max(0, Math.min(99, _n('ed-ctok-grantamt', 1))),
+      grantOn: _v('ed-ctok-granton', 'never'),
+      canCounter: !!(_cc && _cc.checked),
+      counterCost: Math.max(1, Math.min(99, _n('ed-ctok-cost', 1))),
+      counterTargets: Array.from(document.querySelectorAll('[data-ctok-target]:checked'))
+        .map(c => c.getAttribute('data-ctok-target')),
+    };
+  } else if (_ctokOn) {
+    delete card.counterToken;
+  }
+
   // ⏱ Counter — capture trigger checkboxes + effect + response-window.
   // Path A: pure Counter card (type === 'counter')
   // Path B: hybrid Counter Unit (type === 'unit' AND ed-counter-unit-on checked)
@@ -136040,9 +136452,19 @@ function _aiAutoCounter(state, opts) {
     }
   } catch (e) {}
   if (!_pool.length) _pool = candidates;
-  const cheapest = _pool.reduce((m, c) => (c.cost | 0) < (m.cost | 0) ? c : m, _pool[0]);
+  // `let`, not `const`: the counter-token payment path below replaces this with
+  // a cost-0 copy so the single energy deduction further down charges nothing.
+  let cheapest = _pool.reduce((m, c) => (c.cost | 0) < (m.cost | 0) ? c : m, _pool[0]);
   const energy = (state.ai && state.ai.energy) | 0;
-  if (energy < (cheapest.cost | 0)) return false;
+  // 🔵 The AI may also pay by removing its counters. Charged HERE, before the
+  // random fire-chance roll below, would waste counters on a counter it then
+  // declines — so this only ESTABLISHES affordability; the actual removal
+  // happens after the roll, alongside the energy deduction.
+  let _aiPayCounters = false;
+  if (energy < (cheapest.cost | 0)) {
+    if (!_counterPayableWithTokens(state, 'ai', cheapest, opts.trigger)) return false;
+    _aiPayCounters = true;
+  }
   // Probability — heavier triggers (ultimate, spell) get higher chance to
   // counter; basic attacks get a lower chance so the AI doesn't trivialize
   // routine play.
@@ -136051,6 +136473,15 @@ function _aiAutoCounter(state, opts) {
     unitEffect: 45, location: 45, weather: 45, attack: 30, move: 20,
   })[opts.trigger] || 35;
   if (Math.random() * 100 >= FIRE_PCT) return false;
+  // 🔵 Now that the AI has committed, remove the counters. A failure here (the
+  // stack changed since the affordability check) aborts the whole counter
+  // rather than letting it resolve for free.
+  if (_aiPayCounters) {
+    try {
+      if (!window.MythicCounters.payForCounter(state, 'ai', cheapest)) return false;
+      cheapest = Object.assign({}, cheapest, { cost: 0 });
+    } catch (e) { return false; }
+  }
   // 🔒 Lockdown counter — shut the action's SOURCE side out of that category for the rest of their turn.
   try { _battleApplyCounterLock(state, cheapest, (opts.source && opts.source.owner) || 'player'); } catch (e) {}
   // Apply effect.
@@ -136172,6 +136603,15 @@ let _battleCounterPromptBusy = false;
 // during the wait, JS exception in render, etc.), this kicks the next caller
 // free after BUSY_WAIT_MAX_MS instead of waiting forever.
 const _COUNTER_BUSY_WAIT_MAX_MS = 2000;
+/* 🔵 Can `owner` activate this counter card by REMOVING its counters instead of
+   paying energy? Thin wrapper over window.MythicCounters so both the player
+   filter and the AI filter ask the question exactly one way, and so a missing
+   module degrades to "no, pay energy" rather than throwing inside a filter. */
+function _counterPayableWithTokens(state, owner, card, trigger) {
+  try {
+    return !!(window.MythicCounters && window.MythicCounters.canPayWithCounters(state, owner, card, trigger));
+  } catch (e) { return false; }
+}
 async function tryPromptCounter(state, opts) {
   if (!opts || !opts.trigger || !state) return false;
   if (_battleIsLocked(state, 'player', 'counter')) return false;   // 🔒 you're locked out of playing counters
@@ -136194,7 +136634,10 @@ async function tryPromptCounter(state, opts) {
     && (c.counterTriggers.indexOf(opts.trigger) >= 0
         || (_hitsHero && c.counterTriggers.indexOf('heroDamaged') >= 0))
     && _counterScopeOk(c, opts)
-    && _energy >= (c.cost | 0));   // only offer counters the player can actually afford
+    // 🔵 Affordable EITHER with energy OR by removing this card's counters.
+    // The counter path is checked second so a card that can pay both ways is
+    // still offered when energy alone is short.
+    && (_energy >= (c.cost | 0) || _counterPayableWithTokens(state, 'player', c, opts.trigger)));
   // 🪦 REACTIVE GRAVE ABILITIES (v116n) — graveyard cards whose graveActive.trigger
   // matches this event. Banish-to-react from the grave (no energy cost). This is
   // "negate an attack from the graveyard" and other Yu-Gi-Oh grave reactions.
@@ -136360,10 +136803,22 @@ function _battleActivateCounter(cardInstanceId) {
   const idx = (s.player.hand || []).findIndex(c => c && c.instanceId === cardInstanceId);
   if (idx < 0) return;
   const card = s.player.hand[idx];
-  const cost = card.cost | 0;
+  let cost = card.cost | 0;
+  // 🔵 COUNTER PAYMENT — try the counter stack FIRST when energy is short, and
+  // only then refuse. Paying with counters zeroes the energy cost for this
+  // activation (`cost = 0` below), so the single energy deduction further down
+  // stays the one and only place energy moves.
+  let _paidWithCounters = false;
   if ((s.player.energy | 0) < cost) {
-    if (typeof showToast === 'function') showToast(`⚠ Not enough energy (need ${cost}).`);
-    return;
+    const _tp = (App.ui && App.ui.counterPrompt && App.ui.counterPrompt.trigger) || null;
+    if (_counterPayableWithTokens(s, 'player', card, _tp)
+        && window.MythicCounters.payForCounter(s, 'player', card)) {
+      _paidWithCounters = true;
+      cost = 0;
+    } else {
+      if (typeof showToast === 'function') showToast(`⚠ Not enough energy (need ${cost}).`);
+      return;
+    }
   }
   // 🪖 HYBRID PATH — Counter Unit: pop from hand AND deploy to the field.
   // The unit lands on the first valid placement tile near the player's hero.
@@ -136598,7 +137053,17 @@ function renderCounterPrompt() {
             <div class="counter-prompt-card-icon">${escapeHtml(c.icon || '⏱')}</div>
             <div class="counter-prompt-card-body">
               <div class="counter-prompt-card-name">${escapeHtml(c.name)}</div>
-              <div class="counter-prompt-card-cost">Cost: ${c.cost | 0} ⚡</div>
+              <div class="counter-prompt-card-cost">Cost: ${c.cost | 0} ⚡${(function () {
+                // 🔵 A card that can pay by REMOVING counters says so here. Without
+                // this the prompt offers a card the player cannot afford in energy
+                // and gives no hint why clicking it works anyway.
+                try {
+                  const tk = window.MythicCounters && window.MythicCounters.tokenOf(c);
+                  if (!tk || !tk.canCounter) return '';
+                  const have = window.MythicCounters.totalFor(App.state, 'player', tk.id);
+                  return ` <span style="color:#8fc4ff">· or ${tk.counterCost} ${escapeHtml(tk.icon || '🔵')} (${have} held)</span>`;
+                } catch (e) { return ''; }
+              })()}</div>
               ${c.counterEffect ? `<div class="counter-prompt-card-effect small-text ink-dim">${escapeHtml(c.counterEffect)}</div>` : ''}
             </div>
           </button>`).join('')}
@@ -141519,6 +141984,24 @@ function renderBoard() {
     return `<div class="board pixi-board" id="pixi-board-mount" aria-label="Battlefield (Pixi renderer)"></div>`;
   }
   const s = App.state;
+  // 🟢 FUEL RESTORE aura, built ONCE per render (see the tile loop). A Map of
+  // 'x,y' -> owner; null when nothing on the board projects a circle, which is
+  // the overwhelmingly common case and costs the tile loop nothing.
+  let _fuelAuraMap = null;
+  try {
+    if (window.MythicFuel) {
+      const _at = window.MythicFuel.auraTiles(s);
+      if (_at.length) {
+        _fuelAuraMap = new Map();
+        // Player circles win a contested tile: you must be able to see your own
+        // supply line, and a friendly refill is the actionable half for you.
+        for (const t of _at) {
+          const k = t.x + ',' + t.y;
+          if (t.owner === 'player' || !_fuelAuraMap.has(k)) _fuelAuraMap.set(k, t.owner);
+        }
+      }
+    }
+  } catch (e) { _fuelAuraMap = null; }
   const sel = App.ui.selectedUnitId ? s.units.find(u => u.id === App.ui.selectedUnitId) : null;
   const moveCard = App.ui.selectedCardId ? s.player.hand.find(c => c.instanceId === App.ui.selectedCardId) : null;
   const aiActorId = App.ui.aiActorId;
@@ -141702,6 +142185,14 @@ function renderBoard() {
       // block). Without it a painted tile looked unreachable even though every
       // one of them is a legal move.
       if (tile.surface && tile.surface.type) tileClasses.push('has-surface');
+      // 🟢 FUEL RESTORE — the green circle. Computed ONCE per render into
+      // `_fuelAuraMap` (below the board loop's setup) rather than per tile:
+      // rebuilding the aura list 7×9 times a frame is 63 sweeps of the unit
+      // array for a purely cosmetic ring.
+      if (_fuelAuraMap) {
+        const _fa = _fuelAuraMap.get(x + ',' + y);
+        if (_fa) { tileClasses.push('fuel-aura'); if (_fa !== 'player') tileClasses.push('enemy-aura'); }
+      }
       if (tile.location) tileClasses.push('loc-' + tile.location);
       if (tile.trap && tile.trap.owner === 'player') tileClasses.push('has-trap');
       if (tile.event) tileClasses.push('has-event');
@@ -141843,7 +142334,7 @@ function renderBoard() {
           else if (occupant.owner === 'player' && !occupant.isHero) polyClass = ' poly-not-material';
         }
         cellInner = `
-          <div class="unit ${occupant.owner}${occupant.isHero ? ' hero' : ''}${occupant._decoyOf ? ' decoy' : ''}${occupant.isFaceDown ? ' facedown' : ''}${isSel ? ' selected' : ''}${occupant.flying ? ' flying' : ''}${isAIActor ? ' ai-actor' : ''} rarity-${rarity}${polyClass}" data-unit="${occupant.id}" data-y="${y}" data-rarity="${rarity}">
+          <div class="unit ${occupant.owner}${occupant.isHero ? ' hero' : ''}${occupant._decoyOf ? ' decoy' : ''}${occupant.isFaceDown ? ' facedown' : ''}${isSel ? ' selected' : ''}${occupant.flying ? ' flying' : ''}${isAIActor ? ' ai-actor' : ''}${(function () { try { return (window.MythicFuel && window.MythicFuel.isStalled(occupant)) ? ' stalled' : ''; } catch (e) { return ''; } })()} rarity-${rarity}${polyClass}" data-unit="${occupant.id}" data-y="${y}" data-rarity="${rarity}">
             ${occupant.isHero ? `<img class="hero-board-marker" src="assets/artwork/gameicons/hero-board-icon.png" alt="Hero" title="Hero — your match depends on keeping yours alive" draggable="false" loading="lazy">` : ''}
             ${occupant.isFaceDown ? '' : '<div class="unit-frame"></div>'}
             <div class="unit-icon">${unitBoardVisual(occupant)}</div>
@@ -141882,6 +142373,32 @@ function renderBoard() {
               } catch (e) { return ''; }
             })()}
             ${statusIcons ? `<div class="unit-status">${statusIcons}</div>` : ''}
+            ${/* ⛽ FUEL PIPS + 🔵 COUNTER BADGE. Both read from
+                  src/battle/effects.js and both render NOTHING when the unit
+                  does not use the mechanic, so no existing card changes look. */ ''}
+            ${(function () {
+              try {
+                if (!window.MythicFuel || !window.MythicFuel.uses(occupant)) return '';
+                const f = window.MythicFuel.ensure(occupant);
+                let pips = '';
+                for (let i = 0; i < f.max; i++) pips += `<span class="fuel-pip${i < f.left ? '' : ' spent'}"></span>`;
+                const t = f.left > 0
+                  ? `Fuel ${f.left}/${f.max} — loses 1 at the end of your turn.`
+                  : `Out of Fuel — STALLED. Cannot move or attack until refuelled.`;
+                return `<div class="fuel-badge" title="${escapeHtml(t)}">${pips}</div>`;
+              } catch (e) { return ''; }
+            })()}
+            ${(function () {
+              try {
+                if (!window.MythicCounters) return '';
+                const list = window.MythicCounters.listOn(s, occupant);
+                if (!list.length) return '';
+                const tok = window.MythicCounters.tokenOf(occupant) || {};
+                const total = list.reduce((n, c) => n + c.n, 0);
+                const nm = tok.name || 'Counter';
+                return `<div class="counter-badge" title="${escapeHtml(total + ' ' + nm + (total === 1 ? '' : 's'))}">${escapeHtml(tok.icon || '🔵')}${total}</div>`;
+              } catch (e) { return ''; }
+            })()}
             ${realStar}
             ${overwatchBadge}
             ${bleedBadge}
@@ -142781,6 +143298,31 @@ function renderCardDetailModal() {
       </div>
     </div>` : '';
 
+  // 🔵 COUNTERS the card CARRIES — the markers, not the ⏱ Counter card type.
+  // Shown for every card type because any of them can hold counters; renders
+  // nothing at all when the card has no counter block.
+  const counterTokenHtml = (function () {
+    try {
+      const tk = window.MythicCounters && window.MythicCounters.tokenOf(card);
+      if (!tk) return '';
+      const who = { self: 'itself only', allies: 'your cards', enemies: 'enemy units', any: 'any card' }[tk.grantTo] || tk.grantTo;
+      const when = tk.grantOn === 'turnEnd' ? 'at the end of your turn' : 'only via an Add Counters effect';
+      return `
+    <div class="modal-section">
+      <div class="modal-section-title">${escapeHtml(tk.icon || '🔵')} ${escapeHtml(tk.name)}s</div>
+      <div style="border:1px solid rgba(120,180,255,0.4);border-left:3px solid #6ba8ff;border-radius:6px;padding:7px 10px;background:linear-gradient(90deg,rgba(90,150,255,0.10),rgba(20,12,40,0.4))">
+        <div style="color:#cfe4ff;font-size:0.82rem">
+          Enters play with <strong>${tk.start}</strong>${tk.max > 0 ? ` · caps at <strong>${tk.max}</strong>` : ' · no cap'}.
+        </div>
+        ${tk.grantAmount > 0 ? `<div style="color:#cfe4ff;font-size:0.82rem;margin-top:3px">Gives <strong>${tk.grantAmount}</strong> to ${escapeHtml(who)}, ${escapeHtml(when)}.</div>` : ''}
+        ${tk.canCounter
+          ? `<div style="color:#ffd166;font-size:0.82rem;margin-top:4px">🚫 Remove <strong>${tk.counterCost}</strong> to counter${tk.counterTargets.length ? ': ' + escapeHtml(tk.counterTargets.map(t => CARD_COUNTER_TRIGGER_LABELS[t] || t).join(', ')) : ' anything this card can answer'} — <em>instead of paying energy</em>.</div>`
+          : `<div style="color:#a89878;font-size:0.78rem;margin-top:4px">These counters cannot be spent to counter — they are a resource for other effects.</div>`}
+      </div>
+    </div>`;
+    } catch (e) { return ''; }
+  })();
+
   // ⚰ In-Grave effect — lingering / zombie behavior while the card sits in
   // the graveyard. Shows the trigger + effect + chance so the player knows
   // what this card will do if discarded / killed.
@@ -142883,6 +143425,7 @@ function renderCardDetailModal() {
             ${onPlayHtml}
             ${activationCostHtml}
             ${counterHtml}
+            ${counterTokenHtml}
             ${handHtml}
             ${inGraveHtml}
             ${onResHtml}
@@ -150223,6 +150766,10 @@ const AI_FX_VALUE = {
   deckToGrave: 14, millSearch: 12, millSelf: 6, discardSelf: 4, shuffleToDeck: 26,
   // —— board control / terrain ——
   paintSurface: 20, clearSurfaces: 14, clearWalls: 16, clearTraps: 18,
+  // ⛽🔵 Absorb prices above Clear Surfaces because it also heals; Refuel prices
+  // like a small heal (it un-stalls a body); counters price low on their own —
+  // their value is in what they later PAY for, which the scorer cannot see.
+  absorbSurface: 22, refuel: 20, addCounters: 12, removeCounters: 14,
   revealTraps: 10, clearWeather: 14, weatherLock: 18, swapPositions: 16,
   // —— tempo & support ——
   empowerTeam: 66, buffAllies: 22, applyBuffDebuff: 20, aoeStatus: 18,
@@ -151489,6 +152036,10 @@ function doAIStep() {
         for (const t of playerUnits) {
           if (distance(probe.pos, t.pos) > aiRange) continue;
           if (isEffectivelyFlying(t) && !canMoveHitTarget(move, t)) continue;
+          // 🌊 Don't let the AI burn its turn swinging at a submerged fish.
+          try {
+            if (window.MythicSea && window.MythicSea.hidesFromAttack(App.state, t, move, probe)) continue;
+          } catch (e) {}
           // 👑 Take-control can't seize heroes / walls / spellshielded units.
           if (_isControl && (t.isHero || t.isWall || (typeof hasPassive === 'function' && hasPassive(t, 'spellshield')))) continue;
           // 🎭 Happy / Follow My Lead — skip targets the attacker is forbidden from
@@ -211042,6 +211593,18 @@ function _describeOnPlayEffectBody(eff) {
     case 'revealTraps':   return 'Reveals every enemy trap on the board (still active, but no longer hidden).';
     case 'clearWalls':    return `Smashes enemy walls within ${r} tile${r === 1 ? '' : 's'} of this unit.`;
     case 'clearSurfaces': return `Wipes surface hazards (oil/fire/water/etc.) within ${r} tile${r === 1 ? '' : 's'}.`;
+    case 'absorbSurface': {
+      const _st = eff.surfaceType || 'sea';
+      const _sn = (typeof SURFACE_TYPES !== 'undefined' && SURFACE_TYPES[_st] && SURFACE_TYPES[_st].name) || _st;
+      const _hp = eff.amount | 0;
+      return `Absorbs every ${_sn} tile within ${r} tile${r === 1 ? '' : 's'}`
+        + (_hp > 0 ? `, healing ${_hp} HP per tile drunk.` : '.');
+    }
+    case 'refuel': return (eff.amount | 0) > 0
+      ? `Restores ${eff.amount | 0} Fuel counter${(eff.amount | 0) === 1 ? '' : 's'} to units within ${r} tile${r === 1 ? '' : 's'}.`
+      : `Refuels units within ${r} tile${r === 1 ? '' : 's'} to FULL.`;
+    case 'addCounters':    return `Places ${Math.max(1, eff.amount | 0)} counter${Math.max(1, eff.amount | 0) === 1 ? '' : 's'} on cards within ${r} tile${r === 1 ? '' : 's'}.`;
+    case 'removeCounters': return `Removes ${Math.max(1, eff.amount | 0)} counter${Math.max(1, eff.amount | 0) === 1 ? '' : 's'} from cards within ${r} tile${r === 1 ? '' : 's'}.`;
     case 'scanAllEnemies': return 'Scans every enemy unit + hero — type, faction, element, passives, moves, and stats are all revealed for the rest of the match.';
     case 'scanAllTurn':    return '⏱ Flash-scans every enemy unit + hero for THIS TURN ONLY. Intel goes dark again at end of turn.';
     case 'peekHand':       return '👁 Reveals the enemy hand — you see every card they are holding.';
@@ -223113,6 +223676,7 @@ render();
 <link rel="stylesheet" href="src/battle/units.css?v=120k6">
 <link rel="stylesheet" href="src/battle/chrome.css?v=120k6">
 <link rel="stylesheet" href="src/battle/alive.css?v=120k6">
+<script src="src/battle/effects.js?v=120w7" defer></script>
 <script src="src/battle/combat.js?v=120m4" defer></script>
 <script src="src/battle/targeting.js?v=120k6" defer></script>
 <link rel="stylesheet" href="src/sprites/frames.css?v=120k3">

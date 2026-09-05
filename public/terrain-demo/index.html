@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mythic Spellbook — Terrain demo</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&family=EB+Garamond:ital,wght@0,500;1,500&display=swap" rel="stylesheet">
+<!-- Loaded exactly as the live game will: classic script, absolute path
+     (public/ is the deploy root, so /src/terrain/ resolves from anywhere). -->
+<link rel="stylesheet" href="/src/terrain/terrain.css">
+<script src="/src/terrain/terrain.js"></script>
+<style>
+:root { --bg:#0b0a10; --panel:#15131d; --line:#2c2838; --ink:#e8dfc8; --dim:#9a9083; --gold:#f0c96a; --tile:56px; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--ink); font-family:"EB Garamond",Georgia,serif; font-size:15px; }
+header { display:flex; align-items:center; gap:14px; padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line); flex-wrap:wrap; }
+h1 { font-family:Cinzel,serif; font-size:18px; color:var(--gold); margin:0; }
+.sub { color:var(--dim); font-size:13px; }
+.spacer { flex:1; }
+button { font:inherit; color:var(--ink); background:#1d1a27; border:1px solid var(--line); border-radius:6px; padding:5px 12px; cursor:pointer; }
+button:hover { border-color:var(--gold); }
+button.primary { color:var(--gold); border-color:var(--gold); background:#3a2f12; font-family:Cinzel,serif; font-weight:700; }
+input { width:100px; background:var(--bg); color:var(--ink); border:1px solid var(--line); border-radius:6px; padding:4px 6px; font:inherit; }
+main { display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:14px; padding:14px; align-items:start; }
+@media (max-width:820px) { main { grid-template-columns:1fr; } :root { --tile:44px; } }
+.boardwrap { display:flex; flex-direction:column; align-items:center; gap:10px; }
+.board { display:grid; grid-template-columns:repeat(8,var(--tile)); grid-template-rows:repeat(7,var(--tile)); gap:2px; padding:6px; background:#06060a; border:1px solid var(--line); border-radius:10px; }
+/* .tile mimics the live board cell: relative, so the terrain overlay fills it */
+.tile { position:relative; border-radius:4px; background:#1a1815; border:1px solid #26231e; display:grid; place-items:center; user-select:none; overflow:hidden; cursor:pointer; }
+.tile .coord { position:absolute; right:3px; bottom:1px; font-size:9px; color:var(--dim); opacity:.5; z-index:1; }
+.tile.move-target { box-shadow: inset 0 0 0 2px #5aa2e8; }
+.unit { position:relative; width:82%; height:82%; border-radius:6px; display:grid; place-items:center; font-size:24px; background:#1a2536; border:1px solid #3f6ea5; z-index:2; }
+.unit.selected { box-shadow:0 0 0 2px #fff; }
+.unit.enemy { background:#341a1d; border-color:#a04040; }
+.hint { color:var(--gold); font-style:italic; min-height:20px; text-align:center; }
+.panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
+.panel h3 { font-family:Cinzel,serif; font-size:13px; color:var(--gold); letter-spacing:.06em; text-transform:uppercase; margin:0 0 8px; }
+.name { font-family:Cinzel,serif; font-weight:700; }
+.row { display:flex; gap:6px; flex-wrap:wrap; margin-top:6px; }
+.tag { font-size:11px; padding:2px 6px; border-radius:4px; background:#1d1a27; border:1px solid var(--line); }
+.tag.up { border-color:#6fc47a; color:#6fc47a; } .tag.dn { border-color:#e0574f; color:#e0574f; }
+.legend { display:grid; grid-template-columns:1fr 1fr; gap:4px 10px; font-size:12px; color:var(--dim); white-space:nowrap; }
+.legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; vertical-align:middle; background:hsl(var(--h),40%,32%); }
+.log { max-height:200px; overflow:auto; font-size:13px; line-height:1.35; }
+.log div { border-bottom:1px dotted #23202c; padding:2px 0; }
+.roster { display:flex; flex-wrap:wrap; gap:6px; }
+.roster button { padding:3px 8px; font-size:13px; }
+.roster button.on { border-color:var(--gold); color:var(--gold); }
+footer { padding:8px 16px; color:var(--dim); font-size:12px; border-top:1px solid var(--line); background:var(--panel); }
+</style>
+</head>
+<body>
+<header><h1>🌍 Terrain</h1><span class="sub">elemental ground · Empowered +25% · Hindered −25% · flyers ignore · labyrinth blocks · flux every 2 turns</span>
+<span class="spacer"></span><label class="sub">seed <input id="seed"></label><button id="new">New board</button><button id="turn" class="primary">End turn</button></header>
+<main>
+  <div class="boardwrap"><div class="board" id="board"></div><div class="hint" id="hint">Click a unit, then a blue tile to move it. Watch its stats change with the ground.</div>
+    <div class="panel" style="width:100%"><h3>Roster — click to swap the selected unit's card</h3><div class="roster" id="roster"></div></div></div>
+  <div style="display:flex;flex-direction:column;gap:12px">
+    <div class="panel" id="upanel"><h3>Unit</h3><div class="sub">Select a unit.</div></div>
+    <div class="panel"><h3>Terrain</h3><div class="legend" id="legend"></div></div>
+    <div class="panel"><h3>Log</h3><div class="log" id="log"></div></div>
+  </div>
+</main>
+<footer>STRONG_VS below is the live game's table (generated from index.html). The tile markup mirrors the live board cell so terrain.css is exercised as-is.</footer>
+<script>
+const STRONG_VS = {"fire":["nature","wind","ice","metal"],"water":["fire","earth","blood"],"earth":["fire","storm","poison"],"wind":["earth","nature","poison"],"nature":["water","shadow","crystal"],"shadow":["light","nature","psychic"],"light":["shadow","storm","void"],"storm":["water","wind","metal"],"ice":["nature","water","blood"],"metal":["earth","ice","crystal"],"poison":["nature","water","light"],"psychic":["poison","fire","void"],"arcane":["shadow","ice","metal"],"void":["psychic","arcane","crystal"],"blood":["light","ice","nature"],"crystal":["storm","fire","arcane"],"corruption":["nature","light","water"],"spirit":["metal","shadow","psychic"],"lava":["ice","metal","nature"],"sound":["crystal","ice","psychic"],"gravity":["wind","fire","spirit"]};
+const ROSTER = [{"id":"goblin","name":"Goblin Scout","icon":"👺","elements":["shadow"],"flying":false,"stats":{"hp":14,"atk":10,"def":5,"mag":5,"res":5,"spd":2}},{"id":"orc","name":"Orc Warrior","icon":"🧌","elements":["earth"],"flying":false,"stats":{"hp":24,"atk":16,"def":10,"mag":5,"res":7,"spd":1}},{"id":"sprite","name":"Fire Sprite","icon":"🔥","elements":["fire"],"flying":true,"stats":{"hp":16,"atk":6,"def":6,"mag":18,"res":12,"spd":1}},{"id":"troll","name":"Cave Troll","icon":"👹","elements":["nature","earth"],"flying":false,"stats":{"hp":40,"atk":22,"def":15,"mag":5,"res":10,"spd":1}},{"id":"priest","name":"Healing Priest","icon":"✨","elements":["light"],"flying":false,"stats":{"hp":18,"atk":5,"def":7,"mag":14,"res":14,"spd":1}},{"id":"wolf","name":"Dire Wolf","icon":"🐺","elements":["nature"],"flying":false,"stats":{"hp":20,"atk":14,"def":8,"mag":5,"res":8,"spd":2}},{"id":"golem","name":"Stone Golem","icon":"🗿","elements":["earth"],"flying":false,"stats":{"hp":32,"atk":14,"def":18,"mag":5,"res":15,"spd":1}},{"id":"lich","name":"Lich Apprentice","icon":"💀","elements":["shadow","storm"],"flying":false,"stats":{"hp":20,"atk":6,"def":8,"mag":20,"res":16,"spd":1}},{"id":"archer","name":"Elven Archer","icon":"🏹","elements":["wind"],"flying":false,"stats":{"hp":16,"atk":16,"def":6,"mag":8,"res":8,"spd":1}},{"id":"spider","name":"Giant Spider","icon":"🕷️","elements":["shadow","nature"],"flying":false,"stats":{"hp":18,"atk":12,"def":6,"mag":8,"res":6,"spd":2}},{"id":"paladin","name":"Paladin","icon":"🛡️","elements":["light"],"flying":false,"stats":{"hp":34,"atk":18,"def":16,"mag":12,"res":14,"spd":1}},{"id":"ice","name":"Ice Elemental","icon":"❄️","elements":["water","wind"],"flying":true,"stats":{"hp":22,"atk":8,"def":10,"mag":18,"res":16,"spd":1}}];
+const T = MythicTerrain.configure({ strongVs: STRONG_VS });
+const W = 8, H = 7;
+const ELEM_ICON = { fire:'🔥', water:'💧', earth:'🪨', wind:'🌬️', light:'✨', shadow:'🌑', nature:'🌿', storm:'⚡', ice:'❄️', metal:'⚙️' };
+let state, rng, sel = null, shifted = null;
+const q = (s) => document.querySelector(s);
+
+function build(seedText) {
+  const seed = seedText ? (Number(seedText) >>> 0 || 1) : ((Math.random() * 0xffffffff) >>> 0);
+  rng = T.makeRng(seed);
+  q('#seed').value = seed;
+  const board = Array.from({ length: H }, (_, y) => Array.from({ length: W }, (_, x) => ({ x, y, location: null, trap: null, event: null })));
+  const mk = (card, owner, x, y) => ({ id: owner + card.id, owner, alive: true, pos: { x, y }, name: card.name, icon: card.icon, elements: card.elements, flying: card.flying, stats: { ...card.stats } });
+  state = { board, turnNumber: 1, log: [], units: [
+    { id: 'hero', owner: 'player', isHero: true, alive: true, pos: { x: 4, y: 6 }, name: 'Your hero', icon: '👑', elements: [], stats: { atk: 18, def: 12, mag: 12, res: 12 } },
+    mk(ROSTER[0], 'player', 2, 5), mk(ROSTER[2], 'player', 5, 5), mk(ROSTER[1], 'ai', 3, 1), mk(ROSTER[6], 'ai', 5, 1),
+  ] };
+  const protect = []; for (let x = 0; x < W; x++) protect.push({ x, y: 0 }, { x, y: H - 1 });
+  T.seed(state, { rng, protect });
+  state.log.push({ msg: 'Board seeded (' + seed + ').' });
+  sel = null; shifted = null; render();
+}
+
+function endTurn() {
+  state.turnNumber++;
+  shifted = T.tick(state, { rng });
+  if (!shifted.length) state.log.push({ msg: 'Turn ' + state.turnNumber + ' — the ground holds.' });
+  render();
+}
+
+function moves(u) {
+  const out = [];
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+    const x = u.pos.x + dx, y = u.pos.y + dy;
+    if ((!dx && !dy) || x < 0 || y < 0 || x >= W || y >= H) continue;
+    if (state.units.some((o) => o.alive && o.pos.x === x && o.pos.y === y)) continue;
+    if (T.blocks(state, x, y)) continue;      // the movement hook
+    out.push({ x, y });
+  }
+  return out;
+}
+
+function render() {
+  const b = q('#board'); b.innerHTML = '';
+  const u = sel && state.units.find((o) => o.id === sel);
+  const mv = u ? moves(u) : [];
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const d = document.createElement('div');
+    d.className = 'tile' + T.cellClass(state, x, y, shifted) + (mv.some((m) => m.x === x && m.y === y) ? ' move-target' : '');
+    d.title = T.cellTitle(state, x, y) || 'Plain';
+    d.innerHTML = T.cellHtml(state, x, y) + '<span class="coord">' + T.coord({ x, y }) + '</span>';
+    const occ = state.units.find((o) => o.alive && o.pos.x === x && o.pos.y === y);
+    if (occ) d.innerHTML += '<div class="unit' + (occ.owner === 'ai' ? ' enemy' : '') + (occ.id === sel ? ' selected' : '') + '">' + occ.icon + T.unitBadge(occ, state) + '</div>';
+    d.onclick = () => click(x, y);
+    b.appendChild(d);
+  }
+  shifted = null;
+  renderPanel(u); renderLog(); renderRoster(u);
+}
+
+function click(x, y) {
+  const occ = state.units.find((o) => o.alive && o.pos.x === x && o.pos.y === y);
+  const u = sel && state.units.find((o) => o.id === sel);
+  if (u && !occ && moves(u).some((m) => m.x === x && m.y === y)) { u.pos = { x, y }; render(); return; }
+  sel = occ ? occ.id : null; render();
+}
+
+function renderPanel(u) {
+  const p = q('#upanel');
+  if (!u) { p.innerHTML = '<h3>Unit</h3><div class="sub">Select a unit.</div>'; return; }
+  const info = T.describe(u, state);
+  const stat = (k) => { const b = T.statBonus(u, k, u.stats[k], state); return '<span class="tag ' + (b > 0 ? 'up' : b < 0 ? 'dn' : '') + '">' + k.toUpperCase() + ' ' + (u.stats[k] + b) + (b ? ' (' + (b > 0 ? '+' : '') + b + ')' : '') + '</span>'; };
+  p.innerHTML = '<h3>Unit</h3><div class="name">' + u.icon + ' ' + u.name + '</div>'
+    + '<div class="row">' + stat('atk') + stat('def') + stat('mag') + stat('res') + '</div>'
+    + '<div class="row"><span class="tag">' + (u.elements.length ? u.elements.map((e) => (ELEM_ICON[e] || '') + ' ' + e).join(' / ') : 'no element') + '</span>' + (u.flying ? '<span class="tag">✈ flying</span>' : '') + '</div>'
+    + '<div class="row"><span class="tag">' + (info.terrain ? (info.terrain.icon || '·') + ' ' + info.terrain.name : '· Plain') + '</span>'
+    + (info.label ? '<span class="tag ' + (info.effect > 0 ? 'up' : info.effect < 0 ? 'dn' : '') + '">' + info.label + '</span>' : '') + '</div>';
+}
+function renderRoster(u) {
+  const r = q('#roster'); r.innerHTML = '';
+  for (const c of ROSTER) {
+    const b = document.createElement('button');
+    b.textContent = c.icon + ' ' + c.name + (c.flying ? ' ✈' : '');
+    b.title = c.elements.join('/');
+    if (u && !u.isHero && u.name === c.name) b.className = 'on';
+    b.onclick = () => { if (!u || u.isHero) { q('#hint').textContent = 'Select a non-hero unit first.'; return; } Object.assign(u, { name: c.name, icon: c.icon, elements: c.elements, flying: c.flying, stats: { ...c.stats } }); render(); };
+    r.appendChild(b);
+  }
+}
+function renderLog() { const l = q('#log'); l.innerHTML = state.log.slice(-40).map((e) => '<div>' + e.msg + '</div>').join(''); l.scrollTop = l.scrollHeight; }
+
+const legend = q('#legend');
+for (const t of Object.values(T.TERRAINS)) legend.innerHTML += '<div><i style="--h:' + t.hue + '"></i>' + (t.icon || '·') + ' ' + t.name + (t.element ? ' · ' + (ELEM_ICON[t.element] || t.element) : '') + '</div>';
+q('#new').onclick = () => build(q('#seed').value);
+q('#turn').onclick = endTurn;
+let _p; try { _p = new URLSearchParams(location.search).get('seed'); } catch (e) {}
+build(_p || '');
+</script>
+</body>
+</html>

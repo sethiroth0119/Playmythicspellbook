@@ -1,0 +1,53 @@
+/* MythicTerrain — tile paint. Mirrors `.tile-surface`: a full-bleed CHILD of
+   the tile, pointer-events off, so every existing highlight, marker and unit
+   renders above it untouched. Hue comes from the terrain catalog via
+   --terr-hue so one rule covers every terrain and a new terrain needs no CSS. */
+.tile.has-terrain { position: relative; }
+.tile-terrain {
+  position: absolute; inset: 0;
+  pointer-events: none; overflow: hidden;
+  border-radius: inherit;
+  background:
+    radial-gradient(ellipse at 30% 25%, hsla(var(--terr-hue), 45%, 55%, .22), transparent 60%),
+    linear-gradient(hsla(var(--terr-hue), 40%, 28%, .55), hsla(var(--terr-hue), 45%, 18%, .70));
+  box-shadow: inset 0 0 0 1px hsla(var(--terr-hue), 50%, 60%, .28);
+  z-index: 0;
+}
+.tile-terrain-icon {
+  position: absolute; left: 3px; top: 1px;
+  font-size: 11px; line-height: 1; opacity: .7;
+  filter: drop-shadow(0 1px 1px rgba(0,0,0,.6));
+}
+/* Labyrinth: unmistakably a wall, and never mistaken for a highlight. */
+.tile-terrain.terr-labyrinth {
+  background: repeating-linear-gradient(45deg, #3a2f2f 0 6px, #201818 6px 12px);
+  box-shadow: inset 0 0 0 2px #5a4040;
+}
+.tile-terrain.terr-labyrinth .tile-terrain-icon { opacity: .9; font-size: 14px; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+
+/* Keep every legal-target highlight above the paint — same fix the surface
+   overlay needed, same selector shape, so the two systems cannot fight. */
+.tile.has-terrain.move-target::before,
+.tile.has-terrain.placement::before,
+.tile.has-terrain.attack-target::before { z-index: 1; }
+
+/* Empowered / Hindered badge on a unit (host drops MythicTerrain.unitBadge()
+   inside the unit node). */
+.terrain-badge {
+  position: absolute; top: 0; left: 2px;
+  font-size: 10px; line-height: 1; font-weight: 700;
+  text-shadow: 0 0 3px #000;
+  z-index: 3; pointer-events: none;
+}
+.terrain-badge.up { color: #7fe08a; }
+.terrain-badge.dn { color: #ff7b6e; }
+
+/* FLUX — a tile that just changed flashes once so the shift is legible.
+   Host adds `.terrain-shift` to the changed tiles after render. */
+@keyframes terrainShift {
+  0%   { filter: brightness(2.4) saturate(.2); }
+  40%  { filter: brightness(1.4); }
+  100% { filter: none; }
+}
+.tile.terrain-shift .tile-terrain { animation: terrainShift .9s ease-out; }
+@media (prefers-reduced-motion: reduce) { .tile.terrain-shift .tile-terrain { animation: none; } }

@@ -198,7 +198,32 @@ or sellers will be quoted a fee they are not charged. The fee is recomputed
 from the amount Stripe actually settled and stored on the order row, so
 changing it later never rewrites what a past seller was owed.
 
-## 4. Endpoints
+## 4. How a seller connects their Stripe account
+
+The Bazaar's **Earnings** tab carries its own *Connect Stripe account* button,
+and the **Sell** tab prompts for one before a seller lists. Both call
+`POST /api/cashout/connect` — the **same rail as Part B**, writing the same
+`cashout_accounts` row. There is no second onboarding flow and there must
+never be one: two account maps for one player is how a payout reaches the
+wrong Stripe account.
+
+⚠ **Why the button is duplicated in the Bazaar rather than linked to the
+Cashout Vault.** The Vault is gated behind a Lv 15 hero or owning a node, and
+it bounces anyone who does not qualify. A seller with neither could otherwise
+earn real money with no reachable way to connect an account to be paid into.
+Selling must never depend on that progression gate — if you move the Vault's
+gate, this button stays.
+
+Onboarding is Stripe-hosted: the player completes identity verification and
+bank entry on Stripe's own pages and the game stores only the connected-account
+id. Stripe returns to `/?cashout=return`; the Bazaar reopens on the Earnings
+tab only if *it* started the flow (a `sessionStorage` marker), so a
+Vault-initiated onboarding still returns to the Vault.
+
+A player can list and sell **before** connecting — earnings accrue to the
+ledger regardless, and the account is only required to withdraw.
+
+## 5. Endpoints
 
 | Route | Purpose |
 |---|---|
@@ -209,7 +234,7 @@ changing it later never rewrites what a past seller was owed.
 | `GET  /api/market/earnings` | Balance, hold status, and whether Stripe will accept a payout |
 | `POST /api/market/payout`   | 501 unless `CASHOUT_PAYOUTS_ENABLED=true`. Amount authorised by the database |
 
-## 5. 🔴 Read this before switching it on
+## 6. 🔴 Read this before switching it on
 
 **There is no server-authoritative item inventory in this game.** Cards and
 units live in the player's profile blob, and the existing Cinder card market is

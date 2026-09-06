@@ -113,8 +113,17 @@ function sellTab() {
   let h = '<div style="background:#161b12;border:1px solid #2f3a25;border-radius:10px;padding:0.8rem;font-size:0.85rem;color:#c8d0bc;margin-bottom:0.8rem">' +
     feeLine() +
     '<br><br>Mythic Spellbook is the seller of record and processes the payment. ' +
-    'You are paid out to the Stripe account you connect in the Cashout Vault — ' +
-    'we never see your bank details.</div>';
+    'Your share is paid to your own Stripe account — we never see your bank details.</div>';
+  // Told BEFORE listing, not discovered afterwards on the Earnings tab. You
+  // can still list without an account (the money accrues either way), so this
+  // is a heads-up with the fix attached, not a gate.
+  if (Bazaar.earn && !Bazaar.earn.connected) {
+    h += connectPanel(
+      'You have not connected a Stripe account yet',
+      'You can list and sell now — your earnings are held for you. Connect an account whenever ' +
+      'you want to withdraw them.',
+      'Connect Stripe account');
+  }
   if (Bazaar.mine.length) {
     h += '<div style="font-weight:700;margin:0.6rem 0 0.2rem;color:#c8c4bc">Your listings</div>' +
       Bazaar.mine.map(r => card(r, true)).join('');
@@ -154,9 +163,17 @@ function earnTab() {
   // advances it. A disabled button with no explanation is what makes payout
   // screens feel broken, so every refusal below says what to do instead.
   if (!e.connected) {
-    h += '<p style="color:#d8c07a">Connect a Stripe account in the <strong>Cashout Vault</strong> before you can withdraw.</p>';
+    h += connectPanel(
+      'Connect a Stripe account to get paid',
+      'You can list and sell without one — but you will need it before any money can reach you. ' +
+      'Stripe collects your details on its own pages; the game never sees your bank or ID information.',
+      'Connect Stripe account');
   } else if (!e.payout_ready) {
-    h += '<p style="color:#d8c07a">Stripe has not finished verifying your account yet. Reopen onboarding from the Cashout Vault to complete it.</p>';
+    h += connectPanel(
+      'Stripe still needs a few details',
+      'Your account is connected but Stripe has not finished verifying it, so withdrawals are on hold. ' +
+      'Picking up where you left off takes a minute.',
+      'Finish Stripe verification');
   } else if (!e.payouts_enabled) {
     h += '<p style="color:#8a8a84">Withdrawals are not switched on for this deployment yet. Your balance keeps accruing.</p>';
   } else if ((e.available_cents | 0) <= 0) {
@@ -166,6 +183,47 @@ function earnTab() {
       'Withdraw ' + usd(e.available_cents) + ' to Stripe</button>';
   }
   return h;
+}
+
+/* 🔗 THE CONNECT PANEL — the Bazaar's own entry into Stripe onboarding.
+   ⚠ THIS MUST STAY HERE, not be a link to the Cashout Vault. That screen is
+     gated behind a Lv 15 hero or owning a node and bounces anyone else, so
+     routing sellers there would leave a player able to earn money with no
+     reachable way to connect an account to be paid into. Same rail, same
+     cashout_accounts row — just reachable from where the money is earned. */
+function connectPanel(title, body, cta) {
+  return '<div style="background:#161b12;border:1px solid #3a4a2a;border-radius:10px;padding:0.9rem;margin-top:0.3rem">' +
+    '<div style="font-weight:700;color:#d8e0b8;margin-bottom:0.3rem">' + esc(title) + '</div>' +
+    '<div style="font-size:0.85rem;color:#b6b2aa;line-height:1.5;margin-bottom:0.7rem">' + esc(body) + '</div>' +
+    '<button id="bz-connect" style="width:100%;padding:0.75rem;border-radius:9px;border:0;background:#635bff;' +
+      'color:#fff;font-weight:800;font-size:0.98rem;cursor:pointer">' + esc(cta) + '</button>' +
+    '<div style="font-size:0.72rem;color:#7a7a74;margin-top:0.45rem;text-align:center">' +
+      'Opens Stripe&rsquo;s secure onboarding. Identity and bank details are entered on Stripe, never here.</div>' +
+  '</div>';
+}
+
+async function doConnect() {
+  if (Bazaar.busy) return;
+  Bazaar.busy = true;
+  try {
+    const j = await api.connect();
+    if (j && j.url) {
+      bridge().toast('↪ Redirecting to Stripe\u2019s secure onboarding \u2014 the game never sees your bank or ID details.', 6000);
+      // Stripe returns to /?cashout=return, which is shared with the Cashout
+      // Vault's own button. This marker is how handleReturn knows to reopen
+      // the BAZAAR rather than hijacking a Vault-initiated onboarding.
+      try { sessionStorage.setItem('bz_connecting', '1'); } catch (e) {}
+      setTimeout(() => { try { window.location.href = j.url; } catch (e) {} }, 900);
+      return;
+    }
+    if (j && j.error === 'stripe_not_configured') {
+      bridge().toast('💳 Payouts are not configured on this deployment yet.', 5200); return;
+    }
+    if (j && j.error === 'signed_out') {
+      bridge().toast('☁ Sign in to your account before connecting a payout account.', 4200); return;
+    }
+    bridge().toast('⚠ Could not start Stripe onboarding' + ((j && (j.hint || j.detail)) ? ' — ' + (j.hint || j.detail) : '') + '.', 6000);
+  } finally { Bazaar.busy = false; }
 }
 
 function waitingBanner() {
@@ -218,6 +276,7 @@ function wire(el) {
   el.querySelectorAll('[data-bz-list]').forEach(b => { b.onclick = () => doList(b.getAttribute('data-bz-list')); });
   el.querySelectorAll('[data-bz-claim]').forEach(b => { b.onclick = () => doClaim(b.getAttribute('data-bz-claim')); });
   const p = $('bz-payout'); if (p) p.onclick = doPayout;
+  const cn = $('bz-connect'); if (cn) cn.onclick = doConnect;
 }
 
 // ── Actions ────────────────────────────────────────────────────────────────
@@ -324,6 +383,21 @@ async function doPayout() {
 export async function handleReturn(search) {
   try {
     const q = new URLSearchParams(search || '');
+
+    // 🔗 Back from Stripe onboarding. Only ours if WE started it — the Cashout
+    // Vault uses the same return URL, and stealing its return would drop the
+    // player on the wrong screen.
+    if (q.get('cashout') && (() => { try { return sessionStorage.getItem('bz_connecting') === '1'; } catch (e) { return false; } })()) {
+      try { sessionStorage.removeItem('bz_connecting'); } catch (e) {}
+      open();
+      Bazaar.tab = 'earnings';
+      await refresh();
+      // Stripe can still be verifying, so refresh() decides what to say — it
+      // re-reads payouts_enabled from Stripe rather than assuming success.
+      // Claiming "you're all set" here would be a lie a third of the time.
+      return true;
+    }
+
     if (!q.get('bazaar_paid')) return false;
     const sid = q.get('sid');
     if (!sid) return false;

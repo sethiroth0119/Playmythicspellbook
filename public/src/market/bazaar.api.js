@@ -48,6 +48,35 @@ export async function config() {
 }
 
 export function earnings()          { return api('earnings'); }
+
+/* ── Stripe Connect ────────────────────────────────────────────────────────
+   🔴 THESE TWO HIT /api/cashout/, NOT /api/market/, AND THAT IS DELIBERATE.
+   A player has ONE connected Stripe account, mapped in cashout_accounts by
+   /api/cashout/connect. The Bazaar reuses that rail rather than growing a
+   second onboarding flow — two account maps for one player is how a payout
+   ends up in the wrong Stripe account.
+
+   The Bazaar surfaces the button itself because the Cashout Vault (the only
+   other place it lives) is gated behind a Lv 15 hero or owning a node. A
+   seller who has neither could otherwise earn money with no way to connect
+   an account to be paid into. Selling must never depend on that gate. */
+async function cashoutApi(path, opts) {
+  const h = await authHeaders();
+  if (!h) return { error: 'signed_out' };
+  try {
+    const r = await fetch('/api/cashout/' + path, Object.assign({ headers: h }, opts || {}));
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return Object.assign({ error: j.error || ('http_' + r.status) }, j);
+    return j;
+  } catch (e) { return { error: 'network' }; }
+}
+// Returns a Stripe-HOSTED onboarding URL. The player completes identity
+// verification and bank entry on Stripe's own pages — the game never sees or
+// stores bank or ID details, only the connected-account id.
+// Connection STATUS is not fetched separately — /api/market/earnings already
+// returns `connected` and `payout_ready` (it asks Stripe directly), so a
+// second accessor would just be a second thing to keep in agreement.
+export function connect() { return cashoutApi('connect', { method: 'POST', body: '{}' }); }
 export function checkout(listingId) {
   return api('checkout', { method: 'POST', body: JSON.stringify({ listing: listingId }) });
 }

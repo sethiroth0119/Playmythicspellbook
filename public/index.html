@@ -114704,6 +114704,22 @@ function renderTitle() {
               catch (e) { showToast('⚠ The Community module did not load.', 3200); }
             } }
         : null),
+      // 💵 The Bazaar — player-to-player sales for REAL money. Lives in
+      // /src/market as an ES module; this tile is the only thing index.html
+      // knows about it. Null (= hidden) when the module has not loaded, same
+      // as Communities above — the list is `.filter(Boolean)`ed.
+      // ⚠ The module ALSO hides its own screen when the Worker reports the
+      //   Bazaar is not configured, so a deployment without STRIPE_SECRET_KEY
+      //   or SB_SERVICE shows a tile that explains itself rather than a Buy
+      //   button that cannot work.
+      ((typeof window !== 'undefined' && window.MythicBazaar)
+        ? { id: 'btn-bazaar', icon: '💵', name: 'The Bazaar', sub: 'Sell to other players for real money', accent: '#a0e0a0',
+            badge: 'Real money',
+            onclick: () => {
+              try { window.MythicBazaar.open(); }
+              catch (e) { showToast('⚠ The Bazaar module did not load.', 3200); }
+            } }
+        : null),
       // 🏦 Bank of Ethos — Camp Heights treasury sub-app (iframe). Node /
       // Reserve / Aza wiring is the next pass.
       { id: 'btn-bank-ethos', icon: '<img src="assets/artwork/gameicons/Bank%20of%20Ethos.png" alt="Bank of Ethos" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Bank of Ethos', sub: 'Camp Heights treasury · accounts', accent: '#c9a24a',
@@ -206934,6 +206950,94 @@ try {
     confirm: async (m) => { try { return !!(await gcConfirm(m)); } catch (e) { return false; } },
     render: () => { try { render(); } catch (e) {} },
     isAdmin: () => { try { return !!(typeof isAdmin === 'function' && isAdmin()); } catch (e) { return false; } },
+
+    /* ═══ 💵 THE BAZAAR (/src/market) — real-money player-to-player sales ═══
+       ⚠ DELIBERATELY NARROW. The Bazaar can move ITEMS and read the auth
+       token; it gets no Cinder or Aza accessor and never will. A real-money
+       screen must not also be a path into the soft economy — that is how a
+       pricing bug becomes a dollar-denominated one.
+
+       🔴 Money is NOT handled here. Prices, the platform fee and payout
+       authorisation all live in the Worker (/api/market/*) and sql/038. This
+       bridge cannot set a price or credit a balance; it hands the module an
+       inventory and takes an item away or gives one back. */
+    token: async () => { try { return await _sbToken(); } catch (e) { return null; } },
+
+    // What this player may list. Cards come from the owned collection (Forge
+    // customs only — the same ownership lock listCustomCardForSale enforces),
+    // held items from the inventory.
+    // ⚠ uid IS THE CARD/ITEM ID, not a per-copy id, because the collection is
+    //   a {id: count} map with no instance identity. sql/038's partial unique
+    //   index therefore allows ONE open listing per id per seller even when
+    //   they own three copies. That is the conservative reading and the right
+    //   one on a real-money rail: a duplicate-listing bug here costs dollars.
+    bazaarInventory: () => {
+      try {
+        const out = [];
+        const coll = Profile.cardCollection || {};
+        for (const id in coll) {
+          if (!((coll[id] | 0) > 0)) continue;
+          const card = (typeof lookupCustomCard === 'function') ? lookupCustomCard(id) : null;
+          if (!card) continue;               // only Forge customs are listable
+          out.push({ uid: id, kind: 'card', title: card.name || 'Card',
+                     card: cardSnapshotForListing(card),
+                     unit: ((card.type || 'unit') === 'unit' && typeof unitInstanceSnapshot === 'function')
+                             ? unitInstanceSnapshot(card) : null });
+        }
+        const inv = Profile.itemInventory || {};
+        for (const id in inv) {
+          if (!((inv[id] | 0) > 0)) continue;
+          const it = (typeof HELD_ITEMS !== 'undefined') && HELD_ITEMS[id];
+          if (!it) continue;
+          out.push({ uid: id, kind: 'item', title: it.name || 'Item',
+                     card: itemSnapshotForListing(id), unit: null });
+        }
+        return out;
+      } catch (e) { return []; }
+    },
+    // Escrow first, row second — always. Returns whether a copy ACTUALLY left
+    // the player, so the module only posts a listing when it did.
+    bazaarEscrow: (item) => {
+      try {
+        if (!item || !item.uid) return false;
+        if (item.kind === 'item') {
+          const inv = Profile.itemInventory || (Profile.itemInventory = {});
+          if ((inv[item.uid] | 0) <= 0) return false;
+          inv[item.uid] -= 1;
+          if (inv[item.uid] <= 0) delete inv[item.uid];
+          saveProfile();
+          return true;
+        }
+        return !!_escrowCardCopy(item.uid);
+      } catch (e) { return false; }
+    },
+    // Unwind an escrow whose listing failed to post. Uncapped on purpose:
+    // this is an undo of a take that already happened, not a grant.
+    bazaarRestore: (item) => {
+      try {
+        if (!item || !item.uid) return;
+        if (item.kind === 'item') { _cmGiveItem(item.uid); saveProfile(); return; }
+        _restoreCardCopy(item.uid);
+      } catch (e) {}
+    },
+    // Deliver a claimed purchase (or a cancelled listing's item) into the
+    // collection. Routed through the SAME grant the Cinder card market uses,
+    // so bond-transfer, anti-flip and the Sworn cap apply identically — a
+    // real-money purchase must not be a way around those rules.
+    bazaarGrant: (payload) => {
+      try {
+        if (!payload) return false;
+        const card = payload.card || null;
+        _cmGrantPurchase({
+          kind: payload.kind || 'card',
+          card_id: (card && card.id) || null,
+          card_json: card,
+          unit_json: payload.unit || null,
+        });
+        saveProfile();
+        return true;
+      } catch (e) { return false; }
+    },
     // 🏢 Corporations — communities sit ABOVE these, so the module reads them
     //    but never writes them.
     myCorp: () => { try { return (Corp && Corp.mine) ? { id: Corp.mine.id, name: Corp.mine.name, tag: Corp.mine.tag, faction: Corp.mine.faction } : null; } catch (e) { return null; } },
@@ -223030,6 +223134,9 @@ render();
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
      other static asset. -->
 <script type="module" src="src/community/index.js?v=120h3"></script>
+<!-- 💵 THE BAZAAR — real-money player-to-player sales (/src/market). Inert
+     until opened; the tile hides itself if this module fails to load. -->
+<script type="module" src="src/market/index.js?v=v121bz1"></script>
 <!-- ⛺ THE BUNKHOUSE — the camp half of the House (resonance-card-training.md
      §5). Registers window.MythicBunkhouse and is inert until renderCamp()
      mounts it; the city half is /src/resonance/house.city.js, loaded by

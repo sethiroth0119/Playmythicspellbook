@@ -1,12 +1,15 @@
 # Stripe setup
 
-This game has **two** independent Stripe rails, each off until you set its
+This game has **three** independent Stripe rails, each off until you set its
 secret. They share the same `STRIPE_SECRET_KEY` Worker secret:
 
 - **Part A — Aza-coin PURCHASES** (players buy premium currency). Uses Stripe
   **Checkout**. *This is what you turn on to let players buy Aza coin.*
 - **Part B — Cashout PAYOUTS** (players cash Cinders out to real money). Uses
   Stripe **Connect**. Stays off until you deliberately enable it.
+- **Part C — The BAZAAR** (players sell items to each other for real money and
+  we take a fee). Uses Checkout to collect and Part B's Connect rail to pay
+  out. Needs `SB_SERVICE` as well, and stays hidden until it has one.
 
 ---
 
@@ -127,6 +130,111 @@ Callers authenticate with their Supabase access token
 
 This repo intentionally ships payouts **off**. Turning them on is a
 deliberate, operator-only action.
+
+---
+
+# Part C — The Bazaar (player-to-player sales, with our fee)
+
+Players sell in-game cards and held items to each other for **real money**. We
+take a platform fee on every sale and pay sellers out to the Stripe account
+they already connected in Part B. Ships **off** — the Bazaar tile hides itself
+until both the Stripe key and the Supabase service key are set.
+
+## The money shape
+
+```
+buyer  → Stripe Checkout → PLATFORM balance      (we are merchant of record)
+       → rm_earnings credit for the seller       (sale amount MINUS our fee)
+       …hold window (default 7 days)…
+seller → POST /api/market/payout → Stripe transfer → their connected account
+```
+
+This is **separate charges and transfers**, not a destination charge. The
+seller's share deliberately sits with the platform for the hold window, because
+that is the only period in which a chargeback can be answered by reversing a
+ledger row rather than chasing someone's bank account. `charge.refunded` and
+`charge.dispute.created` webhooks automatically write the reversing row.
+
+**We are the merchant of record.** Buyers see our name on their statement and
+disputes come to us. That is the cost of the hold window.
+
+## 1. Database
+
+Run `sql/038_real_money_market.sql` in the Supabase SQL editor (idempotent,
+ends with a verify block — every line should read `ok`). It creates
+`rm_listings`, `rm_orders`, `rm_earnings`, `rm_payouts`, `rm_claims` and
+`rm_config`, with RLS and the RPCs.
+
+The three money-writing RPCs (`rm_record_order`, `rm_payout_settle`,
+`rm_refund_order`) are **deliberately ungranted** — only the service-role key
+reaches them. Do not "fix" that by granting them; it would let any signed-in
+player mint themselves earnings for a sale that never happened.
+
+## 2. Stripe dashboard
+
+Add `checkout.session.completed`, `charge.refunded` and
+`charge.dispute.created` to your webhook endpoint. Any of
+`/api/market/webhook`, `/api/shop/webhook` or `/api/cashout/webhook` will
+fulfil a Bazaar sale — whichever is already registered works.
+
+The restricted key needs **Checkout Sessions** (write) and **Transfers**
+(write) on top of the Part B permissions.
+
+## 3. Cloudflare secrets / vars
+
+```sh
+npx wrangler secret put SB_SERVICE          # REQUIRED — price authority + fulfilment
+npx wrangler secret put STRIPE_WEBHOOK_SECRET
+# optional tuning (plain vars are fine; defaults shown)
+#   MARKET_FEE_BPS    1000   = 10.00%  (basis points, bounded 0-5000)
+#   MARKET_HOLD_DAYS  7                (bounded 0-90)
+# withdrawals stay OFF until Part B's switch is on:
+npx wrangler secret put CASHOUT_PAYOUTS_ENABLED   # value: true
+```
+
+`MARKET_FEE_BPS` is the fee the Worker charges; `rm_config.fee_bps` is the
+number the UI quotes to a seller *before* they list. **Change both together**
+or sellers will be quoted a fee they are not charged. The fee is recomputed
+from the amount Stripe actually settled and stored on the order row, so
+changing it later never rewrites what a past seller was owed.
+
+## 4. Endpoints
+
+| Route | Purpose |
+|---|---|
+| `GET  /api/market/config`   | `{enabled,ready,feeBps,holdDays,payoutsEnabled}` — no secrets |
+| `POST /api/market/checkout` | Body is a **listing id only**. Price is read from the DB with the service key |
+| `GET  /api/market/confirm`  | Buyer's return leg — re-verifies `paid` against Stripe, then credits |
+| `POST /api/market/webhook`  | Signature-verified. Fulfils sales; reverses refunds/disputes |
+| `GET  /api/market/earnings` | Balance, hold status, and whether Stripe will accept a payout |
+| `POST /api/market/payout`   | 501 unless `CASHOUT_PAYOUTS_ENABLED=true`. Amount authorised by the database |
+
+## 5. 🔴 Read this before switching it on
+
+**There is no server-authoritative item inventory in this game.** Cards and
+units live in the player's profile blob, and the existing Cinder card market is
+settled entirely client-side — nothing ever verified that a seller owned what
+they listed. That is survivable at Cinder prices. At dollar prices a modified
+client can sell something that does not exist and the chargeback lands on us.
+
+`sql/038` does what can be done without a canonical inventory and does not
+pretend to more: one open listing per item id per seller, a per-seller open
+listing cap, server-side price bounds, and the hold window as the human
+backstop. **The caps are the fraud budget — do not raise them to make the
+Bazaar feel busier.** The real fix is to move unit ownership into a server
+table and have `rm_list()` delete the row in the same transaction; the header
+of `sql/038` says so at the point someone would need to know.
+
+Also yours, not this repo's:
+
+- **Holding other people's money is regulated** in most jurisdictions. The
+  escrow window means we are custodying seller funds. Get advice before launch.
+- **Tax reporting.** Paying sellers real money creates 1099-K/equivalent
+  obligations past thresholds. Stripe Connect can file these — turn it on.
+- Fund the platform Stripe balance; understand Connect fees and
+  negative-balance liability.
+- Watch disputes actively while the hold window is the main defence.
+- Keep withdrawals behind manual review at launch.
 
 ---
 

@@ -124,9 +124,14 @@ function _form(obj, prefix, out) {
   return out;
 }
 // Thin Stripe REST call. v2 = JSON body; v1 = form-encoded. Key from env only.
-async function stripeApi(env, method, path, body, v2) {
+async function stripeApi(env, method, path, body, v2, idem) {
   if (!env.STRIPE_SECRET_KEY) throw new Error('stripe not configured');
   const headers = { authorization: 'Bearer ' + env.STRIPE_SECRET_KEY };
+  // 🔁 Idempotency-Key — Stripe replays the ORIGINAL response for 24h instead
+  // of performing the operation again. Metadata does NOT do this; only this
+  // header does. Passed by the Bazaar payout path, where a retry after a lost
+  // response would otherwise send a seller's money twice.
+  if (idem) headers['idempotency-key'] = String(idem);
   let payload;
   if (body && v2) { headers['content-type'] = 'application/json'; payload = JSON.stringify(body); }
   else if (body) { headers['content-type'] = 'application/x-www-form-urlencoded'; payload = _form(body).toString(); }
@@ -209,6 +214,9 @@ async function handleCashout(request, env, u) {
         try { await _garageFulfillSession(env, s); } catch (e) {}
       }
     }
+    // 💵 A Bazaar sale, refund or dispute. _rmHandleEvent inspects the type
+    // itself, so it is safe to hand it every event.
+    try { await _rmHandleEvent(env, evt); } catch (e) {}
     return cjson({ received: true });
   }
 
@@ -716,10 +724,13 @@ async function handleShop(request, env, u) {
       // garage fulfiller instead of the shop one, which would ignore it.
       if (_o && _o.metadata && _o.metadata.garage_sku) {
         try { await _garageFulfillSession(env, _o); } catch (e) {}
-      } else {
+      } else if (!(_o && _o.metadata && _o.metadata.rm_listing)) {
+        // A Bazaar session carries rm_listing and no shop tier; the shop
+        // fulfiller would ignore it. _rmHandleEvent below is what takes it.
         try { await _shopFulfillSession(env, _o); } catch (e) {}
       }
     }
+    try { await _rmHandleEvent(env, evt); } catch (e) {}
     return cjson({ received: true });
   }
 
@@ -835,6 +846,328 @@ async function handleShop(request, env, u) {
   }
 
   return cjson({ error: 'not_found' }, 404);
+}
+
+/* ============================================================================
+ * 💵 THE BAZAAR — player-to-player sales for REAL money, with our fee.
+ *
+ * SHAPE (separate charges & transfers, decided with the operator 2026-09-06):
+ *   buyer → Stripe Checkout → PLATFORM balance   (we are merchant of record)
+ *   platform → rm_earnings credit for the seller (amount MINUS our fee)
+ *   …hold window…
+ *   seller → /api/market/payout → Stripe transfer → their connected account
+ *
+ * This is NOT a destination charge. The money deliberately sits with the
+ * platform for MARKET_HOLD_DAYS before a seller can withdraw, because that is
+ * the only window in which a chargeback or a fraud report can be answered by
+ * reversing a ledger row instead of chasing somebody's bank account.
+ *
+ * 🔴 PRICE AUTHORITY. The browser sends a listing id and NOTHING ELSE that
+ *    touches money. Every amount charged is read HERE from rm_listings with
+ *    the service key, and the fee is computed HERE. A price, a title or a
+ *    currency arriving in the request body is ignored — same rule as the
+ *    Shop's cart path above, and for the same reason.
+ *
+ * 🔴 THE FEE IS SERVER-SIDE AND RECORDED ON THE ORDER. rm_orders carries
+ *    amount/fee/seller cents with a CHECK that they sum, so a later change to
+ *    MARKET_FEE_BPS never retroactively rewrites what a past seller was owed.
+ *
+ * Reuses the Cashout Connect rail wholesale: a seller's connected account is
+ * the one in cashout_accounts, created by /api/cashout/connect. There is no
+ * second onboarding flow, and there must never be one — two account maps for
+ * one player is how payouts end up going to the wrong Stripe account.
+ *
+ * Disabled (503) until STRIPE_SECRET_KEY is set, and reports ready:false
+ * until SB_SERVICE is set and sql/038 is applied — the game stays in mock
+ * mode and the Bazaar tile hides itself. Nothing breaks.
+ * ========================================================================== */
+// Platform fee in basis points. 1000 = 10.00%. Operator-tunable via a Worker
+// var; the DB carries the same number in rm_config so the UI can quote it to a
+// seller BEFORE they list. Keep the two in sync when you change either.
+const MARKET_FEE_BPS_DEFAULT = 1000;
+const MARKET_HOLD_DAYS_DEFAULT = 7;
+function _rmFeeBps(env) {
+  const n = parseInt(env.MARKET_FEE_BPS, 10);
+  // Bounded rather than trusted: a typo'd secret ("10%" → NaN, or 100000)
+  // would otherwise take the seller's whole sale or invert the split.
+  return (Number.isFinite(n) && n >= 0 && n <= 5000) ? n : MARKET_FEE_BPS_DEFAULT;
+}
+function _rmHoldDays(env) {
+  const n = parseInt(env.MARKET_HOLD_DAYS, 10);
+  return (Number.isFinite(n) && n >= 0 && n <= 90) ? n : MARKET_HOLD_DAYS_DEFAULT;
+}
+// Our cut, in whole cents, floored — rounding DOWN is deliberate: the rounding
+// remainder goes to the seller, so the platform can never take a cent it did
+// not earn and fee + seller always reconstructs the amount exactly.
+function _rmFeeCents(env, amountCents) {
+  return Math.floor((amountCents * _rmFeeBps(env)) / 10000);
+}
+// Call a Supabase RPC. `token` = a player's JWT (RLS + auth.uid() apply) or
+// env.SB_SERVICE (bypasses RLS — only for the three ungranted functions).
+async function _rmRpc(env, token, fn, args) {
+  const r = await fetch(String(env.SB_URL).replace(/\/+$/, '') + '/rest/v1/rpc/' + fn, {
+    method: 'POST',
+    headers: { apikey: token === env.SB_SERVICE ? env.SB_SERVICE : env.SB_ANON,
+               authorization: 'Bearer ' + token,
+               'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify(args || {}),
+  });
+  const j = await r.json().catch(() => null);
+  if (!r.ok) {
+    // PostgREST puts a raise exception's text in .message — that is the
+    // seller-facing reason ("only 300 cents available"), so pass it through
+    // rather than flattening every failure to "error".
+    const msg = (j && (j.message || j.hint)) || ('rpc_' + r.status);
+    throw new Error(String(msg).slice(0, 200));
+  }
+  return j;
+}
+// Read a listing with the SERVICE key. Must be the service key and not the
+// buyer's token: RLS lets a buyer see an open listing, but this read is what
+// the CHARGE is built from, and it must not be shaped by who is asking.
+async function _rmListing(env, id) {
+  if (!env.SB_SERVICE) return null;
+  const r = await fetch(String(env.SB_URL).replace(/\/+$/, '') +
+    '/rest/v1/rm_listings?select=id,seller_id,seller_name,title,price_cents,currency,status&id=eq.' +
+    encodeURIComponent(id) + '&limit=1',
+    { headers: { apikey: env.SB_SERVICE, authorization: 'Bearer ' + env.SB_SERVICE, accept: 'application/json' } });
+  if (!r.ok) return null;
+  const a = await r.json().catch(() => null);
+  return (Array.isArray(a) && a[0]) || null;
+}
+// Record a paid Bazaar session. Idempotent on the Stripe session id (rm_record_order
+// returns the existing order untouched), so the webhook and the buyer's return
+// visit can both call this and the seller is credited exactly once.
+async function _rmFulfillSession(env, s) {
+  const md = (s && s.metadata) || {};
+  if (!s || s.payment_status !== 'paid' || !md.rm_listing || !md.rm_buyer) return null;
+  if (!env.SB_SERVICE) return { ok: false, error: 'sb_service_missing' };
+  const amount = s.amount_total | 0;
+  if (!(amount > 0)) return { ok: false, error: 'no_amount' };
+  try {
+    const o = await _rmRpc(env, env.SB_SERVICE, 'rm_record_order', {
+      p_session: s.id,
+      p_intent: typeof s.payment_intent === 'string' ? s.payment_intent : null,
+      p_listing: md.rm_listing,
+      p_buyer: md.rm_buyer,
+      p_amount: amount,
+      // Recomputed from the AMOUNT STRIPE ACTUALLY CHARGED, not from the fee
+      // we stashed in metadata at checkout time — metadata is a hint, the
+      // charge is the fact, and they differ if a coupon or tax ever enters.
+      p_fee: _rmFeeCents(env, amount),
+      p_currency: s.currency || 'usd',
+    });
+    return { ok: true, order: o };
+  } catch (e) { return { ok: false, error: String((e && e.message) || e).slice(0, 200) }; }
+}
+async function handleMarket(request, env, u) {
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_RW });
+  const seg = u.pathname.replace(/^\/api\/market\//, '').replace(/\/+$/, '');
+  const configured = !!env.STRIPE_SECRET_KEY;
+  const payoutsEnabled = configured && env.CASHOUT_PAYOUTS_ENABLED === 'true';
+
+  // Public, no-secret. `ready` false means selling is impossible (no service
+  // key ⇒ no price authority and no fulfilment), and the client hides the
+  // Bazaar rather than showing a screen whose Buy button cannot work.
+  if (seg === 'config' && request.method === 'GET') {
+    return cjson({
+      enabled: configured,
+      ready: configured && !!env.SB_SERVICE,
+      webhook: !!env.STRIPE_WEBHOOK_SECRET,
+      feeBps: _rmFeeBps(env),
+      holdDays: _rmHoldDays(env),
+      payoutsEnabled: payoutsEnabled,
+    });
+  }
+  if (!configured) return cjson({ error: 'stripe_not_configured', hint: 'Set the STRIPE_SECRET_KEY secret on this Worker (see STRIPE.md).' }, 503);
+
+  // 🪝 Webhook — Stripe calls this, NOT a signed-in player, so it sits ABOVE
+  // the auth gate. The signature IS the authentication. This is what credits
+  // a seller when the buyer pays and never returns to the game.
+  if (seg === 'webhook' && request.method === 'POST') {
+    const raw = await request.text();
+    const ok = await verifyStripeSig(env.STRIPE_WEBHOOK_SECRET, raw, request.headers.get('stripe-signature') || '');
+    if (!ok) return cjson({ error: 'bad_signature' }, 400);
+    let evt = null; try { evt = JSON.parse(raw); } catch (e) {}
+    await _rmHandleEvent(env, evt);
+    return cjson({ received: true });
+  }
+
+  if (!env.SB_SERVICE) return cjson({ error: 'market_not_ready', hint: 'Set the SB_SERVICE secret and apply sql/038_real_money_market.sql. The Bazaar stays hidden until then.' }, 503);
+
+  const user = await sbUser(env, request);
+  if (!user) return cjson({ error: 'unauthorized', hint: 'Send your Supabase access token as Authorization: Bearer.' }, 401);
+
+  // ── BUY ──────────────────────────────────────────────────────────────────
+  // Body carries a listing id and nothing else that matters. Everything the
+  // buyer is charged is read from the database below.
+  if (seg === 'checkout' && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    const id = String((body && body.listing) || '');
+    if (!/^[0-9a-f-]{36}$/i.test(id)) return cjson({ error: 'bad_listing' }, 400);
+    const l = await _rmListing(env, id);
+    if (!l) return cjson({ error: 'no_such_listing' }, 404);
+    if (l.status !== 'open') return cjson({ error: 'not_available', hint: 'That listing has already sold or was cancelled.' }, 409);
+    // A seller buying their own listing would be a fee-free way to move money
+    // through Stripe and out again — a card-testing / laundering shape, not a
+    // trade. Refuse it here rather than only in the UI.
+    if (l.seller_id === user.id) return cjson({ error: 'own_listing' }, 400);
+    const amount = l.price_cents | 0;
+    if (!(amount > 0)) return cjson({ error: 'bad_price' }, 400);
+
+    const origin = _safeReturnOrigin(env, u);
+    const s = await stripeApi(env, 'POST', '/v1/checkout/sessions', {
+      mode: 'payment',
+      'line_items[0][quantity]': 1,
+      'line_items[0][price_data][currency]': l.currency || 'usd',
+      'line_items[0][price_data][unit_amount]': amount,
+      'line_items[0][price_data][product_data][name]': 'Bazaar — ' + String(l.title || 'Listing').slice(0, 90),
+      client_reference_id: user.id,
+      'metadata[rm_listing]': l.id,
+      'metadata[rm_buyer]': user.id,
+      'metadata[rm_seller]': l.seller_id,
+      // A hint for support, not an input to the split — the fee is recomputed
+      // from the settled amount at fulfilment time. See _rmFulfillSession.
+      'metadata[rm_fee_bps]': String(_rmFeeBps(env)),
+      success_url: origin + '/?bazaar_paid=1&sid={CHECKOUT_SESSION_ID}',
+      cancel_url: origin + '/?bazaar_cancel=1',
+    });
+    return cjson({ url: s && s.url });
+  }
+
+  // Buyer's return leg. Re-verifies against Stripe with the secret key — the
+  // sid in the URL bar proves nothing on its own, so `paid` AND "this session
+  // belongs to the caller" are both checked before anything is credited.
+  if (seg === 'confirm' && request.method === 'GET') {
+    const sid = u.searchParams.get('sid') || '';
+    if (!sid) return cjson({ error: 'no_session' }, 400);
+    const s = await stripeApi(env, 'GET', '/v1/checkout/sessions/' + encodeURIComponent(sid), null);
+    if (!s || s.payment_status !== 'paid') return cjson({ error: 'not_paid', status: s && s.payment_status }, 402);
+    if (!s.metadata || s.metadata.rm_buyer !== user.id) return cjson({ error: 'not_your_session' }, 403);
+    const r = await _rmFulfillSession(env, s);
+    if (!r || !r.ok) return cjson({ error: 'fulfil_failed', detail: (r && r.error) || null }, 502);
+    return cjson({ ok: true, order: r.order && r.order.id });
+  }
+
+  // ── SELL ─────────────────────────────────────────────────────────────────
+  // Earnings summary. Read AS THE PLAYER so rm_balance()'s auth.uid() is them
+  // — the Worker never picks whose balance to return.
+  if (seg === 'earnings' && request.method === 'GET') {
+    const b = await _rmRpc(env, user.token, 'rm_balance', {});
+    const row = (Array.isArray(b) ? b[0] : b) || {};
+    const acct = await sbAcctGet(env, user);
+    let ready = false;
+    if (acct) {
+      // Payouts need a connected account that Stripe itself says can receive
+      // them — details_submitted is not enough, KYC can still be outstanding.
+      try {
+        const a = await stripeApi(env, 'GET', '/v1/accounts/' + acct, null);
+        ready = !!(a && a.payouts_enabled);
+      } catch (e) { ready = false; }
+    }
+    return cjson({
+      total_cents: row.total_cents | 0,
+      available_cents: row.available_cents | 0,
+      pending_cents: row.pending_cents | 0,
+      connected: !!acct,
+      payout_ready: ready,
+      payouts_enabled: payoutsEnabled,
+      holdDays: _rmHoldDays(env),
+    });
+  }
+
+  // ── PAYOUT ───────────────────────────────────────────────────────────────
+  // 🔴 The amount is AUTHORISED BY THE DATABASE, not by this handler and not
+  //    by the client. rm_payout_open() takes the advisory lock, re-reads the
+  //    available balance, writes the payout row AND the negative ledger row in
+  //    one transaction, and raises if the seller cannot afford it. Only then
+  //    does money move. If the transfer fails we settle the row as failed,
+  //    which returns the amount with a compensating positive row.
+  if (seg === 'payout' && request.method === 'POST') {
+    if (!payoutsEnabled) return cjson({ error: 'payouts_disabled', hint: 'Set CASHOUT_PAYOUTS_ENABLED=true and fund the platform balance to enable real transfers (see STRIPE.md).' }, 501);
+    const acct = await sbAcctGet(env, user);
+    if (!acct) return cjson({ error: 'not_connected', hint: 'Connect a Stripe account in the Cashout Vault first.' }, 400);
+
+    // Refuse BEFORE debiting the ledger if Stripe would reject the transfer.
+    // The compensating-row path exists for surprises, not for the case we can
+    // see coming — a failed payout the seller has to wait out is worse UX
+    // than a clean refusal.
+    const a = await stripeApi(env, 'GET', '/v1/accounts/' + acct, null);
+    if (!a || !a.payouts_enabled) {
+      return cjson({ error: 'account_not_ready', hint: 'Stripe has not enabled payouts on your account yet — finish onboarding.',
+                     requirements_due: ((a && a.requirements && a.requirements.currently_due) || []).length }, 400);
+    }
+
+    const body = await request.json().catch(() => ({}));
+    const cents = Math.floor(Number(body && body.cents) || 0);
+    if (!(cents > 0)) return cjson({ error: 'bad_amount' }, 400);
+
+    // Debit first. A raise here (insufficient / below minimum) is the
+    // seller-facing reason and no money has moved.
+    let p = null;
+    try { p = await _rmRpc(env, user.token, 'rm_payout_open', { p_amount: cents }); }
+    catch (e) { return cjson({ error: 'payout_refused', detail: String((e && e.message) || e).slice(0, 200) }, 400); }
+    p = (Array.isArray(p) ? p[0] : p) || null;
+    if (!p || !p.id) return cjson({ error: 'payout_open_failed' }, 502);
+
+    try {
+      // The payout id is unique per debit, which makes it exactly the right
+      // idempotency key: a retry after a lost response replays the original
+      // transfer instead of sending the money a second time.
+      const tr = await stripeApi(env, 'POST', '/v1/transfers', {
+        amount: cents, currency: 'usd', destination: acct,
+        metadata: { game_user: user.id, rm_payout: p.id },
+      }, false, 'rm_payout_' + p.id);
+      await _rmRpc(env, env.SB_SERVICE, 'rm_payout_settle', {
+        p_payout: p.id, p_transfer: (tr && tr.id) || null, p_account: acct, p_ok: true, p_failure: null });
+      return cjson({ ok: true, payout: p.id, transfer: tr && tr.id, cents: cents });
+    } catch (e) {
+      const why = String((e && e.message) || e).slice(0, 200);
+      // Give the money back. If THIS fails too the row stays 'pending' and the
+      // seller is short — that is the one state needing an operator, so it is
+      // reported rather than swallowed.
+      let returned = true;
+      try {
+        await _rmRpc(env, env.SB_SERVICE, 'rm_payout_settle', {
+          p_payout: p.id, p_transfer: null, p_account: acct, p_ok: false, p_failure: why });
+      } catch (e2) { returned = false; }
+      return cjson({ error: 'transfer_failed', detail: why, refunded: returned, payout: p.id }, 502);
+    }
+  }
+
+  return cjson({ error: 'not_found' }, 404);
+}
+// One event router, called from all three webhook endpoints. Whichever URL the
+// operator actually registered in the Stripe dashboard, a Bazaar sale gets
+// fulfilled — the same belt-and-braces the Shop and the Garage already rely on.
+async function _rmHandleEvent(env, evt) {
+  try {
+    if (!evt || !evt.data || !evt.data.object) return;
+    const o = evt.data.object;
+    if (evt.type === 'checkout.session.completed' && o.metadata && o.metadata.rm_listing) {
+      await _rmFulfillSession(env, o);
+      return;
+    }
+    // 💸 A dispute or refund on a Bazaar sale reverses the seller's credit.
+    // This is the reason the hold window exists, so it must actually be wired:
+    // without it a chargeback takes money from the platform and leaves the
+    // seller's balance untouched.
+    if (evt.type === 'charge.refunded' || evt.type === 'charge.dispute.created') {
+      // Both Charge and Dispute carry payment_intent, which is what rm_orders
+      // stores. A Dispute's `.charge` is a CHARGE id and would never match
+      // stripe_intent — falling back to it would look like it worked and
+      // silently reverse nothing, so there is deliberately no fallback.
+      const intent = typeof o.payment_intent === 'string' ? o.payment_intent : null;
+      if (!intent || !env.SB_SERVICE) return;
+      const r = await fetch(String(env.SB_URL).replace(/\/+$/, '') +
+        '/rest/v1/rm_orders?select=stripe_session_id&stripe_intent=eq.' + encodeURIComponent(intent) + '&limit=1',
+        { headers: { apikey: env.SB_SERVICE, authorization: 'Bearer ' + env.SB_SERVICE, accept: 'application/json' } });
+      if (!r.ok) return;
+      const rows = await r.json().catch(() => null);
+      const sess = rows && rows[0] && rows[0].stripe_session_id;
+      if (sess) await _rmRpc(env, env.SB_SERVICE, 'rm_refund_order', { p_session: sess, p_note: evt.type });
+    }
+  } catch (e) {}
 }
 
 /* ============================================================================
@@ -1123,6 +1456,11 @@ export default {
     if (u.pathname.startsWith('/api/garage/')) {
       try { return await handleGarage(request, env, u); }
       catch (e) { return cjson({ error: 'garage_error', detail: String((e && e.message) || e).slice(0, 200) }, 502); }
+    }
+
+    if (u.pathname.startsWith('/api/market/')) {
+      try { return await handleMarket(request, env, u); }
+      catch (e) { return cjson({ error: 'market_error', detail: String((e && e.message) || e).slice(0, 200) }, 502); }
     }
 
     if (u.pathname.startsWith('/api/shop/')) {

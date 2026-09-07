@@ -28361,7 +28361,7 @@
     border:1px solid rgba(240,200,105,0.34); border-radius:10px; }
   .tw-node-drawer.tw-aaa .tw-nd-cinder-value {
     font-family:'Cinzel',serif; font-weight:800; color:#f0d089; }
-  /* the big gold action button (ATTACK PRN) */
+  /* the big gold action button (DO CAMPAIGN — was ATTACK PRN) */
   .tw-node-drawer.tw-aaa .tw-action-buttons button.btn-primary,
   .tw-node-drawer.tw-aaa #tw-act-attack {
     width:100%; padding:0.85rem 1rem; border-radius:9px;
@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120w6';
+  window.BUILD_VERSION = 'v120w7';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -206934,6 +206934,60 @@ try {
     confirm: async (m) => { try { return !!(await gcConfirm(m)); } catch (e) { return false; } },
     render: () => { try { render(); } catch (e) {} },
     isAdmin: () => { try { return !!(typeof isAdmin === 'function' && isAdmin()); } catch (e) { return false; } },
+    /* 🎯 NODE CAMPAIGNS (/src/campaigns) — everything the "Do Campaign" picker
+       needs from the City Node map and the roguelite runner, and nothing more.
+       The module never sees Forge.territoryWars or Profile.rlcRun; it gets
+       plain snapshots and calls the real entry points (rlcStartRun etc.) so
+       the deck-pick / intro / abandon rules stay in ONE place. */
+    nodeCampaigns: {
+      node: (id) => {
+        try {
+          const n = (_twForge().nodes || []).find((x) => x && x.id === id);
+          return n ? { id: n.id, name: n.name || n.id, type: n.type || 'PRN', purpose: n.purpose || '', icon: n.icon || '' } : null;
+        } catch (e) { return null; }
+      },
+      selectedNode: () => { try { return App._twSelectedNode || null; } catch (e) { return null; } },
+      onNodeScreen: () => { try { return App.screen === 'territoryWars'; } catch (e) { return false; } },
+      // The raid is only offered to a corp that does NOT hold the node — the
+      // same `iOwn` test the drawer uses to hide the old Attack button.
+      canAttack: (id) => {
+        try {
+          const own = _twState().ownedNodes[id]; const c = _twPlayerCorp();
+          return !(own && c && own.ownerCorpId === c.id);
+        } catch (e) { return true; }
+      },
+      attack: (id) => { try { _twAttackFlow(id); } catch (e) {} },
+      // Stash resources on the sanctioned helpers. refundRes is the uncapped
+      // undo — see _refundRes for why addRes must not be used for a refund.
+      getRes: (id) => { try { return getRes(id) | 0; } catch (e) { return 0; } },
+      spendRes: (id, n) => { try { return !!spendResources({ [id]: n | 0 }); } catch (e) { return false; } },
+      refundRes: (id, n) => { try { _refundRes(id, n); } catch (e) {} },
+      // The give RPC debited the canonical wallet server-side; adopt its
+      // balance the way chargeCinderAtomic does — tax-exempt, seq in step.
+      adoptCinder: (bal, seq) => {
+        try {
+          _gemsTaxExempt(() => { Profile.gems = Math.max(0, bal | 0); });
+          if (seq != null) Profile.walletSeqProgress = Math.max(0, seq | 0);
+          saveProfile();
+        } catch (e) {}
+      },
+      // Roguelite campaigns = the MISSIONS a node campaign points at.
+      missions: () => {
+        try {
+          return getAllCampaigns().filter((c) => c && c.id).map((c) => ({
+            id: c.id, name: c.name || c.id, isPublished: c.isPublished !== false,
+            hasMap: Array.isArray(c.nodes) && c.nodes.length > 0,
+          }));
+        } catch (e) { return []; }
+      },
+      missionRun: () => {
+        try { const r = Profile.rlcRun; return r ? { campaignId: r.campaignId, isComplete: !!r.isComplete, isFailed: !!r.isFailed } : null; }
+        catch (e) { return null; }
+      },
+      missionStart: (id) => { try { rlcStartRun(id); } catch (e) {} },
+      missionResume: () => { try { App.screen = 'rlcMap'; render(); } catch (e) {} },
+      goMissions: () => { try { App.screen = 'rlcList'; render(); } catch (e) {} },
+    },
     // 🏢 Corporations — communities sit ABOVE these, so the module reads them
     //    but never writes them.
     myCorp: () => { try { return (Corp && Corp.mine) ? { id: Corp.mine.id, name: Corp.mine.name, tag: Corp.mine.tag, faction: Corp.mine.faction } : null; } catch (e) { return null; } },
@@ -220354,7 +220408,7 @@ function renderTerritoryWars() {
         ${modsHtml}
         ${objHtml}
         <div class="tw-action-buttons">
-          ${!iOwn ? `<button class="btn-primary" id="tw-act-attack">⚔ Attack PRN</button>` : ''}
+          <button class="btn-primary" id="tw-act-attack" title="Choose a campaign for this node — a relief drive, its mission, or the raid">🎯 Do Campaign</button>
           ${iOwn ? `<button class="btn-primary" id="tw-act-collect">💎 Collect Resources</button>` : ''}
           ${iOwn ? `<button class="btn-secondary" id="tw-act-hire">🛡 Hire Guard</button>` : ''}
           ${iOwn ? `<button class="btn-secondary" id="tw-act-shop">🏗 PRN Shop</button>` : ''}
@@ -220917,7 +220971,7 @@ function renderTerritoryWars() {
       <div class="tw-nd-section-hdr">— ACTIONS</div>
       <div class="tw-nd-actions">
         <div class="tw-nd-action-row">
-          ${!iOwn ? `<button class="btn-primary" id="tw-act-attack">⚔ Attack PRN</button>` : ''}
+          <button class="btn-primary" id="tw-act-attack" title="Choose a campaign for this node — a relief drive, its mission, or the raid">🎯 Do Campaign</button>
           ${iOwn ? `<button class="btn-primary" id="tw-act-collect">💎 Collect Resources</button>` : ''}
         </div>
         <div class="tw-nd-action-row">
@@ -220929,7 +220983,12 @@ function renderTerritoryWars() {
     `;
 
     // --- Campaigns tab ---
+    // 🎯 Node campaigns (relief drives, leaderboard, admin editor) come from
+    // /src/campaigns — the module renders from its cache synchronously and
+    // re-renders the drawer once its fetches land. Battle history stays below.
+    const _ncTabHtml = (() => { try { const NC = window.MythicNodeCampaigns; return (NC && typeof NC.renderTab === 'function') ? (NC.renderTab(selNode.id) || '') : ''; } catch (e) { return ''; } })();
     const campaignsHtml = `
+      ${_ncTabHtml}
       <div class="tw-nd-section-hdr">— BATTLE HISTORY (${_ah.length} records)</div>
       <div class="tw-nd-history-list">
         ${_ah.length ? _ah.slice(0,30).map(a=>`<div class="tw-nd-hist-row ${a.win?'win':'loss'}">
@@ -221431,7 +221490,15 @@ function renderTerritoryWars() {
     render();
   });
   const act = (id, fn) => { const el = document.getElementById(id); if (el) el.onclick = fn; };
-  act('tw-act-attack', () => _twAttackFlow(App._twSelectedNode));
+  // 🎯 "Do Campaign" (was "Attack PRN"). The picker lives in /src/campaigns and
+  // offers the node's relief drives + mission + the raid. If the module failed
+  // to load, the button still does what it always did.
+  act('tw-act-attack', () => {
+    const nid = App._twSelectedNode;
+    const NC = window.MythicNodeCampaigns;
+    if (NC && typeof NC.open === 'function') NC.open(nid);
+    else _twAttackFlow(nid);
+  });
   act('tw-act-collect', () => {
     const r = tw_collectNode(App._twSelectedNode);
     if (!r) return;
@@ -223080,6 +223147,15 @@ render();
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
 <script type="module" src="src/nodes/tiers.js?v=v120t9n2"></script>
+<!-- 🎯 NODE CAMPAIGNS — the "Do Campaign" picker on every City Node: relief
+     drives (give food / water / crude oil / Cinder → leaderboard + Ⓜ airdrops,
+     sql/038) and the roguelite MISSION each drive points at. Registers
+     window.MythicNodeCampaigns; reads the legacy app ONLY through
+     window.MythicBridge.nodeCampaigns (the globals trap — CLAUDE.md). If this
+     404s the button falls back to the old attack flow.
+     ⚠ Bump ?v= on every change — the service worker caches /src/* like any
+       other static asset, and a missed bump ships invisibly. -->
+<script type="module" src="src/campaigns/index.js?v=v120w7nc1"></script>
 <!-- 🧰 RESOURCE CHAIN — the 258-entry industrial catalogue behind the city
      builder (water → agriculture → … → containment → civic). Registers
      window.MythicResourceChain: pure data, no I/O, no globals, and NOTHING in

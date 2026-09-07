@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120w6';
+  window.BUILD_VERSION = 'v120x0';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -114617,6 +114617,35 @@ function renderTitle() {
               if (typeof showToast === 'function') showToast('📡 Emergency Broadcast opened in a new tab.', 3200);
             } catch (e) {}
           } },
+      // ⚔ MERCENARIES — the escrow job board. Sits directly under Emergency
+      // Broadcast because that is where it LIVES: posting a contract puts a
+      // job on the network feed, applying notifies the employer there, and a
+      // mercenary's record and badges are published on their EB profile.
+      // Lives in /src/mercenary as an ES module; this tile is the only thing
+      // index.html knows about it.
+      // ⚠ Resolves to NULL when the module has not loaded — the tile list is
+      //   `.filter(Boolean)`ed, which is how every conditional portal here
+      //   hides itself. There is no `hidden` flag; returning null IS the flag.
+      ((typeof window !== 'undefined' && window.MythicMercenaries)
+        ? { id: 'btn-mercenaries', icon: '<span style="font-size:3rem;line-height:1;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">⚔</span>', name: 'Mercenaries', sub: 'Hire a survivor · Cinder in escrow until the goods land', accent: '#ff8a4b',
+            // ⚠ The count is only KNOWN after the hub has been opened once this
+            //   session — the module does not query on boot, deliberately: a
+            //   Supabase round trip on every cold start, for a feature most
+            //   players never touch, is not worth a number on a tile. Until
+            //   then the tile reads as a label, which is honest. Do not "fix"
+            //   this by prefetching claims during boot.
+            badge: (() => {
+              try {
+                const n = window.MythicMercenaries.claimCount();
+                return n ? `📦 ${n} waiting` : 'Contracts & bounties';
+              } catch (e) { return 'Contracts & bounties'; }
+            })(),
+            alertBadge: (() => { try { return window.MythicMercenaries.claimCount() > 0; } catch (e) { return false; } })(),
+            onclick: () => {
+              try { window.MythicMercenaries.open(); }
+              catch (e) { showToast('⚠ The Mercenary module did not load.', 3200); }
+            } }
+        : null),
       ];
       // Admin-only tools — appended only when the current user is an admin so
       // regular players never see The Forge / Sprite Atelier / Pack Creator /
@@ -207412,6 +207441,132 @@ window.MythicTradeBridge = {
   save: () => { try { saveProfile(); return true; } catch (e) { return false; } },
   toast: (m, ms) => { try { showToast(m, ms || 3600); } catch (e) {} },
 };
+/* ⚔ MERCENARY BRIDGE — the seam for /src/mercenary (the escrow job board).
+   Same reason MythicTradeBridge and MythicCityBridge exist: `Profile`,
+   `RESOURCES`, `Forge` and `Cloud` are top-level `const` and are therefore NOT
+   on `window`, so an ES module cannot see them (CLAUDE.md, "the globals trap").
+   Everything the board touches arrives through here and nowhere else.
+
+   🔴 EVERY MUTATOR RETURNS A BOOLEAN, for the same reason the trade bridge
+   does: merc.api.js's deliver() decides whether to unwind a half-taken drop
+   from these return values, and a wrapper that returned `undefined` on success
+   would make its rollback fire on a leg that actually worked.
+
+   🔴 refundRes vs addRes is, again, the whole safety story. refundRes is
+   UNCAPPED and is only ever an UNDO of a deduction the same call stack just
+   made (a delivery the server refused). addRes CREATES units for the player (a
+   collected payout) and respects the stash cap; the board checks for room
+   BEFORE it claims, because a claim is a one-shot insert and a clamp after the
+   fact would be goods that no longer exist anywhere. */
+window.MythicMercBridge = {
+  // ── Identity / cloud. The module makes its own Supabase calls (like
+  //    /src/community does) rather than routing them back through here.
+  get cloud() { try { return (typeof Cloud !== 'undefined') ? Cloud : null; } catch (e) { return null; } },
+  signedIn: () => { try { return !!(Profile.cloud && Profile.cloud.signedIn && Cloud && Cloud.client); } catch (e) { return false; } },
+  userId: () => { try { return (Profile.cloud && Profile.cloud.userId) || null; } catch (e) { return null; } },
+  displayName: () => {
+    try { return (Profile.cloud && Profile.cloud.displayName) || (Profile.account && Profile.account.displayName) || 'Survivor'; }
+    catch (e) { return 'Survivor'; }
+  },
+
+  /* 🧰 FORGE RESOURCES — the LIVE arrays, not a copy. RESOURCES and
+     SALVAGE_RES are MUTATED in place by _applyResourceCustomization(), so
+     handing the module these two references is what makes "every resource
+     that was ever created in the Forge" true without the module knowing that
+     custom resources exist at all. A snapshot taken at boot would miss every
+     resource an admin published afterwards. */
+  resources: () => {
+    try {
+      const base = (typeof RESOURCES !== 'undefined' && Array.isArray(RESOURCES)) ? RESOURCES : [];
+      const salv = (typeof SALVAGE_RES !== 'undefined' && Array.isArray(SALVAGE_RES)) ? SALVAGE_RES : [];
+      const seen = new Set(); const out = [];
+      base.concat(salv).forEach((r) => { if (r && r.id && !seen.has(r.id)) { seen.add(r.id); out.push(r); } });
+      return out;
+    } catch (e) { return []; }
+  },
+  meta: (id) => { try { return _meta(id); } catch (e) { return { id: id, name: id, icon: '📦' }; } },
+  getRes: (id) => { try { return getRes(id) | 0; } catch (e) { return 0; } },
+  resourceCap: () => { try { return getResourceCap() | 0; } catch (e) { return 0; } },
+  resourceUnits: () => { try { return getResourceUnits() | 0; } catch (e) { return 0; } },
+  spendRes: (id, n) => { try { return !!spendResources({ [id]: n | 0 }); } catch (e) { return false; } },
+  addRes: (id, n) => { try { addRes(id, n | 0); return true; } catch (e) { return false; } },
+  refundRes: (id, n) => { try { _refundRes(id, n | 0); return true; } catch (e) { return false; } },
+
+  /* 🃏 CUSTOM CARDS — getAllCustomCards() is the merge of the admin's local
+     Forge edits and the published catalog, which is exactly "everything
+     created in customs". Heroes are INCLUDED here (unlike the trade bridge,
+     which filters them out): a contract is a delivery of a card the
+     mercenary owns a copy of, not a deck-legality question. */
+  customCards: () => {
+    try {
+      const list = (typeof getAllCustomCards === 'function') ? getAllCustomCards() : (Forge.customCards || []);
+      return (list || []).filter((c) => c && c.id);
+    } catch (e) { return []; }
+  },
+  ownCount: (kind, id) => { try { return _resOwnCount(kind, id) | 0; } catch (e) { return 0; } },
+  takeOwned: (kind, id, n) => {
+    try { n = Math.max(1, n | 0); if (_resOwnCount(kind, id) < n) return false; for (let i = 0; i < n; i++) _resTakeOwned(kind, id); return true; } catch (e) { return false; }
+  },
+  giveOwned: (kind, id, n) => {
+    try { n = Math.max(1, n | 0); for (let i = 0; i < n; i++) _resGiveOwned(kind, id); return true; } catch (e) { return false; }
+  },
+
+  // ── 🔥 Cinder. READ ONLY from the module's side.
+  gems: () => { try { return Profile.gems | 0; } catch (e) { return 0; } },
+  /* 🔴 THERE IS DELIBERATELY NO spendGems / addGems HERE.
+     Escrow moves money INSIDE the merc_* RPCs (wallet_charge on post,
+     wallet_credit on payout and refund), so by the time the module gets a
+     response the server has already moved it and Profile.gems is stale. A
+     spendGems() here would charge the player a SECOND time.
+
+     adoptBalance() is the only Cinder write, and it is the same adoption
+     chargeCinderAtomic performs after its own wallet_charge:
+       • the balance is applied TAX-EXEMPT — the 2% Foundation Tax was already
+         taken server-side, and letting the poll watcher see this as a local
+         decrease would tax the same spend twice;
+       • walletSeqProgress is advanced so the next boot's walletFetchProgress
+         does not adopt a stale server row and throw the spend away (sql/023);
+       • the tax is mirrored into the local ledger so the Tax tab updates now.
+     Pass seq = null for a CREDIT: wallet_credit does not move the debit
+     counter, and inventing a value here would desynchronise it. */
+  adoptBalance: (newBalance, walletSeq, taxAmount, reason) => {
+    try {
+      if (typeof newBalance === 'number' && isFinite(newBalance) && newBalance >= 0) {
+        _gemsTaxExempt(() => { Profile.gems = newBalance | 0; });
+      }
+      if (typeof walletSeq === 'number' && isFinite(walletSeq)) {
+        Profile.walletSeqProgress = Math.max(0, walletSeq | 0);
+      }
+      const tax = taxAmount | 0;
+      if (tax > 0 && typeof _frTaxLedger === 'function') {
+        const L = _frTaxLedger();
+        const rk = reason || 'Mercenary contract';
+        L.total = (L.total | 0) + tax;
+        L.byMarket = L.byMarket || {}; L.byMarket.spend = (L.byMarket.spend | 0) + tax;
+        L.byRes = L.byRes || {};       L.byRes[rk] = (L.byRes[rk] | 0) + tax;
+        L.recent = Array.isArray(L.recent) ? L.recent : [];
+        L.recent.unshift({ resource: rk, sale_value: 0, tax_amount: tax, market_type: 'spend', created_at: new Date().toISOString() });
+        if (L.recent.length > 60) L.recent.length = 60;
+        if (typeof _frRebuildTaxStats === 'function') _frRebuildTaxStats(FoundationReserve.taxStats);
+        if (typeof _frScheduleLedgerSave === 'function') _frScheduleLedgerSave();
+      }
+      try { saveProfile(); } catch (e) {}
+      return true;
+    } catch (e) { return false; }
+  },
+
+  save: () => { try { saveProfile(); return true; } catch (e) { return false; } },
+  toast: (m, ms) => { try { showToast(m, ms || 3600); } catch (e) {} },
+  confirm: async (m) => { try { return !!(await gcConfirm(m)); } catch (e) { return false; } },
+  render: () => { try { render(); } catch (e) {} },
+  isAdmin: () => { try { return !!(typeof isAdmin === 'function' && isAdmin()); } catch (e) { return false; } },
+  // 📡 Deep link to a player's Emergency Broadcast profile, where their
+  //    mercenary standing and badges are published (merc_public_standing).
+  ebUrl: (uid) => {
+    try { return 'https://mythicspellbook.xyz/?' + (uid ? 'u=' + encodeURIComponent(uid) : 'feed=1'); }
+    catch (e) { return 'https://mythicspellbook.xyz/'; }
+  },
+};
 window.MythicCityBridge = {
   // ── Resources. Accessors, never snapshots — a captured value goes stale the
   //    moment the player loots or spends.
@@ -223072,6 +223227,18 @@ render();
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
 <script type="module" src="src/trading/index.js?v=r12trade1"></script>
+<!-- ⚔ MERCENARIES — the escrow job board (sql/038_mercenary_board.sql).
+     Registers window.MythicMercenaries and is INERT until the main-menu tile
+     opens it. index.html's half of the seam is window.MythicMercBridge,
+     defined next to MythicTradeBridge above; without it the module registers,
+     stays inert and shows an empty board rather than reaching for a bare
+     global (the globals trap, CLAUDE.md).
+     ⚠ The board degrades all the way down: signed out, or sql/038 not yet
+       applied by hand in the Supabase editor, both render an explanation
+       instead of an error. Nothing else in the game is downstream of it.
+     ⚠ Bump ?v= on every change — the service worker caches /src/* like any
+       other static asset, and a missed bump ships invisibly. -->
+<script type="module" src="src/mercenary/index.js?v=v120x0merc1"></script>
 <!-- 🔌 PRN NODE TIERS — the generation-rate table (Free 0.5% … Eternal 20%).
      Registers window.MythicNodeTiers: pure math, no I/O, no globals. Two
      consumers in this file, both `typeof`-guarded so an absent module falls

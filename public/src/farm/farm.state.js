@@ -57,9 +57,19 @@ export function ensureState(host) {
   if (!Array.isArray(s.journal)) s.journal = [];
   if (!s.stats || typeof s.stats !== 'object') s.stats = {};
   if (!Array.isArray(s.shipments)) s.shipments = [];
-  s.shipments = s.shipments.filter(x => x && animalDef(x.sp) && (x.n | 0) > 0).map(x => ({ id: x.id | 0, sp: x.sp, n: x.n | 0, carrier: String(x.carrier || ''), label: String(x.label || ''), departAt: Number(x.departAt) || 0, arriveAt: Number(x.arriveAt) || 0, fee: x.fee | 0, price: x.price | 0, risk: Number(x.risk) || 0, insured: Number(x.insured) || 0 }));
-  ['births', 'slaughtered', 'meat', 'raidsRepelled', 'raidsLost', 'predatorsRepelled', 'lost', 'died', 'abducted', 'returned', 'delivered', 'crated', 'shipped', 'lostInTransit', 'built'].forEach(k => { if (typeof s.stats[k] !== 'number') s.stats[k] = 0; });
+  s.shipments = s.shipments.filter(x => x && animalDef(x.sp) && (x.n | 0) > 0).map(x => ({ id: x.id | 0, sp: x.sp, n: x.n | 0, carrier: String(x.carrier || ''), label: String(x.label || ''), departAt: Number(x.departAt) || 0, arriveAt: Number(x.arriveAt) || 0, fee: x.fee | 0, price: x.price | 0, risk: Number(x.risk) || 0, insured: Number(x.insured) || 0, escort: x.escort | 0 }));
+  ['births', 'slaughtered', 'meat', 'raidsRepelled', 'raidsLost', 'predatorsRepelled', 'lost', 'died', 'abducted', 'returned', 'delivered', 'crated', 'shipped', 'lostInTransit', 'built', 'outbreaks', 'cured', 'contractsDone', 'contractsFailed', 'auctions', 'auctionValue'].forEach(k => { if (typeof s.stats[k] !== 'number') s.stats[k] = 0; });
   if (!s.demand || typeof s.demand !== 'object') s.demand = { day: 0, used: 0 };
+  if (!s.contracts || typeof s.contracts !== 'object') s.contracts = { week: 0, offers: [], active: [], rep: 0 };
+  if (!Array.isArray(s.contracts.offers)) s.contracts.offers = [];
+  if (!Array.isArray(s.contracts.active)) s.contracts.active = [];
+  s.contracts.rep = Math.max(FARM_ECON.contracts.repMin, Math.min(FARM_ECON.contracts.repMax, s.contracts.rep | 0));
+  if (!s.collection || typeof s.collection !== 'object') s.collection = {};
+  if (!s.collectionRewarded || typeof s.collectionRewarded !== 'object') s.collectionRewarded = {};
+  if (!Array.isArray(s.lots)) s.lots = [];
+  if (!Array.isArray(s.holding)) s.holding = [];      // beasts that came back (claimed lots) with no room in the pen yet
+  s.holding = s.holding.filter(a => a && animalDef(a.sp));
+  s.lots = s.lots.filter(l => l && l.animal && animalDef(l.animal.sp));
   s.look = normalizeLook(s.look);
   Object.keys(s.buildings).forEach(id => {
     const b = s.buildings[id];
@@ -85,6 +95,9 @@ export function ensureState(host) {
       health: (typeof a.health === 'number') ? Math.max(0, Math.min(100, a.health)) : 100,
       breed: (typeof a.breed === 'string' && FARM_ECON.breeds[a.breed]) ? a.breed : null,
       born: Number(a.born) || 0,
+      ill: (typeof a.ill === 'string' && FARM_ECON.disease.kinds[a.ill]) ? a.ill : null,
+      illSince: Number(a.illSince) || 0,
+      away: a.away | 0,                       // shipment id this guard is escorting, else 0
     };
   });
   return s;
@@ -136,7 +149,14 @@ export function healthFactor(a) {
   return 0.5 + 0.5 * (a.health - sb) / (100 - sb);
 }
 export function breedOf(a) { return a.breed ? FARM_ECON.breeds[a.breed] : null; }
-export function yieldMul(a) { const b = breedOf(a); return b ? b.yieldMul : 1; }
+export function yieldMul(a) { const b = breedOf(a); let m = b ? b.yieldMul : 1; if (a.ill) m *= FARM_ECON.disease.yieldMul; return m; }
+export function tierOf(a) { const b = breedOf(a); return b ? b.tier : null; }
+/* 🦠 */
+export function isIll(a) { return !!a.ill; }
+export function diseaseFor(sp, rnd) {
+  const ks = Object.keys(FARM_ECON.disease.kinds).filter(k => FARM_ECON.disease.kinds[k].species.indexOf(sp) >= 0);
+  return ks.length ? ks[Math.floor((rnd ? rnd() : Math.random()) * ks.length)] : null;
+}
 /* Weight in kg: 15% of adult at birth → adult at growH → creeps to max. */
 export function weightOf(a) {
   const e = econOf(a); if (!e) return 0;
@@ -247,7 +267,7 @@ export function penRatePerH(s, penId, host, now) {
 export function guardDefense(s) {
   let d = 0;
   s.animals.forEach(a => {
-    const e = econOf(a); if (!e || !e.defense || !isAdult(a)) return;
+    const e = econOf(a); if (!e || !e.defense || !isAdult(a) || a.away) return;
     d += e.defense * (a.health < FARM_ECON.health.guardHalfBelow ? 0.5 : 1);
   });
   return d;
@@ -283,7 +303,72 @@ export function townOffer(s, now) {
   const offers = FARM_ECON.townDemand.offers;
   const i = hash32('town:' + s.seed + ':' + day) % offers.length;
   const used = (s.demand.day === day) ? (s.demand.used | 0) : 0;
-  return Object.assign({ day, used, left: Math.max(0, FARM_ECON.townDemand.perDay - used) }, offers[i]);
+  const perDay = demandPerDay(s);
+  return Object.assign({ day, used, left: Math.max(0, perDay - used), perDay, rep: s.contracts ? s.contracts.rep | 0 : 0 }, offers[i]);
+}
+export function demandPerDay(s) {
+  const rep = s.contracts ? (s.contracts.rep | 0) : 0;
+  const table = FARM_ECON.contracts.demandPerDayAtRep;
+  let best = FARM_ECON.townDemand.perDay;
+  Object.keys(table).map(Number).sort((a, b) => a - b).forEach(k => { if (rep >= k) best = table[String(k)]; });
+  return best;
+}
+/* 📜 Contracts: two seeded offers per week, accept up to maxActive. */
+export function weekKey(now) { return Math.floor((now || Date.now()) / (7 * DAY)); }
+export function contractOffers(s, now) {
+  now = now || Date.now();
+  const wk = weekKey(now);
+  if (s.contracts.week !== wk) {
+    s.contracts.week = wk; s.contracts.offers = [];
+    const T = FARM_ECON.contracts, R = rngFor('contract:' + s.seed + ':' + wk);
+    const used = new Set();
+    for (let i = 0; i < T.offersPerWeek && used.size < T.templates.length; i++) {
+      let idx = Math.floor(R() * T.templates.length); while (used.has(idx)) idx = (idx + 1) % T.templates.length; used.add(idx);
+      const tpl = T.templates[idx]; const days = T.days[Math.floor(R() * T.days.length)];
+      s.contracts.offers.push({ id: wk * 10 + i, give: Object.assign({}, tpl.give), get: Object.assign({}, tpl.get), days });
+    }
+  }
+  return s.contracts.offers;
+}
+/* 🏛 Sale Ring. */
+export function auctionOpen(now) {
+  const d = new Date(now || Date.now()); const A = FARM_ECON.auction;
+  return d.getDay() === A.dayOfWeek && d.getHours() >= A.hoursOpen[0] && d.getHours() < A.hoursOpen[1];
+}
+export function nextAuction(now) {
+  const d = new Date(now || Date.now()); const A = FARM_ECON.auction;
+  const x = new Date(d); x.setHours(A.hoursOpen[0], 0, 0, 0);
+  let delta = (A.dayOfWeek - x.getDay() + 7) % 7; if (delta === 0 && x.getTime() + (A.hoursOpen[1] - A.hoursOpen[0]) * H <= d.getTime()) delta = 7;
+  x.setDate(x.getDate() + delta); return x.getTime();
+}
+/* A beast's value in Cinder terms: price × weight share × line × prize. */
+export function animalValue(s, a) {
+  const e = econOf(a); if (!e) return 0;
+  let v = e.cinder * Math.max(0.5, weightOf(a) / e.adultWeight);
+  const tier = tierOf(a); if (tier && FARM_ECON.auction.priceMul[tier]) v *= FARM_ECON.auction.priceMul[tier];
+  if (prizeIds(s).has(a.id)) v *= FARM_ECON.auction.priceMul.prize;
+  return Math.round(v);
+}
+/* The seeded bid timeline of an NPC lot: who bid what, when. Pure. */
+export function lotTimeline(lot) {
+  const A = FARM_ECON.auction, R = rngFor('lot:' + lot.seed);
+  const n = A.bidsMin + Math.floor(R() * (A.bidsMax - A.bidsMin + 1));
+  const total = A.lotMinutes * 60000; const hammerMul = A.hammerRange[0] + R() * (A.hammerRange[1] - A.hammerRange[0]);
+  const final = Math.round(lot.reserve * hammerMul);
+  const bids = []; let cur = Math.round(lot.reserve * 0.7);
+  for (let i = 0; i < n; i++) {
+    const b = A.bidders[Math.floor(R() * A.bidders.length)];
+    const at = lot.at + Math.round(total * (0.08 + 0.84 * (i + R() * 0.6) / n));
+    cur = i === n - 1 ? final : Math.round(cur + (final - cur) * (0.3 + R() * 0.4));
+    bids.push({ at, who: b.name, id: b.id, amount: cur });
+  }
+  const winner = bids[bids.length - 1];
+  return { bids, hammerAt: lot.at + total, final, winner: winner.who, winnerId: winner.id, athena: A.athena[Math.floor(R() * A.athena.length)] };
+}
+export function lotPayout(final) {
+  const out = {}; const P = FARM_ECON.auction.payoutPer1000;
+  Object.keys(P).forEach(r => { out[r] = Math.max(1, Math.round(P[r] * final / 1000)); });
+  return out;
 }
 
 /* ── Simulation ────────────────────────────────────────────────────────────── */
@@ -314,7 +399,11 @@ export function simulate(host, s, now, rnd) {
     arrived.forEach(x => {
       const ad = animalDef(x.sp); const R = rngFor('ship:' + s.seed + ':' + x.id);
       let n = x.n, lostN = 0;
-      if (x.risk > 0 && R() < x.risk) { lostN = Math.max(1, Math.round(n * 0.34)); n -= lostN; }
+      const esc = x.escort ? animalById(s, x.escort) : null;
+      let risk = x.risk;
+      if (esc) { const e = econOf(esc); risk *= Math.max(FARM_ECON.escort.minRiskMul, 1 - (e && e.defense ? e.defense : 0) / FARM_ECON.escort.div); }
+      if (risk > 0 && R() < risk) { lostN = Math.max(1, Math.round(n * 0.34)); n -= lostN; if (esc) esc.health = Math.max(1, esc.health - FARM_ECON.escort.woundOnHit); }
+      if (esc) { esc.away = 0; journal(s, 'ship', '🐕', `${esc.name} rode back with the ${x.label} truck${lostN ? ', bloodied' : ''}.`, x.arriveAt); }
       const names = [];
       for (let i = 0; i < n; i++) { const a = newAnimal(s, x.sp, x.arriveAt); s.animals.push(a); names.push(a.name); }
       if (lostN) {
@@ -353,14 +442,42 @@ export function simulate(host, s, now, rnd) {
 
     const gained = {};
     const dead = [];
+    // 🦠 Spread, then the clinic. Spread is per pen-mate per hour; the clinic
+    // cures the longest-ill first, one medicine each, `cured/h` by level.
+    const DZ = FARM_ECON.disease;
+    const illNow = herd.filter(a => a.ill);
+    if (illNow.length) {
+      const R = rnd || rngFor('spread:' + s.seed + ':' + def.id + ':' + Math.floor(now / H));
+      herd.forEach(a => {
+        if (a.ill) return;
+        const src = illNow.find(x => FARM_ECON.disease.kinds[x.ill].species.indexOf(a.sp) >= 0);
+        if (!src) return;
+        const p = 1 - Math.pow(1 - DZ.spreadPerH, Math.min(hours, 72));
+        if (R() < p) { a.ill = src.ill; a.illSince = now; changed = true; }
+      });
+      const vet = building(s, 'vet');
+      if (vet && !vet.constructing) {
+        const cures = Math.floor(hours * DZ.vetCureHPerLevel * vet.level / DZ.cureH * 2);
+        const queue = herd.filter(a => a.ill).sort((x, y) => x.illSince - y.illSince);
+        for (let i = 0; i < Math.min(cures, queue.length); i++) {
+          if (host.getRes('medicine') < DZ.vetMedicinePerCure) break;
+          if (!host.spendRes('medicine', DZ.vetMedicinePerCure)) break;
+          const a = queue[i]; journal(s, 'vet', '🩺', `The clinic cured ${a.name} of ${DZ.kinds[a.ill].label.toLowerCase()}.`, now);
+          a.ill = null; a.illSince = 0; s.stats.cured++; changed = true;
+        }
+      }
+    }
     herd.forEach(a => {
       const e = econOf(a); if (!e) return;
+      if (a.ill) a.health -= hours * DZ.healthLossPerH;
       // Age is real time; growth is fed time.
       a.ageH += hours;
       const adultH = Math.max(0, fedH - Math.max(0, e.growH - a.grownH));
       a.grownH += fedH;
       // Hunger and healing.
-      if (fedH > 0) { a.hungry = Math.max(0, a.hungry - fedH * 2); a.health = Math.min(100, a.health + fedH * HL.healPerFedH); }
+      // Feed heals — unless the animal is ill: a sick beast does not mend on
+      // its own however full the trough, which is what makes the clinic matter.
+      if (fedH > 0) { a.hungry = Math.max(0, a.hungry - fedH * 2); if (!a.ill) a.health = Math.min(100, a.health + fedH * HL.healPerFedH); }
       if (unfedH > 0) {
         const before = a.hungry; a.hungry += unfedH;
         const painful = Math.max(0, a.hungry - Math.max(before, HL.hungerGraceH));
@@ -404,10 +521,20 @@ export function simulate(host, s, now, rnd) {
         if (R() < p * frac) births++;
         for (let i = 0; i < births; i++) {
           if (animalsInPen(s, def.id).length >= cap) break;
-          const rare = R() < FARM_ECON.rareBreedChance;
-          const a = newAnimal(s, sp, now, rare ? sp : null);
+          // 🧬 Lines: pick two adult parents; their tiers decide the child's.
+          const parents = s.animals.filter(a => a.sp === sp && isAdult(a) && !isSick(a));
+          const p1 = parents[Math.floor(R() * parents.length)], p2 = parents[Math.floor(R() * parents.length)];
+          const L = FARM_ECON.lines; const t1 = p1 ? tierOf(p1) : null, t2 = p2 ? tierOf(p2) : null;
+          let breed = null;
+          if (t1 === 'royal' && t2 === 'royal' && R() < L.mythicChance) breed = sp + ':mythic';
+          else if ((t1 === 'rare' || t1 === 'royal') && (t2 === 'rare' || t2 === 'royal') && R() < L.royalChance) breed = sp + ':royal';
+          else if ((t1 || t2) && R() < L.inheritRare) breed = sp;
+          else if (R() < L.rareChance) breed = sp;
+          const a = newAnimal(s, sp, now, breed);
           s.animals.push(a); s.stats.births++; changed = true;
-          journal(s, 'birth', rare ? '✨' : '🐣', rare ? `A ${FARM_ECON.breeds[sp].label} was born — ${a.name}! Double yield for life.` : `${a.name} the ${ad.name.toLowerCase()} was born.`, now);
+          if (breed) noteCollection(host, s, breed, now);
+          const B = breed ? FARM_ECON.breeds[breed] : null;
+          journal(s, 'birth', breed ? (B.tier === 'mythic' ? '🌟' : B.tier === 'royal' ? '👑' : '✨') : '🐣', breed ? `A ${B.label} was born — ${a.name}! ${B.tier === 'mythic' ? 'The line is complete: ×5 yield.' : B.tier === 'royal' ? 'A royal line: ×3 yield.' : 'Double yield for life.'}` : `${a.name} the ${ad.name.toLowerCase()} was born.`, now);
         }
       });
     }
@@ -416,15 +543,82 @@ export function simulate(host, s, now, rnd) {
   // ⚔ Replay every event window the farm slept through.
   const windows = eventWindowsBetween(s.eventAt, now);
   if (windows.length) {
-    windows.forEach(w => { if (resolveWindow(host, s, w)) changed = true; });
+    windows.forEach(w => { if (resolveWindow(host, s, w)) changed = true; if (rollOutbreaks(host, s, w)) changed = true; });
     s.eventAt = Math.max(s.eventAt, now);
   }
+  // 🚧 Beasts waiting at the gate walk in when a stall opens.
+  if (s.holding.length) {
+    const keep = [];
+    s.holding.forEach(a => {
+      const pen = penFor(a.sp);
+      if (pen && has(s, pen.id) && isReady(s, pen.id, now) && penCapacity(s, pen.id, host) - animalsInPen(s, pen.id).length - inTransit(s, pen.id) >= 1) { s.animals.push(a); journal(s, 'ship', '🚪', `${a.name} walked in from the gate.`, now); changed = true; }
+      else keep.push(a);
+    });
+    s.holding = keep;
+  }
+  // 🧬 Any breed on the farm counts for the collection (covers migrated saves).
+  s.animals.forEach(a => { if (a.breed && !s.collection[a.breed]) { noteCollection(host, s, a.breed, now); changed = true; } });
+  // 📜 Contracts past their deadline fail: reputation drops, the town demands less.
+  const failed = s.contracts.active.filter(c => c.deadline <= now);
+  if (failed.length) {
+    s.contracts.active = s.contracts.active.filter(c => c.deadline > now);
+    failed.forEach(c => {
+      s.contracts.rep = Math.max(FARM_ECON.contracts.repMin, s.contracts.rep - FARM_ECON.contracts.repHit); s.stats.contractsFailed++;
+      journal(s, 'contract', '📜', `Missed the town's contract (${Object.keys(c.give).map(k => c.give[k] + ' ' + k).join(', ')}). Reputation ${s.contracts.rep}: the town now takes ${demandPerDay(s)} deliveries a day.`, c.deadline);
+    });
+    changed = true;
+  }
+  contractOffers(s, now);
+  // 🏛 Lots whose hammer has fallen pay out in goods.
+  const done = s.lots.filter(l => !l.p2p && lotTimeline(l).hammerAt <= now);
+  if (done.length) {
+    s.lots = s.lots.filter(l => done.indexOf(l) < 0);
+    done.forEach(l => {
+      const tl = lotTimeline(l); const pay = lotPayout(tl.final);
+      const { got } = deliver(host, pay);
+      s.stats.auctions++; s.stats.auctionValue += tl.final;
+      journal(s, 'auction', '🔨', `SOLD — ${l.animal.name} the ${animalDef(l.animal.sp).name.toLowerCase()} to ${tl.winner} for ${tl.final.toLocaleString()}: ${Object.keys(got).map(k => got[k] + ' ' + k).join(', ')}.`, tl.hammerAt);
+    });
+    changed = true;
+  }
   return { changed };
+}
+/* 🦠 One outbreak roll per pen per window. Crowding and a thin fence raise it; the clinic halves it. */
+function rollOutbreaks(host, s, w) {
+  const DZ = FARM_ECON.disease; let changed = false;
+  const vet = building(s, 'vet'); const vetCut = (vet && !vet.constructing) ? DZ.vetOutbreakCut : 1;
+  FARM_BUILDINGS.forEach(def => {
+    if (!def.houses) return; const b = building(s, def.id); if (!b) return;
+    const herd = animalsInPen(s, def.id).filter(a => !a.ill); if (!herd.length) return;
+    const R = rngFor('dz:' + s.seed + ':' + def.id + ':' + w.idx);
+    const cap = penCapacity(s, def.id, host) || 1;
+    let p = DZ.outbreakBase * vetCut;
+    if (herd.length / cap >= DZ.crowdAbove) p *= DZ.crowdMul;
+    p *= Math.max(0.3, 1 - DZ.penLevelCut * (b.level - 1));
+    if (R() >= p) return;
+    const a = herd[Math.floor(R() * herd.length)]; const k = diseaseFor(a.sp, R); if (!k) return;
+    a.ill = k; a.illSince = w.at; s.stats.outbreaks++; changed = true;
+    journal(s, 'disease', DZ.kinds[k].icon, `${DZ.kinds[k].label} in the ${def.name}: ${a.name} is sick${herd.length / cap >= DZ.crowdAbove ? ' — the pen is crowded' : ''}. It spreads by the hour; ${vet ? 'the clinic is on it' : 'treat it, or build a Vet Clinic'}.`, w.at);
+  });
+  return changed;
+}
+/* 🧬 The collection: every breed ever owned. A full tier pays once. */
+function noteCollection(host, s, breed, now) {
+  if (!breed || s.collection[breed]) return;
+  s.collection[breed] = true;
+  const B = FARM_ECON.breeds[breed]; if (!B || !B.tier || B.tier === 'glow') return;
+  const tier = B.tier;
+  const all = Object.keys(FARM_ECON.breeds).filter(k => FARM_ECON.breeds[k].tier === tier);
+  if (all.every(k => s.collection[k]) && !s.collectionRewarded[tier]) {
+    s.collectionRewarded[tier] = true;
+    const { got } = deliver(host, FARM_ECON.lines.collectionReward[tier] || {});
+    journal(s, 'collection', '🏆', `Collection complete — every ${tier} breed has lived on this farm. Reward: ${Object.keys(got).map(k => got[k] + ' ' + k).join(', ') || 'nothing fit in the stash'}.`, now);
+  }
 }
 
 function newAnimal(s, sp, now, breed) {
   const id = s.seq++;
-  return { id, sp, name: defaultName(sp, id), ageH: 0, grownH: 0, hungry: 0, health: 100, breed: breed || null, born: now };
+  return { id, sp, name: defaultName(sp, id), ageH: 0, grownH: 0, hungry: 0, health: 100, breed: breed || null, born: now, ill: null, illSince: 0, away: 0 };
 }
 
 /* One event window. Returns true when anything changed. */
@@ -595,7 +789,7 @@ export function repair(host, s, id) {
   if (!b.damaged) return { ok: false, why: 'nothing to repair' };
   return paid(host, s, FARM_ECON.events.storm.repair, () => { simulate(host, s); b.damaged = false; journal(s, 'repair', '🔨', `The ${def.name} roof is back on.`); return { repaired: id }; });
 }
-export function buyAnimal(host, s, sp, n, carrier) {
+export function buyAnimal(host, s, sp, n, carrier, escortId) {
   n = Math.max(1, n | 0);
   const ad = animalDef(sp), e = FARM_ECON.animals[sp];
   if (!ad || !e) return { ok: false, why: 'unknown animal' };
@@ -609,6 +803,8 @@ export function buyAnimal(host, s, sp, n, carrier) {
      the carrier does; the pen slot is reserved from now. */
   const c = carrierById(host, carrier);
   const fee = shipFee(c, sp, n), price = e.cinder * n;
+  const esc = escortId ? animalById(s, escortId) : null;
+  if (escortId && (!esc || !isGuard(esc) || !isAdult(esc) || esc.away || isSick(esc))) return { ok: false, why: 'that guard cannot ride along' };
   return paid(host, s, { cinder: price + fee }, () => {
     const now = Date.now();
     if (!(c.hours > 0)) {
@@ -618,7 +814,8 @@ export function buyAnimal(host, s, sp, n, carrier) {
       s.stats.shipped += n;
       return { shipped: n, arriveAt: now, carrier: c.name, fee, names };
     }
-    const sh = { id: s.seq++, sp, n, carrier: c.id, label: c.name, departAt: now, arriveAt: now + Math.round(c.hours * H), fee, price, risk: c.risk || 0, insured: c.insured || 0 };
+    const sh = { id: s.seq++, sp, n, carrier: c.id, label: c.name, departAt: now, arriveAt: now + Math.round(c.hours * H), fee, price, risk: c.risk || 0, insured: c.insured || 0, escort: esc ? esc.id : 0 };
+    if (esc) { esc.away = sh.id; journal(s, 'ship', '🐕', `${esc.name} rides with the truck — the pens are down a guard until it is back.`, now); }
     s.shipments.push(sh); s.stats.shipped += n;
     journal(s, 'ship', c.emoji || '🚚', `${n} ${n === 1 ? ad.name.toLowerCase() : ad.plural.toLowerCase()} ordered — ${c.name} is hauling ${n === 1 ? 'it' : 'them'} in, ETA ${Math.round(c.hours * 60)} min${fee ? ', fee ' + fee.toLocaleString() + ' Cinder' : ''}.`, now);
     return { shipped: n, arriveAt: sh.arriveAt, carrier: c.name, fee };
@@ -651,8 +848,79 @@ export function rename(host, s, animalId, name) {
 export function treat(host, s, animalId) {
   const a = animalById(s, animalId); if (!a) return { ok: false, why: 'no such animal' };
   simulate(host, s);
+  if (a.ill) {
+    const k = a.ill;
+    return paid(host, s, FARM_ECON.disease.handCure, () => { a.ill = null; a.illSince = 0; a.health = Math.min(100, a.health + FARM_ECON.health.treatHeal); s.stats.cured++; journal(s, 'vet', '💊', `Treated ${a.name} for ${FARM_ECON.disease.kinds[k].label.toLowerCase()} by hand.`); return { health: a.health, cured: k }; });
+  }
   if (a.health >= 100) return { ok: false, why: 'already in perfect health' };
   return paid(host, s, FARM_ECON.health.treatCost, () => { a.health = Math.min(100, a.health + FARM_ECON.health.treatHeal); a.hungry = 0; return { health: a.health }; });
+}
+export function acceptContract(host, s, offerId) {
+  simulate(host, s);
+  const o = contractOffers(s).find(x => x.id === (offerId | 0)); if (!o) return { ok: false, why: 'that offer is gone' };
+  if (s.contracts.active.length >= FARM_ECON.contracts.maxActive) return { ok: false, why: 'you already hold ' + FARM_ECON.contracts.maxActive + ' contracts' };
+  const now = Date.now();
+  s.contracts.active.push({ id: o.id, give: o.give, get: o.get, accepted: now, deadline: now + o.days * DAY });
+  s.contracts.offers = s.contracts.offers.filter(x => x.id !== o.id);
+  journal(s, 'contract', '📜', `Signed a town contract: ${Object.keys(o.give).map(k => o.give[k] + ' ' + k).join(', ')} within ${o.days} days.`, now);
+  try { record(host, s); } catch (e) { return { ok: false, why: 'save failed' }; }
+  return { ok: true };
+}
+export function deliverContract(host, s, contractId) {
+  simulate(host, s);
+  const c = s.contracts.active.find(x => x.id === (contractId | 0)); if (!c) return { ok: false, why: 'no such contract' };
+  return paid(host, s, c.give, () => {
+    s.contracts.active = s.contracts.active.filter(x => x !== c);
+    s.contracts.rep = Math.min(FARM_ECON.contracts.repMax, s.contracts.rep + FARM_ECON.contracts.repGainOnDeliver); s.stats.contractsDone++;
+    const { got, clipped } = deliver(host, c.get);
+    journal(s, 'contract', '📜', `Contract delivered. The town paid ${Object.keys(got).map(k => got[k] + ' ' + k).join(', ')}. Reputation ${s.contracts.rep}.`);
+    return { got, clipped, rep: s.contracts.rep };
+  });
+}
+/* 🏛 Consign a beast to the Sale Ring. NPC lot: hammer in lotMinutes, paid in goods. */
+export function consign(host, s, animalId) {
+  const a = animalById(s, animalId); if (!a) return { ok: false, why: 'no such animal' };
+  if (!has(s, 'salering')) return { ok: false, why: 'build the Sale Ring first' };
+  if (!isReady(s, 'salering')) return { ok: false, why: 'the Sale Ring is still under construction' };
+  simulate(host, s);
+  const now = Date.now();
+  if (!auctionOpen(now)) return { ok: false, why: 'the ring opens ' + new Date(nextAuction(now)).toLocaleString() };
+  if (!isAdult(a)) return { ok: false, why: a.name + ' is not grown' };
+  if (isGuard(a)) return { ok: false, why: 'guards are not sold at the ring' };
+  if (a.ill || isSick(a)) return { ok: false, why: a.name + ' is not fit to show' };
+  if (!tierOf(a) && !prizeIds(s).has(a.id)) return { ok: false, why: 'the ring only takes prize or bred stock' };
+  const reserve = animalValue(s, a);
+  const lot = { id: s.seq++, seed: s.seed + ':' + s.seq + ':' + now, at: now, reserve, animal: Object.assign({}, a, { prize: prizeIds(s).has(a.id) }), p2p: false };
+  s.animals = s.animals.filter(x => x.id !== a.id);
+  s.lots.push(lot);
+  journal(s, 'auction', '🏛', `${a.name} the ${animalDef(a.sp).name.toLowerCase()} walks into the ring. Reserve ${reserve.toLocaleString()}. Athena: "${lotTimeline(lot).athena}"`, now);
+  try { record(host, s); } catch (e) { s.animals.push(a); s.lots = s.lots.filter(l => l !== lot); return { ok: false, why: 'save failed' }; }
+  return { ok: true, lot, timeline: lotTimeline(lot) };
+}
+/* 🌐 Player lots live on the server (sql/038). The farm only hands the beast
+   over (and takes it back if the post fails) — see farm.cloud.js. */
+export function takeAnimalForLot(host, s, animalId) {
+  const a = animalById(s, animalId); if (!a) return { ok: false, why: 'no such animal' };
+  if (!has(s, 'salering') || !isReady(s, 'salering')) return { ok: false, why: 'the Sale Ring must be built and finished' };
+  simulate(host, s);
+  if (!isAdult(a) || isGuard(a) || a.ill || isSick(a)) return { ok: false, why: a.name + ' cannot be listed' };
+  s.animals = s.animals.filter(x => x.id !== a.id);
+  try { record(host, s); } catch (e) { s.animals.push(a); return { ok: false, why: 'save failed' }; }
+  return { ok: true, animal: Object.assign({}, a, { prize: prizeIds(s).has(a.id), value: animalValue(s, a) }) };
+}
+/* A beast arriving from outside (a claimed lot). With no room it waits at
+   the gate (`holding`) and walks in on the next simulate that finds a stall —
+   the claim RPC is once-only, so the animal must never be dropped. */
+export function returnAnimal(host, s, animal) {
+  if (!animal || !animalDef(animal.sp)) return { ok: false, why: 'bad animal' };
+  simulate(host, s);
+  const a = Object.assign(newAnimal(s, animal.sp, Date.now()), { name: String(animal.name || '').slice(0, 24) || defaultName(animal.sp, s.seq), ageH: Number(animal.ageH) || 0, grownH: Number(animal.grownH) || 0, health: Math.max(1, Math.min(100, Number(animal.health) || 100)), breed: (typeof animal.breed === 'string' && FARM_ECON.breeds[animal.breed]) ? animal.breed : null });
+  const pen = penFor(animal.sp);
+  const room = pen && has(s, pen.id) && isReady(s, pen.id) && (penCapacity(s, pen.id, host) - animalsInPen(s, pen.id).length - inTransit(s, pen.id) >= 1);
+  if (room) { s.animals.push(a); if (a.breed) noteCollection(host, s, a.breed, Date.now()); }
+  else { s.holding.push(a); journal(s, 'ship', '🚧', `${a.name} the ${animalDef(a.sp).name.toLowerCase()} is waiting at the gate — no room in the ${pen ? pen.name : 'pen'}.`); }
+  try { record(host, s); } catch (e) { s.animals = s.animals.filter(x => x !== a); s.holding = s.holding.filter(x => x !== a); return { ok: false, why: 'save failed' }; }
+  return { ok: true, animal: a, held: !room };
 }
 export function fillTrough(host, s, penId, units) {
   const def = buildingDef(penId), b = building(s, penId);
@@ -841,7 +1109,8 @@ export function summary(host, s) {
   });
   const animals = s.animals.map(a => Object.assign({}, a, {
     adult: isAdult(a), guard: isGuard(a), sick: isSick(a), weight: weightOf(a), prize: prizes.has(a.id),
-    breedLabel: breedOf(a) ? breedOf(a).label : null,
+    breedLabel: breedOf(a) ? breedOf(a).label : null, tier: tierOf(a),
+    illLabel: a.ill ? FARM_ECON.disease.kinds[a.ill].label : null, value: animalValue(s, a),
   }));
   const species = FARM_ANIMALS.map(a => {
     const list = animals.filter(x => x.sp === a.id);
@@ -858,5 +1127,12 @@ export function summary(host, s) {
     builders: (() => { try { return host.builders ? (host.builders() | 0) : 0; } catch (e) { return 0; } })(), buildersBonus: buildersBonus(host),
     shipments: s.shipments.map(x => Object.assign({}, x, { progress: Math.max(0, Math.min(1, (now - x.departAt) / Math.max(1, x.arriveAt - x.departAt))), pen: animalDef(x.sp).pen })),
     carriers: carriersFor(host),
+    contracts: { offers: contractOffers(s, now).slice(), active: s.contracts.active.slice(), rep: s.contracts.rep, demandPerDay: demandPerDay(s) },
+    lots: s.lots.map(l => Object.assign({}, l, { timeline: lotTimeline(l) })),
+    auction: { open: auctionOpen(now), next: nextAuction(now), ringReady: isReady(s, 'salering', now), ringBuilt: has(s, 'salering') },
+    collection: Object.assign({}, s.collection), collectionRewarded: Object.assign({}, s.collectionRewarded),
+    escorts: s.animals.filter(a => isGuard(a) && isAdult(a) && !a.away && !isSick(a)).map(a => ({ id: a.id, name: a.name, sp: a.sp, defense: econOf(a).defense })),
+    ill: s.animals.filter(a => a.ill).length,
+    holding: s.holding.slice(),
   };
 }

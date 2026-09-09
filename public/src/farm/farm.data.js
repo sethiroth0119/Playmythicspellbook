@@ -109,12 +109,26 @@ export const FARM_ECON = {
      bragging rights. `glow` is the UFO's doing and can only come back that way. */
   rareBreedChance: 0.05,
   breeds: {
-    chicken: { key: 'golden',  label: 'Golden Hen',   color: 0xf2c14e, yieldMul: 2 },
-    cow:     { key: 'silver',  label: 'Silver Cow',   color: 0xc8ccd6, yieldMul: 2 },
-    pig:     { key: 'spotted', label: 'Spotted Pig',  color: 0x6a4a3a, yieldMul: 2 },
-    sheep:   { key: 'black',   label: 'Black Sheep',  color: 0x2b2622, yieldMul: 2 },
-    goat:    { key: 'ivory',   label: 'Ivory Goat',   color: 0xf4efe4, yieldMul: 2 },
-    glow:    { key: 'glow',    label: 'Glow-touched', color: 0x8affd6, yieldMul: 2.5, meatMul: 1.5 },
+    // rare line (5% of births, or inherited)
+    chicken: { tier: 'rare', sp: 'chicken', label: 'Golden Hen',   color: 0xf2c14e, yieldMul: 2 },
+    cow:     { tier: 'rare', sp: 'cow',     label: 'Silver Cow',   color: 0xc8ccd6, yieldMul: 2 },
+    pig:     { tier: 'rare', sp: 'pig',     label: 'Spotted Pig',  color: 0x6a4a3a, yieldMul: 2 },
+    sheep:   { tier: 'rare', sp: 'sheep',   label: 'Black Sheep',  color: 0x2b2622, yieldMul: 2 },
+    goat:    { tier: 'rare', sp: 'goat',    label: 'Ivory Goat',   color: 0xf4efe4, yieldMul: 2 },
+    // royal line (two rare parents)
+    'chicken:royal': { tier: 'royal', sp: 'chicken', label: 'Crown Hen',   color: 0xffe08a, yieldMul: 3, meatMul: 1.5 },
+    'cow:royal':     { tier: 'royal', sp: 'cow',     label: 'Moon Cow',    color: 0xe8f0ff, yieldMul: 3, meatMul: 1.5 },
+    'pig:royal':     { tier: 'royal', sp: 'pig',     label: 'Ember Pig',   color: 0xd85a2a, yieldMul: 3, meatMul: 1.5 },
+    'sheep:royal':   { tier: 'royal', sp: 'sheep',   label: 'Storm Sheep', color: 0x6a7a9a, yieldMul: 3, meatMul: 1.5 },
+    'goat:royal':    { tier: 'royal', sp: 'goat',    label: 'Sun Goat',    color: 0xf4c040, yieldMul: 3, meatMul: 1.5 },
+    // mythic line (two royal parents)
+    'chicken:mythic': { tier: 'mythic', sp: 'chicken', label: 'Phoenix Hen',   color: 0xff6a2a, yieldMul: 5, meatMul: 2 },
+    'cow:mythic':     { tier: 'mythic', sp: 'cow',     label: 'Aurochs',       color: 0x3a2a20, yieldMul: 5, meatMul: 2 },
+    'pig:mythic':     { tier: 'mythic', sp: 'pig',     label: 'Iron Boar',     color: 0x5a6070, yieldMul: 5, meatMul: 2 },
+    'sheep:mythic':   { tier: 'mythic', sp: 'sheep',   label: 'Golden Fleece', color: 0xffd24a, yieldMul: 5, meatMul: 2 },
+    'goat:mythic':    { tier: 'mythic', sp: 'goat',    label: 'Star Goat',     color: 0xc0d8ff, yieldMul: 5, meatMul: 2 },
+    // the UFO's doing
+    glow:    { tier: 'glow', label: 'Glow-touched', color: 0x8affd6, yieldMul: 2.5, meatMul: 1.5 },
   },
 
   /* 👷 Farmer citizens (Reconstruction workforce). Each hired Farmer tops up
@@ -212,6 +226,97 @@ export const FARM_ECON = {
       warden:   { hours: 0.6, risk: 0.02 },
     },
     defaultCarrier: 'voss',
+  },
+
+  /* 🦠 Disease. An outbreak is rolled per pen per event window; crowding and
+     a low pen level raise the odds. It spreads to pen-mates by the hour. An
+     ill animal loses health and yields half. The Vet Clinic auto-treats from
+     the medicine stash each hour it is open; without one, Treat cures by hand
+     for `handCure` medicine. */
+  disease: {
+    outbreakBase: 0.04, crowdMul: 3, crowdAbove: 0.8, penLevelCut: 0.3,
+    spreadPerH: 0.12, healthLossPerH: 1.5, yieldMul: 0.5, cureH: 12,
+    handCure: { medicine: 2 }, vetMedicinePerCure: 1, vetCureHPerLevel: 3, vetOutbreakCut: 0.5,
+    kinds: {
+      coccidiosis: { label: 'Coccidiosis', icon: '🦠', species: ['chicken'] },
+      footrot:     { label: 'Foot rot',    icon: '🦶', species: ['sheep', 'goat'] },
+      swinefever:  { label: 'Swine fever', icon: '🌡', species: ['pig'] },
+      bluetongue:  { label: 'Bluetongue',  icon: '💙', species: ['cow'] },
+      kennelcough: { label: 'Kennel cough', icon: '😮‍💨', species: ['terrier', 'collie', 'mastiff', 'donkey'] },
+    },
+  },
+
+  /* 🧬 Breeding lines. Two parents of the same LINE can produce the next
+     tier. rare → royal → mythic. `collection` rewards owning every breed in
+     a tier at least once (tracked for life, so a sold beast still counts). */
+  lines: {
+    rareChance: 0.05,            // any birth
+    inheritRare: 0.35,           // one rare parent → rare child
+    royalChance: 0.25,           // two rare parents → royal
+    mythicChance: 0.12,          // two royal parents → mythic
+    tiers: {
+      rare:   { yieldMul: 2,   meatMul: 1.2 },
+      royal:  { yieldMul: 3,   meatMul: 1.5 },
+      mythic: { yieldMul: 5,   meatMul: 2 },
+    },
+    collectionReward: { rare: { memoryShards: 1 }, royal: { memoryShards: 2, dna: 1 }, mythic: { memoryShards: 3, dna: 2 } },
+  },
+
+  /* 📜 Town contracts. Two offers a week (seeded), multi-day, paid in a
+     resource bundle far above the daily demand. Missing the deadline costs
+     town reputation, which shrinks the daily demand until it is earned back. */
+  contracts: {
+    offersPerWeek: 2, maxActive: 2, days: [3, 5, 7],
+    templates: [
+      { give: { eggs: 40, leather: 10 },   get: { supplies: 30, metal: 20, medicine: 4 } },
+      { give: { rawMilk: 60, wool: 12 },   get: { cloth: 20, supplies: 25, water: 40 } },
+      { give: { meat: 30, feathers: 20 },  get: { metal: 30, fuel: 20, ammo: 15 } },
+      { give: { hide: 12, fertilizer: 25 }, get: { wood: 120, stone: 60 } },
+      { give: { eggs: 25, rawMilk: 25, meat: 15 }, get: { medicine: 8, supplies: 20, memoryShards: 1 } },
+      { give: { wool: 20, leather: 6 },    get: { cloth: 30, metal: 15 } },
+    ],
+    repHit: 2, repGainOnDeliver: 1, repMin: -6, repMax: 6,
+    demandPerDayAtRep: { '-6': 0, '-4': 1, '-2': 2, '0': 3, '2': 4, '4': 5 },
+  },
+
+  /* 🐕 Escorts. A guard rides with a shipment: risk × (1 − defense/escortDiv),
+     floored, and the guard is away from the pens until the truck is back. */
+  escort: { div: 14, minRiskMul: 0.15, woundOnHit: 20 },
+
+  /* 🏛 The Sale Ring — the weekly livestock auction, Athena calling.
+     NPC bidders pay in RESOURCES (never Cinder). A consigned beast's reserve
+     is its value: species price × weight share × line multiplier × prize.
+     The hammer falls `lotMinutes` after consignment; bids land on a seeded
+     timeline in between so the ring reads live on every device. */
+  auction: {
+    dayOfWeek: 6,                // Saturday (local)
+    hoursOpen: [8, 22],
+    lotMinutes: 20, bidsMin: 4, bidsMax: 9,
+    priceMul: { prize: 1.5, rare: 1.6, royal: 2.4, mythic: 4, glow: 2 },
+    hammerRange: [0.85, 1.7],
+    // 1,000 Cinder of animal value → this bundle, scaled.
+    payoutPer1000: { supplies: 4, metal: 3, medicine: 1 },
+    bidders: [
+      { id: 'kael',   name: 'Warden Kael',    agg: 0.5,  taunt: 'Hoards everything. Never blinks first.' },
+      { id: 'broker', name: 'The Broker',     agg: 0.72, taunt: 'Trades secrets for stock.' },
+      { id: 'ash',    name: 'Ash Syndicate',  agg: 0.88, taunt: 'Buys low, betrays lower.' },
+      { id: 'vex',    name: 'Node Baron Vex', agg: 0.42, taunt: 'Owns three nodes and wants your herd.' },
+      { id: 'mara',   name: 'Butcher Mara',   agg: 0.6,  taunt: 'Only bids on what she can cut.' },
+    ],
+    athena: [
+      'Fresh beast on the ring — open your bids, survivors.',
+      'Walk it round under the lights. Let us see who wants it.',
+      'Cinder is cheap. A good bloodline is not.',
+      'This one has papers from the Reconstruction Network. Bid accordingly.',
+    ],
+    // Player-to-player lots (Cinder, server-settled — see sql/038).
+    p2p: { minBid: 500, hoursMin: 6, hoursMax: 72, stepPct: 0.05, antiSnipeMin: 5 },
+  },
+
+  /* 🤝 The corp ranch — a shared pasture every member feeds. */
+  ranch: {
+    capacity: 12, troughCap: 1200, species: ['sheep', 'goat', 'cow'],
+    shareWindowDays: 7,          // your claim share = your feed / everyone's feed, last N days
   },
 
   /* 🏭 Station recipes — instant crafts. */
@@ -355,6 +460,25 @@ export const FARM_BUILDINGS = [
     ],
   },
   {
+    id: 'vet', name: 'Vet Clinic', emoji: '🩺', accent: '#ff8aa0', station: true, role: 'vet',
+    desc: 'Treats sick stock from the medicine stash every hour it is open, and halves the odds of an outbreak. Higher levels cure faster.',
+    maxLevel: 3, buildH: [2, 5, 12], plot: { x: 1, y: 13, w: 3, h: 1 },
+    cost: [
+      { cinder: 55000, wood: 50, metal: 25, medicine: 6 },
+      { cinder: 140000, wood: 100, metal: 60, medicine: 15 },
+      { cinder: 330000, wood: 200, metal: 140, medicine: 35, supplies: 30 },
+    ],
+  },
+  {
+    id: 'salering', name: 'Sale Ring', emoji: '🏛', accent: '#d4af37', station: true, role: 'auction',
+    desc: 'The auction ring. Consign a prize or rare beast on sale day and Athena calls the bids — in goods from the ring\'s regulars, or in Cinder from other players.',
+    maxLevel: 2, buildH: [3, 8], plot: { x: 12, y: 13, w: 2, h: 1 },
+    cost: [
+      { cinder: 80000, wood: 90, stone: 60, cloth: 20 },
+      { cinder: 220000, wood: 200, stone: 140, cloth: 50, metal: 40 },
+    ],
+  },
+  {
     id: 'kitchen', name: 'Farm Kitchen', emoji: '🍳', accent: '#ffcf6b', station: true, role: 'craft',
     recipes: ['kitchenMeat', 'kitchenEggs', 'kitchenMilk'],
     desc: 'Smokes meat, boils eggs, sets milk: everything the farm makes can become rations.',
@@ -421,7 +545,7 @@ export function buildingCostAt(def, level) {
 /* Every ledger id the farm can pay out or consume — the promotion contract. */
 export const FARM_RESOURCE_IDS = [
   'animalFeed', 'eggs', 'feathers', 'rawMilk', 'meat', 'wool', 'hide', 'leather', 'fertilizer', 'livestock',
-  'food', 'water', 'wood', 'stone', 'cloth', 'metal', 'supplies', 'medicine', 'memoryShards', 'dna',
+  'food', 'water', 'wood', 'stone', 'cloth', 'metal', 'supplies', 'medicine', 'memoryShards', 'dna', 'fuel', 'ammo',
 ];
 
 export function auditCatalog(knownIds) {
@@ -432,6 +556,8 @@ export function auditCatalog(knownIds) {
   Object.values(FARM_ECON.slaughter).forEach(y => Object.keys(y).forEach(k => need.add(k)));
   Object.values(FARM_ECON.recipes).forEach(r => { Object.keys(r.inputs).forEach(k => need.add(k)); Object.keys(r.output).forEach(k => need.add(k)); });
   FARM_ECON.townDemand.offers.forEach(o => { Object.keys(o.give).forEach(k => need.add(k)); Object.keys(o.get).forEach(k => need.add(k)); });
+  FARM_ECON.contracts.templates.forEach(o => { Object.keys(o.give).forEach(k => need.add(k)); Object.keys(o.get).forEach(k => need.add(k)); });
+  Object.keys(FARM_ECON.auction.payoutPer1000).forEach(k => need.add(k));
   Object.values(FARM_ECON.events).forEach(e => { Object.keys(e.loot || {}).forEach(k => need.add(k)); Object.keys(e.gift || {}).forEach(k => need.add(k)); Object.keys(e.repair || {}).forEach(k => need.add(k)); });
   FARM_BUILDINGS.forEach(b => b.cost.forEach(c => Object.keys(c).forEach(k => { if (k !== 'cinder') need.add(k); })));
   need.forEach(id => { if (!known.has(id)) missing.push(id); });

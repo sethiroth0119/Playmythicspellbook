@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120x2';
+  window.BUILD_VERSION = 'v120x3';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -207442,6 +207442,29 @@ window.MythicFarmBridge = {
       return rows.filter(r => r && r.camp_name && r.user_id !== me).map(r => String(r.camp_name)).slice(0, 40);
     } catch (e) { return []; }
   },
+  /* 🌐 THE CLOUD SEAM — for /src/farm/farm.cloud.js (player lots + corp ranch).
+     `Cloud`, `Corp`, `Profile` are lexical bindings, invisible to the module,
+     so this is the whole surface it gets. Every function is absent-tolerant:
+     signed out → ready() false, no corp → corp() null, no client → the module
+     prints "not available". rpc/select return the Supabase {data,error} shape
+     untouched so the module can tell a missing table (sql/038 not applied)
+     from a real error. No money moves through here — the definer RPCs do it. */
+  cloud: {
+    ready: () => { try { return !!(typeof initCloud === 'function' && initCloud() && Cloud && Cloud.client && Profile.cloud && Profile.cloud.signedIn); } catch (e) { return false; } },
+    userId: () => { try { return (Profile.cloud && Profile.cloud.userId) || null; } catch (e) { return null; } },
+    userName: () => { try { return (typeof _campRegName === 'function' && _campRegName()) || (Profile.cloud && (Profile.cloud.displayName || Profile.cloud.username)) || 'Farmer'; } catch (e) { return 'Farmer'; } },
+    corp: () => { try { return (Corp && Corp.mine && Corp.mine.id) ? { id: Corp.mine.id, name: Corp.mine.name, tag: Corp.mine.tag } : null; } catch (e) { return null; } },
+    rpc: (name, args) => { try { return Cloud.client.rpc(name, args || {}); } catch (e) { return Promise.resolve({ data: null, error: { message: String(e && e.message || e) } }); } },
+    select: (table, o) => {
+      try {
+        o = o || {}; let q = Cloud.client.from(table).select(o.cols || '*');
+        if (o.eq) Object.keys(o.eq).forEach(k => { q = q.eq(k, o.eq[k]); });
+        if (o.order) q = q.order(o.order[0], { ascending: !!o.order[1] });
+        if (o.limit) q = q.limit(o.limit | 0);
+        return q;
+      } catch (e) { return Promise.resolve({ data: null, error: { message: String(e && e.message || e) } }); }
+    },
+  },
   /* 🏗 Hired Builders shorten construction; 🚚 the best convoy rig the
      player owns is a free carrier for bought stock (CONVOY_TRUCKS + the
      Garage decide ownership; _convoyOwnsTruck unions cash and legacy Aza). */
@@ -223255,7 +223278,7 @@ render();
      ⚠ If this 404s nothing else changes — the Camp button shows a fallback.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/farm/index.js?v=v120x2farm3"></script>
+<script type="module" src="src/farm/index.js?v=v120x3farm4"></script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the

@@ -18,6 +18,8 @@ FARM_ECON.eventChance = 0;                           // events are tested on the
 const savedBuildH = new Map(FARM_BUILDINGS.map(b => [b.id, b.buildH]));
 const instant = (on) => { FARM_BUILDINGS.forEach(b => { b.buildH = on ? [0, 0, 0] : savedBuildH.get(b.id); }); Object.values(FARM_ECON.transport.carriers).forEach(c => { c._hours = c._hours == null ? c.hours : c._hours; c._risk = c._risk == null ? c.risk : c._risk; c.hours = on ? 0 : c._hours; c.risk = on ? 0 : c._risk; }); };
 instant(true);
+const savedOutbreak = FARM_ECON.disease.outbreakBase;
+FARM_ECON.disease.outbreakBase = 0;                  // disease has its own section
 
 function fakeHost(opts) {
   opts = opts || {};
@@ -50,7 +52,7 @@ function farm(opts) {
 }
 
 console.log('catalogue audit');
-const ids = ['animalFeed', 'eggs', 'feathers', 'rawMilk', 'meat', 'wool', 'hide', 'leather', 'fertilizer', 'livestock', 'food', 'water', 'wood', 'stone', 'cloth', 'metal', 'supplies', 'medicine', 'memoryShards', 'dna'];
+const ids = ['animalFeed', 'eggs', 'feathers', 'rawMilk', 'meat', 'wool', 'hide', 'leather', 'fertilizer', 'livestock', 'food', 'water', 'wood', 'stone', 'cloth', 'metal', 'supplies', 'medicine', 'memoryShards', 'dna', 'fuel', 'ammo'];
 ok(auditCatalog(ids).length === 0, 'every id the farm touches is in the promotion list: ' + auditCatalog(ids).join(','));
 ok(FARM_BUILDINGS.every(b => b.cost.every(c => c.cinder > 0 && Object.keys(c).filter(k => k !== 'cinder').length >= 2)), 'every building level costs Cinder + ≥2 resources');
 ok(Object.values(FARM_ECON.townDemand.offers).every(o => !('cinder' in o.get)), 'town demand never pays Cinder (no faucet)');
@@ -342,6 +344,111 @@ console.log('transport: carriers, fees, ETA, room, losses, insurance, own rig');
   instant(true);
 }
 
+console.log('disease: outbreak, spread, hand cure, vet clinic');
+{
+  const h = fakeHost({ seed: 'plague' }); const s = S.ensureState(h);
+  S.build(h, s, 'feedmill'); S.build(h, s, 'coop'); h.led.animalFeed = 240; S.fillTrough(h, s, 'coop', 1e9);
+  S.buyAnimal(h, s, 'chicken', 6);                         // 6/6 = crowded
+  const t0 = 2000000000000; Object.values(s.buildings).forEach(b => { b.simAt = t0; }); s.eventAt = t0;
+  FARM_ECON.disease.outbreakBase = 1;                      // force it
+  S.simulate(h, s, t0 + 6 * H, () => 1);
+  const ill0 = s.animals.filter(a => a.ill).length;
+  ok(ill0 >= 1 && s.stats.outbreaks >= 1 && s.journal.some(j => j.kind === 'disease' && /crowded/.test(j.text)), 'a crowded coop caught coccidiosis (' + ill0 + ' ill), journalled as crowded');
+  FARM_ECON.disease.outbreakBase = 0;
+  const hp0 = s.animals.find(a => a.ill).health;
+  S.simulate(h, s, t0 + 30 * H, () => 0);                  // rnd 0 → spread always
+  const illN = s.animals.filter(a => a.ill).length;
+  ok(illN === 6, 'spread to the whole pen (' + illN + ')');
+  ok(s.animals.find(a => a.ill).health < hp0, 'ill birds lose health');
+  ok(S.yieldMul(s.animals[0]) === FARM_ECON.disease.yieldMul, 'ill yield halves');
+  let r = S.treat(h, s, s.animals[0].id);
+  ok(r.ok && r.cured === 'coccidiosis' && !s.animals[0].ill && h.led.medicine === 8, 'hand cure: 2 medicine, cured, journalled');
+  S.build(h, s, 'vet'); h.led.medicine = 20;
+  S.simulate(h, s, t0 + 60 * H, () => 1);
+  ok(s.animals.every(a => !a.ill) && s.stats.cured >= 6 && h.led.medicine < 20, 'the Vet Clinic cured the rest from the stash (' + h.led.medicine + ' medicine left)');
+}
+
+console.log('breeding lines + collection');
+{
+  const { h, s } = farm();
+  S.buyAnimal(h, s, 'chicken', 2);
+  s.animals.forEach(a => { a.breed = 'chicken'; a.grownH = 10; });   // two Golden Hens
+  const t0 = Date.now();
+  S.simulate(h, s, t0 + 4 * H, () => 0);                   // rnd 0: royal
+  const royal = s.animals.filter(a => a.breed === 'chicken:royal');
+  ok(royal.length >= 1 && s.journal.some(j => /Crown Hen/.test(j.text)), 'two rare parents → a Crown Hen (royal)');
+  ok(S.yieldMul(royal[0]) === 3, 'royal ×3 yield');
+  s.animals = s.animals.filter(a => a.breed === 'chicken:royal').slice(0, 2);
+  while (s.animals.length < 2) s.animals.push(Object.assign({}, s.animals[0], { id: s.seq++ }));
+  s.animals.forEach(a => { a.grownH = 10; });
+  S.simulate(h, s, t0 + 8 * H, () => 0);
+  ok(s.animals.some(a => a.breed === 'chicken:mythic') && s.journal.some(j => /Phoenix Hen/.test(j.text)), 'two royals → a Phoenix Hen (mythic)');
+  ok(s.collection['chicken'] && s.collection['chicken:royal'] && s.collection['chicken:mythic'], 'collection tracks every breed owned');
+  const shards0 = h.led.memoryShards | 0;
+  S.build(h, s, 'barn'); S.build(h, s, 'sty'); S.build(h, s, 'pasture');
+  ['cow', 'pig', 'sheep', 'goat'].forEach(sp => { const r = S.returnAnimal(h, s, { sp, name: 'x', breed: sp, grownH: 0, health: 100 }); if (!r.ok) console.log('    (return failed:', sp, r.why + ')'); });
+  ok(s.collectionRewarded.rare === true && (h.led.memoryShards | 0) === shards0 + 1 && s.journal.some(j => j.kind === 'collection'), 'owning every rare breed once pays a Memory Shard');
+}
+
+console.log('contracts + reputation');
+{
+  const h = fakeHost({ seed: 'town2' }); const s = S.ensureState(h);
+  const offers = S.contractOffers(s);
+  ok(offers.length === 2 && offers.every(o => o.give && o.get && o.days), 'two weekly offers');
+  let r = S.acceptContract(h, s, offers[0].id); ok(r.ok && s.contracts.active.length === 1 && s.contracts.offers.length === 1, 'accepted one');
+  const c = s.contracts.active[0];
+  r = S.deliverContract(h, s, c.id); ok(!r.ok && r.why === 'short', 'cannot deliver short');
+  Object.keys(c.give).forEach(k => { h.led[k] = (h.led[k] | 0) + c.give[k]; });
+  r = S.deliverContract(h, s, c.id);
+  ok(r.ok && s.contracts.rep === 1 && Object.keys(r.got).length && s.stats.contractsDone === 1, 'delivered: paid the bundle, rep +1');
+  r = S.acceptContract(h, s, s.contracts.offers[0].id);
+  const c2 = s.contracts.active[0]; c2.deadline = Date.now() - 1;
+  S.simulate(h, s, Date.now() + 1000, () => 1);
+  ok(s.contracts.active.length === 0 && s.contracts.rep === -1 && s.stats.contractsFailed === 1, 'missed deadline: rep −2 → −1');
+  s.contracts.rep = -4; ok(S.demandPerDay(s) === 1 && S.townOffer(s).perDay === 1, 'at rep −4 the town takes 1 delivery a day');
+  s.contracts.rep = 4; ok(S.demandPerDay(s) === 5, 'at rep +4 it takes 5');
+}
+
+console.log('escorts');
+{
+  instant(false); FARM_BUILDINGS.forEach(b => { b.buildH = [0, 0, 0]; });
+  const h = fakeHost({ seed: 'escort' }); const s = S.ensureState(h);
+  S.build(h, s, 'feedmill'); S.build(h, s, 'coop'); S.build(h, s, 'guardpost'); h.led.animalFeed = 480; S.fillTrough(h, s, 'guardpost', 240);
+  s.animals.push({ id: s.seq++, sp: 'mastiff', name: 'Brutus', ageH: 20, grownH: 20, hungry: 0, health: 100, breed: null, born: 0, ill: null, illSince: 0, away: 0 });
+  const dog = s.animals[0];
+  ok(S.guardDefense(s) === 7, 'mastiff defends 7');
+  let r = S.buyAnimal(h, s, 'chicken', 3, 'hollow', dog.id);
+  ok(r.ok && dog.away === s.shipments[0].id && S.guardDefense(s) === 0, 'escort rides along; the pens are unguarded meanwhile');
+  const t0 = Date.now(); S.simulate(h, s, t0 + 4 * H, () => 1);
+  ok(dog.away === 0 && s.animals.filter(a => a.sp === 'chicken').length >= 2 && s.journal.some(j => /rode back/.test(j.text)), 'escort came back with the load');
+  let hits = 0, hitsPlain = 0; for (let i = 0; i < 4000; i++) { const R = rngFor('ship:x:' + i)(); if (R < 0.25 * 0.5) hits++; if (R < 0.25) hitsPlain++; }
+  ok(hits < hitsPlain * 0.6, 'a mastiff halves Hollow Road risk (' + hits + ' vs ' + hitsPlain + ' hits per 4000 loads)');
+  instant(true);
+}
+
+console.log('the Sale Ring (NPC auction)');
+{
+  const h = fakeHost({ seed: 'ring' }); const s = S.ensureState(h);
+  S.build(h, s, 'feedmill'); S.build(h, s, 'barn'); S.build(h, s, 'salering');
+  const cow = { id: s.seq++, sp: 'cow', name: 'Duchess', ageH: 80, grownH: 30, hungry: 0, health: 100, breed: 'cow', born: 0, ill: null, illSince: 0, away: 0 };
+  s.animals.push(cow);
+  const A = FARM_ECON.auction; const d0 = A.dayOfWeek, h0 = A.hoursOpen.slice();
+  A.dayOfWeek = (new Date().getDay() + 1) % 7;
+  let r = S.consign(h, s, cow.id); ok(!r.ok && /opens/.test(r.why), 'closed on a weekday: ' + r.why.slice(0, 40) + '…');
+  A.dayOfWeek = new Date().getDay(); A.hoursOpen = [0, 24];
+  const v = S.animalValue(s, cow);
+  ok(v > 14000 * 1.6 && S.prizeIds(s).has(cow.id), 'a prize Silver Cow is worth more than list (' + v + ')');
+  r = S.consign(h, s, cow.id);
+  ok(r.ok && s.animals.length === 0 && s.lots.length === 1 && r.timeline.bids.length >= A.bidsMin && r.timeline.final >= v * A.hammerRange[0], 'consigned: Athena opened, ' + r.timeline.bids.length + ' bids queued, hammer ' + r.timeline.final);
+  const tl = S.lotTimeline(s.lots[0]);
+  ok(JSON.stringify(tl) === JSON.stringify(r.timeline), 'the bid timeline is deterministic');
+  const sup0 = h.led.supplies;
+  S.simulate(h, s, tl.hammerAt + 1000, () => 1);
+  ok(s.lots.length === 0 && h.led.supplies > sup0 && s.stats.auctions === 1 && s.journal.some(j => /SOLD/.test(j.text)), 'hammer fell: paid in goods, journalled');
+  A.dayOfWeek = d0; A.hoursOpen = h0;
+}
+
+FARM_ECON.disease.outbreakBase = savedOutbreak;
 FARM_ECON.eventChance = savedChance;
 console.log(fails ? `\n${fails} FAILED` : '\nALL CLEAR');
 process.exit(fails ? 1 : 0);

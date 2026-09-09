@@ -26,10 +26,15 @@ assume `window.Foo` exists because `const Foo` does.
 | `/src/city` | `window.MythicCityBridge` |
 | `/src/trading` | `window.MythicTradeBridge` |
 | `/src/resonance/house.camp.js` | `window.MythicHouseBridge` |
-| `/src/farm` (🐄 Homestead Farm, 3D) | `window.MythicFarmBridge` — state on `Profile.farm`, synced as `__farm__` |
+| `/src/farm` (🐄 Homestead Farm, 3D) | `window.MythicFarmBridge` — state on `Profile.farm`, synced as `__farm__`; its `cloud` sub-object is the only Supabase seam (player lots + corp ranch, `sql/038`) |
 
 The farm's economy is pure over a host adapter: `node tools/farm_harness.mjs` drives
-build → feed → grow → collect → slaughter → craft and every refund path with no browser.
+build → feed → grow → collect → slaughter → craft, construction, haulage, disease, breeding
+lines, contracts, escorts and the NPC auction with no browser (19 sections). Player-to-player
+lots and the corp ranch need `sql/038_farm_auction_and_ranch.sql` applied; until then the
+Market and Ranch tabs print "not set up on the server yet" and everything else works.
+🔴 Never mirror a server-escrowed bid with a client `spendGems()` — the client spend path is
+mirrored to `wallet_charge` and would debit the bid twice.
 
 ## Non-negotiables
 - All Supabase access is guarded. The app MUST still work offline / before tables exist,

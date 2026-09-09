@@ -302,8 +302,10 @@ function build3D(THREE, container, opts) {
     const top = (a.sp === 'chicken' ? 0.95 : 1.35) * s + 0.25;
     const rosette = tinySprite('🏅', 0.42); rosette.position.y = top; rosette.visible = false; g.add(rosette);
     const sickMark = tinySprite('🤒', 0.36); sickMark.position.y = top; sickMark.visible = false; g.add(sickMark);
+    const illMark = tinySprite('🦠', 0.36); illMark.position.y = top; illMark.visible = false; g.add(illMark);
+    const crown = tinySprite(a.breed && /:mythic$/.test(a.breed) ? '🌟' : '👑', 0.36); crown.position.y = top + 0.3; crown.visible = false; g.add(crown);
     g.traverse(o => { if (o.isMesh) { o.userData.pick = { kind: 'animal', id: a.sp }; pickables.push(o); } });
-    return { group: g, legs, rosette, sickMark };
+    return { group: g, legs, rosette, sickMark, illMark, crown };
   };
 
   /* ── Decor (rebuilt when the look changes) ── */
@@ -498,7 +500,7 @@ function build3D(THREE, container, opts) {
       if (n && n.akey !== akey) { unpick(n.group); herd.remove(n.group); delete animalNodes[a.id]; n = null; }
       if (!n) {
         const made = makeAnimal(a);
-        n = animalNodes[a.id] = { group: made.group, legs: made.legs, rosette: made.rosette, sickMark: made.sickMark, w: new Wanderer(a, yard), sp: a.sp, akey };
+        n = animalNodes[a.id] = { group: made.group, legs: made.legs, rosette: made.rosette, sickMark: made.sickMark, illMark: made.illMark, crown: made.crown, w: new Wanderer(a, yard), sp: a.sp, akey };
         herd.add(n.group);
       }
       const e = FARM_ECON.animals[a.sp];
@@ -506,7 +508,9 @@ function build3D(THREE, container, opts) {
       let sc = 0.55 + 0.45 * grown;
       if (e && a.weight) sc *= 0.9 + 0.2 * Math.min(1.3, a.weight / e.adultWeight) / 1.3;
       n.group.scale.set(sc, sc, sc);
-      n.rosette.visible = !!a.prize; n.sickMark.visible = !!a.sick && !a.prize;
+      n.rosette.visible = !!a.prize; n.illMark.visible = !!a.ill; n.sickMark.visible = !!a.sick && !a.ill && !a.prize;
+      n.crown.visible = !!(a.tier === 'royal' || a.tier === 'mythic');
+      n.group.visible = !a.away;   // an escort is on the road
     });
     Object.keys(animalNodes).forEach(id => {
       if (live.has(+id)) return;

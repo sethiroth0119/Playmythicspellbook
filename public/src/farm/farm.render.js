@@ -10,6 +10,7 @@
 
 import { FARM_ECON, FARM_ANIMALS, FARM_BUILDINGS, FARM_LOOKS, RECIPE_LABELS, animalDef, buildingDef, buildingCostAt } from './farm.data.js';
 import { uncrateCost, shipFee, carrierById } from './farm.state.js';
+import { ranchView } from './farm.cloud.js';
 import { ageLabel } from './farm.events.js';
 
 export const FARM_CSS = `
@@ -31,7 +32,7 @@ export const FARM_CSS = `
 @keyframes farmBanner{from{opacity:0;transform:translate(-50%,-8px)}to{opacity:1;transform:translate(-50%,0)}}
 .farm-panel{width:min(440px,46vw);min-width:300px;overflow:auto;background:#10141d;border-left:1px solid #2a3140;display:flex;flex-direction:column}
 .farm-tabs{display:flex;border-bottom:1px solid #2a3140;position:sticky;top:0;background:#10141d;z-index:2}
-.farm-tab{flex:1;padding:9px 4px;background:none;border:none;border-bottom:2px solid transparent;color:#9aa3b5;cursor:pointer;font-size:.78rem;letter-spacing:.03em;white-space:nowrap}
+.farm-tab{flex:1;padding:9px 2px;background:none;border:none;border-bottom:2px solid transparent;color:#9aa3b5;cursor:pointer;font-size:.78rem;letter-spacing:.03em;white-space:nowrap}
 .farm-tab.is-active{color:#f2d98a;border-bottom-color:#d4af37}
 .farm-cards{padding:10px;display:flex;flex-direction:column;gap:10px}
 .farm-card{background:#151b26;border:1px solid #2a3140;border-radius:8px;padding:10px;border-left:3px solid var(--accent,#d4af37)}
@@ -91,6 +92,16 @@ export const FARM_CSS = `
 .farm-check{display:inline-flex;align-items:center;gap:5px;font-size:.78rem;background:#1d2431;border:1px solid #3a4457;border-radius:6px;padding:4px 8px;cursor:pointer}
 .farm-check.is-on{border-color:#d4af37;color:#f8e8b0}
 .farm-roofs{display:grid;grid-template-columns:1fr auto auto;gap:4px 8px;align-items:center;font-size:.78rem}
+.farm-beast .nm .tag.ill{background:#4a1e24;color:#f8c0c8}.farm-beast .nm .tag.royal{background:#5a4a1e;color:#ffe08a}.farm-beast .nm .tag.mythic{background:#4a2a5a;color:#e8c0ff}.farm-beast .nm .tag.away{background:#2a3350;color:#a8c0ff}
+.farm-ring{background:#0c0f16;border:1px solid #d4af3755;border-radius:8px;padding:8px 10px;margin:6px 0}
+.farm-ring .ath{font-style:italic;color:#f2d98a;font-size:.8rem;margin-bottom:6px}
+.farm-bid{display:flex;justify-content:space-between;gap:8px;font-size:.78rem;padding:3px 0;border-top:1px solid #1e2532}
+.farm-bid:first-of-type{border-top:none}
+.farm-bid.you{color:#8affd6}
+.farm-coll{display:grid;grid-template-columns:repeat(5,1fr);gap:5px}
+.farm-coll .b{background:#0c0f16;border:1px solid #2a3140;border-radius:6px;padding:6px 4px;text-align:center;font-size:.68rem;color:#9aa3b5}
+.farm-coll .b.on{border-color:#d4af37;color:#f4efe4}
+.farm-coll .b i{display:block;width:18px;height:18px;border-radius:50%;margin:0 auto 3px;border:1px solid #0008}
 @media (max-width:760px){.farm-body{flex-direction:column}.farm-panel{width:auto;min-width:0;max-height:52vh;border-left:none;border-top:1px solid #2a3140}.farm-stage{min-height:42vh}.farm-beast{grid-template-columns:1fr auto}.farm-beast .hp{grid-column:1/-1}}
 @media (prefers-reduced-motion:reduce){.farm-stage .farm-banner{animation:none}}
 `;
@@ -207,7 +218,9 @@ export function renderLivestock(host, s, view, focus, ui) {
   const transport = `<div class="farm-card" style="--accent:#7fd6ff"><h3>🚚 Haulage<span class="lv">${view.shipments.length ? view.shipments.length + ' on the road' : 'nothing on the road'}</span></h3>
     <p>Bought stock is hauled in from market. Pick who drives: cheap and risky, insured, armoured — or your own rig if you own one.</p>
     <div class="farm-row"><select class="farm-select" data-fsel="carrier" style="max-width:100%">${carrierOpts}</select></div>
-    <div class="farm-toastline">${esc(carrier.blurb || '')}</div>${roads}</div>`;
+    <div class="farm-toastline">${esc(carrier.blurb || '')}</div>
+    <div class="farm-row"><span class="k">🐕 Escort</span><select class="farm-select" data-fsel="escort"><option value="">none</option>${view.escorts.map(g => `<option value="${g.id}" ${ui && (ui.escort | 0) === g.id ? 'selected' : ''}>${animalDef(g.sp).emoji} ${esc(g.name)} · 🛡${g.defense} · risk ×${Math.max(FARM_ECON.escort.minRiskMul, 1 - g.defense / FARM_ECON.escort.div).toFixed(2)}</option>`).join('')}</select><span class="k">rides with the next order; the pens lose that guard until it is back</span></div>
+    ${view.holding.length ? `<div class="farm-row" style="color:#e0a060">🚧 ${view.holding.map(a => esc(a.name)).join(', ')} waiting at the gate — make room in the pen.</div>` : ''}${roads}</div>`;
   const header = transport + `<div class="farm-card" style="--accent:#b8404a"><h3>🔪 The block<span class="lv">${butcher ? 'Level ' + butcher.level : 'not built'}</span></h3>
     <div class="farm-row"><span class="k">Cut</span><select class="farm-select" data-fsel="cut">${cutOpts}</select><span class="k">${esc(cutBlurb(cut))}</span></div>
     <div class="farm-row"><span class="k">Season</span><b>${view.season.icon} ${esc(view.season.label)}</b><span class="k">· meat ×${view.season.meatMul} · breeding ×${view.season.breedMul} · feed ×${view.season.feedMul}</span></div>
@@ -226,13 +239,14 @@ export function renderLivestock(host, s, view, focus, ui) {
     const per = {}; if (sl) Object.keys(sl).forEach(k => { per[k] = Math.max(1, Math.round(sl[k] * mul * (k === 'meat' ? FARM_ECON.cuts[cut].meat * view.season.meatMul : k === 'hide' ? FARM_ECON.cuts[cut].hide : FARM_ECON.cuts[cut].other))); });
     const rows = list.map(x => {
       const hpc = x.health < FARM_ECON.health.sickBelow ? 'empty' : x.health < 60 ? 'low' : '';
-      const tags = [x.prize ? '<span class="tag prize">🏅 prize</span>' : '', x.breedLabel ? `<span class="tag rare">✨ ${esc(x.breedLabel)}</span>` : '', x.guard ? `<span class="tag guard">🛡 ${e.defense}</span>` : '', !x.adult ? '<span class="tag young">young</span>' : '', x.sick ? '<span class="tag" style="background:#4a1e24;color:#f8c0c8">sick</span>' : ''].join('');
+      const tags = [x.prize ? '<span class="tag prize">🏅 prize</span>' : '', x.breedLabel ? `<span class="tag ${x.tier === 'royal' ? 'royal' : x.tier === 'mythic' ? 'mythic' : 'rare'}">${x.tier === 'mythic' ? '🌟' : x.tier === 'royal' ? '👑' : '✨'} ${esc(x.breedLabel)}</span>` : '', x.guard ? `<span class="tag guard">🛡 ${e.defense}</span>` : '', x.away ? '<span class="tag away">🚚 escorting</span>' : '', !x.adult ? '<span class="tag young">young</span>' : '', x.illLabel ? `<span class="tag ill">🦠 ${esc(x.illLabel)}</span>` : (x.sick ? '<span class="tag ill">sick</span>' : '')].join('');
       const grow = x.adult ? '' : ` · grown in ${hrs(Math.max(0, e.growH - x.grownH))} fed`;
       return `<div class="farm-beast ${x.sick ? 'is-sick' : ''}" data-aid="${x.id}">
         <div class="nm">${a.emoji} ${esc(x.name)}${tags}<button class="farm-btn tiny" data-fact="rename" data-id="${x.id}" title="Rename">✎</button></div>
         <div class="st"><span>⚖ <b>${x.weight} kg</b></span><span>🎂 <b>${ageLabel(x.ageH)}</b>${grow}</span><span class="hp">❤ <span class="farm-meter"><i class="${hpc}" style="width:${Math.round(x.health)}%"></i></span><b>${Math.round(x.health)}</b></span></div>
         <div class="acts">
-          ${x.health < 100 ? `<button class="farm-btn tiny" data-fact="treat" data-id="${x.id}" ${host.getRes('medicine') >= 1 ? '' : 'disabled'} title="1 medicine → +${FARM_ECON.health.treatHeal} health">💊 Treat</button>` : ''}
+          ${x.ill ? `<button class="farm-btn tiny primary" data-fact="treat" data-id="${x.id}" ${host.getRes('medicine') >= FARM_ECON.disease.handCure.medicine ? '' : 'disabled'} title="${FARM_ECON.disease.handCure.medicine} medicine → cured">💊 Cure</button>` : x.health < 100 ? `<button class="farm-btn tiny" data-fact="treat" data-id="${x.id}" ${host.getRes('medicine') >= 1 ? '' : 'disabled'} title="1 medicine → +${FARM_ECON.health.treatHeal} health">💊 Treat</button>` : ''}
+          ${!x.guard && x.adult && !x.ill && !x.sick && (x.tier || x.prize) && view.auction.ringReady ? `<button class="farm-btn tiny" data-fact="consign" data-id="${x.id}" ${view.auction.open ? '' : 'disabled'} title="Sale Ring · value ${fmt(x.value)}${view.auction.open ? '' : ' · opens ' + new Date(view.auction.next).toLocaleString()}">🏛 Ring</button><button class="farm-btn tiny" data-fact="p2p-post" data-id="${x.id}" title="List for other players (Cinder) · value ${fmt(x.value)}">🌐 List</button>` : ''}
           ${x.adult && !x.sick ? `<button class="farm-btn tiny" data-fact="crate" data-id="${x.id}" title="Crate for the Exchange (1 livestock)">📦</button>` : ''}
           ${!x.guard && x.adult ? `<button class="farm-btn tiny danger" data-fact="slaughter-one" data-id="${x.id}" ${butcher ? '' : 'disabled'} title="To the block">🔪</button>` : ''}
         </div>
@@ -305,6 +319,79 @@ export function renderAthena(host, s, view) {
   </div>`;
 }
 
+/* ── Market tab: the Sale Ring (NPC + players), contracts, the collection ── */
+export function renderMarket(host, s, view, ui, cloud) {
+  const now = Date.now();
+  const A = view.auction;
+  const ring = !A.ringBuilt ? '<div class="farm-empty">Build the Sale Ring to auction prize or bred stock.</div>'
+    : !A.ringReady ? '<div class="farm-empty">The Sale Ring is still under construction.</div>'
+    : `<div class="farm-row"><span class="k">${A.open ? '🔔 The ring is OPEN' : '🔒 Closed'}</span><span class="k">· ${A.open ? 'consign from the Livestock tab' : 'next sale ' + new Date(A.next).toLocaleString()}</span></div>`;
+  const npcLots = view.lots.map(l => {
+    const tl = l.timeline; const a = l.animal; const shown = tl.bids.filter(b => b.at <= now);
+    const nextBid = tl.bids.find(b => b.at > now);
+    const done = tl.hammerAt <= now;
+    return `<div class="farm-ring"><div class="ath">🅰 Athena: “${esc(tl.athena)}”</div>
+      <div class="farm-row"><b>${animalDef(a.sp).emoji} ${esc(a.name)}</b><span class="k">${esc(a.breed && FARM_ECON.breeds[a.breed] ? FARM_ECON.breeds[a.breed].label : animalDef(a.sp).name)}${a.prize ? ' · 🏅 prize' : ''} · reserve ${fmt(l.reserve)}</span></div>
+      ${shown.length ? shown.map(b => `<div class="farm-bid"><span>${esc(b.who)}</span><b>${fmt(b.amount)}</b></div>`).join('') : '<div class="farm-bid"><span class="k">The regulars are looking it over…</span></div>'}
+      <div class="farm-toastline">${done ? 'Hammer down — paid in goods, see the Journal.' : nextBid ? `Next bid in ${hrs((nextBid.at - now) / 3600000)} · hammer in ${hrs((tl.hammerAt - now) / 3600000)}` : `Hammer in ${hrs((tl.hammerAt - now) / 3600000)}`}</div></div>`;
+  }).join('');
+  const C = cloud || {};
+  const me = C.userId || null;
+  const rows = C.lots || [];
+  const lotRow = (l) => {
+    const a = l.animal || {}; const ends = new Date(l.ends_at).getTime(); const left = ends - now;
+    const isMine = l.seller_id === me, high = l.high_bidder === me;
+    const minNext = Math.max(l.min_bid | 0, (l.current_bid | 0) + Math.max(100, Math.floor((l.current_bid | 0) * FARM_ECON.auction.p2p.stepPct)));
+    const claimable = (l.status === 'sold' && high && !l.claimed) || (l.status === 'unsold' && isMine && !l.claimed);
+    return `<div class="farm-ring" data-lot="${esc(l.id)}">
+      <div class="farm-row"><b>${animalDef(a.sp) ? animalDef(a.sp).emoji : '🐾'} ${esc(a.name || '?')}</b><span class="k">${esc(a.breed && FARM_ECON.breeds[a.breed] ? FARM_ECON.breeds[a.breed].label : (animalDef(a.sp) || {}).name || '')}${a.prize ? ' · 🏅' : ''} · ${a.weight ? a.weight + ' kg · ' : ''}seller ${esc(l.seller_name || 'someone')}${isMine ? ' (you)' : ''}</span></div>
+      <div class="farm-row"><span class="k">Bid</span><b>🔥${fmt(l.current_bid || l.min_bid)}</b>${high ? '<span class="tag" style="color:#8affd6">you lead</span>' : ''}<span class="k">· ${l.status === 'open' ? (left > 0 ? 'ends in ' + hrs(left / 3600000) : 'ended — settle it') : l.status}</span></div>
+      ${l.status === 'open' && left > 0 && !isMine ? `<div class="farm-row"><input class="farm-input" type="number" min="${minNext}" step="100" value="${minNext}" data-fbidamt="${esc(l.id)}" style="width:120px"><button class="farm-btn tiny primary" data-fact="p2p-bid" data-id="${esc(l.id)}">🔨 Bid</button><span class="k">min ${fmt(minNext)} · escrowed from your wallet, refunded if outbid</span></div>` : ''}
+      ${l.status === 'open' && left <= 0 ? `<div class="farm-row"><button class="farm-btn tiny" data-fact="p2p-settle" data-id="${esc(l.id)}">⚖ Settle</button></div>` : ''}
+      ${claimable ? `<div class="farm-row"><button class="farm-btn tiny primary" data-fact="p2p-claim" data-id="${esc(l.id)}">🚪 ${l.status === 'sold' ? 'Bring it home' : 'Take it back'}</button></div>` : ''}
+    </div>`;
+  };
+  const p2p = C.why ? `<div class="farm-empty">${esc(C.why)}</div>` : (rows.length ? rows.map(lotRow).join('') : '<div class="farm-empty">No player lots open right now.</div>');
+  const mineRows = (C.mine || []).filter(l => l.status !== 'open' || !rows.some(r => r.id === l.id));
+  const contracts = view.contracts;
+  const offerRow = (o) => `<div class="farm-ring"><div class="farm-row">${yieldHtml(host, o.give)}<span class="k">→</span>${yieldHtml(host, o.get)}</div><div class="farm-row"><span class="k">${o.days} days</span><button class="farm-btn tiny primary" data-fact="contract-accept" data-id="${o.id}" ${contracts.active.length >= FARM_ECON.contracts.maxActive ? 'disabled' : ''}>Sign</button></div></div>`;
+  const activeRow = (c) => { const can = Object.keys(c.give).every(k => host.getRes(k) >= c.give[k]); const left = c.deadline - now; return `<div class="farm-ring" style="border-color:${left < 86400000 ? '#e0556a88' : '#7fd6ff55'}"><div class="farm-row">${Object.keys(c.give).map(k => { const m = host.resMeta(k); const have = host.getRes(k); return `<span class="c farm-chip" style="${have >= c.give[k] ? 'color:#8affd6' : ''}">${m.icon} ${fmt(have)}/${fmt(c.give[k])}</span>`; }).join('')}<span class="k">→</span>${yieldHtml(host, c.get)}</div><div class="farm-row"><span class="k">${left > 0 ? hrs(left / 3600000) + ' left' : 'overdue'}</span><button class="farm-btn tiny primary" data-fact="contract-deliver" data-id="${c.id}" ${can ? '' : 'disabled'}>🚚 Deliver</button></div></div>`; };
+  const tiers = ['rare', 'royal', 'mythic'];
+  const coll = tiers.map(tier => { const ks = Object.keys(FARM_ECON.breeds).filter(k => FARM_ECON.breeds[k].tier === tier); const have = ks.filter(k => view.collection[k]).length; return `<div class="farm-row"><span class="k">${tier}</span><b>${have}/${ks.length}</b>${view.collectionRewarded[tier] ? '<span class="tag" style="color:#f2d98a">🏆 rewarded</span>' : `<span class="k">· full set pays ${Object.keys(FARM_ECON.lines.collectionReward[tier]).map(r => FARM_ECON.lines.collectionReward[tier][r] + ' ' + host.resMeta(r).name).join(', ')}</span>`}</div><div class="farm-coll">${ks.map(k => { const B = FARM_ECON.breeds[k]; return `<div class="b ${view.collection[k] ? 'on' : ''}"><i style="background:${hex6(B.color)}"></i>${esc(B.label)}</div>`; }).join('')}</div>`; }).join('');
+  return `<div class="farm-cards">
+    <div class="farm-card" style="--accent:#d4af37"><h3>🏛 Sale Ring<span class="lv">${view.lots.length} in the ring</span></h3><p>Prize and bred stock only. The regulars pay in goods; other players pay in Cinder, settled on the server.</p>${ring}${npcLots}</div>
+    <div class="farm-card" style="--accent:#8affd6"><h3>🌐 Player lots<span class="lv">${C.loading ? 'loading…' : rows.length + ' open'}</span></h3>
+      <div class="farm-row"><button class="farm-btn tiny" data-fact="p2p-refresh">↻ Refresh</button><span class="k">Bids are escrowed; the seller is paid at the hammer less the 2% Foundation Tax.</span></div>
+      ${p2p}${mineRows.length ? '<div class="farm-row"><span class="k">Yours</span></div>' + mineRows.map(lotRow).join('') : ''}</div>
+    <div class="farm-card" style="--accent:#7fd6ff"><h3>📜 Contracts<span class="lv">rep ${contracts.rep >= 0 ? '+' : ''}${contracts.rep} · ${contracts.demandPerDay}/day demand</span></h3>
+      <p>Multi-day orders from the town. Deliver and the daily demand grows; miss one and it shrinks.</p>
+      ${contracts.active.length ? '<div class="farm-row"><span class="k">Signed</span></div>' + contracts.active.map(activeRow).join('') : ''}
+      ${contracts.offers.length ? '<div class="farm-row"><span class="k">This week\'s offers</span></div>' + contracts.offers.map(offerRow).join('') : '<div class="farm-empty">No more offers this week.</div>'}</div>
+    <div class="farm-card" style="--accent:#c0a8ff"><h3>🧬 Bloodlines<span class="lv">${Object.keys(view.collection).length} breeds seen</span></h3><p>Two rare parents can throw a royal; two royals a mythic. Every breed you have ever owned counts.</p>${coll}</div>
+  </div>`;
+}
+
+/* ── Ranch tab: the corporation's shared pasture ─────────────────────────── */
+export function renderRanch(host, view, R) {
+  if (!R) return '<div class="farm-empty">Loading the ranch…</div>';
+  if (!R.ok) return `<div class="farm-cards"><div class="farm-card" style="--accent:#8fc46a"><h3>🤝 Corp ranch</h3><p>A pasture every member feeds. Your claim is your share of the feed over the last ${FARM_ECON.ranch.shareWindowDays} days.</p><div class="farm-empty">${esc(R.why)}</div></div></div>`;
+  const v = ranchView(R.state, R.meta);
+  const pct = Math.round(v.feed / v.troughCap * 100);
+  const herd = v.herd.map(a => `<div class="farm-beast"><div class="nm">${animalDef(a.sp).emoji} ${esc(a.name)}${a.adult ? '' : '<span class="tag young">young</span>'}</div><div class="st"><span>by <b>${esc(a.by || '?')}</b></span></div><div class="acts">${a.adult ? `<button class="farm-btn tiny danger" data-fact="ranch-butcher" data-id="${a.id}" ${v.share > 0 ? '' : 'disabled'}>🔪</button>` : ''}</div></div>`).join('');
+  return `<div class="farm-cards">
+    <div class="farm-card" style="--accent:#8fc46a"><h3>🤝 ${esc(R.corp.name)} ranch<span class="lv">${v.herd.length}/${v.capacity} head</span></h3>
+      <p>Everyone feeds it; everyone claims their share. Your share right now: <b>${Math.round(v.share * 100)}%</b> (${fmt(R.meta.my_feed)} of ${fmt(R.meta.all_feed)} feed this week).</p>
+      <div class="farm-row"><span class="k">Trough</span><span class="farm-meter"><i class="${v.feed <= 0 ? 'empty' : pct < 25 ? 'low' : ''}" style="width:${pct}%"></i></span><b>${v.feed}/${v.troughCap}</b><span class="k">· ${v.herd.length ? hrs(v.hoursLeft) + ' of feed' : 'no stock'}</span></div>
+      <div class="farm-row"><span class="k">Pool</span>${yieldHtml(host, v.pending)}</div>
+      <div class="farm-row"><span class="k">Your cut</span>${yieldHtml(host, v.mine)}</div>
+      <div class="farm-row"><button class="farm-btn" data-fact="ranch-feed" data-n="60" ${host.getRes('animalFeed') >= 1 ? '' : 'disabled'}>🌾 Add 60 feed</button><button class="farm-btn" data-fact="ranch-feed" data-n="240" ${host.getRes('animalFeed') >= 1 ? '' : 'disabled'}>🌾 Add 240</button><button class="farm-btn primary" data-fact="ranch-claim" ${Object.keys(v.mine).length ? '' : 'disabled'}>🧺 Claim my share</button><button class="farm-btn tiny" data-fact="ranch-refresh">↻</button></div>
+      <div class="farm-row">${FARM_ECON.ranch.species.map(sp => { const a = animalDef(sp), e = FARM_ECON.animals[sp]; return `<button class="farm-btn" data-fact="ranch-stock" data-id="${sp}" ${v.herd.length >= v.capacity || host.gems() < e.cinder ? 'disabled' : ''}>${a.emoji} Add ${esc(a.name)} · 🔥${fmt(e.cinder)}</button>`; }).join('')}</div>
+      ${herd ? `<div style="margin-top:6px;border:1px solid #1e2532;border-radius:6px;overflow:hidden">${herd}</div>` : '<div class="farm-empty">No stock yet. Add a sheep, goat or cow — it grazes for the whole corporation.</div>'}
+    </div>
+    <div class="farm-card" style="--accent:#9aa3b5"><h3>📒 Ranch ledger</h3>${(R.meta.ledger || []).length ? (R.meta.ledger || []).slice(0, 15).map(e => `<div class="farm-bid"><span>${esc(e.who || '?')} · ${esc(e.kind)} ${esc(e.resource || '')}</span><b>${fmt(e.amount)}</b></div>`).join('') : '<div class="farm-empty">Nothing yet.</div>'}</div>
+  </div>`;
+}
+
 export function renderShell(sub) {
   return `<div class="farm-page">
     <div class="farm-top">
@@ -318,6 +405,8 @@ export function renderShell(sub) {
         <div class="farm-tabs">
           <button class="farm-tab is-active" data-fact="tab" data-id="homestead">🏡 Homestead</button>
           <button class="farm-tab" data-fact="tab" data-id="livestock">🐑 Livestock</button>
+          <button class="farm-tab" data-fact="tab" data-id="market">🏛 Market</button>
+          <button class="farm-tab" data-fact="tab" data-id="ranch">🤝 Ranch</button>
           <button class="farm-tab" data-fact="tab" data-id="journal">📜 Journal</button>
           <button class="farm-tab" data-fact="tab" data-id="athena">🅰 Athena</button>
         </div>

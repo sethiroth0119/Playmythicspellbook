@@ -25,7 +25,8 @@
 import { FARM_ECON, FARM_ANIMALS, FARM_BUILDINGS, FARM_LOOKS, animalDef, buildingDef, buildingCostAt, auditCatalog } from './farm.data.js';
 import * as S from './farm.state.js';
 import { createScene } from './farm.scene.js';
-import { FARM_CSS, renderShell, renderLedger, renderHomestead, renderLivestock, renderJournal, renderAthena } from './farm.render.js';
+import { FARM_CSS, renderShell, renderLedger, renderHomestead, renderLivestock, renderJournal, renderAthena, renderMarket, renderRanch } from './farm.render.js';
+import { lots as cloudLots, ranch as cloudRanch } from './farm.cloud.js';
 
 function makeHost() {
   const B = (typeof window !== 'undefined') ? window.MythicFarmBridge : null;
@@ -67,6 +68,15 @@ function makeHost() {
     collectCdMs: (B.collectCdMs | 0) || 6 * 3600000,
     accrualCapH: (B.accrualCapH | 0) || 36,
     isAdmin: () => { try { return !!(B.isAdmin && B.isAdmin()); } catch (e) { return false; } },
+    // 🌐 The cloud seam (player lots, corp ranch). Absent on an older bridge → the tabs say so.
+    cloud: (B.cloud && typeof B.cloud.rpc === 'function') ? {
+      ready: () => { try { return !!B.cloud.ready(); } catch (e) { return false; } },
+      userId: () => { try { return B.cloud.userId(); } catch (e) { return null; } },
+      userName: () => { try { return B.cloud.userName() || 'Farmer'; } catch (e) { return 'Farmer'; } },
+      corp: () => { try { return B.cloud.corp(); } catch (e) { return null; } },
+      rpc: (n, a) => B.cloud.rpc(n, a),
+      select: (tb, o) => B.cloud.select(tb, o),
+    } : null,
   };
 }
 
@@ -100,7 +110,7 @@ function mount(rootEl) {
   if (missing.length) { try { console.warn('[farm] ledger is missing ids the farm pays out: ' + missing.join(', ')); } catch (e) {} }
 
   rootEl.innerHTML = renderShell();
-  const m = _mounted = { root: rootEl, scene: null, tab: 'homestead', focus: null, tick: 0, busy: false, ui: { cut: 'balanced', carrier: FARM_ECON.transport.defaultCarrier, renaming: null }, bannerShown: false };
+  const m = _mounted = { root: rootEl, scene: null, tab: 'homestead', focus: null, tick: 0, busy: false, ui: { cut: 'balanced', carrier: FARM_ECON.transport.defaultCarrier, escort: 0, renaming: null }, bannerShown: false, cloud: { loading: false, lots: [], mine: [], why: null, userId: null, at: 0 }, ranch: null };
   const stage = rootEl.querySelector('[data-farm="stage"]');
 
   const paint = () => {
@@ -115,6 +125,8 @@ function mount(rootEl) {
         panel.innerHTML = m.tab === 'livestock' ? renderLivestock(h, s, view, m.focus, m.ui)
           : m.tab === 'journal' ? renderJournal(h, s, view)
           : m.tab === 'athena' ? renderAthena(h, s, view)
+          : m.tab === 'market' ? renderMarket(h, s, view, m.ui, m.cloud)
+          : m.tab === 'ranch' ? renderRanch(h, view, m.ranch)
           : renderHomestead(h, s, view, m.focus, m.ui);
         if (m.ui.renaming) {
           const row = panel.querySelector(`.farm-beast[data-aid="${m.ui.renaming}"] .nm`);
@@ -135,6 +147,22 @@ function mount(rootEl) {
     } catch (e) { try { console.warn('[farm] paint failed:', e); } catch (x) {} }
   };
   m.paint = paint;
+  const loadLots = async () => {
+    if (_mounted !== m) return;
+    m.cloud.loading = true; paint();
+    try {
+      m.cloud.userId = h.cloud ? h.cloud.userId() : null;
+      const open = await cloudLots.listOpen(h); const mine = await cloudLots.mine(h);
+      m.cloud.lots = open.rows || []; m.cloud.mine = mine.rows || []; m.cloud.why = open.ok ? null : open.why; m.cloud.at = Date.now();
+    } catch (e) { m.cloud.why = 'could not reach the ring'; }
+    m.cloud.loading = false; if (_mounted === m) paint();
+  };
+  const loadRanch = async () => {
+    if (_mounted !== m) return;
+    m.ranch = null; paint();
+    try { m.ranch = await cloudRanch.get(h); } catch (e) { m.ranch = { ok: false, why: 'could not reach the ranch' }; }
+    if (_mounted === m) paint();
+  };
 
   // 👷 Farmers tend the troughs as you walk in.
   try { const s = S.ensureState(h); const r = S.tend(h, s); if (r.ok && r.moved) h.toast(`👷 Your Farmers topped up the troughs with ${r.moved} feed.`, 3000); } catch (e) {}
@@ -175,6 +203,7 @@ function mount(rootEl) {
     if (!t || _mounted !== m) return;
     if (t.getAttribute('data-fsel') === 'cut') { m.ui.cut = t.value; paint(); return; }
     if (t.getAttribute('data-fsel') === 'carrier') { m.ui.carrier = t.value; paint(); return; }
+    if (t.getAttribute('data-fsel') === 'escort') { m.ui.escort = t.value | 0; paint(); return; }
     const roof = t.getAttribute('data-froof');
     if (roof) { const s = S.ensureState(h); const r = S.setLook(h, s, { roofs: { [roof]: t.value } }); if (!r.ok) h.toast('Could not save the roof colour.', 2500); paint(); }
   }
@@ -206,7 +235,7 @@ function mount(rootEl) {
       let r;
       switch (act) {
         case 'back': h.back(); return;
-        case 'tab': m.tab = id; m.focus = null; m.ui.renaming = null; break;
+        case 'tab': m.tab = id; m.focus = null; m.ui.renaming = null; if (id === 'market' && Date.now() - m.cloud.at > 15000) loadLots(); if (id === 'ranch') loadRanch(); break;
         case 'build': {
           const def = buildingDef(id); if (!def) break;
           r = S.build(h, s, id);
@@ -219,7 +248,8 @@ function mount(rootEl) {
         case 'repair': { const def = buildingDef(id); if (!def) break; r = S.repair(h, s, id); h.toast(r.ok ? `🔨 ${def.name} repaired.` : `Repair: ${why(h, r)}`, 3200); break; }
         case 'buy': {
           const a = animalDef(id); if (!a) break;
-          r = S.buyAnimal(h, s, id, n, m.ui.carrier);
+          r = S.buyAnimal(h, s, id, n, m.ui.carrier, m.ui.escort);
+          if (r.ok) m.ui.escort = 0;
           h.toast(r.ok ? `🚚 ${r.shipped} ${r.shipped === 1 ? a.name.toLowerCase() : a.plural.toLowerCase()} ordered. ${r.carrier} is on the road — ETA ${Math.max(1, Math.round((r.arriveAt - Date.now()) / 60000))} min${r.fee ? ', haulage 🔥' + r.fee.toLocaleString() : ''}.` : `Cannot order: ${why(h, r)}`, 4200);
           break;
         }
@@ -248,7 +278,7 @@ function mount(rootEl) {
           h.toast(r.ok ? `🔪 ${a.name} → ${fmtGot(h, r.got)}.${r.stories.length ? ' ' + r.stories.join(' ') : ''}` : `Butcher: ${why(h, r)}`, 5000);
           break;
         }
-        case 'treat': { const a = S.animalById(s, id | 0); if (!a) break; r = S.treat(h, s, a.id); h.toast(r.ok ? `💊 ${a.name} is at ${Math.round(r.health)} health.` : `Treat: ${why(h, r)}`, 2800); break; }
+        case 'treat': { const a = S.animalById(s, id | 0); if (!a) break; r = S.treat(h, s, a.id); h.toast(r.ok ? (r.cured ? `💊 ${a.name} is cured of ${FARM_ECON.disease.kinds[r.cured].label.toLowerCase()} (${Math.round(r.health)} health).` : `💊 ${a.name} is at ${Math.round(r.health)} health.`) : `Treat: ${why(h, r)}`, 3000); break; }
         case 'crate': {
           const a = S.animalById(s, id | 0); if (!a) break;
           const ok = await h.confirm(`Crate ${a.name} for the Exchange? You get 1 Livestock crate; the animal leaves the farm.`); if (!ok) break;
@@ -258,6 +288,52 @@ function mount(rootEl) {
         case 'craft': { const rk = t.getAttribute('data-recipe'); r = S.craft(h, s, id, rk, n); h.toast(r.ok ? `⚙ ${r.batches}× → ${fmtGot(h, r.got)}.${r.clipped ? ' ⚠ Stash full — output was clipped.' : ''}` : `Cannot craft: ${why(h, r)}`, 3600); break; }
         case 'deliver': { r = S.deliverDemand(h, s); h.toast(r.ok ? `🚚 Delivered. The town paid ${fmtGot(h, r.got)}. ${r.left} left today.` : `Town: ${why(h, r)}`, 3600); break; }
         case 'rename': m.ui.renaming = id | 0; break;
+        case 'consign': {
+          const a = S.animalById(s, id | 0); if (!a) break;
+          const ok = await h.confirm(`Walk ${a.name} into the Sale Ring? The regulars bid in goods and the hammer falls in ${FARM_ECON.auction.lotMinutes} minutes. No taking it back.`); if (!ok) break;
+          r = S.consign(h, s, a.id);
+          if (r.ok) { m.tab = 'market'; loadLots(); h.toast(`🏛 ${a.name} is in the ring. Athena: “${r.timeline.athena}”`, 4200); } else h.toast(`Ring: ${why(h, r)}`, 3400);
+          break;
+        }
+        case 'p2p-post': {
+          const a = S.animalById(s, id | 0); if (!a) break;
+          if (!h.cloud || !h.cloud.ready()) { h.toast('Sign in to list stock for other players.', 3000); break; }
+          const value = S.animalValue(s, a); const minBid = Math.max(FARM_ECON.auction.p2p.minBid, Math.round(value * 0.5 / 100) * 100);
+          const ok = await h.confirm(`List ${a.name} for other players? Minimum bid 🔥${minBid.toLocaleString()} (half its value), 24 hours. The beast leaves your farm now and comes back only if nobody bids.`); if (!ok) break;
+          const took = S.takeAnimalForLot(h, s, a.id); if (!took.ok) { h.toast(`List: ${took.why}`, 3000); break; }
+          const animal = took.animal; delete animal.away; delete animal.ill; delete animal.illSince; delete animal.hungry;
+          const pr = await cloudLots.post(h, animal, minBid, 24);
+          if (pr.ok) { h.toast(`🌐 ${a.name} is listed. Bids settle on the server.`, 3600); m.tab = 'market'; loadLots(); }
+          else { S.returnAnimal(h, s, animal); h.toast(`List: ${pr.why}`, 4000); }
+          break;
+        }
+        case 'p2p-refresh': loadLots(); break;
+        case 'p2p-bid': {
+          const inp = rootEl.querySelector(`[data-fbidamt="${id}"]`); const amt = parseInt(inp ? inp.value : '0', 10) | 0;
+          const ok = await h.confirm(`Bid 🔥${amt.toLocaleString()}? It is held in escrow and returned if you are outbid.`); if (!ok) break;
+          const br = await cloudLots.bid(h, id, amt);
+          h.toast(br.ok ? `🔨 Bid placed: 🔥${amt.toLocaleString()}.` : `Bid: ${br.why}`, 3400);
+          /* ⚠ No local spendGems here. The RPC already debited the canonical
+             wallet; a client-side spend would be mirrored to wallet_charge and
+             debit the bid TWICE. The chip catches up on the next wallet sync. */
+          loadLots(); break;
+        }
+        case 'p2p-settle': { const sr = await cloudLots.settle(h, id); h.toast(sr.ok ? `⚖ Settled: ${sr.data && sr.data.status}${sr.data && sr.data.net ? ' · seller paid 🔥' + Number(sr.data.net).toLocaleString() : ''}.` : `Settle: ${sr.why}`, 3400); loadLots(); break; }
+        case 'p2p-claim': {
+          const cr = await cloudLots.claim(h, id);
+          if (!cr.ok) { h.toast(`Claim: ${cr.why}`, 3400); loadLots(); break; }
+          const animal = cr.data && cr.data.animal;
+          const rr = S.returnAnimal(h, s, animal || {});
+          h.toast(rr.ok ? (rr.held ? `🚧 ${rr.animal.name} is waiting at the gate — make room in the pen.` : `🚪 ${rr.animal.name} is home.`) : `Claimed, but: ${rr.why}`, 3600);
+          loadLots(); break;
+        }
+        case 'contract-accept': { r = S.acceptContract(h, s, id | 0); h.toast(r.ok ? '📜 Contract signed. The clock is running.' : `Contract: ${why(h, r)}`, 3000); break; }
+        case 'contract-deliver': { r = S.deliverContract(h, s, id | 0); h.toast(r.ok ? `🚚 Delivered. The town paid ${fmtGot(h, r.got)}. Reputation ${r.rep >= 0 ? '+' : ''}${r.rep}.` : `Contract: ${why(h, r)}`, 4000); break; }
+        case 'ranch-refresh': loadRanch(); break;
+        case 'ranch-feed': { const rr = await cloudRanch.feed(h, n); h.toast(rr.ok ? `🌾 Added ${rr.added} feed to the ranch.` : `Ranch: ${rr.why}`, 3000); loadRanch(); break; }
+        case 'ranch-stock': { const a = animalDef(id); const rr = await cloudRanch.stock(h, id); h.toast(rr.ok ? `${a.emoji} ${rr.name} joins the ranch.` : `Ranch: ${rr.why}`, 3000); loadRanch(); break; }
+        case 'ranch-claim': { const rr = await cloudRanch.claim(h); h.toast(rr.ok ? `🧺 Claimed ${fmtGot(h, rr.got)}.` : `Ranch: ${rr.why}`, 3400); loadRanch(); break; }
+        case 'ranch-butcher': { const ok = await h.confirm('Send this ranch animal to the block? Your cut follows your feed share.'); if (!ok) break; const rr = await cloudRanch.butcher(h, id | 0); h.toast(rr.ok ? `🔪 Your cut: ${fmtGot(h, rr.got)}.` : `Ranch: ${rr.why}`, 3400); loadRanch(); break; }
         case 'rename-save': { const inp = rootEl.querySelector(`[data-frename="${id}"]`); doRename(id, inp ? inp.value : ''); return; }
         case 'rename-cancel': m.ui.renaming = null; break;
         case 'look-ground': S.setLook(h, s, { ground: id }); break;
@@ -302,6 +378,11 @@ const api = {
   rush: (id) => withHost((h, s) => S.rush(h, s, id)),
   carriers: () => { const h = host(); return h ? S.carriersFor(h) : []; },
   debugShift: (ms) => withHost((h, s) => S.debugShift(h, s, ms)),
+  consign: (id) => withHost((h, s) => S.consign(h, s, id)),
+  acceptContract: (id) => withHost((h, s) => S.acceptContract(h, s, id)),
+  deliverContract: (id) => withHost((h, s) => S.deliverContract(h, s, id)),
+  returnAnimal: (a) => withHost((h, s) => S.returnAnimal(h, s, a)),
+  cloud: { lots: cloudLots, ranch: cloudRanch },
   fillTrough: (id, n) => withHost((h, s) => S.fillTrough(h, s, id, n)),
   collect: (id) => withHost((h, s) => S.collect(h, s, id)),
   slaughter: (sel, cut) => withHost((h, s) => S.slaughter(h, s, typeof sel === 'string' ? { sp: sel, n: 1 } : sel, cut)),

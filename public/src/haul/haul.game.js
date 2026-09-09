@@ -372,6 +372,9 @@ export async function play(opts) {
     const truck = Math.random() < 0.3;
     const lane = Math.floor(Math.random() * LANES);
     if (hazards.some((h) => Math.abs(h.z - zAhead) < 120)) return;
+    // Nothing spawns inside a toll plaza: the rig has to pull away from the
+    // booth into clear road, not into a car crawling through the arms.
+    if (junctions.some((j) => j.toll && Math.abs(j.zArm - zAhead) < 260)) return;
     const mesh = makeCar(truck, TRAFFIC_COLORS[Math.floor(Math.random() * TRAFFIC_COLORS.length)]);
     const cruise = (truck ? 17 : 22) + Math.random() * (truck ? 5 : 11);
     const v = { mesh, lane, x: laneX(lane), z: zAhead, speed: cruise, cruise, truck, halfL: mesh.userData.halfL, halfW: mesh.userData.halfW, hitCd: 0,
@@ -510,8 +513,10 @@ export async function play(opts) {
       const nose = S.z + PLAYER_HALF_L;
       if (jj.tollState === 'closed' && S.z > jj.zArm - 220 && !jj.warned) { jj.warned = true; flash('🛑 TOLL BOOTH AHEAD — STOP'); }
       if (nose >= jj.zArm - 0.3) {
-        // The arm is a wall. Arriving fast is a hit; either way you are stopped here.
-        if (S.speed > 6) { S.cr++; damage(RAIL_HIT_DMG * 2); flash('🚧 RAN THE TOLL ARM'); }
+        // The arm is a wall. Rolling into it under ~45 km/h is a bump and a
+        // stop; faster than that is a hit. Either way you are stopped here.
+        if (S.speed > 12.5) { S.cr++; damage(RAIL_HIT_DMG * 2); flash('🚧 RAN THE TOLL ARM'); }
+        else if (S.speed > 1) flash('🛑 STOPPED AT THE BOOTH');
         S.z = jj.zArm - PLAYER_HALF_L - 0.3; S.speed = 0;
       }
       if (S.speed < 0.6 && nose > jj.zArm - 9) {
@@ -586,9 +591,15 @@ export async function play(opts) {
       }
       setBlink(v.mesh.children[0], v.sigDir || 0, v.phase !== 'cruise' && (Math.floor(S.t * 3) % 2 === 0));
       if (v.z < S.z - 70 || v.z > S.z + 420) { scene.remove(v.mesh); traffic.splice(i, 1); continue; }
+      // The plaza empties as the rig arrives — the crawl-through traffic was
+      // exactly where the rig accelerates once the arms lift, and every pull-
+      // away became a rear-end crash (reported by the user).
+      if (junctions.some((j) => j.toll && j.tollState !== 'open' && Math.abs(v.z - j.zArm) < 60 && S.z > j.zArm - 240 && S.z < j.zArm + 20)) { scene.remove(v.mesh); traffic.splice(i, 1); continue; }
       collideVehicle(v, dt);
     }
-    while (traffic.length < want) spawnTraffic(S.z + 140 + Math.random() * 260);
+    // Bounded: spawnTraffic can decline (hazard or toll plaza in the window),
+    // and an unbounded while spun forever beside a plaza and froze the page.
+    for (let tries = 0; traffic.length < want && tries < 6; tries++) spawnTraffic(S.z + 140 + Math.random() * 260);
     // ── Raiders: one event at a time, from behind, fast, aimed at the rig.
     const nextRaid = plan.raiders[S.raiderIdx];
     if (!S.raider && nextRaid && S.z > nextRaid.z) {

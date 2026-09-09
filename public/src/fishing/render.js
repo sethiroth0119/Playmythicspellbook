@@ -15,7 +15,7 @@ import { FISH_IDS, RECIPES, batchesAffordable, coverageCycles, windowEndsAt } fr
 
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const n = (v) => (Number(v) || 0).toLocaleString();
-const RAR_COL = { freshFish: '#6fc0d8', shellfish: '#d8b48a', seafood: '#e08a5a', seaweed: '#7fb37a' };
+const RAR_COL = { freshFish: '#6fc0d8', shellfish: '#d8b48a', seafood: '#e08a5a', seaweed: '#7fb37a', monsterParts: '#c47ad8' };
 
 function fmtEta(ms) { const m = Math.max(0, Math.ceil(ms / 60000)); return m < 60 ? m + 'm' : Math.floor(m / 60) + 'h ' + (m % 60) + 'm'; }
 
@@ -85,6 +85,7 @@ export function renderStorage(ctx, model) {
           '<div>🦪 <b style="color:#d8b48a">Shellfish</b> → galley &amp; rig-kitchen contracts · shuck for food + supplies</div>' +
           '<div>🐠 <b style="color:#e08a5a">Prime Seafood</b> → 💊 <b>Fish Oil Works</b> (with kelp → medicine) · Apothecary &amp; Research contracts · Legendary catches also drop 🧬 DNA</div>' +
           '<div>🌿 <b style="color:#7fb37a">Seaweed</b> → 💊 <b>Fish Oil Works</b> · Salvage Union rope &amp; compost contracts · dry for rations</div>' +
+          '<div>🦈 <b style="color:#c47ad8">Leviathan Parts</b> → off sharks &amp; anomalies you harpoon or beat in battle · 🦈 <b>Leviathan Rendery</b> (→ medicine + corrupted essence) · Harpoon Mount refit · Research &amp; trophy contracts</div>' +
           '<div style="margin-top:0.4rem;color:#9aa3b2;font-size:0.72rem">Every unit you sell on the Player Market is a unit another survivor\'s Cannery or Oil Works does not have to catch. Every contract you fill lifts the exchange price for everyone still fishing.</div>' +
         '</div>' +
       '</div>' +
@@ -112,8 +113,12 @@ export function renderContracts(ctx, model) {
     '</div>';
   }).join('') || '<div class="wfa-empty-row">— NO ORDERS ON THE BOARD —</div>';
 
+  const t = model.tide;
+  const tideBar = t ? '<div class="wfa-panel" style="margin-bottom:0.8rem;border-color:' + (t.res ? (RAR_COL[t.res] || '#7fb9c9') + '88' : 'rgba(255,255,255,0.1)') + '"><div class="wfa-panel-h"><h3>' + t.icon + ' ' + esc(t.name).toUpperCase() + '</h3><span>WORLD TIDE · SAME FOR EVERY SURVIVOR · ' + fmtEta(model.endsAt - now) + ' LEFT</span></div>' +
+    '<div style="font-size:0.8rem;color:#cdd3df">' + esc(t.blurb) + (t.res ? ' <span style="color:#9aa3b2">— ' + esc(ctx.meta(t.res).name) + ' contracts ×' + t.premiumMul + (t.weightMul !== 1 ? ', bites ×' + t.weightMul : '') + (t.threat ? ', attacks ×' + t.threat : '') + '</span>' : '') + '</div></div>' : '';
   return '<div class="wfa-contracts">' +
     '<div class="wfa-panel-header">FISHING CONTRACTS  <span class="wfa-panel-crumb">BUY ORDERS · BOARD RESETS IN ' + fmtEta(model.endsAt - now) + '</span></div>' +
+    tideBar +
     '<div class="wfa-grid-2-1">' +
       '<div class="wfa-panel">' +
         '<div class="wfa-panel-h"><h3>OPEN ORDERS</h3><span>' + model.contracts.filter((c) => !c.done).length + ' OPEN · ' + model.contracts.filter((c) => c.done).length + ' FILLED</span></div>' +

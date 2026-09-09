@@ -98,6 +98,8 @@ export const RESOURCE_CHAIN = [
   { id: 'seafood',                 name: 'Prime Seafood',               icon: '🐠',  color: '#e08a5a', cat: 'fishing',      tier: 0, existing: true, inputs: ['freshFish'] },
   { id: 'shellfish',               name: 'Shellfish',                   icon: '🦪',  color: '#d8b48a', cat: 'fishing',      tier: 0, existing: true, inputs: [] },
   { id: 'seaweed',                 name: 'Seaweed',                     icon: '🌿',  color: '#7fb37a', cat: 'fishing',      tier: 0, existing: true, inputs: [] },
+  // 🦈 fishing round 2 — dropped by sharks/anomalies that attack boats; the Deepwater Pier lands a little.
+  { id: 'monsterParts',            name: 'Leviathan Parts',             icon: '🦈',  color: '#c47ad8', cat: 'fishing',      tier: 0, existing: true, inputs: [] },
 
   // ── Food Processing ───────────────────────────────────────────
   { id: 'flour',                   name: 'Flour',                       icon: '🍞',  color: '#e0a86a', cat: 'food',         tier: 1, core: true, inputs: [] },

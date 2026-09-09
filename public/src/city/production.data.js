@@ -332,7 +332,9 @@ export const CITY_PRODUCTION = [
     id: 'deeppier', name: 'Deepwater Pier', kind: 'production', emoji: '🐠', accent: '#e08a5a',
     desc: 'Long-liners that go out past the trench. Baits with the Wharf\'s catch and comes back with the prime cut.',
     maxLevel: 3,
-    yields: { seafood: 10 }, inputs: { fuel: 25, freshFish: 12 },
+    // 🦈 Long-liners hook something bigger now and then — the only steady
+     // city source of Leviathan Parts; the rest come off things that attack boats.
+    yields: { seafood: 10, monsterParts: 1 }, inputs: { fuel: 25, freshFish: 12 },
     draw: { power: 12, water: 0, workers: 7, pollution: 8 },
     footprint: { w: 3, h: 3 },
     cost: [
@@ -366,6 +368,19 @@ export const CITY_PRODUCTION = [
       { cinder: 85000,  metal: 60,  supplies: 50,  water: 30,  wood: 20 },
       { cinder: 200000, metal: 135, supplies: 115, water: 70,  wood: 45 },
       { cinder: 470000, metal: 290, supplies: 250, water: 160, wood: 100, dna: 9 },
+    ],
+  },
+  {
+    id: 'rendery', name: 'Leviathan Rendery', kind: 'production', emoji: '🦈', accent: '#c47ad8',
+    desc: 'Boils shark and worse down to salve and a jar of something that hums. The parts come off whatever attacked your boats.',
+    maxLevel: 3,
+    yields: { medicine: 10, corruptedEssence: 3 }, inputs: { monsterParts: 2, water: 10 },
+    draw: { power: 24, water: 10, workers: 5, pollution: 14, heat: 8 },
+    footprint: { w: 2, h: 3 },
+    cost: [
+      { cinder: 120000, metal: 90,  supplies: 70,  water: 40,  medicine: 15 },
+      { cinder: 280000, metal: 200, supplies: 160, water: 90,  medicine: 40 },
+      { cinder: 640000, metal: 420, supplies: 340, water: 190, medicine: 95, memoryShards: 12 },
     ],
   },
 ];
@@ -422,6 +437,7 @@ export const CITY_PREREQ = {
   deeppier:    ['fishwharf'],      // baits with fresh fish: the wharf comes first
   cannery:     ['fishwharf'],
   oilworks:    ['deeppier', 'kelpbeds'],
+  rendery:     ['oilworks'],
 };
 
 /* Which prerequisites are missing, given what the city already has placed.
@@ -456,6 +472,7 @@ export function auditCatalog(resourceIds) {
     'wood', 'stone', 'cloth',
     // 🐟 fishing expansion — 18 as of this round
     'freshFish', 'shellfish', 'seafood', 'seaweed',
+    'monsterParts',   // 🦈 round 2 — 19
   ];
   const problems = [];
   // 1. Every one of the resources has a producer (14 as of r12 — the count is

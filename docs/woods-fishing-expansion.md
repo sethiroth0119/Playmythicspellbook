@@ -96,3 +96,50 @@ and the per-window `done` map) lives on `Profile.fishingCorp.contracts` and ride
   the 3D trip boots, casts, bites, reels, banks `freshFish` (+ seaweed by-catch) and records a
   trophy weight, gear tab renders, storm weather applies, docking clears the overlay. No page errors.
 - ⚠ The Browser pane in this environment does not composite (no RAF) — use real Chromium for the trip.
+
+
+# Round 2 — boats that matter, things that bite
+
+## Boats
+- Every class now carries `armor`, `sonar`, `stability` alongside cap/fuel/hull/speed, and all of
+  them are read (`_wfBoatStats`): armor soaks bites and expedition damage, sonar + the Sonar Array
+  reveal school tiers, stability scales swell and storm surge, speed decides flee odds and cast range.
+- **Hull is health.** The trip HUD shows it; storms chip it, sharks bite it, Bilge Pumps regen it.
+  Zero hull = wrecked: half the haul goes overboard, the boat is `damaged`, the drydock takes over.
+- **Boat XP → levels → refit slots** (L2/L4/L6; +1 armor at L5). XP from catches, trips, kills,
+  expeditions. `WF_BOAT_MODS`: Harpoon Mount, Reinforced Hull, Extended Hold, Sonar Array, Bilge
+  Pumps, Chum Guard — paid in drydock stock, ledger resources and Cinder. DOCKS → ⚙ REFIT.
+
+## Threats (the 3D trip)
+- A **threat meter** rises per cast (biome, blood bait, night, storm, fog; big fish add chum; Chum
+  Guard and a hunter deckhand slow it; the "Something hungry" tide speeds it). Full → an attacker
+  from `WF3_THREATS[biome]` surfaces, circles in 3D, lunges every ~5 s for `bite − armor` hull.
+- Three answers on the card: **Harpoon** (needs the mount, 3 ammo a shot, 15–30 + boat level dmg),
+  **Flee** (0.45 + 0.15·(speed − its speed), costs 2 casts + 2 fuel), **Card Battle** (existing
+  encounter path; win → parts + drops, loss → two free bites on the docked hull and the deckhand).
+- Kills drop **Leviathan Parts** (`monsterParts`, 19th ledger resource, base ¢1,500) plus anomaly
+  extras (memory shards / corrupted essence). Deckhands can be hurt or lost on a bite.
+
+## Crew
+- Level from exp (`_wfCrewLevel`), rank titles Deckhand→Captain, +1% trip luck per level.
+- `_wfCrewHurt`: health 0 can be lethal (30%, 10% for veterans/hunters). Fleet expeditions hurt
+  crew per 15 hull damage; monster events single someone out.
+
+## Fleet
+- Expedition damage is soaked by armor (never below 20% of the roll). Monster/anomaly events the
+  boat survives with armor ≥3 or a hunter drop parts; anomalies drop essence. Extended Hold +25% haul.
+
+## Economy
+- `rendery` city building (Leviathan Rendery: parts + water → medicine + corrupted essence),
+  Deepwater Pier lands 1 part/cycle, two new contract buyers for parts.
+- **Tide events** (`demand.js` `tideFor`): one world-wide condition per 8h window, seeded by the
+  window only. Moves one resource's contract premium and bite rate (herring run, red tide, kelp
+  bloom, dead calm, something hungry). Shown on CONTRACTS and the trip HUD.
+- **Coastal claim**: a corp holding ≥50% of any Territory Wars region gets +6–12% trip luck.
+
+## Tournaments
+- `sql/038_fishing_records.sql` — `fishing_records` + `fishing_record_submit()` RPC (security
+  definer, stamps `auth.uid()`, keeps the max, clamps kg ≤120; select-only RLS for authenticated,
+  no direct write policies). Run it in the Supabase SQL editor.
+- Client posts a new personal best after a live catch (guarded, fire-and-forget); TOURNAMENT tab
+  shows the weekly sector board per species and local trophies, and says so when offline.

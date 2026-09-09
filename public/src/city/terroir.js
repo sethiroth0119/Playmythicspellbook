@@ -70,6 +70,8 @@ const FALLBACK_IDS = [
   // 🐟 Fishing expansion — the catch. Same rule as r12: a stale fallback would
   // hand profileFor() 14 ids against an 18-slot bag and degrade to all-COMMON.
   'freshFish', 'shellfish', 'seafood', 'seaweed',
+  // 🦈 fishing round 2 — leviathan parts (19)
+  'monsterParts',
 ];
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -124,7 +126,9 @@ export const TERROIR_ECON = {
      ⚠ This re-deals every surveyed player's ground (the Fisher–Yates below
        runs over the new, longer pool). r12 accepted the same for +3 ids;
        nothing placed is touched and no tier can go to zero. */
-  slots: { RICH: 4, COMMON: 6, SCARCE: 6, BARREN: 2 },
+  /* 🔢 RE-DERIVED FOR 19 (fishing round 2: +monsterParts). COMMON 6 → 7;
+     RICH and BARREN hold (4 and 2). Scarce-or-worse 8/19 = 42.1%. */
+  slots: { RICH: 4, COMMON: 7, SCARCE: 6, BARREN: 2 },
 
   /* 🌱 The node's own resource seam is forced RICH. The war map already tells
      the player "this node produces METAL"; terroir makes that claim mean

@@ -30,7 +30,7 @@
    invisible to a module).
    ============================================================================ */
 
-export const FISH_IDS = ['freshFish', 'shellfish', 'seafood', 'seaweed'];
+export const FISH_IDS = ['freshFish', 'shellfish', 'seafood', 'seaweed', 'monsterParts'];
 
 /* ── Cold Storage recipes ────────────────────────────────────────────────────
    `inputs` and `outputs` are per batch. Ratios sit BELOW the buildings on
@@ -82,7 +82,34 @@ export const CONTRACT_BUYERS = [
   { id: 'salvage',  name: 'Salvage Union',           wants: 'seaweed',   units: [20, 60],  premium: [1.4, 1.8],   xp: 15, blurb: 'Kelp for rope-making and the compost pits.' },
   { id: 'northbld', name: 'North Build Co. canteen', wants: 'freshFish', units: [25, 70],  premium: [1.25, 1.4],  xp: 20, blurb: 'Site canteens across the sector. Weekly standing order.' },
   { id: 'oilworks', name: 'Fish Oil Works co-op',    wants: 'seaweed',   units: [30, 80],  premium: [1.3, 1.6],   xp: 15, blurb: 'The renderers burn through kelp faster than the beds grow it.' },
+  // 🦈 round 2 — the parts off whatever attacked you. Small orders, big premiums.
+  { id: 'anomalab', name: 'Anomaly Research wing',   wants: 'monsterParts', units: [2, 6],  premium: [1.6, 2.2],   xp: 60, blurb: 'Teeth, hide, the glowing bits. Bagged, labelled, no questions.' },
+  { id: 'trophy',   name: 'Salt Saint trophy house', wants: 'monsterParts', units: [3, 8],  premium: [1.4, 1.8],   xp: 50, blurb: 'Rich survivors pay to hang a jaw over the bar.' },
 ];
+
+/* ── Tide events ────────────────────────────────────────────────────────────
+   One world-wide condition per contract window (seeded by the WINDOW ONLY, so
+   every player sees the same tide — it is weather, not a private roll). A
+   tide moves ONE resource: `premiumMul` scales that resource's contract
+   premiums, `weightMul` scales how often its species bite on a live trip.
+   'calm' is the common case and changes nothing. */
+export const TIDE_EVENTS = [
+  { id: 'calm',     res: null,          premiumMul: 1,    weightMul: 1,    weight: 40, icon: '🌊', name: 'Calm tide',        blurb: 'Nothing unusual on the water.' },
+  { id: 'herring',  res: 'freshFish',   premiumMul: 0.8,  weightMul: 1.8,  weight: 12, icon: '🐟', name: 'Herring run',      blurb: 'The shallows are boiling with fish. Fresh fish is everywhere and buyers know it.' },
+  { id: 'redtide',  res: 'shellfish',   premiumMul: 1.6,  weightMul: 0.35, weight: 10, icon: '🟥', name: 'Red tide',         blurb: 'Shellfish beds closed. What little comes up sells for a fortune.' },
+  { id: 'upwell',   res: 'seafood',     premiumMul: 0.85, weightMul: 1.6,  weight: 8,  icon: '🐠', name: 'Deep upwelling',   blurb: 'Cold water rising from the trench brings the prime cut up with it.' },
+  { id: 'kelpbloom',res: 'seaweed',     premiumMul: 0.7,  weightMul: 2.2,  weight: 10, icon: '🌿', name: 'Kelp bloom',       blurb: 'Rope-thick kelp on every line. Cheap, and there is a lot of it.' },
+  { id: 'hunger',   res: 'monsterParts',premiumMul: 1.5,  weightMul: 1,    weight: 8,  icon: '🦈', name: 'Something hungry', blurb: 'Boats are coming back bitten. The research wing is paying double for parts.', threat: 1.5 },
+  { id: 'still',    res: 'seafood',     premiumMul: 1.4,  weightMul: 0.5,  weight: 6,  icon: '🌫', name: 'Dead calm',        blurb: 'The deep has gone quiet. Prime seafood is scarce and priced like it.' },
+];
+export function tideFor(now) {
+  const wk = windowKey(now);
+  const rnd = xorshift(hash32('fishing:tide:v1:' + wk));
+  let tot = 0; TIDE_EVENTS.forEach((t) => { tot += t.weight; });
+  let r = rnd() * tot;
+  for (const t of TIDE_EVENTS) { r -= t.weight; if (r <= 0) return t; }
+  return TIDE_EVENTS[0];
+}
 
 /* Deterministic PRNG — the same one terroir.js uses, so a board cannot be
    re-rolled by reloading the page. */
@@ -111,7 +138,8 @@ export function contractsFor(seed, now, priceOf) {
   for (let i = 0; i < CONTRACT_COUNT && pool.length; i++) {
     const b = pool.splice(Math.floor(rnd() * pool.length), 1)[0];
     const units = Math.round(b.units[0] + (b.units[1] - b.units[0]) * rnd());
-    const premium = +(b.premium[0] + (b.premium[1] - b.premium[0]) * rnd()).toFixed(2);
+    const tide = tideFor(now);
+    const premium = +((b.premium[0] + (b.premium[1] - b.premium[0]) * rnd()) * ((tide.res === b.wants) ? tide.premiumMul : 1)).toFixed(2);
     out.push({
       id: wk + ':' + b.id, key: wk, buyerId: b.id, buyer: b.name, res: b.wants, units, premium, xp: b.xp, blurb: b.blurb,
       payout: payoutFor(units, premium, priceOf ? priceOf(b.wants) : 0),

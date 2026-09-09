@@ -89,7 +89,7 @@ function contractsModel() {
     const have = ctx.getRes(c.res); const price = ctx.price(c.res).current;
     return Object.assign({}, c, { have, price, payout: D.payoutFor(c.units, c.premium, price), done: !!L.done[c.id], canFill: have >= c.units });
   });
-  return { contracts: list, endsAt: D.windowEndsAt(now), filledCount: L.filled | 0, earned: L.earned | 0, delivered: L.delivered | 0 };
+  return { contracts: list, endsAt: D.windowEndsAt(now), filledCount: L.filled | 0, earned: L.earned | 0, delivered: L.delivered | 0, tide: D.tideFor(now) };
 }
 
 /* ── Actions ────────────────────────────────────────────────────────────────
@@ -138,6 +138,9 @@ const api = {
   renderStorage: () => { try { return R.renderStorage(ctx, storageModel()); } catch (e) { warnOnce('renderStorage: ' + e); return ''; } },
   renderContracts: () => { try { return R.renderContracts(ctx, contractsModel()); } catch (e) { warnOnce('renderContracts: ' + e); return ''; } },
   storageModel, contractsModel, process, fill,
+  /* 🌊 The world tide for this window — index.html's trip reads it (guarded)
+     to scale bites and attack pressure. Pure, seeded by the window only. */
+  tide: () => { try { return D.tideFor(Date.now()); } catch (e) { return null; } },
   /* Wire the data-attributes the renderers emit. Safe to call repeatedly. */
   bind: (root) => {
     const b = B(); if (!b || !root) return;

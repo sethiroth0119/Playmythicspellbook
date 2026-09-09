@@ -9,7 +9,7 @@
    ════════════════════════════════════════════════════════════════════════════ */
 
 import { FARM_ECON, FARM_ANIMALS, FARM_BUILDINGS, FARM_LOOKS, RECIPE_LABELS, animalDef, buildingDef, buildingCostAt } from './farm.data.js';
-import { uncrateCost } from './farm.state.js';
+import { uncrateCost, shipFee, carrierById } from './farm.state.js';
 import { ageLabel } from './farm.events.js';
 
 export const FARM_CSS = `
@@ -80,7 +80,7 @@ export const FARM_CSS = `
 .farm-entry .when{color:#9aa3b5;font-size:.7rem;margin-top:2px}
 .farm-entry.raid,.farm-entry.wolves,.farm-entry.fox,.farm-entry.hawk,.farm-entry.death{border-left:3px solid #b8404a}
 .farm-entry.birth,.farm-entry.gift,.farm-entry.repair,.farm-entry.tend{border-left:3px solid #8fc46a}
-.farm-entry.ufo{border-left:3px solid #8affd6}.farm-entry.storm{border-left:3px solid #7fd6ff}
+.farm-entry.ufo{border-left:3px solid #8affd6}.farm-entry.storm{border-left:3px solid #7fd6ff}.farm-entry.ship,.farm-entry.build{border-left:3px solid #d4af37}
 .farm-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding:0 10px 10px}
 .farm-stat{background:#151b26;border:1px solid #2a3140;border-radius:6px;padding:6px 8px;text-align:center}
 .farm-stat b{display:block;font-size:1.1rem;color:#f4efe4;font-variant-numeric:tabular-nums}
@@ -124,7 +124,7 @@ export function renderLedger(host, view) {
 }
 
 /* ── Homestead tab ──────────────────────────────────────────────────────── */
-export function renderHomestead(host, s, view, focus) {
+export function renderHomestead(host, s, view, focus, ui) {
   const now = Date.now();
   const cards = FARM_BUILDINGS.map(def => {
     const b = s.buildings[def.id];
@@ -140,6 +140,15 @@ export function renderHomestead(host, s, view, focus) {
     }
     const pen = view.pens.find(p => p.id === def.id);
     let body = '';
+    const prog = view.construction.find(c => c.id === def.id);
+    if (prog) {
+      const pr = prog.progress;
+      body += `<div class="farm-row"><span class="k">${pr.upgrading ? '⬆ Upgrading to level ' + pr.toLevel : '🏗 Under construction'}</span><span class="farm-meter"><i style="width:${pr.pct}%;background:#d4af37"></i></span><b>${hrs(pr.left / 3600000)} left</b></div>
+        <div class="farm-row"><button class="farm-btn" data-fact="rush" data-id="${def.id}" ${host.gems() >= prog.rush ? '' : 'disabled'} title="Pay the crews to finish now">⚡ Rush · 🔥${fmt(prog.rush)}</button>${view.builders ? `<span class="k">👷 ${view.builders} Builder${view.builders === 1 ? '' : 's'} · −${Math.round(view.buildersBonus * 100)}% build time</span>` : '<span class="k">Hire Builders on the Employment Board to build faster.</span>'}</div>`;
+      if (!pr.upgrading) {
+        return `<div class="${cls}" style="--accent:${def.accent}" data-fid="${def.id}"><h3>${def.emoji} ${esc(def.name)}<span class="lv">building…</span></h3><p>${esc(def.desc)}</p>${body}</div>`;
+      }
+    }
     if (b.damaged) body += `<div class="farm-row" style="color:#f8c0c8">🌪 Roof torn off — nothing here produces or breeds until it is repaired.</div>${costHtml(host, FARM_ECON.events.storm.repair)}<div class="farm-row"><button class="farm-btn primary" data-fact="repair" data-id="${def.id}">🔨 Repair</button></div>`;
     if (pen) {
       const pct = pen.troughCap ? Math.min(100, Math.round(pen.feed / pen.troughCap * 100)) : 0;
@@ -147,7 +156,7 @@ export function renderHomestead(host, s, view, focus) {
       const wait = ready ? '' : ` (${hrs((pen.readyAt - now) / 3600000)} left)`;
       const isGuardPost = def.id === 'guardpost';
       body += `
-        <div class="farm-row"><span class="k">${isGuardPost ? 'Guards' : 'Herd'}</span><b>${pen.herd}/${pen.capacity}</b><span class="k">· ${pen.adults} grown, ${pen.herd - pen.adults} young</span>${def.id === 'pasture' ? `<span class="k">· ground ${esc(view.terroir.toLowerCase())}</span>` : ''}</div>
+        <div class="farm-row"><span class="k">${isGuardPost ? 'Guards' : 'Herd'}</span><b>${pen.herd}/${pen.capacity}</b><span class="k">· ${pen.adults} grown, ${pen.herd - pen.adults} young${pen.inTransit ? ` · 🚚 ${pen.inTransit} on the road` : ''}</span>${def.id === 'pasture' ? `<span class="k">· ground ${esc(view.terroir.toLowerCase())}</span>` : ''}</div>
         <div class="farm-row"><span class="k">Trough</span><span class="farm-meter"><i class="${pen.feed <= 0 ? 'empty' : pct < 25 ? 'low' : ''}" style="width:${pct}%"></i></span><b>${pen.feed}/${pen.troughCap}</b><span class="k">· ${pen.herd ? hrs(pen.hoursLeft) + ' of feed' : 'no animals'}</span></div>
         <div class="farm-row"><span class="k">Defense</span><b>🛡 ${Math.round(pen.defense * 10) / 10}</b><span class="k">· guards + fence (level ${b.level})</span></div>
         <div class="farm-row"><span class="k">Yield</span>${yieldHtml(host, pen.ratePerH, true)}</div>
@@ -156,7 +165,8 @@ export function renderHomestead(host, s, view, focus) {
           <button class="farm-btn" data-fact="feed" data-id="${def.id}" title="Move Animal Feed from your stash into the trough">🌾 Fill trough</button>
           <button class="farm-btn primary" data-fact="collect" data-id="${def.id}" ${(ready && hasPending) ? '' : 'disabled'}>🧺 Collect${wait}</button>
         </div>
-        <div class="farm-row">${(def.houses || []).map(sp => { const a = animalDef(sp), e = FARM_ECON.animals[sp]; return `<button class="farm-btn" data-fact="buy" data-id="${sp}" ${pen.herd >= pen.capacity || host.gems() < e.cinder ? 'disabled' : ''} title="${esc(a.desc)}">${a.emoji} ${esc(a.name)} · 🔥${fmt(e.cinder)}${e.defense ? ' · 🛡' + e.defense : ''}</button>`; }).join('')}</div>`;
+        <div class="farm-row">${(def.houses || []).map(sp => { const a = animalDef(sp), e = FARM_ECON.animals[sp]; const fee = shipFee(carrierById(host, ui && ui.carrier), sp, 1); return `<button class="farm-btn" data-fact="buy" data-id="${sp}" ${pen.herd + pen.inTransit >= pen.capacity || host.gems() < e.cinder + fee ? 'disabled' : ''} title="${esc(a.desc)} · haulage ${fmt(fee)}">${a.emoji} ${esc(a.name)} · 🔥${fmt(e.cinder + fee)}${e.defense ? ' · 🛡' + e.defense : ''}</button>`; }).join('')}</div>
+        <div class="farm-toastline">Prices include haulage by ${esc(carrierById(host, ui && ui.carrier).name)} — change the carrier on the Livestock tab.</div>`;
     } else if (def.role === 'feed') {
       const r = FARM_ECON.feedMillRecipe, mul = 1 + FARM_ECON.recipeBonusPerLevel * (b.level - 1);
       body += `<div class="farm-row"><span class="k">Grind</span>${yieldHtml(host, r.inputs)}<span class="k">→</span>${yieldHtml(host, scale(r.output, mul))}</div>
@@ -191,7 +201,14 @@ export function renderLivestock(host, s, view, focus, ui) {
   const butcher = s.buildings.butcher;
   const cut = (ui && ui.cut) || 'balanced';
   const cutOpts = Object.keys(FARM_ECON.cuts).map(k => { const c = FARM_ECON.cuts[k]; const locked = !butcher || butcher.level < c.minLevel; return `<option value="${k}" ${k === cut ? 'selected' : ''} ${locked ? 'disabled' : ''}>${esc(c.label)}${locked ? ' (L' + c.minLevel + ')' : ''}</option>`; }).join('');
-  const header = `<div class="farm-card" style="--accent:#b8404a"><h3>🔪 The block<span class="lv">${butcher ? 'Level ' + butcher.level : 'not built'}</span></h3>
+  const carrier = carrierById(host, ui && ui.carrier);
+  const carrierOpts = view.carriers.map(c => `<option value="${c.id}" ${c.id === carrier.id ? 'selected' : ''}>${c.emoji} ${esc(c.name)} · ${Math.round(c.hours * 60)} min · ${c.risk ? Math.round(c.risk * 100) + '% risk' : 'no risk'}${c.insured ? ' · ' + Math.round(c.insured * 100) + '% insured' : ''}${c.feeBase ? ' · from 🔥' + fmt(c.feeBase) : ' · free'}</option>`).join('');
+  const roads = view.shipments.length ? view.shipments.map(x => { const a = animalDef(x.sp); return `<div class="farm-row"><span>${a.emoji} ${x.n} ${esc(x.n === 1 ? a.name : a.plural)}</span><span class="farm-meter"><i style="width:${Math.round(x.progress * 100)}%;background:#7fd6ff"></i></span><b>${hrs(Math.max(0, x.arriveAt - Date.now()) / 3600000)}</b><span class="k">· ${esc(x.label)}</span></div>`; }).join('') : '';
+  const transport = `<div class="farm-card" style="--accent:#7fd6ff"><h3>🚚 Haulage<span class="lv">${view.shipments.length ? view.shipments.length + ' on the road' : 'nothing on the road'}</span></h3>
+    <p>Bought stock is hauled in from market. Pick who drives: cheap and risky, insured, armoured — or your own rig if you own one.</p>
+    <div class="farm-row"><select class="farm-select" data-fsel="carrier" style="max-width:100%">${carrierOpts}</select></div>
+    <div class="farm-toastline">${esc(carrier.blurb || '')}</div>${roads}</div>`;
+  const header = transport + `<div class="farm-card" style="--accent:#b8404a"><h3>🔪 The block<span class="lv">${butcher ? 'Level ' + butcher.level : 'not built'}</span></h3>
     <div class="farm-row"><span class="k">Cut</span><select class="farm-select" data-fsel="cut">${cutOpts}</select><span class="k">${esc(cutBlurb(cut))}</span></div>
     <div class="farm-row"><span class="k">Season</span><b>${view.season.icon} ${esc(view.season.label)}</b><span class="k">· meat ×${view.season.meatMul} · breeding ×${view.season.breedMul} · feed ×${view.season.feedMul}</span></div>
     ${host.getRes('livestock') > 0 ? `<div class="farm-row"><span class="k">📦 ${host.getRes('livestock')} crate${host.getRes('livestock') === 1 ? '' : 's'}</span>${FARM_ANIMALS.filter(a => !a.guard).map(a => { const c = uncrateCost(a.id); const pen = s.buildings[a.pen]; return `<button class="farm-btn tiny" data-fact="uncrate" data-id="${a.id}" ${pen && host.gems() >= c.cinder ? '' : 'disabled'} title="1 crate + 🔥${fmt(c.cinder)}">Uncrate ${a.emoji}</button>`; }).join('')}</div>` : ''}
@@ -201,7 +218,9 @@ export function renderLivestock(host, s, view, focus, ui) {
     const list = view.animals.filter(x => x.sp === a.id).sort((x, y) => y.ageH - x.ageH);
     const adults = list.filter(x => x.adult).length;
     const penView = view.pens.find(p => p.id === a.pen);
-    const room = penRow && penView ? penView.capacity - penView.herd : 0;
+    const room = penRow && penView ? penView.capacity - penView.herd - penView.inTransit : 0;
+    const fee1 = shipFee(carrier, a.id, 1), feeAll = shipFee(carrier, a.id, Math.max(1, room));
+    const penReady = !!(penView && penView.ready);
     const sl = FARM_ECON.slaughter[a.id];
     const mul = (butcher ? 1 + FARM_ECON.butcherBonusPerLevel * (butcher.level - 1) : 1);
     const per = {}; if (sl) Object.keys(sl).forEach(k => { per[k] = Math.max(1, Math.round(sl[k] * mul * (k === 'meat' ? FARM_ECON.cuts[cut].meat * view.season.meatMul : k === 'hide' ? FARM_ECON.cuts[cut].hide : FARM_ECON.cuts[cut].other))); });
@@ -222,13 +241,13 @@ export function renderLivestock(host, s, view, focus, ui) {
     return `<div class="farm-card ${focus === a.id ? 'is-focus' : ''}" style="--accent:${hex6(a.colors.accent)}" data-fid="${a.id}">
       <h3>${a.emoji} ${esc(a.plural)}<span class="lv">${list.length} owned · ${adults} grown</span></h3>
       <p>${esc(a.desc)}</p>
-      <div class="farm-row"><span class="k">Pen</span><b>${pen.emoji} ${esc(pen.name)}</b>${penRow ? `<span class="k">· ${room} free</span>` : '<span class="k" style="color:#e0a060">· not built</span>'}</div>
+      <div class="farm-row"><span class="k">Pen</span><b>${pen.emoji} ${esc(pen.name)}</b>${penRow ? (penReady ? `<span class="k">· ${room} free${penView.inTransit ? ' · 🚚 ' + penView.inTransit + ' on the road' : ''}</span>` : '<span class="k" style="color:#e0a060">· under construction</span>') : '<span class="k" style="color:#e0a060">· not built</span>'}</div>
       <div class="farm-row"><span class="k">Eats</span><b>${Math.round(e.feedPerH * view.season.feedMul * (a.ground ? 100 : 100)) / 100} feed/h${a.ground ? ' (grazes)' : ''}</b><span class="k">· grows in ${e.growH} fed hours · ${e.adultWeight} kg grown</span></div>
       ${a.guard ? `<div class="farm-row"><span class="k">Defense</span><b>🛡 ${e.defense}</b><span class="k">· halves when hurt (below ${FARM_ECON.health.guardHalfBelow} health)</span></div>` : `<div class="farm-row"><span class="k">Alive gives</span>${yieldHtml(host, FARM_ECON.yieldsPerH[a.id], true)}</div>
       <div class="farm-row"><span class="k">Slaughter gives</span>${yieldHtml(host, per)}<span class="k">· at grown weight</span></div>`}
       <div class="farm-row">
-        <button class="farm-btn" data-fact="buy" data-id="${a.id}" data-n="1" ${!penRow || room < 1 || host.gems() < e.cinder ? 'disabled' : ''}>Buy 1 · 🔥${fmt(e.cinder)}</button>
-        ${a.guard ? '' : `<button class="farm-btn" data-fact="buy" data-id="${a.id}" data-n="${Math.max(1, room)}" ${!penRow || room < 2 || host.gems() < e.cinder * room ? 'disabled' : ''}>Fill pen (${Math.max(0, room)}) · 🔥${fmt(e.cinder * Math.max(0, room))}</button>
+        <button class="farm-btn" data-fact="buy" data-id="${a.id}" data-n="1" ${!penReady || room < 1 || host.gems() < e.cinder + fee1 ? 'disabled' : ''} title="🔥${fmt(e.cinder)} + haulage 🔥${fmt(fee1)} · ${Math.round(carrier.hours * 60)} min">Order 1 · 🔥${fmt(e.cinder + fee1)}</button>
+        ${a.guard ? '' : `<button class="farm-btn" data-fact="buy" data-id="${a.id}" data-n="${Math.max(1, room)}" ${!penReady || room < 2 || host.gems() < e.cinder * room + feeAll ? 'disabled' : ''} title="one shipment, one haulage fee">Fill pen (${Math.max(0, room)}) · 🔥${fmt(e.cinder * Math.max(0, room) + feeAll)}</button>
         <button class="farm-btn danger" data-fact="slaughter" data-id="${a.id}" data-n="${adults}" ${!butcher || adults < 2 ? 'disabled' : ''}>🔪 All grown (${adults})</button>`}
       </div>
       ${list.length ? `<div style="margin-top:6px;border:1px solid #1e2532;border-radius:6px;overflow:hidden">${rows}</div>` : ''}
@@ -259,7 +278,7 @@ export function renderJournal(host, s, view) {
       <div class="farm-row"><button class="farm-btn primary" data-fact="deliver" ${canGive && t.left > 0 ? '' : 'disabled'}>🚚 Deliver</button></div>
     </div>
   </div>
-  <div class="farm-stats">${S('births', 'Births')}${S('slaughtered', 'Butchered')}${S('meat', 'Meat')}${S('raidsRepelled', 'Raids beaten')}${S('raidsLost', 'Raids lost')}${S('predatorsRepelled', 'Predators beaten')}${S('lost', 'Stock lost')}${S('died', 'Died')}${S('returned', 'UFO returns')}</div>
+  <div class="farm-stats">${S('births', 'Births')}${S('slaughtered', 'Butchered')}${S('meat', 'Meat')}${S('raidsRepelled', 'Raids beaten')}${S('raidsLost', 'Raids lost')}${S('predatorsRepelled', 'Predators beaten')}${S('lost', 'Stock lost')}${S('died', 'Died')}${S('returned', 'UFO returns')}${S('shipped', 'Hauled in')}${S('lostInTransit', 'Lost on road')}${S('built', 'Built')}</div>
   <div class="farm-journal">${entries}</div>`;
 }
 function weatherBlurb(k) {

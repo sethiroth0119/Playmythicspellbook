@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120x1';
+  window.BUILD_VERSION = 'v120x2';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -207442,6 +207442,17 @@ window.MythicFarmBridge = {
       return rows.filter(r => r && r.camp_name && r.user_id !== me).map(r => String(r.camp_name)).slice(0, 40);
     } catch (e) { return []; }
   },
+  /* 🏗 Hired Builders shorten construction; 🚚 the best convoy rig the
+     player owns is a free carrier for bought stock (CONVOY_TRUCKS + the
+     Garage decide ownership; _convoyOwnsTruck unions cash and legacy Aza). */
+  builders: () => { try { return (_campWorkforce().Builder | 0); } catch (e) { return 0; } },
+  bestRig: () => {
+    try {
+      let best = null;
+      for (const tr of CONVOY_TRUCKS) if (_convoyOwnsTruck(tr.id) && (!best || tr.perDay > best.perDay)) best = tr;
+      return best ? { id: best.id, name: best.name, emoji: best.emoji, perDay: best.perDay } : null;
+    } catch (e) { return null; }
+  },
   collectCdMs: (typeof OP_COLLECT_CD_MS !== 'undefined') ? OP_COLLECT_CD_MS : 6 * 3600000,
   accrualCapH: (typeof OP_ACCRUAL_CAP_H !== 'undefined') ? OP_ACCRUAL_CAP_H : 36,
 };
@@ -223244,7 +223255,7 @@ render();
      ⚠ If this 404s nothing else changes — the Camp button shows a fallback.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/farm/index.js?v=v120x1farm2"></script>
+<script type="module" src="src/farm/index.js?v=v120x2farm3"></script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the

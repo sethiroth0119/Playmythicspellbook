@@ -180,3 +180,9 @@ for a species-price discount. Terroir `slots` re-derived to 24 (COMMON 11 → 12
 `?v=v120x1chain4` in both files. The farm's living layer (health / weight / age / names, guards,
 raids and events, seasons and weather, town demand, the Athena Editor) is all inside `/src/farm`;
 `node tools/farm_harness.mjs` covers it.
+
+### Round 3 (v120x2): construction time and haulage
+Buildings take real hours per level (`buildH` on each entry); hired Builders shorten it, Cinder
+rushes it per remaining minute. Bought stock is hauled in by a carrier (three companies, or the
+player's best convoy rig via `MythicFarmBridge.bestRig()`), with a fee, an ETA, a seeded loss roll
+and insurance. No new ledger ids. `node tools/farm_harness.mjs` covers both.

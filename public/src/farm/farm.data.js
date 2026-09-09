@@ -183,6 +183,37 @@ export const FARM_ECON = {
      because the crate is species-less (a hen crate cannot become a free cow). */
   crate: { uncrateDiscount: 0.5, minAgeMul: 1 },
 
+  /* 🏗 Construction. Buildings take REAL hours to raise (per level, on each
+     building as `buildH`). Hired Builders (Reconstruction workforce) shave a
+     share off; Cinder can rush what is left, priced per remaining minute so
+     rushing the last five minutes is cheap and rushing a barn is not. */
+  construction: { perBuilder: 0.05, builderCap: 0.4, rushCinderPerMin: 40, rushMin: 500 },
+
+  /* 🚚 Transport. Bought stock does not appear in the pen — it is on the road.
+     Three haulage companies and, for players who own a convoy rig, their own
+     truck. `hours` is the trip, `risk` the chance the shipment is hit on the
+     way (one animal lost), `insured` the share of the animals' price refunded
+     when that happens. Fee = base + perKg × shipping weight (young stock ships
+     at `shipKgShare` of adult weight). Nothing here pays out Cinder except an
+     insurance refund of Cinder the player just spent. */
+  transport: {
+    shipKgShare: 0.3,
+    carriers: {
+      hollow:   { name: 'Hollow Road Haulage',    emoji: '🛻', feeBase: 400,  feePerKg: 2, hours: 3,    risk: 0.25, insured: 0,   blurb: 'Cheap, slow, and the road is not theirs. One in four loads gets hit.' },
+      voss:     { name: 'Voss Livestock Express', emoji: '🚚', feeBase: 1200, feePerKg: 4, hours: 1.5,  risk: 0.08, insured: 0.5, blurb: 'Reliable crews, half your money back if a load is lost.' },
+      ironclad: { name: 'Ironclad Convoys',       emoji: '🚛', feeBase: 3000, feePerKg: 8, hours: 0.75, risk: 0,    insured: 1,   blurb: 'Armoured. Nothing on the road touches it. You pay for that.' },
+    },
+    /* The player's own convoy rig (index.html CONVOY_TRUCKS, via the bridge).
+       Free haulage; the better the rig, the faster and safer the trip. */
+    ownRig: {
+      hauler:   { hours: 2.5, risk: 0.15 },
+      ironback: { hours: 1.5, risk: 0.08 },
+      ashrig:   { hours: 1.0, risk: 0.04 },
+      warden:   { hours: 0.6, risk: 0.02 },
+    },
+    defaultCarrier: 'voss',
+  },
+
   /* 🏭 Station recipes — instant crafts. */
   recipes: {
     tannery:  { inputs: { hide: 3, water: 2 },  output: { leather: 2 } },
@@ -231,7 +262,7 @@ export const FARM_BUILDINGS = [
   {
     id: 'feedmill', name: 'Feed Mill', emoji: '🌾', accent: '#d9c46a', station: true, role: 'feed',
     desc: 'Grinds rations and water into Animal Feed. Nothing on the farm eats without it.',
-    maxLevel: 3, plot: { x: 1, y: 1, w: 3, h: 2 },
+    maxLevel: 3, buildH: [0.5, 2, 6], plot: { x: 1, y: 1, w: 3, h: 2 },
     cost: [
       { cinder: 22000, wood: 30, stone: 20, water: 10 },
       { cinder: 60000, wood: 70, stone: 45, metal: 20 },
@@ -241,7 +272,7 @@ export const FARM_BUILDINGS = [
   {
     id: 'coop', name: 'Chicken Coop', emoji: '🐔', accent: '#e8c07a', houses: ['chicken'],
     desc: 'Roosts and nesting boxes. Six birds a level. Higher levels mean a stouter fence.',
-    maxLevel: 3, plot: { x: 5, y: 1, w: 2, h: 2 }, yard: { x: 5, y: 3, w: 3, h: 3 },
+    maxLevel: 3, buildH: [0.75, 2.5, 6], plot: { x: 5, y: 1, w: 2, h: 2 }, yard: { x: 5, y: 3, w: 3, h: 3 },
     capacity: lv => 6 * lv,
     cost: [
       { cinder: 30000, wood: 40, cloth: 10 },
@@ -252,7 +283,7 @@ export const FARM_BUILDINGS = [
   {
     id: 'barn', name: 'Cattle Barn', emoji: '🐄', accent: '#c25a3a', houses: ['cow'],
     desc: 'Stalls and a milking bay. Three head a level — cattle need room.',
-    maxLevel: 3, plot: { x: 9, y: 1, w: 4, h: 3 }, yard: { x: 9, y: 4, w: 4, h: 4 },
+    maxLevel: 3, buildH: [4, 10, 24], plot: { x: 9, y: 1, w: 4, h: 3 }, yard: { x: 9, y: 4, w: 4, h: 4 },
     capacity: lv => 3 * lv,
     cost: [
       { cinder: 90000, wood: 120, stone: 60, metal: 30 },
@@ -263,7 +294,7 @@ export const FARM_BUILDINGS = [
   {
     id: 'sty', name: 'Pig Sty', emoji: '🐖', accent: '#e090a8', houses: ['pig'],
     desc: 'Mud, a roof, a trough. Four pigs a level and they will fill it.',
-    maxLevel: 3, plot: { x: 1, y: 5, w: 3, h: 2 }, yard: { x: 1, y: 7, w: 3, h: 3 },
+    maxLevel: 3, buildH: [1.5, 4, 10], plot: { x: 1, y: 5, w: 3, h: 2 }, yard: { x: 1, y: 7, w: 3, h: 3 },
     capacity: lv => 4 * lv,
     cost: [
       { cinder: 45000, wood: 60, stone: 30, water: 20 },
@@ -274,7 +305,7 @@ export const FARM_BUILDINGS = [
   {
     id: 'pasture', name: 'Fenced Pasture', emoji: '🐑', accent: '#8fc46a', houses: ['sheep', 'goat'],
     desc: 'Grass and a fence. Sheep and goats graze here; how well depends on the ground your camp stands on.',
-    maxLevel: 3, plot: { x: 5, y: 7, w: 3, h: 2 }, yard: { x: 5, y: 9, w: 4, h: 4 },
+    maxLevel: 3, buildH: [1, 3, 8], plot: { x: 5, y: 7, w: 3, h: 2 }, yard: { x: 5, y: 9, w: 4, h: 4 },
     capacity: lv => 5 * lv,
     cost: [
       { cinder: 40000, wood: 80, stone: 10 },
@@ -285,7 +316,7 @@ export const FARM_BUILDINGS = [
   {
     id: 'guardpost', name: 'Guard Post', emoji: '🐕', accent: '#a8b0c0', houses: ['terrier', 'collie', 'mastiff', 'donkey'],
     desc: 'A doghouse and a lantern. Guards kennel here and patrol every pen. Two a level.',
-    maxLevel: 3, plot: { x: 12, y: 8, w: 2, h: 1 }, yard: { x: 12, y: 9, w: 2, h: 2 },
+    maxLevel: 3, buildH: [0.75, 2, 5], plot: { x: 12, y: 8, w: 2, h: 1 }, yard: { x: 12, y: 9, w: 2, h: 2 },
     capacity: lv => 2 * lv,
     cost: [
       { cinder: 28000, wood: 35, stone: 15, cloth: 5 },
@@ -296,7 +327,7 @@ export const FARM_BUILDINGS = [
   {
     id: 'butcher', name: "Butcher's Block", emoji: '🔪', accent: '#b8404a', station: true, role: 'slaughter',
     desc: 'Where stock becomes meat, hide and feathers. Higher levels waste less and unlock the trophy cut.',
-    maxLevel: 3, plot: { x: 10, y: 9, w: 2, h: 2 },
+    maxLevel: 3, buildH: [1, 3, 8], plot: { x: 10, y: 9, w: 2, h: 2 },
     cost: [
       { cinder: 35000, wood: 30, metal: 25, water: 15 },
       { cinder: 90000, wood: 60, metal: 60, water: 30 },
@@ -306,7 +337,7 @@ export const FARM_BUILDINGS = [
   {
     id: 'tannery', name: 'Tannery', emoji: '🧥', accent: '#a0704a', station: true, role: 'craft', recipes: ['tannery'],
     desc: 'Cures raw hide into leather. Downwind of everything, for a reason.',
-    maxLevel: 3, plot: { x: 12, y: 11, w: 2, h: 2 },
+    maxLevel: 3, buildH: [2, 5, 12], plot: { x: 12, y: 11, w: 2, h: 2 },
     cost: [
       { cinder: 48000, wood: 50, stone: 40, water: 30 },
       { cinder: 120000, wood: 100, stone: 90, water: 60, metal: 20 },
@@ -316,7 +347,7 @@ export const FARM_BUILDINGS = [
   {
     id: 'spinner', name: 'Spinning Shed', emoji: '🧵', accent: '#e0b8c8', station: true, role: 'craft', recipes: ['spinner'],
     desc: 'Cards and spins wool into cloth — the same cloth the city builder already prices.',
-    maxLevel: 3, plot: { x: 1, y: 11, w: 3, h: 2 },
+    maxLevel: 3, buildH: [1.5, 4, 10], plot: { x: 1, y: 11, w: 3, h: 2 },
     cost: [
       { cinder: 42000, wood: 60, cloth: 15, metal: 10 },
       { cinder: 105000, wood: 120, cloth: 35, metal: 25 },
@@ -327,7 +358,7 @@ export const FARM_BUILDINGS = [
     id: 'kitchen', name: 'Farm Kitchen', emoji: '🍳', accent: '#ffcf6b', station: true, role: 'craft',
     recipes: ['kitchenMeat', 'kitchenEggs', 'kitchenMilk'],
     desc: 'Smokes meat, boils eggs, sets milk: everything the farm makes can become rations.',
-    maxLevel: 3, plot: { x: 5, y: 13, w: 3, h: 1 },
+    maxLevel: 3, buildH: [1.5, 4, 10], plot: { x: 5, y: 13, w: 3, h: 1 },
     cost: [
       { cinder: 38000, wood: 40, stone: 30, metal: 15 },
       { cinder: 95000, wood: 80, stone: 70, metal: 35 },

@@ -55,6 +55,8 @@ function makeHost() {
     back: () => { try { B.back(); } catch (e) {} },
     // 👷 Reconstruction workforce, 🏴 rival camps, 🗺 terroir — all absent-tolerant.
     farmers: () => { try { return B.farmers ? (B.farmers() | 0) : 0; } catch (e) { return 0; } },
+    builders: () => { try { return B.builders ? (B.builders() | 0) : 0; } catch (e) { return 0; } },
+    bestRig: () => { try { return B.bestRig ? (B.bestRig() || null) : null; } catch (e) { return null; } },
     rivals: () => { try { return B.rivals ? (B.rivals() || []) : []; } catch (e) { return []; } },
     terroirTier: (resId) => {
       try {
@@ -98,7 +100,7 @@ function mount(rootEl) {
   if (missing.length) { try { console.warn('[farm] ledger is missing ids the farm pays out: ' + missing.join(', ')); } catch (e) {} }
 
   rootEl.innerHTML = renderShell();
-  const m = _mounted = { root: rootEl, scene: null, tab: 'homestead', focus: null, tick: 0, busy: false, ui: { cut: 'balanced', renaming: null }, bannerShown: false };
+  const m = _mounted = { root: rootEl, scene: null, tab: 'homestead', focus: null, tick: 0, busy: false, ui: { cut: 'balanced', carrier: FARM_ECON.transport.defaultCarrier, renaming: null }, bannerShown: false };
   const stage = rootEl.querySelector('[data-farm="stage"]');
 
   const paint = () => {
@@ -113,7 +115,7 @@ function mount(rootEl) {
         panel.innerHTML = m.tab === 'livestock' ? renderLivestock(h, s, view, m.focus, m.ui)
           : m.tab === 'journal' ? renderJournal(h, s, view)
           : m.tab === 'athena' ? renderAthena(h, s, view)
-          : renderHomestead(h, s, view, m.focus);
+          : renderHomestead(h, s, view, m.focus, m.ui);
         if (m.ui.renaming) {
           const row = panel.querySelector(`.farm-beast[data-aid="${m.ui.renaming}"] .nm`);
           const a = S.animalById(s, m.ui.renaming);
@@ -172,6 +174,7 @@ function mount(rootEl) {
     const t = e.target;
     if (!t || _mounted !== m) return;
     if (t.getAttribute('data-fsel') === 'cut') { m.ui.cut = t.value; paint(); return; }
+    if (t.getAttribute('data-fsel') === 'carrier') { m.ui.carrier = t.value; paint(); return; }
     const roof = t.getAttribute('data-froof');
     if (roof) { const s = S.ensureState(h); const r = S.setLook(h, s, { roofs: { [roof]: t.value } }); if (!r.ok) h.toast('Could not save the roof colour.', 2500); paint(); }
   }
@@ -207,16 +210,17 @@ function mount(rootEl) {
         case 'build': {
           const def = buildingDef(id); if (!def) break;
           r = S.build(h, s, id);
-          if (r.ok) { h.toast(`${def.emoji} ${def.name} raised.`, 3000); m.focus = id; if (m.scene && m.scene.select) m.scene.select({ kind: 'building', id }); }
+          if (r.ok) { h.toast(`🏗 Broke ground on the ${def.name} — ready in ${Math.max(1, Math.round((r.readyAt - Date.now()) / 60000))} min. Rush it with Cinder or hire Builders.`, 4000); m.focus = id; if (m.scene && m.scene.select) m.scene.select({ kind: 'building', id }); }
           else h.toast(`Cannot build: ${why(h, r)}`, 3600);
           break;
         }
-        case 'upgrade': { const def = buildingDef(id); if (!def) break; r = S.upgrade(h, s, id); h.toast(r.ok ? `⬆ ${def.name} is now level ${r.level}.` : `Cannot upgrade: ${why(h, r)}`, 3200); break; }
+        case 'upgrade': { const def = buildingDef(id); if (!def) break; r = S.upgrade(h, s, id); h.toast(r.ok ? (r.pendingLevel ? `🏗 Crews are raising ${def.name} to level ${r.pendingLevel}. It keeps working meanwhile.` : `⬆ ${def.name} is now level ${r.level}.`) : `Cannot upgrade: ${why(h, r)}`, 3400); break; }
+        case 'rush': { const def = buildingDef(id); if (!def) break; r = S.rush(h, s, id); h.toast(r.ok ? `⚡ ${def.name} finished for 🔥${(r.cost | 0).toLocaleString()}.` : `Rush: ${why(h, r)}`, 3200); break; }
         case 'repair': { const def = buildingDef(id); if (!def) break; r = S.repair(h, s, id); h.toast(r.ok ? `🔨 ${def.name} repaired.` : `Repair: ${why(h, r)}`, 3200); break; }
         case 'buy': {
           const a = animalDef(id); if (!a) break;
-          r = S.buyAnimal(h, s, id, n);
-          h.toast(r.ok ? `${a.emoji} ${r.bought === 1 ? r.names[0] + ' the ' + a.name.toLowerCase() + ' joins the farm.' : 'Bought ' + r.bought + ' ' + a.plural.toLowerCase() + '.'} Keep the trough full — stock only grows while fed.` : `Cannot buy: ${why(h, r)}`, 4000);
+          r = S.buyAnimal(h, s, id, n, m.ui.carrier);
+          h.toast(r.ok ? `🚚 ${r.shipped} ${r.shipped === 1 ? a.name.toLowerCase() : a.plural.toLowerCase()} ordered. ${r.carrier} is on the road — ETA ${Math.max(1, Math.round((r.arriveAt - Date.now()) / 60000))} min${r.fee ? ', haulage 🔥' + r.fee.toLocaleString() : ''}.` : `Cannot order: ${why(h, r)}`, 4200);
           break;
         }
         case 'feed': { r = S.fillTrough(h, s, id, 1e9); h.toast(r.ok ? `🌾 Added ${r.added} Animal Feed to the trough.` : `Trough: ${why(h, r)}`, 3000); break; }
@@ -294,7 +298,10 @@ const api = {
   build: (id) => withHost((h, s) => S.build(h, s, id)),
   upgrade: (id) => withHost((h, s) => S.upgrade(h, s, id)),
   repair: (id) => withHost((h, s) => S.repair(h, s, id)),
-  buyAnimal: (sp, n) => withHost((h, s) => S.buyAnimal(h, s, sp, n)),
+  buyAnimal: (sp, n, carrier) => withHost((h, s) => S.buyAnimal(h, s, sp, n, carrier)),
+  rush: (id) => withHost((h, s) => S.rush(h, s, id)),
+  carriers: () => { const h = host(); return h ? S.carriersFor(h) : []; },
+  debugShift: (ms) => withHost((h, s) => S.debugShift(h, s, ms)),
   fillTrough: (id, n) => withHost((h, s) => S.fillTrough(h, s, id, n)),
   collect: (id) => withHost((h, s) => S.collect(h, s, id)),
   slaughter: (sel, cut) => withHost((h, s) => S.slaughter(h, s, typeof sel === 'string' ? { sp: sel, n: 1 } : sel, cut)),

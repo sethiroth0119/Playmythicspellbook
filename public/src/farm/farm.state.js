@@ -56,7 +56,9 @@ export function ensureState(host) {
   if (typeof s.eventAt !== 'number') s.eventAt = Date.now();
   if (!Array.isArray(s.journal)) s.journal = [];
   if (!s.stats || typeof s.stats !== 'object') s.stats = {};
-  ['births', 'slaughtered', 'meat', 'raidsRepelled', 'raidsLost', 'predatorsRepelled', 'lost', 'died', 'abducted', 'returned', 'delivered', 'crated'].forEach(k => { if (typeof s.stats[k] !== 'number') s.stats[k] = 0; });
+  if (!Array.isArray(s.shipments)) s.shipments = [];
+  s.shipments = s.shipments.filter(x => x && animalDef(x.sp) && (x.n | 0) > 0).map(x => ({ id: x.id | 0, sp: x.sp, n: x.n | 0, carrier: String(x.carrier || ''), label: String(x.label || ''), departAt: Number(x.departAt) || 0, arriveAt: Number(x.arriveAt) || 0, fee: x.fee | 0, price: x.price | 0, risk: Number(x.risk) || 0, insured: Number(x.insured) || 0 }));
+  ['births', 'slaughtered', 'meat', 'raidsRepelled', 'raidsLost', 'predatorsRepelled', 'lost', 'died', 'abducted', 'returned', 'delivered', 'crated', 'shipped', 'lostInTransit', 'built'].forEach(k => { if (typeof s.stats[k] !== 'number') s.stats[k] = 0; });
   if (!s.demand || typeof s.demand !== 'object') s.demand = { day: 0, used: 0 };
   s.look = normalizeLook(s.look);
   Object.keys(s.buildings).forEach(id => {
@@ -67,6 +69,9 @@ export function ensureState(host) {
     b.simAt = Number(b.simAt) || Date.now();
     b.lastCollect = Number(b.lastCollect) || 0;
     b.damaged = !!b.damaged;
+    b.readyAt = Number(b.readyAt) || 0;          // 0 = finished (v2 saves predate construction)
+    b.constructing = !!b.constructing && b.readyAt > 0;
+    b.pendingLevel = (b.pendingLevel | 0) > b.level ? (b.pendingLevel | 0) : 0;
     if (!b.accrual || typeof b.accrual !== 'object') b.accrual = {};
   });
   s.animals = s.animals.filter(a => a && animalDef(a.sp)).map(a => {
@@ -148,6 +153,47 @@ export function penCapacity(s, penId, host) {
   let cap = def.capacity(b.level);
   if (host && penId === 'pasture' && terroirTier(host) === 'BARREN') cap = Math.max(1, cap - FARM_ECON.terroirBarrenCapLoss);
   return cap;
+}
+/* 🏗 A building under construction exists on the plot but cannot be used. */
+export function isReady(s, id, now) { const b = building(s, id); return !!b && !(b.constructing && b.readyAt > (now || Date.now())); }
+export function buildProgress(s, id, now) {
+  const b = building(s, id); now = now || Date.now();
+  if (!b || !b.readyAt || b.readyAt <= now) return null;
+  const total = b.readyAt - (b.startedAt || b.builtAt || now), left = b.readyAt - now;
+  return { left, total, pct: total > 0 ? Math.max(0, Math.min(100, Math.round((1 - left / total) * 100))) : 0, upgrading: !b.constructing, toLevel: b.pendingLevel || b.level };
+}
+export function buildersBonus(host) {
+  let n = 0; try { n = host.builders ? (host.builders() | 0) : 0; } catch (e) {}
+  return Math.min(FARM_ECON.construction.builderCap, n * FARM_ECON.construction.perBuilder);
+}
+export function buildTimeMs(host, def, level) {
+  const hs = Array.isArray(def.buildH) ? def.buildH : [1];
+  const h = hs[Math.max(0, Math.min(hs.length - 1, (level | 0) - 1))];
+  return Math.round(h * (1 - buildersBonus(host)) * H);
+}
+export function rushCost(s, id, now) {
+  const p = buildProgress(s, id, now); if (!p) return 0;
+  return Math.max(FARM_ECON.construction.rushMin, Math.ceil(p.left / 60000) * FARM_ECON.construction.rushCinderPerMin);
+}
+/* 🚚 Transport. */
+export function inTransit(s, penId) {
+  const def = buildingDef(penId); if (!def || !def.houses) return 0;
+  return s.shipments.filter(x => def.houses.indexOf(x.sp) >= 0).reduce((a, x) => a + x.n, 0);
+}
+export function carriersFor(host) {
+  const T = FARM_ECON.transport;
+  const list = Object.keys(T.carriers).map(k => Object.assign({ id: k, own: false }, T.carriers[k]));
+  try {
+    const rig = host.bestRig && host.bestRig();
+    if (rig && rig.id && T.ownRig[rig.id]) list.unshift(Object.assign({ id: 'own:' + rig.id, own: true, name: rig.name + ' (your rig)', emoji: rig.emoji || '🚚', feeBase: 0, feePerKg: 0, insured: 0, blurb: 'Your own truck. No fee; the trip depends on the rig.' }, T.ownRig[rig.id]));
+  } catch (e) {}
+  return list;
+}
+export function carrierById(host, id) { const L = carriersFor(host); return L.find(c => c.id === id) || L.find(c => c.id === FARM_ECON.transport.defaultCarrier) || L[0]; }
+export function shipFee(carrier, sp, n) {
+  const e = FARM_ECON.animals[sp]; if (!e || !carrier) return 0;
+  const kg = e.adultWeight * FARM_ECON.transport.shipKgShare * Math.max(1, n | 0);
+  return Math.round(carrier.feeBase + carrier.feePerKg * kg);
 }
 export function troughCap(s, penId) {
   const b = building(s, penId);
@@ -251,9 +297,42 @@ export function simulate(host, s, now, rnd) {
   const capH = host.accrualCapH;
   const HL = FARM_ECON.health;
 
+  // 🏗 Finish any construction / upgrade whose clock has run out.
+  Object.keys(s.buildings).forEach(id => {
+    const b = s.buildings[id];
+    if (b.readyAt && b.readyAt <= now) {
+      const def = buildingDef(id);
+      if (b.constructing) { b.constructing = false; journal(s, 'build', '🏠', `The ${def.name} is finished.`, b.readyAt); s.stats.built++; changed = true; }
+      if (b.pendingLevel > b.level) { b.level = b.pendingLevel; journal(s, 'build', '⬆', `The ${def.name} is now level ${b.level}.`, b.readyAt); changed = true; }
+      b.pendingLevel = 0; b.readyAt = 0;
+    }
+  });
+  // 🚚 Arrivals. Rolled with the shipment's own seed so two devices agree.
+  const arrived = s.shipments.filter(x => x.arriveAt <= now);
+  if (arrived.length) {
+    s.shipments = s.shipments.filter(x => x.arriveAt > now);
+    arrived.forEach(x => {
+      const ad = animalDef(x.sp); const R = rngFor('ship:' + s.seed + ':' + x.id);
+      let n = x.n, lostN = 0;
+      if (x.risk > 0 && R() < x.risk) { lostN = Math.max(1, Math.round(n * 0.34)); n -= lostN; }
+      const names = [];
+      for (let i = 0; i < n; i++) { const a = newAnimal(s, x.sp, x.arriveAt); s.animals.push(a); names.push(a.name); }
+      if (lostN) {
+        s.stats.lostInTransit += lostN; s.stats.lost += lostN;
+        const refund = Math.round((x.price / x.n) * lostN * (x.insured || 0));
+        if (refund > 0) host.addGems(refund);
+        journal(s, 'raid', '🛻', `${x.label} was hit on the road — ${lostN} ${lostN === 1 ? ad.name.toLowerCase() : ad.plural.toLowerCase()} lost.${refund ? ' Insurance paid back ' + refund.toLocaleString() + ' Cinder.' : ' No insurance.'}${n ? ' ' + n + ' arrived.' : ''}`, x.arriveAt);
+      } else {
+        journal(s, 'ship', '🚚', `${x.label} delivered ${n} ${n === 1 ? ad.name.toLowerCase() : ad.plural.toLowerCase()}${names.length ? ' — ' + names.slice(0, 3).join(', ') + (names.length > 3 ? '…' : '') : ''}.`, x.arriveAt);
+      }
+    });
+    changed = true;
+  }
+
   FARM_BUILDINGS.forEach(def => {
     if (!def.houses) return;
     const b = building(s, def.id); if (!b) return;
+    if (b.constructing && b.readyAt > now) { b.simAt = now; return; }
     const hours = Math.max(0, (now - b.simAt) / H);
     /* ⏮ Never move the clock backwards. A device with a skewed clock (or a
        harness mixing fake time with Date.now()) must not rewind simAt and
@@ -490,15 +569,25 @@ export function build(host, s, id) {
   if (!def) return { ok: false, why: 'unknown building' };
   if (has(s, id)) return { ok: false, why: 'already built' };
   return paid(host, s, buildingCostAt(def, 1), () => {
-    s.buildings[id] = { level: 1, builtAt: Date.now(), feed: 0, simAt: Date.now(), lastCollect: 0, accrual: {}, damaged: false };
-    return { built: id };
+    const now = Date.now(), ms = buildTimeMs(host, def, 1);
+    s.buildings[id] = { level: 1, builtAt: now, startedAt: now, readyAt: now + ms, constructing: ms > 0, pendingLevel: 0, feed: 0, simAt: now, lastCollect: 0, accrual: {}, damaged: false };
+    journal(s, 'build', '🏗', `Broke ground on the ${def.name} — ready in ${Math.round(ms / 60000)} min.`, now);
+    return { built: id, readyAt: now + ms };
   });
 }
 export function upgrade(host, s, id) {
   const def = buildingDef(id), b = building(s, id);
   if (!def || !b) return { ok: false, why: 'not built' };
   if (b.level >= def.maxLevel) return { ok: false, why: 'max level' };
-  return paid(host, s, buildingCostAt(def, b.level + 1), () => { simulate(host, s); b.level += 1; return { level: b.level }; });
+  if (b.readyAt > Date.now()) return { ok: false, why: 'crews are already working on it' };
+  return paid(host, s, buildingCostAt(def, b.level + 1), () => {
+    simulate(host, s);
+    const now = Date.now(), ms = buildTimeMs(host, def, b.level + 1);
+    if (ms <= 0) { b.level += 1; return { level: b.level, pendingLevel: 0, readyAt: now }; }
+    b.pendingLevel = b.level + 1; b.startedAt = now; b.readyAt = now + ms;
+    journal(s, 'build', '🏗', `Upgrading the ${def.name} to level ${b.pendingLevel} — ${Math.round(ms / 60000)} min. It keeps working meanwhile.`, now);
+    return { level: b.level, pendingLevel: b.pendingLevel, readyAt: b.readyAt };
+  });
 }
 export function repair(host, s, id) {
   const def = buildingDef(id), b = building(s, id);
@@ -506,20 +595,50 @@ export function repair(host, s, id) {
   if (!b.damaged) return { ok: false, why: 'nothing to repair' };
   return paid(host, s, FARM_ECON.events.storm.repair, () => { simulate(host, s); b.damaged = false; journal(s, 'repair', '🔨', `The ${def.name} roof is back on.`); return { repaired: id }; });
 }
-export function buyAnimal(host, s, sp, n) {
+export function buyAnimal(host, s, sp, n, carrier) {
   n = Math.max(1, n | 0);
   const ad = animalDef(sp), e = FARM_ECON.animals[sp];
   if (!ad || !e) return { ok: false, why: 'unknown animal' };
   const pen = penFor(sp);
   if (!pen || !has(s, pen.id)) return { ok: false, why: 'needs ' + (pen ? pen.name : 'a pen') };
+  if (!isReady(s, pen.id)) return { ok: false, why: pen.name + ' is still under construction' };
   simulate(host, s);
-  const room = penCapacity(s, pen.id, host) - animalsInPen(s, pen.id).length;
-  if (room < n) return { ok: false, why: room <= 0 ? pen.name + ' is full' : 'only room for ' + room };
-  return paid(host, s, { cinder: e.cinder * n }, () => {
-    const names = [];
-    for (let i = 0; i < n; i++) { const a = newAnimal(s, sp, Date.now()); s.animals.push(a); names.push(a.name); }
-    return { bought: n, names };
+  const room = penCapacity(s, pen.id, host) - animalsInPen(s, pen.id).length - inTransit(s, pen.id);
+  if (room < n) return { ok: false, why: room <= 0 ? pen.name + ' is full (counting stock on the road)' : 'only room for ' + room };
+  /* 🚚 Stock is bought at market and hauled in. It arrives — or not — when
+     the carrier does; the pen slot is reserved from now. */
+  const c = carrierById(host, carrier);
+  const fee = shipFee(c, sp, n), price = e.cinder * n;
+  return paid(host, s, { cinder: price + fee }, () => {
+    const now = Date.now();
+    if (!(c.hours > 0)) {
+      // A zero-hour carrier (a harness, or a future "at the gate" purchase) hands the stock over now.
+      const names = [];
+      for (let i = 0; i < n; i++) { const a = newAnimal(s, sp, now); s.animals.push(a); names.push(a.name); }
+      s.stats.shipped += n;
+      return { shipped: n, arriveAt: now, carrier: c.name, fee, names };
+    }
+    const sh = { id: s.seq++, sp, n, carrier: c.id, label: c.name, departAt: now, arriveAt: now + Math.round(c.hours * H), fee, price, risk: c.risk || 0, insured: c.insured || 0 };
+    s.shipments.push(sh); s.stats.shipped += n;
+    journal(s, 'ship', c.emoji || '🚚', `${n} ${n === 1 ? ad.name.toLowerCase() : ad.plural.toLowerCase()} ordered — ${c.name} is hauling ${n === 1 ? 'it' : 'them'} in, ETA ${Math.round(c.hours * 60)} min${fee ? ', fee ' + fee.toLocaleString() + ' Cinder' : ''}.`, now);
+    return { shipped: n, arriveAt: sh.arriveAt, carrier: c.name, fee };
   });
+}
+export function rush(host, s, id) {
+  const def = buildingDef(id); if (!def || !building(s, id)) return { ok: false, why: 'not built' };
+  const cost = rushCost(s, id);
+  if (!cost) return { ok: false, why: 'nothing to rush' };
+  return paid(host, s, { cinder: cost }, () => { const b = building(s, id); b.readyAt = Date.now() - 1; simulate(host, s); journal(s, 'build', '⚡', `Rushed the ${def.name} for ${cost.toLocaleString()} Cinder.`); return { rushed: id, cost }; });
+}
+/* 🧪 Shift every clock on the farm by `ms` into the past. Used by the
+   sandbox's "skip 12 hours"; only reachable through the API. */
+export function debugShift(host, s, ms) {
+  ms = ms | 0;
+  Object.values(s.buildings).forEach(b => { b.simAt -= ms; if (b.readyAt) b.readyAt -= ms; if (b.startedAt) b.startedAt -= ms; b.lastCollect = Math.max(0, b.lastCollect - ms); });
+  s.shipments.forEach(x => { x.departAt -= ms; x.arriveAt -= ms; });
+  s.eventAt -= ms;
+  try { record(host, s); } catch (e) {}
+  return { ok: true };
 }
 export function rename(host, s, animalId, name) {
   const a = animalById(s, animalId); if (!a) return { ok: false, why: 'no such animal' };
@@ -538,7 +657,8 @@ export function treat(host, s, animalId) {
 export function fillTrough(host, s, penId, units) {
   const def = buildingDef(penId), b = building(s, penId);
   if (!def || !def.houses || !b) return { ok: false, why: 'not a pen' };
-  if (!has(s, 'feedmill')) return { ok: false, why: 'build the Feed Mill first' };
+  if (!isReady(s, penId)) return { ok: false, why: def.name + ' is still under construction' };
+  if (!isReady(s, 'feedmill')) return { ok: false, why: has(s, 'feedmill') ? 'the Feed Mill is still under construction' : 'build the Feed Mill first' };
   simulate(host, s);
   const free = Math.floor(troughCap(s, penId) - b.feed);
   const have = host.getRes('animalFeed');
@@ -588,6 +708,7 @@ export function collect(host, s, penId) {
 export function slaughter(host, s, sel, cut) {
   const bb = building(s, 'butcher');
   if (!bb) return { ok: false, why: "build the Butcher's Block first" };
+  if (!isReady(s, 'butcher')) return { ok: false, why: "the Butcher's Block is still under construction" };
   const C = FARM_ECON.cuts[cut || 'balanced'] || FARM_ECON.cuts.balanced;
   if (bb.level < C.minLevel) return { ok: false, why: `${C.label} needs Butcher's Block level ${C.minLevel}` };
   simulate(host, s);
@@ -631,6 +752,7 @@ export function slaughter(host, s, sel, cut) {
 export function craft(host, s, stationId, recipeKey, batches) {
   const def = buildingDef(stationId), b = building(s, stationId);
   if (!def || !b) return { ok: false, why: 'not built' };
+  if (!isReady(s, stationId)) return { ok: false, why: def.name + ' is still under construction' };
   let recipe;
   if (def.role === 'feed') recipe = FARM_ECON.feedMillRecipe;
   else if (Array.isArray(def.recipes) && def.recipes.indexOf(recipeKey) >= 0) recipe = FARM_ECON.recipes[recipeKey];
@@ -681,8 +803,9 @@ export function uncrate(host, s, sp) {
   if (!ad || !e) return { ok: false, why: 'unknown animal' };
   const pen = penFor(sp);
   if (!pen || !has(s, pen.id)) return { ok: false, why: 'needs ' + (pen ? pen.name : 'a pen') };
+  if (!isReady(s, pen.id)) return { ok: false, why: pen.name + ' is still under construction' };
   simulate(host, s);
-  if (penCapacity(s, pen.id, host) - animalsInPen(s, pen.id).length < 1) return { ok: false, why: pen.name + ' is full' };
+  if (penCapacity(s, pen.id, host) - animalsInPen(s, pen.id).length - inTransit(s, pen.id) < 1) return { ok: false, why: pen.name + ' is full' };
   const cost = { livestock: 1, cinder: Math.round(e.cinder * FARM_ECON.crate.uncrateDiscount) };
   return paid(host, s, cost, () => { const a = newAnimal(s, sp, Date.now()); a.grownH = e.growH * 0.5; s.animals.push(a); return { name: a.name }; });
 }
@@ -709,7 +832,7 @@ export function summary(host, s) {
     const b = building(s, d.id);
     const herd = animalsInPen(s, d.id);
     return {
-      id: d.id, built: !!b, level: b ? b.level : 0, damaged: !!(b && b.damaged),
+      id: d.id, built: !!b, level: b ? b.level : 0, damaged: !!(b && b.damaged), ready: isReady(s, d.id, now), progress: buildProgress(s, d.id, now), inTransit: inTransit(s, d.id),
       herd: herd.length, adults: herd.filter(isAdult).length, capacity: penCapacity(s, d.id, host),
       feed: b ? Math.floor(b.feed) : 0, troughCap: troughCap(s, d.id), hoursLeft: b ? feedHoursLeft(s, d.id, host) : 0,
       pending: pendingCollect(s, d.id), readyAt: b ? collectReadyAt(host, s, d.id) : 0,
@@ -731,5 +854,9 @@ export function summary(host, s) {
     season: seasonFor(now), weather: weatherAt(s.seed, now), terroir: terroirTier(host),
     guardDefense: guardDefense(s), farmers: (() => { try { return host.farmers() | 0; } catch (e) { return 0; } })(), farmersBonus: farmersBonus(host),
     town: townOffer(s, now), recentEvents: recent,
+    construction: FARM_BUILDINGS.map(d => ({ id: d.id, progress: buildProgress(s, d.id, now), rush: rushCost(s, d.id, now) })).filter(x => x.progress),
+    builders: (() => { try { return host.builders ? (host.builders() | 0) : 0; } catch (e) { return 0; } })(), buildersBonus: buildersBonus(host),
+    shipments: s.shipments.map(x => Object.assign({}, x, { progress: Math.max(0, Math.min(1, (now - x.departAt) / Math.max(1, x.arriveAt - x.departAt))), pen: animalDef(x.sp).pen })),
+    carriers: carriersFor(host),
   };
 }

@@ -428,6 +428,31 @@ function build3D(THREE, container, opts) {
     });
   };
 
+  /* 🏗 Scaffolding: a building being raised is poles, planks and a crate. */
+  const makeScaffold = (def, label) => {
+    const g = new THREE.Group(); const w = def.plot.w, d = def.plot.h; const wood = M(0x9a7a4a), plank = M(0xc8a068);
+    const slab = box(w - 0.3, 0.12, d - 0.3, M(0x8a8078)); slab.position.y = 0.06; g.add(slab);
+    [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(([sx, sz]) => { const pole = box(0.1, 1.4, 0.1, wood); pole.position.set(sx * (w / 2 - 0.25), 0.7, sz * (d / 2 - 0.25)); g.add(pole); });
+    const beam = box(w - 0.4, 0.08, 0.08, wood); beam.position.set(0, 1.35, d / 2 - 0.25); g.add(beam); const beam2 = beam.clone(); beam2.position.z = -(d / 2 - 0.25); g.add(beam2);
+    for (let i = 0; i < 3; i++) { const pl = box(0.9, 0.06, 0.2, plank); pl.position.set((i - 1) * 0.5, 0.15 + i * 0.05, (i % 2 ? 0.3 : -0.3)); pl.rotation.y = i * 0.5; g.add(pl); }
+    const crate = box(0.4, 0.4, 0.4, plank); crate.position.set(w / 2 - 0.55, 0.32, -d / 2 + 0.55); g.add(crate);
+    const lab = labelSprite('🏗 ' + def.name, label || 'Under construction', '#d4af37'); lab.position.y = 2.0; g.add(lab);
+    g.traverse(o => { if (o.isMesh) { o.userData.pick = { kind: 'building', id: def.id }; pickables.push(o); } });
+    return g;
+  };
+  /* 🚚 A haulage truck: cab, bed, wheels, and a crate with the animal's emoji. */
+  const makeTruck = (emoji, own) => {
+    const g = new THREE.Group(); const body = M(own ? 0x8a6a3a : 0x3a4a6a), dark = M(0x1a1a20);
+    const bed = box(1.5, 0.35, 0.7, body); bed.position.set(-0.25, 0.42, 0); g.add(bed);
+    const cab = box(0.55, 0.55, 0.7, body); cab.position.set(0.75, 0.52, 0); g.add(cab);
+    const glass = box(0.08, 0.25, 0.5, new THREE.MeshLambertMaterial({ color: 0x8fb8d8, emissive: 0x203040 })); glass.position.set(1.03, 0.6, 0); g.add(glass);
+    const crate = box(0.9, 0.45, 0.55, M(0xc8a068)); crate.position.set(-0.4, 0.82, 0); g.add(crate);
+    [[0.7, 0.35], [0.7, -0.35], [-0.6, 0.35], [-0.6, -0.35]].forEach(([x, z]) => { const wh = cyl(0.16, 0.16, 0.12, dark, 10); wh.rotation.x = Math.PI / 2; wh.position.set(x, 0.16, z); g.add(wh); });
+    const sp = tinySprite(emoji, 0.45); sp.position.set(-0.4, 1.3, 0); g.add(sp);
+    return g;
+  };
+  const truckNodes = {};
+
   let view = null, selected = null, selectRing = null, lookKey = '', wxKey = '', actorsShown = false;
   const unpick = (root) => root.traverse(o => { const i = pickables.indexOf(o); if (i >= 0) pickables.splice(i, 1); });
 
@@ -450,16 +475,17 @@ function build3D(THREE, container, opts) {
       const row = v.buildings[def.id], lv = row ? row.level : 0;
       const roof = look.roofs && look.roofs[def.id];
       const dmg = !!(row && row.damaged);
-      const key = lv + '|' + (roof || '') + '|' + dmg;
+      const constructing = !!(row && row.constructing && row.readyAt > Date.now());
+      const key = lv + '|' + (roof || '') + '|' + dmg + '|' + constructing;
       const cur = buildingNodes[def.id];
       if (cur && cur.key === key) return;
       if (cur) { unpick(cur.group); buildings.remove(cur.group); if (cur.fence) yards.remove(cur.fence); const si = spinners.indexOf(cur.spin); if (si >= 0) spinners.splice(si, 1); }
       const p = tileToWorld(def.plot.x + def.plot.w / 2, def.plot.y + def.plot.h / 2);
       const before = spinners.length;
-      const g = lv ? makeBuilding(def, lv, roof, dmg) : makeGhost(def);
+      const g = !lv ? makeGhost(def) : constructing ? makeScaffold(def) : makeBuilding(def, lv, roof, dmg);
       g.position.set(p.x, 0, p.z); buildings.add(g);
       let f = null;
-      if (lv && def.yard) { f = fence(def.yard.x, def.yard.y, def.yard.x + def.yard.w, def.yard.y + def.yard.h, lv >= 3 ? 0x5a4a3a : 0x7a5a3a, lv >= 2); yards.add(f); }
+      if (lv && !constructing && def.yard) { f = fence(def.yard.x, def.yard.y, def.yard.x + def.yard.w, def.yard.y + def.yard.h, lv >= 3 ? 0x5a4a3a : 0x7a5a3a, lv >= 2); yards.add(f); }
       buildingNodes[def.id] = { group: g, key, fence: f, spin: spinners.length > before ? spinners[spinners.length - 1] : null };
     });
     const live = new Set();
@@ -486,6 +512,19 @@ function build3D(THREE, container, opts) {
       if (live.has(+id)) return;
       unpick(animalNodes[id].group); herd.remove(animalNodes[id].group); delete animalNodes[id];
     });
+    // 🚚 Shipments on the road: one truck each, driving the top path toward the pen.
+    const ships = Array.isArray(v.shipments) ? v.shipments.slice(0, 4) : [];
+    const liveShips = new Set();
+    ships.forEach(x => {
+      liveShips.add(x.id);
+      let n = truckNodes[x.id];
+      if (!n) { const ad = animalDef(x.sp); n = truckNodes[x.id] = { g: makeTruck(ad ? ad.emoji : '📦', /^own:/.test(x.carrier)), pen: x.pen }; actors.add(n.g); }
+      const penDef = FARM_BUILDINGS.find(b => b.id === x.pen) || FARM_BUILDINGS[0];
+      const gx0 = -2.5, gx1 = penDef.plot.x + penDef.plot.w / 2;
+      const p = tileToWorld(gx0 + (gx1 - gx0) * x.progress, 0.5);
+      n.g.position.set(p.x, 0, p.z); n.g.rotation.y = 0; n.target = p;
+    });
+    Object.keys(truckNodes).forEach(id => { if (!liveShips.has(+id)) { actors.remove(truckNodes[id].g); delete truckNodes[id]; } });
     if (!actorsShown && Array.isArray(v.recentEvents) && v.recentEvents.length) { actorsShown = true; spawnActors(v.recentEvents); }
   }
 
@@ -548,6 +587,7 @@ function build3D(THREE, container, opts) {
       n.group.position.y = walking ? Math.abs(Math.sin(n.w.phase)) * 0.03 : 0;
     });
     spinners.forEach(h => { h.rotation.z += dt * 1.1; });
+    Object.values(truckNodes).forEach(n => { n.g.position.y = Math.abs(Math.sin(t / 90)) * 0.02; });
     if (rain) {
       const pos = rain.geometry.attributes.position.array;
       for (let i = 0; i < rainVel.length; i++) { pos[i * 3 + 1] -= rainVel[i] * dt; if (pos[i * 3 + 1] < 0) pos[i * 3 + 1] = 12; }

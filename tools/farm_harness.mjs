@@ -13,11 +13,16 @@ const H = 3600000;
 const SE = seasonFor(Date.now());                    // tests run in whatever month it is
 const savedChance = FARM_ECON.eventChance;
 FARM_ECON.eventChance = 0;                           // events are tested on their own below
+// The general suite wants instant buildings and instant deliveries; the
+// construction + transport sections below restore real timings for themselves.
+const savedBuildH = new Map(FARM_BUILDINGS.map(b => [b.id, b.buildH]));
+const instant = (on) => { FARM_BUILDINGS.forEach(b => { b.buildH = on ? [0, 0, 0] : savedBuildH.get(b.id); }); Object.values(FARM_ECON.transport.carriers).forEach(c => { c._hours = c._hours == null ? c.hours : c._hours; c._risk = c._risk == null ? c.risk : c._risk; c.hours = on ? 0 : c._hours; c.risk = on ? 0 : c._risk; }); };
+instant(true);
 
 function fakeHost(opts) {
   opts = opts || {};
   const led = Object.assign({ food: 500, water: 500, wood: 2000, stone: 1000, cloth: 300, metal: 500, supplies: 200, medicine: 10 }, opts.ledger || {});
-  const st = { gems: opts.gems == null ? 2e6 : opts.gems, state: { seed: opts.seed || 'harness' }, cap: opts.cap || 1e9, saveFails: 0, farmers: opts.farmers | 0, tier: opts.tier || 'COMMON' };
+  const st = { gems: opts.gems == null ? 2e6 : opts.gems, state: { seed: opts.seed || 'harness' }, cap: opts.cap || 1e9, saveFails: 0, farmers: opts.farmers | 0, builders: opts.builders | 0, rig: opts.rig || null, tier: opts.tier || 'COMMON' };
   const units = () => Object.values(led).reduce((a, b) => a + b, 0);
   return {
     led, st,
@@ -32,7 +37,7 @@ function fakeHost(opts) {
     state: () => st.state,
     setState: s => { st.state = s; return true; },
     save: () => { if (st.saveFails > 0) { st.saveFails--; return false; } return true; },
-    farmers: () => st.farmers, rivals: () => ['Camp Ember', 'Sludge Hollow'], terroirTier: () => st.tier,
+    farmers: () => st.farmers, builders: () => st.builders | 0, bestRig: () => st.rig || null, rivals: () => ['Camp Ember', 'Sludge Hollow'], terroirTier: () => st.tier,
     collectCdMs: 6 * 3600000, accrualCapH: 36,
   };
 }
@@ -81,7 +86,7 @@ console.log('feed, growth, weight, age');
   const { h, s } = farm();
   const t0 = Date.now();
   let r = S.buyAnimal(h, s, 'chicken', 6);
-  ok(r.ok && s.animals.length === 6 && r.names.length === 6, 'bought 6 named chickens: ' + r.names.slice(0, 3).join(', ') + '…');
+  ok(r.ok && s.animals.length === 6 && r.shipped === 6, 'bought 6 chickens (instant delivery in this suite)');
   ok(s.animals.every(a => S.weightOf(a) > 0 && S.weightOf(a) < FARM_ECON.animals.chicken.adultWeight), 'chicks start light');
   S.simulate(h, s, t0 + 9 * H, () => 1);
   const a = s.animals[0];
@@ -235,7 +240,7 @@ console.log('stations + town demand + crates');
   sh.grownH = 20;
   r = S.crate(h, s, sh.id); ok(r.ok && h.led.livestock === 1 && !s.animals.some(a => a.sp === 'sheep'), 'crated a grown sheep → 1 livestock');
   const g0 = h.st.gems;
-  r = S.uncrate(h, s, 'goat'); ok(r.ok && h.led.livestock === 0 && h.st.gems === g0 - 2100 && s.animals.some(a => a.sp === 'goat'), 'uncrated as a goat for 1 livestock + 50% price');
+  r = S.uncrate(h, s, 'goat'); ok(r.ok && h.led.livestock === 0 && h.st.gems === g0 - 2100 && s.animals.some(a => a.sp === 'goat'), 'uncrated as a goat for 1 livestock + 50% price (no haulage: it is already at the gate)');
 }
 
 console.log('farmers + terroir');
@@ -258,6 +263,83 @@ console.log('rename + editor');
   r = S.setLook(h, s, { ground: 'snow', sky: 'night', decor: { pond: false }, roofs: { coop: '#FF0000', bogus: '#000000' } });
   ok(r.ok && s.look.ground === 'snow' && s.look.sky === 'night' && s.look.decor.pond === false && s.look.decor.trees === true && s.look.roofs.coop === '#ff0000' && !s.look.roofs.bogus, 'look patch validated and merged');
   r = S.setLook(h, s, { ground: 'lava' }); ok(r.ok && s.look.ground === 'meadow' || s.look.ground === 'snow', 'unknown ground falls back safely');
+}
+
+console.log('construction: time, gates, builders, rush, upgrade');
+{
+  instant(false);
+  const h = fakeHost(); const s = S.ensureState(h);
+  const t0 = Date.now();
+  let r = S.build(h, s, 'coop');
+  ok(r.ok && s.buildings.coop.constructing && r.readyAt >= t0 + 0.75 * H - 50 && r.readyAt <= t0 + 0.75 * H + 50, 'coop takes 45 min to raise');
+  ok(!S.isReady(s, 'coop'), 'not ready yet');
+  r = S.build(h, s, 'feedmill'); ok(r.ok, 'feed mill also started');
+  r = S.buyAnimal(h, s, 'chicken', 1); ok(!r.ok && /construction/.test(r.why), 'cannot buy stock for a pen under construction');
+  r = S.craft(h, s, 'feedmill', 'feed', 1); ok(!r.ok && /construction/.test(r.why), 'cannot grind at an unfinished mill');
+  const p = S.buildProgress(s, 'coop'); ok(p && p.pct === 0 && p.left > 0, 'progress reads 0% with time left');
+  const rc = S.rushCost(s, 'coop'); ok(rc === Math.max(500, Math.ceil(p.left / 60000) * 40), 'rush priced per remaining minute: ' + rc);
+  const g0 = h.st.gems; r = S.rush(h, s, 'coop');
+  ok(r.ok && h.st.gems === g0 - rc && S.isReady(s, 'coop') && !s.buildings.coop.constructing, 'rush finishes it for Cinder');
+  // Time finishes the mill on its own.
+  S.simulate(h, s, t0 + 1 * H, () => 1);
+  ok(S.isReady(s, 'feedmill') && s.journal.some(j => /Feed Mill is finished/.test(j.text)), 'the mill finished by itself after 30 min and was journalled');
+  // Upgrade keeps working at the old level until done.
+  r = S.upgrade(h, s, 'coop'); ok(r.ok && s.buildings.coop.level === 1 && s.buildings.coop.pendingLevel === 2, 'upgrade queued: still level 1 while crews work');
+  r = S.upgrade(h, s, 'coop'); ok(!r.ok && /already/.test(r.why), 'cannot queue a second upgrade');
+  ok(S.isReady(s, 'coop'), 'an upgrading pen stays usable');
+  S.simulate(h, s, t0 + 4 * H, () => 1);
+  ok(s.buildings.coop.level === 2 && !s.buildings.coop.pendingLevel, 'upgrade landed after 2.5h');
+  // Builders shave time.
+  const hb = fakeHost({ builders: 4 }); const sb = S.ensureState(hb);
+  const rb = S.build(hb, sb, 'barn');
+  ok(rb.ok && Math.abs((rb.readyAt - Date.now()) - 4 * H * 0.8) < 2000, '4 Builders: barn 4h → 3h12m');
+  const hc = fakeHost({ builders: 20 }); const sc = S.ensureState(hc);
+  ok(S.buildTimeMs(hc, FARM_BUILDINGS.find(b => b.id === 'barn'), 1) === Math.round(4 * H * 0.6), 'builder bonus caps at 40%');
+  instant(true);
+}
+
+console.log('transport: carriers, fees, ETA, room, losses, insurance, own rig');
+{
+  instant(false);
+  const h = fakeHost({ seed: 'haul' }); const s = S.ensureState(h);
+  FARM_BUILDINGS.forEach(b => { b.buildH = [0, 0, 0]; });   // instant buildings, real hauling
+  S.build(h, s, 'feedmill'); S.build(h, s, 'coop'); S.build(h, s, 'barn');
+  const cs = S.carriersFor(h);
+  ok(cs.length === 3 && cs.map(c => c.id).join() === 'hollow,voss,ironclad', 'three haulage companies, no rig');
+  ok(S.shipFee(S.carrierById(h, 'hollow'), 'chicken', 6) === Math.round(400 + 2 * 2.5 * 0.3 * 6) && S.shipFee(S.carrierById(h, 'ironclad'), 'cow', 1) === Math.round(3000 + 8 * 520 * 0.3), 'fee = base + perKg × shipping weight');
+  const g0 = h.st.gems; const t0 = Date.now();
+  let r = S.buyAnimal(h, s, 'cow', 2, 'voss');
+  ok(r.ok && r.shipped === 2 && s.animals.length === 0 && s.shipments.length === 1 && Math.abs(r.arriveAt - (t0 + 1.5 * H)) < 100, 'cows are on the road with Voss, ETA 90 min, none in the pen yet');
+  ok(h.st.gems === g0 - 2 * 14000 - S.shipFee(S.carrierById(h, 'voss'), 'cow', 2), 'paid price + fee');
+  ok(S.inTransit(s, 'barn') === 2, '2 in transit count against the barn');
+  r = S.buyAnimal(h, s, 'cow', 2, 'voss'); ok(!r.ok && /room|full/.test(r.why), 'a full barn (counting the road) refuses');
+  S.simulate(h, s, t0 + 1 * H, () => 1); ok(s.animals.length === 0, 'still on the road at 60 min');
+  S.simulate(h, s, t0 + 2 * H, () => 1);
+  ok(s.animals.filter(a => a.sp === 'cow').length === 2 && s.shipments.length === 0 && s.journal.some(j => /delivered 2 cows/.test(j.text)), 'delivered at 90 min and journalled');
+  // Losses: find a shipment id whose seeded roll is a hit for Hollow Road (risk .25).
+  let hit = null; for (let i = 100; i < 400; i++) { if (rngFor('ship:' + s.seed + ':' + i)() < 0.25) { hit = i; break; } }
+  s.seq = hit; const g1 = h.st.gems;
+  r = S.buyAnimal(h, s, 'chicken', 3, 'hollow'); ok(r.ok, 'ordered 3 chickens with Hollow Road (uninsured)');
+  S.simulate(h, s, t0 + 6 * H, () => 1);
+  ok(s.animals.filter(a => a.sp === 'chicken').length === 2 && s.stats.lostInTransit === 1 && s.journal.some(j => /hit on the road/.test(j.text) && /No insurance/.test(j.text)), 'the seeded hit lost 1 of 3, no refund');
+  ok(h.st.gems === g1 - 3 * 1800 - S.shipFee(S.carrierById(h, 'hollow'), 'chicken', 3), 'no Cinder came back');
+  // Same roll with Voss (insured 50%) refunds half of the lost animal's price.
+  let hit2 = null; for (let i = s.seq; i < s.seq + 600; i++) { if (rngFor('ship:' + s.seed + ':' + i)() < 0.08) { hit2 = i; break; } }
+  s.seq = hit2; const g2 = h.st.gems;
+  r = S.buyAnimal(h, s, 'chicken', 3, 'voss');
+  S.simulate(h, s, t0 + 9 * H, () => 1);
+  ok(h.st.gems === g2 - 3 * 1800 - S.shipFee(S.carrierById(h, 'voss'), 'chicken', 3) + 900 && s.journal.some(j => /Insurance paid back 900/.test(j.text)), 'Voss insurance paid back 900 Cinder for the lost hen');
+  // Ironclad never loses a load.
+  r = S.buyAnimal(h, s, 'chicken', 1, 'ironclad'); S.simulate(h, s, t0 + 12 * H, () => 1);
+  ok(s.animals.filter(a => a.sp === 'chicken').length === 5, 'Ironclad delivered');
+  // Own rig: free and fast.
+  const hr = fakeHost({ rig: { id: 'warden', name: 'Warden Longhaul', emoji: '🚛' } }); const sr = S.ensureState(hr);
+  S.build(hr, sr, 'feedmill'); S.build(hr, sr, 'coop');
+  const own = S.carriersFor(hr)[0];
+  ok(own.own && own.id === 'own:warden' && own.hours === 0.6 && S.shipFee(own, 'chicken', 6) === 0, 'own Warden rig: first option, 36 min, no fee');
+  const g3 = hr.st.gems; r = S.buyAnimal(hr, sr, 'chicken', 2, 'own:warden');
+  ok(r.ok && hr.st.gems === g3 - 3600, 'hauled by own rig for the animals\' price only');
+  instant(true);
 }
 
 FARM_ECON.eventChance = savedChance;

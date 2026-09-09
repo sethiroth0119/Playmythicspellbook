@@ -39297,6 +39297,23 @@ const RESOURCES = [
   { id: 'wood',             name: 'Wood',             icon: '🪵', color: '#c08a4a' },
   { id: 'stone',            name: 'Stone',            icon: '🪨', color: '#a8a29a' },
   { id: 'cloth',            name: 'Cloth',            icon: '🧵', color: '#e0b8c8' },
+  /* 🐟 THE CATCH (fishing expansion). Four ids promoted out of the chain
+     catalogue (src/resources/chain.js, category "fishing") WITH their producer,
+     exactly as RESOURCES_NEXT.md prescribes — Woods Fishing (live trips + fleet
+     expeditions), the Fishing Company op and the city's Fishing Wharf / Kelp
+     Beds / Deepwater Pier all make them, and the Cannery, Fish Oil Works and
+     fishing contracts all EAT them. Ids are the chain's ids, unchanged, so the
+     node-city HUD (seeded from the chain) and this ledger agree.
+       freshFish  — every Common catch. The bulk good; cans into food.
+       shellfish  — Uncommon shallows/mire catch. Supplies + contracts.
+       seafood    — "Prime Seafood": Rare/Legendary deep catch. Medicine + research.
+       seaweed    — by-catch of every cast. Fertiliser for the chain, cheap.
+     ⚠ THE COUNT IS NOW 18. terroir.js `slots` MUST sum to it (re-derived there),
+       and auditCatalog's fallback id list in production.data.js mirrors it. */
+  { id: 'freshFish',        name: 'Fresh Fish',       icon: '🐟', color: '#6fc0d8' },
+  { id: 'shellfish',        name: 'Shellfish',        icon: '🦪', color: '#d8b48a' },
+  { id: 'seafood',          name: 'Prime Seafood',    icon: '🐠', color: '#e08a5a' },
+  { id: 'seaweed',          name: 'Seaweed',          icon: '🌿', color: '#7fb37a' },
 ];
 // 🍞 Consumable resources — keyed by resource id. `effect(amount)` mutates
 // Profile state. The inventory modal renders a USE button for any resource
@@ -75371,6 +75388,15 @@ function tileBlockedByTombstone(state, x, y) {
 // hero rituals, expedition/gym salvage. This v1 is the core loop only.
 // ════════════════════════════════════════════════════════════════════════
 const SALVAGE_RES = [
+  /* 🐟 Fish (fishing expansion) — carry an explicit `value` because _cxBasePrice
+     reads SALVAGE_RES for a resource's base price, and the categories below
+     would otherwise floor every fish at 100. Tiered so the Crash Exchange's
+     _cxRarityTier bands land where the catch rarity says: fresh fish is an
+     ABUNDANT bulk good, shellfish COMMON, prime seafood UNCOMMON-going-on-rare. */
+  { id: "freshFish", name: "Fresh Fish", icon: "🐟", value: 90,  cat: "bio" },
+  { id: "shellfish", name: "Shellfish",  icon: "🦪", value: 240, cat: "bio" },
+  { id: "seafood",   name: "Prime Seafood", icon: "🐠", value: 900, cat: "bio" },
+  { id: "seaweed",   name: "Seaweed",    icon: "🌿", value: 45,  cat: "bio" },
   { id: "ammo", name: "Ammo", icon: "🔫" },
   { id: "metal", name: "Metal", icon: "⛓️" },
   { id: "water", name: "Water", icon: "💧" },
@@ -79740,7 +79766,20 @@ const OPS_ECON = {
   salvage:      { startup: 250000, ratePerWorkerHr: 650,  salaryPerWorkerHr: 150, maxWorkers: 14, yields: { metal: 1.6 } },
   gas:          { startup: 350000, ratePerWorkerHr: 850,  salaryPerWorkerHr: 200, maxWorkers: 12, yields: { fuel: 2.2 } },
   cars:         { startup: 450000, ratePerWorkerHr: 1100, salaryPerWorkerHr: 280, maxWorkers: 10, yields: { metal: 1.8 }, inputs: { metal: 1.2, fuel: 0.4 } },
-  fishing:      { startup: 300000, ratePerWorkerHr: 750,  salaryPerWorkerHr: 180, maxWorkers: 14, yields: { food: 2.4 }, inputs: { fuel: 0.6 } },
+  /* 🐟 FISHING COMPANY — the fleet's industrial arm (fishing expansion).
+     Used to yield 2.4 food; now the food is what it EATS fish for. The catch
+     lands as the three fish ledger resources so it can be canned, sold on the
+     Player Market, or delivered against a fishing contract. Total units/hr are
+     unchanged (2.4 → 1.5 + 0.6 + 0.3), so nobody's business got smaller —
+     its output just became tradeable. Seafood is deliberately absent: the
+     deep catch is what the live trip and the Deepwater Pier are FOR. */
+  fishing:      { startup: 300000, ratePerWorkerHr: 750,  salaryPerWorkerHr: 180, maxWorkers: 14, yields: { freshFish: 1.5, shellfish: 0.6, seaweed: 0.3 }, inputs: { fuel: 0.6 } },
+  /* 🥫 FISH CANNERY — the first business that CONSUMES the catch. Sized against
+     `agri` (food 2.4 from nothing): the cannery makes more food per worker but
+     only while fish and a trickle of metal for tins keep coming, so a player
+     who founds it without a fleet, a wharf or a market supplier runs at the
+     input throttle (see _opComputed) and reads the reason on the card. */
+  cannery:      { startup: 320000, ratePerWorkerHr: 820,  salaryPerWorkerHr: 190, maxWorkers: 12, yields: { food: 3.6, supplies: 0.4 }, inputs: { freshFish: 1.6, metal: 0.15 } },
   cardshop:     { startup: 200000, ratePerWorkerHr: 500,  salaryPerWorkerHr: 120, maxWorkers: 6,  yields: {} },
   // 📦 WAREHOUSE — the storage business. It earns modestly on fees, but the
   // real product is CAPACITY: `storagePerWorker` raises the player's resource
@@ -79987,6 +80026,7 @@ const OP_LABELS = {
      so a new operation without a label here is buyable but shows up in the shop
      as "genelab". */
   genelab: 'Genetics Lab',
+  cannery: 'Fish Cannery',
 };
 // 📦 Storage a staffed warehouse adds to the player's resource cap. Reads the
 // LIVE econ table via _opEcon, so an admin retune reaches this too. Counts the
@@ -82289,7 +82329,7 @@ function _jbHandleAction(a) {
             medical: 'Medical Corporation', agri: 'Agricultural Op.', research: 'Research Facility',
             smuggling: 'Smuggling Network', salvage: 'Salvage Operation', gas: 'Gas Station Chain',
             cars: 'Car Dealership', fishing: 'Fishing Company', cardshop: 'Card Shop',
-            dojo: 'Dojo', bank: 'Bank',
+            dojo: 'Dojo', bank: 'Bank', genelab: 'Genetics Lab', cannery: 'Fish Cannery',
           })[a.op] || (a.op.charAt(0).toUpperCase() + a.op.slice(1));
           const haveCR = (Profile.gems | 0);
           // 🏦 The bank already ran its own confirm (_bankFoundChoice showed the
@@ -192492,10 +192532,17 @@ const WF_EVENTS = [
 ];
 // Fish → game salvage mapping. Every expedition produces a basket of these
 // resources, scaled by danger × duration × crew skill.
+// 🐟 Fishing expansion: the three fish rows used to collapse into `food`. They
+// now land as the fish ledger resources (freshFish / shellfish / seafood, plus
+// seaweed by-catch) so an idle fleet produces something the Cannery, the Fish
+// Oil Works, the fishing contracts and the Player Market can actually use.
+// Food itself is still reachable — one Cannery cycle, or the Cold Storage
+// "gut & salt" button in Woods Fishing.
 const WF_FISH_DROPS = [
-  { id: 'common',  name: 'Common Fish',       salvage: 'food',           qty: [8, 22], weight: 32 },
-  { id: 'shell',   name: 'Shellfish',         salvage: 'food',           qty: [4, 10], weight: 18 },
-  { id: 'rare',    name: 'Rare Fish',         salvage: 'food',           qty: [2, 6],  weight: 9  },
+  { id: 'common',  name: 'Common Fish',       salvage: 'freshFish',      qty: [8, 22], weight: 32 },
+  { id: 'shell',   name: 'Shellfish',         salvage: 'shellfish',      qty: [4, 10], weight: 18 },
+  { id: 'rare',    name: 'Rare Fish',         salvage: 'seafood',        qty: [2, 6],  weight: 9  },
+  { id: 'kelp',    name: 'Kelp Tangle',       salvage: 'seaweed',        qty: [5, 14], weight: 12 },
   { id: 'mutant',  name: 'Mutated Fish',      salvage: 'dna',            qty: [1, 3],  weight: 5  },
   { id: 'deep',    name: 'Deep Sea Creature', salvage: 'memoryShards',   qty: [1, 2],  weight: 3  },
   { id: 'toxic',   name: 'Toxic Fish',        salvage: 'corruptedEssence', qty: [1, 4], weight: 4  },
@@ -193273,6 +193320,10 @@ function wfResolveExpedition(exp) {
     } catch (e) {}
     try { if (typeof dropMarketPriceDown === 'function') dropMarketPriceDown(sid, n, 'fishing'); } catch (e) {}
   }
+  // 🐟 The haul is supply — push it through the same producer hook every other
+  // production site uses so a busy fleet softens fish prices like a busy mine
+  // softens metal (dropMarketPriceDown alone never tracked the glut window).
+  try { if (typeof cxProduce === 'function' && Object.keys(haul).length) cxProduce(haul, 'fleet'); } catch (e) {}
   const haulSummary = Object.keys(haul).map(k => {
     const meta = (typeof _meta === 'function') ? _meta(k) : { icon: '', name: k };
     return (meta.icon || '') + (haul[k]) + ' ' + (meta.name || k);
@@ -193411,15 +193462,46 @@ const WF3_BAITS = [
   { id: 'blood', name: 'Bloodbait',   emoji: '🩸', cost: 70,  pack: 8,  luck: 0.10, encounter: 0.28, foodBonus: 0, desc: 'Draws predators — big jump in encounters.' },
   { id: 'lure',  name: 'Mythic Lure', emoji: '💎', cost: 220, pack: 5,  luck: 0.55, encounter: 0.10, foodBonus: 0, desc: 'Legendary bait. Massive rare-catch boost.' },
 ];
+/* 🐟 SPECIES ARE RESOURCES NOW (fishing expansion).
+   Every loot row names the LEDGER resource it lands as (`res`), how many units a
+   catch is worth (`units`, scaled by the rolled weight), its weight range in kg
+   (`kg` — the trophy stat the Catch Log keeps) and when it bites (`time`:
+   'day' | 'night' | 'any'). `food` is kept ONLY so old catch-log entries and the
+   admin species-model editor keep their labels; food is no longer granted on a
+   catch — it comes from the Cannery / Cold Storage "gut & salt" now.
+     Common    → freshFish   (the bulk good; cans into food)
+     Uncommon  → freshFish or shellfish
+     Rare/Leg. → seafood     (Prime Seafood — medicine, research, contracts)
+   ⚠ Ids are the contract: models.species[id] (admin .glb uploads) and the
+     persistent catch log both key on them. Never rename an existing id. */
 const WF3_BIOMES = [
   { id: 'shallows', name: 'Ashen Shallows', emoji: '🏝️', unlockCost: 0,   water: 0x16323a, fog: 0x121620, encounterChance: 0.12, desc: 'Calm starter waters near the ruined dock.',
-    loot: [ { id: 'ash_minnow', name: 'Ashen Minnow', rarity: 'Common', food: 2, weight: 40 }, { id: 'rust_carp', name: 'Rust Carp', rarity: 'Common', food: 3, weight: 32 }, { id: 'glow_eel', name: 'Glowscale Eel', rarity: 'Uncommon', food: 5, weight: 16 }, { id: 'mythic_koi', name: 'Mythic Koi', rarity: 'Rare', food: 12, weight: 4 } ],
+    loot: [
+      { id: 'ash_minnow', name: 'Ashen Minnow',   rarity: 'Common',   food: 2,  res: 'freshFish', units: [2, 4], kg: [0.2, 0.9],  time: 'any',   weight: 40 },
+      { id: 'rust_carp',  name: 'Rust Carp',      rarity: 'Common',   food: 3,  res: 'freshFish', units: [3, 6], kg: [0.8, 3.5],  time: 'any',   weight: 30 },
+      { id: 'tide_crab',  name: 'Tide Crab',      rarity: 'Uncommon', food: 4,  res: 'shellfish', units: [2, 4], kg: [0.3, 1.4],  time: 'day',   weight: 14 },
+      { id: 'glow_eel',   name: 'Glowscale Eel',  rarity: 'Uncommon', food: 5,  res: 'freshFish', units: [4, 7], kg: [1.0, 4.0],  time: 'night', weight: 14 },
+      { id: 'mythic_koi', name: 'Mythic Koi',     rarity: 'Rare',     food: 12, res: 'seafood',   units: [2, 3], kg: [2.0, 6.0],  time: 'any',   weight: 4 },
+    ],
     encounters: [ { enemyId: 'drowned_husk', name: 'Drowned Husk', rarity: 'Uncommon' } ] },
   { id: 'mire', name: 'Drowned Mire', emoji: '🌿', unlockCost: 250, water: 0x1c2a16, fog: 0x10160e, encounterChance: 0.22, desc: 'A toxic swamp. More bites — and more teeth.',
-    loot: [ { id: 'rust_carp', name: 'Rust Carp', rarity: 'Common', food: 3, weight: 26 }, { id: 'glow_eel', name: 'Glowscale Eel', rarity: 'Uncommon', food: 5, weight: 30 }, { id: 'cinder_bass', name: 'Cinderfin Bass', rarity: 'Uncommon', food: 7, weight: 24 }, { id: 'mythic_koi', name: 'Mythic Koi', rarity: 'Rare', food: 13, weight: 9 } ],
+    loot: [
+      { id: 'rust_carp',   name: 'Rust Carp',      rarity: 'Common',   food: 3,  res: 'freshFish', units: [3, 6], kg: [0.8, 3.5],  time: 'any',   weight: 24 },
+      { id: 'glow_eel',    name: 'Glowscale Eel',  rarity: 'Uncommon', food: 5,  res: 'freshFish', units: [4, 7], kg: [1.0, 4.0],  time: 'night', weight: 22 },
+      { id: 'bog_clam',    name: 'Bog Clam',       rarity: 'Uncommon', food: 4,  res: 'shellfish', units: [3, 6], kg: [0.2, 0.8],  time: 'any',   weight: 16 },
+      { id: 'cinder_bass', name: 'Cinderfin Bass', rarity: 'Uncommon', food: 7,  res: 'freshFish', units: [5, 8], kg: [2.0, 6.5],  time: 'day',   weight: 20 },
+      { id: 'ghost_pike',  name: 'Ghost Pike',     rarity: 'Rare',     food: 11, res: 'seafood',   units: [2, 4], kg: [3.0, 11.0], time: 'night', weight: 7 },
+      { id: 'mythic_koi',  name: 'Mythic Koi',     rarity: 'Rare',     food: 13, res: 'seafood',   units: [2, 3], kg: [2.0, 6.0],  time: 'any',   weight: 7 },
+    ],
     encounters: [ { enemyId: 'mire_serpent', name: 'Mire Serpent', rarity: 'Uncommon' }, { enemyId: 'bog_lurker', name: 'Bog Lurker', rarity: 'Rare' } ] },
   { id: 'depths', name: 'Cinder Depths', emoji: '🌋', unlockCost: 700, water: 0x2a1014, fog: 0x180609, encounterChance: 0.30, desc: 'Lava-fed abyss. The rarest hauls, the deadliest fights.',
-    loot: [ { id: 'cinder_bass', name: 'Cinderfin Bass', rarity: 'Uncommon', food: 7, weight: 28 }, { id: 'emberjaw', name: 'Emberjaw', rarity: 'Rare', food: 15, weight: 30 }, { id: 'mythic_koi', name: 'Mythic Koi', rarity: 'Rare', food: 14, weight: 18 }, { id: 'leviath_fry', name: 'Leviathan Fry', rarity: 'Legendary', food: 28, weight: 6 } ],
+    loot: [
+      { id: 'cinder_bass',  name: 'Cinderfin Bass', rarity: 'Uncommon',  food: 7,  res: 'freshFish', units: [5, 8],  kg: [2.0, 6.5],   time: 'day',   weight: 26 },
+      { id: 'emberjaw',     name: 'Emberjaw',       rarity: 'Rare',      food: 15, res: 'seafood',   units: [3, 5],  kg: [6.0, 18.0],  time: 'any',   weight: 26 },
+      { id: 'lantern_jelly',name: 'Lantern Jelly',  rarity: 'Rare',      food: 9,  res: 'seafood',   units: [2, 4],  kg: [1.0, 5.0],   time: 'night', weight: 16 },
+      { id: 'mythic_koi',   name: 'Mythic Koi',     rarity: 'Rare',      food: 14, res: 'seafood',   units: [2, 3],  kg: [2.0, 6.0],   time: 'any',   weight: 16 },
+      { id: 'leviath_fry',  name: 'Leviathan Fry',  rarity: 'Legendary', food: 28, res: 'seafood',   units: [6, 10], kg: [20.0, 60.0], time: 'any',   weight: 6, extra: { dna: 1 } },
+    ],
     encounters: [ { enemyId: 'cinder_wyrm', name: 'Cinder Wyrm', rarity: 'Rare' }, { enemyId: 'ash_leviathan', name: 'Ash Leviathan', rarity: 'Legendary' } ] },
 ];
 const WF3_FIGHT = {
@@ -193430,6 +193512,61 @@ const WF3_SWELL = {
   shallows: { bob: 0.10, roll: 0.022, pitch: 0.014, wave: 1.00 },
   mire:     { bob: 0.18, roll: 0.038, pitch: 0.022, wave: 1.18 },
   depths:   { bob: 0.30, roll: 0.060, pitch: 0.034, wave: 1.45 },
+};
+
+// 🌦 WEATHER — rolled at cast-off, drifts every ~90s of trip time. Each state
+// is a set of multipliers the catch roll, the reel fight and the renderer all
+// read; nothing else in the trip holds a weather number.
+//   bite     — bite-timer multiplier (rain brings them up)
+//   luck     — flat luck added to every cast (fog: rare fish rise)
+//   enc      — flat encounter chance added (storm: things surface)
+//   surge    — fight-surge multiplier while reeling
+//   sway     — boat swell multiplier
+//   fog      — [near, far] fog distances
+//   rain     — 0..1 particle density; lightning — flashes/min (storm only)
+const WF3_WEATHER = {
+  clear: { id: 'clear', name: 'Clear',      icon: '🌤', bite: 1.00, luck: 0.00, enc: 0.00, surge: 1.00, sway: 1.0, fog: [30, 95], rain: 0,   lightning: 0,   next: { clear: 55, fog: 20, rain: 20, storm: 5 } },
+  fog:   { id: 'fog',   name: 'Sea Fog',    icon: '🌫', bite: 1.10, luck: 0.12, enc: 0.02, surge: 0.95, sway: 0.8, fog: [8, 38],  rain: 0,   lightning: 0,   next: { clear: 40, fog: 40, rain: 15, storm: 5 } },
+  rain:  { id: 'rain',  name: 'Rain',       icon: '🌧', bite: 0.70, luck: 0.05, enc: 0.03, surge: 1.10, sway: 1.2, fog: [22, 70], rain: 0.5, lightning: 0,   next: { clear: 30, fog: 15, rain: 35, storm: 20 } },
+  storm: { id: 'storm', name: 'Storm',      icon: '⛈', bite: 0.60, luck: 0.20, enc: 0.10, surge: 1.35, sway: 1.6, fog: [14, 55], rain: 1.0, lightning: 4,   next: { clear: 15, fog: 10, rain: 45, storm: 30 } },
+};
+const WF3_WEATHER_DRIFT_S = 90;   // seconds between weather re-rolls
+// 🌗 Sky keyframes by in-game hour. Lerped every frame; biome fog tint is mixed in.
+const WF3_SKY = [
+  { h: 0,  sky: 0x05070f, sun: 0x223055, sunI: 0.12, amb: 0.35, stars: 1.0 },
+  { h: 5,  sky: 0x0a0d1a, sun: 0x334066, sunI: 0.18, amb: 0.40, stars: 0.8 },
+  { h: 7,  sky: 0x5a3a3a, sun: 0xffa060, sunI: 0.75, amb: 0.75, stars: 0.0 },
+  { h: 12, sky: 0x4a6a86, sun: 0xfff0d0, sunI: 1.05, amb: 1.00, stars: 0.0 },
+  { h: 18, sky: 0x6a3a2a, sun: 0xff7a40, sunI: 0.70, amb: 0.72, stars: 0.0 },
+  { h: 20, sky: 0x101426, sun: 0x334066, sunI: 0.20, amb: 0.42, stars: 0.7 },
+  { h: 24, sky: 0x05070f, sun: 0x223055, sunI: 0.12, amb: 0.35, stars: 1.0 },
+];
+const WF3_HOUR_SECONDS = 40;      // real seconds per in-game hour (a trip sees dawn→dusk in ~8 min)
+function _wf3IsNightHour(h) { return h < 6 || h >= 19.5; }
+// ⚓ GEAR — one-off boat upgrades bought at the Outfitter (persist on live.gear).
+const WF3_GEAR = [
+  { id: 'fishfinder', name: 'Fish Finder',   emoji: '📡', cost: 450,  desc: 'Sonar reads each school\'s tier — you see what you\'re casting at.' },
+  { id: 'icebox',     name: 'Ice Hold',      emoji: '🧊', cost: 600,  desc: '+50% hold capacity per trip. Bigger hauls before docking.' },
+  { id: 'outrigger',  name: 'Outriggers',    emoji: '⚖️', cost: 800,  desc: 'Steadies the hull — storm surges strain the line 25% less.' },
+  { id: 'kelpknife',  name: 'Kelp Knife',    emoji: '🔪', cost: 250,  desc: 'Doubles seaweed by-catch. Kelp is what the Oil Works burns.' },
+];
+const WF3_HOLD_PER_CAP = 15;       // hold units per crew-slot of the boat class
+const WF3_SEAWEED_CHANCE = 0.30;   // by-catch chance per landed fish
+// 🐟 Ledger metadata for the four catch resources (icons/names come from
+// RESOURCES via _meta; this only says which ones are "fish" for HUD grouping).
+const WF3_FISH_RES = ['freshFish', 'shellfish', 'seafood', 'seaweed'];
+// 🎣 Deckhand trait effects on a live trip — the WF_TRAITS ids, read at cast time.
+const WF3_TRAIT_FX = {
+  lucky:      { luck: 0.08,  blurb: '+8% luck' },
+  hard:       { reel: 1.15,  blurb: '+15% reel speed' },
+  veteran:    { xpLoss: 0.5, blurb: 'half XP loss' },
+  aggressive: { bounty: 1.5, blurb: '×1.5 encounter bounty' },
+  hunter:     { enc: -0.05, surge: 0.85, blurb: '−5% encounters, calmer fights' },
+  coward:     { hook: 0.8,   blurb: 'shorter hook window' },
+  lazy:       { reel: 0.9,   blurb: '−10% reel speed' },
+  smuggler:   { barrel: 2.0, blurb: '×2 oil-barrel snags' },
+  unstable:   { drop: 0.06,  blurb: '6% chance to fumble a catch' },
+  alcoholic:  { hook: 0.9, luck: 0.03, blurb: 'shaky hands, lucky streaks' },
 };
 
 // Runtime (transient) state for the open trip. Persistent progress lives on
@@ -193453,6 +193590,9 @@ function _wf3Live() {
   // 🐟 Catch log — every species (and oil barrel) the player has ever landed:
   // id → { id, name, rarity, count, biome, last }. Drives the CATCH LOG tab.
   if (!L.catchLog || typeof L.catchLog !== 'object') L.catchLog = {};
+  // ⚓ Fishing expansion — one-off gear and the crewman riding along.
+  if (!Array.isArray(L.gear)) L.gear = [];
+  if (!('deckhandId' in L)) L.deckhandId = null;
   return L;
 }
 // 🐟 Every distinct catchable, derived from the biome loot tables (unique by id)
@@ -193461,17 +193601,23 @@ const WF3_OIL_BARREL = { id: 'oil_barrel', name: 'Oil Barrel', rarity: 'Uncommon
 function _wf3AllFish() {
   const seen = {}, out = [];
   WF3_BIOMES.forEach(b => (b.loot || []).forEach(f => {
-    if (!seen[f.id]) { seen[f.id] = { id: f.id, name: f.name, rarity: f.rarity, maxFood: f.food, biomes: [b.name] }; out.push(seen[f.id]); }
+    if (!seen[f.id]) { seen[f.id] = { id: f.id, name: f.name, rarity: f.rarity, maxFood: f.food, res: f.res || 'freshFish', maxUnits: (f.units || [0, 0])[1], kg: f.kg || [0, 0], time: f.time || 'any', biomes: [b.name] }; out.push(seen[f.id]); }
     else { seen[f.id].maxFood = Math.max(seen[f.id].maxFood, f.food); if (seen[f.id].biomes.indexOf(b.name) < 0) seen[f.id].biomes.push(b.name); }
   }));
-  out.push({ id: WF3_OIL_BARREL.id, name: WF3_OIL_BARREL.name, rarity: WF3_OIL_BARREL.rarity, maxFood: 0, biomes: ['All waters'], special: 'fuel' });
+  out.push({ id: WF3_OIL_BARREL.id, name: WF3_OIL_BARREL.name, rarity: WF3_OIL_BARREL.rarity, maxFood: 0, res: 'fuel', maxUnits: 3, kg: [0, 0], time: 'any', biomes: ['All waters'], special: 'fuel' });
   return out;
 }
-// Record a landed catch into the persistent log.
-function _wf3RecordCatch(id, name, rarity, biomeName) {
+function _wf3RecordCatch(id, name, rarity, biomeName, extra) {
   if (!id) return; const L = _wf3Live(); const e = L.catchLog[id] || { id, name, rarity, count: 0 };
   e.count = (e.count | 0) + 1; e.name = name || e.name; e.rarity = rarity || e.rarity;
   e.last = Date.now(); if (biomeName) e.biome = biomeName;
+  // 🏆 Trophy + economy stats (fishing expansion): heaviest specimen and the
+  // running total of ledger units this species has put in the stash.
+  if (extra) {
+    if (typeof extra.kg === 'number' && extra.kg > (e.bestKg || 0)) { e.bestKg = +extra.kg.toFixed(2); e.bestAt = Date.now(); }
+    if (extra.res) e.res = extra.res;
+    if (extra.units) e.units = (e.units | 0) + (extra.units | 0);
+  }
   L.catchLog[id] = e;
 }
 function _wf3Pole() { const L = _wf3Live(); return WF3_POLES.find(p => p.id === L.equippedPole) || WF3_POLES[0]; }
@@ -193502,6 +193648,20 @@ function _wf3MergeLive(a, b) {
     equippedBait: ('equippedBait' in lead) ? lead.equippedBait : (a.equippedBait != null ? a.equippedBait : b.equippedBait),
     currentBiome: lead.currentBiome || a.currentBiome || b.currentBiome || 'shallows',
     level, xp,
+    // ⚓ Fishing expansion — gear is a union (a bought upgrade can never be
+    // un-bought by a stale row); the catch log keeps the higher count and the
+    // heavier trophy per species; the deckhand follows the more-progressed side.
+    gear: uniq(a.gear, b.gear),
+    catchLog: (() => {
+      const o = {}; [a.catchLog, b.catchLog].forEach(src => { if (!src || typeof src !== 'object') return; for (const k in src) {
+        const x = src[k], y = o[k]; if (!x || typeof x !== 'object') continue;
+        if (!y) { o[k] = Object.assign({}, x); continue; }
+        y.count = Math.max(y.count | 0, x.count | 0); y.units = Math.max(y.units | 0, x.units | 0);
+        if ((x.bestKg || 0) > (y.bestKg || 0)) { y.bestKg = x.bestKg; y.bestAt = x.bestAt; }
+        y.last = Math.max(y.last || 0, x.last || 0); y.res = y.res || x.res; y.biome = y.biome || x.biome;
+      } }); return o;
+    })(),
+    deckhandId: ('deckhandId' in lead) ? lead.deckhandId : (a.deckhandId != null ? a.deckhandId : b.deckhandId),
   };
 }
 
@@ -193522,6 +193682,73 @@ function _wf3PickBoat() {
   return ready[0];
 }
 
+// ── Deckhand / boat / hold / weather (fishing expansion) ────────────────────
+// The crewman riding along on a live trip. Chosen in the EXPEDITIONS tab; must
+// still be on the roster and idle (a crewman at sea cannot also be here).
+function _wf3Deckhand() {
+  try {
+    const L = _wf3Live(); if (!L.deckhandId) return null;
+    const c = (ensureFishingCorp().crew || []).find(x => x && x.id === L.deckhandId);
+    return (c && c.status === 'idle') ? c : null;
+  } catch (e) { return null; }
+}
+// Summed trait effects for the current deckhand — returns {} with no crewman.
+function _wf3DeckFx() {
+  const c = _wf3Deckhand(); const out = {};
+  if (!c) return out;
+  (c.traits || []).forEach(t => { const fx = WF3_TRAIT_FX[t]; if (!fx) return; for (const k in fx) { if (k === 'blurb') continue; if (k === 'luck' || k === 'enc' || k === 'drop') out[k] = (out[k] || 0) + fx[k]; else out[k] = (out[k] || 1) * fx[k]; } });
+  // Skill is the crewman's stat line (0-10): a little reel speed on top of traits.
+  out.reel = (out.reel || 1) * (1 + Math.max(0, (c.skill | 0) - 5) * 0.02);
+  return out;
+}
+function _wf3DeckTraitBlurb(c) { return (c && (c.traits || []).map(t => WF3_TRAIT_FX[t] && WF3_TRAIT_FX[t].blurb).filter(Boolean).join(' · ')) || 'no trip traits'; }
+function _wf3OwnsGear(id) { return _wf3Live().gear.indexOf(id) >= 0; }
+function _wf3BoatClass() { const s = _wf3S; const b = s && s.boat; return (b && WF_BOAT_CLASSES.find(c => c.id === b.classId)) || WF_BOAT_CLASSES[0]; }
+// 🧊 Hold — how many ledger units a trip can carry before it must dock.
+function _wf3HoldCap() { const cls = _wf3BoatClass(); return Math.round((cls.cap | 0 || 2) * WF3_HOLD_PER_CAP * (_wf3OwnsGear('icebox') ? 1.5 : 1)); }
+function _wf3HoldUsed() { const s = _wf3S; if (!s || !s.haul) return 0; let n = 0; for (const k in s.haul) n += s.haul[k] | 0; return n; }
+function _wf3HoldFull() { return _wf3HoldUsed() >= _wf3HoldCap(); }
+// Boat class bends the rod: fast hulls cast further, heavy hulls take strain.
+function _wf3CastMax() { return _wf3Pole().castMax + ((_wf3BoatClass().speed | 0) * 0.5); }
+function _wf3TensionCap() { return _wf3Pole().tensionCap + Math.min(20, (_wf3BoatClass().hull | 0) * 0.08); }
+function _wf3Weather() { const s = _wf3S; return WF3_WEATHER[(s && s.weather) || 'clear'] || WF3_WEATHER.clear; }
+function _wf3IsNight() { const s = _wf3S; return !!s && _wf3IsNightHour(s.hour); }
+// Roll the next weather from the current state's transition row.
+function _wf3RollWeather(fromId) {
+  const row = (WF3_WEATHER[fromId] || WF3_WEATHER.clear).next; let tot = 0; for (const k in row) tot += row[k];
+  let r = Math.random() * tot; for (const k in row) { r -= row[k]; if (r <= 0) return k; } return 'clear';
+}
+function _wf3SetWeather(id, silent) {
+  const s = _wf3S; if (!s) return; const prev = s.weather; s.weather = WF3_WEATHER[id] ? id : 'clear'; s.weatherT = WF3_WEATHER_DRIFT_S * (0.7 + Math.random() * 0.6);
+  const w = _wf3Weather();
+  if (s.G) { try { s.G.scene.fog.near = w.fog[0]; s.G.scene.fog.far = w.fog[1]; if (s.G.rain) s.G.rain.visible = w.rain > 0; } catch (e) {} }
+  s.waveAmp = (WF3_SWELL[_wf3Live().currentBiome] || WF3_SWELL.shallows).wave * w.sway;
+  if (!silent && prev !== s.weather) _wf3FlashLog(w.icon + ' ' + w.name + (w.id === 'storm' ? ' — hold on!' : w.id === 'fog' ? ' — rare fish rise' : w.id === 'rain' ? ' — bites come faster' : ' skies'), w.id === 'storm' ? 'enc' : 'hot');
+  _wf3RenderHud();
+}
+// Sky keyframe blend for an in-game hour → {sky, sun, sunI, amb, stars}.
+function _wf3SkyAt(h) {
+  h = ((h % 24) + 24) % 24; let a = WF3_SKY[0], b = WF3_SKY[WF3_SKY.length - 1];
+  for (let i = 0; i < WF3_SKY.length - 1; i++) { if (h >= WF3_SKY[i].h && h <= WF3_SKY[i + 1].h) { a = WF3_SKY[i]; b = WF3_SKY[i + 1]; break; } }
+  const k = (b.h === a.h) ? 0 : (h - a.h) / (b.h - a.h);
+  const lerpHex = (x, y) => { const r = ((x >> 16) & 255) + (((y >> 16) & 255) - ((x >> 16) & 255)) * k, g = ((x >> 8) & 255) + (((y >> 8) & 255) - ((x >> 8) & 255)) * k, bl = (x & 255) + ((y & 255) - (x & 255)) * k; return (Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(bl); };
+  return { sky: lerpHex(a.sky, b.sky), sun: lerpHex(a.sun, b.sun), sunI: a.sunI + (b.sunI - a.sunI) * k, amb: a.amb + (b.amb - a.amb) * k, stars: a.stars + (b.stars - a.stars) * k };
+}
+// Weight roll — skewed small, nudged up by angler level. Returns kg.
+function _wf3RollWeight(sp) {
+  const r = sp.kg || [0.5, 2]; const lvl = _wf3Live().level | 0;
+  const u = Math.min(1, Math.pow(Math.random(), 1.8) + lvl * 0.012 + (_wf3Weather().id === 'storm' ? 0.08 : 0));
+  return +(r[0] + (r[1] - r[0]) * u).toFixed(2);
+}
+// Units a specimen is worth: interpolated across the species' unit range by
+// where its weight fell in the kg range. A record fish is a full crate.
+function _wf3UnitsFor(sp, kg) {
+  const u = sp.units || [1, 1], r = sp.kg || [0, 1]; const k = (r[1] > r[0]) ? (kg - r[0]) / (r[1] - r[0]) : 0.5;
+  return Math.max(1, Math.round(u[0] + (u[1] - u[0]) * Math.max(0, Math.min(1, k))));
+}
+function _wf3ResMeta(id) { try { return _meta(id); } catch (e) { return { id, name: id, icon: '📦' }; } }
+function _wf3ResPrice(id) { try { return Math.round(getMarketPrice(id).current); } catch (e) { return 0; } }
+
 // ── DOM helpers ─────────────────────────────────────────────────────────────
 function _wf3$(suffix) { return document.getElementById('wf3-' + suffix); }
 function _wf3SetPrompt(h) { const el = _wf3$('promptText'); if (el) el.innerHTML = h; }
@@ -193531,7 +193758,13 @@ function _wf3RenderHud() {
   const L = _wf3Live(), s = _wf3S; if (!s) return;
   const cin = _wf3$('cinder'); if (cin) cin.textContent = _wf3GetCinder().toLocaleString();
   const sc = _wf3$('shopCinder'); if (sc) sc.textContent = _wf3GetCinder().toLocaleString();
-  const food = _wf3$('food'); if (food) food.textContent = (s.foodTrip | 0).toLocaleString();
+  // 🐟 Trip haul by ledger resource (fishing expansion) + hold gauge.
+  const haulEl = _wf3$('haul');
+  if (haulEl) {
+    const parts = WF3_FISH_RES.filter(r => (s.haul && s.haul[r] | 0) > 0).map(r => { const m = _wf3ResMeta(r); return '<span title="' + escapeHtml(m.name) + '">' + m.icon + ' ' + (s.haul[r] | 0) + '</span>'; });
+    haulEl.innerHTML = parts.length ? parts.join(' ') : '<span style="color:#7d97a8">empty</span>';
+  }
+  const hold = _wf3$('hold'); if (hold) { const u = _wf3HoldUsed(), c = _wf3HoldCap(); hold.textContent = u + ' / ' + c; hold.style.color = u >= c ? '#e0623d' : (u / c > 0.8 ? '#e6b660' : '#f3ead2'); }
   const pn = _wf3$('poleName'); if (pn) pn.textContent = _wf3Pole().name;
   const bn = _wf3$('biomeName'); if (bn) bn.textContent = _wf3Biome().name;
   const lv = _wf3$('lvl'); if (lv) lv.textContent = L.level;
@@ -193543,8 +193776,13 @@ function _wf3RenderHud() {
   if (b) { if (ban) ban.textContent = b.name; if (bac) bac.textContent = '(' + (L.baitStock[b.id] || 0) + ')'; }
   else { if (ban) ban.textContent = 'None'; if (bac) bac.textContent = ''; }
   const cl = _wf3$('casts'); if (cl) cl.textContent = Math.max(0, s.castsLeft | 0);
+  // 🌦 Clock + weather, boat + deckhand.
+  const w = _wf3Weather(); const hh = Math.floor(s.hour || 0), mm = Math.floor(((s.hour || 0) % 1) * 60);
+  const wx = _wf3$('weather'); if (wx) wx.innerHTML = w.icon + ' <b>' + w.name + '</b> · ' + (_wf3IsNight() ? '🌙' : '☀️') + ' ' + String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0');
+  const bt = _wf3$('boatName'); if (bt) bt.textContent = s.boat ? (s.boat.name + ' · ' + (_wf3BoatClass().name || '')) : '—';
+  const dh = _wf3$('deckhand'); const c = _wf3Deckhand();
+  if (dh) dh.innerHTML = c ? '<b>' + escapeHtml(c.name) + '</b> <span style="color:#7d97a8">' + escapeHtml(_wf3DeckTraitBlurb(c)) + '</span>' : '<span style="color:#7d97a8">none aboard</span>';
 }
-
 // ── Progression ─────────────────────────────────────────────────────────────
 function _wf3ApplyLevel() {
   const s = _wf3S; if (!s) return; const L = _wf3Live();
@@ -193644,7 +193882,30 @@ function _wf3InitScene(mount) {
   hotspot.add(ring); hotspot.add(disc); hotspot.add(pip); hotspot.visible = false; scene.add(hotspot);
   const predictor = new T.Mesh(new T.RingGeometry(0.42, 0.62, 24), new T.MeshBasicMaterial({ color: 0xf3ead2, transparent: true, opacity: 0.85, side: T.DoubleSide, depthWrite: false })); predictor.rotation.x = -Math.PI / 2; predictor.visible = false; scene.add(predictor);
   const clock = new T.Clock();
-  Object.assign(G, { renderer, scene, camera, water, waterBase, floor, shore, shipModel, fishingRod, rodTip, rodTipLocal, bobber, lineMesh, biteMark, hotspot, predictor, clock, loader: (T.GLTFLoader ? new T.GLTFLoader() : null) });
+  // 🌗 Sky: a big back-facing sphere the sky colour paints, a sun/moon disc on
+  //    an arc, a star field that fades in by hour. All driven per frame from
+  //    _wf3SkyAt(hour) so dawn→dusk happens on the water without a reload.
+  const skyDome = new T.Mesh(new T.SphereGeometry(180, 24, 12), new T.MeshBasicMaterial({ color: bm.fog, side: T.BackSide, fog: false })); scene.add(skyDome);
+  const sunDisc = new T.Mesh(new T.CircleGeometry(6, 24), new T.MeshBasicMaterial({ color: 0xfff0c0, fog: false, transparent: true, opacity: 0.95 })); scene.add(sunDisc);
+  const moonDisc = new T.Mesh(new T.CircleGeometry(3.6, 24), new T.MeshBasicMaterial({ color: 0xdfe6ff, fog: false, transparent: true, opacity: 0.9 })); scene.add(moonDisc);
+  const starGeo = new T.BufferGeometry(); const starN = 320, sp = new Float32Array(starN * 3);
+  for (let i = 0; i < starN; i++) { const th = Math.random() * Math.PI * 2, ph = Math.random() * Math.PI * 0.42; sp[i * 3] = Math.cos(th) * Math.sin(ph) * 160; sp[i * 3 + 1] = Math.cos(ph) * 160 + 6; sp[i * 3 + 2] = Math.sin(th) * Math.sin(ph) * 160 - 20; }
+  starGeo.setAttribute('position', new T.BufferAttribute(sp, 3));
+  // Round/streak sprites for the point clouds — a bare PointsMaterial draws
+  // hard squares, which read as debris rather than stars or rain.
+  const dotTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 32; const x = c.getContext('2d'); const g = x.createRadialGradient(16, 16, 0, 16, 16, 16); g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.4, 'rgba(255,255,255,.7)'); g.addColorStop(1, 'rgba(255,255,255,0)'); x.fillStyle = g; x.fillRect(0, 0, 32, 32); const tx = new T.CanvasTexture(c); tx.needsUpdate = true; return tx; })();
+  const streakTex = (() => { const c = document.createElement('canvas'); c.width = 8; c.height = 32; const x = c.getContext('2d'); const g = x.createLinearGradient(0, 0, 0, 32); g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.5, 'rgba(255,255,255,.9)'); g.addColorStop(1, 'rgba(255,255,255,0)'); x.fillStyle = g; x.fillRect(2, 0, 4, 32); const tx = new T.CanvasTexture(c); tx.needsUpdate = true; return tx; })();
+  const stars = new T.Points(starGeo, new T.PointsMaterial({ color: 0xe8ecff, size: 1.4, map: dotTex, transparent: true, opacity: 0, fog: false, depthWrite: false, blending: T.AdditiveBlending })); scene.add(stars);
+  // 🌧 Rain: a Points cloud that falls inside a box around the boat and wraps.
+  const rainN = 700, rp = new Float32Array(rainN * 3);
+  for (let i = 0; i < rainN; i++) { rp[i * 3] = (Math.random() - 0.5) * 60; rp[i * 3 + 1] = Math.random() * 30; rp[i * 3 + 2] = -30 + Math.random() * 60; }
+  const rainGeo = new T.BufferGeometry(); rainGeo.setAttribute('position', new T.BufferAttribute(rp, 3));
+  const rain = new T.Points(rainGeo, new T.PointsMaterial({ color: 0xb8ccdd, size: 0.55, map: streakTex, transparent: true, opacity: 0.45, depthWrite: false, alphaTest: 0.05 })); rain.visible = false; scene.add(rain);
+  Object.assign(G, { renderer, scene, camera, water, waterBase, floor, shore, shipModel, fishingRod, rodTip, rodTipLocal, bobber, lineMesh, biteMark, hotspot, predictor, clock, loader: (T.GLTFLoader ? new T.GLTFLoader() : null),
+    skyDome, sunDisc, moonDisc, stars, rain, rainPos: rp, fx2: [], schools: [], ambient: scene.children.find(o => o.isAmbientLight), sun,
+    camBase: camera.position.clone(), camLook: new T.Vector3(0, 1, -8), camLookBase: new T.Vector3(0, 1, -8), shake: 0 });
+  // 🐟 Schools — the moving targets the hotspot ring now follows.
+  try { _wf3BuildSchools(G); } catch (e) {}
   // Optional admin .glb boat — swap in over the procedural hull.
   _wf3LoadShipModel(G);
   const onResize = () => { const c = renderer.domElement, w = c.clientWidth || W, h = c.clientHeight || H; if (w === G._lw && h === G._lh) return; G._lw = w; G._lh = h; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); };
@@ -193660,6 +193921,93 @@ function _wf3InitScene(mount) {
   };
   G.fit = onResize;
   return G;
+}
+// ── Schools, sonar, splash FX (fishing expansion) ───────────────────────────
+// A school is 5–8 small translucent fish circling a centre that drifts across
+// the cast lane. Each school carries a TIER bias: casting into it multiplies
+// that rarity's weight in the loot roll, and the luck ring rides on one of them
+// so the target moves. The fish finder gear tells you which tier is which.
+function _wf3BuildSchools(G) {
+  const T = window.THREE; const bm = _wf3Biome();
+  (G.schools || []).forEach(sc => { try { G.scene.remove(sc.group); _ppaDisposeObj(sc.group); } catch (e) {} });
+  G.schools = [];
+  const tiers = bm.id === 'depths' ? ['Uncommon', 'Rare', 'Rare'] : bm.id === 'mire' ? ['Common', 'Uncommon', 'Rare'] : ['Common', 'Common', 'Uncommon'];
+  const cm = _wf3CastMax();
+  tiers.forEach((tier, i) => {
+    const group = new T.Group(); const n = 5 + Math.floor(Math.random() * 4); const fish = [];
+    const col = tier === 'Rare' ? 0xc9a24d : tier === 'Uncommon' ? 0x46c97e : 0x8fa3b8;
+    const mat = new T.MeshPhongMaterial({ color: col, transparent: true, opacity: 0.42, shininess: 40, depthWrite: false });
+    for (let k = 0; k < n; k++) {
+      const f = new T.Mesh(new T.ConeGeometry(0.14, 0.62, 5), mat); f.rotation.x = Math.PI / 2; f.userData.ph = Math.random() * Math.PI * 2; f.userData.rr = 0.5 + Math.random() * 1.3; f.userData.sp = 0.8 + Math.random() * 0.8;
+      group.add(f); fish.push(f);
+    }
+    group.position.set((Math.random() - 0.5) * 12, -0.35, 11 - (9 + Math.random() * (cm - 11)));
+    G.scene.add(group);
+    G.schools.push({ group, fish, tier, r: 2.1, vx: (Math.random() - 0.5) * 0.5, vz: (Math.random() - 0.5) * 0.3, t: Math.random() * 10, zMin: 11 - (cm - 2), zMax: 11 - 8 });
+  });
+}
+function _wf3UpdateSchools(G, dt, t) {
+  const cm = _wf3CastMax();
+  (G.schools || []).forEach(sc => {
+    sc.t += dt; const g = sc.group;
+    g.position.x += sc.vx * dt; g.position.z += sc.vz * dt;
+    if (g.position.x > 8 || g.position.x < -8) sc.vx *= -1;
+    if (g.position.z < 11 - (cm - 2)) sc.vz = Math.abs(sc.vz); if (g.position.z > 3) sc.vz = -Math.abs(sc.vz);
+    if (Math.random() < dt * 0.15) { sc.vx = (Math.random() - 0.5) * 0.6; sc.vz = (Math.random() - 0.5) * 0.35; }
+    sc.fish.forEach(f => { const a = sc.t * f.userData.sp + f.userData.ph; f.position.set(Math.cos(a) * f.userData.rr, Math.sin(a * 2.3) * 0.08, Math.sin(a) * f.userData.rr); f.rotation.y = -a + Math.PI / 2; });
+  });
+}
+// Which school is under (x,z)? → { school, precision 0..1 } or null.
+function _wf3SchoolAt(x, z) {
+  const G = _wf3S && _wf3S.G; if (!G) return null; let best = null;
+  (G.schools || []).forEach(sc => { const d = Math.hypot(sc.group.position.x - x, sc.group.position.z - z); if (d <= sc.r && (!best || d < best.d)) best = { school: sc, d, precision: 1 - d / sc.r }; });
+  return best;
+}
+// 📡 Sonar — a 2D canvas overlay: the boat at the bottom, school blips above,
+// the aim marker while charging. Tiers are colour-coded only with the fish
+// finder aboard (or at angler level 12+, when you've learned to read water).
+function _wf3DrawSonar() {
+  const s = _wf3S; if (!s || !s.G) return; const cv = _wf3$('sonar'); if (!cv) return; const x = cv.getContext('2d'); const W = cv.width, H = cv.height;
+  x.clearRect(0, 0, W, H); x.fillStyle = 'rgba(6,14,20,0.85)'; x.beginPath(); x.arc(W / 2, H / 2, W / 2 - 1, 0, Math.PI * 2); x.fill();
+  x.strokeStyle = 'rgba(90,208,224,0.25)'; x.lineWidth = 1; [0.33, 0.66, 1].forEach(k => { x.beginPath(); x.arc(W / 2, H / 2, (W / 2 - 3) * k, 0, Math.PI * 2); x.stroke(); });
+  const cm = _wf3CastMax(); const map = (px, pz) => [W / 2 + px / 9 * (W / 2 - 6), H - 8 - ((11 - pz) / cm) * (H - 16)];
+  const reveal = _wf3OwnsGear('fishfinder') || (_wf3Live().level | 0) >= 12;
+  const sweep = (s.G.clock.elapsedTime * 1.2) % (Math.PI * 2);
+  x.strokeStyle = 'rgba(90,208,224,0.5)'; x.beginPath(); x.moveTo(W / 2, H / 2); x.lineTo(W / 2 + Math.cos(sweep) * (W / 2), H / 2 + Math.sin(sweep) * (H / 2)); x.stroke();
+  (s.G.schools || []).forEach(sc => { const [px, py] = map(sc.group.position.x, sc.group.position.z); x.fillStyle = reveal ? (WF3_RARITY_COLOR[sc.tier] || '#9aa3b2') : '#7fb9c9'; x.beginPath(); x.arc(px, py, 3.2, 0, Math.PI * 2); x.fill(); x.strokeStyle = x.fillStyle; x.globalAlpha = 0.35; x.beginPath(); x.arc(px, py, 7, 0, Math.PI * 2); x.stroke(); x.globalAlpha = 1; });
+  if (s.state === 'CHARGING' || s.state === 'WAITING' || s.state === 'BITE' || s.state === 'REELING') { const pt = (s.state === 'CHARGING') ? [s.aimX, _wf3LandingZ(s.power)] : [s.castTo.x, s.castTo.z]; const [px, py] = map(pt[0], pt[1]); x.strokeStyle = '#f3ead2'; x.beginPath(); x.moveTo(px - 4, py); x.lineTo(px + 4, py); x.moveTo(px, py - 4); x.lineTo(px, py + 4); x.stroke(); }
+  x.fillStyle = '#e0c178'; x.beginPath(); x.moveTo(W / 2, H - 4); x.lineTo(W / 2 - 4, H - 12); x.lineTo(W / 2 + 4, H - 12); x.closePath(); x.fill();
+}
+// 💦 Ripple rings + spray. Pushed onto G.fx2 and ticked by _wf3UpdateFx2.
+function _wf3Ripple(x, z, scale, n) {
+  const s = _wf3S; if (!s || !s.G) return; const T = window.THREE; n = n || 3; scale = scale || 1;
+  for (let i = 0; i < n; i++) {
+    const m = new T.Mesh(new T.RingGeometry(0.3, 0.42, 28), new T.MeshBasicMaterial({ color: 0xdfeaf0, transparent: true, opacity: 0.55, side: T.DoubleSide, depthWrite: false }));
+    m.rotation.x = -Math.PI / 2; m.position.set(x, 0.05, z); s.G.scene.add(m);
+    s.G.fx2.push({ obj: m, t: -i * 0.18, dur: 1.1, kind: 'ring', scale: scale * (1.6 + i * 0.5), x, z });
+  }
+}
+function _wf3Spray(x, z, count, up) {
+  const s = _wf3S; if (!s || !s.G) return; const T = window.THREE; count = count || 18; up = up || 4;
+  const pos = new Float32Array(count * 3), vel = [];
+  for (let i = 0; i < count; i++) { pos[i * 3] = x; pos[i * 3 + 1] = 0.1; pos[i * 3 + 2] = z; vel.push([(Math.random() - 0.5) * 3, up * (0.5 + Math.random()), (Math.random() - 0.5) * 3]); }
+  const g = new T.BufferGeometry(); g.setAttribute('position', new T.BufferAttribute(pos, 3));
+  const pts = new T.Points(g, new T.PointsMaterial({ color: 0xe8f2f8, size: 0.18, transparent: true, opacity: 0.9, depthWrite: false })); s.G.scene.add(pts);
+  s.G.fx2.push({ obj: pts, t: 0, dur: 0.9, kind: 'spray', vel, pos });
+}
+function _wf3UpdateFx2(G, dt, t) {
+  for (let i = G.fx2.length - 1; i >= 0; i--) {
+    const fx = G.fx2[i]; fx.t += dt; if (fx.t < 0) continue; const k = fx.t / fx.dur;
+    if (k >= 1) { try { G.scene.remove(fx.obj); _ppaDisposeObj(fx.obj); } catch (e) {} G.fx2.splice(i, 1); continue; }
+    if (fx.kind === 'ring') { const sc = 1 + k * 4 * fx.scale; fx.obj.scale.set(sc, sc, 1); fx.obj.material.opacity = 0.55 * (1 - k); fx.obj.position.y = _wf3WaveHeight(fx.x, fx.z, t, _wf3S.waveAmp) + 0.05; }
+    else if (fx.kind === 'spray') { const p = fx.pos; for (let j = 0; j < fx.vel.length; j++) { const v = fx.vel[j]; v[1] -= 9.8 * dt; p[j * 3] += v[0] * dt; p[j * 3 + 1] += v[1] * dt; p[j * 3 + 2] += v[2] * dt; } fx.obj.geometry.attributes.position.needsUpdate = true; fx.obj.material.opacity = 0.9 * (1 - k); }
+  }
+}
+// ⚡ Lightning: a two-frame ambient spike + a white flash div, storm only.
+function _wf3Lightning(G) {
+  const s = _wf3S; if (!s) return; s.flash = 0.16;
+  const fl = _wf3$('flash'); if (fl) { fl.style.opacity = '0.7'; setTimeout(() => { if (fl) fl.style.opacity = '0'; }, 90); }
+  try { G.shake = Math.max(G.shake, 0.25); } catch (e) {}
 }
 function _wf3LoadShipModel(G) {
   const m = _wf3AdminModels(); const list = Array.isArray(m.ship) ? m.ship : [];
@@ -193718,91 +194066,123 @@ function _wf3LaunchFish(obj, at) {
 function _wf3WaveHeight(x, z, t, amp) { return (Math.sin(x * 0.25 + t * 1.4) * 0.45 + Math.cos((z + 14) * 0.3 + t * 1.1) * 0.4) * amp; }
 
 // ── Cast + hotspot ──────────────────────────────────────────────────────────
-function _wf3LandingZ(p) { return 11 - (6 + p * (_wf3Pole().castMax - 6)); }
+function _wf3LandingZ(p) { return 11 - (6 + p * (_wf3CastMax() - 6)); }
 function _wf3PlaceHotspot() {
-  const s = _wf3S; if (!s || !s.G) return; const cm = _wf3Pole().castMax, minD = 8, maxD = cm - 2, dist = minD + Math.random() * (maxD - minD);
-  s.hotZ = 11 - dist; s.G.hotspot.position.set(0, 0.4, s.hotZ); s.G.hotspot.scale.set(s.ringScale, 1, s.ringScale); s.G.hotspot.visible = true;
+  const s = _wf3S; if (!s || !s.G) return;
+  // The ring rides a school (fishing expansion) — a moving target. Falls back
+  // to the old fixed lane if schools failed to build.
+  const scs = s.G.schools || [];
+  s.targetSchool = scs.length ? scs[Math.floor(Math.random() * scs.length)] : null;
+  if (s.targetSchool) { s.hotX = s.targetSchool.group.position.x; s.hotZ = s.targetSchool.group.position.z; }
+  else { const cm = _wf3CastMax(), minD = 8, maxD = cm - 2, dist = minD + Math.random() * (maxD - minD); s.hotX = 0; s.hotZ = 11 - dist; }
+  s.G.hotspot.position.set(s.hotX, 0.4, s.hotZ); s.G.hotspot.scale.set(s.ringScale, 1, s.ringScale); s.G.hotspot.visible = true;
 }
 function _wf3BeginCharge() {
   const s = _wf3S; if (!s) return;
   if (s.castsLeft <= 0) { _wf3SetPrompt('Tank\'s dry — <b>Refuel</b> or head back to <span class="wf3-hot">dock</span>.'); showToast('⛽ Out of trip fuel — refuel or return to dock.', 2600); return; }
+  if (_wf3HoldFull()) { _wf3SetPrompt('🧊 <b>Hold full</b> — <span class="wf3-hot">dock</span> to land the haul.'); showToast('🧊 The hold is full — dock to unload (' + _wf3HoldCap() + ' units).', 2800); return; }
   s.state = 'CHARGING'; s.power = 0; s.powerDir = 1;
   const pw = _wf3$('power'); if (pw) pw.style.display = 'block'; if (s.G) s.G.predictor.visible = true;
-  _wf3SetPrompt('Release to <b>cast</b> — hit the <span class="wf3-hot">ring</span>!');
+  _wf3SetPrompt('Release to <b>cast</b> — drag to aim, hit the <span class="wf3-hot">ring</span>!');
 }
 function _wf3ReleaseCast() {
   const s = _wf3S; if (!s || !s.G) return; const G = s.G, L = _wf3Live();
   const pw = _wf3$('power'); if (pw) pw.style.display = 'none'; G.predictor.visible = false;
   if (L.equippedBait && (L.baitStock[L.equippedBait] || 0) > 0) { L.baitStock[L.equippedBait]--; _wf3RenderHud(); }
-  s.castsLeft = Math.max(0, s.castsLeft - 1); _wf3RenderHud();
-  const z = _wf3LandingZ(s.power);
-  s.castFrom.copy(G.rodTip); s.castTo.set(0, 0, z); s.castT = 0; s.arcH = 4 + s.power * 5;
-  const d = Math.abs(z - s.hotZ);
+  s.castsLeft = Math.max(0, s.castsLeft - 1); if (_wf3Weather().id === 'storm') s.stormCasts = (s.stormCasts | 0) + 1; _wf3RenderHud();
+  const z = _wf3LandingZ(s.power), x = s.aimX || 0;
+  s.castFrom.copy(G.rodTip); s.castTo.set(x, 0, z); s.castT = 0; s.arcH = 4 + s.power * 5;
+  // Ring precision — the ring rides a school, so use its live position.
+  if (s.targetSchool) { s.hotX = s.targetSchool.group.position.x; s.hotZ = s.targetSchool.group.position.z; }
+  const d = Math.hypot(z - s.hotZ, x - (s.hotX || 0));
+  s.castSchool = null;
   if (d <= s.hotR) {
     const precision = 1 - d / s.hotR;
     s.castLuckBonus = WF3_HOTSPOT_LUCK_MIN + precision * (WF3_HOTSPOT_LUCK_MAX - WF3_HOTSPOT_LUCK_MIN);
     s.castEncBonus = precision * WF3_HOTSPOT_ENC_MAX; s.castWasLucky = true;
+    s.castSchool = s.targetSchool;
     const tier = precision > 0.7 ? '🎯 Bullseye!' : precision > 0.35 ? '🎯 Solid cast' : '🎯 Clipped the ring';
-    _wf3FlashLog(tier + ' +' + Math.round(s.castLuckBonus * 100) + '% luck', 'hot');
-  } else { s.castLuckBonus = 0; s.castEncBonus = 0; s.castWasLucky = false; }
+    _wf3FlashLog(tier + ' +' + Math.round(s.castLuckBonus * 100) + '% luck' + (s.castSchool ? ' · into the ' + s.castSchool.tier.toLowerCase() + ' school' : ''), 'hot');
+  } else {
+    s.castLuckBonus = 0; s.castEncBonus = 0; s.castWasLucky = false;
+    // Landed in some OTHER school? Still gets the species bias, just no ring luck.
+    const hit = _wf3SchoolAt(x, z); if (hit) { s.castSchool = hit.school; _wf3FlashLog('🐟 Landed among the ' + hit.school.tier.toLowerCase() + ' school', 'hot'); }
+  }
   G.hotspot.visible = false; s.state = 'CASTING'; _wf3SetPrompt('…');
 }
 function _wf3UpdateCharge(dt) {
   const s = _wf3S; if (!s || !s.G) return; s.power += s.powerDir * dt * s.powerRate;
   if (s.power >= 1) { s.power = 1; s.powerDir = -1; } if (s.power <= 0) { s.power = 0; s.powerDir = 1; }
   const pf = _wf3$('powerFill'); if (pf) pf.style.width = (s.power * 100) + '%';
-  s.G.predictor.position.set(0, 0.36, _wf3LandingZ(s.power));
+  s.G.predictor.position.set(s.aimX || 0, 0.36, _wf3LandingZ(s.power));
 }
 function _wf3UpdateCast(dt) {
   const s = _wf3S; if (!s || !s.G) return; s.castT += dt / s.castDur;
-  if (s.castT >= 1) { s.castT = 1; s.bobAnchor.copy(s.castTo); s.state = 'WAITING'; _wf3ScheduleBite(); _wf3SetPrompt(s.castWasLucky ? 'Lucky waters… <span class="wf3-hot">wait for a bite</span>' : 'Wait for a bite…'); }
+  if (s.castT >= 1) {
+    s.castT = 1; s.bobAnchor.copy(s.castTo); s.state = 'WAITING'; _wf3ScheduleBite();
+    try { _wf3Ripple(s.castTo.x, s.castTo.z, 0.7, 2); _wf3Spray(s.castTo.x, s.castTo.z, 10, 2.5); } catch (e) {}
+    _wf3SetPrompt(s.castWasLucky ? 'Lucky waters… <span class="wf3-hot">wait for a bite</span>' : 'Wait for a bite…');
+  }
   const p = s.castT; s.G.bobber.position.lerpVectors(s.castFrom, s.castTo, p); s.G.bobber.position.y += s.arcH * 4 * p * (1 - p);
 }
-
 // ── Bite / hook ─────────────────────────────────────────────────────────────
-function _wf3ScheduleBite() { _wf3S.biteTimer = 1.8 + Math.random() * 3.2; }
+function _wf3ScheduleBite() { _wf3S.biteTimer = (1.8 + Math.random() * 3.2) * _wf3Weather().bite * (_wf3S.castSchool ? 0.75 : 1); }
 function _wf3UpdateWaiting(dt, t) {
   const s = _wf3S; if (!s || !s.G) return; s.G.bobber.position.y = _wf3WaveHeight(s.bobAnchor.x, s.bobAnchor.z, t, s.waveAmp) + 0.1;
-  s.biteTimer -= dt; if (s.biteTimer <= 0) { s.state = 'BITE'; s.hookTimer = 1.15; s.G.biteMark.visible = true; s.G.biteMark.position.set(s.bobAnchor.x, 2.2, s.bobAnchor.z); _wf3SetPrompt('<b>Bite!</b> Click to set the hook!'); }
+  s.biteTimer -= dt; if (s.biteTimer <= 0) { s.state = 'BITE'; s.hookTimer = 1.15 * (_wf3DeckFx().hook || 1); s.G.biteMark.visible = true; s.G.biteMark.position.set(s.bobAnchor.x, 2.2, s.bobAnchor.z); try { _wf3Ripple(s.bobAnchor.x, s.bobAnchor.z, 0.5, 1); } catch (e) {} _wf3SetPrompt('<b>Bite!</b> Click to set the hook!'); }
 }
 function _wf3UpdateBite(dt, t) {
   const s = _wf3S; if (!s || !s.G) return; s.G.bobber.position.y = _wf3WaveHeight(s.bobAnchor.x, s.bobAnchor.z, t, s.waveAmp) - 0.7 + Math.sin(t * 40) * 0.18;
   s.G.biteMark.position.y = 2.2 + Math.sin(t * 12) * 0.15; s.hookTimer -= dt;
-  if (s.hookTimer <= 0) { s.G.biteMark.visible = false; _wf3FlashLog('It got away… −' + WF3_XP_LOSS_GETAWAY + ' XP', 'enc'); _wf3LoseXP(WF3_XP_LOSS_GETAWAY); _wf3ResetToIdle(); }
+  if (s.hookTimer <= 0) { s.G.biteMark.visible = false; const loss = Math.round(WF3_XP_LOSS_GETAWAY * (_wf3DeckFx().xpLoss || 1)); _wf3FlashLog('It got away… −' + loss + ' XP', 'enc'); _wf3LoseXP(loss); _wf3ResetToIdle(); }
 }
 function _wf3AttemptHook() { const s = _wf3S; if (!s || !s.G) return; s.G.biteMark.visible = false; s.pending = _wf3RollCatch(); _wf3StartReel(); }
-function _wf3TotalLuck() { const b = _wf3Bait(); return _wf3Pole().luck + ((b && b.luck) || 0) + _wf3S.castLuckBonus; }
+function _wf3TotalLuck() { const b = _wf3Bait(); return _wf3Pole().luck + ((b && b.luck) || 0) + _wf3S.castLuckBonus + _wf3Weather().luck + (_wf3DeckFx().luck || 0); }
 function _wf3WeightedPickLuck(list, luck) {
-  const w = list.map(i => { let m = 1; if (i.rarity === 'Uncommon') m = 1 + luck; else if (i.rarity === 'Rare') m = 1 + luck * 2; else if (i.rarity === 'Legendary') m = 1 + luck * 3.2; return { i, w: i.weight * m }; });
+  // 🌙 Time of day and the school you cast into bend the table (fishing expansion):
+  // nocturnal species barely bite by day and swarm at night; a school of a given
+  // tier triples that tier's weight.
+  const night = _wf3IsNight(); const sch = _wf3S && _wf3S.castSchool;
+  const w = list.map(i => {
+    let m = 1; if (i.rarity === 'Uncommon') m = 1 + luck; else if (i.rarity === 'Rare') m = 1 + luck * 2; else if (i.rarity === 'Legendary') m = 1 + luck * 3.2;
+    if (i.time === 'night') m *= night ? 2.2 : 0.25; else if (i.time === 'day') m *= night ? 0.3 : 1.3;
+    if (sch && i.rarity === sch.tier) m *= 3;
+    return { i, w: i.weight * m };
+  });
   const total = w.reduce((s, o) => s + o.w, 0); let r = Math.random() * total;
   for (const o of w) { if ((r -= o.w) <= 0) return o.i; } return list[list.length - 1];
 }
 function _wf3RollCatch() {
-  const s = _wf3S, b = _wf3Biome(), bait = _wf3Bait();
-  const encChance = b.encounterChance + ((bait && bait.encounter) || 0) + s.castEncBonus;
+  const s = _wf3S, b = _wf3Biome(), bait = _wf3Bait(), fx = _wf3DeckFx(), w = _wf3Weather();
+  const encChance = Math.max(0, b.encounterChance + ((bait && bait.encounter) || 0) + s.castEncBonus + w.enc + (fx.enc || 0));
   if (Math.random() < encChance) { const e = b.encounters[Math.floor(Math.random() * b.encounters.length)]; return { type: 'encounter', rarity: e.rarity, enemyId: e.enemyId, name: e.name }; }
   // 🛢 Sometimes you snag a drifting oil barrel instead of a fish → ⛽ fuel.
-  if (Math.random() < WF3_BARREL_CHANCE) { return { type: 'barrel', rarity: WF3_OIL_BARREL.rarity, item: { id: WF3_OIL_BARREL.id, name: WF3_OIL_BARREL.name, rarity: WF3_OIL_BARREL.rarity }, amount: _wfRandInt(1, 3) }; }
+  if (Math.random() < WF3_BARREL_CHANCE * (fx.barrel || 1)) { return { type: 'barrel', rarity: WF3_OIL_BARREL.rarity, item: { id: WF3_OIL_BARREL.id, name: WF3_OIL_BARREL.name, rarity: WF3_OIL_BARREL.rarity }, amount: _wfRandInt(1, 3) }; }
   const f = _wf3WeightedPickLuck(b.loot, _wf3TotalLuck());
-  return { type: 'food', rarity: f.rarity, item: { id: f.id, name: f.name, rarity: f.rarity }, amount: f.food + ((bait && bait.foodBonus) || 0) };
+  // 🐟 A fish is a ledger resource now: weight → units of `res` (fishing expansion).
+  const kg = _wf3RollWeight(f); const units = _wf3UnitsFor(f, kg);
+  const seaweed = (Math.random() < WF3_SEAWEED_CHANCE) ? _wfRandInt(1, 3) * (_wf3OwnsGear('kelpknife') ? 2 : 1) : 0;
+  return { type: 'fish', rarity: f.rarity, item: { id: f.id, name: f.name, rarity: f.rarity }, res: f.res || 'freshFish', units, kg, seaweed, extra: f.extra || null, food: ((bait && bait.foodBonus) || 0) };
 }
-
 // ── Reel mini-game ──────────────────────────────────────────────────────────
 function _wf3StartReel() {
   const s = _wf3S; if (!s) return; s.state = 'REELING'; s.progress = 0; s.tension = 0; s.surgeTimer = 0;
-  const f = WF3_FIGHT[s.pending.rarity] || WF3_FIGHT.Common; s.fightStr = f.str; s.fightSurge = f.surge;
-  const fl = _wf3$('fightLvl'); if (fl) fl.innerHTML = 'Fight: <span style="color:' + WF3_RARITY_COLOR[s.pending.rarity] + '">' + f.dots + '</span> ' + s.pending.rarity;
+  const f = WF3_FIGHT[s.pending.rarity] || WF3_FIGHT.Common; const fx = _wf3DeckFx(), w = _wf3Weather();
+  // A heavy specimen fights harder; storms surge; outriggers and a hunter calm it.
+  const kgK = (s.pending.type === 'fish' && s.pending.kg) ? (0.85 + 0.3 * Math.min(1, s.pending.kg / 20)) : 1;
+  s.fightStr = f.str * kgK; s.fightSurge = f.surge * w.surge * (fx.surge || 1) * (w.id === 'storm' && _wf3OwnsGear('outrigger') ? 0.75 : 1);
+  const fl = _wf3$('fightLvl'); if (fl) fl.innerHTML = 'Fight: <span style="color:' + WF3_RARITY_COLOR[s.pending.rarity] + '">' + f.dots + '</span> ' + s.pending.rarity + (s.pending.kg ? ' · ~' + s.pending.kg.toFixed(1) + ' kg' : '');
   const reel = _wf3$('reel'); if (reel) reel.style.display = 'block'; _wf3SetPrompt('<b>Reel it in!</b>'); _wf3DrawReel();
 }
 function _wf3UpdateReel(dt, t) {
-  const s = _wf3S; if (!s || !s.G) return; const cap = _wf3Pole().tensionCap, rate = _wf3Pole().reelRate;
+  const s = _wf3S; if (!s || !s.G) return; const cap = _wf3TensionCap(), rate = _wf3Pole().reelRate * (_wf3DeckFx().reel || 1);
   s.tension += s.fightStr * dt; s.surgeTimer -= dt;
-  if (s.surgeTimer <= 0 && Math.random() < 0.9 * dt) { s.tension += s.fightSurge; s.surgeTimer = 0.6; }
+  if (s.surgeTimer <= 0 && Math.random() < 0.9 * dt) { s.tension += s.fightSurge; s.surgeTimer = 0.6; try { _wf3Ripple(s.G.bobber.position.x, s.G.bobber.position.z, 0.4, 1); } catch (e) {} }
   if (s.holding) { s.progress += rate * dt; s.tension += 34 * dt; } else { s.progress -= 6 * dt; s.tension -= 46 * dt; }
   s.progress = _wf3Clamp(s.progress, 0, 100); s.tension = _wf3Clamp(s.tension, 0, cap);
   const p = s.progress / 100; s.G.bobber.position.lerpVectors(s.castTo, s.G.rodTip, p * 0.4); s.G.bobber.position.y = _wf3WaveHeight(s.G.bobber.position.x, s.G.bobber.position.z, t, s.waveAmp) - 0.5;
   _wf3DrawReel(cap);
-  if (s.tension >= cap) { const reel = _wf3$('reel'); if (reel) reel.style.display = 'none'; _wf3FlashLog('The line snapped! −' + WF3_XP_LOSS_SNAP + ' XP', 'enc'); _wf3LoseXP(WF3_XP_LOSS_SNAP); _wf3ResetToIdle(); }
+  if (s.tension >= cap) { const reel = _wf3$('reel'); if (reel) reel.style.display = 'none'; const loss = Math.round(WF3_XP_LOSS_SNAP * (_wf3DeckFx().xpLoss || 1)); _wf3FlashLog('The line snapped! −' + loss + ' XP', 'enc'); _wf3LoseXP(loss); _wf3ResetToIdle(); }
   if (s.progress >= 100) { const reel = _wf3$('reel'); if (reel) reel.style.display = 'none'; _wf3ResolveCatch(); }
 }
 function _wf3DrawReel(cap) {
@@ -193815,20 +194195,37 @@ function _wf3DrawReel(cap) {
 function _wf3ResolveCatch() { const s = _wf3S; s.state = 'RESOLVED'; _wf3OnCatch(s.pending); }
 function _wf3OnCatch(result) {
   const cin = WF3_RARITY_CINDER[result.rarity] || 4, xp = WF3_XP_GAIN[result.rarity] || 10;
-  const biomeName = _wf3Biome().name;
-  if (result.type === 'food') {
-    _wf3S.foodTrip = (_wf3S.foodTrip | 0) + result.amount; _wf3AddFood(result.amount); _wf3AddCinder(cin); _wf3GainXP(xp);
-    _wf3RecordCatch(result.item.id, result.item.name, result.rarity, biomeName);
-    _wf3FlashLog('+' + result.amount + ' food · ' + result.item.name, result.rarity !== 'Common' ? 'rare' : '');
-    try { _wf3SpawnFish(result.rarity, result.item.id); } catch (e) {}
-    _wf3ShowFoodCard(result, cin, xp);
+  const biomeName = _wf3Biome().name; const fx = _wf3DeckFx();
+  if (result.type === 'fish' || result.type === 'food') {
+    // 🐟 THE CATCH IS A RESOURCE (fishing expansion). Units of `res` go to the
+    // ledger through addRes (cap-enforced: a full stash spoils the fish — the
+    // player sees it on the card rather than losing units silently), the hold
+    // counts them against the boat, and the supply hook moves the exchange.
+    const res = result.res || 'freshFish'; let units = result.units || result.amount || 1;
+    if ((fx.drop || 0) > 0 && Math.random() < fx.drop) { _wf3FlashLog('😬 ' + ((_wf3Deckhand() || {}).name || 'Deckhand') + ' fumbled it over the rail!', 'enc'); _wf3GainXP(Math.round(xp * 0.3)); _wf3ShowFumbleCard(result); _wf3RenderHud(); return; }
+    const room = Math.max(0, _wf3HoldCap() - _wf3HoldUsed()); if (units > room) units = room;
+    let banked = 0, spoiled = 0;
+    try { const free = Math.max(0, getResourceCap() - getResourceUnits()); banked = Math.min(units, free); spoiled = units - banked; if (banked > 0) addRes(res, banked); } catch (e) { banked = 0; spoiled = units; }
+    s_haul(res, banked);
+    let kelp = 0; if (result.seaweed && banked > 0) { try { const free2 = Math.max(0, getResourceCap() - getResourceUnits()); kelp = Math.min(result.seaweed, free2, Math.max(0, _wf3HoldCap() - _wf3HoldUsed())); if (kelp > 0) { addRes('seaweed', kelp); s_haul('seaweed', kelp); } } catch (e) { kelp = 0; } }
+    if (result.extra) { for (const k in result.extra) { try { addRes(k, result.extra[k] | 0); } catch (e) {} } }
+    if (result.food > 0) _wf3AddFood(result.food);
+    const produced = {}; if (banked > 0) produced[res] = banked; if (kelp > 0) produced.seaweed = kelp;
+    try { if (typeof cxProduce === 'function' && Object.keys(produced).length) cxProduce(produced, 'fishing'); } catch (e) {}
+    _wf3AddCinder(cin); _wf3GainXP(xp);
+    _wf3RecordCatch(result.item.id, result.item.name, result.rarity, biomeName, { kg: result.kg, res, units: banked });
+    const c = _wf3Deckhand(); if (c) { c.exp = (c.exp | 0) + 1; }
+    const m = _wf3ResMeta(res);
+    _wf3FlashLog('+' + banked + ' ' + m.icon + ' ' + result.item.name + (result.kg ? ' · ' + result.kg.toFixed(1) + ' kg' : '') + (spoiled ? ' · ' + spoiled + ' spoiled' : ''), result.rarity !== 'Common' ? 'rare' : '');
+    try { _wf3SpawnFish(result.rarity, result.item.id); _wf3Ripple(_wf3S.G.bobber.position.x, _wf3S.G.bobber.position.z, 1.2, 3); _wf3Spray(_wf3S.G.bobber.position.x, _wf3S.G.bobber.position.z, 24, 5); _wf3S.G.shake = 0.18; } catch (e) {}
+    _wf3ShowFishCard(result, { res, banked, spoiled, kelp, cin, xp });
   } else if (result.type === 'barrel') {
     // 🛢 Oil barrel → fuel resource (+ a little XP). Floods the local fuel market a touch.
     if (!Profile.salvage || typeof Profile.salvage !== 'object') Profile.salvage = {};
     Profile.salvage.fuel = (Profile.salvage.fuel | 0) + result.amount;
     _wf3S.fuelTrip = (_wf3S.fuelTrip | 0) + result.amount;
     _wf3GainXP(Math.round(xp * 0.5));
-    _wf3RecordCatch(result.item.id, result.item.name, result.rarity, biomeName);
+    _wf3RecordCatch(result.item.id, result.item.name, result.rarity, biomeName, { res: 'fuel', units: result.amount });
     // ⚠ bumpMarketPriceDown does not exist — only bumpMarketPriceUp does — so
     // hauling oil out of the water never moved the fuel price at all. Supply
     // is expressed through cxProduce, the single producer hook every other
@@ -193836,20 +194233,33 @@ function _wf3OnCatch(result) {
     // is what actually softens the price.
     try { if (typeof cxProduce === 'function' && result.amount > 0) cxProduce({ fuel: result.amount }, 'fishing'); } catch (e) {}
     _wf3FlashLog('🛢 Oil Barrel · +' + result.amount + ' ⛽ fuel', 'buy');
-    try { _wf3SpawnFish(result.rarity, result.item.id); } catch (e) {}
+    try { _wf3SpawnFish(result.rarity, result.item.id); _wf3Ripple(_wf3S.G.bobber.position.x, _wf3S.G.bobber.position.z, 1.0, 2); } catch (e) {}
     _wf3ShowBarrelCard(result);
   } else {
-    _wf3S.pendingBounty = cin * 2; _wf3S.pendingEncRarity = result.rarity;
+    _wf3S.pendingBounty = Math.round(cin * 2 * (fx.bounty || 1)); _wf3S.pendingEncRarity = result.rarity;
     _wf3FlashLog('Encounter! ' + result.name, 'enc');
+    try { _wf3S.G.shake = 0.35; _wf3Ripple(_wf3S.G.bobber.position.x, _wf3S.G.bobber.position.z, 2.0, 3); } catch (e) {}
     _wf3ShowEncounterCard(result);
   }
   _wf3RenderHud(); _wf3RefreshFuelBar(); _wf3Save();
+  function s_haul(r, n) { if (!_wf3S.haul) _wf3S.haul = {}; if (n > 0) _wf3S.haul[r] = (_wf3S.haul[r] | 0) + n; }
 }
-function _wf3ShowFoodCard(r, cin, xp) {
-  const col = WF3_RARITY_COLOR[r.rarity]; const card = _wf3$('card'); if (!card) return;
-  card.innerHTML = '<div class="wf3-icon">🐟</div><div class="wf3-rarity" style="color:' + col + '">' + r.rarity + '</div>' +
-    '<h2>' + escapeHtml(r.item.name) + '</h2><p>Hauled onto the ash-strewn shore — added to camp food.</p>' +
-    '<div class="wf3-reward">+' + r.amount + ' Food &nbsp;·&nbsp; <span class="wf3-cin">+' + cin + ' <span class="cinder-icon"></span></span> &nbsp;·&nbsp; <span class="wf3-xp">+' + xp + ' XP</span></div>' +
+function _wf3ShowFishCard(r, o) {
+  const col = WF3_RARITY_COLOR[r.rarity]; const card = _wf3$('card'); if (!card) return; const m = _wf3ResMeta(o.res); const px = _wf3ResPrice(o.res);
+  const best = (_wf3Live().catchLog[r.item.id] || {}); const isRecord = r.kg && best.bestKg && Math.abs(best.bestKg - r.kg) < 0.001 && (best.count | 0) > 1;
+  card.innerHTML = '<div class="wf3-icon">' + m.icon + '</div><div class="wf3-rarity" style="color:' + col + '">' + r.rarity + (isRecord ? ' · 🏆 NEW RECORD' : '') + '</div>' +
+    '<h2>' + escapeHtml(r.item.name) + '</h2><p>' + (r.kg ? '<b style="color:#f3ead2">' + r.kg.toFixed(1) + ' kg</b> · ' : '') + 'iced in the hold as <b style="color:' + (m.color || '#cfd6e4') + '">' + escapeHtml(m.name) + '</b>' + (px ? ' · Exchange ~' + px + ' <span class="cinder-icon"></span>/unit' : '') + '</p>' +
+    '<div class="wf3-reward">+' + o.banked + ' ' + m.icon + ' ' + escapeHtml(m.name) + (o.kelp ? ' &nbsp;·&nbsp; +' + o.kelp + ' 🌿 Seaweed' : '') + ' &nbsp;·&nbsp; <span class="wf3-cin">+' + o.cin + ' <span class="cinder-icon"></span></span> &nbsp;·&nbsp; <span class="wf3-xp">+' + o.xp + ' XP</span></div>' +
+    (o.spoiled ? '<div style="margin-top:6px;font-size:12px;color:#e0623d">⚠ ' + o.spoiled + ' unit' + (o.spoiled > 1 ? 's' : '') + ' spoiled — stash full. Sell, bank or build a Warehouse.</div>' : '') +
+    (r.extra ? '<div style="margin-top:6px;font-size:12px;color:#86e08a">+ ' + Object.keys(r.extra).map(k => (r.extra[k]) + ' ' + escapeHtml(_wf3ResMeta(k).name)).join(', ') + '</div>' : '') +
+    '<button class="wf3-btn" id="wf3-contBtn">' + (_wf3HoldFull() ? 'Hold Full — Dock' : 'Cast Again') + '</button>';
+  const ov = _wf3$('overlayCard'); if (ov) ov.style.display = 'flex';
+  const cb = _wf3$('contBtn'); if (cb) cb.onclick = () => { if (ov) ov.style.display = 'none'; if (_wf3HoldFull()) _wf3Close(); else _wf3ResetToIdle(); };
+}
+function _wf3ShowFumbleCard(r) {
+  const card = _wf3$('card'); if (!card) return;
+  card.innerHTML = '<div class="wf3-icon">😬</div><div class="wf3-rarity" style="color:#e0623d">Fumbled</div>' +
+    '<h2>' + escapeHtml(r.item.name) + '</h2><p>It was over the rail — then it wasn\'t. Your deckhand swears it was slippery.</p>' +
     '<button class="wf3-btn" id="wf3-contBtn">Cast Again</button>';
   const ov = _wf3$('overlayCard'); if (ov) ov.style.display = 'flex';
   const cb = _wf3$('contBtn'); if (cb) cb.onclick = () => { if (ov) ov.style.display = 'none'; _wf3ResetToIdle(); };
@@ -193884,7 +194294,7 @@ function _wf3PickEncounterDeck() {
   return decks.length ? decks[Math.floor(Math.random() * decks.length)] : null;
 }
 function _wf3GoToBattle(r) {
-  const bounty = ((WF3_RARITY_CINDER[r.rarity] || 4) * 2);
+  const bounty = Math.round((WF3_RARITY_CINDER[r.rarity] || 4) * 2 * (_wf3DeckFx().bounty || 1));
   const deck = _wf3PickEncounterDeck();
   const enemyLevel = ({ Common: 8, Uncommon: 14, Rare: 22, Legendary: 32 })[r.rarity] || 12;
   App._encounterChallenge = {
@@ -193920,17 +194330,24 @@ function _wf3AwardFishingWin(fe) {
 }
 function _wf3ResetToIdle() {
   const s = _wf3S; if (!s || !s.G) return; s.state = 'IDLE'; s.G.biteMark.visible = false; s.pending = null;
-  s.castLuckBonus = 0; s.castEncBonus = 0; s.castWasLucky = false; s.G.predictor.visible = false;
+  s.castLuckBonus = 0; s.castEncBonus = 0; s.castWasLucky = false; s.castSchool = null; s.G.predictor.visible = false;
   s.G.bobber.position.copy(s.G.rodTip); _wf3PlaceHotspot();
-  if (s.castsLeft <= 0) _wf3SetPrompt('Tank\'s dry — <b>Refuel</b> or head back to <span class="wf3-hot">dock</span>.');
-  else _wf3SetPrompt('Hold to <b>charge a cast</b> · land in the <span class="wf3-hot">ring</span> for luck');
+  if (_wf3HoldFull()) _wf3SetPrompt('🧊 <b>Hold full</b> (' + _wf3HoldCap() + ') — <span class="wf3-hot">dock</span> to land the haul.');
+  else if (s.castsLeft <= 0) _wf3SetPrompt('Tank\'s dry — <b>Refuel</b> or head back to <span class="wf3-hot">dock</span>.');
+  else _wf3SetPrompt('Hold to <b>charge</b> · drag to <b>aim</b> · land in the <span class="wf3-hot">ring</span>');
 }
-
 // ── Shop / travel ───────────────────────────────────────────────────────────
 function _wf3OpenShop() { _wf3CancelCharge(); const sh = _wf3$('shop'); if (sh) sh.style.display = 'flex'; _wf3RenderHud(); _wf3RenderShop(); }
 function _wf3RenderShop() {
   const list = _wf3$('shopList'); if (!list) return; const L = _wf3Live(), cin = _wf3GetCinder();
-  if (_wf3S.shopTab === 'bait') {
+  if (_wf3S.shopTab === 'gear') {
+    list.innerHTML = WF3_GEAR.map(g => {
+      const owned = _wf3OwnsGear(g.id);
+      const btn = owned ? '<button class="wf3-ibtn owned">Fitted</button>' : '<button class="wf3-ibtn" data-wf3-buy-gear="' + g.id + '" ' + (cin < g.cost ? 'disabled' : '') + '>Fit</button>';
+      const price = owned ? '<div class="wf3-price have">Owned</div>' : '<div class="wf3-price">' + g.cost + ' <span class="cinder-icon"></span></div>';
+      return '<div class="wf3-item ' + (owned ? 'eq' : '') + '"><div class="wf3-emoji">' + g.emoji + '</div><div class="wf3-info"><h3>' + g.name + '</h3><p>' + g.desc + '</p></div><div class="wf3-act">' + price + btn + '</div></div>';
+    }).join('');
+  } else if (_wf3S.shopTab === 'bait') {
     list.innerHTML = WF3_BAITS.map(b => {
       const have = L.baitStock[b.id] || 0, eq = L.equippedBait === b.id;
       const eqBtn = have > 0 ? (eq ? '<button class="wf3-ibtn owned">Active</button>' : '<button class="wf3-ibtn equip" data-wf3-equip-bait="' + b.id + '">Equip</button>') : '';
@@ -193949,7 +194366,9 @@ function _wf3RenderShop() {
   list.querySelectorAll('[data-wf3-equip-pole]').forEach(el => el.onclick = () => { _wf3Live().equippedPole = el.dataset.wf3EquipPole; _wf3Save(); _wf3RenderHud(); _wf3RenderShop(); });
   list.querySelectorAll('[data-wf3-buy-bait]').forEach(el => el.onclick = () => _wf3BuyBait(el.dataset.wf3BuyBait));
   list.querySelectorAll('[data-wf3-equip-bait]').forEach(el => el.onclick = () => { _wf3Live().equippedBait = el.dataset.wf3EquipBait; _wf3Save(); _wf3RenderHud(); _wf3RenderShop(); });
+  list.querySelectorAll('[data-wf3-buy-gear]').forEach(el => el.onclick = () => _wf3BuyGear(el.dataset.wf3BuyGear));
 }
+function _wf3BuyGear(id) { const g = WF3_GEAR.find(x => x.id === id), L = _wf3Live(); if (!g || _wf3OwnsGear(id) || !_wf3SpendCinder(g.cost)) return; L.gear.push(id); _wf3FlashLog('Fitted ' + g.name, 'buy'); _wf3Save(); _wf3RenderHud(); _wf3RenderShop(); }
 function _wf3BuyPole(id) { const p = WF3_POLES.find(x => x.id === id), L = _wf3Live(); if (!p || _wf3OwnsPole(id) || !_wf3SpendCinder(p.cost)) return; L.poles.push(id); L.equippedPole = id; _wf3FlashLog('Bought ' + p.name, 'buy'); _wf3Save(); _wf3RenderHud(); _wf3RenderShop(); }
 function _wf3BuyBait(id) { const b = WF3_BAITS.find(x => x.id === id), L = _wf3Live(); if (!b || !_wf3SpendCinder(b.cost)) return; L.baitStock[id] = (L.baitStock[id] || 0) + b.pack; if (!L.equippedBait) L.equippedBait = id; _wf3FlashLog('Bought ' + b.name + ' ×' + b.pack, 'buy'); _wf3Save(); _wf3RenderHud(); _wf3RenderShop(); }
 function _wf3OpenBoat() { _wf3CancelCharge(); const bt = _wf3$('boat'); if (bt) bt.style.display = 'flex'; _wf3RenderBoat(); }
@@ -193965,7 +194384,7 @@ function _wf3RenderBoat() {
 }
 function _wf3SetBiome(id) {
   const b = WF3_BIOMES.find(x => x.id === id); if (!b || !_wf3BiomeUnlocked(id)) return; const L = _wf3Live(); L.currentBiome = id; _wf3Save();
-  const s = _wf3S; if (s && s.G) { s.waveAmp = (WF3_SWELL[id] || WF3_SWELL.shallows).wave; s.G.scene.background.setHex(b.fog); s.G.scene.fog.color.setHex(b.fog); s.G.water.material.color.setHex(b.water); }
+  const s = _wf3S; if (s && s.G) { s.waveAmp = (WF3_SWELL[id] || WF3_SWELL.shallows).wave * _wf3Weather().sway; s.G.water.material.color.setHex(b.water); try { _wf3BuildSchools(s.G); } catch (e) {} }
   _wf3RenderHud(); _wf3RenderBoat(); _wf3FlashLog('Sailed to ' + b.name); const bt = _wf3$('boat'); if (bt) bt.style.display = 'none'; _wf3ResetToIdle();
 }
 
@@ -193975,23 +194394,54 @@ function _wf3IsUI(t) { return t && t.closest && t.closest('.wf3-navbtn,.wf3-moda
 function _wf3CancelCharge() { const s = _wf3S; if (!s) return; s.holding = false; if (s.state === 'CHARGING') { s.state = 'IDLE'; const pw = _wf3$('power'); if (pw) pw.style.display = 'none'; if (s.G) s.G.predictor.visible = false; _wf3ResetToIdle(); } }
 function _wf3Press(e) { const s = _wf3S; if (!s) return; if (_wf3ModalOpen() || _wf3IsUI(e.target)) return; s.holding = true; if (s.state === 'IDLE') _wf3BeginCharge(); else if (s.state === 'BITE') _wf3AttemptHook(); }
 function _wf3Release(e) { const s = _wf3S; if (!s) return; s.holding = false; if (_wf3ModalOpen() || _wf3IsUI(e.target)) { _wf3CancelCharge(); return; } if (s.state === 'CHARGING') _wf3ReleaseCast(); }
+// 🎯 Aim: pointer x across the screen maps to a landing lane of ±8 units, so a
+// drifting school off to port can actually be reached. Tracked always, applied
+// only while charging (the predictor ring shows where it will land).
+function _wf3Move(e) { const s = _wf3S; if (!s) return; const w = innerWidth || 1; s.aimX = _wf3Clamp(((e.clientX / w) - 0.5) * 18, -8, 8); }
 
 // ── Main loop ───────────────────────────────────────────────────────────────
 function _wf3Animate() {
   const s = _wf3S; if (!s || !s.G) return; const G = s.G, T = window.THREE; G.raf = requestAnimationFrame(_wf3Animate);
   if (G.fit) G.fit();
   const dt = Math.min(G.clock.getDelta(), 0.05), t = G.clock.elapsedTime;
+  // 🕐 Trip clock + weather drift (fishing expansion).
+  s.hour = ((s.hour || 0) + dt / WF3_HOUR_SECONDS) % 24;
+  s.weatherT -= dt; if (s.weatherT <= 0) _wf3SetWeather(_wf3RollWeather(s.weather));
+  const w = _wf3Weather();
+  if (w.lightning > 0 && Math.random() < dt * w.lightning / 60) _wf3Lightning(G);
+  // 🌗 Sky
+  try {
+    const sk = _wf3SkyAt(s.hour); const bm = _wf3Biome();
+    const skyC = new T.Color(sk.sky).lerp(new T.Color(bm.fog), 0.35).lerp(new T.Color(0x2a3038), w.id === 'storm' ? 0.55 : w.id === 'rain' ? 0.3 : 0);
+    G.skyDome.material.color.copy(skyC); G.scene.fog.color.copy(skyC); if (G.scene.background) G.scene.background.copy(skyC);
+    const ang = ((s.hour - 6) / 12) * Math.PI; // 06:00 rises east, 18:00 sets west
+    G.sunDisc.position.set(Math.cos(ang) * 120, Math.sin(ang) * 90 + 4, -110); G.sunDisc.lookAt(G.camera.position); G.sunDisc.visible = Math.sin(ang) > -0.05;
+    G.moonDisc.position.set(-Math.cos(ang) * 120, -Math.sin(ang) * 90 + 4, -110); G.moonDisc.lookAt(G.camera.position); G.moonDisc.visible = -Math.sin(ang) > -0.05;
+    G.sunDisc.material.opacity = 0.95 * (w.id === 'clear' ? 1 : w.id === 'fog' ? 0.35 : 0.2);
+    G.stars.material.opacity = sk.stars * (w.id === 'clear' ? 1 : w.id === 'fog' ? 0.3 : 0.1);
+    const flash = (s.flash > 0) ? 2.4 : 0; if (s.flash > 0) s.flash -= dt;
+    G.sun.color.setHex(sk.sun); G.sun.intensity = sk.sunI * (w.id === 'storm' ? 0.4 : w.id === 'rain' ? 0.6 : 1) + flash;
+    G.sun.position.set(Math.cos(ang) * 18, Math.max(3, Math.sin(ang) * 18), -6);
+    if (G.ambient) G.ambient.intensity = 0.9 * sk.amb + flash * 0.5;
+  } catch (e) {}
+  // 🌧 Rain
+  if (G.rain && G.rain.visible) { const rp = G.rainPos, n = rp.length / 3, fall = 22 * dt; for (let i = 0; i < n; i++) { if (i / n > w.rain) { rp[i * 3 + 1] = -5; continue; } rp[i * 3 + 1] -= fall; rp[i * 3] += w.id === 'storm' ? 6 * dt : 0; if (rp[i * 3 + 1] < -1) { rp[i * 3 + 1] = 28 + Math.random() * 4; rp[i * 3] = (Math.random() - 0.5) * 60; rp[i * 3 + 2] = -30 + Math.random() * 60; } } G.rain.geometry.attributes.position.needsUpdate = true; }
   // water
   const pos = G.water.geometry.attributes.position.array;
   for (let i = 0; i < pos.length; i += 3) { const x = G.waterBase[i], z = G.waterBase[i + 2]; pos[i + 1] = (Math.sin(x * 0.25 + t * 1.4) * 0.45 + Math.cos(z * 0.3 + t * 1.1) * 0.4) * s.waveAmp; }
   G.water.geometry.attributes.position.needsUpdate = true;
-  // boat sway
-  const sw = WF3_SWELL[_wf3Live().currentBiome] || WF3_SWELL.shallows;
-  G.shipModel.position.y = WF3_SHIP_BASE_Y + Math.sin(t * 0.8) * sw.bob;
-  G.shipModel.rotation.z = Math.sin(t * 0.6) * sw.roll; G.shipModel.rotation.x = Math.sin(t * 0.5 + 1.0) * sw.pitch;
+  // boat sway (weather scales it)
+  const sw = WF3_SWELL[_wf3Live().currentBiome] || WF3_SWELL.shallows; const ws = w.sway;
+  G.shipModel.position.y = WF3_SHIP_BASE_Y + Math.sin(t * 0.8) * sw.bob * ws;
+  G.shipModel.rotation.z = Math.sin(t * 0.6) * sw.roll * ws; G.shipModel.rotation.x = Math.sin(t * 0.5 + 1.0) * sw.pitch * ws;
   G.shipModel.updateMatrixWorld(true); G.rodTip.copy(G.shipModel.localToWorld(G.rodTipLocal.clone()));
   if (s.state === 'IDLE' || s.state === 'CHARGING') G.bobber.position.copy(G.rodTip);
-  if (G.hotspot.visible) { const sc = s.ringScale * (1 + Math.sin(t * 3) * 0.07); G.hotspot.scale.set(sc, 1, sc); G.hotspot.position.y = 0.4 + Math.sin(t * 2) * 0.08; }
+  // 🐟 schools + the ring that rides one of them
+  try { _wf3UpdateSchools(G, dt, t); } catch (e) {}
+  if (G.hotspot.visible) {
+    if (s.targetSchool) { s.hotX = s.targetSchool.group.position.x; s.hotZ = s.targetSchool.group.position.z; G.hotspot.position.x = s.hotX; G.hotspot.position.z = s.hotZ; }
+    const sc = s.ringScale * (1 + Math.sin(t * 3) * 0.07); G.hotspot.scale.set(sc, 1, sc); G.hotspot.position.y = 0.4 + Math.sin(t * 2) * 0.08;
+  }
   if (s.state === 'CHARGING') _wf3UpdateCharge(dt); else if (s.state === 'CASTING') _wf3UpdateCast(dt);
   else if (s.state === 'WAITING') _wf3UpdateWaiting(dt, t); else if (s.state === 'BITE') _wf3UpdateBite(dt, t); else if (s.state === 'REELING') _wf3UpdateReel(dt, t);
   // fish breach FX
@@ -194002,10 +194452,20 @@ function _wf3Animate() {
       fx.obj.position.x = fx.baseX; fx.obj.position.z = fx.baseZ;
     }
   }
+  try { _wf3UpdateFx2(G, dt, t); } catch (e) {}
+  // 🎥 Camera: eases toward the bobber while a line is out, shakes on a hit.
+  try {
+    const out = (s.state === 'WAITING' || s.state === 'BITE' || s.state === 'REELING' || s.state === 'CASTING');
+    const want = out ? G.camLookBase.clone().lerp(G.bobber.position, 0.45) : G.camLookBase;
+    G.camLook.lerp(want, Math.min(1, dt * 2.2));
+    const zoom = out ? 1.6 : 0; G.camera.position.lerp(G.camBase.clone().add(new T.Vector3(0, -zoom * 0.5, -zoom)), Math.min(1, dt * 1.6));
+    if (G.shake > 0) { G.shake = Math.max(0, G.shake - dt); G.camera.position.x += (Math.random() - 0.5) * G.shake * 0.6; G.camera.position.y += (Math.random() - 0.5) * G.shake * 0.4; }
+    G.camera.lookAt(G.camLook);
+  } catch (e) {}
   G.lineMesh.geometry.setFromPoints([G.rodTip, G.bobber.position.clone()]);
+  if (((t * 10) | 0) % 2 === 0) { try { _wf3DrawSonar(); } catch (e) {} }
   G.renderer.render(G.scene, G.camera);
 }
-
 // ── Overlay open / close ────────────────────────────────────────────────────
 function _wf3EnsureStyle() {
   if (document.getElementById('wf3-style')) return;
@@ -194099,6 +194559,12 @@ function _wf3EnsureStyle() {
   #wf3-battle h1{font-size:34px;color:#f3ead2;margin-bottom:6px}
   #wf3-battle .wf3-note{max-width:380px;font-size:13px;color:#8a8276;margin:16px auto 0;line-height:1.6;border-top:1px solid rgba(255,255,255,.1);padding-top:14px}
   #wf3-loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#c9a24d;letter-spacing:2px;font-size:13px;z-index:50;background:#0a0d14}
+  #wf3-sonarWrap{left:14px;bottom:40px;pointer-events:none;text-align:center}
+  #wf3-sonar{display:block;width:132px;height:132px;border-radius:50%;border:1px solid rgba(90,208,224,.45);box-shadow:0 0 18px rgba(90,208,224,.15)}
+  #wf3-overlay .wf3-sonar-lbl{font-size:10px;letter-spacing:2px;color:#5ad0e0;margin-top:4px}
+  #wf3-flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:9;transition:opacity .25s ease-out}
+  #wf3-haul span{margin-right:6px;color:#f3ead2}
+  @media (max-width:700px){#wf3-sonarWrap{display:none}#wf3-topleft{max-width:200px}}
   `;
   document.head.appendChild(st);
 }
@@ -194110,7 +194576,11 @@ function _wf3OverlayHtml() {
       '<div class="wf3-cinder"><span id="wf3-cinder">0</span> <small><span class="cinder-icon"></span> CINDER</small></div>' +
       '<div class="wf3-stat">🎣 <b id="wf3-poleName">Driftwood Rod</b></div>' +
       '<div class="wf3-stat">🪱 Bait: <b id="wf3-baitName">None</b> <span id="wf3-baitCount"></span></div>' +
-      '<div class="wf3-stat">🐟 Trip Haul: <b id="wf3-food">0</b> food</div>' +
+      '<div class="wf3-stat" id="wf3-weather">🌤 <b>Clear</b></div>' +
+      '<div class="wf3-stat">🚤 <b id="wf3-boatName">—</b></div>' +
+      '<div class="wf3-stat">👤 Deckhand: <span id="wf3-deckhand"></span></div>' +
+      '<div class="wf3-stat">🧊 Hold: <b id="wf3-hold">0 / 0</b></div>' +
+      '<div class="wf3-stat">🐟 Haul: <span id="wf3-haul"></span></div>' +
       '<div class="wf3-stat">⛽ Casts left: <b id="wf3-casts">0</b></div>' +
       '<div class="wf3-stat">🎚️ Fishing Lvl: <b id="wf3-lvl">1</b></div>' +
       '<div class="wf3-xpbar"><div class="wf3-xpfill" id="wf3-xpFill"></div></div>' +
@@ -194129,9 +194599,11 @@ function _wf3OverlayHtml() {
       '<div class="wf3-row"><div class="wf3-name"><span>Line Tension</span><span style="color:#e0623d">DON\'T SNAP</span></div><div class="wf3-track"><div class="wf3-danger"></div><div class="wf3-tension" id="wf3-tensionBar"></div></div></div>' +
       '<div class="wf3-fight" id="wf3-fightLvl"></div><div class="wf3-hint">HOLD to reel · RELEASE to ease tension</div>' +
     '</div>' +
+    '<div class="wf3-hud" id="wf3-sonarWrap"><canvas id="wf3-sonar" width="132" height="132"></canvas><div class="wf3-sonar-lbl">📡 SONAR</div></div>' +
+    '<div id="wf3-flash"></div>' +
     '<div class="wf3-hud wf3-fuelbar" id="wf3-fuel"><span>⛽ Trip tank: <b id="wf3-casts2"></b></span><button class="wf3-refuel" id="wf3-refuelBtn">Refuel ' + WF3_TRIP_FUEL + '⛽</button></div>' +
     '<div id="wf3-overlayCard"><div class="wf3-card" id="wf3-card"></div></div>' +
-    '<div class="wf3-modal" id="wf3-shop"><div class="wf3-sheet"><span class="wf3-close" id="wf3-shopClose">✕</span><h1>Sparta Outfitter</h1><div class="wf3-sub">Spend Cinder on gear. Better poles fight harder fish; bait bends your luck.</div><div class="wf3-wallet-line">Balance: <span id="wf3-shopCinder">0</span> <span class="cinder-icon"></span></div><div class="wf3-tabs"><div class="wf3-tab on" id="wf3-tabPoles">Poles</div><div class="wf3-tab" id="wf3-tabBait">Bait</div></div><div id="wf3-shopList"></div></div></div>' +
+    '<div class="wf3-modal" id="wf3-shop"><div class="wf3-sheet"><span class="wf3-close" id="wf3-shopClose">✕</span><h1>Sparta Outfitter</h1><div class="wf3-sub">Spend Cinder on gear. Better poles fight harder fish; bait bends your luck.</div><div class="wf3-wallet-line">Balance: <span id="wf3-shopCinder">0</span> <span class="cinder-icon"></span></div><div class="wf3-tabs"><div class="wf3-tab on" id="wf3-tabPoles">Poles</div><div class="wf3-tab" id="wf3-tabBait">Bait</div><div class="wf3-tab" id="wf3-tabGear">Gear</div></div><div id="wf3-shopList"></div></div></div>' +
     '<div class="wf3-modal" id="wf3-boat"><div class="wf3-sheet"><span class="wf3-close" id="wf3-boatClose">✕</span><h1>🚤 Set Sail</h1><div class="wf3-sub">Pilot the boat to a new biome. Deeper waters = rarer catches and fiercer fights.</div><div id="wf3-biomeList"></div></div></div>' +
     '<div id="wf3-battle"><div class="wf3-vs">A Wild Encounter</div><h1 id="wf3-battleName"></h1><button class="wf3-btn danger" id="wf3-battleBtn">Defeat it &amp; Return</button><div class="wf3-note">You wrestle the beast back into the deep and claim its bounty.</div></div>';
 }
@@ -194172,7 +194644,12 @@ function _wf3Open() {
     hotR: WF3_RING_BASE, powerRate: 0.9, ringScale: 1,
     waveAmp: (WF3_SWELL[L.currentBiome] || WF3_SWELL.shallows).wave,
     castsLeft: WF3_TRIP_CASTS, foodTrip: 0,
+    // 🐟 fishing expansion — the boat you sailed, the haul by resource, the
+    //    in-game clock (starts at the player's local hour so an evening session
+    //    fishes at dusk), weather, aim lane, and the school the ring rides.
+    boat, haul: {}, hour: (new Date().getHours() + new Date().getMinutes() / 60), weather: 'clear', weatherT: 1, aimX: 0, targetSchool: null, castSchool: null, hotX: 0, flash: 0, stormCasts: 0,
   };
+  _wf3S.weather = _wf3RollWeather('clear'); _wf3S.weatherT = WF3_WEATHER_DRIFT_S * (0.7 + Math.random() * 0.6);
   // wire buttons
   const onClose = () => _wf3Close();
   wrap.querySelector('#wf3-exitBtn').onclick = onClose;
@@ -194181,7 +194658,8 @@ function _wf3Open() {
   wrap.querySelector('#wf3-shopClose').onclick = () => { const e = _wf3$('shop'); if (e) e.style.display = 'none'; };
   wrap.querySelector('#wf3-boatClose').onclick = () => { const e = _wf3$('boat'); if (e) e.style.display = 'none'; };
   wrap.querySelector('#wf3-tabPoles').onclick = () => { _wf3S.shopTab = 'poles'; _wf3$('tabPoles').classList.add('on'); _wf3$('tabBait').classList.remove('on'); _wf3RenderShop(); };
-  wrap.querySelector('#wf3-tabBait').onclick = () => { _wf3S.shopTab = 'bait'; _wf3$('tabBait').classList.add('on'); _wf3$('tabPoles').classList.remove('on'); _wf3RenderShop(); };
+  const _tabs = ['Poles', 'Bait', 'Gear'];
+  _tabs.forEach(tb => { wrap.querySelector('#wf3-tab' + tb).onclick = () => { _wf3S.shopTab = tb.toLowerCase(); _tabs.forEach(o => _wf3$('tab' + o).classList.toggle('on', o === tb)); _wf3RenderShop(); }; });
   wrap.querySelector('#wf3-refuelBtn').onclick = () => {
     if (_wf3Fuel() < WF3_TRIP_FUEL) { showToast('⛽ Not enough fuel to refuel (' + WF3_TRIP_FUEL + ' needed).', 2800); return; }
     Profile.salvage.fuel = Math.max(0, _wf3Fuel() - WF3_TRIP_FUEL);
@@ -194195,6 +194673,7 @@ function _wf3Open() {
   // pointer input (root-scoped → auto-cleans when overlay removed)
   wrap.addEventListener('pointerdown', (e) => { if (e.pointerType === 'mouse' && e.button !== 0) return; _wf3Press(e); });
   wrap.addEventListener('pointerup', (e) => { _wf3Release(e); });
+  wrap.addEventListener('pointermove', (e) => { _wf3Move(e); });
   wrap.addEventListener('contextmenu', (e) => e.preventDefault());
   // boot THREE
   _csLoadThree((ok) => {
@@ -194202,7 +194681,8 @@ function _wf3Open() {
     const T = window.THREE; _wf3S.castFrom = new T.Vector3(); _wf3S.castTo = new T.Vector3(); _wf3S.bobAnchor = new T.Vector3();
     const mount = _wf3$('mount'); _wf3S.G = _wf3InitScene(mount);
     if (!_wf3S.G) { const l = _wf3$('loading'); if (l) l.textContent = '3D engine offline.'; return; }
-    _wf3ApplyLevel(); _wf3RenderHud(); _wf3RefreshFuelBar(); _wf3ResetToIdle();
+    _wf3ApplyLevel(); _wf3SetWeather(_wf3S.weather, true); _wf3RenderHud(); _wf3RefreshFuelBar(); _wf3ResetToIdle();
+    const w0 = _wf3Weather(); _wf3FlashLog(w0.icon + ' ' + w0.name + ' · ' + (_wf3IsNight() ? 'night run' : 'day run') + (_wf3Deckhand() ? ' · ' + _wf3Deckhand().name + ' aboard' : ''), 'hot');
     const l = _wf3$('loading'); if (l) l.style.display = 'none';
     _wf3S.G.raf = requestAnimationFrame(_wf3Animate);
   });
@@ -194213,12 +194693,14 @@ function _wf3Close() {
   const s = _wf3S;
   try { if (s && s.G) s.G.dispose(); } catch (e) {}
   const o = document.getElementById('wf3-overlay'); if (o) o.remove();
-  const haul = s ? (s.foodTrip | 0) : 0;
+  const haul = (s && s.haul) ? Object.assign({}, s.haul) : {};
+  // 🚤 The boat wore a little: a trip costs 2 condition, storms cost more.
+  try { if (s && s.boat) { const wear = 2 + Math.round((s.stormCasts | 0) * 0.5); s.boat.condition = Math.max(0, (s.boat.condition | 0) - wear); if (typeof s.boat.hull === 'number') s.boat.hull = Math.max(0, s.boat.hull - Math.round(wear / 2)); } } catch (e) {}
   _wf3S = null; _wf3Save();
   try { if (typeof render === 'function' && App.screen === 'woodsFishing') render(); } catch (e) {}
-  if (haul > 0) try { showToast('🐟 Trip banked — +' + haul + ' food to the camp stores.', 3400); } catch (e) {}
+  const parts = Object.keys(haul).filter(k => haul[k] > 0).map(k => { const m = _wf3ResMeta(k); return '+' + haul[k] + ' ' + m.icon + ' ' + m.name; });
+  if (parts.length) { try { showToast('🐟 Trip banked — ' + parts.join(' · ') + '. Sell it, can it, or fill a contract.', 4200); } catch (e) {} try { _wfLog('good', 'Live trip landed ' + parts.join(', ') + '.'); } catch (e) {} }
 }
-
 // ── Admin .glb models (boat + per-rarity fish) ──────────────────────────────
 const WF3_FISH_TIERS = ['Common', 'Uncommon', 'Rare', 'Legendary'];
 function _wf3AdminModelsHtml() {
@@ -194289,7 +194771,7 @@ function _wfRenderCatchLog(f) {
       '<div class="wfa-admin-img" style="font-size:2.2rem;color:' + rcol(sp.rarity) + '">' + (got ? icon : '🔒') + (hasModel && got ? '<span style="position:absolute;bottom:4px;right:6px;font-size:0.6rem;background:#11253099;color:#7fb9c9;padding:1px 4px;border-radius:4px">🧊 3D</span>' : '') + '</div>' +
       '<div class="wfa-admin-name">' + escapeHtml(got ? sp.name : '???') + '</div>' +
       '<div style="font-size:0.66rem;letter-spacing:0.1em;color:' + rcol(sp.rarity) + ';text-transform:uppercase;margin-top:1px">' + (got ? sp.rarity : 'undiscovered') + '</div>' +
-      '<div style="font-size:0.7rem;color:#9aa3b2;margin-top:3px">' + (got ? ('Caught ×' + count + (sp.special === 'fuel' ? '' : ' · ' + (sp.maxFood) + ' food')) : '— not yet caught —') + '</div>' +
+      '<div style="font-size:0.7rem;color:#9aa3b2;margin-top:3px">' + (got ? ('Caught ×' + count + (sp.special === 'fuel' ? '' : ' · ' + (_wf3ResMeta(sp.res).icon || '') + ' ' + escapeHtml(_wf3ResMeta(sp.res).name) + (e && e.bestKg ? ' · 🏆 ' + e.bestKg.toFixed(1) + ' kg' : ''))) : ('— not yet caught —' + (sp.time === 'night' ? ' · 🌙 night' : sp.time === 'day' ? ' · ☀️ day' : ''))) + '</div>' +
       (got ? '<div style="font-size:0.62rem;color:#7d97a8;margin-top:2px">' + escapeHtml((sp.biomes || []).join(' · ')) + '</div>' : '') +
       (got && hasModel ? '<div class="wfa-admin-actions" style="margin-top:5px"><button class="wfa-mini-btn" data-wfcl-view="' + sp.id + '">👁 VIEW 3D</button></div>' : '') +
     '</div>';
@@ -194330,7 +194812,8 @@ function renderWoodsFishing() {
     docks:       { title: 'DOCK DASHBOARD', crumb: '// INFRASTRUCTURE' },
     expeditions: { title: 'EXPEDITIONS',    crumb: '// OPERATIONS' },
     manifest:    { title: 'CREW MANIFEST',  crumb: '// PERSONNEL' },
-    storage:     { title: 'COLD STORAGE',   crumb: '// FOOD STOCKPILE' },
+    storage:     { title: 'COLD STORAGE',   crumb: '// THE CATCH · SUPPLY BOARD' },
+    contracts:   { title: 'CONTRACTS',      crumb: '// BUY ORDERS · DEMAND' },
     catchlog:    { title: 'CATCH LOG',      crumb: '// SPECIES · TROPHIES' },
     log:         { title: 'EVENT LOG',      crumb: '// CHRONOLOGICAL' },
     admin:       { title: 'ADMIN',          crumb: '// PHOTOS · CONFIG' },
@@ -194344,6 +194827,7 @@ function renderWoodsFishing() {
   else if (tab === 'expeditions') body = _wfRenderExp(f);
   else if (tab === 'manifest')    body = _wfRenderManifest(f);
   else if (tab === 'storage')     body = _wfRenderStorage(f);
+  else if (tab === 'contracts')   body = _wfRenderContracts(f);
   else if (tab === 'catchlog')    body = _wfRenderCatchLog(f);
   else if (tab === 'log')         body = _wfRenderEventLog(f);
   else if (tab === 'admin')       body = _wfRenderAdmin(f);
@@ -194358,7 +194842,7 @@ function renderWoodsFishing() {
   const navItem = (id, label, count, group) => {
     const active = (tab === id);
     return '<button class="wfa-nav-btn' + (active ? ' is-active' : '') + '" data-wfa-tab="' + id + '">' +
-      '<span class="wfa-nav-ico">' + (id === 'overview' ? '◆' : id === 'supply' ? '+' : id === 'docks' ? '▲' : id === 'expeditions' ? '⛵' : id === 'manifest' ? '✚' : id === 'storage' ? '⊞' : id === 'catchlog' ? '🐟' : id === 'log' ? '☰' : '👑') + '</span>' +
+      '<span class="wfa-nav-ico">' + (id === 'overview' ? '◆' : id === 'supply' ? '+' : id === 'docks' ? '▲' : id === 'expeditions' ? '⛵' : id === 'manifest' ? '✚' : id === 'storage' ? '⊞' : id === 'contracts' ? '📜' : id === 'catchlog' ? '🐟' : id === 'log' ? '☰' : '👑') + '</span>' +
       '<span class="wfa-nav-label">' + label + '</span>' +
       (count != null ? '<span class="wfa-nav-count">' + count + '</span>' : '') +
     '</button>';
@@ -194372,7 +194856,8 @@ function renderWoodsFishing() {
     '<div class="wfa-nav-group">CREW</div>' +
     navItem('manifest',    'MANIFEST',    f.crew.length) +
     '<div class="wfa-nav-group">STOREHOUSE</div>' +
-    navItem('storage',     'COLD STORAGE', null) +
+    navItem('storage',     'COLD STORAGE', _wfFishUnits()) +
+    navItem('contracts',   'CONTRACTS',    _wfOpenContracts()) +
     navItem('catchlog',    'CATCH LOG',   Object.keys((f.live && f.live.catchLog) || {}).length) +
     navItem('log',         'EVENT LOG',   f.log.length) +
     (isAdminUser ? '<div class="wfa-nav-group">ADMIN</div>' + navItem('admin', 'PHOTOS', null) : '');
@@ -194435,6 +194920,7 @@ function renderWoodsFishing() {
   else if (tab === 'expeditions') _wfBindExp();
   else if (tab === 'manifest')    _wfBindManifest();
   else if (tab === 'storage')     _wfBindStorage();
+  else if (tab === 'contracts')   _wfBindStorage();
   else if (tab === 'catchlog')    _wfBindCatchLog();
   else if (tab === 'log')         _wfBindLog();
   else if (tab === 'admin')       _wfBindAdmin();
@@ -195052,7 +195538,8 @@ function _wfRenderExp(f) {
     '<div class="wfa-panel" style="margin-bottom:0.8rem;border-color:rgba(90,176,201,0.45);background:linear-gradient(160deg,rgba(18,40,48,0.55),rgba(8,11,18,0.6))">' +
       '<div class="wfa-panel-h"><h3>⚓ LIVE FISHING TRIP</h3><span style="color:#7fb9c9">3D · HANDS-ON</span></div>' +
       '<div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap">' +
-        '<div style="flex:1;min-width:230px;font-size:0.82rem;color:#cdd3df;line-height:1.5">Take the helm yourself — cast into the <b style="color:#7fb9c9">luck ring</b>, set the hook, and reel without snapping the line. Land fish for <b style="color:#a3d977">camp food</b> + <b style="color:#e6b660">Cinder</b>, level your angler, and buy poles, bait &amp; deeper biomes on the water.<div style="margin-top:0.5rem;font-size:0.8rem">' + boatLine + '</div></div>' +
+        '<div style="flex:1;min-width:230px;font-size:0.82rem;color:#cdd3df;line-height:1.5">Take the helm yourself — track the <b style="color:#7fb9c9">schools</b> on sonar, aim into the <b style="color:#7fb9c9">luck ring</b>, set the hook, and reel without snapping the line. Every fish lands in the stash as <b style="color:#6fc0d8">Fresh Fish</b>, <b style="color:#d8b48a">Shellfish</b> or <b style="color:#e08a5a">Prime Seafood</b> — sell it on the Player Market, can it, or fill a contract. Weather turns, night falls, and the deep bites differently.' +
+        _wf3TripSetupHtml(f, tripBoat) + '<div style="margin-top:0.5rem;font-size:0.8rem">' + boatLine + '</div></div>' +
         '<div style="text-align:right">' +
           '<div style="font-size:0.72rem;letter-spacing:0.14em;color:#9aa3b2;text-transform:uppercase;margin-bottom:2px">FUEL TO SAIL</div>' +
           '<div style="font-size:1.1rem;font-weight:800;color:' + (hasFuel ? '#e6b660' : '#cf6868') + '">' + WF3_TRIP_FUEL + ' ⛽ <span style="font-size:0.75rem;color:#7d97a8;font-weight:600">/ ' + fuelHave + ' on hand</span></div>' +
@@ -195082,7 +195569,24 @@ function _wfRenderExp(f) {
     '</div>' +
   '</div>';
 }
+// 🎣 Live-trip outfit line (fishing expansion): which boat sails, its hold, and
+// the deckhand riding along. The boat is whatever _wf3PickBoat() chooses (best
+// docked hull); the deckhand is any IDLE crewman and persists on live.deckhandId.
+function _wf3TripSetupHtml(f, tripBoat) {
+  const L = _wf3Live();
+  const cls = tripBoat ? (WF_BOAT_CLASSES.find(c => c.id === tripBoat.classId) || WF_BOAT_CLASSES[0]) : null;
+  const hold = cls ? Math.round((cls.cap | 0 || 2) * WF3_HOLD_PER_CAP * (_wf3OwnsGear('icebox') ? 1.5 : 1)) : 0;
+  const idle = (f.crew || []).filter(c => c && c.status === 'idle');
+  const opts = ['<option value="">— no deckhand —</option>'].concat(idle.map(c => '<option value="' + escapeHtml(c.id) + '"' + (L.deckhandId === c.id ? ' selected' : '') + '>' + escapeHtml(c.name) + ' · ' + escapeHtml(_wf3DeckTraitBlurb(c)) + '</option>')).join('');
+  return '<div style="margin-top:0.55rem;display:flex;gap:1rem;flex-wrap:wrap;align-items:center;font-size:0.74rem;color:#9aa3b2">' +
+    '<span>🧊 HOLD <b style="color:#f3ead2">' + (hold || '—') + '</b> units' + (cls ? ' <span style="color:#7d97a8">(' + escapeHtml(cls.name) + ', ' + cls.cap + ' slots' + (_wf3OwnsGear('icebox') ? ' + Ice Hold' : '') + ')</span>' : '') + '</span>' +
+    '<label style="display:flex;align-items:center;gap:0.4rem">👤 DECKHAND <select id="wf3-deckhand-sel" style="background:#0d1420;color:#e8e2d4;border:1px solid rgba(201,162,77,.35);border-radius:4px;padding:2px 6px;font-size:0.74rem;max-width:260px">' + opts + '</select></label>' +
+    '<span style="color:#7d97a8">' + (idle.length ? 'Traits ride along: lucky, hard worker, hunter…' : 'Hire crew in MANIFEST to bring a deckhand.') + '</span>' +
+  '</div>';
+}
 function _wfBindExp() {
+  const dhs = document.getElementById('wf3-deckhand-sel');
+  if (dhs) dhs.onchange = dhs.oninput = () => { _wf3Live().deckhandId = dhs.value || null; _wf3Save(); };
   document.querySelectorAll('[data-wfa-pick-boat]').forEach(el => el.onclick = () => {
     App._wfExpSetup = App._wfExpSetup || { boatId: null, crewIds: [], durationId: '1h' };
     App._wfExpSetup.boatId = el.dataset.wfaPickBoat;
@@ -195179,7 +195683,23 @@ function _wfBindManifest() {
 }
 
 // ───────────────────────── COLD STORAGE ─────────────────────────
+// 🐟 Fishing expansion — the Cold Storage and Contracts tabs are rendered by
+// /src/fishing when it loaded; the legacy panel below is the fallback and the
+// reason a 404 on the module costs the player a feature, never the screen.
+function _wfFish() { try { const M = window.MythicFishing; return (M && M.ready && M.ready()) ? M : null; } catch (e) { return null; } }
+function _wfFishUnits() { try { return ['freshFish', 'shellfish', 'seafood', 'seaweed'].reduce((s, id) => s + (getRes(id) | 0), 0) || null; } catch (e) { return null; } }
+function _wfOpenContracts() { try { const M = _wfFish(); if (!M) return null; return M.contractsModel().contracts.filter(c => !c.done).length || null; } catch (e) { return null; } }
+function _wfRenderContracts(f) {
+  const M = _wfFish();
+  if (!M) return '<div class="wfa-panel"><div class="wfa-empty-row">— the fishing economy module did not load; contracts are unavailable —</div></div>';
+  return M.renderContracts();
+}
 function _wfRenderStorage(f) {
+  const M = _wfFish();
+  if (M) return M.renderStorage();
+  return _wfRenderStorageLegacy(f);
+}
+function _wfRenderStorageLegacy(f) {
   // Map game salvage to fish-like rows.
   const TRACKED = [
     { id: 'food',             label: 'Common Fish / Food',     rarity: 'common',    value: 4 },
@@ -195229,7 +195749,7 @@ function _wfRenderStorage(f) {
     '</div>' +
   '</div>';
 }
-function _wfBindStorage() {}
+function _wfBindStorage() { try { const M = _wfFish(); if (M) M.bind(document); } catch (e) {} }
 
 // ───────────────────────── EVENT LOG ─────────────────────────
 function _wfRenderEventLog(f) {
@@ -207411,6 +207931,54 @@ window.MythicTradeBridge = {
   },
   save: () => { try { saveProfile(); return true; } catch (e) { return false; } },
   toast: (m, ms) => { try { showToast(m, ms || 3600); } catch (e) {} },
+};
+/* 🐟 FISHING BRIDGE — the hand-over for /src/fishing (Cold Storage supply
+   board, processing bench, contracts). Same shape as MythicTradeBridge above:
+   accessors, never snapshots; every mutator goes through the sanctioned helper
+   (spendResources / addRes / addGems); nothing throws across the seam.
+   ⚠ `corp()` hands over Profile.fishingCorp BY REFERENCE — that is deliberate,
+     it is how the contract ledger rides the existing __fishingCorp__ cloud
+     sync without a second persistence path. */
+window.MythicFishingBridge = {
+  meta: (id) => { try { return _meta(id); } catch (e) { return { id: id, name: id, icon: '📦' }; } },
+  getRes: (id) => { try { return getRes(id) | 0; } catch (e) { return 0; } },
+  resourceCap: () => { try { return getResourceCap() | 0; } catch (e) { return 0; } },
+  resourceUnits: () => { try { return getResourceUnits() | 0; } catch (e) { return 0; } },
+  userId: () => { try { return (Profile.cloud && Profile.cloud.userId) || ''; } catch (e) { return ''; } },
+  corp: () => { try { return ensureFishingCorp(); } catch (e) { return null; } },
+  /* Staffed operations with their LIVE econ row (admin overrides applied via
+     _opEcon), so the supply board's "ops / hr" column prices what the Fishing
+     Company and the Cannery actually burn and make. */
+  ops: () => {
+    try {
+      return (Operations.list || []).map((o) => { const e = _opEcon(o.op_type) || {}; return { type: o.op_type, label: (typeof OP_LABELS !== 'undefined' && OP_LABELS[o.op_type]) || o.op_type, workers: o.workers | 0, inputs: e.inputs || {}, yields: e.yields || {} }; });
+    } catch (e) { return []; }
+  },
+  marketPrice: (id) => { try { const p = getMarketPrice(id); return { base: p.base, current: p.current, delta24h: p.delta24h }; } catch (e) { return null; } },
+  spendMany: (map) => { try { return !!spendResources(map); } catch (e) { return false; } },
+  addRes: (id, n) => { try { addRes(id, n | 0); return true; } catch (e) { return false; } },
+  addGems: (n, why) => { try { addGems(n | 0, why || 'Fishing contract'); return true; } catch (e) { return false; } },
+  // Demand: a delivery or a batch cooked lifts the price of what it ate.
+  consumed: (map) => { try { for (const id in map) if ((map[id] | 0) > 0) bumpMarketPriceUp(id, map[id] | 0, 'craft'); } catch (e) {} },
+  // Supply: what the bench produced goes through the same producer hook as every other site.
+  produced: (map, src) => { try { if (typeof cxProduce === 'function') cxProduce(map, src || 'fishing'); } catch (e) {} },
+  fishingXp: (n) => { try { _wf3AwardFishingXp(n | 0); } catch (e) {} },
+  log: (lvl, msg) => { try { _wfLog(lvl, msg); } catch (e) {} },
+  save: () => { try { saveProfile(); return true; } catch (e) { return false; } },
+  toast: (m, ms) => { try { showToast(m, ms || 3600); } catch (e) {} },
+  render: () => { try { render(); } catch (e) {} },
+  /* ⇄ SELL — route to the Player Market's Resources tab and pre-pick the
+     resource in the lot form. The pick is best-effort (the form is rendered by
+     /src/trading after render()); if it is not there the tab still opens. */
+  openMarket: (resId) => {
+    try {
+      App._wfReturn = 'woodsFishing'; App.screen = 'market'; App.marketTab = 'resources';
+      try { if (typeof resMarketFetch === 'function') resMarketFetch(); } catch (e) {}
+      render();
+      setTimeout(() => { try { const el = document.getElementById('resmkt-res'); if (el && resId) { el.value = resId; el.dispatchEvent(new Event('change', { bubbles: true })); } } catch (e) {} }, 80);
+      showToast('⇄ List ' + ((_meta(resId) || {}).name || resId) + ' in lots — buyers pay Cinder, Aza or a swap.', 3200);
+    } catch (e) {}
+  },
 };
 window.MythicCityBridge = {
   // ── Resources. Accessors, never snapshots — a captured value goes stale the
@@ -223061,7 +223629,7 @@ render();
      bridge it registers, stays inert and warns once — the globals trap.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/city/index.js?v=v120u0seam"></script>
+<script type="module" src="src/city/index.js?v=v120x0fish"></script>
 <!-- 🤝 TRADING — player-to-player swaps + LOT listings for the Resource
      Exchange. Registers window.MythicTrading and is INERT until the Market's
      Resources tab renders. index.html keeps the Supabase calls (Cloud/Profile
@@ -223072,6 +223640,17 @@ render();
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
 <script type="module" src="src/trading/index.js?v=r12trade1"></script>
+<!-- 🐟 FISHING ECONOMY — the Cold Storage supply board, the processing bench
+     and the contracts board of the Woods Fishing expansion. Registers
+     window.MythicFishing and is INERT until the fishing screen renders one of
+     those tabs. index.html keeps the 3D trip, the fleet and the screen shell
+     (an existing system, extended in place) and hands this module everything
+     through window.MythicFishingBridge, defined next to MythicCityBridge.
+     ⚠ If this 404s the fishing screen falls back to its legacy Cold Storage
+       panel; contracts are simply absent. Nothing else changes.
+     ⚠ Bump ?v= on every change — the service worker caches /src/* like any
+       other static asset, and a missed bump ships invisibly. -->
+<script type="module" src="src/fishing/index.js?v=fish1"></script>
 <!-- 🔌 PRN NODE TIERS — the generation-rate table (Free 0.5% … Eternal 20%).
      Registers window.MythicNodeTiers: pure math, no I/O, no globals. Two
      consumers in this file, both `typeof`-guarded so an absent module falls
@@ -223095,7 +223674,7 @@ render();
        the safe state to ship a data layer in.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/resources/chain.js?v=v120w6chain2"></script>
+<script type="module" src="src/resources/chain.js?v=v120x0fish"></script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the

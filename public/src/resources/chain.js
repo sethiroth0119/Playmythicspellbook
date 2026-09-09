@@ -89,10 +89,15 @@ export const RESOURCE_CHAIN = [
   { id: 'biomass',                 name: 'Biomass',                     icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 1, inputs: [] },
 
   // ── Fishing ───────────────────────────────────────────────────
-  { id: 'freshFish',               name: 'Fresh Fish',                  icon: '🐟',  color: '#6fc0d8', cat: 'fishing',      tier: 0, inputs: [] },
-  { id: 'seafood',                 name: 'Seafood',                     icon: '🐟',  color: '#6fc0d8', cat: 'fishing',      tier: 0, inputs: [] },
-  { id: 'shellfish',               name: 'Shellfish',                   icon: '🐟',  color: '#6fc0d8', cat: 'fishing',      tier: 0, inputs: [] },
-  { id: 'seaweed',                 name: 'Seaweed',                     icon: '🐟',  color: '#6fc0d8', cat: 'fishing',      tier: 0, inputs: [] },
+  /* 🐟 PROMOTED (fishing expansion). All four now live in index.html's RESOURCES
+     with a producer each (Woods Fishing, the Fishing Company op, and the city's
+     Fishing Wharf / Kelp Beds / Deepwater Pier). `existing: true` from here on —
+     names/icons below mirror the ledger so the node-city HUD, which seeds
+     RES_META from this file, prints the same thing the vault does. */
+  { id: 'freshFish',               name: 'Fresh Fish',                  icon: '🐟',  color: '#6fc0d8', cat: 'fishing',      tier: 0, existing: true, inputs: [] },
+  { id: 'seafood',                 name: 'Prime Seafood',               icon: '🐠',  color: '#e08a5a', cat: 'fishing',      tier: 0, existing: true, inputs: ['freshFish'] },
+  { id: 'shellfish',               name: 'Shellfish',                   icon: '🦪',  color: '#d8b48a', cat: 'fishing',      tier: 0, existing: true, inputs: [] },
+  { id: 'seaweed',                 name: 'Seaweed',                     icon: '🌿',  color: '#7fb37a', cat: 'fishing',      tier: 0, existing: true, inputs: [] },
 
   // ── Food Processing ───────────────────────────────────────────
   { id: 'flour',                   name: 'Flour',                       icon: '🍞',  color: '#e0a86a', cat: 'food',         tier: 1, core: true, inputs: [] },

@@ -288,6 +288,86 @@ export const CITY_PRODUCTION = [
       { cinder: 292000, metal: 205, supplies: 180, wood: 135, water: 100, dna: 7 },
     ],
   },
+  /* ══ THE CATCH (fishing expansion) ══════════════════════════════════════
+     freshFish / shellfish / seafood / seaweed joined RESOURCES. Rule 1 again:
+     each needs a producer, and the city's are below. The chain is deliberately
+     a LOOP, not a line: the Wharf lands the bulk catch, the Pier spends some of
+     it as bait to bring up the deep catch, and the Cannery / Oil Works turn
+     both back into the food and medicine the rest of the city already burns.
+     Woods Fishing (the live 3D trip and the fleet expeditions) feeds the same
+     four ledger ids, so a player can run the city side, the boat side, or buy
+     the fish on the Player Market — the buildings do not care which.
+     Yields sit against the shelf: Wharf 40 fresh fish (bulk, ABUNDANT on the
+     exchange), Kelp Beds 35, Pier 10 seafood (the scarce one), Cannery 70 food
+     (more than Hydroponics 45, because it has to buy its inputs).
+     🔴 None priced in what it produces (rule 2), ≥3 legs (rule 3), top tier
+        pulls a rare (rule 5). */
+  {
+    id: 'fishwharf', name: 'Fishing Wharf', kind: 'production', emoji: '🐟', accent: '#6fc0d8',
+    desc: 'Nets, ice and a diesel winch. Brings the shallows in by the crate.',
+    maxLevel: 3,
+    yields: { freshFish: 40, shellfish: 8 }, inputs: { fuel: 10 },
+    draw: { power: 8, water: 0, workers: 6, pollution: 3 },
+    footprint: { w: 3, h: 2 },
+    cost: [
+      { cinder: 42000,  metal: 35,  supplies: 30,  wood: 30 },
+      { cinder: 100000, metal: 85,  supplies: 70,  wood: 70,  fuel: 30 },
+      { cinder: 236000, metal: 190, supplies: 155, wood: 150, fuel: 70, memoryShards: 5 },
+    ],
+  },
+  {
+    id: 'kelpbeds', name: 'Kelp Beds', kind: 'production', emoji: '🌿', accent: '#7fb37a',
+    desc: 'Rope lines seeded with kelp. Grows on nothing but water and patience.',
+    maxLevel: 3,
+    yields: { seaweed: 35 }, inputs: { water: 15 },
+    draw: { power: 4, water: 15, workers: 3, pollution: 0 },
+    footprint: { w: 2, h: 2 },
+    cost: [
+      { cinder: 30000,  metal: 20,  supplies: 25,  wood: 35 },
+      { cinder: 72000,  metal: 50,  supplies: 60,  wood: 80,  cloth: 20 },
+      { cinder: 170000, metal: 110, supplies: 135, wood: 170, cloth: 45, dna: 5 },
+    ],
+  },
+  {
+    id: 'deeppier', name: 'Deepwater Pier', kind: 'production', emoji: '🐠', accent: '#e08a5a',
+    desc: 'Long-liners that go out past the trench. Baits with the Wharf\'s catch and comes back with the prime cut.',
+    maxLevel: 3,
+    yields: { seafood: 10 }, inputs: { fuel: 25, freshFish: 12 },
+    draw: { power: 12, water: 0, workers: 7, pollution: 8 },
+    footprint: { w: 3, h: 3 },
+    cost: [
+      { cinder: 95000,  metal: 90,  supplies: 60,  wood: 60,  fuel: 30 },
+      { cinder: 225000, metal: 200, supplies: 140, wood: 130, fuel: 75 },
+      { cinder: 520000, metal: 420, supplies: 300, wood: 280, fuel: 160, corruptedEssence: 10 },
+    ],
+  },
+  {
+    id: 'cannery', name: 'Cannery', kind: 'production', emoji: '🥫', accent: '#9ad17a',
+    desc: 'Guts, cooks, tins. The city\'s cheapest calories, as long as the boats keep coming in.',
+    maxLevel: 3,
+    yields: { food: 70 }, inputs: { freshFish: 30, metal: 6 },
+    draw: { power: 20, water: 15, workers: 8, pollution: 9 },
+    footprint: { w: 3, h: 2 },
+    // Costs no food (rule 2 — a food building bootstrapped from food is a loop).
+    cost: [
+      { cinder: 58000,  metal: 60,  supplies: 45,  water: 25 },
+      { cinder: 140000, metal: 140, supplies: 105, water: 60,  fuel: 30 },
+      { cinder: 330000, metal: 300, supplies: 235, water: 135, fuel: 70, memoryShards: 6 },
+    ],
+  },
+  {
+    id: 'oilworks', name: 'Fish Oil Works', kind: 'production', emoji: '💊', accent: '#ff8aa0',
+    desc: 'Renders the deep catch and kelp into oil, salve and antiseptic. The infirmary\'s other supplier.',
+    maxLevel: 3,
+    yields: { medicine: 14 }, inputs: { seafood: 6, seaweed: 12, water: 10 },
+    draw: { power: 18, water: 10, workers: 5, pollution: 6 },
+    footprint: { w: 2, h: 2 },
+    cost: [
+      { cinder: 85000,  metal: 60,  supplies: 50,  water: 30,  wood: 20 },
+      { cinder: 200000, metal: 135, supplies: 115, water: 70,  wood: 45 },
+      { cinder: 470000, metal: 290, supplies: 250, water: 160, wood: 100, dna: 9 },
+    ],
+  },
 ];
 
 export const CITY_PRODUCTION_BY_ID = CITY_PRODUCTION.reduce((m, b) => { m[b.id] = b; return m; }, {});
@@ -335,6 +415,13 @@ export const CITY_PREREQ = {
   sump:        ['apothecary'],
   archive:     ['depot'],
   genevault:   ['apothecary'],
+  // 🐟 the catch — Wharf and Kelp Beds are cheap coastal starters; the rest
+  // hang off the producer of what they eat, same grammar as everything above.
+  fishwharf:   ['warehouse'],
+  kelpbeds:    ['wellhead'],
+  deeppier:    ['fishwharf'],      // baits with fresh fish: the wharf comes first
+  cannery:     ['fishwharf'],
+  oilworks:    ['deeppier', 'kelpbeds'],
 };
 
 /* Which prerequisites are missing, given what the city already has placed.
@@ -359,7 +446,7 @@ export function cityProdDef(id) { return CITY_PRODUCTION_BY_ID[id] || null; }
    down over a tuning typo. Returns [] when the catalog is sound. */
 export function auditCatalog(resourceIds) {
   const RARE = ['memoryShards', 'dna', 'corruptedEssence'];
-  // ⚠ Kept in sync with index.html's RESOURCES (14 as of r12). A STALE list
+  // ⚠ Kept in sync with index.html's RESOURCES (18 as of the fishing expansion). A STALE list
   // here does not just under-report: rule 4 ("every cost key must be a real
   // resource") would flag every wood/stone/cloth cost leg below as an unknown
   // id, which is the 'intel' bug this audit was written to catch, inverted.
@@ -367,6 +454,8 @@ export function auditCatalog(resourceIds) {
     'food', 'ammo', 'water', 'medicine', 'energyDrink', 'supplies',
     'metal', 'fuel', 'corruptedEssence', 'memoryShards', 'dna',
     'wood', 'stone', 'cloth',
+    // 🐟 fishing expansion — 18 as of this round
+    'freshFish', 'shellfish', 'seafood', 'seaweed',
   ];
   const problems = [];
   // 1. Every one of the resources has a producer (14 as of r12 — the count is

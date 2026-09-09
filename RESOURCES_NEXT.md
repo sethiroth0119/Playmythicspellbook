@@ -163,3 +163,13 @@ iframe is a separate window with its own `window`.
    may be the better shape. Worth deciding before writing the first ten.
 2. **What consumes the finished goods?** Wave 1 stops at intermediates the city eats directly.
    Tier 2 (machinery, electronics, vehicles) needs a demand sink before it is worth producing.
+
+
+## 🐟 2026-09-09 — first promotion landed: the catch (18 resources now)
+
+`freshFish`, `shellfish`, `seafood`, `seaweed` went into `RESOURCES` **with their producers**
+(Woods Fishing live trips + fleet, the Fishing Company op, and the city's Fishing Wharf /
+Kelp Beds / Deepwater Pier) and their consumers (Cannery, Fish Oil Works, the Fish Cannery op,
+fishing contracts). Terroir `slots` re-derived to 18 (`RICH 4 / COMMON 6 / SCARCE 6 / BARREN 2`).
+The four are `existing: true` in `chain.js` now. Full notes: `docs/woods-fishing-expansion.md`.
+The checklist above held exactly as written — nothing else needed touching.

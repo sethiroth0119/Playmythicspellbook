@@ -67,6 +67,9 @@ const FALLBACK_IDS = [
   // fallback, but a STALE fallback is worse than none: it would hand
   // profileFor() 11 ids against a 14-slot bag and degrade to all-COMMON.
   'wood', 'stone', 'cloth',
+  // 🐟 Fishing expansion — the catch. Same rule as r12: a stale fallback would
+  // hand profileFor() 14 ids against an 18-slot bag and degrade to all-COMMON.
+  'freshFish', 'shellfish', 'seafood', 'seaweed',
 ];
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -111,7 +114,17 @@ export const TERROIR_ECON = {
      ⚠ MUST SUM TO resourceIds().length. profileFor() checks and falls back to
        all-COMMON; that fallback is SILENT except for a console.warn, so a wrong
        number here disables terroir without breaking anything visibly. */
-  slots: { RICH: 3, COMMON: 5, SCARCE: 4, BARREN: 2 },
+  /* 🔢 RE-DERIVED FOR 18 (fishing expansion: +freshFish +shellfish +seafood
+     +seaweed). Was { 3, 5, 4, 2 } = 14. Same reasoning as the r12 block above:
+       • BARREN STAYS AT EXACTLY 2 — an absolute, never a ratio.
+       • RICH GOES 3 → 4 so the sellable surplus keeps pace with the ledger
+         (3/14 = 21% → 4/18 = 22%).
+       • The remaining 12 split COMMON 6 / SCARCE 6, which lands scarce-or-
+         worse at 8/18 = 44.4% against r12's 42.9% and the original 45.5%.
+     ⚠ This re-deals every surveyed player's ground (the Fisher–Yates below
+       runs over the new, longer pool). r12 accepted the same for +3 ids;
+       nothing placed is touched and no tier can go to zero. */
+  slots: { RICH: 4, COMMON: 6, SCARCE: 6, BARREN: 2 },
 
   /* 🌱 The node's own resource seam is forced RICH. The war map already tells
      the player "this node produces METAL"; terroir makes that claim mean
@@ -141,6 +154,9 @@ export const TERROIR_ECON = {
     ETHER: 'corruptedEssence', WOOD: 'wood', BIO: 'dna', ELEC: 'energyDrink',
     WATER: 'water', AMMO: 'ammo', SUPPLIES: 'supplies',
     STONE: 'stone', ROCK: 'stone', CLOTH: 'cloth', FIBER: 'cloth', FIBRE: 'cloth',
+    // 🐟 No war-map node yields these today; listed so a future coastal node
+    // can name its seam without another edit here.
+    FISH: 'freshFish', SEAFOOD: 'seafood', SHELLFISH: 'shellfish', KELP: 'seaweed', SEAWEED: 'seaweed',
   },
 
   /* Ground with no camp node registered (offline, signed out, brand-new, or a

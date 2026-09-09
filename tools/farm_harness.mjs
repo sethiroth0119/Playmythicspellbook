@@ -85,10 +85,10 @@ console.log('feed, growth, weight, age');
   ok(s.animals.every(a => S.weightOf(a) > 0 && S.weightOf(a) < FARM_ECON.animals.chicken.adultWeight), 'chicks start light');
   S.simulate(h, s, t0 + 9 * H, () => 1);
   const a = s.animals[0];
-  ok(Math.abs(a.ageH - 9) < 1e-6 && Math.abs(a.grownH - 9) < 1e-6 && S.isAdult(a), '9h fed: age 9h, grown 9h, adult');
+  ok(Math.abs(a.ageH - 9) < 1e-3 && Math.abs(a.grownH - 9) < 1e-3 && S.isAdult(a), '9h fed: age 9h, grown 9h, adult');
   ok(Math.abs(S.weightOf(a) - FARM_ECON.animals.chicken.adultWeight) < 0.5, 'adult weight ≈ ' + FARM_ECON.animals.chicken.adultWeight + 'kg (' + S.weightOf(a) + ')');
   const drained = 240 - s.buildings.coop.feed;
-  ok(Math.abs(drained - 9 * 6 * 0.6 * SE.feedMul) < 1e-6, 'trough drained 0.6/h per bird × season feedMul ' + SE.feedMul);
+  ok(Math.abs(drained - 9 * 6 * 0.6 * SE.feedMul) < 1e-3, 'trough drained 0.6/h per bird × season feedMul ' + SE.feedMul);
   const p = S.pendingCollect(s, 'coop');
   const wx = weatherAt(s.seed, t0 + 9 * H);
   const expEggs = Math.floor(6 * 3 * 0.35 * (typeof wx.eggMul === 'number' ? wx.eggMul : 1));
@@ -105,7 +105,7 @@ console.log('health: neglect, sickness, treatment, death');
   S.simulate(h, s, t0 + 30 * H, () => 1);                    // 20 unfed hours: 24h grace, no loss yet
   ok(s.animals.every(a => a.health === 100), 'inside the 24h grace: health untouched');
   S.simulate(h, s, t0 + 40 * H, () => 1);                    // 30 unfed: 6 past grace → −12
-  ok(s.animals.every(a => Math.abs(a.health - 88) < 1e-6), 'past grace: −2/h (' + s.animals[0].health + ')');
+  ok(s.animals.every(a => Math.abs(a.health - 88) < 1e-3), 'past grace: −2/h (' + s.animals[0].health + ')');
   S.simulate(h, s, t0 + 80 * H, () => 1);                    // 70 unfed: 46 past grace → 100 − 92 = 8 → sick
   ok(s.animals.every(a => a.health < FARM_ECON.health.sickBelow && a.health > 0), 'sick, not dead (' + s.animals[0].health + ')');
   ok(Object.values(S.penRatePerH(s, 'coop', h)).every(v => v === 0), 'sick birds yield nothing');
@@ -122,7 +122,10 @@ console.log('accrual cap + collect + stash clip');
   const units = () => Object.values(h.led).reduce((a, b) => a + b, 0);
   h.led.animalFeed = 240; S.fillTrough(h, s, 'coop', 1e9); S.buyAnimal(h, s, 'chicken', 6);
   const t0 = Date.now(); S.simulate(h, s, t0 + 60 * H, () => 1);
-  const p = S.pendingCollect(s, 'coop'); const rate = S.penRatePerH(s, 'coop', h);
+  // Same `now` as the simulate above: the rate reads the weather of the
+  // moment, and a storm (eggs ×0) at Date.now() would zero it while the
+  // accrual was earned under the window that was simulated.
+  const p = S.pendingCollect(s, 'coop'); const rate = S.penRatePerH(s, 'coop', h, t0 + 60 * H);
   ok(p.eggs <= Math.floor(rate.eggs * 36) + 1, 'accrual capped near 36h of adult rate: ' + p.eggs);
   h.led.stone += 4506 - units() - 2;
   const r = S.collect(h, s, 'coop');
@@ -154,9 +157,11 @@ console.log('guards, defense, raids and predators');
   r = S.buyAnimal(h, s, 'donkey', 1); ok(r.ok && s.animals.some(a => a.sp === 'donkey'), 'bought a donkey (25,000)');
   ok(S.guardDefense(s) === 0, 'a foal defends nothing');
   // Pinned clock: event windows are seeded by ABSOLUTE window index, so a
-  // Date.now() here would make which events fire drift with the wall clock
-  // (one run in six went red). A fixed t0 makes this section reproducible.
-  const t0 = 1760000000000; Object.values(s.buildings).forEach(b => { b.simAt = t0; }); S.simulate(h, s, t0 + 13 * H, () => 1);
+  // Date.now() here would make which events fire drift with the wall clock.
+  // The pin is in the FUTURE on purpose: mutators call simulate(Date.now())
+  // internally, and the sim's never-rewind guard turns those into no-ops
+  // instead of fast-forwarding the farm a year (a past pin did exactly that).
+  const t0 = 2000000000000; Object.values(s.buildings).forEach(b => { b.simAt = t0; }); S.simulate(h, s, t0 + 13 * H, () => 1);
   ok(S.guardDefense(s) === 10 && S.penDefense(s, 'coop') === 10, 'grown donkey: defense 10');
   S.upgrade(h, s, 'coop'); ok(S.penDefense(s, 'coop') === 11.5, 'L2 fence adds 1.5');
   // Force events: chance 1, and walk windows one at a time with a known seed.

@@ -119,7 +119,24 @@ export async function play(opts) {
     glass: new THREE.MeshLambertMaterial({ color: 0x8fd0ff }),
     cargo: new THREE.MeshLambertMaterial({ color: opts.cargoColor ? new THREE.Color(opts.cargoColor) : 0xd4af37 }),
     player: new THREE.MeshLambertMaterial({ color: 0xff7a2b }),
+    blink: new THREE.MeshBasicMaterial({ color: 0xffa000 }),
+    blinkOff: new THREE.MeshBasicMaterial({ color: 0x4a2a00 }),
   };
+  /* 🔶 INDICATORS. Four small lamps per vehicle (front + rear, left + right).
+     Traffic signals before every lane change; the rig signals while you
+     steer. `setBlink(g, dir, on)` is the only thing that touches them. */
+  function addBlinkers(g, halfW, frontZ, rearZ, y) {
+    const geo = new THREE.BoxGeometry(0.22, 0.16, 0.12);
+    g.userData.blink = { L: [], R: [] };
+    for (const [side, key] of [[-1, 'L'], [1, 'R']]) for (const z of [frontZ, rearZ]) {
+      const m = new THREE.Mesh(geo, M.blinkOff); m.position.set(side * (halfW - 0.05), y, z); g.add(m); g.userData.blink[key].push(m);
+    }
+  }
+  function setBlink(g, dir, on) {
+    const b = g.userData.blink; if (!b) return;
+    b.L.forEach((m) => { m.material = (dir < 0 && on) ? M.blink : M.blinkOff; });
+    b.R.forEach((m) => { m.material = (dir > 0 && on) ? M.blink : M.blinkOff; });
+  }
   const G = {
     road: new THREE.PlaneGeometry(ROAD_W, SEG_LEN),
     shoulder: new THREE.PlaneGeometry(1.4, SEG_LEN),
@@ -192,12 +209,14 @@ export async function play(opts) {
       const box = new THREE.Mesh(new THREE.BoxGeometry(2.5, 2.8, 8.5), new THREE.MeshLambertMaterial({ color: 0xc8c8c8 })); box.position.set(0, 1.7, -2.4); g.add(box);
       const gl = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.8, 0.1), M.glass); gl.position.set(0, 2.1, 4.52); g.add(gl);
       for (const [x, z] of [[-1.1, 3.2], [1.1, 3.2], [-1.1, -1], [1.1, -1], [-1.1, -5], [1.1, -5]]) { const w = new THREE.Mesh(G.wheel, M.wheel); w.rotation.z = Math.PI / 2; w.position.set(x, 0.42, z); g.add(w); }
+      addBlinkers(g, 1.25, 4.45, -6.6, 1.1);
       outer.userData.halfL = 6.6; outer.userData.halfW = 1.3;
     } else {
       const b = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.8, 4.3), body); b.position.y = 0.7; g.add(b);
       const top = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.6, 2.2), body); top.position.set(0, 1.4, -0.2); g.add(top);
       const gl = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.5, 0.1), M.glass); gl.position.set(0, 1.4, 0.95); g.add(gl);
       for (const [x, z] of [[-0.9, 1.4], [0.9, 1.4], [-0.9, -1.4], [0.9, -1.4]]) { const w = new THREE.Mesh(G.wheel, M.wheel); w.rotation.z = Math.PI / 2; w.position.set(x, 0.42, z); g.add(w); }
+      addBlinkers(g, 0.95, 2.1, -2.1, 0.75);
       outer.userData.halfL = 2.2; outer.userData.halfW = 1.0;
     }
     return outer;
@@ -209,6 +228,7 @@ export async function play(opts) {
     const bed = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.5, 6), new THREE.MeshLambertMaterial({ color: 0x333 })); bed.position.set(0, 0.85, -1.4); rig.add(bed);
     for (let i = 0; i < 3; i++) { const c = new THREE.Mesh(new THREE.BoxGeometry(2.0, 1.4, 1.6), M.cargo); c.position.set(0, 1.8, 0.4 - i * 1.9); c.userData.cargo = true; rig.add(c); }
     for (const [x, z] of [[-1.05, 2.9], [1.05, 2.9], [-1.05, -0.8], [1.05, -0.8], [-1.05, -3.4], [1.05, -3.4]]) { const w = new THREE.Mesh(G.wheel, M.wheel); w.rotation.z = Math.PI / 2; w.position.set(x, 0.42, z); rig.add(w); }
+    addBlinkers(rig, 1.2, 4.05, -4.35, 1.0);
     scene.add(rigOuter); }
   // Finish gate at the destination.
   const gate = new THREE.Group();
@@ -223,7 +243,10 @@ export async function play(opts) {
     const truck = Math.random() < 0.3;
     const lane = Math.floor(Math.random() * LANES);
     const mesh = makeCar(truck, TRAFFIC_COLORS[Math.floor(Math.random() * TRAFFIC_COLORS.length)]);
-    const v = { mesh, lane, x: laneX(lane), z: zAhead, speed: (truck ? 17 : 22) + Math.random() * (truck ? 5 : 11), truck, halfL: mesh.userData.halfL, halfW: mesh.userData.halfW, hitCd: 0 };
+    const cruise = (truck ? 17 : 22) + Math.random() * (truck ? 5 : 11);
+    const v = { mesh, lane, x: laneX(lane), z: zAhead, speed: cruise, cruise, truck, halfL: mesh.userData.halfL, halfW: mesh.userData.halfW, hitCd: 0,
+                // lane-change state machine: 'cruise' → 'signal' (blinker, 1.2 s) → 'move' (drift to the new lane) → 'cruise'
+                phase: 'cruise', toLane: lane, sigDir: 0, sigT: 0, decideCd: 1 + Math.random() * 3 };
     // Never spawn on top of another vehicle.
     if (traffic.some((t) => t.lane === lane && Math.abs(t.z - v.z) < 24)) { return; }
     scene.add(mesh); traffic.push(v);
@@ -237,7 +260,7 @@ export async function play(opts) {
   };
   // 🧪 Read-only peek for driven tests (window.__haulRun.t vs wall time tells
   //    you the sim is running at speed). Nothing reads it in the game.
-  try { window.__haulRun = S; } catch (e) {}
+  try { window.__haulRun = S; S._traffic = traffic; } catch (e) {}
   const isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
   if (isTouch) { root.classList.add('haul-is-touch'); $('haul-hint').textContent = 'Auto throttle · tap ◀ ▶ to steer · hold BRAKE'; }
 
@@ -292,6 +315,7 @@ export async function play(opts) {
     // Lateral: steering authority grows with speed, so parking-lot wiggles do
     // nothing and a flat-out flick is a lane and a half.
     const steer = (right ? 1 : 0) - (left ? 1 : 0);
+    setBlink(rig, steer, steer !== 0 && (Math.floor(S.t * 3) % 2 === 0));
     const lat = steer * (6 + S.speed * 0.22);
     S.x += lat * dt;
     S.heading += ((steer * 0.28) - S.heading) * Math.min(1, dt * 8);
@@ -309,11 +333,56 @@ export async function play(opts) {
     // Traffic: keep ~1 vehicle per 28 m of road ahead, denser as the run goes on.
     const density = 1 / (30 - Math.min(10, (S.z / total) * 10));
     const want = Math.floor(320 * density);
+    /* 🚦 TRAFFIC AI. Every vehicle looks for the nearest thing ahead in its
+       lane — another vehicle OR the rig — and keeps a speed-scaled gap, so
+       nothing drives through anything. A vehicle stuck behind something
+       slower (or simply restless) signals, waits, checks the target lane is
+       clear both ways, then drifts across. */
+    const aheadOf = (v, lane) => {
+      let best = null, bestD = Infinity;
+      for (const o of traffic) { if (o === v || o.lane !== lane && o.toLane !== lane) continue; const d = o.z - v.z; if (d > 0 && d < bestD) { bestD = d; best = { z: o.z, speed: o.speed, halfL: o.halfL }; } }
+      if (Math.abs(S.x - laneX(lane)) < LANE_W * 0.75) { const d = S.z - v.z; if (d > 0 && d < bestD) { bestD = d; best = { z: S.z, speed: S.speed, halfL: PLAYER_HALF_L, rig: true }; } }
+      return best;
+    };
+    const laneClear = (v, lane) => {
+      for (const o of traffic) { if (o === v) continue; if ((o.lane === lane || o.toLane === lane) && Math.abs(o.z - v.z) < 22 + v.halfL + o.halfL) return false; }
+      if (Math.abs(S.x - laneX(lane)) < LANE_W * 0.75 && Math.abs(S.z - v.z) < 26 + v.halfL + PLAYER_HALF_L) return false;
+      return true;
+    };
     for (let i = traffic.length - 1; i >= 0; i--) {
       const v = traffic[i];
-      v.z += v.speed * dt; v.hitCd = Math.max(0, v.hitCd - dt);
-      // Traffic drifts back to its lane centre after being shoved.
-      v.x += (laneX(v.lane) - v.x) * Math.min(1, dt * 1.5);
+      v.hitCd = Math.max(0, v.hitCd - dt);
+      // ── Following: close the gap to the vehicle ahead, never through it.
+      const lead = aheadOf(v, v.lane);
+      let want = v.cruise;
+      if (lead) {
+        const gap = lead.z - v.z - lead.halfL - v.halfL;           // bumper to bumper
+        const safe = 4 + v.speed * 0.9;                            // ~0.9 s headway
+        if (gap < safe) want = Math.min(want, Math.max(0, lead.speed - (safe - gap) * 0.6));
+        if (gap < 0.3 && !lead.rig) v.z = lead.z - lead.halfL - v.halfL - 0.3; // hard stop: no overlap, ever
+      }
+      v.speed += Math.max(-9 * dt, Math.min(4 * dt, want - v.speed));
+      v.z += v.speed * dt;
+      // ── Lane changes.
+      v.decideCd -= dt;
+      if (v.phase === 'cruise') {
+        v.x += (laneX(v.lane) - v.x) * Math.min(1, dt * 1.5);   // settle after a shove
+        const blocked = lead && lead.speed < v.cruise - 3 && (lead.z - v.z) < 40;
+        if (v.decideCd <= 0 && (blocked || Math.random() < dt * 0.04)) {
+          const dirs = [v.lane - 1, v.lane + 1].filter((l) => l >= 0 && l < LANES && laneClear(v, l));
+          if (dirs.length) { v.toLane = dirs[Math.floor(Math.random() * dirs.length)]; v.sigDir = Math.sign(v.toLane - v.lane); v.phase = 'signal'; v.sigT = 0; }
+          v.decideCd = 2 + Math.random() * 4;
+        }
+      } else if (v.phase === 'signal') {
+        v.sigT += dt;
+        if (!laneClear(v, v.toLane)) { v.phase = 'cruise'; v.toLane = v.lane; }         // somebody moved in: cancel
+        else if (v.sigT > 1.2) { v.phase = 'move'; v.lane = v.toLane; }
+      } else if (v.phase === 'move') {
+        v.sigT += dt;
+        const tx = laneX(v.lane); v.x += (tx - v.x) * Math.min(1, dt * 2.2);
+        if (Math.abs(tx - v.x) < 0.08) { v.x = tx; v.phase = 'cruise'; }
+      }
+      setBlink(v.mesh.children[0], v.sigDir || 0, v.phase !== 'cruise' && (Math.floor(S.t * 3) % 2 === 0));
       if (v.z < S.z - 70 || v.z > S.z + 420) { scene.remove(v.mesh); traffic.splice(i, 1); continue; }
       // Collision, in road space (x relative to the centre line).
       const dz = v.z - S.z, dx = v.x - S.x;

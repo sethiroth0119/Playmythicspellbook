@@ -15,7 +15,7 @@
 import { bridge, esc, fmtNum, fmtKm, fmtTime } from './haul.bridge.js';
 import { normalizeCities, route, parSeconds } from './haul.map.js';
 import { econOf, minFare, defaultTerms, settle, rating, rankFor, worth, verdict, RANKS,
-         cargoClass, CARGO_CLASSES, cargoRisk, UPGRADES, UPGRADE_MAX, upgradePrice, insurancePremium, guardFee, tollPct, bonusEarned } from './haul.economy.js';
+         cargoClass, CARGO_CLASSES, cargoRisk, UPGRADES, UPGRADE_MAX, upgradePrice, insurancePremium, guardFee, tollPct, bonusEarned, rigProfile, ISSUED_RIG } from './haul.economy.js';
 import { Haul, loadAll, loadCompany, postJob, cancelJob, claimJob, completeRun, claimGoods, saveCompany, setWage, practiceAdd, practiceStats, hireGuard, buyUpgrade } from './haul.api.js';
 import { play, planRun, GAME_CSS } from './haul.game.js';
 
@@ -24,6 +24,13 @@ let tab = 'dispatch';
 let form = { fromId: '', toId: '', resource: '', qty: 10, fare: 0, recipientId: '', insured: false, bonus: 0 };
 let practice = { fromId: '', toId: '', guard: false };
 let busy = false;
+/* 🚛 The rig the player drives: any owned truck the bridge lists (Garage rigs,
+   Prince Portfolios trucks, the issued hauler). The choice is per browser. */
+function myRigs() { const b = bridge(); let list = []; try { list = b.rigs ? b.rigs() : []; } catch (e) {} return list.length ? list : [ISSUED_RIG]; }
+function chosenRig() {
+  const list = myRigs(); let id = ''; try { id = localStorage.getItem('haul_rig') || ''; } catch (e) {}
+  return list.find((r) => r.id === id) || list[list.length - 1];
+}
 
 /* ── Terms the CURRENT player drives under. Company terms if their corp runs a
    transport op, else freelance (null). Mirrors _haul_company_of in sql/038. */
@@ -71,7 +78,10 @@ function jobCard(j, opts) {
   const me = b.userId();
   const mineAsShipper = j.shipper_id === me, mineAsDriver = j.driver_id === me, mineAsRecipient = j.recipient_id === me;
   let actions = '';
-  if (opts.board && !mineAsShipper) actions = `<button class="hl-btn hl-btn-go" data-h="claim" data-id="${j.id}">🛣 Take the wheel</button>`;
+  const cap = rigProfile(chosenRig()).capacity;
+  if (opts.board && !mineAsShipper) actions = (j.qty | 0) > cap
+    ? `<span class="hl-dim hl-small">Needs a rig with ${j.qty}+ capacity — yours carries ${cap}. Change rig in 🔧 Garage.</span>`
+    : `<button class="hl-btn hl-btn-go" data-h="claim" data-id="${j.id}">🛣 Take the wheel</button>`;
   if (mineAsDriver && st === 'claimed') actions = `<button class="hl-btn hl-btn-go" data-h="drive" data-id="${j.id}">🚚 Drive now</button>`;
   if (mineAsShipper && st === 'open') actions += `<button class="hl-btn" data-h="cancel" data-id="${j.id}">Cancel · refund</button>`;
   if (mineAsRecipient && st === 'delivered' && !j.goods_claimed_at) actions += `<button class="hl-btn hl-btn-go" data-h="collect" data-id="${j.id}">📦 Collect ${Math.floor(j.qty * Number(j.cargo_pct || 0))} ${esc(m.name)}</button>`;
@@ -224,7 +234,17 @@ function paintCompany() {
 
 function paintGarage() {
   const b = bridge(); const econ = econOf(b.econ()); const U = Haul.upgrades || {};
-  return `<div class="hl-card"><div class="hl-card-t">🔧 Your rig <span class="hl-dim">— upgrades are yours, whoever you drive for</span></div>
+  const rigs = myRigs(); const cur = chosenRig();
+  const bar = (v, max) => `<i class="hl-stat"><b style="width:${Math.round(Math.max(0, Math.min(1, v / max)) * 100)}%"></b></i>`;
+  return `<div class="hl-card"><div class="hl-card-t">🚛 Choose your rig <span class="hl-dim">— Garage rigs, trucks on your Prince Portfolios lot, or the issued hauler</span></div>
+    <div class="hl-tblwrap"><table class="hl-tbl"><thead><tr><th></th><th>Rig</th><th>Engine</th><th>Brakes</th><th>Handling</th><th>Armour</th><th>Capacity</th></tr></thead><tbody>
+    ${rigs.map((r) => { const P = rigProfile(r); return `<tr class="${r.id === cur.id ? 'hl-row-on' : ''}"><td><button class="hl-btn hl-btn-sm${r.id === cur.id ? ' hl-btn-go' : ''}" data-h="rig" data-id="${esc(r.id)}">${r.id === cur.id ? 'Driving' : 'Drive'}</button></td>
+      <td><b>${esc(P.name)}</b><div class="hl-small hl-dim">${esc(P.typeLabel)}${P.condition ? ' · ' + esc(P.condition) : ''}${r.kind === 'lot' ? ' · from your lot' : r.kind === 'garage' ? ' · Garage' : ' · issued'}</div></td>
+      <td>${bar(P.accel, 1.2)}</td><td>${bar(P.brake, 1.2)}</td><td>${bar(P.steer, 1.2)}</td><td>${bar(2 - P.armor, 1.5)}</td><td><b>${P.capacity}</b> <span class="hl-dim hl-small">units</span></td></tr>`; }).join('')}
+    </tbody></table></div>
+    <div class="hl-dim hl-small">A job's units must fit the rig. Dealership condition scales engine and brakes — a Salvage-grade truck drives like one. Armoured rigs take less cargo damage; Construction rigs carry the most and turn the slowest.</div>
+  </div>
+  <div class="hl-card"><div class="hl-card-t">🔧 Upgrades <span class="hl-dim">— yours, whoever you drive for</span></div>
     ${UPGRADES.map((u) => { const lvl = U[u.id] | 0; const next = lvl + 1; const price = upgradePrice(econ, u.id, next);
       return `<div class="hl-run"><span>${u.icon} <b>${u.name}</b> <span class="hl-dim">L${lvl}/${UPGRADE_MAX} · ${esc(u.desc)}</span></span>
         <span>${lvl >= UPGRADE_MAX ? '<span class="hl-dim">maxed</span>' : `<button class="hl-btn hl-btn-sm hl-btn-go" data-h="buy" data-id="${u.id}" ${Haul.offline || Haul.missing ? 'disabled' : ''}>Buy L${next} · 🔥 ${fmtNum(price)}</button>`}</span></div>`; }).join('')}
@@ -275,7 +295,7 @@ async function practiceRun() {
   const C = cities(); const r = route(C, practice.fromId, practice.toId);
   if (!r || r.km <= 0) return bridge().toast('Pick two different cities.');
   let out;
-  try { out = await runGame({ cities: C, fromId: practice.fromId, toId: practice.toId, cargoLabel: 'practice load', guard: practice.guard, upgrades: Haul.upgrades, driverId: bridge().userId(), forceToll: true }); }
+  try { out = await runGame({ cities: C, fromId: practice.fromId, toId: practice.toId, cargoLabel: 'practice load', guard: practice.guard, upgrades: Haul.upgrades, driverId: bridge().userId(), forceToll: true, rig: chosenRig() }); }
   catch (e) { return bridge().toast('⚠ ' + (e && e.message), 6000); }
   practiceAdd(out);
   const fare = minFare(bridge().econ(), r.km, 10);
@@ -294,6 +314,7 @@ async function startRun(job) {
     job = c.job || job;
   }
   const m = b.meta(job.resource);
+  if ((job.qty | 0) > rigProfile(chosenRig()).capacity) return b.toast('⚠ That load does not fit your rig. Pick a bigger one in the Garage.', 4200);
   // 🪖 One guard per run, offered before the wheel turns. Paid by the company
   //    treasury (or the freelancer) through sql/039; the job row remembers it.
   if (!job.guard_hired && !Haul.missing) {
@@ -302,7 +323,7 @@ async function startRun(job) {
     if (yes) { const g = await hireGuard(job); if (g.ok) { job.guard_hired = true; b.toast('🪖 Guard hired for this run.', 3000); } else b.toast('⚠ ' + g.why, 4200); }
   }
   let out;
-  try { out = await runGame({ cities: cities(), fromId: job.from_node, toId: job.to_node, resource: job.resource, cargoLabel: job.qty + '× ' + m.name, cargoColor: m.color, guard: !!job.guard_hired, upgrades: Haul.upgrades, driverId: b.userId() }); }
+  try { out = await runGame({ cities: cities(), fromId: job.from_node, toId: job.to_node, resource: job.resource, cargoLabel: job.qty + '× ' + m.name, cargoColor: m.color, guard: !!job.guard_hired, upgrades: Haul.upgrades, driverId: b.userId(), rig: chosenRig() }); }
   catch (e) { b.toast('⚠ ' + (e && e.message), 6000); await loadAll(); paint(); return; }
   busy = true; paint();
   const s = await completeRun(job, out);
@@ -328,6 +349,7 @@ function resultCard(out, s, o) {
       <div><span>Cargo intact</span><b>${Math.round(out.cargoPct * 100)}%</b></div>
       <div><span>Car hits</span><b>${out.crashesCar}</b></div>
       <div><span>Rail hits</span><b>${out.crashesRail}</b></div>
+      <div><span>Rig</span><b>${esc(out.rig || '')}</b></div>
       <div><span>Exits</span><b>${out.wrongExits ? '<span class="hl-err">' + out.wrongExits + ' wrong · +' + out.detourM + ' m</span>' : 'all correct'}</b></div>
       <div><span>Raiders</span><b>${out.raiders ? out.raidersBeaten + '/' + out.raiders + ' beaten' + (out.guardUsed ? ' · 🪖 guard fired' : '') : 'none'}</b></div>
     </div>
@@ -359,6 +381,7 @@ async function onClick(ev) {
   if (h === 'refresh') { busy = true; paint(); await loadAll(); busy = false; paint(); return; }
   if (h === 'practice') return practiceRun();
   if (h === 'how-toggle') { howOpen = !howOpen; try { localStorage.setItem('haul_how_open', howOpen ? '1' : '0'); } catch (e) {} paint(); return; }
+  if (h === 'rig') { try { localStorage.setItem('haul_rig', t.dataset.id); } catch (e) {} paint(); return; }
   if (h === 'buy') {
     const u = UPGRADES.find((x) => x.id === t.dataset.id); if (!u) return;
     const price = upgradePrice(b.econ(), u.id, (Haul.upgrades[u.id] | 0) + 1);
@@ -486,6 +509,8 @@ function injectStyle() {
 .hl-how{display:flex;gap:10px;align-items:flex-start;font-size:.88rem}
 .hl-how-i{font-size:1.3rem;line-height:1.2;width:1.6rem;text-align:center;flex:none}
 .hl-howcard .hl-card-t{margin-bottom:4px}
+.hl-stat{display:block;width:64px;height:8px;background:rgba(255,255,255,.1);border-radius:4px;overflow:hidden}.hl-stat b{display:block;height:100%;background:#ffb060}
+.hl-row-on td{background:rgba(255,176,96,.08)}
 .hl-chk{display:inline-flex;align-items:center;gap:6px;font-size:.84rem;color:#e8e0d0;cursor:pointer}
 .hl-chk input{width:auto}
 .hl-route{margin-top:10px;padding:8px 10px;background:rgba(108,212,255,.08);border-radius:8px;font-size:.86rem}

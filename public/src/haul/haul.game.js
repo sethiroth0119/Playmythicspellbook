@@ -23,7 +23,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 import { roadLength, parSeconds, normalizeCities, route as routeOf } from './haul.map.js';
-import { cargoClass, CARGO_CLASSES, upgradeEffects, weatherFor } from './haul.economy.js';
+import { cargoClass, CARGO_CLASSES, upgradeEffects, weatherFor, rigProfile } from './haul.economy.js';
 
 // The lanes. 4 × 3.6 m + a 1.4 m shoulder each side; the rail sits at ±HALF.
 const LANE_W = 3.6, LANES = 4, ROAD_W = LANE_W * LANES, HALF = ROAD_W / 2 + 1.4;
@@ -97,7 +97,9 @@ export async function play(opts) {
   const km = plan.route.km;
   const cls = CARGO_CLASSES[cargoClass(opts.resource)] || CARGO_CLASSES.standard;
   const up = upgradeEffects(opts.upgrades);
-  const MAX_SPEED = BASE_MAX_SPEED * cls.speed * up.speed;
+  const RIG = rigProfile(opts.rig);
+  const MAX_SPEED = BASE_MAX_SPEED * cls.speed * up.speed * RIG.top;
+  const WHEELBASE = 6.5;                        // bicycle model: yaw rate = v · tan(δ) / L
   let THREE;
   try { THREE = await import('three'); }
   catch (e) { throw new Error('three.js failed to load — the run needs the 3D engine. ' + ((e && e.message) || '')); }
@@ -112,7 +114,8 @@ export async function play(opts) {
         <div class="haul-pill"><span class="haul-k">ROUTE</span> ${esc(plan.route.path[0] && plan.cities.find((c) => c.id === plan.fromId).name)} → ${esc(plan.cities.find((c) => c.id === plan.toId).name)} · ${km.toFixed(1)} km</div>
         <div class="haul-pill"><span class="haul-k">CARGO</span> <span id="haul-cargo">100%</span> · ${esc(opts.cargoLabel || 'freight')} <span class="haul-dim">${cls.label}</span></div>
         <div class="haul-pill"><span class="haul-k">TIME</span> <span id="haul-time">0:00</span> <span class="haul-dim">/ par ${fmtT(par)}</span></div>
-        <div class="haul-pill haul-dim">${weather.icon} ${esc(weather.label)}${opts.guard ? ' · <span id="haul-guard">🛡 GUARD READY</span>' : ''}</div>
+        <div class="haul-pill haul-dim">🚛 ${esc(RIG.name)}${RIG.condition ? ' · ' + esc(RIG.condition) : ''} · ${weather.icon} ${esc(weather.label)}${opts.guard ? ' · <span id="haul-guard">🛡 GUARD READY</span>' : ''}</div>
+        <div class="haul-pill haul-turn" id="haul-turn" hidden></div>
       </div>
       <div class="haul-progress"><div id="haul-prog-bar"></div><div id="haul-prog-txt"></div></div>
       <div class="haul-hud-spacer"></div>
@@ -386,7 +389,7 @@ export async function play(opts) {
   // ── State ─────────────────────────────────────────────────────────────────
   const S = {
     z: 0, x: 0, speed: 0, heading: 0, t: 0, cargo: 100, cc: 0, cr: 0, hz: 0, wrongExits: 0, detourM: 0, total,
-    railCd: 0, done: false, paused: false, abandoned: false, started: false, jIdx: 0, tollsHit: 0, tollsPaid: [],
+    railCd: 0, steer: 0, done: false, paused: false, abandoned: false, started: false, jIdx: 0, tollsHit: 0, tollsPaid: [],
     raider: null, raiderIdx: 0, raidersBeaten: 0, raiderHits: 0, guardUsed: false, tracerT: 0,
     keys: {}, touch: { left: false, right: false, brake: false },
   };
@@ -470,27 +473,56 @@ export async function play(opts) {
     const brake = isTouch ? T.brake : (K.arrowdown || K.s || K[' ']);
     const left = K.arrowleft || K.a || T.left, right = K.arrowright || K.d || T.right;
     const grip = weather.grip;
-    if (brake) S.speed = Math.max(0, S.speed - 34 * cls.brake * up.brake * grip * dt);
-    else if (gas) S.speed = Math.min(MAX_SPEED, S.speed + (S.speed < 20 ? 16 : 9) * cls.accel * up.accel * dt);
-    else S.speed = Math.max(0, S.speed - 5 * dt);
+    if (brake) S.speed = Math.max(0, S.speed - 34 * cls.brake * up.brake * RIG.brake * grip * dt);
+    else if (gas) S.speed = Math.min(MAX_SPEED, S.speed + (S.speed < 20 ? 16 : 9) * cls.accel * up.accel * RIG.accel * (1 - 0.5 * S.speed / MAX_SPEED) * dt);
+    else S.speed = Math.max(0, S.speed - (3 + S.speed * 0.04) * dt);   // rolling + air drag
     const steer = (right ? 1 : 0) - (left ? 1 : 0);
-    setBlink(rig, steer, steer !== 0 && (Math.floor(S.t * 3) % 2 === 0));
-    const lat = steer * (6 + S.speed * 0.22) * grip;
-    S.x += lat * dt;
-    S.heading += ((steer * 0.28) - S.heading) * Math.min(1, dt * 8);
-    S.z += S.speed * dt;
+    /* 🚛 HANDLING — a bicycle model rather than "x moves sideways". The wheel
+       turns toward the input at a finite rate, its maximum angle shrinks with
+       speed (you cannot crank a rig over at 200 km/h), yaw comes from
+       v·tan(δ)/wheelbase, and the nose drifts back to straight when you let
+       go. So a lane change at speed needs an early, gentle input and a
+       counter-steer, a heavy Construction rig turns late, and a Utility 4x4
+       flicks. Rain scales grip, the rig's steer figure scales authority. */
+    const maxSteer = (0.42 - 0.34 * Math.min(1, S.speed / MAX_SPEED)) * RIG.steer;
+    const target = steer * maxSteer;
+    S.steer += Math.max(-2.2 * dt, Math.min(2.2 * dt, target - S.steer));
+    if (!steer) S.steer *= Math.pow(0.05, dt);
+    // Tyres, not geometry, limit the turn at speed: lateral acceleration is
+    // capped (~7 m/s² for a loaded rig, less in rain), so at 150 km/h a lane
+    // change takes a second and a half however hard you crank the wheel.
+    const geo = S.speed * Math.tan(S.steer) / WHEELBASE;
+    const cap = (7 * grip * (0.85 + 0.3 * RIG.steer)) / Math.max(3, S.speed);
+    const yawRate = Math.max(-cap, Math.min(cap, geo)) * grip;
+    S.heading += yawRate * dt;
+    // Self-centring: a rig tracks straight down a lane when the wheel is free.
+    if (!steer) S.heading *= Math.pow(0.35, dt);
+    S.heading = Math.max(-0.6, Math.min(0.6, S.heading));
+    S.x += Math.sin(S.heading) * S.speed * dt;
+    S.z += Math.cos(S.heading) * S.speed * dt;
+    // Blinkers: your own input, or the ramp is open at YOUR exit.
+    const jNow = junctions[S.jIdx];
+    const rampOpen = !!(jNow && jNow.viaExit && S.z > jNow.z - RAMP_IN && S.z < jNow.z + RAMP_OUT);
+    setBlink(rig, steer || (rampOpen ? 1 : 0), (steer !== 0 || rampOpen) && (Math.floor(S.t * 3) % 2 === 0));
     // Rails. The right rail moves out a lane inside a ramp window.
     S.railCd = Math.max(0, S.railCd - dt);
     const rl = rightLimit();
     if (S.x + PLAYER_HALF_W > rl || -S.x + PLAYER_HALF_W > HALF) {
       S.x = S.x > 0 ? rl - PLAYER_HALF_W : -(HALF - PLAYER_HALF_W);
+      S.heading *= 0.3; S.steer *= 0.5;   // the rail straightens you out
       if (S.railCd <= 0) { S.cr++; S.railCd = 0.7; damage(RAIL_HIT_DMG * (0.5 + S.speed / MAX_SPEED) * cls.railMul); flash('🛤 RAIL'); }
       // Per-SECOND decay via pow(dt): a per-frame multiplier stopped the rig
       // dead on fast screens and barely slowed it on slow ones.
       S.speed *= Math.pow(0.55, dt);
     }
-    // ── Junctions: the exit decision, read RAMP_OUT metres past the city.
+    // ── Exit callouts: "your exit is coming up" 500 m out, and a turn sign
+    //    while the ramp is open at an exit that is yours.
     const j = junctions[S.jIdx];
+    if (j && j.viaExit && !j.calledUp && S.z > j.z - 520) { j.calledUp = true; flash('↗ YOUR EXIT IS COMING UP → ' + j.nextName); }
+    const turnEl = $('haul-turn');
+    if (rampOpen) { turnEl.hidden = false; turnEl.textContent = (Math.floor(S.t * 3) % 2 === 0 ? '↗ ' : '  ') + 'EXIT OPEN — TURN NOW → ' + j.nextName; }
+    else if (j && !j.viaExit && S.z > j.z - RAMP_IN && S.z < j.z + RAMP_OUT) { turnEl.hidden = false; turnEl.textContent = '↑ STAY ON — not your exit'; }
+    else turnEl.hidden = true;
     if (j && S.z >= j.z + RAMP_OUT) {
       const tookExit = S.x > ROAD_W / 2 + 0.3;
       if (tookExit === j.viaExit) { flash(j.last ? '🏁 ' + j.node.name : '✓ ' + (tookExit ? 'EXIT' : 'THRU') + ' → ' + j.nextName); }
@@ -522,7 +554,14 @@ export async function play(opts) {
       if (S.speed < 0.6 && nose > jj.zArm - 9) {
         if (jj.tollState === 'closed') { jj.tollState = 'paying'; flash('💰 PAYING TOLL · ' + (jj.tollOwner || jj.node.name)); }
         jj.payT += dt;
-        if (jj.payT >= TOLL_PAY_S) { jj.tollState = 'open'; S.tollsHit++; flash('✓ TOLL PAID — GO'); }
+        // Paid — but the arm only lifts once the lane ahead is clear, so you
+        // are never waved into the back of the car that just paid.
+        if (jj.payT >= TOLL_PAY_S) {
+          const myLane = Math.max(0, Math.min(LANES - 1, Math.floor((S.x + ROAD_W / 2) / LANE_W)));
+          const blocked = traffic.some((o) => o.lane === myLane && o.z > S.z && o.z - S.z < 30);
+          if (!blocked) { jj.tollState = 'open'; S.tollsHit++; flash('✓ TOLL PAID — CLEAR AHEAD, GO'); }
+          else if (!jj.waitFlash) { jj.waitFlash = true; flash('💰 TOLL PAID — WAIT FOR THE CAR AHEAD'); }
+        }
       }
     }
     // ── Hazards.
@@ -561,8 +600,8 @@ export async function play(opts) {
       const lead = aheadOf(v, v.lane);
       const hz = hazardAhead(v);
       let wantS = hz ? v.cruise * 0.6 : v.cruise;
-      // Toll plazas: traffic rolls through at a crawl (their arms lift for them).
-      for (const jj of junctions) if (jj.toll) { const d = jj.zArm - v.z; if (d > -6 && d < 80) wantS = Math.min(wantS, d < 14 ? 3 : 8); }
+      // Toll plazas: traffic slows on the approach and stops at the booth (below).
+      for (const jj of junctions) if (jj.toll && v.tolled !== jj) { const d = jj.zArm - v.z; if (d > -6 && d < 90) wantS = Math.min(wantS, Math.max(0, d * 0.35)); }
       if (lead) {
         const gap = lead.z - v.z - lead.halfL - v.halfL;
         const safe = 4 + v.speed * 0.9;
@@ -591,10 +630,14 @@ export async function play(opts) {
       }
       setBlink(v.mesh.children[0], v.sigDir || 0, v.phase !== 'cruise' && (Math.floor(S.t * 3) % 2 === 0));
       if (v.z < S.z - 70 || v.z > S.z + 420) { scene.remove(v.mesh); traffic.splice(i, 1); continue; }
-      // The plaza empties as the rig arrives — the crawl-through traffic was
-      // exactly where the rig accelerates once the arms lift, and every pull-
-      // away became a rear-end crash (reported by the user).
-      if (junctions.some((j) => j.toll && j.tollState !== 'open' && Math.abs(v.z - j.zArm) < 60 && S.z > j.zArm - 240 && S.z < j.zArm + 20)) { scene.remove(v.mesh); traffic.splice(i, 1); continue; }
+      // Toll booths: every car stops at the arm in its lane, pays (1.2 s),
+      // and rolls on. They queue behind each other like anyone else, and
+      // the rig queues behind them — nothing vanishes.
+      for (const jj of junctions) if (jj.toll) {
+        if (v.tolled === jj) continue;
+        const stopAt = jj.zArm - v.halfL - 0.6;
+        if (v.z >= stopAt) { v.z = stopAt; v.speed = 0; v.tollT = (v.tollT || 0) + dt; if (v.tollT >= 1.2) { v.tolled = jj; v.tollT = 0; v.speed = 2; jj.laneLift = jj.laneLift || {}; jj.laneLift[v.lane] = 1.6; } }
+      }
       collideVehicle(v, dt);
     }
     // Bounded: spawnTraffic can decline (hazard or toll plaza in the window),
@@ -657,19 +700,22 @@ export async function play(opts) {
       else { const push = Math.sign(dx || 1); S.x -= push * 1.6 * dt * 20; v.x += push * 0.8; S.speed *= 0.93; }
     }
   }
-  function damage(pct) { S.cargo = Math.max(0, S.cargo - pct * up.bed); if (S.cargo <= 0) { flash('💥 CARGO LOST'); setTimeout(finish, 600); } }
+  function damage(pct) { S.cargo = Math.max(0, S.cargo - pct * up.bed * RIG.armor); if (S.cargo <= 0) { flash('💥 CARGO LOST'); setTimeout(finish, 600); } }
   function flash(txt) { const f = $('haul-flash'); f.textContent = txt; f.classList.add('on'); flashT = 0.7; }
   function draw() {
     const cx = centreX(S.z);
     const yaw = -Math.atan2((centreX(S.z + 1) - centreX(S.z - 1)) / 2, 1);
-    rigOuter.position.set(cx + S.x, 0, -S.z); rigOuter.rotation.y = yaw - S.heading * 0.6;
+    rigOuter.position.set(cx + S.x, 0, -S.z); rigOuter.rotation.y = yaw - S.heading;
     rig.children.forEach((c) => { if (c.userData.cargo) { const k = 0.5 + 0.5 * (S.cargo / 100); c.scale.set(k, k, k); c.rotation.z = (1 - k) * 0.6; } });
     for (const v of traffic) { v.mesh.position.set(centreX(v.z) + v.x, 0, -v.z); v.mesh.rotation.y = -Math.atan2((centreX(v.z + 1) - centreX(v.z - 1)) / 2, 1); }
     if (S.raider) { const R = S.raider; R.mesh.position.set(centreX(R.z) + R.x, R.dead ? 0.3 : 0, -R.z); if (!R.dead) R.mesh.rotation.y = -Math.atan2((centreX(R.z + 1) - centreX(R.z - 1)) / 2, 1); }
     tracer.visible = S.tracerT > 0 && Math.floor(S.tracerT * 12) % 2 === 0;
     if (tracer.visible && S.raider) { tracer.position.set(cx + S.x + 0.6, 3.4, -(S.z - 12)); }
     for (const h of hazards) for (const o of h.objs) if (o.blink) setBlink(o.mesh.children[0], 2, Math.floor(S.t * 2) % 2 === 0);
-    for (const jj of junctions) if (jj.arms) { const target = jj.tollState === 'open' ? -1.35 : 0; jj.armAngle += (target - jj.armAngle) * 0.12; jj.arms.forEach((a) => { a.rotation.z = jj.armAngle; }); }
+    for (const jj of junctions) if (jj.arms) {
+      jj.laneLift = jj.laneLift || {};
+      jj.arms.forEach((a, l) => { const t = jj.laneLift[l]; if (t > 0) jj.laneLift[l] = t - 1 / 60; const target = (jj.tollState === 'open' || jj.laneLift[l] > 0) ? -1.35 : 0; a.rotation.z += (target - a.rotation.z) * 0.12; });
+    }
     const camBack = 13 + S.speed * 0.08;
     cam.position.set(centreX(S.z - camBack) + S.x * 0.6, 6.2 + S.speed * 0.02, -(S.z - camBack));
     cam.lookAt(cx + S.x * 0.8, 1.6, -(S.z + 18));
@@ -695,7 +741,7 @@ export async function play(opts) {
       completed, abandoned: S.abandoned, timeS: Math.round(S.t), parS: par, km,
       crashesCar: S.cc, crashesRail: S.cr + S.hz, hazards: S.hz, cargoPct: completed ? Math.round(S.cargo) / 100 : 0,
       wrongExits: S.wrongExits, detourM: S.detourM, tolls: S.tollsHit, raiders: S.raiderIdx, raidersBeaten: S.raidersBeaten, raiderHits: S.raiderHits,
-      guardUsed: S.guardUsed, weather: weather.id, cargoClass: cls.id, distanceM: Math.round(S.z), totalM: S.total,
+      guardUsed: S.guardUsed, weather: weather.id, cargoClass: cls.id, rig: RIG.name, distanceM: Math.round(S.z), totalM: S.total,
     });
   }
   function destroy() {
@@ -725,6 +771,7 @@ export const GAME_CSS = `
 .haul-k{color:#ffb060;font-size:.68rem;letter-spacing:.12em;margin-right:6px}
 .haul-dim{color:#a89880;font-weight:500}
 .haul-speed{font-size:1.5rem;min-width:7rem;text-align:center}
+.haul-turn{background:rgba(31,61,138,.85);border-color:#6cd4ff;color:#fff;font-size:1rem}
 .haul-progress{position:relative;height:8px;background:rgba(255,255,255,.1);border-radius:6px;overflow:visible;margin-top:4px;flex:none}
 .haul-hud-spacer{flex:1}
 #haul-prog-bar{height:100%;background:linear-gradient(90deg,#ffb060,#ffd166);border-radius:6px;width:0}

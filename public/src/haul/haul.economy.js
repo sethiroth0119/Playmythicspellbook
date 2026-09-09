@@ -169,3 +169,44 @@ export function guardFee(econ) { return Math.max(1, Math.round(Number(econOf(eco
 export function tollPct(econ) { return Number(econOf(econ).tollPct) || 3; }
 /** The on-time bonus is earned by arriving within par with ≥ 90% cargo. */
 export function bonusEarned(out, econ) { const minCargo = Number(econOf(econ).bonusMinCargo) || 0.9; return !!(out && out.completed && out.timeS <= out.parS && out.cargoPct >= minCargo); }
+
+/* ── RIGS: WHAT YOU DRIVE ─────────────────────────────────────────────────────
+   The truck comes from the rest of the game, not from here: a Garage rig
+   (Ironback / Ash Convoy / Warden, bought for cash), a truck-class vehicle
+   sitting on the player's Prince Portfolios lot, or the free issued Scrap
+   Hauler. Each maps to a HANDLING PROFILE, so a dealership stat line finally
+   means something on the road: an Armored Vehicle shrugs off hits but is slow
+   to stop, a Utility 4x4 is nimble and small, a Construction Vehicle carries
+   the most and turns like a barge. Condition (dealership) scales the engine
+   and brakes: a Salvage-grade truck is a Salvage-grade truck.
+     accel / brake / top  — multipliers on the base rig physics
+     steer               — steering authority (1 = base)
+     armor               — cargo-damage multiplier (lower is tougher)
+     capacity            — the most units it can carry on one job */
+export const RIG_TYPES = {
+  hauler:     { id: 'hauler',     label: 'Scrap Hauler',        accel: 0.85, brake: 0.9,  top: 0.82, steer: 1.05, armor: 1.15, capacity: 40 },
+  ironback:   { id: 'ironback',   label: 'Ironback Runner',     accel: 0.95, brake: 1.0,  top: 0.92, steer: 1.0,  armor: 1.0,  capacity: 80 },
+  ashconvoy:  { id: 'ashconvoy',  label: 'Ash Convoy Rig',      accel: 1.0,  brake: 1.05, top: 1.0,  steer: 0.95, armor: 0.9,  capacity: 140 },
+  warden:     { id: 'warden',     label: 'Warden Longhaul',     accel: 1.05, brake: 1.1,  top: 1.06, steer: 0.9,  armor: 0.7,  capacity: 220 },
+  truck:      { id: 'truck',      label: 'Truck',               accel: 1.0,  brake: 1.0,  top: 0.98, steer: 1.0,  armor: 1.0,  capacity: 120 },
+  utility:    { id: 'utility',    label: 'Utility Vehicle',     accel: 1.1,  brake: 1.1,  top: 0.95, steer: 1.15, armor: 1.1,  capacity: 60 },
+  construction: { id: 'construction', label: 'Construction Vehicle', accel: 0.75, brake: 0.85, top: 0.78, steer: 0.75, armor: 0.8, capacity: 260 },
+  armored:    { id: 'armored',    label: 'Armored Vehicle',     accel: 0.85, brake: 0.8,  top: 0.9,  steer: 0.85, armor: 0.55, capacity: 150 },
+  van:        { id: 'van',        label: 'Smuggler Van',        accel: 1.15, brake: 1.05, top: 1.08, steer: 1.1,  armor: 1.05, capacity: 70 },
+};
+const PP_TYPE_TO_RIG = { 'Truck': 'truck', 'Utility Vehicle': 'utility', 'Construction Vehicle': 'construction', 'Armored Vehicle': 'armored', 'Smuggler Van': 'van' };
+const COND_MULT = { Pristine: 1.05, Clean: 1, Worn: 0.9, Battered: 0.78, Wrecked: 0.6, Salvage: 0.45 };
+export function isHaulVehicleType(ppType) { return !!PP_TYPE_TO_RIG[String(ppType || '')]; }
+/** A rig profile from any owned vehicle record the bridge hands over:
+    { id, name, kind: 'garage'|'lot'|'issued', type?, condition?, sku? } */
+export function rigProfile(v) {
+  v = v || {};
+  let t = RIG_TYPES.hauler;
+  if (v.kind === 'garage') t = RIG_TYPES[{ rig_ironback: 'ironback', rig_ashconvoy: 'ashconvoy', rig_warden: 'warden' }[v.sku]] || RIG_TYPES.ironback;
+  else if (v.kind === 'lot') t = RIG_TYPES[PP_TYPE_TO_RIG[v.type]] || RIG_TYPES.truck;
+  const c = COND_MULT[v.condition] || 1;
+  return { id: v.id || t.id, name: v.name || t.label, kind: v.kind || 'issued', typeLabel: t.label, condition: v.condition || '',
+           accel: t.accel * c, brake: t.brake * c, top: t.top * (0.85 + 0.15 * c), steer: t.steer, armor: t.armor * (v.condition === 'Salvage' || v.condition === 'Wrecked' ? 1.15 : 1),
+           capacity: Math.round(t.capacity * (c < 0.7 ? 0.7 : 1)) };
+}
+export const ISSUED_RIG = { id: 'issued_hauler', name: 'Scrap Hauler', kind: 'issued' };

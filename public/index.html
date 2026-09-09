@@ -207469,6 +207469,29 @@ window.MythicHaulBridge = {
     } catch (e) { return null; }
   },
   corpTreasuryRefresh: async () => { try { if (typeof corpTreasuryFetch === 'function') return await corpTreasuryFetch(); } catch (e) {} return 0; },
+  /* 🚛 THE RIGS THE PLAYER CAN DRIVE. Three sources, one list, so a truck
+     bought anywhere in the game is a truck on the highway: the free issued
+     Scrap Hauler, the cash Garage rigs (Ironback / Ash Convoy / Warden — the
+     same _garageRig / CONVOY_TRUCKS ownership answer the convoys use), and any
+     truck-class vehicle on the Prince Portfolios lot (Truck, Utility, Armored,
+     Construction, Smuggler Van), condition included. /src/haul turns each into
+     a handling profile; nothing here decides how they drive. */
+  rigs: () => {
+    const out = [{ id: 'issued_hauler', name: 'Scrap Hauler', kind: 'issued' }];
+    try {
+      (typeof GARAGE_RIGS !== 'undefined' ? GARAGE_RIGS : []).forEach((r) => {
+        let has = false; try { has = garageOwns(r.sku); } catch (e) {}
+        if (!has && typeof CONVOY_TRUCKS !== 'undefined' && typeof _convoyOwnsTruck === 'function') { try { const ct = CONVOY_TRUCKS.find((x) => x.sku === r.sku); if (ct) has = _convoyOwnsTruck(ct.id); } catch (e) {} }
+        if (has) out.push({ id: r.sku, name: r.name, kind: 'garage', sku: r.sku });
+      });
+    } catch (e) {}
+    try {
+      const lot = (Profile.princePortfolios && Array.isArray(Profile.princePortfolios.lot)) ? Profile.princePortfolios.lot : [];
+      const truckTypes = { 'Truck': 1, 'Utility Vehicle': 1, 'Construction Vehicle': 1, 'Armored Vehicle': 1, 'Smuggler Van': 1 };
+      lot.forEach((v) => { if (v && v.id && truckTypes[v.type]) out.push({ id: 'lot_' + v.id, name: v.name, kind: 'lot', type: v.type, condition: v.condition, color: v.color, mileage: v.mileage | 0 }); });
+    } catch (e) {}
+    return out;
+  },
   // Warm the node-owner cache so toll gates show on the GPS before the run.
   nodeOwnersRefresh: async () => { try { if (typeof tw_cloudFetchNodeOwners === 'function') await tw_cloudFetchNodeOwners(); } catch (e) {} },
   corpTreasury: () => { try { return Corp.treasury | 0; } catch (e) { return 0; } },
@@ -223190,7 +223213,7 @@ render();
      ⚠ If this 404s the tile simply does not appear.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/haul/index.js?v=v120x0haul5"></script>
+<script type="module" src="src/haul/index.js?v=v120x0haul6"></script>
 <!-- 🔌 PRN NODE TIERS — the generation-rate table (Free 0.5% … Eternal 20%).
      Registers window.MythicNodeTiers: pure math, no I/O, no globals. Two
      consumers in this file, both `typeof`-guarded so an absent module falls

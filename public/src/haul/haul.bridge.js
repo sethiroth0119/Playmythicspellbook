@@ -37,6 +37,7 @@ const NULL_BRIDGE = {
   corpTreasuryRefresh: async () => 0,
   corpTreasury: () => 0,
   nodeOwnersRefresh: async () => {},
+  rigs: () => [{ id: 'issued_hauler', name: 'Scrap Hauler', kind: 'issued' }],
   toast: (m) => { try { console.log('[haul]', m); } catch (e) {} },
   confirm: async () => false,
   saveProfile: () => {},

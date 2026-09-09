@@ -71,6 +71,8 @@ const FALLBACK_IDS = [
   // Same rule: the live bridge list wins; this only keeps the no-host bag the
   // right length so profileFor() does not degrade to all-COMMON.
   'animalFeed', 'eggs', 'feathers', 'rawMilk', 'meat', 'wool', 'hide', 'leather', 'fertilizer', 'livestock',
+  // ⭐ Grade-2 farm goods (farm round 5) — four more, same rule.
+  'goldEggs', 'primeMeat', 'richMilk', 'fineWool',
 ];
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -130,8 +132,12 @@ export const TERROIR_ECON = {
          the bag the right length, and the pressure is left on the original
          chains where it applies.
      +livestock (farm round 2, crates) went to COMMON: 24.
-     ⚠ MUST SUM TO resourceIds().length (24). */
-  slots: { RICH: 4, COMMON: 12, SCARCE: 6, BARREN: 2 },
+     +goldEggs / primeMeat / richMilk / fineWool (farm round 5, grade-2 goods):
+       RICH +1, COMMON +2, SCARCE +1 → 28. Same reasoning as the farm ids
+       above — the farm does not read terroir, so a premium good in a SCARCE
+       slot costs nothing; the slots keep the bag the right length.
+     ⚠ MUST SUM TO resourceIds().length (28). */
+  slots: { RICH: 5, COMMON: 14, SCARCE: 7, BARREN: 2 },
 
   /* 🌱 The node's own resource seam is forced RICH. The war map already tells
      the player "this node produces METAL"; terroir makes that claim mean

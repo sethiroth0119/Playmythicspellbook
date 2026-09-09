@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120x4';
+  window.BUILD_VERSION = 'v120x5';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -39323,8 +39323,19 @@ const RESOURCES = [
   /* 📦 Livestock crate (farm round 2). A grown animal crated at the farm is one
      unit; it trades on the Exchange like any resource and uncrates at any farm
      for a species-price discount. The chain catalogue already named it.
-     ⚠ THE COUNT IS NOW 24. terroir.js `slots` sums to 24. */
+     ⚠ THE COUNT WAS 24 after livestock. */
   { id: 'livestock',        name: 'Livestock',        icon: '🐄', color: '#c9b8a0' },
+  /* ⭐ Grade-2 farm goods (farm round 5, v120x5). ONLY a rare / royal / mythic
+     breed makes them (FARM_ECON.premium): a share of its eggs / milk / wool /
+     meat lands as the premium id instead of the plain one. They cook richer at
+     the Farm Kitchen, the town barters more for them, and any operation that
+     eats `food` eats them first (OPS_FARM_MENU) — but they are never worth more
+     Cinder anywhere, so this is a better ration, not a faucet.
+     ⚠ THE COUNT IS NOW 28. terroir.js `slots` sums to 28. */
+  { id: 'goldEggs',         name: 'Golden Eggs',      icon: '🥚', color: '#f2c14e' },
+  { id: 'primeMeat',        name: 'Prime Cuts',       icon: '🥩', color: '#e0606a' },
+  { id: 'richMilk',         name: 'Rich Milk',        icon: '🥛', color: '#fff8e0' },
+  { id: 'fineWool',         name: 'Fine Wool',        icon: '🧶', color: '#ffe8c0' },
 ];
 // 🍞 Consumable resources — keyed by resource id. `effect(amount)` mutates
 // Profile state. The inventory modal renders a USE button for any resource
@@ -80089,6 +80100,10 @@ function getOpsEconOverrides() {
    ⚠ Tuning lives HERE (the _opEcon() rule); admins may override it as
      `__farmMenu` in the opsEcon overrides, same rail as every other op number. */
 const OPS_FARM_MENU = {
+  // ⭐ Grade-2 goods first: a prime cut feeds more and lifts the menu further.
+  primeMeat: { per: 0.3, bonus: 0.40 },
+  goldEggs:  { per: 0.5, bonus: 0.20 },
+  richMilk:  { per: 0.6, bonus: 0.20 },
   meat:    { per: 0.5, bonus: 0.25 },
   eggs:    { per: 0.8, bonus: 0.10 },
   rawMilk: { per: 0.9, bonus: 0.10 },
@@ -206565,7 +206580,7 @@ function _openNodeCity(nodeId, _resolved) {
   }
   const f = document.createElement('iframe');
   f.id = 'node-city-frame';
-  f.src = 'node-city/index.html?v=120x4';
+  f.src = 'node-city/index.html?v=120x5';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);
@@ -223330,7 +223345,7 @@ render();
        the safe state to ship a data layer in.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/resources/chain.js?v=v120x1chain4"></script>
+<script type="module" src="src/resources/chain.js?v=v120x5chain5"></script>
 <!-- 🐄 HOMESTEAD FARM — the 3D animal-farm simulation (/src/farm). Registers
      window.MythicFarm and is INERT until renderFarm() hands it #app. Reads
      nothing by itself: window.MythicFarmBridge (defined next to
@@ -223341,7 +223356,7 @@ render();
      ⚠ If this 404s nothing else changes — the Camp button shows a fallback.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/farm/index.js?v=v120x4farm5"></script>
+<script type="module" src="src/farm/index.js?v=v120x5farm6"></script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the

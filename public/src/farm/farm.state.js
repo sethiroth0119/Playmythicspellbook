@@ -58,7 +58,7 @@ export function ensureState(host) {
   if (!s.stats || typeof s.stats !== 'object') s.stats = {};
   if (!Array.isArray(s.shipments)) s.shipments = [];
   s.shipments = s.shipments.filter(x => x && animalDef(x.sp) && (x.n | 0) > 0).map(x => ({ id: x.id | 0, sp: x.sp, n: x.n | 0, carrier: String(x.carrier || ''), label: String(x.label || ''), departAt: Number(x.departAt) || 0, arriveAt: Number(x.arriveAt) || 0, fee: x.fee | 0, price: x.price | 0, risk: Number(x.risk) || 0, insured: Number(x.insured) || 0, escort: x.escort | 0 }));
-  ['births', 'slaughtered', 'meat', 'raidsRepelled', 'raidsLost', 'predatorsRepelled', 'lost', 'died', 'abducted', 'returned', 'delivered', 'crated', 'shipped', 'lostInTransit', 'built', 'outbreaks', 'cured', 'contractsDone', 'contractsFailed', 'auctions', 'auctionValue'].forEach(k => { if (typeof s.stats[k] !== 'number') s.stats[k] = 0; });
+  ['births', 'slaughtered', 'meat', 'raidsRepelled', 'raidsLost', 'predatorsRepelled', 'lost', 'died', 'abducted', 'returned', 'delivered', 'crated', 'shipped', 'lostInTransit', 'built', 'outbreaks', 'cured', 'contractsDone', 'contractsFailed', 'auctions', 'auctionValue', 'shopBuys', 'premium'].forEach(k => { if (typeof s.stats[k] !== 'number') s.stats[k] = 0; });
   if (!s.demand || typeof s.demand !== 'object') s.demand = { day: 0, used: 0 };
   if (!s.contracts || typeof s.contracts !== 'object') s.contracts = { week: 0, offers: [], active: [], rep: 0 };
   if (!Array.isArray(s.contracts.offers)) s.contracts.offers = [];
@@ -67,6 +67,11 @@ export function ensureState(host) {
   if (!s.collection || typeof s.collection !== 'object') s.collection = {};
   if (!s.collectionRewarded || typeof s.collectionRewarded !== 'object') s.collectionRewarded = {};
   if (!Array.isArray(s.lots)) s.lots = [];
+  // 🛒 Shop: timed boosts (item → expiry ms) and one-time unlocks (item → true).
+  if (!s.boosts || typeof s.boosts !== 'object') s.boosts = {};
+  Object.keys(s.boosts).forEach(k => { const it = FARM_ECON.shop.items[k]; const at = Number(s.boosts[k]) || 0; if (!it || it.permanent || at <= 0) delete s.boosts[k]; else s.boosts[k] = at; });
+  if (!s.unlocks || typeof s.unlocks !== 'object') s.unlocks = {};
+  Object.keys(s.unlocks).forEach(k => { const it = FARM_ECON.shop.items[k]; if (!it || !it.permanent || !s.unlocks[k]) delete s.unlocks[k]; });
   if (!Array.isArray(s.holding)) s.holding = [];      // beasts that came back (claimed lots) with no room in the pen yet
   s.holding = s.holding.filter(a => a && animalDef(a.sp));
   s.lots = s.lots.filter(l => l && l.animal && animalDef(l.animal.sp));
@@ -230,6 +235,58 @@ export function farmersBonus(host) {
   let n = 0; try { n = host.farmers() | 0; } catch (e) {}
   return Math.min(FARM_ECON.farmers.yieldCap, n * FARM_ECON.farmers.yieldPerFarmer);
 }
+/* 🛒 Shop boosts. A timed item covers [purchase, expiry); an interval that
+   straddles the expiry gets the effect for the covered share only — so a
+   player who slept through the last hour of Kelp Meal is paid for the hours
+   it was live and nothing after. `boostMul` folds every active item with a
+   multiplicative effect (product); `boostAdd` sums additive ones. Permanent
+   unlocks cover everything. */
+function boostCover(s, itemId, from, to) {
+  const it = FARM_ECON.shop.items[itemId]; if (!it) return 0;
+  if (it.permanent) return s.unlocks && s.unlocks[itemId] ? 1 : 0;
+  const exp = s.boosts ? (Number(s.boosts[itemId]) || 0) : 0; if (!exp) return 0;
+  if (to == null) to = from;
+  if (to <= from) return exp > from ? 1 : 0;
+  return Math.max(0, Math.min(1, (exp - from) / (to - from)));
+}
+export function boostMul(s, key, from, to) {
+  let m = 1; const items = FARM_ECON.shop.items;
+  Object.keys(items).forEach(id => {
+    const v = items[id].effect && items[id].effect[key]; if (typeof v !== 'number') return;
+    const c = boostCover(s, id, from, to); if (c > 0) m *= 1 + (v - 1) * c;
+  });
+  return m;
+}
+export function boostAdd(s, key, from, to) {
+  let m = 0; const items = FARM_ECON.shop.items;
+  Object.keys(items).forEach(id => {
+    const v = items[id].effect && items[id].effect[key]; if (typeof v !== 'number') return;
+    const c = boostCover(s, id, from, to); if (c > 0) m += v * c;
+  });
+  return m;
+}
+export function activeBoosts(s, now) {
+  now = now || Date.now(); const out = [];
+  Object.keys(FARM_ECON.shop.items).forEach(id => {
+    const it = FARM_ECON.shop.items[id];
+    if (it.permanent) { if (s.unlocks && s.unlocks[id]) out.push({ id, permanent: true }); return; }
+    const exp = s.boosts ? (Number(s.boosts[id]) || 0) : 0;
+    if (exp > now) out.push({ id, expiresAt: exp, hoursLeft: (exp - now) / H });
+  });
+  return out;
+}
+/* ⭐ Grade-2 share of a beast's yield: its tier's share + shop grading, ≤ 1. */
+export function premiumShare(s, a, from, to) {
+  const tier = tierOf(a); if (!tier) return 0;
+  const base = FARM_ECON.premium.shareByTier[tier] || 0; if (!base) return 0;
+  return Math.min(1, base + boostAdd(s, 'premiumShareAdd', from, to));
+}
+/* Split `v` of good `r` between its premium id and itself by `share`. */
+function addYield(map, r, v, share) {
+  const pid = FARM_ECON.premium.goods[r];
+  if (pid && share > 0) { map[pid] = (map[pid] || 0) + v * share; v *= 1 - share; }
+  if (v > 0) map[r] = (map[r] || 0) + v;
+}
 /* Feed units this pen burns per hour with its current herd, now. */
 export function feedDrawPerH(s, penId, host, now) {
   now = now || Date.now();
@@ -240,7 +297,7 @@ export function feedDrawPerH(s, penId, host, now) {
     if (!ad || !e) return;
     d += e.feedPerH * se.feedMul * (ad.ground ? gf : 1);
   });
-  return d;
+  return d * boostMul(s, 'feedMul', now);
 }
 export function feedHoursLeft(s, penId, host) {
   const b = building(s, penId); if (!b) return 0;
@@ -252,14 +309,16 @@ export function penRatePerH(s, penId, host, now) {
   const rate = {}; now = now || Date.now();
   const wx = weatherAt(seedOf(host || { state: () => s }), now);
   const fb = host ? farmersBonus(host) : 0;
+  const bm = boostMul(s, 'yieldMul', now);
   animalsInPen(s, penId).forEach(a => {
     if (!isAdult(a)) return;
     const hf = healthFactor(a); if (hf <= 0) return;
     const y = FARM_ECON.yieldsPerH[a.sp] || {};
+    const share = premiumShare(s, a, now);
     Object.keys(y).forEach(r => {
-      let v = y[r] * hf * yieldMul(a) * (1 + fb);
+      let v = y[r] * hf * yieldMul(a) * (1 + fb) * bm;
       if (r === 'eggs' && typeof wx.eggMul === 'number') v *= wx.eggMul;
-      rate[r] = (rate[r] || 0) + v;
+      addYield(rate, r, v, share);
     });
   });
   return rate;
@@ -434,8 +493,13 @@ export function simulate(host, s, now, rnd) {
     // Rain fills the pasture trough a little (grass, really) per window it holds.
     if (def.id === 'pasture' && wx.troughWater && hours >= 1) b.feed = Math.min(troughCap(s, def.id), b.feed + wx.troughWater * Math.min(4, hours / FARM_ECON.weatherWindowH));
 
+    const from = now - hours * H;                       // b.simAt before the write above
     let draw = 0;
     herd.forEach(a => { const ad = animalDef(a.sp), e = econOf(a); if (ad && e) draw += e.feedPerH * se.feedMul * (ad.ground ? gf : 1); });
+    draw *= boostMul(s, 'feedMul', from, now);            // 🍯 Molasses Lick
+    const growMul = boostMul(s, 'growMul', from, now);    // 🥣 Growth Mash
+    const healMul = boostMul(s, 'healMul', from, now);    // 🧪 Vet Tonic
+    const yieldBoost = boostMul(s, 'yieldMul', from, now); // 🌿 Kelp Meal
     const fedH = draw > 0 ? Math.min(hours, b.feed / draw) : hours;
     const unfedH = Math.max(0, hours - fedH);
     b.feed = Math.max(0, b.feed - fedH * draw);
@@ -472,12 +536,14 @@ export function simulate(host, s, now, rnd) {
       if (a.ill) a.health -= hours * DZ.healthLossPerH;
       // Age is real time; growth is fed time.
       a.ageH += hours;
-      const adultH = Math.max(0, fedH - Math.max(0, e.growH - a.grownH));
-      a.grownH += fedH;
+      // Growth Mash: a fed hour counts for more; adulthood arrives sooner in
+      // real hours, and the yield clock (adultH, real hours) starts then.
+      const adultH = Math.max(0, fedH - Math.max(0, e.growH - a.grownH) / growMul);
+      a.grownH += fedH * growMul;
       // Hunger and healing.
       // Feed heals — unless the animal is ill: a sick beast does not mend on
       // its own however full the trough, which is what makes the clinic matter.
-      if (fedH > 0) { a.hungry = Math.max(0, a.hungry - fedH * 2); if (!a.ill) a.health = Math.min(100, a.health + fedH * HL.healPerFedH); }
+      if (fedH > 0) { a.hungry = Math.max(0, a.hungry - fedH * 2); if (!a.ill) a.health = Math.min(100, a.health + fedH * HL.healPerFedH * healMul); }
       if (unfedH > 0) {
         const before = a.hungry; a.hungry += unfedH;
         const painful = Math.max(0, a.hungry - Math.max(before, HL.hungerGraceH));
@@ -489,10 +555,11 @@ export function simulate(host, s, now, rnd) {
       if (b.damaged || adultH <= 0) return;
       const hf = healthFactor(a); if (hf <= 0) return;
       const y = FARM_ECON.yieldsPerH[a.sp] || {};
+      const share = premiumShare(s, a, from, now);
       Object.keys(y).forEach(r => {
-        let v = y[r] * adultH * hf * yieldMul(a) * (1 + fb);
+        let v = y[r] * adultH * hf * yieldMul(a) * (1 + fb) * yieldBoost;
         if (r === 'eggs' && typeof wx.eggMul === 'number') v *= wx.eggMul;
-        gained[r] = (gained[r] || 0) + v;
+        addYield(gained, r, v, share);
       });
     });
     if (dead.length) {
@@ -515,7 +582,7 @@ export function simulate(host, s, now, rnd) {
         const ad = animalDef(sp); if (!ad || ad.guard) return;
         const adults = s.animals.filter(a => a.sp === sp && isAdult(a) && !isSick(a)).length;
         if (adults < 2) return;
-        const p = (FARM_ECON.breedChancePerH[sp] || 0) * se.breedMul;
+        const p = Math.min(1, (FARM_ECON.breedChancePerH[sp] || 0) * se.breedMul * boostMul(s, 'breedMul', from, now));   // 💞 Fertility Mash
         let trials = Math.min(200, Math.floor(fedH)), frac = fedH - Math.floor(fedH), births = 0;
         for (let i = 0; i < trials; i++) if (R() < p) births++;
         if (R() < p * frac) births++;
@@ -525,11 +592,13 @@ export function simulate(host, s, now, rnd) {
           const parents = s.animals.filter(a => a.sp === sp && isAdult(a) && !isSick(a));
           const p1 = parents[Math.floor(R() * parents.length)], p2 = parents[Math.floor(R() * parents.length)];
           const L = FARM_ECON.lines; const t1 = p1 ? tierOf(p1) : null, t2 = p2 ? tierOf(p2) : null;
+          // 🧂 Bloodline Salts scale the rare roll, 👑 Royal Jelly the line rolls.
+          const rareMul = boostMul(s, 'rareMul', from, now), lineMul = boostMul(s, 'lineMul', from, now);
           let breed = null;
-          if (t1 === 'royal' && t2 === 'royal' && R() < L.mythicChance) breed = sp + ':mythic';
-          else if ((t1 === 'rare' || t1 === 'royal') && (t2 === 'rare' || t2 === 'royal') && R() < L.royalChance) breed = sp + ':royal';
-          else if ((t1 || t2) && R() < L.inheritRare) breed = sp;
-          else if (R() < L.rareChance) breed = sp;
+          if (t1 === 'royal' && t2 === 'royal' && R() < Math.min(1, L.mythicChance * lineMul)) breed = sp + ':mythic';
+          else if ((t1 === 'rare' || t1 === 'royal') && (t2 === 'rare' || t2 === 'royal') && R() < Math.min(1, L.royalChance * lineMul)) breed = sp + ':royal';
+          else if ((t1 || t2) && R() < Math.min(1, L.inheritRare * rareMul)) breed = sp;
+          else if (R() < Math.min(1, L.rareChance * rareMul)) breed = sp;
           const a = newAnimal(s, sp, now, breed);
           s.animals.push(a); s.stats.births++; changed = true;
           if (breed) noteCollection(host, s, breed, now);
@@ -592,7 +661,7 @@ function rollOutbreaks(host, s, w) {
     const herd = animalsInPen(s, def.id).filter(a => !a.ill); if (!herd.length) return;
     const R = rngFor('dz:' + s.seed + ':' + def.id + ':' + w.idx);
     const cap = penCapacity(s, def.id, host) || 1;
-    let p = DZ.outbreakBase * vetCut;
+    let p = DZ.outbreakBase * vetCut * boostMul(s, 'outbreakMul', w.at);   // 🧪 Vet Tonic
     if (herd.length / cap >= DZ.crowdAbove) p *= DZ.crowdMul;
     p *= Math.max(0.3, 1 - DZ.penLevelCut * (b.level - 1));
     if (R() >= p) return;
@@ -922,6 +991,24 @@ export function returnAnimal(host, s, animal) {
   try { record(host, s); } catch (e) { s.animals = s.animals.filter(x => x !== a); s.holding = s.holding.filter(x => x !== a); return { ok: false, why: 'save failed' }; }
   return { ok: true, animal: a, held: !room };
 }
+/* 🛒 Buy from the merchant's cart. Timed items EXTEND (never stack the
+   effect); permanent items buy once. Paid in Cinder + goods via paid(), so a
+   failed save refunds every leg. */
+export function buyShopItem(host, s, itemId) {
+  const it = FARM_ECON.shop.items[itemId]; if (!it) return { ok: false, why: 'unknown item' };
+  if (it.permanent && s.unlocks[itemId]) return { ok: false, why: 'already owned' };
+  simulate(host, s);
+  const now = Date.now();
+  return paid(host, s, it.cost, () => {
+    let expiresAt = 0;
+    const had = it.permanent ? 0 : Math.max(0, (Number(s.boosts[itemId]) || 0) - now);
+    if (it.permanent) s.unlocks[itemId] = true;
+    else { expiresAt = now + had + it.hours * H; s.boosts[itemId] = expiresAt; }
+    s.stats.shopBuys++;
+    journal(s, 'shop', it.icon, `${it.label} bought from the merchant's cart${it.permanent ? '.' : ` — runs until ${new Date(expiresAt).toLocaleString()}.`}`, now);
+    return { item: itemId, expiresAt, permanent: !!it.permanent, extended: had > 0 };
+  });
+}
 export function fillTrough(host, s, penId, units) {
   const def = buildingDef(penId), b = building(s, penId);
   if (!def || !def.houses || !b) return { ok: false, why: 'not a pen' };
@@ -967,6 +1054,7 @@ export function collect(host, s, penId) {
   if (!Object.keys(want).length) return { ok: false, why: 'nothing to collect' };
   const { got, clipped } = deliver(host, want);
   Object.keys(got).forEach(r => { b.accrual[r] = Math.max(0, (b.accrual[r] || 0) - got[r]); });
+  Object.values(FARM_ECON.premium.goods).forEach(pid => { s.stats.premium += got[pid] | 0; });
   if (Object.keys(got).length) b.lastCollect = Date.now();
   try { record(host, s); } catch (e) { return { ok: false, why: 'save failed', got, clipped }; }
   return { ok: true, got, clipped };
@@ -998,12 +1086,17 @@ export function slaughter(host, s, sel, cut) {
   list.forEach(a => {
     const table = FARM_ECON.slaughter[a.sp], e = econOf(a), br = breedOf(a);
     const wf = weightOf(a) / e.adultWeight;
+    const share = premiumShare(s, a, Date.now());
     Object.keys(table).forEach(r => {
       let v = table[r] * wf * mul;
       if (r === 'meat') v *= C.meat * se.meatMul * ((br && br.meatMul) || 1);
       else if (r === 'hide') v *= C.hide;
       else v *= C.other;
-      want[r] = (want[r] || 0) + Math.max(1, Math.round(v));
+      v = Math.max(1, Math.round(v));
+      // ⭐ A good breed's meat and wool grade up by its premium share (whole units).
+      const pid = FARM_ECON.premium.goods[r];
+      if (pid && share > 0) { const p = Math.round(v * share); if (p > 0) { want[pid] = (want[pid] || 0) + p; v -= p; } }
+      if (v > 0) want[r] = (want[r] || 0) + v;
     });
     if (C.rare && R() < C.rareChance) { Object.keys(C.rare).forEach(r => { want[r] = (want[r] || 0) + C.rare[r]; }); stories.push(`${a.name}'s trophy cut turned up a Memory Shard.`); }
     if (prizes.has(a.id) && R() < FARM_ECON.prizeRare.chance) { Object.keys(FARM_ECON.prizeRare.drop).forEach(r => { want[r] = (want[r] || 0) + FARM_ECON.prizeRare.drop[r]; }); stories.push(`Prize beast ${a.name} yielded a strand of DNA.`); }
@@ -1011,7 +1104,7 @@ export function slaughter(host, s, sel, cut) {
   const ids = new Set(list.map(a => a.id));
   s.animals = s.animals.filter(a => !ids.has(a.id));
   const { got, clipped } = deliver(host, want);
-  s.stats.slaughtered += list.length; s.stats.meat += (got.meat | 0);
+  s.stats.slaughtered += list.length; s.stats.meat += (got.meat | 0) + (got.primeMeat | 0); s.stats.premium += (got.primeMeat | 0) + (got.fineWool | 0);
   const nm = list.length === 1 ? `${list[0].name} the ${animalDef(list[0].sp).name.toLowerCase()}` : `${list.length} ${animalDef(list[0].sp).plural.toLowerCase()}`;
   journal(s, 'butcher', '🔪', `${nm} went to the block (${C.label.toLowerCase()}): ${Object.keys(got).map(k => got[k] + ' ' + k).join(', ')}.${stories.length ? ' ' + stories.join(' ') : ''}`);
   try { record(host, s); } catch (e) { return { ok: false, why: 'save failed', got, clipped, taken: list.length }; }
@@ -1168,5 +1261,11 @@ export function summary(host, s) {
     escorts: s.animals.filter(a => isGuard(a) && isAdult(a) && !a.away && !isSick(a)).map(a => ({ id: a.id, name: a.name, sp: a.sp, defense: econOf(a).defense })),
     ill: s.animals.filter(a => a.ill).length,
     holding: s.holding.slice(),
+    shop: {
+      active: activeBoosts(s, now),
+      unlocks: Object.assign({}, s.unlocks),
+      premiumShare: Object.keys(FARM_ECON.premium.shareByTier).reduce((o, t) => { o[t] = Math.min(1, FARM_ECON.premium.shareByTier[t] + boostAdd(s, 'premiumShareAdd', now)); return o; }, {}),
+      graded: s.animals.filter(a => tierOf(a)).length,
+    },
   };
 }

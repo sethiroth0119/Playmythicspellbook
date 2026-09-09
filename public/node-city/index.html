@@ -699,6 +699,10 @@
   <span class="res"><span class="rtip"><b>🥛 Raw Milk</b>From the homestead's barn and pasture. The Dairy sets it into rations.<span class="use">0.9 milk replaces a food.</span></span><span class="ico">🥛</span><span class="amt" id="r-rawMilk">0</span><span class="d" id="d-rawMilk"></span></span>
   <span class="res"><span class="rtip"><b>💩 Fertilizer</b>Manure from the homestead's pens.<span class="use">A Farm or Hydro Farm with fertilizer in the stash yields +50%.</span></span><span class="ico">💩</span><span class="amt" id="r-fertilizer">0</span><span class="d" id="d-fertilizer"></span></span>
   <span class="res"><span class="rtip"><b>🧥 Leather</b>Cured at the homestead's Tannery.<span class="use">A Weavery with leather in the stash makes +50% Goods.</span></span><span class="ico">🧥</span><span class="amt" id="r-leather">0</span><span class="d" id="d-leather"></span></span>
+  <!-- ⭐ Grade-2 farm goods (v120x5): only a rare-or-better breed makes them; kitchens serve them first. -->
+  <span class="res"><span class="rtip"><b>🥩 Prime Cuts</b>Meat from a rare, royal or mythic beast.<span class="use">0.3 prime cuts replace a food — served before anything else.</span></span><span class="ico">🥩</span><span class="amt" id="r-primeMeat">0</span><span class="d" id="d-primeMeat"></span></span>
+  <span class="res"><span class="rtip"><b>🥚 Golden Eggs</b>Laid by a Golden, Crown or Phoenix hen.<span class="use">0.5 golden eggs replace a food.</span></span><span class="ico">🥚</span><span class="amt" id="r-goldEggs">0</span><span class="d" id="d-goldEggs"></span></span>
+  <span class="res"><span class="rtip"><b>🥛 Rich Milk</b>From a Silver or Moon cow, an Ivory or Sun goat.<span class="use">0.6 rich milk replace a food.</span></span><span class="ico">🥛</span><span class="amt" id="r-richMilk">0</span><span class="d" id="d-richMilk"></span></span>
   <span class="res" id="popres"><span class="rtip"><b>👥 Population</b>Workers and soldiers you have hired, against the capacity your Housing supports.<span class="use">At capacity → build Housing before hiring more.</span></span><span class="ico">👥</span><span class="amt" id="r-pop">0/0</span></span>
   <span class="res" id="clockres"><span class="rtip"><b>🕒 City Time</b>Drives the day/night cycle — production ticks, lamps and moonlight all follow it.<span class="use">Night: lamps light the streets.</span></span><span class="ico" id="clockico">☀️</span><span class="amt" id="r-clock">06:00</span></span>
 </div>
@@ -1341,7 +1345,7 @@
      a separate window, so it needs its own registration.
      ⚠ Bump ?v= in BOTH places when the catalogue changes — here and in
        index.html — or one window ships a stale table. -->
-<script type="module" src="../src/resources/chain.js?v=v120x1chain4"></script>
+<script type="module" src="../src/resources/chain.js?v=v120x5chain5"></script>
 
 <script type="module">
 import * as THREE from 'three';
@@ -1928,7 +1932,9 @@ const HUD_RES = ['food','water','metal','fuel','supplies','medicine','ammo'];
 // nobody asked for. This list is display only.
 const HUD_DISPLAY_RES = HUD_RES.concat(['memoryShards', 'corruptedEssence', 'wood', 'stone', 'cloth',
   // 🐄 Homestead Farm goods — shown, mirrored (refreshLedgerMirror reads THIS list) and spendable by the city.
-  'meat', 'eggs', 'rawMilk', 'fertilizer', 'leather']);
+  'meat', 'eggs', 'rawMilk', 'fertilizer', 'leather',
+  // ⭐ grade-2 farm goods (v120x5): kitchens serve them before anything else.
+  'primeMeat', 'goldEggs', 'richMilk']);
 
 /* ════════════════════════════════════════════════════════════════════════
    2b. THE INTERMEDIATES — the city's own refined stock.
@@ -16487,7 +16493,8 @@ const STOCK_RAW_FALLBACK = { rations: 'food', remedies: 'medicine', goods: 'supp
    homestead's goods first, at `per` units per ration, and only then burns
    raw food at RAW_FALLBACK_MULT. Meat at 0.5 is CHEAPER than a canned ration
    from crops on purpose: it is the reason to own a farm behind a city. */
-const STOCK_FARM_FALLBACK = { rations: [['meat', 0.5], ['eggs', 0.8], ['rawMilk', 0.9]] };
+// ⭐ Grade-2 goods (farm round 5) are served first and go further still.
+const STOCK_FARM_FALLBACK = { rations: [['primeMeat', 0.3], ['goldEggs', 0.5], ['richMilk', 0.6], ['meat', 0.5], ['eggs', 0.8], ['rawMilk', 0.9]] };
 function stockCap() {
   let c = STOCK_CAP_BASE;
   for (const t of Object.values(game.tiles)) {

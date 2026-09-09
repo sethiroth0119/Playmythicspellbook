@@ -189,6 +189,11 @@ export const FARM_ECON = {
       { give: { leather: 4 },  get: { metal: 8 } },
       { give: { feathers: 10 }, get: { cloth: 4 } },
       { give: { fertilizer: 8 }, get: { food: 12 } },
+      // ⭐ Grade-2 goods: the town pays about double per unit, in goods.
+      { give: { goldEggs: 6 },  get: { medicine: 4, supplies: 4 } },
+      { give: { primeMeat: 4 }, get: { metal: 8, supplies: 4 } },
+      { give: { richMilk: 5 },  get: { medicine: 4, water: 10 } },
+      { give: { fineWool: 3 },  get: { cloth: 5, supplies: 4 } },
     ],
   },
 
@@ -274,6 +279,7 @@ export const FARM_ECON = {
       { give: { hide: 12, fertilizer: 25 }, get: { wood: 120, stone: 60 } },
       { give: { eggs: 25, rawMilk: 25, meat: 15 }, get: { medicine: 8, supplies: 20, memoryShards: 1 } },
       { give: { wool: 20, leather: 6 },    get: { cloth: 30, metal: 15 } },
+      { give: { goldEggs: 12, primeMeat: 8 }, get: { medicine: 12, supplies: 30, memoryShards: 2 } },
     ],
     repHit: 2, repGainOnDeliver: 1, repMin: -6, repMax: 6,
     demandPerDayAtRep: { '-6': 0, '-4': 1, '-2': 2, '0': 3, '2': 4, '4': 5 },
@@ -326,8 +332,53 @@ export const FARM_ECON = {
     kitchenMeat: { inputs: { meat: 4 },         output: { food: 6 } },
     kitchenEggs: { inputs: { eggs: 6 },         output: { food: 4 } },
     kitchenMilk: { inputs: { rawMilk: 6 },      output: { food: 5 } },
+    // ⭐ Grade-2 goods cook richer: fewer units in, more rations out.
+    kitchenGoldEggs: { inputs: { goldEggs: 4 },   output: { food: 6 } },
+    kitchenPrime:    { inputs: { primeMeat: 3 },  output: { food: 8 } },
+    kitchenCream:    { inputs: { richMilk: 4 },   output: { food: 7 } },
+    spinnerFine:     { inputs: { fineWool: 3 },   output: { cloth: 4 } },
   },
   recipeBonusPerLevel: 0.25,
+
+  /* ⭐ GRADE-2 GOODS — the "level 2" versions of what the farm makes, and the
+     ONLY way to get them is a better breed. A rare / royal / mythic beast
+     turns `shareByTier` of its eggs / milk / wool / meat into the premium
+     id; the rest is the ordinary good. The Grading Table (shop, permanent)
+     and Provenance Stamps (shop, timed) add to that share, capped at 1.
+     Premium goods cook richer at the Kitchen, spin finer at the Spinning Shed,
+     and the town pays more for them — they are NOT worth more Cinder anywhere,
+     so this is not a faucet, just a better ration. */
+  premium: {
+    goods: { eggs: 'goldEggs', rawMilk: 'richMilk', wool: 'fineWool', meat: 'primeMeat' },
+    shareByTier: { rare: 0.35, royal: 0.6, mythic: 1, glow: 0.5 },
+  },
+
+  /* 🛒 THE FARM SHOP — the merchant's cart at the gate. Everything here is
+     paid in Cinder + goods and does ONE of three things: makes feed go
+     further / work harder (feed), tilts the bloodline dice (breed), or
+     raises the grade-2 share of a good breed's yield (grade). Timed items
+     run `hours` from purchase and STACK BY EXTENDING (buying an active
+     boost adds its hours to the clock, it never doubles the effect — the
+     harness checks that). `permanent` items buy once. Effects are
+     multipliers folded into simulate() in proportion to how much of a
+     simulated interval the boost covered, so a boost that ran out at 3 a.m.
+     is honoured for the hours it was live and not a minute more.
+     🔴 Nothing in the shop pays out Cinder or creates goods from nothing:
+     every effect scales something the animals already produce or eat. */
+  shop: {
+    items: {
+      molasses:  { cat: 'feed',  label: 'Molasses Lick',    icon: '🍯', hours: 24, cost: { cinder: 6000,  food: 10 },                 effect: { feedMul: 0.75 },            blurb: 'Sweetens the trough. Stock eats a quarter less for a day.' },
+      kelp:      { cat: 'feed',  label: 'Kelp Meal',        icon: '🌿', hours: 24, cost: { cinder: 9000,  water: 20 },                effect: { yieldMul: 1.25 },           blurb: 'Minerals in the mash: eggs, milk, wool and manure +25% for a day.' },
+      mash:      { cat: 'feed',  label: 'Growth Mash',      icon: '🥣', hours: 24, cost: { cinder: 12000, food: 25 },                 effect: { growMul: 1.5 },             blurb: 'Young stock grows half again as fast on every fed hour.' },
+      tonic:     { cat: 'feed',  label: 'Vet Tonic',        icon: '🧪', hours: 24, cost: { cinder: 8000,  medicine: 2 },              effect: { healMul: 2, outbreakMul: 0.5 }, blurb: 'In the water for a day: feed heals twice as fast, outbreaks are half as likely.' },
+      fertility: { cat: 'breed', label: 'Fertility Mash',   icon: '💞', hours: 24, cost: { cinder: 15000, food: 30 },                 effect: { breedMul: 2 },              blurb: 'Twice the births for a day — you still need the stalls.' },
+      salts:     { cat: 'breed', label: 'Bloodline Salts',  icon: '🧂', hours: 48, cost: { cinder: 20000, fertilizer: 10 },           effect: { rareMul: 3 },               blurb: 'Three times the odds that any birth is a rare breed, for two days.' },
+      jelly:     { cat: 'breed', label: 'Royal Jelly',      icon: '👑', hours: 48, cost: { cinder: 45000, eggs: 20, rawMilk: 20 },    effect: { lineMul: 2 },               blurb: 'Doubles the odds that two rare parents throw a royal, and two royals a mythic.' },
+      stamps:    { cat: 'grade', label: 'Provenance Stamps', icon: '📜', hours: 48, cost: { cinder: 25000, cloth: 10 },               effect: { premiumShareAdd: 0.25 },    blurb: 'Papers for the pens: a quarter more of every good breed’s yield grades as premium, for two days.' },
+      grading:   { cat: 'grade', label: 'Grading Table',    icon: '🏷', permanent: true, cost: { cinder: 80000, wood: 60, metal: 30 }, effect: { premiumShareAdd: 0.25 },    blurb: 'A sorting table by the coop door. Permanently grades a quarter more of every good breed’s yield as premium.' },
+    },
+    cats: { feed: { label: 'Feed & trough', icon: '🌾' }, breed: { label: 'Bloodlines', icon: '🧬' }, grade: { label: 'Grading', icon: '⭐' } },
+  },
 };
 
 /* ── Species ─────────────────────────────────────────────────────────────── */
@@ -450,7 +501,7 @@ export const FARM_BUILDINGS = [
     ],
   },
   {
-    id: 'spinner', name: 'Spinning Shed', emoji: '🧵', accent: '#e0b8c8', station: true, role: 'craft', recipes: ['spinner'],
+    id: 'spinner', name: 'Spinning Shed', emoji: '🧵', accent: '#e0b8c8', station: true, role: 'craft', recipes: ['spinner', 'spinnerFine'],
     desc: 'Cards and spins wool into cloth — the same cloth the city builder already prices.',
     maxLevel: 3, buildH: [1.5, 4, 10], plot: { x: 1, y: 11, w: 3, h: 2 },
     cost: [
@@ -480,7 +531,7 @@ export const FARM_BUILDINGS = [
   },
   {
     id: 'kitchen', name: 'Farm Kitchen', emoji: '🍳', accent: '#ffcf6b', station: true, role: 'craft',
-    recipes: ['kitchenMeat', 'kitchenEggs', 'kitchenMilk'],
+    recipes: ['kitchenMeat', 'kitchenEggs', 'kitchenMilk', 'kitchenGoldEggs', 'kitchenPrime', 'kitchenCream'],
     desc: 'Smokes meat, boils eggs, sets milk: everything the farm makes can become rations.',
     maxLevel: 3, buildH: [1.5, 4, 10], plot: { x: 5, y: 13, w: 3, h: 1 },
     cost: [
@@ -499,6 +550,10 @@ export const RECIPE_LABELS = {
   kitchenMeat: 'Smoke meat → food',
   kitchenEggs: 'Boil eggs → food',
   kitchenMilk: 'Set milk → food',
+  kitchenGoldEggs: 'Golden eggs → food',
+  kitchenPrime: 'Prime cuts → food',
+  kitchenCream: 'Rich milk → food',
+  spinnerFine: 'Fine wool → cloth',
 };
 
 /* 🅰 Athena Editor — the owner's look settings. Palettes are named so the
@@ -545,6 +600,8 @@ export function buildingCostAt(def, level) {
 /* Every ledger id the farm can pay out or consume — the promotion contract. */
 export const FARM_RESOURCE_IDS = [
   'animalFeed', 'eggs', 'feathers', 'rawMilk', 'meat', 'wool', 'hide', 'leather', 'fertilizer', 'livestock',
+  // ⭐ grade-2 goods (round 5): only a rare-or-better breed makes them.
+  'goldEggs', 'primeMeat', 'richMilk', 'fineWool',
   'food', 'water', 'wood', 'stone', 'cloth', 'metal', 'supplies', 'medicine', 'memoryShards', 'dna', 'fuel', 'ammo',
 ];
 
@@ -558,6 +615,8 @@ export function auditCatalog(knownIds) {
   FARM_ECON.townDemand.offers.forEach(o => { Object.keys(o.give).forEach(k => need.add(k)); Object.keys(o.get).forEach(k => need.add(k)); });
   FARM_ECON.contracts.templates.forEach(o => { Object.keys(o.give).forEach(k => need.add(k)); Object.keys(o.get).forEach(k => need.add(k)); });
   Object.keys(FARM_ECON.auction.payoutPer1000).forEach(k => need.add(k));
+  Object.values(FARM_ECON.premium.goods).forEach(k => need.add(k));
+  Object.values(FARM_ECON.shop.items).forEach(it => Object.keys(it.cost || {}).forEach(k => { if (k !== 'cinder') need.add(k); }));
   Object.values(FARM_ECON.events).forEach(e => { Object.keys(e.loot || {}).forEach(k => need.add(k)); Object.keys(e.gift || {}).forEach(k => need.add(k)); Object.keys(e.repair || {}).forEach(k => need.add(k)); });
   FARM_BUILDINGS.forEach(b => b.cost.forEach(c => Object.keys(c).forEach(k => { if (k !== 'cinder') need.add(k); })));
   need.forEach(id => { if (!known.has(id)) missing.push(id); });

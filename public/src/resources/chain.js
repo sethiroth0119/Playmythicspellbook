@@ -1,5 +1,5 @@
 /* 🧰 RESOURCE CHAIN — the full industrial catalogue behind the city builder.
-   258 entries as specified (+3 farm ids: feathers, wool, hide — see the
+   258 entries as specified (+3 farm ids: feathers, wool, hide, +4 grade-2 farm goods — see the
    Homestead Farm block under Agriculture), grouped by the supply chain they
    belong to. Generated once and then owned by hand.
 
@@ -97,6 +97,14 @@ export const RESOURCE_CHAIN = [
   { id: 'feathers',                name: 'Feathers',                    icon: '🪶',  color: '#e8d8b0', cat: 'agriculture',  tier: 1, core: true, inputs: ['livestock'] },
   { id: 'wool',                    name: 'Wool',                        icon: '🧶',  color: '#f0e6d2', cat: 'agriculture',  tier: 1, core: true, inputs: ['livestock'] },
   { id: 'hide',                    name: 'Hide',                        icon: '🟫',  color: '#a0704a', cat: 'agriculture',  tier: 1, core: true, inputs: ['livestock'] },
+  /* ⭐ Grade-2 farm goods (farm round 5, v120x5). Promoted WITH their producer:
+     only a rare / royal / mythic breed on the homestead makes them (a share of
+     its plain yield lands as the premium id). Tier 2 because each is the
+     refined form of a tier-1 good. */
+  { id: 'goldEggs',                name: 'Golden Eggs',                 icon: '🥚',  color: '#f2c14e', cat: 'agriculture',  tier: 2, core: true, inputs: ['eggs'] },
+  { id: 'primeMeat',               name: 'Prime Cuts',                  icon: '🥩',  color: '#e0606a', cat: 'food',         tier: 2, core: true, inputs: ['meat'] },
+  { id: 'richMilk',                name: 'Rich Milk',                   icon: '🥛',  color: '#fff8e0', cat: 'agriculture',  tier: 2, core: true, inputs: ['rawMilk'] },
+  { id: 'fineWool',                name: 'Fine Wool',                   icon: '🧶',  color: '#ffe8c0', cat: 'agriculture',  tier: 2, core: true, inputs: ['wool'] },
 
   // ── Fishing ───────────────────────────────────────────────────
   { id: 'freshFish',               name: 'Fresh Fish',                  icon: '🐟',  color: '#6fc0d8', cat: 'fishing',      tier: 0, inputs: [] },

@@ -25,7 +25,7 @@
 import { FARM_ECON, FARM_ANIMALS, FARM_BUILDINGS, FARM_LOOKS, animalDef, buildingDef, buildingCostAt, auditCatalog } from './farm.data.js';
 import * as S from './farm.state.js';
 import { createScene } from './farm.scene.js';
-import { FARM_CSS, renderShell, renderLedger, renderHomestead, renderLivestock, renderJournal, renderAthena, renderMarket, renderRanch } from './farm.render.js';
+import { FARM_CSS, FARM_TABS, renderShell, renderLedger, renderHud, renderHomestead, renderLivestock, renderJournal, renderAthena, renderMarket, renderRanch, renderShop } from './farm.render.js';
 import { lots as cloudLots, ranch as cloudRanch } from './farm.cloud.js';
 
 function makeHost() {
@@ -110,7 +110,7 @@ function mount(rootEl) {
   if (missing.length) { try { console.warn('[farm] ledger is missing ids the farm pays out: ' + missing.join(', ')); } catch (e) {} }
 
   rootEl.innerHTML = renderShell();
-  const m = _mounted = { root: rootEl, scene: null, tab: 'homestead', focus: null, tick: 0, busy: false, ui: { cut: 'balanced', carrier: FARM_ECON.transport.defaultCarrier, escort: 0, renaming: null }, bannerShown: false, cloud: { loading: false, lots: [], mine: [], why: null, userId: null, at: 0 }, ranch: null };
+  const m = _mounted = { root: rootEl, scene: null, tab: 'homestead' /* 🎮 null = no panel open, just the homestead */, focus: null, tick: 0, busy: false, ui: { cut: 'balanced', carrier: FARM_ECON.transport.defaultCarrier, escort: 0, renaming: null }, bannerShown: false, cloud: { loading: false, lots: [], mine: [], why: null, userId: null, at: 0 }, ranch: null };
   const stage = rootEl.querySelector('[data-farm="stage"]');
 
   const paint = () => {
@@ -120,13 +120,19 @@ function mount(rootEl) {
       const view = S.summary(h, s);
       const led = rootEl.querySelector('[data-farm="ledger"]'); if (led) led.innerHTML = renderLedger(h, view);
       const title = rootEl.querySelector('[data-farm="title"]'); if (title) title.textContent = '🐄 ' + (view.look.name || 'Homestead Farm');
+      const hud = rootEl.querySelector('[data-farm="hud"]'); if (hud) hud.innerHTML = renderHud(h, view, m.tab);
+      // 🎮 CS2 chrome: no tab open → no panel, just the homestead.
+      const box = rootEl.querySelector('[data-farm="panelbox"]'); if (box) box.hidden = !m.tab;
+      const ptitle = rootEl.querySelector('[data-farm="paneltitle"]'); if (ptitle) { const td = FARM_TABS.find(x => x.id === m.tab); ptitle.textContent = td ? td.icon + ' ' + td.label : ''; }
       const panel = rootEl.querySelector('[data-farm="panel"]');
-      if (panel) {
+      if (panel && !m.tab) panel.innerHTML = '';
+      else if (panel) {
         panel.innerHTML = m.tab === 'livestock' ? renderLivestock(h, s, view, m.focus, m.ui)
           : m.tab === 'journal' ? renderJournal(h, s, view)
           : m.tab === 'athena' ? renderAthena(h, s, view)
           : m.tab === 'market' ? renderMarket(h, s, view, m.ui, m.cloud)
           : m.tab === 'ranch' ? renderRanch(h, view, m.ranch)
+          : m.tab === 'shop' ? renderShop(h, s, view)
           : renderHomestead(h, s, view, m.focus, m.ui);
         if (m.ui.renaming) {
           const row = panel.querySelector(`.farm-beast[data-aid="${m.ui.renaming}"] .nm`);
@@ -235,7 +241,15 @@ function mount(rootEl) {
       let r;
       switch (act) {
         case 'back': h.back(); return;
-        case 'tab': m.tab = id; m.focus = null; m.ui.renaming = null; if (id === 'market' && Date.now() - m.cloud.at > 15000) loadLots(); if (id === 'ranch') loadRanch(); break;
+        // 🎮 Toolbar buttons TOGGLE: pressing the open panel's button closes it.
+        case 'tab': m.tab = (m.tab === id) ? null : id; m.focus = null; m.ui.renaming = null; if (m.tab === 'market' && Date.now() - m.cloud.at > 15000) loadLots(); if (m.tab === 'ranch') loadRanch(); break;
+        case 'tab-close': m.tab = null; m.focus = null; m.ui.renaming = null; break;
+        case 'shop-buy': {
+          const it = FARM_ECON.shop.items[id]; if (!it) break;
+          r = S.buyShopItem(h, s, id);
+          h.toast(r.ok ? `${it.icon} ${it.label} ${r.permanent ? 'is yours — permanent.' : (r.extended ? 'extended' : 'bought') + ' — ' + it.hours + 'h on the clock, ends ' + new Date(r.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + '.'}` : `Shop: ${why(h, r)}`, 4000);
+          break;
+        }
         case 'build': {
           const def = buildingDef(id); if (!def) break;
           r = S.build(h, s, id);
@@ -398,6 +412,8 @@ const api = {
   deliverDemand: () => withHost((h, s) => S.deliverDemand(h, s)),
   setLook: (patch) => withHost((h, s) => S.setLook(h, s, patch)),
   tend: () => withHost((h, s) => S.tend(h, s)),
+  buyShopItem: (id) => withHost((h, s) => S.buyShopItem(h, s, id)),
+  boosts: () => { const h = host(); return h ? S.activeBoosts(S.ensureState(h)) : []; },
   /* 🏆 For a future corp / community contest: lifetime harvest numbers. */
   harvestScore: () => { try { const s = api.state(); return { meat: s.stats.meat | 0, slaughtered: s.stats.slaughtered | 0, births: s.stats.births | 0, raidsRepelled: s.stats.raidsRepelled | 0 }; } catch (e) { return null; } },
   _state: S,

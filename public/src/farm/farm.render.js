@@ -4,8 +4,16 @@
    Render functions return HTML strings; index.js owns the DOM, the delegated
    click handler and the scene. No number in here is economic — every price,
    rate and yield is read from FARM_ECON / state at render time.
-   Tabs: Homestead (buildings) · Livestock (every animal) · Journal (events,
-   weather, season, town demand, stats) · Athena (the look editor).
+   Panels: Homestead (buildings) · Livestock (every animal) · Market · Ranch ·
+   Shop (the merchant's cart) · Journal (events, town demand, stats) · Athena
+   (the look editor).
+   🎮 The chrome is Cities: Skylines 2 style (round 5): the 3D homestead
+   fills the view, a toolbar of icon buttons sits along the bottom, and each
+   button opens ONE floating panel over the scene (press it again, or ✕, to
+   close). The old weather/season/defense card is now the HUD button in the
+   top-left corner — press it and the Journal opens. `data-fact="tab"` was
+   kept as the action name so index.js and the e2e did not have to change
+   their vocabulary; only its meaning changed from "switch" to "toggle".
    ════════════════════════════════════════════════════════════════════════════ */
 
 import { FARM_ECON, FARM_ANIMALS, FARM_BUILDINGS, FARM_LOOKS, RECIPE_LABELS, animalDef, buildingDef, buildingCostAt } from './farm.data.js';
@@ -25,15 +33,36 @@ export const FARM_CSS = `
 .farm-chip b{font-weight:700;color:#fff}
 .farm-chip.cinder{border-color:#d4af3766;color:#f2d98a}
 .farm-chip.wx{border-color:#7fd6ff55}
-.farm-body{display:flex;flex:1;min-height:0}
+.farm-body{display:flex;flex:1;min-height:0;position:relative}
 .farm-stage{flex:1;min-width:0;position:relative;background:#1a2233}
-.farm-stage .farm-hint{position:absolute;left:10px;bottom:8px;font-size:.72rem;color:#c9c3b6;background:rgba(8,10,16,.55);padding:3px 8px;border-radius:5px;pointer-events:none}
+.farm-stage .farm-hint{position:absolute;left:10px;bottom:76px;font-size:.72rem;color:#c9c3b6;background:rgba(8,10,16,.55);padding:3px 8px;border-radius:5px;pointer-events:none}
+/* 🎮 CS2-style HUD: info buttons in the top-left corner of the scene. */
+.farm-hud{position:absolute;left:10px;top:10px;display:flex;flex-direction:column;gap:6px;z-index:3;align-items:flex-start}
+.farm-hudbtn{display:inline-flex;align-items:center;gap:8px;background:rgba(10,13,20,.82);border:1px solid rgba(255,255,255,.14);color:#e8e2d6;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:.8rem;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);text-align:left}
+.farm-hudbtn:hover{border-color:#d4af37aa;background:rgba(20,24,34,.92)}
+.farm-hudbtn.is-active{border-color:#d4af37;box-shadow:0 0 0 1px #d4af3755}
+.farm-hudbtn .big{font-size:1.25rem;line-height:1}
+.farm-hudbtn .col{display:flex;flex-direction:column;line-height:1.2}
+.farm-hudbtn .col b{font-size:.82rem;color:#f4efe4}
+.farm-hudbtn .col span{font-size:.68rem;color:#9aa3b5}
+.farm-hudbtn .sep{width:1px;height:22px;background:rgba(255,255,255,.14)}
+.farm-hudbtn.boost{border-color:#8affd655}
+/* 🎮 The bottom toolbar: one icon button per panel. */
+.farm-bar{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);display:flex;gap:4px;padding:5px;background:rgba(10,13,20,.9);border:1px solid rgba(255,255,255,.14);border-radius:12px;z-index:4;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);max-width:calc(100% - 20px);overflow-x:auto}
+.farm-tab{display:flex;flex-direction:column;align-items:center;gap:2px;min-width:62px;padding:6px 8px;background:none;border:1px solid transparent;border-radius:9px;color:#9aa3b5;cursor:pointer;font-size:.62rem;letter-spacing:.03em;white-space:nowrap;text-transform:uppercase}
+.farm-tab .ic{font-size:1.35rem;line-height:1}
+.farm-tab:hover{background:rgba(255,255,255,.06);color:#e8e2d6}
+.farm-tab.is-active{color:#f2d98a;background:#2a2410;border-color:#d4af37}
+.farm-tab .dot{position:absolute;margin-left:34px;margin-top:-2px;width:8px;height:8px;border-radius:50%;background:#8affd6;box-shadow:0 0 6px #8affd6}
+/* 🎮 The floating panel a toolbar button opens. */
+.farm-panel{position:absolute;right:10px;top:10px;bottom:74px;width:min(440px,46vw);min-width:300px;overflow:auto;background:rgba(16,20,29,.96);border:1px solid #2a3140;border-radius:10px;display:flex;flex-direction:column;z-index:3;box-shadow:0 12px 40px rgba(0,0,0,.45)}
+.farm-panel[hidden]{display:none}
+.farm-panelhead{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid #2a3140;position:sticky;top:0;background:#10141d;z-index:2}
+.farm-panelhead h2{margin:0;font-size:.92rem;color:#f2d98a;letter-spacing:.03em;flex:1}
+.farm-panelhead .x{background:none;border:1px solid #3a4457;color:#c9c3b6;border-radius:6px;width:26px;height:26px;cursor:pointer;font-size:.9rem}
+.farm-panelhead .x:hover{background:#27303f;color:#fff}
 .farm-stage .farm-banner{position:absolute;left:50%;top:12px;transform:translateX(-50%);background:rgba(8,10,16,.8);border:1px solid #d4af37aa;color:#f4efe4;padding:8px 14px;border-radius:8px;font-size:.85rem;max-width:80%;text-align:center;pointer-events:none;animation:farmBanner .5s ease-out}
 @keyframes farmBanner{from{opacity:0;transform:translate(-50%,-8px)}to{opacity:1;transform:translate(-50%,0)}}
-.farm-panel{width:min(440px,46vw);min-width:300px;overflow:auto;background:#10141d;border-left:1px solid #2a3140;display:flex;flex-direction:column}
-.farm-tabs{display:flex;border-bottom:1px solid #2a3140;position:sticky;top:0;background:#10141d;z-index:2}
-.farm-tab{flex:1;padding:9px 2px;background:none;border:none;border-bottom:2px solid transparent;color:#9aa3b5;cursor:pointer;font-size:.78rem;letter-spacing:.03em;white-space:nowrap}
-.farm-tab.is-active{color:#f2d98a;border-bottom-color:#d4af37}
 .farm-cards{padding:10px;display:flex;flex-direction:column;gap:10px}
 .farm-card{background:#151b26;border:1px solid #2a3140;border-radius:8px;padding:10px;border-left:3px solid var(--accent,#d4af37)}
 .farm-card.is-focus{box-shadow:0 0 0 2px #d4af3788}
@@ -102,7 +131,22 @@ export const FARM_CSS = `
 .farm-coll .b{background:#0c0f16;border:1px solid #2a3140;border-radius:6px;padding:6px 4px;text-align:center;font-size:.68rem;color:#9aa3b5}
 .farm-coll .b.on{border-color:#d4af37;color:#f4efe4}
 .farm-coll .b i{display:block;width:18px;height:18px;border-radius:50%;margin:0 auto 3px;border:1px solid #0008}
-@media (max-width:760px){.farm-body{flex-direction:column}.farm-panel{width:auto;min-width:0;max-height:52vh;border-left:none;border-top:1px solid #2a3140}.farm-stage{min-height:42vh}.farm-beast{grid-template-columns:1fr auto}.farm-beast .hp{grid-column:1/-1}}
+/* 🛒 Shop */
+.farm-shopitem{display:grid;grid-template-columns:auto 1fr auto;gap:6px 10px;align-items:center;padding:8px;border-top:1px solid #1e2532}
+.farm-shopitem:first-of-type{border-top:none}
+.farm-shopitem .ic{font-size:1.5rem;line-height:1}
+.farm-shopitem .nm{font-weight:700;color:#f4efe4;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.farm-shopitem .nm .tag{font-size:.66rem;padding:0 5px;border-radius:3px;background:#2a3140;color:#c9c3b6;font-weight:400}
+.farm-shopitem .nm .tag.on{background:#1e4a3a;color:#8affd6}.farm-shopitem .nm .tag.own{background:#5a4a1e;color:#f8e8b0}
+.farm-shopitem .bl{font-size:.75rem;color:#b3bccb;line-height:1.3}
+.farm-shopitem .fx{font-size:.72rem;color:#8affd6}
+.farm-shopitem .farm-cost{margin:3px 0 0}
+.farm-boostbar{height:4px;background:#0c0f16;border-radius:2px;overflow:hidden;margin-top:3px}
+.farm-boostbar i{display:block;height:100%;background:#8affd6}
+.farm-grade{display:grid;grid-template-columns:repeat(4,1fr);gap:5px}
+.farm-grade .g{background:#0c0f16;border:1px solid #2a3140;border-radius:6px;padding:6px 4px;text-align:center;font-size:.68rem;color:#9aa3b5}
+.farm-grade .g b{display:block;font-size:1rem;color:#f4efe4}
+@media (max-width:760px){.farm-panel{left:0;right:0;top:auto;bottom:66px;width:auto;min-width:0;max-height:56vh;border-radius:10px 10px 0 0}.farm-bar{bottom:4px;gap:1px;padding:3px}.farm-tab{min-width:44px;padding:4px 3px;font-size:.5rem}.farm-tab .ic{font-size:1.2rem}.farm-hud{top:6px;left:6px}.farm-beast{grid-template-columns:1fr auto}.farm-beast .hp{grid-column:1/-1}.farm-stage .farm-hint{display:none}}
 @media (prefers-reduced-motion:reduce){.farm-stage .farm-banner{animation:none}}
 `;
 
@@ -130,8 +174,11 @@ function scale(map, mul) { const o = {}; Object.keys(map).forEach(k => { o[k] = 
 
 export function renderLedger(host, view) {
   const ids = ['animalFeed', 'eggs', 'feathers', 'rawMilk', 'meat', 'wool', 'hide', 'leather', 'fertilizer', 'livestock', 'food', 'cloth'];
-  const wx = view ? `<span class="farm-chip wx" title="Weather until ${new Date(view.weather.until).toLocaleTimeString()}">${view.weather.icon} ${esc(view.weather.label)}</span><span class="farm-chip wx" title="Season">${view.season.icon} ${esc(view.season.label)}</span><span class="farm-chip wx" title="Guard defense (fence adds per pen)">🛡 <b>${Math.round(view.guardDefense)}</b></span>` : '';
-  return wx + `<span class="farm-chip cinder">🔥 <b>${fmt(host.gems())}</b></span>` + ids.map(id => { const m = host.resMeta(id); return `<span class="farm-chip" title="${esc(m.name)}">${m.icon} <b>${fmt(host.getRes(id))}</b></span>`; }).join('');
+  // ⭐ Grade-2 goods only take a chip once the farm holds some (a new farm has no reason to see four zeros).
+  const prem = Object.values(FARM_ECON.premium.goods).filter(id => host.getRes(id) > 0);
+  // 🎮 Weather / season / defense moved to the HUD button over the scene (CS2 chrome); the ledger is just the ledger.
+  return `<span class="farm-chip cinder">🔥 <b>${fmt(host.gems())}</b></span>` + ids.map(id => { const m = host.resMeta(id); return `<span class="farm-chip" title="${esc(m.name)}">${m.icon} <b>${fmt(host.getRes(id))}</b></span>`; }).join('')
+    + prem.map(id => { const m = host.resMeta(id); return `<span class="farm-chip" style="border-color:#f2d98a66" title="${esc(m.name)} (grade-2)">⭐${m.icon} <b>${fmt(host.getRes(id))}</b></span>`; }).join('');
 }
 
 /* ── Homestead tab ──────────────────────────────────────────────────────── */
@@ -302,6 +349,56 @@ function seasonBlurb(k) {
   return { spring: 'Spring: breeding doubles.', summer: 'Summer: grazing is cheap.', autumn: 'Autumn: the cull season — meat yields +15%, feed a little dearer.', winter: 'Winter: feed costs double and little is born.' }[k] || '';
 }
 
+/* ── HUD (top-left of the scene): the weather / season / defense button ─── */
+export function renderHud(host, view, tab) {
+  const boosts = (view.shop && view.shop.active) || [];
+  const soon = boosts.filter(b => !b.permanent).sort((a, b) => a.expiresAt - b.expiresAt)[0];
+  const under = view.construction.length;
+  return `<button class="farm-hudbtn ${tab === 'journal' ? 'is-active' : ''}" data-fact="tab" data-id="journal" title="Weather, season, defense — open the Journal">
+      <span class="big">${view.weather.icon}</span><span class="col"><b>${esc(view.weather.label)}</b><span>${view.season.icon} ${esc(view.season.label)} · ${esc(view.terroir.toLowerCase())} ground</span></span>
+      <span class="sep"></span><span class="big">🛡</span><span class="col"><b>${Math.round(view.guardDefense)}</b><span>defense</span></span>
+      ${view.ill ? `<span class="sep"></span><span class="big">🦠</span><span class="col"><b>${view.ill}</b><span>sick</span></span>` : ''}
+      ${under ? `<span class="sep"></span><span class="big">🏗</span><span class="col"><b>${under}</b><span>building</span></span>` : ''}
+    </button>
+    ${boosts.length ? `<button class="farm-hudbtn boost ${tab === 'shop' ? 'is-active' : ''}" data-fact="tab" data-id="shop" title="Active shop boosts — open the Shop"><span class="big">${boosts.map(b => FARM_ECON.shop.items[b.id].icon).join('')}</span><span class="col"><b>${boosts.length} boost${boosts.length === 1 ? '' : 's'} active</b><span>${soon ? esc(FARM_ECON.shop.items[soon.id].label) + ' ends in ' + hrs(soon.hoursLeft) : 'permanent'}</span></span></button>` : ''}`;
+}
+
+/* ── Shop panel: the merchant's cart ────────────────────────────────────── */
+export function renderShop(host, s, view) {
+  const SH = FARM_ECON.shop, P = FARM_ECON.premium, now = Date.now();
+  const active = {}; (view.shop.active || []).forEach(b => { active[b.id] = b; });
+  const fx = (e) => Object.keys(e).map(k => ({
+    feedMul: `feed use ×${e.feedMul}`, yieldMul: `yields ×${e.yieldMul}`, growMul: `growth ×${e.growMul}`, healMul: `healing ×${e.healMul}`, outbreakMul: `outbreaks ×${e.outbreakMul}`,
+    breedMul: `births ×${e.breedMul}`, rareMul: `rare births ×${e.rareMul}`, lineMul: `royal & mythic ×${e.lineMul}`, premiumShareAdd: `+${Math.round(e.premiumShareAdd * 100)}% graded premium`,
+  }[k] || k)).join(' · ');
+  const item = (id) => {
+    const it = SH.items[id]; const a = active[id];
+    const afford = Object.keys(it.cost).every(k => k === 'cinder' ? host.gems() >= it.cost[k] : host.getRes(k) >= it.cost[k]);
+    const owned = it.permanent && a;
+    const left = a && !a.permanent ? a.hoursLeft : 0;
+    return `<div class="farm-shopitem"><div class="ic">${it.icon}</div>
+      <div><div class="nm">${esc(it.label)}${owned ? '<span class="tag own">owned</span>' : a ? `<span class="tag on">active · ${hrs(left)} left</span>` : it.permanent ? '<span class="tag">permanent</span>' : `<span class="tag">${it.hours}h</span>`}</div>
+        <div class="bl">${esc(it.blurb)}</div><div class="fx">${esc(fx(it.effect))}</div>
+        ${a && !a.permanent ? `<div class="farm-boostbar"><i style="width:${Math.max(2, Math.min(100, left / it.hours * 100))}%"></i></div>` : ''}
+        ${owned ? '' : costHtml(host, it.cost)}</div>
+      <div class="acts">${owned ? '' : `<button class="farm-btn ${afford ? 'primary' : ''}" data-fact="shop-buy" data-id="${id}" ${afford ? '' : 'disabled'}>${a ? 'Extend' : 'Buy'}</button>`}</div>
+    </div>`;
+  };
+  const cats = Object.keys(SH.cats).map(c => `<div class="farm-card" style="--accent:${c === 'feed' ? '#d9c46a' : c === 'breed' ? '#8affd6' : '#f2d98a'}"><h3>${SH.cats[c].icon} ${esc(SH.cats[c].label)}</h3>${Object.keys(SH.items).filter(k => SH.items[k].cat === c).map(item).join('')}</div>`).join('');
+  const goods = Object.keys(P.goods).map(base => { const pid = P.goods[base]; const m = host.resMeta(pid), b = host.resMeta(base); return `<div class="g"><b>${m.icon} ${fmt(host.getRes(pid))}</b>${esc(m.name)}<br><span style="opacity:.7">from ${b.icon} ${esc(b.name)}</span></div>`; }).join('');
+  const share = view.shop.premiumShare;
+  return `<div class="farm-cards">
+    <div class="farm-onboard"><b>The merchant's cart.</b> Feed that goes further, salts that tilt the bloodline dice, and papers that grade a good breed's yield as premium. Timed items <b>extend</b> when bought again — they never stack. Nothing here mints Cinder or goods; it only makes what you already raise work harder.</div>
+    ${cats}
+    <div class="farm-card" style="--accent:#f2d98a"><h3>⭐ Grade-2 goods<span class="lv">${view.shop.graded} graded beast${view.shop.graded === 1 ? '' : 's'} on the farm</span></h3>
+      <p>Only a rare-or-better breed makes these. They cook richer at the Kitchen, spin finer at the Spinning Shed, and the town pays about double for them — in goods, never Cinder.</p>
+      <div class="farm-grade">${goods}</div>
+      <div class="farm-row" style="margin-top:8px"><span class="k">Premium share</span>${['rare', 'royal', 'mythic', 'glow'].map(tk => `<span class="farm-chip">${tk} <b>${Math.round((share[tk] || 0) * 100)}%</b></span>`).join('')}</div>
+      <div class="farm-toastline">Base ${Object.keys(P.shareByTier).map(k => k + ' ' + Math.round(P.shareByTier[k] * 100) + '%').join(' · ')} — the Grading Table and Provenance Stamps add to it, capped at 100%.</div>
+    </div>
+  </div>`;
+}
+
 /* ── Athena Editor tab ──────────────────────────────────────────────────── */
 export function renderAthena(host, s, view) {
   const L = view.look;
@@ -401,17 +498,22 @@ export function renderShell(sub) {
     </div>
     <div class="farm-body">
       <div class="farm-stage" data-farm="stage"><div class="farm-hint">Drag to orbit · wheel / pinch to zoom · tap a building or animal</div></div>
-      <div class="farm-panel">
-        <div class="farm-tabs">
-          <button class="farm-tab is-active" data-fact="tab" data-id="homestead">🏡 Homestead</button>
-          <button class="farm-tab" data-fact="tab" data-id="livestock">🐑 Livestock</button>
-          <button class="farm-tab" data-fact="tab" data-id="market">🏛 Market</button>
-          <button class="farm-tab" data-fact="tab" data-id="ranch">🤝 Ranch</button>
-          <button class="farm-tab" data-fact="tab" data-id="journal">📜 Journal</button>
-          <button class="farm-tab" data-fact="tab" data-id="athena">🅰 Athena</button>
-        </div>
+      <div class="farm-hud" data-farm="hud"></div>
+      <div class="farm-panel" data-farm="panelbox">
+        <div class="farm-panelhead"><h2 data-farm="paneltitle">Homestead</h2><button class="x" data-fact="tab-close" title="Close">✕</button></div>
         <div data-farm="panel"></div>
       </div>
+      <div class="farm-bar" role="tablist">${FARM_TABS.map(t => `<button class="farm-tab ${t.id === 'homestead' ? 'is-active' : ''}" data-fact="tab" data-id="${t.id}" title="${esc(t.title)}"><span class="ic">${t.icon}</span>${esc(t.label)}</button>`).join('')}</div>
     </div>
   </div>`;
 }
+/* 🎮 The toolbar. Order is the order of a session: build → stock → sell → share → shop → read → restyle. */
+export const FARM_TABS = [
+  { id: 'homestead', icon: '🏡', label: 'Homestead', title: 'Buildings and stations' },
+  { id: 'livestock', icon: '🐑', label: 'Livestock', title: 'Every animal on the farm' },
+  { id: 'market',    icon: '🏛', label: 'Market',    title: 'The Sale Ring, player lots, contracts, bloodlines' },
+  { id: 'ranch',     icon: '🤝', label: 'Ranch',     title: 'The corporation’s shared pasture' },
+  { id: 'shop',      icon: '🛒', label: 'Shop',      title: 'The merchant’s cart: feed, bloodlines, grading' },
+  { id: 'journal',   icon: '📜', label: 'Journal',   title: 'Town demand, statistics, what happened' },
+  { id: 'athena',    icon: '🅰', label: 'Athena',    title: 'The look editor' },
+];

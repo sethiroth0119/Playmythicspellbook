@@ -26,7 +26,7 @@ assume `window.Foo` exists because `const Foo` does.
 | `/src/city` | `window.MythicCityBridge` |
 | `/src/trading` | `window.MythicTradeBridge` |
 | `/src/resonance/house.camp.js` | `window.MythicHouseBridge` |
-| `/src/farm` (🐄 Homestead Farm, 3D) | `window.MythicFarmBridge` — state on `Profile.farm`, synced as `__farm__`; its `cloud` sub-object is the only Supabase seam (player lots + corp ranch, `sql/038`) |
+| `/src/farm` (🐄 Homestead Farm, 3D) | `window.MythicFarmBridge` — state on `Profile.farm`, synced as `__farm__`; its `cloud` sub-object is the only Supabase seam (player lots + corp ranch, `sql/038`). Chrome is Cities: Skylines 2 style (bottom toolbar of icon buttons, one floating panel, HUD weather button opens the Journal). The Shop (`FARM_ECON.shop`) sells timed boosts that EXTEND, never stack; grade-2 goods (`FARM_ECON.premium`, 4 ledger ids, count 28) come only from rare+ breeds |
 
 The farm's economy is pure over a host adapter: `node tools/farm_harness.mjs` drives
 build → feed → grow → collect → slaughter → craft, construction, haulage, disease, breeding

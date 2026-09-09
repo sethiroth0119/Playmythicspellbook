@@ -52,7 +52,7 @@ function farm(opts) {
 }
 
 console.log('catalogue audit');
-const ids = ['animalFeed', 'eggs', 'feathers', 'rawMilk', 'meat', 'wool', 'hide', 'leather', 'fertilizer', 'livestock', 'food', 'water', 'wood', 'stone', 'cloth', 'metal', 'supplies', 'medicine', 'memoryShards', 'dna', 'fuel', 'ammo'];
+const ids = ['animalFeed', 'eggs', 'feathers', 'rawMilk', 'meat', 'wool', 'hide', 'leather', 'fertilizer', 'livestock', 'goldEggs', 'primeMeat', 'richMilk', 'fineWool', 'food', 'water', 'wood', 'stone', 'cloth', 'metal', 'supplies', 'medicine', 'memoryShards', 'dna', 'fuel', 'ammo'];
 ok(auditCatalog(ids).length === 0, 'every id the farm touches is in the promotion list: ' + auditCatalog(ids).join(','));
 ok(FARM_BUILDINGS.every(b => b.cost.every(c => c.cinder > 0 && Object.keys(c).filter(k => k !== 'cinder').length >= 2)), 'every building level costs Cinder + ≥2 resources');
 ok(Object.values(FARM_ECON.townDemand.offers).every(o => !('cinder' in o.get)), 'town demand never pays Cinder (no faucet)');
@@ -463,6 +463,105 @@ console.log('the kitchen door (operations + city draw from pen accrual)');
   r = S.drawAccrual(h, s, 'eggs', 9999, 'x');
   ok(r.ok && r.taken === pend.eggs - 5 && S.available(h, s, 'eggs') === 0, 'a draw larger than the pen takes what is there');
   r = S.drawAccrual(h, s, 'wool', 3, 'x'); ok(r.ok && r.taken === 0, 'nothing of a good the farm does not have');
+}
+
+console.log('the shop: boosts, extension, permanent unlocks, refunds');
+{
+  const { h, s } = farm(); h.led.food = 500; h.led.water = 500;   // farm() grinds the food into feed
+  const SH = FARM_ECON.shop.items;
+  const g0 = h.st.gems, f0 = h.led.food;
+  let r = S.buyShopItem(h, s, 'molasses');
+  ok(r.ok && !r.extended && h.st.gems === g0 - SH.molasses.cost.cinder && h.led.food === f0 - SH.molasses.cost.food, 'Molasses Lick charged Cinder + food');
+  const exp1 = s.boosts.molasses;
+  ok(exp1 > Date.now() + 23.9 * H && s.journal[0].kind === 'shop', 'boost runs 24h and is journalled');
+  r = S.buyShopItem(h, s, 'molasses');
+  ok(r.ok && r.extended && Math.abs(s.boosts.molasses - (exp1 + 24 * H)) < 5000, 'buying it again EXTENDS by 24h, it does not stack the effect');
+  S.buyAnimal(h, s, 'chicken', 4);
+  const drawOn = S.feedDrawPerH(s, 'coop', h);
+  delete s.boosts.molasses;
+  const drawOff = S.feedDrawPerH(s, 'coop', h);
+  ok(Math.abs(drawOn - drawOff * SH.molasses.effect.feedMul) < 1e-9, 'with the lick the coop draws 75% of the feed');
+  ok(!S.buyShopItem(h, s, 'nope').ok, 'unknown item refused');
+  r = S.buyShopItem(h, s, 'grading');
+  ok(r.ok && r.permanent && s.unlocks.grading === true, 'Grading Table bought once');
+  r = S.buyShopItem(h, s, 'grading');
+  ok(!r.ok && r.why === 'already owned', 'cannot buy a permanent item twice');
+  const h2 = fakeHost(); const s2 = S.ensureState(h2); h2.st.saveFails = 1; const g2 = h2.st.gems, w2 = h2.led.wood;
+  r = S.buyShopItem(h2, s2, 'grading');
+  ok(!r.ok && h2.st.gems === g2 && h2.led.wood === w2 && !s2.unlocks.grading, 'save failure refunds the table, Cinder included');
+  const h3 = fakeHost({ gems: 10 }); const s3 = S.ensureState(h3);
+  r = S.buyShopItem(h3, s3, 'kelp'); ok(!r.ok && r.why === 'short' && r.shortfall.cinder === SH.kelp.cost.cinder - 10, 'short on Cinder refuses with the shortfall');
+  // A boost that expires mid-interval is honoured for its covered share only.
+  const t0 = Date.now();
+  const { h: h4, s: s4 } = farm(); S.buyAnimal(h4, s4, 'chicken', 2);
+  S.simulate(h4, s4, t0 + 10 * H, () => 1); s4.buildings.coop.accrual = {};
+  const base = S.penRatePerH(s4, 'coop', h4, t0 + 10 * H).eggs;
+  s4.boostsSaved = 0; s4.boosts.kelp = t0 + 15 * H;   // live for 5 of the next 10 hours
+  S.simulate(h4, s4, t0 + 20 * H, () => 1);
+  const want = base * 10 * (1 + 0.25 * 0.5);
+  ok(Math.abs(s4.buildings.coop.accrual.eggs - want) < 1e-3, 'Kelp Meal live for half the interval pays +12.5% over it (' + s4.buildings.coop.accrual.eggs.toFixed(3) + ' vs ' + want.toFixed(3) + ')');
+  ok(S.activeBoosts(s4, t0 + 20 * H).length === 0 && S.activeBoosts(s4, t0 + 12 * H)[0].id === 'kelp', 'activeBoosts reports the clock honestly');
+  // Growth Mash: a hen grows in 4 fed hours instead of 6.
+  const { h: h5, s: s5 } = farm(); h5.led.food = 500; ok(S.buyShopItem(h5, s5, 'mash').ok, 'Growth Mash bought'); S.buyAnimal(h5, s5, 'chicken', 1);
+  S.simulate(h5, s5, Date.now() + 4.1 * H, () => 1);
+  ok(S.isAdult(s5.animals[0]) && s5.animals[0].ageH < 4.2, 'Growth Mash: grown at 4h of real time instead of 6');
+  // Bloodline Salts. Forced dice: breed chance clamps to 1 so every trial births;
+  // the rare roll 0.6 FAILS against 0.34 but PASSES against 0.34 × 3 — only
+  // the Salts make the difference between the two runs.
+  const { h: h6, s: s6 } = farm(); S.buyAnimal(h6, s6, 'chicken', 2);
+  const bc0 = FARM_ECON.breedChancePerH.chicken; FARM_ECON.breedChancePerH.chicken = 10;   // × any season ≥ 1 → clamped to 1
+  FARM_ECON.lines.rareChance = 0.34; s6.animals.forEach(a => { a.grownH = 6; });
+  S.simulate(h6, s6, Date.now() + 2 * H, () => 0.6);
+  const plain = s6.animals.filter(a => a.id > 2);
+  ok(plain.length > 0 && plain.every(a => !a.breed), 'without Salts the same dice throw plain chicks (' + plain.length + ')');
+  s6.boosts.salts = Date.now() + 48 * H;
+  S.simulate(h6, s6, Date.now() + 4 * H, () => 0.6);
+  const born = s6.animals.filter(a => a.id > 2 + plain.length);
+  ok(born.length > 0 && born.every(a => a.breed === 'chicken'), 'Bloodline Salts: rare roll ×3 → every birth was a Golden Hen (' + born.length + ' born)');
+  FARM_ECON.lines.rareChance = 0.05; FARM_ECON.breedChancePerH.chicken = bc0;
+  // Vet Tonic halves outbreaks: p × 0.5 at the window.
+  const { h: h7, s: s7 } = farm(); S.buyAnimal(h7, s7, 'chicken', 2);
+  ok(Math.abs(S.boostMul(s7, 'outbreakMul', Date.now()) - 1) < 1e-9 && (s7.boosts.tonic = Date.now() + H, Math.abs(S.boostMul(s7, 'outbreakMul', Date.now()) - 0.5) < 1e-9), 'Vet Tonic reads as ×0.5 outbreak odds while live');
+}
+
+console.log('grade-2 goods from better breeds');
+{
+  const P = FARM_ECON.premium;
+  ok(Object.values(P.goods).every(id => ids.indexOf(id) >= 0), 'every premium id is promoted');
+  const { h, s } = farm();
+  S.buyAnimal(h, s, 'chicken', 2);
+  s.animals[0].breed = 'chicken:mythic';           // share 1: everything grades up
+  const t0 = Date.now();
+  S.simulate(h, s, t0 + 20 * H, () => 1);
+  const acc = s.buildings.coop.accrual;
+  const rate = S.penRatePerH(s, 'coop', h, t0 + 20 * H);
+  ok(acc.goldEggs > 0 && acc.eggs > 0 && rate.goldEggs > rate.eggs * 4.9, 'a Phoenix Hen lays golden eggs only (×5); the plain hen lays plain eggs');
+  ok(Math.abs(rate.goldEggs - 0.35 * 5) < 1e-9 && Math.abs(rate.eggs - 0.35) < 1e-9, 'rate: 1.75 golden + 0.35 plain per hour');
+  s.animals[0].breed = 'chicken';                  // rare: 35% premium
+  const r2 = S.penRatePerH(s, 'coop', h, t0 + 20 * H);
+  ok(Math.abs(r2.goldEggs - 0.35 * 2 * 0.35) < 1e-9 && Math.abs(r2.eggs - (0.35 + 0.35 * 2 * 0.65)) < 1e-9, 'a Golden Hen grades 35% of her eggs');
+  s.unlocks.grading = true; s.boosts.stamps = t0 + 100 * H;
+  const r3 = S.penRatePerH(s, 'coop', h, t0 + 20 * H);
+  ok(Math.abs(r3.goldEggs - 0.35 * 2 * 0.85) < 1e-9, 'Grading Table + Stamps: 35% → 85%');
+  s.animals[0].breed = 'chicken:royal';
+  const r4 = S.penRatePerH(s, 'coop', h, t0 + 20 * H);
+  ok(Math.abs(r4.goldEggs - 0.35 * 3) < 1e-9 && !r4.eggs || Math.abs(r4.eggs - 0.35) < 1e-9, 'a royal with the table and stamps caps at 100% premium');
+  // Collect lands premium ids in the ledger; the kitchen cooks them richer.
+  s.buildings.coop.lastCollect = 0;
+  let r = S.collect(h, s, 'coop');
+  ok(r.ok && r.got.goldEggs > 0 && h.led.goldEggs === r.got.goldEggs && s.stats.premium === r.got.goldEggs, 'collected golden eggs into the ledger, counted in stats');
+  S.build(h, s, 'kitchen'); h.led.goldEggs = 40; h.led.eggs = 60;
+  const fA = h.led.food; S.craft(h, s, 'kitchen', 'kitchenGoldEggs', 1); const gold = h.led.food - fA;
+  const fB = h.led.food; S.craft(h, s, 'kitchen', 'kitchenEggs', 1); const plain = h.led.food - fB;
+  ok(gold === 6 && plain === 4 && h.led.goldEggs === 36, 'the kitchen turns 4 golden eggs into 6 food (6 plain → 4)');
+  // Slaughter: a mythic cow's meat is all prime.
+  S.build(h, s, 'barn'); S.build(h, s, 'butcher'); S.fillTrough(h, s, 'barn', 1e9);
+  S.buyAnimal(h, s, 'cow', 1); s.animals[s.animals.length - 1].breed = 'cow:mythic'; s.animals[s.animals.length - 1].grownH = 24;
+  r = S.slaughter(h, s, { sp: 'cow', n: 1 }, 'balanced');
+  ok(r.ok && r.got.primeMeat > 0 && !r.got.meat && r.got.hide > 0, 'an Aurochs to the block: all its meat is prime cuts (' + r.got.primeMeat + '), hide unchanged');
+  ok(s.stats.meat >= r.got.primeMeat, 'prime cuts count toward the Meat stat');
+  // Town wants premium; audit + shop costs are promoted.
+  ok(FARM_ECON.townDemand.offers.some(o => o.give.goldEggs) && FARM_ECON.townDemand.offers.every(o => !('cinder' in o.get)), 'the town wants golden eggs, pays in goods');
 }
 
 FARM_ECON.disease.outbreakBase = savedOutbreak;

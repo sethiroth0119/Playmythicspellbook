@@ -181,6 +181,16 @@ for a species-price discount. Terroir `slots` re-derived to 24 (COMMON 11 → 12
 raids and events, seasons and weather, town demand, the Athena Editor) is all inside `/src/farm`;
 `node tools/farm_harness.mjs` covers it.
 
+### Round 5 (v120x5): grade-2 farm goods — the count is **28**
+`goldEggs`, `primeMeat`, `richMilk`, `fineWool` are the "level 2" versions of eggs / meat / raw milk /
+wool, and ONLY a rare, royal or mythic breed makes them (`FARM_ECON.premium`: a share of the beast's
+yield lands as the premium id; the farm Shop's Grading Table and Provenance Stamps add to that share).
+Promoted with their producer: `RESOURCES` (28), terroir `slots` re-derived to 28 (RICH 5, COMMON 14,
+SCARCE 7, BARREN 2), `FALLBACK_IDS`, `chain.js` (tier 2, `?v=v120x5chain5` in both files), node-city
+HUD rows + `HUD_DISPLAY_RES` + `STOCK_FARM_FALLBACK` (served first), and `OPS_FARM_MENU` (a prime cut
+feeds an operation at 0.3 per food and lifts the menu +40%). They cook richer at the Farm Kitchen and
+the town barters about double for them — in goods. They are never worth more Cinder anywhere.
+
 ### Round 3 (v120x2): construction time and haulage
 Buildings take real hours per level (`buildH` on each entry); hired Builders shorten it, Cinder
 rushes it per remaining minute. Bought stock is hauled in by a carrier (three companies, or the

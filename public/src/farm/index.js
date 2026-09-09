@@ -383,6 +383,10 @@ const api = {
   deliverContract: (id) => withHost((h, s) => S.deliverContract(h, s, id)),
   returnAnimal: (a) => withHost((h, s) => S.returnAnimal(h, s, a)),
   cloud: { lots: cloudLots, ranch: cloudRanch },
+  /* 🚪 Kitchen door — for operations and the node city (index.html reads these). */
+  available: (id) => { const h = host(); return h ? S.available(h, S.ensureState(h), id) : 0; },
+  pending: () => { const h = host(); return h ? S.pendingAll(h, S.ensureState(h)) : {}; },
+  drawAccrual: (id, n, who) => withHost((h, s) => S.drawAccrual(h, s, id, n, who)),
   fillTrough: (id, n) => withHost((h, s) => S.fillTrough(h, s, id, n)),
   collect: (id) => withHost((h, s) => S.collect(h, s, id)),
   slaughter: (sel, cut) => withHost((h, s) => S.slaughter(h, s, typeof sel === 'string' ? { sp: sel, n: 1 } : sel, cut)),

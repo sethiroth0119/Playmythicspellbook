@@ -35,6 +35,9 @@ lots and the corp ranch need `sql/038_farm_auction_and_ranch.sql` applied; until
 Market and Ranch tabs print "not set up on the server yet" and everything else works.
 🔴 Never mirror a server-escrowed bid with a client `spendGems()` — the client spend path is
 mirrored to `wallet_charge` and would debit the bid twice.
+Farm → economy seams: `OPS_FARM_MENU` + `_opConsumeInputs()` in index.html (any op with a
+`food` input eats meat/eggs/milk first, drawn from pen accrual via `MythicFarm.drawAccrual`);
+node-city's `STOCK_FARM_FALLBACK`, `smokehouse`/`dairy`, and the `boost` field on buildings.
 
 ## Non-negotiables
 - All Supabase access is guarded. The app MUST still work offline / before tables exist,

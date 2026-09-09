@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120x3';
+  window.BUILD_VERSION = 'v120x4';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -80076,6 +80076,52 @@ function getOpsEconOverrides() {
   } catch (e) {}
   return null;
 }
+/* 🍳 THE FARM MENU (v120x4) — any operation that consumes `food` per worker·hr
+   (the Restaurant, the Medical Corporation, whatever an admin adds) can be fed
+   FARM GOODS instead, and pays a premium for it: `per` is how many units of
+   the good replace ONE food, `bonus` the output lift while that good is on
+   the menu (scaled by the share of the run it covered). Goods are taken in
+   this order, then plain food makes up the rest.
+   🚪 THE KITCHEN DOOR: the goods can come straight out of the farm's pens
+   (window.MythicFarm.drawAccrual) before the stash — an owner of both skips
+   the 6h collect on the part the business eats. Nothing is created: it is the
+   same accrual a Collect would bank.
+   ⚠ Tuning lives HERE (the _opEcon() rule); admins may override it as
+     `__farmMenu` in the opsEcon overrides, same rail as every other op number. */
+const OPS_FARM_MENU = {
+  meat:    { per: 0.5, bonus: 0.25 },
+  eggs:    { per: 0.8, bonus: 0.10 },
+  rawMilk: { per: 0.9, bonus: 0.10 },
+};
+function _opFarmMenu() {
+  try { const ov = getOpsEconOverrides(); if (ov && ov.__farmMenu && typeof ov.__farmMenu === 'object') return Object.assign({}, OPS_FARM_MENU, ov.__farmMenu); } catch (e) {}
+  return OPS_FARM_MENU;
+}
+function _opFarmAvail(rid) {
+  try { const F = (typeof window !== 'undefined') ? window.MythicFarm : null; return (F && typeof F.available === 'function') ? Math.max(0, F.available(rid) | 0) : 0; } catch (e) { return 0; }
+}
+/* Consume an operation's inputs at settle: the kitchen-door share is drawn
+   from the farm's pens first, the rest from the stash. `scale` is the
+   wages-short penalty the corp path applies. Returns what was actually taken. */
+function _opConsumeInputs(c, scale, who) {
+  const out = {};
+  try {
+    scale = (typeof scale === 'number') ? scale : 1;
+    const burn = {};
+    Object.keys(c.inputsUsed || {}).forEach(function (rid) { const q = Math.max(0, Math.floor(c.inputsUsed[rid] * scale)); if (q > 0) burn[rid] = q; });
+    const F = (typeof window !== 'undefined') ? window.MythicFarm : null;
+    if (F && typeof F.drawAccrual === 'function' && c.farmDoor) {
+      Object.keys(c.farmDoor).forEach(function (rid) {
+        const want = Math.min(burn[rid] | 0, Math.max(0, Math.floor(c.farmDoor[rid] * scale)));
+        if (want <= 0) return;
+        try { const r = F.drawAccrual(rid, want, who || 'the business'); const took = (r && r.taken) | 0; if (took > 0) { burn[rid] -= took; out[rid] = (out[rid] | 0) + took; } } catch (e) {}
+      });
+    }
+    const rest = {}; Object.keys(burn).forEach(function (rid) { if (burn[rid] > 0) rest[rid] = burn[rid]; });
+    if (Object.keys(rest).length && typeof spendResources === 'function') { spendResources(rest); Object.keys(rest).forEach(function (rid) { out[rid] = (out[rid] | 0) + rest[rid]; }); }
+  } catch (e) { try { console.warn('[op inputs]', e); } catch (_) {} }
+  return out;
+}
 function _opEcon(t) {
   const base = OPS_ECON[t] || null;
   if (!base) return null;
@@ -80194,6 +80240,10 @@ function _opComputed(o) {
   // supply problem the player can go and solve.
   const inputsWanted = {};
   let supply = 1;
+  /* 🍳 FARM MENU — see OPS_FARM_MENU. Runs BEFORE the throttle so a restaurant
+     with a full coop and an empty food shelf still runs at 100%. `farmDoor`
+     is the slice of each good that will come out of the pens at settle. */
+  const farmDoor = {}; let menuMul = 1; const menuUsed = {};
   if (e.inputs && typeof e.inputs === 'object') {
     Object.keys(e.inputs).forEach(function (rid) {
       // 🗺 Scaled by terroir: you consume in proportion to what you can
@@ -80201,12 +80251,30 @@ function _opComputed(o) {
       const need = w * (e.inputs[rid] || 0) * hrs * _terr;
       if (need > 0) inputsWanted[rid] = need;
     });
+    if (inputsWanted.food > 0) {
+      const M = _opFarmMenu(); let foodLeft = inputsWanted.food; const foodAll = foodLeft;
+      Object.keys(M).forEach(function (rid) {
+        if (foodLeft <= 0.5) return;
+        const m = M[rid]; if (!m || !(m.per > 0)) return;
+        let stash = 0; try { stash = (typeof getRes === 'function') ? Math.max(0, getRes(rid) | 0) : 0; } catch (err) {}
+        const door = _opFarmAvail(rid);
+        const units = Math.min(stash + door, Math.ceil(foodLeft * m.per));
+        if (units <= 0) return;
+        const covers = units / m.per;
+        menuUsed[rid] = units; foodLeft -= covers;
+        if (door > 0) farmDoor[rid] = Math.min(units, door);
+        menuMul += (m.bonus || 0) * Math.min(1, covers / foodAll);
+      });
+      if (foodLeft <= 0.5) delete inputsWanted.food; else inputsWanted.food = foodLeft;
+      Object.keys(menuUsed).forEach(function (rid) { inputsWanted[rid] = menuUsed[rid]; });
+    }
     const ids = Object.keys(inputsWanted);
     if (ids.length) {
       let worst = 1;
       ids.forEach(function (rid) {
         let have = 0;
         try { have = (typeof getRes === 'function') ? Math.max(0, getRes(rid) | 0) : 0; } catch (err) { have = 0; }
+        if (menuUsed[rid]) have += _opFarmAvail(rid);
         const ratio = Math.min(1, have / inputsWanted[rid]);
         if (ratio < worst) worst = ratio;
       });
@@ -80234,7 +80302,7 @@ function _opComputed(o) {
   //   the guarantee that remote operation is unchanged; _opSiteEff clamps to
   //   [1, 1.45] on read so a corrupt value cannot cut a business's income.
   const siteEff = (typeof _opSiteEff === 'function') ? _opSiteEff(o) : 1;
-  const grossPerHr = w * e.ratePerWorkerHr * mktMul * stdMul * supply * siteEff * _terrGross;
+  const grossPerHr = w * e.ratePerWorkerHr * mktMul * stdMul * supply * siteEff * _terrGross * menuMul;
   // ⚠ Salaries are NOT throttled — same rule as the market multiplier above.
   // Wages are owed whether or not the supply line held, which is what makes
   // running dry actually hurt instead of quietly pausing the business.
@@ -80245,10 +80313,10 @@ function _opComputed(o) {
   const cdLeft = Math.max(0, (last + OP_COLLECT_CD_MS) - Date.now());
   const yields = {};
   if (e.yields) Object.keys(e.yields).forEach(function (rid) {
-    const q = Math.floor(w * (e.yields[rid] || 0) * hrs * supply * _terrRes(rid));
+    const q = Math.floor(w * (e.yields[rid] || 0) * hrs * supply * _terrRes(rid) * menuMul);
     if (q > 0) yields[rid] = q;
   });
-  return { e: e, w: w, hrs: hrs, grossPerHr: grossPerHr, salaryPerHr: salaryPerHr, gross: gross, salary: salary, net: net, cdLeft: cdLeft, last: last, yields: yields, mktMul: mktMul, stdMul: stdMul, supply: supply, siteEff: siteEff, terroirMul: _terr, terroirGrossMul: _terrGross, inputsWanted: inputsWanted, inputsUsed: inputsUsed };
+  return { farmDoor: farmDoor, menuMul: menuMul, menuUsed: menuUsed, e: e, w: w, hrs: hrs, grossPerHr: grossPerHr, salaryPerHr: salaryPerHr, gross: gross, salary: salary, net: net, cdLeft: cdLeft, last: last, yields: yields, mktMul: mktMul, stdMul: stdMul, supply: supply, siteEff: siteEff, terroirMul: _terr, terroirGrossMul: _terrGross, inputsWanted: inputsWanted, inputsUsed: inputsUsed };
 }
 function _opLaborPool() { return Math.max(1, (Corp.roster || []).length || 1); }
 // Shared post-founding handler — fires the unlock toast + grants Woods
@@ -80417,9 +80485,7 @@ async function _opSettle(o) {
       // rate, which is itself bounded by what the player actually holds, so this
       // can never overdraw — and the gross/yields above were computed from the
       // same `supply` figure, so spend and output always agree.
-      if (c.inputsUsed && Object.keys(c.inputsUsed).length && typeof spendResources === 'function') {
-        try { spendResources(c.inputsUsed); } catch (errIn) { try { console.warn('[op inputs]', errIn); } catch (_) {} }
-      }
+      if (c.inputsUsed && Object.keys(c.inputsUsed).length) _opConsumeInputs(c, 1, OP_LABELS[o.op_type] || o.op_type);
       Object.keys(c.yields || {}).forEach(function (rid) {
         const q = Math.max(0, Math.floor(c.yields[rid]));
         if (q > 0) yieldedL[rid] = q;
@@ -80460,15 +80526,8 @@ async function _opSettle(o) {
     // 🏭 Consume inputs on the corp path too. Scaled by the same wagesShort
     // penalty as the output, so a half-output run also burns half the feedstock
     // rather than paying full price for reduced production.
-    if (c.inputsUsed && Object.keys(c.inputsUsed).length && typeof spendResources === 'function') {
-      const burn = {};
-      Object.keys(c.inputsUsed).forEach(function (rid) {
-        const q = Math.max(0, Math.floor(c.inputsUsed[rid] * (wagesShort ? 0.5 : 1)));
-        if (q > 0) burn[rid] = q;
-      });
-      if (Object.keys(burn).length) {
-        try { spendResources(burn); } catch (errIn) { try { console.warn('[op inputs]', errIn); } catch (_) {} }
-      }
+    if (c.inputsUsed && Object.keys(c.inputsUsed).length) {
+      _opConsumeInputs(c, wagesShort ? 0.5 : 1, OP_LABELS[o.op_type] || o.op_type);
     }
     const cy = c.yields || {};
     Object.keys(cy).forEach(function (rid) {
@@ -81549,6 +81608,10 @@ function _jbEcon() {
             salary: c.salary, cdLeftMs: c.cdLeft, hrs: Math.round(c.hrs * 10) / 10,
             yieldStr: ys, yieldRate: yp,
             inputRate: ip, inputStr: iu,
+            // 🍳 Farm menu — what farm goods this run ate instead of food, the lift it earned, and the share that came out of the pens.
+            farmMenu: Object.keys(c.menuUsed || {}).map(function (rid) { return ((_meta(rid).icon) || '📦') + ' ' + (c.menuUsed[rid] | 0); }).join(' · '),
+            farmLift: Math.round(((c.menuMul || 1) - 1) * 100),
+            farmDoor: Object.keys(c.farmDoor || {}).map(function (rid) { return ((_meta(rid).icon) || '📦') + ' ' + (c.farmDoor[rid] | 0); }).join(' · '),
             // 🏙 Sited in a city? The Just Business card is where a player who
             // has never opened the city builder finds out the option exists.
             sited: !!(typeof _opSite === 'function' && _opSite(o)),
@@ -206502,7 +206565,7 @@ function _openNodeCity(nodeId, _resolved) {
   }
   const f = document.createElement('iframe');
   f.id = 'node-city-frame';
-  f.src = 'node-city/index.html?v=120t9';
+  f.src = 'node-city/index.html?v=120x4';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);
@@ -223278,7 +223341,7 @@ render();
      ⚠ If this 404s nothing else changes — the Camp button shows a fallback.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/farm/index.js?v=v120x3farm4"></script>
+<script type="module" src="src/farm/index.js?v=v120x4farm5"></script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the

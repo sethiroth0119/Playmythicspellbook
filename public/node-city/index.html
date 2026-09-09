@@ -693,6 +693,12 @@
   <span class="res"><span class="rtip"><b>🪵 Wood</b>Felled timber. The cheapest structural material there is, and the city eats it by the tonne.<span class="use">Produced by: Lumber Camp. Milled into Planks by a Sawmill.</span></span><span class="ico">🪵</span><span class="amt" id="r-wood">0</span><span class="d" id="d-wood"></span></span>
   <span class="res"><span class="rtip"><b>🪨 Stone</b>Cut block and rubble. Slower to win than timber and needed in smaller amounts — which is exactly why the two never balance.<span class="use">Produced by: Quarry. Dressed into Planks by a Sawmill.</span></span><span class="ico">🪨</span><span class="amt" id="r-stone">0</span><span class="d" id="d-stone"></span></span>
   <span class="res"><span class="rtip"><b>🧵 Cloth</b>Woven fibre. The only road into Goods that does not run through the metal chain.<span class="use">Produced by: Fiber Croft. Woven into Goods by a Weavery.</span></span><span class="ico">🧵</span><span class="amt" id="r-cloth">0</span><span class="d" id="d-cloth"></span></span>
+  <!-- 🐄 Homestead Farm goods (v120x4). Kitchens serve these before raw food, the Smokehouse and Dairy can them, fertilizer lifts the fields, leather feeds the Weavery. -->
+  <span class="res"><span class="rtip"><b>🥩 Meat</b>From the homestead's block. Kitchens serve it before raw food, and the Smokehouse cans it.<span class="use">Half a meat replaces a whole food in any kitchen.</span></span><span class="ico">🥩</span><span class="amt" id="r-meat">0</span><span class="d" id="d-meat"></span></span>
+  <span class="res"><span class="rtip"><b>🥚 Eggs</b>From the homestead's coop. Kitchens serve them before raw food; the Dairy cans them.<span class="use">0.8 eggs replace a food.</span></span><span class="ico">🥚</span><span class="amt" id="r-eggs">0</span><span class="d" id="d-eggs"></span></span>
+  <span class="res"><span class="rtip"><b>🥛 Raw Milk</b>From the homestead's barn and pasture. The Dairy sets it into rations.<span class="use">0.9 milk replaces a food.</span></span><span class="ico">🥛</span><span class="amt" id="r-rawMilk">0</span><span class="d" id="d-rawMilk"></span></span>
+  <span class="res"><span class="rtip"><b>💩 Fertilizer</b>Manure from the homestead's pens.<span class="use">A Farm or Hydro Farm with fertilizer in the stash yields +50%.</span></span><span class="ico">💩</span><span class="amt" id="r-fertilizer">0</span><span class="d" id="d-fertilizer"></span></span>
+  <span class="res"><span class="rtip"><b>🧥 Leather</b>Cured at the homestead's Tannery.<span class="use">A Weavery with leather in the stash makes +50% Goods.</span></span><span class="ico">🧥</span><span class="amt" id="r-leather">0</span><span class="d" id="d-leather"></span></span>
   <span class="res" id="popres"><span class="rtip"><b>👥 Population</b>Workers and soldiers you have hired, against the capacity your Housing supports.<span class="use">At capacity → build Housing before hiring more.</span></span><span class="ico">👥</span><span class="amt" id="r-pop">0/0</span></span>
   <span class="res" id="clockres"><span class="rtip"><b>🕒 City Time</b>Drives the day/night cycle — production ticks, lamps and moonlight all follow it.<span class="use">Night: lamps light the streets.</span></span><span class="ico" id="clockico">☀️</span><span class="amt" id="r-clock">06:00</span></span>
 </div>
@@ -1920,7 +1926,9 @@ const HUD_RES = ['food','water','metal','fuel','supplies','medicine','ammo'];
 // and feeds the bridge's sync list. Adding the two rare resources to it would
 // have quietly let raiders carry off memory shards, which is a balance change
 // nobody asked for. This list is display only.
-const HUD_DISPLAY_RES = HUD_RES.concat(['memoryShards', 'corruptedEssence', 'wood', 'stone', 'cloth']);
+const HUD_DISPLAY_RES = HUD_RES.concat(['memoryShards', 'corruptedEssence', 'wood', 'stone', 'cloth',
+  // 🐄 Homestead Farm goods — shown, mirrored (refreshLedgerMirror reads THIS list) and spendable by the city.
+  'meat', 'eggs', 'rawMilk', 'fertilizer', 'leather']);
 
 /* ════════════════════════════════════════════════════════════════════════
    2b. THE INTERMEDIATES — the city's own refined stock.
@@ -1983,10 +1991,16 @@ const MAX_LVL = 3, UPGRADE_MULT = 1.75, RATE_MULT = 2, CAP_PER_BUILDING = 80;
 const BUILDINGS = {
   road:     { name: 'Road',          ico: '🛤️', cost: { cinder: 4 }, pop: 0, maxLvl: 1,
               desc: 'Links districts to Node Anchors. Producers beside a road work +25% faster.' },
+  /* 🐄 `boost` (v120x4): optional inputs. When EVERY listed good is in the
+     stash the building draws them and multiplies its output; when any is
+     missing it runs exactly as before — a boost is never a gate. Handled in
+     economyTick beside the `use` draw. */
   farm:     { name: 'Farm',          ico: '🌾', cost: { cinder: 14, metal: 4 }, pop: 2, crew: 2, outdoor: true,
-              gen: { food: 1.5 },  desc: 'Open-field crops. Cheap and productive — but rain feeds it, snow and storms hurt it.' },
+              gen: { food: 1.5 },  boost: { use: { fertilizer: 0.05 }, mul: 1.5 },
+              desc: 'Open-field crops. Cheap and productive — but rain feeds it, snow and storms hurt it. Fertilizer from the homestead lifts it by half.' },
   hydrofarm:{ name: 'Hydro Farm',    ico: '🥫', cost: { cinder: 24, metal: 10 }, pop: 2, crew: 2,
-              gen: { food: 1.1 },  desc: 'Indoor ember-lamp crops. Weatherproof.' },
+              gen: { food: 1.1 },  boost: { use: { fertilizer: 0.05 }, mul: 1.5 },
+              desc: 'Indoor ember-lamp crops. Weatherproof. Fertilizer from the homestead lifts it by half.' },
   purifier: { name: 'Purifier',      ico: '💧', cost: { cinder: 20, metal: 10 }, pop: 2, crew: 2, outdoor: true,
               gen: { water: 1.2 }, desc: 'Condenses clean water. Rain fills it faster.' },
   scrapmine:{ name: 'Mine',          ico: '⛏️', cost: { cinder: 26, food: 10 }, pop: 2, crew: 2,
@@ -2073,8 +2087,8 @@ const BUILDINGS = {
               gen: { planks: 0.42 }, use: { wood: 0.55, stone: 0.30 },
               desc: 'Mills timber and dresses stone into planks. Eats roughly two wood per stone, so the two never run out together.' },
   weavery:  { name: 'Weavery',     ico: '🧶', cost: { cinder: 46, metal: 14, cloth: 10 }, pop: 2, crew: 2, powerNeed: 0.35, mesh: 'cannery',
-              gen: { goods: 0.30 }, use: { cloth: 0.30 },
-              desc: 'Bolts, blankets and boots. Makes Goods without touching ingots — the only leisure supply a metal-poor city can run.' },
+              gen: { goods: 0.30 }, use: { cloth: 0.30 }, boost: { use: { leather: 0.10 }, mul: 1.5 },
+              desc: 'Bolts, blankets and boots. Makes Goods without touching ingots — the only leisure supply a metal-poor city can run. Leather from the homestead\'s Tannery adds half again.' },
   housing:  { name: 'Housing',       ico: '🏠', cost: { cinder: 26, metal: 10, supplies: 6 }, pop: 0, popCap: 6,
               desc: 'Shelters citizens. +6 population cap per level.' },
   barracks: { name: 'Barracks',      ico: '⚔️', cost: { cinder: 50, metal: 20, supplies: 8 }, pop: 0, garrison: 4, defense: 6,
@@ -2193,6 +2207,16 @@ const BUILDINGS = {
   cannery:  { name: 'Cannery',       ico: '🥫', cost: { cinder: 35, metal: 12 }, pop: 2, crew: 2, powerNeed: 0.25,
               gen: { rations: 2.60 }, use: { food: 2.25, water: 1.55 },
               desc: 'Turns raw crops into rations. A kitchen can serve straight off the field, but it burns more than twice the produce doing it — the Cannery is what makes food service cheap.' },
+  /* 🐄 THE HOMESTEAD'S TWO CANNERIES (v120x4). Same job as the Cannery, fed
+     by farm goods instead of crops. Rates sit UNDER the Cannery's 2.60 because
+     their inputs are cheaper per ration (0.6 meat vs 2.25 food) — a farm behind
+     a city makes rations cheaper, not faster. Both borrow the cannery mesh. */
+  smokehouse:{name: 'Smokehouse',    ico: '🍖', cost: { cinder: 40, metal: 12, wood: 10 }, pop: 2, crew: 2, powerNeed: 0.2, mesh: 'cannery',
+              gen: { rations: 2.0 }, use: { meat: 0.6, water: 0.5 },
+              desc: 'Smokes the homestead\'s meat into rations. Needs a Butcher\'s Block somewhere behind it — this is where the block\'s output goes when the city is hungry.' },
+  dairy:    { name: 'Dairy',         ico: '🧀', cost: { cinder: 38, metal: 10, water: 10 }, pop: 2, crew: 2, powerNeed: 0.25, mesh: 'cannery',
+              gen: { rations: 1.6 }, use: { rawMilk: 1.0, eggs: 0.6 },
+              desc: 'Sets milk and boils eggs into rations. Cheap to run if the coop and the barn are full; idle if they are not.' },
   warehouse:{ name: 'Warehouse',     ico: '🏬', cost: { cinder: 45, metal: 18 }, pop: 1, crew: 1,
               stockCap: STOCK_CAP_PER_WAREHOUSE,
               desc: 'Racking, dock and yard. +' + STOCK_CAP_PER_WAREHOUSE + ' storage for every refined good, per level. Without storage, refining simply stops when the shelves fill.' },
@@ -2315,7 +2339,7 @@ const BUILD_SECTIONS = [
   { id: 'svc',   name: 'Food & Service',  ico: '🍽️', desc: 'Feeds the city. Coverage, not stockpiles — this is what stops the population falling.',
     items: ['foodtruck', 'restaurant', 'grocery', 'clinic', 'club'] },
   { id: 'chain', name: 'Refining',        ico: '🏭', desc: 'Raw into refined. Rations, ingots, components, planks and power.',
-    items: ['cannery', 'smelter', 'machineshop', 'sawmill', 'weavery', 'powerstation', 'warehouse'] },
+    items: ['cannery', 'smokehouse', 'dairy', 'smelter', 'machineshop', 'sawmill', 'weavery', 'powerstation', 'warehouse'] },
   { id: 'infra', name: 'Infrastructure', ico: '🛤️', desc: 'Links and stores. Producers beside a road work faster.',
     items: ['road', 'streetlight', 'depot', 'caravanpost', 'railyard', 'lot'] },
   { id: 'civic', name: 'Civic',          ico: '🏠', desc: 'Population, health and morale.',
@@ -2335,6 +2359,8 @@ const BUILD_SECTIONS = [
 const BUILD_ORDER = ['road','streetlight','farm','hydrofarm','purifier','scrapmine','fuelrig','gasstation','depot','medlab','munitions','housing','barracks','tower','wall','gate','arena','shop','caravanpost','lot','reslab','siphon','obelisk','kalonstable','tree','bush','garden','fountain',
   // ── the service city (r5) ──
   'foodtruck','restaurant','grocery','clinic','club','cannery','smelter','machineshop','powerstation','warehouse','motorpool','firestation','police',
+  // ── the homestead's canneries (v120x4) ──
+  'smokehouse','dairy',
   // ── the House (r8) ──
   'resthouse',
   // ── the Stadium (r9) ──
@@ -16457,6 +16483,11 @@ function bonusesFor(x, z, type) {
 //   for building the Cannery. Remove this and step 3 of the doc's build order
 //   ("Restaurants + Food Trucks") does nothing until step 8.
 const STOCK_RAW_FALLBACK = { rations: 'food', remedies: 'medicine', goods: 'supplies' };
+/* 🐄 FARM GOODS BEFORE RAW FOOD. A kitchen short of rations tries the
+   homestead's goods first, at `per` units per ration, and only then burns
+   raw food at RAW_FALLBACK_MULT. Meat at 0.5 is CHEAPER than a canned ration
+   from crops on purpose: it is the reason to own a farm behind a city. */
+const STOCK_FARM_FALLBACK = { rations: [['meat', 0.5], ['eggs', 0.8], ['rawMilk', 0.9]] };
 function stockCap() {
   let c = STOCK_CAP_BASE;
   for (const t of Object.values(game.tiles)) {
@@ -16623,10 +16654,18 @@ async function economyTick(dtMin) {
     if (want <= 1e-9) return 1;
     let got = Math.min(stockOf(res), want);
     if (got > 0) game.stock[res] = stockOf(res) - got;
-    const short = want - got;
+    let short = want - got;
     if (short > 1e-9) {
+      // 🐄 The homestead's goods first — see STOCK_FARM_FALLBACK.
+      const farm = STOCK_FARM_FALLBACK[res];
+      if (farm) for (const [fid, per] of farm) {
+        if (short <= 1e-9) break;
+        const avail = Math.max(0, (game.res[fid] | 0) - (rawDraw[fid] || 0));
+        const use = Math.min(avail, short * per);
+        if (use > 0) { rawDraw[fid] = (rawDraw[fid] || 0) + use; got += use / per; short -= use / per; }
+      }
       const raw = STOCK_RAW_FALLBACK[res];
-      if (raw) {
+      if (raw && short > 1e-9) {
         const cost = short * RAW_FALLBACK_MULT;
         const avail = Math.max(0, (game.res[raw] | 0) - (rawDraw[raw] || 0));
         const use = Math.min(avail, cost);
@@ -16679,6 +16718,21 @@ async function economyTick(dtMin) {
       prodPerMin[r] = (prodPerMin[r] || 0) - def.use[r] * mult * omRes;
       if (r === 'water') waterNetRaw -= def.use[r] * mult;
     }
+    // 🐄 Optional boost inputs (fertilizer on a field, leather at the Weavery).
+    let boostMul = 1;
+    if (def.boost && def.boost.use) {
+      let all = true; for (const u in def.boost.use) if (haveOf(u) <= 0) { all = false; break; }
+      if (all) {
+        boostMul = def.boost.mul || 1;
+        for (const r in def.boost.use) { spendNeeds[r] = (spendNeeds[r] || 0) + def.boost.use[r] * mult * omRes * dtMin; prodPerMin[r] = (prodPerMin[r] || 0) - def.boost.use[r] * mult * omRes; }
+      }
+    }
+    // 🐄 Farm-to-table: a kitchen that lifts Morale (the Restaurant) plates a
+    // little homestead meat when there is any, and computeMorale reads the same
+    // stash to pay the bonus. A tiny draw, so a single meat lasts an evening.
+    if (def.svc && def.svc.morale && def.svc.input === 'rations' && (game.res.meat | 0) > 0) {
+      spendNeeds.meat = (spendNeeds.meat || 0) + 0.02 * dtMin; prodPerMin.meat = (prodPerMin.meat || 0) - 0.02;
+    }
     if (def.gen) for (const r in def.gen) {
       // consumers only run if inputs available — checked crudely against the mirror
       let ok = true;
@@ -16694,16 +16748,16 @@ async function economyTick(dtMin) {
         // production stops when full" (city-buildings.md §2).
         const cap = stockCap();
         const room = Math.max(0, cap - stockOf(r));
-        const made = Math.min(room, def.gen[r] * mult * om * dtMin);
+        const made = Math.min(room, def.gen[r] * mult * om * boostMul * dtMin);
         game.stock[r] = stockOf(r) + made;
-        prodPerMin[r] = (prodPerMin[r] || 0) + (room > 0 ? def.gen[r] * mult * om : 0);
+        prodPerMin[r] = (prodPerMin[r] || 0) + (room > 0 ? def.gen[r] * mult * om * boostMul : 0);
         continue;
       }
       // 💰 Cinder accrues on the HOUR (see CINDER_PERIOD_DIV); goods on the
       //    minute, unchanged. Both the banked amount and the rate the HUD prints
       //    go through the same divisor, so the panel can never promise a number
       //    the tick does not pay.
-      const genR = (r === 'cinder') ? cinderRate(def.gen[r]) : def.gen[r];
+      const genR = ((r === 'cinder') ? cinderRate(def.gen[r]) : def.gen[r]) * boostMul;
       let madeR = genR * mult * om * dtMin;
       /* 📦 A LEDGER RESOURCE THE VAULT CANNOT TAKE IS NOT PRODUCED.
          Same shape as the city-stock clamp above: production is limited to the
@@ -18748,6 +18802,8 @@ function serviceMorale() {
     const d = BUILDINGS[t.type];
     if (!d || !d.svc || !d.svc.morale || t.damaged) continue;
     m += d.svc.morale * t.lvl * (t.svcFed == null ? 1 : t.svcFed);
+    // 🐄 Farm-to-table: +1 per level while there is homestead meat to plate (economyTick draws it).
+    if (d.svc.input === 'rations' && (game.res.meat | 0) > 0) m += 1 * t.lvl * (t.svcFed == null ? 1 : t.svcFed);
   }
   return Math.min(15, m);
 }
@@ -19539,6 +19595,17 @@ function evaluateNeeds() {
         (canneries ? 'Your ' + canneries + ' Cannery' + (canneries > 1 ? ' works' : ' works') +
           ' flat out and still cannot keep up — this city wants about ' + need + '.'
                    : 'A Cannery (35🔥) turns crops into rations; this city wants about ' + need + '.'), false);
+      /* 🐄 …and name the homestead if it is sitting on the answer. The farm
+         module lives in the PARENT window; guarded because the city also runs
+         standalone and on builds without a farm. */
+      try {
+        const F = (window.parent && window.parent !== window) ? window.parent.MythicFarm : null;
+        const pend = (F && typeof F.pending === 'function') ? F.pending() : null;
+        if (pend) {
+          const bits = ['meat', 'eggs', 'rawMilk'].filter(k => (pend[k] | 0) > 0).map(k => (pend[k] | 0) + ' ' + (RES_META[k] ? RES_META[k].name.toLowerCase() : k));
+          if (bits.length) add('farmdoor', '🐄', 'Your homestead has ' + bits.join(', ') + ' waiting in the pens. Collect it — kitchens serve farm goods before raw food, and a Smokehouse or Dairy cans them.', false);
+        }
+      } catch (e) {}
     }
   }
   // Food source at all

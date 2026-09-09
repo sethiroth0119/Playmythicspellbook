@@ -132,8 +132,9 @@ console.log('accrual cap + collect + stash clip');
   // Same `now` as the simulate above: the rate reads the weather of the
   // moment, and a storm (eggs ×0) at Date.now() would zero it while the
   // accrual was earned under the window that was simulated.
+  // Feathers, not eggs: a storm window zeroes egg laying and made this flake.
   const p = S.pendingCollect(s, 'coop'); const rate = S.penRatePerH(s, 'coop', h, t0 + 60 * H);
-  ok(p.eggs <= Math.floor(rate.eggs * 36) + 1, 'accrual capped near 36h of adult rate: ' + p.eggs);
+  ok((p.feathers | 0) > 0 && (p.feathers | 0) <= Math.floor(rate.feathers * 36) + 1, 'accrual capped near 36h of adult rate: ' + p.feathers + ' feathers');
   h.led.stone += 4506 - units() - 2;
   const r = S.collect(h, s, 'coop');
   ok(r.ok && r.clipped && (r.got.eggs | 0) + (r.got.feathers | 0) === 2, 'collect delivered only the 2 that fit and flagged clipped');
@@ -446,6 +447,22 @@ console.log('the Sale Ring (NPC auction)');
   S.simulate(h, s, tl.hammerAt + 1000, () => 1);
   ok(s.lots.length === 0 && h.led.supplies > sup0 && s.stats.auctions === 1 && s.journal.some(j => /SOLD/.test(j.text)), 'hammer fell: paid in goods, journalled');
   A.dayOfWeek = d0; A.hoursOpen = h0;
+}
+
+console.log('the kitchen door (operations + city draw from pen accrual)');
+{
+  const { h, s } = farm();
+  S.buyAnimal(h, s, 'chicken', 6);
+  const t0 = Date.now(); S.simulate(h, s, t0 + 20 * H, () => 1);
+  const pend = S.pendingAll(h, s);
+  ok(pend.eggs > 0 && S.available(h, s, 'eggs') === pend.eggs, 'eggs are waiting in the coop: ' + pend.eggs);
+  const e0 = h.led.eggs | 0;
+  let r = S.drawAccrual(h, s, 'eggs', 5, 'the Restaurant');
+  ok(r.ok && r.taken === 5 && S.available(h, s, 'eggs') === pend.eggs - 5 && (h.led.eggs | 0) === e0, 'drew 5 straight out of the pen — the stash is untouched, no collect needed');
+  ok(s.journal.some(j => j.kind === 'door' && /Restaurant/.test(j.text)) && s.stats.kitchenDoor === 5, 'journalled as the kitchen door');
+  r = S.drawAccrual(h, s, 'eggs', 9999, 'x');
+  ok(r.ok && r.taken === pend.eggs - 5 && S.available(h, s, 'eggs') === 0, 'a draw larger than the pen takes what is there');
+  r = S.drawAccrual(h, s, 'wool', 3, 'x'); ok(r.ok && r.taken === 0, 'nothing of a good the farm does not have');
 }
 
 FARM_ECON.disease.outbreakBase = savedOutbreak;

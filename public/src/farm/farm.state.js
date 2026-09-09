@@ -1090,6 +1090,40 @@ export function setLook(host, s, patch) {
   return { ok: true, look: next };
 }
 
+/* ── 🚪 THE KITCHEN DOOR — goods that leave the pens without a collect ─────
+   An operation (or the node city) that wants eggs, meat or milk can take them
+   straight out of a pen's accrual, skipping the 6h collect cooldown. That is
+   the whole point of owning both: the restaurant's back door opens onto the
+   coop. Nothing is created — it is the same accrual a Collect would bank. */
+export function available(host, s, id) {
+  simulate(host, s);
+  let n = 0;
+  FARM_BUILDINGS.forEach(def => { const b = building(s, def.id); if (b && def.houses && !b.constructing) n += Math.floor(b.accrual[id] || 0); });
+  return n;
+}
+export function pendingAll(host, s) {
+  simulate(host, s);
+  const out = {};
+  FARM_BUILDINGS.forEach(def => { const b = building(s, def.id); if (!b || !def.houses) return; Object.keys(b.accrual).forEach(r => { const n = Math.floor(b.accrual[r] || 0); if (n > 0) out[r] = (out[r] || 0) + n; }); });
+  return out;
+}
+export function drawAccrual(host, s, id, n, who) {
+  n = Math.max(0, n | 0); if (!n) return { ok: true, taken: 0 };
+  simulate(host, s);
+  let left = n, taken = 0;
+  FARM_BUILDINGS.forEach(def => {
+    if (left <= 0) return; const b = building(s, def.id); if (!b || !def.houses) return;
+    const have = Math.floor(b.accrual[id] || 0); if (have <= 0) return;
+    const take = Math.min(have, left); b.accrual[id] = Math.max(0, (b.accrual[id] || 0) - take); left -= take; taken += take;
+  });
+  if (taken) {
+    s.stats.kitchenDoor = (s.stats.kitchenDoor | 0) + taken;
+    journal(s, 'door', '🚪', `${taken} ${id} went out the kitchen door to ${who || 'the business'}.`);
+    try { record(host, s); } catch (e) { return { ok: false, why: 'save failed', taken }; }
+  }
+  return { ok: true, taken };
+}
+
 /* ── Snapshot for the UI + scene ───────────────────────────────────────────── */
 export function summary(host, s) {
   const now = Date.now();

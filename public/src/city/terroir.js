@@ -67,6 +67,10 @@ const FALLBACK_IDS = [
   // fallback, but a STALE fallback is worse than none: it would hand
   // profileFor() 11 ids against a 14-slot bag and degrade to all-COMMON.
   'wood', 'stone', 'cloth',
+  // 🐄 Homestead Farm (src/farm) — nine more, promoted with their producer.
+  // Same rule: the live bridge list wins; this only keeps the no-host bag the
+  // right length so profileFor() does not degrade to all-COMMON.
+  'animalFeed', 'eggs', 'feathers', 'rawMilk', 'meat', 'wool', 'hide', 'leather', 'fertilizer',
 ];
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -111,7 +115,22 @@ export const TERROIR_ECON = {
      ⚠ MUST SUM TO resourceIds().length. profileFor() checks and falls back to
        all-COMMON; that fallback is SILENT except for a console.warn, so a wrong
        number here disables terroir without breaking anything visibly. */
-  slots: { RICH: 3, COMMON: 5, SCARCE: 4, BARREN: 2 },
+  /* 🔢 RE-DERIVED FOR 23 (Homestead Farm: +animalFeed +eggs +feathers +rawMilk
+     +meat +wool +hide +leather +fertilizer). Was { 3, 5, 4, 2 } = 14. Applying
+     the same reasoning as above:
+       • BARREN STAYS AT EXACTLY 2 — the absolute, not a ratio.
+       • RICH 3 → 4 so sellable surplus keeps pace (4/23 = 17%, vs 3/14 = 21%
+         before; the farm ids are mostly animal products a player makes from
+         feed rather than from the ground, so a slightly lower share is the
+         honest number).
+       • SCARCE 4 → 6, COMMON 5 → 11: scarce-or-worse lands at 8/23 = 34.8%.
+         That is softer than 6/14 = 42.9% ON PURPOSE — the farm does not read
+         terroir at all (animals eat feed, not ground), so a farm id in a
+         SCARCE slot costs the player nothing today; the slots exist to keep
+         the bag the right length, and the pressure is left on the original
+         chains where it applies.
+     ⚠ MUST SUM TO resourceIds().length (23). */
+  slots: { RICH: 4, COMMON: 11, SCARCE: 6, BARREN: 2 },
 
   /* 🌱 The node's own resource seam is forced RICH. The war map already tells
      the player "this node produces METAL"; terroir makes that claim mean

@@ -19,6 +19,18 @@ The fix is the proven one: index.html explicitly hands a module what it needs.
 from the legacy app, **add it to the bridge** — never reach for a bare global and never
 assume `window.Foo` exists because `const Foo` does.
 
+### Modules and their bridges (add to the bridge, never reach for a global)
+| Module | Bridge object in index.html |
+|---|---|
+| `/src/community` | `window.MythicBridge` |
+| `/src/city` | `window.MythicCityBridge` |
+| `/src/trading` | `window.MythicTradeBridge` |
+| `/src/resonance/house.camp.js` | `window.MythicHouseBridge` |
+| `/src/farm` (🐄 Homestead Farm, 3D) | `window.MythicFarmBridge` — state on `Profile.farm`, synced as `__farm__` |
+
+The farm's economy is pure over a host adapter: `node tools/farm_harness.mjs` drives
+build → feed → grow → collect → slaughter → craft and every refund path with no browser.
+
 ## Non-negotiables
 - All Supabase access is guarded. The app MUST still work offline / before tables exist,
   degrading to mock or empty data. Follow the `Corp.*` pattern.

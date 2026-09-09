@@ -163,3 +163,13 @@ iframe is a separate window with its own `window`.
    may be the better shape. Worth deciding before writing the first ten.
 2. **What consumes the finished goods?** Wave 1 stops at intermediates the city eats directly.
    Tier 2 (machinery, electronics, vehicles) needs a demand sink before it is worth producing.
+
+## ✅ First promotion wave shipped with a producer — the Homestead Farm (v120x0)
+
+`/src/farm` promoted **nine** ids into `RESOURCES` (count is now **23**): `animalFeed`,
+`eggs`, `rawMilk`, `meat` (already catalogued), `leather`, `fertilizer` (already in
+`SALVAGE_RES`, previously inert), and `feathers`, `wool`, `hide` (new; added to `chain.js`
+with `inputs` filled). Producers: Feed Mill, living stock, the Butcher's Block, the Tannery.
+All five sites were touched: `RESOURCES`, cost renderers (free), producer (the farm),
+terroir (`slots` re-derived to 23, `FALLBACK_IDS` synced), node-city `RES_META` (free via
+the chain). `chain.js` is now `?v=v120x0chain3` in both files.

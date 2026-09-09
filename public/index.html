@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120w6';
+  window.BUILD_VERSION = 'v120x0';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -39297,6 +39297,28 @@ const RESOURCES = [
   { id: 'wood',             name: 'Wood',             icon: '🪵', color: '#c08a4a' },
   { id: 'stone',            name: 'Stone',            icon: '🪨', color: '#a8a29a' },
   { id: 'cloth',            name: 'Cloth',            icon: '🧵', color: '#e0b8c8' },
+  /* 🐄 HOMESTEAD FARM (src/farm). Nine ids promoted WITH their producer, per
+     RESOURCES_NEXT.md — never before it. animalFeed / eggs / rawMilk / meat
+     were already catalogued in src/resources/chain.js; leather and fertilizer
+     already existed in SALVAGE_RES (lootable, but inert until now); feathers,
+     wool and hide are new and were added to chain.js in the same change.
+     Producers: the Feed Mill grinds food+water → animalFeed; living stock
+     gives eggs / feathers / rawMilk / wool / fertilizer; the Butcher's Block
+     turns grown stock into meat / hide / feathers; the Tannery cures hide →
+     leather. Every other site (RESOURCE_IDS, the market guard, the cost
+     renderers, node-city RES_META via the chain, MythicCityBridge.resources →
+     terroir) follows from this list.
+     ⚠ THE COUNT IS NOW 23. terroir.js `slots` was re-derived to sum to 23 —
+       a mismatch there silently disables terroir (console.warn only). */
+  { id: 'animalFeed',       name: 'Animal Feed',      icon: '🌾', color: '#d9c46a' },
+  { id: 'eggs',             name: 'Eggs',             icon: '🥚', color: '#f2e8d5' },
+  { id: 'feathers',         name: 'Feathers',         icon: '🪶', color: '#e8d8b0' },
+  { id: 'rawMilk',          name: 'Raw Milk',         icon: '🥛', color: '#f4f1ea' },
+  { id: 'meat',             name: 'Meat',             icon: '🥩', color: '#c8505a' },
+  { id: 'wool',             name: 'Wool',             icon: '🧶', color: '#f0e6d2' },
+  { id: 'hide',             name: 'Hide',             icon: '🟫', color: '#a0704a' },
+  { id: 'leather',          name: 'Leather',          icon: '🧥', color: '#b08050' },
+  { id: 'fertilizer',       name: 'Fertilizer',       icon: '💩', color: '#8a6a3a' },
 ];
 // 🍞 Consumable resources — keyed by resource id. `effect(amount)` mutates
 // Profile state. The inventory modal renders a USE button for any resource
@@ -46681,6 +46703,9 @@ async function cloudSyncProfile() {
          who spent 120,000 Cinder on a Gene Vault watched it vanish on their
          next device. See the __convoy__ note above — same trap, same file. */
       __cityProduction__:   (Profile.cityProduction && typeof Profile.cityProduction === 'object') ? Profile.cityProduction : {},
+      /* 🐄 Homestead Farm (/src/farm) — same trap as __cityProduction__ above:
+         a key travels only if it is named here AND read back in hydration. */
+      __farm__:             (Profile.farm && typeof Profile.farm === 'object') ? Profile.farm : {},
       __rlcRun__:           (Profile.rlcRun           && typeof Profile.rlcRun           === 'object') ? Profile.rlcRun           : null,
       __dialogueFlags__:    (Profile.dialogueFlags    && typeof Profile.dialogueFlags    === 'object') ? Profile.dialogueFlags    : {},
       __dailyChallenges__:  (Profile.dailyChallenges  && typeof Profile.dailyChallenges  === 'object') ? Profile.dailyChallenges  : {},
@@ -48054,6 +48079,33 @@ async function cloudFetchProfile() {
             cur.lastCollect = Math.max(Number(cur.lastCollect) || 0, Number(r.lastCollect) || 0);
           });
         Profile.cityProduction = Object.assign({}, cp, lo, { placed: Object.keys(rows).map((k) => rows[k]) });
+      }
+      /* 🐄 Homestead Farm — the other half of __farm__ above.
+         MERGE POLICY:
+           buildings = UNION BY ID, HIGHER LEVEL WINS. A pen costs tens of
+             thousands of Cinder; a stale copy must never delete or downgrade
+             one. Trough feed / accrual / timers come from the NEWER copy
+             (higher `ts`) — taking the older one would let a player re-collect
+             a window by switching devices.
+           animals = the NEWER copy's herd. Herds change constantly (births,
+             the block), so a union would resurrect slaughtered stock. */
+      if (f.__farm__ && typeof f.__farm__ === 'object') {
+        const cl = f.__farm__;
+        const lo = (Profile.farm && typeof Profile.farm === 'object') ? Profile.farm : {};
+        const newer = ((Number(cl.ts) || 0) >= (Number(lo.ts) || 0)) ? cl : lo;
+        const older = (newer === cl) ? lo : cl;
+        const bl = Object.assign({}, (older.buildings && typeof older.buildings === 'object') ? older.buildings : {});
+        const bn = (newer.buildings && typeof newer.buildings === 'object') ? newer.buildings : {};
+        Object.keys(bn).forEach((id) => {
+          const a = bl[id], b = bn[id];
+          if (!b || typeof b !== 'object') return;
+          bl[id] = a ? Object.assign({}, b, { level: Math.max(a.level | 0, b.level | 0) || 1 }) : Object.assign({}, b);
+        });
+        Profile.farm = Object.assign({}, older, newer, {
+          buildings: bl,
+          animals: Array.isArray(newer.animals) ? newer.animals : (Array.isArray(older.animals) ? older.animals : []),
+          seq: Math.max(newer.seq | 0, older.seq | 0) || 1,
+        });
       }
       if (f.__dialogueFlags__ && typeof f.__dialogueFlags__ === 'object') Profile.dialogueFlags = Object.assign({}, Profile.dialogueFlags || {}, f.__dialogueFlags__);
       if (f.__dailyChallenges__ && typeof f.__dailyChallenges__ === 'object') Profile.dailyChallenges = f.__dailyChallenges__;
@@ -111339,6 +111391,7 @@ function _renderImpl() {
   if (App.screen === 'dojoShop')   return renderDojoShop();
   if (App.screen === 'camp')       return renderCamp();
   if (App.screen === 'reconstruction') return renderReconstruction();   // 🏗 Reconstruction Settlement (Camp Console)
+  if (App.screen === 'farm')       return renderFarm();                 // 🐄 Homestead Farm (/src/farm, 3D)
   if (App.screen === 'research')   return renderResearch();
   if (App.screen === 'resistanceRing') return renderResistanceRing();
   if (App.screen === 'campOps')    return renderCamp();   // real camp ops, opened from the bunker
@@ -156249,6 +156302,7 @@ function _campCommandBarHtml() {
         <button class="btn-secondary" id="btn-camp-vehicle-market" title="Buy or sell vehicles between players">🛒 Vehicle Market${vehicleCount}</button>
         <span class="cbx-spacer"></span>
         <button class="btn-secondary" data-act="recon-open" title="Open the Reconstruction Settlement — Camp Console + reclaim the ruins">🏗 Reconstruction</button>
+        <button class="btn-secondary" data-act="farm-open" title="The Homestead Farm — raise stock, collect eggs / milk / wool, slaughter for meat and hide">🐄 Farm</button>
       </nav>`;
 }
 
@@ -177014,6 +177068,7 @@ const RPG_GUIDE_PAGES = [
   { route: 'collection',   label: 'Inventory / Codex' },
   { route: 'coliseum',     label: 'Colosseum' },
   { route: 'camp',         label: 'Survivor Camp' },
+  { route: 'farm',         label: '🐄 Homestead Farm' },
   { route: 'lab',          label: 'The Lab' },
   // 🗺 City Nodes (Territory Wars war map) — App.screen === 'territoryWars',
   // so _currentGuideRoute's fall-through matches it with no extra wiring.
@@ -207329,6 +207384,47 @@ window.MythicHouseBridge = {
   collectCdMs: (typeof OP_COLLECT_CD_MS !== 'undefined') ? OP_COLLECT_CD_MS : 6 * 3600000,
   accrualCapH: (typeof OP_ACCRUAL_CAP_H !== 'undefined') ? OP_ACCRUAL_CAP_H : 36,
 };
+/* 🐄 THE FARM BRIDGE — for /src/farm/*.js (the Homestead Farm).
+   🔴 THE GLOBALS TRAP (CLAUDE.md), once more. `Profile`, `getRes`, `addRes`,
+   `spendGems`, `RESOURCES`, `App`, `render` and the idle constants are
+   top-level `const` / function declarations in this file — global LEXICAL
+   bindings, invisible to an ES module. Everything the farm needs is handed
+   over HERE, exactly as MythicCityBridge does for /src/city. If the farm
+   needs something new, it is ADDED HERE, never guessed at from inside.
+   ⚠ Same rules as the city bridge: resources live on Profile.salvage behind
+     getRes/addRes (NOT Profile.resources); refundRes is the UNCAPPED undo;
+     setFarmState/save RETURN FALSE on failure so the module's refund path is
+     reachable; the 6h/36h idle contract is passed, never redeclared. */
+window.MythicFarmBridge = {
+  resources: (typeof RESOURCES !== 'undefined') ? RESOURCES : [],
+  getRes: (id) => { try { return getRes(id) | 0; } catch (e) { return 0; } },
+  addRes: (id, n) => { try { addRes(id, n); } catch (e) {} },
+  refundRes: (id, n) => { try { _refundRes(id, n); } catch (e) {} },
+  spendRes: (id, n) => { try { return !!spendResources({ [id]: n | 0 }); } catch (e) { return false; } },
+  gems: () => { try { return Profile.gems | 0; } catch (e) { return 0; } },
+  spendGems: (n) => { try { return !!spendGems(n); } catch (e) { return false; } },
+  addGems: (n) => { try { addGems(n); } catch (e) {} },
+  /* Persistence — absent-tolerant (a save with no farm key hydrates as {}),
+     and the two writers report failure instead of swallowing it. Profile.farm
+     is named in the cloud payload as __farm__ and merged back in hydration;
+     both halves, or a paid-for barn vanishes on the next device. */
+  farmState: () => {
+    try {
+      if (!Profile.farm || typeof Profile.farm !== 'object') Profile.farm = {};
+      return Profile.farm;
+    } catch (e) { return {}; }
+  },
+  setFarmState: (s) => {
+    try { if (!s || typeof s !== 'object') return false; Profile.farm = s; return true; } catch (e) { return false; }
+  },
+  save: () => { try { saveProfile(); return true; } catch (e) { return false; } },
+  toast: (m, ms) => { try { showToast(m, ms || 3600); } catch (e) {} },
+  confirm: (m) => { try { return gcConfirm(m); } catch (e) { return Promise.resolve(false); } },
+  back: () => { try { App.screen = 'camp'; render(); } catch (e) {} },
+  isAdmin: () => { try { return !!(typeof isAdmin === 'function' && isAdmin()); } catch (e) { return false; } },
+  collectCdMs: (typeof OP_COLLECT_CD_MS !== 'undefined') ? OP_COLLECT_CD_MS : 6 * 3600000,
+  accrualCapH: (typeof OP_ACCRUAL_CAP_H !== 'undefined') ? OP_ACCRUAL_CAP_H : 36,
+};
 /* 🏭 THE CITY PRODUCTION BRIDGE — for /src/city/*.js (CITY_PRODUCTION).
    🔴 THE GLOBALS TRAP, a third time (CLAUDE.md). `Profile`, `getRes`, `addRes`,
    `spendGems`, `RESOURCES` and the idle constants are top-level `const` /
@@ -215753,6 +215849,8 @@ try {
         case 'camp-defend-convoy': openConvoyDefense(); break;
         case 'convoy-launch': launchConvoyDefense(); break;
         case 'recon-open': App.screen = 'reconstruction'; try { render(); } catch (err) {} break;
+        case 'farm-open': App.screen = 'farm'; try { render(); } catch (err) {} break;
+        case 'farm-back': App.screen = 'camp'; try { render(); } catch (err) {} break;
         case 'recon-back': App.screen = 'camp'; try { render(); } catch (err) {} break;
         case 'recon-reclaim': { const s = t.getAttribute('data-site'); if (s) openReconReclaim(s); break; }
         case 'recon-reclaim-confirm': { const s = t.getAttribute('data-site'); if (s) reconReclaim(s); break; }
@@ -216522,6 +216620,26 @@ function _reconNetworkBodyHtml() {
     </div>
     <div class="recon-net-rail">${railHtml}</div>
   </div>`;
+}
+/* 🐄 HOMESTEAD FARM — App.screen === 'farm'. The screen itself lives in
+   /src/farm (CLAUDE.md: new features go in /src/<feature>/). This function is
+   only the hand-off: gate, hand #app to the module, and show a plain fallback
+   if the module never loaded (offline first visit, stale cache). The module
+   watches its own canvas and disposes when render() replaces #app, so leaving
+   by ANY route (back button, admin route picker, a toast that changes
+   App.screen) cleans up the WebGL context. */
+function renderFarm() {
+  if (typeof isCampUnlocked === 'function' && !isCampUnlocked()) { App.screen = 'camp'; return renderCamp(); }
+  const MF = (typeof window !== 'undefined') ? window.MythicFarm : null;
+  const fallback = (why) => {
+    root.innerHTML = `<div style="padding:40px 20px;text-align:center;max-width:520px;margin:0 auto">
+      <h2>🐄 Homestead Farm</h2>
+      <p class="hint" style="margin:12px 0 18px">${escapeHtml(why)}</p>
+      <button class="btn-secondary" data-act="farm-back">← Back to Camp</button></div>`;
+  };
+  if (!MF || typeof MF.mount !== 'function') return fallback('The farm module has not loaded — you may be offline, or a cached build is stale. Refresh and try again.');
+  try { if (!MF.mount(root)) return fallback('The farm could not start (its bridge is missing). Refresh and try again.'); }
+  catch (e) { try { console.warn('[farm] mount failed:', e); } catch (e2) {} return fallback('The farm hit an error while starting. Refresh and try again.'); }
 }
 function renderReconstruction() {
   const r = _reconState();
@@ -223095,7 +223213,18 @@ render();
        the safe state to ship a data layer in.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/resources/chain.js?v=v120w6chain2"></script>
+<script type="module" src="src/resources/chain.js?v=v120x0chain3"></script>
+<!-- 🐄 HOMESTEAD FARM — the 3D animal-farm simulation (/src/farm). Registers
+     window.MythicFarm and is INERT until renderFarm() hands it #app. Reads
+     nothing by itself: window.MythicFarmBridge (defined next to
+     MythicCityBridge above) hands it the resource accessors, Cinder, the
+     Profile.farm slot, toast/confirm and the existing 6h/36h idle constants.
+     three.js is fetched on first open from the same cdnjs r128 URL the combat
+     VFX uses (one cached copy); if that fails the farm renders on a 2D canvas.
+     ⚠ If this 404s nothing else changes — the Camp button shows a fallback.
+     ⚠ Bump ?v= on every change — the service worker caches /src/* like any
+       other static asset, and a missed bump ships invisibly. -->
+<script type="module" src="src/farm/index.js?v=v120x0farm1"></script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the

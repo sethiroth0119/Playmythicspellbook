@@ -34,6 +34,14 @@ assume `window.Foo` exists because `const Foo` does.
 - User-facing errors use `showToast()`. Confirmations use `gcConfirm()` (async).
 - No new npm dependencies without asking.
 
+## Feature seams that already exist
+- `/src/haul` (Highway Haul) reads the legacy app ONLY through `window.MythicHaulBridge`
+  (defined next to `MythicTradeBridge`). Its money moves are the `sql/038` RPCs; the
+  module never calls spendGems/addGems. Pricing is `OPS_ECON.transport` via `_opEcon()`.
+  Route length comes from the Territory-War node map (`_twForge()` positions + supply
+  lines); `haul.map.js` keeps a copy of the 16-node seed for bridge-less test pages —
+  keep the two in step.
+
 ## Existing systems to reuse, not rebuild
 - `Corp.*` — roster, requests, roles, treasury. **Communities sit ABOVE corps.**
 - `chat_messages` — rooms + DMs + RLS already exist. Community channels are rooms.

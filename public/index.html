@@ -79769,6 +79769,22 @@ const OPS_ECON = {
   // yields {} on purpose — a bank earns Cinder interest, not resources, so it
   // must never be swept up by the production-pressure hook (cxProduce).
   bank:         { startup: 1000000, ratePerWorkerHr: 1500, salaryPerWorkerHr: 400, maxWorkers: 8,  yields: {} },
+  /* 🛣 TRANSPORT COMPANY — the licence to run a haulage business on the
+     Highway Haul (/src/haul). Unlike every other op it produces NOTHING on a
+     timer: ratePerWorkerHr and salaryPerWorkerHr are 0 on purpose, because its
+     revenue is the fares real drivers earn on real runs and its wages are set
+     by the owner per driver (haul_companies / haul_wages). A non-zero salary
+     here with a zero rate would bleed the treasury for an idle office.
+     The fare figures are the ONLY place the haul economy is priced —
+     /src/haul reads them through _opEcon('transport') so Pricing Admin
+     overrides apply, per the "all operation pricing goes through _opEcon()"
+     rule. fareBase is the flat call-out, farePerKm scales with the route on
+     the city node map, farePerUnit with the load; wagePct/penalty figures are
+     the DEFAULTS a new company starts with (the owner can retune their own).
+     ⚠ car/rail/max penalty defaults are mirrored in sql/038 for freelance
+       runs, which the server settles without a company row. Move both. */
+  transport:    { startup: 380000, ratePerWorkerHr: 0, salaryPerWorkerHr: 0, maxWorkers: 10, yields: {},
+                  fareBase: 240, farePerKm: 14, farePerUnit: 2.5, wagePct: 35, carPenaltyPct: 6, railPenaltyPct: 3, maxPenaltyPct: 80 },
 };
 // 🏦 The bank is the ONE operation with an alternate price: 1,000,000 Cinder,
 // OR a $200 stake in Mythic Token. MT is $0.10 (the Bank of Ethos quote price),
@@ -79987,6 +80003,7 @@ const OP_LABELS = {
      so a new operation without a label here is buyable but shows up in the shop
      as "genelab". */
   genelab: 'Genetics Lab',
+  transport: 'Transport Company',
 };
 // 📦 Storage a staffed warehouse adds to the player's resource cap. Reads the
 // LIVE econ table via _opEcon, so an admin retune reaches this too. Counts the
@@ -114684,6 +114701,14 @@ function renderTitle() {
       { id: 'btn-just-business', icon: '<img src="assets/artwork/gameicons/Business%20icon.png" alt="Just Business" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Just Business', sub: 'Corporations · vault · operations · markets', accent: '#c89a4a',
         badge: 'Player economy',
         onclick: () => { App.screen = 'justBusiness'; render(); } },
+      // 🛣 Highway Haul — the 3D freight run between city nodes. Lives in
+      // /src/haul as an ES module; this tile is all index.html knows about it,
+      // and it resolves to null (hidden) if the module failed to load.
+      ((typeof window !== 'undefined' && window.MythicHaul)
+        ? { id: 'btn-highway-haul', icon: '🚚', name: 'Highway Haul', sub: 'Drive freight city to city · fares in Cinder · driver rank', accent: '#ffb060',
+            badge: (() => { try { return window.MythicHaul.badge(); } catch (e) { return 'Freight'; } })(),
+            onclick: () => { try { window.MythicHaul.open(); } catch (e) { showToast('⚠ The Highway Haul module did not load.', 3200); } } }
+        : null),
       // 🏛️ City Hall — survivor government: corp registry, law, licensing,
       // treasury. Opens a self-contained overlay (no screen nav).
       { id: 'btn-city-hall', icon: '<img src="assets/artwork/gameicons/SCP%20City%20Hall.png" alt="City Hall" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'City Hall', sub: 'Registry · law · licensing · treasury', accent: '#ffcf5a',
@@ -207368,6 +207393,74 @@ window.MythicHouseBridge = {
    player (a payout, a delivery, a sale collection) goes through addRes and
    respects the stash cap; /src/trading verifies the landing and treats a clamp
    as a failed leg rather than a smaller delivery. */
+/* ═══════════════════════════════════════════════════════════════════════════
+   🛣 HIGHWAY HAUL BRIDGE — the ONE seam between this file and /src/haul.
+   Same rule as MythicBridge (read that block first): Profile / Cloud / Corp /
+   Forge / Operations are top-level `const`, invisible to a module, so every
+   thing the haul needs is handed over here as an ACCESSOR, never a snapshot.
+   The module is inert without this and says so once.
+   ═══════════════════════════════════════════════════════════════════════════ */
+window.MythicHaulBridge = {
+  get cloud() { try { return (typeof Cloud !== 'undefined' && initCloud()) ? Cloud : null; } catch (e) { return null; } },
+  signedIn: () => { try { return !!(Profile.cloud && Profile.cloud.signedIn && Cloud && Cloud.client); } catch (e) { return false; } },
+  userId: () => { try { return (Profile.cloud && Profile.cloud.userId) || null; } catch (e) { return null; } },
+  displayName: () => { try { return (Profile.cloud && Profile.cloud.displayName) || (Profile.account && Profile.account.displayName) || 'Survivor'; } catch (e) { return 'Survivor'; } },
+  // 🔥 Cinder is READ here only. The haul never moves Cinder client-side: the
+  //    fare, the wage and the penalties are settled by the sql/038 RPCs, and
+  //    refreshWallet() adopts what the server decided (walletFetchProgress
+  //    honours wallet_seq, so a server-side debit is never ratcheted back).
+  gems: () => { try { return Profile.gems | 0; } catch (e) { return 0; } },
+  refreshWallet: async () => { try { if (typeof walletFetchProgress === 'function') await walletFetchProgress(); } catch (e) {} try { render(); } catch (e) {} },
+  // 📦 Goods. Same helpers, same refund-not-add rule, as MythicTradeBridge.
+  resources: () => { try { return (typeof RESOURCES !== 'undefined') ? RESOURCES : []; } catch (e) { return []; } },
+  meta: (id) => { try { return _meta(id); } catch (e) { return { id: id, name: id, icon: '📦' }; } },
+  getRes: (id) => { try { return getRes(id) | 0; } catch (e) { return 0; } },
+  spendRes: (id, n) => { try { return !!spendResources({ [id]: n | 0 }); } catch (e) { return false; } },
+  addRes: (id, n) => { try { addRes(id, n | 0); return true; } catch (e) { return false; } },
+  refundRes: (id, n) => { try { _refundRes(id, n | 0); return true; } catch (e) { return false; } },
+  /* 🗺 THE CITY NODE MAP. Route length is derived from these positions and
+     supply-line connections — the same map City Nodes draws — so a haul from
+     ASHFALL to LAST WICK is long because the map says it is, not because a
+     table somewhere says so. _twForge() seeds the 16-node starter map when
+     nothing is authored, so this is never empty in a working game. */
+  cities: () => {
+    try {
+      const t = _twForge(); const st = _twState(); const mine = (typeof _twPlayerCorp === 'function') ? _twPlayerCorp() : null;
+      const secs = {}; (t.sectors || []).forEach((s) => { secs[s.id] = s; });
+      return (t.nodes || []).slice(0, 300).map((n) => {
+        const o = st.ownedNodes[n.id]; const sec = secs[n.sectorId] || {};
+        return { id: n.id, name: n.name || n.id, x: (n.position && +n.position.x) || 0, y: (n.position && +n.position.y) || 0,
+                 connections: Array.isArray(n.connections) ? n.connections.slice() : [],
+                 sector: sec.name || '', region: sec.regionId || '',
+                 owned: !!o, mine: !!(o && mine && o.ownerCorpId === mine.id) };
+      });
+    } catch (e) { return []; }
+  },
+  // 💰 Pricing. The ONLY source of fare numbers (see OPS_ECON.transport).
+  econ: () => { try { return _opEcon('transport'); } catch (e) { return null; } },
+  // 🏢 The corporation — the haul's "transport company" IS a corp that owns a
+  //    transport operation. Read only; ownership and hiring stay in Just Business.
+  myCorp: () => { try { return (Corp && Corp.mine) ? { id: Corp.mine.id, name: Corp.mine.name, tag: Corp.mine.tag } : null; } catch (e) { return null; } },
+  amCorpFounder: () => { try { return !!(Corp && Corp.amOwner && Corp.mine); } catch (e) { return false; } },
+  corpRoster: () => { try { return (Corp && Array.isArray(Corp.roster)) ? Corp.roster.map((m) => ({ userId: m.userId, name: m.name, role: m.role })) : []; } catch (e) { return []; } },
+  corpEnsure: async () => { try { if (typeof corpEnsure === 'function') await corpEnsure(); } catch (e) {} },
+  // Does my corp run a Transport Company? Fetched, not cached: Operations.list
+  // is only populated once Just Business has been opened this session.
+  transportOp: async () => {
+    try {
+      if (!Corp || !Corp.mine) return null;
+      const list = (typeof opFetch === 'function') ? await opFetch() : (Operations.list || []);
+      const o = (list || []).find((x) => x && x.op_type === 'transport' && x.status !== 'closed');
+      return o ? { id: o.id, workers: o.workers | 0 } : null;
+    } catch (e) { return null; }
+  },
+  corpTreasuryRefresh: async () => { try { if (typeof corpTreasuryFetch === 'function') return await corpTreasuryFetch(); } catch (e) {} return 0; },
+  corpTreasury: () => { try { return Corp.treasury | 0; } catch (e) { return 0; } },
+  toast: (m, ms) => { try { showToast(m, ms || 3600); } catch (e) {} },
+  confirm: async (m) => { try { return !!(await gcConfirm(m)); } catch (e) { return false; } },
+  saveProfile: () => { try { saveProfile(); } catch (e) {} },
+  isAdmin: () => { try { return !!(typeof isAdmin === 'function' && isAdmin()); } catch (e) { return false; } },
+};
 window.MythicTradeBridge = {
   // ── Readers
   resources: () => { try { return (typeof RESOURCES !== 'undefined') ? RESOURCES : []; } catch (e) { return []; } },
@@ -223072,6 +223165,16 @@ render();
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
 <script type="module" src="src/trading/index.js?v=r12trade1"></script>
+<!-- 🛣 HIGHWAY HAUL — Crazy-Taxi-style 3D freight runs between city nodes.
+     Registers window.MythicHaul and is INERT until its portal tile is clicked.
+     index.html hands it everything through window.MythicHaulBridge (defined
+     next to MythicTradeBridge above) — the globals trap. Money never moves in
+     the module: sql/038's RPCs settle fares, wages and crash penalties.
+     Uses the three@0.171 import map declared above (WebGPU, WebGL fallback).
+     ⚠ If this 404s the tile simply does not appear.
+     ⚠ Bump ?v= on every change — the service worker caches /src/* like any
+       other static asset, and a missed bump ships invisibly. -->
+<script type="module" src="src/haul/index.js?v=v120x0haul1"></script>
 <!-- 🔌 PRN NODE TIERS — the generation-rate table (Free 0.5% … Eternal 20%).
      Registers window.MythicNodeTiers: pure math, no I/O, no globals. Two
      consumers in this file, both `typeof`-guarded so an absent module falls

@@ -34,6 +34,8 @@ const CAR_HIT_DMG = 9, RAIL_HIT_DMG = 4, HAZARD_DMG = 3, RAIDER_DMG = 8;
 // Exit ramps: the extra lane opens RAMP_IN metres before the junction and the
 // decision is read RAMP_OUT metres after it.
 const RAMP_IN = 60, RAMP_OUT = 100;
+const TOLL_BACK = 150;                          // the plaza sits this far before the junction
+const TOLL_PAY_S = 1.6;                         // the pause at the booth
 
 function centreX(z) { return 6 * Math.sin(z / 260) + 3.5 * Math.sin(z / 97 + 1.3); }
 function laneX(i) { return -ROAD_W / 2 + LANE_W * (i + 0.5); }
@@ -278,8 +280,25 @@ export async function play(opts) {
     roadsideSign(j.z - 480, ['◆ ' + j.node.name, (j.node.sector || 'SETTLEMENT').toUpperCase()], M.signGreen, 1, true);
     gantry(j.z - 300, j.thruNames, j.exitNames, 300);
     gantry(j.z - 90, j.thruNames, j.exitNames, 0);
-    if (j.toll) roadsideSign(j.z - 200, ['TOLL GATE', j.tollOwner ? 'OWNER: ' + j.tollOwner : 'PRIVATE NODE', 'SLOW TO 40'], M.toll, 1, true);
-    if (j.toll) { const gate = new THREE.Group(); const b = new THREE.Mesh(new THREE.BoxGeometry(0.4, 3, 0.4), M.toll); b.position.set(-HALF, 1.5, 0); gate.add(b); const arm = new THREE.Mesh(new THREE.BoxGeometry(HALF * 2 + LANE_W, 0.25, 0.25), M.signWarn); arm.position.set(LANE_W / 2, 2.6, 0); gate.add(arm); placeAt(gate, j.z - 20, 0, 0); j.gate = gate; }
+    /* 💰 TOLL PLAZA. Booths between the lanes under a canopy, one barrier arm
+       per lane, all DOWN. The rig has to come to a full stop at the booth;
+       the toll is paid over a short pause, the arms lift, and only then can
+       it roll. Running the arm is a wall — the run does not continue until
+       the toll is paid, whatever speed you arrived at. */
+    if (j.toll) {
+      roadsideSign(j.z - 260, ['TOLL PLAZA · STOP', j.tollOwner ? 'OWNER: ' + j.tollOwner : 'PRIVATE NODE', 'STOP AT THE BOOTH'], M.toll, 1, true);
+      const plaza = new THREE.Group(); const zArm = j.z - TOLL_BACK;
+      const canopy = new THREE.Mesh(new THREE.BoxGeometry(HALF * 2 + 2, 0.6, 9), M.toll); canopy.position.set(0, 6.2, 0); plaza.add(canopy);
+      const title = textPanel(['TOLL · STOP', j.tollOwner ? j.tollOwner : j.node.name], HALF * 2, 2.4, '#8a2a2a', '#ffffff'); title.position.set(0, 7.7, 4.5); title.rotation.y = Math.PI; plaza.add(title);
+      for (let l = 0; l <= LANES; l++) { const x = -ROAD_W / 2 + l * LANE_W; const booth = new THREE.Mesh(new THREE.BoxGeometry(0.9, 3.2, 4.5), M.post); booth.position.set(x, 1.6, 0); plaza.add(booth);
+        const win = new THREE.Mesh(new THREE.BoxGeometry(0.95, 1, 2.2), M.win); win.position.set(x, 2.2, 0); plaza.add(win);
+        for (const s2 of [-1, 1]) { const pl = new THREE.Mesh(new THREE.BoxGeometry(0.9, 6.5, 0.9), M.post); pl.position.set(x, 3, s2 * 4.2); plaza.add(pl); } }
+      j.arms = [];
+      for (let l = 0; l < LANES; l++) { const pivot = new THREE.Group(); pivot.position.set(-ROAD_W / 2 + l * LANE_W + 0.5, 1.4, -2.6); const arm = new THREE.Mesh(new THREE.BoxGeometry(LANE_W - 1, 0.18, 0.18), M.signWarn); arm.position.set((LANE_W - 1) / 2, 0, 0); pivot.add(arm); const tip = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 0.3), M.blink); tip.position.set(LANE_W - 1.2, 0, 0); pivot.add(tip); plaza.add(pivot); j.arms.push(pivot); }
+      // Stop line + rumble strips on the approach.
+      for (let k = 0; k < 6; k++) { const st = new THREE.Mesh(new THREE.PlaneGeometry(ROAD_W, 0.35), M.edge); st.rotation.x = -Math.PI / 2; st.position.set(0, 0.012, 10 + k * 6); plaza.add(st); }
+      placeAt(plaza, zArm, 0, 0); j.plaza = plaza; j.zArm = zArm; j.tollState = 'closed'; j.payT = 0; j.armAngle = 0;
+    }
   }
   for (const hz of hazards) {
     roadsideSign(hz.z - 260, ['⚠ ' + ({ debris: 'DEBRIS', breakdown: 'BREAKDOWN', cones: 'LANES CLOSED' })[hz.kind], 'AHEAD 250 m'], M.signWarn, 1, false);
@@ -424,7 +443,7 @@ export async function play(opts) {
     gps.fillStyle = '#6cd4ff'; gps.beginPath(); gps.arc(px, py, 5, 0, Math.PI * 2); gps.fill(); gps.strokeStyle = '#fff'; gps.lineWidth = 1.5; gps.stroke();
     const j = junctions[S.jIdx];
     let txt = '🏁 Arrived';
-    if (j) { const d = Math.max(0, Math.round(j.z + RAMP_OUT - S.z)); txt = (j.viaExit ? '↗ TAKE THE EXIT' : '↑ STAY ON') + ' in ' + (d >= 1000 ? (d / 1000).toFixed(1) + ' km' : d + ' m') + ' → ' + j.nextName + (j.toll ? ' · 💰 toll' : ''); }
+    if (j) { const d = Math.max(0, Math.round(j.z + RAMP_OUT - S.z)); txt = (j.viaExit ? '↗ TAKE THE EXIT' : '↑ STAY ON') + ' in ' + (d >= 1000 ? (d / 1000).toFixed(1) + ' km' : d + ' m') + ' → ' + j.nextName + (j.toll && j.tollState !== 'open' ? ' · 🛑 toll booth first' : ''); }
     $('haul-gps-txt').textContent = txt;
   }
 
@@ -485,11 +504,21 @@ export async function play(opts) {
       if (tookExit) { S.x = Math.min(S.x, ROAD_W / 2 - PLAYER_HALF_W - 0.2); }
       S.jIdx++;
     }
-    // Toll gates: slow under 40 km/h through the gate or you hit the arm.
-    for (const jj of junctions) if (jj.toll && !jj.tollDone && S.z > jj.z - 24 && S.z < jj.z - 16) {
-      jj.tollDone = true; S.tollsHit++;
-      if (S.speed > 11.2) { S.cr++; damage(RAIL_HIT_DMG * 1.5); S.speed *= 0.5; flash('🚧 TOLL ARM'); } else flash('💰 TOLL PAID · ' + (jj.tollOwner || 'node'));
-      if (jj.gate) jj.gate.children[1].rotation.z = 1.2;
+    // ── Toll plazas: a full stop at the booth, then the arms lift.
+    for (const jj of junctions) {
+      if (!jj.toll || jj.tollState === 'open') continue;
+      const nose = S.z + PLAYER_HALF_L;
+      if (jj.tollState === 'closed' && S.z > jj.zArm - 220 && !jj.warned) { jj.warned = true; flash('🛑 TOLL BOOTH AHEAD — STOP'); }
+      if (nose >= jj.zArm - 0.3) {
+        // The arm is a wall. Arriving fast is a hit; either way you are stopped here.
+        if (S.speed > 6) { S.cr++; damage(RAIL_HIT_DMG * 2); flash('🚧 RAN THE TOLL ARM'); }
+        S.z = jj.zArm - PLAYER_HALF_L - 0.3; S.speed = 0;
+      }
+      if (S.speed < 0.6 && nose > jj.zArm - 9) {
+        if (jj.tollState === 'closed') { jj.tollState = 'paying'; flash('💰 PAYING TOLL · ' + (jj.tollOwner || jj.node.name)); }
+        jj.payT += dt;
+        if (jj.payT >= TOLL_PAY_S) { jj.tollState = 'open'; S.tollsHit++; flash('✓ TOLL PAID — GO'); }
+      }
     }
     // ── Hazards.
     for (const h of hazards) for (const o of h.objs) {
@@ -527,6 +556,8 @@ export async function play(opts) {
       const lead = aheadOf(v, v.lane);
       const hz = hazardAhead(v);
       let wantS = hz ? v.cruise * 0.6 : v.cruise;
+      // Toll plazas: traffic rolls through at a crawl (their arms lift for them).
+      for (const jj of junctions) if (jj.toll) { const d = jj.zArm - v.z; if (d > -6 && d < 80) wantS = Math.min(wantS, d < 14 ? 3 : 8); }
       if (lead) {
         const gap = lead.z - v.z - lead.halfL - v.halfL;
         const safe = 4 + v.speed * 0.9;
@@ -627,6 +658,7 @@ export async function play(opts) {
     tracer.visible = S.tracerT > 0 && Math.floor(S.tracerT * 12) % 2 === 0;
     if (tracer.visible && S.raider) { tracer.position.set(cx + S.x + 0.6, 3.4, -(S.z - 12)); }
     for (const h of hazards) for (const o of h.objs) if (o.blink) setBlink(o.mesh.children[0], 2, Math.floor(S.t * 2) % 2 === 0);
+    for (const jj of junctions) if (jj.arms) { const target = jj.tollState === 'open' ? -1.35 : 0; jj.armAngle += (target - jj.armAngle) * 0.12; jj.arms.forEach((a) => { a.rotation.z = jj.armAngle; }); }
     const camBack = 13 + S.speed * 0.08;
     cam.position.set(centreX(S.z - camBack) + S.x * 0.6, 6.2 + S.speed * 0.02, -(S.z - camBack));
     cam.lookAt(cx + S.x * 0.8, 1.6, -(S.z + 18));

@@ -55,7 +55,7 @@ export function paint() {
         <div class="hl-head-r"><span class="hl-pill">🔥 ${fmtNum(b.gems())}</span><button class="hl-x" data-h="close">✕</button></div>
       </div>
       <div class="hl-tabs">
-        ${[['dispatch', '📋 Dispatch'], ['ship', '📦 Ship goods'], ['company', '🏢 Company'], ['garage', '🔧 Garage'], ['rank', '🪪 Driver rank']].map(([id, n]) => `<button class="hl-tab${tab === id ? ' on' : ''}" data-h="tab" data-tab="${id}">${n}</button>`).join('')}
+        ${[['dispatch', '📋 Haulage Board'], ['ship', '📦 Ship goods'], ['company', '🏢 Company'], ['garage', '🔧 Garage'], ['rank', '🪪 Driver rank']].map(([id, n]) => `<button class="hl-tab${tab === id ? ' on' : ''}" data-h="tab" data-tab="${id}">${n}</button>`).join('')}
       </div>
       <div class="hl-body">${busy ? '<div class="hl-busy">Working…</div>' : ''}${({ dispatch: paintDispatch, ship: paintShip, company: paintCompany, garage: paintGarage, rank: paintRank })[tab]()}</div>
     </div>`;
@@ -106,11 +106,37 @@ function paintDispatch() {
       ${r && r.direct ? '<div class="hl-dim hl-small">⚠ No supply line links these cities — straight-line distance used.</div>' : ''}
     </div>
     ${myRuns.length ? '<div class="hl-card-t">🚚 Your claimed run</div>' + myRuns.map((j) => jobCard(j)).join('') : ''}
+    ${paintHowItWorks()}
     <div class="hl-card-t">📋 Open shipments <span class="hl-dim">(${open.length})</span> <button class="hl-btn hl-btn-sm" data-h="refresh">↻</button></div>
     ${open.length ? open.map((j) => jobCard(j, { board: true })).join('')
       : `<div class="hl-empty">${Haul.offline ? 'Sign in to see live shipments.' : Haul.missing ? 'The freight board is not set up on the server yet.' : 'Nobody is shipping right now. Post one under 📦 Ship goods.'}</div>`}
     ${myShip.length ? '<div class="hl-card-t">📦 Your shipments</div>' + myShip.slice(0, 12).map((j) => jobCard(j)).join('') : ''}
   `;
+}
+
+/* The board's briefing: everything a shipper or driver needs to know before
+   they post or take a load, with the LIVE rates from _opEcon('transport') so
+   the numbers here are the numbers the server settles with. Collapsible and
+   remembered per browser, because a regular reads it once. */
+let howOpen = (() => { try { return localStorage.getItem('haul_how_open') !== '0'; } catch (e) { return true; } })();
+function paintHowItWorks() {
+  const b = bridge(); const e = econOf(b.econ()); const terms = Haul.transportOp ? (Haul.company || defaultTerms(e)) : null;
+  const row = (icon, t, d) => `<div class="hl-how"><span class="hl-how-i">${icon}</span><div><b>${t}</b><div class="hl-dim hl-small">${d}</div></div></div>`;
+  return `<div class="hl-card hl-howcard">
+    <div class="hl-card-t" style="cursor:pointer" data-h="how-toggle">📖 How hauling works <span class="hl-dim hl-small">${howOpen ? '▾ hide' : '▸ show'}</span></div>
+    ${howOpen ? `<div class="hl-howgrid">
+      ${row('📦', 'Posting a shipment', 'You pick two cities on the node map, the goods and a fare. Minimum fare = 🔥 ' + e.fareBase + ' + ' + e.farePerKm + '/km + ' + e.farePerUnit + '/unit, × the cargo class. The fare is escrowed and your goods leave your stash. Cancel an unclaimed job for a full refund of fare and bonus.')}
+      ${row('🛣', 'The route', 'Distance is the shortest supply-line road between the two cities. Every city on the way is a junction with an exit ramp and signs naming the real nodes each road leads to. The GPS in the corner tells you whether to stay on or take the exit; a wrong road is a real detour on the clock.')}
+      ${row('💰', 'Paying the driver', (terms ? 'Company drivers get ' + terms.wage_pct + '% of the fare that arrived, minus ' + terms.car_penalty_pct + '% of that per car hit and ' + terms.rail_penalty_pct + '% per rail hit (capped at ' + terms.max_penalty_pct + '%); the rest goes to the company treasury.' : 'A company driver gets their wage % of the fare that arrived, minus crash penalties; the rest goes to the treasury.') + ' Freelancers keep the whole fare and their penalties are burned. Damaged cargo is refunded to the shipper pro rata; a failed run puts the shipment back on the board.')}
+      ${row('🎁', 'On-time bonus', 'Optional, escrowed with the fare. The driver earns it by arriving within par with at least ' + Math.round((e.bonusMinCargo || 0.9) * 100) + '% cargo. Missed, it comes back to the shipper.')}
+      ${row('🛡', 'Insurance', 'Shippers can insure a load for ' + e.insurePct + '% of the fare. The recipient then collects the FULL quantity whatever arrived. The premium is a sink and is not refunded on cancel.')}
+      ${row('🛑', 'Toll plazas', 'A city owned by another player is a toll plaza: booths across the road, arms down. Stop at the booth, the toll pays in a moment, the arms lift. Running the arm stops you anyway and damages the cargo. ' + e.tollPct + '% of the fare per plaza goes to the node owner, out of the carrier\'s side — never the driver\'s wage.')}
+      ${row('🚨', 'Raiders and guards', 'Routes over 40 km draw raiders who come from behind and ram. Before a run the carrier can hire ONE guard for 🔥 ' + e.guardFee + ' (company treasury, or the freelancer\'s wallet); the guard opens fire once, the first time raiders close in.')}
+      ${row('⚠', 'Hazards and weather', 'Debris, breakdowns and closed lanes are signposted 250 m ahead. Rain cuts grip; night cuts how far you can see. Weather follows the destination region.')}
+      ${row('🧱', 'Cargo classes', 'Fragile (medicine, water, DNA): rail scrapes hurt more, fare × ' + (e.cargoRisk && e.cargoRisk.fragile || 1.5) + '. Flammable (fuel): car hits hurt more and a hard hit starts a fire, fare × ' + (e.cargoRisk && e.cargoRisk.flammable || 1.8) + '. Heavy (metal, stone, wood): slower to speed up and stop, fare × ' + (e.cargoRisk && e.cargoRisk.heavy || 1.2) + '.')}
+      ${row('🪪', 'Driver rank', 'Every run feeds a 0–100 rating from cargo integrity, clean driving per km, pace against par and reliability. Company owners see each driver\'s rank and what their record is worth against the wage they pay. Rig upgrades in the Garage are yours whoever you drive for.')}
+    </div>` : ''}
+  </div>`;
 }
 
 function paintShip() {
@@ -332,6 +358,7 @@ async function onClick(ev) {
   if (h === 'tab') { tab = t.dataset.tab; if (tab === 'company') { busy = true; paint(); await loadCompany(); busy = false; } paint(); return; }
   if (h === 'refresh') { busy = true; paint(); await loadAll(); busy = false; paint(); return; }
   if (h === 'practice') return practiceRun();
+  if (h === 'how-toggle') { howOpen = !howOpen; try { localStorage.setItem('haul_how_open', howOpen ? '1' : '0'); } catch (e) {} paint(); return; }
   if (h === 'buy') {
     const u = UPGRADES.find((x) => x.id === t.dataset.id); if (!u) return;
     const price = upgradePrice(b.econ(), u.id, (Haul.upgrades[u.id] | 0) + 1);
@@ -455,6 +482,10 @@ function injectStyle() {
 .hl-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
 .hl-grid-4{grid-template-columns:repeat(auto-fit,minmax(160px,1fr))}
 .hl-grid label{display:flex;flex-direction:column;gap:4px;font-size:.8rem;color:#c8bca8}
+.hl-howgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px 16px;margin-top:4px}
+.hl-how{display:flex;gap:10px;align-items:flex-start;font-size:.88rem}
+.hl-how-i{font-size:1.3rem;line-height:1.2;width:1.6rem;text-align:center;flex:none}
+.hl-howcard .hl-card-t{margin-bottom:4px}
 .hl-chk{display:inline-flex;align-items:center;gap:6px;font-size:.84rem;color:#e8e0d0;cursor:pointer}
 .hl-chk input{width:auto}
 .hl-route{margin-top:10px;padding:8px 10px;background:rgba(108,212,255,.08);border-radius:8px;font-size:.86rem}

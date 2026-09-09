@@ -24,6 +24,8 @@ export const Haul = {
   wages: {},         // user_id -> wage_pct overrides for my corp
   transportOp: null, // my corp's transport operation, if it has one
   runs: [],          // my recent runs
+  upgrades: {},      // my rig: { engine, brakes, bed } levels
+  records: [],       // haul_route_records rows
   missing: false,    // sql/038 not applied
   offline: false,    // no client / not signed in
   error: null,
@@ -77,6 +79,9 @@ export async function loadAll() {
     if (!Haul.missing) { Haul.missing = false; }
     const runs = await c.from('haul_runs').select('*').eq('driver_id', me).order('created_at', { ascending: false }).limit(30);
     if (!runs.error) Haul.runs = runs.data || [];
+    // sql/039 extras — absent-tolerant: a 038-only database simply leaves these empty.
+    try { const u = await c.from('haul_upgrades').select('upgrade,level').eq('user_id', me); if (!u.error) { Haul.upgrades = {}; (u.data || []).forEach((x) => { Haul.upgrades[x.upgrade] = x.level | 0; }); } } catch (e) {}
+    try { const rr = await c.from('haul_route_records').select('*').limit(300); if (!rr.error) Haul.records = rr.data || []; } catch (e) {}
     await loadCompany();
   } catch (e) { fail(e); }
   Haul.loading = false; Haul.lastLoad = Date.now();
@@ -114,6 +119,7 @@ export async function postJob(j) {
       p_from_node: j.fromId, p_from_name: j.fromName, p_to_node: j.toId, p_to_name: j.toName,
       p_resource: j.resource, p_qty: qty, p_distance_km: j.km, p_fare: Math.floor(j.fare),
       p_recipient: j.recipientId || null, p_shipper_name: b.displayName(),
+      p_path: Array.isArray(j.path) ? j.path : null, p_insured: !!j.insured, p_bonus: Math.max(0, Math.floor(j.bonus || 0)),
     });
     if (r.error) throw r.error;
     await b.refreshWallet();
@@ -150,6 +156,7 @@ export async function completeRun(job, out) {
     const r = await c.rpc('haul_complete', {
       p_job_id: job.id, p_crashes_car: out.crashesCar | 0, p_crashes_rail: out.crashesRail | 0,
       p_time_s: out.timeS | 0, p_par_s: out.parS | 0, p_cargo_pct: out.completed ? out.cargoPct : 0,
+      p_wrong_exits: out.wrongExits | 0, p_weather: out.weather || null,
     });
     if (r.error) throw r.error;
     await b.refreshWallet();
@@ -168,6 +175,27 @@ export async function claimGoods(job) {
     const n = row.units | 0;
     if (n > 0) { b.addRes(row.resource, n); b.saveProfile(); }
     return { ok: true, resource: row.resource, units: n };
+  } catch (e) { fail(e); return { ok: false, why: why(e && e.message) }; }
+}
+
+/** Hire the one guard a run may carry. Company treasury pays when the driver
+    drives for one; the freelancer's wallet otherwise (sql/039). */
+export async function hireGuard(job) {
+  const b = bridge(); const c = ready(); if (!c) return { ok: false, why: 'Sign in.' };
+  try {
+    const r = await c.rpc('haul_hire_guard', { p_job_id: job.id });
+    if (r.error) throw r.error;
+    await b.refreshWallet(); try { await b.corpTreasuryRefresh(); } catch (e) {}
+    return { ok: !!r.data };
+  } catch (e) { fail(e); return { ok: false, why: String(e && e.message || '').includes('TREASURY_SHORT') ? 'The company treasury cannot cover the guard fee.' : why(e && e.message) }; }
+}
+export async function buyUpgrade(id) {
+  const b = bridge(); const c = ready(); if (!c) return { ok: false, why: 'Sign in to buy upgrades.' };
+  try {
+    const r = await c.rpc('haul_buy_upgrade', { p_upgrade: id });
+    if (r.error) throw r.error;
+    Haul.upgrades[id] = r.data | 0; await b.refreshWallet();
+    return { ok: true, level: r.data | 0 };
   } catch (e) { fail(e); return { ok: false, why: why(e && e.message) }; }
 }
 

@@ -14,14 +14,15 @@
 
 import { bridge, esc, fmtNum, fmtKm, fmtTime } from './haul.bridge.js';
 import { normalizeCities, route, parSeconds } from './haul.map.js';
-import { econOf, minFare, defaultTerms, settle, rating, rankFor, worth, verdict, RANKS } from './haul.economy.js';
-import { Haul, loadAll, loadCompany, postJob, cancelJob, claimJob, completeRun, claimGoods, saveCompany, setWage, practiceAdd, practiceStats } from './haul.api.js';
-import { play, GAME_CSS } from './haul.game.js';
+import { econOf, minFare, defaultTerms, settle, rating, rankFor, worth, verdict, RANKS,
+         cargoClass, CARGO_CLASSES, cargoRisk, UPGRADES, UPGRADE_MAX, upgradePrice, insurancePremium, guardFee, tollPct, bonusEarned } from './haul.economy.js';
+import { Haul, loadAll, loadCompany, postJob, cancelJob, claimJob, completeRun, claimGoods, saveCompany, setWage, practiceAdd, practiceStats, hireGuard, buyUpgrade } from './haul.api.js';
+import { play, planRun, GAME_CSS } from './haul.game.js';
 
 const OV = 'haul-ov';
 let tab = 'dispatch';
-let form = { fromId: '', toId: '', resource: '', qty: 10, fare: 0, recipientId: '' };
-let practice = { fromId: '', toId: '' };
+let form = { fromId: '', toId: '', resource: '', qty: 10, fare: 0, recipientId: '', insured: false, bonus: 0 };
+let practice = { fromId: '', toId: '', guard: false };
 let busy = false;
 
 /* ── Terms the CURRENT player drives under. Company terms if their corp runs a
@@ -54,9 +55,9 @@ export function paint() {
         <div class="hl-head-r"><span class="hl-pill">🔥 ${fmtNum(b.gems())}</span><button class="hl-x" data-h="close">✕</button></div>
       </div>
       <div class="hl-tabs">
-        ${[['dispatch', '📋 Dispatch'], ['ship', '📦 Ship goods'], ['company', '🏢 Company'], ['rank', '🪪 Driver rank']].map(([id, n]) => `<button class="hl-tab${tab === id ? ' on' : ''}" data-h="tab" data-tab="${id}">${n}</button>`).join('')}
+        ${[['dispatch', '📋 Dispatch'], ['ship', '📦 Ship goods'], ['company', '🏢 Company'], ['garage', '🔧 Garage'], ['rank', '🪪 Driver rank']].map(([id, n]) => `<button class="hl-tab${tab === id ? ' on' : ''}" data-h="tab" data-tab="${id}">${n}</button>`).join('')}
       </div>
-      <div class="hl-body">${busy ? '<div class="hl-busy">Working…</div>' : ''}${({ dispatch: paintDispatch, ship: paintShip, company: paintCompany, rank: paintRank })[tab]()}</div>
+      <div class="hl-body">${busy ? '<div class="hl-busy">Working…</div>' : ''}${({ dispatch: paintDispatch, ship: paintShip, company: paintCompany, garage: paintGarage, rank: paintRank })[tab]()}</div>
     </div>`;
 }
 
@@ -77,7 +78,7 @@ function jobCard(j, opts) {
   const statusTxt = { open: 'On the board', claimed: 'Driver: ' + (j.driver_name || '—'), delivered: 'Delivered · ' + Math.round(Number(j.cargo_pct || 0) * 100) + '% intact' + (j.goods_claimed_at ? ' · collected' : ''), cancelled: 'Cancelled' }[st] || st;
   return `<div class="hl-job hl-${st}">
     <div class="hl-job-route"><b>${esc(j.from_name)}</b> → <b>${esc(j.to_name)}</b> <span class="hl-dim">· ${fmtKm(j.distance_km)} · par ${fmtTime(par)}</span></div>
-    <div class="hl-job-meta">${m.icon || '📦'} ${j.qty}× ${esc(m.name)} · fare <b>🔥 ${fmtNum(j.fare)}</b> · by ${esc(j.shipper_name || 'Survivor')}</div>
+    <div class="hl-job-meta">${m.icon || '📦'} ${j.qty}× ${esc(m.name)} <span class="hl-dim">${CARGO_CLASSES[cargoClass(j.resource)].label}</span> · fare <b>🔥 ${fmtNum(j.fare)}</b>${j.bonus > 0 ? ' · 🎁 bonus 🔥 ' + fmtNum(j.bonus) + ' if on time' : ''}${j.insured ? ' · 🛡 insured' : ''}${j.guard_hired ? ' · 🪖 guard' : ''} · by ${esc(j.shipper_name || 'Survivor')}</div>
     <div class="hl-job-meta hl-dim">${esc(statusTxt)}${opts.board && !mineAsShipper ? ' · your cut at 100% cargo: <b>🔥 ' + fmtNum(prev.driverPay) + '</b>' + (terms ? ' (' + prev.wagePct + '% wage)' : ' (freelance)') : ''}</div>
     ${actions ? '<div class="hl-job-act">' + actions + '</div>' : ''}
   </div>`;
@@ -99,7 +100,8 @@ function paintDispatch() {
     <div class="hl-card hl-practice">
       <div class="hl-card-t">🏁 Practice run <span class="hl-dim">— no cargo, no Cinder, but it counts toward your feel for the road</span></div>
       <div class="hl-row">${citySelect('pfrom', practice.fromId, '')} <span>→</span> ${citySelect('pto', practice.toId, '')}
-        <span class="hl-pill">${r ? fmtKm(r.km) + ' · par ' + fmtTime(parSeconds(r.km)) : '—'}</span>
+        <span class="hl-pill">${r ? fmtKm(r.km) + ' · ' + (r.path.length - 1) + ' junction' + (r.path.length > 2 ? 's' : '') + ' · par ' + fmtTime(parSeconds(r.km)) : '—'}</span>
+        <label class="hl-chk"><input type="checkbox" data-f="pguard"${practice.guard ? ' checked' : ''}> 🪖 bring a guard (free in practice)</label>
         <button class="hl-btn hl-btn-go" data-h="practice">Drive</button></div>
       ${r && r.direct ? '<div class="hl-dim hl-small">⚠ No supply line links these cities — straight-line distance used.</div>' : ''}
     </div>
@@ -119,8 +121,11 @@ function paintShip() {
   if (!form.resource) { const held = res.find((x) => b.getRes(x.id) > 0); form.resource = (held || res[0] || {}).id || ''; }
   const r = route(C, form.fromId, form.toId);
   const econ = econOf(b.econ());
-  const min = r ? minFare(econ, r.km, form.qty) : 0;
+  const min = r ? minFare(econ, r.km, form.qty, form.resource) : 0;
   if (!(form.fare >= min)) form.fare = min;
+  const cc = CARGO_CLASSES[cargoClass(form.resource)]; const risk = cargoRisk(econ, form.resource);
+  const premium = insurancePremium(econ, form.fare);
+  const tollNodes = r ? r.path.slice(1, -1).map((id) => C.find((c) => c.id === id)).filter((c) => c && c.ownerId && c.ownerId !== b.userId()) : [];
   const have = b.getRes(form.resource);
   const roster = b.corpRoster().filter((m) => m.userId && m.userId !== b.userId());
   const terms = Haul.transportOp ? (Haul.company || defaultTerms(econ)) : null;
@@ -132,12 +137,14 @@ function paintShip() {
         <label>To city ${citySelect('toId', form.toId, form.fromId)}</label>
         <label>Goods <select class="hl-in" data-f="resource">${res.map((x) => `<option value="${esc(x.id)}"${x.id === form.resource ? ' selected' : ''}>${x.icon || '📦'} ${esc(x.name)} (${fmtNum(b.getRes(x.id))})</option>`).join('')}</select></label>
         <label>Quantity <input class="hl-in" type="number" min="1" max="${Math.max(1, have)}" data-f="qty" value="${form.qty}"></label>
-        <label>Fare in Cinder <input class="hl-in" type="number" min="${min}" data-f="fare" value="${form.fare}"><span class="hl-small hl-dim">minimum 🔥 ${fmtNum(min)} — base ${econ.fareBase} + ${econ.farePerKm}/km + ${econ.farePerUnit}/unit. Pay more to pull drivers.</span></label>
+        <label>Fare in Cinder <input class="hl-in" type="number" min="${min}" data-f="fare" value="${form.fare}"><span class="hl-small hl-dim">minimum 🔥 ${fmtNum(min)} — base ${econ.fareBase} + ${econ.farePerKm}/km + ${econ.farePerUnit}/unit${risk !== 1 ? ' × ' + risk + ' (' + cc.label.replace('· ', '') + ' cargo)' : ''}. Pay more to pull drivers.</span></label>
+        <label>On-time bonus 🎁 <input class="hl-in" type="number" min="0" data-f="bonus" value="${form.bonus}"><span class="hl-small hl-dim">Escrowed with the fare. The driver earns it by arriving within par with ≥ 90% cargo; otherwise it comes back to you.</span></label>
+        <label class="hl-chk-lab"><span>Insurance 🛡</span><span class="hl-chk"><input type="checkbox" data-f="insured"${form.insured ? ' checked' : ''}> Insure for 🔥 ${fmtNum(premium)} (${econ.insurePct}% of fare)</span><span class="hl-small hl-dim">The recipient collects the FULL ${form.qty} units whatever arrives. The premium is not refunded on cancel.</span></label>
         <label>Deliver to <select class="hl-in" data-f="recipientId"><option value="">Myself (goods wait for me at the destination)</option>${roster.map((m) => `<option value="${esc(m.userId)}"${m.userId === form.recipientId ? ' selected' : ''}>${esc(m.name)} (corp)</option>`).join('')}</select></label>
       </div>
-      <div class="hl-route">${r ? `Route: ${r.path.map(cityName).map(esc).join(' → ')} · <b>${fmtKm(r.km)}</b> · par ${fmtTime(parSeconds(r.km))}${r.direct ? ' · ⚠ no supply line, straight-line distance' : ''}` : 'Pick two cities.'}</div>
+      <div class="hl-route">${r ? `Route: ${r.path.map(cityName).map(esc).join(' → ')} · <b>${fmtKm(r.km)}</b> · par ${fmtTime(parSeconds(r.km))}${r.direct ? ' · ⚠ no supply line, straight-line distance' : ''}${tollNodes.length ? ' · 💰 ' + tollNodes.length + ' toll gate' + (tollNodes.length > 1 ? 's' : '') + ' (' + tollNodes.map((c) => esc(c.name)).join(', ') + ') — ' + tollPct(econ) + '% of the fare each, paid to the node owner out of the carrier\'s side' : ''}` : 'Pick two cities.'}</div>
       <div class="hl-dim hl-small">The fare is escrowed now and paid out on delivery. Damaged cargo is refunded to you pro rata; a failed run puts the shipment back on the board with your escrow intact. Your ${form.qty} units leave your stash when you post.</div>
-      <div class="hl-job-act"><button class="hl-btn hl-btn-go" data-h="post" ${Haul.offline || Haul.missing || have < form.qty ? 'disabled' : ''}>Post for 🔥 ${fmtNum(form.fare)}</button>
+      <div class="hl-job-act"><button class="hl-btn hl-btn-go" data-h="post" ${Haul.offline || Haul.missing || have < form.qty ? 'disabled' : ''}>Post for 🔥 ${fmtNum(form.fare + (form.bonus | 0) + (form.insured ? premium : 0))}${(form.bonus | 0) || form.insured ? ' <span class="hl-small">(fare' + ((form.bonus | 0) ? ' + bonus' : '') + (form.insured ? ' + insurance' : '') + ')</span>' : ''}</button>
         ${have < form.qty ? '<span class="hl-err">You hold ' + fmtNum(have) + '.</span>' : ''}
         ${Haul.offline ? '<span class="hl-dim">Sign in to post.</span>' : Haul.missing ? '<span class="hl-dim">Server tables missing (sql/038).</span>' : ''}</div>
     </div>
@@ -189,6 +196,19 @@ function paintCompany() {
     </div>`;
 }
 
+function paintGarage() {
+  const b = bridge(); const econ = econOf(b.econ()); const U = Haul.upgrades || {};
+  return `<div class="hl-card"><div class="hl-card-t">🔧 Your rig <span class="hl-dim">— upgrades are yours, whoever you drive for</span></div>
+    ${UPGRADES.map((u) => { const lvl = U[u.id] | 0; const next = lvl + 1; const price = upgradePrice(econ, u.id, next);
+      return `<div class="hl-run"><span>${u.icon} <b>${u.name}</b> <span class="hl-dim">L${lvl}/${UPGRADE_MAX} · ${esc(u.desc)}</span></span>
+        <span>${lvl >= UPGRADE_MAX ? '<span class="hl-dim">maxed</span>' : `<button class="hl-btn hl-btn-sm hl-btn-go" data-h="buy" data-id="${u.id}" ${Haul.offline || Haul.missing ? 'disabled' : ''}>Buy L${next} · 🔥 ${fmtNum(price)}</button>`}</span></div>`; }).join('')}
+    <div class="hl-dim hl-small">${Haul.offline ? 'Sign in to buy upgrades.' : Haul.missing ? 'Server tables missing (sql/039).' : 'Charged to your wallet by the server; the level applies on your next run.'}</div>
+  </div>
+  <div class="hl-card"><div class="hl-card-t">📦 Cargo handling</div>
+    ${Object.values(CARGO_CLASSES).map((c) => `<div class="hl-run"><span><b>${c.id}</b> <span class="hl-dim">${c.id === 'standard' ? 'drives normally' : c.id === 'fragile' ? 'rail scrapes and hazards hurt 1.7×' : c.id === 'flammable' ? 'car hits hurt 1.6×; a hard hit starts a fire' : 'slower to accelerate and stop, tougher cargo'}</span></span><span class="hl-dim">fare × ${cargoRisk(econ, { fragile: 'medicine', flammable: 'fuel', heavy: 'metal', standard: 'food' }[c.id])}</span></div>`).join('')}
+  </div>`;
+}
+
 function paintRank() {
   const b = bridge(); const st = myStats();
   const R = rating(st); const rk = rankFor(R.score);
@@ -209,6 +229,7 @@ function paintRank() {
     <div class="hl-card"><div class="hl-card-t">🧾 Recent runs</div>
       ${runs.length ? runs.slice(0, 12).map((r) => `<div class="hl-run"><span>${r.outcome === 'delivered' ? '✅' : '❌'} ${fmtKm(r.distance_km)} · ${fmtTime(r.time_s)}/${fmtTime(r.par_s)} · 🚗${r.crashes_car} 🛤${r.crashes_rail} · cargo ${Math.round(Number(r.cargo_pct) * 100)}%</span><span>🔥 ${fmtNum(r.driver_pay)}${r.penalty > 0 ? ' <span class="hl-err">−' + fmtNum(r.penalty) + '</span>' : ''}${r.corp_id ? '' : ' <span class="hl-dim">freelance</span>'}</span></div>`).join('') : '<div class="hl-dim">Nothing settled yet.</div>'}
     </div>
+    ${Haul.records.length ? '<div class="hl-card"><div class="hl-card-t">⏱ Route records</div>' + Haul.records.slice(0, 15).map((x) => `<div class="hl-run"><span>${esc(cityName(x.from_node))} → ${esc(cityName(x.to_node))}</span><span><b>${fmtTime(x.time_s)}</b> · ${esc(x.driver_name || 'Driver')}</span></div>`).join('') + '</div>' : ''}
     <div class="hl-card"><div class="hl-card-t">🏆 Top drivers</div>
       ${top.length ? top.map((x, i) => { const k = rankFor(x.s); return `<div class="hl-run"><span>${i + 1}. ${k.icon} <b>${esc(x.r.driver_name || 'Driver')}</b> <span class="hl-dim">${k.name}</span></span><span>${x.s} · ${x.r.runs} runs · ${fmtKm(x.r.km)}</span></div>`; }).join('') : '<div class="hl-dim">No drivers on the board yet.</div>'}
     </div>`;
@@ -228,14 +249,15 @@ async function practiceRun() {
   const C = cities(); const r = route(C, practice.fromId, practice.toId);
   if (!r || r.km <= 0) return bridge().toast('Pick two different cities.');
   let out;
-  try { out = await runGame({ km: r.km, fromName: cityName(practice.fromId), toName: cityName(practice.toId), cargoLabel: 'practice load' }); }
+  try { out = await runGame({ cities: C, fromId: practice.fromId, toId: practice.toId, cargoLabel: 'practice load', guard: practice.guard, upgrades: Haul.upgrades, driverId: bridge().userId(), forceToll: true }); }
   catch (e) { return bridge().toast('⚠ ' + (e && e.message), 6000); }
   practiceAdd(out);
-  const prev = settle({ fare: minFare(bridge().econ(), r.km, 10), cargoPct: out.cargoPct, crashesCar: out.crashesCar, crashesRail: out.crashesRail, terms: myTerms() });
+  const fare = minFare(bridge().econ(), r.km, 10);
+  const prev = settle({ fare, cargoPct: out.cargoPct, crashesCar: out.crashesCar, crashesRail: out.crashesRail, terms: myTerms() });
   // Paint FIRST: paint() rebuilds the overlay's innerHTML and would wipe the
   // card if it came after. (Driven test: the result never appeared.)
   paint();
-  resultCard(out, prev, { practice: true, fare: minFare(bridge().econ(), r.km, 10) });
+  resultCard(out, prev, { practice: true, fare });
 }
 
 async function startRun(job) {
@@ -246,8 +268,15 @@ async function startRun(job) {
     job = c.job || job;
   }
   const m = b.meta(job.resource);
+  // 🪖 One guard per run, offered before the wheel turns. Paid by the company
+  //    treasury (or the freelancer) through sql/039; the job row remembers it.
+  if (!job.guard_hired && !Haul.missing) {
+    const fee = guardFee(b.econ()); const corp = Haul.transportOp ? b.myCorp() : null;
+    const yes = await b.confirm('Hire a guard for this run? 🔥 ' + fmtNum(fee) + (corp ? ' from the ' + corp.name + ' treasury' : ' from your wallet') + '.\n\nRaiders on long routes try to ram you off the road. A guard opens fire once per run, the first time they close in.');
+    if (yes) { const g = await hireGuard(job); if (g.ok) { job.guard_hired = true; b.toast('🪖 Guard hired for this run.', 3000); } else b.toast('⚠ ' + g.why, 4200); }
+  }
   let out;
-  try { out = await runGame({ km: Number(job.distance_km), fromName: job.from_name, toName: job.to_name, cargoLabel: job.qty + '× ' + m.name, cargoColor: m.color }); }
+  try { out = await runGame({ cities: cities(), fromId: job.from_node, toId: job.to_node, resource: job.resource, cargoLabel: job.qty + '× ' + m.name, cargoColor: m.color, guard: !!job.guard_hired, upgrades: Haul.upgrades, driverId: b.userId() }); }
   catch (e) { b.toast('⚠ ' + (e && e.message), 6000); await loadAll(); paint(); return; }
   busy = true; paint();
   const s = await completeRun(job, out);
@@ -258,7 +287,8 @@ async function startRun(job) {
   resultCard(out, {
     failed: run.outcome === 'failed', farePaid: run.fare_paid | 0, refund: (run.fare | 0) - (run.fare_paid | 0), wagePct: Number(run.wage_pct), wageGross: run.wage_gross | 0,
     penalty: run.penalty | 0, driverPay: run.driver_pay | 0, companyNet: run.company_net | 0, burned: run.corp_id ? 0 : (run.penalty | 0),
-  }, { fare: job.fare, corp: !!run.corp_id });
+    bonusPaid: run.bonus_paid | 0, tollPaid: run.toll_paid | 0,
+  }, { fare: job.fare, corp: !!run.corp_id, bonus: job.bonus | 0 });
 }
 
 function resultCard(out, s, o) {
@@ -272,14 +302,18 @@ function resultCard(out, s, o) {
       <div><span>Cargo intact</span><b>${Math.round(out.cargoPct * 100)}%</b></div>
       <div><span>Car hits</span><b>${out.crashesCar}</b></div>
       <div><span>Rail hits</span><b>${out.crashesRail}</b></div>
+      <div><span>Exits</span><b>${out.wrongExits ? '<span class="hl-err">' + out.wrongExits + ' wrong · +' + out.detourM + ' m</span>' : 'all correct'}</b></div>
+      <div><span>Raiders</span><b>${out.raiders ? out.raidersBeaten + '/' + out.raiders + ' beaten' + (out.guardUsed ? ' · 🪖 guard fired' : '') : 'none'}</b></div>
     </div>
-    ${o.practice ? `<div class="hl-dim hl-small">Practice — nothing was paid. On a real 🔥 ${fmtNum(o.fare)} fare this run would have paid you <b>🔥 ${fmtNum(s.driverPay)}</b>${s.penalty ? ' after a 🔥 ' + fmtNum(s.penalty) + ' crash penalty' : ''}.</div>`
+    ${o.practice ? `<div class="hl-dim hl-small">Practice — nothing was paid. On a real 🔥 ${fmtNum(o.fare)} fare this run would have paid you <b>🔥 ${fmtNum(s.driverPay)}</b>${s.penalty ? ' after a 🔥 ' + fmtNum(s.penalty) + ' crash penalty' : ''}${bonusEarned(out, bridge().econ()) ? ', and you would have earned any on-time bonus' : ', and missed any on-time bonus'}.</div>`
       : ok ? `<div class="hl-settle">
           <div><span>Fare escrowed</span><b>🔥 ${fmtNum(o.fare)}</b></div>
           <div><span>Shipper charged (${Math.round(out.cargoPct * 100)}% arrived)</span><b>🔥 ${fmtNum(s.farePaid)}</b>${s.refund ? '<i class="hl-dim"> · 🔥 ' + fmtNum(s.refund) + ' refunded</i>' : ''}</div>
           <div><span>Your wage (${s.wagePct}%)</span><b>🔥 ${fmtNum(s.wageGross)}</b></div>
           <div><span>Crash penalty</span><b class="hl-err">− 🔥 ${fmtNum(s.penalty)}</b></div>
-          <div class="hl-settle-big"><span>Paid to you</span><b>🔥 ${fmtNum(s.driverPay)}</b></div>
+          ${o.bonus ? `<div><span>On-time bonus 🎁</span><b>${s.bonusPaid ? '🔥 ' + fmtNum(s.bonusPaid) : '<span class="hl-dim">missed — refunded to the shipper</span>'}</b></div>` : ''}
+          ${s.tollPaid ? `<div><span>Tolls to node owners</span><b class="hl-err">− 🔥 ${fmtNum(s.tollPaid)}</b></div>` : ''}
+          <div class="hl-settle-big"><span>Paid to you</span><b>🔥 ${fmtNum(s.driverPay + (s.bonusPaid | 0))}</b></div>
           ${o.corp ? `<div><span>To the company treasury</span><b>🔥 ${fmtNum(s.companyNet)}</b></div>` : `<div class="hl-dim hl-small">Freelance run — the penalty was burned, not paid to anyone.</div>`}
         </div>`
       : '<div class="hl-dim hl-small">Nothing was paid. The shipment is back on the board and the failed run is on your record.</div>'}
@@ -298,6 +332,13 @@ async function onClick(ev) {
   if (h === 'tab') { tab = t.dataset.tab; if (tab === 'company') { busy = true; paint(); await loadCompany(); busy = false; } paint(); return; }
   if (h === 'refresh') { busy = true; paint(); await loadAll(); busy = false; paint(); return; }
   if (h === 'practice') return practiceRun();
+  if (h === 'buy') {
+    const u = UPGRADES.find((x) => x.id === t.dataset.id); if (!u) return;
+    const price = upgradePrice(b.econ(), u.id, (Haul.upgrades[u.id] | 0) + 1);
+    if (!(await b.confirm('Buy ' + u.name + ' L' + ((Haul.upgrades[u.id] | 0) + 1) + ' for 🔥 ' + fmtNum(price) + '?'))) return;
+    busy = true; paint(); const r = await buyUpgrade(u.id); busy = false;
+    b.toast(r.ok ? '🔧 ' + u.name + ' is now L' + r.level + '.' : '⚠ ' + r.why, 4000); paint(); return;
+  }
   if (h === 'claim' || h === 'drive') { const j = byId(t.dataset.id); if (j) return startRun(j); }
   if (h === 'cancel') {
     const j = byId(t.dataset.id); if (!j) return;
@@ -315,11 +356,12 @@ async function onClick(ev) {
   if (h === 'post') {
     const C = cities(); const r = route(C, form.fromId, form.toId);
     if (!r) return b.toast('Pick two cities.');
-    const min = minFare(b.econ(), r.km, form.qty);
+    const min = minFare(b.econ(), r.km, form.qty, form.resource);
     const fare = Math.max(min, Math.floor(form.fare));
-    if (!(await b.confirm('Post ' + form.qty + '× ' + b.meta(form.resource).name + ' from ' + cityName(form.fromId) + ' to ' + cityName(form.toId) + ' (' + fmtKm(r.km) + ') for 🔥 ' + fmtNum(fare) + '?\n\nThe Cinder is escrowed now and the goods leave your stash.'))) return;
+    const bonus = Math.max(0, Math.floor(form.bonus || 0)); const prem = form.insured ? insurancePremium(b.econ(), fare) : 0;
+    if (!(await b.confirm('Post ' + form.qty + '× ' + b.meta(form.resource).name + ' from ' + cityName(form.fromId) + ' to ' + cityName(form.toId) + ' (' + fmtKm(r.km) + ') for 🔥 ' + fmtNum(fare) + (bonus ? ' + 🔥 ' + fmtNum(bonus) + ' bonus escrow' : '') + (prem ? ' + 🔥 ' + fmtNum(prem) + ' insurance' : '') + '?\n\nThe Cinder is escrowed now and the goods leave your stash.'))) return;
     busy = true; paint();
-    const res = await postJob({ fromId: form.fromId, fromName: cityName(form.fromId), toId: form.toId, toName: cityName(form.toId), resource: form.resource, qty: form.qty, km: r.km, fare, recipientId: form.recipientId || null });
+    const res = await postJob({ fromId: form.fromId, fromName: cityName(form.fromId), toId: form.toId, toName: cityName(form.toId), resource: form.resource, qty: form.qty, km: r.km, fare, recipientId: form.recipientId || null, path: r.path, insured: form.insured, bonus });
     busy = false;
     if (res.ok) { b.toast('📦 Shipment posted. Drivers can see it now.', 4200); tab = 'dispatch'; await loadAll(); }
     else b.toast('⚠ ' + res.why, 5200);
@@ -347,6 +389,9 @@ async function onClick(ev) {
 function onInput(ev) {
   const f = ev.target.dataset.f; if (!f) return;
   const v = ev.target.value;
+  if (f === 'pguard') { practice.guard = !!ev.target.checked; return; }
+  if (f === 'insured') { form.insured = !!ev.target.checked; paint(); return; }
+  if (f === 'bonus') { form.bonus = Math.max(0, parseInt(v, 10) || 0); if (ev.type === 'change') paint(); return; }
   if (f === 'pfrom' || f === 'pto') { practice[f === 'pfrom' ? 'fromId' : 'toId'] = v; if (practice.fromId === practice.toId) { const C = cities(); practice.toId = (C.find((c) => c.id !== practice.fromId) || C[0]).id; } paint(); return; }
   if (f === 'qty') form.qty = Math.max(1, parseInt(v, 10) || 1);
   else if (f === 'fare') form.fare = Math.max(0, parseInt(v, 10) || 0);
@@ -365,11 +410,11 @@ export function open() {
     ov.addEventListener('click', (ev) => { if (ev.target === ov) close(); });
     ov.addEventListener('click', onClick);
     ov.addEventListener('change', onInput);
-    ov.addEventListener('input', (ev) => { if (ev.target.dataset.f === 'fare' || ev.target.dataset.f === 'qty') onInput(ev); });
+    ov.addEventListener('input', (ev) => { if (['fare', 'qty', 'bonus'].includes(ev.target.dataset.f)) onInput(ev); });
     document.body.appendChild(ov);
   }
   tab = 'dispatch'; busy = true; paint();
-  loadAll().then(() => { busy = false; paint(); });
+  Promise.all([loadAll(), bridge().nodeOwnersRefresh ? bridge().nodeOwnersRefresh() : null]).then(() => { busy = false; paint(); });
 }
 export function close() { const ov = document.getElementById(OV); if (ov) ov.remove(); }
 
@@ -410,6 +455,8 @@ function injectStyle() {
 .hl-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
 .hl-grid-4{grid-template-columns:repeat(auto-fit,minmax(160px,1fr))}
 .hl-grid label{display:flex;flex-direction:column;gap:4px;font-size:.8rem;color:#c8bca8}
+.hl-chk{display:inline-flex;align-items:center;gap:6px;font-size:.84rem;color:#e8e0d0;cursor:pointer}
+.hl-chk input{width:auto}
 .hl-route{margin-top:10px;padding:8px 10px;background:rgba(108,212,255,.08);border-radius:8px;font-size:.86rem}
 .hl-tblwrap{overflow-x:auto}
 .hl-tbl{width:100%;border-collapse:collapse;font-size:.84rem}

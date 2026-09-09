@@ -79784,7 +79784,15 @@ const OPS_ECON = {
      ⚠ car/rail/max penalty defaults are mirrored in sql/038 for freelance
        runs, which the server settles without a company row. Move both. */
   transport:    { startup: 380000, ratePerWorkerHr: 0, salaryPerWorkerHr: 0, maxWorkers: 10, yields: {},
-                  fareBase: 240, farePerKm: 14, farePerUnit: 2.5, wagePct: 35, carPenaltyPct: 6, railPenaltyPct: 3, maxPenaltyPct: 80 },
+                  fareBase: 240, farePerKm: 14, farePerUnit: 2.5, wagePct: 35, carPenaltyPct: 6, railPenaltyPct: 3, maxPenaltyPct: 80,
+                  // sql/039 extras. insurePct: shipper's premium as % of fare (a sink —
+                  // the payout is goods, not Cinder). guardFee: one guard, one run.
+                  // tollPct: % of fare per player-owned node passed, paid to that
+                  // owner. cargoRisk: fare multiplier by cargo class. upgradeBase:
+                  // the level-1 price of a rig upgrade. bonusMinCargo: cargo needed
+                  // to earn the shipper's on-time bonus.
+                  insurePct: 12, guardFee: 350, tollPct: 3, upgradeBase: 4000, bonusMinCargo: 0.9,
+                  cargoRisk: { standard: 1, fragile: 1.5, flammable: 1.8, heavy: 1.2 } },
 };
 // 🏦 The bank is the ONE operation with an alternate price: 1,000,000 Cinder,
 // OR a $200 stake in Mythic Token. MT is $0.10 (the Bank of Ethos quote price),
@@ -207427,12 +207435,18 @@ window.MythicHaulBridge = {
     try {
       const t = _twForge(); const st = _twState(); const mine = (typeof _twPlayerCorp === 'function') ? _twPlayerCorp() : null;
       const secs = {}; (t.sectors || []).forEach((s) => { secs[s.id] = s; });
+      // 👑 Player ownership (tw_node_owners) drives TOLL GATES: passing a node
+      //    another player owns costs a slice of the fare, paid to them. The
+      //    cache is warmed by the War Map; if it has not loaded, no tolls show,
+      //    and the server (sql/039) still charges the real ones on settlement.
+      const owners = (App._twNodeOwners && App._twNodeOwners.byNode) || {};
       return (t.nodes || []).slice(0, 300).map((n) => {
-        const o = st.ownedNodes[n.id]; const sec = secs[n.sectorId] || {};
+        const o = st.ownedNodes[n.id]; const sec = secs[n.sectorId] || {}; const po = owners[n.id] || null;
         return { id: n.id, name: n.name || n.id, x: (n.position && +n.position.x) || 0, y: (n.position && +n.position.y) || 0,
                  connections: Array.isArray(n.connections) ? n.connections.slice() : [],
                  sector: sec.name || '', region: sec.regionId || '',
-                 owned: !!o, mine: !!(o && mine && o.ownerCorpId === mine.id) };
+                 owned: !!o, mine: !!(o && mine && o.ownerCorpId === mine.id),
+                 ownerId: (po && po.user_id) || null, ownerName: (po && po.display_name) || '' };
       });
     } catch (e) { return []; }
   },
@@ -207455,6 +207469,8 @@ window.MythicHaulBridge = {
     } catch (e) { return null; }
   },
   corpTreasuryRefresh: async () => { try { if (typeof corpTreasuryFetch === 'function') return await corpTreasuryFetch(); } catch (e) {} return 0; },
+  // Warm the node-owner cache so toll gates show on the GPS before the run.
+  nodeOwnersRefresh: async () => { try { if (typeof tw_cloudFetchNodeOwners === 'function') await tw_cloudFetchNodeOwners(); } catch (e) {} },
   corpTreasury: () => { try { return Corp.treasury | 0; } catch (e) { return 0; } },
   toast: (m, ms) => { try { showToast(m, ms || 3600); } catch (e) {} },
   confirm: async (m) => { try { return !!(await gcConfirm(m)); } catch (e) { return false; } },
@@ -223174,7 +223190,7 @@ render();
      ⚠ If this 404s the tile simply does not appear.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/haul/index.js?v=v120x0haul2"></script>
+<script type="module" src="src/haul/index.js?v=v120x0haul3"></script>
 <!-- 🔌 PRN NODE TIERS — the generation-rate table (Free 0.5% … Eternal 20%).
      Registers window.MythicNodeTiers: pure math, no I/O, no globals. Two
      consumers in this file, both `typeof`-guarded so an absent module falls

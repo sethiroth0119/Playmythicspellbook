@@ -36,7 +36,7 @@ assume `window.Foo` exists because `const Foo` does.
 
 ## Feature seams that already exist
 - `/src/haul` (Highway Haul) reads the legacy app ONLY through `window.MythicHaulBridge`
-  (defined next to `MythicTradeBridge`). Its money moves are the `sql/038` RPCs; the
+  (defined next to `MythicTradeBridge`). Its money moves are the `sql/038` + `sql/039` RPCs (fare, wage, penalties, insurance, bonus escrow, guards, tolls, upgrades); the
   module never calls spendGems/addGems. Pricing is `OPS_ECON.transport` via `_opEcon()`.
   Route length comes from the Territory-War node map (`_twForge()` positions + supply
   lines); `haul.map.js` keeps a copy of the 16-node seed for bridge-less test pages —

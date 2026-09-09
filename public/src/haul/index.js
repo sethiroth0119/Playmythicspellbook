@@ -25,13 +25,13 @@ import { Haul, loadAll } from './haul.api.js';
 import { bridge, bridgeReady } from './haul.bridge.js';
 import * as map from './haul.map.js';
 import * as economy from './haul.economy.js';
-import { play } from './haul.game.js';
+import { play, planRun } from './haul.game.js';
 
 const MythicHaul = {
   version: 'v1',
   open, close, paint,
   state: Haul, loadAll,
-  map, economy, play,          // pure pieces, exposed for the console and tests
+  map, economy, play, planRun,          // pure pieces, exposed for the console and tests
   bridgeReady,
   /* The portal tile's badge. Cheap and synchronous — it is called on every
      hub repaint, so it must never fetch. */

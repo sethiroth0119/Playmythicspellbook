@@ -13,15 +13,17 @@
    it mirrors OPS_ECON.transport on purpose.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-export const DEFAULT_ECON = { fareBase: 240, farePerKm: 14, farePerUnit: 2.5, wagePct: 35, carPenaltyPct: 6, railPenaltyPct: 3, maxPenaltyPct: 80 };
+export const DEFAULT_ECON = { fareBase: 240, farePerKm: 14, farePerUnit: 2.5, wagePct: 35, carPenaltyPct: 6, railPenaltyPct: 3, maxPenaltyPct: 80,
+  insurePct: 12, guardFee: 350, tollPct: 3, upgradeBase: 4000, bonusMinCargo: 0.9, cargoRisk: { standard: 1, fragile: 1.5, flammable: 1.8, heavy: 1.2 } };
 
 export function econOf(raw) { return Object.assign({}, DEFAULT_ECON, raw && typeof raw === 'object' ? raw : {}); }
 
 /** The MINIMUM fare for a job: flat call-out + distance + load. A shipper may
     offer more (a tip pulls drivers to an unpopular route), never less. */
-export function minFare(econ, km, qty) {
+export function minFare(econ, km, qty, resource) {
   const e = econOf(econ);
-  return Math.max(1, Math.round((Number(e.fareBase) || 0) + (Number(e.farePerKm) || 0) * (Number(km) || 0) + (Number(e.farePerUnit) || 0) * (Number(qty) || 0)));
+  const base = (Number(e.fareBase) || 0) + (Number(e.farePerKm) || 0) * (Number(km) || 0) + (Number(e.farePerUnit) || 0) * (Number(qty) || 0);
+  return Math.max(1, Math.round(base * (resource ? cargoRisk(econ, resource) : 1)));
 }
 
 /** Company terms as stored in haul_companies, seeded from econ for a new one. */
@@ -119,3 +121,51 @@ export function verdict(currentPct, worthPct) {
   if (d < 0) return { delta: d, verdict: 'under', label: 'Underpaid by ' + (-d) + ' pts — raise or lose them', color: '#ffd166' };
   return { delta: d, verdict: 'over', label: 'Overpaid by ' + d + ' pts', color: '#ff8aa0' };
 }
+
+/* ── CARGO CLASSES ───────────────────────────────────────────────────────────
+   What you carry changes how you drive. Gameplay multipliers live here; the
+   FARE multiplier per class comes from econ.cargoRisk so Pricing Admin can
+   retune what risky freight pays. */
+export const CARGO_CLASSES = {
+  standard:  { id: 'standard',  label: '',            accel: 1,    brake: 1,    speed: 1,    carMul: 1,   railMul: 1,   fire: false },
+  fragile:   { id: 'fragile',   label: '· fragile',   accel: 1,    brake: 1,    speed: 1,    carMul: 1.2, railMul: 1.7, fire: false },
+  flammable: { id: 'flammable', label: '· flammable', accel: 1,    brake: 1,    speed: 1,    carMul: 1.6, railMul: 1,   fire: true },
+  heavy:     { id: 'heavy',     label: '· heavy',     accel: 0.78, brake: 0.85, speed: 0.92, carMul: 0.85, railMul: 0.85, fire: false },
+};
+const CLASS_OF = { fuel: 'flammable', gas: 'flammable', medicine: 'fragile', energyDrink: 'fragile', water: 'fragile', dna: 'fragile', memoryShards: 'fragile', corruptedEssence: 'fragile', metal: 'heavy', stone: 'heavy', wood: 'heavy' };
+export function cargoClass(resource) { return CLASS_OF[String(resource || '')] || 'standard'; }
+export function cargoRisk(econ, resource) { const e = econOf(econ); const r = (e.cargoRisk && e.cargoRisk[cargoClass(resource)]); return Number(r) > 0 ? Number(r) : 1; }
+
+/* ── RIG UPGRADES ─────────────────────────────────────────────────────────────
+   Per driver, three lines, three levels each. Prices scale from econ.upgradeBase. */
+export const UPGRADES = [
+  { id: 'engine', name: 'Engine',        icon: '⚙️', desc: '+7% acceleration and top speed per level' },
+  { id: 'brakes', name: 'Brakes',        icon: '🛑', desc: '+14% braking per level' },
+  { id: 'bed',    name: 'Reinforced bed', icon: '🧱', desc: '−12% cargo damage per level' },
+];
+export const UPGRADE_MAX = 3;
+export function upgradePrice(econ, id, nextLevel) { const e = econOf(econ); return Math.round((Number(e.upgradeBase) || 4000) * nextLevel * (id === 'bed' ? 1.25 : 1)); }
+export function upgradeEffects(levels) {
+  const L = levels || {}; const g = (k) => Math.max(0, Math.min(UPGRADE_MAX, L[k] | 0));
+  return { accel: 1 + 0.07 * g('engine'), speed: 1 + 0.07 * g('engine'), brake: 1 + 0.14 * g('brakes'), bed: 1 - 0.12 * g('bed') };
+}
+
+/* ── WEATHER ─────────────────────────────────────────────────────────────────
+   Keyed to the destination's region and a seeded roll, so a route has weather
+   you can expect (coastal sectors rain more) without being identical every time
+   the map is redrawn. */
+export function weatherFor(city, rnd) {
+  const region = String((city && city.region) || '').toLowerCase();
+  const roll = rnd ? rnd() : Math.random();
+  const wet = /tide|coast|marsh|water|glas/.test(region) ? 0.45 : 0.22;
+  if (roll < wet) return { id: 'rain', icon: '🌧', label: 'Rain — less grip', grip: 0.78, skyH: 0.6, skyS: 0.2, skyL: 0.22, fogNear: 60, fogFar: 380, light: 0.7, rain: true, night: false };
+  if (roll < wet + 0.25) return { id: 'night', icon: '🌙', label: 'Night — short sight', grip: 1, skyH: 0.66, skyS: 0.4, skyL: 0.08, fogNear: 50, fogFar: 300, light: 0.45, rain: false, night: true };
+  return { id: 'clear', icon: '🌤', label: 'Clear', grip: 1, skyH: 0.62, skyS: 0.38, skyL: 0.30, fogNear: 140, fogFar: 560, light: 1, rain: false, night: false };
+}
+
+/* ── THE EXTRAS A SHIPPER CAN BUY, AND WHAT THEY COST ────────────────────── */
+export function insurancePremium(econ, fare) { return Math.max(1, Math.round((Number(fare) || 0) * (Number(econOf(econ).insurePct) || 12) / 100)); }
+export function guardFee(econ) { return Math.max(1, Math.round(Number(econOf(econ).guardFee) || 350)); }
+export function tollPct(econ) { return Number(econOf(econ).tollPct) || 3; }
+/** The on-time bonus is earned by arriving within par with ≥ 90% cargo. */
+export function bonusEarned(out, econ) { const minCargo = Number(econOf(econ).bonusMinCargo) || 0.9; return !!(out && out.completed && out.timeS <= out.parS && out.cargoPct >= minCargo); }

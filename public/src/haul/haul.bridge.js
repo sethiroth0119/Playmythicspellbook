@@ -36,6 +36,7 @@ const NULL_BRIDGE = {
   transportOp: async () => null,
   corpTreasuryRefresh: async () => 0,
   corpTreasury: () => 0,
+  nodeOwnersRefresh: async () => {},
   toast: (m) => { try { console.log('[haul]', m); } catch (e) {} },
   confirm: async () => false,
   saveProfile: () => {},

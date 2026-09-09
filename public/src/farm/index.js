@@ -4,29 +4,28 @@
    A 3D animal-farm simulation: build pens and stations with Cinder +
    resources, buy stock, keep the troughs full, collect eggs / milk / wool /
    feathers / manure from living animals, slaughter grown stock for meat and
-   hide, and refine at the Tannery (leather), Spinning Shed (cloth) and Farm
-   Kitchen (food). NEW feature, so it lives OUTSIDE index.html (CLAUDE.md).
+   hide, refine at the Tannery / Spinning Shed / Kitchen — and now keep it
+   alive: every animal has health, weight, age and a name; guards defend
+   against raids and predators; seasons, weather, the town's demand, crates
+   for the Exchange, hired Farmers, and the Athena Editor for the look.
+   NEW feature, so it lives OUTSIDE index.html (CLAUDE.md).
 
    🔴 THE GLOBALS TRAP. `Profile`, `getRes`, `addRes`, `spendGems`, `RESOURCES`
    are top-level `const` / function declarations in index.html — global
    LEXICAL bindings, NOT properties of `window`. This module reads NOTHING by
-   itself: index.html hands over window.MythicFarmBridge (defined next to
-   MythicCityBridge), and without it the module registers, stays inert and
-   warns once. Same seam, same reason, as /src/city and /src/community.
+   itself: index.html hands over window.MythicFarmBridge, and without it the
+   module registers, stays inert and warns once. window.MythicTerroir is the
+   one exception, and only because terroir.js is itself a module that
+   publishes on window (module → window is the direction that works).
 
    ⚠ Everything is wrapped so a failure inside the farm can never take the
    game down. The farm is a feature; the game is the product.
-
-   Lifecycle: index.html's renderFarm() writes the shell into #app and calls
-   MythicFarm.mount(rootEl). The scene watches its own canvas and disposes
-   itself when render() replaces #app's contents, so leaving the screen by
-   ANY route (back button, admin route, App.screen set elsewhere) cleans up.
    ════════════════════════════════════════════════════════════════════════════ */
 
-import { FARM_ECON, FARM_ANIMALS, FARM_BUILDINGS, animalDef, buildingDef, buildingCostAt, auditCatalog } from './farm.data.js';
+import { FARM_ECON, FARM_ANIMALS, FARM_BUILDINGS, FARM_LOOKS, animalDef, buildingDef, buildingCostAt, auditCatalog } from './farm.data.js';
 import * as S from './farm.state.js';
 import { createScene } from './farm.scene.js';
-import { FARM_CSS, renderShell, renderLedger, renderHomestead, renderLivestock } from './farm.render.js';
+import { FARM_CSS, renderShell, renderLedger, renderHomestead, renderLivestock, renderJournal, renderAthena } from './farm.render.js';
 
 function makeHost() {
   const B = (typeof window !== 'undefined') ? window.MythicFarmBridge : null;
@@ -48,15 +47,21 @@ function makeHost() {
     spendRes: (id, n) => { try { return !!B.spendRes(id, n); } catch (e) { return false; } },
     addRes: (id, n) => { try { B.addRes(id, n); } catch (e) {} },
     refundRes: (id, n) => { try { (B.refundRes || B.addRes)(id, n); } catch (e) {} },
-    /* 🔴 These two REPORT failure (return false) — the state module turns a
-       false into the exception its refund path is written for. Swallowing
-       here would charge the player for a building that never persisted. */
     state: () => { try { return B.farmState(); } catch (e) { return {}; } },
     setState: (s) => { try { return B.setFarmState(s) !== false; } catch (e) { return false; } },
     save: () => { try { return B.save() !== false; } catch (e) { return false; } },
     toast: (m, ms) => { try { B.toast(m, ms); } catch (e) {} },
     confirm: (m) => { try { return Promise.resolve(B.confirm(m)); } catch (e) { return Promise.resolve(false); } },
     back: () => { try { B.back(); } catch (e) {} },
+    // 👷 Reconstruction workforce, 🏴 rival camps, 🗺 terroir — all absent-tolerant.
+    farmers: () => { try { return B.farmers ? (B.farmers() | 0) : 0; } catch (e) { return 0; } },
+    rivals: () => { try { return B.rivals ? (B.rivals() || []) : []; } catch (e) { return []; } },
+    terroirTier: (resId) => {
+      try {
+        const T = window.MythicTerroir; if (!T || typeof T.terroir !== 'function') return null;
+        const t = T.terroir(); return (t && t.tiers && t.tiers[resId]) || null;
+      } catch (e) { return null; }
+    },
     collectCdMs: (B.collectCdMs | 0) || 6 * 3600000,
     accrualCapH: (B.accrualCapH | 0) || 36,
     isAdmin: () => { try { return !!(B.isAdmin && B.isAdmin()); } catch (e) { return false; } },
@@ -74,9 +79,10 @@ function host() {
 }
 
 const fmtGot = (h, got) => Object.keys(got || {}).map(k => { const m = h.resMeta(k); return `${m.icon} ${got[k]} ${m.name}`; }).join(', ');
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 /* ── Mount ─────────────────────────────────────────────────────────────────── */
-let _mounted = null;   // { root, scene, tab, focus, tick }
+let _mounted = null;
 
 function ensureCss() {
   if (document.getElementById('farm-css')) return;
@@ -92,7 +98,7 @@ function mount(rootEl) {
   if (missing.length) { try { console.warn('[farm] ledger is missing ids the farm pays out: ' + missing.join(', ')); } catch (e) {} }
 
   rootEl.innerHTML = renderShell();
-  const m = _mounted = { root: rootEl, scene: null, tab: 'homestead', focus: null, tick: 0, busy: false };
+  const m = _mounted = { root: rootEl, scene: null, tab: 'homestead', focus: null, tick: 0, busy: false, ui: { cut: 'balanced', renaming: null }, bannerShown: false };
   const stage = rootEl.querySelector('[data-farm="stage"]');
 
   const paint = () => {
@@ -100,15 +106,36 @@ function mount(rootEl) {
     try {
       const s = S.ensureState(h);
       const view = S.summary(h, s);
-      const led = rootEl.querySelector('[data-farm="ledger"]'); if (led) led.innerHTML = renderLedger(h);
+      const led = rootEl.querySelector('[data-farm="ledger"]'); if (led) led.innerHTML = renderLedger(h, view);
+      const title = rootEl.querySelector('[data-farm="title"]'); if (title) title.textContent = '🐄 ' + (view.look.name || 'Homestead Farm');
       const panel = rootEl.querySelector('[data-farm="panel"]');
-      if (panel) panel.innerHTML = m.tab === 'livestock' ? renderLivestock(h, s, view, m.focus) : renderHomestead(h, s, view, m.focus);
+      if (panel) {
+        panel.innerHTML = m.tab === 'livestock' ? renderLivestock(h, s, view, m.focus, m.ui)
+          : m.tab === 'journal' ? renderJournal(h, s, view)
+          : m.tab === 'athena' ? renderAthena(h, s, view)
+          : renderHomestead(h, s, view, m.focus);
+        if (m.ui.renaming) {
+          const row = panel.querySelector(`.farm-beast[data-aid="${m.ui.renaming}"] .nm`);
+          const a = S.animalById(s, m.ui.renaming);
+          if (row && a) row.innerHTML = `<input class="farm-input" data-frename="${a.id}" maxlength="24" value="${esc(a.name)}" style="width:130px"><button class="farm-btn tiny primary" data-fact="rename-save" data-id="${a.id}">Save</button><button class="farm-btn tiny" data-fact="rename-cancel">✕</button>`;
+          const inp = row && row.querySelector('input'); if (inp) { setTimeout(() => { try { inp.focus(); inp.select(); } catch (e) {} }, 0); }
+        }
+      }
       rootEl.querySelectorAll('.farm-tab').forEach(t => t.classList.toggle('is-active', t.getAttribute('data-id') === m.tab));
       if (m.scene) m.scene.update(view);
+      if (!m.bannerShown && view.recentEvents.length && stage) {
+        m.bannerShown = true;
+        const ev = view.recentEvents[0];
+        const b = document.createElement('div'); b.className = 'farm-banner'; b.textContent = `${ev.icon} While you were away: ${ev.text}`; stage.appendChild(b);
+        setTimeout(() => { try { b.remove(); } catch (e) {} }, 12000);
+      }
       if (m.focus) { const el = panel && panel.querySelector(`[data-fid="${m.focus}"]`); if (el && m.scrollTo) { try { el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) {} m.scrollTo = false; } }
     } catch (e) { try { console.warn('[farm] paint failed:', e); } catch (x) {} }
   };
   m.paint = paint;
+
+  // 👷 Farmers tend the troughs as you walk in.
+  try { const s = S.ensureState(h); const r = S.tend(h, s); if (r.ok && r.moved) h.toast(`👷 Your Farmers topped up the troughs with ${r.moved} feed.`, 3000); } catch (e) {}
 
   createScene(stage, {
     onSelect: (kind, id) => {
@@ -124,13 +151,46 @@ function mount(rootEl) {
     paint();
   }).catch(() => {});
 
-  // Refresh the numbers every 20s while open (feed drains, cooldowns tick).
-  m.tick = setInterval(() => { if (!rootEl.isConnected || _mounted !== m) { unmount(m); return; } paint(); }, 20000);
+  /* ⏱ Periodic refresh (feed drains, cooldowns tick). Skipped while the player
+     is typing — the e2e caught a half-typed homestead name being wiped by a
+     repaint that landed between keystrokes. */
+  m.tick = setInterval(() => {
+    if (!rootEl.isConnected || _mounted !== m) { unmount(m); return; }
+    const ae = document.activeElement;
+    if (m.ui.renaming || (ae && rootEl.contains(ae) && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName))) return;
+    paint();
+  }, 20000);
 
   rootEl.addEventListener('click', onClick);
-  m.onClick = onClick;
+  rootEl.addEventListener('change', onChange);
+  rootEl.addEventListener('keydown', onKey);
+  m.onClick = onClick; m.onChange = onChange; m.onKey = onKey;
   paint();
   return true;
+
+  function onChange(e) {
+    const t = e.target;
+    if (!t || _mounted !== m) return;
+    if (t.getAttribute('data-fsel') === 'cut') { m.ui.cut = t.value; paint(); return; }
+    const roof = t.getAttribute('data-froof');
+    if (roof) { const s = S.ensureState(h); const r = S.setLook(h, s, { roofs: { [roof]: t.value } }); if (!r.ok) h.toast('Could not save the roof colour.', 2500); paint(); }
+  }
+  function onKey(e) {
+    if (_mounted !== m) return;
+    const t = e.target;
+    if (e.key === 'Enter' && t && t.getAttribute('data-frename')) { e.preventDefault(); doRename(t.getAttribute('data-frename'), t.value); }
+    if (e.key === 'Enter' && t && t.getAttribute('data-fname')) { e.preventDefault(); doName(t.value); }
+    if (e.key === 'Escape' && m.ui.renaming) { m.ui.renaming = null; paint(); }
+  }
+  function doRename(id, value) {
+    const s = S.ensureState(h); const r = S.rename(h, s, id | 0, value);
+    m.ui.renaming = null;
+    h.toast(r.ok ? `🏷 Renamed to ${r.name}.` : `Rename: ${r.why}`, 2500); paint();
+  }
+  function doName(value) {
+    const s = S.ensureState(h); const r = S.setLook(h, s, { name: String(value || '').replace(/[<>]/g, '').trim() });
+    h.toast(r.ok ? '🏷 Homestead renamed.' : 'Could not save the name.', 2500); paint();
+  }
 
   async function onClick(e) {
     const t = e.target.closest && e.target.closest('[data-fact]');
@@ -143,7 +203,7 @@ function mount(rootEl) {
       let r;
       switch (act) {
         case 'back': h.back(); return;
-        case 'tab': m.tab = id; m.focus = null; break;
+        case 'tab': m.tab = id; m.focus = null; m.ui.renaming = null; break;
         case 'build': {
           const def = buildingDef(id); if (!def) break;
           r = S.build(h, s, id);
@@ -151,23 +211,15 @@ function mount(rootEl) {
           else h.toast(`Cannot build: ${why(h, r)}`, 3600);
           break;
         }
-        case 'upgrade': {
-          const def = buildingDef(id); if (!def) break;
-          r = S.upgrade(h, s, id);
-          h.toast(r.ok ? `⬆ ${def.name} is now level ${r.level}.` : `Cannot upgrade: ${why(h, r)}`, 3200);
-          break;
-        }
+        case 'upgrade': { const def = buildingDef(id); if (!def) break; r = S.upgrade(h, s, id); h.toast(r.ok ? `⬆ ${def.name} is now level ${r.level}.` : `Cannot upgrade: ${why(h, r)}`, 3200); break; }
+        case 'repair': { const def = buildingDef(id); if (!def) break; r = S.repair(h, s, id); h.toast(r.ok ? `🔨 ${def.name} repaired.` : `Repair: ${why(h, r)}`, 3200); break; }
         case 'buy': {
           const a = animalDef(id); if (!a) break;
           r = S.buyAnimal(h, s, id, n);
-          h.toast(r.ok ? `${a.emoji} Bought ${r.bought} ${r.bought === 1 ? a.name : a.plural}. Keep the trough full — young stock only grows while fed.` : `Cannot buy: ${why(h, r)}`, 4000);
+          h.toast(r.ok ? `${a.emoji} ${r.bought === 1 ? r.names[0] + ' the ' + a.name.toLowerCase() + ' joins the farm.' : 'Bought ' + r.bought + ' ' + a.plural.toLowerCase() + '.'} Keep the trough full — stock only grows while fed.` : `Cannot buy: ${why(h, r)}`, 4000);
           break;
         }
-        case 'feed': {
-          r = S.fillTrough(h, s, id, 1e9);
-          h.toast(r.ok ? `🌾 Added ${r.added} Animal Feed to the trough.` : `Trough: ${why(h, r)}`, 3000);
-          break;
-        }
+        case 'feed': { r = S.fillTrough(h, s, id, 1e9); h.toast(r.ok ? `🌾 Added ${r.added} Animal Feed to the trough.` : `Trough: ${why(h, r)}`, 3000); break; }
         case 'collect': {
           r = S.collect(h, s, id);
           if (r.ok) h.toast(`🧺 Collected ${fmtGot(h, r.got)}.${r.clipped ? ' Stash full — the rest waits in the pen.' : ''}`, 4200);
@@ -177,18 +229,38 @@ function mount(rootEl) {
         }
         case 'slaughter': {
           const a = animalDef(id); if (!a) break;
-          if (n > 1) { const ok = await h.confirm(`Send ${n} grown ${a.plural.toLowerCase()} to the block? This cannot be undone.`); if (!ok) break; }
-          r = S.slaughter(h, s, id, n);
-          if (r.ok) h.toast(`🔪 ${r.taken} ${r.taken === 1 ? a.name : a.plural} slaughtered → ${fmtGot(h, r.got)}.${r.clipped ? ' ⚠ Stash full — part of the yield was lost.' : ''}`, 5000);
-          else h.toast(`Butcher: ${why(h, r)}`, 3200);
+          if (n > 1) { const ok = await h.confirm(`Send ${n} grown ${a.plural.toLowerCase()} to the block (${FARM_ECON.cuts[m.ui.cut].label.toLowerCase()})? This cannot be undone.`); if (!ok) break; }
+          r = S.slaughter(h, s, { sp: id, n }, m.ui.cut);
+          h.toast(r.ok ? `🔪 ${r.taken} ${r.taken === 1 ? a.name : a.plural} → ${fmtGot(h, r.got)}.${r.stories.length ? ' ' + r.stories.join(' ') : ''}${r.clipped ? ' ⚠ Stash full — part of the yield was lost.' : ''}` : `Butcher: ${why(h, r)}`, 5000);
           break;
         }
-        case 'craft': {
-          const rk = t.getAttribute('data-recipe');
-          r = S.craft(h, s, id, rk, n);
-          h.toast(r.ok ? `⚙ ${r.batches}× → ${fmtGot(h, r.got)}.${r.clipped ? ' ⚠ Stash full — output was clipped.' : ''}` : `Cannot craft: ${why(h, r)}`, 3600);
+        case 'slaughter-one': {
+          const a = S.animalById(s, id | 0); if (!a) break;
+          const d = animalDef(a.sp);
+          const prize = S.prizeIds(s).has(a.id);
+          const ok = await h.confirm(`Send ${a.name} the ${d.name.toLowerCase()}${prize ? ' — your PRIZE beast —' : ''} to the block (${FARM_ECON.cuts[m.ui.cut].label.toLowerCase()})?`);
+          if (!ok) break;
+          r = S.slaughter(h, s, { ids: [a.id] }, m.ui.cut);
+          h.toast(r.ok ? `🔪 ${a.name} → ${fmtGot(h, r.got)}.${r.stories.length ? ' ' + r.stories.join(' ') : ''}` : `Butcher: ${why(h, r)}`, 5000);
           break;
         }
+        case 'treat': { const a = S.animalById(s, id | 0); if (!a) break; r = S.treat(h, s, a.id); h.toast(r.ok ? `💊 ${a.name} is at ${Math.round(r.health)} health.` : `Treat: ${why(h, r)}`, 2800); break; }
+        case 'crate': {
+          const a = S.animalById(s, id | 0); if (!a) break;
+          const ok = await h.confirm(`Crate ${a.name} for the Exchange? You get 1 Livestock crate; the animal leaves the farm.`); if (!ok) break;
+          r = S.crate(h, s, a.id); h.toast(r.ok ? `📦 ${a.name} crated. Sell the crate on the Resource Exchange.` : `Crate: ${why(h, r)}`, 3600); break;
+        }
+        case 'uncrate': { const a = animalDef(id); if (!a) break; r = S.uncrate(h, s, id); h.toast(r.ok ? `📦 ${r.name} the ${a.name.toLowerCase()} came out of the crate, half grown.` : `Uncrate: ${why(h, r)}`, 3600); break; }
+        case 'craft': { const rk = t.getAttribute('data-recipe'); r = S.craft(h, s, id, rk, n); h.toast(r.ok ? `⚙ ${r.batches}× → ${fmtGot(h, r.got)}.${r.clipped ? ' ⚠ Stash full — output was clipped.' : ''}` : `Cannot craft: ${why(h, r)}`, 3600); break; }
+        case 'deliver': { r = S.deliverDemand(h, s); h.toast(r.ok ? `🚚 Delivered. The town paid ${fmtGot(h, r.got)}. ${r.left} left today.` : `Town: ${why(h, r)}`, 3600); break; }
+        case 'rename': m.ui.renaming = id | 0; break;
+        case 'rename-save': { const inp = rootEl.querySelector(`[data-frename="${id}"]`); doRename(id, inp ? inp.value : ''); return; }
+        case 'rename-cancel': m.ui.renaming = null; break;
+        case 'look-ground': S.setLook(h, s, { ground: id }); break;
+        case 'look-sky': S.setLook(h, s, { sky: id }); break;
+        case 'look-decor': S.setLook(h, s, { decor: { [id]: !s.look.decor[id] } }); break;
+        case 'look-roof-reset': S.setLook(h, s, { roofs: { [id]: null } }); break;
+        case 'look-name': { const inp = rootEl.querySelector('[data-fname]'); doName(inp ? inp.value : ''); return; }
         default: return;
       }
     } catch (err) { try { console.warn('[farm] action failed:', err); } catch (x) {} }
@@ -208,24 +280,34 @@ function unmount(which) {
   if (_mounted === m) _mounted = null;
   try { clearInterval(m.tick); } catch (e) {}
   try { if (m.scene) m.scene.destroy(); } catch (e) {}
-  try { if (m.onClick) m.root.removeEventListener('click', m.onClick); } catch (e) {}
+  try { if (m.onClick) m.root.removeEventListener('click', m.onClick); if (m.onChange) m.root.removeEventListener('change', m.onChange); if (m.onKey) m.root.removeEventListener('keydown', m.onKey); } catch (e) {}
 }
 
+const withHost = (fn) => { const h = host(); return h ? fn(h, S.ensureState(h)) : { ok: false, why: 'no bridge' }; };
 const api = {
-  FARM_ECON, FARM_ANIMALS, FARM_BUILDINGS, animalDef, buildingDef, buildingCostAt, auditCatalog,
+  FARM_ECON, FARM_ANIMALS, FARM_BUILDINGS, FARM_LOOKS, animalDef, buildingDef, buildingCostAt, auditCatalog,
   ready: () => !!makeHost(),
   mount, unmount,
   refresh: () => { try { if (_mounted && _mounted.paint) _mounted.paint(); } catch (e) {} },
   state: () => { const h = host(); return h ? S.ensureState(h) : { buildings: {}, animals: [] }; },
   summary: () => { const h = host(); return h ? S.summary(h, S.ensureState(h)) : null; },
-  // Exposed for the harness and for any future caller (all bound to the live bridge).
-  build: (id) => { const h = host(); return h ? S.build(h, S.ensureState(h), id) : { ok: false, why: 'no bridge' }; },
-  upgrade: (id) => { const h = host(); return h ? S.upgrade(h, S.ensureState(h), id) : { ok: false, why: 'no bridge' }; },
-  buyAnimal: (sp, n) => { const h = host(); return h ? S.buyAnimal(h, S.ensureState(h), sp, n) : { ok: false, why: 'no bridge' }; },
-  fillTrough: (id, n) => { const h = host(); return h ? S.fillTrough(h, S.ensureState(h), id, n) : { ok: false, why: 'no bridge' }; },
-  collect: (id) => { const h = host(); return h ? S.collect(h, S.ensureState(h), id) : { ok: false, why: 'no bridge' }; },
-  slaughter: (sp, n) => { const h = host(); return h ? S.slaughter(h, S.ensureState(h), sp, n) : { ok: false, why: 'no bridge' }; },
-  craft: (id, rk, n) => { const h = host(); return h ? S.craft(h, S.ensureState(h), id, rk, n) : { ok: false, why: 'no bridge' }; },
+  build: (id) => withHost((h, s) => S.build(h, s, id)),
+  upgrade: (id) => withHost((h, s) => S.upgrade(h, s, id)),
+  repair: (id) => withHost((h, s) => S.repair(h, s, id)),
+  buyAnimal: (sp, n) => withHost((h, s) => S.buyAnimal(h, s, sp, n)),
+  fillTrough: (id, n) => withHost((h, s) => S.fillTrough(h, s, id, n)),
+  collect: (id) => withHost((h, s) => S.collect(h, s, id)),
+  slaughter: (sel, cut) => withHost((h, s) => S.slaughter(h, s, typeof sel === 'string' ? { sp: sel, n: 1 } : sel, cut)),
+  craft: (id, rk, n) => withHost((h, s) => S.craft(h, s, id, rk, n)),
+  treat: (id) => withHost((h, s) => S.treat(h, s, id)),
+  rename: (id, nm) => withHost((h, s) => S.rename(h, s, id, nm)),
+  crate: (id) => withHost((h, s) => S.crate(h, s, id)),
+  uncrate: (sp) => withHost((h, s) => S.uncrate(h, s, sp)),
+  deliverDemand: () => withHost((h, s) => S.deliverDemand(h, s)),
+  setLook: (patch) => withHost((h, s) => S.setLook(h, s, patch)),
+  tend: () => withHost((h, s) => S.tend(h, s)),
+  /* 🏆 For a future corp / community contest: lifetime harvest numbers. */
+  harvestScore: () => { try { const s = api.state(); return { meat: s.stats.meat | 0, slaughtered: s.stats.slaughtered | 0, births: s.stats.births | 0, raidsRepelled: s.stats.raidsRepelled | 0 }; } catch (e) { return null; } },
   _state: S,
 };
 

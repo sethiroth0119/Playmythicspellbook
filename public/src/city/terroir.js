@@ -70,7 +70,7 @@ const FALLBACK_IDS = [
   // 🐄 Homestead Farm (src/farm) — nine more, promoted with their producer.
   // Same rule: the live bridge list wins; this only keeps the no-host bag the
   // right length so profileFor() does not degrade to all-COMMON.
-  'animalFeed', 'eggs', 'feathers', 'rawMilk', 'meat', 'wool', 'hide', 'leather', 'fertilizer',
+  'animalFeed', 'eggs', 'feathers', 'rawMilk', 'meat', 'wool', 'hide', 'leather', 'fertilizer', 'livestock',
 ];
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -129,8 +129,9 @@ export const TERROIR_ECON = {
          SCARCE slot costs the player nothing today; the slots exist to keep
          the bag the right length, and the pressure is left on the original
          chains where it applies.
-     ⚠ MUST SUM TO resourceIds().length (23). */
-  slots: { RICH: 4, COMMON: 11, SCARCE: 6, BARREN: 2 },
+     +livestock (farm round 2, crates) went to COMMON: 24.
+     ⚠ MUST SUM TO resourceIds().length (24). */
+  slots: { RICH: 4, COMMON: 12, SCARCE: 6, BARREN: 2 },
 
   /* 🌱 The node's own resource seam is forced RICH. The war map already tells
      the player "this node produces METAL"; terroir makes that claim mean

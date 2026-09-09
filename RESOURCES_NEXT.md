@@ -173,3 +173,10 @@ with `inputs` filled). Producers: Feed Mill, living stock, the Butcher's Block, 
 All five sites were touched: `RESOURCES`, cost renderers (free), producer (the farm),
 terroir (`slots` re-derived to 23, `FALLBACK_IDS` synced), node-city `RES_META` (free via
 the chain). `chain.js` is now `?v=v120x0chain3` in both files.
+
+### Round 2 (v120x1): `livestock` promoted — the count is **24**
+A crated grown animal is one `livestock` unit; it trades on the Exchange and uncrates at any farm
+for a species-price discount. Terroir `slots` re-derived to 24 (COMMON 11 → 12). `chain.js` is
+`?v=v120x1chain4` in both files. The farm's living layer (health / weight / age / names, guards,
+raids and events, seasons and weather, town demand, the Athena Editor) is all inside `/src/farm`;
+`node tools/farm_harness.mjs` covers it.

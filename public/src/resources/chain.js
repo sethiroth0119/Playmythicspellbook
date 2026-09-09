@@ -81,7 +81,7 @@ export const RESOURCE_CHAIN = [
   { id: 'herbs',                   name: 'Herbs',                       icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 0, inputs: [] },
   { id: 'seeds',                   name: 'Seeds',                       icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 0, existing: true, inputs: [] },
   { id: 'animalFeed',              name: 'Animal Feed',                 icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 1, core: true, inputs: ['food', 'water'] },
-  { id: 'livestock',               name: 'Livestock',                   icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 1, core: true, inputs: [] },
+  { id: 'livestock',               name: 'Livestock',                   icon: '🐄',  color: '#c9b8a0', cat: 'agriculture',  tier: 1, core: true, inputs: ['animalFeed'] },   // 🐄 promoted: a crated grown animal (src/farm)
   { id: 'poultry',                 name: 'Poultry',                     icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 1, inputs: [] },
   { id: 'eggs',                    name: 'Eggs',                        icon: '🥚',  color: '#f2e8d5', cat: 'agriculture',  tier: 1, core: true, inputs: ['animalFeed'] },
   { id: 'rawMilk',                 name: 'Raw Milk',                    icon: '🥛',  color: '#f4f1ea', cat: 'agriculture',  tier: 1, core: true, inputs: ['animalFeed'] },

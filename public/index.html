@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120x0';
+  window.BUILD_VERSION = 'v120x1';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -39308,8 +39308,9 @@ const RESOURCES = [
      leather. Every other site (RESOURCE_IDS, the market guard, the cost
      renderers, node-city RES_META via the chain, MythicCityBridge.resources →
      terroir) follows from this list.
-     ⚠ THE COUNT IS NOW 23. terroir.js `slots` was re-derived to sum to 23 —
-       a mismatch there silently disables terroir (console.warn only). */
+     ⚠ THE COUNT WAS 23 after this block; `livestock` below makes it 24.
+       terroir.js `slots` sums to 24 — a mismatch there silently disables
+       terroir (console.warn only). */
   { id: 'animalFeed',       name: 'Animal Feed',      icon: '🌾', color: '#d9c46a' },
   { id: 'eggs',             name: 'Eggs',             icon: '🥚', color: '#f2e8d5' },
   { id: 'feathers',         name: 'Feathers',         icon: '🪶', color: '#e8d8b0' },
@@ -39319,6 +39320,11 @@ const RESOURCES = [
   { id: 'hide',             name: 'Hide',             icon: '🟫', color: '#a0704a' },
   { id: 'leather',          name: 'Leather',          icon: '🧥', color: '#b08050' },
   { id: 'fertilizer',       name: 'Fertilizer',       icon: '💩', color: '#8a6a3a' },
+  /* 📦 Livestock crate (farm round 2). A grown animal crated at the farm is one
+     unit; it trades on the Exchange like any resource and uncrates at any farm
+     for a species-price discount. The chain catalogue already named it.
+     ⚠ THE COUNT IS NOW 24. terroir.js `slots` sums to 24. */
+  { id: 'livestock',        name: 'Livestock',        icon: '🐄', color: '#c9b8a0' },
 ];
 // 🍞 Consumable resources — keyed by resource id. `effect(amount)` mutates
 // Profile state. The inventory modal renders a USE button for any resource
@@ -207422,6 +207428,20 @@ window.MythicFarmBridge = {
   confirm: (m) => { try { return gcConfirm(m); } catch (e) { return Promise.resolve(false); } },
   back: () => { try { App.screen = 'camp'; render(); } catch (e) {} },
   isAdmin: () => { try { return !!(typeof isAdmin === 'function' && isAdmin()); } catch (e) { return false; } },
+  /* 👷 Hired Farmers (Reconstruction workforce) tend the troughs and add a
+     small yield bonus. Read live, never cached — hiring happens elsewhere. */
+  farmers: () => { try { return (_campWorkforce().Farmer | 0); } catch (e) { return 0; } },
+  /* 🏴 Rival camp names for raid stories. Best-effort from the Territory Wars
+     registration cache (already fetched for the Civilization Network); an
+     empty list makes the farm fall back to bandit gangs. Never the player's
+     own camp — a raid by yourself is not a story. */
+  rivals: () => {
+    try {
+      const rows = (App._twAllCamps && Array.isArray(App._twAllCamps.rows)) ? App._twAllCamps.rows : [];
+      const me = (Profile.cloud && Profile.cloud.userId) || null;
+      return rows.filter(r => r && r.camp_name && r.user_id !== me).map(r => String(r.camp_name)).slice(0, 40);
+    } catch (e) { return []; }
+  },
   collectCdMs: (typeof OP_COLLECT_CD_MS !== 'undefined') ? OP_COLLECT_CD_MS : 6 * 3600000,
   accrualCapH: (typeof OP_ACCRUAL_CAP_H !== 'undefined') ? OP_ACCRUAL_CAP_H : 36,
 };
@@ -223213,7 +223233,7 @@ render();
        the safe state to ship a data layer in.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/resources/chain.js?v=v120x0chain3"></script>
+<script type="module" src="src/resources/chain.js?v=v120x1chain4"></script>
 <!-- 🐄 HOMESTEAD FARM — the 3D animal-farm simulation (/src/farm). Registers
      window.MythicFarm and is INERT until renderFarm() hands it #app. Reads
      nothing by itself: window.MythicFarmBridge (defined next to
@@ -223224,7 +223244,7 @@ render();
      ⚠ If this 404s nothing else changes — the Camp button shows a fallback.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/farm/index.js?v=v120x0farm1"></script>
+<script type="module" src="src/farm/index.js?v=v120x1farm2"></script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the

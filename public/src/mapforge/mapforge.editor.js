@@ -58,7 +58,7 @@ export async function openEditor(opts) {
     paintIdx: 0, propId: 'tree', propTint: null, assetId: null,
     scatter: { count: 6, jitterRot: true, jitterScale: 0.3, avoidWater: true },
     selectedId: null, gizmoMode: 'translate', snap: false, undo: [], redo: [], playing: false,
-    showGrid: false, showMarkers: true, showColliders: false,
+    showGrid: false, showMarkers: true, showColliders: false, showNav: false,
     hotkeys: (() => { try { return localStorage.getItem('mf_hotkeys') === 'default' ? 'default' : 'unreal'; } catch (e) { return 'unreal'; } })(),
     rmb: false, gizmoSpace: 'world', snapSize: 1,
     folderId: null,     // the content folder new objects land in (null = root)
@@ -126,6 +126,15 @@ export async function openEditor(opts) {
   // the trigger volume of the selected actor, drawn as a ring on the ground (blueprints section below); declared here because loadDoc runs first
   const trigRing = new THREE.Mesh(new THREE.RingGeometry(0.96, 1, 48), new THREE.MeshBasicMaterial({ color: 0xffb347, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false })); trigRing.rotation.x = -Math.PI / 2; trigRing.visible = false; trigRing.renderOrder = 18; scene.add(trigRing);
   let bpGraph = null, bpFor = null;   // the blueprint graph editor instance and the object it shows
+  let navMesh = null, navVer = -1;    // the navmesh overlay (Terrain tab → View → Navmesh)
+  function drawNav() {
+    if (navMesh && (!S.showNav || S.playing)) { scene.remove(navMesh); navMesh.geometry.dispose(); navMesh.material.dispose(); navMesh = null; navVer = -1; }
+    if (!S.showNav || S.playing || !world) return;
+    const nav = world.nav; if (!nav.baked) nav.bake();
+    if (navMesh && navVer === nav.version) return;
+    if (navMesh) { scene.remove(navMesh); navMesh.geometry.dispose(); navMesh.material.dispose(); }
+    navMesh = nav.debugMesh(THREE); navVer = nav.version; scene.add(navMesh);
+  }
   function drawColliders() {
     const o = objById(S.selectedId), c = o && world.colliders.get(o.id);
     colSel.visible = !!c && !S.playing;
@@ -287,7 +296,7 @@ export async function openEditor(opts) {
     if (S.tool === 'scatter') { endObjectEdit(); return; }
     if (stroke.before) {
       pushUndo({ type: 'terrain', before: stroke.before, after: world.terrain.snapshot() });
-      stroke.before = null; regroundAll(); setDirty(true);
+      stroke.before = null; regroundAll(); setDirty(true); world.navInvalidate(); drawNav();
     }
   }
   const cv = renderer.domElement;
@@ -319,7 +328,7 @@ export async function openEditor(opts) {
     const after = { objects: clone(S.map.objects), assets: clone(S.map.assets), folders: clone(S.map.folders || []), prefabs: clone(S.map.prefabs || []) };
     if (JSON.stringify(after) !== JSON.stringify(stroke.objBefore)) { pushUndo({ type: 'objects', before: stroke.objBefore, after }); setDirty(true); }
     stroke.objBefore = null;
-    drawColliders(); renderOutliner();
+    drawColliders(); renderOutliner(); drawNav();
   }
 
   /* ═══ CONTENT FOLDERS ═══ — the World Outliner. Objects carry `f`; folders nest. */
@@ -527,7 +536,7 @@ export async function openEditor(opts) {
       <div class="mf-btns" style="margin:6px 0"><select id="mf-bp-addc"><option value="">＋ Add component…</option>${Object.keys(COMPONENTS).map(k => '<option value="' + k + '">' + COMPONENTS[k].icon + ' ' + esc(COMPONENTS[k].label) + '</option>').join('')}</select></div>
       ${bp ? `<div class="mf-sub">Variables</div>${vars}<div class="mf-btns" style="margin:4px 0"><input type="text" id="mf-bp-vname" placeholder="variable" maxlength="40"><button id="mf-bp-vadd">＋</button></div>` : ''}
       <div class="mf-btns" style="margin-top:6px"><button id="mf-bp-graph" class="${S.bpOpen ? 'on' : 'primary'}">⚡ ${bp ? 'Event graph' : 'Add blueprint'}</button>${bp ? '<button id="mf-bp-clear" class="danger" title="Remove the blueprint">✕</button>' : ''}</div>
-      <p class="mf-hint" style="margin:6px 0 0">Runs in Play (P) and in the game: Begin Play, Tick, the player entering a Trigger volume, pressing <b>E</b> inside it, a Physics body hitting something → move, rotate, spin, impulse, tint, animate, spawn, destroy, toast, variables, game actions.</p></div>`;
+      <p class="mf-hint" style="margin:6px 0 0">Runs in Play (P) and in the game: Begin Play, Tick, the player entering a Trigger volume, pressing <b>E</b> inside it, a Physics body hitting something, the player coming into view → move, rotate, spin, impulse, walk the navmesh (Move To / Chase / Patrol / Wander), tint, animate, spawn, destroy, toast, variables, game actions.</p></div>`;
   }
   function ensureBp(o) { if (!o.bp) { o.bp = newBlueprint(); } return o.bp; }
   function wireBpSection(box, o) {
@@ -583,6 +592,7 @@ export async function openEditor(opts) {
       if (k === 'target') ctl = `<input type="text" data-k="${k}" list="mf-bp-targets" value="${esc(n.props[k])}">`;
       else if (k === 'loop') ctl = `<select data-k="${k}">${LOOP_MODES.map(l => '<option value="' + l + '"' + (n.props[k] === l ? ' selected' : '') + '>' + l + '</option>').join('')}</select>`;
       else if (k === 'what') ctl = `<input type="text" data-k="${k}" list="mf-bp-spawnables" value="${esc(n.props[k])}">`;
+      else if (k === 'points') ctl = `<input type="text" data-k="${k}" placeholder="wp1, wp2  or  folder:Route" value="${esc(n.props[k])}" title="Waypoint names: ${esc(S.map.objects.filter(x => x.t === 'waypoint' && x.n).map(x => x.n).join(', ') || 'name some Waypoint markers first')}">`;
       else if (k === 'color') ctl = `<input type="color" data-k="${k}" value="${esc(n.props[k])}">`;
       else if (k === 'message' || k === 'value' || k === 'cond' || k === 'args') ctl = `<textarea data-k="${k}" rows="2">${esc(n.props[k])}</textarea>`;
       else ctl = `<input type="text" data-k="${k}" value="${esc(n.props[k])}">`;
@@ -892,14 +902,14 @@ export async function openEditor(opts) {
     world.setMarkersVisible(false); colSel.visible = false; colAll.visible = false;
     const sp = world.spawns()[0];
     player.start(sp ? null : { pos: new THREE.Vector3(controls.target.x, 0, controls.target.z), yaw: Math.atan2(camera.position.x - controls.target.x, camera.position.z - controls.target.z) + Math.PI });
-    trigRing.visible = false; S.bpOpen = false; renderBpPanel();
+    trigRing.visible = false; S.bpOpen = false; renderBpPanel(); drawNav();
     world.startPlay({ get pos() { return player.pos; }, setPos: (x, z) => { player.pos.x = x; player.pos.z = z; player.pos.y = world.heightAt(x, z); } });
     $('#mf-play').classList.add('on'); $('#mf-play').textContent = '■ Stop';
   }
   function stopPlay() {
     if (!S.playing) return;
     S.playing = false; canvasHost.classList.remove('play');
-    world.stopPlay(); $('#mf-prompt').hidden = true;
+    world.stopPlay(); $('#mf-prompt').hidden = true; drawNav();
     player.stop(); drawColliders(); renderStats(); renderOutliner();
     controls.enabled = true; camera.position.copy(play.savedCam); controls.target.copy(play.savedTarget); controls.update();
     world.setMarkersVisible(S.showMarkers);
@@ -1226,7 +1236,7 @@ export async function openEditor(opts) {
   function renderTerrainTab() {
     const t = S.map.terrain; $('#mf-t-n').value = t.n; $('#mf-t-cell').value = t.cell;
     $('#mf-t-size').textContent = (t.n * t.cell) + ' m × ' + (t.n * t.cell) + ' m';
-    $('#mf-t-grid').checked = S.showGrid; $('#mf-t-markers').checked = S.showMarkers;
+    $('#mf-t-grid').checked = S.showGrid; $('#mf-t-markers').checked = S.showMarkers; $('#mf-t-nav').checked = S.showNav;
   }
   function renderWaterTab() {
     const w = S.map.water; $('#mf-w-on').checked = w.on; $('#mf-w-level').value = w.level; $('#mf-w-level-v').textContent = w.level.toFixed(1) + 'm';
@@ -1310,6 +1320,7 @@ export async function openEditor(opts) {
   $('#mf-t-flat').onclick = () => { const before = world.terrain.snapshot(); world.terrain.generate({ type: 'flat' }); regroundAll(); pushUndo({ type: 'terrain', before, after: world.terrain.snapshot() }); setDirty(true); };
   $('#mf-t-grid').onchange = e => toggleGrid(e.target.checked);
   $('#mf-t-markers').onchange = e => { S.showMarkers = e.target.checked; world.setMarkersVisible(S.showMarkers); };
+  $('#mf-t-nav').onchange = e => { S.showNav = e.target.checked; world.navInvalidate(); drawNav(); if (S.showNav) toast('Navmesh: green cells are walkable for agents; red are too steep, under water or blocked.', 3600); };
   $('#mf-t-amp').oninput = e => { $('#mf-t-amp-v').textContent = (+e.target.value).toFixed(1) + 'm'; };
   $('#mf-t-scale').oninput = e => { $('#mf-t-scale-v').textContent = (+e.target.value).toFixed(2); };
 
@@ -1512,6 +1523,7 @@ const TEMPLATE = `
       <tr><td>Water</td><td>One global water level (Water tab). Sculpt below it to make lakes and rivers; Scatter skips underwater ground.</td></tr>
       <tr><td>Models</td><td>Drag a <kbd>.glb</kbd> onto the canvas, or Library → Models → Project / URL. Animated models: select the object and pick a clip, speed and loop in the inspector.</td></tr>
       <tr><td>Blueprints</td><td>Select an object → <b>⚡ Add blueprint</b>: components (Trigger volume, Point light, Rotating, Floating, Tag) and an <b>event graph</b> — Begin Play, On Tick, On Enter / Exit / Interact (E) → Move, Rotate, Scale, Spin, Set visible / tint, Play animation, Effect, Light, Spawn, Destroy, Teleport, Toast, Set variable, Branch, Delay, Call game action. Runs in Play and in the game; the map is untouched afterwards.</td></tr>
+      <tr><td>AI</td><td>Add a <b>Nav agent</b> component and use <b>Move To</b>, <b>Chase</b>, <b>Patrol</b> (waypoint names or <code>folder:Route</code>), <b>Wander</b>, <b>Stop moving</b>, <b>Look at</b>; event <b>On See</b> (range + field of view). Agents walk a navmesh baked from the terrain and colliders — Terrain tab → View → <b>Navmesh</b> shows it. Spawn a prefab whose blueprint chases the player and you have an enemy.</td></tr>
       <tr><td>Physics</td><td>Add a <b>Physics body</b> component (dynamic: mass and gravity; kinematic: moved by the graph, pushes things; box / sphere / cylinder). In Play the terrain, every solid collider and the player are part of the simulation — barrels fall, roll, get shoved. Graph: <b>Impulse</b>, <b>Set velocity</b>, <b>Set body kind</b>, event <b>On Hit</b> (<code>{hit.impact}</code>, <code>{hit.other}</code>). cannon-es, vendored at /vendor.</td></tr>
       <tr><td>Prefabs</td><td><kbd>Ctrl</kbd>+click several objects → <b>📦 Create prefab</b> (or 📦 on a folder). Place instances from Library → Prefabs. <b>✎ Edit prefab</b> unpacks one; <b>⤴ Apply</b> rewrites the prefab and every instance follows. 📚 keeps a prefab on this device for other maps.</td></tr>
       <tr><td>Folders</td><td>Scene tab: content folders hold what you place. Click a folder to target it, drag objects between folders, 👁 hide / 🔒 lock a whole folder. Games read them with <code>world.inFolder('name')</code>.</td></tr>
@@ -1550,6 +1562,7 @@ const TEMPLATE = `
     <div class="mf-sec"><h3>View</h3>
       <div class="mf-row"><label>Grid</label><input type="checkbox" id="mf-t-grid"></div>
       <div class="mf-row"><label>Markers</label><input type="checkbox" id="mf-t-markers" checked><span class="mf-hint" style="margin:0">spawns, zones, waypoints</span></div>
+      <div class="mf-row"><label>Navmesh</label><input type="checkbox" id="mf-t-nav"><span class="mf-hint" style="margin:0">where agents can walk (baked from terrain + colliders)</span></div>
     </div>
   </div>
   <div class="mf-tab" data-tab="water">

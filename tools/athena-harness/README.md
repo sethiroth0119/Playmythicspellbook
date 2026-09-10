@@ -37,6 +37,8 @@ node tools/athena-harness/pw-test6.mjs        # round 6: prefabs (create/place/e
                                               #   blueprints (components, graph, Play, engine, overlay)
 node tools/athena-harness/pw-test7.mjs        # round 7: physics — heightfield, static colliders, dynamic/kinematic
                                               #   bodies, Impulse / Set velocity / Set body kind, On Hit, player push, engine
+node tools/athena-harness/pw-test8.mjs        # round 8: navmesh bake, A* around walls, Move To / Patrol / Wander,
+                                              #   On See → Chase, spawned enemy prefab, navmesh overlay, engine
 ```
 
 Each prints ✔/✘ per step and the page's error list; screenshots land in

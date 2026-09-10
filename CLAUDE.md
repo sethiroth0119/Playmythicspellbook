@@ -127,4 +127,6 @@ therefore terminate.
   package.json, copied from `node_modules/cannon-es/dist/`) — the one approved runtime library
   besides three.js; never load it from a CDN. `mapforge.physics.js` simulates only while playing;
   a map with a Physics component starts its actors after the library loads (Begin Play impulses).
-- Docs: `docs/athena-engine.md`. Tests: `tools/athena-harness/` (`pw-test5.mjs` round 5, `pw-test6.mjs` round 6, `pw-test7.mjs` physics).
+- **Round 8 (AI):** `mapforge.nav.js` is a grid navmesh (bake from terrain + colliders, A*); agents
+  are actors with the `agent` component driven by Move To / Chase / Patrol / Wander nodes.
+- Docs: `docs/athena-engine.md`. Tests: `tools/athena-harness/` (`pw-test5.mjs` round 5, `pw-test6.mjs` round 6, `pw-test7.mjs` physics, `pw-test8.mjs` navigation).

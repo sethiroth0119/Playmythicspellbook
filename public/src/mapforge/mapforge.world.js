@@ -14,6 +14,7 @@ import { buildProp, PROP_BY_ID, collides } from './mapforge.props.js';
 import { createEmitter, createWeather, windVector, EMITTERS } from './mapforge.vfx.js';
 import { createActors, hasBehaviour } from './mapforge.actors.js';
 import { ensureCannon, createPhysics } from './mapforge.physics.js';
+import { createNav } from './mapforge.nav.js';
 
 export function buildWorld(THREE, map, opts) {
   opts = opts || {};
@@ -255,6 +256,7 @@ export function buildWorld(THREE, map, opts) {
   function objDoc(id) { return map.objects.find(o => o.id === id) || partDoc(id); }
   const rootOf = (id) => objects.get(id) || parts.get(id) || null;
   function updateCollider(id) {
+    if (nav && !actors.running) nav.invalidate();   // edit-time moves change walkability; agents moving in play do not (they avoid statics, not each other — a rebake per step would be 25k cells per frame)
     const root = rootOf(id), o = objDoc(id);
     if (!root || !o || !collides(o)) { colliders.delete(id); return null; }
     root.updateMatrixWorld(true);
@@ -265,24 +267,27 @@ export function buildWorld(THREE, map, opts) {
     colliders.set(id, c);
     return c;
   }
-  function updateAllColliders() { colliders.clear(); objects.forEach((r, id) => { if (r.userData.mfPrefab) return; updateCollider(id); }); parts.forEach((r, id) => updateCollider(id)); }
+  function updateAllColliders() { if (nav) nav.invalidate(); colliders.clear(); objects.forEach((r, id) => { if (r.userData.mfPrefab) return; updateCollider(id); }); parts.forEach((r, id) => updateCollider(id)); }
   function footprint(c, x, z, pad) {
     if (c.shape === 'cyl') { const dx = x - c.cx, dz = z - c.cz; const rr = c.r + pad; return dx * dx + dz * dz < rr * rr; }
     return x > c.minX - pad && x < c.maxX + pad && z > c.minZ - pad && z < c.maxZ + pad;
   }
   /* Ground under a point for something standing at `feet`: terrain, or the
      top of any collider it is on / can step onto. */
-  function groundAt(x, z, feet) {
+  /* `ignore`: an object id whose collider (and prefab parts, 'id:*') is skipped —
+     an agent must not stand on or be blocked by its own body. */
+  const owned = (c, ignore) => ignore && (c.id === ignore || c.id.indexOf(ignore + ':') === 0);
+  function groundAt(x, z, feet, ignore) {
     let g = terrain.heightAt(x, z);
     if (feet == null) return g;
-    colliders.forEach(c => { if (c.top > g && c.top <= feet + STEP && c.bottom <= feet + STEP && footprint(c, x, z, 0.1)) g = c.top; });
+    colliders.forEach(c => { if (owned(c, ignore)) return; if (c.top > g && c.top <= feet + STEP && c.bottom <= feet + STEP && footprint(c, x, z, 0.1)) g = c.top; });
     return g;
   }
   /* Slide a capsule-ish body (radius, height) from (x0,z0) toward (x1,z1);
      axis-separated so walls are slid along, not stuck to. */
-  function resolveMove(x0, z0, x1, z1, feet, height, radius) {
+  function resolveMove(x0, z0, x1, z1, feet, height, radius, ignore) {
     height = height || 1.7; radius = radius || 0.35;
-    const blocked = (x, z) => { let hit = false; colliders.forEach(c => { if (hit) return; if (c.bottom < feet + height && c.top > feet + STEP && footprint(c, x, z, radius)) hit = true; }); return hit; };
+    const blocked = (x, z) => { let hit = false; colliders.forEach(c => { if (hit || owned(c, ignore)) return; if (c.bottom < feet + height && c.top > feet + STEP && footprint(c, x, z, radius)) hit = true; }); return hit; };
     let nx = x1; if (blocked(nx, z0)) nx = x0;
     let nz = z1; if (blocked(nx, nz)) nz = z0;
     return { x: nx, z: nz, blocked: nx !== x1 || nz !== z1 };
@@ -359,6 +364,9 @@ export function buildWorld(THREE, map, opts) {
   /* physics: created on the first play of a map that has a Physics component,
      after cannon-es loads (async) — play starts at once, bodies join when ready */
   let physics = null, physicsWanted = 0;
+  /* navigation: baked lazily from terrain + colliders; invalidated when either changes */
+  let nav = null;
+  const navNeeded = () => map.objects.some(o => o.bp && (o.bp.comps.some(c => c.type === 'agent') || o.bp.graph.nodes.some(n => /^(moveto|chase|patrol|wander)$/.test(n.type))));
   const needsPhysics = () => map.objects.some(o => o.bp && o.bp.comps.some(c => c.type === 'physics'));
   /* Bodies must exist BEFORE Begin Play runs (an Impulse on Begin Play would
      otherwise hit thin air), so a map that needs physics starts its actors
@@ -395,8 +403,11 @@ export function buildWorld(THREE, map, opts) {
     interact() { interactFlag = true; },
     get playing() { return actors.running; },
     get physics() { return physics && physics.running ? physics : null; },
+    get nav() { if (!nav) nav = createNav(api, opts.nav); return nav; },
+    navBake() { return api.nav.bake(); },
+    navInvalidate() { if (nav) nav.invalidate(); },
     physicsReady: () => ensureCannon().then(() => true).catch(() => false),
-    startPlay(player) { if (player !== undefined) playerRef = player; if (needsPhysics()) startWithPhysics(); else actors.start(); },
+    startPlay(player) { if (player !== undefined) playerRef = player; if (navNeeded()) api.nav.bake(); if (needsPhysics()) startWithPhysics(); else actors.start(); },
     stopPlay() {
       physicsWanted++; if (physics) physics.stop();
       actors.stop();
@@ -437,7 +448,7 @@ export function buildWorld(THREE, map, opts) {
     setFxEnabled(v) { fxOn = !!v; objects.forEach((r, id) => { const o = objDoc(id); if (o) attachFx(o, r); }); setWeather(map.env); },
     /* After the grid is resized or regenerated: water covers the new size,
        shadows cover it, grounded objects land on the new surface. */
-    onTerrainRebuilt() { water.resize(terrain.size); applyEnv(map.env); },
+    onTerrainRebuilt() { water.resize(terrain.size); applyEnv(map.env); if (nav) nav.invalidate(); },
     /* Build ONE object's body the way the world would (prop clone or a .glb
        template clone) without adding it to this world — a host game uses
        this to draw a slot's replacement inside its own scene graph.

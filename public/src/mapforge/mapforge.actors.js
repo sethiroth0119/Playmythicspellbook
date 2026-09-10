@@ -31,6 +31,7 @@ export const COMPONENTS = {
   bob:     { label: 'Floating',       icon: '〰', fields: { amp: 0.3, speed: 1 },        help: 'Bobs up and down: amplitude in metres, cycles per second.' },
   tag:     { label: 'Tag',            icon: '🏷', fields: { v: '' },                     help: 'A label the game can query: W().actors.withTag("loot").' },
   physics: { label: 'Physics body',   icon: '🎳', fields: PHYSICS_FIELDS, enums: PHYSICS_ENUMS, help: 'Dynamic: mass, gravity, collides with everything (cannon-es). Kinematic: moved by the graph, pushes dynamic bodies. Shape fits the object\'s bounds.' },
+  agent:   { label: 'Nav agent',      icon: '🧭', fields: { speed: 2.5, turn: 8, stop: 0.8 }, help: 'Walks the navmesh: Move To, Chase, Patrol, Wander. speed m/s, turn = how fast it faces its heading, stop = arrival distance.' },
 };
 
 export const ACTOR_NODES = {
@@ -40,6 +41,7 @@ export const ACTOR_NODES = {
   ev_exit:     { cat: 'Events',  label: 'On Exit',         color: '#b8404a', outs: ['then'] },
   ev_interact: { cat: 'Events',  label: 'On Interact (E)', color: '#b8404a', outs: ['then'], props: { prompt: 'Press E' }, help: 'The player presses E inside the Trigger volume.' },
   ev_hit:      { cat: 'Events',  label: 'On Hit',          color: '#b8404a', outs: ['then'], props: { with: '', minImpact: 1 }, help: 'This Physics body collides. `with`: empty = anything, player, ground, an object name or a tag. minImpact filters soft touches (m/s).' },
+  ev_see:      { cat: 'Events',  label: 'On See',          color: '#b8404a', outs: ['then'], props: { target: 'player', range: 10, fov: 140 }, help: 'The target comes into view: within range and inside the field of view (degrees) in front of this actor. Fires once per sighting.' },
   toast:       { cat: 'Actions', label: 'Toast',           color: '#3a6ea8', ins: true, outs: ['then'], props: { message: 'Hello', ms: 3000 } },
   setvar:      { cat: 'Actions', label: 'Set variable',    color: '#3a6ea8', ins: true, outs: ['then'], props: { var: '', value: '' }, help: 'value is an expression: {$count} + 1' },
   branch:      { cat: 'Flow',    label: 'Branch',          color: '#8a8a8a', ins: true, outs: ['true', 'false'], props: { cond: '{$count} > 0' } },
@@ -60,6 +62,12 @@ export const ACTOR_NODES = {
   impulse:     { cat: 'Physics', label: 'Impulse',         color: '#c2451c', ins: true, outs: ['then'], props: { target: 'self', x: 0, y: 4, z: 6, local: 'true' }, help: 'A kick (N·s) on a Physics body; local = in the body\'s own frame (z forward).' },
   velocity:    { cat: 'Physics', label: 'Set velocity',    color: '#c2451c', ins: true, outs: ['then'], props: { target: 'self', x: 0, y: 0, z: 0 } },
   bodykind:    { cat: 'Physics', label: 'Set body kind',   color: '#c2451c', ins: true, outs: ['then'], props: { target: 'self', kind: 'dynamic' }, help: 'dynamic (falls), kinematic (graph-driven, pushes), static (frozen).' },
+  moveto:      { cat: 'AI',      label: 'Move To',         color: '#2f8f8f', ins: true, outs: ['then', 'arrived', 'failed'], props: { target: 'player', x: '', z: '' }, help: 'Walk the navmesh to a target (player / object name) or to x,z. then = at once; arrived / failed = later.' },
+  chase:       { cat: 'AI',      label: 'Chase',           color: '#2f8f8f', ins: true, outs: ['then', 'caught', 'lost'], props: { target: 'player', range: 12, reach: 1.5 }, help: 'Keep re-pathing toward the target while it is within range; caught when within reach, lost when it leaves range.' },
+  patrol:      { cat: 'AI',      label: 'Patrol',          color: '#2f8f8f', ins: true, outs: ['then', 'arrived'], props: { points: '', wait: 1, loop: 'true' }, help: 'Walk a list of waypoint names ("wp1, wp2") or every waypoint in a folder ("folder:Route"). arrived fires at each point.' },
+  wander:      { cat: 'AI',      label: 'Wander',          color: '#2f8f8f', ins: true, outs: ['then'], props: { radius: 6, wait: 2 }, help: 'Random walkable points around where it started.' },
+  stopmove:    { cat: 'AI',      label: 'Stop moving',     color: '#2f8f8f', ins: true, outs: ['then'], props: { target: 'self' } },
+  lookat:      { cat: 'AI',      label: 'Look at',         color: '#2f8f8f', ins: true, outs: ['then'], props: { target: 'player' } },
   call:        { cat: 'Actions', label: 'Call game action', color: '#3a6ea8', ins: true, outs: ['then'], props: { action: '', args: '' } },
   log:         { cat: 'Actions', label: 'Print',           color: '#3a6ea8', ins: true, outs: ['then'], props: { message: '' } },
 };
@@ -123,10 +131,11 @@ export function createActors(host) {
     const r = rootOf(actor.id); if (r) data.self = { x: r.position.x, y: r.position.y, z: r.position.z, name: actor.o.n || '' };
     if (host.player && r) data.dist = Math.hypot(host.player.pos.x - r.position.x, host.player.pos.z - r.position.z);
     if (actor.lastHit) data.hit = { other: actor.lastHit.other, impact: actor.lastHit.impact };
+    data.agent = { moving: !!actor.nav, mode: actor.nav ? actor.nav.mode : '' };
     return { data, vars: actor.vars };
   }
   function makeActor(o) {
-    const a = { id: o.id, o, vars: {}, inside: false, spin: null, bobT: Math.random() * 6, light: null };
+    const a = { id: o.id, o, vars: {}, inside: false, spin: null, bobT: Math.random() * 6, light: null, nav: null, seen: {}, home: null };
     Object.keys(o.bp.vars || {}).forEach(k => { a.vars[k] = { type: o.bp.vars[k].type, value: o.bp.vars[k].value }; });
     const sp = comp(o, 'spin'); if (sp) a.spin = sp.speed;
     const li = comp(o, 'light'); const root = rootOf(o.id);
@@ -168,6 +177,12 @@ export function createActors(host) {
         case 'impulse': { const ph = W().physics; const id = resolveTarget(actor, n.props.target); if (ph && id) { if (!ph.impulse(id, [N('x', 0), N('y', 0), N('z', 0)], truthy(P('local')))) toast('Impulse: "' + (n.props.target || 'self') + '" has no Physics body.', 2600); } cont('then'); break; }
         case 'velocity': { const ph = W().physics; const id = resolveTarget(actor, n.props.target); if (ph && id) ph.setVelocity(id, [N('x', 0), N('y', 0), N('z', 0)]); cont('then'); break; }
         case 'bodykind': { const ph = W().physics; const id = resolveTarget(actor, n.props.target); if (ph && id) ph.setKind(id, String(P('kind') || 'dynamic')); cont('then'); break; }
+        case 'moveto': { const tgt = navTarget(actor, n); if (!tgt) { cont('then'); cont('failed'); break; } navGo(actor, tgt, { mode: 'moveto', onArrive: () => cont('arrived'), onFail: () => cont('failed') }); cont('then'); break; }
+        case 'chase': { navGo(actor, null, { mode: 'chase', target: String(n.props.target || 'player'), range: N('range', 12), reach: N('reach', 1.5), onCaught: () => cont('caught'), onLost: () => cont('lost') }); cont('then'); break; }
+        case 'patrol': { const pts = patrolPoints(actor, String(n.props.points || '')); if (!pts.length) { toast('Patrol: no waypoints found for "' + n.props.points + '".', 2600); cont('then'); break; } navGo(actor, null, { mode: 'patrol', points: pts, i: 0, wait: N('wait', 1), loop: truthy(P('loop')), onArrive: () => cont('arrived') }); cont('then'); break; }
+        case 'wander': { navGo(actor, null, { mode: 'wander', radius: N('radius', 6), wait: N('wait', 2) }); cont('then'); break; }
+        case 'stopmove': { const id = resolveTarget(actor, n.props.target); const a = id && actors.get(id); if (a) a.nav = null; cont('then'); break; }
+        case 'lookat': { const r = rootOf(actor.id); const p = pointOf(actor, String(n.props.target || 'player')); if (r && p) r.rotation.y = Math.atan2(p[0] - r.position.x, p[1] - r.position.z); cont('then'); break; }
         case 'call': { const name = String(n.props.action || '').trim(); let fn = host.actions && host.actions[name]; if (!fn) { try { const b = window.MythicBridge; fn = b && b.ui && b.ui.actions && b.ui.actions[name]; } catch (e) {} } const args = String(n.props.args || '').split(',').map(s => s.trim()).filter(Boolean).map(a => evalExpr(a, scopeFor(actor))); if (typeof fn === 'function') { try { fn.apply(null, args); } catch (e) {} } else toast('Actor: no game action named "' + name + '".', 2600); cont('then'); break; }
         case 'log': try { console.log('[actor ' + (actor.o.n || actor.id) + ']', P('message')); } catch (e) {} cont('then'); break;
         default: cont('then');
@@ -175,6 +190,82 @@ export function createActors(host) {
     } catch (e) { try { console.warn('[actors] node failed', n.type, e); } catch (x) {} }
   }
   const extraSpin = new Map();
+  /* ── navigation (mapforge.nav.js through the world) ── */
+  const navOf = () => { const w = W(); return w && w.nav ? w.nav : null; };
+  function pointOf(actor, name) {
+    name = String(name || '').trim();
+    if (name === 'player') return host.player ? [host.player.pos.x, host.player.pos.z] : null;
+    const id = resolveTarget(actor, name); const r = id && rootOf(id); if (r) return [r.position.x, r.position.z];
+    const m = /^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/.exec(name); if (m) return [+m[1], +m[2]];
+    return null;
+  }
+  function navTarget(actor, n) {
+    const xs = String(n.props.x == null ? '' : interpolate(n.props.x, scopeFor(actor))).trim(), zs = String(n.props.z == null ? '' : interpolate(n.props.z, scopeFor(actor))).trim();
+    if (xs !== '' && zs !== '' && Number.isFinite(+xs) && Number.isFinite(+zs)) return [+xs, +zs];
+    return pointOf(actor, interpolate(n.props.target, scopeFor(actor)));
+  }
+  function patrolPoints(actor, spec) {
+    const w = W(); if (!w) return [];
+    if (/^folder:/i.test(spec)) { const name = spec.slice(7).trim(); return w.inFolder(name).filter(o => o.t === 'waypoint' || o.n).map(o => [o.p[0], o.p[2]]); }
+    return spec.split(',').map(s => s.trim()).filter(Boolean).map(nm => pointOf(actor, nm)).filter(Boolean);
+  }
+  function navGo(actor, point, st) {
+    const nav = navOf(); if (!nav) { if (st.onFail) st.onFail(); return; }
+    const r = rootOf(actor.id); if (!r) return;
+    const c = comp(actor.o, 'agent') || { speed: 2.5, turn: 8, stop: 0.8 };
+    actor.nav = Object.assign({ path: null, idx: 0, speed: c.speed, turn: c.turn, stopDist: c.stop, repath: 0, waitT: 0, goal: point, stuck: 0 }, st);
+    if (!actor.home) actor.home = [r.position.x, r.position.z];
+    if (point) { actor.nav.path = nav.findPath([r.position.x, r.position.z], point); actor.nav.idx = 1; if (!actor.nav.path) { actor.nav = null; if (st.onFail) st.onFail(); } }
+  }
+  /* one agent, one frame: pick / refresh the goal per mode, then walk the path */
+  function navStep(actor, dt) {
+    const nv = actor.nav; const r = rootOf(actor.id); const nav = navOf(); if (!nv || !r || !nav) return;
+    const here = [r.position.x, r.position.z];
+    if (nv.waitT > 0) { nv.waitT -= dt; return; }
+    if (nv.mode === 'chase') {
+      const p = pointOf(actor, nv.target); if (!p) { actor.nav = null; if (nv.onLost) nv.onLost(); return; }
+      const d = Math.hypot(p[0] - here[0], p[1] - here[1]);
+      if (d > nv.range) { actor.nav = null; if (nv.onLost) nv.onLost(); return; }
+      if (d <= nv.reach) { actor.nav = null; if (nv.onCaught) nv.onCaught(); return; }
+      nv.repath -= dt; if (nv.repath <= 0 || !nv.path) { nv.repath = 0.4; nv.path = nav.findPath(here, p); nv.idx = 1; nv.goal = p; if (!nv.path) { actor.nav = null; if (nv.onLost) nv.onLost(); return; } }
+    } else if (nv.mode === 'patrol' && !nv.path) {
+      if (nv.i >= nv.points.length) { if (!nv.loop) { actor.nav = null; return; } nv.i = 0; }
+      nv.goal = nv.points[nv.i]; nv.path = nav.findPath(here, nv.goal); nv.idx = 1; if (!nv.path) { nv.i++; nv.waitT = 0.2; return; }
+    } else if (nv.mode === 'wander' && !nv.path) {
+      for (let tries = 0; tries < 6 && !nv.path; tries++) { const a = Math.random() * Math.PI * 2, d = Math.random() * nv.radius; const g = nav.nearestWalkable(actor.home[0] + Math.cos(a) * d, actor.home[1] + Math.sin(a) * d, 3); if (g) { nv.goal = g; nv.path = nav.findPath(here, g); nv.idx = 1; } }
+      if (!nv.path) { nv.waitT = 1; return; }
+    }
+    if (!nv.path) return;
+    const wp = nv.path[Math.min(nv.idx, nv.path.length - 1)];
+    const dx = wp.x - here[0], dz = wp.z - here[1], d = Math.hypot(dx, dz);
+    const last = nv.idx >= nv.path.length - 1;
+    if (d < (last ? nv.stopDist : 0.25)) {
+      if (!last) { nv.idx++; return; }
+      nv.path = null;
+      if (nv.mode === 'moveto') { actor.nav = null; if (nv.onArrive) nv.onArrive(); }
+      else if (nv.mode === 'patrol') { nv.i++; nv.waitT = nv.wait; if (nv.onArrive) nv.onArrive(); }
+      else if (nv.mode === 'wander') nv.waitT = nv.wait;
+      return;
+    }
+    const stepLen = Math.min(d, nv.speed * dt);
+    let nx = here[0] + dx / d * stepLen, nz = here[1] + dz / d * stepLen;
+    const w = W(); if (w.resolveMove) { const rr = w.resolveMove(here[0], here[1], nx, nz, r.position.y, 1.7, 0.3, actor.id); nx = rr.x; nz = rr.z; if (rr.blocked) { nv.stuck += dt; if (nv.stuck > 1.5) { nv.stuck = 0; nv.path = nav.findPath(here, nv.goal || [wp.x, wp.z]); nv.idx = 1; if (!nv.path) { const cb = nv.onFail; actor.nav = null; if (cb) cb(); return; } } } else nv.stuck = 0; }
+    r.position.x = nx; r.position.z = nz;
+    r.position.y = w.groundAt ? w.groundAt(nx, nz, r.position.y, actor.id) : w.heightAt(nx, nz);
+    if (w.updateCollider) w.updateCollider(actor.id);   // its collider travels with it (the player and other agents are blocked by it)
+    const want = Math.atan2(dx, dz); let diff = want - r.rotation.y; while (diff > Math.PI) diff -= Math.PI * 2; while (diff < -Math.PI) diff += Math.PI * 2;
+    r.rotation.y += diff * Math.min(1, nv.turn * dt);
+  }
+  function seeStep(actor) {
+    const nodes = actor.o.bp.graph.nodes.filter(n => n.type === 'ev_see'); if (!nodes.length) return;
+    const r = rootOf(actor.id); if (!r) return;
+    nodes.forEach(n => {
+      const p = pointOf(actor, n.props.target || 'player'); const key = n.id;
+      let vis = false;
+      if (p) { const dx = p[0] - r.position.x, dz = p[1] - r.position.z, d = Math.hypot(dx, dz); if (d <= num(n.props.range, 10)) { const ang = Math.atan2(dx, dz); let diff = ang - r.rotation.y; while (diff > Math.PI) diff -= Math.PI * 2; while (diff < -Math.PI) diff += Math.PI * 2; vis = Math.abs(diff) <= (num(n.props.fov, 140) / 2) * Math.PI / 180; } }
+      if (vis && !actor.seen[key]) { actor.seen[key] = true; run(actor, n, 0); } else if (!vis) actor.seen[key] = false;
+    });
+  }
   const ease = (k) => k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
 
   const api = {
@@ -215,6 +306,8 @@ export function createActors(host) {
       actors.forEach(a => {
         const r = rootOf(a.id); if (!r) return;
         if (a.spin != null) r.rotation.y += a.spin * Math.PI / 180 * dt;
+        if (a.nav) navStep(a, dt);
+        seeStep(a);
         const bob = comp(a.o, 'bob'); if (bob) { a.bobT += dt * bob.speed * Math.PI * 2; const base = snapshot.get(a.id); if (base) r.position.y = base.p.y + Math.sin(a.bobT) * bob.amp; }
         const tr = comp(a.o, 'trigger');
         if (tr && host.player) {

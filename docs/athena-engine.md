@@ -32,6 +32,7 @@ fixed battle grid. The two coexist.
 | `mapforge.games.js` | the **game scenes** registry: a mini-game registers an adapter so its map opens in the editor |
 | `mapforge.overlay.js` | the game side of game scenes: `AthenaEngine.overlay.forGame(id)` → the live map as an overlay (slot transforms, replacements, extra objects) |
 | `mapforge.actors.js` | **actor blueprints**: components + an event graph on any object, and the runtime that executes them (`world.actors`) |
+| `mapforge.nav.js` | **navigation**: a grid navmesh baked from terrain + colliders, A* with string-pulling (`world.nav`) |
 | `mapforge.physics.js` | **rigid-body physics** (cannon-es, vendored at `/vendor/cannon-es.js`): terrain heightfield, static colliders, dynamic/kinematic bodies, the player as a kinematic sphere |
 | `../widgets/graph-editor.js` | the shared Blueprint-style node editor (used by the actor graph panel) |
 
@@ -447,3 +448,46 @@ removes the bodies; edit mode never simulates. Runtime: `world.physics`
 
 Limits: no joints or constraints yet, no water buoyancy for bodies, shapes
 are primitives (no convex hulls from .glb geometry), one gravity per world.
+
+## Navigation and AI (round 8)
+
+A **navmesh** is a grid (1 m cells) over the terrain square, baked from the
+heightfield and the solid colliders: a cell is walkable unless it is too
+steep (rise over one cell > 0.9), under water (deeper than a wade) or under
+a collider taller than a step, padded by the agent radius. Terrain tab →
+View → **Navmesh** draws it (green walkable, red blocked). It bakes when
+play starts if any actor needs it, and re-bakes after terrain or collider
+edits. Paths are A* over the grid with line-of-sight string-pulling, so
+agents cut corners instead of zig-zagging.
+
+**Nav agent** component: `speed` (m/s), `turn` (how fast it faces its
+heading), `stop` (arrival distance). Nodes (all take `player`, an object
+name, `self.part`, or `x, z` where a point is expected):
+
+- **Move To** — walk to a target or to `x`/`z`; `arrived` / `failed` fire later.
+- **Chase** — re-path toward the target every 0.4 s while it is within
+  `range`; `caught` inside `reach`, `lost` when it leaves range.
+- **Patrol** — `points`: waypoint names (`wp1, wp2`) or `folder:Route`
+  (every waypoint in that folder, in order); `wait` seconds at each;
+  `arrived` fires at each point; `loop`.
+- **Wander** — random walkable points within `radius` of where it started.
+- **Stop moving**, **Look at**.
+- Event **On See** — the target is within `range` and inside `fov` degrees
+  in front of the actor; fires once per sighting (re-arms when it leaves).
+
+Bindings: `{dist}` (to the player), `{agent.moving}`, `{agent.mode}`.
+Agents move kinematically along the path, slide along colliders (the same
+`resolveMove` the player uses), re-path when stuck, and stand on the ground
+(colliders included). A kinematic Physics body on an agent pushes dynamic
+bodies out of its way.
+
+Enemy recipe: a prefab whose part carries a Nav agent and `On See → Chase
+→ (caught) Toast`, and a spawner actor with `Begin Play → Spawn Enemy`.
+
+Runtime: `world.nav` (`bake`, `walkable`, `nearestWalkable`, `findPath`,
+`debugMesh`, `invalidate`), `world.navBake()`, `world.navInvalidate()`;
+`buildWorld(…, { nav: { cell, maxSlope, agentRadius, step } })`.
+
+Limits: agents avoid static colliders, not each other; no crowd
+separation, no flying; the grid is one level (no bridges over walkable
+ground — a bridge deck counts as ground where it is low enough to step onto).

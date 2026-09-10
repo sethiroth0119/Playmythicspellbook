@@ -1,3 +1,12 @@
+# Athena Engine — handoff (2026-09-10, round 5: folders · game scenes · widgets)
+
+> Round 5 adds content folders, game scenes (the Homestead Farm opens and is
+> edited inside Athena; slots move/replace the farm's buildings) and Athena
+> Widgets (`/src/widgets`, a Blueprint-style UI designer). Migration for the
+> widgets: `sql/040_ui_widgets.sql`. Bumped to v120x6. Test: `pw-test5.mjs`
+> on `harness2.html` (farm + Athena + widgets together). Details in
+> docs/athena-engine.md; the sections below are the 09-03 plan, still valid.
+
 # Athena Engine — handoff (2026-09-03)
 
 Everything below is verified against the branch, not from memory.

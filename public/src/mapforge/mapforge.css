@@ -133,3 +133,34 @@
 #mf-root .mf-gizmo select,#mf-root .mf-top select{width:auto}
 .mf-fx{border:1px solid rgba(255,179,71,.35);border-radius:7px;padding:8px 9px;margin:4px 0 8px}
 .mf-fx .st{color:#ffb347;font-size:12px;flex:1}
+
+/* ── content folders (outliner) ── */
+.mf-top .gametag{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#ffd23f;border:1px solid rgba(255,210,63,.5);border-radius:10px;padding:2px 8px;white-space:nowrap}
+.mf-outliner{display:flex;flex-direction:column;gap:1px;max-height:60vh;overflow:auto;border:1px solid var(--mf-line);border-radius:7px;padding:4px;background:#0a0c12}
+.mf-ol-root,.mf-ol-f,.mf-ol-o{display:flex;align-items:center;gap:4px;padding:3px 5px;border-radius:5px;font-size:12px;min-width:0;border:1px solid transparent}
+.mf-ol-f{padding-left:calc(5px + var(--d,0) * 12px)}
+.mf-ol-body{display:contents}
+.mf-ol-body .mf-ol-o{padding-left:calc(24px + var(--d,0) * 12px)}
+.mf-ol-loose .mf-ol-o{padding-left:14px}
+.mf-ol-root:hover,.mf-ol-f:hover{background:#12151f}
+.mf-ol-o{cursor:pointer;color:#cfc7ad}
+.mf-ol-o:hover{background:#171b27;color:#ffe9a8}
+.mf-ol-o.sel{background:rgba(212,175,55,.16);border-color:var(--mf-gold);color:#ffe9a8}
+.mf-ol-o.locked{opacity:.55}
+.mf-ol-f.hidden .lb,.mf-ol-f.hidden .ic{opacity:.45;text-decoration:line-through}
+.mf-ol-f.locked .lb{color:#8fd0ff}
+.mf-ol-f.active,.mf-ol-root.active{background:rgba(212,175,55,.1);border-color:rgba(212,175,55,.5)}
+.mf-ol-f.active .lb::after,.mf-ol-root.active .lb::after{content:" ◂ target";font-size:9.5px;letter-spacing:.08em;color:var(--mf-gold);text-transform:uppercase}
+.mf-ol-root.over,.mf-ol-f.over{outline:1px dashed var(--mf-gold2);background:rgba(212,175,55,.14)}
+.mf-ol-f .lb,.mf-ol-o .lb,.mf-ol-root .lb{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+.mf-ol-f .lb{font-weight:600;color:#e8e2d0}
+.mf-ol-f .n,.mf-ol-root .n{font-size:10.5px;color:var(--mf-dim);font-variant-numeric:tabular-nums}
+.mf-ol-f button,.mf-ol-root button{padding:0 3px;border:none;background:none;font-size:11px;line-height:18px;opacity:.55}
+.mf-ol-f:hover button{opacity:1}
+.mf-ol-f button.tw{width:14px;padding:0;opacity:.8}
+.mf-ol-f input.rn{flex:1;padding:1px 4px;font-size:12px}
+.mf-ol-o .tag{font-size:9px;letter-spacing:.06em;color:var(--mf-dim);border:1px solid var(--mf-line);border-radius:8px;padding:0 5px}
+.mf-ol-loose{margin-top:4px;border-top:1px dashed var(--mf-line);padding-top:4px}
+.mf-slot{border:1px solid rgba(255,210,63,.5);border-radius:7px;padding:8px 9px;margin:4px 0 8px;background:rgba(255,210,63,.05)}
+.mf-slot .st{color:#ffd23f;font-size:12px;flex:1}
+.mf-slot small{color:var(--mf-dim);font-size:10px}

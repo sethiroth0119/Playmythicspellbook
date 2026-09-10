@@ -15,6 +15,8 @@ import { createPlayer } from './mapforge.player.js';
 import { newMap, normalize, serialize, PAINT, ENV_PRESETS, MAP_VERSION } from './mapforge.format.js';
 import { PROP_CATALOG } from './mapforge.props.js';
 import * as api from './mapforge.api.js';
+import * as games from './mapforge.games.js';
+import * as overlay from './mapforge.overlay.js';
 
 const MythicMapForge = {
   version: MAP_VERSION,
@@ -27,7 +29,12 @@ const MythicMapForge = {
   engine: { mount: mountWorld, createPlayer },
   format: { newMap, normalize, serialize, PAINT, ENV_PRESETS, PROP_CATALOG },
   maps: { list: api.listMaps, load: api.loadMap, save: api.saveMap, remove: api.deleteMap, setLive: api.setLive, loadLive: api.loadLive },
+  /* game scenes: a mini-game registers an adapter, its map opens in the editor (open({ game })),
+     and the game reads the result back as an overlay — docs/athena-engine.md → Game scenes */
+  games: { register: games.register, get: games.get, list: games.list, onRegister: games.onRegister },
+  overlay: { forGame: overlay.forGame, liveMap: overlay.liveMap, invalidate: overlay.invalidate },
 };
+games.drainQueue();
 
 // Athena Engine is the product name; MythicMapForge stays as the API alias index.html already wires.
 try { window.AthenaEngine = MythicMapForge; window.MythicMapForge = MythicMapForge; } catch (e) {}
@@ -37,7 +44,7 @@ try { window.AthenaEngine = MythicMapForge; window.MythicMapForge = MythicMapFor
 try {
   const q = new URLSearchParams(location.search);
   if (q.get('mapforge') === '1') {
-    const go = () => setTimeout(() => MythicMapForge.open(q.get('map') ? { id: q.get('map'), source: q.get('src') || 'local' } : {}), 800);
+    const go = () => setTimeout(() => MythicMapForge.open(q.get('map') ? { id: q.get('map'), source: q.get('src') || 'local' } : q.get('game') ? { game: q.get('game') } : {}), 800);
     if (document.readyState === 'complete') go(); else window.addEventListener('load', go, { once: true });
   }
 } catch (e) {}

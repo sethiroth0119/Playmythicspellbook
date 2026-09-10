@@ -105,3 +105,18 @@ therefore terminate.
 - Deploy bumps three knobs together or the update check breaks: `public/version.txt`,
   `window.BUILD_VERSION`, `sw.js` `CACHE_VERSION`. Verify the EDGE with curl, never the
   deploy log, and poll — propagation across PoPs takes up to a couple of minutes.
+
+## ⚒ Athena Engine & 🧩 Athena Widgets (round 5 — 2026-09-10)
+- `/src/mapforge/` is Athena Engine (3D map creator + mini-game engine); `/src/widgets/` is
+  Athena Widgets (Blueprint-style UI designer). Both read the legacy app ONLY through
+  `window.MythicBridge`; widgets additionally read `MythicBridge.ui.data()` for bindings
+  and call `MythicBridge.ui.actions.*` — **add a field/action there**, never a global.
+- **Game scenes:** a mini-game that draws its own 3D scene registers an adapter
+  (`AthenaEngine.games.register`, see `farm.athena.js`) and reads the live map back as an
+  overlay (`AthenaEngine.overlay.forGame`). Slots (`objects[].k`) stand in for the game's
+  own assets. A live game scene is global — the "Open in Athena" button in a game is
+  **admin-only** by design.
+- **Widgets going live is admin-only** (trigger in `sql/040`). Slots are
+  `data-athena-slot="…"` elements; a screen registers data/actions for its slots with
+  `AthenaUI.slots.register(prefix, …)` and unregisters on unmount.
+- Docs: `docs/athena-engine.md`. Tests: `tools/athena-harness/` (`pw-test5.mjs` covers round 5).

@@ -19,6 +19,10 @@
                                           wolves, fox, hawk) — the replay of
                                           what happened while you were away
      • decor + palette + roofs           view.look (the Athena Editor)
+     • building placement / replacement, extra props, VFX, optional ground
+       and sky                          the live Athena Engine 'farm' map
+                                         (farm.athena.js) — admin-built,
+                                         global, absent → drawn as before
 
    ⚠ THE BROWSER PANE DOES NOT COMPOSITE (CLAUDE.md): requestAnimationFrame
      never fires there. The loop is RAF-driven; the interval only watches for
@@ -29,6 +33,7 @@
    ════════════════════════════════════════════════════════════════════════════ */
 
 import { FARM_ANIMALS, FARM_BUILDINGS, FARM_GRID, FARM_LOOKS, FARM_ECON, animalDef } from './farm.data.js';
+import { loadOverlay, watchAthena } from './farm.athena.js';
 
 const THREE_SRC = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
 
@@ -149,6 +154,28 @@ function build3D(THREE, container, opts) {
   const weatherG = new THREE.Group(); scene.add(weatherG);
   const spinners = [];   // windmill blades etc.
 
+  /* ⚒ The Athena overlay. Null until (and unless) a live 'farm' map loads;
+     every reader below falls back to the catalogue's own layout. */
+  let athena = null, athenaVer = 0, athenaUnwatch = null;
+  const yardFor = (def) => athena ? athena.yardOf(def) : yardOf(def);
+  const placeFor = (def) => athena ? athena.placement(def) : null;
+  const maxDist = () => (athena && athena.pieces && athena.pieces.ground) ? 70 : 34;
+  async function loadAthena(force) {
+    let ov = null;
+    try { ov = await loadOverlay(THREE, scene, { force }); } catch (e) { ov = null; }
+    if (!alive) { if (ov) ov.dispose(); return; }
+    if (athena) { try { scene.remove(athena.group); athena.dispose(); } catch (e) {} athena = null; }
+    athena = ov; athenaVer++;
+    if (ov) scene.add(ov.group);
+    ground.visible = !(ov && ov.pieces.ground);
+    // everything placed by the catalogue is rebuilt against the new placement
+    Object.keys(buildingNodes).forEach(id => { const cur = buildingNodes[id]; unpick(cur.group); buildings.remove(cur.group); if (cur.fence) yards.remove(cur.fence); const si = spinners.indexOf(cur.spin); if (si >= 0) spinners.splice(si, 1); delete buildingNodes[id]; });
+    Object.keys(animalNodes).forEach(id => { unpick(animalNodes[id].group); herd.remove(animalNodes[id].group); delete animalNodes[id]; });
+    lookKey = ''; wxKey = '';
+    if (view) update(view);
+    if (selected) select(selected);
+  }
+
   const labelSprite = (text, sub, color) => {
     const c = document.createElement('canvas'); c.width = 640; c.height = 160;
     const x = c.getContext('2d');
@@ -211,6 +238,18 @@ function build3D(THREE, container, opts) {
     }
     for (let i = 0; i < level - 1; i++) { const star = box(0.16, 0.16, 0.16, M(0xd4af37)); star.position.set(-w / 2 + 0.35 + i * 0.3, hgt + 0.05, d / 2 - 0.1); g.add(star); }
     const lab = labelSprite(def.emoji + ' ' + def.name, damaged ? 'Roof torn off — repair' : 'Level ' + level, damaged ? '#e0556a' : (roofHex || def.accent)); lab.position.y = hgt + 1.35; g.add(lab);
+    g.traverse(o => { if (o.isMesh) { o.userData.pick = { kind: 'building', id: def.id }; pickables.push(o); } });
+    return g;
+  };
+  /* A building the admin REPLACED in Athena: the prop / .glb they chose, the
+     farm's own label above it, and an invisible plate so a tap still opens
+     the building (a .glb arrives asynchronously — meshes added later would
+     not be in `pickables`). */
+  const makeReplaced = (def, level, roofHex, damaged, pl) => {
+    const g = new THREE.Group();
+    const body = athena ? athena.replacement(def) : null; if (body) g.add(body);
+    const plate = new THREE.Mesh(new THREE.BoxGeometry(def.plot.w, 1.6, def.plot.h), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false })); plate.position.y = 0.8; g.add(plate);
+    const lab = labelSprite(def.emoji + ' ' + def.name, damaged ? 'Roof torn off — repair' : 'Level ' + level, damaged ? '#e0556a' : (roofHex || def.accent)); lab.position.y = 2.2 * Math.max(0.5, pl.scale || 1) + 0.3; g.add(lab);
     g.traverse(o => { if (o.isMesh) { o.userData.pick = { kind: 'building', id: def.id }; pickables.push(o); } });
     return g;
   };
@@ -362,8 +401,8 @@ function build3D(THREE, container, opts) {
     }
     if (D.lanterns) {
       FARM_BUILDINGS.forEach(def => {
-        if (!def.yard) return;
-        [[def.yard.x, def.yard.y], [def.yard.x + def.yard.w, def.yard.y + def.yard.h]].forEach(([gx, gy], i) => {
+        if (!def.yard) return; const yd = yardFor(def);
+        [[yd.x, yd.y], [yd.x + yd.w, yd.y + yd.h]].forEach(([gx, gy], i) => {
           const p = tileToWorld(gx, gy);
           const pole = cyl(0.03, 0.04, 1.1, M(0x3a2f26), 6); pole.position.set(p.x, 0.55, p.z); decor.add(pole);
           const lamp = box(0.18, 0.18, 0.18, new THREE.MeshLambertMaterial({ color: 0xffe0a0, emissive: 0xffb040, emissiveIntensity: 1 })); lamp.position.set(p.x, 1.15, p.z); decor.add(lamp);
@@ -381,9 +420,8 @@ function build3D(THREE, container, opts) {
     let top = S.top, bottom = S.bottom, sunI = S.sun, hemiI = S.hemi, fogD = 60;
     if (wx.key === 'rain' || wx.key === 'storm' || wx.key === 'cloud') { top = blend(top, 0x3a4250, wx.key === 'cloud' ? 0.45 : 0.7); bottom = blend(bottom, 0x6a7280, wx.key === 'cloud' ? 0.4 : 0.65); sunI *= wx.key === 'cloud' ? 0.75 : 0.5; }
     if (wx.key === 'fog') { top = blend(top, 0xb8bcc4, 0.6); bottom = blend(bottom, 0xd0d4d8, 0.7); fogD = 24; }
-    scene.background = skyTex(top, bottom);
-    scene.fog = new THREE.Fog(bottom, wx.key === 'fog' ? 10 : 22, fogD);
-    sun.intensity = sunI; hemi.intensity = hemiI;
+    if (athena && athena.pieces && athena.pieces.sky) { sun.intensity = sunI; hemi.intensity = hemiI; }   // Athena owns the sky + fog
+    else { scene.background = skyTex(top, bottom); scene.fog = new THREE.Fog(bottom, wx.key === 'fog' ? 10 : 22, fogD); sun.intensity = sunI; hemi.intensity = hemiI; }
     if (wx.key === 'rain' || wx.key === 'storm') {
       const n = wx.key === 'storm' ? 900 : 500;
       const pos = new Float32Array(n * 3); rainVel = new Float32Array(n);
@@ -478,23 +516,27 @@ function build3D(THREE, container, opts) {
       const roof = look.roofs && look.roofs[def.id];
       const dmg = !!(row && row.damaged);
       const constructing = !!(row && row.constructing && row.readyAt > Date.now());
-      const key = lv + '|' + (roof || '') + '|' + dmg + '|' + constructing;
+      const key = lv + '|' + (roof || '') + '|' + dmg + '|' + constructing + '|' + athenaVer;
       const cur = buildingNodes[def.id];
       if (cur && cur.key === key) return;
       if (cur) { unpick(cur.group); buildings.remove(cur.group); if (cur.fence) yards.remove(cur.fence); const si = spinners.indexOf(cur.spin); if (si >= 0) spinners.splice(si, 1); }
-      const p = tileToWorld(def.plot.x + def.plot.w / 2, def.plot.y + def.plot.h / 2);
+      const pl = placeFor(def);
+      const p = pl ? { x: pl.x, z: pl.z } : tileToWorld(def.plot.x + def.plot.w / 2, def.plot.y + def.plot.h / 2);
       const before = spinners.length;
-      const g = !lv ? makeGhost(def) : constructing ? makeScaffold(def) : makeBuilding(def, lv, roof, dmg);
-      g.position.set(p.x, 0, p.z); buildings.add(g);
+      const g = !lv ? makeGhost(def) : constructing ? makeScaffold(def) : (pl && pl.replaced) ? makeReplaced(def, lv, roof, dmg, pl) : makeBuilding(def, lv, roof, dmg);
+      g.position.set(p.x, pl ? pl.y : 0, p.z);
+      if (pl) { g.rotation.y = pl.ry; if (!pl.replaced) g.scale.setScalar(pl.scale || 1); g.visible = !pl.hidden; }
+      buildings.add(g);
       let f = null;
-      if (lv && !constructing && def.yard) { f = fence(def.yard.x, def.yard.y, def.yard.x + def.yard.w, def.yard.y + def.yard.h, lv >= 3 ? 0x5a4a3a : 0x7a5a3a, lv >= 2); yards.add(f); }
+      const yd = yardFor(def);
+      if (lv && !constructing && def.yard && !(pl && pl.hidden)) { f = fence(yd.x, yd.y, yd.x + yd.w, yd.y + yd.h, lv >= 3 ? 0x5a4a3a : 0x7a5a3a, lv >= 2); yards.add(f); }
       buildingNodes[def.id] = { group: g, key, fence: f, spin: spinners.length > before ? spinners[spinners.length - 1] : null };
     });
     const live = new Set();
     v.animals.forEach(a => {
       live.add(a.id);
       const def = animalDef(a.sp); const penDef = FARM_BUILDINGS.find(b => b.id === def.pen);
-      const yard = yardOf(penDef);
+      const yard = yardFor(penDef);
       let n = animalNodes[a.id];
       const akey = (a.breed || '') ;
       if (n && n.akey !== akey) { unpick(n.group); herd.remove(n.group); delete animalNodes[a.id]; n = null; }
@@ -552,11 +594,11 @@ function build3D(THREE, container, opts) {
     dragging = false; cv.style.cursor = 'grab';
     if (moved < 6) { const p = pickAt(e.clientX, e.clientY); if (p) { select(p); try { opts.onSelect && opts.onSelect(p.kind, p.id); } catch (x) {} } }
   };
-  const onWheel = (e) => { e.preventDefault(); orbit.dist = Math.max(8, Math.min(34, orbit.dist + e.deltaY * 0.02)); placeCamera(); };
+  const onWheel = (e) => { e.preventDefault(); orbit.dist = Math.max(8, Math.min(maxDist(), orbit.dist + e.deltaY * 0.02)); placeCamera(); };
   const onTouch = (e) => {
     if (e.touches.length === 2) {
       const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
-      if (pinch) { orbit.dist = Math.max(8, Math.min(34, orbit.dist - (d - pinch) * 0.04)); placeCamera(); }
+      if (pinch) { orbit.dist = Math.max(8, Math.min(maxDist(), orbit.dist - (d - pinch) * 0.04)); placeCamera(); }
       pinch = d; e.preventDefault();
     } else pinch = 0;
   };
@@ -571,8 +613,8 @@ function build3D(THREE, container, opts) {
       selectRing.rotation.x = -Math.PI / 2; selectRing.position.y = 0.03; scene.add(selectRing);
     }
     if (p.kind === 'building') {
-      const def = FARM_BUILDINGS.find(b => b.id === p.id); const w = tileToWorld(def.plot.x + def.plot.w / 2, def.plot.y + def.plot.h / 2);
-      selectRing.position.set(w.x, 0.03, w.z); const r = Math.max(def.plot.w, def.plot.h) * 0.62; selectRing.scale.set(r, r, 1);
+      const def = FARM_BUILDINGS.find(b => b.id === p.id); const pl = placeFor(def); const w = pl ? { x: pl.x, z: pl.z } : tileToWorld(def.plot.x + def.plot.w / 2, def.plot.y + def.plot.h / 2);
+      selectRing.position.set(w.x, (pl ? pl.y : 0) + 0.03, w.z); const r = Math.max(def.plot.w, def.plot.h) * 0.62 * (pl && !pl.replaced ? (pl.scale || 1) : 1); selectRing.scale.set(r, r, 1);
       selectRing.visible = true;
     } else selectRing.visible = false;
   }
@@ -591,6 +633,7 @@ function build3D(THREE, container, opts) {
       n.group.position.y = walking ? Math.abs(Math.sin(n.w.phase)) * 0.03 : 0;
     });
     spinners.forEach(h => { h.rotation.z += dt * 1.1; });
+    if (athena) athena.update(dt, camera);
     Object.values(truckNodes).forEach(n => { n.g.position.y = Math.abs(Math.sin(t / 90)) * 0.02; });
     if (rain) {
       const pos = rain.geometry.attributes.position.array;
@@ -612,6 +655,7 @@ function build3D(THREE, container, opts) {
 
   function destroy() {
     if (!alive) return; alive = false;
+    try { if (athenaUnwatch) athenaUnwatch(); if (athena) athena.dispose(); } catch (e) {}
     try { cancelAnimationFrame(rafId); clearInterval(timerId); } catch (e) {}
     try { window.removeEventListener('resize', onResize); if (ro) ro.disconnect(); } catch (e) {}
     try { scene.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) { const ms = [].concat(o.material); ms.forEach(m => { if (m.map) m.map.dispose(); m.dispose(); }); } }); } catch (e) {}
@@ -619,7 +663,10 @@ function build3D(THREE, container, opts) {
     try { renderer.dispose(); renderer.forceContextLoss && renderer.forceContextLoss(); } catch (e) {}
     try { cv.remove(); } catch (e) {}
   }
-  return { update, destroy, mode: '3d', select };
+  // ⚒ Fetch the live Athena farm map (async, degrades to null) and follow the editor's saves.
+  loadAthena(false);
+  athenaUnwatch = watchAthena(() => loadAthena(true));
+  return { update, destroy, mode: '3d', select, get athena() { return athena; }, reloadAthena: () => loadAthena(true) };
 }
 
 /* ══════════════════════════ 2D fallback ══════════════════════════ */

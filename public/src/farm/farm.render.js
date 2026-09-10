@@ -38,6 +38,9 @@ export const FARM_CSS = `
 .farm-stage .farm-hint{position:absolute;left:10px;bottom:76px;font-size:.72rem;color:#c9c3b6;background:rgba(8,10,16,.55);padding:3px 8px;border-radius:5px;pointer-events:none}
 /* 🎮 CS2-style HUD: info buttons in the top-left corner of the scene. */
 .farm-hud{position:absolute;left:10px;top:10px;display:flex;flex-direction:column;gap:6px;z-index:3;align-items:flex-start}
+/* 🧩 Athena Widget slots — empty until a live widget targets them. */
+.farm-slot:empty{display:none}
+.farm-slot-hud{position:absolute;left:10px;top:120px;z-index:3;max-width:min(360px,40vw)}
 .farm-hudbtn{display:inline-flex;align-items:center;gap:8px;background:rgba(10,13,20,.82);border:1px solid rgba(255,255,255,.14);color:#e8e2d6;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:.8rem;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);text-align:left}
 .farm-hudbtn:hover{border-color:#d4af37aa;background:rgba(20,24,34,.92)}
 .farm-hudbtn.is-active{border-color:#d4af37;box-shadow:0 0 0 1px #d4af3755}
@@ -413,6 +416,10 @@ export function renderAthena(host, s, view) {
     <div class="farm-card" style="--accent:#7fb8ff"><h3>🌅 Sky</h3><div class="farm-swatches">${skies}</div><div class="farm-toastline">${esc(FARM_LOOKS.sky[L.sky].label)} · live weather still paints rain and storm over it</div></div>
     <div class="farm-card" style="--accent:#c08a4a"><h3>🌳 Decor</h3><div class="farm-row">${decor}</div></div>
     <div class="farm-card" style="--accent:#c25a3a"><h3>🏠 Roofs</h3>${roofs ? `<div class="farm-roofs">${roofs}</div><div class="farm-toastline">Pick a colour and it applies at once.</div>` : '<div class="farm-empty">Build something and its roof shows up here.</div>'}</div>
+    ${host.isAdmin() ? `<div class="farm-card" style="--accent:#d4af37"><h3>⚒ Athena Engine</h3>
+      <p>Open this homestead in the world editor: move the buildings, swap their models for props or .glb files, add props, effects and weather. What you <b>Set live</b> shows on every player's farm — this is the game's layout, not a personal look.</p>
+      <div class="farm-row"><button class="farm-btn primary" data-fact="athena-open">⚒ Open in Athena Engine</button></div>
+      <div class="farm-toastline">Also: the Pricing Admin panel → Open Athena Engine → Maps → Game scenes → Homestead Farm.</div></div>` : ''}
   </div>`;
 }
 
@@ -495,13 +502,17 @@ export function renderShell(sub) {
       <button class="farm-back" data-fact="back">← Camp</button>
       <div><h1 data-farm="title">🐄 Homestead Farm</h1><div class="farm-sub">${esc(sub || 'Raise stock, feed it, guard it, collect what it gives — and send it to the block when it is grown.')}</div></div>
       <div class="farm-ledger" data-farm="ledger"></div>
+      <div class="farm-slot" data-athena-slot="farm.top"></div>
     </div>
     <div class="farm-body">
       <div class="farm-stage" data-farm="stage"><div class="farm-hint">Drag to orbit · wheel / pinch to zoom · tap a building or animal</div></div>
       <div class="farm-hud" data-farm="hud"></div>
+      <div class="farm-slot farm-slot-hud" data-athena-slot="farm.hud"></div>
       <div class="farm-panel" data-farm="panelbox">
         <div class="farm-panelhead"><h2 data-farm="paneltitle">Homestead</h2><button class="x" data-fact="tab-close" title="Close">✕</button></div>
+        <div class="farm-slot" data-athena-slot="farm.panel.top"></div>
         <div data-farm="panel"></div>
+        <div class="farm-slot" data-athena-slot="farm.panel.bottom"></div>
       </div>
       <div class="farm-bar" role="tablist">${FARM_TABS.map(t => `<button class="farm-tab ${t.id === 'homestead' ? 'is-active' : ''}" data-fact="tab" data-id="${t.id}" title="${esc(t.title)}"><span class="ic">${t.icon}</span>${esc(t.label)}</button>`).join('')}</div>
     </div>

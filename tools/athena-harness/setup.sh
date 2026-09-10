@@ -25,4 +25,5 @@ ln -sfn ../three www/three
 ln -sfn ../three/models www/models
 ln -sfn ../artifact www/artifact
 cp harness.html www/harness.html
+cp harness2.html www/harness2.html
 echo "ready. Start the server:  (cd www && python3 -m http.server 8765 --bind 127.0.0.1)"

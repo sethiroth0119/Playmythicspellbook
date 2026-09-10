@@ -27,6 +27,10 @@ import * as S from './farm.state.js';
 import { createScene } from './farm.scene.js';
 import { FARM_CSS, FARM_TABS, renderShell, renderLedger, renderHud, renderHomestead, renderLivestock, renderJournal, renderAthena, renderMarket, renderRanch, renderShop } from './farm.render.js';
 import { lots as cloudLots, ranch as cloudRanch } from './farm.cloud.js';
+import { registerWithAthena, openInAthena } from './farm.athena.js';
+
+// ⚒ Tell Athena Engine the farm is a game scene it can open (queued if Athena loads later).
+try { registerWithAthena(); } catch (e) {}
 
 function makeHost() {
   const B = (typeof window !== 'undefined') ? window.MythicFarmBridge : null;
@@ -110,6 +114,23 @@ function mount(rootEl) {
   if (missing.length) { try { console.warn('[farm] ledger is missing ids the farm pays out: ' + missing.join(', ')); } catch (e) {} }
 
   rootEl.innerHTML = renderShell();
+  /* 🧩 Athena Widgets in the farm's slots get the farm's view to bind to and
+     a few safe actions to call; unregistered on unmount. Absent-tolerant. */
+  try {
+    if (window.AthenaUI && window.AthenaUI.slots) {
+      m.unslot = window.AthenaUI.slots.register('farm.', {
+        slots: ['farm.top', 'farm.hud', 'farm.panel.top', 'farm.panel.bottom'],
+        data: () => { try { const s = S.ensureState(h); const v = S.summary(h, s); return { farm: v, farmTab: _mounted && _mounted.tab || '' }; } catch (e) { return {}; } },
+        actions: {
+          'farm.tab': (id) => { if (_mounted) { _mounted.tab = id || null; _mounted.paint(); } },
+          'farm.build': (id) => { const r = api.build(id); h.toast(r.ok ? '🏗 Building.' : 'Cannot build: ' + why(h, r), 3000); api.refresh(); },
+          'farm.feed': (id) => { const r = api.fillTrough(id, 1e9); h.toast(r.ok ? '🌾 Fed.' : 'Trough: ' + why(h, r), 3000); api.refresh(); },
+          'farm.collect': (id) => { const r = api.collect(id); h.toast(r.ok ? '🧺 Collected.' : 'Collect: ' + why(h, r), 3000); api.refresh(); },
+          'farm.tend': () => { const r = api.tend(); h.toast(r.ok ? '👷 Troughs topped up.' : 'Tend: ' + why(h, r), 3000); api.refresh(); },
+        },
+      });
+    }
+  } catch (e) {}
   const m = _mounted = { root: rootEl, scene: null, tab: 'homestead' /* 🎮 null = no panel open, just the homestead */, focus: null, tick: 0, busy: false, ui: { cut: 'balanced', carrier: FARM_ECON.transport.defaultCarrier, escort: 0, renaming: null }, bannerShown: false, cloud: { loading: false, lots: [], mine: [], why: null, userId: null, at: 0 }, ranch: null };
   const stage = rootEl.querySelector('[data-farm="stage"]');
 
@@ -355,6 +376,7 @@ function mount(rootEl) {
         case 'look-decor': S.setLook(h, s, { decor: { [id]: !s.look.decor[id] } }); break;
         case 'look-roof-reset': S.setLook(h, s, { roofs: { [id]: null } }); break;
         case 'look-name': { const inp = rootEl.querySelector('[data-fname]'); doName(inp ? inp.value : ''); return; }
+        case 'athena-open': { if (!h.isAdmin()) { h.toast('The world editor is admin-only — it changes the farm for everyone.', 3200); break; } if (!openInAthena()) h.toast('Athena Engine is still loading — try again in a moment.', 2600); break; }
         default: return;
       }
     } catch (err) { try { console.warn('[farm] action failed:', err); } catch (x) {} }
@@ -374,6 +396,7 @@ function unmount(which) {
   if (_mounted === m) _mounted = null;
   try { clearInterval(m.tick); } catch (e) {}
   try { if (m.scene) m.scene.destroy(); } catch (e) {}
+  try { if (m.unslot) m.unslot(); } catch (e) {}
   try { if (m.onClick) m.root.removeEventListener('click', m.onClick); if (m.onChange) m.root.removeEventListener('change', m.onChange); if (m.onKey) m.root.removeEventListener('keydown', m.onKey); } catch (e) {}
 }
 
@@ -383,6 +406,8 @@ const api = {
   ready: () => !!makeHost(),
   mount, unmount,
   refresh: () => { try { if (_mounted && _mounted.paint) _mounted.paint(); } catch (e) {} },
+  /* the mounted 3D/2D scene handle (tests, the Athena overlay's reloadAthena) — null when not mounted */
+  scene: () => (_mounted && _mounted.scene) || null,
   state: () => { const h = host(); return h ? S.ensureState(h) : { buildings: {}, animals: [] }; },
   summary: () => { const h = host(); return h ? S.summary(h, S.ensureState(h)) : null; },
   build: (id) => withHost((h, s) => S.build(h, s, id)),

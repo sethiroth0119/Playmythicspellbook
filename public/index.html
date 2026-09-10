@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120x5';
+  window.BUILD_VERSION = 'v120x6';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -120275,6 +120275,9 @@ function renderPricingAdmin() {
         </div>
         <button id="open-map-creator" class="btn-secondary" style="margin-top:0.7rem;width:100%;background:linear-gradient(180deg,#e7c757,#d4af37);color:#1a1206;font-weight:800;border:1px solid #e7c757">⚒ Open Athena Engine</button>
         <div class="small-text ink-dim" style="margin-top:0.5rem">Also reachable at <code>?mapforge=1</code>. Press <strong>H</strong> inside for the controls.</div>
+        <div class="small-text ink-dim" style="margin-top:0.7rem">🧩 <strong>Athena Widgets</strong> — the Blueprint-style UI designer: build widgets from a palette, wire an event graph (click → branch → toast / set variable / call a game action), bind any property to live game data (<code>{gems|num}</code>), and target a named slot or any existing element of the game's UI (🎯 pick it) to extend or replace it. Theme documents restyle the whole game through CSS variables. Lives in <code>/src/widgets/</code>; cloud saving needs <code>sql/040_ui_widgets.sql</code>.</div>
+        <button id="open-widget-designer" class="btn-secondary" style="margin-top:0.5rem;width:100%;border:1px solid #e7c757;color:#ffe9a8">🧩 Open Widget Designer</button>
+        <div class="small-text ink-dim" style="margin-top:0.4rem">Also reachable at <code>?widgets=1</code>. Only an admin can set a widget <strong>live</strong> for every player (the server enforces it).</div>
       </div>
 
       <div class="settings-section">
@@ -121127,6 +121130,17 @@ function renderPricingAdmin() {
       if (window.MythicMapForge && window.MythicMapForge.open) window.MythicMapForge.open();
       else showToast('Athena Engine is still loading — try again in a moment.', 2600);
     } catch (e) { try { console.warn('[mapforge] open failed', e); } catch (_) {} }
+  };
+
+  // 🧩 Athena Widgets — the UI designer (/src/widgets, an ES module). Same
+  //    contract as the map creator: the module registers window.AthenaUI; if it
+  //    has not loaded the button says so.
+  const awBtn = document.getElementById('open-widget-designer');
+  if (awBtn) awBtn.onclick = () => {
+    try {
+      if (window.AthenaUI && window.AthenaUI.openDesigner) window.AthenaUI.openDesigner();
+      else showToast('Athena Widgets is still loading — try again in a moment.', 2600);
+    } catch (e) { try { console.warn('[widgets] open failed', e); } catch (_) {} }
   };
 
   // ⛧ Preview the new Mythic Summon ritual VFX (unwired — preview only).
@@ -207093,6 +207107,31 @@ try {
     confirm: async (m) => { try { return !!(await gcConfirm(m)); } catch (e) { return false; } },
     render: () => { try { render(); } catch (e) {} },
     isAdmin: () => { try { return !!(typeof isAdmin === 'function' && isAdmin()); } catch (e) { return false; } },
+    /* 🧩 ATHENA WIDGETS (/src/widgets) — the data a widget can BIND to and the
+       actions its event graph can CALL. Read live on every refresh, never
+       snapshotted. Keep this a plain-data view: no functions inside `data()`,
+       nothing that mutates. Adding a field here is how a new game value
+       becomes bindable as {field}. Actions are the only way a widget touches
+       the game, and each one goes through the same helpers the UI uses. */
+    ui: {
+      data: () => {
+        const d = {};
+        try { d.gems = Profile.gems | 0; d.name = (Profile.cloud && Profile.cloud.displayName) || (Profile.account && Profile.account.displayName) || 'Survivor'; d.signedIn = !!(Profile.cloud && Profile.cloud.signedIn); d.admin = !!(typeof isAdmin === 'function' && isAdmin()); } catch (e) {}
+        try { d.screen = App.screen || ''; } catch (e) {}
+        try { d.level = Profile.level | 0; d.xp = Profile.xp | 0; } catch (e) {}
+        try { d.cards = Array.isArray(Profile.cards) ? Profile.cards.length : 0; } catch (e) {}
+        try { d.res = {}; (typeof RESOURCES !== 'undefined' ? RESOURCES : []).forEach(r => { if (r && r.id) d.res[r.id] = getRes(r.id) | 0; }); } catch (e) {}
+        try { d.corp = (Corp && Corp.mine) ? { name: Corp.mine.name, tag: Corp.mine.tag } : null; } catch (e) {}
+        try { d.farm = (window.MythicFarm && window.MythicFarm.ready && window.MythicFarm.ready()) ? (window.MythicFarm.summary() || null) : null; } catch (e) {}
+        return d;
+      },
+      actions: {
+        toast: (m, ms) => { try { showToast(String(m), ms || 3600); } catch (e) {} },
+        navigate: (screen) => { try { if (screen) { App.screen = String(screen); render(); } } catch (e) {} },
+        render: () => { try { render(); } catch (e) {} },
+        save: () => { try { saveProfile(); } catch (e) {} },
+      },
+    },
     // 🏢 Corporations — communities sit ABOVE these, so the module reads them
     //    but never writes them.
     myCorp: () => { try { return (Corp && Corp.mine) ? { id: Corp.mine.id, name: Corp.mine.name, tag: Corp.mine.tag, faction: Corp.mine.faction } : null; } catch (e) { return null; } },
@@ -223379,7 +223418,18 @@ render();
      ⚠ If this 404s nothing changes — the button reports "still loading".
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/mapforge/index.js?v=mf5"></script>
+<script type="module" src="src/mapforge/index.js?v=mf6"></script>
+<!-- 🧩 ATHENA WIDGETS — Blueprint-style UI widgets and themes (/src/widgets).
+     Registers window.AthenaUI. At boot it loads every LIVE widget/theme
+     (public.ui_widgets, sql/040 — or the device's cached copy) and mounts
+     them into their targets: a named slot (data-athena-slot="…") or any
+     element by CSS selector, following DOM changes with a MutationObserver.
+     Bindings read window.MythicBridge.ui.data(); graphs call .ui.actions.
+     The designer itself opens only from the admin panel button or ?widgets=1.
+     ⚠ If this 404s nothing changes — no widget shows, the button reports it.
+     ⚠ Bump ?v= on every change — the service worker caches /src/* like any
+       other static asset, and a missed bump ships invisibly. -->
+<script type="module" src="src/widgets/index.js?v=aw1"></script>
 <!-- 🐄 HOMESTEAD FARM — the 3D animal-farm simulation (/src/farm). Registers
      window.MythicFarm and is INERT until renderFarm() hands it #app. Reads
      nothing by itself: window.MythicFarmBridge (defined next to
@@ -223390,7 +223440,7 @@ render();
      ⚠ If this 404s nothing else changes — the Camp button shows a fallback.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/farm/index.js?v=v120x5farm6"></script>
+<script type="module" src="src/farm/index.js?v=v120x6farm7"></script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the

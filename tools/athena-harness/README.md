@@ -29,6 +29,9 @@ node tools/athena-harness/pw-test2.mjs        # project library, .glb file embed
 node tools/athena-harness/pw-test3.mjs        # collision, Play movement, Unreal hotkeys, toolbar, Ruins props
 node tools/athena-harness/pw-test4.mjs        # VFX emitters, built-in effects, weather, save/reload, engine
 node tools/athena-harness/pw-fallback.mjs     # no OrbitControls / TransformControls at all
+node tools/athena-harness/pw-test5.mjs        # round 5 on harness2.html (farm + Athena + widgets with faked bridges):
+                                              #   content folders, game-scene slots, farm overlay, widget designer,
+                                              #   graph execution, slot/selector targets, themes, the expression language
 ```
 
 Each prints ✔/✘ per step and the page's error list; screenshots land in

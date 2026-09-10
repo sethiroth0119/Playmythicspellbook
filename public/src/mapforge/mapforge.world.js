@@ -23,7 +23,24 @@ export function buildWorld(THREE, map, opts) {
   const sun = new THREE.DirectionalLight(0xffffff, 1);
   const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 0.6);
   sun.target.position.set(0, 0, 0);
-  group.add(terrain.mesh, water.mesh, sky, sun, sun.target, hemi, objectsGroup);
+  /* Pieces a host can leave out: a game-scene OVERLAY (Homestead Farm) keeps
+     its own ground, sky and lights and only takes the objects. The map's own
+     `scene` flags are the default; explicit opts win. The terrain object is
+     still built (heightAt / grounding need it) — it is just not in the group. */
+  const want = (k, dflt) => opts[k] != null ? !!opts[k] : dflt;
+  const sceneFlags = map.scene || {};
+  const pieces = { ground: want('ground', sceneFlags.ground !== false), water: want('water', sceneFlags.water !== false), sky: want('sky', sceneFlags.sky !== false), lights: want('lights', true) };
+  if (pieces.ground) group.add(terrain.mesh);
+  if (pieces.water) group.add(water.mesh);
+  if (pieces.sky) group.add(sky);
+  if (pieces.lights) group.add(sun, sun.target, hemi);
+  group.add(objectsGroup);
+  const folderOf = (id) => (map.folders || []).find(f => f.id === id) || null;
+  /* A folder is visible only if every ancestor is; hidden folders hide their
+     objects in the editor AND at runtime (a hidden folder is how a builder
+     parks alternatives without deleting them). */
+  function folderVisible(id) { let f = folderOf(id), hops = 0; while (f && hops++ < 200) { if (f.vis === false) return false; f = f.parent ? folderOf(f.parent) : null; } return true; }
+  function applyFolderVisibility() { objects.forEach((r, id) => { const o = objDoc(id); const v = !o || !o.f || folderVisible(o.f); r.userData.mfFolderHidden = !v; r.visible = v && !(r.userData.mfMarker && !markersVisible); }); }
 
   const objects = new Map();        // id → root Object3D
   const colliders = new Map();      // id → world-space collider (see updateCollider)
@@ -149,6 +166,7 @@ export function buildWorld(THREE, map, opts) {
     attachFx(o, root);
     applyTransform(root, o);
     if (root.userData.mfMarker) root.visible = markersVisible;
+    if (o.f && !folderVisible(o.f)) { root.visible = false; root.userData.mfFolderHidden = true; }
     objectsGroup.add(root);
     root.updateMatrixWorld(true);   // raycastable NOW, not after the next render — a click right after placing must hit
     objects.set(o.id, root);
@@ -290,7 +308,7 @@ export function buildWorld(THREE, map, opts) {
     hemi.color.set(env.ambient); hemi.groundColor.set(env.groundColor); hemi.intensity = env.ambientIntensity;
     sky.material.uniforms.uTop.value.set(env.skyTop); sky.material.uniforms.uBottom.value.set(env.skyBottom);
     sky.material.uniforms.uSun.value.copy(sunDir); sky.material.uniforms.uSunColor.value.set(env.sunColor);
-    if (opts.scene) {
+    if (opts.scene && pieces.sky) {
       opts.scene.fog = new THREE.Fog(new THREE.Color(env.fogColor), env.fogNear, env.fogFar);
       opts.scene.background = new THREE.Color(env.skyBottom);
     }
@@ -309,7 +327,23 @@ export function buildWorld(THREE, map, opts) {
     spawns: () => map.objects.filter(o => o.t === 'spawn'),
     /* every object of a type — e.g. world.find('enemy') for a mini-game's spawner */
     find: (type) => map.objects.filter(o => o.t === type),
-    setMarkersVisible(v) { markersVisible = !!v; objects.forEach(r => { if (r.userData.mfMarker) r.visible = markersVisible; if (r.userData.mfFxHandle) r.userData.mfFxHandle.visible = markersVisible; }); },
+    pieces,
+    /* ── content folders ── */
+    folders: () => map.folders || [],
+    folderVisible, applyFolderVisibility,
+    /* objects inside a folder (by id or name), descendants included — e.g.
+       world.inFolder('Enemies') for a spawner, world.inFolder('Night') to toggle a set */
+    inFolder(idOrName, deep) {
+      const fs = map.folders || []; const root = fs.find(f => f.id === idOrName) || fs.find(f => f.name === idOrName); if (!root) return [];
+      const ids = new Set([root.id]);
+      if (deep !== false) { let grew = true; while (grew) { grew = false; fs.forEach(f => { if (f.parent && ids.has(f.parent) && !ids.has(f.id)) { ids.add(f.id); grew = true; } }); } }
+      return map.objects.filter(o => o.f && ids.has(o.f));
+    },
+    setFolderVisible(idOrName, v) { const f = (map.folders || []).find(x => x.id === idOrName || x.name === idOrName); if (!f) return false; f.vis = !!v; applyFolderVisibility(); return true; },
+    /* ── game slots ── objects standing in for the host game's own assets */
+    slots: () => map.objects.filter(o => o.k),
+    slot: (key) => map.objects.find(o => o.k === key) || null,
+    setMarkersVisible(v) { markersVisible = !!v; objects.forEach(r => { if (r.userData.mfMarker) r.visible = markersVisible && !r.userData.mfFolderHidden; if (r.userData.mfFxHandle) r.userData.mfFxHandle.visible = markersVisible; }); },
     emitters, get weather() { return weather; }, wind,
     /* re-tune an emitter after the inspector changes o.fx / o.c */
     refreshFx(id) { const o = objDoc(id), r = objects.get(id); if (o && r) attachFx(o, r); },
@@ -317,6 +351,19 @@ export function buildWorld(THREE, map, opts) {
     /* After the grid is resized or regenerated: water covers the new size,
        shadows cover it, grounded objects land on the new surface. */
     onTerrainRebuilt() { water.resize(terrain.size); applyEnv(map.env); },
+    /* Build ONE object's body the way the world would (prop clone or a .glb
+       template clone) without adding it to this world — a host game uses
+       this to draw a slot's replacement inside its own scene graph.
+       Returns { root, ready } where `ready` resolves once a model loaded. */
+    buildDetached(o) {
+      const root = new THREE.Group(); root.userData = { mfId: o.id, mfType: o.t, detached: true };
+      const body = makeBody(o); root.add(body);
+      attachFx(o, root);
+      root.scale.set(o.s[0], o.s[1], o.s[2]); root.rotation.set(o.r[0], o.r[1], o.r[2]);
+      let ready = Promise.resolve(root);
+      if (o.t === 'glb') ready = loadAsset(o.a).then(({ template, clips }) => { root.remove(body); const real = cloneTemplate(template); root.add(real); root.userData.mfClips = clips; if (o.anim && o.anim.clip) { const clip = clips.find(c => c.name === o.anim.clip) || clips[0]; if (clip) { const mixer = new THREE.AnimationMixer(real); const a = mixer.clipAction(clip); a.setEffectiveTimeScale(o.anim.speed == null ? 1 : o.anim.speed); applyLoop(a, o.anim.loop); a.play(); root.userData.mixer = mixer; } } return root; }).catch(() => root);
+      return { root, ready, update(dt) { if (root.userData.mixer) root.userData.mixer.update(dt); const em = emitters.get(o.id); if (em) em.update(time, wind); } };
+    },
     update(dt, camera) {
       time += dt;
       water.update(time, sunDir);

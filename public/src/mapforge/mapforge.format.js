@@ -73,7 +73,17 @@ export function newMap(opts) {
     water: { on: true, level: -0.6, color: '#2e6f9e', opacity: 0.78, wave: 0.12, speed: 1 },
     env: Object.assign({ preset: 'day', shadows: true, weather: 'none', weatherIntensity: 1, windDir: 45, windSpeed: 1.5 }, ENV_PRESETS.day),
     assets: [],
+    /* Content folders (Unreal's World Outliner folders): objects carry `f`
+       (a folder id); a folder can nest via `parent`. Visibility/lock are
+       editor conveniences saved with the map so a build session resumes
+       where it left off. Objects with no `f` sit at the root. */
+    folders: [],
     objects: [],
+    /* Which pieces of THIS document a host game renders when the map is a
+       game-scene overlay (Homestead Farm etc.). A standalone world uses all
+       three; an overlay usually keeps the game's own ground and sky and only
+       contributes objects. Ignored by the editor's own viewport. */
+    scene: { ground: true, water: true, sky: true },
     meta: { created: Date.now(), updated: Date.now(), author: opts.author || '' },
   };
 }
@@ -145,14 +155,39 @@ export function normalize(raw) {
   }) : null).filter(a => a && (a.url || a.data));
 
   const assetIds = new Set(m.assets.map(a => a.id));
-  m.objects = (Array.isArray(raw.objects) ? raw.objects : []).map(o => normalizeObject(o, assetIds)).filter(Boolean);
+  m.folders = normalizeFolders(raw.folders);
+  const folderIds = new Set(m.folders.map(f => f.id));
+  m.objects = (Array.isArray(raw.objects) ? raw.objects : []).map(o => normalizeObject(o, assetIds, folderIds)).filter(Boolean);
+  const sc = raw.scene || {};
+  m.scene = { ground: sc.ground !== false, water: sc.water !== false, sky: sc.sky !== false };
 
   const meta = raw.meta || {};
   m.meta = { created: +meta.created || Date.now(), updated: +meta.updated || Date.now(), author: String(meta.author || '').slice(0, 80) };
   return m;
 }
 
-export function normalizeObject(o, assetIds) {
+/* Folders: ids unique, parents must exist and must not cycle (a cycle is
+   flattened to the root rather than crashing the outliner). */
+export function normalizeFolders(raw) {
+  const out = []; const seen = new Set();
+  (Array.isArray(raw) ? raw : []).forEach(f => {
+    if (!f || typeof f !== 'object') return;
+    const id = String(f.id || uid('f_')); if (seen.has(id)) return; seen.add(id);
+    out.push({ id, name: String(f.name || 'Folder').slice(0, 60), parent: f.parent ? String(f.parent) : null, open: f.open !== false, vis: f.vis !== false, lock: f.lock === true });
+  });
+  const byId = new Map(out.map(f => [f.id, f]));
+  out.forEach(f => {
+    if (f.parent && !byId.has(f.parent)) f.parent = null;
+    // cycle check: walk up; if we come back to f, cut the link
+    let p = f.parent, hops = 0; while (p && hops++ < 200) { if (p === f.id) { f.parent = null; break; } p = (byId.get(p) || {}).parent; }
+  });
+  return out;
+}
+/* A slot key: the game's own id for the thing this object stands in for
+   (a Homestead Farm building id such as 'feedmill'). Lower-case, short. */
+export function slotKey(v) { return String(v == null ? '' : v).trim().toLowerCase().replace(/[^a-z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40); }
+
+export function normalizeObject(o, assetIds, folderIds) {
   if (!o || typeof o !== 'object' || !o.t) return null;
   const t = String(o.t);
   if (t === 'glb' && assetIds && !assetIds.has(o.a)) return null;   // orphaned model reference
@@ -160,6 +195,8 @@ export function normalizeObject(o, assetIds) {
     id: String(o.id || uid('o_')),
     t,
     a: t === 'glb' ? String(o.a) : undefined,
+    f: (o.f && (!folderIds || folderIds.has(String(o.f)))) ? String(o.f) : undefined,   // content folder
+    k: o.k ? (slotKey(o.k) || undefined) : undefined,                                      // game slot key (see docs: game scenes)
     p: vec3(o.p, [0, 0, 0]),
     r: vec3(o.r, [0, 0, 0]),
     s: vec3(o.s, [1, 1, 1]),

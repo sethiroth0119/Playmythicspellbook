@@ -62,7 +62,21 @@ process.on('unhandledRejection', (e) => {
   process.exit(1);
 });
 
-console.log('═══════════ BUILD ═══════════');
+console.log('═══════════ PREFLIGHT ═══════');
+// Catch a >25 MiB file before wrangler spends two minutes uploading and then
+// aborts on it (tools/preflight-assets.mjs explains). Runs before minify() so
+// a failure here never leaves the source needing a restore.
+{
+  const { preflight } = await import('./tools/preflight-assets.mjs');
+  const bad = preflight();
+  if (bad.length) {
+    console.error('❌ ' + bad.length + ' file(s) over the 25 MiB Cloudflare cap — run `node tools/preflight-assets.mjs` for the list and fixes.');
+    process.exit(1);
+  }
+  console.log('✅ no oversized assets');
+}
+
+console.log('\n═══════════ BUILD ═══════════');
 await minify();
 
 console.log('\n═══════════ DEPLOY ══════════');

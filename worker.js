@@ -1081,6 +1081,67 @@ async function handleArtProxy(request, u) {
   });
 }
 
+// ── /media/* — R2-backed large asset delivery ────────────────────────────────
+// Range requests are honored so <video>/<audio> can seek and the browser can
+// resume a partial .glb download; a 200 with the whole 60 MB model on every
+// scrub would be unusable on mobile. ETag/If-None-Match gives a cheap 304 on
+// repeat visits. Immutable long cache: R2 keys are content-addressed by
+// convention (put a version in the filename, never overwrite in place), the
+// same rule the /assets/* header block already relies on.
+const MEDIA_TYPES = {
+  glb: 'model/gltf-binary', gltf: 'model/gltf+json', mp4: 'video/mp4', webm: 'video/webm',
+  mp3: 'audio/mpeg', ogg: 'audio/ogg', wav: 'audio/wav', m4a: 'audio/mp4',
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif',
+  json: 'application/json', zip: 'application/zip', bin: 'application/octet-stream',
+};
+async function handleMedia(request, env, u) {
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return new Response('method not allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });
+  }
+  if (!env.MEDIA) {
+    return cjson({
+      error: 'media_not_configured',
+      hint: 'Create an R2 bucket and add {"r2_buckets":[{"binding":"MEDIA","bucket_name":"<name>"}]} to wrangler.jsonc.',
+    }, 404);
+  }
+  // Decode once; refuse traversal-looking keys outright. R2 keys are flat
+  // strings so "../" is not dangerous to R2 itself, but a key that contains it
+  // is never one we uploaded.
+  let key;
+  try { key = decodeURIComponent(u.pathname.slice('/media/'.length)); } catch (e) { return new Response('bad key', { status: 400 }); }
+  if (!key || key.includes('..') || key.startsWith('/')) return new Response('bad key', { status: 400 });
+
+  const range = request.headers.get('Range');
+  const obj = await env.MEDIA.get(key, {
+    range: range ? request.headers : undefined,
+    onlyIf: request.headers,
+  });
+  if (!obj) return new Response('not found', { status: 404, headers: { 'Cache-Control': 'no-store' } });
+
+  const headers = new Headers();
+  obj.writeHttpMetadata(headers);
+  headers.set('ETag', obj.httpEtag);
+  headers.set('Accept-Ranges', 'bytes');
+  headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+  headers.set('Access-Control-Allow-Origin', '*');
+  if (!headers.get('Content-Type')) {
+    const ext = (key.split('.').pop() || '').toLowerCase();
+    headers.set('Content-Type', MEDIA_TYPES[ext] || 'application/octet-stream');
+  }
+  // `onlyIf` matched If-None-Match → R2 returns the object with no body.
+  if (!('body' in obj) || obj.body == null) return new Response(null, { status: 304, headers });
+
+  if (obj.range) {
+    const start = obj.range.offset ?? 0;
+    const end = obj.range.length != null ? start + obj.range.length - 1 : obj.size - 1;
+    headers.set('Content-Range', `bytes ${start}-${end}/${obj.size}`);
+    headers.set('Content-Length', String(end - start + 1));
+    return new Response(request.method === 'HEAD' ? null : obj.body, { status: 206, headers });
+  }
+  headers.set('Content-Length', String(obj.size));
+  return new Response(request.method === 'HEAD' ? null : obj.body, { status: 200, headers });
+}
+
 export default {
   async fetch(request, env) {
     let u;
@@ -1098,6 +1159,19 @@ export default {
     // hardcoded in two places that can drift apart.
     if (u.pathname === '/api/push/key') {
       return cjson({ key: env.VAPID_PUBLIC || null, configured: !!(env.VAPID_PUBLIC && env.VAPID_PRIVATE) });
+    }
+
+    // 🗄 LARGE MEDIA (v120w7) — same-origin path for files Cloudflare Workers
+    //    Assets refuses to upload (25 MiB per-file cap; ONE oversized file aborts
+    //    the whole deploy, see public/.assetsignore). Big .glb models, long
+    //    videos and audio masters go in an R2 bucket bound as `MEDIA` and are
+    //    served here as /media/<key>. R2 has no practical per-object cap and
+    //    egress to the Worker is free, so this is also the cheap path.
+    //    Guarded: with no binding the route answers 404 + a hint instead of
+    //    throwing, so deploys before the bucket exists still work.
+    if (u.pathname.startsWith('/media/')) {
+      try { return await handleMedia(request, env, u); }
+      catch (e) { return cjson({ error: 'media_error', detail: String((e && e.message) || e).slice(0, 200) }, 502); }
     }
 
     if (u.pathname === '/api/art/proxy') {

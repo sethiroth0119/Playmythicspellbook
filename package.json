@@ -4,6 +4,8 @@
   "version": "1.0.0",
   "description": "Mythic Spellbook — Cloudflare Workers static deploy of ./public",
   "scripts": {
+    "preflight": "node tools/preflight-assets.mjs",
+    "media:put": "node tools/media-put.mjs",
     "deploy": "node deploy.mjs",
     "deploy:test": "node deploy-test.mjs",
     "deploy:raw": "wrangler deploy",

@@ -10,6 +10,17 @@
     "directory": "./public",
     "binding": "ASSETS"
   },
+  // 🗄 Large media (anything over Workers Assets' 25 MiB per-file cap) is served
+  // by worker.js from an R2 bucket at /media/<key>. To turn it on:
+  //   1. Cloudflare dashboard → R2 → Create bucket → name it  mythic-media
+  //   2. Uncomment the block below and deploy.
+  //   3. Upload with:  node tools/media-put.mjs "public/assets/3d models/Battletable.glb"
+  //      → served at  /media/3d-models/Battletable.glb
+  // Left commented because wrangler refuses to deploy a binding to a bucket
+  // that does not exist yet, and the route degrades to a clean 404 without it.
+  // "r2_buckets": [
+  //   { "binding": "MEDIA", "bucket_name": "mythic-media" }
+  // ],
   "vars": {
     "SB_URL": "https://ktsiasyjusesawtrwrjc.supabase.co",
     "SB_ANON": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt0c2lhc3lqdXNlc2F3dHJ3cmpjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2NDU5MjgsImV4cCI6MjA5NDIyMTkyOH0.fYpQFCs03ZE5AIv88S_GStqp7g71sTQe9yUxmXgyKQo",

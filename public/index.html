@@ -68,11 +68,16 @@
      network on EVERY load — so that 11.3 MB was re-downloaded every single time.
      As real files they fall under the SW's cache-first /assets/* rule and are
      fetched once, ever. Warmed here at low priority so the first hand still
-     paints instantly without competing with boot-critical resources. -->
-<link rel="preload" as="image" href="assets/cardframes/unit.png" fetchpriority="low">
-<link rel="preload" as="image" href="assets/cardframes/location.png" fetchpriority="low">
-<link rel="preload" as="image" href="assets/cardframes/spell.png" fetchpriority="low">
-<link rel="preload" as="image" href="assets/cardframes/trap.png" fetchpriority="low">
+     paints instantly without competing with boot-critical resources.
+     ⚠ v120w7: the extraction wrote these as assets/cardframes/*.png but the four
+     files were never committed, so every load 404'd four times and the hand fell
+     back to the base .hand-card rules — which already point at assets/Frames/.
+     Those are the frames that exist, so preload THOSE. Keep the ?v=4 in sync
+     with the .hand-card rules or the preload warms a different cache key. -->
+<link rel="preload" as="image" href="assets/Frames/unit%20card.png?v=4" fetchpriority="low">
+<link rel="preload" as="image" href="assets/Frames/Location%20card.png?v=4" fetchpriority="low">
+<link rel="preload" as="image" href="assets/Frames/Spell%20card.png?v=4" fetchpriority="low">
+<link rel="preload" as="image" href="assets/Frames/Trap%20card.png?v=4" fetchpriority="low">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Cinzel+Decorative:wght@700;900&family=Crimson+Text:ital,wght@0,400;0,600;1,400&family=Rajdhani:wght@500;600;700&family=EB+Garamond:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
@@ -36160,12 +36165,12 @@
   .image-buttons input[type=text]:focus { outline: none; border-color: var(--gold); }
   .image-or { color: var(--ink-dim); font-size: 0.8rem; padding: 0 0.2rem; }
 
-  /* Frame data URLs (auto-embedded) */
-  .hand-card { background-image: url('assets/cardframes/unit.png') !important; }
-  .hand-card.type-location { background-image: url('assets/cardframes/location.png') !important; }
-  .hand-card.type-spell { background-image: url('assets/cardframes/spell.png') !important; }
-  .hand-card.type-trap { background-image: url('assets/cardframes/trap.png') !important; }
-  /* Weather/Wall reset — keep gradient backgrounds; outrank the unit-frame data URL above */
+  /* Frame art: the base .hand-card / .type-* rules (assets/Frames/*.png) are the
+     single source of truth. An !important override block used to sit here
+     pointing at assets/cardframes/*.png — files that never existed in the repo,
+     so it did nothing but throw 404s. Removed v120w7. Don't re-add a second frame
+     source; bump ?v= on the base rules instead when the art changes. */
+  /* Weather/Wall reset — keep gradient backgrounds; outrank the unit-frame rules above */
   .hand-card.type-weather { background-image: none !important; background: linear-gradient(180deg, #142838 0%, #2a5060 5%, #2a5060 58%, #0f1e2a 58%, #0f1e2a 68%, #c8d2dc 70%, #c8d2dc 93%, #142838 93%, #142838 100%) !important; border: 2px solid #5da7b8; border-radius: 8px; }
   .hand-card.type-wall { background-image: none !important; background: linear-gradient(180deg, #1a1410 0%, #4a3525 5%, #4a3525 58%, #1a1208 58%, #1a1208 68%, #d8c9a4 70%, #d8c9a4 93%, #1a1410 93%, #1a1410 100%) !important; border: 2px solid #8a7045; border-radius: 8px; }
 

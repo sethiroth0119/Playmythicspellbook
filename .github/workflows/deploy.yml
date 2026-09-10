@@ -22,6 +22,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Fails fast, with the offending paths, instead of letting wrangler abort
+      # mid-upload on a file over the 25 MiB per-asset cap.
+      - name: Preflight asset sizes
+        run: node tools/preflight-assets.mjs
+
       - name: Deploy with Wrangler
         uses: cloudflare/wrangler-action@v3
         with:

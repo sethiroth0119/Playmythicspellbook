@@ -19,6 +19,26 @@ The fix is the proven one: index.html explicitly hands a module what it needs.
 from the legacy app, **add it to the bridge** — never reach for a bare global and never
 assume `window.Foo` exists because `const Foo` does.
 
+### Modules and their bridges (add to the bridge, never reach for a global)
+| Module | Bridge object in index.html |
+|---|---|
+| `/src/community` | `window.MythicBridge` |
+| `/src/city` | `window.MythicCityBridge` |
+| `/src/trading` | `window.MythicTradeBridge` |
+| `/src/resonance/house.camp.js` | `window.MythicHouseBridge` |
+| `/src/farm` (🐄 Homestead Farm, 3D) | `window.MythicFarmBridge` — state on `Profile.farm`, synced as `__farm__`; its `cloud` sub-object is the only Supabase seam (player lots + corp ranch, `sql/038`). Chrome is Cities: Skylines 2 style (bottom toolbar of icon buttons, one floating panel, HUD weather button opens the Journal). The Shop (`FARM_ECON.shop`) sells timed boosts that EXTEND, never stack; grade-2 goods (`FARM_ECON.premium`, 4 ledger ids, count 28) come only from rare+ breeds |
+
+The farm's economy is pure over a host adapter: `node tools/farm_harness.mjs` drives
+build → feed → grow → collect → slaughter → craft, construction, haulage, disease, breeding
+lines, contracts, escorts and the NPC auction with no browser (19 sections). Player-to-player
+lots and the corp ranch need `sql/038_farm_auction_and_ranch.sql` applied; until then the
+Market and Ranch tabs print "not set up on the server yet" and everything else works.
+🔴 Never mirror a server-escrowed bid with a client `spendGems()` — the client spend path is
+mirrored to `wallet_charge` and would debit the bid twice.
+Farm → economy seams: `OPS_FARM_MENU` + `_opConsumeInputs()` in index.html (any op with a
+`food` input eats meat/eggs/milk first, drawn from pen accrual via `MythicFarm.drawAccrual`);
+node-city's `STOCK_FARM_FALLBACK`, `smokehouse`/`dairy`, and the `boost` field on buildings.
+
 ## Non-negotiables
 - All Supabase access is guarded. The app MUST still work offline / before tables exist,
   degrading to mock or empty data. Follow the `Corp.*` pattern.

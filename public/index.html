@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120w6';
+  window.BUILD_VERSION = 'v120x5';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -39297,6 +39297,45 @@ const RESOURCES = [
   { id: 'wood',             name: 'Wood',             icon: '🪵', color: '#c08a4a' },
   { id: 'stone',            name: 'Stone',            icon: '🪨', color: '#a8a29a' },
   { id: 'cloth',            name: 'Cloth',            icon: '🧵', color: '#e0b8c8' },
+  /* 🐄 HOMESTEAD FARM (src/farm). Nine ids promoted WITH their producer, per
+     RESOURCES_NEXT.md — never before it. animalFeed / eggs / rawMilk / meat
+     were already catalogued in src/resources/chain.js; leather and fertilizer
+     already existed in SALVAGE_RES (lootable, but inert until now); feathers,
+     wool and hide are new and were added to chain.js in the same change.
+     Producers: the Feed Mill grinds food+water → animalFeed; living stock
+     gives eggs / feathers / rawMilk / wool / fertilizer; the Butcher's Block
+     turns grown stock into meat / hide / feathers; the Tannery cures hide →
+     leather. Every other site (RESOURCE_IDS, the market guard, the cost
+     renderers, node-city RES_META via the chain, MythicCityBridge.resources →
+     terroir) follows from this list.
+     ⚠ THE COUNT WAS 23 after this block; `livestock` below makes it 24.
+       terroir.js `slots` sums to 24 — a mismatch there silently disables
+       terroir (console.warn only). */
+  { id: 'animalFeed',       name: 'Animal Feed',      icon: '🌾', color: '#d9c46a' },
+  { id: 'eggs',             name: 'Eggs',             icon: '🥚', color: '#f2e8d5' },
+  { id: 'feathers',         name: 'Feathers',         icon: '🪶', color: '#e8d8b0' },
+  { id: 'rawMilk',          name: 'Raw Milk',         icon: '🥛', color: '#f4f1ea' },
+  { id: 'meat',             name: 'Meat',             icon: '🥩', color: '#c8505a' },
+  { id: 'wool',             name: 'Wool',             icon: '🧶', color: '#f0e6d2' },
+  { id: 'hide',             name: 'Hide',             icon: '🟫', color: '#a0704a' },
+  { id: 'leather',          name: 'Leather',          icon: '🧥', color: '#b08050' },
+  { id: 'fertilizer',       name: 'Fertilizer',       icon: '💩', color: '#8a6a3a' },
+  /* 📦 Livestock crate (farm round 2). A grown animal crated at the farm is one
+     unit; it trades on the Exchange like any resource and uncrates at any farm
+     for a species-price discount. The chain catalogue already named it.
+     ⚠ THE COUNT WAS 24 after livestock. */
+  { id: 'livestock',        name: 'Livestock',        icon: '🐄', color: '#c9b8a0' },
+  /* ⭐ Grade-2 farm goods (farm round 5, v120x5). ONLY a rare / royal / mythic
+     breed makes them (FARM_ECON.premium): a share of its eggs / milk / wool /
+     meat lands as the premium id instead of the plain one. They cook richer at
+     the Farm Kitchen, the town barters more for them, and any operation that
+     eats `food` eats them first (OPS_FARM_MENU) — but they are never worth more
+     Cinder anywhere, so this is a better ration, not a faucet.
+     ⚠ THE COUNT IS NOW 28. terroir.js `slots` sums to 28. */
+  { id: 'goldEggs',         name: 'Golden Eggs',      icon: '🥚', color: '#f2c14e' },
+  { id: 'primeMeat',        name: 'Prime Cuts',       icon: '🥩', color: '#e0606a' },
+  { id: 'richMilk',         name: 'Rich Milk',        icon: '🥛', color: '#fff8e0' },
+  { id: 'fineWool',         name: 'Fine Wool',        icon: '🧶', color: '#ffe8c0' },
 ];
 // 🍞 Consumable resources — keyed by resource id. `effect(amount)` mutates
 // Profile state. The inventory modal renders a USE button for any resource
@@ -46681,6 +46720,9 @@ async function cloudSyncProfile() {
          who spent 120,000 Cinder on a Gene Vault watched it vanish on their
          next device. See the __convoy__ note above — same trap, same file. */
       __cityProduction__:   (Profile.cityProduction && typeof Profile.cityProduction === 'object') ? Profile.cityProduction : {},
+      /* 🐄 Homestead Farm (/src/farm) — same trap as __cityProduction__ above:
+         a key travels only if it is named here AND read back in hydration. */
+      __farm__:             (Profile.farm && typeof Profile.farm === 'object') ? Profile.farm : {},
       __rlcRun__:           (Profile.rlcRun           && typeof Profile.rlcRun           === 'object') ? Profile.rlcRun           : null,
       __dialogueFlags__:    (Profile.dialogueFlags    && typeof Profile.dialogueFlags    === 'object') ? Profile.dialogueFlags    : {},
       __dailyChallenges__:  (Profile.dailyChallenges  && typeof Profile.dailyChallenges  === 'object') ? Profile.dailyChallenges  : {},
@@ -48054,6 +48096,33 @@ async function cloudFetchProfile() {
             cur.lastCollect = Math.max(Number(cur.lastCollect) || 0, Number(r.lastCollect) || 0);
           });
         Profile.cityProduction = Object.assign({}, cp, lo, { placed: Object.keys(rows).map((k) => rows[k]) });
+      }
+      /* 🐄 Homestead Farm — the other half of __farm__ above.
+         MERGE POLICY:
+           buildings = UNION BY ID, HIGHER LEVEL WINS. A pen costs tens of
+             thousands of Cinder; a stale copy must never delete or downgrade
+             one. Trough feed / accrual / timers come from the NEWER copy
+             (higher `ts`) — taking the older one would let a player re-collect
+             a window by switching devices.
+           animals = the NEWER copy's herd. Herds change constantly (births,
+             the block), so a union would resurrect slaughtered stock. */
+      if (f.__farm__ && typeof f.__farm__ === 'object') {
+        const cl = f.__farm__;
+        const lo = (Profile.farm && typeof Profile.farm === 'object') ? Profile.farm : {};
+        const newer = ((Number(cl.ts) || 0) >= (Number(lo.ts) || 0)) ? cl : lo;
+        const older = (newer === cl) ? lo : cl;
+        const bl = Object.assign({}, (older.buildings && typeof older.buildings === 'object') ? older.buildings : {});
+        const bn = (newer.buildings && typeof newer.buildings === 'object') ? newer.buildings : {};
+        Object.keys(bn).forEach((id) => {
+          const a = bl[id], b = bn[id];
+          if (!b || typeof b !== 'object') return;
+          bl[id] = a ? Object.assign({}, b, { level: Math.max(a.level | 0, b.level | 0) || 1 }) : Object.assign({}, b);
+        });
+        Profile.farm = Object.assign({}, older, newer, {
+          buildings: bl,
+          animals: Array.isArray(newer.animals) ? newer.animals : (Array.isArray(older.animals) ? older.animals : []),
+          seq: Math.max(newer.seq | 0, older.seq | 0) || 1,
+        });
       }
       if (f.__dialogueFlags__ && typeof f.__dialogueFlags__ === 'object') Profile.dialogueFlags = Object.assign({}, Profile.dialogueFlags || {}, f.__dialogueFlags__);
       if (f.__dailyChallenges__ && typeof f.__dailyChallenges__ === 'object') Profile.dailyChallenges = f.__dailyChallenges__;
@@ -80018,6 +80087,56 @@ function getOpsEconOverrides() {
   } catch (e) {}
   return null;
 }
+/* 🍳 THE FARM MENU (v120x4) — any operation that consumes `food` per worker·hr
+   (the Restaurant, the Medical Corporation, whatever an admin adds) can be fed
+   FARM GOODS instead, and pays a premium for it: `per` is how many units of
+   the good replace ONE food, `bonus` the output lift while that good is on
+   the menu (scaled by the share of the run it covered). Goods are taken in
+   this order, then plain food makes up the rest.
+   🚪 THE KITCHEN DOOR: the goods can come straight out of the farm's pens
+   (window.MythicFarm.drawAccrual) before the stash — an owner of both skips
+   the 6h collect on the part the business eats. Nothing is created: it is the
+   same accrual a Collect would bank.
+   ⚠ Tuning lives HERE (the _opEcon() rule); admins may override it as
+     `__farmMenu` in the opsEcon overrides, same rail as every other op number. */
+const OPS_FARM_MENU = {
+  // ⭐ Grade-2 goods first: a prime cut feeds more and lifts the menu further.
+  primeMeat: { per: 0.3, bonus: 0.40 },
+  goldEggs:  { per: 0.5, bonus: 0.20 },
+  richMilk:  { per: 0.6, bonus: 0.20 },
+  meat:    { per: 0.5, bonus: 0.25 },
+  eggs:    { per: 0.8, bonus: 0.10 },
+  rawMilk: { per: 0.9, bonus: 0.10 },
+};
+function _opFarmMenu() {
+  try { const ov = getOpsEconOverrides(); if (ov && ov.__farmMenu && typeof ov.__farmMenu === 'object') return Object.assign({}, OPS_FARM_MENU, ov.__farmMenu); } catch (e) {}
+  return OPS_FARM_MENU;
+}
+function _opFarmAvail(rid) {
+  try { const F = (typeof window !== 'undefined') ? window.MythicFarm : null; return (F && typeof F.available === 'function') ? Math.max(0, F.available(rid) | 0) : 0; } catch (e) { return 0; }
+}
+/* Consume an operation's inputs at settle: the kitchen-door share is drawn
+   from the farm's pens first, the rest from the stash. `scale` is the
+   wages-short penalty the corp path applies. Returns what was actually taken. */
+function _opConsumeInputs(c, scale, who) {
+  const out = {};
+  try {
+    scale = (typeof scale === 'number') ? scale : 1;
+    const burn = {};
+    Object.keys(c.inputsUsed || {}).forEach(function (rid) { const q = Math.max(0, Math.floor(c.inputsUsed[rid] * scale)); if (q > 0) burn[rid] = q; });
+    const F = (typeof window !== 'undefined') ? window.MythicFarm : null;
+    if (F && typeof F.drawAccrual === 'function' && c.farmDoor) {
+      Object.keys(c.farmDoor).forEach(function (rid) {
+        const want = Math.min(burn[rid] | 0, Math.max(0, Math.floor(c.farmDoor[rid] * scale)));
+        if (want <= 0) return;
+        try { const r = F.drawAccrual(rid, want, who || 'the business'); const took = (r && r.taken) | 0; if (took > 0) { burn[rid] -= took; out[rid] = (out[rid] | 0) + took; } } catch (e) {}
+      });
+    }
+    const rest = {}; Object.keys(burn).forEach(function (rid) { if (burn[rid] > 0) rest[rid] = burn[rid]; });
+    if (Object.keys(rest).length && typeof spendResources === 'function') { spendResources(rest); Object.keys(rest).forEach(function (rid) { out[rid] = (out[rid] | 0) + rest[rid]; }); }
+  } catch (e) { try { console.warn('[op inputs]', e); } catch (_) {} }
+  return out;
+}
 function _opEcon(t) {
   const base = OPS_ECON[t] || null;
   if (!base) return null;
@@ -80136,6 +80255,10 @@ function _opComputed(o) {
   // supply problem the player can go and solve.
   const inputsWanted = {};
   let supply = 1;
+  /* 🍳 FARM MENU — see OPS_FARM_MENU. Runs BEFORE the throttle so a restaurant
+     with a full coop and an empty food shelf still runs at 100%. `farmDoor`
+     is the slice of each good that will come out of the pens at settle. */
+  const farmDoor = {}; let menuMul = 1; const menuUsed = {};
   if (e.inputs && typeof e.inputs === 'object') {
     Object.keys(e.inputs).forEach(function (rid) {
       // 🗺 Scaled by terroir: you consume in proportion to what you can
@@ -80143,12 +80266,30 @@ function _opComputed(o) {
       const need = w * (e.inputs[rid] || 0) * hrs * _terr;
       if (need > 0) inputsWanted[rid] = need;
     });
+    if (inputsWanted.food > 0) {
+      const M = _opFarmMenu(); let foodLeft = inputsWanted.food; const foodAll = foodLeft;
+      Object.keys(M).forEach(function (rid) {
+        if (foodLeft <= 0.5) return;
+        const m = M[rid]; if (!m || !(m.per > 0)) return;
+        let stash = 0; try { stash = (typeof getRes === 'function') ? Math.max(0, getRes(rid) | 0) : 0; } catch (err) {}
+        const door = _opFarmAvail(rid);
+        const units = Math.min(stash + door, Math.ceil(foodLeft * m.per));
+        if (units <= 0) return;
+        const covers = units / m.per;
+        menuUsed[rid] = units; foodLeft -= covers;
+        if (door > 0) farmDoor[rid] = Math.min(units, door);
+        menuMul += (m.bonus || 0) * Math.min(1, covers / foodAll);
+      });
+      if (foodLeft <= 0.5) delete inputsWanted.food; else inputsWanted.food = foodLeft;
+      Object.keys(menuUsed).forEach(function (rid) { inputsWanted[rid] = menuUsed[rid]; });
+    }
     const ids = Object.keys(inputsWanted);
     if (ids.length) {
       let worst = 1;
       ids.forEach(function (rid) {
         let have = 0;
         try { have = (typeof getRes === 'function') ? Math.max(0, getRes(rid) | 0) : 0; } catch (err) { have = 0; }
+        if (menuUsed[rid]) have += _opFarmAvail(rid);
         const ratio = Math.min(1, have / inputsWanted[rid]);
         if (ratio < worst) worst = ratio;
       });
@@ -80176,7 +80317,7 @@ function _opComputed(o) {
   //   the guarantee that remote operation is unchanged; _opSiteEff clamps to
   //   [1, 1.45] on read so a corrupt value cannot cut a business's income.
   const siteEff = (typeof _opSiteEff === 'function') ? _opSiteEff(o) : 1;
-  const grossPerHr = w * e.ratePerWorkerHr * mktMul * stdMul * supply * siteEff * _terrGross;
+  const grossPerHr = w * e.ratePerWorkerHr * mktMul * stdMul * supply * siteEff * _terrGross * menuMul;
   // ⚠ Salaries are NOT throttled — same rule as the market multiplier above.
   // Wages are owed whether or not the supply line held, which is what makes
   // running dry actually hurt instead of quietly pausing the business.
@@ -80187,10 +80328,10 @@ function _opComputed(o) {
   const cdLeft = Math.max(0, (last + OP_COLLECT_CD_MS) - Date.now());
   const yields = {};
   if (e.yields) Object.keys(e.yields).forEach(function (rid) {
-    const q = Math.floor(w * (e.yields[rid] || 0) * hrs * supply * _terrRes(rid));
+    const q = Math.floor(w * (e.yields[rid] || 0) * hrs * supply * _terrRes(rid) * menuMul);
     if (q > 0) yields[rid] = q;
   });
-  return { e: e, w: w, hrs: hrs, grossPerHr: grossPerHr, salaryPerHr: salaryPerHr, gross: gross, salary: salary, net: net, cdLeft: cdLeft, last: last, yields: yields, mktMul: mktMul, stdMul: stdMul, supply: supply, siteEff: siteEff, terroirMul: _terr, terroirGrossMul: _terrGross, inputsWanted: inputsWanted, inputsUsed: inputsUsed };
+  return { farmDoor: farmDoor, menuMul: menuMul, menuUsed: menuUsed, e: e, w: w, hrs: hrs, grossPerHr: grossPerHr, salaryPerHr: salaryPerHr, gross: gross, salary: salary, net: net, cdLeft: cdLeft, last: last, yields: yields, mktMul: mktMul, stdMul: stdMul, supply: supply, siteEff: siteEff, terroirMul: _terr, terroirGrossMul: _terrGross, inputsWanted: inputsWanted, inputsUsed: inputsUsed };
 }
 function _opLaborPool() { return Math.max(1, (Corp.roster || []).length || 1); }
 // Shared post-founding handler — fires the unlock toast + grants Woods
@@ -80359,9 +80500,7 @@ async function _opSettle(o) {
       // rate, which is itself bounded by what the player actually holds, so this
       // can never overdraw — and the gross/yields above were computed from the
       // same `supply` figure, so spend and output always agree.
-      if (c.inputsUsed && Object.keys(c.inputsUsed).length && typeof spendResources === 'function') {
-        try { spendResources(c.inputsUsed); } catch (errIn) { try { console.warn('[op inputs]', errIn); } catch (_) {} }
-      }
+      if (c.inputsUsed && Object.keys(c.inputsUsed).length) _opConsumeInputs(c, 1, OP_LABELS[o.op_type] || o.op_type);
       Object.keys(c.yields || {}).forEach(function (rid) {
         const q = Math.max(0, Math.floor(c.yields[rid]));
         if (q > 0) yieldedL[rid] = q;
@@ -80402,15 +80541,8 @@ async function _opSettle(o) {
     // 🏭 Consume inputs on the corp path too. Scaled by the same wagesShort
     // penalty as the output, so a half-output run also burns half the feedstock
     // rather than paying full price for reduced production.
-    if (c.inputsUsed && Object.keys(c.inputsUsed).length && typeof spendResources === 'function') {
-      const burn = {};
-      Object.keys(c.inputsUsed).forEach(function (rid) {
-        const q = Math.max(0, Math.floor(c.inputsUsed[rid] * (wagesShort ? 0.5 : 1)));
-        if (q > 0) burn[rid] = q;
-      });
-      if (Object.keys(burn).length) {
-        try { spendResources(burn); } catch (errIn) { try { console.warn('[op inputs]', errIn); } catch (_) {} }
-      }
+    if (c.inputsUsed && Object.keys(c.inputsUsed).length) {
+      _opConsumeInputs(c, wagesShort ? 0.5 : 1, OP_LABELS[o.op_type] || o.op_type);
     }
     const cy = c.yields || {};
     Object.keys(cy).forEach(function (rid) {
@@ -81491,6 +81623,10 @@ function _jbEcon() {
             salary: c.salary, cdLeftMs: c.cdLeft, hrs: Math.round(c.hrs * 10) / 10,
             yieldStr: ys, yieldRate: yp,
             inputRate: ip, inputStr: iu,
+            // 🍳 Farm menu — what farm goods this run ate instead of food, the lift it earned, and the share that came out of the pens.
+            farmMenu: Object.keys(c.menuUsed || {}).map(function (rid) { return ((_meta(rid).icon) || '📦') + ' ' + (c.menuUsed[rid] | 0); }).join(' · '),
+            farmLift: Math.round(((c.menuMul || 1) - 1) * 100),
+            farmDoor: Object.keys(c.farmDoor || {}).map(function (rid) { return ((_meta(rid).icon) || '📦') + ' ' + (c.farmDoor[rid] | 0); }).join(' · '),
             // 🏙 Sited in a city? The Just Business card is where a player who
             // has never opened the city builder finds out the option exists.
             sited: !!(typeof _opSite === 'function' && _opSite(o)),
@@ -111339,6 +111475,7 @@ function _renderImpl() {
   if (App.screen === 'dojoShop')   return renderDojoShop();
   if (App.screen === 'camp')       return renderCamp();
   if (App.screen === 'reconstruction') return renderReconstruction();   // 🏗 Reconstruction Settlement (Camp Console)
+  if (App.screen === 'farm')       return renderFarm();                 // 🐄 Homestead Farm (/src/farm, 3D)
   if (App.screen === 'research')   return renderResearch();
   if (App.screen === 'resistanceRing') return renderResistanceRing();
   if (App.screen === 'campOps')    return renderCamp();   // real camp ops, opened from the bunker
@@ -156269,6 +156406,7 @@ function _campCommandBarHtml() {
         <button class="btn-secondary" id="btn-camp-vehicle-market" title="Buy or sell vehicles between players">🛒 Vehicle Market${vehicleCount}</button>
         <span class="cbx-spacer"></span>
         <button class="btn-secondary" data-act="recon-open" title="Open the Reconstruction Settlement — Camp Console + reclaim the ruins">🏗 Reconstruction</button>
+        <button class="btn-secondary" data-act="farm-open" title="The Homestead Farm — raise stock, collect eggs / milk / wool, slaughter for meat and hide">🐄 Farm</button>
       </nav>`;
 }
 
@@ -177034,6 +177172,7 @@ const RPG_GUIDE_PAGES = [
   { route: 'collection',   label: 'Inventory / Codex' },
   { route: 'coliseum',     label: 'Colosseum' },
   { route: 'camp',         label: 'Survivor Camp' },
+  { route: 'farm',         label: '🐄 Homestead Farm' },
   { route: 'lab',          label: 'The Lab' },
   // 🗺 City Nodes (Territory Wars war map) — App.screen === 'territoryWars',
   // so _currentGuideRoute's fall-through matches it with no extra wiring.
@@ -206461,7 +206600,7 @@ function _openNodeCity(nodeId, _resolved) {
   }
   const f = document.createElement('iframe');
   f.id = 'node-city-frame';
-  f.src = 'node-city/index.html?v=120t9';
+  f.src = 'node-city/index.html?v=120x5';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);
@@ -207346,6 +207485,95 @@ window.MythicHouseBridge = {
   showToast: (m, ms) => { try { showToast(m, ms); } catch (e) {} },
   gcConfirm: (m) => { try { return gcConfirm(m); } catch (e) { return Promise.resolve(false); } },
   render: () => { try { render(); } catch (e) {} },
+  collectCdMs: (typeof OP_COLLECT_CD_MS !== 'undefined') ? OP_COLLECT_CD_MS : 6 * 3600000,
+  accrualCapH: (typeof OP_ACCRUAL_CAP_H !== 'undefined') ? OP_ACCRUAL_CAP_H : 36,
+};
+/* 🐄 THE FARM BRIDGE — for /src/farm/*.js (the Homestead Farm).
+   🔴 THE GLOBALS TRAP (CLAUDE.md), once more. `Profile`, `getRes`, `addRes`,
+   `spendGems`, `RESOURCES`, `App`, `render` and the idle constants are
+   top-level `const` / function declarations in this file — global LEXICAL
+   bindings, invisible to an ES module. Everything the farm needs is handed
+   over HERE, exactly as MythicCityBridge does for /src/city. If the farm
+   needs something new, it is ADDED HERE, never guessed at from inside.
+   ⚠ Same rules as the city bridge: resources live on Profile.salvage behind
+     getRes/addRes (NOT Profile.resources); refundRes is the UNCAPPED undo;
+     setFarmState/save RETURN FALSE on failure so the module's refund path is
+     reachable; the 6h/36h idle contract is passed, never redeclared. */
+window.MythicFarmBridge = {
+  resources: (typeof RESOURCES !== 'undefined') ? RESOURCES : [],
+  getRes: (id) => { try { return getRes(id) | 0; } catch (e) { return 0; } },
+  addRes: (id, n) => { try { addRes(id, n); } catch (e) {} },
+  refundRes: (id, n) => { try { _refundRes(id, n); } catch (e) {} },
+  spendRes: (id, n) => { try { return !!spendResources({ [id]: n | 0 }); } catch (e) { return false; } },
+  gems: () => { try { return Profile.gems | 0; } catch (e) { return 0; } },
+  spendGems: (n) => { try { return !!spendGems(n); } catch (e) { return false; } },
+  addGems: (n) => { try { addGems(n); } catch (e) {} },
+  /* Persistence — absent-tolerant (a save with no farm key hydrates as {}),
+     and the two writers report failure instead of swallowing it. Profile.farm
+     is named in the cloud payload as __farm__ and merged back in hydration;
+     both halves, or a paid-for barn vanishes on the next device. */
+  farmState: () => {
+    try {
+      if (!Profile.farm || typeof Profile.farm !== 'object') Profile.farm = {};
+      return Profile.farm;
+    } catch (e) { return {}; }
+  },
+  setFarmState: (s) => {
+    try { if (!s || typeof s !== 'object') return false; Profile.farm = s; return true; } catch (e) { return false; }
+  },
+  save: () => { try { saveProfile(); return true; } catch (e) { return false; } },
+  toast: (m, ms) => { try { showToast(m, ms || 3600); } catch (e) {} },
+  confirm: (m) => { try { return gcConfirm(m); } catch (e) { return Promise.resolve(false); } },
+  back: () => { try { App.screen = 'camp'; render(); } catch (e) {} },
+  isAdmin: () => { try { return !!(typeof isAdmin === 'function' && isAdmin()); } catch (e) { return false; } },
+  /* 👷 Hired Farmers (Reconstruction workforce) tend the troughs and add a
+     small yield bonus. Read live, never cached — hiring happens elsewhere. */
+  farmers: () => { try { return (_campWorkforce().Farmer | 0); } catch (e) { return 0; } },
+  /* 🏴 Rival camp names for raid stories. Best-effort from the Territory Wars
+     registration cache (already fetched for the Civilization Network); an
+     empty list makes the farm fall back to bandit gangs. Never the player's
+     own camp — a raid by yourself is not a story. */
+  rivals: () => {
+    try {
+      const rows = (App._twAllCamps && Array.isArray(App._twAllCamps.rows)) ? App._twAllCamps.rows : [];
+      const me = (Profile.cloud && Profile.cloud.userId) || null;
+      return rows.filter(r => r && r.camp_name && r.user_id !== me).map(r => String(r.camp_name)).slice(0, 40);
+    } catch (e) { return []; }
+  },
+  /* 🌐 THE CLOUD SEAM — for /src/farm/farm.cloud.js (player lots + corp ranch).
+     `Cloud`, `Corp`, `Profile` are lexical bindings, invisible to the module,
+     so this is the whole surface it gets. Every function is absent-tolerant:
+     signed out → ready() false, no corp → corp() null, no client → the module
+     prints "not available". rpc/select return the Supabase {data,error} shape
+     untouched so the module can tell a missing table (sql/038 not applied)
+     from a real error. No money moves through here — the definer RPCs do it. */
+  cloud: {
+    ready: () => { try { return !!(typeof initCloud === 'function' && initCloud() && Cloud && Cloud.client && Profile.cloud && Profile.cloud.signedIn); } catch (e) { return false; } },
+    userId: () => { try { return (Profile.cloud && Profile.cloud.userId) || null; } catch (e) { return null; } },
+    userName: () => { try { return (typeof _campRegName === 'function' && _campRegName()) || (Profile.cloud && (Profile.cloud.displayName || Profile.cloud.username)) || 'Farmer'; } catch (e) { return 'Farmer'; } },
+    corp: () => { try { return (Corp && Corp.mine && Corp.mine.id) ? { id: Corp.mine.id, name: Corp.mine.name, tag: Corp.mine.tag } : null; } catch (e) { return null; } },
+    rpc: (name, args) => { try { return Cloud.client.rpc(name, args || {}); } catch (e) { return Promise.resolve({ data: null, error: { message: String(e && e.message || e) } }); } },
+    select: (table, o) => {
+      try {
+        o = o || {}; let q = Cloud.client.from(table).select(o.cols || '*');
+        if (o.eq) Object.keys(o.eq).forEach(k => { q = q.eq(k, o.eq[k]); });
+        if (o.order) q = q.order(o.order[0], { ascending: !!o.order[1] });
+        if (o.limit) q = q.limit(o.limit | 0);
+        return q;
+      } catch (e) { return Promise.resolve({ data: null, error: { message: String(e && e.message || e) } }); }
+    },
+  },
+  /* 🏗 Hired Builders shorten construction; 🚚 the best convoy rig the
+     player owns is a free carrier for bought stock (CONVOY_TRUCKS + the
+     Garage decide ownership; _convoyOwnsTruck unions cash and legacy Aza). */
+  builders: () => { try { return (_campWorkforce().Builder | 0); } catch (e) { return 0; } },
+  bestRig: () => {
+    try {
+      let best = null;
+      for (const tr of CONVOY_TRUCKS) if (_convoyOwnsTruck(tr.id) && (!best || tr.perDay > best.perDay)) best = tr;
+      return best ? { id: best.id, name: best.name, emoji: best.emoji, perDay: best.perDay } : null;
+    } catch (e) { return null; }
+  },
   collectCdMs: (typeof OP_COLLECT_CD_MS !== 'undefined') ? OP_COLLECT_CD_MS : 6 * 3600000,
   accrualCapH: (typeof OP_ACCRUAL_CAP_H !== 'undefined') ? OP_ACCRUAL_CAP_H : 36,
 };
@@ -215773,6 +216001,8 @@ try {
         case 'camp-defend-convoy': openConvoyDefense(); break;
         case 'convoy-launch': launchConvoyDefense(); break;
         case 'recon-open': App.screen = 'reconstruction'; try { render(); } catch (err) {} break;
+        case 'farm-open': App.screen = 'farm'; try { render(); } catch (err) {} break;
+        case 'farm-back': App.screen = 'camp'; try { render(); } catch (err) {} break;
         case 'recon-back': App.screen = 'camp'; try { render(); } catch (err) {} break;
         case 'recon-reclaim': { const s = t.getAttribute('data-site'); if (s) openReconReclaim(s); break; }
         case 'recon-reclaim-confirm': { const s = t.getAttribute('data-site'); if (s) reconReclaim(s); break; }
@@ -216542,6 +216772,26 @@ function _reconNetworkBodyHtml() {
     </div>
     <div class="recon-net-rail">${railHtml}</div>
   </div>`;
+}
+/* 🐄 HOMESTEAD FARM — App.screen === 'farm'. The screen itself lives in
+   /src/farm (CLAUDE.md: new features go in /src/<feature>/). This function is
+   only the hand-off: gate, hand #app to the module, and show a plain fallback
+   if the module never loaded (offline first visit, stale cache). The module
+   watches its own canvas and disposes when render() replaces #app, so leaving
+   by ANY route (back button, admin route picker, a toast that changes
+   App.screen) cleans up the WebGL context. */
+function renderFarm() {
+  if (typeof isCampUnlocked === 'function' && !isCampUnlocked()) { App.screen = 'camp'; return renderCamp(); }
+  const MF = (typeof window !== 'undefined') ? window.MythicFarm : null;
+  const fallback = (why) => {
+    root.innerHTML = `<div style="padding:40px 20px;text-align:center;max-width:520px;margin:0 auto">
+      <h2>🐄 Homestead Farm</h2>
+      <p class="hint" style="margin:12px 0 18px">${escapeHtml(why)}</p>
+      <button class="btn-secondary" data-act="farm-back">← Back to Camp</button></div>`;
+  };
+  if (!MF || typeof MF.mount !== 'function') return fallback('The farm module has not loaded — you may be offline, or a cached build is stale. Refresh and try again.');
+  try { if (!MF.mount(root)) return fallback('The farm could not start (its bridge is missing). Refresh and try again.'); }
+  catch (e) { try { console.warn('[farm] mount failed:', e); } catch (e2) {} return fallback('The farm hit an error while starting. Refresh and try again.'); }
 }
 function renderReconstruction() {
   const r = _reconState();
@@ -223115,7 +223365,7 @@ render();
        the safe state to ship a data layer in.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/resources/chain.js?v=v120w6chain2"></script>
+<script type="module" src="src/resources/chain.js?v=v120x5chain5"></script>
 <!-- ⚒ ATHENA ENGINE (World Forge) — the 3D map creator + mini-game engine (terrain, water, props, .glb models,
      gizmo, sky, Play mode). Registers window.MythicMapForge and is INERT until
      opened from the admin panel button or ?mapforge=1: three.js (the r128
@@ -223130,6 +223380,17 @@ render();
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
 <script type="module" src="src/mapforge/index.js?v=mf5"></script>
+<!-- 🐄 HOMESTEAD FARM — the 3D animal-farm simulation (/src/farm). Registers
+     window.MythicFarm and is INERT until renderFarm() hands it #app. Reads
+     nothing by itself: window.MythicFarmBridge (defined next to
+     MythicCityBridge above) hands it the resource accessors, Cinder, the
+     Profile.farm slot, toast/confirm and the existing 6h/36h idle constants.
+     three.js is fetched on first open from the same cdnjs r128 URL the combat
+     VFX uses (one cached copy); if that fails the farm renders on a 2D canvas.
+     ⚠ If this 404s nothing else changes — the Camp button shows a fallback.
+     ⚠ Bump ?v= on every change — the service worker caches /src/* like any
+       other static asset, and a missed bump ships invisibly. -->
+<script type="module" src="src/farm/index.js?v=v120x5farm6"></script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the

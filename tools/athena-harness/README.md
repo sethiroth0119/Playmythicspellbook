@@ -39,6 +39,8 @@ node tools/athena-harness/pw-test7.mjs        # round 7: physics — heightfield
                                               #   bodies, Impulse / Set velocity / Set body kind, On Hit, player push, engine
 node tools/athena-harness/pw-test8.mjs        # round 8: navmesh bake, A* around walls, Move To / Patrol / Wander,
                                               #   On See → Chase, spawned enemy prefab, navmesh overlay, engine
+node tools/athena-harness/pw-test9.mjs        # round 9: audio — Sounds library, Sound emitter, Play/Stop sound, engine
+                                              #   (needs three/models/beep.wav: `node -e` in pw-test9's header comment, or any small wav)
 ```
 
 Each prints ✔/✘ per step and the page's error list; screenshots land in

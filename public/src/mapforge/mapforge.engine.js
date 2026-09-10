@@ -39,7 +39,7 @@ export async function mountWorld(host, opts) {
   host.appendChild(canvas);
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(opts.fov || 60, 1, 0.1, 3000);
-  const world = buildWorld(THREE, map, { scene, markers: !!opts.markers, gltfLoader: opts.gltfLoader, onLightning: opts.onLightning, toast: opts.toast, onPrompt: opts.onPrompt, actions: opts.actions });
+  const world = buildWorld(THREE, map, { scene, camera, markers: !!opts.markers, gltfLoader: opts.gltfLoader, onLightning: opts.onLightning, toast: opts.toast, onPrompt: opts.onPrompt, actions: opts.actions });
   scene.add(world.group);
 
   const listeners = { frame: [], resize: [] };

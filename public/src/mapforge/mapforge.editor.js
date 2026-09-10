@@ -162,7 +162,7 @@ export async function openEditor(opts) {
     if (world) { scene.remove(world.group); world.dispose(); }
     if (gridHelper) { scene.remove(gridHelper); gridHelper = null; }
     S.map = map; S.source = source == null ? S.source : source;
-    world = buildWorld(THREE, map, { scene, onAssetLoaded: () => {}, toast: (m, ms) => toast(m, ms), onPrompt: (p) => { const el = $('#mf-prompt'); el.hidden = !p; el.textContent = p ? '⚡ ' + p : ''; } });
+    world = buildWorld(THREE, map, { scene, camera, onAssetLoaded: () => {}, toast: (m, ms) => toast(m, ms), onPrompt: (p) => { const el = $('#mf-prompt'); el.hidden = !p; el.textContent = p ? '⚡ ' + p : ''; } });
     S.editingPrefab = null; S.multi.clear(); S.bpOpen = false; if (bpGraph) { bpGraph.destroy(); bpGraph = null; bpFor = null; }
     scene.add(world.group);
     world.setMarkersVisible(S.showMarkers);
@@ -528,7 +528,7 @@ export async function openEditor(opts) {
   /* ═══ ACTOR BLUEPRINTS ═══ — components + an event graph on the selected object. */
   function renderBpSection(o) {
     const bp = o.bp;
-    const comps = bp ? bp.comps.map((c, i) => { const C = COMPONENTS[c.type]; const E = C.enums || {}; return `<div class="mf-comp" data-ci="${i}" title="${esc(C.help || '')}"><span class="ic">${C.icon}</span><span class="lb">${esc(C.label)}</span>${Object.keys(C.fields).map(k => `<label>${esc(k)}${E[k] ? '<select data-ck="' + k + '">' + E[k].map(v => '<option value="' + v + '"' + (c[k] === v ? ' selected' : '') + '>' + v + '</option>').join('') + '</select>' : `<input type="${k === 'c' ? 'color' : (typeof C.fields[k] === 'number' ? 'number' : 'text')}" data-ck="${k}" value="${esc(c[k])}" ${typeof C.fields[k] === 'number' ? 'step="0.1"' : ''}>`}</label>`).join('')}<button data-cdel="${i}" title="Remove">✕</button></div>`; }).join('') : '';
+    const comps = bp ? bp.comps.map((c, i) => { const C = COMPONENTS[c.type]; const E = C.enums || {}; return `<div class="mf-comp" data-ci="${i}" title="${esc(C.help || '')}"><span class="ic">${C.icon}</span><span class="lb">${esc(C.label)}</span>${Object.keys(C.fields).map(k => `<label>${esc(k)}${(c.type === 'sound' && k === 's') ? '<select data-ck="s"><option value="">— pick —</option>' + (S.map.sounds || []).map(x => '<option value="' + esc(x.id) + '"' + (c.s === x.id ? ' selected' : '') + '>' + esc(x.label) + '</option>').join('') + '</select>' : E[k] ? '<select data-ck="' + k + '">' + E[k].map(v => '<option value="' + v + '"' + (c[k] === v ? ' selected' : '') + '>' + v + '</option>').join('') + '</select>' : `<input type="${k === 'c' ? 'color' : (typeof C.fields[k] === 'number' ? 'number' : 'text')}" data-ck="${k}" value="${esc(c[k])}" ${typeof C.fields[k] === 'number' ? 'step="0.1"' : ''}>`}</label>`).join('')}<button data-cdel="${i}" title="Remove">✕</button></div>`; }).join('') : '';
     const vars = bp ? Object.keys(bp.vars).map(k => `<div class="mf-comp var" data-vk="${esc(k)}"><code>$${esc(k)}</code><select data-vt><option value="number" ${bp.vars[k].type === 'number' ? 'selected' : ''}>num</option><option value="string" ${bp.vars[k].type === 'string' ? 'selected' : ''}>text</option><option value="bool" ${bp.vars[k].type === 'bool' ? 'selected' : ''}>bool</option></select><input type="text" data-vv value="${esc(bp.vars[k].value == null ? '' : bp.vars[k].value)}"><button data-vdel title="Remove">✕</button></div>`).join('') : '';
     const n = bp ? bp.graph.nodes.length : 0;
     return `<div class="mf-bp"><div class="mf-row" style="margin-bottom:5px"><label>Blueprint</label><span class="st">⚡ ${bp ? (bp.comps.length + ' component' + (bp.comps.length === 1 ? '' : 's') + ' · ' + n + ' node' + (n === 1 ? '' : 's')) : 'none — static prop'}</span></div>
@@ -592,6 +592,8 @@ export async function openEditor(opts) {
       if (k === 'target') ctl = `<input type="text" data-k="${k}" list="mf-bp-targets" value="${esc(n.props[k])}">`;
       else if (k === 'loop') ctl = `<select data-k="${k}">${LOOP_MODES.map(l => '<option value="' + l + '"' + (n.props[k] === l ? ' selected' : '') + '>' + l + '</option>').join('')}</select>`;
       else if (k === 'what') ctl = `<input type="text" data-k="${k}" list="mf-bp-spawnables" value="${esc(n.props[k])}">`;
+      else if (k === 'sound') ctl = `<input type="text" data-k="${k}" list="mf-bp-sounds" value="${esc(n.props[k])}" placeholder="Library → Sounds"><datalist id="mf-bp-sounds">${(S.map.sounds || []).map(x => '<option value="' + esc(x.label) + '">').join('')}</datalist>`;
+      else if (k === 'at') ctl = `<input type="text" data-k="${k}" list="mf-bp-at" value="${esc(n.props[k])}"><datalist id="mf-bp-at"><option value="self"><option value="player"><option value="2d"><option value="all">${names.map(x => '<option value="' + esc(x) + '">').join('')}</datalist>`;
       else if (k === 'points') ctl = `<input type="text" data-k="${k}" placeholder="wp1, wp2  or  folder:Route" value="${esc(n.props[k])}" title="Waypoint names: ${esc(S.map.objects.filter(x => x.t === 'waypoint' && x.n).map(x => x.n).join(', ') || 'name some Waypoint markers first')}">`;
       else if (k === 'color') ctl = `<input type="color" data-k="${k}" value="${esc(n.props[k])}">`;
       else if (k === 'message' || k === 'value' || k === 'cond' || k === 'args') ctl = `<textarea data-k="${k}" rows="2">${esc(n.props[k])}</textarea>`;
@@ -834,12 +836,17 @@ export async function openEditor(opts) {
     beginObjectEdit(); a.url = url.trim(); delete a.data; delete a.size; endObjectEdit();
     renderLibrary(); setDirty(true); toast('Relinked — it will load from the URL on next open.');
   }
-  let projectLib = null;   // /models/manifest.json, fetched once per session
+  let projectLib = null, projectSounds = null;   // /models/manifest.json (models + sounds), fetched once per session
   async function loadProjectLib() {
     if (projectLib) return projectLib;
-    try { const r = await fetch('/models/manifest.json', { cache: 'no-cache' }); const j = r.ok ? await r.json() : null; projectLib = (j && Array.isArray(j.models)) ? j.models.filter(m => m && m.url) : []; }
-    catch (e) { projectLib = []; }
+    try { const r = await fetch('/models/manifest.json', { cache: 'no-cache' }); const j = r.ok ? await r.json() : null; projectLib = (j && Array.isArray(j.models)) ? j.models.filter(m => m && m.url) : []; projectSounds = (j && Array.isArray(j.sounds)) ? j.sounds.filter(m => m && m.url) : []; }
+    catch (e) { projectLib = []; projectSounds = []; }
     return projectLib;
+  }
+  /* editor-only 2D preview through a throwaway listener (the world's audio only runs in Play) */
+  let previewAudio = null;
+  function previewSound(url) {
+    try { if (!previewAudio) { previewAudio = new THREE.Audio(new THREE.AudioListener()); } const ctx = previewAudio.listener.context; if (ctx.state === 'suspended') ctx.resume(); new THREE.AudioLoader().load(url, (buf) => { try { if (previewAudio.isPlaying) previewAudio.stop(); previewAudio.setBuffer(buf); previewAudio.setLoop(false); previewAudio.setVolume(0.9); previewAudio.play(); } catch (e) {} }, undefined, () => toast('Could not load that sound.', 3000)); } catch (e) { toast('Audio is not available here.', 2600); }
   }
   function removeAsset(id) {
     beginObjectEdit();
@@ -1080,12 +1087,13 @@ export async function openEditor(opts) {
   }
   let libCat = 'Nature';
   function renderLibrary() {
-    const cats = ['Nature', 'Structures', 'Props', 'Ruins', 'VFX', 'Markers', 'Models', 'Prefabs'];
+    const cats = ['Nature', 'Structures', 'Props', 'Ruins', 'VFX', 'Markers', 'Models', 'Prefabs', 'Sounds'];
     $('#mf-cats').innerHTML = cats.map(c => '<button data-cat="' + c + '" class="' + (c === libCat ? 'on' : '') + '">' + c + '</button>').join('');
     $$('#mf-cats button').forEach(b => b.onclick = () => { libCat = b.dataset.cat; renderLibrary(); });
     const grid = $('#mf-props'), models = $('#mf-models');
     if (libCat === 'Models') {
       const pb = $('#mf-prefabbox'); if (pb) pb.style.display = 'none';
+      const sb = $('#mf-soundbox'); if (sb) sb.style.display = 'none';
       grid.innerHTML = ''; models.style.display = '';
       $('#mf-assets').innerHTML = S.map.assets.length ? S.map.assets.map(a => '<div class="mf-asset ' + (S.propId === 'glb' && S.assetId === a.id ? 'on' : '') + '" data-asset="' + a.id + '"><span>' + (a.data ? '📦' : '🧊') + '</span><span class="lb" title="' + esc(a.url || 'embedded in this map') + '">' + esc(a.label) + (a.anims && a.anims.length ? ' <small>🎞 ' + a.anims.length + '</small>' : '') + '</span>' + (a.data ? '<span class="tag" title="Embedded in the map (' + (assetBytes(a) / 1024).toFixed(0) + ' KB). Relink to a /models/ URL for production.">' + (assetBytes(a) / 1024).toFixed(0) + 'K</span><span class="rl" title="Relink to a URL">↗</span>' : '') + '<span class="x" title="Remove model and every placed copy">✕</span></div>').join('') : '<div class="mf-empty">No models in this map yet. Drop a <b>.glb</b> on the canvas, pick one from the Project list, or paste a URL.</div>';
       const eb = embeddedBytes(S.map); $('#mf-embed-note').textContent = eb ? 'Embedded models: ' + (eb / 1048576).toFixed(2) + ' MB of 3.5 MB cloud limit' : '';
@@ -1097,7 +1105,23 @@ export async function openEditor(opts) {
         box.innerHTML = lib.length ? lib.map((m, i) => '<div class="mf-asset" data-proj="' + i + '" title="' + esc(m.url) + '"><span>🗂</span><span class="lb">' + esc(m.label || m.id || m.url) + (m.anims && m.anims.length ? ' <small>🎞 ' + m.anims.length + '</small>' : '') + '</span><span class="tag">' + esc(m.cat || 'model') + '</span></div>').join('') : '<div class="mf-empty">No project models listed. Add .glb files to /models/ and list them in /models/manifest.json.</div>';
         box.querySelectorAll('[data-proj]').forEach(el => el.onclick = () => { const m = lib[+el.dataset.proj]; addAsset(m.url, m.label || m.id, { anims: m.anims }); if (S.tool === 'select' || S.tool === 'erase') setTool('place'); });
       });
+    } else if (libCat === 'Sounds') {
+      const pb = $('#mf-prefabbox'); if (pb) pb.style.display = 'none';
+      models.style.display = 'none'; grid.innerHTML = '';
+      let box = $('#mf-soundbox'); if (!box) { box = document.createElement('div'); box.id = 'mf-soundbox'; grid.parentNode.insertBefore(box, models); }
+      box.style.display = '';
+      const list = S.map.sounds || [];
+      box.innerHTML = `<div class="mf-assets" id="mf-sounds">${list.length ? list.map(x => `<div class="mf-asset" data-snd="${esc(x.id)}" title="${esc(x.url)}"><span>🔊</span><span class="lb">${esc(x.label)}</span><span class="rl" data-sact="play" title="Preview">▶</span><span class="x" data-sact="del" title="Remove from this map">✕</span></div>`).join('') : '<div class="mf-empty">No sounds in this map. Add one from the project list or by URL, then put a <b>Sound emitter</b> on an object or use <b>Play sound</b> in a graph.</div>'}</div>
+        <div class="mf-sub" style="margin-top:8px">Project (/models/manifest.json → sounds)</div><div class="mf-assets" id="mf-projsounds"><div class="mf-empty">Loading…</div></div>
+        <div class="mf-sub" style="margin-top:8px">By URL</div><div><input type="text" id="mf-snd-url" placeholder="/assets/Audio/Rain sound.mp3"></div>
+        <div style="display:flex;gap:5px;margin-top:5px"><input type="text" id="mf-snd-label" placeholder="Label (optional)" maxlength="60"><button id="mf-snd-add">Add</button></div>
+        <p class="mf-hint">Files the game already ships (assets/Audio) or any CORS host. Nothing is uploaded. Positional sounds pan and fade with distance in Play and in the game.</p>`;
+      const addSound = (url, label) => { url = String(url || '').trim(); if (!url) return; if (!/^(https?:\/\/|\/|\.\/|assets\/)/i.test(url)) { toast('Sound URL must start with https://, / or assets/'); return; } if (S.map.sounds.find(x => x.url === url)) { toast('Already in this map.'); return; } beginObjectEdit(); S.map.sounds.push({ id: uid('s_'), label: (label || decodeURIComponent(url.split('/').pop().replace(/\.[a-z0-9]+$/i, '')) || 'Sound').slice(0, 60), url }); endObjectEdit(); setDirty(true); renderLibrary(); };
+      box.querySelector('#mf-snd-add').onclick = () => { addSound(box.querySelector('#mf-snd-url').value, box.querySelector('#mf-snd-label').value); };
+      box.querySelectorAll('[data-snd]').forEach(el => el.onclick = (e) => { const id = el.dataset.snd, act = e.target.dataset.sact; const x = S.map.sounds.find(y => y.id === id); if (!x) return; if (act === 'del') { beginObjectEdit(); S.map.sounds = S.map.sounds.filter(y => y.id !== id); endObjectEdit(); setDirty(true); renderLibrary(); return; } if (act === 'play') { previewSound(x.url); } });
+      loadProjectLib().then(() => { const pj = $('#mf-projsounds'); if (!pj || libCat !== 'Sounds') return; const snds = projectSounds || []; pj.innerHTML = snds.length ? snds.map((m, i) => '<div class="mf-asset" data-ps="' + i + '" title="' + esc(m.url) + '"><span>🗂</span><span class="lb">' + esc(m.label || m.url) + '</span><span class="tag">' + (S.map.sounds.find(x => x.url === m.url) ? 'in map' : 'add') + '</span></div>').join('') : '<div class="mf-empty">No project sounds listed. Add a `sounds` array to /models/manifest.json.</div>'; pj.querySelectorAll('[data-ps]').forEach(el => el.onclick = () => { const m = snds[+el.dataset.ps]; addSound(m.url, m.label); }); });
     } else if (libCat === 'Prefabs') {
+      const sb = $('#mf-soundbox'); if (sb) sb.style.display = 'none';
       models.style.display = 'none';
       const defs = S.map.prefabs || [], shelf = shelfList();
       grid.innerHTML = '';
@@ -1116,6 +1140,7 @@ export async function openEditor(opts) {
       box.querySelectorAll('[data-shelf]').forEach(el => el.onclick = (e) => { const id = el.dataset.shelf; if (e.target.dataset.shelfact === 'del') { shelfRemove(id); return; } shelfImport(id); });
     } else {
       const pb = $('#mf-prefabbox'); if (pb) pb.style.display = 'none';
+      const sb = $('#mf-soundbox'); if (sb) sb.style.display = 'none';
       models.style.display = 'none';
       grid.innerHTML = PROP_CATALOG.filter(p => p.cat === libCat).map(p => '<button data-prop="' + p.id + '" class="' + (S.propId === p.id ? 'on' : '') + '" title="' + esc(p.label) + '"><span class="ic">' + p.icon + '</span>' + esc(p.label) + '</button>').join('');
       $$('#mf-props button').forEach(b => b.onclick = () => { S.propId = b.dataset.prop; if (S.tool === 'select' || S.tool === 'erase') setTool('place'); renderLibrary(); refreshGhost(); renderHud(); });
@@ -1523,6 +1548,7 @@ const TEMPLATE = `
       <tr><td>Water</td><td>One global water level (Water tab). Sculpt below it to make lakes and rivers; Scatter skips underwater ground.</td></tr>
       <tr><td>Models</td><td>Drag a <kbd>.glb</kbd> onto the canvas, or Library → Models → Project / URL. Animated models: select the object and pick a clip, speed and loop in the inspector.</td></tr>
       <tr><td>Blueprints</td><td>Select an object → <b>⚡ Add blueprint</b>: components (Trigger volume, Point light, Rotating, Floating, Tag) and an <b>event graph</b> — Begin Play, On Tick, On Enter / Exit / Interact (E) → Move, Rotate, Scale, Spin, Set visible / tint, Play animation, Effect, Light, Spawn, Destroy, Teleport, Toast, Set variable, Branch, Delay, Call game action. Runs in Play and in the game; the map is untouched afterwards.</td></tr>
+      <tr><td>Audio</td><td>Library → <b>Sounds</b>: add files the game ships (assets/Audio) or a URL, ▶ previews. A <b>Sound emitter</b> component plays positionally on an object (auto from Begin Play, or via <b>Play sound</b>); Play sound also fires one-shots at the player or in 2D; <b>Stop sound</b> silences a target. Browsers need one click/key before audio starts.</td></tr>
       <tr><td>AI</td><td>Add a <b>Nav agent</b> component and use <b>Move To</b>, <b>Chase</b>, <b>Patrol</b> (waypoint names or <code>folder:Route</code>), <b>Wander</b>, <b>Stop moving</b>, <b>Look at</b>; event <b>On See</b> (range + field of view). Agents walk a navmesh baked from the terrain and colliders — Terrain tab → View → <b>Navmesh</b> shows it. Spawn a prefab whose blueprint chases the player and you have an enemy.</td></tr>
       <tr><td>Physics</td><td>Add a <b>Physics body</b> component (dynamic: mass and gravity; kinematic: moved by the graph, pushes things; box / sphere / cylinder). In Play the terrain, every solid collider and the player are part of the simulation — barrels fall, roll, get shoved. Graph: <b>Impulse</b>, <b>Set velocity</b>, <b>Set body kind</b>, event <b>On Hit</b> (<code>{hit.impact}</code>, <code>{hit.other}</code>). cannon-es, vendored at /vendor.</td></tr>
       <tr><td>Prefabs</td><td><kbd>Ctrl</kbd>+click several objects → <b>📦 Create prefab</b> (or 📦 on a folder). Place instances from Library → Prefabs. <b>✎ Edit prefab</b> unpacks one; <b>⤴ Apply</b> rewrites the prefab and every instance follows. 📚 keeps a prefab on this device for other maps.</td></tr>

@@ -75,6 +75,9 @@ export function newMap(opts) {
     water: { on: true, level: -0.6, color: '#2e6f9e', opacity: 0.78, wave: 0.12, speed: 1 },
     env: Object.assign({ preset: 'day', shadows: true, weather: 'none', weatherIntensity: 1, windDir: 45, windSpeed: 1.5 }, ENV_PRESETS.day),
     assets: [],
+    /* Sounds: URLs of files the game ships (/assets/Audio/…) referenced by Sound
+       emitter components and Play sound nodes — { id, label, url }, like assets. */
+    sounds: [],
     /* Content folders (Unreal's World Outliner folders): objects carry `f`
        (a folder id); a folder can nest via `parent`. Visibility/lock are
        editor conveniences saved with the map so a build session resumes
@@ -162,6 +165,7 @@ export function normalize(raw) {
   }) : null).filter(a => a && (a.url || a.data));
 
   const assetIds = new Set(m.assets.map(a => a.id));
+  m.sounds = (Array.isArray(raw.sounds) ? raw.sounds : []).map(x => x && typeof x === 'object' && x.url ? ({ id: String(x.id || uid('s_')), label: String(x.label || 'Sound').slice(0, 60), url: String(x.url).slice(0, 1000) }) : null).filter(Boolean).slice(0, 200);
   m.folders = normalizeFolders(raw.folders);
   const folderIds = new Set(m.folders.map(f => f.id));
   m.prefabs = normalizePrefabs(raw.prefabs, assetIds);

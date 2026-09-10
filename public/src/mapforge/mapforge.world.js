@@ -15,6 +15,7 @@ import { createEmitter, createWeather, windVector, EMITTERS } from './mapforge.v
 import { createActors, hasBehaviour } from './mapforge.actors.js';
 import { ensureCannon, createPhysics } from './mapforge.physics.js';
 import { createNav } from './mapforge.nav.js';
+import { createAudio } from './mapforge.audio.js';
 
 export function buildWorld(THREE, map, opts) {
   opts = opts || {};
@@ -366,6 +367,9 @@ export function buildWorld(THREE, map, opts) {
   let physics = null, physicsWanted = 0;
   /* navigation: baked lazily from terrain + colliders; invalidated when either changes */
   let nav = null;
+  /* audio: one listener on whatever camera the host hands over (engine / editor / overlay) */
+  let audio = null;
+  const needsAudio = () => map.objects.some(o => o.bp && (o.bp.comps.some(c => c.type === 'sound') || o.bp.graph.nodes.some(n => n.type === 'playsound')));
   const navNeeded = () => map.objects.some(o => o.bp && (o.bp.comps.some(c => c.type === 'agent') || o.bp.graph.nodes.some(n => /^(moveto|chase|patrol|wander)$/.test(n.type))));
   const needsPhysics = () => map.objects.some(o => o.bp && o.bp.comps.some(c => c.type === 'physics'));
   /* Bodies must exist BEFORE Begin Play runs (an Impulse on Begin Play would
@@ -404,12 +408,15 @@ export function buildWorld(THREE, map, opts) {
     get playing() { return actors.running; },
     get physics() { return physics && physics.running ? physics : null; },
     get nav() { if (!nav) nav = createNav(api, opts.nav); return nav; },
+    get audio() { return audio && audio.running ? audio : null; },
+    setAudioCamera(cam) { if (!needsAudio() && !audio) return; if (!audio) { try { audio = createAudio(THREE); } catch (e) { audio = null; return; } } audio.attach(cam); },
     navBake() { return api.nav.bake(); },
     navInvalidate() { if (nav) nav.invalidate(); },
     physicsReady: () => ensureCannon().then(() => true).catch(() => false),
-    startPlay(player) { if (player !== undefined) playerRef = player; if (navNeeded()) api.nav.bake(); if (needsPhysics()) startWithPhysics(); else actors.start(); },
+    startPlay(player) { if (player !== undefined) playerRef = player; if (navNeeded()) api.nav.bake(); if (needsAudio()) { if (!audio) { try { audio = createAudio(THREE); } catch (e) { audio = null; } } if (audio) { audio.start(); if (!audio.camera && opts.camera) audio.attach(opts.camera); } } if (needsPhysics()) startWithPhysics(); else actors.start(); },
     stopPlay() {
       physicsWanted++; if (physics) physics.stop();
+      if (audio) audio.stop();
       actors.stop();
       map.objects.filter(o => o._rt).forEach(o => removeObject(o.id)); map.objects = map.objects.filter(o => !o._rt);
       rtHidden.forEach(id => { const r = rootOf(id); if (r) r.visible = true; updateCollider(id); }); rtHidden.clear();
@@ -464,6 +471,7 @@ export function buildWorld(THREE, map, opts) {
     },
     update(dt, camera) {
       time += dt;
+      if (camera && audio && audio.running && audio.camera !== camera) audio.attach(camera);
       if (actors.running) { if (physics && physics.running) physics.step(dt, playerRef); actors.update(dt, interactFlag); interactFlag = false; }
       water.update(time, sunDir);
       mixers.forEach(m => m.mixer.update(dt));
@@ -472,7 +480,7 @@ export function buildWorld(THREE, map, opts) {
       if (camera) sky.position.copy(camera.position);
     },
     dispose() {
-      try { physicsWanted++; if (physics) physics.dispose(); actors.stop(); } catch (e) {}
+      try { physicsWanted++; if (physics) physics.dispose(); if (audio) audio.dispose(); actors.stop(); } catch (e) {}
       mixers.forEach((m, id) => stopAnim(id));
       emitters.forEach((em, id) => detachFx(id)); if (weather) { weather.dispose(); weather = null; }
       terrain.dispose(); water.dispose();

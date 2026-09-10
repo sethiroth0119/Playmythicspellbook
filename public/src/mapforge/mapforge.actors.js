@@ -32,6 +32,7 @@ export const COMPONENTS = {
   tag:     { label: 'Tag',            icon: '🏷', fields: { v: '' },                     help: 'A label the game can query: W().actors.withTag("loot").' },
   physics: { label: 'Physics body',   icon: '🎳', fields: PHYSICS_FIELDS, enums: PHYSICS_ENUMS, help: 'Dynamic: mass, gravity, collides with everything (cannon-es). Kinematic: moved by the graph, pushes dynamic bodies. Shape fits the object\'s bounds.' },
   agent:   { label: 'Nav agent',      icon: '🧭', fields: { speed: 2.5, turn: 8, stop: 0.8 }, help: 'Walks the navmesh: Move To, Chase, Patrol, Wander. speed m/s, turn = how fast it faces its heading, stop = arrival distance.' },
+  sound:   { label: 'Sound emitter',  icon: '🔊', fields: { s: '', vol: 1, dist: 10, loop: 'true', auto: 'true' }, enums: { loop: ['true', 'false'], auto: ['true', 'false'] }, help: 'A positional sound on this object (pans and fades with distance). s = a sound from the Library → Sounds list; auto plays from Begin Play, otherwise the Play sound node starts it.' },
 };
 
 export const ACTOR_NODES = {
@@ -68,6 +69,8 @@ export const ACTOR_NODES = {
   wander:      { cat: 'AI',      label: 'Wander',          color: '#2f8f8f', ins: true, outs: ['then'], props: { radius: 6, wait: 2 }, help: 'Random walkable points around where it started.' },
   stopmove:    { cat: 'AI',      label: 'Stop moving',     color: '#2f8f8f', ins: true, outs: ['then'], props: { target: 'self' } },
   lookat:      { cat: 'AI',      label: 'Look at',         color: '#2f8f8f', ins: true, outs: ['then'], props: { target: 'player' } },
+  playsound:   { cat: 'Audio',   label: 'Play sound',      color: '#a85a9a', ins: true, outs: ['then'], props: { sound: '', at: 'self', vol: 1, loop: 'false' }, help: 'sound = a Library sound (label/id) or a URL. at: self / an object name (positional), player, or 2d.' },
+  stopsound:   { cat: 'Audio',   label: 'Stop sound',      color: '#a85a9a', ins: true, outs: ['then'], props: { at: 'self' }, help: 'Stops every sound playing at the target (self / name / player / 2d / all).' },
   call:        { cat: 'Actions', label: 'Call game action', color: '#3a6ea8', ins: true, outs: ['then'], props: { action: '', args: '' } },
   log:         { cat: 'Actions', label: 'Print',           color: '#3a6ea8', ins: true, outs: ['then'], props: { message: '' } },
 };
@@ -183,6 +186,8 @@ export function createActors(host) {
         case 'wander': { navGo(actor, null, { mode: 'wander', radius: N('radius', 6), wait: N('wait', 2) }); cont('then'); break; }
         case 'stopmove': { const id = resolveTarget(actor, n.props.target); const a = id && actors.get(id); if (a) a.nav = null; cont('then'); break; }
         case 'lookat': { const r = rootOf(actor.id); const p = pointOf(actor, String(n.props.target || 'player')); if (r && p) r.rotation.y = Math.atan2(p[0] - r.position.x, p[1] - r.position.z); cont('then'); break; }
+        case 'playsound': { const au = W().audio; if (au) { const url = soundUrl(String(P('sound') || '')); const at = String(P('at') || 'self').trim(); if (!url) toast('Play sound: "' + n.props.sound + '" is not in this map\'s sounds.', 2600); else if (at === '2d') au.play(url, { vol: N('vol', 1), loop: truthy(P('loop')), tag: '2d' }); else if (at === 'player') au.play(url, { vol: N('vol', 1), loop: truthy(P('loop')), tag: 'player' }); else { const id = resolveTarget(actor, at); const r = id && rootOf(id); if (r) au.play(url, { root: r, vol: N('vol', 1), loop: truthy(P('loop')), dist: 10, tag: id }); } } cont('then'); break; }
+        case 'stopsound': { const au = W().audio; if (au) { const at = String(P('at') || 'self').trim(); if (at === 'all') au.stop(), au.start(); else if (at === '2d' || at === 'player') au.stopWhere(s => s.userData.tag === at); else { const id = resolveTarget(actor, at); if (id) au.stopWhere(s => s.userData.tag === id); } } cont('then'); break; }
         case 'call': { const name = String(n.props.action || '').trim(); let fn = host.actions && host.actions[name]; if (!fn) { try { const b = window.MythicBridge; fn = b && b.ui && b.ui.actions && b.ui.actions[name]; } catch (e) {} } const args = String(n.props.args || '').split(',').map(s => s.trim()).filter(Boolean).map(a => evalExpr(a, scopeFor(actor))); if (typeof fn === 'function') { try { fn.apply(null, args); } catch (e) {} } else toast('Actor: no game action named "' + name + '".', 2600); cont('then'); break; }
         case 'log': try { console.log('[actor ' + (actor.o.n || actor.id) + ']', P('message')); } catch (e) {} cont('then'); break;
         default: cont('then');
@@ -190,6 +195,16 @@ export function createActors(host) {
     } catch (e) { try { console.warn('[actors] node failed', n.type, e); } catch (x) {} }
   }
   const extraSpin = new Map();
+  /* ── audio ── a sound name → URL through the map's sound list (or a raw URL) */
+  function soundUrl(name) {
+    name = String(name || '').trim(); if (!name) return null;
+    const list = host.map.sounds || []; const hit = list.find(x => x.id === name || x.label === name); if (hit) return hit.url;
+    return /^(https?:\/\/|\/|\.\/|assets\/)/i.test(name) ? name : null;
+  }
+  function startEmitters() {
+    const au = W().audio; if (!au) return;
+    actors.forEach(a => { const c = comp(a.o, 'sound'); if (!c || !truthy(c.auto)) return; const url = soundUrl(c.s); const r = rootOf(a.id); if (url && r) au.play(url, { root: r, vol: c.vol, dist: c.dist, loop: truthy(c.loop), tag: a.id }); });
+  }
   /* ── navigation (mapforge.nav.js through the world) ── */
   const navOf = () => { const w = W(); return w && w.nav ? w.nav : null; };
   function pointOf(actor, name) {
@@ -275,6 +290,7 @@ export function createActors(host) {
       snapshot.clear(); actors.clear(); tweens.length = 0;
       host.map.objects.forEach(o => { if (!hasBehaviour(o)) return; const r = rootOf(o.id); if (!r) return; snapshot.set(o.id, { p: r.position.clone(), r: r.rotation.clone(), s: r.scale.clone(), visible: r.visible, c: o.c, fx: o.fx ? Object.assign({}, o.fx) : undefined }); actors.set(o.id, makeActor(o)); });
       actors.forEach(a => fire(a, 'ev_begin'));
+      startEmitters();
       actors.forEach(a => a.o.bp.graph.nodes.filter(n => n.type === 'ev_tick').forEach(n => { const ms = Math.max(50, num(n.props.ms, 1000)); const t = setInterval(() => { if (running) run(a, n, 0); }, ms); timers.push(t); }));
     },
     stop() {

@@ -33,6 +33,7 @@ fixed battle grid. The two coexist.
 | `mapforge.overlay.js` | the game side of game scenes: `AthenaEngine.overlay.forGame(id)` → the live map as an overlay (slot transforms, replacements, extra objects) |
 | `mapforge.actors.js` | **actor blueprints**: components + an event graph on any object, and the runtime that executes them (`world.actors`) |
 | `mapforge.nav.js` | **navigation**: a grid navmesh baked from terrain + colliders, A* with string-pulling (`world.nav`) |
+| `mapforge.audio.js` | **positional audio** (three.js WebAudio): one listener on the camera, emitters on objects, one-shots at the player or in 2D |
 | `mapforge.physics.js` | **rigid-body physics** (cannon-es, vendored at `/vendor/cannon-es.js`): terrain heightfield, static colliders, dynamic/kinematic bodies, the player as a kinematic sphere |
 | `../widgets/graph-editor.js` | the shared Blueprint-style node editor (used by the actor graph panel) |
 
@@ -491,3 +492,23 @@ Runtime: `world.nav` (`bake`, `walkable`, `nearestWalkable`, `findPath`,
 Limits: agents avoid static colliders, not each other; no crowd
 separation, no flying; the grid is one level (no bridges over walkable
 ground — a bridge deck counts as ground where it is low enough to step onto).
+
+## Audio (round 9)
+
+Library → **Sounds**: add files the game already ships (`/assets/Audio/…`,
+listed in `/models/manifest.json` → `sounds`) or any URL; ▶ previews.
+Nothing is uploaded (repo rule). The map keeps `sounds: [{ id, label, url }]`.
+
+- **Sound emitter** component — a positional loop (or one-shot) on the object:
+  `s` (a Library sound), `vol`, `dist` (reference distance; it fades beyond),
+  `loop`, `auto` (start at Begin Play). Pans and fades as the player walks.
+- **Play sound** node — `sound` (label, id or URL), `at`: `self` / an object
+  name (positional), `player`, or `2d` (UI-style); `vol`, `loop`.
+- **Stop sound** node — `at`: a target, `player`, `2d`, or `all`.
+
+One `AudioListener` rides on the active camera (editor Play, `engine.mount`,
+or the camera passed to `world.update` by an overlay host). Browsers gate
+audio behind a user gesture: the context resumes on the first click or key,
+so a game opened by clicking simply plays. Runs only while playing; stop
+silences everything. Runtime: `world.audio` (`play`, `stopWhere`, `count`,
+`listener`), `world.setAudioCamera(cam)`.

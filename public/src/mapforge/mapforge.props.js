@@ -91,6 +91,8 @@ export const PROP_CATALOG = [
      the game asset. Replacing it with a prop/.glb keeps `k`, so the game
      draws the replacement in that asset's place. */
   { id: 'slot',     label: 'Game slot',    icon: '🧩', cat: 'Slots', tint: true, col: false, slot: true },
+  /* Prefab instance — its body is the definition's parts (mapforge.world.js); this entry only names the type. */
+  { id: 'prefab',   label: 'Prefab',       icon: '🧱', cat: 'Prefabs', col: false, prefab: true },
 ];
 /* Does this object block the player? Explicit o.col wins; else the prop's
    default (col: false above), else solid. Custom .glb models are solid. */

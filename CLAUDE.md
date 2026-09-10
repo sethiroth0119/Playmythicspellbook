@@ -119,4 +119,8 @@ therefore terminate.
 - **Widgets going live is admin-only** (trigger in `sql/040`). Slots are
   `data-athena-slot="…"` elements; a screen registers data/actions for its slots with
   `AthenaUI.slots.register(prefix, …)` and unregisters on unmount.
-- Docs: `docs/athena-engine.md`. Tests: `tools/athena-harness/` (`pw-test5.mjs` covers round 5).
+- **Round 6:** `objects[].bp` is an actor blueprint (components + event graph, `mapforge.actors.js`),
+  run only while playing (`world.startPlay/stopPlay`); `prefabs[]` + `{ t:'prefab', pf }` instances
+  (parts keyed `'instance:child'`). The node editor is shared (`widgets/graph-editor.js`); the
+  widget designer still carries its older inline copy — migrate it there, don't fork a third.
+- Docs: `docs/athena-engine.md`. Tests: `tools/athena-harness/` (`pw-test5.mjs` round 5, `pw-test6.mjs` round 6).

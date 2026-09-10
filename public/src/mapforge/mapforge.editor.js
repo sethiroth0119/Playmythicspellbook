@@ -25,6 +25,8 @@ import { createPlayer } from './mapforge.player.js';
 import { newMap, normalize, serialize, clone, uid, PAINT, ENV_PRESETS, LOOP_MODES, resampleTerrain, gameId, assetBytes, embeddedBytes } from './mapforge.format.js';
 import * as games from './mapforge.games.js';
 import { invalidate as invalidateOverlay } from './mapforge.overlay.js';
+import { COMPONENTS, ACTOR_NODES, newBlueprint, newGraphNode, hasBehaviour } from './mapforge.actors.js';
+import { createGraphEditor } from '../widgets/graph-editor.js';
 import { PROP_CATALOG, PROP_BY_ID, buildProp } from './mapforge.props.js';
 import { WEATHERS } from './mapforge.vfx.js';
 import * as api from './mapforge.api.js';
@@ -61,6 +63,10 @@ export async function openEditor(opts) {
     rmb: false, gizmoSpace: 'world', snapSize: 1,
     folderId: null,     // the content folder new objects land in (null = root)
     game: null,         // registered game adapter id when this map is a game scene
+    multi: new Set(),   // multi-selection (Ctrl/Shift+click); selectedId is the primary
+    prefabId: null,     // the prefab the Place tool drops when propId === 'prefab'
+    editingPrefab: null, // { pf, ids } while a prefab is unpacked for editing (Apply repacks it)
+    bpOpen: false,      // the blueprint graph panel
   };
   const teardown = [];
   let outlinerT = 0, renaming = null;   // outliner redraw timer + the folder being renamed (declared early: loadDoc runs before the outliner section)
@@ -117,6 +123,9 @@ export async function openEditor(opts) {
   // collider outlines: the selected object's (gold) and, on demand, everyone's
   const colSel = new THREE.Box3Helper(new THREE.Box3(), 0xffd23f); colSel.visible = false; colSel.material.depthTest = false; colSel.material.transparent = true; colSel.material.opacity = 0.9; scene.add(colSel);
   const colAll = new THREE.Group(); colAll.visible = false; scene.add(colAll);
+  // the trigger volume of the selected actor, drawn as a ring on the ground (blueprints section below); declared here because loadDoc runs first
+  const trigRing = new THREE.Mesh(new THREE.RingGeometry(0.96, 1, 48), new THREE.MeshBasicMaterial({ color: 0xffb347, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false })); trigRing.rotation.x = -Math.PI / 2; trigRing.visible = false; trigRing.renderOrder = 18; scene.add(trigRing);
+  let bpGraph = null, bpFor = null;   // the blueprint graph editor instance and the object it shows
   function drawColliders() {
     const o = objById(S.selectedId), c = o && world.colliders.get(o.id);
     colSel.visible = !!c && !S.playing;
@@ -144,7 +153,8 @@ export async function openEditor(opts) {
     if (world) { scene.remove(world.group); world.dispose(); }
     if (gridHelper) { scene.remove(gridHelper); gridHelper = null; }
     S.map = map; S.source = source == null ? S.source : source;
-    world = buildWorld(THREE, map, { scene, onAssetLoaded: () => {} });
+    world = buildWorld(THREE, map, { scene, onAssetLoaded: () => {}, toast: (m, ms) => toast(m, ms), onPrompt: (p) => { const el = $('#mf-prompt'); el.hidden = !p; el.textContent = p ? '⚡ ' + p : ''; } });
+    S.editingPrefab = null; S.multi.clear(); S.bpOpen = false; if (bpGraph) { bpGraph.destroy(); bpGraph = null; bpFor = null; }
     scene.add(world.group);
     world.setMarkersVisible(S.showMarkers);
     if (S.showGrid) toggleGrid(true);
@@ -210,7 +220,7 @@ export async function openEditor(opts) {
   function hitObject() {
     world.objectsGroup.updateMatrixWorld(true);
     const hits = raycaster.intersectObjects(world.objectsGroup.children, true);
-    for (const h of hits) { let o = h.object; while (o && !(o.userData && o.userData.mfId)) o = o.parent; if (o && o.visible && !isLocked(o.userData.mfId)) return o; }
+    for (const h of hits) { let o = h.object; while (o && !(o.userData && o.userData.mfId && !o.userData.mfPart)) o = o.parent; if (o && o.visible && !isLocked(o.userData.mfId)) return o; }
     // Near-miss pick: thin things (lantern posts, fences, a bird's wing) are
     // easy to click past. Take the nearest object whose centre projects within
     // a few pixels of the pointer, the way most editors forgive a miss.
@@ -238,6 +248,7 @@ export async function openEditor(opts) {
     lastMods = { shiftKey: ev.shiftKey, ctrlKey: ev.ctrlKey, altKey: ev.altKey };
     if (S.tool === 'select') {
       const o = hitObject();
+      if (o && (ev.ctrlKey || ev.metaKey || ev.shiftKey)) { toggleMulti(o.userData.mfId); return; }
       select(o ? o.userData.mfId : null);
       if (o && !gizmo) { stroke.active = true; stroke.dragObj = o; beginObjectEdit(); }
       return;
@@ -302,10 +313,10 @@ export async function openEditor(opts) {
 
   /* ═══ OBJECTS ═══ */
   function objById(id) { return S.map.objects.find(o => o.id === id) || null; }
-  function beginObjectEdit() { stroke.objBefore = { objects: clone(S.map.objects), assets: clone(S.map.assets), folders: clone(S.map.folders || []) }; }
+  function beginObjectEdit() { stroke.objBefore = { objects: clone(S.map.objects), assets: clone(S.map.assets), folders: clone(S.map.folders || []), prefabs: clone(S.map.prefabs || []) }; }
   function endObjectEdit() {
     if (!stroke.objBefore) return;
-    const after = { objects: clone(S.map.objects), assets: clone(S.map.assets), folders: clone(S.map.folders || []) };
+    const after = { objects: clone(S.map.objects), assets: clone(S.map.assets), folders: clone(S.map.folders || []), prefabs: clone(S.map.prefabs || []) };
     if (JSON.stringify(after) !== JSON.stringify(stroke.objBefore)) { pushUndo({ type: 'objects', before: stroke.objBefore, after }); setDirty(true); }
     stroke.objBefore = null;
     drawColliders(); renderOutliner();
@@ -359,10 +370,11 @@ export async function openEditor(opts) {
   function objLabel(o) {
     if (o.n) return o.n;
     if (o.t === 'glb') return (S.map.assets.find(a => a.id === o.a) || {}).label || 'Model';
+    if (o.t === 'prefab') { const p = prefabById(o.pf); return p ? p.name : 'Prefab'; }
     if (o.k) { const sl = slotMeta(o.k); if (sl) return sl.label; }
     return (PROP_BY_ID[o.t] || {}).label || o.t;
   }
-  function objIcon(o) { if (o.k) return '🧩'; if (o.t === 'glb') return '🧊'; return (PROP_BY_ID[o.t] || {}).icon || '🧱'; }
+  function objIcon(o) { if (o.k) return '🧩'; if (o.t === 'glb') return '🧊'; if (o.t === 'prefab') return '🧱'; return ((PROP_BY_ID[o.t] || {}).icon || '🧱') + (hasBehaviour(o) ? '⚡' : ''); }
   function slotMeta(k) { const g = S.game && games.get(S.game); return (g && (g.slots || []).find(x => x.k === k)) || null; }
   function renderOutliner(force) {
     // Only draw when the tab is showing (a scatter stroke adds dozens of objects a second).
@@ -373,7 +385,7 @@ export async function openEditor(opts) {
     if (!ED) return;
     const box = $('#mf-outliner'); if (!box) return;
     const MAX = 200;
-    const objRow = (o) => `<div class="mf-ol-o ${o.id === S.selectedId ? 'sel' : ''} ${isLocked(o.id) ? 'locked' : ''}" draggable="true" data-oid="${esc(o.id)}" title="${esc(objLabel(o))}"><span class="ic">${objIcon(o)}</span><span class="lb">${esc(objLabel(o))}</span>${o.k ? '<span class="tag">' + esc(o.k) + '</span>' : ''}</div>`;
+    const objRow = (o) => `<div class="mf-ol-o ${o.id === S.selectedId ? 'sel' : (S.multi.has(o.id) ? 'multi' : '')} ${isLocked(o.id) ? 'locked' : ''}" draggable="true" data-oid="${esc(o.id)}" title="${esc(objLabel(o))}"><span class="ic">${objIcon(o)}</span><span class="lb">${esc(objLabel(o))}</span>${o.k ? '<span class="tag">' + esc(o.k) + '</span>' : ''}</div>`;
     const objList = (fid) => { const os = folderObjects(fid); return os.slice(0, MAX).map(objRow).join('') + (os.length > MAX ? '<div class="mf-empty">… ' + (os.length - MAX) + ' more</div>' : ''); };
     const countIn = (fid) => { const ids = folderDescendants(fid); return S.map.objects.filter(o => o.f && ids.includes(o.f)).length; };
     const folderRow = (f, depth) => {
@@ -387,6 +399,7 @@ export async function openEditor(opts) {
         <button data-act="lock" title="${f.lock ? 'Unlock' : 'Lock'} (locked objects cannot be picked in the viewport)">${f.lock ? '🔒' : '🔓'}</button>
         <button data-act="sel" title="Select the objects in this folder">◎</button>
         <button data-act="sub" title="New sub-folder">＋</button>
+        <button data-act="pf" title="Make a prefab from everything in this folder">📦</button>
         <button data-act="del" title="Delete folder (its contents move up a level)">✕</button>
       </div>`;
       const body = f.open ? `<div class="mf-ol-body" style="--d:${depth + 1}">${kids.map(k => folderRow(k, depth + 1)).join('')}${objList(f.id)}</div>` : '';
@@ -407,6 +420,7 @@ export async function openEditor(opts) {
         else if (a === 'lock') setFolderFlag(fid, 'lock', !f.lock);
         else if (a === 'sel') selectFolderObjects(fid);
         else if (a === 'sub') newFolder(fid);
+        else if (a === 'pf') { const ids = folderDescendants(fid); const objs = S.map.objects.filter(x => x.f && ids.includes(x.f)).map(x => x.id); if (objs.length) createPrefab(objs, f.name); else toast('This folder is empty.'); }
         else if (a === 'del') { if (countIn(fid) > 0 || folderChildren(fid).length) { askConfirm('Delete folder "' + f.name + '"? Its ' + countIn(fid) + ' objects move up a level (nothing is removed from the map).').then(ok => { if (ok) deleteFolder(fid); }); } else deleteFolder(fid); }
       });
       const lb = row.querySelector('.lb[data-act="pick"]');
@@ -425,7 +439,7 @@ export async function openEditor(opts) {
     rootRow.ondrop = (e) => { e.preventDefault(); rootRow.classList.remove('over'); const oid = e.dataTransfer.getData('text/mf-object'), mf = e.dataTransfer.getData('text/mf-folder'); if (oid) moveToFolder([oid], null); else if (mf) moveFolder(mf, null); };
     box.querySelectorAll('.mf-ol-o').forEach(row => {
       const oid = row.dataset.oid;
-      row.onclick = () => { if (S.tool !== 'select') setTool('select'); select(oid); };
+      row.onclick = (e) => { if (S.tool !== 'select') setTool('select'); if (e.ctrlKey || e.metaKey || e.shiftKey) toggleMulti(oid); else select(oid); };
       row.ondblclick = () => { select(oid); focusSelected(); };
       row.ondragstart = (e) => { e.dataTransfer.setData('text/mf-object', oid); e.stopPropagation(); };
     });
@@ -502,13 +516,94 @@ export async function openEditor(opts) {
     world.removeObject(o.id); world.addObject(o);
     endObjectEdit(); setDirty(true); select(o.id); toast('Restored — the game draws its own asset here again.');
   }
+  /* ═══ ACTOR BLUEPRINTS ═══ — components + an event graph on the selected object. */
+  function renderBpSection(o) {
+    const bp = o.bp;
+    const comps = bp ? bp.comps.map((c, i) => { const C = COMPONENTS[c.type]; return `<div class="mf-comp" data-ci="${i}"><span class="ic">${C.icon}</span><span class="lb">${esc(C.label)}</span>${Object.keys(C.fields).map(k => `<label>${esc(k)}<input type="${k === 'c' ? 'color' : (typeof C.fields[k] === 'number' ? 'number' : 'text')}" data-ck="${k}" value="${esc(c[k])}" ${typeof C.fields[k] === 'number' ? 'step="0.1"' : ''}></label>`).join('')}<button data-cdel="${i}" title="Remove">✕</button></div>`; }).join('') : '';
+    const vars = bp ? Object.keys(bp.vars).map(k => `<div class="mf-comp var" data-vk="${esc(k)}"><code>$${esc(k)}</code><select data-vt><option value="number" ${bp.vars[k].type === 'number' ? 'selected' : ''}>num</option><option value="string" ${bp.vars[k].type === 'string' ? 'selected' : ''}>text</option><option value="bool" ${bp.vars[k].type === 'bool' ? 'selected' : ''}>bool</option></select><input type="text" data-vv value="${esc(bp.vars[k].value == null ? '' : bp.vars[k].value)}"><button data-vdel title="Remove">✕</button></div>`).join('') : '';
+    const n = bp ? bp.graph.nodes.length : 0;
+    return `<div class="mf-bp"><div class="mf-row" style="margin-bottom:5px"><label>Blueprint</label><span class="st">⚡ ${bp ? (bp.comps.length + ' component' + (bp.comps.length === 1 ? '' : 's') + ' · ' + n + ' node' + (n === 1 ? '' : 's')) : 'none — static prop'}</span></div>
+      ${bp ? `<div class="mf-sub">Components</div>${comps || '<div class="mf-empty">No components.</div>'}` : ''}
+      <div class="mf-btns" style="margin:6px 0"><select id="mf-bp-addc"><option value="">＋ Add component…</option>${Object.keys(COMPONENTS).map(k => '<option value="' + k + '">' + COMPONENTS[k].icon + ' ' + esc(COMPONENTS[k].label) + '</option>').join('')}</select></div>
+      ${bp ? `<div class="mf-sub">Variables</div>${vars}<div class="mf-btns" style="margin:4px 0"><input type="text" id="mf-bp-vname" placeholder="variable" maxlength="40"><button id="mf-bp-vadd">＋</button></div>` : ''}
+      <div class="mf-btns" style="margin-top:6px"><button id="mf-bp-graph" class="${S.bpOpen ? 'on' : 'primary'}">⚡ ${bp ? 'Event graph' : 'Add blueprint'}</button>${bp ? '<button id="mf-bp-clear" class="danger" title="Remove the blueprint">✕</button>' : ''}</div>
+      <p class="mf-hint" style="margin:6px 0 0">Runs in Play (P) and in the game: Begin Play, Tick, the player entering a Trigger volume, pressing <b>E</b> inside it → move, rotate, spin, tint, animate, spawn, destroy, toast, variables, game actions.</p></div>`;
+  }
+  function ensureBp(o) { if (!o.bp) { o.bp = newBlueprint(); } return o.bp; }
+  function wireBpSection(box, o) {
+    const commitBp = (fn) => { beginObjectEdit(); fn(); endObjectEdit(); setDirty(true); renderInspector(); renderBpPanel(); };
+    const addc = box.querySelector('#mf-bp-addc'); if (addc) addc.onchange = () => { const t = addc.value; if (!t) return; commitBp(() => { ensureBp(o).comps.push(Object.assign({ type: t }, COMPONENTS[t].fields)); }); if (t === 'light' || t === 'trigger') drawTriggerRing(); };
+    box.querySelectorAll('.mf-comp[data-ci]').forEach(row => {
+      const i = +row.dataset.ci;
+      row.querySelectorAll('input[data-ck]').forEach(inp => inp.onchange = () => commitBp(() => { const c = o.bp.comps[i]; c[inp.dataset.ck] = inp.type === 'number' ? (+inp.value || 0) : inp.value; }));
+      row.querySelector('[data-cdel]').onclick = () => commitBp(() => { o.bp.comps.splice(i, 1); });
+    });
+    box.querySelectorAll('.mf-comp[data-vk]').forEach(row => {
+      const k = row.dataset.vk;
+      row.querySelector('[data-vt]').onchange = (e) => commitBp(() => { o.bp.vars[k].type = e.target.value; });
+      row.querySelector('[data-vv]').onchange = (e) => commitBp(() => { const t = o.bp.vars[k].type; o.bp.vars[k].value = t === 'number' ? (+e.target.value || 0) : t === 'bool' ? /^(true|1|yes|on)$/i.test(e.target.value) : e.target.value; });
+      row.querySelector('[data-vdel]').onclick = () => commitBp(() => { delete o.bp.vars[k]; });
+    });
+    const va = box.querySelector('#mf-bp-vadd'); if (va) va.onclick = () => { const k = String(box.querySelector('#mf-bp-vname').value || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 40); if (!k) return; commitBp(() => { ensureBp(o).vars[k] = { type: 'number', value: 0 }; }); };
+    const gb = box.querySelector('#mf-bp-graph'); if (gb) gb.onclick = () => { if (!o.bp) commitBp(() => ensureBp(o)); S.bpOpen = !S.bpOpen; renderBpPanel(); renderInspector(); };
+    const cb = box.querySelector('#mf-bp-clear'); if (cb) cb.onclick = () => { S.bpOpen = false; commitBp(() => { delete o.bp; }); drawTriggerRing(); };
+  }
+  function drawTriggerRing() {
+    const o = objById(S.selectedId); const tr = o && o.bp && o.bp.comps.find(c => c.type === 'trigger'); const r = o && world.objects.get(o.id);
+    trigRing.visible = !!(tr && r && !S.playing);
+    if (trigRing.visible) { const rad = tr.r * Math.max(0.01, o.s[0]); trigRing.position.set(r.position.x, world.heightAt(r.position.x, r.position.z) + 0.08, r.position.z); trigRing.scale.set(rad, rad, 1); }
+  }
+  function renderBpPanel() {
+    const panel = $('#mf-bp'); const o = objById(S.selectedId);
+    drawTriggerRing();
+    if (!S.bpOpen || !o || !o.bp) { panel.hidden = true; if (bpGraph) { bpGraph.destroy(); bpGraph = null; bpFor = null; } return; }
+    panel.hidden = false;
+    $('#mf-bp-title').textContent = '⚡ ' + (o.n || objLabel(o)) + ' — event graph';
+    if (bpFor !== o.id || !bpGraph) {
+      if (bpGraph) bpGraph.destroy();
+      bpFor = o.id;
+      bpGraph = createGraphEditor($('#mf-bp-canvas'), {
+        catalog: ACTOR_NODES, get: () => (objById(bpFor) || {}).bp ? objById(bpFor).bp.graph : { nodes: [], links: [] },
+        newNode: (t, x, y) => newGraphNode(t, x, y),
+        onChange: () => { setDirty(true); renderInspector(); },
+        onSelect: (n) => renderBpNodeDetails(n),
+      });
+      renderBpNodeDetails(null);
+    }
+    bpGraph.render();
+  }
+  function renderBpNodeDetails(n) {
+    const box = $('#mf-bp-details'); const o = objById(S.selectedId);
+    if (!n) { box.innerHTML = '<div class="mf-empty">Right-click the graph (or ＋ Node) to add nodes. Drag a header to move it, drag from an out-pin ● to an in-pin to wire, click a wire to cut it. Select a node to edit its fields here.</div>'; return; }
+    const G = ACTOR_NODES[n.type];
+    const names = S.map.objects.filter(x => x.n).map(x => x.n);
+    const parts = o && o.t === 'prefab' && prefabById(o.pf) ? prefabById(o.pf).objects.map(c => 'self.' + (c.n || c.id)) : [];
+    const rows = Object.keys(G.props || {}).map(k => {
+      let ctl;
+      if (k === 'target') ctl = `<input type="text" data-k="${k}" list="mf-bp-targets" value="${esc(n.props[k])}">`;
+      else if (k === 'loop') ctl = `<select data-k="${k}">${LOOP_MODES.map(l => '<option value="' + l + '"' + (n.props[k] === l ? ' selected' : '') + '>' + l + '</option>').join('')}</select>`;
+      else if (k === 'what') ctl = `<input type="text" data-k="${k}" list="mf-bp-spawnables" value="${esc(n.props[k])}">`;
+      else if (k === 'color') ctl = `<input type="color" data-k="${k}" value="${esc(n.props[k])}">`;
+      else if (k === 'message' || k === 'value' || k === 'cond' || k === 'args') ctl = `<textarea data-k="${k}" rows="2">${esc(n.props[k])}</textarea>`;
+      else ctl = `<input type="text" data-k="${k}" value="${esc(n.props[k])}">`;
+      return `<div class="mf-row"><label>${esc(k)}</label>${ctl}</div>`;
+    }).join('');
+    box.innerHTML = `<h4><span class="aw-gdot" style="background:${G.color}"></span> ${esc(G.label)}</h4>${G.help ? '<p class="mf-hint" style="margin:0 0 6px">' + esc(G.help) + '</p>' : ''}${rows || '<div class="mf-empty">No fields.</div>'}
+      <datalist id="mf-bp-targets"><option value="self"><option value="player">${names.map(x => '<option value="' + esc(x) + '">').join('')}${parts.map(x => '<option value="' + esc(x) + '">').join('')}</datalist>
+      <datalist id="mf-bp-spawnables">${(S.map.prefabs || []).map(p => '<option value="' + esc(p.name) + '">').join('')}${PROP_CATALOG.filter(p => !p.marker && !p.slot && !p.prefab).map(p => '<option value="' + p.id + '">').join('')}</datalist>
+      <div class="mf-btns" style="margin-top:8px"><button id="mf-bp-ndel" class="danger">✕ Delete node</button></div>
+      <p class="mf-hint">Expressions: <code>{$hp} - 1</code>, <code>{dist} < 3</code>, <code>{self.x}</code>, <code>{player.z}</code>, <code>{gems|num}</code> — same language as the widgets.</p>`;
+    box.querySelectorAll('[data-k]').forEach(el => { el.onchange = () => { beginObjectEdit(); n.props[el.dataset.k] = el.value; endObjectEdit(); setDirty(true); if (bpGraph) bpGraph.render(); }; el.onkeydown = (e) => e.stopPropagation(); });
+    box.querySelector('#mf-bp-ndel').onclick = () => { beginObjectEdit(); bpGraph.deleteSelected(); endObjectEdit(); };
+  }
   function notifyGame(kind) {
     try { if (S.map.game) invalidateOverlay(S.map.game); window.dispatchEvent(new CustomEvent('athena:' + kind, { detail: { game: S.map.game || 'sandbox', id: S.map.id, source: S.source } })); } catch (e) {}
   }
   function makeObject(p, extra) {
-    const isGlb = S.propId === 'glb';
+    const isGlb = S.propId === 'glb', isPf = S.propId === 'prefab';
     const o = { id: uid('o_'), t: isGlb ? 'glb' : S.propId, p: [p.x, world.heightAt(p.x, p.z), p.z], r: [0, 0, 0], s: [1, 1, 1], g: true };
     if (isGlb) { o.a = S.assetId; const fit = assetFit.get(S.assetId); if (fit) o.s = [fit, fit, fit]; }
+    if (isPf) o.pf = S.prefabId;
     else if (S.propTint && PROP_BY_ID[o.t] && PROP_BY_ID[o.t].tint) o.c = S.propTint;
     if (S.folderId && folderById(S.folderId)) o.f = S.folderId;
     Object.assign(o, extra || {});
@@ -516,6 +611,7 @@ export async function openEditor(opts) {
   }
   function placeAt(p, selectIt) {
     if (S.propId === 'glb' && !S.assetId) { toast('Add a model URL in the Library first.'); return; }
+    if (S.propId === 'prefab' && !prefabById(S.prefabId)) { toast('Pick a prefab in the Library first.'); return; }
     const o = makeObject(p, S.scatter.jitterRot && S.tool === 'scatter' ? { r: [0, Math.random() * Math.PI * 2, 0] } : null);
     S.map.objects.push(o); world.addObject(o);
     if (selectIt && S.tool === 'select') select(o.id);
@@ -524,6 +620,7 @@ export async function openEditor(opts) {
   }
   function scatterAt(p) {
     if (S.propId === 'glb' && !S.assetId) { toast('Add a model URL in the Library first.'); stroke.active = false; return; }
+    if (S.propId === 'prefab' && !prefabById(S.prefabId)) { toast('Pick a prefab in the Library first.'); stroke.active = false; return; }
     const R = S.brush.radius, half = world.terrain.half;
     for (let i = 0; i < S.scatter.count; i++) {
       const a = Math.random() * Math.PI * 2, d = Math.sqrt(Math.random()) * R;
@@ -545,9 +642,10 @@ export async function openEditor(opts) {
     if (S.selectedId === id) select(null);
     renderStats();
   }
-  function select(id) {
+  function select(id, keepMulti) {
     S.selectedId = id;
-    setTimeout(drawColliders, 0); renderOutliner();
+    if (!keepMulti) { S.multi.clear(); if (id) S.multi.add(id); }
+    setTimeout(drawColliders, 0); renderOutliner(); renderBpPanel();
     if (gizmo) { const r = id ? world.objects.get(id) : null; if (r && S.tool === 'select') { gizmo.attach(r); gizmo.setMode(S.gizmoMode); } else gizmo.detach(); }
     renderInspector();
   }
@@ -558,19 +656,105 @@ export async function openEditor(opts) {
       else r.position.y = world.heightAt(r.position.x, r.position.z);
     }
     o.p = [r.position.x, r.position.y, r.position.z]; o.r = [r.rotation.x, r.rotation.y, r.rotation.z]; o.s = [r.scale.x, r.scale.y, r.scale.z];
-    world.updateCollider(o.id); drawColliders();
+    world.updateCollider(o.id); drawColliders(); drawTriggerRing();
     setDirty(true); renderInspector();
   }
   function regroundAll() {
     S.map.objects.forEach(o => { if (o.g) { o.p[1] = world.heightAt(o.p[0], o.p[2]); const r = world.objects.get(o.id); if (r) r.position.y = o.p[1]; } });
     world.updateAllColliders(); drawColliders();
   }
-  function duplicateSelected() {
-    const o = objById(S.selectedId); if (!o) return;
-    beginObjectEdit();
-    const c = clone(o); c.id = uid('o_'); c.p[0] += 1.5; c.p[2] += 1.5; if (c.g) c.p[1] = world.heightAt(c.p[0], c.p[2]);
-    S.map.objects.push(c); world.addObject(c); select(c.id); endObjectEdit(); renderStats();
+  function selectedIds() { return S.multi.size > 1 ? Array.from(S.multi).filter(objById) : (S.selectedId && objById(S.selectedId) ? [S.selectedId] : []); }
+  function toggleMulti(id) {
+    if (S.multi.has(id) && S.multi.size > 1) { S.multi.delete(id); if (S.selectedId === id) S.selectedId = Array.from(S.multi)[0]; }
+    else { S.multi.add(id); if (!S.selectedId || !objById(S.selectedId)) S.selectedId = id; }
+    if (gizmo) { const r = world.objects.get(S.selectedId); if (r && S.tool === 'select') gizmo.attach(r); }
+    setTimeout(drawColliders, 0); renderOutliner(); renderInspector();
   }
+  function deleteSelected() { const ids = selectedIds(); if (!ids.length) return; beginObjectEdit(); ids.forEach(removeObject); endObjectEdit(); select(null); }
+  function duplicateSelected() {
+    const ids = selectedIds(); if (!ids.length) return;
+    beginObjectEdit();
+    const made = ids.map(id => { const o = objById(id); const c = clone(o); c.id = uid('o_'); c.p[0] += 1.5; c.p[2] += 1.5; if (c.g) c.p[1] = world.heightAt(c.p[0], c.p[2]); S.map.objects.push(c); world.addObject(c); return c.id; });
+    select(made[0]); made.forEach(id => S.multi.add(id)); endObjectEdit(); renderStats(); renderInspector();
+  }
+
+  /* ═══ PREFABS ═══ — Unity's prefab: a definition, many instances, edit one → all follow. */
+  const SHELF_KEY = 'mf_prefabs_v1';
+  function prefabById(id) { return (S.map.prefabs || []).find(p => p.id === id) || null; }
+  function shelfList() { try { const x = JSON.parse(localStorage.getItem(SHELF_KEY) || '[]'); return Array.isArray(x) ? x : []; } catch (e) { return []; } }
+  function shelfWrite(list) { try { localStorage.setItem(SHELF_KEY, JSON.stringify(list.slice(0, 100))); } catch (e) { toast('Could not save to the prefab shelf (storage full?).'); } }
+  /* Children become relative to the group's footprint: XZ centroid, lowest Y. */
+  function createPrefab(ids, name, pfId) {
+    const objs = ids.map(objById).filter(o => o && o.t !== 'prefab' && o.t !== 'slot');
+    if (!objs.length) { toast('Select some objects first (prefab instances and game slots cannot be nested).'); return null; }
+    const cx = objs.reduce((a, o) => a + o.p[0], 0) / objs.length, cz = objs.reduce((a, o) => a + o.p[2], 0) / objs.length, by = Math.min.apply(null, objs.map(o => o.p[1]));
+    const def = { id: pfId || uid('pf_'), name: (name || 'Prefab ' + ((S.map.prefabs || []).length + 1)).slice(0, 60), icon: '🧱', objects: objs.map(o => { const c = clone(o); c.id = c.id.replace(/^o_/, 'c_'); c.p = [o.p[0] - cx, o.p[1] - by, o.p[2] - cz]; delete c.f; delete c.k; c.g = false; return c; }) };
+    const folder = objs[0].f;
+    beginObjectEdit();
+    if (pfId) { const i = S.map.prefabs.findIndex(p => p.id === pfId); if (i >= 0) S.map.prefabs[i] = def; else S.map.prefabs.push(def); } else S.map.prefabs.push(def);
+    objs.forEach(o => removeObject(o.id));
+    const inst = { id: uid('o_'), t: 'prefab', pf: def.id, p: [cx, by, cz], r: [0, 0, 0], s: [1, 1, 1], g: objs.every(o => o.g !== false), n: def.name };
+    if (folder) inst.f = folder;
+    S.map.objects.push(inst); world.addObject(inst);
+    // every other instance of a re-applied definition is rebuilt
+    if (pfId) S.map.objects.filter(o => o.t === 'prefab' && o.pf === pfId && o.id !== inst.id).forEach(o => world.addObject(o));
+    endObjectEdit(); setDirty(true); renderStats(); renderLibrary(); select(inst.id);
+    return def;
+  }
+  /* Unpack: children get world transforms (yaw + uniform-ish scale composed) and the instance goes. */
+  function unpackPrefab(instId, keepLink) {
+    const inst = objById(instId), def = inst && prefabById(inst.pf); if (!def) return [];
+    const yaw = inst.r[1], cs = Math.cos(yaw), sn = Math.sin(yaw);
+    beginObjectEdit();
+    const ids = def.objects.map(c => {
+      const o = clone(c); o.id = uid('o_');
+      const x = c.p[0] * inst.s[0], z = c.p[2] * inst.s[2];
+      o.p = [inst.p[0] + x * cs + z * sn, inst.p[1] + c.p[1] * inst.s[1], inst.p[2] - x * sn + z * cs];
+      o.r = [c.r[0], c.r[1] + yaw, c.r[2]]; o.s = [c.s[0] * inst.s[0], c.s[1] * inst.s[1], c.s[2] * inst.s[2]];
+      if (inst.f) o.f = inst.f;
+      S.map.objects.push(o); world.addObject(o); return o.id;
+    });
+    removeObject(instId);
+    endObjectEdit(); setDirty(true); renderStats();
+    S.editingPrefab = keepLink ? { pf: def.id, ids, name: def.name } : null;
+    select(ids[0]); ids.forEach(id => S.multi.add(id)); renderInspector(); renderOutliner();
+    if (keepLink) toast('Editing "' + def.name + '" — change the pieces, then ⤴ Apply to prefab. Every instance follows.', 5200);
+    return ids;
+  }
+  function applyPrefab() {
+    const ed = S.editingPrefab; if (!ed) return;
+    const ids = ed.ids.filter(objById);
+    S.editingPrefab = null;
+    if (!ids.length) { toast('Nothing left of the prefab to apply.'); renderInspector(); return; }
+    createPrefab(ids, ed.name, ed.pf);
+    toast('Applied — ' + S.map.objects.filter(o => o.t === 'prefab' && o.pf === ed.pf).length + ' instance(s) updated.');
+  }
+  function renamePrefab(id, name) { const d = prefabById(id); if (!d) return; name = String(name || '').trim().slice(0, 60); if (!name) return; beginObjectEdit(); d.name = name; endObjectEdit(); setDirty(true); renderLibrary(); renderInspector(); }
+  function deletePrefab(id) {
+    const d = prefabById(id); if (!d) return;
+    const inst = S.map.objects.filter(o => o.t === 'prefab' && o.pf === id);
+    beginObjectEdit(); inst.forEach(o => removeObject(o.id)); S.map.prefabs = S.map.prefabs.filter(p => p.id !== id); endObjectEdit(); setDirty(true); renderLibrary(); renderStats();
+    if (S.propId === 'prefab' && S.prefabId === id) { S.propId = 'tree'; S.prefabId = null; refreshGhost(); }
+  }
+  /* The shelf: prefabs kept on this device across maps. Embedded models are
+     not copied (they belong to a map); URL assets travel with the prefab. */
+  function shelfSave(id) {
+    const d = prefabById(id); if (!d) return;
+    const assets = []; d.objects.forEach(c => { if (c.t === 'glb') { const a = S.map.assets.find(x => x.id === c.a); if (a && a.url && !assets.find(x => x.id === a.id)) assets.push({ id: a.id, label: a.label, url: a.url, anims: a.anims }); } });
+    const entry = { id: d.id, name: d.name, icon: d.icon, objects: clone(d.objects).filter(c => c.t !== 'glb' || assets.find(a => a.id === c.a)), assets, saved: Date.now() };
+    const list = shelfList().filter(x => x.id !== d.id); list.unshift(entry); shelfWrite(list); renderLibrary(); toast('📚 "' + d.name + '" is on your prefab shelf — available in every map on this device.');
+  }
+  function shelfImport(entryId) {
+    const e = shelfList().find(x => x.id === entryId); if (!e) return;
+    beginObjectEdit();
+    (e.assets || []).forEach(a => { if (!S.map.assets.find(x => x.id === a.id)) S.map.assets.push({ id: a.id, label: a.label, url: a.url, anims: a.anims }); });
+    let def = prefabById(e.id);
+    if (!def) { def = { id: e.id, name: e.name, icon: e.icon || '🧱', objects: clone(e.objects) }; S.map.prefabs.push(def); }
+    endObjectEdit(); setDirty(true);
+    S.propId = 'prefab'; S.prefabId = def.id; if (S.tool === 'select' || S.tool === 'erase') setTool('place'); renderLibrary(); refreshGhost(); renderHud();
+    toast('Prefab ready — click the ground to place it.');
+  }
+  function shelfRemove(entryId) { shelfWrite(shelfList().filter(x => x.id !== entryId)); renderLibrary(); }
   function focusSelected() {
     const r = world.objects.get(S.selectedId); if (!r) return;
     const bb = new THREE.Box3().setFromObject(r), size = new THREE.Vector3(); bb.getSize(size);
@@ -659,7 +843,7 @@ export async function openEditor(opts) {
   function refreshGhost() {
     if (ghost) { scene.remove(ghost); ghost = null; }
     if (!(S.tool === 'place' || S.tool === 'scatter')) return;
-    const g = S.propId === 'glb' ? buildProp(THREE, 'placeholder') : buildProp(THREE, S.propId, S.propTint);
+    const g = (S.propId === 'glb' || S.propId === 'prefab') ? buildProp(THREE, 'placeholder') : buildProp(THREE, S.propId, S.propTint);
     g.traverse(o => { if (o.isMesh) { o.material = o.material.clone(); o.material.transparent = true; o.material.opacity = 0.45; o.material.depthWrite = false; o.castShadow = false; } });
     if (S.propId === 'glb') { const f = assetFit.get(S.assetId); if (f) g.scale.setScalar(f); }
     ghost = g; ghost.visible = false; scene.add(ghost);
@@ -673,7 +857,7 @@ export async function openEditor(opts) {
       const resized = snap.n !== S.map.terrain.n || snap.cell !== S.map.terrain.cell;
       world.terrain.restore(snap); if (resized) world.onTerrainRebuilt(); regroundAll(); renderTerrainTab();
     } else if (e.type === 'objects') {
-      S.map.objects = clone(snap.objects); S.map.assets = clone(snap.assets); S.map.folders = clone(snap.folders || []);
+      S.map.objects = clone(snap.objects); S.map.assets = clone(snap.assets); S.map.folders = clone(snap.folders || []); S.map.prefabs = clone(snap.prefabs || []);
       if (S.folderId && !folderById(S.folderId)) S.folderId = null;
       Array.from(world.objects.keys()).forEach(id => world.removeObject(id));
       S.map.objects.forEach(o => world.addObject(o)); renderOutliner();
@@ -708,12 +892,15 @@ export async function openEditor(opts) {
     world.setMarkersVisible(false); colSel.visible = false; colAll.visible = false;
     const sp = world.spawns()[0];
     player.start(sp ? null : { pos: new THREE.Vector3(controls.target.x, 0, controls.target.z), yaw: Math.atan2(camera.position.x - controls.target.x, camera.position.z - controls.target.z) + Math.PI });
+    trigRing.visible = false; S.bpOpen = false; renderBpPanel();
+    world.startPlay({ get pos() { return player.pos; }, setPos: (x, z) => { player.pos.x = x; player.pos.z = z; player.pos.y = world.heightAt(x, z); } });
     $('#mf-play').classList.add('on'); $('#mf-play').textContent = '■ Stop';
   }
   function stopPlay() {
     if (!S.playing) return;
     S.playing = false; canvasHost.classList.remove('play');
-    player.stop(); drawColliders();
+    world.stopPlay(); $('#mf-prompt').hidden = true;
+    player.stop(); drawColliders(); renderStats(); renderOutliner();
     controls.enabled = true; camera.position.copy(play.savedCam); controls.target.copy(play.savedTarget); controls.update();
     world.setMarkersVisible(S.showMarkers);
     $('#mf-play').classList.remove('on'); $('#mf-play').textContent = '▶ Play';
@@ -729,7 +916,7 @@ export async function openEditor(opts) {
     if ($('.mf-help').classList.contains('on') && e.key === 'Escape') { $('.mf-help').classList.remove('on'); return; }
     if (isTyping(e)) { if (e.key === 'Escape') e.target.blur(); return; }
     const k = e.key.toLowerCase();
-    if (S.playing) { if (k === 'escape') stopPlay(); return; }   // movement keys belong to the player
+    if (S.playing) { if (k === 'escape') stopPlay(); else if (k === 'e' && !mod0(e)) world.interact(); return; }   // movement keys belong to the player
     if ((e.ctrlKey || e.metaKey) && k === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
     if ((e.ctrlKey || e.metaKey) && k === 'y') { e.preventDefault(); redo(); return; }
     if ((e.ctrlKey || e.metaKey) && k === 's') { e.preventDefault(); save(); return; }
@@ -747,7 +934,7 @@ export async function openEditor(opts) {
       case 't': setGizmoMode('translate'); break; case 'r': setGizmoMode('rotate'); break; case 'c': setGizmoMode('scale'); break;
       case 'x': S.snap = !S.snap; applySnap(); renderHud(); break;
       case 'f': focusSelected(); break;
-      case 'delete': case 'backspace': if (S.selectedId) { beginObjectEdit(); removeObject(S.selectedId); endObjectEdit(); } break;
+      case 'delete': case 'backspace': deleteSelected(); break;
       case 'escape': select(null); break;
       case '[': S.brush.radius = Math.max(0.5, S.brush.radius * 0.85); renderBrush(); break;
       case ']': S.brush.radius = Math.min(60, S.brush.radius * 1.18); renderBrush(); break;
@@ -758,6 +945,7 @@ export async function openEditor(opts) {
     e.preventDefault();
   }
   function onKeyUp(e) { const k = e.key.toLowerCase(); fly.keys[k] = false; }
+  function mod0(e) { return e.ctrlKey || e.metaKey || e.altKey; }
   window.addEventListener('keydown', onKeyDown, true); window.addEventListener('keyup', onKeyUp, true);
   teardown.push(() => { window.removeEventListener('keydown', onKeyDown, true); window.removeEventListener('keyup', onKeyUp, true); });
   function flyFrame(dt) {
@@ -869,7 +1057,7 @@ export async function openEditor(opts) {
     const gk = S.hotkeys === 'unreal' ? '<b>W/E/R</b> move/rotate/scale · <b>RMB+WASD</b> fly' : '<b>T/R/C</b> move/rotate/scale · <b>WASD</b> fly';
     $('#mf-hud-help').innerHTML = { select: 'Click an object · ' + gk + ' · <b>F</b> focus · <b>Del</b> remove · <b>Ctrl+D</b> duplicate', sculpt: 'Drag to raise · <b>Shift</b> lower · <b>Ctrl</b> smooth · <b>Alt</b> flatten · <b>[ ]</b> radius', paint: 'Drag to paint the selected layer · <b>[ ]</b> radius', place: 'Click the ground to place · pick a prop in the Library', scatter: 'Drag to scatter several props · <b>[ ]</b> radius', erase: 'Click an object to remove it' }[S.tool];
   }
-  function propLabel() { if (S.propId === 'glb') { const a = S.map.assets.find(x => x.id === S.assetId); return a ? a.label : 'model'; } return (PROP_BY_ID[S.propId] || {}).label || S.propId; }
+  function propLabel() { if (S.propId === 'glb') { const a = S.map.assets.find(x => x.id === S.assetId); return a ? a.label : 'model'; } if (S.propId === 'prefab') { const p = prefabById(S.prefabId); return p ? '🧱 ' + p.name : 'prefab'; } return (PROP_BY_ID[S.propId] || {}).label || S.propId; }
   function renderBrush() {
     const b = S.brush; $('#mf-radius').value = b.radius; $('#mf-radius-v').textContent = b.radius.toFixed(1) + 'm';
     $('#mf-strength').value = b.strength; $('#mf-strength-v').textContent = Math.round(b.strength * 100) + '%';
@@ -882,11 +1070,12 @@ export async function openEditor(opts) {
   }
   let libCat = 'Nature';
   function renderLibrary() {
-    const cats = ['Nature', 'Structures', 'Props', 'Ruins', 'VFX', 'Markers', 'Models'];
+    const cats = ['Nature', 'Structures', 'Props', 'Ruins', 'VFX', 'Markers', 'Models', 'Prefabs'];
     $('#mf-cats').innerHTML = cats.map(c => '<button data-cat="' + c + '" class="' + (c === libCat ? 'on' : '') + '">' + c + '</button>').join('');
     $$('#mf-cats button').forEach(b => b.onclick = () => { libCat = b.dataset.cat; renderLibrary(); });
     const grid = $('#mf-props'), models = $('#mf-models');
     if (libCat === 'Models') {
+      const pb = $('#mf-prefabbox'); if (pb) pb.style.display = 'none';
       grid.innerHTML = ''; models.style.display = '';
       $('#mf-assets').innerHTML = S.map.assets.length ? S.map.assets.map(a => '<div class="mf-asset ' + (S.propId === 'glb' && S.assetId === a.id ? 'on' : '') + '" data-asset="' + a.id + '"><span>' + (a.data ? '📦' : '🧊') + '</span><span class="lb" title="' + esc(a.url || 'embedded in this map') + '">' + esc(a.label) + (a.anims && a.anims.length ? ' <small>🎞 ' + a.anims.length + '</small>' : '') + '</span>' + (a.data ? '<span class="tag" title="Embedded in the map (' + (assetBytes(a) / 1024).toFixed(0) + ' KB). Relink to a /models/ URL for production.">' + (assetBytes(a) / 1024).toFixed(0) + 'K</span><span class="rl" title="Relink to a URL">↗</span>' : '') + '<span class="x" title="Remove model and every placed copy">✕</span></div>').join('') : '<div class="mf-empty">No models in this map yet. Drop a <b>.glb</b> on the canvas, pick one from the Project list, or paste a URL.</div>';
       const eb = embeddedBytes(S.map); $('#mf-embed-note').textContent = eb ? 'Embedded models: ' + (eb / 1048576).toFixed(2) + ' MB of 3.5 MB cloud limit' : '';
@@ -898,7 +1087,25 @@ export async function openEditor(opts) {
         box.innerHTML = lib.length ? lib.map((m, i) => '<div class="mf-asset" data-proj="' + i + '" title="' + esc(m.url) + '"><span>🗂</span><span class="lb">' + esc(m.label || m.id || m.url) + (m.anims && m.anims.length ? ' <small>🎞 ' + m.anims.length + '</small>' : '') + '</span><span class="tag">' + esc(m.cat || 'model') + '</span></div>').join('') : '<div class="mf-empty">No project models listed. Add .glb files to /models/ and list them in /models/manifest.json.</div>';
         box.querySelectorAll('[data-proj]').forEach(el => el.onclick = () => { const m = lib[+el.dataset.proj]; addAsset(m.url, m.label || m.id, { anims: m.anims }); if (S.tool === 'select' || S.tool === 'erase') setTool('place'); });
       });
+    } else if (libCat === 'Prefabs') {
+      models.style.display = 'none';
+      const defs = S.map.prefabs || [], shelf = shelfList();
+      grid.innerHTML = '';
+      const html = `<div class="mf-assets" id="mf-prefabs">${defs.length ? defs.map(p => `<div class="mf-asset ${S.propId === 'prefab' && S.prefabId === p.id ? 'on' : ''}" data-pf="${esc(p.id)}"><span>${p.icon || '🧱'}</span><span class="lb">${esc(p.name)} <small>${p.objects.length} parts · ${S.map.objects.filter(o => o.t === 'prefab' && o.pf === p.id).length} placed</small></span><span class="rl" data-pfact="rename" title="Rename">✎</span><span class="rl" data-pfact="shelf" title="Save to shelf">📚</span><span class="x" data-pfact="del" title="Delete prefab and its instances">✕</span></div>`).join('') : '<div class="mf-empty">No prefabs in this map. Select objects (Ctrl+click) → <b>Create prefab</b> in the inspector, or pull one from the shelf below.</div>'}
+        <div class="mf-sub" style="margin-top:8px">Shelf (this device)</div>
+        ${shelf.length ? shelf.map(e => `<div class="mf-asset" data-shelf="${esc(e.id)}"><span>${e.icon || '🧱'}</span><span class="lb">${esc(e.name)} <small>${e.objects.length} parts</small></span><span class="tag">${prefabById(e.id) ? 'in map' : 'add'}</span><span class="x" data-shelfact="del" title="Remove from shelf">✕</span></div>`).join('') : '<div class="mf-empty">Empty. 📚 on a prefab keeps it here for other maps.</div>'}</div>`;
+      let box = $('#mf-prefabbox'); if (!box) { box = document.createElement('div'); box.id = 'mf-prefabbox'; grid.parentNode.insertBefore(box, models); }
+      box.style.display = ''; box.innerHTML = html;
+      box.querySelectorAll('[data-pf]').forEach(el => el.onclick = (e) => {
+        const id = el.dataset.pf, act = e.target.dataset.pfact;
+        if (act === 'del') { askConfirm('Delete this prefab and every placed instance?').then(ok => { if (ok) deletePrefab(id); }); return; }
+        if (act === 'rename') { const nm = window.prompt('Prefab name:', prefabById(id).name); if (nm) renamePrefab(id, nm); return; }
+        if (act === 'shelf') { shelfSave(id); return; }
+        S.propId = 'prefab'; S.prefabId = id; if (S.tool === 'select' || S.tool === 'erase') setTool('place'); renderLibrary(); refreshGhost(); renderHud();
+      });
+      box.querySelectorAll('[data-shelf]').forEach(el => el.onclick = (e) => { const id = el.dataset.shelf; if (e.target.dataset.shelfact === 'del') { shelfRemove(id); return; } shelfImport(id); });
     } else {
+      const pb = $('#mf-prefabbox'); if (pb) pb.style.display = 'none';
       models.style.display = 'none';
       grid.innerHTML = PROP_CATALOG.filter(p => p.cat === libCat).map(p => '<button data-prop="' + p.id + '" class="' + (S.propId === p.id ? 'on' : '') + '" title="' + esc(p.label) + '"><span class="ic">' + p.icon + '</span>' + esc(p.label) + '</button>').join('');
       $$('#mf-props button').forEach(b => b.onclick = () => { S.propId = b.dataset.prop; if (S.tool === 'select' || S.tool === 'erase') setTool('place'); renderLibrary(); refreshGhost(); renderHud(); });
@@ -913,12 +1120,33 @@ export async function openEditor(opts) {
     const meta = PROP_BY_ID[o.t] || { label: o.t === 'glb' ? 'Model' : o.t, icon: o.t === 'glb' ? '🧊' : '🧩' };
     const label = o.t === 'glb' ? ((S.map.assets.find(a => a.id === o.a) || {}).label || 'Model') : meta.label;
     const slot = o.k ? (slotMeta(o.k) || { k: o.k, label: o.k, icon: '🧩' }) : null;
+    const pf = o.t === 'prefab' ? prefabById(o.pf) : null;
+    const ids = selectedIds(); const multiN = ids.length;
+    if (multiN > 1) {
+      box.innerHTML = `<div class="mf-row"><label>Selected</label><div style="flex:1;color:#cfc7ad">${multiN} objects</div></div>
+        <div class="mf-row"><label>Folder</label><select id="mf-m-folder">${folderOptions('')}</select></div>
+        <div class="mf-pf"><div class="mf-row" style="margin-bottom:5px"><label>Prefab</label><span class="st">📦 Group them into a reusable prefab</span></div>
+          <div class="mf-btns"><input type="text" id="mf-pf-name" placeholder="Prefab name" maxlength="60" style="flex:2"><button id="mf-pf-create" class="primary">📦 Create prefab</button></div></div>
+        ${S.editingPrefab ? '<div class="mf-btns" style="margin-top:6px"><button id="mf-pf-apply" class="primary">⤴ Apply to prefab "' + esc(S.editingPrefab.name) + '"</button><button id="mf-pf-cancel">Stop editing</button></div>' : ''}
+        <div class="mf-btns" style="margin-top:8px"><button id="mf-m-dup">⧉ Duplicate all</button><button id="mf-m-del" class="danger">✕ Delete all</button></div>
+        <p class="mf-hint">Ctrl/Shift+click adds to the selection. The gizmo moves the last-clicked object.</p>`;
+      box.querySelector('#mf-m-folder').onchange = (e) => moveToFolder(ids, e.target.value || null);
+      box.querySelector('#mf-pf-create').onclick = () => createPrefab(ids, box.querySelector('#mf-pf-name').value);
+      box.querySelector('#mf-m-dup').onclick = duplicateSelected; box.querySelector('#mf-m-del').onclick = deleteSelected;
+      const ap = box.querySelector('#mf-pf-apply'); if (ap) ap.onclick = applyPrefab;
+      const cn = box.querySelector('#mf-pf-cancel'); if (cn) cn.onclick = () => { S.editingPrefab = null; renderInspector(); };
+      return;
+    }
     const deg = (r) => Math.round(r * 180 / Math.PI * 10) / 10;
     const f = (v) => Math.round(v * 100) / 100;
     box.innerHTML = `
       <div class="mf-row"><label>Name</label><input type="text" id="mf-o-name" value="${esc(o.n || '')}" placeholder="${esc(label)}" maxlength="60"></div>
-      <div class="mf-row"><label>Type</label><div style="flex:1;color:#cfc7ad">${meta.icon || ''} ${esc(label)}</div></div>
+      <div class="mf-row"><label>Type</label><div style="flex:1;color:#cfc7ad">${pf ? '🧱 Prefab instance' : (meta.icon || '') + ' ' + esc(label)}</div></div>
       <div class="mf-row"><label>Folder</label><select id="mf-o-folder">${folderOptions(o.f || '')}</select></div>
+      ${pf ? `<div class="mf-pf"><div class="mf-row" style="margin-bottom:5px"><label>Prefab</label><span class="st">📦 ${esc(pf.name)} <small>${pf.objects.length} part${pf.objects.length === 1 ? '' : 's'} · ${S.map.objects.filter(x => x.t === 'prefab' && x.pf === pf.id).length} placed</small></span></div>
+        <div class="mf-btns"><button id="mf-pf-edit" class="primary">✎ Edit prefab</button><button id="mf-pf-unpack">⤵ Unpack</button><button id="mf-pf-shelf" title="Keep on this device for other maps">📚 Shelf</button></div>
+        <p class="mf-hint" style="margin:6px 0 0">Edit unpacks the pieces here; <b>Apply</b> afterwards rewrites the prefab and every instance follows. Unpack just breaks the link.</p></div>` : (o.t !== 'slot' ? `<div class="mf-pf"><div class="mf-btns"><input type="text" id="mf-pf-name" placeholder="Prefab name" maxlength="60" style="flex:2"><button id="mf-pf-create">📦 Make prefab</button></div>${S.editingPrefab ? '<div class="mf-btns" style="margin-top:6px"><button id="mf-pf-apply" class="primary">⤴ Apply to prefab "' + esc(S.editingPrefab.name) + '"</button><button id="mf-pf-cancel">Stop editing</button></div>' : ''}</div>` : '')}
+      ${o.t !== 'slot' ? renderBpSection(o) : ''}
       ${slot ? `<div class="mf-slot"><div class="mf-row" style="margin-bottom:5px"><label>Game slot</label><span class="st">${slot.icon || '🧩'} ${esc(slot.label)} <small>(${esc(o.k)})</small></span></div>
         ${o.t === 'slot' ? '<p class="mf-hint" style="margin:0 0 6px">The game draws its own asset here; move, turn or scale it and the game follows. To swap the asset, pick a prop or model in the Library, then:</p>' : '<p class="mf-hint" style="margin:0 0 6px">Replaced — the game draws <b>' + esc(label) + '</b> in place of its own asset.</p>'}
         <div class="mf-btns"><button id="mf-o-slot-replace" class="primary">⇄ Replace with ${esc(propLabel())}</button>${o.t !== 'slot' ? '<button id="mf-o-slot-restore">↺ Restore game asset</button>' : ''}</div></div>` : ''}
@@ -954,6 +1182,13 @@ export async function openEditor(opts) {
     uni.onpointerdown = () => beginObjectEdit(); uni.onchange = () => endObjectEdit();
     box.querySelector('#mf-o-name').onchange = (e) => commit(() => { o.n = e.target.value.trim().slice(0, 60) || undefined; });
     box.querySelector('#mf-o-folder').onchange = (e) => moveToFolder([o.id], e.target.value || null);
+    const pfe = box.querySelector('#mf-pf-edit'); if (pfe) pfe.onclick = () => unpackPrefab(o.id, true);
+    const pfu = box.querySelector('#mf-pf-unpack'); if (pfu) pfu.onclick = () => unpackPrefab(o.id, false);
+    const pfs = box.querySelector('#mf-pf-shelf'); if (pfs) pfs.onclick = () => shelfSave(o.pf);
+    const pfc = box.querySelector('#mf-pf-create'); if (pfc) pfc.onclick = () => createPrefab([o.id], box.querySelector('#mf-pf-name').value);
+    const pfa = box.querySelector('#mf-pf-apply'); if (pfa) pfa.onclick = applyPrefab;
+    const pfx = box.querySelector('#mf-pf-cancel'); if (pfx) pfx.onclick = () => { S.editingPrefab = null; renderInspector(); };
+    wireBpSection(box, o);
     const sr = box.querySelector('#mf-o-slot-replace'); if (sr) sr.onclick = () => replaceSlot(o);
     const ss = box.querySelector('#mf-o-slot-restore'); if (ss) ss.onclick = () => restoreSlot(o);
     const tint = box.querySelector('#mf-o-tint'); if (tint) { tint.oninput = () => { o.c = tint.value; world.refreshObject(o); setDirty(true); }; tint.onpointerdown = () => beginObjectEdit(); tint.onchange = () => endObjectEdit(); box.querySelector('#mf-o-untint').onclick = () => commit(() => { delete o.c; }); }
@@ -980,11 +1215,12 @@ export async function openEditor(opts) {
     cs.onchange = () => { beginObjectEdit(); world.setCollision(o.id, null, cs.value); endObjectEdit(); setDirty(true); };
     box.querySelector('#mf-o-dup').onclick = duplicateSelected;
     box.querySelector('#mf-o-focus').onclick = focusSelected;
-    box.querySelector('#mf-o-del').onclick = () => { beginObjectEdit(); removeObject(o.id); endObjectEdit(); };
+    box.querySelector('#mf-o-del').onclick = () => { beginObjectEdit(); removeObject(o.id); endObjectEdit(); select(null); };
   }
   function renderStats() {
     const m = S.map; if (!m) return;
-    $('#mf-hud-stats').innerHTML = '<b>' + m.objects.length + '</b> objects · <b>' + (m.folders || []).length + '</b> folders · <b>' + m.terrain.n + '×' + m.terrain.n + '</b> · ' + (m.terrain.n * m.terrain.cell) + 'm';
+    const nb = m.objects.filter(hasBehaviour).length;
+    $('#mf-hud-stats').innerHTML = '<b>' + m.objects.length + '</b> objects · <b>' + (m.folders || []).length + '</b> folders · <b>' + (m.prefabs || []).length + '</b> prefabs' + (nb ? ' · <b>' + nb + '</b> ⚡' : '') + ' · <b>' + m.terrain.n + '×' + m.terrain.n + '</b> · ' + (m.terrain.n * m.terrain.cell) + 'm';
     renderOutliner();
   }
   function renderTerrainTab() {
@@ -1109,6 +1345,8 @@ export async function openEditor(opts) {
   $('.mf-help').onclick = e => { if (e.target === e.currentTarget || e.target.dataset.close) $('.mf-help').classList.remove('on'); };
   $('#mf-close').onclick = () => close(false);
   $('#mf-overview').onclick = frameOverview;
+  $('#mf-bp-close').onclick = () => { S.bpOpen = false; renderBpPanel(); renderInspector(); };
+  $('#mf-bp-add').onclick = (e) => { if (bpGraph) bpGraph.openMenu(e.clientX, e.clientY + 8); };
   $('#mf-widgets').onclick = () => { try { if (window.AthenaUI && window.AthenaUI.openDesigner) window.AthenaUI.openDesigner(); else toast('Athena Widgets has not loaded (src/widgets/index.js).', 3200); } catch (e) { toast('Could not open the Widget Designer.', 3000); } };
   $$('.mf-gizmo button[data-gm]').forEach(b => b.onclick = () => setGizmoMode(b.dataset.gm));
   $('#mf-gm-select').onclick = () => setTool('select');
@@ -1152,7 +1390,8 @@ export async function openEditor(opts) {
   return ED;
 }
 
-export function closeEditor() { if (ED) ED.close(); }
+/* Resolves when the editor is actually gone (a dirty map asks first) — `await close(); open(…)` is safe. */
+export function closeEditor() { return ED ? Promise.resolve(ED.close()) : Promise.resolve(); }
 
 /* ── helpers ── */
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
@@ -1254,6 +1493,11 @@ const TEMPLATE = `
   <div class="mf-hud"><div class="chip" id="mf-hud-tool"></div><div class="chip" id="mf-hud-help"></div><div class="chip"><span id="mf-hud-stats"></span> · <span id="mf-hud-fps"></span></div></div>
   <div class="mf-playhud"><div class="ret"></div><div class="msg"><b>W</b> forward · <b>S</b> back · <b>A</b> left · <b>D</b> right · <b>Space</b> jump · <b>Shift</b> run · mouse looks · <b>Esc</b> back to the editor</div></div>
   <div class="mf-toast"></div>
+  <div class="mf-prompt" id="mf-prompt" hidden></div>
+  <div class="mf-bppanel" id="mf-bp" hidden>
+    <div class="mf-bp-head"><span id="mf-bp-title">⚡ Event graph</span><span class="spacer"></span><button id="mf-bp-add">＋ Node</button><button id="mf-bp-close" title="Close">✕</button></div>
+    <div class="mf-bp-body"><div class="mf-bp-canvas" id="mf-bp-canvas"></div><div class="mf-bp-details" id="mf-bp-details"></div></div>
+  </div>
   <div class="mf-help"><div class="box">
     <h2>Athena Engine — controls</h2>
     <table>
@@ -1267,6 +1511,8 @@ const TEMPLATE = `
       <tr><td>File</td><td><kbd>Ctrl+S</kbd> save · <kbd>Ctrl+Z</kbd> / <kbd>Ctrl+Y</kbd> undo / redo · Export writes a .world.json you can Import anywhere</td></tr>
       <tr><td>Water</td><td>One global water level (Water tab). Sculpt below it to make lakes and rivers; Scatter skips underwater ground.</td></tr>
       <tr><td>Models</td><td>Drag a <kbd>.glb</kbd> onto the canvas, or Library → Models → Project / URL. Animated models: select the object and pick a clip, speed and loop in the inspector.</td></tr>
+      <tr><td>Blueprints</td><td>Select an object → <b>⚡ Add blueprint</b>: components (Trigger volume, Point light, Rotating, Floating, Tag) and an <b>event graph</b> — Begin Play, On Tick, On Enter / Exit / Interact (E) → Move, Rotate, Scale, Spin, Set visible / tint, Play animation, Effect, Light, Spawn, Destroy, Teleport, Toast, Set variable, Branch, Delay, Call game action. Runs in Play and in the game; the map is untouched afterwards.</td></tr>
+      <tr><td>Prefabs</td><td><kbd>Ctrl</kbd>+click several objects → <b>📦 Create prefab</b> (or 📦 on a folder). Place instances from Library → Prefabs. <b>✎ Edit prefab</b> unpacks one; <b>⤴ Apply</b> rewrites the prefab and every instance follows. 📚 keeps a prefab on this device for other maps.</td></tr>
       <tr><td>Folders</td><td>Scene tab: content folders hold what you place. Click a folder to target it, drag objects between folders, 👁 hide / 🔒 lock a whole folder. Games read them with <code>world.inFolder('name')</code>.</td></tr>
       <tr><td>Game scenes</td><td>Maps tab → <b>Game scenes</b>: open the Homestead Farm (or any registered game) as a map of 🧩 slots. Move a slot to move that building in the game; select it → <b>Replace</b> to swap in a prop or .glb; add anything else around it. Save → ★ Set live → the game shows it.</td></tr>
       <tr><td>Mini-games</td><td>Maps tab: tag the map with a game and <b>★ Set live</b>. A mini-game then loads it with <code>MythicMapForge.engine.mount(el, { game: 'name' })</code>.</td></tr>

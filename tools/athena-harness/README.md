@@ -32,6 +32,8 @@ node tools/athena-harness/pw-fallback.mjs     # no OrbitControls / TransformCont
 node tools/athena-harness/pw-test5.mjs        # round 5 on harness2.html (farm + Athena + widgets with faked bridges):
                                               #   content folders, game-scene slots, farm overlay, widget designer,
                                               #   graph execution, slot/selector targets, themes, the expression language
+node tools/athena-harness/pw-test6.mjs        # round 6: prefabs (create/place/edit/apply/unpack/shelf) and actor
+                                              #   blueprints (components, graph, Play, engine, overlay)
 ```
 
 Each prints ✔/✘ per step and the page's error list; screenshots land in

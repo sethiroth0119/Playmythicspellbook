@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120x6';
+  window.BUILD_VERSION = 'v120x7';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -223418,7 +223418,7 @@ render();
      ⚠ If this 404s nothing changes — the button reports "still loading".
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/mapforge/index.js?v=mf6"></script>
+<script type="module" src="src/mapforge/index.js?v=mf7"></script>
 <!-- 🧩 ATHENA WIDGETS — Blueprint-style UI widgets and themes (/src/widgets).
      Registers window.AthenaUI. At boot it loads every LIVE widget/theme
      (public.ui_widgets, sql/040 — or the device's cached copy) and mounts
@@ -223429,7 +223429,7 @@ render();
      ⚠ If this 404s nothing changes — no widget shows, the button reports it.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/widgets/index.js?v=aw1"></script>
+<script type="module" src="src/widgets/index.js?v=aw2"></script>
 <!-- 🐄 HOMESTEAD FARM — the 3D animal-farm simulation (/src/farm). Registers
      window.MythicFarm and is INERT until renderFarm() hands it #app. Reads
      nothing by itself: window.MythicFarmBridge (defined next to

@@ -15,6 +15,8 @@
    Euler XYZ in radians (stored as-is from three.js), scale is per-axis.
    ═══════════════════════════════════════════════════════════════════════════ */
 
+import { normalizeBp } from './mapforge.actors.js';
+
 export const MAP_VERSION = 1;
 
 // Paint layers. Index is what gets stored per vertex — never reorder this
@@ -78,6 +80,11 @@ export function newMap(opts) {
        editor conveniences saved with the map so a build session resumes
        where it left off. Objects with no `f` sit at the root. */
     folders: [],
+    /* Prefabs: reusable groups. A definition holds child objects RELATIVE to
+       the instance origin; an instance is one object { t: 'prefab', pf: id }
+       placed like any prop. Edit the definition and every instance follows —
+       Unity's prefab, Unreal's Blueprint class for a set of static pieces. */
+    prefabs: [],
     objects: [],
     /* Which pieces of THIS document a host game renders when the map is a
        game-scene overlay (Homestead Farm etc.). A standalone world uses all
@@ -157,7 +164,9 @@ export function normalize(raw) {
   const assetIds = new Set(m.assets.map(a => a.id));
   m.folders = normalizeFolders(raw.folders);
   const folderIds = new Set(m.folders.map(f => f.id));
-  m.objects = (Array.isArray(raw.objects) ? raw.objects : []).map(o => normalizeObject(o, assetIds, folderIds)).filter(Boolean);
+  m.prefabs = normalizePrefabs(raw.prefabs, assetIds);
+  const prefabIds = new Set(m.prefabs.map(p => p.id));
+  m.objects = (Array.isArray(raw.objects) ? raw.objects : []).map(o => normalizeObject(o, assetIds, folderIds, prefabIds)).filter(Boolean);
   const sc = raw.scene || {};
   m.scene = { ground: sc.ground !== false, water: sc.water !== false, sky: sc.sky !== false };
 
@@ -187,14 +196,32 @@ export function normalizeFolders(raw) {
    (a Homestead Farm building id such as 'feedmill'). Lower-case, short. */
 export function slotKey(v) { return String(v == null ? '' : v).trim().toLowerCase().replace(/[^a-z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40); }
 
-export function normalizeObject(o, assetIds, folderIds) {
+/* Prefab definitions: children are ordinary objects minus folder/prefab
+   fields (no nesting — a prefab inside a prefab is flattened away rather
+   than risking a cycle). Child ids stay stable so blueprints can target
+   `self.childName` and colliders can be keyed per part. */
+export function normalizePrefabs(raw, assetIds) {
+  const out = []; const seen = new Set();
+  (Array.isArray(raw) ? raw : []).slice(0, 200).forEach(p => {
+    if (!p || typeof p !== 'object') return;
+    const id = String(p.id || uid('pf_')); if (seen.has(id)) return; seen.add(id);
+    const objects = (Array.isArray(p.objects) ? p.objects : []).map(o => { const n = normalizeObject(o, assetIds, null, null); if (!n || n.t === 'prefab') return null; delete n.f; delete n.k; return n; }).filter(Boolean).slice(0, 200);
+    if (!objects.length) return;
+    out.push({ id, name: String(p.name || 'Prefab').slice(0, 60), icon: String(p.icon || '🧱').slice(0, 4), objects });
+  });
+  return out;
+}
+export function normalizeObject(o, assetIds, folderIds, prefabIds) {
   if (!o || typeof o !== 'object' || !o.t) return null;
   const t = String(o.t);
   if (t === 'glb' && assetIds && !assetIds.has(o.a)) return null;   // orphaned model reference
+  if (t === 'prefab' && (!o.pf || (prefabIds && !prefabIds.has(String(o.pf))))) return null;   // orphaned prefab instance
   return {
     id: String(o.id || uid('o_')),
     t,
     a: t === 'glb' ? String(o.a) : undefined,
+    pf: t === 'prefab' ? String(o.pf) : undefined,                                              // prefab definition id
+    bp: normalizeBp(o.bp),                                                                       // actor blueprint (components + graph), see mapforge.actors.js
     f: (o.f && (!folderIds || folderIds.has(String(o.f)))) ? String(o.f) : undefined,   // content folder
     k: o.k ? (slotKey(o.k) || undefined) : undefined,                                      // game slot key (see docs: game scenes)
     p: vec3(o.p, [0, 0, 0]),

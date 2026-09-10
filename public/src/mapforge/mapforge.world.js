@@ -12,6 +12,7 @@ import { createTerrain } from './mapforge.terrain.js';
 import { createWater } from './mapforge.water.js';
 import { buildProp, PROP_BY_ID, collides } from './mapforge.props.js';
 import { createEmitter, createWeather, windVector, EMITTERS } from './mapforge.vfx.js';
+import { createActors, hasBehaviour } from './mapforge.actors.js';
 
 export function buildWorld(THREE, map, opts) {
   opts = opts || {};
@@ -43,7 +44,8 @@ export function buildWorld(THREE, map, opts) {
   function applyFolderVisibility() { objects.forEach((r, id) => { const o = objDoc(id); const v = !o || !o.f || folderVisible(o.f); r.userData.mfFolderHidden = !v; r.visible = v && !(r.userData.mfMarker && !markersVisible); }); }
 
   const objects = new Map();        // id → root Object3D
-  const colliders = new Map();      // id → world-space collider (see updateCollider)
+  const parts = new Map();          // 'instanceId:childId' → a prefab instance's child root
+  const colliders = new Map();      // id → world-space collider (see updateCollider); prefab parts are keyed per part
   const emitters = new Map();       // id → emitter (fx_* objects and props with a built-in effect)
   let weather = null; const wind = new THREE.Vector3(); let fxOn = opts.fx !== false; let lightBudget = 0;
   const mixers = new Map();         // id → { mixer, action, clip }
@@ -112,6 +114,31 @@ export function buildWorld(THREE, map, opts) {
     return clone;
   }
 
+  /* ── prefabs ──
+     An instance is one root with a child root per definition object, each
+     built exactly like a top-level object (prop clone, .glb, effect) and
+     collided per part, so a "ruined house" prefab of six pieces blocks the
+     player piece by piece. Parts are addressable as 'instance:child' — the
+     blueprint target `self.door` — through `parts`. */
+  const prefabOf = (o) => (map.prefabs || []).find(p => p.id === o.pf) || null;
+  function partDoc(id) { const i = id.indexOf(':'); if (i < 0) return null; const inst = map.objects.find(o => o.id === id.slice(0, i)); const def = inst && prefabOf(inst); return def ? (def.objects.find(c => c.id === id.slice(i + 1)) || null) : null; }
+  function buildPartsInto(root, o, withColliders) {
+    const def = prefabOf(o); if (!def) { root.add(buildProp(THREE, 'placeholder')); return; }
+    def.objects.forEach(c => {
+      const pid = o.id + ':' + c.id;
+      const cr = new THREE.Group(); cr.name = 'mf-part-' + c.id; cr.userData = { mfId: pid, mfType: c.t, mfPart: true, mfOwner: o.id, mfMarker: !!(PROP_BY_ID[c.t] && PROP_BY_ID[c.t].marker) };
+      const body = makeBody(c); cr.add(body);
+      if (c.t.startsWith('fx_')) { cr.userData.mfFxHandle = body; body.visible = markersVisible; }
+      attachFx(Object.assign({}, c, { id: pid }), cr);
+      applyTransform(cr, c);
+      if (cr.userData.mfMarker) cr.visible = markersVisible;
+      root.add(cr); parts.set(pid, cr);
+      if (c.t === 'glb') loadAsset(c.a).then(({ template, clips }) => { if (parts.get(pid) !== cr) return; cr.remove(body); const real = cloneTemplate(template); cr.add(real); cr.userData.mfClips = clips; cr.updateMatrixWorld(true); if (withColliders) updateCollider(pid); setAnim(pid, c.anim); }).catch(() => { cr.userData.mfError = true; });
+    });
+  }
+  function removeParts(o) {
+    Array.from(parts.keys()).forEach(pid => { if (pid.indexOf(o.id + ':') === 0) { stopAnim(pid); detachFx(pid); const cr = parts.get(pid); if (cr && cr.parent) cr.parent.remove(cr); parts.delete(pid); colliders.delete(pid); } });
+  }
   function makeBody(o) {
     if (o.t === 'glb') { const body = buildProp(THREE, 'placeholder'); body.userData.mfPending = true; return body; }
     if (o.t.startsWith('fx_')) return buildProp(THREE, 'fxmarker');
@@ -160,17 +187,21 @@ export function buildWorld(THREE, map, opts) {
     const root = new THREE.Group();
     root.name = 'mf-obj-' + o.id;
     root.userData = { mfId: o.id, mfType: o.t, mfMarker: !!(PROP_BY_ID[o.t] && PROP_BY_ID[o.t].marker) };
-    const body = makeBody(o);
-    root.add(body);
-    if (o.t.startsWith('fx_')) { root.userData.mfFxHandle = body; body.visible = markersVisible; }
-    attachFx(o, root);
+    if (o.t === 'prefab') { root.userData.mfPrefab = o.pf; buildPartsInto(root, o, true); }
+    else {
+      const body = makeBody(o);
+      root.add(body);
+      if (o.t.startsWith('fx_')) { root.userData.mfFxHandle = body; body.visible = markersVisible; }
+      attachFx(o, root);
+    }
     applyTransform(root, o);
     if (root.userData.mfMarker) root.visible = markersVisible;
     if (o.f && !folderVisible(o.f)) { root.visible = false; root.userData.mfFolderHidden = true; }
     objectsGroup.add(root);
     root.updateMatrixWorld(true);   // raycastable NOW, not after the next render — a click right after placing must hit
     objects.set(o.id, root);
-    updateCollider(o.id);
+    if (o.t === 'prefab') { const def = prefabOf(o); if (def) def.objects.forEach(c => updateCollider(o.id + ':' + c.id)); }
+    else updateCollider(o.id);
     if (o.t === 'glb') {
       loadAsset(o.a).then(({ template, clips }) => {
         if (objects.get(o.id) !== root) return;      // removed while loading
@@ -189,6 +220,7 @@ export function buildWorld(THREE, map, opts) {
   function removeObject(id) {
     const root = objects.get(id); if (!root) return;
     stopAnim(id); detachFx(id);
+    if (root.userData.mfPrefab) removeParts({ id });
     objectsGroup.remove(root); objects.delete(id); colliders.delete(id);
   }
   function applyTransform(root, o) {
@@ -199,6 +231,7 @@ export function buildWorld(THREE, map, opts) {
   /* Re-tint means a new body (tint is baked into the template key). */
   function refreshObject(o) {
     const root = objects.get(o.id); if (!root) return addObject(o);
+    if (o.t === 'prefab' || root.userData.mfPrefab) return addObject(o);   // a prefab instance is rebuilt whole
     if (o.t !== 'glb' && root.children[0] && root.children[0].userData.mfProp === o.t) {
       root.remove(root.children[0]); root.add(buildProp(THREE, o.t, o.c));
     }
@@ -218,9 +251,10 @@ export function buildWorld(THREE, map, opts) {
      Recomputed whenever an object is added, moved or reshaped (cheap: one
      Box3 per change, never per frame). */
   const STEP = 0.55, _bb = new THREE.Box3();
-  function objDoc(id) { return map.objects.find(o => o.id === id) || null; }
+  function objDoc(id) { return map.objects.find(o => o.id === id) || partDoc(id); }
+  const rootOf = (id) => objects.get(id) || parts.get(id) || null;
   function updateCollider(id) {
-    const root = objects.get(id), o = objDoc(id);
+    const root = rootOf(id), o = objDoc(id);
     if (!root || !o || !collides(o)) { colliders.delete(id); return null; }
     root.updateMatrixWorld(true);
     _bb.setFromObject(root);
@@ -230,7 +264,7 @@ export function buildWorld(THREE, map, opts) {
     colliders.set(id, c);
     return c;
   }
-  function updateAllColliders() { colliders.clear(); objects.forEach((r, id) => updateCollider(id)); }
+  function updateAllColliders() { colliders.clear(); objects.forEach((r, id) => { if (r.userData.mfPrefab) return; updateCollider(id); }); parts.forEach((r, id) => updateCollider(id)); }
   function footprint(c, x, z, pad) {
     if (c.shape === 'cyl') { const dx = x - c.cx, dz = z - c.cz; const rr = c.r + pad; return dx * dx + dz * dz < rr * rr; }
     return x > c.minX - pad && x < c.maxX + pad && z > c.minZ - pad && z < c.maxZ + pad;
@@ -268,7 +302,7 @@ export function buildWorld(THREE, map, opts) {
     mixers.delete(id);
   }
   function setAnim(id, anim) {
-    const root = objects.get(id); if (!root) return false;
+    const root = rootOf(id); if (!root) return false;
     const clips = root.userData.mfClips || [];
     const cur = mixers.get(id);
     if (!anim || !anim.clip) { stopAnim(id); return true; }
@@ -316,8 +350,41 @@ export function buildWorld(THREE, map, opts) {
     if ((env.weather || 'none') !== w || (env.weatherIntensity || 1) !== wi) setWeather(env); else wind.copy(windVector(THREE, env));
   }
 
+  /* ── actors (blueprints) ──
+     Live only between startPlay() and stopPlay(). Spawned objects are flagged
+     _rt and removed at stop; a destroyed persistent object is hidden and
+     restored at stop, so a play session never changes the document. */
+  let playerRef = null, interactFlag = false; const rtHidden = new Set();
+  const actors = createActors({
+    THREE, map, get player() { return playerRef; },
+    get world() { return api; },
+    toast: opts.toast, onPrompt: opts.onPrompt, actions: opts.actions,
+    spawn(what, p, name) {
+      what = String(what || '').trim(); if (!what) return null;
+      const pf = (map.prefabs || []).find(x => x.name === what || x.id === what);
+      const o = { id: 'rt_' + Math.random().toString(36).slice(2, 9), t: pf ? 'prefab' : (PROP_BY_ID[what] ? what : 'crate'), pf: pf ? pf.id : undefined, p: [p[0], p[1], p[2]], r: [0, 0, 0], s: [1, 1, 1], g: false, n: name || undefined, _rt: true };
+      map.objects.push(o); addObject(o); actors.adopt(o); return o;
+    },
+    destroy(id) {
+      const o = map.objects.find(x => x.id === id);
+      if (o && o._rt) { removeObject(id); map.objects.splice(map.objects.indexOf(o), 1); actors.forget(id); return; }
+      const r = rootOf(id); if (r) { r.visible = false; rtHidden.add(id); colliders.delete(id); }
+    },
+  });
   const api = {
-    map, group, terrain, water, sky, sun, hemi, objects, objectsGroup, mixers,
+    map, group, terrain, water, sky, sun, hemi, objects, parts, objectsGroup, mixers,
+    actors, hasBehaviour,
+    setPlayer(p) { playerRef = p || null; },
+    interact() { interactFlag = true; },
+    get playing() { return actors.running; },
+    startPlay(player) { if (player !== undefined) playerRef = player; actors.start(); },
+    stopPlay() {
+      actors.stop();
+      map.objects.filter(o => o._rt).forEach(o => removeObject(o.id)); map.objects = map.objects.filter(o => !o._rt);
+      rtHidden.forEach(id => { const r = rootOf(id); if (r) r.visible = true; updateCollider(id); }); rtHidden.clear();
+      playerRef = null;
+    },
+    rootOf, partDoc, prefabOf,
     addObject, removeObject, refreshObject, applyTransform, loadAsset, setAnim, stopAnim,
     colliders, updateCollider, updateAllColliders, groundAt, resolveMove, setCollision, isSolid: (o) => collides(o),
     /* clips available on a placed .glb (empty until it has loaded) */
@@ -357,8 +424,8 @@ export function buildWorld(THREE, map, opts) {
        Returns { root, ready } where `ready` resolves once a model loaded. */
     buildDetached(o) {
       const root = new THREE.Group(); root.userData = { mfId: o.id, mfType: o.t, detached: true };
-      const body = makeBody(o); root.add(body);
-      attachFx(o, root);
+      let body = null;
+      if (o.t === 'prefab') buildPartsInto(root, o, false); else { body = makeBody(o); root.add(body); attachFx(o, root); }
       root.scale.set(o.s[0], o.s[1], o.s[2]); root.rotation.set(o.r[0], o.r[1], o.r[2]);
       let ready = Promise.resolve(root);
       if (o.t === 'glb') ready = loadAsset(o.a).then(({ template, clips }) => { root.remove(body); const real = cloneTemplate(template); root.add(real); root.userData.mfClips = clips; if (o.anim && o.anim.clip) { const clip = clips.find(c => c.name === o.anim.clip) || clips[0]; if (clip) { const mixer = new THREE.AnimationMixer(real); const a = mixer.clipAction(clip); a.setEffectiveTimeScale(o.anim.speed == null ? 1 : o.anim.speed); applyLoop(a, o.anim.loop); a.play(); root.userData.mixer = mixer; } } return root; }).catch(() => root);
@@ -366,6 +433,7 @@ export function buildWorld(THREE, map, opts) {
     },
     update(dt, camera) {
       time += dt;
+      if (actors.running) { actors.update(dt, interactFlag); interactFlag = false; }
       water.update(time, sunDir);
       mixers.forEach(m => m.mixer.update(dt));
       emitters.forEach(em => em.update(time, wind));
@@ -373,6 +441,7 @@ export function buildWorld(THREE, map, opts) {
       if (camera) sky.position.copy(camera.position);
     },
     dispose() {
+      try { actors.stop(); } catch (e) {}
       mixers.forEach((m, id) => stopAnim(id));
       emitters.forEach((em, id) => detachFx(id)); if (weather) { weather.dispose(); weather = null; }
       terrain.dispose(); water.dispose();

@@ -31,6 +31,8 @@ fixed battle grid. The two coexist.
 | `mapforge.three.js` | loads the r128 global three.js + addons on demand |
 | `mapforge.games.js` | the **game scenes** registry: a mini-game registers an adapter so its map opens in the editor |
 | `mapforge.overlay.js` | the game side of game scenes: `AthenaEngine.overlay.forGame(id)` → the live map as an overlay (slot transforms, replacements, extra objects) |
+| `mapforge.actors.js` | **actor blueprints**: components + an event graph on any object, and the runtime that executes them (`world.actors`) |
+| `../widgets/graph-editor.js` | the shared Blueprint-style node editor (used by the actor graph panel) |
 
 Migrations: `sql/038_world_maps.sql` then `sql/039_world_maps_games.sql` (apply by
 hand in the Supabase SQL editor). Until they are applied the editor saves to the
@@ -343,3 +345,65 @@ screen registers for its slots: the farm registers `farm.tab`, `farm.build`,
 `farm.feed`, `farm.collect`, `farm.tend` via `AthenaUI.slots.register('farm.', …)`.
 
 Migration: `sql/040_ui_widgets.sql` (table `ui_widgets`, RLS, admin-only live).
+
+## Actor Blueprints — behaviour on any object (round 6)
+
+Select an object → inspector → **⚡ Add blueprint**. An actor carries
+**components** and an **event graph**, like an Unreal Actor:
+
+- **Components** — Trigger volume (radius around the actor; drawn as an orange
+  ring while selected), Point light (colour, intensity, distance; eight are
+  budgeted per world), Rotating (deg/s around Y), Floating (bob amplitude and
+  speed), Tag (a label the game can query with `world.actors.withTag('loot')`).
+- **Variables** — typed (`num` / `text` / `bool`), read as `{$name}`.
+- **Event graph** — the bottom panel (⚡ Event graph). Events: Begin Play, On
+  Tick (ms), On Enter / On Exit (the player crosses the trigger radius), On
+  Interact (the player presses **E** inside it; the prompt text shows on
+  screen). Actions: Move (offset or absolute, over seconds), Rotate, Scale,
+  Spin on/off, Set visible, Set tint, Play animation, Effect on/off, Light
+  on/off, Spawn (a prop id or a prefab name at an offset), Destroy, Teleport
+  player, Toast, Set variable, Branch, Sequence, Delay, Call game action,
+  Print. Targets: `self`, `player`, another object's name, or a prefab part as
+  `self.partName`. Every field takes the widget expression language
+  (`{$hp} - 1`, `{dist} < 3`, `{self.x}`, `{player.z}`, `{gems|num}`).
+  Right-click the graph for nodes, drag pins to wire, click a wire to cut it.
+
+It runs only while **playing**: the editor's Play (P), `engine.mount()`
+(E is the interact key; pass `interactKey` to change it), and a game
+overlay (Begin Play / Tick / components run without a player; the host may
+pass `player` to `overlay.forGame` or call `ov.setPlayer` for triggers). In
+edit mode a blueprint is data. Play snapshots every actor's transform, tint
+and effects and puts them back on stop; spawned objects are runtime-only
+(`_rt`) and are removed; a destroyed persistent object is hidden, not deleted.
+
+Document: `objects[].bp = { vars, comps, graph }` (see `mapforge.actors.js`,
+`normalizeBp`). Runtime: `world.actors` (`start/stop/update/fire/vars/withTag/
+adopt/forget`), `world.startPlay(player)`, `world.stopPlay()`, `world.interact()`,
+`world.playing`; `buildWorld` accepts `toast`, `onPrompt`, `actions` for the
+graph's Toast / prompt / Call nodes.
+
+## Prefabs — reusable groups (round 6)
+
+**Ctrl/Shift+click** several objects (the inspector switches to the
+multi-selection view) → name it → **📦 Create prefab**; or 📦 on a folder in
+the outliner. The pieces are replaced by ONE instance and the definition goes
+to Library → **Prefabs**, from where instances are placed like props (Place
+and Scatter both work). An instance moves, turns and scales as one; its parts
+collide individually and animate / emit effects like top-level objects.
+
+- **✎ Edit prefab** unpacks an instance in place (its pieces are selected);
+  change them, then **⤴ Apply to prefab** rewrites the definition and every
+  instance in the map is rebuilt. **⤵ Unpack** just breaks the link.
+- **📚 Shelf** keeps a prefab on this device across maps (Library → Prefabs
+  → Shelf → click to add to the current map). URL models travel with it;
+  embedded models do not.
+- Blueprints on an instance address its parts as `self.partName`; a Spawn node
+  can spawn a prefab by name.
+- A game slot can be **replaced** with a prefab like any prop.
+
+Document: `prefabs: [{ id, name, icon, objects: [child objects relative to the
+instance origin] }]`, instances are `{ t: 'prefab', pf: id }`. No nesting (a
+prefab inside a prefab is flattened by `normalize()`). Runtime: `world.parts`
+(`'instance:child'` → Object3D), `world.partDoc(id)`, `world.prefabOf(o)`.
+
+Multi-selection also drives Duplicate all, Delete all and the folder move.

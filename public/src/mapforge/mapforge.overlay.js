@@ -50,6 +50,8 @@ export async function forGame(game, opts) {
   });
   // slot objects are the game's stand-ins: hide the placeholder body, the game draws the real thing
   world.objects.forEach((root, id) => { const o = map.objects.find(x => x.id === id); if (o && o.t === 'slot') root.visible = false; });
+  // blueprints run in the host game too (Begin Play, Tick, spin, bob, lights); trigger events need a player the host may pass later via ov.setPlayer
+  try { world.startPlay(opts.player || null); } catch (e) {}
   const detached = [];
   const ov = {
     map, world, group: world.group, source: rec.source, THREE,
@@ -65,6 +67,7 @@ export async function forGame(game, opts) {
       const o = world.slot(key); if (!o || o.t === 'slot') return null;
       const d = world.buildDetached(o); detached.push(d); return d.root;
     },
+    setPlayer: (p) => world.setPlayer(p), interact: () => world.interact(), actors: world.actors,
     update(dt, camera) { world.update(dt, camera); detached.forEach(d => d.update(dt)); },
     dispose() { try { world.dispose(); } catch (e) {} detached.length = 0; },
   };

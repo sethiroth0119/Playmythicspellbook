@@ -39,7 +39,7 @@ export async function mountWorld(host, opts) {
   host.appendChild(canvas);
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(opts.fov || 60, 1, 0.1, 3000);
-  const world = buildWorld(THREE, map, { scene, markers: !!opts.markers, gltfLoader: opts.gltfLoader });
+  const world = buildWorld(THREE, map, { scene, markers: !!opts.markers, gltfLoader: opts.gltfLoader, onLightning: opts.onLightning, toast: opts.toast, onPrompt: opts.onPrompt, actions: opts.actions });
   scene.add(world.group);
 
   const listeners = { frame: [], resize: [] };
@@ -65,6 +65,10 @@ export async function mountWorld(host, opts) {
     else camera.lookAt(0, 0, 0);
   }
 
+  // ⚡ actor blueprints run for the life of the mount; E (or opts.interactKey) is the interact key
+  const onInteract = (e) => { if ((e.key || '').toLowerCase() === (opts.interactKey || 'e')) world.interact(); };
+  window.addEventListener('keydown', onInteract);
+  world.startPlay(player ? { get pos() { return player.pos; }, setPos: (x, z) => { player.pos.x = x; player.pos.z = z; player.pos.y = world.heightAt(x, z); } } : null);
   let raf = 0, last = performance.now(), running = true;
   function loop(now) {
     if (!running) return;
@@ -82,7 +86,7 @@ export async function mountWorld(host, opts) {
     THREE, map, source, scene, camera, renderer, canvas, world, player, controls, on,
     resize,
     stop() {
-      running = false; cancelAnimationFrame(raf); ro.disconnect();
+      running = false; cancelAnimationFrame(raf); ro.disconnect(); window.removeEventListener('keydown', onInteract); try { world.stopPlay(); } catch (e) {}
       if (player) player.stop(); if (clickToLock) canvas.removeEventListener('click', clickToLock);
       try { world.dispose(); renderer.dispose(); renderer.forceContextLoss(); } catch (e) {}
       if (canvas.parentNode) canvas.parentNode.removeChild(canvas);

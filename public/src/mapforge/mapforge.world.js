@@ -13,6 +13,7 @@ import { createWater } from './mapforge.water.js';
 import { buildProp, PROP_BY_ID, collides } from './mapforge.props.js';
 import { createEmitter, createWeather, windVector, EMITTERS } from './mapforge.vfx.js';
 import { createActors, hasBehaviour } from './mapforge.actors.js';
+import { ensureCannon, createPhysics } from './mapforge.physics.js';
 
 export function buildWorld(THREE, map, opts) {
   opts = opts || {};
@@ -355,6 +356,22 @@ export function buildWorld(THREE, map, opts) {
      _rt and removed at stop; a destroyed persistent object is hidden and
      restored at stop, so a play session never changes the document. */
   let playerRef = null, interactFlag = false; const rtHidden = new Set();
+  /* physics: created on the first play of a map that has a Physics component,
+     after cannon-es loads (async) — play starts at once, bodies join when ready */
+  let physics = null, physicsWanted = 0;
+  const needsPhysics = () => map.objects.some(o => o.bp && o.bp.comps.some(c => c.type === 'physics'));
+  /* Bodies must exist BEFORE Begin Play runs (an Impulse on Begin Play would
+     otherwise hit thin air), so a map that needs physics starts its actors
+     only once cannon-es is in — a few hundred ms on the first play, instant
+     after. stopPlay() during the load cancels via the generation counter. */
+  function startWithPhysics() {
+    const gen = ++physicsWanted;
+    ensureCannon().then(CANNON => {
+      if (gen !== physicsWanted) return;
+      if (!physics) physics = createPhysics(THREE, CANNON, api, { gravity: opts.gravity });
+      physics.start(); actors.start();
+    }).catch(e => { try { console.warn('[mapforge] physics unavailable:', e && e.message); } catch (x) {} if (opts.toast) opts.toast('Physics could not load (/vendor/cannon-es.js) — bodies stay still.', 4000); if (gen === physicsWanted) actors.start(); });
+  }
   const actors = createActors({
     THREE, map, get player() { return playerRef; },
     get world() { return api; },
@@ -377,8 +394,11 @@ export function buildWorld(THREE, map, opts) {
     setPlayer(p) { playerRef = p || null; },
     interact() { interactFlag = true; },
     get playing() { return actors.running; },
-    startPlay(player) { if (player !== undefined) playerRef = player; actors.start(); },
+    get physics() { return physics && physics.running ? physics : null; },
+    physicsReady: () => ensureCannon().then(() => true).catch(() => false),
+    startPlay(player) { if (player !== undefined) playerRef = player; if (needsPhysics()) startWithPhysics(); else actors.start(); },
     stopPlay() {
+      physicsWanted++; if (physics) physics.stop();
       actors.stop();
       map.objects.filter(o => o._rt).forEach(o => removeObject(o.id)); map.objects = map.objects.filter(o => !o._rt);
       rtHidden.forEach(id => { const r = rootOf(id); if (r) r.visible = true; updateCollider(id); }); rtHidden.clear();
@@ -433,7 +453,7 @@ export function buildWorld(THREE, map, opts) {
     },
     update(dt, camera) {
       time += dt;
-      if (actors.running) { actors.update(dt, interactFlag); interactFlag = false; }
+      if (actors.running) { if (physics && physics.running) physics.step(dt, playerRef); actors.update(dt, interactFlag); interactFlag = false; }
       water.update(time, sunDir);
       mixers.forEach(m => m.mixer.update(dt));
       emitters.forEach(em => em.update(time, wind));
@@ -441,7 +461,7 @@ export function buildWorld(THREE, map, opts) {
       if (camera) sky.position.copy(camera.position);
     },
     dispose() {
-      try { actors.stop(); } catch (e) {}
+      try { physicsWanted++; if (physics) physics.dispose(); actors.stop(); } catch (e) {}
       mixers.forEach((m, id) => stopAnim(id));
       emitters.forEach((em, id) => detachFx(id)); if (weather) { weather.dispose(); weather = null; }
       terrain.dispose(); water.dispose();

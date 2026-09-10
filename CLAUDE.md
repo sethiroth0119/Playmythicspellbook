@@ -123,4 +123,8 @@ therefore terminate.
   run only while playing (`world.startPlay/stopPlay`); `prefabs[]` + `{ t:'prefab', pf }` instances
   (parts keyed `'instance:child'`). The node editor is shared (`widgets/graph-editor.js`); the
   widget designer still carries its older inline copy — migrate it there, don't fork a third.
-- Docs: `docs/athena-engine.md`. Tests: `tools/athena-harness/` (`pw-test5.mjs` round 5, `pw-test6.mjs` round 6).
+- **Round 7 (physics):** cannon-es 0.20.0 is VENDORED at `public/vendor/cannon-es.js` (pinned in
+  package.json, copied from `node_modules/cannon-es/dist/`) — the one approved runtime library
+  besides three.js; never load it from a CDN. `mapforge.physics.js` simulates only while playing;
+  a map with a Physics component starts its actors after the library loads (Begin Play impulses).
+- Docs: `docs/athena-engine.md`. Tests: `tools/athena-harness/` (`pw-test5.mjs` round 5, `pw-test6.mjs` round 6, `pw-test7.mjs` physics).

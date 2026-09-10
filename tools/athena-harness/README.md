@@ -21,6 +21,7 @@ game or a network.
 
 ```bash
 (cd tools/athena-harness/www && python3 -m http.server 8765 --bind 127.0.0.1) &
+# ⚠ in the Claude Code sandbox the server does not survive a turn — start it in the same command as the test
 node tools/athena-harness/check-modules.mjs   # syntax of every module (terser, module mode)
 node _synckcheck.mjs                          # index.html, as always
 node tools/athena-harness/pw-test.mjs         # editor core: sculpt, paint, place, gizmo, undo, scatter,
@@ -34,6 +35,8 @@ node tools/athena-harness/pw-test5.mjs        # round 5 on harness2.html (farm +
                                               #   graph execution, slot/selector targets, themes, the expression language
 node tools/athena-harness/pw-test6.mjs        # round 6: prefabs (create/place/edit/apply/unpack/shelf) and actor
                                               #   blueprints (components, graph, Play, engine, overlay)
+node tools/athena-harness/pw-test7.mjs        # round 7: physics — heightfield, static colliders, dynamic/kinematic
+                                              #   bodies, Impulse / Set velocity / Set body kind, On Hit, player push, engine
 ```
 
 Each prints ✔/✘ per step and the page's error list; screenshots land in

@@ -22,6 +22,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 import { interpolate, evalExpr, truthy } from '../widgets/widgets.format.js';
+import { PHYSICS_FIELDS, PHYSICS_ENUMS } from './mapforge.physics.js';
 
 export const COMPONENTS = {
   trigger: { label: 'Trigger volume', icon: '⭕', fields: { r: 3 },                    help: 'A radius around the actor. Fires On Enter / On Exit / On Interact for the player.' },
@@ -29,6 +30,7 @@ export const COMPONENTS = {
   spin:    { label: 'Rotating',       icon: '🔄', fields: { speed: 45 },                help: 'Degrees per second around Y, always on.' },
   bob:     { label: 'Floating',       icon: '〰', fields: { amp: 0.3, speed: 1 },        help: 'Bobs up and down: amplitude in metres, cycles per second.' },
   tag:     { label: 'Tag',            icon: '🏷', fields: { v: '' },                     help: 'A label the game can query: W().actors.withTag("loot").' },
+  physics: { label: 'Physics body',   icon: '🎳', fields: PHYSICS_FIELDS, enums: PHYSICS_ENUMS, help: 'Dynamic: mass, gravity, collides with everything (cannon-es). Kinematic: moved by the graph, pushes dynamic bodies. Shape fits the object\'s bounds.' },
 };
 
 export const ACTOR_NODES = {
@@ -37,6 +39,7 @@ export const ACTOR_NODES = {
   ev_enter:    { cat: 'Events',  label: 'On Enter',        color: '#b8404a', outs: ['then'], help: 'The player enters the Trigger volume.' },
   ev_exit:     { cat: 'Events',  label: 'On Exit',         color: '#b8404a', outs: ['then'] },
   ev_interact: { cat: 'Events',  label: 'On Interact (E)', color: '#b8404a', outs: ['then'], props: { prompt: 'Press E' }, help: 'The player presses E inside the Trigger volume.' },
+  ev_hit:      { cat: 'Events',  label: 'On Hit',          color: '#b8404a', outs: ['then'], props: { with: '', minImpact: 1 }, help: 'This Physics body collides. `with`: empty = anything, player, ground, an object name or a tag. minImpact filters soft touches (m/s).' },
   toast:       { cat: 'Actions', label: 'Toast',           color: '#3a6ea8', ins: true, outs: ['then'], props: { message: 'Hello', ms: 3000 } },
   setvar:      { cat: 'Actions', label: 'Set variable',    color: '#3a6ea8', ins: true, outs: ['then'], props: { var: '', value: '' }, help: 'value is an expression: {$count} + 1' },
   branch:      { cat: 'Flow',    label: 'Branch',          color: '#8a8a8a', ins: true, outs: ['true', 'false'], props: { cond: '{$count} > 0' } },
@@ -54,6 +57,9 @@ export const ACTOR_NODES = {
   spawn:       { cat: 'World',   label: 'Spawn',           color: '#a8763a', ins: true, outs: ['then'], props: { what: 'crate', x: 0, y: 0, z: 2, name: '' }, help: 'A prop id or a prefab name, at an offset from this actor.' },
   destroy:     { cat: 'World',   label: 'Destroy',         color: '#a8763a', ins: true, outs: ['then'], props: { target: 'self' } },
   teleport:    { cat: 'World',   label: 'Teleport player', color: '#a8763a', ins: true, outs: ['then'], props: { x: 0, z: 0 } },
+  impulse:     { cat: 'Physics', label: 'Impulse',         color: '#c2451c', ins: true, outs: ['then'], props: { target: 'self', x: 0, y: 4, z: 6, local: 'true' }, help: 'A kick (N·s) on a Physics body; local = in the body\'s own frame (z forward).' },
+  velocity:    { cat: 'Physics', label: 'Set velocity',    color: '#c2451c', ins: true, outs: ['then'], props: { target: 'self', x: 0, y: 0, z: 0 } },
+  bodykind:    { cat: 'Physics', label: 'Set body kind',   color: '#c2451c', ins: true, outs: ['then'], props: { target: 'self', kind: 'dynamic' }, help: 'dynamic (falls), kinematic (graph-driven, pushes), static (frozen).' },
   call:        { cat: 'Actions', label: 'Call game action', color: '#3a6ea8', ins: true, outs: ['then'], props: { action: '', args: '' } },
   log:         { cat: 'Actions', label: 'Print',           color: '#3a6ea8', ins: true, outs: ['then'], props: { message: '' } },
 };
@@ -72,7 +78,8 @@ export function normalizeBp(raw) {
   (Array.isArray(raw.comps) ? raw.comps : []).slice(0, 20).forEach(c => {
     if (!c || !COMPONENTS[c.type]) return;
     const out = { type: c.type }; const F = COMPONENTS[c.type].fields;
-    Object.keys(F).forEach(k => { const d = F[k]; out[k] = typeof d === 'number' ? num(c[k], d) : (k === 'c' ? (HEX.test(String(c[k] || '')) ? String(c[k]).toLowerCase() : d) : String(c[k] == null ? d : c[k]).slice(0, 60)); });
+    const E = COMPONENTS[c.type].enums || {};
+    Object.keys(F).forEach(k => { const d = F[k]; out[k] = typeof d === 'number' ? num(c[k], d) : E[k] ? (E[k].includes(c[k]) ? c[k] : d) : (k === 'c' ? (HEX.test(String(c[k] || '')) ? String(c[k]).toLowerCase() : d) : String(c[k] == null ? d : c[k]).slice(0, 60)); });
     bp.comps.push(out);
   });
   const g = raw.graph || {}; const ids = new Set();
@@ -115,6 +122,7 @@ export function createActors(host) {
     data.time = time; data.player = host.player ? { x: host.player.pos.x, y: host.player.pos.y, z: host.player.pos.z } : null;
     const r = rootOf(actor.id); if (r) data.self = { x: r.position.x, y: r.position.y, z: r.position.z, name: actor.o.n || '' };
     if (host.player && r) data.dist = Math.hypot(host.player.pos.x - r.position.x, host.player.pos.z - r.position.z);
+    if (actor.lastHit) data.hit = { other: actor.lastHit.other, impact: actor.lastHit.impact };
     return { data, vars: actor.vars };
   }
   function makeActor(o) {
@@ -157,6 +165,9 @@ export function createActors(host) {
         case 'spawn': { const r = rootOf(actor.id); if (r && host.spawn) { const what = String(P('what') || '').trim(); const off = new THREE.Vector3(N('x', 0), N('y', 0), N('z', 2)).applyAxisAngle(new THREE.Vector3(0, 1, 0), r.rotation.y); host.spawn(what, [r.position.x + off.x, r.position.y + off.y, r.position.z + off.z], String(P('name') || '')); } cont('then'); break; }
         case 'destroy': { const id = resolveTarget(actor, n.props.target); if (id && host.destroy) host.destroy(id); if (id !== actor.id) cont('then'); break; }
         case 'teleport': { if (host.player && host.player.setPos) host.player.setPos(N('x', 0), N('z', 0)); cont('then'); break; }
+        case 'impulse': { const ph = W().physics; const id = resolveTarget(actor, n.props.target); if (ph && id) { if (!ph.impulse(id, [N('x', 0), N('y', 0), N('z', 0)], truthy(P('local')))) toast('Impulse: "' + (n.props.target || 'self') + '" has no Physics body.', 2600); } cont('then'); break; }
+        case 'velocity': { const ph = W().physics; const id = resolveTarget(actor, n.props.target); if (ph && id) ph.setVelocity(id, [N('x', 0), N('y', 0), N('z', 0)]); cont('then'); break; }
+        case 'bodykind': { const ph = W().physics; const id = resolveTarget(actor, n.props.target); if (ph && id) ph.setKind(id, String(P('kind') || 'dynamic')); cont('then'); break; }
         case 'call': { const name = String(n.props.action || '').trim(); let fn = host.actions && host.actions[name]; if (!fn) { try { const b = window.MythicBridge; fn = b && b.ui && b.ui.actions && b.ui.actions[name]; } catch (e) {} } const args = String(n.props.args || '').split(',').map(s => s.trim()).filter(Boolean).map(a => evalExpr(a, scopeFor(actor))); if (typeof fn === 'function') { try { fn.apply(null, args); } catch (e) {} } else toast('Actor: no game action named "' + name + '".', 2600); cont('then'); break; }
         case 'log': try { console.log('[actor ' + (actor.o.n || actor.id) + ']', P('message')); } catch (e) {} cont('then'); break;
         default: cont('then');
@@ -187,6 +198,20 @@ export function createActors(host) {
       if (!running) return; time += dt;
       for (let i = tweens.length - 1; i >= 0; i--) { const t = tweens[i]; t.t += dt; const k = Math.min(1, t.t / t.secs); t.apply(k); if (k >= 1) { tweens.splice(i, 1); if (t.done) t.done(); } }
       let prompt = null;
+      // physics contacts → On Hit (the world steps physics before this update)
+      const ph = W().physics;
+      if (ph && ph.running) {
+        const hitList = ph.drainHits();
+        if (hitList.length) hitList.forEach(h => {
+          const a = actors.get(h.id); if (!a) return;
+          a.o.bp.graph.nodes.filter(n => n.type === 'ev_hit').forEach(n => {
+            if (h.impact < num(n.props.minImpact, 1)) return;
+            const want = String(n.props.with || '').trim();
+            if (want) { const other = host.map.objects.find(o => o.id === h.other); const tag = other && comp(other, 'tag'); if (!(want === h.other || (other && other.n === want) || (tag && tag.v === want))) return; }
+            a.lastHit = h; run(a, n, 0);
+          });
+        });
+      }
       actors.forEach(a => {
         const r = rootOf(a.id); if (!r) return;
         if (a.spin != null) r.rotation.y += a.spin * Math.PI / 180 * dt;
@@ -208,8 +233,8 @@ export function createActors(host) {
     fire(id, type) { const a = actors.get(id); if (a) fire(a, type); },
     vars(id) { const a = actors.get(id); return a ? a.vars : null; },
     /* a new object placed at runtime (Spawn) joins the running set */
-    adopt(o) { if (!running || !hasBehaviour(o)) return; const r = rootOf(o.id); if (!r) return; snapshot.set(o.id, { p: r.position.clone(), r: r.rotation.clone(), s: r.scale.clone(), visible: r.visible, c: o.c }); const a = makeActor(o); actors.set(o.id, a); fire(a, 'ev_begin'); },
-    forget(id) { actors.delete(id); snapshot.delete(id); },
+    adopt(o) { if (!running || !hasBehaviour(o)) return; const r = rootOf(o.id); if (!r) return; if (W().physics) W().physics.adopt(o); snapshot.set(o.id, { p: r.position.clone(), r: r.rotation.clone(), s: r.scale.clone(), visible: r.visible, c: o.c }); const a = makeActor(o); actors.set(o.id, a); fire(a, 'ev_begin'); },
+    forget(id) { actors.delete(id); snapshot.delete(id); if (W().physics) W().physics.forget(id); },
   };
   return api;
 }

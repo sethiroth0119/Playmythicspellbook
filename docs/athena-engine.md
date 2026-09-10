@@ -32,6 +32,7 @@ fixed battle grid. The two coexist.
 | `mapforge.games.js` | the **game scenes** registry: a mini-game registers an adapter so its map opens in the editor |
 | `mapforge.overlay.js` | the game side of game scenes: `AthenaEngine.overlay.forGame(id)` → the live map as an overlay (slot transforms, replacements, extra objects) |
 | `mapforge.actors.js` | **actor blueprints**: components + an event graph on any object, and the runtime that executes them (`world.actors`) |
+| `mapforge.physics.js` | **rigid-body physics** (cannon-es, vendored at `/vendor/cannon-es.js`): terrain heightfield, static colliders, dynamic/kinematic bodies, the player as a kinematic sphere |
 | `../widgets/graph-editor.js` | the shared Blueprint-style node editor (used by the actor graph panel) |
 
 Migrations: `sql/038_world_maps.sql` then `sql/039_world_maps_games.sql` (apply by
@@ -407,3 +408,42 @@ prefab inside a prefab is flattened by `normalize()`). Runtime: `world.parts`
 (`'instance:child'` → Object3D), `world.partDoc(id)`, `world.prefabOf(o)`.
 
 Multi-selection also drives Duplicate all, Delete all and the folder move.
+
+## Physics (round 7)
+
+Add a **Physics body** component to an object: `kind` dynamic (mass, gravity,
+collides with everything) or kinematic (moved by the graph, pushes dynamic
+bodies), `shape` box / sphere / cylinder sized from the object's rendered
+bounds, `mass`, `friction`, `bounce`. While playing, the world simulates:
+
+- the terrain as a heightfield (exactly the heights the player walks on),
+- every solid collider — props, models, prefab parts — as a static body,
+- each Physics-body object, synced back to its three.js root every frame,
+- the player as a kinematic sphere, so walking into a barrel shoves it.
+
+Graph: **Impulse** (a kick in N·s, `local` = the body's own frame with +z
+forward), **Set velocity**, **Set body kind** (dynamic / kinematic / static),
+and the event **On Hit** (`with`: empty for anything, `player`, `ground`, an
+object name or a tag; `minImpact` in m/s; `{hit.impact}` and `{hit.other}`
+are readable in the chain). A Spawn followed by an Impulse on the spawned
+name throws things.
+
+Engine: cannon-es 0.20.0 (MIT), ~340 KB of plain JavaScript, **vendored** at
+`public/vendor/cannon-es.js` (copied from `node_modules/cannon-es/dist/`; the
+version is pinned in `package.json` devDependencies) so gameplay never
+depends on a CDN. It is loaded with one dynamic `import()` the first time a
+map with a Physics component is played (`window.MF_CANNON_URL` overrides the
+URL; the harness serves a local copy). Chosen over a WebAssembly engine
+because the game's props are boxes, cylinders and heightfields — exactly
+cannon-es's shapes — and because WASM adds a loading/CSP story for no
+visible gain at this art style.
+
+Play with physics starts the actors only after the library is in (a few
+hundred ms the first time, instant after), so an Impulse on Begin Play
+lands. Stop restores every body's transform (the actor snapshot) and
+removes the bodies; edit mode never simulates. Runtime: `world.physics`
+(`bodies`, `impulse`, `setVelocity`, `setKind`, `drainHits`, `adopt`,
+`forget`), `world.physicsReady()`; `buildWorld(…, { gravity })`.
+
+Limits: no joints or constraints yet, no water buoyancy for bodies, shapes
+are primitives (no convex hulls from .glb geometry), one gravity per world.

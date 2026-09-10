@@ -17,6 +17,7 @@ import { PROP_CATALOG } from './mapforge.props.js';
 import * as api from './mapforge.api.js';
 import * as games from './mapforge.games.js';
 import * as overlay from './mapforge.overlay.js';
+import * as quality from './mapforge.quality.js';
 
 const MythicMapForge = {
   version: MAP_VERSION,
@@ -33,6 +34,8 @@ const MythicMapForge = {
      and the game reads the result back as an overlay — docs/athena-engine.md → Game scenes */
   games: { register: games.register, get: games.get, list: games.list, onRegister: games.onRegister },
   overlay: { forGame: overlay.forGame, liveMap: overlay.liveMap, invalidate: overlay.invalidate },
+  /* the quality ladder: get() / set('auto'|'low'|'medium'|'high') / onChange(fn) — remembered per device, auto steps down on low fps */
+  quality: { get: quality.get, set: quality.set, onChange: quality.onChange, apply: quality.apply, LEVELS: quality.LEVELS },
 };
 games.drainQueue();
 

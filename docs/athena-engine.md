@@ -34,6 +34,7 @@ fixed battle grid. The two coexist.
 | `mapforge.actors.js` | **actor blueprints**: components + an event graph on any object, and the runtime that executes them (`world.actors`) |
 | `mapforge.nav.js` | **navigation**: a grid navmesh baked from terrain + colliders, A* with string-pulling (`world.nav`) |
 | `mapforge.audio.js` | **positional audio** (three.js WebAudio): one listener on the camera, emitters on objects, one-shots at the player or in 2D |
+| `mapforge.quality.js` | the **quality ladder** (pixel ratio, shadows, effects, effect range) with auto-tune; remembered per device |
 | `mapforge.physics.js` | **rigid-body physics** (cannon-es, vendored at `/vendor/cannon-es.js`): terrain heightfield, static colliders, dynamic/kinematic bodies, the player as a kinematic sphere |
 | `../widgets/graph-editor.js` | the shared Blueprint-style node editor (used by the actor graph panel) |
 
@@ -512,3 +513,27 @@ audio behind a user gesture: the context resumes on the first click or key,
 so a game opened by clicking simply plays. Runs only while playing; stop
 silences everything. Runtime: `world.audio` (`play`, `stopWhere`, `count`,
 `listener`), `world.setAudioCamera(cam)`.
+
+## Performance (round 10)
+
+- **Instancing** — in the game (`engine.mount`, overlays) repeated static
+  props with the same tint and no blueprint or effect are drawn as
+  `InstancedMesh` batches: one draw call per template mesh instead of one per
+  placement (400 scattered pines: ~1,200 draw calls → 3). Every object keeps
+  its root (transform, bounds, collider); only its meshes are hidden and the
+  batch draws in their place. Destroying, hiding a folder or moving an object
+  updates its instance; objects added at runtime rebuild the batches lazily.
+  The editor keeps per-object meshes (picking, gizmo): `world.instancing`,
+  `world.setInstancing(v)`, `world.stats()` → batches / instanced / draws.
+- **Effect culling** — emitters farther than `fxRange` from the camera are
+  neither updated nor drawn (`world.setFxRange`).
+- **Quality** — `AthenaEngine.quality` / the editor's top-bar select:
+  `auto` (default; starts high and steps *down* while the frame rate stays
+  under 28 fps for a few seconds — never up), `high`, `medium`, `low`. Each
+  level sets pixel ratio (2 / 1.5 / 1), shadows and shadow-map size (2048 /
+  1024 / off), effects on/off and effect range (160 / 80 / 40 m). Remembered
+  per device (`mf_quality`); `quality.onChange` lets a host react.
+- The editor HUD shows fps, triangles and draw calls.
+
+Still open: level-of-detail for `.glb` models, chunked terrain. A 160×160
+terrain is 25k vertices in one draw call and has not needed either.

@@ -46,6 +46,7 @@ export async function forGame(game, opts) {
     scene: opts.scene, markers: false,
     ground: opts.ground != null ? opts.ground : map.scene.ground, water: opts.water != null ? opts.water : map.scene.water, sky: opts.sky != null ? opts.sky : map.scene.sky,
     lights: opts.lights != null ? opts.lights : false,
+    instancing: opts.instancing !== false,
     gltfLoader: opts.gltfLoader, onLightning: opts.onLightning,
   });
   // slot objects are the game's stand-ins: hide the placeholder body, the game draws the real thing

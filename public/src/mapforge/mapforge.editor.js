@@ -27,6 +27,7 @@ import * as games from './mapforge.games.js';
 import { invalidate as invalidateOverlay } from './mapforge.overlay.js';
 import { COMPONENTS, ACTOR_NODES, newBlueprint, newGraphNode, hasBehaviour } from './mapforge.actors.js';
 import { createGraphEditor } from '../widgets/graph-editor.js';
+import * as quality from './mapforge.quality.js';
 import { PROP_CATALOG, PROP_BY_ID, buildProp } from './mapforge.props.js';
 import { WEATHERS } from './mapforge.vfx.js';
 import * as api from './mapforge.api.js';
@@ -111,6 +112,7 @@ export async function openEditor(opts) {
   const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  quality.apply(renderer, null);
   canvasHost.insertBefore(renderer.domElement, canvasHost.firstChild);
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 3000);
@@ -162,7 +164,7 @@ export async function openEditor(opts) {
     if (world) { scene.remove(world.group); world.dispose(); }
     if (gridHelper) { scene.remove(gridHelper); gridHelper = null; }
     S.map = map; S.source = source == null ? S.source : source;
-    world = buildWorld(THREE, map, { scene, camera, onAssetLoaded: () => {}, toast: (m, ms) => toast(m, ms), onPrompt: (p) => { const el = $('#mf-prompt'); el.hidden = !p; el.textContent = p ? '⚡ ' + p : ''; } });
+    world = buildWorld(THREE, map, { scene, camera, shadowMap: quality.get().settings.shadowMap, fx: quality.get().settings.fx, fxRange: quality.get().settings.fxRange, onAssetLoaded: () => {}, toast: (m, ms) => toast(m, ms), onPrompt: (p) => { const el = $('#mf-prompt'); el.hidden = !p; el.textContent = p ? '⚡ ' + p : ''; } });
     S.editingPrefab = null; S.multi.clear(); S.bpOpen = false; if (bpGraph) { bpGraph.destroy(); bpGraph = null; bpFor = null; }
     scene.add(world.group);
     world.setMarkersVisible(S.showMarkers);
@@ -1391,6 +1393,10 @@ export async function openEditor(opts) {
   $('#mf-space').onclick = () => setGizmoSpace(S.gizmoSpace === 'world' ? 'local' : 'world');
   $('#mf-colview').onclick = () => { S.showColliders = !S.showColliders; $('#mf-colview').classList.toggle('on', S.showColliders); drawColliders(); };
   $('#mf-hotkeys').onchange = e => setHotkeys(e.target.value);
+  $('#mf-quality').value = quality.get().pref;
+  $('#mf-quality').onchange = e => { quality.set(e.target.value); quality.apply(renderer, world); resize(); toast('Quality: ' + quality.get().settings.label + (quality.get().pref === 'auto' ? ' (auto — steps down when the frame rate drops)' : ''), 3000); };
+  const offQ = quality.onChange(() => { quality.apply(renderer, world); resize(); $('#mf-quality').value = quality.get().pref; }); teardown.push(offQ);
+  const qTuner = quality.createTuner();
   $('#mf-hotkeys').value = S.hotkeys; renderToolbar();
   if (!gizmo) { $$('.mf-gizmo button[data-gm]').forEach(b => { b.disabled = true; b.title = 'TransformControls did not load — drag objects on the ground, or type values in the inspector'; }); }
 
@@ -1420,7 +1426,8 @@ export async function openEditor(opts) {
     if (ghost) { const on = !S.playing && !!stroke.hit && (S.tool === 'place' || S.tool === 'scatter'); ghost.visible = on; if (on) ghost.position.set(stroke.hit.x, world.heightAt(stroke.hit.x, stroke.hit.z), stroke.hit.z); }
     world.update(dt, camera);
     renderer.render(scene, camera);
-    fpsN++; fpsT += dt; if (fpsT >= 0.5) { $('#mf-hud-fps').textContent = Math.round(fpsN / fpsT) + ' fps · ' + renderer.info.render.triangles.toLocaleString() + ' tris'; fpsN = 0; fpsT = 0; }
+    if (S.playing) qTuner.frame(dt);
+    fpsN++; fpsT += dt; if (fpsT >= 0.5) { $('#mf-hud-fps').textContent = Math.round(fpsN / fpsT) + ' fps · ' + renderer.info.render.triangles.toLocaleString() + ' tris · ' + renderer.info.render.calls + ' calls'; fpsN = 0; fpsT = 0; }
   }
   raf = requestAnimationFrame(frame);
   return ED;
@@ -1481,6 +1488,7 @@ const TEMPLATE = `
   <span class="grp"><button id="mf-overview" title="Frame the whole map">⌂ Overview</button><button id="mf-play" title="Walk the map (P)">▶ Play</button></span>
   <span class="grp"><button id="mf-save" class="primary" title="Save (Ctrl+S)">💾 Save</button><button id="mf-save-local" title="Save a copy on this device only">⇩ Device</button><button id="mf-export" title="Download as JSON">⤓ Export</button><button id="mf-import" title="Open a JSON export">⤒ Import</button><input type="file" id="mf-file" accept=".json,application/json" hidden></span>
   <span class="grp"><button id="mf-widgets" title="Open the Widget Designer (Blueprint-style UI)">🧩 Widgets</button></span>
+  <span class="grp"><select id="mf-quality" title="Quality: pixel ratio, shadows, effects (auto steps down on low fps)"><option value="auto">Quality: auto</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></span>
   <span class="grp"><select id="mf-hotkeys" title="Hotkey scheme"><option value="unreal">Unreal hotkeys</option><option value="default">Simple hotkeys</option></select><button id="mf-help-btn" title="Controls (H)">?</button><button id="mf-close" class="danger" title="Close the editor">✕</button></span>
 </div>
 <div class="mf-left">
@@ -1548,6 +1556,7 @@ const TEMPLATE = `
       <tr><td>Water</td><td>One global water level (Water tab). Sculpt below it to make lakes and rivers; Scatter skips underwater ground.</td></tr>
       <tr><td>Models</td><td>Drag a <kbd>.glb</kbd> onto the canvas, or Library → Models → Project / URL. Animated models: select the object and pick a clip, speed and loop in the inspector.</td></tr>
       <tr><td>Blueprints</td><td>Select an object → <b>⚡ Add blueprint</b>: components (Trigger volume, Point light, Rotating, Floating, Tag) and an <b>event graph</b> — Begin Play, On Tick, On Enter / Exit / Interact (E) → Move, Rotate, Scale, Spin, Set visible / tint, Play animation, Effect, Light, Spawn, Destroy, Teleport, Toast, Set variable, Branch, Delay, Call game action. Runs in Play and in the game; the map is untouched afterwards.</td></tr>
+      <tr><td>Performance</td><td>Top bar → <b>Quality</b>: auto (steps down when the frame rate drops), high, medium, low — pixel ratio, shadows, effects. In the game repeated static props are drawn as instanced batches (one draw call per prop mesh, not per placement) and far effects pause; the HUD shows fps, triangles and draw calls.</td></tr>
       <tr><td>Audio</td><td>Library → <b>Sounds</b>: add files the game ships (assets/Audio) or a URL, ▶ previews. A <b>Sound emitter</b> component plays positionally on an object (auto from Begin Play, or via <b>Play sound</b>); Play sound also fires one-shots at the player or in 2D; <b>Stop sound</b> silences a target. Browsers need one click/key before audio starts.</td></tr>
       <tr><td>AI</td><td>Add a <b>Nav agent</b> component and use <b>Move To</b>, <b>Chase</b>, <b>Patrol</b> (waypoint names or <code>folder:Route</code>), <b>Wander</b>, <b>Stop moving</b>, <b>Look at</b>; event <b>On See</b> (range + field of view). Agents walk a navmesh baked from the terrain and colliders — Terrain tab → View → <b>Navmesh</b> shows it. Spawn a prefab whose blueprint chases the player and you have an enemy.</td></tr>
       <tr><td>Physics</td><td>Add a <b>Physics body</b> component (dynamic: mass and gravity; kinematic: moved by the graph, pushes things; box / sphere / cylinder). In Play the terrain, every solid collider and the player are part of the simulation — barrels fall, roll, get shoved. Graph: <b>Impulse</b>, <b>Set velocity</b>, <b>Set body kind</b>, event <b>On Hit</b> (<code>{hit.impact}</code>, <code>{hit.other}</code>). cannon-es, vendored at /vendor.</td></tr>

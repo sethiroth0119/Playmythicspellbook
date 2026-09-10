@@ -131,4 +131,6 @@ therefore terminate.
   are actors with the `agent` component driven by Move To / Chase / Patrol / Wander nodes.
 - **Round 9 (audio):** `mapforge.audio.js`; `map.sounds[]` are URLs of shipped files (never uploads);
   project sounds are listed in `public/models/manifest.json` → `sounds`.
-- Docs: `docs/athena-engine.md`. Tests: `tools/athena-harness/` (`pw-test5.mjs` round 5, `pw-test6.mjs` round 6, `pw-test7.mjs` physics, `pw-test8.mjs` navigation, `pw-test9.mjs` audio).
+- **Round 10 (perf):** static repeated props are instanced in games (`buildWorld({ instancing: true })`,
+  engine + overlay), never in the editor (picking). `mapforge.quality.js` owns every looks-vs-fps knob.
+- Docs: `docs/athena-engine.md`. Tests: `tools/athena-harness/` (`pw-test5.mjs` round 5, `pw-test6.mjs` round 6, `pw-test7.mjs` physics, `pw-test8.mjs` navigation, `pw-test9.mjs` audio, `pw-test10.mjs` performance).

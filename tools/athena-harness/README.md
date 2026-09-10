@@ -41,6 +41,8 @@ node tools/athena-harness/pw-test8.mjs        # round 8: navmesh bake, A* around
                                               #   On See → Chase, spawned enemy prefab, navmesh overlay, engine
 node tools/athena-harness/pw-test9.mjs        # round 9: audio — Sounds library, Sound emitter, Play/Stop sound, engine
                                               #   (needs three/models/beep.wav: `node -e` in pw-test9's header comment, or any small wav)
+node tools/athena-harness/pw-test10.mjs       # round 10: instancing draw calls, per-instance hide, emitter culling,
+                                              #   quality ladder + auto-tune, editor HUD
 ```
 
 Each prints ✔/✘ per step and the page's error list; screenshots land in

@@ -44,10 +44,55 @@ export function buildWorld(THREE, map, opts) {
      objects in the editor AND at runtime (a hidden folder is how a builder
      parks alternatives without deleting them). */
   function folderVisible(id) { let f = folderOf(id), hops = 0; while (f && hops++ < 200) { if (f.vis === false) return false; f = f.parent ? folderOf(f.parent) : null; } return true; }
-  function applyFolderVisibility() { objects.forEach((r, id) => { const o = objDoc(id); const v = !o || !o.f || folderVisible(o.f); r.userData.mfFolderHidden = !v; r.visible = v && !(r.userData.mfMarker && !markersVisible); }); }
+  function applyFolderVisibility() { objects.forEach((r, id) => { const o = objDoc(id); const v = !o || !o.f || folderVisible(o.f); r.userData.mfFolderHidden = !v; r.visible = v && !(r.userData.mfMarker && !markersVisible); syncInstance(id); }); }
 
   const objects = new Map();        // id → root Object3D
   const parts = new Map();          // 'instanceId:childId' → a prefab instance's child root
+  /* ── instancing (runtime only; the editor keeps per-object meshes for picking) ──
+     Repeated STATIC props — same prop, same tint, no blueprint, no effect — are
+     drawn as InstancedMesh batches: one draw call per template mesh instead of
+     one per placement, which is what turns 400 scattered pines from 1,200 draw
+     calls into three. Each object still has its root (transform, bounds → the
+     collider); only its meshes are hidden and the batch draws in their place.
+     Removing / hiding an instanced object collapses its instance to zero scale
+     (sync); batches rebuild lazily when objects are added. */
+  const INSTANCE_MIN = 3;
+  let instancing = opts.instancing === true, batches = new Map(), batchDirty = false;
+  const batchGroup = new THREE.Group(); batchGroup.name = 'mf-batches';
+  group.add(batchGroup);   // (objectsGroup was added above, before this section is declared)
+  const _m4 = new THREE.Matrix4(), _zero = new THREE.Matrix4().makeScale(0, 0, 0);
+  function instanceKey(o) {
+    if (!instancing || !o || o.t === 'glb' || o.t === 'prefab' || o.t === 'slot' || o.t.indexOf('fx_') === 0) return null;
+    const m = PROP_BY_ID[o.t]; if (!m || m.marker || m.fx || m.fxKind) return null;
+    if (o.bp && hasBehaviour(o)) return null;   // it may move, animate or be destroyed
+    return o.t + '|' + (o.c || '');
+  }
+  function rebuildBatches() {
+    batchDirty = false;
+    batches.forEach(b => { b.meshes.forEach(im => { batchGroup.remove(im); im.dispose(); }); b.ids.forEach(id => { const r = objects.get(id); if (r) { r.traverse(x => { if (x.isMesh) x.visible = true; }); delete r.userData.mfInstanced; } }); });
+    batches.clear();
+    if (!instancing) return;
+    const groups = new Map();
+    map.objects.forEach(o => { const k = instanceKey(o); if (!k || !objects.has(o.id)) return; (groups.get(k) || groups.set(k, []).get(k)).push(o.id); });
+    groups.forEach((ids, key) => {
+      if (ids.length < INSTANCE_MIN) return;
+      const [t, c] = key.split('|'); const tpl = buildProp(THREE, t, c || undefined); tpl.updateMatrixWorld(true);
+      const tplMeshes = []; tpl.traverse(x => { if (x.isMesh) tplMeshes.push(x); });
+      const meshes = tplMeshes.map(src => { const im = new THREE.InstancedMesh(src.geometry, src.material, ids.length); im.castShadow = true; im.receiveShadow = true; im.frustumCulled = false; im.userData = { mfBatch: key, local: src.matrixWorld.clone() }; batchGroup.add(im); return im; });
+      ids.forEach((id, i) => { const r = objects.get(id); r.userData.mfInstanced = { key, index: i }; r.traverse(x => { if (x.isMesh) x.visible = false; }); });
+      batches.set(key, { ids, meshes });
+      ids.forEach(id => syncInstance(id));
+      meshes.forEach(im => { im.instanceMatrix.needsUpdate = true; });
+    });
+  }
+  function syncInstance(id) {
+    const r = objects.get(id); const inst = r && r.userData.mfInstanced; if (!inst) return;
+    const b = batches.get(inst.key); if (!b) return;
+    const hidden = !r.visible || r.userData.mfFolderHidden;
+    r.updateMatrixWorld(true);
+    b.meshes.forEach(im => { if (hidden) im.setMatrixAt(inst.index, _zero); else { _m4.multiplyMatrices(r.matrixWorld, im.userData.local); im.setMatrixAt(inst.index, _m4); } im.instanceMatrix.needsUpdate = true; });
+  }
+  function dropInstance(id) { const r = objects.get(id); const inst = r && r.userData.mfInstanced; if (!inst) return; const b = batches.get(inst.key); if (b) b.meshes.forEach(im => { im.setMatrixAt(inst.index, _zero); im.instanceMatrix.needsUpdate = true; }); }
   const colliders = new Map();      // id → world-space collider (see updateCollider); prefab parts are keyed per part
   const emitters = new Map();       // id → emitter (fx_* objects and props with a built-in effect)
   let weather = null; const wind = new THREE.Vector3(); let fxOn = opts.fx !== false; let lightBudget = 0;
@@ -156,6 +201,8 @@ export function buildWorld(THREE, map, opts) {
      is plenty) — the rest of the fires still glow through their additive
      flames, they just do not cast light. */
   const LIGHT_BUDGET = 8;
+  let fxRange = opts.fxRange || 160, shadowMapSize = opts.shadowMap || 2048, shadowsOn = opts.shadows !== false;
+  const _wp = new THREE.Vector3();
   function attachFx(o, root) {
     detachFx(o.id);
     if (!fxOn) return;
@@ -203,6 +250,7 @@ export function buildWorld(THREE, map, opts) {
     objectsGroup.add(root);
     root.updateMatrixWorld(true);   // raycastable NOW, not after the next render — a click right after placing must hit
     objects.set(o.id, root);
+    if (instancing && built && instanceKey(o)) batchDirty = true;
     if (o.t === 'prefab') { const def = prefabOf(o); if (def) def.objects.forEach(c => updateCollider(o.id + ':' + c.id)); }
     else updateCollider(o.id);
     if (o.t === 'glb') {
@@ -224,6 +272,7 @@ export function buildWorld(THREE, map, opts) {
     const root = objects.get(id); if (!root) return;
     stopAnim(id); detachFx(id);
     if (root.userData.mfPrefab) removeParts({ id });
+    dropInstance(id);
     objectsGroup.remove(root); objects.delete(id); colliders.delete(id);
   }
   function applyTransform(root, o) {
@@ -243,6 +292,7 @@ export function buildWorld(THREE, map, opts) {
     root.updateMatrixWorld(true);
     updateCollider(o.id);
     if (o.t === 'glb') setAnim(o.id, o.anim);
+    if (root.userData.mfInstanced) { if (root.userData.mfInstanced.key !== instanceKey(o)) batchDirty = true; else syncInstance(o.id); }
     return root;
   }
 
@@ -342,10 +392,11 @@ export function buildWorld(THREE, map, opts) {
     const dist = Math.max(60, terrain.size * 0.9);
     sun.position.copy(sunDir).multiplyScalar(dist);
     sun.color.set(env.sunColor); sun.intensity = env.sunIntensity;
-    sun.castShadow = env.shadows !== false && opts.shadows !== false;
+    sun.castShadow = env.shadows !== false && shadowsOn;
     const ext = terrain.half + 12;
     const sc = sun.shadow.camera; sc.left = -ext; sc.right = ext; sc.top = ext; sc.bottom = -ext; sc.near = 1; sc.far = dist * 2 + ext * 2;
-    sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -0.0008; sun.shadow.normalBias = 0.03; sc.updateProjectionMatrix();
+    if (sun.shadow.mapSize.x !== shadowMapSize) { sun.shadow.mapSize.set(shadowMapSize, shadowMapSize); if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; } }
+    sun.shadow.bias = -0.0008; sun.shadow.normalBias = 0.03; sc.updateProjectionMatrix();
     hemi.color.set(env.ambient); hemi.groundColor.set(env.groundColor); hemi.intensity = env.ambientIntensity;
     sky.material.uniforms.uTop.value.set(env.skyTop); sky.material.uniforms.uBottom.value.set(env.skyBottom);
     sky.material.uniforms.uSun.value.copy(sunDir); sky.material.uniforms.uSunColor.value.set(env.sunColor);
@@ -397,7 +448,7 @@ export function buildWorld(THREE, map, opts) {
     destroy(id) {
       const o = map.objects.find(x => x.id === id);
       if (o && o._rt) { removeObject(id); map.objects.splice(map.objects.indexOf(o), 1); actors.forget(id); return; }
-      const r = rootOf(id); if (r) { r.visible = false; rtHidden.add(id); colliders.delete(id); }
+      const r = rootOf(id); if (r) { r.visible = false; rtHidden.add(id); colliders.delete(id); syncInstance(id); }
     },
   });
   const api = {
@@ -419,7 +470,7 @@ export function buildWorld(THREE, map, opts) {
       if (audio) audio.stop();
       actors.stop();
       map.objects.filter(o => o._rt).forEach(o => removeObject(o.id)); map.objects = map.objects.filter(o => !o._rt);
-      rtHidden.forEach(id => { const r = rootOf(id); if (r) r.visible = true; updateCollider(id); }); rtHidden.clear();
+      rtHidden.forEach(id => { const r = rootOf(id); if (r) r.visible = true; updateCollider(id); syncInstance(id); }); rtHidden.clear();
       playerRef = null;
     },
     rootOf, partDoc, prefabOf,
@@ -452,7 +503,16 @@ export function buildWorld(THREE, map, opts) {
     emitters, get weather() { return weather; }, wind,
     /* re-tune an emitter after the inspector changes o.fx / o.c */
     refreshFx(id) { const o = objDoc(id), r = objects.get(id); if (o && r) attachFx(o, r); },
-    setFxEnabled(v) { fxOn = !!v; objects.forEach((r, id) => { const o = objDoc(id); if (o) attachFx(o, r); }); setWeather(map.env); },
+    setFxEnabled(v) { if (fxOn === !!v) return; fxOn = !!v; objects.forEach((r, id) => { const o = objDoc(id); if (o) attachFx(o, r); }); setWeather(map.env); },
+    /* emitters farther than this from the camera are not updated or drawn */
+    setFxRange(m) { fxRange = Math.max(5, +m || 160); },
+    setShadowMapSize(n) { n = +n || 2048; if (n === shadowMapSize) return; shadowMapSize = n; applyEnv(map.env); },
+    setShadows(v) { shadowsOn = !!v; applyEnv(map.env); },
+    /* instancing: on by default in the engine and overlays, off in the editor */
+    get instancing() { return instancing; },
+    setInstancing(v) { instancing = !!v; batchDirty = true; },
+    batches, syncInstance,
+    stats() { let inst = 0, draws = 0; batches.forEach(b => { inst += b.ids.length; draws += b.meshes.length; }); return { objects: objects.size, batches: batches.size, instanced: inst, batchDraws: draws, emitters: emitters.size, colliders: colliders.size }; },
     /* After the grid is resized or regenerated: water covers the new size,
        shadows cover it, grounded objects land on the new surface. */
     onTerrainRebuilt() { water.resize(terrain.size); applyEnv(map.env); if (nav) nav.invalidate(); },
@@ -471,11 +531,12 @@ export function buildWorld(THREE, map, opts) {
     },
     update(dt, camera) {
       time += dt;
+      if (batchDirty) rebuildBatches();
       if (camera && audio && audio.running && audio.camera !== camera) audio.attach(camera);
       if (actors.running) { if (physics && physics.running) physics.step(dt, playerRef); actors.update(dt, interactFlag); interactFlag = false; }
       water.update(time, sunDir);
       mixers.forEach(m => m.mixer.update(dt));
-      emitters.forEach(em => em.update(time, wind));
+      emitters.forEach(em => { if (camera) { em.group.getWorldPosition(_wp); const near = _wp.distanceTo(camera.position) < fxRange; if (em.group.visible !== near) em.group.visible = near; if (!near) return; } em.update(time, wind); });
       if (weather && camera) weather.update(time, dt, camera.position, wind);
       if (camera) sky.position.copy(camera.position);
     },
@@ -483,12 +544,16 @@ export function buildWorld(THREE, map, opts) {
       try { physicsWanted++; if (physics) physics.dispose(); if (audio) audio.dispose(); actors.stop(); } catch (e) {}
       mixers.forEach((m, id) => stopAnim(id));
       emitters.forEach((em, id) => detachFx(id)); if (weather) { weather.dispose(); weather = null; }
+      batches.forEach(b => b.meshes.forEach(im => im.dispose())); batches.clear();
       terrain.dispose(); water.dispose();
       try { sky.geometry.dispose(); sky.material.dispose(); } catch (e) {}
       objects.clear();
     },
   };
+  let built = false;
   map.objects.forEach(addObject);
+  built = true;
+  if (instancing) rebuildBatches();
   applyEnv(map.env);
   water.apply(map.water);
   return api;

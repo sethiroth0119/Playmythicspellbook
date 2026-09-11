@@ -26,7 +26,7 @@
 // the step and say so in the commit.
 // ─────────────────────────────────────────────────────────────────────────────
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT, argFlag } from './headless.mjs';
 
@@ -48,8 +48,20 @@ if (!quick) {
   // @babel/standalone is not a declared dependency (CLAUDE.md: no new npm deps without
   // asking), so this step is optional: it runs when the module is present and reports
   // itself as skipped otherwise, rather than painting the whole gate red.
-  run('jsx      (_jsxcheck.js — Just Business iframe)', process.execPath, [join(ROOT, '_jsxcheck.js')], { skipIfMissing: '@babel/standalone' });
+  run('jsx      (_jsxcheck.js — Just Business iframe)', process.execPath, [join(ROOT, '_jsxcheck.js'), ...jsxFiles()], { skipIfMissing: '@babel/standalone' });
   run('versions (version.txt / BUILD_VERSION / CACHE_VERSION)', null, null, { fn: versionKnobs });
+}
+
+/* _jsxcheck.js takes FILES and exits 1 with a usage line when given none — so
+   this step used to fail the moment @babel/standalone was present, and "passed"
+   only by self-skipping when it was absent. Pass the Just Business sources it is
+   meant to check. Read the directory rather than hardcoding five names so a new
+   screen is covered the day it lands. */
+function jsxFiles() {
+  try {
+    const dir = join(ROOT, 'public', 'corp');
+    return readdirSync(dir).filter(f => f.endsWith('.jsx')).sort().map(f => join(dir, f));
+  } catch (e) { return []; }
 }
 
 // Deploy bumps three knobs together or the update check breaks (CLAUDE.md). Fail

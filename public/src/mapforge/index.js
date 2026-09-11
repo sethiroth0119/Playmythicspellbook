@@ -18,6 +18,7 @@ import * as api from './mapforge.api.js';
 import * as games from './mapforge.games.js';
 import * as overlay from './mapforge.overlay.js';
 import * as quality from './mapforge.quality.js';
+import * as showroom from './mapforge.showroom.js';
 
 const MythicMapForge = {
   version: MAP_VERSION,
@@ -33,6 +34,8 @@ const MythicMapForge = {
   /* game scenes: a mini-game registers an adapter, its map opens in the editor (open({ game })),
      and the game reads the result back as an overlay — docs/athena-engine.md → Game scenes */
   games: { register: games.register, get: games.get, list: games.list, onRegister: games.onRegister },
+  /* 🎮 every mini-game's model slots as showroom scenes (round 18, mapforge.showroom.js) */
+  showrooms: { list: showroom.listGames, open: showroom.open, pick: showroom.pick, register: showroom.registerAll, build: showroom.buildShowroom, diff: showroom.diffShowroom, lastWrite: showroom.lastWrite },
   overlay: { forGame: overlay.forGame, liveMap: overlay.liveMap, invalidate: overlay.invalidate },
   /* the quality ladder: get() / set('auto'|'low'|'medium'|'high') / onChange(fn) — remembered per device, auto steps down on low fps */
   quality: { get: quality.get, set: quality.set, onChange: quality.onChange, apply: quality.apply, LEVELS: quality.LEVELS },

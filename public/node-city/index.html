@@ -3921,6 +3921,10 @@ const MODEL_REGISTRY = {
   // civilian: { url: 'models/citizen.glb', scale: 1 },
 };
 const MODELS_LSK = 'mythic_city_models_v1';
+// 🌐 Published slots first (the host's Forge.cityModels, set from Athena's Node City
+//    showroom and shipped in the catalogue — same for every player), then this
+//    device's own ⚙ Models overrides on top, exactly as before.
+try { const host = (window.parent && window.parent !== window) ? window.parent.__mythicCityModels : null; if (host && typeof host === 'object') Object.assign(MODEL_REGISTRY, JSON.parse(JSON.stringify(host))); } catch (e) {}
 try {
   const saved = JSON.parse(localStorage.getItem(MODELS_LSK) || 'null');
   if (saved && typeof saved === 'object') Object.assign(MODEL_REGISTRY, saved);

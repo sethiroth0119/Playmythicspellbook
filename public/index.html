@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120y8';
+  window.BUILD_VERSION = 'v120y9';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -46480,6 +46480,8 @@ async function cloudSyncProfile() {
       useCustomOnlyPool: !!Forge.useCustomOnlyPool,
       // 🗺️ 3D battle map (admin) — the active map + camera tilt ship to every player.
       battleMap3d:      (Forge.battleMap3d && typeof Forge.battleMap3d === 'object') ? Forge.battleMap3d : null,
+      // 🏙 Node City model slots (buildings / civilians / vehicles → .glb) — set from Athena's showroom (round 18); the city merges them at boot.
+      cityModels:       (Forge.cityModels && typeof Forge.cityModels === 'object') ? Forge.cityModels : null,
       // 🔁 Global reset epoch — broadcast to every player on next sync.
       resetEpoch:       (Forge.resetEpoch | 0) || 0,
       // 🔁 Per-player ack — each Profile remembers the last reset epoch it
@@ -47645,6 +47647,7 @@ async function cloudFetchProfile() {
       if (typeof f.useCustomOnlyPool === 'boolean') Forge.useCustomOnlyPool = f.useCustomOnlyPool;
       // 🗺️ Published 3D battle map: players ALWAYS adopt it (so they get map
       // updates); an admin keeps their own local working copy while they tune.
+      if (f.cityModels && typeof f.cityModels === 'object') Forge.cityModels = f.cityModels;
       if (f.battleMap3d && typeof f.battleMap3d === 'object') {
         const _amAdmin = (typeof isAdmin === 'function' && isAdmin());
         if (!_amAdmin || !(Forge.battleMap3d && Forge.battleMap3d.cam)) Forge.battleMap3d = f.battleMap3d;
@@ -120308,6 +120311,7 @@ function renderPricingAdmin() {
         <button id="open-map-creator" class="btn-secondary" style="margin-top:0.7rem;width:100%;background:linear-gradient(180deg,#e7c757,#d4af37);color:#1a1206;font-weight:800;border:1px solid #e7c757">⚒ Open Athena Engine</button>
         <div class="small-text ink-dim" style="margin-top:0.5rem">Also reachable at <code>?mapforge=1</code>. Press <strong>H</strong> inside for the controls.</div>
         <div class="small-text ink-dim" style="margin-top:0.7rem">🧩 <strong>Athena Widgets</strong> — the Blueprint-style UI designer: build widgets from a palette, wire an event graph (click → branch → toast / set variable / call a game action), bind any property to live game data (<code>{gems|num}</code>), and target a named slot or any existing element of the game's UI (🎯 pick it) to extend or replace it. Theme documents restyle the whole game through CSS variables. Lives in <code>/src/widgets/</code>; cloud saving needs <code>sql/040_ui_widgets.sql</code>.</div>
+        <button id="open-showrooms" class="btn-secondary" style="margin-top:0.5rem;width:100%;border:1px solid #e7c757;color:#ffe9a8" title="Every mini-game's models in Athena: Woods Fishing, the auction block, Black River, Node City — swap any model, save, publish">🎮 Mini-game models in Athena</button>
         <button id="open-battle-athena" class="btn-secondary" style="margin-top:0.5rem;width:100%;border:1px solid #e7c757;color:#ffe9a8" title="Edit the live battle board inside Athena Engine: paint terrain, move or replace props, add anything">⚔ Battle board in Athena Engine</button>
         <button id="open-widget-designer" class="btn-secondary" style="margin-top:0.5rem;width:100%;border:1px solid #e7c757;color:#ffe9a8">🧩 Open Widget Designer</button>
         <button id="open-ui-screens" class="btn-secondary" style="margin-top:0.5rem;width:100%;border:1px solid #4aa3ff;color:#dff4ff" title="Every screen and every player-facing text in one table — edit, find & replace, save, set live">🗂 Screens &amp; Strings</button>
@@ -121154,6 +121158,8 @@ function renderPricingAdmin() {
 
   // 🗺️ Open the Battlemap Editor (Phase 2) — terrain paint + 3D model placement.
   // ⚔ Battle board in Athena (src/battle/battle.athena.js registers window.MythicBattleAthena)
+  const srBtn = document.getElementById('open-showrooms');
+  if (srBtn) srBtn.onclick = () => { try { if (window.AthenaEngine && window.AthenaEngine.showrooms) window.AthenaEngine.showrooms.pick(); else showToast('Athena Engine is still loading — try again in a moment.', 2600); } catch (e) { try { console.warn('[showrooms] open failed', e); } catch (_) {} } };
   const baBtn = document.getElementById('open-battle-athena');
   if (baBtn) baBtn.onclick = () => { try { if (window.MythicBattleAthena && window.MythicBattleAthena.open) window.MythicBattleAthena.open(); else showToast('Athena Engine is still loading — try again in a moment.', 2600); } catch (e) { try { console.warn('[battle-athena] open failed', e); } catch (_) {} } };
   const bmeBtn = document.getElementById('open-battlemap-editor');
@@ -206662,7 +206668,7 @@ function _openNodeCity(nodeId, _resolved) {
   }
   const f = document.createElement('iframe');
   f.id = 'node-city-frame';
-  f.src = 'node-city/index.html?v=120x5';
+  f.src = 'node-city/index.html?v=120y9';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);
@@ -207126,6 +207132,7 @@ try { if (typeof FoundationReserve !== 'undefined') window.FoundationReserve = F
    ⚠ Every accessor is a FUNCTION, not a snapshot. Profile.gems changes
    constantly; a captured value would go stale the moment the player spends.
    ═══════════════════════════════════════════════════════════════════════════ */
+try { Object.defineProperty(window, '__mythicCityModels', { get: () => { try { return (Forge.cityModels && typeof Forge.cityModels === 'object') ? Forge.cityModels : {}; } catch (e) { return {}; } } }); } catch (e) {}   // 🏙 node-city/index.html merges this at boot (published model slots, round 18)
 try {
   window.MythicBridge = {
     get cloud() { try { return (typeof Cloud !== 'undefined') ? Cloud : null; } catch (e) { return null; } },
@@ -207161,6 +207168,63 @@ try {
        nothing that mutates. Adding a field here is how a new game value
        becomes bindable as {field}. Actions are the only way a widget touches
        the game, and each one goes through the same helpers the UI uses. */
+    /* 🎮 MODEL SLOTS (round 18, Athena's showrooms — src/mapforge/mapforge.showroom.js).
+       Every mini-game that lets the admin point an asset at a .glb, in one
+       registry: Woods Fishing (boats, species, fallback fish per tier), the
+       Prince Portfolios auction (cars per rarity), Black River extraction
+       (core, node, machines) and Node City (buildings, civilians, vehicles,
+       per level). `games()` describes the slots with their current model;
+       set/clear write the SAME Forge fields the games' own admin panels write
+       (so those panels keep working), and publish() ships the catalogue.
+       Keys: 'ship/0', 'species/<id>/1', 'fish/Rare/0', a trailing '/+' means
+       "append a new entry" for list slots. */
+    slots: (() => {
+      const fishing = () => { const M = (Forge.woodsFishing && Forge.woodsFishing.models) || {}; const groups = [];
+        const rec = (m) => ({ url: m && m.url || '', scale: m && +m.scale || 1, rotY: m && +m.rotY || 0, name: m && (m.label || m.name) || '' });
+        const listSlots = (prefix, label, icon, list) => { const out = (Array.isArray(list) ? list : []).map((m, i) => Object.assign({ k: prefix + '/' + i, label: label + ' #' + (i + 1), icon, list: true }, rec(m))); out.push({ k: prefix + '/+', label: label + ' · new', icon: '＋', list: true, url: '', scale: 1, rotY: 0, add: true }); return out; };
+        groups.push({ id: 'ship', label: 'Boats', slots: listSlots('ship', 'Boat', '⛵', M.ship) });
+        try { const sp = _wf3AllFish(); groups.push({ id: 'species', label: 'Species', slots: sp.flatMap(s => listSlots('species/' + s.id, s.name, '🐟', M.species && M.species[s.id])) }); } catch (e) {}
+        try { groups.push({ id: 'fish', label: 'Fallback fish per tier', slots: WF3_FISH_TIERS.flatMap(t => listSlots('fish/' + t, t + ' fish', '🎣', M.fish && M.fish[t])) }); } catch (e) {}
+        return { id: 'fishing', label: 'Woods Fishing', icon: '🎣', groups }; };
+      const auction = () => { const A = (Forge.princePortfolios && Forge.princePortfolios.auctionModels) || {}; const groups = [];
+        try { groups.push({ id: 'cars', label: 'Cars per rarity', slots: PPA_RARITIES.flatMap(r => { const list = Array.isArray(A[r.key]) ? A[r.key] : []; const out = list.map((m, i) => ({ k: r.key + '/' + i, label: r.key + ' car #' + (i + 1), icon: '🚗', list: true, url: m && m.url || '', scale: m && +m.scale || 1, rotY: m && +m.rotY || 0, name: m && m.name || '' })); out.push({ k: r.key + '/+', label: r.key + ' car · new', icon: '＋', list: true, add: true, url: '', scale: 1, rotY: 0 }); return out; }) }); } catch (e) {}
+        return { id: 'auction', label: 'Auction block (Prince Portfolios)', icon: '🏎', groups }; };
+      const extraction = () => { const E = (Forge.blackRiver && Forge.blackRiver.extraction && Forge.blackRiver.extraction.models) || {}; const mach = E.machines || {}; const groups = [
+        { id: 'site', label: 'Site', slots: [{ k: 'core', label: 'Cinder Core', icon: '🌋', url: E.core || '', scale: 1, rotY: 0 }, { k: 'node', label: 'Extraction node', icon: '📡', url: E.node || '', scale: 1, rotY: 0 }] } ];
+        try { const types = Object.keys(OSIM_MACHINES).concat(Object.keys(_osimCustomMachines || {})); groups.push({ id: 'machines', label: 'Machines', slots: types.map(t => ({ k: 'machine/' + t, label: (OSIM_MACHINES[t] || _osimCustomMachines[t] || {}).name || t, icon: (OSIM_MACHINES[t] || {}).ic || '⚙️', url: (typeof mach[t] === 'string' ? mach[t] : (mach[t] && mach[t].url)) || '', scale: 1, rotY: 0 })) }); } catch (e) {}
+        return { id: 'extraction', label: 'Black River extraction', icon: '🛢️', groups }; };
+      const CITY_BUILDINGS = ['road', 'farm', 'hydrofarm', 'purifier', 'scrapmine', 'fuelrig', 'gasstation', 'depot', 'medlab', 'munitions', 'forge', 'indexfund', 'holdco', 'reslab', 'siphon', 'lumbercamp', 'quarry', 'fibercroft', 'sawmill', 'weavery', 'housing', 'barracks', 'tower', 'tree', 'bush', 'garden', 'fountain', 'arena', 'shop', 'wall', 'gate', 'caravanpost', 'lot', 'obelisk', 'kalonstable', 'foodtruck', 'restaurant', 'grocery', 'club', 'streetlight', 'motorpool', 'firestation', 'police', 'smelter'];
+      const city = () => { const C = (Forge.cityModels && typeof Forge.cityModels === 'object') ? Forge.cityModels : {}; const rec = (k) => { const v = C[k]; return typeof v === 'string' ? { url: v, scale: 1 } : (v && v.url ? { url: v.url, scale: +v.scale || 1 } : { url: '', scale: 1 }); };
+        const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+        return { id: 'city', label: 'Node City', icon: '🏙', groups: [
+          { id: 'agents', label: 'People & vehicles', slots: [['civilian', '🚶 Civilian'], ['truck', '🚚 Truck'], ['police', '🚓 Police']].map(([k, l]) => Object.assign({ k, label: l, icon: l.slice(0, 2), rotY: 0 }, rec(k))) },
+          { id: 'buildings', label: 'Buildings', slots: CITY_BUILDINGS.map(k => Object.assign({ k, label: cap(k), icon: '🏢', rotY: 0 }, rec(k))) },
+          { id: 'levels', label: 'Buildings per level', slots: CITY_BUILDINGS.flatMap(k => [1, 2, 3, 4].map(l => Object.assign({ k: k + '@' + l, label: cap(k) + ' · level ' + l, icon: '🏗', rotY: 0 }, rec(k + '@' + l)))) },
+        ] }; };
+      const games = () => { const out = []; [fishing, auction, extraction, city].forEach(fn => { try { out.push(fn()); } catch (e) {} }); return out; };
+      const touch = () => { try { saveForge(); } catch (e) {} };
+      const setSlot = (game, k, m) => {
+        const url = String(m && m.url || '').trim(); if (!url) return clearSlot(game, k);
+        const scale = Math.max(0.01, +(m && m.scale) || 1), rotY = +(m && m.rotY) || 0, name = String(m && m.name || '').slice(0, 60);
+        if (game === 'fishing') { if (!Forge.woodsFishing) Forge.woodsFishing = {}; const M = Forge.woodsFishing.models = Forge.woodsFishing.models || {}; const p = k.split('/'); const rec = { url, label: name || 'Model', scale, rotY };
+          let list; if (p[0] === 'ship') { M.ship = Array.isArray(M.ship) ? M.ship : []; list = M.ship; } else if (p[0] === 'species') { M.species = M.species || {}; M.species[p[1]] = Array.isArray(M.species[p[1]]) ? M.species[p[1]] : []; list = M.species[p[1]]; } else if (p[0] === 'fish') { M.fish = M.fish || {}; M.fish[p[1]] = Array.isArray(M.fish[p[1]]) ? M.fish[p[1]] : []; list = M.fish[p[1]]; } else return false;
+          const i = p[p.length - 1]; if (i === '+') list.push(rec); else if (list[+i]) Object.assign(list[+i], rec); else list.push(rec); touch(); return true; }
+        if (game === 'auction') { if (!Forge.princePortfolios) Forge.princePortfolios = {}; const A = Forge.princePortfolios.auctionModels = Forge.princePortfolios.auctionModels || {}; const [rk, i] = k.split('/'); A[rk] = Array.isArray(A[rk]) ? A[rk] : []; const rec = { url, name: name || 'Model', scale, rotY }; if (i === '+') A[rk].push(rec); else if (A[rk][+i]) Object.assign(A[rk][+i], rec); else A[rk].push(rec); touch(); return true; }
+        if (game === 'extraction') { if (k === 'core' || k === 'node') _osimSetModelUrl(k, url); else if (k.indexOf('machine/') === 0) { if (!Forge.blackRiver) Forge.blackRiver = {}; if (!Forge.blackRiver.extraction) Forge.blackRiver.extraction = {}; const E = Forge.blackRiver.extraction; E.models = E.models || {}; E.models.machines = E.models.machines || {}; E.models.machines[k.slice(8)] = url; } else return false; touch(); return true; }
+        if (game === 'city') { Forge.cityModels = (Forge.cityModels && typeof Forge.cityModels === 'object') ? Forge.cityModels : {}; Forge.cityModels[k] = { url, scale }; try { const ls = JSON.parse(localStorage.getItem('mythic_city_models_v1') || '{}') || {}; ls[k] = { url, scale }; localStorage.setItem('mythic_city_models_v1', JSON.stringify(ls)); } catch (e) {} touch(); return true; }
+        return false;
+      };
+      const clearSlot = (game, k) => {
+        try {
+          if (game === 'fishing') { const M = Forge.woodsFishing && Forge.woodsFishing.models; if (!M) return false; const p = k.split('/'); const i = +p[p.length - 1]; if (!Number.isFinite(i)) return false; let list = p[0] === 'ship' ? M.ship : p[0] === 'species' ? (M.species || {})[p[1]] : (M.fish || {})[p[1]]; if (Array.isArray(list) && list[i]) list.splice(i, 1); touch(); return true; }
+          if (game === 'auction') { const A = Forge.princePortfolios && Forge.princePortfolios.auctionModels; const [rk, i] = k.split('/'); if (A && Array.isArray(A[rk]) && A[rk][+i]) A[rk].splice(+i, 1); touch(); return true; }
+          if (game === 'extraction') { if (k === 'core' || k === 'node') _osimDelModelUrl(k); else { const E = Forge.blackRiver && Forge.blackRiver.extraction; if (E && E.models && E.models.machines) delete E.models.machines[k.slice(8)]; } touch(); return true; }
+          if (game === 'city') { if (Forge.cityModels) delete Forge.cityModels[k]; try { const ls = JSON.parse(localStorage.getItem('mythic_city_models_v1') || '{}') || {}; delete ls[k]; localStorage.setItem('mythic_city_models_v1', JSON.stringify(ls)); } catch (e) {} touch(); return true; }
+        } catch (e) {}
+        return false;
+      };
+      return { games, set: setSlot, clear: clearSlot, publish: async () => { if (typeof cloudPublishCatalog !== 'function') return false; await cloudPublishCatalog(); return true; }, canWrite: () => { try { return typeof isAdmin === 'function' && isAdmin(); } catch (e) { return false; } } };
+    })(),
     /* ☁ FILES (round 17, Athena's content browser). The SAME public `models`
        bucket the card shop and Black River already upload .glb files to
        (_csShopUploadModel), under an athena/<kind>/ prefix, so a model or a
@@ -223540,7 +223604,7 @@ render();
      ⚠ If this 404s nothing changes — the button reports "still loading".
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/mapforge/index.js?v=mf16"></script>
+<script type="module" src="src/mapforge/index.js?v=mf17"></script>
 <!-- 🧩 ATHENA WIDGETS — Blueprint-style UI widgets and themes (/src/widgets).
      Registers window.AthenaUI. At boot it loads every LIVE widget/theme
      (public.ui_widgets, sql/040 — or the device's cached copy) and mounts

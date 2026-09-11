@@ -164,4 +164,8 @@ therefore terminate.
   URL asset. Rename of a cloud file rewrites map URLs. The dock (`#mf-cb`, Ctrl+Space) shares the Library's index,
   thumbnails and picks — never fork a second card renderer. `.glb` is the one accepted upload type (plus audio);
   images/video stay out.
-- Docs: `docs/athena-engine.md`. Tests: `tools/athena-harness/` (`pw-test5.mjs` round 5, `pw-test6.mjs` round 6, `pw-test7.mjs` physics, `pw-test8.mjs` navigation, `pw-test9.mjs` audio, `pw-test10.mjs` performance, `pw-test11.mjs` look, `pw-test12.mjs` asset browser, `pw-test13.mjs` splines, `pw-test14.mjs` live UI editor, `pw-test15.mjs` battle board, `pw-test16.mjs` screens & strings, `pw-test17.mjs` cloud files + content browser).
+- **Round 18 (showrooms):** `MythicBridge.slots` lists every mini-game model slot (fishing / auction / extraction /
+  city) and set/clear write the SAME Forge fields the games' own panels write; `mapforge.showroom.js` opens each as
+  game scene `models-<id>`. `Forge.cityModels` is published in the catalogue and merged by node-city at boot via
+  `window.__mythicCityModels` (device key `mythic_city_models_v1` still wins). Keys are `encodeKey`'d for `slotKey`.
+- Docs: `docs/athena-engine.md`. Tests: `tools/athena-harness/` (`pw-test5.mjs` round 5, `pw-test6.mjs` round 6, `pw-test7.mjs` physics, `pw-test8.mjs` navigation, `pw-test9.mjs` audio, `pw-test10.mjs` performance, `pw-test11.mjs` look, `pw-test12.mjs` asset browser, `pw-test13.mjs` splines, `pw-test14.mjs` live UI editor, `pw-test15.mjs` battle board, `pw-test16.mjs` screens & strings, `pw-test17.mjs` cloud files + content browser, `pw-test18.mjs` showrooms).

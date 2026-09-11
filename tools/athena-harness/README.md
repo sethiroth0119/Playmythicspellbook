@@ -57,6 +57,8 @@ node tools/athena-harness/pw-test16.mjs       # round 16: Screens & Strings — 
                                               #           save + live, off-stage screens, export/import, widgets, admin gate
 node tools/athena-harness/pw-test17.mjs       # round 17: cloud files (bridge bucket), upload, rename everywhere, F2,
                                               #           the content browser dock, context menu
+node tools/athena-harness/pw-test18.mjs       # round 18: mini-game model showrooms — build, replace/restore/append,
+                                              #           save → bridge, live → publish, city registry, chooser, admin gate
 ```
 
 Each prints ✔/✘ per step and the page's error list; screenshots land in

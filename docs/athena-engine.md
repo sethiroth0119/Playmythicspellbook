@@ -809,3 +809,42 @@ Limits: cloud lists need a signed-in game session (the harness fakes the
 bucket); renaming a cloud file changes its URL — other maps that referenced
 the old URL keep the old one until they are opened and re-saved (the old
 object is gone after the move, so re-upload if that happens).
+
+## 🎮 Mini-game models as showrooms (round 18)
+
+Admin panel → **🎮 Mini-game models in Athena** (`mapforge.showroom.js`,
+`AthenaEngine.showrooms.pick()` / `.open(id)`). Every mini-game that lets the
+admin point an asset at a `.glb` is listed by `MythicBridge.slots.games()`
+and opened as a **showroom** scene — one 🧩 slot per asset on a pedestal,
+grouped in folders, showing the model it points at today:
+
+| game | slots |
+|---|---|
+| `fishing` — Woods Fishing | boats, a model list per species, fallback fish per tier |
+| `auction` — Prince Portfolios auction block | cars per rarity (Common … Mythic) |
+| `extraction` — Black River | Cinder Core, extraction node, one per machine type (incl. custom machines) |
+| `city` — Node City | civilian / truck / police, every building, and per level 1–4 |
+
+Replace a slot with a model from the Library (cloud file, project model or
+URL), scale and turn it; **Save** writes URL, scale and yaw through
+`bridge.slots.set` into the SAME Forge field the game's own admin panel
+writes (`Forge.woodsFishing.models`, `Forge.princePortfolios.auctionModels`,
+`Forge.blackRiver.extraction.models`, `Forge.cityModels`), so those panels
+keep working; **★ Set live** publishes the catalogue. List slots end with a
+"· new" slot — replace it to append; restore a filled slot to its 🧩 stand-in
+to delete the entry (clears run highest index first). A built-in prop or an
+embedded model on a slot is skipped with a toast — games need a `.glb` URL,
+so upload it to the cloud first.
+
+Node City reads `Forge.cityModels` (shipped in the catalogue, hydrated on
+every player) through `window.__mythicCityModels` at boot, then applies the
+device's own ⚙ Models overrides on top, exactly as before; Athena also
+writes the device key (`mythic_city_models_v1`) so the running city on the
+admin's device changes at once. Bridge keys (`species/pike/+`, `Rare/0`,
+`farm@2`) are encoded into Athena's slot alphabet (`encodeKey`: `/`→`.`,
+`+`→`new`, `@`→`_lv`).
+
+Limits: the showroom edits which model an asset uses, not where the game
+places it (per-player layouts — a player's card shop, extraction rig or
+city — stay in their own builders); a game reads the new model the next
+time it mounts its scene.

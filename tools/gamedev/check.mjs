@@ -15,7 +15,12 @@
 //   4. lint.mjs             — id cross-references, registry⇄resolver parity, cardsets
 //   5. effects.mjs          — every on-play effect runs headless; none throw; no new quiet
 //   6. damage.mjs --golden  — the damage formula still matches the locked goldens
-//   7. sw/version knobs     — public/version.txt, BUILD_VERSION and sw.js CACHE_VERSION agree
+//   7. econ.mjs --check     — city production catalog audit; client ⇄ worker.js price parity
+//   8. sql-lint.mjs         — every migration: RLS, USING, recursion, idempotency, verify query
+//   9. audit.mjs            — whole-game conventions (fails only on ERROR-level: globals trap,
+//                             chat_messages direct insert, version knobs)
+//  10. _jsxcheck.js         — the Just Business React iframe still parses
+//  11. sw/version knobs     — public/version.txt, BUILD_VERSION and sw.js CACHE_VERSION agree
 //
 // Never weaken a step to get green — fix the code, or if the step is wrong, fix
 // the step and say so in the commit.
@@ -37,6 +42,13 @@ run('lint     (gamedev/lint.mjs)',     process.execPath, [join(ROOT, 'tools', 'g
 if (!quick) {
   run('effects  (gamedev/effects.mjs)', process.execPath, [join(ROOT, 'tools', 'gamedev', 'effects.mjs'), '--strict']);
   run('damage   (gamedev/damage.mjs --golden)', process.execPath, [join(ROOT, 'tools', 'gamedev', 'damage.mjs'), '--golden']);
+  run('economy  (gamedev/econ.mjs --check)',   process.execPath, [join(ROOT, 'tools', 'gamedev', 'econ.mjs'), '--check']);
+  run('sql      (gamedev/sql-lint.mjs)',       process.execPath, [join(ROOT, 'tools', 'gamedev', 'sql-lint.mjs')]);
+  run('audit    (gamedev/audit.mjs)',          process.execPath, [join(ROOT, 'tools', 'gamedev', 'audit.mjs')]);
+  // @babel/standalone is not a declared dependency (CLAUDE.md: no new npm deps without
+  // asking), so this step is optional: it runs when the module is present and reports
+  // itself as skipped otherwise, rather than painting the whole gate red.
+  run('jsx      (_jsxcheck.js — Just Business iframe)', process.execPath, [join(ROOT, '_jsxcheck.js')], { skipIfMissing: '@babel/standalone' });
   run('versions (version.txt / BUILD_VERSION / CACHE_VERSION)', null, null, { fn: versionKnobs });
 }
 
@@ -62,6 +74,10 @@ for (const s of steps) {
   if (s.fn) { try { ({ ok, out } = s.fn()); } catch (e) { ok = false; out = e.message; } }
   else { const r = spawnSync(s.cmd, s.args, { encoding: 'utf8', cwd: ROOT }); ok = r.status === 0; out = (r.stdout || '') + (r.stderr || ''); }
   const ms = Date.now() - t;
+  if (!ok && s.skipIfMissing && out.includes("Cannot find module '" + s.skipIfMissing + "'")) {
+    console.log('– ' + s.name.padEnd(52) + (ms + ' ms').padStart(9) + '   skipped: ' + s.skipIfMissing + ' not installed (npm i -D ' + s.skipIfMissing + ' to enable)');
+    continue;
+  }
   console.log((ok ? '✓ ' : '✗ ') + s.name.padEnd(52) + (ms + ' ms').padStart(9));
   if (!ok || argFlag('verbose')) {
     const tail = out.trim().split('\n');

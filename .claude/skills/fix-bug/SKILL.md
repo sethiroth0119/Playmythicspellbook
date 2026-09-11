@@ -1,6 +1,6 @@
 ---
 name: fix-bug
-description: Diagnose and fix a bug in Mythic Spellbook's battle engine, cards, or effects with a headless reproduction first. Use for "X does nothing", "Y crashes", "Z deals the wrong damage", desyncs between client and server catalogs, or any regression report.
+description: Diagnose and fix a bug anywhere in Mythic Spellbook — battle, cards, city, businesses, economy, community, multiplayer, SQL — with a headless reproduction first. Use for "X does nothing", "Y crashes", "Z shows the wrong number", money mismatches, desyncs, or any regression report.
 ---
 
 # Fix a bug
@@ -17,6 +17,11 @@ nothing.
 | "damage is wrong" | `node tools/gamedev/damage.mjs X --vs <unit>` and `--golden` |
 | blank screen / page dies on load | `node _harness.js` (TDZ / const-order), `node _synckcheck.mjs` (syntax) |
 | MP differs from single-player | `node tools/extract-engine-data.mjs --check` (stale server catalogs) |
+| a price / payout / balance is wrong | `econ.mjs ops\|tax\|parity`, `audit.mjs --rule cinder`, then `map.mjs where <fn>` and read the ledger path |
+| city building / resource misbehaves | `econ.mjs city`, `catalog.mjs resources`, `map.mjs where city<Fn>` |
+| a table "does not exist" / permission denied | `audit.mjs --rule supabase`, `sql-lint.mjs`, read the policy — who is `auth.uid()` here? |
+| an ES module cannot see Profile/App/Corp | the globals trap — `audit.mjs --rule globals`; fix via the bridge, never `window.X` |
+| where even is this? | `node tools/gamedev/map.mjs sections --grep <word>`, `map.mjs where <name>` |
 | anything else in the resolver | write a 10-line script with `loadEngine()` from `tools/gamedev/headless.mjs`, build a minimal `state`, call the function |
 
 ## 2. Reproduce

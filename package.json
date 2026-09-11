@@ -22,7 +22,11 @@
     "gd:damage": "node tools/gamedev/damage.mjs",
     "gd:scaffold": "node tools/gamedev/scaffold.mjs",
     "engine:regen": "node tools/extract-engine-data.mjs",
-    "engine:check": "node tools/extract-engine-data.mjs --check"
+    "engine:check": "node tools/extract-engine-data.mjs --check",
+    "gd:audit": "node tools/gamedev/audit.mjs",
+    "gd:sql": "node tools/gamedev/sql-lint.mjs",
+    "gd:econ": "node tools/gamedev/econ.mjs",
+    "gd:map": "node tools/gamedev/map.mjs"
   },
   "devDependencies": {
     "terser": "^5.48.0",

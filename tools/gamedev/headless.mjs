@@ -51,8 +51,28 @@ export const EXPORTS = [
   'applyOnPlayEffect', '_applyOnPlayOne', '_applyOnPlayOneRaw', '_applyTriggerEffect', '_fireTriggers',
   'calculateDamage', 'applyDamageTriggers', 'applyStatusEffect', 'isImmuneToStatus', 'executeMove',
   'getAvailableMoves', 'hasPassive', '_aiEffectValue', 'buildPassivesFromCard', 'drawCards', 'startTurn',
-  // app-level objects (lexical consts — see CLAUDE.md "globals trap")
-  'App', 'Profile',
+  // ── economy / businesses / city (the non-battle half of the game) ──────────
+  'RESOURCES', 'CONSUMABLE_RESOURCES', 'SALVAGE_RES', 'RESOURCE_CINDER_VALUE', 'CRAFT_RECIPES_DEFAULT',
+  'OPS_ECON', 'OP_LABELS', 'CORP_LAWS', 'CITY_LICENSES', 'NODE_REQUIRED_LICENSE', '_JB_COMPANY_OPS',
+  'RESERVE_WEIGHTS', 'RESERVE_RANKS', 'RESERVE_PRODUCTS', 'RESERVE_EVENTS', 'RESERVE_NODE_TYPES', 'NODE_RISK_EVENTS', 'PLEDGE_TIERS',
+  'GEM_REWARDS', 'CINDER_SELL_VALUES', 'PACK_DEFINITIONS', 'SOVEREIGN_PACKAGES', 'CASHOUT_TIERS', 'CASHOUT_METHODS',
+  'GARAGE_RIGS', 'BKC_TIERS', 'BKC_OVERSTAKE', 'UDW_TIERS', 'BBO_CLASSES', 'MYTHIC_TOKEN', 'AZA_TO_CINDER', 'BOE_FEE',
+  'MARKET_NPC_SELLERS', 'DVS_WEIGHTS', 'DVS_CLASS_BANDS', 'TRADER_DEFAULTS',
+  'PP_LOT_LEVELS', 'PP_PARTS', 'PP_NPCS', 'PPA_RARITIES', 'PPA_NPCS',
+  'DEFAULT_ZONES', 'DEFAULT_HOUSE_LISTINGS', 'FURNITURE_CATALOG', 'FURNITURE_CATEGORIES',
+  'CAMP_FACILITIES', 'CAMP_BUILDINGS', 'CAMP_NPCS', 'CAMP_TRAITS', 'CAMP_WORKER_ROLES', 'CONVOY_TRUCKS',
+  'TW_NODE_STATES', 'TW_NODE_TYPES', 'TW_NODE_OBJECTIVES', 'TW_RUN_MODIFIERS', 'TW_OWNERSHIP_THRESHOLDS', 'TW_SECTOR_BONUSES',
+  'TW_REGION_BONUSES', 'TW_CHOSEN_TRAITS', 'TW_DARK_EVENTS', 'RECON_SITES', 'RECON_EVENTS', 'WORLD_EVENTS',
+  'AI_CORPS', 'AI_STARTUPS', 'AI_STANDING_TIERS',
+  'MISSION_CATALOG', 'ACHIEVEMENTS', 'DAILY_CHALLENGES', 'RANK_TIERS', 'SEASONS', 'TOURNAMENT_TIERS',
+  'SEASON_FREE_REWARDS', 'SEASON_PREMIUM_REWARDS', 'COURT_RANKS', 'CRIME_TYPES', 'COURT_SUIT_TYPES',
+  // economy functions (pure enough to call headless)
+  '_opEcon', '_opComputed', 'getOpsEconOverrides', 'frTaxQuote', 'frApplyTax', 'spendGems', 'addGems',
+  'getRes', 'addRes', 'spendResources', 'getResourceCap', 'getResourceUnits', '_ensureResources',
+  'tw_regionControlPct', 'tw_sectorControlPct', 'cardShopMarketPrice',
+  // state objects (lexical consts — see CLAUDE.md "globals trap")
+  'App', 'Profile', 'Corp', 'Operations', 'BankEthos', 'Wallet', 'FoundationReserve', 'RealtyMarket',
+  'Market', 'CardMarket', 'ResMarket', 'CityMgr', 'NodeTierState', 'Forge', 'Cloud',
 ];
 
 /** Pull the largest classic (non-module, non-src) inline script out of the HTML. */

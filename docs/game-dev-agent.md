@@ -1,7 +1,23 @@
 # The game-dev agent — what it is, what it found, where it goes next
 
-Status: **shipped v1 (2026-09-11)**. Toolkit in `tools/gamedev/`, agent in
-`.claude/agents/game-dev.md`, workflows in `.claude/skills/`.
+Status: **v2 (2026-09-11) — whole game.** v1 covered the battle engine; v2 adds the city
+builder, businesses and economy, Supabase migrations, the worker, and a bug-hunt workflow.
+Toolkit in `tools/gamedev/`, agent in `.claude/agents/game-dev.md`, workflows in
+`.claude/skills/`.
+
+## Scope (v2)
+| domain | tools | skills |
+|---|---|---|
+| battle engine, cards, moves, effects | `lint` `effects` `damage` `scaffold` `catalog` | `/add-move` `/add-card-effect` `/add-status` `/balance-review` |
+| Node City, city production, dwellings, resonance, node tiers | `econ city` `catalog resources` `map` | `/city-dev` |
+| Corp ops, Just Business, banks, wallets, markets, cars, garage/Aza, Territory Wars | `econ ops\|tax\|parity` `catalog ops\|…` `audit --rule cinder` | `/business-dev` |
+| Supabase | `sql-lint` `audit --rule supabase` | `/db-migration` |
+| everything | `map` `audit` `check` | `/find-bugs` `/fix-bug` `/ship-check` |
+
+**"Athena engine":** there is none in this repository. "Athena" is Commander Athena, the
+tutorial narrator, and the Prince Portfolios auctioneer. If an external engine by that name
+is meant, the agent needs a pointer to its docs before it can "know" it — nothing here
+pretends otherwise.
 
 ## The problem it solves
 
@@ -40,7 +56,23 @@ chain. Rolls use the real `Math.random`; deterministic tools pass `accuracy:100,
 | `scaffold.mjs` | "where do I put it and what else must I touch?" — skeleton + insertion anchors + checklist for move / status / passive / effect |
 | `check.mjs` | "can I commit?" — syntax, runtime TDZ, engine freshness, lint, effects, golden, deploy version knobs |
 
-## What the first run found (all real, none fixed here on purpose)
+## What the v2 tools found (whole game)
+
+- **`audit.mjs`** — 75 direct `Profile.gems` writes outside `spendGems/addGems` and not
+  wrapped in `_gemsTaxExempt`. Some are legitimate resets and cloud merges that predate the
+  wrapper; several sit on purchase paths (listings, camp hires, hero rites, stakes) and
+  therefore skip the tax, ledger and spend-notice that `spendGems` provides. Each is a
+  five-minute fix; the list is the backlog. Also 4 native `alert()`s and one `guild_chat`
+  direct insert (known).
+- **`sql-lint.mjs`** — 0 errors after calibration; 55 warnings, mostly `CREATE POLICY`
+  without a preceding `DROP POLICY IF EXISTS` (so the file is not re-runnable), a handful
+  of `SECURITY DEFINER` functions without `SET search_path`, and RLS-enabled tables with no
+  policy that do not say "service role only" in a comment.
+- **`econ.mjs`** — city production catalog clean (17 buildings, 14 resources); Garage rigs
+  and Aza packages match `worker.js` names, prices and grants.
+- **`check.mjs`** now runs eleven steps in about ten seconds.
+
+## What the first (battle) run found (all real, none fixed here on purpose)
 
 1. **`MOVES.sunder` applies status `armorBreak`, which is not defined.** The move's text
    promises "halves the target's DEF for 2 turns"; it has never done so. `/add-status`
@@ -108,6 +140,17 @@ With 1–3 in place the `game-dev` agent can take a card idea in plain English, 
 JSON, prove it in the Lab headless, run 200 sims against the meta decks, and hand back a
 diff plus a balance table — which is the "agent game developer" asked for, done on rails
 the codebase already has rather than on a second engine.
+
+## Roadmap additions for the whole game
+- **`sim-econ.mjs`** — run `OPS_ECON` + terroir + tax over N simulated hours for a corp
+  with a given roster and report Cinder/hour, payback and resource flows per op. The
+  numbers are already reachable headless (`econ.mjs ops`); the loop is the missing part.
+- **Bridge contract tests** — for each `window.MythicXBridge` and `window.city*` function,
+  a table of (input → expected shape) run headless, so an iframe/module never breaks on
+  a host refactor. `map.mjs modules` already lists the surfaces.
+- **SQL apply log** — a `sql/APPLIED.md` the human ticks when a file has been run in the
+  Supabase editor, so `audit.mjs` can distinguish "migration missing from repo" from
+  "migration not yet applied".
 
 ## Conventions this toolkit follows
 - Never edits `index.html` itself; it prints and checks. The edit is a human's or the

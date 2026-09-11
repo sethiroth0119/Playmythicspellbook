@@ -76,16 +76,19 @@ query, and ships its RLS in the same file.
 helper functions (`is_community_member` / `is_community_leader`), which bypass RLS and
 therefore terminate.
 
-## Game-dev toolkit (battle engine, cards, moves, effects)
-`tools/gamedev/` loads the inline engine headless (`headless.mjs`) and gives you the live
-catalogs and resolvers in Node. Use it instead of grepping 11 MB or reasoning from memory:
-`node tools/gamedev/catalog.mjs moves --schema`, `lint.mjs` (dangling ids, registry⇄resolver
-parity — it found `MOVES.sunder` applying a status that never existed), `effects.mjs`
-(every on-play effect run headless), `damage.mjs` (deterministic tables + `--golden`),
-`scaffold.mjs` (skeleton + anchors), and **`node tools/gamedev/check.mjs` — the gate before
-any battle/data commit.** The `game-dev` agent (`.claude/agents/game-dev.md`) and the
-`/add-move`, `/add-card-effect`, `/add-status`, `/fix-bug`, `/balance-review`, `/ship-check`
-skills encode the workflows. Details: `docs/game-dev-agent.md`.
+## Game-dev toolkit (whole game: battle, city, businesses, economy, SQL)
+`tools/gamedev/` loads the inline engine headless (`headless.mjs`, ~0.3 s) and gives you the
+live catalogs, state objects and functions in Node. Use it instead of grepping 11 MB or
+reasoning from memory. Navigate with `map.mjs sections|where|consts|modules`; read data with
+`catalog.mjs <section>` (battle AND `ops|resources|laws|packs|houses|twnodes|…` or any
+`UPPER_CASE` const); prove with `effects.mjs`, `damage.mjs`, `econ.mjs ops|tax|city|parity`;
+find bugs with `lint.mjs` (battle ids — it found `MOVES.sunder` applying a status that never
+existed), `audit.mjs` (Cinder writes, globals trap, unknown tables, alert()), `sql-lint.mjs`
+(RLS/idempotency/verify on every migration). **`node tools/gamedev/check.mjs` is the gate
+before any commit.** The `game-dev` agent (`.claude/agents/game-dev.md`) and the skills
+`/add-move` `/add-card-effect` `/add-status` `/balance-review` `/city-dev` `/business-dev`
+`/db-migration` `/find-bugs` `/fix-bug` `/ship-check` encode the workflows.
+Details: `docs/game-dev-agent.md`.
 
 ## Verifying (this environment)
 - Syntax-check index.html with `node _synckcheck.mjs` — **not** `build.mjs`.

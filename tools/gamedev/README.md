@@ -12,13 +12,17 @@ functions, so nothing here can drift from the game.
 | `effects.mjs` | run every on-play effect through the in-app `__mg.testEffect` harness, headless |
 | `damage.mjs` | deterministic damage matrices from `calculateDamage`; `--golden` locks the formula |
 | `scaffold.mjs` | paste-ready skeleton + anchors + checklist for a new move / status / passive / effect |
-| `check.mjs` | the gate: syntax, runtime, engine freshness, lint, effects, golden, version knobs |
+| `check.mjs` | the gate: syntax, runtime, engine freshness, lint, effects, golden, economy, sql, audit, jsx, version knobs |
+| `map.mjs` | navigate: banner-section index, `where <name>` (declaration + section + call sites), catalog consts, modules |
+| `econ.mjs` | economy headless: `_opEcon` pricing table, tax quotes, resources, city production audit, client ⇄ worker.js parity |
+| `audit.mjs` | whole-game conventions: direct Cinder writes, globals trap in modules, tables no migration creates, `alert()`, chat inserts |
+| `sql-lint.mjs` | migration rules from CLAUDE.md: RLS enabled + policies + USING, recursion, idempotency, verify query, ledger UPDATEs |
 
-`npm run gd:check` / `gd:lint` / `gd:effects` / `gd:catalog` are shortcuts.
+`npm run gd:check` / `gd:lint` / `gd:effects` / `gd:catalog` / `gd:econ` / `gd:audit` / `gd:sql` / `gd:map` are shortcuts.
 
 The Claude Code agent that uses these lives in `.claude/agents/game-dev.md`; the step-by-step
 workflows are the skills in `.claude/skills/` (`/add-move`, `/add-card-effect`, `/add-status`,
-`/fix-bug`, `/balance-review`, `/ship-check`). Design notes and the roadmap for a visual
+`/balance-review`, `/city-dev`, `/business-dev`, `/db-migration`, `/find-bugs`, `/fix-bug`, `/ship-check`). Design notes and the roadmap for a visual
 effect composer: `docs/game-dev-agent.md`.
 
 ## Adding a tool

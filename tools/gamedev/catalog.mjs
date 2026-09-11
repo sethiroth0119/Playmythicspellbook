@@ -46,7 +46,26 @@ const SECTIONS = {
   factions:  { data: eng.FACTIONS,       kind: 'list', cols: ['id', 'name', 'icon', 'desc'] },
   items:     { data: eng.HELD_ITEMS,     kind: 'dict', cols: ['id', 'name', 'desc'] },
   rarities:  { data: eng.RARITIES,       kind: 'list', cols: ['id', 'name', 'color'] },
+  // ── economy / city / businesses ─────────────────────────────────────────
+  resources: { data: eng.RESOURCES,      kind: 'list', cols: ['id', 'name', 'icon', 'color'] },
+  ops:       { data: eng.OPS_ECON,       kind: 'dict', cols: ['id', 'startup', 'ratePerWorkerHr', 'salaryPerWorkerHr', 'maxWorkers', 'yields', 'inputs', 'illicit'] },
+  laws:      { data: eng.CORP_LAWS,      kind: Array.isArray(eng.CORP_LAWS) ? 'list' : 'dict', cols: ['id', 'name', 'desc'] },
+  licenses:  { data: eng.CITY_LICENSES,  kind: Array.isArray(eng.CITY_LICENSES) ? 'list' : 'dict', cols: ['id', 'name', 'cost', 'desc'] },
+  packs:     { data: eng.PACK_DEFINITIONS, kind: Array.isArray(eng.PACK_DEFINITIONS) ? 'list' : 'dict', cols: ['id', 'name', 'cost', 'price', 'cards', 'desc'] },
+  missions:  { data: eng.MISSION_CATALOG, kind: Array.isArray(eng.MISSION_CATALOG) ? 'list' : 'dict', cols: ['id', 'name', 'reward', 'desc'] },
+  achievements: { data: eng.ACHIEVEMENTS, kind: Array.isArray(eng.ACHIEVEMENTS) ? 'list' : 'dict', cols: ['id', 'name', 'desc'] },
+  zones:     { data: eng.DEFAULT_ZONES,  kind: 'list', cols: ['id', 'name', 'desc'] },
+  houses:    { data: eng.DEFAULT_HOUSE_LISTINGS, kind: 'list', cols: ['id', 'name', 'zone', 'price', 'rent'] },
+  furniture: { data: eng.FURNITURE_CATALOG, kind: Array.isArray(eng.FURNITURE_CATALOG) ? 'list' : 'dict', cols: ['id', 'name', 'cat', 'price'] },
+  twnodes:   { data: eng.TW_NODE_TYPES,  kind: Array.isArray(eng.TW_NODE_TYPES) ? 'list' : 'dict', cols: ['id', 'name', 'desc'] },
+  aicorps:   { data: eng.AI_CORPS,       kind: Array.isArray(eng.AI_CORPS) ? 'list' : 'dict', cols: ['id', 'name', 'desc'] },
 };
+// Any exported UPPER_CASE const can be dumped raw: `catalog.mjs CAMP_TRAITS`.
+if (args[0] && /^[A-Z][A-Z0-9_]+$/.test(args[0]) && !SECTIONS[args[0]]) {
+  const v = eng[args[0]];
+  if (v === undefined) { console.error(args[0] + ' is not exported by headless.mjs — add it to EXPORTS there.'); process.exit(1); }
+  console.log(JSON.stringify(v, null, wantJson ? 1 : 2)); process.exit(0);
+}
 
 const get = (o, path) => path.split('.').reduce((v, k) => (v == null ? undefined : v[k]), o);
 const fmt = (v) => {
@@ -77,7 +96,7 @@ function schema(rows) {
 
 function stats(name, rows) {
   const dist = (key) => { const d = {}; rows.forEach((r) => { const v = fmt(get(r, key)) || '(none)'; d[v] = (d[v] || 0) + 1; }); return Object.entries(d).sort((a, b) => b[1] - a[1]); };
-  const keys = name === 'moves' ? ['element', 'kind', 'type', 'cost', 'range', 'power'] : name === 'units' ? ['cost', 'elements', 'factions', 'passive'] : name === 'passives' ? ['cat', 'faction'] : name === 'statuses' ? ['when', 'skipTurn'] : ['type'];
+  const keys = name === 'moves' ? ['element', 'kind', 'type', 'cost', 'range', 'power'] : name === 'units' ? ['cost', 'elements', 'factions', 'passive'] : name === 'passives' ? ['cat', 'faction'] : name === 'statuses' ? ['when', 'skipTurn'] : name === 'ops' ? ['maxWorkers', 'illicit'] : ['type'];
   return keys.map((k) => '• by ' + k + ':\n' + dist(k).map(([v, n]) => '    ' + String(v).padEnd(18) + n).join('\n')).join('\n');
 }
 

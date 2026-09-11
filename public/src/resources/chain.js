@@ -1,7 +1,6 @@
 /* 🧰 RESOURCE CHAIN — the full industrial catalogue behind the city builder.
-   258 entries as specified (+3 farm ids: feathers, wool, hide, +4 grade-2 farm goods — see the
-   Homestead Farm block under Agriculture), grouped by the supply chain they
-   belong to. Generated once and then owned by hand.
+   258 entries, in the order they were specified, grouped by the supply
+   chain they belong to. Generated once and then owned by hand.
 
    🔴 THIS IS A CATALOGUE, NOT THE LIVE LEDGER — and the difference is the whole
       reason it is a separate file. index.html has two lists already:
@@ -80,31 +79,14 @@ export const RESOURCE_CHAIN = [
   { id: 'fruit',                   name: 'Fruit',                       icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 0, inputs: [] },
   { id: 'herbs',                   name: 'Herbs',                       icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 0, inputs: [] },
   { id: 'seeds',                   name: 'Seeds',                       icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 0, existing: true, inputs: [] },
-  { id: 'animalFeed',              name: 'Animal Feed',                 icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 1, core: true, inputs: ['food', 'water'] },
-  { id: 'livestock',               name: 'Livestock',                   icon: '🐄',  color: '#c9b8a0', cat: 'agriculture',  tier: 1, core: true, inputs: ['animalFeed'] },   // 🐄 promoted: a crated grown animal (src/farm)
+  { id: 'animalFeed',              name: 'Animal Feed',                 icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 1, existing: true, inputs: [] },
+  { id: 'livestock',               name: 'Livestock',                   icon: '🐄',  color: '#d9c46a', cat: 'agriculture',  tier: 1, core: true, inputs: [] },
   { id: 'poultry',                 name: 'Poultry',                     icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 1, inputs: [] },
-  { id: 'eggs',                    name: 'Eggs',                        icon: '🥚',  color: '#f2e8d5', cat: 'agriculture',  tier: 1, core: true, inputs: ['animalFeed'] },
-  { id: 'rawMilk',                 name: 'Raw Milk',                    icon: '🥛',  color: '#f4f1ea', cat: 'agriculture',  tier: 1, core: true, inputs: ['animalFeed'] },
+  { id: 'eggs',                    name: 'Eggs',                        icon: '🥚',  color: '#d9c46a', cat: 'agriculture',  tier: 1, core: true, existing: true, inputs: [] },
+  { id: 'rawMilk',                 name: 'Raw Milk',                    icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 1, core: true, existing: true, inputs: [] },
   { id: 'cotton',                  name: 'Cotton',                      icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 0, inputs: [] },
   { id: 'plantFiber',              name: 'Plant Fiber',                 icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 0, inputs: [] },
   { id: 'biomass',                 name: 'Biomass',                     icon: '🌾',  color: '#d9c46a', cat: 'agriculture',  tier: 1, inputs: [] },
-  /* 🐄 HOMESTEAD FARM (src/farm). These three did not exist in the original
-     258 and were added WITH their producer, per the rule above: feathers and
-     hide come off the Butcher's Block (and feathers moult from living hens),
-     wool is sheared from sheep. They were promoted into RESOURCES in the same
-     change, together with animalFeed, eggs, rawMilk and meat from this list.
-     `inputs` is filled because the producer exists: the farm IS the recipe. */
-  { id: 'feathers',                name: 'Feathers',                    icon: '🪶',  color: '#e8d8b0', cat: 'agriculture',  tier: 1, core: true, inputs: ['livestock'] },
-  { id: 'wool',                    name: 'Wool',                        icon: '🧶',  color: '#f0e6d2', cat: 'agriculture',  tier: 1, core: true, inputs: ['livestock'] },
-  { id: 'hide',                    name: 'Hide',                        icon: '🟫',  color: '#a0704a', cat: 'agriculture',  tier: 1, core: true, inputs: ['livestock'] },
-  /* ⭐ Grade-2 farm goods (farm round 5, v120x5). Promoted WITH their producer:
-     only a rare / royal / mythic breed on the homestead makes them (a share of
-     its plain yield lands as the premium id). Tier 2 because each is the
-     refined form of a tier-1 good. */
-  { id: 'goldEggs',                name: 'Golden Eggs',                 icon: '🥚',  color: '#f2c14e', cat: 'agriculture',  tier: 2, core: true, inputs: ['eggs'] },
-  { id: 'primeMeat',               name: 'Prime Cuts',                  icon: '🥩',  color: '#e0606a', cat: 'food',         tier: 2, core: true, inputs: ['meat'] },
-  { id: 'richMilk',                name: 'Rich Milk',                   icon: '🥛',  color: '#fff8e0', cat: 'agriculture',  tier: 2, core: true, inputs: ['rawMilk'] },
-  { id: 'fineWool',                name: 'Fine Wool',                   icon: '🧶',  color: '#ffe8c0', cat: 'agriculture',  tier: 2, core: true, inputs: ['wool'] },
 
   // ── Fishing ───────────────────────────────────────────────────
   { id: 'freshFish',               name: 'Fresh Fish',                  icon: '🐟',  color: '#6fc0d8', cat: 'fishing',      tier: 0, inputs: [] },
@@ -115,7 +97,7 @@ export const RESOURCE_CHAIN = [
   // ── Food Processing ───────────────────────────────────────────
   { id: 'flour',                   name: 'Flour',                       icon: '🍞',  color: '#e0a86a', cat: 'food',         tier: 1, core: true, inputs: [] },
   { id: 'bread',                   name: 'Bread',                       icon: '🍞',  color: '#e0a86a', cat: 'food',         tier: 1, core: true, inputs: [] },
-  { id: 'meat',                    name: 'Meat',                        icon: '🥩',  color: '#c8505a', cat: 'food',         tier: 1, core: true, inputs: ['livestock'] },
+  { id: 'meat',                    name: 'Meat',                        icon: '🍞',  color: '#e0a86a', cat: 'food',         tier: 1, core: true, existing: true, inputs: [] },
   { id: 'processedMeat',           name: 'Processed Meat',              icon: '🍞',  color: '#e0a86a', cat: 'food',         tier: 1, inputs: [] },
   { id: 'dairy',                   name: 'Dairy',                       icon: '🍞',  color: '#e0a86a', cat: 'food',         tier: 1, core: true, inputs: [] },
   { id: 'cheese',                  name: 'Cheese',                      icon: '🍞',  color: '#e0a86a', cat: 'food',         tier: 1, inputs: [] },

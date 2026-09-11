@@ -96,7 +96,101 @@ export function newMap(opts) {
        contributes objects. Ignored by the editor's own viewport. */
     scene: { ground: true, water: true, sky: true },
     meta: { created: Date.now(), updated: Date.now(), author: opts.author || '' },
+    menu: normalizeMenu(null),
+    player: normalizePlayer(null),
   };
+}
+
+/* ── the PLAYER in this world: point of view + character ──
+   view    'fps' first person · 'tps' over-the-shoulder third person · 'top' top-down
+   model   { a: asset id in map.assets, scale, faces: 'z' | '-z' } — none = invisible
+   anim    idle / walk / run / interact → { clip, src?, speed? } (src = an uploaded
+           animation file whose clips are borrowed by name)
+   animFiles  the uploaded animation files the editor lists clips from */
+export const PLAYER_VIEWS = ['fps', 'tps', 'top'];
+/* 🧍 How many characters one map may offer. A picker is a grid a player reads
+   in one glance; past a dozen it is a wardrobe, and every extra entry is a
+   model every visitor's browser may have to download. */
+export const PLAYER_CAST_MAX = 12;
+export const PLAYER_ANIMS = ['idle', 'walk', 'run', 'interact'];
+export function normalizePlayer(p) {
+  p = p && typeof p === 'object' ? p : {};
+  const m = p.model && typeof p.model === 'object' && p.model.a ? { a: String(p.model.a).slice(0, 80), scale: clampNum(p.model.scale, 0.01, 50, 1), faces: p.model.faces === 'z' ? 'z' : '-z' } : null;
+  const anim = {};
+  PLAYER_ANIMS.forEach(k => { const a = p.anim && p.anim[k]; if (a && typeof a === 'object' && a.clip) { anim[k] = { clip: String(a.clip).slice(0, 80), speed: clampNum(a.speed, 0.1, 8, 1) }; if (a.src) anim[k].src = String(a.src).slice(0, 1000); } });
+  const files = (Array.isArray(p.animFiles) ? p.animFiles : []).filter(f => f && f.url).map(f => ({ url: String(f.url).slice(0, 1000), name: String(f.name || 'animation').slice(0, 80) })).slice(0, 24);
+  /* 🧍 THE CAST — the characters a PLAYER may choose between in this map.
+     ─────────────────────────────────────────────────────────────────────────
+     `model` above stays exactly what it was: the character the AUTHOR sets,
+     and the one everybody gets when they have not chosen or when their choice
+     is not offered here. The cast is additive, so every map that already
+     exists keeps working with an empty one and one default character.
+     ⚠ AN ENTRY IS AN ASSET ID, not a URL. It names a row in map.assets, which
+       is what the world's model cache is keyed on — so two players wearing the
+       same character share one loaded template instead of fetching it twice,
+       and an entry can never point at a file this map does not carry. */
+  const seen = Object.create(null);
+  const cast = (Array.isArray(p.cast) ? p.cast : [])
+    .filter(c => c && c.a && typeof c.a !== 'object')
+    .map(c => ({ a: String(c.a).slice(0, 80), label: String(c.label || '').slice(0, 40),
+                 scale: clampNum(c.scale, 0.01, 50, 1), faces: c.faces === 'z' ? 'z' : '-z' }))
+    /* One row per asset: a duplicate is two identical buttons in the picker and
+       an ambiguous answer to "which one did they choose". */
+    .filter(c => { if (seen[c.a]) return false; seen[c.a] = 1; return true; })
+    .slice(0, PLAYER_CAST_MAX);
+  return { view: PLAYER_VIEWS.includes(p.view) ? p.view : 'fps', model: m, anim, animFiles: files, cast };
+}
+
+/* ── the map as a MENU BUTTON ──
+   Asked for: "the map can be turned into a button on the game's menu where I
+   name the button, pick what menu it goes on, whether it is a player hub
+   (prox chat + typed chat) or an interaction — entering a building takes the
+   player to a menu, a dialogue pulls a guide from the Forge."
+     on        the button exists (saving to the cloud then makes the map public)
+     label/sub/icon   what the tile shows
+     hub       which game menu carries it: main | battle | forge | exchange | codex | field | arcanum
+     mode      'hub' — everyone who enters shares the room (mapforge.session.js)
+               'interact' — single player; the map's default action below
+     chatText/chatVoice   the hub's two chats, each switchable
+     kind      'enter' → open a menu screen (target = App.screen id or a hub)
+               'dialog' → play a Forge guide (guide = Forge.pageGuides id)
+   A placed object can carry its own interaction (o.act); a Zone marker with
+   none runs this default. */
+export const HUBS = ['main', 'battle', 'forge', 'exchange', 'codex', 'field', 'arcanum'];
+export const MENU_MODES = ['interact', 'hub'];
+export const MENU_KINDS = ['enter', 'dialog'];
+export const ACT_KINDS = ['none', 'screen', 'hub', 'guide'];
+export function normalizeMenu(m) {
+  m = m && typeof m === 'object' ? m : {};
+  return {
+    on: m.on === true,
+    label: String(m.label || '').slice(0, 40),
+    sub: String(m.sub || '').slice(0, 80),
+    icon: String(m.icon || '').slice(0, 4),
+    hub: HUBS.includes(m.hub) ? m.hub : 'main',
+    mode: MENU_MODES.includes(m.mode) ? m.mode : 'interact',
+    chatText: m.chatText !== false,
+    chatVoice: m.chatVoice !== false,
+    kind: MENU_KINDS.includes(m.kind) ? m.kind : 'enter',
+    target: String(m.target || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40),
+    guide: String(m.guide || '').slice(0, 80),
+  };
+}
+/* An object's interaction: what happens when the player presses E beside it
+   (or walks into it, for a Zone). */
+export function normalizeAct(a) {
+  if (!a || typeof a !== 'object' || !ACT_KINDS.includes(a.kind) || a.kind === 'none') return undefined;
+  const out = { kind: a.kind, prompt: String(a.prompt || '').slice(0, 40) };
+  if (a.kind === 'screen') out.target = String(a.target || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40);
+  if (a.kind === 'hub') out.hub = HUBS.includes(a.hub) ? a.hub : 'main';
+  if (a.kind === 'guide') out.guide = String(a.guide || '').slice(0, 80);
+  if (a.auto === false) out.auto = false;          // a Zone that waits for E instead of firing on entry
+  return out;
+}
+/* A 🔊 Sound marker: positional audio from an uploaded file. */
+export function normalizeAudio(a) {
+  if (!a || typeof a !== 'object' || !a.url) return undefined;
+  return { url: String(a.url).slice(0, 1000), vol: clampNum(a.vol, 0, 1, 1), r: clampNum(a.r, 1, 200, 20), loop: a.loop !== false };
 }
 
 /* Bring ANY parsed JSON into a valid v1 document. Every field gets a default,
@@ -182,6 +276,9 @@ export function normalize(raw) {
 
   const meta = raw.meta || {};
   m.meta = { created: +meta.created || Date.now(), updated: +meta.updated || Date.now(), author: String(meta.author || '').slice(0, 80) };
+  m.menu = normalizeMenu(raw.menu);
+  m.player = normalizePlayer(raw.player);
+  if (m.player.model && !assetIds.has(m.player.model.a)) m.player.model = null;   // the character's model left the map
   return m;
 }
 
@@ -254,6 +351,8 @@ export function normalizeObject(o, assetIds, folderIds, prefabIds) {
     col: typeof o.col === 'boolean' ? o.col : undefined,
     cs: o.cs === 'cyl' ? 'cyl' : undefined,          // collider shape: box (default) or cylinder
     fx: normalizeFx(o.fx),                            // emitter tuning for fx_* objects / attached effects
+    au: t === 'audio' ? normalizeAudio(o.au) : undefined,   // 🔊 sound marker source
+    act: normalizeAct(o.act),                         // interaction (press E / walk in)
     mat: normalizeMat(o.mat),                         // material override: roughness / metalness / emissive (round 11)
     sp,                                               // spline: control points + mode + source (round 13, mapforge.spline.js)
   };
@@ -280,7 +379,9 @@ export function normalizeMat(m) {
 export const LOOP_MODES = ['repeat', 'once', 'pingpong'];
 export function normalizeAnim(a) {
   if (!a || typeof a !== 'object' || !a.clip) return undefined;
-  return { clip: String(a.clip).slice(0, 80), speed: clampNum(a.speed, 0, 8, 1), loop: LOOP_MODES.includes(a.loop) ? a.loop : 'repeat' };
+  const out = { clip: String(a.clip).slice(0, 80), speed: clampNum(a.speed, 0, 8, 1), loop: LOOP_MODES.includes(a.loop) ? a.loop : 'repeat' };
+  if (a.src) out.src = String(a.src).slice(0, 1000);    // clip from an uploaded animation file, not the model
+  return out;
 }
 export function gameId(v) { return String(v == null ? '' : v).trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40); }
 

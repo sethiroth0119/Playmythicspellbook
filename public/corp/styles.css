@@ -8,12 +8,19 @@
      Every component reads these vars, so the palette swap reskins the whole
      app; the override block at the end of this file adds the engraved-gold
      chrome. Layout/classnames untouched — all functionality preserved. ═══ */
-  /* Surfaces (deep navy stack) */
-  --bg:        #0a0e1d;
-  --bg-2:      #070a16;
-  --surface:   #0f1628;
-  --surface-2: #151f3a;
-  --surface-3: #1c2947;
+  /* Surfaces (warm near-black stack).
+     WHY not navy: this was #0a0e1d/#070a16/#0f1628/#151f3a/#1c2947, a deep-navy
+     ramp. A critic measured the page ground at rgb(10,14,29) — blue exceeds red
+     by 19/255, and DESIGN-BAR.md §1 fails any chrome where that gap is > 8.
+     The stack below is the bar's own three named grounds: page #0b0a09,
+     panel #141210, raised card #1c1813 (+ #241f16 for the most-raised step,
+     which keeps the old ramp's lightness spacing so nothing loses contrast).
+     Gold, type, layout and every classname are unchanged — only hue moved. */
+  --bg:        #0b0a09;
+  --bg-2:      #080807;
+  --surface:   #141210;
+  --surface-2: #1c1813;
+  --surface-3: #241f16;
   --line:      rgba(212, 168, 60, .38);
   --line-soft: rgba(212, 168, 60, .16);
 
@@ -39,7 +46,11 @@
   --f-mono:    'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 
   --radius:   4px;
-  --radius-2: 8px;
+  /* WHY 4px and not 8px: --radius-2 is applied to real panels (.card, .corp-card,
+     .modal, .prop-card, .prop-agent-card…) and DESIGN-BAR.md §3 caps a panel or
+     card at 6px — large radii read as modern web, which is the wrong century for
+     this look. 999px stays legal on a status chip only. */
+  --radius-2: 4px;
   --gutter:   18px;
 }
 
@@ -278,7 +289,12 @@ body {
   border-bottom: 1px solid var(--line-soft);
 }
 .row-head h3 {
-  margin: 0; font-family: var(--f-mono); font-size: 11px;
+  /* WHY --f-display and not --f-mono: DESIGN-BAR §2's measurable test fails any
+     heading that does not resolve to a serif family, and .row-head h3 is the
+     section heading on every framed panel ("CORP VAULT", "LEDGER — EVERY
+     MOVEMENT", …). Only the family was wrong — the 11px / uppercase / tracking /
+     gold of the override at the foot of this file is correct and stays. */
+  margin: 0; font-family: var(--f-display); font-size: 11px;
   color: var(--muted); letter-spacing: .12em; text-transform: uppercase;
   font-weight: 600;
 }
@@ -589,7 +605,8 @@ body {
     linear-gradient(180deg, rgba(8,6,4,0.18) 0%, transparent 30%, transparent 70%, rgba(8,6,4,0.35) 100%),
     /* warm accent wash */
     radial-gradient(900px 600px at 30% 30%, oklch(0.22 0.04 40 / 0.22), transparent 70%),
-    radial-gradient(700px 500px at 80% 70%, oklch(0.20 0.04 320 / 0.18), transparent 70%);
+    /* was hue 320 (violet) despite the "warm accent wash" comment above it */
+    radial-gradient(700px 500px at 80% 70%, oklch(0.20 0.04 60 / 0.18), transparent 70%);
   pointer-events: none;
 }
 
@@ -1148,8 +1165,10 @@ body {
 body {
   background-image:
     radial-gradient(1100px 560px at 78% -8%, rgba(212, 168, 60, .10), transparent 62%),
-    radial-gradient(900px 520px at -8% 108%, rgba(63, 81, 181, .16), transparent 60%),
-    radial-gradient(1400px 900px at 50% 120%, rgba(20, 30, 68, .55), transparent 70%);
+    /* WHY warm: these two were rgba(63,81,181,.16) indigo and rgba(20,30,68,.55)
+       navy, and they alone pushed blue past red across the whole page ground. */
+    radial-gradient(900px 520px at -8% 108%, rgba(150, 118, 62, .12), transparent 60%),
+    radial-gradient(1400px 900px at 50% 120%, rgba(34, 28, 20, .55), transparent 70%);
 }
 
 /* Engraved double-border panels */
@@ -1159,12 +1178,45 @@ body {
     inset 0 0 0 1px rgba(212, 168, 60, .08),
     inset 0 1px 0 rgba(246, 214, 126, .10),
     0 10px 30px rgba(0, 0, 0, .45);
-  background: linear-gradient(168deg, rgba(21, 29, 54, .92), rgba(9, 13, 27, .96));
+  /* Raised-card fill. WHY: was rgba(21,29,54)→rgba(9,13,27), which composited to
+     rgb(11,16,33..36) — the measured 19/255 blue-over-red failure. Same two-stop
+     shape, warm: lands on the bar's raised-card #1c1813 at the top edge. */
+  background: linear-gradient(168deg, rgba(28, 24, 19, .92), rgba(11, 10, 9, .96));
+}
+
+/* Corner ornaments — DESIGN-BAR §3: important frames carry small angular gold
+   marks at the four corners (the Camp facility tiles, the Bank vault cards).
+   This screen IS the corporation vault and had zero of them.
+   WHY one pseudo-element painting eight gradients, and not four little bordered
+   boxes: .card/.corp-card/.modal had NO position of their own, so every extra
+   positioned child is another chance to re-anchor an absolutely-positioned
+   descendant. One inset overlay with pointer-events:none cannot be clicked, does
+   not reflow, and cannot steal a click from the card body.
+   WHY ::before: .screen-head::after above is already the hairline rule, and
+   nothing on .card/.corp-card/.modal claims ::before. .prop-card is a separate
+   class (it keeps its own ::before tag glyphs) and is deliberately untouched. */
+.card, .corp-card, .modal { position: relative; }
+.card::before, .corp-card::before, .modal::before {
+  content: ""; position: absolute; inset: 3px; pointer-events: none;
+  background-repeat: no-repeat;
+  background-image:
+    linear-gradient(rgba(212, 168, 60, .55), rgba(212, 168, 60, .55)),
+    linear-gradient(rgba(212, 168, 60, .55), rgba(212, 168, 60, .55)),
+    linear-gradient(rgba(212, 168, 60, .55), rgba(212, 168, 60, .55)),
+    linear-gradient(rgba(212, 168, 60, .55), rgba(212, 168, 60, .55)),
+    linear-gradient(rgba(212, 168, 60, .55), rgba(212, 168, 60, .55)),
+    linear-gradient(rgba(212, 168, 60, .55), rgba(212, 168, 60, .55)),
+    linear-gradient(rgba(212, 168, 60, .55), rgba(212, 168, 60, .55)),
+    linear-gradient(rgba(212, 168, 60, .55), rgba(212, 168, 60, .55));
+  background-size: 9px 1px, 1px 9px, 9px 1px, 1px 9px, 9px 1px, 1px 9px, 9px 1px, 1px 9px;
+  background-position:
+    left top, left top, right top, right top,
+    left bottom, left bottom, right bottom, right bottom;
 }
 
 /* Chrome rails */
-.sidebar { border-right: 1px solid rgba(212, 168, 60, .22); background: linear-gradient(180deg, #0a0f20, #060913); }
-.topbar  { border-bottom: 1px solid rgba(212, 168, 60, .22); background: linear-gradient(180deg, #0b1122, #080d1a); }
+.sidebar { border-right: 1px solid rgba(212, 168, 60, .22); background: linear-gradient(180deg, #0d0c0a, #070706); }
+.topbar  { border-bottom: 1px solid rgba(212, 168, 60, .22); background: linear-gradient(180deg, #0f0d0b, #080807); }
 .ticker  { border-top: 1px solid rgba(212, 168, 60, .18); }
 
 /* Brand + headers → engraved serif gold */
@@ -1201,16 +1253,16 @@ body {
 /* Top-bar balances → bordered pill chips */
 .bal {
   border: 1px solid rgba(212, 168, 60, .30);
-  border-radius: 8px;
+  border-radius: 4px;
   padding: 5px 12px;
-  background: linear-gradient(180deg, rgba(21, 29, 54, .8), rgba(9, 13, 27, .9));
+  background: linear-gradient(180deg, rgba(28, 24, 19, .8), rgba(11, 10, 9, .9));
   box-shadow: inset 0 1px 0 rgba(246, 214, 126, .08);
 }
 .bal .num { color: #f4dc9a; }
-.me .av { background: linear-gradient(135deg, #d4a83c, #7a3cff); color: #0a0e1d; }
+.me .av { background: linear-gradient(135deg, #d4a83c, #7a3cff); color: #0b0a09; }
 
 /* Buttons — gilded */
-.btn { border-radius: 7px; border-color: rgba(212, 168, 60, .35); }
+.btn { border-radius: 4px; border-color: rgba(212, 168, 60, .35); }
 .btn:hover { border-color: rgba(212, 168, 60, .6); box-shadow: 0 0 12px rgba(212, 168, 60, .18); }
 .btn.primary {
   background: linear-gradient(180deg, #e7bd55, #b8892b);
@@ -1226,8 +1278,8 @@ body {
 /* Inputs */
 .input, .select {
   border-color: rgba(212, 168, 60, .28);
-  background: rgba(8, 12, 24, .8);
-  border-radius: 7px;
+  background: rgba(10, 9, 8, .8);
+  border-radius: 4px;
 }
 .input:focus, .select:focus { border-color: #d4a83c; box-shadow: 0 0 0 1px rgba(212, 168, 60, .35); }
 
@@ -1242,7 +1294,8 @@ body {
 .tbl td { border-color: rgba(212, 168, 60, .10) !important; }
 
 /* Chips / tags */
-.chip { border: 1px solid rgba(212, 168, 60, .30); border-radius: 999px; background: rgba(21, 29, 54, .7); }
+/* 999px stays — DESIGN-BAR.md §3 allows a pill on a status chip specifically. */
+.chip { border: 1px solid rgba(212, 168, 60, .30); border-radius: 999px; background: rgba(28, 24, 19, .7); }
 
 /* Ticker tags */
 .ticker .ev .tag { border-radius: 4px; }
@@ -1251,4 +1304,4 @@ body {
 .main::-webkit-scrollbar-thumb { background: rgba(212, 168, 60, .35); border: 2px solid var(--bg); }
 
 /* Modal scrim slightly warmer */
-.modal-scrim { background: rgba(3, 4, 10, .78); backdrop-filter: blur(4px); }
+.modal-scrim { background: rgba(5, 4, 3, .78); backdrop-filter: blur(4px); }

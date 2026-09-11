@@ -21,6 +21,8 @@ import { ensureThree } from './mapforge.three.js';
 import { buildWorld } from './mapforge.world.js';
 import { createPlayer } from './mapforge.player.js';
 import { newMap, normalize } from './mapforge.format.js';
+import { createAvatar, resolveCharacter } from './mapforge.avatar.js';
+import { avatarPick } from './mapforge.bridge.js';
 import * as quality from './mapforge.quality.js';
 import { createPost } from './mapforge.post.js';
 const TONE = { aces: 'ACESFilmicToneMapping', linear: 'LinearToneMapping', reinhard: 'ReinhardToneMapping' };
@@ -62,11 +64,30 @@ export async function mountWorld(host, opts) {
   const ro = new ResizeObserver(resize); ro.observe(host); resize();
 
   const mode = opts.mode || 'fps';
-  let player = null, controls = null, clickToLock = null;
+  /* 🎥 the map's own point of view and character (map.player) — opts.view
+     overrides for a game that insists. 'fps' mode means "walk it"; which
+     camera that walk uses is the map's call. */
+  const pv = map.player || { view: 'fps' };
+  const view = opts.view || pv.view || 'fps';
+  let avatar = null;
+  /* 🧍 The character THIS player chose, if the map offers it, else the map
+        author's own default — resolveCharacter() owns that reconciliation and
+        is the same call the hub uses to draw everybody else. */
+  const myModel = resolveCharacter(pv, avatarPick());
+  if (mode === 'fps' && myModel) { try { avatar = createAvatar(THREE, { world, scene, player: { model: myModel, anim: pv.anim || {}, animFiles: pv.animFiles || [] } }); } catch (e) { avatar = null; } }
+  let player = null, controls = null, clickToLock = null, gesture = null;
+  // 🔊 sound markers: listener on the camera; audio starts on the first gesture
+  if (opts.audio !== false && world.attachAudio(camera)) {
+    gesture = () => { try { world.startAudio(); } catch (e) {} canvas.removeEventListener('pointerdown', gesture); window.removeEventListener('keydown', gesture, true); gesture = null; };
+    canvas.addEventListener('pointerdown', gesture); window.addEventListener('keydown', gesture, true);
+  }
   if (mode === 'fps') {
-    player = createPlayer(THREE, { world, camera, dom: canvas, pointerLock: opts.pointerLock !== false, onUnlock: opts.onUnlock, onFrame: opts.onPlayerFrame, eye: opts.eye, speed: opts.speed });
+    player = createPlayer(THREE, { world, camera, dom: canvas, pointerLock: opts.pointerLock !== false && view !== 'top', onUnlock: opts.onUnlock, onFrame: opts.onPlayerFrame, eye: opts.eye, speed: opts.speed, view, avatar });
     player.start(opts.spawn);
-    if (opts.pointerLock !== false) { clickToLock = () => { try { canvas.requestPointerLock(); } catch (e) {} }; canvas.addEventListener('click', clickToLock); }
+    // requestPointerLock returns a promise in current browsers; a refusal (the
+    // canvas already torn out of the document, a click during teardown) is a
+    // rejection, not a throw, and an unhandled one trips the page's crashguard.
+    if (opts.pointerLock !== false && view !== 'top') { clickToLock = () => { try { Promise.resolve(canvas.requestPointerLock()).catch(() => {}); } catch (e) {} }; canvas.addEventListener('click', clickToLock); }
   } else if (mode === 'orbit') {
     const size = world.terrain.size;
     camera.position.set(size * 0.55, size * 0.4, size * 0.55);
@@ -94,11 +115,13 @@ export async function mountWorld(host, opts) {
   raf = requestAnimationFrame(loop);
 
   const g = {
-    THREE, map, source, scene, camera, renderer, canvas, world, player, controls, on, quality, post,
+    THREE, map, source, scene, camera, renderer, canvas, world, player, controls, on, view, avatar, quality, post,
     resize,
     stop() {
       running = false; cancelAnimationFrame(raf); ro.disconnect(); window.removeEventListener('keydown', onInteract); offQ(); try { world.stopPlay(); } catch (e) {}
       if (player) player.stop(); if (clickToLock) canvas.removeEventListener('click', clickToLock);
+      if (avatar) { try { avatar.dispose(); } catch (e) {} }
+      if (gesture) { canvas.removeEventListener('pointerdown', gesture); window.removeEventListener('keydown', gesture, true); }
       try { post.dispose(); world.dispose(); renderer.dispose(); renderer.forceContextLoss(); } catch (e) {}
       if (canvas.parentNode) canvas.parentNode.removeChild(canvas);
     },

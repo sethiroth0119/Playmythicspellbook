@@ -25,6 +25,27 @@
 import * as Lots from './lots.js';
 import * as Settle from './settle.js';
 import * as R from './render.js';
+import * as Outside from '../outside/status.js';
+
+/* 🛣 THE OUTSIDE-CONNECTION GATE (/src/outside).
+   A lot listing is a deal with another player's city, and a city with no road
+   out cannot honour one. The connection test can only run where the tiles live
+   — inside node-city — so it publishes a record and this reads it.
+
+   ⚠ IT FAILS OPEN, AT EVERY STEP. status.allowTrade() refuses ONLY on a fresh,
+     explicit "disconnected" from a city that has tiles in it. No record, a
+     stale record, an empty city, a corrupt record, localStorage disabled, or
+     this import 404ing all mean `ok`. That asymmetry is deliberate: the cost of
+     a false refusal here is a player who cannot trade and cannot find out why,
+     and that is strictly worse than a player who trades while their ramp is
+     down for an afternoon.
+
+   ⚠ IT GATES NEW DEALS ONLY. escrow() and takeLots() are new obligations.
+     unescrow() and payout() UNWIND obligations that already exist, and gating
+     those would strand a player's goods behind a road they cannot reach. */
+function outsideGate() {
+  try { return Outside.allowTrade(); } catch (e) { return { ok: true, code: 'OK', why: '' }; }
+}
 
 const B = () => (typeof window !== 'undefined' ? window.MythicTradeBridge : null) || null;
 
@@ -70,6 +91,8 @@ function io() {
 /** Seller side. Goods leave the stash BEFORE the row is written; the caller
     must refund with `unescrow()` if the insert fails. */
 function escrow({ resource, lotSize, lots }, customIo) {
+  const g = outsideGate();
+  if (!g.ok) return { ok: false, code: g.code, why: g.why, moved: [], rolledBack: false, failedLeg: -1 };
   return Settle.settle(Settle.escrowLegs({ resource, lotSize, lots }), customIo || io());
 }
 /** Undo an escrow. Uncapped by construction — it goes through refundRes. */
@@ -82,6 +105,8 @@ function unescrow({ resource, lotSize, lots }, customIo) {
 }
 /** Buyer side. One call, all legs, all-or-nothing. */
 function takeLots(row, lots, customIo) {
+  const g = outsideGate();
+  if (!g.ok) return { ok: false, code: g.code, why: g.why, rolledBack: false };
   const L = Lots.readLots(row);
   const n = Math.max(0, Math.min(L.lotsLeft, Math.floor(Number(lots) || 0)));
   if (n <= 0) return { ok: false, code: 'NO_LOTS', why: 'Choose at least one lot.', rolledBack: false };
@@ -193,6 +218,8 @@ const API = {
   LOT_SIZE_MAX: Lots.LOT_SIZE_MAX, LOT_COUNT_MAX: Lots.LOT_COUNT_MAX,
   // movement
   escrow, unescrow, takeLots, payout, settleLegs: (legs, j) => Settle.settle(legs, j || io()),
+  // 🛣 The outside-connection gate, exposed so a driver can prove it both ways.
+  outside: Outside, outsideGate,
   preflight: (legs, j) => Settle.preflight(legs, j || io()),
   // surface
   formHtml: () => R.formHtml(ctx),

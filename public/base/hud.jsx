@@ -141,8 +141,23 @@ function LeftColumn() {
       ? <img src={p.icon} alt={p.n} className="roster-art"
              style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 4 }} />
       : <span>{p.icon || p.i}</span>;
+  const door = (action) => () => { try { window.parent.postMessage({ type: "base:action", action }, window.location.origin); } catch (e) {} };
   return (
     <aside className="hud-left">
+      {/* 🚪 THE TWO DOORS. Big, on the left beside the bunker, each with a
+          tooltip ABOVE it saying what it does — asked for in those words. */}
+      <div className="doors">
+        <button className="door" data-tip="Camp Ops — station units and hired workers, set them to Rest, Study or Raid, and build or upgrade the camp's facilities. (hotkey A)" onClick={door("nav:campOps")}>
+          <span className="door-ico">🏕</span>
+          <span className="door-lbl">Camp</span>
+          <span className="door-sub">Station units · build & upgrade</span>
+        </button>
+        <button className="door" data-tip="Ethos Heights — the district map: raids, the train, and what the people think of you. (hotkey W)" onClick={door("ethos")}>
+          <span className="door-ico">🗺</span>
+          <span className="door-lbl">Ethos Heights</span>
+          <span className="door-sub">The district map · raids · the train</span>
+        </button>
+      </div>
       {BAG && BAG.has && (
         <div
           className="left-section bag"
@@ -377,6 +392,7 @@ function RosterPanel() {
               className={`roster-row ${st.cls}`}
               key={idx}
               onClick={() => openCard(p.id)}
+              onContextMenu={(e) => { if (!p.id) return; e.preventDefault(); openCard(p.id); }}
               style={p.id ? { cursor: "pointer" } : undefined}
               title={
                 `${p.n}${p.t ? "  ·  " + p.t : ""}` +
@@ -442,11 +458,9 @@ function BottomBar({ activeId, onSelect, speed, setSpeed, paused, setPaused }) {
             <button
               key={i}
               className={`minimap-cell ${c}`}
-              onClick={() => onSelect(window.ROOMS[i].id)}
               title={
                 `${window.ROOMS[i].name}` +
-                (window.ROOMS[i].status ? `  ·  ${String(window.ROOMS[i].status).toUpperCase()}` : "") +
-                "\nClick to open this room"
+                (window.ROOMS[i].status ? `  ·  ${String(window.ROOMS[i].status).toUpperCase()}` : "")
               }
             />
           ))}
@@ -457,59 +471,13 @@ function BottomBar({ activeId, onSelect, speed, setSpeed, paused, setPaused }) {
         </div>
       </div>
 
-      <div className="actions">
-        <button className="act primary" title="Build a new room in an empty slot (hotkey: B)">
-          {Ic.build}
-          <span className="act-lbl">Build</span>
-          <span className="act-hot">B</span>
-        </button>
-        <a
-          className="act"
-          href="World Map.html"
-          style={{ textDecoration: "none" }}
-          title="Open the World Map — expeditions & roguelite runs (hotkey: W)"
-        >
-          {Ic.scout}
-          <span className="act-lbl">World</span>
-          <span className="act-hot">W</span>
-        </a>
-        <button
-          className="act"
-          title="Open Camp Ops — station units, assign Rest / Study / Raid, build & upgrade facilities (hotkey: A)"
-          onClick={() => { try { window.parent.postMessage({ type: "base:action", action: "nav:campOps" }, window.location.origin); } catch (e) {} }}
-        >
-          {Ic.recruit}
-          <span className="act-lbl">Assign</span>
-          <span className="act-hot">A</span>
-        </button>
-        <button
-          className="act"
-          title="Hire NPC staff / station units to run the camp rooms"
-          onClick={() => { try { window.parent.postMessage({ type: "base:action", action: "workers" }, window.location.origin); } catch (e) {} }}
-        >
-          {Ic.research}
-          <span className="act-lbl">Hire</span>
-          <span className="act-hot">H</span>
-        </button>
-        {/* 🛏 THE BUNKHOUSE HAD NO DOOR. Its logic, UI, purchase and persistence
-            all shipped, but this screen sits under a full-viewport iframe, so
-            nothing could open it — the design doc's "floor, works with no city"
-            was unreachable for every player without a Tier-1 city. Added as its
-            OWN button rather than by repurposing a room's CTA: panel.jsx renders
-            exactly one CTA per room, so reusing one would have deleted an
-            existing entry point. The overlay this opens renders above the
-            builder frame, which is why the postMessage seam works here. */}
-        <button
-          className="act"
-          title="Billet cards to train their Resonance (R)"
-          onClick={() => { try { window.parent.postMessage({ type: "base:action", action: "bunkhouse" }, window.location.origin); } catch (e) {} }}
-        >
-          {Ic.survivor}
-          <span className="act-lbl">Bunks</span>
-          <span className="act-hot">R</span>
-        </button>
-      </div>
-
+      {/* 🚪 THE ACTION ROW IS GONE. Asked for: "Remove the buttons down here
+          but Assign change that to Camp and Ethos Heights. Make them big buttons
+          next to the bunker images on the left side." Build, Hire and Bunks are
+          retired with it; Camp (the old Assign → Camp Ops) and Ethos Heights are
+          the two doors in LeftColumn above the bunker. The postMessage seams
+          they used are unchanged — "nav:campOps" and "ethos" — so the parent
+          side needed no edit. */}
       <div className="tick">
         <button
           className="tick-pause"

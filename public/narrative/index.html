@@ -417,6 +417,7 @@ const AudioSys = (() => {
       muted = m;
       if (master) master.gain.value = m ? 0 : .8;
       try { if (ambienceEl) { if (m) ambienceEl.pause(); else { const p = ambienceEl.play(); if (p && p.catch) p.catch(()=>{}); } } } catch(e){}
+      try { const v = this._voice; if (v) { if (m) v.pause(); else { const p = v.play(); if (p && p.catch) p.catch(()=>{}); } } } catch(e){}
     },
     isMuted(){ return muted; },
     blip(voice){
@@ -458,10 +459,39 @@ const AudioSys = (() => {
         });
       }catch(e){}
     },
+    /* 🔊 ONE VOICE AT A TIME, AND IT FINISHES. Reported: "the audio is
+       overlapping each other" — every node made a fresh Audio() and nobody
+       stopped the last one, so a narration clip kept talking under the first
+       dialogue line, and a long line under the next. Now the player keeps
+       the CURRENT clip: playUrl stops whatever was speaking, and the engine
+       asks onVoiceEnd() before it moves on by itself. Next/Skip still work at
+       once — they stop the clip (stopVoice) and the next node starts its own.
+       Muted, blocked by autoplay, or a 404: the clip counts as finished, so a
+       scene never waits on a sound that will not come. */
+    _voice: null, _voiceCb: null,
+    _voiceDone(a){
+      if (this._voice !== a) return;
+      this._voice = null; const cb = this._voiceCb; this._voiceCb = null;
+      if (cb){ try{ cb(); }catch(e){} }
+    },
     playUrl(url){
+      this.stopVoice();
       if (!url || muted) return;
-      try{ const a = new Audio(url); a.volume = .9; a.play().catch(()=>{}); }catch(e){}
-    }
+      try{
+        const a = new Audio(url); a.volume = .9; this._voice = a;
+        a.addEventListener('ended', () => this._voiceDone(a));
+        a.addEventListener('error', () => this._voiceDone(a));
+        const p = a.play(); if (p && p.catch) p.catch(() => this._voiceDone(a));
+      }catch(e){ this._voice = null; }
+    },
+    stopVoice(){
+      const a = this._voice; this._voice = null; this._voiceCb = null;
+      if (a){ try{ a.pause(); a.src = ''; }catch(e){} }
+    },
+    voicePlaying(){ const a = this._voice; return !!(a && !a.ended); },
+    /* Runs cb when the current clip ends — or right now if nothing is speaking.
+       Cleared by stopVoice, so a skip never fires a stale advance. */
+    onVoiceEnd(cb){ if (this.voicePlaying()) this._voiceCb = cb; else cb(); }
   };
 })();
 addEventListener('pointerdown', () => AudioSys.boot(), { once: false });
@@ -539,6 +569,9 @@ const Engine = {
 
   next(gotoId){
     if (this.typing){ this.cancelType && this.cancelType(); return; }
+    /* Moving on ends the line that was speaking — Next and Skip are the one
+       way to cut a clip short; every automatic advance waits for it. */
+    clearTimeout(this._autoT); AudioSys.stopVoice();
     let j = (gotoId != null) ? this.findIndex(gotoId) : this.i + 1;
     if (j < 0) j = this.i + 1;
     /* skip condition-failed nodes */
@@ -631,7 +664,12 @@ const Engine = {
     const paras = Array.isArray(n.paragraphs) ? n.paragraphs : [];
     let idx = 0;
     const nextPara = () => {
-      if (idx >= paras.length){ this._paraTimer = setTimeout(() => this.next(), 700); return; }
+      if (idx >= paras.length){
+        /* Every paragraph is on the page; the narration's voice-over may
+           still be reading. Wait for it (or for Next/Skip) before leaving. */
+        AudioSys.onVoiceEnd(() => { this._paraTimer = setTimeout(() => this.next(), 700); });
+        return;
+      }
       const p = paras[idx++];
       const el = document.createElement('p');
       if (p.cls) el.className = p.cls;
@@ -716,6 +754,12 @@ const Engine = {
         els.choices.classList.add('show');
       } else {
         els.nextBtn.textContent = n.nextLabel || (isLast ? (OPTS.finishLabel || 'Finish ✓') : 'Continue ✦');
+        /* A voiced line plays in full, then the scene moves on by itself;
+           an unvoiced line waits for the button as it always did. */
+        if (n.audioUrl) AudioSys.onVoiceEnd(() => {
+          if (Engine.node() !== n || Engine.typing || Engine._done) return;
+          clearTimeout(Engine._autoT); Engine._autoT = setTimeout(() => Engine.next(), 600);
+        });
       }
     });
   },
@@ -729,7 +773,7 @@ const Engine = {
   hideAll(){ this.hideDialog(); this.hideJournal(); },
 
   skipScene(){
-    this.cancelType && this.cancelType(); clearTimeout(this._paraTimer);
+    this.cancelType && this.cancelType(); clearTimeout(this._paraTimer); clearTimeout(this._autoT); AudioSys.stopVoice();
     let j = this.i + 1;
     while (j < SCRIPT.length && SCRIPT[j] && SCRIPT[j].type !== 'title' && SCRIPT[j].type !== 'end') j++;
     if (j >= SCRIPT.length || (SCRIPT[j] && SCRIPT[j].type === 'end')){ this.finish(true); return; }
@@ -739,6 +783,7 @@ const Engine = {
   finish(skipped){
     if (this._done) return;
     this._done = true;
+    clearTimeout(this._autoT); AudioSys.stopVoice();
     this.hideAll();
     els.titleCard.classList.remove('show');
     post({ type: 'narr:done', dontShow: this.ds, skipped: !!skipped, flags: FLAGS });

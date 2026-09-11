@@ -5,7 +5,7 @@
    tiles, search, double-click picks, context menu, admin gate. harness2.html. */
 import { createRequire } from 'module';
 const { chromium } = createRequire(process.env.PLAYWRIGHT_PKG || '/opt/node22/lib/node_modules/playwright/package.json')('playwright');
-const S = new URL('.', import.meta.url).pathname.replace(/\/$/, '');
+const S = decodeURIComponent(new URL('.', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/$/, '');
 const browser = await chromium.launch({ headless: true, args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-webgl'] });
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
 const logs = [];
@@ -121,7 +121,10 @@ await step('context menu: rename + delete-from-cloud actions; deleting a cloud f
   if (!r.items.includes('rename') || !r.items.includes('play') || !r.items.includes('remove') || !r.gone || !r.listed || !r.menuClosed) throw new Error(JSON.stringify(r));
   return r;
 });
-await page.evaluate(async () => { const e = MythicMapForge.editor(); e.content.toggle(true); document.querySelector('#mf-cb .mf-cb-node[data-node="Content/Props/Nature"]').click(); });
+await page.evaluate(async () => { const e = MythicMapForge.editor(); e.content.toggle(true); await new Promise(r => setTimeout(r, 200));
+  // the tree shows a folder's children only while it is on the path: open Props first, then Nature (the screenshot's subject)
+  const props = document.querySelector('#mf-cb .mf-cb-node[data-node="Content/Props"]'); if (props) props.click(); await new Promise(r => setTimeout(r, 200));
+  const nat = document.querySelector('#mf-cb .mf-cb-node[data-node="Content/Props/Nature"]'); if (nat) nat.click(); });
 await page.waitForTimeout(400);
 await page.screenshot({ path: S + '/shots/r17-01-content.png' });
 console.log('--- page errors:', await page.evaluate(() => window.__errors));

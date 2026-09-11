@@ -4,6 +4,9 @@
   "version": "1.0.0",
   "description": "Mythic Spellbook — Cloudflare Workers static deploy of ./public",
   "scripts": {
+    "check": "node _checkall.mjs",
+    "check:full": "node _checkall.mjs --full",
+    "check:list": "node _checkall.mjs --list",
     "deploy": "node deploy.mjs",
     "deploy:test": "node deploy-test.mjs",
     "deploy:raw": "wrangler deploy",
@@ -15,9 +18,20 @@
     "deploy:market": "node deploy-all.mjs --market",
     "deploy:check": "node deploy-all.mjs --dry"
   },
+  "dependencies": {
+    "cannon-es": "0.20.0"
+  },
   "devDependencies": {
-    "cannon-es": "0.20.0",
+    "@babel/standalone": "^8.0.4",
+    "@gltf-transform/cli": "^4.4.2",
+    "@gltf-transform/core": "^4.4.2",
+    "@gltf-transform/extensions": "^4.4.2",
+    "@gltf-transform/functions": "^4.4.2",
+    "meshoptimizer": "^0.25.0",
+    "playwright": "^1.56.1",
+    "sharp": "^0.34.5",
     "terser": "^5.48.0",
+    "three": "^0.128.0",
     "wrangler": "^4"
   }
 }

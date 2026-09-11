@@ -551,7 +551,7 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   background: var(--hull);
   border: 1px solid var(--line);
   overflow: hidden;
-  cursor: pointer;
+  cursor: default;   /* 🖼 for show — a room opens nothing (app.jsx) */
   transition: outline-color .15s ease, transform .2s ease;
   outline: 1px solid transparent;
   outline-offset: -2px;
@@ -773,6 +773,48 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   background: linear-gradient(180deg, #2a1a08 0%, #14090c 100%);
   border-color: var(--bronze-dim);
 }
+
+/* 🚪 THE TWO DOORS — big, beside the bunker on the left, tooltip above. */
+.doors {
+  display: flex; flex-direction: column; gap: 10px;
+  /* the top padding is headroom for the first door's tooltip — asked for ABOVE the buttons */
+  padding: 78px 12px 6px;
+  flex: 0 0 auto;
+}
+.door {
+  position: relative;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  width: 100%;
+  padding: 16px 12px 14px;
+  border: 1px solid var(--bronze-dim);
+  background: linear-gradient(180deg, #2a1a08 0%, #14090c 100%);
+  box-shadow: 0 0 0 1px rgba(0,0,0,.6) inset, 0 6px 18px rgba(0,0,0,.55);
+  transition: border-color .15s, transform .1s, box-shadow .15s;
+}
+.door:hover, .door:focus-visible { border-color: var(--bronze-hi); box-shadow: 0 0 0 1px rgba(0,0,0,.6) inset, 0 0 22px rgba(255, 209, 102, .18); outline: none; }
+.door:active { transform: translateY(1px); }
+.door-ico { font-size: 30px; line-height: 1; filter: drop-shadow(0 2px 6px rgba(0,0,0,.7)); }
+.door-lbl { font-family: var(--f-mono); font-size: 13px; font-weight: 700; color: var(--bronze-hi); letter-spacing: .2em; text-transform: uppercase; }
+.door-sub { font-family: var(--f-mono); font-size: 8.5px; color: var(--text-2); letter-spacing: .08em; text-align: center; }
+/* the tooltip sits ABOVE the button, so it never covers the bunker */
+.door::after {
+  content: attr(data-tip);
+  position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translateX(-50%) translateY(4px);
+  width: max(220px, 100%); max-width: 320px;
+  padding: 9px 11px;
+  font-family: var(--f-mono); font-size: 10px; line-height: 1.45; letter-spacing: .03em; text-transform: none;
+  color: var(--text-1, #ece4d4); background: #0d0a14; border: 1px solid var(--bronze);
+  box-shadow: 0 10px 28px rgba(0,0,0,.7);
+  opacity: 0; pointer-events: none; z-index: 30;
+  transition: opacity .15s, transform .15s;
+}
+.door::before {
+  content: ""; position: absolute; left: 50%; bottom: calc(100% + 3px); transform: translateX(-50%);
+  border: 5px solid transparent; border-top-color: var(--bronze);
+  opacity: 0; pointer-events: none; z-index: 31; transition: opacity .15s;
+}
+.door:hover::after, .door:focus-visible::after, .door:hover::before, .door:focus-visible::before { opacity: 1; transform: translateX(-50%) translateY(0); }
+
 .act.primary svg { color: var(--bronze-hi); }
 .act.primary .act-lbl { color: var(--bronze-hi); }
 .act.primary:hover { border-color: var(--bronze-hi); box-shadow: 0 0 24px rgba(192,138,60,.18); }

@@ -30,6 +30,22 @@
      · nothing here writes game.pop.npc, popCap(), popUsed() or army.workers.
    So the HUD's population, the staffing ratio and this roster cannot drift.
 
+   ⚠ WHERE THE LIVE ROSTER ACTUALLY IS, AS OF THE bindRoster WIRING.
+   Nothing imports this module. `public/node-city/index.html` grew its own
+   roster (`citizens` / `CITIZENS_API`, seeded by citEnsure) and that is the one
+   mounted on `window.MythicCitizens`, the one the talk dialog and the walking
+   agents read, and the one `households.js bindRoster()` is now called with.
+   Mounting this file as well would put two rosters on the same global and give
+   the player two different answers about the same person, so it was left where
+   it is rather than wired up a second time.
+   The contract below is unchanged and still correct: `sync()` is the function
+   bindRoster requires and calls. On the live side that verb means "re-point the
+   named roster at the jobs the economy says exist" (node-city's citEmpSync);
+   here it still means the full city reconcile. If this module is ever mounted,
+   those two meanings have to be reconciled BEFORE it is — bindRoster calls
+   whatever `sync` is, and a reconcile pass firing on the economy's 4 s beat is
+   not what that beat is for.
+
    🔌 THE SEAM FOR `offline-life` (the other builder this round):
      window.MythicCitizens = {
        list(), byId(id), count(),

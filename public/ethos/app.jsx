@@ -112,6 +112,39 @@ const fmt = (n, opts = {}) => {
   const { decimals = 0 } = opts;
   return new Intl.NumberFormat("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals }).format(n);
 };
+/* 💵 WHAT THE ACCOUNT IS WORTH IN REAL MONEY.
+   The two rates the owner gave, written down once and used everywhere, so a
+   change to the peg is a one-line change and not a hunt through the markup.
+     · 5,000 Cinder = $1
+     · 1 Aza Coin  = $1   ← Aza is the STABLE · MARKET-PEGGED currency, which
+       is why it is 1:1 and Cinder is not.
+   ⚠ THIS IS A DISPLAY, NOT A TILL. Nothing here can be spent, cashed out or
+     traded at these numbers — it converts balances the bank already holds so
+     a player can see what their pile is worth. Any real cash-out has to go
+     through the server, which owns the wallet. */
+/* 🔴 THE RATES NOW LIVE IN public/src/econ/peg.js AND ARE ONLY READ HERE.
+   They were declared in this file, which meant only the Bank could see
+   them — and the Crash Exchange, in a different document, needed the same
+   peg to price a portfolio. Two copies of an exchange rate are noticed for
+   the first time when two screens disagree in front of a player about how
+   much money they have, so there is one copy and this is not it.
+   ⚠ THE FALLBACK LITERALS ARE THE SAME NUMBERS, DELIBERATELY. A 404 on the
+     peg must cost nothing at all — the Bank showing a DIFFERENT wrong
+     valuation would be far worse than it showing the right one from a stale
+     copy. If they ever need changing, peg.js is the file; these exist only
+     so a missing script cannot blank the account panel. */
+const _PEG = (typeof window !== 'undefined' && window.MythicPeg) ? window.MythicPeg : null;
+const USD_PER_CINDER = _PEG ? _PEG.USD_PER_CINDER : 1 / 5000;
+const USD_PER_AZA    = _PEG ? _PEG.USD_PER_AZA    : 1;
+const usdOf = (cinder, aza) => _PEG ? _PEG.usdOf(cinder, aza) : (
+  (Math.max(0, Number(cinder) || 0) * USD_PER_CINDER) +
+  (Math.max(0, Number(aza) || 0) * USD_PER_AZA));
+/* Two decimals always. A balance worth $758.2 reads as an error next to one
+   worth $1,596.00, and money with a ragged tail looks like a rounding bug. */
+const usd = (n) => "$" + new Intl.NumberFormat("en-US", {
+  minimumFractionDigits: 2, maximumFractionDigits: 2,
+}).format(Math.max(0, Number(n) || 0));
+
 const fmtTime = (s) => {
   const h = Math.floor(s / 3600).toString().padStart(2,"0");
   const m = Math.floor((s % 3600) / 60).toString().padStart(2,"0");
@@ -284,6 +317,21 @@ function openStatementWindow(account) {
       .map(function (r) { return "<tr><td>" + esc(r.icon || "") + " " + esc(r.name) + "</td><td style='text-align:right'>" + fmtN(bRes[r.id]) + "</td></tr>"; })
       .join("");
     if (!resRows) resRows = "<tr><td colspan='2' style='color:#888;text-align:center'>(none)</td></tr>";
+    /* 💵 WHAT THE ACCOUNT IS WORTH, for the statement.
+       usdOf / usd / USD_PER_* are the same helpers the Account Value panel on
+       the Vaults page uses. Reusing them rather than re-deriving here is the
+       point: a printed statement that disagreed with the screen it was
+       printed from would be worse than no statement. */
+    var _cB = Math.max(0, Number(account.cinder) || 0);
+    var _cW = Math.max(0, Number(account.walletCinder) || 0);
+    var _aB = Math.max(0, Number(account.aza) || 0);
+    var _aW = Math.max(0, Number(account.walletAza) || 0);
+    var _bankUsd   = usdOf(_cB, _aB);
+    var _walletUsd = usdOf(_cW, _aW);
+    var _totalUsd  = _bankUsd + _walletUsd;
+    var _cinderPerDollar = Math.round(1 / USD_PER_CINDER);
+    var _azaPerDollar    = Math.round(1 / USD_PER_AZA);
+
     var led = Array.isArray(account.ledger) ? account.ledger : [];
     var ledRows = led.length ? led.slice(0, 60).map(function (e) {
       var c = (e.cinder | 0), a = (e.aza | 0);
@@ -310,6 +358,30 @@ function openStatementWindow(account) {
         + "<tr><td>◉ Aza Coin · in bank</td><td style='text-align:right'>" + fmtN(account.aza) + "</td></tr>"
         + "<tr><td>◉ Aza Coin · in wallet</td><td style='text-align:right'>" + fmtN(account.walletAza) + "</td></tr>"
       + "</table>"
+      /* 💵 ACCOUNT VALUE — the headline a statement is actually read for.
+         Printed black-on-white like the rest of the page rather than in the
+         app's colours: this sheet goes through a printer. */
+      + "<h2>Account Value</h2>"
+      + "<div style='border:1px solid #161616;padding:14px 16px'>"
+        + "<div class='muted' style='letter-spacing:.08em;text-transform:uppercase;font-size:10.5px'>Everything you hold · bank + wallet</div>"
+        + "<div style='font-size:30px;font-weight:700;letter-spacing:-0.02em;margin-top:2px'>" + usd(_totalUsd) + "</div>"
+        + "<div class='row' style='margin-top:10px;font-size:12.5px'>"
+          + "<span>In the bank &nbsp;<b>" + usd(_bankUsd) + "</b></span>"
+          + "<span>In the wallet &nbsp;<b>" + usd(_walletUsd) + "</b></span>"
+        + "</div>"
+      + "</div>"
+      + "<table style='margin-top:6px'>"
+        + "<tr><td>🜂 Cinder · " + fmtN(_cB + _cW) + " units</td><td style='text-align:right'>" + usd(usdOf(_cB + _cW, 0)) + "</td></tr>"
+        + "<tr><td>◉ Aza Coin · " + fmtN(_aB + _aW) + " coins</td><td style='text-align:right'>" + usd(usdOf(0, _aB + _aW)) + "</td></tr>"
+      + "</table>"
+      /* ⚠ AND WHAT IT DOES NOT COUNT, said on the page. The Banked Resources
+         table sits directly below this figure, so a reader would reasonably
+         assume the total covers it. It does not — metal, water and the rest
+         have no fixed exchange rate, and inventing one to make the number
+         bigger would be the kind of made-up figure this project keeps having
+         to rip out of panels. */
+      + "<div class='muted' style='margin-top:6px'>Valued at " + fmtN(_cinderPerDollar) + " Cinder = $1 and " + fmtN(_azaPerDollar) + " Aza Coin = $1. "
+        + "Banked resources listed below are <b>not</b> included — they have no fixed exchange rate.</div>"
       + "<h2>Banked Resources</h2><table><tr><th style='text-align:left'>Resource</th><th style='text-align:right'>Units</th></tr>" + resRows + "</table>"
       + "<h2>Transaction Ledger</h2><table><tr><th style='text-align:left'>When</th><th style='text-align:left'>Kind</th><th style='text-align:left'>Note</th><th style='text-align:right'>Amount</th></tr>" + ledRows + "</table>"
       + "<div class='muted' style='margin-top:24px'>End of statement. Bank of Ethos · Camp Heights Treasury.</div>"
@@ -378,6 +450,14 @@ function App() {
             bankRes: (d.bankRes && typeof d.bankRes === 'object') ? d.bankRes : {},
             bankReady: !!d.bankReady,
             extCols: !!d.extCols,
+            // Vault ceiling from the parent. Absent (0) when an older
+            // parent seeded us — every readout below is guarded on cap > 0
+            // rather than defaulting, so a stale parent shows no cap at all
+            // instead of a made-up one.
+            cap: Math.max(0, Number(d.vaultCap) || 0),
+            fee: Math.max(0, Number(d.vaultFee) || 0),
+            used: Math.max(0, Number(d.vaultUsed) || 0),
+            room: Math.max(0, Number(d.vaultRoom) || 0),
           },
           // Real ledger + Cinder requests (incoming pending = ask to pay,
           // outgoing = ones we sent).
@@ -387,6 +467,8 @@ function App() {
           // Hero-collateralized loans + the player's current capacity.
           loans: Array.isArray(d.loans) ? d.loans : ((prev && prev.loans) || []),
           loanCap: (d.loanCap && typeof d.loanCap === 'object') ? d.loanCap : ((prev && prev.loanCap) || { aza: 0, max: 20, perLv: 5, heroLv: 0, perCinder: 5000 }),
+          // 🏦 the once-only starter loan (40,000 🜂), and whether it has been taken
+          starterLoan: (d.starterLoan && typeof d.starterLoan === 'object') ? d.starterLoan : ((prev && prev.starterLoan) || { cinder: 40000, installments: 4, used: false }),
           // 🏢 Business loans from owned operations (Black River Petroleum,
           //    Ethos Fuel Command, etc.). Mirrored from BankEthos.businessLoans
           //    on the parent. NO hero-level gate — these are corporate, not
@@ -541,7 +623,7 @@ function AppInner({ account, updateAccount, transfers, sendMoney, pushToast, onL
         <Topbar account={account} onSend={() => setSendTo({})} onLogout={onLogout} />
         <div className="content">
           <PageBoundary key={route} route={route}>
-          {route === "vaults" && <PageVaults role={role} account={account} liveCinder={liveCinder} sessionSec={sessionSec} onSend={() => setSendTo({})} />}
+          {route === "vaults" && <PageVaults role={role} account={account} onSend={() => setSendTo({})} />}
           {route === "transfers" && <PageTransfers account={account} transfers={transfers} onSend={(c) => setSendTo(c || {})} />}
           {route === "directory" && <PageDirectory account={account} onSend={(c) => setSendTo(c)} />}
           {route === "ledger" && <PageLedger account={account} transfers={transfers} />}
@@ -640,7 +722,7 @@ function Topbar({ account, onSend, onLogout }) {
 /* ============================================================
    PAGE: VAULTS (Dashboard)
    ============================================================ */
-function PageVaults({ role, account, liveCinder, sessionSec, onSend }) {
+function PageVaults({ role, account, onSend }) {
   const [depOpen, setDepOpen] = useState(false);
   return (
     <div>
@@ -683,7 +765,10 @@ function PageVaults({ role, account, liveCinder, sessionSec, onSend }) {
         const inflow24 = ledger.filter(e => (e.ts || 0) >= last24 && (e.cinder | 0) > 0).reduce((s, e) => s + (e.cinder | 0), 0);
         return (
           <div className="grid g-4" style={{ marginBottom: 14 }}>
-            <Metric k="Resources in Bank" v={fmt(bankedTotal) + " units"} sub={bankedTotal > 0 ? bankedTypes + " of " + cat.length + " types" : "deposit via Ops Vault"} />
+            <Metric k="Resources in Bank"
+                    v={(v.cap | 0) > 0 ? fmt((v.used | 0)) + " / " + fmt(v.cap | 0) : fmt(bankedTotal) + " units"}
+                    sub={(v.cap | 0) > 0 ? fmt(v.room | 0) + " units of room"
+                                         : (bankedTotal > 0 ? bankedTypes + " of " + cat.length + " types" : "deposit via Ops Vault")} />
             <Metric k="Cinder Inflow (24h)" v={fmt(inflow24)} sub={<><CinderGlyph size={11}/> CDR</>} />
             <Metric k="Active Mercenary Contracts" v={String(activeContracts.length)} sub={activeContracts.length ? "see Mercenary Ops" : "(none)"} />
             <Metric k="Active Loans" v={activeLoans.length ? activeLoans.length + " · " + fmt(owed) : "0"} sub={activeLoans.length ? <><CinderGlyph size={11}/> CDR owed</> : "(none)"} />
@@ -692,36 +777,59 @@ function PageVaults({ role, account, liveCinder, sessionSec, onSend }) {
       })()}
 
       <div className="grid" style={{ gridTemplateColumns: "1.4fr 1fr", gap: 14, marginBottom: 14 }}>
-        {/* Active session live panel */}
+        {/* 💵 ACCOUNT VALUE — what this player is actually holding, in USD.
+            REPLACES a "Live Session — Vash Korr · Ranked Battle Ops" panel that
+            was demo furniture end to end: a name nobody owns, a clock counting
+            from a hardcoded 11,520 seconds, "+12/sec" that no stream produced,
+            and a flat 18,240 loot estimate. Every number below is the player's
+            own balance, read from the same `account` object the two balance
+            cards at the top of this page are drawn from — so this panel and
+            those cards cannot disagree. */}
         <div className="panel">
-          <div className="panel-h">
-            <div className="row" style={{ gap: 8 }}>
-              <span className="live-dot"></span>
-              <h3>Live Session — Vash Korr · Ranked Battle Ops</h3>
-            </div>
-            <span className="chip live"><span className="dot" style={{ background: "var(--good)" }}></span>Clocked In</span>
-          </div>
-          <div className="panel-b">
-            <div className="row between" style={{ alignItems: "flex-end", marginBottom: 16 }}>
-              <div>
-                <div className="label">Session Time · Auto clock-out at 08:00:00</div>
-                <div className="clock-time mono">{fmtTime(sessionSec)}<span className="ms"> / 08:00:00</span></div>
-              </div>
-              <div style={{ textAlign: "right" }}>
-                <div className="label">Cinder generated</div>
-                <div className="display" style={{ fontSize: 30, fontWeight: 600, color: "var(--cinder)" }} >{fmt(liveCinder)}</div>
-                <div className="mono" style={{ fontSize: 11, color: "var(--ink-mute)" }}>+12/sec · battle stream</div>
-              </div>
-            </div>
-            <div className="bar" style={{ marginBottom: 16 }}>
-              <div style={{ width: `${(sessionSec / (8*3600)) * 100}%`, background: "linear-gradient(90deg, var(--violet), var(--cinder))" }}></div>
-            </div>
-            <div className="grid g-3" style={{ gap: 10 }}>
-              <SplitCard label="Mercenary cut · 60%" value={Math.round(liveCinder * 0.6)} kind="cinder" />
-              <SplitCard label="Employer cut · 40%" value={Math.round(liveCinder * 0.4)} kind="cinder" />
-              <SplitCard label="Loot value est." value={18_240} kind="aza" decimals={0} />
-            </div>
-          </div>
+          {(() => {
+            const cBank = Math.max(0, Number(account.cinder) || 0);
+            const cWall = Math.max(0, Number(account.walletCinder) || 0);
+            const aBank = Math.max(0, Number(account.aza) || 0);
+            const aWall = Math.max(0, Number(account.walletAza) || 0);
+            const bankUsd   = usdOf(cBank, aBank);
+            const walletUsd = usdOf(cWall, aWall);
+            const totalUsd  = bankUsd + walletUsd;
+            /* Guard the divide: a brand-new account holds nothing, and 0/0 would
+               put NaN% into the bar width and collapse the layout. */
+            const bankPct = totalUsd > 0 ? (bankUsd / totalUsd) * 100 : 0;
+            return (
+              <>
+                <div className="panel-h">
+                  <h3>Account Value</h3>
+                  <span className="label">USD equivalent</span>
+                </div>
+                <div className="panel-b">
+                  <div className="row between" style={{ alignItems: "flex-end", marginBottom: 16 }}>
+                    <div>
+                      <div className="label">Everything you hold · bank + wallet</div>
+                      <div className="clock-time mono">{usd(totalUsd)}</div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div className="label">Of that, in the bank</div>
+                      <div className="display" style={{ fontSize: 30, fontWeight: 600, color: "var(--good)" }}>{usd(bankUsd)}</div>
+                      <div className="mono" style={{ fontSize: 11, color: "var(--ink-mute)" }}>
+                        {totalUsd > 0 ? Math.round(bankPct) + "% banked · " + usd(walletUsd) + " still in the wallet"
+                                      : "nothing deposited yet"}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="bar" style={{ marginBottom: 16 }}>
+                    <div style={{ width: `${bankPct}%`, background: "linear-gradient(90deg, var(--violet), var(--cinder))" }}></div>
+                  </div>
+                  <div className="grid g-3" style={{ gap: 10 }}>
+                    <UsdCard label="Cinder · CDR" units={cBank + cWall} value={usdOf(cBank + cWall, 0)} rate="5,000 CDR = $1" kind="cinder" />
+                    <UsdCard label="Aza Coin · AZA" units={aBank + aWall} value={usdOf(0, aBank + aWall)} rate="1 AZA = $1" kind="aza" />
+                    <UsdCard label="Held in wallet" units={null} value={walletUsd} rate="not yet deposited" kind="violet" />
+                  </div>
+                </div>
+              </>
+            );
+          })()}
         </div>
 
         {/* Vault composition */}
@@ -929,6 +1037,33 @@ function BalanceCard({ kind, amount, decimals = 0, delta, spark, onSend, wallet 
         />
         <button className="btn sm" disabled={!bankReady} onClick={() => act("deposit")} title={`Move ${sym} from wallet into the bank`}>Deposit</button>
         <button className="btn sm ghost" disabled={!bankReady} onClick={() => act("withdraw")} title={`Move ${sym} from the bank to your wallet`}>Withdraw</button>
+        {/* 🏢 WALLET → CORPORATION TREASURY, 1% to the bank.
+            Cinder only: a corporation treasury holds Cinder, so offering this on
+            the Aza card would be a control that cannot succeed.
+            Deliberately NOT gated on bankReady — this moves WALLET Cinder and
+            never touches the vault row, so a bank read that has not landed yet is
+            no reason to refuse it. The parent re-validates the balance, the corp
+            membership and the fee before a coin moves. */}
+        {isCinder && (
+          <button
+            className="btn sm"
+            disabled={!(n > 0)}
+            /* 🔴 DISABLED WHEN THERE IS NO AMOUNT, rather than silently ignoring
+               the click. The first cut wrapped the whole handler in an
+               "if (n > 0)" with no disabled state, so tapping it with an empty
+               field did NOTHING — no toast, no error, no state change — which
+               reads exactly like a dead control. Reported as "there is no
+               button", and that is the honest description of a button that
+               never answers.
+               ⚠ Deposit and Withdraw beside it share the original flaw via act():
+                 they also return silently on an empty field. Left alone here
+                 because changing three controls to fix one report is how an
+                 unrelated regression gets shipped — but it is the same bug and
+                 worth the same treatment next time this file is open. */
+            onClick={() => { if (!(n > 0)) return; if (n > wallet) { setAmt(String(wallet)); return; } if (boeTx("deposit", "corp", n)) setAmt(""); }}
+            title="Move Cinder from your wallet into your corporation's shared treasury. The bank takes 1% — you are shown the fee and the net before it goes through. Shared funds are not refundable to you personally."
+          >To Corp · 1%</button>
+        )}
       </div>
       <div className="bal-foot" style={{ position: "relative", zIndex: 1 }}>
         <div style={{ flex: 1 }}><div className="k">In Bank</div><div className="v">{fmt(amount, { decimals })}</div></div>
@@ -945,6 +1080,21 @@ function Metric({ k, v, sub, d, dir }) {
       <div className="k">{k}</div>
       <div className="v display row" style={{ gap: 6 }}>{v} {sub && <span style={{ fontSize: 11, color: "var(--ink-mute)", fontFamily: "JetBrains Mono", display: "inline-flex", alignItems: "center", gap: 4 }}>{sub}</span>}</div>
       {d && <div className={`d ${dir === "up" ? "up" : "down"}`}>{dir === "up" ? "▲" : "▼"} {d}</div>}
+    </div>
+  );
+}
+
+/* One converted line: what you hold, what it is worth, and the rate that got
+   from one to the other. The rate is ON the card rather than in a footnote —
+   a money figure a player cannot check is a money figure they will not trust. */
+function UsdCard({ label, units, value, rate, kind }) {
+  return (
+    <div style={{ border: "1px solid var(--hair)", padding: 12, background: "var(--bg-1)" }}>
+      <div className="label">{label}</div>
+      <div className="display" style={{ fontSize: 20, fontWeight: 600, marginTop: 6, color: `var(--${kind})` }}>{usd(value)}</div>
+      <div className="mono" style={{ fontSize: 11, color: "var(--ink-mute)", marginTop: 4 }}>
+        {units === null ? rate : fmt(units) + " · " + rate}
+      </div>
     </div>
   );
 }
@@ -1632,6 +1782,9 @@ function OpsResCard({ meta, banked, inWallet, canBank }) {
   const tone = meta.color || "var(--violet)";
   const total = banked + inWallet;
   const act = (op) => {
+    /* Deposit is limited by the WALLET; withdraw and drop are both limited by
+       what is BANKED, because both take from the bank side. The host re-checks
+       this inside its transaction — this only stops an obviously bad send. */
     const max = op === "deposit" ? inWallet : banked;
     if (!(n > 0)) return;
     if (n > max) { setAmt(String(max)); return; }
@@ -1666,6 +1819,14 @@ function OpsResCard({ meta, banked, inWallet, canBank }) {
         />
         <button className="btn sm" disabled={!canBank || inWallet <= 0} onClick={() => act("deposit")} title="Move from wallet into the bank">Deposit</button>
         <button className="btn sm ghost" disabled={!canBank || banked <= 0} onClick={() => act("withdraw")} title="Move from the bank to your wallet">Withdraw</button>
+        {/* 🗑 DROP — destroys the amount outright. Deliberately LAST in the row
+            and the only red control on the card, so it is never the button a
+            thumb lands on by accident, and disabled with an empty shelf so it
+            never looks live on nothing. The host confirms before any unit
+            moves and credits nothing anywhere — see boeDropRes. */}
+        <button className="btn sm" style={{ color: "var(--bad)", borderColor: "var(--bad)" }}
+          disabled={!canBank || banked <= 0} onClick={() => act("drop")}
+          title="Destroy this many — frees vault room, you get nothing back">Drop</button>
       </div>
     </div>
   );
@@ -1682,6 +1843,40 @@ function PageOpsVault({ account }) {
   const walletTotal = cat.reduce((s, r) => s + (wRes[r.id] | 0), 0);
   const bankedTypes = cat.filter(r => (bRes[r.id] | 0) > 0).length;
 
+  /* 🏦 THE CEILING, SHOWN WHERE THE DEPOSITS HAPPEN.
+     cap/used/room come from the parent's __boeVault — the same helpers
+     boeDepositRes refuses with — so this readout and the rule move together.
+     "used" is preferred over the locally summed bankedTotal for the same
+     reason: one number, one source. Guarded on cap > 0 so an older parent
+     renders the original "x of N types" line rather than a made-up "0 / 0". */
+  const vCap  = (vault && vault.cap)  | 0;
+  const vUsed = vCap > 0 ? ((vault && vault.used) | 0) : bankedTotal;
+  const vRoom = (vault && vault.room) | 0;
+
+  /* 🔎 FIND A RESOURCE. The catalogue is long and almost every card reads 0/0,
+     so the two questions a player actually has — "what can I put in right now"
+     and "where is the one I am looking for" — were both answered by scrolling.
+     `have` is keyed on the WALLET, not the bank: what you can deposit is what
+     is loose in your wallet, which is the question the Deposit button asks. */
+  const [q, setQ] = React.useState("");
+  const [only, setOnly] = React.useState("all");
+  const needle = q.trim().toLowerCase();
+  const shown = cat.filter(r => {
+    const inB = bRes[r.id] | 0, inW = wRes[r.id] | 0;
+    if (only === "have" && inW <= 0) return false;
+    if (only === "banked" && inB <= 0) return false;
+    if (only === "empty" && (inW > 0 || inB > 0)) return false;
+    if (!needle) return true;
+    return String(r.name || "").toLowerCase().includes(needle)
+        || String(r.id || "").toLowerCase().includes(needle);
+  });
+  const FILTERS = [
+    { k: "all",    label: "All",         n: cat.length },
+    { k: "have",   label: "Can deposit", n: cat.filter(r => (wRes[r.id] | 0) > 0).length },
+    { k: "banked", label: "In bank",     n: bankedTypes },
+    { k: "empty",  label: "Empty",       n: cat.filter(r => !((wRes[r.id] | 0) > 0 || (bRes[r.id] | 0) > 0)).length },
+  ];
+
   return (
     <div>
       <div className="page-head">
@@ -1695,7 +1890,10 @@ function PageOpsVault({ account }) {
       </div>
 
       <div className="grid g-4" style={{ marginBottom: 14 }}>
-        <Metric k="Resources in bank" v={`${fmt(bankedTotal)} units`} sub={`${bankedTypes} of ${cat.length} types`} />
+        <Metric k="Resources in bank"
+                v={vCap > 0 ? `${fmt(vUsed)} / ${fmt(vCap)}` : `${fmt(bankedTotal)} units`}
+                sub={vCap > 0 ? `${fmt(vRoom)} units of room · ${bankedTypes} of ${cat.length} types`
+                              : `${bankedTypes} of ${cat.length} types`} />
         <Metric k="Resources in wallet" v={`${fmt(walletTotal)} units`} sub="loose salvage" />
         <Metric k="Cinder in bank" v={fmt(account ? account.cinder : 0)} sub="🔥 CDR" />
         <Metric k="Aza in bank" v={fmt(account ? account.aza : 0)} sub="👑 AZA" />
@@ -1711,8 +1909,42 @@ function PageOpsVault({ account }) {
       )}
 
       {vault && (
+        <div className="panel" style={{ padding: "10px 12px", marginBottom: 12, display: "flex",
+             gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <input
+            value={q}
+            onChange={e => setQ(e.target.value)}
+            placeholder="Search resources…"
+            style={{ flex: "1 1 220px", minWidth: 160, padding: "7px 10px", borderRadius: 8,
+                     border: "1px solid var(--edge, #2e2740)", background: "rgba(0,0,0,.35)",
+                     color: "var(--ink, #e8e2d5)", font: "inherit", fontSize: 13 }} />
+          {FILTERS.map(f => (
+            <button key={f.k} onClick={() => setOnly(f.k)}
+              style={{ cursor: "pointer", padding: "6px 11px", borderRadius: 999, fontSize: 12,
+                       fontWeight: 700, font: "inherit", whiteSpace: "nowrap",
+                       border: "1px solid " + (only === f.k ? "rgba(212,175,55,.65)" : "rgba(150,150,170,.28)"),
+                       background: only === f.k ? "rgba(212,175,55,.14)" : "rgba(0,0,0,.25)",
+                       color: only === f.k ? "#ffcf5a" : "var(--ink-dim, #9aa0a6)" }}>
+              {f.label} <span style={{ opacity: .7 }}>{f.n}</span>
+            </button>
+          ))}
+          {(needle || only !== "all") && (
+            <span style={{ fontSize: 12, color: "var(--ink-dim, #9aa0a6)" }}>
+              {shown.length} shown
+            </span>
+          )}
+        </div>
+      )}
+
+      {vault && shown.length === 0 && (
+        <div className="panel" style={{ padding: 22, textAlign: "center", color: "var(--ink-dim)" }}>
+          Nothing matches. {needle ? "Try a different search" : "Try another filter"}.
+        </div>
+      )}
+
+      {vault && (
         <div className="grid g-3">
-          {cat.map(r => (
+          {shown.map(r => (
             <OpsResCard
               key={r.id}
               meta={r}
@@ -2132,6 +2364,8 @@ function PageLoans({ account }) {
   const active = loans.filter(l => l && l.status === "active");
   const past = loans.filter(l => l && l.status !== "active");
   const canApply = cap.aza > 0 && active.length === 0;
+  const starter = (account && account.starterLoan) || { cinder: 40000, installments: 4, used: false };
+  const canStarter = !starter.used && active.length === 0;
   return (
     <div>
       {applyOpen && <ApplyLoanModal account={account} onClose={() => setApplyOpen(false)} />}
@@ -2141,6 +2375,10 @@ function PageLoans({ account }) {
           <div className="page-title display">Loans & Credit Lines</div>
         </div>
         <div className="page-actions">
+          <button className="btn" disabled={!canStarter} onClick={() => boeLoan("starter", {})}
+            title={starter.used ? "The starter loan is once per account — you have already taken it" : active.length > 0 ? "Pay off your active loan first" : "No hero collateral needed. " + fmt(starter.cinder) + " 🜂 into your bank, repaid in " + starter.installments + " weekly installments. Once per account."}>
+            <Icon name="plus" size={14}/> Starter loan · {fmt(starter.cinder)} 🜂 {starter.used ? "(taken)" : "(once)"}
+          </button>
           <button className="btn primary" disabled={!canApply} onClick={() => setApplyOpen(true)} title={!canApply ? (active.length > 0 ? "Pay off your active loan first" : "Train heroes to unlock loan capacity") : ""}>
             <Icon name="plus" size={14}/> Apply for Loan
           </button>

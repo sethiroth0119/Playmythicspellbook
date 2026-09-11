@@ -2,7 +2,7 @@
    /src/mapforge touches Supabase or localStorage for map data.
 
    Two stores, one shape:
-     cloud  → public.world_maps (sql/038). Needs a signed-in player AND the
+     cloud  → public.world_maps (sql/091). Needs a signed-in player AND the
               migration applied. Every call degrades: `missing` means the
               table is not there yet, `offline` means not signed in.
      local  → localStorage. Always available, per device, no sync. This is
@@ -109,7 +109,7 @@ export async function cloudDelete(id) {
   try { const r = await c.from(TABLE).delete().eq('id', id); return r.error ? fail(r.error) : { ok: true }; } catch (e) { return fail(e); }
 }
 /* Mark one map LIVE for its game: the map a mini-game loads. The partial
-   unique index in sql/039 allows one live map per (owner, game), so the old
+   unique index in sql/092 allows one live map per (owner, game), so the old
    one is cleared first; the trigger there also forces is_public on. */
 export async function cloudSetLive(id, on) {
   const c = supabase(); if (!c) return { ok: false, offline: true };
@@ -140,6 +140,16 @@ export async function cloudLive(game) {
     if (!id) return { ok: false, map: null, error: 'no map for ' + game };
     return cloudLoad(id);
   } catch (e) { return { ...fail(e), map: null }; }
+}
+/* Every public map that is a MENU BUTTON (data.menu.on) — one narrow select;
+   mapforge.menu.js caches it for the session. */
+export async function menuMaps() {
+  const c = supabase(); if (!c) return { ok: false, offline: true, rows: [] };
+  try {
+    const r = await c.from(TABLE).select('id,name,menu:data->menu').eq('is_public', true).filter('data->menu->>on', 'eq', 'true').order('updated_at', { ascending: false }).limit(200);
+    if (r.error) return { ...fail(r.error), rows: [] };
+    return { ok: true, rows: (r.data || []).map(x => ({ id: x.id, name: x.name, menu: x.menu && typeof x.menu === 'object' ? x.menu : null })).filter(x => x.menu && x.menu.on === true) };
+  } catch (e) { return { ...fail(e), rows: [] }; }
 }
 export async function cloudSetPublic(id, on) {
   const c = supabase(); if (!c) return { ok: false, offline: true };
@@ -174,4 +184,18 @@ export async function loadLive(game) {
   if (r.ok) return { ...r, source: 'cloud' };
   const m = localLive(game);
   return m ? { ok: true, map: m, source: 'local', mine: true } : { ok: false, map: null, error: r.error || 'no map for ' + game };
+}
+/* Every game key that has a live world — cloud (any owner's, they are public
+   by trigger) plus this device's. One narrow select; the ⚒ pill caches it
+   for the session. Never throws: with no cloud it is the local set alone. */
+export async function liveGames() {
+  const games = new Set();
+  try { const ix = lsIndex(); Object.keys(ix).forEach(k => { if (ix[k].live) games.add(gameId(ix[k].game || 'sandbox')); }); } catch (e) {}
+  const c = supabase(); if (!c) return { ok: false, offline: true, games: Array.from(games) };
+  try {
+    const r = await c.from(TABLE).select('game').eq('live', true).limit(500);
+    if (r.error) return { ...fail(r.error), games: Array.from(games) };
+    (r.data || []).forEach(x => games.add(gameId(x.game || 'sandbox')));
+    return { ok: true, games: Array.from(games) };
+  } catch (e) { return { ...fail(e), games: Array.from(games) }; }
 }

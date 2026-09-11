@@ -1,0 +1,2284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Battle Stage Harness</title>
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     🔬 BATTLE STAGE HARNESS — drive battle-board/index.html without the game.
+
+     WHY THIS FILE EXISTS
+     Until now the only way to look at the canvas stage was its own built-in
+     standalone demo (the `else` branch at battle-board/index.html:2925-2933).
+     That demo is NOT what the game shows, for a reason that is easy to miss:
+     the stage checks `EMBEDDED` (:2736) and, when it is in an iframe, ZEROES
+     `CONFIG.SAFE` and `CONFIG.viewShiftY` (:2917-2920). `VIEW.scale` fits the
+     vertical FOV to the SAFE-BOX height (:441), so the standalone preview is
+     framed differently from the in-game stage — different zoom, different
+     horizon. Anyone who tunes the board against the standalone demo is tuning
+     against a view the player never sees.
+
+     So this harness does the ONE thing that makes a capture trustworthy: it
+     embeds the stage in an iframe exactly the way `_bbStageMount()` does
+     (index.html:104150-104166) and speaks the real `board:*` postMessage
+     protocol at it. Every payload below is produced by a bridge function
+     copied from index.html — same field names, same game-y → board-z rename,
+     same absolute-URL rule. If the game can put the board in a state, this
+     harness can too, and the pixels are the pixels the player would get.
+
+     WHAT IS DELIBERATELY *NOT* COPIED
+     - No game rules. Scenarios are fixtures, not a simulation. The board owns
+       no pathfinding either (CONTRACT §1), so "legal moves" here are a painted
+       set of strings, exactly as they are on the wire.
+     - No Kalon handling in `_bbUnitKey`. The real one (index.html:103328) has
+       a `kalon:` branch for transformed units; there are no transforms in a
+       fixture, and inventing one would be inventing protocol.
+
+     🏷 AS-SHIPPED vs TARGET-STATE — READ THIS BEFORE JUDGING A CAPTURE
+     A harness fixture can only be trusted as far as the GAME's sender can
+     actually produce it, and for the map payload it currently cannot. The one
+     producer of the battle stage's `map` is `_bbMapFromEditor`
+     (index.html:103208); see the long note above RUIN_TILES for exactly what
+     it does and does not emit. The short version is that with the shipped
+     default it sends an EMPTY tiles array — no props, no hazards, no
+     elevation — while every richly-terrained scene here is a fixture showing
+     what the board COULD draw if something sent it.
+
+     So every scene carries `shipped: true|false`, the chrome panel labels it,
+     and `?shot=1` stamps the label into the corner of the PNG. Exactly one
+     scene is honest about today: `gamemap`. Judge "does the game look like
+     this" against that one. Judge "can the board draw this" against the rest.
+
+     USAGE
+       /battle-board/_harness.html?scene=gamemap           what a match shows TODAY
+       /battle-board/_harness.html?scene=skirmish          what the board CAN show
+       /battle-board/_harness.html?scene=skirmish&shot=1   capture it
+       node .gauntlet/shot.mjs "/battle-board/_harness.html?scene=gamemap&shot=1" out.png 1600 900
+
+     `?host=boardarea|full` overrides the host box (see boardAreaRect below).
+
+     `?shot=1` hides the harness chrome and publishes `window.__harnessReady`
+     (see the READY SIGNAL block near the bottom). `window.__harness` is the
+     live driver handle — `__harness.post('timeOfDay',{key:'night'})` works
+     from a console or from Playwright.
+     ═══════════════════════════════════════════════════════════════════════ -->
+<style>
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  html,body{ width:100%; height:100%; overflow:hidden; background:#05040a; }
+  body{ font-family:'Cinzel','Trajan Pro',Georgia,serif; color:#f6efe3; }
+
+  /* The game mounts the stage into a host div sized to `.board-area`'s rect
+     and stretches the iframe to `inset:0` inside it (`_bbStageTrack`,
+     index.html:104381). The harness does the same, and `sizeHost()` writes the
+     box — NOT `inset:0`, because the host's aspect is load-bearing (see
+     boardAreaRect). Left/top/width/height start at full-viewport and are
+     overwritten on load and on resize. */
+  #bb-stage-host{ position:fixed; left:0; top:0; width:100%; height:100%; }
+  #bb-stage-host .bb-stage{
+    position:absolute; inset:0; width:100%; height:100%; border:0; display:block;
+    background:#05040a; opacity:0; transition:opacity .2s ease;
+  }
+  #bb-stage-host .bb-stage.ready{ opacity:1; }
+
+  /* 🖱 THE CATCHER. In game the stage paints BELOW the app so the HUD stays on
+     top, which means the canvas can never receive its own mouse events; the
+     host captures them and forwards normalised coords over `board:pointer`
+     (CONTRACT §1.4). Here the iframe is on top and *could* use its own local
+     listeners (battle-board/index.html:2618-2632) — so a transparent catcher
+     is laid over it on purpose, to make sure what we exercise is the SAME
+     forwarded path the game uses. */
+  #bb-catch{ position:absolute; inset:0; z-index:3; background:transparent; cursor:crosshair; }
+
+  #chrome{
+    position:fixed; left:14px; top:14px; z-index:10; width:290px;
+    padding:12px 14px 11px; border:2px solid transparent; border-radius:10px;
+    background:
+      linear-gradient(180deg,#171625,#12121e) padding-box,
+      linear-gradient(155deg,#f4d47c 0%,#c29a3a 22%,#7a5f24 50%,#c29a3a 78%,#f6d780 100%) border-box;
+    box-shadow:0 7px 24px rgba(0,0,0,.6), inset 0 0 26px rgba(0,0,0,.5);
+    font-size:12px; line-height:1.5;
+  }
+  #chrome h1{ font-size:11px; font-weight:900; letter-spacing:.18em; color:#d4af37; margin-bottom:2px; }
+  #chrome .sub{ font-family:'EB Garamond',Georgia,serif; font-size:12.5px; color:#9a8d6c; margin-bottom:9px; }
+  #chrome .lab{ font-size:9.5px; font-weight:700; letter-spacing:.18em; color:#a2957a; margin-top:8px; }
+  #chrome .scenes{ display:flex; flex-wrap:wrap; gap:5px; margin-top:4px; }
+  #chrome a{
+    display:inline-block; padding:3px 8px; border-radius:5px; text-decoration:none;
+    font-size:10.5px; letter-spacing:.06em; color:#e9dab2;
+    border:1.5px solid rgba(210,164,78,.55); background:rgba(10,9,15,.85);
+  }
+  #chrome a.on{ color:#3a2606; background:linear-gradient(180deg,#ffe9a2,#d99f34); border-color:#8a6218; font-weight:700; }
+  #chrome .read{ font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11px; color:#b9afa0; }
+  #chrome .err{ color:#e0553c; }
+  /* ◆ = as-shipped, ◇ = target-state fixture. The marker is on the chip so the
+     distinction survives someone screenshotting only the panel. */
+  #chrome a.ship::before{ content:'◆ '; color:#5edb8a; }
+  #chrome a.fix::before{ content:'◇ '; color:#b9afa0; }
+  #chrome .legend{ font-size:9.5px; letter-spacing:.06em; color:#7a7466; margin-top:6px; }
+  #chrome .prov{ font-size:9.5px; font-weight:700; letter-spacing:.18em; margin-bottom:6px; }
+  #chrome .prov.ship{ color:#5edb8a; }
+  #chrome .prov.fix{ color:#e0a34a; }
+  body.shot #chrome{ display:none; }
+
+  /* 🏷 PROVENANCE WATERMARK. A PNG outlives the URL that made it, and the whole
+     failure this harness exists to prevent is someone treating a fixture as
+     evidence of what the game looks like. So the label is burned into the
+     capture itself, small enough not to compete with the board and impossible
+     to crop off accidentally without noticing. Hidden outside ?shot=1 — the
+     chrome panel says the same thing, louder. */
+  #h-mark{ display:none; }
+  body.shot #h-mark{
+    display:block; position:fixed; left:10px; bottom:9px; z-index:11;
+    font-family:ui-monospace,Menlo,Consolas,monospace; font-size:10px;
+    letter-spacing:.06em; padding:3px 7px; border-radius:4px;
+    background:rgba(5,4,10,.72); border:1px solid rgba(210,164,78,.35);
+    color:#b9afa0; white-space:nowrap;
+  }
+  body.shot #h-mark b{ font-weight:700; }
+
+  /* 📐 FRAME GUIDES. Only drawn when the host is sized to the in-game
+     `.board-area` rect, where the board legitimately occupies about half the
+     screen and the rest is HUD. Without these the surround reads as a broken
+     capture; with them it reads as the point — this is the board's real share
+     of a 1600×900 match. Deliberately drawn as hairline outlines with caps
+     labels so nobody mistakes them for game UI: the game's rail is an opaque
+     gold-bordered panel (CONTRACT §6.4), nothing like this. */
+  #h-guides{ display:none; }
+  body.shot.guides #h-guides{ display:block; position:fixed; inset:0; z-index:2; pointer-events:none; }
+  #h-guides div{
+    position:absolute; border:1px dashed rgba(210,164,78,.22);
+    font-family:ui-monospace,Menlo,Consolas,monospace; font-size:10px;
+    letter-spacing:.1em; color:rgba(185,175,160,.42); padding:5px 7px;
+  }
+  #h-guides div.board{ border-style:solid; border-color:rgba(94,219,138,.30); color:rgba(94,219,138,.5); }
+  body.shot #h-mark b.ship{ color:#5edb8a; }
+  body.shot #h-mark b.fix{ color:#e0a34a; }
+</style>
+</head>
+<body>
+<div id="bb-stage-host"><div id="bb-catch"></div></div>
+<div id="chrome">
+  <h1>BATTLE STAGE HARNESS</h1>
+  <div class="prov" id="h-prov">…</div>
+  <div class="sub" id="h-desc">…</div>
+  <div class="lab">SCENE</div>
+  <div class="scenes" id="h-scenes"></div>
+  <div class="legend">◆ as-shipped &nbsp;·&nbsp; ◇ target-state fixture</div>
+  <div class="lab">HOST BOX</div>
+  <div class="read" id="h-host">…</div>
+  <div class="lab">BOARD → HOST</div>
+  <div class="read" id="h-read">waiting for board:ready…</div>
+</div>
+<div id="h-guides"></div>
+<div id="h-mark"></div>
+
+<script>
+'use strict';
+(function () {
+
+/* 🚦 READY SIGNAL — FIRST STATEMENT IN THE IIFE, on purpose, because its
+   PRESENCE is the contract and everything below it can throw. `.gauntlet/
+   shot.mjs` probes for `typeof window.__harnessReady !== 'undefined'`: defined
+   means "this page publishes a real signal, wait for it"; undefined means "no
+   signal, use the fixed delay" — which is how every other page in the repo
+   keeps working unchanged. It used to sit ~470 lines down, after the ROSTER and
+   SCENES construction, so a throw in any of that left the global undefined and
+   silently downgraded a stalled capture into a fixed-delay one. The gate that
+   flips it to true is at the bottom of the driver. */
+window.__harnessReady = false;
+
+/* ══════════════════════════════════════════════════════════════════
+   0 · CONSTANTS COPIED FROM THE HOST
+   ══════════════════════════════════════════════════════════════════ */
+
+/* Must track `const BB_VER` at index.html:111901. It is only a cache-buster,
+   but a harness that loads a different build than the game is a lie.
+
+   ⚠ AND IT BECAME ONE. This sat at 'v119k4' while the game moved to
+   'v121e3-hex' — 20+ builds — because nothing checks it: the value is only
+   ever fed to `frame.src = 'index.html?v=' + BB_VER` at :2032, so a stale
+   value does not error, it just serves whatever board build the browser
+   happens to have cached under the old key. That is the exact failure this
+   comment was written to prevent: the harness reproduces a bug that the
+   shipped board already fixed, or misses one it has. Re-copy on every BB_VER
+   bump. The line number above is a hint and rots too — grep for
+   `const BB_VER =` in public/index.html rather than trusting it. */
+const BB_VER = 'v121e3-hex';
+
+/* 🎨 Game surface type → board shader key. Verbatim from index.html:103972.
+   The game asserts this table against SURFACE_TYPES at load; the harness has
+   no SURFACE_TYPES to assert against, so it is a straight copy — re-copy it if
+   the game's ever changes. */
+const _BB_SURFACE_FX = {
+  oil: 'oil',              grease: 'grease',        water: 'puddle',
+  fire: 'fire',            toxin: 'gas',            web: 'web',
+  caltrops: 'caltrops',    ice: 'ice',              blood: 'blood',
+  steam: 'gas',            rift: 'void',            acid: 'toxic',
+  poison: 'mire',          electrified: 'electric', holy: 'holy',
+  cracked: 'crack'
+};
+
+/* The battlefield backdrop + ground the game registers for the neutral
+   'battlefield' location (index.html:103283-103302). Same files, same ids. */
+const _BB_BATTLEFIELD_BG = 'assets/board/Battlefield/battlefield-background.png';
+const _BB_DARK_FOREST_BG = 'assets/board/Battlefield/dark-forest.png';
+const _BB_GROUND_ART     = 'assets/board/locations/dark-forest-ground.jpg';
+
+/* The bundled default gravestone — the exact string getTombstoneImage()
+   returns when no cosmetic is equipped (index.html:74174). */
+const TOMB_ART = 'assets/tombstone/Base%20Tombstone.png';
+
+/* ⚠ ABSOLUTE URLs OR NOTHING. `_bbAbs` (index.html:103245) resolves against
+   the GAME's location, which is the deploy root. This page lives one level
+   down in /battle-board/, so resolving against `location.href` here would
+   produce /battle-board/assets/… — the exact silent-404 class the game's own
+   comment warns about. Resolve against the root explicitly. */
+const ROOT = new URL('..', location.href).href;
+function _bbAbs(u) {
+  if (!u || typeof u !== 'string') return null;
+  if (/^(data:|blob:|https?:)/i.test(u)) return u;
+  try { return new URL(u, ROOT).href; } catch (e) { return u; }
+}
+
+/* 🔑 THE BOARD'S IDENTITY KEY for a unit — index.html:103328, minus the Kalon
+   branch (see the header note). `applyUnits` re-keys and swaps a unit's def
+   only when this string changes. */
+function _bbUnitKey(u) {
+  if (!u) return '';
+  return String((u && u.cardId) || (u && u.originalCardId) || (u && u.id) || '');
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   1 · SPRITE SLICER — real frames, from art that is really in the repo.
+
+   In a live match `_bbUnitDefs` (index.html:103345) fills `def.frames` from
+   `getSpriteFrames()` — an ARRAY OF FULL-RES FRAME IMAGES uploaded through the
+   Sprite Atelier and kept in IndexedDB. None of that exists in a cold headless
+   browser, so a naive harness sends `frames:null, art:null` and every unit
+   falls through `paintSprite` to the procedural jelly (:1803). Critics would
+   then be judging a failure mode, not the board.
+
+   The repo does ship real sprite art: ~370 transparent 768×768 sheets laid out
+   5 cols × 5 rows, one animation per row. This slices row 0 (idle) into five
+   PNG data: URLs and hands them over as `frames`. That is the SAME payload
+   shape the game sends, and data: URLs are explicitly the game's own fix for
+   art that cannot cross the iframe (`_artValueToDataUrl`, index.html:103944).
+
+   Every frame is cropped to ONE shared bounding box measured across the whole
+   row, not per-frame — `paintSprite` anchors a sprite by its BOTTOM edge
+   (:1760 `dy = -h`), so per-frame trimming would make the unit bob and skate
+   across the tile as the animation cycles.
+   ══════════════════════════════════════════════════════════════════ */
+const _sheetCache = new Map();
+
+function loadImg(src) {
+  return new Promise((res, rej) => {
+    const i = new Image();
+    i.onload = () => res(i);
+    i.onerror = () => rej(new Error('sprite sheet failed to load: ' + src));
+    i.src = src;
+  });
+}
+
+async function sliceSheet(sp) {
+  const src = _bbAbs(sp.src);
+  if (_sheetCache.has(src)) return _sheetCache.get(src);
+  const img = await loadImg(src);
+  const cols = sp.cols || 5, rows = sp.rows || 5, row = sp.row | 0;
+  const cw = img.width / cols, ch = img.height / rows;
+
+  /* draw the whole row into a probe canvas so the alpha scan is one pass */
+  const probe = document.createElement('canvas');
+  probe.width = img.width; probe.height = Math.round(ch);
+  const pc = probe.getContext('2d', { willReadFrequently: true });
+  pc.drawImage(img, 0, row * ch, img.width, ch, 0, 0, probe.width, probe.height);
+  const px = pc.getImageData(0, 0, probe.width, probe.height).data;
+
+  let top = -1, bot = -1;
+  for (let y = 0; y < probe.height; y++) {
+    for (let x = 0; x < probe.width; x += 2) {
+      if (px[(y * probe.width + x) * 4 + 3] > 16) { if (top < 0) top = y; bot = y; break; }
+    }
+  }
+  if (top < 0) { top = 0; bot = probe.height - 1; }   // fully blank row — ship it anyway
+
+  const fw = Math.round(cw), fh = bot - top + 1;
+  const n = Math.min(sp.frames || cols, cols);
+  const out = [];
+  for (let k = 0; k < n; k++) {
+    const c = document.createElement('canvas');
+    c.width = fw; c.height = fh;
+    c.getContext('2d').drawImage(probe, Math.round(k * cw), top, fw, fh, 0, 0, fw, fh);
+    out.push(c.toDataURL('image/png'));
+  }
+  _sheetCache.set(src, out);
+  return out;
+}
+
+/* 🎨 THE FIXTURE ROSTER. Keyed by the same string `_bbUnitKey` produces, i.e.
+   a card id. `color` stands in for ELEMENT_DATA[el].color, which is where the
+   real def gets it (index.html:103512).
+
+   ⚠ `h` IS THE HARNESS'S OPINION, NOT THE GAME'S. `_bbUnitDefs` writes
+   `h: 1.05` as a LITERAL for every unit it emits (index.html:103514) — there is
+   no per-card height in the game at all, so a boss is exactly as tall as a dog.
+   The 0.78–1.22 spread below is a fixture showing what the board does with
+   varied heights; it is applied in TARGET-STATE scenes only. Any scene with
+   `shipped: true` gets 1.05 across the board, enforced in bridgeDefs, so a
+   silhouette-scale judgement made from an as-shipped capture is a judgement
+   about the real game. */
+const ROSTER = {
+  /* — survivors (player side) — */
+  'warrior-hero':  { name:'Warrior',        color:'#d4af37', h:1.20,   /* hero: reads taller */
+                     sheet:{ src:'assets/Heros/Warriors/Warrior.png' } },
+  'survivor-lead': { name:'Survivor Lead',  color:'#3aa86b', h:1.05,
+                     sheet:{ src:'assets/artwork/Survivor 1/Survivor hero-standing-v1.png' } },
+  'dual-blader':   { name:'Dual Blader',    color:'#4a8fd4', h:1.05,
+                     sheet:{ src:'assets/artwork/survivor guard dual blader/Survivor Guard dual blader-standing-v1.png' } },
+  'rifleman':      { name:'Guard Rifleman', color:'#a89888', h:1.05,
+                     sheet:{ src:'assets/artwork/survivorrilfeman/Suvivor Guard Riflemen-standing-v2.png' } },
+  'field-medic':   { name:'Field Medic',    color:'#e8e0d0', h:1.05,
+                     sheet:{ src:'assets/artwork/Fleld Medic/Fleld Medic.png' } },
+  'guard-dog':     { name:'Guard Dog',      color:'#8b5cf6', h:0.78,   /* quadruped: sits low */
+                     sheet:{ src:'assets/artwork/Survivor dog/Survivor guard dog-standing-v1.png' } },
+  /* — the other side — */
+  'zombie':        { name:'Zombie',         color:'#6f7240', h:1.02,
+                     sheet:{ src:'assets/artwork/Zombie/Zombie.png' } },
+  'scum-grunt':    { name:'Scum Grunt',     color:'#a02828', h:1.05,
+                     sheet:{ src:'assets/artwork/Scum Grunt/Scum Grunt-standing-v1.png' } },
+  'scum-boss':     { name:'Scum Boss',      color:'#e85d3c', h:1.22,   /* boss: reads bigger */
+                     sheet:{ src:'assets/artwork/Scum boss/Scum boss.png' } },
+  'mutant-dog':    { name:'Mutant Dog',     color:'#a02828', h:0.80,
+                     sheet:{ src:'assets/artwork/Mutant dog/Mutant dog-standing-v1.png' } },
+  'giant-spider':  { name:'Giant Spider',   color:'#6b5499', h:0.86,
+                     sheet:{ src:'assets/artwork/Giantspider/giant Spider-standing-v1.png' } },
+  'scp-guard':     { name:'SCP Guard',      color:'#4a8fd4', h:1.06,
+                     sheet:{ src:'assets/artwork/Scp Guard/Scp Guard.png' } }
+};
+
+/* ══════════════════════════════════════════════════════════════════
+   2 · THE BRIDGE — game state → board payloads.
+
+   Every function here is the harness's copy of an index.html original and is
+   named for it. The shapes are the contract; do not "improve" them.
+   Scenarios are therefore written in GAME terms (`pos:{x,y}`, `owner`,
+   `tombstones[].y`, surfaces keyed `"x,y"` by surface TYPE) and the rename to
+   board terms (`{x,z}`, `side`, shader key) happens ONLY here — which is
+   exactly where it happens in the game (CONTRACT §1.1).
+   ══════════════════════════════════════════════════════════════════ */
+
+/* _bbLocations — index.html:103283. The two bundled entries; the game adds a
+   row per location card, which a fixture has no catalog to enumerate. */
+function bridgeLocations() {
+  return {
+    'battlefield': { name:'Battlefield', image:_bbAbs(_BB_GROUND_ART),
+                     backdrop:_bbAbs(_BB_BATTLEFIELD_BG), timeOfDay:null, tint:null },
+    'dark-forest': { name:'The Dark Forest', image:_bbAbs(_BB_GROUND_ART),
+                     backdrop:_bbAbs(_BB_DARK_FOREST_BG), timeOfDay:null, tint:null }
+  };
+}
+
+/* _bbStagePayload — index.html:103815. NOTE what it leaves out: `defs` and
+   `units` are deliberately empty and `events` is absent entirely, because the
+   stage mount pushes the roster separately a beat later. Matching that
+   ordering matters — it is what the board actually receives. */
+function bridgeInitPayload(sc) {
+  return { map: sc.map, locations: bridgeLocations(), location: sc.location,
+           timeOfDay: sc.timeOfDay, defs: {}, units: [] };
+}
+
+/* _bbStageUnitList — index.html:104051. Game {x,y}/owner → board {x,z}/side. */
+function bridgeUnitList(sc) {
+  const out = [];
+  for (const u of (sc.units || [])) {
+    if (!u || !u.alive || !u.pos) continue;
+    /* 🏷 The nameplate half of the payload, mirroring the four scalars the
+       real _bbStageUnitList now sends (name / hp / hpMax / hero). Without
+       them the board's plate pass finds no name and draws nothing, and a
+       capture would show the enemy-nameplate requirement as un-built when
+       it is the FIXTURE that is silent. `hp`/`maxHp` come off the fixture
+       unit exactly as `currentHp`/`maxHp` come off a real one. */
+    out.push({ id: String(u.id), key: _bbUnitKey(u),
+               x: u.pos.x | 0, z: u.pos.y | 0,
+               side: u.owner === 'player' ? 'mine' : 'foe',
+               name: String(u.name || ''),
+               hp: Math.max(0, u.currentHp | 0),
+               hpMax: Math.max(1, u.maxHp | 0),
+               hero: !!u.isHero });
+  }
+  return out;
+}
+
+/* _bbUnitDefs — index.html:103363, reduced to the tier that survives a cold
+   headless load: sprite frames, then a still, then nothing (procedural).
+   `h` is forced to the game's hardcoded 1.05 for an as-shipped scene — see the
+   ROSTER note. Everything else in this payload (field names, order, fps:10,
+   sheet:null) is what the real builder emits at index.html:103514. */
+async function bridgeDefs(sc) {
+  const defs = {};
+  for (const u of (sc.units || [])) {
+    if (!u || !u.alive) continue;
+    const key = _bbUnitKey(u);
+    if (!key || defs[key]) continue;
+    const r = ROSTER[key] || {};
+    let frames = null;
+    if (r.sheet) {
+      try { frames = await sliceSheet(r.sheet); }
+      catch (e) { note('def art: ' + (e && e.message || e), true); }
+    }
+    const h = sc.shipped ? 1.05 : ((typeof r.h === 'number') ? r.h : 1.05);
+    defs[key] = { name: u.name || r.name || key, color: r.color || '#cfd6e4',
+                  h: h,
+                  art: r.art ? _bbAbs(r.art) : null, frames: frames, fps: 10, sheet: null };
+  }
+  return defs;
+}
+
+/* _bbStagePushPaint — index.html:103885. The four highlight sets are arrays of
+   `"x,z"` strings built from GAME {x,y} pairs (`k()` at :103887), and `sel` is
+   the one place the rename is written out longhand: `{x: sel.pos.x, z: sel.pos.y}`. */
+function bridgePaint(sc) {
+  const p = sc.paint || {};
+  const k = (arr) => (arr || []).map(t => t.x + ',' + t.y);
+  return { move: k(p.move), attack: k(p.attack), place: k(p.place), swap: k(p.swap),
+           sel: (p.sel) ? { x: p.sel.x, z: p.sel.y } : null };
+}
+
+/* _bbStagePushTele — the XCOM telegraph (index.html, `_bbStagePushTele`).
+   The GAME builds `path` by calling getMovePath() — the same function moveUnit()
+   uses to decide which tiles the unit walks over — and hands the board the
+   ordered result. The harness has no rules and no pathfinder, so a scene states
+   its route as a literal tile list and this bridge only performs the {x,y} →
+   {x,z} rename, exactly as bridgePaint does.
+   ⚠ That is the honest limit of this rig: a harness capture proves the board
+   DRAWS the route it is given. It cannot prove the route is the one the unit
+   will walk — only the real game can, by calling the real pathfinder. */
+function bridgeTele(sc) {
+  const t = sc.tele || {};
+  const k = (arr) => (arr || []).map(p => p.x + ',' + p.y);
+  const xz = (p) => p ? { x: p.x, z: p.y } : null;
+  /* `side` says whose route this is. The game sends 'foe' while the AI is
+     acting (from App.ui.aiMoveTrail, set at the AI's own move site) and 'mine'
+     for the player's hover preview; the board picks the palette off it so the
+     two can never be the same colour. Default 'mine', matching the host. */
+  return { path: k(t.path), dest: xz(t.dest), threat: k(t.threat),
+           side: t.side === 'foe' ? 'foe' : 'mine',
+           arc: t.arc ? { from: xz(t.arc.from), to: xz(t.arc.to), side: t.arc.side || 'mine' } : null };
+}
+
+/* _bbStagePushTombs — index.html:103880. Note `z: t.y|0`, the rename the
+   CONTRACT calls out by name, and that a blob: image is dropped rather than
+   sent (it cannot cross into the iframe). */
+function bridgeTombs(sc) {
+  const list = [];
+  for (const t of (sc.tombstones || [])) {
+    if (!t || t.x == null || t.y == null) continue;
+    let img = t.image || TOMB_ART;
+    if (typeof img !== 'string' || img.slice(0, 5) === 'blob:') img = null;
+    list.push({ x: t.x | 0, z: t.y | 0, img: _bbAbs(img), owner: t.owner || 'ai',
+                glowing: !!t.glowing, lootable: !!t.lootable, looted: !!t.looted });
+  }
+  return { list: list };
+}
+
+/* _bbStagePushStructs — index.html, beside _bbStagePushTombs. Same `z: t.y|0`
+   rename, and no image field at all: ruins are drawn procedurally by
+   drawStruct, which is what keeps them visible for the REMOTE player (`image`
+   is a HEAVY_KEY, blanked out of every multiplayer snapshot). */
+function bridgeStructs(sc) {
+  const list = [];
+  for (const t of (sc.structures || [])) {
+    if (!t || t.x == null || t.y == null) continue;
+    list.push({ x: t.x | 0, z: t.y | 0, kind: String(t.kind || 'house'),
+                lootable: !!t.lootable, looted: !!t.looted, risk: t.risk || null });
+  }
+  return { list: list };
+}
+
+/* _bbStagePushSurfaces — index.html:103990. The game walks board[y][x].surface
+   and emits `out[x + ',' + y] = _BB_SURFACE_FX[type]`, silently skipping a
+   type with no shader. A fixture hands the same thing in as a flat map. */
+function bridgeSurfaces(sc) {
+  const out = {};
+  for (const key of Object.keys(sc.surfaces || {})) {
+    const fx = _BB_SURFACE_FX[sc.surfaces[key]];
+    if (fx) out[key] = fx;
+  }
+  return { tiles: out };
+}
+
+/* _bbEvents — index.html:103625. Shape {x, z, type, name, color, art, scale};
+   the board re-runs each entry through `spawnEvent` (battle-board:1131).
+
+   ⚠ WHERE THIS DOES NOT COME FROM. `_bbStagePayload` (index.html:103815) — the
+   payload the IN-BATTLE stage receives — omits `events` entirely, and
+   `_bbStageMount` never posts `board:events`. So the stage a player looks at
+   during a match currently shows no event tiles at all, even when the match has
+   them; only the full-screen board (`_bbMount` → `_bbSnapshot`, :103658) sends
+   them. Scenes therefore default to NO events, so a capture matches the battle
+   stage; the `ruins` scene opts in, matching the full-screen board. */
+async function bridgeEvents(sc) {
+  const out = [];
+  for (const e of (sc.events || [])) {
+    let art = null;
+    if (e.art) {
+      try { art = (await sliceSheet({ src: e.art, frames: 1 }))[0]; }
+      catch (err) { note('event art: ' + (err && err.message || err), true); }
+    }
+    out.push({ x: e.x | 0, z: e.y | 0, type: e.type || 'relic', name: e.name || null,
+               color: e.color || null, art: art,
+               scale: (typeof e.scale === 'number') ? e.scale : 1 });
+  }
+  return { events: out };
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   3 · SCENARIOS. Plain objects, in game terms. Add one by adding a key.
+   ══════════════════════════════════════════════════════════════════ */
+
+/* BOARD_W / BOARD_H (index.html:71892), which HEXSPEC §7 pins at 14×12 for the
+   hex board — and §7 is explicit that the canvas MAP.cols/rows must be FED from
+   these, never re-typed board-side. That is what every payload below does. The
+   board's own BOARD_DEFAULT is only its fallback for a host that sends neither. */
+const COLS = 14, ROWS = 12;
+
+/* ══════════════════════════════════════════════════════════════════
+   3b · THE TERRAIN GENERATOR — copied verbatim from public/index.html.
+   ══════════════════════════════════════════════════════════════════
+   Everything from `_bbRng` to the end of `_bbGenTerrain` below is a BYTE-FOR-
+   BYTE copy of the block that now sits immediately above `_bbMapFromEditor` in
+   public/index.html, minus `_bbMapSeed()` — which reads App.battlePrep /
+   App.state and neither exists here. That is the same rule every other bridge
+   function in this file follows (see the table in .gauntlet/README.md): the
+   harness may only build a payload the way the real sender builds it. If you
+   edit the generator, re-copy it; a harness that generates terrain its own way
+   is a harness that validates work the game does not do.
+
+   The seed is a CONSTANT here, not a random one, because a capture has to be
+   reproducible: `node .gauntlet/shot.mjs …?scene=gamemap` must produce the same
+   battlefield today and next week or the A/B against .gauntlet/baseline-stage.png
+   compares two different maps and says nothing.
+   ══════════════════════════════════════════════════════════════════ */
+/* ?seed=<number> overrides it. The default is what every capture and every A/B
+   uses and must not change; the override exists because the no-burying
+   constraint the generator now enforces (THE FRINGE RULE) is a property of the
+   whole seed FAMILY, not of one map, and a sweep that only ever ran one map
+   would prove nothing about the next match. `| 0` because a NaN seed silently
+   becomes the mulberry32 fallback constant and every seed would then be the
+   same board while appearing to differ. */
+const HARNESS_MAP_SEED = (() => {
+  const q = new URLSearchParams(location.search).get('seed');
+  const n = q == null ? NaN : Number(q);
+  return Number.isFinite(n) ? (n >>> 0) : 0x5eed1a17;
+})();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🏙 TERRAIN GENERATOR — the ground a match is actually fought on.
+//
+// WHY IT EXISTS. `_bbMapFromEditor` used to return `tiles: []` for the shipped
+// default (no admin battlemap configured, i.e. every normal match), so the
+// canvas stage drew 168 identical cells over a backdrop photograph. The stage
+// has always been able to draw lit slabs, cliff faces and props — the sender
+// simply never fed it any. This is the feed.
+//
+// 🎲 DETERMINISM IS NOT DECORATION — IT IS THE WHOLE CONTRACT.
+// The map is NOT part of the synced battle state: every client builds its own
+// copy from `_bbMapSeed()`. If anything below reached for `Math.random()`,
+// `Date.now()` or the wall clock, the two players in a multiplayer match — and
+// a replay of that match — would each raise DIFFERENT tiles. Unit positions are
+// synced; terrain would not be. The same unit would stand in an open street on
+// one screen and on top of a two-level rubble slab on the other, cover would
+// disagree with what the rules think, and NOTHING WOULD THROW: it reads as a
+// rendering bug forever. Every random number here comes out of the seeded PRNG
+// below, consumed in a fixed order.
+//
+// 🪞 AND THE MAP IS POINT-SYMMETRIC, ON PURPOSE.
+// Multiplayer does not hand the guest the host's coordinates — it rotates the
+// whole board 180° (`_mirrorAllPositions`, and see its BOARD_H-must-be-even
+// note) so that each player's own army sits at the bottom of their own screen.
+// Terrain, being generated rather than synced, does not go through that
+// rotation. A map that IS its own 180° rotation is therefore the only map that
+// lands on the same tiles for both players — and the only fair one, since on an
+// asymmetric map one side gets the rubble fort and the other gets open street.
+// Every field below is built from primitives that are symmetric about the
+// lattice centre, and a final pass copies the canonical half onto its partner
+// so that a bug in one of those primitives degrades to "rotated" rather than to
+// "unfair, and silently desynced".
+//
+// 🚧 TERRAIN IS DRESSING. It emits `surf` (what the tile is made of), `elev`
+// (slab height) and `deco` (silhouette props) and nothing else. It never emits
+// `type:'blocked'` and never emits `prop:'pylon'` — those are the two things the
+// canvas stage treats as impassable (`tileBlocked`, battle-board:625), and the
+// stage's idea of blocked is not the game's. The game's own walkable rules stay
+// authoritative, so every tile raised here is still a tile a unit may stand on.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// mulberry32. Chosen because it is entirely uint32 arithmetic (Math.imul), so
+// it produces the identical stream on every JS engine — a generator seeded the
+// same on two machines that disagreed in the last float bit would defeat the
+// whole point of seeding it.
+function _bbRng(seed) {
+  let a = (seed >>> 0) || 0x9e3779b9;
+  return function () {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+// FNV-1a over a string → uint32. Used to turn a match id into a seed.
+function _bbSeedFromString(s) {
+  let h = 0x811c9dc5; const str = String(s);
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return h >>> 0;
+}
+
+// 🪜 THE ELEVATION LADDER.
+// Five rungs, and the numbers are chosen against the PICTURE, not against a
+// picking constraint. They used to be [0, 0.13, 0.26, 0.34] and the comment
+// here explained at length why 0.34 was the ceiling: `pickTile` intersected the
+// y = 0 plane only, so a slab top projected to the same pixel as a ground point
+// ~0.91·e further away, one hex row is hexV = 0.866 deep, and past ~0.43 of a
+// row of height a click on high ground silently resolved to the row BEHIND it.
+// That constraint is GONE — pickTile now sweeps the map's distinct heights from
+// the top down and returns the first tile whose own top face the ray meets
+// (battle-board/index.html, "SCREEN → TILE, ELEVATION-AWARE"). It is exact for
+// a single-height-per-column field, which is what this generator emits, and
+// window.__bbHexCheck() asserts the whole round trip at every rung.
+// So the ceiling is now what the eye needs. At the game's real 802x688 stage
+// rect one world unit of height is ~36 screen px, so:
+//   0.34 → ~12 px   the smallest step that reads as a STEP and not a bevel
+//   1.36 → ~49 px   total relief ≈ one full hex width (hexes measure ~50 px)
+// BAR R1 asks for "chunky slabs at several heights with visible cliff faces …
+// height readable at a glance". Under ~10 px a face is an outline; the old
+// ladder's 4.7 px per step is why the board read as a coloured hex mosaic.
+//
+// 📏 THE RUNGS ARE EVENLY SPACED, AND THAT IS A PICKING CONSTRAINT.
+// They used to be [0, 0.30, 0.62, 0.95, 1.35] — gaps of 0.30 / 0.32 / 0.33 /
+// 0.40 — and the 0.40 at the top was measurably over the line. A tile's own
+// centre is 0.577 world units behind the back boundary of the two tiles in the
+// row in front of it (they are half a column either side of it, so at the
+// centre's x they reach back only to their ±30° vertices). The pick ray runs
+// about 1.45 units of z per unit of y at the far edge of the board, so a step
+// of Δ in front of a tile eats 1.45·Δ of that 0.577. Δ = 0.40 gives 0.58 —
+// over — and the sweep found the centres of (9,0) and (0,1) genuinely
+// unclickable. Δ = 0.34 gives 0.49, a 15% margin, and every rung now costs the
+// same, so THE FRINGE RULE below can be stated in rungs instead of in metres.
+// ⚠ This array is copied BYTE-FOR-BYTE into public/battle-board/_harness.html.
+// Change it here and re-copy, or the control capture is a lie.
+const _BB_ELEV = [0, 0.34, 0.68, 1.02, 1.36];
+
+// Odd-r neighbour offsets, indexed [rowParity][edge], where `edge` is the same
+// index the stage's hexCorners() uses: edge i faces outward at i·60°.
+// HEXSPEC §5 — six neighbours, never eight.
+const _BB_NB = [
+  [[1, 0], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1]],   // even row
+  [[1, 0], [1, 1], [0, 1], [-1, 0], [0, -1], [1, -1]]      // odd row
+];
+
+function _bbGenTerrain(cols, rows, seed) {
+  const rnd = _bbRng(seed);
+  const SALT_M = (rnd() * 0x7fffffff) | 0;      // moisture — grass and standing water
+  const SALT_D = (rnd() * 0x7fffffff) | 0;      // debris — where rubble drifted to
+
+  // ── lattice, in COLUMN widths ─────────────────────────────────────────────
+  // ax counts columns, az counts rows scaled by the row pitch (hexV/hexW =
+  // 1.5/√3), so a circle in (ax,az) is a circle on the board rather than an
+  // ellipse. Odd rows are shifted +½ column (HEXSPEC §2), which puts the
+  // lattice's own centre ¼ column right of column (cols-1)/2 — the same +0.25
+  // the stage's latticeCentreX() applies. Subtracting it is what makes
+  // (x,z) → (cols-1-x, rows-1-z) exactly (ax,az) → (-ax,-az).
+  const HEXV = 1.5 / Math.sqrt(3);
+  const ccx = (cols - 1) / 2, ccz = (rows - 1) / 2;
+  const A = (x, z) => ({ ax: (x + (z & 1) * 0.5 - ccx) - 0.25, az: (z - ccz) * HEXV });
+
+  // ── value noise ───────────────────────────────────────────────────────────
+  function h2(ix, iz, salt) {
+    let h = Math.imul(ix | 0, 374761393) ^ Math.imul(iz | 0, 668265263) ^ Math.imul(salt | 0, 2246822519);
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+  }
+  function vnoise(ax, az, f, salt) {
+    const px = ax * f, pz = az * f;
+    const x0 = Math.floor(px), z0 = Math.floor(pz);
+    const tx = px - x0, tz = pz - z0;
+    const sx = tx * tx * (3 - 2 * tx), sz = tz * tz * (3 - 2 * tz);
+    const a0 = h2(x0, z0, salt), a1 = h2(x0 + 1, z0, salt);
+    const b0 = h2(x0, z0 + 1, salt), b1 = h2(x0 + 1, z0 + 1, salt);
+    const t0 = a0 + (a1 - a0) * sx, t1 = b0 + (b1 - b0) * sx;
+    return t0 + (t1 - t0) * sz;
+  }
+  // Two octaves so a patch has an edge as well as a middle, then folded against
+  // its own 180° partner. Folding HERE rather than copying half the finished
+  // board keeps the field CONTINUOUS through the centre line: a straight copy
+  // leaves a seam that every drift and every grass patch runs into.
+  function fld(ax, az, f, salt) {
+    return vnoise(ax, az, f, salt) * 0.68 + vnoise(ax, az, f * 2.3, salt ^ 0x5bf03635) * 0.32;
+  }
+  const nsym = (ax, az, f, salt) => 0.5 * (fld(ax, az, f, salt) + fld(-ax, -az, f, salt));
+
+  // ── the street network ────────────────────────────────────────────────────
+  // NOT per-tile noise. Uncorrelated random per tile is the tell of a generated
+  // map; a place has roads that go somewhere. Three streets run UP AND DOWN the
+  // board — a main avenue through the middle and one either side — and a cross
+  // street connects them near each end, which leaves six lots for the buildings
+  // that used to stand there.
+  //
+  // 🧭 THE MAIN LINES RUN NORTH–SOUTH ON PURPOSE, AND IT IS A PICKING
+  // CONSTRAINT RATHER THAN A LAYOUT PREFERENCE. See THE FRINGE RULE below: what
+  // buries a tile is a taller tile in the row IN FRONT of it, because that is
+  // what stands between it and the camera; a taller tile in the same ROW hides
+  // nothing, because it is at the same depth and only covers its own column. A
+  // street is rung 0 by definition, so an EAST–WEST avenue pins a whole row to
+  // the floor and forbids any real height within three rows either side of it —
+  // which is exactly why the previous layout could only put rung-3 and rung-4
+  // tiles in rows 0–3 and 8–11 and left the middle, where the fight actually
+  // happens, flat. A NORTH–SOUTH street pins a COLUMN instead, so its canyon
+  // walls may be sheer and full height and the relief is free to sit in the
+  // middle of the board where the eye is.
+  //
+  // Every line passes through — or is mirrored about — the lattice centre, and
+  // every wobble term is ODD in its argument, which is what keeps the whole
+  // network its own 180° rotation. (Check: for the avenue residual
+  // r = ax − Aꞏsin(kꞏaz), r(−ax,−az) = −r(ax,az), so |r| is symmetric. For the
+  // side-street pair r₁ = ax − D − Bꞏsin(mꞏaz) and r₂ = ax + D − Bꞏsin(mꞏaz),
+  // r₁(−ax,−az) = −r₂(ax,az), so min(|r₁|,|r₂|) is symmetric as a set — and the
+  // same argument transposed covers the cross-street pair in az.)
+  const avA = 0.50 + rnd() * 0.50, avK = 0.12 + rnd() * 0.10, avW = 0.42;
+  const csD = 4.1 + rnd() * 0.5, csB = 0.30 + rnd() * 0.45, csM = 0.14 + rnd() * 0.10, csW = 0.40;
+  const xsD = 4.15 + rnd() * 0.35, xsB = 0.35 + rnd() * 0.45, xsM = 0.20 + rnd() * 0.18, xsW = 0.34;
+  // 📐 SIGNED DISTANCE TO THE NEAREST CARRIAGEWAY EDGE, IN COLUMN WIDTHS.
+  // Negative on the road itself. This used to be each line divided by its own
+  // half-width and then Math.min'd together — three different units glued into
+  // one number. That is fine for the boolean `paved` it was written for and
+  // useless for the height gate below, which needs a REAL distance so it can
+  // let the ground climb back at a rate bounded PER TILE STEP. HEXSPEC §3 with
+  // hexW = 1 puts all six neighbours of a hex exactly 1.0 apart in (ax, az), so
+  // here "rungs per column width" IS "rungs per tile step", with no conversion
+  // and nothing to get wrong.
+  //
+  // ⚖ AND IT IS SPLIT BY DIRECTION, WHICH IS THE WHOLE POINT OF THE LAYOUT.
+  // Distance to a NORTH–SOUTH line varies with ax, so the ground may climb out
+  // of that gutter as fast as it likes: a sheer four-rung canyon wall is a step
+  // within a row and hides nothing (THE FRINGE RULE). Distance to a cross
+  // street varies with az, so THAT gate has to climb slowly or it re-creates
+  // the buried tile it exists to prevent. One `streetGap` for both would have
+  // to obey the slower of the two everywhere, and on a 14-wide board with a
+  // road every four columns that caps the entire map at rung 1 — measured, not
+  // guessed: the first build of this pass came back with 96 tiles at rung 1,
+  // four at rung 2 and nothing above.
+  function gapNS(ax, az) {
+    const av = Math.abs(ax - avA * Math.sin(avK * az * 2)) - avW;
+    const wob = csB * Math.sin(csM * az * 2);
+    const cs = Math.min(Math.abs(ax - csD - wob), Math.abs(ax + csD - wob)) - csW;
+    return Math.min(av, cs);
+  }
+  function gapEW(ax, az) {
+    const xw = xsB * Math.sin(xsM * ax * 2);
+    return Math.min(Math.abs(az - xsD - xw), Math.abs(az + xsD - xw)) - xsW;
+  }
+  function streetGap(ax, az) {                     // < 0 → paved
+    return Math.min(gapNS(ax, az), gapEW(ax, az));
+  }
+
+  // ── THE MASSIF — the relief the fight happens ON ──────────────────────────
+  // Height is built as a CONTINUOUS field in RUNG units and quantised once at
+  // the end, instead of being assigned per shell as an integer. That is what
+  // makes the no-burying constraint checkable rather than merely hoped for: the
+  // six neighbours of a hex are all exactly 1.0 apart in (ax, az), so a field
+  // whose gradient stays under one rung per unit quantises to a level field
+  // that steps by AT MOST ONE RUNG between neighbours. (Proof of the last step:
+  // if |Ha − Hb| ≤ 1 then round(Ha) and round(Hb) cannot differ by 2, because
+  // that would need Ha < 0.5 and Hb ≥ 1.5, i.e. |Ha − Hb| > 1.)
+  //
+  // The shape is a broad central mass whose terraces run ACROSS the board, so
+  // rows 3–8 — the middle, where the units stand and the eye goes — are the
+  // HIGH ground and the two deployment ends are the low ground. The build
+  // before this one had it exactly inverted: every rung-3 and rung-4 tile was
+  // in rows 0–3 or 8–11 and the middle topped out at rung 1, which is the "even
+  // border round an arena" this generator's own comment swears off, drawn in
+  // relief instead of in rubble.
+  const mfTop = 4.45, mfSlope = 0.95, mfFlat = 0.50;
+  const mfW1 = 1.25 + rnd() * 0.55, mfK1 = 0.62 + rnd() * 0.16;
+  const mfW2 = 0.25 + rnd() * 0.30, mfK2 = 0.60 + rnd() * 0.38;
+  // Where the crest is WIDEST, in column widths. Halfway between the avenue at
+  // ax = 0 and the side street at ax = csD, i.e. over the middle of a block —
+  // and it is derived from csD rather than typed so it cannot drift away from
+  // the street grid. It used to be a plain cos(k·ax), whose maximum is at ax = 0
+  // BY DEFINITION, so the crest was always widest exactly where the avenue cuts
+  // it down to rung 0. Two whole rungs of the ladder were unreachable for that
+  // reason alone, and nothing about the symptom pointed at it.
+  const mfCx = csD * 0.52;
+  function massif(ax, az) {
+    // The crest wobbles with ax so the terrace edges are not ruled lines. cos()
+    // is EVEN and |az| is even, so massif(−ax,−az) === massif(ax,az): the 180°
+    // symmetry holds by construction rather than by the mirror pass.
+    // ⚠ The wobble is RECTIFIED to [0, 1] and therefore only ever WIDENS the
+    // crest. A signed cosine swung the terrace line ±2 rows, which sounds like
+    // the same amount of interest and is not: where it swung NEGATIVE it pulled
+    // rows 4 and 7 down to rung 2, and THE FRINGE RULE then capped rows 5 and 6
+    // at rung 3 from both sides. That is how three successive attempts to reach
+    // the top of the ladder came back with a map whose maximum was 1.02 and no
+    // hint of why.
+    const w = mfW1 * (0.5 + 0.5 * Math.cos(mfK1 * (Math.abs(ax) - mfCx)))
+            + mfW2 * (0.5 + 0.5 * Math.cos(mfK2 * (Math.abs(ax) + 1.7)));
+    return mfTop - Math.max(0, Math.abs(az) - mfFlat - w) * mfSlope;
+  }
+  // ── ruined building footprints ────────────────────────────────────────────
+  // Sampled in ONE half and mirrored, so the pair is symmetric by construction.
+  // Rejection-sampled off the road network and off each other: a building grown
+  // through the road would erase the thing that makes the map read as a place.
+  // A lot is now a BUMP ON the massif rather than a tower of its own. It used
+  // to be three concentric shells stepping 4 / 3 / 2 across a radius of 1.25 —
+  // bands a third of a tile wide, so a single step could be TWO rungs and the
+  // apron met the street with a two-rung drop. Those were the buried tiles.
+  // A cone of bounded slope adds up to a rung and a half over a run of four
+  // columns instead, which still carries the crest to the top of the ladder.
+  // 📍 AND THE FIRST PAIR IS ANCHORED IN THE MIDDLE BAND, ON PURPOSE.
+  // |az| ≤ 1.9 is rows 3.3–7.7, i.e. inside rows 3–8. Left to uniform sampling
+  // the lots scatter over rows 0–5 and their mirrors, and the two that happen
+  // to land near the deployment ends are the two the cross-street gate holds
+  // down — which is how the previous build ended up with every tall tile in the
+  // border rows. Forcing one pair into the middle guarantees TWO rung-3+ masses
+  // in the half of the board the camera is pointed at, whatever the seed does.
+  const lots = [];
+  for (let guard = 0; lots.length < 6 && guard < 900; guard++) {
+    const p = A(Math.floor(rnd() * cols), Math.floor(rnd() * (rows / 2)));
+    const r = 1.9 + rnd() * 1.2;
+    if (lots.length < 2 && Math.abs(p.az) > 1.9) continue;
+    if (streetGap(p.ax, p.az) < 0.45) continue;
+    if (lots.some(L => Math.hypot(L.ax - p.ax, L.az - p.az) < (L.r + r) * 0.55)) continue;
+    lots.push({ ax: p.ax, az: p.az, r: r }, { ax: -p.ax, az: -p.az, r: r });
+  }
+  const LOT_RISE = 0.55, LOT_CAP = 1.00;
+  function lotBump(ax, az) {
+    let b = 0;
+    for (let i = 0; i < lots.length; i++) {
+      const L = lots[i], d = Math.hypot(ax - L.ax, az - L.az);
+      if (d < L.r) b = Math.max(b, Math.min(LOT_CAP, (L.r - d) * LOT_RISE));
+    }
+    return b;
+  }
+
+  // ── assemble ──────────────────────────────────────────────────────────────
+  // 🧱 THE HEIGHT GATE. The road is the LOW ground, always: it is what the
+  // player reads height against, and a street that climbed over a rubble heap
+  // would say the opposite of what the silhouette says. But it can no longer
+  // SLAM the tile to zero the way `paved ? 0 : …` did: a rung-3 tile with a
+  // rung-0 tile in the row behind it is exactly the buried-tile bug. So the
+  // carriageway pulls the field down to zero and lets it climb back at a rate
+  // bounded per tile step instead of dropping off a kerb four rungs high.
+  // 🛣 AND THE CROSS STREET IS SURFACED, NOT CUT. Only the north–south lines
+  // gate the height. An east–west street that dug itself down to rung 0 would
+  // pin a whole ROW to the floor, and THE FRINGE RULE would then forbid any
+  // real height for three rows either side of it — measured: with both gates
+  // live the whole 14×12 board topped out at rung 2 with four tiles on it.
+  // So the cross street is a road laid ALONG the terrace rather than a trench
+  // through it. It still reads as a street, because `paved` (which decides the
+  // material, the kerbstones and the asphalt) is the union of both gaps; it
+  // simply does not flatten the hillside it runs across, which is what a road
+  // on a slope actually looks like.
+  const NS_RISE = 9.0;                         // rungs per column width
+  const out = [];
+  for (let z = 0; z < rows; z++) {
+    for (let x = 0; x < cols; x++) {
+      const p = A(x, z);
+      const gn = gapNS(p.ax, p.az), ge = gapEW(p.ax, p.az);
+      const paved = gn < 0 || ge < 0;
+      const lb = lotBump(p.ax, p.az);
+      // Symmetric noise at a feature size of ~3 columns and half a rung of
+      // amplitude, so the terraces buckle instead of running as clean bands.
+      const rough = (nsym(p.ax, p.az, 0.30, SALT_D) - 0.5) * 0.45;
+      const h = Math.min(massif(p.ax, p.az) + lb + rough, Math.max(0, gn) * NS_RISE);
+      out.push({ x: x, z: z, _lvl: Math.max(0, Math.min(4, Math.round(h))),
+                 _pv: paved ? 1 : 0, _lb: lb,
+                 _m: nsym(p.ax, p.az, 0.30, SALT_M), _d: nsym(p.ax, p.az, 0.52, SALT_D) });
+    }
+  }
+
+  // 🚧 THE FRINGE RULE — the constraint that keeps every tile CLICKABLE.
+  // ═══════════════════════════════════════════════════════════════════════
+  //   No tile may sit more than ONE RUNG below either of its neighbours in an
+  //   ADJACENT ROW. Steps within a row are unconstrained.
+  // ═══════════════════════════════════════════════════════════════════════
+  // WHY IT EXISTS. A judge sampled 36 points inside every tile and asked
+  // `pickTile` which tile each one resolved to. On the shipped map (13,5),
+  // (4,8), (3,9) and (8,9) came back with almost nothing — five to seven
+  // samples out of thirty-six, and their CENTRES dead — because a rung-3 or
+  // rung-4 mound in the row in front of them stood between them and the
+  // camera. A tile you cannot click is a tile you cannot move to, cannot
+  // target and cannot select the unit on, WHILE THE DOM BOARD CAN STILL REACH
+  // IT: the two renderers disagreeing about what is reachable, which is the
+  // same "the UI lies about the rules" family as the scar at index.html:141543.
+  // `pickTile` was doing the physically correct thing. The generator was the
+  // bug, and this is where it is fixed — not by capping the ladder, because
+  // the height is what BAR R1 is judged on.
+  //
+  // WHY *ROWS* AND NOT ALL SIX NEIGHBOURS. Only the row in front can occlude:
+  // a taller tile in the same row is at the same depth and covers its own
+  // column, nothing behind it. Constraining all six would forbid a sheer
+  // canyon wall for no gain and, with the streets pinned to rung 0, would
+  // flatten the whole board to rungs 0–1 — there is not enough room on a 14×12
+  // lattice to terrace away from a road in every direction.
+  //
+  // WHY IT LOWERS AND NEVER RAISES. Raising the tile behind would work for the
+  // camera and would silently rebuild the road network on top of the rubble.
+  // Lowering only is also what makes this terminate: levels are bounded below
+  // by 0 and never increase, so the loop cannot oscillate.
+  //
+  // AND IT IS SYMMETRIC. The constraint is on a PAIR, so it reads the same
+  // from either end, and the odd-r neighbour relation maps onto itself under
+  // the 180° rotation (BOARD_H is even). A point-symmetric input therefore
+  // stays point-symmetric, and the mirror pass further down stays the no-op it
+  // is supposed to be rather than quietly re-introducing a violation.
+  function fringePass() {
+    for (let pass = 0; pass < rows + 2; pass++) {
+      let cut = 0;
+      for (let z = 0; z < rows; z++) {
+        for (let x = 0; x < cols; x++) {
+          const t = out[z * cols + x], nb = _BB_NB[z & 1];
+          let cap = 4;
+          for (let e2 = 0; e2 < 6; e2++) {
+            if (nb[e2][1] === 0) continue;       // same row — cannot occlude
+            const ox = x + nb[e2][0], oz = z + nb[e2][1];
+            if (ox < 0 || oz < 0 || ox >= cols || oz >= rows) continue;
+            cap = Math.min(cap, out[oz * cols + ox]._lvl + 1);
+          }
+          if (t._lvl > cap) { t._lvl = cap; cut++; }
+        }
+      }
+      if (!cut) break;
+    }
+  }
+  fringePass();
+  // 🛬 THE DEPLOYMENT SHELF — the second row in from each end is levelled DOWN
+  // to the outermost one, and it is the one place the fringe rule is not
+  // enough. At the far CORNERS the pick ray is not in the z–y plane at all: it
+  // also runs six and a half columns sideways, which lengthens it and flattens
+  // its descent per row, so the 0.34 that clears everywhere else does not clear
+  // there. Measured: with the rule alone, __bbHexCheck reported one dead
+  // centre, at (0,0), answered by (0,1) one rung above it.
+  // ⚠ IT LOWERS THE INNER ROW; IT MUST NOT RAISE THE OUTER ONE. Raising row 0
+  // to meet row 1 is free — nothing stands behind row 0 — but the mirror of
+  // that operation raises row 11, which is the row NEAREST the camera, and that
+  // promptly buried (10,10). Any raise makes a tile a new occluder for the row
+  // behind it; only a lowering is safe in both directions, which is what lets
+  // the same operation run at both ends and keep the map its own 180° rotation.
+  // The fringe pass is re-run afterwards because a lowering can open a two-rung
+  // step further in.
+  function shelfPass() {
+    for (let x = 0; x < cols; x++) {
+      for (const z of [1, rows - 2]) {
+        const outward = z === 1 ? -1 : 1;
+        const nb = _BB_NB[z & 1], t = out[z * cols + x];
+        let lv = t._lvl;
+        for (let e2 = 0; e2 < 6; e2++) {
+          if (nb[e2][1] !== outward) continue;
+          const ox = x + nb[e2][0], oz = z + outward;
+          if (ox < 0 || ox >= cols) continue;
+          lv = Math.min(lv, out[oz * cols + ox]._lvl);
+        }
+        t._lvl = lv;
+      }
+    }
+  }
+  shelfPass(); fringePass();
+  for (const t of out) t.elev = _BB_ELEV[t._lvl];
+
+  // 💧 QUANTILES, NOT FIXED CUTOFFS. Thresholding a noise field at a constant
+  // is a coin flip on how much water and grass a given seed happens to get: an
+  // early build of this ran four seeds and one of them produced ZERO grass on a
+  // map whose whole brief is "nature is taking over". Sorting the field and
+  // cutting it at a fraction pins the MIX instead of the threshold, so every
+  // seed gets the same amount of overgrowth in a different shape. The field is
+  // symmetric and a quantile is a whole-board statistic, so this does not break
+  // the 180° symmetry.
+  //
+  // 🎨 AND MATERIAL IS NOT HEIGHT. The pass this replaces opened with
+  // `if (_lvl >= 2) surf = 'rubble'`, which welded the two questions together:
+  // every single one of the 36 tiles at the top of the ladder came out rubble,
+  // 100% of them, and grass, dirt and asphalt could only ever exist on the
+  // floor. BAR R1 asks for four materials at four heights — "rock plateau,
+  // dirt shelf, grass shelf, and a wide marsh floor" — so `_lvl` now answers
+  // only "how high" and the moisture and debris fields answer "made of what",
+  // at every height. Standing water is the one exception and stays on the
+  // floor, because a puddle on a plateau is not a thing.
+  const qOf = (arr, f) => {
+    const s = arr.slice().sort((a, b) => a - b);
+    return s.length ? s[Math.min(s.length - 1, Math.max(0, Math.floor(f * s.length)))] : 1;
+  };
+  const land = out.filter(t => !t._pv);
+  const qWater = qOf(out.filter(t => !t._pv && t._lvl === 0).map(t => t._m), 0.86);
+  const qGrass = qOf(land.map(t => t._m), 0.60);
+  const qRub   = qOf(land.map(t => t._d + t._lb * 0.34), 0.52);
+  for (const t of out) {
+    if (t._pv) t.surf = 'asphalt';
+    else if (t._lvl === 0 && t._m >= qWater) t.surf = 'water';
+    else if (t._m >= qGrass) t.surf = 'grass';
+    else if (t._d + t._lb * 0.34 >= qRub) t.surf = 'rubble';
+    else t.surf = 'dirt';
+  }
+
+  // 🛤 THE KERB STEP. Pavement stands one step above the carriageway — that is
+  // what a street IS, and it is the cheapest relief on the whole map because it
+  // follows a line the player is already reading. Without it every raised tile
+  // sat in a corner lot and the MIDDLE of the board, which is where the fight
+  // actually happens, was one flat sheet. Applied AFTER the surface pass on
+  // purpose: a kerb-height tile stays grass or dirt. How high a tile is and what
+  // it is made of are two questions, and an earlier build conflated them —
+  // raising the kerb there turned every verge into rubble.
+  for (const t of out) {
+    // Standing water is exempt: a puddle that stands one step PROUD of the
+    // street it drained off is not a puddle. The first run of the decoupled
+    // surface pass kerbed all eight water tiles because the kerb reads `elev`
+    // and the surface pass had already run.
+    if (t.elev || t._pv || t.surf === 'water') continue;
+    const nb = _BB_NB[t.z & 1];
+    for (let e2 = 0; e2 < 6; e2++) {
+      const ox = t.x + nb[e2][0], oz = t.z + nb[e2][1];
+      if (ox < 0 || oz < 0 || ox >= cols || oz >= rows) continue;
+      if (out[oz * cols + ox]._pv) { t._lvl = 1; break; }
+    }
+  }
+  // ⚠ THE KERB IS A RAISE, AND A RAISE IS WHAT BURIES. Re-run the two passes
+  // that guarantee it cannot. On seed 424242 the kerb lifted (0,1) one rung
+  // above (0,0) AFTER the shelf had levelled the pair, and the far corner went
+  // dead again — a one-line raise reopening a bug three passes had just closed,
+  // with nothing in the kerb code to suggest it could.
+  shelfPass(); fringePass();
+  for (const t of out) t.elev = _BB_ELEV[t._lvl];
+
+  // 🪞 Belt and braces — see the header. Pairs are taken by LINEAR index so this
+  // still terminates, and still pairs correctly, if either dimension is ever
+  // odd (an odd total leaves one self-paired middle tile, which the loop bound
+  // skips rather than mangles).
+  const total = cols * rows;
+  for (let i = 0; i < total >> 1; i++) {
+    const a = out[i], b = out[total - 1 - i];
+    b.surf = a.surf; b.elev = a.elev; b._lvl = a._lvl; b._pv = a._pv;
+  }
+
+  // ── props ─────────────────────────────────────────────────────────────────
+  // Small, numerous, irregularly placed — BAR R1 names "evenly spaced props on
+  // a lattice" as a fail condition, so nothing here sits at the tile centre and
+  // nothing draws at a fixed size. `u`/`v` are offsets from the tile centre in
+  // units of the hex CIRCUMRADIUS (the stage multiplies by CONFIG.tile); `r` is
+  // a rotation in radians; `s` is a size multiplier.
+  const R2 = v => Math.round(v * 100) / 100;
+  const idx = (x, z) => (x >= 0 && z >= 0 && x < cols && z < rows) ? out[z * cols + x] : null;
+  function decoFor(t, x, z) {
+    // Seeded from the TILE, not from the iteration, so the same tile gets the
+    // same props no matter what order the board is walked in.
+    const rp = _bbRng((seed ^ Math.imul(x + 1, 0x27d4eb2d) ^ Math.imul(z + 1, 0x165667b1)) >>> 0);
+    const d = [];
+    const put = (k, spread, s0, s1) => d.push({
+      k: k, u: R2((rp() - 0.5) * spread), v: R2((rp() - 0.5) * spread),
+      s: R2(s0 + rp() * (s1 - s0)), r: R2(rp() * 6.28)
+    });
+    if (t.surf === 'rubble') {
+      const n = 3 + ((rp() * 3) | 0);
+      for (let i = 0; i < n; i++) put('chunk', 1.15, 0.18, 0.42);
+      if (rp() < 0.42) put('rebar', 0.9, 0.5, 0.95);
+      if (rp() < 0.3) put('slab', 0.8, 0.45, 0.8);
+    } else if (t.surf === 'dirt') {
+      if (rp() < 0.55) put('chunk', 1.1, 0.14, 0.3);
+      if (rp() < 0.4) put('scrub', 1.0, 0.4, 0.8);
+      if (rp() < 0.22) put('chunk', 1.1, 0.12, 0.24);
+    } else if (t.surf === 'grass') {
+      const n = 1 + ((rp() * 3) | 0);
+      for (let i = 0; i < n; i++) put('tuft', 1.15, 0.4, 0.95);
+      if (rp() < 0.3) put('scrub', 0.95, 0.45, 0.85);
+    } else if (t.surf === 'asphalt') {
+      if (rp() < 0.3) put('chunk', 1.1, 0.12, 0.26);
+      if (rp() < 0.12) put('tuft', 1.0, 0.3, 0.55);
+    } else if (t.surf === 'water') {
+      if (rp() < 0.5) put('reed', 0.9, 0.4, 0.8);
+    }
+    // 🧱 KERBSTONES. The one prop that is NOT randomly placed: it marks where
+    // the pavement ended, so it goes on the edge the road is actually on. This
+    // is what makes the street read as a street instead of a grey stripe. Half
+    // are dropped and every one is jittered, so the run stays broken.
+    if (!t._pv && t._lvl === 0) {
+      const nb = _BB_NB[z & 1];
+      for (let e = 0; e < 6; e++) {
+        const o = idx(x + nb[e][0], z + nb[e][1]);
+        if (!o || !o._pv || rp() < 0.45) continue;
+        const a = e * Math.PI / 3;
+        d.push({ k: 'kerb', u: R2(Math.cos(a) * 0.72 + (rp() - 0.5) * 0.2),
+                 v: R2(Math.sin(a) * 0.72 + (rp() - 0.5) * 0.2),
+                 s: R2(0.55 + rp() * 0.4), r: R2(a + Math.PI / 2 + (rp() - 0.5) * 0.5) });
+      }
+    }
+    return d;
+  }
+  const TAU = Math.PI * 2;
+  for (let i = 0; i < total >> 1; i++) {
+    const a = out[i], b = out[total - 1 - i];
+    const d = decoFor(a, a.x, a.z);
+    a.deco = d;
+    // The partner tile is the SAME tile rotated 180°, so its props are the same
+    // props rotated 180°: offsets negate, headings turn by π.
+    b.deco = d.map(o => ({ k: o.k, u: R2(-o.u), v: R2(-o.v), s: o.s, r: R2((o.r + Math.PI) % TAU) }));
+  }
+
+  // Emit the wire shape only. `_lvl`/`_pv`/`_lb`/`_m`/`_d` were scratch; `elev`
+  // and `deco` are dropped when empty because this array crosses a postMessage
+  // boundary once per battle and 168 tiles of "elev: 0" is pure freight.
+  return out.map(t => {
+    const o = { x: t.x, z: t.z, surf: t.surf };
+    if (t.elev) o.elev = t.elev;
+    if (t.deco && t.deco.length) o.deco = t.deco;
+    return o;
+  });
+}
+// Admin battlemap-editor terrain key → generated-surface key. The editor is the
+// author's intent about what a tile is MADE OF, so where it has an opinion it
+// wins; the generator keeps supplying the relief and the props, which the
+// editor's v3 format has no way to express at all.
+
+
+/* 🔴 TARGET-STATE FIXTURE. NOTHING BELOW THIS LINE IS ON THE WIRE TODAY.
+
+   The tile VOCABULARY here is the board's RECEIVER vocabulary — the PORT BRIEF
+   at battle-board/index.html:92-93 advertises
+   'normal'|'blocked'|'hazard'|'objective'|'spawn' plus `elev` in world units,
+   and the drawing code really does honour all of it. But what the board can
+   RECEIVE is not what the game can SEND, and the sender is the honest source:
+
+     `_bbMapFromEditor` (index.html:103208-103242) is the ONE producer of the
+     battle stage's `map`. It emits tiles as `{x, z, type}` plus an optional
+     `prop`, and that is the whole shape:
+       · `elev` APPEARS NOWHERE IN THE FUNCTION. Not defaulted, not derived —
+         the word is absent. Every raised slab and lit cliff face below is the
+         harness's invention.
+       · `BB_TERRAIN_TYPE` (:103200) is `{water:'hazard', lava:'hazard',
+         blight:'hazard'}`, so the only `type` it can ever emit is 'hazard'.
+         `'objective'` and `'blocked'` are unreachable from the sender.
+       · props come only from `m.models` via `BB_PROP_MAP` (:103202) — free
+         editor models snapped to their nearest cell.
+
+     And with the SHIPPED DEFAULT there is no input at all: `_b3dActiveMap()`
+     (index.html:102835) returns `terrain: null, models: []` when no admin map
+     is configured, so both loops run zero times and `_bbMapFromEditor` returns
+     `tiles: []`. `board:init` then does `Object.assign(MAP, msg.map)`
+     (battle-board:2818), which REPLACES the board's demo tiles with that empty
+     array. A real match today therefore shows ZERO props, ZERO hazards, ZERO
+     objective tiles and ZERO elevation.
+
+   That is `SCENES.gamemap`, and it is the control capture. This table is the
+   target state: what the board would draw if a sender ever fed it. It matters
+   which is which because .gauntlet/BAR.md R1 is judged almost entirely on
+   elevation and cliff faces — validating hex cliff-face lighting or raised-tile
+   side walls against a green capture from a scene below would validate work
+   that is invisible in a real match.
+
+   ⚠ ONLY FOUR PROPS ACTUALLY DRAW. The PORT BRIEF still advertises
+   'house' and 'wreck' and `BB_PROP_MAP` can still emit both, but `drawProp`
+   (battle-board/index.html:1688-1711) only handles barricade / crater / pylon /
+   bones — its own comment at :1686 says houses and wrecked cars "are EVENTS
+   now". A tile carrying prop:'house' renders as bare ground with no warning, so
+   the fixture does not use one; the `ruins` scene below shows a building the
+   way the board can really show one.
+
+   Placed irregularly on purpose — evenly spaced props on a lattice is a named
+   fail condition in .gauntlet/BAR.md (R1). */
+const RUIN_TILES = [
+  { x:1,  z:1,  prop:'bones' },
+  { x:10, z:1,  prop:'barricade' },
+  { x:12, z:3,  prop:'pylon', elev:0.18 },
+  { x:3,  z:3,  prop:'crater', type:'hazard' },
+  { x:8,  z:4,  prop:'crater', type:'hazard' },
+  { x:0,  z:6,  prop:'barricade' },
+  { x:2,  z:5,  prop:'barricade' },
+  { x:11, z:6,  prop:'crater', type:'hazard' },
+  { x:5,  z:7,  prop:'barricade' },
+  { x:1,  z:8,  prop:'pylon', elev:0.18 },
+  { x:13, z:8,  prop:'bones' },
+  { x:9,  z:10, prop:'bones' },
+  { x:4,  z:10, prop:'bones' },
+  { x:6,  z:2,  type:'objective' },
+  { x:7,  z:8,  type:'objective' },
+  /* A RAISED SHELF, four tiles of it. The only elevation in the fixture used to
+     be the two 0.18 pylon pads, which are one tile each — too small to show
+     whether the cliff faces are drawn on the right EDGES. A hexagon has six,
+     and which of them are visible is now decided by projected outward normal
+     rather than by a fixed index triple, so the fixture needs a slab with
+     edges facing several ways at once for that to be checkable at all. */
+  { x:6,  z:8,  elev:0.24 },
+  { x:7,  z:9,  elev:0.24 },
+  { x:6,  z:9,  elev:0.24 },
+  { x:5,  z:9,  elev:0.24 }
+];
+
+/* 🗿 EVENT ART. `_bbEvents()` (index.html:103625) hands the board a per-tile
+   `art` — a PNG baked from the admin's uploaded .glb — and `drawEvent`
+   (:1218-1231) scales it to fit exactly one tile. The repo's ruin art is in the
+   same 5×5 sheet format as the units, so frame 0 of each is the still.
+   Types come from EVENT_TYPES (battle-board/index.html:1111): 'structure'
+   blocks its tile, the rest do not. */
+const RUIN_ART = {
+  car:      'assets/artwork/Eventlocations/Cars/Abandon car-abandon_car-v2.png',
+  house:    'assets/artwork/Eventlocations/homes/Abandon house-house-v1.png',
+  building: 'assets/artwork/Eventlocations/buildings/Abandon building-building-v3.png',
+  facility: 'assets/artwork/Eventlocations/scpbuiilding/Abandon SCP Tactility-building-v1.png',
+  truck:    'assets/artwork/Eventlocations/tricks/Abandon truck-truck-v1.png'
+};
+
+/* 🗺 THE AS-SHIPPED MAP — the literal return value of `_bbMapFromEditor()`
+   (index.html:103208) for the shipped default, field for field:
+     id      m.id   ‖ 'editor'      → `_b3dActiveMap()` has no id  → 'editor'
+     name    m.name ‖ 'Battlemap'   → no name                      → 'Battlemap'
+     cols    m.cols ‖ BOARD_W       → 14     (index.html:71892, HEXSPEC §7)
+     rows    m.rows ‖ BOARD_H       → 12
+     ground  the same literal pair, hardcoded at :103237
+     tiles   [] — terrain is null and models is empty, so both loops in the
+             converter run zero times (see the RUIN_TILES note above)
+     events  [] — hardcoded empty in the converter
+     spawns  the same derived literal
+   timeOfDay/location come from `_bbTimeOfDay()`/`_bbActiveLocationId()`, which
+   are the match's own state, so they are scene inputs here.
+   Change this ONLY to track a change in `_bbMapFromEditor`. Its whole value is
+   being boring and true. */
+function shippedMap(timeOfDay, location) {
+  return {
+    id:'editor', name:'Battlemap', cols:COLS, rows:ROWS,
+    timeOfDay: timeOfDay, location: location,
+    ground:{ base:'#6b5c3e', accent:'#8a7846' },
+    /* ⬅ THIS LINE USED TO BE `tiles: []`. It was true: the shipped converter
+       filled the array only from an admin battlemap, and the shipped default
+       has none, so a real match sent the stage an empty board. `_bbMapFromEditor`
+       now seeds `_bbGenTerrain()` for every map it builds, admin-configured or
+       not, so the as-shipped payload carries a full 14x12 of surfaces, relief
+       and props — and this fixture has to carry the same thing or the control
+       capture stops being a control. */
+    tiles: _bbGenTerrain(COLS, ROWS, HARNESS_MAP_SEED),
+    events: [],
+    spawns:{ mine:[[2,ROWS-1],[3,ROWS-1],[4,ROWS-1],[5,ROWS-1]],
+             foe: [[2,0],[3,0],[4,0],[5,0]] }
+  };
+}
+
+/* 🔴 THE TARGET-STATE MAP. Same envelope as `shippedMap` — the board's
+   receiver takes it happily — but the `tiles` array carries `elev` and
+   `type:'objective'`, which `_bbMapFromEditor` has no branch for and no input
+   that could produce. It is a picture of a board with terrain, not a picture of
+   this game. `events:[]` matches the real builder; the match's events arrive
+   separately (and, for the battle stage, never — see bridgeEvents). */
+function ruinsMap(timeOfDay, location, tiles) {
+  /* The fixture's hand-placed tiles are now an OVERLAY on generated terrain
+     rather than the whole map. Before the generator existed they had to be the
+     whole map, and the result was 168 bare cells with thirteen interesting ones
+     on top. Overlaying keeps every fixture value that made a point — the four
+     raised shelf tiles that test which hex edges get a cliff face, the objective
+     tiles, the hazard craters — while the ground underneath is the same ground
+     a match gets, so `skirmish` and `gamemap` still diff cleanly (which is the
+     entire reason they share a layout). */
+  const base = _bbGenTerrain(COLS, ROWS, HARNESS_MAP_SEED);
+  const at = new Map(base.map(t => [t.x + ',' + t.z, t]));
+  for (const o of (tiles || RUIN_TILES)) {
+    const hit = at.get(o.x + ',' + o.z);
+    if (hit) Object.assign(hit, o); else base.push(Object.assign({}, o));
+  }
+  return {
+    id:'harness-ruins', name:'Overgrown Downtown', cols:COLS, rows:ROWS,
+    timeOfDay: timeOfDay, location: location,
+    ground:{ base:'#6b5c3e', accent:'#8a7846' },
+    tiles: base,
+    events: [],
+    spawns:{ mine:[[2,ROWS-1],[3,ROWS-1],[4,ROWS-1],[5,ROWS-1]],
+             foe: [[2,0],[3,0],[4,0],[5,0]] }
+  };
+}
+
+let _uid = 0;
+function unit(cardId, owner, x, y) {
+  _uid++;
+  const r = ROSTER[cardId] || {};
+  /* hp is a FIXTURE value — the harness has no rules and no combat, so it
+     stands in for whatever a real match would have on the unit at this
+     moment. Varied on purpose (and not by Math.random, which would make
+     every capture a different picture): the plate has to be checkable at
+     full, at a scratch, and at the brink in one shot. */
+  const hpMax = r.hpMax || (r.h && r.h > 1.15 ? 34 : 22);
+  const hp = Math.max(1, Math.round(hpMax * [1, 0.62, 0.28, 0.85, 0.45][_uid % 5]));
+  return { id: 'u' + _uid, cardId: cardId, name: r.name || cardId,
+           owner: owner, alive: true, pos: { x: x, y: y },
+           currentHp: hp, maxHp: hpMax, isHero: /hero|boss|lead/.test(cardId) };
+}
+
+/* HEXSPEC §6 — cube distance over odd-r offset coordinates. This used to be a
+   Chebyshev disc, and on a hex lattice that is the wrong SHAPE, not just the
+   wrong count: a range-2 reach covers 3N²+3N+1 = 19 tiles, not (2N+1)² = 25,
+   and the corners it drops are the diagonals a hex grid does not have. Painting
+   the square shape onto a hex board would put a telegraph on screen that the
+   rules will never agree with — the "UI lies about the rules" failure the game
+   already carries a scar comment about. */
+function offsetToCube(x, y) {
+  const cx = x - (y - (y & 1)) / 2;      /* & not %: -1 % 2 is -1 in JS */
+  return { x: cx, y: -cx - y, z: y };
+}
+function hexDistance(ax, ay, bx, by) {
+  const a = offsetToCube(ax, ay), b = offsetToCube(bx, by);
+  return (Math.abs(a.x - b.x) + Math.abs(a.y - b.y) + Math.abs(a.z - b.z)) / 2;
+}
+
+/* Hex disc, the game's metric (`distance`, index.html:74070), minus anything a
+   unit could not stand on. This is a FIXTURE convenience, not a port of
+   getValidMoves — the board has no pathfinding and neither does this. */
+function disc(units, blocked, cx, cy, r) {
+  const taken = new Set((units || []).map(u => u.pos.x + ',' + u.pos.y));
+  const out = [];
+  for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
+    if (hexDistance(x, y, cx, cy) > r) continue;
+    if (x === cx && y === cy) continue;
+    if (taken.has(x + ',' + y)) continue;
+    if (blocked && blocked.has(x + ',' + y)) continue;
+    out.push({ x: x, y: y });
+  }
+  return out;
+}
+
+/* Six neighbours, odd-r (HEXSPEC §5). Same table the game's hexNeighbors()
+   uses, kept here for the same reason `disc` keeps a hex metric: a fixture that
+   expands the wrong frontier would put a shape on screen the rules never
+   produce, and the whole point of these captures is that they cannot. */
+function hexNb(x, y) {
+  const D = (y & 1) ? [[1,0],[-1,0],[1,-1],[0,-1],[1,1],[0,1]]
+                    : [[1,0],[-1,0],[0,-1],[-1,-1],[0,1],[-1,1]];
+  return D.map(d => ({ x: x + d[0], y: y + d[1] }));
+}
+/* Breadth-first route with a parent trace — a FIXTURE MIRROR of the game's
+   getMovePath() (index.html), which is the function moveUnit() calls to decide
+   which tiles a unit walks over. Same six-way frontier, same "occupied tiles
+   are not enterable", same parent unwind. It exists so a harness scene can show
+   a route that genuinely bends around an obstacle instead of a hand-drawn
+   polyline. It is NOT the proof that the drawn route is the walked route — only
+   the real game can be that, because only the real game runs the real BFS. */
+function bfsPath(units, blocked, sx, sy, tx, ty, speed) {
+  const taken = new Set((units || []).map(u => u.pos.x + ',' + u.pos.y));
+  taken.delete(sx + ',' + sy);
+  const seen = new Map([[sx + ',' + sy, null]]);
+  let frontier = [{ x: sx, y: sy }];
+  for (let d = 0; d < speed && frontier.length; d++) {
+    const next = [];
+    for (const p of frontier) {
+      for (const n of hexNb(p.x, p.y)) {
+        if (n.x < 0 || n.y < 0 || n.x >= COLS || n.y >= ROWS) continue;
+        const k = n.x + ',' + n.y;
+        if (seen.has(k)) continue;
+        if (taken.has(k) || (blocked && blocked.has(k))) continue;
+        seen.set(k, { x: p.x, y: p.y });
+        next.push(n);
+      }
+    }
+    frontier = next;
+  }
+  const out = [];
+  let cur = { x: tx, y: ty };
+  while (cur) {
+    out.unshift({ x: cur.x, y: cur.y });
+    cur = seen.get(cur.x + ',' + cur.y);
+  }
+  return (out.length && out[0].x === sx && out[0].y === sy) ? out : [];
+}
+/* The reachable SET for the same fixture BFS — what the move contour is traced
+   around. Kept next to bfsPath so the two can never expand differently. */
+function bfsReach(units, blocked, sx, sy, speed) {
+  const out = [];
+  for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
+    if (x === sx && y === sy) continue;
+    if (bfsPath(units, blocked, sx, sy, x, y, speed).length) out.push({ x: x, y: y });
+  }
+  return out;
+}
+
+/* Every scene carries `shipped`. There is no default: a scene that forgets it
+   is falsy, i.e. target-state, which is the safe way round — the failure mode
+   of the flag is "labelled as a fixture when it was honest", never the reverse. */
+const SCENES = {};
+
+/* — 0 · GAMEMAP. ⭐ THE ONLY AS-SHIPPED SCENE, AND THE CONTROL CAPTURE. ⭐
+
+     The map is the literal output of `_bbMapFromEditor()` for the shipped
+     default (`shippedMap` above): 14×12, the hardcoded ground pair, and an EMPTY
+     tiles array — no props, no hazards, no objective tiles, no elevation. That
+     is the terrain a player gets today, and it is the honest A/B partner for
+     .gauntlet/baseline-stage.png.
+
+     Everything else in this scene is verbatim-real and was checked field for
+     field against its sender: units (`_bbStageUnitList` :103862), defs with the
+     hardcoded h:1.05 (`_bbUnitDefs` :103514), tombstones (`_bbStagePushTombs`
+     :103898) and surfaces (`_bbStagePushSurfaces` :104008). No `events` — the
+     in-battle stage is never sent any (see bridgeEvents).
+
+     The unit and grave layout deliberately matches `skirmish` so the two can be
+     diffed: the ONLY differences in the pixels are the terrain the game cannot
+     send and the unit heights it does not vary. */
+SCENES.gamemap = (function () {
+  /* Deployment re-laid for the 14×12 board: the same thirteen units, still one
+     side per end of the field, spread so neither force sits in a corner of a
+     board almost three times the old area. */
+  const units = [
+    unit('zombie',       'ai',      2, 0),
+    unit('scum-grunt',   'ai',      5, 0),
+    unit('scum-boss',    'ai',      7, 1),
+    unit('zombie',       'ai',      9, 1),
+    unit('giant-spider', 'ai',      4, 2),
+    unit('mutant-dog',   'ai',     11, 2),
+    unit('scp-guard',    'ai',      1, 3),
+    unit('dual-blader',  'player',  4, 9),
+    unit('field-medic',  'player',  7, 9),
+    unit('guard-dog',    'player', 10, 9),
+    unit('survivor-lead','player',  2, 10),
+    unit('warrior-hero', 'player',  5, 11),
+    unit('rifleman',     'player',  9, 11)
+  ];
+  return {
+    shipped: true,
+    desc: 'What a match renders TODAY: _bbMapFromEditor() with the shipped default sends tiles:[] — bare ground, no props, no elevation.',
+    timeOfDay: 'day', location: 'battlefield',
+    map: shippedMap('day', 'battlefield'),
+    units: units,
+    tombstones: [
+      { x:7,  y:5, owner:'ai',     lootable:true,  looted:false, glowing:false },
+      { x:2,  y:6, owner:'player', lootable:true,  looted:true,  glowing:false },
+      { x:11, y:6, owner:'ai',     lootable:false, looted:false, glowing:true  }
+    ],
+    surfaces: { '4,5':'oil', '9,5':'fire', '6,6':'water' },
+    paint: null
+  };
+})();
+
+/* — 1 · EMPTY. The board and nothing else: ground, props, horizon, lighting.
+     ⚠ TARGET-STATE. This was called "the control capture" in an earlier
+     revision and it is not one: with no units to look at, every pixel in it
+     that is not flat ground — the two raised pylon slabs with lit side faces,
+     the craters, the barricades, the brighter objective tiles — comes from
+     RUIN_TILES, and none of it reaches a player. `gamemap` is the control. This
+     scene's job is narrower and still worth having: terrain, horizon and
+     lighting with nothing standing in front of them. */
+SCENES.empty = {
+  shipped: false,
+  desc: 'Bare stage — target-state terrain, props and horizon, no units.',
+  timeOfDay: 'day', location: 'battlefield',
+  map: ruinsMap('day', 'battlefield'),
+  units: [], tombstones: [], surfaces: {}, paint: null
+};
+
+/* — 2 · SKIRMISH. Both sides deployed, mixed unit types, tombstones in three
+     different states (plain / glowing / already looted) and three painted
+     surfaces. This is the "mid-match" capture. */
+SCENES.skirmish = (function () {
+  /* Deployment re-laid for the 14×12 board: the same thirteen units, still one
+     side per end of the field, spread so neither force sits in a corner of a
+     board almost three times the old area. */
+  const units = [
+    unit('zombie',       'ai',      2, 0),
+    unit('scum-grunt',   'ai',      5, 0),
+    unit('scum-boss',    'ai',      7, 1),
+    unit('zombie',       'ai',      9, 1),
+    unit('giant-spider', 'ai',      4, 2),
+    unit('mutant-dog',   'ai',     11, 2),
+    unit('scp-guard',    'ai',      1, 3),
+    unit('dual-blader',  'player',  4, 9),
+    unit('field-medic',  'player',  7, 9),
+    unit('guard-dog',    'player', 10, 9),
+    unit('survivor-lead','player',  2, 10),
+    unit('warrior-hero', 'player',  5, 11),
+    unit('rifleman',     'player',  9, 11)
+  ];
+  return {
+    shipped: false,
+    desc: 'Both sides deployed, mixed types, three graves, three painted surfaces. Terrain and unit heights are target-state.',
+    timeOfDay: 'day', location: 'battlefield',
+    map: ruinsMap('day', 'battlefield'),
+    units: units,
+    tombstones: [
+      { x:7,  y:5, owner:'ai',     lootable:true,  looted:false, glowing:false },
+      { x:2,  y:6, owner:'player', lootable:true,  looted:true,  glowing:false },
+      { x:11, y:6, owner:'ai',     lootable:false, looted:false, glowing:true  }
+    ],
+    /* keys are GAME "x,y"; values are game surface TYPE ids, mapped through
+       _BB_SURFACE_FX by the bridge exactly as the game does */
+    surfaces: { '4,5':'oil', '9,5':'fire', '6,6':'water' },
+    paint: null
+  };
+})();
+
+/* — 3 · MOVERANGE. One unit selected, its move set and attack set painted.
+     The capture for anything about telegraphing (BAR R2/R3). */
+SCENES.moverange = (function () {
+  const units = [
+    unit('zombie',       'ai',     5, 4),
+    unit('scum-grunt',   'ai',     6, 5),
+    unit('scum-boss',    'ai',     8, 3),
+    unit('dual-blader',  'player', 5, 6),
+    unit('warrior-hero', 'player', 6, 10),
+    unit('rifleman',     'player', 3, 10)
+  ];
+  const blocked = new Set(RUIN_TILES.filter(t => t.type === 'hazard' || t.type === 'blocked')
+                                    .map(t => t.x + ',' + t.z));
+  const sel = { x:5, y:6 };
+  const move = disc(units, blocked, sel.x, sel.y, 2);
+  /* attacks are enemy-occupied tiles in reach — the same thing `validAttacks`
+     holds when the game fills App._bbPaint (index.html:141689) */
+  const attack = units.filter(u => u.owner === 'ai' &&
+      hexDistance(u.pos.x, u.pos.y, sel.x, sel.y) <= 2)
+    .map(u => ({ x: u.pos.x, y: u.pos.y }));
+  return {
+    shipped: false,
+    desc: 'Dual Blader selected at (5,6): blue HEX move set (19 tiles at range 2, not 25), red attack set, gold ring on the unit. Paint is real; terrain is target-state.',
+    timeOfDay: 'day', location: 'battlefield',
+    map: ruinsMap('day', 'battlefield'),
+    units: units,
+    tombstones: [ { x:10, y:5, owner:'ai', lootable:true, looted:false, glowing:false } ],
+    surfaces: {},
+    paint: { move: move, attack: attack, place: [], swap: [], sel: sel }
+  };
+})();
+
+/* — 3b · TELEGRAPH. BAR R3's picture: the reachable region as ONE contour, and
+     a route to the cursor that BENDS. The blockers are placed deliberately —
+     a wall of bodies between the mover and the destination — because a
+     straight-line route proves nothing at all. Verify the bend is real by
+     reading the path out: it must not be a monotone run. */
+SCENES.telegraph = (function () {
+  const sel = { x: 4, y: 8 };
+  const units = [
+    unit('dual-blader',  'player', sel.x, sel.y),
+    /* the wall: seven bodies sealing every direct line north from (4,8) */
+    unit('zombie',       'ai',     5, 7),
+    unit('zombie',       'ai',     5, 6),
+    unit('scum-grunt',   'ai',     6, 5),
+    unit('zombie',       'ai',     6, 6),
+    unit('scum-grunt',   'ai',     4, 6),
+    unit('zombie',       'ai',     3, 6),
+    unit('scum-grunt',   'ai',     4, 7),
+    unit('warrior-hero', 'player', 2, 10),
+    unit('rifleman',     'player', 9, 9)
+  ];
+  const blocked = new Set(RUIN_TILES.filter(t => t.type === 'hazard' || t.type === 'blocked')
+                                    .map(t => t.x + ',' + t.z));
+  const SPEED = 6;
+  const move = bfsReach(units, blocked, sel.x, sel.y, SPEED);
+  /* (4,5) is THREE hexes from (4,8) in a straight line and SIX steps by the
+     only legal route — the destination is chosen for exactly that gap, because
+     a straight-line route would prove nothing. */
+  const dest = { x: 4, y: 5 };
+  const path = bfsPath(units, blocked, sel.x, sel.y, dest.x, dest.y, SPEED);
+  return {
+    shipped: false,
+    desc: 'Dual Blader at (4,8), speed 5. Move range as ONE cyan contour, not a checkerboard. Route to (4,5) — 3 hexes away, 6 steps by the only legal route — detours around seven blockers — read the chevrons, they turn.',
+    timeOfDay: 'day', location: 'battlefield',
+    map: ruinsMap('day', 'battlefield'),
+    units: units, tombstones: [], surfaces: {},
+    paint: { move: move, attack: [], place: [], swap: [], sel: sel },
+    tele: { path: path, dest: dest, arc: null, threat: [] }
+  };
+})();
+
+/* — 3b-ii · WALKWALL. 🚶 THE WALKED ROUTE, not just the drawn one.
+     `telegraph` proves the board DRAWS a bent route. These two scenes exist to
+     prove the SPRITE WALKS IT — moveUnit() now reads TELE.path (the very list
+     the arrow was drawn from) instead of lerping endpoint to endpoint, and the
+     only way to catch a regression in that is to move a unit and sample where
+     it actually went. Both scenes therefore hand the board a route whose
+     straight line passes through solid matter, so a straight tween cannot
+     possibly be mistaken for a correct one.
+
+     Here the obstacle is a WALL of `type:'blocked'` tiles across row 6 with a
+     single gap at (6,6). Every route from the south half to the north half is
+     funnelled through that one hex; the straight line from (3,9) to (3,3) is
+     not. */
+SCENES.walkwall = (function () {
+  const sel = { x: 3, y: 9 };
+  const dest = { x: 3, y: 3 };
+  const wall = [];
+  for (let x = 0; x < COLS; x++) if (x !== 6) wall.push({ x: x, z: 6, type: 'blocked', elev: 0.22 });
+  const units = [
+    unit('dual-blader',  'player', sel.x, sel.y),
+    unit('warrior-hero', 'player', 1, 10),
+    unit('scum-boss',    'ai',     10, 2)
+  ];
+  const blocked = new Set(wall.map(t => t.x + ',' + t.z));
+  const SPEED = 14;
+  const path = bfsPath(units, blocked, sel.x, sel.y, dest.x, dest.y, SPEED);
+  return {
+    shipped: false,
+    desc: 'WALKED-ROUTE RIG. A blocked wall across row 6 with one gap at (6,6). The Dual Blader walks (3,9) → (3,3): straight line is 6 hexes through solid wall, the legal route is ' + (path.length - 1) + ' steps through the gap. Drive it with Board.moveUnit and sample where the sprite goes.',
+    timeOfDay: 'day', location: 'battlefield',
+    map: ruinsMap('day', 'battlefield', RUIN_TILES.concat(wall)),
+    units: units, tombstones: [], surfaces: {},
+    paint: { move: bfsReach(units, blocked, sel.x, sel.y, SPEED), attack: [], place: [], swap: [], sel: sel },
+    tele: { path: path, dest: dest, arc: null, threat: [] }
+  };
+})();
+
+/* — 3b-iii · WALKSLAB. The same proof with the obstacle RAISED, because the
+     second half of the walked-route fix is that a unit follows the ground.
+     A nine-by-two raised mass seals columns 0–8 of rows 5 and 6, so the only
+     way north is round its eastern shoulder — and that shoulder is a stepped
+     shelf, so the legal route climbs 0 → 0.15 → 0.34 → 0.15 → 0 on its way
+     past. A sprite pinned to its DESTINATION's height (which is what
+     tileElev(u.gx,u.gz) gave for the whole tween) walks through the shelf
+     instead of over it. */
+SCENES.walkslab = (function () {
+  const sel = { x: 4, y: 8 };
+  const dest = { x: 4, y: 2 };
+  const mass = [];
+  for (let z = 5; z <= 6; z++) for (let x = 0; x <= 8; x++) mass.push({ x: x, z: z, type: 'blocked', elev: 0.62 });
+  /* the stepped shoulder the detour has to climb — heights on the route itself,
+     not beside it, so the walk is what changes height.
+     ⚠ Row 4 is lifted with them, and NOT for looks: a 0.62 slab on row 5 is
+     tall enough to bury the centre pixel of the flat tile behind it, and a
+     buried tile is a tile the player can see the rules offer and cannot click
+     (.gauntlet/OPEN-BREAKS.md #3). __bbHexCheck counts it as a deadCentre — the
+     fixture must not manufacture one of those to make its own point. */
+  const shelf = [
+    { x: 0, z: 4, elev: 0.34 }, { x: 1, z: 4, elev: 0.34 }, { x: 2, z: 4, elev: 0.34 },
+    { x: 3, z: 4, elev: 0.34 }, { x: 4, z: 4, elev: 0.34 }, { x: 5, z: 4, elev: 0.34 },
+    { x: 6, z: 4, elev: 0.34 }, { x: 7, z: 4, elev: 0.34 },
+    { x: 9,  z: 7, elev: 0.15 }, { x: 10, z: 7, elev: 0.15 },
+    { x: 9,  z: 6, elev: 0.34 }, { x: 10, z: 6, elev: 0.34 },
+    { x: 9,  z: 5, elev: 0.34 }, { x: 10, z: 5, elev: 0.34 },
+    { x: 9,  z: 4, elev: 0.15 }, { x: 10, z: 4, elev: 0.15 }
+  ];
+  const units = [
+    unit('dual-blader',  'player', sel.x, sel.y),
+    unit('rifleman',     'player', 2, 10),
+    unit('scum-grunt',   'ai',     11, 1)
+  ];
+  const blocked = new Set(mass.map(t => t.x + ',' + t.z));
+  const SPEED = 20;
+  const path = bfsPath(units, blocked, sel.x, sel.y, dest.x, dest.y, SPEED);
+  return {
+    shipped: false,
+    desc: 'WALKED-ROUTE RIG, RAISED. A blocked mass 0–8 wide over rows 5–6 at elev 0.62; the only way north is over the stepped shelf at columns 9–10. The Dual Blader walks (4,8) → (4,2) in ' + (path.length - 1) + ' steps and must RISE with the shelf on the way.',
+    timeOfDay: 'day', location: 'battlefield',
+    map: ruinsMap('day', 'battlefield', RUIN_TILES.concat(mass, shelf)),
+    units: units, tombstones: [], surfaces: {},
+    paint: { move: bfsReach(units, blocked, sel.x, sel.y, SPEED), attack: [], place: [], swap: [], sel: sel },
+    tele: { path: path, dest: dest, arc: null, threat: [] }
+  };
+})();
+
+/* — 3c · ARC. The attack telegraph: a curve from attacker to target drawn
+     ABOVE the board (BAR R2), not a straight laser along the ground. */
+SCENES.arc = (function () {
+  const sel = { x: 5, y: 7 };
+  const tgt = { x: 8, y: 4 };
+  const units = [
+    unit('rifleman',     'player', sel.x, sel.y),
+    unit('scum-boss',    'ai',     tgt.x, tgt.y),
+    unit('zombie',       'ai',     7, 5),
+    unit('scum-grunt',   'ai',     6, 6),
+    unit('warrior-hero', 'player', 4, 9)
+  ];
+  return {
+    shipped: false,
+    desc: 'Rifleman at (5,7) telegraphing an attack on the Scum Boss at (8,4): an arc over the board coloured by ownership, arrowhead and foot ring on the target.',
+    timeOfDay: 'dusk', location: 'battlefield',
+    map: ruinsMap('dusk', 'battlefield'),
+    units: units, tombstones: [], surfaces: {},
+    paint: { move: [], attack: [tgt], place: [], swap: [], sel: sel },
+    tele: { path: [], dest: null, threat: [],
+            arc: { from: sel, to: tgt, side: 'mine' } }
+  };
+})();
+
+/* — 3d · THREAT. BAR R2's danger zone: the enemy reach as a painted region
+     with a BRIGHTER outer edge, in a colour that is not the move colour, so
+     "where I can stand" and "what threatens me" never read as one thing. */
+SCENES.threat = (function () {
+  const sel = { x: 4, y: 9 };
+  const units = [
+    unit('dual-blader',  'player', sel.x, sel.y),
+    unit('warrior-hero', 'player', 6, 10),
+    unit('scum-boss',    'ai',     7, 4),
+    unit('zombie',       'ai',     4, 5),
+    unit('scum-grunt',   'ai',    10, 6)
+  ];
+  const blocked = new Set(RUIN_TILES.filter(t => t.type === 'hazard' || t.type === 'blocked')
+                                    .map(t => t.x + ',' + t.z));
+  const move = bfsReach(units, blocked, sel.x, sel.y, 3);
+  /* Enemy reach the way the game builds it: where each foe can STAND (its own
+     move BFS) grown by its attack range. Here that is a 1-step grow of each
+     foe's speed-2 reach, done with the same fixture BFS. */
+  const threatSet = new Set();
+  for (const e of units.filter(u => u.owner === 'ai')) {
+    const stands = bfsReach(units, blocked, e.pos.x, e.pos.y, 2).concat([e.pos]);
+    for (const st of stands) {
+      threatSet.add(st.x + ',' + st.y);
+      for (const n of hexNb(st.x, st.y))
+        if (n.x >= 0 && n.y >= 0 && n.x < COLS && n.y < ROWS) threatSet.add(n.x + ',' + n.y);
+    }
+  }
+  const threat = Array.from(threatSet).map(k => ({ x: +k.split(',')[0], y: +k.split(',')[1] }));
+  return {
+    shipped: false,
+    desc: 'Three foes, their combined reach painted orange with a bright outer edge; the selected Dual Blader\'s own cyan move contour sits inside it. Two regions, two colours, one board.',
+    timeOfDay: 'day', location: 'battlefield',
+    map: ruinsMap('day', 'battlefield'),
+    units: units, tombstones: [], surfaces: {},
+    paint: { move: move, attack: [], place: [], swap: [], sel: sel },
+    tele: { path: [], dest: null, arc: null, threat: threat }
+  };
+})();
+
+/* — 3e · AI TELEGRAPH. The ENEMY half of BAR R3 — the half XCOM is actually
+     famous for. In the game this picture is pushed from setAIActor(): the AI's
+     move site computes getMovePath() BEFORE it commits the move and hands the
+     route over on App.ui.aiMoveTrail, so the enemy walks a route the player
+     can see. Before that existed the enemy's arrow was rendered only into
+     `.ai-trail`, a DOM-board glyph that is visibility:hidden while the stage
+     is on, and the enemy simply teleported.
+     Two things are on screen at once here, exactly as they are in a real AI
+     turn: the mover's RED route (side:'foe' — never the player's cyan) and a
+     second foe's attack arc onto the player hero. `paint.move` is empty on
+     purpose: the game publishes no player move set while the AI is acting. */
+SCENES.aitele = (function () {
+  const from = { x: 8, y: 3 };
+  const dest = { x: 5, y: 7 };
+  const hero = { x: 4, y: 9 };
+  const shooter = { x: 7, y: 6 };
+  const units = [
+    unit('scum-grunt',   'ai',     from.x, from.y),
+    unit('scum-boss',    'ai',     shooter.x, shooter.y),
+    /* the wall — bodies sealing the direct line south-west out of (8,3), so
+       the route has to swing wide. A straight route would prove nothing. */
+    unit('zombie',       'ai',     7, 4),
+    unit('zombie',       'ai',     6, 4),
+    unit('zombie',       'ai',     6, 5),
+    unit('scum-grunt',   'ai',     5, 5),
+    unit('warrior-hero', 'player', hero.x, hero.y),
+    unit('rifleman',     'player', 3, 8)
+  ];
+  const blocked = new Set(RUIN_TILES.filter(t => t.type === 'hazard' || t.type === 'blocked')
+                                    .map(t => t.x + ',' + t.z));
+  const path = bfsPath(units, blocked, from.x, from.y, dest.x, dest.y, 8);
+  return {
+    shipped: false,
+    desc: 'The ENEMY telegraph. A Scum Grunt crossing from (8,3) to (5,7) — its route drawn in RED, not the player\'s cyan — while a Scum Boss telegraphs an attack arc onto the player hero. In a match this is pushed from setAIActor while the AI walks.',
+    timeOfDay: 'dusk', location: 'battlefield',
+    map: ruinsMap('dusk', 'battlefield'),
+    units: units, tombstones: [], surfaces: {},
+    paint: { move: [], attack: [], place: [], swap: [], sel: null },
+    tele: { path: path, dest: dest, threat: [], side: 'foe',
+            arc: { from: shooter, to: hero, side: 'foe' } }
+  };
+})();
+
+/* — 4 · NIGHT. Skirmish under the night rig, which swaps the whole lighting
+     preset (TIME_PRESETS, battle-board/index.html:284) and turns the braziers
+     into the dominant light source. Cheap to ship, and half the board's look
+     lives in this one flag. */
+SCENES.night = Object.assign({}, SCENES.skirmish, {
+  shipped: false,
+  desc: 'Skirmish under the night lighting rig.',
+  timeOfDay: 'night',
+  map: ruinsMap('night', 'battlefield')
+});
+
+/* — 5 · RUINS. THE FIVE LOOTABLE RUINS the brief names, on the real
+     `board:structs` path: a wrecked CAR, a gutted CHURCH, a collapsed SCHOOL,
+     a caved-in HOSPITAL and a burnt HOUSE.
+
+     ⚠ WHAT CHANGED, AND WHY THE OLD FIXTURE IS GONE. This scene used to place
+     five EVENT tiles carrying baked ruin art, because an event was the only
+     way the board could draw a building at all. Two things were wrong with
+     that and both are now fixed rather than papered over:
+       · the repo ships no church and no school art, so two of the five were
+         labelled "Ruined Building" / "Abandoned Facility" — the scene could
+         not show the thing the requirement actually asks for;
+       · the in-battle stage is never sent events (see the bridgeEvents note),
+         so the fixture was doubly target-state: it showed a path no match
+         takes, using art for buildings the requirement does not name.
+     `board:structs` is sent by _bbStagePushStructs on the SAME slow tick and
+     the SAME board:ready path as board:tombs, so this scene now exercises a
+     message a real match really sends, and the art is procedural — drawStruct
+     in battle-board/index.html — so nothing depends on an asset that isn't
+     there. `shipped` stays false only because the terrain under it is.
+
+     Spread across the 14x12 board rather than bunched in one quadrant: five
+     ruins in one corner tells you nothing about how they read at the far edge,
+     where the projection is smallest. One ruin is `looted:true` — the greyed-out
+     state is half the read and it needs to be in the capture, not just in the
+     code — and it is the HOUSE, not the school. It used to be the school, and
+     that was a mistake: the school is the ruin whose identity is hardest to
+     read, so greying it out meant the one building a critic most needed to
+     judge was the one shown at reduced contrast. The house's gable and chimney
+     survive the grey; nothing is lost by moving the flag to it. */
+SCENES.ruins = {
+  shipped: false,
+  desc: 'The five lootable ruins on the real board:structs path — car, church, school, hospital, house. Procedural art; the house is shown already stripped.',
+  timeOfDay: 'dusk', location: 'battlefield',
+  map: ruinsMap('dusk', 'battlefield', [
+    { x:12, z:3, prop:'pylon', elev:0.18 },
+    { x:1,  z:8, prop:'pylon', elev:0.18 },
+    { x:1,  z:1, prop:'bones' },
+    { x:11, z:9, prop:'bones' }
+  ]),
+  units: [ unit('warrior-hero', 'player', 6, 10), unit('zombie', 'ai', 7, 2) ],
+  tombstones: [], surfaces: {}, paint: null, events: [],
+  /* GAME coords {x,y} — the bridge renames y → z, exactly as the game's own
+     push does. Writing {x,z} here is the transpose bug README warns about. */
+  structures: [
+    /* Rows follow STRUCTURE_MIN_ROW (index.html, next to STRUCTURE_ORDER) —
+       the same height-aware back-row keep-out the game's own roll now obeys, so
+       this fixture shows a layout a real match can actually produce. It used to
+       put the church on row 2, which measures head Y = -43 in this projector:
+       its steeple was cropped off the top of the frame in the delivered
+       capture, and a capture whose subject is half off-screen judges nothing. */
+    { x:2,  y:4, kind:'car',      lootable:true, looted:false, risk:'explosive' },
+    { x:5,  y:5, kind:'church',   lootable:true, looted:false, risk:'cursed' },
+    { x:10, y:5, kind:'school',   lootable:true, looted:false, risk:null },
+    { x:3,  y:8, kind:'hospital', lootable:true, looted:false, risk:'corrupted' },
+    { x:9,  y:9, kind:'house',    lootable:true, looted:true,  risk:null }
+  ]
+};
+
+/* — 6 · SURFACES. Every painter in SURFACE_2D at once, one per tile.
+     ⚠ TARGET-STATE for the terrain, but the surface half is real protocol: the
+     keys below are the GAME's surface type ids and go through _BB_SURFACE_FX
+     exactly as `_bbStagePushSurfaces` sends them.
+     This scene exists because the surface FX are the one system the hex
+     conversion could break INVISIBLY. Each painter is clipped to its own tile
+     polygon, and that polygon used to be built by offsetting the GRID
+     coordinates by ±0.5 — half a COLUMN, which on a staggered lattice is not a
+     tile corner at all and on odd rows is not even over the tile. It now comes
+     from the same hexCorners() the tile itself is drawn from. Sixteen painters
+     is too many to eyeball one at a time from a scene that shows three, so
+     they all go on the board together and the failure — paint bleeding past a
+     hex edge, or sitting half a tile to the side on odd rows only — is a single
+     look. Deliberately alternating odd and even rows for that reason. */
+SCENES.surfaces = {
+  shipped: false,
+  desc: 'All 16 surface painters, one per tile, alternating odd/even rows — the clip-polygon check for the hex conversion.',
+  timeOfDay: 'day', location: 'battlefield',
+  map: ruinsMap('day', 'battlefield', []),
+  units: [], tombstones: [], paint: null,
+  surfaces: {
+    '2,3':'oil',        '4,3':'grease',   '6,3':'water',     '8,3':'fire',
+    '3,4':'toxin',      '5,4':'web',      '7,4':'caltrops',  '9,4':'ice',
+    '2,5':'blood',      '4,5':'steam',    '6,5':'rift',      '8,5':'acid',
+    '3,6':'poison',     '5,6':'electrified', '7,6':'holy',   '9,6':'cracked',
+    /* the same four again on the opposite parity, hard against the right edge:
+       an odd-row-only half-column drift shows up here and nowhere else */
+    '11,3':'fire',      '12,4':'water',   '11,5':'oil',      '12,6':'ice'
+  }
+};
+
+/* ══════════════════════════════════════════════════════════════════
+   4 · THE DRIVER
+   ══════════════════════════════════════════════════════════════════ */
+
+const QS    = new URLSearchParams(location.search);
+const SHOT  = QS.get('shot') === '1';
+/* The bare URL lands on the AS-SHIPPED scene deliberately. Whoever opens this
+   file with no query string is the person most likely to mistake it for the
+   game, so give them the true picture and make them ask for a fixture. */
+const NAME  = SCENES[QS.get('scene')] ? QS.get('scene') : 'gamemap';
+const SCENE = SCENES[NAME];
+const KIND  = SCENE.shipped ? 'as-shipped' : 'target-state fixture';
+
+const host  = document.getElementById('bb-stage-host');
+const catch_ = document.getElementById('bb-catch');
+const readEl = document.getElementById('h-read');
+
+let boardReady = false;      // board:ready seen
+let pushedAt   = 0;          // performance.now() when the scenario finished going out
+let rectsSeen  = 0;          // board:rects since the push — proof the iframe's RAF runs
+let lastRects  = null;       // …and the newest payload, for anchor-staleness tests
+const errors   = [];
+
+function note(msg, isErr) {
+  if (isErr) errors.push(msg);
+  if (!readEl) return;
+  readEl.innerHTML = String(msg).replace(/[<&]/g, c => c === '<' ? '&lt;' : '&amp;');
+  readEl.className = 'read' + (isErr ? ' err' : '');
+}
+
+if (SHOT) document.body.classList.add('shot');
+
+/* ── 📐 THE IN-GAME HOST RECT — measured, not guessed ──────────────────
+   The game sizes #bb-stage-host to `.board-area`'s bounding rect
+   (`_bbStageTrack`, index.html:104381-104425) and stretches the iframe to
+   inset:0 inside it. That rect is NOT the viewport, and the difference is not
+   cosmetic: `VIEW.scale` (battle-board:441) fits the vertical FOV to the
+   SAFE-BOX HEIGHT, and EMBEDDED zeroes SAFE (:2917) — so vertical FOV is pinned
+   to the host's HEIGHT and horizontal FOV falls out of its ASPECT (CONTRACT
+   §1.6). A full-viewport host frames the board differently from a match, which
+   is precisely the "right in the rig, wrong in the game" error this file exists
+   to prevent.
+
+   The numbers below are a MEASUREMENT of the live cascade, not a reading of the
+   CSS. Method: load /index.html in headless Chromium, append an empty
+   `.battle-screen > .battle-grid > .battle-center > .board-area` into #app,
+   force root zoom to 1 (the battle screen is exempt from the UI auto-scale —
+   index.html:209104 sets z=1 when App.screen==='battle'), read the rect.
+   Re-measure the same way if the rail widths move.
+
+       viewport      .board-area (CSS px)
+       1600 × 900     801.6 × 688   at (490.4, 5.6)
+       1440 × 900     781.6 × 692   at (370.4, 5.6)
+       1920 × 1080   1111.2 × 868   at (496.0, 9.6)
+
+   The arithmetic reproduces the first two to under a pixel and 1920 to ~1%.
+   Its inputs are the ones the cascade really uses:
+     rail L   chrome.css:97-99    440 / 320 / 280 by breakpoint — it OVERRIDES
+                                  index.html:7082-7089's 560/400/330
+     rail R   chrome.css:114-115  248 / 228 — index.html's --btl-rail-r lies
+                                  about this and says so in its own comment
+     grid     index.html:6921-6928  gap 1rem, +20px rail offset, +24px right
+                                  reservation, padding-right .75rem
+     height   index.html:6926     min-height: calc(100vh - 1.2rem - 190px) */
+function boardAreaRect(W, H) {
+  const railL = (W >= 1600) ? 440 : (W >= 1280 ? 320 : 280);
+  const railR = (W > 1500) ? 248 : 228;
+  const left  = 14 + (railL + 20) + 16;          /* #app inset + column 1 + gap */
+  return { left: left, top: 6,
+           width:  Math.max(240, W - left - 16 - (railR + 24) - 20),
+           height: Math.max(200, H - 22 - 190) };
+}
+
+/* Which box this scene mounts into. An as-shipped scene gets the in-game rect,
+   because a capture that claims to be the game must be framed like the game. A
+   target-state scene keeps the full viewport: a bigger, lower-framed picture
+   that no match produces — which is fine, it is a fixture, and the watermark
+   says so. `?host=full|boardarea` overrides either way for a direct A/B. */
+const HOSTMODE = (QS.get('host') === 'full' || QS.get('host') === 'boardarea')
+  ? QS.get('host') : (SCENE.shipped ? 'boardarea' : 'full');
+let hostBox = { left:0, top:0, width:0, height:0 };
+
+function sizeHost() {
+  const W = window.innerWidth || 1600, H = window.innerHeight || 900;
+  const r = (HOSTMODE === 'boardarea') ? boardAreaRect(W, H)
+                                       : { left:0, top:0, width:W, height:H };
+  host.style.left = r.left + 'px'; host.style.top = r.top + 'px';
+  host.style.width = r.width + 'px'; host.style.height = r.height + 'px';
+  hostBox = r;
+  paintMark();
+  paintGuides();
+}
+window.addEventListener('resize', sizeHost);
+
+/* 📐 Draw the furniture the game puts around the board, from the SAME numbers
+   boardAreaRect uses so the two cannot drift. Nothing here is rendered — these
+   are outlines of the space a match spends on HUD, which is the whole reason
+   the board's rect is not the viewport. */
+function paintGuides() {
+  const box = document.getElementById('h-guides');
+  if (!box) return;
+  box.innerHTML = '';
+  document.body.classList.toggle('guides', HOSTMODE === 'boardarea');
+  if (HOSTMODE !== 'boardarea') return;
+  const W = window.innerWidth || 1600, H = window.innerHeight || 900;
+  const railL = (W >= 1600) ? 440 : (W >= 1280 ? 320 : 280);   /* chrome.css:97-99   */
+  const railR = (W > 1500) ? 248 : 228;                        /* chrome.css:114-115 */
+  const HAND  = 190;                                           /* index.html:6927    */
+  const parts = [
+    { l:14,        t:6, w:railL,  h:H - HAND - 12, s:'HUD RAIL · .battle-left', c:'' },
+    { l:W - railR - 12, t:6, w:railR, h:H - HAND - 12, s:'DECK RAIL · .bp-wrap', c:'' },
+    { l:0,         t:H - HAND, w:W, h:HAND, s:'HAND STRIP · position:fixed', c:'' },
+    { l:hostBox.left, t:hostBox.top, w:hostBox.width, h:hostBox.height,
+      s:'.board-area — the stage host', c:'board' }
+  ];
+  for (const p of parts) {
+    const d = document.createElement('div');
+    d.className = p.c;
+    d.style.left = p.l + 'px'; d.style.top = p.t + 'px';
+    d.style.width = p.w + 'px'; d.style.height = p.h + 'px';
+    d.textContent = p.s;
+    box.appendChild(d);
+  }
+}
+
+/* 🏷 The watermark. Kind first because that is the thing a stray PNG loses. */
+function paintMark() {
+  const el = document.getElementById('h-mark');
+  if (!el) return;
+  el.innerHTML = '<b class="' + (SCENE.shipped ? 'ship' : 'fix') + '">' +
+    (SCENE.shipped ? '◆ AS-SHIPPED' : '◇ TARGET-STATE FIXTURE') + '</b>' +
+    ' · scene=' + NAME +
+    ' · host ' + (HOSTMODE === 'boardarea' ? '.board-area' : 'viewport') + ' ' +
+    Math.round(hostBox.width) + '×' + Math.round(hostBox.height);
+  const hb = document.getElementById('h-host');
+  if (hb) hb.textContent = (HOSTMODE === 'boardarea' ? '.board-area (in-game)' : 'full viewport')
+    + ' · ' + Math.round(hostBox.width) + '×' + Math.round(hostBox.height);
+}
+
+/* chrome. Every chip is labelled, not just the active one — the panel has to
+   answer "which of these are real" without clicking through five of them. */
+(function paintChrome() {
+  const pv = document.getElementById('h-prov');
+  if (pv) {
+    pv.textContent = SCENE.shipped ? '◆ AS-SHIPPED' : '◇ TARGET-STATE FIXTURE';
+    pv.className = 'prov ' + (SCENE.shipped ? 'ship' : 'fix');
+  }
+  const d = document.getElementById('h-desc');
+  if (d) d.textContent = SCENE.desc || '';
+  const box = document.getElementById('h-scenes');
+  if (!box) return;
+  for (const k of Object.keys(SCENES)) {
+    const a = document.createElement('a');
+    a.href = '?scene=' + k; a.textContent = k;
+    a.className = (SCENES[k].shipped ? 'ship' : 'fix') + (k === NAME ? ' on' : '');
+    a.title = SCENES[k].shipped ? 'as-shipped — the game can send this today'
+                                : 'target-state fixture — the game cannot send this today';
+    box.appendChild(a);
+  }
+})();
+
+/* The iframe, mounted the way _bbStageMount does (index.html:104155-104163):
+   same src + cache-buster, hidden until `load` so the browser's white
+   pre-paint frame never shows, with a belt-and-braces timer behind it. */
+sizeHost();
+
+const frame = document.createElement('iframe');
+frame.className = 'bb-stage';
+frame.setAttribute('aria-hidden', 'true');
+frame.setAttribute('tabindex', '-1');
+frame.src = 'index.html?v=' + BB_VER;
+frame.addEventListener('load', () => frame.classList.add('ready'));
+setTimeout(() => frame.classList.add('ready'), 4000);
+host.insertBefore(frame, catch_);
+
+/* _bbStagePost — index.html:103820. Same envelope, same same-origin target. */
+function post(type, detail) {
+  if (!frame.contentWindow) return;
+  try {
+    frame.contentWindow.postMessage(Object.assign({ type: 'board:' + type }, detail || {}),
+                                    location.origin);
+  } catch (e) { note('post ' + type + ' failed: ' + e.message, true); }
+}
+
+/* The push order is copied from the `board:ready` branch at index.html:104147-104149:
+   init → units (which pushes defs first) → paint → tombs → surfaces. Order is
+   load-bearing: `applyUnits` mints a placeholder def for any key it has not
+   seen (battle-board/index.html:2795-2800), so defs must land first or a unit
+   spends its first frames as a procedural body. */
+async function pushScene() {
+  post('init', bridgeInitPayload(SCENE));
+
+  /* _bbStagePushLocation (index.html:103936) registers the entry and THEN
+     switches, because setLocation() hard-bails on an id it has never seen.
+     init already carried the table; doing it again costs nothing and keeps
+     the harness on the same code path the game uses mid-match. */
+  post('locations', { locations: bridgeLocations() });
+  post('location', { id: SCENE.location });
+  post('timeOfDay', { key: SCENE.timeOfDay });
+
+  /* _bbStagePushUnits — index.html:104041: defs(force) first, then the FULL
+     roster. The game always sends the whole list; withholding a unit and
+     asking for a summon ceremony instead is a documented past bug. */
+  const defs = await bridgeDefs(SCENE);
+  post('defs', { defs: defs });
+  post('units', { units: bridgeUnitList(SCENE) });
+
+  post('paint', bridgePaint(SCENE));
+  post('tele', bridgeTele(SCENE));
+  post('tombs', bridgeTombs(SCENE));
+  post('structs', bridgeStructs(SCENE));
+  post('surfaces', bridgeSurfaces(SCENE));
+  post('events', await bridgeEvents(SCENE));
+
+  pushedAt = performance.now();
+  rectsSeen = 0;
+  note('scene "' + NAME + '" pushed · ' + (SCENE.units || []).length + ' units');
+}
+
+window.addEventListener('message', (e) => {
+  if (e.origin !== location.origin) return;
+  const d = e.data;
+  if (!d || typeof d.type !== 'string' || d.type.indexOf('board:') !== 0) return;
+  if (!frame.contentWindow || e.source !== frame.contentWindow) return;
+
+  if (d.type === 'board:ready') {
+    boardReady = true;
+    pushScene().catch(err => note('pushScene: ' + (err && err.message || err), true));
+    return;
+  }
+  /* board:rects is EMBEDDED-only, throttled to 4/sec while the camera is at
+     rest and published EVERY FRAME while it moves (the anchors are what every
+     VFX and cinematic hangs off, and at 78°/s a 250ms-old box is ~84px stale).
+     It is published from inside frame() itself, so receiving them is direct
+     evidence the stage's RAF loop is alive — which is what the ready gate below
+     wants, and what a parent-side rAF count could never prove.
+     The payload is KEPT, not just counted: it is the only way to measure that
+     staleness from outside the iframe, which is how the 4/sec desync was
+     quantified in the first place. See __harness.rects(). */
+  if (d.type === 'board:rects') { rectsSeen++; lastRects = d; return; }
+  if (d.type === 'board:tileClick') {
+    note('tileClick ' + d.x + ',' + d.z + (d.unitId ? ' → unit ' + d.unitId : ''));
+    return;
+  }
+  if (d.type === 'board:tileHover') {
+    if (d.x >= 0) note('hover ' + d.x + ',' + d.z + (d.unitId ? ' · ' + d.unitId : ''));
+    return;
+  }
+});
+
+/* Forwarded pointer — `_bbStageCatcher`, index.html:104344-104353. Normalised
+   against the STAGE HOST (not the catcher), which is the fix for the "clicks
+   land one tile over" bug the game's comment records. */
+function norm(e) {
+  const r = host.getBoundingClientRect();
+  return { nx: (e.clientX - r.left) / Math.max(1, r.width),
+           ny: (e.clientY - r.top) / Math.max(1, r.height) };
+}
+catch_.addEventListener('click', (e) => { const n = norm(e); post('pointer', { kind:'click', nx:n.nx, ny:n.ny }); });
+catch_.addEventListener('mousemove', (e) => { const n = norm(e); post('pointer', { kind:'move', nx:n.nx, ny:n.ny }); });
+catch_.addEventListener('mouseleave', () => post('pointer', { kind:'move', nx:-1, ny:-1 }));
+
+/* ── ⌨ KEY FORWARDING — NO LONGER A STUB ───────────────────────────────
+   .gauntlet/BAR.md requirement #2 is "Camera: WASD moves it, Q/E turns it".
+   This rig forwarded the two messages below long before anything received
+   them, because CONTRACT §2 Tier 2 is explicit that an embedded free camera
+   needs HOST-FORWARDED KEYS: an iframe that never holds focus receives no
+   `keydown` for exactly the reason it receives no mouse events (§1.4), so a
+   camera built and tested only against the standalone preview's local listener
+   would be dead in the game and dead here.
+
+   The board now has both receivers (`handleHostMessage`, cases `key` and
+   `camera`), and the GAME sends both messages from `_bbCamKeysBind`
+   (index.html) in the same shapes and the same units this rig does — that
+   pairing is the whole reason to keep both:
+
+     board:key    {down, code, key, repeat}   key EDGES. The board keeps the
+                  held set and integrates it in update(dt) against its own
+                  clock, which is what makes camera speed independent of either
+                  side's frame rate. It is also the only shape that can carry
+                  R (reset the view), which is an edge and not an axis.
+     board:camera {dx, dz, yaw}               resolved intent, re-sent every
+                  animation frame while a camera key is held, with dt already
+                  applied. `dz` is a delta along the board's +Z, i.e. toward
+                  the NEAR edge, so S is positive and W is negative.
+
+   ⚠ The board reads the pulse as an intent SIGN and never accumulates it, so
+   sending both shapes does not drive the camera twice. A rig (or a host) that
+   integrated deltas on the board's behalf WOULD double-count, at whatever
+   ratio the two clocks happened to sit at, and it would look like a tuning
+   problem rather than a bug.
+
+   ⚠ `g` and `1`-`4` are claimed by the board's own local listener and are
+   inert here for the focus reason above — they are forwarded as `board:key`
+   but the board only maps WASD/QE/R out of that message. Use
+   `__harness.post('timeOfDay',{key:'night'})` for time of day.
+
+   For a deterministic capture, do not hold a key for a guessed number of
+   milliseconds — reach into the stage and set the pose:
+     __harness.cam().set(90, 0, 0)   → yaw 90°, no pan, no easing
+     __harness.cam().get()           → { yawDeg, pan, moving, terrainKey, … } */
+const CAMKEYS = { KeyW:'fwd', KeyS:'back', KeyA:'left', KeyD:'right', KeyQ:'yawL', KeyE:'yawR', KeyR:'reset' };
+const held = Object.create(null);
+let camSent = 0, camRaf = 0, camLast = 0;
+
+function camStep(t) {
+  camRaf = 0;
+  const dt = camLast ? Math.min(0.1, (t - camLast) / 1000) : 0.016;
+  camLast = t;
+  const dx  = (held.KeyD ? 1 : 0) - (held.KeyA ? 1 : 0);
+  const dz  = (held.KeyS ? 1 : 0) - (held.KeyW ? 1 : 0);
+  const yaw = (held.KeyE ? 1 : 0) - (held.KeyQ ? 1 : 0);
+  if (!dx && !dz && !yaw) { camLast = 0; return; }
+  /* Units are per-second and world-ish: 6 tiles/s pan, 90°/s turn. They are the
+     harness's guess — the board will own the real rates once it owns a camera. */
+  post('camera', { dx: dx * 6 * dt, dz: dz * 6 * dt, yaw: yaw * (Math.PI / 2) * dt });
+  camSent++;
+  camRaf = requestAnimationFrame(camStep);
+}
+function pumpCam() { if (!camRaf) camRaf = requestAnimationFrame(camStep); }
+
+window.addEventListener('keydown', (e) => {
+  if (e.repeat && CAMKEYS[e.code]) { pumpCam(); return; }   /* the rAF pump owns repeats */
+  post('key', { down: true, code: e.code, key: e.key, repeat: !!e.repeat });
+  if (CAMKEYS[e.code]) {
+    /* R is an EDGE (reset), not an axis — it goes out as board:key and must
+       never enter the held set, or the rAF pump would spin forever on a key
+       that contributes nothing to dx/dz/yaw. */
+    if (e.code !== 'KeyR') { held[e.code] = true; pumpCam(); }
+    note('key ' + e.code + ' ↓ → board:key + board:camera (' + CAMKEYS[e.code] + ')');
+  } else {
+    note('key ' + e.code + ' ↓ → board:key (the board maps WASD/QE/R only)');
+  }
+});
+window.addEventListener('keyup', (e) => {
+  post('key', { down: false, code: e.code, key: e.key, repeat: false });
+  if (CAMKEYS[e.code]) delete held[e.code];
+});
+/* A window that loses focus never delivers the keyup, which would leave a key
+   stuck down and the rAF pump running forever. */
+window.addEventListener('blur', () => { for (const k in held) delete held[k]; });
+
+/* ── READY GATE ──────────────────────────────────────────────────────
+   __harnessReady flips only when all three of the required conditions hold:
+     1. the stage reported board:ready,
+     2. the scenario finished going out (pushedAt is set — and it is set AFTER
+        the awaited sprite slicing, so no unit can still be an empty def), and
+     3. one full second of real animation has elapsed since that push, which is
+        checked by BOTH wall clock and ≥3 board:rects (4/sec ⇒ ≥0.75 s of
+        frames actually rendered).
+   The degraded escape hatch exists because rAF genuinely does not fire in some
+   embedded viewers (CLAUDE.md's Browser-pane note). Rather than hang a
+   screenshotter for 30 s, give up after 6 s, flip ready anyway, and SAY SO on
+   `window.__harnessDegraded` so nobody mistakes a frozen board for a rendered
+   one. */
+const readyTick = setInterval(() => {
+  if (window.__harnessReady) { clearInterval(readyTick); return; }
+  if (!boardReady || !pushedAt) return;
+  const age = performance.now() - pushedAt;
+  if (age >= 1000 && rectsSeen >= 3) { window.__harnessReady = true; clearInterval(readyTick); return; }
+  if (age >= 6000) {
+    window.__harnessDegraded = 'no board:rects after ' + Math.round(age) +
+      'ms — the stage RAF loop is probably not running';
+    note(window.__harnessDegraded, true);
+    window.__harnessReady = true; clearInterval(readyTick);
+  }
+}, 100);
+
+/* Driver handle: `__harness.post('timeOfDay',{key:'night'})`,
+   `__harness.push()` to re-send, `__harness.scenes` to enumerate. */
+window.__harness = {
+  scene: NAME, scenes: Object.keys(SCENES), data: SCENE,
+  shipped: !!SCENE.shipped, kind: KIND, hostMode: HOSTMODE,
+  post: post, push: pushScene, frame: frame,
+  errors: errors,
+  /* HEXSPEC §4's round-trip assertion, run inside the stage. gw() and
+     worldToTile() are hand-derived analytic inverses with nothing else tying
+     them together, so this is the only thing that can catch a parity slip —
+     and a parity slip is invisible in a screenshot. Same-origin iframe, so we
+     call straight into it rather than inventing a protocol message for a test
+     hook the game must never fire. */
+  hexCheck: (opts) => {
+    const w = frame.contentWindow;
+    if (!w || typeof w.__bbHexCheck !== 'function')
+      return { ok:false, error:'board has no __bbHexCheck (not loaded yet?)' };
+    return w.__bbHexCheck(opts);
+  },
+  /* 🎥 The stage's camera probe, reached straight through the same-origin
+     iframe. `set(yawDeg, panX, panZ)` jumps to a pose with no easing (the
+     clamp still runs), which is the only way a screenshot rig can assert the
+     angle a capture was taken at — yaw is not visible in a PNG. `get()`
+     reports the pose AND the live terrainKey, so a test can prove the baked
+     ground layer actually re-keyed when the camera moved. */
+  cam: () => {
+    const w = frame.contentWindow;
+    return (w && w.__bbCam) || { error: 'board has no __bbCam (not loaded yet?)' };
+  },
+  /* The most recent board:rects payload as the HOST sees it — {rects, tiles}.
+     Compare against the board's own live unitScreenBox() to measure how stale
+     an anchored overlay is at any moment. */
+  rects: () => lastRects,
+  /* `camSent` counts board:camera posts that left the parent. */
+  state: () => ({ boardReady, pushedAt, rectsSeen, ready: window.__harnessReady,
+                  degraded: window.__harnessDegraded || null,
+                  shipped: !!SCENE.shipped, hostMode: HOSTMODE,
+                  host: { w: Math.round(hostBox.width), h: Math.round(hostBox.height) },
+                  heldKeys: Object.keys(held), camSent: camSent })
+};
+
+})();
+</script>
+</body>
+</html>

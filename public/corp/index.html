@@ -11,8 +11,19 @@
 
   <link rel="stylesheet" href="styles.css?v=118k9" />
 
-  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
-  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <!-- React is pinned at 18.3.1 and loaded as the PRODUCTION builds. It used to load
+       react.development.js / react-dom.development.js, which are ~10x the size for no
+       benefit here: nothing in corp/*.jsx reads a dev-only API, and the dev warnings were
+       going to a console no player opens. Uncompressed that was 1,190,158 bytes of blocking
+       script; the min builds are 142,586 (261,207 -> 47,185 over the wire, gzipped).
+       Do NOT "helpfully" swap these back to .development.js to chase a warning — take the
+       page to a local dev copy instead, and keep this file on the min builds.
+       The integrity hashes are sha384 of the exact 18.3.1 min files; if you ever change the
+       pinned version you MUST recompute both or the page dies with an SRI failure and a
+       blank #root. Babel standalone below is deliberately left in place: removing it needs a
+       real build step, and CLAUDE.md forbids adding one without asking. -->
+  <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" integrity="sha384-DGyLxAyjq0f9SPpVevD6IgztCFlnMF6oW/XQGmfe+IsZ8TqEiDrcHkMLKI6fiB/Z" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" integrity="sha384-gTGxhz21lVGYNMcdJOyq01Edg0jhn/c22nsx0kyqP0TxaV5WVdsSH1fSDUf5YJj1" crossorigin="anonymous"></script>
   <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
 
   <script src="data.js"></script>
@@ -21,10 +32,10 @@
 <body>
   <div id="root"></div>
 
-  <script type="text/babel" src="tweaks-panel.jsx?v=118s9"></script>
-  <script type="text/babel" src="shell.jsx?v=119z3"></script>
-  <script type="text/babel" src="screens.jsx?v=120r8"></script>
-  <script type="text/babel" src="realestate.jsx?v=118s9"></script>
-  <script type="text/babel" src="app.jsx?v=120p3"></script>
+  <script type="text/babel" src="tweaks-panel.jsx?v=121q18"></script>
+  <script type="text/babel" src="shell.jsx?v=121u5"></script>
+  <script type="text/babel" src="screens.jsx?v=121v49"></script>
+  <script type="text/babel" src="realestate.jsx?v=121q18"></script>
+  <script type="text/babel" src="app.jsx?v=v121v2-121q18"></script>
 </body>
 </html>

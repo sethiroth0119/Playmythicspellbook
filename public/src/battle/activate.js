@@ -51,7 +51,7 @@
   if (!global || typeof global.document === 'undefined') return;
 
   var doc = global.document;
-  var VERSION = 'r7-activate-1.0.0';
+  var VERSION = 'r7-activate-1.1.0-splash';
   var STYLE_ID = 'afx-style';
   var ROOT_ID = 'afx-root';
 
@@ -68,13 +68,21 @@
    * player fires the same trigger.
    * ------------------------------------------------------------------ */
   var PULSE_MS = 520;
+  /* 🃏 THE SPLASH — "when card effects activate show an animation of the card
+     on the screen, of the card art, for 2 seconds, so players can see what
+     card is using its effect" (Master Duel's activation card). The card's
+     illustration rises large in the middle of the screen, holds, and goes.
+     Every tier shows it — it IS the "which card" signal — and the beat's
+     total is stretched to cover it. */
+  var SPLASH_MS = 2000;
+  var SPLASH_IN = 260, SPLASH_OUT = 300;
   var TIER = {
     full:  { in: 190, hold: 1320, out: 230 },
     brief: { in: 150, hold:  620, out: 190 },
     flash: { in: 120, hold:  260, out: 150 }
   };
   var GAP_MS = 70;             // between two beats of a chain
-  var CHAIN_BUDGET_MS = 5400;  // a chain must never outstay this
+  var CHAIN_BUDGET_MS = 6800;  // a chain must never outstay this (three splashes fit)
   var MAX_QUEUE = 6;           // beyond this the tail coalesces into one beat
   var RM_TOTAL = 340;          // reduced motion: one short, motionless beat
   var WATCHDOG_PAD = 1500;     // hard kill, over and above the schedule
@@ -186,6 +194,38 @@
       '  background:#ffce6e;transform:rotate(45deg);box-shadow:0 0 8px rgba(255,190,80,.9);}',
       '@keyframes afx-lead{0%{opacity:0}20%{opacity:.75}70%{opacity:.55}100%{opacity:0}}',
 
+      /* ---- the splash: the card art, large, centre screen, 2 seconds ---- */
+      '.afx-veil{position:fixed;inset:0;pointer-events:none;opacity:0;',
+      '  background:radial-gradient(ellipse at 50% 48%,rgba(0,0,0,.55) 0%,rgba(0,0,0,.28) 38%,rgba(0,0,0,0) 72%);',
+      '  animation:afx-veil var(--afx-splash-ms,2000ms) ease-in-out forwards;}',
+      '@keyframes afx-veil{0%{opacity:0}12%{opacity:1}84%{opacity:1}100%{opacity:0}}',
+      '.afx-splash{position:fixed;left:50%;top:50%;width:min(300px,34vw,calc(52vh * .667));aspect-ratio:2/3;',
+      '  transform:translate(-50%,-50%);transform-origin:50% 50%;border-radius:14px;overflow:hidden;pointer-events:none;',
+      '  background:linear-gradient(165deg,#2a1c3e,#0d0917);background-size:cover;background-position:center;',
+      '  box-shadow:0 0 0 2px rgba(255,214,120,.95),0 0 34px rgba(255,176,60,.65),0 0 80px rgba(255,150,40,.3),0 30px 70px rgba(0,0,0,.85);',
+      '  opacity:0;will-change:transform,opacity;',
+      '  animation:afx-splash var(--afx-splash-ms,2000ms) cubic-bezier(.2,.9,.25,1) forwards;}',
+      '.afx-splash.afx-foe{box-shadow:0 0 0 2px rgba(255,130,110,.95),0 0 34px rgba(255,90,70,.6),0 0 80px rgba(255,60,50,.28),0 30px 70px rgba(0,0,0,.85);}',
+      '.afx-splash::before{content:"";position:absolute;inset:0;pointer-events:none;',
+      '  background:linear-gradient(105deg,rgba(255,255,255,0) 30%,rgba(255,240,200,.28) 50%,rgba(255,255,255,0) 70%);',
+      '  transform:translateX(-120%);animation:afx-sheen 1100ms 260ms ease-out forwards;}',
+      '@keyframes afx-sheen{to{transform:translateX(120%)}}',
+      '.afx-splash .afx-glyph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:96px;}',
+      '.afx-splash i{position:absolute;left:0;right:0;bottom:0;font-style:normal;text-align:center;padding:26px 10px 10px;',
+      '  font-size:15px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#fff3d8;',
+      '  text-shadow:0 1px 8px rgba(0,0,0,.95);background:linear-gradient(transparent,rgba(0,0,0,.92));}',
+      '.afx-splash i b{display:block;font-size:9.5px;font-weight:800;letter-spacing:.18em;color:#ffce6e;margin-bottom:2px;}',
+      '.afx-splash.afx-foe i b{color:#ff9a86;}',
+      '.afx-splash .afx-chain{position:absolute;top:10px;right:10px;font-style:normal;font-size:10.5px;font-weight:800;',
+      '  letter-spacing:.14em;color:#1b1206;background:linear-gradient(180deg,#ffd98a,#c99633);border-radius:6px;',
+      '  padding:4px 8px;box-shadow:0 2px 8px rgba(0,0,0,.6);}',
+      '@keyframes afx-splash{',
+      '  0%{opacity:0;transform:translate(-50%,-34%) scale(.72);}',
+      '  11%{opacity:1;transform:translate(-50%,-51%) scale(1.06);}',
+      '  17%{opacity:1;transform:translate(-50%,-50%) scale(1);}',
+      '  86%{opacity:1;transform:translate(-50%,-50%) scale(1);}',
+      '  100%{opacity:0;transform:translate(-50%,-58%) scale(1.03);}}',
+
       /* ---- the explain band ----------------------------------------- */
       '.afx-band{position:fixed;display:flex;align-items:stretch;gap:11px;pointer-events:auto;cursor:pointer;',
       '  padding:9px 14px 9px 9px;border-radius:12px;opacity:0;will-change:transform,opacity;',
@@ -254,6 +294,9 @@
       '  .afx-pulse,.afx-ring,.afx-ghost,.afx-zone,.afx-lead,.afx-src-lit{animation:none!important;}',
       '  .afx-pulse{opacity:0!important;}.afx-ring,.afx-ghost,.afx-lead{display:none!important;}',
       '  .afx-zone{opacity:1!important;}',
+      '  .afx-splash{animation:afx-fade-in 120ms linear forwards!important;transform:translate(-50%,-50%)!important;}',
+      '  .afx-splash::before{animation:none!important;}',
+      '  .afx-veil{animation:none!important;opacity:1!important;}',
       '  .afx-band{transform:none!important;}',
       '  .afx-band.afx-in{animation:afx-fade-in 100ms linear forwards!important;}',
       '  .afx-band.afx-out{animation:afx-fade-out 100ms linear forwards!important;}',
@@ -626,6 +669,40 @@
     }
   };
 
+  /* ---- half 3: the splash ------------------------------------------- */
+  Beat.prototype.splash = function () {
+    var s = this.spec;
+    /* A hidden enemy card (a face-down flip the opponent may not read) has no
+       face to show; nothing with no art at all is worth a full-screen card. */
+    if (s.hidden) return false;
+    /* ⛓ ONE SPLASH PER CHAIN. "Just one — if it is a chain show it with how
+       many cards are in the chain." The first link's art goes up, wearing the
+       chain count; the links behind it keep their pulse and band only. */
+    if ((s.chainLen | 0) > 1 && (s.chainIndex | 0) > 0) return false;
+    var art = s.artUrl || null, frame = s.frameUrl || null;
+    if (!art && !frame) return false;
+    var veil = doc.createElement('div');
+    veil.className = 'afx-veil';
+    veil.style.setProperty('--afx-splash-ms', SPLASH_MS + 'ms');
+    this.add(veil);
+    var el = doc.createElement('div');
+    el.className = 'afx-splash' + (s.owner === 'ai' ? ' afx-foe' : '');
+    el.style.setProperty('--afx-splash-ms', SPLASH_MS + 'ms');
+    var glyph = '';
+    if (art) el.style.backgroundImage = 'url("' + String(art).replace(/"/g, '%22') + '")';
+    else {
+      el.style.backgroundImage = 'url("' + String(frame).replace(/"/g, '%22') + '")';
+      el.style.backgroundSize = '100% 100%';
+      glyph = '<span class="afx-glyph">' + esc(s.icon || '⚡') + '</span>';
+    }
+    var chain = ((s.chainLen | 0) > 1)
+      ? '<em class="afx-chain">⛓ CHAIN · ' + (s.chainLen | 0) + ' CARDS</em>' : '';
+    el.innerHTML = glyph + chain + '<i><b>' + esc(s.kindLabel || 'ACTIVATED') + '</b>' + esc(s.name || 'Card') + '</i>';
+    this.add(el);
+    this.splashed = true;
+    return true;
+  };
+
   /* ---- half 2: the explain ------------------------------------------ */
   Beat.prototype.explain = function () {
     var s = this.spec, self = this;
@@ -763,12 +840,16 @@
     } catch (e) {}
     try { this.pulse(); } catch (e) { try { console.warn('[ActivateFX] pulse', e); } catch (_) {} }
     if (!this.spec.pulseOnly) {
+      try { this.splash(); } catch (e) { try { console.warn('[ActivateFX] splash', e); } catch (_) {} }
       try { this.explain(); } catch (e) { try { console.warn('[ActivateFX] explain', e); } catch (_) {} }
     }
     var d = TIER[this.tier] || TIER.full;
     var total = this.spec.pulseOnly ? PULSE_MS
               : Math.max(PULSE_MS, d.in + d.hold + (this.holdBonus | 0) + d.out);
-    if (reduceMotion()) total = RM_TOTAL;
+    /* The splash is the two seconds the player asked for, whatever tier the
+       band chose — a flash beat still shows the whole card. */
+    if (this.splashed) total = Math.max(total, SPLASH_MS);
+    if (reduceMotion()) total = this.splashed ? Math.max(RM_TOTAL, 1200) : RM_TOTAL;
     this.after(total, function () { self.finish('schedule'); });
     // Watchdog — independent of the schedule above, so a cleared/lost timer
     // can never leave the overlay on screen.
@@ -789,6 +870,7 @@
     try {
       trace.push({ id: this.id, name: this.spec.name, zone: this.spec.zone, tier: this.tier,
                    why: why, at: Math.round(this.startedAt), where: this.bandSlotWhere || null,
+                   splash: !!this.splashed,
                    pulsed: !!(this.spec.rect || this.spec.anchorRect),
                    effects: (this.spec.effects || []).length });
       if (trace.length > 40) trace.shift();
@@ -941,7 +1023,7 @@
     isPlaying: function () { return !!(live && !live.done); },
 
     timings: function () {
-      return { pulse: PULSE_MS, tiers: TIER, gap: GAP_MS, chainBudget: CHAIN_BUDGET_MS,
+      return { pulse: PULSE_MS, splash: SPLASH_MS, tiers: TIER, gap: GAP_MS, chainBudget: CHAIN_BUDGET_MS,
                reducedMotionTotal: RM_TOTAL, totals: { full: tierMs('full'), brief: tierMs('brief'), flash: tierMs('flash') } };
     },
 
@@ -975,13 +1057,15 @@
         sp.kindLabel = sp.kindLabel || ZONE_LABEL[sp.zone] || 'ACTIVATED';
         var b = new Beat(sp, sp.forceTier);
         live = b;
-        b.pulse(); b.explain();
+        b.pulse(); b.splash(); b.explain();
         for (var i = 0; i < b.timers.length; i++) { try { global.clearTimeout(b.timers[i]); } catch (e) {} }
         b.timers.length = 0;
         // Freeze the pulse clone mid-swell so a still frame shows the hit pose.
         try {
           var p = doc.querySelector('#' + ROOT_ID + ' .afx-pulse');
           if (p) { p.style.animation = 'none'; p.style.opacity = '1'; p.style.transform = 'scale(1.16)'; }
+          var sp2 = doc.querySelector('#' + ROOT_ID + ' .afx-splash');
+          if (sp2) { sp2.style.animation = 'none'; sp2.style.opacity = '1'; sp2.style.transform = 'translate(-50%,-50%)'; }
           var bd = doc.querySelector('#' + ROOT_ID + ' .afx-band');
           if (bd) { bd.style.animation = 'none'; bd.style.opacity = '1'; bd.style.transform = 'none'; }
           var rg = doc.querySelector('#' + ROOT_ID + ' .afx-ring');

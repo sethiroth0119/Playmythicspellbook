@@ -1,7 +1,7 @@
 import { createRequire } from 'module';
 const __req = createRequire(import.meta.url);
 let chromium; try { ({ chromium } = __req('playwright')); } catch (e) { ({ chromium } = createRequire(process.env.PLAYWRIGHT_PKG || '/opt/node22/lib/node_modules/playwright/package.json')('playwright')); }
-const S = new URL('.', import.meta.url).pathname.replace(/\/$/, '');   // this folder; setup.sh creates three/, www/, shots/, artifact/ here
+const S = decodeURIComponent(new URL('.', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/$/, '');   // this folder; setup.sh creates three/, www/, shots/, artifact/ here
 const browser = await chromium.launch({ headless: true, args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
 const logs = []; page.on('console', m => { if (m.type() === 'error' || /THREE\.WebGLProgram/.test(m.text())) logs.push(m.text().slice(0, 300)); }); page.on('pageerror', e => logs.push('pageerror: ' + e.message));

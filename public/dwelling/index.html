@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Mythic Spellbook — Dwelling</title>
 <style>#brand{display:none !important}</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <script>
 /* Host storage shim — the Dwelling app persists through window.storage.{get,set,delete}.
    Backed by IndexedDB (large quota) so imported .glb models + layouts SAVE durably;
@@ -25,10 +28,14 @@
    runs every purchase against the real economy. Standalone (no parent) → not bridged. */
 window.MYTHIC = (function(){
   var cinder = null, aza = null, ready = false, admin = false, catalog = [], seq = 0, pending = {}, waiters = [];
+  /* 🧰 The stash slots of the property this dwelling belongs to — the host
+     sends it with the wallet. 0 means 'the host did not say', and every
+     reader below falls back to its own default rather than to an empty chest. */
+  var stashSlots = 0;
   function post(m){ try { if (parent && parent !== window) parent.postMessage(m, '*'); } catch(e){} }
   window.addEventListener('message', function(e){
     var d = e && e.data; if (!d || typeof d !== 'object') return;
-    if (d.type === 'dw:econ'){ cinder = d.cinder|0; aza = d.aza|0; admin = !!d.admin; ready = true; waiters.splice(0).forEach(function(fn){ try{ fn(); }catch(_){} }); try{ window.dispatchEvent(new Event('mythicEcon')); }catch(_){} }
+    if (d.type === 'dw:econ'){ cinder = d.cinder|0; aza = d.aza|0; admin = !!d.admin; stashSlots = Math.max(0, d.stashSlots|0); ready = true; waiters.splice(0).forEach(function(fn){ try{ fn(); }catch(_){} }); try{ window.dispatchEvent(new Event('mythicEcon')); }catch(_){} }
     else if (d.type === 'dw:catalog'){ catalog = Array.isArray(d.rows) ? d.rows : []; try{ window.dispatchEvent(new Event('mythicCatalog')); }catch(_){} }
     else if (d.type === 'dw:spendResult'){ var p = pending[d.reqId]; if (p){ delete pending[d.reqId]; if (d.ok){ cinder = d.cinder|0; aza = d.aza|0; try{ window.dispatchEvent(new Event('mythicEcon')); }catch(_){} } p(!!d.ok); } }
   });
@@ -36,6 +43,7 @@ window.MYTHIC = (function(){
   return {
     bridged: function(){ return ready; },
     isAdmin: function(){ return !!admin; },
+    stashSlots: function(){ return stashSlots|0; },
     cinder: function(){ return cinder|0; },
     aza: function(){ return aza|0; },
     catalog: function(){ return catalog.slice(); },
@@ -83,8 +91,30 @@ window.MYTHIC = (function(){
     <div class="fld"><label>Icon image</label><label for="aIcoImg" class="btn small ico-up">🖼 Upload image…</label><input id="aIcoImg" type="file" accept="image/*" style="display:none"><span id="aIcoPrev" class="ico-prev" style="display:none"></span><button id="aIcoClear" class="mini-del" style="display:none">Clear</button></div>
     <div class="fld"><label>Price</label><input id="aAza" class="in sm" type="number" value="20"><span class="cur">🪙</span><input id="aCin" class="in sm" type="number" value="15"><span class="cur">🔥</span></div>
     <div class="fld"><label>Type</label><select id="aMount" class="in"><option value="floor">🪑 Floor furniture</option><option value="wall">🖼️ Wall-mounted</option><option value="flat">🟥 Flat / rug</option><option value="ceiling">💡 Ceiling / hanging</option></select></div>
-    <div class="fld"><label>Function</label><select id="aFunc" class="in"><option value="">— No function (decor)</option><option value="bed">🛏️ Bed (rest heroes)</option><option value="storage">🧰 Storage chest</option><option value="binder">📒 Binder / Counter</option><option value="open">🎴 Open packs</option><option value="vendor">🛒 Vendor Market</option><option value="battle">⚔️ Battle Table</option></select></div>
+    <div class="fld"><label>Function</label><select id="aFunc" class="in"><option value="">— No function (decor)</option><option value="bed">🛏️ Bed (rest heroes)</option><option value="storage">🧰 Storage chest</option><option value="binder">📒 Binder / Counter</option><option value="open">🎴 Open packs</option><option value="vendor">🛒 Vendor Market</option><option value="battle">⚔️ Battle Table</option><option value="depot">📦 Resource Depot (20,000 units · any wallet resource)</option></select></div>
     <div class="fld"><label>Details</label><input id="aDetails" class="in" placeholder='What it does — blank → "a normal ..."'></div>
+    <!-- 🏗 WHERE THE MODEL CAN BE PLACED. This importer is the only one in the
+         game, and the warehouse reads the SAME library, so a model has to be
+         able to say which room it belongs to. Without this the warehouse could
+         never be given a real PC mesh: /src/decorate/warehouse.js only picks up
+         models tagged room==='wh' (or carrying a propId), and nothing could
+         write that tag. Left alone everything behaves as it always did &mdash;
+         'dwelling' is the default and is what every existing model has. -->
+    <div class="fld"><label>Room</label><select id="aRoom" class="in">
+      <option value="dwelling">🏠 Dwelling only</option>
+      <option value="wh">🏗 Warehouse only</option>
+      <option value="both">🏠🏗 Both</option>
+    </select></div>
+    <div class="fld" id="aPropWrap" style="display:none"><label>Replaces fitting</label><select id="aProp" class="in">
+      <option value="">&mdash; its own piece (not a replacement)</option>
+      <option value="workstation">🖥 Workstation (the PCs)</option>
+      <option value="rack">🗄 Pallet Rack</option>
+      <option value="pallet">📦 Pallet Stack</option>
+      <option value="barrel">🛢 Drum</option>
+      <option value="lamp">💡 Floor Lamp</option>
+      <option value="sign">🪧 Hanging Sign</option>
+      <option value="plant">🪴 Dead Fern</option>
+    </select><div class="empty-note">Pick <b>Workstation</b> to swap the warehouse&rsquo;s block PCs for this model everywhere they already stand &mdash; existing warehouses update without anyone re-placing anything.</div></div>
     <div class="sub-h">Import 3D Model (.glb)</div>
     <input id="glbFile" type="file" accept=".glb,.gltf" class="in">
     <div id="glbInfo" style="display:none">
@@ -138,7 +168,7 @@ window.MYTHIC = (function(){
   <div id="paint" class="modal">
     <div class="store-box paint-box">
       <div class="store-head"><span>🎨 Paint Walls</span><div class="spacer"></div><span id="paintHave" class="cap"></span><button id="closePaint" class="btn small">Close</button></div>
-      <div class="paint-row"><input id="paintColor" type="color" value="#1a2238"><div id="swatches" class="swatches"></div></div>
+      <div class="paint-row"><input id="paintColor" type="color" value="#2a2419"><div id="swatches" class="swatches"></div></div>
       <button id="applyPaint" class="btn primary full">Apply — 5 🎨</button>
       <div class="store-foot">Repainting all walls costs 5 paint.</div>
     </div>
@@ -148,127 +178,184 @@ window.MYTHIC = (function(){
 </div>
 
 <style>
+  /* ══ RUIN LEDGER THEME ══════════════════════════════════════════════════
+     WHY these tokens exist: this file used to carry six separate navy chrome
+     fills (#0c1018 #10182b #141d33 #161f38 #1b2540 #1f2c4d) and one font —
+     'Segoe UI'. Against the house bar that is two outright failures: chrome
+     whose blue channel runs 12–46/255 above red, and headings on a UI sans.
+     Every chrome colour now comes from a token below; nothing warm-black is
+     hard-coded twice, so the next drift is a one-line fix.
+     ⚠ Do NOT reintroduce a bare hex for chrome — reach for a token.
+     ⚠ THE EMOJI FACES IN THE FONT STACKS ARE LOAD-BEARING, not decoration.
+     Every furnishing icon in this app (🪑 🔥 🛏️ 🖼️ …) is an emoji printed as
+     text. A stack that ends at the generic `serif` resolves on Windows to
+     Times New Roman, which has no emoji coverage, and codepoints needing
+     U+FE0F land on a monochrome face that draws the glyph plus a MISSING-GLYPH
+     box. Naming the colour-emoji faces before the generic keeps them whole.
+     Same fix, same reason, as node-city/index.html. */
+  :root{
+    --ground:#0c0b0a;          /* page ground — near-black, faintly warm */
+    --panel:#141210;           /* panel ground */
+    --card:#1c1813;            /* raised card */
+    --card-hi:#262019;         /* card, hovered */
+    --sunk:#100e0c;            /* input wells */
+    --parch-bg:#241f16;        /* parchment block — explainers/tooltips ONLY */
+    --frame:rgba(198,160,74,.34);
+    --frame-soft:rgba(198,160,74,.16);
+    --gold:#c9a227;
+    --gold-2:#d4af37;
+    --gold-bright:#f0d98a;
+    --ink:#e8dfc9;
+    --ink-dim:#9d907a;
+    --parch:#d9cbaa;
+    --blood:#c0392b;
+    --serif:'Crimson Text',Georgia,'Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji',serif;
+    --display:'Cinzel',Georgia,'Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji',serif;
+    /* Panel grounds are never a flat fill — a hairline diagonal scratch over a
+       warm charcoal, at an alpha you read as texture rather than as stripes. */
+    --etch:repeating-linear-gradient(114deg,rgba(198,160,74,.030) 0 1px,transparent 1px 8px);
+  }
   * { margin:0; padding:0; box-sizing:border-box; }
-  #app { position:fixed; inset:0; font-family:'Segoe UI',system-ui,sans-serif; background:#0c1018; color:#e7e9ef; overflow:hidden; }
+  /* On html/body, not just #app — the save-status toast is appended to <body>,
+     outside #app, and inherited Times New Roman (no emoji coverage) there. */
+  html, body { font-family:var(--serif); background:var(--ground); color:var(--ink); }
+  #app { position:fixed; inset:0; font-family:var(--serif); background:var(--ground); color:var(--ink); overflow:hidden; }
+  button, input, select, textarea { font-family:var(--serif); }
   canvas { display:block; width:100%; height:100%; touch-action:none; }
-  .gold { color:#d4af37; }
-  #topbar { position:absolute; top:0; left:0; right:0; height:52px; z-index:10; display:flex; align-items:center; gap:8px; padding:0 14px; background:linear-gradient(180deg,rgba(14,20,34,.96),rgba(14,20,34,.78)); border-bottom:1px solid rgba(212,175,55,.35); backdrop-filter:blur(6px); }
-  #brand { font-weight:700; letter-spacing:1.5px; font-size:14px; white-space:nowrap; }
+  .gold { color:var(--gold-2); }
+  /* Section heading: small caps ON a hairline that runs to the panel edge. */
+  .panel-title, .sub-h, .col-h, #admin h3 { font-family:var(--display); text-transform:uppercase; color:var(--gold-bright); display:flex; align-items:center; gap:8px; font-weight:600; }
+  .panel-title::after, .sub-h::after, .col-h::after, #admin h3::after { content:''; flex:1; height:1px; background:var(--frame-soft); }
+  #topbar { position:absolute; top:0; left:0; right:0; height:52px; z-index:10; display:flex; align-items:center; gap:8px; padding:0 14px; background:linear-gradient(180deg,rgba(18,16,14,.97),rgba(18,16,14,.80)); border-bottom:1px solid var(--frame); backdrop-filter:blur(6px); }
+  #brand { font-family:var(--display); font-weight:700; letter-spacing:.10em; font-size:13px; white-space:nowrap; color:var(--gold-bright); text-transform:uppercase; }
   .spacer { flex:1; }
-  .wallet { font-size:13px; font-weight:700; display:flex; gap:12px; margin-right:6px; white-space:nowrap; }
-  .btn { background:#1b2540; color:#cdd3e3; border:1px solid rgba(212,175,55,.3); padding:7px 13px; border-radius:7px; font-size:12.5px; cursor:pointer; transition:.15s; font-weight:600; letter-spacing:.3px; white-space:nowrap; }
-  .btn:hover { background:#243155; border-color:rgba(212,175,55,.6); color:#fff; }
-  .btn.primary { background:#d4af37; color:#1a1300; border-color:#d4af37; }
-  .btn.primary:hover { background:#e6c34d; }
-  .btn.primary:disabled { background:#222c44; color:#5a627a; border-color:rgba(255,255,255,.1); cursor:not-allowed; }
-  .btn.danger { color:#e7a3a3; border-color:rgba(200,80,80,.35); }
-  .btn.danger:hover { background:#3a1d22; color:#ffd0d0; }
-  .btn.small { padding:5px 10px; font-size:11.5px; }
+  .wallet { font-size:13px; font-weight:600; display:flex; gap:12px; margin-right:6px; white-space:nowrap; color:var(--gold-bright); font-variant-numeric:tabular-nums; }
+  /* Ghost action: 1px gold on transparent, sharp corners, small caps. */
+  .btn { background:linear-gradient(180deg,#1d1913,#151210); color:var(--parch); border:1px solid var(--frame); padding:7px 12px; border-radius:3px; font-family:var(--display); font-size:11px; text-transform:uppercase; cursor:pointer; transition:.15s; font-weight:600; letter-spacing:.06em; white-space:nowrap; }
+  .btn:hover { background:linear-gradient(180deg,#282118,#1b1712); border-color:rgba(198,160,74,.62); color:var(--gold-bright); }
+  .btn.primary { background:linear-gradient(180deg,#e0bb45,#a8801d); color:#17140c; border-color:var(--gold-2); }
+  .btn.primary:hover { background:linear-gradient(180deg,#f0d071,#bb8f22); color:#17140c; }
+  .btn.primary:disabled { background:#1a1815; color:#6d6455; border-color:var(--frame-soft); cursor:not-allowed; }
+  .btn.danger { color:#d99183; border-color:rgba(192,57,43,.42); }
+  .btn.danger:hover { background:#2a1512; color:#f0b6a8; border-color:rgba(192,57,43,.7); }
+  .btn.small { padding:5px 9px; font-size:10px; }
   .btn.full { width:100%; } .btn.grow { flex:1; }
-  #catalog { position:absolute; top:62px; left:12px; width:194px; z-index:9; background:rgba(15,21,36,.92); border:1px solid rgba(212,175,55,.28); border-radius:12px; padding:12px; backdrop-filter:blur(8px); max-height:calc(100% - 140px); overflow-y:auto; }
-  .market-btn { width:100%; margin-bottom:9px; background:#2a3a63; border-color:rgba(212,175,55,.5); }
-  .market-btn:hover { background:#33457a; }
-  .paint-btn { background:#3a2a4a; border-color:rgba(180,140,220,.4); margin-bottom:11px; }
-  .paint-btn:hover { background:#4a3760; }
-  .panel-title { font-size:11px; letter-spacing:2px; color:#d4af37; text-transform:uppercase; margin-bottom:9px; font-weight:700; }
-  .sel-title { margin-top:14px; padding-top:12px; border-top:1px solid rgba(212,175,55,.2); }
+  #catalog { position:absolute; top:62px; left:12px; width:194px; z-index:9; background:var(--etch),linear-gradient(180deg,rgba(22,19,16,.95),rgba(16,14,12,.95)); border:1px solid var(--frame); border-radius:3px; padding:12px; backdrop-filter:blur(8px); max-height:calc(100% - 140px); overflow-y:auto; box-shadow:inset 0 0 0 1px rgba(0,0,0,.45); }
+  .market-btn { width:100%; margin-bottom:9px; background:linear-gradient(180deg,#2a2318,#1c1813); border-color:rgba(198,160,74,.5); }
+  .market-btn:hover { background:linear-gradient(180deg,#352c1e,#221d16); }
+  /* WHY not violet: violet is reserved for Aza / premium / mythic rarity. The
+     paint button used #3a2a4a purely as chrome, which is exactly the tell the
+     bar calls out. It is a tool, so it reads as a tool: warm ghost. */
+  .paint-btn { background:linear-gradient(180deg,#241f16,#191510); border-color:var(--frame); margin-bottom:11px; }
+  .paint-btn:hover { background:linear-gradient(180deg,#2e281c,#201b14); }
+  .panel-title { font-size:10px; letter-spacing:.16em; margin-bottom:9px; }
+  .sel-title { margin-top:14px; padding-top:12px; border-top:1px solid var(--frame-soft); }
   #items { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
-  .item { position:relative; background:#161f38; border:1px solid rgba(255,255,255,.06); border-radius:9px; padding:9px 4px; text-align:center; cursor:pointer; transition:.13s; user-select:none; }
-  .item:hover { background:#1f2c4d; border-color:rgba(212,175,55,.5); transform:translateY(-1px); }
-  .item.active { background:#2a3a63; border-color:#d4af37; box-shadow:0 0 0 1px #d4af37 inset; }
+  .item { position:relative; background:var(--card); border:1px solid var(--frame-soft); border-radius:2px; padding:9px 4px; text-align:center; cursor:pointer; transition:.13s; user-select:none; }
+  .item:hover { background:var(--card-hi); border-color:rgba(198,160,74,.5); }
+  .item.active { background:#2a2318; border-color:var(--gold-2); box-shadow:0 0 0 1px var(--gold-2) inset; }
   .item .ico { font-size:21px; display:block; line-height:1.2; }
-  .item .ico img { width:26px; height:26px; object-fit:cover; border-radius:5px; display:inline-block; }
-  .cust-item .ci-ico img { width:20px; height:20px; object-fit:cover; border-radius:4px; vertical-align:middle; }
-  .item .lbl { font-size:10px; color:#aeb6cc; margin-top:3px; display:block; }
-  .item .badge { position:absolute; top:4px; right:5px; background:#d4af37; color:#1a1300; font-size:10px; font-weight:800; border-radius:8px; padding:0 5px; line-height:16px; min-width:16px; }
-  .empty-note { font-size:11px; color:#8b93ab; line-height:1.55; margin-top:4px; }
-  .sel-name { font-size:14px; font-weight:700; margin-bottom:9px; color:#fff; }
+  .item .ico img { width:26px; height:26px; object-fit:cover; border-radius:2px; display:inline-block; }
+  .cust-item .ci-ico img { width:20px; height:20px; object-fit:cover; border-radius:2px; vertical-align:middle; }
+  .item .lbl { font-size:10px; color:var(--ink-dim); margin-top:3px; display:block; letter-spacing:.06em; }
+  .item .badge { position:absolute; top:4px; right:5px; background:var(--gold-2); color:#17140c; font-size:10px; font-weight:700; border-radius:2px; padding:0 5px; line-height:16px; min-width:16px; font-variant-numeric:tabular-nums; }
+  /* World voice: italic serif, the same register as the quartermaster lines. */
+  .empty-note { font-size:12px; color:var(--ink-dim); line-height:1.5; margin-top:4px; font-style:italic; }
+  .sel-name { font-family:var(--display); font-size:13px; font-weight:600; margin-bottom:9px; color:var(--gold-bright); letter-spacing:.04em; }
   .sel-actions { display:flex; gap:6px; }
-  #admin { position:absolute; top:62px; right:12px; width:316px; z-index:9; background:rgba(15,21,36,.96); border:1px solid rgba(212,175,55,.4); border-radius:12px; padding:14px; max-height:calc(100% - 80px); overflow-y:auto; display:none; }
-  #admin h3 { font-size:12px; letter-spacing:1.5px; color:#d4af37; text-transform:uppercase; margin-bottom:12px; }
-  .sub-h { font-size:11px; letter-spacing:1px; color:#d4af37; text-transform:uppercase; margin:12px 0 7px; font-weight:700; }
+  #admin { position:absolute; top:62px; right:12px; width:316px; z-index:9; background:var(--etch),linear-gradient(180deg,rgba(22,19,16,.97),rgba(16,14,12,.97)); border:1px solid var(--frame); border-radius:3px; padding:14px; max-height:calc(100% - 80px); overflow-y:auto; display:none; box-shadow:inset 0 0 0 1px rgba(0,0,0,.45); }
+  #admin h3 { font-size:11px; letter-spacing:.14em; margin-bottom:12px; }
+  .sub-h { font-size:10px; letter-spacing:.14em; margin:12px 0 7px; }
   .fld { display:flex; gap:6px; align-items:center; margin-bottom:7px; }
-  .fld label { font-size:11px; color:#9aa2bb; min-width:46px; }
+  .fld label { font-size:11px; color:var(--ink-dim); min-width:46px; letter-spacing:.08em; text-transform:uppercase; }
   .cur { font-size:13px; }
-  .in { background:#10182b; border:1px solid rgba(255,255,255,.1); color:#e7e9ef; border-radius:6px; padding:5px 7px; font-size:12px; width:100%; }
+  .in { background:var(--sunk); border:1px solid var(--frame-soft); color:var(--ink); border-radius:2px; padding:5px 7px; font-size:12px; width:100%; }
+  .in:focus { outline:none; border-color:rgba(198,160,74,.55); }
   .in.sm { width:60px; flex:none; }
   input[type=color].in { padding:1px; height:28px; width:34px; flex:none; }
   input[type=file].in { padding:6px; font-size:11px; }
   select.in { width:auto; }
-  .part-row { background:#141d33; border:1px solid rgba(255,255,255,.07); border-radius:8px; padding:8px; margin-bottom:8px; }
+  .part-row { background:var(--card); border:1px solid var(--frame-soft); border-radius:2px; padding:8px; margin-bottom:8px; }
   .part-line { display:flex; gap:5px; align-items:center; flex-wrap:wrap; margin-bottom:5px; }
   .part-line:last-child { margin-bottom:0; }
   .num { display:flex; flex-direction:column; gap:2px; }
-  .num span { font-size:9px; color:#7a8199; letter-spacing:.5px; }
-  .num input { width:48px; background:#10182b; border:1px solid rgba(255,255,255,.1); color:#e7e9ef; border-radius:5px; padding:4px 5px; font-size:11.5px; }
-  .glow-wrap { display:flex; align-items:center; gap:3px; font-size:11px; color:#9aa2bb; }
-  .part-rm { margin-left:auto; background:#3a1d22; color:#e7a3a3; border:none; border-radius:5px; width:24px; height:24px; cursor:pointer; font-size:12px; }
+  .num span { font-size:9px; color:var(--ink-dim); letter-spacing:.1em; text-transform:uppercase; }
+  .num input { width:48px; background:var(--sunk); border:1px solid var(--frame-soft); color:var(--ink); border-radius:2px; padding:4px 5px; font-size:11.5px; font-variant-numeric:tabular-nums; }
+  .glow-wrap { display:flex; align-items:center; gap:3px; font-size:11px; color:var(--ink-dim); }
+  .part-rm { margin-left:auto; background:#2a1512; color:#d99183; border:1px solid rgba(192,57,43,.42); border-radius:2px; width:24px; height:24px; cursor:pointer; font-size:12px; }
   .admin-actions { display:flex; gap:6px; margin:11px 0 4px; }
-  .cust-item { display:flex; align-items:center; gap:8px; background:#141d33; padding:7px 9px; border-radius:7px; margin-bottom:5px; font-size:12px; }
-  .mini-del { margin-left:auto; background:#3a1d22; color:#e7a3a3; border:none; border-radius:5px; padding:4px 9px; cursor:pointer; font-size:11px; }
-  #crosshair { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:rgba(212,175,55,.8); font-size:22px; z-index:8; display:none; pointer-events:none; font-weight:300; }
-  #interact { position:absolute; bottom:52px; left:50%; transform:translateX(-50%); z-index:9; display:none; background:rgba(12,16,24,.9); border:1px solid #d4af37; padding:8px 18px; border-radius:8px; font-size:13px; color:#fff; letter-spacing:.5px; pointer-events:none; }
-  #interact b { display:inline-block; background:#d4af37; color:#1a1300; border-radius:4px; padding:1px 7px; font-size:12px; }
-  #hint { position:absolute; bottom:14px; left:50%; transform:translateX(-50%); z-index:9; background:rgba(12,16,24,.85); border:1px solid rgba(212,175,55,.25); padding:8px 16px; border-radius:20px; font-size:12px; color:#b9c0d6; white-space:nowrap; max-width:92vw; overflow:hidden; text-overflow:ellipsis; }
-  .modal { position:absolute; inset:0; z-index:20; display:none; align-items:center; justify-content:center; background:rgba(6,9,15,.66); backdrop-filter:blur(3px); }
-  .store-box { width:min(560px,92vw); background:#0f1524; border:1px solid rgba(212,175,55,.45); border-radius:14px; padding:18px; box-shadow:0 20px 60px rgba(0,0,0,.6); }
+  .cust-item { display:flex; align-items:center; gap:8px; background:var(--card); border:1px solid var(--frame-soft); padding:7px 9px; border-radius:2px; margin-bottom:5px; font-size:12px; }
+  .mini-del { margin-left:auto; background:#2a1512; color:#d99183; border:1px solid rgba(192,57,43,.42); border-radius:2px; padding:4px 9px; cursor:pointer; font-size:11px; }
+  #crosshair { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:rgba(198,160,74,.8); font-size:22px; z-index:8; display:none; pointer-events:none; font-weight:300; }
+  #interact { position:absolute; bottom:52px; left:50%; transform:translateX(-50%); z-index:9; display:none; background:rgba(12,10,8,.92); border:1px solid var(--gold-2); padding:8px 18px; border-radius:3px; font-size:13px; color:var(--ink); letter-spacing:.06em; pointer-events:none; }
+  #interact b { display:inline-block; background:var(--gold-2); color:#17140c; border-radius:2px; padding:1px 7px; font-size:12px; font-family:var(--display); }
+  /* Footer strip: world voice, italic serif, on a dark band. */
+  #hint { position:absolute; bottom:14px; left:50%; transform:translateX(-50%); z-index:9; background:rgba(12,10,8,.88); border:1px solid var(--frame-soft); padding:8px 16px; border-radius:3px; font-size:12.5px; font-style:italic; color:var(--parch); white-space:nowrap; max-width:92vw; overflow:hidden; text-overflow:ellipsis; }
+  .modal { position:absolute; inset:0; z-index:20; display:none; align-items:center; justify-content:center; background:rgba(6,5,4,.7); backdrop-filter:blur(3px); }
+  .store-box { position:relative; width:min(560px,92vw); background:var(--etch),linear-gradient(180deg,#171410,#100e0c); border:1px solid var(--frame); border-radius:3px; padding:18px; box-shadow:0 20px 60px rgba(0,0,0,.65), inset 0 0 0 1px rgba(0,0,0,.5); }
+  /* Corner ornaments — the Camp facility tiles and the Bank vault cards carry
+     these; a frame of consequence is not just a border. */
+  .store-box::before, .store-box::after { content:''; position:absolute; width:11px; height:11px; pointer-events:none; border-color:rgba(198,160,74,.6); }
+  .store-box::before { top:4px; left:4px; border-top:1px solid; border-left:1px solid; }
+  .store-box::after { bottom:4px; right:4px; border-bottom:1px solid; border-right:1px solid; }
   .paint-box { width:min(400px,92vw); }
   .paint-row { display:flex; gap:10px; align-items:center; margin-bottom:14px; }
-  .paint-row input[type=color] { width:46px; height:36px; border:1px solid rgba(212,175,55,.4); border-radius:8px; background:#10182b; padding:2px; cursor:pointer; }
+  .paint-row input[type=color] { width:46px; height:36px; border:1px solid var(--frame); border-radius:2px; background:var(--sunk); padding:2px; cursor:pointer; }
   .swatches { display:flex; gap:7px; flex-wrap:wrap; }
-  .sw { width:28px; height:28px; border-radius:6px; cursor:pointer; border:2px solid rgba(255,255,255,.12); }
-  .sw:hover { border-color:#d4af37; transform:scale(1.08); }
-  .store-head { display:flex; align-items:center; gap:12px; font-size:16px; font-weight:700; margin-bottom:14px; }
-  .store-head .cap { font-size:13px; color:#d4af37; font-weight:700; }
+  .sw { width:28px; height:28px; border-radius:2px; cursor:pointer; border:1px solid var(--frame-soft); }
+  .sw:hover { border-color:var(--gold-2); }
+  .store-head { display:flex; align-items:center; gap:12px; font-family:var(--display); font-size:14px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--gold-bright); margin-bottom:14px; }
+  .store-head .cap { font-family:var(--serif); font-size:13px; color:var(--gold-bright); font-weight:600; letter-spacing:0; text-transform:none; font-variant-numeric:tabular-nums; }
   .store-cols { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
-  .col-h { font-size:11px; letter-spacing:1.5px; text-transform:uppercase; color:#d4af37; margin-bottom:8px; font-weight:700; }
-  .res-list { display:flex; flex-direction:column; gap:5px; min-height:60px; }
-  .res-row { display:flex; align-items:center; gap:9px; padding:7px 10px; border-radius:7px; cursor:pointer; background:#18213a; border:1px solid rgba(255,255,255,.05); transition:.12s; user-select:none; }
-  .res-row:hover { background:#243156; border-color:rgba(212,175,55,.5); }
+  .col-h { font-size:10px; letter-spacing:.14em; margin-bottom:8px; }
+  .res-list { display:flex; flex-direction:column; gap:4px; min-height:60px; }
+  /* Ledger row: label left, tabular numeral right, hairline separator. */
+  .res-row { display:flex; align-items:center; gap:9px; padding:7px 10px; border-radius:2px; cursor:pointer; background:var(--card); border:1px solid transparent; border-bottom:1px solid var(--frame-soft); transition:.12s; user-select:none; }
+  .res-row:hover { background:var(--card-hi); border-color:rgba(198,160,74,.5); }
   .res-row.empty { opacity:.4; cursor:default; }
-  .r-ico { font-size:16px; } .r-name { flex:1; font-size:13px; } .r-qty { font-weight:700; color:#fff; font-variant-numeric:tabular-nums; }
-  .store-foot { margin-top:14px; font-size:11px; color:#8b93ab; text-align:center; }
+  .r-ico { font-size:16px; } .r-name { flex:1; font-size:13px; } .r-qty { font-weight:600; color:var(--gold-bright); font-variant-numeric:tabular-nums; }
+  .store-foot { margin-top:14px; font-size:12px; font-style:italic; color:var(--ink-dim); text-align:center; }
   .store-box-wide { width:min(900px,95vw); }
   /* 🏪 store-page grid of product cards */
   .store-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:11px; max-height:58vh; overflow-y:auto; padding:2px 4px 2px 0; }
-  .store-card { display:flex; flex-direction:column; background:#141d33; border:1px solid rgba(255,255,255,.06); border-radius:11px; overflow:hidden; transition:.13s; }
-  .store-card:hover { border-color:rgba(212,175,55,.5); transform:translateY(-2px); box-shadow:0 8px 22px rgba(0,0,0,.4); }
-  .sc-thumb { position:relative; height:96px; display:flex; align-items:center; justify-content:center; font-size:46px; background:radial-gradient(circle at 50% 38%,#21304f,#0e1424); border-bottom:1px solid rgba(255,255,255,.05); }
+  .store-card { display:flex; flex-direction:column; background:var(--card); border:1px solid var(--frame-soft); border-radius:2px; overflow:hidden; transition:.13s; }
+  .store-card:hover { border-color:rgba(198,160,74,.5); box-shadow:0 8px 22px rgba(0,0,0,.45); }
+  .sc-thumb { position:relative; height:96px; display:flex; align-items:center; justify-content:center; font-size:46px; background:radial-gradient(circle at 50% 38%,#2b2418,#121009); border-bottom:1px solid var(--frame-soft); }
   .sc-thumb img { width:100%; height:100%; object-fit:cover; }
-  .sc-own { position:absolute; top:6px; right:7px; background:rgba(8,12,20,.82); color:#d4af37; font-size:10.5px; font-weight:800; border:1px solid rgba(212,175,55,.5); border-radius:7px; padding:1px 7px; }
+  .sc-own { position:absolute; top:6px; right:7px; background:rgba(10,8,6,.85); color:var(--gold-bright); font-family:var(--display); font-size:9.5px; letter-spacing:.08em; text-transform:uppercase; font-weight:600; border:1px solid var(--frame); border-radius:2px; padding:1px 7px; }
   .sc-body { display:flex; flex-direction:column; gap:5px; padding:9px 10px 11px; flex:1; }
-  .sc-name { font-size:13px; font-weight:700; color:#eef1f8; }
-  .sc-det { font-size:10.5px; color:#b9b08f; font-style:italic; line-height:1.3; }
-  .sc-price { font-size:12.5px; font-weight:700; color:#ffcf66; font-variant-numeric:tabular-nums; margin-top:auto; }
-  .sc-add { margin-top:7px; background:#d4af37; color:#1a1300; border:none; border-radius:7px; padding:7px; font-size:12px; font-weight:800; cursor:pointer; transition:.13s; }
-  .sc-add:hover { background:#e6c34d; }
+  .sc-name { font-family:var(--display); font-size:11.5px; font-weight:600; letter-spacing:.05em; text-transform:uppercase; color:var(--ink); }
+  .sc-det { font-size:11px; color:var(--parch); opacity:.78; font-style:italic; line-height:1.35; }
+  .sc-price { font-size:13px; font-weight:600; color:var(--gold-bright); font-variant-numeric:tabular-nums; margin-top:auto; }
+  .sc-add { margin-top:7px; background:linear-gradient(180deg,#e0bb45,#a8801d); color:#17140c; border:1px solid var(--gold-2); border-radius:2px; padding:7px; font-family:var(--display); font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; font-weight:600; cursor:pointer; transition:.13s; }
+  .sc-add:hover { background:linear-gradient(180deg,#f0d071,#bb8f22); }
   .sc-qty { margin-top:7px; display:flex; align-items:center; gap:6px; }
-  .sc-qty button { flex:0 0 28px; height:28px; border:none; border-radius:7px; background:#2a3a63; color:#fff; font-size:15px; font-weight:800; cursor:pointer; }
-  .sc-qty button:hover { background:#33457a; }
-  .sc-qty .sc-q { flex:1; text-align:center; font-weight:800; font-size:13px; color:#d4af37; }
+  .sc-qty button { flex:0 0 28px; height:28px; border:1px solid var(--frame); border-radius:2px; background:linear-gradient(180deg,#2a2318,#1c1813); color:var(--gold-bright); font-size:15px; font-weight:700; cursor:pointer; }
+  .sc-qty button:hover { background:linear-gradient(180deg,#352c1e,#221d16); }
+  .sc-qty .sc-q { flex:1; text-align:center; font-weight:700; font-size:13px; color:var(--gold-bright); font-variant-numeric:tabular-nums; }
   /* 🛒 cart */
-  .cart-btn { position:relative; background:#2a3a63; border-color:rgba(212,175,55,.5); }
-  .cart-badge { background:#d4af37; color:#1a1300; font-size:10px; font-weight:800; border-radius:9px; padding:0 6px; margin-left:4px; }
-  .cart-list { display:flex; flex-direction:column; gap:8px; max-height:52vh; overflow-y:auto; padding-right:3px; margin-bottom:12px; }
-  .cart-row { display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:9px; background:#141d33; border:1px solid rgba(255,255,255,.05); }
-  .cart-row .cr-ico { width:38px; height:38px; flex:0 0 auto; display:flex; align-items:center; justify-content:center; font-size:24px; border-radius:8px; background:#0e1424; overflow:hidden; }
+  .cart-btn { position:relative; background:linear-gradient(180deg,#2a2318,#1c1813); border-color:rgba(198,160,74,.5); }
+  .cart-badge { background:var(--gold-2); color:#17140c; font-size:10px; font-weight:700; border-radius:2px; padding:0 6px; margin-left:4px; font-variant-numeric:tabular-nums; }
+  .cart-list { display:flex; flex-direction:column; gap:6px; max-height:52vh; overflow-y:auto; padding-right:3px; margin-bottom:12px; }
+  .cart-row { display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:2px; background:var(--card); border:1px solid transparent; border-bottom:1px solid var(--frame-soft); }
+  .cart-row .cr-ico { width:38px; height:38px; flex:0 0 auto; display:flex; align-items:center; justify-content:center; font-size:24px; border-radius:2px; background:var(--sunk); border:1px solid var(--frame-soft); overflow:hidden; }
   .cart-row .cr-ico img { width:100%; height:100%; object-fit:cover; }
   .cart-row .cr-name { flex:1; font-size:13px; font-weight:600; }
-  .cart-row .cr-line { font-size:12px; color:#ffcf66; font-variant-numeric:tabular-nums; min-width:90px; text-align:right; }
+  .cart-row .cr-line { font-size:12.5px; color:var(--gold-bright); font-variant-numeric:tabular-nums; min-width:90px; text-align:right; }
   .cart-row .cr-qty { display:flex; align-items:center; gap:5px; }
-  .cart-row .cr-qty button { width:24px; height:24px; border:none; border-radius:6px; background:#2a3a63; color:#fff; font-weight:800; cursor:pointer; }
-  .cart-row .cr-qty .crq { min-width:18px; text-align:center; font-weight:800; font-size:12.5px; }
-  .cart-row .cr-rm { background:none; border:none; color:#e7a3a3; cursor:pointer; font-size:15px; }
-  .cart-foot { border-top:1px solid rgba(212,175,55,.22); padding-top:11px; display:flex; flex-direction:column; gap:9px; }
-  .cart-total-row { display:flex; justify-content:space-between; align-items:center; font-size:14px; font-weight:700; }
-  .cart-total { color:#ffcf66; font-variant-numeric:tabular-nums; }
+  .cart-row .cr-qty button { width:24px; height:24px; border:1px solid var(--frame); border-radius:2px; background:linear-gradient(180deg,#2a2318,#1c1813); color:var(--gold-bright); font-weight:700; cursor:pointer; }
+  .cart-row .cr-qty .crq { min-width:18px; text-align:center; font-weight:700; font-size:12.5px; font-variant-numeric:tabular-nums; }
+  .cart-row .cr-rm { background:none; border:none; color:#d99183; cursor:pointer; font-size:15px; }
+  .cart-foot { border-top:1px solid var(--frame-soft); padding-top:11px; display:flex; flex-direction:column; gap:9px; }
+  .cart-total-row { display:flex; justify-content:space-between; align-items:center; font-family:var(--display); font-size:12px; letter-spacing:.1em; text-transform:uppercase; font-weight:600; color:var(--ink-dim); }
+  .cart-total { color:var(--gold-bright); font-family:var(--serif); font-size:15px; letter-spacing:0; font-variant-numeric:tabular-nums; }
   .ico-up { display:inline-flex; align-items:center; }
-  .ico-prev { width:30px; height:30px; border-radius:6px; object-fit:cover; border:1px solid rgba(212,175,55,.5); display:inline-block; vertical-align:middle; }
+  .ico-prev { width:30px; height:30px; border-radius:2px; object-fit:cover; border:1px solid var(--frame); display:inline-block; vertical-align:middle; }
   #catalog::-webkit-scrollbar, #admin::-webkit-scrollbar, .res-list::-webkit-scrollbar, .store-grid::-webkit-scrollbar, .cart-list::-webkit-scrollbar { width:7px; }
-  #catalog::-webkit-scrollbar-thumb, #admin::-webkit-scrollbar-thumb, .store-grid::-webkit-scrollbar-thumb, .cart-list::-webkit-scrollbar-thumb { background:rgba(212,175,55,.3); border-radius:4px; }
+  #catalog::-webkit-scrollbar-thumb, #admin::-webkit-scrollbar-thumb, .store-grid::-webkit-scrollbar-thumb, .cart-list::-webkit-scrollbar-thumb { background:rgba(198,160,74,.3); border-radius:2px; }
 </style>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="/assets/vfx/three.min.js"></script>
 <script>
 (function(){
   const SAVE_KEY='mythic_house_layout_v1', MODELS_KEY='mythic_custom_models_v1', GLB_PREFIX='mythic_glb_';
@@ -279,14 +366,14 @@ window.MYTHIC = (function(){
   const canvas=document.getElementById('c');
   const renderer=new THREE.WebGLRenderer({canvas, antialias:true});
   renderer.setPixelRatio(Math.min(devicePixelRatio,2)); renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap; renderer.outputEncoding=THREE.sRGBEncoding;
-  const scene=new THREE.Scene(); scene.background=new THREE.Color(0x0c1018); scene.fog=new THREE.Fog(0x0c1018,22,46);
+  const scene=new THREE.Scene(); scene.background=new THREE.Color(0x0d0b09); scene.fog=new THREE.Fog(0x0d0b09,22,46);
   const camera=new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 200);
-  scene.add(new THREE.AmbientLight(0x4a5274,0.55)); scene.add(new THREE.HemisphereLight(0x6878a0,0x1a1520,0.5));
+  scene.add(new THREE.AmbientLight(0x59503c,0.55)); scene.add(new THREE.HemisphereLight(0x8a7c5e,0x17120c,0.5));
   const sun=new THREE.DirectionalLight(0xffe6c0,0.9); sun.position.set(10,18,8); sun.castShadow=true; sun.shadow.mapSize.set(1024,1024);
   const sc=sun.shadow.camera; sc.left=-14; sc.right=14; sc.top=14; sc.bottom=-14; sc.near=1; sc.far=50; scene.add(sun);
-  const floor=new THREE.Mesh(new THREE.BoxGeometry(ROOM*2,0.3,ROOM*2),mat(0x33373f,{r:0.95})); floor.position.y=-0.15; floor.receiveShadow=true; scene.add(floor);
-  const grid=new THREE.GridHelper(ROOM*2,ROOM*4,0xd4af37,0x2a3147); grid.position.y=0.02; grid.material.opacity=0.35; grid.material.transparent=true; scene.add(grid);
-  let wallColor='#1a2238';
+  const floor=new THREE.Mesh(new THREE.BoxGeometry(ROOM*2,0.3,ROOM*2),mat(0x3a332a,{r:0.95})); floor.position.y=-0.15; floor.receiveShadow=true; scene.add(floor);
+  const grid=new THREE.GridHelper(ROOM*2,ROOM*4,0xc9a227,0x33291b); grid.position.y=0.02; grid.material.opacity=0.35; grid.material.transparent=true; scene.add(grid);
+  let wallColor='#2a2419';
   const wallMat=new THREE.MeshStandardMaterial({color:wallColor, roughness:0.9}); const trimMat=mat(COL.gold,{m:0.6,r:0.4});
   const wallMeshes=[];
   function wall(w,d,x,z,nx,nz){ const g=new THREE.Group(); const m=new THREE.Mesh(new THREE.BoxGeometry(w,WALL_H,d),wallMat); m.position.y=WALL_H/2; m.receiveShadow=true; m.castShadow=true; m.userData.normal=new THREE.Vector3(nx,0,nz); g.add(m); wallMeshes.push(m); const t=new THREE.Mesh(new THREE.BoxGeometry(w+0.05,0.18,d+0.05),trimMat); t.position.y=0.3; g.add(t); g.position.set(x,0,z); scene.add(g); }
@@ -320,7 +407,7 @@ window.MYTHIC = (function(){
     {type:'bookshelf',name:'Shelf',ico:'📚',r:0.9,price:{aza:18}},
     {type:'brazier',name:'Brazier',ico:'🔥',r:0.5,price:{cinder:30}},
     {type:'bed',name:'Bed',ico:'🛏️',r:1.6,price:{aza:22,cinder:12}},
-    {type:'chest',name:'Storage',ico:'🧰',r:0.75,cap:200,price:{aza:35,cinder:25}},
+    {type:'chest',name:'Storage',ico:'🧰',r:0.75,cap:0,price:{aza:35,cinder:25}},
     {type:'altar',name:'Altar',ico:'📖',r:0.95,price:{aza:45,cinder:35}},
     {type:'crystal',name:'Crystal',ico:'🔮',r:0.6,price:{aza:40,cinder:45}},
     {type:'computer',name:'Computer',ico:'🖥️',r:1.1,price:{aza:30,cinder:20}},
@@ -333,7 +420,11 @@ window.MYTHIC = (function(){
   // this shared catalog is their entire custom-furniture supply. Loaded by URL.
   let sharedModels=[]; let lastLayoutItems=[];
   function fullCatalog(){ return BUILTIN
-    .concat(customModels.map(m=>({type:m.id,name:m.name,ico:m.ico,r:m.r,price:m.price,parts:m.parts,kind:m.kind,custom:true,mount:m.mount||'floor',func:m.func||'',details:m.details||'',wall:!!m.wall||m.mount==='wall',storage:!!m.storage||m.func==='storage'})))
+    /* ⚠ room==='wh' pieces are filtered OUT here. They are still in the shared
+       library — the warehouse reads it directly — but a warehouse workstation
+       has no business showing up in a bedroom's furniture market. 'both' and
+       the untagged legacy models stay. */
+    .concat(customModels.filter(m=>(m.room||'dwelling')!=='wh').map(m=>({type:m.id,name:m.name,ico:m.ico,r:m.r,price:m.price,parts:m.parts,kind:m.kind,custom:true,mount:m.mount||'floor',func:m.func||'',details:m.details||'',wall:!!m.wall||m.mount==='wall',storage:!!m.storage||m.func==='storage'})))
     .concat(sharedModels.map(m=>({type:m.id,name:m.name,ico:m.ico,r:m.r||0,price:m.price,kind:'glb',shared:true,custom:true,mount:m.mount||'floor',func:m.func||'',details:m.details||'',category:m.category||'decor',srcUrl:m.url,wall:m.mount==='wall',storage:m.func==='storage'}))); }
   let META={}; function rebuildMeta(){ META={}; fullCatalog().forEach(c=>META[c.type]=c); }
   rebuildMeta();
@@ -385,6 +476,28 @@ window.MYTHIC = (function(){
 
   const RESOURCES=[ {id:'cinder',name:'Cinder',ico:'🔥'},{id:'aza',name:'Aza Coin',ico:'🪙'},{id:'paint',name:'Paint',ico:'🎨'},{id:'timber',name:'Timber',ico:'🪵'},{id:'scrap',name:'Scrap',ico:'⚙️'},{id:'crystal',name:'Crystal Shard',ico:'🔮'},{id:'essence',name:'Essence',ico:'✨'},{id:'ration',name:'Ration',ico:'🥫'} ];
   const DEFAULT_PACK={cinder:300,aza:150,paint:60,timber:60,scrap:35,crystal:12,essence:8,ration:25};
+  /* 🧰 HOW MANY UNITS A STORAGE CHEST HOLDS.
+     Set by the owner: "make it where (storage chest) can hold as many units
+     as the real estate stash slots that are set for it."
+     The host sends that number — the STASH SLOTS field on the property's Real
+     Estate listing — with the wallet. It replaces a flat 200 that every chest
+     carried, which meant a 600-slot Penthouse and a 60-slot cot stored exactly
+     the same amount and the field on the listing form did nothing.
+     ⚠ A MODEL MAY STILL OVERRIDE IT. An admin who typed an explicit cap on a
+       custom model gets that cap — their number beats the property's, because
+       they set it deliberately on that one piece.
+     ⚠ AND 200 REMAINS THE FALLBACK, for a dwelling opened outside the host
+       (the standalone build) where no property is known. Falling back to 0
+       would render a chest that can hold nothing, which reads as broken. */
+  function _chestCap(meta){
+    try{
+      var own = (meta && (meta.cap|0) > 0) ? (meta.cap|0) : 0;
+      if (own > 0) return own;
+      var fromProperty = (window.MYTHIC && typeof window.MYTHIC.stashSlots === 'function')
+        ? (window.MYTHIC.stashSlots()|0) : 0;
+      return fromProperty > 0 ? fromProperty : 200;
+    }catch(e){ return 200; }
+  }
   const DEFAULT_OWNED={bed:1,chest:1,rug:1,chair:2};
   let pack={...DEFAULT_PACK}, owned={...DEFAULT_OWNED};
   // 🔗 When embedded in the game, mirror the player's REAL Cinder (🔥) + Aza (🪙)
@@ -409,9 +522,9 @@ window.MYTHIC = (function(){
   }
   function buildFurniture(type){ const meta=META[type]; if(!meta) return null;
     const _stor=!!meta.storage||(type==='chest'), _wall=!!meta.wall, _func=meta.func||(_stor?'storage':''), _mount=meta.mount||(_wall?'wall':'floor');
-    if(meta.kind==='glb'){ const t=glbCache[type]; if(!t) return null; const g=t.clone(true); g.userData={type,radius:_collRadius(g,meta.r,_mount),storage:_stor,wall:_wall,func:_func,mount:_mount}; if(_stor){ g.userData.cap=meta.cap||200; g.userData.inv={}; } return g; }
+    if(meta.kind==='glb'){ const t=glbCache[type]; if(!t) return null; const g=t.clone(true); g.userData={type,radius:_collRadius(g,meta.r,_mount),storage:_stor,wall:_wall,func:_func,mount:_mount}; if(_stor){ g.userData.cap=_chestCap(meta); g.userData.inv={}; } return g; }
     const g=new THREE.Group(); if(meta.parts) buildParts(g,meta.parts); else if(BUILD[type]) BUILD[type](g); else return null;
-    g.userData={type,radius:_collRadius(g,meta.r,_mount),storage:_stor,wall:_wall,func:_func,mount:_mount}; if(g.userData.storage){ g.userData.cap=meta.cap||200; g.userData.inv={}; } return g; }
+    g.userData={type,radius:_collRadius(g,meta.r,_mount),storage:_stor,wall:_wall,func:_func,mount:_mount}; if(g.userData.storage){ g.userData.cap=_chestCap(meta); g.userData.inv={}; } return g; }
 
   // ===== state =====
   const placed=[]; let mode='decorate';
@@ -445,12 +558,14 @@ window.MYTHIC = (function(){
     if(isWall(type)) ghost.visible=false;
     scene.add(ghost); setHint(isWall(type)?'Hover a wall to place · drag to orbit · Esc to cancel':'Click to place · drag to orbit · R to rotate · Esc to cancel'); renderPortal(); }
   function cancelPlacing(){ if(ghost){ scene.remove(ghost); ghost=null; } placingType=null; renderPortal(); if(mode==='decorate'&&!adminOpen) setHint(defaultHint()); }
-  function placeGhost(){ if(!ghost||ghost.visible===false) return; const t=placingType; const g=buildFurniture(t); g.position.copy(ghost.position); g.rotation.y=ghost.rotation.y; scene.add(g); placed.push(g); owned[t]=(owned[t]||0)-1; renderPortal(); if((owned[t]||0)<=0) cancelPlacing(); else if(isWall(t)) ghost.visible=false; }
+  function placeGhost(){ if(!ghost||ghost.visible===false) return; const t=placingType; const g=buildFurniture(t); g.position.copy(ghost.position); g.rotation.y=ghost.rotation.y; scene.add(g); placed.push(g); owned[t]=(owned[t]||0)-1; renderPortal(); saveSoon(); if((owned[t]||0)<=0) cancelPlacing(); else if(isWall(t)) ghost.visible=false; }
 
   const selPanel=document.getElementById('selPanel'), selTitle=document.querySelector('.sel-title'), selName=document.getElementById('selName'), rotBtn=document.getElementById('rotBtn');
-  function selectItem(g){ clearSelection(); selected=g; selHelper=new THREE.BoxHelper(g,0xd4af37); scene.add(selHelper); selName.textContent=(META[g.userData.type]?META[g.userData.type].name:'Piece')+(function(){var f=g.userData.func,L={bed:' · 🛏️ bed',storage:' · 🧰 stores resources',counter:' · 🛒 counter',binder:' · 📒 binder',open:' · 🎴 open packs'};return (f&&L[f])||(g.userData.wall?' · wall-mounted':'');})(); rotBtn.style.display=g.userData.wall?'none':'inline-block'; selPanel.style.display='block'; selTitle.style.display='block'; }
+  function selectItem(g){ clearSelection(); selected=g; selHelper=new THREE.BoxHelper(g,0xd4af37); scene.add(selHelper); selName.textContent=(META[g.userData.type]?META[g.userData.type].name:'Piece')+(function(){var f=g.userData.func,L={bed:' · 🛏️ bed',storage:' · 🧰 stores resources',depot:' · 📦 resource depot (20,000)',counter:' · 🛒 counter',binder:' · 📒 binder',open:' · 🎴 open packs'};return (f&&L[f])||(g.userData.wall?' · wall-mounted':'');})(); rotBtn.style.display=g.userData.wall?'none':'inline-block'; selPanel.style.display='block'; selTitle.style.display='block'; }
   function clearSelection(){ if(selHelper){ scene.remove(selHelper); selHelper=null; } selected=null; selPanel.style.display='none'; selTitle.style.display='none'; }
-  function returnSelected(){ if(!selected) return; const t=selected.userData.type; owned[t]=(owned[t]||0)+1; scene.remove(selected); placed.splice(placed.indexOf(selected),1); clearSelection(); renderPortal(); }
+  function returnSelected(){ if(!selected) return; const t=selected.userData.type; owned[t]=(owned[t]||0)+1; scene.remove(selected); placed.splice(placed.indexOf(selected),1); clearSelection(); renderPortal();
+    /* Explicit delete: counted, so the loss guard lets the save through. */
+    explicitRemovals++; saveSoon(); }
   rotBtn.onclick=()=>{ if(selected&&!selected.userData.wall){ selected.rotation.y+=Math.PI/2; selHelper.update(); } };
   document.getElementById('delBtn').onclick=returnSelected;
 
@@ -517,7 +632,7 @@ window.MYTHIC = (function(){
   // ===== paint =====
   const paintEl=document.getElementById('paint'), paintColor=document.getElementById('paintColor'), paintHave=document.getElementById('paintHave'), applyPaintBtn=document.getElementById('applyPaint'), swatchesEl=document.getElementById('swatches');
   function previewWall(c){ paintColor.value=c; wallMat.color.set(c); renderPaint(); }
-  ['#1a2238','#3a3f4b','#5a2a2a','#2a3f2e','#4a3a5a','#6b5a2a','#1c1c22','#7d7066','#26384f','#3c2230'].forEach(c=>{ const s=document.createElement('div'); s.className='sw'; s.style.background=c; s.onclick=()=>previewWall(c); swatchesEl.appendChild(s); });
+  ['#2a2419','#3a352c','#5a2a2a','#2f3a2a','#4a3a5a','#6b5a2a','#1c1a18','#7d7066','#4a3a2a','#3c2230'].forEach(c=>{ const s=document.createElement('div'); s.className='sw'; s.style.background=c; s.onclick=()=>previewWall(c); swatchesEl.appendChild(s); });
   paintColor.oninput=()=>{ wallMat.color.set(paintColor.value); renderPaint(); };
   function renderPaint(){ paintHave.textContent=`🎨 ${pack.paint||0}`; const same=paintColor.value.toLowerCase()===wallColor.toLowerCase(); applyPaintBtn.disabled=(pack.paint||0)<PAINT_COST||same; applyPaintBtn.textContent=same?'Current color':`Apply — ${PAINT_COST} 🎨`; }
   function openPaint(){ uiOpen=true; lookDrag=false; paintColor.value=wallColor; renderPaint(); paintEl.style.display='flex'; }
@@ -578,6 +693,9 @@ window.MYTHIC = (function(){
     const am=document.getElementById('aMount'); if(am) am.value=m.mount||(m.wall?'wall':'floor');
     const af=document.getElementById('aFunc'); if(af) af.value=m.func||(m.storage?'storage':'');
     const ad=document.getElementById('aDetails'); if(ad) ad.value=m.details||'';
+    const ar=document.getElementById('aRoom'); if(ar) ar.value=m.room||(m.propId?'wh':'dwelling');
+    const ap=document.getElementById('aProp'); if(ap) ap.value=m.propId||'';
+    syncRoomFields();
     pendingGLB=null; glbFile.value='';
     if(m.kind==='glb'){ editPreviewTemplate=glbCache[m.id]||null; editParts=[defaultPart()]; }
     else { editPreviewTemplate=null; editParts=(Array.isArray(m.parts)&&m.parts.length)?m.parts.map(p=>({...p})):[defaultPart()]; }
@@ -588,8 +706,17 @@ window.MYTHIC = (function(){
     renderCustomList(); try{ adminEl.scrollTop=0; }catch(e){}
     flash('Editing "'+(m.name||'model')+'"'+(m.kind==='glb'?' — import a .glb only to swap the mesh.':' — adjust parts/details.'));
   }
+  /* The replacement picker is meaningless for a dwelling-only model, so it is
+     hidden rather than left there to be filled in and silently ignored. */
+  function syncRoomFields(){ var r=(document.getElementById('aRoom')||{}).value||'dwelling';
+    var w=document.getElementById('aPropWrap'); if(w) w.style.display=(r==='dwelling')?'none':'block';
+    if(r==='dwelling'){ var p=document.getElementById('aProp'); if(p) p.value=''; } }
+  (function(){ var r=document.getElementById('aRoom'); if(r) r.onchange=syncRoomFields; })();
   function clearEdit(){ editingId=null; editPreviewTemplate=null; if(saveBtn) saveBtn.textContent='Save Model'; if(cancelEditBtn) cancelEditBtn.style.display='none';
-    pendingGLB=null; glbFile.value=''; aName.value=''; aIco.value=''; setAdminIco(null); const ad=document.getElementById('aDetails'); if(ad) ad.value=''; editParts=[defaultPart()]; renderParts(); renderImportState(); refreshPreview(); }
+    pendingGLB=null; glbFile.value=''; aName.value=''; aIco.value=''; setAdminIco(null); const ad=document.getElementById('aDetails'); if(ad) ad.value='';
+    var ar0=document.getElementById('aRoom'); if(ar0) ar0.value='dwelling';
+    var ap0=document.getElementById('aProp'); if(ap0) ap0.value=''; syncRoomFields();
+    editParts=[defaultPart()]; renderParts(); renderImportState(); refreshPreview(); }
   glbFile.onchange=async e=>{ const f=e.target.files[0]; if(!f) return;
     try{ const buf=await f.arrayBuffer(); let scale=parseFloat(glbScale.value)||1; const md=maxDimOf(buf); if(md>3||md<0.3){ scale=+(1.6/md).toFixed(3); glbScale.value=scale; }
       pendingGLB={ name:f.name, b64:abToB64(buf), rawBuf:buf, template:glbToTemplate(buf,scale), scale, big:f.size>MAX_GLB };
@@ -606,6 +733,8 @@ window.MYTHIC = (function(){
     const func=(document.getElementById('aFunc')||{}).value||'';
     const details=((document.getElementById('aDetails')||{}).value||'').trim();
     const wall=(mount==='wall'); const storage=(func==='storage');
+    const room=(document.getElementById('aRoom')||{}).value||'dwelling';
+    const propId=(room==='dwelling')?'':(((document.getElementById('aProp')||{}).value)||'');
     // ✏️ EDIT MODE — update the existing model in place (keep its id) instead of
     // adding a new one. A fresh GLB import swaps the mesh; otherwise a GLB keeps its
     // existing mesh (metadata-only edit); a parts model re-takes the parts editor.
@@ -613,7 +742,7 @@ window.MYTHIC = (function(){
       const idx=customModels.findIndex(x=>x.id===editingId);
       if(idx>=0){
         const ex=customModels[idx];
-        const upd=Object.assign({},ex,{name,ico,r,price:{aza,cinder},mount,func,details,wall,storage});
+        const upd=Object.assign({},ex,{name,ico,r,price:{aza,cinder},mount,func,details,wall,storage,room,propId});
         if(pendingGLB){ upd.kind='glb'; upd.scale=pendingGLB.scale||1; delete upd.parts; glbCache[editingId]=pendingGLB.template;
           try{ if(pendingGLB.big) throw new Error('big'); await window.storage.set(GLB_PREFIX+editingId, pendingGLB.b64, false); }catch(err){} }
         else if(ex.kind==='glb'){ /* metadata-only — keep the existing mesh */ }
@@ -624,10 +753,10 @@ window.MYTHIC = (function(){
       editingId=null; // stale id — fall through to add a fresh model
     }
     const id='m_'+Date.now();
-    if(pendingGLB){ customModels.push({id,name,ico,r,price:{aza,cinder},kind:'glb',scale:pendingGLB.scale||1,mount,func,details,wall,storage}); glbCache[id]=pendingGLB.template; persistModels(); rebuildMeta(); renderCustomList(); renderPortal(); renderMarket();
+    if(pendingGLB){ customModels.push({id,name,ico,r,price:{aza,cinder},kind:'glb',scale:pendingGLB.scale||1,mount,func,details,wall,storage,room,propId}); glbCache[id]=pendingGLB.template; persistModels(); rebuildMeta(); renderCustomList(); renderPortal(); renderMarket();
       try{ if(pendingGLB.big) throw new Error('big'); await window.storage.set(GLB_PREFIX+id, pendingGLB.b64, false); flash(`Model "${name}" added to market`); }catch(err){ flash(`"${name}" added for this session (too large to save permanently)`); }
       pendingGLB=null; glbFile.value=''; renderImportState(); }
-    else { if(!editParts.length){ flash('Add a part or import a model'); return; } customModels.push({id,name,ico,r,price:{aza,cinder},kind:'parts',parts:editParts.map(p=>({...p})),mount,func,details,wall,storage}); persistModels(); rebuildMeta(); renderCustomList(); renderPortal(); renderMarket(); flash(`Model "${name}" added to market`); editParts=[defaultPart()]; renderParts(); }
+    else { if(!editParts.length){ flash('Add a part or import a model'); return; } customModels.push({id,name,ico,r,price:{aza,cinder},kind:'parts',parts:editParts.map(p=>({...p})),mount,func,details,wall,storage,room,propId}); persistModels(); rebuildMeta(); renderCustomList(); renderPortal(); renderMarket(); flash(`Model "${name}" added to market`); editParts=[defaultPart()]; renderParts(); }
     var ad=document.getElementById('aDetails'); if(ad) ad.value='';
     aName.value=''; refreshPreview(); }
   function deleteModel(id){ customModels=customModels.filter(m=>m.id!==id); delete glbCache[id]; try{ window.storage.delete(GLB_PREFIX+id); }catch(e){} persistModels(); rebuildMeta(); renderCustomList(); renderPortal(); renderMarket(); flash('Model deleted'); }
@@ -692,11 +821,27 @@ window.MYTHIC = (function(){
   canvas.addEventListener('touchstart',e=>{ if(mode==='walk'&&!uiOpen&&e.touches.length===1){ lookDrag=true; lastLX=e.touches[0].clientX; lastLY=e.touches[0].clientY; } },{passive:true});
   canvas.addEventListener('touchmove',e=>{ if(mode==='walk'&&lookDrag&&e.touches.length===1){ const t=e.touches[0]; yaw-=(t.clientX-lastLX)*LOOK; pitch-=(t.clientY-lastLY)*LOOK; pitch=Math.max(-1.2,Math.min(1.2,pitch)); lastLX=t.clientX; lastLY=t.clientY; e.preventDefault(); } },{passive:false});
   canvas.addEventListener('touchend',()=>{ lookDrag=false; },{passive:true});
-  window.addEventListener('keydown',e=>{ const k=e.key.toLowerCase(); keys[k]=true;
+  /* ⌨ THE SAME TYPING GUARD public/warehouse/index.html now carries, and it is
+     here because this walker has the same shape and therefore the same defect:
+     `keys[k]=true` claimed every letter in the document, so W A S D walked the
+     player while they typed in the market, the paint panel or the admin box,
+     and R rotated whatever was selected. The report came from the warehouse's
+     Fleet Wrap Shop ("we can't type W A S D letters in here because it moves us
+     instead"); this file is the other place the same click leads to.
+     The Delete/Backspace arm below already tested activeElement — that guard
+     was correct and applied to exactly one key out of the set. */
+  const _dwTyping = () => { const el = document.activeElement;
+    return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable); };
+  window.addEventListener('keydown',e=>{ if(_dwTyping()){ for(const kk in keys) keys[kk]=false; return; } const k=e.key.toLowerCase(); keys[k]=true;
     if(k==='escape'){ if(marketEl.style.display==='flex') closeMarket(); else if(paintEl.style.display==='flex') closePaint(); else if(uiOpen) closeStorage(); else if(adminOpen) closeAdmin(); else if(placingType) cancelPlacing(); else if(selected) clearSelection(); }
     if(k==='r'){ if(placingType&&!isWall(placingType)) placingRot+=Math.PI/2; else if(selected&&!selected.userData.wall){ selected.rotation.y+=Math.PI/2; selHelper.update(); } }
     if((k==='delete'||k==='backspace')&&selected&&mode==='decorate'&&document.activeElement.tagName!=='INPUT'){ e.preventDefault(); returnSelected(); }
-    if(k==='e'&&mode==='walk'&&interactable&&!uiOpen){ var _ud=interactable.userData||{}; if(_ud.func==='bed'){ dwInteractBed(interactable); } else if(_ud.func==='vendor'){ dwBridge('dw:vendor','🛒 Opening Vendor Market…'); } else if(_ud.func==='battle'){ dwBridge('dw:battle','⚔️ Opening battle…'); } else if(_ud.storage){ openStorage(interactable); } } });
+    if(k==='e'&&mode==='walk'&&interactable&&!uiOpen){ var _ud=interactable.userData||{}; if(_ud.func==='bed'){ dwInteractBed(interactable); } else if(_ud.func==='vendor'){ dwBridge('dw:vendor','🛒 Opening Vendor Market…'); } else if(_ud.func==='battle'){ dwBridge('dw:battle','⚔️ Opening battle…'); } else if(_ud.func==='depot'){ dwBridge('dw:depot','📦 Opening your resource depot…'); } else if(_ud.storage){ openStorage(interactable); } } });
+  /* 📦 RESOURCE DEPOT — a piece whose function is 'depot' opens the HOST's
+     depot (index.html openResourceDepot): one 20,000-unit store per account
+     that takes ANY resource in the real wallet, not the dwelling's eight-item
+     pack. It lives in the parent because the wallet does; this page only
+     asks for the door. Standalone it says so, like the bed. */
   // 🛏️ Bed → ask the host game to open its hero-rest modal (heroes + energy live
   // in the parent). Posts the bed's name/details so the modal can show them.
   function dwInteractBed(g){ try{ var meta=META[g.userData.type]||{}; var name=meta.name||'Bed'; var details=(meta.details||'').toString(); if(window.MYTHIC && window.MYTHIC.bridged()){ if(parent&&parent!==window) parent.postMessage({type:'dw:bed',name:name,details:details},'*'); flash('🛏️ Resting heroes…'); } else { flash('🛏️ Rest is available in-game.'); } }catch(e){} }
@@ -716,14 +861,214 @@ window.MYTHIC = (function(){
   document.getElementById('closeStore').onclick=closeStorage;
   storageEl.addEventListener('mousedown',e=>{ if(e.target===storageEl) closeStorage(); });
 
-  // ===== persistence =====
-  async function save(silent){ const items=placed.map(g=>{ const o={t:g.userData.type,x:+g.position.x.toFixed(3),y:+g.position.y.toFixed(3),z:+g.position.z.toFixed(3),ry:+g.rotation.y.toFixed(4)}; if(g.userData.storage) o.inv=g.userData.inv; return o; });
-    try{ await window.storage.set(SAVE_KEY, JSON.stringify({items,pack,owned,wall:wallColor}), false); if(!silent) flash('Saved'); } catch(err){ if(!silent) flash('Save failed'); console.error(err); } }
+  // ═══════════════════════════════════════════════════════════════════════
+  // 🏠 PERSISTENCE — a home is permanent player property
+  //
+  // 🔴 THE BUG THIS REPLACES, EXACTLY. load() caught its own failure, flashed
+  //    a message and returned — leaving "placed" EMPTY, because rebuild() had
+  //    never run. save() had no idea any of that had happened, so the next
+  //    save (a click, a purchase, walking out) wrote "items: []" over a fully
+  //    decorated house. IndexedDB throwing is not exotic: private browsing, a
+  //    quota trip and a corrupted store all do it. That is the brief's
+  //    "player loads home → only some decorations load → autosave runs →
+  //    decorations permanently disappear", and it was one catch block away at
+  //    all times.
+  //
+  //    THE FIX IS A GATE, NOT A BIGGER TRY/CATCH. save() now refuses to write
+  //    unless the load that preceded it is known to have SUCCEEDED. An empty
+  //    scene means "we could not read your house", never "your house is
+  //    empty", unless we positively established that it is.
+  // ═══════════════════════════════════════════════════════════════════════
+  const SNAP_KEY = SAVE_KEY + '_snapshots';
+  const SNAP_MAX = 5;
+
+  // 'pending' → nothing may be written yet.  'ok'/'empty' → safe to write.
+  // 'failed'  → the house could not be read; writing would destroy it.
+  let loadState = 'pending';
+  let houseRev = 0;              // revision of the document we loaded
+  let lastGoodItems = null;      // what the last trustworthy state held
+  let explicitRemovals = 0;      // deletes the PLAYER actually asked for
+  let saveTimer = null;
+
+  /* The brief asks for a visible status. It doubles as the only way a player
+     can tell a blocked save from a successful one. */
+  const statusEl = (function () {
+    const el = document.createElement('div');
+    el.id = 'dwSaveStatus';
+    el.style.cssText = 'position:fixed;top:10px;right:12px;z-index:60;font:600 12px/1.35 Cinzel,Georgia,"Segoe UI Emoji","Apple Color Emoji",serif;letter-spacing:.06em;' +
+      'padding:6px 11px;border-radius:3px;pointer-events:none;transition:opacity .35s;opacity:0;' +
+      'background:rgba(12,10,8,.88);border:1px solid rgba(212,175,55,.45);color:#f0d68f;max-width:46vw';
+    document.body.appendChild(el);
+    return el;
+  })();
+  let statusT = null;
+  function setStatus(text, tone, sticky) {
+    statusEl.textContent = text;
+    statusEl.style.borderColor = tone === 'bad' ? 'rgba(255,138,102,.7)'
+      : tone === 'good' ? 'rgba(124,232,168,.6)' : 'rgba(212,175,55,.45)';
+    statusEl.style.color = tone === 'bad' ? '#ffb499' : tone === 'good' ? '#9df0bf' : '#f0d68f';
+    statusEl.style.opacity = '1';
+    clearTimeout(statusT);
+    if (!sticky) statusT = setTimeout(function () { statusEl.style.opacity = '0'; }, 2600);
+  }
+
+  function serialiseItems() {
+    return placed.map(function (g) {
+      const o = { t: g.userData.type, x: +g.position.x.toFixed(3), y: +g.position.y.toFixed(3),
+                  z: +g.position.z.toFixed(3), ry: +g.rotation.y.toFixed(4) };
+      if (g.userData.storage) o.inv = g.userData.inv;
+      return o;
+    });
+  }
+
+  /* 🛡 THE LOSS GUARD. A drop this large with no matching player action is not
+     a redecoration, it is a fault — a half-loaded scene, a race, a crash
+     part-way through rebuild(). Refuse it and keep what we had. The threshold
+     mirrors node-city's city-loss guard, which exists for the same reason and
+     was written after the same kind of report. */
+  const LOSS_FLOOR = 4;        // below this, counting ratios is noise
+  const LOSS_RATIO = 0.5;      // losing half of a real house is a red flag
+  function lossLooksWrong(nextItems) {
+    if (!Array.isArray(lastGoodItems)) return false;
+    const before = lastGoodItems.length, after = nextItems.length;
+    if (before < LOSS_FLOOR) return false;
+    const lost = before - after;
+    if (lost <= 0) return false;
+    if (lost <= explicitRemovals) return false;          // the player did this
+    return after < before * LOSS_RATIO;
+  }
+
+  async function readDoc(key) {
+    const r = await window.storage.get(key);
+    if (!r || !r.value) return null;
+    const d = JSON.parse(r.value);
+    if (Array.isArray(d)) return { items: d, rev: 0 };    // the oldest format
+    return d;
+  }
+
+  async function pushSnapshot(doc) {
+    /* Keep a short history so a home can be recovered rather than mourned.
+       Snapshots are written BEFORE the new save lands, so the ring always
+       holds states that were once good. */
+    try {
+      let ring = [];
+      try { const r = await window.storage.get(SNAP_KEY); if (r && r.value) ring = JSON.parse(r.value) || []; } catch (e) {}
+      if (!Array.isArray(ring)) ring = [];
+      ring.unshift(doc);
+      if (ring.length > SNAP_MAX) ring.length = SNAP_MAX;
+      await window.storage.set(SNAP_KEY, JSON.stringify(ring), false);
+    } catch (e) {}
+  }
+
+  async function save(silent) {
+    // ── THE GATE ─────────────────────────────────────────────────────────
+    if (loadState === 'pending') { if (!silent) setStatus('Still loading your home — not saving yet.', 'warn'); return false; }
+    if (loadState === 'failed') {
+      setStatus('SAVE BLOCKED — your home could not be read, so nothing was overwritten. Reload to try again.', 'bad', true);
+      return false;
+    }
+    const items = serialiseItems();
+    if (lossLooksWrong(items)) {
+      /* The brief: "If the game detects large unexpected decoration loss, do
+         not commit the new save." Preserve the bigger state and say so. */
+      setStatus('SAVE BLOCKED — ' + lastGoodItems.length + ' items were placed and only ' + items.length +
+                ' are loaded. Your previous layout has been preserved; nothing was deleted.', 'bad', true);
+      try { console.warn('[dwelling] loss guard blocked a save', { before: lastGoodItems.length, after: items.length, explicitRemovals: explicitRemovals }); } catch (e) {}
+      return false;
+    }
+
+    if (!silent) setStatus('Saving…', 'warn');
+    const doc = { v: 2, rev: houseRev + 1, items: items, pack: pack, owned: owned,
+                  wall: wallColor, savedAt: Date.now() };
+    try {
+      // Snapshot the state we are about to replace, not the one we are writing.
+      if (Array.isArray(lastGoodItems)) {
+        await pushSnapshot({ v: 2, rev: houseRev, items: lastGoodItems, pack: pack, owned: owned, wall: wallColor, savedAt: Date.now() });
+      }
+      const ok = await window.storage.set(SAVE_KEY, JSON.stringify(doc), false);
+      if (ok === false) throw new Error('storage refused the write');
+      houseRev = doc.rev;
+      lastGoodItems = items;
+      explicitRemovals = 0;
+      setStatus('Home saved · ' + items.length + ' item' + (items.length === 1 ? '' : 's'), 'good');
+      return true;
+    } catch (err) {
+      setStatus('SAVE FAILED — your previous layout has been preserved. No placed items were deleted.', 'bad', true);
+      try { console.error('[dwelling] save failed', err); } catch (e) {}
+      return false;
+    }
+  }
+
+  /* Autosave. The brief lists place / move / rotate / remove / leave, and
+     "do not wait until the player closes the entire game". Debounced so a
+     drag does not write on every frame, and flushed on the way out. */
+  function saveSoon() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(function () { save(true); }, 700);
+  }
+  window.addEventListener('beforeunload', function () { try { save(true); } catch (e) {} });
+  window.addEventListener('pagehide', function () { try { save(true); } catch (e) {} });
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') { try { save(true); } catch (e) {} }
+  });
+
   function rebuild(items){ lastLayoutItems=items||[]; placed.forEach(g=>scene.remove(g)); placed.length=0; clearSelection(); (items||[]).forEach(d=>{ const g=buildFurniture(d.t); if(!g) return; g.position.set(d.x, g.userData.wall?(d.y||1.4):0, d.z); g.rotation.y=d.ry; if(g.userData.storage&&d.inv) g.userData.inv={...d.inv}; scene.add(g); placed.push(g); }); }
-  async function load(silent){ try{ const r=await window.storage.get(SAVE_KEY); if(r&&r.value){ const data=JSON.parse(r.value); if(Array.isArray(data)){ rebuild(data); } else { rebuild(data.items||[]); if(data.pack) pack={...DEFAULT_PACK,...data.pack}; if(data.owned) owned={...data.owned}; if(data.wall){ wallColor=data.wall; wallMat.color.set(wallColor); } } if(!silent) flash('Loaded'); } else if(!silent) flash('No saved house'); } catch(err){ if(!silent) flash('Nothing to load'); } renderPortal(); updateWallet(); }
+
+  async function load(silent) {
+    let doc = null, from = 'save';
+    try {
+      doc = await readDoc(SAVE_KEY);
+    } catch (err) {
+      /* 🔴 A THROW HERE USED TO BE SWALLOWED AND THE HOUSE LEFT EMPTY. Try the
+         snapshot ring before giving up — that is what it is for. */
+      try { console.error('[dwelling] primary load failed', err); } catch (e) {}
+      try {
+        const r = await window.storage.get(SNAP_KEY);
+        const ring = (r && r.value) ? JSON.parse(r.value) : [];
+        if (Array.isArray(ring) && ring.length) { doc = ring[0]; from = 'snapshot'; }
+      } catch (e2) {}
+      if (!doc) {
+        loadState = 'failed';
+        setStatus('Could not read your home. Nothing has been changed or deleted — reload to try again.', 'bad', true);
+        renderPortal(); updateWallet();
+        return false;
+      }
+    }
+
+    if (!doc) {
+      /* Genuinely nothing stored. This is the ONLY case where an empty scene
+         is the truth, and it is the only one that may be saved over. */
+      loadState = 'empty'; houseRev = 0; lastGoodItems = [];
+      if (!silent) setStatus('No saved home yet — place something and it will save itself.', 'warn');
+      renderPortal(); updateWallet();
+      return true;
+    }
+
+    rebuild(doc.items || []);
+    if (doc.pack) pack = { ...DEFAULT_PACK, ...doc.pack };
+    if (doc.owned) owned = { ...doc.owned };
+    if (doc.wall) { wallColor = doc.wall; wallMat.color.set(wallColor); }
+    houseRev = doc.rev | 0;
+    lastGoodItems = serialiseItems();
+    explicitRemovals = 0;
+    loadState = 'ok';
+    if (from === 'snapshot') {
+      setStatus('Recovered your home from a backup — ' + lastGoodItems.length + ' items restored.', 'good', true);
+    } else if (!silent) {
+      setStatus('Home loaded · ' + lastGoodItems.length + ' item' + (lastGoodItems.length === 1 ? '' : 's'), 'good');
+    }
+    renderPortal(); updateWallet();
+    return true;
+  }
+
   document.getElementById('saveBtn').onclick=()=>save(false);
   document.getElementById('loadBtn').onclick=()=>load(false);
-  document.getElementById('clearBtn').onclick=()=>{ placed.forEach(g=>{ owned[g.userData.type]=(owned[g.userData.type]||0)+1; scene.remove(g); }); placed.length=0; clearSelection(); renderPortal(); flash('House cleared — items returned to portal'); };
+  document.getElementById('clearBtn').onclick=()=>{ const n=placed.length; placed.forEach(g=>{ owned[g.userData.type]=(owned[g.userData.type]||0)+1; scene.remove(g); }); placed.length=0; clearSelection(); renderPortal();
+    /* An explicit clear is a PLAYER DELETE, so it is accounted for and the loss
+       guard must not block the save that follows it. Counting it is what keeps
+       "you emptied your house on purpose" apart from "your house failed to
+       load", which look identical in the scene graph. */
+    explicitRemovals += n; saveSoon(); flash('House cleared — items returned to portal'); };
 
   // ===== hint =====
   const hintEl=document.getElementById('hint');

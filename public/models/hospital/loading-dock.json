@@ -1,0 +1,26 @@
+{
+  "file": "loading-dock.glb",
+  "bytes": 1015920,
+  "triangles": 37178,
+  "simplify": "sloppy",
+  "textures": "webp-1024",
+  "bounds": {
+    "min": [
+      -0.952,
+      -0.948,
+      -0.894
+    ],
+    "max": [
+      0.95,
+      0.95,
+      0.889
+    ]
+  },
+  "dims": {
+    "w": 1.902,
+    "h": 1.898,
+    "d": 1.783
+  },
+  "source": "assets-source/glb-masters/hospital/loading-dock.glb",
+  "packedBy": "tools/pack-glb.mjs"
+}

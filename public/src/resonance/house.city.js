@@ -89,6 +89,25 @@ function houseTiles() {
   return out;
 }
 function specOf(t) { return H.tierSpec(t ? t.lvl : 1); }
+/* 🏗 IS THIS HOUSE STILL A HOLE IN THE GROUND?
+   A Resting House under construction (`t.bld.k === 0`) has no beds, no roof and
+   no card asleep in it, and it must accrue exactly ZERO — otherwise a player
+   who orders a 24-hour Tier 3 House starts earning Resonance from a foundation
+   pad, which is the same class of bug as a construction site paying rent.
+   ⚠ AN UPGRADING HOUSE (k = 1) IS NOT A SITE. It is a standing, working
+     building at its current tier whose `lvl` simply has not moved yet — it
+     keeps its billets and keeps accruing at the tier it actually reached.
+     That asymmetry is the entire point of the k flag; testing `t.bld` alone
+     here would silently stop a live House the moment its owner upgraded it.
+   🔴 THE GLOBALS TRAP. `bldSite` is a top-level `const` inside node-city's
+      module script and is invisible from here, so index.html hands it over as
+      `ctx.isSite` at mount. The fallback reads the record's own shape, which
+      keeps this correct (and unit-testable with a bare tile object) if a
+      future ctx forgets the field — never a bare global, never window.game. */
+function isSite(t) {
+  try { if (CTX && typeof CTX.isSite === 'function') return !!CTX.isSite(t); } catch (e) {}
+  return !!(t && t.bld && t.bld.k === 0);
+}
 /* The billet store lives ON THE TILE, so it is written by the city's own
    serialize() and read by its loadState() — no second save file, no second
    failure mode. `loadHouse` is absent-tolerant by construction. */
@@ -124,6 +143,7 @@ export function tick(dtMin) {
   const rq = restNow().quality;
   for (const [, t] of houseTiles()) {
     if (t.damaged) continue;                       // a damaged building is offline, city-wide rule
+    if (isSite(t)) continue;                       // 🏗 and an unbuilt one does not exist yet
     const spec = specOf(t);
     H.tick(houseOf(t), dtMin, {
       tierRate: spec.rate, restQuality: rq,
@@ -147,6 +167,12 @@ export function settleOffline() {
   let total = 0, away = 0, capped = false;
   for (const [, t] of houseTiles()) {
     if (t.damaged) continue;
+    /* 🏗 Same skip as the live tick, and it matters MORE here: settle() pays
+       for an absence, so a House ordered just before the player closed the tab
+       would bank up to the whole 36-hour cap for a building that was a
+       foundation pad the entire time. The watermark is untouched by the skip,
+       so it settles honestly from the moment it finishes. */
+    if (isSite(t)) continue;
     const spec = specOf(t);
     const r = H.settle(houseOf(t), {
       tierRate: spec.rate, restQuality: rq,
@@ -371,10 +397,18 @@ function render(k) {
 }
 
 async function onClick(ev) {
-  const k = OPEN_KEY; if (!k || !CTX) return;
-  const t = CTX.game.tiles[k]; if (!t) return;
+  /* 🔴 CLOSE IS CHECKED FIRST, BEFORE ANY GUARD THAT CAN RETURN.
+     It used to sit third, behind `if (!k || !CTX) return;` and
+     `if (!t) return;` — so the moment OPEN_KEY went stale or the tile lookup
+     missed (a demolish, a reload, a save swapped underneath the dialog), the
+     Close button and the backdrop both stopped responding and the panel could
+     not be dismissed at all. A dialog you cannot close is a worse outcome than
+     anything those two guards protect against, and it does not need either of
+     them: removing the box reads nothing from the tile. */
   const box = document.getElementById('housemod');
   if (ev.target === box || ev.target.id === 'hm-close') { close(); return; }
+  const k = OPEN_KEY; if (!k || !CTX) return;
+  const t = CTX.game.tiles[k]; if (!t) return;
   const h = houseOf(t), spec = specOf(t);
   const btn = ev.target.closest('[data-hact]');
   if (btn) {
@@ -384,15 +418,44 @@ async function onClick(ev) {
       const why = H.billetBlock(h, spec, roomId);
       if (why) { CTX.toast(why, 'bad'); return; }
       const room = H.roomById(roomId);
-      CTX.openCardPicker('Billet a card in the ' + room.name + ' → ' + room.stat.toUpperCase(),
-        c => c.type !== 'Structure',
+      /* 🛏 UNITS ONLY. This read `c.type !== 'Structure'`, which offered the
+         player Heroes, Kalons, Spells, Equipment, Artifacts and Relics as well
+         — everything in the collection bar one type. A House trains a fighter's
+         stat line (ATK/MAG/DEF/RES/SPD/HP); a Spell has no stat line to raise
+         and an Artifact is not something that sleeps, so those were offers the
+         room could never honour.
+         ⚠ The list is already restricted to cards the player OWNS and has not
+           assigned elsewhere — openCardPicker draws from freeCards(), which is
+           CARDS minus assignedCardIds(). This filter narrows the TYPE and
+           nothing else; ownership was never the missing half. */
+      /* 🔴 STAND ASIDE WHILE THE PICKER IS UP. #housemod is z-index 46 and
+         #cardpicker is 45 — the House sits ABOVE the list it opens, so hitting
+         "+ Billet" appeared to do nothing and the player had to close the House
+         to find the units waiting underneath. Raising the picker instead would
+         put a body-level dialog over every other panel that opens one; hiding
+         the opener is local to this call and is what the player asked for
+         anyway: the House gets out of the way, the list appears, and the House
+         comes back when the list is done. Restored on ALL THREE exits (pick,
+         Close, backdrop) through openCardPicker's onClose — see its note. */
+      const _hm = document.getElementById('housemod');
+      if (_hm) _hm.style.display = 'none';
+      CTX.openCardPicker('Billet a unit in the ' + room.name + ' → ' + room.stat.toUpperCase(),
+        c => c.type === 'Unit',
         (c) => {
           const err = H.billet(h, c.id, roomId, spec);
           if (err) { CTX.toast(err, 'bad'); return; }
           try { CTX.assignCard(c.id, true); } catch (e) {}
           CTX.toast('🛏 ' + c.name + ' bedded down in the ' + room.name + ' — training ' + room.stat.toUpperCase() + '.', 'good');
           CTX.saveSoon(); render(k);
-        });
+        },
+        // Says what was actually looked at. "No unassigned cards" would be a
+        // statement about the whole collection from a dialog that only read one
+        // type of it — see openCardPicker's note on the default.
+        'No free units. Every unit you own is already billeted, socketed or in a deck.',
+        /* Bring the House back however the picker was dismissed. Re-queried
+           rather than reusing `_hm`, because a pick calls render(k) which may
+           have replaced the element by the time this runs. */
+        () => { const b = document.getElementById('housemod'); if (b) b.style.display = ''; });
       return;
     }
     if (act === 'wake') {
@@ -469,7 +532,7 @@ export function mount(ctx) {
     tipLine, open, close, refresh, restNow, restInputs, houseOf,
     specOf, HOUSE_TYPE, TIERS: H.TIERS, ROOMS: H.ROOMS,
     // 🔬 test seam — the driver needs to move the clock without waiting 36h.
-    _ctx: () => CTX, _core: () => ctxForCore(),
+    _ctx: () => CTX, _core: () => ctxForCore(), _isSite: isSite,
   };
   try { window.MythicHouse = api; } catch (e) {}
   return api;

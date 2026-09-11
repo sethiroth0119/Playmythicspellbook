@@ -100,6 +100,9 @@ export function buildWorld(THREE, map, opts) {
   let weather = null; const wind = new THREE.Vector3(); let fxOn = opts.fx !== false; let lightBudget = 0;
   const mixers = new Map();         // id → { mixer, action, clip }
   const assetCache = new Map();     // assetId → Promise<{ template, size, clips }>
+  const extClips = new Map();       // url → Promise<clip[]> — uploaded animation files (Files tab)
+  const sounds = new Map();         // id → { sound, url } — 🔊 markers
+  let listener = null, audioOn = false;
   const sunDir = new THREE.Vector3(0, 1, 0);
   let time = 0, markersVisible = opts.markers !== false, gltfLoader = null;
 
@@ -163,6 +166,66 @@ export function buildWorld(THREE, map, opts) {
     });
     return clone;
   }
+
+  /* Clips from a separate animation .glb (an upload of kind 'anim'): loaded
+     once per URL and applied to whatever model asks for them by name. A clip
+     only plays when its bone names match the model — the inspector says so
+     when they do not. */
+  function loadExtClips(url) {
+    if (extClips.has(url)) return extClips.get(url);
+    const p = (async () => {
+      const L = loader(); if (!L) throw new Error('GLTFLoader unavailable');
+      const g = await new Promise((res, rej) => L.load(url, res, undefined, rej));
+      return (g.animations || []).filter(a => a && a.duration > 0);
+    })();
+    p.catch(() => {});
+    extClips.set(url, p);
+    return p;
+  }
+
+  /* ── 🔊 positional audio ──
+     attachAudio(camera) hangs the listener on the camera (the engine does it
+     for FPS mounts); until then sound markers are silent handles. Browsers
+     refuse to start audio before a gesture, so startAudio() is called on the
+     first click / key in the world. */
+  function attachAudio(camera) {
+    if (!THREE.AudioListener || !camera) return false;
+    if (!listener) { listener = new THREE.AudioListener(); }
+    if (listener.parent !== camera) camera.add(listener);
+    objects.forEach((root, id) => { const o = objDoc(id); if (o && o.t === 'audio') attachSound(o, root); });
+    return true;
+  }
+  function attachSound(o, root) {
+    detachSound(o.id);
+    if (!listener || !o.au || !o.au.url || !THREE.PositionalAudio) return;
+    const s = new THREE.PositionalAudio(listener);
+    const rec = { sound: s, url: o.au.url, ready: false };
+    sounds.set(o.id, rec); root.add(s);
+    tuneSound(rec, o.au);
+    try {
+      new THREE.AudioLoader().load(o.au.url, (buf) => {
+        if (sounds.get(o.id) !== rec) return;
+        s.setBuffer(buf); rec.ready = true;
+        if (audioOn) { try { s.play(); } catch (e) {} }
+      });
+    } catch (e) {}
+  }
+  function tuneSound(rec, au) {
+    const s = rec.sound;
+    try { s.setDistanceModel('linear'); s.setRefDistance(Math.max(0.5, au.r * 0.15)); s.setMaxDistance(au.r); s.setRolloffFactor(1); s.setLoop(au.loop !== false); s.setVolume(au.vol == null ? 1 : au.vol); } catch (e) {}
+  }
+  function detachSound(id) {
+    const rec = sounds.get(id); if (!rec) return;
+    try { if (rec.sound.isPlaying) rec.sound.stop(); } catch (e) {}
+    try { if (rec.sound.parent) rec.sound.parent.remove(rec.sound); } catch (e) {}
+    sounds.delete(id);
+  }
+  function startAudio() {
+    audioOn = true;
+    try { if (listener && listener.context && listener.context.state === 'suspended') listener.context.resume(); } catch (e) {}
+    sounds.forEach(rec => { if (rec.ready && !rec.sound.isPlaying) { try { rec.sound.play(); } catch (e) {} } });
+  }
+  function stopAudio() { audioOn = false; sounds.forEach(rec => { try { if (rec.sound.isPlaying) rec.sound.stop(); } catch (e) {} }); }
 
   /* ── prefabs ──
      An instance is one root with a child root per definition object, each
@@ -270,6 +333,7 @@ export function buildWorld(THREE, map, opts) {
       root.add(body);
       if (o.t.startsWith('fx_')) { root.userData.mfFxHandle = body; body.visible = markersVisible; }
       attachFx(o, root);
+      if (o.t === 'audio') attachSound(o, root);   // 🔊 build B's sound marker
       if (o.mat) applyMat(body, o.mat);
     }
     applyTransform(root, o);
@@ -302,7 +366,7 @@ export function buildWorld(THREE, map, opts) {
   function removeObject(id) {
     const root = objects.get(id); if (!root) return;
     if (root.userData.mfType === 'spline') root.children.forEach(disposeSplineBody);
-    stopAnim(id); detachFx(id);
+    stopAnim(id); detachFx(id); detachSound(id);
     if (root.userData.mfPrefab) removeParts({ id });
     dropInstance(id);
     objectsGroup.remove(root); objects.delete(id); colliders.delete(id);
@@ -322,6 +386,7 @@ export function buildWorld(THREE, map, opts) {
     }
     if (root.children[0]) applyMat(root.children[0], o.mat || null);
     attachFx(o, root);
+    if (o.t === 'audio') { const rec = sounds.get(o.id); if (rec && o.au && rec.url === o.au.url) tuneSound(rec, o.au); else attachSound(o, root); }
     applyTransform(root, o);
     root.updateMatrixWorld(true);
     updateCollider(o.id);
@@ -392,12 +457,24 @@ export function buildWorld(THREE, map, opts) {
     try { m.mixer.stopAllAction(); m.mixer.uncacheRoot(m.mixer.getRoot()); } catch (e) {}
     mixers.delete(id);
   }
-  function setAnim(id, anim) {
+  function setAnim(id, anim, _retry) {
     const root = rootOf(id); if (!root) return false;
     const clips = root.userData.mfClips || [];
     const cur = mixers.get(id);
     if (!anim || !anim.clip) { stopAnim(id); return true; }
-    const clip = clips.find(c => c.name === anim.clip) || (anim.clip === '*' ? clips[0] : null);
+    let clip = clips.find(c => c.name === anim.clip) || (anim.clip === '*' ? clips[0] : null);
+    // the clip lives in an uploaded animation file: fetch it, merge, try again
+    if (!clip && anim.src && !_retry && !root.userData.mfPending) {
+      const src = anim.src;
+      loadExtClips(src).then(ext => {
+        if (objects.get(id) !== root) return;
+        const have = new Set(clips.map(c => c.name));
+        root.userData.mfClips = clips.concat(ext.filter(c => !have.has(c.name)));
+        root.userData.mfExtSrc = src;
+        setAnim(id, anim, true);
+      }).catch(() => {});
+      return true;
+    }
     if (!clip) { stopAnim(id); return false; }
     if (cur && cur.clip === clip) {
       cur.action.setEffectiveTimeScale(anim.speed == null ? 1 : anim.speed);
@@ -514,6 +591,10 @@ export function buildWorld(THREE, map, opts) {
     colliders, updateCollider, updateAllColliders, groundAt, resolveMove, setCollision, isSolid: (o) => collides(o),
     /* clips available on a placed .glb (empty until it has loaded) */
     clipsOf: (id) => { const r = objects.get(id); return r && r.userData.mfClips ? r.userData.mfClips.map(c => c.name) : []; },
+    loadExtClips, cloneTemplate,
+    /* 🔊 */ attachAudio, startAudio, stopAudio, sounds,
+    /* objects within r metres (XZ) of a point — interactions, triggers */
+    objectsNear: (x, z, r) => map.objects.filter(o => Math.hypot(o.p[0] - x, o.p[2] - z) <= r),
     applyEnv, applyWater: (w) => water.apply(w),
     heightAt: (x, z) => terrain.heightAt(x, z),
     spawns: () => map.objects.filter(o => o.t === 'spawn'),
@@ -579,6 +660,8 @@ export function buildWorld(THREE, map, opts) {
       if (camera) sky.position.copy(camera.position);
     },
     dispose() {
+      stopAudio(); sounds.forEach((rec, id) => detachSound(id));
+      try { if (listener && listener.parent) listener.parent.remove(listener); } catch (e) {}
       try { physicsWanted++; if (physics) physics.dispose(); if (audio) audio.dispose(); actors.stop(); } catch (e) {}
       mixers.forEach((m, id) => stopAnim(id));
       emitters.forEach((em, id) => detachFx(id)); if (weather) { weather.dispose(); weather = null; }

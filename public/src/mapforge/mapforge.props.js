@@ -85,6 +85,7 @@ export const PROP_CATALOG = [
   { id: 'enemy',    label: 'Enemy spawn',  icon: '💀', cat: 'Markers', marker: true, col: false },
   { id: 'waypoint', label: 'Waypoint',     icon: '📍', cat: 'Markers', marker: true, col: false },
   { id: 'zone',     label: 'Zone (10m)',   icon: '⭕', cat: 'Markers', marker: true, col: false },
+  { id: 'audio',    label: 'Sound',        icon: '🔊', cat: 'Markers', marker: true, col: false },   // positional audio from an uploaded file (o.au)
   /* Game slot — a stand-in for something the host game draws itself (a farm
      building, a shop counter). Only ever created by a game adapter
      (AthenaEngine.games); it is NOT in the Library. `k` on the object names
@@ -255,6 +256,7 @@ const BUILDERS = {
     g.add(at(M(box(0.6, 0.2, 0.1), '#ff3b3b', { emissive: '#ff1a1a', ei: 1.0 }), 0, 2.8, 0.66)); g.add(at(M(box(4.4, 0.4, 1.6), DARKCONC), 0, 3.4, 0)); return g; },
   sfcrate: ({ M, box, G, at }) => { const g = G(); g.add(at(M(box(1.2, 1.0, 1.2), '#4b5563', { metal: 0.3, rough: 0.6 }, true), 0, 0.5, 0)); [-0.5, 0.5].forEach(x => g.add(at(M(box(0.12, 1.04, 1.24), '#2b3038'), x, 0.5, 0))); g.add(at(M(box(0.5, 0.05, 0.05), NEON, { emissive: NEON, ei: 1.3 }), 0, 0.75, 0.62)); g.add(at(M(box(0.3, 0.3, 0.02), '#ffb347', { emissive: '#ff8a00', ei: 0.6 }), 0, 0.4, 0.62)); return g; },
 
+  audio: ({ G, THREE }) => { const g = G(); const m = new THREE.Mesh(new THREE.SphereGeometry(0.32, 12, 8), new THREE.MeshBasicMaterial({ color: 0x5fd38a, wireframe: true, transparent: true, opacity: 0.85, depthTest: false })); m.position.y = 0.45; m.renderOrder = 15; g.add(m); const r = new THREE.Mesh(new THREE.TorusGeometry(0.7, 0.03, 6, 32), new THREE.MeshBasicMaterial({ color: 0x5fd38a, transparent: true, opacity: 0.5, depthTest: false })); r.rotation.x = Math.PI / 2; r.position.y = 0.05; r.renderOrder = 15; g.add(r); return g; },
   fxmarker: ({ M, G, at, THREE }) => { const g = G(); const m = new THREE.Mesh(new THREE.OctahedronGeometry(0.28, 0), new THREE.MeshBasicMaterial({ color: 0xffb347, wireframe: true, transparent: true, opacity: 0.85, depthTest: false })); m.position.y = 0.3; m.renderOrder = 15; g.add(m); return g; },
 
   spawn: ({ M, cyl, cone, G, at }) => { const g = G(); g.add(at(M(cyl(0.9, 0.9, 0.08, 24), '#42d77d', { emissive: '#1f9a4f', ei: 0.7, op: 0.75 }), 0, 0.04, 0)); g.add(at(M(cone(0.35, 0.9, 4), '#42d77d', { emissive: '#1f9a4f', ei: 0.7, op: 0.85, flat: true }), 0, 1.4, 0)).rotation.x = Math.PI; g.add(at(M(cyl(0.05, 0.05, 2.0, 6), '#42d77d', { emissive: '#1f9a4f', ei: 0.7 }), 0, 1.0, 0)); g.add(at(M(cone(0.25, 0.5, 6), '#42d77d', { emissive: '#1f9a4f', ei: 0.9, flat: true }), 0, 0.3, 0.65)).rotation.x = Math.PI / 2; return g; },

@@ -1,0 +1,38 @@
+-- 083 · A warehouse bay starts at 5,000 kg and grows as the warehouse levels up.
+--
+-- Set by the owner: "Start the base bay for the warehouse at 5000 units and
+-- increase as the players level up." Confirmed to mean the WAREHOUSE TIER — the
+-- ladder a player actually levels (Lean-To Depot → Ashfall Logistics Yard).
+-- There is no player-level column anywhere in this database; the alternatives
+-- were district-node level and competitive rank, and the owner picked tier.
+--
+-- WAS: every bay was created at a flat 500 kg from wh_config.unit_capacity_kg,
+-- and the only way to grow one was to pay through wh_unit_tiers()
+-- (500 → 1,250 → 2,500 → 3,750 → 5,000).
+--
+-- NOW:  tier 1  5,000   ·  tier 2  7,500  ·  tier 3 10,000
+--       tier 4 12,500   ·  tier 5 15,000   (kg, per bay)
+--
+-- ⚠ THE PAID PER-BAY LADDER IS NOW INERT, and that is a consequence worth
+--   stating rather than hiding. wh_unit_tiers() tops out at 5,000, which is the
+--   tier-1 floor, so wh_unit_next_tier() finds nothing wider and wh_expand_unit
+--   returns 'bay_maxed' and charges nothing. It fails safe — nobody is billed
+--   for an upgrade they cannot receive — but if bay expansion should remain
+--   purchasable, that ladder needs re-pricing ABOVE the floors.
+--
+-- ⚠ max_shipment_kg IS DELIBERATELY UNCHANGED at 1,800. Its own comment sizes
+--   it against "tier-1 = 4 bays x 500 kg"; that reasoning is now stale (a tier-1
+--   warehouse holds 20,000 kg), but raising the per-shipment limit is a separate
+--   design call about how many trips a haul should take.
+--
+-- Applied 2026-08-30. The one-time lift moved all 73 existing bays onto their
+-- tier's floor: tier 1 → 5,000 (20 bays), tier 3 → 10,000 (7), tier 4 → 12,500
+-- (14), tier 5 → 15,000 (32). greatest() throughout, so nothing shrank.
+--
+-- The full function bodies are recorded in the Supabase migration history:
+--   wh_bay_floor_by_tier
+--   wh_bays_start_at_5000_and_grow_with_tier
+-- and comprise: wh_bay_floor(tier), wh_config() (one key changed plus a
+-- bay_floor_by_tier map), wh_buy_unit (opens a bay at the warehouse's floor),
+-- wh_upgrade_tier (lifts EVERY bay in the warehouse, never shrinking one that
+-- was already larger), and the one-time backfill UPDATE.

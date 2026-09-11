@@ -1,0 +1,71 @@
+-- ===========================================================================
+-- 100 — comm_upd's WITH CHECK WAS A TAUTOLOGY, AND IT BROKE EDITING ENTIRELY.
+--
+-- The check read:
+--
+--   owner_id = (select c.owner_id from communities c where c.id = c.id)
+--
+-- `c.id = c.id` is true for every row, so that scalar subquery returns the whole
+-- table. With one community in existence it is invisible. With two or more it
+-- raises
+--
+--   ERROR: more than one row returned by a subquery used as an expression
+--
+-- and EVERY update fails. There are four communities, so editing a community has
+-- simply not worked, for anybody, since the second one was created.
+--
+-- ⚠ THIS IS A GAMEPLAY BUG THAT A SECURITY AUDIT FOUND. It turned up while
+--   sweeping write policies for account separation — a policy that mentions no
+--   auth.uid() looks like a hole, and the hole turned out to be a typo that
+--   fails CLOSED rather than open. Worth saying because it is the cheerful case:
+--   nobody could exploit it, and nobody could use the feature either. Confirmed
+--   by driving it as the actual owner rather than by reading it, which is also
+--   how the "more than one row" behaviour was distinguished from a policy that
+--   merely denied.
+--
+-- The intent is plain once the typo is named: a leader may edit their community
+-- but may not hand it to somebody else. `c.id = communities.id` says that — in a
+-- WITH CHECK, `communities` is the NEW row, and the subquery still sees the OLD
+-- one, so it compares new.owner_id against the stored owner_id.
+--
+-- USING (is_community_leader(id)) already decides WHICH row may be touched and
+-- is unchanged.
+--
+-- Idempotent and re-runnable. Verify block at the bottom.
+-- ===========================================================================
+
+drop policy if exists comm_upd on public.communities;
+create policy comm_upd on public.communities
+  for update to authenticated
+  using (public.is_community_leader(id))
+  with check (owner_id = (select c.owner_id from public.communities c where c.id = communities.id));
+
+-- ===========================================================================
+-- VERIFY — three rounds, all must PASS. Impersonates the real owner.
+--
+--   create temp table cres(step text, got text, want text);
+--   grant insert, select on cres to authenticated;
+--   do $$ declare v_id uuid; v_owner uuid; v_name text; v_other uuid; n int;
+--   begin
+--     select id, owner_id, name into v_id, v_owner, v_name from public.communities limit 1;
+--     select owner_id into v_other from public.communities where owner_id <> v_owner limit 1;
+--     set local role authenticated;
+--     perform set_config('request.jwt.claims', json_build_object('sub', v_owner, 'role','authenticated')::text, true);
+--     begin update public.communities set name = v_name where id = v_id;
+--           insert into cres values ('1 leader can edit', 'succeeded', 'succeeded');
+--     exception when others then insert into cres values ('1 leader can edit', 'ERROR: '||left(SQLERRM,90), 'succeeded'); end;
+--     begin update public.communities set owner_id = coalesce(v_other, gen_random_uuid()) where id = v_id;
+--           insert into cres values ('2 cannot reassign owner', 'succeeded (!)', 'refused');
+--     exception when others then insert into cres values ('2 cannot reassign owner', 'refused', 'refused'); end;
+--     perform set_config('request.jwt.claims', json_build_object('sub', gen_random_uuid(), 'role','authenticated')::text, true);
+--     update public.communities set name = v_name where id = v_id;
+--     get diagnostics n = row_count;
+--     insert into cres values ('3 a stranger edits nothing', n::text, '0');
+--     reset role;
+--   end $$;
+--   select step, got, want, case when got = want then 'PASS' else '*** FAIL ***' end from cres order by step;
+--
+-- ⚠ Round 1 is a no-op edit (name set to its own value) on purpose — the point
+--   is whether the statement is ALLOWED, and a test that also changed data would
+--   be a test you cannot re-run on production.
+-- ===========================================================================

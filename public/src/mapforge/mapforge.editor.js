@@ -3,7 +3,7 @@
 
    A full-screen overlay: sculpt + paint a heightfield, place props and .glb
    models with a gizmo, set water / sky / sun, walk the map in Play mode,
-   save to the cloud (sql/038) or this device, export JSON.
+   save to the cloud (sql/091) or this device, export JSON.
 
    Layering, so it stays understandable:
      format.js  the document        world.js   document → scene (runtime)
@@ -22,7 +22,13 @@
 import { ensureThree } from './mapforge.three.js';
 import { buildWorld, bufferToB64 } from './mapforge.world.js';
 import { createPlayer } from './mapforge.player.js';
-import { newMap, normalize, serialize, clone, uid, PAINT, ENV_PRESETS, LOOP_MODES, resampleTerrain, gameId, assetBytes, embeddedBytes, normalizeTags } from './mapforge.format.js';
+import { newMap, normalize, serialize, clone, uid, PAINT, ENV_PRESETS, LOOP_MODES, resampleTerrain, gameId, assetBytes, embeddedBytes, HUBS, normalizeMenu, normalizeAct, normalizePlayer, PLAYER_ANIMS, PLAYER_CAST_MAX, normalizeTags } from './mapforge.format.js';
+import * as assetsApi from './mapforge.files.js';   // the uploaded files (world_assets, sql/112) — build B's FILES tab
+import { refreshMenu } from './mapforge.menu.js';
+import { EMITTERS } from './mapforge.vfx.js';
+import { createAvatar, VIEWS } from './mapforge.avatar.js';
+import { miniGames } from './mapforge.bridge.js';
+import { refreshLive } from './mapforge.pill.js';
 import * as games from './mapforge.games.js';
 import { invalidate as invalidateOverlay } from './mapforge.overlay.js';
 import { COMPONENTS, ACTOR_NODES, newBlueprint, newGraphNode, hasBehaviour } from './mapforge.actors.js';
@@ -35,7 +41,7 @@ import { applyTone } from './mapforge.engine.js';
 import { PROP_CATALOG, PROP_BY_ID, buildProp } from './mapforge.props.js';
 import { WEATHERS } from './mapforge.vfx.js';
 import * as api from './mapforge.api.js';
-import { confirm as askConfirm, signedIn, displayName, isAdmin, bridge } from './mapforge.bridge.js';
+import { confirm as askConfirm, signedIn, displayName, isAdmin, bridge, hubs as bridgeHubs, guides as bridgeGuides } from './mapforge.bridge.js';
 
 let ED = null;
 export function isOpen() { return !!ED; }
@@ -67,6 +73,7 @@ export async function openEditor(opts) {
     showGrid: false, showMarkers: true, showColliders: false, showNav: false,
     hotkeys: (() => { try { return localStorage.getItem('mf_hotkeys') === 'default' ? 'default' : 'unreal'; } catch (e) { return 'unreal'; } })(),
     rmb: false, gizmoSpace: 'world', snapSize: 1,
+    audioUrl: null, audioName: null, fxPreset: null,   // picked in the Files tab, consumed by makeObject
     folderId: null,     // the content folder new objects land in (null = root)
     game: null,         // registered game adapter id when this map is a game scene
     multi: new Set(),   // multi-selection (Ctrl/Shift+click); selectedId is the primary
@@ -96,19 +103,21 @@ export async function openEditor(opts) {
     if (r.ok) { doc = r.map; S.source = opts.source || 'local'; S.isPublic = !!r.is_public; S.mine = r.mine !== false; }
     else toast('Could not load that map: ' + (r.error || 'unknown error'), 4000);
   }
-  else if (opts.game) {
-    // A game scene: the live map for that mini-game, else the adapter builds it from the game.
+  let freshStart = false;
+  // Opened FOR a mini-game (the ⚒ pill on that screen): its live world when
+  // there is one, otherwise a fresh map already tagged with the game. Someone
+  // else's live world opens read-only-ish: the first save makes your copy.
+  if (!doc && opts.game) {
     const g = games.get(opts.game);
     const r = await api.loadLive(opts.game);
-    if (r.ok) { doc = r.map; S.source = r.source; S.isPublic = !!r.is_public; S.mine = r.mine !== false; }
+    if (r.ok && r.map) { doc = r.map; S.source = r.source || 'cloud'; S.isPublic = true; S.mine = r.mine !== false; }
     else if (g) { try { doc = normalize(g.build(THREE)); doc.game = g.id; S.source = null; setTimeout(() => toast('Built the ' + g.label + ' scene from the game — arrange it, Save, then ★ Set live so the game loads it.', 5600), 600); } catch (e) { toast('The ' + g.label + ' adapter failed to build its scene: ' + ((e && e.message) || e), 5000); } }
-    else toast('No saved map for "' + opts.game + '" and no game adapter registered for it.', 4200);
+    else { doc = newMap({ author: displayName(), game: gameId(opts.game) || 'sandbox' }); freshStart = true; }
   }
   if (!doc) {
     const draft = api.loadDraft();
     if (draft) { doc = draft; S.source = null; setTimeout(() => toast('Restored your unsaved draft — save it or start a New map.', 4200), 600); }
   }
-  let freshStart = false;
   if (!doc) { doc = newMap({ author: displayName() }); freshStart = true; }
   if (!ED) return null;
 
@@ -169,6 +178,30 @@ export async function openEditor(opts) {
   ED.gizmo = gizmo;
   if (missing && missing.length) setTimeout(() => toast('Some editor addons did not load (' + missing.join(', ') + ') — using built-in fallbacks.', 4500), 900);
 
+  // ── the Mini-game field: a select fed by the game's own registry ──
+  // window.MythicBridge.miniGames() (index.html's ATHENA_MINI_GAMES), plus
+  // 'sandbox', every game a saved map already carries, the current value if
+  // it is none of those, and a Custom… entry for an id not on the list.
+  let _knownGames = [];
+  function setGameField(value, extra) {
+    const sel = $('#mf-game'); if (!sel) return;
+    if (extra) _knownGames = extra.slice();
+    const opts = []; const seen = new Set();
+    const add = (val, label) => { val = gameId(val); if (!val || seen.has(val)) return; seen.add(val); opts.push({ val, label: label || val }); };
+    add('sandbox', 'sandbox · no game');
+    miniGames().forEach(g => add(g.key || g.id, (g.name || g.id) + ' · ' + gameId(g.key || g.id)));
+    _knownGames.forEach(g => add(g));
+    add(value);
+    // build A's registered game adapters (farm, battle, the showrooms) are choices too
+    try { games.list().forEach(g => add(g.id, (g.icon ? g.icon + ' ' : '') + (g.label || g.id))); } catch (e) {}
+    /* a free-text input with a datalist (build A's field): every known id is a
+       suggestion, and an id nobody listed can still be typed — the "Custom id…"
+       prompt of the old <select> is no longer needed */
+    const dl = $('#mf-games'); if (dl) dl.innerHTML = opts.map(o => '<option value="' + esc(o.val) + '">' + esc(o.label) + '</option>').join('');
+    sel.value = gameId(value) || 'sandbox';
+  }
+  function currentGameField() { const sel = $('#mf-game'); const v = sel ? sel.value : ''; return v === '__custom__' ? (S.map.game || 'sandbox') : v; }
+
   function loadDoc(map, source) {
     if (world) { scene.remove(world.group); world.dispose(); }
     if (gridHelper) { scene.remove(gridHelper); gridHelper = null; }
@@ -182,7 +215,7 @@ export async function openEditor(opts) {
     frameOverview();
     $('.mf-top .name input').value = map.name;
     $('#mf-desc').value = map.description || '';
-    $('#mf-game').value = map.game || 'sandbox';
+    setGameField(map.game || 'sandbox');
     S.game = games.get(map.game) ? games.get(map.game).id : null; S.folderId = null;
     renderGameTag();
     renderTerrainTab(); renderWaterTab(); renderSkyTab(); renderStats(); renderOutliner(true); renderSceneFlags();
@@ -636,12 +669,15 @@ export async function openEditor(opts) {
     if (isGlb) { o.a = S.assetId; const fit = assetFit.get(S.assetId); if (fit) o.s = [fit, fit, fit]; }
     if (isPf) o.pf = S.prefabId;
     else if (S.propTint && PROP_BY_ID[o.t] && PROP_BY_ID[o.t].tint) o.c = S.propTint;
+    if (o.t === 'audio' && S.audioUrl) { o.au = { url: S.audioUrl, vol: 1, r: 20, loop: true }; o.n = (S.audioName || 'Sound').slice(0, 60); }
+    if (S.fxPreset && o.t === 'fx_' + S.fxPreset.kind) { if (S.fxPreset.c) o.c = S.fxPreset.c; if (S.fxPreset.fx) o.fx = S.fxPreset.fx; if (S.fxPreset.label) o.n = S.fxPreset.label.slice(0, 60); }
     if (S.folderId && folderById(S.folderId)) o.f = S.folderId;
     Object.assign(o, extra || {});
     return o;
   }
   function placeAt(p, selectIt) {
     if (S.propId === 'glb' && !S.assetId) { toast('Add a model URL in the Library first.'); return; }
+    if (S.propId === 'audio' && !S.audioUrl) { toast('Pick an audio file in the Files tab first — the marker plays that file.', 3600); showTab('files'); return; }
     if (S.propId === 'prefab' && !prefabById(S.prefabId)) { toast('Pick a prefab in the Library first.'); return; }
     const o = makeObject(p, S.scatter.jitterRot && S.tool === 'scatter' ? { r: [0, Math.random() * Math.PI * 2, 0] } : null);
     S.map.objects.push(o); world.addObject(o);
@@ -674,7 +710,7 @@ export async function openEditor(opts) {
     if (S.selectedId === id) select(null);
     renderStats();
   }
-  function select(id, keepMulti) {
+  function select(id, keepMulti) { if (tabOn('scene')) setTimeout(renderSceneTab, 0);
     S.selectedId = id;
     if (!keepMulti) { S.multi.clear(); if (id) S.multi.add(id); }
     setTimeout(drawColliders, 0); renderOutliner(); renderBpPanel();
@@ -1235,16 +1271,26 @@ export async function openEditor(opts) {
     controls.enabled = false; if (gizmo) gizmo.detach(); brushRing.visible = false; if (ghost) ghost.visible = false;
     world.setMarkersVisible(false); colSel.visible = false; colAll.visible = false;
     const sp = world.spawns()[0];
+    /* 🎥 Play uses the map's point of view and character, exactly as the game will */
+    S.map.player = normalizePlayer(S.map.player);
+    if (play.avatar) { try { play.avatar.dispose(); } catch (e) {} play.avatar = null; }
+    if (S.map.player.model && S.map.player.model.a) { try { play.avatar = createAvatar(THREE, { world, scene, player: S.map.player }); } catch (e) { play.avatar = null; } }
+    player.setView(S.map.player.view, play.avatar);
     player.start(sp ? null : { pos: new THREE.Vector3(controls.target.x, 0, controls.target.z), yaw: Math.atan2(camera.position.x - controls.target.x, camera.position.z - controls.target.z) + Math.PI });
     trigRing.visible = false; S.bpOpen = false; renderBpPanel(); drawNav();
     world.startPlay({ get pos() { return player.pos; }, setPos: (x, z) => { player.pos.x = x; player.pos.z = z; player.pos.y = world.heightAt(x, z); } });
     $('#mf-play').classList.add('on'); $('#mf-play').textContent = '■ Stop';
+    // 🔊 sound markers play in Play mode: pressing Play is itself the gesture
+    // 🔊 build B's sound MARKERS (t:'audio') get their listener only when the map has any — a second AudioListener on the camera slowed build A's component emitters (pw-test9)
+    try { if (world.sounds && world.sounds.size) { world.attachAudio(camera); world.startAudio(); } } catch (e) {}
   }
   function stopPlay() {
     if (!S.playing) return;
+    try { world.stopAudio(); } catch (e) {}
     S.playing = false; canvasHost.classList.remove('play');
     world.stopPlay(); $('#mf-prompt').hidden = true; drawNav();
     player.stop(); drawColliders(); renderStats(); renderOutliner();
+    if (play.avatar) { try { play.avatar.dispose(); } catch (e) {} play.avatar = null; }
     controls.enabled = true; camera.position.copy(play.savedCam); controls.target.copy(play.savedTarget); controls.update();
     world.setMarkersVisible(S.showMarkers);
     $('#mf-play').classList.remove('on'); $('#mf-play').textContent = '▶ Play';
@@ -1256,6 +1302,7 @@ export async function openEditor(opts) {
   const fly = { keys: {} };
   function isTyping(e) { const t = e.target; return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable); }
   function onKeyDown(e) {
+    if (S.playing && (e.key === 'e' || e.key === 'E') && !isTyping(e)) { try { player.interact(); } catch (x) {} }
     if (!ED) return;
     if ($('.mf-help').classList.contains('on') && e.key === 'Escape') { $('.mf-help').classList.remove('on'); return; }
     if (isTyping(e)) { if (e.key === 'Escape') e.target.blur(); return; }
@@ -1332,15 +1379,19 @@ export async function openEditor(opts) {
     }
     S.map.name = ($('.mf-top .name input').value || 'Untitled world').trim().slice(0, 80);
     S.map.description = ($('#mf-desc').value || '').slice(0, 2000);
-    S.map.game = gameId($('#mf-game').value) || 'sandbox'; $('#mf-game').value = S.map.game;
+    S.map.game = gameId(currentGameField()) || 'sandbox'; setGameField(S.map.game);
     const source = forceSource || S.source || (signedIn() ? 'cloud' : 'local');
+    S.map.menu = normalizeMenu(S.map.menu);
+    if (S.map.menu.on && source === 'cloud' && !S.isPublic) { S.isPublic = true; toast('This map is a menu button, so it is saved public.', 2600); }
     const btn = $('#mf-save'); btn.disabled = true;
     const r = await api.saveMap(S.map, source, source === 'cloud' ? S.isPublic : undefined);
     btn.disabled = false;
     if (!r.ok) { toast('Save failed: ' + (r.error || 'unknown error'), 5000); return false; }
     S.source = r.source; setDirty(false); api.clearDraft(); notifyGame('saved');
-    if (r.fellBack) toast(r.missing ? 'Cloud maps are not set up yet (run sql/038) — saved on this device instead.' : r.offline ? 'Not signed in — saved on this device.' : 'Cloud save failed (' + r.error + ') — saved on this device instead.', 5200);
+    if (r.fellBack) toast(r.missing ? 'Cloud maps are not set up yet (run sql/091) — saved on this device instead.' : r.offline ? 'Not signed in — saved on this device.' : 'Cloud save failed (' + r.error + ') — saved on this device instead.', 5200);
     else toast(r.source === 'cloud' ? '☁ Saved to the cloud.' : '💾 Saved on this device.');
+    if (S.map.menu.on && r.source !== 'cloud') toast('The menu button only shows once the map is saved to the cloud.', 4200);
+    try { refreshMenu(); } catch (e) {}
     renderMapsTab();
     return true;
   }
@@ -1366,7 +1417,7 @@ export async function openEditor(opts) {
   }
   async function newMapFlow() {
     if (S.dirty && !(await askConfirm('Discard unsaved changes and start a new map?'))) return;
-    const m = newMap({ author: displayName(), game: gameId($('#mf-game').value) || 'sandbox' });
+    const m = newMap({ author: displayName(), game: gameId(currentGameField()) || 'sandbox' });
     loadDoc(m, null); world.terrain.generate({ type: 'hills', seed: (Math.random() * 1e6) | 0, amplitude: 6, scale: 0.35 }); regroundAll(); renderTerrainTab();
     api.clearDraft(); setDirty(false); S.isPublic = false; S.mine = true; renderMapsTab();
   }
@@ -1390,6 +1441,9 @@ export async function openEditor(opts) {
     root.remove(); document.body.style.overflow = prevOverflow;
     const closedGame = S.map && S.map.game;
     ED = null;
+    // The ⚒ pill hid itself while the editor covered the screen; a live map may
+    // also have been set or unset in here. Reload the live index and redraw it.
+    try { refreshLive(); } catch (e) {}
     try { if (closedGame) invalidateOverlay(closedGame); window.dispatchEvent(new CustomEvent('athena:closed', { detail: { game: closedGame || 'sandbox' } })); } catch (e) {}
     try { if (opts.onClose) opts.onClose(); } catch (e) {}
   }
@@ -1731,10 +1785,28 @@ export async function openEditor(opts) {
         <div class="mf-row" style="margin-bottom:5px"><label>Collision</label><span class="st">${world.isSolid(o) ? '● Solid — blocks the player' : '○ None — walk through'}</span></div>
         <div class="mf-btns">${world.isSolid(o) ? '<button id="mf-o-col-off">－ Remove collision</button>' : '<button id="mf-o-col-on" class="primary">＋ Add collision</button>'}<select id="mf-o-cs" ${world.isSolid(o) ? '' : 'disabled'}><option value="box" ${o.cs !== 'cyl' ? 'selected' : ''}>Box</option><option value="cyl" ${o.cs === 'cyl' ? 'selected' : ''}>Cylinder</option></select></div>
       </div>
-      ${o.t === 'glb' ? (() => { const clips = world.clipsOf(o.id); const known = clips.length ? clips : ((S.map.assets.find(a => a.id === o.a) || {}).anims || []); const cur = o.anim && o.anim.clip; return known.length ? `
+      ${o.t === 'glb' ? (() => { const clips = world.clipsOf(o.id); const known = clips.length ? clips : ((S.map.assets.find(a => a.id === o.a) || {}).anims || []); const cur = o.anim && o.anim.clip; return `
+      <div class="mf-anim"><div class="mf-row" style="margin-bottom:4px"><label>Animations</label><span class="st">🎞 ${known.length} clip${known.length === 1 ? '' : 's'}${o.anim && o.anim.src ? ' · + file' : ''}</span></div>
+        ${known.length ? '<div class="mf-clips">' + known.map(c => '<button data-clip="' + esc(c) + '" class="' + (c === cur ? 'on' : '') + '" title="Play ' + esc(c) + '">▶ ' + esc(c) + '</button>').join('') + '</div>' : ''}
+        <div class="mf-btns"><button id="mf-o-upanim">⤒ Upload animation for this model</button><button id="mf-o-pickanim" title="Choose an uploaded animation in the Files tab">🎞 From Files</button><input type="file" id="mf-o-animfile" accept=".glb,.gltf" hidden></div>
+      </div>` + (known.length ? `
       <div class="mf-row"><label>Animation</label><select id="mf-o-anim"><option value="">— none —</option>${known.map(c => '<option value="' + esc(c) + '"' + (c === cur ? ' selected' : '') + '>' + esc(c) + '</option>').join('')}</select></div>
       <div class="mf-row"><label>Speed</label><input type="range" id="mf-o-aspeed" min="0" max="4" step="0.05" value="${o.anim ? o.anim.speed : 1}"><span class="v" id="mf-o-aspeed-v">${(o.anim ? o.anim.speed : 1).toFixed(2)}×</span></div>
-      <div class="mf-row"><label>Loop</label><select id="mf-o-aloop">${LOOP_MODES.map(l => '<option value="' + l + '"' + (o.anim && o.anim.loop === l ? ' selected' : '') + '>' + l + '</option>').join('')}</select></div>` : (world.objects.get(o.id) && world.objects.get(o.id).userData.mfPending ? '<p class="mf-hint">Loading model…</p>' : '<p class="mf-hint">This model has no animation clips.</p>'); })() : ''}
+      <div class="mf-row"><label>Loop</label><select id="mf-o-aloop">${LOOP_MODES.map(l => '<option value="' + l + '"' + (o.anim && o.anim.loop === l ? ' selected' : '') + '>' + l + '</option>').join('')}</select></div>` : (world.objects.get(o.id) && world.objects.get(o.id).userData.mfPending ? '<p class="mf-hint">Loading model…</p>' : '<p class="mf-hint">This model has no animation clips of its own — upload an animation file for it.</p>')); })() : ''}
+      ${o.t === 'audio' ? (() => { const au = o.au || { url: '', vol: 1, r: 20, loop: true }; return `
+      <div class="mf-fx"><div class="mf-row" style="margin-bottom:5px"><label>Sound</label><span class="st" title="${esc(au.url)}">🔊 ${au.url ? esc(au.url.split('/').pop().replace(/^[a-z0-9]+_/, '')) : 'no file — pick one in Files'}</span></div>
+        <div class="mf-row"><label>Volume</label><input type="range" id="mf-o-auv" min="0" max="1" step="0.05" value="${au.vol}"><span class="v" id="mf-o-auv-v">${Math.round(au.vol * 100)}%</span></div>
+        <div class="mf-row"><label>Range</label><input type="range" id="mf-o-aur" min="1" max="200" step="1" value="${au.r}"><span class="v" id="mf-o-aur-v">${au.r} m</span></div>
+        <div class="mf-row"><label>Loop</label><input type="checkbox" id="mf-o-aul" ${au.loop !== false ? 'checked' : ''}><span class="mf-hint" style="margin:0">plays in Play mode and in the game</span></div>
+      </div>`; })() : ''}
+      ${!(PROP_BY_ID[o.t] && PROP_BY_ID[o.t].marker && o.t !== 'zone') && !o.t.startsWith('fx_') ? (() => { const act = o.act || { kind: 'none' }; const hubs = bridgeHubs(), gl = bridgeGuides(), games = miniGames(); const opt = (list, cur, idk, namek) => list.map(x => '<option value="' + esc(x[idk]) + '"' + (x[idk] === cur ? ' selected' : '') + '>' + esc(x[namek] || x[idk]) + '</option>').join(''); return `
+      <div class="mf-act ${act.kind !== 'none' ? 'on' : ''}"><div class="mf-row" style="margin-bottom:5px"><label>Interaction</label><select id="mf-o-act"><option value="none" ${act.kind === 'none' ? 'selected' : ''}>${o.t === 'zone' ? 'Map default (Menu tab)' : 'None'}</option><option value="screen" ${act.kind === 'screen' ? 'selected' : ''}>Enter → open a screen</option><option value="hub" ${act.kind === 'hub' ? 'selected' : ''}>Enter → open a menu</option><option value="guide" ${act.kind === 'guide' ? 'selected' : ''}>Talk → play a guide</option></select></div>
+        ${act.kind === 'screen' ? '<div class="mf-row"><label>Screen</label><select id="mf-o-act-target"><option value="">— pick —</option>' + opt(games, act.target, 'id', 'name') + '</select></div>' : ''}
+        ${act.kind === 'hub' ? '<div class="mf-row"><label>Menu</label><select id="mf-o-act-hub">' + opt(hubs, act.hub || 'main', 'id', 'name') + '</select></div>' : ''}
+        ${act.kind === 'guide' ? '<div class="mf-row"><label>Guide</label><select id="mf-o-act-guide"><option value="">— pick —</option>' + opt(gl, act.guide, 'id', 'title') + '</select></div>' : ''}
+        ${act.kind !== 'none' ? '<div class="mf-row"><label>Prompt</label><input type="text" id="mf-o-act-prompt" maxlength="40" value="' + esc(act.prompt || '') + '" placeholder="' + (act.kind === 'guide' ? 'Talk' : 'Enter') + '"></div>' + (o.t === 'zone' ? '<div class="mf-row"><label>Trigger</label><input type="checkbox" id="mf-o-act-auto" ' + (act.auto === false ? '' : 'checked') + '><span class="mf-hint" style="margin:0">fires on entry (off: press E inside)</span></div>' : '') : ''}
+        <p class="mf-hint">${o.t === 'zone' ? 'Walking into the zone runs this.' : 'Standing beside it and pressing <b>E</b> runs this.'}</p>
+      </div>`; })() : ''}
       <div class="mf-btns" style="margin-top:8px"><button id="mf-o-drop">⤓ Drop to ground</button><button id="mf-o-dup">⧉ Duplicate</button><button id="mf-o-focus">◎ Focus</button><button id="mf-o-del" class="danger">✕ Delete</button></div>`;
     const commit = (fn) => { beginObjectEdit(); fn(); world.refreshObject(o); if (gizmo && gizmo.object) gizmo.object.updateMatrixWorld(); endObjectEdit(); setDirty(true); };
     box.querySelectorAll('input[data-f]').forEach(inp => inp.onchange = () => commit(() => {
@@ -1759,14 +1831,40 @@ export async function openEditor(opts) {
     const ss = box.querySelector('#mf-o-slot-restore'); if (ss) ss.onclick = () => restoreSlot(o);
     const tint = box.querySelector('#mf-o-tint'); if (tint) { tint.oninput = () => { o.c = tint.value; world.refreshObject(o); setDirty(true); }; tint.onpointerdown = () => beginObjectEdit(); tint.onchange = () => endObjectEdit(); box.querySelector('#mf-o-untint').onclick = () => commit(() => { delete o.c; }); }
     box.querySelector('#mf-o-ground').onchange = (e) => commit(() => { o.g = e.target.checked; if (o.g) o.p[1] = world.heightAt(o.p[0], o.p[2]); });
+    if (o.t === 'glb') {
+      const applyClip = (clip, src) => { beginObjectEdit(); o.anim = clip ? { clip, speed: (o.anim && o.anim.speed) || 1, loop: (o.anim && o.anim.loop) || 'repeat', src: src || (o.anim && o.anim.src) || undefined } : undefined; const okp = world.setAnim(o.id, o.anim); endObjectEdit(); setDirty(true); renderInspector(); if (clip && okp === false) toast('That clip does not fit this model\'s skeleton.', 3600); };
+      box.querySelectorAll('[data-clip]').forEach(b => { b.onclick = () => applyClip(b.dataset.clip === (o.anim && o.anim.clip) ? '' : b.dataset.clip); });
+      const upb = box.querySelector('#mf-o-upanim'), pkb = box.querySelector('#mf-o-pickanim'), fin = box.querySelector('#mf-o-animfile');
+      if (upb) upb.onclick = () => fin.click();
+      if (fin) fin.onchange = async (e) => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; const r = await assetsApi.upload(f, { inspect: inspectFile, kind: 'anim' }); if (!ED) return; if (!r.ok) { toast(r.missing ? 'The files table is not set up yet — run sql/112_world_assets.sql.' : 'Upload failed: ' + (r.error || 'unknown error'), 5200); return; } filesCache = null; select(o.id); useFile(r.row); };
+      if (pkb) pkb.onclick = () => { filesFilter = 'anim'; showTab('files'); toast('Pick an animation — ▶ Apply puts it on the selected model.', 3600); };
+    }
     const animSel = box.querySelector('#mf-o-anim');
     if (animSel) {
-      const applyAnim = () => { const clip = animSel.value; o.anim = clip ? { clip, speed: +box.querySelector('#mf-o-aspeed').value, loop: box.querySelector('#mf-o-aloop').value } : undefined; world.setAnim(o.id, o.anim); box.querySelector('#mf-o-aspeed-v').textContent = (+box.querySelector('#mf-o-aspeed').value).toFixed(2) + '×'; };
+      const applyAnim = () => { const clip = animSel.value; o.anim = clip ? { clip, speed: +box.querySelector('#mf-o-aspeed').value, loop: box.querySelector('#mf-o-aloop').value, src: (o.anim && o.anim.src) || undefined } : undefined; world.setAnim(o.id, o.anim); box.querySelector('#mf-o-aspeed-v').textContent = (+box.querySelector('#mf-o-aspeed').value).toFixed(2) + '×'; };
       animSel.onchange = () => commit(applyAnim);
       box.querySelector('#mf-o-aloop').onchange = () => commit(applyAnim);
       const sp = box.querySelector('#mf-o-aspeed'); sp.oninput = () => { applyAnim(); setDirty(true); }; sp.onpointerdown = () => beginObjectEdit(); sp.onchange = () => endObjectEdit();
     }
     box.querySelector('#mf-o-drop').onclick = () => commit(() => { o.p[1] = world.heightAt(o.p[0], o.p[2]); });
+    const auv = box.querySelector('#mf-o-auv');
+    if (auv) {
+      const aur = box.querySelector('#mf-o-aur'), aul = box.querySelector('#mf-o-aul');
+      const applyAu = () => { o.au = Object.assign(o.au || { url: '' }, { vol: +auv.value, r: +aur.value, loop: aul.checked }); box.querySelector('#mf-o-auv-v').textContent = Math.round(+auv.value * 100) + '%'; box.querySelector('#mf-o-aur-v').textContent = aur.value + ' m'; world.refreshObject(o); setDirty(true); };
+      [auv, aur].forEach(el => { el.onpointerdown = () => beginObjectEdit(); el.oninput = applyAu; el.onchange = () => endObjectEdit(); });
+      aul.onchange = () => { beginObjectEdit(); applyAu(); endObjectEdit(); };
+    }
+    const actSel = box.querySelector('#mf-o-act');
+    if (actSel) {
+      const applyAct = () => {
+        const kind = actSel.value; const cur = o.act || {};
+        const raw = kind === 'none' ? null : { kind, prompt: (box.querySelector('#mf-o-act-prompt') || {}).value || cur.prompt || '', target: (box.querySelector('#mf-o-act-target') || {}).value || cur.target || '', hub: (box.querySelector('#mf-o-act-hub') || {}).value || cur.hub || 'main', guide: (box.querySelector('#mf-o-act-guide') || {}).value || cur.guide || '', auto: box.querySelector('#mf-o-act-auto') ? box.querySelector('#mf-o-act-auto').checked : cur.auto !== false };
+        o.act = normalizeAct(raw);
+      };
+      const onAct = () => { beginObjectEdit(); applyAct(); endObjectEdit(); setDirty(true); renderInspector(); };
+      actSel.onchange = onAct;
+      ['#mf-o-act-target', '#mf-o-act-hub', '#mf-o-act-guide', '#mf-o-act-prompt', '#mf-o-act-auto'].forEach(id => { const el = box.querySelector(id); if (el) el.onchange = onAct; });
+    }
     const fxi = box.querySelector('#mf-o-fxi');
     if (fxi) {
       const fxs = box.querySelector('#mf-o-fxs'), fxon = box.querySelector('#mf-o-fxon'), fxc = box.querySelector('#mf-o-fxc');
@@ -1792,6 +1890,7 @@ export async function openEditor(opts) {
   }
   function renderStats() {
     const m = S.map; if (!m) return;
+    if (tabOn('scene')) renderSceneTab();
     const nb = m.objects.filter(hasBehaviour).length;
     $('#mf-hud-stats').innerHTML = '<b>' + m.objects.length + '</b> objects · <b>' + (m.folders || []).length + '</b> folders · <b>' + (m.prefabs || []).length + '</b> prefabs' + (nb ? ' · <b>' + nb + '</b> ⚡' : '') + ' · <b>' + m.terrain.n + '×' + m.terrain.n + '</b> · ' + (m.terrain.n * m.terrain.cell) + 'm';
     renderOutliner();
@@ -1818,10 +1917,10 @@ export async function openEditor(opts) {
     const list = $('#mf-maps'); list.innerHTML = '<div class="mf-empty">Loading…</div>';
     const r = await api.listMaps();
     if (!ED) return;
-    $('#mf-storage').textContent = r.cloudOk ? '☁ Cloud maps on · signed in as ' + displayName() : r.offline ? '💾 Not signed in — maps save on this device only' : r.cloudMissing ? '💾 Cloud table not set up yet (run sql/038_world_maps.sql) — saving on this device' : '⚠ Cloud unavailable: ' + (r.error || '') + ' — saving on this device';
+    $('#mf-storage').textContent = r.cloudOk ? '☁ Cloud maps on · signed in as ' + displayName() : r.offline ? '💾 Not signed in — maps save on this device only' : r.cloudMissing ? '💾 Cloud table not set up yet (run sql/091_world_maps.sql) — saving on this device' : '⚠ Cloud unavailable: ' + (r.error || '') + ' — saving on this device';
     if (!r.rows.length) { list.innerHTML = '<div class="mf-empty">No saved maps yet. Build something and press Save.</div>'; return; }
     const games = Array.from(new Set(r.rows.map(x => x.game || 'sandbox').concat([S.map.game || 'sandbox']))).sort();
-    $('#mf-games').innerHTML = games.map(g => '<option value="' + esc(g) + '">').join('');
+    setGameField(S.map.game || 'sandbox', games);
     const onlyMine = $('#mf-maps-game').checked, curGame = S.map.game || 'sandbox';
     const rows = onlyMine ? r.rows.filter(x => (x.game || 'sandbox') === curGame) : r.rows;
     const byGame = {}; rows.forEach(x => { (byGame[x.game || 'sandbox'] = byGame[x.game || 'sandbox'] || []).push(x); });
@@ -1836,7 +1935,7 @@ export async function openEditor(opts) {
       el.querySelector('[data-act="open"]').onclick = () => openMap(id, src);
       const del = el.querySelector('[data-act="del"]'); if (del) del.onclick = async () => { if (!(await askConfirm('Delete this map permanently?'))) return; const d = await api.deleteMap(id, src); toast(d.ok ? 'Deleted.' : 'Delete failed: ' + d.error); if (d.ok && id === S.map.id) { S.source = null; setDirty(true); } renderMapsTab(); };
       const up = el.querySelector('[data-act="upload"]'); if (up) up.onclick = async () => { const m = api.localLoad(id); if (!m) return; const s = await api.cloudSave(m, false); if (s.ok) { api.localDelete(id); if (id === S.map.id) { S.source = 'cloud'; setDirty(S.dirty); } toast('☁ Uploaded.'); } else toast('Upload failed: ' + (s.error || 'unknown'), 4000); renderMapsTab(); };
-      const lv = el.querySelector('[data-act="live"], [data-act="unlive"]'); if (lv) lv.onclick = async () => { const on = lv.dataset.act === 'live'; const s = await api.setLive(id, src, on); if (s.ok) notifyGame('live'); toast(s.ok ? (on ? '★ Live — mini-game "' + (r.rows.find(x => x.id === id) || {}).game + '" now loads this world.' : 'No longer live.') : 'Failed: ' + (s.error || 'unknown'), 3600); renderMapsTab(); };
+      const lv = el.querySelector('[data-act="live"], [data-act="unlive"]'); if (lv) lv.onclick = async () => { const on = lv.dataset.act === 'live'; const s = await api.setLive(id, src, on); if (s.ok) notifyGame('live'); try { refreshLive(); } catch (_) {} toast(s.ok ? (on ? '★ Live — mini-game "' + (r.rows.find(x => x.id === id) || {}).game + '" now loads this world.' : 'No longer live.') : 'Failed: ' + (s.error || 'unknown'), 3600); renderMapsTab(); };
       const pub = el.querySelector('[data-act="pub"]'); if (pub) pub.onclick = async () => { const row = r.rows.find(x => x.id === id); const s = await api.cloudSetPublic(id, !row.is_public); if (s.ok) { if (id === S.map.id) S.isPublic = !row.is_public; toast(row.is_public ? 'Map is now private.' : 'Map is public — other players can open it.'); } else toast('Failed: ' + s.error); renderMapsTab(); };
     });
   }
@@ -1865,7 +1964,245 @@ export async function openEditor(opts) {
   $('#mf-asset-url').onkeydown = e => { if (e.key === 'Enter') $('#mf-asset-add').click(); };
 
   $$('.mf-tabs button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
-  function showTab(t) { $$('.mf-tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t)); $$('.mf-tab').forEach(p => p.classList.toggle('on', p.dataset.tab === t)); if (t === 'maps') { renderMapsTab(); renderGamesList(); renderSceneFlags(); } if (t === 'scene') renderOutliner(true); }
+  function showTab(t) { $$('.mf-tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t)); $$('.mf-tab').forEach(p => p.classList.toggle('on', p.dataset.tab === t)); if (t === 'maps') { renderMapsTab(); renderGamesList(); renderSceneFlags(); } if (t === 'scene') { renderOutliner(true); renderSceneTab(); } if (t === 'files') renderFilesTab(); if (t === 'menu') { renderPlayerTab(); renderMenuTab(); } }
+  // a function declaration: select() runs during loadDoc, before this line executes
+  function tabOn(t) { const p = $('.mf-tab[data-tab="' + t + '"]'); return !!(p && p.classList.contains('on')); }
+
+  /* ═══ SCENE — everything that is in the map ═══
+     Asked for: "a section where it shows everything that is in the map, like
+     assets." Grouped by category; click a row to select and focus it. */
+  function renderSceneTab() {
+    const box = $('#mf-scene'); if (!box) return;
+    const m = S.map, objs = m.objects;
+    const groups = {}; const catOf = (o) => o.t === 'glb' ? 'Models' : o.t.startsWith('fx_') ? 'VFX' : ((PROP_BY_ID[o.t] || {}).cat || 'Other');
+    objs.forEach(o => { (groups[catOf(o)] = groups[catOf(o)] || []).push(o); });
+    const label = (o) => o.n || (o.t === 'glb' ? ((m.assets.find(a => a.id === o.a) || {}).label || 'Model') : ((PROP_BY_ID[o.t] || {}).label || (EMITTERS[o.t.slice(3)] || {}).label || o.t));
+    const icon = (o) => o.t === 'glb' ? '🧊' : o.t.startsWith('fx_') ? ((EMITTERS[o.t.slice(3)] || {}).icon || '✨') : ((PROP_BY_ID[o.t] || {}).icon || '🧩');
+    const flags = (o) => (o.act ? '<span class="tag" title="Interaction">⚡ ' + esc(o.act.kind) + '</span>' : '') + (o.au ? '<span class="tag">🔊</span>' : '') + (o.anim && o.anim.clip ? '<span class="tag">🎞 ' + esc(o.anim.clip) + '</span>' : '') + (world.isSolid(o) ? '' : '<span class="tag" title="No collision">○</span>');
+    const size = m.terrain.n * m.terrain.cell;
+    const menu = m.menu || normalizeMenu(null);
+    box.innerHTML = '<div class="mf-scn-sum">' +
+      '<div><b>' + esc(m.name) + '</b> <span class="mf-hint" style="display:inline">· ' + esc(m.game || 'sandbox') + (menu.on ? ' · 🌍 menu button on ' + esc(menu.hub) : '') + '</span></div>' +
+      '<div class="mf-scn-grid"><span>Terrain</span><span>' + m.terrain.n + '×' + m.terrain.n + ' · ' + size + ' m</span>' +
+      '<span>Water</span><span>' + (m.water.on ? 'on · level ' + m.water.level.toFixed(1) + ' m' : 'off') + '</span>' +
+      '<span>Sky</span><span>' + esc(m.env.preset) + (m.env.weather && m.env.weather !== 'none' ? ' · ' + esc(m.env.weather) : '') + '</span>' +
+      '<span>Models</span><span>' + m.assets.length + ' file' + (m.assets.length === 1 ? '' : 's') + (embeddedBytes(m) ? ' · ' + (embeddedBytes(m) / 1048576).toFixed(2) + ' MB embedded' : '') + '</span>' +
+      '<span>Objects</span><span>' + objs.length + '</span></div></div>' +
+      (m.assets.length ? '<div class="mf-scn-head">🧊 Model files <span class="n">' + m.assets.length + '</span></div><div class="mf-scn-list">' + m.assets.map(a => '<div class="mf-scn-row" data-asset="' + esc(a.id) + '" title="' + esc(a.url || 'embedded') + '"><span class="ic">' + (a.data ? '📦' : '🧊') + '</span><span class="lb">' + esc(a.label) + '</span><span class="tag">' + objs.filter(o => o.t === 'glb' && o.a === a.id).length + ' placed</span>' + (a.anims && a.anims.length ? '<span class="tag">🎞 ' + a.anims.length + '</span>' : '') + '</div>').join('') + '</div>' : '') +
+      (objs.length ? Object.keys(groups).sort().map(c => '<div class="mf-scn-head">' + esc(c) + ' <span class="n">' + groups[c].length + '</span></div><div class="mf-scn-list">' + groups[c].map(o => '<div class="mf-scn-row ' + (o.id === S.selectedId ? 'on' : '') + '" data-obj="' + esc(o.id) + '"><span class="ic">' + icon(o) + '</span><span class="lb">' + esc(label(o)) + '</span>' + flags(o) + '<span class="pos">' + Math.round(o.p[0]) + ', ' + Math.round(o.p[2]) + '</span></div>').join('') + '</div>').join('') : '<div class="mf-empty" style="padding:10px 12px">Nothing placed yet. Pick something in the Library and click the ground.</div>');
+    box.querySelectorAll('[data-obj]').forEach(el => { el.onclick = () => { select(el.dataset.obj); focusSelected(); renderSceneTab(); showTab('scene'); }; });
+    box.querySelectorAll('[data-asset]').forEach(el => { el.onclick = () => { S.propId = 'glb'; S.assetId = el.dataset.asset; libCat = 'Models'; renderLibrary(); refreshGhost(); renderHud(); if (S.tool === 'select' || S.tool === 'erase') setTool('place'); toast('Click the ground to place another.'); }; });
+  }
+
+  /* ═══ FILES — everything uploaded to the engine ═══
+     Asked for: "the second where all of the files that were uploaded to the
+     engine; allow me to upload GLB, audio, animations and VFX files."
+     Rows come from world_assets (sql/112) through mapforge.assets.js. Using a
+     file: a model joins the Library; an animation applies to the selected
+     model; audio arms the 🔊 marker; a VFX preset arms its emitter. */
+  let filesCache = null, filesFilter = 'all';
+  async function renderFilesTab(force) {
+    const box = $('#mf-files'); if (!box) return;
+    if (!filesCache || force) {
+      box.innerHTML = '<div class="mf-empty" style="padding:10px 12px">Loading…</div>';
+      const r = await assetsApi.list(); if (!ED) return;
+      filesCache = r;
+    }
+    const r = filesCache;
+    const note = $('#mf-files-note');
+    if (note) note.textContent = r.offline ? 'Sign in to upload and see uploaded files.' : r.missing ? 'The files table is not set up yet — run sql/112_world_assets.sql, then reopen.' : r.ok ? (r.rows.length + ' file' + (r.rows.length === 1 ? '' : 's') + ' · up to 60 MB each · stored in the models bucket') : ('Could not list files: ' + (r.error || 'unknown error'));
+    const rows = (r.rows || []).filter(x => filesFilter === 'all' || x.kind === filesFilter);
+    $$('#mf-files-kinds button').forEach(b => b.classList.toggle('on', b.dataset.kind === filesFilter));
+    const sel = objById(S.selectedId);
+    box.innerHTML = rows.length ? rows.map(a => {
+      const inMap = a.kind === 'model' && S.map.assets.some(x => x.url === a.url);
+      const act = a.kind === 'model' ? (inMap ? 'Place' : '＋ Library') : a.kind === 'anim' ? (sel && sel.t === 'glb' ? '▶ Apply' : 'Pick model') : a.kind === 'audio' ? '🔊 Arm' : '✨ Arm';
+      const extra = a.kind === 'anim' ? '<button data-act="player" title="Add this file\'s clips to the player character">🧍 For player</button>' : '';
+      const armed = (a.kind === 'audio' && S.audioUrl === a.url) || (a.kind === 'vfx' && S.fxPreset && S.fxPreset.url === a.url) || (a.kind === 'model' && S.propId === 'glb' && S.assetId && (S.map.assets.find(x => x.id === S.assetId) || {}).url === a.url);
+      return '<div class="mf-file ' + (armed ? 'on' : '') + '" data-id="' + esc(a.id) + '"><span class="ic" title="' + esc(assetsApi.KIND_LABEL[a.kind] || a.kind) + '">' + (assetsApi.KIND_ICON[a.kind] || '📄') + '</span><div class="body"><div class="lb" title="' + esc(a.url) + '">' + esc(a.name) + '</div><div class="m">' + esc(assetsApi.KIND_LABEL[a.kind] || a.kind) + ' · ' + (a.bytes / 1024 >= 1024 ? (a.bytes / 1048576).toFixed(1) + ' MB' : (a.bytes / 1024).toFixed(0) + ' KB') + (a.meta && a.meta.clips && a.meta.clips.length ? ' · 🎞 ' + a.meta.clips.length : '') + (a.meta && a.meta.preset ? ' · ' + esc(a.meta.preset) : '') + (a.owner_name && !a.mine ? ' · by ' + esc(a.owner_name) : '') + '</div></div><button data-act="use" class="' + (armed ? '' : 'primary') + '">' + act + '</button>' + extra + (a.mine ? '<button data-act="del" class="danger" title="Delete this file for everyone">✕</button>' : '') + '</div>';
+    }).join('') : '<div class="mf-empty" style="padding:10px 12px">' + (r.ok ? 'No files uploaded yet. Use <b>⤒ Upload</b> above — .glb models and animations, .mp3 / .wav / .ogg audio, .json VFX presets.' : '') + '</div>';
+    box.querySelectorAll('.mf-file').forEach(el => {
+      const a = (r.rows || []).find(x => x.id === el.dataset.id); if (!a) return;
+      el.querySelector('[data-act="use"]').onclick = () => useFile(a);
+      const pb = el.querySelector('[data-act="player"]'); if (pb) pb.onclick = () => addPlayerAnimFile(a.url, a.name);
+      const del = el.querySelector('[data-act="del"]'); if (del) del.onclick = async () => { if (!(await askConfirm('Delete ' + a.name + ' for everyone? Maps that use it will lose it.'))) return; const d = await assetsApi.remove(a); toast(d.ok ? 'Deleted.' : 'Delete failed: ' + d.error, 3200); if (d.ok) { filesCache = null; renderFilesTab(); } };
+    });
+  }
+  async function useFile(a) {
+    if (a.kind === 'model') {
+      const have = S.map.assets.find(x => x.url === a.url);
+      if (have) { S.propId = 'glb'; S.assetId = have.id; }
+      else { await addAsset(a.url, a.name, { anims: a.meta && a.meta.clips }); }
+      libCat = 'Models'; renderLibrary(); refreshGhost(); renderHud(); if (S.tool === 'select' || S.tool === 'erase') setTool('place');
+      toast('Click the ground to place ' + a.name + '.', 2600); renderFilesTab();
+    } else if (a.kind === 'anim') {
+      const o = objById(S.selectedId);
+      if (!o || o.t !== 'glb') { toast('Select a placed model first, then apply the animation to it.', 3600); return; }
+      toast('Loading clips from ' + a.name + '…', 2000);
+      try {
+        const clips = await world.loadExtClips(a.url); if (!ED) return;
+        if (!clips.length) { toast(a.name + ' has no animation clips.', 3200); return; }
+        const root = world.objects.get(o.id); if (root) { const have = new Set((root.userData.mfClips || []).map(c => c.name)); root.userData.mfClips = (root.userData.mfClips || []).concat(clips.filter(c => !have.has(c.name))); }
+        beginObjectEdit(); o.anim = { clip: clips[0].name, speed: 1, loop: 'repeat', src: a.url }; const okp = world.setAnim(o.id, o.anim); endObjectEdit(); setDirty(true); renderInspector();
+        toast(okp ? '▶ ' + clips[0].name + ' on ' + (o.n || 'the model') + (clips.length > 1 ? ' — ' + clips.length + ' clips in the inspector' : '') : 'The clip does not fit this model\'s skeleton (bone names differ).', 4000);
+      } catch (e) { toast('Could not load ' + a.name + ': ' + ((e && e.message) || e), 4000); }
+    } else if (a.kind === 'audio') {
+      S.audioUrl = a.url; S.audioName = a.name; S.propId = 'audio'; libCat = 'Markers'; renderLibrary(); refreshGhost(); renderHud(); if (S.tool === 'select' || S.tool === 'erase') setTool('place');
+      const o = objById(S.selectedId);
+      if (o && o.t === 'audio') { beginObjectEdit(); o.au = Object.assign(o.au || { vol: 1, r: 20, loop: true }, { url: a.url }); o.n = a.name.slice(0, 60); world.refreshObject(o); endObjectEdit(); setDirty(true); renderInspector(); toast('🔊 ' + a.name + ' now plays from the selected marker.', 3000); }
+      else toast('🔊 armed — click the ground to place a sound marker for ' + a.name + '.', 3600);
+      renderFilesTab();
+    } else if (a.kind === 'vfx') {
+      try {
+        const res = await fetch(a.url, { cache: 'no-cache' }); const p = await res.json(); if (!ED) return;
+        const kind = p && EMITTERS[p.kind] ? p.kind : null;
+        if (!kind) { toast('Preset kind "' + (p && p.kind) + '" is not an emitter. Kinds: ' + Object.keys(EMITTERS).join(', '), 5000); return; }
+        S.fxPreset = { kind, url: a.url, c: (typeof p.tint === 'string' && /^#[0-9a-f]{6}$/i.test(p.tint)) ? p.tint.toLowerCase() : null, fx: { i: Math.max(0.1, Math.min(4, +p.i || 1)), s: Math.max(0.2, Math.min(6, +p.s || 1)) }, label: String(p.label || a.name) };
+        S.propId = 'fx_' + kind; libCat = 'VFX'; renderLibrary(); refreshGhost(); renderHud(); if (S.tool === 'select' || S.tool === 'erase') setTool('place');
+        toast('✨ ' + S.fxPreset.label + ' armed — click the ground to place it.', 3200); renderFilesTab();
+      } catch (e) { toast('Could not read the preset: ' + ((e && e.message) || e), 4000); }
+    }
+  }
+  /* what a GLB holds, without loading it twice: clip names and mesh count */
+  async function inspectFile(file) {
+    if (!/\.gl(b|tf)$/i.test(file.name) || !THREE.GLTFLoader) return {};
+    try {
+      const buf = await file.arrayBuffer();
+      const g = await new Promise((res, rej) => new THREE.GLTFLoader().parse(buf, '', res, rej));
+      let meshes = 0; const scene = g.scene || (g.scenes && g.scenes[0]); if (scene) scene.traverse(o => { if (o.isMesh) meshes++; });
+      return { clips: (g.animations || []).filter(a => a && a.duration > 0).map(a => a.name || 'clip').slice(0, 64), meshes };
+    } catch (e) { return {}; }
+  }
+  async function uploadFiles(files) {
+    const kind = $('#mf-up-kind').value || '';
+    for (const f of files) {
+      toast('Uploading ' + f.name + '…', 60000);
+      const r = await assetsApi.upload(f, { inspect: inspectFile, kind: kind || undefined }); if (!ED) return;
+      if (!r.ok) { toast(r.missing ? 'The files table is not set up yet — run sql/112_world_assets.sql.' : 'Upload failed: ' + (r.error || 'unknown error'), 5200); continue; }
+      toast('⤒ ' + r.row.name + ' uploaded as ' + (assetsApi.KIND_LABEL[r.row.kind] || r.row.kind) + '.', 3200);
+      filesCache = null;
+    }
+    renderFilesTab();
+  }
+
+  /* ═══ PLAYER & CAMERA — how the map is played ═══
+     Asked for: "a setting to change the game mode — top-down, over the
+     shoulder third person like Resident Evil, or first person — the character
+     model the players use, and idle / interact / walk / run animations." */
+  const extClipNames = new Map();   // animation file url → clip names (loaded once)
+  async function extClips(url) {
+    if (extClipNames.has(url)) return extClipNames.get(url);
+    try { const c = await world.loadExtClips(url); const names = c.map(x => x.name); extClipNames.set(url, names); return names; } catch (e) { extClipNames.set(url, []); return []; }
+  }
+  function renderPlayerTab() {
+    const box = $('#mf-player'); if (!box) return;
+    const pl = S.map.player = normalizePlayer(S.map.player);
+    const models = S.map.assets;
+    const cur = pl.model && models.find(a => a.id === pl.model.a);
+    const own = cur ? (cur.anims || []) : [];
+    const opt = (list, v, lab) => list.map(x => '<option value="' + esc(x) + '"' + (x === v ? ' selected' : '') + '>' + esc(lab ? lab(x) : x) + '</option>').join('');
+    const animRow = (k, label, hint) => {
+      const a = pl.anim[k] || {};
+      const val = a.clip ? (a.src ? a.src + '|' + a.clip : 'own|' + a.clip) : '';
+      return '<div class="mf-row"><label>' + label + '</label><select data-pa="' + k + '"><option value="">— none —</option>' +
+        (own.length ? '<optgroup label="' + esc(cur.label) + '">' + own.map(c => '<option value="own|' + esc(c) + '"' + ('own|' + c === val ? ' selected' : '') + '>' + esc(c) + '</option>').join('') + '</optgroup>' : '') +
+        pl.animFiles.map(f => { const names = extClipNames.get(f.url); return names && names.length ? '<optgroup label="🎞 ' + esc(f.name) + '">' + names.map(c => '<option value="' + esc(f.url) + '|' + esc(c) + '"' + (f.url + '|' + c === val ? ' selected' : '') + '>' + esc(c) + '</option>').join('') + '</optgroup>' : ''; }).join('') +
+        '</select><span class="v" title="' + esc(hint) + '">' + (a.clip ? '' : '·') + '</span></div>';
+    };
+    box.innerHTML =
+      '<div class="mf-row"><label>View</label><select id="mf-pl-view">' + opt(Object.keys(VIEWS), pl.view, v => VIEWS[v]) + '</select></div>' +
+      '<p class="mf-hint" style="margin:0 0 8px">' + (pl.view === 'fps' ? 'First person: the character is not drawn; the camera is the eyes.' : pl.view === 'tps' ? 'Over the shoulder: the camera rides behind and to the right of the character, mouse to look.' : 'Top-down: the camera hangs above; WASD walks on the map\'s axes and the character turns to face where it goes.') + '</p>' +
+      '<div class="mf-row"><label>Character</label><select id="mf-pl-model"><option value="">— none (invisible) —</option>' + models.map(a => '<option value="' + esc(a.id) + '"' + (cur && cur.id === a.id ? ' selected' : '') + '>' + esc(a.label) + (a.anims && a.anims.length ? ' · 🎞 ' + a.anims.length : '') + '</option>').join('') + '</select></div>' +
+      (cur ? '<div class="mf-row"><label>Scale</label><input type="number" id="mf-pl-scale" step="0.05" min="0.01" max="50" value="' + (pl.model.scale) + '"><label style="flex:0 0 auto">Faces</label><select id="mf-pl-faces" style="flex:0 0 90px"><option value="-z"' + (pl.model.faces !== 'z' ? ' selected' : '') + '>−Z (three.js)</option><option value="z"' + (pl.model.faces === 'z' ? ' selected' : '') + '>+Z</option></select></div>' : '<p class="mf-hint">Add a model in the Library (or from Files) and pick it here. A character is needed for third person and top-down.</p>') +
+      (cur ? '<div class="mf-sub">Animations</div>' + animRow('idle', 'Idle', 'standing still') + animRow('walk', 'Walk', 'moving') + animRow('run', 'Run', 'moving with Shift (walk at 1.6× if empty)') + animRow('interact', 'Interact', 'pressing E') +
+        '<div class="mf-btns" style="margin-top:6px"><button id="mf-pl-upanim">⤒ Upload animation file</button><button id="mf-pl-pickanim" title="Choose an uploaded animation in the Files tab">🎞 From Files</button><input type="file" id="mf-pl-animfile" accept=".glb,.gltf" hidden></div>' +
+        (pl.animFiles.length ? '<p class="mf-hint">Animation files: ' + pl.animFiles.map(f => esc(f.name)).join(', ') + '</p>' : '<p class="mf-hint">Clips from a separate animation file need the same bone names as the character.</p>') : '') +
+      /* 🧍 THE CAST — what a PLAYER may choose to be in this map.
+          The row above sets the character the author gets and the one everybody
+          falls back to; this is the list they can pick from instead. Empty is
+          the normal case and means "everyone is the default character", which
+          is exactly how every map behaved before this existed. */
+      '<div class="mf-sub">Characters players can pick</div>' +
+      (pl.cast.length
+        ? '<div class="mf-cast">' + pl.cast.map((c, i) => {
+            const a = models.find(x => x.id === c.a);
+            return '<div class="mf-row mf-cast-row"><label>' + esc(a ? a.label : '⚠ missing asset') + '</label>' +
+              '<input type="text" data-cast-label="' + i + '" placeholder="Name players see" maxlength="40" value="' + esc(c.label || '') + '">' +
+              '<input type="number" data-cast-scale="' + i + '" step="0.05" min="0.01" max="50" style="flex:0 0 72px" value="' + c.scale + '">' +
+              '<select data-cast-faces="' + i + '" style="flex:0 0 78px"><option value="-z"' + (c.faces !== 'z' ? ' selected' : '') + '>−Z</option><option value="z"' + (c.faces === 'z' ? ' selected' : '') + '>+Z</option></select>' +
+              '<button data-cast-del="' + i + '" title="Remove from the roster">✕</button></div>';
+          }).join('') + '</div>'
+        : '<p class="mf-hint">No roster — everyone who enters is the character above. Add one or more here and players get a 🧍 Character button in the hub.</p>') +
+      (pl.cast.length < PLAYER_CAST_MAX
+        ? '<div class="mf-row"><label>Add</label><select id="mf-cast-add"><option value="">— choose a model —</option>' +
+          models.filter(a => !pl.cast.some(c => c.a === a.id)).map(a => '<option value="' + esc(a.id) + '">' + esc(a.label) + '</option>').join('') + '</select></div>'
+        : '<p class="mf-hint">That is the maximum of ' + PLAYER_CAST_MAX + ' — a picker past a dozen is a wardrobe, and every entry is a model each visitor may have to download.</p>') +
+      '<p class="mf-hint">A player\u2019s choice is remembered on their account and used in every hub that offers it. Animations above apply to whichever character they wear, so the clips need the same bone names.</p>' +
+      '<p class="mf-hint">Press <b>▶ Play</b> to test exactly what players get.</p>';
+    const commit = () => { S.map.player = normalizePlayer(pl); setDirty(true); renderPlayerTab(); };
+    $('#mf-pl-view').onchange = (e) => { pl.view = e.target.value; commit(); };
+    $('#mf-pl-model').onchange = (e) => { pl.model = e.target.value ? { a: e.target.value, scale: 1, faces: '-z' } : null; pl.anim = {}; commit(); };
+    const sc = $('#mf-pl-scale'); if (sc) sc.onchange = () => { pl.model.scale = +sc.value || 1; commit(); };
+    /* 🧍 the roster's own handlers */
+    const add = $('#mf-cast-add');
+    if (add) add.onchange = () => { if (!add.value) return; pl.cast = (pl.cast || []).concat([{ a: add.value, label: '', scale: 1, faces: '-z' }]); commit(); };
+    box.querySelectorAll('[data-cast-del]').forEach(b => { b.onclick = () => { pl.cast.splice(+b.dataset.castDel, 1); commit(); }; });
+    box.querySelectorAll('[data-cast-label]').forEach(i => { i.onchange = () => { pl.cast[+i.dataset.castLabel].label = i.value; commit(); }; });
+    box.querySelectorAll('[data-cast-scale]').forEach(i => { i.onchange = () => { pl.cast[+i.dataset.castScale].scale = +i.value || 1; commit(); }; });
+    box.querySelectorAll('[data-cast-faces]').forEach(sel => { sel.onchange = () => { pl.cast[+sel.dataset.castFaces].faces = sel.value; commit(); }; });
+    const fc = $('#mf-pl-faces'); if (fc) fc.onchange = () => { pl.model.faces = fc.value; commit(); };
+    box.querySelectorAll('[data-pa]').forEach(sel => { sel.onchange = () => { const v = sel.value; if (!v) { delete pl.anim[sel.dataset.pa]; } else { const i = v.indexOf('|'); const src = v.slice(0, i), clip = v.slice(i + 1); pl.anim[sel.dataset.pa] = src === 'own' ? { clip } : { clip, src }; } commit(); }; });
+    const up = $('#mf-pl-upanim'), pick = $('#mf-pl-pickanim'), fi = $('#mf-pl-animfile');
+    if (up) up.onclick = () => fi.click();
+    if (fi) fi.onchange = async (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) { const r = await assetsApi.upload(f, { inspect: inspectFile, kind: 'anim' }); if (!ED) return; if (!r.ok) { toast(r.missing ? 'The files table is not set up yet — run sql/112_world_assets.sql.' : 'Upload failed: ' + (r.error || 'unknown error'), 5200); return; } filesCache = null; addPlayerAnimFile(r.row.url, r.row.name); } };
+    if (pick) pick.onclick = () => { filesFilter = 'anim'; showTab('files'); toast('Pick an animation file — "For player" adds it to the character.', 3600); };
+    // clip names for the animation files may still be loading: render again when they land
+    pl.animFiles.forEach(f => { if (!extClipNames.has(f.url)) extClips(f.url).then(() => { if (ED && tabOn('menu')) renderPlayerTab(); }); });
+  }
+  async function addPlayerAnimFile(url, name) {
+    const pl = S.map.player = normalizePlayer(S.map.player);
+    if (!pl.animFiles.some(f => f.url === url)) pl.animFiles.push({ url, name: String(name || 'animation').slice(0, 80) });
+    const names = await extClips(url); if (!ED) return;
+    S.map.player = normalizePlayer(pl); setDirty(true);
+    toast(names.length ? '🎞 ' + names.length + ' clip' + (names.length > 1 ? 's' : '') + ' from ' + name + ' — assign them under Player & camera.' : name + ' has no animation clips.', 4200);
+    showTab('menu');
+  }
+
+  /* ═══ MENU — the map as a button on a game menu ═══ */
+  function renderMenuTab() {
+    const box = $('#mf-menu'); if (!box) return;
+    const mn = S.map.menu = normalizeMenu(S.map.menu);
+    const hubs = bridgeHubs(), gl = bridgeGuides(), games = miniGames();
+    const opt = (list, cur, idk, namek) => list.map(x => '<option value="' + esc(x[idk]) + '"' + (x[idk] === cur ? ' selected' : '') + '>' + esc(x[namek] || x[idk]) + '</option>').join('');
+    box.innerHTML = `
+      <div class="mf-row"><label>Button</label><input type="checkbox" id="mf-mn-on" ${mn.on ? 'checked' : ''}><span class="mf-hint" style="margin:0">this map is a button on a game menu</span></div>
+      <div class="mf-mn ${mn.on ? '' : 'off'}">
+        <div class="mf-row"><label>Menu</label><select id="mf-mn-hub">${opt(hubs, mn.hub, 'id', 'name')}</select></div>
+        <div class="mf-row"><label>Name</label><input type="text" id="mf-mn-label" maxlength="40" value="${esc(mn.label)}" placeholder="${esc(S.map.name)}"></div>
+        <div class="mf-row"><label>Subtitle</label><input type="text" id="mf-mn-sub" maxlength="80" value="${esc(mn.sub)}" placeholder="one line under the name"></div>
+        <div class="mf-row"><label>Icon</label><input type="text" id="mf-mn-icon" maxlength="4" value="${esc(mn.icon)}" placeholder="🌍" style="width:64px;flex:0 0 64px"><span class="mf-hint" style="margin:0">an emoji</span></div>
+        <div class="mf-row"><label>Kind</label><select id="mf-mn-mode"><option value="interact" ${mn.mode === 'interact' ? 'selected' : ''}>Interaction — single player</option><option value="hub" ${mn.mode === 'hub' ? 'selected' : ''}>Player hub — multiplayer</option></select></div>
+        <div id="mf-mn-hubopts" style="display:${mn.mode === 'hub' ? '' : 'none'}">
+          <div class="mf-row"><label>Chat</label><input type="checkbox" id="mf-mn-text" ${mn.chatText ? 'checked' : ''}><span class="mf-hint" style="margin:0">typed chat</span><input type="checkbox" id="mf-mn-voice" ${mn.chatVoice ? 'checked' : ''}><span class="mf-hint" style="margin:0">proximity voice</span></div>
+          <p class="mf-hint">Everyone who opens the button meets in this world. They see each other, type in the chat box, and hear whoever is within 16 m when voice is on.</p>
+        </div>
+        <div id="mf-mn-intopts" style="display:${mn.mode === 'interact' ? '' : 'none'}">
+          <div class="mf-row"><label>Default</label><select id="mf-mn-kind"><option value="enter" ${mn.kind === 'enter' ? 'selected' : ''}>Enter a building → open a menu</option><option value="dialog" ${mn.kind === 'dialog' ? 'selected' : ''}>Dialogue → play a Forge guide</option></select></div>
+          <div class="mf-row" id="mf-mn-target-row" style="display:${mn.kind === 'enter' ? '' : 'none'}"><label>Opens</label><select id="mf-mn-target"><option value="">— pick a menu —</option><optgroup label="Menus">${opt(hubs.map(h => ({ id: 'hub:' + h.id, name: h.name })), mn.target && HUBS.includes(mn.target) ? 'hub:' + mn.target : '', 'id', 'name')}</optgroup><optgroup label="Screens">${opt(games, mn.target, 'id', 'name')}</optgroup></select></div>
+          <div class="mf-row" id="mf-mn-guide-row" style="display:${mn.kind === 'dialog' ? '' : 'none'}"><label>Guide</label><select id="mf-mn-guide"><option value="">— pick a guide —</option>${opt(gl, mn.guide, 'id', 'title')}</select></div>
+          <p class="mf-hint">This is what a <b>⭕ Zone</b> marker does when the player walks into it. Any object can carry its own interaction instead — select it and set <b>Interaction</b> in the inspector.${gl.length ? '' : ' No guides yet: create one in the Forge → Guides.'}</p>
+        </div>
+        <p class="mf-hint">Saving to the cloud makes the map public and puts the button on the <b>${esc((hubs.find(h => h.id === mn.hub) || {}).name || mn.hub)}</b> menu for every player.</p>
+      </div>`;
+    const g = (id) => box.querySelector(id);
+    const upd = () => {
+      mn.on = g('#mf-mn-on').checked; mn.hub = g('#mf-mn-hub').value; mn.label = g('#mf-mn-label').value.trim().slice(0, 40); mn.sub = g('#mf-mn-sub').value.trim().slice(0, 80); mn.icon = g('#mf-mn-icon').value.trim().slice(0, 4);
+      mn.mode = g('#mf-mn-mode').value; mn.chatText = g('#mf-mn-text').checked; mn.chatVoice = g('#mf-mn-voice').checked; mn.kind = g('#mf-mn-kind').value;
+      const t = g('#mf-mn-target').value; mn.target = t.startsWith('hub:') ? t.slice(4) : t; mn.guide = g('#mf-mn-guide').value;
+      S.map.menu = normalizeMenu(mn); setDirty(true);
+    };
+    box.querySelectorAll('input,select').forEach(el => { el.onchange = () => { upd(); renderMenuTab(); }; });
+  }
   $('#mf-newfolder').onclick = () => newFolder(S.folderId && folderById(S.folderId) ? (folderById(S.folderId).parent || null) : null);
   $('#mf-newsub').onclick = () => newFolder(S.folderId || null);
   const offReg = games.onRegister(() => { if (!ED) return; if (!S.game && games.get(S.map.game)) { S.game = S.map.game; renderGameTag(); } renderGamesList(); renderSceneFlags(); });
@@ -1904,9 +2241,33 @@ export async function openEditor(opts) {
   // maps tab
   $('#mf-new').onclick = newMapFlow;
   $('#mf-desc').onchange = e => { S.map.description = e.target.value.slice(0, 2000); setDirty(true); };
-  $('#mf-game').onchange = e => { S.map.game = gameId(e.target.value) || 'sandbox'; e.target.value = S.map.game; S.game = games.get(S.map.game) ? S.map.game : null; renderGameTag(); setDirty(true); renderMapsTab(); renderGamesList(); renderSceneFlags(); };
+  // Picking a mini-game TAKES YOU TO ITS WORLD: the live map for that game
+  // opens for editing (asking first if this map has unsaved changes). Only when
+  // the game has no world yet does the pick fall back to tagging the current
+  // map with it — which is how a game gets its first world.
+  $('#mf-game').onchange = async e => {
+    let v = e.target.value;
+    if (v === '__custom__') v = gameId(window.prompt('Mini-game id (letters, digits, - and _):', S.map.game || '') || '') || S.map.game || 'sandbox';
+    const game = gameId(v) || 'sandbox';
+    if (game === (S.map.game || 'sandbox')) { setGameField(game); return; }
+    const r = game === 'sandbox' ? { ok: false } : await api.loadLive(game);
+    if (!ED) return;
+    if (r.ok && r.map && r.map.id !== S.map.id) {
+      if (S.dirty && !(await askConfirm('Discard unsaved changes and open the ' + game + ' world?'))) { setGameField(S.map.game || 'sandbox'); return; }
+      S.isPublic = true; S.mine = r.mine !== false;
+      loadDoc(r.map, r.source || 'cloud'); api.clearDraft(); renderMapsTab();
+      toast(S.mine ? '⚒ Editing the live world for ' + game + '.' : 'This is someone else\'s live world for ' + game + ' — saving creates your own copy.', 4200);
+      return;
+    }
+    S.map.game = game; setGameField(game); setDirty(true); renderMapsTab();
+    if (game !== 'sandbox') toast('No world for ' + game + ' yet — this map is now tagged for it. Save, then ★ Set live.', 4200);
+  };
   $('#mf-maps-game').onchange = () => renderMapsTab();
   $('#mf-glb-btn').onclick = () => $('#mf-glb-file').click();
+  $('#mf-up-btn').onclick = () => $('#mf-up-file').click();
+  $('#mf-up-file').onchange = e => { const fl = Array.from(e.target.files || []); e.target.value = ''; if (fl.length) uploadFiles(fl); };
+  $('#mf-files-refresh').onclick = () => renderFilesTab(true);
+  $$('#mf-files-kinds button').forEach(b => b.onclick = () => { filesFilter = b.dataset.kind; renderFilesTab(); });
   $('#mf-cloud-up').onclick = () => $('#mf-cloud-file').click();
   $('#mf-cloud-file').onchange = e => { Array.from(e.target.files || []).forEach(f => uploadToCloud(f, 'models')); e.target.value = ''; };
   $('#mf-glb-file').onchange = e => { Array.from(e.target.files || []).forEach(addAssetFile); e.target.value = ''; };
@@ -2132,7 +2493,7 @@ const TEMPLATE = `
   <div class="mf-loading"><div>⚒ Loading Athena Engine</div><div class="sub">fetching three.js…</div></div>
 </div>
 <div class="mf-right">
-  <div class="mf-tabs"><button data-tab="object">Object</button><button data-tab="scene">Scene</button><button data-tab="terrain">Terrain</button><button data-tab="water">Water</button><button data-tab="sky">Sky</button><button data-tab="maps">Maps</button></div>
+  <div class="mf-tabs"><button data-tab="object">Object</button><button data-tab="scene">Scene</button><button data-tab="files">Files</button><button data-tab="terrain">Terrain</button><button data-tab="water">Water</button><button data-tab="sky">Sky</button><button data-tab="menu">Menu</button><button data-tab="maps">Maps</button></div>
   <div class="mf-tab" data-tab="object"><div class="mf-sec"><h3>Inspector</h3><div id="mf-inspector"></div></div></div>
   <div class="mf-tab" data-tab="scene">
     <div class="mf-sec"><h3>Content folders <span class="n">outliner</span></h3>
@@ -2140,7 +2501,18 @@ const TEMPLATE = `
       <div class="mf-outliner" id="mf-outliner"></div>
       <p class="mf-hint">Click a folder name to make it the <b>target</b>: everything you place or scatter lands inside it. Drag objects between folders, or set the folder in the inspector. 👁 hides a folder's objects (in the game too), 🔒 keeps them from being picked in the viewport.</p>
     </div>
+    <div class="mf-sec" style="padding:0"><h3 style="padding:10px 12px 0">In this map</h3><div id="mf-scene"></div></div>
   </div>
+  <div class="mf-tab" data-tab="files">
+    <div class="mf-sec"><h3>Uploaded files</h3>
+      <div class="mf-btns"><button id="mf-up-btn" class="primary">⤒ Upload</button><select id="mf-up-kind" title="Detected from the file unless you choose"><option value="">auto-detect</option><option value="model">Model</option><option value="anim">Animation</option><option value="audio">Audio</option><option value="vfx">VFX preset</option></select><button id="mf-files-refresh" title="Reload the list">↻</button><input type="file" id="mf-up-file" accept=".glb,.gltf,.mp3,.wav,.ogg,.m4a,.json" multiple hidden></div>
+      <p class="mf-hint" id="mf-files-note"></p>
+      <div class="mf-cats" id="mf-files-kinds"><button data-kind="all" class="on">All</button><button data-kind="model">🧊 Models</button><button data-kind="anim">🎞 Anims</button><button data-kind="audio">🔊 Audio</button><button data-kind="vfx">✨ VFX</button></div>
+    </div>
+    <div id="mf-files"></div>
+    <div class="mf-sec"><p class="mf-hint" style="margin:0">A model joins this map's Library. An animation applies to the selected model (bone names must match). Audio arms the <b>🔊 Sound</b> marker. A VFX preset is JSON: <code>{"kind":"fire","tint":"#ff8a1a","s":1.5,"i":1,"label":"Torch"}</code>.</p></div>
+  </div>
+  <div class="mf-tab" data-tab="menu"><div class="mf-sec"><h3>Player &amp; camera</h3><div id="mf-player"></div></div><div class="mf-sec"><h3>Menu button</h3><div id="mf-menu"></div></div></div>
   <div class="mf-tab" data-tab="terrain">
     <div class="mf-sec"><h3>Size</h3>
       <div class="mf-row"><label>Grid</label><select id="mf-t-n"><option>32</option><option>48</option><option>64</option><option>96</option><option>128</option><option>160</option></select></div>
@@ -2220,7 +2592,7 @@ const TEMPLATE = `
     </div>
     <div class="mf-sec"><h3>This map</h3>
       <div class="mf-row"><label>Mini-game</label><input type="text" id="mf-game" list="mf-games" maxlength="40" placeholder="sandbox"><datalist id="mf-games"></datalist></div>
-      <p class="mf-hint" style="margin:0 0 8px">Tag the world with the mini-game it belongs to. <b>★ Set live</b> in the list below makes it the world that game loads via <code>MythicMapForge.engine.mount(el, { game })</code>.</p>
+      <p class="mf-hint" style="margin:0 0 8px">Pick the mini-game this world belongs to. <b>★ Set live</b> in the list below makes it that game's world: its screen then shows players a <b>🌍 Enter world</b> pill, and you an <b>⚒ Edit map</b> pill that opens the world right here.</p>
       <textarea id="mf-desc" rows="3" maxlength="2000" placeholder="Description (shown in the list)"></textarea>
       <div class="mf-btns" style="margin-top:8px"><button id="mf-new">✦ New map</button></div>
       <p class="mf-hint" id="mf-storage"></p>

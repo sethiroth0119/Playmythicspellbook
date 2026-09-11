@@ -27,9 +27,4 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          # ⚠ Wrangler 4 is REQUIRED. The action's default (3.90) does not read
-          #   wrangler.jsonc, so it saw no `main` and failed every deploy since
-          #   2026-08-13 with "Missing entry-point" — main looked deployed and
-          #   was not. package.json already pins wrangler ^4; keep these in step.
-          wranglerVersion: "4"
           command: deploy

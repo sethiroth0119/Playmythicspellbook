@@ -8,8 +8,16 @@
   },
   "assets": {
     "directory": "./public",
-    "binding": "ASSETS"
+    "binding": "ASSETS",
+    // 🖼 image requests must reach the Worker so AVIF negotiation can run;
+    // everything else keeps the default asset-first fast path.
+    "run_worker_first": ["/assets/*"]
   },
+  /* 📨 Cloudflare Email Sending. Used only by /api/welcome and only for the
+     address on the caller's own JWT. The sending domain must be onboarded
+     under Compute & AI → Email Service, or every send throws and the Worker
+     reports email_not_configured rather than losing the mail. */
+  "send_email": [{ "name": "EMAIL" }],
   "vars": {
     "SB_URL": "https://ktsiasyjusesawtrwrjc.supabase.co",
     "SB_ANON": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt0c2lhc3lqdXNlc2F3dHJ3cmpjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2NDU5MjgsImV4cCI6MjA5NDIyMTkyOH0.fYpQFCs03ZE5AIv88S_GStqp7g71sTQe9yUxmXgyKQo",

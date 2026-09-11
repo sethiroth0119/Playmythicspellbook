@@ -29,6 +29,16 @@
 --
 -- Requires: city_state.sql, and node_mayors from supabase-ALL-PENDING.sql.
 -- Idempotent. Plain ASCII.
+--
+-- ! SUPERSEDED BY sql/106 -- DO NOT RE-RUN ON A DATABASE THAT HAS 106.
+--   city_state was re-keyed to (user_id, node_id) by sql/065, and the test
+--   below is per OWNER: a mayor hired for N-25 passes it on the same owner's
+--   N-32 row. 106 replaces city_state_can_write(p_owner) with
+--   city_state_can_write(p_owner, p_node) and re-points the three policies at
+--   (user_id, node_id). Running this file afterwards would create-or-replace
+--   the 1-argument overload back into existence and re-point the policies at
+--   it, silently undoing the node term. Kept as the record of the shape and
+--   the reasoning; the live definition is 106's.
 -- ===========================================================================
 
 
@@ -89,6 +99,14 @@ create policy city_state_update on public.city_state
 
 -- --- 3. VERIFY -------------------------------------------------------------
 -- Expect: fn 1, policies 3 (read/write/update), no city_state_own left.
+-- ! Counts only. This does not see the SIGNATURE, which is the thing sql/106
+--   changes: on a database with 106 applied the same query still answers
+--   fn 1, policies 3 -- the one function is the (uuid, text) overload and the
+--   three policies cite city_state_can_write(user_id, node_id). Use 106's own
+--   verify block to tell the two apart; it checks the argument list and the
+--   node term, and counts the un-versioned city_sel / city_upd policies that
+--   this file never knew about (they were on the live table beside these
+--   three until 106 dropped them).
 select
   (select count(*) from pg_proc  p join pg_namespace n on n.oid = p.pronamespace
     where n.nspname = 'public' and p.proname = 'city_state_can_write')          as fn,

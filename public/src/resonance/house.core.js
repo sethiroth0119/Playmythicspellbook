@@ -43,6 +43,56 @@ export const ROOMS = [
 export const REFLECTION_HALL = { id: 'reflect', ico: '🪞', name: 'Reflection Hall', stat: null,
   flavour: 'The retraining room. Resets a spread for free.' };
 
+/* ══ 🏋 DRILL INTENSITY ══════════════════════════════════════════════════
+   Until this existed the House was a faucet: park a card, come back, collect.
+   There was no decision in it and nothing the player could get wrong, which
+   is also why the camp's `fatigue` / `morale` fields — and the Med-bay
+   Medicine sink that clears them — had almost nothing feeding them.
+
+   Monster Rancher's drill is a triangle: a stat rises, stress rises with it,
+   and rest is the third corner. Light is what the House has always done and
+   is EXACTLY unchanged (rate 1.00, no strain), so every existing billet, save
+   and city Resting House behaves identically to before — `int` absent reads
+   as 'light'. Hard buys speed with condition.
+
+   🔴 THE RATE MULTIPLIER IS ALLOWED; THE CEILING IS NOT TOUCHED.
+   doc §9 forbids raising 510 and reserves CAPACITY and RATE as the only
+   things a building may move. Hard drill moves rate and nothing else: it
+   changes how long a card takes to reach the same ceiling every player has.
+   A player who never drills hard reaches Attuned just as surely, slower.
+
+   ⚠ WHY THE STRAIN NUMBERS ARE WHAT THEY ARE. Over one 6h collect cycle a
+     hard drill is +99 Resonance for ~13 fatigue and ~7 morale. Over the full
+     36h accrual cap it is +713 for ~79 fatigue — which very nearly maxes the
+     0–100 fatigue field on its own. That is deliberate: an unattended
+     week-long hard drill should end with an exhausted unit and a Med-bay
+     bill, not with a free doubling. */
+export const DRILLS = {
+  light: { id: 'light', ico: '🌿', name: 'Light', rate: 1.00, fatiguePerH: 0,   moralePerH: 0,
+           blurb: 'Steady work. They stay fresh.' },
+  hard:  { id: 'hard',  ico: '🏋️', name: 'Hard',  rate: 1.80, fatiguePerH: 2.2, moralePerH: 1.1,
+           blurb: 'Faster gains, paid for in fatigue and morale.' },
+};
+export const DEFAULT_DRILL = 'light';
+export function drillById(id) { return DRILLS[id] || DRILLS[DEFAULT_DRILL]; }
+
+/* 🚫 The refusal. A unit this tired will not START a hard drill — the same
+   shape as billetBlock(): ONE function, so the disabled button and the click
+   handler can never disagree about the rule. Returns a reason, or null. */
+export const FATIGUE_HARD_MAX = 70;
+/* …and at 100 an in-progress hard drill stops paying its bonus and runs at
+   the light rate instead. It does NOT unbillet itself and does NOT write to
+   the profile — this file is pure and stays that way. It flags `spent` and
+   the panel says so. A drill that silently kept paying double on a unit at
+   maximum fatigue would make the whole cost fictional. */
+export const FATIGUE_SPENT = 100;
+export function hardDrillBlock(fatigue) {
+  const f = Number.isFinite(+fatigue) ? +fatigue : 0;
+  if (f >= FATIGUE_HARD_MAX)
+    return 'Too worn down to drill hard (fatigue ' + Math.round(f) + '/' + FATIGUE_HARD_MAX + '). Rest them, or treat them at the Med-bay.';
+  return null;
+}
+
 export function roomById(id) { return ROOMS.find(r => r.id === id) || null; }
 
 /* 🏛 THE TIER TABLE (doc §5). Capacity and rate. NOTHING ELSE.
@@ -118,7 +168,7 @@ export function restBreakdown(v) {
    the camp's Profile blob as plain JSON, and every field is read back with a
    default (loadHouse below). Absent-tolerant is a hard requirement — this
    project has shipped a silent save bug three times.
-     billets[] : { card, room, pend, hrs }
+     billets[] : { card, room, pend, hrs, int }
         card — the collection id (string). The card OBJECT is resolved by the
                host at collect time and handed to the Resonance model, so the
                model keys cards however it likes and this file never guesses.
@@ -127,6 +177,9 @@ export function restBreakdown(v) {
                what the 36h cap is measured against, because `pend` moves at a
                rate that changes with rest quality and would make the cap mean
                a different amount of time in a starving city.
+        int  — drill intensity, 'light' | 'hard' (DRILLS). ABSENT READS AS
+               'light', which is the pre-drill behaviour exactly, so every
+               save written before drills existed loads unchanged.
      lastAt      — wall-clock ms up to which this House has been PAID.
      lastCollect — wall-clock ms of the last collect (the 6h gate). */
 export function newHouse() { return { billets: [], lastAt: Date.now(), lastCollect: 0 }; }
@@ -148,6 +201,10 @@ export function loadHouse(raw) {
       card: String(b.card), room: String(b.room),
       pend: Number.isFinite(+b.pend) && +b.pend > 0 ? +b.pend : 0,
       hrs:  Number.isFinite(+b.hrs)  && +b.hrs  > 0 ? +b.hrs  : 0,
+      // Anything unrecognised (an older save, a hand-edit, a drill id we
+      // removed) falls back to light rather than throwing — an unknown
+      // intensity must never make a bed stop paying.
+      int:  DRILLS[b.int] ? String(b.int) : DEFAULT_DRILL,
     });
   }
   return h;
@@ -158,7 +215,8 @@ export function saveHouse(h) {
   return {
     lastAt: Math.round(h.lastAt || Date.now()),
     lastCollect: Math.round(h.lastCollect || 0),
-    billets: h.billets.map(b => ({ card: b.card, room: b.room, pend: +(b.pend || 0).toFixed(3), hrs: +(b.hrs || 0).toFixed(4) })),
+    billets: h.billets.map(b => ({ card: b.card, room: b.room, pend: +(b.pend || 0).toFixed(3),
+                                   hrs: +(b.hrs || 0).toFixed(4), int: DRILLS[b.int] ? b.int : DEFAULT_DRILL })),
   };
 }
 
@@ -186,7 +244,14 @@ export function advance(h, ms, opts) {
   const capH = Number.isFinite(+o.accrualCapH) ? +o.accrualCapH : 36;
   const perHour = Number.isFinite(+o.perHour) ? +o.perHour : RES_PER_HOUR;
   const dtH = Math.max(0, +ms || 0) / HOUR_MS;
-  const out = { hours: dtH, gained: 0, capped: 0 };
+  /* 🏋 The host supplies current fatigue per card. This file stays PURE — it
+     never reaches for a profile — but it still has to know when a hard drill
+     has exhausted its subject, because a bonus that keeps paying past the
+     point the cost was supposed to bite is not a cost at all. No reader
+     supplied (the city half today, any test) reads as 0 fatigue, i.e. the
+     drill always pays, which is the pre-drill behaviour. */
+  const strainOf = (typeof o.strainOf === 'function') ? o.strainOf : null;
+  const out = { hours: dtH, gained: 0, capped: 0, strain: [] };
   if (!h || !Array.isArray(h.billets)) return out;
   for (const b of h.billets) {
     const room = roomById(b.room); if (!room) continue;
@@ -196,9 +261,29 @@ export function advance(h, ms, opts) {
     b.capped = (use < dtH);
     if (b.capped) out.capped++;
     b.hrs = (b.hrs || 0) + use;
-    const g = use * perHour * rate * rq;
+
+    const drill = drillById(b.int);
+    let fat = 0;
+    if (strainOf && drill.fatiguePerH > 0) { try { fat = +strainOf(b.card) || 0; } catch (e) { fat = 0; } }
+    // Exhausted: the hard bonus stops, the bed keeps working at the light
+    // rate, and the panel is told (`spent`) so the player can see WHY the
+    // numbers changed rather than discovering it in a spreadsheet.
+    b.spent = (drill.fatiguePerH > 0 && fat >= FATIGUE_SPENT);
+    const dRate = b.spent ? DRILLS.light.rate : drill.rate;
+
+    const g = use * perHour * rate * rq * dRate;
     b.pend = (b.pend || 0) + g;
     out.gained += g;
+
+    /* Strain is REPORTED, not applied. Writing fatigue and morale means
+       touching Profile.units, which is exactly the reach this file refuses to
+       make (see the header). The host applies what is reported, once, against
+       the same watermark that paid the Resonance — so the cost can never be
+       double-charged, or skipped independently of the gain. */
+    if (!b.spent && drill.fatiguePerH > 0) {
+      out.strain.push({ card: b.card, hours: use,
+                        fatigue: use * drill.fatiguePerH, morale: use * drill.moralePerH });
+    }
   }
   return out;
 }
@@ -290,10 +375,24 @@ export function billetBlock(h, spec, roomId) {
     return 'This House runs ' + spec.rooms + ' room' + (spec.rooms === 1 ? '' : 's') + ' at once. Empty one first, or upgrade.';
   return null;
 }
-export function billet(h, cardId, roomId, spec) {
+export function billet(h, cardId, roomId, spec, intensity) {
   const why = billetBlock(h, spec, roomId); if (why) return why;
   if (h.billets.some(b => b.card === cardId)) return 'Already resting here.';
-  h.billets.push({ card: String(cardId), room: roomId, pend: 0, hrs: 0 });
+  h.billets.push({ card: String(cardId), room: roomId, pend: 0, hrs: 0,
+                   int: DRILLS[intensity] ? String(intensity) : DEFAULT_DRILL });
+  return null;
+}
+/* Switch an existing bed between Light and Hard. Returns a reason, or null.
+   ⚠ Changing intensity does NOT reset `hrs` and does NOT bank `pend`: the 36h
+     window and the earned-but-unbanked Resonance both belong to the BED, not
+     to how hard it was being worked. Resetting either here would hand the
+     player a free cap refresh for the price of two clicks. */
+export function setDrill(h, cardId, intensity, fatigue) {
+  const b = h && h.billets.find(x => x.card === cardId);
+  if (!b) return 'Not resting here.';
+  const d = DRILLS[intensity]; if (!d) return 'No such drill.';
+  if (d.fatiguePerH > 0) { const why = hardDrillBlock(fatigue); if (why) return why; }
+  b.int = d.id;
   return null;
 }
 export function unbillet(h, cardId) {
@@ -328,9 +427,11 @@ export function spreadOf(ctx, cardId) {
 /* 📊 What one billet is earning RIGHT NOW, per hour, fully itemised. This is
    what the panel prints; deriving it anywhere else is how a panel starts
    lying about the economy behind it. */
-export function billetRate(spec, restQ, perHour) {
+export function billetRate(spec, restQ, perHour, intensity) {
   const base = Number.isFinite(+perHour) ? +perHour : RES_PER_HOUR;
-  return { base, tierRate: spec.rate, restQuality: restQ, perHour: base * spec.rate * restQ };
+  const d = drillById(intensity);
+  return { base, tierRate: spec.rate, restQuality: restQ, drill: d, drillRate: d.rate,
+           perHour: base * spec.rate * restQ * d.rate };
 }
 
 /* ⚠ THE THIRD-IDLE-POLICY ALARM. Three builders are working against the same

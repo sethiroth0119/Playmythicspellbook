@@ -7,8 +7,10 @@ object is `window.AthenaEngine`, with `window.MythicMapForge` as an alias.)
 heightfield, set a water level, place props and your own `.glb` models with a
 move/rotate/scale gizmo, tune sun/sky/fog, walk the map in Play mode, save it.
 
-**Open it:** Pricing Admin panel → "⚒ Open Athena Engine", or `/?mapforge=1`
-(`&map=<id>&src=cloud|local` opens a saved map). Press **H** inside for controls.
+**Open it:** Forge Sanctum → **⚒ Athena Engine** tile (admin only), the Pricing
+Admin panel's "⚒ Open Athena Engine" button, the **⚒ Edit map / Build a map**
+pill on any mini-game screen, or `/?mapforge=1` (`&map=<id>&src=cloud|local`
+opens a saved map). Press **H** inside for controls.
 
 It is separate from the legacy *Battlemap Editor* in index.html, which paints the
 fixed battle grid. The two coexist.
@@ -41,9 +43,37 @@ fixed battle grid. The two coexist.
 | `mapforge.physics.js` | **rigid-body physics** (cannon-es, vendored at `/vendor/cannon-es.js`): terrain heightfield, static colliders, dynamic/kinematic bodies, the player as a kinematic sphere |
 | `../widgets/graph-editor.js` | the shared Blueprint-style node editor (used by the actor graph panel) |
 
-Migrations: `sql/038_world_maps.sql` then `sql/039_world_maps_games.sql` (apply by
-hand in the Supabase SQL editor). Until they are applied the editor saves to the
-device and says so.
+| `mapforge.pill.js` | the door between a mini-game screen and its world: the 🌍 Enter world / ⚒ Edit map pill, and the full-screen Play overlay |
+
+Migrations: `sql/091_world_maps.sql` then `sql/092_world_maps_games.sql` — both
+applied to project `ktsiasyjusesawtrwrjc` on 2026-09-03. (They were numbered 038
+and 039 on the feature branch; renumbered on merge because `sql/038_*` and
+`sql/039_*` already existed on main for other systems.)
+
+## How a world is connected to a mini-game
+
+The screen id **is** the game key. index.html keeps a registry,
+`ATHENA_MINI_GAMES` (`[{ id, name }]`, `id` = the `App.screen` the game runs
+on), and hands it to the modules as `window.MythicBridge.miniGames()`. The
+editor's **Mini-game** picker is built from it; a map's `game` column stores
+`gameId(id)` (lowercased, e.g. `cardshop`).
+
+After every draw, `render()` calls `AthenaEngine.pill.sync(App.screen)`. The
+pill module keeps one cached set of game keys that have a live world (one
+`select game from world_maps where live`, refreshed when the editor sets or
+unsets live) and shows, bottom-left, outside `#app`:
+
+- **🌍 Enter world** to everyone when the screen has a live world. It opens a
+  full-screen overlay running `engine.mount(host, { game, mode: 'fps' })` and
+  disposes it on Exit.
+- **⚒ Edit map** to admins on such a screen (opens the editor on the live
+  world), or **⚒ Build a map** on a screen with none (opens the editor on a
+  fresh map already tagged with that game).
+
+To give a new mini-game a world, add one line to `ATHENA_MINI_GAMES`. Nothing
+in the mini-game's own code changes. A game that wants the world *inside* its
+own scene rather than as an overlay uses `engine.mount` or `buildWorld`
+directly, as below.
 
 ## Why the r128 global build
 
@@ -848,3 +878,17 @@ Limits: the showroom edits which model an asset uses, not where the game
 places it (per-player layouts — a player's card shop, extraction rig or
 city — stay in their own builders); a game reads the new model the next
 time it mounts its scene.
+
+## Merge round — Files & Menu (v121v116, 2026-09-11)
+
+Two Athena builds existed: **build A** (repository `main` at `12297093`, rounds 5–18 above) and **build B** (the live site's checkout, pushed as `athena/files-menu`): the FILES and MENU sidebar tabs, uploaded files in `public.world_assets` (`sql/112`), the ⚒ pill, menu-button worlds and multiplayer sessions (`mapforge.menu.js`, `mapforge.session.js`, `mapforge.pill.js`), the player character (`mapforge.avatar.js`, `Profile.athenaAvatar` through the bridge), hub / guide / screen bridges, `world_maps` as `sql/091`/`092`. This round is the union — nothing from either side was dropped:
+
+- **One editor.** Build A's editor (folders, prefabs, blueprints, splines, physics, nav, audio, quality, look, asset browser, content browser, showrooms) with build B's tabs added: the tab row is Object · Scene · Files · Terrain · Water · Sky · Menu · Maps; the Scene tab holds build A's content-folder outliner **and** build B's "In this map" list; the FILES tab is build B's uploaded-files panel unchanged (Upload · auto-detect · ↻ · All / Models / Anims / Audio / VFX · Place / ＋ Library / ▶ Apply / 🔊 Arm / ✨ Arm / 🧍 For player / ✕); the MENU tab is build B's Player & camera + Menu button. Opening for a game tries the live world (B), then the game adapter's `build()` (A), then a fresh map tagged for the game (B).
+- **Two uploads, two purposes, kept apart.** Build B's per-player uploads (`world_assets`, `MythicMapForge.assets`, the FILES tab) and build A's admin cloud files (`MythicBridge.files`, the `models` bucket under `athena/…`, Library → Models → Cloud and the content browser). The module that backed build B's panel was `mapforge.assets.js`; build A's asset-browser index owns that name, so build B's file is now `mapforge.files.js` (same exports).
+- **Sound markers + audio emitters.** Build B's `t:'audio'` marker (`o.au`, `attachSound`) and build A's `sound` component / `map.sounds[]` both build and dispose; `setAnim` keeps build B's external-clip retry and build A's `rootOf` (prefab parts).
+- **The farm.** Build B ships the farm as one bundle, so build A's `farm.athena.js` is inlined as the `FarmAthena` namespace (the bundle imports nothing — the `_farmhaul` rule) and takes its tables by `configure()` and the overlay hooks (placement, replacement, yard shift, camera reach, select ring, update, dispose, live watch) were ported into `build3D`. Admin button: 🐄 Homestead Farm in Athena Engine.
+- **index.html** carries build A's `MythicBridge.slots / files / battle / ui`, `Forge.cityModels` in the catalogue + hydrate, `__mythicCityModels` for the city iframe (node-city merges it at boot), the battle-board overlay (`_b3dAthenaOverlay`, `bmIndex`), and the admin buttons, next to build B's `ATHENA_MINI_GAMES` / hubs / guides / avatar bridge.
+- **Database.** `world_maps` (091/092 = 038/039), `world_assets` (112), `ui_widgets` (040) were already live; 041 (kind `page`) applied in the merge. `farm_lots` / `farm_lot_bids` / `farm_ranch` / `farm_ranch_ledger` (038) already live.
+- **Tests.** `tools/athena-harness/pw-test19.mjs` covers the FILES panel, the MENU tab and the merged Scene tab; `serve.mjs` replaces the python server + symlinks (the volume cannot hold junctions). Busters: mapforge `mf18`, widgets `aw5`, battle `ba2`, farm `v121v116farm4`.
+
+- **Farm bundle rule.** `farm.athena.js` is not a file in this build: the farm bundle imports nothing (`_farmhaul` rule), so build A's adapter is inlined as the `FarmAthena` namespace inside `public/src/farm/index.js`, fed its tables by `configure()` right after `FARM_GRID`.

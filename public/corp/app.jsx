@@ -9,6 +9,47 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "tickerSpeed": 60
 }/*EDITMODE-END*/;
 
+/* 🛟 SCREEN ERROR BOUNDARY.
+
+   Until this existed there was no boundary anywhere in the corp app, so a
+   throw inside ANY screen unmounted the whole React tree — the sidebar, the
+   top bar and the ticker went with it, leaving a blank page with the error
+   only in the console and no way for the player to navigate out. That is not
+   hypothetical: one warehouse-freight row arriving without a `cargo` array
+   (bridged data, five screens now read bridged data) blanked the entire app
+   in a browser, and every screen visited afterwards was empty.
+
+   It wraps ONLY <main>, deliberately. The nav must survive the failure of the
+   thing it navigates to — a player who lands on a broken screen has to be able
+   to leave it. `route` is passed as a key from the parent, so changing screens
+   resets the boundary and a transient failure does not stick.
+
+   It says which screen failed and prints the message. It does NOT retry
+   silently or render a plausible-looking empty state: a screen that failed to
+   read its data must not be mistaken for a screen whose data is empty. */
+class ScreenBoundary extends React.Component {
+  constructor(p) { super(p); this.state = { err: null }; }
+  static getDerivedStateFromError(err) { return { err: err }; }
+  componentDidCatch(err, info) { try { console.error('[corp screen]', err, info); } catch (e) {} }
+  render() {
+    if (!this.state.err) return this.props.children;
+    const msg = (this.state.err && this.state.err.message) || String(this.state.err);
+    return (
+      <div className="screen">
+        <div className="card" style={{ padding: 18 }}>
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>This screen could not be drawn</div>
+          <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.6, marginBottom: 10 }}>
+            Something in <b>{this.props.name || 'this screen'}</b> failed while rendering, so nothing on it can be
+            trusted and it has been left blank rather than shown half-filled. The rest of the app still works —
+            pick another screen in the sidebar. Nothing was changed and no data was lost.
+          </div>
+          <div className="mono muted" style={{ fontSize: 11, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{msg}</div>
+        </div>
+      </div>
+    );
+  }
+}
+
 function App() {
   const [route, setRoute] = useState('vault');
   const [relicId, setRelicId] = useState(null);
@@ -18,7 +59,11 @@ function App() {
   const [buyTarget, setBuyTarget] = useState(null);     // {listing, illicit}
   const [confirmStage, setConfirmStage] = useState(0);  // for trade-confirm flow
   const [toasts, setToasts] = useState([]);
-  const [mail, setMail] = useState(window.ECON.MAIL);
+  /* 📮 There is no mail STATE any more. window.ECON.MAIL was an array
+     hardcoded to [] whose `unread` flags only ever moved because a button in
+     the old inbox flipped them in React. The Mailbox is now a read-only feed
+     of five real ledgers (econ.corpActivity) and the sidebar badge counts it
+     against a localStorage mark — see the header of MailboxScreen. */
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
 
   // 💰 Top-bar balances. `aza` is the CINDER chip (legacy field name).
@@ -166,7 +211,6 @@ function App() {
   const foundCost = _jbE ? (_jbE.foundCost | 0) : 1000000;
   const isAdm = !!(_jbE && _jbE.isAdmin);
 
-  const unreadMail = mail.filter(m => m.unread).length;
   const blackCount = window.ECON.BLACK_MARKET.length;
 
   let screen;
@@ -181,15 +225,17 @@ function App() {
     ? <BlackMarketScreen openBuy={(l) => setBuyTarget({ listing: l, illicit: true })} />
     : <RestrictedScreen />;
   else if (route === 'feed')      screen = <FeedScreen />;
-  else if (route === 'mail')      screen = <MailboxScreen mail={mail} setMail={setMail} openTrade={() => setRoute('trade')} />;
-  else if (route === 'trade')     screen = <TradeScreen assets={window.ECON.ASSETS} />;
+  else if (route === 'mail')      screen = <MailboxScreen />;
+  else if (route === 'trade')     screen = <TradeScreen />;
   else if (route === 'relic')     screen = <RelicDetailScreen relicId={relicId} onBack={() => setRoute('vault')} />;
 
   return (
     <div className="app">
-      <Sidebar route={route} setRoute={onSetRoute} mailCount={unreadMail} blackCount={blackCount} />
+      <Sidebar route={route} setRoute={onSetRoute} blackCount={blackCount} />
       <Topbar route={route} balances={balances} />
-      <main className="main">{screen}</main>
+      {/* key={route} so the boundary resets when the player navigates away —
+          otherwise one broken screen would poison every screen after it. */}
+      <main className="main"><ScreenBoundary key={route} name={route}>{screen}</ScreenBoundary></main>
       <Ticker events={events} />
 
       <ToastHost toasts={toasts} />
@@ -278,6 +324,123 @@ function RestrictedScreen() {
 // ──────────────────────────────────────────────────────────────────────────
 // Action modals
 // ──────────────────────────────────────────────────────────────────────────
+
+/* 💸 PAY A MEMBER — one dialog, in the game's own chrome.
+   Replaces two stacked window.prompt() calls. Beyond matching the rest of the
+   app, an in-app modal does three things a browser prompt cannot: show what you
+   actually hold, refuse an unaffordable amount BEFORE the request is sent, and
+   put the amount and the reason on one screen.
+
+   ⚠ IT READS econ.cinders, NOT econ.cinder. The singular was written first and
+     is undefined, which made `have` 0, disabled the button for everyone and
+     would have replaced a broken feature with a differently broken one.
+   ⚠ NO INVENTED CSS VARS. --bg-1 and --ink do not exist in this theme (it is
+     --bg/--surface and --fg), and --toxic is the black-market GREEN, not an
+     error colour — that is --blood. Inputs use className="input" like every
+     other field in this file rather than hand-rolled inline styles. */
+function PayMemberModal({ member, econ, onClose, onPay }) {
+  /* 💸 WAGES COME OUT OF THE CORPORATION. Reported: "when players who own a
+     corporation or a CEO pays their member in Cinder with the Pay button, take
+     from the Corp Treasury and then pay the player." This modal charged the
+     PAYER'S OWN WALLET and said so — the founder of Hidn Studios was being
+     asked to fund wages from his 69,795 🔥 while 962,190 🔥 sat in the
+     corporation he owns.
+     An officer (founder / owner / CEO — econ.amOwner) now spends the treasury;
+     everyone else still sends their own Cinder, which is the member-to-member
+     gift this modal was originally built for. The server decides the same way
+     and refuses an officer it does not recognise, so the two cannot disagree
+     about whose money it is — see corp_pay_member_from_treasury (sql/107). */
+  const fromTreasury = !!(econ && econ.amOwner && econ.corp);
+  const have = Math.max(0, Math.floor(
+    (fromTreasury ? (econ && econ.corpTreasury) : (econ && econ.cinders)) || 0));
+  const [amt, setAmt] = useState('100');
+  const [note, setNote] = useState('Work completed');
+  const qty = Math.floor(Number(amt) || 0);
+  const tooMuch = qty > have;
+  const bad = !(qty > 0) || tooMuch;
+  const quick = [100, 500, 1000, 5000].filter(v => v <= have);
+
+  /* ⌨ ESCAPE CLOSES THIS SHEET ONLY. Modal registers a plain window keydown,
+     and the Guild panel behind this one has its own — a single Escape would
+     shut both, throwing away the panel while you are still typing an amount.
+     A CAPTURE listener runs before either and stops the event dead. */
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      e.stopImmediatePropagation();
+      onClose();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [onClose]);
+
+  return (
+    <Modal title={'Pay · ' + member.name} onClose={onClose}
+      footer={
+        <>
+          <button className="btn ghost" onClick={onClose}>Cancel</button>
+          <button className="btn primary" disabled={bad} onClick={() => onPay(qty, note)}>
+            {!(qty > 0) ? 'Enter an amount' : tooMuch ? 'Not enough Cinder' : 'Pay ' + fmt(qty) + ' 🔥'}
+          </button>
+        </>
+      }>
+      <div style={{ display: 'grid', gap: 16 }}>
+        <div className="row" style={{ justifyContent: 'space-between', padding: 12,
+          background: 'var(--bg-2)', border: '1px solid var(--line-soft)', borderRadius: 4 }}>
+          <div>
+            <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase' }}>Paying</div>
+            <div style={{ fontFamily: 'var(--f-display)', fontSize: 18, fontWeight: 600, lineHeight: 1.2, marginTop: 2 }}>{member.name}</div>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase' }}>{fromTreasury ? 'Corp Treasury' : 'Your Cinder'}</div>
+            <div style={{ fontSize: 20, fontWeight: 600, color: 'var(--aza)', marginTop: 2 }}>🔥 {fmt(have)}</div>
+          </div>
+        </div>
+
+        <div>
+          <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase', marginBottom: 6 }}>Amount</div>
+          <div className="row" style={{ gap: 8 }}>
+            <input className="input" type="number" min={1} max={have} value={amt}
+              onChange={e => setAmt(e.target.value)} />
+            <button className="btn sm" disabled={!have} onClick={() => setAmt(String(have))}>All</button>
+          </div>
+          {quick.length > 0 && (
+            <div className="row" style={{ gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+              {quick.map(v => (
+                <button key={v} className="btn sm" onClick={() => setAmt(String(v))}>{fmt(v)}</button>
+              ))}
+            </div>
+          )}
+          {tooMuch && (
+            <div className="mono" style={{ fontSize: 11, color: 'var(--blood)', marginTop: 8 }}>
+              {fromTreasury ? 'The treasury holds ' : 'You only hold '}{fmt(have)} 🔥.
+            </div>
+          )}
+          {have === 0 && (
+            <div className="mono muted" style={{ fontSize: 11, marginTop: 8 }}>
+              {fromTreasury
+                ? 'The corporation treasury is empty — deposit Cinder before paying wages.'
+                : 'You have no Cinder to pay with.'}
+            </div>
+          )}
+        </div>
+
+        <div>
+          <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase', marginBottom: 6 }}>What is it for?</div>
+          <input className="input" placeholder="e.g. Work completed" value={note}
+            onChange={e => setNote(e.target.value)} />
+        </div>
+
+        <div className="mono muted" style={{ fontSize: 11, lineHeight: 1.6 }}>
+          {fromTreasury ? 'The Cinder leaves the corporation treasury' : 'The Cinder moves from your wallet'}
+          {' to ' + member.name + "'s wallet the moment you press Pay. "}
+          There is nothing for them to claim and nothing to cancel — check the amount first.
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 
 function SendModal({ asset, onClose, onSend }) {
   const { PLAYERS } = window.ECON;
@@ -733,12 +896,159 @@ const CORP_ROLES = [
   // so the hire genuinely opens the Underwriting Desk for them — the role on its
   // own would be a label with no authority behind it.
   { id: 'Bank Teller',       name: 'Bank Teller',       d: 'Works your bank counter — reviews loan applications and underwrites on the owner’s behalf, up to the approval ceiling you set. Hire when you own a bank and want the desk staffed while you are away.' },
+  /* 📦🔧 Two desks, not two labels. Approving either ALSO opens a real
+     surface (see corpApprove + _jbDesks in index.html) — the Warehouse Worker
+     gets the founder's yard and the capacity office, the Weapon Smith gets the
+     bench and a delivery path from their armoury into this vault. Same rule
+     the Bank Teller above established: a role with no authority behind it is a
+     label, and hiring someone into one is worse than not offering it.
+     ⚠ corp_set_role carries its OWN whitelist server-side and it does not know
+       these strings yet — sql/047_corp_desk_roles.sql adds them. HIRING works
+       without it (corp_hire copies the role straight off the application);
+       only RE-ASSIGNING an existing member needs the migration. The desk
+       panel below says so rather than letting the dropdown fail silently. */
+  { id: 'Warehouse Worker',  name: 'Warehouse Worker',  d: 'Keeps the corporation’s yard — walks the founder’s warehouse floor, moves crates into the right bays and works the capacity market. Hire when your stores are the bottleneck.' },
+  { id: 'Weapon Smith',      name: 'Weapon Smith',      d: 'Works the bench — strips donors, cleans parts and forges weapons. Anything they build can be delivered straight into the corporation vault for the guild to draw on. Hire to arm the roster.' },
   { id: 'member',            name: 'Member',            d: 'General corporation member — pools resources and shares in the corporation’s success.' },
 ];
+
+/* 🔀 CORP SWITCHER — "which corporation am I acting in?"
+   ═══════════════════════════════════════════════════════════════════════════
+   THE BUG THIS EXISTS BECAUSE OF, written down so nobody removes it as clutter:
+   a player founded TWO corporations five hours apart, both named River Meadows
+   Corp, both tagged RIVE. The deployed corp_members lets one player hold two
+   rows even though the schema declares user_id as its primary key. Every one of
+   the 362,706 units they deposited went to one of them; the game bound them to
+   the OTHER, and the Vault screen honestly reported an empty vault. It was the
+   wrong vault, and there was no way to tell — index.html computed `Corp._multi`
+   for exactly this case, with a comment saying a player "has no way to know
+   which", and then nothing ever read it.
+
+   ⚠ IT RENDERS ONLY WHEN THERE IS A CHOICE. One corporation, no control — which
+     is almost every player, and a picker with one option is noise that makes
+     the screen look broken.
+   ⚠ IT SHOWS WHAT EACH ONE HOLDS. That is the whole diagnostic: two identically
+     named corporations are indistinguishable until one of them says 362,706 and
+     the other says empty.
+   ⚠ SWITCHING IS A FULL RE-RESOLVE ON THE HOST SIDE, not a local id swap — the
+     vault, roster, permissions, treasury, licences and laws are all corp-scoped.
+     See the corpPick action in index.html. */
+/* 🤝 CONTRIBUTE — the sanctioned way to put something into a corporation you
+   JOINED rather than founded.
+   ────────────────────────────────────────────────────────────────────────
+   It exists because of the rule its counterpart enforces: the Bank of Ethos
+   transfer now funds the corporation you FOUNDED, always, whichever one you
+   happen to be acting in. That is the right rule — a control labelled "your
+   corporation" moving your Cinder into somebody else's treasury, from which
+   it is explicitly non-refundable, is a trap — but on its own it would leave
+   a member of somebody else's corporation with no way to help fund it at all.
+   This is that way, and the wording says what is actually happening.
+   Only rendered when the corporation is one they joined: for your own, the
+   bank control already reads correctly and a second box would be noise. */
+function ContributePanel({ econ, act }) {
+  const [amt, setAmt] = useState('');
+  if (!econ || !econ.actingInJoined || !econ.corp) return null;
+  const n = Math.floor(Number(amt) || 0);
+  /* econ.cinderS — plural. The singular is undefined and would read 0,
+     disabling the button for everyone; this file already carries a warning
+     about exactly that mistake at PayMemberModal. */
+  const wallet = Math.max(0, Math.floor(Number(econ.cinders) || 0));
+  const tooMuch = n > wallet;
+  const owned = econ.ownedCorp;
+  return (
+    <div className="card flat" style={{ padding: 14, marginBottom: 14, borderColor: 'var(--aza)' }}>
+      <div className="mono" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase', marginBottom: 6, color: 'var(--aza)' }}>
+        Contribute
+      </div>
+      <div className="mono muted" style={{ fontSize: 11, marginBottom: 10, lineHeight: 1.5 }}>
+        You joined <b>{econ.corp.name}</b>{econ.corp.tag ? ' [' + econ.corp.tag + ']' : ''} — you did not found it.
+        {owned
+          ? ' The Bank of Ethos transfer funds your own corporation (' + (owned.name || 'yours') + '). Use this to fund this one.'
+          : ' Use this to fund it.'}
+      </div>
+      <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+        <input className="input" type="number" min={1} value={amt} placeholder="Cinder"
+          onChange={e => setAmt(e.target.value)}
+          style={{ flex: 1, minWidth: 0, padding: '5px 7px' }} />
+        <button className="btn sm primary" disabled={!(n > 0) || tooMuch}
+          onClick={() => { act({ kind: 'corpContribute', cinder: n }); setAmt(''); }}>
+          Contribute
+        </button>
+      </div>
+      <div className="mono muted" style={{ fontSize: 10.5, marginTop: 6 }}>
+        {tooMuch
+          ? 'Your wallet holds ' + wallet.toLocaleString() + '.'
+          : 'Wallet: ' + wallet.toLocaleString() + ' · goes to this corporation\u2019s treasury.'}
+      </div>
+      {/* Resources already have a path — the vault Deposit button writes to
+          whichever corporation you are acting in, which is this one — so this
+          points at it rather than building a second one that could drift. */}
+      <div className="mono muted" style={{ fontSize: 10.5, marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--line-soft)', lineHeight: 1.5 }}>
+        For resources and cards, use <b>Deposit</b> on the Vault — it goes to the corporation you are acting in.
+      </div>
+    </div>
+  );
+}
+
+function CorpSwitcher({ econ, act }) {
+  const list = (econ && Array.isArray(econ.myCorps)) ? econ.myCorps : [];
+  if (list.length < 2) return null;
+  const why = (econ && econ.corpPickWhy) || '';
+  return (
+    <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--line-soft)' }}>
+      <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase', marginBottom: 6 }}>
+        You are in {list.length} corporations
+      </div>
+      <div className="mono muted" style={{ fontSize: 11, marginBottom: 8, lineHeight: 1.5 }}>
+        You act in one at a time. The vault you see — and the vault a deposit
+        reaches — is this one’s.
+      </div>
+      <div className="col" style={{ gap: 6 }}>
+        {list.map((c) => (
+          <button
+            key={c.id}
+            className="row"
+            disabled={!!c.current}
+            onClick={() => { if (!c.current) act({ kind: 'corpPick', corpId: c.id }); }}
+            style={{
+              padding: '9px 11px', borderRadius: 4, gap: 10, textAlign: 'left',
+              font: 'inherit', color: 'inherit', alignItems: 'center',
+              cursor: c.current ? 'default' : 'pointer',
+              border: '1px solid ' + (c.current ? 'var(--rust)' : 'var(--line-soft)'),
+              background: c.current ? 'var(--surface-2)' : 'transparent',
+            }}>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ fontWeight: 600 }}>{c.name || 'Corporation'}</span>
+              {c.tag ? <span className="mono muted" style={{ fontSize: 11 }}> [{c.tag}]</span> : null}
+              <span className="mono muted" style={{ fontSize: 10.5, display: 'block' }}>
+                {String(c.role || 'member')}
+                {' · '}
+                {/* 0 is a RESULT, not a missing value — say "empty" rather than
+                    printing nothing, because "nothing shown" is exactly what
+                    made the duplicate corporation invisible in the first place. */}
+                {(c.held | 0) > 0 ? (c.held | 0).toLocaleString() + ' units in vault' : 'vault empty'}
+              </span>
+            </span>
+            <span className="mono" style={{ fontSize: 10, letterSpacing: '.12em', textTransform: 'uppercase',
+              color: c.current ? 'var(--rust)' : 'var(--aza)', flexShrink: 0 }}>
+              {c.current ? 'Acting' : 'Switch'}
+            </span>
+          </button>
+        ))}
+      </div>
+      {why === 'holdings' && (
+        <div className="mono muted" style={{ fontSize: 10.5, marginTop: 8, lineHeight: 1.5 }}>
+          Picked automatically because it is the one holding your goods.
+        </div>
+      )}
+    </div>
+  );
+}
 
 function CorpGuild({ econ, toast, onClose, onFound }) {
   const [tag, setTag] = useState('');
   const [role, setRole] = useState('member');
+  const [payTarget, setPayTarget] = useState(null);
   const corp = econ && econ.corp;
   const roster = (econ && Array.isArray(econ.roster)) ? econ.roster : [];
   const requests = (econ && Array.isArray(econ.requests)) ? econ.requests : [];
@@ -827,6 +1137,85 @@ function CorpGuild({ econ, toast, onClose, onFound }) {
     </div>
   ) : null;
 
+  /* 🧰 YOUR DESK — the door for the two hireable positions.
+     ─────────────────────────────────────────────────────────────────────────
+     This project's most-repeated defect is a finished feature with no way in.
+     The sidebar's "My Companies" list is built from ops the viewer OWNS, so a
+     hired Weapon Smith or Warehouse Worker would never see an entry for the
+     surface they were hired to work — they would hold a title and nothing
+     else. This panel is the door, and it sits beside the Agency Desk and the
+     Legal Docket because those two solved exactly the same problem for the
+     Real Estate Agent and the Lawyer.
+
+     ⚠ NOTHING HERE IS INVENTED. Every line is a fact econ.desks got from the
+       server or from the module registry — is the bench module loaded, did
+       ws_state answer, does the founder actually have a yard. `null` means the
+       probe has not answered YET and prints as "checking…", never as a
+       failure: this app must work offline, and telling a keeper their
+       migration is missing because their connection was slow is a lie. */
+  const desks = (econ && econ.desks) || null;
+  // Defaulted rather than null-checked at every use: an older host that has not
+  // been reloaded still pushes an econ with no `desks`, and this panel must
+  // simply not render in that case instead of taking the screen down with it.
+  const smithDesk = (desks && desks.smith) || { staff: false, licensed: false, loaded: false, sql: null, sqlLabel: '' };
+  const yardDesk = (desks && desks.warehouse) || { staff: false, owns: false, loaded: false, sql: null, sqlLabel: '', yardId: null, corpSql: null, corpSqlLabel: '' };
+  const deskLine = (v, okMsg, missingMsg) => v === true ? okMsg : (v === false ? missingMsg : 'Checking with the server…');
+  const deskPanel = (corp && (smithDesk.staff || yardDesk.staff)) ? (
+    <div className="card flat" style={{ padding: 12, marginBottom: 14 }}>
+      <div className="mono" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase', color: 'var(--aza)', marginBottom: 6 }}>
+        🧰 Your desk — {String(corp.role || 'member')}
+      </div>
+      {smithDesk.staff && (
+        <div style={{ padding: '8px 10px', border: '1px solid var(--line-soft)', borderRadius: 4, marginBottom: yardDesk.staff ? 8 : 0 }}>
+          <div style={{ fontWeight: 600, fontSize: 12.5 }}>🔧 The Weapon Smith’s bench</div>
+          <div className="muted" style={{ fontSize: 11.5, marginTop: 2 }}>
+            Strip donors, clean parts and build. Every finished weapon can be delivered
+            from your armoury into {corp.name}’s vault — it leaves your hands and appears
+            there under your name.
+          </div>
+          <div className="mono muted" style={{ fontSize: 10.5, marginTop: 4 }}>
+            {smithDesk.loaded
+              ? deskLine(smithDesk.sql,
+                  'Bench ready · order board and minting online.',
+                  'Bench ready · the order board and minting need ' + (smithDesk.sqlLabel || 'the weaponsmith migration') + ' applied. Building and delivering still work.')
+              : 'The bench module has not loaded — reload the page.'}
+            {smithDesk.licensed ? ' · you also hold the licence yourself.' : ''}
+          </div>
+          <button className="btn sm primary" style={{ marginTop: 6 }}
+            disabled={!smithDesk.loaded}
+            onClick={() => act({ kind: 'openWeaponSmith' })}>🔧 Open the bench</button>
+        </div>
+      )}
+      {yardDesk.staff && (
+        <div style={{ padding: '8px 10px', border: '1px solid var(--line-soft)', borderRadius: 4 }}>
+          <div style={{ fontWeight: 600, fontSize: 12.5 }}>📦 The corporation’s yard</div>
+          <div className="muted" style={{ fontSize: 11.5, marginTop: 2 }}>
+            Walk {corp.name}’s warehouse floor — vans arrive with other players’ shipments,
+            and a crate at a time goes into the renter’s bay. The office below is your own:
+            it is where capacity is rented in and out.
+          </div>
+          <div className="mono muted" style={{ fontSize: 10.5, marginTop: 4 }}>
+            {yardDesk.sql === false
+              ? 'Player storage is not installed on this server — ' + (yardDesk.sqlLabel || 'the warehouse migration') + ' is pending.'
+              : (yardDesk.corpSql === false
+                  ? 'The corporation yard lookup needs ' + (yardDesk.corpSqlLabel || 'sql/047_corp_desk_roles.sql') + ' applied. Your own office still works.'
+                  : (yardDesk.corpSql === true
+                      ? (yardDesk.yardId
+                          ? 'Yard found — you keep it for the founder.'
+                          : 'The founder has not built a warehouse yet, so there is no yard to walk.')
+                      : 'Checking with the server…'))}
+            {yardDesk.owns ? ' · you own a Warehouse of your own too.' : ''}
+          </div>
+          <div className="row" style={{ gap: 6, marginTop: 6 }}>
+            <button className="btn sm primary"
+              disabled={yardDesk.sql === false || yardDesk.corpSql === false || (yardDesk.corpSql === true && !yardDesk.yardId)}
+              onClick={() => act({ kind: 'openCorpYard' })}>📦 Walk the yard</button>
+            <button className="btn sm" onClick={() => act({ kind: 'openWarehouse' })}>🏬 Your warehouse office</button>
+          </div>
+        </div>
+      )}
+    </div>
+  ) : null;
   const rolesPanel = (
     <div style={{ marginTop: 4 }}>
       <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase', marginBottom: 8 }}>Roles you can hire / apply for</div>
@@ -866,6 +1255,7 @@ function CorpGuild({ econ, toast, onClose, onFound }) {
   );
 
   return (
+    <>
     <Modal title="Corporation — Guild & Hiring" onClose={onClose} wide
       footer={<button className="btn ghost" onClick={onClose}>Close</button>}>
       {!econ || !econ.signedIn ? (
@@ -897,8 +1287,49 @@ function CorpGuild({ econ, toast, onClose, onFound }) {
               <SumRow label="Your role" value={String(corp.role || 'member')} />
               <SumRow label="Members" value={count + ' / ' + cap} />
               {amOwner && <SumRow label="Over-cap hire" value={fee + ' Aza coin each'} />}
+              <CorpSwitcher econ={econ} act={act} />
             </div>
+            <ContributePanel econ={econ} act={act} />
             <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase', marginBottom: 6 }}>Roster</div>
+            {/* 💸 TRANSFER INBOX — incoming payments to claim, outgoing ones you
+                can still cancel. A payment sits here until the recipient accepts
+                it, which is why corp_send_asset writes status 'sent' rather than
+                moving the asset outright. Hidden entirely when there is nothing
+                pending, so it costs the roster no space in the normal case. */}
+            {(() => {
+              const tf = (econ && Array.isArray(econ.transfers)) ? econ.transfers : [];
+              const inc = tf.filter(t => t.incoming), out = tf.filter(t => t.outgoing);
+              if (!inc.length && !out.length) return null;
+              return (
+                <div className="card flat" style={{ padding: 10, marginBottom: 12 }}>
+                  <div className="mono" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase', color: 'var(--aza)', marginBottom: 6 }}>
+                    💸 Transfers
+                  </div>
+                  <div className="col" style={{ gap: 5, maxHeight: '20vh', overflow: 'auto' }}>
+                    {inc.map(t => (
+                      <div key={t.id} className="row" style={{ justifyContent: 'space-between', gap: 8, padding: '6px 10px', border: '1px solid var(--line-soft)', borderRadius: 4 }}>
+                        <span style={{ minWidth: 0 }}>
+                          <span style={{ fontWeight: 600, fontSize: 12 }}>{t.icon} {t.qty} {t.name}</span>
+                          <span className="mono muted" style={{ fontSize: 10.5 }}> · from {t.from}{t.note ? ' · ' + t.note : ''}</span>
+                        </span>
+                        <button className="btn sm" style={{ flexShrink: 0 }}
+                          onClick={() => act({ kind: 'corpClaim', transferId: t.id })}>📥 Claim</button>
+                      </div>
+                    ))}
+                    {out.map(t => (
+                      <div key={t.id} className="row" style={{ justifyContent: 'space-between', gap: 8, padding: '6px 10px', border: '1px dashed var(--line-soft)', borderRadius: 4, opacity: .8 }}>
+                        <span style={{ minWidth: 0 }}>
+                          <span style={{ fontSize: 12 }}>{t.icon} {t.qty} {t.name}</span>
+                          <span className="mono muted" style={{ fontSize: 10.5 }}> · to {t.to} · awaiting claim</span>
+                        </span>
+                        <button className="btn sm" style={{ flexShrink: 0, color: 'var(--toxic)' }}
+                          onClick={() => act({ kind: 'corpCancel', transferId: t.id })}>↩ Cancel</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
             <div className="col" style={{ gap: 4, maxHeight: '34vh', overflow: 'auto' }}>
               {roster.length === 0 && pendingHires.length === 0 && <div className="muted" style={{ fontSize: 12 }}>Just you so far.</div>}
               {roster.map(m => (
@@ -910,6 +1341,20 @@ function CorpGuild({ econ, toast, onClose, onFound }) {
                         onChange={e => act({ kind: 'corpSetRole', userId: m.userId, role: e.target.value })} title="Assign position">
                         {CORP_ROLES.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
                       </select>
+                      {/* 💸 PAY THIS MEMBER. The whole reason the owner opens this
+                          screen after a job is done. The server side has always
+                          existed (corp_send_asset); nothing in this app ever
+                          called it, which is why paying "did not work".
+                          Two-step by design: this creates a PENDING transfer the
+                          member claims from their inbox, so nothing lands in an
+                          account without the game acknowledging it and the sender
+                          can still cancel. */}
+                      {/* 🪟 A MODAL, NOT window.prompt(). The browser dialog is chrome
+                          from outside the game — it ignores the art direction, cannot
+                          show a balance or validate as you type, and stacks TWO dialogs
+                          (amount, then note) for one action. */}
+                      <button className="btn sm" title={'Pay ' + m.name + ' from your Cinder'}
+                        onClick={() => setPayTarget({ userId: m.userId, name: m.name })}>💸 Pay</button>
                       <button className="btn sm" onClick={() => act({ kind: 'corpKick', userId: m.userId })} style={{ color: 'var(--toxic)' }}>Remove</button>
                     </span>
                   )}
@@ -928,6 +1373,17 @@ function CorpGuild({ econ, toast, onClose, onFound }) {
             )}
             {amOwner && (
               <div style={{ marginTop: 16 }}>
+                {/* 🏢 SHUT DOWN (bug-mtw1eyki): the founder's door out. Typed-name
+                    confirm; the server refuses while the treasury or vault hold anything. */}
+                <button className="btn ghost" style={{ marginBottom: 14, borderColor: 'var(--toxic-soft)', color: 'var(--toxic)' }}
+                  title="Close this corporation for good. Members are released, licences and operations go with it. The treasury and vault must be empty first."
+                  onClick={() => {
+                    const nm = String((econ && econ.corp && econ.corp.name) || '').trim();
+                    const t = window.prompt('Shut down ' + (nm || 'your corporation') + '?\n\nThis cannot be undone. Members are released, licences and operations go with it, and the treasury and vault must already be empty.\n\nType the corporation name to confirm:');
+                    if (t == null) return;
+                    if (nm && t.trim().toLowerCase() !== nm.toLowerCase()) { window.alert('The name did not match — nothing was done.'); return; }
+                    act({ kind: 'corpDissolve' }); onClose();
+                  }}>🏢 Shut down corporation</button>
                 <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase', marginBottom: 6 }}>
                   Applications {requests.length ? '· ' + requests.length : ''}
                 </div>
@@ -947,6 +1403,7 @@ function CorpGuild({ econ, toast, onClose, onFound }) {
             )}
           </div>
           <div>
+            {deskPanel}
             {agencyPanel}
             {lawyerPanel}
             {rolesPanel}
@@ -954,6 +1411,17 @@ function CorpGuild({ econ, toast, onClose, onFound }) {
         </div>
       )}
     </Modal>
+
+    {payTarget && <PayMemberModal member={payTarget} econ={econ}
+      onClose={() => setPayTarget(null)}
+      onPay={(qty, note) => { act({ kind: 'corpSend', toId: payTarget.userId, toName: payTarget.name,
+        assetKind: 'resource', itemId: 'cinder', name: 'Cinder', icon: '🔥', qty: qty, note: note,
+        /* 💸 Which purse. The parent re-checks this against the server, which
+           refuses an officer it does not recognise — this flag chooses the RPC,
+           it does not grant the right. */
+        fromTreasury: !!(econ && econ.amOwner && econ.corp) });
+        setPayTarget(null); }} />}
+    </>
   );
 }
 

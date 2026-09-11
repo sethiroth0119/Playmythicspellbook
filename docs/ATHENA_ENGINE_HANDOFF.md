@@ -20,7 +20,7 @@ Everything below is verified against the branch, not from memory.
 | Commits | 6 on top of main, 3,534 lines added, 20 files (+ this doc and `tools/athena-harness/`) |
 | Merged to main | **no** |
 | Deployed | **no** — live is still `v120w6` |
-| Supabase migrations | **not applied** — `sql/038`, `sql/039` |
+| Supabase migrations | **not applied** — `sql/091`, `sql/092` |
 | Live preview | https://claude.ai/code/artifact/b76338f2-1f24-4eae-a2eb-9b4db9054ffc (same code, bundled into one page) |
 | Working tree | clean |
 
@@ -51,8 +51,8 @@ Detailed reference: `docs/athena-engine.md`. This file is the connection plan.
    curl -sSI https://<host>/src/mapforge/mapforge.vfx.js | head -1
    ```
 5. **Run the migrations by hand** in the Supabase SQL editor for project
-   `ktsiasyjusesawtrwrjc`: `sql/038_world_maps.sql`, then
-   `sql/039_world_maps_games.sql`. Each ends with a verify query; every row
+   `ktsiasyjusesawtrwrjc`: `sql/091_world_maps.sql`, then
+   `sql/092_world_maps_games.sql`. Each ends with a verify query; every row
    must say `ok`. Until they are applied the editor saves to the device and
    says so — nothing breaks.
 6. **Open it**: Pricing Admin panel → *⚒ Open Athena Engine* (admin only),

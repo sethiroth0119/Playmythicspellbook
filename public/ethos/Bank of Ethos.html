@@ -443,7 +443,18 @@
 <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<!-- 💵 THE PEG, BEFORE THE APP THAT READS IT. A classic script on purpose:
+     app.jsx is compiled by Babel and cannot import, so the two rates are
+     published on window and both this page and the Crash Exchange in
+     index.html read the same pair. See public/src/econ/peg.js.
+     ⚠ ABOVE tweaks-panel.jsx, NOT BETWEEN IT AND app.jsx, AND THAT MATTERS.
+       The gate pins those two tags as ADJACENT lines — it is the only thing
+       distinguishing THIS app.jsx bust from the identical tag in corp/ and
+       base/ — so a tag inserted between them reads as "the Bank lost its
+       cache-bust". Load order is unaffected: all this needs is to come
+       before app.jsx, and it does. -->
+<script src="../src/econ/peg.js?v=v121q51"></script>
 <script type="text/babel" src="tweaks-panel.jsx"></script>
-<script type="text/babel" src="app.jsx"></script>
+<script type="text/babel" src="app.jsx?v=v121q50"></script>
 </body>
 </html>

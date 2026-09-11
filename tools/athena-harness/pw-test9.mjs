@@ -39,7 +39,8 @@ await step('objects: emitter (auto loop) + a caster (Begin → Play sound 2d, Pl
 await step('Play: listener on the camera, emitters created (positional on fire, 2d, player), playing', async () => {
   await page.evaluate(() => { if (document.activeElement) document.activeElement.blur(); });
   await page.keyboard.press('p'); await page.waitForTimeout(250);
-  await page.waitForFunction(() => { const w = MythicMapForge.editor().world; return w.audio && w.audio.count >= 4; }, null, { timeout: 8000 });
+  // 20 s, not 8: under SwiftShader the four emitters' buffer decodes sometimes land after 8 s (timing, not a fault — the later steps see all four)
+  await page.waitForFunction(() => { const w = MythicMapForge.editor().world; return w.audio && w.audio.count >= 4; }, null, { timeout: 20000 });
   const r = await page.evaluate(() => { const e = MythicMapForge.editor(); const w = e.world; const au = w.audio; const fire = w.objects.get('o_em'); const pos = []; fire.traverse(o => { if (o.panner && o.listener) pos.push({ playing: o.isPlaying, loop: o.getLoop(), ref: o.getRefDistance ? o.getRefDistance() : null }); }); return { count: au.count, onCamera: au.camera === e.camera, listenerAttached: e.camera.children.includes(au.listener), firePositional: pos, ctx: au.listener.context.state }; });
   if (r.count < 4 || !r.onCamera || !r.listenerAttached || r.firePositional.length !== 2 || !r.firePositional.some(p => p.ref === 8)) throw new Error(JSON.stringify(r));
   return r;

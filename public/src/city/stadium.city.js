@@ -42,6 +42,9 @@
    not lie about what it can do while they do not.
    ══════════════════════════════════════════════════════════════════════════ */
 import * as E from './stadium.economy.js';
+/* 🛣 The road resolver — the away-day report counts the road network the fans
+   travel on, and a Lane carries them exactly as a Road does. */
+import { isRoadTile } from '../roads/types.js';
 
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -141,7 +144,7 @@ export function nodeSnapshot() {
   for (const k in tiles) {
     const t = tiles[k]; if (!t) continue;
     const [x, z] = k.split(',').map(Number);
-    if (t.type === 'road') { roadsTotal++; if (!t.damaged) roadsRepaired++; continue; }
+    if (isRoadTile(t)) { roadsTotal++; if (!t.damaged) roadsRepaired++; continue; }
     if (t.damaged) continue;                       // a burnt-out building moves nobody
     if (t.type === 'motorpool') motorPoolCapacity += (t.lvl || 1);
     if (t.type === 'railyard') railYardCapacity += (t.lvl || 1);
@@ -677,6 +680,16 @@ export function renderEventSettlement(plan) {
       (plan.tickets.refund ? '<tr><td>Refunds (' + Math.round(plan.effects.refundPct * 100) + '%)</td><td class="n neg">−' + fmt(plan.tickets.refundCinder) + '🔥</td></tr>' : '') +
       '<tr><td>Satisfaction ×' + plan.effects.revenueMult + '</td><td class="n">' + fmt(plan.tickets.netCinder) + '🔥</td></tr>' +
       '<tr><td>Concessions (' + Math.round(plan.fulfilment.ratio * 100) + '% served)</td><td class="n">' + fmt(plan.concessions.netCinder) + '🔥</td></tr>' +
+      /* 🏟 bug-mtuasm4d: "it isn't picking up Remedies, Goods or Rations — I have
+         plenty". The panel printed one served-% and nothing per line, so a
+         short line looked like a resource that was not plugged in. Each
+         concession line now shows HAVE (city stock) against NEED for this
+         event's attendance and length. */
+      (plan.fulfilment && plan.fulfilment.want ? Object.keys(plan.fulfilment.want).map((r) => {
+        const need = plan.fulfilment.want[r] || 0, have = (plan.fulfilment.have && plan.fulfilment.have[r]) || 0;
+        const okLine = have >= need;
+        return '<tr><td style="padding-left:1.2em">' + (DRAIN_ICO[r] || '') + ' ' + r.charAt(0).toUpperCase() + r.slice(1) + '</td><td class="n' + (okLine ? '' : ' neg') + '">have ' + fmt(Math.floor(have)) + ' / need ' + fmt(Math.ceil(need)) + (okLine ? ' ✓' : ' short') + '</td></tr>';
+      }).join('') : '') +
       '<tr><td>Vendor fees (' + plan.vendorFee.pct + '% of gain)</td><td class="n">' + fmt(plan.vendorFee.cinder) + '🔥</td></tr>' +
       '<tr><td><b>Host total</b></td><td class="n"><b>' + fmt(plan.totals.hostCinder) + '🔥</b></td></tr>' +
     '</tbody></table></div>' +

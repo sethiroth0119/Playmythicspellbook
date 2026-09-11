@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync } from 'fs';
 import { createRequire } from 'module'; const { minify } = createRequire(new URL('../../package.json', import.meta.url))('terser');
-const dir = new URL('../../public/src/mapforge/', import.meta.url).pathname;
+const dir = decodeURIComponent(new URL('../../public/src/mapforge/', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1');   // Windows: /D:/… → D:/…
 let fails = 0;
 for (const f of readdirSync(dir).filter(x => x.endsWith('.js'))) {
   const code = readFileSync(dir + f, 'utf8');

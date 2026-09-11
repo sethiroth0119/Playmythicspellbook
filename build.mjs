@@ -123,7 +123,21 @@ export async function minify() {
   console.log('✓ wrote minified', SRC, '(' + minHtml.length.toLocaleString() + ' chars total)');
 }
 
-export async function restore() {
+/* 🔴 SYNCHRONOUS, AND THAT IS LOAD-BEARING. This was `async` while every call
+   inside it was sync, which looked harmless and was not:
+
+     • deploy.mjs wraps the call in a plain try/catch. An async function turns a
+       throw into a REJECTION, which a synchronous catch cannot see — so when
+       the write below failed, the operator got no "restore failed", no
+       "git checkout" hint, and "✅ deploy complete" printed anyway. The real
+       error surfaced afterwards as a bare unhandledRejection.
+     • deploy.mjs's signal handler documents "SYNCHRONOUS ONLY — a signal
+       handler gets one tick". An async restore genuinely could not finish
+       there, so the Ctrl+C path was quietly broken too.
+
+   It is now sync, so a failure is a throw the caller can actually catch, and
+   the signal path does what its own comment says. */
+export function restore() {
   if (!fs.existsSync(BACKUP)) {
     console.log('⚠  no backup file at', BACKUP, '— nothing to restore');
     return false;
@@ -141,7 +155,33 @@ export async function restore() {
     console.error('   (leaving the backup in place; nothing has been overwritten)');
     return false;
   }
-  fs.writeFileSync(SRC, src);
+  /* 🔁 RETRY THE WRITE. `wrangler deploy` has just finished streaming this very
+     file to Cloudflare, and on Windows the handle is not always released the
+     instant the child exits — a virus scanner or the indexer picks it up on the
+     way past. The observed failure was:
+
+         UNKNOWN: unknown error, open 'D:\game-deploy\public\index.html'
+
+     twice, leaving the working tree minified. It is transient by nature, so the
+     answer is to wait for the handle rather than to give up on the first miss.
+     Synchronous backoff (Atomics.wait) because this must also work from the
+     signal handler, where there is no event loop left to await on. */
+  let wrote = false, lastErr = null;
+  for (let attempt = 1; attempt <= 6 && !wrote; attempt++) {
+    try { fs.writeFileSync(SRC, src); wrote = true; }
+    catch (e) {
+      lastErr = e;
+      if (attempt === 6) break;
+      console.log('   restore write failed (' + (e && e.code || 'err') + ') — retry ' + attempt + '/5 …');
+      try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250 * attempt); } catch (e2) {}
+    }
+  }
+  if (!wrote) {
+    console.error('❌ could not write ' + SRC + ' after 6 attempts: ' + (lastErr && lastErr.message));
+    console.error('   The BACKUP IS INTACT at ' + BACKUP + ' — nothing has been lost.');
+    console.error('   Recover with:  git checkout -- public/index.html');
+    throw lastErr || new Error('restore write failed');
+  }
   /* Verify the write landed before dropping the only other copy. An unlink that
      runs after a failed/partial write is how a backup becomes the last casualty
      of an already-bad situation. */
@@ -169,7 +209,13 @@ if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
   if (arg === 'minify') {
     minify().catch(e => { console.error('❌', e.message); process.exit(1); });
   } else if (arg === 'restore') {
-    restore().catch(e => { console.error('❌', e.message); process.exit(1); });
+    /* restore() is SYNC now, so `.catch()` would itself throw "not a function"
+       — and this is the recovery command the file's own header tells you to
+       run when a deploy has gone wrong. A recovery tool that crashes on the
+       way to recovering is the same class of defect as one that silently
+       no-ops, which is what this entrypoint used to do on Windows. */
+    try { if (restore() !== true) process.exit(1); }
+    catch (e) { console.error('❌', e && e.message); process.exit(1); }
   } else {
     console.log('Usage: node build.mjs [minify|restore]');
   }

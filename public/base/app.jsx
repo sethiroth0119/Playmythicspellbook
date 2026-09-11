@@ -52,6 +52,14 @@ function App() {
       if (e.key === "1")      setSpeed(1);
       if (e.key === "2")      setSpeed(2);
       if (e.key === "4")      setSpeed(4);
+      // W — Ethos Heights, the district map in the parent game (see hud.jsx).
+      if ((e.key === "w" || e.key === "W") && !e.ctrlKey && !e.metaKey && !e.altKey && !/^(INPUT|TEXTAREA|SELECT)$/.test((e.target && e.target.tagName) || "")) {
+        try { window.parent.postMessage({ type: "base:action", action: "ethos" }, window.location.origin); } catch (err) {}
+      }
+      // A — Camp Ops, the other door (the old Assign button's hotkey).
+      if ((e.key === "a" || e.key === "A") && !e.ctrlKey && !e.metaKey && !e.altKey && !/^(INPUT|TEXTAREA|SELECT)$/.test((e.target && e.target.tagName) || "")) {
+        try { window.parent.postMessage({ type: "base:action", action: "nav:campOps" }, window.location.origin); } catch (err) {}
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -92,12 +100,17 @@ function App() {
             <div className="base-cutaway">
               <div className="base-hull">
                 <div className="room-grid">
+                  {/* 🖼 FOR SHOW. Asked for: "Remove all of these modals from the
+                      bunker pictures when they are clicked on. I just want them to
+                      be for show." A room paints and glows; it opens nothing. The
+                      two doors a player actually needs are the big Camp and Ethos
+                      Heights buttons on the left (hud.jsx LeftColumn). */}
                   {rooms.map((r) => (
                     <Room
                       key={r.id}
                       room={r}
-                      active={r.id === activeId}
-                      onClick={() => setActiveId(r.id)}
+                      active={false}
+                      onClick={undefined}
                     />
                   ))}
                 </div>
@@ -109,7 +122,10 @@ function App() {
           </div>
         </div>
 
-        <Panel room={active} onClose={() => setActiveId(null)} />
+        {/* The room panel is retired with the room click — nothing sets activeId
+            any more, so this renders nothing; kept mounted so a future room CTA
+            has its host back without re-wiring. */}
+        <Panel room={null} onClose={() => setActiveId(null)} />
       </main>
 
       <BottomBar

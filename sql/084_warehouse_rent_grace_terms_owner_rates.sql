@@ -1,0 +1,44 @@
+-- 084 · Rental expiry: 24 hours to act, renewal terms, and owner-set rates.
+--
+-- Asked for by the owner: "when players rent a bay from a player and their days
+-- are out they have to have their resources returned to them, which will be 24
+-- hours. Send a modal message that says 'Return your resources or rent another
+-- 7, 30, 60, 90 days.' If they pick a day then charge them on the rates based
+-- on the days. Allow owners of warehouses to change the prices of their rates."
+--
+-- WHAT CHANGED, in two applied migrations:
+--
+--   wh_rent_grace_24h_terms_and_owner_rates
+--     · wh_warehouses.rent_cinder_per_day   NEW, nullable. Null = the game
+--       default, so every existing warehouse charges exactly what it did before.
+--     · wh_rent_rate(warehouse)             the owner's price or the default —
+--       one function, so the quote shown, the charge taken and the owner's
+--       dashboard cannot disagree.
+--     · wh_set_rent_rate(cinder_per_day)    owner-only, CLAMPED 1,000–5,000,000.
+--       0 would make bays free and break the "was I paid?" ledger; unbounded
+--       lets an owner park a renter's goods behind a price nobody can pay,
+--       which is the impound flow with extra steps.
+--     · wh_config                           rent_grace_days 3 → 1 (the 24 hours),
+--       rent_max_days 30 → 90 (30 would have clamped a 90-day renewal to 30
+--       days while charging for 90), renew_terms [7,30,60,90] named once.
+--     · wh_rent_unit                        charges the owner's rate.
+--     · wh_renew_unit(unit, days)           NEW. Works AFTER expiry — that is
+--       the whole point — up until the owner may impound. A lapsed term
+--       restarts from now, not from the past date, or renewing 7 days a day
+--       late would buy 6.
+--
+--   wh_my_rentals_shows_lapsed_bays
+--     · 🔴 wh_my_rentals filtered `rent_until > now()`, so an expired rental
+--       VANISHED from the renter's list — the one bay they most need, with
+--       their goods in it and the clock running. The modal would have had
+--       nothing to render and the renter no way to reach the bay to withdraw
+--       from. Lapsed bays now return flagged, with grace_until, the warehouse's
+--       rate, and a price per term so the modal quotes what the charge takes.
+--
+-- Verified in rolled-back transactions against live rows:
+--   grace 1 day · max 90 · terms [7,30,60,90] · default rate 120,000
+--   owner rate 250,000 applies (30 days = 7,500,000) · clamps at 1,000/5,000,000
+--   lapsed bay visible: expired=true, 140 kg held, 22:00 grace left,
+--     quotes {7:840000, 30:3600000, 60:7200000, 90:10800000}
+--   renew 30 days after expiry: ok, charged 3,600,000, granted 30 full days
+--   a term not on the list is refused with the list

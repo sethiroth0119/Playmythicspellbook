@@ -11,6 +11,7 @@
 // Use:   npm run deploy
 
 import { execSync } from 'node:child_process';
+import fs from 'node:fs';   // version.txt is written from BUILD_VERSION below
 import { minify, restore } from './build.mjs';
 
 /* 🔴 RESTORE MUST SURVIVE THE PROCESS DYING, NOT JUST WRANGLER FAILING.
@@ -29,13 +30,19 @@ import { minify, restore } from './build.mjs';
      Re-entering it would be harmless today, which is precisely why it is worth
      pinning now rather than relying on that staying true. */
 let _restored = false;
+let _restoreFailed = false;
 function restoreOnce(why) {
   if (_restored) return;
   _restored = true;
   try {
     console.log('\n═══════════ RESTORE ═════════' + (why ? '  (' + why + ')' : ''));
-    restore();
+    /* restore() is SYNC (see its header). It used to be async, which meant a
+       failure here became an unhandled rejection instead of something this
+       catch could see — so a failed restore printed nothing useful and the
+       deploy still announced success while the working tree sat minified. */
+    if (restore() !== true) _restoreFailed = true;
   } catch (e) {
+    _restoreFailed = true;
     console.error('❌ restore failed:', e && e.message);
     console.error('   Recover with:  git checkout -- public/index.html');
   }
@@ -62,7 +69,35 @@ process.on('unhandledRejection', (e) => {
   process.exit(1);
 });
 
+/* 🔄 version.txt IS THE UPDATE SIGNAL, AND IT WENT STALE FOR 70 BUILDS.
+   index.html fetches it uncached every few minutes and compares it to
+   window.BUILD_VERSION; when they differ it reloads ONCE to pick up the new
+   bundle. It was last hand-edited at v121q15 while BUILD_VERSION marched on to
+   v121q85, so `latest` never changed, every player's __forcedReloadFor was
+   already stamped with it, and the whole auto-update path was dead — fixes
+   shipped and simply did not reach anybody until they cleared their cache.
+   ⚠ WRITTEN FROM BUILD_VERSION RATHER THAN MAINTAINED BY HAND, because a
+     number two humans have to remember to change together is a number that
+     drifts. This reads the one in index.html and makes the file agree with it,
+     every deploy, before anything is uploaded.
+   ⚠ It writes the SOURCE file, which minify() then copies — so it must run
+     before the build, and the restore afterwards leaves the corrected value in
+     place because version.txt is not one of the files minify rewrites. */
+function syncVersionTxt() {
+  const idx = fs.readFileSync('public/index.html', 'utf8');
+  const m = idx.match(/window\.BUILD_VERSION\s*=\s*'([^']+)'/);
+  if (!m) { console.error('⚠ could not read BUILD_VERSION — version.txt left alone'); return null; }
+  const v = m[1];
+  let was = '';
+  try { was = fs.readFileSync('public/version.txt', 'utf8').trim(); } catch (e) {}
+  if (was === v) { console.log('   version.txt already ' + v); return v; }
+  fs.writeFileSync('public/version.txt', v);
+  console.log('   version.txt ' + (was || '(empty)') + '  ->  ' + v);
+  return v;
+}
+
 console.log('═══════════ BUILD ═══════════');
+syncVersionTxt();
 await minify();
 
 console.log('\n═══════════ DEPLOY ══════════');
@@ -78,6 +113,17 @@ restoreOnce();
 
 if (deployErr) {
   console.error('\nDeploy aborted. Local source is restored — you can re-run `npm run deploy`.');
+  process.exit(1);
+}
+/* 🔴 A FAILED RESTORE IS NOT A SUCCESSFUL DEPLOY, even though the upload
+   worked. Announcing "✅ deploy complete" over a minified working tree is how
+   this went unnoticed twice: the next edit would have been made against
+   minified source. The upload IS live — say so — but exit non-zero so the
+   shell, and anything scripting this, treats it as needing attention. */
+if (_restoreFailed) {
+  console.error('\n⚠  THE UPLOAD SUCCEEDED, BUT YOUR LOCAL SOURCE WAS NOT RESTORED.');
+  console.error('   public/index.html is still the MINIFIED build. Do not edit it.');
+  console.error('   Recover with:  git checkout -- public/index.html');
   process.exit(1);
 }
 console.log('\n✅ deploy complete');

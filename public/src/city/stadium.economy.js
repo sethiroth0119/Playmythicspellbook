@@ -516,10 +516,12 @@ export function concessionDemand(attendance, eventLengthCycles, E = STADIUM_ECON
  */
 export function concessionFulfilment(demand, stock, E = STADIUM_ECON) {
   const per = {}, short = [], consumed = {};
+  const haveOf = {}, wantOf = {};   // 🏟 bug-mtuasm4d: the readiness panel prints these per line
   let ratio = 1;
   for (const r in demand) {
     const want = Math.max(0, num(demand[r]));
     const have = Math.max(0, num(stock && stock[r]));
+    haveOf[r] = have; wantOf[r] = want;
     const p = want > 0 ? clamp(have / want, 0, 1) : 1;
     per[r] = p;
     if (p < 1) short.push(r);
@@ -543,7 +545,7 @@ export function concessionFulfilment(demand, stock, E = STADIUM_ECON) {
     const have = Math.max(0, num(stock && stock[r]));
     consumed[r] = +Math.min(want, have).toFixed(3);
   }
-  return { ratio: +ratio.toFixed(4), short, per, consumed, demand };
+  return { have: haveOf, want: wantOf, ratio: +ratio.toFixed(4), short, per, consumed, demand };
 }
 
 /** Σ share × spendWeight — box holders spend nearly twice a terrace ticket. */

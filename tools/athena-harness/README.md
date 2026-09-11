@@ -76,3 +76,11 @@ node tools/athena-harness/pw-bundle.mjs        # drives that page with the CDN s
 
 `bundle.mjs` is a small regex bundler tuned to this codebase (one IIFE per
 module); `worldforge.html` is what was published as the live preview.
+## Merged build (v121v116)
+
+```bash
+node tools/athena-harness/serve.mjs 8765 &     # instead of python http.server + symlinks: maps /src → public/src, /three, /models, /artifact
+PLAYWRIGHT_PKG=$PWD/node_modules/playwright/package.json node tools/athena-harness/pw-test19.mjs   # FILES panel, MENU tab, merged Scene tab
+```
+
+Every suite honours `PLAYWRIGHT_PKG` (the sandbox default is `/opt/node22/lib/node_modules/playwright/package.json`). `check-modules.mjs` resolves its directory on Windows too.

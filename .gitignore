@@ -52,6 +52,28 @@ public/assets/Units/unit frames/Mythic Spellbook units/Last units/Bonus units/Ne
 # Raw 3D model sources. Runtime models are served from the Supabase `models`
 # bucket, never the Pages bundle (see public/.assetsignore for the why).
 *.glb
+# EXCEPTION: the two Containment Lab characters. They are FIXTURES of the
+# BSL-4 mini-game — every player is the researcher and becomes the sentinel —
+# so they cannot live in a per-owner Storage bucket. 1.4 MB for the pair,
+# already recompressed from 30 MB, and mirrored by an exception in
+# public/.assetsignore so they actually reach the CDN.
+!public/models/lab/researcher.glb
+!public/models/lab/sentinel.glb
+# EXCEPTION: the Cracking Yard's operator, for the same reason — every player
+# who walks the yard IS this character, so it ships rather than living in a
+# per-owner bucket. 0.75 MB, packed from three 8 MB Meshy exports by
+# tools/glbpack-character.mjs. Mirrored in public/.assetsignore.
+!public/models/refinery/guardian.glb
+# EXCEPTION: the three trucks. Same rule again — these are CATALOGUE fixtures,
+# not per-owner uploads: every player browsing Prince Portfolios' Truck Yard
+# sees the same rigs, and the Cracking Yard's tanker is the model every
+# refinery parks. A Storage bucket the player has never written to cannot
+# serve a shop's own product photos. 1.2 MB for all three, packed from 364 MB
+# and 9 million triangles of raw Meshy export by tools/glbprop.mjs.
+# Mirrored in public/.assetsignore.
+!public/models/trucks/tanker.glb
+!public/models/trucks/freight_box.glb
+!public/models/trucks/freight_rig.glb
 # Oversized audio masters dropped into assets/Audio (~50-100 MiB each).
 public/assets/Audio/*.wav
 # Local-only working directories.
@@ -72,8 +94,85 @@ mythic-game-api/
 # disk; compress or convert to a sprite sheet if it is ever wanted in-game.
 public/assets/Units/unit frames/New units/*.gif
 
+# Gauntlet debug captures. The screenshot harness lives in the session scratchpad
+# and writes there; some builder agents nonetheless emit their isolated-bake PNGs
+# and .meta.json probes to a shots/ dir at the repo root. That is 40MB+ of
+# regenerable debug output per run and must never reach git history — the
+# checkpoint commits during a wave use `git add -A`, so without this rule one
+# stray bake lands in the repo permanently.
+/shots/
+
+# 🗄 Uncompressed asset masters (audio WAV, GLB, GIF) kept locally for
+# re-encoding. 1.4 GB — never commit, never deploy. The shipped, compressed
+# versions live under public/assets/. See migration/audit-report.md.
+assets-source/
+
+# Local run logs from the asset tooling.
+migration/*.log
+migration/*.err
+# Gauntlet harness: vendored three.js + regenerable screenshots
+.gauntlet/package/
+.gauntlet/*.tgz
+.gauntlet/shots/**/*.png
+.gauntlet/progress.html
+
+# Transient git worktrees created by in-flight Workflow builders — each is a
+# full checkout and is removed when the run ends. Never commit these.
+.claude/worktrees/
+.gauntlet/patch-preview.html
+# 15 MB pre-change snapshot rebuilt on demand by .gauntlet/_fxfind-baseline.mjs
+.gauntlet/_fxfind-baseline.html
+.gauntlet/probe-*.mjs
+.gauntlet/shots/wip-*/
+.gauntlet/shots/*.json
+
+# Warehouse minigame headless capture output — regenerable.
+_wh_shots/
+scratchpad/
+
+# ── Scratch and patch leftovers ────────────────────────────────────────────
+# tmp/ is this repo's scratchpad: 678 files and ~300 MB of one-off screenshots
+# and whole-file backups of index.html. None of it is source and none of it
+# should ever have been a commit candidate.
+tmp/
+
+# 🔴 PATCH LEFTOVERS, AND THIS ONE WAS LIVE. `patch` writes a .orig beside the
+# file it edits, and public/ is the deploy root — so a 15 MB copy of the entire
+# game at v121q47 was being uploaded and served at /index.html.orig, where
+# anyone could load a stale build. A second one had already shipped under
+# node-city/. Ignored so the next stray patch cannot reach production.
+*.orig
+*.rej
+
 # Athena Engine test harness — runtime folders created by setup.sh
 tools/athena-harness/three/
 tools/athena-harness/www/
 tools/athena-harness/shots/
 tools/athena-harness/artifact/
+# EXCEPTION: the four hospital patients. Same rule as the lab characters and
+# the trucks — these are FIXTURES every player sees, not per-owner uploads: the
+# people who walk into your Medical Corporation are the same four looks for
+# everybody, so a Storage bucket the player has never written to cannot serve
+# them. ~3 MB for all four, packed from ~92 MB of raw Meshy export (four
+# one-clip files each) by tools/glbpack-character.mjs.
+# Mirrored in public/.assetsignore.
+!public/models/hospital/patients/pilgrim.glb
+!public/models/hospital/patients/survivor.glb
+!public/models/hospital/patients/wanderer.glb
+!public/models/hospital/patients/denim.glb
+
+# 🏥 The hospital's fixtures as models (2026-09-04): two counters, four
+# stations and the ward bed. 1.7–4.6 MB each, packed by tools/pack-glb.mjs
+# from 115–128 MB Meshy exports whose masters stay in assets-source/ (ignored
+# above). Each ships with a .json sidecar of measured extents that
+# /public/src/hospital/floor.js and beds.js pin themselves to. Mirrored in
+# public/.assetsignore.
+!public/models/hospital/intake-desk.glb
+!public/models/hospital/ward-desk.glb
+!public/models/hospital/ward-bed.glb
+!public/models/hospital/crate-intake.glb
+!public/models/hospital/containment-vault.glb
+!public/models/hospital/supply-bench.glb
+!public/models/hospital/dispensary-stockroom.glb
+!public/models/hospital/compounding-lab.glb
+!public/models/hospital/loading-dock.glb

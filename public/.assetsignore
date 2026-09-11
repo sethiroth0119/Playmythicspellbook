@@ -39,6 +39,54 @@ assets/3d models/**/*.glb
 # 14.8 MiB — comfortably under Cloudflare's 25 MiB per-asset cap.
 !assets/3d models/Binder table.glb
 
+# EXCEPTION: the two Containment Lab characters (☣️ /src/biolab). Same reasoning
+# as the binder table — they are FIXTURES, not per-owner uploads: every player
+# who enters the airlock is the researcher and becomes the sentinel, so the
+# suit-up cannot depend on a Storage bucket the player has never written to.
+# 684 KiB + 738 KiB, two orders of magnitude under the cap; both were already
+# recompressed (4 files → 2, 30 MB → 1.4 MB) before they got here.
+!models/lab/researcher.glb
+!models/lab/sentinel.glb
+
+# EXCEPTION: the Cracking Yard's operator (🛢 /src/refinery). Same reasoning
+# again — it is the yard's fixture character, not a per-owner upload, so the
+# walk cycle cannot depend on a Storage bucket the player has never written
+# to. 0.75 MB, packed from three 8 MB exports.
+!models/refinery/guardian.glb
+
+# EXCEPTION: the three trucks (🚛 Truck Yard, 🛢 Cracking Yard). Catalogue
+# fixtures rather than per-owner uploads — every player sees the same rigs on
+# the shop floor, and the tanker is the model every refinery parks — so a
+# Storage bucket the player has never written to cannot serve them.
+# 342 + 363 + 474 KiB, all far under the 25 MiB cap, packed down from 364 MB
+# and ~9 million triangles by tools/glbprop.mjs.
+!models/trucks/tanker.glb
+!models/trucks/freight_box.glb
+!models/trucks/freight_rig.glb
+
+# EXCEPTION: the two farm rigs (🌾 Bulk Feed and 🐄 Livestock, added with those
+# two cargo classes in the Truck Yard). Same reasoning as the three above —
+# catalogue fixtures every player sees on the same shop floor, never per-owner
+# uploads — and the same pipeline: tools/glbprop.mjs took 93.7 MB /
+# 3,077,745 triangles and 94.9 MB / ~3M down to 0.86 MiB (14,496 tris) and
+# 1.31 MiB, with 1024px WebP textures. Masters in
+# assets-source/glb-masters/trucks/, never under public/.
+# 🔴 A MODEL PATH IN rigs.data.js WITHOUT A LINE HERE IS THE WORST FAILURE SHAPE
+#   THIS FILE HAS: the blanket rule above means it works perfectly in local dev
+#   and 404s only in production. Add the rig row and this line together.
+!models/trucks/feed_truck.glb
+!models/trucks/livestock_truck.glb
+
+# EXCEPTION (v121v110): the white flatbed semi every FREIGHT rig now shows in
+# the Truck Yard and drives in the Highway Haul, and the two shipping
+# containers that ride on its deck there. Same pipeline (tools/glbprop.mjs):
+# 26.7 MB → 0.84 MiB, 19.9 MB → 0.59 MiB, 16.7 MB → 0.53 MiB. Masters in
+# assets-source/glb-masters/{trucks,containers}/.
+!models/trucks/freight_semi.glb
+!models/trucks/freight_semi_wrecked.glb
+!models/trucks/container_blue.glb
+!models/trucks/container_red.glb
+
 # Belt-and-suspenders: any other oversized model formats that land in assets.
 *.glb.zip
 
@@ -65,3 +113,108 @@ assets/Audio/Main menu music.wav
 # they can ship. Small GIFs under the cap still deploy normally, so exclude only
 # this one by exact name. File stays on disk.
 assets/Units/unit frames/New units/Grey Dragon Animate rare.gif
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ✅ COMPRESSED RUNTIME MODELS — re-included 2026-08-19.
+# The blanket `**/*.glb` above STAYS. It is the guard that stopped an oversized
+# drop aborting the entire deploy (see the header), and removing it would just
+# wait for the next 70 MiB model to freeze production again. Instead each model
+# that has been through `gltf-transform optimize --compress draco` and VERIFIED
+# under the 25 MiB cap is re-included BY NAME below.
+#
+# Uncompressed masters live in `assets-source/glb-masters/` (outside the deploy
+# root, byte-verified before any write). To add a model here: compress it,
+# confirm `gltf-transform inspect` reports unchanged mesh/material counts,
+# confirm it is under 25 MiB, then add one `!` line. Do not relax the blanket.
+#
+# ⚠ These are DRACO-compressed. Any page that loads one MUST wire a DRACOLoader
+# into its GLTFLoader or the load throws. index.html already does; pack-opener
+# and ascent-map were wired in the same commit that added these lines.
+!assets/Boosterandpacks/Glb/Booster boxes.glb
+!assets/Boosterandpacks/Glb/BOU! pack.glb
+!assets/gib files/Prince The adam Changer.glb
+!assets/gib files/The Tour Guide.glb
+!assets/3d models/Man eacthing plant statue.glb
+!assets/3d models/packopening shelf.glb
+!assets/3d models/cardshelf.glb
+!assets/3d models/Bahamut statue.glb
+!assets/3d models/Mythci deck.glb
+!assets/3d models/Vendor market cash register.glb
+!assets/3d models/base chair.glb
+!assets/3d models/cindercore.glb
+!assets/3d models/abandontank.glb
+!assets/3d models/posters/Birth Of Universe 1.glb
+!assets/3d models/Base survivor bed.glb
+!assets/3d models/sircedric statue.glb
+!assets/3d models/prn nodes.glb
+!assets/3d models/Battletable.glb
+!assets/3d models/ruin house 1.glb
+
+# 🚜 THE WAREHOUSE FORKLIFT. On the allow-list because **/*.glb above blocks
+# every model by default and this one has to ship — the warehouse loads it when
+# a player owns the tier-4 lifter.
+# ⚠ IT IS 1.67 MB, AND THAT IS THE ONLY REASON IT IS ALLOWED. The file Meshy
+#   produced was 122 MB and 3,038,154 triangles, which is four times the 25 MiB
+#   ceiling that aborts a whole deploy. tools/build-forklift.mjs decimates it to
+#   29,202 triangles; re-export from Meshy and you MUST run that script again
+#   before the raw file goes anywhere near this folder.
+!assets/models/forklift.glb
+
+# EXCEPTION: the four hospital patients (🏥 /src/hospital). Fixtures rather
+# than per-owner uploads — the same four looks walk into every player's ward —
+# so a Storage bucket the player has never written to cannot serve them.
+# 0.5-0.9 MiB each, far under the 25 MiB cap, packed from ~92 MB of raw export.
+!models/hospital/patients/pilgrim.glb
+!models/hospital/patients/survivor.glb
+!models/hospital/patients/wanderer.glb
+!models/hospital/patients/denim.glb
+
+# EXCEPTION: the hospital's Front Desk (🏥 /src/hospital/scene.desk.js). A
+# fixture every Medical Corporation stands behind, so it cannot depend on a
+# Storage bucket the player has never written to. Packed by
+# tools/build-intake-desk.mjs from a 115 MiB / 2,990,122-triangle Meshy export
+# down to 35,880 triangles and three 1024² WebP textures — 1.81 MiB, 7% of
+# the cap. The raw export is 4.6× the cap and would abort the whole deploy:
+# it lives in assets-source/glb-masters/, never here. Re-export → re-run the
+# script. WebP: every GLTFLoader this game ships supports EXT_texture_webp.
+!models/hospital/intake-desk.glb
+
+# EXCEPTION: the Ward Bay's counter and the Ward Cot (🏥 /src/hospital —
+# floor.js BAY_MODEL, beds.js BED_MODEL). Fixtures every ward stands and lies
+# in. Packed by tools/pack-glb.mjs from 116 MiB / 3,009,198-triangle and
+# 118 MiB / 3,040,134-triangle Meshy exports down to 1.87 MiB (36,108 tris)
+# and 1.70 MiB (36,480 tris). Masters in assets-source/glb-masters/.
+!models/hospital/ward-desk.glb
+!models/hospital/ward-bed.glb
+
+# EXCEPTION: four more hospital stations as models (🏥 /src/hospital —
+# floor.js WARD_MODEL, VAULT_MODEL, SUPPLY_MODEL, STOCK_MODEL): the Crate
+# Intake, Containment Vault, Supply Bench and Dispensary Stockroom. Fixtures
+# every Medical Corporation has. Packed by tools/pack-glb.mjs from ~3M-triangle
+# / 113-122 MiB Meshy exports to 4.63 MiB (61,342 tris), 1.81 MiB (36,148),
+# 3.32 MiB (49,284) and 1.78 MiB (36,278). Masters in assets-source/glb-masters/.
+!models/hospital/crate-intake.glb
+!models/hospital/containment-vault.glb
+!models/hospital/supply-bench.glb
+!models/hospital/dispensary-stockroom.glb
+
+# EXCEPTION: the Compounding Lab and the Loading Dock (🏥 floor.js
+# COMPOUND_MODEL, DOCK_MODEL). Same pipeline: tools/pack-glb.mjs from
+# 114 MiB / 3,047,710-triangle and 130 MiB / 3,052,710-triangle Meshy
+# exports; the lab lands at 1.63 MiB (36,572 tris). The dock's grated deck
+# hit meshopt's topology floor (~101k tris at ANY error bound) and went
+# through the sloppy simplifier instead — 0.97 MiB, 37,178 tris; its sidecar
+# says `simplify: sloppy` so nobody mistakes that for the default pass.
+!models/hospital/compounding-lab.glb
+!models/hospital/loading-dock.glb
+
+# EXCEPTION: the four city-builder civilians (🚶 node-city agentMesh + /src/crowd).
+# Fixtures every city's streets walk with — never per-owner uploads — so a Storage
+# bucket the player has never written to cannot serve them. Meshy walking exports
+# with one skin and one clip each; the geometry was already ~3,100 triangles, so
+# only the textures were packed (tools/glb-textures.mjs → 512 WebP): 335-385 KiB
+# each, two orders of magnitude under the 25 MiB cap.
+!models/civilians/regal.glb
+!models/civilians/survivor.glb
+!models/civilians/pilgrim.glb
+!models/civilians/wanderer.glb

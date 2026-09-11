@@ -51,6 +51,8 @@ function makeHost() {
     resourceCap: () => { try { return B.resourceCap() | 0; } catch (e) { return 0; } },
     resourceUnits: () => { try { return B.resourceUnits() | 0; } catch (e) { return 0; } },
     workerPool: () => { try { return B.workerPool ? (B.workerPool() | 0) : 0; } catch (e) { return 0; } },
+    // 💰 Cinder value per unit — what inputTerroirScale weights a building's yields by.
+    resValue: (id) => { try { return B.resValue ? (Number(B.resValue(id)) || 0) : 0; } catch (e) { return 0; } },
     // ── writes, all through the sanctioned helpers. Never Profile.gems directly.
     spendGems: (n) => { try { return !!B.spendGems(n); } catch (e) { return false; } },
     addGems: (n) => { try { B.addGems(n); } catch (e) {} },

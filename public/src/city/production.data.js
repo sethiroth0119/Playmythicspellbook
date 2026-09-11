@@ -31,6 +31,19 @@
    exists to be deleted by whoever adds one.
    ════════════════════════════════════════════════════════════════════════════ */
 
+/* 🧰 The catalogue, for the chain producers appended at the bottom of this file.
+   🔴 THE QUERY STRING IS DELIBERATE AND MUST MATCH index.html's <script> tag for
+      chain.js EXACTLY. An ES module is keyed by URL, so `../resources/chain.js`
+      and `../resources/chain.js?v=v121v94chain3` are TWO instances of the same
+      file: both parse, both register window.MythicResourceChain, and the second
+      one to run wins. That is harmless today (the module is pure data) but it is
+      2× the parse of a 258-entry table on every load and it is the kind of thing
+      that stops being harmless the moment anyone gives chain.js state.
+      round0p of tools/economy-tests/run.mjs asserts the two strings match, so a
+      bump in index.html that forgets this line turns the gate red instead of
+      silently double-loading. */
+import { CHAIN_BY_ID } from '../resources/chain.js?v=v121v94chain3';
+
 /* 📦 UI ORDER IS LOAD-BEARING — THE WAREHOUSE IS FIRST ON PURPOSE.
    Production halts at full storage. A player who builds a Hydroponics Bay first
    watches it fill its buffer and stop, which reads as a broken building rather
@@ -122,10 +135,21 @@ export const CITY_PRODUCTION = [
     id: 'foundry', name: 'Smelting Foundry', kind: 'production', emoji: '🏭', accent: '#9fb4d8',
     desc: 'Scrap in, ingots out. The air downwind is not free.',
     maxLevel: 3,
-    yields: { metal: 40 }, inputs: { fuel: 20 },
+    /* 🧱 …AND INGOTS, WHICH THIS ROW HAS PROMISED SINCE IT WAS WRITTEN.
+       The description above says "Scrap in, ingots out" and the data yielded
+       metal alone, so when ingots was promoted into RESOURCES (v121v70) the
+       gate correctly refused it: "no producer for: ingots — else the pile is
+       real and inert". It is THIS building, in the city builder too (the
+       Smelting Works there runs gen ingots / use metal).
+       ⚠ metal STAYS. This is the only metal producer in the catalogue, so
+         swapping the yield rather than adding to it would strand metal in
+         exactly the way the gate is there to catch.
+       Tier 1 against metal's tier 0 (economy/tuning.js resTier), so the
+       smaller number is the refined half of the same heat, not a nerf. */
+    yields: { metal: 40, ingots: 12 }, inputs: { fuel: 20 },
     draw: { power: 35, water: 0, workers: 8, pollution: 18 },
     footprint: { w: 3, h: 3 },
-    // Produces metal, priced mostly in fuel + supplies. Rule 1 of §3.
+    // Produces metal and ingots, priced mostly in fuel + supplies. Rule 1 of §3.
     cost: [
       { cinder: 60000,  metal: 20,  supplies: 45,  fuel: 30 },
       { cinder: 145000, metal: 55,  supplies: 110, fuel: 75,  ammo: 15 },
@@ -288,7 +312,379 @@ export const CITY_PRODUCTION = [
       { cinder: 292000, metal: 205, supplies: 180, wood: 135, water: 100, dna: 7 },
     ],
   },
+  /* ══ THE FREIGHT DEPOT (transport r1, re-landed) ═══════════════════════════
+     APPENDED, NOT SLOTTED IN WITH THE OTHER UTILITIES, deliberately. It is
+     `kind: 'utility'` because it yields nothing and enables instead — but the
+     header rule at the top of this file (storage → power → labour → producers)
+     is about what a NEW city is offered FIRST, and a freight yard is nowhere on
+     that path. Putting it third would hand a fresh player a charter building
+     before a farm. It is the LAST hand-written row; the generated chain
+     producers are push()ed after the literal closes, so they still follow it.
+
+     🔴 WHY IT IS BEING LANDED A SECOND TIME. This entry shipped once, in commit
+     2535e5e57d on the transport feature branch, and never reached this branch:
+     the transport module (src/transport/depot.js) was merged with its
+     DEPOT_DEF_ID = 'freightdepot' and this def was not. Measured on a clean
+     bundle: MythicCityProduction.cityProdDef('freightdepot') → null, so
+     depotDef() → null and depotReady() refused every chartered haulier with
+     'catalog-missing' — the one code that tells a player to stop touching the
+     game — before it ever looked at their placed rows. Grepping this file for
+     the id is the whole test; nothing about the def had to change to fix it.
+
+     ⚠ THE ID COLLISION IS REAL AND IT IS WHY THIS SAYS `freightdepot`.
+     `depot` is ALREADY TAKEN — by the Supply Workshop above (id 'depot', a
+     `production` building that yields supplies), and `CITY_PREREQ.archive =
+     ['depot']` points at THAT one. Two ids a prefix apart is a hazard, so it is
+     written down: Supply Workshop is `depot`, the freight yard is
+     `freightdepot`, and NEITHER may be renamed to tidy the pair up. (The
+     node-city Truck Depot is a third thing again — a node-city BUILDINGS tile
+     typed `truckdepot`, which sql/075-076 index; it is not in this catalog.)
+
+     🔴 WHY A RENAME IS NOT COSMETIC: A MISSING ID DELETES A PAID-FOR BUILDING.
+     ensureState() (production.state.js) filters s.placed down to the rows whose
+     defId still resolves through cityProdDef() and WRITES THE FILTERED ARRAY
+     BACK. The instant this entry stops existing — renamed, removed, or merely
+     absent from the bundle a stale service worker served against a fresh save —
+     every placed depot is erased from the save, permanently, after the player
+     paid for it. This file's own history, recorded in production.state.js:
+     "This project deleted paid-for buildings four rounds running."
+     So `freightdepot` is a PERMANENT id, and this entry must land in the same
+     deploy as anything that can place one — never one deploy behind it.
+
+     🔴 THREE OF THE FOUR effect() KEYS ARE READ BY NOTHING IN /src/city, AND
+     THAT IS THE DESIGN, NOT AN OVERSIGHT. cityBudget() reads exactly `power`,
+     `workers`, `storage` and `population` off def.effect(level) and discards
+     the rest — powerplant's authored `radius: 4` above is already dead in
+     precisely this way. `bays` / `fleetCap` / `radius` are read on the TRANSPORT
+     side, by src/transport/depot.js, which walks the placed rows and calls this
+     function itself. Do NOT "fix" that by teaching cityBudget() about bays: the
+     city budget is a power/crew/storage ledger and a freight number in it would
+     be a second authority for a value the server (transport_caps() in sql/073)
+     also derives. This function is the SINGLE client definition of the level
+     table. Copy it nowhere. */
+  {
+    id: 'freightdepot', name: 'Freight Depot', kind: 'utility', emoji: '🚛', accent: '#e0a45c',
+    desc: 'Loading bays, fuel bowsers and a yard. Without one your charter is paperwork — and a working yard eats crew and power the rest of the city was using.',
+    maxLevel: 3,
+    /* ⛽ `inputs` IS OMITTED, AND THE DESIGN DOC'S `inputs: { fuel: 30 }` IS A
+       REJECTED DESIGN. Three verified facts, in the order that decides it:
+         1. It could never debit a unit. `inputs` is charged only inside
+            collect(), and collect() is unreachable for any def with
+            `yields: null` because pending() returns `{cycles: 0}` on its first
+            line for exactly that case.
+         2. It would still RENDER on the card and still raise a red ⛔ NO FUEL
+            halt through haltState(), whose wording is "burns 30 fuel per cycle"
+            — and there is no cycle. A halt that is worded falsely is bad; a
+            halt that is worded falsely AND stops nothing is worse. It would
+            stop nothing: cityBudget() and depot.js both read effect() with no
+            regard for halt state, so a "halted" depot keeps every bay, every
+            fleet slot and its full reach.
+         3. The fuel sink the doc wants is real, and it is somebody else's line.
+            CLAUDE.md: all operation pricing goes through _opEcon(). A per-run
+            burn priced HERE would be a second price for one thing, which is
+            the failure this catalog's cost dial exists to prevent.
+       So: no `inputs`, and when the per-run burn does ship it ships in
+       _opEcon('transport') and this line stays null. The card losing a fuel
+       chip is the whole cost of that. */
+    yields: null, inputs: null,
+    /* ⚠ THIS IS A REAL CITY LOAD AND IT SCALES WITH LEVEL — the `desc` says so
+       because a player is owed the warning BEFORE they place it. cityBudget()
+       multiplies every `draw` leg by the row's level and sums it across ALL
+       placed rows, so a level-3 yard draws 54⚡, 24 crew, 12💧 and 42☣ — and 24
+       crew is an entire level-1 Tenement block's output. The deficit is
+       CITY-WIDE: haltState() reports NO_STAFF and BROWNOUT (a 0.4 throttle) on
+       every OTHER building, so upgrading this can visibly stop a player's
+       Foundry with no message that names the depot. Kept at the design doc's
+       numbers rather than quietly shaved, because a business that costs the
+       city nothing is not a business; the honest move is to say it out loud in
+       the desc and in the panel, not to hide it in the tuning. */
+    draw: { power: 18, water: 4, workers: 8, pollution: 14 },
+    /* 🚛 THE THREE THINGS THE BUILDING DECIDES, and the reason freight is a
+       building rather than a number:
+         bays     — SIMULTANEOUS in-transit contracts, independent of fleet
+                    size. Buying rigs alone does not scale a carrier.
+         fleetCap — how many rigs the yard can park.
+         radius   — reach in HOPS from the node the yard stands in. No depot in
+                    reach of both endpoints ⇒ no quote, which is what stops one
+                    player serving the planet from a single tile.
+       🔴 THE SERVER HAS ITS OWN COPY OF ALL THREE AND THE SERVER'S COPY BINDS.
+       transport_caps() in sql/073 publishes `'reach', 3 + c.depot_level`,
+       `'bays', least(2 * c.depot_level, f.max_bays)` and `'fleet_cap',
+       least(4 * c.depot_level, f.max_fleet_rigs)` as plpgsql literals — a
+       migration cannot import this catalog — and transport_quote / dispatch
+       read those, not this. So changing the multipliers below WITHOUT a new
+       migration that redefines transport_caps() makes the panel promise bays
+       and reach that dispatch then refuses — this repo's worst bug class: shown
+       one number, billed by another. The two copies must move together.
+       ⚠ max_bays defaults to 6 and 2 × 3 is exactly 6, so the server's clamp is
+       invisible today and will bite the first person who raises the bays
+       multiplier without raising transport_config.max_bays. */
+    effect: lv => ({ bays: 2 * lv, fleetCap: 4 * lv, radius: 3 + lv }),
+    footprint: { w: 3, h: 3 },
+    /* 💰 AUTHORED PRE-DIAL, like every hand-written row above it. cost.js's
+       buildingCostAt() applies RESOURCE_COST_MULT = 2.5 to every non-cinder leg
+       and CINDER_COST_DIV = 3 to the cinder leg AT READ TIME, so these numbers
+       are NOT the price: L1 is charged as 35,000 cinder + 238 metal + 175
+       supplies + 125 stone + 75 fuel. Never hand-multiply a row to "fix" a
+       price and never touch the two constants for one building — they are one
+       knob for the whole catalog, and that is what keeps the UI and the spend
+       from ever disagreeing.
+       Priced against the Power Plant (the other 3×3 utility) and deliberately a
+       little under it: this is the door into a whole business, not a capstone.
+       💡 THE STONE + WOOD LEGS ARE ON PURPOSE A SINK for the r12 material
+       chain — wood and stone got producers that round and almost nothing that
+       consumes them at scale. A yard is hardstanding, decking and dunnage, so
+       the fiction and the economy want the same thing here. */
+    cost: [
+      { cinder: 105000, metal: 95,  supplies: 70,  stone: 50,  fuel: 30 },
+      { cinder: 250000, metal: 215, supplies: 160, stone: 120, fuel: 70,  wood: 80 },
+      { cinder: 585000, metal: 460, supplies: 340, stone: 260, fuel: 155, wood: 175, memoryShards: 9 },
+    ],
+  },
 ];
+
+/* ════════════════════════════════════════════════════════════════════════════
+   🧰 THE CHAIN PRODUCERS — one per promoted chain resource, GENERATED.
+   ----------------------------------------------------------------------------
+   🔴 WHY THIS EXISTS AT ALL. auditCatalog() rule 1 — "every resource has a
+   producer" — is not a style rule. index.html's RESOURCES gained 56 chain ids
+   this round, and NOT ONE of them is in SALVAGE_RES (checked: the intersection
+   is empty), so unlike wood/stone/cloth in r12 they cannot even be looted. A
+   promoted id with no building that makes it would therefore be a vault row
+   that can never hold anything — the "real and inert" failure RESOURCES_NEXT.md
+   is written about, reproduced 56 times in one commit. These rows are the
+   producer half of "a resource is promoted TOGETHER with its producer".
+
+   ── THE OPEN QUESTION THIS ANSWERS ─────────────────────────────────────────
+   RESOURCES_NEXT.md §"Remaining open questions" asks: does CITY_PRODUCTION need
+   a building per resource, or can one building take a recipe parameter? Neither,
+   quite. It is one building per resource — because `defId` is what a placed row
+   stores and what CITY_PREREQ keys off, and a recipe parameter would mean a
+   second identity dimension in every save row — but the 56 definitions are
+   DERIVED from three inputs rather than typed:
+     • the id list (PROMOTED_CHAIN_IDS below, itself the derivation),
+     • the catalogue's own name/icon/colour/tier/category (chain.js), and
+     • one shelf of numbers per tier (CHAIN_TIER).
+   So there is nothing here for a hand to get wrong 56 times, adding a resource
+   to the promotion set costs zero edits in this block, and the numbers can be
+   retuned in three places instead of a hundred and sixty-eight.
+
+   🔴 EVERY COST LEG IS ONE OF THE LEGACY 14, AND EVERY INPUT TOO. That is the
+   load-bearing constraint, not a simplification:
+     • A cost priced in a chain id would be unpayable on a fresh camp — none of
+       the 56 can be looted, so the only source is these buildings, and pricing
+       them in each other deadlocks the whole block behind itself.
+     • The industrial relationships between the 56 (timber→lumber, wheat→flour…)
+       ARE modelled — in /src/economy/recipes.js, which the city firms run on.
+       Restating them here would create a second copy that can disagree with the
+       first, and chain.js `inputs: []` is deliberately still empty precisely so
+       there is one place that answer lives. This file must not become the
+       second one.
+   Rules 2/3/5 of auditCatalog fall out by construction: costs name only legacy
+   ids so they can never be "priced solely in what it produces"; every tier's L1
+   carries three non-Cinder legs; every tier's top row pulls a rare.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* 🔴 DERIVED, NOT CHOSEN — and re-derived by the gate on every run.
+
+       PROMOTED_CHAIN_IDS = { every `out` id of node-city's ECO_BUILDING_MAP,
+                              with the OP_ECO_MAP ops join applied }
+                            ∩ MythicResourceChain.NEW_IDS
+
+   i.e. exactly the catalogue ids that have a real producer standing behind them
+   after this round wired 19 more buildings into the economy. It is a literal
+   here only because ECO_BUILDING_MAP lives inside a 27,000-line HTML file that
+   no module can import (the globals trap); round0p of
+   tools/economy-tests/run.mjs scrapes the shipped map, recomputes the
+   intersection and fails on ANY difference from this array, in either
+   direction. Do not edit it by hand — change the map and let the gate tell you.
+   45 tier-0 raws, 17 tier-1 intermediates, 9 tier-2 finished goods — the 15 added
+   by the extraction round (rawWater, the deep and strategic minerals, quartz,
+   sugar cane and the four deep anomalous seams) are all tier 0. */
+/* ══ 🛢 PROMOTED WITH A PRODUCER THAT IS NOT A BUILDING ═════════════════════
+   🔴 THE DERIVATION BELOW ASSUMES A CITY TILE IS THE ONLY THING THAT CAN MAKE
+      AN ID, and that stopped being true when Hidn Petro — The Cracking Yard
+      started drumming its cuts into the camp stores
+      (/src/refinery/state.js drawToStash). These thirteen are in index.html's
+      RESOURCES and are NOT derivable from ECO_BUILDING_MAP, because no tile
+      yields them.
+
+   They are listed HERE rather than quietly appended to PROMOTED_CHAIN_IDS
+   because that array's whole value is that it IS the derivation — putting a
+   hand-picked id in it would make the drift gate meaningless for everything
+   else. Keeping them separate says the true thing: "promoted, with a producer,
+   just not a building one."
+
+   ⚠ THE RULE THEY STILL OBEY is the one that matters: every id has exactly one
+     producer standing behind it today. An id with none is "worse than missing —
+     the player's pile of it is real and inert", and none of these is that.
+   ⚠ WHAT THIS FIXES: terroir's FALLBACK_IDS is `legacy 14 + promoted`, and
+     profileFor() compares that length against the slot bag — a mismatch
+     degrades the ENTIRE terroir feature to all-COMMON behind one console.warn.
+     Promoting fifteen ids into RESOURCES without extending this list left it
+     at 124 against a 139-id ledger, which is exactly that silent failure. */
+/* ⚠ ORDER IS LOAD-BEARING: this list is concatenated after the derivation to
+   reproduce index.html's RESOURCES array id-for-id, so it is in the REFINERY's
+   own cut order (light ends, middle distillates, bottoms, then the recovery
+   cuts) exactly as the ledger lists them — NOT alphabetical. Sorting it breaks
+   the RESOURCES equality check and terroir's FALLBACK_IDS alignment. */
+export const MINIGAME_IDS = [
+  'naphtha', 'kerosene', 'diesel', 'gasOil', 'heavyOil', 'slop', 'ethanol',
+  'reformate', 'alkylate', 'butane', 'catGasoline', 'hydrotreatedCut',
+  'reprocessedSlop',
+  /* 🐄 The Homestead Farm's thirteen (v121v94). Farm output, not tile output, so
+     they belong here beside the refinery's ids and not in the derived list below. */
+  'animalFeed', 'eggs', 'feathers', 'rawMilk', 'meat', 'wool', 'hide', 'leather', 'fertilizer',
+  'goldEggs', 'primeMeat', 'richMilk', 'fineWool',
+  /* 🎣 Woods Fishing (v121v96): the premium catch and what comes off the things that
+     attack boats. Mini-game output, like the refinery's cuts above. */
+  'primeSeafood', 'monsterParts',
+  'rations', 'planks', 'remedies',
+];
+
+/* 🧱 THE FOURTH SET: ids promoted out of the CITY'S OWN STOCK.
+   ingots was never a chain id and never lootable — it lived in node-city's
+   CITY_STOCK, the city's internal refined goods, which the player ledger
+   could not see. Players produced it, saw it in the city panel and found
+   nothing in any vault, which is the reported bug (v121v70).
+   It is listed separately from PROMOTED_CHAIN_IDS on purpose: it is NOT
+   part of the derivation (it is in no chain catalogue), so folding it in
+   there would make that list stop meaning "the derivation" and quietly
+   disarm the check that nothing rides in beside it.
+   ⚠ THE SAME PRICE OF ADMISSION APPLIES: a producer (the Smelting Foundry
+     now yields it, as its own description always claimed), an explicit
+     RESOURCE_CINDER_VALUE, and a classification. The gate enforces all
+     three — it caught this promotion mid-flight and refused it. */
+export const PROMOTED_STOCK_IDS = ['ingots'];
+
+export const PROMOTED_CHAIN_IDS = [
+  'acids', 'adhesives', 'aluminum', 'aluminumOre', 'anomalousEnergy', 'anomalousMatter',
+  /* 🛣 ✈️ asphalt and aviationFuel joined the derivation when the Asphalt Plant
+     and the Jet Fuel Terminal were added to ECO_BUILDING_MAP — they ARE tile
+     outputs, so unlike MINIGAME_IDS above they belong in this list, in the
+     alphabetical order the derivation produces. */
+  'appliances', 'arcaneCrystal', 'asphalt', 'aviationFuel', 'beverages', 'boosterPacks', 'bread', 'cannedFood',
+  'cardStock', 'cardboard', 'cars', 'chemicalFeedstock', 'clay', 'clothing',
+  'coal', 'cobalt', 'constructionComponents', 'constructionGlass', 'copper', 'copperOre',
+  'copperWire', 'corn', 'cotton', 'crudeOil', 'dimensionalMaterial', 'electricalComponents',
+  'electricity', 'electronicComponents', 'engines', 'fabric', 'freshFish', 'freshWater',
+  'fruit', 'furniture', 'furnitureComponents', 'gasoline', 'glass', 'goldOre',
+  'gravel', 'herbs', 'householdGoods', 'industrialChemicals', 'industrialFuel', 'industrialGas',
+  /* 🐄 livestock joined the derivation when the Livestock Farm was added to
+     ECO_BUILDING_MAP — it is that building's promoted output, and the handle
+     the coming slaughter business will pull. Alphabetical, because that is the
+     order the derivation emits. */
+  'industrialWater', 'limestone', 'lithium', 'livestock', 'lumber', 'machineParts', 'maintenanceParts',
+  'medicalChemicals', 'metalAlloys', 'metalComponents', 'microchips', 'mythicResidue', 'naturalGas',
+  'nickelOre', 'packagingMaterial', 'paint', 'petrochemicals', 'pigIron', 'plantFiber',
+  'plastic', 'plasticFeedstock', 'platinumOre', 'potatoes', 'preparedMeals', 'printedCards',
+  /* ♻️ recycledGlass and recycledPlastic joined the derivation when the Trash
+     Crusher was added to OP_ECO_MAP — they are its two outputs. In the
+     alphabetical order the derivation produces, which is why glass sits BEFORE
+     metal here and plastic after it. */
+  'quartz', 'rareEarthMinerals', 'rawWater', 'realityFragments', 'realityMatter',
+  'recycledGlass', 'recycledMetal', 'recycledPlastic',
+  'researchChemicals', 'researchEquipment', 'rice', 'rubber', 'sand', 'seafood',
+  'seaweed', 'semiconductorChemicals', 'semiconductorMaterials', 'sheetMetal', 'shellfish', 'silica',
+  'siliconWafers', 'silverOre', 'solvents', 'soybeans', 'specialtyPolymers', 'sportingGoods',
+  'steel', 'sugar', 'sugarCrops', 'syntheticFiber', 'timber', 'tires',
+  'titanium', 'toys', 'tungsten', 'vegetables', 'vehicleParts', 'wheat',
+  'woodPanels', 'zincOre',
+];
+
+/* The building noun per catalogue category. Cosmetic, but it is what stops 56
+   buildings all being called "<Resource> Works" — a blueprint list where every
+   card has the same shape is a list nobody reads.
+   ⚠ 'Yard' is deliberately NOT used for forestry: the hand-written catalog above
+     already ships a "Timber Yard" (which makes legacy `wood`), and two buildings
+     with the same name and different outputs is a support ticket. */
+const CHAIN_CAT_NOUN = {
+  water: 'Works',       agriculture: 'Farm',   fishing: 'Dock',      food: 'Kitchen',
+  forestry: 'Mill',     minerals: 'Pit',       energy: 'Plant',      construction: 'Works',
+  metals: 'Foundry',    chemicals: 'Plant',    machinery: 'Shop',    electronics: 'Fab',
+  vehicles: 'Plant',    consumer: 'Works',     medical: 'Lab',       waste: 'Yard',
+  recycling: 'Reclaimer', comms: 'Relay',      robotics: 'Works',    cards: 'Press',
+  holographic: 'Optics', aerospace: 'Works',   anomalous: 'Siphon',  containment: 'Lab',
+  security: 'Works',    civic: 'Depot',
+};
+
+/* 🎛 THE THREE SHELVES. Set against the hand-written catalog above so a chain
+   producer is never strictly better than the building next to it: the Water
+   Reclaimer yields 60 and the Supply Workshop 50, so a tier-0 extractor at 40 is
+   deliberately below both — a raw with a whole industrial chain behind it should
+   not also be the fastest thing in the city. Output falls and price rises with
+   tier, which is the only shape that makes refining a decision.
+   ⚠ Costs and inputs name ONLY legacy ids. See the header — this is the rule
+     that keeps the block buildable from a cold start. */
+const CHAIN_TIER = {
+  0: {
+    yield: 40, inputs: { fuel: 10 },
+    draw: { power: 12, water: 6, workers: 5, pollution: 6 },
+    footprint: { w: 3, h: 2 },
+    prereq: ['warehouse'],           // storage first — the catalog's own onboarding rule
+    cost: [
+      { cinder: 42000,  metal: 40,  supplies: 30,  fuel: 12 },
+      { cinder: 100000, metal: 95,  supplies: 70,  fuel: 30, wood: 25 },
+      { cinder: 236000, metal: 205, supplies: 155, fuel: 70, wood: 60, memoryShards: 5 },
+    ],
+  },
+  1: {
+    yield: 28, inputs: { fuel: 12, water: 15 },
+    draw: { power: 22, water: 15, workers: 6, pollution: 10 },
+    footprint: { w: 3, h: 3 },
+    prereq: ['powerplant'],          // refining draws real power; powerplant needs warehouse
+    cost: [
+      { cinder: 58000,  metal: 55,  supplies: 42,  water: 18 },
+      { cinder: 138000, metal: 130, supplies: 100, water: 45,  stone: 30 },
+      { cinder: 325000, metal: 280, supplies: 215, water: 100, stone: 70, memoryShards: 6 },
+    ],
+  },
+  2: {
+    yield: 16, inputs: { fuel: 15, supplies: 12 },
+    draw: { power: 30, water: 10, workers: 8, pollution: 14 },
+    footprint: { w: 3, h: 3 },
+    prereq: ['powerplant'],
+    cost: [
+      { cinder: 84000,  metal: 75,  supplies: 58,  cloth: 20 },
+      { cinder: 200000, metal: 175, supplies: 135, cloth: 48,  fuel: 40 },
+      { cinder: 470000, metal: 375, supplies: 290, cloth: 105, fuel: 90, dna: 8 },
+    ],
+  },
+};
+
+/* 🏗 Build them. Ids are prefixed `chain_` so they can never collide with the
+   hand-written catalog (a `defId` is stored in every placed row and in the save,
+   so a collision would silently re-point an existing building at a new
+   definition). `cost` rows are COPIED, not shared — a placed-building path that
+   ever mutated a cost row would otherwise change it for all 56 at once.
+   ⚠ Appended AFTER the hand-written entries on purpose: the catalog order is the
+     blueprint-list order and the Warehouse has to stay first (see the comment
+     above CITY_PRODUCTION). */
+const CHAIN_PREREQ = {};
+for (const id of PROMOTED_CHAIN_IDS) {
+  const m = CHAIN_BY_ID[id];
+  /* An id the catalogue does not define cannot be described, priced or drawn, so
+     it is SKIPPED rather than rendered as "undefined Pit". It also cannot
+     happen while round0p is green — the promotion set is an intersection WITH
+     the catalogue — which is exactly why this is a guard and not a throw. */
+  if (!m) continue;
+  const T = CHAIN_TIER[m.tier] || CHAIN_TIER[1];
+  const defId = 'chain_' + id;
+  CITY_PRODUCTION.push({
+    id: defId,
+    name: m.name + ' ' + (CHAIN_CAT_NOUN[m.cat] || 'Works'),
+    kind: 'production', emoji: m.icon, accent: m.color,
+    desc: 'Tier ' + m.tier + ' · ' + m.name + ' for the camp ledger. The city\'s own firms trade this id too; '
+        + 'this is the building that puts it in YOUR stash.',
+    maxLevel: T.cost.length,
+    yields: { [id]: T.yield },
+    inputs: Object.assign({}, T.inputs),
+    draw: Object.assign({}, T.draw),
+    footprint: Object.assign({}, T.footprint),
+    cost: T.cost.map(row => Object.assign({}, row)),
+  });
+  CHAIN_PREREQ[defId] = T.prereq.slice();
+}
 
 export const CITY_PRODUCTION_BY_ID = CITY_PRODUCTION.reduce((m, b) => { m[b.id] = b; return m; }, {});
 
@@ -313,6 +709,16 @@ export const CITY_PRODUCTION_BY_ID = CITY_PRODUCTION.reduce((m, b) => { m[b.id] 
 
    Empty / absent = buildable from turn one. */
 export const CITY_PREREQ = {
+  /* 🧰 The 56 generated chain producers, folded in from CHAIN_PREREQ above.
+     Spread FIRST so a hand-written key below always wins — the `chain_` prefix
+     already makes a collision impossible, and this is the ordering that stays
+     correct if that ever stops being true.
+     ⚠ STILL ACYCLIC, one level deep, by construction: every chain producer
+       depends on `warehouse` or `powerplant`, and neither of those depends on
+       anything the generator emits. The cycle warning below (foundry ⇄ refinery)
+       is about deriving prerequisites from `inputs`; these are not derived from
+       inputs — they are the two utilities that make any producer work at all. */
+  ...CHAIN_PREREQ,
   // bootstrap tier — ungated on purpose, a new city must be able to start
   warehouse:   [],
   wellhead:    [],
@@ -335,6 +741,22 @@ export const CITY_PREREQ = {
   sump:        ['apothecary'],
   archive:     ['depot'],
   genevault:   ['apothecary'],
+  /* 🚛 THE FREIGHT DEPOT — GATED, AND NOT LEFT ABSENT. An absent id means
+     "buildable from turn one" (missingPrereqs() returns [] for it), which would
+     put a charter building on the bootstrap tier next to warehouse, wellhead
+     and hydroponics — the three that are ungated so a NEW city can start — and
+     a yard on an empty grid has no Power Plant to draw its 18⚡ from.
+     ⚠ THE GRAMMAR SAYS "the producer of its primary input" AND THAT WOULD SAY
+     `refinery` (fuel). Rejected, for two reasons. The depot declares no
+     `inputs` at all — see the entry — so pointing at the fuel producer would
+     gate the building on a line that does not exist; and refinery sits four
+     deep (powerplant → stonequarry → foundry → refinery), which buries the
+     entrance to a whole business behind the late game. What the depot actually
+     consumes, every hour, charged and enforced, is POWER. So it hangs off the
+     thing that makes power. One level deep, and acyclic: powerplant needs only
+     warehouse, and nothing needs the depot. depotReady()'s 'no-depot' fix text
+     ("It needs a Power Plant first") is this line, read from the other side. */
+  freightdepot: ['powerplant'],
 };
 
 /* Which prerequisites are missing, given what the city already has placed.
@@ -359,21 +781,34 @@ export function cityProdDef(id) { return CITY_PRODUCTION_BY_ID[id] || null; }
    down over a tuning typo. Returns [] when the catalog is sound. */
 export function auditCatalog(resourceIds) {
   const RARE = ['memoryShards', 'dna', 'corruptedEssence'];
-  // ⚠ Kept in sync with index.html's RESOURCES (14 as of r12). A STALE list
-  // here does not just under-report: rule 4 ("every cost key must be a real
-  // resource") would flag every wood/stone/cloth cost leg below as an unknown
-  // id, which is the 'intel' bug this audit was written to catch, inverted.
+  /* ⚠ Kept in sync with index.html's RESOURCES (70 as of the chain promotion).
+     A STALE list here does not just under-report: rule 4 ("every cost key must
+     be a real resource") would flag every wood/stone/cloth cost leg below as an
+     unknown id, which is the 'intel' bug this audit was written to catch,
+     inverted.
+     🔴 THE 56 ARE CONCATENATED, NOT RETYPED. The legacy 11 + 3 stay a literal
+     because index.html owns them and no module can import that file; the chain
+     half is PROMOTED_CHAIN_IDS, the same array the ledger and the producers are
+     built from. So the fallback cannot fall behind a promotion — which is
+     exactly how it would have gone stale, since the fallback is what runs when a
+     caller has no host and therefore no live RESOURCE_IDS to hand over. */
   const ids = Array.isArray(resourceIds) && resourceIds.length ? resourceIds : [
     'food', 'ammo', 'water', 'medicine', 'energyDrink', 'supplies',
     'metal', 'fuel', 'corruptedEssence', 'memoryShards', 'dna',
     'wood', 'stone', 'cloth',
-  ];
+  ].concat(PROMOTED_CHAIN_IDS);
   const problems = [];
   // 1. Every one of the resources has a producer (14 as of r12 — the count is
   //    read from `ids`, never hardcoded, precisely so this rule cannot go stale).
   const produced = new Set();
   CITY_PRODUCTION.forEach(b => Object.keys(b.yields || {}).forEach(r => produced.add(r)));
-  ids.forEach(r => { if (!produced.has(r)) problems.push(`no building yields "${r}"`); });
+  /* 🛢 A MINI-GAME OUTPUT HAS A PRODUCER, IT IS JUST NOT A TILE. The refinery
+     cuts are made in the Cracking Yard, so demanding a CITY_PRODUCTION row for
+     them would report fifteen false problems and train the reader to ignore
+     this list — which is the only thing that makes rule 1 worth anything. The
+     exemption is the curated MINIGAME_IDS above, so it still cannot wave
+     through an id that nothing at all makes. */
+  ids.forEach(r => { if (!produced.has(r) && MINIGAME_IDS.indexOf(r) < 0) problems.push(`no building yields "${r}"`); });
   CITY_PRODUCTION.forEach(b => {
     const levels = Array.isArray(b.cost) ? b.cost : [];
     if (levels.length !== b.maxLevel) problems.push(`${b.id}: ${levels.length} cost rows for maxLevel ${b.maxLevel}`);

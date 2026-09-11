@@ -5,8 +5,13 @@
    There are two independent Cloudflare deploys, and "deploy everything" has
    historically meant only one of them:
 
-     game    H:\aiTcgbattler\game-deploy    → playmythicspellbook.play-a3d.workers.dev
-     market  H:\aiTcgbattler\market-deploy  → mythicspellbook.xyz
+     game    D:\game-deploy                 → playmythicspellbook.play-a3d.workers.dev
+     market  D:\market-deploy               → mythicspellbook.xyz
+
+   ⚠ BOTH REPOS MOVED off H:\aiTcgbattler\. The constants below pointed at the
+     old drive, so every run reported "not found" for both products and exited
+     non-zero — a deploy script that cannot find either tree fails safe, but it
+     also means this script had stopped being the thing anyone deployed with.
 
    They have DIFFERENT pipelines. game-deploy minifies index.html, bumps
    version.txt / BUILD_VERSION / CACHE_VERSION, then restores the source.
@@ -39,8 +44,8 @@
 import { execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 
-const GAME   = 'H:\\aiTcgbattler\\game-deploy';
-const MARKET = 'H:\\aiTcgbattler\\market-deploy';
+const GAME   = 'D:\\game-deploy';
+const MARKET = 'D:\\market-deploy';
 
 const argv        = process.argv.slice(2);
 const ONLY_GAME   = argv.includes('--game');

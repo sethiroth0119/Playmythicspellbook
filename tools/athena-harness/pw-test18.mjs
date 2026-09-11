@@ -6,7 +6,7 @@
    device registry key, skipped built-in props, the chooser. harness2.html. */
 import { createRequire } from 'module';
 const { chromium } = createRequire(process.env.PLAYWRIGHT_PKG || '/opt/node22/lib/node_modules/playwright/package.json')('playwright');
-const S = new URL('.', import.meta.url).pathname.replace(/\/$/, '');
+const S = decodeURIComponent(new URL('.', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/$/, '');
 const browser = await chromium.launch({ headless: true, args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-webgl'] });
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
 const logs = [];

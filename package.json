@@ -16,7 +16,20 @@
     "whoami": "wrangler whoami",
     "deploy:all": "node deploy-all.mjs",
     "deploy:market": "node deploy-all.mjs --market",
-    "deploy:check": "node deploy-all.mjs --dry"
+    "deploy:check": "node deploy-all.mjs --dry",
+    "gd:check": "node tools/gamedev/check.mjs",
+    "gd:check:quick": "node tools/gamedev/check.mjs --quick",
+    "gd:lint": "node tools/gamedev/lint.mjs",
+    "gd:effects": "node tools/gamedev/effects.mjs",
+    "gd:catalog": "node tools/gamedev/catalog.mjs",
+    "gd:damage": "node tools/gamedev/damage.mjs",
+    "gd:scaffold": "node tools/gamedev/scaffold.mjs",
+    "gd:audit": "node tools/gamedev/audit.mjs",
+    "gd:sql": "node tools/gamedev/sql-lint.mjs",
+    "gd:econ": "node tools/gamedev/econ.mjs",
+    "gd:map": "node tools/gamedev/map.mjs",
+    "engine:regen": "node tools/extract-engine-data.mjs",
+    "engine:check": "node tools/extract-engine-data.mjs --check"
   },
   "dependencies": {
     "cannon-es": "0.20.0"

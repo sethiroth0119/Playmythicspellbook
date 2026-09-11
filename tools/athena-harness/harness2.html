@@ -1,0 +1,81 @@
+<!doctype html><meta charset="utf-8"><title>Athena + Farm + Widgets harness</title>
+<style>html,body{margin:0;height:100%;background:#0c0f16;color:#eee;font-family:system-ui}#app{height:100vh}</style>
+<script>
+window.MF_THREE_URLS = { core: ['/three/three.min.js'], addons: { OrbitControls: '/three/js/controls/OrbitControls.js', TransformControls: '/three/js/controls/TransformControls.js', GLTFLoader: '/three/js/loaders/GLTFLoader.js' } };
+window.__toasts = []; window.__errors = [];
+window.addEventListener('error', e => window.__errors.push(String(e.message)));
+window.addEventListener('unhandledrejection', e => window.__errors.push('rej:' + String(e.reason && e.reason.message || e.reason)));
+// the game's hand-over objects, faked: not signed in (device saves), admin
+var __gems = 900000, __res = { wood: 500, stone: 500, water: 500, metal: 500, cloth: 500, medicine: 50, food: 100, supplies: 100, feed: 200 };
+var __farm = {};
+window.MythicBridge = {
+  get cloud() { return null; }, signedIn: () => false, userId: () => null, displayName: () => 'Tester', isAdmin: () => true,
+  toast: (m) => { window.__toasts.push(String(m)); console.log('[toast]', m); }, confirm: async () => true,
+  ui: { data: () => ({ gems: __gems, name: 'Tester', screen: 'farm', res: Object.assign({}, __res) }), actions: { toast: (m) => window.__toasts.push('A:' + m), navigate: (s) => { window.__nav = s; } } },
+  // 🎮 model slots (round 18): an in-memory Forge, mirroring MythicBridge.slots in index.html
+  slots: (() => {
+    const F = window.__forge = { woodsFishing: { models: { ship: [{ url: '/models/Duck.glb', label: 'Old skiff', scale: 1.5, rotY: 0 }], species: { pike: [] }, fish: {} } }, princePortfolios: { auctionModels: { Common: [], Rare: [{ url: '/models/Flamingo.glb', name: 'Pinkster', scale: 0.02, rotY: 1 }] } }, blackRiver: { extraction: { models: { core: '', node: '/models/Duck.glb', machines: {} } } }, cityModels: {} };
+    window.__published = 0;
+    const listSlots = (prefix, label, icon, list) => { const out = (list || []).map((m, i) => ({ k: prefix + '/' + i, label: label + ' #' + (i + 1), icon, list: true, url: m.url, scale: m.scale || 1, rotY: m.rotY || 0, name: m.label || m.name || '' })); out.push({ k: prefix + '/+', label: label + ' · new', icon: '＋', list: true, add: true, url: '', scale: 1, rotY: 0 }); return out; };
+    const games = () => { const M = F.woodsFishing.models, A = F.princePortfolios.auctionModels, E = F.blackRiver.extraction.models, C = F.cityModels; const rec = (k) => { const v = C[k]; return typeof v === 'string' ? { url: v, scale: 1 } : (v && v.url ? { url: v.url, scale: v.scale || 1 } : { url: '', scale: 1 }); };
+      return [
+        { id: 'fishing', label: 'Woods Fishing', icon: '🎣', groups: [{ id: 'ship', label: 'Boats', slots: listSlots('ship', 'Boat', '⛵', M.ship) }, { id: 'species', label: 'Species', slots: listSlots('species/pike', 'Pike', '🐟', M.species.pike) }, { id: 'fish', label: 'Fallback fish per tier', slots: ['Common', 'Rare'].flatMap(t => listSlots('fish/' + t, t + ' fish', '🎣', M.fish[t])) }] },
+        { id: 'auction', label: 'Auction block', icon: '🏎', groups: [{ id: 'cars', label: 'Cars per rarity', slots: ['Common', 'Rare'].flatMap(rk => listSlots(rk, rk + ' car', '🚗', A[rk])) }] },
+        { id: 'extraction', label: 'Black River extraction', icon: '🛢️', groups: [{ id: 'site', label: 'Site', slots: [{ k: 'core', label: 'Cinder Core', icon: '🌋', url: E.core || '', scale: 1, rotY: 0 }, { k: 'node', label: 'Extraction node', icon: '📡', url: E.node || '', scale: 1, rotY: 0 }] }, { id: 'machines', label: 'Machines', slots: ['pumpjack', 'drill'].map(t => ({ k: 'machine/' + t, label: t, icon: '⚙️', url: E.machines[t] || '', scale: 1, rotY: 0 })) }] },
+        { id: 'city', label: 'Node City', icon: '🏙', groups: [{ id: 'agents', label: 'People & vehicles', slots: ['civilian', 'truck'].map(k => Object.assign({ k, label: k, icon: '🚶', rotY: 0 }, rec(k))) }, { id: 'buildings', label: 'Buildings', slots: ['farm', 'tower'].map(k => Object.assign({ k, label: k, icon: '🏢', rotY: 0 }, rec(k))) }, { id: 'levels', label: 'Buildings per level', slots: ['farm@1', 'farm@2'].map(k => Object.assign({ k, label: k, icon: '🏗', rotY: 0 }, rec(k))) }] },
+      ]; };
+    const listOf = (game, k) => { const p = k.split('/'); if (game === 'fishing') { const M = F.woodsFishing.models; if (p[0] === 'ship') return M.ship; if (p[0] === 'species') return (M.species[p[1]] = M.species[p[1]] || []); if (p[0] === 'fish') return (M.fish[p[1]] = M.fish[p[1]] || []); } if (game === 'auction') { const A = F.princePortfolios.auctionModels; return (A[p[0]] = A[p[0]] || []); } return null; };
+    window.__slotWrites = [];
+    return {
+      canWrite: () => window.MythicBridge.isAdmin(), games,
+      set: (game, k, m) => { window.__slotWrites.push(['set', game, k, m.url, m.scale, m.rotY]); const list = listOf(game, k); if (list) { const i = k.split('/').pop(); const rec = { url: m.url, label: m.name, name: m.name, scale: m.scale, rotY: m.rotY }; if (i === '+') list.push(rec); else if (list[+i]) Object.assign(list[+i], rec); else list.push(rec); return true; } if (game === 'extraction') { const E = F.blackRiver.extraction.models; if (k === 'core' || k === 'node') E[k] = m.url; else E.machines[k.slice(8)] = m.url; return true; } if (game === 'city') { F.cityModels[k] = { url: m.url, scale: m.scale }; try { const ls = JSON.parse(localStorage.getItem('mythic_city_models_v1') || '{}'); ls[k] = { url: m.url, scale: m.scale }; localStorage.setItem('mythic_city_models_v1', JSON.stringify(ls)); } catch (e) {} return true; } return false; },
+      clear: (game, k) => { window.__slotWrites.push(['clear', game, k]); const list = listOf(game, k); if (list) { const i = +k.split('/').pop(); if (list[i]) list.splice(i, 1); return true; } if (game === 'extraction') { const E = F.blackRiver.extraction.models; if (k === 'core' || k === 'node') E[k] = ''; else delete E.machines[k.slice(8)]; return true; } if (game === 'city') { delete F.cityModels[k]; return true; } return false; },
+      publish: async () => { window.__published++; return true; },
+    };
+  })(),
+  // ☁ files (round 17): an in-memory models bucket
+  files: (() => {
+    const store = window.__files = { models: [{ name: 'Flamingo.glb', path: 'athena/models/aaa111_Flamingo.glb', url: '/models/Flamingo.glb', size: 120000, updated: '2026-09-01T00:00:00Z' }], audio: [{ name: 'beep.wav', path: 'athena/audio/bbb222_beep.wav', url: '/models/beep.wav', size: 8000, updated: null }] };
+    const urlOf = (p) => '/models/' + p.split('/').pop().replace(/^[a-z0-9]{6,}_/, '');
+    return {
+      ready: () => true, canWrite: () => window.MythicBridge.isAdmin(), bucket: () => 'models',
+      list: async (kind) => JSON.parse(JSON.stringify(store[kind === 'audio' ? 'audio' : 'models'])),
+      upload: async (file, kind) => { if (!window.MythicBridge.isAdmin()) throw new Error('Uploading shared files is admin-only.'); const safe = String(file.name).replace(/[^a-zA-Z0-9._-]/g, '_'); const path = 'athena/' + (kind === 'audio' ? 'audio' : 'models') + '/' + 'up' + Date.now().toString(36) + '_' + safe; const rec = { name: safe, path, url: urlOf(path), size: file.size, updated: new Date().toISOString() }; store[kind === 'audio' ? 'audio' : 'models'].unshift(rec); return { path, url: rec.url, name: safe }; },
+      rename: async (path, newName) => { if (!window.MythicBridge.isAdmin()) throw new Error('Renaming shared files is admin-only.'); const list = store.models.concat(store.audio); const rec = list.find(r => r.path === path); if (!rec) throw new Error('not found'); const dir = path.replace(/\/[^/]*$/, ''), stamp = (/\/([a-z0-9]{6,})_[^/]*$/.exec(path) || [])[1] || 'x'; const safe = String(newName).replace(/[^a-zA-Z0-9._-]/g, '_'); rec.path = dir + '/' + stamp + '_' + safe; rec.name = safe; rec.url = urlOf(rec.path); window.__renames = (window.__renames || []).concat([[path, rec.path]]); return { path: rec.path, url: rec.url, name: safe }; },
+      remove: async (path) => { store.models = store.models.filter(r => r.path !== path); store.audio = store.audio.filter(r => r.path !== path); return true; },
+    };
+  })(),
+  // ⚔ battle board (round 15): a v3 map + the board's prop builder, faked
+  battle: (() => {
+    const TERRAIN = { road:{label:'Cracked Road',color:'#55585e'}, rubble:{label:'Rubble',color:'#6b5f4f'}, dirt:{label:'Dirt',color:'#6e5436'}, grass:{label:'Dead Grass',color:'#6f7240'}, stone:{label:'Stone',color:'#8a8a8e'}, sand:{label:'Sand',color:'#b9a06a'}, snow:{label:'Snow',color:'#d9e0ea'}, ash:{label:'Scorched',color:'#2b2926'}, water:{label:'Water',color:'#2e5e86'}, blight:{label:'Blight',color:'#6a3578'}, lava:{label:'Lava',color:'#c4400f'} };
+    const PROPS = { house:{label:'Ruin',ic:'🏚️'}, tower:{label:'Tower',ic:'🗼'}, deadtree:{label:'Dead Tree',ic:'🪵'}, rock:{label:'Boulder',ic:'🪨'}, crates:{label:'Crates',ic:'📦'}, bonfire:{label:'Bonfire',ic:'🔥'} };
+    const terrain = []; for (let c = 0; c < 8; c++) for (let r = 0; r < 7; r++) terrain.push(c < 2 ? 'grass' : (r === 6 ? 'water' : (c === 7 ? 'lava' : 'road')));
+    let map = { v: 3, cols: 8, rows: 7, terrain, glbSlots: [{ id: 'g1', label: 'Duck', url: '/models/Duck.glb' }], models: [
+      { t: 'tower', x: -2.5, z: -1.5, rot: 90, sc: 1 }, { t: 'house', x: 1.5, z: 0.5, rot: 0, sc: 1.2 }, { t: 'rock', x: 3, z: 2, rot: 45, sc: 0.8 }, { t: 'g1', x: -1, z: 2.5, rot: 0, sc: 1 } ] };
+    window.__battleWrites = []; window.__battlePublished = 0; window.__boardRefreshed = 0;
+    return {
+      size: () => ({ cols: 8, rows: 7 }), terrain: () => TERRAIN, props: () => PROPS, defaultTerrain: () => 'road', scale: () => 3,
+      getMap: () => JSON.parse(JSON.stringify(map)),
+      setMap: (m) => { map = JSON.parse(JSON.stringify(m)); window.__battleWrites.push(map); return true; },
+      publish: async () => { window.__battlePublished++; return true; },
+      buildProp: (key) => { const T = window.THREE; if (!T || !PROPS[key]) return null; const g = new T.Group(); const h = key === 'tower' ? 1.6 : 0.6; const m = new T.Mesh(new T.BoxGeometry(0.6, h, 0.6), new T.MeshStandardMaterial({ color: key === 'tower' ? 0x8899aa : 0x6a5238 })); m.position.y = h / 2; g.add(m); g.userData.bmProp = key; return g; },
+      boardOpen: () => false, refreshBoard: () => { window.__boardRefreshed++; }, openLegacyEditor: () => {},
+    };
+  })(),
+};
+window.MythicFarmBridge = {
+  resources: Object.keys(__res).map(id => ({ id, name: id, icon: '▪', color: '#ccc' })),
+  getRes: (id) => __res[id] | 0, addRes: (id, n) => { __res[id] = (__res[id] | 0) + n; }, refundRes: (id, n) => { __res[id] = (__res[id] | 0) + n; },
+  spendRes: (id, n) => { if ((__res[id] | 0) < n) return false; __res[id] -= n; return true; },
+  gems: () => __gems, spendGems: (n) => { if (__gems < n) return false; __gems -= n; return true; }, addGems: (n) => { __gems += n; },
+  farmState: () => __farm, setFarmState: (s) => { __farm = s; return true; }, save: () => true,
+  toast: (m) => { window.__toasts.push(String(m)); }, confirm: () => Promise.resolve(true), back: () => { window.__back = true; }, isAdmin: () => true,
+  collectCdMs: 6 * 3600000, accrualCapH: 36,
+};
+</script>
+<script src="/three/three.min.js"></script>
+<script type="module" src="/src/mapforge/index.js"></script>
+<script type="module" src="/src/widgets/index.js"></script>
+<script type="module" src="/src/farm/index.js"></script>
+<script type="module" src="/src/battle/battle.athena.js"></script>
+<div id="app"></div>

@@ -19,6 +19,28 @@ The fix is the proven one: index.html explicitly hands a module what it needs.
 from the legacy app, **add it to the bridge** — never reach for a bare global and never
 assume `window.Foo` exists because `const Foo` does.
 
+### Modules and their bridges (add to the bridge, never reach for a global)
+| Module | Bridge object in index.html |
+|---|---|
+| `/src/community` | `window.MythicBridge` |
+| `/src/city` | `window.MythicCityBridge` |
+| `/src/trading` | `window.MythicTradeBridge` |
+| `/src/resonance/house.camp.js` | `window.MythicHouseBridge` |
+| `/src/dilemma` (🏛 Ethos Heights) | `window.MythicDilemmaBridge` — standing + cooldowns + last deck on `Profile.dilemma`, synced as `__dilemma__`. NO SQL and no RLS surface. Every reader is a function (never a snapshot) and every mutator returns a boolean; bond moves only through `adjustBond`, Cinder only through `spendGems`/`addGems` |
+| `/src/battle/battle.athena.js` | `window.MythicBridge.battle` — the v3 battlemap in/out/publish + the board's prop builder (round 15) |
+| `/src/farm` (🐄 Homestead Farm, 3D) | `window.MythicFarmBridge` — state on `Profile.farm`, synced as `__farm__`; its `cloud` sub-object is the only Supabase seam (player lots + corp ranch, `sql/038`). Chrome is Cities: Skylines 2 style (bottom toolbar of icon buttons, one floating panel, HUD weather button opens the Journal). The Shop (`FARM_ECON.shop`) sells timed boosts that EXTEND, never stack; grade-2 goods (`FARM_ECON.premium`, 4 ledger ids, count 28) come only from rare+ breeds |
+
+The farm's economy is pure over a host adapter: `node tools/farm_harness.mjs` drives
+build → feed → grow → collect → slaughter → craft, construction, haulage, disease, breeding
+lines, contracts, escorts and the NPC auction with no browser (19 sections). Player-to-player
+lots and the corp ranch need `sql/038_farm_auction_and_ranch.sql` applied; until then the
+Market and Ranch tabs print "not set up on the server yet" and everything else works.
+🔴 Never mirror a server-escrowed bid with a client `spendGems()` — the client spend path is
+mirrored to `wallet_charge` and would debit the bid twice.
+Farm → economy seams: `OPS_FARM_MENU` + `_opConsumeInputs()` in index.html (any op with a
+`food` input eats meat/eggs/milk first, drawn from pen accrual via `MythicFarm.drawAccrual`);
+node-city's `STOCK_FARM_FALLBACK`, `smokehouse`/`dairy`, and the `boost` field on buildings.
+
 ## Non-negotiables
 - All Supabase access is guarded. The app MUST still work offline / before tables exist,
   degrading to mock or empty data. Follow the `Corp.*` pattern.
@@ -85,3 +107,66 @@ therefore terminate.
 - Deploy bumps three knobs together or the update check breaks: `public/version.txt`,
   `window.BUILD_VERSION`, `sw.js` `CACHE_VERSION`. Verify the EDGE with curl, never the
   deploy log, and poll — propagation across PoPs takes up to a couple of minutes.
+
+## ⚒ Athena Engine & 🧩 Athena Widgets (round 5 — 2026-09-10)
+- `/src/mapforge/` is Athena Engine (3D map creator + mini-game engine); `/src/widgets/` is
+  Athena Widgets (Blueprint-style UI designer). Both read the legacy app ONLY through
+  `window.MythicBridge`; widgets additionally read `MythicBridge.ui.data()` for bindings
+  and call `MythicBridge.ui.actions.*` — **add a field/action there**, never a global.
+- **Game scenes:** a mini-game that draws its own 3D scene registers an adapter
+  (`AthenaEngine.games.register`, see `farm.athena.js`) and reads the live map back as an
+  overlay (`AthenaEngine.overlay.forGame`). Slots (`objects[].k`) stand in for the game's
+  own assets. A live game scene is global — the "Open in Athena" button in a game is
+  **admin-only** by design.
+- **Widgets going live is admin-only** (trigger in `sql/040`). Slots are
+  `data-athena-slot="…"` elements; a screen registers data/actions for its slots with
+  `AthenaUI.slots.register(prefix, …)` and unregisters on unmount.
+- **Round 6:** `objects[].bp` is an actor blueprint (components + event graph, `mapforge.actors.js`),
+  run only while playing (`world.startPlay/stopPlay`); `prefabs[]` + `{ t:'prefab', pf }` instances
+  (parts keyed `'instance:child'`). The node editor is shared (`widgets/graph-editor.js`); the
+  widget designer still carries its older inline copy — migrate it there, don't fork a third.
+- **Round 7 (physics):** cannon-es 0.20.0 is VENDORED at `public/vendor/cannon-es.js` (pinned in
+  package.json, copied from `node_modules/cannon-es/dist/`) — the one approved runtime library
+  besides three.js; never load it from a CDN. `mapforge.physics.js` simulates only while playing;
+  a map with a Physics component starts its actors after the library loads (Begin Play impulses).
+- **Round 8 (AI):** `mapforge.nav.js` is a grid navmesh (bake from terrain + colliders, A*); agents
+  are actors with the `agent` component driven by Move To / Chase / Patrol / Wander nodes.
+- **Round 9 (audio):** `mapforge.audio.js`; `map.sounds[]` are URLs of shipped files (never uploads);
+  project sounds are listed in `public/models/manifest.json` → `sounds`.
+- **Round 10 (perf):** static repeated props are instanced in games (`buildWorld({ instancing: true })`,
+  engine + overlay), never in the editor (picking). `mapforge.quality.js` owns every looks-vs-fps knob.
+- **Round 11 (look):** terrain detail is a shader injected into MeshStandardMaterial (`mapforge.terrain.js`,
+  procedural atlas — no texture assets); `objects[].mat` overrides clone materials per object, never the
+  shared prop templates; tone mapping/exposure are applied by the HOST via `onEnv` (`applyTone`), bloom +
+  vignette by `mapforge.post.js` (no EffectComposer addons).
+- **Round 12 (asset browser):** Library is `mapforge.assets.js` (index + search + prefs, pure) plus the editor's
+  card views; thumbnails come from a second, offscreen WebGLRenderer (session cache only — never persist PNGs);
+  tags live on `assets[].tags` / `prefabs[].tags` (`normalizeTags`) and `PROP_TAGS` for built-ins. Project
+  models still come ONLY from `/models/manifest.json` (no uploads).
+- **Round 13 (splines):** `objects[].t === 'spline'` + `sp` (`mapforge.spline.js`: Catmull-Rom, arc-length
+  resampled; mesh mode BENDS the source's vertices and merges per material; scatter is seeded; terrain mode
+  applies through `terrain.applyBrush` so it is an ordinary undoable edit). Splines never collide and are
+  never instanced (catalogue entry `spline`). Editor handles live in world space so the gizmo drives them.
+- **Round 14 (✎ Edit UI):** `widgets/live-editor.js` edits the running page: rules `{ sel, text, hide, style, attrs }`
+  in a kind `page` doc (`normalizePage` whitelists `PAGE_STYLE_PROPS`, no `url()`, no event attrs); the runtime
+  applies styles as `<style id="aw-pages">` scoped by `body[data-aw-screen]` and text via the mutation sync.
+  `sql/041` widens the kind check; live stays admin-only through the sql/040 trigger. Never let a rule carry raw CSS.
+- **Round 15 (battle board):** `src/battle/battle.athena.js` opens the v3 battlemap as game scene `battle`
+  (3 m per cell; models → slots `bm.<i>` drawn via `buildWorld({ slotBody })` with the board's own builder;
+  paint ↔ terrain keys) and writes it back on `athena:saved` / publishes on `athena:live` through
+  `MythicBridge.battle` (never Forge). `_b3dBuild` adds the Athena overlay at ⅓ scale for what v3 cannot hold.
+  Index-matched slots: one editor at a time.
+- **Round 16 (Screens & Strings):** `widgets/screens.js` — the game has NO string table, so the Strings tab scans
+  the on-stage DOM (`scanStrings`) and an edit is a text rule in the screen's page doc (same mechanism as round 14,
+  `loadPageDocFor` shared from live-editor.js). `SCREEN_CATALOG` lists `App.screen` ids with labels — extend it
+  there (or via `MythicBridge.ui.screens()`), never by reading App.
+- **Round 17 (cloud files / rename / content browser):** `MythicBridge.files` = the existing public `models`
+  bucket under `athena/…` (list / upload / rename=move / remove, admin writes); a cloud file in a map is a plain
+  URL asset. Rename of a cloud file rewrites map URLs. The dock (`#mf-cb`, Ctrl+Space) shares the Library's index,
+  thumbnails and picks — never fork a second card renderer. `.glb` is the one accepted upload type (plus audio);
+  images/video stay out.
+- **Round 18 (showrooms):** `MythicBridge.slots` lists every mini-game model slot (fishing / auction / extraction /
+  city) and set/clear write the SAME Forge fields the games' own panels write; `mapforge.showroom.js` opens each as
+  game scene `models-<id>`. `Forge.cityModels` is published in the catalogue and merged by node-city at boot via
+  `window.__mythicCityModels` (device key `mythic_city_models_v1` still wins). Keys are `encodeKey`'d for `slotKey`.
+- Docs: `docs/athena-engine.md`. Tests: `tools/athena-harness/` (`pw-test5.mjs` round 5, `pw-test6.mjs` round 6, `pw-test7.mjs` physics, `pw-test8.mjs` navigation, `pw-test9.mjs` audio, `pw-test10.mjs` performance, `pw-test11.mjs` look, `pw-test12.mjs` asset browser, `pw-test13.mjs` splines, `pw-test14.mjs` live UI editor, `pw-test15.mjs` battle board, `pw-test16.mjs` screens & strings, `pw-test17.mjs` cloud files + content browser, `pw-test18.mjs` showrooms).

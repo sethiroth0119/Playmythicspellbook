@@ -16,6 +16,7 @@
     "deploy:check": "node deploy-all.mjs --dry"
   },
   "devDependencies": {
+    "cannon-es": "0.20.0",
     "terser": "^5.48.0",
     "wrangler": "^4"
   }

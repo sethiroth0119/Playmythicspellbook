@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120y6';
+  window.BUILD_VERSION = 'v120y7';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -120310,6 +120310,7 @@ function renderPricingAdmin() {
         <div class="small-text ink-dim" style="margin-top:0.7rem">🧩 <strong>Athena Widgets</strong> — the Blueprint-style UI designer: build widgets from a palette, wire an event graph (click → branch → toast / set variable / call a game action), bind any property to live game data (<code>{gems|num}</code>), and target a named slot or any existing element of the game's UI (🎯 pick it) to extend or replace it. Theme documents restyle the whole game through CSS variables. Lives in <code>/src/widgets/</code>; cloud saving needs <code>sql/040_ui_widgets.sql</code>.</div>
         <button id="open-battle-athena" class="btn-secondary" style="margin-top:0.5rem;width:100%;border:1px solid #e7c757;color:#ffe9a8" title="Edit the live battle board inside Athena Engine: paint terrain, move or replace props, add anything">⚔ Battle board in Athena Engine</button>
         <button id="open-widget-designer" class="btn-secondary" style="margin-top:0.5rem;width:100%;border:1px solid #e7c757;color:#ffe9a8">🧩 Open Widget Designer</button>
+        <button id="open-ui-screens" class="btn-secondary" style="margin-top:0.5rem;width:100%;border:1px solid #4aa3ff;color:#dff4ff" title="Every screen and every player-facing text in one table — edit, find & replace, save, set live">🗂 Screens &amp; Strings</button>
         <button id="open-ui-editor" class="btn-secondary" style="margin-top:0.5rem;width:100%;border:1px solid #4aa3ff;color:#dff4ff" title="Click any element of the game and retitle, restyle or hide it — for every player once live">✎ Edit the game UI (live)</button>
         <div class="small-text ink-dim" style="margin-top:0.4rem">Also reachable at <code>?widgets=1</code>. Only an admin can set a widget <strong>live</strong> for every player (the server enforces it).</div>
       </div>
@@ -121173,6 +121174,8 @@ function renderPricingAdmin() {
   //    contract as the map creator: the module registers window.AthenaUI; if it
   //    has not loaded the button says so.
   // ✎ Edit UI — the live page editor (src/widgets/live-editor.js).
+  const scBtn = document.getElementById('open-ui-screens');
+  if (scBtn) scBtn.onclick = () => { try { if (window.AthenaUI && window.AthenaUI.openScreens) window.AthenaUI.openScreens(); else showToast('Athena Widgets is still loading — try again in a moment.', 2600); } catch (e) { try { console.warn('[widgets] screens open failed', e); } catch (_) {} } };
   const uiBtn = document.getElementById('open-ui-editor');
   if (uiBtn) uiBtn.onclick = () => {
     try {
@@ -223501,7 +223504,7 @@ render();
      ⚠ If this 404s nothing changes — no widget shows, the button reports it.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/widgets/index.js?v=aw3"></script>
+<script type="module" src="src/widgets/index.js?v=aw4"></script>
 <!-- 🐄 HOMESTEAD FARM — the 3D animal-farm simulation (/src/farm). Registers
      window.MythicFarm and is INERT until renderFarm() hands it #app. Reads
      nothing by itself: window.MythicFarmBridge (defined next to

@@ -743,3 +743,36 @@ hex stage (`public/battle-board/`, an iframe) receives the written-back v3
 (terrain + models) but not the overlay's extra objects; the 3D board's
 gameplay rules (hazards per terrain key) come from v3, so a painted layer
 changes the rule where the key changes.
+
+## 🗂 Screens & Strings (round 16)
+
+Admin panel → **🗂 Screens & Strings** (`src/widgets/screens.js`,
+`AthenaUI.openScreens()`, `?screens=1`). One window over the whole game:
+
+- **Screens list** — every screen of the game (`SCREEN_CATALOG` in
+  screens.js, plus anything the bridge adds through `ui.screens()`, saved
+  page documents and the screen on stage), with rule counts and LIVE tags.
+  **➜ Go there** navigates through the bridge; **✎ Edit UI** opens the live
+  editor on that screen.
+- **Strings tab** — the game has no string table, so the on-stage screen
+  is SCANNED (`scanStrings`: buttons, links, headings, labels, tabs, cells —
+  elements with their own text, visible, one row per selector). Editing a
+  cell makes a text rule in that screen's page document (the ✎ Edit UI
+  mechanism, applied live at once); ↺ restores the original; **find &
+  replace** rewrites every visible string at once; the search box filters.
+  A screen that is not on stage cannot be scanned — its saved rules are
+  listed and Go there brings its text up.
+- **Rules tab** — every rule of the screen (text / style / hidden), delete
+  one or reset the page. **Widgets tab** — every widget and theme with its
+  target, highlighted when it targets this screen; Open goes to the
+  designer.
+- **Save** writes every changed screen's page document (cloud when signed
+  in, else device); **★ Live** publishes the selected screen's (admin;
+  sql/040 trigger). **Export / Import** moves all page documents as a
+  text-only JSON file (`{ kind: 'athena-pages', pages: [...] }`) — a backup
+  or a way to carry a redesign between accounts; imports go through
+  `normalize`, so nothing unsafe survives.
+
+Limits: only text that is in the DOM can be scanned — text the game draws
+into a canvas, or shows only after an action, is not listed until it is on
+stage; toasts and other transient text are not covered.

@@ -41,13 +41,7 @@ export async function openLiveEditor(opts) {
   // the document: the live page doc for this screen, else a saved one, else new
   let doc = null, source = null;
   if (opts.doc) doc = normalize(opts.doc);
-  else {
-    const lv = liveDocs().find(d => d.kind === 'page' && d.page.screen === screen);
-    if (lv) { doc = clone(lv); source = await sourceOf(lv.id); }
-    else { const rows = (await api.listAll()).rows.filter(r => r.kind === 'page' && r.target && r.target.slot === 'page:' + screen && r.mine); if (rows[0]) { const r = await api.load(rows[0].id, rows[0].source); if (r.ok) { doc = r.doc; source = rows[0].source; } } }
-  }
-  if (!doc) { doc = newWidget({ kind: 'page', author: api.displayName(), screen, name: 'Page · ' + (screen || 'game') }); }
-  doc.page.screen = doc.page.screen || screen; doc.target = { mode: 'none', slot: 'page:' + doc.page.screen, selector: '', place: 'append' };
+  else { const got = await loadPageDocFor(screen); doc = got.doc; source = got.source; }
 
   const root = document.createElement('div'); root.id = 'aw-live'; document.body.appendChild(root);
   const $ = (q) => root.querySelector(q);
@@ -170,6 +164,17 @@ export async function openLiveEditor(opts) {
   LE = { root, S, close, select: (el) => selectEl(el), selectSelector: (sel) => selectEl((() => { try { return document.querySelector(sel); } catch (e) { return null; } })(), sel), commit, apply, save, setLive, undo, redo, get doc() { return S.doc; }, setPicking, rule: (sel) => ruleFor(sel, false) };
   apply(); renderPanel(); setPicking(opts.picking !== false);
   return LE;
+}
+/* The page document for a screen: its LIVE one, else the newest saved one of
+   mine, else a fresh one. Shared with the Screens view (screens.js). */
+export async function loadPageDocFor(screen) {
+  let doc = null, source = null;
+  const lv = liveDocs().find(d => d.kind === 'page' && d.page.screen === screen);
+  if (lv) { doc = clone(lv); source = await sourceOf(lv.id); }
+  else { const rows = (await api.listAll()).rows.filter(r => r.kind === 'page' && r.target && r.target.slot === 'page:' + screen && r.mine); if (rows[0]) { const r = await api.load(rows[0].id, rows[0].source); if (r.ok) { doc = r.doc; source = rows[0].source; } } }
+  if (!doc) doc = newWidget({ kind: 'page', author: api.displayName(), screen, name: 'Page · ' + (screen || 'game') });
+  doc.page.screen = doc.page.screen || screen; doc.target = { mode: 'none', slot: 'page:' + doc.page.screen, selector: '', place: 'append' };
+  return { doc, source };
 }
 async function sourceOf(id) { try { const rows = (await api.listAll()).rows; const r = rows.find(x => x.id === id); return r ? r.source : null; } catch (e) { return null; } }
 function bridgeToast(m) { try { const b = window.MythicBridge; if (b && b.toast) return b.toast(m); } catch (e) {} try { console.warn('[widgets] ' + m); } catch (e) {} }

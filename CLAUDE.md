@@ -155,4 +155,8 @@ therefore terminate.
   paint ↔ terrain keys) and writes it back on `athena:saved` / publishes on `athena:live` through
   `MythicBridge.battle` (never Forge). `_b3dBuild` adds the Athena overlay at ⅓ scale for what v3 cannot hold.
   Index-matched slots: one editor at a time.
-- Docs: `docs/athena-engine.md`. Tests: `tools/athena-harness/` (`pw-test5.mjs` round 5, `pw-test6.mjs` round 6, `pw-test7.mjs` physics, `pw-test8.mjs` navigation, `pw-test9.mjs` audio, `pw-test10.mjs` performance, `pw-test11.mjs` look, `pw-test12.mjs` asset browser, `pw-test13.mjs` splines, `pw-test14.mjs` live UI editor, `pw-test15.mjs` battle board).
+- **Round 16 (Screens & Strings):** `widgets/screens.js` — the game has NO string table, so the Strings tab scans
+  the on-stage DOM (`scanStrings`) and an edit is a text rule in the screen's page doc (same mechanism as round 14,
+  `loadPageDocFor` shared from live-editor.js). `SCREEN_CATALOG` lists `App.screen` ids with labels — extend it
+  there (or via `MythicBridge.ui.screens()`), never by reading App.
+- Docs: `docs/athena-engine.md`. Tests: `tools/athena-harness/` (`pw-test5.mjs` round 5, `pw-test6.mjs` round 6, `pw-test7.mjs` physics, `pw-test8.mjs` navigation, `pw-test9.mjs` audio, `pw-test10.mjs` performance, `pw-test11.mjs` look, `pw-test12.mjs` asset browser, `pw-test13.mjs` splines, `pw-test14.mjs` live UI editor, `pw-test15.mjs` battle board, `pw-test16.mjs` screens & strings).

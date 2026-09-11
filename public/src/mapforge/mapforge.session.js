@@ -31,7 +31,7 @@
 
 import { mountWorld } from './mapforge.engine.js';
 import { bridge, supabase, userId, displayName, avatarPick, setAvatarPick } from './mapforge.bridge.js';
-import { createAvatar, resolveCharacter, castOf } from './mapforge.avatar.js';
+import { createAvatar, resolveCharacter, castOf, myOutfit, packOutfit, unpackOutfit, outfitHasBody } from './mapforge.avatar.js';
 import { PROP_BY_ID } from './mapforge.props.js';
 
 const VOICE_RANGE = 16;        // metres — silent beyond
@@ -186,7 +186,13 @@ function startHub() {
   /* `pick` is the character I am wearing, read once from the profile: the
       choice is ACCOUNT-WIDE, so it is the same in every hub, and it is carried
       on my position packets so everyone else can draw me as it. */
-  const hub = s.hub = { ch: null, peers: new Map(), figures: new Map(), input: null, log: null, voice: { on: false, stream: null, pcs: new Map() }, lastVol: 0, pick: avatarPick() || '' };
+  /* 👕 `wear` is the outfit from the Player Closet, in packet form, read once
+     like `pick`: it rides the same position packet so everyone draws me in
+     my clothes. The creator fires `closet:outfit` when the player saves, and
+     the next packet carries the new one. */
+  const hub = s.hub = { ch: null, peers: new Map(), figures: new Map(), input: null, log: null, voice: { on: false, stream: null, pcs: new Map() }, lastVol: 0, pick: avatarPick() || '', wear: packOutfit(myOutfit()) };
+  hub.onOutfit = () => { hub.wear = packOutfit(myOutfit()); hub.lastKey = null; };
+  try { window.addEventListener('closet:outfit', hub.onOutfit); } catch (e) {}
   if (chatOn) {
     const box = document.createElement('div'); box.className = 'as-chat';
     box.innerHTML = '<div class="log" id="as-log"><div class="sys">' + (c ? 'You are in the hub — press Enter to type, T to talk.' : 'Sign in to see and talk to other players here.') + '</div></div><input id="as-input" maxlength="240" placeholder="Say something… (Enter)">';
@@ -257,6 +263,7 @@ function buildCastPicker(s) {
 }
 function stopHub(s) {
   const hub = s.hub; if (!hub) return;
+  try { if (hub.onOutfit) window.removeEventListener('closet:outfit', hub.onOutfit); } catch (e) {}
   try { voiceOff(hub); } catch (e) {}
   try { if (hub.ch) { hub.ch.untrack && hub.ch.untrack(); hub.ch.unsubscribe(); } } catch (e) {}
   hub.figures.forEach(f => { try { s.g.scene.remove(f.group); } catch (e) {} if (f.av) { try { f.av.dispose(); } catch (e) {} } });
@@ -282,7 +289,7 @@ function hubFrame(dt) {
        on a packet that already exists rather than a second channel. A peer
        resolves it against THIS map's cast, so an id this map does not offer
        simply falls back to the author's default on their screen. */
-    if (key !== hub.lastKey) { hub.lastKey = key; s.lastPos = now; try { hub.ch.send({ type: 'broadcast', event: 'pos', payload: { uid: userId(), name: displayName(), x: p.x, y: p.y, z: p.z, yaw, m: hub.pick || '', t: Date.now() } }); } catch (e) {} }
+    if (key !== hub.lastKey) { hub.lastKey = key; s.lastPos = now; try { hub.ch.send({ type: 'broadcast', event: 'pos', payload: { uid: userId(), name: displayName(), x: p.x, y: p.y, z: p.z, yaw, m: hub.pick || '', w: hub.wear || '', t: Date.now() } }); } catch (e) {} }
   }
   /* peers glide to their last reported spot */
   hub.figures.forEach((f, uid) => {
@@ -313,8 +320,8 @@ function onPos(p) {
   /* Someone who changed character mid-session is torn down and rebuilt — the
      alternative is swapping a model inside a live mixer, which is a great deal
      of machinery for something that happens when a player opens a menu. */
-  if (f && (f.pick || '') !== (p.m || '')) { removeFigure(uid_of(p), f); f = null; }
-  if (!f) { f = makeFigure(p.name || 'Player', p.m || ''); hub.figures.set(p.uid, f); s.g.scene.add(f.group); f.group.position.set(p.x, p.y, p.z); }
+  if (f && ((f.pick || '') !== (p.m || '') || (f.wear || '') !== (p.w || ''))) { removeFigure(uid_of(p), f); f = null; }
+  if (!f) { f = makeFigure(p.name || 'Player', p.m || '', p.w || ''); hub.figures.set(p.uid, f); s.g.scene.add(f.group); f.group.position.set(p.x, p.y, p.z); }
   f.target.set(p.x, p.y, p.z);
 }
 /* The id off a payload, so the rebuild path above reads the same way as every
@@ -354,7 +361,7 @@ function removePeer(uid) {
      on proximity voice, and a person you can hear and walk into but cannot see
      is a worse bug than a plain shape. So the body is built either way and the
      model, when it arrives, replaces it. */
-function makeFigure(name, pickId) {
+function makeFigure(name, pickId, wear) {
   const THREE = S.g.THREE;
   const group = new THREE.Group();
   const mat = new THREE.MeshStandardMaterial({ color: 0x7fb8ff, roughness: 0.7 });
@@ -372,12 +379,15 @@ function makeFigure(name, pickId) {
      adds its own group to the scene and drives its own transform, so it is
      kept BESIDE the placeholder group rather than inside it — nesting would
      apply the position twice. */
-  const f = { group, target: new THREE.Vector3(), name: nameSprite, av: null, pick: pickId || '', body, head, moved: 0 };
+  const f = { group, target: new THREE.Vector3(), name: nameSprite, av: null, pick: pickId || '', wear: wear || '', body, head, moved: 0 };
   try {
     const pl = (S.g.map && S.g.map.player) || {};
     const spec = resolveCharacter(pl, pickId);
-    if (spec) {
-      const av = createAvatar(THREE, { world: S.g.world, scene: S.g.scene,
+    /* 👕 the peer's outfit (their packet) dresses whichever character they
+       resolve to here; a map with no cast at all draws their closet body */
+    const outfit = unpackOutfit(wear);
+    if (spec || outfitHasBody(outfit)) {
+      const av = createAvatar(THREE, { world: S.g.world, scene: S.g.scene, outfit,
         player: { model: spec, anim: pl.anim || {}, animFiles: pl.animFiles || [] } });
       av.setVisible(true);
       f.av = av;

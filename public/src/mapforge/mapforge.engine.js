@@ -21,7 +21,7 @@ import { ensureThree } from './mapforge.three.js';
 import { buildWorld } from './mapforge.world.js';
 import { createPlayer } from './mapforge.player.js';
 import { newMap, normalize } from './mapforge.format.js';
-import { createAvatar, resolveCharacter } from './mapforge.avatar.js';
+import { createAvatar, resolveCharacter, myOutfit, outfitHasBody } from './mapforge.avatar.js';
 import { avatarPick } from './mapforge.bridge.js';
 import * as quality from './mapforge.quality.js';
 import { createPost } from './mapforge.post.js';
@@ -74,7 +74,9 @@ export async function mountWorld(host, opts) {
         author's own default — resolveCharacter() owns that reconciliation and
         is the same call the hub uses to draw everybody else. */
   const myModel = resolveCharacter(pv, avatarPick());
-  if (mode === 'fps' && myModel) { try { avatar = createAvatar(THREE, { world, scene, player: { model: myModel, anim: pv.anim || {}, animFiles: pv.animFiles || [] } }); } catch (e) { avatar = null; } }
+  /* 👕 …dressed in the Player Closet outfit; with no character from the map, the closet body stands in */
+  const outfit = opts.outfit === undefined ? myOutfit() : opts.outfit;
+  if (mode === 'fps' && (myModel || outfitHasBody(outfit))) { try { avatar = createAvatar(THREE, { world, scene, outfit, player: { model: myModel, anim: pv.anim || {}, animFiles: pv.animFiles || [] } }); } catch (e) { avatar = null; } }
   let player = null, controls = null, clickToLock = null, gesture = null;
   // 🔊 sound markers: listener on the camera; audio starts on the first gesture
   if (opts.audio !== false && world.attachAudio(camera)) {

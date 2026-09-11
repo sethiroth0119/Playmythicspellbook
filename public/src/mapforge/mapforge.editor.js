@@ -26,7 +26,7 @@ import { newMap, normalize, serialize, clone, uid, PAINT, ENV_PRESETS, LOOP_MODE
 import * as assetsApi from './mapforge.files.js';   // the uploaded files (world_assets, sql/112) — build B's FILES tab
 import { refreshMenu } from './mapforge.menu.js';
 import { EMITTERS } from './mapforge.vfx.js';
-import { createAvatar, VIEWS } from './mapforge.avatar.js';
+import { createAvatar, VIEWS, myOutfit } from './mapforge.avatar.js';
 import { miniGames } from './mapforge.bridge.js';
 import { refreshLive } from './mapforge.pill.js';
 import * as games from './mapforge.games.js';
@@ -1274,7 +1274,7 @@ export async function openEditor(opts) {
     /* 🎥 Play uses the map's point of view and character, exactly as the game will */
     S.map.player = normalizePlayer(S.map.player);
     if (play.avatar) { try { play.avatar.dispose(); } catch (e) {} play.avatar = null; }
-    if (S.map.player.model && S.map.player.model.a) { try { play.avatar = createAvatar(THREE, { world, scene, player: S.map.player }); } catch (e) { play.avatar = null; } }
+    if (S.map.player.model && S.map.player.model.a) { try { play.avatar = createAvatar(THREE, { world, scene, player: S.map.player, outfit: myOutfit() }); } catch (e) { play.avatar = null; } }
     player.setView(S.map.player.view, play.avatar);
     player.start(sp ? null : { pos: new THREE.Vector3(controls.target.x, 0, controls.target.z), yaw: Math.atan2(camera.position.x - controls.target.x, camera.position.z - controls.target.z) + Math.PI });
     trigRing.visible = false; S.bpOpen = false; renderBpPanel(); drawNav();
@@ -2289,6 +2289,8 @@ export async function openEditor(opts) {
   $('#mf-overview').onclick = frameOverview;
   $('#mf-bp-close').onclick = () => { S.bpOpen = false; renderBpPanel(); renderInspector(); };
   $('#mf-bp-add').onclick = (e) => { if (bpGraph) bpGraph.openMenu(e.clientX, e.clientY + 8); };
+  /* 👕 the Closet Studio (/src/closet) — where clothing is fitted to the characters; same contract as Widgets */
+  $('#mf-closet').onclick = () => { try { if (window.MythicCloset && window.MythicCloset.openStudio) window.MythicCloset.openStudio(); else toast('The Player Closet has not loaded (src/closet/index.js).', 3200); } catch (e) { toast('Could not open the Closet Studio.', 3000); } };
   $('#mf-widgets').onclick = () => { try { if (window.AthenaUI && window.AthenaUI.openDesigner) window.AthenaUI.openDesigner(); else toast('Athena Widgets has not loaded (src/widgets/index.js).', 3200); } catch (e) { toast('Could not open the Widget Designer.', 3000); } };
   $$('.mf-gizmo button[data-gm]').forEach(b => b.onclick = () => setGizmoMode(b.dataset.gm));
   $('#mf-gm-select').onclick = () => setTool('select');
@@ -2393,7 +2395,7 @@ const TEMPLATE = `
   <span class="grp"><button id="mf-undo" title="Undo (Ctrl+Z)">↶</button><button id="mf-redo" title="Redo (Ctrl+Y)">↷</button></span>
   <span class="grp"><button id="mf-overview" title="Frame the whole map">⌂ Overview</button><button id="mf-play" title="Walk the map (P)">▶ Play</button></span>
   <span class="grp"><button id="mf-save" class="primary" title="Save (Ctrl+S)">💾 Save</button><button id="mf-save-local" title="Save a copy on this device only">⇩ Device</button><button id="mf-export" title="Download as JSON">⤓ Export</button><button id="mf-import" title="Open a JSON export">⤒ Import</button><input type="file" id="mf-file" accept=".json,application/json" hidden></span>
-  <span class="grp"><button id="mf-cb-btn" title="Content browser (Ctrl+Space)">🗂 Content</button><button id="mf-widgets" title="Open the Widget Designer (Blueprint-style UI)">🧩 Widgets</button></span>
+  <span class="grp"><button id="mf-cb-btn" title="Content browser (Ctrl+Space)">🗂 Content</button><button id="mf-widgets" title="Open the Widget Designer (Blueprint-style UI)">🧩 Widgets</button><button id="mf-closet" title="Closet Studio — brands, clothing and the characters players dress (Player Closet)">👕 Closet</button></span>
   <span class="grp"><select id="mf-quality" title="Quality: pixel ratio, shadows, effects (auto steps down on low fps)"><option value="auto">Quality: auto</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></span>
   <span class="grp"><select id="mf-hotkeys" title="Hotkey scheme"><option value="unreal">Unreal hotkeys</option><option value="default">Simple hotkeys</option></select><button id="mf-help-btn" title="Controls (H)">?</button><button id="mf-close" class="danger" title="Close the editor">✕</button></span>
 </div>

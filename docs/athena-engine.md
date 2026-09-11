@@ -892,3 +892,95 @@ Two Athena builds existed: **build A** (repository `main` at `12297093`, rounds 
 - **Tests.** `tools/athena-harness/pw-test19.mjs` covers the FILES panel, the MENU tab and the merged Scene tab; `serve.mjs` replaces the python server + symlinks (the volume cannot hold junctions). Busters: mapforge `mf18`, widgets `aw5`, battle `ba2`, farm `v121v116farm4`.
 
 - **Farm bundle rule.** `farm.athena.js` is not a file in this build: the farm bundle imports nothing (`_farmhaul` rule), so build A's adapter is inlined as the `FarmAthena` namespace inside `public/src/farm/index.js`, fed its tables by `configure()` right after `FARM_GRID`.
+
+## 👕 Player Closet — the character creator and the Closet Studio (round 20)
+
+Asked for: "a Player Closet creator where players change the clothes of their
+characters; in the Athena Engine let me add clothing and connect it correctly
+to the models — when I add a watch and measure it to the human models it fits
+them rightfully; hats, shirts, backpacks, sneakers, watches, jewellery
+(earrings, chains), gloves, scarves; when a category is selected the camera
+swings to the part being changed; clothing brands like Watch Dogs 2; later,
+clothing stores."
+
+Lives in **`/src/closet/`** (`window.MythicCloset`; `AthenaEngine.closet` is
+the alias). Inert until opened: **Forge Sanctum → 👕 Player Closet** (everyone),
+**🧵 Closet Studio** (admin tile, the admin panel button, or **👕 Closet** on
+the Athena top bar), `?closet=1[&cat=watch]`, `?closetstudio=1`.
+
+| File | Role |
+|---|---|
+| `index.js` | entry; `window.MythicCloset`; deep links |
+| `closet.model.js` | **the categories** (slot on the body, size rule, anchor, camera focus) and the normalisers for brand / item / body / outfit; the outfit's packet form |
+| `closet.rig.js` | **the tape measure**: bone families across rigs, per-part measurement from skinned vertices, body-aligned sockets, `placeItem`, the camera focus per category |
+| `closet.dress.js` | the runtime: `dress(THREE, body, outfit, catalog)` — one loader cache per URL, skeleton-aware clones |
+| `closet.api.js` | the catalogue: `closet_brands` / `closet_items` / `closet_bodies` (sql/132) ∪ this device (`mythic_closet_v1`) |
+| `closet.bridge.js` | the player's side through `MythicBridge.closet`: outfit, owned, `charge()` → `spendGems()` |
+| `closet.stage.js` | the shared 3D stage: lights, floor, orbit, the **camera swing** (`swingToCategory`) |
+| `closet.creator.js` | the **Player Closet** (players): Wardrobe / Shop by brand, categories, try-on, Buy & Equip, Save |
+| `closet.studio.js` | the **Closet Studio** (admins): brands, clothing, characters, the fit inspector, Auto-fit |
+
+**How a fit is measured, and why it carries across characters.** The body is
+measured part by part (`measure()`): every skinned vertex is given to the bone
+that owns most of it, so "the head" is the real head geometry, "the wrist" is
+the hand bone's origin and the hand's thickness, "the foot" is foot + toe. Bone
+names are matched by FAMILY (`mixamorig:Head`, `mixamorigHead`, `J_Bip_C_Head`,
+`head.L`, `hand_l`, `LeftHand` all resolve); a model with no skeleton gets its
+parts by human proportion, so every category still has somewhere to hang. A
+fit record is **relative**: `k` (the item's key dimension as a multiple of the
+part's — a watch is 1.05 wrists wide, a hat 1.08 heads), an anchor (item bottom
+on head top; item front on chest back for a backpack), offsets in fractions of
+the part, a rotation in the body's own axes. The item hangs in a **socket** — a
+group under the bone whose axes stay aligned with the body at rest — so it
+follows the bone when the character walks and the record means the same thing
+on every rig. Measured on the three.js Soldier: wrist 3.9 cm → the watch worn
+4.1 cm wide; the same record on a body twice the size wears it twice as wide
+(`pw-test20`). Paired categories (sneakers, earrings, gloves) mirror the left
+piece onto the right.
+
+**The studio.** Brands (name, tagline, logo, colour); Clothing (name, brand,
+category, a model from Athena FILES / the project library / a URL, price in
+Cinder or Aza coin or free, tags, in the shop or a draft) with the **Fit**
+panel — Size, item axis, anchor faces, offset x/y/z, rotate x/y/z, **📏
+Auto-fit** (measures the current character and records it as `fit.ref`), the
+part's measurements in cm and the worn size; Characters (the bodies players
+dress: model, scale, faces, idle clip; the inspector prints the rig's
+measurements). Switching the "Fit on" character re-fits the piece — that is the
+check that a fit is portable. Saves go to the cloud when signed in and sql/132
+is applied, otherwise to this device (the row says which).
+
+**The creator.** The Plainstock panel: Wardrobe (owned + free) / Shop (all
+published, grouped by brand), the category rail (a count per category), a grid
+of cards, the footer with Equip / Take off / **Buy & Equip**. Picking a category
+swings the camera to that part (`focusFor`: front for hats and shirts, behind
+for backpacks, front-left for the watch and earrings). Clicking a card tries it
+on at once, owned or not; Buy charges through `MythicBridge.closet.charge` →
+`spendGems()` / `spendSovereigns()` and then `grant`s the id; **Save outfit**
+writes `Profile.closet.outfit` and drops any unowned try-on (the footer says
+so). The outfit and the owned list ride the forge JSONB (`__closet__`, union
+merge on owned) and the local whitelist, like every other cosmetic.
+
+**In the world.** `createAvatar(THREE, { …, outfit })` dresses the character
+once it has loaded and **before** the mixer runs (the measurement is taken at
+rest); with no character from the map (`resolveCharacter` → null) the closet
+**body** stands in, loaded by URL. `engine.mount` reads `myOutfit()` (pass
+`outfit` to override); the editor's Play does too. In a hub the position
+packet carries `w` (`packOutfit`: `body|hat=id,watch=id`, ≤ 400 chars) beside
+`m`; a peer's figure is rebuilt when either changes; `closet:outfit` on
+`window` (fired by Save) forces the next packet. All of it degrades: no closet
+module → no `w`, no dressing, everything else as before.
+
+**Storage.** `sql/132_player_closet.sql`: three tables `{ id, owner_id,
+owner_name, published, data }` with RLS (published or own to read; owner or
+admin to write), a server-side `updated_at` trigger. Not yet applied to
+`ktsiasyjusesawtrwrjc` at the time of writing — until it is, the studio says
+"saved on this device". Player ownership and the outfit are NOT tables.
+
+**Out of scope / next.** Clothing stores (a store = a brand's shopfront in a
+world: the catalogue and `charge()` are what it needs); skinned clothing that
+deforms with the body (v1 hangs a rigid piece on one bone — right for a watch,
+a hat, a backpack, shoes; a shirt is a rigid vest on the chest bone); item
+thumbnails (cards show the category icon); a gizmo in the studio (sliders
+instead). Test: `tools/athena-harness/pw-test20.mjs` on `harness3.html` (needs
+`three/models/Soldier.glb`, fetched by `setup.sh`'s sibling line in the README).
+Busters: mapforge `mf19`, closet `pc1`.

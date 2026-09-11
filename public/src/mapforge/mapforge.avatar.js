@@ -58,14 +58,31 @@ export function castOf(player) {
 }
 export const ANIM_STATES = ['idle', 'walk', 'run', 'interact'];
 
+/* 👕 THE OUTFIT THIS PLAYER WEARS — from the Player Closet (/src/closet), or
+   null when the closet has not loaded (a harness, a build without it). Read
+   through window.MythicCloset rather than an import so a hub keeps working
+   with no closet at all; the packet form is what a peer sends. */
+export function myOutfit() { try { const C = window.MythicCloset; return C && C.outfit ? C.outfit() : null; } catch (e) { return null; } }
+export function packOutfit(o) { try { const C = window.MythicCloset; return C && C.packOutfit ? C.packOutfit(o) : ''; } catch (e) { return ''; } }
+export function unpackOutfit(s) { try { const C = window.MythicCloset; return C && C.unpackOutfit ? C.unpackOutfit(s) : null; } catch (e) { return null; } }
+/* does an outfit name a closet BODY — a character of its own, for a map with no cast? */
+export function outfitHasBody(o) { return !!(o && typeof o === 'object' && o.body); }
+
 export function createAvatar(THREE, opts) {
   const { world, scene } = opts;
   const P = opts.player || {};
-  const model = P.model || {};
+  let model = P.model || {};
   const anim = P.anim || {};
+  /* 👕 opts.outfit — { body, wear }: the closet dresses the body once it is
+     loaded (closet.dress.js), and when the map gives this player NO character
+     of its own the closet body IS the character. Both are optional. */
+  const outfit = opts.outfit && typeof opts.outfit === 'object' ? opts.outfit : null;
   const group = new THREE.Group(); group.name = 'mf-avatar'; group.visible = false;
   if (scene) scene.add(group);
-  const A = { group, ready: false, error: null, state: 'idle', clips: new Map(), mixer: null, actions: new Map(), current: null, interactUntil: 0, yawOffset: model.faces === 'z' ? Math.PI : 0, scale: +model.scale > 0 ? +model.scale : 1 };
+  /* ⚠ `faces` is applied to the BODY, not folded into the yaw, so that inside
+     the group the character always looks down −z: the closet's fit records
+     (a backpack sits on the +z side of the chest) rely on that frame. */
+  const A = { group, ready: false, error: null, state: 'idle', clips: new Map(), mixer: null, actions: new Map(), current: null, interactUntil: 0, yawOffset: 0, scale: +model.scale > 0 ? +model.scale : 1, dressed: null };
 
   /* which clip a state plays: its own, else a sensible stand-in */
   function clipFor(state) {
@@ -92,15 +109,36 @@ export function createAvatar(THREE, opts) {
 
   (async () => {
     try {
-      if (!model.a || !world || !world.loadAsset) throw new Error('no model');
-      const { template, clips } = await world.loadAsset(model.a);
-      const body = world.cloneTemplate ? world.cloneTemplate(template) : template.clone();
+      let body = null, clips = [];
+      /* no character from the map → the closet body the player chose, if any */
+      if (!model.a && !model.url && outfitHasBody(outfit)) {
+        try { const api = await import('../closet/closet.api.js'); const cat = await api.catalog(); const b = (cat.bodies || []).find(x => x.id === outfit.body && x.url); if (b) { model = { url: b.url, scale: b.scale, faces: b.faces, anim: b.anim || {} }; A.scale = +model.scale > 0 ? +model.scale : 1; } } catch (e) {}
+      }
+      if (model.a && world && world.loadAsset) {
+        const r = await world.loadAsset(model.a);
+        body = world.cloneTemplate ? world.cloneTemplate(r.template) : r.template.clone(); clips = r.clips;
+      } else if (model.url) {
+        /* a closet body: the closet's loader centres a model on its middle, a character stands on its feet */
+        const d = await import('../closet/closet.dress.js');
+        const tpl = await d.loadModel(THREE, model.url);
+        body = d.cloneModel(tpl); clips = tpl.clips || [];
+        const bb = new THREE.Box3().setFromObject(body); body.position.y = -bb.min.y * A.scale;
+        // a closet body names its idle clip on the record; the map's own animation table still wins
+        if (model.anim && model.anim.idle && !(anim.idle && anim.idle.clip)) anim.idle = { clip: model.anim.idle };
+      } else throw new Error('no model');
       body.scale.setScalar(A.scale);
+      if (model.faces === 'z') body.rotation.y = Math.PI;
       group.add(body);
       clips.forEach(c => A.clips.set(c.name, c));
       // clips that live in uploaded animation files
       const srcs = new Set(); ANIM_STATES.forEach(s => { if (anim[s] && anim[s].src) srcs.add(anim[s].src); });
       for (const src of srcs) { try { const ext = await world.loadExtClips(src); ext.forEach(c => { if (!A.clips.has(c.name)) A.clips.set(c.name, c); }); } catch (e) {} }
+      /* 👕 dress BEFORE the mixer runs: the closet measures the body at rest,
+         and a T-pose measured mid-walk-cycle is a wrist in the wrong place. The
+         catalogue is cached, so twelve peers cost one fetch. */
+      if (outfit && outfit.wear && Object.keys(outfit.wear).length) {
+        try { const [d, api] = await Promise.all([import('../closet/closet.dress.js'), import('../closet/closet.api.js')]); const cat = await api.catalog(); A.dressed = d.dress(THREE, body, outfit, cat); } catch (e) { A.dressed = null; }
+      }
       A.mixer = new THREE.AnimationMixer(body);
       A.ready = true;
       play(A.state);
@@ -130,6 +168,7 @@ export function createAvatar(THREE, opts) {
       return true;
     },
     dispose() {
+      try { if (A.dressed) A.dressed.dispose(); } catch (e) {}
       try { if (A.mixer) A.mixer.stopAllAction(); } catch (e) {}
       try { if (group.parent) group.parent.remove(group); } catch (e) {}
     },

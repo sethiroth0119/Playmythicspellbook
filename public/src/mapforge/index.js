@@ -59,6 +59,8 @@ const MythicMapForge = {
   /* 🎮 every mini-game's model slots as showroom scenes (round 18, mapforge.showroom.js) */
   showrooms: { list: showroom.listGames, open: showroom.open, pick: showroom.pick, register: showroom.registerAll, build: showroom.buildShowroom, diff: showroom.diffShowroom, lastWrite: showroom.lastWrite },
   overlay: { forGame: overlay.forGame, liveMap: overlay.liveMap, invalidate: overlay.invalidate },
+  /* 👕 the Player Closet (/src/closet, window.MythicCloset): the creator for players, the studio for authors — see docs/athena-engine.md → Player Closet */
+  closet: { open: (o) => { try { return window.MythicCloset ? window.MythicCloset.open(o) : Promise.resolve(null); } catch (e) { return Promise.resolve(null); } }, openStudio: (o) => { try { return window.MythicCloset ? window.MythicCloset.openStudio(o) : Promise.resolve(null); } catch (e) { return Promise.resolve(null); } } },
   /* the quality ladder: get() / set('auto'|'low'|'medium'|'high') / onChange(fn) — remembered per device, auto steps down on low fps */
   quality: { get: quality.get, set: quality.set, onChange: quality.onChange, apply: quality.apply, LEVELS: quality.LEVELS },
 };

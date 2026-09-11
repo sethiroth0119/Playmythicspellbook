@@ -48537,6 +48537,12 @@ const Profile = {
   // Same convention as sleeves: owned holds ids, equipped holds the IMAGE.
   ownedDiceSkins: [],
   equippedDiceSkin: null,
+  /* 👕 Player Closet (/src/closet) — the outfit worn in every Athena hub and
+     the clothing ids the player has bought. `outfit` = { body, wear: { cat: itemId } }.
+     Money never sits here: a purchase spends through spendGems() and then
+     appends the id to `owned`. Reaches the modules ONLY through
+     MythicBridge.closet (the globals trap). */
+  closet: { outfit: null, owned: [] },
   // 🗺️ Campaign ids the player has cleared (final boss beaten). Drives
   // campaign chaining — a campaign with requiresCampaignId stays locked
   // until its prerequisite id is in here.
@@ -51413,6 +51419,8 @@ async function cloudSyncProfile() {
       // 🎲 Crafting Station — dice skins you own and wear.
       __ownedDiceSkins__:   Array.isArray(Profile.ownedDiceSkins) ? Profile.ownedDiceSkins : [],
       __equippedDiceSkin__: (typeof Profile.equippedDiceSkin === 'string') ? Profile.equippedDiceSkin : null,
+      // 👕 Player Closet — bought clothing + the worn outfit ride the forge JSONB like every cosmetic above
+      __closet__:           (Profile.closet && typeof Profile.closet === 'object') ? Profile.closet : { outfit: null, owned: [] },
       __equippedSleeve__:   (typeof Profile.equippedSleeve === 'string') ? Profile.equippedSleeve : null,
       // 🦸 Chosen Camp Heights survivor id (set once on first entry; sticks).
       __campSurvivorId__:    (typeof Profile.campSurvivorId === 'string') ? Profile.campSurvivorId : null,
@@ -53214,6 +53222,13 @@ async function cloudFetchProfile() {
         Profile.ownedDiceSkins = Object.keys(dset);
       }
       if (typeof f.__equippedDiceSkin__ === 'string') Profile.equippedDiceSkin = f.__equippedDiceSkin__;
+      // 👕 Player Closet — owned ids union-merge (a purchase on another device is never lost); the outfit is last-writer-wins
+      if (f.__closet__ && typeof f.__closet__ === 'object') {
+        const cur = (Profile.closet && typeof Profile.closet === 'object') ? Profile.closet : { outfit: null, owned: [] };
+        const cset = {};
+        [].concat(cur.owned || [], f.__closet__.owned || []).forEach(id => { if (typeof id === 'string') cset[id] = 1; });
+        Profile.closet = { outfit: (f.__closet__.outfit && typeof f.__closet__.outfit === 'object') ? f.__closet__.outfit : (cur.outfit || null), owned: Object.keys(cset) };
+      }
       // 🦸 Camp Heights survivor pick — restored last-writer-wins.
       if (typeof f.__campSurvivorId__ === 'string') Profile.campSurvivorId = f.__campSurvivorId__;
       // 🏳 Camp's registered District Node + Reconstruction Network state.
@@ -77246,6 +77261,7 @@ function loadForge() {
       if (p.princePortfolios && typeof p.princePortfolios === 'object') Profile.princePortfolios = _mergePrincePortfolios(p.princePortfolios, Profile.princePortfolios); // 🚗 car co (merged by id)
       if (p.blackRiver      && typeof p.blackRiver      === 'object') Profile.blackRiver      = p.blackRiver;       // ⛽ oil co
       if (p.fuelCommand     && typeof p.fuelCommand     === 'object') Profile.fuelCommand     = p.fuelCommand;      // ⛽ fuel co
+      if (p.closet          && typeof p.closet          === 'object') Profile.closet          = { outfit: (p.closet.outfit && typeof p.closet.outfit === 'object') ? p.closet.outfit : null, owned: Array.isArray(p.closet.owned) ? p.closet.owned.filter(x => typeof x === 'string') : [] };   // 👕 player closet
       // 🦸 Starter-deck state — restore so the new-player gate never re-fires.
       if (p.starterPicked === true) Profile.starterPicked = true;
       if (typeof p.starterDeckId === 'string') Profile.starterDeckId = p.starterDeckId;
@@ -138474,6 +138490,15 @@ function renderTitle() {
               if (typeof showToast === 'function') showToast('📡 Emergency Broadcast opened in a new tab.', 3200);
             } catch (e) {}
           } },
+      // 👕 PLAYER CLOSET — the character creator: dress the character every
+      //    Athena hub draws you as, shop clothing by brand. Lives in /src/closet
+      //    (window.MythicCloset); this tile is the only thing index.html knows.
+      //    Same null-when-unloaded contract as Mercenaries below.
+      ((typeof window !== 'undefined' && window.MythicCloset)
+        ? { id: 'btn-closet', icon: '<span style="font-size:3rem;line-height:1;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">👕</span>', name: 'Player Closet', sub: 'Dress your character · shop by brand', accent: '#f4d06f',
+            badge: (() => { try { const c = Profile.closet; const n = (c && c.outfit && c.outfit.wear) ? Object.keys(c.outfit.wear).length : 0; return n ? n + ' worn' : null; } catch (e) { return null; } })(),
+            onclick: () => { try { window.MythicCloset.open(); } catch (e) { showToast('⚠ The Player Closet did not load.', 3200); } } }
+        : null),
       // ⚔ MERCENARIES — the escrow job board. Sits directly under Emergency
       // Broadcast because that is where it LIVES: posting a contract puts a
       // job on the network feed, applying notifies the employer there, and a
@@ -138535,6 +138560,16 @@ function renderTitle() {
               else showToast('Athena Engine is still loading — try again in a moment.', 2600);
             } catch (e) { try { console.warn('[athena] open failed', e); } catch (_) {} }
           }, 'Athena Engine is admin-only.') },
+        // 👕 CLOSET STUDIO — where clothing is fitted to the characters and
+        //    brands are made (/src/closet). Also on the Athena top bar.
+        { id: 'btn-closet-studio', icon: '🧵', name: 'Closet Studio',  sub: 'Brands · clothing · fit it to the characters',
+          accent: '#f4d06f',
+          onclick: adminClick(() => {
+            try {
+              if (window.MythicCloset && window.MythicCloset.openStudio) window.MythicCloset.openStudio();
+              else showToast('The Player Closet is still loading — try again in a moment.', 2600);
+            } catch (e) { try { console.warn('[closet] studio open failed', e); } catch (_) {} }
+          }, 'The Closet Studio is admin-only.') },
       ];
       return [...everyoneTiles, ...adminTiles];
     })(),
@@ -144425,6 +144460,7 @@ function renderPricingAdmin() {
         <button id="open-battle-athena" class="btn-secondary" style="margin-top:0.5rem;width:100%;border:1px solid #e7c757;color:#ffe9a8" title="Edit the live battle board inside Athena Engine: paint terrain, move or replace props, add anything">⚔ Battle board in Athena Engine</button>
         <button id="open-farm-athena" class="btn-secondary" style="margin-top:0.5rem;width:100%;border:1px solid #e7c757;color:#ffe9a8" title="Edit the Homestead Farm as a game scene: move or replace its buildings for every player">🐄 Homestead Farm in Athena Engine</button>
         <button id="open-widget-designer" class="btn-secondary" style="margin-top:0.5rem;width:100%;border:1px solid #e7c757;color:#ffe9a8">🧩 Open Widget Designer</button>
+        <button id="open-closet-studio" class="btn-secondary" style="margin-top:0.5rem;width:100%;border:1px solid #e7c757;color:#ffe9a8" title="Player Closet: make brands, add clothing (.glb) and fit it to the characters players dress — hats, shirts, backpacks, sneakers, watches, earrings, chains, gloves, scarves">👕 Closet Studio (clothing &amp; brands)</button>
         <button id="open-ui-screens" class="btn-secondary" style="margin-top:0.5rem;width:100%;border:1px solid #4aa3ff;color:#dff4ff" title="Every screen and every player-facing text in one table — edit, find & replace, save, set live">🗂 Screens &amp; Strings</button>
         <button id="open-ui-editor" class="btn-secondary" style="margin-top:0.5rem;width:100%;border:1px solid #4aa3ff;color:#dff4ff" title="Click any element of the game and retitle, restyle or hide it — for every player once live">✎ Edit the game UI (live)</button>
         <div class="small-text ink-dim" style="margin-top:0.4rem">Also reachable at <code>?widgets=1</code>. Only an admin can set a widget <strong>live</strong> for every player (the server enforces it).</div>
@@ -145293,6 +145329,9 @@ function renderPricingAdmin() {
   };
   const faBtn = document.getElementById('open-farm-athena');
   if (faBtn) faBtn.onclick = () => { try { if (!(window.MythicFarm && window.MythicFarm.openInAthena && window.MythicFarm.openInAthena())) showToast('Athena Engine is still loading — try again in a moment.', 2600); } catch (e) { try { console.warn('[farm] athena open failed', e); } catch (_) {} } };
+  // 👕 Player Closet studio (/src/closet registers window.MythicCloset) — same contract as the map creator.
+  const csBtn = document.getElementById('open-closet-studio');
+  if (csBtn) csBtn.onclick = () => { try { if (window.MythicCloset && window.MythicCloset.openStudio) window.MythicCloset.openStudio(); else showToast('The Player Closet is still loading — try again in a moment.', 2600); } catch (e) { try { console.warn('[closet] open failed', e); } catch (_) {} } };
   const awBtn = document.getElementById('open-widget-designer');
   if (awBtn) awBtn.onclick = () => {
     try {
@@ -241151,6 +241190,45 @@ try { Object.defineProperty(window, '__mythicCityModels', { get: () => { try { r
         return true;
       } catch (e) { return false; }
     },
+    /* 👕 THE PLAYER CLOSET (/src/closet) — the outfit worn in every hub, the
+       clothing the player owns, and the ONLY way the closet spends money.
+       `charge` goes through spendGems() / spendSovereigns() so a purchase is
+       ledgered and cloud-persisted exactly like an avatar or a sleeve; the
+       module never touches Profile.gems. `grant` only ever appends. Everything
+       else is a cosmetic preference and rides saveProfile(). */
+    closet: {
+      signedIn: () => { try { return !!(Profile.cloud && Profile.cloud.signedIn); } catch (e) { return false; } },
+      outfit: () => { try { const c = Profile.closet; return (c && c.outfit && typeof c.outfit === 'object') ? JSON.parse(JSON.stringify(c.outfit)) : null; } catch (e) { return null; } },
+      setOutfit: (o) => {
+        try {
+          if (!o || typeof o !== 'object') return false;
+          const s = JSON.stringify(o); if (s.length > 4000 || /[<>]/.test(s)) return false;
+          if (!Profile.closet || typeof Profile.closet !== 'object') Profile.closet = { outfit: null, owned: [] };
+          Profile.closet.outfit = JSON.parse(s);
+          try { saveProfile(); } catch (e) {}
+          return true;
+        } catch (e) { return false; }
+      },
+      owned: () => { try { const c = Profile.closet; return (c && Array.isArray(c.owned)) ? c.owned.slice() : []; } catch (e) { return []; } },
+      grant: (id) => {
+        try {
+          id = String(id || '').slice(0, 64); if (!/^[A-Za-z0-9_-]{2,64}$/.test(id)) return false;
+          if (!Profile.closet || typeof Profile.closet !== 'object') Profile.closet = { outfit: null, owned: [] };
+          if (!Array.isArray(Profile.closet.owned)) Profile.closet.owned = [];
+          if (Profile.closet.owned.indexOf(id) < 0) Profile.closet.owned.push(id);
+          try { if (typeof _persistProgressNow === 'function') _persistProgressNow(); else saveProfile(); } catch (e) {}
+          return true;
+        } catch (e) { return false; }
+      },
+      balance: (cur) => { try { return cur === 'sovereigns' ? (Profile.sovereigns || 0) : (Profile.gems || 0); } catch (e) { return 0; } },
+      charge: (amount, cur, reason) => {
+        try {
+          amount = Math.floor(+amount || 0); if (amount <= 0) return true;
+          if (cur === 'sovereigns') return !!spendSovereigns(amount, reason || 'Player Closet');
+          return !!spendGems(amount, reason || 'Player Closet');
+        } catch (e) { return false; }
+      },
+    },
     hubs: () => [{ id: 'main', name: 'Main menu' }, { id: 'battle', name: 'Battle Hall' }, { id: 'forge', name: 'Forge Sanctum' }, { id: 'exchange', name: 'Ruin Exchange' }, { id: 'codex', name: 'Codex' }, { id: 'field', name: 'The Field' }, { id: 'arcanum', name: 'Arcanum' }],
     openHub: (h) => { try { const ok = ['main', 'battle', 'forge', 'exchange', 'codex', 'field', 'arcanum']; h = ok.includes(h) ? h : 'main'; App.screen = 'title'; App.titleHub = h === 'main' ? null : h; render(); return true; } catch (e) { return false; } },
     guides: () => {
@@ -264621,7 +264699,13 @@ render();
      ⚠ If this 404s nothing changes — the button reports "still loading".
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/mapforge/index.js?v=mf18"></script>
+<script type="module" src="src/mapforge/index.js?v=mf19"></script>
+<!-- 👕 PLAYER CLOSET — the character creator (players) and the Closet Studio
+     (admins): clothing fitted to the characters by measurement, brands, the
+     outfit every Athena hub draws. Registers window.MythicCloset; inert until
+     opened (Forge Sanctum → Player Closet, the Athena top bar, ?closet=1).
+     Migration: sql/132_player_closet.sql. Bump ?v= on every change. -->
+<script type="module" src="src/closet/index.js?v=pc1"></script>
 <!-- 🧩 ATHENA WIDGETS — Blueprint-style UI widgets and themes (/src/widgets).
      Registers window.AthenaUI. At boot it loads every LIVE widget/theme
      (public.ui_widgets, sql/040 — or the device's cached copy) and mounts

@@ -59,6 +59,12 @@ node tools/athena-harness/pw-test17.mjs       # round 17: cloud files (bridge bu
                                               #           the content browser dock, context menu
 node tools/athena-harness/pw-test18.mjs       # round 18: mini-game model showrooms — build, replace/restore/append,
                                               #           save → bridge, live → publish, city registry, chooser, admin gate
+node tools/athena-harness/pw-test20.mjs       # round 20: 👕 Player Closet — bone families + measurement on Soldier.glb, the camera
+                                              #           swing, watch/hat/sneaker fits, portability across body scale, try-on / buy /
+                                              #           save, the studio (auto-fit, save), createAvatar + engine.mount dressed
+                                              #           (harness3.html; needs three/models/Soldier.glb:
+                                              #            curl -sSL -o tools/athena-harness/three/models/Soldier.glb https://raw.githubusercontent.com/mrdoob/three.js/r128/examples/models/gltf/Soldier.glb
+                                              #            PW_CHROME=<chromium binary> when playwright's own download is absent)
 ```
 
 Each prints ✔/✘ per step and the page's error list; screenshots land in

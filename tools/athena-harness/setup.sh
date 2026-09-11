@@ -18,7 +18,7 @@ cat > three/models/manifest.json <<'JSON'
 { "models": [
   { "id": "duck", "label": "Duck", "url": "/models/Duck.glb", "cat": "Test" },
   { "id": "flamingo", "label": "Flamingo (animated)", "url": "/models/Flamingo.glb", "cat": "Test", "anims": ["flamingo_flyA_"] }
-] }
+], "sounds": [ { "id": "beep", "label": "Beep", "url": "/models/beep.wav" } ] }
 JSON
 ln -sfn ../../../public/src www/src
 ln -sfn ../three www/three

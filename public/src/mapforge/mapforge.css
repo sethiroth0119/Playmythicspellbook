@@ -207,3 +207,59 @@
 #mf-root .aw-gmenu button{display:flex;align-items:center;gap:6px;width:100%;text-align:left;border:none;background:none;padding:4px 6px;border-radius:4px}
 #mf-root .aw-gmenu button:hover{background:#1e2231}
 #mf-root .aw-gdot{width:10px;height:10px;border-radius:50%;display:inline-block}
+/* ── Library / asset browser (round 12) ── */
+.mf-libbar{display:flex;gap:5px;margin-bottom:7px}
+.mf-libbar input{flex:1}
+.mf-libbar button{flex:0 0 32px;padding:4px 0;font-size:13px}
+.mf-tags{display:flex;gap:4px;flex-wrap:wrap;margin:0 0 7px}
+.mf-tags:empty{display:none}
+.mf-tags button{padding:2px 7px;font-size:10.5px;border-radius:20px;color:var(--mf-dim)}
+.mf-tags button small{color:var(--mf-dim);opacity:.7;font-size:9px}
+.mf-tags button.on{color:#ffe9a8}
+.mf-recent{margin-bottom:8px}
+.mf-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
+.mf-cards.row{grid-template-columns:repeat(6,1fr)}
+.mf-cards.list{grid-template-columns:1fr}
+.mf-card{position:relative;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 4px 5px;border:1px solid var(--mf-line);border-radius:7px;background:var(--mf-panel2);cursor:pointer;min-width:0;transition:.12s}
+.mf-card:hover{border-color:var(--mf-gold);background:#1e2231}
+.mf-card.on{background:rgba(212,175,55,.16);border-color:var(--mf-gold);box-shadow:inset 0 0 12px rgba(212,175,55,.15)}
+.mf-card.sel{outline:1px solid var(--mf-blue)}
+.mf-card .th{width:56px;height:56px;border-radius:5px;object-fit:contain;background:radial-gradient(circle at 50% 40%,#232838,#0d1017 75%)}
+.mf-card .th.ic{display:flex;align-items:center;justify-content:center;font-size:26px}
+.mf-card .lb{font-size:10px;line-height:1.15;text-align:center;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mf-card .bd{font-size:8.5px;letter-spacing:.06em;color:var(--mf-dim);border:1px solid var(--mf-line);border-radius:10px;padding:0 5px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mf-card .fav{position:absolute;top:2px;right:4px;font-size:12px;color:rgba(255,255,255,.18);opacity:0;transition:.12s}
+.mf-card:hover .fav,.mf-card .fav.on{opacity:1}
+.mf-card .fav.on{color:var(--mf-gold2)}
+.mf-card .fav:hover{color:var(--mf-gold2);transform:scale(1.2)}
+.mf-cards.list .mf-card{flex-direction:row;padding:4px 6px}
+.mf-cards.list .mf-card .th{width:30px;height:30px}
+.mf-cards.list .mf-card .th.ic{font-size:16px}
+.mf-cards.list .mf-card .lb{flex:1;text-align:left}
+.mf-cards.list .mf-card .fav{position:static;opacity:1}
+.mf-cards.row .mf-card.mini{padding:4px 2px 3px}
+.mf-cards.row .mf-card.mini .th{width:36px;height:36px}
+.mf-cards.row .mf-card.mini .th.ic{font-size:18px}
+.mf-cards.row .mf-card.mini .lb{font-size:8.5px}
+.mf-cards.row .mf-card.mini .bd{display:none}
+.mf-props button .ic.th{width:40px;height:40px;border-radius:4px;object-fit:contain;background:radial-gradient(circle at 50% 40%,#232838,#0d1017 75%)}
+.mf-props.list{grid-template-columns:1fr}
+.mf-props.list button{flex-direction:row;padding:4px 7px;text-align:left}
+.mf-props.list button .ic.th{width:26px;height:26px}
+.mf-props.list button .ic{font-size:14px}
+.mf-props.list button span:last-child{flex:1;font-size:11px}
+.mf-asset img.th{width:28px;height:28px;border-radius:4px;object-fit:contain;background:radial-gradient(circle at 50% 40%,#232838,#0d1017 75%);flex:0 0 28px}
+.mf-details{margin-top:9px;padding:8px;border:1px solid var(--mf-line);border-radius:7px;background:rgba(0,0,0,.18)}
+.mf-dhead{display:flex;gap:9px;align-items:center;margin-bottom:6px}
+.mf-dhead .th{width:64px;height:64px;border-radius:6px;object-fit:contain;background:radial-gradient(circle at 50% 40%,#232838,#0d1017 75%);flex:0 0 64px}
+.mf-dhead .th.ic{display:flex;align-items:center;justify-content:center;font-size:30px}
+.mf-dhead .nm{font-weight:700;font-size:12.5px;color:#f1e9d2}
+.mf-dhead .kd{font-size:10.5px;color:var(--mf-dim);letter-spacing:.04em;text-transform:uppercase}
+.mf-dtags{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px}
+.mf-dtags button{padding:1px 7px;font-size:10px;border-radius:20px;color:var(--mf-dim)}
+.mf-dtags input{margin-top:3px;font-size:11px}
+.mf-dtable{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:6px}
+.mf-dtable td{padding:2px 4px;vertical-align:top;word-break:break-all}
+.mf-dtable td:first-child{color:var(--mf-dim);text-transform:uppercase;letter-spacing:.06em;font-size:10px;white-space:nowrap;width:70px}
+.mf-details .mf-btns{display:flex;gap:4px;flex-wrap:wrap}
+.mf-details .mf-btns button{font-size:11px;padding:3px 8px}

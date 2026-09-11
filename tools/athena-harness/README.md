@@ -45,6 +45,8 @@ node tools/athena-harness/pw-test10.mjs       # round 10: instancing draw calls,
                                               #   quality ladder + auto-tune, editor HUD
 node tools/athena-harness/pw-test11.mjs       # round 11: textured terrain layers, material overrides (props + .glb),
                                               #   tone mapping / exposure, bloom + vignette post pass, Look controls
+node tools/athena-harness/pw-test12.mjs       # round 12: asset browser — index/search/tags, thumbnails (props, models, prefabs),
+                                              #           favourites/recents, details panel, legacy category views
 ```
 
 Each prints ✔/✘ per step and the page's error list; screenshots land in

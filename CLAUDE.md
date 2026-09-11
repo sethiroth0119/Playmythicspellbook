@@ -137,4 +137,8 @@ therefore terminate.
   procedural atlas — no texture assets); `objects[].mat` overrides clone materials per object, never the
   shared prop templates; tone mapping/exposure are applied by the HOST via `onEnv` (`applyTone`), bloom +
   vignette by `mapforge.post.js` (no EffectComposer addons).
-- Docs: `docs/athena-engine.md`. Tests: `tools/athena-harness/` (`pw-test5.mjs` round 5, `pw-test6.mjs` round 6, `pw-test7.mjs` physics, `pw-test8.mjs` navigation, `pw-test9.mjs` audio, `pw-test10.mjs` performance, `pw-test11.mjs` look).
+- **Round 12 (asset browser):** Library is `mapforge.assets.js` (index + search + prefs, pure) plus the editor's
+  card views; thumbnails come from a second, offscreen WebGLRenderer (session cache only — never persist PNGs);
+  tags live on `assets[].tags` / `prefabs[].tags` (`normalizeTags`) and `PROP_TAGS` for built-ins. Project
+  models still come ONLY from `/models/manifest.json` (no uploads).
+- Docs: `docs/athena-engine.md`. Tests: `tools/athena-harness/` (`pw-test5.mjs` round 5, `pw-test6.mjs` round 6, `pw-test7.mjs` physics, `pw-test8.mjs` navigation, `pw-test9.mjs` audio, `pw-test10.mjs` performance, `pw-test11.mjs` look, `pw-test12.mjs` asset browser).

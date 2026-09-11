@@ -165,6 +165,7 @@ export function normalize(raw) {
     url: a.url ? String(a.url).slice(0, 1000) : undefined,
     data: (typeof a.data === 'string' && a.data.length) ? a.data : undefined,
     anims: Array.isArray(a.anims) ? a.anims.map(x => String(x).slice(0, 80)).slice(0, 64) : undefined,
+    tags: normalizeTags(a.tags).length ? normalizeTags(a.tags) : undefined,
     size: Number.isFinite(+a.size) ? +a.size : undefined,
   }) : null).filter(a => a && (a.url || a.data));
 
@@ -215,9 +216,16 @@ export function normalizePrefabs(raw, assetIds) {
     const id = String(p.id || uid('pf_')); if (seen.has(id)) return; seen.add(id);
     const objects = (Array.isArray(p.objects) ? p.objects : []).map(o => { const n = normalizeObject(o, assetIds, null, null); if (!n || n.t === 'prefab') return null; delete n.f; delete n.k; return n; }).filter(Boolean).slice(0, 200);
     if (!objects.length) return;
-    out.push({ id, name: String(p.name || 'Prefab').slice(0, 60), icon: String(p.icon || '🧱').slice(0, 4), objects });
+    const tags = normalizeTags(p.tags);
+    out.push(Object.assign({ id, name: String(p.name || 'Prefab').slice(0, 60), icon: String(p.icon || '🧱').slice(0, 4), objects }, tags.length ? { tags } : {}));
   });
   return out;
+}
+/* Asset-browser tags on prefabs and models: short lower-case words the author
+   types in the details panel; the Library searches them (mapforge.assets.js). */
+export function normalizeTags(raw) {
+  const seen = new Set();
+  return (Array.isArray(raw) ? raw : typeof raw === 'string' ? raw.split(/[,\s]+/) : []).map(t => String(t || '').toLowerCase().trim().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24)).filter(t => { if (!t || seen.has(t)) return false; seen.add(t); return true; }).slice(0, 12);
 }
 export function normalizeObject(o, assetIds, folderIds, prefabIds) {
   if (!o || typeof o !== 'object' || !o.t) return null;

@@ -35,6 +35,7 @@ fixed battle grid. The two coexist.
 | `mapforge.nav.js` | **navigation**: a grid navmesh baked from terrain + colliders, A* with string-pulling (`world.nav`) |
 | `mapforge.audio.js` | **positional audio** (three.js WebAudio): one listener on the camera, emitters on objects, one-shots at the player or in 2D |
 | `mapforge.post.js` | the **look pass**: bloom + vignette composited over the scene (self-contained, no addons) |
+| `mapforge.assets.js` | the **asset browser** behind Library: one index over props / models / prefabs / sounds, search + tags, favourites + recents, offscreen thumbnails |
 | `mapforge.quality.js` | the **quality ladder** (pixel ratio, shadows, effects, effect range) with auto-tune; remembered per device |
 | `mapforge.physics.js` | **rigid-body physics** (cannon-es, vendored at `/vendor/cannon-es.js`): terrain heightfield, static colliders, dynamic/kinematic bodies, the player as a kinematic sphere |
 | `../widgets/graph-editor.js` | the shared Blueprint-style node editor (used by the actor graph panel) |
@@ -567,3 +568,49 @@ terrain is 25k vertices in one draw call and has not needed either.
 
 Limits: no environment maps / reflections, no SSAO; the terrain detail is
 procedural (no texture assets are hosted), one tile set for every map.
+
+## Asset browser (round 12)
+
+Library is now a content browser rather than a flat list — the part of
+Unreal's Content Browser / Unity's Project window that matters for a map
+maker: **find it, see it, place it**.
+
+- **Search everything.** The box at the top of Library searches props,
+  this map's models, project models (`/models/manifest.json`), prefabs (map
+  + shelf) and sounds at once, by name and by tag; every token must
+  prefix-match, label hits rank above tag hits. Typing ignores the prop
+  category you were on (a category only scopes the idle grid); **Models /
+  Prefabs / Sounds** still scope a search to that kind, **★** to favourites,
+  **All** is the whole index. `Esc` clears.
+- **Tags.** Built-in props carry hand-written tags (`PROP_TAGS` in
+  `mapforge.assets.js`: a barrel is *wood, container, storage*; a lantern is
+  *light, lamp, glow, night*), plus derived ones (*tintable*, *effect*,
+  *marker*, *no-collision*, *animated*, *embedded*). Manifest entries may
+  carry `tags: []`. Your own models and prefabs take tags in the details
+  panel (comma-separated; stored as `assets[].tags` / `prefabs[].tags`,
+  normalised to ≤ 12 short lower-case words). The chips under the search are
+  the tag cloud of the current results — click one to narrow.
+- **Thumbnails.** A 96 px offscreen renderer draws each prop, model and
+  prefab once from a ¾ view and caches the PNG for the session; VFX
+  emitters and markers keep their icon. Project models not yet in the map
+  are loaded once for their picture (no asset is created; capped at 24 per
+  session). Prefab pictures are recomposed after **Apply**. If a second
+  WebGL context cannot be created the cards fall back to icons.
+- **Favourites and recents** (`localStorage` → `mf_assets_v1`): ★ on any
+  card or in the details panel; the last twelve things picked show as a
+  Recent row above the grid. Grid / list toggle next to the search box.
+- **Details panel** under the grid: picture, kind and source (built-in /
+  this map / project / this device), tags, and per kind: collision + tint +
+  placed count (props), source URL or embedded size, clip names, dimensions
+  and triangle count (models), parts and placed count (prefabs); actions —
+  favourite, add to map, relink, rename, shelf, remove.
+- Editor API (tests, hosts): `editor.library.search(q, filters)`,
+  `.pick(key)`, `.setQuery(q)`, `.setCat(c)`, `.thumb(key)`, `.prefs`,
+  `.index`; `editor.thumbs()` is the renderer. Keys are `kind:id`
+  (`prop:tree`, `model:a_…`, `project:duck`, `prefab:pf_…`, `shelf:…`,
+  `sound:s_…`, `psound:rain`).
+
+Limits: thumbnails are session-only (never persisted — a hundred PNGs is
+cheap to redraw and expensive to store); no folders inside the Library (map
+content folders are the outliner's job); no drag-and-drop from a card (pick,
+then click the ground, as before).

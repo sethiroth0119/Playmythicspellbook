@@ -22,12 +22,13 @@
 import { ensureThree } from './mapforge.three.js';
 import { buildWorld, bufferToB64 } from './mapforge.world.js';
 import { createPlayer } from './mapforge.player.js';
-import { newMap, normalize, serialize, clone, uid, PAINT, ENV_PRESETS, LOOP_MODES, resampleTerrain, gameId, assetBytes, embeddedBytes } from './mapforge.format.js';
+import { newMap, normalize, serialize, clone, uid, PAINT, ENV_PRESETS, LOOP_MODES, resampleTerrain, gameId, assetBytes, embeddedBytes, normalizeTags } from './mapforge.format.js';
 import * as games from './mapforge.games.js';
 import { invalidate as invalidateOverlay } from './mapforge.overlay.js';
 import { COMPONENTS, ACTOR_NODES, newBlueprint, newGraphNode, hasBehaviour } from './mapforge.actors.js';
 import { createGraphEditor } from '../widgets/graph-editor.js';
 import * as quality from './mapforge.quality.js';
+import * as assetsMod from './mapforge.assets.js';
 import { createPost } from './mapforge.post.js';
 import { applyTone } from './mapforge.engine.js';
 import { PROP_CATALOG, PROP_BY_ID, buildProp } from './mapforge.props.js';
@@ -743,6 +744,7 @@ export async function openEditor(opts) {
     const ids = ed.ids.filter(objById);
     S.editingPrefab = null;
     if (!ids.length) { toast('Nothing left of the prefab to apply.'); renderInspector(); return; }
+    invalidatePrefabThumb(ed.pf);   // parts moved — the picture is stale even when the part count is not
     createPrefab(ids, ed.name, ed.pf);
     toast('Applied — ' + S.map.objects.filter(o => o.t === 'prefab' && o.pf === ed.pf).length + ' instance(s) updated.');
   }
@@ -1060,6 +1062,7 @@ export async function openEditor(opts) {
     try { cancelAnimationFrame(raf); } catch (e) {}   // raf is declared at the very end; a close during a failed open must not throw
     teardown.forEach(f => { try { f(); } catch (e) {} });
     try { post.dispose(); if (world) world.dispose(); renderer.dispose(); renderer.forceContextLoss(); } catch (e) {}
+    try { if (thumbs) thumbs.dispose(); } catch (e) {}
     root.remove(); document.body.style.overflow = prevOverflow;
     const closedGame = S.map && S.map.game;
     ED = null;
@@ -1090,70 +1093,249 @@ export async function openEditor(opts) {
     $('#mf-palette').innerHTML = PAINT.map((p, i) => '<button data-paint="' + i + '" class="' + (i === S.paintIdx ? 'on' : '') + '"><span class="sw" style="background:' + p.color + '"></span>' + esc(p.label) + '</button>').join('');
     $$('#mf-palette button').forEach(b => b.onclick = () => { S.paintIdx = +b.dataset.paint; if (S.tool !== 'paint') setTool('paint'); renderPalette(); renderHud(); });
   }
-  let libCat = 'Nature';
+  /* ═══ LIBRARY / ASSET BROWSER ═══
+     Two views over one index (mapforge.assets.js). With no search text and a
+     prop category picked, the classic grid (buttons, now with thumbnails).
+     With text, or on All / ★, a unified card grid over props, models, prefabs
+     and sounds. The management forms (add .glb, URL, shelf, sounds by URL)
+     stay under their own categories. `libSel` is the card the details panel
+     describes — it follows whatever was last picked. */
+  let libCat = 'Nature', libQ = '', libTag = '', libSel = null, libIndex = [];
+  const prefs = assetsMod.createPrefs();
+  let thumbs = null;
+  function thumbsRenderer() { if (thumbs === null) { try { thumbs = assetsMod.createThumbs(THREE, { size: 96 }); } catch (e) { thumbs = false; } } return thumbs || null; }
+  ED.thumbs = () => thumbsRenderer();
+  const tplCache = new Map();        // assetId → template Object3D once the world has loaded it
+  const thumbBusy = new Set();       // asset/project keys with a load in flight (or failed) — never retried in a loop
+  function cacheTemplate(a) {
+    if (!a || tplCache.has(a.id) || thumbBusy.has('model:' + a.id)) return;
+    thumbBusy.add('model:' + a.id);
+    world.loadAsset(a.id).then(({ template }) => { tplCache.set(a.id, template); thumbBusy.delete('model:' + a.id); const th = thumbsRenderer(); if (th) th.invalidate('model:' + a.id); if (root.isConnected) renderLibrary(); }).catch(() => {});
+  }
+  /* A project model not yet in the map: load it once for its picture (no asset is created). */
+  let projectThumbLoads = 0;
+  function cacheProjectTemplate(key, m) {
+    if (thumbBusy.has(key) || tplCache.has(key) || !THREE.GLTFLoader || projectThumbLoads >= 24) return;
+    thumbBusy.add(key); projectThumbLoads++;
+    try {
+      new THREE.GLTFLoader().load(m.url, (g) => {
+        const sc = g.scene || (g.scenes && g.scenes[0]); if (!sc) return;
+        sc.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(sc), c = new THREE.Vector3(); bb.getCenter(c);
+        const wrap = new THREE.Group(); sc.position.set(-c.x, -bb.min.y, -c.z); wrap.add(sc);
+        tplCache.set(key, wrap); thumbBusy.delete(key); if (root.isConnected) renderLibrary();
+      }, undefined, () => {});
+    } catch (e) {}
+  }
+  function prefabPreview(def) {
+    const g = new THREE.Group();
+    (def.objects || []).slice(0, 60).forEach(c => {
+      let body;
+      if (c.t === 'glb') { const tpl = tplCache.get(c.a); body = tpl ? tpl.clone() : buildProp(THREE, 'placeholder'); }
+      else if (c.t.startsWith('fx_')) body = buildProp(THREE, 'fxmarker');
+      else body = buildProp(THREE, c.t, c.c);
+      body.position.set(c.p[0], c.p[1], c.p[2]); body.rotation.set(c.r[0], c.r[1], c.r[2]); body.scale.set(c.s[0], c.s[1], c.s[2]);
+      g.add(body);
+    });
+    return g;
+  }
+  /* { img } or { icon } for a card; builds and caches the picture on first ask. */
+  function thumbOf(e) {
+    const th = thumbsRenderer();
+    if (e.kind === 'prop') return assetsMod.thumbFor(th, e.key, e.icon, () => (e.ref.fxKind || e.ref.marker) ? null : buildProp(THREE, e.id));
+    if (e.kind === 'model') { const tpl = tplCache.get(e.id); if (!tpl) cacheTemplate(e.ref); return assetsMod.thumbFor(th, e.key, e.icon, () => tpl || null); }
+    if (e.kind === 'project') { const inMap = S.map.assets.find(a => a.url === e.url); if (inMap) return thumbOf({ kind: 'model', key: 'model:' + inMap.id, id: inMap.id, icon: e.icon, ref: inMap }); if (!tplCache.has(e.key)) cacheProjectTemplate(e.key, e.ref); return assetsMod.thumbFor(th, e.key, e.icon, () => tplCache.get(e.key) || null); }
+    if (e.kind === 'prefab' || e.kind === 'shelf') return assetsMod.thumbFor(th, e.key + ':' + (e.ref.objects || []).length, e.icon, () => prefabPreview(e.ref));
+    return { icon: e.icon };
+  }
+  function invalidatePrefabThumb(id) { const th = thumbsRenderer(); if (!th) return; Array.from(th.cache.keys()).filter(k => k.startsWith('prefab:' + id + ':') || k.startsWith('shelf:' + id + ':')).forEach(k => th.invalidate(k)); }
+  function rebuildIndex() {
+    libIndex = assetsMod.buildIndex({ props: PROP_CATALOG, assets: S.map.assets, project: projectLib || [], prefabs: S.map.prefabs || [], shelf: shelfList(), sounds: S.map.sounds || [], projectSounds: projectSounds || [] });
+    return libIndex;
+  }
+  function entryByKey(k) { return libIndex.find(e => e.key === k) || null; }
+  const KIND_CATS = { Models: ['model', 'project'], Prefabs: ['prefab', 'shelf'], Sounds: ['sound', 'psound'] };
+  function libFilters() {
+    const f = {};
+    if (libCat === '★') f.fav = prefs.favs;
+    else if (KIND_CATS[libCat]) f.kind = KIND_CATS[libCat];
+    else if (libCat !== 'All' && !libQ.trim() && !libTag) f.cat = libCat;   // typing searches everything; a prop category only scopes the idle grid
+    if (libTag) f.tag = libTag;
+    return f;
+  }
+  function addSound(url, label) { url = String(url || '').trim(); if (!url) return; if (!/^(https?:\/\/|\/|\.\/|assets\/)/i.test(url)) { toast('Sound URL must start with https://, / or assets/'); return; } if (S.map.sounds.find(x => x.url === url)) { toast('Already in this map.'); return; } beginObjectEdit(); S.map.sounds.push({ id: uid('s_'), label: (label || decodeURIComponent(url.split('/').pop().replace(/\.[a-z0-9]+$/i, '')) || 'Sound').slice(0, 60), url }); endObjectEdit(); setDirty(true); renderLibrary(); }
+  const wantPlace = () => { if (S.tool === 'select' || S.tool === 'erase') setTool('place'); };
+  /* Act on a card: props/models/prefabs become the placement pick, project
+     entries are added to the map first, sounds preview. */
+  function pickEntry(e) {
+    if (!e) return;
+    libSel = e.key; prefs.touch(e.key);
+    if (e.kind === 'prop') { S.propId = e.id; wantPlace(); }
+    else if (e.kind === 'model') { S.propId = 'glb'; S.assetId = e.id; wantPlace(); }
+    else if (e.kind === 'project') { const inMap = S.map.assets.find(a => a.url === e.url); if (inMap) { S.propId = 'glb'; S.assetId = inMap.id; } else addAsset(e.url, e.label || e.id, { anims: e.ref.anims }); if (S.assetId) { libSel = 'model:' + S.assetId; prefs.touch(libSel); } wantPlace(); }
+    else if (e.kind === 'prefab') { S.propId = 'prefab'; S.prefabId = e.id; wantPlace(); }
+    else if (e.kind === 'shelf') { shelfImport(e.id); return; }
+    else if (e.kind === 'sound') previewSound(e.url);
+    else if (e.kind === 'psound') { if (!S.map.sounds.find(s => s.url === e.url)) addSound(e.url, e.label); else previewSound(e.url); const snd = S.map.sounds.find(s => s.url === e.url); if (snd) { libSel = 'sound:' + snd.id; prefs.touch(libSel); } }
+    renderLibrary(); refreshGhost(); renderHud();
+  }
+  function isPicked(e) {
+    if (e.kind === 'prop') return S.propId === e.id;
+    if (e.kind === 'model') return S.propId === 'glb' && S.assetId === e.id;
+    if (e.kind === 'project') { const a = S.map.assets.find(x => x.url === e.url); return !!a && S.propId === 'glb' && S.assetId === a.id; }
+    if (e.kind === 'prefab') return S.propId === 'prefab' && S.prefabId === e.id;
+    return false;
+  }
+  function cardHtml(e, extraClass) {
+    const t = thumbOf(e);
+    const pic = t.img ? '<img class="th" src="' + t.img + '" alt="">' : '<span class="th ic">' + e.icon + '</span>';
+    const badge = e.kind === 'project' || e.kind === 'psound' ? (e.inMap || (e.kind === 'project' && S.map.assets.find(a => a.url === e.url)) ? 'in map' : 'project') : e.kind === 'shelf' ? 'shelf' : e.kind === 'model' ? (e.ref.data ? 'embedded' : 'url') : e.kind === 'prefab' ? e.parts + ' parts' : e.kind === 'sound' ? 'sound' : '';
+    return '<div class="mf-card ' + (isPicked(e) ? 'on ' : '') + (libSel === e.key ? 'sel ' : '') + (extraClass || '') + '" data-key="' + esc(e.key) + '" title="' + esc(e.label + ' · ' + assetsMod.KINDS[e.kind].label + ' · ' + assetsMod.KINDS[e.kind].source) + '">' + pic + '<span class="lb">' + esc(e.label) + '</span>' + (badge ? '<span class="bd">' + esc(badge) + '</span>' : '') + '<span class="fav ' + (prefs.isFav(e.key) ? 'on' : '') + '" data-fav="' + esc(e.key) + '" title="Favourite">★</span></div>';
+  }
+  function wireCards(box) {
+    box.querySelectorAll('.mf-card').forEach(el => el.onclick = (ev) => {
+      const key = el.dataset.key;
+      if (ev.target.dataset.fav) { prefs.toggleFav(key); renderLibrary(); return; }
+      pickEntry(entryByKey(key));
+    });
+  }
   function renderLibrary() {
-    const cats = ['Nature', 'Structures', 'Props', 'Ruins', 'VFX', 'Markers', 'Models', 'Prefabs', 'Sounds'];
-    $('#mf-cats').innerHTML = cats.map(c => '<button data-cat="' + c + '" class="' + (c === libCat ? 'on' : '') + '">' + c + '</button>').join('');
-    $$('#mf-cats button').forEach(b => b.onclick = () => { libCat = b.dataset.cat; renderLibrary(); });
+    rebuildIndex();
+    const cats = ['All', '★', 'Nature', 'Structures', 'Props', 'Ruins', 'VFX', 'Markers', 'Models', 'Prefabs', 'Sounds'];
+    $('#mf-cats').innerHTML = cats.map(c => '<button data-cat="' + c + '" class="' + (c === libCat ? 'on' : '') + '" title="' + (c === '★' ? 'Favourites' : c === 'All' ? 'Everything, searchable' : c) + '">' + c + '</button>').join('');
+    $$('#mf-cats button').forEach(b => b.onclick = () => { libCat = b.dataset.cat; libTag = ''; renderLibrary(); });
+    const qEl = $('#mf-lib-q'); if (qEl && qEl.value !== libQ) qEl.value = libQ;
+    const vEl = $('#mf-lib-view'); if (vEl) { vEl.textContent = prefs.view === 'list' ? '☰' : '▦'; vEl.title = prefs.view === 'list' ? 'Switch to grid' : 'Switch to list'; }
     const grid = $('#mf-props'), models = $('#mf-models');
-    if (libCat === 'Models') {
-      const pb = $('#mf-prefabbox'); if (pb) pb.style.display = 'none';
-      const sb = $('#mf-soundbox'); if (sb) sb.style.display = 'none';
-      grid.innerHTML = ''; models.style.display = '';
-      $('#mf-assets').innerHTML = S.map.assets.length ? S.map.assets.map(a => '<div class="mf-asset ' + (S.propId === 'glb' && S.assetId === a.id ? 'on' : '') + '" data-asset="' + a.id + '"><span>' + (a.data ? '📦' : '🧊') + '</span><span class="lb" title="' + esc(a.url || 'embedded in this map') + '">' + esc(a.label) + (a.anims && a.anims.length ? ' <small>🎞 ' + a.anims.length + '</small>' : '') + '</span>' + (a.data ? '<span class="tag" title="Embedded in the map (' + (assetBytes(a) / 1024).toFixed(0) + ' KB). Relink to a /models/ URL for production.">' + (assetBytes(a) / 1024).toFixed(0) + 'K</span><span class="rl" title="Relink to a URL">↗</span>' : '') + '<span class="x" title="Remove model and every placed copy">✕</span></div>').join('') : '<div class="mf-empty">No models in this map yet. Drop a <b>.glb</b> on the canvas, pick one from the Project list, or paste a URL.</div>';
-      const eb = embeddedBytes(S.map); $('#mf-embed-note').textContent = eb ? 'Embedded models: ' + (eb / 1048576).toFixed(2) + ' MB of 3.5 MB cloud limit' : '';
-      $$('#mf-assets .mf-asset').forEach(el => {
-        el.onclick = (e) => { if (e.target.classList.contains('x')) { removeAsset(el.dataset.asset); return; } if (e.target.classList.contains('rl')) { relinkAsset(el.dataset.asset); return; } S.propId = 'glb'; S.assetId = el.dataset.asset; if (S.tool === 'select' || S.tool === 'erase') setTool('place'); renderLibrary(); refreshGhost(); renderHud(); };
-      });
-      loadProjectLib().then(lib => {
-        const box = $('#mf-project'); if (!box || libCat !== 'Models') return;
-        box.innerHTML = lib.length ? lib.map((m, i) => '<div class="mf-asset" data-proj="' + i + '" title="' + esc(m.url) + '"><span>🗂</span><span class="lb">' + esc(m.label || m.id || m.url) + (m.anims && m.anims.length ? ' <small>🎞 ' + m.anims.length + '</small>' : '') + '</span><span class="tag">' + esc(m.cat || 'model') + '</span></div>').join('') : '<div class="mf-empty">No project models listed. Add .glb files to /models/ and list them in /models/manifest.json.</div>';
-        box.querySelectorAll('[data-proj]').forEach(el => el.onclick = () => { const m = lib[+el.dataset.proj]; addAsset(m.url, m.label || m.id, { anims: m.anims }); if (S.tool === 'select' || S.tool === 'erase') setTool('place'); });
-      });
-    } else if (libCat === 'Sounds') {
-      const pb = $('#mf-prefabbox'); if (pb) pb.style.display = 'none';
-      models.style.display = 'none'; grid.innerHTML = '';
-      let box = $('#mf-soundbox'); if (!box) { box = document.createElement('div'); box.id = 'mf-soundbox'; grid.parentNode.insertBefore(box, models); }
-      box.style.display = '';
-      const list = S.map.sounds || [];
-      box.innerHTML = `<div class="mf-assets" id="mf-sounds">${list.length ? list.map(x => `<div class="mf-asset" data-snd="${esc(x.id)}" title="${esc(x.url)}"><span>🔊</span><span class="lb">${esc(x.label)}</span><span class="rl" data-sact="play" title="Preview">▶</span><span class="x" data-sact="del" title="Remove from this map">✕</span></div>`).join('') : '<div class="mf-empty">No sounds in this map. Add one from the project list or by URL, then put a <b>Sound emitter</b> on an object or use <b>Play sound</b> in a graph.</div>'}</div>
-        <div class="mf-sub" style="margin-top:8px">Project (/models/manifest.json → sounds)</div><div class="mf-assets" id="mf-projsounds"><div class="mf-empty">Loading…</div></div>
-        <div class="mf-sub" style="margin-top:8px">By URL</div><div><input type="text" id="mf-snd-url" placeholder="/assets/Audio/Rain sound.mp3"></div>
-        <div style="display:flex;gap:5px;margin-top:5px"><input type="text" id="mf-snd-label" placeholder="Label (optional)" maxlength="60"><button id="mf-snd-add">Add</button></div>
-        <p class="mf-hint">Files the game already ships (assets/Audio) or any CORS host. Nothing is uploaded. Positional sounds pan and fade with distance in Play and in the game.</p>`;
-      const addSound = (url, label) => { url = String(url || '').trim(); if (!url) return; if (!/^(https?:\/\/|\/|\.\/|assets\/)/i.test(url)) { toast('Sound URL must start with https://, / or assets/'); return; } if (S.map.sounds.find(x => x.url === url)) { toast('Already in this map.'); return; } beginObjectEdit(); S.map.sounds.push({ id: uid('s_'), label: (label || decodeURIComponent(url.split('/').pop().replace(/\.[a-z0-9]+$/i, '')) || 'Sound').slice(0, 60), url }); endObjectEdit(); setDirty(true); renderLibrary(); };
-      box.querySelector('#mf-snd-add').onclick = () => { addSound(box.querySelector('#mf-snd-url').value, box.querySelector('#mf-snd-label').value); };
-      box.querySelectorAll('[data-snd]').forEach(el => el.onclick = (e) => { const id = el.dataset.snd, act = e.target.dataset.sact; const x = S.map.sounds.find(y => y.id === id); if (!x) return; if (act === 'del') { beginObjectEdit(); S.map.sounds = S.map.sounds.filter(y => y.id !== id); endObjectEdit(); setDirty(true); renderLibrary(); return; } if (act === 'play') { previewSound(x.url); } });
-      loadProjectLib().then(() => { const pj = $('#mf-projsounds'); if (!pj || libCat !== 'Sounds') return; const snds = projectSounds || []; pj.innerHTML = snds.length ? snds.map((m, i) => '<div class="mf-asset" data-ps="' + i + '" title="' + esc(m.url) + '"><span>🗂</span><span class="lb">' + esc(m.label || m.url) + '</span><span class="tag">' + (S.map.sounds.find(x => x.url === m.url) ? 'in map' : 'add') + '</span></div>').join('') : '<div class="mf-empty">No project sounds listed. Add a `sounds` array to /models/manifest.json.</div>'; pj.querySelectorAll('[data-ps]').forEach(el => el.onclick = () => { const m = snds[+el.dataset.ps]; addSound(m.url, m.label); }); });
-    } else if (libCat === 'Prefabs') {
-      const sb = $('#mf-soundbox'); if (sb) sb.style.display = 'none';
-      models.style.display = 'none';
-      const defs = S.map.prefabs || [], shelf = shelfList();
-      grid.innerHTML = '';
-      const html = `<div class="mf-assets" id="mf-prefabs">${defs.length ? defs.map(p => `<div class="mf-asset ${S.propId === 'prefab' && S.prefabId === p.id ? 'on' : ''}" data-pf="${esc(p.id)}"><span>${p.icon || '🧱'}</span><span class="lb">${esc(p.name)} <small>${p.objects.length} parts · ${S.map.objects.filter(o => o.t === 'prefab' && o.pf === p.id).length} placed</small></span><span class="rl" data-pfact="rename" title="Rename">✎</span><span class="rl" data-pfact="shelf" title="Save to shelf">📚</span><span class="x" data-pfact="del" title="Delete prefab and its instances">✕</span></div>`).join('') : '<div class="mf-empty">No prefabs in this map. Select objects (Ctrl+click) → <b>Create prefab</b> in the inspector, or pull one from the shelf below.</div>'}
-        <div class="mf-sub" style="margin-top:8px">Shelf (this device)</div>
-        ${shelf.length ? shelf.map(e => `<div class="mf-asset" data-shelf="${esc(e.id)}"><span>${e.icon || '🧱'}</span><span class="lb">${esc(e.name)} <small>${e.objects.length} parts</small></span><span class="tag">${prefabById(e.id) ? 'in map' : 'add'}</span><span class="x" data-shelfact="del" title="Remove from shelf">✕</span></div>`).join('') : '<div class="mf-empty">Empty. 📚 on a prefab keeps it here for other maps.</div>'}</div>`;
-      let box = $('#mf-prefabbox'); if (!box) { box = document.createElement('div'); box.id = 'mf-prefabbox'; grid.parentNode.insertBefore(box, models); }
-      box.style.display = ''; box.innerHTML = html;
-      box.querySelectorAll('[data-pf]').forEach(el => el.onclick = (e) => {
-        const id = el.dataset.pf, act = e.target.dataset.pfact;
-        if (act === 'del') { askConfirm('Delete this prefab and every placed instance?').then(ok => { if (ok) deletePrefab(id); }); return; }
-        if (act === 'rename') { const nm = window.prompt('Prefab name:', prefabById(id).name); if (nm) renamePrefab(id, nm); return; }
-        if (act === 'shelf') { shelfSave(id); return; }
-        S.propId = 'prefab'; S.prefabId = id; if (S.tool === 'select' || S.tool === 'erase') setTool('place'); renderLibrary(); refreshGhost(); renderHud();
-      });
-      box.querySelectorAll('[data-shelf]').forEach(el => el.onclick = (e) => { const id = el.dataset.shelf; if (e.target.dataset.shelfact === 'del') { shelfRemove(id); return; } shelfImport(id); });
-    } else {
-      const pb = $('#mf-prefabbox'); if (pb) pb.style.display = 'none';
-      const sb = $('#mf-soundbox'); if (sb) sb.style.display = 'none';
-      models.style.display = 'none';
-      grid.innerHTML = PROP_CATALOG.filter(p => p.cat === libCat).map(p => '<button data-prop="' + p.id + '" class="' + (S.propId === p.id ? 'on' : '') + '" title="' + esc(p.label) + '"><span class="ic">' + p.icon + '</span>' + esc(p.label) + '</button>').join('');
-      $$('#mf-props button').forEach(b => b.onclick = () => { S.propId = b.dataset.prop; if (S.tool === 'select' || S.tool === 'erase') setTool('place'); renderLibrary(); refreshGhost(); renderHud(); });
+    const browsing = !!libQ.trim() || libCat === 'All' || libCat === '★' || !!libTag;
+    const show = (id, on) => { const el = $('#' + id); if (el) el.style.display = on ? '' : 'none'; };
+    let sbox = $('#mf-search'); if (!sbox) { sbox = document.createElement('div'); sbox.id = 'mf-search'; sbox.className = 'mf-cards'; grid.parentNode.insertBefore(sbox, grid); }
+    // recent row — only when idle on a category, never while searching
+    const rec = $('#mf-recent');
+    if (rec) {
+      const items = browsing ? [] : prefs.recent.map(entryByKey).filter(Boolean).slice(0, 6);
+      rec.style.display = items.length ? '' : 'none';
+      rec.innerHTML = items.length ? '<div class="mf-sub">Recent</div><div class="mf-cards row">' + items.map(e => cardHtml(e, 'mini')).join('') + '</div>' : '';
+      if (items.length) wireCards(rec);
     }
+    if (browsing) {
+      show('mf-prefabbox', false); show('mf-soundbox', false); models.style.display = 'none'; grid.innerHTML = '';
+      const hits = assetsMod.search(libIndex, libQ, libFilters());
+      const tags = assetsMod.collectTags(hits, 14);
+      $('#mf-tags').innerHTML = (libTag ? '<button class="on" data-tag="">✕ ' + esc(libTag) + '</button>' : '') + tags.filter(t => t.tag !== libTag).map(t => '<button data-tag="' + esc(t.tag) + '">' + esc(t.tag) + ' <small>' + t.n + '</small></button>').join('');
+      $$('#mf-tags button').forEach(b => b.onclick = () => { libTag = b.dataset.tag; renderLibrary(); });
+      $('#mf-lib-n').textContent = hits.length + ' / ' + libIndex.length;
+      sbox.style.display = ''; sbox.className = 'mf-cards ' + (prefs.view === 'list' ? 'list' : '');
+      sbox.innerHTML = hits.length ? hits.slice(0, 120).map(e => cardHtml(e)).join('') + (hits.length > 120 ? '<div class="mf-empty">…and ' + (hits.length - 120) + ' more — narrow the search.</div>' : '') : '<div class="mf-empty">' + (libCat === '★' ? 'No favourites yet — hover a card and click ★.' : 'Nothing matches "' + esc(libQ) + '". Try a tag: wood, stone, building, light, effect, animated.') + '</div>';
+      wireCards(sbox);
+    } else {
+      sbox.style.display = 'none'; $('#mf-tags').innerHTML = ''; $('#mf-lib-n').textContent = '';
+      if (libCat === 'Models') {
+        show('mf-prefabbox', false); show('mf-soundbox', false);
+        grid.innerHTML = ''; models.style.display = '';
+        $('#mf-assets').innerHTML = S.map.assets.length ? S.map.assets.map(a => { const t = thumbOf(entryByKey('model:' + a.id) || { kind: 'model', key: 'model:' + a.id, id: a.id, icon: a.data ? '📦' : '🧊', ref: a }); return '<div class="mf-asset ' + (S.propId === 'glb' && S.assetId === a.id ? 'on' : '') + '" data-asset="' + a.id + '">' + (t.img ? '<img class="th" src="' + t.img + '" alt="">' : '<span>' + t.icon + '</span>') + '<span class="lb" title="' + esc(a.url || 'embedded in this map') + '">' + esc(a.label) + (a.anims && a.anims.length ? ' <small>🎞 ' + a.anims.length + '</small>' : '') + '</span>' + (a.data ? '<span class="tag" title="Embedded in the map (' + (assetBytes(a) / 1024).toFixed(0) + ' KB). Relink to a /models/ URL for production.">' + (assetBytes(a) / 1024).toFixed(0) + 'K</span><span class="rl" title="Relink to a URL">↗</span>' : '') + '<span class="x" title="Remove model and every placed copy">✕</span></div>'; }).join('') : '<div class="mf-empty">No models in this map yet. Drop a <b>.glb</b> on the canvas, pick one from the Project list, or paste a URL.</div>';
+        const eb = embeddedBytes(S.map); $('#mf-embed-note').textContent = eb ? 'Embedded models: ' + (eb / 1048576).toFixed(2) + ' MB of 3.5 MB cloud limit' : '';
+        $$('#mf-assets .mf-asset').forEach(el => {
+          el.onclick = (e) => { if (e.target.classList.contains('x')) { removeAsset(el.dataset.asset); return; } if (e.target.classList.contains('rl')) { relinkAsset(el.dataset.asset); return; } pickEntry(entryByKey('model:' + el.dataset.asset)); };
+        });
+        loadProjectLib().then(lib => {
+          const box = $('#mf-project'); if (!box || libCat !== 'Models') return;
+          if (!libIndex.find(e => e.kind === 'project') && lib.length) rebuildIndex();
+          box.innerHTML = lib.length ? lib.map((m, i) => { const e = libIndex.find(x => x.kind === 'project' && x.ref === m); const t = e ? thumbOf(e) : { icon: '🗂' }; return '<div class="mf-asset" data-proj="' + i + '" title="' + esc(m.url) + '">' + (t.img ? '<img class="th" src="' + t.img + '" alt="">' : '<span>' + t.icon + '</span>') + '<span class="lb">' + esc(m.label || m.id || m.url) + (m.anims && m.anims.length ? ' <small>🎞 ' + m.anims.length + '</small>' : '') + '</span><span class="tag">' + esc(S.map.assets.find(a => a.url === m.url) ? 'in map' : (m.cat || 'model')) + '</span></div>'; }).join('') : '<div class="mf-empty">No project models listed. Add .glb files to /models/ and list them in /models/manifest.json.</div>';
+          box.querySelectorAll('[data-proj]').forEach(el => el.onclick = () => { const m = lib[+el.dataset.proj]; const e = libIndex.find(x => x.kind === 'project' && x.ref === m); if (e) pickEntry(e); else { addAsset(m.url, m.label || m.id, { anims: m.anims }); wantPlace(); } });
+        });
+      } else if (libCat === 'Sounds') {
+        show('mf-prefabbox', false);
+        models.style.display = 'none'; grid.innerHTML = '';
+        let box = $('#mf-soundbox'); if (!box) { box = document.createElement('div'); box.id = 'mf-soundbox'; grid.parentNode.insertBefore(box, models); }
+        box.style.display = '';
+        const list = S.map.sounds || [];
+        box.innerHTML = `<div class="mf-assets" id="mf-sounds">${list.length ? list.map(x => `<div class="mf-asset ${libSel === 'sound:' + x.id ? 'on' : ''}" data-snd="${esc(x.id)}" title="${esc(x.url)}"><span>🔊</span><span class="lb">${esc(x.label)}</span><span class="rl" data-sact="play" title="Preview">▶</span><span class="x" data-sact="del" title="Remove from this map">✕</span></div>`).join('') : '<div class="mf-empty">No sounds in this map. Add one from the project list or by URL, then put a <b>Sound emitter</b> on an object or use <b>Play sound</b> in a graph.</div>'}</div>
+          <div class="mf-sub" style="margin-top:8px">Project (/models/manifest.json → sounds)</div><div class="mf-assets" id="mf-projsounds"><div class="mf-empty">Loading…</div></div>
+          <div class="mf-sub" style="margin-top:8px">By URL</div><div><input type="text" id="mf-snd-url" placeholder="/assets/Audio/Rain sound.mp3"></div>
+          <div style="display:flex;gap:5px;margin-top:5px"><input type="text" id="mf-snd-label" placeholder="Label (optional)" maxlength="60"><button id="mf-snd-add">Add</button></div>
+          <p class="mf-hint">Files the game already ships (assets/Audio) or any CORS host. Nothing is uploaded. Positional sounds pan and fade with distance in Play and in the game.</p>`;
+        box.querySelector('#mf-snd-add').onclick = () => { addSound(box.querySelector('#mf-snd-url').value, box.querySelector('#mf-snd-label').value); };
+        box.querySelectorAll('[data-snd]').forEach(el => el.onclick = (e) => { const id = el.dataset.snd, act = e.target.dataset.sact; const x = S.map.sounds.find(y => y.id === id); if (!x) return; if (act === 'del') { beginObjectEdit(); S.map.sounds = S.map.sounds.filter(y => y.id !== id); endObjectEdit(); setDirty(true); renderLibrary(); return; } libSel = 'sound:' + id; prefs.touch(libSel); if (act === 'play') previewSound(x.url); renderLibrary(); });
+        loadProjectLib().then(() => { const pj = $('#mf-projsounds'); if (!pj || libCat !== 'Sounds') return; const snds = projectSounds || []; pj.innerHTML = snds.length ? snds.map((m, i) => '<div class="mf-asset" data-ps="' + i + '" title="' + esc(m.url) + '"><span>🗂</span><span class="lb">' + esc(m.label || m.url) + '</span><span class="tag">' + (S.map.sounds.find(x => x.url === m.url) ? 'in map' : 'add') + '</span></div>').join('') : '<div class="mf-empty">No project sounds listed. Add a `sounds` array to /models/manifest.json.</div>'; pj.querySelectorAll('[data-ps]').forEach(el => el.onclick = () => { const m = snds[+el.dataset.ps]; addSound(m.url, m.label); }); });
+      } else if (libCat === 'Prefabs') {
+        show('mf-soundbox', false);
+        models.style.display = 'none';
+        const defs = S.map.prefabs || [], shelf = shelfList();
+        grid.innerHTML = '';
+        const pic = (e) => { const t = thumbOf(e); return t.img ? '<img class="th" src="' + t.img + '" alt="">' : '<span>' + t.icon + '</span>'; };
+        const html = `<div class="mf-assets" id="mf-prefabs">${defs.length ? defs.map(p => `<div class="mf-asset ${S.propId === 'prefab' && S.prefabId === p.id ? 'on' : ''}" data-pf="${esc(p.id)}">${pic(entryByKey('prefab:' + p.id))}<span class="lb">${esc(p.name)} <small>${p.objects.length} parts · ${S.map.objects.filter(o => o.t === 'prefab' && o.pf === p.id).length} placed</small></span><span class="rl" data-pfact="rename" title="Rename">✎</span><span class="rl" data-pfact="shelf" title="Save to shelf">📚</span><span class="x" data-pfact="del" title="Delete prefab and its instances">✕</span></div>`).join('') : '<div class="mf-empty">No prefabs in this map. Select objects (Ctrl+click) → <b>Create prefab</b> in the inspector, or pull one from the shelf below.</div>'}
+          <div class="mf-sub" style="margin-top:8px">Shelf (this device)</div>
+          ${shelf.length ? shelf.map(e => `<div class="mf-asset" data-shelf="${esc(e.id)}">${prefabById(e.id) ? pic(entryByKey('prefab:' + e.id)) : pic(entryByKey('shelf:' + e.id) || { kind: 'shelf', key: 'shelf:' + e.id, icon: e.icon || '🧱', ref: e })}<span class="lb">${esc(e.name)} <small>${e.objects.length} parts</small></span><span class="tag">${prefabById(e.id) ? 'in map' : 'add'}</span><span class="x" data-shelfact="del" title="Remove from shelf">✕</span></div>`).join('') : '<div class="mf-empty">Empty. 📚 on a prefab keeps it here for other maps.</div>'}</div>`;
+        let box = $('#mf-prefabbox'); if (!box) { box = document.createElement('div'); box.id = 'mf-prefabbox'; grid.parentNode.insertBefore(box, models); }
+        box.style.display = ''; box.innerHTML = html;
+        box.querySelectorAll('[data-pf]').forEach(el => el.onclick = (e) => {
+          const id = el.dataset.pf, act = e.target.dataset.pfact;
+          if (act === 'del') { askConfirm('Delete this prefab and every placed instance?').then(ok => { if (ok) deletePrefab(id); }); return; }
+          if (act === 'rename') { const nm = window.prompt('Prefab name:', prefabById(id).name); if (nm) renamePrefab(id, nm); return; }
+          if (act === 'shelf') { shelfSave(id); return; }
+          pickEntry(entryByKey('prefab:' + id));
+        });
+        box.querySelectorAll('[data-shelf]').forEach(el => el.onclick = (e) => { const id = el.dataset.shelf; if (e.target.dataset.shelfact === 'del') { shelfRemove(id); return; } shelfImport(id); });
+      } else {
+        show('mf-prefabbox', false); show('mf-soundbox', false);
+        models.style.display = 'none';
+        grid.className = 'mf-props ' + (prefs.view === 'list' ? 'list' : '');
+        grid.innerHTML = PROP_CATALOG.filter(p => p.cat === libCat).map(p => { const e = entryByKey('prop:' + p.id); const t = e ? thumbOf(e) : { icon: p.icon }; return '<button data-prop="' + p.id + '" class="' + (S.propId === p.id ? 'on' : '') + '" title="' + esc(p.label) + '">' + (t.img ? '<img class="ic th" src="' + t.img + '" alt="">' : '<span class="ic">' + p.icon + '</span>') + '<span>' + esc(p.label) + '</span></button>'; }).join('');
+        $$('#mf-props button').forEach(b => b.onclick = () => pickEntry(entryByKey('prop:' + b.dataset.prop)));
+      }
+    }
+    renderDetails();
     const tintable = S.propId !== 'glb' && PROP_BY_ID[S.propId] && PROP_BY_ID[S.propId].tint;
     $('#mf-tint-row').style.display = tintable ? '' : 'none';
     $('#mf-tint-on').checked = !!S.propTint;
   }
+  /* Details panel: what the picked card is, where it comes from, its tags
+     (editable on this map's models and prefabs), size, and its actions. */
+  function renderDetails() {
+    const box = $('#mf-details'); if (!box) return;
+    let e = libSel ? entryByKey(libSel) : null;
+    if (!e) { const k = S.propId === 'glb' ? 'model:' + S.assetId : S.propId === 'prefab' ? 'prefab:' + S.prefabId : 'prop:' + S.propId; e = entryByKey(k); }
+    if (!e) { box.innerHTML = ''; box.style.display = 'none'; return; }
+    box.style.display = '';
+    const t = thumbOf(e), K = assetsMod.KINDS[e.kind];
+    const rows = [];
+    if (e.kind === 'prop') { const p = e.ref; rows.push(['Type', p.fxKind ? 'Effect emitter' : p.marker ? 'Gameplay marker' : 'Procedural prop']); rows.push(['Collision', p.col === false ? 'none' : 'solid']); if (p.tint) rows.push(['Tint', 'yes — Tint row below']); if (p.fx) rows.push(['Effect', p.fx.kind + ' (built in)']); rows.push(['Placed', S.map.objects.filter(o => o.t === p.id).length]); }
+    if (e.kind === 'model') { const a = e.ref; rows.push(['Source', a.data ? 'embedded · ' + (assetBytes(a) / 1024).toFixed(0) + ' KB' : a.url]); if (a.anims && a.anims.length) rows.push(['Clips', a.anims.join(', ')]); const tpl = tplCache.get(a.id); if (tpl) { const bb = new THREE.Box3().setFromObject(tpl), sz = new THREE.Vector3(); bb.getSize(sz); let tris = 0; tpl.traverse(o => { if (o.isMesh && o.geometry) { const g = o.geometry; tris += g.index ? g.index.count / 3 : (g.attributes.position ? g.attributes.position.count / 3 : 0); } }); rows.push(['Size', sz.x.toFixed(2) + ' × ' + sz.y.toFixed(2) + ' × ' + sz.z.toFixed(2) + ' m']); rows.push(['Triangles', Math.round(tris).toLocaleString()]); } rows.push(['Placed', S.map.objects.filter(o => o.t === 'glb' && o.a === a.id).length]); }
+    if (e.kind === 'project') { rows.push(['Source', e.url]); if (e.ref.anims && e.ref.anims.length) rows.push(['Clips', e.ref.anims.join(', ')]); rows.push(['In map', S.map.assets.find(a => a.url === e.url) ? 'yes' : 'no — click to add']); }
+    if (e.kind === 'prefab') { rows.push(['Parts', e.ref.objects.map(o => (PROP_BY_ID[o.t] || {}).label || o.t).slice(0, 8).join(', ') + (e.ref.objects.length > 8 ? '…' : '')]); rows.push(['Placed', S.map.objects.filter(o => o.t === 'prefab' && o.pf === e.id).length]); }
+    if (e.kind === 'shelf') rows.push(['Parts', (e.ref.objects || []).length + ' · on this device, not yet in this map']);
+    if (e.kind === 'sound' || e.kind === 'psound') rows.push(['Source', e.url]);
+    const editableTags = e.kind === 'model' || e.kind === 'prefab';
+    const acts = [];
+    acts.push('<button data-act="fav" class="' + (prefs.isFav(e.key) ? 'on' : '') + '">★ Favourite</button>');
+    if (e.kind === 'model') { if (e.ref.data) acts.push('<button data-act="relink">↗ Relink</button>'); acts.push('<button data-act="rmmodel" class="danger">✕ Remove</button>'); }
+    if (e.kind === 'project' && !S.map.assets.find(a => a.url === e.url)) acts.push('<button data-act="pick" class="primary">＋ Add to map</button>');
+    if (e.kind === 'prefab') { acts.push('<button data-act="rename">✎ Rename</button>'); acts.push('<button data-act="shelf">📚 Shelf</button>'); acts.push('<button data-act="rmprefab" class="danger">✕ Delete</button>'); }
+    if (e.kind === 'shelf') { acts.push('<button data-act="pick" class="primary">＋ Add to map</button>'); acts.push('<button data-act="rmshelf" class="danger">✕ Forget</button>'); }
+    if (e.kind === 'sound') { acts.push('<button data-act="play">▶ Preview</button>'); acts.push('<button data-act="rmsound" class="danger">✕ Remove</button>'); }
+    if (e.kind === 'psound') acts.push(S.map.sounds.find(s => s.url === e.url) ? '<button data-act="play">▶ Preview</button>' : '<button data-act="pick" class="primary">＋ Add to map</button>');
+    box.innerHTML = '<div class="mf-dhead">' + (t.img ? '<img class="th" src="' + t.img + '" alt="">' : '<span class="th ic">' + e.icon + '</span>') + '<div><div class="nm">' + esc(e.label) + '</div><div class="kd">' + esc(K.label) + ' · ' + esc(K.source) + '</div></div></div>'
+      + '<div class="mf-dtags">' + e.tags.filter(x => !/^\d+ parts$/.test(x)).map(x => '<button data-tag="' + esc(x) + '">' + esc(x) + '</button>').join('') + (editableTags ? '<input type="text" id="mf-dtag-in" placeholder="add tags, comma-separated" value="' + esc((e.ref.tags || []).join(', ')) + '">' : '') + '</div>'
+      + (rows.length ? '<table class="mf-dtable">' + rows.map(r => '<tr><td>' + esc(r[0]) + '</td><td>' + esc(r[1]) + '</td></tr>').join('') + '</table>' : '')
+      + '<div class="mf-btns">' + acts.join('') + '</div>';
+    box.querySelectorAll('.mf-dtags button').forEach(b => b.onclick = () => { libTag = b.dataset.tag; if (!(libQ.trim() || libCat === 'All' || libCat === '★')) libCat = 'All'; renderLibrary(); });
+    const tin = box.querySelector('#mf-dtag-in');
+    if (tin) tin.onchange = () => { beginObjectEdit(); const tags = normalizeTags(tin.value); if (tags.length) e.ref.tags = tags; else delete e.ref.tags; endObjectEdit(); setDirty(true); renderLibrary(); };
+    box.querySelectorAll('[data-act]').forEach(b => b.onclick = () => {
+      const act = b.dataset.act;
+      if (act === 'fav') { prefs.toggleFav(e.key); renderLibrary(); }
+      else if (act === 'pick') pickEntry(e);
+      else if (act === 'relink') relinkAsset(e.id);
+      else if (act === 'rmmodel') { libSel = null; prefs.forget(e.key); removeAsset(e.id); }
+      else if (act === 'rename') { const nm = window.prompt('Prefab name:', e.ref.name); if (nm) renamePrefab(e.id, nm); }
+      else if (act === 'shelf') shelfSave(e.id);
+      else if (act === 'rmprefab') askConfirm('Delete this prefab and every placed instance?').then(ok => { if (ok) { libSel = null; prefs.forget(e.key); deletePrefab(e.id); } });
+      else if (act === 'rmshelf') { libSel = null; prefs.forget(e.key); shelfRemove(e.id); }
+      else if (act === 'play') previewSound(e.url);
+      else if (act === 'rmsound') { beginObjectEdit(); S.map.sounds = S.map.sounds.filter(y => y.id !== e.id); endObjectEdit(); setDirty(true); libSel = null; prefs.forget(e.key); renderLibrary(); }
+    });
+  }
+  ED.library = { get index() { return libIndex; }, search: (q, f) => assetsMod.search(rebuildIndex(), q, f), pick: (key) => pickEntry(entryByKey(key)), setQuery(q) { libQ = String(q || ''); renderLibrary(); }, setCat(c) { libCat = c; libTag = ''; renderLibrary(); }, get selected() { return libSel; }, prefs, thumb: (key) => { const e = entryByKey(key); return e ? thumbOf(e) : null; } };
   function renderInspector() {
     const box = $('#mf-inspector'); const o = objById(S.selectedId);
     if (!o) { box.innerHTML = '<div class="mf-empty">Nothing selected. Use <b>Select</b> (1) and click an object, or pick a prop from the Library and click the ground to place it.</div>'; return; }
@@ -1338,6 +1520,9 @@ export async function openEditor(opts) {
   $('#mf-sc-scale').oninput = e => { S.scatter.jitterScale = +e.target.value; $('#mf-sc-scale-v').textContent = Math.round(S.scatter.jitterScale * 100) + '%'; };
   $('#mf-sc-rot').onchange = e => { S.scatter.jitterRot = e.target.checked; };
   $('#mf-sc-water').onchange = e => { S.scatter.avoidWater = e.target.checked; };
+  $('#mf-lib-q').oninput = () => { libQ = $('#mf-lib-q').value; libTag = ''; renderLibrary(); };
+  $('#mf-lib-q').onkeydown = e => { if (e.key === 'Escape') { libQ = ''; libTag = ''; renderLibrary(); e.target.blur(); } e.stopPropagation(); };
+  $('#mf-lib-view').onclick = () => { prefs.view = prefs.view === 'list' ? 'grid' : 'list'; renderLibrary(); };
   $('#mf-asset-add').onclick = () => { addAsset($('#mf-asset-url').value, $('#mf-asset-label').value); $('#mf-asset-url').value = ''; $('#mf-asset-label').value = ''; };
   $('#mf-asset-url').onkeydown = e => { if (e.key === 'Enter') $('#mf-asset-add').click(); };
 
@@ -1528,8 +1713,11 @@ const TEMPLATE = `
     <p class="mf-hint">Hold <b>Shift</b> to lower, <b>Ctrl</b> to smooth, <b>Alt</b> to flatten. <b>[</b> / <b>]</b> change the radius.</p>
   </div>
   <div class="mf-sec"><h3>Paint layers</h3><div class="mf-pal" id="mf-palette"></div></div>
-  <div class="mf-sec"><h3>Library</h3>
+  <div class="mf-sec"><h3>Library <span class="n" id="mf-lib-n"></span></h3>
+    <div class="mf-libbar"><input type="text" id="mf-lib-q" placeholder="🔍 Search everything — names and tags (wood, light, animated…)" autocomplete="off"><button id="mf-lib-view" title="Grid / list">▦</button></div>
     <div class="mf-cats" id="mf-cats"></div>
+    <div class="mf-tags" id="mf-tags"></div>
+    <div class="mf-recent" id="mf-recent" style="display:none"></div>
     <div class="mf-props" id="mf-props"></div>
     <div id="mf-models" style="display:none">
       <div class="mf-assets" id="mf-assets"></div>
@@ -1542,6 +1730,7 @@ const TEMPLATE = `
       <div style="display:flex;gap:5px;margin-top:5px"><input type="text" id="mf-asset-label" placeholder="Label (optional)" maxlength="60"><button id="mf-asset-add">Add</button></div>
       <p class="mf-hint">Drop a .glb on the canvas to embed it in this map (quick tests). For production put the file in /models/, list it in /models/manifest.json, and it appears under Project. Y-up, metres, origin at the base. Animated models keep their clips — pick one in the inspector.</p>
     </div>
+    <div class="mf-details" id="mf-details" style="display:none"></div>
     <div class="mf-row" id="mf-tint-row" style="margin-top:8px"><label>Tint</label><input type="checkbox" id="mf-tint-on"><input type="color" id="mf-tint" value="#c0392b"><span class="mf-hint" style="margin:0">colour new props</span></div>
   </div>
   <div class="mf-sec"><h3>Scatter</h3>

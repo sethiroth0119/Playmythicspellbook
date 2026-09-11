@@ -1,5 +1,5 @@
 {
-  "_readme": "Athena Engine project library. Every entry shows up under Library \u2192 Models \u2192 Project. Drop the .glb next to this file, add a line here, deploy. Y-up, metres, origin at the base. `anims` is optional and only a hint \u2014 the editor reads the real clip names from the file.",
+  "_readme": "Athena Engine project library. Every entry shows up under Library \u2192 Models \u2192 Project. Drop the .glb next to this file, add a line here, deploy. Y-up, metres, origin at the base. `anims` is optional and only a hint \u2014 the editor reads the real clip names from the file. `tags` (optional, short lower-case words) makes the entry findable in the Library search.",
   "models": [],
   "_sounds_readme": "Project sounds for Athena Engine (Library \u2192 Sounds \u2192 Project). URLs of files the game already ships \u2014 nothing is uploaded. Keep them under 25 MiB (Cloudflare's per-asset cap).",
   "sounds": [

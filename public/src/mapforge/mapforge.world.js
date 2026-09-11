@@ -65,6 +65,7 @@ export function buildWorld(THREE, map, opts) {
     if (!instancing || !o || o.t === 'glb' || o.t === 'prefab' || o.t === 'slot' || o.t.indexOf('fx_') === 0) return null;
     const m = PROP_BY_ID[o.t]; if (!m || m.marker || m.fx || m.fxKind) return null;
     if (o.bp && hasBehaviour(o)) return null;   // it may move, animate or be destroyed
+    if (o.mat) return null;                     // its own material, not the template's
     return o.t + '|' + (o.c || '');
   }
   function rebuildBatches() {
@@ -187,6 +188,17 @@ export function buildWorld(THREE, map, opts) {
   function removeParts(o) {
     Array.from(parts.keys()).forEach(pid => { if (pid.indexOf(o.id + ':') === 0) { stopAnim(pid); detachFx(pid); const cr = parts.get(pid); if (cr && cr.parent) cr.parent.remove(cr); parts.delete(pid); colliders.delete(pid); } });
   }
+  /* ── material override ── clones each mesh's material once (templates share
+     theirs through the prop cache — never mutate those) and applies the PBR
+     knobs; `null` restores the original. */
+  function applyMat(root, mat) {
+    root.traverse(m => {
+      if (!m.isMesh || !m.material) return;
+      if (!mat) { if (m.userData.mfOrigMat) { m.material = m.userData.mfOrigMat; delete m.userData.mfOrigMat; } return; }
+      if (!m.userData.mfOrigMat) { m.userData.mfOrigMat = m.material; m.material = Array.isArray(m.material) ? m.material.map(x => x.clone()) : m.material.clone(); }
+      [].concat(m.material).forEach(x => { if (mat.rough != null && 'roughness' in x) x.roughness = mat.rough; if (mat.metal != null && 'metalness' in x) x.metalness = mat.metal; if (x.emissive) { x.emissive.set(mat.em || '#000000'); x.emissiveIntensity = mat.em ? (mat.ei == null ? 1 : mat.ei) : 1; } x.needsUpdate = true; });
+    });
+  }
   function makeBody(o) {
     if (o.t === 'glb') { const body = buildProp(THREE, 'placeholder'); body.userData.mfPending = true; return body; }
     if (o.t.startsWith('fx_')) return buildProp(THREE, 'fxmarker');
@@ -237,12 +249,14 @@ export function buildWorld(THREE, map, opts) {
     const root = new THREE.Group();
     root.name = 'mf-obj-' + o.id;
     root.userData = { mfId: o.id, mfType: o.t, mfMarker: !!(PROP_BY_ID[o.t] && PROP_BY_ID[o.t].marker) };
+    let body = null;   // the placeholder / prop body — the .glb load below swaps it out (it was scoped inside the else once, which broke every model swap)
     if (o.t === 'prefab') { root.userData.mfPrefab = o.pf; buildPartsInto(root, o, true); }
     else {
-      const body = makeBody(o);
+      body = makeBody(o);
       root.add(body);
       if (o.t.startsWith('fx_')) { root.userData.mfFxHandle = body; body.visible = markersVisible; }
       attachFx(o, root);
+      if (o.mat) applyMat(body, o.mat);
     }
     applyTransform(root, o);
     if (root.userData.mfMarker) root.visible = markersVisible;
@@ -259,12 +273,13 @@ export function buildWorld(THREE, map, opts) {
         root.remove(body);
         const real = cloneTemplate(template);
         root.add(real);
+        if (o.mat) applyMat(real, o.mat);
         root.userData.mfPending = false; root.userData.mfClips = clips;
         root.updateMatrixWorld(true);
         updateCollider(o.id);
         setAnim(o.id, o.anim);
         if (opts.onAssetLoaded) opts.onAssetLoaded(o.id, root);
-      }).catch(() => { root.userData.mfError = true; });
+      }).catch((e) => { root.userData.mfError = true; try { console.warn('[mapforge] model ' + o.a + ' failed:', e && (e.message || e)); } catch (x) {} });
     }
     return root;
   }
@@ -287,6 +302,7 @@ export function buildWorld(THREE, map, opts) {
     if (o.t !== 'glb' && root.children[0] && root.children[0].userData.mfProp === o.t) {
       root.remove(root.children[0]); root.add(buildProp(THREE, o.t, o.c));
     }
+    if (root.children[0]) applyMat(root.children[0], o.mat || null);
     attachFx(o, root);
     applyTransform(root, o);
     root.updateMatrixWorld(true);
@@ -404,6 +420,8 @@ export function buildWorld(THREE, map, opts) {
       opts.scene.fog = new THREE.Fog(new THREE.Color(env.fogColor), env.fogNear, env.fogFar);
       opts.scene.background = new THREE.Color(env.skyBottom);
     }
+    terrain.setDetail(env.terrainDetail == null ? 0.8 : env.terrainDetail); terrain.setTile(env.terrainTile == null ? 0.5 : env.terrainTile);
+    if (opts.onEnv) { try { opts.onEnv(env); } catch (e) {} }   // the host owns the renderer: tone mapping, exposure, the post pass
     const w = weather ? weather.kind : 'none', wi = weather ? weather.intensity : 1;
     if ((env.weather || 'none') !== w || (env.weatherIntensity || 1) !== wi) setWeather(env); else wind.copy(windVector(THREE, env));
   }
@@ -508,6 +526,8 @@ export function buildWorld(THREE, map, opts) {
     setFxRange(m) { fxRange = Math.max(5, +m || 160); },
     setShadowMapSize(n) { n = +n || 2048; if (n === shadowMapSize) return; shadowMapSize = n; applyEnv(map.env); },
     setShadows(v) { shadowsOn = !!v; applyEnv(map.env); },
+    /* re-apply an object's material override after the inspector changes o.mat */
+    refreshMat(id) { const r = objects.get(id), o = objDoc(id); if (!r || !o) return; r.children.forEach(ch => { if (!ch.isLight && !(ch.userData && ch.userData.mfPart)) applyMat(ch, o.mat || null); }); if (r.userData.mfInstanced) batchDirty = true; },
     /* instancing: on by default in the engine and overlays, off in the editor */
     get instancing() { return instancing; },
     setInstancing(v) { instancing = !!v; batchDirty = true; },

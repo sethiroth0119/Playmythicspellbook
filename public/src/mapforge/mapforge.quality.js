@@ -11,9 +11,9 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 export const LEVELS = {
-  low:    { pixelRatio: 1,   shadows: false, shadowMap: 1024, fx: false, fxRange: 40,  label: 'Low' },
-  medium: { pixelRatio: 1.5, shadows: true,  shadowMap: 1024, fx: true,  fxRange: 80,  label: 'Medium' },
-  high:   { pixelRatio: 2,   shadows: true,  shadowMap: 2048, fx: true,  fxRange: 160, label: 'High' },
+  low:    { pixelRatio: 1,   shadows: false, shadowMap: 1024, fx: false, fxRange: 40,  post: false, label: 'Low' },
+  medium: { pixelRatio: 1.5, shadows: true,  shadowMap: 1024, fx: true,  fxRange: 80,  post: true,  label: 'Medium' },
+  high:   { pixelRatio: 2,   shadows: true,  shadowMap: 2048, fx: true,  fxRange: 160, post: true,  label: 'High' },
 };
 export const ORDER = ['low', 'medium', 'high'];
 const KEY = 'mf_quality';

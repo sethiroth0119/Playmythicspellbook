@@ -43,6 +43,8 @@ node tools/athena-harness/pw-test9.mjs        # round 9: audio — Sounds librar
                                               #   (needs three/models/beep.wav: `node -e` in pw-test9's header comment, or any small wav)
 node tools/athena-harness/pw-test10.mjs       # round 10: instancing draw calls, per-instance hide, emitter culling,
                                               #   quality ladder + auto-tune, editor HUD
+node tools/athena-harness/pw-test11.mjs       # round 11: textured terrain layers, material overrides (props + .glb),
+                                              #   tone mapping / exposure, bloom + vignette post pass, Look controls
 ```
 
 Each prints ✔/✘ per step and the page's error list; screenshots land in

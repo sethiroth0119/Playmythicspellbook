@@ -133,4 +133,8 @@ therefore terminate.
   project sounds are listed in `public/models/manifest.json` → `sounds`.
 - **Round 10 (perf):** static repeated props are instanced in games (`buildWorld({ instancing: true })`,
   engine + overlay), never in the editor (picking). `mapforge.quality.js` owns every looks-vs-fps knob.
-- Docs: `docs/athena-engine.md`. Tests: `tools/athena-harness/` (`pw-test5.mjs` round 5, `pw-test6.mjs` round 6, `pw-test7.mjs` physics, `pw-test8.mjs` navigation, `pw-test9.mjs` audio, `pw-test10.mjs` performance).
+- **Round 11 (look):** terrain detail is a shader injected into MeshStandardMaterial (`mapforge.terrain.js`,
+  procedural atlas — no texture assets); `objects[].mat` overrides clone materials per object, never the
+  shared prop templates; tone mapping/exposure are applied by the HOST via `onEnv` (`applyTone`), bloom +
+  vignette by `mapforge.post.js` (no EffectComposer addons).
+- Docs: `docs/athena-engine.md`. Tests: `tools/athena-harness/` (`pw-test5.mjs` round 5, `pw-test6.mjs` round 6, `pw-test7.mjs` physics, `pw-test8.mjs` navigation, `pw-test9.mjs` audio, `pw-test10.mjs` performance, `pw-test11.mjs` look).

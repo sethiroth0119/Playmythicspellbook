@@ -28,6 +28,8 @@ import { invalidate as invalidateOverlay } from './mapforge.overlay.js';
 import { COMPONENTS, ACTOR_NODES, newBlueprint, newGraphNode, hasBehaviour } from './mapforge.actors.js';
 import { createGraphEditor } from '../widgets/graph-editor.js';
 import * as quality from './mapforge.quality.js';
+import { createPost } from './mapforge.post.js';
+import { applyTone } from './mapforge.engine.js';
 import { PROP_CATALOG, PROP_BY_ID, buildProp } from './mapforge.props.js';
 import { WEATHERS } from './mapforge.vfx.js';
 import * as api from './mapforge.api.js';
@@ -113,6 +115,7 @@ export async function openEditor(opts) {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   quality.apply(renderer, null);
+  const post = createPost(THREE, renderer);
   canvasHost.insertBefore(renderer.domElement, canvasHost.firstChild);
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 3000);
@@ -164,7 +167,7 @@ export async function openEditor(opts) {
     if (world) { scene.remove(world.group); world.dispose(); }
     if (gridHelper) { scene.remove(gridHelper); gridHelper = null; }
     S.map = map; S.source = source == null ? S.source : source;
-    world = buildWorld(THREE, map, { scene, camera, shadowMap: quality.get().settings.shadowMap, fx: quality.get().settings.fx, fxRange: quality.get().settings.fxRange, onAssetLoaded: () => {}, toast: (m, ms) => toast(m, ms), onPrompt: (p) => { const el = $('#mf-prompt'); el.hidden = !p; el.textContent = p ? '⚡ ' + p : ''; } });
+    world = buildWorld(THREE, map, { scene, camera, shadowMap: quality.get().settings.shadowMap, fx: quality.get().settings.fx, fxRange: quality.get().settings.fxRange, onEnv: (env) => applyTone(THREE, renderer, env), onAssetLoaded: () => {}, toast: (m, ms) => toast(m, ms), onPrompt: (p) => { const el = $('#mf-prompt'); el.hidden = !p; el.textContent = p ? '⚡ ' + p : ''; } });
     S.editingPrefab = null; S.multi.clear(); S.bpOpen = false; if (bpGraph) { bpGraph.destroy(); bpGraph = null; bpFor = null; }
     scene.add(world.group);
     world.setMarkersVisible(S.showMarkers);
@@ -1056,7 +1059,7 @@ export async function openEditor(opts) {
     stopPlay();
     try { cancelAnimationFrame(raf); } catch (e) {}   // raf is declared at the very end; a close during a failed open must not throw
     teardown.forEach(f => { try { f(); } catch (e) {} });
-    try { if (world) world.dispose(); renderer.dispose(); renderer.forceContextLoss(); } catch (e) {}
+    try { post.dispose(); if (world) world.dispose(); renderer.dispose(); renderer.forceContextLoss(); } catch (e) {}
     root.remove(); document.body.style.overflow = prevOverflow;
     const closedGame = S.map && S.map.game;
     ED = null;
@@ -1199,6 +1202,12 @@ export async function openEditor(opts) {
         <div class="mf-row"><label>Size</label><input type="range" id="mf-o-fxs" min="0.2" max="6" step="0.1" value="${f.s}"><span class="v" id="mf-o-fxs-v">${f.s.toFixed(1)}×</span></div>
         ${meta.fxKind ? '<div class="mf-row"><label>Tint</label><input type="color" id="mf-o-fxc" value="' + (o.c || '#ff8a1a') + '"><button id="mf-o-fxuntint" style="flex:1">Default colour</button></div>' : ''}
       </div>`; })() : ''}
+      ${(o.t !== 'slot' && !o.t.startsWith('fx_') && !(meta.marker)) ? (() => { const mt = o.mat || {}; return `
+      <div class="mf-mat"><div class="mf-row" style="margin-bottom:5px"><label>Material</label><span class="st">🎨 ${o.mat ? 'override' : 'prop default'}</span>${o.mat ? '<button id="mf-o-mat-reset" class="small">Reset</button>' : ''}</div>
+        <div class="mf-row"><label>Roughness</label><input type="range" id="mf-o-rough" min="0" max="1" step="0.02" value="${mt.rough == null ? 0.85 : mt.rough}"><span class="v" id="mf-o-rough-v">${(mt.rough == null ? 0.85 : mt.rough).toFixed(2)}</span></div>
+        <div class="mf-row"><label>Metalness</label><input type="range" id="mf-o-metal" min="0" max="1" step="0.02" value="${mt.metal == null ? 0 : mt.metal}"><span class="v" id="mf-o-metal-v">${(mt.metal == null ? 0 : mt.metal).toFixed(2)}</span></div>
+        <div class="mf-row"><label>Emissive</label><input type="color" id="mf-o-em" value="${mt.em || '#000000'}"><input type="range" id="mf-o-ei" min="0" max="8" step="0.1" value="${mt.ei == null ? 1 : mt.ei}" title="Emissive intensity"><span class="v" id="mf-o-ei-v">${(mt.ei == null ? 1 : mt.ei).toFixed(1)}×</span></div>
+      </div>`; })() : ''}
       <div class="mf-col ${world.isSolid(o) ? 'solid' : ''}">
         <div class="mf-row" style="margin-bottom:5px"><label>Collision</label><span class="st">${world.isSolid(o) ? '● Solid — blocks the player' : '○ None — walk through'}</span></div>
         <div class="mf-btns">${world.isSolid(o) ? '<button id="mf-o-col-off">－ Remove collision</button>' : '<button id="mf-o-col-on" class="primary">＋ Add collision</button>'}<select id="mf-o-cs" ${world.isSolid(o) ? '' : 'disabled'}><option value="box" ${o.cs !== 'cyl' ? 'selected' : ''}>Box</option><option value="cyl" ${o.cs === 'cyl' ? 'selected' : ''}>Cylinder</option></select></div>
@@ -1246,6 +1255,13 @@ export async function openEditor(opts) {
       if (fxon) fxon.onchange = () => { beginObjectEdit(); applyFx(); endObjectEdit(); };
       if (fxc) { fxc.onpointerdown = () => beginObjectEdit(); fxc.oninput = () => { o.c = fxc.value; world.refreshFx(o.id); setDirty(true); }; fxc.onchange = () => endObjectEdit(); box.querySelector('#mf-o-fxuntint').onclick = () => commit(() => { delete o.c; world.refreshFx(o.id); }); }
     }
+    const rough = box.querySelector('#mf-o-rough');
+    if (rough) {
+      const metal = box.querySelector('#mf-o-metal'), em = box.querySelector('#mf-o-em'), ei = box.querySelector('#mf-o-ei');
+      const applyM = () => { const m = { rough: +rough.value, metal: +metal.value }; if (em.value !== '#000000') { m.em = em.value; m.ei = +ei.value; } o.mat = m; world.refreshMat(o.id); box.querySelector('#mf-o-rough-v').textContent = (+rough.value).toFixed(2); box.querySelector('#mf-o-metal-v').textContent = (+metal.value).toFixed(2); box.querySelector('#mf-o-ei-v').textContent = (+ei.value).toFixed(1) + '×'; setDirty(true); };
+      [rough, metal, ei, em].forEach(el => { el.onpointerdown = () => beginObjectEdit(); el.oninput = applyM; el.onchange = () => { endObjectEdit(); renderInspector(); }; });
+      const rs = box.querySelector('#mf-o-mat-reset'); if (rs) rs.onclick = () => commit(() => { delete o.mat; world.refreshMat(o.id); });
+    }
     const colOn = box.querySelector('#mf-o-col-on'), colOff = box.querySelector('#mf-o-col-off'), cs = box.querySelector('#mf-o-cs');
     if (colOn) colOn.onclick = () => { beginObjectEdit(); world.setCollision(o.id, true); endObjectEdit(); setDirty(true); renderInspector(); toast('Collision added — it now blocks the player in Play.'); };
     if (colOff) colOff.onclick = () => { beginObjectEdit(); world.setCollision(o.id, false); endObjectEdit(); setDirty(true); renderInspector(); toast('Collision removed — the player walks through it.'); };
@@ -1273,7 +1289,8 @@ export async function openEditor(opts) {
   function renderSkyTab() {
     const e = S.map.env; $('#mf-e-preset').value = e.preset;
     ['skyTop', 'skyBottom', 'fogColor', 'sunColor', 'ambient', 'groundColor'].forEach(k => { $('#mf-e-' + k).value = e[k]; });
-    [['fogNear', 0], ['fogFar', 0], ['sunEl', 0], ['sunAz', 0], ['sunIntensity', 2], ['ambientIntensity', 2], ['weatherIntensity', 1], ['windDir', 0], ['windSpeed', 1]].forEach(([k, d]) => { $('#mf-e-' + k).value = e[k]; $('#mf-e-' + k + '-v').textContent = (+e[k]).toFixed(d) + (k === 'windDir' ? '°' : k === 'windSpeed' ? ' m/s' : k === 'weatherIntensity' ? '×' : ''); });
+    [['fogNear', 0], ['fogFar', 0], ['sunEl', 0], ['sunAz', 0], ['sunIntensity', 2], ['ambientIntensity', 2], ['weatherIntensity', 1], ['windDir', 0], ['windSpeed', 1], ['exposure', 2], ['bloom', 2], ['bloomThreshold', 2], ['vignette', 2], ['terrainDetail', 2], ['terrainTile', 2]].forEach(([k, d]) => { $('#mf-e-' + k).value = e[k]; $('#mf-e-' + k + '-v').textContent = (+e[k]).toFixed(d) + (k === 'windDir' ? '°' : k === 'windSpeed' ? ' m/s' : k === 'weatherIntensity' ? '×' : k === 'terrainTile' ? '/m' : ''); });
+    $('#mf-e-tone').value = e.tone || 'aces';
     $('#mf-e-weather').value = e.weather || 'none';
     $('#mf-e-shadows').checked = e.shadows !== false;
   }
@@ -1356,7 +1373,8 @@ export async function openEditor(opts) {
   wBind('on', 'on'); wBind('level', 'level'); wBind('color', 'color'); wBind('opacity', 'opacity'); wBind('wave', 'wave'); wBind('speed', 'speed');
   // sky tab
   const eBind = (key) => { const el = $('#mf-e-' + key); const h = () => { const e = S.map.env; e[key] = el.type === 'checkbox' ? el.checked : el.type === 'color' ? el.value : +el.value; world.applyEnv(e); settingsChanged(); renderSkyTab(); }; el.oninput = h; el.onchange = h; };
-  ['skyTop', 'skyBottom', 'fogColor', 'fogNear', 'fogFar', 'sunEl', 'sunAz', 'sunIntensity', 'sunColor', 'ambient', 'ambientIntensity', 'groundColor', 'shadows', 'weatherIntensity', 'windDir', 'windSpeed'].forEach(eBind);
+  ['skyTop', 'skyBottom', 'fogColor', 'fogNear', 'fogFar', 'sunEl', 'sunAz', 'sunIntensity', 'sunColor', 'ambient', 'ambientIntensity', 'groundColor', 'shadows', 'weatherIntensity', 'windDir', 'windSpeed', 'exposure', 'bloom', 'bloomThreshold', 'vignette', 'terrainDetail', 'terrainTile'].forEach(eBind);
+  $('#mf-e-tone').onchange = e => { S.map.env.tone = e.target.value; world.applyEnv(S.map.env); settingsChanged(); };
   $('#mf-e-weather').onchange = e => { S.map.env.weather = e.target.value; world.applyEnv(S.map.env); settingsChanged(); };
   $('#mf-e-preset').onchange = e => { const p = ENV_PRESETS[e.target.value]; if (!p) return; Object.assign(S.map.env, p, { preset: e.target.value }); world.applyEnv(S.map.env); settingsChanged(); renderSkyTab(); };
 
@@ -1425,7 +1443,8 @@ export async function openEditor(opts) {
     }
     if (ghost) { const on = !S.playing && !!stroke.hit && (S.tool === 'place' || S.tool === 'scatter'); ghost.visible = on; if (on) ghost.position.set(stroke.hit.x, world.heightAt(stroke.hit.x, stroke.hit.z), stroke.hit.z); }
     world.update(dt, camera);
-    renderer.render(scene, camera);
+    post.enabled = quality.get().settings.post !== false;
+    post.render(scene, camera, S.map.env);
     if (S.playing) qTuner.frame(dt);
     fpsN++; fpsT += dt; if (fpsT >= 0.5) { $('#mf-hud-fps').textContent = Math.round(fpsN / fpsT) + ' fps · ' + renderer.info.render.triangles.toLocaleString() + ' tris · ' + renderer.info.render.calls + ' calls'; fpsN = 0; fpsT = 0; }
   }
@@ -1556,6 +1575,7 @@ const TEMPLATE = `
       <tr><td>Water</td><td>One global water level (Water tab). Sculpt below it to make lakes and rivers; Scatter skips underwater ground.</td></tr>
       <tr><td>Models</td><td>Drag a <kbd>.glb</kbd> onto the canvas, or Library → Models → Project / URL. Animated models: select the object and pick a clip, speed and loop in the inspector.</td></tr>
       <tr><td>Blueprints</td><td>Select an object → <b>⚡ Add blueprint</b>: components (Trigger volume, Point light, Rotating, Floating, Tag) and an <b>event graph</b> — Begin Play, On Tick, On Enter / Exit / Interact (E) → Move, Rotate, Scale, Spin, Set visible / tint, Play animation, Effect, Light, Spawn, Destroy, Teleport, Toast, Set variable, Branch, Delay, Call game action. Runs in Play and in the game; the map is untouched afterwards.</td></tr>
+      <tr><td>Look</td><td>Sky tab → <b>Look</b>: filmic tone mapping + exposure, bloom (threshold), vignette, ground detail texturing and tile size. Inspector → <b>Material</b>: roughness, metalness and an emissive colour/intensity per object (props and .glb models) — a glowing relic is a slider, not a second prop.</td></tr>
       <tr><td>Performance</td><td>Top bar → <b>Quality</b>: auto (steps down when the frame rate drops), high, medium, low — pixel ratio, shadows, effects. In the game repeated static props are drawn as instanced batches (one draw call per prop mesh, not per placement) and far effects pause; the HUD shows fps, triangles and draw calls.</td></tr>
       <tr><td>Audio</td><td>Library → <b>Sounds</b>: add files the game ships (assets/Audio) or a URL, ▶ previews. A <b>Sound emitter</b> component plays positionally on an object (auto from Begin Play, or via <b>Play sound</b>); Play sound also fires one-shots at the player or in 2D; <b>Stop sound</b> silences a target. Browsers need one click/key before audio starts.</td></tr>
       <tr><td>AI</td><td>Add a <b>Nav agent</b> component and use <b>Move To</b>, <b>Chase</b>, <b>Patrol</b> (waypoint names or <code>folder:Route</code>), <b>Wander</b>, <b>Stop moving</b>, <b>Look at</b>; event <b>On See</b> (range + field of view). Agents walk a navmesh baked from the terrain and colliders — Terrain tab → View → <b>Navmesh</b> shows it. Spawn a prefab whose blueprint chases the player and you have an enemy.</td></tr>
@@ -1633,6 +1653,16 @@ const TEMPLATE = `
       <div class="mf-row"><label>Wind dir</label><input type="range" id="mf-e-windDir" min="0" max="360" step="5"><span class="v" id="mf-e-windDir-v"></span></div>
       <div class="mf-row"><label>Wind</label><input type="range" id="mf-e-windSpeed" min="0" max="20" step="0.5"><span class="v" id="mf-e-windSpeed-v"></span></div>
       <p class="mf-hint">Storm adds lightning. Wind bends every smoke column and drives rain, snow and ash. Place local effects from Library → VFX: fire, smoke, steam, ground fog, sparks, toxic gas, dust, motes.</p>
+    </div>
+    <div class="mf-sec"><h3>Look</h3>
+      <div class="mf-row"><label>Tone map</label><select id="mf-e-tone"><option value="aces">Filmic (ACES)</option><option value="reinhard">Reinhard</option><option value="linear">Linear</option></select></div>
+      <div class="mf-row"><label>Exposure</label><input type="range" id="mf-e-exposure" min="0.2" max="3" step="0.05"><span class="v" id="mf-e-exposure-v"></span></div>
+      <div class="mf-row"><label>Bloom</label><input type="range" id="mf-e-bloom" min="0" max="2" step="0.05"><span class="v" id="mf-e-bloom-v"></span></div>
+      <div class="mf-row"><label>Threshold</label><input type="range" id="mf-e-bloomThreshold" min="0" max="1" step="0.02"><span class="v" id="mf-e-bloomThreshold-v"></span></div>
+      <div class="mf-row"><label>Vignette</label><input type="range" id="mf-e-vignette" min="0" max="1" step="0.02"><span class="v" id="mf-e-vignette-v"></span></div>
+      <div class="mf-row"><label>Ground detail</label><input type="range" id="mf-e-terrainDetail" min="0" max="1" step="0.02"><span class="v" id="mf-e-terrainDetail-v"></span></div>
+      <div class="mf-row"><label>Ground tile</label><input type="range" id="mf-e-terrainTile" min="0.1" max="2" step="0.05"><span class="v" id="mf-e-terrainTile-v"></span></div>
+      <p class="mf-hint">Filmic tone mapping and exposure shape the whole image; bloom makes emissive props, fire and the sun glow (Low quality skips it); ground detail is the per-layer texture on the terrain, tile = repeats per metre.</p>
     </div>
     <div class="mf-sec"><h3>Ambient</h3>
       <div class="mf-row"><label>Sky light</label><input type="color" id="mf-e-ambient"></div>

@@ -22,6 +22,9 @@ import { buildWorld } from './mapforge.world.js';
 import { createPlayer } from './mapforge.player.js';
 import { newMap, normalize } from './mapforge.format.js';
 import * as quality from './mapforge.quality.js';
+import { createPost } from './mapforge.post.js';
+const TONE = { aces: 'ACESFilmicToneMapping', linear: 'LinearToneMapping', reinhard: 'ReinhardToneMapping' };
+export function applyTone(THREE, renderer, env) { renderer.toneMapping = THREE[TONE[env.tone] || 'ACESFilmicToneMapping'] || THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = env.exposure == null ? 1 : env.exposure; }
 import * as api from './mapforge.api.js';
 
 export async function mountWorld(host, opts) {
@@ -42,7 +45,8 @@ export async function mountWorld(host, opts) {
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(opts.fov || 60, 1, 0.1, 3000);
   /* instancing is on for games (draw calls, not picking, are what matter here); quality knobs follow the ladder and auto-tune */
-  const world = buildWorld(THREE, map, { scene, camera, markers: !!opts.markers, gltfLoader: opts.gltfLoader, onLightning: opts.onLightning, toast: opts.toast, onPrompt: opts.onPrompt, actions: opts.actions, instancing: opts.instancing !== false, shadows: opts.shadows !== false && Q.shadows, shadowMap: Q.shadowMap, fx: Q.fx, fxRange: Q.fxRange });
+  const post = createPost(THREE, renderer);
+  const world = buildWorld(THREE, map, { scene, camera, markers: !!opts.markers, gltfLoader: opts.gltfLoader, onLightning: opts.onLightning, toast: opts.toast, onPrompt: opts.onPrompt, actions: opts.actions, instancing: opts.instancing !== false, shadows: opts.shadows !== false && Q.shadows, shadowMap: Q.shadowMap, fx: Q.fx, fxRange: Q.fxRange, onEnv: (env) => applyTone(THREE, renderer, env) });
   const tuner = quality.createTuner(opts.tuner);
   const offQ = quality.onChange(q => { quality.apply(renderer, world, q.level); resize(); });
   scene.add(world.group);
@@ -84,17 +88,18 @@ export async function mountWorld(host, opts) {
     if (controls) controls.update();
     world.update(dt, camera);
     listeners.frame.forEach(f => f(dt, now));
-    renderer.render(scene, camera);
+    post.enabled = quality.get().settings.post !== false && opts.post !== false;
+    post.render(scene, camera, map.env);
   }
   raf = requestAnimationFrame(loop);
 
   const g = {
-    THREE, map, source, scene, camera, renderer, canvas, world, player, controls, on, quality,
+    THREE, map, source, scene, camera, renderer, canvas, world, player, controls, on, quality, post,
     resize,
     stop() {
       running = false; cancelAnimationFrame(raf); ro.disconnect(); window.removeEventListener('keydown', onInteract); offQ(); try { world.stopPlay(); } catch (e) {}
       if (player) player.stop(); if (clickToLock) canvas.removeEventListener('click', clickToLock);
-      try { world.dispose(); renderer.dispose(); renderer.forceContextLoss(); } catch (e) {}
+      try { post.dispose(); world.dispose(); renderer.dispose(); renderer.forceContextLoss(); } catch (e) {}
       if (canvas.parentNode) canvas.parentNode.removeChild(canvas);
     },
   };

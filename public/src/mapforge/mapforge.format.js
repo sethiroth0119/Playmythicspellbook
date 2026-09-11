@@ -73,7 +73,7 @@ export function newMap(opts) {
       paint: new Array(verts).fill(0),
     },
     water: { on: true, level: -0.6, color: '#2e6f9e', opacity: 0.78, wave: 0.12, speed: 1 },
-    env: Object.assign({ preset: 'day', shadows: true, weather: 'none', weatherIntensity: 1, windDir: 45, windSpeed: 1.5 }, ENV_PRESETS.day),
+    env: Object.assign({ preset: 'day', shadows: true, weather: 'none', weatherIntensity: 1, windDir: 45, windSpeed: 1.5, tone: 'aces', exposure: 1, bloom: 0, bloomThreshold: 0.75, vignette: 0, terrainDetail: 0.8, terrainTile: 0.5 }, ENV_PRESETS.day),
     assets: [],
     /* Sounds: URLs of files the game ships (/assets/Audio/…) referenced by Sound
        emitter components and Play sound nodes — { id, label, url }, like assets. */
@@ -150,6 +150,10 @@ export function normalize(raw) {
     weather: ['rain', 'storm', 'snow', 'ash', 'duststorm'].includes(e.weather) ? e.weather : 'none',
     weatherIntensity: clampNum(e.weatherIntensity, 0.1, 3, 1),
     windDir: clampNum(e.windDir, 0, 360, 45), windSpeed: clampNum(e.windSpeed, 0, 20, 1.5),
+    // the look pass (round 11): filmic tone mapping + exposure, bloom, vignette; terrain detail texturing
+    tone: ['aces', 'linear', 'reinhard'].includes(e.tone) ? e.tone : 'aces',
+    exposure: clampNum(e.exposure, 0.2, 3, 1), bloom: clampNum(e.bloom, 0, 2, 0), bloomThreshold: clampNum(e.bloomThreshold, 0, 1, 0.75), vignette: clampNum(e.vignette, 0, 1, 0),
+    terrainDetail: clampNum(e.terrainDetail, 0, 1, 0.8), terrainTile: clampNum(e.terrainTile, 0.05, 4, 0.5),
   };
 
   /* An asset is EITHER a URL (a file under /models/ or any CORS-enabled host)
@@ -239,6 +243,7 @@ export function normalizeObject(o, assetIds, folderIds, prefabIds) {
     col: typeof o.col === 'boolean' ? o.col : undefined,
     cs: o.cs === 'cyl' ? 'cyl' : undefined,          // collider shape: box (default) or cylinder
     fx: normalizeFx(o.fx),                            // emitter tuning for fx_* objects / attached effects
+    mat: normalizeMat(o.mat),                         // material override: roughness / metalness / emissive (round 11)
   };
 }
 
@@ -247,6 +252,18 @@ export function normalizeFx(f) {
   const out = { i: clampNum(f.i, 0.1, 4, 1), s: clampNum(f.s, 0.2, 6, 1) };
   if (f.off === true) out.off = true;        // a prop's built-in effect switched off
   return out;
+}
+/* A material override applies to every mesh of the object (a prop or a whole .glb):
+   PBR roughness / metalness and an emissive colour + intensity — how a lantern glows or
+   a relic gleams without a second prop. Absent = the prop's own look. */
+export function normalizeMat(m) {
+  if (!m || typeof m !== 'object') return undefined;
+  const out = {};
+  if (m.rough != null) out.rough = clampNum(m.rough, 0, 1, 0.85);
+  if (m.metal != null) out.metal = clampNum(m.metal, 0, 1, 0);
+  if (m.em && hex(m.em, null)) out.em = hex(m.em, null);
+  if (m.ei != null) out.ei = clampNum(m.ei, 0, 8, 1);
+  return Object.keys(out).length ? out : undefined;
 }
 export const LOOP_MODES = ['repeat', 'once', 'pingpong'];
 export function normalizeAnim(a) {

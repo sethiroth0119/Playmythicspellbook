@@ -34,6 +34,7 @@ fixed battle grid. The two coexist.
 | `mapforge.actors.js` | **actor blueprints**: components + an event graph on any object, and the runtime that executes them (`world.actors`) |
 | `mapforge.nav.js` | **navigation**: a grid navmesh baked from terrain + colliders, A* with string-pulling (`world.nav`) |
 | `mapforge.audio.js` | **positional audio** (three.js WebAudio): one listener on the camera, emitters on objects, one-shots at the player or in 2D |
+| `mapforge.post.js` | the **look pass**: bloom + vignette composited over the scene (self-contained, no addons) |
 | `mapforge.quality.js` | the **quality ladder** (pixel ratio, shadows, effects, effect range) with auto-tune; remembered per device |
 | `mapforge.physics.js` | **rigid-body physics** (cannon-es, vendored at `/vendor/cannon-es.js`): terrain heightfield, static colliders, dynamic/kinematic bodies, the player as a kinematic sphere |
 | `../widgets/graph-editor.js` | the shared Blueprint-style node editor (used by the actor graph panel) |
@@ -537,3 +538,32 @@ silences everything. Runtime: `world.audio` (`play`, `stopWhere`, `count`,
 
 Still open: level-of-detail for `.glb` models, chunked terrain. A 160×160
 terrain is 25k vertices in one draw call and has not needed either.
+
+## Materials and lighting (round 11)
+
+- **Textured terrain layers.** The paint indices now drive a detail texture
+  per layer: a procedural 4×4 atlas (grass strokes, dirt speckle, sand
+  ripples, rock cracks, snow, cobbles, asphalt, concrete slabs, rust, toxic,
+  soot — one tile per `PAINT` entry, append-only like `PAINT`) sampled per
+  cell through a layer-index texture and feathered across the four
+  surrounding cells; steep faces switch to the rock tile. The shader is
+  injected into `MeshStandardMaterial` (`onBeforeCompile`), so lighting,
+  shadows and fog are untouched. Sky tab → Look: **Ground detail**
+  (strength) and **Ground tile** (repeats per metre) — `env.terrainDetail`,
+  `env.terrainTile`.
+- **Material override per object** — inspector → **Material**: roughness,
+  metalness, emissive colour and intensity, on props and whole `.glb` models
+  (textures kept). Stored as `objects[].mat = { rough, metal, em, ei }`;
+  materials are cloned per object (the shared prop templates are never
+  mutated); overridden objects are not instanced. `world.refreshMat(id)`.
+- **Look pass** — Sky tab → Look: **tone mapping** (ACES filmic default,
+  Reinhard, linear) and **exposure** on the renderer (`env.tone`,
+  `env.exposure`; the world calls `opts.onEnv(env)` and the host applies
+  them — `applyTone(THREE, renderer, env)` in `mapforge.engine.js`);
+  **bloom** (strength + threshold) and **vignette** through
+  `mapforge.post.js` — scene → bright pass → two blur iterations →
+  composite; with both at zero the scene renders straight to the canvas.
+  Low quality skips the pass (`LEVELS.low.post = false`).
+
+Limits: no environment maps / reflections, no SSAO; the terrain detail is
+procedural (no texture assets are hosted), one tile set for every map.

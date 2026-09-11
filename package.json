@@ -28,6 +28,7 @@
     "gd:sql": "node tools/gamedev/sql-lint.mjs",
     "gd:econ": "node tools/gamedev/econ.mjs",
     "gd:map": "node tools/gamedev/map.mjs",
+    "gd:mcp": "node tools/gamedev/mcp.mjs",
     "engine:regen": "node tools/extract-engine-data.mjs",
     "engine:check": "node tools/extract-engine-data.mjs --check"
   },

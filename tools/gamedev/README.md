@@ -17,6 +17,9 @@ functions, so nothing here can drift from the game.
 | `econ.mjs` | economy headless: `_opEcon` pricing table, tax quotes, resources, city production audit, client ⇄ worker.js parity |
 | `audit.mjs` | whole-game conventions: direct Cinder writes, globals trap in modules, tables no migration creates, `alert()`, chat inserts |
 | `sql-lint.mjs` | migration rules from CLAUDE.md: RLS enabled + policies + USING, recursion, idempotency, verify query, ledger UPDATEs |
+| `mcp.mjs` | **the live page as an MCP server** — boots index.html in headless Chromium and answers what only a browser knows: which ES modules mounted, the real `MythicBridge` surface, Athena's registered scenes, whether a screen paints. Zero npm deps; all off-origin traffic aborted, so it never touches Supabase or the worker. |
+
+`npm run gd:mcp` starts the MCP server (normally Claude Code starts it from `.mcp.json`).
 
 `npm run gd:check` / `gd:lint` / `gd:effects` / `gd:catalog` / `gd:econ` / `gd:audit` / `gd:sql` / `gd:map` are shortcuts.
 

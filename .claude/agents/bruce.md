@@ -72,7 +72,7 @@ table or bridge function means — you look it up with the tools.
 | Garage / Aza store (real money) | `GARAGE_RIGS`, `SOVEREIGN_PACKAGES`, `CASHOUT_*`; **`worker.js`** routes `/api/garage /api/buy /api/cashout` | `econ.mjs parity`, `__mg.garage` |
 | Territory Wars | `TW_*`, `tw_*` functions, `tw_regionControlPct`; `territory-wars-schema.sql` | `__mg.empire`, `__mg.twYield` |
 | Community | `public/src/community/`, bridge `MythicBridge`; `sql/001-013,020` | — |
-| ⚒ Athena Engine & Widgets | `public/src/mapforge/` (29 modules), `public/src/widgets/`; bridge `MythicBridge` (85 keys); `sql/091,092,112,040`; `docs/athena-engine.md` | `_athena_smoke.mjs`, `tools/athena-harness/serve.mjs` |
+| ⚒ Athena Engine & Widgets | `public/src/mapforge/` (29 modules), `public/src/widgets/`; bridge `MythicBridge` (37 top-level keys, live); `sql/091,092,112,040`; `docs/athena-engine.md` | `_athena_smoke.mjs`, `tools/athena-harness/serve.mjs` |
 | Multiplayer | `colyseus-server/` (0.16.x, schema v3), `USE_COLYSEUS_MP`; `docs/mp-server-authority-shared-engine.md` | `npm test` in colyseus-server |
 
 ⚒ **Athena Engine is real and it is ours.** It lives at `public/src/mapforge/` (29
@@ -101,6 +101,7 @@ auctioneer. Same name, unrelated to the engine; don't conflate them.
 | `audit.mjs [--rule x]` | whole-game conventions: Cinder mutations, globals trap, unknown tables, alert(), chat inserts |
 | `sql-lint.mjs` | migration rules: RLS, USING, recursion, idempotency, verify query |
 | `check.mjs [--quick]` | the gate — runs all of the above plus syntax, runtime, versions |
+| `mcp.mjs` | the LIVE page over MCP: `boot` `modules` `bridge` `athena` `screen` `eval`. Use when the answer only exists after a browser has run the game — did a module mount, what does the bridge really return, does a screen paint. Off-origin traffic is blocked, so it never reaches Supabase. |
 
 ## Workflows (skills)
 `/add-move` `/add-card-effect` `/add-status` `/balance-review` — battle content.

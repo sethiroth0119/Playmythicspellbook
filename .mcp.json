@@ -1,5 +1,9 @@
 {
   "mcpServers": {
+    "mythic-game": {
+      "command": "node",
+      "args": ["tools/gamedev/mcp.mjs"]
+    },
     "cloudflare": {
       "type": "http",
       "url": "https://mcp.cloudflare.com/mcp"

@@ -76,6 +76,17 @@ query, and ships its RLS in the same file.
 helper functions (`is_community_member` / `is_community_leader`), which bypass RLS and
 therefore terminate.
 
+## Game-dev toolkit (battle engine, cards, moves, effects)
+`tools/gamedev/` loads the inline engine headless (`headless.mjs`) and gives you the live
+catalogs and resolvers in Node. Use it instead of grepping 11 MB or reasoning from memory:
+`node tools/gamedev/catalog.mjs moves --schema`, `lint.mjs` (dangling ids, registry⇄resolver
+parity — it found `MOVES.sunder` applying a status that never existed), `effects.mjs`
+(every on-play effect run headless), `damage.mjs` (deterministic tables + `--golden`),
+`scaffold.mjs` (skeleton + anchors), and **`node tools/gamedev/check.mjs` — the gate before
+any battle/data commit.** The `game-dev` agent (`.claude/agents/game-dev.md`) and the
+`/add-move`, `/add-card-effect`, `/add-status`, `/fix-bug`, `/balance-review`, `/ship-check`
+skills encode the workflows. Details: `docs/game-dev-agent.md`.
+
 ## Verifying (this environment)
 - Syntax-check index.html with `node _synckcheck.mjs` — **not** `build.mjs`.
 - The Browser pane does not composite: `requestAnimationFrame` never fires, so `render()`

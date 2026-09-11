@@ -72,14 +72,6 @@
    "atkMod": -3,
    "desc": "-3 attack"
   },
-  "vulnerable": {
-   "id": "vulnerable",
-   "name": "Vulnerable",
-   "icon": "🪓",
-   "defMod": -5,
-   "resMod": -5,
-   "desc": "-5 DEF & RES — armor and wards shattered."
-  },
   "strong": {
    "id": "strong",
    "name": "Strong",
@@ -195,6 +187,13 @@
    "atkMod": 3,
    "defMod": -2,
    "desc": "Must attack the nearest enemy; can only use attack moves (+3 ATK, -2 DEF)"
+  },
+  "corrupted": {
+   "id": "corrupted",
+   "name": "Corrupted",
+   "icon": "🕷",
+   "forceAttackAlly": true,
+   "desc": "Turned against its own — can ONLY attack allied units, and may only use attack moves."
   },
   "infected": {
    "id": "infected",
@@ -345,6 +344,14 @@
    "skipChance": 0.3,
    "desc": "Crackling current — 1-3 dmg/turn and 30% chance to fumble each action."
   },
+  "vulnerable": {
+   "id": "vulnerable",
+   "name": "Vulnerable",
+   "icon": "🪓",
+   "defMod": -5,
+   "resMod": -5,
+   "desc": "-5 DEF & RES — armor and wards shattered."
+  },
   "empowered": {
    "id": "empowered",
    "name": "Empowered",
@@ -461,6 +468,96 @@
    "name": "None",
    "desc": "No passive ability"
   },
+  "zoneOfControl": {
+   "id": "zoneOfControl",
+   "name": "Zone of Control",
+   "cat": "mobility",
+   "desc": "🛑 Enemies cannot move THROUGH tiles adjacent to this unit (they may still stop beside it)."
+  },
+  "chokehold": {
+   "id": "chokehold",
+   "name": "Chokehold",
+   "cat": "mobility",
+   "desc": "⛓ Enemies that begin their turn adjacent to this unit lose 1 movement."
+  },
+  "highGround": {
+   "id": "highGround",
+   "name": "High Ground",
+   "cat": "offense",
+   "desc": "🪶 +20% damage while airborne against a target that is not — flight is the high ground."
+  },
+  "scavenger": {
+   "id": "scavenger",
+   "name": "Scavenger",
+   "cat": "economy",
+   "desc": "🧲 Whenever ANY enemy unit dies, its owner's loss is your gain: +1 energy."
+  },
+  "tithe": {
+   "id": "tithe",
+   "name": "Tithe",
+   "cat": "economy",
+   "desc": "🪙 Costs 1 more energy to play, but draws you a card when it enters the field."
+  },
+  "momentum": {
+   "id": "momentum",
+   "name": "Momentum",
+   "cat": "offense",
+   "desc": "🏇 +10% damage for each consecutive turn this unit has attacked (max +50%). Resets the turn it does not."
+  },
+  "secondWind": {
+   "id": "secondWind",
+   "name": "Second Wind",
+   "cat": "death",
+   "desc": "💨 The first time it falls below 50% HP, it immediately refreshes its action. Once per match."
+  },
+  "riposte": {
+   "id": "riposte",
+   "name": "Riposte",
+   "cat": "defense",
+   "desc": "⚔ When this unit DODGES an attack, it counters instantly for 50% of its own attack."
+  },
+  "arcaneTariff": {
+   "id": "arcaneTariff",
+   "name": "Arcane Tariff",
+   "cat": "defense",
+   "desc": "💸 The first enemy spell each turn that targets this unit costs its caster +2 energy."
+  },
+  "vigilant": {
+   "id": "vigilant",
+   "name": "Vigilant",
+   "cat": "defense",
+   "desc": "👀 Attacks any enemy that steps into an adjacent tile — once per turn."
+  },
+  "mirrorScales": {
+   "id": "mirrorScales",
+   "name": "Mirror Scales",
+   "cat": "defense",
+   "desc": "🪞 The FIRST status effect applied to this unit each match is reflected back onto its source."
+  },
+  "graveTide": {
+   "id": "graveTide",
+   "name": "Grave Tide",
+   "cat": "death",
+   "desc": "🪦 +1 ATK for every 3 cards in your graveyard — it grows as the match wears on."
+  },
+  "ashenDecree": {
+   "id": "ashenDecree",
+   "name": "Ashen Decree",
+   "cat": "death",
+   "desc": "🗿 While this unit lives, cards that would be sent to ANY graveyard are BANISHED to the Void instead. Affects both players."
+  },
+  "voidAnchor": {
+   "id": "voidAnchor",
+   "name": "Void Anchor",
+   "cat": "death",
+   "desc": "⚓ While this unit lives, cards that would be BANISHED go to the graveyard instead."
+  },
+  "soulHarvest": {
+   "id": "soulHarvest",
+   "name": "Soul Harvest",
+   "cat": "death",
+   "desc": "👻 Units dying within 2 tiles feed it — +2 max HP permanently, for the rest of the match."
+  },
   "regeneration": {
    "id": "regeneration",
    "name": "Regeneration",
@@ -495,6 +592,11 @@
    "id": "archonSuppress",
    "name": "Seal the Source",
    "desc": "🚫 While this unit lives, NEITHER player can perform an Archon Summon."
+  },
+  "countsAsKalon": {
+   "id": "countsAsKalon",
+   "name": "Born Ascended",
+   "desc": "🜂 Treated as a Kalon Transform at all times, even though it never transformed. Gains Kalon support — and Kalon counterplay."
   },
   "raiseFromDead": {
    "id": "raiseFromDead",
@@ -549,12 +651,7 @@
   "archmage": {
    "id": "archmage",
    "name": "Archmage",
-   "desc": "Spells cost 1 less energy"
-  },
-  "guardian": {
-   "id": "guardian",
-   "name": "Guardian",
-   "desc": "Once per match, redirects the first incoming attack on any ally within 2 tiles to this unit instead. Consumed after use."
+   "desc": "Spells and abilities cost 1 less energy"
   },
   "inspire": {
    "id": "inspire",
@@ -656,6 +753,36 @@
    "name": "Lethal",
    "desc": "Any damage this unit deals to a non-hero unit is instantly fatal, regardless of remaining HP."
   },
+  "sunder": {
+   "id": "sunder",
+   "name": "Sunder",
+   "desc": "Its strikes cleave through armor — attacks ignore half the target DEF / RES."
+  },
+  "wrathborn": {
+   "id": "wrathborn",
+   "name": "Wrathborn",
+   "desc": "Fights harder as it bleeds — deals up to +50% more damage the lower its HP."
+  },
+  "ashveil": {
+   "id": "ashveil",
+   "name": "Ashveil",
+   "desc": "Shrouded in ash — no single blow can remove more than 40% of its max HP."
+  },
+  "bloodtithe": {
+   "id": "bloodtithe",
+   "name": "Bloodtithe",
+   "desc": "Half the attack damage this unit deals is tithed to your hero as healing."
+  },
+  "cull": {
+   "id": "cull",
+   "name": "Cull",
+   "desc": "Executes any wounded non-hero foe (at or below 30% HP) the instant it strikes."
+  },
+  "mirrorskin": {
+   "id": "mirrorskin",
+   "name": "Mirrorskin",
+   "desc": "Reflects 30% of any magic damage it takes back at the caster."
+  },
   "defender": {
    "id": "defender",
    "name": "Defender",
@@ -700,6 +827,16 @@
    "id": "bodyguard",
    "name": "Bodyguard",
    "desc": "Steps in front of attacks targeting allies within 1 tile. Redirects enemy hits to this unit instead. No use limit."
+  },
+  "guardian": {
+   "id": "guardian",
+   "name": "Guardian",
+   "desc": "Once per match, redirects the first incoming attack on any ally within 2 tiles to this unit instead (consumed after use). On a HERO: adjacent allies also take 25% less damage."
+  },
+  "heroGuardian": {
+   "id": "heroGuardian",
+   "name": "Hero Guardian",
+   "desc": "Once per turn, if YOUR hero would die, it is instead resummoned next to this unit with 10 HP. Only works while this unit is alive on the board."
   },
   "physicalImmortal": {
    "id": "physicalImmortal",
@@ -896,7 +1033,12 @@
   "trapDog": {
    "id": "trapDog",
    "name": "Trap Dog",
-   "desc": "🐕 On entering play: reveals every enemy trap on the board for the rest of the match."
+   "desc": "🐕 On entering play: reveals every enemy trap on the board for the rest of the match, and springs every enemy face-down (Subterfuge) unit."
+  },
+  "detection": {
+   "id": "detection",
+   "name": "Detection",
+   "desc": "🔍 On entering play and after it moves: springs every ADJACENT enemy face-down (Subterfuge) trap — forcing the ambush on YOUR terms before it can surprise you."
   },
   "trapBreaker": {
    "id": "trapBreaker",
@@ -1072,6 +1214,18 @@
    "name": "Cold Iron",
    "wardFaction": "fairy",
    "desc": "🛡️🧚 Immune to damage from Fairy attackers."
+  },
+  "wardVsWerewolf": {
+   "id": "wardVsWerewolf",
+   "name": "Silvered Guard",
+   "wardFaction": "werewolf",
+   "desc": "🛡️🌕 Immune to damage from Werewolf attackers."
+  },
+  "wardVsHero": {
+   "id": "wardVsHero",
+   "name": "Villain's Guile",
+   "wardFaction": "hero",
+   "desc": "🛡️🦸 Immune to damage from Hero attackers."
   },
   "solarFlare": {
    "id": "solarFlare",
@@ -1932,6 +2086,163 @@
   ]
  },
  "MOVES": {
+  "sunder": {
+   "id": "sunder",
+   "name": "Sunder",
+   "kind": "attack",
+   "type": "physical",
+   "power": 30,
+   "range": 1,
+   "cost": 1,
+   "element": "metal",
+   "icon": "🪓",
+   "desc": "Cleaves armour — halves the target's DEF for 2 turns.",
+   "applyStatus": {
+    "id": "armorBreak",
+    "chance": 100,
+    "duration": 2
+   }
+  },
+  "riptide": {
+   "id": "riptide",
+   "name": "Riptide",
+   "kind": "attack",
+   "type": "magic",
+   "power": 28,
+   "range": 2,
+   "cost": 1,
+   "element": "water",
+   "icon": "🌊",
+   "desc": "A dragging current — damages and hauls the target one tile closer.",
+   "pull": 1
+  },
+  "concussiveWave": {
+   "id": "concussiveWave",
+   "name": "Concussive Wave",
+   "kind": "attack",
+   "type": "magic",
+   "power": 16,
+   "range": 2,
+   "cost": 2,
+   "element": "sound",
+   "icon": "📢",
+   "desc": "Little damage, but the blast rattles the target out of its next action.",
+   "applyStatus": {
+    "id": "stun",
+    "chance": 100,
+    "duration": 1
+   }
+  },
+  "bloodPact": {
+   "id": "bloodPact",
+   "name": "Blood Pact",
+   "kind": "attack",
+   "type": "physical",
+   "power": 64,
+   "range": 1,
+   "cost": 1,
+   "element": "blood",
+   "icon": "🩸",
+   "desc": "Pay in your own blood — heavy damage at the cost of 15% of your HP.",
+   "selfDamagePct": 15
+  },
+  "mindSpike": {
+   "id": "mindSpike",
+   "name": "Mind Spike",
+   "kind": "attack",
+   "type": "magic",
+   "power": 18,
+   "range": 3,
+   "cost": 2,
+   "element": "psychic",
+   "icon": "🧠",
+   "desc": "Punishes the expensive — damage scales with the target card's energy cost.",
+   "scaleByTargetCost": 8
+  },
+  "entropyField": {
+   "id": "entropyField",
+   "name": "Entropy Field",
+   "kind": "ability",
+   "type": "magic",
+   "power": 0,
+   "range": 2,
+   "cost": 2,
+   "element": "void",
+   "icon": "🕳",
+   "desc": "No damage — everything within 2 tiles slows as the field eats momentum.",
+   "aoeRadius": 2,
+   "applyStatus": {
+    "id": "slow",
+    "chance": 100,
+    "duration": 2
+   }
+  },
+  "plagueBloom": {
+   "id": "plagueBloom",
+   "name": "Plague Bloom",
+   "kind": "attack",
+   "type": "magic",
+   "power": 20,
+   "range": 2,
+   "cost": 2,
+   "element": "poison",
+   "icon": "☣️",
+   "desc": "A spreading rot — poison that creeps to a new neighbour each turn.",
+   "applyStatus": {
+    "id": "poison",
+    "chance": 100,
+    "duration": 3
+   },
+   "spreadsStatus": {
+    "id": "poison",
+    "radius": 1,
+    "perTurn": 1
+   }
+  },
+  "phaseStep": {
+   "id": "phaseStep",
+   "name": "Phase Step",
+   "kind": "movement",
+   "type": "magic",
+   "power": 0,
+   "range": 3,
+   "cost": 1,
+   "element": "arcane",
+   "icon": "⚛️",
+   "desc": "Step sideways through space — teleport 3 tiles, ignoring walls and units.",
+   "teleport": 3,
+   "priority": true
+  },
+  "chainLightning": {
+   "id": "chainLightning",
+   "name": "Chain Lightning",
+   "kind": "attack",
+   "type": "magic",
+   "power": 34,
+   "range": 3,
+   "cost": 2,
+   "element": "storm",
+   "icon": "⚡",
+   "desc": "Arcs between three targets, weakening with every jump (100 / 70 / 50%).",
+   "chain": {
+    "jumps": 2,
+    "falloff": 0.7,
+    "radius": 2
+   }
+  },
+  "aegisBreak": {
+   "id": "aegisBreak",
+   "name": "Aegis Break",
+   "kind": "attack",
+   "type": "physical",
+   "power": 26,
+   "range": 1,
+   "cost": 1,
+   "element": "light",
+   "icon": "🛡️",
+   "desc": "Made for cracking guards — double damage to shielded or warded targets.",
+   "vsGuardedMult": 2
+  },
   "slash": {
    "id": "slash",
    "name": "Slash",

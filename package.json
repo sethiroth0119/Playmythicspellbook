@@ -2,7 +2,7 @@
   "name": "playmythicspellbook",
   "private": true,
   "version": "1.0.0",
-  "description": "Mythic Spellbook — Cloudflare Workers static deploy of ./public",
+  "description": "Mythic Spellbook \u2014 Cloudflare Workers static deploy of ./public",
   "scripts": {
     "deploy": "node deploy.mjs",
     "deploy:test": "node deploy-test.mjs",
@@ -13,7 +13,16 @@
     "whoami": "wrangler whoami",
     "deploy:all": "node deploy-all.mjs",
     "deploy:market": "node deploy-all.mjs --market",
-    "deploy:check": "node deploy-all.mjs --dry"
+    "deploy:check": "node deploy-all.mjs --dry",
+    "gd:check": "node tools/gamedev/check.mjs",
+    "gd:check:quick": "node tools/gamedev/check.mjs --quick",
+    "gd:lint": "node tools/gamedev/lint.mjs",
+    "gd:effects": "node tools/gamedev/effects.mjs",
+    "gd:catalog": "node tools/gamedev/catalog.mjs",
+    "gd:damage": "node tools/gamedev/damage.mjs",
+    "gd:scaffold": "node tools/gamedev/scaffold.mjs",
+    "engine:regen": "node tools/extract-engine-data.mjs",
+    "engine:check": "node tools/extract-engine-data.mjs --check"
   },
   "devDependencies": {
     "terser": "^5.48.0",

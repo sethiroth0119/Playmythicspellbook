@@ -27,7 +27,15 @@ export const STATUS_EFFECTS = {
   // bumps every incoming hit by 25%. Read by calculateDamage AFTER the
   // base def calc so it stacks with elemental matchup but the spec's
   // "universal" promise (works regardless of element / faction) still holds.
-  vulnerable:{ id: 'vulnerable',name: 'Vulnerable', icon: '🎯', damageTakenMult: 1.25, desc: 'Marked vulnerable — takes +25% damage from all sources.' },
+  // ⚠ `vulnerable` WAS DECLARED TWICE in this object. A duplicate key in an
+  // object literal is silent — the later one won, so this entry never existed
+  // at runtime and its `damageTakenMult: 1.25` was unreachable. Since it was
+  // the ONLY status carrying that field, the engine's +25%-damage-taken hook
+  // (calculateDamage, ~L78472) had no way to fire at all.
+  // Merged into the single definition further down. Live behaviour (-5 DEF/RES)
+  // is preserved there EXACTLY — restoring the +25% on top would be a silent
+  // buff to every card that already applies Vulnerable, so that is left as a
+  // deliberate choice rather than a side effect of this fix.
   strong:    { id: 'strong',    name: 'Strong',    icon: '💪',  atkMod: 4, desc: '+4 attack' },
   shielded:  { id: 'shielded',  name: 'Shielded',  icon: '🛡️', defMod: 5, resMod: 5, desc: '+5 def & res' },
   focused:   { id: 'focused',   name: 'Focused',   icon: '🎯',  magMod: 4, desc: '+4 magic' },
@@ -61,6 +69,20 @@ export const STATUS_EFFECTS = {
   // Ability/heal moves are locked out for the duration. If no enemy is reachable, the unit
   // may still move freely.
   rage:       { id: 'rage',       name: 'Raged',      icon: '😡',  forceAttackNearest: true, atkMod: 3, defMod: -2, desc: 'Must attack the nearest enemy; can only use attack moves (+3 ATK, -2 DEF)' },
+  /* 🕷 CORRUPTED — rage with the target set INVERTED. The unit may only use attack
+     moves (same lockout as rage), and the only legal targets are its OWN side.
+     Deliberately heavier than rage, per the design call:
+       • No stat compensation. Rage pays +3 ATK for its restriction because it
+         still hits the enemy — the restriction is only about WHICH enemy.
+         Corrupted turns the unit's whole output against its owner, so there is
+         no upside to price in. Adding an ATK bonus here would make corrupting
+         your own beater a viable combo, which inverts the intent.
+       • `forceAttackAlly`, NOT `forceAttackNearest` — it is a target-SET switch,
+         not a target-CHOICE restriction. The corrupted unit picks freely among
+         its allies; the cruelty is that it has to pick one at all.
+     ⚠ Every site that assumed "attack target ⇒ enemy" has to consult
+       _statusForcingAllyAttack(). See it for the list. */
+  corrupted:  { id: 'corrupted',  name: 'Corrupted',  icon: '🕷',  forceAttackAlly: true, desc: 'Turned against its own — can ONLY attack allied units, and may only use attack moves.' },
   // Infected — themed for zombies, aliens, plague-bearers. Halves ALL of the victim's
   // combat stats (ATK, MAG, DEF, RES, SPD) via the `statMult` field, which is read by
   // `getStatusStatMultiplier(unit)` and applied at damage-formula + speed-calc time.
@@ -135,6 +157,10 @@ export const STATUS_EFFECTS = {
   // ⚡ ELECTRIFIED — arc damage with a chance to drop the action.
   electrified:{ id: 'electrified',name: 'Electrified',  icon: '⚡',  dmgMin: 1, dmgMax: 3, when: 'turnStart', skipChance: 0.3, desc: 'Crackling current — 1-3 dmg/turn and 30% chance to fumble each action.' },
   // 🛡️ VULNERABLE — defenses cracked wide open (mirror of Shielded).
+  // 🪓 The ONE Vulnerable. (It was declared twice; see the note above. This is
+  // the definition that was actually live, so it is the one kept.)
+  // To also make it take +25% damage from every source, add `damageTakenMult:
+  // 1.25` here — the engine hook is already wired and currently has no user.
   vulnerable: { id: 'vulnerable', name: 'Vulnerable',   icon: '🪓',  defMod: -5, resMod: -5, desc: '-5 DEF & RES — armor and wards shattered.' },
   // 💪 EMPOWERED — sustained offensive buff (mirror of Vulnerable).
   empowered:  { id: 'empowered',  name: 'Empowered',    icon: '✊',  atkMod: 4, magMod: 4, desc: '+4 ATK and +4 MAG while empowered.' },
@@ -171,6 +197,40 @@ export const STATUS_EFFECTS = {
 
 export const PASSIVES = {
   none:         { id: 'none',         name: 'None',         desc: 'No passive ability' },
+  // ── v119j0 ── positional, tempo, reactive and graveyard passives. The
+  // catalogue had plenty of flat stat modifiers and very little that reads the
+  // BOARD or reacts to what the opponent does. Flanker already exists as
+  // `sneakAttack`, so it is not repeated here.
+  zoneOfControl: { id: 'zoneOfControl', name: 'Zone of Control', cat: 'mobility',
+    desc: '🛑 Enemies cannot move THROUGH tiles adjacent to this unit (they may still stop beside it).' },
+  chokehold:     { id: 'chokehold',     name: 'Chokehold', cat: 'mobility',
+    desc: '⛓ Enemies that begin their turn adjacent to this unit lose 1 movement.' },
+  highGround:    { id: 'highGround',    name: 'High Ground', cat: 'offense',
+    desc: '🪶 +20% damage while airborne against a target that is not — flight is the high ground.' },
+  scavenger:     { id: 'scavenger',     name: 'Scavenger', cat: 'economy',
+    desc: '🧲 Whenever ANY enemy unit dies, its owner\'s loss is your gain: +1 energy.' },
+  tithe:         { id: 'tithe',         name: 'Tithe', cat: 'economy',
+    desc: '🪙 Costs 1 more energy to play, but draws you a card when it enters the field.' },
+  momentum:      { id: 'momentum',      name: 'Momentum', cat: 'offense',
+    desc: '🏇 +10% damage for each consecutive turn this unit has attacked (max +50%). Resets the turn it does not.' },
+  secondWind:    { id: 'secondWind',    name: 'Second Wind', cat: 'death',
+    desc: '💨 The first time it falls below 50% HP, it immediately refreshes its action. Once per match.' },
+  riposte:       { id: 'riposte',       name: 'Riposte', cat: 'defense',
+    desc: '⚔ When this unit DODGES an attack, it counters instantly for 50% of its own attack.' },
+  arcaneTariff:  { id: 'arcaneTariff',  name: 'Arcane Tariff', cat: 'defense',
+    desc: '💸 The first enemy spell each turn that targets this unit costs its caster +2 energy.' },
+  vigilant:      { id: 'vigilant',      name: 'Vigilant', cat: 'defense',
+    desc: '👀 Attacks any enemy that steps into an adjacent tile — once per turn.' },
+  mirrorScales:  { id: 'mirrorScales',  name: 'Mirror Scales', cat: 'defense',
+    desc: '🪞 The FIRST status effect applied to this unit each match is reflected back onto its source.' },
+  graveTide:     { id: 'graveTide',     name: 'Grave Tide', cat: 'death',
+    desc: '🪦 +1 ATK for every 3 cards in your graveyard — it grows as the match wears on.' },
+  ashenDecree:   { id: 'ashenDecree',   name: 'Ashen Decree', cat: 'death',
+    desc: '🗿 While this unit lives, cards that would be sent to ANY graveyard are BANISHED to the Void instead. Affects both players.' },
+  voidAnchor:    { id: 'voidAnchor',    name: 'Void Anchor', cat: 'death',
+    desc: '⚓ While this unit lives, cards that would be BANISHED go to the graveyard instead.' },
+  soulHarvest:   { id: 'soulHarvest',   name: 'Soul Harvest', cat: 'death',
+    desc: '👻 Units dying within 2 tiles feed it — +2 max HP permanently, for the rest of the match.' },
   regeneration: { id: 'regeneration', name: 'Regeneration', desc: 'Heal 2 HP at start of your turn' },
   // 🜂 ARCHON SUMMON — CATALYST RANKS. A unit with a Catalyst passive holds a
   // fragment of Primordial Energy and can initiate an Archon Summon ritual:
@@ -186,6 +246,20 @@ export const PASSIVES = {
   // lockdown). Put both on one card for a total Kalon + Archon null-field.
   kalonSuppress:  { id: 'kalonSuppress',  name: 'Null Awakening',  desc: '🚫 While this unit lives, NEITHER player can Kalon Transform.' },
   archonSuppress: { id: 'archonSuppress', name: 'Seal the Source', desc: '🚫 While this unit lives, NEITHER player can perform an Archon Summon.' },
+  /* 🜂 BORN ASCENDED — a BASE unit that the whole game already treats as a
+     Kalon, without ever having transformed. Everything Kalon-ness gates on
+     runs through _isKalonUnit(), so honouring the passive there gets the lot
+     in one place: the k_ sprite slot, the Kalon-scoped board key, Kalon-only
+     buffs, and Kalon-only counterplay.
+     ⚠ THE COUNTERPLAY IS THE POINT, NOT A SIDE EFFECT. This unit becomes a
+       legal target for purgeAscended and every other "destroy all Kalons"
+       effect from the moment it hits the field. A card that gets Kalon
+       upside with no Kalon downside would be strictly better than actually
+       transforming, which would make the mechanic pointless.
+     ⚠ It does NOT consume the owner's Kalon charge and does NOT set
+       kalonUsed — so this unit can still perform a real Kalon Transform later
+       if its card has a form. "Counts as" is a status, not a spent action. */
+  countsAsKalon:  { id: 'countsAsKalon',  name: 'Born Ascended',   desc: '🜂 Treated as a Kalon Transform at all times, even though it never transformed. Gains Kalon support — and Kalon counterplay.' },
   // 🪦 RAISE FROM DEAD
   // On death, leave a GLOWING tombstone that blocks the tile for 1-3 turns.
   // When the timer expires, the unit revives on that tile at 60% HP.
@@ -206,8 +280,10 @@ export const PASSIVES = {
   tough:        { id: 'tough',        name: 'Tough',        desc: '+3 Defense' },
   magicWard:    { id: 'magicWard',    name: 'Magic Ward',   desc: '+3 Magic Resist' },
   warlord:      { id: 'warlord',      name: 'Warlord',      desc: 'Your units gain +2 Attack' },
-  archmage:     { id: 'archmage',     name: 'Archmage',     desc: 'Spells cost 1 less energy' },
-  guardian:     { id: 'guardian',     name: 'Guardian',     desc: 'Adjacent allies take 25% less damage' },
+  archmage:     { id: 'archmage',     name: 'Archmage',     desc: 'Spells and abilities cost 1 less energy' },
+  // ⚠️ 'guardian' was defined TWICE in this catalog (duplicate object key — JS silently
+  // kept only the later entry, hiding this one's text). BOTH behaviors are implemented
+  // in the engine, so the surviving entry below now documents both. Do not re-add here.
   inspire:      { id: 'inspire',      name: 'Inspire',      desc: 'When an allied unit enters play whose cost ≥ this unit\'s cost, that unit gains the configured Inspire Effect (Swift / stat buff / buff-all-stats / draw / energy). Buff All Stats requires the new unit to cost strictly MORE.' },
   venomous:     { id: 'venomous',     name: 'Venomous',     desc: 'Attacks have 30% chance to poison' },
   bloodthirst:  { id: 'bloodthirst',  name: 'Bloodthirst',  desc: 'Heal 5 HP after killing a unit' },
@@ -241,6 +317,14 @@ export const PASSIVES = {
   // ===== HEX TCG KEYWORD PASSIVES (v86g) =====
   // ☠️ LETHAL — any damage dealt instantly kills a non-hero target (Hex TCG: Lethal).
   lethal:       { id: 'lethal',       name: 'Lethal',       desc: 'Any damage this unit deals to a non-hero unit is instantly fatal, regardless of remaining HP.' },
+
+  // ===== ✦ MYTHIC COMBAT PASSIVES — original keywords (v105c) =====
+  sunder:       { id: 'sunder',       name: 'Sunder',       desc: 'Its strikes cleave through armor — attacks ignore half the target DEF / RES.' },
+  wrathborn:    { id: 'wrathborn',    name: 'Wrathborn',    desc: 'Fights harder as it bleeds — deals up to +50% more damage the lower its HP.' },
+  ashveil:      { id: 'ashveil',      name: 'Ashveil',      desc: 'Shrouded in ash — no single blow can remove more than 40% of its max HP.' },
+  bloodtithe:   { id: 'bloodtithe',   name: 'Bloodtithe',   desc: 'Half the attack damage this unit deals is tithed to your hero as healing.' },
+  cull:         { id: 'cull',         name: 'Cull',         desc: 'Executes any wounded non-hero foe (at or below 30% HP) the instant it strikes.' },
+  mirrorskin:   { id: 'mirrorskin',   name: 'Mirrorskin',   desc: 'Reflects 30% of any magic damage it takes back at the caster.' },
   // ⚔️ DEFENDER — cannot attack; holds the line as a defensive blocker (Hex TCG: Defender).
   defender:     { id: 'defender',     name: 'Defender',     desc: 'This unit cannot attack. It holds the line as a defensive blocker and cannot be directed to strike.' },
   // 🌀 UNBLOCKABLE — bypasses Bodyguard/Guardian intercepts and can hit flying units (Hex TCG: Unblockable).
@@ -269,7 +353,8 @@ export const PASSIVES = {
   bodyguard:    { id: 'bodyguard',   name: 'Bodyguard',    desc: 'Steps in front of attacks targeting allies within 1 tile. Redirects enemy hits to this unit instead. No use limit.' },
   // GUARDIAN — intercept the FIRST incoming attack on any ally within 2 tiles (once per match).
   // The one-shot limit is tracked via _guardianUsed on the unit object.
-  guardian:     { id: 'guardian',    name: 'Guardian',     desc: 'Once per match, redirects the first incoming attack on any ally within 2 tiles to this unit instead. Consumed after use.' },
+  guardian:     { id: 'guardian',    name: 'Guardian',     desc: 'Once per match, redirects the first incoming attack on any ally within 2 tiles to this unit instead (consumed after use). On a HERO: adjacent allies also take 25% less damage.' },
+  heroGuardian: { id: 'heroGuardian', name: 'Hero Guardian', desc: 'Once per turn, if YOUR hero would die, it is instead resummoned next to this unit with 10 HP. Only works while this unit is alive on the board.' },
 
   // ===== 💀 IMMORTAL — cannot be killed by a damage TYPE =====
   // Damage of the matching type can still drain the unit all the way to 1 HP,
@@ -375,7 +460,8 @@ export const PASSIVES = {
   // The engine checks these flags wherever it makes sense; the modal shows
   // them as proper effects so admins can attach them to specific cards.
   trapHunter:    { id: 'trapHunter',    name: 'Trap Hunter',    desc: '🪤 +2 ATK and +1 SPD while ANY trap is on the field (yours OR theirs). The unit thrives when the board is dangerous.' },
-  trapDog:       { id: 'trapDog',       name: 'Trap Dog',       desc: '🐕 On entering play: reveals every enemy trap on the board for the rest of the match.' },
+  trapDog:       { id: 'trapDog',       name: 'Trap Dog',       desc: '🐕 On entering play: reveals every enemy trap on the board for the rest of the match, and springs every enemy face-down (Subterfuge) unit.' },
+  detection:     { id: 'detection',     name: 'Detection',      desc: '🔍 On entering play and after it moves: springs every ADJACENT enemy face-down (Subterfuge) trap — forcing the ambush on YOUR terms before it can surprise you.' },
   trapBreaker:   { id: 'trapBreaker',   name: 'Trap Breaker',   desc: '🔧 At the start of your turn: disarms one adjacent enemy trap (random pick from those in Chebyshev radius 1).' },
   wallBreaker:   { id: 'wallBreaker',   name: 'Wall Breaker',   desc: '🧱 +50% damage to walls/structures (any wall tile attacked).' },
   surfaceWalker: { id: 'surfaceWalker', name: 'Surface Walker', desc: '🧹 Immune to surface hazards. When this unit moves onto a tile with a surface, that surface is cleared (oil / fire / water / glass / mud).' },
@@ -419,6 +505,8 @@ export const PASSIVES = {
   wardVsCelestial:{ id: 'wardVsCelestial', name: 'Heretic\'s Armor',    wardFaction: 'celestial', desc: '🛡️😇 Immune to damage from Celestial attackers.' },
   wardVsGoblinoid:{ id: 'wardVsGoblinoid', name: 'Tribal Defense',      wardFaction: 'goblinoid', desc: '🛡️👺 Immune to damage from Goblinoid attackers.' },
   wardVsFairy:    { id: 'wardVsFairy',     name: 'Cold Iron',           wardFaction: 'fairy',     desc: '🛡️🧚 Immune to damage from Fairy attackers.' },
+  wardVsWerewolf: { id: 'wardVsWerewolf',  name: 'Silvered Guard',      wardFaction: 'werewolf',  desc: '🛡️🌕 Immune to damage from Werewolf attackers.' },
+  wardVsHero:     { id: 'wardVsHero',      name: 'Villain\'s Guile',    wardFaction: 'hero',      desc: '🛡️🦸 Immune to damage from Hero attackers.' },
 
   // ===== 🌦️ WEATHER-TRIGGERED PASSIVES =====
   // Each fires only when the matching weather is active (turnsLeft > 0). The
@@ -574,6 +662,40 @@ export const TYPE_IMMUNITIES = {
 };
 
 export const MOVES = {
+  // ── v119j0: filling the thin elements. The catalogue skewed hard to
+  // nature/shadow/light (21/25/21) and was almost empty at void(3), psychic(3),
+  // sound(1), poison(1), blood(2) — these ten land in those gaps.
+  sunder:        { id: 'sunder',        name: 'Sunder',          kind: 'attack', type: 'physical', power: 30, range: 1, cost: 1, element: 'metal',
+                   icon: '🪓', desc: 'Cleaves armour — halves the target\'s DEF for 2 turns.',
+                   applyStatus: { id: 'armorBreak', chance: 100, duration: 2 } },
+  riptide:       { id: 'riptide',       name: 'Riptide',         kind: 'attack', type: 'magic',    power: 28, range: 2, cost: 1, element: 'water',
+                   icon: '🌊', desc: 'A dragging current — damages and hauls the target one tile closer.',
+                   pull: 1 },
+  concussiveWave:{ id: 'concussiveWave',name: 'Concussive Wave', kind: 'attack', type: 'magic',    power: 16, range: 2, cost: 2, element: 'sound',
+                   icon: '📢', desc: 'Little damage, but the blast rattles the target out of its next action.',
+                   applyStatus: { id: 'stun', chance: 100, duration: 1 } },
+  bloodPact:     { id: 'bloodPact',     name: 'Blood Pact',      kind: 'attack', type: 'physical', power: 64, range: 1, cost: 1, element: 'blood',
+                   icon: '🩸', desc: 'Pay in your own blood — heavy damage at the cost of 15% of your HP.',
+                   selfDamagePct: 15 },
+  mindSpike:     { id: 'mindSpike',     name: 'Mind Spike',      kind: 'attack', type: 'magic',    power: 18, range: 3, cost: 2, element: 'psychic',
+                   icon: '🧠', desc: 'Punishes the expensive — damage scales with the target card\'s energy cost.',
+                   scaleByTargetCost: 8 },
+  entropyField:  { id: 'entropyField',  name: 'Entropy Field',   kind: 'ability', type: 'magic',   power: 0,  range: 2, cost: 2, element: 'void',
+                   icon: '🕳', desc: 'No damage — everything within 2 tiles slows as the field eats momentum.',
+                   aoeRadius: 2, applyStatus: { id: 'slow', chance: 100, duration: 2 } },
+  plagueBloom:   { id: 'plagueBloom',   name: 'Plague Bloom',    kind: 'attack', type: 'magic',    power: 20, range: 2, cost: 2, element: 'poison',
+                   icon: '☣️', desc: 'A spreading rot — poison that creeps to a new neighbour each turn.',
+                   applyStatus: { id: 'poison', chance: 100, duration: 3 }, spreadsStatus: { id: 'poison', radius: 1, perTurn: 1 } },
+  phaseStep:     { id: 'phaseStep',     name: 'Phase Step',      kind: 'movement', type: 'magic',  power: 0,  range: 3, cost: 1, element: 'arcane',
+                   icon: '⚛️', desc: 'Step sideways through space — teleport 3 tiles, ignoring walls and units.',
+                   teleport: 3, priority: true },
+  chainLightning:{ id: 'chainLightning',name: 'Chain Lightning', kind: 'attack', type: 'magic',    power: 34, range: 3, cost: 2, element: 'storm',
+                   icon: '⚡', desc: 'Arcs between three targets, weakening with every jump (100 / 70 / 50%).',
+                   chain: { jumps: 2, falloff: 0.7, radius: 2 } },
+  aegisBreak:    { id: 'aegisBreak',    name: 'Aegis Break',     kind: 'attack', type: 'physical', power: 26, range: 1, cost: 1, element: 'light',
+                   icon: '🛡️', desc: 'Made for cracking guards — double damage to shielded or warded targets.',
+                   vsGuardedMult: 2 },
+
   slash:        { id: 'slash',        name: 'Slash',        kind: 'attack',  type: 'physical', power: 22, range: 1, cost: 0, element: 'nature', basic: true, desc: 'Basic strike (free)' },
   heavyStrike:  { id: 'heavyStrike',  name: 'Heavy Strike', kind: 'attack',  type: 'physical', power: 42, range: 1, cost: 1, element: 'earth', accuracy: 90, desc: 'Devastating blow' },
   pierce:       { id: 'pierce',       name: 'Pierce',       kind: 'attack',  type: 'physical', power: 32, range: 1, cost: 1, element: 'wind',  desc: 'Ignores 50% defense', effect: 'pierce' },

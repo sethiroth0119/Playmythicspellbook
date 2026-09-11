@@ -851,6 +851,169 @@ export async function openEditor(opts) {
   }
   ED.spline = { get draft() { return splineDraft; }, add: splineDraftAdd, finish: splineDraftFinish, cancel: splineDraftCancel, insert: () => { const o = objById(S.selectedId); if (o && o.t === 'spline') splineInsertPoint(o); }, deletePoint: splineDeletePoint, applyTerrain: () => { const o = objById(S.selectedId); if (o && o.t === 'spline') splineApplyTerrain(o); }, handles: () => splineH.handles, srcFromPick: splineSrcFromPick };
 
+  /* ═══ CLOUD FILES + RENAME + CONTENT BROWSER (round 17) ═══
+     Cloud files are the game's `models` bucket through MythicBridge.files
+     (upload / list / rename / remove — admin-only writes): one URL every
+     player loads, unlike a .glb embedded in the map. Rename covers every
+     library item that has a name of its own: map models and sounds
+     (labels), prefabs, cloud files (a storage move — references in the map
+     are rewritten to the new URL). The content browser is Unreal's: a dock
+     over the bottom of the viewport with a folder tree, breadcrumb, search,
+     tile size, tiles with type bars, a context menu — the same index, cards
+     and picks as the sidebar Library. */
+  let cloudFiles = null, cloudSounds = null, cloudLoading = null;
+  function filesApi() { const b = bridge(); return b && b.files ? b.files : null; }
+  function cloudReady() { try { const f = filesApi(); return !!(f && f.ready()); } catch (e) { return false; } }
+  function cloudCanWrite() { try { const f = filesApi(); return !!(f && f.canWrite && f.canWrite()); } catch (e) { return false; } }
+  async function loadCloud(force) {
+    const f = filesApi(); if (!f || !cloudReady()) { cloudFiles = cloudFiles || []; cloudSounds = cloudSounds || []; return; }
+    if (cloudLoading && !force) return cloudLoading;
+    cloudLoading = (async () => { try { const [m, a] = await Promise.all([f.list('models'), f.list('audio')]); cloudFiles = m || []; cloudSounds = a || []; } catch (e) { cloudFiles = cloudFiles || []; cloudSounds = cloudSounds || []; } finally { cloudLoading = null; } if (root.isConnected) { renderLibrary(); renderContentBrowser(); } })();
+    return cloudLoading;
+  }
+  async function uploadToCloud(file, kind) {
+    const f = filesApi(); if (!f) { toast('Cloud files need the game (no bridge here).'); return null; }
+    if (!cloudReady()) { toast('Sign in to upload shared files.'); return null; }
+    if (!cloudCanWrite()) { toast('Uploading shared files is admin-only.'); return null; }
+    kind = kind || (/\.(mp3|wav|ogg|m4a|aac|flac)$/i.test(file.name) ? 'audio' : 'models');
+    toast('☁ Uploading ' + file.name + '…', 4000);
+    try {
+      const r = await f.upload(file, kind);
+      await loadCloud(true);
+      if (kind === 'audio') addSound(r.url, r.name.replace(/\.[a-z0-9]+$/i, '')); else { await addAsset(r.url, r.name.replace(/\.(glb|gltf)$/i, '')); wantPlace(); }
+      toast('☁ ' + r.name + ' is in the cloud — every player loads it from there.', 3600);
+      return r;
+    } catch (e) { toast('Upload failed: ' + ((e && e.message) || e), 5000); return null; }
+  }
+  function rewriteUrl(oldUrl, newUrl) {
+    let n = 0;
+    (S.map.assets || []).forEach(a => { if (a.url === oldUrl) { a.url = newUrl; n++; } });
+    (S.map.sounds || []).forEach(s => { if (s.url === oldUrl) { s.url = newUrl; n++; } });
+    return n;
+  }
+  /* Rename whatever the library entry is. Returns true when something changed. */
+  async function renameEntry(e, name) {
+    if (!e) return false;
+    const cur = e.kind === 'prefab' || e.kind === 'shelf' ? e.ref.name : e.kind === 'cloud' || e.kind === 'csound' ? e.ref.name : e.label;
+    if (name == null) { name = window.prompt('Rename “' + cur + '” to:', cur); if (name == null) return false; }
+    name = String(name).trim().slice(0, 60); if (!name || name === cur) return false;
+    if (e.kind === 'model') { beginObjectEdit(); e.ref.label = name; endObjectEdit(); setDirty(true); }
+    else if (e.kind === 'sound') { beginObjectEdit(); e.ref.label = name; endObjectEdit(); setDirty(true); }
+    else if (e.kind === 'prefab') { renamePrefab(e.id, name); }
+    else if (e.kind === 'shelf') { const list = shelfList(); const it = list.find(x => x.id === e.id); if (it) { it.name = name; shelfWrite(list); } }
+    else if (e.kind === 'cloud' || e.kind === 'csound') {
+      const f = filesApi(); if (!f || !cloudCanWrite()) { toast('Renaming shared files is admin-only.'); return false; }
+      const ext = (/\.[a-z0-9]+$/i.exec(e.ref.name) || [''])[0]; const withExt = /\.[a-z0-9]+$/i.test(name) ? name : name + ext;
+      try { const r = await f.rename(e.ref.path, withExt); const n = rewriteUrl(e.ref.url, r.url); if (n) { beginObjectEdit(); endObjectEdit(); setDirty(true); (S.map.assets || []).forEach(a => { if (a.url === r.url) a.label = name; }); (S.map.sounds || []).forEach(s => { if (s.url === r.url) s.label = name; }); } await loadCloud(true); libSel = e.kind + ':' + r.path; }
+      catch (x) { toast('Rename failed: ' + ((x && x.message) || x), 4000); return false; }
+    }
+    else { toast('Built-in props keep their names — rename the placed object in the inspector instead.'); return false; }
+    renderLibrary(); renderContentBrowser(); renderOutliner(); renderInspector();
+    return true;
+  }
+  async function removeCloudFile(e) {
+    const f = filesApi(); if (!f || !cloudCanWrite()) { toast('Deleting shared files is admin-only.'); return; }
+    const used = (S.map.assets || []).filter(a => a.url === e.ref.url).length + (S.map.sounds || []).filter(s => s.url === e.ref.url).length;
+    if (!(await askConfirm('Delete “' + e.ref.name + '” from the cloud for everyone?' + (used ? ' This map still references it (' + used + ').' : '')))) return;
+    try { await f.remove(e.ref.path); prefs.forget(e.key); if (libSel === e.key) libSel = null; await loadCloud(true); toast('Deleted from the cloud.'); } catch (x) { toast('Delete failed: ' + ((x && x.message) || x), 4000); }
+  }
+
+  /* ── the dock ── */
+  const CB = { open: false, path: ['Content'], q: '', size: 96, sel: null, menu: null };
+  const CB_TREE = [
+    { id: 'Content', label: 'Content', icon: '📁', children: [
+      { id: 'Content/Props', label: 'Props', icon: '📁', children: ['Nature', 'Structures', 'Props', 'Ruins', 'VFX', 'Markers'].map(c => ({ id: 'Content/Props/' + c, label: c, icon: '📁', filter: { kind: 'prop', cat: c } })), filter: { kind: 'prop' } },
+      { id: 'Content/Splines', label: 'Splines', icon: '📁', filter: { kind: 'spline' } },
+      { id: 'Content/Models', label: 'Models', icon: '📁', filter: { kind: ['model', 'project', 'cloud'] }, children: [
+        { id: 'Content/Models/In map', label: 'In this map', icon: '📁', filter: { kind: 'model' } }, { id: 'Content/Models/Project', label: 'Project', icon: '📁', filter: { kind: 'project' } }, { id: 'Content/Models/Cloud', label: 'Cloud', icon: '☁', filter: { kind: 'cloud' } } ] },
+      { id: 'Content/Prefabs', label: 'Prefabs', icon: '📁', filter: { kind: ['prefab', 'shelf'] }, children: [
+        { id: 'Content/Prefabs/In map', label: 'In this map', icon: '📁', filter: { kind: 'prefab' } }, { id: 'Content/Prefabs/Shelf', label: 'Shelf', icon: '📚', filter: { kind: 'shelf' } } ] },
+      { id: 'Content/Sounds', label: 'Sounds', icon: '📁', filter: { kind: ['sound', 'psound', 'csound'] }, children: [
+        { id: 'Content/Sounds/In map', label: 'In this map', icon: '📁', filter: { kind: 'sound' } }, { id: 'Content/Sounds/Project', label: 'Project', icon: '📁', filter: { kind: 'psound' } }, { id: 'Content/Sounds/Cloud', label: 'Cloud', icon: '☁', filter: { kind: 'csound' } } ] },
+    ] },
+    { id: 'Favourites', label: 'Favourites', icon: '★', filter: { fav: true } },
+    { id: 'Recent', label: 'Recent', icon: '🕘', filter: { recent: true } },
+  ];
+  function cbNode(id) { let found = null; const walk = (n) => { if (n.id === id) found = n; (n.children || []).forEach(walk); }; CB_TREE.forEach(walk); return found; }
+  const KIND_BAR = { prop: '#4fb3d9', spline: '#6fd3a1', model: '#5aa5ff', project: '#5aa5ff', cloud: '#5aa5ff', prefab: '#b07cff', shelf: '#b07cff', sound: '#ff9f43', psound: '#ff9f43', csound: '#ff9f43' };
+  function toggleContentBrowser(on) { CB.open = on == null ? !CB.open : !!on; const d = $('#mf-cb'); if (d) d.hidden = !CB.open; const b = $('#mf-cb-btn'); if (b) b.classList.toggle('on', CB.open); if (CB.open) renderContentBrowser(); }
+  function renderContentBrowser() {
+    const d = $('#mf-cb'); if (!d || !CB.open) return;
+    rebuildIndex();
+    const node = cbNode(CB.path.join('/')) || CB_TREE[0];
+    const f = Object.assign({}, node.filter || {}); let hits;
+    if (f.fav) hits = assetsMod.search(libIndex, CB.q, { fav: prefs.favs });
+    else if (f.recent) hits = prefs.recent.map(entryByKey).filter(Boolean).filter(e => !CB.q || assetsMod.search([e], CB.q, {}).length);
+    else hits = assetsMod.search(libIndex, CB.q, f);
+    // tree
+    const treeHtml = (n, depth) => { const on = CB.path.join('/') === n.id, inPath = CB.path.join('/').startsWith(n.id); return '<div class="mf-cb-node ' + (on ? 'on' : '') + '" data-node="' + esc(n.id) + '" style="padding-left:' + (8 + depth * 14) + 'px">' + (n.children ? '<span class="tw">' + (inPath ? '▾' : '▸') + '</span>' : '<span class="tw"></span>') + '<span class="ic">' + n.icon + '</span>' + esc(n.label) + '</div>' + ((n.children && inPath) ? n.children.map(c => treeHtml(c, depth + 1)).join('') : ''); };
+    d.querySelector('.mf-cb-tree').innerHTML = CB_TREE.map(n => treeHtml(n, 0)).join('');
+    d.querySelectorAll('.mf-cb-node').forEach(el => el.onclick = () => { CB.path = el.dataset.node.split('/'); CB.sel = null; renderContentBrowser(); });
+    // crumbs
+    d.querySelector('.mf-cb-crumbs').innerHTML = CB.path.map((p, i) => '<span class="crumb" data-i="' + i + '">' + esc(p) + '</span>').join('<span class="sep">›</span>');
+    d.querySelectorAll('.mf-cb-crumbs .crumb').forEach(el => el.onclick = () => { CB.path = CB.path.slice(0, +el.dataset.i + 1); renderContentBrowser(); });
+    // tiles
+    const grid = d.querySelector('.mf-cb-grid'); grid.style.setProperty('--tile', CB.size + 'px');
+    const folders = (node.children || []).map(c => '<div class="mf-cb-tile folder" data-folder="' + esc(c.id) + '"><div class="th"><span class="ic">' + c.icon + '</span></div><div class="nm">' + esc(c.label) + '</div></div>').join('');
+    grid.innerHTML = folders + hits.slice(0, 300).map(e => { const t = thumbOf(e); const picked = isPicked(e); return '<div class="mf-cb-tile ' + (CB.sel === e.key ? 'sel ' : '') + (picked ? 'on' : '') + '" data-key="' + esc(e.key) + '" title="' + esc(e.label + ' · ' + assetsMod.KINDS[e.kind].label + ' · ' + assetsMod.KINDS[e.kind].source) + '"><div class="th">' + (t.img ? '<img src="' + t.img + '" alt="">' : '<span class="ic">' + e.icon + '</span>') + '<span class="fav ' + (prefs.isFav(e.key) ? 'on' : '') + '" data-fav="' + esc(e.key) + '">★</span></div><div class="bar" style="background:' + (KIND_BAR[e.kind] || '#888') + '"></div><div class="nm">' + esc(e.label) + '</div><div class="kd">' + esc(assetsMod.KINDS[e.kind].label) + (e.inMap ? ' · in map' : '') + '</div></div>'; }).join('') || '<div class="mf-cb-empty">' + (CB.q ? 'Nothing matches “' + esc(CB.q) + '”.' : 'Empty folder.') + '</div>';
+    grid.querySelectorAll('.mf-cb-tile.folder').forEach(el => el.ondblclick = el.onclick = () => { CB.path = el.dataset.folder.split('/'); renderContentBrowser(); });
+    grid.querySelectorAll('.mf-cb-tile[data-key]').forEach(el => {
+      el.onclick = (ev) => { if (ev.target.dataset.fav) { prefs.toggleFav(el.dataset.key); renderContentBrowser(); renderLibrary(); return; } CB.sel = el.dataset.key; libSel = el.dataset.key; renderContentBrowser(); renderDetails(); };
+      el.ondblclick = () => { pickEntry(entryByKey(el.dataset.key)); renderContentBrowser(); };
+      el.oncontextmenu = (ev) => { ev.preventDefault(); CB.sel = el.dataset.key; libSel = el.dataset.key; renderContentBrowser(); cbMenu(ev.clientX, ev.clientY, entryByKey(el.dataset.key)); };
+    });
+    d.querySelector('.mf-cb-status').textContent = hits.length + ' item' + (hits.length === 1 ? '' : 's') + (CB.sel ? ' · 1 selected' : '') + (cloudReady() ? '' : ' · cloud offline');
+    const q = d.querySelector('#mf-cb-q'); if (q && q.value !== CB.q) q.value = CB.q;
+    const add = d.querySelector('#mf-cb-addcloud'); if (add) add.disabled = !cloudReady();
+  }
+  function cbMenu(x, y, e) {
+    cbCloseMenu(); if (!e) return;
+    const items = [];
+    if (['prop', 'model', 'project', 'cloud', 'prefab', 'shelf', 'spline'].includes(e.kind)) items.push(['place', '🎯 Place / pick']);
+    if (['sound', 'psound', 'csound'].includes(e.kind)) items.push(['play', '▶ Preview'], ['add', '＋ Add to map']);
+    if (['model', 'sound', 'prefab', 'shelf', 'cloud', 'csound'].includes(e.kind)) items.push(['rename', '✎ Rename (F2)']);
+    items.push(['fav', prefs.isFav(e.key) ? '☆ Unfavourite' : '★ Favourite']);
+    if (e.url) items.push(['copy', '⧉ Copy URL']);
+    if (e.kind === 'model') items.push(['remove', '✕ Remove from map']);
+    if (e.kind === 'prefab') items.push(['remove', '✕ Delete prefab']);
+    if (e.kind === 'sound') items.push(['remove', '✕ Remove from map']);
+    if (e.kind === 'cloud' || e.kind === 'csound') items.push(['remove', '✕ Delete from cloud']);
+    const m = document.createElement('div'); m.className = 'mf-cb-menu'; m.style.left = Math.min(x, window.innerWidth - 200) + 'px'; m.style.top = Math.min(y, window.innerHeight - items.length * 28 - 10) + 'px';
+    m.innerHTML = '<div class="hd">' + esc(e.label) + '</div>' + items.map(([a, l]) => '<button data-a="' + a + '">' + l + '</button>').join('');
+    document.body.appendChild(m); CB.menu = m;
+    m.querySelectorAll('button').forEach(b => b.onclick = async () => {
+      const a = b.dataset.a; cbCloseMenu();
+      if (a === 'place' || a === 'add') pickEntry(e);
+      else if (a === 'play') previewSound(e.url);
+      else if (a === 'rename') renameEntry(e);
+      else if (a === 'fav') { prefs.toggleFav(e.key); renderContentBrowser(); renderLibrary(); }
+      else if (a === 'copy') { try { await navigator.clipboard.writeText(e.url); toast('URL copied.'); } catch (x) { window.prompt('URL:', e.url); } }
+      else if (a === 'remove') {
+        if (e.kind === 'model') removeAsset(e.id);
+        else if (e.kind === 'prefab') { if (await askConfirm('Delete this prefab and every placed instance?')) deletePrefab(e.id); }
+        else if (e.kind === 'sound') { beginObjectEdit(); S.map.sounds = S.map.sounds.filter(y => y.id !== e.id); endObjectEdit(); setDirty(true); renderLibrary(); }
+        else removeCloudFile(e);
+        renderContentBrowser();
+      }
+    });
+    setTimeout(() => document.addEventListener('pointerdown', cbCloseMenu, { once: true, capture: true }), 0);
+  }
+  function cbCloseMenu() { if (CB.menu) { CB.menu.remove(); CB.menu = null; } }
+  function wireContentBrowser() {
+    const d = $('#mf-cb'); if (!d) return;
+    d.querySelector('#mf-cb-q').oninput = (e) => { CB.q = e.target.value; renderContentBrowser(); };
+    d.querySelector('#mf-cb-q').onkeydown = (e) => { if (e.key === 'Escape') { CB.q = ''; renderContentBrowser(); e.target.blur(); } e.stopPropagation(); };
+    d.querySelector('#mf-cb-size').oninput = (e) => { CB.size = +e.target.value; d.querySelector('.mf-cb-grid').style.setProperty('--tile', CB.size + 'px'); };
+    d.querySelector('#mf-cb-close').onclick = () => toggleContentBrowser(false);
+    d.querySelector('#mf-cb-addcloud').onclick = () => d.querySelector('#mf-cb-cloudfile').click();
+    d.querySelector('#mf-cb-cloudfile').onchange = (e) => { Array.from(e.target.files || []).forEach(f => uploadToCloud(f)); e.target.value = ''; };
+    d.querySelector('#mf-cb-embed').onclick = () => $('#mf-glb-file').click();
+    d.querySelector('#mf-cb-url').onclick = () => { const u = window.prompt('Model or sound URL (https://… or /models/…):'); if (!u) return; if (/\.(mp3|wav|ogg|m4a|aac|flac)(\?|#|$)/i.test(u)) addSound(u); else addAsset(u); renderContentBrowser(); };
+    d.querySelector('#mf-cb-refresh').onclick = () => loadCloud(true);
+    $('#mf-cb-btn').onclick = () => toggleContentBrowser();
+  }
+  ED.content = { toggle: toggleContentBrowser, get state() { return CB; }, render: renderContentBrowser, rename: (key, name) => renameEntry(entryByKey(key), name), upload: uploadToCloud, cloud: () => ({ models: cloudFiles || [], sounds: cloudSounds || [] }), reloadCloud: () => loadCloud(true), menu: (key) => cbMenu(20, 20, entryByKey(key)) };
+
   /* ═══ PREFABS ═══ — Unity's prefab: a definition, many instances, edit one → all follow. */
   const SHELF_KEY = 'mf_prefabs_v1';
   function prefabById(id) { return (S.map.prefabs || []).find(p => p.id === id) || null; }
@@ -1014,7 +1177,9 @@ export async function openEditor(opts) {
     beginObjectEdit();
     S.map.assets = S.map.assets.filter(a => a.id !== id);
     S.map.objects.filter(o => o.t === 'glb' && o.a === id).map(o => o.id).forEach(removeObject);
+    S.map.objects.forEach(o => { if (o.t === 'spline' && o.sp && o.sp.src && o.sp.src.t === 'glb' && o.sp.src.a === id) { o.sp.src = { t: 'placeholder' }; world.refreshObject(o); } });   // a spline built from that model falls back to the placeholder instead of a dead reference
     if (S.assetId === id) { S.assetId = null; if (S.propId === 'glb') S.propId = 'tree'; }
+    if (S.lastSrc && S.lastSrc.a === id) S.lastSrc = null;
     endObjectEdit(); renderLibrary(); refreshGhost();
   }
 
@@ -1100,6 +1265,8 @@ export async function openEditor(opts) {
     if ((e.ctrlKey || e.metaKey) && k === 'y') { e.preventDefault(); redo(); return; }
     if ((e.ctrlKey || e.metaKey) && k === 's') { e.preventDefault(); save(); return; }
     if ((e.ctrlKey || e.metaKey) && k === 'd') { e.preventDefault(); duplicateSelected(); return; }
+    if (k === 'f2') { e.preventDefault(); const o = S.selectedId ? objById(S.selectedId) : null; if (o) { const nm = window.prompt('Name this object:', o.n || ''); if (nm != null) { beginObjectEdit(); o.n = nm.trim().slice(0, 60) || undefined; endObjectEdit(); setDirty(true); renderInspector(); renderOutliner(); } } else { const sel = libSel ? entryByKey(libSel) : null; if (sel) renameEntry(sel); } return; }   // F2: the selected object first (Unreal's outliner), else the library item
+    if ((e.ctrlKey || e.metaKey) && k === ' ') { e.preventDefault(); toggleContentBrowser(); return; }
     const mod = e.ctrlKey || e.metaKey || e.altKey;
     if (S.hotkeys === 'unreal') {
       // Unreal: W/A/S/D fly only while the right mouse button is held; otherwise
@@ -1300,17 +1467,18 @@ export async function openEditor(opts) {
     const th = thumbsRenderer();
     if (e.kind === 'prop') return assetsMod.thumbFor(th, e.key, e.icon, () => (e.ref.fxKind || e.ref.marker) ? null : buildProp(THREE, e.id));
     if (e.kind === 'model') { const tpl = tplCache.get(e.id); if (!tpl) cacheTemplate(e.ref); return assetsMod.thumbFor(th, e.key, e.icon, () => tpl || null); }
-    if (e.kind === 'project') { const inMap = S.map.assets.find(a => a.url === e.url); if (inMap) return thumbOf({ kind: 'model', key: 'model:' + inMap.id, id: inMap.id, icon: e.icon, ref: inMap }); if (!tplCache.has(e.key)) cacheProjectTemplate(e.key, e.ref); return assetsMod.thumbFor(th, e.key, e.icon, () => tplCache.get(e.key) || null); }
+    if (e.kind === 'project' || e.kind === 'cloud') { const inMap = S.map.assets.find(a => a.url === e.url); if (inMap) return thumbOf({ kind: 'model', key: 'model:' + inMap.id, id: inMap.id, icon: e.icon, ref: inMap }); if (!tplCache.has(e.key)) cacheProjectTemplate(e.key, e.ref); return assetsMod.thumbFor(th, e.key, e.icon, () => tplCache.get(e.key) || null); }
     if (e.kind === 'prefab' || e.kind === 'shelf') return assetsMod.thumbFor(th, e.key + ':' + (e.ref.objects || []).length, e.icon, () => prefabPreview(e.ref));
     return { icon: e.icon };
   }
   function invalidatePrefabThumb(id) { const th = thumbsRenderer(); if (!th) return; Array.from(th.cache.keys()).filter(k => k.startsWith('prefab:' + id + ':') || k.startsWith('shelf:' + id + ':')).forEach(k => th.invalidate(k)); }
   function rebuildIndex() {
-    libIndex = assetsMod.buildIndex({ props: PROP_CATALOG, assets: S.map.assets, project: projectLib || [], prefabs: S.map.prefabs || [], shelf: shelfList(), sounds: S.map.sounds || [], projectSounds: projectSounds || [], splines: SPLINE_PRESETS });
+    libIndex = assetsMod.buildIndex({ props: PROP_CATALOG, assets: S.map.assets, project: projectLib || [], cloud: cloudFiles || [], cloudSounds: cloudSounds || [], prefabs: S.map.prefabs || [], shelf: shelfList(), sounds: S.map.sounds || [], projectSounds: projectSounds || [], splines: SPLINE_PRESETS });
+    if (cloudFiles === null && !cloudLoading) loadCloud();
     return libIndex;
   }
   function entryByKey(k) { return libIndex.find(e => e.key === k) || null; }
-  const KIND_CATS = { Models: ['model', 'project'], Prefabs: ['prefab', 'shelf'], Sounds: ['sound', 'psound'], Splines: ['spline'] };
+  const KIND_CATS = { Models: ['model', 'project', 'cloud'], Prefabs: ['prefab', 'shelf'], Sounds: ['sound', 'psound', 'csound'], Splines: ['spline'] };
   function libFilters() {
     const f = {};
     if (libCat === '★') f.fav = prefs.favs;
@@ -1329,6 +1497,8 @@ export async function openEditor(opts) {
     if (e.kind === 'prop') { S.propId = e.id; if (!e.ref.marker && !e.ref.fxKind) S.lastSrc = Object.assign({ t: e.id }, S.propTint && e.ref.tint ? { c: S.propTint } : {}); wantPlace(); }
     else if (e.kind === 'model') { S.propId = 'glb'; S.assetId = e.id; S.lastSrc = { t: 'glb', a: e.id }; wantPlace(); }
     else if (e.kind === 'spline') { if (splineDraft) splineDraftCancel(); S.propId = 'spline'; S.splinePreset = e.id; wantPlace(); }
+    else if (e.kind === 'cloud') { const inMap = S.map.assets.find(a => a.url === e.url); if (inMap) { S.propId = 'glb'; S.assetId = inMap.id; } else addAsset(e.url, e.label); if (S.assetId) { libSel = 'model:' + S.assetId; prefs.touch(libSel); S.lastSrc = { t: 'glb', a: S.assetId }; } wantPlace(); }
+    else if (e.kind === 'csound') { if (!S.map.sounds.find(s => s.url === e.url)) addSound(e.url, e.label); else previewSound(e.url); const snd = S.map.sounds.find(s => s.url === e.url); if (snd) { libSel = 'sound:' + snd.id; prefs.touch(libSel); } }
     else if (e.kind === 'project') { const inMap = S.map.assets.find(a => a.url === e.url); if (inMap) { S.propId = 'glb'; S.assetId = inMap.id; } else addAsset(e.url, e.label || e.id, { anims: e.ref.anims }); if (S.assetId) { libSel = 'model:' + S.assetId; prefs.touch(libSel); S.lastSrc = { t: 'glb', a: S.assetId }; } wantPlace(); }
     else if (e.kind === 'prefab') { S.propId = 'prefab'; S.prefabId = e.id; wantPlace(); }
     else if (e.kind === 'shelf') { shelfImport(e.id); return; }
@@ -1339,7 +1509,7 @@ export async function openEditor(opts) {
   function isPicked(e) {
     if (e.kind === 'prop') return S.propId === e.id;
     if (e.kind === 'model') return S.propId === 'glb' && S.assetId === e.id;
-    if (e.kind === 'project') { const a = S.map.assets.find(x => x.url === e.url); return !!a && S.propId === 'glb' && S.assetId === a.id; }
+    if (e.kind === 'project' || e.kind === 'cloud') { const a = S.map.assets.find(x => x.url === e.url); return !!a && S.propId === 'glb' && S.assetId === a.id; }
     if (e.kind === 'prefab') return S.propId === 'prefab' && S.prefabId === e.id;
     if (e.kind === 'spline') return S.propId === 'spline' && S.splinePreset === e.id;
     return false;
@@ -1347,7 +1517,7 @@ export async function openEditor(opts) {
   function cardHtml(e, extraClass) {
     const t = thumbOf(e);
     const pic = t.img ? '<img class="th" src="' + t.img + '" alt="">' : '<span class="th ic">' + e.icon + '</span>';
-    const badge = e.kind === 'project' || e.kind === 'psound' ? (e.inMap || (e.kind === 'project' && S.map.assets.find(a => a.url === e.url)) ? 'in map' : 'project') : e.kind === 'shelf' ? 'shelf' : e.kind === 'model' ? (e.ref.data ? 'embedded' : 'url') : e.kind === 'prefab' ? e.parts + ' parts' : e.kind === 'sound' ? 'sound' : '';
+    const badge = e.kind === 'cloud' || e.kind === 'csound' ? (e.inMap ? 'in map' : 'cloud') : e.kind === 'project' || e.kind === 'psound' ? (e.inMap || (e.kind === 'project' && S.map.assets.find(a => a.url === e.url)) ? 'in map' : 'project') : e.kind === 'shelf' ? 'shelf' : e.kind === 'model' ? (e.ref.data ? 'embedded' : 'url') : e.kind === 'prefab' ? e.parts + ' parts' : e.kind === 'sound' ? 'sound' : '';
     return '<div class="mf-card ' + (isPicked(e) ? 'on ' : '') + (libSel === e.key ? 'sel ' : '') + (extraClass || '') + '" data-key="' + esc(e.key) + '" title="' + esc(e.label + ' · ' + assetsMod.KINDS[e.kind].label + ' · ' + assetsMod.KINDS[e.kind].source) + '">' + pic + '<span class="lb">' + esc(e.label) + '</span>' + (badge ? '<span class="bd">' + esc(badge) + '</span>' : '') + '<span class="fav ' + (prefs.isFav(e.key) ? 'on' : '') + '" data-fav="' + esc(e.key) + '" title="Favourite">★</span></div>';
   }
   function wireCards(box) {
@@ -1396,6 +1566,7 @@ export async function openEditor(opts) {
         $$('#mf-assets .mf-asset').forEach(el => {
           el.onclick = (e) => { if (e.target.classList.contains('x')) { removeAsset(el.dataset.asset); return; } if (e.target.classList.contains('rl')) { relinkAsset(el.dataset.asset); return; } pickEntry(entryByKey('model:' + el.dataset.asset)); };
         });
+        { const cb = $('#mf-cloud'); if (cb) { const list = cloudFiles || []; cb.innerHTML = !cloudReady() ? '<div class="mf-empty">Sign in to the game to see shared cloud models.</div>' : cloudFiles === null ? '<div class="mf-empty">Loading…</div>' : list.length ? list.map(m => { const e = libIndex.find(x => x.kind === 'cloud' && x.ref === m); const t = e ? thumbOf(e) : { icon: '☁' }; return '<div class="mf-asset" data-cloud="' + esc(m.path) + '" title="' + esc(m.url) + '">' + (t.img ? '<img class="th" src="' + t.img + '" alt="">' : '<span>' + t.icon + '</span>') + '<span class="lb">' + esc(m.name) + '</span><span class="tag">' + (S.map.assets.find(a => a.url === m.url) ? 'in map' : 'cloud') + '</span></div>'; }).join('') : '<div class="mf-empty">No shared models yet — ☁ Upload one.</div>'; cb.querySelectorAll('[data-cloud]').forEach(el => el.onclick = () => pickEntry(entryByKey('cloud:' + el.dataset.cloud))); } }
         loadProjectLib().then(lib => {
           const box = $('#mf-project'); if (!box || libCat !== 'Models') return;
           if (!libIndex.find(e => e.kind === 'project') && lib.length) rebuildIndex();
@@ -1444,6 +1615,7 @@ export async function openEditor(opts) {
       }
     }
     renderDetails();
+    if (CB.open) renderContentBrowser();
     const tintable = S.propId !== 'glb' && PROP_BY_ID[S.propId] && PROP_BY_ID[S.propId].tint;
     $('#mf-tint-row').style.display = tintable ? '' : 'none';
     $('#mf-tint-on').checked = !!S.propTint;
@@ -1464,12 +1636,16 @@ export async function openEditor(opts) {
     if (e.kind === 'prefab') { rows.push(['Parts', e.ref.objects.map(o => (PROP_BY_ID[o.t] || {}).label || o.t).slice(0, 8).join(', ') + (e.ref.objects.length > 8 ? '…' : '')]); rows.push(['Placed', S.map.objects.filter(o => o.t === 'prefab' && o.pf === e.id).length]); }
     if (e.kind === 'shelf') rows.push(['Parts', (e.ref.objects || []).length + ' · on this device, not yet in this map']);
     if (e.kind === 'sound' || e.kind === 'psound') rows.push(['Source', e.url]);
+    if (e.kind === 'cloud' || e.kind === 'csound') { rows.push(['File', e.ref.name]); rows.push(['Size', e.ref.size ? (e.ref.size / 1024).toFixed(0) + ' KB' : '?']); rows.push(['Source', e.url]); rows.push(['In map', e.inMap ? 'yes' : 'no — click to add']); }
     const editableTags = e.kind === 'model' || e.kind === 'prefab';
     const acts = [];
     acts.push('<button data-act="fav" class="' + (prefs.isFav(e.key) ? 'on' : '') + '">★ Favourite</button>');
+    if (['model', 'sound', 'prefab', 'shelf', 'cloud', 'csound'].includes(e.kind)) acts.push('<button data-act="rename" title="F2">✎ Rename</button>');
+    if ((e.kind === 'cloud' || e.kind === 'csound') && !e.inMap) acts.push('<button data-act="pick" class="primary">＋ Add to map</button>');
+    if (e.kind === 'cloud' || e.kind === 'csound') acts.push('<button data-act="rmcloud" class="danger">✕ Delete from cloud</button>');
     if (e.kind === 'model') { if (e.ref.data) acts.push('<button data-act="relink">↗ Relink</button>'); acts.push('<button data-act="rmmodel" class="danger">✕ Remove</button>'); }
     if (e.kind === 'project' && !S.map.assets.find(a => a.url === e.url)) acts.push('<button data-act="pick" class="primary">＋ Add to map</button>');
-    if (e.kind === 'prefab') { acts.push('<button data-act="rename">✎ Rename</button>'); acts.push('<button data-act="shelf">📚 Shelf</button>'); acts.push('<button data-act="rmprefab" class="danger">✕ Delete</button>'); }
+    if (e.kind === 'prefab') { acts.push('<button data-act="shelf">📚 Shelf</button>'); acts.push('<button data-act="rmprefab" class="danger">✕ Delete</button>'); }
     if (e.kind === 'shelf') { acts.push('<button data-act="pick" class="primary">＋ Add to map</button>'); acts.push('<button data-act="rmshelf" class="danger">✕ Forget</button>'); }
     if (e.kind === 'sound') { acts.push('<button data-act="play">▶ Preview</button>'); acts.push('<button data-act="rmsound" class="danger">✕ Remove</button>'); }
     if (e.kind === 'psound') acts.push(S.map.sounds.find(s => s.url === e.url) ? '<button data-act="play">▶ Preview</button>' : '<button data-act="pick" class="primary">＋ Add to map</button>');
@@ -1486,7 +1662,8 @@ export async function openEditor(opts) {
       else if (act === 'pick') pickEntry(e);
       else if (act === 'relink') relinkAsset(e.id);
       else if (act === 'rmmodel') { libSel = null; prefs.forget(e.key); removeAsset(e.id); }
-      else if (act === 'rename') { const nm = window.prompt('Prefab name:', e.ref.name); if (nm) renamePrefab(e.id, nm); }
+      else if (act === 'rename') renameEntry(e);
+      else if (act === 'rmcloud') removeCloudFile(e);
       else if (act === 'shelf') shelfSave(e.id);
       else if (act === 'rmprefab') askConfirm('Delete this prefab and every placed instance?').then(ok => { if (ok) { libSel = null; prefs.forget(e.key); deletePrefab(e.id); } });
       else if (act === 'rmshelf') { libSel = null; prefs.forget(e.key); shelfRemove(e.id); }
@@ -1730,6 +1907,8 @@ export async function openEditor(opts) {
   $('#mf-game').onchange = e => { S.map.game = gameId(e.target.value) || 'sandbox'; e.target.value = S.map.game; S.game = games.get(S.map.game) ? S.map.game : null; renderGameTag(); setDirty(true); renderMapsTab(); renderGamesList(); renderSceneFlags(); };
   $('#mf-maps-game').onchange = () => renderMapsTab();
   $('#mf-glb-btn').onclick = () => $('#mf-glb-file').click();
+  $('#mf-cloud-up').onclick = () => $('#mf-cloud-file').click();
+  $('#mf-cloud-file').onchange = e => { Array.from(e.target.files || []).forEach(f => uploadToCloud(f, 'models')); e.target.value = ''; };
   $('#mf-glb-file').onchange = e => { Array.from(e.target.files || []).forEach(addAssetFile); e.target.value = ''; };
   // drag a .glb (or a .world.json) onto the canvas
   canvasHost.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; canvasHost.classList.add('drop'); });
@@ -1765,6 +1944,7 @@ export async function openEditor(opts) {
   if (!gizmo) { $$('.mf-gizmo button[data-gm]').forEach(b => { b.disabled = true; b.title = 'TransformControls did not load — drag objects on the ground, or type values in the inspector'; }); }
 
   renderBrush(); renderPalette(); renderLibrary(); renderInspector(); setTool('select'); setGizmoMode('translate'); showTab('object'); renderUndo();
+  wireContentBrowser();
   setDirty(freshStart ? false : S.dirty);
   loading.remove();
   if (freshStart) setTimeout(() => toast('Welcome to Athena Engine — press H for the controls.', 4000), 400);
@@ -1852,7 +2032,7 @@ const TEMPLATE = `
   <span class="grp"><button id="mf-undo" title="Undo (Ctrl+Z)">↶</button><button id="mf-redo" title="Redo (Ctrl+Y)">↷</button></span>
   <span class="grp"><button id="mf-overview" title="Frame the whole map">⌂ Overview</button><button id="mf-play" title="Walk the map (P)">▶ Play</button></span>
   <span class="grp"><button id="mf-save" class="primary" title="Save (Ctrl+S)">💾 Save</button><button id="mf-save-local" title="Save a copy on this device only">⇩ Device</button><button id="mf-export" title="Download as JSON">⤓ Export</button><button id="mf-import" title="Open a JSON export">⤒ Import</button><input type="file" id="mf-file" accept=".json,application/json" hidden></span>
-  <span class="grp"><button id="mf-widgets" title="Open the Widget Designer (Blueprint-style UI)">🧩 Widgets</button></span>
+  <span class="grp"><button id="mf-cb-btn" title="Content browser (Ctrl+Space)">🗂 Content</button><button id="mf-widgets" title="Open the Widget Designer (Blueprint-style UI)">🧩 Widgets</button></span>
   <span class="grp"><select id="mf-quality" title="Quality: pixel ratio, shadows, effects (auto steps down on low fps)"><option value="auto">Quality: auto</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></span>
   <span class="grp"><select id="mf-hotkeys" title="Hotkey scheme"><option value="unreal">Unreal hotkeys</option><option value="default">Simple hotkeys</option></select><button id="mf-help-btn" title="Controls (H)">?</button><button id="mf-close" class="danger" title="Close the editor">✕</button></span>
 </div>
@@ -1884,7 +2064,10 @@ const TEMPLATE = `
       <div class="mf-assets" id="mf-assets"></div>
       <div class="mf-btns" style="margin:8px 0"><button id="mf-glb-btn" class="primary">📂 Add .glb file</button><input type="file" id="mf-glb-file" accept=".glb,.gltf,model/gltf-binary" multiple hidden></div>
       <p class="mf-hint" id="mf-embed-note" style="margin:0 0 8px"></p>
-      <div class="mf-sub">Project (/models/)</div>
+      <div class="mf-btns" style="margin:0 0 8px"><button id="mf-cloud-up" title="Upload to the shared cloud (admin) — one URL every player loads">☁ Upload to cloud</button><input type="file" id="mf-cloud-file" accept=".glb,.gltf,model/gltf-binary" multiple hidden></div>
+      <div class="mf-sub">Cloud (shared)</div>
+      <div class="mf-assets" id="mf-cloud"><div class="mf-empty">Loading…</div></div>
+      <div class="mf-sub" style="margin-top:8px">Project (/models/)</div>
       <div class="mf-assets" id="mf-project"><div class="mf-empty">Loading…</div></div>
       <div class="mf-sub" style="margin-top:8px">By URL</div>
       <div><input type="text" id="mf-asset-url" placeholder="https://…/model.glb  or  /models/x.glb"></div>
@@ -1905,6 +2088,15 @@ const TEMPLATE = `
   <div class="mf-gizmo"><button id="mf-gm-select" title="Select tool">↖ Select</button><button data-gm="translate" title="Move">✥ Move</button><button data-gm="rotate" title="Rotate">⟳ Rotate</button><button data-gm="scale" title="Scale">⤢ Scale</button><span class="sep"></span><button id="mf-snap" title="Snap to grid (X)">⌗ Snap</button><select id="mf-snapsize" title="Snap size"><option value="0.25">¼ m</option><option value="0.5">½ m</option><option value="1" selected>1 m</option><option value="2">2 m</option><option value="5">5 m</option></select><button id="mf-space" title="Gizmo space: world / local">🌐 World</button><span class="sep"></span><button id="mf-colview" title="Show every collider">▢ Colliders</button></div>
   <div class="mf-hud"><div class="chip" id="mf-hud-tool"></div><div class="chip" id="mf-hud-help"></div><div class="chip"><span id="mf-hud-stats"></span> · <span id="mf-hud-fps"></span></div></div>
   <div class="mf-playhud"><div class="ret"></div><div class="msg"><b>W</b> forward · <b>S</b> back · <b>A</b> left · <b>D</b> right · <b>Space</b> jump · <b>Shift</b> run · mouse looks · <b>Esc</b> back to the editor</div></div>
+  <div id="mf-cb" class="mf-cb" hidden>
+    <div class="mf-cb-head"><span class="brand">🗂 CONTENT BROWSER</span>
+      <button id="mf-cb-addcloud" class="primary" title="Upload a .glb or a sound to the shared cloud (admin) — every player loads it from there">☁ Upload</button><input type="file" id="mf-cb-cloudfile" accept=".glb,.gltf,.mp3,.wav,.ogg,.m4a,model/gltf-binary,audio/*" multiple hidden>
+      <button id="mf-cb-embed" title="Embed a .glb in this map only">⤒ Embed .glb</button><button id="mf-cb-url" title="Add a model or sound by URL">🔗 URL</button><button id="mf-cb-refresh" title="Refresh the cloud lists">↻</button>
+      <span class="mf-cb-crumbs"></span>
+      <input type="text" id="mf-cb-q" placeholder="🔍 Search content…" autocomplete="off"><input type="range" id="mf-cb-size" min="56" max="160" step="8" value="96" title="Tile size"><button id="mf-cb-close" title="Close (Ctrl+Space)">✕</button></div>
+    <div class="mf-cb-body"><div class="mf-cb-tree"></div><div class="mf-cb-grid"></div></div>
+    <div class="mf-cb-status"></div>
+  </div>
   <div class="mf-toast"></div>
   <div class="mf-prompt" id="mf-prompt" hidden></div>
   <div class="mf-bppanel" id="mf-bp" hidden>

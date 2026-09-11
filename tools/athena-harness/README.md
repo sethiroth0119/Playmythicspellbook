@@ -55,6 +55,8 @@ node tools/athena-harness/pw-test15.mjs       # round 15: battle board — v3 �
                                               #           publish on live, board overlay (extra objects + replacement)
 node tools/athena-harness/pw-test16.mjs       # round 16: Screens & Strings — scan, edit → live rule, find & replace, rules,
                                               #           save + live, off-stage screens, export/import, widgets, admin gate
+node tools/athena-harness/pw-test17.mjs       # round 17: cloud files (bridge bucket), upload, rename everywhere, F2,
+                                              #           the content browser dock, context menu
 ```
 
 Each prints ✔/✘ per step and the page's error list; screenshots land in

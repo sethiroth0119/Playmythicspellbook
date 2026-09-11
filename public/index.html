@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120y7';
+  window.BUILD_VERSION = 'v120y8';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -207161,6 +207161,53 @@ try {
        nothing that mutates. Adding a field here is how a new game value
        becomes bindable as {field}. Actions are the only way a widget touches
        the game, and each one goes through the same helpers the UI uses. */
+    /* ☁ FILES (round 17, Athena's content browser). The SAME public `models`
+       bucket the card shop and Black River already upload .glb files to
+       (_csShopUploadModel), under an athena/<kind>/ prefix, so a model or a
+       sound the admin uploads is one URL every player loads. Rename is a
+       storage move (the URL changes; the caller rewrites its references).
+       Admin-only: an uploaded file is global content, like a live scene. */
+    files: {
+      ready: () => { try { return !!(Cloud && Cloud.ready && Cloud.client && Profile.cloud && Profile.cloud.signedIn); } catch (e) { return false; } },
+      canWrite: () => { try { return typeof isAdmin === 'function' && isAdmin(); } catch (e) { return false; } },
+      bucket: () => CS_MODELS_BUCKET,
+      list: async (kind) => {
+        if (typeof Cloud === 'undefined' || !Cloud.ready || !Cloud.client) return [];
+        const dir = 'athena/' + (kind === 'audio' ? 'audio' : 'models');
+        const { data, error } = await Cloud.client.storage.from(CS_MODELS_BUCKET).list(dir, { limit: 500, sortBy: { column: 'updated_at', order: 'desc' } });
+        if (error || !Array.isArray(data)) return [];
+        return data.filter(o => o && o.name && !o.name.startsWith('.')).map(o => { const path = dir + '/' + o.name; const { data: u } = Cloud.client.storage.from(CS_MODELS_BUCKET).getPublicUrl(path); return { name: o.name.replace(/^[a-z0-9]{6,}_/, ''), path, url: u && u.publicUrl, size: (o.metadata && o.metadata.size) || 0, updated: o.updated_at || null }; });
+      },
+      upload: async (file, kind) => {
+        if (typeof isAdmin !== 'function' || !isAdmin()) throw new Error('Uploading shared files is admin-only.');
+        if (typeof Cloud === 'undefined' || !Cloud.ready || !Cloud.client) throw new Error('Cloud offline.');
+        try { await Cloud.client.storage.createBucket(CS_MODELS_BUCKET, { public: true, fileSizeLimit: CS_MODEL_SIZE_LIMIT }); } catch (e) {}
+        const safe = String(file.name || 'file').replace(/[^a-zA-Z0-9._-]/g, '_');
+        const dir = 'athena/' + (kind === 'audio' ? 'audio' : 'models');
+        const path = dir + '/' + Date.now().toString(36) + '_' + safe;
+        const ct = kind === 'audio' ? (file.type || 'audio/mpeg') : 'model/gltf-binary';
+        const { error } = await Cloud.client.storage.from(CS_MODELS_BUCKET).upload(path, file, { upsert: true, contentType: ct });
+        if (error) { const msg = String((error && error.message) || error || ''); if (/exceeded the maximum|maximum allowed size|payload too large|413/i.test(msg)) throw new Error('That file is ' + (file.size / 1048576).toFixed(1) + ' MB — over the Storage upload limit.'); throw error; }
+        const { data } = Cloud.client.storage.from(CS_MODELS_BUCKET).getPublicUrl(path);
+        return { path, url: data && data.publicUrl, name: safe };
+      },
+      rename: async (path, newName) => {
+        if (typeof isAdmin !== 'function' || !isAdmin()) throw new Error('Renaming shared files is admin-only.');
+        if (typeof Cloud === 'undefined' || !Cloud.ready || !Cloud.client) throw new Error('Cloud offline.');
+        const dir = String(path).replace(/\/[^/]*$/, ''); const stamp = (/\/([a-z0-9]{6,})_[^/]*$/.exec(path) || [])[1] || Date.now().toString(36);
+        const safe = String(newName || '').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80); if (!safe) throw new Error('Name required.');
+        const to = dir + '/' + stamp + '_' + safe;
+        const { error } = await Cloud.client.storage.from(CS_MODELS_BUCKET).move(path, to);
+        if (error) throw error;
+        const { data } = Cloud.client.storage.from(CS_MODELS_BUCKET).getPublicUrl(to);
+        return { path: to, url: data && data.publicUrl, name: safe };
+      },
+      remove: async (path) => {
+        if (typeof isAdmin !== 'function' || !isAdmin()) throw new Error('Deleting shared files is admin-only.');
+        if (typeof Cloud === 'undefined' || !Cloud.ready || !Cloud.client) throw new Error('Cloud offline.');
+        const { error } = await Cloud.client.storage.from(CS_MODELS_BUCKET).remove([path]); if (error) throw error; return true;
+      },
+    },
     /* ⚔ BATTLE BOARD ↔ ⚒ Athena (round 15, src/battle/battle.athena.js). The
        v3 battlemap document (Forge.battleMap3d.active) in, out, and published;
        the board's own procedural prop builder so Athena draws the SAME props
@@ -223493,7 +223540,7 @@ render();
      ⚠ If this 404s nothing changes — the button reports "still loading".
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/mapforge/index.js?v=mf15"></script>
+<script type="module" src="src/mapforge/index.js?v=mf16"></script>
 <!-- 🧩 ATHENA WIDGETS — Blueprint-style UI widgets and themes (/src/widgets).
      Registers window.AthenaUI. At boot it loads every LIVE widget/theme
      (public.ui_widgets, sql/040 — or the device's cached copy) and mounts

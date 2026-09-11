@@ -583,6 +583,7 @@ export function buildWorld(THREE, map, opts) {
       mixers.forEach((m, id) => stopAnim(id));
       emitters.forEach((em, id) => detachFx(id)); if (weather) { weather.dispose(); weather = null; }
       batches.forEach(b => b.meshes.forEach(im => im.dispose())); batches.clear();
+      objects.forEach(r => { if (r.userData.mfType === 'spline') r.children.forEach(disposeSplineBody); });   // deformed spline geometry is per object, not a shared template
       terrain.dispose(); water.dispose();
       try { sky.geometry.dispose(); sky.material.dispose(); } catch (e) {}
       objects.clear();

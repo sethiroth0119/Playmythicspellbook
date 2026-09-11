@@ -776,3 +776,36 @@ Admin panel → **🗂 Screens & Strings** (`src/widgets/screens.js`,
 Limits: only text that is in the DOM can be scanned — text the game draws
 into a canvas, or shows only after an action, is not listed until it is on
 stage; toasts and other transient text are not covered.
+
+## ☁ Cloud files, rename, the content browser (round 17)
+
+- **Cloud files.** `MythicBridge.files` (index.html) wraps the game's existing
+  public `models` storage bucket — the one the card shop and Black River
+  already upload `.glb` files to — under an `athena/models/` and
+  `athena/audio/` prefix: `list(kind)`, `upload(file, kind)`,
+  `rename(path, name)` (a storage move; the URL changes and Athena rewrites
+  every map reference to it), `remove(path)`. Writes are admin-only (a
+  shared file is global content). Library → Models shows a **Cloud** list and
+  **☁ Upload to cloud**; a cloud file picked into a map is an ordinary URL
+  asset, so every player loads the same file — unlike **Embed .glb**, which
+  stores the bytes in the map (3.5 MB cap). Index kinds: `cloud`, `csound`.
+- **Rename.** Every library item with a name of its own: map models and
+  sounds (labels), prefabs, shelf prefabs, cloud files (move). Details panel
+  → ✎ Rename, the content browser's context menu, or **F2** (the selected
+  object first — its name in the outliner — else the selected library item).
+  Built-in props keep their names.
+- **Content browser** — top bar 🗂 Content or **Ctrl+Space**: a dock over the
+  bottom of the viewport in Unreal's layout — folder tree (Content ▸ Props by
+  category, Splines, Models ▸ In map / Project / Cloud, Prefabs ▸ In map /
+  Shelf, Sounds ▸ In map / Project / Cloud, Favourites, Recent), breadcrumb,
+  ☁ Upload / ⤒ Embed / 🔗 URL, search, tile size, tiles with thumbnails and a
+  type colour bar (mesh cyan, model blue, prefab purple, sound orange),
+  status line. Click selects (details in the sidebar), double-click picks
+  for placement, right-click opens a menu (place, preview, rename,
+  favourite, copy URL, remove / delete). Same index, thumbnails and picks as
+  the sidebar Library.
+
+Limits: cloud lists need a signed-in game session (the harness fakes the
+bucket); renaming a cloud file changes its URL — other maps that referenced
+the old URL keep the old one until they are opened and re-saved (the old
+object is gone after the move, so re-upload if that happens).

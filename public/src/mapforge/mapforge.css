@@ -267,3 +267,45 @@
 .mf-spline{margin:8px 0;padding:7px 8px;border:1px solid rgba(255,233,168,.28);border-radius:7px;background:rgba(255,233,168,.05)}
 .mf-spline .st{color:#ffe9a8;font-size:11.5px}
 .mf-spline .mf-btns{margin-top:4px;flex-wrap:wrap;gap:4px}
+/* ── 🗂 Content browser dock (round 17) ── */
+.mf-cb{position:absolute;left:0;right:0;bottom:0;height:42%;min-height:220px;display:flex;flex-direction:column;background:rgba(14,17,26,.97);border-top:1px solid var(--mf-gold);box-shadow:0 -10px 30px rgba(0,0,0,.5);z-index:6;font-size:12px}
+.mf-cb[hidden]{display:none}
+.mf-cb-head{display:flex;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--mf-line);background:linear-gradient(180deg,#151827,#0f1119)}
+.mf-cb-head .brand{font-weight:800;letter-spacing:.14em;color:var(--mf-gold2);font-size:10.5px;white-space:nowrap}
+.mf-cb-head button{padding:3px 8px;font-size:11.5px;white-space:nowrap}
+.mf-cb-head #mf-cb-q{flex:0 0 220px}
+.mf-cb-head #mf-cb-size{width:90px}
+.mf-cb-crumbs{flex:1;display:flex;align-items:center;gap:4px;padding:0 8px;overflow:hidden;white-space:nowrap;color:var(--mf-dim)}
+.mf-cb-crumbs .crumb{cursor:pointer;color:#e8e2d0;padding:2px 5px;border-radius:4px}
+.mf-cb-crumbs .crumb:hover{background:rgba(212,175,55,.14)}
+.mf-cb-crumbs .crumb:last-child{color:#ffe9a8;font-weight:600}
+.mf-cb-crumbs .sep{color:var(--mf-dim)}
+.mf-cb-body{flex:1;display:flex;min-height:0}
+.mf-cb-tree{flex:0 0 190px;border-right:1px solid var(--mf-line);overflow-y:auto;padding:6px 0}
+.mf-cb-node{display:flex;align-items:center;gap:4px;padding:3px 8px;cursor:pointer;white-space:nowrap;color:#cfc7ad}
+.mf-cb-node:hover{background:rgba(212,175,55,.08)}
+.mf-cb-node.on{background:rgba(212,175,55,.16);color:#ffe9a8}
+.mf-cb-node .tw{width:10px;color:var(--mf-dim);font-size:10px}
+.mf-cb-node .ic{font-size:12px}
+.mf-cb-grid{--tile:96px;flex:1;overflow-y:auto;padding:10px;display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--tile),1fr));gap:8px;align-content:start}
+.mf-cb-tile{position:relative;display:flex;flex-direction:column;border:1px solid var(--mf-line);border-radius:6px;background:#12151f;cursor:pointer;overflow:hidden;user-select:none}
+.mf-cb-tile:hover{border-color:var(--mf-gold)}
+.mf-cb-tile.sel{border-color:var(--mf-blue);box-shadow:0 0 0 2px rgba(74,163,255,.35)}
+.mf-cb-tile.on{border-color:var(--mf-gold);box-shadow:inset 0 0 12px rgba(212,175,55,.2)}
+.mf-cb-tile .th{position:relative;width:100%;padding-top:100%;background:radial-gradient(circle at 50% 40%,#232838,#0d1017 75%)}   /* padding square: aspect-ratio on a flex child is unreliable in Chromium */
+.mf-cb-tile .th img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+.mf-cb-tile .th .ic{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:calc(var(--tile) * .34)}
+.mf-cb-tile .fav{position:absolute;top:3px;right:5px;font-size:12px;color:rgba(255,255,255,.2);opacity:0}
+.mf-cb-tile:hover .fav,.mf-cb-tile .fav.on{opacity:1}
+.mf-cb-tile .fav.on{color:var(--mf-gold2)}
+.mf-cb-tile .bar{height:3px}
+.mf-cb-tile .nm{padding:4px 6px 0;font-size:11px;line-height:1.15;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#f1e9d2}
+.mf-cb-tile .kd{padding:0 6px 5px;font-size:9.5px;color:var(--mf-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mf-cb-tile.folder .th{background:linear-gradient(180deg,#1a1e2c,#12151f)}
+.mf-cb-tile.folder .nm{padding-bottom:6px}
+.mf-cb-empty{grid-column:1/-1;padding:20px;text-align:center;color:var(--mf-dim)}
+.mf-cb-status{padding:3px 10px;border-top:1px solid var(--mf-line);color:var(--mf-dim);font-size:11px}
+.mf-cb-menu{position:fixed;z-index:1000000;min-width:180px;background:#12151f;border:1px solid var(--mf-gold);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.6);padding:4px;font-size:12px;color:#e8e2d0;font-family:system-ui,sans-serif}
+.mf-cb-menu .hd{padding:4px 8px 6px;color:var(--mf-dim);font-size:10.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-bottom:1px solid var(--mf-line);margin-bottom:3px}
+.mf-cb-menu button{display:block;width:100%;text-align:left;background:none;border:none;color:#e8e2d0;padding:5px 8px;border-radius:5px;cursor:pointer;font:inherit}
+.mf-cb-menu button:hover{background:rgba(212,175,55,.16);color:#ffe9a8}

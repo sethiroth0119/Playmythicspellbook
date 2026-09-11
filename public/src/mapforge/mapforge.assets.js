@@ -56,6 +56,8 @@ export const KINDS = {
   sound:   { label: 'Sound',      icon: '🔊', source: 'this map' },
   psound:  { label: 'Sound',      icon: '🗂', source: 'project' },
   spline:  { label: 'Spline',     icon: '〰️', source: 'built-in' },
+  cloud:   { label: 'Model',      icon: '☁', source: 'cloud' },
+  csound:  { label: 'Sound',      icon: '☁', source: 'cloud' },
 };
 
 const words = (s) => String(s || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
@@ -82,6 +84,8 @@ export function buildIndex(src) {
   (src.splines || []).forEach(p => push('spline', p.id, p.label, p.icon, 'Splines', [...(p.tags || []), p.mode, 'spline', 'curve'], p));
   (src.assets || []).forEach(a => push('model', a.id, a.label, a.data ? '📦' : '🧊', 'Models', [...(a.tags || []), a.data ? 'embedded' : 'url', ...(a.anims && a.anims.length ? ['animated'] : [])], a, { url: a.url }));
   (src.project || []).forEach((m, i) => push('project', m.id || String(i), m.label || m.id || m.url, '🗂', m.cat || 'Models', [...(m.tags || []), ...(m.anims && m.anims.length ? ['animated'] : [])], m, { url: m.url, inMap: !!(src.assets || []).find(a => a.url === m.url) }));
+  (src.cloud || []).forEach(m => push('cloud', m.path, m.name.replace(/\.(glb|gltf)$/i, ''), '☁', 'Models', ['cloud', 'shared', ...(m.tags || [])], m, { url: m.url, path: m.path, inMap: !!(src.assets || []).find(a => a.url === m.url) }));
+  (src.cloudSounds || []).forEach(m => push('csound', m.path, m.name.replace(/\.[a-z0-9]+$/i, ''), '☁', 'Sounds', ['cloud', 'shared'], m, { url: m.url, path: m.path, inMap: !!(src.sounds || []).find(s => s.url === m.url) }));
   (src.prefabs || []).forEach(p => push('prefab', p.id, p.name, p.icon || '🧱', 'Prefabs', [...(p.tags || []), p.objects.length + ' parts'], p, { parts: p.objects.length }));
   (src.shelf || []).forEach(e => { if ((src.prefabs || []).find(p => p.id === e.id)) return; push('shelf', e.id, e.name, e.icon || '🧱', 'Prefabs', [...(e.tags || []), 'shelf'], e, { parts: (e.objects || []).length }); });
   (src.sounds || []).forEach(s => push('sound', s.id, s.label, '🔊', 'Sounds', s.tags || [], s, { url: s.url }));

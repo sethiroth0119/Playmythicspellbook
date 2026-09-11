@@ -141,4 +141,8 @@ therefore terminate.
   card views; thumbnails come from a second, offscreen WebGLRenderer (session cache only — never persist PNGs);
   tags live on `assets[].tags` / `prefabs[].tags` (`normalizeTags`) and `PROP_TAGS` for built-ins. Project
   models still come ONLY from `/models/manifest.json` (no uploads).
-- Docs: `docs/athena-engine.md`. Tests: `tools/athena-harness/` (`pw-test5.mjs` round 5, `pw-test6.mjs` round 6, `pw-test7.mjs` physics, `pw-test8.mjs` navigation, `pw-test9.mjs` audio, `pw-test10.mjs` performance, `pw-test11.mjs` look, `pw-test12.mjs` asset browser).
+- **Round 13 (splines):** `objects[].t === 'spline'` + `sp` (`mapforge.spline.js`: Catmull-Rom, arc-length
+  resampled; mesh mode BENDS the source's vertices and merges per material; scatter is seeded; terrain mode
+  applies through `terrain.applyBrush` so it is an ordinary undoable edit). Splines never collide and are
+  never instanced (catalogue entry `spline`). Editor handles live in world space so the gizmo drives them.
+- Docs: `docs/athena-engine.md`. Tests: `tools/athena-harness/` (`pw-test5.mjs` round 5, `pw-test6.mjs` round 6, `pw-test7.mjs` physics, `pw-test8.mjs` navigation, `pw-test9.mjs` audio, `pw-test10.mjs` performance, `pw-test11.mjs` look, `pw-test12.mjs` asset browser, `pw-test13.mjs` splines).

@@ -35,6 +35,7 @@ fixed battle grid. The two coexist.
 | `mapforge.nav.js` | **navigation**: a grid navmesh baked from terrain + colliders, A* with string-pulling (`world.nav`) |
 | `mapforge.audio.js` | **positional audio** (three.js WebAudio): one listener on the camera, emitters on objects, one-shots at the player or in 2D |
 | `mapforge.post.js` | the **look pass**: bloom + vignette composited over the scene (self-contained, no addons) |
+| `mapforge.spline.js` | **splines**: Catmull-Rom curves, mesh bending / scatter / terrain shaping, the Library presets |
 | `mapforge.assets.js` | the **asset browser** behind Library: one index over props / models / prefabs / sounds, search + tags, favourites + recents, offscreen thumbnails |
 | `mapforge.quality.js` | the **quality ladder** (pixel ratio, shadows, effects, effect range) with auto-tune; remembered per device |
 | `mapforge.physics.js` | **rigid-body physics** (cannon-es, vendored at `/vendor/cannon-es.js`): terrain heightfield, static colliders, dynamic/kinematic bodies, the player as a kinematic sphere |
@@ -614,3 +615,51 @@ Limits: thumbnails are session-only (never persisted — a hundred PNGs is
 cheap to redraw and expensive to store); no folders inside the Library (map
 content folders are the outliner's job); no drag-and-drop from a card (pick,
 then click the ground, as before).
+
+## Splines (round 13)
+
+Draw a curve on the ground and a mesh follows it — Unreal's spline mesh
+component, Unity's spline package. A spline is an object (`t: 'spline'`)
+whose body is generated from control points; it saves, undoes, duplicates,
+folders and instances into games like any other object.
+
+- **Drawing.** Library → **Splines** (or search: road, wall, fence, tree
+  line, lamp posts, colonnade, dirt track, stone path, river bed, custom).
+  With Place active every ground click adds a point; **Enter** or a
+  double-click finishes, clicking the first point again closes a loop,
+  **Backspace** removes the last point, **Esc** cancels. The spline's origin
+  is its first point; points are stored relative to it (`sp.pts`), so
+  moving the object moves the whole curve.
+- **Editing.** A selected spline shows gold handles on its control points
+  (green = first, blue = selected). Click a handle and the gizmo moves that
+  point; the curve rebuilds live. Inspector → Spline: mode, source, piece
+  length / spacing, width, bend, stretch, forward axis, jitter, align,
+  reshuffle, paint layer, depth, tension, loop, ＋ Add point (after the
+  selected one, or extending the end), － Delete point, ⛰ Apply to terrain.
+- **Modes.**
+  - *Mesh* — the source (a built-in prop or any model in the map — drop a
+    road `.glb` in, pick **Custom**) is repeated along the curve and
+    **bent** to it: vertices are mapped by arc length, so a straight slab
+    becomes a curved road. Geometry is merged per material (a 40-piece road
+    is a handful of draw calls). *Stretch* fits a whole number of pieces
+    exactly; *Bend* off places rigid pieces yawed to the tangent. The
+    forward axis is the source's longer horizontal side unless overridden.
+  - *Scatter* — the source is dropped every *spacing* metres with jitter,
+    spread across *width*, random yaw or aligned to the curve; the seed is
+    stored so the game sees the same trees as the editor.
+  - *Terrain* — a translucent ribbon shows the path; **Apply to terrain**
+    flattens the ground to the (smoothed) curve, sinks or raises it by
+    *depth*, and paints the layer under it — all through the terrain brush,
+    so it is one undo step. Mesh/scatter splines can Apply too, so a road
+    sits in the hillside rather than on it.
+- Grounded splines (the default) read the terrain height at every sample
+  and rebuild after sculpting; a `.glb` source shows the placeholder until
+  the model loads, then rebuilds.
+- Schema: `sp = { pts, closed, mode, src:{t|glb,a,c}, gap, w, tension,
+  deform, stretch, axis, jitter, align, seed, paint, dy }`
+  (`normalizeSpline`); a spline with fewer than two points is dropped.
+
+Limits: splines never collide (one box around a curve would be wrong — put
+a wall prop where the player must be stopped, or bake navigation around the
+generated pieces later); no per-point width or roll; mesh mode bends static
+geometry only (skinned models are placed rigid).

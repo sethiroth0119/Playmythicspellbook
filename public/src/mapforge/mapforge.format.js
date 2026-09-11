@@ -16,6 +16,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 import { normalizeBp } from './mapforge.actors.js';
+import { normalizeSpline } from './mapforge.spline.js';
 
 export const MAP_VERSION = 1;
 
@@ -232,6 +233,8 @@ export function normalizeObject(o, assetIds, folderIds, prefabIds) {
   const t = String(o.t);
   if (t === 'glb' && assetIds && !assetIds.has(o.a)) return null;   // orphaned model reference
   if (t === 'prefab' && (!o.pf || (prefabIds && !prefabIds.has(String(o.pf))))) return null;   // orphaned prefab instance
+  const sp = t === 'spline' ? normalizeSpline(o.sp, assetIds) : undefined;
+  if (t === 'spline' && !sp) return null;                                                      // a spline needs two points
   return {
     id: String(o.id || uid('o_')),
     t,
@@ -252,6 +255,7 @@ export function normalizeObject(o, assetIds, folderIds, prefabIds) {
     cs: o.cs === 'cyl' ? 'cyl' : undefined,          // collider shape: box (default) or cylinder
     fx: normalizeFx(o.fx),                            // emitter tuning for fx_* objects / attached effects
     mat: normalizeMat(o.mat),                         // material override: roughness / metalness / emissive (round 11)
+    sp,                                               // spline: control points + mode + source (round 13, mapforge.spline.js)
   };
 }
 

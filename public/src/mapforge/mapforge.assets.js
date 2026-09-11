@@ -55,6 +55,7 @@ export const KINDS = {
   shelf:   { label: 'Prefab',     icon: '📚', source: 'this device' },
   sound:   { label: 'Sound',      icon: '🔊', source: 'this map' },
   psound:  { label: 'Sound',      icon: '🗂', source: 'project' },
+  spline:  { label: 'Spline',     icon: '〰️', source: 'built-in' },
 };
 
 const words = (s) => String(s || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
@@ -78,6 +79,7 @@ export function buildIndex(src) {
     if (p.tint) t.push('tintable'); if (p.fx || p.fxKind) t.push('effect'); if (p.marker) t.push('marker'); if (p.col === false) t.push('no-collision');
     push('prop', p.id, p.label, p.icon, p.cat, t, p);
   });
+  (src.splines || []).forEach(p => push('spline', p.id, p.label, p.icon, 'Splines', [...(p.tags || []), p.mode, 'spline', 'curve'], p));
   (src.assets || []).forEach(a => push('model', a.id, a.label, a.data ? '📦' : '🧊', 'Models', [...(a.tags || []), a.data ? 'embedded' : 'url', ...(a.anims && a.anims.length ? ['animated'] : [])], a, { url: a.url }));
   (src.project || []).forEach((m, i) => push('project', m.id || String(i), m.label || m.id || m.url, '🗂', m.cat || 'Models', [...(m.tags || []), ...(m.anims && m.anims.length ? ['animated'] : [])], m, { url: m.url, inMap: !!(src.assets || []).find(a => a.url === m.url) }));
   (src.prefabs || []).forEach(p => push('prefab', p.id, p.name, p.icon || '🧱', 'Prefabs', [...(p.tags || []), p.objects.length + ' parts'], p, { parts: p.objects.length }));

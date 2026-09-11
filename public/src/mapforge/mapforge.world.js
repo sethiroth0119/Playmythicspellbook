@@ -11,6 +11,7 @@
 import { createTerrain } from './mapforge.terrain.js';
 import { createWater } from './mapforge.water.js';
 import { buildProp, PROP_BY_ID, collides } from './mapforge.props.js';
+import { buildSpline } from './mapforge.spline.js';
 import { createEmitter, createWeather, windVector, EMITTERS } from './mapforge.vfx.js';
 import { createActors, hasBehaviour } from './mapforge.actors.js';
 import { ensureCannon, createPhysics } from './mapforge.physics.js';
@@ -62,7 +63,7 @@ export function buildWorld(THREE, map, opts) {
   group.add(batchGroup);   // (objectsGroup was added above, before this section is declared)
   const _m4 = new THREE.Matrix4(), _zero = new THREE.Matrix4().makeScale(0, 0, 0);
   function instanceKey(o) {
-    if (!instancing || !o || o.t === 'glb' || o.t === 'prefab' || o.t === 'slot' || o.t.indexOf('fx_') === 0) return null;
+    if (!instancing || !o || o.t === 'glb' || o.t === 'prefab' || o.t === 'slot' || o.t === 'spline' || o.t.indexOf('fx_') === 0) return null;
     const m = PROP_BY_ID[o.t]; if (!m || m.marker || m.fx || m.fxKind) return null;
     if (o.bp && hasBehaviour(o)) return null;   // it may move, animate or be destroyed
     if (o.mat) return null;                     // its own material, not the template's
@@ -199,8 +200,20 @@ export function buildWorld(THREE, map, opts) {
       [].concat(m.material).forEach(x => { if (mat.rough != null && 'roughness' in x) x.roughness = mat.rough; if (mat.metal != null && 'metalness' in x) x.metalness = mat.metal; if (x.emissive) { x.emissive.set(mat.em || '#000000'); x.emissiveIntensity = mat.em ? (mat.ei == null ? 1 : mat.ei) : 1; } x.needsUpdate = true; });
     });
   }
+  /* A spline's source: a prop clone, a loaded model template clone, or the
+     placeholder while the model is still loading (the load callback rebuilds). */
+  function splineSource(o) {
+    return (src) => {
+      if (src.t === 'glb') { const tpl = assetTemplates.get(src.a); if (tpl) return cloneTemplate(tpl); if (!assetTemplates.has(src.a)) { assetTemplates.set(src.a, null); loadAsset(src.a).then(({ template }) => { assetTemplates.set(src.a, template); map.objects.forEach(x => { if (x.t === 'spline' && x.sp && x.sp.src && x.sp.src.a === src.a && objects.has(x.id)) refreshObject(x); }); }).catch(() => {}); } return buildProp(THREE, 'placeholder'); }
+      if (src.t.startsWith('fx_') || !BUILDABLE(src.t)) return buildProp(THREE, 'placeholder');
+      return buildProp(THREE, src.t, src.c);
+    };
+  }
+  const assetTemplates = new Map();   // assetId → template (null while loading) for spline sources
+  const BUILDABLE = (t) => !!PROP_BY_ID[t] && !PROP_BY_ID[t].marker && !PROP_BY_ID[t].slot && !PROP_BY_ID[t].prefab && !PROP_BY_ID[t].spline && !PROP_BY_ID[t].fxKind;
   function makeBody(o) {
     if (o.t === 'glb') { const body = buildProp(THREE, 'placeholder'); body.userData.mfPending = true; return body; }
+    if (o.t === 'spline') return buildSpline(o, { THREE, source: splineSource(o), heightAt: (x, z) => terrain.heightAt(x, z) });
     if (o.t.startsWith('fx_')) return buildProp(THREE, 'fxmarker');
     return buildProp(THREE, o.t, o.c);
   }
@@ -283,8 +296,11 @@ export function buildWorld(THREE, map, opts) {
     }
     return root;
   }
+  /* Deformed spline geometry is unique to the object — free it; materials are the shared templates'. */
+  function disposeSplineBody(b) { try { b.traverse(m => { if (m.userData && (m.userData.mfSplineMesh || m.userData.mfRibbon) && m.geometry) { m.geometry.dispose(); if (m.userData.mfRibbon && m.material) m.material.dispose(); } }); } catch (e) {} }
   function removeObject(id) {
     const root = objects.get(id); if (!root) return;
+    if (root.userData.mfType === 'spline') root.children.forEach(disposeSplineBody);
     stopAnim(id); detachFx(id);
     if (root.userData.mfPrefab) removeParts({ id });
     dropInstance(id);
@@ -299,7 +315,8 @@ export function buildWorld(THREE, map, opts) {
   function refreshObject(o) {
     const root = objects.get(o.id); if (!root) return addObject(o);
     if (o.t === 'prefab' || root.userData.mfPrefab) return addObject(o);   // a prefab instance is rebuilt whole
-    if (o.t !== 'glb' && root.children[0] && root.children[0].userData.mfProp === o.t) {
+    if (o.t === 'spline') { while (root.children.length) { const c = root.children.pop(); disposeSplineBody(c); } root.add(makeBody(o)); }
+    else if (o.t !== 'glb' && root.children[0] && root.children[0].userData.mfProp === o.t) {
       root.remove(root.children[0]); root.add(buildProp(THREE, o.t, o.c));
     }
     if (root.children[0]) applyMat(root.children[0], o.mat || null);

@@ -93,6 +93,9 @@ export const PROP_CATALOG = [
   { id: 'slot',     label: 'Game slot',    icon: '🧩', cat: 'Slots', tint: true, col: false, slot: true },
   /* Prefab instance — its body is the definition's parts (mapforge.world.js); this entry only names the type. */
   { id: 'prefab',   label: 'Prefab',       icon: '🧱', cat: 'Prefabs', col: false, prefab: true },
+  /* Spline — its body is generated from control points (mapforge.spline.js). Never
+     collides (one box around a curve would be wrong) and never instanced. */
+  { id: 'spline',   label: 'Spline',       icon: '〰️', cat: 'Splines', col: false, spline: true },
 ];
 /* Does this object block the player? Explicit o.col wins; else the prop's
    default (col: false above), else solid. Custom .glb models are solid. */

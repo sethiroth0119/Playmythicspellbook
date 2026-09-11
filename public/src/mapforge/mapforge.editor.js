@@ -29,6 +29,7 @@ import { COMPONENTS, ACTOR_NODES, newBlueprint, newGraphNode, hasBehaviour } fro
 import { createGraphEditor } from '../widgets/graph-editor.js';
 import * as quality from './mapforge.quality.js';
 import * as assetsMod from './mapforge.assets.js';
+import { SPLINE_PRESETS, SPLINE_PRESET_BY_ID, SPLINE_MODES, sampleSpline, applySplineToTerrain, normalizeSpline } from './mapforge.spline.js';
 import { createPost } from './mapforge.post.js';
 import { applyTone } from './mapforge.engine.js';
 import { PROP_CATALOG, PROP_BY_ID, buildProp } from './mapforge.props.js';
@@ -57,6 +58,7 @@ export async function openEditor(opts) {
   const toast = (m, ms) => { toastEl.textContent = m; toastEl.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => toastEl.classList.remove('show'), ms || 2600); };
 
   const S = {
+    splinePreset: 'road', splinePt: -1, lastSrc: null,   // splines (round 13): picked preset, selected handle, last prop/model pick for Custom
     THREE: null, map: null, source: null, isPublic: false, mine: true, dirty: false,
     tool: 'select', sculptMode: 'raise', brush: { radius: 6, strength: 0.5, falloff: 0.6 },
     paintIdx: 0, propId: 'tree', propTint: null, assetId: null,
@@ -129,6 +131,9 @@ export async function openEditor(opts) {
   // collider outlines: the selected object's (gold) and, on demand, everyone's
   const colSel = new THREE.Box3Helper(new THREE.Box3(), 0xffd23f); colSel.visible = false; colSel.material.depthTest = false; colSel.material.transparent = true; colSel.material.opacity = 0.9; scene.add(colSel);
   const colAll = new THREE.Group(); colAll.visible = false; scene.add(colAll);
+  const splineG = new THREE.Group(); splineG.name = 'mf-spline-ui'; scene.add(splineG);
+  let splineDraft = null;                       // { preset, pts: [[x,y,z]…] } while drawing — declared here, not with the spline code below: select() runs during loadDoc and reads splineH (TDZ otherwise)
+  const splineH = { handles: [], line: null, draft: null };   // control-point handles + curve line of the selected spline, and the drawing preview
   // the trigger volume of the selected actor, drawn as a ring on the ground (blueprints section below); declared here because loadDoc runs first
   const trigRing = new THREE.Mesh(new THREE.RingGeometry(0.96, 1, 48), new THREE.MeshBasicMaterial({ color: 0xffb347, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false })); trigRing.rotation.x = -Math.PI / 2; trigRing.visible = false; trigRing.renderOrder = 18; scene.add(trigRing);
   let bpGraph = null, bpFor = null;   // the blueprint graph editor instance and the object it shows
@@ -209,7 +214,9 @@ export async function openEditor(opts) {
   const stroke = { active: false, hit: null, target: 0, before: null, lastX: 0, lastZ: 0, dist: 0 };
 
   function setTool(t) {
+    if (t !== 'place' && splineDraft) splineDraftCancel();
     S.tool = t;
+    try { drawSplineHandles(); } catch (e) {}
     $$('.mf-tools button[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === t));
     const gs = $('#mf-gm-select'); if (gs) gs.classList.toggle('on', t === 'select');
     if (t !== 'select' && gizmo) gizmo.detach();
@@ -261,6 +268,10 @@ export async function openEditor(opts) {
     if (gizmo && gizmo.object && gizmo.axis) return;     // clicked the gizmo itself (axis goes stale after detach — hence the .object check)
     updatePointer(ev);
     lastMods = { shiftKey: ev.shiftKey, ctrlKey: ev.ctrlKey, altKey: ev.altKey };
+    if (S.tool === 'select' && splineH.handles.length) {
+      const hh = raycaster.intersectObjects(splineH.handles, false);
+      if (hh.length) { S.splinePt = hh[0].object.userData.mfSplinePt; drawSplineHandles(true); if (gizmo) { gizmo.attach(hh[0].object); gizmo.setMode('translate'); } renderInspector(); return; }
+    }
     if (S.tool === 'select') {
       const o = hitObject();
       if (o && (ev.ctrlKey || ev.metaKey || ev.shiftKey)) { toggleMulti(o.userData.mfId); return; }
@@ -270,6 +281,7 @@ export async function openEditor(opts) {
     }
     if (S.tool === 'erase') { const o = hitObject(); if (o) { beginObjectEdit(); removeObject(o.userData.mfId); endObjectEdit(); } return; }
     const p = hitTerrain(); if (!p) return;
+    if (S.tool === 'place' && S.propId === 'spline') { splineDraftAdd(p); return; }
     if (S.tool === 'place') { beginObjectEdit(); placeAt(p, true); endObjectEdit(); return; }
     if (S.tool === 'scatter') { beginObjectEdit(); stroke.active = true; stroke.dist = 1e9; stroke.hit = p; stroke.lastX = p.x; stroke.lastZ = p.z; scatterAt(p); return; }
     if (S.tool === 'sculpt' || S.tool === 'paint') {
@@ -308,6 +320,7 @@ export async function openEditor(opts) {
   const cv = renderer.domElement;
   cv.tabIndex = 0;
   cv.addEventListener('pointerdown', onPointerDown);
+  cv.addEventListener('dblclick', (e) => { if (splineDraft) { e.preventDefault(); splineDraftFinish(false); } });
   cv.addEventListener('pointermove', onPointerMove);
   cv.addEventListener('pointerup', onPointerUp);
   cv.addEventListener('pointerleave', () => { stroke.hit = null; });
@@ -637,6 +650,7 @@ export async function openEditor(opts) {
     return o;
   }
   function scatterAt(p) {
+    if (S.propId === 'spline') { toast('Splines are drawn with Place (4): click points on the ground.'); stroke.active = false; return; }
     if (S.propId === 'glb' && !S.assetId) { toast('Add a model URL in the Library first.'); stroke.active = false; return; }
     if (S.propId === 'prefab' && !prefabById(S.prefabId)) { toast('Pick a prefab in the Library first.'); stroke.active = false; return; }
     const R = S.brush.radius, half = world.terrain.half;
@@ -665,20 +679,30 @@ export async function openEditor(opts) {
     if (!keepMulti) { S.multi.clear(); if (id) S.multi.add(id); }
     setTimeout(drawColliders, 0); renderOutliner(); renderBpPanel();
     if (gizmo) { const r = id ? world.objects.get(id) : null; if (r && S.tool === 'select') { gizmo.attach(r); gizmo.setMode(S.gizmoMode); } else gizmo.detach(); }
+    S.splinePt = -1; drawSplineHandles();
     renderInspector();
   }
+  ED.drawSplineHandles = () => drawSplineHandles();
   function onGizmoChange() {
     const o = objById(S.selectedId), r = world.objects.get(S.selectedId); if (!o || !r) return;
+    if (gizmo.object && gizmo.object.userData.mfSplinePt != null && o.t === 'spline') {
+      const h = gizmo.object, i = h.userData.mfSplinePt; if (!o.sp.pts[i]) return;
+      if (o.g) h.position.y = world.heightAt(h.position.x, h.position.z);
+      o.sp.pts[i] = [h.position.x - o.p[0], h.position.y - o.p[1], h.position.z - o.p[2]];
+      world.refreshObject(o); drawSplineHandles(true); setDirty(true); renderInspector(); return;
+    }
     if (gizmo.mode === 'translate' && o.g) {
       if (gizmo.axis === 'Y') o.g = false;      // lifting it = they want it off the ground
       else r.position.y = world.heightAt(r.position.x, r.position.z);
     }
     o.p = [r.position.x, r.position.y, r.position.z]; o.r = [r.rotation.x, r.rotation.y, r.rotation.z]; o.s = [r.scale.x, r.scale.y, r.scale.z];
+    if (o.t === 'spline') { world.refreshObject(o); drawSplineHandles(true); }   // grounded pieces re-read the terrain under the moved curve
     world.updateCollider(o.id); drawColliders(); drawTriggerRing();
     setDirty(true); renderInspector();
   }
   function regroundAll() {
-    S.map.objects.forEach(o => { if (o.g) { o.p[1] = world.heightAt(o.p[0], o.p[2]); const r = world.objects.get(o.id); if (r) r.position.y = o.p[1]; } });
+    S.map.objects.forEach(o => { if (o.g) { o.p[1] = world.heightAt(o.p[0], o.p[2]); const r = world.objects.get(o.id); if (r) r.position.y = o.p[1]; } if (o.t === 'spline' && o.g !== false) world.refreshObject(o); });
+    drawSplineHandles(true);
     world.updateAllColliders(); drawColliders();
   }
   function selectedIds() { return S.multi.size > 1 ? Array.from(S.multi).filter(objById) : (S.selectedId && objById(S.selectedId) ? [S.selectedId] : []); }
@@ -695,6 +719,137 @@ export async function openEditor(opts) {
     const made = ids.map(id => { const o = objById(id); const c = clone(o); c.id = uid('o_'); c.p[0] += 1.5; c.p[2] += 1.5; if (c.g) c.p[1] = world.heightAt(c.p[0], c.p[2]); S.map.objects.push(c); world.addObject(c); return c.id; });
     select(made[0]); made.forEach(id => S.multi.add(id)); endObjectEdit(); renderStats(); renderInspector();
   }
+
+  /* ═══ SPLINES ═══ — draw a curve on the ground, a mesh follows it (mapforge.spline.js).
+     Drawing: Library → Splines picks a preset, every ground click adds a point,
+     Enter / double-click / clicking the first point finishes. Editing: a selected
+     spline shows gold handles; click one and the gizmo moves that point. Handles
+     live in WORLD space (scene root) so the gizmo can drive them directly. */
+  function splineSrcFromPick() {
+    if (S.propId === 'glb' && S.assetId) return { t: 'glb', a: S.assetId };
+    if (S.propId && S.propId !== 'spline' && S.propId !== 'prefab' && PROP_BY_ID[S.propId] && !PROP_BY_ID[S.propId].marker && !PROP_BY_ID[S.propId].fxKind) return Object.assign({ t: S.propId }, S.propTint && PROP_BY_ID[S.propId].tint ? { c: S.propTint } : {});
+    return S.lastSrc || null;
+  }
+  function splineDraftAdd(p) {
+    const preset = SPLINE_PRESET_BY_ID[S.splinePreset] || SPLINE_PRESETS[0];
+    if (!splineDraft) splineDraft = { preset, pts: [] };
+    if (splineDraft.pts.length >= 3) { const f = splineDraft.pts[0]; if (Math.hypot(f[0] - p.x, f[2] - p.z) < Math.max(0.8, S.map.terrain.cell * 0.6)) { splineDraftFinish(true); return; } }   // clicking the first point closes the loop
+    splineDraft.pts.push([p.x, world.heightAt(p.x, p.z), p.z]);
+    if (splineDraft.pts.length > 200) { splineDraftFinish(false); return; }
+    drawSplineDraft(); renderHud();
+  }
+  function splineDraftCancel() { splineDraft = null; drawSplineDraft(); renderHud(); }
+  function splineDraftFinish(closed) {
+    const d = splineDraft; splineDraft = null; drawSplineDraft();
+    if (!d || d.pts.length < 2) { toast('A spline needs at least two points.'); return null; }
+    const pr = d.preset, o0 = d.pts[0];
+    const sp = { pts: d.pts.map(q => [q[0] - o0[0], q[1] - o0[1], q[2] - o0[2]]), closed: !!closed, mode: pr.mode, gap: pr.gap, w: pr.w, tension: 0.5 };
+    if (pr.mode === 'mesh') { sp.deform = pr.deform !== false; sp.stretch = pr.stretch !== false; }
+    if (pr.mode === 'scatter') { sp.jitter = pr.jitter == null ? 0.3 : pr.jitter; sp.align = !!pr.align; sp.seed = (Math.random() * 1e9) | 0; }
+    if (pr.mode === 'terrain') { sp.paint = pr.paint; sp.dy = pr.dy || 0; }
+    if (pr.mode !== 'terrain') { sp.src = pr.src ? Object.assign({}, pr.src) : (S.lastSrc || { t: 'placeholder' }); if (!pr.src && !S.lastSrc) toast('Custom spline: pick a prop or model in the Library, then "Use library pick" in the inspector.', 4200); }
+    const o = { id: uid('o_'), t: 'spline', p: [o0[0], o0[1], o0[2]], r: [0, 0, 0], s: [1, 1, 1], g: true, n: pr.label, sp: normalizeSpline(sp) };   // through the schema: presets omit fields their mode does not use
+    if (S.folderId && folderById(S.folderId)) o.f = S.folderId;
+    beginObjectEdit(); S.map.objects.push(o); world.addObject(o); endObjectEdit();
+    setTool('select'); select(o.id); renderStats();
+    toast(pr.label + ' — ' + sp.pts.length + ' points. Drag the gold handles to reshape it.', 3000);
+    return o;
+  }
+  function splineLineGeo(ptsWorld, closed) {
+    const c = sampleSpline(ptsWorld, closed, 0.5, 0.5);
+    const arr = new Float32Array(c.pts.length * 3);
+    c.pts.forEach((q, i) => { arr[i * 3] = q.x; arr[i * 3 + 1] = world.heightAt(q.x, q.z) + 0.15; arr[i * 3 + 2] = q.z; });
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(arr, 3)); return g;
+  }
+  function clearSplineUi(keepHandles) {
+    if (splineH.line) { splineG.remove(splineH.line); splineH.line.geometry.dispose(); splineH.line = null; }
+    if (!keepHandles) { splineH.handles.forEach(h => splineG.remove(h)); splineH.handles = []; }
+  }
+  function drawSplineDraft() {
+    if (splineH.draft) { splineG.remove(splineH.draft); splineH.draft.traverse(m => { if (m.geometry) m.geometry.dispose(); }); splineH.draft = null; }
+    if (!splineDraft || !splineDraft.pts.length) return;
+    const g = new THREE.Group();
+    splineDraft.pts.forEach((q, i) => { const m = new THREE.Mesh(new THREE.SphereGeometry(i === 0 ? 0.45 : 0.3, 10, 8), handleMat(i === 0 ? 0x5fd38a : 0xd4af37)); m.renderOrder = 21; m.position.set(q[0], q[1] + 0.2, q[2]); g.add(m); });
+    if (splineDraft.pts.length > 1) { const ln = new THREE.Line(splineLineGeo(splineDraft.pts, false), new THREE.LineBasicMaterial({ color: 0xffe9a8, depthTest: false, transparent: true, opacity: 0.95 })); ln.renderOrder = 20; g.add(ln); }
+    splineH.draft = g; splineG.add(g);
+  }
+  const handleMats = {}; function handleMat(c) { return handleMats[c] || (handleMats[c] = new THREE.MeshBasicMaterial({ color: c, depthTest: false, transparent: true, opacity: 0.95 })); }
+  function drawSplineHandles(reposition) {
+    const o = objById(S.selectedId);
+    const show = !!o && o.t === 'spline' && !S.playing && S.tool === 'select';
+    if (!show) { clearSplineUi(false); return; }
+    const wp = o.sp.pts.map(q => [q[0] + o.p[0], q[1] + o.p[1], q[2] + o.p[2]]);
+    if (!reposition || splineH.handles.length !== wp.length) {
+      clearSplineUi(false);
+      wp.forEach((q, i) => { const m = new THREE.Mesh(new THREE.SphereGeometry(0.32, 12, 10), handleMat(0xd4af37)); m.userData.mfSplinePt = i; m.renderOrder = 21; splineG.add(m); splineH.handles.push(m); });
+    } else clearSplineUi(true);
+    splineH.handles.forEach((m, i) => { const q = wp[i]; m.position.set(q[0], o.g ? world.heightAt(q[0], q[2]) : q[1], q[2]); m.material = handleMat(i === S.splinePt ? 0x4aa3ff : i === 0 ? 0x5fd38a : 0xd4af37); });
+    splineH.line = new THREE.Line(splineLineGeo(wp, o.sp.closed), new THREE.LineBasicMaterial({ color: 0xffe9a8, depthTest: false, transparent: true, opacity: 0.8 })); splineH.line.renderOrder = 20; splineG.add(splineH.line);
+  }
+  function splineCommit(o, fn) { beginObjectEdit(); fn(); world.refreshObject(o); endObjectEdit(); setDirty(true); drawSplineHandles(true); renderInspector(); }
+  function splineInsertPoint(o) {
+    const n = o.sp.pts.length, i = S.splinePt >= 0 ? S.splinePt : n - 1, a = o.sp.pts[i], b = o.sp.pts[(i + 1) % n];
+    let q;
+    if (i < n - 1 || o.sp.closed) q = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
+    else { const pr = o.sp.pts[i - 1] || [a[0] - 3, a[1], a[2]]; const dx = a[0] - pr[0], dz = a[2] - pr[2], L = Math.hypot(dx, dz) || 1; q = [a[0] + dx / L * 3, a[1], a[2] + dz / L * 3]; }
+    if (o.g) q[1] = world.heightAt(q[0] + o.p[0], q[2] + o.p[2]) - o.p[1];
+    splineCommit(o, () => { o.sp.pts.splice(i + 1, 0, q); }); S.splinePt = i + 1; drawSplineHandles(true);
+    if (gizmo && splineH.handles[S.splinePt]) gizmo.attach(splineH.handles[S.splinePt]);
+    renderInspector();
+  }
+  function splineDeletePoint() {
+    const o = objById(S.selectedId); if (!o || o.t !== 'spline' || S.splinePt < 0) return;
+    if (o.sp.pts.length <= 2) { toast('A spline keeps at least two points — delete the object instead.'); return; }
+    const i = S.splinePt; S.splinePt = -1; if (gizmo) gizmo.attach(world.objects.get(o.id));
+    splineCommit(o, () => { o.sp.pts.splice(i, 1); });
+  }
+  function splineApplyTerrain(o) {
+    const before = world.terrain.snapshot();
+    const n = applySplineToTerrain(world.terrain, o);
+    if (!n) return;
+    pushUndo({ type: 'terrain', before, after: world.terrain.snapshot() });
+    regroundAll(); setDirty(true); world.navInvalidate(); drawNav(); renderTerrainTab();
+    toast('Terrain shaped under the spline (undo with Ctrl+Z).', 2600);
+  }
+  function renderSplineSection(o) {
+    const sp = o.sp; const lbl = (src) => src ? (src.t === 'glb' ? ((S.map.assets.find(a => a.id === src.a) || {}).label || 'model') : ((PROP_BY_ID[src.t] || {}).label || src.t)) : '—';
+    const pick = splineSrcFromPick();
+    const opt = (v, cur, lb) => '<option value="' + v + '"' + (String(v) === String(cur) ? ' selected' : '') + '>' + esc(lb == null ? v : lb) + '</option>';
+    return `<div class="mf-spline"><div class="mf-row" style="margin-bottom:5px"><label>Spline</label><span class="st">〰️ ${sp.pts.length} points · ${sp.closed ? 'loop' : 'open'}</span></div>
+      <div class="mf-row"><label>Mode</label><select id="mf-sp-mode">${SPLINE_MODES.map(m => opt(m, sp.mode, { mesh: 'Mesh — repeat & bend', scatter: 'Scatter — drop along', terrain: 'Terrain — shape the ground' }[m])).join('')}</select></div>
+      ${sp.mode !== 'terrain' ? `<div class="mf-row"><label>Source</label><div style="flex:1;color:#cfc7ad;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(lbl(sp.src))}</div>${pick ? '<button id="mf-sp-usepick" title="Use what the Library has picked">⇄ ' + esc(lbl(pick)) + '</button>' : ''}</div>` : ''}
+      <div class="mf-row"><label>${sp.mode === 'mesh' ? 'Piece length' : sp.mode === 'scatter' ? 'Spacing' : 'Sample'}</label><input type="range" id="mf-sp-gap" min="0.2" max="30" step="0.1" value="${sp.gap}"><span class="v" id="mf-sp-gap-v">${sp.gap.toFixed(1)}m</span></div>
+      <div class="mf-row"><label>Width</label><input type="range" id="mf-sp-w" min="0" max="20" step="0.1" value="${sp.w}"><span class="v" id="mf-sp-w-v">${sp.w.toFixed(1)}m</span></div>
+      ${sp.mode === 'mesh' ? `<div class="mf-row"><label>Bend</label><input type="checkbox" id="mf-sp-deform" ${sp.deform ? 'checked' : ''}><span class="mf-hint" style="margin:0">deform the mesh along the curve (off = rigid pieces)</span></div>
+        <div class="mf-row"><label>Stretch</label><input type="checkbox" id="mf-sp-stretch" ${sp.stretch ? 'checked' : ''}><span class="mf-hint" style="margin:0">fit a whole number of pieces exactly</span></div>
+        <div class="mf-row"><label>Forward</label><select id="mf-sp-axis">${opt('', sp.axis || '', 'auto (longer side)')}${opt('x', sp.axis || '', 'X')}${opt('z', sp.axis || '', 'Z')}</select></div>` : ''}
+      ${sp.mode === 'scatter' ? `<div class="mf-row"><label>Jitter</label><input type="range" id="mf-sp-jitter" min="0" max="1" step="0.05" value="${sp.jitter}"><span class="v" id="mf-sp-jitter-v">${Math.round(sp.jitter * 100)}%</span></div>
+        <div class="mf-row"><label>Align</label><input type="checkbox" id="mf-sp-align" ${sp.align ? 'checked' : ''}><span class="mf-hint" style="margin:0">face along the curve (off = random yaw)</span></div>
+        <div class="mf-row"><label>Seed</label><button id="mf-sp-reseed" style="flex:1">🎲 Reshuffle</button></div>` : ''}
+      ${sp.mode === 'terrain' ? `<div class="mf-row"><label>Paint</label><select id="mf-sp-paint">${PAINT.map((p, i) => opt(i, sp.paint, p.label)).join('')}</select></div>
+        <div class="mf-row"><label>Depth</label><input type="range" id="mf-sp-dy" min="-6" max="6" step="0.1" value="${sp.dy}"><span class="v" id="mf-sp-dy-v">${sp.dy >= 0 ? '+' : ''}${sp.dy.toFixed(1)}m</span></div>` : ''}
+      <div class="mf-row"><label>Tension</label><input type="range" id="mf-sp-tension" min="0" max="1" step="0.05" value="${sp.tension}"><span class="v" id="mf-sp-tension-v">${sp.tension.toFixed(2)}</span></div>
+      <div class="mf-row"><label>Loop</label><input type="checkbox" id="mf-sp-closed" ${sp.closed ? 'checked' : ''}><span class="mf-hint" style="margin:0">join the last point to the first</span></div>
+      <div class="mf-btns"><button id="mf-sp-add">＋ Add point${S.splinePt >= 0 ? ' after #' + (S.splinePt + 1) : ''}</button>${S.splinePt >= 0 ? '<button id="mf-sp-del" class="danger">－ Delete point #' + (S.splinePt + 1) + '</button>' : ''}<button id="mf-sp-terrain" class="${sp.mode === 'terrain' ? 'primary' : ''}">⛰ Apply to terrain</button></div>
+      <p class="mf-hint" style="margin:6px 0 0">Click a gold handle and drag the gizmo to reshape. ${sp.mode === 'terrain' ? 'Apply flattens the ground to the curve and paints the layer under it — an ordinary terrain edit, undoable.' : 'Apply flattens the ground under the curve so the pieces sit in it, not on it.'} Splines never collide.</p></div>`;
+  }
+  function wireSplineSection(box, o) {
+    const sp = o.sp; const q = (id) => box.querySelector('#' + id);
+    const live = (id, fn, fmt) => { const el = q(id); if (!el) return; el.oninput = () => { fn(parseFloat(el.value)); world.refreshObject(o); drawSplineHandles(true); const v = q(id + '-v'); if (v && fmt) v.textContent = fmt(parseFloat(el.value)); }; el.onpointerdown = () => beginObjectEdit(); el.onchange = () => { endObjectEdit(); setDirty(true); }; };
+    const mode = q('mf-sp-mode'); if (mode) mode.onchange = () => splineCommit(o, () => { const m = mode.value; sp.mode = m; if (m === 'mesh') { if (sp.deform == null) sp.deform = true; if (sp.stretch == null) sp.stretch = true; } if (m === 'scatter') { if (sp.jitter == null) sp.jitter = 0.3; if (sp.align == null) sp.align = false; if (sp.seed == null) sp.seed = (Math.random() * 1e9) | 0; } if (m !== 'terrain' && !sp.src) sp.src = splineSrcFromPick() || { t: 'placeholder' }; if (m === 'terrain') { if (sp.paint == null) sp.paint = 2; if (sp.dy == null) sp.dy = 0; } });
+    const up = q('mf-sp-usepick'); if (up) up.onclick = () => splineCommit(o, () => { const src = splineSrcFromPick(); if (src) sp.src = src; });
+    live('mf-sp-gap', v => { sp.gap = v; }, v => v.toFixed(1) + 'm'); live('mf-sp-w', v => { sp.w = v; }, v => v.toFixed(1) + 'm');
+    live('mf-sp-jitter', v => { sp.jitter = v; }, v => Math.round(v * 100) + '%'); live('mf-sp-dy', v => { sp.dy = v; }, v => (v >= 0 ? '+' : '') + v.toFixed(1) + 'm'); live('mf-sp-tension', v => { sp.tension = v; }, v => v.toFixed(2));
+    const cb = (id, fn) => { const el = q(id); if (el) el.onchange = () => splineCommit(o, () => fn(el.checked)); };
+    cb('mf-sp-deform', v => { sp.deform = v; }); cb('mf-sp-stretch', v => { sp.stretch = v; }); cb('mf-sp-align', v => { sp.align = v; }); cb('mf-sp-closed', v => { sp.closed = v; });
+    const ax = q('mf-sp-axis'); if (ax) ax.onchange = () => splineCommit(o, () => { if (ax.value) sp.axis = ax.value; else delete sp.axis; });
+    const pt = q('mf-sp-paint'); if (pt) pt.onchange = () => splineCommit(o, () => { sp.paint = +pt.value; });
+    const rs = q('mf-sp-reseed'); if (rs) rs.onclick = () => splineCommit(o, () => { sp.seed = (Math.random() * 1e9) | 0; });
+    const ad = q('mf-sp-add'); if (ad) ad.onclick = () => splineInsertPoint(o);
+    const dl = q('mf-sp-del'); if (dl) dl.onclick = splineDeletePoint;
+    const tr = q('mf-sp-terrain'); if (tr) tr.onclick = () => splineApplyTerrain(o);
+  }
+  ED.spline = { get draft() { return splineDraft; }, add: splineDraftAdd, finish: splineDraftFinish, cancel: splineDraftCancel, insert: () => { const o = objById(S.selectedId); if (o && o.t === 'spline') splineInsertPoint(o); }, deletePoint: splineDeletePoint, applyTerrain: () => { const o = objById(S.selectedId); if (o && o.t === 'spline') splineApplyTerrain(o); }, handles: () => splineH.handles, srcFromPick: splineSrcFromPick };
 
   /* ═══ PREFABS ═══ — Unity's prefab: a definition, many instances, edit one → all follow. */
   const SHELF_KEY = 'mf_prefabs_v1';
@@ -866,7 +1021,7 @@ export async function openEditor(opts) {
   /* placement ghost — a see-through preview under the cursor */
   function refreshGhost() {
     if (ghost) { scene.remove(ghost); ghost = null; }
-    if (!(S.tool === 'place' || S.tool === 'scatter')) return;
+    if (!(S.tool === 'place' || S.tool === 'scatter') || S.propId === 'spline') return;
     const g = (S.propId === 'glb' || S.propId === 'prefab') ? buildProp(THREE, 'placeholder') : buildProp(THREE, S.propId, S.propTint);
     g.traverse(o => { if (o.isMesh) { o.material = o.material.clone(); o.material.transparent = true; o.material.opacity = 0.45; o.material.depthWrite = false; o.castShadow = false; } });
     if (S.propId === 'glb') { const f = assetFit.get(S.assetId); if (f) g.scale.setScalar(f); }
@@ -952,6 +1107,8 @@ export async function openEditor(opts) {
       if (S.rmb && ['w', 'a', 's', 'd', 'q', 'e', 'shift'].includes(k) && !mod) { fly.keys[k] = true; if (k !== 'shift') e.preventDefault(); return; }
       if (!mod) { switch (k) { case 'q': setTool('select'); e.preventDefault(); return; case 'w': setGizmoMode('translate'); e.preventDefault(); return; case 'e': setGizmoMode('rotate'); e.preventDefault(); return; case 'r': setGizmoMode('scale'); e.preventDefault(); return; case 'end': dropSelected(); e.preventDefault(); return; } }
     } else if (['w', 'a', 's', 'd', 'q', 'e', 'shift'].includes(k) && !mod) { fly.keys[k] = true; if (k !== 'shift') e.preventDefault(); return; }
+    if (splineDraft) { if (k === 'enter') { splineDraftFinish(false); e.preventDefault(); return; } if (k === 'escape') { splineDraftCancel(); e.preventDefault(); return; } if (k === 'backspace' || k === 'delete') { splineDraft.pts.pop(); if (!splineDraft.pts.length) splineDraftCancel(); else drawSplineDraft(); e.preventDefault(); return; } }
+    if (S.splinePt >= 0 && (k === 'delete' || k === 'backspace')) { splineDeletePoint(); e.preventDefault(); return; }
     switch (k) {
       case '1': setTool('select'); break; case '2': setTool('sculpt'); break; case '3': setTool('paint'); break;
       case '4': setTool('place'); break; case '5': setTool('scatter'); break; case '6': setTool('erase'); break;
@@ -1080,7 +1237,7 @@ export async function openEditor(opts) {
     const fld = S.folderId && folderById(S.folderId);
     $('#mf-hud-tool').innerHTML = '<b>' + esc(tool) + '</b>' + (S.tool === 'sculpt' || S.tool === 'paint' || S.tool === 'scatter' ? ' · radius ' + b.radius.toFixed(1) + 'm' : '') + (S.snap ? ' · snap' : '') + (fld && (S.tool === 'place' || S.tool === 'scatter') ? ' · into 📁 ' + esc(fld.name) : '');
     const gk = S.hotkeys === 'unreal' ? '<b>W/E/R</b> move/rotate/scale · <b>RMB+WASD</b> fly' : '<b>T/R/C</b> move/rotate/scale · <b>WASD</b> fly';
-    $('#mf-hud-help').innerHTML = { select: 'Click an object · ' + gk + ' · <b>F</b> focus · <b>Del</b> remove · <b>Ctrl+D</b> duplicate', sculpt: 'Drag to raise · <b>Shift</b> lower · <b>Ctrl</b> smooth · <b>Alt</b> flatten · <b>[ ]</b> radius', paint: 'Drag to paint the selected layer · <b>[ ]</b> radius', place: 'Click the ground to place · pick a prop in the Library', scatter: 'Drag to scatter several props · <b>[ ]</b> radius', erase: 'Click an object to remove it' }[S.tool];
+    $('#mf-hud-help').innerHTML = { select: 'Click an object · ' + gk + ' · <b>F</b> focus · <b>Del</b> remove · <b>Ctrl+D</b> duplicate', sculpt: 'Drag to raise · <b>Shift</b> lower · <b>Ctrl</b> smooth · <b>Alt</b> flatten · <b>[ ]</b> radius', paint: 'Drag to paint the selected layer · <b>[ ]</b> radius', place: S.propId === 'spline' ? 'Click the ground to add points · <b>Enter</b> or double-click finishes · click the first point to close a loop · <b>Backspace</b> removes the last · <b>Esc</b> cancels' : 'Click the ground to place · pick a prop in the Library', scatter: 'Drag to scatter several props · <b>[ ]</b> radius', erase: 'Click an object to remove it' }[S.tool];
   }
   function propLabel() { if (S.propId === 'glb') { const a = S.map.assets.find(x => x.id === S.assetId); return a ? a.label : 'model'; } if (S.propId === 'prefab') { const p = prefabById(S.prefabId); return p ? '🧱 ' + p.name : 'prefab'; } return (PROP_BY_ID[S.propId] || {}).label || S.propId; }
   function renderBrush() {
@@ -1149,11 +1306,11 @@ export async function openEditor(opts) {
   }
   function invalidatePrefabThumb(id) { const th = thumbsRenderer(); if (!th) return; Array.from(th.cache.keys()).filter(k => k.startsWith('prefab:' + id + ':') || k.startsWith('shelf:' + id + ':')).forEach(k => th.invalidate(k)); }
   function rebuildIndex() {
-    libIndex = assetsMod.buildIndex({ props: PROP_CATALOG, assets: S.map.assets, project: projectLib || [], prefabs: S.map.prefabs || [], shelf: shelfList(), sounds: S.map.sounds || [], projectSounds: projectSounds || [] });
+    libIndex = assetsMod.buildIndex({ props: PROP_CATALOG, assets: S.map.assets, project: projectLib || [], prefabs: S.map.prefabs || [], shelf: shelfList(), sounds: S.map.sounds || [], projectSounds: projectSounds || [], splines: SPLINE_PRESETS });
     return libIndex;
   }
   function entryByKey(k) { return libIndex.find(e => e.key === k) || null; }
-  const KIND_CATS = { Models: ['model', 'project'], Prefabs: ['prefab', 'shelf'], Sounds: ['sound', 'psound'] };
+  const KIND_CATS = { Models: ['model', 'project'], Prefabs: ['prefab', 'shelf'], Sounds: ['sound', 'psound'], Splines: ['spline'] };
   function libFilters() {
     const f = {};
     if (libCat === '★') f.fav = prefs.favs;
@@ -1169,9 +1326,10 @@ export async function openEditor(opts) {
   function pickEntry(e) {
     if (!e) return;
     libSel = e.key; prefs.touch(e.key);
-    if (e.kind === 'prop') { S.propId = e.id; wantPlace(); }
-    else if (e.kind === 'model') { S.propId = 'glb'; S.assetId = e.id; wantPlace(); }
-    else if (e.kind === 'project') { const inMap = S.map.assets.find(a => a.url === e.url); if (inMap) { S.propId = 'glb'; S.assetId = inMap.id; } else addAsset(e.url, e.label || e.id, { anims: e.ref.anims }); if (S.assetId) { libSel = 'model:' + S.assetId; prefs.touch(libSel); } wantPlace(); }
+    if (e.kind === 'prop') { S.propId = e.id; if (!e.ref.marker && !e.ref.fxKind) S.lastSrc = Object.assign({ t: e.id }, S.propTint && e.ref.tint ? { c: S.propTint } : {}); wantPlace(); }
+    else if (e.kind === 'model') { S.propId = 'glb'; S.assetId = e.id; S.lastSrc = { t: 'glb', a: e.id }; wantPlace(); }
+    else if (e.kind === 'spline') { if (splineDraft) splineDraftCancel(); S.propId = 'spline'; S.splinePreset = e.id; wantPlace(); }
+    else if (e.kind === 'project') { const inMap = S.map.assets.find(a => a.url === e.url); if (inMap) { S.propId = 'glb'; S.assetId = inMap.id; } else addAsset(e.url, e.label || e.id, { anims: e.ref.anims }); if (S.assetId) { libSel = 'model:' + S.assetId; prefs.touch(libSel); S.lastSrc = { t: 'glb', a: S.assetId }; } wantPlace(); }
     else if (e.kind === 'prefab') { S.propId = 'prefab'; S.prefabId = e.id; wantPlace(); }
     else if (e.kind === 'shelf') { shelfImport(e.id); return; }
     else if (e.kind === 'sound') previewSound(e.url);
@@ -1183,6 +1341,7 @@ export async function openEditor(opts) {
     if (e.kind === 'model') return S.propId === 'glb' && S.assetId === e.id;
     if (e.kind === 'project') { const a = S.map.assets.find(x => x.url === e.url); return !!a && S.propId === 'glb' && S.assetId === a.id; }
     if (e.kind === 'prefab') return S.propId === 'prefab' && S.prefabId === e.id;
+    if (e.kind === 'spline') return S.propId === 'spline' && S.splinePreset === e.id;
     return false;
   }
   function cardHtml(e, extraClass) {
@@ -1200,13 +1359,13 @@ export async function openEditor(opts) {
   }
   function renderLibrary() {
     rebuildIndex();
-    const cats = ['All', '★', 'Nature', 'Structures', 'Props', 'Ruins', 'VFX', 'Markers', 'Models', 'Prefabs', 'Sounds'];
+    const cats = ['All', '★', 'Nature', 'Structures', 'Props', 'Ruins', 'VFX', 'Markers', 'Splines', 'Models', 'Prefabs', 'Sounds'];
     $('#mf-cats').innerHTML = cats.map(c => '<button data-cat="' + c + '" class="' + (c === libCat ? 'on' : '') + '" title="' + (c === '★' ? 'Favourites' : c === 'All' ? 'Everything, searchable' : c) + '">' + c + '</button>').join('');
     $$('#mf-cats button').forEach(b => b.onclick = () => { libCat = b.dataset.cat; libTag = ''; renderLibrary(); });
     const qEl = $('#mf-lib-q'); if (qEl && qEl.value !== libQ) qEl.value = libQ;
     const vEl = $('#mf-lib-view'); if (vEl) { vEl.textContent = prefs.view === 'list' ? '☰' : '▦'; vEl.title = prefs.view === 'list' ? 'Switch to grid' : 'Switch to list'; }
     const grid = $('#mf-props'), models = $('#mf-models');
-    const browsing = !!libQ.trim() || libCat === 'All' || libCat === '★' || !!libTag;
+    const browsing = !!libQ.trim() || libCat === 'All' || libCat === '★' || libCat === 'Splines' || !!libTag;
     const show = (id, on) => { const el = $('#' + id); if (el) el.style.display = on ? '' : 'none'; };
     let sbox = $('#mf-search'); if (!sbox) { sbox = document.createElement('div'); sbox.id = 'mf-search'; sbox.className = 'mf-cards'; grid.parentNode.insertBefore(sbox, grid); }
     // recent row — only when idle on a category, never while searching
@@ -1368,6 +1527,7 @@ export async function openEditor(opts) {
       ${pf ? `<div class="mf-pf"><div class="mf-row" style="margin-bottom:5px"><label>Prefab</label><span class="st">📦 ${esc(pf.name)} <small>${pf.objects.length} part${pf.objects.length === 1 ? '' : 's'} · ${S.map.objects.filter(x => x.t === 'prefab' && x.pf === pf.id).length} placed</small></span></div>
         <div class="mf-btns"><button id="mf-pf-edit" class="primary">✎ Edit prefab</button><button id="mf-pf-unpack">⤵ Unpack</button><button id="mf-pf-shelf" title="Keep on this device for other maps">📚 Shelf</button></div>
         <p class="mf-hint" style="margin:6px 0 0">Edit unpacks the pieces here; <b>Apply</b> afterwards rewrites the prefab and every instance follows. Unpack just breaks the link.</p></div>` : (o.t !== 'slot' ? `<div class="mf-pf"><div class="mf-btns"><input type="text" id="mf-pf-name" placeholder="Prefab name" maxlength="60" style="flex:2"><button id="mf-pf-create">📦 Make prefab</button></div>${S.editingPrefab ? '<div class="mf-btns" style="margin-top:6px"><button id="mf-pf-apply" class="primary">⤴ Apply to prefab "' + esc(S.editingPrefab.name) + '"</button><button id="mf-pf-cancel">Stop editing</button></div>' : ''}</div>` : '')}
+      ${o.t === 'spline' ? renderSplineSection(o) : ''}
       ${o.t !== 'slot' ? renderBpSection(o) : ''}
       ${slot ? `<div class="mf-slot"><div class="mf-row" style="margin-bottom:5px"><label>Game slot</label><span class="st">${slot.icon || '🧩'} ${esc(slot.label)} <small>(${esc(o.k)})</small></span></div>
         ${o.t === 'slot' ? '<p class="mf-hint" style="margin:0 0 6px">The game draws its own asset here; move, turn or scale it and the game follows. To swap the asset, pick a prop or model in the Library, then:</p>' : '<p class="mf-hint" style="margin:0 0 6px">Replaced — the game draws <b>' + esc(label) + '</b> in place of its own asset.</p>'}
@@ -1384,7 +1544,7 @@ export async function openEditor(opts) {
         <div class="mf-row"><label>Size</label><input type="range" id="mf-o-fxs" min="0.2" max="6" step="0.1" value="${f.s}"><span class="v" id="mf-o-fxs-v">${f.s.toFixed(1)}×</span></div>
         ${meta.fxKind ? '<div class="mf-row"><label>Tint</label><input type="color" id="mf-o-fxc" value="' + (o.c || '#ff8a1a') + '"><button id="mf-o-fxuntint" style="flex:1">Default colour</button></div>' : ''}
       </div>`; })() : ''}
-      ${(o.t !== 'slot' && !o.t.startsWith('fx_') && !(meta.marker)) ? (() => { const mt = o.mat || {}; return `
+      ${(o.t !== 'slot' && o.t !== 'spline' && !o.t.startsWith('fx_') && !(meta.marker)) ? (() => { const mt = o.mat || {}; return `
       <div class="mf-mat"><div class="mf-row" style="margin-bottom:5px"><label>Material</label><span class="st">🎨 ${o.mat ? 'override' : 'prop default'}</span>${o.mat ? '<button id="mf-o-mat-reset" class="small">Reset</button>' : ''}</div>
         <div class="mf-row"><label>Roughness</label><input type="range" id="mf-o-rough" min="0" max="1" step="0.02" value="${mt.rough == null ? 0.85 : mt.rough}"><span class="v" id="mf-o-rough-v">${(mt.rough == null ? 0.85 : mt.rough).toFixed(2)}</span></div>
         <div class="mf-row"><label>Metalness</label><input type="range" id="mf-o-metal" min="0" max="1" step="0.02" value="${mt.metal == null ? 0 : mt.metal}"><span class="v" id="mf-o-metal-v">${(mt.metal == null ? 0 : mt.metal).toFixed(2)}</span></div>
@@ -1417,6 +1577,7 @@ export async function openEditor(opts) {
     const pfa = box.querySelector('#mf-pf-apply'); if (pfa) pfa.onclick = applyPrefab;
     const pfx = box.querySelector('#mf-pf-cancel'); if (pfx) pfx.onclick = () => { S.editingPrefab = null; renderInspector(); };
     wireBpSection(box, o);
+    if (o.t === 'spline') wireSplineSection(box, o);
     const sr = box.querySelector('#mf-o-slot-replace'); if (sr) sr.onclick = () => replaceSlot(o);
     const ss = box.querySelector('#mf-o-slot-restore'); if (ss) ss.onclick = () => restoreSlot(o);
     const tint = box.querySelector('#mf-o-tint'); if (tint) { tint.oninput = () => { o.c = tint.value; world.refreshObject(o); setDirty(true); }; tint.onpointerdown = () => beginObjectEdit(); tint.onchange = () => endObjectEdit(); box.querySelector('#mf-o-untint').onclick = () => commit(() => { delete o.c; }); }

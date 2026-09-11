@@ -127,7 +127,7 @@ await step('save local → engine.mount runs the blueprint (spin) with a player;
     await new Promise(r => setTimeout(r, 400));
     const root = g.world.objects.get('o_actor'); const rot = root.rotation.y;
     const diag = { playing: g.world.playing, actors: g.world.actors.actors.size, hasBp: !!(g.map.objects.find(o => o.id === 'o_actor') || {}).bp, source: g.source, name: g.map.name, errors: window.__errors.slice() };
-    g.world.update(0.5, g.camera); const rotManual = root.rotation.y;
+    g.world.update(0.5, g.camera); const rotManual = root.rotation.y - rot;   // delta of ONE manual step (the absolute angle depends on how many RAF frames ran)
     const prefabInst = g.map.objects.filter(o => o.t === 'prefab').length;
     g.stop(); host.remove();
     const ov = await MythicMapForge.overlay.forGame('bpgame', { THREE: window.THREE });

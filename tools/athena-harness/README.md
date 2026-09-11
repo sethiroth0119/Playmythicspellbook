@@ -47,6 +47,8 @@ node tools/athena-harness/pw-test11.mjs       # round 11: textured terrain layer
                                               #   tone mapping / exposure, bloom + vignette post pass, Look controls
 node tools/athena-harness/pw-test12.mjs       # round 12: asset browser — index/search/tags, thumbnails (props, models, prefabs),
                                               #           favourites/recents, details panel, legacy category views
+node tools/athena-harness/pw-test13.mjs       # round 13: splines — sampling, mesh bending, scatter, terrain apply, drawing,
+                                              #           handles, .glb sources, normalize, engine build
 ```
 
 Each prints ✔/✘ per step and the page's error list; screenshots land in

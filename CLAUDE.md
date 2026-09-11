@@ -145,4 +145,8 @@ therefore terminate.
   resampled; mesh mode BENDS the source's vertices and merges per material; scatter is seeded; terrain mode
   applies through `terrain.applyBrush` so it is an ordinary undoable edit). Splines never collide and are
   never instanced (catalogue entry `spline`). Editor handles live in world space so the gizmo drives them.
-- Docs: `docs/athena-engine.md`. Tests: `tools/athena-harness/` (`pw-test5.mjs` round 5, `pw-test6.mjs` round 6, `pw-test7.mjs` physics, `pw-test8.mjs` navigation, `pw-test9.mjs` audio, `pw-test10.mjs` performance, `pw-test11.mjs` look, `pw-test12.mjs` asset browser, `pw-test13.mjs` splines).
+- **Round 14 (✎ Edit UI):** `widgets/live-editor.js` edits the running page: rules `{ sel, text, hide, style, attrs }`
+  in a kind `page` doc (`normalizePage` whitelists `PAGE_STYLE_PROPS`, no `url()`, no event attrs); the runtime
+  applies styles as `<style id="aw-pages">` scoped by `body[data-aw-screen]` and text via the mutation sync.
+  `sql/041` widens the kind check; live stays admin-only through the sql/040 trigger. Never let a rule carry raw CSS.
+- Docs: `docs/athena-engine.md`. Tests: `tools/athena-harness/` (`pw-test5.mjs` round 5, `pw-test6.mjs` round 6, `pw-test7.mjs` physics, `pw-test8.mjs` navigation, `pw-test9.mjs` audio, `pw-test10.mjs` performance, `pw-test11.mjs` look, `pw-test12.mjs` asset browser, `pw-test13.mjs` splines, `pw-test14.mjs` live UI editor).

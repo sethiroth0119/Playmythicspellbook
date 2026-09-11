@@ -74,18 +74,66 @@ export function newWidget(opts) {
   root.children.push(newNode('text', { name: 'Title', props: { text: 'New widget', size: 16, weight: '700', align: 'left' } }));
   return {
     v: WIDGET_VERSION, id: opts.id || uid('wg_'), name: opts.name || 'Untitled widget', description: '',
-    kind: opts.kind === 'theme' ? 'theme' : 'widget',
+    kind: opts.kind === 'theme' ? 'theme' : opts.kind === 'page' ? 'page' : 'widget',
     target: { mode: 'none', slot: '', selector: '', place: 'append' },
     vars: {},
-    root: opts.kind === 'theme' ? null : root,
-    graph: { nodes: opts.kind === 'theme' ? [] : [Object.assign(newGraphNode('ev_construct'), { x: 40, y: 40 })], links: [] },
+    root: (opts.kind === 'theme' || opts.kind === 'page') ? null : root,
+    graph: { nodes: (opts.kind === 'theme' || opts.kind === 'page') ? [] : [Object.assign(newGraphNode('ev_construct'), { x: 40, y: 40 })], links: [] },
     theme: { vars: {}, css: '' },
+    page: { screen: opts.screen || '', rules: [] },
     meta: { created: Date.now(), updated: Date.now(), author: opts.author || '' },
   };
 }
 export function newGraphNode(type, x, y) {
   const G = GRAPH_NODES[type] || GRAPH_NODES.log;
   return { id: uid('g_'), type: GRAPH_NODES[type] ? type : 'log', x: x || 40, y: y || 40, props: Object.assign({}, G.props || {}) };
+}
+
+/* ── Page overrides (the live UI editor, round 14) ──
+   A page document is a list of RULES, each aimed at a CSS selector on one
+   screen of the game: replace its text, restyle it, hide it. Styles are
+   emitted as a stylesheet (cheap, survives every re-render); text is written
+   into the element's own text nodes by the runtime's mutation sync. Only
+   these style properties are accepted — a rule can never inject arbitrary
+   CSS or script. */
+export const PAGE_STYLE_PROPS = ['color', 'background', 'background-color', 'font-size', 'font-weight', 'font-family', 'font-style', 'text-transform', 'letter-spacing', 'line-height', 'text-align', 'padding', 'margin', 'border', 'border-color', 'border-radius', 'border-width', 'opacity', 'width', 'height', 'min-width', 'min-height', 'max-width', 'max-height', 'gap', 'box-shadow', 'text-shadow', 'display', 'flex-direction', 'justify-content', 'align-items', 'order', 'position', 'top', 'left', 'right', 'bottom', 'z-index', 'transform', 'cursor', 'overflow', 'visibility', 'filter', 'outline', 'text-decoration', 'white-space'];
+const SAFE_CSS_VALUE = /^[^;{}<>\\]{0,200}$/;
+export function normalizePage(raw) {
+  const out = { screen: '', rules: [] };
+  if (!raw || typeof raw !== 'object') return out;
+  out.screen = String(raw.screen || '').replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 60);
+  const seen = new Set();
+  (Array.isArray(raw.rules) ? raw.rules : []).slice(0, 400).forEach(r => {
+    if (!r || typeof r !== 'object') return;
+    const sel = String(r.sel || '').trim().slice(0, 300); if (!sel || /[{}<]/.test(sel)) return;   // '>' is the child combinator selectorFor emits
+    let id = String(r.id || uid('r_')); if (seen.has(id)) id = uid('r_'); seen.add(id);
+    const rule = { id, sel, label: String(r.label || '').slice(0, 80) };
+    if (typeof r.text === 'string') rule.text = r.text.slice(0, 2000);
+    if (r.hide === true) rule.hide = true;
+    const st = {}; Object.keys(r.style || {}).forEach(k => { const key = String(k).toLowerCase().trim(); const v = String(r.style[k] == null ? '' : r.style[k]).trim(); if (PAGE_STYLE_PROPS.includes(key) && v && SAFE_CSS_VALUE.test(v) && !/expression|url\(|javascript/i.test(v)) st[key] = v.slice(0, 200); });
+    if (Object.keys(st).length) rule.style = st;
+    if (r.attrs && typeof r.attrs === 'object') { const at = {}; Object.keys(r.attrs).slice(0, 10).forEach(k => { const key = String(k).toLowerCase(); if (['title', 'placeholder', 'aria-label', 'href'].includes(key)) { const v = String(r.attrs[k]).slice(0, 500); if (key !== 'href' || /^(\/|#|https?:\/\/)/.test(v)) at[key] = v; } }); if (Object.keys(at).length) rule.attrs = at; }
+    if (!rule.text && !rule.hide && !rule.style && !rule.attrs && r.keep !== true) return;   // an empty rule is noise
+    out.rules.push(rule);
+  });
+  return out;
+}
+/* The stylesheet for a set of page docs. Rules of a doc with a screen only
+   apply while <body data-aw-screen> matches (the runtime keeps that attribute
+   in step with the game's current screen). */
+export function pageCss(docs) {
+  const lines = [];
+  docs.forEach(d => {
+    if (!d || d.kind !== 'page' || !d.page) return;
+    const scope = d.page.screen ? 'body[data-aw-screen="' + d.page.screen + '"] ' : '';
+    d.page.rules.forEach(r => {
+      const decl = [];
+      if (r.style) Object.keys(r.style).forEach(k => decl.push(k + ':' + r.style[k] + ' !important'));
+      if (r.hide) decl.push('display:none !important');
+      if (decl.length) lines.push(scope + r.sel + '{' + decl.join(';') + '}');
+    });
+  });
+  return lines.join('\n');
 }
 
 /* Bring ANY parsed JSON into a valid document; an old or hand-edited file
@@ -97,13 +145,14 @@ export function normalize(raw) {
   d.id = typeof raw.id === 'string' && raw.id ? raw.id : d.id;
   d.name = String(raw.name || d.name).slice(0, 80);
   d.description = String(raw.description || '').slice(0, 1000);
-  d.kind = raw.kind === 'theme' ? 'theme' : 'widget';
+  d.kind = raw.kind === 'theme' ? 'theme' : raw.kind === 'page' ? 'page' : 'widget';
   const t = raw.target || {};
   d.target = { mode: ['none', 'slot', 'selector'].includes(t.mode) ? t.mode : 'none', slot: String(t.slot || '').slice(0, 80), selector: String(t.selector || '').slice(0, 300), place: ['append', 'prepend', 'before', 'after', 'replace', 'contents'].includes(t.place) ? t.place : 'append' };
   d.vars = {};
   Object.keys(raw.vars || {}).slice(0, 200).forEach(k => { const v = raw.vars[k]; const key = String(k).replace(/[^A-Za-z0-9_]/g, '').slice(0, 40); if (!key) return; d.vars[key] = (v && typeof v === 'object') ? { type: ['number', 'string', 'bool'].includes(v.type) ? v.type : 'string', value: v.value } : { type: typeof v === 'number' ? 'number' : typeof v === 'boolean' ? 'bool' : 'string', value: v }; });
   const seen = new Set();
-  d.root = d.kind === 'theme' ? null : (normalizeNode(raw.root, seen, 0) || base.root);
+  d.root = (d.kind === 'theme' || d.kind === 'page') ? null : (normalizeNode(raw.root, seen, 0) || base.root);
+  d.page = normalizePage(raw.page);
   const g = raw.graph || {};
   const gids = new Set();
   d.graph.nodes = (Array.isArray(g.nodes) ? g.nodes : []).map(n => { if (!n || !GRAPH_NODES[n.type]) return null; const id = String(n.id || uid('g_')); if (gids.has(id)) return null; gids.add(id); return { id, type: n.type, x: num(n.x, 0), y: num(n.y, 0), props: Object.assign({}, GRAPH_NODES[n.type].props || {}, plainProps(n.props)) }; }).filter(Boolean).slice(0, 400);
@@ -220,4 +269,19 @@ function applyFilters(inner, scope) {
   let v = evalExpr(parts[0], scope);
   for (let k = 1; k < parts.length; k++) { const [name, arg] = parts[k].trim().split(':'); const f = FILTERS[name.trim()]; if (f) v = f(v, arg); }
   return v;
+}
+
+/* A stable-ish CSS selector for a live element (ids, classes, data attrs, nth-of-type as a last resort). Shared by the designer's picker and the live UI editor. */
+export function selectorFor(el) {
+  if (el.id && !/\d{4,}/.test(el.id)) return '#' + CSS.escape(el.id);
+  const parts = []; let cur = el, hops = 0;
+  while (cur && cur.nodeType === 1 && cur !== document.body && hops++ < 5) {
+    let s = cur.tagName.toLowerCase();
+    if (cur.id && !/\d{4,}/.test(cur.id)) { parts.unshift('#' + CSS.escape(cur.id)); break; }
+    const cls = Array.from(cur.classList).filter(c => !/^(is-|on$|active|hover|aw-)/.test(c)).slice(0, 2); if (cls.length) s += '.' + cls.map(c => CSS.escape(c)).join('.');
+    const attr = ['data-farm', 'data-act', 'data-fact', 'data-id', 'data-screen'].find(a => cur.hasAttribute(a)); if (attr) s += '[' + attr + '="' + cur.getAttribute(attr).replace(/"/g, '\\"') + '"]';
+    else if (!cls.length) { const sib = Array.from(cur.parentNode ? cur.parentNode.children : []).filter(x => x.tagName === cur.tagName); if (sib.length > 1) s += ':nth-of-type(' + (sib.indexOf(cur) + 1) + ')'; }
+    parts.unshift(s); cur = cur.parentNode;
+  }
+  return parts.join(' > ');
 }

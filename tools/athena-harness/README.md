@@ -49,6 +49,8 @@ node tools/athena-harness/pw-test12.mjs       # round 12: asset browser — inde
                                               #           favourites/recents, details panel, legacy category views
 node tools/athena-harness/pw-test13.mjs       # round 13: splines — sampling, mesh bending, scatter, terrain apply, drawing,
                                               #           handles, .glb sources, normalize, engine build
+node tools/athena-harness/pw-test14.mjs       # round 14: ✎ Edit UI — page rules, runtime text/style/hide, pick layer,
+                                              #           save + live, screen scoping, replace-with-widget, admin gate
 ```
 
 Each prints ✔/✘ per step and the page's error list; screenshots land in

@@ -663,3 +663,40 @@ Limits: splines never collide (one box around a curve would be wrong — put
 a wall prop where the player must be stopped, or bake navigation around the
 generated pieces later); no per-point width or roll; mesh mode bends static
 geometry only (skinned models are placed rigid).
+
+## ✎ Edit UI — the live page editor (round 14)
+
+The Unreal move of opening the screen you are looking at and editing it in
+place. Admin panel → **✎ Edit the game UI (live)** (or `?uiedit=1`, or
+`AthenaUI.openLiveEditor()`). A layer covers the running game: hover
+highlights any element, a click selects it, and the panel on the right edits
+it. Everything is stored as **rules** in a *page* document (kind `page`,
+same store, RLS and admin-only live trigger as widgets — apply
+`sql/041_ui_pages.sql`, which only widens the kind check).
+
+- **What you can change on any element:** its direct **text** (child icons
+  and sub-labels are kept), **hidden**, and a fixed list of look properties —
+  colour, background, font size / weight / case / spacing / alignment,
+  padding, margin, radius, border, opacity, width, height, shadow, order,
+  plus a *More CSS* line for the rest of `PAGE_STYLE_PROPS`. Anything else
+  (`url()`, unknown properties, event attributes, `javascript:` links) is
+  dropped by `normalizePage`. **Replace with a widget…** opens the Widget
+  Designer with the element as its selector target (`place: replace`).
+- **How it applies:** styles and hides become one stylesheet
+  (`<style id="aw-pages">`, `!important`), scoped by `body[data-aw-screen]`
+  which the runtime keeps equal to `MythicBridge.ui.data().screen`; text
+  and attributes are written into the element's own text nodes on every
+  mutation sync, so a re-render that puts the old text back is corrected
+  immediately, and deleting a rule restores the original. Rules match by
+  selector (`selectorFor`: id, classes, data attributes, nth-of-type last),
+  so they survive updates as long as the element keeps its identity.
+- **Workflow:** edit → **Save** (cloud when signed in, else this device) →
+  **★ Live** (admin) → every player on that screen sees it. Reopening on a
+  screen loads its live page doc. Undo/redo (Ctrl+Z), a rules list with
+  per-rule delete and **Reset page**, and *Reset this element*.
+- Non-admins cannot open it (bridge `isAdmin`), and going live is refused
+  by the database trigger regardless of the client.
+
+Limits: one rule per selector per page doc; no drag-to-move or reorder
+beyond CSS `order`; no new elements (build those as widgets); the game's
+own JavaScript behaviour is untouched — a button keeps doing what it did.

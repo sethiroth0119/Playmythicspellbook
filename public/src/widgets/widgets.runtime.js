@@ -17,7 +17,7 @@
    wrapped, a bad expression reads as empty.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-import { WIDGET_TYPES, GRAPH_NODES, interpolate, evalExpr, truthy, walk, findNode, nodeByName } from './widgets.format.js';
+import { WIDGET_TYPES, GRAPH_NODES, interpolate, evalExpr, truthy, walk, findNode, nodeByName , pageCss } from './widgets.format.js';
 import * as api from './widgets.api.js';
 
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -194,7 +194,50 @@ export function applyTheme(doc) {
 }
 
 /* ═══ BOOT: live documents → their targets ═══ */
-const live = { docs: [], mounts: new Map(), themes: new Map(), observer: null, overlayHost: null, ready: false };
+const live = { docs: [], mounts: new Map(), themes: new Map(), observer: null, overlayHost: null, ready: false, pageDraft: null, pageStyle: null };
+/* ── page overrides ── (round 14: the live UI editor). One <style> for every
+   live page doc plus the editor's draft; text rules are written into the
+   matching elements' own text nodes on every sync (re-renders put the
+   original text back, the next sync puts ours back — marked so it is idempotent). */
+function pageDocs() { const docs = live.docs.filter(d => d.kind === 'page'); if (live.pageDraft) return docs.filter(d => d.id !== live.pageDraft.id).concat([live.pageDraft]); return docs; }
+function applyPageCss() {
+  const css = pageCss(pageDocs());
+  if (!live.pageStyle || !live.pageStyle.isConnected) { live.pageStyle = document.createElement('style'); live.pageStyle.id = 'aw-pages'; document.head.appendChild(live.pageStyle); }
+  if (live.pageStyle.textContent !== css) live.pageStyle.textContent = css;
+}
+export function currentScreen() { try { const d = gameData(); return String(d.screen || ''); } catch (e) { return ''; } }
+function syncScreenAttr() { try { const sc = currentScreen(); if (document.body.getAttribute('data-aw-screen') !== sc) document.body.setAttribute('data-aw-screen', sc); } catch (e) {} }
+/* Direct text of an element = its own text nodes (children like icons stay). */
+export function elementText(el) { return Array.from(el.childNodes).filter(n => n.nodeType === 3).map(n => n.nodeValue).join('').trim(); }
+export function setElementText(el, text) {
+  const tn = Array.from(el.childNodes).filter(n => n.nodeType === 3);
+  if (!el.__awOrigText) el.__awOrigText = tn.map(n => n.nodeValue);
+  // keep the node's own leading/trailing whitespace so "<icon> Label" stays spaced
+  if (tn.length) { let done = false; tn.forEach(n => { if (!done && n.nodeValue.trim()) { const m = /^(\s*)[\s\S]*?(\s*)$/.exec(n.nodeValue); n.nodeValue = (m ? m[1] : '') + text + (m ? m[2] : ''); done = true; } else if (done) n.nodeValue = ''; }); if (!done) tn[0].nodeValue = text; }
+  else el.appendChild(document.createTextNode(text));
+}
+function restoreElementText(el) { const orig = el.__awOrigText; if (!orig) return; const tn = Array.from(el.childNodes).filter(n => n.nodeType === 3); tn.forEach((n, i) => { if (i < orig.length) n.nodeValue = orig[i]; else n.nodeValue = ''; }); if (!tn.length && orig.length) el.appendChild(document.createTextNode(orig.join(''))); delete el.__awOrigText; }
+function syncPageText() {
+  const sc = currentScreen(); const marks = new Map();   // el → key applied this pass
+  pageDocs().forEach(d => {
+    if (d.page.screen && d.page.screen !== sc) return;
+    d.page.rules.forEach(r => {
+      if (typeof r.text !== 'string' && !r.attrs) return;
+      let els = []; try { els = Array.from(document.querySelectorAll(r.sel)); } catch (e) { return; }
+      els.forEach(el => {
+        if (el.closest('#aw-root, #aw-live, #mf-root, #aw-picklayer')) return;
+        const key = d.id + ':' + r.id + ':' + (r.text || '') + ':' + JSON.stringify(r.attrs || {});
+        if (typeof r.text === 'string' && (el.getAttribute('data-aw-text') !== key || elementText(el) !== r.text.trim())) { setElementText(el, r.text); }
+        if (r.attrs) Object.keys(r.attrs).forEach(a => { if (el.getAttribute(a) !== r.attrs[a]) { if (!el.__awOrigAttrs) el.__awOrigAttrs = {}; if (!(a in el.__awOrigAttrs)) el.__awOrigAttrs[a] = el.getAttribute(a); el.setAttribute(a, r.attrs[a]); } });
+        el.setAttribute('data-aw-text', key); marks.set(el, key);
+      });
+    });
+  });
+  // elements we touched before whose rule is gone: put the original back
+  try { document.querySelectorAll('[data-aw-text]').forEach(el => { if (marks.has(el)) return; restoreElementText(el); if (el.__awOrigAttrs) { Object.keys(el.__awOrigAttrs).forEach(a => { const v = el.__awOrigAttrs[a]; if (v == null) el.removeAttribute(a); else el.setAttribute(a, v); }); delete el.__awOrigAttrs; } el.removeAttribute('data-aw-text'); }); } catch (e) {}
+}
+export function setPageDraft(doc) { live.pageDraft = doc ? JSON.parse(JSON.stringify(doc)) : null; applyPageCss(); syncScreenAttr(); syncPageText(); }
+export function pageInfo() { return { screen: currentScreen(), docs: pageDocs().map(d => ({ id: d.id, name: d.name, screen: d.page.screen, rules: d.page.rules.length, draft: !!(live.pageDraft && live.pageDraft.id === d.id) })) }; }
 function overlayHost() {
   if (live.overlayHost && live.overlayHost.isConnected) return live.overlayHost;
   const el = document.createElement('div'); el.id = 'aw-overlay'; el.setAttribute('data-athena-slot', 'game.overlay'); document.body.appendChild(el); live.overlayHost = el; return el;
@@ -242,8 +285,9 @@ function sync() {
   clearTimeout(syncT);
   syncT = setTimeout(() => {
     const wanted = new Set();
+    syncScreenAttr(); syncPageText();
     live.docs.forEach(doc => {
-      if (doc.kind === 'theme') return;
+      if (doc.kind === 'theme' || doc.kind === 'page') return;
       if (doc.target.mode === 'none') return;
       targetsFor(doc).forEach(target => { const k = doc.id + '@' + (target.getAttribute('data-aw-host-key') || ''); if (target.getAttribute('data-aw-host-key') && live.mounts.has(k)) { wanted.add(k); return; } attachOne(doc, target); wanted.add(doc.id + '@' + target.getAttribute('data-aw-host-key')); });
     });
@@ -259,7 +303,7 @@ export function setLiveDocs(docs) {
   // widgets: drop mounts of documents no longer live (or changed), sync the rest
   const ids = new Set(docs.map(d => d.id));
   Array.from(live.mounts.keys()).forEach(k => { const m = live.mounts.get(k); const cur = docs.find(d => d.id === m.doc.id); if (!ids.has(m.doc.id) || (cur && JSON.stringify(cur) !== JSON.stringify(m.doc))) detachOne(k); });
-  live.ready = true; overlayHost(); sync();
+  live.ready = true; overlayHost(); applyPageCss(); sync();
 }
 export async function reload() {
   const r = await api.liveAll();

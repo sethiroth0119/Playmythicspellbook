@@ -16,7 +16,7 @@
    global from index.html — data comes through window.MythicBridge.ui.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-import { WIDGET_TYPES, GRAPH_NODES, STYLE_KEYS, ANCHORS, newWidget, newNode, newGraphNode, normalize, serialize, clone, walk, findNode, findParent, uid, interpolate } from './widgets.format.js';
+import { WIDGET_TYPES, GRAPH_NODES, STYLE_KEYS, ANCHORS, newWidget, newNode, newGraphNode, normalize, serialize, clone, walk, findNode, findParent, uid, interpolate , selectorFor } from './widgets.format.js';
 import { render, mount, sampleData, listActions, knownSlots, themeCss, reload as reloadLive } from './widgets.runtime.js';
 import * as api from './widgets.api.js';
 
@@ -46,6 +46,7 @@ export async function openDesigner(opts) {
   else if (opts.id) { const r = await api.load(opts.id, opts.source || 'local'); if (r.ok) { doc = r.doc; S.source = opts.source || 'local'; S.mine = r.mine !== false; } else toast('Could not load: ' + (r.error || 'unknown'), 4000); }
   if (!doc) { const d = api.loadDraft(); if (d) { doc = d; setTimeout(() => toast('Restored your unsaved draft.', 3000), 500); } }
   if (!doc) doc = newWidget({ author: api.displayName(), kind: opts.kind });
+  if (opts.target && typeof opts.target === 'object') doc.target = Object.assign({}, doc.target, opts.target);   // the live UI editor hands over "replace this element"
   if (!ED) return null;
 
   function loadDoc(d, source) {
@@ -318,20 +319,6 @@ export async function openDesigner(opts) {
     const key = (e) => { if (e.key === 'Escape') { e.preventDefault(); done(null); } };
     document.addEventListener('mousemove', move, true); document.addEventListener('click', click, true); document.addEventListener('keydown', key, true);
   }
-  function selectorFor(el) {
-    if (el.id && !/\d{4,}/.test(el.id)) return '#' + CSS.escape(el.id);
-    const parts = []; let cur = el, hops = 0;
-    while (cur && cur.nodeType === 1 && cur !== document.body && hops++ < 5) {
-      let s = cur.tagName.toLowerCase();
-      if (cur.id && !/\d{4,}/.test(cur.id)) { parts.unshift('#' + CSS.escape(cur.id)); break; }
-      const cls = Array.from(cur.classList).filter(c => !/^(is-|on$|active|hover|aw-)/.test(c)).slice(0, 2); if (cls.length) s += '.' + cls.map(c => CSS.escape(c)).join('.');
-      const attr = ['data-farm', 'data-act', 'data-fact', 'data-id', 'data-screen'].find(a => cur.hasAttribute(a)); if (attr) s += '[' + attr + '="' + cur.getAttribute(attr).replace(/"/g, '\\"') + '"]';
-      else if (!cls.length) { const sib = Array.from(cur.parentNode ? cur.parentNode.children : []).filter(x => x.tagName === cur.tagName); if (sib.length > 1) s += ':nth-of-type(' + (sib.indexOf(cur) + 1) + ')'; }
-      parts.unshift(s); cur = cur.parentNode;
-    }
-    return parts.join(' > ');
-  }
-
   /* ═══ PREVIEW ═══ */
   function startPreview() {
     stopPreview(); if (S.doc.kind === 'theme') { toast('Themes preview live as you edit.'); return; }
@@ -347,7 +334,7 @@ export async function openDesigner(opts) {
     const box = $('#aw-lib'); box.innerHTML = '<div class="aw-empty">Loading…</div>';
     const r = await api.listAll(); if (!ED) return;
     $('#aw-storage').textContent = r.cloudOk ? '☁ Cloud on · ' + api.displayName() : r.offline ? '💾 Not signed in — saving on this device' : r.cloudMissing ? '💾 Cloud table not set up (run sql/040_ui_widgets.sql)' : '⚠ ' + (r.error || 'cloud unavailable');
-    box.innerHTML = r.rows.length ? r.rows.map(row => `<div class="aw-lrow ${row.id === S.doc.id ? 'cur' : ''}" data-id="${esc(row.id)}" data-src="${row.source}"><div class="t"><span>${row.kind === 'theme' ? '🎨' : '🧩'}</span><span class="lb">${esc(row.name)}</span>${row.live ? '<span class="tag live">LIVE</span>' : ''}<span class="tag">${row.source}</span>${!row.mine ? '<span class="tag">by ' + esc(row.owner_name || '?') + '</span>' : ''}</div><div class="m">${row.target && row.target.mode && row.target.mode !== 'none' ? esc(row.target.mode + ': ' + (row.target.slot || row.target.selector || '')) : (row.kind === 'theme' ? 'theme' : 'no target')}</div><div class="acts"><button data-act="open">Open</button>${row.mine ? (row.live ? '<button data-act="unlive">Unset live</button>' : '<button data-act="live">★ Set live</button>') + '<button data-act="del" class="danger">Delete</button>' : ''}</div></div>`).join('') : '<div class="aw-empty">Nothing saved yet.</div>';
+    box.innerHTML = r.rows.length ? r.rows.map(row => `<div class="aw-lrow ${row.id === S.doc.id ? 'cur' : ''}" data-id="${esc(row.id)}" data-src="${row.source}"><div class="t"><span>${row.kind === 'theme' ? '🎨' : row.kind === 'page' ? '✎' : '🧩'}</span><span class="lb">${esc(row.name)}</span>${row.live ? '<span class="tag live">LIVE</span>' : ''}<span class="tag">${row.source}</span>${!row.mine ? '<span class="tag">by ' + esc(row.owner_name || '?') + '</span>' : ''}</div><div class="m">${row.target && row.target.mode && row.target.mode !== 'none' ? esc(row.target.mode + ': ' + (row.target.slot || row.target.selector || '')) : (row.kind === 'theme' ? 'theme' : row.kind === 'page' ? 'page rules' : 'no target')}</div><div class="acts"><button data-act="open">Open</button>${row.mine ? (row.live ? '<button data-act="unlive">Unset live</button>' : '<button data-act="live">★ Set live</button>') + '<button data-act="del" class="danger">Delete</button>' : ''}</div></div>`).join('') : '<div class="aw-empty">Nothing saved yet.</div>';
     box.querySelectorAll('.aw-lrow').forEach(el => {
       const id = el.dataset.id, src = el.dataset.src;
       el.querySelector('[data-act="open"]').onclick = async () => { if (S.dirty && !(await confirmDlg('Discard unsaved changes?'))) return; const rr = await api.load(id, src); if (!rr.ok) { toast('Could not open: ' + rr.error, 3600); return; } S.mine = rr.mine !== false; loadDoc(rr.doc, src); api.clearDraft(); renderLibrary(); };

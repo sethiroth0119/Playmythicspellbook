@@ -12,12 +12,15 @@ Toolkit in `tools/gamedev/`, agent (named **Bruce** as of 2026-09-11) in `.claud
 | Node City, city production, dwellings, resonance, node tiers | `econ city` `catalog resources` `map` | `/city-dev` |
 | Corp ops, Just Business, banks, wallets, markets, cars, garage/Aza, Territory Wars | `econ ops\|tax\|parity` `catalog ops\|…` `audit --rule cinder` | `/business-dev` |
 | Supabase | `sql-lint` `audit --rule supabase` | `/db-migration` |
+| ⚒ Athena Engine, Widgets, worlds | `map modules` `audit --rule globals` | — (see `docs/athena-engine.md`) |
 | everything | `map` `audit` `check` | `/find-bugs` `/fix-bug` `/ship-check` |
 
-**"Athena engine":** there is none in this repository. "Athena" is Commander Athena, the
-tutorial narrator, and the Prince Portfolios auctioneer. If an external engine by that name
-is meant, the agent needs a pointer to its docs before it can "know" it — nothing here
-pretends otherwise.
+**⚒ Athena Engine:** it is real, it is ours, and it is in this repository at
+`public/src/mapforge/` (29 modules, ~7,700 lines) with `public/src/widgets/` alongside it.
+It merged at v121v116 on 2026-09-11; `docs/athena-engine.md` is its reference. An earlier
+version of this line said no such engine existed — true only of the branch this agent was
+written on, which predates the merge. **Commander Athena** (tutorial narrator, Prince
+Portfolios auctioneer) is a different thing that shares the name.
 
 ## The problem it solves
 

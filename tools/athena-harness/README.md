@@ -51,6 +51,8 @@ node tools/athena-harness/pw-test13.mjs       # round 13: splines — sampling, 
                                               #           handles, .glb sources, normalize, engine build
 node tools/athena-harness/pw-test14.mjs       # round 14: ✎ Edit UI — page rules, runtime text/style/hide, pick layer,
                                               #           save + live, screen scoping, replace-with-widget, admin gate
+node tools/athena-harness/pw-test15.mjs       # round 15: battle board — v3 ↔ Athena, slotBody props, edits written back,
+                                              #           publish on live, board overlay (extra objects + replacement)
 ```
 
 Each prints ✔/✘ per step and the page's error list; screenshots land in

@@ -26,6 +26,7 @@ assume `window.Foo` exists because `const Foo` does.
 | `/src/city` | `window.MythicCityBridge` |
 | `/src/trading` | `window.MythicTradeBridge` |
 | `/src/resonance/house.camp.js` | `window.MythicHouseBridge` |
+| `/src/battle/battle.athena.js` | `window.MythicBridge.battle` — the v3 battlemap in/out/publish + the board's prop builder (round 15) |
 | `/src/farm` (🐄 Homestead Farm, 3D) | `window.MythicFarmBridge` — state on `Profile.farm`, synced as `__farm__`; its `cloud` sub-object is the only Supabase seam (player lots + corp ranch, `sql/038`). Chrome is Cities: Skylines 2 style (bottom toolbar of icon buttons, one floating panel, HUD weather button opens the Journal). The Shop (`FARM_ECON.shop`) sells timed boosts that EXTEND, never stack; grade-2 goods (`FARM_ECON.premium`, 4 ledger ids, count 28) come only from rare+ breeds |
 
 The farm's economy is pure over a host adapter: `node tools/farm_harness.mjs` drives
@@ -149,4 +150,9 @@ therefore terminate.
   in a kind `page` doc (`normalizePage` whitelists `PAGE_STYLE_PROPS`, no `url()`, no event attrs); the runtime
   applies styles as `<style id="aw-pages">` scoped by `body[data-aw-screen]` and text via the mutation sync.
   `sql/041` widens the kind check; live stays admin-only through the sql/040 trigger. Never let a rule carry raw CSS.
-- Docs: `docs/athena-engine.md`. Tests: `tools/athena-harness/` (`pw-test5.mjs` round 5, `pw-test6.mjs` round 6, `pw-test7.mjs` physics, `pw-test8.mjs` navigation, `pw-test9.mjs` audio, `pw-test10.mjs` performance, `pw-test11.mjs` look, `pw-test12.mjs` asset browser, `pw-test13.mjs` splines, `pw-test14.mjs` live UI editor).
+- **Round 15 (battle board):** `src/battle/battle.athena.js` opens the v3 battlemap as game scene `battle`
+  (3 m per cell; models → slots `bm.<i>` drawn via `buildWorld({ slotBody })` with the board's own builder;
+  paint ↔ terrain keys) and writes it back on `athena:saved` / publishes on `athena:live` through
+  `MythicBridge.battle` (never Forge). `_b3dBuild` adds the Athena overlay at ⅓ scale for what v3 cannot hold.
+  Index-matched slots: one editor at a time.
+- Docs: `docs/athena-engine.md`. Tests: `tools/athena-harness/` (`pw-test5.mjs` round 5, `pw-test6.mjs` round 6, `pw-test7.mjs` physics, `pw-test8.mjs` navigation, `pw-test9.mjs` audio, `pw-test10.mjs` performance, `pw-test11.mjs` look, `pw-test12.mjs` asset browser, `pw-test13.mjs` splines, `pw-test14.mjs` live UI editor, `pw-test15.mjs` battle board).

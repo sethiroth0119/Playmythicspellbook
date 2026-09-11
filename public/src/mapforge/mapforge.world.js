@@ -213,6 +213,7 @@ export function buildWorld(THREE, map, opts) {
   const BUILDABLE = (t) => !!PROP_BY_ID[t] && !PROP_BY_ID[t].marker && !PROP_BY_ID[t].slot && !PROP_BY_ID[t].prefab && !PROP_BY_ID[t].spline && !PROP_BY_ID[t].fxKind;
   function makeBody(o) {
     if (o.t === 'glb') { const body = buildProp(THREE, 'placeholder'); body.userData.mfPending = true; return body; }
+    if (o.t === 'slot' && opts.slotBody) { try { const b = opts.slotBody(o, THREE); if (b) { b.userData.mfSlotBody = true; return b; } } catch (e) {} }   // a game adapter draws its own stand-in (the battle board's props)
     if (o.t === 'spline') return buildSpline(o, { THREE, source: splineSource(o), heightAt: (x, z) => terrain.heightAt(x, z) });
     if (o.t.startsWith('fx_')) return buildProp(THREE, 'fxmarker');
     return buildProp(THREE, o.t, o.c);

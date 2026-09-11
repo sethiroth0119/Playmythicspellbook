@@ -36441,7 +36441,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120y5';
+  window.BUILD_VERSION = 'v120y6';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -102950,6 +102950,32 @@ function _b3dEnabled() {
     return !!(typeof Forge !== 'undefined' && Forge.battleMap3d && Forge.battleMap3d.enabled);
   } catch (e) { return false; }
 }
+/* ⚒ Ask Athena for the live 'battle' scene and lay it over the board. The
+   overlay group is in Athena units (BOARD_ATHENA_SCALE × board units) so it is
+   scaled down here; a board model the admin REPLACED in Athena is hidden and
+   the replacement drawn in its place. Degrades to nothing: no module, no live
+   map, or a build error → the board is exactly as before. */
+const BOARD_ATHENA_SCALE = 3;
+function _b3dAthenaOverlay(scene) {
+  const A = window.AthenaEngine || window.MythicMapForge;
+  if (!A || !A.overlay || typeof A.overlay.forGame !== 'function') return;
+  A.overlay.forGame('battle', { THREE: window.THREE, scene }).then(ov => {
+    if (!ov) return;
+    if (!_B3D.on || _B3D.scene !== scene) { try { ov.dispose(); } catch (e) {} return; }
+    const K = 1 / BOARD_ATHENA_SCALE;
+    ov.group.scale.setScalar(K); scene.add(ov.group);
+    // replaced board props: hide ours, draw the admin's
+    ov.slots().forEach(s => {
+      if (!s || !s.replaced || !/^bm\.(\d+)$/.test(s.o.k)) return;
+      const idx = +s.o.k.slice(3);
+      scene.children.forEach(ch => { if (ch.userData && ch.userData.bmIndex === idx) ch.visible = false; });
+      const rep = ov.buildReplacement(s.o.k); if (!rep) return;
+      rep.position.set(s.p[0] * K, s.p[1] * K, s.p[2] * K); rep.rotation.set(s.r[0], s.r[1], s.r[2]); rep.scale.set(s.s[0] * K, s.s[1] * K, s.s[2] * K);
+      scene.add(rep);
+    });
+    _B3D.athena = ov;
+  }).catch(() => {});
+}
 function _b3dActiveMap() {
   _b3dEnsureLoaded();
   try { if (typeof Forge !== 'undefined' && Forge.battleMap3d && Forge.battleMap3d.active) return Forge.battleMap3d.active; } catch (e) {}
@@ -103127,6 +103153,10 @@ function _b3dBuild(host) {
   // now add the placed 3D models / GLBs (Phase 2 editor output).
   _B3D._glow = [];
   try { _bmPopulateBattleBoard(scene, map); } catch (e) {}
+  // ⚒ Athena Engine overlay (src/battle/battle.athena.js): whatever the admin
+  //    placed on the board inside Athena that the v3 map cannot express
+  //    (extra props, splines, models, replaced board props) — async, guarded.
+  try { _b3dAthenaOverlay(scene); } catch (e) {}
   // 🌋 3D hazard-surface decal layer (one InstancedMesh over the tile grid).
   try { _hzDispose(); } catch (e) {}
   try { _hzBuild(scene, cols, rows); } catch (e) {}
@@ -103151,11 +103181,13 @@ function _b3dBuild(host) {
     if (e) { const pos = e.geo.attributes.position.array; for (let i = 0; i < e.n; i++) { pos[i * 3 + 1] += e.vel[i] * 0.033; if (pos[i * 3 + 1] > 5.2) { pos[i * 3 + 1] = 0; pos[i * 3] = (Math.random() * 2 - 1) * e.HX; pos[i * 3 + 2] = (Math.random() * 2 - 1) * e.HZ; } } e.geo.attributes.position.needsUpdate = true; }
     if (_B3D._glow && _B3D._glow.length) { const tt = now * 0.001; for (const m of _B3D._glow) { if (m.material && m.userData.glow != null) m.material.emissiveIntensity = m.userData.glow * (0.75 + 0.35 * Math.sin(tt * 4 + m.id)); } }
     try { _hzTick(0.033); } catch (e) {}   // 🌋 animate + sync the hazard-surface decals
+    try { if (_B3D.athena) _B3D.athena.update(0.033, camera); } catch (e) {}
     try { renderer.render(scene, camera); } catch (err) { _b3dUnmount(); }
   };
   _B3D.raf = requestAnimationFrame(frame);
 }
 function _b3dUnmount() {
+  try { if (_B3D.athena) { _B3D.athena.dispose(); _B3D.athena = null; } } catch (e) {}
   try { _b3dHudRemove(); } catch (e) {}
   try { _hzDispose(); } catch (e) {}
   if (_B3D.raf) { try { cancelAnimationFrame(_B3D.raf); } catch (e) {} _B3D.raf = 0; }
@@ -104663,8 +104695,8 @@ function _bmPopulateBattleBoard(scene, map){
   try{
     if(!map) return;
     _B3D._glow = _B3D._glow || [];
-    const place=(mesh,m)=>{ mesh.position.set(m.x,0,m.z); mesh.rotation.y=(m.rot||0)*Math.PI/180; mesh.scale.setScalar(m.sc||1); mesh.traverse(o=>{ if(o.isMesh&&o.userData&&o.userData.glow!=null) _B3D._glow.push(o); }); scene.add(mesh); };
-    (map.models||[]).forEach(m=>{ if(m && _BME_PROPS_META[m.t]) place(_bmBuildProp(m.t), m); });
+    const place=(mesh,m,i)=>{ mesh.position.set(m.x,0,m.z); mesh.rotation.y=(m.rot||0)*Math.PI/180; mesh.scale.setScalar(m.sc||1); mesh.userData.bmIndex=i; mesh.traverse(o=>{ if(o.isMesh&&o.userData&&o.userData.glow!=null) _B3D._glow.push(o); }); scene.add(mesh); };   // bmIndex: the Athena overlay hides a model the admin replaced (see _b3dAthenaOverlay)
+    (map.models||[]).forEach((m,i)=>{ if(m && _BME_PROPS_META[m.t]) place(_bmBuildProp(m.t), m, i); });
     (map.glbSlots||[]).forEach(slot=>{
       if(!slot||!slot.url) return;
       const targets=(map.models||[]).filter(m=>m.t===slot.id);
@@ -104675,7 +104707,7 @@ function _bmPopulateBattleBoard(scene, map){
         if(!_B3D.on || _B3D.scene!==scene) return;   // board torn down meanwhile
         const tmpl=_bmNormalizeModel(res.scene);
         const clips=(res.animations&&res.animations.length)?res.animations:tmpl.__animClips;
-        targets.forEach(m=>{ const c=_cs3DCloneModel(tmpl); place(c, m);
+        targets.forEach(m=>{ const c=_cs3DCloneModel(tmpl); place(c, m, (map.models||[]).indexOf(m));
           // ▶ Play the model's baked clips (if any). The alive predicate prunes
           //   the mixer the moment this board scene is torn down.
           if(clips&&clips.length) _cs3DAutoplay(c, clips, { alive: ()=>!!(_B3D.on && _B3D.scene===scene) });
@@ -120276,6 +120308,7 @@ function renderPricingAdmin() {
         <button id="open-map-creator" class="btn-secondary" style="margin-top:0.7rem;width:100%;background:linear-gradient(180deg,#e7c757,#d4af37);color:#1a1206;font-weight:800;border:1px solid #e7c757">⚒ Open Athena Engine</button>
         <div class="small-text ink-dim" style="margin-top:0.5rem">Also reachable at <code>?mapforge=1</code>. Press <strong>H</strong> inside for the controls.</div>
         <div class="small-text ink-dim" style="margin-top:0.7rem">🧩 <strong>Athena Widgets</strong> — the Blueprint-style UI designer: build widgets from a palette, wire an event graph (click → branch → toast / set variable / call a game action), bind any property to live game data (<code>{gems|num}</code>), and target a named slot or any existing element of the game's UI (🎯 pick it) to extend or replace it. Theme documents restyle the whole game through CSS variables. Lives in <code>/src/widgets/</code>; cloud saving needs <code>sql/040_ui_widgets.sql</code>.</div>
+        <button id="open-battle-athena" class="btn-secondary" style="margin-top:0.5rem;width:100%;border:1px solid #e7c757;color:#ffe9a8" title="Edit the live battle board inside Athena Engine: paint terrain, move or replace props, add anything">⚔ Battle board in Athena Engine</button>
         <button id="open-widget-designer" class="btn-secondary" style="margin-top:0.5rem;width:100%;border:1px solid #e7c757;color:#ffe9a8">🧩 Open Widget Designer</button>
         <button id="open-ui-editor" class="btn-secondary" style="margin-top:0.5rem;width:100%;border:1px solid #4aa3ff;color:#dff4ff" title="Click any element of the game and retitle, restyle or hide it — for every player once live">✎ Edit the game UI (live)</button>
         <div class="small-text ink-dim" style="margin-top:0.4rem">Also reachable at <code>?widgets=1</code>. Only an admin can set a widget <strong>live</strong> for every player (the server enforces it).</div>
@@ -121119,6 +121152,9 @@ function renderPricingAdmin() {
   };
 
   // 🗺️ Open the Battlemap Editor (Phase 2) — terrain paint + 3D model placement.
+  // ⚔ Battle board in Athena (src/battle/battle.athena.js registers window.MythicBattleAthena)
+  const baBtn = document.getElementById('open-battle-athena');
+  if (baBtn) baBtn.onclick = () => { try { if (window.MythicBattleAthena && window.MythicBattleAthena.open) window.MythicBattleAthena.open(); else showToast('Athena Engine is still loading — try again in a moment.', 2600); } catch (e) { try { console.warn('[battle-athena] open failed', e); } catch (_) {} } };
   const bmeBtn = document.getElementById('open-battlemap-editor');
   if (bmeBtn) bmeBtn.onclick = () => { try { _bmeOpen(); } catch (e) { try { console.warn('[bme] open failed', e); } catch (_) {} } };
 
@@ -207122,6 +207158,33 @@ try {
        nothing that mutates. Adding a field here is how a new game value
        becomes bindable as {field}. Actions are the only way a widget touches
        the game, and each one goes through the same helpers the UI uses. */
+    /* ⚔ BATTLE BOARD ↔ ⚒ Athena (round 15, src/battle/battle.athena.js). The
+       v3 battlemap document (Forge.battleMap3d.active) in, out, and published;
+       the board's own procedural prop builder so Athena draws the SAME props
+       (both use the r128 global THREE). Every accessor is a function. */
+    battle: {
+      size: () => ({ cols: BOARD_W, rows: BOARD_H }),
+      terrain: () => _BME_TERRAIN, props: () => _BME_PROPS_META, defaultTerrain: () => _BME_DEF_T,
+      scale: () => BOARD_ATHENA_SCALE,
+      getMap: () => { try { return JSON.parse(JSON.stringify(_b3dActiveMap())); } catch (e) { return null; } },
+      setMap: (map) => {
+        try {
+          if (!map || typeof map !== 'object') return false;
+          if (!Forge.battleMap3d || typeof Forge.battleMap3d !== 'object') Forge.battleMap3d = {};
+          Forge.battleMap3d.active = map;
+          try { _b3dPersistNow(); } catch (e) {}
+          try { saveForge(); } catch (e) {}
+          try { if (document.getElementById('bb-frame')) _bbPushEditorMap(); } catch (e) {}
+          try { if (_B3D.on) { _b3dUnmount(); _b3dMount(); } } catch (e) {}
+          return true;
+        } catch (e) { return false; }
+      },
+      publish: async () => { if (typeof cloudPublishCatalog !== 'function') return false; await cloudPublishCatalog(); return true; },
+      buildProp: (key) => { try { return _BME_PROPS_META[key] ? _bmBuildProp(key) : null; } catch (e) { return null; } },
+      boardOpen: () => !!_B3D.on,
+      refreshBoard: () => { try { if (_B3D.on) { _b3dUnmount(); _b3dMount(); } } catch (e) {} },
+      openLegacyEditor: () => { try { _bmeOpen(); } catch (e) {} },
+    },
     ui: {
       data: () => {
         const d = {};
@@ -223427,7 +223490,7 @@ render();
      ⚠ If this 404s nothing changes — the button reports "still loading".
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
-<script type="module" src="src/mapforge/index.js?v=mf14"></script>
+<script type="module" src="src/mapforge/index.js?v=mf15"></script>
 <!-- 🧩 ATHENA WIDGETS — Blueprint-style UI widgets and themes (/src/widgets).
      Registers window.AthenaUI. At boot it loads every LIVE widget/theme
      (public.ui_widgets, sql/040 — or the device's cached copy) and mounts
@@ -223450,6 +223513,7 @@ render();
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
 <script type="module" src="src/farm/index.js?v=v120x6farm7"></script>
+<script type="module" src="src/battle/battle.athena.js?v=ba1"></script>
 <!-- battle-board round 1 -->
 <!-- 🎴 BATTLE BOARD — round 1 of the Master Duel pass.
      Loaded LAST so the board plate styles win by ordinary source order; the

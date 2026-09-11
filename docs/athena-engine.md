@@ -700,3 +700,46 @@ same store, RLS and admin-only live trigger as widgets — apply
 Limits: one rule per selector per page doc; no drag-to-move or reorder
 beyond CSS `order`; no new elements (build those as widgets); the game's
 own JavaScript behaviour is untouched — a button keeps doing what it did.
+
+## ⚔ The battle board as a game scene (round 15)
+
+Admin panel → **⚔ Battle board in Athena Engine** (`src/battle/battle.athena.js`,
+`window.MythicBattleAthena.open()`). The live board is a v3 battlemap
+document (`cols × rows` cells, a terrain key per cell, `models[{t,x,z,rot,sc}]`,
+`glbSlots`), kept on the catalogue and published to every player. Athena
+opens it as a game scene tagged `battle` and writes edits back.
+
+- **Board → Athena.** 3 metres per board cell (`bridge.battle.scale()`),
+  so metre-scaled Athena props sit right next to board props. Each cell's
+  terrain key paints the Athena ground (`TERRAIN_TO_PAINT`: road→asphalt,
+  rubble→concrete, dirt, grass→dark grass, stone→rock, sand, snow,
+  scorched→ash, water→mud, blight→toxic, lava→ember). Every placed board
+  model is a 🧩 slot (`k = 'bm.<index>'`) drawn with the board's OWN
+  procedural builder (`bridge.battle.buildProp`, same r128 THREE) through
+  the new `buildWorld({ slotBody })` hook, so the editor shows the real
+  props; a `.glb` slot shows the generic stand-in. Two folders: Board props,
+  Board models.
+- **Athena → board (Save).** `toBoardMap`: the paint under each cell's centre
+  becomes its terrain key (`PAINT_TO_TERRAIN`, majority of the four nearest
+  vertices); every surviving slot keeps its board type with the new
+  x/z/rot/sc; a deleted slot removes the model; `glbSlots` and the backdrop
+  are kept. `bridge.battle.setMap` stores it (Forge + device) and rebuilds an
+  open board. **★ Set live** also publishes it (`bridge.battle.publish` →
+  the catalogue) — every player fights on it.
+- **What v3 cannot hold** — extra props, splines, models, a board prop
+  *replaced* with another prop — stays in the Athena map. `_b3dBuild`
+  (index.html) asks `AthenaEngine.overlay.forGame('battle')` after placing
+  the board's models, adds the group at ⅓ scale, hides a replaced model
+  (meshes carry `userData.bmIndex`) and draws the replacement; the overlay
+  is stepped in the board's frame loop and disposed on unmount. No live
+  map, no module → the board is exactly as before.
+- Bridge (`MythicBridge.battle`): `size, terrain, props, defaultTerrain,
+  scale, getMap, setMap, publish, buildProp, boardOpen, refreshBoard,
+  openLegacyEditor` — all functions, never Forge directly.
+
+Limits: slots are matched to board models by index, so edit the board in
+ONE editor at a time (Athena or the legacy Battlemap Forge); the perspective
+hex stage (`public/battle-board/`, an iframe) receives the written-back v3
+(terrain + models) but not the overlay's extra objects; the 3D board's
+gameplay rules (hazards per terrain key) come from v3, so a painted layer
+changes the rule where the key changes.

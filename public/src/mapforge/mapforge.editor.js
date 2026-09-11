@@ -173,7 +173,7 @@ export async function openEditor(opts) {
     if (world) { scene.remove(world.group); world.dispose(); }
     if (gridHelper) { scene.remove(gridHelper); gridHelper = null; }
     S.map = map; S.source = source == null ? S.source : source;
-    world = buildWorld(THREE, map, { scene, camera, shadowMap: quality.get().settings.shadowMap, fx: quality.get().settings.fx, fxRange: quality.get().settings.fxRange, onEnv: (env) => applyTone(THREE, renderer, env), onAssetLoaded: () => {}, toast: (m, ms) => toast(m, ms), onPrompt: (p) => { const el = $('#mf-prompt'); el.hidden = !p; el.textContent = p ? '⚡ ' + p : ''; } });
+    world = buildWorld(THREE, map, { scene, camera, slotBody: (o, T) => { const g = map.game && games.get(map.game); return g && typeof g.slotBody === 'function' ? g.slotBody(o, T) : null; }, shadowMap: quality.get().settings.shadowMap, fx: quality.get().settings.fx, fxRange: quality.get().settings.fxRange, onEnv: (env) => applyTone(THREE, renderer, env), onAssetLoaded: () => {}, toast: (m, ms) => toast(m, ms), onPrompt: (p) => { const el = $('#mf-prompt'); el.hidden = !p; el.textContent = p ? '⚡ ' + p : ''; } });
     S.editingPrefab = null; S.multi.clear(); S.bpOpen = false; if (bpGraph) { bpGraph.destroy(); bpGraph = null; bpFor = null; }
     scene.add(world.group);
     world.setMarkersVisible(S.showMarkers);
@@ -628,7 +628,7 @@ export async function openEditor(opts) {
     box.querySelector('#mf-bp-ndel').onclick = () => { beginObjectEdit(); bpGraph.deleteSelected(); endObjectEdit(); };
   }
   function notifyGame(kind) {
-    try { if (S.map.game) invalidateOverlay(S.map.game); window.dispatchEvent(new CustomEvent('athena:' + kind, { detail: { game: S.map.game || 'sandbox', id: S.map.id, source: S.source } })); } catch (e) {}
+    try { if (S.map.game) invalidateOverlay(S.map.game); window.dispatchEvent(new CustomEvent('athena:' + kind, { detail: { game: S.map.game || 'sandbox', id: S.map.id, source: S.source, map: clone(S.map) } })); } catch (e) {}   // `map`: adapters that write the scene back into their own format (the battle board) read it here
   }
   function makeObject(p, extra) {
     const isGlb = S.propId === 'glb', isPf = S.propId === 'prefab';

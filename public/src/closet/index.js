@@ -10,6 +10,8 @@
      bodySpec(outfit, catalog)             the closet body as { url, scale, faces }
      outfit() / packOutfit / unpackOutfit  the player's outfit and its packet form
      CATEGORIES           the slots
+     character            spawn(THREE, { scene }) / replace(THREE, standIn) — the player's
+                          dressed character for any scene (closet.character.js)
 
    The world side (mapforge.avatar.js) reaches these through dynamic imports
    so a hub still runs if this folder ever fails to load. */
@@ -21,6 +23,7 @@ import { dress, loadModel, cloneModel, measureItem } from './closet.dress.js';
 import { measure, findBones, focusFor, focusBody } from './closet.rig.js';
 import { openCreator, closeCreator, isOpen } from './closet.creator.js';
 import { openStudio, closeStudio, isStudioOpen } from './closet.studio.js';
+import * as character from './closet.character.js';
 
 /* The closet body a player chose, as the shape createAvatar understands —
    null when they chose none or it is not (or no longer) in the catalogue. */
@@ -42,6 +45,8 @@ const MythicCloset = {
   outfit: me.outfit, setOutfit: me.setOutfit, owned: me.owned,
   packOutfit, unpackOutfit, normalizeOutfit, normalizeItem, normalizeBrand, normalizeBody, priceLabel,
   CATEGORIES, CAT_BY_ID,
+  /* 🧍 the player's character for ANY scene — the hub, the courthouse, the camp, the roguelite map: spawn / replace / describe / onChange (closet.character.js) */
+  character: { spawn: character.spawn, replace: character.replace, describe: character.describe, onChange: character.onChange },
 };
 try { window.MythicCloset = MythicCloset; } catch (e) {}
 

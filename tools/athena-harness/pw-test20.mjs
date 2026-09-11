@@ -249,6 +249,39 @@ await step('engine.mount wears the outfit on the map author\'s character too', a
   return r;
 });
 
+await step('character.spawn gives any scene the dressed closet body; replace() takes a stand-in\'s place and hides it; a saved outfit rebuilds a following character', async () => {
+  const r = await page.evaluate(async () => {
+    const { THREE } = await import('/src/mapforge/mapforge.three.js').then(m => m.ensureThree());
+    const C = window.MythicCloset;
+    window.__profile.closet.outfit = { body: 'cb_soldier', wear: { hat: 'ci_hat' } };
+    const scene = new THREE.Scene();
+    const d = await C.character.describe();
+    const me = await C.character.spawn(THREE, { scene, follow: true });
+    const wait = async (h) => { const t0 = Date.now(); while (!h.ready && !h.error && Date.now() - t0 < 15000) await new Promise(r => setTimeout(r, 100)); await new Promise(r => setTimeout(r, 900)); };
+    await wait(me);
+    const count = (g) => { let n = 0; g.traverse(o => { if (/^closet:/.test(o.name)) n++; }); return n; };
+    const p1 = count(me.group);
+    me.update(0.016, new THREE.Vector3(1, 0, 2), 0.5, 'walk');
+    // the stand-in: a capsule the train would hand over
+    const standIn = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 1.8, 8), new THREE.MeshBasicMaterial()); standIn.position.set(4, 0, -3); standIn.rotation.y = 1.1; scene.add(standIn);
+    const rep = await C.character.replace(THREE, standIn);
+    await wait(rep);
+    const repPos = rep.group.position.clone(), hidden = !standIn.visible;
+    rep.dispose();
+    const shownAgain = standIn.visible;
+    // save a new outfit → the following character is rebuilt with the new pieces
+    window.dispatchEvent(new CustomEvent('closet:outfit', { detail: { body: 'cb_soldier', wear: { hat: 'ci_hat', watch: 'ci_watch', sneakers: 'ci_sneakers' } } }));
+    await new Promise(r => setTimeout(r, 200)); await wait(me);
+    const p2 = count(me.group), pos2 = me.group.position.clone();
+    me.dispose();
+    const none = await C.character.spawn(THREE, { scene, outfit: { body: '', wear: {} } });
+    return { body: d.body && d.body.name, p1, p2, x: pos2.x, repX: repPos.x, repZ: repPos.z, hidden, shownAgain, none };
+  });
+  if (r.body !== 'Soldier' || r.p1 !== 1 || r.p2 !== 4 || r.x !== 1) throw new Error(JSON.stringify(r));
+  if (r.repX !== 4 || r.repZ !== -3 || !r.hidden || !r.shownAgain || r.none !== null) throw new Error(JSON.stringify(r));
+  return r;
+});
+
 const errs = await page.evaluate(() => window.__errors);
 console.log('\npage errors:', errs.length ? errs : 'none');
 console.log('console:', logs.filter(l => !/favicon|WebGL|GPU stall|swiftshader|Automatic fallback/i.test(l)).slice(0, 12));

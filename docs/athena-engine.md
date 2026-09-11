@@ -976,6 +976,33 @@ admin to write), a server-side `updated_at` trigger. Not yet applied to
 `ktsiasyjusesawtrwrjc` at the time of writing — until it is, the studio says
 "saved on this device". Player ownership and the outfit are NOT tables.
 
+**🧍 One character for every scene — `MythicCloset.character`** (`closet.character.js`).
+The player hub already draws it (session.js). The courthouse, the 3D camp and the
+roguelite's 3D map, when they are built, take the same character through one door,
+so it looks identical everywhere because it is the same body, outfit, measurement
+and fit:
+
+```js
+// any scene with a three.js scene — three lines
+const me = await MythicCloset.character.spawn(THREE, { scene, follow: true });   // null → draw your placeholder
+me.update(dt, pos, yaw, 'walk');     // each frame: position, heading, idle | walk | run | interact
+me.dispose();                         // on the way out
+
+// the roguelite: the train hands over a stand-in; the character takes its place and heading
+const me = await MythicCloset.character.replace(THREE, standInObject3D);
+me.sync(dt, 'idle');                  // keep following the stand-in while the train rolls
+me.dispose();                         // the stand-in shows again
+
+// before drawing anything: which body, its URL / scale / facing, how many pieces are worn
+const { body, outfit, worn } = await MythicCloset.character.describe();
+MythicCloset.character.onChange(o => …);   // the player saved a new outfit while your scene runs
+```
+`spawn({ player: map.player, world })` lets a map with its own cast win, exactly as
+`engine.mount` does; `follow: true` rebuilds the character in place when the outfit
+changes. `spawn` resolves to `null` when neither the map nor the closet names a body,
+and `replace` then leaves the stand-in visible: the scene must still draw something,
+and it knows its own placeholder. (`pw-test20`, last step.)
+
 **Out of scope / next.** Clothing stores (a store = a brand's shopfront in a
 world: the catalogue and `charge()` are what it needs); skinned clothing that
 deforms with the body (v1 hangs a rigid piece on one bone — right for a watch,

@@ -74,9 +74,12 @@ const fmt = (v) => {
   if (typeof v === 'object') return JSON.stringify(v);
   return String(v);
 };
+// Shape is read from the DATA, not trusted from the table above — a catalog that
+// changes from array to object (or is missing) must not crash the overview.
 const rowsOf = (sec) => {
-  if (sec.kind === 'dict') return Object.entries(sec.data || {}).map(([k, v]) => ({ _key: k, ...(v || {}) }));
-  if (sec.kind === 'list') return (sec.data || []).map((v) => (typeof v === 'object' ? v : { id: v }));
+  const d = sec.data;
+  if (Array.isArray(d)) return d.map((v) => (v && typeof v === 'object' ? v : { id: v }));
+  if (d && typeof d === 'object' && sec.kind !== 'nested') return Object.entries(d).map(([k, v]) => ({ _key: k, ...((v && typeof v === 'object') ? v : { value: v }) }));
   return [];
 };
 const matches = (row, q) => JSON.stringify(row).toLowerCase().includes(q.toLowerCase());

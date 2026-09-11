@@ -33,7 +33,13 @@ export function loadModel(THREE, url) {
   if (templates.has(url)) return templates.get(url);
   const p = (async () => {
     const L = loader(THREE); if (!L) throw new Error('GLTFLoader unavailable');
-    const g = await new Promise((res, rej) => L.load(url, res, undefined, rej));
+    /* a data: URL (an embedded model) is decoded here and parsed directly —
+       an XHR to a data URL is refused by some hosts' CSP, and a network
+       error there looks exactly like a missing file */
+    const m = /^data:[^,]*;base64,(.*)$/s.exec(url);
+    const g = m
+      ? await new Promise((res, rej) => { try { const bin = atob(m[1]); const buf = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i); L.parse(buf.buffer, '', res, rej); } catch (e) { rej(e); } })
+      : await new Promise((res, rej) => L.load(url, res, undefined, rej));
     const scene = g.scene || (g.scenes && g.scenes[0]);
     if (!scene) throw new Error('empty glb');
     scene.updateMatrixWorld(true);

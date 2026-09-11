@@ -194,7 +194,9 @@ export async function openCreator(opts) {
   try {
     S.stage = await createStage($('#cl-stage'), { catalog: S.catalog, outfit: S.outfit });
     if (!UI) { S.stage.dispose(); return null; }
-    S.stage.on('measure', () => { if (!S.cat) S.stage.swingToBody(); });
+    S.stage.on('measure', () => { if (S.cat) S.stage.swingToCategory(S.cat, 'l'); else S.stage.swingToBody(); });
+    S.stage.on('bodyError', (e) => { empty.hidden = false; empty.innerHTML = '<div><div style="font-size:40px">🧍</div>The character could not be loaded.<br><span style="font-size:12px">' + esc((e && e.message) || e) + '</span></div>'; });
+    S.stage.on('body', (b) => { if (b) empty.hidden = true; });
     const rec = bodyRec();
     if (rec) { const o = normalizeOutfit(S.outfit); if (o.body !== rec.id) { o.body = rec.id; S.outfit = o; S.stage.setOutfit(o); } await S.stage.setBody(rec); }
     if (opts.cat && CAT_BY_ID[opts.cat]) pickCat(opts.cat);

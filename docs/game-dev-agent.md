@@ -2,7 +2,7 @@
 
 Status: **v2 (2026-09-11) — whole game.** v1 covered the battle engine; v2 adds the city
 builder, businesses and economy, Supabase migrations, the worker, and a bug-hunt workflow.
-Toolkit in `tools/gamedev/`, agent in `.claude/agents/game-dev.md`, workflows in
+Toolkit in `tools/gamedev/`, agent (named **Bruce** as of 2026-09-11) in `.claude/agents/bruce.md`, workflows in
 `.claude/skills/`.
 
 ## Scope (v2)

@@ -85,7 +85,7 @@ reasoning from memory. Navigate with `map.mjs sections|where|consts|modules`; re
 find bugs with `lint.mjs` (battle ids — it found `MOVES.sunder` applying a status that never
 existed), `audit.mjs` (Cinder writes, globals trap, unknown tables, alert()), `sql-lint.mjs`
 (RLS/idempotency/verify on every migration). **`node tools/gamedev/check.mjs` is the gate
-before any commit.** The `game-dev` agent (`.claude/agents/game-dev.md`) and the skills
+before any commit.** The `bruce` agent (`.claude/agents/bruce.md`) and the skills
 `/add-move` `/add-card-effect` `/add-status` `/balance-review` `/city-dev` `/business-dev`
 `/db-migration` `/find-bugs` `/fix-bug` `/ship-check` encode the workflows.
 Details: `docs/game-dev-agent.md`.

@@ -20,7 +20,7 @@ functions, so nothing here can drift from the game.
 
 `npm run gd:check` / `gd:lint` / `gd:effects` / `gd:catalog` / `gd:econ` / `gd:audit` / `gd:sql` / `gd:map` are shortcuts.
 
-The Claude Code agent that uses these lives in `.claude/agents/game-dev.md`; the step-by-step
+The Claude Code agent that uses these is **Bruce** (`.claude/agents/bruce.md`); the step-by-step
 workflows are the skills in `.claude/skills/` (`/add-move`, `/add-card-effect`, `/add-status`,
 `/balance-review`, `/city-dev`, `/business-dev`, `/db-migration`, `/find-bugs`, `/fix-bug`, `/ship-check`). Design notes and the roadmap for a visual
 effect composer: `docs/game-dev-agent.md`.

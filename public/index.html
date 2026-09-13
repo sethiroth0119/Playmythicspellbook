@@ -10423,6 +10423,419 @@
     100% { transform: translateX(-50%) scale(1); opacity: 1; letter-spacing: 0.18em; }
   }
 
+  /* ==========================================================================
+     🌌⚡ FUSION CINEMATIC v2 — "fcx" (Fusion Cinematic eXtended)
+     Replaces the old 4-phase poly-cine overlay for POLYCREATION only. The
+     Archon ritual still owns every .poly-cine-* rule above; nothing here
+     touches it.
+
+     WHY A SEPARATE, BODY-MOUNTED OVERLAY:
+     the old cinematic lived inside renderBattle's HTML string and was driven by
+     a phase counter that called renderBattle() four times. Every one of those
+     re-renders blew away the overlay DOM and RESTARTED every CSS animation, so
+     nothing could move continuously across phases — which is exactly why the
+     old version was a pile of pulsing rings rather than a sequence. This one is
+     appended to document.body ONCE by _fusionCineMount() and left alone, so a
+     single timeline of CSS animations plays start to finish.
+     ⚠ Do not move this back inside renderBattle.
+
+     THE SEQUENCE (Master-Duel shaped, 6.2s):
+       Act 1  0.00-0.90  material CARD FRAMES fly in and fan out
+       Act 2  0.90-2.10  they orbit, tilt into the vortex, charge up
+       Act 3  2.10-3.30  spiral pull — cards are sucked into the core
+       Act 4  3.30-4.20  detonation: flash, shockwaves, pillar of light
+       Act 5  4.20-6.20  the fused card flips face-up and slams in, name burst
+     ========================================================================== */
+  .fcx-root {
+    position: fixed; inset: 0;
+    z-index: 2147483400;
+    pointer-events: none;
+    overflow: hidden;
+    perspective: 1400px;
+    background: radial-gradient(ellipse at 50% 48%, rgba(46,16,84,0.90) 0%, rgba(14,5,32,0.96) 42%, rgba(2,1,7,0.99) 100%);
+    animation: fcx-root-in 0.34s ease-out both;
+    /* --cs scales the whole card choreography down on phones. */
+    --cs: 1;
+  }
+  @media (max-width: 780px) { .fcx-root { --cs: 0.66; } }
+  @keyframes fcx-root-in { from { opacity: 0; } to { opacity: 1; } }
+  .fcx-root.fcx-out { animation: fcx-root-out 0.42s ease-in forwards; }
+  @keyframes fcx-root-out { to { opacity: 0; } }
+
+  /* Camera shake — applied to the stage so the backdrop stays rock steady. */
+  .fcx-stage {
+    position: absolute; left: 50%; top: 50%;
+    width: 0; height: 0;
+    transform-style: preserve-3d;
+    animation: fcx-shake 6.2s linear both;
+  }
+  @keyframes fcx-shake {
+    0%,32%   { transform: translate(-0px, 0); }
+    34%      { transform: translate(-7px, 4px); }
+    36%      { transform: translate(6px, -5px); }
+    38%      { transform: translate(-5px, -3px); }
+    40%      { transform: translate(4px, 4px); }
+    42%      { transform: translate(-3px, 2px); }
+    44%      { transform: translate(2px, -2px); }
+    46%,66%  { transform: translate(0, 0); }
+    68%      { transform: translate(-4px, 3px); }
+    70%      { transform: translate(3px, -3px); }
+    72%,100% { transform: translate(0, 0); }
+  }
+
+  /* ---------- the vortex core ---------- */
+  .fcx-vortex {
+    position: absolute; left: 50%; top: 50%;
+    width: 520px; height: 520px; margin: -260px 0 0 -260px;
+    border-radius: 50%;
+    background: conic-gradient(from 0deg,
+      rgba(180,90,255,0)    0deg,  rgba(180,90,255,0.55) 40deg,
+      rgba(120,200,255,0)  90deg,  rgba(255,205,110,0.55) 150deg,
+      rgba(180,90,255,0)  200deg,  rgba(160,120,255,0.5) 268deg,
+      rgba(255,205,110,0) 330deg,  rgba(180,90,255,0)  360deg);
+    filter: blur(16px);
+    mix-blend-mode: screen;
+    opacity: 0;
+    animation: fcx-vortex 6.2s cubic-bezier(0.3,0.1,0.2,1) both;
+  }
+  @keyframes fcx-vortex {
+    0%   { opacity: 0;    transform: rotate(0deg)    scale(0.25); }
+    14%  { opacity: 0.45; transform: rotate(180deg)  scale(0.62); }
+    34%  { opacity: 0.85; transform: rotate(560deg)  scale(0.95); }
+    55%  { opacity: 1;    transform: rotate(1180deg) scale(1.25); }
+    60%  { opacity: 1;    transform: rotate(1400deg) scale(0.18); }
+    67%  { opacity: 0.7;  transform: rotate(1500deg) scale(2.1); }
+    82%  { opacity: 0.32; transform: rotate(1700deg) scale(1.5); }
+    100% { opacity: 0.18; transform: rotate(1900deg) scale(1.35); }
+  }
+  .fcx-vortex-2 {
+    width: 340px; height: 340px; margin: -170px 0 0 -170px;
+    filter: blur(7px);
+    animation-direction: reverse;
+    animation-duration: 6.2s;
+  }
+
+  /* Hexagonal fusion grid that snaps in behind everything. */
+  .fcx-grid {
+    position: absolute; left: 50%; top: 50%;
+    width: 760px; height: 760px; margin: -380px 0 0 -380px;
+    opacity: 0;
+    animation: fcx-grid 6.2s ease-out both;
+  }
+  @keyframes fcx-grid {
+    0%   { opacity: 0;   transform: rotate(-40deg) scale(0.4); }
+    12%  { opacity: 0.8; transform: rotate(0deg)   scale(1); }
+    55%  { opacity: 0.9; transform: rotate(46deg)  scale(1.05); }
+    60%  { opacity: 1;   transform: rotate(60deg)  scale(0.55); }
+    68%  { opacity: 0;   transform: rotate(70deg)  scale(2.4); }
+    100% { opacity: 0;   transform: rotate(80deg)  scale(2.4); }
+  }
+  .fcx-grid svg { width: 100%; height: 100%; overflow: visible; }
+
+  /* ---------- material card frames ---------- */
+  .fcx-card {
+    position: absolute; left: 0; top: 0;
+    width: 132px; height: 188px;
+    margin: -94px 0 0 -66px;
+    transform-style: preserve-3d;
+    opacity: 0;
+    /* 🔴 --sc scales the LAYOUT, not just the sprite. scale() shrinks a card
+       but leaves its translate3d offset alone, so on a phone the frames used
+       to shrink and still fan out past both screen edges. Every --tx/--ty is
+       multiplied by --sc for that reason. --cs is the viewport knob, --cc the
+       material-count knob. */
+    --sc: calc(var(--cs) * var(--cc, 1));
+    animation: fcx-card-life 3.85s cubic-bezier(0.22,0.66,0.24,1) both;
+  }
+  /* --fx/--fy: where the card flies IN from. --tx/--ty: its fanned resting
+     spot. --tilt: the resting rotation. */
+  @keyframes fcx-card-life {
+    0% {
+      transform: translate3d(calc(var(--fx) * var(--sc)), calc(var(--fy) * var(--sc)), -600px)
+                 scale(calc(var(--sc) * 0.3)) rotate(var(--fspin)) rotateY(55deg);
+      opacity: 0;
+    }
+    6%  { opacity: 1; }
+    20% {
+      transform: translate3d(calc(var(--tx) * var(--sc)), calc(var(--ty) * var(--sc)), 0)
+                 scale(var(--sc)) rotate(var(--tilt)) rotateY(0deg);
+      opacity: 1;
+    }
+    /* Act 2 — breathe, then tip toward the vortex mouth. */
+    38% {
+      transform: translate3d(calc(var(--tx) * var(--sc)), calc(var(--ty) * var(--sc)), 40px)
+                 scale(calc(var(--sc) * 1.06)) rotate(var(--tilt)) rotateY(0deg);
+      opacity: 1;
+    }
+    64% {
+      transform: translate3d(calc(var(--tx) * var(--sc) * 0.82), calc(var(--ty) * var(--sc) * 0.82), 90px)
+                 scale(calc(var(--sc) * 0.96)) rotate(calc(var(--tilt) * 2)) rotateY(var(--yaw));
+      opacity: 1;
+    }
+    /* Act 3 — the spiral pull. */
+    87% {
+      transform: translate3d(calc(var(--tx) * var(--sc) * 0.22), calc(var(--ty) * var(--sc) * 0.22), -140px)
+                 scale(calc(var(--sc) * 0.42)) rotate(calc(var(--tilt) + 420deg)) rotateY(220deg);
+      opacity: 1;
+    }
+    100% {
+      transform: translate3d(0, 0, -520px)
+                 scale(calc(var(--sc) * 0.04)) rotate(calc(var(--tilt) + 900deg)) rotateY(520deg);
+      opacity: 0;
+    }
+  }
+  .fcx-frame {
+    position: relative; width: 100%; height: 100%;
+    border-radius: 9px;
+    background: linear-gradient(160deg, #efd79a 0%, #a7823a 18%, #6b4f1c 52%, #c3a058 84%, #f3e3ae 100%);
+    padding: 5px;
+    box-shadow:
+      0 0 0 1px rgba(28,16,4,0.9),
+      0 18px 40px rgba(0,0,0,0.72),
+      0 0 26px rgba(255,206,120,0.55);
+    overflow: hidden;
+  }
+  .fcx-frame-inner {
+    position: relative; width: 100%; height: 100%;
+    border-radius: 5px; overflow: hidden;
+    background: #0d0a16;
+    display: flex; flex-direction: column;
+  }
+  .fcx-art {
+    position: relative; flex: 1 1 auto; min-height: 0;
+    display: grid; place-items: center;
+    background: radial-gradient(circle at 50% 34%, #2a2142, #0a0712 78%);
+    overflow: hidden;
+  }
+  .fcx-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .fcx-art .fcx-emoji { font-size: 3.1rem; filter: drop-shadow(0 0 10px rgba(255,205,110,0.8)); }
+  .fcx-plate {
+    flex: 0 0 auto;
+    padding: 4px 5px 5px;
+    font-family: 'Cinzel', serif; font-weight: 800;
+    font-size: 10px; letter-spacing: 0.05em; text-align: center;
+    color: #f7ecd4;
+    background: linear-gradient(180deg, #1a1226, #0b0813);
+    border-top: 1px solid rgba(214,176,94,0.5);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  /* Travelling sheen — sells the frames as foil rather than flat rectangles. */
+  .fcx-sheen {
+    position: absolute; inset: 0; border-radius: 9px; pointer-events: none;
+    background: linear-gradient(105deg, transparent 36%, rgba(255,255,255,0.55) 48%, transparent 60%);
+    mix-blend-mode: screen;
+    animation: fcx-sheen 1.5s ease-in-out infinite;
+  }
+  @keyframes fcx-sheen {
+    0%   { transform: translateX(-130%); opacity: 0; }
+    22%  { opacity: 1; }
+    70%  { transform: translateX(130%); opacity: 0; }
+    100% { transform: translateX(130%); opacity: 0; }
+  }
+  /* The element's own glow halo, so each card lights the darkness around it. */
+  .fcx-aura {
+    position: absolute; inset: -28%;
+    border-radius: 50%;
+    background: radial-gradient(circle, var(--aura, rgba(190,120,255,0.55)) 0%, transparent 68%);
+    mix-blend-mode: screen;
+    filter: blur(9px);
+    animation: fcx-aura 1.1s ease-in-out infinite;
+    z-index: -1;
+  }
+  @keyframes fcx-aura { 0%,100% { opacity: 0.5; transform: scale(0.92); } 50% { opacity: 1; transform: scale(1.1); } }
+
+  /* Energy tether from each card into the core. */
+  .fcx-tether {
+    position: absolute; left: 0; top: 0;
+    height: 3px; width: calc(var(--len, 240px) * var(--cs));
+    transform-origin: 0 50%;
+    transform: rotate(var(--ang, 0deg)) scaleX(0);
+    background: linear-gradient(90deg, rgba(255,255,255,0.95), var(--aura, rgba(190,120,255,0.8)) 45%, transparent);
+    box-shadow: 0 0 14px var(--aura, rgba(190,120,255,0.9));
+    mix-blend-mode: screen;
+    opacity: 0;
+    animation: fcx-tether 6.2s ease-out both;
+  }
+  @keyframes fcx-tether {
+    0%,14%  { opacity: 0; transform: rotate(var(--ang)) scaleX(0); }
+    24%     { opacity: 0.9; transform: rotate(var(--ang)) scaleX(1); }
+    52%     { opacity: 1; transform: rotate(calc(var(--ang) + 14deg)) scaleX(1); }
+    60%     { opacity: 0; transform: rotate(calc(var(--ang) + 26deg)) scaleX(0.2); }
+    100%    { opacity: 0; }
+  }
+
+  /* ---------- Act 4: detonation ---------- */
+  .fcx-flash {
+    position: absolute; inset: 0;
+    background: radial-gradient(circle at 50% 50%, #fffdf6 0%, rgba(255,236,190,0.9) 18%, rgba(196,130,255,0.35) 40%, transparent 66%);
+    mix-blend-mode: screen; opacity: 0;
+    animation: fcx-flash 6.2s linear both;
+  }
+  @keyframes fcx-flash {
+    0%,57%  { opacity: 0; }
+    60%     { opacity: 1; }
+    64%     { opacity: 0.55; }
+    68%     { opacity: 0.9; }
+    80%     { opacity: 0; }
+    100%    { opacity: 0; }
+  }
+  .fcx-shock {
+    position: absolute; left: 50%; top: 50%;
+    width: 120px; height: 120px; margin: -60px 0 0 -60px;
+    border-radius: 50%;
+    border: 4px solid rgba(255,240,205,0.95);
+    box-shadow: 0 0 40px rgba(255,215,140,0.85), inset 0 0 30px rgba(255,215,140,0.6);
+    opacity: 0;
+    animation: fcx-shock 1.5s cubic-bezier(0.1,0.7,0.2,1) both;
+  }
+  @keyframes fcx-shock {
+    0%   { opacity: 0;   transform: scale(0.2); border-width: 7px; }
+    12%  { opacity: 1; }
+    100% { opacity: 0;   transform: scale(11);  border-width: 1px; }
+  }
+  .fcx-pillar {
+    position: absolute; left: 50%; top: 50%;
+    width: 340px; height: 190vh; margin-left: -170px;
+    transform: translateY(-50%) scaleX(0.1);
+    background: linear-gradient(180deg,
+      transparent 0%, rgba(214,168,255,0.35) 24%, rgba(255,245,220,0.95) 50%,
+      rgba(214,168,255,0.35) 76%, transparent 100%);
+    filter: blur(26px);
+    mix-blend-mode: screen; opacity: 0;
+    animation: fcx-pillar 6.2s ease-out both;
+  }
+  @keyframes fcx-pillar {
+    0%,57%  { opacity: 0; transform: translateY(-50%) scaleX(0.06); }
+    61%     { opacity: 1; transform: translateY(-50%) scaleX(1.5); }
+    74%     { opacity: 0.65; transform: translateY(-50%) scaleX(0.8); }
+    100%    { opacity: 0.3;  transform: translateY(-50%) scaleX(0.55); }
+  }
+  /* Radiating god-rays behind the reveal. */
+  .fcx-rays {
+    position: absolute; left: 50%; top: 50%;
+    width: 1500px; height: 1500px; margin: -750px 0 0 -750px;
+    background: repeating-conic-gradient(from 0deg,
+      rgba(255,238,200,0.13) 0deg 3deg, transparent 3deg 15deg);
+    /* Masked hollow in the centre — solid bars running under the revealed card
+       made it look like it was sitting on a pinwheel. */
+    -webkit-mask-image: radial-gradient(circle, transparent 14%, #000 42%, #000 74%, transparent 96%);
+    mask-image: radial-gradient(circle, transparent 14%, #000 42%, #000 74%, transparent 96%);
+    mix-blend-mode: screen; opacity: 0;
+    animation: fcx-rays 6.2s linear both;
+  }
+  @keyframes fcx-rays {
+    0%,58%  { opacity: 0; transform: rotate(0deg) scale(0.5); }
+    66%     { opacity: 0.95; transform: rotate(12deg) scale(1); }
+    100%    { opacity: 0.55; transform: rotate(60deg) scale(1.1); }
+  }
+
+  /* ---------- Act 5: the reveal card ---------- */
+  .fcx-result {
+    position: absolute; left: 0; top: 0;
+    width: 236px; height: 336px; margin: -168px 0 0 -118px;
+    transform-style: preserve-3d;
+    opacity: 0;
+    animation: fcx-result 2.5s cubic-bezier(0.16,1.02,0.3,1) 3.78s both;
+  }
+  @keyframes fcx-result {
+    0%   { opacity: 0; transform: translate3d(0,0,-900px) scale(calc(var(--cs) * 0.2)) rotateY(-900deg); }
+    18%  { opacity: 1; }
+    /* The flip lands face-up just as it arrives. */
+    54%  { opacity: 1; transform: translate3d(0,0,240px) scale(calc(var(--cs) * 1.22)) rotateY(0deg); }
+    70%  { opacity: 1; transform: translate3d(0,0,0)     scale(calc(var(--cs) * 0.98)) rotateY(0deg); }
+    100% { opacity: 1; transform: translate3d(0,0,0)     scale(calc(var(--cs) * 1.04)) rotateY(0deg); }
+  }
+  .fcx-result .fcx-frame {
+    border-radius: 13px;
+    background: linear-gradient(160deg, #fff3cd 0%, #d8ae4e 16%, #8a6524 50%, #e2c069 82%, #fff6dc 100%);
+    padding: 8px;
+    box-shadow:
+      0 0 0 1px rgba(40,24,6,0.95),
+      0 26px 70px rgba(0,0,0,0.8),
+      0 0 60px rgba(255,214,130,0.85),
+      0 0 130px rgba(190,120,255,0.5);
+  }
+  .fcx-result .fcx-plate { font-size: 14px; padding: 7px 6px 8px; letter-spacing: 0.08em; }
+  .fcx-result .fcx-art .fcx-emoji { font-size: 6rem; }
+  .fcx-result .fcx-sheen { animation-duration: 2.4s; }
+  /* Reveal-only halo that keeps pulsing under the finished card. */
+  .fcx-result-halo {
+    position: absolute; inset: -45%;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255,220,150,0.6) 0%, rgba(180,110,255,0.28) 40%, transparent 70%);
+    mix-blend-mode: screen; filter: blur(14px); z-index: -1;
+    animation: fcx-aura 1.6s ease-in-out infinite;
+  }
+
+  /* ---------- captions ---------- */
+  .fcx-caption {
+    position: absolute; left: 50%; top: 13%;
+    transform: translateX(-50%);
+    font-family: 'Cinzel', serif; font-weight: 800;
+    letter-spacing: 0.3em; text-transform: uppercase;
+    font-size: clamp(0.68rem, 2.1vw, 1.35rem);
+    color: #f0dcff;
+    text-shadow: 0 0 18px rgba(198,130,255,0.95), 0 0 44px rgba(120,60,200,0.8);
+    width: 92vw; text-align: center; text-wrap: balance;
+    opacity: 0;
+    animation: fcx-caption 1.35s ease-out both;
+  }
+  @keyframes fcx-caption {
+    0%   { opacity: 0; transform: translateX(-50%) scale(0.86); letter-spacing: 0.02em; }
+    16%  { opacity: 1; transform: translateX(-50%) scale(1);    letter-spacing: 0.3em; }
+    78%  { opacity: 1; }
+    100% { opacity: 0; }
+  }
+  .fcx-name {
+    position: absolute; left: 50%; top: 76%;
+    transform: translateX(-50%);
+    font-family: 'Cinzel', serif; font-weight: 900;
+    font-size: clamp(1.05rem, 4.4vw, 3rem);
+    letter-spacing: 0.16em; text-transform: uppercase;
+    color: #fff;
+    text-shadow: 0 0 26px rgba(255,214,130,1), 0 0 52px rgba(255,180,80,0.7), 0 4px 12px rgba(0,0,0,0.9);
+    width: 92vw; text-align: center; text-wrap: balance; line-height: 1.14;
+    opacity: 0;
+    animation: fcx-name 1.5s cubic-bezier(0.16,1.1,0.3,1) 4.62s both;
+  }
+  @keyframes fcx-name {
+    0%   { opacity: 0; transform: translateX(-50%) scale(0.4);  letter-spacing: 0; }
+    45%  { opacity: 1; transform: translateX(-50%) scale(1.14); letter-spacing: 0.3em; }
+    100% { opacity: 1; transform: translateX(-50%) scale(1);    letter-spacing: 0.16em; }
+  }
+  .fcx-name-rule {
+    position: absolute; left: 50%; top: 74.2%;
+    width: 0; height: 2px; margin-left: 0;
+    transform: translateX(-50%);
+    background: linear-gradient(90deg, transparent, rgba(255,214,130,0.95), transparent);
+    box-shadow: 0 0 18px rgba(255,214,130,0.9);
+    animation: fcx-name-rule 1.1s ease-out 4.66s both;
+  }
+  @keyframes fcx-name-rule { from { width: 0; opacity: 0; } to { width: min(560px, 82vw); opacity: 1; } }
+
+  /* ---------- embers ---------- */
+  .fcx-embers { position: absolute; inset: 0; pointer-events: none; }
+  .fcx-embers i {
+    position: absolute; bottom: -10px;
+    width: 5px; height: 5px; border-radius: 50%;
+    background: #ffd98a;
+    box-shadow: 0 0 10px rgba(255,205,110,0.95);
+    opacity: 0;
+    animation: fcx-ember var(--dur) ease-out var(--delay) infinite;
+  }
+  @keyframes fcx-ember {
+    0%   { transform: translate(0,0) scale(0.6); opacity: 0; }
+    14%  { opacity: 1; }
+    100% { transform: translate(var(--dx), -104vh) scale(1.15); opacity: 0; }
+  }
+
+  /* Anyone who asked for less motion gets the result, not the ride. */
+  @media (prefers-reduced-motion: reduce) {
+    .fcx-root * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
+    .fcx-result { opacity: 1 !important; animation: none !important; transform: scale(1) !important; }
+    .fcx-name   { opacity: 1 !important; animation: none !important; }
+  }
+
   /* 🜂 ARCHON SUMMON — Yu-Gi-Oh Master-Duel-style special summon: a pillar of
      light erupts from the ritual circle, the Archon's SPRITE rises out of it,
      then a white-gold flash on manifestation. Layered on top of the shared
@@ -39407,7 +39820,7 @@ body:has(#pack-opener-frame) #chat-overlay {
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v121v116';
+  window.BUILD_VERSION = 'v121v117';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -162910,27 +163323,35 @@ function bindFusionSelectionOverlay() {
   if (confirm) confirm.onclick = () => {
     if (!App.ui || !App.ui.fusionMode) return;
     App.ui.fusionMode.confirmed = true;
-    App.ui.polyCine = { startedAt: Date.now(), phase: 1, totalMs: 5200 };
+    App.ui.polyCine = { startedAt: Date.now(), phase: 1, totalMs: FCX_TOTAL_MS };
     renderBattle();
     // Lower music while cinematic plays.
     try { if (typeof _muffleBattleAudioForUlt === 'function') _muffleBattleAudioForUlt(true); } catch (e) {}
-    // Phase advancer — bumps phase every ~1.2s so CSS keyframes match.
-    const phaseDurs = [1100, 1300, 1100, 1700]; // sum ≈ 5200ms
-    let acc = 0;
-    phaseDurs.forEach((d, i) => {
-      acc += d;
-      setTimeout(() => {
-        if (!App.ui || !App.ui.polyCine) return;
-        App.ui.polyCine.phase = i + 2;
-        renderBattle();
-      }, acc);
-    });
+    // 🌌 Mount the v2 cinematic on document.body. It is NOT part of the battle
+    // render tree on purpose — see _fusionCineMount's header. The old code
+    // advanced a phase counter and called renderBattle() four times, which
+    // restarted every CSS animation in the overlay on each call; that is why
+    // the previous cinematic could only ever be a loop of pulsing rings.
+    // App.ui.polyCine stays set for the whole run because _anyCinematicActive()
+    // reads it to hold the AI back until the animation is done.
+    let _fcxMs = 0;
+    try {
+      const _s = App.state;
+      const _fm = App.ui.fusionMode;
+      const _card = _fusionModeCard(_fm, _s);
+      const _kalon = _resolveFusionKalonForMode(_fm, _card);
+      _fcxMs = _fusionCineMount(_fm, _kalon, _card);
+    } catch (err) { try { console.warn('[poly] cinematic mount failed', err); } catch (_) {} }
+    // A mount that failed returns 0 — resolve on the next tick rather than
+    // leaving the player staring at a frozen board for six seconds.
+    const _holdMs = _fcxMs > 0 ? _fcxMs : 60;
     // After the full sequence, resolve + dismiss.
     setTimeout(() => {
       try { if (typeof _muffleBattleAudioForUlt === 'function') _muffleBattleAudioForUlt(false); } catch (e) {}
+      try { _fusionCineUnmount(); } catch (e) {}
       App.ui.polyCine = null;
       try { _resolvePolycreationFusion(); } catch (e) { console.warn('[poly] resolve failed', e); App.ui.fusionMode = null; renderBattle(); }
-    }, 5300);
+    }, _holdMs);
   };
 }
 
@@ -163385,69 +163806,231 @@ function bindGameModeSummary() {
   };
 }
 
-function renderPolycreationCinematic() {
-  const cine = App.ui && App.ui.polyCine;
-  if (!cine) return '';
-  const s = App.state;
-  if (!s) return '';
-  const fm = App.ui.fusionMode;
-  if (!fm) return '';
-  const card = _fusionModeCard(fm, s);   // 🖿 same stand-in, so the cinematic plays too
-  if (!card) return '';
-  // 🌌 Use the gate's actual pick so the cinematic names the fusion that was
-  // really summoned (see _resolveFusionKalonForMode).
-  const kalon = _resolveFusionKalonForMode(fm, card);
-  if (!kalon) return '';
-  const phase = cine.phase | 0 || 1;
-  const phaseLabel = ({
-    1: 'POLYCREATION INITIATED',
-    2: 'CONVERSION IN PROGRESS',
-    3: 'FUSION COMPLETE',
-    4: 'SUMMON UNIT CREATED',
-    5: 'SUMMON UNIT CREATED',
-  })[phase] || '';
-  const showKalonName = phase >= 4;
-  // Spawn 18 floating ash particles for ambience.
-  const ash = Array.from({ length: 18 }, (_, i) => {
-    const left = ((i * 53) % 100);
-    const dx = ((i * 17) % 80) - 40;
-    const delay = (i * 31) % 600;
-    const dur = 1400 + ((i * 91) % 800);
-    return `<span style="left:${left}%;--dx:${dx}px;--delay:${delay}ms;--dur:${dur}ms"></span>`;
-  }).join('');
-  // 12 rotating rune glyphs around the fusion circle.
-  const runes = ['☉','☽','✺','✦','⌬','☸','✧','⚛','✷','⌖','◈','✶'];
-  const runeRing = runes.map((g, i) => {
-    const angle = (i * 360 / runes.length);
-    return `<div class="poly-rune" style="transform: rotate(${angle}deg) translateY(-180px); animation-delay: ${i * 70}ms">${g}</div>`;
-  }).join('');
-  return `
-    <div class="poly-cine-backdrop poly-cine-phase-${phase}" aria-hidden="true">
-      <div class="poly-cine-vignette"></div>
-      <div class="poly-cine-stage">
-        <div class="poly-cine-circle">
-          <div class="poly-cine-ring poly-cine-ring-outer"></div>
-          <div class="poly-cine-ring poly-cine-ring-mid"></div>
-          <div class="poly-cine-ring poly-cine-ring-inner"></div>
-          <div class="poly-cine-rune-ring">${runeRing}</div>
-          <!-- ⚛ The Polycreation sigil, spinning behind the portrait. Sits BELOW
-               the kalon icon in z-order so it frames the summon instead of
-               hiding what was summoned. -->
-          <img class="poly-cine-atom" src="assets/artwork/gameicons/polycreation.png" alt=""
-               onerror="this.style.display='none'">
-          <div class="poly-cine-energy"></div>
-          <div class="poly-cine-shockwave"></div>
+/* ============================================================================
+   🌌⚡ FUSION CINEMATIC v2 — the Polycreation summon sequence.
+
+   WHAT REPLACED WHAT: the old cinematic was a set of pulsing rings rendered
+   INSIDE renderBattle's HTML string, advanced by a phase counter that called
+   renderBattle() four times. Each of those calls rebuilt the overlay's DOM,
+   which restarts every CSS animation it contains — so no element could move
+   continuously from one phase to the next, and the materials being fused were
+   never shown at all. You got a light show with no subject.
+
+   This version shows the CARD FRAMES. The real material cards fly in with
+   their art, fan out, tether themselves to the vortex, get spiralled into it,
+   and the fused Kalon flips face-up out of the detonation. Master-Duel shaped.
+
+   🔴 IT IS MOUNTED ON document.body, NOT RETURNED AS HTML. That is the whole
+   reason it can animate across the full 6.2s: nothing in renderBattle can
+   reach it, so no re-render restarts the timeline. renderPolycreationCinematic()
+   is kept as a stub returning '' so the renderBattle call site is unchanged.
+   ⚠ Do not "simplify" this back into the render string.
+
+   The Archon ritual still uses the separate .poly-cine-* overlay above and is
+   deliberately untouched by any of this.
+   ========================================================================== */
+
+// How long the whole thing runs. The CSS timeline in .fcx-* is authored
+// against this number — change one, change the other.
+const FCX_TOTAL_MS = 6200;
+
+/* Resolve fm.materialUnitIds into things we can draw a card frame for.
+   A material is EITHER a board unit id (string) or a zone card object
+   {zone, cardId, name}. Anything unresolvable still yields a placeholder
+   frame rather than being dropped — a fusion that eats 3 materials must show
+   3 cards or the count on screen contradicts the count in the rules. */
+function _fcxMaterials(fm, s) {
+  const out = [];
+  const ids = (fm && fm.materialUnitIds) || [];
+  for (const m of ids) {
+    if (typeof m === 'string') {
+      const u = ((s && s.units) || []).find(x => x && x.id === m);
+      if (u) {
+        out.push({ name: u.name || 'Unit', cardId: u.originalCardId || u.cardId || u.id,
+                   icon: u.icon || '🃏', element: u.element || null });
+        continue;
+      }
+      out.push({ name: 'Material', cardId: null, icon: '🃏', element: null });
+      continue;
+    }
+    if (m && typeof m === 'object') {
+      out.push({ name: m.name || 'Card', cardId: m.cardId || null,
+                 icon: m.icon || '🃏', element: m.element || null });
+      continue;
+    }
+    out.push({ name: 'Material', cardId: null, icon: '🃏', element: null });
+  }
+  return out;
+}
+
+/* The glow colour a card throws. Elements carry a colour already; anything
+   without one gets the Polycreation violet so the ring still reads as one set. */
+function _fcxAura(element) {
+  try {
+    const c = element && ELEMENT_DATA[element] && ELEMENT_DATA[element].color;
+    if (c) return c;
+  } catch (e) {}
+  return '#b478ff';
+}
+
+/* One card frame: gold border, art (or the emoji fallback), name plate, foil
+   sheen. _polyArtSrc is the same art resolver the fusion modal uses, so the
+   cinematic and the modal never disagree about what a card looks like. */
+function _fcxFrameHtml(mat) {
+  let art = null;
+  try { art = _polyArtSrc(mat.cardId); } catch (e) {}
+  const inner = art
+    ? `<img src="${escapeHtml(String(art))}" alt="" onerror="this.onerror=null;this.remove()">`
+    : `<span class="fcx-emoji">${escapeHtml(mat.icon || '🃏')}</span>`;
+  return `<div class="fcx-frame"><div class="fcx-frame-inner">`
+       + `<div class="fcx-art">${inner}</div>`
+       + `<div class="fcx-plate">${escapeHtml(mat.name || 'Card')}</div>`
+       + `</div><div class="fcx-sheen"></div></div>`;
+}
+
+/* Mounts the overlay and returns the ms the caller should wait before
+   resolving the fusion. Safe to call twice — the second call is a no-op
+   because a stale overlay would double every animation on screen. */
+function _fusionCineMount(fm, kalon, spellCard) {
+  try {
+    if (document.getElementById('fusion-cine-overlay')) return FCX_TOTAL_MS;
+    const s = App.state;
+    const mats = _fcxMaterials(fm, s);
+    // The fan is laid out on an arc so 2 cards and 5 cards both look composed.
+    // Radius grows with the count so the frames never overlap each other.
+    const n = Math.max(1, mats.length);
+    const spreadDeg = n === 1 ? 0 : Math.min(152, 46 * (n - 1));
+    // ⚠ The arc radius must beat the card WIDTH or the frames stack on top of
+    // each other and you cannot read a single name plate. A card is 132px wide
+    // and the arc is squashed vertically, so the horizontal reach is roughly
+    // sin(spread/2) * radius — these numbers keep ~150px between neighbours.
+    // A 2-material fusion has the narrowest fan angle, so it needs the widest
+    // arc to clear the same 132px card width — hence the special case.
+    const radius = n === 2 ? 260 : (170 + 46 * (n - 2));
+    // Past four materials the fan runs off a phone screen, so the whole
+    // arrangement shrinks rather than spilling.
+    const countScale = n >= 5 ? 0.76 : (n === 4 ? 0.88 : 1);
+
+    const cards = mats.map((mat, i) => {
+      const t = n === 1 ? 0 : (i / (n - 1)) - 0.5;              // -0.5 … +0.5
+      const ang = t * spreadDeg;                                 // fan angle
+      const rad = (ang - 90) * Math.PI / 180;                    // -90 = up
+      const tx = Math.cos(rad) * radius;
+      const ty = Math.sin(rad) * radius * 0.5;                   // squash: it is a stage, not a circle
+      // Fly in from well off-screen, on the same side the card ends up.
+      const fx = tx * 7 + (t < 0 ? -520 : 520);
+      const fy = ty * 4 - 240;
+      const aura = _fcxAura(mat.element);
+      // The tether is drawn from the core out to the card, so its angle is
+      // the card's bearing and its length the distance to it.
+      const len = Math.sqrt(tx * tx + ty * ty);
+      const tAng = Math.atan2(ty, tx) * 180 / Math.PI;
+      return `
+        <div class="fcx-tether" style="--ang:${tAng.toFixed(2)}deg;--len:${len.toFixed(0)}px;--aura:${aura}"></div>
+        <div class="fcx-card" style="
+              --tx:${tx.toFixed(0)}px; --ty:${ty.toFixed(0)}px;
+              --fx:${fx.toFixed(0)}px; --fy:${fy.toFixed(0)}px;
+              --tilt:${(ang * 0.42).toFixed(1)}deg;
+              --fspin:${(t < 0 ? -38 : 38)}deg;
+              --yaw:${(t * 70).toFixed(0)}deg;
+              --aura:${aura};
+              --cc:${countScale};
+              animation-delay:${(i * 95)}ms">
+          ${_fcxFrameHtml(mat)}
+          <div class="fcx-aura"></div>
+        </div>`;
+    }).join('');
+
+    // Three shockwaves, staggered, all firing at the detonation.
+    const shocks = [0, 130, 280].map(d =>
+      `<div class="fcx-shock" style="animation-delay:${3560 + d}ms"></div>`).join('');
+
+    // Embers. Deterministic offsets — a fixed pattern reads as designed,
+    // Math.random() reads as noise and can clump.
+    const embers = Array.from({ length: 26 }, (_, i) => {
+      const left = (i * 37) % 100;
+      const dx = ((i * 23) % 120) - 60;
+      const dur = 2600 + ((i * 137) % 1800);
+      const delay = (i * 191) % 2400;
+      return `<i style="left:${left}%;--dx:${dx}px;--dur:${dur}ms;--delay:${delay}ms"></i>`;
+    }).join('');
+
+    // The hex lattice behind the vortex.
+    const hex = (() => {
+      const pts = [];
+      for (let ring = 1; ring <= 3; ring++) {
+        const r = ring * 110;
+        const p = Array.from({ length: 6 }, (_, k) => {
+          const a = (k * 60 - 90) * Math.PI / 180;
+          return `${(380 + Math.cos(a) * r).toFixed(1)},${(380 + Math.sin(a) * r).toFixed(1)}`;
+        }).join(' ');
+        pts.push(`<polygon points="${p}" fill="none" stroke="rgba(190,130,255,${0.5 - ring * 0.1})" stroke-width="${4 - ring}"/>`);
+      }
+      for (let k = 0; k < 12; k++) {
+        const a = (k * 30 - 90) * Math.PI / 180;
+        pts.push(`<line x1="380" y1="380" x2="${(380 + Math.cos(a) * 330).toFixed(1)}" y2="${(380 + Math.sin(a) * 330).toFixed(1)}" stroke="rgba(255,205,110,0.22)" stroke-width="1.5"/>`);
+      }
+      return `<svg viewBox="0 0 760 760">${pts.join('')}</svg>`;
+    })();
+
+    const kalonMat = {
+      name: (kalon && kalon.name) || 'Kalon',
+      cardId: kalon && kalon.id,
+      icon: (kalon && kalon.icon) || '🌌',
+      element: kalon && kalon.element,
+    };
+
+    const root = document.createElement('div');
+    root.id = 'fusion-cine-overlay';
+    root.className = 'fcx-root';
+    root.setAttribute('aria-hidden', 'true');
+    root.innerHTML = `
+      <div class="fcx-grid">${hex}</div>
+      <div class="fcx-vortex"></div>
+      <div class="fcx-vortex fcx-vortex-2"></div>
+      <div class="fcx-rays"></div>
+      <div class="fcx-pillar"></div>
+      <div class="fcx-embers">${embers}</div>
+      <div class="fcx-stage">
+        ${cards}
+        ${shocks}
+        <div class="fcx-result">
+          ${_fcxFrameHtml(kalonMat)}
+          <div class="fcx-result-halo"></div>
         </div>
-        <div class="poly-cine-ash">${ash}</div>
-        <div class="poly-cine-tear"></div>
-        <!-- 🦄 The kalon emoji portrait is GONE (v119p7) — the spinning ⚛ sigil
-             behind it is the identity now, and the two stacked read as clutter.
-             The kalon's NAME below still says what was summoned. -->
       </div>
-      <div class="poly-cine-label">${escapeHtml(phaseLabel)}</div>
-      ${showKalonName ? `<div class="poly-cine-kalon-name">${escapeHtml(kalon.name || 'KALON')}</div>` : ''}
-    </div>
-  `;
+      <div class="fcx-flash"></div>
+      <div class="fcx-caption" style="animation-delay:120ms">Polycreation — Materials Locked</div>
+      <div class="fcx-caption" style="animation-delay:1750ms">Conversion In Progress</div>
+      <div class="fcx-caption" style="animation-delay:3480ms">Fusion Summon</div>
+      <div class="fcx-name-rule"></div>
+      <div class="fcx-name">${escapeHtml(kalonMat.name)}</div>
+    `;
+    document.body.appendChild(root);
+    return FCX_TOTAL_MS;
+  } catch (e) {
+    try { console.warn('[fcx] mount failed', e); } catch (_) {}
+    return 0;   // caller resolves immediately rather than hanging the battle
+  }
+}
+
+/* Fade the overlay out and drop it. Always called, even on the error path,
+   because a stuck overlay is a fixed, full-screen, click-through-blocking
+   div over the battle. */
+function _fusionCineUnmount() {
+  try {
+    const el = document.getElementById('fusion-cine-overlay');
+    if (!el) return;
+    el.classList.add('fcx-out');
+    setTimeout(() => { try { el.remove(); } catch (e) {} }, 440);
+  } catch (e) {}
+}
+
+/* Kept as a stub so renderBattle's call site does not have to change. The
+   cinematic is mounted on document.body by _fusionCineMount — see the header
+   comment for why it cannot live in the render string. */
+function renderPolycreationCinematic() {
+  return '';
 }
 
 // Bind the counter-prompt buttons. Called from inside renderBattle.
@@ -176342,7 +176925,7 @@ function _anyCinematicActive() {
     if (document.querySelector(
       '#ace-slam-overlay, #hero-ko-overlay, #field-fx-overlay, ' +
       '.spell-cine-overlay, .onplay-cine-overlay, .ab-cine-overlay, ' +
-      '.poly-cine-backdrop, .kc-overlay, ' +   // summon/fusion backdrop + Kalon evolution burst
+      '.poly-cine-backdrop, .fcx-root, .kc-overlay, ' +   // archon backdrop + v2 fusion cinematic + Kalon evolution burst
       '.csv-fx, .mythic-fx'
     )) return true;
   } catch (e) {}

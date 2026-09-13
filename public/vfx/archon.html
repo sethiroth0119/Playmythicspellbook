@@ -9,14 +9,14 @@
   #fx{position:fixed;inset:0;display:block;background:transparent;pointer-events:none}
 </style>
 <title>Rite of the Archon</title>
-<script>window.VFX_BUILD="v120t5-archon";</script>
+<script>window.VFX_BUILD="v120t6-archon";</script>
 </head>
 <body>
 <canvas id="fx"></canvas>
 <script src="fx-core.js"></script>
 <script>
 /* ═══════════════════════════════════════════════════════════════════════════
-   RITE OF THE ARCHON (v120t5) — the tribute summon, restaged.
+   RITE OF THE ARCHON (v120t6) — the tribute summon, restaged.
 
    Beats:  frames  (the tribute CARD FRAMES fly in and lock into the circle)
         →  ritual  (the sigil ignites, tethers bind the cards, they burn away
@@ -575,6 +575,43 @@ CK.vignette = function (cx, cy, U, k) {
   var GOLD = '#e0b64a', EMBER = '#ff8a3c', BLOOD = '#c2410c',
       COSM = '#8b5cf6', SKY = '#7ec0ff', STAR = '#cfe4ff', VOID = '#140a2e';
 
+  /* ═══ THE BACKDROP BUDGET ═══════════════════════════════════════════════
+     THE MOST BLACK THIS CINEMATIC MAY PUT OVER THE BATTLEFIELD. The player
+     has to keep reading the board through the rite — units, tiles, HP — so
+     everything that merely OBSCURES is held to this one number and nothing
+     else is.
+
+     ⚠ WHICH THINGS ARE "BACKDROP" AND WHICH ARE NOT. Only three things here
+     exist to push the board away: the full-frame vignette grade, the dark
+     pool under the sigil, and the letterbox bars. Those obey BACKDROP. The
+     portal's event horizon, the impact shock rings and the Archon's cast
+     shadow are ALSO black, but they are the EFFECT — they are objects in the
+     shot, they are local, and dimming them would dim the cinematic rather
+     than reveal the board. They stay at full strength.
+
+     ⚠ SCALED AT THE CALL SITE, NEVER IN THE KIT. CK.vignette / CK.ink /
+     CK.bars live in the CINE KIT, which is copied verbatim into kalon,
+     fusion and archon. Editing a kit body here would silently fork it from
+     the other two pages, and the next person to copy the kit across would
+     quietly undo this. Both helpers take a linear strength argument, so the
+     budget is applied where they are CALLED and the kit stays identical. */
+  var BACKDROP = 0.30;
+  /* At full strength the kit's vignette lays ~0.45 of black on the board (a
+     0.16 flat grade compounded with a 0.34 edge falloff) and the ink pool
+     adds ~0.24 inside that. Scaling both by the same factor takes the
+     compounded total from ~0.45 to BACKDROP while keeping their balance —
+     the frame still reads as graded, it is just no longer opaque. */
+  var VIG_K = BACKDROP / 0.45;
+  /* ⚠ THE BARS DO NOT GET THE WHOLE BUDGET, BECAUSE TWO SCRIMS COMPOUND.
+     The vignette is strongest exactly where the bars go — the top and bottom
+     edge — so by the time they are drawn it has already spent ~0.23 of the
+     budget there. Bars at a full 0.30 over that hide 45% of the board, not
+     30%; measured, that was the one place this overran. They are therefore
+     given only what the grade left, which works out at about a tenth. */
+  var VIG_AT_EDGE = 0.34 * VIG_K;
+  var BARS_ON_BOARD = FX.clamp01(1 - (1 - BACKDROP) / (1 - VIG_AT_EDGE));
+  var BARS_A = FX.clamp01(BARS_ON_BOARD / (0.94 * HERO));
+
   var D = FX.director([
     { n: 'frames', d: 0.95 },
     { n: 'ritual', d: 1.40 },
@@ -757,8 +794,8 @@ CK.vignette = function (cx, cy, U, k) {
     /* ═══ LAYER 1 — ATMOSPHERE (sealed at 0.40) ═══════════════════════════ */
     FX.camera(shake, zoomA, cx, cy);
     if (panAY) ctx.translate(0, panAY);
-    CK.vignette(cx, cy, U, darkK);
-    if (N !== 'frames') CK.ink(cx, cy, U * 0.54, FX.clamp01(0.24 * IK), 0.95);
+    CK.vignette(cx, cy, U, darkK * VIG_K);
+    if (N !== 'frames') CK.ink(cx, cy, U * 0.54, FX.clamp01(0.24 * IK * VIG_K), 0.95);
 
     /* the ritual circle on the floor */
     var circK = N === 'frames' ? CK.snap(p)
@@ -1057,8 +1094,32 @@ CK.vignette = function (cx, cy, U, k) {
     /* ⚠ THE NAMEPLATE LEAVES THE CAMERA — the world recedes, the type does not. */
     if (N === 'land') CK.plate(S.name, S.eyebrow, cx, cy + U * 0.335,
                                FX.clamp01((p - 0.14) * 2.6), GOLD);
-    CK.bars(N === 'frames' ? CK.snap(p)
-          : N === 'land' ? 1 - FX.easeIn(FX.clamp01((p - 0.60) / 0.40)) : 1, GOLD);
+    /* ⚠ globalAlpha, NOT the k argument. CK.bars's k drives the bar HEIGHT as
+       well as its wipe, so scaling k would make the bars THINNER rather than
+       more transparent — and thin opaque bars hide just as much board. The
+       outer alpha multiplies the fills the kit writes and leaves the geometry
+       and the wipe timing exactly where they were. */
+    var barK = N === 'frames' ? CK.snap(p)
+             : N === 'land' ? 1 - FX.easeIn(FX.clamp01((p - 0.60) / 0.40)) : 1;
+    ctx.save();
+    ctx.globalAlpha = BARS_A;
+    CK.bars(barK, GOLD);
+    ctx.restore();
+    /* ⚠ THE HAIRLINE KEEPS ITS FULL STRENGTH. With the bars down to a tenth
+       of the board's light the dark fill no longer reads as letterboxing —
+       the two gold rules do, and a 1px rule hides no board worth the name. So
+       they are redrawn here at full strength instead of inheriting the bars'
+       alpha. Same geometry as the kit's, read off the same k. */
+    if (barK > 0.01) {
+      var bh = FX.H * 0.075 * FX.clamp01(barK);
+      var hg = ctx.createLinearGradient(0, 0, FX.W, 0);
+      hg.addColorStop(0,   FX.rgba(GOLD, 0));
+      hg.addColorStop(0.5, FX.rgba(GOLD, 0.55 * FX.clamp01(barK)));
+      hg.addColorStop(1,   FX.rgba(GOLD, 0));
+      ctx.fillStyle = hg;
+      ctx.fillRect(0, bh - 1, FX.W, 1);
+      ctx.fillRect(0, FX.H - bh, FX.W, 1);
+    }
 
     if (S.playing && S.time > D.total + 0.4) S.playing = false;
   }

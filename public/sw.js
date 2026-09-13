@@ -491,7 +491,16 @@ self.addEventListener('fetch', (event) => {
      the file on the server plainly had it.
      Still falls back to cache when offline, so nothing is lost. These are a few
      KB of text; the round-trip is worth the correctness. */
-  if (url.pathname.startsWith('/src/')) {
+  /* 📖 /handbook/ RIDES THE SAME RULE, for the same reason in a different shape.
+     The handbook page fetches handbook.json / gamedata.json / art.json as plain
+     data. Under cache-first those pin on a reader's device until CACHE_VERSION
+     moves, so a rules correction or a regenerated element table would be
+     invisible to exactly the players it was written for — and the page's own
+     `cache: 'no-cache'` cannot help, because this handler answers before the
+     HTTP cache is ever consulted. The book's PUBLISHED copy comes from Supabase
+     (cross-origin, never cached here); this keeps its repo fallback honest too.
+     The /handbook/ HTML itself is a navigation and already skipped above. */
+  if (url.pathname.startsWith('/src/') || url.pathname.startsWith('/handbook/')) {
     event.respondWith((async () => {
       try {
         const fresh = await fetch(req, { cache: 'no-cache' });

@@ -55,6 +55,12 @@ one save field and one panel. **See ECONOMY.md before changing any of it.**
 - **No image or video upload. Text only.** Hosting UGC carries a non-deferrable legal
   obligation to detect and report CSAM. If images are ever wanted, use a third party that
   handles scanning as part of its product.
+  ⚠ ONE NARROW EXCEPTION, and it is not a precedent: the `handbook` Storage bucket
+  (`sql/132_handbook.sql`) accepts image uploads from `is_handbook_admin()` — the three
+  named admin accounts — and refuses every other caller in RLS. That makes it first-party
+  asset storage, not a UGC surface, so the obligation above is not engaged. **Relaxing
+  that policy to `authenticated` re-engages it in full.** Any new upload path must clear
+  the same bar: named accounts only, enforced server-side, or it does not ship.
 - **🚫 No Discord webhooks / no Discord integration.** Decided 2026-08-05. The community
   design doc argues hard for outbound webhooks as its highest-value item — **that
   recommendation is overruled and must not be re-proposed.** Do not build it, and do not

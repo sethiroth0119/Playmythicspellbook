@@ -119,6 +119,39 @@
     // is not "at the enemy".
     FOUNT_RADIUS: 2,
     FOUNT_POWER: 3,
+
+    /* ── phase 3: making it playable as strategy ───────────────────────────── */
+
+    // 🎚 MASTER SWITCH + DIAL. ENABLED off makes every public entry point inert
+    // (no seeding, no tick, no modifier, no tint) so a mode can opt out whole.
+    // INTENSITY scales every modifier this file produces — 0.5 for a casual or
+    // story mode that wants the flavour without the swing, 1.5 for a skirmish
+    // mode that wants positioning to dominate. It multiplies BEFORE the clamp,
+    // so turning it up cannot breach LEY.CAP; raise the cap too if you mean it.
+    ENABLED: true,
+    INTENSITY: 1,
+
+    // 🤖 AI WEIGHTS. The AI's destination scoring is in raw score points, where
+    // roughly 100 ≈ "one good attack", so these are calibrated against that:
+    // taking a fount is worth more than a swing, claiming a hex is worth less.
+    // 🔴 The AI already values ATTACKING from attuned/high ground for free —
+    // tryAttackFromPos probes calculateDamage at the hypothetical tile, which
+    // runs damageMod. These weights cover only what that probe cannot see:
+    // ground worth taking when there is nothing to hit.
+    AI_FOUNT_OPEN: 130,      // step onto an unheld fount
+    AI_FOUNT_ENEMY: 190,     // take one the enemy is drawing power from
+    AI_FOUNT_HOLD: 90,       // stay on the one we already hold
+    AI_CLAIM_NEUTRAL: 18,    // convert bare ground
+    AI_CLAIM_ENEMY: 34,      // grind enemy ground down
+    AI_STAND_OWN: 12,        // per power step of our own ley under us
+    AI_DISCORD: -26,         // ground our element is weak to
+
+    // 💥 COUNTERPLAY. A move flagged breakLey (or a unit with the leybreaker
+    // passive) tears the ley out of the ground it lands on. Without this the
+    // only answer to entrenched ley is to stand on it for three turns, and a
+    // player who is behind on territory has no play at all.
+    BREAK_RADIUS: 1,
+    BREAK_POWER: 2,          // power steps torn out per hit
   };
 
   /* ══════════════════════════════════════════════════════════════════════════
@@ -248,6 +281,7 @@
     return state.board[y][x] || null;
   }
   function leyAt(state, x, y) {
+    if (!LEY.ENABLED) return null;
     var t = tileAt(state, x, y);
     return (t && t.ley && t.ley.elem) ? t.ley : null;
   }
@@ -261,9 +295,13 @@
     return (e && e.length) ? e[0] : null;
   }
   function clampPower(p) { return Math.max(0, Math.min(LEY.POWER_MAX, p | 0)); }
+  // 🎚 INTENSITY is applied HERE, inside the clamp, so every modifier the file
+  // produces is scaled and capped in one place. Scaling at the call sites would
+  // mean a new modifier could be added later that quietly skips the dial.
   function clampMod(m) {
     if (!isFinite(m)) return 0;
-    return Math.max(-LEY.CAP, Math.min(LEY.CAP, m));
+    var scaled = m * (isFinite(LEY.INTENSITY) ? LEY.INTENSITY : 1);
+    return Math.max(-LEY.CAP, Math.min(LEY.CAP, scaled));
   }
 
   /* ══════════════════════════════════════════════════════════════════════════
@@ -293,6 +331,7 @@
      Derived from board DIMENSIONS only, so both multiplayer clients compute the
      same four tiles with nothing to sync — the same property seeding relies on. */
   function founts(state) {
+    if (!LEY.ENABLED) return [];
     if (!state || !Array.isArray(state.board)) return [];
     var H = state.board.length;
     var Wd = (H && state.board[0]) ? state.board[0].length : 0;
@@ -376,6 +415,7 @@
      ley then lives on state.board and travels inside the normal state snapshot.
      ══════════════════════════════════════════════════════════════════════════ */
   function seed(state, map) {
+    if (!LEY.ENABLED) return state;
     if (!state || !Array.isArray(state.board)) return state;
     if (state._leySeeded) return state;
     state._leySeeded = true;
@@ -470,6 +510,7 @@
      ══════════════════════════════════════════════════════════════════════════ */
   function damageMod(state, attacker, defender, moveElem) {
     var out = { mul: 1, atkBonus: 0, defCut: 0, attuned: false, discordant: false, warded: false };
+    if (!LEY.ENABLED) return out;
     if (!state || !attacker || !attacker.pos) return out;
 
     var mod = 0;
@@ -601,6 +642,7 @@
      _cpTickControlPoints documents at the call site.
      ══════════════════════════════════════════════════════════════════════════ */
   function tick(state, map) {
+    if (!LEY.ENABLED) return state;
     if (!state || !Array.isArray(state.board)) return state;
     seed(state, map);
 
@@ -745,6 +787,162 @@
     return { elem: ley.elem, power: clampPower(ley.power), owner: ley.owner, color: W.elementColor(ley.elem), label: txt };
   }
 
+  /* ══════════════════════════════════════════════════════════════════════════
+     📊 CONTROL — the scoreboard for the map-painting war. Without it the
+     territory fight is invisible attrition: the player can see individual
+     hexes but has no way to read whether they are winning the board, which is
+     the one number the whole mode is about.
+
+     Counted by the ELEMENT under each hex matched against each side's living
+     units, not by ley.owner — owner records who last flipped a hex, and a hex
+     your dead unit flipped six turns ago is not yours any more. Seeded ground
+     nobody has claimed correctly reads as neutral to both sides.
+     ══════════════════════════════════════════════════════════════════════════ */
+  function control(state) {
+    var out = { player: 0, ai: 0, neutral: 0, total: 0, playerPct: 0, aiPct: 0 };
+    if (!LEY.ENABLED || !state || !Array.isArray(state.board)) return out;
+    var mine = {}, theirs = {};
+    var units = Array.isArray(state.units) ? state.units : [];
+    for (var i = 0; i < units.length; i++) {
+      var u = units[i];
+      if (!u || !u.alive) continue;
+      var es = W.getElementsOf(u);
+      for (var e = 0; e < es.length; e++) {
+        if (u.owner === 'player') mine[es[e]] = 1; else theirs[es[e]] = 1;
+      }
+    }
+    var H = state.board.length;
+    var Wd = (H && state.board[0]) ? state.board[0].length : 0;
+    for (var y = 0; y < H; y++) {
+      for (var x = 0; x < Wd; x++) {
+        var t = state.board[y][x];
+        if (!t || t.wall) continue;
+        out.total++;
+        var l = t.ley;
+        if (!l || !l.elem) { out.neutral++; continue; }
+        var p = !!mine[l.elem], a = !!theirs[l.elem];
+        // Ground both sides are attuned to counts for neither — it is as much
+        // theirs as ours and calling it "controlled" would double-count it.
+        if (p && !a) out.player++;
+        else if (a && !p) out.ai++;
+        else out.neutral++;
+      }
+    }
+    if (out.total > 0) {
+      out.playerPct = Math.round(out.player / out.total * 100);
+      out.aiPct = Math.round(out.ai / out.total * 100);
+    }
+    return out;
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════════
+     🤖 AI TILE SCORE — what a destination is worth for reasons the attack probe
+     cannot see.
+
+     🔴 SCOPE, AND WHY IT IS THIS NARROW. The AI's destination loop already
+     scores each tile by the best attack reachable from it, and that probe runs
+     the real calculateDamage at the hypothetical position — which means
+     attunement and high ground are ALREADY priced in on the offensive side, for
+     free, today. Adding them here too would double-count them and make the AI
+     over-value attuned tiles by exactly the amount it already values them.
+
+     So this covers only the part with no attack attached: founts, territory,
+     and not standing somewhere that weakens us.
+     ══════════════════════════════════════════════════════════════════════════ */
+  function aiTileScore(state, unit, dest) {
+    if (!LEY.ENABLED || !state || !unit || !dest) return 0;
+    if (W.isFlying(unit)) return 0;        // fliers neither claim nor draw
+    var elem = primaryElementOf(unit);
+    if (!elem) return 0;
+    var sc = 0;
+    var ley = leyAt(state, dest.x, dest.y);
+
+    // 🜂 Founts first — the objective. An AI that cannot see these lets the
+    // player take every one uncontested, and an objective the opponent ignores
+    // is not an objective, it is decoration.
+    if (isFount(state, dest.x, dest.y)) {
+      if (!ley || !ley.elem) sc += LEY.AI_FOUNT_OPEN;
+      else if (ley.elem === elem) sc += LEY.AI_FOUNT_HOLD;
+      else sc += LEY.AI_FOUNT_ENEMY;
+    }
+
+    if (!ley || !ley.elem) {
+      sc += LEY.AI_CLAIM_NEUTRAL;
+    } else if (ley.elem === elem) {
+      sc += LEY.AI_STAND_OWN * clampPower(ley.power);
+    } else {
+      // Hostile ground is worth TAKING (that is the territory war) but standing
+      // on ground that beats our element while we do it is a real cost. Both
+      // terms apply: grinding down a strong enemy ley is worth more, and the
+      // discord penalty is what stops the AI doing it with a unit that suffers
+      // for it when a better-suited one is available.
+      sc += LEY.AI_CLAIM_ENEMY;
+      if (W.getTypeMultiplier(ley.elem, elem) > 1) sc += LEY.AI_DISCORD;
+    }
+    return Math.round(sc);
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════════
+     💥 BREAK — counterplay. Tears BREAK_POWER steps of ley out of a disc.
+     Returns the number of hexes actually changed so the caller can decide
+     whether the event is worth a log line.
+
+     Deliberately element-agnostic: it does NOT convert the ground to the
+     breaker's element, it strips it toward neutral. A break that also claimed
+     would just be a stronger version of walking there, and the point of a
+     counter is to deny, not to leapfrog.
+     ══════════════════════════════════════════════════════════════════════════ */
+  function breakLey(state, cx, cy, radius, power) {
+    if (!LEY.ENABLED || !state || !Array.isArray(state.board)) return 0;
+    var r = (radius == null) ? LEY.BREAK_RADIUS : (radius | 0);
+    var amt = (power == null) ? LEY.BREAK_POWER : (power | 0);
+    var hit = 0;
+    var H = state.board.length;
+    var Wd = (H && state.board[0]) ? state.board[0].length : 0;
+    for (var y = 0; y < H; y++) {
+      for (var x = 0; x < Wd; x++) {
+        if (dist({ x: x, y: y }, { x: cx, y: cy }) > r) continue;
+        var t = state.board[y][x];
+        if (!t || !t.ley || !t.ley.elem) continue;
+        t.ley.power = clampPower(t.ley.power - amt);
+        t.ley.idle = 0;
+        if (t.ley.power <= 0) delete t.ley;
+        hit++;
+      }
+    }
+    return hit;
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════════
+     🔭 PROJECTION — "what do I get if I stand THERE?", for the move-tile
+     preview. This is the piece that turns positioning into a decision instead
+     of a surprise: the ley layer moves damage by up to LEY.CAP based on where a
+     unit is standing, and without a projection the player can only discover
+     that after committing the move.
+
+     Returns null when the tile would change nothing, so the caller can render
+     nothing rather than a row of "+0%" noise.
+     ══════════════════════════════════════════════════════════════════════════ */
+  function project(state, unit, dest) {
+    if (!LEY.ENABLED || !state || !unit || !dest) return null;
+    if (W.isFlying(unit)) return null;
+    var elem = primaryElementOf(unit);
+    var ley = leyAt(state, dest.x, dest.y);
+    var out = { elem: null, power: 0, color: null, atk: 0, perk: null, fount: false, claims: false, rung: rungAt(state, dest.x, dest.y) };
+    if (isFount(state, dest.x, dest.y)) out.fount = true;
+    if (ley) {
+      out.elem = ley.elem; out.power = clampPower(ley.power); out.color = W.elementColor(ley.elem);
+      if (elem && ley.elem === elem) out.atk = clampMod(LEY.ATTUNE_ATK[clampPower(ley.power)] || 0);
+      else if (elem && W.getTypeMultiplier(ley.elem, elem) > 1) out.atk = clampMod(LEY.DISCORD_ATK);
+      out.perk = perkOn(unit, ley);
+      out.claims = !!(elem && ley.elem !== elem);
+    } else if (elem) {
+      out.claims = true;   // bare ground: standing here claims it
+    }
+    if (!out.elem && !out.fount && !out.rung && !out.claims) return null;
+    return out;
+  }
+
   global.MythicLey = {
     version: VERSION,
     LEY: LEY,
@@ -766,5 +964,15 @@
     knockbackBonus: knockbackBonus,
     reactionFor: reactionFor,
     REACTIONS: REACTIONS,
+    control: control,
+    aiTileScore: aiTileScore,
+    breakLey: breakLey,
+    project: project,
+    enabled: function () { return !!LEY.ENABLED; },
+    configure: function (o) {
+      if (!o) return;
+      if (typeof o.enabled === 'boolean') LEY.ENABLED = o.enabled;
+      if (isFinite(o.intensity)) LEY.INTENSITY = Math.max(0, Math.min(3, +o.intensity));
+    },
   };
 })(typeof window !== 'undefined' ? window : this);

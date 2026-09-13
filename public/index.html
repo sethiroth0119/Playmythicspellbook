@@ -37360,6 +37360,18 @@
      so mounting them costs the fit-to-viewport board almost no height. */
   .bc-fieldcond { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 5px; }
 
+  /* 🜂 Leyline control bar — three shares of one hundred, so one bar rather
+     than three chips. Fixed height and no transition on width: it redraws on
+     every render and an animated width would make it crawl continuously. */
+  .bc-ley { margin: 0 0 5px; padding: 4px 7px; border-radius: 7px;
+            background: rgba(12,10,24,0.55); border: 1px solid rgba(212,175,55,0.22); }
+  .bc-ley-head { display: flex; align-items: center; justify-content: space-between;
+                 font-size: 0.62rem; letter-spacing: 0.04em; color: var(--ink-dim); margin-bottom: 3px; }
+  .bc-ley-head strong { color: #6ad880; font-size: 0.7rem; }
+  .bc-ley-bar { display: flex; height: 5px; border-radius: 3px; overflow: hidden;
+                background: rgba(0,0,0,0.4); }
+  .bc-ley-bar i { display: block; height: 100%; }
+
   /* 🕒 v119j9 — the phase track, Master-Duel style. Sits above the board, always
      shows the whole turn, lights the current step. */
   .phz-bar {
@@ -40527,6 +40539,13 @@ const PASSIVES = {
   trapBreaker:   { id: 'trapBreaker',   name: 'Trap Breaker',   desc: '🔧 At the start of your turn: disarms one adjacent enemy trap (random pick from the six tiles touching it).' },
   wallBreaker:   { id: 'wallBreaker',   name: 'Wall Breaker',   desc: '🧱 +50% damage to walls/structures (any wall tile attacked).' },
   surfaceWalker: { id: 'surfaceWalker', name: 'Surface Walker', desc: '🧹 Immune to surface hazards. When this unit moves onto a tile with a surface, that surface is cleared (oil / fire / water / glass / mud).' },
+  // 💥 The answer to an entrenched leyline. Before this the ONLY counter to
+  // enemy ley was to stand on it and grind it down a step per turn, which a
+  // player who is already losing the territory war cannot afford to do — they
+  // would be feeding units onto ground that weakens them for three turns each.
+  // A system with no counterplay is not a strategy layer, it is a tax on
+  // whoever fell behind first.
+  leybreaker: { id: 'leybreaker', name: 'Leybreaker', desc: '💥 This unit\'s attacks tear the leyline out of the ground they land on, stripping the hex and its neighbours back toward neutral. Does NOT claim the ground — it denies it.' },
   weatherWarden: { id: 'weatherWarden', name: 'Weather Warden', desc: '🌤 Active weather ends 1 turn sooner each round this unit is on the field. Clears calm weather windows.' },
   // 👁 ===== X-RAY VISION — passive scan for the whole match =====
   // While this unit is alive on your side, every enemy unit + hero is
@@ -84788,6 +84807,41 @@ function _ley() {
   }
   return M;
 }
+// 🎚 MODE SCOPING. Leylines are a strategy layer, and not every mode wants it
+// at full strength — a story battle wants the flavour, a skirmish wants
+// positioning to decide the match. One dial, read once per battle.
+//
+// Resolution order, most specific first:
+//   App.battlePrep.ley            explicit per-battle override { enabled, intensity }
+//   App.settings.leyIntensity     the player's own preference, when exposed
+//   per-mode defaults below
+//
+// ⚠ Applied through MythicLey.configure() rather than by writing LEY directly:
+// configure clamps intensity to 0..3, and a stray 50 from a saved setting would
+// otherwise scale every modifier by fifty before the cap ever saw it. The cap
+// would still hold the damage, but moveBonus and the AI weights do not go
+// through clampMod and would go berserk.
+function _leyConfigure() {
+  const M = _ley();
+  if (!M) return;
+  let enabled = true, intensity = 1;
+  try {
+    const bp = App.battlePrep || {};
+    // Story / campaign battles are authored encounters — full territory war on
+    // top of a scripted fight fights the author, so it runs at half weight.
+    if (bp.campaign || bp.story) intensity = 0.5;
+    // Roguelite and multiplayer are the competitive surfaces: full strength.
+    const o = bp.ley;
+    if (o && typeof o === 'object') {
+      if (typeof o.enabled === 'boolean') enabled = o.enabled;
+      if (isFinite(o.intensity)) intensity = +o.intensity;
+    }
+    const pref = App.settings && App.settings.leyIntensity;
+    if (o == null && isFinite(pref)) intensity = +pref;
+  } catch (e) {}
+  try { M.configure({ enabled, intensity }); } catch (e) {}
+}
+
 // The map the ley layer seeds itself from. Editor paint (all 11 keys, full
 // fidelity) merged with the generator's per-tile surfaces for everything the
 // editor never painted — see ley.js EDITOR_SEED / SURF_SEED. Both readers are
@@ -84811,6 +84865,11 @@ function _leyMap() {
 function tickLey(state) {
   const M = _ley();
   if (!M) return state;
+  // Re-read the dial each tick rather than once at battle start: App.battlePrep
+  // is rebuilt per battle and a mode set AFTER the first seed would otherwise
+  // keep the previous battle's intensity for the whole match. It is two object
+  // reads and a clamp — cheaper than the bug.
+  _leyConfigure();
   try { return M.tick(state, _leyMap()) || state; } catch (e) { console.warn('[ley tick]', e); return state; }
 }
 
@@ -85200,6 +85259,25 @@ function _resolveSurfaceForMove(state, attacker, target, move, log) {
         log.push({ msg: `🜂 ${move.name} ${_r.msg}.`, color: 'amber' });
       }
     } catch (e) { console.warn('[ley reaction]', e); }
+  }
+
+  // 💥 LEYBREAK — counterplay. A move flagged `breakLey`, or any attack from a
+  // unit with the Leybreaker passive, tears ley out of the ground it lands on.
+  //
+  // Element-agnostic on purpose: it strips toward neutral and does NOT convert
+  // the hex to the breaker's element. A break that also claimed would simply be
+  // a better version of walking there, and the job of a counter is to DENY, not
+  // to leapfrog the thing it counters.
+  if (move.breakLey || (typeof hasPassive === 'function' && hasPassive(attacker, 'leybreaker'))) {
+    try {
+      const _M = _ley();
+      if (_M) {
+        const _r = (move.breakLey && move.breakLey.radius != null) ? (move.breakLey.radius | 0) : null;
+        const _p = (move.breakLey && move.breakLey.power != null) ? (move.breakLey.power | 0) : null;
+        const _n = _M.breakLey(state, tx, ty, _r, _p);
+        if (_n) log.push({ msg: `💥 ${move.name} tears the leyline out of the ground — ${_n} hex${_n === 1 ? '' : 'es'} broken.`, color: 'amber' });
+      }
+    } catch (e) { console.warn('[ley break]', e); }
   }
 
   // Paint the move's own surface AFTER reactions.
@@ -159469,6 +159547,32 @@ function _renderBattleImmediateImpl() {
             ${(weatherBanner || locationBanner || dayNightBanner)
               ? `<div class="bc-fieldcond">${weatherBanner}${locationBanner}${dayNightBanner}</div>`
               : ''}
+            ${/* 🜂 LEYLINE CONTROL — the scoreboard for the map-painting war.
+                 Without it the territory fight is invisible attrition: the
+                 player can read one hex at a time from its tint, but has no way
+                 to tell whether they are WINNING the board, which is the single
+                 number the whole mode is about. A war with no score is not a
+                 war anyone plays deliberately.
+                 Rendered as one bar because the three shares always sum to 100 —
+                 two numbers and a remainder read as three unrelated stats. */ ''}
+            ${(function () {
+              try {
+                const M = _ley();
+                if (!M || !M.enabled()) return '';
+                const c = M.control(s);
+                if (!c.total) return '';
+                const neuPct = Math.max(0, 100 - c.playerPct - c.aiPct);
+                return `<div class="bc-ley" title="${escapeHtml('🜂 Leyline control — ' + c.player + ' hexes yours, '
+                  + c.ai + ' theirs, ' + c.neutral + ' unclaimed. Stand on a hex to convert it; hold a 🜂 fount to flood the ground around it.')}">
+                  <div class="bc-ley-head"><span>🜂 Leyline Control</span><strong>${c.playerPct}%</strong></div>
+                  <div class="bc-ley-bar">
+                    <i style="width:${c.playerPct}%;background:linear-gradient(90deg,#6ad880,#3fa85c)"></i>
+                    <i style="width:${neuPct}%;background:rgba(255,255,255,0.14)"></i>
+                    <i style="width:${c.aiPct}%;background:linear-gradient(90deg,#c4553f,#8a2f22)"></i>
+                  </div>
+                </div>`;
+              } catch (e) { return ''; }
+            })()}
             ${_bcPanel(s, aiHero, playerHero)}
             <div class="panel bc-wrap bc-wrap-action">${renderActionPanel()}</div>
             ${(function(){ const h = (typeof renderHeroActiveSkillBar === 'function') ? renderHeroActiveSkillBar() : ''; return h ? `<div class="panel bc-wrap bc-wrap-skill">${h}</div>` : ''; })()}
@@ -167742,6 +167846,59 @@ function renderBoard() {
             + `text-shadow:0 0 4px rgba(0,0,0,.95)">🜂</span></div>`;
           if (!leyTitle) leyTitle = ' title="' + escapeHtml('🜂 Leyline Fount — hold this hex to flood '
             + (_M.LEY.FOUNT_RADIUS) + ' hexes around it with your element at full power.') + '"';
+        }
+
+        // 🔭 MOVE PROJECTION — "what do I get if I stand HERE?", drawn on every
+        // green move tile while Move mode is open.
+        //
+        // 🔴 THIS IS THE PIECE THAT MAKES POSITIONING A DECISION. Ley moves
+        // damage by up to LEY.CAP based purely on where a unit is standing, and
+        // before this the player could only discover that AFTER committing the
+        // move — which reads as the damage numbers being random rather than as
+        // a system with rules. A modifier you cannot see before you commit to
+        // it is not strategy, it is a surprise.
+        if (_M && isMoveTile && sel) {
+          const _pj = _M.project(s, sel, { x, y });
+          if (_pj) {
+            const bits = [];
+            if (_pj.atk > 0) bits.push('+' + Math.round(_pj.atk * 100) + '%');
+            else if (_pj.atk < 0) bits.push(Math.round(_pj.atk * 100) + '%');
+            if (_pj.rung > 0) bits.push('⛰' + _pj.rung);
+            if (_pj.fount) bits.push('🜂');
+            if (bits.length) {
+              const _pc = _pj.atk < 0 ? '#ff8a7a' : (_pj.color || '#9fe6a0');
+              leyHtml += `<div class="tile-proj" aria-hidden="true" style="position:absolute;left:0;right:0;top:2px;`
+                + `pointer-events:none;text-align:center;font-size:.52rem;font-weight:700;line-height:1;`
+                + `color:${_pc};text-shadow:0 0 4px rgba(0,0,0,.95)">${escapeHtml(bits.join(' '))}</div>`;
+            }
+          }
+        }
+
+        // 🎯 DAMAGE FORECAST — expected damage on every red attack tile, once a
+        // move is picked.
+        //
+        // 🔴 estimate mode (`aiExpectedValue`) EXISTS ALREADY and until now only
+        // the AI used it — three call sites, all AI. It is exactly what a
+        // player-facing preview needs and is the ONLY safe way to ask this
+        // question: it does not roll the dice (so the number shown is not a
+        // different roll from the one that lands) and it deliberately does not
+        // consume once-per-match defences. Calling the ordinary path to preview
+        // a hit would burn the target's Evasive Roll just by LOOKING at them.
+        if (isAttackTile && occupant && sel && App.ui.selectedMoveId) {
+          try {
+            const _mv = lookupMove(App.ui.selectedMoveId);
+            if (_mv && _mv.power) {
+              const _fc = calculateDamage(_mv, sel, occupant, s.weather, { aiExpectedValue: true });
+              if (_fc && _fc.damage > 0) {
+                const _eff = _fc.typeMul >= 2 ? '#ffd166' : (_fc.typeMul <= 0.5 ? '#9aa0a6' : '#ff9a8a');
+                const _lm = (_fc.ley && _fc.ley.mul !== 1)
+                  ? `<span style="font-size:.48rem;opacity:.95">🜂${_fc.ley.mul > 1 ? '+' : ''}${Math.round((_fc.ley.mul - 1) * 100)}%</span>` : '';
+                leyHtml += `<div class="tile-forecast" aria-hidden="true" style="position:absolute;left:0;right:0;bottom:2px;`
+                  + `pointer-events:none;text-align:center;font-size:.6rem;font-weight:800;line-height:1.05;`
+                  + `color:${_eff};text-shadow:0 0 4px rgba(0,0,0,.95)">~${_fc.damage}<br>${_lm}</div>`;
+              }
+            }
+          } catch (e) {}
         }
       } catch (e) {}
       // 🩸 Bleeding overlay — render the downed body first so an active
@@ -178682,6 +178839,27 @@ function doAIStep() {
           if (!lowHp && _threatD.landed >= unit.currentHp && attackScore < 700) {
             sc -= (140 + _threatD.landed) * _ta * _threatD.pHit;
           }
+          // 🜂 LEYLINE awareness — founts, territory, and not standing on ground
+          // that weakens us.
+          //
+          // 🔴 THIS IS NARROWER THAN IT LOOKS, ON PURPOSE. `attackScore` above
+          // comes from tryAttackFromPos(dest), which probes the REAL
+          // calculateDamage at the hypothetical tile — so attunement and high
+          // ground are ALREADY priced into this destination's score, today,
+          // without any code here. Re-adding them would double-count them and
+          // make the AI over-value attuned tiles by exactly the amount it
+          // already values them.
+          //
+          // What the probe genuinely cannot see is ground worth taking when
+          // there is nothing to hit from it: an open fount, a hex worth
+          // flipping, ground that saps the unit standing on it. Without this
+          // block the AI never contests a fount at all — the player takes every
+          // one for free, learns they are free, and the objective layer teaches
+          // the player to ignore it.
+          try {
+            const _M = _ley();
+            if (_M) sc += _M.aiTileScore(App.state, unit, dest);
+          } catch (e) {}
           // 🌋 Surface awareness — don't stroll into a blaze; oil slows us, and
           // standing water is a death trap during a lightning storm.
           try {

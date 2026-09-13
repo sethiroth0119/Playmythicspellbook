@@ -363,5 +363,161 @@ console.log('\n--- 16. ley reactions ---');
   ok('every reaction surface is a real SURFACE_TYPES id', missing.length === 0, missing.join(',') + ' | known=' + [...surfIds].join(','));
 }
 
+/* ── 17. 📊 CONTROL tally ───────────────────────────────────────────────── */
+console.log('\n--- 17. control readout ---');
+{
+  const st = mk(); st._leySeeded = true;
+  st.units = [
+    { name: 'p', owner: 'player', alive: true, pos: { x: 0, y: 0 }, elements: ['fire'], factions: [] },
+    { name: 'a', owner: 'ai',     alive: true, pos: { x: 4, y: 4 }, elements: ['water'], factions: [] },
+  ];
+  const put = (x, y, e) => { st.board[y][x].ley = { elem: e, power: 2, owner: null, held: 0, idle: 0 }; };
+  put(0, 0, 'fire'); put(1, 0, 'fire'); put(2, 0, 'water'); put(3, 0, 'ice');
+  let c = L.control(st);
+  ok('counts our hexes', c.player === 2, c.player);
+  ok('counts their hexes', c.ai === 1, c.ai);
+  ok('unmatched element is neutral', c.neutral === (5 * 5 - 3), c.neutral);
+  ok('total is the whole board', c.total === 25, c.total);
+  ok('percentages add up', c.playerPct + c.aiPct <= 100);
+  // ground BOTH sides are attuned to belongs to neither
+  st.units.push({ name: 'p2', owner: 'player', alive: true, pos: { x: 1, y: 1 }, elements: ['water'], factions: [] });
+  c = L.control(st);
+  ok('shared element counts for neither side', c.ai === 0 && c.player === 2, 'p=' + c.player + ' a=' + c.ai);
+  // a dead unit's ground is not still ours
+  st.units = st.units.map(u => u.owner === 'player' ? { ...u, alive: false } : u);
+  c = L.control(st);
+  ok('dead units do not hold ground', c.player === 0, c.player);
+  ok('walls are not counted', (() => {
+    const w = mk(); w._leySeeded = true; w.board[0][0].wall = { hp: 1 };
+    return L.control(w).total === 24;
+  })());
+}
+
+/* ── 18. 🤖 AI tile scoring ─────────────────────────────────────────────── */
+console.log('\n--- 18. AI leyline awareness ---');
+{
+  const BW = 14, BH = 12;
+  const st = { board: Array.from({ length: BH }, (_, y) => Array.from({ length: BW }, (_, x) => ({ x, y }))), units: [], log: [] };
+  st._leySeeded = true;
+  const f = L.founts(st)[0];
+  const fire = { name: 'f', owner: 'ai', alive: true, pos: { x: 0, y: 0 }, elements: ['fire'], factions: [] };
+  const bare = { x: 5, y: 5 }, away = { x: 9, y: 9 };
+  const sBare = L.aiTileScore(st, fire, bare);
+  ok('claiming bare ground has value', sBare === L.LEY.AI_CLAIM_NEUTRAL, sBare);
+  const sOpen = L.aiTileScore(st, fire, f);
+  ok('an OPEN fount outscores bare ground', sOpen > sBare, sOpen + ' vs ' + sBare);
+  st.board[f.y][f.x].ley = { elem: 'water', power: 3, owner: 'player', held: 2, idle: 0 };
+  const sEnemy = L.aiTileScore(st, fire, f);
+  ok('an ENEMY-held fount outscores an open one', sEnemy > sOpen, sEnemy + ' vs ' + sOpen);
+  st.board[f.y][f.x].ley = { elem: 'fire', power: 3, owner: 'ai', held: 2, idle: 0 };
+  ok('holding our own fount still scores', L.aiTileScore(st, fire, f) > 0);
+  // discord
+  st.board[away.y][away.x].ley = { elem: 'water', power: 2, owner: 'player', held: 0, idle: 0 };
+  const sDisc = L.aiTileScore(st, fire, away);
+  ok('discordant ground is penalised', sDisc === L.LEY.AI_CLAIM_ENEMY + L.LEY.AI_DISCORD, sDisc);
+  ok('discord makes hostile ground worth less than neutral', sDisc < sBare, sDisc + ' vs ' + sBare);
+  // standing on our own ley
+  st.board[away.y][away.x].ley = { elem: 'fire', power: 3, owner: 'ai', held: 0, idle: 0 };
+  ok('our own ley scores by power', L.aiTileScore(st, fire, away) === L.LEY.AI_STAND_OWN * 3);
+  ok('a flier scores no ground at all', L.aiTileScore(st, { ...fire, flying: true }, f) === 0);
+  ok('a unit with no element scores nothing', L.aiTileScore(st, { ...fire, elements: [] }, f) === 0);
+}
+
+/* ── 19. 💥 counterplay ─────────────────────────────────────────────────── */
+console.log('\n--- 19. leybreak ---');
+{
+  const st = mk(); st._leySeeded = true;
+  const put = (x, y, p) => { st.board[y][x].ley = { elem: 'water', power: p, owner: 'ai', held: 0, idle: 0 }; };
+  put(2, 2, 3); put(2, 1, 2); put(1, 2, 1);
+  const n = L.breakLey(st, 2, 2, 1, 2);
+  ok('broke every hex in the disc', n === 3, n);
+  ok('power 3 knocked to 1', st.board[2][2].ley.power === 1, st.board[2][2].ley && st.board[2][2].ley.power);
+  ok('power 2 knocked to nothing', !st.board[1][2].ley);
+  ok('power 1 knocked to nothing', !st.board[2][1].ley);
+  ok('break does NOT claim the ground', !st.board[2][2].ley || st.board[2][2].ley.elem === 'water');
+  ok('breaking bare ground is a no-op', L.breakLey(mk(), 0, 0, 1, 2) === 0);
+  ok('defaults come from LEY', (() => {
+    const s2 = mk(); s2._leySeeded = true;
+    s2.board[0][0].ley = { elem: 'fire', power: 3, owner: null, held: 0, idle: 0 };
+    L.breakLey(s2, 0, 0);
+    return s2.board[0][0].ley.power === 3 - L.LEY.BREAK_POWER;
+  })());
+}
+
+/* ── 20. 🔭 move projection ─────────────────────────────────────────────── */
+console.log('\n--- 20. projection ---');
+{
+  const st = mk(); st._leySeeded = true;
+  st.board[0][0].ley = { elem: 'fire',  power: 3, owner: null, held: 0, idle: 0 };
+  st.board[1][0].ley = { elem: 'water', power: 2, owner: null, held: 0, idle: 0 };
+  const u = { name: 'u', owner: 'player', pos: { x: 3, y: 3 }, elements: ['fire'], factions: [] };
+  const pOwn = L.project(st, u, { x: 0, y: 0 });
+  ok('projects the attuned bonus', Math.abs(pOwn.atk - 0.5) < 1e-9, pOwn.atk);
+  ok('projects the element + power', pOwn.elem === 'fire' && pOwn.power === 3);
+  ok('own ground does not read as a claim', pOwn.claims === false);
+  const pBad = L.project(st, u, { x: 0, y: 1 });
+  ok('projects discord as negative', pBad.atk < 0, pBad.atk);
+  ok('hostile ground reads as a claim', pBad.claims === true);
+  const pBare = L.project(st, u, { x: 4, y: 4 });
+  ok('bare ground reads as claimable', pBare && pBare.claims === true && pBare.elem === null);
+  ok('a flier projects nothing', L.project(st, { ...u, flying: true }, { x: 0, y: 0 }) === null);
+  // projection must agree with what damageMod actually does
+  const uAt = { ...u, pos: { x: 0, y: 0 } };
+  const real = L.damageMod(st, uAt, { name: 'd', pos: { x: 4, y: 4 }, elements: ['nature'], factions: [] }, 'fire');
+  ok('projection MATCHES the real modifier', Math.abs(real.atkBonus - pOwn.atk) < 1e-9, real.atkBonus + ' vs ' + pOwn.atk);
+}
+
+/* ── 21. 🎚 master switch + intensity dial ──────────────────────────────── */
+console.log('\n--- 21. enable flag and intensity ---');
+{
+  const st = mk(); st._leySeeded = true;
+  st.board[0][0].ley = { elem: 'fire', power: 2, owner: null, held: 0, idle: 0 };
+  const a = { name: 'a', owner: 'player', pos: { x: 0, y: 0 }, elements: ['fire'], factions: [] };
+  const d = { name: 'd', owner: 'ai', pos: { x: 4, y: 4 }, elements: ['nature'], factions: [] };
+  const base = L.damageMod(st, a, d, 'fire').mul;
+  ok('baseline intensity 1 = +35%', Math.abs(base - 1.35) < 1e-9, base);
+
+  L.configure({ intensity: 0.5 });
+  ok('intensity 0.5 halves the swing', Math.abs(L.damageMod(st, a, d, 'fire').mul - 1.175) < 1e-9, L.damageMod(st, a, d, 'fire').mul);
+  L.configure({ intensity: 2 });
+  const hot = L.damageMod(st, a, d, 'fire').mul;
+  ok('intensity 2 still cannot breach CAP', hot <= 1 + L.LEY.CAP + 1e-9, hot);
+  L.configure({ intensity: 999 });
+  ok('absurd intensity is clamped to 3', L.LEY.INTENSITY === 3, L.LEY.INTENSITY);
+  L.configure({ intensity: 1 });
+
+  L.configure({ enabled: false });
+  ok('disabled: no modifier',   L.damageMod(st, a, d, 'fire').mul === 1);
+  ok('disabled: no ley read',   L.at(st, 0, 0) === null);
+  ok('disabled: no tick',       (() => { const b = JSON.stringify(st.board); L.tick(st, null); return JSON.stringify(st.board) === b; })());
+  ok('disabled: no founts',     L.founts(st).length === 0);
+  ok('disabled: no control',    L.control(st).total === 0);
+  ok('disabled: no projection', L.project(st, a, { x: 1, y: 1 }) === null);
+  ok('disabled: no AI score',   L.aiTileScore(st, a, { x: 1, y: 1 }) === 0);
+  ok('disabled: no break',      L.breakLey(st, 0, 0) === 0);
+  ok('disabled: seeding is inert', (() => {
+    const s2 = mk();
+    L.seed(s2, { terrain: new Array(25).fill('lava'), cols: 5, rows: 5 });
+    return !s2.board[0][0].ley;
+  })());
+  L.configure({ enabled: true });
+  ok('re-enabling restores the modifier', Math.abs(L.damageMod(st, a, d, 'fire').mul - 1.35) < 1e-9);
+}
+
+/* ── 22. the passive and move flag exist in index.html ──────────────────── */
+console.log('\n--- 22. index.html wiring ---');
+{
+  const html = fs.readFileSync(ROOT + 'public/index.html', 'utf8');
+  const has = (needle, label) => ok(label, html.includes(needle), 'missing: ' + needle);
+  has("leybreaker: { id: 'leybreaker'", 'Leybreaker passive is declared');
+  has("hasPassive(attacker, 'leybreaker')", 'Leybreaker fires on attack');
+  has('_M.aiTileScore(App.state, unit, dest)', 'AI scores leyline destinations');
+  has('_M.project(s, sel, { x, y })', 'move tiles show a projection');
+  has('{ aiExpectedValue: true }', 'forecast uses estimate mode');
+  has('M.control(s)', 'control bar reads the tally');
+  has('_leyConfigure()', 'mode dial is applied');
+  has('M.configure({ enabled, intensity })', 'dial goes through configure()');
+}
+
 console.log('\n' + (fails ? '❌ ' + fails + ' FAILED' : '✅ ALL PASS'));
 process.exit(fails ? 1 : 0);

@@ -84740,6 +84740,74 @@ const SURFACE_TYPES = {
            desc: 'Deep water. Ground units cannot enter it. Flying units pass over and can still be hit by ranged attacks. An Aquatic unit in the Sea cannot be attacked at all — only Storm-element moves reach it.' },
 };
 
+// ============================================================================
+// 🜂 LEYLINES — the bridge to window.MythicLey (src/battle/ley.js).
+//
+// Terrain that powers up elements and factions, Duelists-of-the-Roses style:
+// every hex carries a `ley` ({ elem, power, owner }) seeded from the map's
+// terrain paint, and every unit converts the hex it stands on to its own
+// element automatically, every tick, for free. Attunement is a damage
+// modifier; faction affinity is movement / regen / hazard immunity / a ward.
+// The engine lives in the module — this is only the seam.
+//
+// 🔴 THE GLOBALS TRAP (CLAUDE.md). getElementsOf, getTypeMultiplier,
+// ELEMENT_DATA and isEffectivelyFlying are top-level `const` in this file,
+// which are lexical bindings and NOT on window, so ley.js cannot see one of
+// them. They are handed over HERE, once, through MythicLey.wire(). Never let a
+// call site in ley.js reach for a bare global — this is the whole reason the
+// module has fallbacks for every function it is given.
+//
+// Wiring is lazy and idempotent because ley.js is a DEFERRED script: at the
+// time this const is evaluated window.MythicLey may not exist yet, so binding
+// eagerly here would wire nothing and fail silently for the whole session.
+// Every call site goes through _ley(), which returns null until the module has
+// actually loaded — and null is a complete answer, because every ley call in
+// this file is guarded and the game plays correctly without the layer.
+let _leyWired = false;
+function _ley() {
+  const M = (typeof window !== 'undefined') ? window.MythicLey : null;
+  if (!M) return null;
+  if (!_leyWired) {
+    _leyWired = true;
+    try {
+      M.wire({
+        getElementsOf: (o) => getElementsOf(o),
+        getTypeMultiplier: (a, d) => getTypeMultiplier(a, d),
+        elementColor: (e) => (ELEMENT_DATA[e] && ELEMENT_DATA[e].color) || '#8899aa',
+        elementName: (e) => (ELEMENT_DATA[e] && ELEMENT_DATA[e].name) || e,
+        isFlying: (u) => (typeof isEffectivelyFlying === 'function') ? !!isEffectivelyFlying(u) : !!(u && u.flying),
+        log: (st, msg, color) => { if (st && Array.isArray(st.log)) st.log.push({ msg, color: color || 'amber' }); },
+      });
+    } catch (e) { console.warn('[ley] wire failed', e); }
+  }
+  return M;
+}
+// The map the ley layer seeds itself from. Editor paint (all 11 keys, full
+// fidelity) merged with the generator's per-tile surfaces for everything the
+// editor never painted — see ley.js EDITOR_SEED / SURF_SEED. Both readers are
+// guarded: a profile with no saved battlemap simply seeds from the generator,
+// and a board with neither seeds neutral, which is a playable state.
+function _leyMap() {
+  let terrain = null, cols = 0, rows = 0, tiles = null;
+  try {
+    const m = (typeof _b3dActiveMap === 'function') ? _b3dActiveMap() : null;
+    if (m && Array.isArray(m.terrain)) { terrain = m.terrain; cols = m.cols | 0; rows = m.rows | 0; }
+  } catch (e) {}
+  try {
+    const bb = (typeof _bbMapFromEditor === 'function') ? _bbMapFromEditor() : null;
+    if (bb && Array.isArray(bb.tiles)) tiles = bb.tiles;
+  } catch (e) {}
+  return { terrain, cols, rows, tiles };
+}
+// 🜂 Territory tick — every unit stamps its element onto the hex it holds,
+// entrenched ley climbs, unheld ley decays. Mutates board in place and RETURNS
+// STATE (tickSurfaces' contract), so the call site must assign the result.
+function tickLey(state) {
+  const M = _ley();
+  if (!M) return state;
+  try { return M.tick(state, _leyMap()) || state; } catch (e) { console.warn('[ley tick]', e); return state; }
+}
+
 function _boardDims(state) {
   const H = (state && Array.isArray(state.board)) ? state.board.length : 0;
   const W = (H && state.board[0]) ? state.board[0].length : 0;
@@ -84893,6 +84961,17 @@ function tickSurfaces(state) {
       if (typeof isEffectivelyFlying === 'function' && isEffectivelyFlying(u)) {
         return u;
       }
+      // 🜂 LEYLINE AFFINITY — a faction standing on its HOME ley shrugs off the
+      // hazards its nature makes nonsense of: a Demon on fire ley ignores the
+      // blaze, a Construct on metal ley ignores toxin and acid, a Bug on its
+      // own nature ley walks through webbing. Conditional on the ground, unlike
+      // Surface Walker below (a passive that works anywhere and also CLEANS the
+      // tile) — this one leaves the hazard standing, so it is protection for
+      // the unit and never a way to clear a hazard for free.
+      try {
+        const _M = _ley();
+        if (_M && _M.ignoresHazard(state, u, surf.type)) return u;
+      } catch (e) {}
       // 🧹 SURFACE WALKER passive — unit is immune to surface effects AND
       // clears the tile when it ends its turn on a hazard. Acts as a
       // counter-play tool for oil/fire/water spam.
@@ -100705,6 +100784,15 @@ const _getMoveRangeRaw = (unit, weather) => {
   // 🏯 Active Location SPD modifier — Frost Glade, Mire, Sky Citadel.
   if (typeof getLocationSpeedMod === 'function') speed += getLocationSpeedMod(unit);
   speed = Math.max(1, speed);
+  // 🜂 LEYLINE AFFINITY — a faction on its home ground moves further. Aquatic
+  // on water ley, Beast on nature, Bird on wind. Deliberately the ONLY stat
+  // the ley layer gives a faction: factions get tactics (movement, regen,
+  // hazard immunity, a ward), elements get damage. Letting both multiply the
+  // same number is what would make a matched faction+element stack unplayable
+  // to fight. Reads the unit's CURRENT hex, so it is gained and lost by
+  // walking, which is the point.
+  try { const _M = _ley(); if (_M) speed += _M.moveBonus(App.state, unit); } catch (e) {}
+
   // Stat stage SPD (one stage = +/- 1 movement; total stage bonus, not per STAGE_STEP)
   if (unit.stages && unit.stages.spd) speed += unit.stages.spd;
   // Trick Room: invert SPD so slower units pull ahead (1 ↔ 3, 2 stays)
@@ -102143,6 +102231,34 @@ const calculateDamage = (move, attacker, defender, weather, opts) => {
     }
   }
 
+  // 🜂 LEYLINE ATTUNEMENT — the ground both fighters are standing on.
+  // The attacker's hex decides whether the move is empowered (its element
+  // matches the ley) or discordant (the ley's element beats the move's); the
+  // defender's hex decides how well they are dug in, plus any faction ward.
+  //
+  // 🔴 PLACED LAST ON PURPOSE, AND CLAMPED INSIDE THE MODULE. By this line the
+  // damage has already been through type chart * weather * time-of-day * STAB *
+  // keystones * armor, every one of them a multiplier. A positional bonus with
+  // no ceiling on top of that stack is how a lava map turns a 40-damage move
+  // into a 300-damage one. MythicLey.damageMod caps its own contribution at
+  // LEY.CAP in BOTH directions, so this line can only ever move the number
+  // inside a band — tune LEY in ley.js, never here, and never add a second
+  // ley multiplier at another call site.
+  //
+  // Reads move.element, NOT the attacker's elements: a fire mage standing on
+  // fire ley casting an ice spell is not attuned to what they are doing. Same
+  // reading STAB takes eleven lines up, deliberately.
+  let _leyInfo = null;
+  if (dmg > 0 && !_immune) {
+    try {
+      const _M = _ley();
+      if (_M) {
+        _leyInfo = _M.damageMod(App.state, attacker, defender, moveElem);
+        if (_leyInfo && _leyInfo.mul !== 1) dmg = Math.max(1, Math.round(dmg * _leyInfo.mul));
+      }
+    } catch (e) { console.warn('[ley damage]', e); }
+  }
+
   let effectiveness = 'normal';
   if (typeMul >= 2)        effectiveness = 'super';
   else if (typeMul <= 0.5) effectiveness = 'weak';
@@ -102154,7 +102270,7 @@ const calculateDamage = (move, attacker, defender, weather, opts) => {
     const _evBase = _immune ? 0 : Math.max(1, dmg);
     return { damage: Math.round(_evBase * _evHit), missed: false, crit: isCrit, typeMul, effectiveness, stab, expected: true, hitChance: _evHit };
   }
-  return { damage: _immune ? 0 : Math.max(1, dmg), missed: false, crit: isCrit, typeMul, effectiveness, stab };
+  return { damage: _immune ? 0 : Math.max(1, dmg), missed: false, crit: isCrit, typeMul, effectiveness, stab, ley: _leyInfo };
 };
 
 const initBoard = () => Array.from({ length: BOARD_H }, (_, y) => Array.from({ length: BOARD_W }, (_, x) => ({ x, y, location: null, trap: null, event: null })));
@@ -121280,6 +121396,11 @@ const startTurn = (state, who) => {
   // 🌋 Surface tick — fire spreads to oil, hazards burn / slow whoever ended
   // their turn on them, surface timers decay.
   try { if (typeof tickSurfaces === 'function') s = tickSurfaces(s); } catch (e) { console.warn('[surface tick]', e); }
+  // 🜂 Leyline tick — every unit converts the hex it holds to its own element,
+  // entrenched ley climbs a step, unheld ley decays back toward neutral.
+  // ⚠ ASSIGNS `s` — tickLey follows tickSurfaces' contract and RETURNS state.
+  // Calling it as a bare statement would silently drop every conversion.
+  try { if (typeof tickLey === 'function') s = tickLey(s); } catch (e) { console.warn('[ley tick]', e); }
   s._phoenixTurnRevives = 0;   // 🔥 reset Phoenix Rebirth per-turn limit
   // 🌲 Skill-tree passive turn-start hooks. Each helper guards on whether
   // the active side has a hero with the relevant flag; otherwise they no-op.
@@ -167546,6 +167667,35 @@ function renderBoard() {
           ) + '"';
         }
       }
+      // 🜂 LEYLINE overlay — the attunement layer, tinted in the element's own
+      // colour (ELEMENT_DATA[e].color, so the board and every card/icon in the
+      // game agree) with one pip per power step.
+      //
+      // 🔴 THIS IS NOT DECORATION. Attunement moves damage by up to LEY.CAP in
+      // either direction from where a unit happens to be standing. A modifier
+      // the player cannot SEE is a modifier they read as the damage numbers
+      // being random, and they would be right to. The tint is the rule.
+      //
+      // ⚠ Styled INLINE, like the ruin marker below and for the same reason:
+      // `.tile` carries `contain: layout paint` (CONTRACT §6.10), so a rule
+      // living in a stylesheet that chrome.css later overrides with
+      // `!important` would silently blank the only feedback this system has.
+      // Sits UNDER the surface overlay in the emitted markup — a hazard is
+      // immediate and must win the tile visually; ley is ambient.
+      let leyHtml = '', leyTitle = '';
+      try {
+        const _M = _ley();
+        const _d = _M ? _M.describe(s, x, y, occupant || null) : null;
+        if (_d) {
+          const _pips = '◆'.repeat(_d.power);
+          leyHtml = `<div class="tile-ley" aria-hidden="true" style="position:absolute;inset:0;pointer-events:none;`
+            + `background:radial-gradient(circle at 50% 55%, ${_d.color}4d 0%, ${_d.color}1f 55%, transparent 78%);`
+            + `box-shadow:inset 0 0 0 1px ${_d.color}40"><span style="position:absolute;left:3px;bottom:2px;`
+            + `font-size:.5rem;line-height:1;letter-spacing:-1px;color:${_d.color};`
+            + `text-shadow:0 0 3px rgba(0,0,0,.9)">${_pips}</span></div>`;
+          leyTitle = ' title="' + escapeHtml('🜂 ' + _d.label) + '"';
+        }
+      } catch (e) {}
       // 🩸 Bleeding overlay — render the downed body first so an active
       // occupant standing on the same tile renders ON TOP of it. The
       // overlay is positioned absolute by CSS so it doesn't take space.
@@ -167864,7 +168014,7 @@ function renderBoard() {
       // y can be negative and gets the shift backwards.
       const _gc = 2 * x + 1 + (y & 1);
       const _gridStyle = ` style="grid-column:${_gc} / span 2;grid-row:${y + 1}"`;
-      html += `<div class="${tileClasses.join(' ')}${bleedingHere ? ' has-bleeding' : ''}" data-x="${x}" data-y="${y}"${_gridStyle}${surfTitle}>${surfHtml}${bleedOverlay}${cellInner}</div>`;
+      html += `<div class="${tileClasses.join(' ')}${bleedingHere ? ' has-bleeding' : ''}" data-x="${x}" data-y="${y}"${_gridStyle}${surfTitle || leyTitle}>${leyHtml}${surfHtml}${bleedOverlay}${cellInner}</div>`;
     }
   }
   // 🌌 Inject the living-battlefield ambient overlay — drifting ash + embers,
@@ -264819,6 +264969,7 @@ render();
        2KB with no dependencies. -->
 <script src="src/econ/peg.js?v=v121q51"></script>
 <script src="src/battle/effects.js?v=v121v116" defer></script>
+<script src="src/battle/ley.js?v=v121v117" defer></script>
 <script src="src/phone/handset.js?v=v121v116" defer></script>
 <script src="src/battle/combat.js?v=120m4" defer></script>
 <script src="src/battle/targeting.js?v=121e3hex" defer></script>

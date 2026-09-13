@@ -39407,7 +39407,7 @@ body:has(#pack-opener-frame) #chat-overlay {
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v121v116';
+  window.BUILD_VERSION = 'v121v117';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -172353,13 +172353,13 @@ const _MECH_VFX_FILE = { kalon: 'vfx/kalon', fusion: 'vfx/fusion', archon: 'vfx/
 const _MECH_VFX_API  = { kalon: 'KalonVFX',       fusion: 'FusionVFX',       archon: 'ArchonVFX' };
 // Bump when a vfx/*.html changes, or browsers keep serving the cached page
 // (the same trap BB_VER exists for on the battle board).
-const MECH_VFX_VER = 'v120t3';
+const MECH_VFX_VER = 'v120t5';
 // 🏷 The EXACT stamp each page must report. Presence alone was not enough: a
 // cached page from an older deploy still carries *a* stamp, so it passed the
 // old check and ran anyway (that is how a superseded cinematic kept playing on
 // a machine that had already downloaded the new game). A mismatch is treated
 // exactly like a missing stamp — reload once, then refuse to show it.
-const _MECH_VFX_STAMP = { kalon: 'v120t3-kalon', fusion: 'v120t3-fusion', archon: 'v120t3-archon' };
+const _MECH_VFX_STAMP = { kalon: 'v120t3-kalon', fusion: 'v120t3-fusion', archon: 'v120t5-archon' };
 // One random stamp per page load. Appended to every overlay iframe URL so a
 // stale edge/browser copy of a page can never be reused within a session —
 // the "?v= is new but the served page is old" trap, which shows up as an

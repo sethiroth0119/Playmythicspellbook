@@ -100,6 +100,25 @@
     // instead of two). The paint is untouched and the map still favours that
     // element — it just no longer decides the match on its own.
     SEED_SHARE_CAP: 0.45,
+
+    /* ── phase 2 ──────────────────────────────────────────────────────────── */
+
+    // ⛰ HIGH GROUND. Per rung of elevation difference, on RANGED attacks only
+    // (distance > 1). Melee is two fighters in the same scrum and the rung they
+    // are standing on does not decide it; an archer above you plainly does.
+    // Shares the LEY.CAP clamp with attunement — see damageMod.
+    ELEV_PER_RUNG: 0.08,
+    ELEV_MAX_RUNGS: 3,     // a 4-rung cliff is not four times a 1-rung step
+    // Shoved off a ledge: extra tiles of knockback when the target is pushed
+    // from higher ground to lower.
+    ELEV_KNOCKBACK: 1,
+
+    // 🜂 LEY FOUNTS. Fixed, mirror-symmetric tiles. A unit that holds one floods
+    // the hexes around it with its own element, at a power nothing else on the
+    // board reaches. This is the objective layer: a reason to go somewhere that
+    // is not "at the enemy".
+    FOUNT_RADIUS: 2,
+    FOUNT_POWER: 3,
   };
 
   /* ══════════════════════════════════════════════════════════════════════════
@@ -207,6 +226,14 @@
     elementName: function (e) { return e; },
     isFlying: function () { return false; },
     log: function () {},
+    // 🔴 HEX distance, wired from index.html rather than reimplemented here.
+    // The board is odd-r offset and its parity rules are subtle enough that
+    // _paintSurface shipped a SQUARE disc on a hex board and nobody saw it for
+    // a wave (CLAUDE.md, HEXSPEC §6). Reimplementing that maths in a second
+    // file is volunteering for the same bug. Without it the fount falls back to
+    // its own tile only, which is wrong but small and obvious — never a
+    // silently oversized disc.
+    distance: null,
   };
   function wire(fns) {
     if (!fns) return;
@@ -240,6 +267,102 @@
   }
 
   /* ══════════════════════════════════════════════════════════════════════════
+     ⛰ ELEVATION. The board generator has always written a per-tile `elev`
+     (_BB_ELEV, five rungs 0..1.36 in world units) and gameplay has never read
+     one of them — the height was scenery. Seeding copies it onto the game board
+     as a discrete RUNG so the rules can talk about "one level up" instead of
+     floating-point world height.
+     ══════════════════════════════════════════════════════════════════════════ */
+  var ELEV_STEP = 0.34;                       // _BB_ELEV rung spacing
+  function rungOf(elev) {
+    var n = Math.round((+elev || 0) / ELEV_STEP);
+    return Math.max(0, Math.min(4, n));
+  }
+  function rungAt(state, x, y) {
+    var t = tileAt(state, x, y);
+    return t ? (t.elevRung | 0) : 0;
+  }
+
+  /* 🜂 LEY FOUNTS — deterministic and MIRROR-SYMMETRIC under
+     (x,y) -> (W-1-x, H-1-y), which is the same 180° symmetry _bbGenTerrain
+     folds its noise against. Two mirrored pairs, never a lone centre tile: on
+     an even-sided board no single hex is its own mirror, so a "centre" fount
+     would sit nearer one deployment zone than the other and hand that side the
+     objective layer before the first turn.
+
+     Derived from board DIMENSIONS only, so both multiplayer clients compute the
+     same four tiles with nothing to sync — the same property seeding relies on. */
+  function founts(state) {
+    if (!state || !Array.isArray(state.board)) return [];
+    var H = state.board.length;
+    var Wd = (H && state.board[0]) ? state.board[0].length : 0;
+    if (Wd < 5 || H < 5) return [];            // too small to place them fairly
+    var pts = [
+      { x: Math.floor(Wd * 0.25), y: Math.floor(H * 0.5) },
+      { x: Math.floor(Wd * 0.5),  y: Math.floor(H * 0.25) },
+    ];
+    var out = [], seen = {};
+    for (var i = 0; i < pts.length; i++) {
+      var a = pts[i], b = { x: Wd - 1 - a.x, y: H - 1 - a.y };
+      var pair = [a, b];
+      for (var j = 0; j < 2; j++) {
+        var k = pair[j].x + ',' + pair[j].y;
+        if (seen[k]) continue;
+        seen[k] = 1;
+        out.push(pair[j]);
+      }
+    }
+    return out;
+  }
+  function isFount(state, x, y) {
+    var f = founts(state);
+    for (var i = 0; i < f.length; i++) if (f[i].x === x && f[i].y === y) return true;
+    return false;
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════════
+     🜂 LEY REACTIONS. The surface engine in index.html already chains hazards
+     against each other (fire on oil ignites the pool, storm on water
+     electrifies it). This is the same idea one layer down: a move landing on
+     ATTUNED GROUND leaves a hazard behind, so the ley layer does something
+     other than move a number.
+
+     Keyed [ley element][move element] -> the surface to paint. Deliberately
+     sparse: every entry has to read as obvious the first time a player sees it,
+     because an unexplained hazard appearing under your own unit is worse than
+     no reaction at all.
+     ══════════════════════════════════════════════════════════════════════════ */
+  var REACTIONS = {
+    ice:        { fire: { surf: 'water', turns: 4, msg: 'melts the frozen ground into meltwater' },
+                  lava: { surf: 'water', turns: 4, msg: 'melts the frozen ground into meltwater' } },
+    water:      { ice:   { surf: 'ice',         turns: 5, msg: 'freezes the waterlogged ground solid' },
+                  storm: { surf: 'electrified', turns: 3, msg: 'sends current crawling through the wet ground' } },
+    lava:       { water: { surf: 'steam',  turns: 3, msg: 'flashes across the molten rock into scalding steam' },
+                  ice:   { surf: 'steam',  turns: 3, msg: 'cracks against the molten rock in a burst of steam' } },
+    nature:     { fire: { surf: 'fire',  turns: 3, msg: 'catches the dry growth alight' },
+                  lava: { surf: 'fire',  turns: 3, msg: 'catches the dry growth alight' } },
+    corruption: { fire: { surf: 'toxin', turns: 3, msg: 'burns the rot into a cloud of poison gas' },
+                  lava: { surf: 'toxin', turns: 3, msg: 'burns the rot into a cloud of poison gas' } },
+    poison:     { fire: { surf: 'toxin', turns: 3, msg: 'ignites the tainted ground into choking fumes' } },
+    blood:      { storm: { surf: 'electrified', turns: 3, msg: 'runs through the spilled blood' } },
+    metal:      { storm: { surf: 'electrified', turns: 3, msg: 'earths itself through the iron underfoot' } },
+  };
+
+  /* What (if anything) a move of `moveElem` does to the ley at (x,y).
+     Returns null, or { surf, turns, msg } for the caller to paint and log.
+     Pure — index.html owns _setSurface, and the game owns every decision. */
+  function reactionFor(state, x, y, moveElem) {
+    if (!moveElem) return null;
+    var ley = leyAt(state, x, y);
+    if (!ley) return null;
+    var row = REACTIONS[ley.elem];
+    if (!row) return null;
+    var r = row[moveElem];
+    if (!r) return null;
+    return { surf: r.surf, turns: r.turns, msg: r.msg, leyElem: ley.elem };
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════════
      SEEDING. Lazy and idempotent, keyed on state._leySeeded.
 
      🔴 LAZY ON PURPOSE. index.html builds battle state in more than one place
@@ -269,19 +392,27 @@
 
     // Generator surfaces for everything the editor did not paint.
     var seeded = [], counts = {};
-    var surfByKey = null;
+    var surfByKey = null, elevByKey = null;
     if (map && Array.isArray(map.tiles)) {
-      surfByKey = {};
+      surfByKey = {}; elevByKey = {};
       for (var i = 0; i < map.tiles.length; i++) {
         var mt = map.tiles[i];
-        if (mt) surfByKey[mt.x + ',' + mt.z] = mt.surf;
+        if (!mt) continue;
+        surfByKey[mt.x + ',' + mt.z] = mt.surf;
+        elevByKey[mt.x + ',' + mt.z] = mt.elev;
       }
     }
 
     for (var y = 0; y < H; y++) {
       for (var x = 0; x < Wd; x++) {
         var tile = state.board[y][x];
-        if (!tile || tile.ley) continue;
+        if (!tile) continue;
+        // ⛰ Elevation is copied EVERY pass, even onto a tile that already has
+        // ley — it is a property of the ground, not of the claim on it, and
+        // `continue`-ing past it below would leave the rung at 0 on any tile
+        // the editor happened to paint.
+        if (elevByKey && tile.elevRung == null) tile.elevRung = rungOf(elevByKey[x + ',' + y]);
+        if (tile.ley) continue;
         var s = null;
         if (ed && x < eCols && y < eRows) {
           var key = Array.isArray(ed[x]) ? ed[x][y] : ed[x * eRows + y];
@@ -376,8 +507,41 @@
     }
     out.defCut = dCut;
 
+    // ── ⛰ high ground ──────────────────────────────────────────────────────
+    // RANGED only. Two fighters in a melee scrum are not decided by the rung
+    // they stand on; an archer shooting down at you plainly is. Folded into the
+    // SAME clamped modifier as attunement rather than applied as its own
+    // multiplier, so the two together can never exceed LEY.CAP — one ceiling
+    // for everything this file contributes, which is the only way the ceiling
+    // stays checkable.
+    if (defender && defender.pos && dist(attacker.pos, defender.pos) > 1) {
+      var dr = rungAt(state, attacker.pos.x, attacker.pos.y) - rungAt(state, defender.pos.x, defender.pos.y);
+      if (dr !== 0) {
+        var capped = Math.max(-LEY.ELEV_MAX_RUNGS, Math.min(LEY.ELEV_MAX_RUNGS, dr));
+        out.elevRungs = capped;
+        mod += capped * LEY.ELEV_PER_RUNG;
+        out.atkBonus = mod;
+      }
+    }
+
     out.mul = (1 + clampMod(mod)) * (1 - clampMod(dCut));
     return out;
+  }
+
+  // Hex distance, via the wired game function. Falls back to "not adjacent" for
+  // anything that is not the same tile, which keeps the high-ground rule from
+  // silently applying to melee if wiring ever fails.
+  function dist(a, b) {
+    if (!a || !b) return 0;
+    if (typeof W.distance === 'function') { try { return W.distance(a, b); } catch (e) {} }
+    return (a.x === b.x && a.y === b.y) ? 0 : 2;
+  }
+
+  // ⛰ Extra knockback tiles when the target is shoved from high ground to low.
+  function knockbackBonus(state, attacker, target) {
+    if (!state || !attacker || !attacker.pos || !target || !target.pos) return 0;
+    var dr = rungAt(state, attacker.pos.x, attacker.pos.y) - rungAt(state, target.pos.x, target.pos.y);
+    return dr > 0 ? LEY.ELEV_KNOCKBACK : 0;
   }
 
   // Which affinity perk (if any) this unit gets from standing on this ley.
@@ -442,7 +606,7 @@
 
     var occupied = {};
     var units = Array.isArray(state.units) ? state.units : [];
-    var flips = 0, healed = 0;
+    var flips = 0, healed = 0, fountClaims = [];
 
     for (var i = 0; i < units.length; i++) {
       var u = units[i];
@@ -486,6 +650,55 @@
       if (lp && perkOn(u, lp) === 'regen' && u.currentHp > 0 && u.maxHp && u.currentHp < u.maxHp) {
         u.currentHp = Math.min(u.maxHp, u.currentHp + LEY.PERK_REGEN);
         healed++;
+      }
+
+      // 🜂 FOUNT — holding one floods the hexes around it at FOUNT_POWER. Queued
+      // rather than painted here: two units of different elements can hold two
+      // founts whose discs overlap, and painting inside this loop would give the
+      // overlap to whichever unit happened to sit earlier in state.units — an
+      // outcome decided by array order, which is not a rule anyone can play
+      // around. Resolved together after the loop, where the tie can be seen.
+      if (isFount(state, u.pos.x, u.pos.y)) {
+        fountClaims.push({ x: u.pos.x, y: u.pos.y, elem: elem, owner: u.owner, name: u.name });
+      }
+    }
+
+    // ── fount flooding ───────────────────────────────────────────────────────
+    // A hex inside two rival founts' discs is CONTESTED and is left exactly as
+    // it is — neither side gets it while both stand. Ties go to nobody, never to
+    // whoever the loop reached first.
+    if (fountClaims.length) {
+      var claimed = {};
+      for (var fi = 0; fi < fountClaims.length; fi++) {
+        var fc = fountClaims[fi];
+        for (var fy = 0; fy < state.board.length; fy++) {
+          var rowLen = state.board[fy] ? state.board[fy].length : 0;
+          for (var fx = 0; fx < rowLen; fx++) {
+            if (dist({ x: fx, y: fy }, { x: fc.x, y: fc.y }) > LEY.FOUNT_RADIUS) continue;
+            var kk = fx + ',' + fy;
+            if (claimed[kk] === undefined) claimed[kk] = fc.elem;
+            else if (claimed[kk] !== fc.elem) claimed[kk] = null;   // contested
+          }
+        }
+      }
+      for (var key in claimed) {
+        if (!Object.prototype.hasOwnProperty.call(claimed, key)) continue;
+        var ce = claimed[key];
+        if (!ce) continue;
+        var parts = key.split(',');
+        var cx = parts[0] | 0, cy = parts[1] | 0;
+        var ct = tileAt(state, cx, cy);
+        if (!ct || ct.wall) continue;
+        ct.ley = { elem: ce, power: LEY.FOUNT_POWER, owner: null, held: 0, idle: 0, fount: true };
+        // Held ground does not decay. Without this the decay pass below would
+        // count idle turns on every flooded hex and chip it to power 2 between
+        // floods, so a fount the player is actively standing on would visibly
+        // flicker. Released, the mark is gone and the disc decays normally.
+        occupied[key] = true;
+      }
+      for (var fj = 0; fj < fountClaims.length; fj++) {
+        W.log(state, '🜂 ' + (fountClaims[fj].name || 'A unit') + ' holds a leyline fount — the ground answers.',
+              fountClaims[fj].owner === 'player' ? 'green' : 'red');
       }
     }
 
@@ -547,5 +760,11 @@
     ignoresHazard: ignoresHazard,
     perkOn: perkOn,
     describe: describe,
+    founts: founts,
+    isFount: isFount,
+    rungAt: rungAt,
+    knockbackBonus: knockbackBonus,
+    reactionFor: reactionFor,
+    REACTIONS: REACTIONS,
   };
 })(typeof window !== 'undefined' ? window : this);

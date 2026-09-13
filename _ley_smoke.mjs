@@ -33,7 +33,16 @@ L.wire({
   elementColor: () => '#f00', elementName: e => e,
   isFlying: u => !!(u && u.flying),
   log: (st, m) => { if (st && st.log) st.log.push({ msg: m }); },
+  distance: (a, b) => hexDist(a, b),
 });
+
+/* odd-r offset -> cube, then cube distance. Mirrors index.html's distance(). */
+function hexDist(a, b) {
+  const ac = { x: a.x - ((a.y - (a.y & 1)) >> 1), z: a.y };
+  const bc = { x: b.x - ((b.y - (b.y & 1)) >> 1), z: b.y };
+  const ay = -ac.x - ac.z, by = -bc.x - bc.z;
+  return Math.max(Math.abs(ac.x - bc.x), Math.abs(ay - by), Math.abs(ac.z - bc.z));
+}
 
 const W = 5, H = 5;
 const mk = () => ({ board: Array.from({ length: H }, (_, y) => Array.from({ length: W }, (_, x) => ({ x, y }))), units: [], log: [] });
@@ -232,6 +241,126 @@ console.log('\n--- 13. clamp integrity ---');
   const blown = L.damageMod(st, a, d, 'fire').mul;
   ok('a +900% bump still cannot exceed CAP', blown <= 1 + L.LEY.CAP + 1e-9, blown);
   L.LEY.ATTUNE_ATK = keepA; L.LEY.ATTUNE_DEF = keepD; L.LEY.PERK_WARD = keepW;
+}
+
+/* ── 14. ⛰ ELEVATION ────────────────────────────────────────────────────── */
+console.log('\n--- 14. elevation / high ground ---');
+{
+  const N = 8;
+  const st = { board: Array.from({ length: N }, (_, y) => Array.from({ length: N }, (_, x) => ({ x, y }))), units: [], log: [] };
+  // elev comes in as _BB_ELEV world height; seeding must turn it into a rung.
+  const tiles = [];
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) tiles.push({ x, z: y, surf: 'asphalt', elev: x === 0 ? 1.02 : 0 });
+  L.seed(st, { terrain: null, tiles });
+  ok('elev 1.02 -> rung 3', L.rungAt(st, 0, 0) === 3, L.rungAt(st, 0, 0));
+  ok('elev 0 -> rung 0',    L.rungAt(st, 5, 0) === 0);
+
+  const hi = { name: 'archer', owner: 'player', pos: { x: 0, y: 0 }, elements: ['metal'], factions: [] };
+  const lo = { name: 'target', owner: 'ai', pos: { x: 4, y: 0 }, elements: ['nature'], factions: [] };
+  ok('ranged from 3 rungs up = +24%', Math.abs(L.damageMod(st, hi, lo, 'metal').mul - 1.24) < 1e-9, L.damageMod(st, hi, lo, 'metal').mul);
+  ok('ranged from below = -24%',      Math.abs(L.damageMod(st, lo, hi, 'nature').mul - 0.76) < 1e-9, L.damageMod(st, lo, hi, 'nature').mul);
+  // adjacency: (0,0) and (1,0) are neighbours on odd-r, so this is melee
+  const adj = { name: 'melee', owner: 'ai', pos: { x: 1, y: 0 }, elements: ['nature'], factions: [] };
+  ok('MELEE ignores high ground', L.damageMod(st, hi, adj, 'metal').mul === 1, L.damageMod(st, hi, adj, 'metal').mul);
+  ok('downhill shove adds a tile', L.knockbackBonus(st, hi, lo) === L.LEY.ELEV_KNOCKBACK);
+  ok('uphill shove adds nothing',  L.knockbackBonus(st, lo, hi) === 0);
+  // A cliff is not linearly better than a step.
+  const tall = [];
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) tall.push({ x, z: y, surf: 'asphalt', elev: x === 0 ? 1.36 : 0 });
+  const st2 = { board: Array.from({ length: N }, (_, y) => Array.from({ length: N }, (_, x) => ({ x, y }))), units: [], log: [] };
+  L.seed(st2, { terrain: null, tiles: tall });
+  ok('4-rung cliff capped at ELEV_MAX_RUNGS', Math.abs(L.damageMod(st2, hi, lo, 'metal').mul - 1.24) < 1e-9, L.damageMod(st2, hi, lo, 'metal').mul);
+}
+
+/* ── 15. 🜂 FOUNTS ──────────────────────────────────────────────────────── */
+console.log('\n--- 15. leyline founts ---');
+{
+  const BW = 14, BH = 12;
+  const st = { board: Array.from({ length: BH }, (_, y) => Array.from({ length: BW }, (_, x) => ({ x, y }))), units: [], log: [] };
+  st._leySeeded = true;
+  const f = L.founts(st);
+  ok('four founts on a 14x12 board', f.length === 4, JSON.stringify(f));
+  // 180-degree mirror symmetry: neither side may be favoured.
+  const set = new Set(f.map(p => p.x + ',' + p.y));
+  const mirrored = f.every(p => set.has((BW - 1 - p.x) + ',' + (BH - 1 - p.y)));
+  ok('founts are mirror-symmetric', mirrored, JSON.stringify(f));
+  ok('no fount is its own mirror', f.every(p => !(p.x === BW - 1 - p.x && p.y === BH - 1 - p.y)));
+  ok('founts are deterministic', JSON.stringify(L.founts(st)) === JSON.stringify(f));
+  ok('too-small board gets none', L.founts({ board: Array.from({ length: 3 }, (_, y) => [{ x: 0, y }]) }).length === 0);
+
+  // holding one floods its disc
+  const holder = { id: 'h', name: 'Pyre', owner: 'player', alive: true, pos: { x: f[0].x, y: f[0].y },
+                   elements: ['fire'], factions: [], currentHp: 10, maxHp: 10 };
+  st.units = [holder];
+  L.tick(st, null);
+  let flooded = 0, outside = 0;
+  for (let y = 0; y < BH; y++) for (let x = 0; x < BW; x++) {
+    const l = st.board[y][x].ley;
+    const d = hexDist({ x, y }, f[0]);
+    if (d <= L.LEY.FOUNT_RADIUS) { if (l && l.elem === 'fire' && l.power === L.LEY.FOUNT_POWER) flooded++; }
+    else if (l && l.fount) outside++;
+  }
+  const discSize = 3 * L.LEY.FOUNT_RADIUS * L.LEY.FOUNT_RADIUS + 3 * L.LEY.FOUNT_RADIUS + 1;
+  ok('flooded the whole hex disc (' + discSize + ' hexes)', flooded === discSize, flooded + '/' + discSize);
+  ok('nothing painted outside the disc', outside === 0, outside);
+
+  // held ground must not flicker
+  const p0 = st.board[f[0].y][f[0].x].ley.power;
+  for (let i = 0; i < L.LEY.DECAY_TICKS + 2; i++) L.tick(st, null);
+  ok('held fount does not decay', st.board[f[0].y][f[0].x].ley.power === p0);
+
+  // released, it decays away
+  st.units = [];
+  for (let i = 0; i < L.LEY.DECAY_TICKS * (L.LEY.FOUNT_POWER + 1); i++) L.tick(st, null);
+  ok('released fount disc decays away', !st.board[f[0].y][f[0].x].ley);
+
+  // contested overlap goes to nobody
+  const st2 = { board: Array.from({ length: BH }, (_, y) => Array.from({ length: BW }, (_, x) => ({ x, y }))), units: [], log: [] };
+  st2._leySeeded = true;
+  const a = f[0], b = f.find(p => hexDist(p, a) <= L.LEY.FOUNT_RADIUS * 2 && !(p.x === a.x && p.y === a.y));
+  if (b) {
+    st2.units = [
+      { id: 'a', name: 'A', owner: 'player', alive: true, pos: { x: a.x, y: a.y }, elements: ['fire'], factions: [], currentHp: 9, maxHp: 9 },
+      { id: 'b', name: 'B', owner: 'ai', alive: true, pos: { x: b.x, y: b.y }, elements: ['water'], factions: [], currentHp: 9, maxHp: 9 },
+    ];
+    L.tick(st2, null);
+    let contested = 0;
+    for (let y = 0; y < BH; y++) for (let x = 0; x < BW; x++) {
+      if (hexDist({ x, y }, a) <= L.LEY.FOUNT_RADIUS && hexDist({ x, y }, b) <= L.LEY.FOUNT_RADIUS) {
+        const l = st2.board[y][x].ley;
+        if (l && l.fount) contested++;
+      }
+    }
+    ok('overlapping rival founts leave the overlap unclaimed', contested === 0, contested);
+  } else {
+    ok('overlapping rival founts (no overlapping pair on this board — skipped)', true);
+  }
+}
+
+/* ── 16. 🜂 LEY REACTIONS ───────────────────────────────────────────────── */
+console.log('\n--- 16. ley reactions ---');
+{
+  const st = mk(); st._leySeeded = true;
+  const put = (x, y, e) => { st.board[y][x].ley = { elem: e, power: 2, owner: null, held: 0, idle: 0 }; };
+  put(0, 0, 'ice'); put(1, 0, 'water'); put(2, 0, 'lava'); put(3, 0, 'nature'); put(0, 1, 'corruption');
+  const r = (x, y, el) => L.reactionFor(st, x, y, el);
+  ok('fire on ice ley -> meltwater',        r(0, 0, 'fire')?.surf === 'water');
+  ok('storm on water ley -> electrified',   r(1, 0, 'storm')?.surf === 'electrified');
+  ok('ice on water ley -> ice',             r(1, 0, 'ice')?.surf === 'ice');
+  ok('water on lava ley -> steam',          r(2, 0, 'water')?.surf === 'steam');
+  ok('fire on nature ley -> fire',          r(3, 0, 'fire')?.surf === 'fire');
+  ok('fire on corruption ley -> toxin',     r(0, 1, 'fire')?.surf === 'toxin');
+  ok('no reaction on bare ground',          r(4, 4, 'fire') === null);
+  ok('no reaction for an unrelated element', r(0, 0, 'psychic') === null);
+  ok('no reaction without a move element',  r(0, 0, null) === null);
+  // every surface a reaction names must be a real SURFACE_TYPES id
+  const html = fs.readFileSync(ROOT + 'public/index.html', 'utf8');
+  const block = html.match(/const SURFACE_TYPES = \{(.*?)\n\};/s)[1];
+  const surfIds = new Set([...block.matchAll(/\n\s{2,4}([a-z]+)\s*:\s*\{\s*id:/g)].map(m => m[1]));
+  const named = new Set();
+  for (const row of Object.values(L.REACTIONS)) for (const v of Object.values(row)) named.add(v.surf);
+  const missing = [...named].filter(x => !surfIds.has(x));
+  ok('every reaction surface is a real SURFACE_TYPES id', missing.length === 0, missing.join(',') + ' | known=' + [...surfIds].join(','));
 }
 
 console.log('\n' + (fails ? '❌ ' + fails + ' FAILED' : '✅ ALL PASS'));

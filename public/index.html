@@ -84776,6 +84776,12 @@ function _ley() {
         elementColor: (e) => (ELEMENT_DATA[e] && ELEMENT_DATA[e].color) || '#8899aa',
         elementName: (e) => (ELEMENT_DATA[e] && ELEMENT_DATA[e].name) || e,
         isFlying: (u) => (typeof isEffectivelyFlying === 'function') ? !!isEffectivelyFlying(u) : !!(u && u.flying),
+        // 🔴 HEX distance, handed over rather than reimplemented in the module.
+        // The board is odd-r and _paintSurface once shipped a SQUARE disc on it
+        // that survived a whole wave (HEXSPEC §6). The fount disc and the
+        // high-ground range test both depend on this being the same distance
+        // every other rule in the game measures with.
+        distance: (a, b) => distance(a, b),
         log: (st, msg, color) => { if (st && Array.isArray(st.log)) st.log.push({ msg, color: color || 'amber' }); },
       });
     } catch (e) { console.warn('[ley] wire failed', e); }
@@ -85176,6 +85182,26 @@ function _resolveSurfaceForMove(state, attacker, target, move, log) {
       _setSurface(state, tx, ty, 'water', 4);
     }
   }
+  // 🜂 LEY REACTION — the same chaining one layer down. A move landing on
+  // ATTUNED GROUND leaves a hazard behind: fire on ice ley melts it to
+  // meltwater, storm on water ley electrifies it, fire on corruption ley burns
+  // the rot into poison gas.
+  //
+  // ⚠ ONLY WHERE THERE IS NO SURFACE ALREADY. The surface reactions above are
+  // the specific case and must win: a puddle sitting on water ley is oil-and-
+  // fire rules, not ground rules, and running both would paint the tile twice
+  // in one resolve and log two contradictory lines for one move.
+  if (!here) {
+    try {
+      const _M = _ley();
+      const _r = _M ? _M.reactionFor(state, tx, ty, el) : null;
+      if (_r) {
+        _setSurface(state, tx, ty, _r.surf, _r.turns);
+        log.push({ msg: `🜂 ${move.name} ${_r.msg}.`, color: 'amber' });
+      }
+    } catch (e) { console.warn('[ley reaction]', e); }
+  }
+
   // Paint the move's own surface AFTER reactions.
   if (move.paintSurface && move.paintSurface.type) {
     _paintSurface(state, tx, ty, move.paintSurface.type, move.paintSurface.radius | 0, move.paintSurface.turns || 4);
@@ -119594,7 +119620,15 @@ const executeMove = (state, attacker, target, move) => {
       // cannot re-derive it (there is no getMovePath behind a shove) and must
       // not try — see _shoveRayRecord for the drift this closes.
       const ray = [{ x: tx, y: ty }];
-      for (let step = 0; step < move.knockback; step++) {
+      // ⛰ HIGH GROUND — a shove delivered from above carries the target an
+      // extra tile. Read once, before the walk, so the bonus cannot change
+      // underneath the loop as the target is moved down the ray.
+      let _kbSteps = move.knockback;
+      try {
+        const _M = _ley();
+        if (_M) _kbSteps += _M.knockbackBonus(s, attacker, updatedTarget);
+      } catch (e) {}
+      for (let step = 0; step < _kbSteps; step++) {
         const _n = hexStep(cx, cy, kdir);        // per-step: the offsets flip with row parity
         const nx = _n.x, ny = _n.y;
         if (!inBounds(nx, ny)) break;
@@ -167694,6 +167728,20 @@ function renderBoard() {
             + `font-size:.5rem;line-height:1;letter-spacing:-1px;color:${_d.color};`
             + `text-shadow:0 0 3px rgba(0,0,0,.9)">${_pips}</span></div>`;
           leyTitle = ' title="' + escapeHtml('🜂 ' + _d.label) + '"';
+        }
+        // 🜂 FOUNT — the objective layer. Drawn whether or not the hex carries
+        // ley, and drawn for BOTH sides: a fount only works as an objective if
+        // both players can see where it is and who is standing on it. An
+        // objective the player has to discover by losing to it is not one.
+        if (_M && _M.isFount(s, x, y)) {
+          const _fc = _d ? _d.color : '#d4af37';
+          leyHtml += `<div class="tile-fount" aria-hidden="true" style="position:absolute;inset:0;pointer-events:none;`
+            + `display:flex;align-items:center;justify-content:center;`
+            + `box-shadow:inset 0 0 0 2px ${_fc}b3, inset 0 0 12px ${_fc}59">`
+            + `<span style="font-size:.7rem;line-height:1;opacity:.85;color:${_fc};`
+            + `text-shadow:0 0 4px rgba(0,0,0,.95)">🜂</span></div>`;
+          if (!leyTitle) leyTitle = ' title="' + escapeHtml('🜂 Leyline Fount — hold this hex to flood '
+            + (_M.LEY.FOUNT_RADIUS) + ' hexes around it with your element at full power.') + '"';
         }
       } catch (e) {}
       // 🩸 Bleeding overlay — render the downed body first so an active

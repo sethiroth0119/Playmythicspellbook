@@ -770,12 +770,39 @@ $('#btnAddCh').onclick = ()=>{
   location.hash = '#'+S.book.chapters[S.book.chapters.length-1].id;
 };
 
-$('#btnDownload').onclick = ()=>{
-  const blob=new Blob([JSON.stringify(S.book,null,2)],{type:'application/json'});
+/* Saving the book out.
+   Served from the repo, a plain <a download> is the real path and there is no
+   window.claude at all. Inside the claude.ai artifact viewer that anchor is
+   INERT — the sandbox never grants a page download permission, so the button
+   would look like it worked and do nothing. So: ask for the downloads
+   capability once, use it when it answers, and fall back to the anchor. */
+let _dl;                                   // undefined = not asked yet
+async function getDownloads(){
+  if(_dl !== undefined) return _dl;
+  try{ _dl = (window.claude && window.claude.use) ? await window.claude.use('downloads') : null; }
+  catch(e){ _dl = null; }
+  return _dl;
+}
+
+function saveViaAnchor(json){
+  const blob=new Blob([json],{type:'application/json'});
   const a=document.createElement('a');
   a.href=URL.createObjectURL(blob); a.download='handbook.json';
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+}
+
+$('#btnDownload').onclick = async ()=>{
+  const json = JSON.stringify(S.book,null,2);
+  const dl = await getDownloads();
+  if(dl){
+    try{ await dl.save({filename:'handbook.json', data:json}); return; }
+    catch(err){
+      if(err && err.code === 'declined') return;   // the viewer said no; not an error
+      // anything else: fall through and try the ordinary anchor
+    }
+  }
+  saveViaAnchor(json);
 };
 
 $('#btnUpload').onclick = ()=> $('#fileIn').click();

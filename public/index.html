@@ -39407,7 +39407,7 @@ body:has(#pack-opener-frame) #chat-overlay {
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v121v116';
+  window.BUILD_VERSION = 'v121w1';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -60430,6 +60430,28 @@ function _cardCopyLimit(cardOrId) {
   try {
     let c = cardOrId;
     if (typeof c === 'string') c = (typeof _cardDefById === 'function') ? _cardDefById(c) : null;
+
+    /* ⚖️ THE ACTIVE FORMAT'S BANLIST WINS — /src/formats, table in sql/100.
+       ─────────────────────────────────────────────────────────────────────
+       This function was already the ONE place in the game that decides how
+       many copies of a card a deck may hold, which is why the banlist could
+       be retrofitted at all: the deck builder, the deck validator, the side
+       deck and AI deck generation all come through here, so one check covers
+       every consumer instead of four drifting copies of the rule.
+
+       🔴 `copyLimit` RETURNS null WHEN THERE IS NO ACTIVE FORMAT, and null
+          must fall through to the legacy behaviour below — NOT to 0. A
+          missing format, an offline player, or a Supabase hiccup returning 0
+          here would ban the entire card pool. Check for `typeof === 'number'`
+          and nothing looser: `lim || legacy` would treat a legitimate 0 (the
+          card IS banned) as "no opinion" and silently unban it. */
+    const key = (c && c.id && c.kind) ? (c.kind + ':' + c.id)
+              : (typeof cardOrId === 'string' ? cardOrId : null);
+    if (key && window.MythicFormats && window.MythicFormats.active && window.MythicFormats.active()) {
+      const lim = window.MythicFormats.copyLimit(key);
+      if (typeof lim === 'number') return lim;
+    }
+
     const r = c && c.restriction;
     if (r === 0 || r === '0') return 0;
     const n = parseInt(r, 10);
@@ -120657,6 +120679,39 @@ function _stabilizePermadeath(state, bleedingUnit) {
   state.log = (state.log || []).concat([{ msg: `💀 ${u.name} bled out — permanently lost from your collection.`, color: 'red' }]);
   // Player-side only: actually delete from the Profile.
   if (u.owner === 'player' && u.cardId) {
+    /* 🕯 ENGRAVE BEFORE YOU DELETE. /src/memorial
+       ────────────────────────────────────────────────────────────────────
+       Everything the Memorial Wall records — level, kills, battles, bond,
+       traits — lives on the unit and the profile row that the block below is
+       about to remove. Three lines further down `delete Profile.units[...]`
+       runs and there is no way back: the record has to be taken HERE, while
+       the hero still exists. Moving this call below the delete produces a
+       tombstone with nothing on it and the loss is unrecoverable.
+       ⚠ Fully wrapped. Losing a hero is bad; losing a hero AND crashing the
+         battle's death handler is worse. */
+    try {
+      if (window.MythicMemorial && window.MythicMemorial.available()) {
+        const _prof = (Profile.units && Profile.units[u.cardId]) || {};
+        const _hprof = (Profile.heroes && Profile.heroes[u.cardId]) || {};
+        window.MythicMemorial.record({
+          id: u.cardId,
+          name: u.name,
+          icon: u.icon,
+          level: _prof.level || _hprof.level || u.level || 0,
+          kills: _prof.kills || _hprof.kills || u.kills || 0,
+          battles: _prof.battles || _hprof.battles || 0,
+          wins: _prof.wins || _hprof.wins || 0,
+          bond: _hprof.bond || _prof.bond || u.bond || 0,
+          traits: _hprof.traits || _prof.traits || [],
+          acquiredAt: _prof.acquiredAt || _hprof.acquiredAt || 0,
+        }, {
+          cause: 'bledOut',
+          killedBy: u._lastAttackerName || null,
+          battleName: (state && state.nodeName) || (state && state.campaignNodeLabel) || null,
+        });
+      }
+    } catch (e) { try { console.warn('[memorial] hook failed', e); } catch (e2) {} }
+
     try {
       if (Profile && Profile.units && Profile.units[u.cardId]) {
         delete Profile.units[u.cardId];
@@ -138523,6 +138578,22 @@ function renderTitle() {
         { id: 'btn-pricing-admin', icon: '💰', name: 'Pricing Admin',  sub: 'Control prices · calculator + overrides',
           accent: '#ffd166',
           onclick: adminClick(() => { App.screen = 'pricingAdmin'; render(); }, 'Pricing Admin is admin-only.') },
+        /* ⚖️ FORMATS & BANLIST — /src/formats, table in sql/100.
+           Ban or limit a card per format and make one format live; every deck
+           check in the game reads it through _cardCopyLimit, which was already
+           the single chokepoint for copy limits.
+           ⚠ This tile is the admin's convenience. The SECURITY boundary is the
+             RLS in sql/100 — is_admin() on insert, update and delete. A client
+             gate is never the thing stopping a player editing the banlist. */
+        { id: 'btn-formats', icon: '⚖️', name: 'Formats & Banlist', sub: 'Ban / limit cards · set the live format',
+          accent: '#f6dc95',
+          badge: (() => { try { const f = window.MythicFormats && window.MythicFormats.active(); return f ? f.name : null; } catch (e) { return null; } })(),
+          onclick: adminClick(() => {
+            try {
+              if (window.MythicFormats && window.MythicFormats.openAdmin) window.MythicFormats.openAdmin();
+              else showToast('Formats module is still loading — try again in a moment.', 2600);
+            } catch (e) { showToast('⚠ Formats failed to open.', 3000); }
+          }, 'Formats & Banlist is admin-only.') },
         // ⚒ ATHENA ENGINE — the 3D world builder for the mini-games. The module
         //    (/src/mapforge) is inert until opened, so this tile is the only
         //    boot-time cost. If the module 404'd the click says so instead of
@@ -184806,6 +184877,43 @@ function renderCamp() {
         </div>`;
       })()}
       ${(() => {
+        /* 🏕 THE CAMP'S NEW DOORS — rest, supports, memorial, defence readiness.
+           ────────────────────────────────────────────────────────────────────
+           Four modules under /src, each optional. A tile only renders when its
+           module actually mounted, so removing a <script> tag at the bottom of
+           this file removes its door too rather than leaving a dead button. */
+        const tiles = [];
+        try {
+          if (window.MythicRest && window.MythicRest.available()) {
+            const h = window.MythicRest.hudLine();
+            tiles.push(`<button class="btn-secondary btn-mini" data-open-rest="1" style="border-color:#7fb0ff66;color:#cfe0ff"
+              title="${escapeHtml(h.ok ? 'Long rest costs ' + h.text : h.text)}">🛏 Rest${h.ok ? ` <span class="ink-dim">(${escapeHtml(h.text)})</span>` : ''}</button>`);
+          }
+        } catch (e) {}
+        try {
+          if (window.MythicSupports && window.MythicSupports.available()) {
+            const waiting = window.MythicSupports.pending().length;
+            tiles.push(`<button class="btn-secondary btn-mini" data-open-supports="1" style="border-color:#ff9ecb66;color:#ffc8e0"
+              title="Hero-to-hero support conversations">💬 Supports${waiting ? ` <span style="color:#ffd166">● ${waiting}</span>` : ''}</button>`);
+          }
+        } catch (e) {}
+        try {
+          if (window.MythicMemorial && window.MythicMemorial.available()) {
+            tiles.push(`<button class="btn-secondary btn-mini" data-open-memorial="1" style="border-color:#e0556a66;color:#f0b8c4"
+              title="The full roster history — service records for everyone lost">🕯 Memorial (${window.MythicMemorial.count()})</button>`);
+          }
+        } catch (e) {}
+        try {
+          if (window.MythicCampDefense && window.MythicCampDefense.available()) {
+            const p = window.MythicCampDefense.preview();
+            tiles.push(`<button class="btn-secondary btn-mini" data-open-cdef="1" style="border-color:#c9a24a66;color:#ffd98a"
+              title="${escapeHtml(p.advice.join(' '))}">🏰 Defences ${p.score}/100</button>`);
+          }
+        } catch (e) {}
+        if (!tiles.length) return '';
+        return `<div style="margin-top:1.4rem;display:flex;flex-wrap:wrap;gap:0.5rem">${tiles.join('')}</div>`;
+      })()}
+      ${(() => {
         const mem = (Array.isArray(Profile.memorial) ? Profile.memorial : []);
         if (!mem.length) return '';
         const rows = mem.slice().reverse().slice(0, 30).map(m => {
@@ -185029,6 +185137,25 @@ function renderCamp() {
   // 🧍 Influence — every district's standing, from the camp.
   const _ifBtn = document.getElementById('btn-camp-influence');
   if (_ifBtn) _ifBtn.onclick = () => _campInfluenceOpen();
+  /* 🏕 The four new camp doors (/src/rest, /src/supports, /src/memorial,
+     /src/campdefense). Each is guarded twice — the tile only renders when its
+     module mounted, and the handler re-checks before calling, because a module
+     can in principle fail between the two. */
+  {
+    const wire = (sel, fn) => { const el = document.querySelector(sel); if (el) el.onclick = fn; };
+    wire('[data-open-rest]',     () => { try { if (window.MythicRest && window.MythicRest.available()) window.MythicRest.open(); } catch (e) {} });
+    wire('[data-open-supports]', () => { try { if (window.MythicSupports && window.MythicSupports.available()) window.MythicSupports.openRoster(); } catch (e) {} });
+    wire('[data-open-memorial]', () => { try { if (window.MythicMemorial && window.MythicMemorial.available()) window.MythicMemorial.open(); } catch (e) {} });
+    wire('[data-open-cdef]',     () => {
+      try {
+        if (!window.MythicCampDefense || !window.MythicCampDefense.available()) return;
+        const p = window.MythicCampDefense.preview();
+        showToast(`🏰 Defences ${p.score}/100 — ${p.structures} structures, ${p.coverTiles} cover tiles, `
+          + `${p.breaches.length} way${p.breaches.length === 1 ? '' : 's'} in.`
+          + (p.advice.length ? ' ' + p.advice[0] : ''), 7000);
+      } catch (e) {}
+    });
+  }
   document.querySelectorAll('[data-mia]').forEach(el => {
     el.onclick = () => {
       App._campRescueTarget = (App._campRescueTarget === el.dataset.mia) ? null : el.dataset.mia;
@@ -196297,7 +196424,21 @@ const CAMP_BUILDINGS = [
   { id: 'tent',      name: 'Hero Rest Tent',  icon: 'assets/artwork/gameicons/camp%20icon.png',
     x: 9,  y: 5,  w: 2, h: 2, color: '#88c4ff', glyph: '⛺',
     door: { x: 10, y: 7 },
-    route: () => { try { _campRollDream(); } catch (e) {} App.screen = 'camp'; render(); } },
+    /* 🛏 THE REST ECONOMY (/src/rest) replaces the free dream-roll here.
+       This tile used to be: click → free dream → camp screen. Resting cost
+       nothing, so the camp's food and supplies had no sink the player ever
+       felt. Now it opens the rest panel: a SHORT rest spends one of a small
+       pool of charges, a LONG rest spends food + supplies, refills those
+       charges, rolls the dream, and plays a waiting support conversation.
+       ⚠ The old path is the fallback, exactly as it was. If /src/rest is not
+         mounted the tent behaves as it always did — no dead button. */
+    route: () => {
+      try {
+        if (window.MythicRest && window.MythicRest.available()) { window.MythicRest.open(); return; }
+      } catch (e) {}
+      try { _campRollDream(); } catch (e) {}
+      App.screen = 'camp'; render();
+    } },
 ];
 // NPC catalog — name, fixed position, dialogue lines, optional quest hook.
 const CAMP_NPCS = [
@@ -240749,6 +240890,322 @@ try { window.__mg.cityMgr = () => ({ active: CityMgr.active, nodeId: CityMgr.nod
 try { if (typeof FoundationReserve !== 'undefined') window.FoundationReserve = FoundationReserve; } catch (e) {}
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   🎴🏕 THE 2026-09 FEATURE BRIDGES — chain, side deck, formats, rest,
+   supports, memorial, camp defence.
+   ═══════════════════════════════════════════════════════════════════════════
+   Seven features, each an ES module under /src (CLAUDE.md: new systems never
+   go in this file). This block is everything index.html contributes to them.
+
+   🔴 THE GLOBALS TRAP, AGAIN. Profile, App, Forge, Camp and every helper below
+   are top-level `const` / `function` declarations in this file — global
+   LEXICAL bindings that are NOT properties of window. A module cannot see one.
+   Everything a module needs is handed over explicitly here, as a FUNCTION so
+   it reads live state rather than a boot-time snapshot.
+
+   🔴 EVERY MODULE IS OPTIONAL. Each bridge is independently wrapped and each
+   module degrades to "feature absent" without its bridge. Deleting any one
+   <script> tag at the bottom of this file returns the game to its previous
+   behaviour for that feature and nothing else.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ⛓ CHAIN — response windows. /src/chain
+   The battle hands the chain a trigger; the chain hands back an ordered list of
+   links to apply. It never touches the board itself — see /src/chain/index.js. */
+try {
+  window.MythicChainBridge = {
+    /* Cards this side could activate IN RESPONSE, by zone. The chain filters
+       these by spell speed; we only have to say what is holdable.
+       ⚠ Returns [] for the AI's hand deliberately when hidden-information mode
+         is on — the chain must not be able to see cards the player cannot. */
+    hand: (side, state) => {
+      try {
+        const s = state || (App && App.battle) || null;
+        if (!s) return [];
+        const h = side === 'player' ? (s.hand || []) : (s.aiHand || []);
+        return (h || []).map((c, i) => ({ uid: 'h' + i + ':' + (c && c.id), def: c, tile: null }));
+      } catch (e) { return []; }
+    },
+    /* Set traps and field cards already on the board for this side. These are
+       the classic response — a face-down that springs when you act. */
+    field: (side, state) => {
+      try {
+        const s = state || (App && App.battle) || null;
+        if (!s || !s.board) return [];
+        const out = [];
+        for (const row of s.board) {
+          for (const t of (row || [])) {
+            if (t && t.trap && t.trap.owner === side) {
+              out.push({ uid: 'tr:' + t.trap.id + ':' + t.x + ',' + t.y,
+                         def: t.trap.card || t.trap, tile: { x: t.x, y: t.y }, isTrap: true });
+            }
+          }
+        }
+        return out;
+      } catch (e) { return []; }
+    },
+    /* In-grave effects. This codebase already has them (_activateGraveCard) and
+       they were the clearest thing that wanted a response window and never had one. */
+    grave: (side, state) => {
+      try {
+        const s = state || (App && App.battle) || null;
+        const g = s && s.graveyard;
+        const list = (g && (side === 'player' ? g.player : g.ai)) || [];
+        return (list || []).filter(c => c && c.graveReaction)
+                           .map((c, i) => ({ uid: 'g' + i + ':' + c.id, def: c }));
+      } catch (e) { return []; }
+    },
+    cardDef: (id) => { try { return (typeof _cardDefById === 'function') ? _cardDefById(id) : null; } catch (e) { return null; } },
+    /* Can this side pay to activate? Energy is the battle's own currency. */
+    canPay: (def, side, state) => {
+      try {
+        if (!def) return false;
+        const cost = def.cost | 0;
+        if (!cost) return true;
+        const s = state || (App && App.battle) || null;
+        if (!s) return true;
+        const have = side === 'player' ? (s.energy | 0) : (s.aiEnergy | 0);
+        return have >= cost;
+      } catch (e) { return false; }
+    },
+    /* 💸 Charged BEFORE the link goes on the chain — see /src/chain/index.js.
+       Returning false makes the chain treat the window as a pass. */
+    pay: (def, side, opt, state) => {
+      try {
+        if (!def) return false;
+        const cost = def.cost | 0;
+        if (!cost) return true;
+        const s = state || (App && App.battle) || null;
+        if (!s) return true;
+        if (side === 'player') {
+          if ((s.energy | 0) < cost) return false;
+          s.energy = (s.energy | 0) - cost;
+        } else {
+          if ((s.aiEnergy | 0) < cost) return false;
+          s.aiEnergy = (s.aiEnergy | 0) - cost;
+        }
+        return true;
+      } catch (e) { return false; }
+    },
+    /* How dangerous is the raw trigger (an attack declaration, a summon)?
+       0..1 — only consulted when the AI is deciding whether to answer the
+       trigger itself rather than a card. */
+    triggerThreat: (trigger, state) => {
+      try {
+        if (!trigger) return 0.35;
+        if (trigger.kind === 'heroAttack') return 0.8;
+        if (trigger.kind === 'summon') return 0.5;
+        if (trigger.kind === 'attack') return 0.45;
+        return 0.35;
+      } catch (e) { return 0.35; }
+    },
+    toast: (m, ms) => { try { showToast(m, ms || 4200); } catch (e) {} },
+    sfx: (n) => { try { if (typeof playSfx === 'function') playSfx(n); } catch (e) {} },
+    settings: () => { try { return { difficulty: (App && App.difficulty) || 'normal' }; } catch (e) { return {}; } },
+    save: () => { try { saveProfile(); } catch (e) {} },
+  };
+} catch (e) {}
+
+/* 🔀 SIDE DECK + BEST-OF-3. /src/sidedeck */
+try {
+  window.MythicSideDeckBridge = {
+    deckSize: () => { try { return DECK_SIZE; } catch (e) { return 40; } },
+    nameOf: (key) => {
+      try {
+        const c = (typeof resolveDeckCard === 'function') ? resolveDeckCard(key) : null;
+        return (c && c.name) || String(key).split(':').pop();
+      } catch (e) { return String(key); }
+    },
+    /* The LEGACY copy limit — the card's own `restriction`. /src/sidedeck asks
+       the active format FIRST and only falls back to this, so a banlist wins. */
+    copyLimit: (key) => {
+      try {
+        const c = (typeof resolveDeckCard === 'function') ? resolveDeckCard(key) : null;
+        return (typeof _cardCopyLimit === 'function') ? _cardCopyLimit(c || key) : MAX_COPIES_PER_CARD;
+      } catch (e) { return 3; }
+    },
+    decks: () => { try { return getAllDecks(); } catch (e) { return []; } },
+    saveDeck: (deck) => {
+      try {
+        const list = getAllDecks();
+        const i = list.findIndex(d => d && d.id === deck.id);
+        if (i >= 0) list[i] = deck; else list.push(deck);
+        Profile.decks = list;
+        saveProfile();
+        return true;
+      } catch (e) { return false; }
+    },
+    toast: (m, ms) => { try { showToast(m, ms || 3600); } catch (e) {} },
+    render: () => { try { render(); } catch (e) {} },
+  };
+} catch (e) {}
+
+/* ⚖️ FORMATS + BANLIST (admin). /src/formats — table in sql/100. */
+try {
+  window.MythicFormatsBridge = {
+    client: () => { try { return (Cloud && Cloud.client) || null; } catch (e) { return null; } },
+    isAdmin: () => { try { return typeof isAdmin === 'function' && isAdmin(); } catch (e) { return false; } },
+    nameOf: (key) => {
+      try {
+        const c = (typeof resolveDeckCard === 'function') ? resolveDeckCard(key) : null;
+        return (c && c.name) || String(key).split(':').pop();
+      } catch (e) { return String(key); }
+    },
+    /* The whole pool, as { key, name } — what the banlist editor searches. */
+    allCards: () => {
+      try {
+        const out = [];
+        const add = (list, kind) => (list || []).forEach(c => {
+          if (c && c.id) out.push({ key: kind + ':' + c.id, name: c.name || c.id, kind });
+        });
+        add(typeof UNIT_CARDS     !== 'undefined' ? UNIT_CARDS     : [], 'unit');
+        add(typeof SPELL_CARDS    !== 'undefined' ? SPELL_CARDS    : [], 'spell');
+        add(typeof TRAP_CARDS     !== 'undefined' ? TRAP_CARDS     : [], 'trap');
+        add(typeof LOCATION_CARDS !== 'undefined' ? LOCATION_CARDS : [], 'location');
+        add(typeof WEATHER_CARDS  !== 'undefined' ? WEATHER_CARDS  : [], 'weather');
+        add(typeof WALL_CARDS     !== 'undefined' ? WALL_CARDS     : [], 'wall');
+        return out;
+      } catch (e) { return []; }
+    },
+    toast: (m, ms) => { try { showToast(m, ms || 4000); } catch (e) {} },
+    confirm: async (m) => { try { return !!(await gcConfirm(m)); } catch (e) { return false; } },
+  };
+} catch (e) {}
+
+/* 🛏 REST ECONOMY. /src/rest */
+try {
+  window.MythicRestBridge = {
+    restState: () => { try { return (Profile.rest && typeof Profile.rest === 'object') ? Profile.rest : null; } catch (e) { return null; } },
+    setRestState: (s) => { try { Profile.rest = s; return true; } catch (e) { return false; } },
+    /* The roster the rest panel recovers — owned heroes, with the SAME numbers
+       the hero panels read (getHeroEnergy / getHeroBattleMax), never a second copy. */
+    roster: () => {
+      try {
+        return getAllHeroes()
+          .filter(h => h && h.id && (typeof ownsHero !== 'function' || ownsHero(h.id)))
+          .map(h => {
+            const e = getHeroEnergy(h.id);
+            const prof = (Profile.heroes && Profile.heroes[h.id]) || {};
+            return {
+              id: h.id, name: h.name || h.id,
+              energy: e.energy | 0, energyMax: getHeroBattleMax(h.id) | 0,
+              fatigue: e.fatigue | 0, stress: e.stress | 0,
+              hp: prof.hp != null ? (prof.hp | 0) : null,
+              hpMax: prof.hpMax != null ? (prof.hpMax | 0) : null,
+              bond: prof.bond | 0,
+              dead: !!prof.dead,
+            };
+          });
+      } catch (e) { return []; }
+    },
+    patchHero: (id, patch) => {
+      try {
+        const e = getHeroEnergy(id);
+        const max = getHeroBattleMax(id);
+        if (patch.energy != null)  e.energy  = Math.max(0, Math.min(max, patch.energy | 0));
+        if (patch.fatigue != null) e.fatigue = Math.max(0, patch.fatigue | 0);
+        if (patch.stress != null)  e.stress  = Math.max(0, patch.stress | 0);
+        e.lastRestAt = Date.now();
+        if (!Profile.heroes) Profile.heroes = {};
+        if (!Profile.heroes[id]) Profile.heroes[id] = {};
+        const p = Profile.heroes[id];
+        if (patch.hp != null && p.hpMax != null) p.hp = Math.max(0, Math.min(p.hpMax | 0, patch.hp | 0));
+        if (patch.bond != null) p.bond = Math.max(0, Math.min(BOND_MAX, patch.bond | 0));
+        return true;
+      } catch (e) { return false; }
+    },
+    /* Facility levels, for the rest DISCOUNT. Same source the camp panel shows. */
+    facilities: () => {
+      try {
+        const out = {};
+        const F = (typeof Camp !== 'undefined' && Camp.facilities) || {};
+        for (const k of Object.keys(F)) out[k] = (F[k] && F[k].level) | 0;
+        return out;
+      } catch (e) { return {}; }
+    },
+    getRes: (id) => { try { return getRes(id) | 0; } catch (e) { return 0; } },
+    spendRes: (cost) => { try { return !!spendResources(cost); } catch (e) { return false; } },
+    /* ⚠ UNCAPPED ON PURPOSE — a refund undoes a spend the player already made
+       room for; losing part of it to the vault ceiling means a failed rest
+       cost real food. Same rule as MythicPlagueBridge.refundRes. */
+    refundRes: (map) => {
+      try {
+        const R = _ensureResources();
+        Object.keys(map || {}).forEach(k => { R[k] = Math.max(0, (R[k] | 0) + (map[k] | 0)); });
+        try { saveProfile(); } catch (e2) {}
+        return true;
+      } catch (e) { return false; }
+    },
+    rollDream: () => { try { if (typeof _campRollDream === 'function') _campRollDream(); } catch (e) {} },
+    save: () => { try { saveProfile(); } catch (e) {} },
+    toast: (m, ms) => { try { showToast(m, ms || 4000); } catch (e) {} },
+    render: () => { try { render(); } catch (e) {} },
+  };
+} catch (e) {}
+
+/* 💬 SUPPORTS — hero-to-hero conversations. /src/supports */
+try {
+  window.MythicSupportsBridge = {
+    supportsState: () => { try { return (Profile.supports && typeof Profile.supports === 'object') ? Profile.supports : {}; } catch (e) { return {}; } },
+    setSupportsState: (m) => { try { Profile.supports = m; return true; } catch (e) { return false; } },
+    /* One hero, as the voice engine needs them: a name and their TRAITS, which
+       are what decide how they speak (see /src/supports/supports.voice.js). */
+    hero: (id) => {
+      try {
+        const h = getAllHeroes().find(x => x && x.id === id);
+        const prof = (Profile.heroes && Profile.heroes[id]) || {};
+        return {
+          id,
+          name: (h && h.name) || prof.name || id,
+          traits: Array.isArray(prof.traits) ? prof.traits : [],
+          bond: prof.bond | 0,
+          level: prof.level | 0,
+        };
+      } catch (e) { return { id, name: id, traits: [] }; }
+    },
+    campHasLosses: () => { try { return (Profile.memorial || []).length > 0; } catch (e) { return false; } },
+    save: () => { try { saveProfile(); } catch (e) {} },
+    toast: (m, ms) => { try { showToast(m, ms || 4200); } catch (e) {} },
+  };
+} catch (e) {}
+
+/* 🕯 MEMORIAL — the roster history. /src/memorial
+   ⚠ Reads and writes the SAME Profile.memorial array the camp's existing
+   Memorial Wall already uses, so legacy survivor rows and new hero rows sit on
+   one wall. Nothing about the legacy rows changes. */
+try {
+  window.MythicMemorialBridge = {
+    memorial: () => { try { return Array.isArray(Profile.memorial) ? Profile.memorial : (Profile.memorial = []); } catch (e) { return []; } },
+    setMemorial: (list) => { try { Profile.memorial = Array.isArray(list) ? list : []; return true; } catch (e) { return false; } },
+    save: () => { try { saveProfile(); } catch (e) {} },
+    toast: (m, ms) => { try { showToast(m, ms || 5200); } catch (e) {} },
+  };
+} catch (e) {}
+
+/* 🏰 CAMP DEFENCE — the camp layout as a battle map. /src/campdefense
+   PREP ROUND: the derivation and the Athena world are live; the battle
+   hand-off (startBattleWithGrid) is intentionally not wired yet — see the
+   header of /src/campdefense/index.js. */
+try {
+  window.MythicCampDefenseBridge = {
+    campLayout: () => { try { return (Forge && Forge.campLayout) || null; } catch (e) { return null; } },
+    activeZone: () => { try { return (typeof _getActiveZoneDef === 'function') ? _getActiveZoneDef() : null; } catch (e) { return null; } },
+    roster: () => {
+      try {
+        return getAllHeroes()
+          .filter(h => h && h.id && (typeof ownsHero !== 'function' || ownsHero(h.id)))
+          .map(h => ({ id: h.id, name: h.name || h.id }));
+      } catch (e) { return []; }
+    },
+    /* 🔌 THE REMAINING SEAM. When the battle can start from an externally
+       supplied grid, expose it here and /src/campdefense/startDefense() begins
+       working with no other change. Absent today, on purpose. */
+    startBattleWithGrid: null,
+    toast: (m, ms) => { try { showToast(m, ms || 4000); } catch (e) {} },
+    render: () => { try { render(); } catch (e) {} },
+  };
+} catch (e) {}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    🏛 COMMUNITY BRIDGE — the ONE seam between this file and /src/community.
    See CLAUDE.md. New features live in /src/<feature>/ as ES modules; this is
    the only thing index.html contributes to them.
@@ -264809,6 +265266,28 @@ render();
        the listing tables on its own JWT, so a limit checked here could simply
        be skipped. Nothing in the module is a security boundary. -->
 <script type="module" src="src/trader/membership.js?v=v121h0"></script>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     🎴🏕 THE 2026-09 FEATURES — chain, side deck, formats, rest, supports,
+     memorial, camp defence. Bridges are in the script above (search
+     "THE 2026-09 FEATURE BRIDGES"); these are the modules themselves.
+
+     ⚠ ORDER MATTERS IN EXACTLY ONE PLACE: /src/formats must load before
+       /src/sidedeck, because the side deck asks the active format for a card's
+       copy limit before falling back to the card's own restriction. Everything
+       else here is independent and any of these tags can be removed on its own
+       to take that one feature back out.
+     ⚠ Every module is `type="module"` and therefore DEFERRED — it registers
+       after the first render. Each one is optional at every call site for that
+       reason; nothing in this file assumes a window.Mythic* global exists.
+     ══════════════════════════════════════════════════════════════════════ -->
+<script type="module" src="src/formats/index.js?v=v121w1fmt1"></script>
+<script type="module" src="src/chain/index.js?v=v121w1chain1"></script>
+<script type="module" src="src/sidedeck/index.js?v=v121w1side1"></script>
+<script type="module" src="src/supports/index.js?v=v121w1sup1"></script>
+<script type="module" src="src/rest/index.js?v=v121w1rest1"></script>
+<script type="module" src="src/memorial/index.js?v=v121w1mem1"></script>
+<script type="module" src="src/campdefense/index.js?v=v121w1cdef1"></script>
 <!-- 💵 THE CINDER/AZA DOLLAR PEG. Shared byte-for-byte with the Bank of Ethos,
      which loads the same file — see public/src/econ/peg.js for why it is one
      file and not two copies of an exchange rate.

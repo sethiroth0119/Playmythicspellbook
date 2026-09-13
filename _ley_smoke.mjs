@@ -34,6 +34,8 @@ L.wire({
   isFlying: u => !!(u && u.flying),
   log: (st, m) => { if (st && st.log) st.log.push({ msg: m }); },
   distance: (a, b) => hexDist(a, b),
+  applyStatus: (u, id, dur) => { u.statusEffects = (u.statusEffects || []).filter(e => e.type !== id).concat([{ type: id, turnsLeft: dur }]); },
+  cleanse: (u, n) => { if (n >= 99) u.statusEffects = []; else u.statusEffects = (u.statusEffects || []).slice(n | 0); },
 });
 
 /* odd-r offset -> cube, then cube distance. Mirrors index.html's distance(). */
@@ -517,6 +519,117 @@ console.log('\n--- 22. index.html wiring ---');
   has('M.control(s)', 'control bar reads the tally');
   has('_leyConfigure()', 'mode dial is applied');
   has('M.configure({ enabled, intensity })', 'dial goes through configure()');
+}
+
+/* ── 23. 🎁 ELEMENTAL BOONS — one per element, all on REAL status ids ────── */
+console.log('\n--- 23. elemental boons ---');
+{
+  const html = fs.readFileSync(ROOT + 'public/index.html', 'utf8');
+  const i = html.indexOf('const STATUS_EFFECTS = {');
+  const blk = html.slice(i, html.indexOf('\n};', i));
+  const realStatus = new Set([...blk.matchAll(/\n  ([a-zA-Z][a-zA-Z0-9]*)\s*:\s*\{\s*id:/g)].map(m => m[1]));
+  const els = [...(html.match(/const ELEMENTS = \[(.*?)\];/s)[1].matchAll(/'([a-z]+)'/g))].map(m => m[1]);
+
+  ok('every element has a boon (' + els.length + ')',
+     els.every(e => !!L.ELEM_BOON[e]), els.filter(e => !L.ELEM_BOON[e]).join(','));
+  ok('no boon for a non-element',
+     Object.keys(L.ELEM_BOON).every(k => els.indexOf(k) !== -1),
+     Object.keys(L.ELEM_BOON).filter(k => els.indexOf(k) === -1).join(','));
+
+  /* 🔴 THE CHECK THAT EARNS ITS KEEP. A typo'd status id throws nothing,
+     breaks no syntax gate, and simply never fires. */
+  const bad = [];
+  for (const [e, b] of Object.entries(L.ELEM_BOON)) {
+    if (b.status  && !realStatus.has(b.status))  bad.push(e + '->' + b.status);
+    if (b.status2 && !realStatus.has(b.status2)) bad.push(e + '->' + b.status2);
+    if (!b.name || !b.desc) bad.push(e + ' missing name/desc');
+    if (!b.status && !b.heal && !b.cleanse) bad.push(e + ' does nothing');
+  }
+  ok('every boon status is a REAL STATUS_EFFECTS id', bad.length === 0, bad.join(', '));
+
+  /* 🔴 No boon may touch damage — that is the clamp's exclusive job. */
+  const dmg = Object.entries(L.ELEM_BOON).filter(function (p) {
+    return p[1].mul != null || p[1].atkPct != null || p[1].damage != null;
+  });
+  ok('no boon carries a damage multiplier', dmg.length === 0, dmg.map(p => p[0]).join(','));
+
+  /* power gating */
+  ok('power 1 pays NO boon', L.boonFor('fire', 1) === null);
+  ok('power 2 pays the boon', !!L.boonFor('fire', 2));
+  ok('high-tier boon withheld at power 2', L.boonFor('spirit', 2) === null);
+  ok('high-tier boon pays at power 3', !!L.boonFor('spirit', 3));
+  ok('psychic mirror is high-tier too', L.boonFor('psychic', 2) === null && !!L.boonFor('psychic', 3));
+
+  /* it actually lands on a unit, through tick */
+  const st = mk(); st._leySeeded = true;
+  st.board[0][0].ley = { elem: 'fire', power: 2, owner: 'player', held: 1, idle: 0 };
+  const pyro = { id:'p', name:'Pyre', owner:'player', alive:true, pos:{x:0,y:0},
+                 elements:['fire'], factions:[], currentHp:20, maxHp:20, statusEffects:[] };
+  st.units = [pyro];
+  L.tick(st, null);
+  ok('boon lands as a real status', (pyro.statusEffects||[]).some(e => e.type === 'strong'),
+     JSON.stringify(pyro.statusEffects));
+  ok('the grant is logged once', st.log.some(e => /Emberheat/.test(e.msg)));
+
+  /* heal boons */
+  const st2 = mk(); st2._leySeeded = true;
+  st2.board[0][0].ley = { elem: 'water', power: 2, owner: 'player', held: 1, idle: 0 };
+  const tide = { id:'w', name:'Tide', owner:'player', alive:true, pos:{x:0,y:0},
+                 elements:['water'], factions:[], currentHp:10, maxHp:30, statusEffects:[] };
+  st2.units = [tide]; L.tick(st2, null);
+  ok('water boon heals', tide.currentHp === 10 + L.ELEM_BOON.water.heal, tide.currentHp);
+
+  /* void strips everything */
+  const st3 = mk(); st3._leySeeded = true;
+  st3.board[0][0].ley = { elem: 'void', power: 3, owner: 'player', held: 1, idle: 0 };
+  const vd = { id:'v', name:'Null', owner:'player', alive:true, pos:{x:0,y:0}, elements:['void'],
+               factions:[], currentHp:20, maxHp:20, statusEffects:[{type:'burn',turnsLeft:3},{type:'slow',turnsLeft:2}] };
+  st3.units = [vd]; L.tick(st3, null);
+  ok('void nullfield strips every status', (vd.statusEffects||[]).length === 0, JSON.stringify(vd.statusEffects));
+
+  /* the boon is only for YOUR element */
+  const st4 = mk(); st4._leySeeded = true;
+  st4.board[0][0].ley = { elem: 'fire', power: 3, owner: 'ai', held: 1, idle: 0 };
+  const icy = { id:'i', name:'Frost', owner:'player', alive:true, pos:{x:0,y:0},
+                elements:['ice'], factions:[], currentHp:20, maxHp:20, statusEffects:[] };
+  st4.units = [icy]; L.tick(st4, null);
+  ok('an off-element unit draws NO boon', (icy.statusEffects||[]).length === 0, JSON.stringify(icy.statusEffects));
+
+  /* gravity anchor */
+  const st5 = mk(); st5._leySeeded = true;
+  st5.board[0][0].ley = { elem: 'gravity', power: 2, owner: 'player', held: 1, idle: 0 };
+  const grv = { id:'g', name:'Weight', owner:'player', alive:true, pos:{x:0,y:0},
+                elements:['gravity'], factions:[], currentHp:20, maxHp:20, statusEffects:[] };
+  ok('gravity anchors its unit', L.isAnchored(st5, grv) === true);
+  ok('a flier is never anchored', L.isAnchored(st5, {...grv, flying:true}) === false);
+  ok('off-element unit is not anchored', L.isAnchored(st5, {...grv, elements:['fire']}) === false);
+  st5.board[0][0].ley.power = 1;
+  ok('power 1 gravity does NOT anchor', L.isAnchored(st5, grv) === false);
+
+  /* projection surfaces it */
+  const st6 = mk(); st6._leySeeded = true;
+  st6.board[1][1].ley = { elem: 'light', power: 3, owner: null, held: 0, idle: 0 };
+  const pal = { name:'Pal', owner:'player', pos:{x:3,y:3}, elements:['light'], factions:[] };
+  ok('projection reports the boon', (L.project(st6, pal, {x:1,y:1})||{}).boon?.name === 'Consecration');
+
+  /* disabled kills boons too */
+  L.configure({ enabled:false });
+  ok('disabled: no boon', L.boonFor('fire', 3) === null);
+  ok('disabled: no anchor', L.isAnchored(st5, grv) === false);
+  L.configure({ enabled:true });
+}
+
+/* ── 24. index.html honours the boons ───────────────────────────────────── */
+console.log('\n--- 24. boon wiring ---');
+{
+  const html = fs.readFileSync(ROOT + 'public/index.html', 'utf8');
+  const has = (n, l) => ok(l, html.includes(n), 'missing: ' + n);
+  has('applyStatus: (u, id, dur)', 'status grant adapter is wired');
+  has('u.statusEffects = nu.statusEffects', 'immutable result copied back onto the live unit');
+  has('cleanse: (u, n)', 'cleanse adapter is wired');
+  has('_MA.isAnchored(s, updatedTarget)', 'anchor blocks knockback');
+  has('_MP.isAnchored(s, updatedTarget)', 'anchor blocks pull');
+  has('let _kbSteps = _anchored ? 0 : move.knockback', 'anchored target takes zero shove steps');
 }
 
 console.log('\n' + (fails ? '❌ ' + fails + ' FAILED' : '✅ ALL PASS'));

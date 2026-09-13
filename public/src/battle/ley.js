@@ -152,6 +152,18 @@
     // player who is behind on territory has no play at all.
     BREAK_RADIUS: 1,
     BREAK_POWER: 2,          // power steps torn out per hit
+
+    /* ── phase 4: the elemental boons ──────────────────────────────────────── */
+
+    // 🎁 Ley power at which an element's own boon starts paying out. Power 1 is
+    // the damage bonus alone — the boon has to be EARNED by entrenching, which
+    // is what makes holding a hex for a second turn a decision rather than a
+    // formality.
+    BOON_POWER: 2,
+    // The two strongest boons (a free revive, a 50% dodge) only ever come from
+    // fully entrenched ground.
+    BOON_POWER_HIGH: 3,
+    BOON_DURATION: 2,        // turns a granted status lasts; refreshed each tick
   };
 
   /* ══════════════════════════════════════════════════════════════════════════
@@ -243,6 +255,123 @@
   };
 
   /* ══════════════════════════════════════════════════════════════════════════
+     🎁 ELEMENTAL BOONS — one for every element in ELEMENTS, all 21.
+
+     Attunement (the damage number) is the same for every element by design:
+     one clamped modifier, one ceiling, checkable. The BOON is the other half —
+     what makes standing on fire ground feel different from standing on ice
+     ground rather than just being a differently-coloured +35%.
+
+     🔴 BUILT ON THE GAME'S REAL STATUS_EFFECTS, NOT A PARALLEL BUFF SYSTEM.
+     Every `status` named here is an existing id (verified by _ley_smoke.mjs
+     against index.html, because a typo'd status id throws nothing and simply
+     never fires). That means each boon already draws its own chip on the unit,
+     already counts down on the shared status timer, and already answers to
+     cleanse, dispel and immunity exactly the way players have learned. Inventing
+     21 new buffs would have meant 21 new things that none of that is true of.
+
+     🔴 NO BOON TOUCHES DAMAGE DIRECTLY. Damage lives in the clamped attunement
+     and nowhere else, so the ±60% ceiling stays the whole story for positional
+     damage. A boon that granted "+20% fire damage" would be a second damage
+     path with no clamp on it — which is the exact failure the single clamp
+     exists to prevent. They grant stats, mobility, survivability and utility;
+     the stat statuses (strong, shielded, …) feed the normal getStatBonus path.
+
+     Gated at LEY.BOON_POWER (2), so a boon is EARNED by entrenching — power 1
+     pays the damage bonus alone. The two strongest (a free revive, a 50% dodge)
+     need fully entrenched ground at BOON_POWER_HIGH (3).
+
+     Shape: { name, icon, status?, status2?, heal?, cleanse?, anchor?, min?, desc }
+     ══════════════════════════════════════════════════════════════════════════ */
+  var ELEM_BOON = {
+    fire:       { name: 'Emberheat',        icon: '🔥', status: 'strong',
+                  desc: 'The ground burns hot underfoot — +4 ATK.' },
+    water:      { name: 'Tidal Mend',       icon: '💧', heal: 5,
+                  desc: 'The tide closes your wounds — 5 HP restored each turn you hold the hex.' },
+    earth:      { name: 'Bedrock Stance',   icon: '🪨', status: 'shielded',
+                  desc: 'Rooted to the stone — +5 DEF and +5 RES.' },
+    wind:       { name: 'Tailwind',         icon: '🌬️', status: 'swift',
+                  desc: 'The air carries you — +2 movement and reach.' },
+    light:      { name: 'Consecration',     icon: '✨', status: 'blessed',
+                  desc: 'Hallowed ground — +3 to every stat.' },
+    shadow:     { name: 'Umbral Veil',      icon: '🌑', status: 'lucky',
+                  desc: 'The dark closes around you — 30% chance to dodge any attack.' },
+    nature:     { name: 'Verdant Knit',     icon: '🌿', heal: 4, cleanse: 1,
+                  desc: 'Green growth knits you back together — 4 HP and one affliction lifted.' },
+    storm:      { name: 'Static Charge',    icon: '⚡', status: 'haste', status2: 'focused',
+                  desc: 'Charged air — +1 movement and +4 MAG.' },
+    ice:        { name: 'Frostmantle',      icon: '❄️', status: 'frostForm',
+                  desc: 'Armoured in rime — +4 DEF, +3 RES, -1 SPD.' },
+    metal:      { name: 'Tempered Guard',   icon: '⚙️', status: 'countering',
+                  desc: 'Iron underfoot answers for you — the next enemy attack is blocked and countered.' },
+    poison:     { name: 'Creeping Venom',   icon: '☠️', status: 'moxie',
+                  desc: 'The toxin sharpens rather than sickens — a stacking +2 ATK.' },
+    psychic:    { name: 'Mirrored Mind',    icon: '🧠', status: 'mirror', min: 3,
+                  desc: 'Duplicates flicker around you — 50% chance to dodge. Needs fully entrenched ground.' },
+    arcane:     { name: 'Mana Font',        icon: '🌟', status: 'empowered',
+                  desc: 'Raw magic wells up through the hex — +4 ATK and +4 MAG.' },
+    void:       { name: 'Nullfield',        icon: '⚫', cleanse: 99,
+                  desc: 'The void eats what clings to you — every status effect stripped, good and bad alike.' },
+    blood:      { name: 'Sanguine Feast',   icon: '🩸', heal: 6,
+                  desc: 'The ground gives its blood back — 6 HP restored each turn.' },
+    crystal:    { name: 'Prism Lattice',    icon: '💎', status: 'soulFlame',
+                  desc: 'Facets turn the blow aside — +4 DEF and +4 RES.' },
+    corruption: { name: 'Rotbloom',         icon: '☣️', status: 'berserk',
+                  desc: 'The rot takes hold — +6 ATK, -5 DEF, and you must strike the nearest enemy.' },
+    spirit:     { name: 'Soul Anchor',      icon: '👻', status: 'reraise', min: 3,
+                  desc: 'The dead hold you here — revive once at half HP. Needs fully entrenched ground.' },
+    lava:       { name: 'Molten Skin',      icon: '🌋', status: 'burningRes',
+                  desc: 'Wreathed in the ground\'s own fire — +4 ATK and +4 MAG.' },
+    sound:      { name: 'Resonance',        icon: '🔊', status: 'assisted',
+                  desc: 'The hex rings in sympathy — +6 ATK and +6 MAG for the next strike.' },
+    gravity:    { name: 'Anchored',         icon: '🌌', status: 'shielded', anchor: true,
+                  desc: 'Pinned to the world — +5 DEF, +5 RES, and nothing can shove or drag you.' },
+  };
+
+  // The boon this element pays at this power, or null if the ground is not
+  // charged enough yet.
+  function boonFor(elem, power) {
+    if (!LEY.ENABLED || !elem) return null;
+    var b = ELEM_BOON[elem];
+    if (!b) return null;
+    var need = b.min || LEY.BOON_POWER;
+    return (clampPower(power) >= need) ? b : null;
+  }
+
+  // 🌌 Gravity's half: a unit on entrenched gravity ley cannot be shoved or
+  // dragged. Read by the knockback and pull blocks in index.html.
+  function isAnchored(state, unit) {
+    if (!LEY.ENABLED || !state || !unit || !unit.pos) return false;
+    if (W.isFlying(unit)) return false;
+    var ley = leyAt(state, unit.pos.x, unit.pos.y);
+    if (!ley) return false;
+    var els = W.getElementsOf(unit);
+    if (els.indexOf(ley.elem) === -1) return false;
+    var b = boonFor(ley.elem, ley.power);
+    return !!(b && b.anchor);
+  }
+
+  // Pay one unit's boon. Returns the boon that fired, or null.
+  function payBoon(state, unit, ley) {
+    if (!unit || !ley) return null;
+    var els = W.getElementsOf(unit);
+    if (els.indexOf(ley.elem) === -1) return null;      // only YOUR element pays
+    var b = boonFor(ley.elem, ley.power);
+    if (!b) return null;
+    if (b.heal && unit.maxHp && unit.currentHp > 0 && unit.currentHp < unit.maxHp) {
+      unit.currentHp = Math.min(unit.maxHp, unit.currentHp + b.heal);
+    }
+    if (b.cleanse && typeof W.cleanse === 'function') { try { W.cleanse(unit, b.cleanse); } catch (e) {} }
+    if (typeof W.applyStatus === 'function') {
+      try {
+        if (b.status)  W.applyStatus(unit, b.status,  LEY.BOON_DURATION);
+        if (b.status2) W.applyStatus(unit, b.status2, LEY.BOON_DURATION);
+      } catch (e) {}
+    }
+    return b;
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════════
      WIRING. index.html hands over the lexical `const`s this file cannot see.
      Every one has a fallback that makes the system inert rather than throwing —
      an exception raised from inside calculateDamage would take the whole match
@@ -259,6 +388,15 @@
     elementName: function (e) { return e; },
     isFlying: function () { return false; },
     log: function () {},
+    // 🎁 Status grant, wired from index.html. The boons below are built on the
+    // game's REAL STATUS_EFFECTS ids (strong, shielded, blessed, frostForm,
+    // reraise, …) rather than a parallel buff system, so every one of them
+    // already renders its own chip on the unit, already expires on the shared
+    // timer, and already interacts with cleanse, dispel and immunity the way
+    // players expect. Inert until wired, which costs the boons and nothing else.
+    applyStatus: null,
+    // 🧼 Strip statuses — nature clears one, void clears the lot.
+    cleanse: null,
     // 🔴 HEX distance, wired from index.html rather than reimplemented here.
     // The board is odd-r offset and its parity rules are subtle enough that
     // _paintSurface shipped a SQUARE disc on a hex board and nobody saw it for
@@ -694,6 +832,23 @@
         healed++;
       }
 
+      // 🎁 Elemental boon — the other half of attunement. Paid only on ley
+      // matching one of the unit's OWN elements and only once the hex is
+      // entrenched to LEY.BOON_POWER, so it is earned by holding ground.
+      // Re-granted every tick rather than tracked: the statuses carry
+      // BOON_DURATION, so stepping off the hex lets the buff lapse on its own
+      // through the game's ordinary status timer instead of needing a
+      // bookkeeping pass here that could get out of step with it.
+      if (lp) {
+        var boon = payBoon(state, u, lp);
+        if (boon && !u._leyBoonSeen) {
+          u._leyBoonSeen = lp.elem;
+          W.log(state, (boon.icon || '🎁') + ' ' + (u.name || 'A unit') + ' draws ' + boon.name +
+                ' from the ' + (W.elementName(lp.elem) || lp.elem) + ' ley.',
+                u.owner === 'player' ? 'green' : 'red');
+        } else if (!boon) { u._leyBoonSeen = null; }
+      } else { u._leyBoonSeen = null; }
+
       // 🜂 FOUNT — holding one floods the hexes around it at FOUNT_POWER. Queued
       // rather than painted here: two units of different elements can hold two
       // founts whose discs overlap, and painting inside this loop would give the
@@ -783,6 +938,8 @@
       else if (d.discordant) txt += ' — ' + (viewer.name || 'this unit') + ' discordant: ' + Math.round(clampMod(d.atkBonus) * 100) + '% damage';
       var pk = perkOn(viewer, ley);
       if (pk) txt += ' · home ground (' + pk + ')';
+      var vb = (W.getElementsOf(viewer).indexOf(ley.elem) !== -1) ? boonFor(ley.elem, ley.power) : null;
+      if (vb) txt += ' · ' + (vb.icon || '🎁') + ' ' + vb.name + ' — ' + vb.desc;
     }
     return { elem: ley.elem, power: clampPower(ley.power), owner: ley.owner, color: W.elementColor(ley.elem), label: txt };
   }
@@ -936,6 +1093,9 @@
       else if (elem && W.getTypeMultiplier(ley.elem, elem) > 1) out.atk = clampMod(LEY.DISCORD_ATK);
       out.perk = perkOn(unit, ley);
       out.claims = !!(elem && ley.elem !== elem);
+      // 🎁 The boon this hex would pay THIS unit — the whole reason a player
+      // walks onto their own colour rather than merely fighting from it.
+      if (elem && ley.elem === elem) out.boon = boonFor(ley.elem, ley.power);
     } else if (elem) {
       out.claims = true;   // bare ground: standing here claims it
     }
@@ -968,6 +1128,9 @@
     aiTileScore: aiTileScore,
     breakLey: breakLey,
     project: project,
+    ELEM_BOON: ELEM_BOON,
+    boonFor: boonFor,
+    isAnchored: isAnchored,
     enabled: function () { return !!LEY.ENABLED; },
     configure: function (o) {
       if (!o) return;

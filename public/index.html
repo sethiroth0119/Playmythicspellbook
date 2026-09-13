@@ -84795,6 +84795,40 @@ function _ley() {
         elementColor: (e) => (ELEMENT_DATA[e] && ELEMENT_DATA[e].color) || '#8899aa',
         elementName: (e) => (ELEMENT_DATA[e] && ELEMENT_DATA[e].name) || e,
         isFlying: (u) => (typeof isEffectivelyFlying === 'function') ? !!isEffectivelyFlying(u) : !!(u && u.flying),
+        // 🎁 BOON GRANT — the adapter for the 21 elemental boons.
+        //
+        // 🔴 applyStatusEffect is IMMUTABLE: it returns a NEW unit and leaves
+        // the one it was handed untouched. tickLey walks the live state.units
+        // entries and mutates them in place, so handing the raw function over
+        // would apply every boon to a throwaway copy and the buff would never
+        // appear — a silent no-op with no error anywhere. Copy the result's
+        // statusEffects back onto the SAME object the tick is holding.
+        applyStatus: (u, id, dur) => {
+          try {
+            const nu = applyStatusEffect(u, id, dur);
+            if (nu && nu !== u) u.statusEffects = nu.statusEffects;
+          } catch (e) {}
+        },
+        // 🧼 Nature lifts one affliction, the Void strips everything. Only
+        // DEBUFFS are eligible for the count-limited cleanse — "lifted one
+        // affliction" that removed the unit's own Blessed would read as the
+        // boon working against you. The Void is the deliberate exception: it
+        // eats the lot, its own gifts included, which is the point of it.
+        cleanse: (u, n) => {
+          try {
+            const se = u.statusEffects || [];
+            if (n >= 99) { u.statusEffects = []; return; }
+            let left = n | 0;
+            u.statusEffects = se.filter(e => {
+              if (left <= 0) return true;
+              const d = STATUS_EFFECTS[e && e.type];
+              const bad = d && (d.dmgMin > 0 || d.skipTurn || (d.atkMod || 0) < 0
+                        || (d.defMod || 0) < 0 || (d.spdMod || 0) < 0 || d.statMult);
+              if (!bad) return true;
+              left--; return false;
+            });
+          } catch (e) {}
+        },
         // 🔴 HEX distance, handed over rather than reimplemented in the module.
         // The board is odd-r and _paintSurface once shipped a SQUARE disc on it
         // that survived a whole wave (HEXSPEC §6). The fount disc and the
@@ -119698,13 +119732,22 @@ const executeMove = (state, attacker, target, move) => {
       // cannot re-derive it (there is no getMovePath behind a shove) and must
       // not try — see _shoveRayRecord for the drift this closes.
       const ray = [{ x: tx, y: ty }];
+      // 🌌 ANCHORED — a unit drawing the Gravity boon from entrenched gravity
+      // ley is pinned to the world and cannot be shoved at all. Checked before
+      // the high-ground bonus because a shove that cannot happen has no
+      // distance to add to.
+      let _anchored = false;
+      try { const _MA = _ley(); if (_MA) _anchored = _MA.isAnchored(s, updatedTarget); } catch (e) {}
+      if (_anchored) {
+        log.push({ msg: `🌌 ${updatedTarget.name} is anchored to the leyline — the blow cannot move it.`, color: 'amber' });
+      }
       // ⛰ HIGH GROUND — a shove delivered from above carries the target an
       // extra tile. Read once, before the walk, so the bonus cannot change
       // underneath the loop as the target is moved down the ray.
-      let _kbSteps = move.knockback;
+      let _kbSteps = _anchored ? 0 : move.knockback;
       try {
         const _M = _ley();
-        if (_M) _kbSteps += _M.knockbackBonus(s, attacker, updatedTarget);
+        if (_M && !_anchored) _kbSteps += _M.knockbackBonus(s, attacker, updatedTarget);
       } catch (e) {}
       for (let step = 0; step < _kbSteps; step++) {
         const _n = hexStep(cx, cy, kdir);        // per-step: the offsets flip with row parity
@@ -119736,7 +119779,16 @@ const executeMove = (state, attacker, target, move) => {
   // Note the direction is picked from the TARGET toward the attacker, so a
   // pull that cannot quite reach still travels along the correct hex line
   // instead of the mirror-image zigzag the Math.sign() pair produced.
-  if (updatedTarget.alive && move.pull && move.pull > 0
+  // 🌌 ANCHORED — the Gravity boon's text promises "nothing can shove OR DRAG
+  // you", so the pull has to honour it too. Guarding only the knockback block
+  // above would leave a grappling hook as a way to move an anchored unit, and a
+  // buff whose description is wrong is worse than no buff.
+  let _pullAnchored = false;
+  try { const _MP = _ley(); if (_MP) _pullAnchored = _MP.isAnchored(s, updatedTarget); } catch (e) {}
+  if (_pullAnchored && updatedTarget.alive && move.pull && move.pull > 0) {
+    log.push({ msg: `🌌 ${updatedTarget.name} is anchored to the leyline — it cannot be dragged.`, color: 'amber' });
+  }
+  if (!_pullAnchored && updatedTarget.alive && move.pull && move.pull > 0
       && (Math.random() * 100 < ((move.pullChance == null) ? 100 : move.pullChance))
       && !(updatedTarget.isWall && !(updatedTarget.wall && updatedTarget.wall.canBePushed))) {
     const ax = attacker.pos.x, ay = attacker.pos.y;

@@ -10452,10 +10452,30 @@
     pointer-events: none;
     overflow: hidden;
     perspective: 1400px;
-    background: radial-gradient(ellipse at 50% 48%, rgba(46,16,84,0.90) 0%, rgba(14,5,32,0.96) 42%, rgba(2,1,7,0.99) 100%);
+    /* 🔴 TRANSPARENT ON PURPOSE. This used to be a near-opaque purple radial
+       (0.90-0.99 alpha) that blacked the board out for the full 6.2s. The
+       backdrop is now the .fcx-bg layer below at 30%, so the player can still
+       read the board underneath while the cinematic plays.
+       ⚠ Do NOT put the opacity on .fcx-root — that would fade the CARDS too,
+       which are the whole point. The one translucent thing is .fcx-bg. */
+    background: transparent;
     animation: fcx-root-in 0.34s ease-out both;
     /* --cs scales the whole card choreography down on phones. */
     --cs: 1;
+    /* The backdrop plate. Swap this one line to change the art. */
+    --fcx-bg-src: url('assets/background/Backgrounds/fusion-cine-bg.png');
+  }
+  /* The 30% backdrop. The gradient is painted UNDER the image in the same
+     layer, so if the art is missing or still loading the stage is still a
+     void rather than nothing at all — and it is dimmed by the same 30%, so a
+     missing file never darkens the board more than the real art would. */
+  .fcx-bg {
+    position: absolute; inset: 0;
+    background:
+      var(--fcx-bg-src) center / cover no-repeat,
+      radial-gradient(ellipse at 50% 48%, #2e1054 0%, #0e0520 42%, #020107 100%);
+    opacity: 0.30;
+    pointer-events: none;
   }
   @media (max-width: 780px) { .fcx-root { --cs: 0.66; } }
   @keyframes fcx-root-in { from { opacity: 0; } to { opacity: 1; } }
@@ -39820,7 +39840,7 @@ body:has(#pack-opener-frame) #chat-overlay {
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v121v117';
+  window.BUILD_VERSION = 'v121v118';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -163985,6 +164005,7 @@ function _fusionCineMount(fm, kalon, spellCard) {
     root.className = 'fcx-root';
     root.setAttribute('aria-hidden', 'true');
     root.innerHTML = `
+      <div class="fcx-bg"></div>
       <div class="fcx-grid">${hex}</div>
       <div class="fcx-vortex"></div>
       <div class="fcx-vortex fcx-vortex-2"></div>

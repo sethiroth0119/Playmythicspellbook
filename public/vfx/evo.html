@@ -573,6 +573,30 @@ CK.vignette = function (cx, cy, U, k) {
   var VIOLET = '#6d28d9', LILAC = '#a78bfa', CYAN = '#22d3ee', GOLD = '#d9b45a',
       ROSE   = '#e879a9', AZURE = '#4f7cf7', EMBER = '#f0873f';
 
+  /* ═══ BACKDROP BUDGET — THE ONE KNOB ═════════════════════════════════════
+     How much of the board this cinematic is allowed to take away. The kit's
+     grade at full strength removes ~30% of the board's brightness at the edge
+     of frame and ~25% mid-frame (measured against a flat bright board, with
+     and without the canvas). The brief is that players keep reading the board
+     THROUGH the evolution, so the whole grade is scaled by ONE number here
+     rather than by editing a dozen alphas scattered down the draw.
+
+     ⚠ IT SCALES THE DARK ONLY. The card, the hero art, the nameplate and every
+     light stay exactly as they were: dropping those is what makes an overlay
+     look washed out instead of transparent, and it is the reason the host's
+     own wrap opacity is a ceiling rather than a dimmer.
+     ⚠ It does NOT raise any luminance ceiling. ATMO/HERO are untouched — this
+     can only ever move the frame further from the white-wash threshold. */
+  var BACKDROP = 0.48;   /* ×the kit grade — measured: ~19% of the board removed */
+  /* The letterbox is backdrop too: at the kit's 0.94 it blacks out the top and
+     bottom 7.5% of the board outright, which on this board is where units
+     stand. Held to the same budget so the board reads under the bars. */
+  var BAR_A = 0.68;
+  function bars(k, tint) {
+    if (k <= 0) return;
+    var c = FX.ctx; c.save(); c.globalAlpha = BAR_A; CK.bars(k, tint); c.restore();
+  }
+
   var D = FX.director([
     { n: 'frames',   d: 1.00 },
     { n: 'charge',   d: 1.15 },
@@ -740,7 +764,7 @@ CK.vignette = function (cx, cy, U, k) {
     /* ═══ LAYER 1 — ATMOSPHERE (sealed at 0.40) ═══════════════════════════ */
     FX.camera(shake, zoomA, cx, cy);
     if (panAY) ctx.translate(0, panAY);
-    CK.vignette(cx, cy, U, darkK);
+    CK.vignette(cx, cy, U, darkK * BACKDROP);
     /* Contrast by surrounding the subject with dark, never by adding light —
        EXCEPT across the bang. Measured: with the ink pool left on, the blast
        rendered as a grey donut on a black field, because the pool is centred on
@@ -750,7 +774,7 @@ CK.vignette = function (cx, cy, U, k) {
              : N === 'collapse' ? 1 - suck * 0.55
              : N === 'bang'     ? Math.max(0, 0.18 - p * 0.18)
              : N === 'forge'    ? 0.30 + p * 0.55 : 1;
-    if (inkK > 0.01) CK.ink(cx, cy - lift, U * 0.50, FX.clamp01(0.26 * IK) * inkK, 0.92);
+    if (inkK > 0.01) CK.ink(cx, cy - lift, U * 0.50, FX.clamp01(0.26 * IK) * inkK * BACKDROP, 0.92);
 
     /* the pedestal ring under the rite — present until the bang eats it */
     var ringK = N === 'frames'   ? CK.snap(p) * 0.55
@@ -912,7 +936,7 @@ CK.vignette = function (cx, cy, U, k) {
     /* a second, tighter pool of dark ON TOP of the sealed atmosphere — this is
        the stage the card stands on. Pure black: it can only LOWER luminance. */
     if (inkK > 0.01) {
-      CK.ink(cx, cy - lift, U * 0.34, 0.34 * inkK * (N === 'reveal' ? 1 - p * 0.5 : 1), 0.95);
+      CK.ink(cx, cy - lift, U * 0.34, 0.34 * inkK * BACKDROP * (N === 'reveal' ? 1 - p * 0.5 : 1), 0.95);
     }
 
     /* ── THE BASE CARD + ITS FRAME ───────────────────────────────────────── */
@@ -1004,7 +1028,7 @@ CK.vignette = function (cx, cy, U, k) {
        reads as a bug. Master Duel moves the world and pins the type. */
     if (N === 'reveal') CK.plate(S.name, S.eyebrow, cx, cy + U * 0.330,
                                  FX.clamp01((p - 0.12) * 2.6), GOLD);
-    CK.bars(N === 'frames' ? CK.snap(p)
+    bars(N === 'frames' ? CK.snap(p)
           : N === 'reveal' ? 1 - FX.easeIn(FX.clamp01((p - 0.60) / 0.40)) : 1, GOLD);
 
     if (S.playing && S.time > D.total + 0.4) S.playing = false;

@@ -11,7 +11,7 @@
   #fx{position:fixed;inset:0;display:block;background:transparent;pointer-events:none}
 </style>
 <title>Kalon Transformation</title>
-<script>window.VFX_BUILD="v120t4-kalon";</script>
+<script>window.VFX_BUILD="v120t5-kalon";</script>
 </head>
 <body>
 <canvas id="fx"></canvas>
@@ -592,7 +592,12 @@ CK.portal = function (cx, cy, R, k, t, a) {
 
   /* 1 — THE VOID. Pure black, pre-compensated by IK like every other dark in
      this layer, so it arrives at its intended depth after the seal. */
-  var vA = FX.clamp01(0.92 * IK * a);
+  /* ⚠ 0.14, NOT 0.92. The mouth used to be written past the layer's own
+     ceiling (0.92 x IK = 2.3, clamped to 1) — i.e. as opaque as this pass can
+     draw, which put a 40% black disc over the middle of the board for four
+     seconds. It is still the darkest thing in the frame and still the deepest
+     part of the budget; it is no longer a hole punched through the game. */
+  var vA = FX.clamp01(0.14 * IK * a);
   var g = ctx.createRadialGradient(0, 0, 0, 0, 0, R);
   g.addColorStop(0,    'rgba(2,1,6,'  + vA.toFixed(3) + ')');
   g.addColorStop(0.58, 'rgba(3,1,9,'  + (vA * 0.93).toFixed(3) + ')');
@@ -690,6 +695,35 @@ CK.corridor = function (cx, cy, k, t, a) {
 /* ═══ END COSMIC PORTAL KIT ══════════════════════════════════════════════ */
 
   var VIOLET = '#6d28d9', LILAC = '#a78bfa', CYAN = '#22d3ee', GOLD = '#d9b45a', ROSE = '#e879a9';
+
+  /* ═══ THE BOARD BUDGET ══════════════════════════════════════════════════
+     HOW MUCH OF THE BATTLEFIELD THIS CINEMATIC IS ALLOWED TO TAKE: 30%. The
+     player keeps 70% of their own board through the whole 6.45s — they can
+     read the field, their units and the lane the transform is happening on.
+
+     ⚠ The number in the code IS the number on the screen. Both passes are
+     pre-compensated (`IK` in ATMO, the 0.74 ceiling in HERO), so a dark
+     written as 0.10 arrives as 0.10 — which is the only reason a budget like
+     this can be reasoned about at all instead of measured by trial.
+
+     Four darks stack behind the subject. They MULTIPLY, they do not add:
+
+       vignette  flat grade      0.061   (DK.vig scales the whole helper)
+       vignette  edge radial     0.129   (corner only, never behind the card)
+       ATMO      pool of dark    0.100
+       portal    the void itself 0.140
+       HERO      tighter pool    0.060
+
+       behind the mouth: 1 - (0.939 x 0.900 x 0.860 x 0.940) = 0.317
+
+     ⚠ WHAT THIS COSTS, SO IT IS NOT RE-DISCOVERED AS A BUG. This engine's
+     whole premise is that the subject is lit by being SURROUNDED BY DARK, not
+     by being made bright (see CK.ink). Taking the darks down to a third takes
+     local contrast down with them, and the answer is NOT to push the light
+     back up — that is the exact knob that re-opens the white screen. If the
+     payoff needs to read harder, spend it on silhouette, motion and the
+     accretion ring, all of which are free. ═══════════════════════════════ */
+  var DK = { vig: 0.38, atmo: 0.10, hero: 0.08, revealHero: 0.08, shadow: 0.30, ground: 0.26 };
 
   var D = FX.director([
     { n: 'settle', d: 0.45 },   /* the card lands, bars drop                */
@@ -828,9 +862,9 @@ CK.corridor = function (cx, cy, k, t, a) {
     FX.camera(shake, zoomA, cx, cy);
     bank(roll * 0.7);
     if (panAY) ctx.translate(0, panAY);
-    CK.vignette(cx, cy, U, darkK);
+    CK.vignette(cx, cy, U, darkK * DK.vig);
     /* the subject is lit by being surrounded by dark, not by being made bright */
-    if (N !== 'settle') CK.ink(cx, cardY, U * 0.50, FX.clamp01(0.24 * IK), 0.92);
+    if (N !== 'settle') CK.ink(cx, cardY, U * 0.50, FX.clamp01(DK.atmo * IK), 0.92);
 
     /* the summoning ground — present while we are still ON the board, gone the
        moment the card is through, back under the new form */
@@ -928,13 +962,13 @@ CK.corridor = function (cx, cy, k, t, a) {
     if (panHY) ctx.translate(0, panHY);
     /* a second, tighter pool of dark ON TOP of the atmosphere: the stage the
        card stands on. Pure black — it can only ever LOWER luminance. */
-    if (N !== 'settle') CK.ink(cx, cardY, U * 0.34, 0.30 * (N === 'reveal' ? 1 - p * 0.5 : 1), 0.95);
+    if (N !== 'settle') CK.ink(cx, cardY, U * 0.34, DK.hero * (N === 'reveal' ? 1 - p * 0.5 : 1), 0.95);
 
     /* ground rune bands (structure, so they live up here with the card) */
     if (ringK > 0.01 && N !== 'warp') {
       var R2 = U * (0.225 + 0.02 * FX.pulse(t, 0.4));
       ctx.save(); ctx.translate(cx, GY); ctx.scale(1, 0.30);
-      CK.shadow(0, 0, R2 * 1.25, R2 * 1.25, 0.55 * ringK);
+      CK.shadow(0, 0, R2 * 1.25, R2 * 1.25, DK.ground * ringK);
       for (i = 0; i < 2; i++) {
         var br2 = R2 * (i ? 0.62 : 1), dr = i ? -1 : 1;
         ctx.save(); ctx.rotate(t * 0.22 * dr);
@@ -965,7 +999,7 @@ CK.corridor = function (cx, cy, k, t, a) {
       ctx.save();
       ctx.translate(cx, PY); ctx.scale(sxh, 1);
       ctx.lineWidth = Math.max(1.5, U * 0.007);
-      ctx.strokeStyle = 'rgba(4,2,10,' + (0.72 * portalA).toFixed(3) + ')';
+      ctx.strokeStyle = 'rgba(4,2,10,' + (0.45 * portalA).toFixed(3) + ')';
       ctx.beginPath(); ctx.arc(0, 0, PR * 0.985, 0, 6.2832); ctx.stroke();
       ctx.restore();
     }
@@ -1074,8 +1108,8 @@ CK.corridor = function (cx, cy, k, t, a) {
       /* ⚠ TIGHT (U*0.28). This dark pool is drawn in the HERO pass, i.e. ON TOP
          of the atmosphere — any wider and it covers the whole annulus the ray
          fan lives in and swallows it. */
-      CK.ink(cx, revealY, U * 0.28, 0.36 * r, 1);
-      CK.shadow(cx, GY, U * 0.20, U * 0.055, 0.5 * r);
+      CK.ink(cx, revealY, U * 0.28, DK.revealHero * r, 1);
+      CK.shadow(cx, GY, U * 0.20, U * 0.055, DK.shadow * r);
 
       /* WHAT IT WAS, GOING BACK THROUGH. The old frame falls away into the
          closing mouth — no other page's payoff still contains the thing that

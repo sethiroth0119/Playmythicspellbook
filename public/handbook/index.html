@@ -454,6 +454,147 @@ body.editing [data-edit]:empty::before{
   font-family:var(--sans);font-size:.74rem;color:var(--ink-dim);text-align:center;
 }
 
+
+/* ═══════════════════════════════════════════════════════════════════════
+   CORE-RULEBOOK FURNITURE
+   Numbered rules, part dividers, defined terms, sequences, profiles and the
+   three box kinds (example / designer's note / callout). These are the format
+   conventions of a tabletop core rulebook — a citable numbering scheme and a
+   visual separation between RULE, ILLUSTRATION and ASIDE — rendered in this
+   game's own palette.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Part divider — the spine of the book */
+.part{
+  max-width:var(--measure);margin:96px auto 0;padding:0 24px;text-align:center;
+}
+.part-rule{height:1px;background:linear-gradient(90deg,transparent,var(--rule),transparent)}
+.part-name{
+  font-family:var(--display);font-weight:900;font-size:clamp(.82rem,2.4vw,1.05rem);
+  letter-spacing:.34em;text-transform:uppercase;color:var(--gold);
+  padding:20px 0 18px;text-wrap:balance;
+}
+
+/* Rule number in a hanging gutter. Falls inline under ~720px so the heading
+   never gets squeezed into two words per line on a phone. */
+.sec.rule{display:grid;grid-template-columns:4.6rem minmax(0,1fr);column-gap:18px}
+.sec.rule > *{grid-column:2}
+.sec .rule-n{
+  grid-column:1;grid-row:1;justify-self:end;padding-top:.3rem;
+  font-family:var(--sans);font-weight:700;font-size:.9rem;letter-spacing:.02em;
+  color:var(--gold-dk);font-variant-numeric:tabular-nums;
+}
+@media (max-width:720px){
+  .sec.rule{display:block}
+  .sec .rule-n{display:inline-block;padding:0 .5em 0 0;color:var(--gold)}
+  .sec.rule h3{display:inline}
+}
+
+/* Defined terms */
+dfn{
+  font-style:normal;font-weight:600;color:var(--gold-br);
+  font-variant:small-caps;letter-spacing:.04em;
+}
+
+/* The battle-round sequence, and any other ordered procedure */
+.seq{list-style:none;margin:22px 0;padding:0;counter-reset:seq}
+.seq li{
+  counter-increment:seq;position:relative;margin:0 0 10px;padding:13px 16px 14px 54px;
+  border-radius:10px;background:var(--panel);border:1px solid var(--rule-soft);
+}
+.seq li::before{
+  content:counter(seq);position:absolute;left:14px;top:12px;
+  width:26px;height:26px;display:grid;place-items:center;border-radius:50%;
+  background:rgba(212,175,55,.16);border:1px solid var(--rule);
+  font-family:var(--display);font-weight:700;font-size:.82rem;color:var(--gold-br);
+}
+.seq .sh{font-family:var(--display);font-weight:700;font-size:1rem;color:var(--gold-br);margin-bottom:3px}
+.seq .sb{font-family:var(--sans);font-size:.85rem;line-height:1.6;color:var(--ink-dim)}
+
+/* Datasheet-style profile */
+.profile{
+  margin:24px 0;border-radius:11px;overflow:hidden;
+  border:1px solid var(--rule);background:var(--panel);
+}
+.profile-name{
+  padding:10px 16px;background:rgba(212,175,55,.14);border-bottom:1px solid var(--rule);
+  font-family:var(--display);font-weight:700;font-size:.78rem;letter-spacing:.2em;
+  text-transform:uppercase;color:var(--gold-br);
+}
+.profile-line{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
+.profile-stat{display:flex;gap:12px;padding:11px 16px;border-bottom:1px solid rgba(255,255,255,.05)}
+.profile-stat .pk{
+  flex:0 0 3.1rem;font-family:var(--display);font-weight:900;font-size:1rem;
+  color:var(--gold-br);letter-spacing:.04em;
+}
+.profile-stat .pv{font-family:var(--sans);font-size:.8rem;line-height:1.5;color:var(--ink-dim)}
+.profile-kw{
+  padding:11px 16px;background:rgba(0,0,0,.28);border-top:1px solid var(--rule-soft);
+  font-family:var(--sans);font-size:.7rem;letter-spacing:.09em;color:var(--ink-dim);
+}
+.profile-kw b{color:var(--gold-dk);font-weight:700;margin-right:8px}
+.profile-kw span{color:#ded3bd;font-weight:600}
+
+/* Worked example */
+.example{
+  margin:24px 0;padding:15px 18px;border-radius:10px;
+  border:1px solid rgba(136,200,255,.22);border-left:3px solid #6cb6f2;
+  background:linear-gradient(90deg,rgba(108,182,242,.1),rgba(108,182,242,.02));
+  font-family:var(--sans);font-size:.88rem;line-height:1.62;color:#dfe8f2;
+}
+.example::before{
+  content:'EXAMPLE';display:block;font-weight:700;font-size:.64rem;letter-spacing:.2em;
+  color:#6cb6f2;margin-bottom:6px;
+}
+
+/* Designer's note */
+.designer{
+  margin:24px 0;padding:15px 18px;border-radius:10px;
+  border:1px solid rgba(184,136,255,.24);border-left:3px solid var(--violet);
+  background:linear-gradient(90deg,rgba(184,136,255,.1),rgba(184,136,255,.02));
+  font-family:var(--sans);font-size:.88rem;line-height:1.62;color:#e6ddf5;font-style:italic;
+}
+.designer::before{
+  content:"DESIGNER'S NOTE";display:block;font-weight:700;font-style:normal;
+  font-size:.64rem;letter-spacing:.2em;color:var(--violet);margin-bottom:6px;
+}
+
+/* Rules-priority preamble */
+.preamble{max-width:var(--measure);margin:70px auto 0;padding:0 24px}
+.preamble h2{
+  font-family:var(--display);font-weight:900;font-size:1.5rem;color:#fff;margin:0 0 14px;
+}
+.prio{list-style:none;margin:24px 0 0;padding:0;counter-reset:prio}
+.prio li{
+  counter-increment:prio;position:relative;padding:12px 16px 13px 56px;margin:0 0 9px;
+  border-radius:10px;background:rgba(232,93,60,.07);border:1px solid rgba(232,93,60,.26);
+}
+.prio li::before{
+  content:counter(prio);position:absolute;left:15px;top:11px;
+  width:26px;height:26px;display:grid;place-items:center;border-radius:6px;
+  background:rgba(232,93,60,.2);border:1px solid rgba(232,93,60,.45);
+  font-family:var(--display);font-weight:700;font-size:.82rem;color:#ffb9a6;
+}
+.prio .ph{font-family:var(--display);font-weight:700;font-size:1rem;color:#ffb9a6;margin-bottom:2px}
+.prio .pb{font-family:var(--sans);font-size:.85rem;line-height:1.6;color:var(--ink-dim)}
+
+/* TOC part headings */
+.toc .toc-part{
+  font-family:var(--display);font-weight:700;font-size:.62rem;letter-spacing:.2em;
+  text-transform:uppercase;color:var(--gold-dk);padding:16px 12px 5px;
+}
+.toc li:first-child.toc-part{padding-top:4px}
+
+@media print{
+  .part{page-break-before:always}
+  .seq li,.profile,.example,.designer,.prio li{background:#faf6ec;border-color:#ddd0ad}
+  .seq li::before,.prio li::before{background:#f0e6cc;border-color:#c2ab6a;color:#6d4f14}
+  .example,.designer{color:#2f2a22}
+  .example::before,.designer::before{color:#6d4f14}
+  dfn{color:#6d4f14}
+  .part-name{color:#8a6a28}
+}
+
 @media print{ .who,.pub-state,.upbar,.img-slot,.grid-tools,.addmenu{display:none!important} }
 </style>
 
@@ -807,15 +948,27 @@ function render(){
   $('#brandVer').textContent   = [plain(b.subtitle||''), b.version].filter(Boolean).join(' · ');
   document.title = plain(b.title||'Handbook') + ' — ' + plain(b.subtitle||'');
 
-  $('#toc').innerHTML = b.chapters.map((c,i)=>
-    `<li><a href="#${esc(c.id||('ch'+i))}" data-ch="${i}"><span class="rn">${esc(c.num||(i+1))}</span><span>${stripTags(c.title)}</span></a></li>`
-  ).join('');
+  let tocPart = null;
+  $('#toc').innerHTML = b.chapters.map((c,i)=>{
+    const head = (c.part && c.part !== tocPart) ? `<li class="toc-part">${esc(c.part)}</li>` : '';
+    tocPart = c.part || tocPart;
+    return head + `<li><a href="#${esc(c.id||('ch'+i))}" data-ch="${i}"><span class="rn">${esc(c.num||(i+1))}</span><span>${stripTags(c.title)}</span></a></li>`;
+  }).join('');
 
   const stale = S.staleDraft
     ? `<div class="ro-note" style="color:#ffc978">⚠ This draft was taken from v${S.staleDraft.base}, but v${S.staleDraft.now} is live now. Publishing will overwrite the newer version — or discard the draft to take the live one.</div>`
     : '';
 
-  $('#page').innerHTML = coverHtml(b) + stale + b.chapters.map((c,i)=>chapterHtml(c,i)).join('') + colophonHtml(b);
+  // Part dividers are emitted by chapterHtml when the part CHANGES, so the
+  // book's spine is derived from the chapters themselves rather than kept as a
+  // second list that can fall out of step with them.
+  let lastPart = null;
+  const body = b.chapters.map((c,i)=>{
+    const div = (c.part && c.part !== lastPart) ? partHtml(c.part) : '';
+    lastPart = c.part || lastPart;
+    return div + chapterHtml(c,i);
+  }).join('');
+  $('#page').innerHTML = coverHtml(b) + stale + preambleHtml(b) + body + colophonHtml(b);
 
   wireEditables();
   wireChrome();
@@ -844,6 +997,57 @@ function coverHtml(b){
   </header>`;
 }
 
+function partHtml(name){
+  return `<div class="part"><div class="part-rule"></div><div class="part-name">${esc(name)}</div><div class="part-rule"></div></div>`;
+}
+
+/* The rules-priority preamble. A rulebook states its precedence rules once, up
+   front, before any rule they arbitrate — so this sits above chapter 1 rather
+   than being a chapter of its own. */
+function preambleHtml(b){
+  const p = b.preamble; if(!p) return '';
+  const rules = (p.rules||[]).map((r,i)=>
+    `<li><div class="ph" data-edit="preamble.rules.${i}.h">${esc(r.h||'')}</div>
+         <div class="pb" data-edit="preamble.rules.${i}.body" data-rich="1">${r.body||''}</div></li>`
+  ).join('');
+  return `<div class="preamble">
+    <h2 data-edit="preamble.h">${esc(p.h||'')}</h2>
+    <div data-edit="preamble.body" data-rich="1">${p.body||''}</div>
+    ${rules?`<ol class="prio">${rules}</ol>`:''}
+  </div>`;
+}
+
+function seqHtml(steps, base){
+  return `<ol class="seq">${steps.map((st,k)=>
+    `<li><div class="sh" data-edit="${base}.seq.${k}.h">${esc(st.h||'')}</div>
+         <div class="sb" data-edit="${base}.seq.${k}.body" data-rich="1">${st.body||''}</div></li>`
+  ).join('')}</ol>
+  <div class="grid-tools">
+    <button class="btn sm" data-seqadd="${base}">+ Step</button>
+    <button class="btn sm" data-seqdel="${base}">− Step</button>
+  </div>`;
+}
+
+function profileHtml(pr, base){
+  const stats = (pr.line||[]).map((st,k)=>
+    `<div class="profile-stat">
+       <span class="pk" data-edit="${base}.profile.line.${k}.k">${esc(st.k||'')}</span>
+       <span class="pv" data-edit="${base}.profile.line.${k}.v" data-rich="1">${st.v||''}</span>
+     </div>`).join('');
+  const kw = (pr.keywords||[]).length
+    ? `<div class="profile-kw"><b>KEYWORDS</b>${pr.keywords.map((k,i)=>`<span data-edit="${base}.profile.keywords.${i}">${esc(k)}</span>`).join('<span style="color:var(--gold-dk)"> · </span>')}</div>`
+    : '';
+  return `<div class="profile">
+    <div class="profile-name" data-edit="${base}.profile.name">${esc(pr.name||'')}</div>
+    <div class="profile-line">${stats}</div>
+    ${kw}
+  </div>
+  <div class="grid-tools">
+    <button class="btn sm" data-prowadd="${base}">+ Row</button>
+    <button class="btn sm" data-prowdel="${base}">− Row</button>
+  </div>`;
+}
+
 function chapterHtml(c,i){
   const cid = c.id||('ch'+i);
   const art = c.art ? `<figure class="ch-art"><img src="${esc(au(c.art))}" alt="" loading="lazy" onerror="this.closest('.ch-art').style.display='none'"></figure>` : '';
@@ -868,11 +1072,16 @@ function chapterHtml(c,i){
 }
 
 const BLOCKS = [
-  {t:'text',    k:'¶',  label:'Text'},
-  {t:'image',   k:'🖼', label:'Image'},
-  {t:'table',   k:'▦',  label:'Table'},
-  {t:'cards',   k:'▤',  label:'Card grid'},
-  {t:'callout', k:'◈',  label:'Callout'},
+  {t:'rule',     k:'§',  label:'Numbered rule'},
+  {t:'text',     k:'¶',  label:'Text'},
+  {t:'sequence', k:'⑴',  label:'Sequence'},
+  {t:'profile',  k:'▩',  label:'Profile'},
+  {t:'example',  k:'◐',  label:'Example'},
+  {t:'designer', k:'✎',  label:"Designer's note"},
+  {t:'callout',  k:'◈',  label:'Callout'},
+  {t:'table',    k:'▦',  label:'Table'},
+  {t:'cards',    k:'▤',  label:'Card grid'},
+  {t:'image',    k:'🖼', label:'Image'},
 ];
 
 function addMenuHtml(i){
@@ -888,7 +1097,9 @@ function addMenuHtml(i){
 
 function sectionHtml(s,i,j){
   const base = `chapters.${i}.sections.${j}`;
-  let out = '<div class="sec">';
+  // A numbered rule gets the hanging gutter; an unnumbered section does not.
+  let out = `<div class="sec${s.n != null ? ' rule' : ''}">`;
+  if(s.n != null) out += `<div class="rule-n" data-edit="${base}.n" data-ph="0.0">${esc(s.n)}</div>`;
 
   // An empty heading still gets an editable slot so a blank block can be named.
   if(s.h != null) out += `<h3 data-edit="${base}.h" data-ph="Section heading">${s.h||''}</h3>`;
@@ -910,9 +1121,13 @@ function sectionHtml(s,i,j){
     </div>`;
   }
 
+  if(s.profile) out += profileHtml(s.profile, base);
+  if(s.seq) out += seqHtml(s.seq, base);
   if(s.table) out += tableHtml(s.table, base);
   if(s.cards) out += cardsHtml(s.cards, base);
   if(s.render) out += renderBlock(s.render);
+  if(s.example != null)  out += `<div class="example"  data-edit="${base}.example"  data-rich="1" data-ph="A worked example.">${s.example||''}</div>`;
+  if(s.designer != null) out += `<div class="designer" data-edit="${base}.designer" data-rich="1" data-ph="Why it works this way.">${s.designer||''}</div>`;
   if(s.note != null) out += `<div class="note" data-edit="${base}.note" data-ph="Something worth calling out.">${s.note||''}</div>`;
 
   out += `<div class="ed-tools">
@@ -1027,6 +1242,7 @@ function wireChrome(){
 
   $$('[data-addsec]').forEach(b=> b.onclick = guard(()=>{
     const i=+b.dataset.addsec;
+    S._addingTo = i;                     // read by nextRuleNumber()
     S.book.chapters[i].sections.push(newBlock(b.dataset.type));
     saveDraft(); render();
   }));
@@ -1075,6 +1291,29 @@ function wireChrome(){
     saveDraft(); render();
   }));
 
+  /* ── sequence steps ── */
+  $$('[data-seqadd]').forEach(b=> b.onclick = guard(()=>{
+    const q = getPath(S.book, b.dataset.seqadd+'.seq'); if(!q) return;
+    q.push({h:'Next step', body:'What happens.'});
+    saveDraft(); render();
+  }));
+  $$('[data-seqdel]').forEach(b=> b.onclick = guard(()=>{
+    const q = getPath(S.book, b.dataset.seqdel+'.seq'); if(!q || q.length<=1) return;
+    q.pop(); saveDraft(); render();
+  }));
+
+  /* ── profile rows ── */
+  $$('[data-prowadd]').forEach(b=> b.onclick = guard(()=>{
+    const pr = getPath(S.book, b.dataset.prowadd+'.profile'); if(!pr) return;
+    (pr.line = pr.line || []).push({k:'NEW', v:'What it does.'});
+    saveDraft(); render();
+  }));
+  $$('[data-prowdel]').forEach(b=> b.onclick = guard(()=>{
+    const pr = getPath(S.book, b.dataset.prowdel+'.profile');
+    if(!pr || !pr.line || pr.line.length<=1) return;
+    pr.line.pop(); saveDraft(); render();
+  }));
+
   /* ── card grid ── */
   $$('[data-addcard]').forEach(b=> b.onclick = guard(()=>{
     const cs = getPath(S.book, b.dataset.addcard+'.cards'); if(!cs) return;
@@ -1105,12 +1344,32 @@ function idxOf(p){ return +p.split('.').pop(); }
 
 function newBlock(type){
   switch(type){
-    case 'image':   return {h:'', img:'', cap:''};
-    case 'table':   return {h:'New table', table:{head:['Column','Column'], rows:[['',''],['','']]}};
-    case 'cards':   return {h:'New cards', cards:[{icon:'◆', name:'Name', text:'What it is.'}]};
-    case 'callout': return {h:'', note:'Something worth calling out.'};
-    default:        return {h:'New section', body:'<p>Write here.</p>'};
+    case 'rule':     return {n: nextRuleNumber(), h:'NEW RULE', body:'<p>State the rule.</p>'};
+    case 'sequence': return {h:'New sequence', seq:[
+                       {h:'First step', body:'What happens.'},
+                       {h:'Second step', body:'What happens next.'}]};
+    case 'profile':  return {h:'New profile', profile:{name:'PROFILE', keywords:[],
+                       line:[{k:'HP', v:'Wounds.'}, {k:'ATK', v:'Physical attack.'}]}};
+    case 'example':  return {h:'', example:'A worked example.'};
+    case 'designer': return {h:'', designer:'Why it works this way.'};
+    case 'image':    return {h:'', img:'', cap:''};
+    case 'table':    return {h:'New table', table:{head:['Column','Column'], rows:[['',''],['','']]}};
+    case 'cards':    return {h:'New cards', cards:[{icon:'◆', name:'Name', text:'What it is.'}]};
+    case 'callout':  return {h:'', note:'Something worth calling out.'};
+    default:         return {h:'New section', body:'<p>Write here.</p>'};
   }
+}
+
+/* Suggest the next rule number in the chapter being edited, so a new rule does
+   not arrive as "0.0" and quietly break the cross-references in the text. It is
+   only a suggestion — the number is editable like everything else. */
+function nextRuleNumber(){
+  const ch = S.book.chapters[S._addingTo|0];
+  if(!ch) return '1.1';
+  const major = String(ch.num || (S._addingTo+1));
+  const used = (ch.sections||[]).map(x=>x.n).filter(Boolean)
+    .map(x=>parseInt(String(x).split('.')[1], 10)).filter(Number.isFinite);
+  return major + '.' + ((used.length ? Math.max(...used) : 0) + 1);
 }
 
 /* ── draft persistence ── */
@@ -1217,8 +1476,11 @@ function runSearch(){
   const q=$('#q').value.trim().toLowerCase();
   $$('#toc a').forEach(a=>{
     const ch=S.book.chapters[+a.dataset.ch];
-    const hay=(plain(ch.title)+' '+(ch.blurb||'')+' '+(ch.sections||[]).map(s=>
-      plain(s.h||'')+' '+plain(s.body||'')+' '+plain(s.note||'')+' '+
+    const hay=(plain(ch.title)+' '+(ch.blurb||'')+' '+(ch.part||'')+' '+(ch.sections||[]).map(s=>
+      (s.n||'')+' '+plain(s.h||'')+' '+plain(s.body||'')+' '+plain(s.note||'')+' '+
+      plain(s.example||'')+' '+plain(s.designer||'')+' '+
+      ((s.seq||[]).map(q=>plain(q.h||'')+' '+plain(q.body||'')).join(' '))+' '+
+      (s.profile ? (s.profile.name||'')+' '+(s.profile.line||[]).map(x=>x.k+' '+plain(x.v||'')).join(' ') : '')+' '+
       ((s.cards||[]).map(c=>c.name+' '+plain(c.text||'')).join(' '))
     ).join(' ')).toLowerCase();
     a.parentElement.style.display = (!q || hay.includes(q)) ? '' : 'none';

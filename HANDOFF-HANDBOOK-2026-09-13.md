@@ -1,4 +1,4 @@
-# Handoff — the Player's Handbook, written 2026-09-13
+# Handoff — the Core Rulebook, written 2026-09-13, revised 2026-09-14
 
 Everything below is verified against the working tree and the branch, not from memory.
 Where something is **not** verified, it says so.
@@ -8,8 +8,8 @@ Where something is **not** verified, it says so.
 | | |
 |---|---|
 | Branch | `claude/hopeful-rubin-6arwkd` |
-| HEAD | `339daa96ec` |
-| `main` | **not** merged — branch is 3 commits ahead of the Athena merge it forked from (`449ac97`) |
+| HEAD | `078977c` |
+| `main` | **not** merged — branch is 5 commits ahead of the Athena merge it forked from (`449ac97`) |
 | Pushed | yes, branch is on GitHub |
 | Working tree | clean |
 | Version knobs | **not touched.** `version.txt` / `BUILD_VERSION` / `CACHE_VERSION` all still say `v121v116-athena` |
@@ -17,7 +17,7 @@ Where something is **not** verified, it says so.
 | Deployed | **no** |
 | Run inside the real game | **no** — see *What is not verified* |
 
-Three commits, ~2,365 lines. The reading half is finished and self-contained. The
+Five commits, ~2,700 lines. The reading half is finished and self-contained. The
 authoring half is written and driven headless against a stubbed client, but **has never
 touched a real Supabase**, which is the single most important thing on this page.
 
@@ -28,6 +28,8 @@ touched a real Supabase**, which is the single most important thing on this page
 | `ae21720` | The book itself — 14 chapters at `/handbook/`, plus `tools/handbook-sync.mjs` |
 | `2279376` | Save-out goes through the `downloads` capability when one is offered |
 | `339daa9` | Admin-only editing, published to Supabase, photo upload; `sw.js` and `CLAUDE.md` |
+| `c5db673` | This hand-off |
+| `078977c` | Restructured as a core rulebook — parts, numbered rules, new block types |
 
 ### The premise
 
@@ -36,16 +38,69 @@ that explained the game *whole* — no statement of the win condition, no matchu
 deckbuilding guidance, nothing a new player could read before their first match or a
 returning one could look something up in.
 
+### The shape (as of `078977c`)
+
+The owner asked for the shape of a tabletop core rulebook. **Format conventions only —
+nothing is taken from any publisher's book, and none of their trade dress is imitated.**
+That was a deliberate call and should stay that way: lifting text or layout from a
+scanned rulebook would put infringing material in a commercial game's repo.
+
+| | |
+|---|---|
+| Part One · The Core Rules | 1 Battlefield · 2 Battle Round · 3 Playing Cards · 4 Movement · 5 Making Attacks · 6 Status Effects · 7 The Kalon |
+| Part Two · Reference | 8 Elements · 9 Factions · 10 Status Catalogue · 11 Rarity, Items & Packs |
+| Part Three · Building a Force | 12 Deck Construction · 13 The Roster |
+| Part Four · The Wider World | 14 Outside the Battlefield |
+| Appendix | A Quick Reference · B Glossary |
+
+**Rules are numbered and cited.** 37 of them, `1.1` to `13.2`, rendered in a hanging
+gutter beside the heading (inline below 720px, so a phone does not squeeze the heading).
+Prose cites them — "see 5.2" — and every row of the Quick Reference names the rule behind
+it, which makes the summary an index into the book rather than a second source of truth
+that drifts from it. **If you renumber a rule, grep the book for the old number.**
+
+A **rules-priority preamble** sits above chapter 1, where a rulebook puts it: the card
+beats the core rules, the specific beats the general, cannot beats can, and the game
+itself is the referee.
+
+**Defined terms** are `<dfn>` elements, set in small caps, defined at first use and
+collected in the Glossary.
+
+Three aside kinds, visually distinct because they carry different weight: `example`
+(how a rule plays out), `designer` (why it works that way), and the existing `note`.
+
 This is that document, and it is deliberately **not** part of `index.html`. It is a
 standalone page under `public/handbook/`, served at `/handbook/`. It adds no top-level
 system to the legacy file, touches no `const` global, and needs nothing from
 `window.MythicBridge`.
 
+## The section schema
+
+A chapter is `{id, part, num, title, blurb, art, sections[]}`. A section carries any of:
+
+| Key | Renders as |
+|---|---|
+| `n` | The rule number in the hanging gutter. Its presence is what makes a section a numbered rule. |
+| `h` / `body` | Heading and rich-text body |
+| `seq[]` | A numbered procedure (the battle round, the damage sequence) |
+| `profile` | A datasheet block — `{name, line:[{k,v}], keywords[]}` |
+| `example` / `designer` / `note` | The three aside boxes |
+| `table` / `cards` / `img` + `cap` | As before |
+| `render` | One of the four GENERATED blocks — see below |
+
+`chapter.part` drives both the page's part dividers and the contents rail; a divider is
+emitted when the value *changes*, so the spine is derived from the chapters rather than
+kept as a second list that can fall out of step.
+
+Adding a block type means: a `BLOCKS` entry, a `newBlock()` case, a branch in
+`sectionHtml()`, a renderer, and a line in `runSearch()`'s haystack. **Miss the last one
+and the block's text becomes unfindable**, which for a rule means uncitable.
+
 ## Files
 
 ```
 public/handbook/index.html        the reader + the admin editor (68 KB, one file)
-public/handbook/handbook.json     the book's prose — 14 chapters, 43 sections
+public/handbook/handbook.json     the book's prose — 16 chapters, 50 sections, 5 parts
 public/handbook/gamedata.json     GENERATED — elements, factions, statuses, rarities
 public/handbook/art.json          GENERATED — the 1,116-image picker index
 public/assets/handbook/README.md  where the cover image goes
@@ -211,9 +266,13 @@ in Chromium across five scenarios with a stubbed Supabase client:
 |---|---|
 | Signed out, no Supabase at all | Book renders, no edit button, nothing contenteditable, editor bar hidden |
 | Signed in, not an admin | Same; `setEditing(true)` from the console does nothing |
-| Admin, live book at v6 | Full authoring surface; every block type; table row/column; card add/delete; upload; publish sends the loaded version and clears the draft |
+| Admin, live book at v6 | Full authoring surface; all ten block types; table row/column; sequence steps; profile rows; card add/delete; upload; publish sends the loaded version and clears the draft |
 | Admin, write refused | Refusal reported, **draft kept**, state stays *Unpublished draft* |
 | Mobile 390px, editing | No horizontal scroll |
+
+Plus the rulebook furniture: 5 parts in both the page and the rail, 37 numbered rules
+starting at `1.1`, 27 defined terms, 4 priority rules, a profile KEYWORDS strip, and
+auto-numbering that gave `2.5` to a rule added to chapter 2.
 
 No page errors in any scenario. Element and faction rows were checked against the game's
 own tables (Fire's five weaknesses; Light/Shadow as sworn opposites rather than a

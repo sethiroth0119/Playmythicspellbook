@@ -8,8 +8,8 @@ Where something is **not** verified, it says so.
 | | |
 |---|---|
 | Branch | `claude/hopeful-rubin-6arwkd` |
-| HEAD | `078977c` |
-| `main` | **not** merged — branch is 5 commits ahead of the Athena merge it forked from (`449ac97`) |
+| HEAD | `2ee4b7f` |
+| `main` | **not** merged — branch is 6 commits ahead of the Athena merge it forked from (`449ac97`) |
 | Pushed | yes, branch is on GitHub |
 | Working tree | clean |
 | Version knobs | **not touched.** `version.txt` / `BUILD_VERSION` / `CACHE_VERSION` all still say `v121v116-athena` |
@@ -17,7 +17,7 @@ Where something is **not** verified, it says so.
 | Deployed | **no** |
 | Run inside the real game | **no** — see *What is not verified* |
 
-Five commits, ~2,700 lines. The reading half is finished and self-contained. The
+Six commits, ~2,700 lines. The reading half is finished and self-contained. The
 authoring half is written and driven headless against a stubbed client, but **has never
 touched a real Supabase**, which is the single most important thing on this page.
 
@@ -30,6 +30,7 @@ touched a real Supabase**, which is the single most important thing on this page
 | `339daa9` | Admin-only editing, published to Supabase, photo upload; `sw.js` and `CLAUDE.md` |
 | `c5db673` | This hand-off |
 | `078977c` | Restructured as a core rulebook — parts, numbered rules, new block types |
+| `2ee4b7f` | This hand-off, revised for that restructure |
 
 ### The premise
 

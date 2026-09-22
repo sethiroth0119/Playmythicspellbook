@@ -35814,7 +35814,12 @@ function openInspect(k) {
         crewBtn.disabled = !!(t.damaged || bldSite(t));
         crewBtn.textContent = bldSite(t) ? '👷 Workforce — still a site'
           : t.damaged ? '👷 Workforce — repair first'
-          : '👷 Post a worker — ' + used + ' / ' + slots;
+          /* bug-mu4mc2c8: the multiplier leads, not "0 / 200". A crew is a bonus
+             capped at 1 + BOOST_CAP (×2.00) that two or three good units reach; the post count
+             read as a quota of 200. See crew.city.js's picker for the sentence. */
+          : '👷 Post a worker — ' + ((CREW.multAt && CREW.work && CREW.work.WORK)
+              ? '×' + Number(CREW.multAt(selectedKey) || 1).toFixed(2) + ' of ×' + (1 + CREW.work.WORK.BOOST_CAP).toFixed(2) + ' · '
+              : '') + used + ' posted';
         crewBtn.onclick = crewBtn.disabled ? null : () => CREW.openTilePicker(selectedKey);
       }
     } catch (e) {}

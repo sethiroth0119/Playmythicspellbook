@@ -77631,6 +77631,40 @@ function loadForge() {
       // a reload that did not hydrate (offline, guest, local judged fresher)
       // came back with today's spent trades unspent.
       if (p.aiTrade && typeof p.aiTrade === 'object') Profile.aiTrade = p.aiTrade;
+      /* 🧾 PERSISTENCE AUDIT (2026-09-22) — THINGS PAID FOR. Every field below
+         was ALREADY in the cloud upload (cloudSyncProfile's forge blob) and the
+         cloud hydration, and missing from this list only — the two-of-three
+         trap the gymWars / campWorkforce / missions notes above describe. On a
+         same-device reload the boot saveProfile() stamps lastLocalEditAt, so
+         cloudFetchProfile takes the local-is-fresher branch, SKIPS hydration
+         and re-uploads local — i.e. these came back as the blank initialiser
+         and the blank was then written over the good cloud copy. Offline and
+         signed-out players never had the cloud half at all.
+         Each hydration merge is already a union / max / fill-if-absent, so
+         restoring the local copy first can only ADD to what a stale cloud row
+         brings — nothing here can undo a purchase.
+         Reproduced headless (_persistaudit_smoke.mjs): furniture bought with
+         Cinder, socket gems, crafted-weapon defs (itemInventory WAS restored,
+         so the weapon stayed "owned" with no definition and rendered as an
+         empty slot), dice skins, the 25,000-Cinder trader unlocks, Dojo /
+         Weapon Smith licences, personally-funded Just Business operations, the
+         Homestead Farm and the NPC wage pool all reset on reload. */
+      if (p.furnitureOwned  && typeof p.furnitureOwned  === 'object') Profile.furnitureOwned  = p.furnitureOwned;   // 🛋️ bought furniture
+      if (p.gemsOwned       && typeof p.gemsOwned       === 'object') Profile.gemsOwned       = p.gemsOwned;        // 💎 socket gems
+      if (p.craftedItems    && typeof p.craftedItems    === 'object') Profile.craftedItems    = p.craftedItems;     // 🔧 crafted weapon defs
+      if (Array.isArray(p.ownedDiceSkins))                            Profile.ownedDiceSkins  = p.ownedDiceSkins.filter(x => typeof x === 'string'); // 🎲 dice skins
+      if (typeof p.equippedDiceSkin === 'string' || p.equippedDiceSkin === null) Profile.equippedDiceSkin = p.equippedDiceSkin;
+      if (typeof p.equippedDiceSkinId === 'string' || p.equippedDiceSkinId === null) Profile.equippedDiceSkinId = p.equippedDiceSkinId;
+      if (Array.isArray(p.unlockedTraders))                           Profile.unlockedTraders = p.unlockedTraders.filter(x => typeof x === 'string'); // 🤝 25k-Cinder unlocks
+      if (p.traderStock     && typeof p.traderStock     === 'object') Profile.traderStock     = p.traderStock;      // 🤝 trader restock
+      if (p.dojoUnlocked === true)                                    Profile.dojoUnlocked    = true;               // 🥋 licence (one-way)
+      if (p.dojoStock       && typeof p.dojoStock       === 'object') Profile.dojoStock       = p.dojoStock;        // 🥋 dojo stock
+      if (p.weaponSmithUnlocked === true)                             Profile.weaponSmithUnlocked = true;           // 🔧 licence (one-way)
+      if (p.weaponSmith     && typeof p.weaponSmith     === 'object') Profile.weaponSmith     = p.weaponSmith;      // 🔧 bench + part-built weapon
+      if (Array.isArray(p.jbLocalOps))                                Profile.jbLocalOps      = p.jbLocalOps.filter(o => o && o.id); // 💼 personally-funded ops
+      if (p.farm            && typeof p.farm            === 'object') Profile.farm            = p.farm;             // 🐄 Homestead Farm
+      if (p.cityCards       && typeof p.cityCards       === 'object') Profile.cityCards       = p.cityCards;        // 🏙 cards slotted in the city
+      if (p.wagePool        && typeof p.wagePool        === 'object') Profile.wagePool        = p.wagePool;         // 💰 NPC wage pool balance
       if (p.achievements && typeof p.achievements === 'object') {
         Profile.achievements = {
           earned: (p.achievements.earned && typeof p.achievements.earned === 'object') ? p.achievements.earned : {},

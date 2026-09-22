@@ -117,7 +117,9 @@ ok(/res\.error === 'referrer_newer' \? '⚠ That code belongs to a player who jo
 
 /* ── 7. bug-mtqasoy6: shared corp cities ── */
 ok(/const nodeOwner = Object\.create\(null\);\n\s*const shared = \{\};\n\s*const nameOf = Object\.create\(null\);/.test(SRC), 'the loader keeps node → owner and a shared list');
-ok(/if \(owned && !owned\[String\(c\.owner_id\) \+ '\|' \+ nid\]\) \{[\s\S]*?const ownerId = nodeOwner\[nid\];\n\s*if \(ownerId && ownerId !== String\(c\.owner_id\) && nameOf\[ownerId\]\) \{/.test(SRC), 'a row on a node owned by ANOTHER roster member becomes a shared row, named with the owner');
+/* bug-mtqasoy6 (PRN per city): ownership is now tw_node_owners for map-node rows and the legacy PRN rule for
+   PRN-keyed rows, folded into _holds (true / false / null = could not read). The shared-row rule is unchanged. */
+ok(/const _holds = _isUuid \? \(legacy \? !!legacy\[_ownKey\] : null\) : \(owned \? !!owned\[_ownKey\] : null\);\n\s*if \(_holds === false\) \{[\s\S]*?const ownerId = nodeOwner\[nid\];\n\s*if \(ownerId && ownerId !== String\(c\.owner_id\) && nameOf\[ownerId\]\) \{/.test(SRC), 'a row on a node owned by ANOTHER roster member becomes a shared row, named with the owner');
 ok(/cities: by\[uid\] \|\| \[\], shared: sh \};/.test(SRC), 'each member row carries shared');
 ok(/\{shared\.length \? 'no city of their own' : 'no city founded'\}/.test(JSX) && /works in \{shared\.slice\(0, 3\)\.map\(\(s\) => \(s\.name \|\| 'unnamed city'\) \+ ' \(' \+ s\.ownerName \+ '\)'\)\.join\(', '\)\}/.test(JSX), 'the panel says "no city of their own · works in <city> (<owner>)"');
 

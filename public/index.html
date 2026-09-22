@@ -259938,6 +259938,92 @@ function _aiTradeTick() {
   } catch (e) { return false; }
 }
 
+/* 🔒 SERVER SETTLEMENT (sql/191_ai_trade_settle.sql). The daily allowance
+   above lives in Profile.aiTrade, so on its own a modified client could skip
+   it, and the Cinder arrived through the generic wallet_credit mirror, which
+   has no per-source limit. ai_trade_settle counts AI_TRADE_DAILY per corp per
+   UTC day in an append-only server log, bounds the pay by a price it derives
+   itself (the same _aiOfferHash maths), and credits through wallet_credit.
+   The local allowance stays as instant feedback; the server's `left` wins.
+   ORDER, so a refusal refunds exactly once: the goods are spent BEFORE the
+   call (a second click cannot sell them twice, and _aiSettleBusy blocks it
+   anyway); only a definite "not paid" answer refunds them, through
+   _refundRes (an undo of this call stack's own spend — its documented rule);
+   a paid answer never refunds, even if the UI tail after it throws.
+   ⚠ No server path (offline, signed out, sql/191 not applied) → the old
+     client-only path, like chargeCinderAtomic. Missing is remembered for the
+     session so a player is not charged a failed round trip per trade. */
+let _aiSettleMissing = false;
+const _aiSettleBusy = {};
+function _aiSettleRemote(corpId, kind, res, qty, pay) {
+  try {
+    if (_aiSettleMissing) return null;
+    if (typeof initCloud !== 'function' || !initCloud() || !Profile.cloud || !Profile.cloud.signedIn) return null;
+    if (!Cloud || !Cloud.client || typeof Cloud.client.rpc !== 'function') return null;
+  } catch (e) { return null; }
+  // One ref per settlement: the retry below reuses it, and sql/191 answers a
+  // repeated ref with the first result instead of paying (or counting) again.
+  const args = { p_corp: corpId, p_kind: kind, p_res: res, p_qty: qty | 0, p_pay: pay | 0,
+                 p_ref: 'ait_' + _walletRef() };
+  const once = () => Promise.resolve(Cloud.client.rpc('ai_trade_settle', args)).then((r) => {
+    if (r && r.error) {
+      if (_walletRpcUnavailable(r.error) || _jbRpcMissing(r.error)) return { missing: true };
+      throw r.error;
+    }
+    return (r && r.data && typeof r.data === 'object') ? r.data : { ok: false, reason: 'empty' };
+  });
+  return once().catch(() => once()).catch(() => ({ ok: false, reason: 'network' }));
+}
+/* Adopt the server's balance, never recompute it. TAX-EXEMPT: a bare
+   Profile.gems = x that happens to be lower than local reads to _gemsTaxTick
+   as an unmirrored spend and gets charged AGAIN (bug-mtyp80rx, the hire). */
+function _aiSettleAdopt(corpId, r, reason) {
+  try {
+    const cap = (r.cap | 0) || AI_TRADE_DAILY;
+    const srvUsed = Math.max(0, cap - (r.left | 0));
+    // Only forward, like _aiTradeMerge: this trade counts either way.
+    _aiTradeState().used[corpId] = { d: _aiDayIndex(), n: Math.max(_aiTradesUsed(corpId) + 1, srvUsed) };
+  } catch (e) {}
+  if (r.balance == null) return;
+  try {
+    const bal = Math.max(0, Math.floor(Number(r.balance) || 0));
+    const up = bal >= (Profile.gems | 0);
+    _ledgerWhy(up ? reason : 'Wallet synced with your account',
+      () => _gemsTaxExempt(() => { Profile.gems = bal; }), up ? 'gain' : 'sync');
+    if (r.wallet_seq != null) Profile.walletSeqProgress = Math.max(Profile.walletSeqProgress | 0, Math.floor(Number(r.wallet_seq) || 0));
+    // Past the daily Cinder ceiling the pay is HELD, not lost (sql/093).
+    try { walletHoldsSoon(); } catch (e) {}
+  } catch (e) {}
+}
+const _AI_SETTLE_WHY = {
+  limit: 'the server says no trades are left today',
+  pay: 'the server did not accept that price',
+  wallet: 'your wallet refused the credit',
+  network: 'the server could not be reached',
+};
+function _aiSettleRun(corpId, promise, h) {
+  _aiSettleBusy[corpId] = true;
+  return promise.then((r) => {
+    delete _aiSettleBusy[corpId];
+    if (r && r.missing) { _aiSettleMissing = true; h.missing(); return; }
+    if (r && r.ok) { try { h.paid(r); } catch (e) { try { console.warn('[aiSettle]', e); } catch (_) {} } return; }
+    // Not paid: the goods come back — once, here, and nowhere else.
+    h.refund();
+    const why = (r && r.reason) || 'error';
+    if (why === 'limit') {
+      // The server is the truth: sync the counter so the panel stops offering it.
+      try { _aiTradeState().used[corpId] = { d: _aiDayIndex(), n: Math.max(_aiTradesUsed(corpId), (r.cap | 0) || AI_TRADE_DAILY) }; } catch (e) {}
+    }
+    try { saveProfile(); } catch (e) {}
+    try {
+      showToast('⚠ Nothing was traded with ' + h.name + ' — ' + (_AI_SETTLE_WHY[why] || 'the trade was refused')
+        + (why === 'limit' ? ' (resets in ' + _aiTradeResetIn() + ')' : '') + '. Your goods are back.', 5200);
+    } catch (e) {}
+    try { _aiCorpOpen(corpId, 'trade'); } catch (e) {}
+    try { render(); } catch (e) {}
+  }, () => { delete _aiSettleBusy[corpId]; });
+}
+
 // ── actions ─────────────────────────────────────────────────────────────
 function _aiSpotTrade(corpId) {
   try {
@@ -259954,18 +260040,34 @@ function _aiSpotTrade(corpId) {
       showToast('You need ' + o.qty + ' ' + _meta(o.res).name + ' — you have ' + have + '.', 4200);
       return;
     }
+    if (_aiSettleBusy[corpId]) { showToast('Still settling your last trade with ' + c.name + '…', 2600); return; }
     const cost = {}; cost[o.res] = o.qty;
     if (!spendResources(cost)) { showToast('Trade failed — resources moved.', 3200); return; }
-    // Spend the allowance BEFORE paying: addGems saves and syncs, and the
-    // save it makes must already carry the spent trade.
-    t.spot[corpId] = day;
-    _aiTradeConsume(corpId);
-    if (typeof addGems === 'function') addGems(o.pay, 'Node trade sold');
-    t.rep[corpId] = Math.min(AI_REP_CLAMP, (t.rep[corpId] || 0) + 2);
-    try { saveProfile(); } catch (e) {}
-    showToast('🤝 Sold ' + o.qty + ' ' + _meta(o.res).name + ' to ' + c.name + ' for ' + o.pay + ' Cinder.', 4200);
-    _aiCorpOpen(corpId, 'trade');
-    try { render(); } catch (e) {}
+    // The tail both paths share once the trade is PAID.
+    const done = () => {
+      t.rep[corpId] = Math.min(AI_REP_CLAMP, (t.rep[corpId] || 0) + 2);
+      try { saveProfile(); } catch (e) {}
+      showToast('🤝 Sold ' + o.qty + ' ' + _meta(o.res).name + ' to ' + c.name + ' for ' + o.pay + ' Cinder.', 4200);
+      _aiCorpOpen(corpId, 'trade');
+      try { render(); } catch (e) {}
+    };
+    // Client-only path (offline / signed out / sql/191 not applied): unchanged.
+    const payLocal = () => {
+      // Spend the allowance BEFORE paying: addGems saves and syncs, and the
+      // save it makes must already carry the spent trade.
+      t.spot[corpId] = day;
+      _aiTradeConsume(corpId);
+      if (typeof addGems === 'function') addGems(o.pay, 'Node trade sold');
+      done();
+    };
+    const p = _aiSettleRemote(corpId, 'spot', o.res, o.qty, o.pay);
+    if (!p) { payLocal(); return; }
+    return _aiSettleRun(corpId, p, {
+      missing: payLocal,
+      paid: (r) => { t.spot[corpId] = day; _aiSettleAdopt(corpId, r, 'Node trade sold'); done(); },
+      refund: () => _refundRes(o.res, o.qty),
+      name: c.name,
+    });
   } catch (e) { try { console.warn('[aiSpotTrade]', e); } catch (_) {} }
 }
 function _aiEnterBusiness(corpId) {
@@ -260008,25 +260110,40 @@ function _aiDeliver(corpId) {
         + '. Miss the window and your standing drops.', 5000);
       return;
     }
+    if (_aiSettleBusy[corpId]) { showToast('Still settling your last delivery to ' + c.name + '…', 2600); return; }
     const cost = {}; cost[d.res] = d.qty;
     if (!spendResources(cost)) { showToast('Delivery failed — resources moved.', 3200); return; }
-    _aiTradeConsume(corpId);                  // before addGems — see _aiSpotTrade
-    if (typeof addGems === 'function') addGems(d.pay, 'Delivery paid');
-    d.left -= 1;
-    t.done[corpId] = (t.done[corpId] || 0) + 1;
-    t.rep[corpId] = Math.min(AI_REP_CLAMP, (t.rep[corpId] || 0) + 5);
-    if (d.left <= 0) {
-      // Seeing it through is worth more than the sum of the runs.
-      t.rep[corpId] = Math.min(AI_REP_CLAMP, (t.rep[corpId] || 0) + 8);
-      delete t.deal[corpId];
-      showToast('✅ Contract complete with ' + c.name + '. +' + d.pay + ' Cinder and their trust.', 5600);
-    } else {
-      d.due = Date.now() + AI_TRADE_WINDOW_MS;
-      showToast('📦 Delivered to ' + c.name + '. +' + d.pay + ' Cinder · ' + d.left + ' to go.', 4600);
-    }
-    try { saveProfile(); } catch (e) {}
-    _aiCorpOpen(corpId, 'trade');
-    try { render(); } catch (e) {}
+    const done = () => {
+      d.left -= 1;
+      t.done[corpId] = (t.done[corpId] || 0) + 1;
+      t.rep[corpId] = Math.min(AI_REP_CLAMP, (t.rep[corpId] || 0) + 5);
+      if (d.left <= 0) {
+        // Seeing it through is worth more than the sum of the runs.
+        t.rep[corpId] = Math.min(AI_REP_CLAMP, (t.rep[corpId] || 0) + 8);
+        // Only if it is still THIS contract — the server round trip is async.
+        if (t.deal[corpId] === d) delete t.deal[corpId];
+        showToast('✅ Contract complete with ' + c.name + '. +' + d.pay + ' Cinder and their trust.', 5600);
+      } else {
+        d.due = Date.now() + AI_TRADE_WINDOW_MS;
+        showToast('📦 Delivered to ' + c.name + '. +' + d.pay + ' Cinder · ' + d.left + ' to go.', 4600);
+      }
+      try { saveProfile(); } catch (e) {}
+      _aiCorpOpen(corpId, 'trade');
+      try { render(); } catch (e) {}
+    };
+    const payLocal = () => {
+      _aiTradeConsume(corpId);                // before addGems — see _aiSpotTrade
+      if (typeof addGems === 'function') addGems(d.pay, 'Delivery paid');
+      done();
+    };
+    const p = _aiSettleRemote(corpId, 'deliver', d.res, d.qty, d.pay);
+    if (!p) { payLocal(); return; }
+    return _aiSettleRun(corpId, p, {
+      missing: payLocal,
+      paid: (r) => { _aiSettleAdopt(corpId, r, 'Delivery paid'); done(); },
+      refund: () => _refundRes(d.res, d.qty),
+      name: c.name,
+    });
   } catch (e) { try { console.warn('[aiDeliver]', e); } catch (_) {} }
 }
 function _aiTimeLeft(ms) {

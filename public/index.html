@@ -51430,6 +51430,11 @@ async function cloudSyncProfile() {
       // named here AND read back in the hydration block. Without both halves
       // a signed contract would quietly vanish on the next device.
       __aiTrade__:           (Profile.aiTrade && typeof Profile.aiTrade === 'object') ? Profile.aiTrade : null,
+      // 🎟 Season Pass + 🎯 Missions (bug-mu9clqwc) — the claimed flags are
+      // what stop a reward being taken twice, so they must reach every device.
+      // Hydrated through _seasonPassMerge / _missionsMerge, never assigned.
+      __seasonPass__:        (Profile.seasonPass && typeof Profile.seasonPass === 'object') ? Profile.seasonPass : null,
+      __missions__:          (Profile.missions && typeof Profile.missions === 'object') ? Profile.missions : null,
       // 🚚 Convoy rigs bought with a card. Paid-for and permanent, so this is
       // the one profile key where losing the sync would cost the player real
       // money — the server-side garage_purchases table is the backstop.
@@ -53223,7 +53228,19 @@ async function cloudFetchProfile() {
       // would silently reset on every reload.
       if (typeof f.__twCapitalNodeId__ === 'string' && f.__twCapitalNodeId__) Profile.twCapitalNodeId = f.__twCapitalNodeId__;
       // 🤝 AI trade history — the other half of __aiTrade__ above.
-      if (f.__aiTrade__ && typeof f.__aiTrade__ === 'object') Profile.aiTrade = f.__aiTrade__;
+      // MERGED (bug-mu1i6hd6): assigning let an older copy re-open today's
+      // trades — the "counter goes UP" report. See _aiTradeMerge.
+      if (f.__aiTrade__ && typeof f.__aiTrade__ === 'object') {
+        try { Profile.aiTrade = _aiTradeMerge(Profile.aiTrade, f.__aiTrade__); } catch (e) { Profile.aiTrade = f.__aiTrade__; }
+      }
+      // 🎟🎯 The other half of __seasonPass__ / __missions__. MERGED: a straight
+      // assignment would let an older cloud copy hand back an unclaimed flag.
+      if (f.__seasonPass__ && typeof f.__seasonPass__ === 'object') {
+        try { Profile.seasonPass = _seasonPassMerge(Profile.seasonPass, f.__seasonPass__); } catch (e) {}
+      }
+      if (f.__missions__ && typeof f.__missions__ === 'object') {
+        try { Profile.missions = _missionsMerge(Profile.missions, f.__missions__); } catch (e) {}
+      }
       // 🚚 Rigs MERGE rather than replace. A straight assignment would let an
       // older cloud copy delete a rig bought since — and that rig was paid for.
       if (f.__garage__ && typeof f.__garage__ === 'object') {
@@ -58375,29 +58392,88 @@ function _missionSpec(id) {
 
 // Reset checker — call before EVERY mission interaction (track, render,
 // claim) so a stale day-old set isn't rewarded twice.
+// The two period boundaries, in ONE place so the reset and the cloud merge
+// (_missionsMerge) cannot disagree about which day/week a set belongs to.
+// Both are LOCAL time — daily at local midnight, weekly Monday 00:00 local.
+function _missionPeriodStarts() {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  // Day 0 = Sunday in JS.
+  const monday = new Date(); monday.setHours(0, 0, 0, 0);
+  const dayOfWeek = monday.getDay() || 7;     // make Sunday = 7
+  monday.setDate(monday.getDate() - (dayOfWeek - 1));   // back to this Monday
+  return { todayStart: today.getTime(), mondayStart: monday.getTime() };
+}
 function _missionsResetIfNeeded() {
   const m = _ensureMissions();
   const now = Date.now();
+  const { todayStart, mondayStart } = _missionPeriodStarts();
   // Daily — reset at local midnight. Compare against the start of TODAY.
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const todayStart = today.getTime();
   if (!m.dailyRolledAt || m.dailyRolledAt < todayStart) {
     const seed = Math.floor(todayStart / DAY_MS);
     m.daily = _rollMissionSet(MISSION_CATALOG.daily, 3, seed);
     m.dailyRolledAt = now;
     m.claimedDaily = {};
   }
-  // Weekly — reset Monday 00:00 local. Day 0 = Sunday in JS.
-  const monday = new Date(); monday.setHours(0, 0, 0, 0);
-  const dayOfWeek = monday.getDay() || 7;     // make Sunday = 7
-  monday.setDate(monday.getDate() - (dayOfWeek - 1));   // back to this Monday
-  const mondayStart = monday.getTime();
+  // Weekly — reset Monday 00:00 local.
   if (!m.weeklyRolledAt || m.weeklyRolledAt < mondayStart) {
     const seed = Math.floor(mondayStart / WEEK_MS);
     m.weekly = _rollMissionSet(MISSION_CATALOG.weekly, 2, seed);
     m.weeklyRolledAt = now;
     m.claimedWeekly = {};
   }
+}
+
+/* ☁ CLOUD MERGE for missions and the pass (bug-mu9clqwc). Both used to be
+   device-local AND reload-local, so a claim was forgotten the moment the page
+   reloaded. Now that they sync, hydration must never let an OLDER copy undo a
+   claim: within the same period the claimed maps are UNIONED and progress only
+   ever rises; a copy from an earlier period loses outright (it would be
+   re-rolled anyway). Local wins ties so an in-session claim is never lost. */
+function _missionsMerge(local, cloud) {
+  if (!cloud || typeof cloud !== 'object') return local;
+  if (!local || typeof local !== 'object') return cloud;
+  const P = _missionPeriodStarts();
+  const out = Object.assign({}, cloud, local);
+  const half = (listK, atK, clK, start) => {
+    const ta = +local[atK] || 0, tb = +cloud[atK] || 0;
+    const curA = ta >= start, curB = tb >= start;
+    const la = Array.isArray(local[listK]) ? local[listK] : [], lb = Array.isArray(cloud[listK]) ? cloud[listK] : [];
+    if (curA && curB) {
+      const byId = {};
+      lb.forEach(s => { if (s && s.id) byId[s.id] = s; });
+      out[listK] = la.map(s => {
+        const o = s && s.id ? byId[s.id] : null;
+        if (!o) return s;
+        return Object.assign({}, s, { progress: Math.max(s.progress | 0, o.progress | 0), completed: !!(s.completed || o.completed) });
+      });
+      out[atK] = Math.min(ta, tb);
+      out[clK] = Object.assign({}, cloud[clK] || {}, local[clK] || {});
+    } else if (curB && !curA) {
+      out[listK] = lb; out[atK] = tb; out[clK] = Object.assign({}, cloud[clK] || {});
+    } else {
+      out[listK] = la; out[atK] = ta; out[clK] = Object.assign({}, local[clK] || {});
+    }
+  };
+  half('daily', 'dailyRolledAt', 'claimedDaily', P.todayStart);
+  half('weekly', 'weeklyRolledAt', 'claimedWeekly', P.mondayStart);
+  return out;
+}
+function _seasonPassMerge(local, cloud) {
+  if (!cloud || typeof cloud !== 'object') return local;
+  if (!local || typeof local !== 'object') return cloud;
+  const na = local.seasonNumber | 0, nb = cloud.seasonNumber | 0;
+  if (na !== nb) return na > nb ? local : cloud;     // a later season supersedes
+  const out = Object.assign({}, cloud, local);
+  out.xp   = Math.max(local.xp | 0, cloud.xp | 0);
+  out.tier = Math.max(local.tier | 0, cloud.tier | 0);
+  // The EARLIER start: a fresh device stamps now() on first read, and that
+  // must not extend the season the account is actually in.
+  const sa = +local.seasonStartedAt || 0, sb = +cloud.seasonStartedAt || 0;
+  out.seasonStartedAt = (sa && sb) ? Math.min(sa, sb) : (sa || sb);
+  out.claimedFreeTiers    = Object.assign({}, cloud.claimedFreeTiers || {},    local.claimedFreeTiers || {});
+  out.claimedPremiumTiers = Object.assign({}, cloud.claimedPremiumTiers || {}, local.claimedPremiumTiers || {});
+  out.premiumOwned = !!(local.premiumOwned || cloud.premiumOwned);
+  return out;
 }
 
 // Trigger entry-point — every battle/loot/win path that wants to drip
@@ -77364,6 +77440,19 @@ function loadForge() {
       if (p.campaignProgress && typeof p.campaignProgress === 'object') Profile.campaignProgress = p.campaignProgress;
       if (typeof p.tutorialComplete === 'boolean') Profile.tutorialComplete = p.tutorialComplete;
       if (p.dailyChallenges && typeof p.dailyChallenges === 'object') Profile.dailyChallenges = p.dailyChallenges;
+      /* 🎟 SEASON PASS + 🎯 MISSIONS (bug-mu9clqwc). Neither was on this
+         whitelist, and neither travelled in the cloud row, so every reload
+         handed back the blank initialiser: claimedDaily / claimedWeekly and the
+         claimed-tier maps came back EMPTY while _missionsResetIfNeeded re-rolled
+         the SAME seeded set — "you can keep claiming the daily and weekly task".
+         The claim guard itself was always right; the flag it reads just never
+         survived. saveProfile() already writes both; this is the read half. */
+      if (p.seasonPass && typeof p.seasonPass === 'object') Profile.seasonPass = p.seasonPass;
+      if (p.missions && typeof p.missions === 'object') Profile.missions = p.missions;
+      // 🤝 AI trade (bug-mu1i6hd6) — same hole: only the cloud half existed, so
+      // a reload that did not hydrate (offline, guest, local judged fresher)
+      // came back with today's spent trades unspent.
+      if (p.aiTrade && typeof p.aiTrade === 'object') Profile.aiTrade = p.aiTrade;
       if (p.achievements && typeof p.achievements === 'object') {
         Profile.achievements = {
           earned: (p.achievements.earned && typeof p.achievements.earned === 'object') ? p.achievements.earned : {},
@@ -259098,6 +259187,19 @@ function _aiYieldTradeMul(map) {
 const AI_TRADE_RUNS = 3;                       // deliveries in one contract
 const AI_TRADE_WINDOW_MS = 24 * 60 * 60 * 1000; // time allowed per delivery
 const AI_REP_CLAMP = 60;                       // rep can never eclipse the derived part
+/* 📅 THE DAILY TRADE ALLOWANCE (bug-mu1i6hd6, bug-mu7azbpf, bug-mu8vi4pp).
+   Paid trades per corp per UTC day, shared by EVERY paying entry point: a
+   spot trade and each contract delivery each spend one; signing a contract
+   pays nothing, so it only checks. Before this the only limit anywhere was
+   the spot trade's own once-a-day flag — a contract could be signed,
+   delivered three times back to back and signed again, forever, and every
+   delivery minted Cinder. That is the "excessive Cinder from AI companies"
+   loop, and alternating spot ↔ contract was just the visible way into it.
+   2 = the spot trade plus one delivery, which is the pace the design already
+   described (one spot a day, 24h per delivery). ⚠ Owner's number to tune.
+   _aiTradesLeft() is the ONE source of truth: the actions gate on it and the
+   panel's counter prints it, so the two can never disagree. */
+const AI_TRADE_DAILY = 2;
 
 function _aiTradeState() {
   if (!Profile.aiTrade || typeof Profile.aiTrade !== 'object') Profile.aiTrade = {};
@@ -259107,9 +259209,53 @@ function _aiTradeState() {
   if (!t.fail || typeof t.fail !== 'object') t.fail = {};
   if (!t.deal || typeof t.deal !== 'object') t.deal = {};
   if (!t.spot || typeof t.spot !== 'object') t.spot = {};
+  if (!t.used || typeof t.used !== 'object') t.used = {};   // { corpId: { d: dayIndex, n } }
   return t;
 }
 function _aiDayIndex() { return Math.floor(Date.now() / 86400000); }
+function _aiTradesUsed(corpId) {
+  const u = _aiTradeState().used[corpId];
+  return (u && u.d === _aiDayIndex()) ? Math.max(0, u.n | 0) : 0;
+}
+function _aiTradesLeft(corpId) { return Math.max(0, AI_TRADE_DAILY - _aiTradesUsed(corpId)); }
+function _aiTradeConsume(corpId) {
+  _aiTradeState().used[corpId] = { d: _aiDayIndex(), n: _aiTradesUsed(corpId) + 1 };
+}
+function _aiTradeResetIn() { return _aiTimeLeft((_aiDayIndex() + 1) * 86400000); }
+/* ☁ Cloud hydration used to ASSIGN __aiTrade__ wholesale, so an older copy
+   (another device, or an upload that lost the race) handed back an unspent
+   spot flag and a finished contract — the counter going back UP. Now the
+   anti-replay fields only move forward (latest day, highest count), and a
+   corp's rep/contract come from whichever copy has more history with it
+   (deliveries + misses); a tie keeps local, where the player just acted. */
+function _aiTradeMerge(local, cloud) {
+  if (!cloud || typeof cloud !== 'object') return local;
+  if (!local || typeof local !== 'object') return cloud;
+  const obj = (o, k) => (o[k] && typeof o[k] === 'object') ? o[k] : {};
+  const out = Object.assign({}, cloud, local);
+  const ids = {};
+  ['rep', 'done', 'fail', 'deal', 'spot', 'used'].forEach(k => {
+    Object.keys(obj(local, k)).forEach(id => { ids[id] = 1; });
+    Object.keys(obj(cloud, k)).forEach(id => { ids[id] = 1; });
+  });
+  const rep = {}, done = {}, fail = {}, deal = {}, spot = {}, used = {};
+  for (const id of Object.keys(ids)) {
+    const hl = (obj(local, 'done')[id] | 0) + (obj(local, 'fail')[id] | 0);
+    const hc = (obj(cloud, 'done')[id] | 0) + (obj(cloud, 'fail')[id] | 0);
+    const src = hc > hl ? cloud : local;
+    if (id in obj(src, 'rep')) rep[id] = obj(src, 'rep')[id];
+    if (obj(src, 'deal')[id]) deal[id] = obj(src, 'deal')[id];
+    const dn = Math.max(obj(local, 'done')[id] | 0, obj(cloud, 'done')[id] | 0); if (dn) done[id] = dn;
+    const fl = Math.max(obj(local, 'fail')[id] | 0, obj(cloud, 'fail')[id] | 0); if (fl) fail[id] = fl;
+    const sp = Math.max(+obj(local, 'spot')[id] || 0, +obj(cloud, 'spot')[id] || 0); if (sp) spot[id] = sp;
+    const ul = obj(local, 'used')[id], uc = obj(cloud, 'used')[id];
+    const pick = [ul, uc].filter(u => u && typeof u === 'object')
+      .sort((a, b) => ((b.d | 0) - (a.d | 0)) || ((b.n | 0) - (a.n | 0)))[0];
+    if (pick) used[id] = { d: pick.d | 0, n: pick.n | 0 };
+  }
+  Object.assign(out, { rep, done, fail, deal, spot, used });
+  return out;
+}
 
 // Which resource a corp actually deals in. Incumbents buy the resource they
 // control; a startup buys whatever its offer is built on, so the goods that
@@ -259187,6 +259333,7 @@ function _aiSpotTrade(corpId) {
     const t = _aiTradeState();
     const day = _aiDayIndex();
     if (t.spot[corpId] === day) { showToast('Already traded with ' + c.name + ' today.', 3200); return; }
+    if (_aiTradesLeft(corpId) <= 0) { showToast('No trades left with ' + c.name + ' today — resets in ' + _aiTradeResetIn() + '.', 3600); return; }
     const o = _aiSpotOffer(corpId);
     const have = (typeof getRes === 'function') ? getRes(o.res) : 0;
     if (have < o.qty) {
@@ -259197,8 +259344,11 @@ function _aiSpotTrade(corpId) {
     }
     const cost = {}; cost[o.res] = o.qty;
     if (!spendResources(cost)) { showToast('Trade failed — resources moved.', 3200); return; }
-    if (typeof addGems === 'function') addGems(o.pay, 'Node trade sold');
+    // Spend the allowance BEFORE paying: addGems saves and syncs, and the
+    // save it makes must already carry the spent trade.
     t.spot[corpId] = day;
+    _aiTradeConsume(corpId);
+    if (typeof addGems === 'function') addGems(o.pay, 'Node trade sold');
     t.rep[corpId] = Math.min(AI_REP_CLAMP, (t.rep[corpId] || 0) + 2);
     try { saveProfile(); } catch (e) {}
     showToast('🤝 Sold ' + o.qty + ' ' + _meta(o.res).name + ' to ' + c.name + ' for ' + o.pay + ' Cinder.', 4200);
@@ -259211,6 +259361,9 @@ function _aiEnterBusiness(corpId) {
     const c = AI_CORP_BY_ID[corpId]; if (!c) return;
     const t = _aiTradeState();
     if (t.deal[corpId]) { showToast('You already have a contract with ' + c.name + '.', 3200); return; }
+    // Signing pays nothing, so it spends nothing — but a contract signed with
+    // no trade left today could not be delivered on, so it is not offered.
+    if (_aiTradesLeft(corpId) <= 0) { showToast('No trades left with ' + c.name + ' today — resets in ' + _aiTradeResetIn() + '.', 3600); return; }
     const terms = _aiContractTerms(corpId);
     // Gate on the FIRST delivery, not the whole run — you are signing up to
     // deliver now and keep delivering, not to have it all up front.
@@ -259236,6 +259389,7 @@ function _aiDeliver(corpId) {
     const t = _aiTradeState();
     const d = t.deal[corpId];
     if (!d) { showToast('No contract with ' + c.name + '.', 3000); return; }
+    if (_aiTradesLeft(corpId) <= 0) { showToast('No trades left with ' + c.name + ' today — resets in ' + _aiTradeResetIn() + '. Your window is ' + _aiTimeLeft(d.due) + '.', 4200); return; }
     const have = (typeof getRes === 'function') ? getRes(d.res) : 0;
     if (have < d.qty) {
       showToast('Short by ' + (d.qty - have) + ' ' + _meta(d.res).name
@@ -259244,6 +259398,7 @@ function _aiDeliver(corpId) {
     }
     const cost = {}; cost[d.res] = d.qty;
     if (!spendResources(cost)) { showToast('Delivery failed — resources moved.', 3200); return; }
+    _aiTradeConsume(corpId);                  // before addGems — see _aiSpotTrade
     if (typeof addGems === 'function') addGems(d.pay, 'Delivery paid');
     d.left -= 1;
     t.done[corpId] = (t.done[corpId] || 0) + 1;
@@ -259270,7 +259425,7 @@ function _aiTimeLeft(ms) {
 try {
   window.__mg = window.__mg || {};
   window.__mg.aiTrade = { state: _aiTradeState, offer: _aiSpotOffer, terms: _aiContractTerms,
-                          wants: _aiCorpWants, tick: _aiTradeTick };
+                          wants: _aiCorpWants, tick: _aiTradeTick, left: _aiTradesLeft };
 } catch (e) {}
 // 🖱 Click a corp pin → who they are, what they want, and where you stand.
 // The pin only carries an icon and a colour; everything else is here, which is
@@ -259559,9 +259714,17 @@ function _aiCorpOpen(corpId, tab) {
         + (ok ? '' : 'opacity:0.45;cursor:not-allowed;') + '">' + label + '</button>'
         + (ok ? '' : '<div style="font-size:0.76rem;color:#e0a86a;margin-top:0.3rem;text-align:center">' + why + '</div>');
 
-      const spotOk = have(spot.res) >= spot.qty && !traded;
+      // 📅 The counter prints _aiTradesLeft — the same number every action
+      // gates on — and every button below is disabled from it, so the panel
+      // cannot offer a trade the action will refuse, or hide one it allows.
+      const left = _aiTradesLeft(corpId);
+      const outWhy = 'No trades left with them today — resets in ' + _aiTradeResetIn() + '.';
+      const spotOk = have(spot.res) >= spot.qty && !traded && left > 0;
       dealHtml =
-        '<div class="tw-nd-section-hdr">SPOT TRADE · TODAY</div>'
+        '<div style="padding:0.2rem 1.1rem 0.6rem;font-size:0.82rem;color:' + (left > 0 ? '#c2b184' : '#e0a86a') + '">'
+        +   '📅 <b style="color:' + (left > 0 ? '#fff4d2' : '#e8705c') + '">' + left + ' of ' + AI_TRADE_DAILY + '</b> trades left today'
+        +   ' · a spot trade or a delivery uses one · resets in ' + _aiTradeResetIn() + '</div>'
+        + '<div class="tw-nd-section-hdr">SPOT TRADE · TODAY</div>'
         + '<div style="padding:0 1.1rem 0.9rem">'
         +   '<div class="tw-nd-cinder-box" style="padding:0.8rem 0.9rem">'
         +     '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:0.5rem">'
@@ -259570,12 +259733,12 @@ function _aiCorpOpen(corpId, tab) {
         +     '<div style="font-size:0.78rem;color:#c2b184;margin-bottom:0.6rem">You hold '
         +       have(spot.res) + ' · one trade per day · price includes their ' + esc(sd.tier.name.toLowerCase()) + ' rate</div>'
         +     btn('spot', traded ? 'TRADED TODAY' : 'TRADE',
-                 spotOk, traded ? 'Come back tomorrow.' : 'Need ' + (spot.qty - have(spot.res)) + ' more ' + rname(spot.res) + '.')
+                 spotOk, traded ? 'Come back tomorrow.' : left <= 0 ? outWhy : 'Need ' + (spot.qty - have(spot.res)) + ' more ' + rname(spot.res) + '.')
         +   '</div></div>';
 
       if (deal) {
         const doneRuns = deal.runs - deal.left;
-        const canDeliver = have(deal.res) >= deal.qty;
+        const canDeliver = have(deal.res) >= deal.qty && left > 0;
         dealHtml +=
           '<div class="tw-nd-section-hdr">ACTIVE CONTRACT</div>'
           + '<div style="padding:0 1.1rem 1rem">'
@@ -259589,10 +259752,11 @@ function _aiCorpOpen(corpId, tab) {
           +       '<span style="color:#c2b184">' + doneRuns + ' of ' + deal.runs + ' delivered</span>'
           +       '<span style="color:' + (canDeliver ? '#c2b184' : '#e8705c') + '">due in ' + _aiTimeLeft(deal.due) + '</span></div>'
           +     btn('deliver', 'DELIVER ' + deal.qty + ' ' + rname(deal.res).toUpperCase(),
-                   canDeliver, 'Short ' + (deal.qty - have(deal.res)) + '. Miss the window and standing drops ' + '−' + '12.')
+                   canDeliver, left <= 0 ? outWhy + ' Your window: ' + _aiTimeLeft(deal.due) + '.'
+                     : 'Short ' + (deal.qty - have(deal.res)) + '. Miss the window and standing drops ' + '−' + '12.')
           +   '</div></div>';
       } else {
-        const signOk = have(terms.res) >= terms.qty;
+        const signOk = have(terms.res) >= terms.qty && left > 0;
         dealHtml +=
           '<div class="tw-nd-section-hdr">ENTER BUSINESS</div>'
           + '<div style="padding:0 1.1rem 1rem">'
@@ -259604,14 +259768,17 @@ function _aiCorpOpen(corpId, tab) {
           +       '</b> per run for <b style="color:#f5c453">' + terms.pay + ' 🔥</b> each. '
           +       'You get 24h per delivery. Every run earns their trust; '
           +       '<span style="color:#e8705c">miss a window and you lose it.</span></div>'
-          +     btn('sign', 'ENTER BUSINESS', signOk,
+          +     btn('sign', 'ENTER BUSINESS', signOk, left <= 0 ? outWhy :
                    'They will not sign — first run needs ' + (terms.qty - have(terms.res)) + ' more ' + rname(terms.res) + '.')
           +   '</div></div>';
       }
       const dn = (ts.done[corpId] | 0), fl = (ts.fail[corpId] | 0);
       if (dn || fl) {
         dealHtml += '<div style="padding:0 1.1rem 1rem;font-size:0.8rem;color:#a7987c">'
-          + '📦 ' + dn + ' delivered · 📉 ' + fl + ' missed · record worth '
+          // "All time" — the lifetime record, not this contract's progress
+          // (that is the "N of 3 delivered" bar above). Unlabelled it read as
+          // a contract counter that "starts at a random number" (bug-mu7azbpf).
+          + 'All time: 📦 ' + dn + ' delivered · 📉 ' + fl + ' missed · record worth '
           + '<b style="color:' + ((ts.rep[corpId] | 0) >= 0 ? '#7fd8a0' : '#e8705c') + '">'
           + (((ts.rep[corpId] | 0) > 0) ? '+' : '') + (ts.rep[corpId] | 0) + '</b> standing</div>';
       }

@@ -17239,6 +17239,29 @@
     .dpx-acts { grid-column: 1 / -1; min-width: 0; flex-direction: row; flex-wrap: wrap; }
     .dpx-acts .dpx-btn, .dpx-acts-row { flex: 1 1 140px; }
   }
+  /* 💻 bug-mtxq2arc "camp when parked — can not read all info on the cards" (laptop).
+     The two breakpoints above test the VIEWPORT, but this grid lives in the camp's
+     MIDDLE column, between a 250px and a 260px rail. On a 1280-1440px laptop the
+     viewport is wide enough to keep the 2-column grid with its fixed 400px
+     "Available" column, while the middle column is only ~460-620px — so the
+     Deploy Slots column got ~130-200px, and a parked card (132px portrait + body +
+     actions) crushed its name, stats and XP to a sliver. Measured: 1280x720 →
+     slot card 130px wide. The same rules now also follow the SPACE the grid
+     really has. .dpx-cq wraps only the grid (not the page column) so its
+     containment cannot affect anything outside it. */
+  .dpx-cq { container-type: inline-size; }
+  @container (max-width: 980px) {
+    .dpx-grid { grid-template-columns: minmax(0, 1fr); }
+    .dpx-slot { grid-template-columns: 96px minmax(0, 1fr); }
+    .dpx-port { width: 96px; height: 96px; }
+    .dpx-acts { grid-column: 1 / -1; min-width: 0; flex-direction: row; flex-wrap: wrap; }
+    .dpx-acts .dpx-btn, .dpx-acts-row { flex: 1 1 140px; }
+  }
+  @container (max-width: 560px) {
+    .dpx-body { grid-template-columns: minmax(0, 1fr); }
+    .dpx-name { font-size: 1.02rem; letter-spacing: 0.01em; }
+    .dpx-slot { padding: 0.7rem; gap: 0.7rem; }
+  }
   @media (max-width: 760px) {
     .dpx-body { grid-template-columns: minmax(0, 1fr); }
     .dpx-tab { font-size: 0.8rem; letter-spacing: 0.08em; padding: 0.6rem 0.3rem 0.7rem; }
@@ -184783,7 +184806,7 @@ function renderCamp() {
         <button class="dpx-tab${App._campDeployTab === 'park' ? ' is-on' : ''}" data-dpxtab="park">Park</button>
         <button class="dpx-tab${App._campDeployTab === 'barracks' ? ' is-on' : ''}" data-dpxtab="barracks">Barracks</button>
       </div>
-      <div class="dpx-grid">
+      <div class="dpx-cq"><div class="dpx-grid">
         ${App._campDeployTab === 'park' ? '' : `
         <section class="dpx-panel">
           <div class="dpx-h"><span class="dpx-h-t">Deploy Slots</span><span class="dpx-h-n">(${Camp.slots.length}/${_maxSlots})</span><span class="dpx-h-rule"></span></div>
@@ -184794,7 +184817,7 @@ function renderCamp() {
           <div class="dpx-h"><span class="dpx-h-t">Available to Park</span><span class="dpx-h-rule"></span></div>
           <div class="dpx-scroll">${availableHtml || '<div class="dpx-empty">Nothing available</div>'}</div>
         </section>`}
-      </div>
+      </div></div>
         </main>
         <aside class="cbx-col cbx-right cbx-side">
           <div id="camp-roster-host"></div>
@@ -247967,6 +247990,29 @@ try {
   try { if (window.visualViewport) window.visualViewport.addEventListener('resize', () => { try { _uiAutoScale(); } catch (e) {} }, { passive: true }); } catch (e) {}
   try { _uiAutoScale(); } catch (e) {}
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { try { _uiAutoScale(); } catch (e) {} });
+  /* 💻 bug-mtxq2arc "on a laptop the city often does not show full screen".
+     The fullscreen-iframe exemption above (frameUp → zoom 1) is only evaluated
+     on resize and from render(), and opening the city appends its iframe
+     WITHOUT a render. So on a laptop, where the hub pages run at zoom ≈0.72-0.97,
+     the city mounted under the page's zoom: its 100vw×100vh rendered at
+     zoom×viewport, parked in the top-left corner with dead bands right and
+     bottom — until some unrelated background render happened to re-run this
+     (hence "most of the time", not always). Measured 1366×768: 839×472 visible
+     of a 1366×768 window. Re-evaluate whenever an iframe is added to or
+     removed from <body> — which covers the city, the pack opener, the deck
+     vault, the base builder and their close fades in one place. Direct
+     children only, so it costs nothing on ordinary repaints (those are inside #app). */
+  try {
+    const _frameWatch = () => { try {
+      new MutationObserver((ms) => {
+        for (const m of ms) {
+          for (const n of m.addedNodes) if (n && n.tagName === 'IFRAME') { try { _uiAutoScale(); } catch (e) {} return; }
+          for (const n of m.removedNodes) if (n && n.tagName === 'IFRAME') { try { _uiAutoScale(); } catch (e) {} return; }
+        }
+      }).observe(document.body, { childList: true });
+    } catch (e) {} };
+    if (document.body) _frameWatch(); else document.addEventListener('DOMContentLoaded', _frameWatch);
+  } catch (e) {}
   window.__mg = window.__mg || {};
   window.__mg.viewport = () => {
     const w = window.innerWidth, h = window.innerHeight;

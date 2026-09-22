@@ -77275,6 +77275,25 @@ function loadForge() {
       // survives later admin edits to the survivor template.
       if (typeof p.campSurvivorId === 'string') Profile.campSurvivorId = p.campSurvivorId;
       if (Array.isArray(p.campTraits)) Profile.campTraits = p.campTraits.filter(x => typeof x === 'string');
+      /* 👷 RECONSTRUCTION STAFF — bug-mtyp80rx / bug-mu8rpr6s, "hired and paid
+         for builders and guards, gone the next day; one came back, the new
+         two never showed". The same two-of-three trap as cityProduction above:
+         campWorkforce (and the rest of the Reconstruction state below) was in
+         the cloud upload and the cloud hydration and NOT in this list. Every
+         reload dropped the paid roster; boot's own saveProfile() then made
+         local look fresher than the cloud, so cloudFetchProfile kept the empty
+         local copy and uploaded `{}` over the good one. Whether the staff
+         "came back" depended only on which side won that race on a given
+         load. The hire itself is a server charge (camp_hire_from_city), so
+         this was paid-for staff disappearing.
+         campNodeId is deliberately NOT here: the registration is re-read from
+         tw_camp_registrations, and a blank must never be emitted for it. */
+      if (p.campWorkforce && typeof p.campWorkforce === 'object') Profile.campWorkforce = p.campWorkforce;   // 👷 hired staff (paid)
+      if (p.campNodeHire  && typeof p.campNodeHire  === 'object') Profile.campNodeHire  = p.campNodeHire;    // 📒 hire history per node
+      if (p.campRoute     && typeof p.campRoute     === 'object') Profile.campRoute     = p.campRoute;       // 🚚 convoy clock
+      if (typeof p.campContrib  === 'number') Profile.campContrib  = p.campContrib;                          // 🤝 node contribution
+      if (typeof p.campPrestige === 'number') Profile.campPrestige = p.campPrestige;                         // 🎖 settlement prestige
+      if (typeof p.campName === 'string' && p.campName) Profile.campName = p.campName;                       // 🏷 settlement name
       /* 🏛 Map capital (see _twMakeCapital). saveProfile() stringifies the whole
          Profile, so it is always WRITTEN — but this local load is a whitelist,
          and a key missing from it is dropped on every refresh and then written

@@ -77754,6 +77754,45 @@ function loadForge() {
       if (p.tutorialsSeen   && typeof p.tutorialsSeen   === 'object') Profile.tutorialsSeen   = p.tutorialsSeen;    // 🎓 tutorials seen
       if (typeof p.corpPick === 'string' && p.corpPick)               Profile.corpPick        = p.corpPick;         // 🔀 corp acted in
       if (p.purgeReTutorial === true)                                 Profile.purgeReTutorial = true;               // 🎓 purge re-tutorial
+      /* 🧾 PERSISTENCE AUDIT — COOLDOWNS, LATCHES AND CHOICES ON NO LIST AT ALL.
+         Each has a comment that assumes it survives a reload; none did.
+           _csBedRestAt / lastDreamAt — the bed-rest cooldown and the
+             one-dream-per-hour throttle: F5 re-armed both (free energy, and a
+             re-roll of a dream that can drop a medkit);
+           hunger / thirst — reset to 80 (a free meal for a starving camp, a
+             lost one for a fed camp);
+           ownedNodeEver — the latch whose whole job is to answer "when the
+             network cannot"; it was gone after every reload;
+           forceStarterPick — a purged player who reloaded before picking lost
+             the flag and, with battle history, was never shown the picker;
+           corpLaws — the charter's offline mirror ("survives offline" — it did not);
+           _corpXferSeen / _staffSeen — the seen-sets whose comment says a
+             memory-only set "repeats the toast on every reload";
+           the rest are preferences and dashboard counters. */
+      if (typeof p._csBedRestAt === 'number')                         Profile._csBedRestAt    = p._csBedRestAt;     // 🛏 bed-rest cooldown (re-anchored on read)
+      if (typeof p.lastDreamAt === 'number')                          Profile.lastDreamAt     = p.lastDreamAt;      // 🌙 1 dream / hour
+      if (typeof p.hunger === 'number')                               Profile.hunger          = p.hunger;           // 🍞 satiation (clamped on read)
+      if (typeof p.thirst === 'number')                               Profile.thirst          = p.thirst;           // 💧
+      if (p.ownedNodeEver === true)                                   Profile.ownedNodeEver   = true;               // 🗺 unlock latch
+      if (p.forceStarterPick === true)                                Profile.forceStarterPick = true;              // 🎴 re-pick after a purge
+      if (p.corpLaws        && typeof p.corpLaws        === 'object') Profile.corpLaws        = p.corpLaws;         // ⚖ charter mirror
+      if (p._corpXferSeen   && typeof p._corpXferSeen   === 'object') Profile._corpXferSeen   = p._corpXferSeen;    // 🔔 seen transfers
+      if (p._staffSeen      && typeof p._staffSeen      === 'object') Profile._staffSeen      = p._staffSeen;       // 🔔 seen job offers
+      if (p.campNodeContrib && typeof p.campNodeContrib === 'object') Profile.campNodeContrib = p.campNodeContrib;  // 🏗 my node contribution
+      if (p.cityPrint       && typeof p.cityPrint       === 'object') Profile.cityPrint       = p.cityPrint;        // 🃏 print-run counter (bounded)
+      if (p.readNotes       && typeof p.readNotes       === 'object') Profile.readNotes       = p.readNotes;        // 📜 notes read
+      if (typeof p.reserveSpecialty === 'string' && p.reserveSpecialty) Profile.reserveSpecialty = p.reserveSpecialty; // 🏭 camp specialty
+      if (typeof p.athenaAvatar === 'string' && !/[<>"']/.test(p.athenaAvatar)) Profile.athenaAvatar = p.athenaAvatar.slice(0, 80); // 🧍 hub character
+      if (typeof p.lastHuntCard === 'string')                         Profile.lastHuntCard    = p.lastHuntCard;     // 🎯 no-repeat hunt
+      /* 📋 A SIDE DECK ON LOAN WHEN THE PAGE DIED. startBattleWithPrep swaps the
+         side deck for the battle and keeps the real one in _sideDeckPreBattle;
+         any save during the match writes BOTH, and _sideDeckRestore puts it back
+         at the end. A reload mid-battle dropped the snapshot and kept the swap —
+         the "side deck is a loan, not a trade" bug, one F5 away. A reload always
+         ends the battle, so the loan is returned here and the snapshot dropped. */
+      if (Array.isArray(p._sideDeckPreBattle) && Profile.sideDeck && typeof Profile.sideDeck === 'object') {
+        Profile.sideDeck.cards = p._sideDeckPreBattle.slice(0);
+      }
       if (p.achievements && typeof p.achievements === 'object') {
         Profile.achievements = {
           earned: (p.achievements.earned && typeof p.achievements.earned === 'object') ? p.achievements.earned : {},

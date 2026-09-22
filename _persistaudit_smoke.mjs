@@ -220,7 +220,7 @@ const TRANSIENT = {
   campMilestoneClaims: 'client cache only; tw_node_claim_milestone dedups server-side (already_claimed)',
   walletSeqProfile:    'device snapshot marker, local-only by design; 0 after reload means "adopt the server" — the fail-safe direction',
   walletSeqProgress:   'as walletSeqProfile',
-  lockedGems:          'soft bid escrow keyed to CardMarket.myBids (memory only); restoring it alone would strand funds on an outbid — owner decision',
+  lockedGems:          'LEGACY soft bid lock, used only when sql/193 is not applied; with it, bids are debited into the server escrow and auction_escrow_sync rebuilds CardMarket.escrowHeld after a reload (_auctionescrow_smoke.mjs). Restoring this alone would strand funds on an outbid',
   lockedSov:           'as lockedGems (Aza auctions)',
 };
 /* (c) PERSISTED UNDER ITS OWN KEY / BY THE SERVER — cite where. */

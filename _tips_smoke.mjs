@@ -45,6 +45,17 @@ for (const sel of ['.nav-item[data-label="The Camp"]', '.luni-nav-btn[data-tab="
   ok(r1 && r1.text === 'hello', '1. data-tip wins');
   const r2 = ctx.mxTipResolve(el({ title: 'native one' }));
   ok(r2 && r2.text === 'native one' && r2.native === true, '2. a title becomes a tooltip (flagged native, so the browser bubble is parked while ours shows)');
+  {
+    // bug-mu0kgo44: once shown, the title is PARKED (removed); the next move over
+    // the same element must still resolve, or the bubble blinks on every mousemove.
+    const row = el({ title: 'Click for full details' });
+    listeners.mousemove[0]({ target: row, clientX: 5, clientY: 5 });
+    const parkedNow = row.getAttribute('title') == null && row.getAttribute('data-tip-title') === 'Click for full details';
+    const again = ctx.mxTipResolve(row, 6, 5);
+    ok(parkedNow && again && again.text === 'Click for full details', '2b. a titled element still resolves while its title is parked (no on/off flicker per mousemove)', JSON.stringify(again));
+    ctx.mxTipHide();
+    ok(row.getAttribute('title') === 'Click for full details', '    …and hide() puts the title back');
+  }
   const r3 = ctx.mxTipResolve(el({}, ['.dpx-empty']));
   ok(r3 && /Empty deployment slot/.test(r3.text), '3. a table entry: the empty deploy slot');
   const r3b = ctx.mxTipResolve(el({}, ['.nav-item[data-label="The Camp"]'], 'button'));

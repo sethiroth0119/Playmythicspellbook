@@ -143946,6 +143946,15 @@ function startBattleWithPrep(playerGoesFirst) {
     App.state.currentTurn = playerGoesFirst ? 'player' : 'ai';
     MatchBroadcast.myTurn  = !!playerGoesFirst;
     App.ui.aiBusy          = !playerGoesFirst;
+    // 🔁 The turn-start-on-flip latch (_onRemoteStateArrived) records the
+    // turnNumber whose draw/energy refresh already ran, and was NEVER reset.
+    // initGame just discarded whatever board that turn-start ran on — the last
+    // match's, or an opponent packet adopted while we were still on the VS /
+    // dice screen (the first mover can hand the turn over before we get here).
+    // A stale latch equal to this match's handoff turn silently skipped MY
+    // turn-start: no draw, energy stuck at 1, only the hero could act
+    // (bug-mu2wufcq / bug-mtzfzejp). Nothing has started on THIS board yet.
+    MatchBroadcast._mpLastTurnStarted = null;
   }
   // Campaign overrides: enemy hero level, custom enemy deck, scripted starting weather
   if (App.state) {
@@ -207018,6 +207027,46 @@ function _mpApplyPrivateRemovals(myBlock, ops) {
   return out;
 }
 
+/* 🃏 WIRE STUBS ARE NOT CARDS — bug-mtzfzejp / bug-mu2wufcq ("my cards didn't
+   show / wouldn't play, only my hero could move; a refresh fixed it").
+   _serializeBattleStateForBroadcast slims every hand/deck/graveyard card to
+   {instanceId, cardId, name}. The adopt in _onRemoteStateArrived keeps MY OWN
+   player block, so those stubs never reach my hand — EXCEPT when there is no
+   own block to keep: attemptMatchReconnect boots with App.state === null, so
+   the first adopted packet handed me the opponent's slimmed model of my zones,
+   and every later adopt then "kept" that stub block for the rest of the match.
+   A stub has no `id`, `type` or `cost`, so the hand strip could not draw it and
+   nothing could be played from it. Rehydrate each stub from the shared catalog
+   by cardId, keeping its instanceId (the opponent's model IS my last broadcast,
+   so the ids line up). A stub we cannot resolve is kept as-is — dropping it
+   would silently shrink the hand, which is worse than one dead card.
+   Only exact stubs are touched: anything carrying a `type` is a real card. */
+function _mpIsWireStub(c) {
+  return !!(c && typeof c === 'object' && !c.type && !c.id && c.cardId);
+}
+function _mpRehydrateStub(c) {
+  if (!_mpIsWireStub(c)) return c;
+  const id = c.cardId;
+  let base = null;
+  try {
+    const tables = [UNIT_CARDS, SPELL_CARDS, TRAP_CARDS, LOCATION_CARDS, WEATHER_CARDS];
+    for (const t of tables) { if (!base && Array.isArray(t)) base = t.find(x => x && x.id === id) || null; }
+    if (!base && typeof lookupCustomCard === 'function') base = lookupCustomCard(id) || null;
+  } catch (e) { base = null; }
+  if (!base) return c;
+  return { ...base, instanceId: c.instanceId || uid() };
+}
+function _mpRehydratePrivateBlock(block) {
+  if (!block || typeof block !== 'object') return block;
+  let out = block;
+  for (const z of ['hand', 'deck', 'graveyard']) {
+    const zone = out[z];
+    if (!Array.isArray(zone) || !zone.some(_mpIsWireStub)) continue;
+    out = { ...out, [z]: zone.map(_mpRehydrateStub) };
+  }
+  return out;
+}
+
 // Swap every 'player' ↔ 'ai' owner reference in the state AND mirror every
 // position so the receiver's own units land at the bottom of the board. Used
 // when applying the opponent's snapshot — they sent their state with their own
@@ -209065,6 +209114,13 @@ function _onRemoteStateArrived(payload) {
     // actions as mine. We keep our correctly-worded log and append the opponent's
     // actions under their name (queued by the delta-feedback pass above).
     if (Array.isArray(_myPrev.log)) swapped.log = _myPrev.log;
+  }
+  // 🃏 No own block to keep (a reconnect after a refresh boots with App.state
+  // null) → the adopted block is the opponent's SLIMMED model of my zones.
+  // Turn its stubs back into real cards, or the rest of the match is played
+  // with an undrawable, unplayable hand. See _mpRehydratePrivateBlock.
+  if (_isMp && swapped.player) {
+    try { swapped.player = _mpRehydratePrivateBlock(swapped.player); } catch (e) {}
   }
   App.state = swapped;
   // ⚔️ Reliable combat-cinematic trigger — the attacker stamped the attack onto

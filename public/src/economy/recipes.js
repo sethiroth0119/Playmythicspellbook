@@ -798,6 +798,29 @@ export const ALT_FEEDSTOCK = {
   metalAlloys:    [{ in: { nickelOre: 0.4, zincOre: 0.3, steel: 0.4 },       labor: 0.16, power: 0.38, tag: 'nickel', band: 'technical' },
                    { in: { rareMinerals: 0.12, nickelOre: 0.2, steel: 0.4 }, labor: 0.22, power: 0.42, tag: 'rare', band: 'technical' },
                    { in: { platinumOre: 0.05, zincOre: 0.25, steel: 0.4 },   labor: 0.26, power: 0.44, tag: 'platinum', band: 'technical' }],
+  /* 🏠 THE HOUSING UPKEEP CHAIN HAD NO WAY IN (bug-mu2p9ya7, bug-mttyizit).
+     Every housing tile founds a `landlord` firm whose output is
+     `constructionComponents` — the upkeep the household basket's housing line
+     buys (households.js BASKET) — and its only recipe needs `structuralSteel`,
+     which NO tile, operation or bootstrap firm in the game produces (walked
+     over ECO_BUILDING_MAP + OP_ECO_MAP). By produce()'s min rule every
+     Property Company in every city therefore sat at 0% on "Structural Steel
+     Supply" for ever, and because a city has many houses they sorted to the
+     top of cityReport() — the City tab's "Primary bottleneck: Structural
+     Steel", with no building the player could put up to answer it.
+     The second leg is the same beams rolled in-house from plain `steel` (the
+     Steel Mill's output; structuralSteel's own recipe is steel 1.08 +
+     metalAlloys 0.06): 0.44 steel per unit, a little more labour and power
+     for the rolling. A LEG, not a replacement, for the reason this object's
+     header gives: the default below is byte-identical to RECIPES, so base
+     price (derived off legs[0]) does not move, and a structural-steel producer
+     added later is picked up with no further edit.
+     REJECTED: re-pointing `steelmill` at structuralSteel (it would cut the
+     Rolling Mill and Alloy Mill off their only steel), and a second `out` on
+     the Steel Mill (pickAvailable takes the first non-deposit; the second is
+     never reached — see the high-street note in node-city's map). */
+  constructionComponents: [{ in: { structuralSteel: 0.4, lumber: 0.5, metalComponents: 0.2 }, labor: 0.12, power: 0.16, tag: 'structural' },
+                           { in: { steel: 0.44, lumber: 0.5, metalComponents: 0.2 },           labor: 0.14, power: 0.19, tag: 'rolled' }],
 };
 
 /* ════════════════════════════════════════════════════════════════════════════

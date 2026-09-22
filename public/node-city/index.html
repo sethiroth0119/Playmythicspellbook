@@ -34791,7 +34791,13 @@ function insWorkPane(t, x, z, mult, om) {
        Ops Vault, the Reserve and the Player Market see it. Player-driven, one
        click per good: nothing here changes what the city keeps for itself. */
     const sendRow = STOCK_STASHABLE.filter((r) => Math.floor(stockOf(r)) >= 1).map((r) =>
-      '<button class="btn small" data-stash-send="' + r + '" title="Move this city stock into your stash (the Ops Vault, Reserve and Player Market can hold it)">📤 ' + resIco(r) + ' Send ' + Math.floor(stockOf(r)).toLocaleString() + ' ' + resName(r) + ' to stash</button>').join(' ');
+      '<button class="btn small" data-stash-send="' + r + '" title="Move this city stock into your stash (the Ops Vault, Reserve and Player Market can hold it)">📤 ' + resIco(r) + ' Send ' + Math.floor(stockOf(r)).toLocaleString() + ' ' + resName(r) + ' to stash</button>')
+      /* 📥 …and back (bug-mucr6azr) — see stockPullFromStash. Offered whenever
+         the shelf has room; the stash count is read on click, not here, because
+         this card renders synchronously and the ledger is behind the bridge. */
+      .concat(STOCK_STASHABLE.filter((r) => stockOf(r) < cap - 1).map((r) =>
+        '<button class="btn small" data-stash-pull="' + r + '" title="Bring ' + resName(r) + ' from your stash into the city, up to the shelf ceiling">📥 ' + resIco(r) + ' Bring ' + resName(r) + ' from stash</button>'))
+      .join(' ');
     out.push(insCardHtml('Refined stock', '+' + (def.stockCap * t.lvl).toLocaleString() + ' storage',
       rows +
       (sendRow ? '<div class="insrow" style="display:flex;flex-wrap:wrap;gap:6px;margin:6px 0">' + sendRow + '</div>' : '') +
@@ -35463,6 +35469,44 @@ $('inspect').addEventListener('click', async (ev) => {
     else { toast('📤 ' + n.toLocaleString() + ' ' + resName(r) + ' moved to your stash.', 'good'); saveSoon(); }
   } catch (e) { game.stock[r] = stockOf(r) + n; toast('⚠ Could not move ' + resName(r) + '.', 'bad'); }
   try { updateHUD(); } catch (e) {}
+  b.disabled = false;
+});
+/* 📥 BRING FROM STASH — "send to stash" run backwards (bug-mucr6azr).
+   Reported: the Stadium planner said 2 rations while the player's wallet held
+   several hundred. Both were true: since v121v105 rations/planks/remedies are
+   game resources in the stash AND city stock here, and the only bridge between
+   the two ran city → stash. Rations bought on the Exchange (which the stadium's
+   own fix line recommended) could never reach a stadium, a kitchen or a clinic.
+   ⚠ SPEND FIRST, THEN STOCK. The ledger is debited through the bridge and only
+     a confirmed spend lands on the shelf, so a refused or failed spend moves
+     nothing and nothing is ever minted.
+   ⚠ CLAMPED TO THE SHELF. Stock is capped per good by stockCap() (the
+     Warehouse rule: a full shelf stops the buildings that make it); pulling
+     past it would dodge the cap, so the surplus simply stays in the stash.
+   Returns how many moved. Used by the Warehouse card and the Stadium dialog. */
+async function stockPullFromStash(r, want) {
+  if (!CITY_STOCK[r] || STOCK_STASHABLE.indexOf(r) < 0) return 0;
+  const room = Math.max(0, Math.floor(stockCap() - stockOf(r)));
+  let have = 0;
+  try { have = Math.max(0, Math.floor(Number(await MythicCityBridge.getRes(r)) || 0)); } catch (e) { have = 0; }
+  const cap = (want > 0) ? Math.ceil(want) : Infinity;
+  const n = Math.min(room, have, cap);
+  if (!(n >= 1)) return 0;
+  let ok = false;
+  try { ok = !!(await MythicCityBridge.spendRes({ [r]: n })); } catch (e) { ok = false; }
+  if (!ok) return 0;
+  game.stock[r] = stockOf(r) + n;
+  saveSoon();
+  try { updateHUD(); } catch (e) {}
+  return n;
+}
+$('inspect').addEventListener('click', async (ev) => {
+  const b = ev.target.closest('[data-stash-pull]'); if (!b) return;
+  const r = b.getAttribute('data-stash-pull');
+  b.disabled = true;
+  const n = await stockPullFromStash(r);
+  if (n > 0) toast('📥 ' + n.toLocaleString() + ' ' + resName(r) + ' brought in from your stash.', 'good');
+  else toast('⚠ Nothing moved — no ' + resName(r) + ' in your stash, or the shelf is full.', 'bad');
   b.disabled = false;
 });
 $('instabs').addEventListener('keydown', (ev) => {
@@ -51121,6 +51165,10 @@ async function _ncResourceNeeds() {
       addRes: (r, n) => MythicCityBridge.addRes(r, n),
       addCinders: (n) => MythicCityBridge.addCinders(n),
       spendCinders: (n) => MythicCityBridge.spendCinders(n),
+      /* 📥 bug-mucr6azr — the stash half of rations/remedies: a READ for the
+         button label, and the one mover, which spends before it stocks. */
+      stashCount: (r) => MythicCityBridge.getRes(r),
+      pullFromStash: (r, want) => stockPullFromStash(r, want),
     });
   } catch (e) { console.warn('[Stadium] not mounted (non-fatal):', e); }
   /* ══ 🦠 PUBLIC HEALTH — THE OUTBREAK ENGINE ═════════════════════════════

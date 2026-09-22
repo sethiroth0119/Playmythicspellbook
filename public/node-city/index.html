@@ -41760,7 +41760,31 @@ function _toastArm(t) {
     setTimeout(() => t.remove(), 500);
   }, 4200);
 }
+/* 🕰 bug-mu2oevqf "old notifications being shown when loading cities … should
+   only be displayed when the city data load is completed". Two sources, both
+   the boot's:
+     · the OFFLINE CATCH-UP replays hours of economy through the real tick
+       functions, and anything they toast describes a moment of the absence,
+       not now — the away report and the city log already carry that story
+       (see showAwayReport's rule). Those are dropped: `_toastCatchUp`.
+     · everything else toasted while boot() is still loading (anchors, the
+       read, module mounts) painted over a city that was not on screen yet.
+       Those are HELD and shown once boot finishes (_toastRelease), deduped.
+   `var`, not `let`: toast() is hoisted and may run before this line has, and
+   an undefined hold simply means "not holding" — the old behaviour. The timer
+   is the backstop: a boot that dies part-way must not swallow toasts for the
+   rest of the session. */
+var _toastHold = [], _toastCatchUp = false;
+function _toastRelease() {
+  const held = _toastHold; _toastHold = null;
+  if (!Array.isArray(held)) return;
+  const seen = new Set();
+  for (const h of held) { if (seen.has(h.m)) continue; seen.add(h.m); try { toast(h.m, h.c); } catch (e) {} }
+}
+try { setTimeout(_toastRelease, 90000); } catch (e) {}
 function toast(msg, cls) {
+  if (_toastCatchUp) return;
+  if (Array.isArray(_toastHold)) { if (_toastHold.length < 40) _toastHold.push({ m: msg, c: cls }); return; }
   /* 🗺 BULK SINK (public/src/zoning). A zoning "develop" runs tryPlace once per
      zoned plot and every refusal is a toast; the rail holds THREE, so a 40-tile
      run would show three arbitrary refusals, drop the rest, and tell the player
@@ -43150,6 +43174,7 @@ async function offlineCatchUp(awayMsOverride) {
      completion could reach a ledger. */
   _bldOffline = true; _bldDirty = false;
   _bldRebuildDue();
+  _toastCatchUp = true;                   // 🕰 the absence's toasts are history — see _toastHold
   try {
     /* 🌩 THERE WAS A SECOND FLAG HERE (`_ecoOfflineSweep`) AND IT WENT WITH THE
        DISASTER TERM. Its job was to tell the economy "no storm" for the length
@@ -43221,6 +43246,11 @@ async function offlineCatchUp(awayMsOverride) {
   } finally {
     B.addRes = oAddRes; B.addCinders = oAddCin; B.spendRes = oSpend;
     _bldOffline = false;                  // same lifetime as the bridge patch
+    _toastCatchUp = false;
+    /* 🎉 …and the population milestone re-baselines on the city as it stands
+       NOW, or the first live tick congratulates the player for growth that
+       happened while they were away (popMilestoneCheck marks on its first call). */
+    _popMilestone = -1;
   }
   /* 🏗 ONE sync for the whole absence, and only now that the bridge is its own
      again. Per-completion this would be a firm reconcile inside the slice loop;
@@ -54551,6 +54581,8 @@ async function _ncResourceNeeds() {
   MythicCityBridge.ready = true;
   clearTimeout(failsafe);
   setTimeout(() => $('boot').classList.add('done'), 350);
+  // 🕰 The city is loaded and caught up: what boot held back may speak now (bug-mu2oevqf).
+  setTimeout(() => { try { _toastRelease(); } catch (e) {} }, 400);
   renderer.setAnimationLoop(animate);
 })();
 

@@ -17,6 +17,10 @@
      leaves a ~150 KB copy in localStorage and nothing ever removed one. A full
      origin now evicts the least-recently-opened copies the server has
      confirmed, never the city on screen and never an unconfirmed one.
+   · bug-mu2oevqf "old notifications shown when loading cities". Toasts raised
+     inside the offline catch-up described moments of the absence and are
+     dropped (the away report and the city log carry them); anything else
+     toasted while boot() loads is held and shown once the city is up.
 
    Run: node _cityload_smoke.mjs */
 import { readFileSync } from 'fs';
@@ -219,6 +223,35 @@ const blob = (o, n) => JSON.stringify(Object.assign({ tiles: { '1,1': { type: 'h
   await B4.loadCity();
   const lru4 = JSON.parse(L4.getItem('nc_city_lru') || '{}');
   ok(lru4[base + 'client9@N-26'] && lru4[base + 'client9@N-26'].s === 1234 && lru4[base + 'client9@N-26'].o > 0, 'loadCity records the open and the trusted server savedAt', JSON.stringify(lru4));
+}
+
+/* ── 5. bug-mu2oevqf: no stale notifications while a city loads ──────────── */
+{
+  const decl = NC.slice(NC.indexOf('var _toastHold = [], _toastCatchUp = false;'), NC.indexOf('function toast(msg, cls) {'));
+  const body = fnText(NC, 'function toast(msg, cls) {');
+  const painted = [];
+  const mkEl = () => ({ children: [], dataset: {}, style: {}, lastElementChild: null, appendChild(c) { this.children.push(c); this.lastElementChild = c; painted.push(c.textContent); }, get firstElementChild() { return this.children[0]; } });
+  const box = mkEl();
+  const ctx = { $: () => box, document: { createElement: () => ({ dataset: {}, style: {}, className: '', textContent: '', appendChild() {}, remove() {} }) },
+    window: {}, TOAST_MAX: 3, _toastArm() {}, setTimeout: () => 0, clearTimeout() {}, Set, Array };
+  vm.createContext(ctx);
+  vm.runInContext(decl + '\n' + body + '\nthis.toast = toast; this.release = _toastRelease; this.setCU = (v) => { _toastCatchUp = v; };', ctx);
+  ctx.toast('No PRN nodes owned yet', 'bad');
+  ctx.setCU(true);
+  ctx.toast('🎉 Population 275 — your city is growing.', 'good');
+  ctx.toast('🏚️ A Farm has fallen into disrepair', 'bad');
+  ctx.setCU(false);
+  ctx.toast('No PRN nodes owned yet', 'bad');
+  ok(painted.length === 0, 'nothing is painted while the city is still loading', JSON.stringify(painted));
+  ctx.release();
+  ok(painted.length === 1 && painted[0] === 'No PRN nodes owned yet', 'on release the held toast shows once; the catch-up ones (history) never do', JSON.stringify(painted));
+  ctx.toast('live', 'good');
+  ok(painted.length === 2 && painted[1] === 'live', 'after release toasts paint immediately, as before');
+  const CU = fnText(NC, 'async function offlineCatchUp(awayMsOverride)');
+  ok(/_toastCatchUp = true;[\s\S]*?try \{[\s\S]*?\} finally \{[\s\S]*?_toastCatchUp = false;[\s\S]*?_popMilestone = -1;/.test(CU), 'offlineCatchUp drops toasts only inside its try/finally, and re-baselines the population milestone after');
+  const tail = NC.slice(NC.indexOf('  MythicCityBridge.ready = true;\n  clearTimeout(failsafe);'));
+  ok(/_toastRelease\(\)/.test(tail.slice(0, 400)), 'boot() releases the held toasts when it finishes');
+  ok(/setTimeout\(_toastRelease, 90000\)/.test(decl), 'and a boot that dies part-way still releases them (backstop)');
 }
 
 console.log('\n' + (fails ? '❌ ' + fails + ' FAILED' : '✅ all passed') + ' (' + passes + ' passes)');

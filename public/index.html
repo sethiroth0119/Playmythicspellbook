@@ -198302,7 +198302,10 @@ function _bboBar(bank) {
   const sig = b.logo_url
     ? '<img src="' + escapeHtml(b.logo_url) + '" alt="">'
     : '<span class="ph">' + escapeHtml(((b.bank_name || '?').trim()[0] || '?').toUpperCase()) + '</span>';
-  return '<header class="bbo-bar"><div class="bbo-mark"><span class="bbo-sigil">' + sig + '</span><div>' +
+  // bug-mu0minh8: the only way out used to be the ← Back under the content,
+  // which a long loan-product list pushes off screen. The standard top-left
+  // back lives in the header now; the bottom one stays for the end of a scroll.
+  return '<header class="bbo-bar"><div class="bbo-mark"><button class="bbo-btn" style="padding:8px 14px" onclick="App.screen=\'campOps\';render()">← Back</button><span class="bbo-sigil">' + sig + '</span><div>' +
       '<h1>' + escapeHtml(b.bank_name || 'Your Bank') + '</h1>' +
       '<div class="sub">Back office · ' + escapeHtml(tier) + ' · Charter ' + 'I'.repeat(b.charter_tier || 1) + '</div>' +
     '</div></div>' +
@@ -247413,8 +247416,10 @@ function _udwHead(bank) {
   const ratio = deposits > 0 ? (reserves / deposits) : 1;
   const staked = Number(b.mt_staked || 0) + Number(b.mt_overstake || 0);
   const role = S.isOwner ? 'Owner' : (S.teller ? ((S.teller.role || 'teller').toUpperCase()) : '—');
+  // bug-mu0minh8 (the loan screen): a top-left ← Back in the header — the one
+  // under the application rail was the only exit and sat below the fold.
   return '<header class="udw-bar">' +
-    '<div class="udw-word"><h1>' + escapeHtml(b.bank_name || 'The Underwriting Desk') + '</h1>' +
+    '<div class="udw-word"><button class="udw-btn" style="padding:8px 14px" onclick="App.screen=\'campOps\';render()">← Back</button><h1>' + escapeHtml(b.bank_name || 'The Underwriting Desk') + '</h1>' +
       '<span class="udw-charter">' + escapeHtml(_bkcTier(b.charter_tier || 1).name) + ' · ' + escapeHtml(role) + '</span>' +
       // Owner-only: staffing the desk is the owner's call, and RLS refuses a
       // teller's write anyway — showing them the button would only mislead.

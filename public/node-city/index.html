@@ -35129,9 +35129,25 @@ function pmFirmTerm(k) {
     source: 'MythicEconomy.diagnose(' + d.firmId + ')' + (b ? ' — ' + b.label : ''),
     /* VERBATIM. If this sentence is wrong it is wrong in bottleneck.js and must
        be fixed there, where the Just Business panel that already prints it will
-       pick the correction up too. */
-    fix: String(d.cause.fix || ''),
+       pick the correction up too.
+       🛢 …PLUS THE LIST, FOR NO_FEEDSTOCK ONLY (bug-mu2oz3ve). The sentence says
+       "any one of several feedstocks" and the economy panel prints them above
+       it — this card printed none, so a Fast Food owner read "feedstock" as the
+       Feedstock Plant's Chemical Feedstock and filed it as a missing link. The
+       ids are the firm's own (diagnose().feedstocks), prefixed as data, and an
+       id no building in the city map can make is SAID so rather than left for
+       the player to hunt for. */
+    fix: pmFeedstockLead(d) + String(d.cause.fix || ''),
   };
+}
+function pmFeedstockLead(d) {
+  try {
+    if (!d || !d.noLeg || !Array.isArray(d.feedstocks) || !d.feedstocks.length) return '';
+    const made = new Set();
+    for (const k in ECO_BUILDING_MAP) for (const o of (ECO_BUILDING_MAP[k].out || [])) made.add(o);
+    return 'Runs on ' + d.feedstocks.map((id) => _ecoResLabel(id) +
+      (made.has(id) ? '' : ' (no building makes it yet)')).join(', ') + '. ';
+  } catch (e) { return ''; }
 }
 
 function pmCostTxt(c) {

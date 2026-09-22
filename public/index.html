@@ -51555,6 +51555,16 @@ async function cloudSyncProfile() {
       __campWorkforce__:     (Profile.campWorkforce && typeof Profile.campWorkforce === 'object') ? Profile.campWorkforce : {},
       __campNodeHire__:      (Profile.campNodeHire && typeof Profile.campNodeHire === 'object') ? Profile.campNodeHire : {},
       __campRoute__:         (Profile.campRoute && typeof Profile.campRoute === 'object') ? Profile.campRoute : null,
+      /* 🛡 PAID CAMP STATE THAT NEVER LEFT THE DEVICE (persistence audit
+         2026-09-22). All four were in loadForge's list only — one of three —
+         so a second device, the desktop app, or a cleared cache came back with
+         fortifications, overclock / repair windows and the Bunkhouse unbuilt,
+         although the Ammo, Metal, Fuel and Cinder they cost are synced as
+         spent. Merges below only ever raise them. */
+      __campDefense__:       Math.max(0, Profile.campDefense | 0),
+      __campPoweredUntil__:  Math.max(0, Number(Profile.campPoweredUntil) || 0),
+      __campRepairUntil__:   Math.max(0, Number(Profile.campRepairUntil) || 0),
+      __bunkhouse__:         (Profile.bunkhouse && typeof Profile.bunkhouse === 'object') ? Profile.bunkhouse : null,
       __recon__:             (Profile.recon && typeof Profile.recon === 'object') ? Profile.recon : null,
       // 🔬 Camp Research Lab levels (bug-mucgicr6). Was in the local loader
       // ONLY — one list of three — so a second device, the desktop app beside
@@ -53389,6 +53399,21 @@ async function cloudFetchProfile() {
       if (f.__campWorkforce__ && typeof f.__campWorkforce__ === 'object') Profile.campWorkforce = f.__campWorkforce__;
       if (f.__campNodeHire__ && typeof f.__campNodeHire__ === 'object') Profile.campNodeHire = f.__campNodeHire__;
       if (f.__campRoute__ && typeof f.__campRoute__ === 'object') Profile.campRoute = f.__campRoute__;
+      /* 🛡 Fortify level only rises (there is no path that lowers it), and the
+         two windows are paid-until stamps, so all three take the MAX — a stale
+         row can never un-fortify a camp or cut short a window already paid for.
+         The Bunkhouse is ONE save (billets + uncollected Resonance): adopted
+         only when this device has not built one, so it can arrive on a new
+         device but never overwrite the live one here. */
+      try {
+        if (typeof f.__campDefense__ === 'number') Profile.campDefense = Math.min(typeof CAMP_DEFENSE_MAX === 'number' ? CAMP_DEFENSE_MAX : 10, Math.max(Profile.campDefense | 0, f.__campDefense__ | 0));
+        if (Number(f.__campPoweredUntil__) > (Number(Profile.campPoweredUntil) || 0)) Profile.campPoweredUntil = Number(f.__campPoweredUntil__);
+        if (Number(f.__campRepairUntil__) > (Number(Profile.campRepairUntil) || 0)) Profile.campRepairUntil = Number(f.__campRepairUntil__);
+        const _cbh = f.__bunkhouse__;
+        if (_cbh && typeof _cbh === 'object' && _cbh.built && !(Profile.bunkhouse && Profile.bunkhouse.built)) {
+          Profile.bunkhouse = { built: 1, house: (_cbh.house && typeof _cbh.house === 'object') ? _cbh.house : null };
+        }
+      } catch (e) {}
       /* 🏗 RECLAIMED SITES MERGE — a UNION, not a replacement, for exactly the
          reason __garage__ above merges: a reclaim costs Cinder and resources,
          the code that grants it calls reconstruction PERMANENT, and there is

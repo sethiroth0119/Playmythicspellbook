@@ -239833,6 +239833,26 @@ window.cityOwnerNodes = async function () {
   if (rows.length) { C.owner = owner; C.rows = rows; C.at = Date.now(); }
   return rows.slice();
 };
+/* 🔮 bug-mtwtxvg8 / bug-mtr5bze0 — THE CITY ASKS FOR ITS OWN NODES.
+   node-city's anchor ring reads FoundationReserve.nodes (own city), which
+   only nodeFetch fills. _cityWarmup runs it at the door, but bounded and
+   skipped when fresh, so a city could open before the read landed and ring
+   nothing all session — the "open Bank / City Hall / the Reserve first"
+   workaround. The city's late ring (anchorsLateRing) calls this while its ring
+   is empty. Own city only (managing reads the owner's rows through
+   cityOwnerNodes, which re-asks on its own); throttled so a player who truly
+   holds no nodes costs at most one read per 10 s. Never throws. */
+let _cityRefreshNodesAt = 0;
+window.cityRefreshNodes = async function () {
+  try {
+    if (_cityManagedOwner()) return false;
+    if ((FoundationReserve.nodes || []).length) return true;
+    if (Date.now() - _cityRefreshNodesAt < 10000) return false;
+    _cityRefreshNodesAt = Date.now();
+    if (typeof nodeFetch === 'function') await nodeFetch();
+    return true;
+  } catch (e) { return false; }
+};
 /* 🏙 City LINK % → node efficiency shield (per CITY_INTEGRATION.md).
    Own city: the local mirror is stamped at once (the HUD's _nodeEff reads it),
    then the RPC, best-effort.

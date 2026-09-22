@@ -3023,6 +3023,17 @@ const MythicCityBridge = (() => {
       { id: 'mock-fuel',   node_type: 'fuel',   name: 'Fuel PRN',   level: 1, eff: 90, camps: 1 },
     ];
   };
+  /* 🔮 bug-mtwtxvg8 / bug-mtr5bze0: ask the game to (re)read the reserve's
+     node rows. fetchNodes() above only READS FoundationReserve.nodes; the
+     game fills it on its own schedule, so a city opened before that read
+     landed rang no anchors for the whole session. Returns true when the
+     parent ran a fetch; false on an older parent (the late ring then simply
+     re-reads whatever the game has, which is still better than never). */
+  B.refreshNodes = async () => {
+    if (B.mode !== 'parent') return false;
+    try { if (typeof P.cityRefreshNodes === 'function') { await P.cityRefreshNodes(); return true; } } catch (e) {}
+    return false;
+  };
 
   /* 📦 STASH HEADROOM — how much the player's vault can still accept.
      Producers use this to IDLE rather than manufacture goods that addRes()
@@ -28025,6 +28036,82 @@ function reseatAnchors() {
   }
 }
 
+/* 🔮 THE LATE RING — bug-mtwtxvg8 "PRN nodes not spawning in city" and
+   bug-mtr5bze0 "startup sequence should be automated".
+   spawnAnchors() asks for the nodes ONCE, at boot, and never again. In parent
+   mode that answer is FoundationReserve.nodes, which the game fills on its own
+   schedule (nodeFetch — needs the corp lookup first). _cityWarmup runs those
+   fetches at the door, but bounded at 8 s and skipped when a pass is under
+   5 minutes old, so a slow corp/node read, or a pass that ran before the
+   corp resolved, opened the city on an empty reserve: "No PRN nodes owned
+   yet", and no anchors until the player left and came back. Opening Bank →
+   City Hall → Reserve first was the players' way of making that fetch land
+   before the door; the report says even that stopped being enough.
+   So the city now asks again by itself: a few bounded re-reads after boot
+   (the game is asked to fetch first — B.refreshNodes), and every node not yet
+   on the map is ringed exactly as spawnAnchors would, then put where the
+   player last had it (anchorAt) by the same free-plot rule — a building is
+   never displaced. Concludes on the first non-empty answer or after
+   ANCHOR_LATE_MAX tries; it can never become a poll. */
+const ANCHOR_LATE = { tries: 0, done: false, timer: null };
+const ANCHOR_LATE_MAX = 8;
+const ANCHOR_LATE_MS  = 12000;
+const ANCHOR_LATE_FETCH_MS = 8000;           // one read either answers or it did not
+function anchorAddMissing(nodes) {
+  const have = new Set(game.anchors.map((a) => (a && a.node && a.node.id != null) ? String(a.node.id) : null));
+  const slots = anchorSlots(Math.max(nodes.length, 1));
+  /* anchorSetTile stamps anchorAt with the ring slot; the save's remembered
+     plot has to survive that so reseatAnchors can take the anchor back to it. */
+  const remembered = Object.assign({}, game.anchorAt || {});
+  let added = 0;
+  nodes.forEach((n, i) => {
+    if (!n || n.id == null || have.has(String(n.id))) return;
+    const want = slots[i] || slots[0];
+    const spot = anchorFreeNear(want.x, want.z, null);
+    if (!spot) return;                       // full grid — better unplaced than destructive
+    const a = { node: n, x: spot.x, z: spot.z, link: 0, key: key(spot.x, spot.z) };
+    anchorSetTile(a, spot.x, spot.z);
+    game.anchors.push(a);
+    have.add(String(n.id));
+    added++;
+  });
+  if (added) {
+    for (const id of have) if (remembered[id]) game.anchorAt[id] = remembered[id];
+    try { reseatAnchors(); } catch (e) {}   // back to where the player last put them
+  }
+  return added;
+}
+async function anchorsLateRing() {
+  if (ANCHOR_LATE.done) return 0;
+  if (ANCHOR_LATE.tries >= ANCHOR_LATE_MAX) { ANCHOR_LATE.done = true; return 0; }
+  ANCHOR_LATE.tries++;
+  let nodes = null;
+  try {
+    nodes = await Promise.race([
+      (async () => { try { await MythicCityBridge.refreshNodes(); } catch (e) {} return MythicCityBridge.fetchNodes(); })(),
+      new Promise((r) => setTimeout(() => r(null), ANCHOR_LATE_FETCH_MS)),
+    ]);
+  } catch (e) { nodes = null; }
+  if (!Array.isArray(nodes) || !nodes.length) return 0;   // "not yet" — the next try asks again
+  ANCHOR_LATE.done = true;
+  const added = anchorAddMissing(nodes);
+  if (added) {
+    try { computeLinks(); updateHUD(); saveSoon(); } catch (e) {}
+    try { toast('🔮 ' + added + ' PRN node' + (added === 1 ? '' : 's') + ' synced to the city.', 'good'); } catch (e) {}
+    try { logEvent('city', '🔮 ' + added + ' PRN node anchor' + (added === 1 ? '' : 's') + ' arrived after the city opened and joined the ring.'); } catch (e) {}
+  }
+  return added;
+}
+function anchorsLateRingStart() {
+  if (ANCHOR_LATE.timer) return;
+  const step = async () => {
+    ANCHOR_LATE.timer = null;
+    try { await anchorsLateRing(); } catch (e) {}
+    if (!ANCHOR_LATE.done) ANCHOR_LATE.timer = setTimeout(step, ANCHOR_LATE_MS);
+  };
+  ANCHOR_LATE.timer = setTimeout(step, 1500);
+}
+
 /* ── Road network link: BFS from each anchor over roads; producers adjacent
       to reachable road (or the anchor itself) feed that anchor. ──────── */
 function computeLinks() {
@@ -50608,6 +50695,8 @@ async function _ncResourceNeeds() {
     try { reseatAnchors(); } catch (e) { console.warn('[city] anchor reseat', e); }
     for (const k in game.tiles) if (isRoadTile(game.tiles[k])) { const [x, z] = k.split(',').map(Number); refreshRoad(x, z); }
     computeLinks();
+    // 🔮 Booted on an empty ring? The reserve may simply not have landed yet — see anchorsLateRing.
+    try { if (!game.anchors.length) anchorsLateRingStart(); } catch (e) {}
     // 🗺 Adopt what was already standing into land-use zones — see afterLoad().
     try { if (window.MythicZoning) window.MythicZoning.afterLoad(); } catch (e) {}
     /* 🌳 …and then progression adopts what the CITY already has. Second, and

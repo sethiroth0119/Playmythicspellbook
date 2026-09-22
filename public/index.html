@@ -78929,6 +78929,23 @@ try {
     var _markClean = function () { try { localStorage.setItem('hg_clean_exit', '1'); } catch (e) {} };
     window.addEventListener('pagehide', _markClean);
     window.addEventListener('beforeunload', _markClean);
+    /* 📱 bug-mtyl7vad — "Last session ended in a crash" on EVERY open. On a
+       phone the normal way to leave is to switch apps or swipe the game away,
+       and the OS later kills the backgrounded page WITHOUT firing pagehide or
+       beforeunload (iOS never fires beforeunload at all, and a home-screen
+       PWA is usually reaped in the background). So the sentinel stayed '0'
+       after a perfectly normal session and the banner accused the player of a
+       crash each launch. Going hidden is the last moment a mobile page is
+       guaranteed to run, so it counts as a clean exit; coming back re-arms the
+       sentinel, so a genuine crash while the game is on screen is still
+       caught. (A tab killed while hidden is the OS reclaiming memory, not
+       something the player saw crash.) pageshow re-arms after a bfcache
+       restore, which fires pagehide but not visibilitychange→visible. */
+    var _markRunning = function () { try { localStorage.setItem('hg_clean_exit', '0'); } catch (e) {} };
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'hidden') _markClean(); else _markRunning();
+    });
+    window.addEventListener('pageshow', function (ev) { if (ev && ev.persisted) _markRunning(); });
   } catch (e) {}
   let _crumbT = 0;
   setInterval(function () {
@@ -144000,6 +144017,15 @@ function startBattleWithPrep(playerGoesFirst) {
     App.state.currentTurn = playerGoesFirst ? 'player' : 'ai';
     MatchBroadcast.myTurn  = !!playerGoesFirst;
     App.ui.aiBusy          = !playerGoesFirst;
+    // 🔁 The turn-start-on-flip latch (_onRemoteStateArrived) records the
+    // turnNumber whose draw/energy refresh already ran, and was NEVER reset.
+    // initGame just discarded whatever board that turn-start ran on — the last
+    // match's, or an opponent packet adopted while we were still on the VS /
+    // dice screen (the first mover can hand the turn over before we get here).
+    // A stale latch equal to this match's handoff turn silently skipped MY
+    // turn-start: no draw, energy stuck at 1, only the hero could act
+    // (bug-mu2wufcq / bug-mtzfzejp). Nothing has started on THIS board yet.
+    MatchBroadcast._mpLastTurnStarted = null;
   }
   // Campaign overrides: enemy hero level, custom enemy deck, scripted starting weather
   if (App.state) {
@@ -169239,11 +169265,10 @@ function bindBattleEvents() {
     App.state.gameOver = 'ai';
     // 🌐 MULTIPLAYER — if we're in a real online match, broadcast the
     // concession to the opponent so they immediately get the win screen
-    // instead of having to wait out the disconnect timer.
+    // instead of having to wait out the disconnect timer. (This used to call a
+    // MatchBroadcast.send that never existed — see _mpConcedeMatch.)
     try {
-      if (App.battlePrep && App.battlePrep.multiplayer && typeof MatchBroadcast !== 'undefined' && MatchBroadcast.send) {
-        MatchBroadcast.send({ type: 'concede', winner: 'opponent' });
-      }
+      if (App.battlePrep && App.battlePrep.multiplayer && typeof _mpConcedeMatch === 'function') _mpConcedeMatch();
     } catch (e) { console.warn('[concede] broadcast failed', e); }
     showToast('🏳 You conceded. Defeat recorded.', 3200);
     renderBattle();
@@ -176329,9 +176354,7 @@ function _forfeitByTurnTimeout() {
     // 🌐 MULTIPLAYER — tell the opponent immediately so they get the win screen
     // right away instead of waiting out a disconnect timer (mirrors Concede).
     try {
-      if (App.battlePrep && App.battlePrep.multiplayer && typeof MatchBroadcast !== 'undefined' && MatchBroadcast.send) {
-        MatchBroadcast.send({ type: 'concede', winner: 'opponent' });
-      }
+      if (App.battlePrep && App.battlePrep.multiplayer && typeof _mpConcedeMatch === 'function') _mpConcedeMatch();
     } catch (e) { try { console.warn('[timeout-forfeit] broadcast failed', e); } catch (_) {} }
     try { if (typeof showToast === 'function') showToast('⏱ Defeated — two missed turn timers in a row.', 4600); } catch (e) {}
     try { renderBattle(); } catch (e) {}
@@ -207072,6 +207095,46 @@ function _mpApplyPrivateRemovals(myBlock, ops) {
   return out;
 }
 
+/* 🃏 WIRE STUBS ARE NOT CARDS — bug-mtzfzejp / bug-mu2wufcq ("my cards didn't
+   show / wouldn't play, only my hero could move; a refresh fixed it").
+   _serializeBattleStateForBroadcast slims every hand/deck/graveyard card to
+   {instanceId, cardId, name}. The adopt in _onRemoteStateArrived keeps MY OWN
+   player block, so those stubs never reach my hand — EXCEPT when there is no
+   own block to keep: attemptMatchReconnect boots with App.state === null, so
+   the first adopted packet handed me the opponent's slimmed model of my zones,
+   and every later adopt then "kept" that stub block for the rest of the match.
+   A stub has no `id`, `type` or `cost`, so the hand strip could not draw it and
+   nothing could be played from it. Rehydrate each stub from the shared catalog
+   by cardId, keeping its instanceId (the opponent's model IS my last broadcast,
+   so the ids line up). A stub we cannot resolve is kept as-is — dropping it
+   would silently shrink the hand, which is worse than one dead card.
+   Only exact stubs are touched: anything carrying a `type` is a real card. */
+function _mpIsWireStub(c) {
+  return !!(c && typeof c === 'object' && !c.type && !c.id && c.cardId);
+}
+function _mpRehydrateStub(c) {
+  if (!_mpIsWireStub(c)) return c;
+  const id = c.cardId;
+  let base = null;
+  try {
+    const tables = [UNIT_CARDS, SPELL_CARDS, TRAP_CARDS, LOCATION_CARDS, WEATHER_CARDS];
+    for (const t of tables) { if (!base && Array.isArray(t)) base = t.find(x => x && x.id === id) || null; }
+    if (!base && typeof lookupCustomCard === 'function') base = lookupCustomCard(id) || null;
+  } catch (e) { base = null; }
+  if (!base) return c;
+  return { ...base, instanceId: c.instanceId || uid() };
+}
+function _mpRehydratePrivateBlock(block) {
+  if (!block || typeof block !== 'object') return block;
+  let out = block;
+  for (const z of ['hand', 'deck', 'graveyard']) {
+    const zone = out[z];
+    if (!Array.isArray(zone) || !zone.some(_mpIsWireStub)) continue;
+    out = { ...out, [z]: zone.map(_mpRehydrateStub) };
+  }
+  return out;
+}
+
 // Swap every 'player' ↔ 'ai' owner reference in the state AND mirror every
 // position so the receiver's own units land at the bottom of the board. Used
 // when applying the opponent's snapshot — they sent their state with their own
@@ -209120,6 +209183,13 @@ function _onRemoteStateArrived(payload) {
     // actions under their name (queued by the delta-feedback pass above).
     if (Array.isArray(_myPrev.log)) swapped.log = _myPrev.log;
   }
+  // 🃏 No own block to keep (a reconnect after a refresh boots with App.state
+  // null) → the adopted block is the opponent's SLIMMED model of my zones.
+  // Turn its stubs back into real cards, or the rest of the match is played
+  // with an undrawable, unplayable hand. See _mpRehydratePrivateBlock.
+  if (_isMp && swapped.player) {
+    try { swapped.player = _mpRehydratePrivateBlock(swapped.player); } catch (e) {}
+  }
   App.state = swapped;
   // ⚔️ Reliable combat-cinematic trigger — the attacker stamped the attack onto
   // the state (_atkFx); play it here if the fast 'attackfx' event didn't already
@@ -209471,8 +209541,36 @@ function _onRemoteGameOverArrived(payload) {
 function _mpResultIsLegitimate(finalState, endReason) {
   if (endReason === 'dc') return true;  // disconnect submits are intentional
   if (!finalState || !Array.isArray(finalState.units)) return false;
+  // 🏳 A CONCESSION ends the match with both heroes standing. Concede and the
+  // two-missed-timers forfeit both set concededByPlayer + gameOver='ai', and
+  // this guard refused them and then CLEARED gameOver — so in PvP a concession
+  // never reached the server, the conceder sat on "Confirming result…", the
+  // match un-ended itself on the next post-action check, and the opponent was
+  // never told (bug-mtylr070 "can't end a match, have to refresh"). Only a
+  // LOSS can be conceded (gameOver 'ai' = the opponent wins), so this cannot
+  // be used to award yourself a win.
+  if (finalState.concededByPlayer && finalState.gameOver === 'ai') return true;
   const deadHero = finalState.units.find(u => u && u.isHero && (u.alive === false || u.currentHp <= 0));
   return !!deadHero;
+}
+
+// 🏳 Close an online match as MY loss (Concede button, two-missed-timers
+// forfeit). Both callers used to call `MatchBroadcast.send(...)`, a method
+// MatchBroadcast has never had, so the typeof guard skipped it silently and
+// the concession stayed local. Record it with the server instead — the same
+// race-safe path a hero kill takes — which also broadcasts 'gameover' and
+// flips matches.winner_id, so the opponent's screen ends too. A concession is
+// unambiguous, so the conceder is not held on "Confirming result…" either.
+function _mpConcedeMatch() {
+  if (!(App.battlePrep && App.battlePrep.multiplayer)) return;
+  if (typeof USE_COLYSEUS_MP !== 'undefined' && USE_COLYSEUS_MP) {
+    if (typeof sendColyseusForfeit === 'function') sendColyseusForfeit();
+    return;
+  }
+  MatchBroadcast.gameOverResolved = true;
+  if (MatchBroadcast.opponentId && App.state) {
+    submitMatchResult(MatchBroadcast.opponentId, App.state, { endReason: 'concede' });
+  }
 }
 
 async function submitMatchResult(winnerUserId, finalState, opts) {
@@ -209504,7 +209602,9 @@ async function submitMatchResult(winnerUserId, finalState, opts) {
         matchId:   MatchBroadcast.matchId,
         winnerId:  winnerUserId,
         turns:     (finalState && finalState.turnNumber) || 0,
-        endReason: 'normal',
+        // 'concede' is recorded as such (matches.end_reason documents it);
+        // every other path keeps the value it always sent.
+        endReason: endReason === 'concede' ? 'concede' : 'normal',
       },
     });
     if (error) throw error;

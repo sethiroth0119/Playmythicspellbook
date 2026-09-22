@@ -77717,6 +77717,17 @@ function loadForge() {
       if (Array.isArray(p.reserveConvoys))                            Profile.reserveConvoys  = p.reserveConvoys.filter(c => c && c.id); // 🚚 convoys in flight
       if (Array.isArray(p.walletOutbox))                              Profile.walletOutbox    = p.walletOutbox.filter(c => c && c.ref); // 📮 credits to replay
       if (p.fieldShop       && typeof p.fieldShop       === 'object') Profile.fieldShop       = p.fieldShop;        // 🏪 offline trader float + lots
+      /* 🔒 THE ONE-TIME RESET STAMPS (persistence audit 2026-09-22). The upload
+         block explains why __gearReset__ / __purgeReset__ / __seasonApplied__
+         exist: a stamp that does not travel lets a "one-time" wipe run again on
+         the next device. But the stamps were never read back HERE, so every
+         same-device reload that took the local-is-fresher branch uploaded ''
+         over the cloud stamp — erasing the very record those comments added,
+         and re-arming the wipe for the player's next device. Adopt-only, like
+         the hydration: a stamp is never cleared by a load. */
+      if (typeof p.gearResetApplied   === 'string' && p.gearResetApplied)   Profile.gearResetApplied   = p.gearResetApplied;
+      if (typeof p.purgeResetApplied  === 'string' && p.purgeResetApplied)  Profile.purgeResetApplied  = p.purgeResetApplied;
+      if (typeof p.seasonResetApplied === 'string' && p.seasonResetApplied) Profile.seasonResetApplied = p.seasonResetApplied;
       if (p.achievements && typeof p.achievements === 'object') {
         Profile.achievements = {
           earned: (p.achievements.earned && typeof p.achievements.earned === 'object') ? p.achievements.earned : {},

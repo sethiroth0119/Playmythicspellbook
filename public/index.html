@@ -255214,11 +255214,17 @@ function _reconRunMission(instIdx, def, choiceIdx) {
   let host = document.getElementById('camp-node-picker-host');
   if (!host) { host = document.createElement('div'); host.id = 'camp-node-picker-host'; document.body.appendChild(host); }
   const win = Math.round(m.win * 100);
+  /* bug-mtyp80rx — "hired guards for security and they are gone". A lost
+     "Defend the walls" takes 6 Guards and 10 Civilians off the paid roster.
+     That is the design, but this sheet showed only the odds, so the staff
+     just vanished. It now says what each outcome does before launch. */
   host.innerHTML = `<div class="cnp-scrim" data-act="camp-picker-close"><div class="cnp-modal" role="dialog">
     <div class="cnp-modal-head"><h3>${escapeHtml(m.name)}</h3><button class="cnp-x" data-act="camp-picker-close">✕</button></div>
     <div class="cnp-modal-body" id="recon-mission-body">
       <div class="hint" style="margin-bottom:12px">${def.text}</div>
       <div class="cnp-odds"><div class="cnp-o win"><div class="k">Success</div><div class="v">${win}%</div></div><div class="cnp-o lose"><div class="k">Failure</div><div class="v">${100 - win}%</div></div></div>
+      <div class="hint" style="margin-top:8px">If it succeeds: ${escapeHtml(_reconEffectSummary(m.onWin))}</div>
+      <div class="hint" style="margin-top:4px;color:#ffb8a0">If it fails: ${escapeHtml(_reconEffectSummary(m.onLose))}</div>
       <button class="btn-primary" style="width:100%;margin-top:12px" data-act="recon-mission-launch" data-idx="${instIdx}" data-cidx="${choiceIdx}">Launch Mission</button>
     </div></div></div>`;
 }

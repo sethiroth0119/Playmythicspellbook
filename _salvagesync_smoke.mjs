@@ -98,7 +98,9 @@ console.log('── a reader tab cannot donate ──');
   ok(vm.runInContext('_readerTabRefuses("x")', ctx) === false, 'no MultiTab at all (single tab / old browser) is not refused');
 }
 console.log('── wiring ──');
-ok(/_salvageHydrate\(_cloudSalvage,/.test(SRC), 'cloudFetchProfile hydrates salvage through _salvageHydrate');
+// sql/190 put _salvageHydrateSync in front; it still falls back to _salvageHydrate.
+ok(/_salvageHydrateSync\(_cloudSalvage,/.test(SRC) && /_salvageHydrate\(cl, /.test(fnText('_salvageHydrateSync')),
+   'cloudFetchProfile hydrates salvage through _salvageHydrateSync → _salvageHydrate');
 ok(/__salvageAt__:\s*Math\.max\(0, Number\(Profile\.salvageAt\)/.test(SRC), 'the upload carries __salvageAt__');
 ok(/typeof p\.salvageAt === 'number'\)\s*Profile\.salvageAt\s*= p\.salvageAt/.test(SRC), 'a reload restores the stamp (the loader is a whitelist)');
 ok(/lastLocalEditAt = Date\.now\(\);\s*\n\s*\/\/[^\n]*\n\s*_salvageStampIfChanged\(\);/.test(SRC), 'saveProfile stamps the ledger');

@@ -43054,6 +43054,166 @@ function _salvageHydrate(cl, cloudAt) {
   }
   return 'max';
 }
+/* 🧮 SERVER-MERGED LEDGER (sql/190) — the permanent fix behind the stamp above.
+   🔴 bug-mu8vnos5 "bought 4-5 stacks of 100 ammo, Cinder taken, no ammo": the
+   buy credited this device's ledger and uploaded; a second device left open
+   uploaded its stale whole map next (the row is last-writer-wins) and the ammo
+   was gone. The salvageAt stamp stops donated items coming back (mu83ph17) but
+   trusts device clocks: a clock set ahead wins and erases the other device's
+   gains. So the upload now also carries `base` — the ledger as of this device's
+   last server-ACKNOWLEDGED sync — and sql/190's trigger applies (current − base)
+   onto whatever the row holds right now, under the row lock, and returns the
+   merged map through the upsert. Two devices' changes add instead of racing.
+   Profile.salvageSync = { uid, dev, seq, bid, base }:
+     dev  random per device+account; seq  the last write id sent (strictly
+     increasing, Date.now()-floored so a restored older save cannot reuse ids);
+     bid  the write id whose reply produced `base`. The server keeps the last
+     applied id per device, so a retry whose first attempt landed (reply lost)
+     is not applied twice, and a base older than a landed write is replaced by
+     what that write sent.
+   ⚠ Opt-in and self-detecting: before sql/190 is applied the reply carries no
+     acknowledgement and everything below degrades to the stamp logic above. */
+let _salvageBootBase = null;   // the ledger as the local save held it at boot
+function _salvageClone(m) {
+  const o = {};
+  if (m && typeof m === 'object') for (const k in m) o[k] = Math.max(0, m[k] | 0);
+  return o;
+}
+function _salvageSame(a, b) {
+  a = a || {}; b = b || {};
+  for (const k in a) if ((a[k] | 0) !== (b[k] | 0)) return false;
+  for (const k in b) if ((a[k] | 0) !== (b[k] | 0)) return false;
+  return true;
+}
+// Called by the local loader: restores the sync state and notes the boot ledger,
+// which serves as `base` if this device uploads before any hydration sets one
+// (the local-is-fresher path in cloudFetchProfile skips hydration entirely).
+function _salvageNoteBoot(p) {
+  try {
+    if (p && p.salvageSync && typeof p.salvageSync === 'object') Profile.salvageSync = p.salvageSync;
+    if (p && p.salvage && typeof p.salvage === 'object') _salvageBootBase = _salvageClone(p.salvage);
+  } catch (e) {}
+}
+function _salvageSyncState() {
+  const uid = (Profile.cloud && Profile.cloud.userId) || '';
+  let st = Profile.salvageSync;
+  // The device id also lives in its own localStorage key: a Profile copied onto
+  // another device must not share a write-id stream with the one it came from.
+  let devKey = null;
+  try { devKey = localStorage.getItem('hg_salvage_dev'); } catch (e) {}
+  if (!st || typeof st !== 'object' || st.uid !== uid || typeof st.dev !== 'string' || (devKey && devKey !== st.dev)) {
+    let dev = devKey;
+    if (!dev) {
+      try { dev = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : ''; } catch (e) { dev = ''; }
+      if (!dev) dev = 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
+    }
+    st = Profile.salvageSync = { uid, dev, seq: 0, bid: 0, base: null };
+  }
+  try { if (!devKey) localStorage.setItem('hg_salvage_dev', st.dev); } catch (e) {}
+  return st;
+}
+// Built into the upload (forge.__salvageSync__). null = no known base → the
+// old whole-map write, once, after which the reply supplies a base.
+function _salvageSyncRequest() {
+  try {
+    if (!Profile.salvage || typeof Profile.salvage !== 'object') return null;
+    const st = _salvageSyncState();
+    if (!st.base && _salvageBootBase) st.base = _salvageBootBase;
+    if (!st.base) return null;
+    const wid = Math.max((Number(st.seq) || 0) + 1, Date.now());
+    st.seq = wid;
+    return { dev: st.dev, wid, bid: Number(st.bid) || 0, base: _salvageClone(st.base) };
+  } catch (e) { return null; }
+}
+/* After a successful upsert. `sentForge` is the forge object that was uploaded
+   (a deep copy — _stripDataUrls — so __salvage__ is exactly what the server
+   saw); `reply` is the RETURNING row { salv, sack } or null.
+   • acknowledged → adopt the merged map IN PLACE, keeping anything this device
+     changed while the request was in flight (merged + (now − sent)).
+   • not acknowledged (sql/190 not applied, no request, or no reply read) → the
+     row holds what we sent, or a merge that already contains it; either way
+     `sent` is a correct base for this device's next change. */
+function _salvageAdoptReply(sentForge, reply) {
+  try {
+    const req = sentForge && sentForge.__salvageSync__;
+    const sent = sentForge && sentForge.__salvage__;
+    if (!sent || typeof sent !== 'object') return 'none';
+    const st = _salvageSyncState();
+    const ack = reply && reply.sack;
+    const M = reply && reply.salv;
+    if (req && ack && ack.dev === req.dev && Number(ack.wid) === req.wid && M && typeof M === 'object') {
+      if (!Profile.salvage || typeof Profile.salvage !== 'object') Profile.salvage = {};
+      const L = Profile.salvage;
+      const was = (sent === L) ? _salvageClone(L) : sent;   // no copy was made → nothing moved in flight
+      let movedInFlight = false;
+      const keys = new Set(Object.keys(M).concat(Object.keys(L)));
+      for (const k of keys) {
+        const d = (L[k] | 0) - (was[k] | 0);
+        if (d) movedInFlight = true;
+        L[k] = Math.max(0, (M[k] | 0) + d);
+      }
+      st.base = _salvageClone(M);
+      st.bid = req.wid;
+      try { if (typeof _ensureResources === 'function') _ensureResources(); } catch (e) {}
+      if (!movedInFlight) { try { _salvageSig = JSON.stringify(Profile.salvage); } catch (e) {} }   // adopting is not a local edit
+      return 'merged';
+    }
+    st.base = _salvageClone(sent);
+    st.bid = Number(st.seq) || 0;
+    return 'plain';
+  } catch (e) { return 'none'; }
+}
+/* Hydration (cloudFetchProfile). A row whose last write the server merged
+   carries forge.__salvageAck__.
+   • merged row, no local change since the last acknowledged sync → the row IS
+     the truth: adopt it whole (decreases included) and make it the base.
+   • merged row, local changes not yet acknowledged → leave the ledger alone and
+     upload now; the merge reply reconciles both sides. Adopting here instead
+     would drop the unsent change, and adding it on top could count a write
+     that landed without its reply twice.
+   • anything else (sql/190 not applied, or an older build wrote the row last)
+     → the stamp logic above, and the cloud map becomes the base. */
+function _salvageHydrateSync(cl, forge) {
+  if (!cl || typeof cl !== 'object') return 'none';
+  const st = _salvageSyncState();
+  const srvMerged = !!(forge && typeof forge === 'object' && forge.__salvageAck__ && typeof forge.__salvageAck__ === 'object');
+  if (srvMerged && st.base) {
+    if (!Profile.salvage || typeof Profile.salvage !== 'object') Profile.salvage = {};
+    const L = Profile.salvage;
+    if ((Number(st.seq) || 0) !== (Number(st.bid) || 0) || !_salvageSame(L, st.base)) {
+      try { if (typeof _persistResourcesSoon === 'function') _persistResourcesSoon(); } catch (e) {}
+      return 'held';
+    }
+    for (const k in L) { if (!(k in cl)) delete L[k]; }
+    for (const k in cl) L[k] = Math.max(0, cl[k] | 0);
+    st.base = _salvageClone(cl);
+    const cAt = Math.max(0, Number(forge.__salvageAt__) || 0);
+    if (cAt > (Number(Profile.salvageAt) || 0)) Profile.salvageAt = cAt;
+    try { if (typeof _ensureResources === 'function') _ensureResources(); } catch (e) {}
+    try { _salvageSig = JSON.stringify(Profile.salvage); } catch (e) {}
+    return 'server';
+  }
+  const r = _salvageHydrate(cl, forge && typeof forge === 'object' ? forge.__salvageAt__ : 0);
+  st.base = _salvageClone(cl);
+  st.bid = Number(st.seq) || 0;
+  return r;
+}
+// The upsert, asking for the merged ledger back when the row carries a merge
+// request. If PostgREST ever rejects the select itself (a PGRST1xx request
+// error is raised before anything is written) the plain upsert runs instead
+// and the select stays off for the session: a save must never fail over this.
+let _salvageSelectOff = false;
+async function _profileUpsert(r) {
+  const plain = () => Cloud.client.from('user_profiles').upsert(r, { onConflict: 'user_id' });
+  if (_salvageSelectOff || !(r && r.forge && r.forge.__salvageSync__)) return plain();
+  const res = await plain().select('salv:forge->__salvage__,sack:forge->__salvageAck__');
+  if (res && res.error && /^PGRST1/.test(String(res.error.code || ''))) {
+    _salvageSelectOff = true;
+    try { console.warn('☁ salvage merge reply unavailable — plain upsert', res.error.message || res.error); } catch (_) {}
+    return plain();
+  }
+  return res;
+}
 // 🏰 STASH CAP (Tarkov rule, user-decided): secured storage holds a FINITE
 // number of resource units — base vault (8×10) = 2000; every Vendor-Market
 // vault container adds rows = +250 units per row. Gains beyond the cap are
@@ -51352,6 +51512,9 @@ async function cloudSyncProfile() {
       // 🧾 When this ledger was last edited on the uploading device — lets the
       //    next hydration tell a newer ledger from an older one (bug-mu83ph17).
       __salvageAt__:  Math.max(0, Number(Profile.salvageAt) || 0),
+      // 🧮 base + write id, so sql/190 merges this device's CHANGE into the row
+      //    instead of the whole map winning (bug-mu8vnos5). Never stored.
+      __salvageSync__: _salvageSyncRequest(),
       // 📊 CX share positions — per-resource { qty, avgCost }. Pure-speculation
       // positions; never contain real resources (that's the exploit fix).
       __cxHoldings__: (Profile.cxHoldings && typeof Profile.cxHoldings === 'object') ? Profile.cxHoldings : {},
@@ -51713,7 +51876,8 @@ async function cloudSyncProfile() {
     // Distribution of admin images to other players goes through the Catalog
     // publish pipeline (Supabase Storage), NOT this row.
     const row = (typeof _stripDataUrls === 'function') ? _stripDataUrls(rowRaw) : rowRaw;
-    let { error } = await Cloud.client.from('user_profiles').upsert(row, { onConflict: 'user_id' });
+    // 🧮 _profileUpsert = this upsert, plus the merged ledger read back (sql/190).
+    let { data: _salvReply, error } = await _profileUpsert(row);
     // 🌐 TRANSIENT-ERROR RECOVERY — Supabase/Cloudflare edge hiccups
     // ("upstream connect error", "connection termination", 502/503/504,
     // "Failed to fetch") almost always succeed on a 1-3s retry. Without this
@@ -51724,11 +51888,12 @@ async function cloudSyncProfile() {
     if (error && _isTransientCloudError(error)) {
       try { console.warn('☁ Transient cloud-sync error — retrying:', error.message || error); } catch (_) {}
       const r = await _retryCloudOp(
-        () => Cloud.client.from('user_profiles').upsert(row, { onConflict: 'user_id' }),
+        () => _profileUpsert(row),   // same row, same write id → a replay if the first attempt landed
         { delays: [600, 1800, 4500] }
       );
       if (r && !r.error) {
         error = null;   // ✓ recovered, treat as success
+        _salvReply = r.result && r.result.data;
         try { console.log('☁ Cloud sync recovered after transient error.'); } catch (_) {}
       } else if (r && r.error) {
         // After all retries still failing — promote to surfaced error, but
@@ -51831,6 +51996,8 @@ async function cloudSyncProfile() {
     Profile.cloud.lastSyncError = null;  // clear any prior error badge
     Profile.cloud._reconnecting = false; // edge is happy, hide reconnecting hint
     Profile.cloud.pendingChanges = false;
+    // 🧮 Adopt the server-merged ledger (or record what we sent as the base).
+    _salvageAdoptReply(row.forge, Array.isArray(_salvReply) ? _salvReply[0] : _salvReply);
     saveProfile();
     return { ok: true };
   } catch (e) {
@@ -52440,9 +52607,10 @@ async function cloudFetchProfile() {
       : (data.salvage && typeof data.salvage === 'object' ? data.salvage : null);
     if (_cloudSalvage) {
       /* ⚠ Was an unconditional per-resource MAX — the "resources come back
-         after I donate them" dupe (bug-mu83ph17). Newer ledger wins now; see
-         _salvageHydrate for why and for the legacy fallback. */
-      _salvageHydrate(_cloudSalvage, (data.forge && typeof data.forge === 'object') ? data.forge.__salvageAt__ : 0);
+         after I donate them" dupe (bug-mu83ph17). A server-merged row
+         (sql/190) is adopted; otherwise the newer ledger wins — see
+         _salvageHydrateSync / _salvageHydrate. */
+      _salvageHydrateSync(_cloudSalvage, data.forge);
     }
     if (typeof _ensureResources === 'function') _ensureResources();
     // 📊 Restore CX share holdings from cloud.
@@ -77388,6 +77556,7 @@ function loadForge() {
       // upload an empty blob over the good cloud copy.
       if (p.salvage         && typeof p.salvage         === 'object') Profile.salvage         = p.salvage;          // ⛏ resource ledger
       if (typeof p.salvageAt === 'number')                            Profile.salvageAt       = p.salvageAt;        // 🧾 its edit stamp (bug-mu83ph17)
+      if (typeof _salvageNoteBoot === 'function') _salvageNoteBoot(p);                                               // 🧮 its merge base (bug-mu8vnos5, sql/190)
       // 🏕 Camp survival state — was MISSING from the whitelist, so every reload
       // silently reset raid defenses (Fortify), the rival's threat, the MIA /
       // Memorial rosters, the raid clock, AND research-project progress. Restore

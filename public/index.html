@@ -55338,6 +55338,34 @@ try { window.__mg = window.__mg || {}; window.__mg.diagnose = _diagnoseSpriteSav
 // When the GAME next pulls cloudFetchProfile(), we see those receipts and
 // actually open the pack here — using the same openPack() the in-game shop
 // uses — so the player receives the cards in their inventory.
+/* 🧾 Write the receipt list back as ONE KEY of user_profiles.forge.
+   🔴 This used to be `update({ forge: { webPurchases } })`, which REPLACED the
+   whole forge column — ~80 synced keys (__cardCollection__, __itemInventory__,
+   __equipment__, __vaultLayout__ …) — with one key. up_guard (sql/070) only
+   restores a forge that drops to ZERO keys, so the row stayed gutted until the
+   next full upload, and a second device fetching in that window hydrated from
+   it. (A `newForge` merge was built right above it and never used.)
+   Now: sql/195's web_purchases_set does `forge || {webPurchases}` server-side.
+   Until that file is applied, fall back to read → merge ONE key → write, and
+   only if the row is unchanged since the read (updated_at match), so a save
+   landing in between is never overwritten. Returns true when the list landed. */
+async function _webPurchasesWrite(list) {
+  const uid = Profile.cloud && Profile.cloud.userId;
+  if (!uid || !Cloud || !Cloud.client) return false;
+  const r = await Cloud.client.rpc('web_purchases_set', { p_list: list });
+  if (!r || !r.error) return !!(r && r.data === true);
+  const e = r.error;
+  const missing = /PGRST202|42883/.test(String(e.code || '')) ||
+    /could not find the function|does not exist/i.test(String(e.message || ''));
+  if (!missing) return false;
+  const cur = await Cloud.client.from('user_profiles').select('forge,updated_at').eq('user_id', uid).maybeSingle();
+  if (!cur || cur.error || !cur.data || !cur.data.updated_at) return false;
+  const forge = (cur.data.forge && typeof cur.data.forge === 'object' && !Array.isArray(cur.data.forge)) ? cur.data.forge : {};
+  const up = await Cloud.client.from('user_profiles')
+    .update({ forge: { ...forge, webPurchases: list } })
+    .eq('user_id', uid).eq('updated_at', cur.data.updated_at);
+  return !!(up && !up.error);
+}
 function redeemWebPurchases(receipts) {
   if (!Array.isArray(receipts) || receipts.length === 0) return;
   const remaining = [];     // keep applied receipts marked so server keeps a record
@@ -55379,12 +55407,9 @@ function redeemWebPurchases(receipts) {
   // we never re-process the same receipt twice.
   try {
     if (Cloud && Cloud.client && Profile.cloud && Profile.cloud.userId) {
-      const newForge = { ...(Profile._lastForgeSnapshot || {}), webPurchases: remaining };
-      // Best-effort update — doesn't block; next save sweep will catch any retry.
-      Cloud.client.from('user_profiles').update({
-        forge: { webPurchases: remaining },
-        updated_at: new Date().toISOString(),
-      }).eq('user_id', Profile.cloud.userId).then(() => {}, () => {});
+      // Best-effort — doesn't block; a failed write leaves the receipts for the
+      // next fetch exactly as before.
+      _webPurchasesWrite(remaining).then(() => {}, () => {});
     }
   } catch (e) {}
   if (openedAny) {

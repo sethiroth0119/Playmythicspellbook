@@ -51203,6 +51203,11 @@ async function cloudSyncProfile() {
       __wagePool__:        (Profile.wagePool && typeof Profile.wagePool === 'object') ? Profile.wagePool : null,
       // 🐄 Homestead Farm state — one save, newest `ts` wins on merge.
       __farm__:            (Profile.farm && typeof Profile.farm === 'object') ? Profile.farm : null,
+      /* 🍳 The Kitchen's saved subset (kitchen.state.js snapshot()): level/xp,
+         pantry, the upgrades bought with Cinder and the startGranted /
+         reliefAt receipts. It rode NO list before the 2026-09-22 persistence
+         audit, so every reload re-granted the starting stock. Merge below. */
+      __kitchen__:         (Profile.kitchen && typeof Profile.kitchen === 'object') ? Profile.kitchen : null,
       // 🥋 Dojo — the business licence + the owner's unlisted move stock.
       __dojoUnlocked__:    !!Profile.dojoUnlocked,
       __dojoStock__:       (Profile.dojoStock && typeof Profile.dojoStock === 'object') ? Profile.dojoStock : {},
@@ -51550,6 +51555,16 @@ async function cloudSyncProfile() {
       __campWorkforce__:     (Profile.campWorkforce && typeof Profile.campWorkforce === 'object') ? Profile.campWorkforce : {},
       __campNodeHire__:      (Profile.campNodeHire && typeof Profile.campNodeHire === 'object') ? Profile.campNodeHire : {},
       __campRoute__:         (Profile.campRoute && typeof Profile.campRoute === 'object') ? Profile.campRoute : null,
+      /* 🛡 PAID CAMP STATE THAT NEVER LEFT THE DEVICE (persistence audit
+         2026-09-22). All four were in loadForge's list only — one of three —
+         so a second device, the desktop app, or a cleared cache came back with
+         fortifications, overclock / repair windows and the Bunkhouse unbuilt,
+         although the Ammo, Metal, Fuel and Cinder they cost are synced as
+         spent. Merges below only ever raise them. */
+      __campDefense__:       Math.max(0, Profile.campDefense | 0),
+      __campPoweredUntil__:  Math.max(0, Number(Profile.campPoweredUntil) || 0),
+      __campRepairUntil__:   Math.max(0, Number(Profile.campRepairUntil) || 0),
+      __bunkhouse__:         (Profile.bunkhouse && typeof Profile.bunkhouse === 'object') ? Profile.bunkhouse : null,
       __recon__:             (Profile.recon && typeof Profile.recon === 'object') ? Profile.recon : null,
       // 🔬 Camp Research Lab levels (bug-mucgicr6). Was in the local loader
       // ONLY — one list of three — so a second device, the desktop app beside
@@ -52770,6 +52785,28 @@ async function cloudFetchProfile() {
           if (!_lf || typeof _lf !== 'object' || (Number(_cf.ts) || 0) > (Number(_lf.ts) || 0)) Profile.farm = _cf;
         } catch (e) {}
       }
+      /* 🍳 Kitchen (persistence audit 2026-09-22). One save, so the body is
+         whichever side has MORE xp (xp only rises; a tie keeps this device's
+         pantry). But the purchases and the receipts are never taken from one
+         side only: upgrades are a UNION (bought with Cinder), startGranted is
+         an OR and reliefAt a MAX — either side having had the free stock or
+         the free drop means it has been had, so a stale row cannot re-arm a
+         faucet and cannot un-buy an upgrade. */
+      if (f.__kitchen__ && typeof f.__kitchen__ === 'object') {
+        try {
+          const _ck = f.__kitchen__;
+          const _lk = (Profile.kitchen && typeof Profile.kitchen === 'object') ? Profile.kitchen : null;
+          const _lkEmpty = !_lk || !Object.keys(_lk).length;
+          const _base = (_lkEmpty || (Number(_ck.xp) || 0) > (Number(_lk.xp) || 0)) ? Object.assign({}, _ck) : Object.assign({}, _lk);
+          const _up = {};
+          [].concat((_lk && Array.isArray(_lk.upgrades)) ? _lk.upgrades : [], Array.isArray(_ck.upgrades) ? _ck.upgrades : [])
+            .forEach((u) => { if (typeof u === 'string' && u) _up[u] = 1; });
+          _base.upgrades = Object.keys(_up);
+          _base.startGranted = !!((_lk && _lk.startGranted) || _ck.startGranted);
+          _base.reliefAt = Math.max(Number(_lk && _lk.reliefAt) || 0, Number(_ck.reliefAt) || 0);
+          Profile.kitchen = _base;
+        } catch (e) {}
+      }
       // 💸 Wage pool — newest stamp wins. It is a balance: a union would double it.
       if (f.__wagePool__ && typeof f.__wagePool__ === 'object') {
         try {
@@ -53362,6 +53399,21 @@ async function cloudFetchProfile() {
       if (f.__campWorkforce__ && typeof f.__campWorkforce__ === 'object') Profile.campWorkforce = f.__campWorkforce__;
       if (f.__campNodeHire__ && typeof f.__campNodeHire__ === 'object') Profile.campNodeHire = f.__campNodeHire__;
       if (f.__campRoute__ && typeof f.__campRoute__ === 'object') Profile.campRoute = f.__campRoute__;
+      /* 🛡 Fortify level only rises (there is no path that lowers it), and the
+         two windows are paid-until stamps, so all three take the MAX — a stale
+         row can never un-fortify a camp or cut short a window already paid for.
+         The Bunkhouse is ONE save (billets + uncollected Resonance): adopted
+         only when this device has not built one, so it can arrive on a new
+         device but never overwrite the live one here. */
+      try {
+        if (typeof f.__campDefense__ === 'number') Profile.campDefense = Math.min(typeof CAMP_DEFENSE_MAX === 'number' ? CAMP_DEFENSE_MAX : 10, Math.max(Profile.campDefense | 0, f.__campDefense__ | 0));
+        if (Number(f.__campPoweredUntil__) > (Number(Profile.campPoweredUntil) || 0)) Profile.campPoweredUntil = Number(f.__campPoweredUntil__);
+        if (Number(f.__campRepairUntil__) > (Number(Profile.campRepairUntil) || 0)) Profile.campRepairUntil = Number(f.__campRepairUntil__);
+        const _cbh = f.__bunkhouse__;
+        if (_cbh && typeof _cbh === 'object' && _cbh.built && !(Profile.bunkhouse && Profile.bunkhouse.built)) {
+          Profile.bunkhouse = { built: 1, house: (_cbh.house && typeof _cbh.house === 'object') ? _cbh.house : null };
+        }
+      } catch (e) {}
       /* 🏗 RECLAIMED SITES MERGE — a UNION, not a replacement, for exactly the
          reason __garage__ above merges: a reclaim costs Cinder and resources,
          the code that grants it calls reconstruction PERMANENT, and there is
@@ -77363,6 +77415,7 @@ function loadForge() {
       if (p.bunkhouse && typeof p.bunkhouse === 'object') {
         Profile.bunkhouse = { built: p.bunkhouse.built ? 1 : 0,
                               house: (p.bunkhouse.house && typeof p.bunkhouse.house === 'object') ? p.bunkhouse.house : null };
+      }
       /* 🏛 DILEMMA STATE — standing with Ethos Heights, the cooldowns and the
          last-deck record. The same whitelist trap sideDeck, archonDeck and the
          Bunkhouse above all fell into, and one that Profile.cityProduction and
@@ -77375,9 +77428,13 @@ function loadForge() {
          would be forgotten between sessions. Shape is normalised by
          ensureState() in /src/dilemma/engine.js, which is absent-tolerant by
          contract — a missing or corrupt blob loads as a fresh standing, never
-         as a throw. */
+         as a throw.
+         ⚠ This line used to sit INSIDE the bunkhouse `if` above (its closing
+           brace came after it), so the standing was restored only for players
+           who had ever opened the Bunkhouse — everybody else lost it on every
+           reload while every text scan of this list showed `p.dilemma` as
+           restored. Found by the 2026-09-22 persistence audit. */
       if (p.dilemma && typeof p.dilemma === 'object') Profile.dilemma = p.dilemma;
-      }
       // 🧰 CRITICAL SAVE FIX — saveProfile() stringifies the WHOLE Profile to
       // localStorage, but this loader is a field whitelist. These player-
       // progress maps were missing from it, so every reload silently dropped
@@ -77631,6 +77688,141 @@ function loadForge() {
       // a reload that did not hydrate (offline, guest, local judged fresher)
       // came back with today's spent trades unspent.
       if (p.aiTrade && typeof p.aiTrade === 'object') Profile.aiTrade = p.aiTrade;
+      /* 🧾 PERSISTENCE AUDIT (2026-09-22) — THINGS PAID FOR. Every field below
+         was ALREADY in the cloud upload (cloudSyncProfile's forge blob) and the
+         cloud hydration, and missing from this list only — the two-of-three
+         trap the gymWars / campWorkforce / missions notes above describe. On a
+         same-device reload the boot saveProfile() stamps lastLocalEditAt, so
+         cloudFetchProfile takes the local-is-fresher branch, SKIPS hydration
+         and re-uploads local — i.e. these came back as the blank initialiser
+         and the blank was then written over the good cloud copy. Offline and
+         signed-out players never had the cloud half at all.
+         Each hydration merge is already a union / max / fill-if-absent, so
+         restoring the local copy first can only ADD to what a stale cloud row
+         brings — nothing here can undo a purchase.
+         Reproduced headless (_persistaudit_smoke.mjs): furniture bought with
+         Cinder, socket gems, crafted-weapon defs (itemInventory WAS restored,
+         so the weapon stayed "owned" with no definition and rendered as an
+         empty slot), dice skins, the 25,000-Cinder trader unlocks, Dojo /
+         Weapon Smith licences, personally-funded Just Business operations, the
+         Homestead Farm and the NPC wage pool all reset on reload. */
+      if (p.furnitureOwned  && typeof p.furnitureOwned  === 'object') Profile.furnitureOwned  = p.furnitureOwned;   // 🛋️ bought furniture
+      if (p.gemsOwned       && typeof p.gemsOwned       === 'object') Profile.gemsOwned       = p.gemsOwned;        // 💎 socket gems
+      if (p.craftedItems    && typeof p.craftedItems    === 'object') Profile.craftedItems    = p.craftedItems;     // 🔧 crafted weapon defs
+      if (Array.isArray(p.ownedDiceSkins))                            Profile.ownedDiceSkins  = p.ownedDiceSkins.filter(x => typeof x === 'string'); // 🎲 dice skins
+      if (typeof p.equippedDiceSkin === 'string' || p.equippedDiceSkin === null) Profile.equippedDiceSkin = p.equippedDiceSkin;
+      if (typeof p.equippedDiceSkinId === 'string' || p.equippedDiceSkinId === null) Profile.equippedDiceSkinId = p.equippedDiceSkinId;
+      if (Array.isArray(p.unlockedTraders))                           Profile.unlockedTraders = p.unlockedTraders.filter(x => typeof x === 'string'); // 🤝 25k-Cinder unlocks
+      if (p.traderStock     && typeof p.traderStock     === 'object') Profile.traderStock     = p.traderStock;      // 🤝 trader restock
+      if (p.dojoUnlocked === true)                                    Profile.dojoUnlocked    = true;               // 🥋 licence (one-way)
+      if (p.dojoStock       && typeof p.dojoStock       === 'object') Profile.dojoStock       = p.dojoStock;        // 🥋 dojo stock
+      if (p.weaponSmithUnlocked === true)                             Profile.weaponSmithUnlocked = true;           // 🔧 licence (one-way)
+      if (p.weaponSmith     && typeof p.weaponSmith     === 'object') Profile.weaponSmith     = p.weaponSmith;      // 🔧 bench + part-built weapon
+      if (Array.isArray(p.jbLocalOps))                                Profile.jbLocalOps      = p.jbLocalOps.filter(o => o && o.id); // 💼 personally-funded ops
+      if (p.farm            && typeof p.farm            === 'object') Profile.farm            = p.farm;             // 🐄 Homestead Farm
+      if (p.cityCards       && typeof p.cityCards       === 'object') Profile.cityCards       = p.cityCards;        // 🏙 cards slotted in the city
+      if (p.wagePool        && typeof p.wagePool        === 'object') Profile.wagePool        = p.wagePool;         // 💰 NPC wage pool balance
+      /* 🧾 PERSISTENCE AUDIT — PAID STATE THAT LIVED ON NO LIST AT ALL. These
+         were written by saveProfile() and read back by nothing, local or cloud,
+         while the code around each one says it persists:
+           kitchen        — the Kitchen's whole save (upgrades bought with Cinder);
+           rentals        — a Real Estate rental the player PAID rent for; the
+                            Dwelling locked again on the next reload;
+           tw_state       — Territory Wars guards hired, upgrades bought and the
+                            territory vault (ownership itself is re-read from
+                            tw_ownership, but that fetch keeps guards/upgrades
+                            from the local copy, which was empty);
+           reserveConvoys — Reserve convoys IN FLIGHT: the cargo is spent at
+                            dispatch, so a reload before arrival lost it outright;
+           walletOutbox   — failed Cinder credits queued for replay ("rides
+                            Profile … so the queue survives a reload" — it did not);
+           fieldShop      — the offline trader fallback, whose float is what
+                            stops a trader being a Cinder faucet (reload refilled it).
+         ⚠ Local only on purpose, except kitchen (see __kitchen__). A convoy or
+           an outbox entry replayed from a second device would deliver twice;
+           rentals are rebuilt cross-device from realty_listings in realtyFetch. */
+      if (p.kitchen         && typeof p.kitchen         === 'object') Profile.kitchen         = p.kitchen;          // 🍳 the Kitchen save
+      if (p.rentals         && typeof p.rentals         === 'object') Profile.rentals         = p.rentals;          // 🔑 paid rentals
+      if (p.tw_state        && typeof p.tw_state        === 'object') Profile.tw_state        = p.tw_state;         // 🗺 guards / upgrades / vault
+      if (Array.isArray(p.reserveConvoys))                            Profile.reserveConvoys  = p.reserveConvoys.filter(c => c && c.id); // 🚚 convoys in flight
+      if (Array.isArray(p.walletOutbox))                              Profile.walletOutbox    = p.walletOutbox.filter(c => c && c.ref); // 📮 credits to replay
+      if (p.fieldShop       && typeof p.fieldShop       === 'object') Profile.fieldShop       = p.fieldShop;        // 🏪 offline trader float + lots
+      /* 🔒 THE ONE-TIME RESET STAMPS (persistence audit 2026-09-22). The upload
+         block explains why __gearReset__ / __purgeReset__ / __seasonApplied__
+         exist: a stamp that does not travel lets a "one-time" wipe run again on
+         the next device. But the stamps were never read back HERE, so every
+         same-device reload that took the local-is-fresher branch uploaded ''
+         over the cloud stamp — erasing the very record those comments added,
+         and re-arming the wipe for the player's next device. Adopt-only, like
+         the hydration: a stamp is never cleared by a load. */
+      if (typeof p.gearResetApplied   === 'string' && p.gearResetApplied)   Profile.gearResetApplied   = p.gearResetApplied;
+      if (typeof p.purgeResetApplied  === 'string' && p.purgeResetApplied)  Profile.purgeResetApplied  = p.purgeResetApplied;
+      if (typeof p.seasonResetApplied === 'string' && p.seasonResetApplied) Profile.seasonResetApplied = p.seasonResetApplied;
+      /* 🧾 PERSISTENCE AUDIT — PROGRESS AND COOLDOWNS THE CLOUD ALREADY CARRIED.
+         Same two-of-three gap as the block above the Kitchen: uploaded and
+         hydrated, never restored here, so a same-device reload reset them and
+         re-uploaded the reset. Worst of them:
+           workSalt     — a NEW salt was minted on every reload, re-rolling what
+                          every unit is good at, and then pushed over the cloud's;
+           breedCooldowns — reload cleared every breeding rest timer;
+           will / permadeath / stabilizeBleeding — a bleeding-out unit was
+                          healed by F5;
+           labCampTombs — the deletion tombstones, uploaded as {} after a
+                          reload, so a discarded Lab core came back from the
+                          other device's union.
+         The rest (packHistory, squads, onboarding, tutorialsSeen, corpPick,
+         purgeReTutorial) are progress and choices that simply reset. */
+      if (p.breedCooldowns  && typeof p.breedCooldowns  === 'object') Profile.breedCooldowns  = p.breedCooldowns;   // 🧬 rest timers
+      if (typeof p.workSalt === 'string' && p.workSalt)               Profile.workSalt        = p.workSalt;         // 👷 work suitabilities
+      if (p.will            && typeof p.will            === 'object') Profile.will            = p.will;             // 🧠 will / panic
+      if (Array.isArray(p.permadeath))                                Profile.permadeath      = p.permadeath;       // 🩸 roll log
+      if (p.stabilizeBleeding && typeof p.stabilizeBleeding === 'object') Profile.stabilizeBleeding = p.stabilizeBleeding; // 🩸 bleed-out state
+      if (p.labCampTombs    && typeof p.labCampTombs    === 'object') Profile.labCampTombs    = p.labCampTombs;     // 🪦 removal tombstones
+      if (Array.isArray(p.packHistory))                               Profile.packHistory     = p.packHistory;      // 📦 opened packs
+      if (p.squads          && typeof p.squads          === 'object') Profile.squads          = p.squads;           // 🤝 squad bonds
+      if (p.onboarding      && typeof p.onboarding      === 'object') Profile.onboarding      = p.onboarding;       // 🎓 onboarding step
+      if (p.tutorialsSeen   && typeof p.tutorialsSeen   === 'object') Profile.tutorialsSeen   = p.tutorialsSeen;    // 🎓 tutorials seen
+      if (typeof p.corpPick === 'string' && p.corpPick)               Profile.corpPick        = p.corpPick;         // 🔀 corp acted in
+      if (p.purgeReTutorial === true)                                 Profile.purgeReTutorial = true;               // 🎓 purge re-tutorial
+      /* 🧾 PERSISTENCE AUDIT — COOLDOWNS, LATCHES AND CHOICES ON NO LIST AT ALL.
+         Each has a comment that assumes it survives a reload; none did.
+           _csBedRestAt / lastDreamAt — the bed-rest cooldown and the
+             one-dream-per-hour throttle: F5 re-armed both (free energy, and a
+             re-roll of a dream that can drop a medkit);
+           hunger / thirst — reset to 80 (a free meal for a starving camp, a
+             lost one for a fed camp);
+           ownedNodeEver — the latch whose whole job is to answer "when the
+             network cannot"; it was gone after every reload;
+           forceStarterPick — a purged player who reloaded before picking lost
+             the flag and, with battle history, was never shown the picker;
+           corpLaws — the charter's offline mirror ("survives offline" — it did not);
+           _corpXferSeen / _staffSeen — the seen-sets whose comment says a
+             memory-only set "repeats the toast on every reload";
+           the rest are preferences and dashboard counters. */
+      if (typeof p._csBedRestAt === 'number')                         Profile._csBedRestAt    = p._csBedRestAt;     // 🛏 bed-rest cooldown (re-anchored on read)
+      if (typeof p.lastDreamAt === 'number')                          Profile.lastDreamAt     = p.lastDreamAt;      // 🌙 1 dream / hour
+      if (typeof p.hunger === 'number')                               Profile.hunger          = p.hunger;           // 🍞 satiation (clamped on read)
+      if (typeof p.thirst === 'number')                               Profile.thirst          = p.thirst;           // 💧
+      if (p.ownedNodeEver === true)                                   Profile.ownedNodeEver   = true;               // 🗺 unlock latch
+      if (p.forceStarterPick === true)                                Profile.forceStarterPick = true;              // 🎴 re-pick after a purge
+      if (p.corpLaws        && typeof p.corpLaws        === 'object') Profile.corpLaws        = p.corpLaws;         // ⚖ charter mirror
+      if (p._corpXferSeen   && typeof p._corpXferSeen   === 'object') Profile._corpXferSeen   = p._corpXferSeen;    // 🔔 seen transfers
+      if (p._staffSeen      && typeof p._staffSeen      === 'object') Profile._staffSeen      = p._staffSeen;       // 🔔 seen job offers
+      if (p.campNodeContrib && typeof p.campNodeContrib === 'object') Profile.campNodeContrib = p.campNodeContrib;  // 🏗 my node contribution
+      if (p.cityPrint       && typeof p.cityPrint       === 'object') Profile.cityPrint       = p.cityPrint;        // 🃏 print-run counter (bounded)
+      if (p.readNotes       && typeof p.readNotes       === 'object') Profile.readNotes       = p.readNotes;        // 📜 notes read
+      if (typeof p.reserveSpecialty === 'string' && p.reserveSpecialty) Profile.reserveSpecialty = p.reserveSpecialty; // 🏭 camp specialty
+      if (typeof p.athenaAvatar === 'string' && !/[<>"']/.test(p.athenaAvatar)) Profile.athenaAvatar = p.athenaAvatar.slice(0, 80); // 🧍 hub character
+      if (typeof p.lastHuntCard === 'string')                         Profile.lastHuntCard    = p.lastHuntCard;     // 🎯 no-repeat hunt
+      /* 📋 A SIDE DECK ON LOAN WHEN THE PAGE DIED. startBattleWithPrep swaps the
+         side deck for the battle and keeps the real one in _sideDeckPreBattle;
+         any save during the match writes BOTH, and _sideDeckRestore puts it back
+         at the end. A reload mid-battle dropped the snapshot and kept the swap —
+         the "side deck is a loan, not a trade" bug, one F5 away. A reload always
+         ends the battle, so the loan is returned here and the snapshot dropped. */
+      if (Array.isArray(p._sideDeckPreBattle) && Profile.sideDeck && typeof Profile.sideDeck === 'object') {
+        Profile.sideDeck.cards = p._sideDeckPreBattle.slice(0);
+      }
       if (p.achievements && typeof p.achievements === 'object') {
         Profile.achievements = {
           earned: (p.achievements.earned && typeof p.achievements.earned === 'object') ? p.achievements.earned : {},
@@ -197381,6 +197573,20 @@ async function realtyFetch() {
     // ⌛ Drop my OWN expired rentals (I no longer hold Dwelling access there).
     const rentals = _reEnsureRentals();
     Object.keys(rentals).forEach(k => { if (rentals[k] && (rentals[k].until || 0) <= now) { delete rentals[k]; changed = true; } });
+    /* 🔑 …and ADOPT the ones the server says I am renting (persistence audit
+       2026-09-22). Profile.rentals was on no load list and no cloud list, so a
+       rental paid for in Cinder was forgotten on the next reload and never
+       existed on a second device. The row is the receipt: status 'rented',
+       buyer_id me, rent_until in the future. Additive only — a local entry is
+       never replaced, and an expired row is never adopted. */
+    for (const r of (data || [])) {
+      if (r.buyer_id !== me || r.status !== 'rented' || rentals[r.id]) continue;
+      const until = r.rent_until ? Date.parse(r.rent_until) : 0;
+      if (!(until > now)) continue;
+      const pj = r.prop_json || {};
+      rentals[r.id] = { until, name: pj.name || 'Rental', nodeId: r.node_id || null, residents: r.residents | 0, propId: r.prop_id || null };
+      changed = true;
+    }
     if (changed) { try { saveProfile(); } catch (e) {} }
     const rows = (data || []);
     RealtyMarket.open = rows.filter(r => r.status === 'open' && r.seller_id !== me).map(r => _reRowToListing(r, me));

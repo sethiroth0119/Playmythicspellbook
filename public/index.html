@@ -42999,6 +42999,61 @@ function _persistResourcesSoon() {
     try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
   }, 200);
 }
+/* 🧾 SALVAGE EDIT STAMP — when did THIS device last change the resource ledger?
+   🔴 bug-mu83ph17: "Foundation donations accepted but the resources reappear in
+   the vault." The hydration merge in cloudFetchProfile took MAX(local, cloud)
+   per resource, on the theory that a spend is uploaded before any fetch runs so
+   both sides already hold the lower number. That holds on ONE device and fails
+   on two: donate 500 Metal on the desktop (cloud now says 0), then open the
+   phone, whose local save still says 500 — the cloud row is fresher, the merge
+   runs, MAX keeps the phone's 500, and the phone uploads it. The Reserve kept
+   the contribution and paid the reward; the Metal came back to be donated
+   again. Every resource spend (market escrow, bank deposit, crafting) had the
+   same hole; the Reserve is simply where players spend the most at once.
+   So the ledger carries a stamp: saveProfile() moves Profile.salvageAt only
+   when the salvage map actually changed, it rides the upload as __salvageAt__,
+   and hydration lets the NEWER ledger win whole (_salvageHydrate). A row with
+   no stamp (older builds) still gets the old MAX merge, so nothing a stamp-less
+   device holds can be lost by this change. */
+let _salvageSig = null;
+function _salvageStampIfChanged() {
+  try {
+    const S = Profile.salvage;
+    if (!S || typeof S !== 'object') return;
+    const sig = JSON.stringify(S);
+    // First look after load only records the baseline — loading is not an edit.
+    if (_salvageSig !== null && sig !== _salvageSig) Profile.salvageAt = Date.now();
+    _salvageSig = sig;
+  } catch (e) {}
+}
+/* Merge a cloud salvage map into Profile.salvage. `cloudAt` is the uploader's
+   __salvageAt__ (0/absent on rows written by older builds).
+   • cloud stamp >= local stamp → the cloud ledger IS the newer ledger: adopt it
+     whole, including the DECREASES (that is the whole fix). In place, so a
+     caller holding _ensureResources() across an await keeps a live object.
+   • otherwise (legacy row, or this device edited later) → the old per-resource
+     MAX, which can never drop a count.
+   Returns 'adopted' | 'max' | 'none' so the smoke test can see which ran. */
+function _salvageHydrate(cl, cloudAt) {
+  if (!cl || typeof cl !== 'object') return 'none';
+  if (!Profile.salvage || typeof Profile.salvage !== 'object') Profile.salvage = {};
+  const L = Profile.salvage;
+  const cAt = Math.max(0, Number(cloudAt) || 0);
+  const lAt = Math.max(0, Number(Profile.salvageAt) || 0);
+  if (cAt > 0 && cAt >= lAt) {
+    for (const k in L) { if (!(k in cl)) delete L[k]; }
+    for (const k in cl) L[k] = Math.max(0, cl[k] | 0);
+    Profile.salvageAt = cAt;
+    try { if (typeof _ensureResources === 'function') _ensureResources(); } catch (e) {}
+    try { _salvageSig = JSON.stringify(Profile.salvage); } catch (e) {}   // adopting is not a local edit
+    return 'adopted';
+  }
+  for (const k in cl) {
+    const cv = cl[k] | 0, lv = L[k] | 0;
+    if (cv > lv) L[k] = cv;
+  }
+  return 'max';
+}
 // 🏰 STASH CAP (Tarkov rule, user-decided): secured storage holds a FINITE
 // number of resource units — base vault (8×10) = 2000; every Vendor-Market
 // vault container adds rows = +250 units per row. Gains beyond the cap are
@@ -51294,6 +51349,9 @@ async function cloudSyncProfile() {
       // still survives cache clears / new devices / cloud restores. It is
       // tiny (numeric map) so it never strains the forge payload.
       __salvage__:    (Profile.salvage && typeof Profile.salvage === 'object') ? Profile.salvage : {},
+      // 🧾 When this ledger was last edited on the uploading device — lets the
+      //    next hydration tell a newer ledger from an older one (bug-mu83ph17).
+      __salvageAt__:  Math.max(0, Number(Profile.salvageAt) || 0),
       // 📊 CX share positions — per-resource { qty, avgCost }. Pure-speculation
       // positions; never contain real resources (that's the exploit fix).
       __cxHoldings__: (Profile.cxHoldings && typeof Profile.cxHoldings === 'object') ? Profile.cxHoldings : {},
@@ -52381,12 +52439,10 @@ async function cloudFetchProfile() {
       ? data.forge.__salvage__
       : (data.salvage && typeof data.salvage === 'object' ? data.salvage : null);
     if (_cloudSalvage) {
-      if (!Profile.salvage || typeof Profile.salvage !== 'object') Profile.salvage = {};
-      const _loc = Profile.salvage, _cl = _cloudSalvage;
-      for (const k in _cl) {
-        const cv = _cl[k] | 0, lv = _loc[k] | 0;
-        if (cv > lv) _loc[k] = cv;
-      }
+      /* ⚠ Was an unconditional per-resource MAX — the "resources come back
+         after I donate them" dupe (bug-mu83ph17). Newer ledger wins now; see
+         _salvageHydrate for why and for the legacy fallback. */
+      _salvageHydrate(_cloudSalvage, (data.forge && typeof data.forge === 'object') ? data.forge.__salvageAt__ : 0);
     }
     if (typeof _ensureResources === 'function') _ensureResources();
     // 📊 Restore CX share holdings from cloud.
@@ -66276,6 +66332,7 @@ async function boeDepositRes(id, qty) {
   qty = Math.floor(qty);
   if (!BankEthos.ready) { showToast('Bank not ready.', 2600); return false; }
   if (_boeNeedCols()) return false;
+  if (typeof _readerTabRefuses === 'function' && _readerTabRefuses('bank resources')) return false;   // bug-mu83ph17 — same dupe shape
   if (!id || !(qty > 0)) { showToast('Enter an amount.'); return false; }
   const have = (typeof getRes === 'function') ? getRes(id) : 0;
   if (have < qty) { showToast('Need ' + qty.toLocaleString() + ' ' + _boeResName(id) + ' — you have ' + have.toLocaleString() + '.', 4200); return false; }
@@ -68526,8 +68583,24 @@ function _frFmtDur(ms) {
   const h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000);
   return h > 0 ? (h + 'h ' + m + 'm') : (m + 'm');
 }
+/* 🪟 A READER TAB CANNOT MOVE GOODS TO THE SERVER (bug-mu83ph17).
+   Every "stash → server" move here is a CLIENT debit plus a SERVER credit. In a
+   non-writer tab saveProfile() returns early and writes nothing, so the debit
+   exists only in that tab's memory while the credit (reserve_contributions, the
+   Cinder reward, the bank row) is real — reload and the goods are back, ready
+   to be given again. _boeTransfer's note records the same shape minting Cinder.
+   Refuse up front, before anything is taken. Strictly `=== false`: MultiTab
+   defaults to writer, so single-tab play never sees this. */
+function _readerTabRefuses(what) {
+  if (typeof MultiTab !== 'undefined' && MultiTab && MultiTab.amWriter === false) {
+    try { showToast('🪟 This tab is read-only — ' + what + ' from the tab that is active (close the other tab or refresh this one).', 4600); } catch (e) {}
+    return true;
+  }
+  return false;
+}
 async function frDeposit(resId, qty) {
   if (!initCloud() || !Profile.cloud.signedIn) { showToast('☁ Sign in to contribute to the Reserve.', 2600); return false; }
+  if (_readerTabRefuses('contribute to the Reserve')) return false;
   qty = Math.floor(qty);
   if (!resId || !(qty > 0)) { showToast('Pick a resource and amount.'); return false; }
   if (!(typeof _SALVAGE_BY_ID !== 'undefined' && _SALVAGE_BY_ID[resId])) { showToast('Unknown resource.'); return false; }
@@ -68606,6 +68679,7 @@ function _frConvoyRisk(escorted) {
 function _frConvoys() { if (!Array.isArray(Profile.reserveConvoys)) Profile.reserveConvoys = []; return Profile.reserveConvoys; }
 async function frConvoyDispatch(resId, qty, escort) {
   if (!initCloud() || !Profile.cloud.signedIn) { showToast('☁ Sign in to run a convoy.', 2600); return false; }
+  if (_readerTabRefuses('dispatch convoys')) return false;
   qty = Math.floor(qty);
   if (!resId || !(qty > 0)) { showToast('Pick a resource and amount.'); return false; }
   if (!(typeof _SALVAGE_BY_ID !== 'undefined' && _SALVAGE_BY_ID[resId])) { showToast('Unknown resource.'); return false; }
@@ -68649,6 +68723,10 @@ async function frConvoyTick() {
     const list = _frConvoys();
     if (!list.length) return false;
     if (!initCloud() || !Profile.cloud || !Profile.cloud.signedIn) return false;
+    // 🪟 Only the writer tab delivers: a reader tab would credit the Reserve
+    //    and pay the reward, but its splice of the convoy is never saved, so
+    //    the writer tab delivers the same convoy again (bug-mu83ph17).
+    if (typeof MultiTab !== 'undefined' && MultiTab && MultiTab.amWriter === false) return false;
     if (typeof FoundationReserve !== 'undefined' && FoundationReserve.tableMissing) return false;
     const now = Date.now();
     const due = list.filter(c => c.arriveAt <= now);
@@ -77309,6 +77387,7 @@ function loadForge() {
       // reload keeps them, and there's no transient-empty window that could
       // upload an empty blob over the good cloud copy.
       if (p.salvage         && typeof p.salvage         === 'object') Profile.salvage         = p.salvage;          // ⛏ resource ledger
+      if (typeof p.salvageAt === 'number')                            Profile.salvageAt       = p.salvageAt;        // 🧾 its edit stamp (bug-mu83ph17)
       // 🏕 Camp survival state — was MISSING from the whitelist, so every reload
       // silently reset raid defenses (Fortify), the rival's threat, the MIA /
       // Memorial rosters, the raid clock, AND research-project progress. Restore
@@ -80222,6 +80301,8 @@ function saveProfile() {
     // deck edits) on the next page load when the 4-second debounced cloud
     // upload didn't have time to fire before tab close.
     if (Profile.cloud) Profile.cloud.lastLocalEditAt = Date.now();
+    // 🧾 …and the resource ledger's own stamp, only if it changed (bug-mu83ph17).
+    _salvageStampIfChanged();
     // 🚀 PERF — stringify ONCE at the top. The quota-recovery branches
     // below used to call JSON.stringify(Profile) up to 4 times in a row;
     // on a Profile with replays + a few hundred resources that's
@@ -98670,8 +98751,12 @@ function _jbHandleAction(a) {
           }
           const qty = Math.floor(Number(a.qty) || 0);
           if (qty <= 0) { showToast('Enter an amount greater than zero.', 2600); return; }
-          const toId = (a.toId || '').toString();
-          if (!toId) { showToast('Pick who to pay.', 2600); return; }
+          /* 🏦 toSelf = the founder's "Withdraw treasury to my wallet" (bug-mu17gpcz).
+             Resolved HERE from the signed-in id, never taken from the iframe. It
+             is only honoured on the treasury path below: corp_pay_member from
+             your own wallet to your own wallet would be a pointless round trip. */
+          const toId = (a.toSelf ? ((a.fromTreasury && Profile.cloud.userId) || '') : (a.toId || '')).toString();
+          if (!toId) { showToast(a.toSelf ? 'Only the treasury can be withdrawn to your wallet.' : 'Pick who to pay.', 2600); return; }
 
           /* 💸 CINDER IS PAID, NOT POSTED — AND THIS IS THE WHOLE BUG.
              ═══════════════════════════════════════════════════════════════
@@ -98768,6 +98853,19 @@ function _jbHandleAction(a) {
                treasury is re-read instead, because that IS the balance that
                moved and the Guild panel shows it. */
             if (_fromTreasury) { try { await corpTreasuryFetch(); } catch (e) {} }
+            if (a.toSelf) {
+              /* 🏦 The payee is US: the server has already credited our canonical
+                 wallet by exactly qty, so the mirror moves by the same qty —
+                 tax-exempt, and NOT through addGems, which would mirror the
+                 credit to the server a second time. Moving by qty rather than
+                 adopting to_balance keeps any not-yet-mirrored local credit. */
+              try {
+                if (_pd && isFinite(Number(_pd.to_balance))) { _gemsTaxExempt(() => { Profile.gems = (Profile.gems | 0) + qty; }); saveProfile(); }
+              } catch (e) {}
+              showToast('🏦 Withdrew ' + qty.toLocaleString() + ' 🔥 from the corporation treasury — it is in your wallet now.', 4600);
+              try { corpEnsure().then(_jbSendData); } catch (e) { _jbSendData(); }
+              return;
+            }
             showToast('💸 Paid ' + qty.toLocaleString() + ' 🔥 to ' + (a.toName || 'them') +
                       (_fromTreasury ? ' from the corporation treasury' : '') +
                       ' — it is in their wallet now.', 4600);

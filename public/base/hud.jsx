@@ -93,12 +93,14 @@ function TopBar({ day = "DAY 047", clock = "02:14:32", threat = 38 }) {
       </div>
 
       <div className="hud-clock">
-        <div className="clock-block" title="Day cycle since the camp was founded">
+        {/* bug-mty87zhi: the world day and UTC time, the same clock as the
+            Camp console and the website (index.html gameClock). */}
+        <div className="clock-block" title="World day — the same day number as the Camp console and the website">
           <span className="clock-lbl">Cycle</span>
           <span className="clock-val day">{day}</span>
         </div>
-        <div className="clock-block" title="Bunker local clock">
-          <span className="clock-lbl">Local Time</span>
+        <div className="clock-block" title="World time (UTC) — the same clock as the Camp console and the website">
+          <span className="clock-lbl">UTC</span>
           <span className="clock-val">{clock}</span>
         </div>
         <div

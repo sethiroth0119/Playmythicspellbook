@@ -27,22 +27,22 @@ function App() {
   const rooms  = window.ROOMS;
   const active = rooms.find((r) => r.id === activeId) || null;
 
-  // simple ticking clock for HUD flavor
-  const [clock, setClock] = useState({ h: 2, m: 14, s: 32 });
+  /* 📅 THE WORLD CLOCK, READ FROM THE GAME (bug-mty87zhi). This used to be a
+     hard-coded "DAY 047" beside a counter that started at 02:14:32 on every
+     open — the design comp's mock data — so it agreed with nothing. The day
+     and time now come from the parent's gameClock() (index.html), the same
+     function the Camp console uses: world day + UTC, like the website. This
+     same-origin iframe reads it directly instead of copying the epoch.
+     Speed / pause no longer touch it — a world clock is not the bunker's to
+     pause. Standalone (no parent) it shows dashes rather than inventing one. */
+  const readClock = () => {
+    try { const g = window.parent && window.parent !== window && window.parent.gameClock; return typeof g === "function" ? g() : null; } catch (e) { return null; }
+  };
+  const [clock, setClock] = useState(readClock);
   useEffect(() => {
-    if (paused) return;
-    const id = setInterval(() => {
-      setClock((c) => {
-        let s = c.s + 1 * speed;
-        let m = c.m, h = c.h;
-        if (s >= 60) { m += Math.floor(s / 60); s %= 60; }
-        if (m >= 60) { h += Math.floor(m / 60); m %= 60; }
-        if (h >= 24) { h %= 24; }
-        return { h, m, s };
-      });
-    }, 1000);
+    const id = setInterval(() => setClock(readClock()), 1000);
     return () => clearInterval(id);
-  }, [speed, paused]);
+  }, []);
 
   // close on Escape
   useEffect(() => {
@@ -65,14 +65,14 @@ function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const fmt = (n) => String(n).padStart(2, "0");
-  const clockStr = `${fmt(clock.h)}:${fmt(clock.m)}:${fmt(clock.s)}`;
+  const clockStr = clock ? clock.hms : "--:--:--";
+  const dayStr = clock ? "DAY " + clock.dayStr : "DAY ---";
 
   return (
     <div
       className={`app chrome-${t.chrome}`}
     >
-      <TopBar day="DAY 047" clock={clockStr} threat={38} />
+      <TopBar day={dayStr} clock={clockStr} threat={38} />
       <LeftColumn />
       <RightColumn />
 

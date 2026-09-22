@@ -184328,6 +184328,42 @@ function _campCommandBarHtml() {
       </nav>`;
 }
 
+/* 📅 THE WORLD DAY + CLOCK — the ONE source for every "Day N / time" the camp
+   shows (bug-mty87zhi). Reported: three different days and times — the Bunker
+   said Day 047 at 02:xx, the Camp console Day 100 at the player's local 11:xx,
+   and the website Day 112 at 10:xx UTC. None of the in-game ones was a world
+   clock: the Bunker's was a HARD-CODED "DAY 047" and a React counter that
+   started at 02:14:32 on every open (mock data from the design comp); the
+   console's was the ACCOUNT's age beside the device's local time.
+   ⚖ UTC, like the website, so every player sees the same day at the same
+     instant; a local clock would make "Day N" roll over at a different moment
+     for each player.
+   ⚠ THE EPOCH IS AN INFERENCE, NOT A COPY. The website's source is not in this
+     repo (deploy-all.mjs: market-deploy). 2026-05-23T16:00Z is the initial
+     global reset (Forge.resetEpoch's original value) and gives Day 112 at the
+     report's 2026-09-12 10:12Z — matching the website on that one sample.
+     A UTC-midnight epoch on 05-24 would also match it. Confirm against the
+     website's code and change this ONE constant if it differs.
+   ⚠ Deliberately a constant and NOT Forge.resetEpoch: that value is bumped by
+     an admin wipe, and the world's day count must not restart with it.
+   ⚠ Node City's "Day N" is NOT this: it is the CITY's age (cityRealDay, from
+     the city's own foundedAt) under an EST sky, and it keys the city's
+     calendar rules. Only the camp's world clocks read here. */
+function gameClock(now) {
+  /* Inside the function, not a top-level const: this is called from renders
+     that can run before this line of the file has executed (TDZ). */
+  const GAME_DAY_EPOCH_MS = Date.parse('2026-05-23T16:00:00Z');
+  const t = Number(now) || Date.now();
+  const day = Math.max(1, Math.floor((t - GAME_DAY_EPOCH_MS) / 86400000) + 1);
+  const d = new Date(t);
+  const p2 = (n) => String(n).padStart(2, '0');
+  const hh = d.getUTCHours(), mm = d.getUTCMinutes(), ss = d.getUTCSeconds();
+  return { day, dayStr: String(day).padStart(3, '0'), hh, mm, ss, hm: p2(hh) + ':' + p2(mm), hms: p2(hh) + ':' + p2(mm) + ':' + p2(ss), tz: 'UTC' };
+}
+// The bunker (public/base, a same-origin iframe) reads the parent's clock
+// rather than keeping a copy of the epoch — one function, not two.
+try { window.gameClock = gameClock; } catch (e) {}
+
 // 🏕️ v118g0 — Camp Console top resource bar (mockup #2). Read-only strip wired to
 // REAL Profile/Camp data, gold-framed to match the Reconstruction Network console.
 function _campHudTopBar() {
@@ -184337,8 +184373,12 @@ function _campHudTopBar() {
   const def = (() => { try { return (Profile.campDefense | 0) + ((typeof researchBonus === 'function') ? researchBonus('defense') : 0); } catch (e) { return 0; } })();
   const power = (() => { try { const s = (typeof _campFacState === 'function') ? _campFacState('powerRelay') : null; return s ? (s.level | 0) : 0; } catch (e) { return 0; } })();
   const units = (() => { try { return (typeof _totalOwnedCards === 'function') ? _totalOwnedCards() : 0; } catch (e) { return 0; } })();
-  const day = (() => { try { const f = (Profile.createdAt || Profile.firstSeen || 0); return f ? (Math.floor((Date.now() - f) / 86400000) + 1) : ((Profile.stats && Profile.stats.daysActive) || 1); } catch (e) { return 1; } })();
-  const clock = (() => { try { const d = new Date(); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); } catch (e) { return ''; } })();
+  /* 📅 bug-mty87zhi — was account age (Profile.createdAt) beside the DEVICE's
+     local time, so it disagreed with the bunker and the website. Both now come
+     from gameClock(), the one world day + UTC time. */
+  const _gc = gameClock();
+  const day = _gc.day;
+  const clock = _gc.hm + ' UTC';
   const items = [
     ['Gold', '<span class="cinder-icon"></span>', (Profile.gems | 0), '#ffd166'],
     ['Supplies', '📦', R('supplies'), '#c9b98a'],

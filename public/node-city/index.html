@@ -31152,9 +31152,55 @@ const ECO_BUILDING_MAP = {
 /* Build the list MythicEconomy.syncBuildings() reconciles against. One entry
    per standing, undamaged business tile. Capacity scales with the tile's level,
    which is what makes upgrading a building mean something economically. */
+/* ⛏ ONE SEAM PER TILE, NOT ONE SEAM PER NODE (bug-mu2tq6op).
+   pickAvailable() answers "the best seam this ground has" — ONE id — so every
+   tile of a multi-seam extractor type used to work the SAME seam. That is right
+   for substitutes and fatal for complements, which is what these lists mostly
+   are: a Gas Station's gasoline needs crudeOil, the Refinery needs crudeOil AND
+   naturalGas, a Smelter needs ironOre AND coal — and all of each pair sit on ONE
+   row. Measured over 500 nodes: on 195 every Fuel Rig in the city worked
+   naturalGas, so thirteen rigs and a Gas Station still read "Crude Oil —
+   nothing in this city makes it"; on the other 271 the Refinery could never
+   get its gas. Same shape as the 🪵 wood note on ECO_BUILDING_MAP, one level up.
+   SO: the FIRST tile of a type still gets the best seam (identical to before for
+   a lone rig, farm or mine), and each further tile takes the ground-supported
+   seam its siblings are working LEAST, ties to the better grade. The choice is
+   stamped on the tile (`t.eco`, saved by serialize()) so it never flips: a
+   later build or a demolition cannot re-found a neighbour's business, which a
+   positional or recomputed rule would do on every change. A stamp the ground no
+   longer supports is dropped and re-chosen.
+   ⚠ Only rows whose outputs are ALL deposits and list more than one. Every
+     manufactured row keeps pickAvailable() exactly (its first non-deposit).
+   ⚠ ecoGroundRefusal() and the build previews still ask pickAvailable(): they
+     answer "does this ground support the building", which has not changed. */
+function _ecoSeamRank(E, list) {
+  const rank = [], left = list.slice();
+  for (;;) {                                   // best-first, by the economy's own ranking
+    const b = E.pickAvailable(left);
+    if (!b) return rank;
+    rank.push(b); left.splice(left.indexOf(b), 1);
+  }
+}
+function _ecoIsSeamRow(E, m) {
+  try {
+    return m.out.length > 1 && !!(E.recipes && typeof E.recipes.isDeposit === 'function') &&
+           m.out.every((id) => E.recipes.isDeposit(id));
+  } catch (e) { return false; }
+}
 function ecoBuildings() {
   const E = window.MythicEconomy; if (!E) return [];
   const out = [];
+  /* Pass 1 of the seam spread: what the stamped tiles already work, per type. */
+  const _seamRank = {}, _seamUsed = {};
+  for (const t of Object.values(game.tiles)) {
+    const m = t && ECO_BUILDING_MAP[t.type];
+    if (!m || t.damaged || bldSite(t) || !_ecoIsSeamRow(E, m)) continue;
+    const rank = _seamRank[t.type] || (_seamRank[t.type] = _ecoSeamRank(E, m.out));
+    if (typeof t.eco === 'string' && rank.indexOf(t.eco) >= 0) {
+      const u = _seamUsed[t.type] || (_seamUsed[t.type] = {});
+      u[t.eco] = (u[t.eco] || 0) + 1;
+    } else t.eco = null;
+  }
   for (const [k, t] of Object.entries(game.tiles)) {
     const m = ECO_BUILDING_MAP[t.type]; if (!m) continue;
     /* A damaged building is offline everywhere else in this city; it must be
@@ -31180,7 +31226,17 @@ function ecoBuildings() {
        would go red. Any future "simplification" of bldSite to bldBusy here is
        a data-loss bug wearing a green test suite. */
     if (t.damaged || bldSite(t)) continue;
-    const res = E.pickAvailable(m.out);
+    let res;
+    const rank = _seamRank[t.type];
+    if (rank) {
+      if (!t.eco && rank.length) {       // least-worked seam, ties to the better grade
+        const u = _seamUsed[t.type] || (_seamUsed[t.type] = {});
+        let pick = rank[0];
+        for (const id of rank) if ((u[id] || 0) < (u[pick] || 0)) pick = id;
+        t.eco = pick; u[pick] = (u[pick] || 0) + 1;
+      }
+      res = t.eco || null;
+    } else res = E.pickAvailable(m.out);
     if (!res) continue;                 // this ground supports none of them
     /* 🏢 THE FIRM'S NAME IS THE COMPANY THAT TOOK THE LOT, when one did.
        /src/tenants runs a market of NPC companies bidding for zoned plots; the
@@ -35285,9 +35341,25 @@ function pmFirmTerm(k) {
     source: 'MythicEconomy.diagnose(' + d.firmId + ')' + (b ? ' — ' + b.label : ''),
     /* VERBATIM. If this sentence is wrong it is wrong in bottleneck.js and must
        be fixed there, where the Just Business panel that already prints it will
-       pick the correction up too. */
-    fix: String(d.cause.fix || ''),
+       pick the correction up too.
+       🛢 …PLUS THE LIST, FOR NO_FEEDSTOCK ONLY (bug-mu2oz3ve). The sentence says
+       "any one of several feedstocks" and the economy panel prints them above
+       it — this card printed none, so a Fast Food owner read "feedstock" as the
+       Feedstock Plant's Chemical Feedstock and filed it as a missing link. The
+       ids are the firm's own (diagnose().feedstocks), prefixed as data, and an
+       id no building in the city map can make is SAID so rather than left for
+       the player to hunt for. */
+    fix: pmFeedstockLead(d) + String(d.cause.fix || ''),
   };
+}
+function pmFeedstockLead(d) {
+  try {
+    if (!d || !d.noLeg || !Array.isArray(d.feedstocks) || !d.feedstocks.length) return '';
+    const made = new Set();
+    for (const k in ECO_BUILDING_MAP) for (const o of (ECO_BUILDING_MAP[k].out || [])) made.add(o);
+    return 'Runs on ' + d.feedstocks.map((id) => _ecoResLabel(id) +
+      (made.has(id) ? '' : ' (no building makes it yet)')).join(', ') + '. ';
+  } catch (e) { return ''; }
 }
 
 function pmCostTxt(c) {
@@ -35992,7 +36064,12 @@ function openInspect(k) {
         crewBtn.disabled = !!(t.damaged || bldSite(t));
         crewBtn.textContent = bldSite(t) ? '👷 Workforce — still a site'
           : t.damaged ? '👷 Workforce — repair first'
-          : '👷 Post a worker — ' + used + ' / ' + slots;
+          /* bug-mu4mc2c8: the multiplier leads, not "0 / 200". A crew is a bonus
+             capped at 1 + BOOST_CAP (×2.00) that two or three good units reach; the post count
+             read as a quota of 200. See crew.city.js's picker for the sentence. */
+          : '👷 Post a worker — ' + ((CREW.multAt && CREW.work && CREW.work.WORK)
+              ? '×' + Number(CREW.multAt(selectedKey) || 1).toFixed(2) + ' of ×' + (1 + CREW.work.WORK.BOOST_CAP).toFixed(2) + ' · '
+              : '') + used + ' posted';
         crewBtn.onclick = crewBtn.disabled ? null : () => CREW.openTilePicker(selectedKey);
       }
     } catch (e) {}
@@ -42508,6 +42585,12 @@ function serialize() {
                     `null` on every non-road tile and on every road that is a
                     plain street, so no existing save grows by a byte. */
                  rc: (typeof t.rc === 'string' && t.rc) ? t.rc : null,
+                 /* ⛏ Which seam this extractor works (ecoBuildings' spread).
+                    MUST ride the save or it is re-chosen on load in whatever
+                    order the tiles come back, and a changed seam re-founds the
+                    business. Spread conditionally: only multi-seam extractors
+                    carry it, so no other save grows by a byte. */
+                 ...((typeof t.eco === 'string' && t.eco) ? { eco: t.eco } : {}),
                  card: t.card || null, cards: t.cards || null,
                  tenant: t.tenant || null, wear: Math.round(t.wear || 0),
                  /* 🛡 The grace-period birth stamp, on the game.cityAge clock.
@@ -43985,6 +44068,9 @@ async function loadState() {
                      Absent on every save written before this feature ⇒ null ⇒
                      the shipped street. */
                   rc: (typeof td.rc === 'string' && td.rc) ? td.rc : null,
+                  /* ⛏ The extractor's seam; validated against the ground by
+                     ecoBuildings(), which drops and re-chooses a stale one. */
+                  eco: (typeof td.eco === 'string' && td.eco) ? td.eco : null,
                   rot: (td.rot | 0) & 3,
                   card: td.card || null, cards: td.cards || null,
                   tenant: td.tenant || null, wear: td.wear || 0,

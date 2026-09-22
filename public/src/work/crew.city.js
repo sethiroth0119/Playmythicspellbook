@@ -767,6 +767,16 @@ function pickHtml() {
   try { warn = (CTX.postWarning && CTX.postWarning(k)) || null; } catch (e) { warn = null; }
   return '<div class="pbox"><h3>👷 Who works the ' + esc(def ? def.name : k) + '?</h3>' +
     '<div class="psub">Needs ' + needs + ' · <b>' + postsAt(k).length + ' / ' + slotsAt(k) + '</b> posts filled' +
+    /* 👷 THE HONEST NUMBER (bug-mu4mc2c8; HANDOFF-BUGS §4 option 1). "A Nuclear
+       Plant needs 200 workers and the city allows a handful" — the post count
+       read as a quota. It is not one: a crew is a pure BONUS (multFrom = 1 +
+       boost, nothing below ×1.00), the boost CAPS at ×2.00 (WORK.BOOST_CAP),
+       and two good units already reach ×1.56 (work.js's solved numbers). So
+       the sentence the player needed was the multiplier and the cap, next to
+       the post count and the city's crew size. No number is changed. */
+    '<br>Output now <b>' + W.multLabel(multAt(k)) + '</b> of the ×' + (1 + W.WORK.BOOST_CAP).toFixed(2) + ' a crew can reach — ' +
+      'two or three good units usually get there. Empty posts cost this building nothing: they are room, not a quota. ' +
+      'Your city fields ' + crewCap() + ' crew in all (' + CREW_MAX + ' at most; Housing and Resting Houses raise it).' +
     '<br>The figure is what each unit would add to THIS building. Anyone already posted elsewhere moves here.</div>' +
     (warn ? '<div class="pwarn">⚠ ' + esc(warn) + '</div>' : '') +
     (cands.length ? cands.map(o =>

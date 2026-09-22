@@ -34,7 +34,11 @@ ok(/const starved = \(firm\.cash \|\| 0\) <= 0 && !\(\(firm\.revenueDay \|\| 0\)
   ok(auto({ rung: 'HEALTHY', cash: 250, revenueDay: 0 }, 5) === null, 'a firm with cash does not');
   ok(auto({ rung: 'DEBT', cash: 30, revenueDay: 10 }, 5) !== null, 'DEBT still borrows as before');
 }
-ok(/A Bank in the city lends a starved business a few days of working capital automatically; without one it stays stuck here\./.test(BN), 'the Out-of-cash verdict says a Bank is what unsticks it');
+/* bug-mtsq62mg (reopened after v121v108): cash never gates a material, so the
+   Out-of-cash verdict is the BANKRUPT rung only, and it still names the Bank —
+   its loan is what keeps a starved firm off that rung. §5 of _firstload_smoke
+   drives classify() for the verdict itself. */
+ok(/A Bank in the city lends a starved business a few days of working capital automatically, which is what keeps it off this rung\./.test(BN), 'the Out-of-cash verdict says a Bank is what keeps a firm off the bankrupt rung');
 
 /* ── 2. the workers bottleneck carries the numbers ── */
 ok(/if \(top\.cause && top\.cause\.key === 'NO_WORKERS'\) \{[\s\S]*?const sn = Sim\.snapshot\(\);[\s\S]*?working-age residents are free to hire/.test(BN), 'primary(): NO_WORKERS prints free / working-age / employed / residents');

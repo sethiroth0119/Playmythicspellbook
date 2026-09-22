@@ -77390,6 +77390,7 @@ function loadForge() {
       if (p.bunkhouse && typeof p.bunkhouse === 'object') {
         Profile.bunkhouse = { built: p.bunkhouse.built ? 1 : 0,
                               house: (p.bunkhouse.house && typeof p.bunkhouse.house === 'object') ? p.bunkhouse.house : null };
+      }
       /* 🏛 DILEMMA STATE — standing with Ethos Heights, the cooldowns and the
          last-deck record. The same whitelist trap sideDeck, archonDeck and the
          Bunkhouse above all fell into, and one that Profile.cityProduction and
@@ -77402,9 +77403,13 @@ function loadForge() {
          would be forgotten between sessions. Shape is normalised by
          ensureState() in /src/dilemma/engine.js, which is absent-tolerant by
          contract — a missing or corrupt blob loads as a fresh standing, never
-         as a throw. */
+         as a throw.
+         ⚠ This line used to sit INSIDE the bunkhouse `if` above (its closing
+           brace came after it), so the standing was restored only for players
+           who had ever opened the Bunkhouse — everybody else lost it on every
+           reload while every text scan of this list showed `p.dilemma` as
+           restored. Found by the 2026-09-22 persistence audit. */
       if (p.dilemma && typeof p.dilemma === 'object') Profile.dilemma = p.dilemma;
-      }
       // 🧰 CRITICAL SAVE FIX — saveProfile() stringifies the WHOLE Profile to
       // localStorage, but this loader is a field whitelist. These player-
       // progress maps were missing from it, so every reload silently dropped

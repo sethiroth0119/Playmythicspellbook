@@ -51523,7 +51523,9 @@ async function cloudSyncProfile() {
          blob is small (no art, no data urls) and losing any of it is losing
          paid-for plant. */
       __refinery__:             (Profile.refinery && typeof Profile.refinery === 'object') ? Profile.refinery : {},
-      __covertActions__:        Array.isArray(Profile.covertActions)        ? Profile.covertActions        : [],
+      // 🏛️ Gym Core Wars — Core Trial badges + gym history (bug-mu0lf3vw).
+      __gymWars__:              (Profile.gymWars && typeof Profile.gymWars === 'object') ? Profile.gymWars : {},
+      __covertActions__:       Array.isArray(Profile.covertActions)        ? Profile.covertActions        : [],
       __covertActionHistory__:  Array.isArray(Profile.covertActionHistory)  ? Profile.covertActionHistory  : [],
       // 🆘 VIPs captured by the enemy (returns next-day raid).
       __twCapturedVips__:  Array.isArray(Profile.twCapturedVips) ? Profile.twCapturedVips : [],
@@ -53560,6 +53562,31 @@ async function cloudFetchProfile() {
           return units * 1e9 + ((r.lifetimeL | 0) + (r.lifetimeRevenue | 0));
         };
         if (_rank(f.__refinery__) > _rank(Profile.refinery)) Profile.refinery = f.__refinery__;
+      }
+      /* 🏛️ Gym Core Wars (bug-mu0lf3vw). A badge is earned once and never
+         revoked, so badges are a UNION (earliest earnedAt wins) and the
+         history log a union by coreId+claimedAt — a stale device signing in
+         can add a badge but never take one away. Lifetime bests take the max;
+         the remaining scalars fill in only where this device has none. */
+      if (f.__gymWars__ && typeof f.__gymWars__ === 'object' && Object.keys(f.__gymWars__).length) {
+        try {
+          const _cg = f.__gymWars__;
+          const _lg = _ensureGymWars();
+          const _cb = (_cg.badges && typeof _cg.badges === 'object') ? _cg.badges : {};
+          Object.keys(_cb).forEach((id) => {
+            const c = _cb[id]; if (!c) return;
+            const l = _lg.badges[id];
+            if (!l || ((Number(c.earnedAt) || 0) > 0 && (Number(c.earnedAt) || 0) < (Number(l.earnedAt) || Infinity))) _lg.badges[id] = c;
+          });
+          const _hk = (h) => h && (h.coreId + '|' + (Number(h.claimedAt) || 0));
+          const _seenH = new Set(_lg.history.map(_hk));
+          (Array.isArray(_cg.history) ? _cg.history : []).forEach((h) => { const k = _hk(h); if (k && !_seenH.has(k)) { _seenH.add(k); _lg.history.push(h); } });
+          ['bestPeakStreak', 'bestSupport'].forEach((k) => { _lg[k] = Math.max(Number(_lg[k]) || 0, Number(_cg[k]) || 0); });
+          Object.keys(_cg).forEach((k) => {
+            if (k === 'badges' || k === 'history' || k === 'bestPeakStreak' || k === 'bestSupport') return;
+            if (_lg[k] == null && _cg[k] != null) _lg[k] = _cg[k];
+          });
+        } catch (e) {}
       }
       if (Array.isArray(f.__covertActions__)) {
         /* 🜂 UNION BY ID, NOT REPLACE. The cloud upload is debounced four
@@ -77147,7 +77174,13 @@ function loadForge() {
          reload. The same trap as Covert Actions, and the reason that note
          above insists on all three. */
       if (p.refinery        && typeof p.refinery        === 'object') Profile.refinery            = p.refinery;             // 🛢 the Cracking Yard
-      if (Array.isArray(p.covertActions))                              Profile.covertActions       = p.covertActions;        // 🜂 running Covert Actions
+      /* 🏛️ GYM CORE WARS badges (bug-mu0lf3vw: "completed 7 of 8 Core Trials and
+         they all reset — a US-timezone reset?"). There is no timed reset
+         anywhere; Profile.gymWars was in NONE of the three whitelists, so the
+         badges lived only until the next reload or update and then came back
+         as the default `badges: {}`. Same trap as the Cracking Yard above. */
+      if (p.gymWars         && typeof p.gymWars         === 'object') Profile.gymWars             = p.gymWars;              // 🏛️ Core Trial badges
+      if (Array.isArray(p.covertActions))                            Profile.covertActions       = p.covertActions;        // 🜂 running Covert Actions
       if (Array.isArray(p.covertActionHistory))                        Profile.covertActionHistory = p.covertActionHistory;  // 🜂 collected ops
       if (p.convoy          && typeof p.convoy          === 'object') Profile.convoy              = p.convoy;               // 🚚 daily convoy slots used
       if (Array.isArray(p.twCapturedVips))                             Profile.twCapturedVips      = p.twCapturedVips;       // 🗺 captured VIPs

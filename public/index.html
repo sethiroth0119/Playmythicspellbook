@@ -72296,12 +72296,17 @@ function _auctWalletSpend(cur, amount) { return _curIsAza(cur) ? spendSovereigns
 /* An NPC winning a player's auction pays them, and for Aza that is newly
    created premium currency — so it goes through the reward rules like every
    other grant. The bid amount is passed as a REQUEST: sov_reward clamps it to
-   the auction_npc_sale band and applies the daily ceiling. The local bump
-   keeps the toast honest while the RPC lands. */
+   the auction_npc_sale band and applies the daily ceiling.
+   ⚠ No local bump any more. It "kept the toast honest" only when the server
+     paid the full bid; when it clamped (band tops out at 25) or refused (5 a
+     day, daily cap) the wallet showed Aza the next boot took back — the
+     bug-mu7bk9gy class, see sovRewardReply. The server's answer is toasted. */
 function _auctWalletAdd(cur, amount) {
   if (!_curIsAza(cur)) return addGems(amount);
-  addSovereigns(amount);
-  return sovReward('auction_npc_sale', amount);
+  return sovRewardReply('auction_npc_sale', amount).then(j => {
+    try { showToast('👑 Auction payout — ' + sovRewardNote(j) + '.', 5200); } catch (e) {}
+    return (j && j.ok === true) ? Math.max(0, Math.round(Number(j.granted) || 0)) : 0;
+  });
 }
 
 // ===== Auction listing creators (parallel to listCardForSale / listHeldItemForSale) =====
@@ -72520,7 +72525,8 @@ function sweepExpiredAuctions() {
     } else if (sellerIsPlayer) {
       // NPC bidder won — pay the seller in the auction's bid currency.
       _auctWalletAdd(bidCur, winAmount);
-      showToast(`💰 ${l.currentBidderName} won your auction — +${winAmount} ${bidCur === 'aza' ? '👑' : '🔥'}!`, 3200);
+      // Aza: the amount actually paid is toasted by _auctWalletAdd.
+      showToast(`💰 ${l.currentBidderName} won your auction${bidCur === 'aza' ? ` for ${winAmount} 👑` : ` — +${winAmount} 🔥`}!`, 3200);
     }
     // Log it for the Stock tab.
     logSale({
@@ -73006,13 +73012,46 @@ try { window.__mg = window.__mg || {}; window.__mg.wsBuyBlueprintAza = wsBuyBlue
    `requested` is honoured only for rules flagged client_amount, and is clamped
    to that rule's band server-side. */
 function sovReward(kind, requested) {
+  return sovRewardReply(kind, requested).then(j => (j && j.ok === true) ? Math.max(0, Math.round(Number(j.granted) || 0)) : 0);
+}
+/* The same call, but hands back the server's whole reply so a caller can say
+   WHY nothing was paid. Never null: no connection comes back as
+   { ok:false, error:'offline' }.
+   ⚠ WHY THIS EXISTS (bug-mu7bk9gy / mu8x9c2u / mu8rh141 / mu2s9wa7): the
+     gameplay grants used to bump Profile.sovereigns locally by the ADVERTISED
+     amount, print "+N Aza", and fire sov_reward without reading the answer. A
+     refusal (rate_limited, daily_cap, offline) carries no `aza`, so _sovAdopt
+     never corrected the bump: the debrief and the wallet both showed the Aza,
+     and the next boot's canonical adopt (walletFetchProgress) took it away —
+     "AZA not hitting the wallet". On an account whose canonical row reads 0
+     that adopt keeps local instead, so there the phantom Aza piled up for good
+     and failed wherever the server does the charging.
+     Callers now credit nothing locally and report what this returns. */
+function sovRewardReply(kind, requested) {
   const args = { p_kind: String(kind || '') };
   if (typeof requested === 'number' && isFinite(requested)) args.p_requested = Math.max(0, Math.floor(requested));
   return _sovRpc('sov_reward', args).then(j => {
     _sovAdopt(j);
-    if (!j || j.ok !== true) return 0;
-    return Math.max(0, Math.round(Number(j.granted) || 0));
-  });
+    return j || { ok: false, error: 'offline' };
+  }, () => ({ ok: false, error: 'offline' }));
+}
+/* One line for the player describing a sov_reward reply. */
+function sovRewardNote(j) {
+  try {
+    if (j && j.ok === true) {
+      const g = Math.max(0, Math.round(Number(j.granted) || 0));
+      return g > 0 ? ('+' + g + ' Aza credited to your wallet') : 'no Aza this time';
+    }
+    const e = j && j.error;
+    if (e === 'rate_limited') {
+      const days = Math.round((Number(j.window_seconds) || 0) / 86400);
+      return 'no Aza — the server pays this at most ' + (j.limit | 0) + '× per ' +
+        (days > 1 ? days + ' days' : 'day') + ', counted from when each payout was collected';
+    }
+    if (e === 'daily_cap') return 'no Aza — daily Aza reward cap (' + (j.cap | 0) + ') reached';
+    if (e === 'offline' || e === 'not_authenticated') return 'no Aza — not signed in / offline, so the server could not pay it';
+    return 'no Aza — the server declined (' + String(e || 'unknown') + ')';
+  } catch (x) { return 'Aza result unknown'; }
 }
 
 // ===== Account / Profile Level system =====
@@ -214416,8 +214455,15 @@ function _covertWeeklyUsesRemaining(missionId) {
   const def = COVERT_MISSIONS.find(m => m.id === missionId);
   if (!def || !def.weeklyLimit) return Infinity;
   const since = Date.now() - def.weeklyWindowMs;
-  const active = (Profile.covertActions || []).filter(m => m && m.missionId === missionId && m.startedAt >= since);
-  const completed = (Profile.covertActionHistory || []).filter(m => m && m.missionId === missionId && m.startedAt >= since);
+  /* ⚠ COUNT THE WAY THE SERVER COUNTS. sov_reward's limit (aza_reward_rules)
+     counts aza_reward_log rows, which are written at COLLECT time. This gate
+     counted by startedAt, so a run collected a day after it finished aged out
+     here a day before it aged out there: the client let the player redeploy,
+     the server refused the Aza, and the debrief printed "+1 Aza" anyway
+     (bug-mu7bk9gy). Every uncollected run will be logged when collected, so
+     it always counts; collected ones count by collectedAt. */
+  const active = (Profile.covertActions || []).filter(m => m && m.missionId === missionId && !m.collected);
+  const completed = (Profile.covertActionHistory || []).filter(m => m && m.missionId === missionId && (m.collectedAt || m.startedAt) >= since);
   const used = active.length + completed.length;
   return Math.max(0, def.weeklyLimit - used);
 }
@@ -214541,6 +214587,32 @@ function _covertGenerateReport(m) {
   } catch (e) { return ''; }
 }
 
+/* 👑 Ask the server for a covert run's Aza and write down what it ACTUALLY
+   paid. Replaces the "confirming" placeholder in the history entry and in any
+   debrief (open or queued) that shows this run, and toasts the outcome. The
+   placeholder is always resolved: sovRewardReply never returns null.
+   Used to be addSovereigns(n) + fire-and-forget sov_reward, which printed
+   "+1 Aza" even when the server refused (bug-mu7bk9gy / mu8x9c2u). */
+function _covertSettleAza(kind, instanceId) {
+  return sovRewardReply(kind).then(j => {
+    const note = sovRewardNote(j);
+    const fix = (e) => {
+      if (e && e.id === instanceId && typeof e.reward === 'string') {
+        e.reward = e.reward.replace('👑 Aza: confirming with the server…', '👑 ' + note + '.');
+      }
+    };
+    try {
+      (Profile.covertActionHistory || []).forEach(fix);
+      fix(App._covertResult);
+      (App._covertResultQueue || []).forEach(fix);
+      saveProfile();
+    } catch (e) {}
+    try { showToast('🜂 ' + (j && j.ok === true && (j.granted | 0) > 0 ? '' : '⚠ ') + 'Covert Action — ' + note + '.', 5200); } catch (e) {}
+    try { if (App.screen === 'resistanceRing') render(); } catch (e) {}
+    return j;
+  });
+}
+
 function _covertCollect(missionInstanceId) {
   const list = _covertList();
   const m = list.find(x => x.id === missionInstanceId);
@@ -214556,11 +214628,11 @@ function _covertCollect(missionInstanceId) {
       // 👑 Aza comes from the server. The 1-per-run payout and the "2 per week"
       //    limit both live in aza_reward_rules now — the limit used to be
       //    checked only here, which meant it was never actually enforced.
-      const a = 1;
+      //    ⚠ Nothing is credited locally and no amount is printed until the
+      //    server answers — see sovRewardReply and _covertSettleAza.
       if (typeof addCinders === 'function') addCinders(c);
-      addSovereigns(a);
-      sovReward('cv_resource');
-      payout = `+${c.toLocaleString()} Cinder, +${a} Aza`;
+      _covertSettleAza('cv_resource', m.id);
+      payout = `+${c.toLocaleString()} Cinder, 👑 Aza: confirming with the server…`;
     } else if (m.missionId === 'cv_intel') {
       // Reveal a Dark Event a few hours early — by adding 30min back
       // to its expiry so player has more time, or — if no events — just
@@ -214647,11 +214719,11 @@ function _covertCollect(missionInstanceId) {
     } else if (m.missionId === 'cv_recruit') {
       // 1000–2500 Cinder + 2 Aza, once per two weeks.
       const c = 1000 + Math.floor(Math.random() * 1501);
-      const a = 2;   // server-owned; see aza_reward_rules.cv_recruit
+      // Aza amount is server-owned (aza_reward_rules.cv_recruit) and reported
+      // by _covertSettleAza once the server has actually paid it.
       if (typeof addCinders === 'function') addCinders(c);
-      addSovereigns(a);
-      sovReward('cv_recruit');
-      payout = `+${c.toLocaleString()} Cinder, +${a} Aza, recruit contacts established.`;
+      _covertSettleAza('cv_recruit', m.id);
+      payout = `+${c.toLocaleString()} Cinder, recruit contacts established. 👑 Aza: confirming with the server…`;
     }
   } catch (e) { console.warn('[covert collect]', e); }
   m.collected = true;
@@ -253498,8 +253570,9 @@ function _twChosenAwardTrophy(chosen) {
     // 25 Aza ≈ $25 — the single largest grant in the game, so it is the last
     // one that should be mintable from the client. Amount + rate now live in
     // aza_reward_rules.tw_chosen_trophy.
-    addSovereigns(25);
-    sovReward('tw_chosen_trophy');
+    // Not bumped locally: a refused grant showed and then vanished at the
+    // next boot (bug-mu7bk9gy class; see sovRewardReply).
+    sovRewardReply('tw_chosen_trophy').then(j => { try { showToast('🏆 Chosen trophy — ' + sovRewardNote(j) + '.', 5200); } catch (e) {} });
   } catch (e) {}
   // Unique trophy relic — stored on the player inventory.
   try {
@@ -253508,7 +253581,7 @@ function _twChosenAwardTrophy(chosen) {
     Profile.itemInventory[trophyId] = (Profile.itemInventory[trophyId] | 0) + 1;
     try { saveProfile(); } catch (e) {}
   } catch (e) {}
-  showToast(`👑💀 ${chosen.name} permanently defeated! +50,000 Cinder, +25 Aza, +1 Chosen Trophy.`, 8000);
+  showToast(`👑💀 ${chosen.name} permanently defeated! +50,000 Cinder, +1 Chosen Trophy.`, 8000);
   _twLog('chosen', `👑 ${chosen.name} of ${chosen.regionId} fell — permadeath. The region's grip loosens.`);
 }
 
@@ -253726,10 +253799,12 @@ function _twCancelDarkEvent(darkEventId, sabotageNodeId) {
   // Reward — chunky Cinder + small Aza pop.
   try {
     if (typeof addCinders === 'function') addCinders(10000);
-    addSovereigns(5);
-    sovReward('dark_event_sabotage');   // amount + rate: aza_reward_rules
+    // amount + rate: aza_reward_rules. Reported from the server's answer, not
+    // bumped locally — a refused grant used to show "+5 Aza" and vanish at the
+    // next boot (same defect as bug-mu7bk9gy; see sovRewardReply).
+    sovRewardReply('dark_event_sabotage').then(j => { try { showToast('🜏 Sabotage bounty — ' + sovRewardNote(j) + '.', 5200); } catch (e) {} });
   } catch (e) {}
-  showToast(`🜏 Dark Event SABOTAGED — ${event.eventName || 'Operation'} cancelled! +10,000 Cinder, +5 Aza.`, 6500);
+  showToast(`🜏 Dark Event SABOTAGED — ${event.eventName || 'Operation'} cancelled! +10,000 Cinder.`, 6500);
   _twLog('darkEvent', `🜏 ${(_twPlayerCorp() && _twPlayerCorp().name) || 'Your corp'} sabotaged ${event.eventName} — event cancelled.`);
   try { saveForge(); } catch (e) {}
 }

@@ -184650,10 +184650,14 @@ function renderCamp() {
     <div class="forge-page camp-hud">
       ${_campHudTopBar()}
       <div class="forge-header">
-        <h2 class="section-title" style="position:relative;padding-left:3.2em"><img src="assets/artwork/gameicons/camp%20icon.png" alt="" style="position:absolute;left:0;top:50%;transform:translateY(-50%);width:2.8em;height:2.8em;object-fit:contain;filter:drop-shadow(0 4px 12px rgba(0,0,0,0.7));pointer-events:none"> Camp</h2>
+        <!-- bug-mtxkwv4m: the back control sits LEFT of the title, as on Pack Opening,
+             the Vault and the hub breadcrumb — it used to be the last thing on the right. -->
+        <div style="display:flex;gap:0.9rem;align-items:center;min-width:0">
+          <button class="btn-secondary keep-tab" id="btn-back-camp">${App.screen === 'campOps' ? '← Bunker' : '← Back to Menu'}</button>
+          <h2 class="section-title" style="position:relative;padding-left:3.2em"><img src="assets/artwork/gameicons/camp%20icon.png" alt="" style="position:absolute;left:0;top:50%;transform:translateY(-50%);width:2.8em;height:2.8em;object-fit:contain;filter:drop-shadow(0 4px 12px rgba(0,0,0,0.7));pointer-events:none"> Camp</h2>
+        </div>
         <div style="display:flex;gap:0.6rem;align-items:center">
           <span class="result-stat-pill" style="background:rgba(212,175,55,0.18);border-color:rgba(212,175,55,0.5);color:#ffd166;font-size:0.95rem;padding:0.3rem 0.8rem"><span class="cinder-icon"></span> ${Profile.gems || 0}</span>
-          <button class="btn-secondary keep-tab" id="btn-back-camp">${App.screen === 'campOps' ? '← Bunker' : '← Back to Menu'}</button>
         </div>
       </div>
       ${_campCommandBarHtml()}

@@ -46064,6 +46064,143 @@ function addUnopenedPacks(def, count, source) {
   return n;
 }
 
+/* 🎁 REWARD PACKS → THE REAL INVENTORY (grantUnopenedPack).
+   Season Pass pack tiers and coupon `packs` rewards used to call
+   grantUnopenedPack — which did not exist — and fall back to
+   `Profile.packInventory[id]++`, a map nothing ever read and loadForge never
+   restored. Every claimed reward pack was marked claimed and delivered nowhere.
+   The real store is Profile.unopenedPacks (addUnopenedPack/s above: rides
+   __unopenedPacks__ in the forge row, union-merged by entry id, opened by
+   openOnePackFromInventory), so reward packs now land there.
+   • `grantKey` names the claim ('sp:<season>:<track>:<tier>', 'cpn:<id>#<n>:<pack>').
+     It is recorded in Profile.packRewardGrants (synced, union-merged) and it
+     seeds the ENTRY ids, so the same claim granted twice — the claim itself and
+     the make-good below, or two devices — is one pack, not two.
+   • Reward ids are not always real pack ids: the Season Pass says 'starter' and
+     the coupon editor's placeholder says 'starter_pack', neither of which is in
+     PACK_DEFINITIONS. A real/custom pack with that id wins; otherwise they alias
+     to 'basic' (the entry pack). An unknown id still grants — the opener has a
+     default-pool fallback — because dropping a claimed reward is the bug.
+   Returns how many packs were added (0 = already granted / bad input). */
+const PACK_REWARD_ALIASES = { starter: 'basic', starter_pack: 'basic', starterpack: 'basic' };
+function _packRewardDef(packId) {
+  const id = String(packId || 'starter');
+  const find = (x) => {
+    const d = (typeof PACK_DEFINITIONS !== 'undefined') ? PACK_DEFINITIONS.find(p => p && p.id === x) : null;
+    if (d) return d;
+    try {
+      const c = ((typeof getAllCustomPacks === 'function') ? getAllCustomPacks() : (Forge.customPacks || [])).find(p => p && p.id === x);
+      if (c) return (typeof toEnginePackDef === 'function') ? toEnginePackDef(c) : c;
+    } catch (e) {}
+    return null;
+  };
+  const alias = PACK_REWARD_ALIASES[id.toLowerCase()];
+  return find(id) || (alias && find(alias))
+    || { id, name: id.replace(/[_-]+/g, ' ').replace(/\b\w/g, m => m.toUpperCase()) + ' Pack', icon: '📦' };
+}
+function grantUnopenedPack(packId, count, source, grantKey, opts) {
+  const n = Math.max(0, Math.min(VENDOR_PACK_BUY_MAX, (count == null ? 1 : count) | 0));
+  if (!n) return 0;
+  if (!Profile.packRewardGrants || typeof Profile.packRewardGrants !== 'object') Profile.packRewardGrants = {};
+  if (grantKey && Profile.packRewardGrants[grantKey]) return 0;
+  const def = _packRewardDef(packId);
+  Profile.unopenedPacks = Array.isArray(Profile.unopenedPacks) ? Profile.unopenedPacks : [];
+  const art = (typeof getPackImage === 'function' ? getPackImage(def.id) : null) || null;
+  const now = Date.now();
+  const stem = grantKey ? 'pk_rw_' + String(grantKey).replace(/[^A-Za-z0-9]+/g, '_').slice(0, 80)
+                        : 'pk_' + now.toString(36) + '_' + Math.floor(Math.random() * 1e6).toString(36);
+  const have = new Set(Profile.unopenedPacks.map(p => p && p.id));
+  let added = 0;
+  for (let i = 0; i < n; i++) {
+    const id = stem + '_' + i;
+    if (have.has(id)) continue;             // already here from another device
+    Profile.unopenedPacks.push({ id, packId: def.id, name: def.name || 'Mystery Pack', icon: def.icon || '📦',
+      art, purchasedAt: now, source: source || 'gift' });
+    added++;
+  }
+  if (grantKey) Profile.packRewardGrants[grantKey] = now;
+  if (!(opts && opts.persist === false)) {
+    try {
+      if (typeof saveProgressCloud === 'function') saveProgressCloud().catch(() => {});
+      else if (typeof saveProfile === 'function') saveProfile();
+    } catch (e) {}
+  }
+  return added;
+}
+// Grant keys shared by the claim paths and the make-good, so they can never disagree.
+function _seasonPackGrantKey(sp, track, tier) {
+  return 'sp:' + (((sp && sp.seasonNumber) | 0) || 1) + ':' + track + ':' + (tier | 0);
+}
+function _couponPackGrantKey(couponId, nth, packId) {
+  return 'cpn:' + couponId + '#' + (nth | 0) + ':' + packId;
+}
+/* 🩹 MAKE-GOOD for packs claimed while grantUnopenedPack did not exist.
+   The claims ARE on record — Profile.seasonPass.claimed*Tiers and
+   Profile.redeemedCoupons both ride the forge row — so the owed packs are
+   rebuilt from them under the same grant keys the live claim paths use:
+   idempotent, safe to re-run, a no-op once granted.
+   Limits: a season that has rolled over reset its claimed maps, so those
+   claims are gone; a coupon whose definition is not loaded yet is skipped and
+   picked up on a later run.
+   Also drains the legacy Profile.packInventory if a save still holds it (it
+   survives only in a blob written in the same session as the claim — the old
+   loader dropped it on every reload): anything BEYOND what the claims above
+   account for is granted once under 'inv:<id>', then the map is deleted.
+   Runs where the claim flags are current: at the end of every
+   cloudFetchProfile branch that keeps a profile, and at boot for a device
+   nobody has signed in on (no cloud fetch will ever come). */
+function _packRewardMakeGood(opts) {
+  let added = 0;
+  const covered = {};
+  try {
+    const sp = Profile.seasonPass;
+    if (sp && typeof sp === 'object' && typeof SEASON_FREE_REWARDS !== 'undefined') {
+      [['free', SEASON_FREE_REWARDS, sp.claimedFreeTiers], ['premium', SEASON_PREMIUM_REWARDS, sp.claimedPremiumTiers]].forEach(([track, table, claimed]) => {
+        Object.keys(claimed || {}).forEach(t => {
+          const rw = claimed[t] && table[t | 0];
+          if (!rw || rw.kind !== 'pack') return;
+          const rid = rw.id || 'starter', q = (rw.amount | 0) || 1;
+          covered[rid] = (covered[rid] | 0) + q;
+          added += grantUnopenedPack(rid, q, 'season', _seasonPackGrantKey(sp, track, t), { persist: false });
+        });
+      });
+    }
+    const red = Array.isArray(Profile.redeemedCoupons) ? Profile.redeemedCoupons : [];
+    if (red.length) {
+      const pool = [].concat(Array.isArray(Forge.coupons) ? Forge.coupons : [],
+        (typeof Catalog !== 'undefined' && Catalog && Array.isArray(Catalog.coupons)) ? Catalog.coupons : []);
+      const nth = {};
+      red.forEach(cid => {
+        const k = nth[cid] = (nth[cid] == null ? 0 : nth[cid] + 1);
+        const c = pool.find(x => x && x.id === cid);
+        const packs = c && c.rewards && c.rewards.packs;
+        if (!packs || typeof packs !== 'object') return;
+        Object.keys(packs).forEach(pid => {
+          const q = packs[pid] | 0; if (q <= 0) return;
+          covered[pid] = (covered[pid] | 0) + q;
+          added += grantUnopenedPack(pid, q, 'coupon', _couponPackGrantKey(cid, k, pid), { persist: false });
+        });
+      });
+    }
+    const inv = Profile.packInventory;
+    if (inv && typeof inv === 'object') {
+      Object.keys(inv).forEach(pid => {
+        const extra = (inv[pid] | 0) - (covered[pid] | 0);
+        if (extra > 0) added += grantUnopenedPack(pid, extra, 'gift', 'inv:' + pid, { persist: false });
+      });
+      delete Profile.packInventory;
+    }
+  } catch (e) { try { console.warn('[packRewardMakeGood]', e); } catch (_) {} }
+  if (added > 0) {
+    try { showToast('📦 ' + added + ' reward pack' + (added === 1 ? '' : 's') + ' that never arrived ' + (added === 1 ? 'is' : 'are') + ' now in your packs.', 5000); } catch (e) {}
+    // opts.persist === false: the caller saves + uploads right after (cloudFetchProfile).
+    if (!(opts && opts.persist === false)) {
+      try { if (typeof saveProgressCloud === 'function') saveProgressCloud().catch(() => {}); else saveProfile(); } catch (e) {}
+    }
+  }
+  return added;
+}
+
 // 📦 Open ONE pack of a given packId from inventory. Top-level so the reveal
 // modal's "Open Another" button can call it WITHOUT bouncing through a
 // render-empty-state intermediate frame (which was causing the flicker
@@ -51793,6 +51930,8 @@ async function cloudSyncProfile() {
       __ownedStarterDecks__: Array.isArray(Profile.ownedStarterDecks) ? Profile.ownedStarterDecks : [],
       // 🎁 Redeemed coupon ids — prevents double-claim across devices.
       __redeemedCoupons__:   Array.isArray(Profile.redeemedCoupons) ? Profile.redeemedCoupons : [],
+      // 🎁 Reward-pack grant ledger — the claim keys that already became packs.
+      __packRewardGrants__:  (Profile.packRewardGrants && typeof Profile.packRewardGrants === 'object') ? Profile.packRewardGrants : {},
       // 👤 Account meta (display name, level, XP, totalXp, email, createdAt).
       __account__:         (Profile.account         && typeof Profile.account         === 'object') ? Profile.account         : {},
       // 🕵️ Covert Actions (Resistance Ring missions) + history.
@@ -52488,6 +52627,7 @@ async function cloudFetchProfile() {
       // Keep local and re-upload so the account is restored cloud-side.
       if (data.settings) Profile.settings = { ...Profile.settings, ...data.settings };
       Profile.cloud.lastFetchAt = Date.now();
+      try { _packRewardMakeGood({ persist: false }); } catch (e) {}   // 🩹 owed reward packs; the save + upload below carry them
       saveProfile();
       try { if (typeof applySettingsLive === 'function') applySettingsLive(); } catch (e) { console.warn('[cloudFetch:recoveredLocal] applySettingsLive failed — saved audio/volume may not be re-applied to live elements', e); }
       try { cloudSyncProfile().catch((err) => { console.warn('[cloudFetch:recoveredLocal] re-upload promise rejected — cloud account may stay empty until next save', err); }); } catch (e) { console.warn('[cloudFetch:recoveredLocal] re-upload threw synchronously — cloud account recovery skipped', e); }
@@ -52500,6 +52640,7 @@ async function cloudFetchProfile() {
       // in sync. Then push local up so the cloud is current again.
       if (data.settings) Profile.settings = { ...Profile.settings, ...data.settings };
       Profile.cloud.lastFetchAt = Date.now();
+      try { _packRewardMakeGood({ persist: false }); } catch (e) {}   // 🩹 owed reward packs; the save + upload below carry them
       saveProfile();
       try { if (typeof applySettingsLive === 'function') applySettingsLive(); } catch (e) { console.warn('[cloudFetch:localIsFresher] applySettingsLive failed — saved audio/volume may not be re-applied', e); }
       // Fire-and-forget upload to make the cloud catch up to local.
@@ -53856,6 +53997,10 @@ async function cloudFetchProfile() {
           if (id && Profile.redeemedCoupons.indexOf(id) < 0) Profile.redeemedCoupons.push(id);
         });
       }
+      // 🎁 Reward-pack grant ledger — union (a key only ever gets added).
+      if (f.__packRewardGrants__ && typeof f.__packRewardGrants__ === 'object') {
+        Profile.packRewardGrants = Object.assign({}, f.__packRewardGrants__, Profile.packRewardGrants || {});
+      }
       // 👤 Account meta — single object overwrite + display name fallback.
       if (f.__account__ && typeof f.__account__ === 'object') {
         Profile.account = { ...(Profile.account || {}), ...f.__account__ };
@@ -54010,6 +54155,9 @@ async function cloudFetchProfile() {
       cloudFetchSprites().catch(() => { /* best-effort */ });
     }
     Profile.cloud.lastFetchAt = Date.now();
+    // 🩹 Owed reward packs — AFTER the seasonPass / redeemedCoupons / unopenedPacks
+    // merges above, so the claim flags are the account's and no pack is doubled.
+    try { _packRewardMakeGood({ persist: false }); } catch (e) {}
     saveProfile();
     // 💾 Sync dedicated cxHoldings key with whatever the cloud just restored.
     // This ensures the dedicated key is always up-to-date so the next boot
@@ -58635,14 +58783,11 @@ function claimSeasonReward(tier, track) {
       break;
     }
     case 'pack': {
-      // Add to pack inventory. Best-effort — fallback to direct increment.
-      try {
-        if (typeof grantUnopenedPack === 'function') grantUnopenedPack(reward.id || 'starter', 1);
-        else {
-          Profile.packInventory = Profile.packInventory || {};
-          Profile.packInventory[reward.id] = (Profile.packInventory[reward.id] | 0) + 1;
-        }
-      } catch (e) {}
+      // Into Profile.unopenedPacks via grantUnopenedPack. This used to fall
+      // back to Profile.packInventory, which nothing read — the pack vanished.
+      // Keyed by season/track/tier so _packRewardMakeGood never doubles it;
+      // no persist here, the save at the end of this function carries it.
+      try { grantUnopenedPack(reward.id || 'starter', (reward.amount | 0) || 1, 'season', _seasonPackGrantKey(sp, isPremium ? 'premium' : 'free', tier), { persist: false }); } catch (e) {}
       break;
     }
     case 'frame': {
@@ -77673,6 +77818,11 @@ function loadForge() {
       // bought share positions even though they were in the localStorage blob.
       if (p.cxHoldings     && typeof p.cxHoldings     === 'object') Profile.cxHoldings      = p.cxHoldings;       // 📈 CX share positions
       if (Array.isArray(p.unopenedPacks))                              Profile.unopenedPacks   = p.unopenedPacks;    // 📦 pack inventory
+      // 🎁 Reward-pack grant ledger (grantUnopenedPack) — which claims already became packs.
+      if (p.packRewardGrants && typeof p.packRewardGrants === 'object') Profile.packRewardGrants = p.packRewardGrants;
+      // 🩹 Legacy write-only reward map. Restored ONLY so _packRewardMakeGood can move
+      // what a save still holds into unopenedPacks; it deletes the field after.
+      if (p.packInventory && typeof p.packInventory === 'object')     Profile.packInventory   = p.packInventory;
       /* 🧾 THE OTHER HALF OF "pack purchases are not being tracked", and the same
          whitelist bug as bagsOwned / cxHoldings above. saveProfile() stringifies
          the WHOLE Profile, so `vendorSold` was written to hg_profile on every
@@ -141985,12 +142135,16 @@ function _applyCouponRewards(coupon) {
     });
   }
   // 📦 Packs
+  // Into Profile.unopenedPacks via grantUnopenedPack — this used to write
+  // Profile.packInventory, which nothing read, so the packs never arrived.
+  // The key's #n is how many times this coupon was redeemed BEFORE (the
+  // caller pushes the id after this runs), matching _packRewardMakeGood.
   if (r.packs && typeof r.packs === 'object') {
-    if (!Profile.packInventory) Profile.packInventory = {};
+    const nth = (Array.isArray(Profile.redeemedCoupons) ? Profile.redeemedCoupons : []).filter(x => x === (coupon && coupon.id)).length;
     Object.keys(r.packs).forEach(pid => {
       const q = (r.packs[pid] | 0); if (q <= 0) return;
-      Profile.packInventory[pid] = (Profile.packInventory[pid] | 0) + q;
-      lines.push(`📦 +${q} ${pid} pack${q === 1 ? '' : 's'}`);
+      grantUnopenedPack(pid, q, 'coupon', (coupon && coupon.id) ? _couponPackGrantKey(coupon.id, nth, pid) : null, { persist: false });
+      lines.push(`📦 +${q} ${_packRewardDef(pid).name || pid}`);
     });
   }
   return {
@@ -253084,6 +253238,16 @@ function renderBestiary() {
 
 // ============ BOOT ============
 loadForge();
+// 🩹 Owed reward packs for a device nobody has ever signed in on — no cloud
+// fetch will come to run _packRewardMakeGood, so run it here. A signed-in
+// device waits for cloudFetchProfile instead, so it grants against the
+// account's merged claims and inventory, not a possibly-stale local copy.
+setTimeout(() => {
+  try {
+    let owner = null; try { owner = localStorage.getItem(PROFILE_OWNER_KEY); } catch (e) {}
+    if (!owner && !(Profile.cloud && Profile.cloud.signedIn)) _packRewardMakeGood();
+  } catch (e) {}
+}, 5000);
 // 💰 CINDER-SPEND TAX — install the Profile.gems interceptor now that the
 // profile is loaded, then ARM it after a short settle window so boot-time
 // restores / the first cloud-profile merge don't get mistaken for a spend.

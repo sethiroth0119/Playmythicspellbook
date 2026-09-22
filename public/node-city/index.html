@@ -2989,13 +2989,33 @@ const MythicCityBridge = (() => {
     camps: (n.meta && (n.meta.connectedCamps | 0)) ||
            (n.meta && Array.isArray(n.meta.camps) ? n.meta.camps.length : 0) || 0,
   });
+  /* ⏱ bug-mtr5xz8t: boot() AWAITS the anchor ring and the city read in turn,
+     and neither had a bound. A managed city reads the OWNER's nodes over the
+     network here BEFORE loadState, so the first request after hours idle —
+     one that never answers — left the city on its control bars for ever
+     (the 9 s failsafe only lifts the spinner). A bound answers `fallback`,
+     the same value the call's own failure path already gives. */
+  const _ncBound = (p, ms, fallback) => {
+    let t = null;
+    const late = new Promise((res) => { t = setTimeout(() => {
+      try { console.warn('[city] a host read did not answer in ' + ms + ' ms — carrying on without it'); } catch (e) {}
+      res(fallback);
+    }, ms); });
+    const done = Promise.resolve(p);
+    done.then(() => clearTimeout(t), () => clearTimeout(t));
+    return Promise.race([done, late]);
+  };
+  B._bound = _ncBound;
   B.fetchNodes = async () => {
     if (B.mode === 'parent') {
       let foreign = false;
       try { if (typeof P.cityOwnerIdentity === 'function') foreign = ((P.cityOwnerIdentity() || {}).isOwner === false); } catch (e) {}
       try {
         if (typeof P.cityOwnerNodes === 'function') {
-          const own = await P.cityOwnerNodes();
+          const LATE = {};
+          const own = await _ncBound(P.cityOwnerNodes(), 10000, LATE);
+          // Unanswered is not "the owner holds no nodes" — spawnAnchors must not say so.
+          B.nodesUnknown = (own === LATE);
           if (Array.isArray(own)) return own.map(anchorRow);
         }
       } catch (e) {}
@@ -3852,7 +3872,10 @@ const MythicCityBridge = (() => {
         + (kept ? 'This device\'s refused save is kept at ' + ck : 'A newer refused save already sits at ' + ck + '; this one was older and is dropped')
         + '. Reloading the server row.');
     } catch (e) {}
-    try { if (typeof toast === 'function') toast('This city was changed on another device — reloading', 'bad'); } catch (e) {}
+    /* bug-mu6bxip6: "another device" read as "someone else is logged in to my
+       account". The other writer is as often the city's mayor (or its owner,
+       seen from the mayor's side) or a second tab — say so. */
+    try { if (typeof toast === 'function') toast('This city was saved from somewhere else since it loaded (another tab or device, or its mayor/owner) — reloading the latest copy', 'bad'); } catch (e) {}
     setTimeout(() => { try { location.reload(); } catch (e) {} }, 1500);
   }
   /* 🪦 A SERVER-SIDE DELETE OR MOVE IS NEVER RESURRECTED FROM LOCALSTORAGE.
@@ -3903,7 +3926,7 @@ const MythicCityBridge = (() => {
     try {
       const src = P || ((typeof window !== 'undefined' && window.parent !== window) ? window.parent : window);
       if (!src || typeof src.cityStateWasDeleted !== 'function') return null;
-      const a = await src.cityStateWasDeleted(node);
+      const a = await _ncBound(src.cityStateWasDeleted(node), 10000, null);   // null = not proven
       return a === true ? true : (a === false ? false : null);
     } catch (e) { return null; }
   }
@@ -3914,12 +3937,17 @@ const MythicCityBridge = (() => {
     if (B.mode === 'parent') {
       try {
         if (typeof P.cityStateLoad === 'function') {
-          const j = await P.cityStateLoad();
+          /* ⏱ Bounded (bug-mtr5xz8t — see _ncBound). The parent bounds each
+             row read itself; this covers the rest of its path (the claim, the
+             mayor's permission probe). No answer is an unproven read. */
+          const TIMED_OUT = {};
+          const j = await _ncBound(P.cityStateLoad(), 30000, TIMED_OUT);
           /* The parent flags a refused or ambiguous read. "No rows" and "RLS
              said no" are otherwise identical, and one of them must never be
              saved over. See the erasure guard on saveNow(). */
           try { B.loadUnsafe = !!P.__cityLoadUnsafe; } catch (e) { B.loadUnsafe = true; }
-          if (j) server = j;
+          if (j === TIMED_OUT) B.loadUnsafe = true;
+          else if (j) server = j;
         }
       } catch (e) { B.loadUnsafe = true; }
     }
@@ -27967,7 +27995,7 @@ function anchorSlots(n) {
 }
 async function spawnAnchors() {
   const nodes = await MythicCityBridge.fetchNodes();
-  if (!nodes.length) {
+  if (!nodes.length && !MythicCityBridge.nodesUnknown) {
     /* 🏛 Whose reserve is empty decides what is said: a mayor cannot license a
        node for a client, so telling them to would be the wrong instruction. */
     let mine = true;

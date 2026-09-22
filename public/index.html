@@ -98481,8 +98481,12 @@ function _jbHandleAction(a) {
           }
           const qty = Math.floor(Number(a.qty) || 0);
           if (qty <= 0) { showToast('Enter an amount greater than zero.', 2600); return; }
-          const toId = (a.toId || '').toString();
-          if (!toId) { showToast('Pick who to pay.', 2600); return; }
+          /* 🏦 toSelf = the founder's "Withdraw treasury to my wallet" (bug-mu17gpcz).
+             Resolved HERE from the signed-in id, never taken from the iframe. It
+             is only honoured on the treasury path below: corp_pay_member from
+             your own wallet to your own wallet would be a pointless round trip. */
+          const toId = (a.toSelf ? ((a.fromTreasury && Profile.cloud.userId) || '') : (a.toId || '')).toString();
+          if (!toId) { showToast(a.toSelf ? 'Only the treasury can be withdrawn to your wallet.' : 'Pick who to pay.', 2600); return; }
 
           /* 💸 CINDER IS PAID, NOT POSTED — AND THIS IS THE WHOLE BUG.
              ═══════════════════════════════════════════════════════════════
@@ -98579,6 +98583,19 @@ function _jbHandleAction(a) {
                treasury is re-read instead, because that IS the balance that
                moved and the Guild panel shows it. */
             if (_fromTreasury) { try { await corpTreasuryFetch(); } catch (e) {} }
+            if (a.toSelf) {
+              /* 🏦 The payee is US: the server has already credited our canonical
+                 wallet by exactly qty, so the mirror moves by the same qty —
+                 tax-exempt, and NOT through addGems, which would mirror the
+                 credit to the server a second time. Moving by qty rather than
+                 adopting to_balance keeps any not-yet-mirrored local credit. */
+              try {
+                if (_pd && isFinite(Number(_pd.to_balance))) { _gemsTaxExempt(() => { Profile.gems = (Profile.gems | 0) + qty; }); saveProfile(); }
+              } catch (e) {}
+              showToast('🏦 Withdrew ' + qty.toLocaleString() + ' 🔥 from the corporation treasury — it is in your wallet now.', 4600);
+              try { corpEnsure().then(_jbSendData); } catch (e) { _jbSendData(); }
+              return;
+            }
             showToast('💸 Paid ' + qty.toLocaleString() + ' 🔥 to ' + (a.toName || 'them') +
                       (_fromTreasury ? ' from the corporation treasury' : '') +
                       ' — it is in their wallet now.', 4600);

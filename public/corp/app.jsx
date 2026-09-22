@@ -353,8 +353,8 @@ function PayMemberModal({ member, econ, onClose, onPay }) {
   const fromTreasury = !!(econ && econ.amOwner && econ.corp);
   const have = Math.max(0, Math.floor(
     (fromTreasury ? (econ && econ.corpTreasury) : (econ && econ.cinders)) || 0));
-  const [amt, setAmt] = useState('100');
-  const [note, setNote] = useState('Work completed');
+  const [amt, setAmt] = useState(member.self ? String(have) : '100');
+  const [note, setNote] = useState(member.self ? 'Treasury withdrawal' : 'Work completed');
   const qty = Math.floor(Number(amt) || 0);
   const tooMuch = qty > have;
   const bad = !(qty > 0) || tooMuch;
@@ -433,7 +433,7 @@ function PayMemberModal({ member, econ, onClose, onPay }) {
 
         <div className="mono muted" style={{ fontSize: 11, lineHeight: 1.6 }}>
           {fromTreasury ? 'The Cinder leaves the corporation treasury' : 'The Cinder moves from your wallet'}
-          {' to ' + member.name + "'s wallet the moment you press Pay. "}
+          {' to ' + (member.self ? 'your own wallet' : member.name + "'s wallet") + ' the moment you press Pay. '}
           There is nothing for them to claim and nothing to cancel — check the amount first.
         </div>
       </div>
@@ -1384,6 +1384,19 @@ function CorpGuild({ econ, toast, onClose, onFound }) {
                     if (nm && t.trim().toLowerCase() !== nm.toLowerCase()) { window.alert('The name did not match — nothing was done.'); return; }
                     act({ kind: 'corpDissolve' }); onClose();
                   }}>🏢 Shut down corporation</button>
+                {/* 🏦 WITHDRAW THE TREASURY (bug-mu17gpcz). corp_dissolve refuses while
+                    the treasury holds Cinder, and the founder had no way to empty it
+                    into their own wallet: the roster hides Pay on the founder's own
+                    row. This is the SAME server path as paying a member —
+                    corp_pay_member_from_treasury (sql/107) with the founder as the
+                    payee: officer test and membership re-checked server-side, an
+                    append-only negative 'wage' row on corp_treasury, the wallet
+                    credited through _ct_cinder_give. Founder only, not CEOs. */}
+                {String(corp.role || '').toLowerCase() === 'founder' && (Number(econ && econ.corpTreasury) || 0) >= 1 && (
+                  <button className="btn ghost" style={{ marginBottom: 14, marginLeft: 8 }}
+                    title="Move Cinder from the corporation treasury into your own wallet — e.g. before shutting the corporation down."
+                    onClick={() => setPayTarget({ userId: null, name: 'Your wallet', self: true })}>🏦 Withdraw treasury to my wallet</button>
+                )}
                 <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase', marginBottom: 6 }}>
                   Applications {requests.length ? '· ' + requests.length : ''}
                 </div>
@@ -1415,6 +1428,8 @@ function CorpGuild({ econ, toast, onClose, onFound }) {
     {payTarget && <PayMemberModal member={payTarget} econ={econ}
       onClose={() => setPayTarget(null)}
       onPay={(qty, note) => { act({ kind: 'corpSend', toId: payTarget.userId, toName: payTarget.name,
+        /* 🏦 the founder's own wallet — the parent resolves it to the signed-in id */
+        toSelf: !!payTarget.self,
         assetKind: 'resource', itemId: 'cinder', name: 'Cinder', icon: '🔥', qty: qty, note: note,
         /* 💸 Which purse. The parent re-checks this against the server, which
            refuses an officer it does not recognise — this flag chooses the RPC,

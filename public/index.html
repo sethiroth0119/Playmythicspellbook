@@ -169194,11 +169194,10 @@ function bindBattleEvents() {
     App.state.gameOver = 'ai';
     // 🌐 MULTIPLAYER — if we're in a real online match, broadcast the
     // concession to the opponent so they immediately get the win screen
-    // instead of having to wait out the disconnect timer.
+    // instead of having to wait out the disconnect timer. (This used to call a
+    // MatchBroadcast.send that never existed — see _mpConcedeMatch.)
     try {
-      if (App.battlePrep && App.battlePrep.multiplayer && typeof MatchBroadcast !== 'undefined' && MatchBroadcast.send) {
-        MatchBroadcast.send({ type: 'concede', winner: 'opponent' });
-      }
+      if (App.battlePrep && App.battlePrep.multiplayer && typeof _mpConcedeMatch === 'function') _mpConcedeMatch();
     } catch (e) { console.warn('[concede] broadcast failed', e); }
     showToast('🏳 You conceded. Defeat recorded.', 3200);
     renderBattle();
@@ -176284,9 +176283,7 @@ function _forfeitByTurnTimeout() {
     // 🌐 MULTIPLAYER — tell the opponent immediately so they get the win screen
     // right away instead of waiting out a disconnect timer (mirrors Concede).
     try {
-      if (App.battlePrep && App.battlePrep.multiplayer && typeof MatchBroadcast !== 'undefined' && MatchBroadcast.send) {
-        MatchBroadcast.send({ type: 'concede', winner: 'opponent' });
-      }
+      if (App.battlePrep && App.battlePrep.multiplayer && typeof _mpConcedeMatch === 'function') _mpConcedeMatch();
     } catch (e) { try { console.warn('[timeout-forfeit] broadcast failed', e); } catch (_) {} }
     try { if (typeof showToast === 'function') showToast('⏱ Defeated — two missed turn timers in a row.', 4600); } catch (e) {}
     try { renderBattle(); } catch (e) {}
@@ -209473,8 +209470,36 @@ function _onRemoteGameOverArrived(payload) {
 function _mpResultIsLegitimate(finalState, endReason) {
   if (endReason === 'dc') return true;  // disconnect submits are intentional
   if (!finalState || !Array.isArray(finalState.units)) return false;
+  // 🏳 A CONCESSION ends the match with both heroes standing. Concede and the
+  // two-missed-timers forfeit both set concededByPlayer + gameOver='ai', and
+  // this guard refused them and then CLEARED gameOver — so in PvP a concession
+  // never reached the server, the conceder sat on "Confirming result…", the
+  // match un-ended itself on the next post-action check, and the opponent was
+  // never told (bug-mtylr070 "can't end a match, have to refresh"). Only a
+  // LOSS can be conceded (gameOver 'ai' = the opponent wins), so this cannot
+  // be used to award yourself a win.
+  if (finalState.concededByPlayer && finalState.gameOver === 'ai') return true;
   const deadHero = finalState.units.find(u => u && u.isHero && (u.alive === false || u.currentHp <= 0));
   return !!deadHero;
+}
+
+// 🏳 Close an online match as MY loss (Concede button, two-missed-timers
+// forfeit). Both callers used to call `MatchBroadcast.send(...)`, a method
+// MatchBroadcast has never had, so the typeof guard skipped it silently and
+// the concession stayed local. Record it with the server instead — the same
+// race-safe path a hero kill takes — which also broadcasts 'gameover' and
+// flips matches.winner_id, so the opponent's screen ends too. A concession is
+// unambiguous, so the conceder is not held on "Confirming result…" either.
+function _mpConcedeMatch() {
+  if (!(App.battlePrep && App.battlePrep.multiplayer)) return;
+  if (typeof USE_COLYSEUS_MP !== 'undefined' && USE_COLYSEUS_MP) {
+    if (typeof sendColyseusForfeit === 'function') sendColyseusForfeit();
+    return;
+  }
+  MatchBroadcast.gameOverResolved = true;
+  if (MatchBroadcast.opponentId && App.state) {
+    submitMatchResult(MatchBroadcast.opponentId, App.state, { endReason: 'concede' });
+  }
 }
 
 async function submitMatchResult(winnerUserId, finalState, opts) {
@@ -209506,7 +209531,9 @@ async function submitMatchResult(winnerUserId, finalState, opts) {
         matchId:   MatchBroadcast.matchId,
         winnerId:  winnerUserId,
         turns:     (finalState && finalState.turnNumber) || 0,
-        endReason: 'normal',
+        // 'concede' is recorded as such (matches.end_reason documents it);
+        // every other path keeps the value it always sent.
+        endReason: endReason === 'concede' ? 'concede' : 'normal',
       },
     });
     if (error) throw error;

@@ -14,7 +14,8 @@
         anchorAt kept
      D. anchorsLateRing — concludes on "owns some, none here"
      E. ownedNodeRows / bldNodeCo / thriveNodeLevel player-wide; popCap per city
-     F. econGroundId — server ground (owner only) → pin → TW node → legacy
+     F. econGroundId — existing cities pinned where they are; new cities get
+        their own ground (server id, owner only → TW node); mayors never mint
      G. cityTradePublish keys by the TW node
      H. _corpMemberCitiesFetch — TW ownership, legacy transition
      I. _ctPrimeCityIds — the node owner's row wins
@@ -199,30 +200,48 @@ const N = (id, site, level) => ({ id, node_type: 'supply', name: id, level: leve
     'sync % and allied camps stay per-city (read game.anchors)');
 }
 
-/* ── F. the economy's ground ─────────────────────────────────────────────── */
+/* ── F. the economy's ground: existing cities PINNED where they are ─────── */
 {
-  const ctx = { game: { anchors: [{ node: { id: 'prn-uuid' } }] }, MythicCityBridge: {} };
+  const ctx = { game: { anchors: [] }, MythicCityBridge: {} };
   vm.createContext(ctx);
   vm.runInContext(lineOf(NC, /var _econGroundPin = '';/) + '\n' + fnText(NC, 'econGroundId'), ctx);
-  const set = (b, pin) => { ctx.MythicCityBridge = b; vm.runInContext('_econGroundPin = ' + JSON.stringify(pin || ''), ctx); };
-  set({ serverGroundId: () => 'cg_owner', cityNodeId: () => 'N-25' });
-  ok(ctx.econGroundId() === 'cg_owner' && vm.runInContext('_econGroundPin', ctx) === 'cg_owner', 'owner: the server ground id, and it is pinned');
-  set({ nodesForeign: true, serverGroundId: () => 'cg_MAYOR', cityNodeId: () => 'N-25' }, 'cg_owner');
-  ok(ctx.econGroundId() === 'cg_owner', 'a mayor never grounds the owner\'s city on the MAYOR\'s minted id — the pin wins');
-  set({ nodesForeign: true, serverGroundId: () => 'cg_MAYOR', cityNodeId: () => 'N-25' });
-  ok(ctx.econGroundId() === 'N-25', 'mayor, no pin yet → the TW node (not pinned)');
-  ok(vm.runInContext('_econGroundPin', ctx) === '', 'the TW fallback is never pinned');
-  set({ serverGroundId: () => null, cityNodeId: () => 'N-25' });
-  ok(ctx.econGroundId() === 'N-25', 'owner, RPC not answered → TW node');
-  set({ serverGroundId: () => null, cityNodeId: () => null });
-  ok(ctx.econGroundId() === 'prn-uuid', 'no server id, no TW node → the old expression (standalone)');
-  ctx.game.anchors = [];
-  ok(ctx.econGroundId() === 'local-city', 'and finally local-city');
-  set({ serverGroundId: () => 'bad id!', cityNodeId: () => 'N-25' });
-  ok(ctx.econGroundId() === 'N-25', 'a malformed id is never used');
-  ok(/const nodeId = econGroundId\(\);/.test(NC) && !/const nodeId = \(game\.anchors && game\.anchors\[0\]/.test(NC), 'E.mount no longer grounds on anchors[0]');
+  const pin = () => vm.runInContext('_econGroundPin', ctx);
+  const reset = (b, p) => { ctx.MythicCityBridge = b; ctx.game.anchors = []; vm.runInContext('_econGroundPin = ' + JSON.stringify(p || ''), ctx); };
+  const owner = { serverGroundId: () => 'cg_owner', cityNodeId: () => 'N-25' };
+  // Lived city on a PRN ground: the per-city filter has emptied its ring — it must NOT move.
+  reset(Object.assign({ ownedNodes: [{ id: 'prn-elsewhere' }] }, owner));
+  ok(ctx.econGroundId({ nodeId: 'prn-old-ground', firms: {} }, 'established') === 'prn-old-ground' && pin() === 'prn-old-ground',
+    'an existing city keeps the ground its saved economy is on, and pins it');
+  ctx.game.anchors = [{ node: { id: 'prn-new-first' } }]; ctx.MythicCityBridge.ownedNodes = [{ id: 'other' }];
+  ok(ctx.econGroundId(null, 'established') === 'prn-old-ground', 'once pinned it never changes, whatever the anchors do later');
+  reset(owner);
+  ok(ctx.econGroundId({ nodeId: 'local-city' }, 'established') === 'local-city', 'a city on the shared local-city ground stays there (accepted)');
+  // Lived city whose blob has no nodeId: the OLD expression, from the old all-PRNs order.
+  reset(Object.assign({ ownedNodes: [{ id: 'first-of-all' }, { id: 'b' }] }, owner));
+  ctx.game.anchors = [{ node: { id: 'filtered-ring-first' } }];
+  ok(ctx.econGroundId({ firms: {} }, 'established') === 'first-of-all', 'no saved nodeId → the old all-PRNs ring\'s first PRN, not the filtered ring', pin());
+  reset(owner);
+  ok(ctx.econGroundId(null, 'established') === 'local-city', 'lived, no blob, no PRN → local-city, pinned', pin());
+  // New city: its own ground.
+  reset(owner);
+  ok(ctx.econGroundId(null, 'new') === 'cg_owner' && pin() === 'cg_owner', 'a NEW city takes the server ground id (owner), pinned');
+  reset({ serverGroundId: () => null, cityNodeId: () => 'N-25' });
+  ok(ctx.econGroundId(null, 'new') === 'N-25' && pin() === 'N-25', 'new city, RPC not answered → its TW node, pinned');
+  // Mayor never mints.
+  reset({ nodesForeign: true, serverGroundId: () => 'cg_MAYOR', cityNodeId: () => 'N-25' });
+  ok(ctx.econGroundId(null, 'new') === 'N-25', 'a mayor opening a NEW client city takes the TW node, never the mayor\'s minted id');
+  reset({ nodesForeign: true, serverGroundId: () => 'cg_MAYOR', cityNodeId: () => 'N-25' });
+  ok(ctx.econGroundId({ nodeId: 'owners-ground' }, 'established') === 'owners-ground', 'a mayor in a lived city pins the OWNER\'s current ground');
+  reset({ nodesForeign: true, serverGroundId: () => 'cg_MAYOR' }, 'owners-pin');
+  ok(ctx.econGroundId({ nodeId: 'x' }, 'established') === 'owners-pin', 'and an existing pin always wins');
+  // Unknown verdict: answer, never pin.
+  reset(Object.assign({ ownedNodes: [{ id: 'p1' }] }, owner));
+  ok(ctx.econGroundId(null, 'unknown') === 'p1' && pin() === '', 'an ambiguous read answers the legacy ground and pins nothing');
+  reset({ serverGroundId: () => 'bad id!', cityNodeId: () => 'N-25' });
+  ok(ctx.econGroundId(null, 'new') === 'N-25', 'a malformed id is never used');
+  ok(/const nodeId = econGroundId\(_pendingEconomy, _cityVerdict\);/.test(NC) && !/const nodeId = \(game\.anchors && game\.anchors\[0\]/.test(NC), 'E.mount grounds through econGroundId with the saved blob and verdict');
   ok(/econGround: _econGroundPin \|\| undefined,/.test(NC) && /_econGroundPin = \(typeof s\.econGround === 'string'\) \? s\.econGround : '';/.test(NC), 'the pin rides the city save (serialize + loadState)');
-  ok(/No deposit on this node/.test(readFileSync('./public/src/economy/sim.js', 'utf8')), 'an extractor on an absent deposit reports it (sim.js) — the honest first-load state');
+  ok(!/now stands on this city\\'s own ground/.test(NC) && !/economy now stands on its own ground/.test(NC), 'no "economy moved" toast/log — pinned cities do not move');
 }
 
 /* ── G. cityTradePublish keys by the TW node ─────────────────────────────── */

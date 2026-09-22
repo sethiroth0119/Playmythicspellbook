@@ -860,6 +860,10 @@ export function eventReadiness(event, node, world, now, E = STADIUM_ECON) {
     push('conc_' + r, CONC_ICO[r] || '📦', CONC_NAME[r] || r, status,
       fmt(have) + ' / ' + fmt(Math.ceil(want)) + ' ' + (CONC_NAME[r] || r).toLowerCase(),
       status === 'ok' ? null : concessionFix(r, shortBy, E));
+    /* The host offers "bring it in from your stash" for exactly this many
+       (bug-mucr6azr) — carried as a number so it is never parsed back out of
+       the detail string. */
+    checks[checks.length - 1].short = shortBy;
   }
 
   /* ⚡ Power */
@@ -920,12 +924,17 @@ export const CONC_ICO = { rations: '🍽', water: '💧', goods: '🎁', remedie
 export const CONC_NAME = { rations: 'Rations', water: 'Water', goods: 'Goods', remedies: 'Remedies' };
 function concessionFix(r, shortBy, E) {
   const cyc = E.cycleMinutes, R = E.readiness;
-  if (r === 'rations') return '→ Buy ' + fmt(shortBy) + ' on the Exchange, or run a 🥫 Cannery for '
+  /* ⚠ bug-mucr6azr: "Buy on the Exchange" alone was a dead end. A bought
+     ration lands in the player's STASH (a game resource since v121v105) and
+     the stadium reads CITY stock, so the player did as told, held hundreds, and
+     the planner still said 2. The stash has to be brought in — the 📥 button
+     on this row, or the Warehouse card. Remedies are the same promoted good. */
+  if (r === 'rations') return '→ Bring ' + fmt(shortBy) + ' in from your stash (buy them on the Exchange first if you have none), or run a 🥫 Cannery for '
     + Math.ceil(shortBy / R.canneryRationsPerMin) + ' more minutes ('
     + fmt(Math.round(R.canneryRationsPerMin * cyc)) + '/cycle)';
   if (r === 'water') return '→ Buy ' + fmt(shortBy) + ' 💧, or build ' + Math.max(1, Math.ceil(shortBy / (R.purifierWaterPerMin * cyc))) + ' 💧 Purifier';
   if (r === 'goods') return '→ Buy ' + fmt(shortBy) + ' 🎁, or build ' + Math.max(1, Math.ceil(shortBy / (R.machineShopGoodsPerMin * cyc))) + ' 🔧 Machine Shop';
-  if (r === 'remedies') return '→ Buy ' + fmt(shortBy) + ' 🩹, or build ' + Math.max(1, Math.ceil(shortBy / (R.clinicRemediesPerMin * cyc))) + ' 🏥 Clinic';
+  if (r === 'remedies') return '→ Bring ' + fmt(shortBy) + ' 🩹 in from your stash (or buy them first), or build ' + Math.max(1, Math.ceil(shortBy / (R.clinicRemediesPerMin * cyc))) + ' 🏥 Clinic';
   return '→ Buy ' + fmt(shortBy) + ' ' + r;
 }
 function fmt(n) { return Math.round(num(n)).toLocaleString('en-US'); }

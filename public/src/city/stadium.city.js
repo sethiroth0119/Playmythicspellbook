@@ -59,6 +59,29 @@ const DRAIN_ICO = E.CONC_ICO;
 let CTX = null;
 let OPEN_KEY = null;
 let LAST_RESULT = null;         // the most recent settlement, for the results screen
+/* 📥 bug-mucr6azr: "the planner says I have 2 rations — my wallet has several
+   hundred". Both numbers were true. Rations and remedies are CITY stock to the
+   city (what a concession draws on) AND game resources in the player's stash
+   since v121v105, and nothing ever moved stash → city: the Warehouse card only
+   sends the other way. So a player who bought rations — as this panel told
+   them to — held them where no stadium could see them.
+   Rejected: counting the stash as city stock inside the plan. Settlement is an
+   all-or-nothing journal with an inverse per op; a second, async ledger leg
+   per concession line would have to join it, and the city's own kitchens would
+   still not see the stash. Moving the goods in is one bridge spend plus one
+   stock write, the same shape as "send to stash" run backwards, and afterwards
+   every reader of city stock agrees.
+   This cache is ONLY for display — how many the button can offer. The move
+   itself re-reads the ledger (node-city stockPullFromStash). */
+const STASH_IDS = ['rations', 'remedies'];
+let STASH = {};
+async function refreshStash() {
+  if (!CTX || typeof CTX.stashCount !== 'function') return;
+  const next = {};
+  for (const r of STASH_IDS) { try { next[r] = Math.max(0, Math.floor(Number(await CTX.stashCount(r)) || 0)); } catch (e) { next[r] = 0; } }
+  STASH = next;
+  if (OPEN_KEY) render(OPEN_KEY);
+}
 
 /* ── per-tile state ────────────────────────────────────────────────────── */
 export function stadiumOf(t) {
@@ -618,6 +641,17 @@ function ensureCss() {
   try { const s = document.createElement('style'); s.id = 'stadium-css'; s.textContent = CSS; document.head.appendChild(s); } catch (e) {}
 }
 
+/* 📥 A short rations/remedies row offers the stash it can see (bug-mucr6azr). */
+function stashPullHtml(c) {
+  const r = c && typeof c.id === 'string' && c.id.indexOf('conc_') === 0 ? c.id.slice(5) : null;
+  if (!r || STASH_IDS.indexOf(r) < 0 || c.status === 'ok') return '';
+  if (!CTX || typeof CTX.pullFromStash !== 'function') return '';
+  const inStash = STASH[r] | 0, n = Math.min(inStash, Math.max(0, c.short | 0));
+  if (n < 1) return '<div class="cf" style="color:#8c96ad">Your stash holds ' + fmt(inStash) + ' ' + r + '.</div>';
+  return '<div style="margin-top:4px"><button class="sbtn" data-pull="' + r + '" data-want="' + n + '">📥 Bring ' +
+    fmt(n) + ' ' + r + ' in from your stash (' + fmt(inStash) + ' there)</button></div>';
+}
+
 /** ⭐ The prep checklist. Every failing row carries its fix. */
 export function renderEventReadiness(readiness) {
   if (!readiness) return '';
@@ -626,6 +660,7 @@ export function renderEventReadiness(readiness) {
       '<div class="chk ' + c.status + '"><div class="ci">' + c.ico + '</div><div class="cl">' +
       '<div class="cn">' + esc(c.label) + '</div><div class="cd">' + esc(c.detail) + '</div>' +
       (c.fix ? '<div class="cf">' + esc(c.fix) + '</div>' : '') +
+      stashPullHtml(c) +
       '</div><div class="cs">' + c.status.toUpperCase() + '</div></div>').join('') +
     '</div>';
 }
@@ -791,6 +826,21 @@ function onInput(ev) {
 async function onClick(ev) {
   if (ev.target.id === 'stadmod') return close();
   if (ev.target.id === 'stad-close') return close();
+  const pull = ev.target.closest && ev.target.closest('[data-pull]');
+  if (pull) {
+    const k = OPEN_KEY; if (!k || !CTX.pullFromStash) return;
+    const r = pull.dataset.pull, want = Number(pull.dataset.want) || 0;
+    pull.disabled = true;
+    let moved = 0;
+    try { moved = (await CTX.pullFromStash(r, want)) | 0; } catch (e) { moved = 0; }
+    try {
+      CTX.toast(moved > 0 ? '📥 ' + fmt(moved) + ' ' + r + ' brought in from your stash.'
+                          : '⚠ Nothing moved — the stash is empty or the warehouse shelf is full.', moved > 0 ? 'good' : 'bad');
+    } catch (e) {}
+    await refreshStash();
+    render(k);
+    return;
+  }
   if (ev.target.id === 'stad-head') {
     /* 🃏 The headliner is the Match Quality factor, and it is real card data —
        `power` off the player's own collection, not a number this module made
@@ -836,6 +886,7 @@ export function open(k) {
   if (!CTX) return;
   const t = CTX.game.tiles[k]; if (!t || t.type !== STADIUM_TYPE) return;
   ensureCss(); OPEN_KEY = k; render(k);
+  refreshStash().catch(() => {});
 }
 export function refresh() { if (OPEN_KEY) render(OPEN_KEY); }
 

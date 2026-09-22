@@ -4033,8 +4033,11 @@ const MythicCityBridge = (() => {
     }
     else if (B.mode === 'message') { const j = await rpc('loadCity', {}); if (j) server = j; }
     /* 💽 Opened now, and a TRUSTED server row carries this savedAt — the two
-       facts _cityEvictable orders and proves by (bug-mu424ej6). */
-    try { _cityLruNote(cityKey(), true, (server && !B.loadUnsafe) ? _savedAtOf(server) : 0); } catch (e) {}
+       facts _cityEvictable orders and proves by (bug-mu424ej6). Only then:
+       with nothing proven there is nothing to record, and a signed-out or
+       deferred city must add no key of its own (economy gauntlet round0v §3c
+       counts them). */
+    if (server && !B.loadUnsafe) { try { _cityLruNote(cityKey(), true, _savedAtOf(server)); } catch (e) {} }
     // Local copy — must never hand back a DIFFERENT person's city.
     try {
       const want = cityOwnerId();

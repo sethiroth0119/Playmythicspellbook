@@ -3693,6 +3693,70 @@ const MythicCityBridge = (() => {
      autosave retry it every minute and would otherwise fill the three-slot
      rail with the same line forever. The console line repeats on purpose. */
   let _localFailToasted = false;
+  /* 💽 bug-mu424ej6 "Browser Storage Warning … started with one city, now I see
+     it on others; raising the browser cache doesn't help". It can't: the limit
+     is localStorage's fixed ~5 MB per origin, not the disk cache. Every city
+     this browser opens — a mayor's client cities included — leaves its whole
+     serialized city (~150 KB each, the report's log shows 147,977 chars) at
+     cityKey(), plus a `:conflict` side copy per refused save, and NOTHING ever
+     removed one. A mayor running a dozen cities fills the origin, and from
+     then on every city's local save is refused.
+     So a refused write now makes room and tries again, removing — oldest-
+     opened first — only copies that are provably not the player's only one:
+       1. a city copy the SERVER HAS: the index below says a server save of at
+          least this `savedAt` was accepted (or loaded) on this device;
+       2. a `:conflict` / `:retired` side copy older than 7 days — support
+          copies, nothing reads them back (see _cityConflict / _retireLocal);
+       3. a copy of ANOTHER player's city (a mayor's cache of a client's: the
+          owner's server row is that city's authority) older than 7 days and
+          not written while its founding was undecided (`ecoDefer`) —
+          needed for copies saved before the index existed.
+     NEVER the city being saved, never the player's own city unless proven on
+     the server, never a deferred copy. Index: `nc_city_lru` =
+     { key: { o: last opened ms, s: highest savedAt the server confirmed } }. */
+  const CITY_LRU_KEY = 'nc_city_lru';
+  const CITY_SIDE_COPY_AGE_MS = 7 * 24 * 3600 * 1000;
+  function _cityLru() {
+    try { const m = JSON.parse(localStorage.getItem(CITY_LRU_KEY) || '{}'); return (m && typeof m === 'object' && !Array.isArray(m)) ? m : {}; } catch (e) { return {}; }
+  }
+  function _cityLruNote(k, opened, serverSavedAt) {
+    try {
+      const m = _cityLru(); const r = m[k] || {};
+      if (opened) r.o = Date.now();
+      if (serverSavedAt > 0) r.s = Math.max(+r.s || 0, serverSavedAt);
+      m[k] = r;
+      localStorage.setItem(CITY_LRU_KEY, JSON.stringify(m));
+    } catch (e) {}
+  }
+  B.cityLruNote = _cityLruNote;
+  const _isQuotaErr = (e) => {
+    try { const n = e && e.name; return n === 'QuotaExceededError' || n === 'NS_ERROR_DOM_QUOTA_REACHED' || (e && (e.code === 22 || e.code === 1014)) || /quota/i.test(String(e && e.message)); } catch (_) { return false; }
+  };
+  function _cityEvictable(keep) {
+    const out = [];
+    let me = null;
+    try { me = (P && typeof P.cityOwnerIdentity === 'function') ? ((P.cityOwnerIdentity() || {}).viewerId || null) : null; } catch (e) {}
+    const lru = _cityLru(), now = Date.now(), keys = [];
+    try { for (let i = 0; i < localStorage.length; i++) keys.push(localStorage.key(i)); } catch (e) {}
+    for (const k of keys) {
+      if (!k || k === keep || k.indexOf(keep + ':') === 0) continue;          // the city being saved, and its side copies
+      if (k !== CITYKEY_BASE && k.indexOf(CITYKEY_BASE + ':') !== 0) continue;
+      let raw = null, o = null;
+      try { raw = localStorage.getItem(k); o = JSON.parse(raw); } catch (e) {}
+      if (raw == null) continue;
+      const at = (o && Number.isFinite(+o.savedAt)) ? +o.savedAt : 0;
+      const side = /:(conflict|retired)$/.test(k);
+      const e = lru[k] || {};
+      let tier = 0;
+      if (!side && +e.s > 0 && at > 0 && at <= +e.s) tier = 1;
+      else if (side && at > 0 && now - at > CITY_SIDE_COPY_AGE_MS) tier = 2;
+      else if (!side && !(+e.s > 0) && o && !o.ecoDefer && me && o._owner && o._owner !== me && at > 0 && now - at > CITY_SIDE_COPY_AGE_MS) tier = 3;
+      if (tier) out.push({ k, tier, o: +e.o || 0, n: raw.length });
+    }
+    out.sort((a, b) => (a.tier - b.tier) || (a.o - b.o));
+    return out;
+  }
+  B.cityEvictable = _cityEvictable;
   B.saveCity = async (json, opts) => {
     /* 🔢 A CONFLICT IS BEING RESOLVED BY A RELOAD — nothing may be written
        until it lands, not even locally. The local half below would put this
@@ -3736,13 +3800,26 @@ const MythicCityBridge = (() => {
       localStorage.setItem(cityKey(), out);
       localOk = true;
       B.lastLocalSaveFailed = false;
-    } catch (e) {
-      B.lastLocalSaveFailed = true;
+    } catch (e0) {
+      let e = e0;
       let k = '?'; try { k = cityKey(); } catch (_) {}
-      try { console.warn('[city] LOCAL SAVE FAILED — localStorage.setItem threw for key ' + k + ' (' + String(out).length + ' chars) — this device holds no copy of these builds.', e); } catch (_) {}
-      if (!_localFailToasted) {
-        _localFailToasted = true;
-        try { if (typeof toast === 'function') toast('💽 This browser refused to store your city (storage full) — your builds are not saved on this device.', 'bad'); } catch (_) {}
+      /* 💽 Full? Make room from the copies _cityEvictable proves safe, one at a
+         time, retrying after each (bug-mu424ej6). */
+      if (k !== '?' && _isQuotaErr(e0)) {
+        const gone = [];
+        for (const c of _cityEvictable(k)) {
+          try { localStorage.removeItem(c.k); gone.push(c.k + ' (' + c.n + ' chars, rule ' + c.tier + ')'); } catch (_) { continue; }
+          try { localStorage.setItem(k, out); localOk = true; break; } catch (e2) { e = e2; }
+        }
+        if (gone.length) { try { console.warn('[city] storage full — removed ' + gone.length + ' older city cop' + (gone.length === 1 ? 'y' : 'ies') + ' this device no longer needs: ' + gone.join(', ') + (localOk ? ' — saved.' : ' — still not enough room.')); } catch (_) {} }
+      }
+      B.lastLocalSaveFailed = !localOk;
+      if (!localOk) {
+        try { console.warn('[city] LOCAL SAVE FAILED — localStorage.setItem threw for key ' + k + ' (' + String(out).length + ' chars) — this device holds no copy of these builds.', e); } catch (_) {}
+        if (!_localFailToasted) {
+          _localFailToasted = true;
+          try { if (typeof toast === 'function') toast('💽 This browser refused to store your city (storage full) — your builds are not saved on this device.', 'bad'); } catch (_) {}
+        }
       }
     }
     // A local-only save never reached the server: false, so the caller's
@@ -3772,6 +3849,7 @@ const MythicCityBridge = (() => {
           return false;
         }
         {
+          let _lk = null; try { _lk = cityKey(); } catch (e) {}   // this copy's key, for the eviction index
           const ok = await P.cityStateSave(json);
           /* 🔢 THE SERVER ROW MOVED UNDER US. cityStateSave writes only over the
              version it read, and answers { ok:false, conflict:true } when that
@@ -3790,6 +3868,8 @@ const MythicCityBridge = (() => {
             return false;
           }
           B.lastServerSaveFailed = false;
+          // 💽 The server now holds this savedAt: the device copy may be evicted once another city needs the room.
+          if (_lk) _cityLruNote(_lk, true, _savedAtOf(out));
         }
       } catch (e) {
         B.lastServerSaveFailed = true;
@@ -3952,6 +4032,9 @@ const MythicCityBridge = (() => {
       } catch (e) { B.loadUnsafe = true; }
     }
     else if (B.mode === 'message') { const j = await rpc('loadCity', {}); if (j) server = j; }
+    /* 💽 Opened now, and a TRUSTED server row carries this savedAt — the two
+       facts _cityEvictable orders and proves by (bug-mu424ej6). */
+    try { _cityLruNote(cityKey(), true, (server && !B.loadUnsafe) ? _savedAtOf(server) : 0); } catch (e) {}
     // Local copy — must never hand back a DIFFERENT person's city.
     try {
       const want = cityOwnerId();

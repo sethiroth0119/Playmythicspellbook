@@ -13,6 +13,10 @@
      stalled first open above, left behind by exit-and-re-enter) resolved after
      the new open had read and saved, put the older row version back on record,
      and the next autosave was refused against this device's own write.
+   · bug-mu424ej6 "Browser Storage Warning" — every client city a mayor opens
+     leaves a ~150 KB copy in localStorage and nothing ever removed one. A full
+     origin now evicts the least-recently-opened copies the server has
+     confirmed, never the city on screen and never an unconfirmed one.
 
    Run: node _cityload_smoke.mjs */
 import { readFileSync } from 'fs';
@@ -164,6 +168,57 @@ const blob = (o, n) => JSON.stringify(Object.assign({ tiles: { '1,1': { type: 'h
   const l = await settle(B.loadCity(), 3000);
   ok(l.done && l.v === null && B.loadUnsafe === true, 'a city read that never answers is an UNPROVEN read (null + loadUnsafe) — boot then reads again', JSON.stringify(l) + ' unsafe=' + B.loadUnsafe);
   ok(/if \(_loadFailed && !Object\.keys\(game\.tiles \|\| \{\}\)\.length\) \{\s*await new Promise\(\(r\) => setTimeout\(r, 2500\)\);/.test(NC), '…and boot() reads again when the first read was unproven and nothing local stood in');
+}
+
+/* ── 4. bug-mu424ej6: a full origin evicts only copies this device no longer needs ── */
+{
+  const now = Date.now(), DAY = 864e5, base = 'mythic_node_city_v2:';
+  const seed = {
+    [base + 'me@N-1']: blob({ _owner: 'me', _node: 'N-1', savedAt: now - 2 * DAY }, 30000),            // own, server has it → rule 1
+    [base + 'client1@N-5']: blob({ _owner: 'client1', _node: 'N-5', savedAt: now - 10 * DAY }, 30000),  // client, legacy, old → rule 3
+    [base + 'client2@N-6']: blob({ _owner: 'client2', _node: 'N-6', savedAt: now - 10 * DAY, ecoDefer: 1 }, 30000), // deferred → never
+    [base + 'me@N-2']: blob({ _owner: 'me', _node: 'N-2', savedAt: now - 10 * DAY }, 30000),            // own, unproven → never
+    [base + 'me@N-3:conflict']: blob({ _owner: 'me', _node: 'N-3', savedAt: now - 10 * DAY }, 30000),   // old side copy → rule 2
+    [base + 'client3@N-7']: blob({ _owner: 'client3', _node: 'N-7', savedAt: now - DAY }, 30000),       // client, recent, unproven → never
+    nc_city_lru: JSON.stringify({ [base + 'me@N-1']: { o: now - 5 * DAY, s: now - 2 * DAY } }),
+    hg_profile: pad(40000),                                                                              // the rest of the game
+  };
+  const LS = quotaLS(0, seed);
+  let used = 0; for (const [k, v] of LS.m) used += k.length + v.length;
+  const P = { getRes: () => 0, addCinders() {}, __cityLoadUnsafe: false,
+    cityStateUserId: () => 'client9', cityNodeIdForKey: () => 'N-26',
+    cityOwnerIdentity: () => ({ viewerId: 'me', isOwner: false }),
+    cityStateSave: async () => true };
+  const B = makeBridge(P, LS);
+  const payload = blob({ savedAt: now }, 60000);
+  const order = B.cityEvictable(base + 'client9@N-26').map((c) => c.k.replace(base, '') + ':' + c.tier).join(' ');
+  ok(order === 'me@N-1:1 me@N-3:conflict:2 client1@N-5:3', 'eligible copies, in eviction order: proven-on-server, old side copy, old client-city cache', order);
+  // Room for everything already there plus ~one more city, less than the new 60k one: two copies must go.
+  const L2 = quotaLS(used + 5000, Object.fromEntries(LS.m));
+  const B2 = makeBridge(P, L2);
+  const r = await B2.saveCity(payload);
+  ok(r === true && L2.getItem(base + 'client9@N-26') !== null && B2.lastLocalSaveFailed === false, "the client city's save lands on a full origin", 'saveCity=' + r + ' failed=' + B2.lastLocalSaveFailed);
+  ok(L2.getItem(base + 'me@N-1') === null, 'rule 1 went first: my own other city, which the server confirmed');
+  ok(L2.getItem(base + 'me@N-3:conflict') === null, 'rule 2 next: a week-old conflict side copy');
+  ok(L2.getItem(base + 'me@N-2') !== null, "NEVER my own city's unproven copy");
+  ok(L2.getItem(base + 'client2@N-6') !== null, 'NEVER a copy written while its founding was undecided (ecoDefer)');
+  ok(L2.getItem(base + 'client3@N-7') !== null, "NEVER a recent unproven copy of a client's city");
+  ok(L2.getItem('hg_profile') !== null, 'nothing outside the city keys is touched');
+  const lru = JSON.parse(L2.getItem('nc_city_lru') || '{}');
+  ok(lru[base + 'client9@N-26'] && lru[base + 'client9@N-26'].s === now, 'the accepted server save is recorded in the index (this copy is now provably on the server)', JSON.stringify(lru));
+  // Tight enough that nothing eligible is left: the refusal is still reported, and the unproven copies survive.
+  const L3 = quotaLS(used - 60000, Object.fromEntries(LS.m));
+  const B3 = makeBridge(P, L3);
+  const r3 = await B3.saveCity(blob({ savedAt: now }, 200000));
+  ok(B3.lastLocalSaveFailed === true && L3.getItem(base + 'me@N-2') !== null && L3.getItem(base + 'client2@N-6') !== null,
+    'with too little to reclaim the save is still refused loudly and no unproven copy is sacrificed', 'failed=' + B3.lastLocalSaveFailed);
+  // Opening a city notes it: a trusted server row proves the copy it replaces.
+  const L4 = quotaLS(1e9);
+  const P4 = Object.assign({}, P, { cityStateLoad: async () => blob({ savedAt: 1234 }, 10), cityStateWasDeleted: async () => false });
+  const B4 = makeBridge(P4, L4);
+  await B4.loadCity();
+  const lru4 = JSON.parse(L4.getItem('nc_city_lru') || '{}');
+  ok(lru4[base + 'client9@N-26'] && lru4[base + 'client9@N-26'].s === 1234 && lru4[base + 'client9@N-26'].o > 0, 'loadCity records the open and the trusted server savedAt', JSON.stringify(lru4));
 }
 
 console.log('\n' + (fails ? '❌ ' + fails + ' FAILED' : '✅ all passed') + ' (' + passes + ' passes)');

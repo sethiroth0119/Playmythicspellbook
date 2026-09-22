@@ -308,6 +308,8 @@ const SUITES = [
     why: 'field abilities can be paid with counters: the real gate on the real Counters engine, the editor, the activation, the AI and the last-counter clause' },
   { id: 'duel',          cmd: ['node', '_duel_smoke.mjs'],         expect: 0, minPasses: 30, tier: 'fast',
     why: 'the duel passives, card effects and arena moves exist, resolve through real hooks, and only use statuses and executor fields that exist' },
+  { id: 'pvpsync',       cmd: ['node', '_pvpsync_smoke.mjs'],      expect: 0, minPasses: 15, tier: 'fast',
+    why: 'PvP: a reconnect never leaves wire stubs as the hand, a dice-screen handoff never eats the real turn-start, a concede/forfeit reaches the server and stays ended; a backgrounded mobile exit is not reported as a crash' },
   { id: 'whanyres',      cmd: ['node', '_whanyres_smoke.mjs'],     expect: 0, minPasses: 12, tier: 'fast',
     why: 'the warehouse send modal offers every stash id (named via _meta), the page is handed names for all of them, sql/114 widens the server id rule' },
   { id: 'marketrepair',  cmd: ['node', '_marketrepair_smoke.mjs'], expect: 0, minPasses: 20, tier: 'fast',

@@ -78875,6 +78875,23 @@ try {
     var _markClean = function () { try { localStorage.setItem('hg_clean_exit', '1'); } catch (e) {} };
     window.addEventListener('pagehide', _markClean);
     window.addEventListener('beforeunload', _markClean);
+    /* 📱 bug-mtyl7vad — "Last session ended in a crash" on EVERY open. On a
+       phone the normal way to leave is to switch apps or swipe the game away,
+       and the OS later kills the backgrounded page WITHOUT firing pagehide or
+       beforeunload (iOS never fires beforeunload at all, and a home-screen
+       PWA is usually reaped in the background). So the sentinel stayed '0'
+       after a perfectly normal session and the banner accused the player of a
+       crash each launch. Going hidden is the last moment a mobile page is
+       guaranteed to run, so it counts as a clean exit; coming back re-arms the
+       sentinel, so a genuine crash while the game is on screen is still
+       caught. (A tab killed while hidden is the OS reclaiming memory, not
+       something the player saw crash.) pageshow re-arms after a bfcache
+       restore, which fires pagehide but not visibilitychange→visible. */
+    var _markRunning = function () { try { localStorage.setItem('hg_clean_exit', '0'); } catch (e) {} };
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'hidden') _markClean(); else _markRunning();
+    });
+    window.addEventListener('pageshow', function (ev) { if (ev && ev.persisted) _markRunning(); });
   } catch (e) {}
   let _crumbT = 0;
   setInterval(function () {

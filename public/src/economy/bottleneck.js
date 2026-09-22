@@ -63,11 +63,14 @@ export const CAUSES = {
   NO_DEMAND:    { key: 'NO_DEMAND',    ico: '💤', label: 'No orders',
                   fix: 'Nobody is buying. This is not a supply problem — it needs customers.' },
   NO_CASH:      { key: 'NO_CASH',      ico: '💸', label: 'Out of cash',
-                  /* Since firms.js closeDay judges a day bad only when the firm is
-                     BOTH out of cash AND losing money, a zero balance alone is a
-                     business at the margin, not a failing one — the text must not
-                     say "failing" about a firm that is breaking even. */
-                  fix: 'Its suppliers exist but it has no cash to buy from them or pay wages. A Bank in the city lends a starved business a few days of working capital automatically; without one it stays stuck here. Breaking even is survivable; losing money on top of this is what fails.' },
+                  /* Only ever the BANKRUPT rung now (see classify). A zero balance
+                     on a trading firm limits nothing — the tick never gates
+                     inputs, output or staffing on cash — so this is the verdict
+                     on a business the ladder has already closed, and it says what
+                     happens next. A Bank still matters: its automatic loan is what
+                     keeps a firm that is out of cash AND losing money off this
+                     rung in the first place (firms.js closeDay, bank.js autoBorrow). */
+                  fix: 'This business ran out of cash while losing money and went bankrupt; the building re-opens as a new business on the next reconcile. A Bank in the city lends a starved business a few days of working capital automatically, which is what keeps it off this rung.' },
   OK:           { key: 'OK',           ico: '✅', label: 'Running',
                   fix: '' },
 };
@@ -156,12 +159,26 @@ export function classify(firm, worst) {
      never had one) and false about its cause, and the fix text sent the
      player to the bank instead of to the missing building. A deposit this
      ground lacks, or an input nobody makes, is the cause whatever the balance
-     says. Cash is the verdict only when the input EXISTS in the city and the
-     firm still cannot get it — the one case where money is what is short. */
+     says. (This used to go on: "cash is the verdict only when the input EXISTS
+     in the city and the firm still cannot get it". That case is not a cash
+     case either — see below.) */
+  /* 💸 …AND A SHORT MATERIAL IS NEVER A CASH VERDICT (bug-mtsq62mg, reopened
+     after v121v108). The line after NO_PRODUCER used to read
+     `if (firm.cash <= 0) return NO_CASH`, and the premise was false: NOTHING
+     in the tick lets cash limit a material. availabilityMap() (sim.js) is
+     city stock ÷ committed demand, produce() never reads f.cash, and
+     payUpstream() hands the goods over whether or not `pay()` raised a coin —
+     the supplier eats the shortfall. A row at 0% here means the city's stock
+     of that input is empty, full stop; a Bank loan fills the till and leaves
+     the row exactly where it was. That is the "nothing James or myself do
+     seems to move the needle" in the report: the card sent them to the bank
+     for a shortage only a supplier can fix. The honest verdict is NO_INPUT,
+     whose trace() walks up to the supplier that is actually short.
+     NO_CASH survives only for a BANKRUPT firm (first line above), where it is
+     true: the ladder only reaches that rung out of cash AND losing money. */
   const id = worst.key;
   if (DEPOSITS[id] && !Endow.canExtract(Sim.state().nodeId, id)) return CAUSES.NO_DEPOSIT;
   if (!Firms.byOutput(id).length) return CAUSES.NO_PRODUCER;
-  if (firm.cash <= 0) return CAUSES.NO_CASH;
   return CAUSES.NO_INPUT;
 }
 

@@ -127,7 +127,10 @@ function fnText(src, head) {
   ok(cl(broke, sugar) === 'NO_PRODUCER', 'broke + an input nobody makes → NOBODY MAKES IT (was: out of cash)');
   ok(cl(flush, sugar) === 'NO_PRODUCER', 'flush + an input nobody makes → the same answer; cash was never the cause');
   cl = mk(['sugar'], true);
-  ok(cl(broke, sugar) === 'NO_CASH', 'broke + a supplier exists → out of cash is the honest verdict');
+  /* bug-mtsq62mg, reopened: cash limits nothing in the tick (availability is
+     city stock ÷ demand; payUpstream hands the goods over unpaid), so a short
+     input with a supplier is STARVED OF INPUTS whatever the balance. */
+  ok(cl(broke, sugar) === 'NO_INPUT', 'broke + a supplier exists but short → starved of inputs (was: out of cash — cash never gates an input)');
   ok(cl(flush, sugar) === 'NO_INPUT', 'flush + a supplier exists but short → starved of inputs');
   cl = mk([], false);
   ok(cl(broke, { key: 'ironOre', pct: 0 }) === 'NO_DEPOSIT', 'broke + a deposit this ground lacks → not in this ground');

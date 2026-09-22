@@ -139194,8 +139194,18 @@ function renderTitle() {
       </div>
     </aside>` : '';
 
+  /* 🔁 bug-mu1pbwb4 "the Ruin Exchange redraws 2-5 times when you go into it".
+     The sub-hub entrance (hub-transitions.css) is triggered by MOUNTING the
+     nodes, and this function replaces the whole subtree on every render() — so
+     every background repaint in the first seconds after entry (cloud profile
+     load, daily/login rewards, badge data arriving; more of them on the first
+     open of the day) replayed the full fade + tile stagger. If the SAME hub is
+     already on screen this is a repaint, not an arrival: mark it is-settled and
+     the entrance is skipped. Leaving and coming back still animates. */
+  let _hubSettled = false;
+  try { const _prevHub = root.querySelector(':scope > .spellbook-hub'); _hubSettled = !!(_prevHub && _prevHub.getAttribute('data-hub') === String(hub)); } catch (e) {}
   root.innerHTML = `
-    <div class="spellbook-hub ${isMain ? 'is-main' : 'is-sub hub-v2'}" data-hub="${escapeHtml(hub)}">
+    <div class="spellbook-hub ${isMain ? 'is-main' : 'is-sub hub-v2'}${_hubSettled ? ' is-settled' : ''}" data-hub="${escapeHtml(hub)}">
       <div class="spellbook-hub-bg">
         <img class="hub-bg-img" src="${escapeHtml(hubBg)}" alt="" draggable="false">
         ${isMain ? '' : `

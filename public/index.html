@@ -188201,12 +188201,17 @@ function _csMyShopBody() {
     }
     const theme = App._csTheme || 'bunker';
     const themeBtns = Object.entries(CARD_SHOP_THEMES).map(([id, th]) => `<button class="cs-tab ${theme === id ? 'is-active' : ''}" data-cs="cs-theme" data-theme="${id}" style="flex:0 0 auto;padding:0.4rem 0.7rem">${escapeHtml(th.name)}</button>`).join('');
+    // bug-mu0l80ou: any repaint of this form (picking a theme, a background cloud
+    // fetch, the 3D panel refresh) rebuilt the inputs from the template and blanked
+    // what the player had typed. Carry the live values across the rebuild.
+    const _liveVal = id => { try { const f = document.getElementById(id); return f ? f.value : null; } catch (e) { return null; } };
+    const nameVal = _liveVal('cs-f-name'), tagVal = _liveVal('cs-f-tag');
     return `<div class="cs-empty" style="text-align:left;border-style:solid">
       <div style="font-weight:800;color:#ffe9a8;margin-bottom:0.3rem">🔨 Open your card shop</div>
       <div style="font-size:0.76rem;color:#8a96a3;margin-bottom:0.7rem">✅ Card Shop licensed. Your shop is listed publicly so other players can walk in and buy. Cards you list are held from your collection until they sell or you unlist them. Your shop starts empty — decorate it from inside with <b>🏗️ Build</b>.</div>
       <div style="display:grid;gap:0.5rem">
-        <input class="cs-input" id="cs-f-name" maxlength="28" placeholder="Shop name (e.g. ${escapeHtml(_csMyName())}'s Outpost)" value="${escapeHtml(_csMyName())}'s Outpost">
-        <input class="cs-input" id="cs-f-tag" maxlength="80" placeholder="Tagline — e.g. Cards salvaged from the ruins.">
+        <input class="cs-input" id="cs-f-name" maxlength="28" placeholder="Shop name (e.g. ${escapeHtml(_csMyName())}'s Outpost)" value="${escapeHtml(nameVal != null ? nameVal : (_csMyName() + "'s Outpost"))}">
+        <input class="cs-input" id="cs-f-tag" maxlength="80" placeholder="Tagline — e.g. Cards salvaged from the ruins." value="${escapeHtml(tagVal || '')}">
         <div style="display:flex;gap:0.4rem;flex-wrap:wrap">${themeBtns}</div>
         <button class="btn-primary" data-cs="cs-open-shop" style="margin-top:0.3rem">Open Shop</button>
       </div></div>`;
@@ -188826,7 +188831,13 @@ function _csMount3D(mount) {
     const lookEnd = () => { St.drag = false; el.style.cursor = 'grab'; };
     el.addEventListener('mousedown', lookStart); window.addEventListener('mousemove', lookMove); window.addEventListener('mouseup', lookEnd);
     el.addEventListener('touchstart', lookStart, { passive: true }); window.addEventListener('touchmove', lookMove, { passive: true }); window.addEventListener('touchend', lookEnd);
-    const kd = e => { const key = (e.key || '').toLowerCase(); St.keys.add(key); if (key === 'e' && nearView) _csEnterStation(nearView); };
+    /* ⌨ bug-mu0l80ou "Card Shop name/tagline wipes out after ~5 key presses": these
+       listeners are on WINDOW, so typing in a panel input (shop name, tagline, price)
+       also walked the camera on W/A/S/D and — the actual wipe — an "e" while standing
+       at the counter re-entered the station, which rebuilds the panel's innerHTML and
+       replaces the input mid-word. Keys typed into a text field belong to the field. */
+    const kdTyping = e => { const t = e.target; return !!(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)); };
+    const kd = e => { if (kdTyping(e)) return; const key = (e.key || '').toLowerCase(); St.keys.add(key); if (key === 'e' && nearView) _csEnterStation(nearView); };
     const ku = e => St.keys.delete((e.key || '').toLowerCase());
     window.addEventListener('keydown', kd); window.addEventListener('keyup', ku);
     const onResize = () => { W = mount.clientWidth || W; H = mount.clientHeight || H; camera.aspect = W / H; camera.updateProjectionMatrix(); renderer.setSize(W, H); };
@@ -189028,7 +189039,12 @@ function _csOpenPanel(view) {
   const mount = document.getElementById('cs-3d-mount'); if (!mount) return;
   let ov = document.getElementById('cs-panel-overlay');
   if (!ov) { ov = document.createElement('div'); ov.id = 'cs-panel-overlay'; ov.className = 'cs-panel-overlay'; mount.appendChild(ov); }
+  // bug-mu0l80ou: this rebuild bypasses render(), so it also bypasses render()'s
+  // keep-typing-alive focus restore — do the same here for a field inside the panel.
+  let fs = null;
+  try { const a = document.activeElement; if (a && a.id && ov.contains(a) && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA')) fs = { id: a.id, s: a.selectionStart, e: a.selectionEnd }; } catch (e) {}
   ov.innerHTML = `<div class="cs-panel-head"><span>${_csPanelTitle(view)}</span><button class="btn-mini" data-cs="cs-panel-close">✕ Close</button></div><div class="cs-panel-body">${_csPanelBody(view)}</div>`;
+  if (fs) { try { const f = document.getElementById(fs.id); if (f) { f.focus({ preventScroll: true }); try { if (fs.s != null) f.setSelectionRange(fs.s, fs.e); } catch (e2) {} } } catch (e) {} }
 }
 function _csClosePanel() { App._csPanel = null; const ov = document.getElementById('cs-panel-overlay'); if (ov) ov.remove(); }
 function _csRefreshPanel() { if (App._csPanel && document.getElementById('cs-panel-overlay')) _csOpenPanel(App._csPanel); }

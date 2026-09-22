@@ -2988,7 +2988,48 @@ const MythicCityBridge = (() => {
     eff: (n.meta && n.meta.eff != null) ? n.meta.eff : 100,
     camps: (n.meta && (n.meta.connectedCamps | 0)) ||
            (n.meta && Array.isArray(n.meta.camps) ? n.meta.camps.length : 0) || 0,
+    // 🏠 The TW node (city) this PRN was PLACED in — meta.site.nodeId, stamped by
+    // index.html cityPrnSite. null = never placed. See ringHere() below.
+    site: (n.meta && n.meta.site && n.meta.site.nodeId != null && n.meta.site.nodeId !== '')
+      ? String(n.meta.site.nodeId) : null,
   });
+  /* 🏠 A PRN ANCHORS ONLY IN THE CITY IT STANDS IN (owner's decision, 2026-09-22;
+     bug-mucvogzk / bug-mucu5m51 / bug-mtqasoy6).
+     fetchNodes returned every PRN the owner holds, so each one rang EVERY city
+     they own: a second city inherited population cap and link from nodes that
+     were never its own, and the economy grounded both cities on the same
+     anchors[0] (measured live: 3 PRN grounds each shared by two cities).
+     The only record of which city a PRN belongs to is meta.site.nodeId — the
+     city the player placed it in from Build → Foundation Reserve. So:
+       · sited HERE      → rung here;
+       · sited elsewhere → rung in that city only;
+       · never placed    → rung NOWHERE until the player places it.
+     B.ownedNodes keeps the WHOLE list, because two perks are player-wide by
+     decision (bldNodeCo's construction ceiling, thriveNodeLevel) and the
+     "nothing here" toast has to say where the nodes actually are.
+     ⚠ An unknown city node (no TW node open) can hold no sited PRN —
+       cityPrnSite refuses 'no-node' — so it rings none.
+     ⚠ Anchors are not in the save's tiles (re-derived every boot), so an
+       anchor this filter stops ringing simply is not drawn: no building is
+       touched, and its anchorAt entry stays in the save untouched. */
+  B.ownedNodes = null;             // null = never read; [] = read, owns none
+  B.nodesElsewhere = 0;
+  B.nodesUnsited = 0;
+  const ringHere = (all) => {
+    const rows = (Array.isArray(all) ? all : []).filter(Boolean);
+    B.ownedNodes = rows.slice();
+    const here = cityNodeIdForKey();
+    const mine = [];
+    let away = 0, loose = 0;
+    for (const n of rows) {
+      if (!n.site) loose++;
+      else if (here && n.site === here) mine.push(n);
+      else away++;
+    }
+    B.nodesElsewhere = away; B.nodesUnsited = loose;
+    return mine;
+  };
+  B.cityNodeId = () => cityNodeIdForKey();
   /* ⏱ bug-mtr5xz8t: boot() AWAITS the anchor ring and the city read in turn,
      and neither had a bound. A managed city reads the OWNER's nodes over the
      network here BEFORE loadState, so the first request after hours idle —
@@ -3010,13 +3051,14 @@ const MythicCityBridge = (() => {
     if (B.mode === 'parent') {
       let foreign = false;
       try { if (typeof P.cityOwnerIdentity === 'function') foreign = ((P.cityOwnerIdentity() || {}).isOwner === false); } catch (e) {}
+      B.nodesForeign = foreign;      // 🏠 whose PRNs the "not here" note names — see anchorsAwayNote
       try {
         if (typeof P.cityOwnerNodes === 'function') {
           const LATE = {};
           const own = await _ncBound(P.cityOwnerNodes(), 10000, LATE);
           // Unanswered is not "the owner holds no nodes" — spawnAnchors must not say so.
           B.nodesUnknown = (own === LATE);
-          if (Array.isArray(own)) return own.map(anchorRow);
+          if (Array.isArray(own)) return ringHere(own.map(anchorRow));
         }
       } catch (e) {}
       if (foreign) return [];
@@ -3031,17 +3073,22 @@ const MythicCityBridge = (() => {
         let me = null; try { me = (P.cityOwnerIdentity() || {}).viewerId || null; } catch (e) {}
         if (FR && Array.isArray(FR.nodes) && FR.nodes.length) {
           const mine = FR.nodes.filter(n => n && (!me || !n.owner_id || String(n.owner_id) === String(me)));
-          return mine.map(anchorRow);
+          return ringHere(mine.map(anchorRow));
         }
       } catch (e) {}
       return [];
     }
-    if (B.mode === 'message') { return (await rpc('fetchNodes', {})) || []; }
-    return [
+    /* message mode (a cross-origin host, rows carry no site) and the
+       standalone mocks ring everything, as before; both still record the owned
+       list so the player-wide perks read the same thing in every mode. */
+    if (B.mode === 'message') { const r = (await rpc('fetchNodes', {})) || []; B.ownedNodes = Array.isArray(r) ? r.slice() : []; return r; }
+    const mock = [
       { id: 'mock-supply', node_type: 'supply', name: 'Supply PRN', level: 1, eff: 84, camps: 2 },
       { id: 'mock-mining', node_type: 'mining', name: 'Mining PRN', level: 1, eff: 62, camps: 0 },
       { id: 'mock-fuel',   node_type: 'fuel',   name: 'Fuel PRN',   level: 1, eff: 90, camps: 1 },
     ];
+    B.ownedNodes = mock.slice();
+    return mock;
   };
   /* 🔮 bug-mtwtxvg8 / bug-mtr5bze0: ask the game to (re)read the reserve's
      node rows. fetchNodes() above only READS FoundationReserve.nodes; the
@@ -28127,6 +28174,54 @@ function anchorSlots(n) {
   }
   return out.map(p => ({ x: THREE.MathUtils.clamp(p.x, 1, GRID - 2), z: THREE.MathUtils.clamp(p.z, 1, GRID - 2) }));
 }
+/* 🏠 WHERE THIS OWNER'S PRNs ARE, WHEN NONE OF THEM IS HERE — the honest
+   answer to an empty ring (owner's wording, 2026-09-22). '' when the owner
+   really holds none, so the caller keeps its "No PRN nodes owned yet". A mayor
+   cannot place the owner's PRNs (cityPrnSite is owner-only), so the
+   instruction is only given to the owner. */
+function anchorsAwayNote(mine) {
+  try {
+    const B = MythicCityBridge;
+    const away = (B && B.nodesElsewhere) | 0, loose = (B && B.nodesUnsited) | 0;
+    if (!away && !loose) return '';
+    const parts = [];
+    if (away) parts.push((mine ? 'Your ' : 'The owner\'s ') + away + ' PRN' + (away === 1 ? ' stands' : 's stand') + ' in other cities.');
+    if (loose) parts.push(loose + ' PRN' + (loose === 1 ? ' is' : 's') + ' not placed in any city'
+      + (mine ? ' — place ' + (loose === 1 ? 'it' : 'them') + ' from Build → Foundation Reserve.' : ' — only the owner can place them.'));
+    return parts.join(' ');
+  } catch (e) { return ''; }
+}
+/* 🏠 RE-READ THE RING WITHOUT A RELOAD — after a PRN is placed here (it now
+   belongs to this city) or released from here (it no longer does).
+   ⚠ REMOVAL NEEDS A POSITIVE ANSWER. An anchor is only taken off when the
+     owner's list was actually read and is non-empty; an empty or failed read is
+     "cannot tell" — the same rule prnReconcile states. The anchor's tile is
+     cleared (anchors are never saved in tiles) and its anchorAt entry is KEPT,
+     so placing it back here returns it to the plot the player gave it. */
+async function anchorsResync() {
+  let nodes = null;
+  try { nodes = await MythicCityBridge.fetchNodes(); } catch (e) { return 0; }
+  if (!Array.isArray(nodes)) return 0;
+  const owned = MythicCityBridge.ownedNodes;
+  const want = new Set(nodes.map((n) => (n && n.id != null) ? String(n.id) : null));
+  let removed = 0;
+  if (Array.isArray(owned) && owned.length) {
+    for (let i = game.anchors.length - 1; i >= 0; i--) {
+      const a = game.anchors[i];
+      const id = (a && a.node && a.node.id != null) ? String(a.node.id) : null;
+      if (id && want.has(id)) continue;
+      const t = a && a.key && game.tiles[a.key];
+      if (t && t.type === 'anchor' && t.anchor === a) { dropTileMesh(t); delete game.tiles[a.key]; }
+      game.anchors.splice(i, 1);
+      removed++;
+    }
+  }
+  const added = anchorAddMissing(nodes);
+  if (added || removed) {
+    try { computeLinks._last = 0; computeLinks(); updateHUD(); saveSoon(); } catch (e) {}
+  }
+  return added + removed;
+}
 async function spawnAnchors() {
   const nodes = await MythicCityBridge.fetchNodes();
   if (!nodes.length && !MythicCityBridge.nodesUnknown) {
@@ -28134,7 +28229,11 @@ async function spawnAnchors() {
        node for a client, so telling them to would be the wrong instruction. */
     let mine = true;
     try { const q = await MythicCityBridge.getIdentity(); mine = !(q && q.owner === false); } catch (e) {}
-    toast(mine ? 'No PRN nodes owned yet — the city runs, but there is nothing to sync to. License a node in the Foundation Reserve.'
+    /* 🏠 "Owns none" and "owns some, none HERE" are different facts since PRNs
+       anchor only in the city they stand in — see ringHere() in the bridge. */
+    const away = anchorsAwayNote(mine);
+    if (away) { toast('🔌 ' + away, 'bad'); try { ANCHOR_LATE.noted = true; } catch (e) {} }
+    else toast(mine ? 'No PRN nodes owned yet — the city runs, but there is nothing to sync to. License a node in the Foundation Reserve.'
                : 'The owner holds no PRN nodes yet — the city runs, but there is nothing to sync to.', 'bad');
   }
   const slots = anchorSlots(Math.max(nodes.length, 1));
@@ -28243,6 +28342,24 @@ async function anchorsLateRing() {
       new Promise((r) => setTimeout(() => r(null), ANCHOR_LATE_FETCH_MS)),
     ]);
   } catch (e) { nodes = null; }
+  if (Array.isArray(nodes) && !nodes.length) {
+    /* 🏠 The reserve HAS landed — the owner holds PRNs — but none stands in this
+       city. That is an answer, not "not yet": conclude, and say where they are
+       unless boot already did (ANCHOR_LATE.noted). */
+    let owned = null;
+    try { owned = MythicCityBridge.ownedNodes; } catch (e) {}
+    if (Array.isArray(owned) && owned.length) {
+      ANCHOR_LATE.done = true;
+      if (!ANCHOR_LATE.noted) {
+        ANCHOR_LATE.noted = true;
+        let mine = true;
+        try { const q = await MythicCityBridge.getIdentity(); mine = !(q && q.owner === false); } catch (e) {}
+        let note = ''; try { note = anchorsAwayNote(mine); } catch (e) {}
+        if (note) try { toast('🔌 ' + note, 'bad'); } catch (e) {}
+      }
+      return 0;
+    }
+  }
   if (!Array.isArray(nodes) || !nodes.length) return 0;   // "not yet" — the next try asks again
   ANCHOR_LATE.done = true;
   const added = anchorAddMissing(nodes);
@@ -29091,6 +29208,72 @@ function rmFactor(k, r) {
    ⚠ cityKey() IS NOT A SOURCE HERE AND MUST NOT BECOME ONE. It is the right
      key for a save slot and the wrong seed for a world: by design it changes
      as identity resolves. */
+/* 🗺🏠 THE ECONOMY'S GROUND — owner's decision C (revised), 2026-09-22
+   (bug-mucvogzk, bug-mucu5m51, bug-mtqasoy6).
+   /src/economy hashes this id to decide which deposits a city can extract. It
+   was `game.anchors[0].node.id || 'local-city'` — with every PRN ringing every
+   city, measured live: 35 of 47 cities on ONE shared 'local-city' ground, 12 on
+   a PRN id, three PRN grounds shared by two cities of one owner.
+
+   🔴 AN EXISTING CITY KEEPS THE GROUND IT IS ON TODAY. Moving every city to
+      its own ground was built first and measured before shipping: 216 of the
+      874 live extractor firms (36 of 47 cities) stood on a deposit the new
+      ground lacked and would have produced nothing from the first tick. The
+      owner's revised call: existing cities are PINNED where they are; only a
+      NEW city gets a ground of its own. Cities that share 'local-city' or a
+      PRN ground today keep sharing it — accepted.
+
+   THE ORDER, and the first answer is pinned in the save (`econGround`) and
+   never changes again, whatever the anchors do later:
+     1. the pin, if this save has one;
+     2. a LIVED city: the ground its saved economy is on (`economy.nodeId` —
+        mount() setNode()s it every boot, so it IS the ground the firms were
+        founded and run on). A lived city whose blob has no nodeId gets what
+        the OLD expression resolved to: the first PRN of the old all-PRNs ring
+        (B.ownedNodes keeps that order), else 'local-city'. Read from the
+        owned list, NOT game.anchors — the per-city filter has already changed
+        the ring by now, which is exactly the move being refused;
+     3. a NEW city (verdict 'new', no economy blob): the server's ground id
+        (sql/045 — the id resmap/water/power stand on) — OWNER ONLY, because
+        city_ground_id mints for auth.uid() and a mayor would get their own;
+        else this city's TW node; else the old expression.
+   ⚠ A MAYOR NEVER MINTS. In a managed city steps 1–2 read the OWNER's save;
+     a brand-new city a mayor opens first takes the TW node, never the
+     mayor's server id.
+   ⚠ 'unknown' verdict (ambiguous read — the economy mounts deferred) answers
+     step 2's legacy value WITHOUT pinning: nothing is decided on a read the
+     rest of boot does not trust either. */
+var _econGroundPin = '';
+function econGroundId(saved, verdict) {
+  const ok = (g) => (typeof g === 'string' && g && g.length <= 64 && /^[A-Za-z0-9_:.-]+$/.test(g)) ? g : '';
+  const B = (typeof MythicCityBridge !== 'undefined') ? MythicCityBridge : {};
+  if (ok(_econGroundPin)) return _econGroundPin;
+  const legacy = () => {
+    let first = '';
+    try { const o = B.ownedNodes; if (Array.isArray(o) && o[0] && o[0].id != null) first = ok(String(o[0].id)); } catch (e) {}
+    if (!first) try { const a = game.anchors && game.anchors[0]; if (a && a.node && a.node.id != null) first = ok(String(a.node.id)); } catch (e) {}
+    return first || (B.cityKey && ok(B.cityKey())) || 'local-city';
+  };
+  const hasBlob = !!(saved && typeof saved === 'object');
+  if (hasBlob) {
+    const was = ok(saved.nodeId != null ? String(saved.nodeId) : '');
+    _econGroundPin = was || legacy();
+    return _econGroundPin;
+  }
+  if (verdict === 'established') { _econGroundPin = legacy(); return _econGroundPin; }
+  if (verdict !== 'new') return legacy();
+  let foreign = false;
+  try { foreign = (B.nodesForeign === true); } catch (e) {}
+  if (!foreign) {
+    let sg = '';
+    try { sg = ok(B.serverGroundId ? B.serverGroundId() : ''); } catch (e) {}
+    if (sg) { _econGroundPin = sg; return sg; }
+  }
+  let tw = '';
+  try { tw = ok(B.cityNodeId ? B.cityNodeId() : ''); } catch (e) {}
+  _econGroundPin = tw || legacy();
+  return _econGroundPin;
+}
 const GROUND_LEGACY_ID = 'local-city';
 let _groundMint = '';
 function cityGroundId() {
@@ -31952,8 +32135,19 @@ function bldCoTiles() {
      standing. The Co. a mayor sites here by hand is the one exception —
      opsMayorMaySite — and it lifts the ceiling through bldCoTiles(), not
      through this predicate. */
+/* 🏠 EVERY PRN THE CITY'S OWNER HOLDS, wherever it stands — for the perks that
+   stay PLAYER-WIDE now that anchors are per city (owner's decision,
+   2026-09-22): this construction ceiling and thriveNodeLevel. Without it a
+   city whose PRNs stand elsewhere (or are not placed yet) would lose 21 of
+   the 68 build cards to "Needs a Construction Co.". Same objects the ring
+   holds, so a level earned here reads through. Falls back to the ring when the
+   bridge has never answered (an older build, or before boot's read). */
+function ownedNodeRows() {
+  try { const o = MythicCityBridge.ownedNodes; if (Array.isArray(o)) return o; } catch (e) {}
+  try { return (game.anchors || []).map((a) => a && a.node).filter(Boolean); } catch (e) { return []; }
+}
 function bldNodeCo() {
-  try { return ((game.anchors || []).length > 0); } catch (e) { return false; }
+  try { return ((game.anchors || []).length > 0) || ownedNodeRows().length > 0; } catch (e) { return false; }
 }
 /* THE ONE PREDICATE ALL THREE CEILING GATES TEST — the shop card's lock, the
    placement gate and the upgrade gate. They used to spell `!bldCoTiles().length`
@@ -36699,6 +36893,8 @@ $('btn-demolish').onclick = guardedAction(async () => {
       let ok = false;
       try { const r = await prnUnsite(_prow.id); ok = !!(r && r.ok); } catch (e) { ok = false; }
       if (!ok) { toast('🔌 Could not release that PRN licence — nothing was demolished. Try again in a moment.', 'bad'); return; }
+      // 🏠 Released from this city → it no longer anchors here (anchorsResync).
+      try { anchorsResync(); } catch (e) {}
     }
   }
   /* 🛤 A road is CHARGED for, not refunded. Paid before anything is torn down —
@@ -39957,6 +40153,8 @@ function thriveNodeLevel() {
   try {
     let lv = 0;
     for (const a of (game.anchors || [])) lv = Math.max(lv, (a && a.node && a.node.level | 0) || 0);
+    // 🏠 Player-wide by decision: the owner's best PRN wherever it stands — see ownedNodeRows.
+    for (const n of ownedNodeRows()) lv = Math.max(lv, (n && n.level | 0) || 0);
     return Math.max(1, lv || 1);
   } catch (e) { return 1; }
 }
@@ -42215,7 +42413,7 @@ function updateHUD() {
       '<span class="nname">' + (nt.ico || '') + ' ' + (a.node.name || nt.name || a.node.node_type) + '</span><br>' +
       'link <b>' + a.link + '%</b> · game eff ' + (a.node.eff | 0) + '%' +
       '<div class="lbar"><i style="width:' + a.link + '%"></i></div></div>';
-  }).join('') || '<div class="noderow">No anchors — no PRN nodes owned.</div>';
+  }).join('') || ('<div class="noderow">' + (anchorsAwayNote(!MythicCityBridge.nodesForeign) || 'No anchors — no PRN nodes owned.') + '</div>');
 
   // Camp upkeep coverage: city production/day vs camp burn/day
   /* 🏕 The colour rule is _campCoverState’s, not this line’s — the roster burn
@@ -42706,6 +42904,9 @@ function serialize() {
        it snap back to the ring on the next load. Absent on an old save, and
        then the ring slot is used exactly as before. */
     anchorAt: game.anchorAt,
+    // 🗺 Where the economy's ground was pinned — see econGroundId. Only ever the
+    // server's ground id, so a mayor's session keeps the owner's world.
+    econGround: _econGroundPin || undefined,
     deck: game.defenseDeck, nodeXp: game.nodeXp,
     log: game.log.slice(-LOG_SAVE),
     /* 👥 THE WHOLE POPULATION LEDGER RIDES THE SAVE. npcPop below is the
@@ -43874,6 +44075,8 @@ async function loadState() {
        there is nothing to hand it yet. Absent ⇒ null ⇒ a fresh economy, which
        is the correct reading of a save written before this feature existed. */
     _pendingEconomy = (s.economy && typeof s.economy === 'object') ? s.economy : null;
+    // 🗺 The economy's pinned ground (econGroundId). '' on every older save.
+    _econGroundPin = (typeof s.econGround === 'string') ? s.econGround : '';
     _pendingPop = (s.pop && typeof s.pop === 'object') ? s.pop : null;
     _pendingHH = (s.hh && typeof s.hh === 'object') ? s.hh : null;
     // ⚡ Same stash, same reason: /src/power is imported later in boot().
@@ -45602,6 +45805,8 @@ _prnReady = true;
       const bp = PRN_BP[type] || {};
       toast((bp.ico || '🔌') + ' ' + (bp.label || type) + ' sited — it keeps paying into the Foundation Reserve.', 'good');
       logEvent('city', (bp.ico || '🔌') + ' ' + (bp.label || type) + ' now stands in the city.');
+      // 🏠 Placed here → this is now the one city it anchors in (anchorsResync).
+      try { anchorsResync(); } catch (e) {}
       openInspect(pk);
     } finally { _prnPlacing.delete(pk); }
   };
@@ -51124,9 +51329,9 @@ async function _ncResourceNeeds() {
       /* The node this city stands on decides what is in its ground. Falls back
          to a stable per-save id so a standalone/dev city still gets a real,
          repeatable survey instead of an unsurveyed one. */
-      const nodeId = (game.anchors && game.anchors[0] && game.anchors[0].node && game.anchors[0].node.id)
-                  || (MythicCityBridge.cityKey && MythicCityBridge.cityKey())
-                  || 'local-city';
+      /* 🗺 See econGroundId: a lived city stays on the ground its firms were
+         founded on (pinned); only a new city gets a ground of its own. */
+      const nodeId = econGroundId(_pendingEconomy, _cityVerdict);
       /* 🔴 `established` IS LOAD-BEARING AND WAS MISSING FOR THE WHOLE LIFE OF
          THIS FEATURE. Without it a lived city that arrives with no economy blob
          is read as brand new and issued a fresh 300,000 🔥 founding tranche with

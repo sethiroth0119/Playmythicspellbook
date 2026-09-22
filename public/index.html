@@ -94882,15 +94882,41 @@ async function _corpMemberCitiesFetch() {
     const shared = {};
     const nameOf = Object.create(null);
     roster.forEach(function (m) { if (m && m.userId) nameOf[String(m.userId)] = (m.name || 'Member'); });
+    /* 🏠 "A NODE THAT MEMBER STILL OWNS" IS A TERRITORY NODE NOW (owner's
+       decision D, 2026-09-22). city_profiles.node_id used to be the economy's
+       ground — anchors[0], a PRN uuid — so ownership was read from
+       economy_nodes. cityTradePublish now keys a city by its own TW node
+       ('N-25', what city_state is keyed by), so ownership is tw_node_owners.
+       ⚠ THE TRANSITION. Until sql/192 re-keys the old rows and every city has
+         republished, a member's only row may still be PRN-keyed. Such a row is
+         kept under the OLD rule (the member owns that PRN) but only while the
+         member has no TW-keyed row at all — the moment their city republishes,
+         the stale uuid rows drop out instead of listing the city twice. */
+    let legacy = null;
+    const twKeyed = Object.create(null);
     try {
-      const nr = await Cloud.client.from('economy_nodes').select('id,owner_id').in('owner_id', ids).limit(500);
-      if (nr && !nr.error && Array.isArray(nr.data)) {
+      const tr = await Cloud.client.from('tw_node_owners').select('node_id,user_id').in('user_id', ids).limit(500);
+      if (tr && !tr.error && Array.isArray(tr.data)) {
         owned = Object.create(null);
-        nr.data.forEach(function (n) {
-          if (n && n.id != null && n.owner_id) { owned[String(n.owner_id) + '|' + String(n.id)] = 1; nodeOwner[String(n.id)] = String(n.owner_id); }
+        tr.data.forEach(function (n) {
+          if (n && n.node_id != null && n.user_id) { owned[String(n.user_id) + '|' + String(n.node_id)] = 1; nodeOwner[String(n.node_id)] = String(n.user_id); }
         });
       }
     } catch (e) { owned = null; }
+    try {
+      const nr = await Cloud.client.from('economy_nodes').select('id,owner_id').in('owner_id', ids).limit(500);
+      if (nr && !nr.error && Array.isArray(nr.data)) {
+        legacy = Object.create(null);
+        nr.data.forEach(function (n) {
+          if (n && n.id != null && n.owner_id) { legacy[String(n.owner_id) + '|' + String(n.id)] = 1; if (!nodeOwner[String(n.id)]) nodeOwner[String(n.id)] = String(n.owner_id); }
+        });
+      }
+    } catch (e) { legacy = null; }
+    const _uuidKey = function (nid) { return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(nid); };
+    r.data.forEach(function (c) {
+      const nid = (c && c.node_id != null) ? String(c.node_id) : '';
+      if (c && c.owner_id && nid && nid !== 'local-city' && !_uuidKey(nid)) twKeyed[String(c.owner_id)] = 1;
+    });
     const by = {};
     r.data.forEach(function (c) {
       if (!c || !c.owner_id) return;
@@ -94898,7 +94924,13 @@ async function _corpMemberCitiesFetch() {
       /* The local save is named, populated and updated like any other row, so
          it can only be told apart by its id. It is never a corp city. */
       if (nid === 'local-city' || !nid) return;
-      if (owned && !owned[String(c.owner_id) + '|' + nid]) {
+      const _ownKey = String(c.owner_id) + '|' + nid;
+      const _isUuid = _uuidKey(nid);
+      // Superseded: this member's city has republished under its TW node.
+      if (_isUuid && twKeyed[String(c.owner_id)]) return;
+      // true / false / null = holds it / does not / could not read (show it).
+      const _holds = _isUuid ? (legacy ? !!legacy[_ownKey] : null) : (owned ? !!owned[_ownKey] : null);
+      if (_holds === false) {
         /* 🤝 bug-mtqasoy6 (reopened): "all of the other cities against my
            corporation members state no city founded". MEASURED on the live
            table for the reporter's corporation: the CEO owns six nodes and has
@@ -243270,7 +243302,17 @@ window.cityTradePublish = async function (payload) {
   try {
     const sb = _cityTradeClient();
     if (!sb || !payload || typeof payload !== 'object') return false;
-    const nodeId = payload.nodeId != null ? String(payload.nodeId) : '';
+    /* 🏠 KEYED BY THE CITY'S OWN TW NODE (bug-mtqasoy6, owner's decision D,
+       2026-09-22). payload.nodeId is the economy's GROUND, which was
+       anchors[0] — an unstable PRN uuid, so one city published under whichever
+       PRN happened to come first and a player collected a row per PRN; two
+       cities of one owner overwrote each other's row. App._cityNodeId is what
+       city_state is keyed by, what the corp roster, cityCampRoster and
+       _ctPrimeCityIds all join on, and it never moves under a city. The ground
+       is only the fallback for a node-less city ('local-city', as before).
+       sql/192 re-keys or clears the old uuid rows. */
+    const nodeId = (App && App._cityNodeId) ? String(App._cityNodeId)
+                 : (payload.nodeId != null ? String(payload.nodeId) : '');
     if (!nodeId) return false;
     let ident = {};
     try { ident = window.cityOwnerIdentity() || {}; } catch (e) {}
@@ -244503,9 +244545,19 @@ function _ctTargetFor(nodeId) {
 async function _ctPrimeCityIds(nodeIds) {
   if (!_ctReady() || !nodeIds || !nodeIds.length) return;
   try {
-    const { data } = await Cloud.client.from('city_profiles').select('id,node_id').in('node_id', nodeIds);
+    /* 🏠 city_profiles.node_id IS the TW node now (cityTradePublish, owner's
+       decision D) — before that it was a PRN uuid and this never matched a
+       map node at all. Two players can each have a city on one node (a city on
+       a node you do not own is allowed), so the NODE OWNER's row wins; any
+       other row is only used when the owner has published none there. */
+    const { data } = await Cloud.client.from('city_profiles').select('id,node_id,owner_id').in('node_id', nodeIds);
     App._ctCityIdByNode = App._ctCityIdByNode || {};
-    for (const r of (data || [])) App._ctCityIdByNode[r.node_id] = r.id;
+    for (const r of (data || [])) {
+      let own = null;
+      try { const o = (typeof _twNodeOwnerUser === 'function') ? _twNodeOwnerUser(r.node_id) : null; own = o ? (o.user_id || o.id || null) : null; } catch (e) {}
+      const isOwners = !!(own && r.owner_id && String(own) === String(r.owner_id));
+      if (isOwners || !App._ctCityIdByNode[r.node_id]) App._ctCityIdByNode[r.node_id] = r.id;
+    }
   } catch (e) {}
 }
 
@@ -246894,9 +246946,13 @@ window.cityCampRoster = async function () {
          `cityHere:false` says so rather than letting the card imply the city
          stands on this ground.
        ⚠ node_id is compared against the RAW App._cityNodeId for the reason the
-         header gives — city_profiles.node_id is written from the city's anchor
+         header gives — city_profiles.node_id is written from the city's TW
          node ('N-20', or 'local-city'), never the city_state uuid, so
          _cityNodeKey()'s sentinel could only ever match nothing.
+         🏠 Until 2026-09-22 cityTradePublish actually wrote the economy's
+         ground there (a PRN uuid), so `here` never matched and every row fell
+         back to "freshest city". It writes App._cityNodeId now (decision D) —
+         this comparison is unchanged and now finds the city on this node.
        REJECTED: deriving a plausible city from the node endowment for a player
          who has published none. An invented city listed beside real ones is
          the same fabrication the "never fabricate a row" rule exists to stop. */

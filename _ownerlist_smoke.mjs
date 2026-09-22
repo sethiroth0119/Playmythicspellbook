@@ -116,11 +116,13 @@ ok(/p\.node_id, p\.role, p\.available, cp\.population/.test(SQL) && !/p\.availab
 }
 
 /* ── 5. anchors are the viewer's own nodes ── */
-ok(/let me = null; try \{ me = \(P\.cityOwnerIdentity\(\) \|\| \{\}\)\.viewerId \|\| null; \} catch \(e\) \{\}\n\s*if \(FR && Array\.isArray\(FR\.nodes\) && FR\.nodes\.length\) \{\n\s*const mine = FR\.nodes\.filter\(n => n && \(!me \|\| !n\.owner_id \|\| String\(n\.owner_id\) === String\(me\)\)\);\n\s*return mine\.map\(anchorRow\);/.test(NC), 'fetchNodes (own city) keeps only nodes the viewer licensed; rows without owner_id are kept');
+ok(/let me = null; try \{ me = \(P\.cityOwnerIdentity\(\) \|\| \{\}\)\.viewerId \|\| null; \} catch \(e\) \{\}\n\s*if \(FR && Array\.isArray\(FR\.nodes\) && FR\.nodes\.length\) \{\n\s*const mine = FR\.nodes\.filter\(n => n && \(!me \|\| !n\.owner_id \|\| String\(n\.owner_id\) === String\(me\)\)\);\n\s*return ringHere\(mine\.map\(anchorRow\)\);/.test(NC), 'fetchNodes (own city) keeps only nodes the viewer licensed; rows without owner_id are kept (then ringHere keeps the ones sited in this city — _prnhome_smoke)');
 {
   const body = NC.slice(NC.indexOf('  B.fetchNodes = async () => {'), NC.indexOf('  B.fetchNodes = async () => {') + 2400);
   const seg = body.slice(0, body.indexOf("if (B.mode === 'message')"));
-  const g = { B: { mode: 'parent' }, P: { cityOwnerIdentity: () => ({ viewerId: 'me', isOwner: true }), FoundationReserve: { nodes: [{ id: 'a', owner_id: 'me' }, { id: 'b', owner_id: 'founder' }, { id: 'c' }] } }, anchorRow: (n) => n.id };
+  const g = { B: { mode: 'parent' }, P: { cityOwnerIdentity: () => ({ viewerId: 'me', isOwner: true }), FoundationReserve: { nodes: [{ id: 'a', owner_id: 'me' }, { id: 'b', owner_id: 'founder' }, { id: 'c' }] } }, anchorRow: (n) => n.id,
+    // 2026-09-22: the per-city site filter (ringHere) is proven in _prnhome_smoke; identity here so this pins the OWNER filter alone.
+    ringHere: (rows) => rows };
   const fn = new Function('g', 'with (g) { ' + seg + ' }; return B.fetchNodes; }')(g);
   ok(JSON.stringify(await fn()) === '["a","c"]', 'run for real: the founder\'s node b is not rung in this member\'s city; a (mine) and c (no owner) are');
 }

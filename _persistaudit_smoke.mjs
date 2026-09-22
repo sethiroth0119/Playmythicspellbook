@@ -228,6 +228,7 @@ const OWN_KEY = {
   bmPass:                'localStorage BM_PASS_KEY, read back in hasBmPass()',
   campNodeId:            'tw_camp_registrations, restored by tw_cloudRestoreMyCampReg (never emit a blank — see the campWorkforce note in loadForge)',
   seasonWalletResetOwed: 'localStorage hg_season_wallet_owed, read back in _seasonClearServerCinder()',
+  salvageSync:           'restored from p by _salvageNoteBoot(p), which loadForge calls (sql/190 merge base; device id also in localStorage hg_salvage_dev)',
 };
 console.log('6. guard: every Profile field is restored, transient, or own-key');
 {

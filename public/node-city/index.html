@@ -29176,6 +29176,49 @@ function rmFactor(k, r) {
    ⚠ cityKey() IS NOT A SOURCE HERE AND MUST NOT BECOME ONE. It is the right
      key for a save slot and the wrong seed for a world: by design it changes
      as identity resolves. */
+/* 🗺🏠 THE ECONOMY'S GROUND — owner's decision C, 2026-09-22 (bug-mucvogzk,
+   bug-mucu5m51, bug-mtqasoy6).
+   /src/economy hashes this id to decide which deposits a city can extract. It
+   was `game.anchors[0].node.id || 'local-city'`, and measured on the live table
+   that meant 35 of 47 cities simulated ONE shared ground ('local-city') and
+   the other 12 sat on a PRN's id — three of those PRN grounds shared by two
+   cities of the same owner. Now, in order:
+     1. the server's ground id (sql/045, minted once per (user, node)) — the
+        SAME id resmap/water/power already stand on, so the economy and the map
+        finally describe one place. OWNER ONLY: city_ground_id mints for
+        auth.uid(), so in a mayor's session it would answer the MAYOR's ground
+        for this node — a different world under the owner's city.
+     2. the ground a previous session pinned (save field `econGround`), which
+        is how a mayor's session, or an owner's whose RPC has not answered,
+        stays on the owner's ground;
+     3. this city's TW node id — stable per city, not pinned (step 1 replaces
+        it on the next boot that has the server's answer);
+     4. the old expression, for standalone / node-less play.
+   ONE-TIME, AND SAFE: E.mount → Sim.setNode keeps the whole economy blob —
+   firms, treasury, charter, day — and only moves the survey. A mounted
+   economy is never re-grounded mid-session (the module has no setter, and a
+   world moving under a running city is the bug sql/045 describes).
+   REJECTED: keeping each city's current ground and only fixing the shared
+   ones — the owner accepted re-grounding all 47 cities / 141 firms once so
+   that no two cities ever share a ground again. */
+var _econGroundPin = '';
+function econGroundId() {
+  const ok = (g) => (typeof g === 'string' && g && g.length <= 64 && /^[A-Za-z0-9_:.-]+$/.test(g)) ? g : '';
+  let foreign = false;
+  try { foreign = (MythicCityBridge.nodesForeign === true); } catch (e) {}
+  if (!foreign) {
+    let sg = '';
+    try { sg = ok(MythicCityBridge.serverGroundId ? MythicCityBridge.serverGroundId() : ''); } catch (e) {}
+    if (sg) { _econGroundPin = sg; return sg; }
+  }
+  if (ok(_econGroundPin)) return _econGroundPin;
+  let tw = '';
+  try { tw = ok(MythicCityBridge.cityNodeId ? MythicCityBridge.cityNodeId() : ''); } catch (e) {}
+  if (tw) return tw;
+  return (game.anchors && game.anchors[0] && game.anchors[0].node && game.anchors[0].node.id)
+      || (MythicCityBridge.cityKey && MythicCityBridge.cityKey())
+      || 'local-city';
+}
 const GROUND_LEGACY_ID = 'local-city';
 let _groundMint = '';
 function cityGroundId() {
@@ -42796,6 +42839,9 @@ function serialize() {
        it snap back to the ring on the next load. Absent on an old save, and
        then the ring slot is used exactly as before. */
     anchorAt: game.anchorAt,
+    // 🗺 Where the economy's ground was pinned — see econGroundId. Only ever the
+    // server's ground id, so a mayor's session keeps the owner's world.
+    econGround: _econGroundPin || undefined,
     deck: game.defenseDeck, nodeXp: game.nodeXp,
     log: game.log.slice(-LOG_SAVE),
     /* 👥 THE WHOLE POPULATION LEDGER RIDES THE SAVE. npcPop below is the
@@ -43964,6 +44010,8 @@ async function loadState() {
        there is nothing to hand it yet. Absent ⇒ null ⇒ a fresh economy, which
        is the correct reading of a save written before this feature existed. */
     _pendingEconomy = (s.economy && typeof s.economy === 'object') ? s.economy : null;
+    // 🗺 The economy's pinned ground (econGroundId). '' on every older save.
+    _econGroundPin = (typeof s.econGround === 'string') ? s.econGround : '';
     _pendingPop = (s.pop && typeof s.pop === 'object') ? s.pop : null;
     _pendingHH = (s.hh && typeof s.hh === 'object') ? s.hh : null;
     // ⚡ Same stash, same reason: /src/power is imported later in boot().
@@ -51216,9 +51264,18 @@ async function _ncResourceNeeds() {
       /* The node this city stands on decides what is in its ground. Falls back
          to a stable per-save id so a standalone/dev city still gets a real,
          repeatable survey instead of an unsurveyed one. */
-      const nodeId = (game.anchors && game.anchors[0] && game.anchors[0].node && game.anchors[0].node.id)
-                  || (MythicCityBridge.cityKey && MythicCityBridge.cityKey())
-                  || 'local-city';
+      const nodeId = econGroundId();
+      /* 🗺 Said once, when a lived economy arrives on a different ground than it
+         was saved on — the one-time move econGroundId describes. Its firms are
+         all kept; an extractor whose deposit is not in this ground reports
+         "No deposit on this node" on its card rather than failing silently. */
+      try {
+        const was = _pendingEconomy && _pendingEconomy.nodeId != null ? String(_pendingEconomy.nodeId) : '';
+        if (was && was !== String(nodeId)) {
+          logEvent('city', '🗺 The economy now stands on this city\'s own ground (it was sharing ' + (was === 'local-city' ? 'the common ground' : 'a PRN\'s ground') + '). Firms were kept; any extractor with no deposit here says so on its card.');
+          toast('🗺 This city\'s economy now stands on its own ground. Check the Economy panel: an extractor with no deposit here shows "No deposit on this node".', 'bad');
+        }
+      } catch (e) {}
       /* 🔴 `established` IS LOAD-BEARING AND WAS MISSING FOR THE WHOLE LIFE OF
          THIS FEATURE. Without it a lived city that arrives with no economy blob
          is read as brand new and issued a fresh 300,000 🔥 founding tranche with

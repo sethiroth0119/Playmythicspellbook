@@ -69426,6 +69426,21 @@ function _nodeEff(n) {
     return Math.max(NODE_EFF_FLOOR + Math.round(_link * 0.5), Math.round(v));
   } catch (e) { return 100; }
 }
+/* 🔮 THE LEVEL A PLAYER IS SHOWN — bug-mtwuhbwu. The city levels a PRN by
+   sustained link (node-city nodeXpTick) and records it in meta.level through
+   cityNodeLevel → city_set_node_level, which clamps to 1..50 and only ever
+   raises it. The Reserve's PRN tab printed the `level` COLUMN, which nothing
+   writes above 1, so every node read "LV 1" while the city announced LV 12.
+   This is DISPLAY ONLY: the payout keeps reading the column through
+   NODE_PAY_MAX_LEVEL (see there — meta.level is not a trusted multiplier). */
+const NODE_CITY_LEVEL_MAX = 50;              // = city_set_node_level's least(50, …)
+function _nodeShownLevel(n) {
+  try {
+    const col = (n && n.level | 0) || 1;
+    const met = (n && n.meta && (n.meta.level | 0)) || 1;
+    return Math.max(1, Math.min(NODE_CITY_LEVEL_MAX, Math.max(col, met)));
+  } catch (e) { return 1; }
+}
 function _nodeActive(n) {
   const m = n.meta || {};
   if (n.status === 'building') { return (m.readyAt && Date.now() >= m.readyAt); }
@@ -70374,7 +70389,7 @@ function openFoundationReserve() {
             return '<div style="padding:9px 11px;border:1px solid ' + (risk ? (risk.lock ? 'rgba(255,107,107,0.4)' : 'rgba(224,184,74,0.38)') : 'rgba(208,189,167,0.2)') + ';border-radius:9px;background:rgba(111,87,59,0.10);margin-bottom:7px">' +
               '<div style="display:flex;align-items:center;gap:9px"><span style="font-size:1.3rem">' + ((_nodeType(n.node_type) || {}).icon || '🔌') + '</span>' +
                 '<div style="flex:1;min-width:0"><div style="color:#f3eee8;font-weight:800">' + esc(n.name || 'PRN') + (risk ? ' <span class="small-text" style="color:' + (risk.lock ? '#ff8a8a' : '#e8cf94') + '">' + risk.icon + '</span>' : '') + '</div>' +
-                '<div class="small-text" style="color:#cfbca6">' + esc(n.resource || '') + ' · LV ' + (n.level | 0) + ' · eff ' + eff + '%</div></div>' +
+                '<div class="small-text" style="color:#cfbca6">' + esc(n.resource || '') + ' · LV ' + _nodeShownLevel(n) + ' · eff ' + eff + '%</div></div>' +
                 '<div style="text-align:right">' + status + '<div class="small-text" style="color:#cdb9a2">claimable: ' + numF(claim) + ' 🔥</div></div></div>' +
               riskBox +
               '<div style="display:flex;gap:6px;margin-top:8px">' +
@@ -246422,7 +246437,7 @@ window.cityPrnList = function () {
              holder their PRN was still under construction, forever. */
           active: _nodeActive(n),
           readyAt: (n.meta && n.meta.readyAt) || 0,
-          level: Math.max(1, n.level | 0),
+          level: _nodeShownLevel(n),        // bug-mtwuhbwu: the city's level, as the Reserve shows it
           /* ⚠ EVERY ONE OF THESE IS THE RESERVE'S OWN FUNCTION, not a second
              copy of the arithmetic. The panel in the city must never be able
              to disagree with the Reserve screen about the same node — and it

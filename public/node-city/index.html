@@ -6522,6 +6522,11 @@ const LOG_MAX = 140, LOG_SAVE = 40;                   // kept in memory / in the
 const EXPEDITION_TIME = [180, 300];              // seconds away
 const REFUGEE_ROLL_EVERY = 170, REFUGEE_CHANCE = .16;
 const NODE_XP_PER_LEVEL = 50000;                 // link% × seconds
+/* bug-mtwuhbwu: the node level the city can earn stops where the server's
+   does. city_set_node_level stores least(50, level), so a city that kept
+   levelling past 50 announced "LEVEL 54" (and counted its node population)
+   for a level the Reserve — and this city's next boot — read back as 50. */
+const NODE_LEVEL_MAX = 50;
 
 /* ── Decorations & the Mayor ──────────────────────────────────────────
    Greenery and monuments raise morale (decorPts, capped). Node owners
@@ -39756,6 +39761,7 @@ function thriveDividendTick(dtSec) {
 function nodeXpTick(dtSec) {
   for (const a of game.anchors) {
     if (a.link <= 0) continue;
+    if (((a.node.level | 0) || 1) >= NODE_LEVEL_MAX) continue;   // at the server's ceiling — see NODE_LEVEL_MAX
     const id = a.node.id;
     game.nodeXp[id] = (game.nodeXp[id] || 0) + a.link * dtSec;
     if (game.nodeXp[id] >= NODE_XP_PER_LEVEL) {

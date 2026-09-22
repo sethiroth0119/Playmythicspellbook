@@ -43374,7 +43374,19 @@ function resourceCostHtml(cost, opts) {
   opts = opts || {};
   if (!cost) return '<span class="ink-dim">free</span>';
   const R = _ensureResources();
-  const parts = RESOURCE_IDS.filter(id => (cost[id] || 0) > 0).map(id => {
+  /* 🔩 bug-mu8xil3s — "won't let me upgrade Bulwark Protocol, I have plenty
+     of resources". Bulwark costs Metal AND Scrap Metal, and scrapMetal is a
+     SALVAGE id, not in RESOURCE_IDS. Walking RESOURCE_IDS alone dropped it
+     from the printed cost, while canAffordResources checks every key the
+     cost names — so the card read "70 Metal", the player had 70 Metal, and
+     the button stayed disabled for a requirement nobody could see. A cost
+     key that is a known salvage resource is now printed too (after the
+     RESOURCE_IDS ones, so existing costs read exactly as before). Same class
+     as the `intel` cost _campCostHtml documents; limited to salvage ids so a
+     caller's non-resource key (cinder) is still not rendered as a resource. */
+  const _extra = Object.keys(cost).filter(id => RESOURCE_IDS.indexOf(id) < 0
+    && typeof _SALVAGE_BY_ID !== 'undefined' && _SALVAGE_BY_ID[id]);
+  const parts = RESOURCE_IDS.filter(id => (cost[id] || 0) > 0).concat(_extra.filter(id => (cost[id] || 0) > 0)).map(id => {
     const short = (R[id] || 0) < (cost[id] || 0);
     const meta = _meta(id);
     const color = short && opts.flagShort ? '#e0556a' : 'inherit';
@@ -51458,6 +51470,11 @@ async function cloudSyncProfile() {
       __campNodeHire__:      (Profile.campNodeHire && typeof Profile.campNodeHire === 'object') ? Profile.campNodeHire : {},
       __campRoute__:         (Profile.campRoute && typeof Profile.campRoute === 'object') ? Profile.campRoute : null,
       __recon__:             (Profile.recon && typeof Profile.recon === 'object') ? Profile.recon : null,
+      // 🔬 Camp Research Lab levels (bug-mucgicr6). Was in the local loader
+      // ONLY — one list of three — so a second device, the desktop app beside
+      // the browser, a cleared cache or an account-switch wipe all came back
+      // with every project at Lv 0 and no copy anywhere to restore from.
+      __research__:          (Profile.research && typeof Profile.research === 'object') ? Profile.research : null,
       // 🧬 Camp traits copied off the chosen survivor at pick time. Travels
       // with the account so admin-side trait edits don't retroactively change
       // an existing player's character creation.
@@ -53281,6 +53298,13 @@ async function cloudFetchProfile() {
         const _cloudSites = (_cloudRecon.sites && typeof _cloudRecon.sites === 'object') ? _cloudRecon.sites : {};
         Profile.recon = Object.assign({}, _cloudRecon,
           { sites: Object.assign({}, _cloudSites, _localSites) });
+      }
+      /* 🔬 RESEARCH LEVELS MERGE AS HIGH-WATER MARKS (bug-mucgicr6). A level is
+         paid for in resources and hours and nothing in the game un-researches
+         one, so max() per project is the merge that loses nothing — the same
+         reasoning as __devPoints__ above. See _researchMerge. */
+      if (f.__research__ && typeof f.__research__ === 'object') {
+        try { Profile.research = _researchMerge(Profile.research, f.__research__); } catch (e) {}
       }
       if (Array.isArray(f.__campTraits__))         Profile.campTraits     = f.__campTraits__.slice();
       // 🕒 Container cooldown maps — MERGE the higher (later) expiry per id so
@@ -77438,6 +77462,25 @@ function loadForge() {
       // survives later admin edits to the survivor template.
       if (typeof p.campSurvivorId === 'string') Profile.campSurvivorId = p.campSurvivorId;
       if (Array.isArray(p.campTraits)) Profile.campTraits = p.campTraits.filter(x => typeof x === 'string');
+      /* 👷 RECONSTRUCTION STAFF — bug-mtyp80rx / bug-mu8rpr6s, "hired and paid
+         for builders and guards, gone the next day; one came back, the new
+         two never showed". The same two-of-three trap as cityProduction above:
+         campWorkforce (and the rest of the Reconstruction state below) was in
+         the cloud upload and the cloud hydration and NOT in this list. Every
+         reload dropped the paid roster; boot's own saveProfile() then made
+         local look fresher than the cloud, so cloudFetchProfile kept the empty
+         local copy and uploaded `{}` over the good one. Whether the staff
+         "came back" depended only on which side won that race on a given
+         load. The hire itself is a server charge (camp_hire_from_city), so
+         this was paid-for staff disappearing.
+         campNodeId is deliberately NOT here: the registration is re-read from
+         tw_camp_registrations, and a blank must never be emitted for it. */
+      if (p.campWorkforce && typeof p.campWorkforce === 'object') Profile.campWorkforce = p.campWorkforce;   // 👷 hired staff (paid)
+      if (p.campNodeHire  && typeof p.campNodeHire  === 'object') Profile.campNodeHire  = p.campNodeHire;    // 📒 hire history per node
+      if (p.campRoute     && typeof p.campRoute     === 'object') Profile.campRoute     = p.campRoute;       // 🚚 convoy clock
+      if (typeof p.campContrib  === 'number') Profile.campContrib  = p.campContrib;                          // 🤝 node contribution
+      if (typeof p.campPrestige === 'number') Profile.campPrestige = p.campPrestige;                         // 🎖 settlement prestige
+      if (typeof p.campName === 'string' && p.campName) Profile.campName = p.campName;                       // 🏷 settlement name
       /* 🏛 Map capital (see _twMakeCapital). saveProfile() stringifies the whole
          Profile, so it is always WRITTEN — but this local load is a whitelist,
          and a key missing from it is dropped on every refresh and then written
@@ -184216,6 +184259,27 @@ function _ensureResearch() {
   if (!Profile.research.completed || typeof Profile.research.completed !== 'object') Profile.research.completed = {};
   return Profile.research;
 }
+/* 🔬 Merge two copies of Profile.research (local, cloud) — bug-mucgicr6.
+   completed: per-project MAX. A level cannot be lost, only earned.
+   active: the running project is kept from whichever side is still running
+   it, but only while no side has already FINISHED that level — otherwise
+   resolveResearch would book the same level a second time (+1 on top of a
+   level the other device already added). Local wins a tie: it is the
+   device the player is looking at. */
+function _researchMerge(local, cloud) {
+  const L = (local && typeof local === 'object') ? local : {};
+  const C = (cloud && typeof cloud === 'object') ? cloud : {};
+  const lc = (L.completed && typeof L.completed === 'object') ? L.completed : {};
+  const cc = (C.completed && typeof C.completed === 'object') ? C.completed : {};
+  const completed = {};
+  for (const k in lc) completed[k] = Math.max(0, lc[k] | 0);
+  for (const k in cc) completed[k] = Math.max(completed[k] | 0, cc[k] | 0);
+  const stillOpen = (a, side) => !!(a && a.id && ((side[a.id] | 0) >= (completed[a.id] | 0)));
+  let active = null;
+  if (stillOpen(L.active, lc)) active = L.active;
+  else if (stillOpen(C.active, cc)) active = C.active;
+  return Object.assign({}, C, L, { completed: completed, active: active });
+}
 function _researchDef(id) { return RESEARCH_PROJECTS.find(p => p && p.id === id) || null; }
 function _researchLevel(id) { return (_ensureResearch().completed[id] | 0); }
 function _researchCost(def, level) { return (def && typeof def.cost === 'function') ? def.cost(level) : {}; }
@@ -254945,8 +255009,19 @@ async function hireCampWorker(role, cityId, cost) {
   }
   const d = res.data || {};
   if (!d.ok) { try { showToast('⚠ ' + (d.why || 'The hire was refused.'), 5200); } catch (e) {} return; }
-  /* The server's balance, exactly as it wrote it. */
-  if (d.balance != null) { try { Profile.gems = Math.max(0, Math.floor(Number(d.balance) || 0)); } catch (e) {} }
+  /* The server's balance, exactly as it wrote it.
+     🔴 bug-mtyp80rx — "extra Cinder is taken when hiring, above the price".
+     This used to be a bare `Profile.gems = …`, and a drop in Profile.gems is
+     exactly what the spend watcher (_gemsTaxTick) exists to catch: it read the
+     adoption as an unmirrored legacy spend and called _mirrorLegacySpend —
+     wallet_charge for the same amount AGAIN. The server had already taken it,
+     so every hire was debited twice, and the next wallet sync adopted that.
+     Adopt it the way chargeCinderAtomic and node_sale_buy do: tax-exempt (the
+     server already charged) and level with the server's debit counter. */
+  if (d.balance != null) {
+    try { _gemsTaxExempt(() => { Profile.gems = Math.max(0, Math.floor(Number(d.balance) || 0)); }); } catch (e) {}
+    if (d.wallet_seq != null) { try { Profile.walletSeqProgress = Math.max(Profile.walletSeqProgress | 0, Math.floor(Number(d.wallet_seq) || 0)); } catch (e) {} }
+  }
   if (!Profile.campWorkforce || typeof Profile.campWorkforce !== 'object') Profile.campWorkforce = {};
   /* EXACTLY what the server says it moved, never what was asked for — the same
      rule the corporation vault withdraw follows. */
@@ -254965,7 +255040,15 @@ async function hireCampWorker(role, cityId, cost) {
   try { _twLog('settlement', `<b>${escapeHtml(_campRegName())}</b> hired a ${role} from ${escapeHtml(String(d.city_name || node.name))}.`); } catch (e) {}
   try { showToast(`👷 Hired a ${role} from ${d.city_name || node.name}. Camp population: ${_campWorkforceTotal()}.`, 3200); } catch (e) {}
   openEmploymentBoard();
-  try { if (App.screen === 'camp') render(); } catch (e) {}
+  /* 🏗 bug-mu84559b — "every hire counted as a citizen". The Employment Board
+     is opened from the Reconstruction console too, and its Population panel
+     (Guards … Civilians, "N SOULS") was only redrawn when the screen was
+     'camp'. Hiring a Doctor from Reconstruction left that panel showing the
+     old counts while the toast reported a bigger total — the new person read
+     as having joined some other row. The hire itself always credited the
+     named trade. The board is a separate host above the screen, so redrawing
+     underneath it keeps it open. */
+  try { if (App.screen === 'camp' || App.screen === 'reconstruction') render(); } catch (e) {}
 }
 // ── Phase 4: node→camp trade route + convoy-defense missions ──
 const CAMP_ROUTE_INTERVAL_MS = 4 * 3600 * 1000;  // a convoy every ~4h while active
@@ -255581,11 +255664,17 @@ function _reconRunMission(instIdx, def, choiceIdx) {
   let host = document.getElementById('camp-node-picker-host');
   if (!host) { host = document.createElement('div'); host.id = 'camp-node-picker-host'; document.body.appendChild(host); }
   const win = Math.round(m.win * 100);
+  /* bug-mtyp80rx — "hired guards for security and they are gone". A lost
+     "Defend the walls" takes 6 Guards and 10 Civilians off the paid roster.
+     That is the design, but this sheet showed only the odds, so the staff
+     just vanished. It now says what each outcome does before launch. */
   host.innerHTML = `<div class="cnp-scrim" data-act="camp-picker-close"><div class="cnp-modal" role="dialog">
     <div class="cnp-modal-head"><h3>${escapeHtml(m.name)}</h3><button class="cnp-x" data-act="camp-picker-close">✕</button></div>
     <div class="cnp-modal-body" id="recon-mission-body">
       <div class="hint" style="margin-bottom:12px">${def.text}</div>
       <div class="cnp-odds"><div class="cnp-o win"><div class="k">Success</div><div class="v">${win}%</div></div><div class="cnp-o lose"><div class="k">Failure</div><div class="v">${100 - win}%</div></div></div>
+      <div class="hint" style="margin-top:8px">If it succeeds: ${escapeHtml(_reconEffectSummary(m.onWin))}</div>
+      <div class="hint" style="margin-top:4px;color:#ffb8a0">If it fails: ${escapeHtml(_reconEffectSummary(m.onLose))}</div>
       <button class="btn-primary" style="width:100%;margin-top:12px" data-act="recon-mission-launch" data-idx="${instIdx}" data-cidx="${choiceIdx}">Launch Mission</button>
     </div></div></div>`;
 }

@@ -43374,7 +43374,19 @@ function resourceCostHtml(cost, opts) {
   opts = opts || {};
   if (!cost) return '<span class="ink-dim">free</span>';
   const R = _ensureResources();
-  const parts = RESOURCE_IDS.filter(id => (cost[id] || 0) > 0).map(id => {
+  /* 🔩 bug-mu8xil3s — "won't let me upgrade Bulwark Protocol, I have plenty
+     of resources". Bulwark costs Metal AND Scrap Metal, and scrapMetal is a
+     SALVAGE id, not in RESOURCE_IDS. Walking RESOURCE_IDS alone dropped it
+     from the printed cost, while canAffordResources checks every key the
+     cost names — so the card read "70 Metal", the player had 70 Metal, and
+     the button stayed disabled for a requirement nobody could see. A cost
+     key that is a known salvage resource is now printed too (after the
+     RESOURCE_IDS ones, so existing costs read exactly as before). Same class
+     as the `intel` cost _campCostHtml documents; limited to salvage ids so a
+     caller's non-resource key (cinder) is still not rendered as a resource. */
+  const _extra = Object.keys(cost).filter(id => RESOURCE_IDS.indexOf(id) < 0
+    && typeof _SALVAGE_BY_ID !== 'undefined' && _SALVAGE_BY_ID[id]);
+  const parts = RESOURCE_IDS.filter(id => (cost[id] || 0) > 0).concat(_extra.filter(id => (cost[id] || 0) > 0)).map(id => {
     const short = (R[id] || 0) < (cost[id] || 0);
     const meta = _meta(id);
     const color = short && opts.flagShort ? '#e0556a' : 'inherit';

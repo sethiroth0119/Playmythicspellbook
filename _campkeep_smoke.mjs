@@ -15,6 +15,9 @@
    4. Camp Research levels travel with the account (bug-mucgicr6). They were
       in the local loader only, so any other device / the desktop app / a
       cleared cache came back at Lv 0. Upload + high-water merge on hydrate.
+   5. Bulwark Protocol prints every resource it charges (bug-mu8xil3s). Its
+      Scrap Metal leg is a salvage id outside RESOURCE_IDS and was left off
+      the card, so the button was disabled for a cost nobody could see.
 
    Run: node _campkeep_smoke.mjs */
 import vm from 'node:vm';
@@ -108,6 +111,18 @@ if (J("typeof _researchMerge === 'function' && String(_researchMerge).indexOf('c
   const m3 = J(`_researchMerge({ completed: { bulwark: 1 }, active: null }, { completed: { bulwark: 1 }, active: { id: 'bulwark', startedAt: 5, durMs: 9 } })`);
   ok(!!(m3.active && m3.active.id === 'bulwark'), 'a project running on the other device keeps running here');
 } else ok(false, '_researchMerge exists');
+
+// ── 5: every charged resource is printed ────────────────────────────────────
+console.log('research cost card');
+run(`Profile.salvage = { metal: 500, scrapMetal: 0 }; Profile.research = { completed: { bulwark: 1 }, active: null };`);
+const bc = J(`_researchCost(_researchDef('bulwark'), 1)`);
+ok(bc.metal > 0 && bc.scrapMetal > 0, 'Bulwark Lv 2 costs Metal and Scrap Metal', JSON.stringify(bc));
+ok(J(`canAffordResources(_researchCost(_researchDef('bulwark'), 1))`) === false, 'with no Scrap Metal it is not affordable');
+const html = J(`resourceCostHtml(_researchCost(_researchDef('bulwark'), 1), { flagShort: true, withNames: true })`);
+ok(/Scrap Metal/.test(html), 'the card names Scrap Metal', html.replace(/<[^>]+>/g, '|'));
+ok(/#e0556a[^>]*title="Scrap Metal"/.test(html), 'and flags it short in red');
+ok(/Metal<\/span>/.test(html) && html.indexOf('Metal') < html.indexOf('Scrap Metal'), 'Metal still prints first, as before');
+ok(!/cinder/i.test(J(`resourceCostHtml({ cinder: 50, metal: 2 })`)), 'a non-resource key (cinder) is still not printed as a resource');
 
 console.log(`\n${passes} passed, ${fails} failed`);
 process.exit(fails ? 1 : 0);

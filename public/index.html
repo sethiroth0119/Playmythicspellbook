@@ -51203,6 +51203,11 @@ async function cloudSyncProfile() {
       __wagePool__:        (Profile.wagePool && typeof Profile.wagePool === 'object') ? Profile.wagePool : null,
       // 🐄 Homestead Farm state — one save, newest `ts` wins on merge.
       __farm__:            (Profile.farm && typeof Profile.farm === 'object') ? Profile.farm : null,
+      /* 🍳 The Kitchen's saved subset (kitchen.state.js snapshot()): level/xp,
+         pantry, the upgrades bought with Cinder and the startGranted /
+         reliefAt receipts. It rode NO list before the 2026-09-22 persistence
+         audit, so every reload re-granted the starting stock. Merge below. */
+      __kitchen__:         (Profile.kitchen && typeof Profile.kitchen === 'object') ? Profile.kitchen : null,
       // 🥋 Dojo — the business licence + the owner's unlisted move stock.
       __dojoUnlocked__:    !!Profile.dojoUnlocked,
       __dojoStock__:       (Profile.dojoStock && typeof Profile.dojoStock === 'object') ? Profile.dojoStock : {},
@@ -52768,6 +52773,28 @@ async function cloudFetchProfile() {
         try {
           const _cf = f.__farm__, _lf = Profile.farm;
           if (!_lf || typeof _lf !== 'object' || (Number(_cf.ts) || 0) > (Number(_lf.ts) || 0)) Profile.farm = _cf;
+        } catch (e) {}
+      }
+      /* 🍳 Kitchen (persistence audit 2026-09-22). One save, so the body is
+         whichever side has MORE xp (xp only rises; a tie keeps this device's
+         pantry). But the purchases and the receipts are never taken from one
+         side only: upgrades are a UNION (bought with Cinder), startGranted is
+         an OR and reliefAt a MAX — either side having had the free stock or
+         the free drop means it has been had, so a stale row cannot re-arm a
+         faucet and cannot un-buy an upgrade. */
+      if (f.__kitchen__ && typeof f.__kitchen__ === 'object') {
+        try {
+          const _ck = f.__kitchen__;
+          const _lk = (Profile.kitchen && typeof Profile.kitchen === 'object') ? Profile.kitchen : null;
+          const _lkEmpty = !_lk || !Object.keys(_lk).length;
+          const _base = (_lkEmpty || (Number(_ck.xp) || 0) > (Number(_lk.xp) || 0)) ? Object.assign({}, _ck) : Object.assign({}, _lk);
+          const _up = {};
+          [].concat((_lk && Array.isArray(_lk.upgrades)) ? _lk.upgrades : [], Array.isArray(_ck.upgrades) ? _ck.upgrades : [])
+            .forEach((u) => { if (typeof u === 'string' && u) _up[u] = 1; });
+          _base.upgrades = Object.keys(_up);
+          _base.startGranted = !!((_lk && _lk.startGranted) || _ck.startGranted);
+          _base.reliefAt = Math.max(Number(_lk && _lk.reliefAt) || 0, Number(_ck.reliefAt) || 0);
+          Profile.kitchen = _base;
         } catch (e) {}
       }
       // 💸 Wage pool — newest stamp wins. It is a balance: a union would double it.
@@ -77665,6 +77692,31 @@ function loadForge() {
       if (p.farm            && typeof p.farm            === 'object') Profile.farm            = p.farm;             // 🐄 Homestead Farm
       if (p.cityCards       && typeof p.cityCards       === 'object') Profile.cityCards       = p.cityCards;        // 🏙 cards slotted in the city
       if (p.wagePool        && typeof p.wagePool        === 'object') Profile.wagePool        = p.wagePool;         // 💰 NPC wage pool balance
+      /* 🧾 PERSISTENCE AUDIT — PAID STATE THAT LIVED ON NO LIST AT ALL. These
+         were written by saveProfile() and read back by nothing, local or cloud,
+         while the code around each one says it persists:
+           kitchen        — the Kitchen's whole save (upgrades bought with Cinder);
+           rentals        — a Real Estate rental the player PAID rent for; the
+                            Dwelling locked again on the next reload;
+           tw_state       — Territory Wars guards hired, upgrades bought and the
+                            territory vault (ownership itself is re-read from
+                            tw_ownership, but that fetch keeps guards/upgrades
+                            from the local copy, which was empty);
+           reserveConvoys — Reserve convoys IN FLIGHT: the cargo is spent at
+                            dispatch, so a reload before arrival lost it outright;
+           walletOutbox   — failed Cinder credits queued for replay ("rides
+                            Profile … so the queue survives a reload" — it did not);
+           fieldShop      — the offline trader fallback, whose float is what
+                            stops a trader being a Cinder faucet (reload refilled it).
+         ⚠ Local only on purpose, except kitchen (see __kitchen__). A convoy or
+           an outbox entry replayed from a second device would deliver twice;
+           rentals are rebuilt cross-device from realty_listings in realtyFetch. */
+      if (p.kitchen         && typeof p.kitchen         === 'object') Profile.kitchen         = p.kitchen;          // 🍳 the Kitchen save
+      if (p.rentals         && typeof p.rentals         === 'object') Profile.rentals         = p.rentals;          // 🔑 paid rentals
+      if (p.tw_state        && typeof p.tw_state        === 'object') Profile.tw_state        = p.tw_state;         // 🗺 guards / upgrades / vault
+      if (Array.isArray(p.reserveConvoys))                            Profile.reserveConvoys  = p.reserveConvoys.filter(c => c && c.id); // 🚚 convoys in flight
+      if (Array.isArray(p.walletOutbox))                              Profile.walletOutbox    = p.walletOutbox.filter(c => c && c.ref); // 📮 credits to replay
+      if (p.fieldShop       && typeof p.fieldShop       === 'object') Profile.fieldShop       = p.fieldShop;        // 🏪 offline trader float + lots
       if (p.achievements && typeof p.achievements === 'object') {
         Profile.achievements = {
           earned: (p.achievements.earned && typeof p.achievements.earned === 'object') ? p.achievements.earned : {},
@@ -197415,6 +197467,20 @@ async function realtyFetch() {
     // ⌛ Drop my OWN expired rentals (I no longer hold Dwelling access there).
     const rentals = _reEnsureRentals();
     Object.keys(rentals).forEach(k => { if (rentals[k] && (rentals[k].until || 0) <= now) { delete rentals[k]; changed = true; } });
+    /* 🔑 …and ADOPT the ones the server says I am renting (persistence audit
+       2026-09-22). Profile.rentals was on no load list and no cloud list, so a
+       rental paid for in Cinder was forgotten on the next reload and never
+       existed on a second device. The row is the receipt: status 'rented',
+       buyer_id me, rent_until in the future. Additive only — a local entry is
+       never replaced, and an expired row is never adopted. */
+    for (const r of (data || [])) {
+      if (r.buyer_id !== me || r.status !== 'rented' || rentals[r.id]) continue;
+      const until = r.rent_until ? Date.parse(r.rent_until) : 0;
+      if (!(until > now)) continue;
+      const pj = r.prop_json || {};
+      rentals[r.id] = { until, name: pj.name || 'Rental', nodeId: r.node_id || null, residents: r.residents | 0, propId: r.prop_id || null };
+      changed = true;
+    }
     if (changed) { try { saveProfile(); } catch (e) {} }
     const rows = (data || []);
     RealtyMarket.open = rows.filter(r => r.status === 'open' && r.seller_id !== me).map(r => _reRowToListing(r, me));

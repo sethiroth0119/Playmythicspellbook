@@ -381,6 +381,16 @@ export function sheetHtml(cardId, inject) {
   } else {
     h += `<div class="rt-note" style="margin-bottom:.45rem">You do not know their taste yet — bond to Steady and they will let it slip. Guess anyway; a lucky one still counts.</div>`;
   }
+  /* 💗 AN OPEN REQUEST IS FILLED HERE TOO (bug-mucgw4pi). The picker and the
+     command-bar badge send the player to this table with "asked for X", and
+     until now nothing here could answer it — the request stayed open, so the
+     badge never went down. Not behind the gift cooldown: a request is the unit
+     asking, and the arrival dialog never gated it either. */
+  const req = prof.request;
+  if (req && req.item && b.fillRequest && b.ownCount(req.item) > 0) {
+    h += `<div class="rt-note" style="margin-bottom:.45rem">They asked you for <b style="color:#ffd166">${esc(b.itemName(req.item))}</b>.</div>`
+      + `<button class="rt-gift fav" data-fill="1">💗 Hand over ${esc(b.itemName(req.item))} <span class="rt-n">×${b.ownCount(req.item)}</span></button>`;
+  }
   if (cd > 0) {
     h += `<div class="rt-note" style="color:#e8c46a">They have had a gift recently. Another in ${esc(G.fmtLeft(cd))}.</div>`;
   } else if (!shelf.length) {
@@ -471,6 +481,12 @@ function paint(host, cardId) {
   host.querySelectorAll('[data-gift]').forEach(el => {
     el.onclick = () => { gift(cardId, el.dataset.gift); paint(host, cardId); };
   });
+  host.querySelectorAll('[data-fill]').forEach(el => {
+    el.onclick = () => { try { b.fillRequest(cardId); } catch (e) {} paint(host, cardId); };
+  });
+  /* bug-mucgw4pi: every paint follows a gift, a judgement or a fill — tell the
+     camp so the Table button's badge is recounted instead of frozen. */
+  try { if (b.tableChanged) b.tableChanged(); } catch (e) {}
 }
 
 /** Apply one judgement. The ONLY write path on this screen besides the gift.
@@ -544,6 +560,12 @@ export function judge(cardId, choice) {
 export function gift(cardId, itemId) {
   const b = B(); if (!b) return null;
   const prof = b.unitProf(cardId); if (!prof) return null;
+  /* Handing over the very thing they ASKED for is filling the request, not an
+     unprompted gift — before bug-mucgw4pi it ate the item, paid the ordinary
+     rate and left the request (and the badge) open. */
+  if (prof.request && prof.request.item === itemId && b.fillRequest) {
+    return b.fillRequest(cardId) ? { ok: true, request: true } : null;
+  }
   const card = b.card(cardId) || { id: cardId, name: cardId };
   const pool = (b.giftPool && b.giftPool()) || [];
   const tierIdx = b.bondTierIndex(prof.bond || 0);
@@ -609,4 +631,5 @@ export function close() {
   if (!ov) return;
   try { if (ov._esc) document.removeEventListener('keydown', ov._esc); } catch (e) {}
   ov.remove();
+  try { const b = B(); if (b && b.tableChanged) b.tableChanged(); } catch (e) {}
 }

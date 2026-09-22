@@ -82355,24 +82355,35 @@ function _lqWitnessDeparture(soldName, hit, skipId) {
     try { saveProfile(); } catch (e) {}
   } catch (e) {}
 }
+/* 💗 Fill one open request. Returns false (and toasts) when the player does not
+   hold the item. Shared by the arrival dialog (_LQ.equip) and the Table
+   (MythicRanchBridge.fillRequest) — bug-mucgw4pi: the Table's badge counted
+   "asked for X" but the Table could not fill a request, and handing X over as
+   an unprompted gift consumed it while leaving the request open, so the count
+   never went down. One implementation, so both doors pay the same. */
+function _lqFulfilRequest(id) {
+  const p = Profile.units[id]; if (!p || !p.request) return false;
+  const r = p.request, item = r.item;
+  if ((typeof _resOwnCount === 'function' ? _resOwnCount('item', item) : 0) <= 0) { if (typeof showToast === 'function') showToast("You don't have that item.", 2200); return false; }
+  _resTakeOwned('item', item);
+  if (!Array.isArray(p.boundItems)) p.boundItems = [];
+  p.boundItems.push(item);
+  const ti = bondTierIndex(p.bond || 0);
+  let gain = 20 + ti * 4;                                 // +20 (Wary) → +40 (Sworn)
+  if ((r.visits | 0) >= 1) gain += LQ_MEMORY_BONUS;       // fulfilled a long-open request
+  adjustBond(p, gain);
+  p.xp = (p.xp | 0) + Math.round(25 * loyaltyXpMult(p.bond));  // genuine power investment too
+  delete p.request;
+  try { saveProfile(); } catch (e) {}
+  const card = _lqCard(id) || { name: 'Companion' };
+  if (typeof showToast === 'function') showToast(`💗 ${card.name}: +${gain} loyalty — ${getBondTier(p.bond).name}. The bond holds.`, 3200);
+  if (typeof _osimSfx !== 'function' && typeof playSfx === 'function') { try { playSfx('levelup'); } catch (e) {} }
+  return true;
+}
 window._LQ = {
   equip: (id) => {
     const p = Profile.units[id]; if (!p || !p.request) { _lqCloseDialog(); return; }
-    const r = p.request, item = r.item;
-    if ((typeof _resOwnCount === 'function' ? _resOwnCount('item', item) : 0) <= 0) { if (typeof showToast === 'function') showToast("You don't have that item.", 2200); return; }
-    _resTakeOwned('item', item);
-    if (!Array.isArray(p.boundItems)) p.boundItems = [];
-    p.boundItems.push(item);
-    const ti = bondTierIndex(p.bond || 0);
-    let gain = 20 + ti * 4;                                 // +20 (Wary) → +40 (Sworn)
-    if ((r.visits | 0) >= 1) gain += LQ_MEMORY_BONUS;       // fulfilled a long-open request
-    adjustBond(p, gain);
-    p.xp = (p.xp | 0) + Math.round(25 * loyaltyXpMult(p.bond));  // genuine power investment too
-    delete p.request;
-    try { saveProfile(); } catch (e) {}
-    const card = _lqCard(id) || { name: 'Companion' };
-    if (typeof showToast === 'function') showToast(`💗 ${card.name}: +${gain} loyalty — ${getBondTier(p.bond).name}. The bond holds.`, 3200);
-    if (typeof _osimSfx !== 'function' && typeof playSfx === 'function') { try { playSfx('levelup'); } catch (e) {} }
+    if (!_lqFulfilRequest(id)) return;
     _lqShowNext();
   },
   decline: (id) => {
@@ -184310,22 +184321,7 @@ function _campCommandBarHtml() {
               a launcher for a module that 404'd is worse than no launcher. */''}
         ${(() => { try {
           if (!window.MythicRanch || typeof window.MythicRanch.open !== 'function') return '';
-          let waiting = 0;
-          try {
-            const _R = window.MythicRanch;
-            // hasBanter is a separate call, NOT a field on the roster entry —
-            // see the note in _campTablePicker. Counting only the fields would
-            // miss the very thing the badge is for.
-            waiting = (_R.stewardRoster() || []).filter(u => {
-              if (!u) return false;
-              let b = false; try { b = !!_R.hasBanter(u.id); } catch (e) {}
-              return b || u.hasRequested || u.giftReady;
-            }).length;
-          } catch (e) {}
-          const badge = waiting > 0
-            ? ` <span style="background:#ffd166;color:#1a1020;padding:0.05rem 0.35rem;border-radius:3px;font-weight:800;font-size:0.7rem">${waiting}</span>`
-            : '';
-          return `<button class="btn-secondary" id="btn-camp-table" title="Sit down with a companion — bond, temperament, memories and their service record">🪵 Table${badge}</button>`;
+          return `<button class="btn-secondary" id="btn-camp-table" title="Sit down with a companion — bond, temperament, memories and their service record">${_campTableBtnInner()}</button>`;
         } catch (e) { return ''; } })()}
         <span class="cbx-spacer"></span>
         <button class="btn-secondary" data-act="recon-open" title="Open the Reconstruction Settlement — Camp Console + reclaim the ruins">🏗 Reconstruction</button>
@@ -242650,6 +242646,39 @@ window.MythicHouseBridge = {
    ⚠ It does NOT call render(): the Table it opens is a body-level overlay
      anchored to the document, and re-rendering the camp underneath would tear
      that DOM out from under it. */
+/* 🪵 The Table button's label + badge. The badge counts companions with
+   something waiting — queued banter, a request you can fill, a favourite in the
+   stores. hasBanter is a separate call, NOT a field on the roster entry (see the
+   note in _campTablePicker); counting only the fields would miss the very thing
+   the badge is for. */
+function _campTableBtnInner() {
+  let waiting = 0;
+  try {
+    const _R = window.MythicRanch;
+    waiting = (_R.stewardRoster() || []).filter(u => {
+      if (!u) return false;
+      let b = false; try { b = !!_R.hasBanter(u.id); } catch (e) {}
+      return b || u.hasRequested || u.giftReady;
+    }).length;
+  } catch (e) {}
+  const badge = waiting > 0
+    ? ` <span style="background:#ffd166;color:#1a1020;padding:0.05rem 0.35rem;border-radius:3px;font-weight:800;font-size:0.7rem">${waiting}</span>`
+    : '';
+  return '🪵 Table' + badge;
+}
+/* 🔁 bug-mucgw4pi: "the number on the Table button does not go down as I give
+   gifts". The badge was computed ONCE, when renderCamp() built the command bar,
+   and the Table deliberately never calls render() (see _campTablePicker), so
+   every gift and judgement changed the data under a label nothing repainted.
+   This rewrites just the button's contents — no render(), so the overlay that
+   asked for it is not torn down. MythicRanchBridge.tableChanged calls it after
+   every paint of the Table and when it closes. */
+function _campTableBadgeRefresh() {
+  try {
+    const btn = document.getElementById('btn-camp-table');
+    if (btn && window.MythicRanch) btn.innerHTML = _campTableBtnInner();
+  } catch (e) {}
+}
 function _campTablePicker() {
   const R = window.MythicRanch;
   if (!R || typeof R.open !== 'function') { showToast('🪵 The Table module did not load — reload the camp.', 4200); return; }
@@ -242785,6 +242814,10 @@ window.MythicRanchBridge = {
   },
   ownCount: (id) => { try { return _resOwnCount('item', id) | 0; } catch (e) { return 0; } },
   takeItem: (id) => { try { _resTakeOwned('item', id); return true; } catch (e) { return false; } },
+  /* 💗 bug-mucgw4pi — fill an open request from the Table through the SAME
+     function the arrival dialog uses, and repaint the command-bar badge. */
+  fillRequest: (id) => { try { return _lqFulfilRequest(id); } catch (e) { return false; } },
+  tableChanged: () => { try { _campTableBadgeRefresh(); } catch (e) {} },
   /* Only what the player actually holds, and only from the gift pool. The raw
      itemInventory carries everything they own; offering a companion a crafting
      reagent as a "gift" is noise in a list that should read as a shortlist. */

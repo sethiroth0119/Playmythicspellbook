@@ -214,7 +214,6 @@ const TRANSIENT = {
   resources:           'legacy pre-salvage ledger, folded into Profile.salvage and blanked (_ensureResources)',
   _dreamPremonition:   'write-only: nothing reads it',
   activeDream:         'write-only: nothing reads it',
-  packInventory:       'write-only: nothing reads it (the real pack inventory is unopenedPacks — see the coupon note in the audit report)',
   _starterRestore:     'self-heal version flag; _starterDeckRestoreCheck re-runs idempotently, guarded by ownedStarterDecks + entitlement',
   cardShopUnlocked:    'legacy flag; the licence is _ownsOp(\'cardshop\') on operation rows, and _csApplyResetOnce clears the flag',
   campMilestoneClaims: 'client cache only; tw_node_claim_milestone dedups server-side (already_claimed)',

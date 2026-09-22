@@ -51430,6 +51430,11 @@ async function cloudSyncProfile() {
       // named here AND read back in the hydration block. Without both halves
       // a signed contract would quietly vanish on the next device.
       __aiTrade__:           (Profile.aiTrade && typeof Profile.aiTrade === 'object') ? Profile.aiTrade : null,
+      // 🎟 Season Pass + 🎯 Missions (bug-mu9clqwc) — the claimed flags are
+      // what stop a reward being taken twice, so they must reach every device.
+      // Hydrated through _seasonPassMerge / _missionsMerge, never assigned.
+      __seasonPass__:        (Profile.seasonPass && typeof Profile.seasonPass === 'object') ? Profile.seasonPass : null,
+      __missions__:          (Profile.missions && typeof Profile.missions === 'object') ? Profile.missions : null,
       // 🚚 Convoy rigs bought with a card. Paid-for and permanent, so this is
       // the one profile key where losing the sync would cost the player real
       // money — the server-side garage_purchases table is the backstop.
@@ -53224,6 +53229,14 @@ async function cloudFetchProfile() {
       if (typeof f.__twCapitalNodeId__ === 'string' && f.__twCapitalNodeId__) Profile.twCapitalNodeId = f.__twCapitalNodeId__;
       // 🤝 AI trade history — the other half of __aiTrade__ above.
       if (f.__aiTrade__ && typeof f.__aiTrade__ === 'object') Profile.aiTrade = f.__aiTrade__;
+      // 🎟🎯 The other half of __seasonPass__ / __missions__. MERGED: a straight
+      // assignment would let an older cloud copy hand back an unclaimed flag.
+      if (f.__seasonPass__ && typeof f.__seasonPass__ === 'object') {
+        try { Profile.seasonPass = _seasonPassMerge(Profile.seasonPass, f.__seasonPass__); } catch (e) {}
+      }
+      if (f.__missions__ && typeof f.__missions__ === 'object') {
+        try { Profile.missions = _missionsMerge(Profile.missions, f.__missions__); } catch (e) {}
+      }
       // 🚚 Rigs MERGE rather than replace. A straight assignment would let an
       // older cloud copy delete a rig bought since — and that rig was paid for.
       if (f.__garage__ && typeof f.__garage__ === 'object') {
@@ -58375,29 +58388,88 @@ function _missionSpec(id) {
 
 // Reset checker — call before EVERY mission interaction (track, render,
 // claim) so a stale day-old set isn't rewarded twice.
+// The two period boundaries, in ONE place so the reset and the cloud merge
+// (_missionsMerge) cannot disagree about which day/week a set belongs to.
+// Both are LOCAL time — daily at local midnight, weekly Monday 00:00 local.
+function _missionPeriodStarts() {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  // Day 0 = Sunday in JS.
+  const monday = new Date(); monday.setHours(0, 0, 0, 0);
+  const dayOfWeek = monday.getDay() || 7;     // make Sunday = 7
+  monday.setDate(monday.getDate() - (dayOfWeek - 1));   // back to this Monday
+  return { todayStart: today.getTime(), mondayStart: monday.getTime() };
+}
 function _missionsResetIfNeeded() {
   const m = _ensureMissions();
   const now = Date.now();
+  const { todayStart, mondayStart } = _missionPeriodStarts();
   // Daily — reset at local midnight. Compare against the start of TODAY.
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const todayStart = today.getTime();
   if (!m.dailyRolledAt || m.dailyRolledAt < todayStart) {
     const seed = Math.floor(todayStart / DAY_MS);
     m.daily = _rollMissionSet(MISSION_CATALOG.daily, 3, seed);
     m.dailyRolledAt = now;
     m.claimedDaily = {};
   }
-  // Weekly — reset Monday 00:00 local. Day 0 = Sunday in JS.
-  const monday = new Date(); monday.setHours(0, 0, 0, 0);
-  const dayOfWeek = monday.getDay() || 7;     // make Sunday = 7
-  monday.setDate(monday.getDate() - (dayOfWeek - 1));   // back to this Monday
-  const mondayStart = monday.getTime();
+  // Weekly — reset Monday 00:00 local.
   if (!m.weeklyRolledAt || m.weeklyRolledAt < mondayStart) {
     const seed = Math.floor(mondayStart / WEEK_MS);
     m.weekly = _rollMissionSet(MISSION_CATALOG.weekly, 2, seed);
     m.weeklyRolledAt = now;
     m.claimedWeekly = {};
   }
+}
+
+/* ☁ CLOUD MERGE for missions and the pass (bug-mu9clqwc). Both used to be
+   device-local AND reload-local, so a claim was forgotten the moment the page
+   reloaded. Now that they sync, hydration must never let an OLDER copy undo a
+   claim: within the same period the claimed maps are UNIONED and progress only
+   ever rises; a copy from an earlier period loses outright (it would be
+   re-rolled anyway). Local wins ties so an in-session claim is never lost. */
+function _missionsMerge(local, cloud) {
+  if (!cloud || typeof cloud !== 'object') return local;
+  if (!local || typeof local !== 'object') return cloud;
+  const P = _missionPeriodStarts();
+  const out = Object.assign({}, cloud, local);
+  const half = (listK, atK, clK, start) => {
+    const ta = +local[atK] || 0, tb = +cloud[atK] || 0;
+    const curA = ta >= start, curB = tb >= start;
+    const la = Array.isArray(local[listK]) ? local[listK] : [], lb = Array.isArray(cloud[listK]) ? cloud[listK] : [];
+    if (curA && curB) {
+      const byId = {};
+      lb.forEach(s => { if (s && s.id) byId[s.id] = s; });
+      out[listK] = la.map(s => {
+        const o = s && s.id ? byId[s.id] : null;
+        if (!o) return s;
+        return Object.assign({}, s, { progress: Math.max(s.progress | 0, o.progress | 0), completed: !!(s.completed || o.completed) });
+      });
+      out[atK] = Math.min(ta, tb);
+      out[clK] = Object.assign({}, cloud[clK] || {}, local[clK] || {});
+    } else if (curB && !curA) {
+      out[listK] = lb; out[atK] = tb; out[clK] = Object.assign({}, cloud[clK] || {});
+    } else {
+      out[listK] = la; out[atK] = ta; out[clK] = Object.assign({}, local[clK] || {});
+    }
+  };
+  half('daily', 'dailyRolledAt', 'claimedDaily', P.todayStart);
+  half('weekly', 'weeklyRolledAt', 'claimedWeekly', P.mondayStart);
+  return out;
+}
+function _seasonPassMerge(local, cloud) {
+  if (!cloud || typeof cloud !== 'object') return local;
+  if (!local || typeof local !== 'object') return cloud;
+  const na = local.seasonNumber | 0, nb = cloud.seasonNumber | 0;
+  if (na !== nb) return na > nb ? local : cloud;     // a later season supersedes
+  const out = Object.assign({}, cloud, local);
+  out.xp   = Math.max(local.xp | 0, cloud.xp | 0);
+  out.tier = Math.max(local.tier | 0, cloud.tier | 0);
+  // The EARLIER start: a fresh device stamps now() on first read, and that
+  // must not extend the season the account is actually in.
+  const sa = +local.seasonStartedAt || 0, sb = +cloud.seasonStartedAt || 0;
+  out.seasonStartedAt = (sa && sb) ? Math.min(sa, sb) : (sa || sb);
+  out.claimedFreeTiers    = Object.assign({}, cloud.claimedFreeTiers || {},    local.claimedFreeTiers || {});
+  out.claimedPremiumTiers = Object.assign({}, cloud.claimedPremiumTiers || {}, local.claimedPremiumTiers || {});
+  out.premiumOwned = !!(local.premiumOwned || cloud.premiumOwned);
+  return out;
 }
 
 // Trigger entry-point — every battle/loot/win path that wants to drip
@@ -77310,6 +77382,15 @@ function loadForge() {
       if (p.campaignProgress && typeof p.campaignProgress === 'object') Profile.campaignProgress = p.campaignProgress;
       if (typeof p.tutorialComplete === 'boolean') Profile.tutorialComplete = p.tutorialComplete;
       if (p.dailyChallenges && typeof p.dailyChallenges === 'object') Profile.dailyChallenges = p.dailyChallenges;
+      /* 🎟 SEASON PASS + 🎯 MISSIONS (bug-mu9clqwc). Neither was on this
+         whitelist, and neither travelled in the cloud row, so every reload
+         handed back the blank initialiser: claimedDaily / claimedWeekly and the
+         claimed-tier maps came back EMPTY while _missionsResetIfNeeded re-rolled
+         the SAME seeded set — "you can keep claiming the daily and weekly task".
+         The claim guard itself was always right; the flag it reads just never
+         survived. saveProfile() already writes both; this is the read half. */
+      if (p.seasonPass && typeof p.seasonPass === 'object') Profile.seasonPass = p.seasonPass;
+      if (p.missions && typeof p.missions === 'object') Profile.missions = p.missions;
       if (p.achievements && typeof p.achievements === 'object') {
         Profile.achievements = {
           earned: (p.achievements.earned && typeof p.achievements.earned === 'object') ? p.achievements.earned : {},

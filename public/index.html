@@ -42615,7 +42615,9 @@ const RESOURCES = [
   { id: 'cobalt',                  name: 'Cobalt',                    icon: '🪨', color: '#a8a29a' },
   { id: 'constructionComponents',  name: 'Construction Components',   icon: '🧱', color: '#c2725a' },
   { id: 'constructionGlass',       name: 'Construction Glass',        icon: '🧱', color: '#c2725a' },
-  { id: 'copper',                  name: 'Copper',                    icon: '⛓️', color: '#9fb4d8' },
+  // 🛢 promoted by the Oil Press (node-city ECO_BUILDING_MAP, bug-mu2oz3ve) — chain.js name/icon/colour verbatim.
+  { id: 'cookingOil',              name: 'Cooking Oil',               icon: '🍞', color: '#e0a86a' },
+  { id: 'copper',                 name: 'Copper',                    icon: '⛓️', color: '#9fb4d8' },
   { id: 'copperOre',               name: 'Copper Ore',                icon: '🪨', color: '#a8a29a' },
   { id: 'copperWire',              name: 'Copper Wire',               icon: '⛓️', color: '#9fb4d8' },
   { id: 'corn',                    name: 'Corn',                      icon: '🌾', color: '#d9c46a' },
@@ -184348,6 +184350,8 @@ const RESOURCE_CINDER_VALUE = {
   beverages: 2, boosterPacks: 2, bread: 2, cannedFood: 2, cardStock: 2,
   cardboard: 2, constructionComponents: 2, electricity: 2, freshWater: 2, gasoline: 2,
   lumber: 2, metalComponents: 2, packagingMaterial: 2, pigIron: 2, preparedMeals: 2,
+  // 🛢 the Oil Press's cookingOil (bug-mu2oz3ve) — tier 1, floor(78 / 28) = 2, like every row above.
+  cookingOil: 2,
   /* ♻️ The Trash Crusher's two ids. NOT copied from recycledMetal because they
      looked similar — derived: chain_recycledGlass and chain_recycledPlastic are
      generated with the same tier-1 shape (28 out, fuel 12 + water 15 in), so

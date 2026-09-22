@@ -236,6 +236,8 @@ export const BUILDING_WORK = {
   canecroft:   ['planting', 'watering'],
   feedplant:   ['planting', 'handiwork'],
   sugarmill:   ['planting', 'kindling'],
+  oilpress:    ['planting', 'kindling'],
+  abattoir:    ['handiwork', 'cooling'],
   waterintake: ['watering', 'generating'],
   waterstation:['watering', 'handiwork'],
   procwater:   ['watering', 'cooling'],

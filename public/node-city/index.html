@@ -5634,6 +5634,36 @@ const BUILDINGS = {
   cannery:  { name: 'Cannery',       ico: '🥫', cost: { cinder: 35, metal: 12 }, pop: 2, crew: 2, powerNeed: 0.25,
               gen: { rations: 2.60 }, use: { food: 2.25, water: 1.55 },
               desc: 'Turns raw crops into rations. A kitchen can serve straight off the field, but it burns more than twice the produce doing it — the Cannery is what makes food service cheap.' },
+  /* 🛢🥩 THE KITCHEN'S TWO MISSING FEEDSTOCKS (bug-mu2oz3ve, owner decision).
+     Every preparedMeals leg the Fast Food, Food Truck and Restaurant firms can
+     run needs `cookingOil` or `meat` (the fourth, seafood + shellfish, needs a
+     Fishing Company), and NO row in ECO_BUILDING_MAP made either — so on most
+     boards those three firms read "No feedstock at all" for ever. The same
+     cookingOil hole kept bread, snacks and restaurantSupplies dark, and
+     maintenanceParts (whose primary leg lists cookingOil at 0.0). These two
+     are the producers; recipes.js already had both recipes (soybeans → oil,
+     livestock → meat) and nothing there changed, so no price moved.
+     ⚙ Same shape as the materials tier: cost off the Smelting Works ladder —
+       Oil Press rung A (first processing, straight off the soybean seam),
+       Abattoir rung B (livestock is itself a made good) — and powerNeed =
+       recipe power ×2, rounded to 0.05, floored at 0.3 (0.13 and 0.12 → 0.3).
+     ⚠ THE TILE INPUTS ARE WHAT THE TILE LAYER CAN ACTUALLY MAKE. The Abattoir
+       eats `livestock`, which the Livestock Farm gens (its note promised the
+       butcher would join by declaring exactly this). The Oil Press eats
+       `corn`, NOT soybeans: no BUILDINGS row gens soybeans, so a soybean input
+       would be the Refinery's crude trap — a building that can never run.
+       Corn is a real oilseed and the Farm already gens it; the FIRM behind the
+       tile still presses soybeans, because that is its recipe. Rates are set at
+       ledger-value parity (corn 1 → oil 2, livestock 2 → meat 3) so neither
+       tile is a Cinder faucet, and one Farm / one Livestock Farm feeds one each.
+       Both `use` ids are promoted ledger ids, so LEDGER_MIRROR_RES (derived
+       from these rows) fetches them with no further edit. */
+  oilpress: { name: 'Oil Press',     ico: '🫒', cost: { cinder: 60, metal: 24 }, pop: 2, crew: 2, powerNeed: 0.3, mesh: 'cannery',
+              gen: { cookingOil: 0.15 }, use: { corn: 0.30 },
+              desc: 'Crushes oilseed into cooking oil. Every kitchen in the city fries in it — Fast Food, Food Trucks and Restaurants cannot serve a meal without it, and neither can a bakery bake.' },
+  abattoir: { name: 'Abattoir',      ico: '🥩', cost: { cinder: 78, metal: 30 }, pop: 2, crew: 2, powerNeed: 0.3, mesh: 'cannery',
+              gen: { meat: 0.17 }, use: { livestock: 0.26 },
+              desc: 'Where the Livestock Farm\'s herd goes. Turns livestock into meat for the kitchens, the cannery and the butcher\'s counter — build it beside the pens.' },
   warehouse:{ name: 'Warehouse',     ico: '🏬', cost: { cinder: 45, metal: 18 }, pop: 1, crew: 1,
               stockCap: STOCK_CAP_PER_WAREHOUSE,
               desc: 'Racking, dock and yard. +' + STOCK_CAP_PER_WAREHOUSE + ' storage for every refined good, per level. Without storage, refining simply stops when the shelves fill.' },
@@ -5972,7 +6002,7 @@ const BUILD_SECTIONS = [
   { id: 'svc',   name: 'Food & Service',  ico: '🍽️', desc: 'Feeds the city. Coverage, not stockpiles — this is what stops the population falling.',
     items: ['foodtruck', 'restaurant', 'grocery', 'clinic', 'club'] },
   { id: 'chain', name: 'Refining',        ico: '🏭', desc: 'Raw into refined. Rations, ingots, components, planks and power.',
-    items: ['cannery', 'smelter', 'machineshop', 'sawmill', 'weavery', 'papermill', 'printworks', 'warehouse'] },
+    items: ['cannery', 'oilpress', 'abattoir', 'smelter', 'machineshop', 'sawmill', 'weavery', 'papermill', 'printworks', 'warehouse'] },
   /* ⚡ THE GENERATING FLEET GETS ITS OWN SECTION, and the Power Station moved
      here out of Refining. Ten generators is a shop of its own — leaving them
      scattered through "Raw into refined" would bury the single most consequential
@@ -6124,6 +6154,8 @@ const BUILD_ORDER = ['streetlight','farm','hydrofarm','stockfarm','purifier','sc
   'tyreworks', 'partspress', 'engineworks',
   // ── the Ouroboros chain: the two links that made the Card Shop able to print
   'papermill', 'printworks',
+  // ── 🛢🥩 the kitchen's two feedstocks: cooking oil and meat (bug-mu2oz3ve)
+  'oilpress', 'abattoir',
   // ── the financial district: the Forge remodelled. 'forge' is BACK in this
   //    list, which is what makes it placeable again; the other two are new.
   'forge', 'indexfund', 'holdco',
@@ -30958,14 +30990,24 @@ const ECO_BUILDING_MAP = {
   /* 🐄 The Livestock Farm. Its two ids are what promotes them into
      PROMOTED_CHAIN_IDS — that array is DERIVED from this map, not chosen, and
      round0p of tools/economy-tests/run.mjs re-derives it and fails on any
-     difference. The coming abattoir joins by adding a row here, not by editing
-     a list of resources. */
+     difference. The abattoir joined exactly that way — a row below, not an
+     edit to a list of resources (bug-mu2oz3ve). */
   stockfarm:   { out: ['livestock'],                                                  ind: 'farm' },
   riftbore:    { out: ['anomalousMatter', 'realityMatter', 'soulEnergy', 'dimensionalMaterial', 'realityFragments'], ind: 'anomalySite' },
   // ── processing & manufacturing
   sawmill:     { out: ['lumber'],             ind: 'sawmill' },
   smelter:     { out: ['pigIron'],            ind: 'smelter' },
   cannery:     { out: ['cannedFood'],         ind: 'foodPlant' },
+  /* 🛢🥩 The two producers every kitchen was waiting on (bug-mu2oz3ve). `ind`
+     is each id's OWN recipe industry, read off recipes.js. Adding `cookingOil`
+     here is what promotes it (PROMOTED_CHAIN_IDS is derived from this map);
+     `meat` was already a ledger id (the Homestead Farm's), so it promotes
+     nothing. ⚠ `meat` is producer-dark on the PRIMARY leg walk (round0j): its
+     livestock needs animalFeed, whose grain leg needs biomass, and nothing
+     makes biomass. In play the Feed Operation runs the seaweed + corn leg, so
+     the Abattoir needs a Fishing Company upstream — see _foodchain_smoke. */
+  oilpress:    { out: ['cookingOil'],         ind: 'foodPlant' },
+  abattoir:    { out: ['meat'],               ind: 'foodPlant' },
   weavery:     { out: ['fabric'],             ind: 'textileMill' },
   machineshop: { out: ['machineParts'],       ind: 'machineWorks' },
   munitions:   { out: ['metalComponents'],    ind: 'fabricator' },

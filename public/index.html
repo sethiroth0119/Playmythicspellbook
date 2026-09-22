@@ -62853,6 +62853,38 @@ async function cardMarketFetch() {
   CardMarket.loading = true;
   try {
     const me = Profile.cloud.userId;
+    /* 🔒 Server escrow reconcile — BEFORE the payout collection below, so an
+       escrow-settled sale is already paid_out when that loop looks (it would
+       otherwise addGems the same sale). This is what replaces the in-memory
+       myBids release: it works from the server's rows, so it survives reload. */
+    try {
+      const _sy = await _cmEscrowRpc('auction_escrow_sync', {});
+      if (!_sy.missing && _sy.ok) {
+        const _prev = CardMarket.escrowHeld || {};
+        const _held = {};
+        for (const id in (_sy.holds || {})) _held[id] = (_sy.holds[id] && _sy.holds[id].amount) | 0;
+        CardMarket.escrowHeld = _held;
+        const _claims = Array.isArray(_sy.claims) ? _sy.claims : [];
+        /* Returned = holds this sync refunded + holds I saw last time that the
+           server says ended 'refunded' (an outbid is refunded inside the OTHER
+           bidder's transaction, so this sync's own `refunded` is 0 for it —
+           without this the wallet would read low until the next reload). */
+        const _recent = _sy.recent || {}, _refunds = _sy.refunds || {};
+        let _returned = 0;
+        for (const id in _prev) if (!(id in _held) && _recent[id] === 'refunded') _returned += _prev[id] | 0;
+        for (const id in _refunds) if (!(id in _prev)) _returned += _refunds[id] | 0;
+        if (_returned > 0 || (_sy.paid | 0) > 0 || _claims.length) {
+          _cmEscrowAdopt(_sy, (_sy.paid | 0) > 0 ? 'Card market sales' : 'Auction escrow returned');
+          for (const r of _claims) {
+            _cmGrantPurchase(r);
+            showToast(`🏆 You won "${(r.card_json && r.card_json.name) || 'card'}" for ${r.current_bid | 0} 🔥!`, 4200);
+          }
+          if (_returned > 0) showToast(`↩ Outbid — ${_returned} 🔥 returned from auction escrow.`, 3600);
+          if ((_sy.paid | 0) > 0) showToast(`💰 Auction sales collected: +${_sy.paid | 0} 🔥`, 4200);
+          try { saveProfile(); } catch (e) {}
+        }
+      }
+    } catch (e) {}
     // Sellers collect Cinder payouts for anything that sold.
     try {
       const { data: sold } = await Cloud.client.from('card_market_listings')
@@ -62901,6 +62933,21 @@ async function cardMarketFetch() {
       if (r.listing_type !== 'auction' || r.status !== 'open') continue;
       if (!(r.ends_at && Date.parse(r.ends_at) < _now)) continue; // not ended yet
       if (r.current_bidder_id === me && (r.current_bid || 0) > 0) {
+        // 🔒 Server escrow: the bid was paid in full when it was placed; this
+        //    only closes the sale and hands me the card, once. 'no_escrow' = a
+        //    bid placed the old way (before sql/193) — the old path below.
+        const _st = await _cmEscrowRpc('auction_escrow_settle', { p_listing: r.id });
+        if (!_st.missing && _st.error !== 'no_escrow') {
+          if (_st.ok && _st.claim && _st.listing) {
+            _cmGrantPurchase(_st.listing);
+            showToast(`🏆 You won "${(r.card_json && r.card_json.name) || 'card'}" for ${r.current_bid} 🔥!`, 4200);
+            _changed = true;
+          }
+          if (_st.ok && CardMarket.escrowHeld) delete CardMarket.escrowHeld[r.id];
+          _settled.add(r.id);   // on a network error: off the board now, settled next fetch
+          continue;
+        }
+        if ((_st.refunded | 0) > 0) _cmEscrowAdopt(_st, 'Auction escrow returned');   // a mismatched hold was refunded first
         // I won — atomic claim, pay from my escrow, grant the card.
         const claim = await Cloud.client.from('card_market_listings').update({ status: 'sold', buyer_id: me }).eq('id', r.id).eq('status', 'open').select('*');
         if (claim && claim.data && claim.data.length) {
@@ -62919,6 +62966,16 @@ async function cardMarketFetch() {
         if (del && del.data && del.data.length) {
           if ((r.kind || 'card') === 'item') _cmGiveItem(r.card_id); else _restoreCardCopy(r.card_id);
           showToast('⌛ Your auction ended with no bids — returned to you.', 3200);
+          _changed = true;
+        }
+        _settled.add(r.id);
+      } else if (r.seller_id === me && !CardMarket._escrowMissing) {
+        // 🔒 My auction ended WITH a bid: settle it from the escrow so I am paid
+        //    even if the winner never comes back (the old path waited for them).
+        const _st = await _cmEscrowRpc('auction_escrow_settle', { p_listing: r.id });
+        if (_st.ok && (_st.paid | 0) > 0) {
+          _cmEscrowAdopt(_st, 'Card market sales');
+          showToast(`💰 Auction sold — +${_st.paid | 0} 🔥`, 4200);
           _changed = true;
         }
         _settled.add(r.id);
@@ -63064,6 +63121,61 @@ async function cardMarketCancel(listing) {
 // winner claims the row on expiry and pays from the released escrow; the seller
 // collects the cinder payout (handled in cardMarketFetch). Bids are race-safe
 // via an atomic compare-and-set (only succeeds if current_bid < amount).
+//
+// 🔒 SERVER ESCROW (sql/193_auction_escrow.sql) supersedes the self-escrow
+// whenever those RPCs exist. The self-escrow could not survive a reload:
+// Profile.lockedGems is not restored by loadForge and its release loop is keyed
+// to CardMarket.myBids, which only ever lived in memory — so after a reload a
+// bidder could spend the "locked" Cinder and still win, and the settlement's
+// Math.max(0, …) let the winner pay less than the bid while the seller was paid
+// all of it. Restoring the lock client-side alone would strand the funds after
+// an outbid (nothing would release it). Now the bid is DEBITED from the
+// canonical wallet into a server escrow; an outbid is refunded in the same
+// transaction as the new bid; auction_escrow_sync() on every fetch refunds holds
+// that stopped being the high bid, pays sellers, hands back unclaimed wins, and
+// returns what is still held (CardMarket.escrowHeld — rebuilt from the server,
+// so a reload cannot lose it). Server-escrowed bids never touch lockedGems/myBids.
+// RPC missing (SQL not applied) → CardMarket._escrowMissing and the old path runs.
+function _cmEscrowRpc(name, args) {
+  if (CardMarket._escrowMissing) return Promise.resolve({ missing: true });
+  return Promise.resolve().then(() => Cloud.client.rpc(name, args || {})).then((res) => {
+    if (res && res.error) {
+      /* Not _walletRpcUnavailable alone: it reads `message || code`, and
+         PostgREST's message for an absent function ("Could not find the
+         function … in the schema cache") matches none of its patterns — the
+         fallback would never engage before sql/193 is applied. */
+      const _c = String(res.error.code || ''), _m = String(res.error.message || '');
+      if (_c === 'PGRST202' || _c === '42883' || /could not find the function|does not exist/i.test(_m) || _walletRpcUnavailable(res.error)) {
+        CardMarket._escrowMissing = true; return { missing: true };
+      }
+      return { ok: false, error: res.error.message || 'rpc_failed' };
+    }
+    return (res && res.data) || { ok: false, error: 'empty' };
+  }).catch(() => ({ ok: false, error: 'network' }));   // NOT "missing": never fall back to a second lock
+}
+/* The server moved Cinder: adopt its balance as chargeCinderAtomic does —
+   tax-exempt (a bare Profile.gems = x is billed again by the spend watcher and
+   mirrored as a second debit, bug-mtyp80rx) and in step with wallet_seq. Aza
+   only for an Aza listing: adopting a 0 from an unseeded account would wipe it. */
+function _cmEscrowAdopt(j, reason, cur) {
+  if (!j) return;
+  if (cur === 'aza') { if (typeof j.aza === 'number' && typeof _sovAdopt === 'function') _sovAdopt(j); return; }
+  if (typeof j.cinder === 'number') _ledgerWhy(reason || 'Auction escrow', () => _gemsTaxExempt(() => { Profile.gems = Math.max(0, Math.round(j.cinder)); }));
+  if (typeof j.wallet_seq === 'number') Profile.walletSeqProgress = Math.max(0, j.wallet_seq | 0);
+}
+function _cmEscrowHeld(listingId) {
+  return ((typeof CardMarket !== 'undefined' && CardMarket.escrowHeld) || {})[listingId] | 0;
+}
+function _cmEscrowErr(j, amount) {
+  const e = (j && j.error) || '';
+  if (e === 'min_bid') return `Bid must be at least ${j.min} 🔥`;
+  if (e === 'insufficient') return `Need ${j.need || amount} 🔥 more in your wallet for that.`;
+  if (e === 'closed') return 'Auction ended.';
+  if (e === 'own_listing') return "You can't bid on your own auction.";
+  if (e === 'no_buy_now') return 'No Buy Now on this auction.';
+  if (e === 'network') return '⚠ Network hiccup — nothing was charged. Try again.';
+  return '⚠ The market refused that (' + String(e).slice(0, 60) + ').';
+}
 function _cmMinNextBid(l) {
   const cur = l.currentBid || 0;
   if (cur <= 0) return l.startingBid || (typeof AUCTION_MIN_STARTING !== 'undefined' ? AUCTION_MIN_STARTING : 5);
@@ -63114,8 +63226,22 @@ async function cardMarketBid(listing, amount) {
   amount = parseInt(amount, 10) || 0;
   const min = _cmMinNextBid(listing);
   if (amount < min) { showToast(`Bid must be at least ${min} 🔥`); return false; }
-  const myPrior = (Profile.lockedGems && Profile.lockedGems[listing.id]) || 0;
+  const myPrior = ((Profile.lockedGems && Profile.lockedGems[listing.id]) || 0) + _cmEscrowHeld(listing.id);
   if (getAvailableGems() + myPrior < amount) { showToast(`Need ${amount} 🔥 — only ${getAvailableGems() + myPrior} available (rest is locked in other bids).`, 3200); return false; }
+  // 🔒 Server escrow first (see the Stage 2 note above).
+  const _esc = await _cmEscrowRpc('auction_escrow_bid', { p_listing: listing.id, p_amount: amount,
+    p_bidder_name: (Profile.cloud.displayName || (Profile.account && Profile.account.displayName) || 'Bidder').slice(0, 40) });
+  if (!_esc.missing) {
+    if (!_esc.ok) { showToast(_cmEscrowErr(_esc, amount), 3200); await cardMarketFetch(); return false; }
+    _cmEscrowAdopt(_esc, 'Auction bid escrowed');
+    // a self-escrow lock from before the server path took over is now moot
+    unlockGemsForBid(listing.id); if (CardMarket.myBids) delete CardMarket.myBids[listing.id];
+    CardMarket.escrowHeld = CardMarket.escrowHeld || {}; CardMarket.escrowHeld[listing.id] = amount;
+    try { saveProfile(); } catch (e) {}
+    showToast(`🔨 Bid ${amount} 🔥 placed — held in escrow until you are outbid or win.`, 2800);
+    await cardMarketFetch();
+    return true;
+  }
   let endsIso;
   if (listing.endsAt && (listing.endsAt - Date.now()) < 60000) endsIso = new Date(Date.now() + 60000).toISOString();
   const hist = (Array.isArray(listing.bidHistory) ? listing.bidHistory : [])
@@ -63145,8 +63271,23 @@ async function cardMarketBuyNow(listing) {
   if (listing.sellerId === 'player') { showToast("You can't buy your own auction."); return false; }
   const price = listing.buyNowPrice || 0;
   if (!price) { showToast('No Buy Now on this auction.'); return false; }
-  const myPrior = (Profile.lockedGems && Profile.lockedGems[listing.id]) || 0;
+  const myPrior = ((Profile.lockedGems && Profile.lockedGems[listing.id]) || 0) + _cmEscrowHeld(listing.id);
   if (getAvailableGems() + myPrior < price) { showToast(`Need ${price} 🔥 available.`); return false; }
+  // 🔒 Server escrow first: charges price minus my own standing hold, refunds
+  //    every other bidder's hold, marks it sold to me — one transaction.
+  const _esc = await _cmEscrowRpc('auction_escrow_buy_now', { p_listing: listing.id,
+    p_buyer_name: (Profile.cloud.displayName || 'Buyer').slice(0, 40) });
+  if (!_esc.missing) {
+    if (!_esc.ok) { showToast(_cmEscrowErr(_esc, price), 3200); await cardMarketFetch(); return false; }
+    _cmEscrowAdopt(_esc, 'Player Market: Buy Now');
+    unlockGemsForBid(listing.id); if (CardMarket.myBids) delete CardMarket.myBids[listing.id];
+    if (CardMarket.escrowHeld) delete CardMarket.escrowHeld[listing.id];
+    if (_esc.claim && _esc.listing) _cmGrantPurchase(_esc.listing);
+    try { saveProfile(); } catch (e) {}
+    showToast(`🛒 Bought "${(listing.item && listing.item.name) || 'card'}" for ${price} 🔥`, 3600);
+    await cardMarketFetch();
+    return true;
+  }
   const { data, error } = await Cloud.client.from('card_market_listings')
     .update({ status: 'sold', buyer_id: Profile.cloud.userId, current_bid: price, current_bidder_id: Profile.cloud.userId, current_bidder_name: (Profile.cloud.displayName || 'Buyer').slice(0, 40) })
     .eq('id', listing.id).eq('status', 'open').select('*');
@@ -182154,7 +182295,7 @@ function renderLuniItem() {
   } else if (isAuction) {
     const myBid = l.currentBidderId === 'player';
     const min = minNextBid(l);
-    const lockedHere = cur === 'aza' ? ((Profile.lockedSov || {})[l.id] || 0) : ((Profile.lockedGems || {})[l.id] || 0);
+    const lockedHere = (cur === 'aza' ? ((Profile.lockedSov || {})[l.id] || 0) : ((Profile.lockedGems || {})[l.id] || 0)) + _cmEscrowHeld(l.id);   // + server escrow (sql/193)
     const canBid = (auctAvail(cur) + (myBid ? lockedHere : 0)) >= min;
     const bn = _auctBuyNow(l);
     const bnBtn = (c) => bn[c] ? `<button class="luni-btn ${auctAvail(c) >= bn[c] ? 'luni-btn-outline' : 'btn-disabled'}" data-act="buynow" data-listing="${escapeHtml(l.id)}" data-bncur="${c}" ${auctAvail(c) >= bn[c] ? '' : 'disabled'}>Buy It Now · ${bn[c]} ${c === 'aza' ? '👑' : '🔥'}</button>` : '';
@@ -182580,7 +182721,7 @@ function renderMarketBrowse(listings, filter) {
       const myBid = l.currentBidderId === 'player';
       const min = minNextBid(l);
       const bc = _auctBidCur(l);
-      const lockedHere = bc === 'aza' ? ((Profile.lockedSov || {})[l.id] || 0) : ((Profile.lockedGems || {})[l.id] || 0);
+      const lockedHere = (bc === 'aza' ? ((Profile.lockedSov || {})[l.id] || 0) : ((Profile.lockedGems || {})[l.id] || 0)) + _cmEscrowHeld(l.id);   // + server escrow (sql/193)
       const canBidWith = auctAvail(bc) + (myBid ? lockedHere : 0);
       const canBid = canBidWith >= min;
       const bn = _auctBuyNow(l);
@@ -182733,7 +182874,7 @@ function renderBidModal() {
   const min = minNextBid(l);
   const myBid = l.currentBidderId === 'player';
   const bc = _auctBidCur(l);
-  const _lk = bc === 'aza' ? ((Profile.lockedSov || {})[l.id] || 0) : ((Profile.lockedGems || {})[l.id] || 0);
+  const _lk = (bc === 'aza' ? ((Profile.lockedSov || {})[l.id] || 0) : ((Profile.lockedGems || {})[l.id] || 0)) + _cmEscrowHeld(l.id);   // + server escrow (sql/193)
   const avail = auctAvail(bc) + (myBid ? _lk : 0);
   const _ci = _curIcon(bc);
   return `

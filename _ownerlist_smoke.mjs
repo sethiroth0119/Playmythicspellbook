@@ -118,7 +118,7 @@ ok(/p\.node_id, p\.role, p\.available, cp\.population/.test(SQL) && !/p\.availab
 /* ── 5. anchors are the viewer's own nodes ── */
 ok(/let me = null; try \{ me = \(P\.cityOwnerIdentity\(\) \|\| \{\}\)\.viewerId \|\| null; \} catch \(e\) \{\}\n\s*if \(FR && Array\.isArray\(FR\.nodes\) && FR\.nodes\.length\) \{\n\s*const mine = FR\.nodes\.filter\(n => n && \(!me \|\| !n\.owner_id \|\| String\(n\.owner_id\) === String\(me\)\)\);\n\s*return mine\.map\(anchorRow\);/.test(NC), 'fetchNodes (own city) keeps only nodes the viewer licensed; rows without owner_id are kept');
 {
-  const body = NC.slice(NC.indexOf('  B.fetchNodes = async () => {'), NC.indexOf('  B.fetchNodes = async () => {') + 1400);
+  const body = NC.slice(NC.indexOf('  B.fetchNodes = async () => {'), NC.indexOf('  B.fetchNodes = async () => {') + 2400);
   const seg = body.slice(0, body.indexOf("if (B.mode === 'message')"));
   const g = { B: { mode: 'parent' }, P: { cityOwnerIdentity: () => ({ viewerId: 'me', isOwner: true }), FoundationReserve: { nodes: [{ id: 'a', owner_id: 'me' }, { id: 'b', owner_id: 'founder' }, { id: 'c' }] } }, anchorRow: (n) => n.id };
   const fn = new Function('g', 'with (g) { ' + seg + ' }; return B.fetchNodes; }')(g);

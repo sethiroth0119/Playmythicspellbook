@@ -240583,22 +240583,49 @@ async function _cityClaimNode(nodeKey) {
      means another device created the city in the meantime: also a conflict. */
 App._cityRow = null;          // { user, node, found, version, updatedAt } — the last clean read
 App._cityVersionCol = null;   // null = not yet known, true = sql/104 applied, false = not applied
+/* ⏱ bug-mtr5xz8t / bug-mu6bxip6. Every city_state read is BOUNDED, and only the
+   NEWEST one may write the record.
+   · "Managed cities not loading first time after a break" — the city sits on
+     the control bars for ever and loads at once on re-entry. v121v92 retried a
+     REFUSED read; a read that never answers (the first request after hours
+     idle: an expired token mid-refresh, a dead pooled connection) was awaited
+     for ever and boot() never reached the tiles. A timeout is now answered as
+     a refusal, so the refresh-and-retry in cityStateLoad runs and the load
+     stays "not proven" (__cityLoadUnsafe) rather than "no city".
+   · "Saved to another device" with no other device. The exit-and-re-enter
+     above left the stalled open's read in flight; it answered after the new
+     open had read and saved, put the OLDER version back on record, and the
+     next autosave was refused against this device's own write — the conflict
+     toast. `_cityRowSeq` numbers reads at issue (and writes as they land); a
+     read that answers after a newer one was issued records nothing. */
+let _cityRowSeq = 0;
+const CITY_ROW_READ_MS = 10000;
 function _cityNoVersionCol(err) {
   try { return !!err && (err.code === '42703' || /column .*version.* does not exist/i.test(String(err.message || ''))); } catch (e) { return false; }
+}
+function _cityRowBounded(q) {
+  let t = null;
+  const late = new Promise((res) => { t = setTimeout(() => res({ data: null,
+    error: { code: 'TIMEOUT', message: 'city_state read did not answer in ' + CITY_ROW_READ_MS + ' ms' } }), CITY_ROW_READ_MS); });
+  const done = Promise.resolve(q);   // a PostgREST builder is a thenable: this is what sends it
+  done.then(() => clearTimeout(t), () => clearTimeout(t));
+  return Promise.race([done, late]);
 }
 /* The one read of a city row. Records what it found so the next save can be
    conditional on it; an errored read records nothing, because it proved
    nothing (a save after it re-reads rather than trusting a stale record). */
 async function _cityRowRead(target, nodeKey) {
+  const seq = ++_cityRowSeq;
   const withVersion = App._cityVersionCol !== false;
-  let r = await Cloud.client.from('city_state').select(withVersion ? 'state, updated_at, version' : 'state, updated_at')
-    .eq('user_id', target).eq('node_id', nodeKey).maybeSingle();
+  let r = await _cityRowBounded(Cloud.client.from('city_state').select(withVersion ? 'state, updated_at, version' : 'state, updated_at')
+    .eq('user_id', target).eq('node_id', nodeKey).maybeSingle());
   if (r && r.error && withVersion && _cityNoVersionCol(r.error)) {
     App._cityVersionCol = false;
     try { console.warn('[cityStateLoad] city_state.version is not on this database yet (sql/104) — writes are keyed on updated_at until it is'); } catch (_) {}
-    r = await Cloud.client.from('city_state').select('state, updated_at')
-      .eq('user_id', target).eq('node_id', nodeKey).maybeSingle();
+    r = await _cityRowBounded(Cloud.client.from('city_state').select('state, updated_at')
+      .eq('user_id', target).eq('node_id', nodeKey).maybeSingle());
   }
+  if (seq !== _cityRowSeq) return r;   // superseded while in flight — see above
   if (r && !r.error) {
     // A clean read that asked for `version` and was answered proves the column exists.
     if (withVersion && App._cityVersionCol !== false) App._cityVersionCol = true;
@@ -240688,6 +240715,8 @@ async function _cityStateSaveNow(json, ident) {
         return false;
       }
       rec = App._cityRow;
+      // A newer read superseded this one (see _cityRowSeq): no record of THIS row to write against.
+      if (!rec || rec.user !== target || rec.node !== _nodeKey) return false;
     }
     const _conflict = (why) => {
       try { console.warn('[cityStateSave] CONFLICT — ' + why + ' (' + target + ' @ ' + _nodeKey + '). Refusing to overwrite it.'); } catch (_) {}
@@ -240723,7 +240752,7 @@ async function _cityStateSaveNow(json, ident) {
       if (res && !res.error && !res.data) {
         const p = await _cityRowRead(target, _nodeKey);
         const now = App._cityRow;
-        const moved = p && !p.error && now && now.found &&
+        const moved = p && !p.error && now && now.found && now.user === target && now.node === _nodeKey &&
           ((App._cityVersionCol !== false && rec.version != null) ? now.version !== rec.version : now.updatedAt !== rec.updatedAt);
         if (moved) {
           App._cityRow.conflicted = true;
@@ -240751,7 +240780,10 @@ async function _cityStateSaveNow(json, ident) {
     App._cityMgrSaveWarned = false;
     /* The write landed: adopt the version it produced (the trigger has already
        bumped it, and RETURNING sees the bumped row), so the next save is
-       conditional on THIS write rather than on the read before it. */
+       conditional on THIS write rather than on the read before it. A read
+       issued before this landed may be holding the pre-write version: the seq
+       bump makes it record nothing when it answers (see _cityRowSeq). */
+    _cityRowSeq++;
     if (res && res.data) {
       App._cityRow = {
         user: target, node: _nodeKey, found: true,

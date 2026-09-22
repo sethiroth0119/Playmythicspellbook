@@ -77728,6 +77728,32 @@ function loadForge() {
       if (typeof p.gearResetApplied   === 'string' && p.gearResetApplied)   Profile.gearResetApplied   = p.gearResetApplied;
       if (typeof p.purgeResetApplied  === 'string' && p.purgeResetApplied)  Profile.purgeResetApplied  = p.purgeResetApplied;
       if (typeof p.seasonResetApplied === 'string' && p.seasonResetApplied) Profile.seasonResetApplied = p.seasonResetApplied;
+      /* 🧾 PERSISTENCE AUDIT — PROGRESS AND COOLDOWNS THE CLOUD ALREADY CARRIED.
+         Same two-of-three gap as the block above the Kitchen: uploaded and
+         hydrated, never restored here, so a same-device reload reset them and
+         re-uploaded the reset. Worst of them:
+           workSalt     — a NEW salt was minted on every reload, re-rolling what
+                          every unit is good at, and then pushed over the cloud's;
+           breedCooldowns — reload cleared every breeding rest timer;
+           will / permadeath / stabilizeBleeding — a bleeding-out unit was
+                          healed by F5;
+           labCampTombs — the deletion tombstones, uploaded as {} after a
+                          reload, so a discarded Lab core came back from the
+                          other device's union.
+         The rest (packHistory, squads, onboarding, tutorialsSeen, corpPick,
+         purgeReTutorial) are progress and choices that simply reset. */
+      if (p.breedCooldowns  && typeof p.breedCooldowns  === 'object') Profile.breedCooldowns  = p.breedCooldowns;   // 🧬 rest timers
+      if (typeof p.workSalt === 'string' && p.workSalt)               Profile.workSalt        = p.workSalt;         // 👷 work suitabilities
+      if (p.will            && typeof p.will            === 'object') Profile.will            = p.will;             // 🧠 will / panic
+      if (Array.isArray(p.permadeath))                                Profile.permadeath      = p.permadeath;       // 🩸 roll log
+      if (p.stabilizeBleeding && typeof p.stabilizeBleeding === 'object') Profile.stabilizeBleeding = p.stabilizeBleeding; // 🩸 bleed-out state
+      if (p.labCampTombs    && typeof p.labCampTombs    === 'object') Profile.labCampTombs    = p.labCampTombs;     // 🪦 removal tombstones
+      if (Array.isArray(p.packHistory))                               Profile.packHistory     = p.packHistory;      // 📦 opened packs
+      if (p.squads          && typeof p.squads          === 'object') Profile.squads          = p.squads;           // 🤝 squad bonds
+      if (p.onboarding      && typeof p.onboarding      === 'object') Profile.onboarding      = p.onboarding;       // 🎓 onboarding step
+      if (p.tutorialsSeen   && typeof p.tutorialsSeen   === 'object') Profile.tutorialsSeen   = p.tutorialsSeen;    // 🎓 tutorials seen
+      if (typeof p.corpPick === 'string' && p.corpPick)               Profile.corpPick        = p.corpPick;         // 🔀 corp acted in
+      if (p.purgeReTutorial === true)                                 Profile.purgeReTutorial = true;               // 🎓 purge re-tutorial
       if (p.achievements && typeof p.achievements === 'object') {
         Profile.achievements = {
           earned: (p.achievements.earned && typeof p.achievements.earned === 'object') ? p.achievements.earned : {},

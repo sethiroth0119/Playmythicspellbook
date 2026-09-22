@@ -51453,6 +51453,11 @@ async function cloudSyncProfile() {
       __campNodeHire__:      (Profile.campNodeHire && typeof Profile.campNodeHire === 'object') ? Profile.campNodeHire : {},
       __campRoute__:         (Profile.campRoute && typeof Profile.campRoute === 'object') ? Profile.campRoute : null,
       __recon__:             (Profile.recon && typeof Profile.recon === 'object') ? Profile.recon : null,
+      // 🔬 Camp Research Lab levels (bug-mucgicr6). Was in the local loader
+      // ONLY — one list of three — so a second device, the desktop app beside
+      // the browser, a cleared cache or an account-switch wipe all came back
+      // with every project at Lv 0 and no copy anywhere to restore from.
+      __research__:          (Profile.research && typeof Profile.research === 'object') ? Profile.research : null,
       // 🧬 Camp traits copied off the chosen survivor at pick time. Travels
       // with the account so admin-side trait edits don't retroactively change
       // an existing player's character creation.
@@ -53262,6 +53267,13 @@ async function cloudFetchProfile() {
         const _cloudSites = (_cloudRecon.sites && typeof _cloudRecon.sites === 'object') ? _cloudRecon.sites : {};
         Profile.recon = Object.assign({}, _cloudRecon,
           { sites: Object.assign({}, _cloudSites, _localSites) });
+      }
+      /* 🔬 RESEARCH LEVELS MERGE AS HIGH-WATER MARKS (bug-mucgicr6). A level is
+         paid for in resources and hours and nothing in the game un-researches
+         one, so max() per project is the merge that loses nothing — the same
+         reasoning as __devPoints__ above. See _researchMerge. */
+      if (f.__research__ && typeof f.__research__ === 'object') {
+        try { Profile.research = _researchMerge(Profile.research, f.__research__); } catch (e) {}
       }
       if (Array.isArray(f.__campTraits__))         Profile.campTraits     = f.__campTraits__.slice();
       // 🕒 Container cooldown maps — MERGE the higher (later) expiry per id so
@@ -184024,6 +184036,27 @@ function _ensureResearch() {
   if (!Profile.research || typeof Profile.research !== 'object') Profile.research = { completed: {}, active: null };
   if (!Profile.research.completed || typeof Profile.research.completed !== 'object') Profile.research.completed = {};
   return Profile.research;
+}
+/* 🔬 Merge two copies of Profile.research (local, cloud) — bug-mucgicr6.
+   completed: per-project MAX. A level cannot be lost, only earned.
+   active: the running project is kept from whichever side is still running
+   it, but only while no side has already FINISHED that level — otherwise
+   resolveResearch would book the same level a second time (+1 on top of a
+   level the other device already added). Local wins a tie: it is the
+   device the player is looking at. */
+function _researchMerge(local, cloud) {
+  const L = (local && typeof local === 'object') ? local : {};
+  const C = (cloud && typeof cloud === 'object') ? cloud : {};
+  const lc = (L.completed && typeof L.completed === 'object') ? L.completed : {};
+  const cc = (C.completed && typeof C.completed === 'object') ? C.completed : {};
+  const completed = {};
+  for (const k in lc) completed[k] = Math.max(0, lc[k] | 0);
+  for (const k in cc) completed[k] = Math.max(completed[k] | 0, cc[k] | 0);
+  const stillOpen = (a, side) => !!(a && a.id && ((side[a.id] | 0) >= (completed[a.id] | 0)));
+  let active = null;
+  if (stillOpen(L.active, lc)) active = L.active;
+  else if (stillOpen(C.active, cc)) active = C.active;
+  return Object.assign({}, C, L, { completed: completed, active: active });
 }
 function _researchDef(id) { return RESEARCH_PROJECTS.find(p => p && p.id === id) || null; }
 function _researchLevel(id) { return (_ensureResearch().completed[id] | 0); }

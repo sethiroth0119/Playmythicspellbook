@@ -12,6 +12,9 @@
    3. The Reconstruction roster survives a reload. campWorkforce and the rest
       of the Reconstruction state were in the cloud lists but not the local
       loader, so every reload dropped paid staff.
+   4. Camp Research levels travel with the account (bug-mucgicr6). They were
+      in the local loader only, so any other device / the desktop app / a
+      cleared cache came back at Lv 0. Upload + high-water merge on hydrate.
 
    Run: node _campkeep_smoke.mjs */
 import vm from 'node:vm';
@@ -22,7 +25,7 @@ const ok = (c, m, x) => {
   console.log((c ? '  PASS ' : '  FAIL ') + m + (c || x === undefined ? '' : '  ← ' + x));
   if (c) passes++; else fails++;
 };
-const eng = loadEngine();
+const eng = loadEngine(process.env.CAMPKEEP_FILE ? { file: process.env.CAMPKEEP_FILE } : {});
 const run = (s) => vm.runInContext(s, eng.sandbox);
 const J = (s) => { const t = run('JSON.stringify(' + s + ')'); return t === undefined ? undefined : JSON.parse(t); };
 
@@ -70,6 +73,41 @@ ok(J('Profile.campContrib') === 14, 'node contribution survives a reload');
 ok(J('Profile.campPrestige') === 9, 'prestige survives a reload');
 ok(J('Profile.campName') === 'Haven', 'settlement name survives a reload');
 ok(J('Profile.campRoute && Profile.campRoute.lastDeliveryAt') === 1789000000000, 'convoy clock survives a reload (not truncated)');
+
+// ── 4: research levels ride the cloud row ───────────────────────────────────
+console.log('research sync');
+eng.sandbox.__rows = [];
+run(`
+  Profile.cloud._hydratedFromCloud = true;
+  Profile.research = { completed: { bulwark: 2, geneForge: 3 }, active: null };
+  var __fetchRow = null;
+  const q = { select() { return q; }, eq() { return q; },
+              maybeSingle() { return Promise.resolve({ data: __fetchRow, error: null }); },
+              upsert(row) { __rows.push(row); return Promise.resolve({ error: null }); } };
+  Cloud.client = { from: () => q, rpc: () => Promise.resolve({ data: null }), auth: {} };
+`);
+await run('cloudSyncProfile()');
+const up = eng.sandbox.__rows[0];
+const upR = up && up.forge && up.forge.__research__;
+ok(!!(upR && upR.completed && upR.completed.bulwark === 2), 'the upload carries the research levels', JSON.stringify(upR));
+run(`
+  Profile.research = { completed: {}, active: null };
+  Profile.cloud.lastLocalEditAt = 0; Profile.cloud.pendingChanges = false;
+  __fetchRow = { user_id: 'u1', updated_at: new Date().toISOString(), records: { battles: 5, wins: 3 }, gems: 5000,
+    forge: { __research__: { completed: { bulwark: 2, geneForge: 3, neuralUplink: 5, essenceSiphon: 5 }, active: null } } };
+`);
+await run('cloudFetchProfile()');
+ok(J('Profile.research.completed.essenceSiphon') === 5, 'a fresh device restores every project level from the cloud', JSON.stringify(J('Profile.research')));
+ok(J('Profile.research.completed.bulwark') === 2, 'and Bulwark Protocol with them');
+// (the headless global answers any unknown name with a stub, so typeof alone proves nothing)
+if (J("typeof _researchMerge === 'function' && String(_researchMerge).indexOf('completed') >= 0")) {
+  const m1 = J(`_researchMerge({ completed: { bulwark: 3 }, active: null }, { completed: { bulwark: 1, geneForge: 2 }, active: null })`);
+  ok(m1.completed.bulwark === 3 && m1.completed.geneForge === 2, 'merge keeps the higher level of each project', JSON.stringify(m1));
+  const m2 = J(`_researchMerge({ completed: { bulwark: 1 }, active: { id: 'bulwark', startedAt: 1, durMs: 1 } }, { completed: { bulwark: 2 }, active: null })`);
+  ok(m2.active === null && m2.completed.bulwark === 2, 'a level the other device already finished is not booked twice', JSON.stringify(m2));
+  const m3 = J(`_researchMerge({ completed: { bulwark: 1 }, active: null }, { completed: { bulwark: 1 }, active: { id: 'bulwark', startedAt: 5, durMs: 9 } })`);
+  ok(!!(m3.active && m3.active.id === 'bulwark'), 'a project running on the other device keeps running here');
+} else ok(false, '_researchMerge exists');
 
 console.log(`\n${passes} passed, ${fails} failed`);
 process.exit(fails ? 1 : 0);

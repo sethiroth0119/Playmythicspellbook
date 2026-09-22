@@ -44,18 +44,24 @@ const FN = fnText('_corpMemberCitiesFetch');
 {
   ok(/if \(nid === 'local-city' \|\| !nid\) return;/.test(FN),
     'the local save is dropped — it is not a node city and can never be one');
-  ok(/if \(owned && !owned\[String\(c\.owner_id\) \+ '\|' \+ nid\]\) \{[\s\S]*?\n\s*return;\n\s*\}/.test(FN) && !/if \(owned && !owned\[String\(c\.owner_id\) \+ '\|' \+ nid\]\) return;/.test(FN),
+  /* 🏠 2026-09-22 (owner's decision D): city_profiles.node_id is the city's TW
+     node now, so "a node the member still owns" is read from tw_node_owners.
+     PRN-keyed rows from older clients are judged by the OLD rule (economy_nodes)
+     only until the member's city republishes under its TW node — see
+     _prnhome_smoke.mjs section H, which RUNS this function. */
+  ok(/if \(_holds === false\) \{[\s\S]*?\n\s*return;\n\s*\}/.test(FN),
     'and a city on a node the member no longer owns is dropped from their cities (v121v100: kept aside as a SHARED row only when another roster member owns that node)');
-  ok(/from\('economy_nodes'\)\.select\('id,owner_id'\)/.test(FN),
-    'ownership is read from economy_nodes — the table that actually says who holds what');
-  ok(/\.in\('owner_id', ids\)/.test(FN), 'for the members being listed, not the whole table');
+  ok(/from\('tw_node_owners'\)\.select\('node_id,user_id'\)\.in\('user_id', ids\)/.test(FN),
+    'ownership is read from tw_node_owners — the table that says who holds the node a city stands on');
+  ok(/from\('economy_nodes'\)\.select\('id,owner_id'\)\.in\('owner_id', ids\)/.test(FN) && /if \(_isUuid && twKeyed\[String\(c\.owner_id\)\]\) return;/.test(FN),
+    'legacy PRN-keyed rows keep the old rule only until the city republishes under its TW node');
 }
 
 /* ── 2. A FAILED READ MUST NOT LOOK LIKE A DELETION ──────────────────────── */
 {
   ok(/let owned = null;/.test(FN), 'the ownership map starts unknown');
   ok(/\} catch \(e\) \{ owned = null; \}/.test(FN), 'and stays unknown when the lookup throws');
-  ok(/if \(owned && !owned\[/.test(FN),
+  ok(/\(owned \? !!owned\[_ownKey\] : null\)/.test(FN) && /\} catch \(e\) \{ legacy = null; \}/.test(FN),
     'the filter is skipped entirely while unknown — a bad read shows everything, which is the behaviour this panel already had, rather than an empty roster');
   /* This is the same rule syncBuildings() states for its own reconcile, and it
      is worth pinning that the precedent is still there — it lives in

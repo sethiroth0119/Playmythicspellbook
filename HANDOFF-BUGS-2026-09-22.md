@@ -120,6 +120,15 @@ fix/auctionescrow 644f2cc6, fix/prnhome e8b93342 (+0709b494).
 | **Auction escrow** (auctionescrow) | Cloud auction bids held server-side. **sql/193**. Later: tighten `cml_upd` once all clients use the RPCs. |
 | **Web-purchase forge wipe** (f002a60b) | Receipts written as one key, never the whole forge; whole-row saves no longer erase receipts. **sql/195** |
 
+## SQL status (project ktsiasyjusesawtrwrjc) — updated 2026-09-22 late
+**APPLIED to production by Claude via the Supabase connection, owner-approved, each verify query green:**
+190 (7/7 ok — this also completed the earlier partial run), 191 (5 rows, bound 598),
+193 (2 tables RLS on, 8 policies, 4 RPCs authenticated, 5 helpers not), 195 (3/3 ok).
+**HELD: 192.** It re-keys city_profiles to map-node ids, but live v121v185 still publishes and
+filters by PRN id, so applying it before the new client ships would drop members' cities from
+the corp roster until they republish, and the live client would recreate the PRN-keyed rows.
+Apply 192 AFTER the fix/prnhome client is deployed.
+
 ## SQL to apply by hand (Supabase SQL editor, project ktsiasyjusesawtrwrjc)
 Paste the WHOLE file into an EMPTY tab, Ctrl+A, Run (a partial selection runs only that part).
 Each is idempotent and ends with a verify query. Renumber against v185's `sql/` if needed.

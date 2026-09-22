@@ -22,7 +22,14 @@
     color:var(--bone);
     -webkit-tap-highlight-color:transparent;
   }
-  #stage{position:fixed;inset:0;display:block;cursor:pointer}
+  /* ⚠ width/height are REQUIRED, inset:0 is not enough (bug-mu0pk7ah "cards huge,
+     off-centre toward the bottom right, animations off screen"). A canvas is a
+     replaced element: absolutely positioned with width:auto it takes its INTRINSIC
+     size, i.e. the backing store renderer.setSize(w,h,false) makes = w×h×DPR. At
+     DPR 1 that happens to equal the viewport; on a 125%/150% Windows laptop the
+     canvas was 1.25–1.5× the window, anchored top-left, so the whole scene was
+     zoomed in and its centre pushed down-right. Measured: 1366×768 @1.25 → 1707×960. */
+  #stage{position:fixed;inset:0;width:100%;height:100%;display:block;cursor:pointer}
   .hud{position:fixed;inset:0;pointer-events:none;display:flex;flex-direction:column;
        justify-content:space-between;align-items:center;padding:26px 16px 34px}
   .set-name{
@@ -196,10 +203,22 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(42, 1, .1, 100);
 camera.position.set(0, 0, 9.2);
+/* 📐 Pull the camera back when the fanned-out pack would not fit across the
+   window (bug-mu0pk7ah: "the average pack of 7 to 8 should all fit on screen").
+   9.2 is the authored distance and is never moved closer; a narrow or portrait
+   window backs off until the whole arc (slotFor spacing + a card of margin) is
+   inside the horizontal field of view. Cheap; runs on resize and on new data. */
+function fitCamera(){
+  const n = Math.max(5, CARDS_PER_PACK|0);
+  const halfSpread = ((n-1)*CARD_W*0.72 + CARD_W*1.8) / 2;
+  const tanHalfH = Math.tan(camera.fov*Math.PI/360) * camera.aspect;
+  camera.position.z = Math.max(9.2, halfSpread / Math.max(0.05, tanHalfH));
+}
 function resize(){
   const w = innerWidth, h = innerHeight;
   renderer.setSize(w, h, false);
   camera.aspect = w/h; camera.updateProjectionMatrix();
+  try { fitCamera(); } catch(e){}
 }
 addEventListener('resize', resize); resize();
 
@@ -423,6 +442,7 @@ let packModelUrl=null, packModelObj=null;
 const PACK_H=4.7, PACK_W=PACK_H*(2/3);
 const SPLIT=0.875;            // uv line where the pack tears
 const CARD_H=2.25, CARD_W=CARD_H*(2/3);
+try { fitCamera(); } catch(e){}   // resize() ran before CARD_W existed (first <script>)
 
 function slotFor(i){
   const c=(CARDS_PER_PACK-1)/2, d=i-c;
@@ -928,6 +948,7 @@ window.addEventListener('message', async (e)=>{
       desc:  (c && c.desc)   ? String(c.desc) : '',
     }));
     CARDS_PER_PACK = Math.max(1, PACK_CARDS.length);
+    try { fitCamera(); } catch(e){}
     if(d.packName){ const sn=document.querySelector('.set-name small'); if(sn) sn.textContent=String(d.packName); }
     // 📦 Optional 3D pack model. Rebuilds the pack so the model is picked up.
     if (typeof d.packModel === 'string' && d.packModel && d.packModel !== packModelUrl) {

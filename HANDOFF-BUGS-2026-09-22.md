@@ -13,7 +13,9 @@ Live is **v121v185**, which exists only on the owner's machine. So:
 - **No version knobs were bumped.** Bump them at deploy as usual, plus the `?v=` busters on
   `pack-opener/index.html`, `src/hubui/tips.js`, `src/hubui/hub-transitions.css`,
   `public/base/app.jsx`, `public/base/hud.jsx`.
-- **Nothing was marked fixed on the tracker** and no SQL was applied. Nothing needs SQL.
+- **Nothing was marked fixed on the tracker.** Round 1 needs no SQL; **round 2 (bottom of this
+  file) adds five SQL files to apply by hand** — see "SQL to apply by hand". Decisions 1, 2, 5, 6
+  and 7 below were made and implemented in round 2.
 - Bruce (`claude/magical-edison-kx2o64`) is merged into this branch.
 
 ## A pattern worth checking in v121v185 directly

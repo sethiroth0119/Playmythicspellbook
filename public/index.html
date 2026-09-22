@@ -254590,7 +254590,15 @@ async function hireCampWorker(role, cityId, cost) {
   try { _twLog('settlement', `<b>${escapeHtml(_campRegName())}</b> hired a ${role} from ${escapeHtml(String(d.city_name || node.name))}.`); } catch (e) {}
   try { showToast(`👷 Hired a ${role} from ${d.city_name || node.name}. Camp population: ${_campWorkforceTotal()}.`, 3200); } catch (e) {}
   openEmploymentBoard();
-  try { if (App.screen === 'camp') render(); } catch (e) {}
+  /* 🏗 bug-mu84559b — "every hire counted as a citizen". The Employment Board
+     is opened from the Reconstruction console too, and its Population panel
+     (Guards … Civilians, "N SOULS") was only redrawn when the screen was
+     'camp'. Hiring a Doctor from Reconstruction left that panel showing the
+     old counts while the toast reported a bigger total — the new person read
+     as having joined some other row. The hire itself always credited the
+     named trade. The board is a separate host above the screen, so redrawing
+     underneath it keeps it open. */
+  try { if (App.screen === 'camp' || App.screen === 'reconstruction') render(); } catch (e) {}
 }
 // ── Phase 4: node→camp trade route + convoy-defense missions ──
 const CAMP_ROUTE_INTERVAL_MS = 4 * 3600 * 1000;  // a convoy every ~4h while active

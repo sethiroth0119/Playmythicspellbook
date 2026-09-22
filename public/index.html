@@ -254540,8 +254540,19 @@ async function hireCampWorker(role, cityId, cost) {
   }
   const d = res.data || {};
   if (!d.ok) { try { showToast('⚠ ' + (d.why || 'The hire was refused.'), 5200); } catch (e) {} return; }
-  /* The server's balance, exactly as it wrote it. */
-  if (d.balance != null) { try { Profile.gems = Math.max(0, Math.floor(Number(d.balance) || 0)); } catch (e) {} }
+  /* The server's balance, exactly as it wrote it.
+     🔴 bug-mtyp80rx — "extra Cinder is taken when hiring, above the price".
+     This used to be a bare `Profile.gems = …`, and a drop in Profile.gems is
+     exactly what the spend watcher (_gemsTaxTick) exists to catch: it read the
+     adoption as an unmirrored legacy spend and called _mirrorLegacySpend —
+     wallet_charge for the same amount AGAIN. The server had already taken it,
+     so every hire was debited twice, and the next wallet sync adopted that.
+     Adopt it the way chargeCinderAtomic and node_sale_buy do: tax-exempt (the
+     server already charged) and level with the server's debit counter. */
+  if (d.balance != null) {
+    try { _gemsTaxExempt(() => { Profile.gems = Math.max(0, Math.floor(Number(d.balance) || 0)); }); } catch (e) {}
+    if (d.wallet_seq != null) { try { Profile.walletSeqProgress = Math.max(Profile.walletSeqProgress | 0, Math.floor(Number(d.wallet_seq) || 0)); } catch (e) {} }
+  }
   if (!Profile.campWorkforce || typeof Profile.campWorkforce !== 'object') Profile.campWorkforce = {};
   /* EXACTLY what the server says it moved, never what was asked for — the same
      rule the corporation vault withdraw follows. */

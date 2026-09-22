@@ -895,3 +895,20 @@ html body #mm-frame {
     0% { outline-color: transparent; opacity: 0; }
   }
 }
+
+/* ── 5. A REPAINT IS NOT AN ARRIVAL (bug-mu1pbwb4) ─────────────────────────────
+   "The Ruin Exchange menu redraws 2-5 times when you go into it." It was not
+   drawing wrong, it was ARRIVING again: renderTitle() replaces the whole sub-hub
+   on every render(), §2's entrance is triggered by that mount, and the first
+   seconds after entry are full of background repaints (profile/cloud load,
+   login rewards, badge data) — more of them on the first open of the day. Each
+   one replayed the fade and the tile stagger. renderTitle() now adds
+   `is-settled` when the same hub was already on screen, and this switches the
+   entrance off for that paint only. Ambient loops (embers) are not listed and
+   keep running. Last in the file on purpose: it must win over §2 AND the
+   reduced-motion block, at equal or higher specificity, without !important. */
+.spellbook-hub.is-sub.is-settled :is(.spellbook-hub-bg, .spellbook-smoke, .hub-side-hero, .keep-topbar,
+  .hub-title, .hub-subtitle, .keep-rule i, .keep-diamond, .hub-portal, .hub-game-footer),
+.spellbook-hub.is-sub.is-settled .hub-portal:nth-child(n) {
+  animation: none;
+}

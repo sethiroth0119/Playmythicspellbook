@@ -17239,6 +17239,29 @@
     .dpx-acts { grid-column: 1 / -1; min-width: 0; flex-direction: row; flex-wrap: wrap; }
     .dpx-acts .dpx-btn, .dpx-acts-row { flex: 1 1 140px; }
   }
+  /* 💻 bug-mtxq2arc "camp when parked — can not read all info on the cards" (laptop).
+     The two breakpoints above test the VIEWPORT, but this grid lives in the camp's
+     MIDDLE column, between a 250px and a 260px rail. On a 1280-1440px laptop the
+     viewport is wide enough to keep the 2-column grid with its fixed 400px
+     "Available" column, while the middle column is only ~460-620px — so the
+     Deploy Slots column got ~130-200px, and a parked card (132px portrait + body +
+     actions) crushed its name, stats and XP to a sliver. Measured: 1280x720 →
+     slot card 130px wide. The same rules now also follow the SPACE the grid
+     really has. .dpx-cq wraps only the grid (not the page column) so its
+     containment cannot affect anything outside it. */
+  .dpx-cq { container-type: inline-size; }
+  @container (max-width: 980px) {
+    .dpx-grid { grid-template-columns: minmax(0, 1fr); }
+    .dpx-slot { grid-template-columns: 96px minmax(0, 1fr); }
+    .dpx-port { width: 96px; height: 96px; }
+    .dpx-acts { grid-column: 1 / -1; min-width: 0; flex-direction: row; flex-wrap: wrap; }
+    .dpx-acts .dpx-btn, .dpx-acts-row { flex: 1 1 140px; }
+  }
+  @container (max-width: 560px) {
+    .dpx-body { grid-template-columns: minmax(0, 1fr); }
+    .dpx-name { font-size: 1.02rem; letter-spacing: 0.01em; }
+    .dpx-slot { padding: 0.7rem; gap: 0.7rem; }
+  }
   @media (max-width: 760px) {
     .dpx-body { grid-template-columns: minmax(0, 1fr); }
     .dpx-tab { font-size: 0.8rem; letter-spacing: 0.08em; padding: 0.6rem 0.3rem 0.7rem; }
@@ -139441,8 +139464,18 @@ function renderTitle() {
       </div>
     </aside>` : '';
 
+  /* 🔁 bug-mu1pbwb4 "the Ruin Exchange redraws 2-5 times when you go into it".
+     The sub-hub entrance (hub-transitions.css) is triggered by MOUNTING the
+     nodes, and this function replaces the whole subtree on every render() — so
+     every background repaint in the first seconds after entry (cloud profile
+     load, daily/login rewards, badge data arriving; more of them on the first
+     open of the day) replayed the full fade + tile stagger. If the SAME hub is
+     already on screen this is a repaint, not an arrival: mark it is-settled and
+     the entrance is skipped. Leaving and coming back still animates. */
+  let _hubSettled = false;
+  try { const _prevHub = root.querySelector(':scope > .spellbook-hub'); _hubSettled = !!(_prevHub && _prevHub.getAttribute('data-hub') === String(hub)); } catch (e) {}
   root.innerHTML = `
-    <div class="spellbook-hub ${isMain ? 'is-main' : 'is-sub hub-v2'}" data-hub="${escapeHtml(hub)}">
+    <div class="spellbook-hub ${isMain ? 'is-main' : 'is-sub hub-v2'}${_hubSettled ? ' is-settled' : ''}" data-hub="${escapeHtml(hub)}">
       <div class="spellbook-hub-bg">
         <img class="hub-bg-img" src="${escapeHtml(hubBg)}" alt="" draggable="false">
         ${isMain ? '' : `
@@ -184939,10 +184972,14 @@ function renderCamp() {
     <div class="forge-page camp-hud">
       ${_campHudTopBar()}
       <div class="forge-header">
-        <h2 class="section-title" style="position:relative;padding-left:3.2em"><img src="assets/artwork/gameicons/camp%20icon.png" alt="" style="position:absolute;left:0;top:50%;transform:translateY(-50%);width:2.8em;height:2.8em;object-fit:contain;filter:drop-shadow(0 4px 12px rgba(0,0,0,0.7));pointer-events:none"> Camp</h2>
+        <!-- bug-mtxkwv4m: the back control sits LEFT of the title, as on Pack Opening,
+             the Vault and the hub breadcrumb — it used to be the last thing on the right. -->
+        <div style="display:flex;gap:0.9rem;align-items:center;min-width:0">
+          <button class="btn-secondary keep-tab" id="btn-back-camp">${App.screen === 'campOps' ? '← Bunker' : '← Back to Menu'}</button>
+          <h2 class="section-title" style="position:relative;padding-left:3.2em"><img src="assets/artwork/gameicons/camp%20icon.png" alt="" style="position:absolute;left:0;top:50%;transform:translateY(-50%);width:2.8em;height:2.8em;object-fit:contain;filter:drop-shadow(0 4px 12px rgba(0,0,0,0.7));pointer-events:none"> Camp</h2>
+        </div>
         <div style="display:flex;gap:0.6rem;align-items:center">
           <span class="result-stat-pill" style="background:rgba(212,175,55,0.18);border-color:rgba(212,175,55,0.5);color:#ffd166;font-size:0.95rem;padding:0.3rem 0.8rem"><span class="cinder-icon"></span> ${Profile.gems || 0}</span>
-          <button class="btn-secondary keep-tab" id="btn-back-camp">${App.screen === 'campOps' ? '← Bunker' : '← Back to Menu'}</button>
         </div>
       </div>
       ${_campCommandBarHtml()}
@@ -185068,7 +185105,7 @@ function renderCamp() {
         <button class="dpx-tab${App._campDeployTab === 'park' ? ' is-on' : ''}" data-dpxtab="park">Park</button>
         <button class="dpx-tab${App._campDeployTab === 'barracks' ? ' is-on' : ''}" data-dpxtab="barracks">Barracks</button>
       </div>
-      <div class="dpx-grid">
+      <div class="dpx-cq"><div class="dpx-grid">
         ${App._campDeployTab === 'park' ? '' : `
         <section class="dpx-panel">
           <div class="dpx-h"><span class="dpx-h-t">Deploy Slots</span><span class="dpx-h-n">(${Camp.slots.length}/${_maxSlots})</span><span class="dpx-h-rule"></span></div>
@@ -185079,7 +185116,7 @@ function renderCamp() {
           <div class="dpx-h"><span class="dpx-h-t">Available to Park</span><span class="dpx-h-rule"></span></div>
           <div class="dpx-scroll">${availableHtml || '<div class="dpx-empty">Nothing available</div>'}</div>
         </section>`}
-      </div>
+      </div></div>
         </main>
         <aside class="cbx-col cbx-right cbx-side">
           <div id="camp-roster-host"></div>
@@ -188500,12 +188537,17 @@ function _csMyShopBody() {
     }
     const theme = App._csTheme || 'bunker';
     const themeBtns = Object.entries(CARD_SHOP_THEMES).map(([id, th]) => `<button class="cs-tab ${theme === id ? 'is-active' : ''}" data-cs="cs-theme" data-theme="${id}" style="flex:0 0 auto;padding:0.4rem 0.7rem">${escapeHtml(th.name)}</button>`).join('');
+    // bug-mu0l80ou: any repaint of this form (picking a theme, a background cloud
+    // fetch, the 3D panel refresh) rebuilt the inputs from the template and blanked
+    // what the player had typed. Carry the live values across the rebuild.
+    const _liveVal = id => { try { const f = document.getElementById(id); return f ? f.value : null; } catch (e) { return null; } };
+    const nameVal = _liveVal('cs-f-name'), tagVal = _liveVal('cs-f-tag');
     return `<div class="cs-empty" style="text-align:left;border-style:solid">
       <div style="font-weight:800;color:#ffe9a8;margin-bottom:0.3rem">🔨 Open your card shop</div>
       <div style="font-size:0.76rem;color:#8a96a3;margin-bottom:0.7rem">✅ Card Shop licensed. Your shop is listed publicly so other players can walk in and buy. Cards you list are held from your collection until they sell or you unlist them. Your shop starts empty — decorate it from inside with <b>🏗️ Build</b>.</div>
       <div style="display:grid;gap:0.5rem">
-        <input class="cs-input" id="cs-f-name" maxlength="28" placeholder="Shop name (e.g. ${escapeHtml(_csMyName())}'s Outpost)" value="${escapeHtml(_csMyName())}'s Outpost">
-        <input class="cs-input" id="cs-f-tag" maxlength="80" placeholder="Tagline — e.g. Cards salvaged from the ruins.">
+        <input class="cs-input" id="cs-f-name" maxlength="28" placeholder="Shop name (e.g. ${escapeHtml(_csMyName())}'s Outpost)" value="${escapeHtml(nameVal != null ? nameVal : (_csMyName() + "'s Outpost"))}">
+        <input class="cs-input" id="cs-f-tag" maxlength="80" placeholder="Tagline — e.g. Cards salvaged from the ruins." value="${escapeHtml(tagVal || '')}">
         <div style="display:flex;gap:0.4rem;flex-wrap:wrap">${themeBtns}</div>
         <button class="btn-primary" data-cs="cs-open-shop" style="margin-top:0.3rem">Open Shop</button>
       </div></div>`;
@@ -189125,7 +189167,13 @@ function _csMount3D(mount) {
     const lookEnd = () => { St.drag = false; el.style.cursor = 'grab'; };
     el.addEventListener('mousedown', lookStart); window.addEventListener('mousemove', lookMove); window.addEventListener('mouseup', lookEnd);
     el.addEventListener('touchstart', lookStart, { passive: true }); window.addEventListener('touchmove', lookMove, { passive: true }); window.addEventListener('touchend', lookEnd);
-    const kd = e => { const key = (e.key || '').toLowerCase(); St.keys.add(key); if (key === 'e' && nearView) _csEnterStation(nearView); };
+    /* ⌨ bug-mu0l80ou "Card Shop name/tagline wipes out after ~5 key presses": these
+       listeners are on WINDOW, so typing in a panel input (shop name, tagline, price)
+       also walked the camera on W/A/S/D and — the actual wipe — an "e" while standing
+       at the counter re-entered the station, which rebuilds the panel's innerHTML and
+       replaces the input mid-word. Keys typed into a text field belong to the field. */
+    const kdTyping = e => { const t = e.target; return !!(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)); };
+    const kd = e => { if (kdTyping(e)) return; const key = (e.key || '').toLowerCase(); St.keys.add(key); if (key === 'e' && nearView) _csEnterStation(nearView); };
     const ku = e => St.keys.delete((e.key || '').toLowerCase());
     window.addEventListener('keydown', kd); window.addEventListener('keyup', ku);
     const onResize = () => { W = mount.clientWidth || W; H = mount.clientHeight || H; camera.aspect = W / H; camera.updateProjectionMatrix(); renderer.setSize(W, H); };
@@ -189327,7 +189375,12 @@ function _csOpenPanel(view) {
   const mount = document.getElementById('cs-3d-mount'); if (!mount) return;
   let ov = document.getElementById('cs-panel-overlay');
   if (!ov) { ov = document.createElement('div'); ov.id = 'cs-panel-overlay'; ov.className = 'cs-panel-overlay'; mount.appendChild(ov); }
+  // bug-mu0l80ou: this rebuild bypasses render(), so it also bypasses render()'s
+  // keep-typing-alive focus restore — do the same here for a field inside the panel.
+  let fs = null;
+  try { const a = document.activeElement; if (a && a.id && ov.contains(a) && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA')) fs = { id: a.id, s: a.selectionStart, e: a.selectionEnd }; } catch (e) {}
   ov.innerHTML = `<div class="cs-panel-head"><span>${_csPanelTitle(view)}</span><button class="btn-mini" data-cs="cs-panel-close">✕ Close</button></div><div class="cs-panel-body">${_csPanelBody(view)}</div>`;
+  if (fs) { try { const f = document.getElementById(fs.id); if (f) { f.focus({ preventScroll: true }); try { if (fs.s != null) f.setSelectionRange(fs.s, fs.e); } catch (e2) {} } } catch (e) {} }
 }
 function _csClosePanel() { App._csPanel = null; const ov = document.getElementById('cs-panel-overlay'); if (ov) ov.remove(); }
 function _csRefreshPanel() { if (App._csPanel && document.getElementById('cs-panel-overlay')) _csOpenPanel(App._csPanel); }
@@ -198571,7 +198624,10 @@ function _bboBar(bank) {
   const sig = b.logo_url
     ? '<img src="' + escapeHtml(b.logo_url) + '" alt="">'
     : '<span class="ph">' + escapeHtml(((b.bank_name || '?').trim()[0] || '?').toUpperCase()) + '</span>';
-  return '<header class="bbo-bar"><div class="bbo-mark"><span class="bbo-sigil">' + sig + '</span><div>' +
+  // bug-mu0minh8: the only way out used to be the ← Back under the content,
+  // which a long loan-product list pushes off screen. The standard top-left
+  // back lives in the header now; the bottom one stays for the end of a scroll.
+  return '<header class="bbo-bar"><div class="bbo-mark"><button class="bbo-btn" style="padding:8px 14px" onclick="App.screen=\'campOps\';render()">← Back</button><span class="bbo-sigil">' + sig + '</span><div>' +
       '<h1>' + escapeHtml(b.bank_name || 'Your Bank') + '</h1>' +
       '<div class="sub">Back office · ' + escapeHtml(tier) + ' · Charter ' + 'I'.repeat(b.charter_tier || 1) + '</div>' +
     '</div></div>' +
@@ -247849,8 +247905,10 @@ function _udwHead(bank) {
   const ratio = deposits > 0 ? (reserves / deposits) : 1;
   const staked = Number(b.mt_staked || 0) + Number(b.mt_overstake || 0);
   const role = S.isOwner ? 'Owner' : (S.teller ? ((S.teller.role || 'teller').toUpperCase()) : '—');
+  // bug-mu0minh8 (the loan screen): a top-left ← Back in the header — the one
+  // under the application rail was the only exit and sat below the fold.
   return '<header class="udw-bar">' +
-    '<div class="udw-word"><h1>' + escapeHtml(b.bank_name || 'The Underwriting Desk') + '</h1>' +
+    '<div class="udw-word"><button class="udw-btn" style="padding:8px 14px" onclick="App.screen=\'campOps\';render()">← Back</button><h1>' + escapeHtml(b.bank_name || 'The Underwriting Desk') + '</h1>' +
       '<span class="udw-charter">' + escapeHtml(_bkcTier(b.charter_tier || 1).name) + ' · ' + escapeHtml(role) + '</span>' +
       // Owner-only: staffing the desk is the owner's call, and RLS refuses a
       // teller's write anyway — showing them the button would only mislead.
@@ -248398,6 +248456,29 @@ try {
   try { if (window.visualViewport) window.visualViewport.addEventListener('resize', () => { try { _uiAutoScale(); } catch (e) {} }, { passive: true }); } catch (e) {}
   try { _uiAutoScale(); } catch (e) {}
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { try { _uiAutoScale(); } catch (e) {} });
+  /* 💻 bug-mtxq2arc "on a laptop the city often does not show full screen".
+     The fullscreen-iframe exemption above (frameUp → zoom 1) is only evaluated
+     on resize and from render(), and opening the city appends its iframe
+     WITHOUT a render. So on a laptop, where the hub pages run at zoom ≈0.72-0.97,
+     the city mounted under the page's zoom: its 100vw×100vh rendered at
+     zoom×viewport, parked in the top-left corner with dead bands right and
+     bottom — until some unrelated background render happened to re-run this
+     (hence "most of the time", not always). Measured 1366×768: 839×472 visible
+     of a 1366×768 window. Re-evaluate whenever an iframe is added to or
+     removed from <body> — which covers the city, the pack opener, the deck
+     vault, the base builder and their close fades in one place. Direct
+     children only, so it costs nothing on ordinary repaints (those are inside #app). */
+  try {
+    const _frameWatch = () => { try {
+      new MutationObserver((ms) => {
+        for (const m of ms) {
+          for (const n of m.addedNodes) if (n && n.tagName === 'IFRAME') { try { _uiAutoScale(); } catch (e) {} return; }
+          for (const n of m.removedNodes) if (n && n.tagName === 'IFRAME') { try { _uiAutoScale(); } catch (e) {} return; }
+        }
+      }).observe(document.body, { childList: true });
+    } catch (e) {} };
+    if (document.body) _frameWatch(); else document.addEventListener('DOMContentLoaded', _frameWatch);
+  } catch (e) {}
   window.__mg = window.__mg || {};
   window.__mg.viewport = () => {
     const w = window.innerWidth, h = window.innerHeight;

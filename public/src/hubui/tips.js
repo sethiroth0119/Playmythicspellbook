@@ -187,7 +187,14 @@
     for (let i = 0; el && i < 8 && el !== document.body; i++, el = el.parentElement) {
       const dt = el.getAttribute('data-tip');
       if (dt) return { text: dt, el };
-      const t = el.getAttribute('title');
+      /* ⚠ The element whose title is PARKED (see show) has no `title` any more.
+         Reading only the attribute made the very next mousemove over it resolve
+         to nothing → hide() → title restored → next move shows again: the bubble
+         blinked on/off on every mouse event over any titled element (bug-mu0kgo44,
+         "flickering when hovering a card" in the Inventory, every row of which
+         carries a title, and "major flicker" in the card-detail modal, which is
+         full of titled stat icons). The parked title still counts for its element. */
+      const t = el.getAttribute('title') || (parked && parked.el === el ? parked.title : null);
       if (t) return { text: t, el, native: true };
       for (const [sel, text] of TIP_BY) { try { if (el.matches(sel)) return { text, el }; } catch (e) {} }
       if (el.tagName === 'BUTTON' || el.tagName === 'A' || el.getAttribute('role') === 'button') break;   // a control with no tip: do not climb into its container

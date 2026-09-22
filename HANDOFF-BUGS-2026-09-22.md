@@ -97,3 +97,41 @@ route/prestige/name). Audit all `Profile.*` fields against all three lists.
   files never committed, missing `.gauntlet/comment-scan.mjs` / `modcheck.mjs` and a few
   scripts, `battleperf` red on the baseline).
 - `git stash` is shared across worktrees — don't use it with parallel agents.
+
+---
+
+# Round 2 (same day) — owner decisions implemented
+
+All on `claude/optimistic-curie-up22w8`, still against v121v116. Merge commits (carry each branch's
+commits over): fix/persist 73ef00bd, fix/aitradesrv 5a133346, fix/foodchain 91bd434f,
+fix/stashsync d4b6971c (+67b4e7f1), fix/packrewards 19f1b57b, web purchases f002a60b,
+fix/auctionescrow 644f2cc6, fix/prnhome e8b93342 (+0709b494).
+
+| What | Decision / result |
+|---|---|
+| **Persistence audit** (persist) | ~60 Profile fields were saved but not restored on a same-device reload, then the blank was uploaded (bought furniture, gems, dice skins, crafted items, businesses, kitchen, rentals, convoys, unit state, Ethos standing hidden inside the Bunkhouse `if`, reset stamps). All fixed; `_persistaudit_smoke` now FAILS on any new unrestored field. |
+| **Stash merge** (stashsync) | Server merges each device's stash deltas — fixes mu8vnos5 (ammo) and mu83ph17 (donations) for good. **sql/190** |
+| **AI trades** (aitradesrv) | 2 per corp per UTC day enforced server-side, pay bounded. **sql/191** (bounds derived from v116 pricing — re-check if v185 changed `_aiSpotOffer`/`_aiContractTerms`) |
+| **PRN per city** (prnhome) | A PRN rings only the city it is sited in; unsited → honest message. Build ceiling + thrive stay player-wide. Existing cities are PINNED to today's economy ground (0 of 866 extractors lose a deposit); new cities get their own ground. city_profiles keyed by map node. **sql/192** |
+| **Oil Press + Abattoir** (foodchain) | Meals now run (potato + veg + oil). Open: meat-from-scratch blocked on biomass; 25% of nodes lack soybeans; a "stranded firm" sim tweak doubled meals (not shipped). |
+| **Pack rewards** (packrewards) | Season Pass / coupon packs were never delivered (`grantUnopenedPack` didn't exist). Now real packs + a one-time make-good. Decide: "Starter Pack" label vs Basic Pack; `Catalog.coupons` may never reach players. |
+| **Auction escrow** (auctionescrow) | Cloud auction bids held server-side. **sql/193**. Later: tighten `cml_upd` once all clients use the RPCs. |
+| **Web-purchase forge wipe** (f002a60b) | Receipts written as one key, never the whole forge; whole-row saves no longer erase receipts. **sql/195** |
+
+## SQL to apply by hand (Supabase SQL editor, project ktsiasyjusesawtrwrjc)
+Paste the WHOLE file into an EMPTY tab, Ctrl+A, Run (a partial selection runs only that part).
+Each is idempotent and ends with a verify query. Renumber against v185's `sql/` if needed.
+The client works the old way until each is applied; order does not matter.
+
+| File | Verify |
+|---|---|
+| `sql/190_salvage_merge.sql` | 7 rows, all ok. ⚠ Was run PARTIALLY on 2026-09-22 (functions + trigger exist, table `salvage_sync_devices` missing). Harmless for live clients (they never send `__salvageSync__`), but re-run the whole file. |
+| `sql/191_ai_trade_settle.sql` | 5 rows; bound `ninthvein deliver` = 598 |
+| `sql/192_city_profiles_rekey.sql` | backup table created; `uuid_keyed` ≈ 10, `dup_owner_node` = 0 (dry run: 9 re-keyed, 45 deleted, 10 kept for open offers) |
+| `sql/193_auction_escrow.sql` | 2 tables RLS true, 8 policies, 4 RPCs executable by authenticated, 5 helpers not |
+| `sql/195_web_purchases_key.sql` | 3 rows, all ok |
+
+## Still open
+- `wallet_credit` is callable by any signed-in client (daily ceiling only) — every Cinder source should get its own RPC like sql/191.
+- `mucvogzk` 1,070 🔥/hr = free-tier patronage ceiling (check pledge tier); `mucu5m51` two population models.
+- A mayor's resource map shows the mayor's own ground; `campWorkforce` hydration is a blind assign; `lockedSov`/local auctions are client-only.

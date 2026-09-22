@@ -565,7 +565,9 @@ export const PROMOTED_CHAIN_IDS = [
      alphabetical order the derivation produces. */
   'appliances', 'arcaneCrystal', 'asphalt', 'aviationFuel', 'beverages', 'boosterPacks', 'bread', 'cannedFood',
   'cardStock', 'cardboard', 'cars', 'chemicalFeedstock', 'clay', 'clothing',
-  'coal', 'cobalt', 'constructionComponents', 'constructionGlass', 'copper', 'copperOre',
+  /* 🛢 cookingOil joined the derivation when the Oil Press was added to
+     ECO_BUILDING_MAP (bug-mu2oz3ve). Alphabetical, as the derivation emits. */
+  'coal', 'cobalt', 'constructionComponents', 'constructionGlass', 'cookingOil', 'copper', 'copperOre',
   'copperWire', 'corn', 'cotton', 'crudeOil', 'dimensionalMaterial', 'electricalComponents',
   'electricity', 'electronicComponents', 'engines', 'fabric', 'freshFish', 'freshWater',
   'fruit', 'furniture', 'furnitureComponents', 'gasoline', 'glass', 'goldOre',

@@ -124,6 +124,12 @@ fix/auctionescrow 644f2cc6, fix/prnhome e8b93342 (+0709b494).
 **APPLIED to production by Claude via the Supabase connection, owner-approved, each verify query green:**
 190 (7/7 ok — this also completed the earlier partial run), 191 (5 rows, bound 598),
 193 (2 tables RLS on, 8 policies, 4 RPCs authenticated, 5 helpers not), 195 (3/3 ok).
+**Also APPLIED (2026-09-23):** 197 (boe_adjust_balance refuses credits — closed an unbounded
+Bank of Ethos mint; the owner pasted it, Claude verified), 196 (faucet_settlements + 4 faucet RPCs;
+the owner's paste ran partially — only the table — so Claude re-applied the whole file in one
+transaction; verify: RLS true, 1 policy, core+helper not executable, 4 RPCs executable, bounds
+188 / 8846 / 6630). The 196 daily caps are uncalibrated estimates (see the calibration query in
+the faucets report); the client that calls them is not deployed yet.
 **HELD: 192.** It re-keys city_profiles to map-node ids, but live v121v185 still publishes and
 filters by PRN id, so applying it before the new client ships would drop members' cities from
 the corp roster until they republish, and the live client would recreate the PRN-keyed rows.

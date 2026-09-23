@@ -107,7 +107,7 @@ console.log('\n=== 1b. the bank seam and the wallet ledger in index.html ===');
 {
   ok(/window\.MythicBank = \{/.test(SRC) && /deposit:\s+async \(n\) => \{ try \{ return !!\(await boeDeposit\(n\)\); \}/.test(SRC) && /withdrawRes: async \(id, n\) => \{ try \{ return !!\(await boeWithdrawRes\(id, n\)\); \}/.test(SRC), 'MythicBank forwards to the Bank of Ethos functions (no rule of its own)');
   ok(/function spendGems\(amount, reason\) \{[\s\S]{0,400}_cinderLedgerAdd\(-amount, reason \|\| \('Spent in ' \+ _ledgerScreenLabel\(\)\), 'spend'\)/.test(SRC), 'spendGems writes a ledger row with the reason (or the screen)');
-  ok(/function addGems\(amount, reason\) \{[\s\S]{0,300}_cinderLedgerAdd\(amount, reason && reason !== 'addGems' \? reason : \('Received in ' \+ _ledgerScreenLabel\(\)\)/.test(SRC), 'addGems writes a ledger row');
+  ok(/function addGems\(amount, reason(?:, serverPaid)?\) \{[\s\S]{0,300}_cinderLedgerAdd\(amount, reason && reason !== 'addGems' \? reason : \('Received in ' \+ _ledgerScreenLabel\(\)\)/.test(SRC), 'addGems writes a ledger row');
   ok(/_ledgerWhy\(dir === 'deposit' \? 'Bank of Ethos deposit' : 'Bank of Ethos withdrawal'/.test(SRC), 'bank deposit / withdrawal are booked in the wallet ledger by the write itself');
   ok(/function _cinderLedgerTick\(\)/.test(SRC) && /setInterval\(_cinderLedgerTick, 4000\)/.test(SRC), 'a tick books direct Profile.gems writes as sync rows');
   ok(/'mythic_cinder_ledger:' \+ \(\(Profile\.cloud && Profile\.cloud\.userId\) \|\| 'guest'\)/.test(SRC) && /if \(_cl\.rows\.length > 400\) _cl\.rows\.length = 400;/.test(SRC), 'the ledger is per account on the device, capped at 400 rows');

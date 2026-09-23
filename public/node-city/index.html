@@ -3326,9 +3326,29 @@ const MythicCityBridge = (() => {
     { id: 'c11', name: 'Ethos Foundation Stone',type: 'Structure', element: 'light',  power: 25, rarity: 'legendary', level: 50 },
     { id: 'c12', name: 'Kalon Den Blueprint',   type: 'Structure', element: 'earth',  power: 19, rarity: 'epic',      level: 30 },
   ];
+  /* ⏱ bug-mtr5xz8t, round 2: the city still froze on its control bars.
+     4f769e51 bounded the anchor ring and the city read, but boot() goes on to
+     AWAIT fetchCards and fetchNeighborCities, and both are network reads in
+     parent mode — cityNeighbors always (city_node_links + names), and
+     cityCardCollection for a MANAGED city (city_owner_cards_get), which is why
+     mayors saw it most. Everything after them in boot, including
+     setAnimationLoop at the very end, waited on a read that never answered:
+     the 9 s failsafe lifted the spinner over a canvas that never drew.
+     Reproduced in Chromium with a host whose cityNeighbors never resolves.
+     Each is now bounded and answers its own failure value ([]); a card list
+     that answers late is kept in B.cardsLate so boot can still adopt it. */
+  B.cardsLate = null;
   B.fetchCards = async () => {
     if (B.mode === 'parent') {
-      try { if (typeof P.cityCardCollection === 'function') return await P.cityCardCollection(); } catch (e) {}
+      try {
+        if (typeof P.cityCardCollection === 'function') {
+          const p = Promise.resolve(P.cityCardCollection());
+          const LATE = {};
+          const r = await _ncBound(p, 10000, LATE);
+          if (r === LATE) { B.cardsLate = p; return []; }
+          return r;
+        }
+      } catch (e) {}
       return [];
     }
     if (B.mode === 'message') { return (await rpc('fetchCards', {})) || []; }
@@ -3431,7 +3451,8 @@ const MythicCityBridge = (() => {
   // Caravans need someone to trade WITH.  ◄◄ CLAUDE CODE HOOK ◄◄
   // parent: return nearby/allied players' cities [{name, owner}].
   B.fetchNeighborCities = async () => {
-    if (B.mode === 'parent') { try { if (typeof P.cityNeighbors === 'function') return await P.cityNeighbors(); } catch (e) {} return []; }
+    // ⏱ Bounded — see B.fetchCards. Caravan destinations only; [] is its own failure value.
+    if (B.mode === 'parent') { try { if (typeof P.cityNeighbors === 'function') return await _ncBound(P.cityNeighbors(), 8000, []); } catch (e) {} return []; }
     if (B.mode === 'message') { return (await rpc('neighbors', {})) || []; }
     return [{ name: 'Ashvale', owner: 'Kael' }, { name: 'Greyharbor', owner: 'Mira' }, { name: 'Ethos Heights', owner: 'The Council' }];
   };
@@ -6379,6 +6400,8 @@ function finReturnFor(tier, vol, bias, seed) {
       opened by a foundation pad. An UPGRADING desk (k=1) is standing and
       working and is counted — that asymmetry is the whole point of `bldSite`. */
 function finCount() {
+  // ⏱ Kept for one synchronous pass — see _kalonMemoOn (bug-mtr5xz8t).
+  if (_finCountMemoOn) return _finCountMemoV;
   let n = 0;
   try {
     for (const t of Object.values(game.tiles)) {
@@ -6386,6 +6409,7 @@ function finCount() {
       if (d && d.fin && !t.damaged && !bldSite(t)) n += 1;
     }
   } catch (e) {}
+  _finCountMemoV = n; _finCountMemoOn = true; _syncMemoExpire(() => { _finCountMemoOn = false; });
   return n;
 }
 /* The multiplier a Cinder earner gets from the financial district. 1 when there
@@ -28651,12 +28675,16 @@ function bonusesFor(x, z, type) {
 //   ("Restaurants + Food Trucks") does nothing until step 8.
 const STOCK_RAW_FALLBACK = { rations: 'food', remedies: 'medicine', goods: 'supplies' };
 function stockCap() {
+  // ⏱ Asked once per refining tile inside economyTick's production loop — kept
+  //   for one synchronous pass, like kalonCityBoost (bug-mtr5xz8t).
+  if (_stockCapMemoOn) return _stockCapMemoV;
   let c = STOCK_CAP_BASE;
   for (const t of Object.values(game.tiles)) {
     const d = BUILDINGS[t.type];
     // 🏗 An unfinished silo stores nothing.
     if (d && d.stockCap && !t.damaged && !bldSite(t)) c += d.stockCap * t.lvl;
   }
+  _stockCapMemoV = c; _stockCapMemoOn = true; _syncMemoExpire(() => { _stockCapMemoOn = false; });
   return c;
 }
 function stockOf(r) { return game.stock[r] || 0; }
@@ -39999,7 +40027,22 @@ function crewMult(k) {
   try { const m = CREW.multAt(k); return (m > 1 && isFinite(m)) ? m : 1; } catch (e) { return 1; }
 }
 
+/* ⏱ bug-mtr5xz8t ("the game crashes a lot when loading the cities"): these two
+   CITY-WIDE numbers are asked once PER TILE by tileMult(), and each answer is a
+   walk over every tile — O(tiles²) per economy tick. On a full 24×24 grid that
+   was ~45 ms a tick, measured by CPU profile with kalonCityBoost alone at 25%
+   self time; the offline catch-up runs one tick per 10 s of absence, so three
+   hours away cost ~50 s of frozen load screen and the 36 h cap would be
+   minutes — behind a spinner the 9 s failsafe has already lifted. Exit and
+   re-enter "fixed" it only because pagehide saved mid-catch-up, stamping
+   savedAt to now. The answer cannot change inside one synchronous run, so it
+   is kept until the next microtask (i.e. for one pass of the tick) and then
+   recomputed. `var`, not `let`: these may be read before this line has run. */
+var _kalonMemoOn = false, _kalonMemoV = 1, _finCountMemoOn = false, _finCountMemoV = 0,
+    _stockCapMemoOn = false, _stockCapMemoV = 0;
+function _syncMemoExpire(clear) { try { queueMicrotask(clear); } catch (e) { Promise.resolve().then(clear); } }
 function kalonCityBoost() {                        // stabled Kalons → global prod
+  if (_kalonMemoOn) return _kalonMemoV;
   let n = 0;
   for (const t of Object.values(game.tiles)) {
     // 🏗 No stalls yet, no Kalons in them.
@@ -40007,7 +40050,9 @@ function kalonCityBoost() {                        // stabled Kalons → global 
     for (const id of (t.cards || [])) { const c = cardById(id); if (c && c.type === 'Kalon') n++; }
     const c1 = t.card && cardById(t.card); if (c1 && c1.type === 'Kalon') n++;
   }
-  return 1 + Math.min(KALON_CITY_CAP, n * KALON_CITY_BOOST);
+  _kalonMemoV = 1 + Math.min(KALON_CITY_CAP, n * KALON_CITY_BOOST);
+  _kalonMemoOn = true; _syncMemoExpire(() => { _kalonMemoOn = false; });
+  return _kalonMemoV;
 }
 function deckPower() {                             // defense deck + synergy
   const cs = game.defenseDeck.map(cardById).filter(Boolean);
@@ -43542,6 +43587,9 @@ const OFFLINE_SLICE_SEC = 10;
      MessageChannel post is a real macrotask (the browser can paint and handle
      input between the two) and is not on the timer throttle. */
 const OFFLINE_YIELD_EVERY = 400;
+/* ⏱ …and never more than this long between yields, however slow a slice is
+   (a full grid measured 20–50 ms a slice, bug-mtr5xz8t). */
+const OFFLINE_YIELD_MS = 100;
 /* 🧊 Buildings constructed between paint yields while loading a saved city.
    Sized in tiles, not milliseconds, because buildMesh cost varies hugely by
    type (a tree is nothing, a Stadium is not) and a count is the thing this loop
@@ -43641,6 +43689,20 @@ async function offlineCatchUp(awayMsOverride) {
   _bldOffline = true; _bldDirty = false;
   _bldRebuildDue();
   _toastCatchUp = true;                   // 🕰 the absence's toasts are history — see _toastHold
+  let _lastYield = performance.now();
+  /* ⏱ bug-mtr5xz8t: boot's 9 s failsafe has usually lifted the loading screen
+     by the time a long absence is being paid, so the "catching up — N%" line
+     was written to a hidden overlay and the player looked at a frozen, empty
+     city instead. While BOOT is catching up (not a resume mid-play), show the
+     overlay again, and put it back exactly as it was when the loop ends. */
+  let _bootEl = null, _bootWasDone = false;
+  try {
+    if (!MythicCityBridge.ready) {
+      _bootEl = $('boot') || null;
+      _bootWasDone = !!(_bootEl && _bootEl.classList.contains('done'));
+      if (_bootWasDone) _bootEl.classList.remove('done');
+    }
+  } catch (e) {}
   try {
     /* 🌩 THERE WAS A SECOND FLAG HERE (`_ecoOfflineSweep`) AND IT WENT WITH THE
        DISASTER TERM. Its job was to tell the economy "no storm" for the length
@@ -43701,16 +43763,26 @@ async function offlineCatchUp(awayMsOverride) {
            can only ever UNDER-credit, never mint. */
         if (_bldNext <= vnow) _bldNext = Infinity;
       }
-      if ((++slices % OFFLINE_YIELD_EVERY) === 0) {
+      /* ⏱ …OR EVERY OFFLINE_YIELD_MS, whichever comes first (bug-mtr5xz8t).
+         400 slices was sized on a small city (~0.4 ms a slice); a full grid
+         measured ~20–50 ms a slice, so the page went 8–20 s between yields —
+         unpaintable, unclickable, and long enough for the browser to offer to
+         kill it: the "crash while loading" the players reported. */
+      ++slices;
+      if ((slices % OFFLINE_YIELD_EVERY) === 0 || performance.now() - _lastYield > OFFLINE_YIELD_MS) {
         try {
           const g = $('bootgpu');
           if (g) g.textContent = '⏳ catching up — ' + Math.round(done / simSec * 100) + '%';
+          // The 9 s failsafe can fire mid-loop too — keep the progress visible.
+          if (_bootEl && _bootEl.classList.contains('done')) { _bootEl.classList.remove('done'); _bootWasDone = true; }
         } catch (e) {}
         await offlineYield();
+        _lastYield = performance.now();
       }
     }
   } finally {
     B.addRes = oAddRes; B.addCinders = oAddCin; B.spendRes = oSpend;
+    try { if (_bootWasDone && _bootEl) _bootEl.classList.add('done'); } catch (e) {}
     _bldOffline = false;                  // same lifetime as the bridge patch
     _toastCatchUp = false;
     /* 🎉 …and the population milestone re-baselines on the city as it stands
@@ -51240,8 +51312,15 @@ async function _ncResourceNeeds() {
   if (isAdmin()) $('adminbtn').style.display = 'block';
   loadGov();
   try {
-    CARDS = (await MythicCityBridge.fetchCards()) || [];
-    NEIGHBORS = (await MythicCityBridge.fetchNeighborCities()) || [];
+    // ⏱ bug-mtr5xz8t: asked together (each is bounded in the bridge), so a
+    // stalled pair costs one bound, not two. A card list that answers after
+    // its bound is adopted when it lands, if nothing has filled CARDS since.
+    const _cardsP = MythicCityBridge.fetchCards(), _nbP = MythicCityBridge.fetchNeighborCities();
+    CARDS = (await _cardsP) || [];
+    NEIGHBORS = (await _nbP) || [];
+    if (MythicCityBridge.cardsLate) {
+      MythicCityBridge.cardsLate.then((v) => { if (Array.isArray(v) && v.length && !CARDS.length) CARDS = v; }, () => {});
+    }
     const ev = await MythicCityBridge.fetchEvents();
     events.rush = !!(ev && ev.planetaryRush);
     if (events.rush) toast('🚀 PLANETARY RUSH is live — all node link gains DOUBLED. Push your sync!', 'good');

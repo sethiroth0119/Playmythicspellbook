@@ -130,6 +130,13 @@ the owner's paste ran partially — only the table — so Claude re-applied the 
 transaction; verify: RLS true, 1 policy, core+helper not executable, 4 RPCs executable, bounds
 188 / 8846 / 6630). The 196 daily caps are uncalibrated estimates (see the calibration query in
 the faucets report); the client that calls them is not deployed yet.
+**Also APPLIED (2026-09-23, owner-approved, caps as written):** 198 (mayor ledger capped at
+120k/call + 1.5M/day per (mayor,node) and logged; wallet_charge_ref / wallet_refund; Fuel Command
+NPC-sale / hedge / insurance / position / loan doors; season_pass_tiers + claims). Pre-flight: every
+column/function it writes exists live, wallet_ledger has no op constraint. Verify: 4 tables RLS
+true, 4 select policies, _wallet_charge_core + _fc_loan_open not executable, 11 functions
+executable, tiers free 21/24,750 premium 12/22,800, bounds 30,400 / 29,800. NOTE: the mayor cap is
+live for current clients immediately (over-cap amounts are cut, not refused).
 **HELD: 192.** It re-keys city_profiles to map-node ids, but live v121v185 still publishes and
 filters by PRN id, so applying it before the new client ships would drop members' cities from
 the corp roster until they republish, and the live client would recreate the PRN-keyed rows.

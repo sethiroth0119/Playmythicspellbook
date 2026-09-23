@@ -850,7 +850,7 @@ function refresh() {
   NetUI.sync(state, Panel.layers.pipes);
   if (!Panel.isOpen()) { Overlay.hide(); return; }
   Panel.render(state, caps());
-  Overlay.sync(state, Panel.layers, { H: H(), grid });
+  Overlay.sync(state, Panel.layers, { H: H(), grid, focus: Panel.focusOf() });
 }
 
 try {

@@ -140,10 +140,14 @@ export function sync(state, layers, ctxHost) {
   if (!mesh) return;
   const on = Object.keys(layers).filter(k => layers[k]).sort();
   const H = ctxHost && ctxHost.H;
-  if (!on.length || !H) { mesh.visible = false; return; }
+  /* 🔎 The source row the player clicked in the panel ('b<i>', 'surface',
+     'sea' — see panel.js `focus`), or ''. It shows the plane on its own, so a
+     player need not know which legend layer draws that source. */
+  const focus = (ctxHost && ctxHost.focus) || '';
+  if ((!on.length && !focus) || !H) { mesh.visible = false; return; }
   mesh.visible = true;
 
-  const sig = on.join(',') + '|' + H.cityId + '|' +
+  const sig = on.join(',') + '|' + focus + '|' + H.cityId + '|' +
     (state ? state.basins.map(b => b.level.toFixed(2) + ':' + b.taint.toFixed(2)).join('/') +
              '|' + state.surface.taint.toFixed(2) + '|' + state.capacity.toFixed(2) +
              '|' + state.wells.length : 'static');
@@ -244,6 +248,24 @@ export function sync(state, layers, ctxHost) {
          running — on condensation alone — and "why is that Purifier grey" is the
          question this whole overlay exists to answer. */
       marker(w.x, w.z, w.src === 'none' ? C.wellDry : C.well);
+    }
+  }
+
+  // ── 🔎 FOCUS — bug-mu2r4z2p ────────────────────────────────────────────
+  /* "The Water Supply panel lists sources and I can't find them on the map."
+     Every tile of the clicked source gets a bright outline, drawn LAST so it
+     reads over whatever layers are on. Same per-tile tests the layers above
+     use (basinAt for DRAWDOWN, surfaceAt's 0.12 bank cut, seaAt), so the
+     outline can never disagree with the paint under it. No camera move: this
+     module has no focus helper to reuse, and adding one was out of scope. */
+  if (focus) {
+    const bi = focus.charAt(0) === 'b' ? Number(focus.slice(1)) : -1;
+    for (let z = 0; z < GRID; z++) for (let x = 0; x < GRID; x++) {
+      let hit = false;
+      if (bi >= 0) { const at = H.basinAt(x, z); hit = !!at && at.basin.i === bi; }
+      else if (focus === 'sea') hit = H.seaAt(x, z) > 0;
+      else if (focus === 'surface') hit = H.surfaceAt(x, z) > 0.12 && !(H.seaAt(x, z) > 0);
+      if (hit) marker(x, z, '#ff5cf0');   // magenta: no water layer or ramp uses it
     }
   }
 

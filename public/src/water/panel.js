@@ -34,6 +34,13 @@
 import { WATER } from './tuning.js';
 
 let root = null, open = false, host = null, api = null;
+/* 🔎 bug-mu2r4z2p: which SOURCES row is outlined on the map — 'b<i>' for a
+   basin, 'surface', 'sea', or '' for none. Clicking a row toggles it; the
+   overlay draws it (overlay.js FOCUS). Cleared when the panel closes, like the
+   info view it rides on. */
+let focus = '';
+export function focusOf() { return focus; }
+const srcAttr = (k) => ' data-wtfocus="' + k + '" title="Show on the map"' + (focus === k ? ' style="outline:1px solid #ff5cf0"' : '');
 
 /* ── LAYERS ─────────────────────────────────────────────────────────────────
    `need` names a capability the row depends on; a row whose capability is
@@ -160,7 +167,7 @@ function sources(s) {
   let h = '<div class="wtsec">SOURCES</div><div class="wtsrc">';
   for (const b of s.basins) {
     const st = STATUS[b.status] || STATUS.recharging;
-    h += '<div class="wtsrow">' +
+    h += '<div class="wtsrow"' + srcAttr('b' + b.i) + '>' +
       '<span class="wtsn">🕳 ' + esc(b.name) + (b.springfed ? ' <i class="wtspring" title="Fed by surface water">⛲</i>' : '') + '</span>' +
       '<span class="wtsv" title="Reserve remaining">' + pct(b.level) + '</span>' +
       '<span class="wtsv" title="Purity">' + pct(b.purity) + '</span>' +
@@ -177,7 +184,7 @@ function sources(s) {
        does. The sub-line says the two things the number cannot: how far inland
        it reaches, and that no amount of cleaning up will improve it. */
   if (s.sea) {
-    h += '<div class="wtsrow">' +
+    h += '<div class="wtsrow"' + srcAttr('sea') + '>' +
       '<span class="wtsn">🌊 ' + esc(s.sea.name) + ' <i class="wtspring" title="Salt water">🧂</i></span>' +
       '<span class="wtsv" title="Effectively unlimited">∞</span>' +
       '<span class="wtsv" title="Purity — salt, and it never changes">' + pct(s.sea.purity) + '</span>' +
@@ -189,7 +196,7 @@ function sources(s) {
   }
   if (s.surface.river || s.surface.lakes) {
     const bad = s.surface.purity < WATER.purity.warnBelow;
-    h += '<div class="wtsrow">' +
+    h += '<div class="wtsrow"' + srcAttr('surface') + '>' +
       '<span class="wtsn">🌊 ' + (s.surface.river ? 'River' : '') +
         (s.surface.river && s.surface.lakes ? ' &amp; ' : '') +
         (s.surface.lakes ? (s.surface.lakes === 1 ? 'Lake' : s.surface.lakes + ' lakes') : '') + '</span>' +
@@ -475,6 +482,7 @@ const CSS = `
 #ncwtr .wtnote code{color:var(--sky,#8fd0e8);font-size:10px}
 #ncwtr .wtsrc{border-top:1px solid var(--edge);padding-top:5px}
 #ncwtr .wtsrow{display:flex;align-items:center;gap:6px;padding:2px 0}
+#ncwtr .wtsrow[data-wtfocus]{cursor:pointer;border-radius:3px}#ncwtr .wtsrow[data-wtfocus]:hover{background:rgba(255,92,240,.08)}
 #ncwtr .wtsn{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--bone)}
 #ncwtr .wtspring{font-style:normal;opacity:.8}
 #ncwtr .wtsv{width:38px;text-align:right;font-variant-numeric:tabular-nums;color:var(--mist)}
@@ -511,7 +519,11 @@ export function mount(h, a) {
     layers[cb.dataset.layer] = cb.checked;
     api.onLayers();
   });
-  root.addEventListener('click', (ev) => { if (ev.target.closest('[data-wtclose]')) api.close(); });
+  root.addEventListener('click', (ev) => {
+    if (ev.target.closest('[data-wtclose]')) { api.close(); return; }
+    const row = ev.target.closest('[data-wtfocus]');
+    if (row) { focus = focus === row.dataset.wtfocus ? '' : row.dataset.wtfocus; api.onLayers(); }
+  });
   (document.body || document.documentElement).appendChild(root);
 }
 
@@ -531,4 +543,4 @@ export function render(state, caps) {
 }
 
 export function show(state, caps) { if (!root) return; open = true; root.style.display = ''; render(state, caps); }
-export function hide() { if (!root) return; open = false; root.style.display = 'none'; }
+export function hide() { if (!root) return; open = false; focus = ''; root.style.display = 'none'; }

@@ -148,6 +148,8 @@ const SUITES = [
     why: 'street lights keep their turn, residents take the open jobs, the restaurant eats and pays, saves carry vitals' },
   { id: 'popagree',      cmd: ['node', '_popagree_smoke.mjs'],      expect: 0, minPasses: 30, tier: 'fast',
     why: 'the Zoning panel\'s Population is the city ledger; shops and offices are not homes; apartments are' },
+  { id: 'watersrc',      cmd: ['node', '_watersrc_smoke.mjs'],      expect: 0, minPasses: 11, tier: 'fast',
+    why: 'clicking a Water Supply source row outlines exactly that basin / river / coast on the map' },
   { id: 'convoy',        cmd: ['node', '_convoy_smoke.mjs'],        expect: 0, minPasses: 20, tier: 'fast',
     why: 'supply crates ride convoys, land in the pantry once, and are never paid as food' },
   { id: 'progression',   cmd: ['node', '_progression_smoke.mjs'],   expect: 0, minPasses: 25, tier: 'fast',

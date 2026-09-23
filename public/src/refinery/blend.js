@@ -223,9 +223,17 @@ export function sellSpot(id, litres) {
   if (!(unit > 0)) { St.toast('Nobody buys that.', 2600); return false; }
   const gross = Math.round(unit * litres);
   St.takeStock(id, litres);
-  St.earn(gross, 'Refinery: spot sale');
-  St.charge('revenue', gross);
   const nm = (COMPONENTS[id] || STREAMS[id] || { name: id }).name;
+  // 🚰 sql/196: the server bounds the pay; if it refuses, this undoes the sale
+  // (stock back, revenue and market supply unbooked) — once, and only then.
+  St.earnSale(gross, 'Refinery: spot sale', id, litres, () => {
+    St.addStock(id, litres);
+    s.pnl.revenue = Math.max(0, (s.pnl.revenue | 0) - gross);
+    s.suppliedRecent = Math.max(0, (s.suppliedRecent || 0) - litres);
+    St.log('warn', 'Sale of ' + litres.toLocaleString() + ' L ' + nm + ' refused — the product is back in the tank.');
+    St.save();
+  });
+  St.charge('revenue', gross);
   St.log('info', 'Sold ' + litres.toLocaleString() + ' L ' + nm + ' — ' + gross.toLocaleString() + ' 🔥.');
   // Rack sales are still supply hitting the market, and the price index has to
   // feel them or a player could dump forever with no consequence.

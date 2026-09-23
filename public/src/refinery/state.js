@@ -48,6 +48,16 @@ export function earn(n, why) {
   if (b && b.addGems) { try { b.addGems(n, why); return; } catch (e) {} }
   _mockCinder += n;
 }
+/* 🚰 A SALE the server settles (sql/196 faucet_refinery_sale), when the game
+   offers that seam. `refund` puts the goods back and runs only if the server
+   refuses. An older host without settleSale → earn(), exactly as before. */
+export function earnSale(n, why, stream, litres, refund) {
+  n = Math.max(0, Math.round(n || 0));
+  if (n === 0) return;
+  const b = bridge();
+  if (b && typeof b.settleSale === 'function') { try { b.settleSale(n, why, stream, litres, refund); return; } catch (e) {} }
+  earn(n, why);
+}
 export function toast(msg, ms) {
   const b = bridge();
   if (b && b.toast) { try { b.toast(msg, ms); return; } catch (e) {} }

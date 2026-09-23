@@ -64243,7 +64243,8 @@ async function walletFetchProgress() {
       // precisely how the deposit got minted a second time.
       if (!_serverDebited && localGems > serverGems) {
         const diff = localGems - serverGems;
-        try { _serverMirrorCredit(diff, 'reconcile_local_gain_on_fetch'); } catch (e) {}
+        // sql/196: its own capped door; the old mirror when that is absent.
+        try { _faucetReconcileGain(diff); } catch (e) {}
       }
     });
     // In step with the server's counter either way — we have just applied
@@ -64551,6 +64552,110 @@ function _serverMirrorCredit(amount, reason) {
       })
       .catch(() => { _walletOutboxAdd(amount, reason, _ref); _walletMarkReconcile(); });
   } catch (e) { _walletOutboxAdd(amount, reason); _walletMarkReconcile(); }
+}
+
+/* ══ 🚰 PER-SOURCE FAUCETS (sql/196_faucet_settle.sql) ════════════════════
+   wallet_credit takes any amount under any reason from any signed-in client
+   (bounded only by sql/093). sql/191 gave AI trades their own door; sql/196
+   does the same for Fuel Command sales, Refinery spot sales, City builder
+   income and reconcile_local_gain_on_fetch. Each RPC bounds the amount from
+   what the server can derive (the demand curve, the price table) or, where
+   nothing is derivable, a tight per-call/per-day cap — and credits through
+   wallet_credit itself, so holds, ledger rows and ref dedupe are unchanged.
+   Same shape as _aiSettleRemote / _aiSettleRun (fdc12786):
+     ok       → credit LOCALLY what the server paid, with no mirror on top;
+     refused  → the goods come back, once, in the source's `refused` handler;
+     missing  → sql/196 not applied: the old addGems path, remembered per
+                session so a player is not charged a failed round trip a tick;
+     network  → retried once with the SAME ref (the server answers a repeat
+                with its first result). If that fails too the outcome is
+                UNKNOWN, so the goods are NOT refunded — refunding would pay
+                twice whenever the server did pay and only the reply was lost.
+                The sale is credited locally and the reconcile flag is set,
+                exactly what addGems does when its mirror fails.
+   ⚠ WHY NOT ADOPT r.balance (as _aiSettleAdopt does): the credit lands
+     asynchronously, and a legacy direct write in between — Fuel Command
+     books its opex as `Profile.gems = …` in the SAME tick as the sale — is
+     only billed by _gemsTaxTick's next poll. An absolute tax-exempt adopt
+     re-baselines the watcher over that unbilled spend, so it would never
+     reach wallet_charge: free opex every 30 s. Adding what was paid is
+     exactly addGems' local half, which the watcher already understands. */
+const _faucetMissing = {};
+const _faucetBusy = {};
+function _faucetRemote(fn, args) {
+  try {
+    if (_faucetMissing[fn]) return null;
+    if (typeof initCloud !== 'function' || !initCloud() || !Profile.cloud || !Profile.cloud.signedIn) return null;
+    if (!Cloud || !Cloud.client || typeof Cloud.client.rpc !== 'function') return null;
+  } catch (e) { return null; }
+  const a = Object.assign({}, args, { p_ref: 'fct_' + _walletRef() });
+  const once = () => Promise.resolve(Cloud.client.rpc(fn, a)).then((r) => {
+    if (r && r.error) {
+      if (_walletRpcUnavailable(r.error) || _jbRpcMissing(r.error)) return { missing: true };
+      throw r.error;
+    }
+    return (r && r.data && typeof r.data === 'object') ? r.data : { ok: false, reason: 'empty' };
+  });
+  return once().catch(() => once()).catch(() => ({ ok: false, reason: 'network' }));
+}
+function _faucetCreditLocal(n, reason) {
+  n = Math.floor(Number(n) || 0);
+  if (n <= 0) return;
+  addGems(n, reason, true);                 // local half only: the server already paid
+  try { walletHoldsSoon(); } catch (e) {}   // past the daily ceiling the pay is HELD (sql/093)
+}
+/* h = { missing(), paid(r), refused(r), network(r) }. Exactly one runs. */
+function _faucetRun(key, fn, promise, h) {
+  _faucetBusy[key] = true;
+  return promise.then((r) => {
+    delete _faucetBusy[key];
+    try {
+      if (r && r.missing) { _faucetMissing[fn] = true; h.missing(); }
+      else if (r && r.ok) h.paid(r);
+      else if (r && r.reason === 'network') h.network(r);
+      else h.refused(r || { ok: false, reason: 'empty' });
+    } catch (e) { try { console.warn('[faucet ' + key + ']', e); } catch (_) {} }
+    return r;
+  }, () => { delete _faucetBusy[key]; });
+}
+/* reconcile_local_gain_on_fetch → faucet_reconcile_gain. Local already holds
+   MAX(server, local); this only moves the server up, so no answer changes
+   Profile.gems. The server pays at most a small daily allowance and the rest
+   is asked for again by the next fetch. */
+function _faucetReconcileGain(diff) {
+  diff = Math.floor(Number(diff) || 0);
+  if (diff <= 0) return;
+  const old = () => _serverMirrorCredit(diff, 'reconcile_local_gain_on_fetch');
+  const p = _faucetRemote('faucet_reconcile_gain', { p_amount: diff });
+  if (!p) { old(); return; }
+  return _faucetRun('reconcile', 'faucet_reconcile_gain', p, {
+    missing: old,
+    paid: () => {},                          // local already holds it; nothing to add
+    refused: () => {},                       // over today's allowance: the next fetch asks again
+    network: () => { try { _walletMarkReconcile(); } catch (e) {} },
+  });
+}
+/* City builder income → faucet_city_income. Nothing is spent to earn it, so a
+   refusal (over the day cap) has nothing to give back: it is not paid, and
+   the player is told once per half hour. */
+let _cityIncomeToastAt = 0;
+function _faucetCityIncome(n) {
+  n = Math.floor(Number(n) || 0);
+  const why = 'City builder income';
+  if (n <= 0) return;
+  const old = () => addCinders(n, why);
+  const p = _faucetRemote('faucet_city_income', { p_amount: n });
+  if (!p) { old(); return; }
+  return _faucetRun('city', 'faucet_city_income', p, {
+    missing: old,
+    paid: (r) => _faucetCreditLocal(Number(r.paid) || n, why),
+    refused: (r) => {
+      if (Date.now() - _cityIncomeToastAt < 30 * 60 * 1000) return;
+      _cityIncomeToastAt = Date.now();
+      try { showToast('🏙 City income paused — ' + ((r && r.reason) === 'day' ? 'today\'s city payout limit is reached' : 'the server refused a payout') + '. It resumes as the 24-hour window frees up.', 6000); } catch (e) {}
+    },
+    network: () => { _faucetCreditLocal(n, why); try { _walletMarkReconcile(); } catch (e) {} },
+  });
 }
 
 /* ══ 📮 THE CREDIT OUTBOX ═════════════════════════════════════════════════
@@ -73549,8 +73654,10 @@ function spendGems(amount, reason) {
    the MAX(server, local) adopt. Neither says WHERE the money came from, so the
    Cinder supply could not be audited: production shows +602,357 🔥 of reconcile
    gains in one week with nothing attributing a single unit of it to a source.
-   A named reason per faucet is the prerequisite for ever noticing abuse. */
-function addGems(amount, reason) {
+   A named reason per faucet is the prerequisite for ever noticing abuse.
+   `serverPaid` (sql/196): the server ALREADY credited this through a faucet
+   RPC, so do the local half only — mirroring it again would pay twice. */
+function addGems(amount, reason, serverPaid) {
   amount = Math.floor(amount || 0);
   if (amount === 0) return;
   _ledgerQuiet(() => { Profile.gems = (Profile.gems || 0) + amount; });
@@ -73571,6 +73678,7 @@ function addGems(amount, reason) {
   //    (reported at client 661,147 vs server 1,143).
   //    Fire-and-forget is fine here ONLY because a failure marks the durable
   //    reconcile flag, which re-reads and lifts the server up later.
+  if (serverPaid) return;
   try { _serverMirrorCredit(amount, reason || 'addGems'); } catch (e) { try { _walletMarkReconcile(); } catch (_) {} }
 }
 
@@ -232610,6 +232718,39 @@ function fcFireEvent(forceId) {
   try { saveProfile && saveProfile(); } catch (e) {} try { saveForge && saveForge(); } catch (e) {}
 }
 
+/* 🚰 THE CYCLE'S SALES SETTLE ON THE SERVER (sql/196 faucet_fuel_sales).
+   This was addGems → the generic wallet_credit, i.e. any figure a client liked.
+   The RPC takes the barrels and the pump price and computes the pay itself,
+   refusing a volume above the demand curve's ceiling at that price, a second
+   sale inside 25 s, or anything past the owner's daily cap. See _faucetRun for
+   the four answers. Refused → the barrels go back in the tank (uncapped: it is
+   an undo, the _refundRes rule) and the KPIs forget the sale; the station then
+   pauses selling (10 min on the daily cap, one tick otherwise) instead of
+   asking again every 30 s. */
+let _fcSalesPauseUntil = 0;
+function _fcSalesPay(s, sold, gross) {
+  if (!(sold > 0) || !(gross > 0)) return;
+  const why = 'Fuel Command: sales';
+  const payLocal = () => addGems(gross, why);
+  const p = _faucetRemote('faucet_fuel_sales', { p_sold: Math.floor(sold), p_pump: Math.round(s.pump) });
+  if (!p) { payLocal(); return; }
+  return _faucetRun('fuel', 'faucet_fuel_sales', p, {
+    missing: payLocal,
+    paid: (r) => _faucetCreditLocal(Number(r.paid) || gross, why),
+    network: () => { _faucetCreditLocal(gross, why); try { _walletMarkReconcile(); } catch (e) {} },
+    refused: (r) => {
+      s.fuel += sold;
+      s.totalSold = Math.max(0, (s.totalSold || 0) - sold);
+      s.lifetimeRevenue = Math.max(0, (s.lifetimeRevenue || 0) - gross);
+      const day = r && r.reason === 'day';
+      _fcSalesPauseUntil = Date.now() + (day ? 10 * 60 * 1000 : 30 * 1000);
+      _fcLog('warn', '⛽ ' + sold + ' bbl NOT sold — ' + (day ? 'the station has hit today\'s sales limit' : 'the sale was refused (' + ((r && r.reason) || 'error') + ')') + '. The fuel is back in the tank.');
+      if (day) { try { showToast('⛽ Fuel sales paused — today\'s station sales limit is reached. Your fuel is back in the tank.', 5200); } catch (e) {} }
+      try { saveProfile && saveProfile(); } catch (e) {}
+    },
+  });
+}
+
 // --- economy tick (runs on a true 30s wall-clock setInterval, NOT on render) ---
 function fcTick() {
   const s = ensureFuelCommand();
@@ -232632,10 +232773,12 @@ function fcTick() {
   dem *= (0.5 + s.rep / 120);
   if (s.supply < 30) dem *= 1.6;
   dem = _fcClamp(dem, 0, 260);
-  const sold = Math.min(s.fuel, Math.round(dem));
+  let sold = Math.min(s.fuel, Math.round(dem));
+  // 🚰 sql/196: a sale still settling, or a refusal cooling down → this cycle sells nothing.
+  if (sold > 0 && (_faucetBusy.fuel || Date.now() < _fcSalesPauseUntil)) sold = 0;
   const gross = sold * s.pump;
   s.fuel -= sold;
-  addGems(gross, 'Fuel Command: sales');
+  _fcSalesPay(s, sold, gross);
   s.totalSold += sold;
   s.lifetimeRevenue += gross;
   // Operating cost (lower than NPC opex of original mock — 5x reduced)
@@ -243196,7 +243339,11 @@ window.cityAddCinders = (n, why) => {
   try {
     n = Math.floor(n) || 0; if (!n) return;
     if (_cityMgrStalled()) { _cityMgrQueue('cinder', n); return; }
-    if (!CityMgr.active) { addCinders(n, why || 'City builder income'); return; }
+    if (!CityMgr.active) {
+      // sql/196: the city's own income has its own capped door (_faucetCityIncome).
+      if (n > 0 && (!why || why === 'City builder income')) { _faucetCityIncome(n); return; }
+      addCinders(n, why || 'City builder income'); return;
+    }
     CityMgr.cinder += n; CityMgr.pending.cinder += n;
   } catch (e) {}
 };
@@ -246190,6 +246337,27 @@ window.MythicRefineryBridge = {
     } catch (e) { return []; }
   },
   addGems: (n, why) => { try { addGems(n, why || 'Refinery'); } catch (e) {} },
+  /* 🚰 A SPOT SALE settles on the server (sql/196 faucet_refinery_sale): the
+     RPC bounds the pay by litres × that stream's top price and a daily cap.
+     `refund` is the module's undo (stock back in the tank) and runs only on a
+     definite refusal — see _faucetRun. No server path → addGems, as before. */
+  settleSale: (n, why, stream, litres, refund) => {
+    n = Math.floor(Number(n) || 0);
+    if (n <= 0) return;
+    why = why || 'Refinery';
+    const payLocal = () => { try { addGems(n, why); } catch (e) {} };
+    const p = _faucetRemote('faucet_refinery_sale', { p_stream: String(stream || ''), p_litres: Math.round(Number(litres) || 0), p_amount: n });
+    if (!p) { payLocal(); return; }
+    return _faucetRun('refinery', 'faucet_refinery_sale', p, {
+      missing: payLocal,
+      paid: (r) => _faucetCreditLocal(Number(r.paid) || n, why),
+      network: () => { _faucetCreditLocal(n, why); try { _walletMarkReconcile(); } catch (e) {} },
+      refused: (r) => {
+        try { if (typeof refund === 'function') refund(); } catch (e) {}
+        try { showToast('🛢 Sale refused — ' + ((r && r.reason) === 'day' ? 'today\'s refinery sales limit is reached' : 'the server did not accept that price') + '. The product is back in your tanks.', 5200); } catch (e) {}
+      },
+    });
+  },
 
   /* ── Chrome. */
   toast: (m, ms) => { try { showToast(m, ms || 3600); } catch (e) {} },

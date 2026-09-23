@@ -69286,7 +69286,7 @@ async function frDeposit(resId, qty) {
   }
   // Reward: Cinders + reputation progress.
   const reward = Math.max(1, Math.round(gained * 0.5));
-  try { if (typeof addCinders === 'function') addCinders(reward); } catch (e) {}
+  try { if (typeof addCinders === 'function') addCinders(reward, 'Foundation Reserve: contribution reward'); } catch (e) {}
   showToast(`🏛 Reserve received ${qty} ${_meta(resId).icon} — +${reward} 🔥 · +${gained} rep${_emergency ? ' · 🚨 EMERGENCY +60%' : ''}${_specialty ? ' · 🏭 SPECIALTY +35%' : ''}`, (_emergency || _specialty) ? 4600 : 3800);
   await frFetch();
   return true;
@@ -69384,7 +69384,7 @@ async function frConvoyTick() {
           const up = await Cloud.client.from('reserve_contributions').upsert({ user_id: me, user_name: ((Profile.cloud.displayName || (Profile.account && Profile.account.displayName) || 'Survivor') + '').slice(0, 40), resource: cv.resId, qty: (Number(cur.data && cur.data.qty) || 0) + qty, points: (Number(cur.data && cur.data.points) || 0) + gained, updated_at: new Date().toISOString() }, { onConflict: 'user_id,resource' });
           if (up.error) throw up.error;
         } catch (e) { _frErr(e); continue; }   // keep convoy, retry next tick
-        try { if (reward > 0 && typeof addCinders === 'function') addCinders(reward); } catch (e) {}
+        try { if (reward > 0 && typeof addCinders === 'function') addCinders(reward, 'Foundation Reserve: convoy delivered'); } catch (e) {}
       }
       const i = list.indexOf(cv); if (i >= 0) list.splice(i, 1);
       changed = true;
@@ -70837,7 +70837,7 @@ async function nodeCollect(nodeId) {
     if (pay <= 0) { showToast('⚠ Nothing was paid out — the claim has been reset, try again.', 4200); return false; }
     // addGems persists itself (saveProgressCloud + the canonical wallet row), so
     // the credit survives a reload without an extra saveProfile here.
-    if (typeof addCinders === 'function') addCinders(pay); else addGems(pay, 'PRN payout');
+    if (typeof addCinders === 'function') addCinders(pay, 'PRN payout'); else addGems(pay, 'PRN payout');
     const tier = _nodeOwnerTierMul();
     const tail = (!pool.legacy && pool.total > 0) ? ' · pool ' + _frNumF(pool.avail) + '/' + _frNumF(pool.total) + ' 🔥 left' : '';
     showToast('🔌 ' + (n.name || 'PRN') + ' payout collected — +' + pay.toLocaleString() + ' 🔥'
@@ -71904,7 +71904,7 @@ function gymResolvePredictions() {
     p.resolved = true; p.correct = correct;
     const gw = _ensureGymWars();
     gw.predTotal = (gw.predTotal || 0) + 1;
-    if (correct) { gw.predWins = (gw.predWins || 0) + 1; wins++; if (typeof addCinders === 'function') addCinders(GYM_PREDICT_REWARD); }
+    if (correct) { gw.predWins = (gw.predWins || 0) + 1; wins++; if (typeof addCinders === 'function') addCinders(GYM_PREDICT_REWARD, 'Gym Wars: prediction won'); }
     changed = true;
   });
   if (changed) { try { saveProfile(); } catch (e) {} if (wins > 0 && typeof showToast === 'function') showToast(`🔮 ${wins} prediction${wins === 1 ? '' : 's'} hit — +${wins * GYM_PREDICT_REWARD} 🔥!`, 4200); }
@@ -73183,7 +73183,7 @@ function _auctWalletSpend(cur, amount) { return _curIsAza(cur) ? spendSovereigns
      day, daily cap) the wallet showed Aza the next boot took back — the
      bug-mu7bk9gy class, see sovRewardReply. The server's answer is toasted. */
 function _auctWalletAdd(cur, amount) {
-  if (!_curIsAza(cur)) return addGems(amount);
+  if (!_curIsAza(cur)) return addGems(amount, 'Auction House: NPC bidder won your lot');
   return sovRewardReply('auction_npc_sale', amount).then(j => {
     try { showToast('👑 Auction payout — ' + sovRewardNote(j) + '.', 5200); } catch (e) {}
     return (j && j.ok === true) ? Math.max(0, Math.round(Number(j.granted) || 0)) : 0;
@@ -94182,7 +94182,7 @@ async function _opSettle(o) {
   // player, and the settle timestamp persists on the profile row.
   if (o.meta && o.meta.localOnly) {
     const netL = Math.max(0, c.gross - c.salary);
-    if (netL > 0) { try { addCinders(netL); } catch (e) {} }
+    if (netL > 0) { try { addCinders(netL, 'Corp: personally-funded op settled (' + (o.op_type || 'op') + ')'); } catch (e) {} }
     /* 💸 The wages a local op pays are whatever its own production covered. */
     try { _wagePoolCredit(Math.min(c.gross, c.salary), 'local op wages'); } catch (e) {}
     const yieldedL = {};
@@ -181347,7 +181347,7 @@ async function dojoCollect() {
     const { data, error } = await Cloud.client.rpc('dojo_collect');
     if (error) throw error;
     const amt = (data && data.amount) | 0;
-    if (amt > 0) { addCinders(amt); try { saveProfile(); } catch (e) {} showToast(`💰 Collected ${amt.toLocaleString()} 🔥 from ${(data.count | 0)} sale${(data.count | 0) === 1 ? '' : 's'}.`, 4000); }
+    if (amt > 0) { addCinders(amt, 'Dojo: shop sales collected'); try { saveProfile(); } catch (e) {} showToast(`💰 Collected ${amt.toLocaleString()} 🔥 from ${(data.count | 0)} sale${(data.count | 0) === 1 ? '' : 's'}.`, 4000); }
     else showToast('No uncollected earnings yet.', 2600);
     Dojo.mine = null; await dojoFetchMine();
   } catch (e) {}
@@ -185161,7 +185161,7 @@ function _refinerySellRes(id, amtSpec) {
     const q = (typeof frApplyTax === 'function') ? frApplyTax(gross, { market: 'black', resource: id, quantity: amt }) : { net: gross, tax: 0, label: '' };
     // ⚠ The fallback used to write Profile.gems raw, so on any build where
     //   addCinders is absent the sale never reached the canonical wallet.
-    if (typeof addCinders === 'function') addCinders(q.net); else addGems(q.net, 'Refinery sale');
+    if (typeof addCinders === 'function') addCinders(q.net, 'Refinery sale'); else addGems(q.net, 'Refinery sale');
     showToast('🔥 +' + q.net + ' Cinders — refined ' + amt + ' ' + _resMeta(id).name + (q.tax ? ' · −' + q.tax + ' tax' : '') + '.', 3000);
     render();
   } catch (e) { try { console.warn('[refinery] sell failed', e); } catch (_) {} }
@@ -187375,7 +187375,7 @@ function renderWagerHall() {
     btn.onclick = () => {
       const m = (Profile.wagers.schedule || []).find(x => x.id === btn.dataset.cancelBet);
       if (!m || !m.bet) return;
-      addCinders(m.bet.stake);
+      addCinders(m.bet.stake, 'Wagers: bet cancelled (stake returned)');
       m.bet = null;
       saveProfile();
       showToast(`↩ Bet canceled — <span class="cinder-icon"></span> ${(m.bet ? m.bet.stake : 0).toLocaleString()} refunded`);
@@ -187547,7 +187547,7 @@ function settleWagerMatch(matchId, winner) {
   const won = bet.side === winner;
   const payout = won ? Math.floor(bet.stake * bet.oddsAtBet) : 0;
   if (won) {
-    addCinders(payout);
+    addCinders(payout, 'Wagers: bet won');
     Profile.wagers.stats.won    = (Profile.wagers.stats.won    || 0) + 1;
     Profile.wagers.stats.profit = (Profile.wagers.stats.profit || 0) + (payout - bet.stake);
     addAccountXp(Math.min(60, 20 + Math.floor(payout / 200)), 'Wager Won');
@@ -188544,7 +188544,7 @@ async function cardShopCollect() {
     const { data, error } = await Cloud.client.rpc('card_shop_collect');
     if (error || !data || !data.ok) { showToast('⚠ Could not collect earnings.', 3000); return null; }
     const amt = data.amount | 0;
-    if (amt > 0) { addCinders(amt); showToast('💰 Collected ' + amt.toLocaleString() + ' 🔥 from ' + (data.count | 0) + ' sale' + ((data.count | 0) === 1 ? '' : 's') + '.', 4600); }
+    if (amt > 0) { addCinders(amt, 'Card Shop: sales collected'); showToast('💰 Collected ' + amt.toLocaleString() + ' 🔥 from ' + (data.count | 0) + ' sale' + ((data.count | 0) === 1 ? '' : 's') + '.', 4600); }
     else showToast('No uncollected sales yet.', 3000);
     CardShop.mine = null; await cardShopFetchMine(); return true;
   } catch (e) { return null; }
@@ -188625,7 +188625,7 @@ async function _csNodeDividend() {
       return false;
     }
     const cinder = data.cinder | 0, units = data.units | 0, resId = data.resource || '';
-    if (cinder > 0 && typeof addCinders === 'function') addCinders(cinder);
+    if (cinder > 0 && typeof addCinders === 'function') addCinders(cinder, 'Card Shop: node dividend');
     if (units > 0 && resId && typeof addRes === 'function') addRes(resId, units);
     try { saveProfile && saveProfile(); } catch (e) {}
     const parts = [];
@@ -195267,7 +195267,7 @@ function renderBlackMarket() {
       if (!ok) return;
       Profile.cardCollection[cardId] = Math.max(0, (Profile.cardCollection[cardId] || 0) - amount);
       if (Profile.cardCollection[cardId] === 0) delete Profile.cardCollection[cardId];
-      addCinders(q.net);
+      addCinders(q.net, 'Black Market: smuggled cards sold');
       showToast(`🔥 +${q.net} Cinders — ${amount}× ${row.card.name} sold${q.tax ? ` · ${q.label} −${q.tax}` : ''}.`);
       render();
     };
@@ -195292,7 +195292,7 @@ function renderBlackMarket() {
         soldCount += r.sellable;
       });
       const q = (typeof frApplyTax === 'function') ? frApplyTax(earned, { market: 'black', resource: 'cards', quantity: soldCount }) : { gross: earned, tax: 0, net: earned, label: 'Foundation Seizure Fee' };
-      addCinders(q.net);
+      addCinders(q.net, 'Black Market: smuggled cards sold');
       showToast(`🔥 +${q.net} Cinders from ${soldCount} cards sold${q.tax ? ` · ${q.label} −${q.tax}` : ''}.`);
       render();
     };
@@ -212197,7 +212197,7 @@ function openBlackMarketTrade() {
         if (!ok) return;
         Profile.cardCollection[cardId] = Math.max(0, (Profile.cardCollection[cardId] || 0) - amount);
         if (Profile.cardCollection[cardId] === 0) delete Profile.cardCollection[cardId];
-        if (typeof addCinders === 'function') addCinders(_q.net);
+        if (typeof addCinders === 'function') addCinders(_q.net, 'Black Market: smuggled cards sold');
         try { showToast('🔥 +' + _q.net + ' Cinders — ' + amount + '× ' + (card.name || cardId) + ' sold' + (_q.tax ? ' · ' + _q.label + ' −' + _q.tax : '') + '.'); } catch (e) {}
         build();
       } catch (e) {}
@@ -212307,7 +212307,7 @@ function openBlackMarketTrade() {
             Profile.cardCollection[p.cid] = Math.max(0, (Profile.cardCollection[p.cid] || 0) - p.sv);
             if (Profile.cardCollection[p.cid] === 0) delete Profile.cardCollection[p.cid];
           });
-          if (typeof addCinders === 'function') addCinders(earned);
+          if (typeof addCinders === 'function') addCinders(earned, 'Black Market: spare copies smuggled');
           try { showToast('🔥 +' + earned + ' Cinders — ' + sold + ' spare copies smuggled.'); } catch (e) {}
           build();
         } catch (e) {}
@@ -212391,7 +212391,7 @@ async function bmMarketFetch() {
           if (!(upd && upd.data && upd.data.length)) continue;
           total += (r.price || 0);
         }
-        if (total > 0) { if (typeof addCinders === 'function') addCinders(total); try { showToast('💰 Booth sales collected: +' + total + ' <span class="cinder-icon"></span> Cinders', 4600); } catch (e) {} }
+        if (total > 0) { if (typeof addCinders === 'function') addCinders(total, 'Black Market: booth sales collected'); try { showToast('💰 Booth sales collected: +' + total + ' <span class="cinder-icon"></span> Cinders', 4600); } catch (e) {} }
       }
     } catch (e) { _bmMarkErr(e); }
     const { data, error } = await Cloud.client.from('bm_card_listings')
@@ -215960,7 +215960,7 @@ function _covertCollect(missionInstanceId) {
       //    checked only here, which meant it was never actually enforced.
       //    ⚠ Nothing is credited locally and no amount is printed until the
       //    server answers — see sovRewardReply and _covertSettleAza.
-      if (typeof addCinders === 'function') addCinders(c);
+      if (typeof addCinders === 'function') addCinders(c, 'Covert Ops: resource run');
       _covertSettleAza('cv_resource', m.id);
       payout = `+${c.toLocaleString()} Cinder, 👑 Aza: confirming with the server…`;
     } else if (m.missionId === 'cv_intel') {
@@ -215974,7 +215974,7 @@ function _covertCollect(missionInstanceId) {
         payout = `📡 Intel acquired on ${ev.eventName} — ${ev.corpId}.`;
         showToast(`📡 Intel: ${ev.corpId}'s ${ev.eventName} active in ${ev.regionId}.`, 6500);
       } else {
-        if (typeof addCinders === 'function') addCinders(3000);
+        if (typeof addCinders === 'function') addCinders(3000, 'Covert Ops: intel run (no fresh intel)');
         payout = `+3,000 Cinder (no fresh intel available).`;
       }
     } else if (m.missionId === 'cv_cardhunt') {
@@ -216039,11 +216039,11 @@ function _covertCollect(missionInstanceId) {
           payout = `🎴 Recovered ${pick.icon || '🎴'} ${pick.name}!` +
             (onlyOne ? ' (the only card currently eligible for a hunt — more become huntable as the catalogue grows)' : '');
         } else if (typeof addCinders === 'function') {
-          addCinders(2000);
+          addCinders(2000, 'Covert Ops: recovery run (salvage)');
           payout = '🔥 Nothing worth carrying back — 2,000 Cinder salvaged instead.';
         }
       } else {
-        if (typeof addCinders === 'function') addCinders(2000);
+        if (typeof addCinders === 'function') addCinders(2000, 'Covert Ops: recovery run (no eligible card)');
         payout = `+2,000 Cinder (no eligible cards in catalog).`;
       }
     } else if (m.missionId === 'cv_recruit') {
@@ -216051,7 +216051,7 @@ function _covertCollect(missionInstanceId) {
       const c = 1000 + Math.floor(Math.random() * 1501);
       // Aza amount is server-owned (aza_reward_rules.cv_recruit) and reported
       // by _covertSettleAza once the server has actually paid it.
-      if (typeof addCinders === 'function') addCinders(c);
+      if (typeof addCinders === 'function') addCinders(c, 'Covert Ops: recruit run');
       _covertSettleAza('cv_recruit', m.id);
       payout = `+${c.toLocaleString()} Cinder, recruit contacts established. 👑 Aza: confirming with the server…`;
     }
@@ -223779,7 +223779,7 @@ function _wf3MergeLive(a, b) {
 // ── Wallet / food hooks ────────────────────────────────────────────────────
 function _wf3GetCinder() { return (typeof getCinders === 'function') ? getCinders() : (Profile.gems | 0); }
 function _wf3SpendCinder(n) { n = Math.round(n); if (_wf3GetCinder() < n) return false; if (typeof spendCinders === 'function') { if (!spendCinders(n)) return false; } else { Profile.gems = (Profile.gems | 0) - n; } try { _serverMirrorCharge && _serverMirrorCharge(n, 'Woods Fishing trip'); } catch (e) {} _wf3RenderHud(); return true; }
-function _wf3AddCinder(n) { n = Math.round(n); if (typeof addCinders === 'function') addCinders(n); else Profile.gems = (Profile.gems | 0) + n; _wf3RenderHud(); }
+function _wf3AddCinder(n, why) { n = Math.round(n); if (typeof addCinders === 'function') addCinders(n, why || 'Woods Fishing'); else Profile.gems = (Profile.gems | 0) + n; _wf3RenderHud(); }
 function _wf3AddFood(n) { if (!Profile.salvage || typeof Profile.salvage !== 'object') Profile.salvage = {}; Profile.salvage.food = (Profile.salvage.food | 0) + (n | 0); }
 /* 🎣 THE CATCH IS A RESOURCE (WOODS_FISHING_HANDOFF, round 1). A landed fish
    used to be minted straight into camp food. It is iced in the hold now as the
@@ -223848,7 +223848,7 @@ function _wf3GainXP(amt) {
   while (L.level < WF3_MAX_LEVEL && L.xp >= _wf3XpForLevel(L.level)) { L.xp -= _wf3XpForLevel(L.level); L.level++; up = true; }
   if (L.level >= WF3_MAX_LEVEL) L.xp = Math.min(L.xp, _wf3XpForLevel(L.level));
   if (up) {
-    _wf3ApplyLevel(); const rw = 15 * L.level; _wf3AddCinder(rw);
+    _wf3ApplyLevel(); const rw = 15 * L.level; _wf3AddCinder(rw, 'Woods Fishing: level-up reward');
     _wf3FlashLog('⬆ Fishing Level ' + L.level + '! +' + rw + ' 🔥', 'buy');
     if (L.level % 3 === 0) { L.baitStock.grub = (L.baitStock.grub || 0) + 5; if (!L.equippedBait) L.equippedBait = 'grub'; _wf3FlashLog('Reward: +5 Grub Bunch bait', 'buy'); }
   }
@@ -224110,7 +224110,7 @@ function _wf3OnCatch(result) {
   if (result.type === 'food') {
     _wf3S.foodTrip = (_wf3S.foodTrip | 0) + result.amount;
     const banked = _wf3BankCatch(result);   // 🎣 fish, not food — see _wf3BankCatch
-    _wf3AddCinder(cin); _wf3GainXP(xp);
+    _wf3AddCinder(cin, 'Woods Fishing: catch'); _wf3GainXP(xp);
     _wf3RecordCatch(result.item.id, result.item.name, result.rarity, biomeName);
     _wf3FlashLog(Object.keys(banked).map((k) => '+' + _wfResLabel(k, banked[k])).join(' · ') + ' · ' + result.item.name, result.rarity !== 'Common' ? 'rare' : '');
     try { _wf3SpawnFish(result.rarity, result.item.id); } catch (e) {}
@@ -224489,7 +224489,7 @@ function _wf3Open() {
     if (_wf3S.state === 'IDLE') _wf3ResetToIdle();
   };
   const battleBtn = wrap.querySelector('#wf3-battleBtn');
-  battleBtn.onclick = () => { const b = _wf3$('battle'); if (b) b.style.display = 'none'; const s = _wf3S; if (s.pendingBounty) { _wf3AddCinder(s.pendingBounty); _wf3FlashLog('Bounty +' + s.pendingBounty + ' 🔥', 'buy'); s.pendingBounty = 0; } _wf3GainXP(WF3_XP_GAIN[s.pendingEncRarity] || 20); _wf3ResetToIdle(); };
+  battleBtn.onclick = () => { const b = _wf3$('battle'); if (b) b.style.display = 'none'; const s = _wf3S; if (s.pendingBounty) { _wf3AddCinder(s.pendingBounty, 'Woods Fishing: encounter bounty'); _wf3FlashLog('Bounty +' + s.pendingBounty + ' 🔥', 'buy'); s.pendingBounty = 0; } _wf3GainXP(WF3_XP_GAIN[s.pendingEncRarity] || 20); _wf3ResetToIdle(); };
   // pointer input (root-scoped → auto-cleans when overlay removed)
   wrap.addEventListener('pointerdown', (e) => { if (e.pointerType === 'mouse' && e.button !== 0) return; _wf3Press(e); });
   wrap.addEventListener('pointerup', (e) => { _wf3Release(e); });
@@ -226006,7 +226006,7 @@ function _wfFillContract(key) {
   const cost = {}; cost[c.id] = c.qty;
   if (typeof spendResources !== 'function' || !spendResources(cost)) { showToast('Not enough ' + (_meta(c.id).name || c.id) + ' — the buyer wants ' + c.qty + '.', 3000); return; }
   done[key] = true;
-  try { addGems(c.pay, 'Fishing contract: ' + c.buyer); } catch (e) { try { addCinders(c.pay); } catch (_) {} }
+  try { addGems(c.pay, 'Fishing contract: ' + c.buyer); } catch (e) { try { addCinders(c.pay, 'Fishing contract: ' + c.buyer); } catch (_) {} }
   try { if (typeof wfLog === 'function') wfLog('good', c.buyer + ' took ' + c.qty + ' ' + (_meta(c.id).name || c.id) + ' for ' + c.pay.toLocaleString() + ' 🔥.'); } catch (e) {}
   showToast('📜 ' + c.buyer + ' paid ' + c.pay.toLocaleString() + ' 🔥 for ' + _wfResLabel(c.id, c.qty) + '.', 3600);
   try { saveProfile(); } catch (e) {}
@@ -226415,7 +226415,7 @@ function _vmCreditSeller(sellerId, amount) {
   // Local fallback — if it's the player's own listing (shouldn't happen
   // since the buyer-check rejects), credit them directly.
   if (sellerId === _vmMyId() && typeof addCinders === 'function') {
-    addCinders(amount);
+    addCinders(amount, 'Vehicle Market: your listing sold');
   }
   // TODO: Supabase RPC for true cross-player credit.
 }
@@ -229905,7 +229905,7 @@ function _brpResolveRunOutcome(state, brpRun) {
     const cinder = Math.floor((R.cinderBase + Math.random() * R.cinderBase * 0.4) * brpRun.mult);
     s.crude = (s.crude | 0) + crude;
     s.fuel  = (s.fuel  | 0) + fuel;
-    if (typeof addCinders === 'function') addCinders(cinder);
+    if (typeof addCinders === 'function') addCinders(cinder, 'Black River: run won');
     s.wanted = Math.min(100, (s.wanted | 0) + R.threat);
     if (!Array.isArray(s.log)) s.log = [];
     s.log.unshift({ ts: Date.now(), level: 'good', msg: `Roguelite extraction success — +${crude} crude, +${fuel} fuel, +¢${cinder.toLocaleString()}.` });
@@ -235706,7 +235706,7 @@ async function _openChest(tierId) {
     // Cinder / Aza
     if (Math.random() < t.cinderCh) {
       const c = t.cinder[0] + Math.floor(Math.random() * (t.cinder[1] - t.cinder[0] + 1));
-      try { addCinders(c); } catch (e) { Profile.gems = (Profile.gems | 0) + c; }
+      try { addCinders(c, 'Chest opened (' + (t.name || tierId) + ')'); } catch (e) { Profile.gems = (Profile.gems | 0) + c; }
       lines.push('🔥 ' + c.toLocaleString() + ' Cinder');
     }
     /* 👑 THE SERVER ROLLS THIS ONE, and it is the clearest case for why.
@@ -248298,7 +248298,7 @@ async function _mayorPayClaim() {
     if (total <= 0) return;
     const upd = await Cloud.client.from('city_mayor_pay').update({ claimed: true }).in('id', rows.map((x) => x.id));
     if (upd && upd.error) return;   // claim failed — leave rows for next pass
-    try { addCinders(total); } catch (e) {}
+    try { addCinders(total, 'City: mayor pay claimed'); } catch (e) {}
     const who = rows[0].from_name ? (' from ' + rows[0].from_name) : '';
     showToast('🎩💰 Mayor hiring pay' + who + ' — +' + total + ' 🔥 Cinder!', 6000);
   } catch (e) {}
@@ -249146,9 +249146,9 @@ function _bdCanPay(s) {
     return true;
   } catch (e) { return false; }
 }
-function _bdApply(s, dir) {   // dir -1 = pay/escrow, +1 = receive/refund
+function _bdApply(s, dir, why) {   // dir -1 = pay/escrow, +1 = receive/refund
   try {
-    if (s.cinder) { dir > 0 ? addCinders(s.cinder) : spendCinders(s.cinder); }
+    if (s.cinder) { dir > 0 ? addCinders(s.cinder, why || 'Broker deal') : spendCinders(s.cinder, why || 'Broker deal'); }
     if (s.aza) { Profile.sovereigns = Math.max(0, (Profile.sovereigns | 0) + dir * s.aza); }
     for (const k in (s.res || {})) { dir > 0 ? addRes(k, s.res[k]) : addRes(k, -s.res[k]); }
     for (const k in (s.cards || {})) {
@@ -249214,18 +249214,18 @@ async function _brokerOpen() {
       const j = (r && r.data) || {};
       if (!j.ok) { showToast('🤝 ' + (j.error === 'deal_unavailable' ? 'Deal already taken.' : 'Accept failed.')); return; }
       _bdApply(d.want || {}, -1);   // pay the maker's ask (held on the row for their Claim)
-      _bdApply(d.give || {}, +1);   // receive the escrowed goods
+      _bdApply(d.give || {}, +1, 'Broker: deal goods received');   // receive the escrowed goods
       showToast('🤝 Deal closed — goods received.', 3200); _brokerOpen();
     } catch (e) { showToast('🤝 Accept failed.'); }
   });
   host.querySelectorAll('[data-bd-cancel]').forEach((b) => b.onclick = async () => {
     const d = rows.find((x) => x.id === b.dataset.bdCancel); if (!d) return;
-    try { const r = await Cloud.client.from('broker_deals').update({ status: 'cancelled' }).eq('id', d.id).eq('status', 'open').select(); if (r && r.data && r.data.length) { _bdApply(d.give || {}, +1); showToast('↩ Deal cancelled — escrow refunded.'); } } catch (e) {}
+    try { const r = await Cloud.client.from('broker_deals').update({ status: 'cancelled' }).eq('id', d.id).eq('status', 'open').select(); if (r && r.data && r.data.length) { _bdApply(d.give || {}, +1, 'Broker: deal cancelled (escrow returned)'); showToast('↩ Deal cancelled — escrow refunded.'); } } catch (e) {}
     _brokerOpen();
   });
   host.querySelectorAll('[data-bd-claim]').forEach((b) => b.onclick = async () => {
     const d = rows.find((x) => x.id === b.dataset.bdClaim); if (!d) return;
-    try { const r = await Cloud.client.from('broker_deals').update({ payout_claimed: true }).eq('id', d.id).eq('payout_claimed', false).select(); if (r && r.data && r.data.length) { _bdApply(d.want || {}, +1); showToast('💰 Payout collected.'); } } catch (e) {}
+    try { const r = await Cloud.client.from('broker_deals').update({ payout_claimed: true }).eq('id', d.id).eq('payout_claimed', false).select(); if (r && r.data && r.data.length) { _bdApply(d.want || {}, +1, 'Broker: deal payout collected'); showToast('💰 Payout collected.'); } } catch (e) {}
     _brokerOpen();
   });
   const post = host.querySelector('#bd-post');
@@ -255119,7 +255119,7 @@ function _twChosenAwardTrophy(chosen) {
   if (!chosen) return;
   // Cinder + Aza payout — generous because this is a major milestone.
   try {
-    if (typeof addCinders === 'function') addCinders(50000);
+    if (typeof addCinders === 'function') addCinders(50000, 'Territory Wars: Chosen trophy');
     // 25 Aza ≈ $25 — the single largest grant in the game, so it is the last
     // one that should be mintable from the client. Amount + rate now live in
     // aza_reward_rules.tw_chosen_trophy.
@@ -255351,7 +255351,7 @@ function _twCancelDarkEvent(darkEventId, sabotageNodeId) {
   t.nodes = (t.nodes || []).filter(n => n.id !== (sabotageNodeId || event.sabotageNodeId));
   // Reward — chunky Cinder + small Aza pop.
   try {
-    if (typeof addCinders === 'function') addCinders(10000);
+    if (typeof addCinders === 'function') addCinders(10000, 'Territory Wars: dark event cancelled');
     // amount + rate: aza_reward_rules. Reported from the server's answer, not
     // bumped locally — a refused grant used to show "+5 Aza" and vanish at the
     // next boot (same defect as bug-mu7bk9gy; see sovRewardReply).
@@ -263830,7 +263830,7 @@ function _twResolveAttackOutcome() {
     try {
       const bonus = (typeof _twGameModeRewardBonus === 'function') ? _twGameModeRewardBonus(App.state) : null;
       if (bonus && (bonus.cinder > 0 || bonus.fuel > 0)) {
-        if (bonus.cinder > 0 && typeof addCinders === 'function') addCinders(bonus.cinder);
+        if (bonus.cinder > 0 && typeof addCinders === 'function') addCinders(bonus.cinder, 'Territory Wars: game-mode bonus');
         if (bonus.fuel > 0) {
           // Route fuel to the player's resource bag via the standard
           // gainResources helper if available.
@@ -263845,7 +263845,7 @@ function _twResolveAttackOutcome() {
       }
       // 💻 Hack Mainframe bonus reward (Reward approach).
       if (App.state.mods && App.state.mods.twHack && App.state.mods.twHack.bonusCinder > 0) {
-        if (typeof addCinders === 'function') addCinders(App.state.mods.twHack.bonusCinder);
+        if (typeof addCinders === 'function') addCinders(App.state.mods.twHack.bonusCinder, 'Territory Wars: hack vault payout');
         showToast(`💻 Hack vault payout: +${App.state.mods.twHack.bonusCinder.toLocaleString()} Cinder.`, 4500);
       }
       // 📊 Game-mode end-screen — stash a stat summary for the result
@@ -263902,7 +263902,7 @@ function _twResolveAttackOutcome() {
         const vu = (App.state.units || []).find(u => u && u.id === vipState.unitId);
         if (vipState.extracted) {
           showToast('🆘 VIP rescued — +5,000 Cinder bonus.', 4500);
-          if (typeof addCinders === 'function') addCinders(5000);
+          if (typeof addCinders === 'function') addCinders(5000, 'Territory Wars: VIP rescued');
         } else if (vu && !vu.alive && !vu._bleeding) {
           showToast('💀 VIP killed — permanent loss.', 5000);
         } else if (vu && vu._bleeding) {

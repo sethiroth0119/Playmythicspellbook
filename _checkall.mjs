@@ -146,6 +146,8 @@ const SUITES = [
     why: 'a fallback map can never be published over the shared world' },
   { id: 'citybuilder',   cmd: ['node', '_citybuilder_smoke.mjs'],   expect: 0, minPasses: 25, tier: 'fast',
     why: 'street lights keep their turn, residents take the open jobs, the restaurant eats and pays, saves carry vitals' },
+  { id: 'popagree',      cmd: ['node', '_popagree_smoke.mjs'],      expect: 0, minPasses: 30, tier: 'fast',
+    why: 'the Zoning panel\'s Population is the city ledger; shops and offices are not homes; apartments are' },
   { id: 'convoy',        cmd: ['node', '_convoy_smoke.mjs'],        expect: 0, minPasses: 20, tier: 'fast',
     why: 'supply crates ride convoys, land in the pantry once, and are never paid as food' },
   { id: 'progression',   cmd: ['node', '_progression_smoke.mjs'],   expect: 0, minPasses: 25, tier: 'fast',

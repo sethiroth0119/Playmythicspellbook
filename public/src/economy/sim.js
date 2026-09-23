@@ -1355,7 +1355,33 @@ const UPKEEP_GOODS = ['constructionComponents', 'electricity', 'freshWater', 'lu
                       'metalComponents', 'machineParts', 'cleaningProducts', 'officeSupplies'];
 const UPKEEP_SPEND_RATE = 0.30;    // of the excess, per economic day
 
+/* 🪵 PRODUCTION'S INPUTS ARE SPOKEN FOR (bug-mttyizit: "Lumber Supply 0%" on
+   every business beside a Sawmill making 320 lumber a day).
+   Upkeep and procurement run AFTER production and bought every unit of any
+   good on their lists that was left in stock — lumber, constructionComponents,
+   electricity, freshWater. availabilityMap() reads the stock at the START of
+   the next day, so it found 0 lumber every morning and the landlord firms
+   (constructionComponents ← lumber) were throttled to nothing for ever, while
+   the Sawmill kept producing into a warehouse the city emptied nightly.
+   recipes.js recorded the hazard at the cardStock note ("sim.js is where the
+   reservation would have to live") — this is it.
+   SO: these two sinks may only take stock ABOVE one day of committed B2B
+   demand — the same `want` availabilityMap() will measure tomorrow. They still
+   post their demand (the producer still ramps for them) and still pay the same
+   price; they just come after the factories that need the good to run.
+   ⚠ A quantity rule only. No Cinder moves differently, so the audit is blind
+     to it by construction.
+   REJECTED: taking lumber off UPKEEP_GOODS / PROCUREMENT. It would fix this one
+     id and leave constructionComponents and electricity starving the same way. */
+function b2bReserve() {
+  try { return availabilityMap(1).want || {}; } catch (e) { return {}; }
+}
+function spareInv(id, reserve) {
+  return Math.max(0, (S.INV[id] || 0) - ((reserve && reserve[id]) || 0));
+}
+
 function runFirmUpkeep(days) {
+  const reserve = b2bReserve();
   for (const f of Firms.alive()) {
     const buffer = Firms.dailyOperatingCost(f) * ECON.firm.startCashDays;
     const excess = f.cash - buffer;
@@ -1369,7 +1395,7 @@ function runFirmUpkeep(days) {
       if (!sellers.length) continue;                 // nobody to buy from
       const price = Prices.priceOf(id) * Logistics.localPremium(id);
       const affordable = budget / Math.max(0.01, price);
-      const got = takeInv(id, affordable);
+      const got = takeInv(id, Math.min(affordable, spareInv(id, reserve)));   // 🪵 after production's share
       if (got <= 0) continue;
       const value = got * price;
       const paid = Firms.pay(f, value);
@@ -1431,11 +1457,12 @@ function runMunicipalSpending(days) {
   // ── Procurement. The city buys goods at market price from the firms that
   //    made them, which is what makes a Concrete Works worth building.
   let left = budget - payroll;
+  const b2b = b2bReserve();          // 🪵 see runFirmUpkeep: factories first
   for (const id of PROCUREMENT) {
     if (left <= 0) break;
     const price = Prices.priceOf(id) * Logistics.localPremium(id);
     const affordable = left / Math.max(0.01, price);
-    const got = takeInv(id, affordable);
+    const got = takeInv(id, Math.min(affordable, spareInv(id, b2b)));
     if (got <= 0) continue;
     const value = got * price;
     const sellers = Firms.byOutput(id);

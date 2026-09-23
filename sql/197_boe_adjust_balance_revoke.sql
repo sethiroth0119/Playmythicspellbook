@@ -1,5 +1,5 @@
 -- ============================================================================
--- 197 — CLOSE THE BANK OF ETHOS MINT: boe_adjust_balance() is still callable.
+-- 197 — CLOSE THE BANK OF ETHOS MINT: boe_adjust_balance() refuses credits.
 --
 -- FOUND WHILE MAPPING THE CINDER FAUCETS (sql/196), 2026-09-23, read-only:
 --   has_function_privilege('authenticated', 'public.boe_adjust_balance(numeric,numeric)',
@@ -18,46 +18,76 @@
 -- boe_transfer's withdraw writes user_progress.cinder directly (not through
 -- wallet_credit), so none of sql/093's per-call, hourly or daily limits apply.
 -- The Aza half is premium currency (boe_transfer_aza moves it to the wallet).
--- This is larger than every wallet_credit faucet combined: unbounded, one
--- round trip, and invisible in wallet_ledger except as an ordinary
--- 'Bank of Ethos withdraw' row.
 --
--- WHY A PLAIN REVOKE IS SAFE. No v121v116 client calls it (grep of public/:
--- zero hits; _boeAdjust → boe_spend since sql/030). Every other function that
--- moves bank_of_ethos.balance is SECURITY DEFINER and does not go through it
--- (_boe_apply, boe_exchange_aza, boe_transfer, boe_transfer_aza,
--- economy_reset_row, warpath_enter), so revoking the grant breaks nothing
--- server-side.
---   ⚠ PRECONDITION: confirm the same on the LIVE build before applying —
---       grep -rn "boe_adjust_balance" public/     (on v121v185)  → no hits
---     If it does have a caller, that caller is a debit (credits have been
---     refused client-side since 030); switch it to boe_spend(-dC, -dA, reason)
---     first, the way _boeAdjust already does.
+-- ⚖ WHY REFUSE CREDITS RATHER THAN REVOKE (owner session, 2026-09-23). No
+-- v121v116 client calls it, but the live build (v121v185) could not be
+-- inspected. A revoke would break any remaining caller outright; refusing a
+-- positive delta closes the mint completely while a DEBIT (the only thing a
+-- post-030 client could legitimately send) keeps working. Once
+--     grep -rn "boe_adjust_balance" public/     (on the live build)
+-- finds nothing, the optional revoke at the bottom can be run too.
 --
--- NOT IN THIS FILE (report to the owner, decisions not code):
+-- NOT IN THIS FILE (owner decisions, not code):
 --   * Existing bank balances that came from the pre-022 client deposit path
 --     are real rows today and remain withdrawable with no daily cap. One
 --     account holds 1.08 BILLION in the bank (legacy 'Cinder deposit to bank'
---     rows, 2026-08-09..10) and has withdrawn 385M since, in 22 moves. Whether
---     that stock is legitimate is an owner/audit question.
+--     rows, 2026-08-09..10) and has withdrawn 385M since, in 22 moves.
 --   * boe_ledger still has a client INSERT policy (user_id = auth.uid()); it
 --     is display history, not money, but it means boe_ledger is not evidence.
 --
--- Re-runnable. Never applied by an agent — paste into the Supabase SQL editor
--- for project ktsiasyjusesawtrwrjc. Verify: both rows 'false'.
+-- Idempotent and re-runnable. Verify query at the end: both rows as noted.
 -- ============================================================================
 
-do $$
-begin
-  if to_regprocedure('public.boe_adjust_balance(numeric, numeric)') is not null then
-    revoke all on function public.boe_adjust_balance(numeric, numeric) from public, anon, authenticated;
-  end if;
-end $$;
+begin;
 
--- VERIFY — nobody but the owner may execute it any more (both 'false'; no rows
--- if the function does not exist at all, which is also fine).
-select r.rolname as role,
-       has_function_privilege(r.rolname, 'public.boe_adjust_balance(numeric, numeric)', 'execute')::text as may_execute
-  from pg_roles r
- where r.rolname in ('anon', 'authenticated')
-   and to_regprocedure('public.boe_adjust_balance(numeric, numeric)') is not null;
+create or replace function public.boe_adjust_balance(p_delta_cinder numeric default 0, p_delta_aza numeric default 0)
+returns jsonb language plpgsql security definer set search_path to 'public' as $function$
+declare
+  v_uid uuid := auth.uid();
+  v_bal numeric;
+  v_aza numeric;
+begin
+  if v_uid is null then
+    return jsonb_build_object('ok', false, 'error', 'not_authenticated');
+  end if;
+
+  -- 🔴 sql/197: a client may only DEBIT its bank here. Money reaches the bank
+  -- through boe_transfer('deposit'), which moves Cinder the wallet holds.
+  if coalesce(p_delta_cinder, 0) > 0 or coalesce(p_delta_aza, 0) > 0 then
+    select balance, aza into v_bal, v_aza from public.bank_of_ethos where user_id = v_uid;
+    return jsonb_build_object('ok', false, 'error', 'credit_not_allowed',
+                              'balance', coalesce(v_bal, 0), 'aza', coalesce(v_aza, 0));
+  end if;
+
+  -- Unchanged from sql/004: one statement, row-locked, overdraft-guarded.
+  update public.bank_of_ethos
+     set balance    = balance + coalesce(p_delta_cinder, 0),
+         aza        = aza     + coalesce(p_delta_aza, 0),
+         updated_at = now()
+   where user_id = v_uid
+     and balance + coalesce(p_delta_cinder, 0) >= 0
+     and aza     + coalesce(p_delta_aza, 0)    >= 0
+  returning balance, aza into v_bal, v_aza;
+
+  if not found then
+    select balance, aza into v_bal, v_aza from public.bank_of_ethos where user_id = v_uid;
+    return jsonb_build_object('ok', false, 'error', 'insufficient_or_missing',
+                              'balance', coalesce(v_bal, 0), 'aza', coalesce(v_aza, 0));
+  end if;
+
+  return jsonb_build_object('ok', true, 'balance', v_bal, 'aza', v_aza);
+end $function$;
+
+revoke all on function public.boe_adjust_balance(numeric, numeric) from public, anon;
+
+commit;
+
+-- OPTIONAL, LATER — once the live build is confirmed to have no caller:
+-- revoke all on function public.boe_adjust_balance(numeric, numeric) from authenticated;
+
+-- VERIFY — expect: anon may execute = false; refuses credits = true.
+select 'anon may execute' as check,
+       has_function_privilege('anon', 'public.boe_adjust_balance(numeric, numeric)', 'execute')::text as value
+union all
+select 'refuses credits',
+       (position('credit_not_allowed' in pg_get_functiondef('public.boe_adjust_balance(numeric, numeric)'::regprocedure)) > 0)::text;

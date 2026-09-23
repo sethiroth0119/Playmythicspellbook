@@ -3326,9 +3326,29 @@ const MythicCityBridge = (() => {
     { id: 'c11', name: 'Ethos Foundation Stone',type: 'Structure', element: 'light',  power: 25, rarity: 'legendary', level: 50 },
     { id: 'c12', name: 'Kalon Den Blueprint',   type: 'Structure', element: 'earth',  power: 19, rarity: 'epic',      level: 30 },
   ];
+  /* ⏱ bug-mtr5xz8t, round 2: the city still froze on its control bars.
+     4f769e51 bounded the anchor ring and the city read, but boot() goes on to
+     AWAIT fetchCards and fetchNeighborCities, and both are network reads in
+     parent mode — cityNeighbors always (city_node_links + names), and
+     cityCardCollection for a MANAGED city (city_owner_cards_get), which is why
+     mayors saw it most. Everything after them in boot, including
+     setAnimationLoop at the very end, waited on a read that never answered:
+     the 9 s failsafe lifted the spinner over a canvas that never drew.
+     Reproduced in Chromium with a host whose cityNeighbors never resolves.
+     Each is now bounded and answers its own failure value ([]); a card list
+     that answers late is kept in B.cardsLate so boot can still adopt it. */
+  B.cardsLate = null;
   B.fetchCards = async () => {
     if (B.mode === 'parent') {
-      try { if (typeof P.cityCardCollection === 'function') return await P.cityCardCollection(); } catch (e) {}
+      try {
+        if (typeof P.cityCardCollection === 'function') {
+          const p = Promise.resolve(P.cityCardCollection());
+          const LATE = {};
+          const r = await _ncBound(p, 10000, LATE);
+          if (r === LATE) { B.cardsLate = p; return []; }
+          return r;
+        }
+      } catch (e) {}
       return [];
     }
     if (B.mode === 'message') { return (await rpc('fetchCards', {})) || []; }
@@ -3431,7 +3451,8 @@ const MythicCityBridge = (() => {
   // Caravans need someone to trade WITH.  ◄◄ CLAUDE CODE HOOK ◄◄
   // parent: return nearby/allied players' cities [{name, owner}].
   B.fetchNeighborCities = async () => {
-    if (B.mode === 'parent') { try { if (typeof P.cityNeighbors === 'function') return await P.cityNeighbors(); } catch (e) {} return []; }
+    // ⏱ Bounded — see B.fetchCards. Caravan destinations only; [] is its own failure value.
+    if (B.mode === 'parent') { try { if (typeof P.cityNeighbors === 'function') return await _ncBound(P.cityNeighbors(), 8000, []); } catch (e) {} return []; }
     if (B.mode === 'message') { return (await rpc('neighbors', {})) || []; }
     return [{ name: 'Ashvale', owner: 'Kael' }, { name: 'Greyharbor', owner: 'Mira' }, { name: 'Ethos Heights', owner: 'The Council' }];
   };
@@ -51240,8 +51261,15 @@ async function _ncResourceNeeds() {
   if (isAdmin()) $('adminbtn').style.display = 'block';
   loadGov();
   try {
-    CARDS = (await MythicCityBridge.fetchCards()) || [];
-    NEIGHBORS = (await MythicCityBridge.fetchNeighborCities()) || [];
+    // ⏱ bug-mtr5xz8t: asked together (each is bounded in the bridge), so a
+    // stalled pair costs one bound, not two. A card list that answers after
+    // its bound is adopted when it lands, if nothing has filled CARDS since.
+    const _cardsP = MythicCityBridge.fetchCards(), _nbP = MythicCityBridge.fetchNeighborCities();
+    CARDS = (await _cardsP) || [];
+    NEIGHBORS = (await _nbP) || [];
+    if (MythicCityBridge.cardsLate) {
+      MythicCityBridge.cardsLate.then((v) => { if (Array.isArray(v) && v.length && !CARDS.length) CARDS = v; }, () => {});
+    }
     const ev = await MythicCityBridge.fetchEvents();
     events.rush = !!(ev && ev.planetaryRush);
     if (events.rush) toast('🚀 PLANETARY RUSH is live — all node link gains DOUBLED. Push your sync!', 'good');

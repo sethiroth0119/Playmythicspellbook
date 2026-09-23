@@ -59,7 +59,7 @@ export const render      = ()        => { const b = bridge(); try { b && b.rende
 // directly, per CLAUDE.md.
 export const gems        = ()  => { const b = bridge(); try { return b ? (b.gems() | 0) : 0; } catch (e) { return 0; } };
 export const spendGems   = (n) => { const b = bridge(); try { return b ? !!b.spendGems(n) : false; } catch (e) { return false; } };
-export const addGems     = (n) => { const b = bridge(); try { b && b.addGems(n); } catch (e) {} };
+export const addGems     = (n, why) => { const b = bridge(); try { b && b.addGems(n, why || 'Weaponsmith'); } catch (e) {} };   // 📒 `why` names the ledger row
 
 // 🧰 Resources. getRes/addRes go through the legacy salvage ledger, which is
 // the one place resource counts are allowed to live.

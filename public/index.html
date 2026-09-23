@@ -58782,6 +58782,45 @@ function addSeasonXp(amount, reason) {
   try { saveProfile(); } catch (e) {}
 }
 
+/* 🚰 A TIER'S CINDER SETTLES ON THE SERVER (sql/198 faucet_season_pass).
+   This was a direct Profile.gems write + _serverMirrorCredit, and the only
+   "already claimed" test was claimed*Tiers in the player's own save — live,
+   one player-day held 25 payouts of 'season-pass tier 1'. The door pays each
+   (season, track, tier) once per account, at the server's price
+   (season_pass_tiers, seeded from SEASON_*_REWARDS — _faucets2_smoke fails if
+   they drift), for a season no older than the newest one paid and at most one
+   ahead of it, and premium only with a premium unlock on the ledger.
+   refused → nothing is paid. A refusal that is about the CLAIM (already paid,
+   wrong season, no premium) keeps the tier marked claimed; one that is about
+   the moment (day cap, the wallet's own limits) un-marks it so the button
+   comes back. missing → the old two lines, unchanged. */
+function _seasonPayCinder(sp, tier, isPremium, claimedMap, amt) {
+  const why = 'season-pass tier ' + tier + (isPremium ? ' (premium)' : '');
+  const old = () => {
+    Profile.gems = (Profile.gems | 0) + amt;
+    if (typeof _serverMirrorCredit === 'function') { try { _serverMirrorCredit(amt, why); } catch (e) {} }
+  };
+  if (!(amt > 0)) return;
+  const track = isPremium ? 'premium' : 'free';
+  const p = _faucetRemote('faucet_season_pass', { p_season: ((sp && sp.seasonNumber) | 0) || 1, p_tier: tier | 0, p_track: track });
+  if (!p) { old(); return; }
+  return _faucetRun('season:' + track + ':' + tier, 'faucet_season_pass', p, {
+    missing: old,
+    paid: (r) => _faucetCreditLocal(Number(r.paid) || amt, why),
+    network: () => { _faucetCreditLocal(amt, why); try { _walletMarkReconcile(); } catch (e) {} },
+    refused: (r) => {
+      const w = (r && r.reason) || 'error';
+      const final = (w === 'claimed' || w === 'season' || w === 'premium' || w === 'tier' || w === 'track');
+      if (!final) { try { delete claimedMap[String(tier)]; saveProfile(); } catch (e) {} }
+      const msg = w === 'claimed' ? 'this tier was already paid on your account'
+                : w === 'season' ? 'the server has your pass in a different season'
+                : w === 'premium' ? 'no Premium unlock for this season is on record'
+                : w === 'day' ? 'today\'s Season Pass payout limit is reached — claim it again later'
+                : 'the server refused it (' + w + ')' + (final ? '' : ' — claim it again later');
+      try { showToast('🎟 Tier ' + tier + (isPremium ? ' premium' : '') + ' Cinder not paid — ' + msg + '.', 5200); } catch (e) {}
+    },
+  });
+}
 // Claim a single tier reward. tier = 1..SEASON_TIER_COUNT; track = 'free' | 'premium'.
 // Refuses if the tier isn't unlocked, if already claimed, or if premium isn't owned.
 function claimSeasonReward(tier, track) {
@@ -58797,10 +58836,7 @@ function claimSeasonReward(tier, track) {
   // Apply the reward — single switch per kind. Each branch is fail-safe.
   switch (reward.kind) {
     case 'cinder': {
-      Profile.gems = (Profile.gems | 0) + (reward.amount | 0);
-      if (typeof _serverMirrorCredit === 'function') {
-        try { _serverMirrorCredit(reward.amount, 'season-pass tier ' + tier + (isPremium ? ' (premium)' : '')); } catch (e) {}
-      }
+      _seasonPayCinder(sp, tier, isPremium, claimedMap, reward.amount | 0);   // 🚰 sql/198
       break;
     }
     case 'aza': {
@@ -64582,13 +64618,15 @@ function _serverMirrorCredit(amount, reason) {
      exactly addGems' local half, which the watcher already understands. */
 const _faucetMissing = {};
 const _faucetBusy = {};
-function _faucetRemote(fn, args) {
+/* `ref` (sql/198): a caller that must name the call later — a keyed charge
+   its refund points at — passes its own; everyone else gets a fresh one. */
+function _faucetRemote(fn, args, ref) {
   try {
     if (_faucetMissing[fn]) return null;
     if (typeof initCloud !== 'function' || !initCloud() || !Profile.cloud || !Profile.cloud.signedIn) return null;
     if (!Cloud || !Cloud.client || typeof Cloud.client.rpc !== 'function') return null;
   } catch (e) { return null; }
-  const a = Object.assign({}, args, { p_ref: 'fct_' + _walletRef() });
+  const a = Object.assign({}, args, { p_ref: ref || ('fct_' + _walletRef()) });
   const once = () => Promise.resolve(Cloud.client.rpc(fn, a)).then((r) => {
     if (r && r.error) {
       if (_walletRpcUnavailable(r.error) || _jbRpcMissing(r.error)) return { missing: true };
@@ -64658,6 +64696,128 @@ function _faucetCityIncome(n) {
   });
 }
 
+/* ══ 🧾 KEYED REFUNDS (sql/198 wallet_charge_ref / wallet_refund) ══════════
+   Twenty-odd sites spend Cinder, try something async, and on failure used to
+   call addGems(n) — i.e. ask wallet_credit for n under the reason 'addGems'.
+   Two faults, both measured on this build:
+     1. the server cannot tell that refund from a mint (the live ledger holds
+        9.5M under 'addGems', one row of 1.55M);
+     2. a SYNCHRONOUS refund (`spendGems(x); if (!spendResources(r)) addGems(x)`)
+        lands in the same 600 ms tick of _gemsTaxTick as its spend, so the
+        watcher sees a net change of 0 and bills nothing — while addGems still
+        credits x on the server. Every failed click was +x.
+   _cinderSpendRef charges the spend ITSELF, under a ref, and moves the
+   watcher's baseline with it so the watcher never bills it a second time;
+   _cinderRefund gives back exactly that charge, once, keyed by the ref.
+   The charge's verdict decides the server half of the refund:
+     ok / unknown → wallet_refund(ref) (a refund that beats its charge voids the
+                    ref server-side, so the pair nets to zero in any order);
+     legacy       → sql/198 not applied: the spend was billed the old way
+                    (_mirrorLegacySpend) and the refund is the old credit, now
+                    under a named 'Refund: …' reason;
+     refused      → the server never took it: nothing to give back there;
+     local        → signed out: same — the reconcile flag owns it.
+   `fn`/`args` let a door that charges as part of its own work (a Fuel Command
+   position, a loan repayment) use the same bookkeeping. Those doors keep their
+   charge off wallet_refund's namespace, so they are never refundable by ref. */
+const _REFUND_Q_KEY = 'ms_refund_q_v1';
+function _cinderSpendRef(amount, reason, fn, args) {
+  amount = Math.floor(Number(amount) || 0);
+  reason = String(reason || ('Spent in ' + _ledgerScreenLabel())).slice(0, 120);
+  if (amount <= 0) return { amount: 0, reason: reason, ref: null, state: 'none', refunded: false, done: Promise.resolve(null) };
+  if (!spendGems(amount, reason)) return null;
+  // Billed below, not by the watcher — move its baseline by exactly this spend.
+  try { if (typeof _gemsWatchLast === 'number') _gemsWatchLast -= amount; } catch (e) {}
+  // The Tax tab's LOCAL line only (_serverMirrorCharge's step 1): the global
+  // reserve_tax_log row is written by the charge itself, server-side.
+  try {
+    const tax = Math.floor(amount * ((typeof FR_TAX_RATE === 'number') ? FR_TAX_RATE : 0.02));
+    if (tax > 0 && typeof _frTaxLedger === 'function') {
+      const L = _frTaxLedger();
+      L.total = (L.total | 0) + tax;
+      L.byMarket = L.byMarket || {}; L.byMarket.spend = (L.byMarket.spend | 0) + tax;
+      L.byRes = L.byRes || {};       L.byRes[reason] = (L.byRes[reason] | 0) + tax;
+      L.recent = Array.isArray(L.recent) ? L.recent : [];
+      L.recent.unshift({ resource: reason, sale_value: amount, tax_amount: tax, market_type: 'spend', created_at: new Date().toISOString() });
+      if (L.recent.length > 60) L.recent.length = 60;
+      if (typeof _frRebuildTaxStats === 'function') _frRebuildTaxStats(FoundationReserve.taxStats);
+      if (typeof _frScheduleLedgerSave === 'function') _frScheduleLedgerSave();
+    }
+  } catch (e) {}
+  fn = fn || 'wallet_charge_ref';
+  const h = { amount: amount, reason: reason, ref: 'cr_' + _walletRef().slice(2), fn: fn, state: 'pending', r: null, refunded: false };
+  const legacy = (st) => { h.state = st; try { _mirrorLegacySpend(amount, reason); } catch (e) {} return h; };
+  const p = _faucetRemote(fn, args || { p_amount: amount, p_reason: reason }, h.ref);
+  // No round trip: either this door is already known missing (billed the old
+  // way → its refund must be the old credit) or the player is signed out.
+  if (!p) { h.done = Promise.resolve(legacy(_faucetMissing[fn] ? 'legacy' : 'local')); return h; }
+  h.done = p.then((r) => {
+    h.r = r;
+    if (r && r.missing) { _faucetMissing[fn] = true; return legacy('legacy'); }
+    if (r && r.ok) { h.state = 'ok'; return h; }
+    if (r && r.reason === 'network') { h.state = 'unknown'; try { _walletMarkReconcile(); } catch (e) {} return h; }
+    h.state = 'refused'; return h;
+  }, () => { h.state = 'unknown'; return h; });
+  return h;
+}
+function _cinderRefund(h, why) {
+  if (!h || h.refunded || !(h.amount > 0)) return Promise.resolve();
+  h.refunded = true;
+  const n = h.amount, reason = ('Refund: ' + String(why || h.reason)).slice(0, 120);
+  addGems(n, reason, true);                  // the local half; the server half follows the charge
+  try { if (typeof _gemsWatchLast === 'number') _gemsWatchLast += n; } catch (e) {}
+  return h.done.then(() => {
+    if (h.state === 'legacy') { try { _serverMirrorCredit(n, reason); } catch (e) {} return; }
+    if (h.state === 'ok' || h.state === 'unknown') return _refundRemote(h.ref, n, reason);
+  });
+}
+function _refundRemote(ref, n, reason) {
+  let ready = false;
+  try { ready = typeof initCloud === 'function' && initCloud() && Cloud.client && Profile.cloud && Profile.cloud.signedIn; } catch (e) {}
+  if (!ready) { _refundQueueAdd(ref, n, reason); return Promise.resolve(); }
+  const call = () => Promise.resolve(Cloud.client.rpc('wallet_refund', { p_charge_ref: ref })).then((r) => {
+    if (r && r.error) {
+      if (_walletRpcUnavailable(r.error) || _jbRpcMissing(r.error)) return { missing: true };
+      throw r.error;
+    }
+    return (r && r.data) || {};
+  });
+  return call().catch(() => call()).then((d) => {
+    if (d && d.missing) { try { _serverMirrorCredit(n, reason); } catch (e) {} return; }   // 198 half-applied
+    if (d && d.ok) return;                   // refunded, voided before its charge, or already done
+    try { _walletMarkReconcile(); } catch (e) {}                                          // too_old: reconcile owns it
+  }, () => { _refundQueueAdd(ref, n, reason); });
+}
+/* A refund whose round trip failed twice is kept (per device) and replayed by
+   the outbox drain — safe because the server refunds a ref at most once. The
+   server honours a refund for 30 min, so an entry older than 25 is given to
+   the reconcile flag instead. */
+function _refundQueueAdd(ref, n, reason) {
+  try {
+    const q = JSON.parse(localStorage.getItem(_REFUND_Q_KEY) || '[]');
+    q.push({ ref: ref, n: n, reason: reason, at: Date.now() });
+    localStorage.setItem(_REFUND_Q_KEY, JSON.stringify(q.slice(-40)));
+  } catch (e) {}
+  try { _walletMarkReconcile(); } catch (e) {}
+}
+async function _refundQueueDrain() {
+  let q = [];
+  try { q = JSON.parse(localStorage.getItem(_REFUND_Q_KEY) || '[]'); } catch (e) { return; }
+  if (!Array.isArray(q) || !q.length) return;
+  const keep = [];
+  for (const e of q) {
+    if (!e || !e.ref || Date.now() - (e.at || 0) > 25 * 60 * 1000) continue;
+    let d = null;
+    try {
+      const r = await Cloud.client.rpc('wallet_refund', { p_charge_ref: e.ref });
+      d = (r && r.error) ? ((_walletRpcUnavailable(r.error) || _jbRpcMissing(r.error)) ? { missing: true } : null) : ((r && r.data) || {});
+    } catch (err) { d = null; }
+    if (!d) { keep.push(e); continue; }
+    if (d.missing) { try { _serverMirrorCredit(e.n, e.reason); } catch (_) {} }
+  }
+  try { localStorage.setItem(_REFUND_Q_KEY, JSON.stringify(keep)); } catch (e) {}
+}
+
 /* ══ 📮 THE CREDIT OUTBOX ═════════════════════════════════════════════════
    A credit whose mirror call failed is held here with its amount and reason,
    and replayed until the server takes it. That is the whole point: it replaces
@@ -64702,6 +64862,8 @@ function _walletOutboxAdd(amount, reason, ref) {
    recovered reward into a rate-limit refusal. */
 async function _walletOutboxDrain() {
   try {
+    // sql/198: keyed refunds whose round trip failed (see _refundQueueAdd).
+    try { if (typeof initCloud === 'function' && initCloud() && Cloud.client && Profile.cloud && Profile.cloud.signedIn) await _refundQueueDrain(); } catch (e) {}
     const q = _walletOutbox();
     if (!q.length) return 0;
     if (typeof initCloud !== 'function' || !initCloud()) return 0;
@@ -65110,7 +65272,9 @@ function courtFile() {
         const cno = 'MSC-' + Date.now().toString(36).toUpperCase().slice(-6);
         const stmt = (state._sum || '').trim().slice(0, 360);
         const summary = '[' + suit.name + '] ' + stmt;
-        if (!spendGems(fee)) { showToast('Not enough Cinders'); btn.disabled = false; return; }
+        // 🧾 sql/198: a keyed charge, so the refund below undoes exactly it.
+        const _feeH = _cinderSpendRef(fee, 'Court: case filing fee');
+        if (!_feeH) { showToast('Not enough Cinders'); btn.disabled = false; return; }
         try { saveProfile(); } catch (e) {}
         try {
           const ins = await Cloud.client.from('court_cases').insert({
@@ -65123,7 +65287,7 @@ function courtFile() {
           });
           if (ins && ins.error) throw ins.error;
         } catch (e) {
-          addGems(fee); try { saveProfile(); } catch (_) {}
+          _cinderRefund(_feeH, 'Court: case filing failed'); try { saveProfile(); } catch (_) {}
           showToast('⚠ Filing failed — fee refunded. ' + (/court_cases|PGRST205|does not exist/i.test((e && e.message) || '') ? 'Run the Reserve setup SQL first.' : ''), 5200);
           btn.disabled = false; btn.textContent = '⚖️ File · ' + fee.toLocaleString() + ' 🔥';
           return;
@@ -65330,8 +65494,10 @@ async function detentionBail(id) {
   if ((Profile.gems || 0) < bail) { showToast('Bail is ' + bail.toLocaleString() + ' 🔥 — you have ' + (Profile.gems || 0).toLocaleString() + '.', 5200); return false; }
   if (!canAffordResources(res)) { showToast('Bail also requires ' + resStr + '.', 4600); return false; }
   if (!(await gcConfirm('Post bail for ' + d.offender_name + (mine ? ' (yourself)' : ' — corp/ally support') + '?\n\n' + bail.toLocaleString() + ' 🔥 + ' + resStr + '\n\nThis frees them immediately.'))) return false;
-  if (!spendGems(bail)) { showToast('Not enough Cinders'); return false; }
-  if (!spendResources(res)) { addGems(bail); showToast('Not enough resources'); return false; }
+  // 🧾 sql/198: keyed, so both refunds below give back exactly this charge, once.
+  const _bailH = _cinderSpendRef(bail, 'Detention: bail posted');
+  if (!_bailH) { showToast('Not enough Cinders'); return false; }
+  if (!spendResources(res)) { _cinderRefund(_bailH, 'Detention: bail resources short'); showToast('Not enough resources'); return false; }
   try { saveProfile(); } catch (e) {}
   try {
     /* 🔒 sql/099. `released_by` is composed on the SERVER from auth.uid(), not
@@ -65344,7 +65510,7 @@ async function detentionBail(id) {
     if (!(up && up.data && up.data.ok)) throw new Error((up && up.data && up.data.error) || 'refused');
     d.status = 'released';
   } catch (e) {
-    addGems(bail); try { addSalvage(res); saveProfile(); } catch (_) {}
+    _cinderRefund(_bailH, 'Detention: bail refused'); try { addSalvage(res); saveProfile(); } catch (_) {}
     showToast('⚠ Bail failed — refunded.', 4200);
     return false;
   }
@@ -65696,10 +65862,11 @@ async function boePayRequest(id) {
     if (total < amt) { showToast('You have ' + total.toLocaleString() + ' 🔥 (wallet + bank).', 4200); return false; }
     const wTake = Math.min(amt, wallet), bTake = amt - wTake;
     const prevBal = BankEthos.balance;
-    if (wTake > 0 && !spendGems(wTake)) { showToast('Not enough Cinders'); return false; }
+    const _wH = _cinderSpendRef(wTake, 'Bank of Ethos: paid a request');   // 🧾 sql/198 keyed
+    if (!_wH) { showToast('Not enough Cinders'); return false; }
     if (bTake > 0) {
       const mv = await _boeAdjust(-bTake, 0);
-      if (!mv.ok) { if (wTake > 0) { addGems(wTake); } showToast('⚠ Payment failed — nothing was moved.', 4000); return false; }
+      if (!mv.ok) { _cinderRefund(_wH, 'Bank of Ethos: request payment failed'); showToast('⚠ Payment failed — nothing was moved.', 4000); return false; }
     }
     try { saveProfile(); } catch (e) {}
     const upd = await t.update({ status: 'paid', resolved_at: new Date().toISOString() }).eq('id', id).eq('to_user', me);
@@ -65847,10 +66014,11 @@ async function _boeLoanPay(loanId, payAmt) {
   if (total < due) { showToast('Need ' + due.toLocaleString() + ' 🔥 — you have ' + total.toLocaleString() + '.', 4200); return false; }
   const wTake = Math.min(due, wallet), bTake = due - wTake;
   const prevBal = BankEthos.balance;
-  if (wTake > 0 && !spendGems(wTake)) { showToast('Not enough Cinders'); return false; }
+  const _wH = _cinderSpendRef(wTake, 'Bank of Ethos: loan repayment');   // 🧾 sql/198 keyed
+  if (!_wH) { showToast('Not enough Cinders'); return false; }
   if (bTake > 0) {
     const mv = await _boeAdjust(-bTake, 0);
-    if (!mv.ok) { if (wTake > 0) addGems(wTake); showToast('⚠ Payment failed — nothing was moved.'); return false; }
+    if (!mv.ok) { _cinderRefund(_wH, 'Bank of Ethos: loan repayment failed'); showToast('⚠ Payment failed — nothing was moved.'); return false; }
   }
   try { saveProfile(); } catch (e) {}
   const newPaid = (ln.cinder_paid | 0) + due;
@@ -66223,11 +66391,12 @@ async function boeMarketBuyNow(id) {
       const total = wC + (BankEthos.balance | 0);
       if (total < price) { showToast('Need ' + price.toLocaleString() + ' 🜂.', 4000); return false; }
       const wTake = Math.min(price, wC), bTake = price - wTake;
-      if (wTake > 0 && !spendGems(wTake)) return false;
+      const _wH = _cinderSpendRef(wTake, 'Bank of Ethos: listing purchase');   // 🧾 sql/198 keyed
+      if (!_wH) return false;
       const prevBal = BankEthos.balance;
       if (bTake > 0) {
         const mv = await _boeAdjust(-bTake, 0);
-        if (!mv.ok) { if (wTake > 0) addGems(wTake); showToast('⚠ Payment failed — nothing was moved.'); return false; }
+        if (!mv.ok) { _cinderRefund(_wH, 'Bank of Ethos: listing payment failed'); showToast('⚠ Payment failed — nothing was moved.'); return false; }
       }
     }
     try { saveProfile(); } catch (e) {}
@@ -66994,11 +67163,12 @@ async function boeDepositRes(id, qty) {
   /* 💸 A FLAT FEE PER DEPOSIT, not per unit — so banking one thing at a time is
      the expensive way to do it and a single large deposit is rewarded. Charged
      BEFORE the goods move and refunded on any failure below. */
-  if (typeof spendGems === 'function' && !spendGems(BOE_DEPOSIT_FEE)) {
+  const _feeH = _cinderSpendRef(BOE_DEPOSIT_FEE, 'Bank of Ethos: deposit fee');   // 🧾 sql/198 keyed
+  if (!_feeH) {
     showToast('🏦 A deposit costs ' + BOE_DEPOSIT_FEE.toLocaleString() + ' 🔥 — you cannot cover the fee.', 4600);
     return false;
   }
-  const _refundFee = () => { try { if (typeof addGems === 'function') addGems(BOE_DEPOSIT_FEE); } catch (e) {} };
+  const _refundFee = () => { try { _cinderRefund(_feeH, 'Bank of Ethos: deposit failed'); } catch (e) {} };
 
   if (typeof spendResources === 'function' && !spendResources({ [id]: qty })) { _refundFee(); showToast('Not enough ' + _boeResName(id) + '.'); return false; }
   try { if (typeof _persistResourcesSoon === 'function') _persistResourcesSoon(); } catch (e) {}
@@ -69286,7 +69456,7 @@ async function frDeposit(resId, qty) {
   }
   // Reward: Cinders + reputation progress.
   const reward = Math.max(1, Math.round(gained * 0.5));
-  try { if (typeof addCinders === 'function') addCinders(reward); } catch (e) {}
+  try { if (typeof addCinders === 'function') addCinders(reward, 'Foundation Reserve: contribution reward'); } catch (e) {}
   showToast(`🏛 Reserve received ${qty} ${_meta(resId).icon} — +${reward} 🔥 · +${gained} rep${_emergency ? ' · 🚨 EMERGENCY +60%' : ''}${_specialty ? ' · 🏭 SPECIALTY +35%' : ''}`, (_emergency || _specialty) ? 4600 : 3800);
   await frFetch();
   return true;
@@ -69384,7 +69554,7 @@ async function frConvoyTick() {
           const up = await Cloud.client.from('reserve_contributions').upsert({ user_id: me, user_name: ((Profile.cloud.displayName || (Profile.account && Profile.account.displayName) || 'Survivor') + '').slice(0, 40), resource: cv.resId, qty: (Number(cur.data && cur.data.qty) || 0) + qty, points: (Number(cur.data && cur.data.points) || 0) + gained, updated_at: new Date().toISOString() }, { onConflict: 'user_id,resource' });
           if (up.error) throw up.error;
         } catch (e) { _frErr(e); continue; }   // keep convoy, retry next tick
-        try { if (reward > 0 && typeof addCinders === 'function') addCinders(reward); } catch (e) {}
+        try { if (reward > 0 && typeof addCinders === 'function') addCinders(reward, 'Foundation Reserve: convoy delivered'); } catch (e) {}
       }
       const i = list.indexOf(cv); if (i >= 0) list.splice(i, 1);
       changed = true;
@@ -69426,7 +69596,8 @@ async function frBuyProduct(productId) {
   const priceNote = price > base ? ` (▲ ${Math.round((price / base - 1) * 100)}% — scarcity)` : price < base ? ` (▼ ${Math.round((1 - price / base) * 100)}% — surplus)` : '';
   if ((Profile.gems || 0) < price) { showToast(`Need ${price} 🔥 — you have ${Profile.gems || 0}`, 3000); return false; }
   if (!(await gcConfirm(`Buy “${p.name}” for ${price} 🔥${priceNote}?\n\n${evHit ? '⚠ ' + ev.icon + ' ' + ev.name + ' is in effect.\n' : ''}This draws ${Object.keys(p.recipe).map(k => (p.recipe[k]) + '×' + (_meta(k).name || k)).join(', ')} out of the world Reserve.`))) return false;
-  if (typeof spendGems === 'function' ? !spendGems(price) : ((Profile.gems || 0) < price)) { showToast('Not enough Cinders'); return false; }
+  const _priceH = _cinderSpendRef(price, 'Foundation Reserve: bought ' + p.name);   // 🧾 sql/198 keyed
+  if (!_priceH) { showToast('Not enough Cinders'); return false; }
   // Draw the recipe out of the global Reserve (append-only — race-free).
   const me = Profile.cloud.userId;
   const rows = Object.keys(p.recipe).map(rid => ({ user_id: me, resource: rid, qty: (p.recipe[rid] | 0), product: p.id }));
@@ -69434,7 +69605,7 @@ async function frBuyProduct(productId) {
     const ins = await Cloud.client.from('reserve_consumption').insert(rows);
     if (ins.error) throw ins.error;
   } catch (e) {
-    try { if (typeof addGems === 'function') addGems(price); } catch (_) {}   // refund
+    try { _cinderRefund(_priceH, 'Foundation Reserve: purchase failed'); } catch (_) {}   // refund
     _frErr(e);
     showToast(FoundationReserve.tableMissing
       ? '⚠ Reserve needs its one-time setup (re-run the SQL) — purchase refunded.'
@@ -70837,7 +71008,7 @@ async function nodeCollect(nodeId) {
     if (pay <= 0) { showToast('⚠ Nothing was paid out — the claim has been reset, try again.', 4200); return false; }
     // addGems persists itself (saveProgressCloud + the canonical wallet row), so
     // the credit survives a reload without an extra saveProfile here.
-    if (typeof addCinders === 'function') addCinders(pay); else addGems(pay, 'PRN payout');
+    if (typeof addCinders === 'function') addCinders(pay, 'PRN payout'); else addGems(pay, 'PRN payout');
     const tier = _nodeOwnerTierMul();
     const tail = (!pool.legacy && pool.total > 0) ? ' · pool ' + _frNumF(pool.avail) + '/' + _frNumF(pool.total) + ' 🔥 left' : '';
     showToast('🔌 ' + (n.name || 'PRN') + ' payout collected — +' + pay.toLocaleString() + ' 🔥'
@@ -71692,7 +71863,8 @@ async function gymContribute(coreId) {
   const season = (GymWars.meta && GymWars.meta.season) || 1;
   // 💸 Charge FIRST so a failed/duplicate write can't grant free contribution.
   // Refund on any DB failure below so the player is never charged for nothing.
-  if (!spendCinders(GYM_CONTRIB_COST)) return { ok:false, error:'Payment failed.' };
+  const _payH = _cinderSpendRef(GYM_CONTRIB_COST, 'Gym Wars: supporter contribution');   // 🧾 sql/198 keyed
+  if (!_payH) return { ok:false, error:'Payment failed.' };
   GymWars._lastContribAt = Date.now();
   let committed = false;
   try {
@@ -71704,7 +71876,7 @@ async function gymContribute(coreId) {
       core_id: coreId, user_id: me, supporter_name: gymPlayerName(),
       contribution: next, role: 'supporter', season, updated_at: new Date().toISOString(),
     }, { onConflict: 'core_id,user_id,season' });
-    if (error) { addCinders(GYM_CONTRIB_COST); _gymMarkErr(error); return { ok:false, error:error.message }; }
+    if (error) { _cinderRefund(_payH, 'Gym Wars: contribution failed'); _gymMarkErr(error); return { ok:false, error:error.message }; }
     committed = true; // contribution recorded — past here, do NOT refund
     // Supporter activity regenerates the gym's stamina faster (spec).
     const row = gymRow(coreId);
@@ -71720,24 +71892,25 @@ async function gymContribute(coreId) {
     GymWars._supporters[coreId] = null;
     await gymFetchAll();
     return { ok:true, total: next };
-  } catch (e) { if (!committed) addCinders(GYM_CONTRIB_COST); _gymMarkErr(e); return { ok:false, error:(e && e.message) || 'Failed.' }; }
+  } catch (e) { if (!committed) _cinderRefund(_payH, 'Gym Wars: contribution failed'); _gymMarkErr(e); return { ok:false, error:(e && e.message) || 'Failed.' }; }
 }
 async function gymReinforceStamina(coreId) {
   const row = gymRow(coreId);
   if (!row || !gymIsOwn(row)) return { ok:false, error:'Not your gym.' };
   if ((Profile.gems || 0) < GYM_REINFORCE_COST) return { ok:false, error:`Need ${GYM_REINFORCE_COST} 🔥.` };
-  if (!spendCinders(GYM_REINFORCE_COST)) return { ok:false, error:'Payment failed.' };
+  const _payH = _cinderSpendRef(GYM_REINFORCE_COST, 'Gym Wars: reinforce stamina');   // 🧾 sql/198 keyed
+  if (!_payH) return { ok:false, error:'Payment failed.' };
   let committed = false;
   try {
     const boosted = Math.min(GYM_STAMINA_MAX, gymStaminaNow(row) + GYM_REINFORCE_AMOUNT);
     const { error } = await Cloud.client.from('gyms').update({
       stamina: boosted, stamina_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     }).eq('core_id', coreId).eq('leader_id', Profile.cloud.userId);
-    if (error) { addCinders(GYM_REINFORCE_COST); _gymMarkErr(error); return { ok:false, error:error.message }; }
+    if (error) { _cinderRefund(_payH, 'Gym Wars: reinforce failed'); _gymMarkErr(error); return { ok:false, error:error.message }; }
     committed = true;
     await gymFetchAll();
     return { ok:true };
-  } catch (e) { if (!committed) addCinders(GYM_REINFORCE_COST); _gymMarkErr(e); return { ok:false, error:(e && e.message) || 'Failed.' }; }
+  } catch (e) { if (!committed) _cinderRefund(_payH, 'Gym Wars: reinforce failed'); _gymMarkErr(e); return { ok:false, error:(e && e.message) || 'Failed.' }; }
 }
 async function gymUpgradeLevel(coreId) {
   const row = gymRow(coreId);
@@ -71745,17 +71918,18 @@ async function gymUpgradeLevel(coreId) {
   const lvl = row.gym_level || 1;
   const cost = GYM_UPGRADE_BASE * lvl;
   if ((Profile.gems || 0) < cost) return { ok:false, error:`Need ${cost} 🔥 to reach Lv ${lvl + 1}.` };
-  if (!spendCinders(cost)) return { ok:false, error:'Payment failed.' };
+  const _payH = _cinderSpendRef(cost, 'Gym Wars: gym upgrade to Lv ' + (lvl + 1));   // 🧾 sql/198 keyed
+  if (!_payH) return { ok:false, error:'Payment failed.' };
   let committed = false;
   try {
     const { error } = await Cloud.client.from('gyms').update({
       gym_level: lvl + 1, updated_at: new Date().toISOString(),
     }).eq('core_id', coreId).eq('leader_id', Profile.cloud.userId);
-    if (error) { addCinders(cost); _gymMarkErr(error); return { ok:false, error:error.message }; }
+    if (error) { _cinderRefund(_payH, 'Gym Wars: upgrade failed'); _gymMarkErr(error); return { ok:false, error:error.message }; }
     committed = true;
     await gymFetchAll();
     return { ok:true, level: lvl + 1 };
-  } catch (e) { if (!committed) addCinders(cost); _gymMarkErr(e); return { ok:false, error:(e && e.message) || 'Failed.' }; }
+  } catch (e) { if (!committed) _cinderRefund(_payH, 'Gym Wars: upgrade failed'); _gymMarkErr(e); return { ok:false, error:(e && e.message) || 'Failed.' }; }
 }
 async function gymSetMotto(coreId, motto) {
   const row = gymRow(coreId);
@@ -71904,7 +72078,7 @@ function gymResolvePredictions() {
     p.resolved = true; p.correct = correct;
     const gw = _ensureGymWars();
     gw.predTotal = (gw.predTotal || 0) + 1;
-    if (correct) { gw.predWins = (gw.predWins || 0) + 1; wins++; if (typeof addCinders === 'function') addCinders(GYM_PREDICT_REWARD); }
+    if (correct) { gw.predWins = (gw.predWins || 0) + 1; wins++; if (typeof addCinders === 'function') addCinders(GYM_PREDICT_REWARD, 'Gym Wars: prediction won'); }
     changed = true;
   });
   if (changed) { try { saveProfile(); } catch (e) {} if (wins > 0 && typeof showToast === 'function') showToast(`🔮 ${wins} prediction${wins === 1 ? '' : 's'} hit — +${wins * GYM_PREDICT_REWARD} 🔥!`, 4200); }
@@ -73183,7 +73357,7 @@ function _auctWalletSpend(cur, amount) { return _curIsAza(cur) ? spendSovereigns
      day, daily cap) the wallet showed Aza the next boot took back — the
      bug-mu7bk9gy class, see sovRewardReply. The server's answer is toasted. */
 function _auctWalletAdd(cur, amount) {
-  if (!_curIsAza(cur)) return addGems(amount);
+  if (!_curIsAza(cur)) return addGems(amount, 'Auction House: NPC bidder won your lot');
   return sovRewardReply('auction_npc_sale', amount).then(j => {
     try { showToast('👑 Auction payout — ' + sovRewardNote(j) + '.', 5200); } catch (e) {}
     return (j && j.ok === true) ? Math.max(0, Math.round(Number(j.granted) || 0)) : 0;
@@ -76086,7 +76260,7 @@ function _campSpendCost(cost, label) {
     // retraces exactly the steps it took.
     for (let i = taken.length - 1; i >= 0; i--) {
       const t = taken[i];
-      try { if (t.kind === 'res') _refundRes(t.id, t.n); else addGems(t.n); } catch (e) {}
+      try { if (t.kind === 'res') _refundRes(t.id, t.n); else _cinderRefund(t.h, 'Camp: ' + (label || 'Build facility') + ' undone'); } catch (e) {}
     }
     taken.length = 0;
   };
@@ -76100,12 +76274,14 @@ function _campSpendCost(cost, label) {
     // spendGems() re-checks the balance and can still say no (another tab, a
     // race with a server reconcile). That is exactly the failure the refund
     // exists for.
-    if (typeof spendGems !== 'function' || !spendGems(cinder)) {
+    // 🧾 sql/198: a KEYED charge (was spendGems + _serverMirrorCharge), so the
+    //    refund() above gives back exactly this charge, once.
+    const h = _cinderSpendRef(cinder, 'Camp: ' + (label || 'Build facility'));
+    if (!h) {
       refund();
       return { ok: false, why: 'Cinder spend failed — your resources were refunded.' };
     }
-    taken.push({ kind: 'gems', n: cinder });
-    try { _serverMirrorCharge(cinder, 'Camp: ' + (label || 'Build facility')); } catch (e) {}
+    taken.push({ kind: 'gems', n: cinder, h: h });
   }
   return { ok: true, refund };
 }
@@ -92647,7 +92823,8 @@ async function boeCorpDeposit(amount) {
       '\nReaches the treasury: ' + net.toLocaleString() + ' 🔥' +
       '\n\nShared corporation funds — this is NOT refundable to you personally, and the fee is not recoverable.'))) return false;
   /* Take the GROSS first. spendGems returns false when it did not spend. */
-  if (!spendGems(amount)) { showToast('Not enough Cinder.', 3200); return false; }
+  const _amtH = _cinderSpendRef(amount, 'Bank of Ethos: transfer to ' + _target.name + ' Treasury');   // 🧾 sql/198 keyed
+  if (!_amtH) { showToast('Not enough Cinder.', 3200); return false; }
   try { saveProfile(); } catch (e) {}
   try {
     const ins = await Cloud.client.from('corp_treasury').insert({
@@ -92660,7 +92837,7 @@ async function boeCorpDeposit(amount) {
     /* 🔴 REFUND THE GROSS. The fee was never a transfer to anywhere — it only
        exists once the deposit succeeds, so a failed insert must leave the
        player exactly as they were, not down by 1%. */
-    addGems(amount); try { saveProfile(); } catch (_) {}
+    _cinderRefund(_amtH, 'Bank of Ethos: treasury transfer failed'); try { saveProfile(); } catch (_) {}
     showToast('⚠ Transfer failed — your ' + amount.toLocaleString() + ' 🔥 was refunded in full.', 5200);
     return false;
   }
@@ -92682,13 +92859,14 @@ async function corpTreasuryDeposit(amount) {
   if (!(amount > 0)) { showToast('Enter a deposit amount.'); return false; }
   if ((Profile.gems || 0) < amount) { showToast('Need ' + amount.toLocaleString() + ' 🔥 — you have ' + (Profile.gems || 0).toLocaleString() + '.', 4200); return false; }
   if (!(await gcConfirm('Deposit ' + amount.toLocaleString() + ' 🔥 into the ' + Corp.mine.name + ' Treasury?\n\nShared funds — used to construct nodes/operations. This is not refundable to you personally.'))) return false;
-  if (!spendGems(amount)) { showToast('Not enough Cinders'); return false; }
+  const _amtH = _cinderSpendRef(amount, 'Corp: treasury deposit');   // 🧾 sql/198 keyed
+  if (!_amtH) { showToast('Not enough Cinders'); return false; }
   try { saveProfile(); } catch (e) {}
   try {
     const ins = await Cloud.client.from('corp_treasury').insert({ corp_id: Corp.mine.id, user_id: Profile.cloud.userId, amount: amount, kind: 'deposit', note: 'member deposit' });
     if (ins && ins.error) throw ins.error;
   } catch (e) {
-    addGems(amount); try { saveProfile(); } catch (_) {}
+    _cinderRefund(_amtH, 'Corp: treasury deposit failed'); try { saveProfile(); } catch (_) {}
     showToast('⚠ Deposit failed — refunded. ' + (/corp_treasury|PGRST205|does not exist/i.test((e && e.message) || '') ? 'Run the Reserve setup SQL first.' : ''), 4600);
     return false;
   }
@@ -94182,7 +94360,7 @@ async function _opSettle(o) {
   // player, and the settle timestamp persists on the profile row.
   if (o.meta && o.meta.localOnly) {
     const netL = Math.max(0, c.gross - c.salary);
-    if (netL > 0) { try { addCinders(netL); } catch (e) {} }
+    if (netL > 0) { try { addCinders(netL, 'Corp: personally-funded op settled (' + (o.op_type || 'op') + ')'); } catch (e) {} }
     /* 💸 The wages a local op pays are whatever its own production covered. */
     try { _wagePoolCredit(Math.min(c.gross, c.salary), 'local op wages'); } catch (e) {}
     const yieldedL = {};
@@ -94854,14 +95032,15 @@ async function cityHallApplyLicense(licId) {
   if ((Profile.gems || 0) < L.cinder) { showToast('Need ' + L.cinder.toLocaleString() + ' 🔥 for the ' + L.name + ' — you have ' + (Profile.gems || 0).toLocaleString() + '.', 5200); return false; }
   if (!canAffordResources(L.res)) { showToast('License requires ' + (Object.keys(L.res).length ? Object.keys(L.res).map(k => L.res[k] + ' ' + ((_meta(k).name) || k)).join(', ') : 'no resources') + '.', 4600); return false; }
   if (!(await gcConfirm('File for the ' + L.name + '?\n\nFee: ' + L.cinder.toLocaleString() + ' 🔥' + (Object.keys(L.res).length ? ' + ' + Object.keys(L.res).map(k => L.res[k] + '× ' + ((_meta(k).name) || k)).join(', ') : '') + (L.illicit ? '\n\n⚠ Illicit — increases Foundation scrutiny.' : '')))) return false;
-  if (!spendGems(L.cinder)) { showToast('Not enough Cinders'); return false; }
-  if (!spendResources(L.res)) { addGems(L.cinder); showToast('Not enough resources'); return false; }
+  const _feeH = _cinderSpendRef(L.cinder, 'Corp: ' + L.name + ' licence fee');   // 🧾 sql/198 keyed
+  if (!_feeH) { showToast('Not enough Cinders'); return false; }
+  if (!spendResources(L.res)) { _cinderRefund(_feeH, 'Corp: licence resources short'); showToast('Not enough resources'); return false; }
   try { saveProfile(); } catch (e) {}
   try {
     const ins = await Cloud.client.from('corp_licenses').insert({ corp_id: Corp.mine.id, license_type: L.id, status: 'active', issued_by: Profile.cloud.userId });
     if (ins && ins.error) throw ins.error;
   } catch (e) {
-    addGems(L.cinder); try { addSalvage(L.res); saveProfile(); } catch (_) {}
+    _cinderRefund(_feeH, 'Corp: licence filing failed'); try { addSalvage(L.res); saveProfile(); } catch (_) {}
     showToast('⚠ Filing failed — refunded. ' + (/corp_licenses|PGRST205|does not exist/i.test((e && e.message) || '') ? 'Run the Reserve setup SQL first.' : ''), 4600);
     return false;
   }
@@ -181347,7 +181526,7 @@ async function dojoCollect() {
     const { data, error } = await Cloud.client.rpc('dojo_collect');
     if (error) throw error;
     const amt = (data && data.amount) | 0;
-    if (amt > 0) { addCinders(amt); try { saveProfile(); } catch (e) {} showToast(`💰 Collected ${amt.toLocaleString()} 🔥 from ${(data.count | 0)} sale${(data.count | 0) === 1 ? '' : 's'}.`, 4000); }
+    if (amt > 0) { addCinders(amt, 'Dojo: shop sales collected'); try { saveProfile(); } catch (e) {} showToast(`💰 Collected ${amt.toLocaleString()} 🔥 from ${(data.count | 0)} sale${(data.count | 0) === 1 ? '' : 's'}.`, 4000); }
     else showToast('No uncollected earnings yet.', 2600);
     Dojo.mine = null; await dojoFetchMine();
   } catch (e) {}
@@ -185161,7 +185340,7 @@ function _refinerySellRes(id, amtSpec) {
     const q = (typeof frApplyTax === 'function') ? frApplyTax(gross, { market: 'black', resource: id, quantity: amt }) : { net: gross, tax: 0, label: '' };
     // ⚠ The fallback used to write Profile.gems raw, so on any build where
     //   addCinders is absent the sale never reached the canonical wallet.
-    if (typeof addCinders === 'function') addCinders(q.net); else addGems(q.net, 'Refinery sale');
+    if (typeof addCinders === 'function') addCinders(q.net, 'Refinery sale'); else addGems(q.net, 'Refinery sale');
     showToast('🔥 +' + q.net + ' Cinders — refined ' + amt + ' ' + _resMeta(id).name + (q.tax ? ' · −' + q.tax + ' tax' : '') + '.', 3000);
     render();
   } catch (e) { try { console.warn('[refinery] sell failed', e); } catch (_) {} }
@@ -187375,7 +187554,7 @@ function renderWagerHall() {
     btn.onclick = () => {
       const m = (Profile.wagers.schedule || []).find(x => x.id === btn.dataset.cancelBet);
       if (!m || !m.bet) return;
-      addCinders(m.bet.stake);
+      addCinders(m.bet.stake, 'Wagers: bet cancelled (stake returned)');
       m.bet = null;
       saveProfile();
       showToast(`↩ Bet canceled — <span class="cinder-icon"></span> ${(m.bet ? m.bet.stake : 0).toLocaleString()} refunded`);
@@ -187547,7 +187726,7 @@ function settleWagerMatch(matchId, winner) {
   const won = bet.side === winner;
   const payout = won ? Math.floor(bet.stake * bet.oddsAtBet) : 0;
   if (won) {
-    addCinders(payout);
+    addCinders(payout, 'Wagers: bet won');
     Profile.wagers.stats.won    = (Profile.wagers.stats.won    || 0) + 1;
     Profile.wagers.stats.profit = (Profile.wagers.stats.profit || 0) + (payout - bet.stake);
     addAccountXp(Math.min(60, 20 + Math.floor(payout / 200)), 'Wager Won');
@@ -188544,7 +188723,7 @@ async function cardShopCollect() {
     const { data, error } = await Cloud.client.rpc('card_shop_collect');
     if (error || !data || !data.ok) { showToast('⚠ Could not collect earnings.', 3000); return null; }
     const amt = data.amount | 0;
-    if (amt > 0) { addCinders(amt); showToast('💰 Collected ' + amt.toLocaleString() + ' 🔥 from ' + (data.count | 0) + ' sale' + ((data.count | 0) === 1 ? '' : 's') + '.', 4600); }
+    if (amt > 0) { addCinders(amt, 'Card Shop: sales collected'); showToast('💰 Collected ' + amt.toLocaleString() + ' 🔥 from ' + (data.count | 0) + ' sale' + ((data.count | 0) === 1 ? '' : 's') + '.', 4600); }
     else showToast('No uncollected sales yet.', 3000);
     CardShop.mine = null; await cardShopFetchMine(); return true;
   } catch (e) { return null; }
@@ -188625,7 +188804,7 @@ async function _csNodeDividend() {
       return false;
     }
     const cinder = data.cinder | 0, units = data.units | 0, resId = data.resource || '';
-    if (cinder > 0 && typeof addCinders === 'function') addCinders(cinder);
+    if (cinder > 0 && typeof addCinders === 'function') addCinders(cinder, 'Card Shop: node dividend');
     if (units > 0 && resId && typeof addRes === 'function') addRes(resId, units);
     try { saveProfile && saveProfile(); } catch (e) {}
     const parts = [];
@@ -195267,7 +195446,7 @@ function renderBlackMarket() {
       if (!ok) return;
       Profile.cardCollection[cardId] = Math.max(0, (Profile.cardCollection[cardId] || 0) - amount);
       if (Profile.cardCollection[cardId] === 0) delete Profile.cardCollection[cardId];
-      addCinders(q.net);
+      addCinders(q.net, 'Black Market: smuggled cards sold');
       showToast(`🔥 +${q.net} Cinders — ${amount}× ${row.card.name} sold${q.tax ? ` · ${q.label} −${q.tax}` : ''}.`);
       render();
     };
@@ -195292,7 +195471,7 @@ function renderBlackMarket() {
         soldCount += r.sellable;
       });
       const q = (typeof frApplyTax === 'function') ? frApplyTax(earned, { market: 'black', resource: 'cards', quantity: soldCount }) : { gross: earned, tax: 0, net: earned, label: 'Foundation Seizure Fee' };
-      addCinders(q.net);
+      addCinders(q.net, 'Black Market: smuggled cards sold');
       showToast(`🔥 +${q.net} Cinders from ${soldCount} cards sold${q.tax ? ` · ${q.label} −${q.tax}` : ''}.`);
       render();
     };
@@ -212197,7 +212376,7 @@ function openBlackMarketTrade() {
         if (!ok) return;
         Profile.cardCollection[cardId] = Math.max(0, (Profile.cardCollection[cardId] || 0) - amount);
         if (Profile.cardCollection[cardId] === 0) delete Profile.cardCollection[cardId];
-        if (typeof addCinders === 'function') addCinders(_q.net);
+        if (typeof addCinders === 'function') addCinders(_q.net, 'Black Market: smuggled cards sold');
         try { showToast('🔥 +' + _q.net + ' Cinders — ' + amount + '× ' + (card.name || cardId) + ' sold' + (_q.tax ? ' · ' + _q.label + ' −' + _q.tax : '') + '.'); } catch (e) {}
         build();
       } catch (e) {}
@@ -212307,7 +212486,7 @@ function openBlackMarketTrade() {
             Profile.cardCollection[p.cid] = Math.max(0, (Profile.cardCollection[p.cid] || 0) - p.sv);
             if (Profile.cardCollection[p.cid] === 0) delete Profile.cardCollection[p.cid];
           });
-          if (typeof addCinders === 'function') addCinders(earned);
+          if (typeof addCinders === 'function') addCinders(earned, 'Black Market: spare copies smuggled');
           try { showToast('🔥 +' + earned + ' Cinders — ' + sold + ' spare copies smuggled.'); } catch (e) {}
           build();
         } catch (e) {}
@@ -212391,7 +212570,7 @@ async function bmMarketFetch() {
           if (!(upd && upd.data && upd.data.length)) continue;
           total += (r.price || 0);
         }
-        if (total > 0) { if (typeof addCinders === 'function') addCinders(total); try { showToast('💰 Booth sales collected: +' + total + ' <span class="cinder-icon"></span> Cinders', 4600); } catch (e) {} }
+        if (total > 0) { if (typeof addCinders === 'function') addCinders(total, 'Black Market: booth sales collected'); try { showToast('💰 Booth sales collected: +' + total + ' <span class="cinder-icon"></span> Cinders', 4600); } catch (e) {} }
       }
     } catch (e) { _bmMarkErr(e); }
     const { data, error } = await Cloud.client.from('bm_card_listings')
@@ -215960,7 +216139,7 @@ function _covertCollect(missionInstanceId) {
       //    checked only here, which meant it was never actually enforced.
       //    ⚠ Nothing is credited locally and no amount is printed until the
       //    server answers — see sovRewardReply and _covertSettleAza.
-      if (typeof addCinders === 'function') addCinders(c);
+      if (typeof addCinders === 'function') addCinders(c, 'Covert Ops: resource run');
       _covertSettleAza('cv_resource', m.id);
       payout = `+${c.toLocaleString()} Cinder, 👑 Aza: confirming with the server…`;
     } else if (m.missionId === 'cv_intel') {
@@ -215974,7 +216153,7 @@ function _covertCollect(missionInstanceId) {
         payout = `📡 Intel acquired on ${ev.eventName} — ${ev.corpId}.`;
         showToast(`📡 Intel: ${ev.corpId}'s ${ev.eventName} active in ${ev.regionId}.`, 6500);
       } else {
-        if (typeof addCinders === 'function') addCinders(3000);
+        if (typeof addCinders === 'function') addCinders(3000, 'Covert Ops: intel run (no fresh intel)');
         payout = `+3,000 Cinder (no fresh intel available).`;
       }
     } else if (m.missionId === 'cv_cardhunt') {
@@ -216039,11 +216218,11 @@ function _covertCollect(missionInstanceId) {
           payout = `🎴 Recovered ${pick.icon || '🎴'} ${pick.name}!` +
             (onlyOne ? ' (the only card currently eligible for a hunt — more become huntable as the catalogue grows)' : '');
         } else if (typeof addCinders === 'function') {
-          addCinders(2000);
+          addCinders(2000, 'Covert Ops: recovery run (salvage)');
           payout = '🔥 Nothing worth carrying back — 2,000 Cinder salvaged instead.';
         }
       } else {
-        if (typeof addCinders === 'function') addCinders(2000);
+        if (typeof addCinders === 'function') addCinders(2000, 'Covert Ops: recovery run (no eligible card)');
         payout = `+2,000 Cinder (no eligible cards in catalog).`;
       }
     } else if (m.missionId === 'cv_recruit') {
@@ -216051,7 +216230,7 @@ function _covertCollect(missionInstanceId) {
       const c = 1000 + Math.floor(Math.random() * 1501);
       // Aza amount is server-owned (aza_reward_rules.cv_recruit) and reported
       // by _covertSettleAza once the server has actually paid it.
-      if (typeof addCinders === 'function') addCinders(c);
+      if (typeof addCinders === 'function') addCinders(c, 'Covert Ops: recruit run');
       _covertSettleAza('cv_recruit', m.id);
       payout = `+${c.toLocaleString()} Cinder, recruit contacts established. 👑 Aza: confirming with the server…`;
     }
@@ -223779,7 +223958,7 @@ function _wf3MergeLive(a, b) {
 // ── Wallet / food hooks ────────────────────────────────────────────────────
 function _wf3GetCinder() { return (typeof getCinders === 'function') ? getCinders() : (Profile.gems | 0); }
 function _wf3SpendCinder(n) { n = Math.round(n); if (_wf3GetCinder() < n) return false; if (typeof spendCinders === 'function') { if (!spendCinders(n)) return false; } else { Profile.gems = (Profile.gems | 0) - n; } try { _serverMirrorCharge && _serverMirrorCharge(n, 'Woods Fishing trip'); } catch (e) {} _wf3RenderHud(); return true; }
-function _wf3AddCinder(n) { n = Math.round(n); if (typeof addCinders === 'function') addCinders(n); else Profile.gems = (Profile.gems | 0) + n; _wf3RenderHud(); }
+function _wf3AddCinder(n, why) { n = Math.round(n); if (typeof addCinders === 'function') addCinders(n, why || 'Woods Fishing'); else Profile.gems = (Profile.gems | 0) + n; _wf3RenderHud(); }
 function _wf3AddFood(n) { if (!Profile.salvage || typeof Profile.salvage !== 'object') Profile.salvage = {}; Profile.salvage.food = (Profile.salvage.food | 0) + (n | 0); }
 /* 🎣 THE CATCH IS A RESOURCE (WOODS_FISHING_HANDOFF, round 1). A landed fish
    used to be minted straight into camp food. It is iced in the hold now as the
@@ -223848,7 +224027,7 @@ function _wf3GainXP(amt) {
   while (L.level < WF3_MAX_LEVEL && L.xp >= _wf3XpForLevel(L.level)) { L.xp -= _wf3XpForLevel(L.level); L.level++; up = true; }
   if (L.level >= WF3_MAX_LEVEL) L.xp = Math.min(L.xp, _wf3XpForLevel(L.level));
   if (up) {
-    _wf3ApplyLevel(); const rw = 15 * L.level; _wf3AddCinder(rw);
+    _wf3ApplyLevel(); const rw = 15 * L.level; _wf3AddCinder(rw, 'Woods Fishing: level-up reward');
     _wf3FlashLog('⬆ Fishing Level ' + L.level + '! +' + rw + ' 🔥', 'buy');
     if (L.level % 3 === 0) { L.baitStock.grub = (L.baitStock.grub || 0) + 5; if (!L.equippedBait) L.equippedBait = 'grub'; _wf3FlashLog('Reward: +5 Grub Bunch bait', 'buy'); }
   }
@@ -224110,7 +224289,7 @@ function _wf3OnCatch(result) {
   if (result.type === 'food') {
     _wf3S.foodTrip = (_wf3S.foodTrip | 0) + result.amount;
     const banked = _wf3BankCatch(result);   // 🎣 fish, not food — see _wf3BankCatch
-    _wf3AddCinder(cin); _wf3GainXP(xp);
+    _wf3AddCinder(cin, 'Woods Fishing: catch'); _wf3GainXP(xp);
     _wf3RecordCatch(result.item.id, result.item.name, result.rarity, biomeName);
     _wf3FlashLog(Object.keys(banked).map((k) => '+' + _wfResLabel(k, banked[k])).join(' · ') + ' · ' + result.item.name, result.rarity !== 'Common' ? 'rare' : '');
     try { _wf3SpawnFish(result.rarity, result.item.id); } catch (e) {}
@@ -224489,7 +224668,7 @@ function _wf3Open() {
     if (_wf3S.state === 'IDLE') _wf3ResetToIdle();
   };
   const battleBtn = wrap.querySelector('#wf3-battleBtn');
-  battleBtn.onclick = () => { const b = _wf3$('battle'); if (b) b.style.display = 'none'; const s = _wf3S; if (s.pendingBounty) { _wf3AddCinder(s.pendingBounty); _wf3FlashLog('Bounty +' + s.pendingBounty + ' 🔥', 'buy'); s.pendingBounty = 0; } _wf3GainXP(WF3_XP_GAIN[s.pendingEncRarity] || 20); _wf3ResetToIdle(); };
+  battleBtn.onclick = () => { const b = _wf3$('battle'); if (b) b.style.display = 'none'; const s = _wf3S; if (s.pendingBounty) { _wf3AddCinder(s.pendingBounty, 'Woods Fishing: encounter bounty'); _wf3FlashLog('Bounty +' + s.pendingBounty + ' 🔥', 'buy'); s.pendingBounty = 0; } _wf3GainXP(WF3_XP_GAIN[s.pendingEncRarity] || 20); _wf3ResetToIdle(); };
   // pointer input (root-scoped → auto-cleans when overlay removed)
   wrap.addEventListener('pointerdown', (e) => { if (e.pointerType === 'mouse' && e.button !== 0) return; _wf3Press(e); });
   wrap.addEventListener('pointerup', (e) => { _wf3Release(e); });
@@ -226006,7 +226185,7 @@ function _wfFillContract(key) {
   const cost = {}; cost[c.id] = c.qty;
   if (typeof spendResources !== 'function' || !spendResources(cost)) { showToast('Not enough ' + (_meta(c.id).name || c.id) + ' — the buyer wants ' + c.qty + '.', 3000); return; }
   done[key] = true;
-  try { addGems(c.pay, 'Fishing contract: ' + c.buyer); } catch (e) { try { addCinders(c.pay); } catch (_) {} }
+  try { addGems(c.pay, 'Fishing contract: ' + c.buyer); } catch (e) { try { addCinders(c.pay, 'Fishing contract: ' + c.buyer); } catch (_) {} }
   try { if (typeof wfLog === 'function') wfLog('good', c.buyer + ' took ' + c.qty + ' ' + (_meta(c.id).name || c.id) + ' for ' + c.pay.toLocaleString() + ' 🔥.'); } catch (e) {}
   showToast('📜 ' + c.buyer + ' paid ' + c.pay.toLocaleString() + ' 🔥 for ' + _wfResLabel(c.id, c.qty) + '.', 3600);
   try { saveProfile(); } catch (e) {}
@@ -226415,7 +226594,7 @@ function _vmCreditSeller(sellerId, amount) {
   // Local fallback — if it's the player's own listing (shouldn't happen
   // since the buyer-check rejects), credit them directly.
   if (sellerId === _vmMyId() && typeof addCinders === 'function') {
-    addCinders(amount);
+    addCinders(amount, 'Vehicle Market: your listing sold');
   }
   // TODO: Supabase RPC for true cross-player credit.
 }
@@ -229905,7 +230084,7 @@ function _brpResolveRunOutcome(state, brpRun) {
     const cinder = Math.floor((R.cinderBase + Math.random() * R.cinderBase * 0.4) * brpRun.mult);
     s.crude = (s.crude | 0) + crude;
     s.fuel  = (s.fuel  | 0) + fuel;
-    if (typeof addCinders === 'function') addCinders(cinder);
+    if (typeof addCinders === 'function') addCinders(cinder, 'Black River: run won');
     s.wanted = Math.min(100, (s.wanted | 0) + R.threat);
     if (!Array.isArray(s.log)) s.log = [];
     s.log.unshift({ ts: Date.now(), level: 'good', msg: `Roguelite extraction success — +${crude} crude, +${fuel} fuel, +¢${cinder.toLocaleString()}.` });
@@ -232271,7 +232450,7 @@ function fcNpcSell(qty) {
   const unit = fcNpcQuote(qty, -1).bid;
   const rev  = Math.floor(qty * unit);         // floor: rounding may only widen the loss
   s.fuel -= qty;
-  addGems(rev, 'Fuel Command: NPC sale');
+  _fcNpcSalePay(s, qty, rev);                  // 🚰 sql/198 faucet_fc_npc_sale (was addGems)
   s.supply = _fcClamp(s.supply + qty * FC_NPC_SUPPLY_PER_BBL, 3, 100);
   // 📉 Selling to the NPC → exchange fuel price DOWN. Same call the bid above
   // was quoted from, applied for real — same _fcCxUnits. Player-chosen, so it
@@ -232384,10 +232563,9 @@ function fcOpenLoan(principal, rate) {
   if (!principal || principal <= 0) { showToast('⚠️ Enter a loan amount above 0.', 3200); return false; }
   if ((s.creditLimit | 0) > 0 && principal > s.creditLimit) { showToast('⚠️ Exceeds credit limit (¢' + (s.creditLimit | 0).toLocaleString() + ').', 4200); return false; }
   s.loan = { principal: principal | 0, balance: principal | 0, rate: rate || 0.012, openedAt: Date.now() };
-  addGems((principal | 0), 'Fuel Command: loan drawn');
+  _fcLoanDrawPay(s, s.loan);                   // 🚰 sql/198 faucet_fc_loan_draw (was addGems); it toasts
   _fcSyncLoanToBankEthos();
   _fcLog('event', 'Took out ¢' + principal.toLocaleString() + ' Bank of Ethos loan @ ' + Math.round((rate || 0.012) * 100) + '% / cycle.');
-  showToast('🏦 Loan disbursed: +¢' + principal.toLocaleString() + ' Cinder.', 4800);
   try { saveProfile && saveProfile(); } catch (e) {} try { saveForge && saveForge(); } catch (e) {}
   return true;
 }
@@ -232397,8 +232575,22 @@ function fcPayLoan(amount) {
   const pay = Math.min(amount | 0, s.loan.balance | 0);
   if (pay <= 0) { showToast('Nothing to repay (enter an amount above 0).', 3200); return false; }
   if ((Profile.gems | 0) < pay) return notEnoughToast('cinder', pay, Profile.gems | 0);
-  Profile.gems = (Profile.gems | 0) - pay;
-  try { _serverMirrorCharge(pay, 'Fuel Command: Loan repayment'); } catch (e) {}
+  /* 🚰 sql/198 fc_loan_repay: charged by the door that books it against the
+     server's debt row (was a direct write + _serverMirrorCharge). A refusal
+     means the server wallet could not cover it: the Cinder and the loan
+     balance both come back, once. */
+  const _before = Object.assign({}, s.loan);
+  const h = _cinderSpendRef(pay, 'Fuel Command: Loan repayment', 'fc_loan_repay', { p_amount: pay });
+  if (!h) return notEnoughToast('cinder', pay, Profile.gems | 0);
+  h.done.then(() => {
+    if (h.state !== 'refused') return;
+    _cinderRefund(h, 'Fuel Command: loan repayment refused');
+    if (s.loan && s.loan.openedAt === _before.openedAt) s.loan.balance += pay; else if (!s.loan) s.loan = _before;
+    _fcSyncLoanToBankEthos();
+    _fcLog('warn', '🏦 Repayment of ¢' + pay.toLocaleString() + ' refused by the bank — the Cinder is back and the loan is as it was.');
+    try { showToast('🏦 Repayment refused — your wallet on the server could not cover it. Nothing was paid.', 5200); } catch (e) {}
+    try { saveProfile && saveProfile(); } catch (e) {}
+  });
   s.loan.balance -= pay;
   if (s.loan.balance <= 1) {
     _fcLog('good', 'Loan paid in full!');
@@ -232459,7 +232651,7 @@ function fcSettleHedge() {
   const mark = _fcSettleMark(s.hedge.price, +1, s.hedge.exoLift, s.hedge.exoDrop);
   const diff = (mark - s.hedge.price) * s.hedge.qty;
   const gain = Math.round(Math.max(0, diff));
-  addGems(gain, 'Fuel Command: hedge settled');
+  _fcHedgePay(s, s.hedge, gain);               // 🚰 sql/198 faucet_fc_hedge (was addGems)
   _fcLog(gain > 0 ? 'good' : 'warn', 'Hedge settled — ' + (gain > 0 ? '+' : '') + _fcFmt(gain) + '₵ banked.');
   showToast(gain > 0 ? ('Hedge paid +¢' + _fcFmt(gain)) : 'Hedge expired flat.', 3200);
   s.hedge = null;
@@ -232470,12 +232662,33 @@ function fcOpenPos(side, stake) {
   if (s.pos) { showToast('Close current position first.', 3200); return false; }
   stake = Math.max(50, stake | 0);
   if ((Profile.gems | 0) < stake) return notEnoughToast('cinder', stake, Profile.gems | 0);
-  Profile.gems = (Profile.gems | 0) - stake;
-  try { _serverMirrorCharge(stake, 'Fuel Command: Open position (' + side + ')'); } catch (e) {}
+  /* 🚰 sql/198 fc_position_open: the stake is charged by the door that RECORDS
+     the position (was a direct write + _serverMirrorCharge), so the close can
+     be bounded by a stake the server actually took. `ref` names it at close;
+     no server row (sql/198 absent, signed out) → no ref → the old close path. */
+  const h = _cinderSpendRef(stake, 'Fuel Command: Open position (' + side + ')', 'fc_position_open', { p_side: side, p_stake: stake });
+  if (!h) return notEnoughToast('cinder', stake, Profile.gems | 0);
   fcRecalcNpc();                 // enter at the LIVE mark, same reason as fcLockHedge
   // Both watermarks: a LONG is paid only for a recorded exogenous rise, a SHORT
   // only for a recorded exogenous fall. fcClosePos caps against the matching one.
-  s.pos = { side: side, entry: s.npc, stake: stake, exoLift: s.exoLift, exoDrop: s.exoDrop };
+  s.pos = { side: side, entry: s.npc, stake: stake, exoLift: s.exoLift, exoDrop: s.exoDrop, ref: h.ref };
+  const _pos = s.pos;
+  h.done.then(() => {
+    if (h.state === 'ok' || h.state === 'unknown') return;
+    if (h.state === 'refused') {
+      if (s.pos === _pos) s.pos = null;
+      _cinderRefund(h, 'Fuel Command: position not opened');
+      const r = h.r || {};
+      const why = r.reason === 'open' ? 'the exchange still holds an open position of yours'
+                : r.reason === 'stake' ? 'the largest stake is ¢' + Number(r.max_stake || 0).toLocaleString()
+                : r.reason === 'insufficient' ? 'your wallet on the server could not cover it' : 'refused (' + (r.reason || 'error') + ')';
+      _fcLog('warn', 'Position NOT opened — ' + why + '. Stake returned.');
+      try { showToast('📉 Position not opened — ' + why + '. Your stake is back.', 5200); } catch (e) {}
+      try { saveProfile && saveProfile(); } catch (e) {}
+      return;
+    }
+    delete _pos.ref;             // legacy / signed out: no server row, closes the old way
+  });
   _fcLog('info', 'Opened ' + side.toUpperCase() + ' ¢' + _fcFmt(stake) + ' @ ¢' + Math.round(s.npc) + '.');
   try { saveProfile && saveProfile(); } catch (e) {} try { saveForge && saveForge(); } catch (e) {}
 }
@@ -232498,7 +232711,7 @@ function fcClosePos() {
   const pl   = Math.round(s.pos.stake * (1 + dir * move * 4));
   const payout = Math.max(0, pl);
   const delta  = pl - s.pos.stake;
-  addGems(payout, 'Fuel Command: position closed');
+  _fcPositionClosePay(s, s.pos, payout);       // 🚰 sql/198 faucet_fc_position_close (was addGems)
   _fcLog(delta >= 0 ? 'good' : 'bad', 'Closed ' + s.pos.side.toUpperCase() + ' — return ¢' + _fcFmt(payout) + ' (P/L ' + (delta >= 0 ? '+' : '') + _fcFmt(delta) + ').');
   showToast('Position closed: ' + (delta >= 0 ? '+' : '') + '¢' + _fcFmt(delta), 3200);
   s.pos = null;
@@ -232580,7 +232793,7 @@ function fcRunExtraction() {
   if (Math.random() < risk * 0.6) {
     yieldN = Math.round(yieldN * 0.4);
     _fcLog('warn', 'Extraction hit trouble in the field — reduced yield.');
-    fcFireEvent('bandit');
+    fcFireEvent('bandit', true);   // a real raid on the run — insurance may pay
   }
   s.crude = _fcClamp(s.crude + yieldN, 0, s.crudeCap);
   _fcLog('good', 'Extraction returned ' + yieldN + ' bbl crude (cap ' + roll.cap + ' — ' + roll.why + ').');
@@ -232643,7 +232856,7 @@ function _fcShock(forced, reason, dir) {
   if (forced) return;
   _fcExoMove(d, units, reason);
 }
-function fcFireEvent(forceId) {
+function fcFireEvent(forceId, genuine) {
   const s = ensureFuelCommand();
   // ⚠ FORCED means the price shock below was CHOSEN, not rolled — the Events tab
   //   ships a "Force Trigger" button for every event, including the two that
@@ -232710,7 +232923,13 @@ function fcFireEvent(forceId) {
     }
     case 'boom':   { const f = Math.min(s.fuel, _fcRnd(100, 300)); s.fuel -= f; s.damage += 40; s.repSafety -= 12; if (Math.random() < 0.4) s.workers = Math.max(0, s.workers - 1); msg = 'MASSIVE LOSS — ' + f + ' bbl gone, station crippled.'; break; }
   }
-  if (s.insured && ['bandit', 'scp', 'boom'].includes(ev.id)) { addGems(4000, 'Fuel Command: insurance payout'); msg += ' Insurance paid out +¢4,000.'; }
+  /* 🛡 INSURANCE PAYS A LOSS YOU SUFFERED, NOT ONE YOU CLICKED. The Events tab's
+     "Force Trigger" on SCP / Explosion / Bandit paid 4,000 a click to an
+     insured station — the same chosen-vs-rolled hole the price shocks above
+     close with `forced`. `genuine` is the extraction run's own bandit raid,
+     which is forced by id but not chosen. The payout settles through
+     sql/198 faucet_fc_insurance (fixed 4,000, needs a premium on the ledger). */
+  if (s.insured && ['bandit', 'scp', 'boom'].includes(ev.id) && (!forced || genuine)) { _fcInsurancePay(); msg += ' Insurance paid out +¢4,000.'; }
   s.repSafety = _fcClamp(s.repSafety, -30, 40);
   const level = (ev.id === 'inspect' && msg.startsWith('Passed')) ? 'good' : (ev.sev >= 2 ? 'bad' : 'warn');
   _fcLog(level, ev.ico + ' ' + ev.nm + ' — ' + msg);
@@ -232746,6 +232965,114 @@ function _fcSalesPay(s, sold, gross) {
       _fcSalesPauseUntil = Date.now() + (day ? 10 * 60 * 1000 : 30 * 1000);
       _fcLog('warn', '⛽ ' + sold + ' bbl NOT sold — ' + (day ? 'the station has hit today\'s sales limit' : 'the sale was refused (' + ((r && r.reason) || 'error') + ')') + '. The fuel is back in the tank.');
       if (day) { try { showToast('⛽ Fuel sales paused — today\'s station sales limit is reached. Your fuel is back in the tank.', 5200); } catch (e) {} }
+      try { saveProfile && saveProfile(); } catch (e) {}
+    },
+  });
+}
+
+/* 🚰 FUEL COMMAND'S OTHER PAYOUTS SETTLE ON THE SERVER (sql/198). Each was
+   addGems → the generic wallet_credit, i.e. whatever figure the client sent
+   (live maxima: NPC sale 250,563 a row and 9.69M in one player-day, a closed
+   position 500,000, a loan 100,000). Same four answers as _fcSalesPay
+   (see _faucetRun): paid → the server's figure; refused → the goods come back
+   once (barrels to the tank, the hedge or position stays open, the loan is
+   undone); missing → the old addGems path; network → retried once with the
+   same ref, then credited locally + the reconcile flag. */
+function _fcNpcSalePay(s, qty, rev) {
+  const why = 'Fuel Command: NPC sale';
+  if (!(rev > 0)) return;
+  const payLocal = () => addGems(rev, why);
+  const p = _faucetRemote('faucet_fc_npc_sale', { p_qty: qty | 0, p_amount: rev | 0 });
+  if (!p) { payLocal(); return; }
+  return _faucetRun('fcnpc', 'faucet_fc_npc_sale', p, {
+    missing: payLocal,
+    paid: (r) => _faucetCreditLocal(Number(r.paid) || rev, why),
+    network: () => { _faucetCreditLocal(rev, why); try { _walletMarkReconcile(); } catch (e) {} },
+    refused: (r) => {
+      s.fuel += qty;                           // uncapped: an undo (the _refundRes rule)
+      s.supply = _fcClamp(s.supply - qty * FC_NPC_SUPPLY_PER_BBL, 3, 100);
+      const day = r && r.reason === 'day';
+      _fcLog('warn', '⛽ ' + qty + ' bbl NOT sold to the NPC — ' + (day ? 'today\'s NPC sales limit is reached' : 'the sale was refused (' + ((r && r.reason) || 'error') + ')') + '. The fuel is back in the tank.');
+      try { showToast('⛽ NPC sale refused — ' + (day ? 'today\'s limit is reached' : 'the server did not accept that price') + '. Your fuel is back in the tank.', 5200); } catch (e) {}
+      try { saveProfile && saveProfile(); } catch (e) {}
+    },
+  });
+}
+function _fcHedgePay(s, hedge, gain) {
+  const why = 'Fuel Command: hedge settled';
+  if (!(gain > 0) || !hedge) return;
+  const payLocal = () => addGems(gain, why);
+  const p = _faucetRemote('faucet_fc_hedge', { p_qty: hedge.qty | 0, p_amount: gain | 0 });
+  if (!p) { payLocal(); return; }
+  return _faucetRun('fchedge', 'faucet_fc_hedge', p, {
+    missing: payLocal,
+    paid: (r) => _faucetCreditLocal(Number(r.paid) || gain, why),
+    network: () => { _faucetCreditLocal(gain, why); try { _walletMarkReconcile(); } catch (e) {} },
+    refused: (r) => {
+      if (!s.hedge) s.hedge = hedge;           // not paid → still the player's hedge
+      _fcLog('warn', 'Hedge NOT paid — ' + (((r && r.reason) === 'rate') ? 'one hedge settlement per 10 minutes' : ((r && r.reason) === 'day') ? 'today\'s hedge payout limit is reached' : 'refused (' + ((r && r.reason) || 'error') + ')') + '. The hedge is still open.');
+      try { showToast('📈 Hedge payout refused — the hedge is still open; settle it again later.', 5200); } catch (e) {}
+      try { saveProfile && saveProfile(); } catch (e) {}
+    },
+  });
+}
+function _fcInsurancePay() {
+  const n = 4000, why = 'Fuel Command: insurance payout';
+  const p = _faucetRemote('faucet_fc_insurance', {});
+  if (!p) { addGems(n, why); return; }
+  return _faucetRun('fcins', 'faucet_fc_insurance', p, {
+    missing: () => addGems(n, why),
+    paid: (r) => _faucetCreditLocal(Number(r.paid) || n, why),
+    network: () => { _faucetCreditLocal(n, why); try { _walletMarkReconcile(); } catch (e) {} },
+    refused: (r) => { _fcLog('warn', '🛡 Insurance claim refused (' + ((r && r.reason) || 'error') + ') — nothing was paid.'); },
+  });
+}
+function _fcPositionClosePay(s, pos, payout) {
+  const why = 'Fuel Command: position closed';
+  const payLocal = () => addGems(payout, why);  // addGems(0) is a no-op, as before
+  if (!pos || !pos.ref) { payLocal(); return; } // opened before sql/198 or signed out: the old path
+  // Called even for a payout of 0: the server holds ONE open position per player.
+  const p = _faucetRemote('faucet_fc_position_close', { p_pos_ref: pos.ref, p_payout: Math.max(0, Math.round(payout)) });
+  if (!p) { payLocal(); return; }
+  return _faucetRun('fcpos', 'faucet_fc_position_close', p, {
+    missing: payLocal,
+    paid: (r) => {
+      _faucetCreditLocal(Number(r.paid) || 0, why);
+      if (Number(r.capped) > 0) _fcLog('warn', 'Position payout capped by the exchange — ¢' + Number(r.capped).toLocaleString() + ' over the limit was not paid.');
+    },
+    network: () => { _faucetCreditLocal(payout, why); try { _walletMarkReconcile(); } catch (e) {} },
+    refused: (r) => {
+      const why2 = r && r.reason;
+      if (why2 === 'closed') return;           // settled already (another tab)
+      if (why2 === 'no_position') {            // its opening never landed: nothing to settle
+        _fcLog('warn', 'The exchange never recorded that position — nothing to settle. Its stake returns with the next wallet sync.');
+        return;
+      }
+      if (!s.pos) s.pos = pos;                 // not paid → the server keeps it open, so do we
+      _fcLog('warn', 'Position close refused (' + (why2 || 'error') + ') — it is still open.');
+      try { showToast('📉 Close refused — the position is still open; close it again later.', 5200); } catch (e) {}
+      try { saveProfile && saveProfile(); } catch (e) {}
+    },
+  });
+}
+function _fcLoanDrawPay(s, loan) {
+  const n = loan.principal | 0, why = 'Fuel Command: loan drawn';
+  const told = () => { try { showToast('🏦 Loan disbursed: +¢' + n.toLocaleString() + ' Cinder.', 4800); } catch (e) {} };
+  const payLocal = () => { addGems(n, why); told(); };
+  const p = _faucetRemote('faucet_fc_loan_draw', { p_principal: n });
+  if (!p) { payLocal(); return; }
+  return _faucetRun('fcloan', 'faucet_fc_loan_draw', p, {
+    missing: payLocal,
+    paid: (r) => { _faucetCreditLocal(Number(r.paid) || n, why); told(); },
+    network: () => { _faucetCreditLocal(n, why); try { _walletMarkReconcile(); } catch (e) {} told(); },
+    refused: (r) => {
+      if (s.loan === loan) s.loan = null;      // no debt on the bank's books → no loan here either
+      _fcSyncLoanToBankEthos();
+      const w = (r && r.reason) === 'call' ? 'the bank lends at most ¢' + Number(r.max_call || 0).toLocaleString() + ' per station loan'
+              : (r && r.reason) === 'open' ? 'an earlier Ethos Fuel loan is still unpaid on the bank\'s books'
+              : 'the bank refused (' + ((r && r.reason) || 'error') + ')';
+      _fcLog('warn', '🏦 Loan NOT disbursed — ' + w + '.');
+      try { showToast('🏦 Loan refused — ' + w + '.', 5200); } catch (e) {}
       try { saveProfile && saveProfile(); } catch (e) {}
     },
   });
@@ -235706,7 +236033,7 @@ async function _openChest(tierId) {
     // Cinder / Aza
     if (Math.random() < t.cinderCh) {
       const c = t.cinder[0] + Math.floor(Math.random() * (t.cinder[1] - t.cinder[0] + 1));
-      try { addCinders(c); } catch (e) { Profile.gems = (Profile.gems | 0) + c; }
+      try { addCinders(c, 'Chest opened (' + (t.name || tierId) + ')'); } catch (e) { Profile.gems = (Profile.gems | 0) + c; }
       lines.push('🔥 ' + c.toLocaleString() + ' Cinder');
     }
     /* 👑 THE SERVER ROLLS THIS ONE, and it is the clearest case for why.
@@ -240009,6 +240336,21 @@ async function _cityMgrSend(node, dC, dS, ctx) {
          above is the owner's and already has the cut taken off. */
       if (Number(j.mayor_cut) > 0) { try { _cityCutReport(j.mayor_cut, j.mayor_pct); } catch (e) {} }
       if (j.salvage && typeof j.salvage === 'object') CityMgr.salvage = j.salvage;
+      /* 🚰 sql/198 CLAMPS a mayor's credit (per call, and per rolling 24 h per
+         mayor and node — faucet_city_income's ceilings) and says how much it
+         did not pay. Over the per-call ceiling (a long stall's carried queue)
+         the rest is put back on the queue and banked by the next flushes;
+         over the day's it is gone, and the mayor is told once per session.
+         The balance adopted above is already the server's, either way. */
+      const _capped = Math.round(Number(j.capped) || 0);
+      if (_capped > 0) {
+        if (j.cap_reason === 'call' && ctx.earnings) {
+          CityMgr.pending.cinder += Math.min(_capped, Math.max(0, Math.round(ctx.earnings.cinder || 0)));
+        } else if (!CityMgr._capWarned) {
+          CityMgr._capWarned = true;
+          try { showToast('🏛 This city has reached today\'s payout limit for its owner — earnings above it are not paid until the 24-hour window frees up.', 6000); } catch (e) {}
+        }
+      }
       return true;
     }
     // Refused (the owner cannot afford it), or a reply with no verdict at all.
@@ -243185,8 +243527,11 @@ window.citySpendCost = (cost) => {
     if (!c.any) return true;
     if (_cityMgrStalled()) return _cityMgrRefuse();
     if (!CityMgr.active) {
-      if (c.cinder && !spendCinders(c.cinder)) return false;
-      if (Object.keys(c.salvage).length && !spendResources(c.salvage)) { if (c.cinder) addCinders(c.cinder); return false; }
+      // 🧾 sql/198: keyed, so the synchronous refund below nets to zero on the
+      //    server too (addCinders here credited the server a spend it was never billed).
+      const _cH = _cinderSpendRef(c.cinder, 'City builder: build cost');
+      if (!_cH) return false;
+      if (Object.keys(c.salvage).length && !spendResources(c.salvage)) { _cinderRefund(_cH, 'City builder: resources short'); return false; }
       return true;
     }
     return _cityMgrSpend(c.cinder, c.salvage);
@@ -247281,14 +247626,14 @@ window.cityMayorSet = async function (name) {
     const hits = await searchPlayers(name);
     const t = (hits || []).find((h) => h.name && h.name.toLowerCase() === String(name).toLowerCase()) || (hits || [])[0];
     if (!t) { showToast('🏛 No player found named "' + name + '".', 3500); return null; }
-    const paid = (typeof spendGems === 'function') ? spendGems(MAYOR_HIRE_FEE)
-               : (typeof spendCinders === 'function') ? spendCinders(MAYOR_HIRE_FEE) : false;
+    const _feeH = _cinderSpendRef(MAYOR_HIRE_FEE, 'City: mayor hiring pay');   // 🧾 sql/198 keyed
+    const paid = !!_feeH;
     if (!paid) { showToast('🎩 Appointing a mayor costs ' + MAYOR_HIRE_FEE + ' 🔥 hiring pay — not enough Cinder.', 4200); return null; }
     const myName = (Profile.cloud && Profile.cloud.displayName) || (typeof _campRegName === 'function' && _campRegName()) || 'the node owner';
     const r = await Cloud.client.rpc('city_set_mayor', { p_mayor_id: t.userId, p_mayor_name: t.name, p_pay: MAYOR_HIRE_FEE, p_from: myName });
     if (r && r.error) {
       // Appointment failed server-side — refund the fee.
-      try { if (typeof addCinders === 'function') addCinders(MAYOR_HIRE_FEE); } catch (e) {}
+      try { _cinderRefund(_feeH, 'City: mayor appointment failed'); } catch (e) {}
       showToast('🏛 Appointment failed — hiring pay refunded.', 3800);
       return null;
     }
@@ -248283,7 +248628,7 @@ async function _mayorPayClaim() {
     if (total <= 0) return;
     const upd = await Cloud.client.from('city_mayor_pay').update({ claimed: true }).in('id', rows.map((x) => x.id));
     if (upd && upd.error) return;   // claim failed — leave rows for next pass
-    try { addCinders(total); } catch (e) {}
+    try { addCinders(total, 'City: mayor pay claimed'); } catch (e) {}
     const who = rows[0].from_name ? (' from ' + rows[0].from_name) : '';
     showToast('🎩💰 Mayor hiring pay' + who + ' — +' + total + ' 🔥 Cinder!', 6000);
   } catch (e) {}
@@ -249131,9 +249476,9 @@ function _bdCanPay(s) {
     return true;
   } catch (e) { return false; }
 }
-function _bdApply(s, dir) {   // dir -1 = pay/escrow, +1 = receive/refund
+function _bdApply(s, dir, why) {   // dir -1 = pay/escrow, +1 = receive/refund
   try {
-    if (s.cinder) { dir > 0 ? addCinders(s.cinder) : spendCinders(s.cinder); }
+    if (s.cinder) { dir > 0 ? addCinders(s.cinder, why || 'Broker deal') : spendCinders(s.cinder, why || 'Broker deal'); }
     if (s.aza) { Profile.sovereigns = Math.max(0, (Profile.sovereigns | 0) + dir * s.aza); }
     for (const k in (s.res || {})) { dir > 0 ? addRes(k, s.res[k]) : addRes(k, -s.res[k]); }
     for (const k in (s.cards || {})) {
@@ -249199,18 +249544,18 @@ async function _brokerOpen() {
       const j = (r && r.data) || {};
       if (!j.ok) { showToast('🤝 ' + (j.error === 'deal_unavailable' ? 'Deal already taken.' : 'Accept failed.')); return; }
       _bdApply(d.want || {}, -1);   // pay the maker's ask (held on the row for their Claim)
-      _bdApply(d.give || {}, +1);   // receive the escrowed goods
+      _bdApply(d.give || {}, +1, 'Broker: deal goods received');   // receive the escrowed goods
       showToast('🤝 Deal closed — goods received.', 3200); _brokerOpen();
     } catch (e) { showToast('🤝 Accept failed.'); }
   });
   host.querySelectorAll('[data-bd-cancel]').forEach((b) => b.onclick = async () => {
     const d = rows.find((x) => x.id === b.dataset.bdCancel); if (!d) return;
-    try { const r = await Cloud.client.from('broker_deals').update({ status: 'cancelled' }).eq('id', d.id).eq('status', 'open').select(); if (r && r.data && r.data.length) { _bdApply(d.give || {}, +1); showToast('↩ Deal cancelled — escrow refunded.'); } } catch (e) {}
+    try { const r = await Cloud.client.from('broker_deals').update({ status: 'cancelled' }).eq('id', d.id).eq('status', 'open').select(); if (r && r.data && r.data.length) { _bdApply(d.give || {}, +1, 'Broker: deal cancelled (escrow returned)'); showToast('↩ Deal cancelled — escrow refunded.'); } } catch (e) {}
     _brokerOpen();
   });
   host.querySelectorAll('[data-bd-claim]').forEach((b) => b.onclick = async () => {
     const d = rows.find((x) => x.id === b.dataset.bdClaim); if (!d) return;
-    try { const r = await Cloud.client.from('broker_deals').update({ payout_claimed: true }).eq('id', d.id).eq('payout_claimed', false).select(); if (r && r.data && r.data.length) { _bdApply(d.want || {}, +1); showToast('💰 Payout collected.'); } } catch (e) {}
+    try { const r = await Cloud.client.from('broker_deals').update({ payout_claimed: true }).eq('id', d.id).eq('payout_claimed', false).select(); if (r && r.data && r.data.length) { _bdApply(d.want || {}, +1, 'Broker: deal payout collected'); showToast('💰 Payout collected.'); } } catch (e) {}
     _brokerOpen();
   });
   const post = host.querySelector('#bd-post');
@@ -252992,11 +253337,12 @@ function bindLabBreed() {
     const A = App.labBreedA, B = App.labBreedB;
     if (!A || !B || A.id === B.id) return;
     if (_breedCooldownLeft(A.id) > 0 || _breedCooldownLeft(B.id) > 0) { showToast('⏳ A parent is still resting from the last breeding.'); return; }
-    const paid = (typeof spendGems === 'function') ? spendGems(BREED_COST_CINDER) : false;
+    const _breedH = _cinderSpendRef(BREED_COST_CINDER, 'Lab: breeding');   // 🧾 sql/198 keyed
+    const paid = !!_breedH;
     if (!paid) { showToast('Not enough Cinder — breeding costs ' + BREED_COST_CINDER.toLocaleString() + ' 🔥.'); return; }
     const core = breedToCore(A, B);
     if (!core) {
-      try { if (typeof addCinders === 'function') addCinders(BREED_COST_CINDER); } catch (e) {}
+      try { _cinderRefund(_breedH, 'Lab: breeding failed'); } catch (e) {}
       showToast('⚠ Breeding failed — Cinder refunded.');
       return;
     }
@@ -255104,7 +255450,7 @@ function _twChosenAwardTrophy(chosen) {
   if (!chosen) return;
   // Cinder + Aza payout — generous because this is a major milestone.
   try {
-    if (typeof addCinders === 'function') addCinders(50000);
+    if (typeof addCinders === 'function') addCinders(50000, 'Territory Wars: Chosen trophy');
     // 25 Aza ≈ $25 — the single largest grant in the game, so it is the last
     // one that should be mintable from the client. Amount + rate now live in
     // aza_reward_rules.tw_chosen_trophy.
@@ -255336,7 +255682,7 @@ function _twCancelDarkEvent(darkEventId, sabotageNodeId) {
   t.nodes = (t.nodes || []).filter(n => n.id !== (sabotageNodeId || event.sabotageNodeId));
   // Reward — chunky Cinder + small Aza pop.
   try {
-    if (typeof addCinders === 'function') addCinders(10000);
+    if (typeof addCinders === 'function') addCinders(10000, 'Territory Wars: dark event cancelled');
     // amount + rate: aza_reward_rules. Reported from the server's answer, not
     // bumped locally — a refused grant used to show "+5 Aza" and vanish at the
     // next boot (same defect as bug-mu7bk9gy; see sovRewardReply).
@@ -263815,7 +264161,7 @@ function _twResolveAttackOutcome() {
     try {
       const bonus = (typeof _twGameModeRewardBonus === 'function') ? _twGameModeRewardBonus(App.state) : null;
       if (bonus && (bonus.cinder > 0 || bonus.fuel > 0)) {
-        if (bonus.cinder > 0 && typeof addCinders === 'function') addCinders(bonus.cinder);
+        if (bonus.cinder > 0 && typeof addCinders === 'function') addCinders(bonus.cinder, 'Territory Wars: game-mode bonus');
         if (bonus.fuel > 0) {
           // Route fuel to the player's resource bag via the standard
           // gainResources helper if available.
@@ -263830,7 +264176,7 @@ function _twResolveAttackOutcome() {
       }
       // 💻 Hack Mainframe bonus reward (Reward approach).
       if (App.state.mods && App.state.mods.twHack && App.state.mods.twHack.bonusCinder > 0) {
-        if (typeof addCinders === 'function') addCinders(App.state.mods.twHack.bonusCinder);
+        if (typeof addCinders === 'function') addCinders(App.state.mods.twHack.bonusCinder, 'Territory Wars: hack vault payout');
         showToast(`💻 Hack vault payout: +${App.state.mods.twHack.bonusCinder.toLocaleString()} Cinder.`, 4500);
       }
       // 📊 Game-mode end-screen — stash a stat summary for the result
@@ -263887,7 +264233,7 @@ function _twResolveAttackOutcome() {
         const vu = (App.state.units || []).find(u => u && u.id === vipState.unitId);
         if (vipState.extracted) {
           showToast('🆘 VIP rescued — +5,000 Cinder bonus.', 4500);
-          if (typeof addCinders === 'function') addCinders(5000);
+          if (typeof addCinders === 'function') addCinders(5000, 'Territory Wars: VIP rescued');
         } else if (vu && !vu.alive && !vu._bleeding) {
           showToast('💀 VIP killed — permanent loss.', 5000);
         } else if (vu && vu._bleeding) {

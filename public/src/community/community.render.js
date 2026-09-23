@@ -803,7 +803,7 @@ async function onClick(ev) {
       const r = await api.claimRewards(openId);
       if (!r.ok) { b.toast('⚠ ' + (r.error || 'Could not claim.')); return; }
       if (!(r.amount > 0)) { b.toast('Nothing to claim.'); return; }
-      b.addGems(r.amount); try { b.saveProfile(); } catch (e) {}
+      b.addGems(r.amount, 'Community: rewards claimed'); try { b.saveProfile(); } catch (e) {}
       b.toast('💰 Claimed 🔥 ' + fmtNum(r.amount) + '.');
       try { b.render(); } catch (e) {}
       await refreshCommunity();
@@ -823,7 +823,7 @@ async function onClick(ev) {
       try { b.saveProfile(); } catch (e) {}
       const r = await api.addContribution(openId, amt, note);
       if (!r.ok) {
-        b.addGems(amt); try { b.saveProfile(); } catch (e) {}
+        b.addGems(amt, 'Refund: Community contribution failed'); try { b.saveProfile(); } catch (e) {}
         b.toast('⚠ Contribution failed — refunded. ' + (r.missing ? 'Run the Community SQL first.' : (r.error || '')));
         return;
       }

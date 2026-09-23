@@ -725,7 +725,7 @@ function bind(s) {
          balance the way Aza is. Noted in sql/041: what the server protects
          here is the contract's TERMS and the REPUTATION, both of which gate
          content. Moving Cinder itself server-side is a far larger change. */
-      if (r && r.ok && r.pays && r.pays.cinder) { try { addGems(r.pays.cinder | 0); } catch (e) {} }
+      if (r && r.ok && r.pays && r.pays.cinder) { try { addGems(r.pays.cinder | 0, 'Weaponsmith: contract delivered'); } catch (e) {} }
       paint();
     };
   });

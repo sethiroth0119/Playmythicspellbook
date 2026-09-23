@@ -180250,7 +180250,7 @@ function renderGameOverOverlay() {
         <!-- 📡 Share stays available but OUT of the three-button row, which the
              reference design fixes at exactly three. Hiding the button entirely
              would have silently removed a shipped feature. -->
-        <div class="gox-sharerow"><button class="gox-sharelink" id="btn-share-broadcast-2">📡 Share this result to Broadcast</button></div>
+        <div class="gox-sharerow"><button class="gox-sharelink" id="btn-share-broadcast-2">📡 Share this result to Broadcast</button><button class="gox-sharelink" id="btn-go-camp" style="margin-left:1.1rem" title="Straight to Camp Ops — collect what you brought back and open the Vault">→ Camp</button></div>
       </div>
     </div>
   `;
@@ -180362,7 +180362,7 @@ function bindGameOverEvents() {
     }
     render();
   };
-  const goExit = () => {
+  const goExit = (toCamp) => {
     App.ui._gameOverHidden = false;
     if (App.ui) App.ui.rankedResult = null;
     App.campaignVictory = null;
@@ -180392,9 +180392,23 @@ function bindGameOverEvents() {
     if (wasWorld && typeof worldBattleAfter === 'function') { worldBattleAfter(); return; }
     if (wasRlc && typeof rlcAfterBattle === 'function') { rlcAfterBattle(); return; }
     if (wasGym && typeof gymAfterBattle === 'function') { gymAfterBattle(); return; }
-    App.screen = 'title';
+    // `=== true`, not truthiness: as an onclick this receives the MouseEvent.
+    if (toCamp === true) { App.screen = 'campOps'; App._campReturnsToBunker = true; }
+    else App.screen = 'title';
     render();
   };
+  /* 🏕 → CAMP (bug-mu0pejur). Players fight, then walk Menu → Camp → Camp Ops
+     every time to empty what they brought back and hit the Vault. This is the
+     same Exit (identical teardown) landing on Camp Ops the way the Bunker's
+     own nav does (_baseNavTo 'campOps'). It lives in the link row under the
+     three action buttons, which the design fixes at three. Hidden for run modes
+     (Warpath, world, roguelite, gym): their after-battle hooks own where the
+     player goes next, and Exit already defers to them. */
+  const campBtn = document.getElementById('btn-go-camp');
+  if (campBtn) {
+    if (wasWarpath || wasWorld || wasRlc || wasGym) campBtn.hidden = true;
+    else campBtn.onclick = () => goExit(true);
+  }
   if (playBtn) playBtn.onclick = goPlayAgain;
   if (exitBtn) exitBtn.onclick = goExit;
   if (playMiniBtn) playMiniBtn.onclick = goPlayAgain;

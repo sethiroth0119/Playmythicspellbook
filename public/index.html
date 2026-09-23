@@ -66447,7 +66447,40 @@ async function boeApplySubmit(payload) {
   showToast('📝 Bank of Ethos account opened — application filed to City Hall.', 6000);
   return true;
 }
-async function boeFetch() {
+/* 🏦 ONE READ OF THE BANK ROW AT A TIME, AND A BACKGROUND WAY TO GET IT.
+   bug-mtr5bze0: "you still have to go into the Bank of Ethos before you can go
+   to City Hall." True — City Hall's back office is gated on BankEthos.ready +
+   _appSubmitted, and the ONLY thing that sets them is boeFetch(), which only
+   openBankOfEthos() (and MythicBank.ensure) ever called. City Hall read the
+   flag and never asked, so a fresh session showed "Open a Bank of Ethos account
+   first" to a player who already had one, until they walked through the bank.
+   Now City Hall and the start-up warm pass (_cityWarmup) call boeEnsureReady().
+   boeFetch is single-flight because those callers can now overlap with
+   openBankOfEthos: two concurrent first reads for a brand-new player would both
+   INSERT the row, and the loser's duplicate-key error set _err='setup' and
+   returned false — the bank then skipped its settlement chain. Joining the read
+   already in flight is the same answer, fetched once. */
+let _boeFetchBusy = null;
+function boeFetch() {
+  if (_boeFetchBusy) return _boeFetchBusy;
+  _boeFetchBusy = _boeFetchOnce().finally(() => { _boeFetchBusy = null; });
+  return _boeFetchBusy;
+}
+/* Resolves true when the account is loaded. Never re-reads a loaded row (the
+   bank's own panels refresh it), signed-out = false without a request, and it
+   is raced against `ms` so a read that never answers cannot hold City Hall's
+   splash — the late answer still lands in BankEthos and the next paint uses it. */
+function boeEnsureReady(ms) {
+  try {
+    if (BankEthos.ready) return Promise.resolve(true);
+    if (!(Profile && Profile.cloud && Profile.cloud.signedIn)) return Promise.resolve(false);
+    return Promise.race([
+      boeFetch().then((ok) => !!ok, () => false),
+      new Promise((r) => setTimeout(() => r(false), ms || 8000)),
+    ]);
+  } catch (e) { return Promise.resolve(false); }
+}
+async function _boeFetchOnce() {
   try {
     const t = await _boeRow();
     if (!t) { BankEthos._err = 'signin'; return false; }
@@ -68606,6 +68639,7 @@ function openCityHall() {
     const online = !!(typeof initCloud === 'function' && initCloud() && Profile.cloud && Profile.cloud.signedIn);
     const numF = (n) => { n = Number(n) || 0; return n >= 1000 ? n.toLocaleString() : String(n); };
     let tab = 'registry';
+    let _chBoeLoading = false;   // bug-mtr5bze0 — bank row read in flight
     const ov = document.createElement('div');
     ov.id = ID;
     /* 🏛 THE GROUND IS `.keep-modal-ov` NOW, NOT A LOCAL COPY OF IT.
@@ -69012,6 +69046,10 @@ function openCityHall() {
         body = '<div class="ink-dim" style="padding:1.8rem;text-align:center">📡 City Hall is a shared civic system. Sign in to your account to access the registry &amp; courts.</div>';
       } else if (typeof FoundationReserve !== 'undefined' && FoundationReserve.tableMissing) {
         body = '<div class="ink-dim" style="padding:1.8rem;text-align:center">🏛️ City Hall is being established — run the Foundation Reserve setup SQL (see the Foundation Reserve panel), then return.</div>';
+      } else if (!hasBoeAccount && _chBoeLoading) {
+        // bug-mtr5bze0: the account is being read below — don't flash the
+        // "open an account first" splash at a player who already has one.
+        body = '<div class="ink-dim" style="padding:1.8rem;text-align:center">🏦 Checking your Bank of Ethos account…</div>';
       } else if (!hasBoeAccount) {
         body = '<div style="padding:1.6rem;text-align:center;max-width:520px;margin:0 auto">' +
           '<div style="font-size:2.2rem;margin-bottom:8px">🏦</div>' +
@@ -69155,6 +69193,19 @@ function openCityHall() {
       host.querySelectorAll('[data-det-bail]').forEach(b => { b.onclick = () => { if (b.disabled) return; b.disabled = true; b.textContent = 'Posting…'; detentionBail(b.getAttribute('data-det-bail')).then(_detRefresh); }; });
       host.querySelectorAll('[data-det-release]').forEach(b => { b.onclick = () => { if (b.disabled) return; b.disabled = true; detentionRelease(b.getAttribute('data-det-release')).then(_detRefresh); }; });
     };
+    /* 🏦 bug-mtr5bze0: City Hall loads the bank account itself instead of
+       sending the player through the Bank of Ethos first (see boeEnsureReady).
+       The ledger is read once on the way so the Bank Account tab is not empty. */
+    if (online && !BankEthos.ready && typeof boeEnsureReady === 'function') {
+      _chBoeLoading = true;
+      boeEnsureReady(8000).then((ok) => {
+        _chBoeLoading = false;
+        if (ok && !(BankEthos.ledger || []).length && typeof boeFetchLedger === 'function') {
+          boeFetchLedger().then(() => { if (document.getElementById(ID)) render(); }, () => {});
+        }
+        if (document.getElementById(ID)) render();
+      });
+    }
     render();
     if (online && !(typeof FoundationReserve !== 'undefined' && FoundationReserve.tableMissing)) {
       cityHallFetch().then(render);
@@ -240359,6 +240410,9 @@ async function _cityWarmup(force) {
       push(typeof nodeFetch === 'function' ? nodeFetch : null);
       push(typeof cityHallFetch === 'function' ? cityHallFetch : null);
       push(typeof corpTreasuryFetch === 'function' ? corpTreasuryFetch : null);
+      // bug-mtr5bze0: the Bank of Ethos row too — City Hall's back office is
+      // gated on it. Skipped once loaded, so later passes cost no request.
+      push(typeof boeEnsureReady === 'function' ? boeEnsureReady : null);
       await Promise.race([Promise.all(jobs), new Promise((r) => setTimeout(r, 8000))]);
       _cityWarm.at = Date.now();
       return true;

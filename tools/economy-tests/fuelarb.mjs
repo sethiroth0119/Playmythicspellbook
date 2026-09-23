@@ -320,6 +320,30 @@ function boot(opts) {
                     { id: 'short', sev: 2, nm: 'Sector Shortage', ico: '🛢', d: '' },
                     { id: 'glut',  sev: 2, nm: 'Refinery Glut', ico: '📉', d: '' }];
   stub.addGems = (n) => { stub.Profile.gems = (stub.Profile.gems | 0) + (n | 0); };
+  /* sql/196 + sql/198 routed Fuel Command's payouts through server doors
+     (_fcSalesPay / _fcNpcSalePay / _fcHedgePay / _fcPositionClosePay). This
+     harness runs signed out, where each door takes its own `payLocal` path —
+     addGems of the same amount, exactly what these call sites did before — so
+     the stubs are that path. The invariant measured here (buy N → sell N
+     always loses) is about the amounts, not about which door pays them. */
+  stub._fcSalesPay = (s, sold, gross) => { if (sold > 0 && gross > 0) stub.addGems(gross); };
+  stub._fcNpcSalePay = (s, qty, rev) => { if (rev > 0) stub.addGems(rev); };
+  stub._fcHedgePay = (s, hedge, gain) => { if (gain > 0 && hedge) stub.addGems(gain); };
+  stub._fcPositionClosePay = (s, pos, payout) => { stub.addGems(payout); };
+  /* sql/198's keyed spend (fcOpenPos's stake). Signed out it is a plain local
+     debit with no server ref — state 'legacy', so the position closes the old
+     way — which is the `Profile.gems -= stake` this call site used to be. */
+  stub._cinderSpendRef = (amount) => {
+    amount = Math.floor(Number(amount) || 0);
+    if (amount <= 0) return { amount: 0, ref: null, state: 'none', refunded: false, done: Promise.resolve(null) };
+    if ((stub.Profile.gems | 0) < amount) return null;
+    stub.Profile.gems = (stub.Profile.gems | 0) - amount;
+    return { amount, ref: null, state: 'legacy', refunded: false, done: Promise.resolve(null) };
+  };
+  stub._cinderRefund = (h) => {
+    if (!h || h.refunded || !(h.amount > 0)) return Promise.resolve();
+    h.refunded = true; stub.addGems(h.amount); return Promise.resolve();
+  };
 
   const S = {
     fuel: 0, fuelCap: opts.fuelCap || 1250, supply: 50, npc: 0, lastNpc: 0,

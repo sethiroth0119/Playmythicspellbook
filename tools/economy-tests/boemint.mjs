@@ -253,6 +253,21 @@ function bank(w) {
       w.gems -= n; w.gemSpent += n; return true;
     },
     addGems: (n) => { w.gems += n; w.gemRefunded += n; },
+    /* sql/198 routed the deposit fee through a keyed spend / refund pair
+       (_cinderSpendRef / _cinderRefund). Signed out — this harness — the pair
+       is exactly the spendGems / addGems it replaced (no server ref: 'legacy'),
+       so it is modelled on the two stubs above and keeps their counters. */
+    _cinderSpendRef: (amount) => {
+      amount = Math.floor(Number(amount) || 0);
+      if (amount <= 0) return { amount: 0, ref: null, state: 'none', refunded: false, done: Promise.resolve(null) };
+      if (w.gems < amount) return null;
+      w.gems -= amount; w.gemSpent += amount;
+      return { amount, ref: null, state: 'legacy', refunded: false, done: Promise.resolve(null) };
+    },
+    _cinderRefund: (h) => {
+      if (!h || h.refunded || !(h.amount > 0)) return Promise.resolve();
+      h.refunded = true; w.gems += h.amount; w.gemRefunded += h.amount; return Promise.resolve();
+    },
     getRes: (id) => w.stash[id] | 0,
     spendResources: (o) => {
       for (const k in o) if ((w.stash[k] | 0) < o[k]) return false;

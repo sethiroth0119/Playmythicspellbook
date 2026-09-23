@@ -58782,6 +58782,45 @@ function addSeasonXp(amount, reason) {
   try { saveProfile(); } catch (e) {}
 }
 
+/* 🚰 A TIER'S CINDER SETTLES ON THE SERVER (sql/198 faucet_season_pass).
+   This was a direct Profile.gems write + _serverMirrorCredit, and the only
+   "already claimed" test was claimed*Tiers in the player's own save — live,
+   one player-day held 25 payouts of 'season-pass tier 1'. The door pays each
+   (season, track, tier) once per account, at the server's price
+   (season_pass_tiers, seeded from SEASON_*_REWARDS — _faucets2_smoke fails if
+   they drift), for a season no older than the newest one paid and at most one
+   ahead of it, and premium only with a premium unlock on the ledger.
+   refused → nothing is paid. A refusal that is about the CLAIM (already paid,
+   wrong season, no premium) keeps the tier marked claimed; one that is about
+   the moment (day cap, the wallet's own limits) un-marks it so the button
+   comes back. missing → the old two lines, unchanged. */
+function _seasonPayCinder(sp, tier, isPremium, claimedMap, amt) {
+  const why = 'season-pass tier ' + tier + (isPremium ? ' (premium)' : '');
+  const old = () => {
+    Profile.gems = (Profile.gems | 0) + amt;
+    if (typeof _serverMirrorCredit === 'function') { try { _serverMirrorCredit(amt, why); } catch (e) {} }
+  };
+  if (!(amt > 0)) return;
+  const track = isPremium ? 'premium' : 'free';
+  const p = _faucetRemote('faucet_season_pass', { p_season: ((sp && sp.seasonNumber) | 0) || 1, p_tier: tier | 0, p_track: track });
+  if (!p) { old(); return; }
+  return _faucetRun('season:' + track + ':' + tier, 'faucet_season_pass', p, {
+    missing: old,
+    paid: (r) => _faucetCreditLocal(Number(r.paid) || amt, why),
+    network: () => { _faucetCreditLocal(amt, why); try { _walletMarkReconcile(); } catch (e) {} },
+    refused: (r) => {
+      const w = (r && r.reason) || 'error';
+      const final = (w === 'claimed' || w === 'season' || w === 'premium' || w === 'tier' || w === 'track');
+      if (!final) { try { delete claimedMap[String(tier)]; saveProfile(); } catch (e) {} }
+      const msg = w === 'claimed' ? 'this tier was already paid on your account'
+                : w === 'season' ? 'the server has your pass in a different season'
+                : w === 'premium' ? 'no Premium unlock for this season is on record'
+                : w === 'day' ? 'today\'s Season Pass payout limit is reached — claim it again later'
+                : 'the server refused it (' + w + ')' + (final ? '' : ' — claim it again later');
+      try { showToast('🎟 Tier ' + tier + (isPremium ? ' premium' : '') + ' Cinder not paid — ' + msg + '.', 5200); } catch (e) {}
+    },
+  });
+}
 // Claim a single tier reward. tier = 1..SEASON_TIER_COUNT; track = 'free' | 'premium'.
 // Refuses if the tier isn't unlocked, if already claimed, or if premium isn't owned.
 function claimSeasonReward(tier, track) {
@@ -58797,10 +58836,7 @@ function claimSeasonReward(tier, track) {
   // Apply the reward — single switch per kind. Each branch is fail-safe.
   switch (reward.kind) {
     case 'cinder': {
-      Profile.gems = (Profile.gems | 0) + (reward.amount | 0);
-      if (typeof _serverMirrorCredit === 'function') {
-        try { _serverMirrorCredit(reward.amount, 'season-pass tier ' + tier + (isPremium ? ' (premium)' : '')); } catch (e) {}
-      }
+      _seasonPayCinder(sp, tier, isPremium, claimedMap, reward.amount | 0);   // 🚰 sql/198
       break;
     }
     case 'aza': {

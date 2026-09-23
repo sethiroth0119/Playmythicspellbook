@@ -219,10 +219,19 @@ function residential() {
     value: clamp01(rep.attract),
     causes,
     limit: rep.limitText || '',
+    /* 👥 bug-mucu5m51: this read `rep.population` under the label
+       "Population", so the same city was 1,206 on the main counter and 55 here.
+       The city ledger (`hostPop` = cityPop()) is THE population — jobs,
+       services and citizens all read it — so it gets the name. This module's
+       own figure is the residents it has placed in DWELLINGS, and it is labelled
+       as that; the gap is people the city shelters outside any home tile (base
+       camp, node anchors). Occupancy is DWELLINGS (households ÷ homes), not
+       heads, so it is labelled as such. */
     stat: [
-      { k: 'Population', v: n0(rep.population) },
+      { k: 'Population', v: n0(rep.hostPop > 0 ? rep.hostPop : rep.population) },
+      { k: 'In homes', v: n0(rep.population) },
       { k: 'Homes', v: n0(rep.homes) },
-      { k: 'Occupancy', v: pc(rep.occupancy) },
+      { k: 'Homes occupied', v: pc(rep.occupancy) },
       { k: 'Net / day', v: (rep.netPerDay > 0 ? '+' : '') + n1(rep.netPerDay) },
     ],
     note: 'This meter is the city’s own attractiveness figure — the average, across every kind of household that looked at every zone, of how willing they were to move in. The list beside it is that same reading’s own list of reasons, printed word for word.',

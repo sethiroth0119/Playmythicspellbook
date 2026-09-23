@@ -60,10 +60,27 @@ export function turnoverOf(zoneId) {
    Returns null for anything that is not residential — commercial, office,
    industrial and warehouse zones hold jobs, not homes, and this module has an
    opinion about neither. */
+/* 🔴 /src/zoning's OWN IDS, NAMED. bug-mucu5m51. The keyword pass below was
+   written before that module landed, and its real ids are one-letter prefixes
+   the keywords cannot see: `c_low` / `o_low` read as "low" and `c_high` /
+   `o_high` as "high", so EVERY shop, restaurant and office standing on
+   commercial or office land was counted as detached houses or towers — homes
+   in the Zoning panel and, via capacityDelta(), phantom beds in popCap(). And
+   `r_apt` / `r_condo` / `r_rent` / `r_mansion` matched nothing and fell back
+   to a guess. The prefix is the category (zoning/zones.js CATS: r c o i), so
+   c_/o_/i_ are never homes; `r_asbuilt` has no archetype by design and is left
+   to deriveFromBuilding(), exactly as unzoned land is. */
+const ZONING_IDS = {
+  r_low: 'resLow', r_mansion: 'resLow', r_row: 'resRow', r_apt: 'resApt',
+  r_condo: 'resApt', r_high: 'resHigh', r_mixed: 'resMixed', r_rent: 'resLowRent',
+  r_asbuilt: null,
+};
 export function normalizeZone(raw) {
   if (raw == null) return null;
   const exact = String(raw);
   if (D().zones[exact]) return exact;
+  if (/^[coi]_/.test(exact)) return null;
+  if (Object.prototype.hasOwnProperty.call(ZONING_IDS, exact)) return ZONING_IDS[exact];
   const s = exact.toLowerCase().replace(/[^a-z0-9]/g, '');
   if (!s) return null;
   // Non-residential first: 'commercialLow' contains 'low' and must not become
@@ -184,6 +201,13 @@ export function deriveFromBuilding(parcel) {
   const t = String(parcel.type || '');
   const lvl = Math.max(1, parcel.lvl | 0 || 1);
   if (t === 'lot') return 'resLowRent';
+  /* 🏢 THE DENSITY LADDER (node-city BUILDINGS apartment → highrise) arrived
+     after this function and was never added, so a player who built apartments
+     saw the Zoning panel's Homes stay put while the city's beds rose
+     (bug-mucu5m51). The zone only picks WHO moves in — survey() still lets the
+     building's own popCap set how many. */
+  if (t === 'apartment' || t === 'aptblock') return 'resApt';
+  if (t === 'apttower' || t === 'highrise') return 'resHigh';
   if (t !== 'housing') return null;
   if (lvl <= 1) return 'resLow';
   if (lvl === 2) return 'resRow';

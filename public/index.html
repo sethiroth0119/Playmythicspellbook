@@ -232414,7 +232414,7 @@ function fcNpcSell(qty) {
   const unit = fcNpcQuote(qty, -1).bid;
   const rev  = Math.floor(qty * unit);         // floor: rounding may only widen the loss
   s.fuel -= qty;
-  addGems(rev, 'Fuel Command: NPC sale');
+  _fcNpcSalePay(s, qty, rev);                  // 🚰 sql/198 faucet_fc_npc_sale (was addGems)
   s.supply = _fcClamp(s.supply + qty * FC_NPC_SUPPLY_PER_BBL, 3, 100);
   // 📉 Selling to the NPC → exchange fuel price DOWN. Same call the bid above
   // was quoted from, applied for real — same _fcCxUnits. Player-chosen, so it
@@ -232527,10 +232527,9 @@ function fcOpenLoan(principal, rate) {
   if (!principal || principal <= 0) { showToast('⚠️ Enter a loan amount above 0.', 3200); return false; }
   if ((s.creditLimit | 0) > 0 && principal > s.creditLimit) { showToast('⚠️ Exceeds credit limit (¢' + (s.creditLimit | 0).toLocaleString() + ').', 4200); return false; }
   s.loan = { principal: principal | 0, balance: principal | 0, rate: rate || 0.012, openedAt: Date.now() };
-  addGems((principal | 0), 'Fuel Command: loan drawn');
+  _fcLoanDrawPay(s, s.loan);                   // 🚰 sql/198 faucet_fc_loan_draw (was addGems); it toasts
   _fcSyncLoanToBankEthos();
   _fcLog('event', 'Took out ¢' + principal.toLocaleString() + ' Bank of Ethos loan @ ' + Math.round((rate || 0.012) * 100) + '% / cycle.');
-  showToast('🏦 Loan disbursed: +¢' + principal.toLocaleString() + ' Cinder.', 4800);
   try { saveProfile && saveProfile(); } catch (e) {} try { saveForge && saveForge(); } catch (e) {}
   return true;
 }
@@ -232540,8 +232539,22 @@ function fcPayLoan(amount) {
   const pay = Math.min(amount | 0, s.loan.balance | 0);
   if (pay <= 0) { showToast('Nothing to repay (enter an amount above 0).', 3200); return false; }
   if ((Profile.gems | 0) < pay) return notEnoughToast('cinder', pay, Profile.gems | 0);
-  Profile.gems = (Profile.gems | 0) - pay;
-  try { _serverMirrorCharge(pay, 'Fuel Command: Loan repayment'); } catch (e) {}
+  /* 🚰 sql/198 fc_loan_repay: charged by the door that books it against the
+     server's debt row (was a direct write + _serverMirrorCharge). A refusal
+     means the server wallet could not cover it: the Cinder and the loan
+     balance both come back, once. */
+  const _before = Object.assign({}, s.loan);
+  const h = _cinderSpendRef(pay, 'Fuel Command: Loan repayment', 'fc_loan_repay', { p_amount: pay });
+  if (!h) return notEnoughToast('cinder', pay, Profile.gems | 0);
+  h.done.then(() => {
+    if (h.state !== 'refused') return;
+    _cinderRefund(h, 'Fuel Command: loan repayment refused');
+    if (s.loan && s.loan.openedAt === _before.openedAt) s.loan.balance += pay; else if (!s.loan) s.loan = _before;
+    _fcSyncLoanToBankEthos();
+    _fcLog('warn', '🏦 Repayment of ¢' + pay.toLocaleString() + ' refused by the bank — the Cinder is back and the loan is as it was.');
+    try { showToast('🏦 Repayment refused — your wallet on the server could not cover it. Nothing was paid.', 5200); } catch (e) {}
+    try { saveProfile && saveProfile(); } catch (e) {}
+  });
   s.loan.balance -= pay;
   if (s.loan.balance <= 1) {
     _fcLog('good', 'Loan paid in full!');
@@ -232602,7 +232615,7 @@ function fcSettleHedge() {
   const mark = _fcSettleMark(s.hedge.price, +1, s.hedge.exoLift, s.hedge.exoDrop);
   const diff = (mark - s.hedge.price) * s.hedge.qty;
   const gain = Math.round(Math.max(0, diff));
-  addGems(gain, 'Fuel Command: hedge settled');
+  _fcHedgePay(s, s.hedge, gain);               // 🚰 sql/198 faucet_fc_hedge (was addGems)
   _fcLog(gain > 0 ? 'good' : 'warn', 'Hedge settled — ' + (gain > 0 ? '+' : '') + _fcFmt(gain) + '₵ banked.');
   showToast(gain > 0 ? ('Hedge paid +¢' + _fcFmt(gain)) : 'Hedge expired flat.', 3200);
   s.hedge = null;
@@ -232613,8 +232626,12 @@ function fcOpenPos(side, stake) {
   if (s.pos) { showToast('Close current position first.', 3200); return false; }
   stake = Math.max(50, stake | 0);
   if ((Profile.gems | 0) < stake) return notEnoughToast('cinder', stake, Profile.gems | 0);
-  Profile.gems = (Profile.gems | 0) - stake;
-  try { _serverMirrorCharge(stake, 'Fuel Command: Open position (' + side + ')'); } catch (e) {}
+  /* 🚰 sql/198 fc_position_open: the stake is charged by the door that RECORDS
+     the position (was a direct write + _serverMirrorCharge), so the close can
+     be bounded by a stake the server actually took. `ref` names it at close;
+     no server row (sql/198 absent, signed out) → no ref → the old close path. */
+  const h = _cinderSpendRef(stake, 'Fuel Command: Open position (' + side + ')', 'fc_position_open', { p_side: side, p_stake: stake });
+  if (!h) return notEnoughToast('cinder', stake, Profile.gems | 0);
   fcRecalcNpc();                 // enter at the LIVE mark, same reason as fcLockHedge
   // Both watermarks: a LONG is paid only for a recorded exogenous rise, a SHORT
   // only for a recorded exogenous fall. fcClosePos caps against the matching one.
@@ -232658,7 +232675,7 @@ function fcClosePos() {
   const pl   = Math.round(s.pos.stake * (1 + dir * move * 4));
   const payout = Math.max(0, pl);
   const delta  = pl - s.pos.stake;
-  addGems(payout, 'Fuel Command: position closed');
+  _fcPositionClosePay(s, s.pos, payout);       // 🚰 sql/198 faucet_fc_position_close (was addGems)
   _fcLog(delta >= 0 ? 'good' : 'bad', 'Closed ' + s.pos.side.toUpperCase() + ' — return ¢' + _fcFmt(payout) + ' (P/L ' + (delta >= 0 ? '+' : '') + _fcFmt(delta) + ').');
   showToast('Position closed: ' + (delta >= 0 ? '+' : '') + '¢' + _fcFmt(delta), 3200);
   s.pos = null;
@@ -232740,7 +232757,7 @@ function fcRunExtraction() {
   if (Math.random() < risk * 0.6) {
     yieldN = Math.round(yieldN * 0.4);
     _fcLog('warn', 'Extraction hit trouble in the field — reduced yield.');
-    fcFireEvent('bandit');
+    fcFireEvent('bandit', true);   // a real raid on the run — insurance may pay
   }
   s.crude = _fcClamp(s.crude + yieldN, 0, s.crudeCap);
   _fcLog('good', 'Extraction returned ' + yieldN + ' bbl crude (cap ' + roll.cap + ' — ' + roll.why + ').');
@@ -232803,7 +232820,7 @@ function _fcShock(forced, reason, dir) {
   if (forced) return;
   _fcExoMove(d, units, reason);
 }
-function fcFireEvent(forceId) {
+function fcFireEvent(forceId, genuine) {
   const s = ensureFuelCommand();
   // ⚠ FORCED means the price shock below was CHOSEN, not rolled — the Events tab
   //   ships a "Force Trigger" button for every event, including the two that
@@ -232870,7 +232887,13 @@ function fcFireEvent(forceId) {
     }
     case 'boom':   { const f = Math.min(s.fuel, _fcRnd(100, 300)); s.fuel -= f; s.damage += 40; s.repSafety -= 12; if (Math.random() < 0.4) s.workers = Math.max(0, s.workers - 1); msg = 'MASSIVE LOSS — ' + f + ' bbl gone, station crippled.'; break; }
   }
-  if (s.insured && ['bandit', 'scp', 'boom'].includes(ev.id)) { addGems(4000, 'Fuel Command: insurance payout'); msg += ' Insurance paid out +¢4,000.'; }
+  /* 🛡 INSURANCE PAYS A LOSS YOU SUFFERED, NOT ONE YOU CLICKED. The Events tab's
+     "Force Trigger" on SCP / Explosion / Bandit paid 4,000 a click to an
+     insured station — the same chosen-vs-rolled hole the price shocks above
+     close with `forced`. `genuine` is the extraction run's own bandit raid,
+     which is forced by id but not chosen. The payout settles through
+     sql/198 faucet_fc_insurance (fixed 4,000, needs a premium on the ledger). */
+  if (s.insured && ['bandit', 'scp', 'boom'].includes(ev.id) && (!forced || genuine)) { _fcInsurancePay(); msg += ' Insurance paid out +¢4,000.'; }
   s.repSafety = _fcClamp(s.repSafety, -30, 40);
   const level = (ev.id === 'inspect' && msg.startsWith('Passed')) ? 'good' : (ev.sev >= 2 ? 'bad' : 'warn');
   _fcLog(level, ev.ico + ' ' + ev.nm + ' — ' + msg);
@@ -232906,6 +232929,114 @@ function _fcSalesPay(s, sold, gross) {
       _fcSalesPauseUntil = Date.now() + (day ? 10 * 60 * 1000 : 30 * 1000);
       _fcLog('warn', '⛽ ' + sold + ' bbl NOT sold — ' + (day ? 'the station has hit today\'s sales limit' : 'the sale was refused (' + ((r && r.reason) || 'error') + ')') + '. The fuel is back in the tank.');
       if (day) { try { showToast('⛽ Fuel sales paused — today\'s station sales limit is reached. Your fuel is back in the tank.', 5200); } catch (e) {} }
+      try { saveProfile && saveProfile(); } catch (e) {}
+    },
+  });
+}
+
+/* 🚰 FUEL COMMAND'S OTHER PAYOUTS SETTLE ON THE SERVER (sql/198). Each was
+   addGems → the generic wallet_credit, i.e. whatever figure the client sent
+   (live maxima: NPC sale 250,563 a row and 9.69M in one player-day, a closed
+   position 500,000, a loan 100,000). Same four answers as _fcSalesPay
+   (see _faucetRun): paid → the server's figure; refused → the goods come back
+   once (barrels to the tank, the hedge or position stays open, the loan is
+   undone); missing → the old addGems path; network → retried once with the
+   same ref, then credited locally + the reconcile flag. */
+function _fcNpcSalePay(s, qty, rev) {
+  const why = 'Fuel Command: NPC sale';
+  if (!(rev > 0)) return;
+  const payLocal = () => addGems(rev, why);
+  const p = _faucetRemote('faucet_fc_npc_sale', { p_qty: qty | 0, p_amount: rev | 0 });
+  if (!p) { payLocal(); return; }
+  return _faucetRun('fcnpc', 'faucet_fc_npc_sale', p, {
+    missing: payLocal,
+    paid: (r) => _faucetCreditLocal(Number(r.paid) || rev, why),
+    network: () => { _faucetCreditLocal(rev, why); try { _walletMarkReconcile(); } catch (e) {} },
+    refused: (r) => {
+      s.fuel += qty;                           // uncapped: an undo (the _refundRes rule)
+      s.supply = _fcClamp(s.supply - qty * FC_NPC_SUPPLY_PER_BBL, 3, 100);
+      const day = r && r.reason === 'day';
+      _fcLog('warn', '⛽ ' + qty + ' bbl NOT sold to the NPC — ' + (day ? 'today\'s NPC sales limit is reached' : 'the sale was refused (' + ((r && r.reason) || 'error') + ')') + '. The fuel is back in the tank.');
+      try { showToast('⛽ NPC sale refused — ' + (day ? 'today\'s limit is reached' : 'the server did not accept that price') + '. Your fuel is back in the tank.', 5200); } catch (e) {}
+      try { saveProfile && saveProfile(); } catch (e) {}
+    },
+  });
+}
+function _fcHedgePay(s, hedge, gain) {
+  const why = 'Fuel Command: hedge settled';
+  if (!(gain > 0) || !hedge) return;
+  const payLocal = () => addGems(gain, why);
+  const p = _faucetRemote('faucet_fc_hedge', { p_qty: hedge.qty | 0, p_amount: gain | 0 });
+  if (!p) { payLocal(); return; }
+  return _faucetRun('fchedge', 'faucet_fc_hedge', p, {
+    missing: payLocal,
+    paid: (r) => _faucetCreditLocal(Number(r.paid) || gain, why),
+    network: () => { _faucetCreditLocal(gain, why); try { _walletMarkReconcile(); } catch (e) {} },
+    refused: (r) => {
+      if (!s.hedge) s.hedge = hedge;           // not paid → still the player's hedge
+      _fcLog('warn', 'Hedge NOT paid — ' + (((r && r.reason) === 'rate') ? 'one hedge settlement per 10 minutes' : ((r && r.reason) === 'day') ? 'today\'s hedge payout limit is reached' : 'refused (' + ((r && r.reason) || 'error') + ')') + '. The hedge is still open.');
+      try { showToast('📈 Hedge payout refused — the hedge is still open; settle it again later.', 5200); } catch (e) {}
+      try { saveProfile && saveProfile(); } catch (e) {}
+    },
+  });
+}
+function _fcInsurancePay() {
+  const n = 4000, why = 'Fuel Command: insurance payout';
+  const p = _faucetRemote('faucet_fc_insurance', {});
+  if (!p) { addGems(n, why); return; }
+  return _faucetRun('fcins', 'faucet_fc_insurance', p, {
+    missing: () => addGems(n, why),
+    paid: (r) => _faucetCreditLocal(Number(r.paid) || n, why),
+    network: () => { _faucetCreditLocal(n, why); try { _walletMarkReconcile(); } catch (e) {} },
+    refused: (r) => { _fcLog('warn', '🛡 Insurance claim refused (' + ((r && r.reason) || 'error') + ') — nothing was paid.'); },
+  });
+}
+function _fcPositionClosePay(s, pos, payout) {
+  const why = 'Fuel Command: position closed';
+  const payLocal = () => addGems(payout, why);  // addGems(0) is a no-op, as before
+  if (!pos || !pos.ref) { payLocal(); return; } // opened before sql/198 or signed out: the old path
+  // Called even for a payout of 0: the server holds ONE open position per player.
+  const p = _faucetRemote('faucet_fc_position_close', { p_pos_ref: pos.ref, p_payout: Math.max(0, Math.round(payout)) });
+  if (!p) { payLocal(); return; }
+  return _faucetRun('fcpos', 'faucet_fc_position_close', p, {
+    missing: payLocal,
+    paid: (r) => {
+      _faucetCreditLocal(Number(r.paid) || 0, why);
+      if (Number(r.capped) > 0) _fcLog('warn', 'Position payout capped by the exchange — ¢' + Number(r.capped).toLocaleString() + ' over the limit was not paid.');
+    },
+    network: () => { _faucetCreditLocal(payout, why); try { _walletMarkReconcile(); } catch (e) {} },
+    refused: (r) => {
+      const why2 = r && r.reason;
+      if (why2 === 'closed') return;           // settled already (another tab)
+      if (why2 === 'no_position') {            // its opening never landed: nothing to settle
+        _fcLog('warn', 'The exchange never recorded that position — nothing to settle. Its stake returns with the next wallet sync.');
+        return;
+      }
+      if (!s.pos) s.pos = pos;                 // not paid → the server keeps it open, so do we
+      _fcLog('warn', 'Position close refused (' + (why2 || 'error') + ') — it is still open.');
+      try { showToast('📉 Close refused — the position is still open; close it again later.', 5200); } catch (e) {}
+      try { saveProfile && saveProfile(); } catch (e) {}
+    },
+  });
+}
+function _fcLoanDrawPay(s, loan) {
+  const n = loan.principal | 0, why = 'Fuel Command: loan drawn';
+  const told = () => { try { showToast('🏦 Loan disbursed: +¢' + n.toLocaleString() + ' Cinder.', 4800); } catch (e) {} };
+  const payLocal = () => { addGems(n, why); told(); };
+  const p = _faucetRemote('faucet_fc_loan_draw', { p_principal: n });
+  if (!p) { payLocal(); return; }
+  return _faucetRun('fcloan', 'faucet_fc_loan_draw', p, {
+    missing: payLocal,
+    paid: (r) => { _faucetCreditLocal(Number(r.paid) || n, why); told(); },
+    network: () => { _faucetCreditLocal(n, why); try { _walletMarkReconcile(); } catch (e) {} told(); },
+    refused: (r) => {
+      if (s.loan === loan) s.loan = null;      // no debt on the bank's books → no loan here either
+      _fcSyncLoanToBankEthos();
+      const w = (r && r.reason) === 'call' ? 'the bank lends at most ¢' + Number(r.max_call || 0).toLocaleString() + ' per station loan'
+              : (r && r.reason) === 'open' ? 'an earlier Ethos Fuel loan is still unpaid on the bank\'s books'
+              : 'the bank refused (' + ((r && r.reason) || 'error') + ')';
+      _fcLog('warn', '🏦 Loan NOT disbursed — ' + w + '.');
+      try { showToast('🏦 Loan refused — ' + w + '.', 5200); } catch (e) {}
       try { saveProfile && saveProfile(); } catch (e) {}
     },
   });

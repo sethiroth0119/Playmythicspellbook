@@ -240009,6 +240009,21 @@ async function _cityMgrSend(node, dC, dS, ctx) {
          above is the owner's and already has the cut taken off. */
       if (Number(j.mayor_cut) > 0) { try { _cityCutReport(j.mayor_cut, j.mayor_pct); } catch (e) {} }
       if (j.salvage && typeof j.salvage === 'object') CityMgr.salvage = j.salvage;
+      /* 🚰 sql/198 CLAMPS a mayor's credit (per call, and per rolling 24 h per
+         mayor and node — faucet_city_income's ceilings) and says how much it
+         did not pay. Over the per-call ceiling (a long stall's carried queue)
+         the rest is put back on the queue and banked by the next flushes;
+         over the day's it is gone, and the mayor is told once per session.
+         The balance adopted above is already the server's, either way. */
+      const _capped = Math.round(Number(j.capped) || 0);
+      if (_capped > 0) {
+        if (j.cap_reason === 'call' && ctx.earnings) {
+          CityMgr.pending.cinder += Math.min(_capped, Math.max(0, Math.round(ctx.earnings.cinder || 0)));
+        } else if (!CityMgr._capWarned) {
+          CityMgr._capWarned = true;
+          try { showToast('🏛 This city has reached today\'s payout limit for its owner — earnings above it are not paid until the 24-hour window frees up.', 6000); } catch (e) {}
+        }
+      }
       return true;
     }
     // Refused (the owner cannot afford it), or a reply with no verdict at all.

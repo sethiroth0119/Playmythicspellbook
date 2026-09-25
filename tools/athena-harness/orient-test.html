@@ -1,0 +1,24 @@
+<!doctype html><html><head><meta charset="utf-8"><title>orient test</title>
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.171.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/" } }</script>
+</head><body>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+try {
+  const src = await (await fetch('/src/haul/index.js')).text();
+  const block = src.slice(src.indexOf('/* ═══ 🚛 GLB rigs and containers'), src.indexOf('/* ───── haul.game.js ───── */'));
+  const api = new Function('THREE', block + '\nreturn { haulAutoOrient, haulKnownRot };')(THREE);
+  const loader = new GLTFLoader(); const out = [];
+  for (const f of ['freight_semi', 'feed_truck', 'livestock_truck', 'tanker']) {
+    const g = await loader.loadAsync('/models/trucks/' + f + '.glb');
+    for (const r of [0, 90, 180, 270]) {
+      const holder = new THREE.Group(); const inner = g.scene.clone(true); inner.rotation.y = r * Math.PI / 180; holder.add(inner);
+      const rot = api.haulAutoOrient(THREE, holder);                 // measured, no filename
+      const known = api.haulAutoOrient(THREE, holder, '/models/trucks/' + f + '.glb');
+      const d = new THREE.Vector3(-1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), r * Math.PI / 180).applyAxisAngle(new THREE.Vector3(0, 1, 0), rot * Math.PI / 180);
+      out.push({ f, pre: r, rot, cabToPlusZ: d.z > 0.99, knownOk: r === 0 ? known === 90 : true });
+    }
+  }
+  window.__res = out;
+} catch (e) { window.__res = 'ERR ' + (e && e.stack || e); }
+</script></body></html>

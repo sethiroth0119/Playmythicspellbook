@@ -1,0 +1,2 @@
+/* D1 — 28px boxes only */
+.fx-two input[type="checkbox"], .fx-two input[type="radio"] { width: 28px !important; height: 28px !important; }

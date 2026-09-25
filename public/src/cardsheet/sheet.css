@@ -1,0 +1,422 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   🎴 THE TABLETOP SHEET — card / unit detail, rebuilt as a character sheet
+   ──────────────────────────────────────────────────────────────────────────
+   WHY THIS FILE EXISTS. The owner asked for the detail view and the in-hand
+   detail view to stop being "a modal with a card in it" and start being the
+   thing you pick up at a table: a wide landscape character sheet, in a machined
+   frame, with the portrait on the left and everything you have to READ on the
+   right. The reference supplied is a blue holo-tech frame over a starfield —
+   beveled metal bars top and bottom, angled corners, a gold cost hex at the
+   top-left, a bond hex under it, and a dense but ORDERED right column.
+
+   🔴 THE RULE THIS SKIN IS BUILT ON: the sheet is LANDSCAPE and the right
+   column is the only thing that scrolls. A detail panel that scrolls as a whole
+   is a web page; a sheet whose frame stays put while one window of text moves
+   is an object. Everything below serves that: the frame, the two bottom bars
+   and the stat block are fixed furniture, and `.tts-read` is the window.
+
+   ⚠ Nothing here styles a bare tag. Every rule is under `.tts`, because this
+   file is loaded globally and index.html's own modal CSS is 270k lines that I
+   cannot audit for collisions. One unscoped `h3` would land somewhere I would
+   never look.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.tts-backdrop{
+  position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
+  padding:18px; background:rgba(3,5,12,.82);
+  -webkit-backdrop-filter:blur(7px) saturate(.9); backdrop-filter:blur(7px) saturate(.9);
+}
+
+/* ── 1. THE SHEET ─────────────────────────────────────────────────────────
+   The angled corners are a clip-path on the OUTER shell and a matching one on
+   an ::after hairline, rather than a border-image. A border-image cannot be cut
+   at 45° and a rotated pseudo-element per corner is four more boxes to keep in
+   sync when the sheet resizes. 18px is the bevel everywhere in this file — it
+   is a variable because the greebles and the bottom bars have to agree with it
+   to the pixel or the frame reads as two frames. */
+.tts{
+  --bev:18px;
+  --steel-1:#15304e; --steel-2:#2d6491; --steel-3:#63b6e8;
+  --cyan:#8fdcff; --cyan-dim:rgba(143,220,255,.34);
+  --ink:#050a16; --panel:#080f22; --panel-2:#0c1428;
+  --gold:#ffd166; --gold-dim:rgba(212,175,55,.34);
+  --txt:#dfe9f7; --txt-dim:#93a6c4;
+
+  position:relative; width:min(1240px,100%); max-height:min(92vh,860px);
+  display:grid; grid-template-columns:minmax(0,1.24fr) minmax(0,1fr);
+  /* 🔴 minmax(0,1fr) on the ROW, not the default `auto`. An auto row's minimum is
+     the min-content of its children, and the portrait is a full-size <img> — so
+     the row grew to the intrinsic image height and pushed the stat block and BOTH
+     footer bars off the bottom of the screen. max-height on .tts does not prevent
+     that; it only clips a layout that has already happened. Measured: 1440×900,
+     sheet laid out at 1204px tall before this line, 828px after. */
+  grid-template-rows:minmax(0,1fr);
+  gap:14px; padding:16px;
+  color:var(--txt); font-size:14px;
+  clip-path:polygon(var(--bev) 0,calc(100% - var(--bev)) 0,100% var(--bev),
+                    100% calc(100% - var(--bev)),calc(100% - var(--bev)) 100%,
+                    var(--bev) 100%,0 calc(100% - var(--bev)),0 var(--bev));
+  background:
+    radial-gradient(120% 90% at 18% 12%,rgba(60,140,210,.20),transparent 62%),
+    radial-gradient(90% 80% at 88% 88%,rgba(90,60,190,.18),transparent 66%),
+    linear-gradient(160deg,#0a1830 0%,#070d1e 45%,#0a1226 100%);
+  box-shadow:0 26px 70px rgba(0,0,0,.72), 0 0 0 1px rgba(99,182,232,.30),
+             inset 0 0 70px rgba(10,30,60,.8);
+}
+/* the machined edge: a bright hairline inset from the clip, so the bevel reads
+   as a chamfered METAL edge rather than as a cut-off rectangle. */
+.tts::before{
+  content:""; position:absolute; inset:5px; pointer-events:none; z-index:6;
+  clip-path:polygon(14px 0,calc(100% - 14px) 0,100% 14px,100% calc(100% - 14px),
+                    calc(100% - 14px) 100%,14px 100%,0 calc(100% - 14px),0 14px);
+  border:1px solid rgba(143,220,255,.42);
+  box-shadow:inset 0 0 22px rgba(99,182,232,.16);
+}
+/* a faint starfield so the sheet has depth behind the portrait without needing
+   an image file. Three sizes of dot at three opacities reads as parallax. */
+.tts::after{
+  content:""; position:absolute; inset:0; pointer-events:none; z-index:0; opacity:.55;
+  background-image:
+    radial-gradient(1.5px 1.5px at 12% 22%,rgba(255,255,255,.85),transparent),
+    radial-gradient(1px 1px at 33% 68%,rgba(180,220,255,.7),transparent),
+    radial-gradient(1.5px 1.5px at 58% 14%,rgba(255,255,255,.6),transparent),
+    radial-gradient(1px 1px at 72% 48%,rgba(200,230,255,.6),transparent),
+    radial-gradient(1px 1px at 88% 78%,rgba(255,255,255,.5),transparent),
+    radial-gradient(1.5px 1.5px at 24% 88%,rgba(190,225,255,.55),transparent);
+}
+
+/* corner greebles — the little tick stacks. repeating-linear-gradient, not six
+   divs each. */
+.tts-greeble{position:absolute;z-index:5;pointer-events:none;opacity:.8;
+  background:repeating-linear-gradient(90deg,var(--cyan) 0 2px,transparent 2px 5px);
+  height:4px;width:34px;filter:drop-shadow(0 0 4px rgba(143,220,255,.7))}
+.tts-greeble.tl{top:11px;left:26px}
+.tts-greeble.tr{top:11px;right:26px}
+.tts-greeble.bl{bottom:11px;left:26px}
+.tts-greeble.br{bottom:11px;right:26px}
+
+/* The × rides in the header ROW beside the title bar rather than floating over
+   it. Floated absolutely it landed on the bar's clipped right tip, where it read
+   as a glyph stuck to the title rather than as a control. */
+.tts-head{display:flex;align-items:stretch;gap:8px;flex:0 0 auto}
+.tts-head .tts-bar{flex:1 1 auto;min-width:0}
+.tts-close{
+  position:relative; flex:0 0 auto; z-index:9;
+  width:40px; min-height:40px; line-height:1; font-size:19px; cursor:pointer;
+  color:var(--cyan); background:rgba(4,10,22,.72);
+  border:1px solid rgba(143,220,255,.45);
+  clip-path:polygon(7px 0,100% 0,100% calc(100% - 7px),calc(100% - 7px) 100%,0 100%,0 7px);
+  transition:background .14s,color .14s;
+}
+.tts-close:hover{background:rgba(143,220,255,.2);color:#fff}
+
+/* ── 2. LEFT: the portrait plate ──────────────────────────────────────────
+   Deliberately NOT a bordered box. In the reference the character stands free
+   on the starfield with only a faint summoning ring behind them; boxing the art
+   is what made the old modal read as "a card inside a dialog". */
+.tts-left{position:relative;z-index:2;display:flex;flex-direction:column;min-width:0;min-height:0}
+.tts-stage{position:relative;flex:1 1 auto;min-height:0;display:flex;align-items:center;justify-content:center;padding:6px 8px 10px}
+/* the arcane/tech ring the figure stands on */
+.tts-stage::before{
+  content:"";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:min(82%,520px);aspect-ratio:1;border-radius:50%;pointer-events:none;
+  border:1px solid rgba(143,220,255,.18);
+  box-shadow:inset 0 0 0 1px rgba(143,220,255,.07),inset 0 0 90px rgba(45,100,145,.35),0 0 60px rgba(45,100,145,.22);
+  background:radial-gradient(circle,rgba(45,110,170,.22),transparent 68%);
+}
+.tts-art{position:relative;z-index:1;max-width:100%;max-height:100%;width:auto;height:auto;
+  object-fit:contain;filter:drop-shadow(0 18px 34px rgba(0,0,0,.75)) drop-shadow(0 0 26px rgba(80,160,230,.28))}
+/* 🃏 a card with no uploaded art still has to fill the plate — an emoji at its
+   natural size in a 500px stage is the "tiny glyph floating in a void" the
+   owner has flagged before. */
+.tts-art-fallback{position:relative;z-index:1;font-size:clamp(84px,17vw,190px);line-height:1;
+  filter:drop-shadow(0 14px 28px rgba(0,0,0,.7))}
+
+/* cost + bond hexes, stacked at the top-left ON the plate */
+/* The plates sit ON the portrait, as in the reference. They carry their own
+   shadow because the art behind them is arbitrary — a dark figure and a bright
+   one both have to leave the cost legible, and reserving empty space instead
+   would shrink the portrait on every card to protect against a few. */
+.tts-pips{position:absolute;top:2px;left:2px;z-index:3;display:flex;flex-direction:column;gap:9px;
+  filter:drop-shadow(0 5px 16px rgba(0,0,0,.85))}
+.tts-pip{display:flex;align-items:center;gap:0}
+.tts-hex{
+  width:62px;height:70px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;
+  font-family:'Cinzel',Georgia,serif;font-weight:800;font-size:25px;color:#2a1c00;
+  clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%);
+  background:linear-gradient(160deg,#ffe9a0,#f0b429 46%,#a8750c);
+  text-shadow:0 1px 0 rgba(255,255,255,.45);
+  filter:drop-shadow(0 3px 7px rgba(0,0,0,.6));
+}
+.tts-hex.bond{background:linear-gradient(160deg,#f2a8ff,#a44fd6 46%,#5b2790);font-size:23px;color:#fff}
+/* the plate the hex sits against */
+.tts-slot{
+  margin-left:-9px;min-width:104px;height:38px;display:flex;align-items:center;
+  padding:0 13px 0 20px;font-family:'Cinzel',Georgia,serif;font-size:12px;font-weight:700;
+  letter-spacing:.11em;text-transform:uppercase;color:#bcd6ef;
+  background:linear-gradient(180deg,rgba(24,52,82,.94),rgba(8,18,34,.94));
+  border:1px solid rgba(143,220,255,.28);border-left:none;
+  clip-path:polygon(0 0,calc(100% - 10px) 0,100% 10px,100% 100%,0 100%);
+}
+.tts-slot b{color:var(--gold);font-size:14px;margin-left:5px}
+/* ⚡0 from Underdog — the struck-through original has to stay visible or the
+   player reads a mis-priced card as a bug. */
+.tts-wascost{text-decoration:line-through;opacity:.5;font-size:14px;margin-left:5px;color:#8fa6c4}
+
+/* ── 3. THE BEVELED BARS ──────────────────────────────────────────────────
+   One class for all three (left footer, right header, right footer). */
+.tts-bar{
+  position:relative;z-index:2;flex:0 0 auto;min-height:46px;
+  display:flex;align-items:center;justify-content:center;gap:10px;
+  padding:7px 20px;
+  font-family:'Cinzel',Georgia,serif;font-weight:700;font-size:14px;
+  letter-spacing:.12em;text-transform:uppercase;color:#d8ecff;
+  text-shadow:0 0 12px rgba(143,220,255,.5);
+  clip-path:polygon(15px 0,calc(100% - 15px) 0,100% 50%,calc(100% - 15px) 100%,15px 100%,0 50%);
+  background:linear-gradient(180deg,#3079b2 0%,#1a4570 40%,#0d2440 62%,#194068 100%);
+  box-shadow:inset 0 1px 0 rgba(180,225,255,.45),inset 0 -1px 0 rgba(0,0,0,.6),
+             0 3px 12px rgba(0,0,0,.5);
+}
+.tts-bar::after{content:"";position:absolute;inset:3px 14px;pointer-events:none;
+  border-top:1px solid rgba(143,220,255,.28);border-bottom:1px solid rgba(143,220,255,.18)}
+.tts-bar.slim{min-height:40px;font-size:13px}
+
+/* ── 2b. MOVES & ATTACKS ──────────────────────────────────────────────────
+   🔴 WHY THESE LIVE IN THE LEFT COLUMN AND NOT IN THE READ WINDOW. A move is
+   the thing you opened a field unit to DO. Put it in `.tts-read` and it sits
+   below the flavour text, the passives and the trigger list — so on a unit with
+   two passives you scroll past lore to reach the attack button. The left column
+   already had dead air around a centred portrait; the moveset fills it, stays
+   on screen at all times, and the sheet ends up shaped like an actual character
+   sheet: portrait and actions on the left, lore and numbers on the right.
+
+   The art gives up the space, on purpose: `.tts-stage` is flex:1 and shrinks.
+   Measured at 1440×900 — a 4-move unit leaves the portrait 466px of the 768px
+   column, which is still larger than the old modal's entire card render. */
+.tts-moves{
+  flex:0 0 auto;display:flex;flex-direction:column;margin-bottom:9px;
+  max-height:min(46%,290px);
+  background:linear-gradient(180deg,rgba(10,18,40,.94),rgba(6,10,24,.94));
+  border:1px solid rgba(143,220,255,.22);
+}
+.tts-moves-h{flex:0 0 auto;display:flex;align-items:center;gap:7px;padding:7px 11px 6px;
+  font-family:'Cinzel',Georgia,serif;font-weight:700;font-size:11.5px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--gold);border-bottom:1px solid rgba(143,220,255,.14)}
+.tts-moves-h .ln{flex:1 1 auto;height:1px;background:linear-gradient(90deg,var(--gold-dim),transparent)}
+.tts-moves-b{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:5px}
+.tts-moves-b::-webkit-scrollbar{width:7px}
+.tts-moves-b::-webkit-scrollbar-track{background:rgba(0,0,0,.3)}
+.tts-moves-b::-webkit-scrollbar-thumb{background:rgba(143,220,255,.3)}
+
+.tts-move{
+  display:block;width:100%;text-align:left;cursor:pointer;
+  padding:6px 9px;margin-bottom:4px;color:inherit;
+  background:linear-gradient(90deg,rgba(30,58,96,.42),rgba(8,14,30,.5));
+  border:1px solid rgba(143,220,255,.2);border-left:3px solid rgba(143,220,255,.5);
+  transition:background .13s,border-color .13s;
+}
+.tts-move:last-child{margin-bottom:0}
+.tts-move:hover:not(:disabled){background:linear-gradient(90deg,rgba(48,110,170,.5),rgba(8,14,30,.5));
+  border-color:rgba(143,220,255,.55)}
+/* the SELECTED move — gold, because that is the colour the board already draws
+   the move ring in and a player should not have to learn a second mapping. */
+.tts-move.sel{border-color:var(--gold);border-left-color:var(--gold);
+  background:linear-gradient(90deg,rgba(212,175,55,.2),rgba(8,14,30,.5));
+  box-shadow:0 0 0 1px rgba(255,209,102,.35),0 0 16px rgba(255,209,102,.2)}
+.tts-move:disabled{opacity:.4;cursor:not-allowed;filter:grayscale(.5)}
+.tts-move.prio{border-left-color:#ffd45e}
+.tts-move-h{display:flex;align-items:center;gap:6px}
+.tts-move-nm{flex:1 1 auto;min-width:0;font-family:'Cinzel',Georgia,serif;font-weight:700;
+  font-size:13px;letter-spacing:.03em;color:#eaf4ff;font-variant:small-caps;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tts-move.sel .tts-move-nm{color:var(--gold)}
+.tts-move-cost{flex:0 0 auto;display:flex;align-items:center;gap:4px;font-weight:800;font-size:13px;color:#fff}
+.tts-move-cost s{opacity:.45;font-weight:600;font-size:11px}
+/* the energy orb, drawn here rather than borrowed from index.html's
+   `.energy-orb` — that class is styled five different ways across the app and
+   inheriting one of them inside this frame is a coin flip. */
+.tts-orb{width:13px;height:13px;border-radius:50%;flex:0 0 auto;
+  background:radial-gradient(circle at 34% 30%,#cfefff,#4aa8e8 55%,#17548c);
+  box-shadow:0 0 7px rgba(90,190,255,.8)}
+/* display:block again, and for the same reason as .tts-track — these are <span>s
+   inside a <button>, so without it the meta line and the flavour line run
+   together into one unreadable string ("…12% CritSwift basic attack"). A <div>
+   inside a <button> would have made the mistake impossible, but nesting block
+   elements in a button is its own can of worms in older engines. */
+.tts-move-meta{display:block;font-size:11px;color:#93a6c4;margin-top:2px;letter-spacing:.02em}
+.tts-move-desc{display:block;font-size:11px;font-style:italic;color:#b9a06a;margin-top:2px}
+.tts-move-note{padding:9px 11px;font-size:12px;color:#93a6c4;line-height:1.5}
+
+/* elements + factions live in the left footer bar as chips */
+.tts-chips{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap}
+.tts-chip{display:inline-flex;align-items:center;gap:6px;padding:3px 11px;
+  font-size:11.5px;letter-spacing:.09em;color:#e6f2ff;
+  background:rgba(4,12,24,.62);border:1px solid rgba(143,220,255,.34);
+  clip-path:polygon(6px 0,100% 0,calc(100% - 6px) 100%,0 100%)}
+.tts-chip img{height:17px;width:17px;object-fit:contain}
+.tts-chip.faction{border-color:var(--gold-dim);color:var(--gold)}
+
+/* the cyan diamond that stitches the two bottom bars together */
+.tts-stitch{position:absolute;left:50%;bottom:24px;z-index:7;transform:translate(-50%,0) rotate(45deg);
+  width:15px;height:15px;background:linear-gradient(135deg,#bff0ff,#3ea8dd);
+  box-shadow:0 0 16px rgba(143,220,255,.85);pointer-events:none}
+
+/* ── 4. RIGHT: the read column ────────────────────────────────────────────*/
+.tts-right{position:relative;z-index:2;display:flex;flex-direction:column;gap:11px;min-width:0;min-height:0}
+
+/* the one scrolling window */
+.tts-read{
+  flex:1 1 auto;min-height:90px;overflow-y:auto;overscroll-behavior:contain;
+  padding:13px 14px;
+  background:linear-gradient(180deg,rgba(10,18,40,.94),rgba(6,10,24,.94));
+  border:1px solid rgba(143,220,255,.22);
+  box-shadow:inset 0 0 34px rgba(30,70,130,.22),inset 0 1px 0 rgba(143,220,255,.14);
+}
+.tts-read::-webkit-scrollbar{width:7px}
+.tts-read::-webkit-scrollbar-track{background:rgba(0,0,0,.3)}
+.tts-read::-webkit-scrollbar-thumb{background:rgba(143,220,255,.3)}
+
+.tts-flavor{font-family:Georgia,'Times New Roman',serif;font-style:italic;
+  font-size:13px;line-height:1.55;color:#c3d3e8;margin-bottom:11px}
+
+.tts-h{display:flex;align-items:center;gap:7px;margin:13px 0 7px;
+  font-family:'Cinzel',Georgia,serif;font-weight:700;font-size:12.5px;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--gold)}
+.tts-h:first-child{margin-top:0}
+.tts-h .ln{flex:1 1 auto;height:1px;background:linear-gradient(90deg,var(--gold-dim),transparent)}
+
+.tts-box{
+  padding:8px 11px;margin-bottom:7px;
+  border:1px solid var(--gold-dim);border-left:3px solid var(--gold);
+  background:linear-gradient(90deg,rgba(212,175,55,.11),rgba(10,16,32,.5));
+}
+.tts-box .nm{font-family:'Cinzel',Georgia,serif;font-weight:700;font-size:13px;
+  letter-spacing:.06em;color:var(--gold);font-variant:small-caps}
+.tts-box .bd{font-size:12.5px;line-height:1.5;color:#cfdcee;margin-top:3px}
+/* the long-tail sections (counters, in-grave, on-resurrect, while-in-hand…)
+   arrive as HTML built by index.html and keep their own accent colour. Only the
+   shell is restyled, so a purple in-grave block stays purple. */
+.tts-box.cool{border-color:rgba(143,220,255,.34);border-left-color:var(--cyan);
+  background:linear-gradient(90deg,rgba(60,140,210,.13),rgba(10,16,32,.5))}
+.tts-box.cool .nm{color:var(--cyan)}
+
+.tts-note{font-size:12px;font-style:italic;line-height:1.5;color:#8fa6c4;
+  margin-top:10px;padding-top:9px;border-top:1px solid rgba(143,220,255,.14)}
+.tts-note.warn{color:#ff9a7a;font-style:normal}
+
+/* the "······" page dots from the reference — a quiet full-stop under the
+   read window so it does not end on a hard edge. */
+.tts-dots{display:flex;justify-content:center;gap:5px;margin-top:11px;opacity:.5}
+.tts-dots i{width:3px;height:3px;background:var(--cyan);border-radius:50%}
+
+/* ── 5. THE STAT BLOCK ────────────────────────────────────────────────────
+   Two fixed panels, never scrolled: the 3×2 numeric grid and the bars. These
+   are the numbers a player checks mid-decision, so they must be in the same
+   place on every card and must never be a scroll away. */
+.tts-stats{flex:0 0 auto;padding:4px;
+  background:linear-gradient(180deg,rgba(10,18,40,.94),rgba(6,10,24,.94));
+  border:1px solid rgba(143,220,255,.22)}
+.tts-grid{display:grid;grid-template-columns:repeat(3,1fr)}
+.tts-cell{display:flex;align-items:center;justify-content:center;gap:6px;padding:7px 4px;
+  border-right:1px solid rgba(143,220,255,.12);border-bottom:1px solid rgba(143,220,255,.12)}
+.tts-cell:nth-child(3n){border-right:none}
+.tts-cell:nth-last-child(-n+3){border-bottom:none}
+.tts-cell img{height:15px;width:15px;object-fit:contain}
+.tts-cell .k{font-family:'Cinzel',Georgia,serif;font-size:10.5px;letter-spacing:.1em;
+  text-transform:uppercase;color:#8fa6c4}
+.tts-cell .v{font-weight:800;font-size:15px;color:#fff}
+
+.tts-bars{flex:0 0 auto;display:flex;flex-direction:column;gap:5px;padding:9px 11px;
+  background:linear-gradient(180deg,rgba(10,18,40,.94),rgba(6,10,24,.94));
+  border:1px solid rgba(143,220,255,.22)}
+.tts-row{display:grid;grid-template-columns:52px 1fr 34px;align-items:center;gap:8px}
+.tts-row .k{display:flex;align-items:center;gap:4px;font-family:'Cinzel',Georgia,serif;
+  font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:#9db2ce}
+.tts-row .k img{height:13px;width:13px;object-fit:contain}
+.tts-row .v{text-align:right;font-weight:700;font-size:12px;color:#e8f2ff}
+/* 🔴 display:block is LOAD-BEARING on both of these. They are <span>s, and an
+   inline box ignores height and width outright — the first build painted six
+   correct-width fills at zero height and the bars read as six empty troughs. It
+   looked like the data was missing, not like the CSS was wrong, which is the
+   expensive kind of failure. Measured after the fix: HP 60/250 → 24.0% of a
+   443px track = 106px of green. */
+.tts-track{display:block;position:relative;height:11px;background:rgba(0,0,0,.5);
+  border:1px solid rgba(143,220,255,.16);overflow:hidden}
+.tts-fill{display:block;height:100%;background:var(--c,#63b6e8);
+  box-shadow:0 0 9px var(--c,#63b6e8),inset 0 1px 0 rgba(255,255,255,.35)}
+/* the segment ticks that make a bar read as a gauge rather than a progress bar */
+.tts-track::after{content:"";position:absolute;inset:0;pointer-events:none;
+  background:repeating-linear-gradient(90deg,transparent 0 9px,rgba(0,0,0,.55) 9px 11px)}
+
+/* ── 6. ACTIONS ───────────────────────────────────────────────────────────*/
+.tts-acts{display:flex;align-items:center;justify-content:center;gap:9px;flex-wrap:wrap}
+.tts-btn{
+  padding:8px 17px;cursor:pointer;font-family:'Cinzel',Georgia,serif;font-weight:700;
+  font-size:12.5px;letter-spacing:.1em;text-transform:uppercase;color:#d8ecff;
+  background:linear-gradient(180deg,rgba(48,121,178,.55),rgba(13,36,64,.8));
+  border:1px solid rgba(143,220,255,.4);
+  clip-path:polygon(8px 0,100% 0,calc(100% - 8px) 100%,0 100%);
+  transition:filter .14s,color .14s;
+}
+.tts-btn:hover:not(:disabled){filter:brightness(1.3);color:#fff}
+.tts-btn.go{background:linear-gradient(180deg,rgba(255,209,102,.8),rgba(140,96,12,.9));
+  border-color:rgba(255,209,102,.7);color:#2a1c00;text-shadow:0 1px 0 rgba(255,255,255,.35)}
+.tts-btn.cast{background:linear-gradient(180deg,rgba(150,110,235,.8),rgba(60,40,130,.9));
+  border-color:#b48cff;color:#fff}
+.tts-btn:disabled{opacity:.42;cursor:not-allowed;filter:grayscale(.55)}
+
+/* ── 7. NARROW ────────────────────────────────────────────────────────────
+   Below 860px the two columns stack and the SHEET becomes the scroller. That
+   contradicts §1 on purpose: on a phone there is no room for a fixed frame
+   around a moving window, and the alternative is a 90px-tall read window. */
+@media(max-width:860px){
+  /* 🔴 grid-template-rows MUST be released here. §1's minmax(0,1fr) is what keeps
+     the desktop sheet from growing past the screen, but stacked it pins the
+     FIRST row to the full container height while the second row is implicit and
+     auto — so the left column claimed everything and the right column drew on
+     top of it. Measured at 750px wide: the moves header and the read window
+     both painted at y≈310. */
+  .tts{grid-template-columns:minmax(0,1fr);grid-template-rows:none;
+       max-height:94vh;overflow-y:auto;gap:11px}
+  .tts-stage{min-height:230px;flex:0 0 auto}
+  /* a percentage max-height against an auto-height parent resolves to none, so
+     the moveset has to be told a real number once the column stops being a
+     fixed-height flex context. */
+  .tts-moves{max-height:266px}
+  .tts-read{overflow:visible;max-height:none}
+  .tts-stitch{display:none}
+  .tts-close{right:14px}
+}
+@media(max-width:520px){
+  .tts{--bev:12px;padding:11px;font-size:13px}
+  .tts-hex{width:52px;height:59px;font-size:21px}
+  .tts-bar{letter-spacing:.07em;font-size:12px}
+}
+.tts-slots{flex:0 0 auto;font-size:10.5px;letter-spacing:.08em;color:#8fa6c4;font-weight:700}
+
+/* ── 8. THE ANNOUNCER ─────────────────────────────────────────────────────
+   Owner: "Put this announcer bot next to all of the modal notifications as he
+   is the one giving the updates and the detail modals... Make him not too big
+   but not too small."
+
+   He rides the HEADER ROW, to the left of the title bar, so the sheet reads as
+   him presenting it rather than as a mascot parked in a corner. He is allowed
+   to overflow the row upward (the row is 40px, he is 64) because a herald
+   cropped to the exact height of a bar reads as an icon; leaning out of it
+   reads as a character standing behind the desk.
+
+   ⚠ HE IS A 2.6 MB / 72-frame ANIMATED WebP at 320x340. One <img> per open
+   modal is fine — the browser decodes the source ONCE and shares it across
+   every element with the same src — but he must never be given a size larger
+   than he is drawn at, and nothing should ever render a grid of him.
+   `content-visibility` is deliberately NOT set: it would stall the animation
+   while the modal is scrolled, which looks like the bot freezing. */
+.tts-herald{
+  flex:0 0 auto; width:64px; height:68px; margin:-22px 0 -6px 0;
+  object-fit:contain; pointer-events:none; align-self:flex-end;
+  filter:drop-shadow(0 4px 12px rgba(0,0,0,.7)) drop-shadow(0 0 16px rgba(90,170,255,.4));
+}
+@media(max-width:520px){ .tts-herald{width:50px;height:54px;margin-top:-14px} }
+/* 🌀 Respect the OS setting. The bot is decorative motion; a player who has
+   asked for less of it should not get a looping character in every modal. */
+@media(prefers-reduced-motion:reduce){ .tts-herald{filter:none} }

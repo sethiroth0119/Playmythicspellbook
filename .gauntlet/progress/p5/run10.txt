@@ -1,0 +1,71 @@
+
+0. boot
+  PASS the page booted with the diagnostics seam
+  PASS /src/plotmood mounted
+  PASS __nc.plotMood is on the seam
+  PASS __nc.tileStatus is on the seam
+   tiles at boot: 3 · /src/economy up
+
+1. seed a city with real problems in it
+   placed 18 tiles (17 by direct write) · board now 21
+   types chosen by predicate: {"home":"housing","works":"farm","shop":"gasstation","clinic":"clinic","kitchen":"foodtruck","lamp":"streetlight"}
+   wrecked 4,4 · site 5,4
+  PASS a wrecked tile and a construction site are on the board   4,4 / 5,4
+
+2. every judged tile: DOM vs __nc.plotMood — mismatch count must be 0
+   judged 10 tiles · 10 carried a card
+   faces:   {"frown":10}
+   reasons: {"damaged":1,"dark":2,"understaffed":5,"brownout":1,"road":1}
+   hard status-badge cases: 7 · card agreed on 7
+  PASS every judged tile carries a mood card   10 / 10
+  PASS MISMATCH COUNT IS 0 (reason id, printed number, face, glyph, fix, badge)   count=0
+  PASS no tile threw while its dossier was opened   count=0
+
+3. frowns with no fix sentence — count must be 0
+  PASS COUNT OF (face==frown && fix=="") IS 0   count=0
+  PASS /src/plotmood self-check is clean   judged=10 problems=0
+
+3b. the same sweep once the city is coping — happy faces must agree too
+   judged 11 tiles · 11 carried a card
+   faces:   {"frown":11}
+   reasons: {"dark":4,"firm:NO_WORKERS":4,"brownout":1,"firm:NO_FEEDSTOCK":1,"road":1}
+  PASS MISMATCH COUNT IS 0 on the recovered city too   count=0
+  PASS COUNT OF (face==frown && fix=="") IS 0 on the recovered city too   count=0
+
+3c. a city with nothing wrong with it — the content face must agree too
+   {"lamp":"streetlight","tiles":41,"powerLifted":true}
+   judged 11 tiles · faces: {"happy":8,"frown":3}
+   reasons: {"ok":8,"dark":1,"road":2}
+  PASS MISMATCH COUNT IS 0 on the contented city too   count=0
+   faces seen across all three sweeps: {"frown":3,"happy":8}
+   mapping: checked 11 tiles, 11 of them headlined by the module's own term
+  PASS the face mapping is total and the glyphs match it   problems=0
+  PASS the card was headlined by the module's own verdict on at least one tile   fromModule=11
+  PASS a content face was reached on a city with nothing wrong with it   happy=8 of 11 · faces {"happy":8,"frown":3}
+  PASS /src/power is back on the page after the §3c lift
+
+5. the verdict moves when the city moves
+   {"ok":true,"k":"6,4","acted":"streetlight at 6,2 (for dark)","before":{"reason":"dark","face":"frown","num":"3 tiles"},"after":{"reason":"power","face":"frown","num":"50%"},"moved":true}
+  PASS placing what the card told the player to build changed the verdict   
+
+4. the citizen mood breakdown, before this piece and after it
+   before: {"ok":true,"id":"c0","via":"window.MythicCitizenUI (seam lost it)","inHtml":true,"inDom":true,"terms":5,"weights":1,"sum":67.215}
+   after:  {"ok":true,"id":"c0","via":"window.MythicCitizenUI (seam lost it)","inHtml":true,"inDom":true,"terms":5,"weights":1,"sum":78.578}
+  PASS BEFORE this piece the mood breakdown is in the DOM
+  PASS AFTER this piece the mood breakdown is in the DOM
+  PASS the five mood terms still weigh exactly 1.00   weights=1 terms=5
+  FAIL the __nc seam still carries citizenUI on the live page (the boot race is closed)   via=window.MythicCitizenUI (seam lost it) · baseline via=window.MythicCitizenUI (seam lost it)
+
+FAILURES: 1
+
+console tail:
+  log: [MythicCityBridge] pushNodeBoost mock-supply 0%
+  log: [MythicCityBridge] pushNodeBoost mock-mining 0%
+  log: [MythicCityBridge] pushNodeBoost mock-fuel 0%
+  log: [MythicCityBridge] cityReport {morale: 55, hunger: 2, sync: 0, alliedCamps: 3, reconPerHr: 0.4}
+  log: [MythicCityBridge] pushNodeBoost mock-supply 0%
+  log: [MythicCityBridge] pushNodeBoost mock-mining 0%
+  log: [MythicCityBridge] pushNodeBoost mock-fuel 0%
+  log: [MythicCityBridge] pushNodeBoost mock-supply 0%
+  log: [MythicCityBridge] pushNodeBoost mock-mining 0%
+  log: [MythicCityBridge] pushNodeBoost mock-fuel 0%

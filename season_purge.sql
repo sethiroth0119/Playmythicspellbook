@@ -1,0 +1,79 @@
+-- ============================================================================
+--  🧹 ECONOMY PURGE  —  post-exploit reset
+--  Mythic Spellbook · project ktsiasyjusesawtrwrjc
+-- ============================================================================
+--
+--  ✅ STEP 1 APPLIED  (migration season_reset_allow_purge_scope)
+--     season_reset_scope_check now permits ('full','business','resources','purge').
+--
+--  ✅ STEP 2 APPLIED  (migrations season_purge_scope_and_rpc,
+--                      season_purge_fix_array_append_cast,
+--                      season_purge_match_real_schema)
+--     · season_apply() gained an `elsif v_scope = 'purge'` branch, so the wipe
+--       commits in the SAME transaction as the once-only mark. The 'full' /
+--       'business' / 'resources' branches were reproduced byte-identically.
+--     · _season_purge_apply(uuid) is the shared teardown.
+--     · season_purge_row() is the client-callable idempotent retry (v119q7
+--       calls it after its local clear, with a durable hg_purge_owed flag).
+--
+--  ⛔ STEP 3 NOT APPLIED — see the bottom of this file. It is the only step
+--     that touches player data.
+--
+-- ---------------------------------------------------------------------------
+--  WHAT STEP 2 ACTUALLY DOES (verified by rolled-back dry run on a live row):
+--    WIPED  gems 157959→0 · cinder 157959→0 · __cardCollection__ dropped ·
+--           __salvage__ dropped · item_inventory dropped · city_state.state
+--    KEPT   heroes unchanged · units unchanged · __account__ unchanged · Aza
+--
+--  TWO BUGS THE DRY RUN CAUGHT — both would have broken every purge:
+--    1. `v_cleared || 'cinder'` → Postgres read the untyped literal as an array
+--       literal and threw ("malformed array literal"). Needs ::text.
+--    2. corp_operations has NO user_id (it is keyed by corp_id) and
+--       corp_treasury is a corp-scoped ledger — deleting per-user could corrupt
+--       a shared corp's books. Both dropped from the helper; the tycoon forge
+--       keys are what the client actually reads, matching the 'business' scope.
+--    Also found: user_progress carries item_inventory / equipment /
+--    relic_equipment as REAL COLUMNS, not just forge keys. The first draft
+--    would have left every player's gear on the server.
+--
+--  ⚠ WHY THE SERVER HALF IS NOT OPTIONAL
+--  __cardCollection__ MAX-merges per card id on hydration (index.html ~L45107),
+--  as do __salvage__ / __itemInventory__. A client-only wipe is handed straight
+--  back by the next sync — exactly how the v118t3 resource wipe undid itself.
+--  Keys are DROPPED rather than emptied, because hydration only merges a key
+--  that is present.
+-- ============================================================================
+
+
+-- ── STEP 3 ── ⚠ THE TRIGGER. Everything above is inert; this is not. ────────
+-- Each client picks this up on its next poll (~2 min while online) and applies
+-- it exactly once, ever. There is no undo and no way to recall it.
+--
+-- ⚠ BEFORE RUNNING: reload any tab that has the game open. A directive is spent
+--   once per account by WHATEVER BUILD IS RUNNING — an already-open older tab
+--   consumes it with old code and the wipe cannot self-correct (v118t6).
+--
+-- insert into public.season_reset (scope, message)
+-- values ('purge', 'Economy reset — exploit remediation');
+
+
+-- ── VERIFICATION (safe, read-only) ─────────────────────────────────────────
+-- Run before and after. The wiped counts should FALL as players come online;
+-- the two "must stay flat" counts prove levels were not touched.
+--
+-- select count(*)                                             as profiles,
+--        count(*) filter (where coalesce(gems,0) > 0)         as with_gems,
+--        count(*) filter (where forge ? '__cardCollection__') as with_cards,
+--        count(*) filter (where forge ? '__salvage__')        as with_salvage,
+--        count(*) filter (where forge ? '__jbLocalOps__')     as with_business,
+--        -- ⚠ MUST STAY FLAT — levels are not part of this wipe
+--        count(*) filter (where heroes <> '{}'::jsonb)        as heroes_flat,
+--        count(*) filter (where forge ? '__account__')        as account_flat
+--   from public.user_profiles;
+--
+-- select count(*) filter (where coalesce(cinder,0) > 0)     as with_cinder,
+--        count(*) filter (where coalesce(sovereigns,0) > 0) as aza_flat  -- ⚠ MUST STAY FLAT
+--   from public.user_progress;
+--
+-- Baseline at time of writing: 61 profiles · 6 with gems/cinder · 61 with
+-- cards · 61 with salvage · 34 with heroes · 0 with Aza.

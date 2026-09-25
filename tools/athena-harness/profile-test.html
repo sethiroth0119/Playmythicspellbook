@@ -1,0 +1,20 @@
+<!doctype html><html><head><meta charset="utf-8"><title>profile</title>
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.171.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/" } }</script>
+</head><body>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+try {
+  const loader = new GLTFLoader(); const out = {};
+  for (const f of ['freight_semi', 'feed_truck', 'livestock_truck', 'tanker']) {
+    const obj = (await loader.loadAsync('/models/trucks/' + f + '.glb')).scene; obj.updateMatrixWorld(true);
+    const b = new THREE.Box3().setFromObject(obj), sz = b.getSize(new THREE.Vector3());
+    const N = 40, top = new Array(N).fill(-1), topAll = new Array(N).fill(-1), bot = new Array(N).fill(2), wid = new Array(N).fill(0), cnt = new Array(N).fill(0), v = new THREE.Vector3();
+    const mid = (b.min.z + b.max.z) / 2, strip = sz.z * 0.3;
+    obj.traverse((o) => { if (!o.isMesh) return; const p = o.geometry.attributes.position; for (let i = 0; i < p.count; i += 2) { v.fromBufferAttribute(p, i).applyMatrix4(o.matrixWorld); const k = Math.max(0, Math.min(N - 1, Math.floor((v.x - b.min.x) / sz.x * N))), hn = (v.y - b.min.y) / sz.y; cnt[k]++; topAll[k] = Math.max(topAll[k], hn); if (Math.abs(v.z - mid) <= strip) top[k] = Math.max(top[k], hn); wid[k] = Math.max(wid[k], Math.abs(v.z - mid) / (sz.z / 2)); } });
+    const r2 = (a) => a.map((x) => Math.round(x * 100)).join(' ');
+    out[f] = { size: [sz.x, sz.y, sz.z].map((n) => +n.toFixed(2)), top: r2(top), topAll: r2(topAll), wid: r2(wid) };
+  }
+  window.__res = out;
+} catch (e) { window.__res = 'ERR ' + (e && e.stack || e); }
+</script></body></html>

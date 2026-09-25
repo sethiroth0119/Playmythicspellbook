@@ -1,0 +1,120 @@
+[
+  {
+    "name": "Weave of Endless Hunger",
+    "type": "enchantment", "cost": 4, "icon": "🕸️", "rarity": "mythic", "elements": ["shadow"],
+    "draft": true,
+    "desc": "PERMANENT. While this hangs over the field, every effect your enemy activates costs them 30 life. It does not expire.",
+    "auras": [
+      { "enabled": true, "amount": 0, "mode": "flat", "stats": {},
+        "burnOnActivate": 30, "burnSide": "enemies", "radius": 0, "tSide": "enemies", "presenceSide": "ally" }
+    ]
+  },
+  {
+    "name": "Banner of the Unbroken Line",
+    "type": "enchantment", "cost": 3, "icon": "🚩", "rarity": "rare", "elements": ["light"],
+    "draft": true,
+    "desc": "PERMANENT. Every unit you control fights with +6 ATK. A standard that never falls.",
+    "auras": [
+      { "enabled": true, "amount": 6, "mode": "flat", "stats": { "atk": true },
+        "radius": 8, "tSide": "allies", "presenceSide": "ally" }
+    ]
+  },
+  {
+    "name": "Sanctuary of Still Air",
+    "type": "enchantment", "cost": 4, "icon": "🕊️", "rarity": "rare", "elements": ["light"],
+    "draft": true,
+    "desc": "PERMANENT. Your units cannot be destroyed by card effects. Blades still work — magic does not.",
+    "auras": [
+      { "enabled": true, "amount": 0, "mode": "flat", "stats": {},
+        "protect": { "attack": false, "damage": false, "destroy": true, "target": false, "status": false },
+        "radius": 8, "tSide": "allies", "presenceSide": "ally" }
+    ]
+  },
+  {
+    "name": "Creeping Blight",
+    "type": "enchantment", "cost": 3, "icon": "🦠", "rarity": "rare", "elements": ["nature"],
+    "draft": true,
+    "desc": "PERMANENT. Enemy units rot where they stand — they fight with 5 less ATK for as long as this lives.",
+    "auras": [
+      { "enabled": true, "amount": -5, "mode": "flat", "stats": { "atk": true },
+        "radius": 8, "tSide": "enemies", "presenceSide": "ally" }
+    ]
+  },
+  {
+    "name": "The Gilded Compact",
+    "type": "enchantment", "cost": 2, "icon": "📜", "rarity": "common", "elements": ["neutral"],
+    "draft": true,
+    "desc": "PERMANENT. On arrival, draw a card. Afterwards its presence steadies every ally by +3 DEF.",
+    "onPlay": { "type": "drawCards", "amount": 1, "anywhere": true },
+    "auras": [
+      { "enabled": true, "amount": 3, "mode": "flat", "stats": { "def": true },
+        "radius": 8, "tSide": "allies", "presenceSide": "ally" }
+    ]
+  },
+  {
+    "name": "Chains of Mutual Ruin",
+    "type": "enchantment", "cost": 5, "icon": "⛓️", "rarity": "mythic", "elements": ["void"],
+    "draft": true,
+    "desc": "PERMANENT. A symmetric curse — EVERY effect either player activates burns that player for 20.",
+    "auras": [
+      { "enabled": true, "amount": 0, "mode": "flat", "stats": {},
+        "burnOnActivate": 20, "burnSide": "all", "radius": 0, "tSide": "all", "presenceSide": "any" }
+    ]
+  },
+  {
+    "name": "Ualti's Standing Ward",
+    "type": "enchantment", "cost": 4, "icon": "🪄", "rarity": "mythic", "elements": ["arcane"],
+    "draft": true,
+    "desc": "PERMANENT. Every Ualti you control gains +8 ATK and +8 MAG, and cannot be targeted by enemy effects.",
+    "auras": [
+      { "enabled": true, "amount": 8, "mode": "flat", "stats": { "atk": true, "mag": true },
+        "protect": { "attack": false, "damage": false, "destroy": false, "target": true, "status": false },
+        "radius": 8, "tSide": "allies", "presenceSide": "ally", "targetName": "ualti" }
+    ]
+  },
+  {
+    "name": "Dominion of the Blood Moon",
+    "type": "enchantment", "cost": 6, "icon": "🌕", "rarity": "mythic", "elements": ["shadow"],
+    "draft": true,
+    "desc": "PERMANENT, and only while the Blood Moon hangs: your army swells with +12 ATK. Build your weather around it.",
+    "auras": [
+      { "enabled": true, "amount": 12, "mode": "flat", "stats": { "atk": true },
+        "radius": 8, "tSide": "allies", "presenceSide": "ally", "weatherTypes": ["bloodmoon"] }
+    ]
+  },
+  {
+    "name": "Warden Bound in Ivy",
+    "type": "unit", "cost": 5, "icon": "🌿", "rarity": "rare",
+    "elements": ["nature"], "factions": ["guardian"], "stats": { "atk": 12, "hp": 44 },
+    "draft": true, "subtype": "enchantment",
+    "desc": "ENCHANTMENT UNIT. A living permanent — while it stands, allies beside it take no status effects.",
+    "auras": [
+      { "enabled": true, "amount": 4, "mode": "flat", "stats": { "def": true, "res": true },
+        "protect": { "attack": false, "damage": false, "destroy": false, "target": false, "status": true },
+        "radius": 2, "tSide": "allies", "presenceSide": "ally" }
+    ]
+  },
+  {
+    "name": "The Sleeping Idol",
+    "type": "unit", "cost": 4, "icon": "🗿", "rarity": "mythic",
+    "elements": ["earth"], "factions": ["guardian"], "stats": { "atk": 0, "hp": 60 },
+    "draft": true, "subtype": "enchantment",
+    "desc": "ENCHANTMENT UNIT. It never attacks. It simply stands, and everything your enemy activates costs them 25 life.",
+    "auras": [
+      { "enabled": true, "amount": 0, "mode": "flat", "stats": {},
+        "burnOnActivate": 25, "burnSide": "enemies", "radius": 0, "tSide": "enemies", "presenceSide": "ally" }
+    ]
+  },
+  {
+    "name": "Choir of the Ninth Bloom",
+    "type": "unit", "cost": 6, "icon": "🌸", "rarity": "mythic",
+    "elements": ["light", "nature"], "factions": ["cleric"], "stats": { "atk": 10, "hp": 40 },
+    "draft": true, "subtype": "enchantment",
+    "desc": "ENCHANTMENT UNIT. On arrival it mends your hero for 50, then keeps every ally standing at +6 DEF and +6 RES.",
+    "onPlay": { "type": "healHero", "amount": 50, "anywhere": true },
+    "auras": [
+      { "enabled": true, "amount": 6, "mode": "flat", "stats": { "def": true, "res": true },
+        "radius": 8, "tSide": "allies", "presenceSide": "ally" }
+    ]
+  }
+]

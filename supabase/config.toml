@@ -1,0 +1,21 @@
+# ============================================================================
+# Supabase CLI project config — required for `supabase functions deploy` to
+# know which project this directory belongs to. Project ref pulled from
+# SUPABASE_URL in index.html: https://ktsiasyjusesawtrwrjc.supabase.co
+# ============================================================================
+project_id = "ktsiasyjusesawtrwrjc"
+
+[functions.mp_resolve_match]
+# Both Edge Functions require a signed-in user — verify_jwt enforces that
+# automatically (the runtime validates the Authorization: Bearer <jwt> header
+# before invoking our handler).
+verify_jwt = true
+
+[functions.mp_end_turn]
+verify_jwt = true
+
+[functions.welcome_email]
+# Called from the DB trigger via pg_net (no user JWT in scope). The function
+# verifies the X-Welcome-Secret header against WELCOME_EMAIL_SECRET instead.
+# See supabase/functions/welcome_email/README.md for setup.
+verify_jwt = false

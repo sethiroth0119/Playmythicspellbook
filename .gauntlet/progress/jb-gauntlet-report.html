@@ -1,0 +1,270 @@
+<title>Just Business Gauntlet</title>
+<style>
+  /* ── Tokens. Light is the base set; dark redefines only the tokens, twice,
+     so the un-stamped (system) state and both explicit stamps all resolve. ── */
+  :root {
+    --ground:   #F2F5F4;
+    --surface:  #FFFFFF;
+    --sunken:   #E9EEEC;
+    --ink:      #131E1C;
+    --muted:    #5A6B67;
+    --hair:     #D7E0DD;
+    --accent:   #26766A;   /* verdigris — the one bold note */
+    --good:     #2C7A52;
+    --warn:     #9C6410;
+    --bad:      #A03A30;
+    --shadow:   0 1px 2px rgba(19,30,28,.06), 0 8px 24px rgba(19,30,28,.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:  #0E1513;
+      --surface: #151F1C;
+      --sunken:  #101917;
+      --ink:     #E6EDEB;
+      --muted:   #94A6A1;
+      --hair:    #22302D;
+      --accent:  #5CBDAB;
+      --good:    #57B183;
+      --warn:    #D39A45;
+      --bad:     #E08174;
+      --shadow:  0 1px 2px rgba(0,0,0,.4), 0 10px 28px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:  #0E1513; --surface: #151F1C; --sunken: #101917;
+    --ink:     #E6EDEB; --muted:   #94A6A1; --hair:   #22302D;
+    --accent:  #5CBDAB; --good:    #57B183; --warn:   #D39A45; --bad: #E08174;
+    --shadow:  0 1px 2px rgba(0,0,0,.4), 0 10px 28px rgba(0,0,0,.35);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font: 15px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 44px 24px 80px; }
+
+  .eyebrow {
+    font: 600 11px/1 ui-monospace, "SF Mono", Consolas, monospace;
+    letter-spacing: .14em; text-transform: uppercase; color: var(--accent);
+  }
+  h1 {
+    font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    font-size: clamp(30px, 4.4vw, 44px); font-weight: 600; line-height: 1.12;
+    margin: 12px 0 10px; text-wrap: balance; letter-spacing: -.01em;
+  }
+  .lede { color: var(--muted); max-width: 62ch; margin: 0; }
+
+  h2 {
+    font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    font-size: 21px; font-weight: 600; margin: 0 0 4px; text-wrap: balance;
+  }
+  section { margin-top: 40px; }
+  .sub { color: var(--muted); font-size: 14px; margin: 0 0 16px; max-width: 64ch; }
+
+  /* ── Summary band ── */
+  .band { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1px;
+          background: var(--hair); border: 1px solid var(--hair); border-radius: 10px;
+          overflow: hidden; margin-top: 26px; }
+  .stat { background: var(--surface); padding: 16px 18px; }
+  .stat b { display: block; font: 600 26px/1.1 ui-monospace, "SF Mono", Consolas, monospace;
+            font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+  .stat span { display: block; font-size: 12px; color: var(--muted); margin-top: 5px; }
+
+  /* ── Ledger ── */
+  .scroll { overflow-x: auto; border: 1px solid var(--hair); border-radius: 10px;
+            background: var(--surface); box-shadow: var(--shadow); }
+  table { border-collapse: collapse; width: 100%; min-width: 620px; }
+  th {
+    text-align: left; font: 600 11px/1 ui-monospace, "SF Mono", Consolas, monospace;
+    letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
+    padding: 12px 16px; border-bottom: 1px solid var(--hair); white-space: nowrap;
+  }
+  td { padding: 13px 16px; border-bottom: 1px solid var(--hair); vertical-align: top; font-size: 14px; }
+  tr:last-child td { border-bottom: 0; }
+  td.name { font-weight: 600; }
+  td.gap { color: var(--muted); }
+
+  /* severity stripe: state in form, not only in colour */
+  tr.needs td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
+  tr.won   td:first-child { box-shadow: inset 3px 0 0 var(--good); }
+  tr.block td:first-child { box-shadow: inset 3px 0 0 var(--bad); }
+
+  .chip {
+    display: inline-block; font: 600 11px/1 ui-monospace, "SF Mono", Consolas, monospace;
+    letter-spacing: .06em; padding: 5px 9px; border-radius: 999px;
+    border: 1px solid currentColor; white-space: nowrap;
+  }
+  .c-won { color: var(--good); }
+  .c-need { color: var(--warn); }
+  .c-block { color: var(--bad); }
+
+  /* ── Callouts ── */
+  .note { border: 1px solid var(--hair); border-left: 3px solid var(--accent);
+          background: var(--surface); border-radius: 8px; padding: 16px 18px; margin-top: 14px; }
+  .note.alarm { border-left-color: var(--bad); }
+  .note h3 { margin: 0 0 6px; font-size: 15px; font-weight: 600; }
+  .note p { margin: 0; color: var(--muted); font-size: 14px; }
+  .note p + p { margin-top: 8px; }
+
+  ul.sql { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 10px; }
+  ul.sql li { background: var(--surface); border: 1px solid var(--hair); border-radius: 8px;
+              padding: 14px 16px; }
+  ul.sql code { font: 600 13px/1 ui-monospace, "SF Mono", Consolas, monospace; color: var(--accent); }
+  ul.sql p { margin: 7px 0 0; color: var(--muted); font-size: 13.5px; }
+
+  code.inline { font: 13px/1 ui-monospace, "SF Mono", Consolas, monospace;
+                background: var(--sunken); padding: 2px 5px; border-radius: 4px; }
+  footer { margin-top: 46px; padding-top: 18px; border-top: 1px solid var(--hair);
+           color: var(--muted); font-size: 13px; }
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Gauntlet run · wf_044e9c86</p>
+  <h1>Just Business Gauntlet</h1>
+  <p class="lede">
+    Seven pieces of the corp economy, each built and then judged by a separate critic
+    with fresh context. Fifty agents over three and a half hours. This is what
+    survived independent verification — and what did not.
+  </p>
+
+  <div class="band">
+    <div class="stat"><b>7</b><span>pieces built</span></div>
+    <div class="stat"><b>50</b><span>agents</span></div>
+    <div class="stat"><b>5</b><span>critic WINS</span></div>
+    <div class="stat"><b>12</b><span>critic rejections</span></div>
+    <div class="stat"><b>4</b><span>migrations pending</span></div>
+  </div>
+
+  <section>
+    <h2>The ledger</h2>
+    <p class="sub">
+      Verdicts are the last word each piece's critic gave it. A rejection does not mean
+      the work is absent — it means the critic found a gap against the bar and the loop
+      ran out of rounds before it closed.
+    </p>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>Piece</th><th>Last verdict</th><th>Largest gap the critic named</th></tr>
+        </thead>
+        <tbody>
+          <tr class="won">
+            <td class="name">Vault — real corp store, card art, depositor</td>
+            <td><span class="chip c-won">WINS</span></td>
+            <td class="gap">A withdrawal renders the raw internal item id and loses its icon.</td>
+          </tr>
+          <tr class="needs">
+            <td class="name">Treasury — kill every fabricated number</td>
+            <td><span class="chip c-need">NO WIN</span></td>
+            <td class="gap">The headline stops equalling the ledger beneath it after the most common in-app treasury action.</td>
+          </tr>
+          <tr class="needs">
+            <td class="name">Member cities — who is in the corp, what each city makes</td>
+            <td><span class="chip c-need">LOSS</span></td>
+            <td class="gap">Stacked columns did not line up, so city N's population sat on city N−1's row. Fixed at integration.</td>
+          </tr>
+          <tr class="needs">
+            <td class="name">Jobs — warehouse worker &amp; weapon smith</td>
+            <td><span class="chip c-need">NO WIN</span></td>
+            <td class="gap">The smith's vault delivery was silent: its whole message layer wrote to a node the view never rendered.</td>
+          </tr>
+          <tr class="won">
+            <td class="name">Mailbox — real guild activity feed</td>
+            <td><span class="chip c-won">WINS</span></td>
+            <td class="gap">79% of the feed was automated payroll noise with nothing separating it from what a player did.</td>
+          </tr>
+          <tr class="needs">
+            <td class="name">Logistics — real shipments, units vs currency</td>
+            <td><span class="chip c-need">NO WIN</span></td>
+            <td class="gap">Guild freight is fetched once at app open and never again, against a real-time requirement.</td>
+          </tr>
+          <tr class="block">
+            <td class="name">Trade — escrowed guild-to-guild swap</td>
+            <td><span class="chip c-block">BLOCKED</span></td>
+            <td class="gap">No working substrate exists: <code class="inline">corp_transfers</code> records intent but moves no assets. Needs sql/048.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Two corrections</h2>
+    <div class="note alarm">
+      <h3>The economy gate was never green</h3>
+      <p>
+        I reported it green after the materials tier. It was not: the suite was
+        <em>crashing</em> at <code class="inline">isRoadTile is not defined</code> before it reached
+        the rounds the tier breaks, and I read the truncated output as a pass.
+      </p>
+      <p>
+        An agent fixed that crash. With the suite running to completion it reports
+        12 failures across 4 rounds — 21 of them my materials-tier chain ids, which need
+        promoting into the resource ledger, and 2 pre-existing
+        (<code class="inline">weaponParts</code>, <code class="inline">gunOil</code>) that were never
+        wired to a producer or a price.
+      </p>
+    </div>
+    <div class="note">
+      <h3>The loop could not read its own verdicts</h3>
+      <p>
+        I wrote a critic schema and never passed it to the critic calls. Verdicts came back
+        as prose, so "loop until it wins" degenerated into "always run three rounds" —
+        which is most of why this cost fifty agents. The verdicts above were recovered
+        from the transcripts afterwards.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Migrations waiting on you</h2>
+    <p class="sub">
+      Written, idempotent, each shipping its own RLS and a verify query. None applied —
+      migrations here are run by hand. Until they are, the UI degrades and says so.
+    </p>
+    <ul class="sql">
+      <li>
+        <code>sql/045_corp_vault_rpcs.sql</code>
+        <p>Deposit and withdraw as membership-scoped functions. Until applied, withdrawal is
+           visibly disabled and names this file — deposits already work.</p>
+      </li>
+      <li>
+        <code>sql/046_corp_treasury_rls.sql</code>
+        <p>Tightens <code class="inline">corp_treasury</code> from <code class="inline">using (true)</code>.
+           Every corporation's full financial history is currently readable by any signed-in
+           player. A data-exposure fix, not a feature.</p>
+      </li>
+      <li>
+        <code>sql/047_corp_desk_roles.sql</code>
+        <p>Backs the hireable desk roles so jobs survive a reload.</p>
+      </li>
+      <li>
+        <code>sql/048_corp_trade_offers.sql</code>
+        <p>The escrowed swap. This is the one piece of the goal that cannot work at all
+           without new SQL.</p>
+      </li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>What I verified myself</h2>
+    <p class="sub">Not taken from any agent's report.</p>
+    <div class="note">
+      <p>
+        All ten screens boot and render with <strong>zero page or console errors</strong> and
+        no NaN, undefined or Invalid Date anywhere — driven in a real browser with the CDN
+        tags left intact. <code class="inline">jsxcheck</code>, <code class="inline">modcheck</code>
+        (226 modules) and <code class="inline">_synckcheck</code> all pass. No agent committed,
+        pushed or deployed; every change is sitting in the working tree.
+      </p>
+    </div>
+  </section>
+
+  <footer>
+    Nothing here is deployed. 11 files changed, ~4,500 lines added, 4 migrations pending.
+  </footer>
+</div>

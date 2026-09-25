@@ -1,0 +1,385 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   🏛 HUB-MODALS — the City Hall / Foundation Reserve skin, made shareable.
+
+   THE ASK: "make the modals on the main menu match the theme — look and feel
+   just as [City Hall and Foundation Reserve]."
+
+   Those two are the REFERENCE, not the work. They already look right, but they
+   look right because each one hand-rolls the same inline styles at its own call
+   site — so nothing else in the game can inherit it. This turns that recipe
+   into one class the other modals can wear.
+
+   THE RECIPE, lifted from openCityHall's own panel (index.html) so this is the
+   same look and not a fresh interpretation of it:
+     overlay  rgba(4,3,8,0.88) + blur(3px)
+     panel    linear-gradient(180deg, rgba(26,20,8,.99), rgba(12,9,4,.99))
+              2px solid rgba(212,175,55,.5), radius 16px
+              0 24px 80px rgba(0,0,0,.9), 0 0 30px rgba(180,140,40,.22)
+     title    Cinzel 800 #ffcf5a
+     button   1px #d4af37 on linear-gradient(180deg,#caa23e,#7a5a18), ink #1a1206
+   The warm near-black is the whole difference from what the main menu had:
+   its quick menu was linear-gradient(170deg,#191537,#0c0a1e) — an INDIGO — and
+   next to a gold-framed stone plaque that reads as a different game.
+
+   ⚠ FIFTH SHEET RULES, from the handoff. It is linked LAST, and it DECLARES NO
+     TOKENS — every value below is either a --keep-* token or a literal lifted
+     from the reference. hub-keep.css is the only file allowed to declare one.
+   ⚠ Each var carries a literal fallback, the same way hub-keep.css's own
+     consumers do, so this sheet still renders correctly if it is ever loaded
+     without hub-keep.css in front of it (the load order is load-bearing, and a
+     sheet that silently degrades to unstyled is worse than one that does not).
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── the dimmed ground behind a modal ─────────────────────────────────────── */
+.keep-modal-ov {
+  position: fixed; inset: 0; z-index: 2147483645;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(4, 3, 8, 0.88);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}
+
+/* ── the panel itself ─────────────────────────────────────────────────────── */
+.keep-modal {
+  background: linear-gradient(180deg, rgba(26, 20, 8, 0.99), rgba(12, 9, 4, 0.99));
+  border: 2px solid rgba(212, 175, 55, 0.5);
+  border-radius: 16px;
+  /* 🔴 TWO SHADOWS, NO LINER, and ink #e8e0d0 — because that is what the
+     reference computes, and the reference is the target.
+     This rule used to end in `var(--keep-liner, inset 0 0 0 1px rgba(0,0,0,.7))`
+     and set `color:#e9dcc0`. Neither City Hall nor Foundation Reserve has ever
+     had either, so every surface wearing the class diverged from the thing it
+     was copied from by exactly those two properties. The first attempt at a fix
+     pinned them OFF at the City Hall call site — which does not resolve the
+     divergence, it just moves it onto the other twelve surfaces and leaves the
+     reference unique. Dropping them here resolves it in the one direction that
+     makes the whole set agree.
+     #e8e0d0 is the literal `--ink` resolves to at the reference (index.html:106).
+     It is written out rather than `var(--ink)` on purpose: --ink is RE-DECLARED
+     as the blue-grey #c3d0e4 inside .bkc (index.html:26516) and two more
+     scopes, so tracking the token would put blue-grey type on a gold plaque the
+     moment a .keep-modal is opened inside one. */
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.9), 0 0 30px rgba(180, 140, 40, 0.22);
+  color: #e8e0d0;
+  font-family: 'Crimson Text', Georgia, serif;
+  display: flex; flex-direction: column;
+  max-height: 90vh;
+  padding: 16px 18px;
+}
+
+/* A menu that hangs off a button rather than sitting centred — the account
+   dropdown. Same skin, tighter padding, no flex column. */
+.keep-modal.is-menu {
+  padding: 6px;
+  border-width: 1px;
+  border-radius: 12px;
+  min-width: 226px;
+  display: block;
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.78), 0 0 24px rgba(180, 140, 40, 0.18);
+}
+
+/* ── header ───────────────────────────────────────────────────────────────── */
+.keep-modal-head {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--keep-cinzel, 'Cinzel', Georgia, serif);
+  font-weight: 800; font-size: 1.3rem; letter-spacing: 0.02em;
+  color: #ffcf5a;
+  /* 🔴 drop-shadow(), NOT text-shadow. Chromium paints text-shadow ON TOP of a
+     background-clip:text fill, hollowing gold glyphs into an outline — the trap
+     the handoff records for exactly this typography. */
+  filter: var(--keep-drop, drop-shadow(0 6px 13px rgba(0, 0, 0, 0.60)));
+}
+.keep-modal-head img, .keep-modal-head .ico { width: 1.7rem; height: 1.7rem; object-fit: contain; }
+.keep-modal-sub {
+  font-size: 0.82rem; color: #b59a66; margin-top: 2px; font-style: italic;
+}
+.keep-modal-rule {
+  height: 1px; margin: 10px 0 8px;
+  background: var(--keep-gold-line, rgba(138, 111, 60, 0.55));
+}
+
+/* ── a row in a menu-style modal ──────────────────────────────────────────── */
+.keep-modal-item {
+  display: block; width: 100%; text-align: left; cursor: pointer;
+  border: 0; border-radius: 7px; padding: 9px 12px;
+  font: inherit; font-size: 14px; background: none;
+  /* `inherit`, not a second copy of the ink — a <button> does not inherit colour
+     on its own, and freezing a near-miss literal here is how the panel and its
+     rows drifted apart in the first place. */
+  color: inherit;
+  transition: background var(--keep-fast, .14s) var(--keep-ease, ease),
+              color var(--keep-fast, .14s) var(--keep-ease, ease);
+}
+.keep-modal-item:hover { background: rgba(212, 175, 55, 0.14); color: var(--keep-gold-hi, #e8c877); }
+.keep-modal-item.is-danger { color: #ff8f7a; }
+.keep-modal-item.is-danger:hover { background: rgba(200, 70, 60, 0.16); color: #ffb0a0; }
+
+/* ── the gold plate button the reference uses everywhere ──────────────────── */
+.keep-modal-btn {
+  cursor: pointer; border: 1px solid #d4af37; border-radius: 9px;
+  padding: 0.5rem 0.95rem;
+  background: linear-gradient(180deg, #caa23e, #7a5a18);
+  color: #1a1206; font-weight: 800;
+  font-family: var(--keep-cinzel, 'Cinzel', Georgia, serif); letter-spacing: 0.04em;
+}
+.keep-modal-btn:hover { background: linear-gradient(180deg, #e0b850, #8d6a1e); }
+.keep-modal-btn.is-quiet {
+  background: rgba(60, 50, 20, 0.35); color: #e8e0d0; border-color: rgba(212, 175, 55, 0.45);
+}
+
+/* ── 🧊 THE INDIGO FURNITURE RULE ─────────────────────────────────────────────
+   `.btn-secondary` fills with `var(--bg-panel)` #1a1530 and borders with
+   `var(--border)` #3a2f5c — the exact indigo family the header above calls the
+   whole problem — and it is the SKIP button on the tutorial-welcome modal, the
+   first panel a new player ever sees, sitting navy on warm black.
+
+   Re-hued HERE, scoped to the gold panels, rather than by editing the two
+   tokens: --bg-panel and --border have 31 and 182 other consumers across the
+   whole app, and repainting those is a different job from "make the modals on
+   the main menu match the theme". The scoped selectors are 0,2,0, so they beat
+   the bare `.btn-secondary` (0,1,0) at index.html:242 and the shared polish
+   block at :36702 without !important.
+   ⚠ Deliberately NOT beating `.unit-modal.unit-aaa .modal-actions .btn-secondary`
+     (index.html:9164, 0,3,1) or the .ccm-aaa twin at :14357 — those already
+     hand-roll this same warm treatment and are the more specific intent. */
+.keep-modal .btn-secondary,
+.tutorial-welcome-modal .btn-secondary,
+.coliseum-help-modal .btn-secondary,
+.ds-modal .btn-secondary,
+.unit-modal .btn-secondary,
+.sc-modal .btn-secondary,
+.dcm-modal .btn-secondary,
+.tos-modal .btn-secondary,
+.auth-modal .btn-secondary {
+  background: rgba(60, 50, 20, 0.35);
+  border-color: rgba(212, 175, 55, 0.45);
+  color: #e8e0d0;
+}
+.keep-modal .btn-secondary:hover:not(:disabled),
+.tutorial-welcome-modal .btn-secondary:hover:not(:disabled),
+.coliseum-help-modal .btn-secondary:hover:not(:disabled),
+.ds-modal .btn-secondary:hover:not(:disabled),
+.unit-modal .btn-secondary:hover:not(:disabled),
+.sc-modal .btn-secondary:hover:not(:disabled),
+.dcm-modal .btn-secondary:hover:not(:disabled),
+.tos-modal .btn-secondary:hover:not(:disabled),
+.auth-modal .btn-secondary:hover:not(:disabled) {
+  background: rgba(212, 175, 55, 0.14);
+  border-color: var(--keep-gold-hi, #e8c877);
+  color: var(--keep-gold-hi, #e8c877);
+}
+
+/* ── the footer Close plate ───────────────────────────────────────────────── */
+.keep-modal-foot {
+  margin-top: 12px; padding-top: 10px;
+  border-top: 1px solid var(--keep-gold-line, rgba(138, 111, 60, 0.55));
+  display: flex; gap: 8px; justify-content: center;
+}
+
+/* ── furniture that came from the indigo era, re-hued ONLY inside a modal ──
+   The tutorial-welcome SKIP button reads as navy-on-warm-black: .btn-secondary
+   fills with var(--bg-panel) (#1a1530) and takes var(--border), both indigo-era
+   tokens. THE FIX IS SCOPED ON PURPOSE — .btn-secondary is a GLOBAL class used
+   all over the app, so re-hueing it at source would reskin every secondary
+   button in the game to chase one button inside one modal. Bounded to
+   .keep-modal, it changes exactly the surfaces this pass claims and nothing
+   else. Same reasoning for the inputs. */
+.keep-modal .btn-secondary {
+  background: rgba(60, 50, 20, 0.35);
+  border-color: var(--keep-gold-line, rgba(138, 111, 60, 0.55));
+  color: #e9dcc0;
+}
+.keep-modal .btn-secondary:hover:not(:disabled) {
+  border-color: var(--keep-gold, #c9ab72);
+  color: var(--keep-gold-hi, #e8c877);
+}
+.keep-modal input, .keep-modal textarea, .keep-modal select {
+  background: rgba(12, 9, 4, 0.6);
+  border: 1px solid var(--keep-gold-line, rgba(138, 111, 60, 0.55));
+  color: #e9dcc0;
+}
+.keep-modal input:focus, .keep-modal textarea:focus, .keep-modal select:focus {
+  outline: none;
+  border-color: rgba(212, 175, 55, 0.75);
+  box-shadow: 0 0 8px rgba(180, 140, 40, 0.35);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   🎯 THE MOVE RING — a unit's attacks laid out around it on the battlefield.
+   Each chip is tinted by its move's ELEMENT (--mvr-col, set inline from
+   ELEMENT_DATA) over the same warm-black plate as every other panel, so the
+   ring reads as part of this game rather than as a second design.
+   ⚠ pointer-events: none on the LAYER, auto on the chips. The layer covers the
+     whole viewport to position without clipping, and without this it would eat
+     every click on the board underneath — the exact failure the node-city host
+     bar comment records for its own full-width strip.
+   ════════════════════════════════════════════════════════════════════════════ */
+.mvr { position: fixed; inset: 0; z-index: 2147483400; pointer-events: none; }
+.mvr-hub { position: absolute; width: 0; height: 0; }
+.mvr-chip {
+  position: absolute; transform: translate(-50%, -50%);
+  pointer-events: auto; cursor: pointer;
+  /* `auto` for the name track, not `1fr`. With `1fr` plus the `min-width:0` that
+     makes ellipsis possible, the name contributes NOTHING to the chip's
+     intrinsic width — so every chip sat at min-width and truncated real move
+     names ("Concuss…", "Mind Sp…") while 28px of allowed width went unused.
+     `auto` grows the chip to the name and then the max-width below clips it. */
+  display: grid; grid-template-columns: auto auto auto; align-items: center;
+  gap: 0 8px; min-width: 156px; padding: 7px 11px;
+  /* A capped width is load-bearing, not cosmetic: the ring lays chips on an arc
+     sized for a FIXED chip width, so one long move name stretched a chip to
+     213px and overlapped its neighbour. Measured at a full 8-move set. */
+  /* 🔴 width:max-content is REQUIRED, not tidying. .mvr-hub is a 0x0 box, so an
+     absolutely-positioned chip inside it shrink-to-fits against an available
+     width of ZERO — every `auto` track then resolves at MIN-content, and with
+     the min-width:0 that makes ellipsis possible the name contributes nothing.
+     Result: chips sat at their min-width and clipped "Concussive Wave" to
+     "Concuss…" with 28px of allowed width unused. Measured, see shot-move-ring. */
+  width: max-content; max-width: 212px; box-sizing: border-box;
+  background: linear-gradient(180deg, rgba(26, 20, 8, 0.97), rgba(12, 9, 4, 0.98));
+  border: 2px solid var(--mvr-col, #c9ab72);
+  border-radius: 10px;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.75), 0 0 18px rgba(0, 0, 0, 0.5);
+  color: #f2e6c8; font-family: var(--keep-cinzel, 'Cinzel', Georgia, serif);
+  animation: mvr-in 0.16s var(--keep-ease, ease) both;
+}
+.mvr-chip:hover { background: linear-gradient(180deg, rgba(46, 36, 14, 0.98), rgba(20, 15, 6, 0.98)); }
+.mvr-chip:focus-visible { outline: 2px solid var(--mvr-col, #c9ab72); outline-offset: 2px; }
+.mvr-name { font-size: 0.86rem; font-weight: 700; letter-spacing: 0.05em; text-align: left;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.mvr-ico  { font-size: 1.05rem; line-height: 1; }
+.mvr-key {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 0.62rem;
+  width: 15px; height: 15px; display: grid; place-items: center; border-radius: 50%;
+  background: var(--mvr-col, #c9ab72); color: #12100c; font-weight: 700;
+}
+.mvr-cost {
+  grid-column: 2 / 4; justify-self: end; margin-top: 1px;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 0.62rem;
+  letter-spacing: 0.06em; color: var(--mvr-col, #c9ab72); opacity: 0.95;
+}
+/* Unaffordable: shown and refused, never hidden — a move that vanishes when you
+   are short on energy reads as the move being gone, not as you being poor. */
+/* ✖ Cancel reads as a way OUT, not as another move: no element tint, a red
+   frame, and a narrower plate so it never competes with the moves it sits under. */
+.mvr-chip.mvr-cancel {
+  border-color: rgba(200, 70, 60, 0.75);
+  min-width: 0;
+  grid-template-columns: auto 1fr auto;
+}
+.mvr-chip.mvr-cancel .mvr-key { background: #c8463c; color: #fff2ee; }
+.mvr-chip.mvr-cancel .mvr-name { color: #ff9a8a; }
+.mvr-chip.mvr-cancel:hover {
+  background: linear-gradient(180deg, rgba(60, 20, 20, 0.97), rgba(24, 10, 8, 0.98));
+  border-color: rgba(230, 90, 80, 0.9);
+}
+/* ══════════════════════════════════════════════════════════════════════════
+   🪪 TRADER MEMBERSHIPS — the Marketplace capacity header and the shop section.
+   Rendered by /src/trader/membership.js. Warm gold like the rest of this sheet,
+   with the capacity bar the ONE place colour carries meaning: green while there
+   is room, amber from 80%, red at the cap. Nothing else in the block competes
+   with it, because that bar is the whole readout.
+   ══════════════════════════════════════════════════════════════════════════ */
+.tm-cap {
+  border: 1px solid var(--keep-gold-line, rgba(138, 111, 60, 0.55));
+  border-radius: 12px; padding: 11px 14px; margin: 0 0 1rem;
+  background: linear-gradient(180deg, rgba(26, 20, 8, 0.72), rgba(12, 9, 4, 0.82));
+}
+.tm-cap.is-full { border-color: rgba(200, 70, 60, 0.7); }
+.tm-cap-wait { opacity: 0.75; display: flex; gap: 8px; align-items: baseline; }
+.tm-cap-row { display: flex; gap: 18px; flex-wrap: wrap; align-items: baseline; }
+.tm-cap-col { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.tm-cap-k {
+  font-size: 0.68rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: #b59a66;
+}
+.tm-cap-v {
+  font-family: var(--keep-cinzel, 'Cinzel', Georgia, serif);
+  font-weight: 800; font-size: 1.05rem; color: #f2e6c8;
+}
+.tm-bar {
+  height: 6px; border-radius: 999px; margin: 9px 0 0;
+  background: rgba(0, 0, 0, 0.55); overflow: hidden;
+  border: 1px solid rgba(138, 111, 60, 0.35);
+}
+.tm-bar > i { display: block; height: 100%; border-radius: 999px; transition: width 0.3s ease; }
+.tm-full {
+  margin-top: 10px; padding: 9px 11px; border-radius: 9px;
+  border: 1px solid rgba(200, 70, 60, 0.55); background: rgba(60, 18, 14, 0.42);
+  display: flex; flex-direction: column; gap: 3px;
+}
+.tm-full b { color: #ff9a8a; letter-spacing: 0.06em; font-family: var(--keep-cinzel, 'Cinzel', Georgia, serif); }
+.tm-full span { font-size: 0.85rem; color: #e8d8c0; }
+.tm-cap-acts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.tm-btn {
+  cursor: pointer; border-radius: 9px; padding: 0.42rem 0.9rem;
+  border: 1px solid rgba(212, 175, 55, 0.45); background: rgba(60, 50, 20, 0.35);
+  color: #e8e0d0; font-weight: 700; font-family: var(--keep-cinzel, 'Cinzel', Georgia, serif);
+  letter-spacing: 0.04em; font-size: 0.85rem;
+}
+.tm-btn:hover { background: rgba(212, 175, 55, 0.16); color: var(--keep-gold-hi, #e8c877); }
+.tm-btn-up {
+  border-color: #d4af37; color: #1a1206; font-weight: 800;
+  background: linear-gradient(180deg, #caa23e, #7a5a18);
+}
+.tm-btn-up:hover { background: linear-gradient(180deg, #e0b850, #8d6a1e); color: #1a1206; }
+
+/* The Vendor Market tab body. The capacity readout sits above the tiers there
+   too — "should I upgrade?" cannot be answered without knowing how full you
+   already are, and that is exactly why the player opened this tab. */
+.tm-vm { max-width: 780px; margin: 0 auto; padding: 4px 2px 10px; }
+/* In the tab the shop is the WHOLE body, so it does not need the rule that
+   separates it from the bag list in the shared overlay. */
+.tm-vm .tm-shop { margin-top: 6px; padding-top: 0; border-top: 0; }
+
+/* ── the Vendor Shop section ─────────────────────────────────────────────── */
+.tm-shop { margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(138, 111, 60, 0.45); }
+.tm-shop-h {
+  font-family: var(--keep-cinzel, 'Cinzel', Georgia, serif);
+  font-weight: 800; font-size: 1.1rem; color: #ffcf5a; letter-spacing: 0.06em;
+}
+.tm-shop-sub { font-style: italic; color: #b59a66; font-size: 0.84rem; margin-top: 1px; }
+.tm-shop-copy { font-size: 0.85rem; color: #e0d4bc; margin: 8px 0 6px; }
+/* The rules clause the brief is emphatic about — capacity only. Quiet, but not
+   hidden: a player deciding whether to spend AZA deserves to read it here. */
+.tm-note {
+  font-size: 0.78rem; color: #9c8f74; border-left: 2px solid rgba(138, 111, 60, 0.5);
+  padding-left: 9px; margin: 0 0 11px;
+}
+.tm-tiers { display: flex; flex-direction: column; gap: 7px; }
+.tm-tier {
+  border: 1px solid rgba(212, 175, 55, 0.24); border-radius: 10px;
+  padding: 9px 11px; background: rgba(18, 14, 6, 0.5);
+}
+.tm-tier.is-current { border-color: rgba(124, 255, 178, 0.5); background: rgba(14, 26, 18, 0.5); }
+.tm-tier-h { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.tm-tier-h b { font-family: var(--keep-cinzel, 'Cinzel', Georgia, serif); color: #ffd166; }
+.tm-slots { font-size: 0.8rem; color: #cdb6ff; font-weight: 700; white-space: nowrap; }
+.tm-blurb { font-size: 0.79rem; color: #b0a488; margin: 3px 0 7px; }
+.tm-buy {
+  cursor: pointer; border-radius: 8px; padding: 0.36rem 0.8rem; font-weight: 700;
+  border: 1px solid #b88aff; background: linear-gradient(180deg, #6a40b0, #3a206a);
+  color: #efe6ff;
+}
+.tm-buy[disabled] { cursor: not-allowed; opacity: 0.45; filter: saturate(0.5); }
+.tm-own { font-weight: 700; color: #7CFFB2; font-size: 0.84rem; }
+.tm-own.tm-own-dim { color: #8d8570; font-weight: 600; }
+
+/* 📏 The range, sharing the cost row. Cost is what it SPENDS and range is how
+   far it REACHES — two numbers about the same move, so they read as one line
+   rather than earning another row in a chip the ring has to fit eight of.
+   Dimmer and un-tinted so the element colour still belongs to the cost. */
+.mvr-rng {
+  font-style: normal; margin-left: 7px; padding-left: 7px;
+  border-left: 1px solid rgba(201, 171, 114, 0.32);
+  color: #b9ad8e; letter-spacing: 0.04em;
+}
+.mvr-chip.is-off { opacity: 0.42; cursor: not-allowed; filter: saturate(0.5); }
+.mvr-chip.is-off:hover { background: linear-gradient(180deg, rgba(26, 20, 8, 0.97), rgba(12, 9, 4, 0.98)); }
+@keyframes mvr-in { from { opacity: 0; transform: translate(-50%, -50%) scale(0.88); }
+                    to   { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .keep-modal-item { transition: none; }
+  .mvr-chip { animation: none; }
+}

@@ -1,0 +1,276 @@
+{
+  "boot": {
+    "nc": true,
+    "roads": true,
+    "verify": {
+      "ok": true,
+      "issues": []
+    },
+    "classes": [
+      "street",
+      "alley",
+      "curve",
+      "bikelane",
+      "culdesac",
+      "avenue",
+      "roundabout",
+      "bridge",
+      "highway"
+    ]
+  },
+  "bed": {
+    "px": 4,
+    "pz": 4,
+    "tiles": 9
+  },
+  "rows": [
+    {
+      "cls": "alley",
+      "at": {
+        "x": 5,
+        "z": 4
+      },
+      "crop": {
+        "x0": 608,
+        "y0": 306,
+        "x1": 960,
+        "y1": 658
+      },
+      "ctrl": {
+        "changed": 0,
+        "total": 123904,
+        "pct": 0
+      },
+      "d": {
+        "changed": 9662,
+        "total": 123904,
+        "pct": 7.8
+      },
+      "callsA": 158,
+      "callsB": 158,
+      "calls": 0
+    },
+    {
+      "cls": "curve",
+      "at": {
+        "x": 4,
+        "z": 4
+      },
+      "crop": {
+        "x0": 464,
+        "y0": 224,
+        "x1": 816,
+        "y1": 576
+      },
+      "ctrl": {
+        "changed": 0,
+        "total": 123904,
+        "pct": 0
+      },
+      "d": {
+        "changed": 6373,
+        "total": 123904,
+        "pct": 5.14
+      },
+      "callsA": 158,
+      "callsB": 158,
+      "calls": 0
+    },
+    {
+      "cls": "bikelane",
+      "at": {
+        "x": 5,
+        "z": 4
+      },
+      "crop": {
+        "x0": 608,
+        "y0": 306,
+        "x1": 960,
+        "y1": 658
+      },
+      "ctrl": {
+        "changed": 0,
+        "total": 123904,
+        "pct": 0
+      },
+      "d": {
+        "changed": 6466,
+        "total": 123904,
+        "pct": 5.22
+      },
+      "callsA": 158,
+      "callsB": 158,
+      "calls": 0
+    },
+    {
+      "cls": "culdesac",
+      "at": {
+        "x": 6,
+        "z": 4
+      },
+      "crop": {
+        "x0": 793,
+        "y0": 410,
+        "x1": 1145,
+        "y1": 762
+      },
+      "ctrl": {
+        "changed": 0,
+        "total": 123904,
+        "pct": 0
+      },
+      "d": {
+        "changed": 23491,
+        "total": 123904,
+        "pct": 18.96
+      },
+      "callsA": 158,
+      "callsB": 158,
+      "calls": 0
+    },
+    {
+      "cls": "avenue",
+      "at": {
+        "x": 5,
+        "z": 4
+      },
+      "crop": {
+        "x0": 608,
+        "y0": 306,
+        "x1": 960,
+        "y1": 658
+      },
+      "ctrl": {
+        "changed": 0,
+        "total": 123904,
+        "pct": 0
+      },
+      "d": {
+        "changed": 8030,
+        "total": 123904,
+        "pct": 6.48
+      },
+      "callsA": 158,
+      "callsB": 158,
+      "calls": 0
+    },
+    {
+      "cls": "bridge",
+      "at": {
+        "x": 5,
+        "z": 4
+      },
+      "crop": {
+        "x0": 608,
+        "y0": 306,
+        "x1": 960,
+        "y1": 658
+      },
+      "ctrl": {
+        "changed": 0,
+        "total": 123904,
+        "pct": 0
+      },
+      "d": {
+        "changed": 19483,
+        "total": 123904,
+        "pct": 15.72
+      },
+      "callsA": 158,
+      "callsB": 158,
+      "calls": 0
+    },
+    {
+      "cls": "highway",
+      "at": {
+        "x": 5,
+        "z": 4
+      },
+      "crop": {
+        "x0": 608,
+        "y0": 306,
+        "x1": 960,
+        "y1": 658
+      },
+      "ctrl": {
+        "changed": 0,
+        "total": 123904,
+        "pct": 0
+      },
+      "d": {
+        "changed": 11482,
+        "total": 123904,
+        "pct": 9.27
+      },
+      "callsA": 158,
+      "callsB": 158,
+      "calls": 0
+    },
+    {
+      "cls": "street",
+      "ctrl": {
+        "changed": 0,
+        "total": 123904,
+        "pct": 0
+      },
+      "d": {
+        "changed": 0,
+        "total": 123904,
+        "pct": 0
+      },
+      "calls": 0,
+      "callsA": 0,
+      "callsB": 0
+    },
+    {
+      "cls": "roundabout",
+      "tiles": 9,
+      "crop": {
+        "x0": 368,
+        "y0": 128,
+        "x1": 912,
+        "y1": 672
+      },
+      "ctrl": {
+        "changed": 0,
+        "total": 295936,
+        "pct": 0
+      },
+      "d": {
+        "changed": 41604,
+        "total": 295936,
+        "pct": 14.06
+      },
+      "oneComponent": true,
+      "reached": 9
+    }
+  ],
+  "diag": {
+    "ok": true,
+    "len": 13,
+    "broken": 0,
+    "first": {
+      "x": 2,
+      "z": 2
+    },
+    "last": {
+      "x": 9,
+      "z": 7
+    }
+  },
+  "calls": {
+    "info": 39
+  },
+  "logs": [
+    "[info] [city] quality -> medium (webgl2)",
+    "[log] [MythicCityBridge] pushNodeBoost mock-supply 0%",
+    "[log] [MythicCityBridge] pushNodeBoost mock-mining 0%",
+    "[log] [MythicCityBridge] pushNodeBoost mock-fuel 0%",
+    "[info] [city] sky env map built in 36.9ms, 336x64 cubeUV, 4 materials",
+    "[log] [MythicCityBridge] cityReport {morale: 50, hunger: 0, sync: 0, alliedCamps: 3, reconPerHr: 0.36}",
+    "[warning] [LandValue] tenant ids no zone or district mix develops — listed as hand-placed only, not dropped: scrapmine, quarry, lumbercamp, fibercroft, fuelrig, deepmine, alloyworks, canecroft, farm",
+    "[log] [MythicCityBridge] pushNodeBoost mock-supply 0%",
+    "[log] [MythicCityBridge] pushNodeBoost mock-mining 0%",
+    "[log] [MythicCityBridge] pushNodeBoost mock-fuel 0%"
+  ]
+}

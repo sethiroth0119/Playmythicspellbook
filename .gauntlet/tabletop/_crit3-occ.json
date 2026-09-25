@@ -1,0 +1,686 @@
+[
+ {
+  "tile": "6,5",
+  "caret": [
+   840,
+   298
+  ],
+  "occ": {
+   "tot": 1307,
+   "hit": 730,
+   "frac": 0.559
+  },
+  "occCtl": {
+   "tot": 1307,
+   "hit": 18,
+   "frac": 0.014
+  },
+  "ink": 2823,
+  "inkCtl": 0
+ },
+ {
+  "tile": "6,7",
+  "caret": [
+   839,
+   367
+  ],
+  "occ": {
+   "tot": 1592,
+   "hit": 785,
+   "frac": 0.493
+  },
+  "occCtl": {
+   "tot": 1592,
+   "hit": 7,
+   "frac": 0.004
+  },
+  "ink": 2075,
+  "inkCtl": 0
+ },
+ {
+  "tile": "5,5",
+  "caret": [
+   792,
+   298
+  ],
+  "occ": {
+   "tot": 1301,
+   "hit": 205,
+   "frac": 0.158
+  },
+  "occCtl": {
+   "tot": 1301,
+   "hit": 10,
+   "frac": 0.008
+  },
+  "ink": 1780,
+  "inkCtl": 0
+ },
+ {
+  "tile": "7,4",
+  "caret": [
+   863,
+   284
+  ],
+  "occ": {
+   "tot": 1160,
+   "hit": 925,
+   "frac": 0.797
+  },
+  "occCtl": {
+   "tot": 1160,
+   "hit": 15,
+   "frac": 0.013
+  },
+  "ink": 1781,
+  "inkCtl": 0
+ },
+ {
+  "tile": "6,4",
+  "caret": [
+   818,
+   284
+  ],
+  "occ": {
+   "tot": 1159,
+   "hit": 401,
+   "frac": 0.346
+  },
+  "occCtl": {
+   "tot": 1159,
+   "hit": 6,
+   "frac": 0.005
+  },
+  "ink": 2096,
+  "inkCtl": 11
+ },
+ {
+  "tile": "5,7",
+  "caret": [
+   789,
+   367
+  ],
+  "occ": {
+   "tot": 1595,
+   "hit": 0,
+   "frac": 0
+  },
+  "occCtl": {
+   "tot": 1595,
+   "hit": 1,
+   "frac": 0.001
+  },
+  "ink": 2016,
+  "inkCtl": 147
+ },
+ {
+  "tile": "6,8",
+  "caret": [
+   812,
+   410
+  ],
+  "occ": {
+   "tot": 1752,
+   "hit": 28,
+   "frac": 0.016
+  },
+  "occCtl": {
+   "tot": 1752,
+   "hit": 0,
+   "frac": 0
+  },
+  "ink": 1920,
+  "inkCtl": 0
+ },
+ {
+  "tile": "4,5",
+  "caret": [
+   747,
+   310
+  ],
+  "occ": {
+   "tot": 1283,
+   "hit": 2,
+   "frac": 0.002
+  },
+  "occCtl": {
+   "tot": 1283,
+   "hit": 1,
+   "frac": 0.001
+  },
+  "ink": 1942,
+  "inkCtl": 30
+ },
+ {
+  "tile": "5,4",
+  "caret": [
+   773,
+   284
+  ],
+  "occ": {
+   "tot": 1159,
+   "hit": 0,
+   "frac": 0
+  },
+  "occCtl": {
+   "tot": 1159,
+   "hit": 0,
+   "frac": 0
+  },
+  "ink": 1613,
+  "inkCtl": 0
+ },
+ {
+  "tile": "5,6",
+  "caret": [
+   766,
+   326
+  ],
+  "occ": {
+   "tot": 1448,
+   "hit": 30,
+   "frac": 0.021
+  },
+  "occCtl": {
+   "tot": 1448,
+   "hit": 3,
+   "frac": 0.002
+  },
+  "ink": 1917,
+  "inkCtl": 0
+ },
+ {
+  "tile": "8,4",
+  "caret": [
+   908,
+   284
+  ],
+  "occ": {
+   "tot": 1160,
+   "hit": 752,
+   "frac": 0.648
+  },
+  "occCtl": {
+   "tot": 1160,
+   "hit": 7,
+   "frac": 0.006
+  },
+  "ink": 1708,
+  "inkCtl": 0
+ },
+ {
+  "tile": "7,3",
+  "caret": [
+   885,
+   259
+  ],
+  "occ": {
+   "tot": 1055,
+   "hit": 542,
+   "frac": 0.514
+  },
+  "occCtl": {
+   "tot": 1055,
+   "hit": 1,
+   "frac": 0.001
+  },
+  "ink": 2390,
+  "inkCtl": 0
+ },
+ {
+  "tile": "6,3",
+  "caret": [
+   841,
+   271
+  ],
+  "occ": {
+   "tot": 1037,
+   "hit": 131,
+   "frac": 0.126
+  },
+  "occCtl": {
+   "tot": 1037,
+   "hit": 1,
+   "frac": 0.001
+  },
+  "ink": 2217,
+  "inkCtl": 0
+ },
+ {
+  "tile": "5,3",
+  "caret": [
+   798,
+   271
+  ],
+  "occ": {
+   "tot": 1039,
+   "hit": 36,
+   "frac": 0.035
+  },
+  "occCtl": {
+   "tot": 1039,
+   "hit": 1,
+   "frac": 0.001
+  },
+  "ink": 2067,
+  "inkCtl": 0
+ },
+ {
+  "tile": "4,7",
+  "caret": [
+   739,
+   367
+  ],
+  "occ": {
+   "tot": 1590,
+   "hit": 3,
+   "frac": 0.002
+  },
+  "occCtl": {
+   "tot": 1590,
+   "hit": 3,
+   "frac": 0.002
+  },
+  "ink": 2054,
+  "inkCtl": 201
+ },
+ {
+  "tile": "5,8",
+  "caret": [
+   761,
+   410
+  ],
+  "occ": {
+   "tot": 1754,
+   "hit": 1,
+   "frac": 0.001
+  },
+  "occCtl": {
+   "tot": 1754,
+   "hit": 3,
+   "frac": 0.002
+  },
+  "ink": 1934,
+  "inkCtl": 0
+ },
+ {
+  "tile": "6,9",
+  "caret": [
+   837,
+   445
+  ],
+  "occ": {
+   "tot": 1961,
+   "hit": 0,
+   "frac": 0
+  },
+  "occCtl": {
+   "tot": 1961,
+   "hit": 0,
+   "frac": 0
+  },
+  "ink": 1694,
+  "inkCtl": 0
+ },
+ {
+  "tile": "5,9",
+  "caret": [
+   785,
+   456
+  ],
+  "occ": {
+   "tot": 1931,
+   "hit": 2,
+   "frac": 0.001
+  },
+  "occCtl": {
+   "tot": 1931,
+   "hit": 3,
+   "frac": 0.002
+  },
+  "ink": 1387,
+  "inkCtl": 0
+ },
+ {
+  "tile": "3,5",
+  "caret": [
+   700,
+   310
+  ],
+  "occ": {
+   "tot": 1284,
+   "hit": 0,
+   "frac": 0
+  },
+  "occCtl": {
+   "tot": 1284,
+   "hit": 0,
+   "frac": 0
+  },
+  "ink": 1836,
+  "inkCtl": 0
+ },
+ {
+  "tile": "4,4",
+  "caret": [
+   728,
+   284
+  ],
+  "occ": {
+   "tot": 1158,
+   "hit": 0,
+   "frac": 0
+  },
+  "occCtl": {
+   "tot": 1158,
+   "hit": 0,
+   "frac": 0
+  },
+  "ink": 1961,
+  "inkCtl": 0
+ },
+ {
+  "tile": "4,6",
+  "caret": [
+   719,
+   337
+  ],
+  "occ": {
+   "tot": 1429,
+   "hit": 7,
+   "frac": 0.005
+  },
+  "occCtl": {
+   "tot": 1429,
+   "hit": 8,
+   "frac": 0.006
+  },
+  "ink": 1815,
+  "inkCtl": 0
+ },
+ {
+  "tile": "4,3",
+  "caret": [
+   755,
+   271
+  ],
+  "occ": {
+   "tot": 1043,
+   "hit": 0,
+   "frac": 0
+  },
+  "occCtl": {
+   "tot": 1043,
+   "hit": 0,
+   "frac": 0
+  },
+  "ink": 2130,
+  "inkCtl": 0
+ },
+ {
+  "tile": "9,4",
+  "caret": [
+   953,
+   284
+  ],
+  "occ": {
+   "tot": 1162,
+   "hit": 0,
+   "frac": 0
+  },
+  "occCtl": {
+   "tot": 1162,
+   "hit": 0,
+   "frac": 0
+  },
+  "ink": 1846,
+  "inkCtl": 0
+ },
+ {
+  "tile": "8,3",
+  "caret": [
+   927,
+   271
+  ],
+  "occ": {
+   "tot": 1039,
+   "hit": 323,
+   "frac": 0.311
+  },
+  "occCtl": {
+   "tot": 1039,
+   "hit": 0,
+   "frac": 0
+  },
+  "ink": 2208,
+  "inkCtl": 0
+ },
+ {
+  "tile": "8,5",
+  "caret": [
+   934,
+   298
+  ],
+  "occ": {
+   "tot": 1302,
+   "hit": 367,
+   "frac": 0.282
+  },
+  "occCtl": {
+   "tot": 1302,
+   "hit": 0,
+   "frac": 0
+  },
+  "ink": 2007,
+  "inkCtl": 0
+ },
+ {
+  "tile": "8,2",
+  "caret": [
+   904,
+   248
+  ],
+  "occ": {
+   "tot": 945,
+   "hit": 670,
+   "frac": 0.709
+  },
+  "occCtl": {
+   "tot": 945,
+   "hit": 0,
+   "frac": 0
+  },
+  "ink": 2144,
+  "inkCtl": 0
+ },
+ {
+  "tile": "7,2",
+  "caret": [
+   863,
+   248
+  ],
+  "occ": {
+   "tot": 950,
+   "hit": 204,
+   "frac": 0.215
+  },
+  "occCtl": {
+   "tot": 950,
+   "hit": 0,
+   "frac": 0
+  },
+  "ink": 2027,
+  "inkCtl": 0
+ },
+ {
+  "tile": "6,2",
+  "caret": [
+   821,
+   248
+  ],
+  "occ": {
+   "tot": 942,
+   "hit": 0,
+   "frac": 0
+  },
+  "occCtl": {
+   "tot": 942,
+   "hit": 1,
+   "frac": 0.001
+  },
+  "ink": 2237,
+  "inkCtl": 84
+ },
+ {
+  "tile": "5,2",
+  "caret": [
+   780,
+   259
+  ],
+  "occ": {
+   "tot": 937,
+   "hit": 0,
+   "frac": 0
+  },
+  "occCtl": {
+   "tot": 937,
+   "hit": 0,
+   "frac": 0
+  },
+  "ink": 1976,
+  "inkCtl": 0
+ },
+ {
+  "tile": "3,7",
+  "caret": [
+   691,
+   378
+  ],
+  "occ": {
+   "tot": 1567,
+   "hit": 0,
+   "frac": 0
+  },
+  "occCtl": {
+   "tot": 1567,
+   "hit": 0,
+   "frac": 0
+  },
+  "ink": 1611,
+  "inkCtl": 0
+ },
+ {
+  "tile": "4,8",
+  "caret": [
+   710,
+   410
+  ],
+  "occ": {
+   "tot": 1755,
+   "hit": 0,
+   "frac": 0
+  },
+  "occCtl": {
+   "tot": 1755,
+   "hit": 0,
+   "frac": 0
+  },
+  "ink": 2163,
+  "inkCtl": 0
+ },
+ {
+  "tile": "4,9",
+  "caret": [
+   733,
+   456
+  ],
+  "occ": {
+   "tot": 1932,
+   "hit": 0,
+   "frac": 0
+  },
+  "occCtl": {
+   "tot": 1932,
+   "hit": 0,
+   "frac": 0
+  },
+  "ink": 1882,
+  "inkCtl": 0
+ },
+ {
+  "tile": "7,9",
+  "caret": [
+   890,
+   445
+  ],
+  "occ": {
+   "tot": 1981,
+   "hit": 0,
+   "frac": 0
+  },
+  "occCtl": {
+   "tot": 1981,
+   "hit": 0,
+   "frac": 0
+  },
+  "ink": 1928,
+  "inkCtl": 0
+ },
+ {
+  "tile": "7,10",
+  "caret": [
+   864,
+   493
+  ],
+  "occ": {
+   "tot": 2179,
+   "hit": 0,
+   "frac": 0
+  },
+  "occCtl": {
+   "tot": 2179,
+   "hit": 0,
+   "frac": 0
+  },
+  "ink": 2361,
+  "inkCtl": 0
+ },
+ {
+  "tile": "6,10",
+  "caret": [
+   809,
+   493
+  ],
+  "occ": {
+   "tot": 2175,
+   "hit": 0,
+   "frac": 0
+  },
+  "occCtl": {
+   "tot": 2175,
+   "hit": 0,
+   "frac": 0
+  },
+  "ink": 2104,
+  "inkCtl": 0
+ },
+ {
+  "tile": "5,10",
+  "caret": [
+   755,
+   493
+  ],
+  "occ": {
+   "tot": 2178,
+   "hit": 0,
+   "frac": 0
+  },
+  "occCtl": {
+   "tot": 2178,
+   "hit": 0,
+   "frac": 0
+  },
+  "ink": 2129,
+  "inkCtl": 21
+ }
+]

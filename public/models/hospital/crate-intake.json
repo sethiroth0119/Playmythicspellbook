@@ -1,0 +1,25 @@
+{
+  "file": "crate-intake.glb",
+  "bytes": 4854508,
+  "triangles": 61342,
+  "textures": "webp-1024",
+  "bounds": {
+    "min": [
+      -0.958,
+      -0.608,
+      -0.613
+    ],
+    "max": [
+      0.951,
+      0.609,
+      0.602
+    ]
+  },
+  "dims": {
+    "w": 1.909,
+    "h": 1.217,
+    "d": 1.214
+  },
+  "source": "assets-source/glb-masters/hospital/crate-intake.glb",
+  "packedBy": "tools/pack-glb.mjs"
+}

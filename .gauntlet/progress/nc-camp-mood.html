@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>nc-camp-mood Progress</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      background: #1a1a1a;
+      color: #e0e0e0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      line-height: 1.6;
+      padding: 20px;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    h1 {
+      font-size: 24px;
+      margin-bottom: 10px;
+      color: #f0f0f0;
+    }
+    .status-line {
+      font-size: 14px;
+      color: #888;
+      margin-bottom: 30px;
+    }
+    .pieces-section {
+      margin-bottom: 50px;
+    }
+    .pieces-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: #f0f0f0;
+      margin-bottom: 20px;
+      border-bottom: 2px solid #333;
+      padding-bottom: 10px;
+    }
+    .pieces-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+      gap: 20px;
+    }
+    .card {
+      background: #242424;
+      border: 1px solid #333;
+      border-radius: 8px;
+      padding: 20px;
+      transition: all 0.2s ease;
+    }
+    .card:hover {
+      border-color: #444;
+    }
+    .card.won {
+      border-left: 4px solid #4caf50;
+    }
+    .card.looping {
+      border-left: 4px solid #ff9800;
+    }
+    .card-id {
+      display: inline-block;
+      background: #333;
+      color: #aaa;
+      padding: 2px 8px;
+      border-radius: 3px;
+      font-size: 12px;
+      margin-bottom: 8px;
+    }
+    .card-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: #f0f0f0;
+      margin-bottom: 12px;
+      line-height: 1.4;
+    }
+    .card-meta {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 12px;
+      font-size: 13px;
+    }
+    .meta-item {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .meta-label {
+      color: #888;
+    }
+    .meta-value {
+      color: #e0e0e0;
+    }
+    .verdict {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .verdict.won {
+      background: #2d5a2d;
+      color: #7cfc7c;
+    }
+    .verdict.looping {
+      background: #5a4a2d;
+      color: #ffa500;
+    }
+    .card-gap {
+      background: #1a1a1a;
+      border-left: 2px solid #555;
+      padding: 12px;
+      margin-top: 12px;
+      border-radius: 4px;
+      font-size: 13px;
+      color: #b0b0b0;
+      line-height: 1.5;
+    }
+    .card-gap.empty {
+      color: #666;
+      font-style: italic;
+    }
+    .rounds-section {
+      margin-top: 50px;
+    }
+    .rounds-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: #f0f0f0;
+      margin-bottom: 20px;
+      border-bottom: 2px solid #333;
+      padding-bottom: 10px;
+    }
+    .round-entry {
+      background: #242424;
+      border-left: 3px solid #555;
+      padding: 15px;
+      margin-bottom: 12px;
+      border-radius: 4px;
+    }
+    .round-entry.wins {
+      border-left-color: #4caf50;
+    }
+    .round-entry.needs-work {
+      border-left-color: #ff9800;
+    }
+    .round-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+    .round-piece {
+      background: #333;
+      color: #aaa;
+      padding: 2px 8px;
+      border-radius: 3px;
+      font-size: 12px;
+      font-weight: 600;
+      min-width: 30px;
+      text-align: center;
+    }
+    .round-meta {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex: 1;
+    }
+    .round-number {
+      color: #888;
+      font-size: 13px;
+    }
+    .round-verdict {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 3px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .round-verdict.wins {
+      background: #2d5a2d;
+      color: #7cfc7c;
+    }
+    .round-verdict.needs-work {
+      background: #5a4a2d;
+      color: #ffa500;
+    }
+    .round-gap {
+      color: #b0b0b0;
+      font-size: 13px;
+      line-height: 1.5;
+      margin-top: 8px;
+    }
+    .round-gap.empty {
+      color: #666;
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>nc-camp-mood Progress Board</h1>
+    <div class="status-line">All pieces finished their loops.</div>
+
+    <div class="pieces-section">
+      <div class="pieces-title">PIECES</div>
+      <div class="pieces-grid">
+        <div class="card won">
+          <div class="card-id">P1</div>
+          <div class="card-title">Camp tab: the real node roster, with its three honest states</div>
+          <div class="card-meta">
+            <div class="meta-item">
+              <span class="meta-label">Round:</span>
+              <span class="meta-value">1</span>
+            </div>
+            <div class="meta-item">
+              <span class="verdict won">WON</span>
+            </div>
+          </div>
+          <div class="card-gap">The burn row's colour verdict rides <code>prodPerMin</code>, which is the NET, storage-clamped rate — so the card's own new promise ("green below means this city alone already covers the whole node's need for that supply") goes RED on a city whose far</div>
+        </div>
+
+        <div class="card looping">
+          <div class="card-id">P2</div>
+          <div class="card-title">plotMood(x,z): the number behind the face, before any face exists</div>
+          <div class="card-meta">
+            <div class="meta-item">
+              <span class="meta-label">Round:</span>
+              <span class="meta-value">1</span>
+            </div>
+            <div class="meta-item">
+              <span class="verdict looping">CRITIQUED</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card won">
+          <div class="card-id">P3</div>
+          <div class="card-title">The floating faces: one mesh, one CanvasTexture, in world space</div>
+          <div class="card-meta">
+            <div class="meta-item">
+              <span class="meta-label">Round:</span>
+              <span class="meta-value">1</span>
+            </div>
+            <div class="meta-item">
+              <span class="verdict won">WON</span>
+            </div>
+          </div>
+          <div class="card-gap">No declutter and no depth sort — the layer is unreadable exactly where a player needs it, in a dense block. The module's cap comment claims to have solved "a content city must not become a wall of smileys", but MOOD.max caps the COUNT (40)</div>
+        </div>
+
+        <div class="card looping">
+          <div class="card-id">P4</div>
+          <div class="card-title">It reacts to placement — at every commit seam, not just the one</div>
+          <div class="card-meta">
+            <div class="meta-item">
+              <span class="meta-label">Round:</span>
+              <span class="meta-value">4</span>
+            </div>
+            <div class="meta-item">
+              <span class="verdict looping">CRITIQUED</span>
+            </div>
+          </div>
+          <div class="card-gap">The builder moved BOTH hooks when only the eager <code>sync()</code> needed to move, and the removed <code>invalidate()</code> was the thing keeping <code>power</code>/<code>water</code> honest. Under the SHIPPED animate() cadence — economyTick on a 1 s accumulator (:42019), vitalsTi</div>
+        </div>
+
+        <div class="card looping">
+          <div class="card-id">P5</div>
+          <div class="card-title">The frown has to be actionable — the panel says why, and agrees with itself</div>
+          <div class="card-meta">
+            <div class="meta-item">
+              <span class="meta-label">Round:</span>
+              <span class="meta-value">2</span>
+            </div>
+            <div class="meta-item">
+              <span class="verdict looping">CRITIQUED</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="rounds-section">
+      <div class="rounds-title">ROUNDS (Chronological)</div>
+
+      <div class="round-entry wins">
+        <div class="round-header">
+          <div class="round-piece">P1</div>
+          <div class="round-meta">
+            <span class="round-number">Round 1</span>
+            <span class="round-verdict wins">WINS</span>
+          </div>
+        </div>
+        <div class="round-gap">The burn row's colour verdict rides <code>prodPerMin</code>, which is the NET, storage-clamped rate — so the card's own new promise ("green below means this city alone already covers the whole node's need for that supply") goes RED on a city whose far</div>
+      </div>
+
+      <div class="round-entry needs-work">
+        <div class="round-header">
+          <div class="round-piece">P5</div>
+          <div class="round-meta">
+            <span class="round-number">Round 1</span>
+            <span class="round-verdict needs-work">NEEDS_WORK</span>
+          </div>
+        </div>
+        <div class="round-gap">The card contradicts itself on the same card, in the one line the mismatch check is structurally blind to. <code>pmEnrich</code> sets <code>term.raw = n ? n.d : 0</code> for the three DISTANCE reasons (index.html:31432 water, :31456 road, :31471 dark), and <code>limi</code></div>
+      </div>
+
+      <div class="round-entry wins">
+        <div class="round-header">
+          <div class="round-piece">P3</div>
+          <div class="round-meta">
+            <span class="round-number">Round 1</span>
+            <span class="round-verdict wins">WINS</span>
+          </div>
+        </div>
+        <div class="round-gap">No declutter and no depth sort — the layer is unreadable exactly where a player needs it, in a dense block. The module's cap comment claims to have solved "a content city must not become a wall of smileys", but MOOD.max caps the COUNT (40)</div>
+      </div>
+
+      <div class="round-entry needs-work">
+        <div class="round-header">
+          <div class="round-piece">P4</div>
+          <div class="round-meta">
+            <span class="round-number">Round 1</span>
+            <span class="round-verdict needs-work">NEEDS_WORK</span>
+          </div>
+        </div>
+        <div class="round-gap">The bar's timed-build test was never actually run, and the report says it *cannot* be run — which is false. <code>.gauntlet/drive-moodreact.mjs:280</code> computes <code>timed: !!(t && t.bld)</code> in the RETURN statement, i.e. AFTER <code>nc.build.finishAll()</code> on l</div>
+      </div>
+
+      <div class="round-entry needs-work">
+        <div class="round-header">
+          <div class="round-piece">P5</div>
+          <div class="round-meta">
+            <span class="round-number">Round 2</span>
+            <span class="round-verdict needs-work">NEEDS_WORK</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="round-entry needs-work">
+        <div class="round-header">
+          <div class="round-piece">P2</div>
+          <div class="round-meta">
+            <span class="round-number">Round 1</span>
+            <span class="round-verdict needs-work">NEEDS_WORK</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="round-entry needs-work">
+        <div class="round-header">
+          <div class="round-piece">P4</div>
+          <div class="round-meta">
+            <span class="round-number">Round 2</span>
+            <span class="round-verdict needs-work">NEEDS_WORK</span>
+          </div>
+        </div>
+        <div class="round-gap">The water seam is hooked on a FAÇADE the player never touches, not on the player's own commit path — and I proved it in a browser. <code>moodPing()</code> was added only to <code>API.pipes.add/remove</code> and <code>API.drains.add/remove</code> (public/src/water/index.js:</div>
+      </div>
+
+      <div class="round-entry needs-work">
+        <div class="round-header">
+          <div class="round-piece">P4</div>
+          <div class="round-meta">
+            <span class="round-number">Round 3</span>
+            <span class="round-verdict needs-work">NEEDS_WORK</span>
+          </div>
+        </div>
+        <div class="round-gap">Opening the badge layer — the state a player is in whenever this feature is in use — makes the numbers behind the faces ONE BEAT STALE against their own source, and it does so *because* the layer is open. node-city calls <code>MythicPlotMood.inv</code></div>
+      </div>
+
+      <div class="round-entry needs-work">
+        <div class="round-header">
+          <div class="round-piece">P4</div>
+          <div class="round-meta">
+            <span class="round-number">Round 4</span>
+            <span class="round-verdict needs-work">NEEDS_WORK</span>
+          </div>
+        </div>
+        <div class="round-gap">The builder moved BOTH hooks when only the eager <code>sync()</code> needed to move, and the removed <code>invalidate()</code> was the thing keeping <code>power</code>/<code>water</code> honest. Under the SHIPPED animate() cadence — economyTick on a 1 s accumulator (:42019), vitalsTi</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

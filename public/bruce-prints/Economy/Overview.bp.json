@@ -1,0 +1,1792 @@
+{
+ "system": "Economy",
+ "label": "Economy & Crash Exchange",
+ "icon": "📈",
+ "print": "Overview",
+ "nodes": [
+  {
+   "id": "renderCrashExchange",
+   "name": "renderCrashExchange",
+   "kind": "event",
+   "file": "public/index.html",
+   "line": 237812,
+   "params": [],
+   "async": false,
+   "reads": [
+    "App._cxTab",
+    "App._cxNode",
+    "App._cxFilter",
+    "App._cxSearch",
+    "App._cxRange",
+    "Profile.cxHoldings",
+    "App._cxFocusId",
+    "BankEthos.aza"
+   ],
+   "writes": [
+    "App._cxFocusId"
+   ],
+   "calls": 25,
+   "x": 80,
+   "y": 80
+  },
+  {
+   "id": "_cxExecuteBuy",
+   "name": "_cxExecuteBuy",
+   "kind": "event",
+   "file": "public/index.html",
+   "line": 221768,
+   "params": [
+    "id",
+    "qty",
+    "_pxOverride"
+   ],
+   "async": false,
+   "reads": [
+    "Profile.gems",
+    "Profile.cxHoldings"
+   ],
+   "writes": [
+    "Profile.gems",
+    "Profile.cxHoldings"
+   ],
+   "calls": 7,
+   "x": 80,
+   "y": 212
+  },
+  {
+   "id": "_cxExecuteSell",
+   "name": "_cxExecuteSell",
+   "kind": "event",
+   "file": "public/index.html",
+   "line": 221848,
+   "params": [
+    "id",
+    "qty",
+    "_pxOverride"
+   ],
+   "async": false,
+   "reads": [
+    "Profile.cxHoldings"
+   ],
+   "writes": [
+    "Profile.cxHoldings"
+   ],
+   "calls": 7,
+   "x": 80,
+   "y": 344
+  },
+  {
+   "id": "cxProduce",
+   "name": "cxProduce",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 221120,
+   "params": [
+    "map",
+    "source"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 7,
+   "x": 80,
+   "y": 476
+  },
+  {
+   "id": "bumpMarketPriceUp",
+   "name": "bumpMarketPriceUp",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 221001,
+   "params": [
+    "id",
+    "qty",
+    "reason"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 5,
+   "x": 420,
+   "y": 80
+  },
+  {
+   "id": "dropMarketPriceDown",
+   "name": "dropMarketPriceDown",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 221019,
+   "params": [
+    "id",
+    "qty",
+    "reason"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 5,
+   "x": 420,
+   "y": 212
+  },
+  {
+   "id": "cxSupplyReport",
+   "name": "cxSupplyReport",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 221197,
+   "params": [
+    "id"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 6,
+   "x": 80,
+   "y": 608
+  },
+  {
+   "id": "_cxConvertCinderToAza",
+   "name": "_cxConvertCinderToAza",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 221903,
+   "params": [
+    "amountCR"
+   ],
+   "async": false,
+   "reads": [
+    "Profile.gems",
+    "BankEthos.aza"
+   ],
+   "writes": [
+    "Profile.gems",
+    "BankEthos.aza"
+   ],
+   "calls": 3,
+   "x": 80,
+   "y": 740
+  },
+  {
+   "id": "_cxGetHistory",
+   "name": "_cxGetHistory",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 221242,
+   "params": [
+    "id",
+    "range",
+    "opts"
+   ],
+   "async": false,
+   "reads": [
+    "CXHist.series"
+   ],
+   "writes": [],
+   "calls": 4,
+   "x": 420,
+   "y": 344
+  },
+  {
+   "id": "_cxConvertAzaToCinder",
+   "name": "_cxConvertAzaToCinder",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 221921,
+   "params": [
+    "amountAZA"
+   ],
+   "async": false,
+   "reads": [
+    "BankEthos.aza"
+   ],
+   "writes": [
+    "BankEthos.aza"
+   ],
+   "calls": 3,
+   "x": 80,
+   "y": 872
+  },
+  {
+   "id": "_cxRenderPortfolio",
+   "name": "_cxRenderPortfolio",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 237062,
+   "params": [
+    "holdings",
+    "totalValue",
+    "cinderBal",
+    "azaBal",
+    "azaInfo",
+    "playerTrades"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 4,
+   "x": 420,
+   "y": 476
+  },
+  {
+   "id": "_cxFetchStatsAll",
+   "name": "_cxFetchStatsAll",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 220542,
+   "params": [],
+   "async": false,
+   "reads": [
+    "CXHist.inflight",
+    "CXHist.all",
+    "CXHist.allAt",
+    "Cloud.client"
+   ],
+   "writes": [
+    "CXHist.all",
+    "CXHist.allAt"
+   ],
+   "calls": 2,
+   "x": 420,
+   "y": 608
+  },
+  {
+   "id": "_cxChartHtml",
+   "name": "_cxChartHtml",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 221425,
+   "params": [
+    "id",
+    "range",
+    "series"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 3,
+   "x": 420,
+   "y": 740
+  },
+  {
+   "id": "_cxHeraldStories",
+   "name": "_cxHeraldStories",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 237735,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 3,
+   "x": 760,
+   "y": 80
+  },
+  {
+   "id": "_cxFetchHistory",
+   "name": "_cxFetchHistory",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 220517,
+   "params": [
+    "id",
+    "range"
+   ],
+   "async": false,
+   "reads": [
+    "CXHist.series",
+    "CXHist.inflight",
+    "Cloud.client"
+   ],
+   "writes": [],
+   "calls": 3,
+   "x": 760,
+   "y": 212
+  },
+  {
+   "id": "cxCloudQueuePush",
+   "name": "cxCloudQueuePush",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 220589,
+   "params": [
+    "id",
+    "reason",
+    "dir"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 3,
+   "x": 760,
+   "y": 344
+  },
+  {
+   "id": "_cxMarketCatalog",
+   "name": "_cxMarketCatalog",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 221524,
+   "params": [],
+   "async": false,
+   "reads": [
+    "Profile.cardCollection"
+   ],
+   "writes": [],
+   "calls": 3,
+   "x": 420,
+   "y": 872
+  },
+  {
+   "id": "_cxIdleDriftFocus",
+   "name": "_cxIdleDriftFocus",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 221956,
+   "params": [
+    "id"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 3,
+   "x": 420,
+   "y": 1004
+  },
+  {
+   "id": "_cxFetchStats",
+   "name": "_cxFetchStats",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 220530,
+   "params": [
+    "id"
+   ],
+   "async": false,
+   "reads": [
+    "CXHist.stats",
+    "CXHist.inflight",
+    "Cloud.client"
+   ],
+   "writes": [],
+   "calls": 2,
+   "x": 420,
+   "y": 1136
+  },
+  {
+   "id": "_cxCloudMergeRow",
+   "name": "_cxCloudMergeRow",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 220567,
+   "params": [
+    "row"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 2,
+   "x": 760,
+   "y": 476
+  },
+  {
+   "id": "cxCloudPullAll",
+   "name": "cxCloudPullAll",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 220624,
+   "params": [
+    "force"
+   ],
+   "async": true,
+   "reads": [
+    "Cloud.client",
+    "App.screen"
+   ],
+   "writes": [],
+   "calls": 2,
+   "x": 420,
+   "y": 1268
+  },
+  {
+   "id": "cxCloudSubscribe",
+   "name": "cxCloudSubscribe",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 220647,
+   "params": [],
+   "async": false,
+   "reads": [
+    "Cloud.client",
+    "Profile.cloud",
+    "App.screen"
+   ],
+   "writes": [],
+   "calls": 2,
+   "x": 420,
+   "y": 1400
+  },
+  {
+   "id": "_cxGetReserve",
+   "name": "_cxGetReserve",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 220722,
+   "params": [
+    "resourceId"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 420,
+   "y": 1532
+  },
+  {
+   "id": "_cxQuoteOrder",
+   "name": "_cxQuoteOrder",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 220767,
+   "params": [
+    "id",
+    "qty",
+    "dir"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 2,
+   "x": 420,
+   "y": 1664
+  },
+  {
+   "id": "getMarketPrice",
+   "name": "getMarketPrice",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 220819,
+   "params": [
+    "id"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 2,
+   "x": 1440,
+   "y": 80
+  },
+  {
+   "id": "recordMarketTxn",
+   "name": "recordMarketTxn",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 221035,
+   "params": [
+    "id",
+    "qty",
+    "reason",
+    "dir"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 2,
+   "x": 760,
+   "y": 608
+  },
+  {
+   "id": "cxSupplyRatio",
+   "name": "cxSupplyRatio",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 221108,
+   "params": [
+    "id"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 2,
+   "x": 760,
+   "y": 740
+  },
+  {
+   "id": "_cxRecordHistory",
+   "name": "_cxRecordHistory",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 221233,
+   "params": [
+    "id"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 2,
+   "x": 1100,
+   "y": 80
+  },
+  {
+   "id": "_cxHistoryPts",
+   "name": "_cxHistoryPts",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 221351,
+   "params": [
+    "id",
+    "range"
+   ],
+   "async": false,
+   "reads": [
+    "CXHist.series"
+   ],
+   "writes": [],
+   "calls": 2,
+   "x": 760,
+   "y": 872
+  },
+  {
+   "id": "getCrashExchange",
+   "name": "getCrashExchange",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 220481,
+   "params": [],
+   "async": false,
+   "reads": [
+    "Forge.crashExchange"
+   ],
+   "writes": [
+    "Forge.crashExchange"
+   ],
+   "calls": 0,
+   "x": 1780,
+   "y": 80
+  },
+  {
+   "id": "_cxDelta24",
+   "name": "_cxDelta24",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 220557,
+   "params": [
+    "id",
+    "p"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 760,
+   "y": 1004
+  },
+  {
+   "id": "_cxCloudFlush",
+   "name": "_cxCloudFlush",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 220605,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Profile.cloud",
+    "Cloud.client"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 1100,
+   "y": 212
+  },
+  {
+   "id": "_cxEnsureReserveModel",
+   "name": "_cxEnsureReserveModel",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 220714,
+   "params": [],
+   "async": false,
+   "reads": [
+    "Forge.cxReserve"
+   ],
+   "writes": [
+    "Forge.cxReserve"
+   ],
+   "calls": 0,
+   "x": 760,
+   "y": 1136
+  },
+  {
+   "id": "_cxFillPrice",
+   "name": "_cxFillPrice",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 220760,
+   "params": [
+    "row",
+    "qty",
+    "dir"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 760,
+   "y": 1268
+  },
+  {
+   "id": "_cxQuoteBuy",
+   "name": "_cxQuoteBuy",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 220777,
+   "params": [
+    "resourceId",
+    "qty",
+    "marketPx"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 1004
+  },
+  {
+   "id": "_cxQuoteSell",
+   "name": "_cxQuoteSell",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 220790,
+   "params": [
+    "resourceId",
+    "qty",
+    "marketPx"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 1136
+  },
+  {
+   "id": "_cxReserveOnBuy",
+   "name": "_cxReserveOnBuy",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 220803,
+   "params": [
+    "resourceId",
+    "qty",
+    "cinderPaid"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 1268
+  },
+  {
+   "id": "_cxReserveOnSell",
+   "name": "_cxReserveOnSell",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 220811,
+   "params": [
+    "resourceId",
+    "qty",
+    "cinderPaid"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 1400
+  },
+  {
+   "id": "tickMarketDecay",
+   "name": "tickMarketDecay",
+   "kind": "event",
+   "file": "public/index.html",
+   "line": 220850,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 760,
+   "y": 1400
+  },
+  {
+   "id": "_cxTape",
+   "name": "_cxTape",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 220944,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 1440,
+   "y": 212
+  },
+  {
+   "id": "_cxTapePush",
+   "name": "_cxTapePush",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 220949,
+   "params": [
+    "id",
+    "dir",
+    "qty",
+    "px",
+    "src"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 760,
+   "y": 1532
+  },
+  {
+   "id": "_cxFlow",
+   "name": "_cxFlow",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 220958,
+   "params": [
+    "id",
+    "ms"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 1100,
+   "y": 344
+  },
+  {
+   "id": "_cxMovers",
+   "name": "_cxMovers",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 220973,
+   "params": [
+    "ms",
+    "limit"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 1100,
+   "y": 476
+  },
+  {
+   "id": "_cxRarityTier",
+   "name": "_cxRarityTier",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 221076,
+   "params": [
+    "id"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 1100,
+   "y": 608
+  },
+  {
+   "id": "_cxSupply",
+   "name": "_cxSupply",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 221088,
+   "params": [
+    "id"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 1100,
+   "y": 740
+  },
+  {
+   "id": "cxIsGlutted",
+   "name": "cxIsGlutted",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 221114,
+   "params": [
+    "id"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 420,
+   "y": 1796
+  },
+  {
+   "id": "_cxLogMarketEvent",
+   "name": "_cxLogMarketEvent",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 221156,
+   "params": [
+    "kind",
+    "id",
+    "source"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 420,
+   "y": 1928
+  },
+  {
+   "id": "cxMarketMul",
+   "name": "cxMarketMul",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 221175,
+   "params": [
+    "id"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 420,
+   "y": 2060
+  },
+  {
+   "id": "cxYieldMul",
+   "name": "cxYieldMul",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 221185,
+   "params": [
+    "map"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 1532
+  },
+  {
+   "id": "_cxEnsureHistory",
+   "name": "_cxEnsureHistory",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 221222,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 1440,
+   "y": 344
+  },
+  {
+   "id": "_cxChartSVG",
+   "name": "_cxChartSVG",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 221309,
+   "params": [
+    "data",
+    "w",
+    "h"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 760,
+   "y": 1664
+  },
+  {
+   "id": "_cxCandleSVG",
+   "name": "_cxCandleSVG",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 221389,
+   "params": [
+    "candles",
+    "w",
+    "h"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 760,
+   "y": 1796
+  },
+  {
+   "id": "_cxCandleTipHtml",
+   "name": "_cxCandleTipHtml",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 221432,
+   "params": [
+    "c"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 760,
+   "y": 1928
+  },
+  {
+   "id": "_cxBindCandleTip",
+   "name": "_cxBindCandleTip",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 221439,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 420,
+   "y": 2192
+  },
+  {
+   "id": "_cxFmtCR",
+   "name": "_cxFmtCR",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 221462,
+   "params": [
+    "n"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 2324
+  },
+  {
+   "id": "_cxUsd",
+   "name": "_cxUsd",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 221491,
+   "params": [
+    "cinder"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 1100,
+   "y": 872
+  },
+  {
+   "id": "_cxUsdAza",
+   "name": "_cxUsdAza",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 221492,
+   "params": [
+    "aza"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 760,
+   "y": 2060
+  },
+  {
+   "id": "_cxUsdMix",
+   "name": "_cxUsdMix",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 221493,
+   "params": [
+    "cinder",
+    "aza"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 760,
+   "y": 2192
+  },
+  {
+   "id": "_cxUsdLine",
+   "name": "_cxUsdLine",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 221496,
+   "params": [
+    "cinder",
+    "cls"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 760,
+   "y": 2324
+  },
+  {
+   "id": "_cxEventList",
+   "name": "_cxEventList",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 221670,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 420,
+   "y": 2456
+  },
+  {
+   "id": "_cxPushEvent",
+   "name": "_cxPushEvent",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 221692,
+   "params": [
+    "ev"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 420,
+   "y": 2588
+  },
+  {
+   "id": "_cxAzaRate",
+   "name": "_cxAzaRate",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 221719,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 420,
+   "y": 2720
+  },
+  {
+   "id": "_cxMarketSummary",
+   "name": "_cxMarketSummary",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 221938,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 420,
+   "y": 2852
+  },
+  {
+   "id": "_cxRenderOpsDesk",
+   "name": "_cxRenderOpsDesk",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 237689,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 2984
+  },
+  {
+   "id": "_cxRenderHerald",
+   "name": "_cxRenderHerald",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 237779,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 420,
+   "y": 3116
+  },
+  {
+   "id": "_cxBasePrice",
+   "name": "_cxBasePrice",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 220439,
+   "params": [
+    "id"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 1780,
+   "y": 212
+  },
+  {
+   "id": "_cxRangeSeconds",
+   "name": "_cxRangeSeconds",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 220515,
+   "params": [
+    "range"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 1100,
+   "y": 1004
+  },
+  {
+   "id": "_cxHistRepaint",
+   "name": "_cxHistRepaint",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 220516,
+   "params": [],
+   "async": false,
+   "reads": [
+    "App.screen"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 1100,
+   "y": 1136
+  },
+  {
+   "id": "_cxStatsOf",
+   "name": "_cxStatsOf",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 220555,
+   "params": [
+    "id"
+   ],
+   "async": false,
+   "reads": [
+    "CXHist.stats",
+    "CXHist.all"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 1100,
+   "y": 1268
+  },
+  {
+   "id": "_cxCloudReady",
+   "name": "_cxCloudReady",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 220559,
+   "params": [],
+   "async": false,
+   "reads": [
+    "Cloud.ready",
+    "Cloud.client",
+    "Profile.cloud"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 1440,
+   "y": 476
+  }
+ ],
+ "edges": [
+  {
+   "from": "renderCrashExchange",
+   "to": "_cxFetchStatsAll"
+  },
+  {
+   "from": "renderCrashExchange",
+   "to": "tickMarketDecay"
+  },
+  {
+   "from": "renderCrashExchange",
+   "to": "cxCloudSubscribe"
+  },
+  {
+   "from": "renderCrashExchange",
+   "to": "cxCloudPullAll"
+  },
+  {
+   "from": "renderCrashExchange",
+   "to": "_cxEnsureHistory"
+  },
+  {
+   "from": "renderCrashExchange",
+   "to": "_cxMarketCatalog"
+  },
+  {
+   "from": "renderCrashExchange",
+   "to": "getMarketPrice"
+  },
+  {
+   "from": "renderCrashExchange",
+   "to": "_cxDelta24"
+  },
+  {
+   "from": "renderCrashExchange",
+   "to": "_cxIdleDriftFocus"
+  },
+  {
+   "from": "renderCrashExchange",
+   "to": "_cxFmtCR"
+  },
+  {
+   "from": "renderCrashExchange",
+   "to": "_cxAzaRate"
+  },
+  {
+   "from": "renderCrashExchange",
+   "to": "_cxUsdLine"
+  },
+  {
+   "from": "renderCrashExchange",
+   "to": "_cxUsdAza"
+  },
+  {
+   "from": "renderCrashExchange",
+   "to": "_cxGetHistory"
+  },
+  {
+   "from": "renderCrashExchange",
+   "to": "_cxFetchStats"
+  },
+  {
+   "from": "renderCrashExchange",
+   "to": "_cxStatsOf"
+  },
+  {
+   "from": "renderCrashExchange",
+   "to": "_cxFlow"
+  },
+  {
+   "from": "renderCrashExchange",
+   "to": "_cxChartHtml"
+  },
+  {
+   "from": "renderCrashExchange",
+   "to": "_cxQuoteOrder"
+  },
+  {
+   "from": "renderCrashExchange",
+   "to": "_cxEventList"
+  },
+  {
+   "from": "renderCrashExchange",
+   "to": "_cxMarketSummary"
+  },
+  {
+   "from": "renderCrashExchange",
+   "to": "_cxRenderHerald"
+  },
+  {
+   "from": "renderCrashExchange",
+   "to": "_cxRenderPortfolio"
+  },
+  {
+   "from": "renderCrashExchange",
+   "to": "_cxRenderOpsDesk"
+  },
+  {
+   "from": "renderCrashExchange",
+   "to": "_cxBindCandleTip"
+  },
+  {
+   "from": "_cxExecuteBuy",
+   "to": "tickMarketDecay"
+  },
+  {
+   "from": "_cxExecuteBuy",
+   "to": "_cxQuoteOrder"
+  },
+  {
+   "from": "_cxExecuteBuy",
+   "to": "_cxFmtCR"
+  },
+  {
+   "from": "_cxExecuteBuy",
+   "to": "_cxTapePush"
+  },
+  {
+   "from": "_cxExecuteBuy",
+   "to": "bumpMarketPriceUp"
+  },
+  {
+   "from": "_cxExecuteBuy",
+   "to": "getCrashExchange"
+  },
+  {
+   "from": "_cxExecuteBuy",
+   "to": "_cxPushEvent"
+  },
+  {
+   "from": "_cxExecuteSell",
+   "to": "tickMarketDecay"
+  },
+  {
+   "from": "_cxExecuteSell",
+   "to": "_cxQuoteOrder"
+  },
+  {
+   "from": "_cxExecuteSell",
+   "to": "_cxTapePush"
+  },
+  {
+   "from": "_cxExecuteSell",
+   "to": "dropMarketPriceDown"
+  },
+  {
+   "from": "_cxExecuteSell",
+   "to": "getCrashExchange"
+  },
+  {
+   "from": "_cxExecuteSell",
+   "to": "_cxPushEvent"
+  },
+  {
+   "from": "_cxExecuteSell",
+   "to": "_cxFmtCR"
+  },
+  {
+   "from": "cxProduce",
+   "to": "tickMarketDecay"
+  },
+  {
+   "from": "cxProduce",
+   "to": "_cxRarityTier"
+  },
+  {
+   "from": "cxProduce",
+   "to": "_cxSupply"
+  },
+  {
+   "from": "cxProduce",
+   "to": "getMarketPrice"
+  },
+  {
+   "from": "cxProduce",
+   "to": "_cxLogMarketEvent"
+  },
+  {
+   "from": "cxProduce",
+   "to": "recordMarketTxn"
+  },
+  {
+   "from": "cxProduce",
+   "to": "cxCloudQueuePush"
+  },
+  {
+   "from": "bumpMarketPriceUp",
+   "to": "getMarketPrice"
+  },
+  {
+   "from": "bumpMarketPriceUp",
+   "to": "_cxTapePush"
+  },
+  {
+   "from": "bumpMarketPriceUp",
+   "to": "tickMarketDecay"
+  },
+  {
+   "from": "bumpMarketPriceUp",
+   "to": "recordMarketTxn"
+  },
+  {
+   "from": "bumpMarketPriceUp",
+   "to": "cxCloudQueuePush"
+  },
+  {
+   "from": "dropMarketPriceDown",
+   "to": "getMarketPrice"
+  },
+  {
+   "from": "dropMarketPriceDown",
+   "to": "_cxTapePush"
+  },
+  {
+   "from": "dropMarketPriceDown",
+   "to": "tickMarketDecay"
+  },
+  {
+   "from": "dropMarketPriceDown",
+   "to": "recordMarketTxn"
+  },
+  {
+   "from": "dropMarketPriceDown",
+   "to": "cxCloudQueuePush"
+  },
+  {
+   "from": "cxSupplyReport",
+   "to": "_cxRarityTier"
+  },
+  {
+   "from": "cxSupplyReport",
+   "to": "_cxSupply"
+  },
+  {
+   "from": "cxSupplyReport",
+   "to": "getMarketPrice"
+  },
+  {
+   "from": "cxSupplyReport",
+   "to": "cxSupplyRatio"
+  },
+  {
+   "from": "cxSupplyReport",
+   "to": "cxIsGlutted"
+  },
+  {
+   "from": "cxSupplyReport",
+   "to": "cxMarketMul"
+  },
+  {
+   "from": "_cxConvertCinderToAza",
+   "to": "_cxAzaRate"
+  },
+  {
+   "from": "_cxConvertCinderToAza",
+   "to": "_cxPushEvent"
+  },
+  {
+   "from": "_cxConvertCinderToAza",
+   "to": "_cxFmtCR"
+  },
+  {
+   "from": "_cxGetHistory",
+   "to": "_cxFetchHistory"
+  },
+  {
+   "from": "_cxGetHistory",
+   "to": "getMarketPrice"
+  },
+  {
+   "from": "_cxGetHistory",
+   "to": "_cxEnsureHistory"
+  },
+  {
+   "from": "_cxGetHistory",
+   "to": "_cxBasePrice"
+  },
+  {
+   "from": "_cxConvertAzaToCinder",
+   "to": "_cxAzaRate"
+  },
+  {
+   "from": "_cxConvertAzaToCinder",
+   "to": "_cxPushEvent"
+  },
+  {
+   "from": "_cxConvertAzaToCinder",
+   "to": "_cxFmtCR"
+  },
+  {
+   "from": "_cxRenderPortfolio",
+   "to": "_cxUsdMix"
+  },
+  {
+   "from": "_cxRenderPortfolio",
+   "to": "_cxUsd"
+  },
+  {
+   "from": "_cxRenderPortfolio",
+   "to": "_cxUsdAza"
+  },
+  {
+   "from": "_cxRenderPortfolio",
+   "to": "_cxUsdLine"
+  },
+  {
+   "from": "_cxFetchStatsAll",
+   "to": "_cxCloudReady"
+  },
+  {
+   "from": "_cxFetchStatsAll",
+   "to": "_cxHistRepaint"
+  },
+  {
+   "from": "_cxChartHtml",
+   "to": "_cxHistoryPts"
+  },
+  {
+   "from": "_cxChartHtml",
+   "to": "_cxCandleSVG"
+  },
+  {
+   "from": "_cxChartHtml",
+   "to": "_cxChartSVG"
+  },
+  {
+   "from": "_cxHeraldStories",
+   "to": "_cxMovers"
+  },
+  {
+   "from": "_cxHeraldStories",
+   "to": "_cxFlow"
+  },
+  {
+   "from": "_cxHeraldStories",
+   "to": "getCrashExchange"
+  },
+  {
+   "from": "_cxFetchHistory",
+   "to": "_cxCloudReady"
+  },
+  {
+   "from": "_cxFetchHistory",
+   "to": "_cxRangeSeconds"
+  },
+  {
+   "from": "_cxFetchHistory",
+   "to": "_cxHistRepaint"
+  },
+  {
+   "from": "cxCloudQueuePush",
+   "to": "_cxCloudReady"
+  },
+  {
+   "from": "cxCloudQueuePush",
+   "to": "getMarketPrice"
+  },
+  {
+   "from": "cxCloudQueuePush",
+   "to": "_cxCloudFlush"
+  },
+  {
+   "from": "_cxMarketCatalog",
+   "to": "_cxEnsureHistory"
+  },
+  {
+   "from": "_cxMarketCatalog",
+   "to": "getMarketPrice"
+  },
+  {
+   "from": "_cxMarketCatalog",
+   "to": "_cxDelta24"
+  },
+  {
+   "from": "_cxIdleDriftFocus",
+   "to": "_cxEnsureHistory"
+  },
+  {
+   "from": "_cxIdleDriftFocus",
+   "to": "getMarketPrice"
+  },
+  {
+   "from": "_cxIdleDriftFocus",
+   "to": "_cxRecordHistory"
+  },
+  {
+   "from": "_cxFetchStats",
+   "to": "_cxCloudReady"
+  },
+  {
+   "from": "_cxFetchStats",
+   "to": "_cxHistRepaint"
+  },
+  {
+   "from": "_cxCloudMergeRow",
+   "to": "getCrashExchange"
+  },
+  {
+   "from": "_cxCloudMergeRow",
+   "to": "_cxBasePrice"
+  },
+  {
+   "from": "cxCloudPullAll",
+   "to": "_cxCloudReady"
+  },
+  {
+   "from": "cxCloudPullAll",
+   "to": "_cxCloudMergeRow"
+  },
+  {
+   "from": "cxCloudSubscribe",
+   "to": "_cxCloudReady"
+  },
+  {
+   "from": "cxCloudSubscribe",
+   "to": "_cxCloudMergeRow"
+  },
+  {
+   "from": "_cxGetReserve",
+   "to": "_cxEnsureReserveModel"
+  },
+  {
+   "from": "_cxQuoteOrder",
+   "to": "getMarketPrice"
+  },
+  {
+   "from": "_cxQuoteOrder",
+   "to": "_cxFillPrice"
+  },
+  {
+   "from": "getMarketPrice",
+   "to": "getCrashExchange"
+  },
+  {
+   "from": "getMarketPrice",
+   "to": "_cxBasePrice"
+  },
+  {
+   "from": "recordMarketTxn",
+   "to": "getCrashExchange"
+  },
+  {
+   "from": "recordMarketTxn",
+   "to": "_cxRecordHistory"
+  },
+  {
+   "from": "cxSupplyRatio",
+   "to": "_cxSupply"
+  },
+  {
+   "from": "cxSupplyRatio",
+   "to": "_cxRarityTier"
+  },
+  {
+   "from": "_cxRecordHistory",
+   "to": "_cxEnsureHistory"
+  },
+  {
+   "from": "_cxRecordHistory",
+   "to": "getMarketPrice"
+  },
+  {
+   "from": "_cxHistoryPts",
+   "to": "_cxEnsureHistory"
+  },
+  {
+   "from": "_cxHistoryPts",
+   "to": "getMarketPrice"
+  },
+  {
+   "from": "_cxDelta24",
+   "to": "_cxStatsOf"
+  },
+  {
+   "from": "_cxCloudFlush",
+   "to": "_cxCloudReady"
+  },
+  {
+   "from": "_cxQuoteBuy",
+   "to": "_cxGetReserve"
+  },
+  {
+   "from": "_cxQuoteSell",
+   "to": "_cxGetReserve"
+  },
+  {
+   "from": "_cxReserveOnBuy",
+   "to": "_cxGetReserve"
+  },
+  {
+   "from": "_cxReserveOnSell",
+   "to": "_cxGetReserve"
+  },
+  {
+   "from": "tickMarketDecay",
+   "to": "getCrashExchange"
+  },
+  {
+   "from": "_cxTape",
+   "to": "getCrashExchange"
+  },
+  {
+   "from": "_cxTapePush",
+   "to": "_cxTape"
+  },
+  {
+   "from": "_cxFlow",
+   "to": "_cxTape"
+  },
+  {
+   "from": "_cxMovers",
+   "to": "_cxTape"
+  },
+  {
+   "from": "_cxRarityTier",
+   "to": "_cxBasePrice"
+  },
+  {
+   "from": "_cxSupply",
+   "to": "getCrashExchange"
+  },
+  {
+   "from": "cxIsGlutted",
+   "to": "cxSupplyRatio"
+  },
+  {
+   "from": "_cxLogMarketEvent",
+   "to": "getCrashExchange"
+  },
+  {
+   "from": "cxMarketMul",
+   "to": "getMarketPrice"
+  },
+  {
+   "from": "cxYieldMul",
+   "to": "cxMarketMul"
+  },
+  {
+   "from": "_cxEnsureHistory",
+   "to": "getCrashExchange"
+  },
+  {
+   "from": "_cxBindCandleTip",
+   "to": "_cxCandleTipHtml"
+  },
+  {
+   "from": "_cxUsdLine",
+   "to": "_cxUsd"
+  },
+  {
+   "from": "_cxEventList",
+   "to": "_cxEnsureHistory"
+  },
+  {
+   "from": "_cxPushEvent",
+   "to": "_cxEnsureHistory"
+  },
+  {
+   "from": "_cxAzaRate",
+   "to": "_cxEnsureHistory"
+  },
+  {
+   "from": "_cxMarketSummary",
+   "to": "_cxEnsureHistory"
+  },
+  {
+   "from": "_cxRenderHerald",
+   "to": "_cxHeraldStories"
+  }
+ ]
+}

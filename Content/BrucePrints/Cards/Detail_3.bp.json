@@ -1,0 +1,351 @@
+{
+ "system": "Cards",
+ "label": "Cards, Moves & Battle",
+ "icon": "🃏",
+ "print": "Detail_3",
+ "nodes": [
+  {
+   "id": "_deckVaultPayload",
+   "name": "_deckVaultPayload",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 249263,
+   "params": [],
+   "async": true,
+   "reads": [
+    "App.deckBuilderHeroId"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 80
+  },
+  {
+   "id": "moveCard",
+   "name": "moveCard",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 251917,
+   "params": [
+    "m"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 212
+  },
+  {
+   "id": "moveRefusal",
+   "name": "moveRefusal",
+   "kind": "pure",
+   "file": "public/node-city/index.html",
+   "line": 36230,
+   "params": [
+    "t",
+    "k"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 344
+  },
+  {
+   "id": "moveCheck",
+   "name": "moveCheck",
+   "kind": "function",
+   "file": "public/node-city/index.html",
+   "line": 36246,
+   "params": [
+    "t",
+    "x",
+    "z"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 476
+  },
+  {
+   "id": "deckPower",
+   "name": "deckPower",
+   "kind": "function",
+   "file": "public/node-city/index.html",
+   "line": 39521,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 608
+  },
+  {
+   "id": "cardBackSrc",
+   "name": "cardBackSrc",
+   "kind": "pure",
+   "file": "public/src/battle/draw.js",
+   "line": 637,
+   "params": [
+    "side"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 740
+  },
+  {
+   "id": "cardKey",
+   "name": "cardKey",
+   "kind": "pure",
+   "file": "public/src/resonance/house.city.js",
+   "line": 68,
+   "params": [
+    "c"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 872
+  },
+  {
+   "id": "_cards",
+   "name": "_cards",
+   "kind": "function",
+   "file": "public/src/resonance/house.camp.js",
+   "line": 376,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1004
+  },
+  {
+   "id": "cardOutput",
+   "name": "cardOutput",
+   "kind": "pure",
+   "file": "public/src/economy/index.js",
+   "line": 549,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1136
+  },
+  {
+   "id": "cardSeam",
+   "name": "cardSeam",
+   "kind": "function",
+   "file": "public/src/districts/index.js",
+   "line": 534,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1268
+  },
+  {
+   "id": "cardsHtml",
+   "name": "cardsHtml",
+   "kind": "pure",
+   "file": "public/src/dossier/index.js",
+   "line": 218,
+   "params": [
+    "k"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1400
+  },
+  {
+   "id": "moveToStash",
+   "name": "moveToStash",
+   "kind": "pure",
+   "file": "public/src/stash/stash.js",
+   "line": 141,
+   "params": [
+    "bag",
+    "stash",
+    "tier",
+    "id",
+    "qty",
+    "slotCost"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1532
+  },
+  {
+   "id": "moveToBag",
+   "name": "moveToBag",
+   "kind": "pure",
+   "file": "public/src/stash/stash.js",
+   "line": 154,
+   "params": [
+    "bag",
+    "stash",
+    "id",
+    "qty"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1664
+  },
+  {
+   "id": "moveGhost",
+   "name": "moveGhost",
+   "kind": "function",
+   "file": "public/src/decorate/warehouse.js",
+   "line": 310,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1796
+  },
+  {
+   "id": "cardOf",
+   "name": "cardOf",
+   "kind": "pure",
+   "file": "public/src/work/crew.city.js",
+   "line": 83,
+   "params": [
+    "id"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1928
+  },
+  {
+   "id": "moveToFolder",
+   "name": "moveToFolder",
+   "kind": "function",
+   "file": "public/src/mapforge/mapforge.editor.js",
+   "line": 413,
+   "params": [
+    "objIds",
+    "folderId"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 2060
+  },
+  {
+   "id": "moveFolder",
+   "name": "moveFolder",
+   "kind": "function",
+   "file": "public/src/mapforge/mapforge.editor.js",
+   "line": 419,
+   "params": [
+    "id",
+    "parent"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 2192
+  },
+  {
+   "id": "cardHtml",
+   "name": "cardHtml",
+   "kind": "function",
+   "file": "public/src/mapforge/mapforge.editor.js",
+   "line": 1609,
+   "params": [
+    "e",
+    "extraClass"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 2324
+  },
+  {
+   "id": "moveTo",
+   "name": "moveTo",
+   "kind": "function",
+   "file": "public/src/biolab/player.js",
+   "line": 274,
+   "params": [
+    "x",
+    "y"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 2456
+  },
+  {
+   "id": "cardOptions",
+   "name": "cardOptions",
+   "kind": "function",
+   "file": "public/src/mercenary/merc.render.js",
+   "line": 226,
+   "params": [
+    "selected"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 2588
+  },
+  {
+   "id": "moveNode",
+   "name": "moveNode",
+   "kind": "function",
+   "file": "public/src/widgets/widgets.editor.js",
+   "line": 119,
+   "params": [
+    "id",
+    "dir"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 2720
+  }
+ ],
+ "edges": []
+}

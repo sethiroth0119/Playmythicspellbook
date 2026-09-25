@@ -1,0 +1,13 @@
+<!doctype html><meta charset="utf-8"><title>cursor check</title>
+<style>
+  body{background:#14141c;color:#ddd;font:14px system-ui;padding:20px}
+  /* the exact rules shipped in index.html */
+  *, *::before, *::after { cursor: url('/cursors/abra-blade.png') 3 3, default !important; }
+  a, button, [onclick], [style*="cursor:pointer"] { cursor: url('/cursors/abra-blade-glow.png') 5 4, pointer !important; }
+  input[type="text"], textarea { cursor: text !important; }
+  .box{padding:14px;margin:8px 0;background:#222;border:1px solid #444;display:inline-block}
+</style>
+<div class="box" id="plain">plain text — blade</div>
+<button class="box" id="btn">a button — glow</button>
+<div class="box" id="inline" style="cursor:pointer">inline cursor:pointer — must still glow</div>
+<input class="box" id="txt" type="text" value="a text box — I-beam">

@@ -1,0 +1,34 @@
+judged: 1
+
+rows (reason / value / the printed "Limited by" line):
+  {"k":"19,19","reason":"road","valueTxt":"no roads","limitedBy":"ROAD no roads","printed":"ROAD no roadsRead live f"}
+
+ZERO-DISTANCE DEFECT COUNT: 0
+
+roof-glyph layer: {
+ "toggled": false,
+ "mesh": false,
+ "mounted": null,
+ "visible": null,
+ "drawn": null,
+ "keys": [
+  "ready",
+  "mount",
+  "invalidate",
+  "beat",
+  "repaint",
+  "moodAtKey",
+  "moodAt",
+  "all",
+  "report",
+  "layer",
+  "layerVisible",
+  "mesh",
+  "atlasCanvas",
+  "setPainter",
+  "tuning",
+  "REASONS",
+  "verify",
+  "evaluate"
+ ]
+}

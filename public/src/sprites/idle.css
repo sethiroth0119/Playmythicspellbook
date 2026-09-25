@@ -1,0 +1,257 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   ROUND 1 — THE IDLE LOOP: CADENCE, SEAM, AND THE BREATHE LAYER
+   Appended after everything else; every rule here wins by ordinary source
+   order at equal specificity. There is NO `!important` in this file.
+
+   ───────────────────────────────────────────────────────────────────────────
+   THE VERDICT ON `unit-idle-breathe` (index.html ~13300)
+   ───────────────────────────────────────────────────────────────────────────
+   It is REMOVED from every sprite the frame ticker is driving, and REBUILT
+   (translate-only, no scale) for sprites that have nothing else moving.
+
+   Four reasons, in order of how much they cost the look:
+
+   1. TWO IDLES AT UNRELATED PERIODS = WOBBLE, NOT LIFE.
+      Measured against the real published library (public-catalog/
+      sprites-0.json, 297 sets with idle frames):
+
+        190 sets have exactly 25 idle frames → 1550ms cycle at the 62ms default
+         28 sets have 64 frames              → 3968ms cycle
+         72 sets have ONE frame              → no idle motion of their own
+
+      Against the breathe's 3600ms, none of those divide evenly. A 25-frame
+      set and the breathe only re-align every 111.6s; a 64-frame set only
+      every 14.9 MINUTES — and because 3968ms is within 10% of 3600ms, the
+      two slide against each other with a ~39s beat envelope. So the figure
+      swells on some loops and not others, on a cycle far longer than anyone
+      is looking at one unit. The eye reads the beat, not the animation, and
+      the beat is exactly what makes the loop point findable — the bar says
+      it must be invisible.
+
+   2. THE SCALE PULSE IS LITERALLY A SIZE WOBBLE, AND IT IS AMPLIFIED ~2×.
+      `scale(1.015)` is applied to `.sprite-stack`, which sits inside a
+      `.unit-icon` that iso-mode already scales to 1.66–2.02 (index ~8133).
+      So the sprite is continuously resampled between 2.00× and 2.03× of its
+      source: edges crawl, thin art (spears, horns, hair) shimmers. The bar
+      is "size, footing and silhouette never wobble". A scale animation on
+      the element the frames render inside cannot satisfy that.
+
+   3. ON THE STREAMING BOARD PATH THE BREATHE IS NOT CLOCK-ANCHORED, SO IT
+      RESTARTS ON EVERY ACTION.
+      The RAF ticker anchors the breathe by writing an inline negative
+      `animation-delay` (index ~106334) — but ONLY onto
+      `.sprite-stack[data-sprite-id]`, i.e. the eager multi-frame stacks.
+      The board's streaming sprite is `<span class="sprite-stack"><img
+      class="bsprite">` (index ~98143) and has NO `data-sprite-id`, so it
+      never gets anchored. renderBattle rebuilds the board on every action,
+      which restarted its 3.6s pulse from scale(1) each time — a size pop
+      wired directly to gameplay events. Deleting the animation deletes the
+      pop; there is no CSS way to phase-lock a fresh element to a global
+      clock.
+
+   4. IT ALSO CAUSED A SNAP AFTER EVERY ATTACK. `[data-anim="attack|hurt|
+      cast|…"]` REPLACES the breathe (same property, higher specificity), so
+      when the state animation ended the breathe re-entered from an arbitrary
+      phase. With no breathe on animated sprites, that seam is gone too.
+
+   WHAT KEEPS A BREATHE: a stack that is NOT being ticked — a single-frame
+   sprite set, or the streaming poster/thumbnail stand-in. That is not an edge
+   case: 72 of the 297 published idle sets (24%) are a single drawing. Those
+   have no idle of their own, and a dead-still figure standing next to
+   animated ones is the other half of "some of them run smooth". They get a
+   1px vertical breath with NO scale component, so silhouette and size stay
+   constant to the pixel. See §2 for why the duration is nailed to 3600ms.
+
+   ───────────────────────────────────────────────────────────────────────────
+   CADENCE AND SEAM — WHAT IS AND ISN'T IN THIS FILE
+   ───────────────────────────────────────────────────────────────────────────
+   The frame index is computed in JS (`Math.floor(_bsNow / frameMs + phase) %
+   frames.length`, index ~97995 and ~106402). CSS cannot reach it, so the two
+   things that need JS live in the sibling file `r1_idle.js`: the
+   frame-count-aware cadence floor, and the `data-bsn` stamp §3 depends on.
+   Nothing else in this round is JS.
+
+   On cadence, the measured library says 16fps is NOT the problem it looked
+   like: 218 of the 225 multi-frame sets carry 25+ frames, so they already
+   cycle in 1.5–4.0s. Exactly ONE published set (5 frames) sits in the band
+   where 62ms/frame strobes. The cadence floor in `r1_idle.js` therefore fires
+   for one sprite today and stands guard over hand-made 2–4 frame idles; it
+   never speeds anything up. What the data DOES raise — 25 frames is one
+   second of 25fps video, so those reels may be playing at 0.64× the speed
+   they were authored at, and the 64-frame reels take 4.0s per loop — is a
+   deliberate change to how every sprite plays, with a real decode cost on the
+   streaming path. That is the user's call, not a silent one to make here.
+
+   The seam itself belongs to the art. Both tickers already do the two things
+   code can do about it: the streaming path pre-decodes the wrap frame
+   (index ~98020) so frame N→0 cannot stall, and the stack path keeps every
+   frame in the DOM and only toggles a class, so a wrap costs nothing. A
+   cross-fade at the seam was tried before and reverted (index ~13537) — and
+   it was right to revert it: two stacked frames at fractional opacity ghost,
+   and finished 2D sprite work uses hard cuts. So this file attacks the seam
+   the two remaining ways that work: it removes the competing rhythm that made
+   the wrap findable (§1/§3), and `r1_idle.js` stretches short cycles out of
+   the strobe band so a 2–4 frame loop reads as a pose change instead of a
+   flicker.
+
+   ───────────────────────────────────────────────────────────────────────────
+   ⚠ WHAT THIS FILE DELIBERATELY DOES NOT TOUCH
+   ───────────────────────────────────────────────────────────────────────────
+   • `.sprite-frame` SIZING — no `width`, no `height`, no `object-fit`, no
+     `object-position`, no `aspect-ratio`. The frame-to-frame size/anchor bug
+     ("sprites get bigger and smaller") is a separate piece of work and this
+     round does not reach across into it. Nothing here needs it: everything
+     below is animation-* and transform on the STACK, never the frame box.
+   • `will-change` / `contain` / `isolation` on `.sprite-stack` and
+     `.unit-icon` — the compositor-layer isolation (index ~13307). A sprite
+     that rasterises into the board's layer repaints the whole projected
+     board on every frame swap. §1 keeps the stack promoted: where the
+     animation is removed the base rule's `transform: translateZ(0)` takes
+     over, and where it stays the keyframes use `translate3d`.
+   • `.board` / `.tile` 3D — nothing here adds or removes a transform on the
+     board, its tiles, or `transform-style` anywhere.
+   • `[data-anim]` STATE ANIMATIONS — attack / hurt / cast / death / summon /
+     victory must all still play. Every rule below is deliberately held at
+     specificity (0,3,0) using `:where()` so the (0,4,0) state rules keep
+     winning. Removing the `:where()` wrapper would silently delete all six.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+
+/* ---------------------------------------------------------------------------
+   1. THE REBUILT BREATH
+   translate only. No scale, no rotate, no filter — the three things that
+   change a sprite's size or silhouette. 1px at the top of the arc, which at
+   the iso board's ~2× standing scale reads as a ~2px lift: enough to be
+   alive, small enough that it cannot be mistaken for the figure changing
+   size.
+
+   `translate3d` (not `translateY`) so the element keeps a 3D transform for
+   the whole cycle and stays on its own compositor layer — this is the same
+   promotion the base rule's `transform: translateZ(0)` provides, preserved
+   through the animation instead of being overwritten by it.
+   ------------------------------------------------------------------------ */
+@keyframes hg-idle-breath-r1 {
+  0%, 100% { transform: translate3d(0, 0,    0); }
+  50%      { transform: translate3d(0, -1px, 0); }
+}
+
+/* ---------------------------------------------------------------------------
+   2. APPLY IT — AND WHY THE DURATION IS EXACTLY 3600ms
+   The RAF ticker anchors a freshly-rebuilt stack mid-breath by writing
+      animationDelay = -((t + _spritePhaseOffset(id)) % 3600) + 'ms'
+   (index ~106334). That inline value is only a correct phase if the
+   animation's period DIVIDES 3600 — otherwise the phase depends on when the
+   element happened to be created, and the sprite snaps to a random point in
+   the cycle on every board re-render (the exact bug that anchoring was added
+   to fix). 3600 / 1800 / 1200 / 900 are safe; 3000 or 4000 are not.
+
+   Longhands, never the `animation:` shorthand — the shorthand would reset
+   `animation-delay` and wipe both the inline anchor's sibling rules and the
+   per-row stagger in §4.
+   ------------------------------------------------------------------------ */
+.unit .unit-icon .sprite-stack {
+  animation-name: hg-idle-breath-r1;
+  animation-duration: 3600ms;      /* MUST divide 3600 — see above */
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+  animation-direction: normal;
+  animation-fill-mode: none;
+  animation-play-state: running;
+}
+
+/* ---------------------------------------------------------------------------
+   3. TURN IT OFF WHERE THE ART IS ALREADY MOVING
+   Two shapes of ticker-driven sprite exist on the board:
+
+     (a) eager stack — `.sprite-stack[data-sprite-id]` holding N
+         `<img.sprite-frame>` children (index ~98349). CSS can COUNT these:
+         two adjacent frames means the ticker has something to cycle.
+     (b) streaming stack — one `<img.sprite-img.bsprite>` whose `src` the
+         board ticker swaps (index ~98143). Frame count is not in the DOM, so
+         `r1_idle.js` stamps `data-bsn` with it; `="1"` keeps the breath.
+         This is what the 72 single-frame sets ride on when a library is big
+         enough to turn streaming on — without the stamp they stand perfectly
+         still. Anything unstamped is treated as animated, which is the
+         conservative reading and the right default: it costs a still sprite
+         a 1px breath, where the opposite default would give 225 animated
+         sets a second idle rhythm.
+
+   `:where()` holds these at (0,3,0). Without it, `:has(.sprite-frame +
+   .sprite-frame)` alone would score (0,5,0) and beat
+   `.unit[data-anim="attack"] .unit-icon .sprite-stack` (0,4,0) — killing
+   every attack / hurt / cast / death / summon / victory animation on the
+   board. That is the one trap in this file worth remembering.
+
+   If a browser lacks `:has()` the two rules below drop out and every sprite
+   keeps the §2 breath — still strictly better than today's scale pulse.
+   ------------------------------------------------------------------------ */
+.unit .unit-icon .sprite-stack:where(:has(> .sprite-frame + .sprite-frame)) {
+  animation-name: none;
+}
+.unit .unit-icon .sprite-stack:where(:has(> img.bsprite:not([data-bsn="1"]))) {
+  animation-name: none;
+}
+
+/* ---------------------------------------------------------------------------
+   4. PHASE — SO NO TWO NEIGHBOURS BREATHE TOGETHER
+   index.html staggers by row only (`.unit[data-y="N"] .sprite-stack`,
+   ~13330), in 0.5s steps across 7 buckets — so an entire ROW inhales in
+   lockstep, which reads as the board pulsing rather than the pieces
+   breathing. This replaces it with a row × column offset.
+
+   The steps (511ms / 173ms) are chosen not to divide 3600, so walking along
+   a row or up a column never lands two units on the same phase.
+
+   Set as inherited custom properties on the `.unit` / `.tile` so the stack
+   rule can consume them in one `calc()`. The stack rule NEVER declares the
+   variables itself — declaring them would block inheritance; the `var()`
+   fallbacks cover boards that do not carry the attributes.
+
+   The inline anchored delay (stacks with `data-sprite-id`) still wins over
+   this, which is correct: continuity across re-renders matters more than
+   stagger, and those already get a per-sprite-id offset from
+   `_spritePhaseOffset(id)` baked into the anchor.
+   ------------------------------------------------------------------------ */
+.unit .unit-icon .sprite-stack {
+  animation-delay: calc(0ms - var(--idle-ph-y, 0ms) - var(--idle-ph-x, 0ms));
+}
+.unit[data-y="0"] { --idle-ph-y:    0ms; }
+.unit[data-y="1"] { --idle-ph-y:  511ms; }
+.unit[data-y="2"] { --idle-ph-y: 1022ms; }
+.unit[data-y="3"] { --idle-ph-y: 1533ms; }
+.unit[data-y="4"] { --idle-ph-y: 2044ms; }
+.unit[data-y="5"] { --idle-ph-y: 2555ms; }
+.unit[data-y="6"] { --idle-ph-y: 3066ms; }
+.unit[data-y="7"] { --idle-ph-y:  277ms; }
+.unit[data-y="8"] { --idle-ph-y:  788ms; }
+.unit[data-y="9"] { --idle-ph-y: 1299ms; }
+/* Columns live on the .tile — `.unit` carries data-y only (index ~137483),
+   the grid cell carries data-x (index ~137640). Inheritance crosses the
+   tile→unit boundary, so setting the variable on the tile is enough. */
+.tile[data-x="0"] { --idle-ph-x:    0ms; }
+.tile[data-x="1"] { --idle-ph-x:  173ms; }
+.tile[data-x="2"] { --idle-ph-x:  346ms; }
+.tile[data-x="3"] { --idle-ph-x:  519ms; }
+.tile[data-x="4"] { --idle-ph-x:  692ms; }
+.tile[data-x="5"] { --idle-ph-x:  865ms; }
+.tile[data-x="6"] { --idle-ph-x: 1038ms; }
+.tile[data-x="7"] { --idle-ph-x: 1211ms; }
+.tile[data-x="8"] { --idle-ph-x: 1384ms; }
+.tile[data-x="9"] { --idle-ph-x: 1557ms; }
+
+/* ---------------------------------------------------------------------------
+   5. REDUCED MOTION
+   index.html has no `prefers-reduced-motion` rule for the board sprites at
+   all — `unit-idle-breathe` ran regardless. The CSS-driven idle stops here.
+
+   The frame ticker is JS and cannot be stopped from a stylesheet; it is left
+   running on purpose. A sprite's own frames are game CONTENT (the character
+   is drawn breathing), not decorative motion, and freezing every unit on
+   frame 0 would read as a broken board. What this removes is the extra,
+   non-content movement the engine adds on top.
+   ------------------------------------------------------------------------ */
+@media (prefers-reduced-motion: reduce) {
+  .unit .unit-icon .sprite-stack {
+    animation-name: none;
+  }
+}

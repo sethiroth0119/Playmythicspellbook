@@ -1,0 +1,282 @@
+{
+ "hour": 19,
+ "built": 172,
+ "box": {
+  "x0": -8.5,
+  "x1": 9.5,
+  "z0": -8.5,
+  "z1": 9.5,
+  "n": 172
+ },
+ "shots": {
+  "aerial": {
+   "ground": {
+    "n": 3344,
+    "mean": 0.2142,
+    "med": 0.1793,
+    "p10": 0.1364,
+    "p90": 0.3302
+   },
+   "groundLit": {
+    "n": 2941,
+    "mean": 0.2178,
+    "med": 0.1824,
+    "p10": 0.1423,
+    "p90": 0.3302
+   },
+   "all": {
+    "n": 4940,
+    "mean": 0.2046,
+    "med": 0.1787,
+    "p10": 0.076,
+    "p90": 0.3302
+   },
+   "vertical": {
+    "n": 866,
+    "mean": 0.1943,
+    "med": 0.1703,
+    "p10": 0.0389,
+    "p90": 0.3302
+   },
+   "vertShaded": {
+    "n": 487,
+    "mean": 0.1524,
+    "med": 0.1067,
+    "p10": 0.0221,
+    "p90": 0.3178
+   },
+   "vertSunlit": {
+    "n": 378,
+    "mean": 0.2484,
+    "med": 0.2681,
+    "p10": 0.0849,
+    "p90": 0.3505
+   },
+   "horizUp": {
+    "n": 406,
+    "mean": 0.158,
+    "med": 0.093,
+    "p10": 0.0496,
+    "p90": 0.3302
+   },
+   "horizUpLit": {
+    "n": 359,
+    "mean": 0.1626,
+    "med": 0.093,
+    "p10": 0.0538,
+    "p90": 0.3302
+   },
+   "horizUpShadow": {
+    "n": 47,
+    "mean": 0.123,
+    "med": 0.091,
+    "p10": 0.0185,
+    "p90": 0.3375
+   },
+   "groundShadow": {
+    "n": 403,
+    "mean": 0.1879,
+    "med": 0.1532,
+    "p10": 0.1086,
+    "p90": 0.2888
+   },
+   "_crushPct": 5.11,
+   "_key": {
+    "intensity": 1.2,
+    "color": "#8fa3d8",
+    "dir": [
+     0.72,
+     0.18,
+     -0.67
+    ],
+    "elevDeg": 10.5,
+    "hemiI": 0.718,
+    "hemiSky": "#b0b4c7",
+    "hemiGnd": "#1d1a30",
+    "exposure": 1.4
+   }
+  },
+  "street": {
+   "vertical": {
+    "n": 1788,
+    "mean": 0.1073,
+    "med": 0.0924,
+    "p10": 0.021,
+    "p90": 0.2255
+   },
+   "vertShaded": {
+    "n": 1646,
+    "mean": 0.0949,
+    "med": 0.0879,
+    "p10": 0.0163,
+    "p90": 0.1552
+   },
+   "all": {
+    "n": 3527,
+    "mean": 0.1493,
+    "med": 0.123,
+    "p10": 0.0213,
+    "p90": 0.2951
+   },
+   "vertSunlit": {
+    "n": 140,
+    "mean": 0.2549,
+    "med": 0.2804,
+    "p10": 0.1258,
+    "p90": 0.3648
+   },
+   "ground": {
+    "n": 1405,
+    "mean": 0.2139,
+    "med": 0.1846,
+    "p10": 0.1042,
+    "p90": 0.374
+   },
+   "groundLit": {
+    "n": 1164,
+    "mean": 0.2286,
+    "med": 0.1961,
+    "p10": 0.1317,
+    "p90": 0.3956
+   },
+   "horizUp": {
+    "n": 150,
+    "mean": 0.1262,
+    "med": 0.0787,
+    "p10": 0.0087,
+    "p90": 0.3426
+   },
+   "horizUpLit": {
+    "n": 78,
+    "mean": 0.184,
+    "med": 0.143,
+    "p10": 0.0351,
+    "p90": 0.4017
+   },
+   "horizUpShadow": {
+    "n": 72,
+    "mean": 0.0636,
+    "med": 0.0299,
+    "p10": 0.0045,
+    "p90": 0.1324
+   },
+   "groundShadow": {
+    "n": 241,
+    "mean": 0.1426,
+    "med": 0.1269,
+    "p10": 0.0473,
+    "p90": 0.214
+   },
+   "_crushPct": 18.18,
+   "_key": {
+    "intensity": 1.2,
+    "color": "#8fa3d8",
+    "dir": [
+     0.71,
+     0.19,
+     -0.67
+    ],
+    "elevDeg": 10.7,
+    "hemiI": 0.713,
+    "hemiSky": "#b0b4c7",
+    "hemiGnd": "#1d1a30",
+    "exposure": 1.4
+   }
+  },
+  "district": {
+   "vertical": {
+    "n": 1550,
+    "mean": 0.1864,
+    "med": 0.1306,
+    "p10": 0.0263,
+    "p90": 0.3505
+   },
+   "vertSunlit": {
+    "n": 519,
+    "mean": 0.236,
+    "med": 0.2607,
+    "p10": 0.079,
+    "p90": 0.3583
+   },
+   "all": {
+    "n": 4940,
+    "mean": 0.1631,
+    "med": 0.1471,
+    "p10": 0.0498,
+    "p90": 0.276
+   },
+   "vertShaded": {
+    "n": 1030,
+    "mean": 0.1616,
+    "med": 0.1014,
+    "p10": 0.0171,
+    "p90": 0.3172
+   },
+   "horizUp": {
+    "n": 265,
+    "mean": 0.1334,
+    "med": 0.0835,
+    "p10": 0.0339,
+    "p90": 0.3246
+   },
+   "horizUpLit": {
+    "n": 186,
+    "mean": 0.1322,
+    "med": 0.0869,
+    "p10": 0.0392,
+    "p90": 0.3207
+   },
+   "ground": {
+    "n": 2683,
+    "mean": 0.1614,
+    "med": 0.1561,
+    "p10": 0.0986,
+    "p90": 0.1838
+   },
+   "groundLit": {
+    "n": 2150,
+    "mean": 0.1612,
+    "med": 0.1586,
+    "p10": 0.1191,
+    "p90": 0.1802
+   },
+   "horizUpShadow": {
+    "n": 79,
+    "mean": 0.1363,
+    "med": 0.07,
+    "p10": 0.0152,
+    "p90": 0.3745
+   },
+   "groundShadow": {
+    "n": 533,
+    "mean": 0.1622,
+    "med": 0.1308,
+    "p10": 0.0734,
+    "p90": 0.277
+   },
+   "_crushPct": 11.67,
+   "_key": {
+    "intensity": 1.2,
+    "color": "#8fa3d8",
+    "dir": [
+     0.71,
+     0.19,
+     -0.67
+    ],
+    "elevDeg": 10.9,
+    "hemiI": 0.709,
+    "hemiSky": "#b0b4c7",
+    "hemiGnd": "#1d1a30",
+    "exposure": 1.4
+   }
+  }
+ },
+ "logs": [
+  "[log] [MythicCityBridge] pushNodeBoost mock-supply 15%",
+  "[log] [MythicCityBridge] pushNodeBoost mock-mining 0%",
+  "[log] [MythicCityBridge] pushNodeBoost mock-fuel 0%",
+  "[log] [MythicCityBridge] pushNodeBoost mock-supply 15%",
+  "[log] [MythicCityBridge] pushNodeBoost mock-mining 0%",
+  "[log] [MythicCityBridge] pushNodeBoost mock-fuel 0%"
+ ]
+}

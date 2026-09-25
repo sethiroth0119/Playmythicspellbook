@@ -1,0 +1,20 @@
+<!doctype html><html><head><meta charset="utf-8"><title>truck view</title>
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.171.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/" } }</script>
+<style>html,body{margin:0;background:#223}</style></head><body>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+const q = new URLSearchParams(location.search);
+const url = q.get('url') || '/models/trucks/freight_semi.glb';
+const r = new THREE.WebGLRenderer({ antialias: true }); r.setSize(900, 600); document.body.appendChild(r.domElement);
+const sc = new THREE.Scene(); sc.add(new THREE.HemisphereLight(0xffffff, 0x444444, 3));
+const cam = new THREE.PerspectiveCamera(40, 1.5, 0.01, 100);
+new GLTFLoader().load(url, (g) => {
+  sc.add(g.scene);
+  /* model space: long axis x, cab (tall) at −x. View = from −x (the cab end), from +x (the tail), and top */
+  const v = q.get('view') || 'minusx';
+  if (v === 'minusx') cam.position.set(-3.2, 0.6, 0.9); else if (v === 'plusx') cam.position.set(3.2, 0.6, 0.9); else if (v === 'side') cam.position.set(0, 0.3, 3.4); else cam.position.set(0.01, 3.4, 0);
+  const bb = new THREE.Box3().setFromObject(g.scene), s = bb.getSize(new THREE.Vector3()), c = bb.getCenter(new THREE.Vector3()), k = 2 / Math.max(s.x, s.y, s.z); g.scene.scale.multiplyScalar(k); g.scene.position.sub(c.multiplyScalar(k)); window.__size = [s.x, s.y, s.z].map((n) => +n.toFixed(2));
+  cam.lookAt(0, 0, 0); r.render(sc, cam); window.__done = true;
+}, undefined, (e) => { window.__err = String(e); });
+</script></body></html>

@@ -1,0 +1,430 @@
+<title>Node City Rebuilt</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bitter:ital,wght@0,500;0,700;1,500&family=Archivo:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+
+<style>
+  :root{
+    --ground:#faf7f2; --surface:#fffdfa; --sunk:#f2ece3;
+    --ink:#1a1714; --ink-2:#4a423a; --ink-3:#7d7268;
+    --rule:#e2d9cc; --rule-2:#cfc3b2;
+    --ember:#b44f14; --ember-soft:#e8d3c0; --ember-wash:#fbf1e8;
+    --sky:#356089; --sky-wash:#eaf0f6;
+    --good:#3f6b45;
+    --spine:#ddd0be;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --ground:#13161d; --surface:#1a1e27; --sunk:#0f1218;
+      --ink:#eceef2; --ink-2:#b3b9c4; --ink-3:#7f8794;
+      --rule:#2a303c; --rule-2:#3a4250;
+      --ember:#e8834a; --ember-soft:#4a2c19; --ember-wash:#221812;
+      --sky:#7fa9d0; --sky-wash:#161d26;
+      --good:#7fb389;
+      --spine:#2f3644;
+    }
+  }
+  :root[data-theme="dark"]{
+    --ground:#13161d; --surface:#1a1e27; --sunk:#0f1218;
+    --ink:#eceef2; --ink-2:#b3b9c4; --ink-3:#7f8794;
+    --rule:#2a303c; --rule-2:#3a4250;
+    --ember:#e8834a; --ember-soft:#4a2c19; --ember-wash:#221812;
+    --sky:#7fa9d0; --sky-wash:#161d26;
+    --good:#7fb389;
+    --spine:#2f3644;
+  }
+
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--ground); color:var(--ink);
+    font-family:"Archivo","Segoe UI",system-ui,sans-serif;
+    font-size:17px; line-height:1.62; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:820px; margin:0 auto; padding:0 24px 96px}
+
+  /* ── masthead ───────────────────────────────────────────── */
+  .top{padding:72px 0 40px; border-bottom:2px solid var(--ink)}
+  .kicker{
+    font-family:"JetBrains Mono",ui-monospace,monospace; font-size:12px;
+    letter-spacing:.16em; text-transform:uppercase; color:var(--ember);
+    margin:0 0 18px;
+  }
+  h1{
+    font-family:"Bitter",Georgia,serif; font-weight:700; font-size:clamp(38px,7vw,62px);
+    line-height:1.02; letter-spacing:-.02em; margin:0 0 20px; text-wrap:balance;
+  }
+  .standfirst{
+    font-size:20px; line-height:1.5; color:var(--ink-2); margin:0; max-width:60ch;
+  }
+  .standfirst strong{color:var(--ink); font-weight:600}
+
+  /* ── the spine ──────────────────────────────────────────── */
+  .body{position:relative; padding-left:34px; margin-top:8px}
+  .body::before{
+    content:""; position:absolute; left:5px; top:44px; bottom:24px;
+    width:2px; background:var(--spine);
+  }
+  section{padding:44px 0 8px; position:relative}
+  section::before{
+    content:""; position:absolute; left:-34px; top:56px;
+    width:12px; height:12px; border-radius:50%;
+    background:var(--ground); border:2px solid var(--ember);
+  }
+  h2{
+    font-family:"Bitter",Georgia,serif; font-weight:700; font-size:30px;
+    letter-spacing:-.01em; line-height:1.15; margin:0 0 6px; text-wrap:balance;
+  }
+  .sec-note{
+    color:var(--ink-3); font-size:15px; margin:0 0 28px; max-width:58ch;
+  }
+  h3{
+    font-family:"Bitter",Georgia,serif; font-weight:700; font-size:19px;
+    margin:34px 0 8px; letter-spacing:-.005em; text-wrap:balance;
+  }
+  h3:first-of-type{margin-top:0}
+  p{margin:0 0 14px; max-width:66ch}
+  p:last-child{margin-bottom:0}
+  strong{font-weight:600}
+  em{font-style:italic; color:var(--ink-2)}
+
+  /* ── measured rows ──────────────────────────────────────── */
+  .meas{
+    margin:16px 0 20px; border:1px solid var(--rule); border-radius:3px;
+    background:var(--surface); overflow-x:auto;
+  }
+  .meas table{width:100%; border-collapse:collapse; font-size:14px}
+  .meas caption{
+    caption-side:top; text-align:left; padding:9px 14px;
+    font-family:"JetBrains Mono",ui-monospace,monospace; font-size:11px;
+    letter-spacing:.13em; text-transform:uppercase; color:var(--ink-3);
+    border-bottom:1px solid var(--rule); background:var(--sunk);
+  }
+  .meas th{
+    text-align:left; font-weight:500; color:var(--ink-2);
+    padding:9px 14px; white-space:nowrap;
+  }
+  .meas td{
+    padding:9px 14px; text-align:right; white-space:nowrap;
+    font-family:"JetBrains Mono",ui-monospace,monospace;
+    font-variant-numeric:tabular-nums; font-size:13px;
+  }
+  .meas tr + tr th, .meas tr + tr td{border-top:1px solid var(--rule)}
+  .was{color:var(--ink-3)}
+  .now{color:var(--ember); font-weight:600}
+  .arrow{color:var(--rule-2); padding:0 2px}
+
+  /* ── inline devices ─────────────────────────────────────── */
+  .cost{
+    display:inline-block; font-family:"JetBrains Mono",ui-monospace,monospace;
+    font-size:12px; letter-spacing:.02em; color:var(--sky);
+    background:var(--sky-wash); border:1px solid var(--rule);
+    padding:2px 8px; border-radius:2px; margin:4px 6px 4px 0;
+  }
+  .quote{
+    margin:18px 0; padding:14px 18px; background:var(--ember-wash);
+    border-left:3px solid var(--ember); border-radius:0 3px 3px 0;
+    font-size:16px; color:var(--ink-2); max-width:64ch;
+  }
+  .quote b{color:var(--ink); font-weight:600}
+  ul{margin:0 0 16px; padding-left:20px; max-width:64ch}
+  li{margin-bottom:7px}
+  li::marker{color:var(--ember)}
+
+  /* ── scoreboard ─────────────────────────────────────────── */
+  .board{
+    display:grid; grid-template-columns:repeat(auto-fit,minmax(168px,1fr));
+    gap:1px; background:var(--rule); border:1px solid var(--rule);
+    border-radius:3px; overflow:hidden; margin:22px 0 8px;
+  }
+  .dim{background:var(--surface); padding:12px 14px}
+  .dim .name{font-size:13px; color:var(--ink-2); margin-bottom:5px}
+  .dim .val{
+    font-family:"JetBrains Mono",ui-monospace,monospace;
+    font-variant-numeric:tabular-nums; font-size:15px;
+  }
+  .dim .val b{color:var(--ink); font-weight:600}
+  .dim .up{color:var(--good); font-size:12px; margin-left:5px}
+  .dim .flat{color:var(--ink-3); font-size:12px; margin-left:5px}
+
+  /* ── closing ────────────────────────────────────────────── */
+  footer{
+    margin-top:64px; padding-top:26px; border-top:2px solid var(--ink);
+    color:var(--ink-3); font-size:15px;
+  }
+  footer p{max-width:64ch}
+  a{color:var(--ember)}
+  a:focus-visible, .dim:focus-visible{outline:2px solid var(--ember); outline-offset:3px}
+</style>
+
+<div class="wrap">
+
+<header class="top">
+  <p class="kicker">Node City · Build v120w9</p>
+  <h1>The city got real</h1>
+  <p class="standfirst">Windows reflect the sky and have rooms behind them. Things cast shadows on the
+    ground they stand on. Land is worth different amounts and that decides what opens on it.
+    <strong>Businesses now compete for your lots — and some of them fail.</strong></p>
+</header>
+
+<div class="body">
+
+<section>
+  <h2>How we built this</h2>
+  <p class="sec-note">Worth a paragraph, because it explains why the notes below are full of numbers.</p>
+
+  <p>Every change in this update was graded against real Cities: Skylines&nbsp;II screenshots across
+    twelve categories — by a reviewer who did not do the work, scoring the actual game rather than a
+    mock-up. Nineteen passes. The average went from <strong>3.6 to 6.9</strong> out of 10.</p>
+
+  <p>The rule we held ourselves to: <em>never ship a number with no model behind it, and never ship a
+    rule nobody enforces.</em> Where you see a figure in the game — a demand percentage, a land value, a
+    citizen's age — something computes it. Where we couldn't compute it honestly, the panel says so
+    instead of inventing one.</p>
+
+  <div class="quote">Twice this update, that discipline killed our own work. A land-value fix would have
+    silently emptied three district types of everything they build; a &ldquo;regression&rdquo; in the
+    ground textures turned out to be us comparing two numbers that were never the same quantity.
+    <b>Both were caught by measuring instead of trusting.</b></div>
+</section>
+
+<section>
+  <h2>The city looks different</h2>
+  <p class="sec-note">Ten changes, in rough order of what you'll notice first.</p>
+
+  <h3>Glass is glass now</h3>
+  <p>The city had no reflections at all. Every window was a flat dark rectangle — a painted panel, not
+    a pane. Now there's a real environment map, built from <em>the game's own sky</em>, so the reflection
+    follows the time of day, the weather and the haze without anyone maintaining a second copy of it.</p>
+  <p>Then we put <strong>rooms behind the glass</strong>: a sky band across the head of each pane falling
+    into interior darkness, with a floor line at the sill. A window reads as a window into somewhere.</p>
+  <div class="meas"><table>
+    <caption>One sunlit pane, same pixels, before and after</caption>
+    <tr><th>Colour in the glass</th><td><span class="was">flat grey</span> <span class="arrow">→</span> <span class="now">sky blue</span></td></tr>
+    <tr><th>Colour saturation</th><td><span class="was">5.7</span> <span class="arrow">→</span> <span class="now">42.5</span></td></tr>
+    <tr><th>Variation inside the pane</th><td><span class="was">2.76</span> <span class="arrow">→</span> <span class="now">19.38</span></td></tr>
+  </table></div>
+  <p><span class="cost">+0 triangles</span><span class="cost">+0 draw calls</span> The interior costs a
+    2&nbsp;KB texture. The reflection rebuilds only when the sky actually changes — 292 times a day,
+    none of them between 9pm and 4am.</p>
+
+  <h3>Things sit on the ground</h3>
+  <p>Lamps, bins, benches, bollards, parked cars and people cast <strong>no shadow at all</strong> — so
+    they read as stickers laid on the pavement. They have contact shadows now, and they darken the road's
+    existing grain rather than covering it with a grey blob, so they look like shade instead of a decal.</p>
+  <p>It works at night without a switch: the shadow is a <em>multiplier</em>, so a fraction of a dim
+    pavement is simply a dim pavement.</p>
+  <p><span class="cost">+2 draw calls, whole city</span> Two meshes cover every prop, vehicle and
+    pedestrian in the map.</p>
+
+  <h3>You can see the far side of the map</h3>
+  <p>Distance haze was set to 30 units. The far corner of the district is 30.18 units from the camera.
+    It wasn't fading distance — it was dissolving the city, and grass and asphalt out there had become the
+    same grey. Fixed by measurement, and the near field is untouched.</p>
+  <div class="meas"><table>
+    <caption>Detail visible in the far third of an aerial shot</caption>
+    <tr><th>Local contrast</th><td><span class="was">34.9</span> <span class="arrow">→</span> <span class="now">54.6</span> <span class="was">(+56%)</span></td></tr>
+  </table></div>
+
+  <h3>Road markings lie flat</h3>
+  <p>Every zebra bar and stop line was a little slab standing proud of the road, with a lit wall on one
+    side and a dark one on the other. A paint slab was a box, and a box has walls. It's a flat quad now —
+    and every marking in the city went from 24 vertices to 4.</p>
+
+  <h3>The kerb was purple</h3>
+  <p>On every street, every tree pit and every plot edge — a lilac line running beside a warm concrete
+    pavement. Nobody had spotted it. Repainted to the pavement's own tone, with brightness unchanged, so
+    nothing tuned against it needed re-tuning.</p>
+  <div class="meas"><table>
+    <caption>Bright lilac pixels in a street-level shot</caption>
+    <tr><th>Frontage view</th><td><span class="was">31,687</span> <span class="arrow">→</span> <span class="now">18</span></td></tr>
+  </table></div>
+
+  <h3>The ground is ground</h3>
+  <p>Open land between roads was one unbroken flat green. It now carries grass tussocks, scrub, rock and
+    saplings in clumps — with <em>bald ground between them</em>, which is what makes the clumps read as
+    thickets rather than a sprinkle. Plus dirt staining and worn margins where grass meets paving.</p>
+  <p>The tufts are splayed blades, not blobs. We tried spheres first and they photographed as a field
+    of green stones.</p>
+
+  <h3>People are people-sized</h3>
+  <p>Nine rounds of grading missed this: <strong>every citizen in the city was about twice human size.</strong>
+    We didn't fix it by eye. The city already contains an object whose scale nobody disputes — a car —
+    and a citizen stood 2.16&times; the height of a car's roof, where a real person is 1.17&times;.
+    Holding that one ratio true is the whole correction.</p>
+
+  <h3>A new Duel Arena</h3>
+  <p>Rebuilt from the ground up: a glazed concourse, a set-back drum with an occupied roof terrace,
+    a cantilevered canopy, a floating halo and lit signage carrying a crossed-cards mark. At night the
+    whole elevation lights up and it's the brightest thing on the street.</p>
+  <p>It was also, embarrassingly, <em>in no screenshot we had ever taken</em> — it sat 33 pixels behind
+    a UI panel and off the edge of the frame. It has its own camera angle now.</p>
+
+  <h3>Office blocks exist</h3>
+  <p>The demand panel had been showing office demand for months and the game <strong>had no office
+    building</strong> — zoning office got you a research spire. There's a proper one now: freestanding and
+    set back, taller than its plot is wide, with a glass ribbon, mullion fins, a coloured accent panel and
+    a surface car park out front. From the air you can now tell offices from shops from industry without
+    reading a single label.</p>
+
+  <h3>Buildings meet their ground</h3>
+  <p>Every building stood on its plot at a hard corner with nothing in the join. There's a kerbed
+    foundation bed with planting against the wall now. While measuring this we found the plot layer had been
+    laying a <em>second</em> pavement on top of five buildings' own — and a green lawn quadrant across the
+    Med Lab's plaza. Removing that saved a draw call for the entire city.</p>
+</section>
+
+<section>
+  <h2>The city plays differently</h2>
+  <p class="sec-note">The zoning economy, and what it means for how you build.</p>
+
+  <h3>Land is worth different amounts, and it decides what opens</h3>
+  <p>Every plot now has a value built from things the city already models: what's nearby, who lives
+    around it, whether a bus <em>actually stops</em> there, whether it's on the water, and how dirty the air
+    is. That sorts the map into five bands.</p>
+  <p>The bands aren't a readout — <strong>they decide what develops.</strong> Paint the same Commercial zone
+    on cheap land and expensive land and you get different businesses: a food truck on one, a restaurant on
+    the other. Paint it on land too cheap for anything that zone builds and the plot stays empty, and the
+    game tells you why in plain words.</p>
+  <div class="quote">There is no rule anywhere saying &ldquo;luxury retail needs land worth more than X.&rdquo;
+    Luxury refuses a cheap lot because <b>nothing a luxury street is made of will open on land that
+    cheap.</b> The floor shown in the panel is worked out from the live map every time it's drawn.</div>
+
+  <h3>Districts, not just zones</h3>
+  <p>Once researched, a block stops being generically &ldquo;Commercial.&rdquo; You tell it what
+    <em>kind</em>: shops, restaurants, nightlife, luxury. Industry splits into general works, heavy industry
+    and logistics. Offices into technology, financial and corporate.</p>
+  <p>Three of them are <strong>card districts</strong> — Mythic Retail, Mythic Entertainment and Card
+    Manufacturing. The last one isn't a themed skin: a paper mill, a printworks and a packing depot are the
+    literal ingredients of a booster pack in this game's own supply chain.</p>
+
+  <h3>NPC companies compete for your lots</h3>
+  <p>You don't place every business any more. You zone, and companies <em>bid</em>. Each one weighs
+    customers nearby, ground rent, how many rivals are already trading within a few tiles, and whether
+    transit serves the plot. The best bid takes the lot — and if nobody clears the reserve, the plot stays
+    empty and the game names what sank it.</p>
+  <div class="meas"><table>
+    <caption>One lot, three bidders, real numbers</caption>
+    <tr><th>Halvorsen &amp; Sons Wagon</th><td><span class="now">+19.31</span> <span class="was">bids</span></td></tr>
+    <tr><th>Fenwick &amp; Duval</th><td><span class="now">+3.13</span> <span class="was">bids</span></td></tr>
+    <tr><th>Stavros's Van</th><td><span class="was">−2.00 walks away</span></td></tr>
+  </table></div>
+
+  <h3>Rent can put a business under</h3>
+  <p>This is new and it's the part we're happiest with. Firms now pay ground rent priced off the land
+    their plot actually sits on. A shop that was comfortably profitable on cheap ground can be squeezed out
+    when the neighbourhood around it becomes valuable — and the ledger says so, in as many words:</p>
+  <div class="quote"><b>Card Shop went bankrupt.</b> Ground rent took 1,893&nbsp;🔥 — it was
+    1,012&nbsp;🔥 in profit before the rent.</div>
+  <p>That line only prints when it's actually true. A business that was losing money on its trading
+    anyway doesn't get to blame the landlord.</p>
+
+  <h3>Businesses stopped dying every sixty days</h3>
+  <p>They were, and the reason turned out to be a missing arrow rather than a missing pile of money. The
+    city held <strong>190&times; what a shopfront needed</strong> and had no way to reach it: money that
+    landed in an established firm's till could be spent on wages, stock and upkeep, and could never be
+    <em>invested</em>. New businesses now raise their start-up capital from established firms' surplus.</p>
+  <p>A side effect worth calling out: the distress states — Reduced, Layoffs, Debt, Default — had literally
+    <em>never once been seen</em>, because every business died instantly. You can watch a firm struggle now.</p>
+
+  <h3>A research tree</h3>
+  <p>Zone types, district specialisations, licences and buildings unlock through research instead of all
+    being available in minute one. Licences you buy at City Hall are wired into it, so holding the licence
+    and holding the land it applies to are one progression. When something's locked, the message names the
+    node that opens it and what it costs.</p>
+
+  <h3>Citizens have ages and careers</h3>
+  <p>Click a citizen and see who they are, where they live, where they work, how they're doing — and now
+    how old they are and how far up they've got at work. Both advance with the city clock.</p>
+  <p>The age is marked with a <strong>≈</strong> on the panel, and that's deliberate: it's a sample drawn
+    from the city's real age distribution, not a fact about that person, and the panel says which. There's a
+    fourth label on that screen now — LIVE, DERIVED, SAMPLED, or plainly UNAVAILABLE — so you always know
+    what kind of thing you're reading.</p>
+
+  <h3>Zoning tells you why nothing is happening</h3>
+  <p>Zoning a district in a city that isn't feeding itself used to change nothing visible, with no
+    explanation. The rule hasn't been softened. What changed is that the game says so, and the threshold in
+    the sentence is read from the same model that enforces it:</p>
+  <div class="quote">Zoned, but nothing will move in — <b>Health is 0% and growth needs 90%.</b>
+    Build a Clinic.</div>
+
+  <h3>Also in this build</h3>
+  <ul>
+    <li><strong>Power import and export</strong> over your highway connection, with batteries drawn down
+      first — a round trip to the neighbours and back loses you the spread twice.</li>
+    <li><strong>The city budget</strong>, every line named and reconciling to the treasury. Two lines a
+      city builder would normally show are deliberately missing, with a note, because our ledger genuinely
+      can't separate them yet.</li>
+    <li><strong>Buses and trains</strong> — a Bus Company and a Rail Operator bought from City Hall, then
+      built out yourself with stops, stations and routes.</li>
+    <li><strong>Emergency Broadcast</strong>, the in-game phone feed.</li>
+    <li><strong>Named streets and traffic</strong> — click a road, name it, see 24 hours of flow.</li>
+    <li><strong>Electricity, water and pollution</strong> as real systems: nine plant types, per-city
+      hydrology, and plumes that drift downwind into your groundwater.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Where the city scores</h2>
+  <p class="sec-note">Graded against real CS2 reference frames. Comparison against the last full score.</p>
+
+  <div class="board">
+    <div class="dim"><div class="name">Building surface detail</div><div class="val"><b>8.0</b><span class="up">▲ 1.5</span></div></div>
+    <div class="dim"><div class="name">Building silhouette</div><div class="val"><b>8.0</b><span class="up">▲ 0.5</span></div></div>
+    <div class="dim"><div class="name">Roads</div><div class="val"><b>8.0</b><span class="up">▲ 0.5</span></div></div>
+    <div class="dim"><div class="name">Palette &amp; grade</div><div class="val"><b>7.5</b><span class="up">▲ 0.5</span></div></div>
+    <div class="dim"><div class="name">Density &amp; zoning read</div><div class="val"><b>7.5</b><span class="up">▲ 1.0</span></div></div>
+    <div class="dim"><div class="name">Lighting &amp; shadow</div><div class="val"><b>7.0</b><span class="flat">—</span></div></div>
+    <div class="dim"><div class="name">Street furniture</div><div class="val"><b>7.0</b><span class="flat">—</span></div></div>
+    <div class="dim"><div class="name">UI legibility</div><div class="val"><b>7.0</b><span class="up">▲ 0.5</span></div></div>
+    <div class="dim"><div class="name">The plot</div><div class="val"><b>6.0</b><span class="up">▲ 0.5</span></div></div>
+    <div class="dim"><div class="name">Vehicles</div><div class="val"><b>6.0</b><span class="up">▲ 0.5</span></div></div>
+    <div class="dim"><div class="name">Citizens</div><div class="val"><b>5.5</b><span class="flat">—</span></div></div>
+    <div class="dim"><div class="name">Vegetation</div><div class="val"><b>5.5</b><span class="flat">—</span></div></div>
+  </div>
+  <p style="margin-top:18px"><strong>Average 6.9</strong>, up from 6.5 at the last full score and 3.6 when
+    we started. The contact shadows landed after this scoring, so lighting, street furniture, vehicles and
+    citizens should all move next time.</p>
+</section>
+
+<section>
+  <h2>Still rough, honestly</h2>
+  <p class="sec-note">You'd find these anyway. Better you hear them from us.</p>
+
+  <h3>Shown side by side with a real CS2 screenshot, you'd still pick the real one instantly</h3>
+  <p>What gives us away has changed, though, and it's no longer the rendering. It's the
+    <strong>composition</strong>: about 40% of an aerial shot is empty green field, and the built area is a
+    hard-edged rectangle with nothing beyond it. A real city runs off all four edges of the frame. No
+    amount of material work touches that.</p>
+
+  <h3>Every window carries the same reflection</h3>
+  <p>Convincing on one pane, a giveaway on fifty. Two office blocks three metres apart have
+    indistinguishable glass, because the interior is a painted profile rather than an actual reflection of
+    what's standing in front of it.</p>
+
+  <h3>Trees are still spheres on sticks</h3>
+  <p>The conifers are genuinely good — layered tiers, real silhouette, autumn colour. The deciduous trees
+    have no branch structure and no trunk taper, and the field bushes read as rocks.</p>
+
+  <h3>Roads are dead straight</h3>
+  <p>Every junction square, every plot one unit wide, every lamp at the same offset. The grid reads as a
+    grid. Curved roads are a much bigger change than they sound.</p>
+
+  <h3>Carriageways are narrow</h3>
+  <p>About 4 metres against a real residential street's 5 to 5.5. It only looks right because the cars are
+    drawn narrow too. Widening it re-cuts every junction in the game, so it's its own piece of work.</p>
+
+  <h3>A lamp post's shadow is a smudge at its foot</h3>
+  <p>Deliberate, and we measured the alternative: resolving a mast that thin properly needs a second
+    shadow cascade, which costs more than it's worth. Cars and people get real directional shadows; thin
+    poles get grounding instead.</p>
+</section>
+
+</div>
+
+<footer>
+  <p>Everything here runs in the actual game — where we say something works, it's because we booted it and
+    looked at it, and where we say it doesn't, that's why it's in the last section instead of the first.</p>
+  <p style="margin-top:12px">More as it lands.</p>
+</footer>
+
+</div>

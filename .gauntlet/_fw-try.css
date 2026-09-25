@@ -1,0 +1,13 @@
+/* candidate A */
+.fx-two input[type="checkbox"], .fx-two input[type="radio"] {
+  width: 28px; height: 28px; flex: 0 0 auto; margin: 0;
+}
+.fx-two .editor-grid > .editor-field.full:has(> div > label > input[type="checkbox"]) {
+  grid-column: 1 / -1;
+}
+.fx-two .editor-field.full > div > label:has(> input[type="checkbox"]) {
+  flex: 1 1 21rem; min-width: min(100%, 21rem);
+}
+.fx-two .editor-grid > .editor-field.full:not(:has(input, select, textarea, .editor-grid, button)) {
+  max-width: 44rem;
+}

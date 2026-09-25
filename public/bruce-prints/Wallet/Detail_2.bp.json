@@ -1,0 +1,91 @@
+{
+ "system": "Wallet",
+ "label": "Wallet, Cinder & Aza",
+ "icon": "🔥",
+ "print": "Detail_2",
+ "nodes": [
+  {
+   "id": "boeShowMtDisclaimer",
+   "name": "boeShowMtDisclaimer",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 66936,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 80
+  },
+  {
+   "id": "_sovRpc",
+   "name": "_sovRpc",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 73330,
+   "params": [
+    "fn",
+    "args"
+   ],
+   "async": false,
+   "reads": [
+    "Cloud.client",
+    "Profile.cloud"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 212
+  },
+  {
+   "id": "wallet",
+   "name": "wallet",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 136267,
+   "params": [],
+   "async": false,
+   "reads": [
+    "Profile.gems"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 344
+  },
+  {
+   "id": "walletAza",
+   "name": "walletAza",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 136320,
+   "params": [],
+   "async": false,
+   "reads": [
+    "Profile.sovereigns"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 476
+  },
+  {
+   "id": "wallet_rpc_missing",
+   "name": "wallet_rpc_missing",
+   "kind": "function",
+   "file": "public/src/transport/contracts.js",
+   "line": 649,
+   "params": [
+    "d"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 608
+  }
+ ],
+ "edges": []
+}

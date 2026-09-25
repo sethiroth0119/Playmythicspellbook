@@ -1,0 +1,10 @@
+<!doctype html><meta charset="utf-8"><title>MF harness</title>
+<script>
+window.MF_THREE_URLS = { core: ['/three/three.min.js'], addons: { OrbitControls: '/three/js/controls/OrbitControls.js', TransformControls: '/three/js/controls/TransformControls.js', GLTFLoader: '/three/js/loaders/GLTFLoader.js' } };
+window.MythicBridge = { get cloud() { return null; }, signedIn: () => false, userId: () => null, displayName: () => 'Tester', isAdmin: () => true, toast: (m) => console.log('[toast]', m), confirm: async () => true };
+window.__errors = [];
+window.addEventListener('error', e => window.__errors.push(String(e.message)));
+window.addEventListener('unhandledrejection', e => window.__errors.push('rej:' + String(e.reason && e.reason.message || e.reason)));
+</script>
+<script type="module" src="/src/mapforge/index.js"></script>
+<button id="open" onclick="MythicMapForge.open()">open</button>

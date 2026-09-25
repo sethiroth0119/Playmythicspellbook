@@ -1,0 +1,118 @@
+{
+ "system": "Farm",
+ "label": "Farm & Feed",
+ "icon": "🌾",
+ "print": "Overview",
+ "nodes": [
+  {
+   "id": "farmersBonus",
+   "name": "farmersBonus",
+   "kind": "pure",
+   "file": "public/src/farm/index.js",
+   "line": 1142,
+   "params": [
+    "host"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 80
+  },
+  {
+   "id": "feedHoursLeft",
+   "name": "feedHoursLeft",
+   "kind": "pure",
+   "file": "public/src/farm/index.js",
+   "line": 1210,
+   "params": [
+    "s",
+    "penId",
+    "host"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 212
+  },
+  {
+   "id": "farmState",
+   "name": "farmState",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 242828,
+   "params": [],
+   "async": false,
+   "reads": [
+    "Profile.farm"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 344
+  },
+  {
+   "id": "farmers",
+   "name": "farmers",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 242848,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 80
+  },
+  {
+   "id": "feedDrawPerH",
+   "name": "feedDrawPerH",
+   "kind": "function",
+   "file": "public/src/farm/index.js",
+   "line": 1199,
+   "params": [
+    "s",
+    "penId",
+    "host",
+    "now"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 212
+  },
+  {
+   "id": "feedPrice",
+   "name": "feedPrice",
+   "kind": "function",
+   "file": "public/src/foundry/taps.js",
+   "line": 105,
+   "params": [
+    "h",
+    "id"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 476
+  }
+ ],
+ "edges": [
+  {
+   "from": "farmersBonus",
+   "to": "farmers"
+  },
+  {
+   "from": "feedHoursLeft",
+   "to": "feedDrawPerH"
+  }
+ ]
+}

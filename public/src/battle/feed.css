@@ -1,0 +1,175 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   📣 THE BATTLE REPORT — what just happened, as one readable panel
+   ──────────────────────────────────────────────────────────────────────────
+   Owner, pointing at a column of five loose pills ("— Your turn 2 —",
+   "… wears off", "End Phase", "Follow Up Phase", "… Countering"):
+     "I want this information in a modal where its clear and keep it up for
+      4 seconds longer so players can read what is going on."
+
+   WHAT WAS WRONG WITH THE PILLS, so nobody rebuilds them:
+     · Five separate floating chips, each its own frame, each fading on its own
+       clock. The eye had nothing to anchor to — it was a list with no page.
+     · white-space:nowrap on every chip, so a long line ran off both edges of a
+       narrow screen instead of wrapping.
+     · 2.4s on screen. A three-line burst at the end of an enemy turn was gone
+       before a player had read the first line.
+
+   WHAT THIS IS: one framed panel with a header, the announcer presenting it,
+   and one ROW per event, newest on top. Each row carries a thin bar that drains
+   over its lifetime, so the player can SEE how long a line has left instead of
+   losing it mid-sentence.
+
+   ⚠ IT IS NOT A BLOCKING MODAL, and that is deliberate. It appears on every
+     turn change and every phase step; a backdrop that swallowed clicks would
+     stop the player acting on their own turn several times a round. It sits
+     above the board, reads like a modal, and lets every click through.
+
+   The element is still #battle-event-feed — hud.css positions it under the
+   hero-banner band (--hud-banner-h), and that rule is correct for this too.
+   This file must load AFTER hud.css: hud.css clips `.bevt-chip` into a pill,
+   and these rows deliberately do not carry that class.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+#battle-event-feed.bef {
+  width: min(460px, 92vw);
+  max-width: 92vw;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+  color: #ece7f6;
+  background: linear-gradient(180deg, rgba(22, 16, 36, 0.96), rgba(9, 6, 18, 0.97));
+  border: 1px solid rgba(255, 207, 107, 0.55);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.8), 0 14px 38px rgba(0, 0, 0, 0.7),
+              0 0 22px rgba(255, 190, 80, 0.16), inset 0 0 26px rgba(0, 0, 0, 0.55);
+  clip-path: polygon(10px 0, calc(100% - 10px) 0, 100% 10px, 100% calc(100% - 10px),
+                     calc(100% - 10px) 100%, 10px 100%, 0 calc(100% - 10px), 0 10px);
+  transition: opacity 0.22s ease;
+}
+/* ◀ IN THE SKY ABOVE THE RED DOCK. Owner, twice: "move this to the left where
+   it is not hovering over the board", then — with a crop of the empty sky at
+   the board's left edge — "move the battle report over here … over the red
+   panel". The first attempt pinned it over the left RAIL, which covered the
+   foe's deck and grave; the place meant is the dark dome sky INSIDE the board
+   column, right of the rail and above the opponent's red dock, where no tile
+   is drawn. Left edge = the rail's width (--btl-rail-w, the same variable that
+   sizes the board's first grid column) plus the column gap; top = just under
+   the banner band. The height is capped so a burst of rows does not run down
+   onto the dock: rows are newest-first, so what the cap hides is the oldest.
+   At 1100px and below the rails stack (hud.css switches at 1101px), so it stays centred. */
+@media (min-width: 1101px) {
+  #battle-event-feed.bef {
+    left: calc(var(--btl-rail-w, 300px) + 40px);
+    top: calc(var(--hud-banner-h, 118px) + 24px);
+    transform: none;
+    width: clamp(220px, 15vw, 290px);
+    max-width: clamp(220px, 15vw, 290px);
+    max-height: 32vh;
+    overflow: hidden;
+  }
+  #battle-event-feed.bef .bef-txt { white-space: normal; }
+}
+/* Below 1440 the board sits higher in its column and the sky is shorter:
+   measured at 1280x800 the report's foot reached the back row of tiles. Tighter
+   under the banner, and a smaller line, keep it in the sky. */
+@media (min-width: 1101px) and (max-width: 1439px) {
+  #battle-event-feed.bef { top: calc(var(--hud-banner-h, 118px) + 4px); max-height: 26vh; }
+  #battle-event-feed.bef .bef-txt { font-size: 13.5px; line-height: 1.22; }
+  #battle-event-feed.bef .bef-row { padding: 4px 12px 5px 8px; }
+  #battle-event-feed.bef .bef-ic { width: 28px; height: 28px; font-size: 16px; }
+}
+/* no rows → no panel. Opacity rather than display so the last row's fade-out
+   is not cut off by the frame vanishing a frame early. */
+#battle-event-feed.bef.bef-empty { opacity: 0; }
+
+/* ── header ────────────────────────────────────────────────────────────── */
+.bef-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 14px 6px 8px;
+  border-bottom: 1px solid rgba(255, 207, 107, 0.28);
+  background: linear-gradient(180deg, rgba(60, 44, 18, 0.55), rgba(20, 14, 8, 0.2));
+}
+/* 🤖 the announcer — the owner's "he is the one giving the updates". Battle-
+   only by construction: this panel exists only on the battle screen, so he is
+   not attached to the app-wide showToast. Sized to sit IN the header, not to
+   dominate it; he overflows upward a little so he reads as a figure. */
+.bef-herald {
+  flex: 0 0 auto; width: 46px; height: 49px; margin: -10px 0 -4px;
+  object-fit: contain; pointer-events: none;
+  filter: drop-shadow(0 3px 8px rgba(0, 0, 0, 0.75)) drop-shadow(0 0 10px rgba(90, 170, 255, 0.35));
+}
+.bef-title {
+  flex: 1 1 auto; min-width: 0;
+  font-family: 'Cinzel', Georgia, serif; font-weight: 700; font-size: 12.5px;
+  letter-spacing: 0.16em; text-transform: uppercase; color: #ffcf6b;
+  text-shadow: 0 0 10px rgba(255, 190, 80, 0.35);
+}
+.bef-title small {
+  display: block; margin-top: 1px;
+  font-family: 'Crimson Text', Georgia, serif; font-weight: 400; font-size: 11.5px;
+  letter-spacing: 0.02em; text-transform: none; color: #b9aed0;
+}
+
+/* ── rows ──────────────────────────────────────────────────────────────── */
+.bef-rows { display: flex; flex-direction: column; padding: 4px 0 5px; }
+.bef-row {
+  position: relative;
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 14px 7px 10px;
+  border-left: 3px solid var(--bevt-color, #8fd2ff);
+  animation: bef-in 0.3s cubic-bezier(0.18, 1.25, 0.4, 1) both;
+}
+.bef-row + .bef-row { border-top: 1px solid rgba(255, 255, 255, 0.06); }
+/* the newest line is the one being announced — give it the light */
+.bef-row:first-child {
+  background: linear-gradient(90deg, var(--bevt-glow, rgba(120, 200, 255, 0.18)), transparent 75%);
+}
+.bef-row.bef-out { animation: bef-out 0.34s ease-in forwards; }
+
+.bef-ic {
+  flex: 0 0 auto; width: 34px; height: 34px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 19px; line-height: 1; overflow: hidden;
+  border-radius: 50%;
+  border: 1px solid var(--bevt-color, #8fd2ff);
+  background: radial-gradient(circle at 50% 38%, rgba(255, 255, 255, 0.18), rgba(0, 0, 0, 0.6) 78%);
+  box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.55), 0 0 8px var(--bevt-glow, transparent);
+}
+/* card art, when the line is about a card — cropped to the face */
+.bef-ic img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 22%; }
+
+.bef-txt {
+  flex: 1 1 auto; min-width: 0;
+  font-family: 'Crimson Text', Georgia, serif; font-size: 15px; line-height: 1.3;
+  /* 🔴 WRAP. The pills were nowrap and ran off a phone screen. */
+  white-space: normal; overflow-wrap: anywhere;
+}
+/* a turn/phase divider reads as a heading, not as an event */
+.bef-row.bevt-event .bef-txt { color: #ffe3a3; }
+
+/* the life bar — drains over the row's full lifetime (set inline) */
+.bef-life {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 2px;
+  background: var(--bevt-color, #8fd2ff); opacity: 0.55;
+  transform-origin: left center;
+  animation: bef-drain linear forwards;
+}
+
+/* the same four kinds the pills had, same colours */
+.bef-row.bevt-buff    { --bevt-color: #74ec9d; --bevt-glow: rgba(110, 231, 155, 0.18); }
+.bef-row.bevt-debuff  { --bevt-color: #ff7188; --bevt-glow: rgba(255, 90, 120, 0.18); }
+.bef-row.bevt-neutral { --bevt-color: #8fd2ff; --bevt-glow: rgba(120, 200, 255, 0.16); }
+.bef-row.bevt-event   { --bevt-color: #ffcf6b; --bevt-glow: rgba(255, 200, 100, 0.18); }
+
+@keyframes bef-in    { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+@keyframes bef-out   { to { opacity: 0; transform: translateX(12px); } }
+@keyframes bef-drain { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+
+@media (max-width: 520px) {
+  .bef-txt { font-size: 14px; }
+  .bef-herald { width: 38px; height: 40px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bef-row, .bef-row.bef-out { animation-duration: 0.01s; }
+  .bef-life { animation: none; opacity: 0.35; }
+  .bef-herald { filter: none; }
+}

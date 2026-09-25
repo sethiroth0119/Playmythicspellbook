@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>glb bake stage</title>
+<style>html,body{margin:0;background:transparent}canvas{display:block}</style>
+</head><body>
+<!-- The repo's OWN three.js and loader, not a fetched copy, so a baked sprite
+     matches what the rest of the project renders with. -->
+<script src="/assets/vfx/three.min.js"></script>
+<script src="/assets/vfx/loaders/GLTFLoader.js"></script>
+<script>
+/* Bake one .glb to a transparent PNG at a fixed camera.
+   ORTHOGRAPHIC on purpose: the board places props by projecting a world point
+   and scaling a sprite, so any perspective the bake bakes IN would fight the
+   board's own projection and the platform would read as leaning. An ortho bake
+   is the neutral one. */
+window.__bake = async function ({ px, yaw, pitch }) {
+  const out = { ok:false, meshes:0, tris:0 };
+  try {
+    const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true, preserveDrawingBuffer:true });
+    renderer.setSize(px, px, false);
+    renderer.setClearColor(0x000000, 0);
+    if (renderer.outputColorSpace !== undefined && THREE.SRGBColorSpace) renderer.outputColorSpace = THREE.SRGBColorSpace;
+    document.body.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    const gltf = await new Promise((res, rej) => {
+      const L = new THREE.GLTFLoader();
+      L.load('/model.glb', res, undefined, rej);
+    });
+    const model = gltf.scene || gltf.scenes[0];
+    scene.add(model);
+
+    model.traverse(o => {
+      if (o.isMesh){
+        out.meshes++;
+        const g = o.geometry;
+        if (g && g.index) out.tris += g.index.count / 3;
+        else if (g && g.attributes && g.attributes.position) out.tris += g.attributes.position.count / 3;
+      }
+    });
+
+    /* Lighting that shows form without inventing a mood. The board grades its
+       own props through PYLON_TINT, so the bake stays neutral and lets the
+       board's time-of-day do the colouring. */
+    scene.add(new THREE.AmbientLight(0xffffff, 1.5));
+    const key = new THREE.DirectionalLight(0xffffff, 2.2); key.position.set(3, 6, 4); scene.add(key);
+    const rim = new THREE.DirectionalLight(0xbfd8ff, 0.8); rim.position.set(-4, 2, -3); scene.add(rim);
+
+    /* Measure BEFORE framing, and report it: the board needs widthWorld and
+       heightWorld in world units and guessing them is how a prop ends up
+       stretched. */
+    const box = new THREE.Box3().setFromObject(model);
+    const size = new THREE.Vector3(), centre = new THREE.Vector3();
+    box.getSize(size); box.getCenter(centre);
+    out.bbox = { w:+size.x.toFixed(4), h:+size.y.toFixed(4), d:+size.z.toFixed(4) };
+
+    model.position.sub(centre);            /* centre on the origin */
+
+    const ry = yaw   * Math.PI / 180;
+    const rx = pitch * Math.PI / 180;
+    const dist = Math.max(size.x, size.y, size.z) * 3 + 1;
+    const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, dist * 4);
+    cam.position.set(
+      Math.sin(ry) * Math.cos(rx) * dist,
+      Math.sin(rx) * dist,
+      Math.cos(ry) * Math.cos(rx) * dist
+    );
+    cam.lookAt(0, 0, 0);
+    cam.updateMatrixWorld(true);
+
+    /* Fit the ortho frustum to the model's projected extent, with a small
+       margin, so the sprite is as large as it can be inside its PNG — a prop
+       baked small wastes resolution the board then has to upscale. */
+    const inv = new THREE.Matrix4().copy(cam.matrixWorldInverse);
+    const b = new THREE.Box3().setFromObject(model);
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (let i = 0; i < 8; i++){
+      const v = new THREE.Vector3(
+        (i & 1) ? b.max.x : b.min.x,
+        (i & 2) ? b.max.y : b.min.y,
+        (i & 4) ? b.max.z : b.min.z
+      ).applyMatrix4(inv);
+      minX = Math.min(minX, v.x); maxX = Math.max(maxX, v.x);
+      minY = Math.min(minY, v.y); maxY = Math.max(maxY, v.y);
+    }
+    const halfW = (maxX - minX) / 2 * 1.04;
+    const halfH = (maxY - minY) / 2 * 1.04;
+    const half  = Math.max(halfW, halfH);       /* square PNG, no aspect skew */
+    cam.left = -half; cam.right = half; cam.top = half; cam.bottom = -half;
+    cam.updateProjectionMatrix();
+
+    renderer.render(scene, cam);
+    out.png = renderer.domElement.toDataURL('image/png');
+    /* The TRUE aspect of the drawn pixels, reported so the board can size the
+       prop without assuming the PNG's squareness means the model is square. */
+    out.bbox.projW = +(maxX - minX).toFixed(4);
+    out.bbox.projH = +(maxY - minY).toFixed(4);
+    out.ok = true;
+  } catch (e) {
+    out.err = String(e && e.message || e);
+  }
+  return out;
+};
+</script>
+</body></html>

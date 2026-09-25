@@ -1,0 +1,139 @@
+{
+ "system": "Athena",
+ "label": "Athena Engine",
+ "icon": "🛠",
+ "print": "Overview",
+ "nodes": [
+  {
+   "id": "relinkAsset",
+   "name": "relinkAsset",
+   "kind": "function",
+   "file": "public/src/mapforge/mapforge.editor.js",
+   "line": 1203,
+   "params": [
+    "id"
+   ],
+   "async": true,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 80
+  },
+  {
+   "id": "_athenaHubPortals",
+   "name": "_athenaHubPortals",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 139287,
+   "params": [
+    "h"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 212
+  },
+  {
+   "id": "prefabOf",
+   "name": "prefabOf",
+   "kind": "function",
+   "file": "public/src/mapforge/mapforge.world.js",
+   "line": 236,
+   "params": [
+    "o"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 344
+  },
+  {
+   "id": "askText",
+   "name": "askText",
+   "kind": "pure",
+   "file": "public/src/mapforge/mapforge.editor.js",
+   "line": 935,
+   "params": [
+    "msg",
+    "def"
+   ],
+   "async": true,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 80
+  },
+  {
+   "id": "prefabById",
+   "name": "prefabById",
+   "kind": "pure",
+   "file": "public/src/mapforge/mapforge.editor.js",
+   "line": 1065,
+   "params": [
+    "id"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 476
+  },
+  {
+   "id": "prefabPreview",
+   "name": "prefabPreview",
+   "kind": "function",
+   "file": "public/src/mapforge/mapforge.editor.js",
+   "line": 1517,
+   "params": [
+    "def"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 608
+  },
+  {
+   "id": "athenaAvailable",
+   "name": "athenaAvailable",
+   "kind": "pure",
+   "file": "public/src/farm/index.js",
+   "line": 654,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 740
+  },
+  {
+   "id": "athena",
+   "name": "athena",
+   "kind": "pure",
+   "file": "public/src/farm/index.js",
+   "line": 2843,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 872
+  }
+ ],
+ "edges": [
+  {
+   "from": "relinkAsset",
+   "to": "askText"
+  }
+ ]
+}

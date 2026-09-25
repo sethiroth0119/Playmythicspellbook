@@ -1,0 +1,2 @@
+/* D4 — chips only, boxes untouched */
+.fx-two label:has(> input[type="checkbox"]), .fx-two label:has(> input[type="radio"]) { flex: 1 1 24rem; max-width: 26rem; }

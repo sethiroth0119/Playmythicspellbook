@@ -1,0 +1,1358 @@
+{
+ "system": "Cards",
+ "label": "Cards, Moves & Battle",
+ "icon": "🃏",
+ "print": "Overview",
+ "nodes": [
+  {
+   "id": "deck",
+   "name": "deck",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 91820,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [
+    "App.screen",
+    "App.deckBuilderHeroId",
+    "App.deckEdit",
+    "App.deckEditName",
+    "App.deckBuilderFilter",
+    "App.deckBuilderOwnFilter"
+   ],
+   "calls": 0,
+   "x": 80,
+   "y": 80
+  },
+  {
+   "id": "deckbuilder",
+   "name": "deckbuilder",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 189468,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [
+    "App.screen",
+    "App.deckBuilderHeroId",
+    "App.deckEdit",
+    "App.deckEditName",
+    "App.deckBuilderFilter",
+    "App.deckBuilderOwnFilter"
+   ],
+   "calls": 0,
+   "x": 80,
+   "y": 212
+  },
+  {
+   "id": "_battleOnUnitKilled",
+   "name": "_battleOnUnitKilled",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 219121,
+   "params": [
+    "state",
+    "killer",
+    "victim"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 420,
+   "y": 80
+  },
+  {
+   "id": "_deckSearchSelect",
+   "name": "_deckSearchSelect",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 164419,
+   "params": [
+    "instanceId"
+   ],
+   "async": false,
+   "reads": [
+    "App.state",
+    "App.ui"
+   ],
+   "writes": [
+    "App.state"
+   ],
+   "calls": 2,
+   "x": 80,
+   "y": 344
+  },
+  {
+   "id": "_battleActivateCounter",
+   "name": "_battleActivateCounter",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 162018,
+   "params": [
+    "cardInstanceId"
+   ],
+   "async": false,
+   "reads": [
+    "App.state",
+    "App.ui"
+   ],
+   "writes": [],
+   "calls": 2,
+   "x": 80,
+   "y": 476
+  },
+  {
+   "id": "_battleApplyNightmareField",
+   "name": "_battleApplyNightmareField",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 233108,
+   "params": [
+    "state",
+    "side"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 608
+  },
+  {
+   "id": "cardMarketFetch",
+   "name": "cardMarketFetch",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 62703,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Profile.cloud",
+    "Cloud.client",
+    "Profile.gems"
+   ],
+   "writes": [
+    "Profile.gems"
+   ],
+   "calls": 0,
+   "x": 760,
+   "y": 80
+  },
+  {
+   "id": "cardMarketBuy",
+   "name": "cardMarketBuy",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 62881,
+   "params": [
+    "listing"
+   ],
+   "async": true,
+   "reads": [
+    "Profile.cloud",
+    "Profile.gems",
+    "Cloud.client"
+   ],
+   "writes": [
+    "Profile.gems"
+   ],
+   "calls": 1,
+   "x": 80,
+   "y": 740
+  },
+  {
+   "id": "cardMarketBuyNow",
+   "name": "cardMarketBuyNow",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 62996,
+   "params": [
+    "listing"
+   ],
+   "async": true,
+   "reads": [
+    "Profile.cloud",
+    "Profile.lockedGems",
+    "Cloud.client",
+    "Profile.gems"
+   ],
+   "writes": [
+    "Profile.gems"
+   ],
+   "calls": 1,
+   "x": 80,
+   "y": 872
+  },
+  {
+   "id": "moveUnit",
+   "name": "moveUnit",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 83503,
+   "params": [
+    "…a"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 1004
+  },
+  {
+   "id": "cardShopListCard",
+   "name": "cardShopListCard",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 187771,
+   "params": [
+    "cardId",
+    "price"
+   ],
+   "async": true,
+   "reads": [
+    "Profile.cardCollection",
+    "Cloud.client"
+   ],
+   "writes": [
+    "App._csPick"
+   ],
+   "calls": 0,
+   "x": 80,
+   "y": 1136
+  },
+  {
+   "id": "cardShopListPack",
+   "name": "cardShopListPack",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 187795,
+   "params": [
+    "entryId",
+    "price"
+   ],
+   "async": true,
+   "reads": [
+    "Profile.unopenedPacks",
+    "Cloud.client"
+   ],
+   "writes": [
+    "App._csPickPack"
+   ],
+   "calls": 0,
+   "x": 80,
+   "y": 1268
+  },
+  {
+   "id": "cardShopUnlist",
+   "name": "cardShopUnlist",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 187809,
+   "params": [
+    "listingId",
+    "cardId",
+    "kind"
+   ],
+   "async": true,
+   "reads": [
+    "Cloud.client",
+    "Profile.cardCollection"
+   ],
+   "writes": [
+    "Profile.cardCollection"
+   ],
+   "calls": 0,
+   "x": 80,
+   "y": 1400
+  },
+  {
+   "id": "moveItem",
+   "name": "moveItem",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 242492,
+   "params": [
+    "itemId",
+    "delta"
+   ],
+   "async": false,
+   "reads": [
+    "Profile.itemInventory"
+   ],
+   "writes": [
+    "Profile.itemInventory"
+   ],
+   "calls": 1,
+   "x": 80,
+   "y": 1532
+  },
+  {
+   "id": "cardPool",
+   "name": "cardPool",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 244525,
+   "params": [],
+   "async": false,
+   "reads": [
+    "Forge.customCards"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 1664
+  },
+  {
+   "id": "cardshop",
+   "name": "cardshop",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 247669,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [
+    "App._cardShopReturn",
+    "App.screen"
+   ],
+   "calls": 0,
+   "x": 80,
+   "y": 1796
+  },
+  {
+   "id": "decksWith",
+   "name": "decksWith",
+   "kind": "function",
+   "file": "public/src/ranch/table.js",
+   "line": 207,
+   "params": [
+    "cardId"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 1928
+  },
+  {
+   "id": "_cardCostCutFor",
+   "name": "_cardCostCutFor",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 45162,
+   "params": [
+    "card",
+    "state",
+    "side"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 2060
+  },
+  {
+   "id": "_battleCurrentSrc",
+   "name": "_battleCurrentSrc",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 47692,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 2192
+  },
+  {
+   "id": "_cardCopyLimit",
+   "name": "_cardCopyLimit",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 60880,
+   "params": [
+    "cardOrId"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 2324
+  },
+  {
+   "id": "deckKeyOwnedCount",
+   "name": "deckKeyOwnedCount",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 60944,
+   "params": [
+    "key"
+   ],
+   "async": false,
+   "reads": [
+    "Profile.cardCollection"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 2456
+  },
+  {
+   "id": "_deckCopiesOfId",
+   "name": "_deckCopiesOfId",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 60956,
+   "params": [
+    "cardKeys",
+    "id"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 2588
+  },
+  {
+   "id": "cardMarketSubscribe",
+   "name": "cardMarketSubscribe",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 62683,
+   "params": [],
+   "async": false,
+   "reads": [
+    "Profile.cloud",
+    "Cloud.client",
+    "App.screen",
+    "App.marketTab"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 2720
+  },
+  {
+   "id": "cardMarketPost",
+   "name": "cardMarketPost",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 62803,
+   "params": [
+    "opts"
+   ],
+   "async": true,
+   "reads": [
+    "Profile.cloud",
+    "ResMarket.mine",
+    "Profile.account",
+    "Cloud.client"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 2852
+  },
+  {
+   "id": "cardMarketCancel",
+   "name": "cardMarketCancel",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 62899,
+   "params": [
+    "listing"
+   ],
+   "async": true,
+   "reads": [
+    "Profile.cloud",
+    "Cloud.client"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 420,
+   "y": 212
+  },
+  {
+   "id": "cardMarketPostAuction",
+   "name": "cardMarketPostAuction",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 62925,
+   "params": [
+    "opts"
+   ],
+   "async": true,
+   "reads": [
+    "Profile.cloud",
+    "ResMarket.mine",
+    "Profile.account",
+    "Cloud.client"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 2984
+  },
+  {
+   "id": "cardMarketBid",
+   "name": "cardMarketBid",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 62963,
+   "params": [
+    "listing",
+    "amount"
+   ],
+   "async": true,
+   "reads": [
+    "Profile.cloud",
+    "Profile.lockedGems",
+    "Profile.account",
+    "Cloud.client"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 3116
+  },
+  {
+   "id": "cardMarketCancelAuction",
+   "name": "cardMarketCancelAuction",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 63017,
+   "params": [
+    "listing"
+   ],
+   "async": true,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 3248
+  },
+  {
+   "id": "cards",
+   "name": "cards",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 83507,
+   "params": [],
+   "async": false,
+   "reads": [
+    "Forge.customCards"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 3380
+  },
+  {
+   "id": "_cardMentionText",
+   "name": "_cardMentionText",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 105979,
+   "params": [
+    "c"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 760,
+   "y": 212
+  },
+  {
+   "id": "_cardMatchesFilter",
+   "name": "_cardMatchesFilter",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 106067,
+   "params": [
+    "cardDef",
+    "f",
+    "zone"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 420,
+   "y": 344
+  },
+  {
+   "id": "_battleTrapDogReveal",
+   "name": "_battleTrapDogReveal",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 114639,
+   "params": [
+    "state",
+    "unit"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 3512
+  },
+  {
+   "id": "_battleActivateGraveReaction",
+   "name": "_battleActivateGraveReaction",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 162206,
+   "params": [
+    "ref"
+   ],
+   "async": false,
+   "reads": [
+    "App.state",
+    "App.ui"
+   ],
+   "writes": [
+    "App.state"
+   ],
+   "calls": 0,
+   "x": 420,
+   "y": 476
+  },
+  {
+   "id": "_deckSearchCancel",
+   "name": "_deckSearchCancel",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 164408,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 608
+  },
+  {
+   "id": "_deckSearchEnqueue",
+   "name": "_deckSearchEnqueue",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 165082,
+   "params": [
+    "req"
+   ],
+   "async": false,
+   "reads": [
+    "App.ui"
+   ],
+   "writes": [
+    "App.ui"
+   ],
+   "calls": 0,
+   "x": 80,
+   "y": 3644
+  },
+  {
+   "id": "_cardInspectHydrate",
+   "name": "_cardInspectHydrate",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 169067,
+   "params": [
+    "c"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 740
+  },
+  {
+   "id": "_cardInspectResolve",
+   "name": "_cardInspectResolve",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 169077,
+   "params": [
+    "ref"
+   ],
+   "async": false,
+   "reads": [
+    "App.state"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 3776
+  },
+  {
+   "id": "_battleInputBlocked",
+   "name": "_battleInputBlocked",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 176921,
+   "params": [],
+   "async": false,
+   "reads": [
+    "App._lastCineBlockToast"
+   ],
+   "writes": [
+    "App._lastCineBlockToast"
+   ],
+   "calls": 0,
+   "x": 80,
+   "y": 3908
+  },
+  {
+   "id": "cardShopOpen",
+   "name": "cardShopOpen",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 187730,
+   "params": [
+    "name",
+    "tagline",
+    "theme"
+   ],
+   "async": true,
+   "reads": [
+    "Cloud.client"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 4040
+  },
+  {
+   "id": "cardShopSetOpen",
+   "name": "cardShopSetOpen",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 187740,
+   "params": [
+    "isOpen"
+   ],
+   "async": true,
+   "reads": [
+    "Cloud.client"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 4172
+  },
+  {
+   "id": "cardShopBuy",
+   "name": "cardShopBuy",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 187819,
+   "params": [
+    "listingId",
+    "price",
+    "ownerId"
+   ],
+   "async": true,
+   "reads": [
+    "Cloud.client"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 4304
+  },
+  {
+   "id": "cardShopCollect",
+   "name": "cardShopCollect",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 187847,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Cloud.client"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 4436
+  },
+  {
+   "id": "cardLevelBadge",
+   "name": "cardLevelBadge",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 216013,
+   "params": [
+    "c",
+    "kind",
+    "ownedCount",
+    "opts"
+   ],
+   "async": false,
+   "reads": [
+    "Profile.heroes",
+    "Profile.units"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 4568
+  },
+  {
+   "id": "_cardCtxResolveEl",
+   "name": "_cardCtxResolveEl",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 216444,
+   "params": [
+    "el"
+   ],
+   "async": false,
+   "reads": [
+    "App.state"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 4700
+  },
+  {
+   "id": "_battleHeroBondedTo",
+   "name": "_battleHeroBondedTo",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 219105,
+   "params": [
+    "hero",
+    "unit"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 760,
+   "y": 344
+  },
+  {
+   "id": "_battleCheckSurvivedNearDeath",
+   "name": "_battleCheckSurvivedNearDeath",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 219184,
+   "params": [
+    "state",
+    "unit",
+    "oldHp"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 4832
+  },
+  {
+   "id": "_battleTickRotation",
+   "name": "_battleTickRotation",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 219197,
+   "params": [
+    "state"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 4964
+  },
+  {
+   "id": "_battleAiScoreBias",
+   "name": "_battleAiScoreBias",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 219248,
+   "params": [
+    "state",
+    "aiHero",
+    "contextHint"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 5096
+  },
+  {
+   "id": "_battleFindInterceptor",
+   "name": "_battleFindInterceptor",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 233053,
+   "params": [
+    "state",
+    "target",
+    "attacker"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 5228
+  },
+  {
+   "id": "_battleApplyNanoRepair",
+   "name": "_battleApplyNanoRepair",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 233082,
+   "params": [
+    "state",
+    "side"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 5360
+  },
+  {
+   "id": "deckKeyCardId",
+   "name": "deckKeyCardId",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 243786,
+   "params": [
+    "k"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 420,
+   "y": 872
+  },
+  {
+   "id": "cardArt",
+   "name": "cardArt",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 244539,
+   "params": [
+    "id"
+   ],
+   "async": false,
+   "reads": [
+    "Forge.cardArt"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 760,
+   "y": 476
+  },
+  {
+   "id": "cardMarketValue",
+   "name": "cardMarketValue",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 244548,
+   "params": [
+    "card"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 5492
+  },
+  {
+   "id": "cardById",
+   "name": "cardById",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 245011,
+   "params": [
+    "id"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 1004
+  },
+  {
+   "id": "_deckVaultSendData",
+   "name": "_deckVaultSendData",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 249395,
+   "params": [],
+   "async": true,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 5624
+  },
+  {
+   "id": "movePreviewOk",
+   "name": "movePreviewOk",
+   "kind": "pure",
+   "file": "public/node-city/index.html",
+   "line": 36288,
+   "params": [
+    "x",
+    "z"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 5756
+  },
+  {
+   "id": "cardDefenseFromSockets",
+   "name": "cardDefenseFromSockets",
+   "kind": "pure",
+   "file": "public/node-city/index.html",
+   "line": 39528,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 5888
+  },
+  {
+   "id": "moveKey",
+   "name": "moveKey",
+   "kind": "function",
+   "file": "public/src/naming/index.js",
+   "line": 236,
+   "params": [
+    "from",
+    "to"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 6020
+  },
+  {
+   "id": "cardArtHtml",
+   "name": "cardArtHtml",
+   "kind": "pure",
+   "file": "public/src/influence/render.js",
+   "line": 138,
+   "params": [
+    "view",
+    "card"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 420,
+   "y": 1136
+  },
+  {
+   "id": "cardBlockHtml",
+   "name": "cardBlockHtml",
+   "kind": "function",
+   "file": "public/src/influence/render.js",
+   "line": 146,
+   "params": [
+    "view",
+    "card",
+    "kind"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 6152
+  },
+  {
+   "id": "deckCohesion",
+   "name": "deckCohesion",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 42244,
+   "params": [
+    "cards"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 6284
+  },
+  {
+   "id": "cardReleaseAt",
+   "name": "cardReleaseAt",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 43610,
+   "params": [
+    "id"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 6416
+  },
+  {
+   "id": "cardHasPassive",
+   "name": "cardHasPassive",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 45137,
+   "params": [
+    "card",
+    "id"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 6548
+  },
+  {
+   "id": "cardEl",
+   "name": "cardEl",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 46598,
+   "params": [
+    "i"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 6680
+  },
+  {
+   "id": "_battleShuffle",
+   "name": "_battleShuffle",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 47683,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 1268
+  },
+  {
+   "id": "_cardCloudIsNewer",
+   "name": "_cardCloudIsNewer",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 57002,
+   "params": [
+    "cloud",
+    "local"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 6812
+  },
+  {
+   "id": "cardKeyOf",
+   "name": "cardKeyOf",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 60891,
+   "params": [
+    "card",
+    "kind"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 6944
+  },
+  {
+   "id": "deckCardCounts",
+   "name": "deckCardCounts",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 60922,
+   "params": [
+    "cardKeys"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 7076
+  },
+  {
+   "id": "deckHasHero",
+   "name": "deckHasHero",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 60933,
+   "params": [
+    "cardKeys"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 7208
+  },
+  {
+   "id": "_deckKeyCardId",
+   "name": "_deckKeyCardId",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 60937,
+   "params": [
+    "key"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 760,
+   "y": 608
+  }
+ ],
+ "edges": [
+  {
+   "from": "_battleOnUnitKilled",
+   "to": "_battleHeroBondedTo"
+  },
+  {
+   "from": "_deckSearchSelect",
+   "to": "_deckSearchCancel"
+  },
+  {
+   "from": "_deckSearchSelect",
+   "to": "_cardMatchesFilter"
+  },
+  {
+   "from": "_battleActivateCounter",
+   "to": "_battleActivateGraveReaction"
+  },
+  {
+   "from": "_battleActivateCounter",
+   "to": "_battleOnUnitKilled"
+  },
+  {
+   "from": "cardMarketBuy",
+   "to": "cardMarketFetch"
+  },
+  {
+   "from": "cardMarketBuyNow",
+   "to": "cardMarketFetch"
+  },
+  {
+   "from": "decksWith",
+   "to": "deckKeyCardId"
+  },
+  {
+   "from": "_cardCostCutFor",
+   "to": "_cardMatchesFilter"
+  },
+  {
+   "from": "_battleCurrentSrc",
+   "to": "_battleShuffle"
+  },
+  {
+   "from": "deckKeyOwnedCount",
+   "to": "_deckKeyCardId"
+  },
+  {
+   "from": "_deckCopiesOfId",
+   "to": "_deckKeyCardId"
+  },
+  {
+   "from": "cardMarketSubscribe",
+   "to": "cardMarketFetch"
+  },
+  {
+   "from": "cardMarketPost",
+   "to": "cardMarketFetch"
+  },
+  {
+   "from": "cardMarketCancel",
+   "to": "cardMarketFetch"
+  },
+  {
+   "from": "cardMarketPostAuction",
+   "to": "cardMarketFetch"
+  },
+  {
+   "from": "cardMarketBid",
+   "to": "cardMarketFetch"
+  },
+  {
+   "from": "cardMarketCancelAuction",
+   "to": "cardMarketCancel"
+  },
+  {
+   "from": "_cardMatchesFilter",
+   "to": "_cardMentionText"
+  },
+  {
+   "from": "_cardInspectResolve",
+   "to": "_cardInspectHydrate"
+  },
+  {
+   "from": "deckKeyCardId",
+   "to": "_deckKeyCardId"
+  },
+  {
+   "from": "cardDefenseFromSockets",
+   "to": "cardById"
+  },
+  {
+   "from": "cardArtHtml",
+   "to": "cardArt"
+  },
+  {
+   "from": "cardBlockHtml",
+   "to": "cardArtHtml"
+  }
+ ]
+}

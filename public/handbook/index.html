@@ -1,0 +1,1629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mythic Spellbook — Player's Handbook</title>
+<meta name="description" content="The Mythic Spellbook Player's Handbook — how to play, the rules, the elements, and everything outside the battlefield.">
+<link rel="icon" href="/assets/artwork/gameicons/Codex%20book.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=EB+Garamond:ital,wght@0,400;0,600;1,400&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ══════════════════════════════════════════════════════════════════════════
+   MYTHIC SPELLBOOK — PLAYER'S HANDBOOK
+   A standalone reader + editor. Deliberately NOT part of index.html: this is
+   its own page under public/handbook/, served at /handbook/.
+
+   WHY IT IS DATA-DRIVEN: the whole book lives in handbook.json, and the
+   element / faction / status / rarity tables live in gamedata.json which is
+   GENERATED FROM index.html's own constants. Hand-copying 21 elements and 42
+   factions into prose guarantees they drift the first time someone adds one.
+   Regenerate with tools/handbook-sync.mjs after touching those tables.
+
+   EDITS: the editor writes to localStorage under HB_KEY and never touches the
+   server. "Download handbook.json" is the commit path — replace the file in
+   the repo with the download to publish an edit to everyone.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+:root{
+  --ink:#efe6d2;            /* body text on dark */
+  --ink-dim:#b0a48c;
+  --gold:#d4af37;
+  --gold-br:#f5d76e;
+  --gold-dk:#8a6a28;
+  --ember:#e85d3c;
+  --violet:#b888ff;
+  --bg:#0b0910;
+  --bg-2:#141020;
+  --panel:rgba(28,22,42,.72);
+  --panel-2:rgba(18,14,28,.85);
+  --rule:rgba(212,175,55,.28);
+  --rule-soft:rgba(212,175,55,.14);
+  --serif:'EB Garamond',Georgia,'Times New Roman',serif;
+  --display:'Cinzel',Georgia,serif;
+  --sans:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --measure:68ch;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0;background:var(--bg);color:var(--ink);
+  font-family:var(--serif);font-size:18px;line-height:1.68;
+  -webkit-font-smoothing:antialiased;
+}
+/* Starfield ground — two radial washes, no image, so it costs nothing. */
+body::before{
+  content:'';position:fixed;inset:0;z-index:-2;pointer-events:none;
+  background:
+    radial-gradient(1200px 700px at 18% -10%, rgba(122,60,255,.22), transparent 62%),
+    radial-gradient(900px 600px at 92% 8%, rgba(232,93,60,.12), transparent 60%),
+    linear-gradient(180deg,#0b0910 0%,#0d0a16 40%,#0b0910 100%);
+}
+img{max-width:100%;display:block}
+a{color:var(--gold-br);text-decoration-color:var(--rule);text-underline-offset:3px}
+a:hover{color:#fff}
+
+/* ─────────────── App shell ─────────────── */
+.app{display:grid;grid-template-columns:280px minmax(0,1fr);min-height:100vh}
+
+/* ─────────────── Sidebar / contents ─────────────── */
+.rail{
+  position:sticky;top:0;align-self:start;height:100vh;overflow-y:auto;
+  border-right:1px solid var(--rule-soft);background:var(--panel-2);
+  backdrop-filter:blur(8px);padding:18px 0 36px;
+}
+.rail-brand{padding:6px 20px 16px;border-bottom:1px solid var(--rule-soft);margin-bottom:12px}
+.rail-brand .mk{font-family:var(--display);font-weight:900;letter-spacing:.13em;font-size:.72rem;color:var(--gold);text-transform:uppercase}
+.rail-brand .tt{font-family:var(--display);font-weight:700;font-size:1.02rem;line-height:1.25;margin-top:4px;color:#fff}
+.rail-brand .vv{font-family:var(--sans);font-size:.68rem;color:var(--ink-dim);margin-top:5px;letter-spacing:.06em}
+
+.rail-search{padding:0 16px 12px}
+.rail-search input{
+  width:100%;padding:9px 11px;border-radius:8px;font-family:var(--sans);font-size:.82rem;
+  background:rgba(0,0,0,.42);border:1px solid var(--rule-soft);color:var(--ink);
+}
+.rail-search input:focus{outline:none;border-color:var(--gold-dk);background:rgba(0,0,0,.6)}
+.rail-search input::placeholder{color:#6f6a5c}
+
+.toc{list-style:none;margin:0;padding:0 10px}
+.toc li{margin:1px 0}
+.toc a{
+  display:flex;gap:10px;align-items:baseline;padding:8px 10px;border-radius:8px;
+  font-family:var(--sans);font-size:.84rem;line-height:1.35;color:var(--ink-dim);
+  text-decoration:none;border-left:2px solid transparent;
+}
+.toc a:hover{background:rgba(212,175,55,.08);color:var(--ink)}
+.toc a.on{background:rgba(212,175,55,.13);color:var(--gold-br);border-left-color:var(--gold)}
+.toc .rn{font-family:var(--display);font-weight:700;font-size:.72rem;color:var(--gold-dk);min-width:2.1em;letter-spacing:.06em}
+.toc a.on .rn{color:var(--gold)}
+
+.rail-tools{padding:16px 16px 0;margin-top:14px;border-top:1px solid var(--rule-soft);display:flex;flex-direction:column;gap:7px}
+
+/* ─────────────── Buttons ─────────────── */
+.btn{
+  font-family:var(--sans);font-size:.78rem;font-weight:600;letter-spacing:.02em;
+  padding:8px 12px;border-radius:8px;cursor:pointer;text-align:center;
+  background:rgba(212,175,55,.1);border:1px solid var(--rule);color:var(--gold-br);
+  transition:background .13s ease,border-color .13s ease,transform .08s ease;
+}
+.btn:hover{background:rgba(212,175,55,.2);border-color:var(--gold)}
+.btn:active{transform:translateY(1px)}
+.btn.ghost{background:transparent;border-color:var(--rule-soft);color:var(--ink-dim)}
+.btn.ghost:hover{color:var(--ink);border-color:var(--rule)}
+.btn.hot{background:rgba(232,93,60,.16);border-color:rgba(232,93,60,.5);color:#ffb9a6}
+.btn.hot:hover{background:rgba(232,93,60,.28)}
+.btn.on{background:var(--gold);border-color:var(--gold-br);color:#1a1206}
+.btn.sm{padding:4px 9px;font-size:.7rem;border-radius:6px}
+
+/* ─────────────── Page body ─────────────── */
+.page{min-width:0;padding:0 0 120px}
+.wrap{max-width:var(--measure);margin:0 auto;padding:0 24px}
+
+/* ─────────────── Cover ─────────────── */
+.cover{
+  position:relative;min-height:min(96vh,940px);display:grid;place-items:center;
+  overflow:hidden;border-bottom:1px solid var(--rule);
+}
+.cover-art{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center 22%}
+.cover::after{
+  content:'';position:absolute;inset:0;pointer-events:none;
+  background:linear-gradient(180deg,rgba(8,6,14,.62) 0%,rgba(8,6,14,.22) 34%,rgba(8,6,14,.78) 74%,rgba(11,9,16,1) 100%);
+}
+.cover-inner{position:relative;z-index:2;text-align:center;padding:56px 24px;max-width:820px}
+.cover-eyebrow{
+  font-family:var(--display);font-size:.74rem;font-weight:700;letter-spacing:.42em;
+  color:var(--gold);text-transform:uppercase;margin-bottom:22px;text-shadow:0 2px 12px #000;
+}
+.cover-title{
+  font-family:var(--display);font-weight:900;line-height:.94;margin:0;
+  font-size:clamp(2.7rem,9vw,6.2rem);letter-spacing:.02em;color:#fff;
+  text-shadow:0 4px 30px rgba(0,0,0,.95),0 0 60px rgba(184,136,255,.45);
+}
+.cover-sub{
+  font-family:var(--display);font-weight:700;letter-spacing:.3em;text-transform:uppercase;
+  font-size:clamp(.8rem,2.2vw,1.2rem);color:var(--gold-br);margin:22px 0 0;
+  text-shadow:0 2px 16px #000;
+}
+.cover-rule{width:170px;height:1px;margin:26px auto;background:linear-gradient(90deg,transparent,var(--gold),transparent)}
+.cover-tag{font-style:italic;font-size:1.06rem;color:#e2d8c4;text-shadow:0 2px 12px #000;margin:0 auto;max-width:34em}
+.cover-byline{font-family:var(--sans);font-size:.7rem;letter-spacing:.22em;text-transform:uppercase;color:var(--ink-dim);margin-top:30px}
+.cover-scroll{position:absolute;bottom:22px;left:50%;transform:translateX(-50%);z-index:2;font-family:var(--sans);font-size:.68rem;letter-spacing:.2em;text-transform:uppercase;color:var(--ink-dim);animation:bob 2.4s ease-in-out infinite}
+@keyframes bob{0%,100%{transform:translate(-50%,0);opacity:.6}50%{transform:translate(-50%,6px);opacity:1}}
+@media (prefers-reduced-motion:reduce){.cover-scroll{animation:none}}
+
+/* ─────────────── Chapter ─────────────── */
+.chapter{padding-top:76px;scroll-margin-top:12px}
+.ch-head{max-width:var(--measure);margin:0 auto 40px;padding:0 24px;text-align:center}
+.ch-num{
+  /* Roman numerals at wide tracking read as separate letters ("II" as "I I"),
+     so this sits tighter than the cover eyebrow deliberately. */
+  font-family:var(--display);font-weight:700;font-size:.8rem;letter-spacing:.22em;
+  text-transform:uppercase;color:var(--gold-dk);
+}
+.ch-num::before,.ch-num::after{content:'';display:inline-block;width:34px;height:1px;background:var(--rule);vertical-align:middle;margin:0 14px 4px}
+.ch-title{font-family:var(--display);font-weight:900;font-size:clamp(1.9rem,5vw,3.1rem);line-height:1.1;margin:14px 0 0;color:#fff}
+.ch-blurb{font-style:italic;color:var(--ink-dim);margin:14px auto 0;max-width:44ch;font-size:1.02rem}
+.ch-art{
+  max-width:820px;margin:34px auto 0;border-radius:14px;overflow:hidden;
+  border:1px solid var(--rule-soft);box-shadow:0 24px 70px rgba(0,0,0,.62);
+  background:linear-gradient(180deg,rgba(30,22,48,.5),rgba(12,9,20,.8));
+}
+.ch-art img{width:100%;max-height:440px;object-fit:contain;background:radial-gradient(60% 70% at 50% 40%,rgba(122,60,255,.16),transparent 70%)}
+
+/* ─────────────── Sections ─────────────── */
+.sec{margin:44px 0}
+.sec h3{
+  font-family:var(--display);font-weight:700;font-size:1.42rem;color:var(--gold-br);
+  margin:0 0 14px;line-height:1.28;
+}
+.sec p{margin:0 0 1.05em}
+.sec ul,.sec ol{margin:0 0 1.05em;padding-left:1.4em}
+.sec li{margin:.42em 0}
+.sec li::marker{color:var(--gold-dk)}
+.sec strong{color:#fff;font-weight:600}
+.sec em{color:#e4dac4}
+.sec dl{margin:0 0 1em}
+.sec dt{font-family:var(--display);font-weight:700;color:var(--gold-br);margin-top:.85em}
+.sec dd{margin:.15em 0 0;padding-left:0;color:var(--ink-dim)}
+.hl-gold{color:var(--gold-br);font-weight:600}
+.hl-ember{color:#ff9a80;font-weight:600}
+
+/* Callout */
+.note{
+  margin:24px 0;padding:15px 18px 15px 20px;border-radius:10px;
+  border:1px solid var(--rule-soft);border-left:3px solid var(--gold);
+  background:linear-gradient(90deg,rgba(212,175,55,.11),rgba(212,175,55,.03));
+  font-family:var(--sans);font-size:.9rem;line-height:1.6;color:#eadfc8;
+}
+.note::before{content:'◈ ';color:var(--gold);font-weight:700}
+
+/* Tables */
+.tbl-scroll{overflow-x:auto;margin:22px 0;border-radius:10px;border:1px solid var(--rule-soft)}
+table{border-collapse:collapse;width:100%;font-family:var(--sans);font-size:.86rem;min-width:min(100%,420px)}
+th{
+  text-align:left;padding:10px 14px;background:rgba(212,175,55,.12);color:var(--gold-br);
+  font-weight:700;font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;
+  border-bottom:1px solid var(--rule);white-space:nowrap;
+}
+td{padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.05);vertical-align:top;color:var(--ink)}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:nth-child(even){background:rgba(255,255,255,.022)}
+td strong{color:#fff}
+
+/* Card grid (the five card types, the seven portals, …) */
+.cards{display:grid;gap:12px;margin:24px 0;grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
+.card{
+  padding:16px 16px 17px;border-radius:11px;background:var(--panel);
+  border:1px solid var(--rule-soft);position:relative;
+}
+.card .ci{font-size:1.55rem;line-height:1;margin-bottom:9px;display:block}
+.card .cn{font-family:var(--display);font-weight:700;font-size:1.02rem;color:var(--gold-br);margin-bottom:6px}
+.card .ct{font-family:var(--sans);font-size:.83rem;line-height:1.58;color:var(--ink-dim)}
+
+/* ─────────────── Element chart ─────────────── */
+.elems{display:grid;gap:12px;margin:24px 0;grid-template-columns:repeat(auto-fill,minmax(268px,1fr))}
+.elem{
+  border-radius:11px;padding:14px 15px;background:var(--panel);
+  border:1px solid var(--rule-soft);border-top:3px solid var(--ec,var(--gold));
+}
+.elem-h{display:flex;align-items:center;gap:10px;margin-bottom:11px}
+.elem-h img{width:34px;height:34px;object-fit:contain;filter:drop-shadow(0 2px 6px rgba(0,0,0,.7))}
+.elem-h .en{font-family:var(--display);font-weight:700;font-size:1.06rem;color:var(--ec,var(--gold-br))}
+.elem-row{font-family:var(--sans);font-size:.76rem;line-height:1.55;margin:5px 0;display:flex;gap:7px}
+.elem-row .lbl{flex:0 0 auto;font-weight:700;letter-spacing:.04em;text-transform:uppercase;font-size:.64rem;padding-top:2px;min-width:5.4em}
+.elem-row.up .lbl{color:#7fd6a0}
+.elem-row.dn .lbl{color:#ff8f7a}
+.elem-row.mu .lbl{color:var(--violet)}
+.elem-row .vals{color:var(--ink-dim)}
+.pill{
+  display:inline-block;padding:1px 7px;border-radius:20px;margin:2px 3px 2px 0;
+  font-size:.7rem;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);color:#ded3bd;
+}
+
+/* ─────────────── Faction / status / rarity grids ─────────────── */
+.facs{display:grid;gap:9px;margin:24px 0;grid-template-columns:repeat(auto-fill,minmax(232px,1fr))}
+.fac{display:flex;gap:10px;align-items:flex-start;padding:11px 12px;border-radius:9px;background:var(--panel);border:1px solid var(--rule-soft);border-left:3px solid var(--fc,var(--gold))}
+.fac .fi{font-size:1.15rem;line-height:1.2;flex:0 0 auto}
+.fac .fn{font-family:var(--display);font-weight:700;font-size:.92rem;color:var(--fc,var(--gold-br));margin-bottom:2px}
+.fac .fd{font-family:var(--sans);font-size:.74rem;line-height:1.5;color:var(--ink-dim)}
+
+.stats-grid{display:grid;gap:8px;margin:24px 0;grid-template-columns:repeat(auto-fill,minmax(276px,1fr))}
+.st{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:9px;background:rgba(255,255,255,.028);border:1px solid rgba(255,255,255,.06)}
+.st .si{font-size:1.05rem;flex:0 0 auto;line-height:1.3}
+.st .sn{font-family:var(--sans);font-weight:700;font-size:.82rem;color:var(--gold-br);margin-bottom:1px}
+.st .sd{font-family:var(--sans);font-size:.74rem;line-height:1.5;color:var(--ink-dim)}
+
+.rars{display:grid;gap:10px;margin:24px 0;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.rar{padding:14px 12px;border-radius:10px;text-align:center;background:var(--panel);border:1px solid var(--rc,var(--gold));box-shadow:0 0 22px -12px var(--rc,var(--gold))}
+.rar .rn2{font-family:var(--display);font-weight:700;font-size:1.02rem;color:var(--rc,var(--gold-br))}
+.rar .rs{font-family:var(--sans);font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-dim);margin-top:5px}
+
+/* ─────────────── Colophon ─────────────── */
+.colophon{max-width:var(--measure);margin:100px auto 0;padding:34px 24px 0;border-top:1px solid var(--rule-soft);text-align:center;font-family:var(--sans);font-size:.79rem;line-height:1.7;color:var(--ink-dim)}
+
+/* ─────────────── Editor ─────────────── */
+body.editing [data-edit]{
+  outline:1px dashed rgba(212,175,55,.4);outline-offset:4px;border-radius:4px;
+  transition:outline-color .12s ease,background .12s ease;
+}
+body.editing [data-edit]:hover{outline-color:var(--gold);background:rgba(212,175,55,.05)}
+body.editing [data-edit]:focus{outline:2px solid var(--gold-br);background:rgba(212,175,55,.09)}
+.ed-only{display:none}
+body.editing .ed-only{display:block}
+body.editing .ed-only.inline{display:inline-flex}
+
+.ed-bar{
+  position:fixed;left:0;right:0;bottom:0;z-index:60;display:none;
+  align-items:center;gap:9px;flex-wrap:wrap;
+  padding:11px 16px;background:rgba(10,8,16,.96);border-top:1px solid var(--rule);
+  backdrop-filter:blur(12px);font-family:var(--sans);
+}
+body.editing .ed-bar{display:flex}
+.ed-bar .sp{flex:1 1 auto}
+.ed-status{font-size:.73rem;color:var(--ink-dim);letter-spacing:.03em}
+.ed-status.saved{color:#7fd6a0}
+
+.ed-tools{display:none;gap:6px;flex-wrap:wrap;margin:14px 0;padding:9px 11px;border-radius:9px;background:rgba(212,175,55,.06);border:1px dashed var(--rule-soft)}
+body.editing .ed-tools{display:flex}
+
+/* Image picker */
+.modal{position:fixed;inset:0;z-index:90;display:none;place-items:center;padding:20px;background:rgba(5,4,9,.86);backdrop-filter:blur(4px)}
+.modal.open{display:grid}
+.modal-box{
+  width:min(1040px,100%);max-height:88vh;display:flex;flex-direction:column;
+  background:#12101c;border:1px solid var(--rule);border-radius:14px;overflow:hidden;
+}
+.modal-head{display:flex;gap:10px;align-items:center;padding:13px 16px;border-bottom:1px solid var(--rule-soft);flex-wrap:wrap}
+.modal-head h4{font-family:var(--display);margin:0;font-size:1.02rem;color:var(--gold-br);flex:0 0 auto}
+.modal-head input{flex:1 1 200px;min-width:0;padding:8px 11px;border-radius:8px;background:rgba(0,0,0,.45);border:1px solid var(--rule-soft);color:var(--ink);font-family:var(--sans);font-size:.83rem}
+.modal-head input:focus{outline:none;border-color:var(--gold-dk)}
+.modal-head select{padding:8px 10px;border-radius:8px;background:rgba(0,0,0,.45);border:1px solid var(--rule-soft);color:var(--ink);font-family:var(--sans);font-size:.8rem}
+.modal-grid{overflow-y:auto;padding:14px;display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(128px,1fr))}
+.thumb{cursor:pointer;border-radius:9px;overflow:hidden;border:1px solid var(--rule-soft);background:rgba(0,0,0,.4);transition:border-color .12s ease,transform .1s ease}
+.thumb:hover{border-color:var(--gold);transform:translateY(-2px)}
+.thumb img{width:100%;height:104px;object-fit:contain;background:rgba(255,255,255,.028)}
+.thumb .tn{font-family:var(--sans);font-size:.63rem;padding:5px 6px;color:var(--ink-dim);line-height:1.3;word-break:break-word}
+.modal-foot{padding:11px 16px;border-top:1px solid var(--rule-soft);display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+.modal-foot .hint{font-family:var(--sans);font-size:.72rem;color:var(--ink-dim);flex:1 1 auto}
+
+/* Mobile drawer */
+.rail-toggle{
+  display:none;position:fixed;left:12px;top:12px;z-index:70;
+  width:42px;height:42px;border-radius:10px;font-size:1.1rem;line-height:1;
+  background:rgba(14,11,22,.94);border:1px solid var(--rule);color:var(--gold-br);cursor:pointer;
+}
+
+/* ─────────────── Responsive ─────────────── */
+@media (max-width:900px){
+  body{font-size:17px}
+  .app{grid-template-columns:1fr}
+  .rail{
+    position:fixed;inset:0 auto 0 0;width:min(300px,86vw);z-index:65;
+    transform:translateX(-102%);transition:transform .22s ease;box-shadow:0 0 60px rgba(0,0,0,.8);
+  }
+  .rail.open{transform:none}
+  .rail-toggle{display:block}
+  .page{padding-top:8px}
+  .wrap,.ch-head{padding-left:18px;padding-right:18px}
+  .cover-inner{padding-top:86px}
+  .chapter{padding-top:56px}
+}
+@media (max-width:520px){
+  body{font-size:16px}
+  .elems,.facs,.stats-grid,.cards{grid-template-columns:1fr}
+  .cover-eyebrow{letter-spacing:.26em}
+}
+
+/* ─────────────── Print ─────────────── */
+@media print{
+  :root{--ink:#15120c;--ink-dim:#4a4335;--rule:#c2ab6a;--rule-soft:#ddd0ad;--panel:#faf6ec;--gold:#8a6a28;--gold-br:#6d4f14;--gold-dk:#8a6a28}
+  body{background:#fff;color:#15120c;font-size:11.5pt}
+  body::before{display:none}
+  .rail,.rail-toggle,.ed-bar,.ed-tools,.ed-only,.modal,.cover-scroll{display:none!important}
+  .app{display:block}
+  .page{padding:0}
+  .cover{min-height:auto;page-break-after:always;border:none}
+  .cover-art{position:static;height:150mm;object-fit:contain}
+  .cover::after{display:none}
+  .cover-inner{padding:14mm 0 0}
+  .cover-title,.cover-sub,.cover-tag{text-shadow:none;color:#15120c}
+  .cover-eyebrow{color:#8a6a28}
+  .chapter{page-break-before:always;padding-top:0}
+  .ch-art img{max-height:100mm}
+  .sec h3,.ch-title{color:#3d2c08}
+  .card,.elem,.fac,.st,.rar{background:#faf6ec;border-color:#ddd0ad;box-shadow:none}
+  th{background:#f0e6cc;color:#4a3a10}
+  .note{background:#fbf4dd;color:#3a3222}
+  a{color:#15120c;text-decoration:none}
+  h3,.ch-title{page-break-after:avoid}
+  .sec,.note,.tbl-scroll,.card{page-break-inside:avoid}
+}
+</style>
+</head>
+<body>
+
+<style>
+/* ═══════════════════════════════════════════════════════════════════════
+   ADMIN AUTHORING — everything below is only ever visible to an admin.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Who you are, in the rail */
+.who{
+  margin:0 16px 12px;padding:10px 12px;border-radius:9px;
+  background:rgba(255,255,255,.03);border:1px solid var(--rule-soft);
+  font-family:var(--sans);font-size:.72rem;line-height:1.5;color:var(--ink-dim);
+}
+.who .nm{color:var(--ink);font-weight:600;word-break:break-all}
+.who .crown{color:var(--gold-br);font-weight:700;letter-spacing:.06em}
+.who a{font-size:.72rem}
+
+/* Publish state */
+.pub-state{
+  font-family:var(--sans);font-size:.7rem;letter-spacing:.04em;
+  padding:3px 8px;border-radius:20px;white-space:nowrap;
+  border:1px solid var(--rule-soft);color:var(--ink-dim);background:rgba(255,255,255,.04);
+}
+.pub-state.live{color:#7fd6a0;border-color:rgba(127,214,160,.4);background:rgba(127,214,160,.1)}
+.pub-state.draft{color:#ffc978;border-color:rgba(255,201,120,.45);background:rgba(255,201,120,.1)}
+.pub-state.err{color:#ff9a80;border-color:rgba(255,154,128,.45);background:rgba(255,154,128,.1)}
+
+/* Add-section menu */
+.addmenu{position:relative;display:inline-block}
+.addmenu-pop{
+  display:none;position:absolute;left:0;bottom:calc(100% + 6px);z-index:40;min-width:186px;
+  background:#16121f;border:1px solid var(--rule);border-radius:10px;padding:5px;
+  box-shadow:0 18px 44px rgba(0,0,0,.7);
+}
+.addmenu.open .addmenu-pop{display:block}
+.addmenu-pop button{
+  display:flex;gap:9px;align-items:center;width:100%;text-align:left;
+  font-family:var(--sans);font-size:.78rem;padding:8px 10px;border-radius:7px;
+  background:none;border:none;color:var(--ink);cursor:pointer;
+}
+.addmenu-pop button:hover{background:rgba(212,175,55,.14);color:var(--gold-br)}
+.addmenu-pop button .k{font-size:.95rem;width:1.3em;text-align:center}
+.addmenu-pop .sep{height:1px;background:var(--rule-soft);margin:4px 6px}
+
+/* Editable table + card affordances */
+body.editing th[data-edit],body.editing td[data-edit]{min-width:80px}
+.grid-tools{display:none;gap:5px;flex-wrap:wrap;margin:-12px 0 20px}
+body.editing .grid-tools{display:flex}
+.card.ed{position:relative}
+body.editing .card.ed .card-x{
+  display:grid;position:absolute;top:5px;right:5px;width:20px;height:20px;place-items:center;
+  border-radius:5px;background:rgba(232,93,60,.22);border:1px solid rgba(232,93,60,.5);
+  color:#ffb9a6;font-size:.7rem;cursor:pointer;
+}
+.card .card-x{display:none}
+
+/* Image drop zone (an empty image section, in edit mode) */
+.img-slot{
+  display:none;margin:22px 0;padding:26px 18px;border-radius:12px;text-align:center;
+  border:1px dashed var(--rule);background:rgba(212,175,55,.04);
+  font-family:var(--sans);font-size:.82rem;color:var(--ink-dim);
+}
+body.editing .img-slot{display:block}
+.img-slot.drag{border-color:var(--gold-br);background:rgba(212,175,55,.13);color:var(--ink)}
+.img-slot .row{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:12px}
+
+/* Upload progress */
+.upbar{
+  position:fixed;left:50%;transform:translateX(-50%);bottom:74px;z-index:80;display:none;
+  align-items:center;gap:10px;padding:10px 16px;border-radius:10px;
+  background:rgba(12,9,18,.96);border:1px solid var(--rule);
+  font-family:var(--sans);font-size:.8rem;color:var(--ink);box-shadow:0 14px 40px rgba(0,0,0,.7);
+}
+.upbar.on{display:flex}
+.upbar .spin{
+  width:14px;height:14px;border-radius:50%;border:2px solid rgba(212,175,55,.25);
+  border-top-color:var(--gold-br);animation:spin .7s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.upbar .spin{animation-duration:2.4s}}
+
+/* Blank editable slots name themselves while editing. */
+body.editing [data-edit]:empty::before{
+  content:attr(data-ph);color:#6f6a5c;font-style:italic;
+}
+/* Notice strip above the book (a stale draft warning, mostly) */
+.ro-note{
+  max-width:var(--measure);margin:0 auto;padding:12px 24px 0;
+  font-family:var(--sans);font-size:.74rem;color:var(--ink-dim);text-align:center;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+   CORE-RULEBOOK FURNITURE
+   Numbered rules, part dividers, defined terms, sequences, profiles and the
+   three box kinds (example / designer's note / callout). These are the format
+   conventions of a tabletop core rulebook — a citable numbering scheme and a
+   visual separation between RULE, ILLUSTRATION and ASIDE — rendered in this
+   game's own palette.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Part divider — the spine of the book */
+.part{
+  max-width:var(--measure);margin:96px auto 0;padding:0 24px;text-align:center;
+}
+.part-rule{height:1px;background:linear-gradient(90deg,transparent,var(--rule),transparent)}
+.part-name{
+  font-family:var(--display);font-weight:900;font-size:clamp(.82rem,2.4vw,1.05rem);
+  letter-spacing:.34em;text-transform:uppercase;color:var(--gold);
+  padding:20px 0 18px;text-wrap:balance;
+}
+
+/* Rule number in a hanging gutter. Falls inline under ~720px so the heading
+   never gets squeezed into two words per line on a phone. */
+.sec.rule{display:grid;grid-template-columns:4.6rem minmax(0,1fr);column-gap:18px}
+.sec.rule > *{grid-column:2}
+.sec .rule-n{
+  grid-column:1;grid-row:1;justify-self:end;padding-top:.3rem;
+  font-family:var(--sans);font-weight:700;font-size:.9rem;letter-spacing:.02em;
+  color:var(--gold-dk);font-variant-numeric:tabular-nums;
+}
+@media (max-width:720px){
+  .sec.rule{display:block}
+  .sec .rule-n{display:inline-block;padding:0 .5em 0 0;color:var(--gold)}
+  .sec.rule h3{display:inline}
+}
+
+/* Defined terms */
+dfn{
+  font-style:normal;font-weight:600;color:var(--gold-br);
+  font-variant:small-caps;letter-spacing:.04em;
+}
+
+/* The battle-round sequence, and any other ordered procedure */
+.seq{list-style:none;margin:22px 0;padding:0;counter-reset:seq}
+.seq li{
+  counter-increment:seq;position:relative;margin:0 0 10px;padding:13px 16px 14px 54px;
+  border-radius:10px;background:var(--panel);border:1px solid var(--rule-soft);
+}
+.seq li::before{
+  content:counter(seq);position:absolute;left:14px;top:12px;
+  width:26px;height:26px;display:grid;place-items:center;border-radius:50%;
+  background:rgba(212,175,55,.16);border:1px solid var(--rule);
+  font-family:var(--display);font-weight:700;font-size:.82rem;color:var(--gold-br);
+}
+.seq .sh{font-family:var(--display);font-weight:700;font-size:1rem;color:var(--gold-br);margin-bottom:3px}
+.seq .sb{font-family:var(--sans);font-size:.85rem;line-height:1.6;color:var(--ink-dim)}
+
+/* Datasheet-style profile */
+.profile{
+  margin:24px 0;border-radius:11px;overflow:hidden;
+  border:1px solid var(--rule);background:var(--panel);
+}
+.profile-name{
+  padding:10px 16px;background:rgba(212,175,55,.14);border-bottom:1px solid var(--rule);
+  font-family:var(--display);font-weight:700;font-size:.78rem;letter-spacing:.2em;
+  text-transform:uppercase;color:var(--gold-br);
+}
+.profile-line{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
+.profile-stat{display:flex;gap:12px;padding:11px 16px;border-bottom:1px solid rgba(255,255,255,.05)}
+.profile-stat .pk{
+  flex:0 0 3.1rem;font-family:var(--display);font-weight:900;font-size:1rem;
+  color:var(--gold-br);letter-spacing:.04em;
+}
+.profile-stat .pv{font-family:var(--sans);font-size:.8rem;line-height:1.5;color:var(--ink-dim)}
+.profile-kw{
+  padding:11px 16px;background:rgba(0,0,0,.28);border-top:1px solid var(--rule-soft);
+  font-family:var(--sans);font-size:.7rem;letter-spacing:.09em;color:var(--ink-dim);
+}
+.profile-kw b{color:var(--gold-dk);font-weight:700;margin-right:8px}
+.profile-kw span{color:#ded3bd;font-weight:600}
+
+/* Worked example */
+.example{
+  margin:24px 0;padding:15px 18px;border-radius:10px;
+  border:1px solid rgba(136,200,255,.22);border-left:3px solid #6cb6f2;
+  background:linear-gradient(90deg,rgba(108,182,242,.1),rgba(108,182,242,.02));
+  font-family:var(--sans);font-size:.88rem;line-height:1.62;color:#dfe8f2;
+}
+.example::before{
+  content:'EXAMPLE';display:block;font-weight:700;font-size:.64rem;letter-spacing:.2em;
+  color:#6cb6f2;margin-bottom:6px;
+}
+
+/* Designer's note */
+.designer{
+  margin:24px 0;padding:15px 18px;border-radius:10px;
+  border:1px solid rgba(184,136,255,.24);border-left:3px solid var(--violet);
+  background:linear-gradient(90deg,rgba(184,136,255,.1),rgba(184,136,255,.02));
+  font-family:var(--sans);font-size:.88rem;line-height:1.62;color:#e6ddf5;font-style:italic;
+}
+.designer::before{
+  content:"DESIGNER'S NOTE";display:block;font-weight:700;font-style:normal;
+  font-size:.64rem;letter-spacing:.2em;color:var(--violet);margin-bottom:6px;
+}
+
+/* Rules-priority preamble */
+.preamble{max-width:var(--measure);margin:70px auto 0;padding:0 24px}
+.preamble h2{
+  font-family:var(--display);font-weight:900;font-size:1.5rem;color:#fff;margin:0 0 14px;
+}
+.prio{list-style:none;margin:24px 0 0;padding:0;counter-reset:prio}
+.prio li{
+  counter-increment:prio;position:relative;padding:12px 16px 13px 56px;margin:0 0 9px;
+  border-radius:10px;background:rgba(232,93,60,.07);border:1px solid rgba(232,93,60,.26);
+}
+.prio li::before{
+  content:counter(prio);position:absolute;left:15px;top:11px;
+  width:26px;height:26px;display:grid;place-items:center;border-radius:6px;
+  background:rgba(232,93,60,.2);border:1px solid rgba(232,93,60,.45);
+  font-family:var(--display);font-weight:700;font-size:.82rem;color:#ffb9a6;
+}
+.prio .ph{font-family:var(--display);font-weight:700;font-size:1rem;color:#ffb9a6;margin-bottom:2px}
+.prio .pb{font-family:var(--sans);font-size:.85rem;line-height:1.6;color:var(--ink-dim)}
+
+/* TOC part headings */
+.toc .toc-part{
+  font-family:var(--display);font-weight:700;font-size:.62rem;letter-spacing:.2em;
+  text-transform:uppercase;color:var(--gold-dk);padding:16px 12px 5px;
+}
+.toc li:first-child.toc-part{padding-top:4px}
+
+@media print{
+  .part{page-break-before:always}
+  .seq li,.profile,.example,.designer,.prio li{background:#faf6ec;border-color:#ddd0ad}
+  .seq li::before,.prio li::before{background:#f0e6cc;border-color:#c2ab6a;color:#6d4f14}
+  .example,.designer{color:#2f2a22}
+  .example::before,.designer::before{color:#6d4f14}
+  dfn{color:#6d4f14}
+  .part-name{color:#8a6a28}
+}
+
+@media print{ .who,.pub-state,.upbar,.img-slot,.grid-tools,.addmenu{display:none!important} }
+</style>
+
+<button class="rail-toggle" id="railToggle" aria-label="Open contents">☰</button>
+
+<div class="app">
+  <!-- ─── Contents rail ─── -->
+  <nav class="rail" id="rail" aria-label="Contents">
+    <div class="rail-brand">
+      <div class="mk">Hidn Studios</div>
+      <div class="tt" id="brandTitle">Mythic Spellbook</div>
+      <div class="vv" id="brandVer">Player's Handbook</div>
+    </div>
+    <div class="who" id="who" hidden></div>
+    <div class="rail-search">
+      <input id="q" type="search" placeholder="Search the handbook…" aria-label="Search the handbook">
+    </div>
+    <ul class="toc" id="toc"></ul>
+    <div class="rail-tools">
+      <button class="btn" id="btnEdit" hidden>✎ Edit this book</button>
+      <button class="btn ghost" id="btnPrint">⎙ Print / Save as PDF</button>
+    </div>
+  </nav>
+
+  <!-- ─── The book ─── -->
+  <main class="page" id="page"><div class="wrap" style="padding-top:80px"><p style="color:#b0a48c">Loading the handbook…</p></div></main>
+</div>
+
+<!-- ─── Editor bar (admins only) ─── -->
+<div class="ed-bar" id="edBar">
+  <button class="btn hot" id="btnDone">✓ Done editing</button>
+  <button class="btn on" id="btnPublish">⬆ Publish to everyone</button>
+  <button class="btn" id="btnAddCh">+ Chapter</button>
+  <button class="btn ghost" id="btnDownload">⭳ Download .json</button>
+  <button class="btn ghost" id="btnUpload">⭱ Load a .json</button>
+  <input type="file" id="fileIn" accept="application/json,.json" hidden>
+  <span class="sp"></span>
+  <span class="pub-state" id="pubState">—</span>
+  <span class="ed-status" id="edStatus">Drafts save to this browser.</span>
+  <button class="btn ghost" id="btnReset">↺ Discard draft</button>
+</div>
+
+<!-- ─── Upload progress ─── -->
+<div class="upbar" id="upbar"><span class="spin"></span><span id="upText">Uploading…</span></div>
+
+<!-- ─── Image picker ─── -->
+<div class="modal" id="picker" role="dialog" aria-modal="true" aria-label="Choose artwork">
+  <div class="modal-box">
+    <div class="modal-head">
+      <h4>Choose artwork</h4>
+      <input id="pq" type="search" placeholder="Search the game's art…">
+      <select id="pg" aria-label="Folder"><option value="">All folders</option></select>
+      <button class="btn ghost sm" id="pClose">Close</button>
+    </div>
+    <div class="modal-grid" id="pGrid"></div>
+    <div class="modal-foot">
+      <span class="hint" id="pHint"></span>
+      <button class="btn sm" id="pUpload">⭱ Upload a photo</button>
+      <button class="btn ghost sm" id="pCustom">Paste a URL…</button>
+      <button class="btn ghost sm" id="pClear">Remove image</button>
+      <input type="file" id="imgIn" accept="image/*" hidden>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   MYTHIC SPELLBOOK — PLAYER'S HANDBOOK
+
+   THREE PLACES THE BOOK CAN COME FROM, in priority order:
+     1. handbook_doc in Supabase — the PUBLISHED book everyone reads.
+     2. an admin's local draft in localStorage — unpublished work in progress.
+     3. handbook.json shipped in the repo — the fallback, and what a brand new
+        install sees before anyone has ever published.
+   Every step is guarded. With no network, no Supabase and no tables, the page
+   still renders the shipped book: that is the required behaviour, not a nicety.
+
+   WHO CAN EDIT. isAdmin() below decides whether the edit UI is DRAWN. It is
+   not the security boundary and must never be mistaken for one — the boundary
+   is RLS in sql/132_handbook.sql, which refuses a write from any account
+   outside the allowlist no matter what this file does.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+const HB_KEY   = 'mythic_handbook_v1';        // admin's local draft
+const HB_VER   = 'mythic_handbook_base_ver';  // the published version that draft was taken from
+
+/* Same project and key as the game. Public by design — the anon key is a
+   client identifier, not a secret; RLS is what protects the data. */
+const SUPABASE_URL      = 'https://ktsiasyjusesawtrwrjc.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt0c2lhc3lqdXNlc2F3dHJ3cmpjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2NDU5MjgsImV4cCI6MjA5NDIyMTkyOH0.fYpQFCs03ZE5AIv88S_GStqp7g71sTQe9yUxmXgyKQo';
+
+/* Mirrors ADMIN_EMAILS in index.html and is_handbook_admin() in sql/132.
+   All three must agree; the SQL one is the one that actually decides. */
+const ADMIN_EMAILS = new Set([
+  'richaegisop@gmail.com',
+  'play@mythicsoa.com',
+  'dev@mythicspellbook.com',
+]);
+
+const S = {
+  book:null, shipped:null, data:null, art:[],
+  editing:false, pickTarget:null, saveT:null,
+  client:null, email:null, admin:false,
+  version:null,          // published version this copy is based on; null = never loaded one
+  source:'shipped',      // 'cloud' | 'draft' | 'shipped'
+  dirty:false,
+};
+
+const $  = (s,r)=>(r||document).querySelector(s);
+const $$ = (s,r)=>Array.from((r||document).querySelectorAll(s));
+const esc = s => String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+/* Asset paths in handbook.json are stored ROOT-RELATIVE ("assets/artwork/x.png")
+   so they read the same as every other path in this repo. This page is served
+   from /handbook/, so a bare relative path would resolve to /handbook/assets/…
+   and 404. Uploaded images are absolute https URLs and pass straight through. */
+const au = p => !p ? '' : (/^(https?:|data:|\/)/.test(p) ? p : '/' + p);
+
+/* Chapter titles are author-written HTML, so the TOC strips tags but leaves
+   entities intact — escaping them again renders a literal "&amp;". plain() is
+   the fully-flattened form, for search and confirm dialogs. */
+function stripTags(s){ return String(s==null?'':s).replace(/<[^>]*>/g,''); }
+function plain(s){ const d=document.createElement('div'); d.innerHTML=stripTags(s); return d.textContent; }
+
+function getPath(o,p){ return p.split('.').reduce((a,k)=>(a==null?a:a[k]), o); }
+function setPath(o,p,v){
+  const ks=p.split('.'), last=ks.pop();
+  const t=ks.reduce((a,k)=>(a==null?a:a[k]), o);
+  if(t) t[last]=v;
+}
+const clone = o => JSON.parse(JSON.stringify(o));
+
+/* ═══════════════════════════════════════════════════════════════════════
+   CLOUD — every call guarded, every failure survivable
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* A hung request must not hold the book hostage. Anything cloud-side that the
+   first paint depends on races this. */
+function withTimeout(p, ms, label){
+  return Promise.race([
+    p,
+    new Promise((_,rej)=>setTimeout(()=>rej(new Error((label||'request')+' timed out')), ms)),
+  ]);
+}
+
+function initCloud(){
+  try{
+    if(!window.supabase || !window.supabase.createClient) return null;
+    /* persistSession with the DEFAULT storage key on purpose: the game writes
+       its session to the same key on this same origin, so a player already
+       signed in to the game is already signed in here, with no second login.
+       (If the game's storage adapter fell back to sessionStorage or memory
+       because localStorage was full, we simply will not see a session — the
+       page then reads as signed out, which degrades correctly.) */
+    return window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth:{ persistSession:true, autoRefreshToken:true, detectSessionInUrl:false },
+    });
+  }catch(e){ return null; }
+}
+
+async function readSession(){
+  if(!S.client) return;
+  try{
+    const {data} = await withTimeout(S.client.auth.getSession(), 6000, 'session');
+    applySession(data && data.session);
+  }catch(e){ applySession(null); }
+}
+
+function applySession(session){
+  const email = (session && session.user && session.user.email) ? String(session.user.email).trim().toLowerCase() : null;
+  S.email = email;
+  S.admin = !!(email && ADMIN_EMAILS.has(email));
+}
+
+async function loadPublished(){
+  if(!S.client) return null;
+  try{
+    const {data,error} = await withTimeout(
+      S.client.from('handbook_doc').select('doc,version,updated_at,updated_email').eq('id','main').maybeSingle(),
+      8000, 'handbook_doc');
+    /* A missing table, a policy that hides the row, an offline client — all of
+       them land here and all of them mean the same thing to the reader: there
+       is no published book yet, so show the shipped one. */
+    if(error || !data || !data.doc) return null;
+    return data;
+  }catch(e){ return null; }
+}
+
+async function publish(){
+  if(!S.client) return {ok:false, status:'offline'};
+  try{
+    const {data,error} = await withTimeout(
+      S.client.rpc('handbook_publish', {p_doc:S.book, p_version:S.version}),
+      15000, 'publish');
+    if(error) return {ok:false, status:'error', message:error.message};
+    const row = Array.isArray(data) ? data[0] : data;
+    if(!row) return {ok:false, status:'error', message:'no answer from handbook_publish'};
+    return {ok:!!row.ok, status:row.status, version:row.new_version};
+  }catch(e){ return {ok:false, status:'error', message:e.message}; }
+}
+
+/* ── Image upload ───────────────────────────────────────────────────────
+   Downscaled in the browser before it leaves. A 12 MB camera photo in a
+   rules book is 12 MB every reader pays for, on every load, forever. */
+const MAX_EDGE = 1600;
+
+function shrink(file){
+  return new Promise((resolve,reject)=>{
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = ()=>{
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, MAX_EDGE/Math.max(img.width,img.height));
+      if(scale === 1 && file.size < 900*1024){ resolve({blob:file, ext:extOf(file)}); return; }
+      const c = document.createElement('canvas');
+      c.width  = Math.round(img.width*scale);
+      c.height = Math.round(img.height*scale);
+      c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+      // WebP carries alpha, which most of this game's art needs, and is much
+      // smaller than PNG. Falling back to PNG keeps alpha if WebP is refused.
+      c.toBlob(b=>{
+        if(b && b.size) resolve({blob:b, ext:'webp'});
+        else c.toBlob(b2=> b2 ? resolve({blob:b2, ext:'png'}) : reject(new Error('could not encode that image')), 'image/png');
+      }, 'image/webp', 0.92);
+    };
+    img.onerror = ()=>{ URL.revokeObjectURL(url); reject(new Error('that file is not an image this browser can read')); };
+    img.src = url;
+  });
+}
+function extOf(f){ const m=/\.([a-z0-9]+)$/i.exec(f.name||''); return m?m[1].toLowerCase():'png'; }
+function slug(s){ return String(s||'image').replace(/\.[^.]+$/,'').replace(/[^a-z0-9]+/gi,'-').replace(/^-|-$/g,'').slice(0,48).toLowerCase()||'image'; }
+
+async function uploadImage(file){
+  if(!S.client) throw new Error('Not connected — sign in to the game first.');
+  if(!/^image\//.test(file.type||'')) throw new Error('That is not an image file.');
+  showUp('Preparing image…');
+  const {blob,ext} = await shrink(file);
+  const path = `book/${Date.now()}-${slug(file.name)}.${ext}`;
+  showUp(`Uploading ${(blob.size/1024).toFixed(0)} KB…`);
+  const {error} = await S.client.storage.from('handbook').upload(path, blob, {
+    upsert:true, cacheControl:'31536000', contentType: blob.type || ('image/'+ext),
+  });
+  if(error) throw new Error(error.message || 'Upload refused.');
+  const {data} = S.client.storage.from('handbook').getPublicUrl(path);
+  if(!data || !data.publicUrl) throw new Error('Uploaded, but no public URL came back.');
+  return data.publicUrl;
+}
+
+function showUp(t){ $('#upText').textContent=t; $('#upbar').classList.add('on'); }
+function hideUp(){ $('#upbar').classList.remove('on'); }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   BOOT
+   ═══════════════════════════════════════════════════════════════════════ */
+async function boot(){
+  let shipped, data, art;
+  try{
+    [shipped, data, art] = await Promise.all([
+      fetch('handbook.json',{cache:'no-cache'}).then(r=>r.json()),
+      fetch('gamedata.json',{cache:'no-cache'}).then(r=>r.json()),
+      fetch('art.json',{cache:'no-cache'}).then(r=>r.json()).catch(()=>({images:[]})),
+    ]);
+  }catch(e){
+    $('#page').innerHTML = '<div class="wrap" style="padding-top:80px"><h2 style="font-family:var(--display);color:#f5d76e">The handbook could not load</h2>'
+      + '<p>This page needs <code>handbook.json</code>, <code>gamedata.json</code> and <code>art.json</code> next to it, which means it has to be served over HTTP — '
+      + 'opening the file straight off disk will not work. Run any static server from <code>public/</code> and visit <code>/handbook/</code>.</p>'
+      + '<p style="color:#b0a48c;font-size:.85rem">' + esc(e && e.message) + '</p></div>';
+    return;
+  }
+  S.shipped = shipped; S.data = data; S.art = (art && art.images) || [];
+
+  S.client = initCloud();
+  await readSession();
+
+  const published = await loadPublished();
+  if(published){ S.book = published.doc; S.version = published.version; S.source='cloud'; }
+  else          { S.book = clone(shipped); S.version = null;            S.source='shipped'; }
+
+  /* A local draft belongs to an admin and only an admin. Loading one for a
+     reader would show them an edit nobody approved, from a browser they may
+     share — and they could not publish it anyway. */
+  if(S.admin){
+    try{
+      const raw = localStorage.getItem(HB_KEY);
+      if(raw){
+        const d = JSON.parse(raw);
+        if(d && Array.isArray(d.chapters)){
+          const base = Number(localStorage.getItem(HB_VER));
+          /* A draft taken from an OLDER published version is stale — someone
+             else published since. Keep it (it is unsaved work) but say so
+             loudly, rather than letting Publish quietly revert their change. */
+          S.book = d;
+          S.source = 'draft';
+          S.dirty = true;
+          if(Number.isFinite(base) && S.version != null && base !== S.version) S.staleDraft = {base, now:S.version};
+        }
+      }
+    }catch(e){}
+  }
+
+  /* Keep the page honest if the session changes in another tab. */
+  if(S.client){
+    try{
+      S.client.auth.onAuthStateChange((_e, session)=>{
+        const was = S.admin;
+        applySession(session);
+        if(was !== S.admin){ if(!S.admin) setEditing(false); renderChrome(); render(); }
+        else renderChrome();
+      });
+    }catch(e){}
+  }
+
+  buildPickerFolders();
+  renderChrome();
+  render();
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   RENDER
+   ═══════════════════════════════════════════════════════════════════════ */
+function renderChrome(){
+  const who = $('#who');
+  $('#btnEdit').hidden = !S.admin;
+
+  if(S.email){
+    who.hidden = false;
+    who.innerHTML = S.admin
+      ? `<div class="crown">👑 ADMIN</div><div class="nm">${esc(S.email)}</div>`
+      : `<div class="nm">${esc(S.email)}</div><div>Reading only — the handbook is edited by the team.</div>`;
+  }else if(S.client){
+    who.hidden = false;
+    who.innerHTML = `<div>Not signed in.</div><div style="margin-top:4px"><a href="/">Open the game to sign in →</a></div>`;
+  }else{
+    who.hidden = true;   // no client at all (offline / sandboxed): say nothing
+  }
+  paintPubState();
+}
+
+function paintPubState(){
+  const el = $('#pubState'); if(!el) return;
+  el.className = 'pub-state';
+  if(S.source === 'draft' || S.dirty){ el.classList.add('draft'); el.textContent = 'Unpublished draft'; }
+  else if(S.source === 'cloud'){ el.classList.add('live'); el.textContent = 'Live · v'+S.version; }
+  else { el.textContent = 'Repo copy — never published'; }
+}
+
+function render(){
+  const b = S.book;
+  $('#brandTitle').textContent = plain(b.title || 'Handbook');
+  $('#brandVer').textContent   = [plain(b.subtitle||''), b.version].filter(Boolean).join(' · ');
+  document.title = plain(b.title||'Handbook') + ' — ' + plain(b.subtitle||'');
+
+  let tocPart = null;
+  $('#toc').innerHTML = b.chapters.map((c,i)=>{
+    const head = (c.part && c.part !== tocPart) ? `<li class="toc-part">${esc(c.part)}</li>` : '';
+    tocPart = c.part || tocPart;
+    return head + `<li><a href="#${esc(c.id||('ch'+i))}" data-ch="${i}"><span class="rn">${esc(c.num||(i+1))}</span><span>${stripTags(c.title)}</span></a></li>`;
+  }).join('');
+
+  const stale = S.staleDraft
+    ? `<div class="ro-note" style="color:#ffc978">⚠ This draft was taken from v${S.staleDraft.base}, but v${S.staleDraft.now} is live now. Publishing will overwrite the newer version — or discard the draft to take the live one.</div>`
+    : '';
+
+  // Part dividers are emitted by chapterHtml when the part CHANGES, so the
+  // book's spine is derived from the chapters themselves rather than kept as a
+  // second list that can fall out of step with them.
+  let lastPart = null;
+  const body = b.chapters.map((c,i)=>{
+    const div = (c.part && c.part !== lastPart) ? partHtml(c.part) : '';
+    lastPart = c.part || lastPart;
+    return div + chapterHtml(c,i);
+  }).join('');
+  $('#page').innerHTML = coverHtml(b) + stale + preambleHtml(b) + body + colophonHtml(b);
+
+  wireEditables();
+  wireChrome();
+  observeChapters();
+}
+
+function coverHtml(b){
+  const c = b.cover||{}, src = c.image||'', fb = c.fallback||'';
+  const img = src
+    ? `<img class="cover-art" src="${esc(au(src))}" alt=""${fb?` data-fb="${esc(au(fb))}" onerror="if(this.dataset.fb){this.src=this.dataset.fb;this.dataset.fb=''}else{this.style.display='none'}"`:` onerror="this.style.display='none'"`}>`
+    : '';
+  return `<header class="cover" id="cover">
+    ${img}
+    <div class="cover-inner">
+      <div class="cover-eyebrow" data-edit="cover.eyebrow">${esc(c.eyebrow||'')}</div>
+      <h1 class="cover-title" data-edit="cover.title">${esc(c.title||b.title||'')}</h1>
+      <div class="cover-sub" data-edit="cover.subtitle">${esc(c.subtitle||'')}</div>
+      <div class="cover-rule"></div>
+      <p class="cover-tag" data-edit="cover.tagline">${esc(c.tagline||'')}</p>
+      <div class="cover-byline" data-edit="cover.byline">${esc(c.byline||'')}</div>
+      <div class="ed-tools" style="justify-content:center;margin-top:22px">
+        <button class="btn sm" data-pick="cover.image">🖼 Change cover art</button>
+      </div>
+    </div>
+    <div class="cover-scroll">Scroll ↓</div>
+  </header>`;
+}
+
+function partHtml(name){
+  return `<div class="part"><div class="part-rule"></div><div class="part-name">${esc(name)}</div><div class="part-rule"></div></div>`;
+}
+
+/* The rules-priority preamble. A rulebook states its precedence rules once, up
+   front, before any rule they arbitrate — so this sits above chapter 1 rather
+   than being a chapter of its own. */
+function preambleHtml(b){
+  const p = b.preamble; if(!p) return '';
+  const rules = (p.rules||[]).map((r,i)=>
+    `<li><div class="ph" data-edit="preamble.rules.${i}.h">${esc(r.h||'')}</div>
+         <div class="pb" data-edit="preamble.rules.${i}.body" data-rich="1">${r.body||''}</div></li>`
+  ).join('');
+  return `<div class="preamble">
+    <h2 data-edit="preamble.h">${esc(p.h||'')}</h2>
+    <div data-edit="preamble.body" data-rich="1">${p.body||''}</div>
+    ${rules?`<ol class="prio">${rules}</ol>`:''}
+  </div>`;
+}
+
+function seqHtml(steps, base){
+  return `<ol class="seq">${steps.map((st,k)=>
+    `<li><div class="sh" data-edit="${base}.seq.${k}.h">${esc(st.h||'')}</div>
+         <div class="sb" data-edit="${base}.seq.${k}.body" data-rich="1">${st.body||''}</div></li>`
+  ).join('')}</ol>
+  <div class="grid-tools">
+    <button class="btn sm" data-seqadd="${base}">+ Step</button>
+    <button class="btn sm" data-seqdel="${base}">− Step</button>
+  </div>`;
+}
+
+function profileHtml(pr, base){
+  const stats = (pr.line||[]).map((st,k)=>
+    `<div class="profile-stat">
+       <span class="pk" data-edit="${base}.profile.line.${k}.k">${esc(st.k||'')}</span>
+       <span class="pv" data-edit="${base}.profile.line.${k}.v" data-rich="1">${st.v||''}</span>
+     </div>`).join('');
+  const kw = (pr.keywords||[]).length
+    ? `<div class="profile-kw"><b>KEYWORDS</b>${pr.keywords.map((k,i)=>`<span data-edit="${base}.profile.keywords.${i}">${esc(k)}</span>`).join('<span style="color:var(--gold-dk)"> · </span>')}</div>`
+    : '';
+  return `<div class="profile">
+    <div class="profile-name" data-edit="${base}.profile.name">${esc(pr.name||'')}</div>
+    <div class="profile-line">${stats}</div>
+    ${kw}
+  </div>
+  <div class="grid-tools">
+    <button class="btn sm" data-prowadd="${base}">+ Row</button>
+    <button class="btn sm" data-prowdel="${base}">− Row</button>
+  </div>`;
+}
+
+function chapterHtml(c,i){
+  const cid = c.id||('ch'+i);
+  const art = c.art ? `<figure class="ch-art"><img src="${esc(au(c.art))}" alt="" loading="lazy" onerror="this.closest('.ch-art').style.display='none'"></figure>` : '';
+  return `<section class="chapter" id="${esc(cid)}" data-chi="${i}">
+    <div class="ch-head">
+      <div class="ch-num" data-edit="chapters.${i}.num">${esc(c.num||(i+1))}</div>
+      <h2 class="ch-title" data-edit="chapters.${i}.title">${c.title||''}</h2>
+      <p class="ch-blurb" data-edit="chapters.${i}.blurb">${esc(c.blurb||'')}</p>
+      <div class="ed-tools" style="justify-content:center">
+        <button class="btn sm" data-pick="chapters.${i}.art">🖼 Chapter art</button>
+        <button class="btn sm" data-move="${i}" data-dir="-1">↑ Move up</button>
+        <button class="btn sm" data-move="${i}" data-dir="1">↓ Move down</button>
+        <button class="btn sm hot" data-delch="${i}">✕ Delete chapter</button>
+      </div>
+    </div>
+    ${art}
+    <div class="wrap">
+      ${(c.sections||[]).map((s,j)=>sectionHtml(s,i,j)).join('')}
+      ${addMenuHtml(i)}
+    </div>
+  </section>`;
+}
+
+const BLOCKS = [
+  {t:'rule',     k:'§',  label:'Numbered rule'},
+  {t:'text',     k:'¶',  label:'Text'},
+  {t:'sequence', k:'⑴',  label:'Sequence'},
+  {t:'profile',  k:'▩',  label:'Profile'},
+  {t:'example',  k:'◐',  label:'Example'},
+  {t:'designer', k:'✎',  label:"Designer's note"},
+  {t:'callout',  k:'◈',  label:'Callout'},
+  {t:'table',    k:'▦',  label:'Table'},
+  {t:'cards',    k:'▤',  label:'Card grid'},
+  {t:'image',    k:'🖼', label:'Image'},
+];
+
+function addMenuHtml(i){
+  return `<div class="ed-tools">
+    <div class="addmenu" data-menu="${i}">
+      <button class="btn sm" data-addtoggle="${i}">+ Add a section ▾</button>
+      <div class="addmenu-pop">
+        ${BLOCKS.map(b=>`<button data-addsec="${i}" data-type="${b.t}"><span class="k">${b.k}</span>${b.label}</button>`).join('')}
+      </div>
+    </div>
+  </div>`;
+}
+
+function sectionHtml(s,i,j){
+  const base = `chapters.${i}.sections.${j}`;
+  // A numbered rule gets the hanging gutter; an unnumbered section does not.
+  let out = `<div class="sec${s.n != null ? ' rule' : ''}">`;
+  if(s.n != null) out += `<div class="rule-n" data-edit="${base}.n" data-ph="0.0">${esc(s.n)}</div>`;
+
+  // An empty heading still gets an editable slot so a blank block can be named.
+  if(s.h != null) out += `<h3 data-edit="${base}.h" data-ph="Section heading">${s.h||''}</h3>`;
+  if(s.body != null) out += `<div data-edit="${base}.body" data-rich="1" data-ph="Write here.">${s.body||''}</div>`;
+
+  if(s.img){
+    out += `<figure class="ch-art" style="margin:22px 0">
+      <img src="${esc(au(s.img))}" alt="" loading="lazy" onerror="this.closest('figure').style.display='none'">
+      ${(s.cap!=null)?`<figcaption style="font-family:var(--sans);font-size:.74rem;color:var(--ink-dim);padding:9px 12px;text-align:center" data-edit="${base}.cap" data-ph="Caption">${esc(s.cap)}</figcaption>`:''}
+    </figure>`;
+  }else if(s.img != null){
+    // Declared an image block but nothing in it yet — the drop zone.
+    out += `<div class="img-slot" data-drop="${base}.img">
+      Drop a photo here, or
+      <div class="row">
+        <button class="btn sm" data-upload="${base}.img">⭱ Upload a photo</button>
+        <button class="btn sm ghost" data-pick="${base}.img">🖼 Choose from the game art</button>
+      </div>
+    </div>`;
+  }
+
+  if(s.profile) out += profileHtml(s.profile, base);
+  if(s.seq) out += seqHtml(s.seq, base);
+  if(s.table) out += tableHtml(s.table, base);
+  if(s.cards) out += cardsHtml(s.cards, base);
+  if(s.render) out += renderBlock(s.render);
+  if(s.example != null)  out += `<div class="example"  data-edit="${base}.example"  data-rich="1" data-ph="A worked example.">${s.example||''}</div>`;
+  if(s.designer != null) out += `<div class="designer" data-edit="${base}.designer" data-rich="1" data-ph="Why it works this way.">${s.designer||''}</div>`;
+  if(s.note != null) out += `<div class="note" data-edit="${base}.note" data-ph="Something worth calling out.">${s.note||''}</div>`;
+
+  out += `<div class="ed-tools">
+      ${s.img ? `<button class="btn sm" data-upload="${base}.img">⭱ Replace photo</button>
+                 <button class="btn sm ghost" data-pick="${base}.img">🖼 Library</button>` : ''}
+      <button class="btn sm" data-secmove="${base}" data-dir="-1">↑</button>
+      <button class="btn sm" data-secmove="${base}" data-dir="1">↓</button>
+      <button class="btn sm hot" data-delsec="${base}">✕ Delete section</button>
+    </div>`;
+  return out + '</div>';
+}
+
+function tableHtml(t, base){
+  const head = (t.head||[]);
+  const rows = (t.rows||[]);
+  const th = head.some(h=>h!=null)
+    ? `<thead><tr>${head.map((h,c)=>`<th data-edit="${base}.table.head.${c}" data-ph="Column">${h||''}</th>`).join('')}</tr></thead>` : '';
+  const tb = rows.map((r,ri)=>`<tr>${r.map((cell,ci)=>`<td data-edit="${base}.table.rows.${ri}.${ci}" data-rich="1" data-ph="—">${cell||''}</td>`).join('')}</tr>`).join('');
+  return `<div class="tbl-scroll"><table>${th}<tbody>${tb}</tbody></table></div>
+    <div class="grid-tools">
+      <button class="btn sm" data-trow="${base}" data-d="1">+ Row</button>
+      <button class="btn sm" data-trow="${base}" data-d="-1">− Row</button>
+      <button class="btn sm" data-tcol="${base}" data-d="1">+ Column</button>
+      <button class="btn sm" data-tcol="${base}" data-d="-1">− Column</button>
+    </div>`;
+}
+
+function cardsHtml(cs, base){
+  return `<div class="cards">${cs.map((c,k)=>
+    `<div class="card ed">
+      <span class="card-x" data-delcard="${base}" data-k="${k}" title="Remove this card">✕</span>
+      <span class="ci" data-edit="${base}.cards.${k}.icon" data-ph="◆">${c.icon||''}</span>
+      <div class="cn" data-edit="${base}.cards.${k}.name" data-ph="Name">${esc(c.name||'')}</div>
+      <div class="ct" data-edit="${base}.cards.${k}.text" data-rich="1" data-ph="What it is.">${c.text||''}</div>
+    </div>`).join('')}</div>
+    <div class="grid-tools"><button class="btn sm" data-addcard="${base}">+ Card</button></div>`;
+}
+
+/* Data-driven blocks. NOT editable in the page on purpose — they are generated
+   from the game's own constants, so an edit here would only create a copy that
+   silently goes stale. Change the game, re-run tools/handbook-sync.mjs. */
+function renderBlock(kind){
+  const d = S.data; if(!d) return '';
+  if(kind==='elements'){
+    return `<div class="elems">${d.order.map(id=>{
+      const e=d.elements[id]; if(!e) return '';
+      const pills = list => list.length ? list.map(x=>`<span class="pill">${esc(d.elements[x]?d.elements[x].name:x)}</span>`).join('') : '<span class="pill" style="opacity:.5">—</span>';
+      return `<div class="elem" style="--ec:${esc(e.color)}">
+        <div class="elem-h">${e.img?`<img src="${esc(au(e.img))}" alt="" loading="lazy" onerror="this.style.display='none'">`:''}<span class="en">${esc(e.name)}</span></div>
+        <div class="elem-row up"><span class="lbl">Beats</span><span class="vals">${pills(e.strongVs.filter(x=>!e.mutual.includes(x)))}</span></div>
+        <div class="elem-row dn"><span class="lbl">Weak to</span><span class="vals">${pills(e.weakTo)}</span></div>
+        ${e.mutual.length?`<div class="elem-row mu"><span class="lbl">Sworn</span><span class="vals">${pills(e.mutual)}</span></div>`:''}
+      </div>`;
+    }).join('')}</div>`;
+  }
+  if(kind==='factions'){
+    return `<div class="facs">${d.factions.map(f=>
+      `<div class="fac" style="--fc:${esc(f.color)}"><span class="fi">${f.icon||'◆'}</span><div><div class="fn">${esc(f.name)}</div><div class="fd">${esc(f.desc)}</div></div></div>`
+    ).join('')}</div>`;
+  }
+  if(kind==='statuses'){
+    return `<div class="stats-grid">${d.statuses.map(s=>
+      `<div class="st"><span class="si">${s.icon||'◆'}</span><div><div class="sn">${esc(s.name)}</div><div class="sd">${esc(s.desc)}</div></div></div>`
+    ).join('')}</div>`;
+  }
+  if(kind==='rarities'){
+    return `<div class="rars">${d.rarities.map((r,i)=>
+      `<div class="rar" style="--rc:${esc(r.color)}"><div class="rn2">${esc(r.name)}</div><div class="rs">Tier ${i+1}</div></div>`
+    ).join('')}</div>`;
+  }
+  return '';
+}
+
+function colophonHtml(b){
+  return `<div class="colophon"><div data-edit="colophon">${esc(b.colophon||'')}</div>
+    <div style="margin-top:16px;opacity:.6">${esc(b.title||'')} · ${esc(b.edition||'')} · ${esc(b.version||'')}</div></div>`;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   EDITING
+   ═══════════════════════════════════════════════════════════════════════ */
+function wireEditables(){
+  $$('[data-edit]').forEach(el=>{
+    // contentEditable is granted ONLY to an admin in edit mode. A reader's DOM
+    // never becomes writable, so there is no edit affordance to stumble into.
+    const on = S.admin && S.editing;
+    el.contentEditable = on ? 'true' : 'false';
+    el.onblur = ()=>{
+      setPath(S.book, el.dataset.edit, el.dataset.rich ? el.innerHTML.trim() : el.textContent.trim());
+      saveDraft();
+    };
+    el.onkeydown = e=>{
+      if(e.key==='Enter' && !el.dataset.rich){ e.preventDefault(); el.blur(); }
+      if(e.key==='Escape'){ el.blur(); }
+    };
+  });
+}
+
+function wireChrome(){
+  const guard = fn => (...a)=>{ if(!S.admin) return; fn(...a); };
+
+  $$('[data-pick]').forEach(b=> b.onclick = guard(()=> openPicker(b.dataset.pick)));
+  $$('[data-upload]').forEach(b=> b.onclick = guard(()=> beginUpload(b.dataset.upload)));
+
+  $$('[data-addtoggle]').forEach(b=> b.onclick = guard(e=>{
+    const m = b.closest('.addmenu');
+    const open = m.classList.contains('open');
+    $$('.addmenu').forEach(x=>x.classList.remove('open'));
+    if(!open) m.classList.add('open');
+    e.stopPropagation();
+  }));
+
+  $$('[data-addsec]').forEach(b=> b.onclick = guard(()=>{
+    const i=+b.dataset.addsec;
+    S._addingTo = i;                     // read by nextRuleNumber()
+    S.book.chapters[i].sections.push(newBlock(b.dataset.type));
+    saveDraft(); render();
+  }));
+
+  $$('[data-delch]').forEach(b=> b.onclick = guard(()=>{
+    const i=+b.dataset.delch;
+    if(confirm('Delete "'+plain(S.book.chapters[i].title)+'" and everything in it?')){
+      S.book.chapters.splice(i,1); saveDraft(); render();
+    }
+  }));
+
+  $$('[data-move]').forEach(b=> b.onclick = guard(()=>{
+    const i=+b.dataset.move, j=i+(+b.dataset.dir);
+    if(j<0 || j>=S.book.chapters.length) return;
+    const a=S.book.chapters; [a[i],a[j]]=[a[j],a[i]];
+    saveDraft(); render();
+  }));
+
+  $$('[data-delsec]').forEach(b=> b.onclick = guard(()=>{
+    const arr = sectionsOf(b.dataset.delsec), j = idxOf(b.dataset.delsec);
+    if(confirm('Delete this section?')){ arr.splice(j,1); saveDraft(); render(); }
+  }));
+
+  $$('[data-secmove]').forEach(b=> b.onclick = guard(()=>{
+    const arr = sectionsOf(b.dataset.secmove), j = idxOf(b.dataset.secmove), k = j+(+b.dataset.dir);
+    if(k<0||k>=arr.length) return;
+    [arr[j],arr[k]]=[arr[k],arr[j]]; saveDraft(); render();
+  }));
+
+  /* ── table shape ── */
+  $$('[data-trow]').forEach(b=> b.onclick = guard(()=>{
+    const t = getPath(S.book, b.dataset.trow+'.table'); if(!t) return;
+    const width = (t.head && t.head.length) || (t.rows[0] && t.rows[0].length) || 2;
+    if(+b.dataset.d > 0) t.rows.push(new Array(width).fill(''));
+    else if(t.rows.length > 1) t.rows.pop();
+    saveDraft(); render();
+  }));
+  $$('[data-tcol]').forEach(b=> b.onclick = guard(()=>{
+    const t = getPath(S.book, b.dataset.tcol+'.table'); if(!t) return;
+    if(+b.dataset.d > 0){ if(t.head) t.head.push(''); t.rows.forEach(r=>r.push('')); }
+    else{
+      const width = (t.head&&t.head.length) || (t.rows[0]&&t.rows[0].length) || 0;
+      if(width <= 1) return;
+      if(t.head) t.head.pop(); t.rows.forEach(r=>r.pop());
+    }
+    saveDraft(); render();
+  }));
+
+  /* ── sequence steps ── */
+  $$('[data-seqadd]').forEach(b=> b.onclick = guard(()=>{
+    const q = getPath(S.book, b.dataset.seqadd+'.seq'); if(!q) return;
+    q.push({h:'Next step', body:'What happens.'});
+    saveDraft(); render();
+  }));
+  $$('[data-seqdel]').forEach(b=> b.onclick = guard(()=>{
+    const q = getPath(S.book, b.dataset.seqdel+'.seq'); if(!q || q.length<=1) return;
+    q.pop(); saveDraft(); render();
+  }));
+
+  /* ── profile rows ── */
+  $$('[data-prowadd]').forEach(b=> b.onclick = guard(()=>{
+    const pr = getPath(S.book, b.dataset.prowadd+'.profile'); if(!pr) return;
+    (pr.line = pr.line || []).push({k:'NEW', v:'What it does.'});
+    saveDraft(); render();
+  }));
+  $$('[data-prowdel]').forEach(b=> b.onclick = guard(()=>{
+    const pr = getPath(S.book, b.dataset.prowdel+'.profile');
+    if(!pr || !pr.line || pr.line.length<=1) return;
+    pr.line.pop(); saveDraft(); render();
+  }));
+
+  /* ── card grid ── */
+  $$('[data-addcard]').forEach(b=> b.onclick = guard(()=>{
+    const cs = getPath(S.book, b.dataset.addcard+'.cards'); if(!cs) return;
+    cs.push({icon:'◆', name:'Name', text:'What it is.'});
+    saveDraft(); render();
+  }));
+  $$('[data-delcard]').forEach(b=> b.onclick = guard(()=>{
+    const cs = getPath(S.book, b.dataset.delcard+'.cards'); if(!cs) return;
+    cs.splice(+b.dataset.k, 1);
+    saveDraft(); render();
+  }));
+
+  /* ── drag a photo onto an empty image block ── */
+  $$('[data-drop]').forEach(z=>{
+    if(!S.admin) return;
+    z.ondragover  = e=>{ e.preventDefault(); z.classList.add('drag'); };
+    z.ondragleave = ()=> z.classList.remove('drag');
+    z.ondrop = async e=>{
+      e.preventDefault(); z.classList.remove('drag');
+      const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if(f) await doUpload(f, z.dataset.drop);
+    };
+  });
+}
+
+function sectionsOf(p){ const k=p.split('.'); k.pop(); return getPath(S.book, k.join('.')); }
+function idxOf(p){ return +p.split('.').pop(); }
+
+function newBlock(type){
+  switch(type){
+    case 'rule':     return {n: nextRuleNumber(), h:'NEW RULE', body:'<p>State the rule.</p>'};
+    case 'sequence': return {h:'New sequence', seq:[
+                       {h:'First step', body:'What happens.'},
+                       {h:'Second step', body:'What happens next.'}]};
+    case 'profile':  return {h:'New profile', profile:{name:'PROFILE', keywords:[],
+                       line:[{k:'HP', v:'Wounds.'}, {k:'ATK', v:'Physical attack.'}]}};
+    case 'example':  return {h:'', example:'A worked example.'};
+    case 'designer': return {h:'', designer:'Why it works this way.'};
+    case 'image':    return {h:'', img:'', cap:''};
+    case 'table':    return {h:'New table', table:{head:['Column','Column'], rows:[['',''],['','']]}};
+    case 'cards':    return {h:'New cards', cards:[{icon:'◆', name:'Name', text:'What it is.'}]};
+    case 'callout':  return {h:'', note:'Something worth calling out.'};
+    default:         return {h:'New section', body:'<p>Write here.</p>'};
+  }
+}
+
+/* Suggest the next rule number in the chapter being edited, so a new rule does
+   not arrive as "0.0" and quietly break the cross-references in the text. It is
+   only a suggestion — the number is editable like everything else. */
+function nextRuleNumber(){
+  const ch = S.book.chapters[S._addingTo|0];
+  if(!ch) return '1.1';
+  const major = String(ch.num || (S._addingTo+1));
+  const used = (ch.sections||[]).map(x=>x.n).filter(Boolean)
+    .map(x=>parseInt(String(x).split('.')[1], 10)).filter(Number.isFinite);
+  return major + '.' + ((used.length ? Math.max(...used) : 0) + 1);
+}
+
+/* ── draft persistence ── */
+function saveDraft(){
+  if(!S.admin) return;
+  S.dirty = true; S.source = 'draft';
+  try{
+    localStorage.setItem(HB_KEY, JSON.stringify(S.book));
+    if(S.version != null) localStorage.setItem(HB_VER, String(S.version));
+  }catch(e){}
+  flash('Draft saved ✓', true);
+  paintPubState();
+}
+
+function flash(msg, good){
+  const st=$('#edStatus'); if(!st) return;
+  st.textContent=msg; st.classList.toggle('saved', !!good);
+  clearTimeout(S.saveT);
+  S.saveT=setTimeout(()=>{ st.textContent='Drafts save to this browser.'; st.classList.remove('saved'); },2400);
+}
+
+function setEditing(on){
+  if(on && !S.admin) return;             // belt and braces; the button is hidden anyway
+  S.editing = on;
+  document.body.classList.toggle('editing', on);
+  $('#btnEdit').classList.toggle('on', on);
+  $('#btnEdit').textContent = on ? '✎ Editing…' : '✎ Edit this book';
+  wireEditables();
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   IMAGE PICKER + UPLOAD
+   ═══════════════════════════════════════════════════════════════════════ */
+function buildPickerFolders(){
+  const groups=[...new Set(S.art.map(a=>a.g))].sort();
+  $('#pg').innerHTML = '<option value="">All folders ('+S.art.length+')</option>'
+    + groups.map(g=>`<option value="${esc(g)}">${esc(g)}</option>`).join('');
+}
+function openPicker(path){ S.pickTarget=path; $('#picker').classList.add('open'); $('#pq').value=''; drawPicker(); $('#pq').focus(); }
+function closePicker(){ $('#picker').classList.remove('open'); S.pickTarget=null; }
+
+function drawPicker(){
+  const q=$('#pq').value.trim().toLowerCase(), g=$('#pg').value;
+  let list=S.art;
+  if(g) list=list.filter(a=>a.g===g);
+  if(q) list=list.filter(a=>a.n.toLowerCase().includes(q));
+  // Capped so the grid stays responsive with a 1,000-image library; the hint
+  // says to narrow the search rather than silently truncating.
+  const shown=list.slice(0,300);
+  $('#pHint').textContent = list.length
+    ? `${shown.length} of ${list.length} shown${list.length>300?' — search to narrow it down':''}`
+    : 'No artwork matches that.';
+  $('#pGrid').innerHTML = shown.map(a=>
+    `<div class="thumb" data-src="${esc(a.p)}"><img src="${esc(au(a.p))}" alt="" loading="lazy"><div class="tn">${esc(a.n)}</div></div>`
+  ).join('');
+  $$('#pGrid .thumb').forEach(t=> t.onclick=()=> applyPick(t.dataset.src));
+}
+
+function applyPick(src){
+  if(!S.pickTarget || !S.admin) return;
+  setPath(S.book, S.pickTarget, src);
+  saveDraft(); closePicker(); render();
+}
+
+/* Upload targets the path the button carries, or the picker's current target
+   when it was started from inside the picker. */
+function beginUpload(path){ S.pickTarget = path; $('#imgIn').click(); }
+
+async function doUpload(file, path){
+  if(!S.admin) return;
+  try{
+    const url = await uploadImage(file);
+    setPath(S.book, path, url);
+    // An image block with a URL but no caption key would render no caption
+    // slot at all, so make sure one exists the moment a photo lands.
+    const secPath = path.replace(/\.img$/,'');
+    if(/\.img$/.test(path)){
+      const sec = getPath(S.book, secPath);
+      if(sec && sec.cap == null) sec.cap = '';
+    }
+    hideUp(); saveDraft(); closePicker(); render();
+    flash('Photo added ✓', true);
+  }catch(err){
+    hideUp();
+    alert('Could not add that photo:\n\n' + (err && err.message ? err.message : err));
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   SEARCH / SCROLLSPY
+   ═══════════════════════════════════════════════════════════════════════ */
+function observeChapters(){
+  const links=$$('#toc a');
+  const io=new IntersectionObserver(es=>{
+    es.forEach(e=>{
+      if(!e.isIntersecting) return;
+      links.forEach(a=>a.classList.toggle('on', a.getAttribute('href')==='#'+e.target.id));
+    });
+  },{rootMargin:'-20% 0px -70% 0px'});
+  $$('.chapter').forEach(c=>io.observe(c));
+}
+
+function runSearch(){
+  const q=$('#q').value.trim().toLowerCase();
+  $$('#toc a').forEach(a=>{
+    const ch=S.book.chapters[+a.dataset.ch];
+    const hay=(plain(ch.title)+' '+(ch.blurb||'')+' '+(ch.part||'')+' '+(ch.sections||[]).map(s=>
+      (s.n||'')+' '+plain(s.h||'')+' '+plain(s.body||'')+' '+plain(s.note||'')+' '+
+      plain(s.example||'')+' '+plain(s.designer||'')+' '+
+      ((s.seq||[]).map(q=>plain(q.h||'')+' '+plain(q.body||'')).join(' '))+' '+
+      (s.profile ? (s.profile.name||'')+' '+(s.profile.line||[]).map(x=>x.k+' '+plain(x.v||'')).join(' ') : '')+' '+
+      ((s.cards||[]).map(c=>c.name+' '+plain(c.text||'')).join(' '))
+    ).join(' ')).toLowerCase();
+    a.parentElement.style.display = (!q || hay.includes(q)) ? '' : 'none';
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   STATIC CHROME — bound once; render() never replaces these nodes
+   ═══════════════════════════════════════════════════════════════════════ */
+$('#btnEdit').onclick  = ()=> setEditing(!S.editing);
+$('#btnDone').onclick  = ()=> setEditing(false);
+$('#btnPrint').onclick = ()=> window.print();
+$('#q').oninput = runSearch;
+
+$('#btnAddCh').onclick = ()=>{
+  if(!S.admin) return;
+  S.book.chapters.push({id:'ch'+Date.now(), num:String(S.book.chapters.length+1), title:'New Chapter',
+    blurb:'', art:'', sections:[{h:'New section', body:'<p>Write here.</p>'}]});
+  saveDraft(); render();
+  location.hash = '#'+S.book.chapters[S.book.chapters.length-1].id;
+};
+
+$('#btnPublish').onclick = async ()=>{
+  if(!S.admin) return;
+  if(!S.client){ alert('Not connected to the game server, so there is nothing to publish to.\n\nYour draft is saved in this browser, and "Download .json" still works.'); return; }
+  if(!confirm('Publish this book to every player?\n\nIt replaces the live handbook immediately.')) return;
+
+  $('#btnPublish').disabled = true;
+  showUp('Publishing…');
+  const res = await publish();
+  hideUp();
+  $('#btnPublish').disabled = false;
+
+  if(res.ok){
+    S.version = res.version; S.source='cloud'; S.dirty=false; S.staleDraft=null;
+    try{ localStorage.removeItem(HB_KEY); localStorage.removeItem(HB_VER); }catch(e){}
+    flash('Published — live for everyone ✓', true);
+    paintPubState(); render();
+    return;
+  }
+  if(res.status === 'denied'){
+    alert('The server refused that write.\n\nOnly the admin accounts in the handbook allowlist can publish. If that should be you, check which account you are signed in as.');
+  }else if(res.status === 'conflict'){
+    alert('Somebody else published while you were editing.\n\nYour draft is safe in this browser. Reload to see their version, then re-apply your changes — or publish again to overwrite it.');
+  }else{
+    alert('Could not publish:\n\n' + (res.message || res.status) + '\n\nYour draft is saved in this browser.');
+  }
+  paintPubState();
+};
+
+/* Saving the book out.
+   Served from the repo, a plain <a download> is the real path and there is no
+   window.claude at all. Inside the claude.ai artifact viewer that anchor is
+   INERT — the sandbox never grants a page download permission — so the button
+   would look like it worked and do nothing. Ask for the capability once, use
+   it when it answers, fall back to the anchor. */
+let _dl;
+async function getDownloads(){
+  if(_dl !== undefined) return _dl;
+  try{ _dl = (window.claude && window.claude.use) ? await window.claude.use('downloads') : null; }
+  catch(e){ _dl = null; }
+  return _dl;
+}
+function saveViaAnchor(json){
+  const blob=new Blob([json],{type:'application/json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob); a.download='handbook.json';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+}
+$('#btnDownload').onclick = async ()=>{
+  const json = JSON.stringify(S.book,null,2);
+  const dl = await getDownloads();
+  if(dl){
+    try{ await dl.save({filename:'handbook.json', data:json}); return; }
+    catch(err){ if(err && err.code === 'declined') return; }
+  }
+  saveViaAnchor(json);
+};
+
+$('#btnUpload').onclick = ()=> $('#fileIn').click();
+$('#fileIn').onchange = e=>{
+  const f=e.target.files&&e.target.files[0]; if(!f || !S.admin) return;
+  const r=new FileReader();
+  r.onload=()=>{
+    try{
+      const o=JSON.parse(r.result);
+      if(!o || !Array.isArray(o.chapters)) throw new Error('That file has no "chapters" array — it is not a handbook.');
+      S.book=o; saveDraft(); render();
+    }catch(err){ alert('Could not load that file:\n\n'+err.message); }
+  };
+  r.readAsText(f);
+  e.target.value='';
+};
+
+$('#btnReset').onclick = ()=>{
+  if(!S.admin) return;
+  const to = (S.version!=null) ? `the live book (v${S.version})` : 'the copy shipped in the repo';
+  if(!confirm(`Throw away this draft and go back to ${to}?`)) return;
+  try{ localStorage.removeItem(HB_KEY); localStorage.removeItem(HB_VER); }catch(e){}
+  S.dirty=false; S.staleDraft=null;
+  location.reload();      // simplest correct path: re-read whatever is authoritative
+};
+
+$('#imgIn').onchange = async e=>{
+  const f=e.target.files&&e.target.files[0];
+  e.target.value='';
+  if(f && S.pickTarget) await doUpload(f, S.pickTarget);
+};
+
+$('#pClose').onclick = closePicker;
+$('#pUpload').onclick = ()=>{ if(S.admin) $('#imgIn').click(); };
+$('#pClear').onclick = ()=>{ if(S.pickTarget && S.admin){ setPath(S.book,S.pickTarget,''); saveDraft(); closePicker(); render(); } };
+$('#pCustom').onclick = ()=>{
+  const u=prompt('Image URL or path (e.g. assets/artwork/Zombie.png):');
+  if(u) applyPick(u.trim().replace(/^\/(?!\/)/,''));
+};
+$('#pq').oninput = drawPicker;
+$('#pg').onchange = drawPicker;
+$('#picker').onclick = e=>{ if(e.target.id==='picker') closePicker(); };
+
+$('#railToggle').onclick = ()=> $('#rail').classList.toggle('open');
+document.addEventListener('click', e=>{
+  if(!e.target.closest('.addmenu')) $$('.addmenu').forEach(m=>m.classList.remove('open'));
+  if(window.innerWidth<=900 && $('#rail').classList.contains('open')
+     && !e.target.closest('#rail') && !e.target.closest('#railToggle')){
+    $('#rail').classList.remove('open');
+  }
+});
+$('#toc').addEventListener('click', e=>{
+  if(e.target.closest('a') && window.innerWidth<=900) $('#rail').classList.remove('open');
+});
+document.addEventListener('keydown', e=>{
+  if(e.key==='Escape'){ if($('#picker').classList.contains('open')) closePicker(); $$('.addmenu').forEach(m=>m.classList.remove('open')); }
+  if((e.metaKey||e.ctrlKey) && e.key==='s' && S.editing){ e.preventDefault(); saveDraft(); }
+});
+
+/* Leaving with unpublished work is almost always a mistake worth one prompt. */
+window.addEventListener('beforeunload', e=>{
+  if(S.admin && S.dirty){ e.preventDefault(); e.returnValue=''; }
+});
+
+boot();
+</script>
+</body>
+</html>

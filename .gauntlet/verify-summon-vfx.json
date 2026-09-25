@@ -1,0 +1,88 @@
+{
+ "tile": {
+  "x": 12,
+  "z": 3,
+  "elev": 1.02,
+  "tiles": 168,
+  "raised": 134,
+  "pctRaised": 79.8,
+  "topX": 641.8,
+  "topY": 318.9,
+  "zeroY": 350.6,
+  "slabPx": 31.6
+ },
+ "livePush": {
+  "beats": [
+   "rune",
+   "flash",
+   "pillar",
+   "ring"
+  ],
+  "ringY0": 1.02,
+  "tileElev": 1.02,
+  "pillarHasTile": true,
+  "ringAnchorY": 318.3,
+  "feetY": 318.9,
+  "zeroY": 350.6,
+  "riseY": -1.1,
+  "rise": 1,
+  "unitId": "u1787424765449_1"
+ },
+ "ringArgs": {
+  "ys": [
+   0.34,
+   0.998,
+   1.02,
+   1.04,
+   2.363
+  ],
+  "calls": 7
+ },
+ "pilArgs": {
+  "ys": [
+   0.34,
+   0.9981,
+   1.02,
+   2.3631,
+   5.22
+  ],
+  "calls": 8
+ },
+ "sweep": [
+  {
+   "dt": 1,
+   "frames": 2200,
+   "peakScaleY": 1.16,
+   "deepestY": -1.1
+  },
+  {
+   "dt": 4,
+   "frames": 550,
+   "peakScaleY": 1.16,
+   "deepestY": -1.1
+  },
+  {
+   "dt": 16.6667,
+   "frames": 132,
+   "peakScaleY": 1.16,
+   "deepestY": -1.1
+  },
+  {
+   "dt": 33.3,
+   "frames": 67,
+   "peakScaleY": 1.16,
+   "deepestY": -1.1
+  }
+ ],
+ "done": {
+  "n": 1,
+  "ids": [
+   "u1787424765449_1"
+  ],
+  "unitId": "u1787424765449_1"
+ },
+ "latch": {
+  "blocksWhileRunning": true,
+  "blocksWhenAbandoned": false
+ }
+}

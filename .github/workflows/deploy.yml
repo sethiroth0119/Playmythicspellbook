@@ -1,0 +1,30 @@
+name: Deploy to Cloudflare
+
+# Every push to main auto-deploys ./public to the Cloudflare Workers
+# project "playmythicspellbook". Without this, git pushes did NOTHING to
+# production — the site only updated when someone ran `wrangler deploy`
+# by hand, which is why fixes kept "not working" (prod was frozen on an
+# old build). One-time setup: add the repo secret CLOUDFLARE_API_TOKEN
+# (Cloudflare dashboard → My Profile → API Tokens → Create Token →
+# "Edit Cloudflare Workers" template) and CLOUDFLARE_ACCOUNT_ID
+# (Workers & Pages → Account ID). After that, every push deploys itself.
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy with Wrangler
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy

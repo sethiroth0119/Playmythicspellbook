@@ -1,0 +1,2 @@
+/* D5 — 28px tall boxes, 15px wide (no horizontal cost) */
+.fx-two input[type="checkbox"], .fx-two input[type="radio"] { height: 28px !important; }

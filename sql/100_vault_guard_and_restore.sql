@@ -1,0 +1,187 @@
+-- 100_vault_guard_and_restore.sql
+-- 🏰 THE VAULT STOPPED BEING DELETABLE BY A SECOND DEVICE.
+--
+-- Sections 1-4 are ALL APPLIED to ktsiasyjusesawtrwrjc (2026-09-15) and
+-- are recorded here so the change lives in /sql with everything else and is
+-- re-runnable against any other environment. Sections 3 and 4 were approved by
+-- the owner on 2026-09-15 and applied; see the notes on each.
+--
+-- ═══════════════════════════════════════════════════════════════════════════
+-- WHAT HAPPENED
+-- ═══════════════════════════════════════════════════════════════════════════
+-- On 2026-09-14 20:17:17 the admin account's vault went from 23,335 units
+-- across 251 resource ids to ZERO across 161 ids in a single write. Across that
+-- same write gems, sovereigns, customCards, itemInventory, equipment and
+-- vaultLayout were BYTE-IDENTICAL. Nothing was spent and nothing was purged:
+-- only forge.__salvage__ collapsed, plus the server-written half of
+-- forge.__influence__ (srvXp, srvLevel, srvReady, srvNextAt, srvStanding).
+--
+-- That is one device writing its own un-hydrated copy of the profile blob over
+-- the account — the same login, not a different one. The client-side cause is a
+-- three-way merge in cloudFetchProfile that had only two branches, leaving
+-- `_haveLocalEdit && localIsFresher` to fall through with the vault never
+-- hydrated; _ensureResources() then fills it with every known id at 0 and the
+-- debounced upload writes that up. Fixed in public/index.html (see
+-- _vaultsync_smoke.mjs), but a client fix only ever protects clients that have
+-- updated — which is why the database needs its own answer.
+--
+-- A second player (Inergy, 1,500 units) lost their vault the same way five
+-- hours later, and a restore applied at 09:05 was overwritten again by the
+-- still-running client at 09:09:53. That last detail is why the rule below is
+-- not "collapsed to zero": the bad client was writing 201 units, not 0.
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 1. THE HELPER  (applied)
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Sums the numeric values of a salvage object. Non-numeric entries are ignored
+-- rather than erroring: this runs inside every profile write and must never be
+-- the reason a save fails.
+create or replace function public.up_salvage_units(f jsonb)
+returns numeric language sql immutable as $$
+  select coalesce(sum((e.value #>> '{}')::numeric), 0)
+    from jsonb_each(coalesce(f -> '__salvage__', '{}'::jsonb)) as e
+   where jsonb_typeof(e.value) = 'number'
+$$;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 2. THE GUARD  (applied — see the deployed up_guard for the full body)
+-- ═══════════════════════════════════════════════════════════════════════════
+-- up_guard already repaired collapses for heroes, units, decks, deck_history,
+-- forge, records, gems and sovereigns. Every one of those tests is at the
+-- COLUMN level, and the vault lives one level down inside the forge blob — the
+-- forge column was fully populated after the wipe, with 184 keys. The guard was
+-- watching the wrong level for the thing players actually lose.
+--
+-- Two clauses were added to it:
+--
+--   old_units := up_salvage_units(OLD.forge);
+--   new_units := up_salvage_units(NEW.forge);
+--   if old_units >= 200 and new_units <= old_units * 0.10 then
+--     NEW.forge := jsonb_set(coalesce(NEW.forge,'{}'::jsonb), '{__salvage__}',
+--                            coalesce(OLD.forge -> '__salvage__','{}'::jsonb), true);
+--     saved := array_append(saved,
+--       'forge.__salvage__ (' || round(old_units) || '->' || round(new_units) || ')');
+--   end if;
+--
+-- ⚠ THE SHAPE, NOT THE VALUE. Both conditions must hold: the vault must have
+--   been worth protecting (>= 200 units) AND the write must destroy at least
+--   90% of it. Spending is incremental — it moves individual ids, over many
+--   writes, each a small delta. Nothing a player does by hand takes a
+--   five-figure vault to a two-figure one between two saves. A write that
+--   merely halves a vault, or empties a small one, is untouched.
+--
+-- ⚠ AND THE REFUSAL LOG IS THROTTLED. The first refusal for a user in a
+--   5-minute window keeps the full snapshot (the copy a restore is built from);
+--   repeats record the fact, the reason and the before/after numbers with the
+--   heavy jsonb columns left NULL. Measured before that change: one stuck
+--   client produced 78 refusals in 30 minutes, each copying a 531 KB profile,
+--   on a table that is already 3.7 GB. The guard was right and the logging was
+--   going to take the database down with it.
+--
+-- ⚠ The sanctioned bypass (app.up_force, set by up_force_reset()) still clears
+--   a test or support account, so this is not a guard with no override.
+
+-- Verify the guard is live and has the vault clause:
+--   select position('up_salvage_units' in pg_get_functiondef(p.oid)) > 0 as guards_vault
+--     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+--    where n.nspname = 'public' and p.proname = 'up_guard';
+
+-- See whether the client bug is still firing, and to whom:
+--   select reason, count(*), max(row_updated)
+--     from public.user_profiles_history
+--    where reason like 'REFUSED-WIPE%' and row_updated > now() - interval '1 day'
+--    group by reason order by 2 desc;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 3. RESTORE A SECOND PLAYER'S VAULT  (APPLIED 2026-09-15, owner approved)
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Inergy, user b8b043a5-21f8-464b-aa0e-8657dd52c7ec, lost 1,500 units at
+-- 2026-09-15 01:52:57. Last good snapshot: hid 29350 (2026-09-14 07:30:09).
+--
+-- ⚠ MERGE, NEVER REPLACE. Per-id max() against the CURRENT row, so anything
+--   earned since the loss is kept and nothing the player has done in the
+--   meantime is thrown away. Non-numeric values prefer the current row.
+--   This is the same query used to restore the admin account, which took it
+--   from 201 units back to 23,384 while keeping the 5 ids that had grown.
+--
+-- Run as-is; it is idempotent in the sense that re-running it cannot lower
+-- anything (max() of the same two objects is stable).
+--
+-- ✅ APPLIED. Inergy came back to 1,500 units across 161 ids, and is now behind
+--    the same guard, so the client that took it cannot take it again.
+
+-- with good as (select forge->'__salvage__' as s from public.user_profiles_history where hid = 29350),
+--      cur  as (select forge->'__salvage__' as s from public.user_profiles
+--                where user_id = 'b8b043a5-21f8-464b-aa0e-8657dd52c7ec'),
+--      keys as (select k from jsonb_object_keys((select s from good)) k
+--               union select k from jsonb_object_keys(coalesce((select s from cur), '{}'::jsonb)) k),
+--      merged as (
+--        select jsonb_object_agg(k.k,
+--          case
+--            when ((select s from good)->>k.k) ~ '^[0-9]+(\.[0-9]+)?$'
+--             and ((select s from cur )->>k.k) ~ '^[0-9]+(\.[0-9]+)?$'
+--              then to_jsonb(greatest(((select s from good)->>k.k)::numeric,
+--                                     ((select s from cur )->>k.k)::numeric))
+--            when ((select s from cur)->k.k) is not null then ((select s from cur)->k.k)
+--            else ((select s from good)->k.k)
+--          end) as s
+--        from keys k
+--      )
+-- update public.user_profiles p
+--    set forge = jsonb_set(p.forge, '{__salvage__}', (select s from merged), true)
+--  where p.user_id = 'b8b043a5-21f8-464b-aa0e-8657dd52c7ec'
+-- returning (select count(*) from jsonb_object_keys(forge->'__salvage__')) as keys,
+--           up_salvage_units(forge) as units;
+
+-- To find anyone ELSE this happened to before the guard landed:
+--   with h as (
+--     select user_id, display_name, hid, row_updated, up_salvage_units(forge) as units
+--       from public.user_profiles_history
+--   ), d as (
+--     select *, lag(units) over (partition by user_id order by row_updated, hid) as prev
+--       from h
+--   )
+--   select display_name, row_updated, prev, units
+--     from d where prev >= 200 and units <= prev * 0.10
+--    order by row_updated desc;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 4. RETENTION  (APPLIED 2026-09-15 — owner chose 14 days, on a schedule)
+-- ═══════════════════════════════════════════════════════════════════════════
+-- user_profiles_history is 3,740 MB of a 7,844 MB database — 48% of it — with
+-- 30,804 rows and no retention policy. 4,472 rows are older than 14 days.
+--
+-- ⚠ THIS TABLE IS THE ONLY REASON THE ADMIN VAULT WAS RECOVERABLE. Whatever
+--   retention is chosen, it must keep enough history to undo a wipe nobody
+--   noticed for a day or two, and it must never prune a REFUSED-WIPE row, which
+--   is the record of an attempt rather than of ordinary play.
+--
+-- 🔴 THE THREE OPTIONS WERE MEASURED BEFORE ONE WAS CHOSEN, and two of them
+--    were traps:
+--      A  drop ordinary saves older than 30 days  →      0 rows,     0 MB
+--      B  drop ordinary saves older than 14 days  →  4,681 rows,   497 MB
+--      C  keep newest 40 snapshots per user       → 28,201 rows, 3,374 MB
+--    A reads as the safe conservative choice and is the NULL one — there were
+--    no ordinary rows that old. C recovers 95% of the space and leaves an
+--    active player about three hours of undo; the admin wipe went unnoticed
+--    for roughly thirteen hours, so C would have failed the one case this
+--    table has actually been needed for. B is the shortest window that still
+--    covers a wipe nobody notices overnight.
+--
+-- Implemented as public.prune_user_profiles_history(), scheduled via pg_cron
+-- at 03:12 daily — off the hour and in the quiet part of the night, because
+-- the delete takes row locks on a table every profile write archives into.
+--
+--   select cron.schedule('prune-user-profiles-history', '12 3 * * *',
+--                        $select public.prune_user_profiles_history();$);
+--
+-- ✅ FIRST RUN: 4,694 ordinary snapshots removed. 31,610 rows left, of which
+--    6,295 are REFUSED-WIPE and are never pruned at any age.
+--
+-- ⚠ THE REPORTED TABLE SIZE DID NOT DROP, AND THAT IS EXPECTED. A plain
+--   DELETE plus VACUUM marks the space reusable inside the table rather than
+--   returning it to the operating system, so the table stops GROWING but still
+--   reads ~3.7 GB. Returning it needs VACUUM FULL, which takes an ACCESS
+--   EXCLUSIVE lock on a table written by every profile save — a maintenance
+--   window job on a live game, not a routine one. The freed space is reused
+--   by the next fortnight of snapshots either way.

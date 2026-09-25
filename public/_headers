@@ -1,0 +1,20 @@
+# ============================================================================
+# Cloudflare cache rules. The app is a single index.html that we redeploy
+# constantly — if the browser/CDN serves a stale copy, every fix "doesn't
+# work" until a manual hard-refresh (this caused most of the confusion
+# while debugging the board). These rules force the HTML entry point to be
+# revalidated on every load (a 304 if unchanged — cheap, but always fresh),
+# while letting big static media cache hard for speed.
+# ============================================================================
+
+# The app shell — ALWAYS revalidate so a new deploy is picked up immediately.
+/
+  Cache-Control: no-cache, must-revalidate
+/index.html
+  Cache-Control: no-cache, must-revalidate
+
+# Static media (sprites, card art, audio, video). These are large and their
+# contents rarely change for a given filename, so a day of caching is a big
+# performance win and won't serve a stale app shell.
+/assets/*
+  Cache-Control: public, max-age=86400

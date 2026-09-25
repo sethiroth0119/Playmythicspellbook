@@ -1,0 +1,41 @@
+/* 💫 STATUS VFX — the Status Atlas on the unit that carries the status.
+   Owner, 2026-09-19: "replace the Emojis with these VFX … placed on the
+   unit/hero that has the Status Effect … Make sure the VFX fit the tile only".
+
+   Each assets/vfx/status/<name>.webp is ONE ROW of 20 frames (128 px cells):
+   a seamless loop of that effect's active phase, baked from the pack's own
+   renderer with the last quarter crossfaded into the first frame.
+
+   Geometry, from the bake: every effect fits a square whose unit-feet pivot
+   is at 47.6% across and 90.3% down. The layer is one tile wide (the unit
+   element is the tile), and that pivot is pinned to the bottom-centre of the
+   unit — so the fire burns at the feet, the halo floats over the head, and
+   nothing spills past the tile.
+
+   steps(20) over a 20-frame strip: background-size 2000% makes one cell the
+   width of the layer; a percentage position p moves the image by
+   (layer − image) × p, so 20/19 = 105.263% walks exactly 20 cells. */
+.status-fx-stack {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  transform: translate(-47.6%, 9.7%);
+  pointer-events: none;
+  z-index: 6;
+}
+.status-fx {
+  position: absolute;
+  inset: 0;
+  background-repeat: no-repeat;
+  background-size: 2000% 100%;
+  background-position: 0 0;
+  animation: statusfx-loop 0.8s steps(20) infinite;
+}
+@keyframes statusfx-loop { to { background-position: 105.263% 0; } }
+/* the iso board lifts the unit's overlays above the tile shade — same here */
+.board.iso-mode .unit .status-fx-stack { z-index: 14; }
+@media (prefers-reduced-motion: reduce) {
+  .status-fx { animation-duration: 2.4s; }
+}

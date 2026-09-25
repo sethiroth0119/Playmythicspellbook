@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<style>
+  html,body{margin:0;padding:0;height:100%;background:transparent!important;overflow:hidden}
+  #fx{position:fixed;inset:0;display:block;background:transparent;pointer-events:none}
+</style>
+<title>ACE Summon</title>
+<script>window.VFX_BUILD="v119f4-ace";</script>
+</head>
+<body>
+<canvas id="fx"></canvas>
+<script src="fx-core.js"></script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   ACE SUMMON — the premium arrival cinematic.
+
+   The ten ACE units used to point at assets/vfx/vfx-*.html files that DO NOT
+   EXIST (404 on every one), so an ACE summon played its sound cue and nothing
+   else. This is the real thing, themed per ACE.
+
+   Shot list — built to read as expensive without costing anything:
+     0 charge   the field darkens from the edges, a sigil scribes itself,
+                dust lifts, letterbox bars slide in, low rumble shake
+     1 pillars  six light pillars rise around the sigil, shake builds,
+                the camera pushes in
+     2 slam     the card CRASHES down from above with motion-blur trails —
+                impact frame, radial speed lines, shake spike, dust ring
+     3 reveal   the unit stands in a chromatic split that settles, embers
+                drift, the nameplate scribes on with its rule
+     4 settle   letterbox retracts, glow drains
+
+   Every colour still runs through FX.rgba, so none of this can go white.
+   ═══════════════════════════════════════════════════════════════════════════ */
+(function () {
+  FX.CEIL = 0.80;
+
+  /* Per-ACE palette: [key light, rim light, ground]. Chosen so each ACE reads
+     as its own element the moment the sigil ignites. */
+  var THEMES = {
+    greyDragon:   { a:'#9aa3b0', b:'#ff8a3c', g:'#3a3f4a', word:'DRAGON PYRE' },
+    bahamut:      { a:'#e0b64a', b:'#6fb3ff', g:'#2b3350', word:'KING OF DRAGONS' },
+    divineRain:   { a:'#e8d9a0', b:'#9fd0ff', g:'#333a4a', word:'DIVINE DESCENT' },
+    efreet:       { a:'#ff8a3c', b:'#c2410c', g:'#3a1c10', word:'METEOR CRASH' },
+    bunnyKage:    { a:'#c084fc', b:'#9fd0ff', g:'#2a2140', word:'SIGIL MOON' },
+    davidSea:     { a:'#2dd4bf', b:'#67b7e0', g:'#123240', word:'TIDAL ARRIVAL' },
+    jayBlacklist: { a:'#e0584a', b:'#d9b45a', g:'#3a1418', word:'THE BLACKLIST' },
+    prince:       { a:'#e0584a', b:'#98a2b3', g:'#301820', word:'RIFT SLASH' },
+    sethiroth:    { a:'#8b5cf6', b:'#56e0ff', g:'#241a4a', word:'PORTAL WALK' },
+    outerGod:     { a:'#84cc16', b:'#a855f7', g:'#16261a', word:'OUTER GOD' },
+    _default:     { a:'#d9b45a', b:'#56e0ff', g:'#2a2438', word:'ACE SUMMON' }
+  };
+
+  var D = FX.director([
+    { n:'charge',  d:0.95 },
+    { n:'pillars', d:1.00 },
+    { n:'slam',    d:0.55 },
+    { n:'reveal',  d:1.85 },
+    { n:'settle',  d:0.95 }
+  ]);
+
+  var q = new URLSearchParams(location.search);
+  var S = {
+    time: 0, playing: false,
+    name: (q.get('name') || 'ACE').toUpperCase(),
+    theme: THEMES[q.get('theme')] || THEMES._default,
+    unitImg: null, cardImg: null
+  };
+  if (q.get('art')) FX.loadImage(q.get('art')).then(function (i) { S.unitImg = S.cardImg = i; });
+
+  var EMB = FX.pool(60, function (e, i) {
+    e.a = FX.hash(i, 201) * 6.2832;
+    e.r = 0.05 + FX.hash(i, 202) * 0.30;
+    e.sp = 0.3 + FX.hash(i, 203) * 0.9;
+    e.sz = 2 + FX.hash(i, 204) * 5;
+    e.ph = FX.hash(i, 205);
+  });
+
+  function draw(dt, t) {
+    if (S.playing) S.time += dt;
+    var W = FX.W, H = FX.H, cx = W / 2, cy = H * 0.55, ctx = FX.ctx;
+    var ph = D.at(S.time), U = Math.min(W, H), TH = S.theme;
+
+    /* camera: rumble through the build, a hard spike on the slam, push-in */
+    var shake = ph.name === 'charge'  ? ph.p * 0.12
+              : ph.name === 'pillars' ? 0.12 + ph.p * 0.30
+              : ph.name === 'slam'    ? 1.0 * (1 - FX.easeOut(ph.p))
+              : ph.name === 'reveal'  ? Math.max(0, 0.18 - ph.p * 0.18) : 0;
+    var zoom  = ph.name === 'pillars' ? 1 + ph.p * 0.03
+              : ph.name === 'slam'    ? 1.03 + FX.easeOut(ph.p) * 0.05
+              : ph.name === 'reveal'  ? 1.08 - FX.easeOut(ph.p) * 0.08 : 1;
+    FX.camera(shake, zoom, cx, cy);
+
+    /* ── edge darkness: pulls focus without touching the middle ──────────── */
+    var darkK = ph.name === 'charge' ? ph.p : ph.name === 'settle' ? 1 - ph.p : 1;
+    if (darkK > 0.01) {
+      var vg = ctx.createRadialGradient(cx, cy, U * 0.18, cx, cy, U * 0.85);
+      vg.addColorStop(0, 'rgba(3,2,7,0)');
+      vg.addColorStop(1, 'rgba(3,2,7,' + (0.55 * darkK).toFixed(3) + ')');
+      ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+    }
+
+    /* ── the sigil scribes itself ────────────────────────────────────────── */
+    var sigK = ph.name === 'charge' ? FX.easeOut(ph.p)
+             : ph.name === 'settle' ? 1 - ph.p : 1;
+    if (sigK > 0.01) {
+      ctx.save();
+      ctx.translate(cx, cy + U * 0.20); ctx.scale(1, 0.30);
+      var R = U * 0.30;
+      FX.glow(0, 0, R * 1.15, TH.a, 0.26 * sigK);
+      /* outer ring drawn as an arc that completes over the charge */
+      ctx.lineWidth = Math.max(1.5, U * 0.006);
+      ctx.strokeStyle = FX.rgba(TH.a, 0.65 * sigK);
+      ctx.beginPath(); ctx.arc(0, 0, R, -1.5708, -1.5708 + 6.2832 * sigK); ctx.stroke();
+      ctx.lineWidth = Math.max(1, U * 0.003);
+      ctx.strokeStyle = FX.rgba(TH.b, 0.45 * sigK);
+      ctx.beginPath(); ctx.arc(0, 0, R * 0.72, 1.5708, 1.5708 - 6.2832 * sigK, true); ctx.stroke();
+      /* rune ticks + inner triangle */
+      ctx.strokeStyle = FX.rgba(TH.a, 0.42 * sigK);
+      for (var k = 0; k < 16; k++) {
+        var a = t * 0.22 + k * 0.3927;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(a) * R * 0.86, Math.sin(a) * R * 0.86);
+        ctx.lineTo(Math.cos(a) * R * 0.99, Math.sin(a) * R * 0.99);
+        ctx.stroke();
+      }
+      ctx.strokeStyle = FX.rgba(TH.b, 0.32 * sigK);
+      ctx.beginPath();
+      for (var v = 0; v <= 3; v++) {
+        var va = -1.5708 + v * 2.0944 + t * 0.1;
+        var vx = Math.cos(va) * R * 0.55, vy = Math.sin(va) * R * 0.55;
+        if (v === 0) ctx.moveTo(vx, vy); else ctx.lineTo(vx, vy);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    /* ── pillars of light ────────────────────────────────────────────────── */
+    if (ph.name === 'pillars' || ph.name === 'slam') {
+      var pk = ph.name === 'pillars' ? FX.easeOut(ph.p) : 1 - ph.p;
+      for (var i = 0; i < 6; i++) {
+        var pa = i * 1.0472 + t * 0.25;
+        var px = cx + Math.cos(pa) * U * 0.28;
+        var py = cy + Math.sin(pa) * U * 0.28 * 0.32 + U * 0.20;
+        var hgt = U * (0.30 + 0.10 * FX.pulse(t * 1.4, 0.8 + i * 0.1)) * pk;
+        FX.beam(px, py - hgt / 2, U * 0.035, hgt, i % 2 ? TH.b : TH.a, 0.34 * pk, 0);
+        FX.glow(px, py, U * 0.05, i % 2 ? TH.b : TH.a, 0.30 * pk);
+      }
+      /* rising embers along the pillars */
+      for (var e = 0; e < EMB.length; e++) {
+        var em = EMB[e];
+        var climb = ((t * em.sp + em.ph) % 1);
+        FX.glow(cx + Math.cos(em.a + t * 0.3) * U * em.r,
+                cy + U * 0.20 - climb * U * 0.52,
+                em.sz * 2.0, e % 4 === 0 ? TH.b : TH.a, 0.24 * pk * (1 - climb));
+      }
+    }
+
+    /* ── the slam ────────────────────────────────────────────────────────── */
+    if (ph.name === 'slam') {
+      var e2 = FX.easeIn(FX.clamp01(ph.p * 1.35));       // card falls in fast
+      var drop = (1 - e2) * U * 0.75;
+      var sc = 2.4 - e2 * 1.4;
+      /* motion-blur trail: the same card, thinner, further up */
+      for (var b = 3; b >= 1; b--) {
+        FX.drawCard(S.cardImg, cx, cy - drop - b * U * 0.05 * (1 - e2),
+                    U * 0.34 * sc, 0.10 * (1 - e2), 0, TH.a);
+      }
+      FX.drawCard(S.cardImg, cx, cy - drop, U * 0.34 * sc, Math.min(1, 0.5 + e2), 0, TH.a);
+      if (ph.p > 0.55) {                                  // contact
+        var ik = (ph.p - 0.55) / 0.45;
+        FX.speedLines(cx, cy, 1 - ik, TH.b, 30);
+        FX.impact(cx, cy, ik, TH.a, 1);
+        FX.dust(cx, cy + U * 0.20, ik, TH.g);
+        FX.glow(cx, cy, U * (0.10 + ik * 0.34), TH.b, 0.34 * (1 - ik));
+      }
+    }
+
+    /* ── reveal ──────────────────────────────────────────────────────────── */
+    if (ph.name === 'reveal' || ph.name === 'settle') {
+      var rk = ph.name === 'reveal' ? FX.easeOut(FX.clamp01(ph.p * 1.5)) : 1;
+      var fade = ph.name === 'settle' ? 1 - FX.easeIn(ph.p) : 1;
+      var split = ph.name === 'reveal' ? Math.max(0, 10 * (1 - ph.p * 2.2)) : 0;
+      FX.glow(cx, cy, U * 0.34, TH.a, 0.22 * rk * fade);
+      FX.chromaImage(S.unitImg, cx, cy, U * 0.52, U * 0.52, rk * fade, split, 0.92 + rk * 0.08);
+      /* drifting embers settle around the arrival */
+      for (var s2 = 0; s2 < 30; s2++) {
+        var sa = FX.hash(s2, 211) * 6.2832 + t * (0.25 + FX.hash(s2, 212) * 0.4);
+        var sr = U * (0.20 + FX.hash(s2, 213) * 0.16);
+        FX.glow(cx + Math.cos(sa) * sr, cy + Math.sin(sa) * sr * 0.55 - t * 4 % (U * 0.1),
+                2 + FX.hash(s2, 214) * 4, s2 % 3 === 0 ? TH.b : TH.a, 0.22 * rk * fade);
+      }
+      FX.plate(S.name, TH.word, cx, cy + U * 0.33,
+               FX.clamp01((ph.name === 'reveal' ? ph.p - 0.08 : 1) * 3) * fade, TH.a);
+    }
+
+    FX.cameraEnd();
+    /* bars OUTSIDE the camera so they never shake */
+    var lb = ph.name === 'charge' ? FX.easeOut(ph.p)
+           : ph.name === 'settle' ? 1 - FX.easeIn(ph.p) : 1;
+    FX.letterbox(lb);
+
+    if (S.playing && S.time > D.total + 0.3) S.playing = false;
+  }
+
+  FX.mount({ draw: draw });
+
+  function set(p) {
+    if (!p) return;
+    if (p.name)  S.name = String(p.name).toUpperCase();
+    if (p.theme && THEMES[p.theme]) S.theme = THEMES[p.theme];
+    if (p.eyebrow) S.theme = Object.assign({}, S.theme, { word: p.eyebrow });
+    if (p.unit) FX.loadImage(p.unit).then(function (i) { if (i) { S.unitImg = i; if (!S.cardImg) S.cardImg = i; } });
+    if (p.card) FX.loadImage(p.card).then(function (i) { if (i) S.cardImg = i; });
+  }
+  function play(p) {
+    set(p); S.time = 0; S.playing = true;
+    return new Promise(function (res) { setTimeout(res, (D.total + 0.3) * 1000); });
+  }
+  function seek(t) { S.time = Math.max(0, +t || 0); S.playing = false; }
+
+  window.AceVFX = { set: set, play: play, seek: seek, duration: D.total, themes: Object.keys(THEMES) };
+  /* the ACE pages are launched by URL (?theme=&art=&name=), so autoplay once the
+     art has had a moment to arrive — the game does not call play() for these */
+  setTimeout(function () { if (!S.playing) play(); }, 120);
+})();
+</script>
+</body>
+</html>

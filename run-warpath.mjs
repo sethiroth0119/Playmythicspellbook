@@ -1,0 +1,15 @@
+import { serve, launch, BATTERY } from './crit-harness.mjs';
+import fs from 'node:fs';
+const OUT = 'C:/Users/sethi/AppData/Local/Temp/claude/D--game-deploy/f4454d3b-41bf-44ee-bacf-9c9b941cc739/scratchpad';
+const { server, base } = await serve();
+const { browser, page, logs } = await launch(1600, 900);
+await page.goto(base + '/warpath/index.html', { waitUntil: 'domcontentloaded' });
+await page.waitForTimeout(9000);
+await page.screenshot({ path: OUT + '/warpath-boot.png' });
+const boot = await page.evaluate(`document.body.innerText.slice(0,600)`);
+console.log('=== BOOT TEXT ===\n' + boot);
+console.log('=== LOGS ===\n' + logs.slice(-25).join('\n'));
+const r = await page.evaluate(BATTERY);
+fs.writeFileSync(OUT + '/warpath-battery.json', JSON.stringify(r, null, 1));
+console.log('=== SUMMARY ===', JSON.stringify({ chromeCount: r.chromeCount, tokenFails: r.tokenFails, radiiCount: r.radiiCount, declRadii: r.declRadii.length, heads: r.heads.length, headFails: r.heads.filter(h => !h.serif).length, bodyFF: r.bodyFF, prose: r.proseFails.length, ovf: r.ovf.docScrollW + '/' + r.ovf.innerW, shown: r.shownCount }, null, 1));
+await browser.close(); server.close();

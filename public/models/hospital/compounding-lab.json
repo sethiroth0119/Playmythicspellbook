@@ -1,0 +1,25 @@
+{
+  "file": "compounding-lab.glb",
+  "bytes": 1709544,
+  "triangles": 36572,
+  "textures": "webp-1024",
+  "bounds": {
+    "min": [
+      -0.724,
+      -0.952,
+      -0.444
+    ],
+    "max": [
+      0.724,
+      0.95,
+      0.442
+    ]
+  },
+  "dims": {
+    "w": 1.448,
+    "h": 1.902,
+    "d": 0.886
+  },
+  "source": "assets-source/glb-masters/hospital/compounding-lab.glb",
+  "packedBy": "tools/pack-glb.mjs"
+}

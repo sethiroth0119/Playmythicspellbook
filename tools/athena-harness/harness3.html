@@ -1,0 +1,14 @@
+<!doctype html><meta charset="utf-8"><title>Closet harness</title>
+<script>
+window.MF_THREE_URLS = { core: ['/three/three.min.js'], addons: { OrbitControls: '/three/js/controls/OrbitControls.js', TransformControls: '/three/js/controls/TransformControls.js', GLTFLoader: '/three/js/loaders/GLTFLoader.js' } };
+/* a fake game: signed out, admin, and a fake Profile-side closet so purchases can be exercised */
+window.__profile = { gems: 1000, sovereigns: 5, closet: { outfit: null, owned: [] } };
+window.MythicBridge = { get cloud() { return null; }, signedIn: () => false, userId: () => null, displayName: () => 'Tester', isAdmin: () => true, toast: (m) => console.log('[toast]', m), confirm: async () => true,
+  closet: { signedIn: () => true, outfit: () => window.__profile.closet.outfit, setOutfit: (o) => { window.__profile.closet.outfit = o; return true; }, owned: () => window.__profile.closet.owned.slice(), grant: (id) => { if (!window.__profile.closet.owned.includes(id)) window.__profile.closet.owned.push(id); return true; },
+    balance: (c) => c === 'sovereigns' ? window.__profile.sovereigns : window.__profile.gems, charge: (n, c) => { const k = c === 'sovereigns' ? 'sovereigns' : 'gems'; if (window.__profile[k] < n) return false; window.__profile[k] -= n; return true; } } };
+window.__errors = [];
+window.addEventListener('error', e => window.__errors.push(String(e.message)));
+window.addEventListener('unhandledrejection', e => window.__errors.push('rej:' + String(e.reason && e.reason.message || e.reason)));
+</script>
+<script type="module" src="/src/mapforge/index.js"></script>
+<script type="module" src="/src/closet/index.js"></script>

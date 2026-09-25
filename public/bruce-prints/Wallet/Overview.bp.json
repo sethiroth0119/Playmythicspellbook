@@ -1,0 +1,1662 @@
+{
+ "system": "Wallet",
+ "label": "Wallet, Cinder & Aza",
+ "icon": "🔥",
+ "print": "Overview",
+ "nodes": [
+  {
+   "id": "boeFetch",
+   "name": "boeFetch",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 66057,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Profile.cloud"
+   ],
+   "writes": [
+    "BankEthos._err",
+    "BankEthos.balance",
+    "BankEthos.aza",
+    "BankEthos.lastFeeAt",
+    "BankEthos.openedAt",
+    "BankEthos._appSubmitted",
+    "BankEthos._extCols",
+    "BankEthos.ready"
+   ],
+   "calls": 0,
+   "x": 80,
+   "y": 80
+  },
+  {
+   "id": "walletFetchProgress",
+   "name": "walletFetchProgress",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 63886,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Profile.cloud",
+    "Cloud.client",
+    "Profile.gems",
+    "Profile.itemInventory",
+    "Profile.walletSeqProgress",
+    "Profile.sovereigns"
+   ],
+   "writes": [
+    "Profile.walletSeqProgress",
+    "Profile.gems",
+    "Profile.sovereigns",
+    "Profile.itemInventory"
+   ],
+   "calls": 3,
+   "x": 80,
+   "y": 212
+  },
+  {
+   "id": "boeMarketBuyNow",
+   "name": "boeMarketBuyNow",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 65806,
+   "params": [
+    "id"
+   ],
+   "async": true,
+   "reads": [
+    "BankEthos.ready",
+    "Profile.cloud",
+    "Profile.sovereigns",
+    "BankEthos.aza",
+    "Profile.gems",
+    "BankEthos.balance",
+    "Profile.cardCollection",
+    "BankEthos._handle"
+   ],
+   "writes": [
+    "Profile.cardCollection"
+   ],
+   "calls": 5,
+   "x": 80,
+   "y": 344
+  },
+  {
+   "id": "boeExchangeAzaToCinder",
+   "name": "boeExchangeAzaToCinder",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 66498,
+   "params": [
+    "azaAmt"
+   ],
+   "async": true,
+   "reads": [
+    "BankEthos.ready",
+    "Cloud.client"
+   ],
+   "writes": [
+    "BankEthos.aza",
+    "BankEthos.balance"
+   ],
+   "calls": 3,
+   "x": 80,
+   "y": 476
+  },
+  {
+   "id": "boePayRequest",
+   "name": "boePayRequest",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 65292,
+   "params": [
+    "id"
+   ],
+   "async": true,
+   "reads": [
+    "Profile.cloud",
+    "Profile.gems",
+    "BankEthos.balance"
+   ],
+   "writes": [],
+   "calls": 4,
+   "x": 80,
+   "y": 608
+  },
+  {
+   "id": "boeCreateStarterLoan",
+   "name": "boeCreateStarterLoan",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 65389,
+   "params": [],
+   "async": true,
+   "reads": [
+    "BankEthos.ready",
+    "BankEthos._extCols",
+    "BankEthos.loans",
+    "BankEthos.balance",
+    "Profile.cloud"
+   ],
+   "writes": [
+    "BankEthos.balance"
+   ],
+   "calls": 3,
+   "x": 80,
+   "y": 740
+  },
+  {
+   "id": "boeCreateLoan",
+   "name": "boeCreateLoan",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 65410,
+   "params": [
+    "azaAmt",
+    "installments"
+   ],
+   "async": true,
+   "reads": [
+    "BankEthos.ready",
+    "BankEthos._extCols",
+    "BankEthos.loans",
+    "BankEthos.balance",
+    "Profile.cloud"
+   ],
+   "writes": [
+    "BankEthos.balance"
+   ],
+   "calls": 3,
+   "x": 80,
+   "y": 872
+  },
+  {
+   "id": "boeApplySubmit",
+   "name": "boeApplySubmit",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 66010,
+   "params": [
+    "payload"
+   ],
+   "async": true,
+   "reads": [
+    "BankEthos.ready",
+    "Profile.cloud"
+   ],
+   "writes": [
+    "BankEthos._appSubmitted",
+    "BankEthos._handle",
+    "BankEthos._label"
+   ],
+   "calls": 1,
+   "x": 80,
+   "y": 1004
+  },
+  {
+   "id": "walletHoldsCheck",
+   "name": "walletHoldsCheck",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 63715,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Cloud.client",
+    "Profile.cloud"
+   ],
+   "writes": [
+    "Profile.gems",
+    "App._walletHeld"
+   ],
+   "calls": 1,
+   "x": 80,
+   "y": 1136
+  },
+  {
+   "id": "walletIncomingCheck",
+   "name": "walletIncomingCheck",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 63768,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Cloud.client",
+    "Profile.cloud",
+    "Profile.gems",
+    "Profile.walletSeqProgress"
+   ],
+   "writes": [
+    "Profile.gems",
+    "Profile.walletSeqProgress"
+   ],
+   "calls": 1,
+   "x": 80,
+   "y": 1268
+  },
+  {
+   "id": "walletReconcile",
+   "name": "walletReconcile",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 64145,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Profile.cloud",
+    "Cloud.client",
+    "Profile.gems",
+    "Profile.walletSeqProgress"
+   ],
+   "writes": [
+    "Profile.gems",
+    "Profile.walletSeqProgress"
+   ],
+   "calls": 1,
+   "x": 80,
+   "y": 1400
+  },
+  {
+   "id": "boeCreateRequest",
+   "name": "boeCreateRequest",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 65263,
+   "params": [
+    "toHandle",
+    "amount",
+    "message"
+   ],
+   "async": true,
+   "reads": [
+    "BankEthos.ready",
+    "Profile.cloud",
+    "BankEthos._handle",
+    "BankEthos._label"
+   ],
+   "writes": [],
+   "calls": 3,
+   "x": 80,
+   "y": 1532
+  },
+  {
+   "id": "boeMercHire",
+   "name": "boeMercHire",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 65557,
+   "params": [
+    "listingId",
+    "hours",
+    "targetCinder"
+   ],
+   "async": true,
+   "reads": [
+    "BankEthos.ready",
+    "Profile.cloud",
+    "BankEthos.mercAsEmployer",
+    "BankEthos._handle",
+    "BankEthos._label",
+    "BankEthos.mercListings"
+   ],
+   "writes": [],
+   "calls": 3,
+   "x": 80,
+   "y": 1664
+  },
+  {
+   "id": "boeMarketList",
+   "name": "boeMarketList",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 65719,
+   "params": [
+    "kind",
+    "opts"
+   ],
+   "async": true,
+   "reads": [
+    "BankEthos.ready",
+    "Profile.cardCollection",
+    "Profile.cloud",
+    "BankEthos._handle",
+    "BankEthos._label"
+   ],
+   "writes": [
+    "Profile.cardCollection"
+   ],
+   "calls": 2,
+   "x": 80,
+   "y": 1796
+  },
+  {
+   "id": "boeAcceptPost",
+   "name": "boeAcceptPost",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 65963,
+   "params": [
+    "id"
+   ],
+   "async": true,
+   "reads": [
+    "BankEthos.ready",
+    "Profile.cloud",
+    "BankEthos._handle",
+    "BankEthos._label",
+    "BankEthos.mercAsEmployer"
+   ],
+   "writes": [],
+   "calls": 3,
+   "x": 80,
+   "y": 1928
+  },
+  {
+   "id": "boeLinkWallet",
+   "name": "boeLinkWallet",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 67037,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Cloud.client",
+    "BankEthos._wallet"
+   ],
+   "writes": [
+    "BankEthos._wallet",
+    "App._ownAccount"
+   ],
+   "calls": 0,
+   "x": 80,
+   "y": 2060
+  },
+  {
+   "id": "spendGems",
+   "name": "spendGems",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 73197,
+   "params": [
+    "amount",
+    "reason"
+   ],
+   "async": false,
+   "reads": [
+    "Profile.gems"
+   ],
+   "writes": [
+    "Profile.gems"
+   ],
+   "calls": 2,
+   "x": 420,
+   "y": 80
+  },
+  {
+   "id": "addGems",
+   "name": "addGems",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 73222,
+   "params": [
+    "amount",
+    "reason"
+   ],
+   "async": false,
+   "reads": [
+    "Profile.gems"
+   ],
+   "writes": [
+    "Profile.gems"
+   ],
+   "calls": 2,
+   "x": 420,
+   "y": 212
+  },
+  {
+   "id": "spendSovereigns",
+   "name": "spendSovereigns",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 73363,
+   "params": [
+    "amount",
+    "reason"
+   ],
+   "async": false,
+   "reads": [
+    "Profile.sovereigns"
+   ],
+   "writes": [
+    "Profile.sovereigns"
+   ],
+   "calls": 1,
+   "x": 420,
+   "y": 344
+  },
+  {
+   "id": "_serverMirrorPurchase",
+   "name": "_serverMirrorPurchase",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 64386,
+   "params": [
+    "amount",
+    "itemId",
+    "reason"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 2,
+   "x": 80,
+   "y": 2192
+  },
+  {
+   "id": "boeFetchRequests",
+   "name": "boeFetchRequests",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 65281,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Profile.cloud"
+   ],
+   "writes": [
+    "BankEthos.reqIn",
+    "BankEthos.reqOut"
+   ],
+   "calls": 0,
+   "x": 420,
+   "y": 476
+  },
+  {
+   "id": "boeFetchMercContracts",
+   "name": "boeFetchMercContracts",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 65503,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Profile.cloud"
+   ],
+   "writes": [
+    "BankEthos.mercAsEmployer",
+    "BankEthos.mercAsMerc"
+   ],
+   "calls": 0,
+   "x": 420,
+   "y": 608
+  },
+  {
+   "id": "boeMercList",
+   "name": "boeMercList",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 65513,
+   "params": [
+    "ratePerHour",
+    "bio"
+   ],
+   "async": true,
+   "reads": [
+    "BankEthos.ready",
+    "Profile.cloud",
+    "BankEthos._handle",
+    "BankEthos._label"
+   ],
+   "writes": [],
+   "calls": 2,
+   "x": 80,
+   "y": 2324
+  },
+  {
+   "id": "boeMercClockOut",
+   "name": "boeMercClockOut",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 65635,
+   "params": [
+    "contractId",
+    "forced"
+   ],
+   "async": true,
+   "reads": [
+    "BankEthos.ready",
+    "Profile.cloud"
+   ],
+   "writes": [],
+   "calls": 2,
+   "x": 80,
+   "y": 2456
+  },
+  {
+   "id": "boeFetchMarket",
+   "name": "boeFetchMarket",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 65699,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Profile.cloud"
+   ],
+   "writes": [
+    "BankEthos.market",
+    "BankEthos.marketMine"
+   ],
+   "calls": 0,
+   "x": 420,
+   "y": 740
+  },
+  {
+   "id": "boeMarketCancel",
+   "name": "boeMarketCancel",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 65782,
+   "params": [
+    "id"
+   ],
+   "async": true,
+   "reads": [
+    "BankEthos.ready",
+    "Profile.cloud",
+    "Profile.cardCollection"
+   ],
+   "writes": [
+    "Profile.cardCollection"
+   ],
+   "calls": 1,
+   "x": 80,
+   "y": 2588
+  },
+  {
+   "id": "boePostContract",
+   "name": "boePostContract",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 65923,
+   "params": [
+    "role",
+    "hours",
+    "target",
+    "description"
+   ],
+   "async": true,
+   "reads": [
+    "BankEthos.ready",
+    "Profile.cloud",
+    "BankEthos._handle",
+    "BankEthos._label"
+   ],
+   "writes": [],
+   "calls": 2,
+   "x": 80,
+   "y": 2720
+  },
+  {
+   "id": "boeDepositRes",
+   "name": "boeDepositRes",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 66576,
+   "params": [
+    "id",
+    "qty"
+   ],
+   "async": true,
+   "reads": [
+    "BankEthos.ready"
+   ],
+   "writes": [],
+   "calls": 2,
+   "x": 80,
+   "y": 2852
+  },
+  {
+   "id": "boeRefreshWallet",
+   "name": "boeRefreshWallet",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 66921,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Profile.cloud",
+    "Cloud.client",
+    "BankEthos._wallet"
+   ],
+   "writes": [
+    "BankEthos._wallet",
+    "App._ownAccount"
+   ],
+   "calls": 0,
+   "x": 80,
+   "y": 2984
+  },
+  {
+   "id": "_serverMirrorCredit",
+   "name": "_serverMirrorCredit",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 64232,
+   "params": [
+    "amount",
+    "reason"
+   ],
+   "async": false,
+   "reads": [
+    "Profile.cloud",
+    "Cloud.client"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 760,
+   "y": 80
+  },
+  {
+   "id": "boeFetchLedger",
+   "name": "boeFetchLedger",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 65239,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Profile.cloud"
+   ],
+   "writes": [
+    "BankEthos.ledger"
+   ],
+   "calls": 0,
+   "x": 80,
+   "y": 3116
+  },
+  {
+   "id": "boeDeclineRequest",
+   "name": "boeDeclineRequest",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 65320,
+   "params": [
+    "id"
+   ],
+   "async": true,
+   "reads": [
+    "Profile.cloud"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 3248
+  },
+  {
+   "id": "boeCancelRequest",
+   "name": "boeCancelRequest",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 65327,
+   "params": [
+    "id"
+   ],
+   "async": true,
+   "reads": [
+    "Profile.cloud"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 3380
+  },
+  {
+   "id": "boeAutoSettle",
+   "name": "boeAutoSettle",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 65337,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Profile.cloud"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 3512
+  },
+  {
+   "id": "boeLoanCapacityAza",
+   "name": "boeLoanCapacityAza",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 65378,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 420,
+   "y": 872
+  },
+  {
+   "id": "boeFetchLoans",
+   "name": "boeFetchLoans",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 65382,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Profile.cloud"
+   ],
+   "writes": [
+    "BankEthos.loans"
+   ],
+   "calls": 0,
+   "x": 420,
+   "y": 1004
+  },
+  {
+   "id": "boePayInstallment",
+   "name": "boePayInstallment",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 65474,
+   "params": [
+    "loanId"
+   ],
+   "async": true,
+   "reads": [
+    "BankEthos.loans"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 3644
+  },
+  {
+   "id": "boePayLoanFull",
+   "name": "boePayLoanFull",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 65481,
+   "params": [
+    "loanId"
+   ],
+   "async": true,
+   "reads": [
+    "BankEthos.loans"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 3776
+  },
+  {
+   "id": "boeFetchMercListings",
+   "name": "boeFetchMercListings",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 65496,
+   "params": [],
+   "async": true,
+   "reads": [],
+   "writes": [
+    "BankEthos.mercListings"
+   ],
+   "calls": 0,
+   "x": 420,
+   "y": 1136
+  },
+  {
+   "id": "boeMercUnlist",
+   "name": "boeMercUnlist",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 65546,
+   "params": [],
+   "async": true,
+   "reads": [
+    "BankEthos.ready",
+    "Profile.cloud"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 3908
+  },
+  {
+   "id": "boeMercClockIn",
+   "name": "boeMercClockIn",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 65592,
+   "params": [
+    "contractId"
+   ],
+   "async": true,
+   "reads": [
+    "BankEthos.ready",
+    "Profile.cloud"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 4040
+  },
+  {
+   "id": "boeMercPause",
+   "name": "boeMercPause",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 65615,
+   "params": [
+    "contractId",
+    "pause"
+   ],
+   "async": true,
+   "reads": [
+    "BankEthos.ready",
+    "Profile.cloud"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 4172
+  },
+  {
+   "id": "boeMercAutoSettle",
+   "name": "boeMercAutoSettle",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 65672,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Profile.cloud"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 4304
+  },
+  {
+   "id": "boeMarketBid",
+   "name": "boeMarketBid",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 65857,
+   "params": [
+    "id",
+    "bid"
+   ],
+   "async": true,
+   "reads": [
+    "BankEthos.ready",
+    "Profile.cloud",
+    "BankEthos._handle"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 4436
+  },
+  {
+   "id": "boeMarketAutoSettle",
+   "name": "boeMarketAutoSettle",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 65879,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Profile.cloud"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 4568
+  },
+  {
+   "id": "boeFetchDirectory",
+   "name": "boeFetchDirectory",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 65899,
+   "params": [],
+   "async": true,
+   "reads": [],
+   "writes": [
+    "BankEthos.directory"
+   ],
+   "calls": 0,
+   "x": 80,
+   "y": 4700
+  },
+  {
+   "id": "boeFetchMercPosts",
+   "name": "boeFetchMercPosts",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 65909,
+   "params": [],
+   "async": true,
+   "reads": [],
+   "writes": [
+    "BankEthos.mercPosts"
+   ],
+   "calls": 0,
+   "x": 420,
+   "y": 1268
+  },
+  {
+   "id": "boeCancelPost",
+   "name": "boeCancelPost",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 65952,
+   "params": [
+    "id"
+   ],
+   "async": true,
+   "reads": [
+    "BankEthos.ready",
+    "Profile.cloud"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 4832
+  },
+  {
+   "id": "boeApplyMaintenance",
+   "name": "boeApplyMaintenance",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 66218,
+   "params": [],
+   "async": true,
+   "reads": [
+    "BankEthos.ready",
+    "BankEthos.lastFeeAt",
+    "BankEthos.balance",
+    "Profile.cloud"
+   ],
+   "writes": [
+    "BankEthos.lastFeeAt"
+   ],
+   "calls": 0,
+   "x": 80,
+   "y": 4964
+  },
+  {
+   "id": "boeDeposit",
+   "name": "boeDeposit",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 66416,
+   "params": [
+    "amt"
+   ],
+   "async": true,
+   "reads": [
+    "BankEthos.ready",
+    "Profile.gems",
+    "BankEthos.balance"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 5096
+  },
+  {
+   "id": "boeWithdraw",
+   "name": "boeWithdraw",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 66427,
+   "params": [
+    "amt"
+   ],
+   "async": true,
+   "reads": [
+    "BankEthos.ready",
+    "BankEthos.balance",
+    "Profile.gems"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 5228
+  },
+  {
+   "id": "boeDepositAza",
+   "name": "boeDepositAza",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 66460,
+   "params": [
+    "amt"
+   ],
+   "async": true,
+   "reads": [
+    "BankEthos.ready",
+    "Profile.sovereigns",
+    "BankEthos.aza"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 5360
+  },
+  {
+   "id": "boeWithdrawAza",
+   "name": "boeWithdrawAza",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 66472,
+   "params": [
+    "amt"
+   ],
+   "async": true,
+   "reads": [
+    "BankEthos.ready",
+    "BankEthos.aza"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 5492
+  },
+  {
+   "id": "boeWithdrawRes",
+   "name": "boeWithdrawRes",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 66728,
+   "params": [
+    "id",
+    "qty"
+   ],
+   "async": true,
+   "reads": [
+    "BankEthos.ready"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 5624
+  },
+  {
+   "id": "_sovAdopt",
+   "name": "_sovAdopt",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 73340,
+   "params": [
+    "j"
+   ],
+   "async": false,
+   "reads": [
+    "Profile.sovereigns"
+   ],
+   "writes": [
+    "Profile.sovereigns"
+   ],
+   "calls": 0,
+   "x": 760,
+   "y": 212
+  },
+  {
+   "id": "addSovereigns",
+   "name": "addSovereigns",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 73357,
+   "params": [
+    "amount"
+   ],
+   "async": false,
+   "reads": [
+    "Profile.sovereigns"
+   ],
+   "writes": [
+    "Profile.sovereigns"
+   ],
+   "calls": 0,
+   "x": 80,
+   "y": 5756
+  },
+  {
+   "id": "_gemsTaxExempt",
+   "name": "_gemsTaxExempt",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 63616,
+   "params": [
+    "fn"
+   ],
+   "async": false,
+   "reads": [
+    "Profile.gems"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 1400
+  },
+  {
+   "id": "_gemsTaxTick",
+   "name": "_gemsTaxTick",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 63628,
+   "params": [],
+   "async": false,
+   "reads": [
+    "Profile.gems"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 5888
+  },
+  {
+   "id": "walletHoldsSoon",
+   "name": "walletHoldsSoon",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 63744,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 1100,
+   "y": 80
+  },
+  {
+   "id": "walletIncomingSoon",
+   "name": "walletIncomingSoon",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 63836,
+   "params": [
+    "ms"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 6020
+  },
+  {
+   "id": "_serverMirrorCharge",
+   "name": "_serverMirrorCharge",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 64069,
+   "params": [
+    "amount",
+    "reason"
+   ],
+   "async": false,
+   "reads": [
+    "Profile.cloud",
+    "Cloud.client"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 760,
+   "y": 344
+  },
+  {
+   "id": "_serverMirrorGrant",
+   "name": "_serverMirrorGrant",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 64373,
+   "params": [
+    "itemId",
+    "qty"
+   ],
+   "async": false,
+   "reads": [
+    "Profile.cloud",
+    "Cloud.client"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 1532
+  },
+  {
+   "id": "boeLog",
+   "name": "boeLog",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 65215,
+   "params": [
+    "kind",
+    "cinder",
+    "aza",
+    "note",
+    "counterparty"
+   ],
+   "async": true,
+   "reads": [
+    "BankEthos.ledger",
+    "Profile.cloud"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 1664
+  },
+  {
+   "id": "boeSyncDirectory",
+   "name": "boeSyncDirectory",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 65228,
+   "params": [],
+   "async": true,
+   "reads": [
+    "BankEthos._handle",
+    "Profile.cloud",
+    "BankEthos._label"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 1796
+  },
+  {
+   "id": "boeResolveHandle",
+   "name": "boeResolveHandle",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 65250,
+   "params": [
+    "handle"
+   ],
+   "async": true,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 1928
+  },
+  {
+   "id": "boeStarterLoanUsed",
+   "name": "boeStarterLoanUsed",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 65368,
+   "params": [],
+   "async": false,
+   "reads": [
+    "BankEthos.loans"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 2060
+  },
+  {
+   "id": "boeHeroLevelTotal",
+   "name": "boeHeroLevelTotal",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 65370,
+   "params": [],
+   "async": false,
+   "reads": [
+    "Profile.heroes"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 760,
+   "y": 476
+  },
+  {
+   "id": "boeTotalAza",
+   "name": "boeTotalAza",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 66497,
+   "params": [],
+   "async": false,
+   "reads": [
+    "Profile.sovereigns",
+    "BankEthos.aza"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 2192
+  },
+  {
+   "id": "boeDropRes",
+   "name": "boeDropRes",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 66693,
+   "params": [
+    "id",
+    "qty"
+   ],
+   "async": true,
+   "reads": [
+    "BankEthos.ready",
+    "BankEthos.resources"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 6152
+  },
+  {
+   "id": "boeCatalogCheck",
+   "name": "boeCatalogCheck",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 66892,
+   "params": [
+    "extraBanked"
+   ],
+   "async": false,
+   "reads": [
+    "BankEthos.resources"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 6284
+  }
+ ],
+ "edges": [
+  {
+   "from": "walletFetchProgress",
+   "to": "walletHoldsSoon"
+  },
+  {
+   "from": "walletFetchProgress",
+   "to": "_gemsTaxExempt"
+  },
+  {
+   "from": "walletFetchProgress",
+   "to": "_serverMirrorCredit"
+  },
+  {
+   "from": "boeMarketBuyNow",
+   "to": "spendSovereigns"
+  },
+  {
+   "from": "boeMarketBuyNow",
+   "to": "spendGems"
+  },
+  {
+   "from": "boeMarketBuyNow",
+   "to": "addGems"
+  },
+  {
+   "from": "boeMarketBuyNow",
+   "to": "boeLog"
+  },
+  {
+   "from": "boeMarketBuyNow",
+   "to": "boeFetchMarket"
+  },
+  {
+   "from": "boeExchangeAzaToCinder",
+   "to": "boeTotalAza"
+  },
+  {
+   "from": "boeExchangeAzaToCinder",
+   "to": "_sovAdopt"
+  },
+  {
+   "from": "boeExchangeAzaToCinder",
+   "to": "boeLog"
+  },
+  {
+   "from": "boePayRequest",
+   "to": "spendGems"
+  },
+  {
+   "from": "boePayRequest",
+   "to": "addGems"
+  },
+  {
+   "from": "boePayRequest",
+   "to": "boeLog"
+  },
+  {
+   "from": "boePayRequest",
+   "to": "boeFetchRequests"
+  },
+  {
+   "from": "boeCreateStarterLoan",
+   "to": "boeFetchLoans"
+  },
+  {
+   "from": "boeCreateStarterLoan",
+   "to": "boeStarterLoanUsed"
+  },
+  {
+   "from": "boeCreateStarterLoan",
+   "to": "boeLog"
+  },
+  {
+   "from": "boeCreateLoan",
+   "to": "boeLoanCapacityAza"
+  },
+  {
+   "from": "boeCreateLoan",
+   "to": "boeLog"
+  },
+  {
+   "from": "boeCreateLoan",
+   "to": "boeFetchLoans"
+  },
+  {
+   "from": "boeApplySubmit",
+   "to": "boeSyncDirectory"
+  },
+  {
+   "from": "walletHoldsCheck",
+   "to": "_gemsTaxExempt"
+  },
+  {
+   "from": "walletIncomingCheck",
+   "to": "_gemsTaxExempt"
+  },
+  {
+   "from": "walletReconcile",
+   "to": "_gemsTaxExempt"
+  },
+  {
+   "from": "boeCreateRequest",
+   "to": "boeResolveHandle"
+  },
+  {
+   "from": "boeCreateRequest",
+   "to": "boeLog"
+  },
+  {
+   "from": "boeCreateRequest",
+   "to": "boeFetchRequests"
+  },
+  {
+   "from": "boeMercHire",
+   "to": "boeLog"
+  },
+  {
+   "from": "boeMercHire",
+   "to": "boeFetchMercListings"
+  },
+  {
+   "from": "boeMercHire",
+   "to": "boeFetchMercContracts"
+  },
+  {
+   "from": "boeMarketList",
+   "to": "boeLog"
+  },
+  {
+   "from": "boeMarketList",
+   "to": "boeFetchMarket"
+  },
+  {
+   "from": "boeAcceptPost",
+   "to": "boeLog"
+  },
+  {
+   "from": "boeAcceptPost",
+   "to": "boeFetchMercPosts"
+  },
+  {
+   "from": "boeAcceptPost",
+   "to": "boeFetchMercContracts"
+  },
+  {
+   "from": "spendGems",
+   "to": "_serverMirrorCharge"
+  },
+  {
+   "from": "addGems",
+   "to": "_serverMirrorCredit"
+  },
+  {
+   "from": "spendSovereigns",
+   "to": "_sovAdopt"
+  },
+  {
+   "from": "_serverMirrorPurchase",
+   "to": "_serverMirrorCharge"
+  },
+  {
+   "from": "_serverMirrorPurchase",
+   "to": "_serverMirrorGrant"
+  },
+  {
+   "from": "boeMercList",
+   "to": "boeFetchMercListings"
+  },
+  {
+   "from": "boeMercList",
+   "to": "boeFetchMercContracts"
+  },
+  {
+   "from": "boeMercClockOut",
+   "to": "boeLog"
+  },
+  {
+   "from": "boeMercClockOut",
+   "to": "boeFetchMercContracts"
+  },
+  {
+   "from": "boeMarketCancel",
+   "to": "boeFetchMarket"
+  },
+  {
+   "from": "boePostContract",
+   "to": "boeLog"
+  },
+  {
+   "from": "boePostContract",
+   "to": "boeFetchMercPosts"
+  },
+  {
+   "from": "boeDepositRes",
+   "to": "spendGems"
+  },
+  {
+   "from": "boeDepositRes",
+   "to": "boeLog"
+  },
+  {
+   "from": "_serverMirrorCredit",
+   "to": "walletHoldsSoon"
+  },
+  {
+   "from": "boeDeclineRequest",
+   "to": "boeFetchRequests"
+  },
+  {
+   "from": "boeCancelRequest",
+   "to": "boeFetchRequests"
+  },
+  {
+   "from": "boeAutoSettle",
+   "to": "boeLog"
+  },
+  {
+   "from": "boeLoanCapacityAza",
+   "to": "boeHeroLevelTotal"
+  },
+  {
+   "from": "boePayInstallment",
+   "to": "boeFetchLoans"
+  },
+  {
+   "from": "boePayLoanFull",
+   "to": "boeFetchLoans"
+  },
+  {
+   "from": "boeMercUnlist",
+   "to": "boeFetchMercListings"
+  },
+  {
+   "from": "boeMercClockIn",
+   "to": "boeFetchMercContracts"
+  },
+  {
+   "from": "boeMercPause",
+   "to": "boeFetchMercContracts"
+  },
+  {
+   "from": "boeMercAutoSettle",
+   "to": "boeLog"
+  },
+  {
+   "from": "boeMarketBid",
+   "to": "boeFetchMarket"
+  },
+  {
+   "from": "boeMarketAutoSettle",
+   "to": "boeLog"
+  },
+  {
+   "from": "boeCancelPost",
+   "to": "boeFetchMercPosts"
+  },
+  {
+   "from": "boeDeposit",
+   "to": "boeLog"
+  },
+  {
+   "from": "boeWithdraw",
+   "to": "boeLog"
+  },
+  {
+   "from": "boeDepositAza",
+   "to": "boeLog"
+  },
+  {
+   "from": "boeWithdrawAza",
+   "to": "boeLog"
+  },
+  {
+   "from": "boeWithdrawRes",
+   "to": "boeLog"
+  }
+ ]
+}

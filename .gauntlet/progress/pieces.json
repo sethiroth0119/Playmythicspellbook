@@ -1,0 +1,348 @@
+[
+ {
+  "id": "forge-save-contract-net",
+  "title": "Save-path contract net: id coverage AND no-op round-trip (new registered suite)",
+  "goal": "A new root suite _forgeids_smoke.mjs registered in _checkall.mjs with expect 0, in TWO halves. HALF A (id coverage): every string-literal id read by captureEditorIntoCard — derived at run time by lifting the function source between 150654 and 152135 and regexing every v('…'), num('…') and getElementById('…') — exists in the HTML renderCardEditor() produces; plus the class-based readback hooks invisible to the id convention (.learn-row/.learn-move 152136, #elem-mods-rows .elem-mod-row + .em-* 152145, .sub-card[data-sub-idx] 150214, #trigger-rows .trg-row, #fusion-req-rows .fusion-req-row, #archon-req-rows .archon-req-row, .ed-treatas-zone, .ed-value-axis, #ed-factions [data-faction], #ed-traitpool [data-traitpool]); plus the nine ability drawers exist by name after bindCardEditor(). HALF B — THE ONE THE OLD PLAN LACKED (no-op round-trip): load every card in Forge.customCards and the built-in catalogue into renderCardEditor/bindCardEditor, run captureEditorIntoCard with ZERO user input, and assert the serialised card is identical to the input. This is the only test that can catch the 77 literal-fallback num() sites (150667; e.g. num('ed-ig-chance',1,100,100), num('ed-onplay-amount',0,200,6)) silently rewriting a live card definition to a constant when a layout piece removes a field from the DOM — and saveCardFromInputs cloud-pushes immediately at 152231-152245, so the damaged definition reaches every owner.",
+  "bar": "On unmodified HEAD: ALL PASS, exit 0, and the suite PRINTS the derived id count and asserts it is >= 200 (a lifter that silently returns an empty list must not pass — the old '25 PASS lines' floor was arbitrary and unvalidated). Half B prints ALL-IDENTICAL over >= 30 real cards including at least one of each type (unit, spell, trap, summon, weather, hero). TWO DISCRIMINATING TESTS, both in-memory (NOT sed -i on a 15 MB mixed-CRLF file): (1) mutate the captured renderCardEditor() output string to rename one id and re-run half A — it must print a FAIL line NAMING that id; (2) monkey-patch renderCardEditor to omit one numeric field's markup and re-run half B — it must print a FAIL line naming that field and showing old→new value. A suite that passes both before and after either mutation has not earned its place.",
+  "risk": "low",
+  "dep": [],
+  "idx": false,
+  "files": [
+   "_forgeids_smoke.mjs",
+   "_checkall.mjs"
+  ]
+ },
+ {
+  "id": "forge-driver-harness",
+  "title": "A Forge driver harness that actually reaches the editor (and can A/B safely)",
+  "goal": "Every screenshot bar in the previous plan was unreachable and would have failed SILENTLY. renderForge() is admin-gated at 144667-144673: a non-admin gets showToast + App.screen='title' + setTimeout(render,0) + return — no error, no throw. A driver built on .gauntlet/_shot-screen.mjs (`App.screen=s; render()`) screenshots the TITLE SCREEN and reports success. Build .gauntlet/_forge-harness.mjs exporting: openCardEditor(page, cardId) which sets Profile.cloud={signedIn:true,email:<an ADMIN_EMAILS entry>}, renders, and HARD-ASSERTS App.screen==='forge' && document.querySelector('.card-editor') before returning; seedNonAdmin(profile) for ownership-gated UI (deckKeyOwnedCount returns Infinity for admins at 59966, so pieces 20 and 21 cannot be judged from the owner's own client); forceOpen(selector) which sets details.open=true on every .fx-sec/.fx-sub being measured and appends the host to document.body (_fxOpen at 133951 returns '' unless App._fxOpen was populated, so every section renders CLOSED, and App._fxOpen accumulates across cards and is never cleared — offsetParent is null for everything inside a closed <details> and for every element in a detached host, so an unforced A/B compares two different open-sets, or 0 against 0); and abRun(driver) which creates `git worktree add ../head-ab HEAD` and runs the same driver with cwd set there. NO PIECE MAY USE `git stash` FOR A/B — it is whole-tree on a repo whose own .gauntlet/precommit-scan.mjs exists because other agents write here, and deploy.mjs:16-49 minifies public/index.html in place, so a stash racing a deploy is unrecoverable.",
+  "bar": "Mechanically self-proving. (1) Called with a non-admin profile, openCardEditor THROWS with a message naming the admin gate — it must not return a page. (2) Called with the admin profile it returns and `document.querySelectorAll('.editor-field').length` is > 100. (3) forceOpen makes `[...document.querySelectorAll('#fx-onplay .editor-field')].filter(e=>e.offsetParent!==null).length` > 0 where the same query without forceOpen returns 0 — print both numbers. (4) abRun on an UNCHANGED tree returns byte-identical metrics from both sides (a harness whose A/B reports a difference on a no-op diff is measuring noise). (5) `git worktree list` shows the HEAD worktree created and removed cleanly; `git status` on the main tree is unchanged by the A/B run.",
+  "risk": "low",
+  "dep": [],
+  "idx": false,
+  "files": [
+   ".gauntlet/_forge-harness.mjs"
+  ]
+ },
+ {
+  "id": "editor-width",
+  "title": "Unlock the editor width and make the field grid responsive — with a legibility floor",
+  "goal": "`.card-editor { max-width: 900px; margin: 0 auto }` at 33891-33898 still applies to `.card-editor.fx-two` — 19553-19556 sets display/grid-template-columns only and does NOT override max-width. So on any monitor the editor is 900px: a fixed 380px sticky asset rail plus ~500px of properties holding 343 fields in a 2-column grid, ~230px per column. That declaration IS the owner's 'doesn't fit the screen'. Scope an override to .fx-two and let the field grid gain COLUMNS, not just width: `.editor-grid` is `repeat(2, 1fr)` at 33912 and is SHARED by renderMoveEditor, the event editor and the elem-mod rows, so the column-count change must be scoped `.fx-two .editor-grid` or it leaks. Widening alone cannot hit a scrollHeight target — wider columns, same row count. State a rule for the many `.editor-field.full` blocks (grid-column 1/-1), which stretch absurdly at 4 columns. The 1080px media query at 19585 collapses to one column with a static unbounded .fx-assets rail; that path needs its own answer, not just 'no horizontal scrollbar'.",
+  "bar": "Measured through the harness with forced-open state, plus a legibility floor that makes the density number unpurchasable by shrinking type. DENSITY: at 1600x1000 with a FIXED, EXPLICIT open-set (identity + kind + effects + on-play forced open, everything else forced closed, identical on both sides of the A/B), computed width of `.card-editor.fx-two` > 1300px where HEAD is exactly 900px, and `.fx-props` scrollHeight for the SAME card with the SAME open-set drops >= 30%. LEGIBILITY FLOOR (all four widths): no `.fx-two .editor-grid` computed column narrower than 260px; no label element whose scrollWidth exceeds its clientWidth (nothing truncated) and none wrapping past 2 lines; no input or select with computed height < 28px; computed font-size on labels and controls is >= HEAD's. CONTROLS: the move editor's `.card-editor` (152445) and the event editor's (153673) are still 900px; no horizontal page scrollbar at 1600/1280/1080/720; at 1080 and 720 the .fx-assets rail is not full-height above the properties column (assert .fx-props top < viewport height); the trait-pool modal still escapes to <body> — assert `modal.offsetParent === document.body` and its getBoundingClientRect() is inside the viewport (adding transform/filter/contain to any .card-editor ancestor re-traps it, see 150447-150452). NOTE the `.fx-actions` save bar is `position:sticky;bottom:0` (19574) so 'reachable without scrolling' is true on HEAD and after any change — it is a CONTROL, not a bar.",
+  "risk": "medium",
+  "dep": [
+   "forge-save-contract-net",
+   "forge-driver-harness"
+  ],
+  "idx": true,
+  "files": [
+   "public/index.html"
+  ]
+ },
+ {
+  "id": "effect-field-gating",
+  "title": "Show only the fields the chosen effect actually uses — without rewriting live cards",
+  "goal": "Twenty-one pickers render UNCONDITIONALLY labelled '(when effect is X)' (`grep -c 'when effect is'` = 21). Every author sees Board Wipe scope (147355), Sacrifice effect (147369), Call Seal (147443), Buff target (147431), Paint Surface (147139), Negate-Field scope (147194), Vanish+Return (147206), Search-Deck type (147083), Summon-From-Zone (147117), Cheapen Duration (147004) and the rest for EVERY effect — in the primary on-play block, in the five SIBLING blocks (148110, 148166, 148305, 148318, 148511) AND in the six onPlayExtra slots. All of them are in scope; gating only the primary block passes a naive count bar while leaving the wall intact. Gate live on the select's change event with no full re-render. THREE HARD CONSTRAINTS. (1) Hidden fields MUST stay in the DOM — not conditionally rendered. Remove a numeric field and num() returns its LITERAL fallback (150667), silently rewriting the card and cloud-pushing it (152231). This is the single most dangerous line in the whole job. (2) They must still count as .editor-field descendants or the empty-section sweep at 150611-150614 sets display:none on the whole section. (3) The sweep and the nav-chip hider at 150615-150618 both run ONCE inside bindCardEditor. Gating live without re-running them leaves a visible drawer full of nothing when an effect empties a sub-section — the exact bug 150607's comment was written to fix — and leaves a live chip pointing at a hidden section. The change handler must re-run both passes.",
+  "bar": "THE PERCENTAGE BAR IS REPLACED BY A PER-EFFECT WHITELIST, because a single ratio on one favourable effect (drawCards, the effect with the fewest fields) is gameable. FOR EVERY ONE of the ~118 ONPLAY_TYPES ids: after setting the select by assigning .value AND dispatching input+change (assigning .value alone fires nothing and tests a dead form), the set of VISIBLE field ids inside the on-play block equals the set that effect's save path actually reads — derivable from the gating at 151392-151553. Same assertion for the five sibling blocks and the six extra slots, not just #fx-onplay. SWEEP COHERENCE, for every effect id: no .fx-sec/.fx-sub is visible with zero visible .editor-field, and no visible nav chip points at a hidden section. NO LIVE-DATA DAMAGE — the assertion that settles the piece: `node _forgeids_smoke.mjs` half B stays ALL-IDENTICAL over all >= 30 real cards. A builder who implements gating by conditional template rendering (the natural way) will pass every visible-field count and FAIL this. ROUND-TRIP: type a value under effect A, switch to B, switch back to A, run captureEditorIntoCard, assert the value is present in the captured object — done in-memory in the driver, NOT by saving to live Forge data. NOTHING GOES BLANK: the nine ability drawers still appear by name (the runtime split at 150550 buckets TOP-LEVEL children of #fx-ingrave .editor-grid by probing [id^=\"ed-ig-\"] — one extra wrapper div collapses all nine into a single 'In-Grave' drawer, the exact bug that code fixes).",
+  "risk": "high",
+  "dep": [
+   "forge-save-contract-net",
+   "forge-driver-harness",
+   "editor-width"
+  ],
+  "idx": true,
+  "files": [
+   "public/index.html"
+  ]
+ },
+ {
+  "id": "owner-checkpoint",
+  "title": "Hard stop: show the owner the gating model and get four decisions in writing",
+  "goal": "The owner said 'do a loop'. Pieces 6, 7, 10, 11, 12, 14, 16, 17, 19, 20 and 21 all build on decisions I cannot make alone. Deliver real screenshots of the widened + gated editor (pieces 3-4) and get four answers recorded in the code comments the way this file does. (i) THE MOVE MODEL: 'either they are an ability, physical, or magic' is ONE mutually-exclusive control, but the data is two orthogonal axes — mv-kind (152455) offers attack/ability/summon while teleport, phaseStep and grapplingHook carry kind:'movement' with no option, and mv-type (152478) offers physical/magic only. A literal 3-way control cannot express 'ability + magic' and destroys kind:'summon' and kind:'movement'. Is 'ability' a kind or a damage channel? (ii) AI DECK SIZE at 40-80: a go/no-go, not a preference. Deck-out loses the match (_drawFailed at 101347, end at 120388); AI pinned at 40 against a player at 80 means the paying player cannot lose the fatigue race, and copies come from paid packs. Match the AI, or cap the max below 80. (iii) Does the Realm Deck's 21 count toward the 40-80 total? Piece 20 assumes OUTSIDE (a separate roster, as today). (iv) REALM OWNERSHIP: ownership is ALREADY fully enforced (245471-245476 computes deckKeyOwnedCount, renders '🔒 Not owned', greys the row, disables +; handler re-checks at 246156-246158). So does 'just like how they add to their main deck' mean UX PARITY (the Realm roster is added from a 340px scrolling list at 245503 instead of the main deck's card grid + search + right-click detail) or a SHARED owned-copy budget across main+side+realm? The shared-budget reading retroactively invalidates decks players built and paid for; I will not choose it unilaterally.",
+  "bar": "Not a code bar — a decision bar, and it is checkable. Four screenshots exist and show the REAL editor (harness-asserted App.screen==='forge' and a .card-editor in the DOM, not the title screen). Four answers are recorded verbatim in the plan and, where they change behaviour, as a comment at the site they govern. Pieces 6, 7, 10-12, 16, 17, 19, 20 and 21 do not start until all four are recorded. A checkpoint that produces screenshots but no written decisions has not happened.",
+  "risk": "low",
+  "dep": [
+   "effect-field-gating"
+  ],
+  "idx": false,
+  "files": []
+ },
+ {
+  "id": "effect-type-picker",
+  "title": "Make the 118-effect dropdown findable — WITHOUT bricking every Counter card",
+  "goal": "ONPLAY_TYPES (101405-101696) has 118 entries; ONPLAY_TYPE_GROUPS (101702-101712) has 10 groups covering 112, with exactly 6 ungrouped (purityPact, buffPerCard, mirrorWard, soulSwap, tributeRite, stillnessSeal) swept into '🔧 Other' by _onplayTypeOptgroups (101719). Group the 6, add a type-to-filter and a one-line inline explanation of the selected effect, at all 11 call sites INCLUDING the spell select at 146471 and the trap select — 146471 is NOT like the others: it prepends nine hand-written classics (_CLASSIC_SPELL_FX, 118900) then appends the grouped 118, and a spell's or trap's whole body IS that dropdown, so they are in scope, not 'at minimum'. Ungrouped is not cosmetic: an id in no group is invisible to _counterScopeOk (159468) so a scoped Counter can never answer it. COPY THE HOUSE PATTERN, do not invent a fourth: buildPassiveOpts at 145808 with _passiveCat at 145801 already buckets ~187 PASSIVES, emits `<optgroup label=\"… (n)\">` with counts, keeps 'none' outside the groups and appends an '◇ Other' bucket. THE LABEL STRINGS ARE PERSISTED LIVE DATA. The contract comment at 159450 is explicit: `card.counterScope = ['🃏 Cards & Hand', '⚰️ Graveyard & Void']  // group labels`, matched by literal string at 159470 (`scope.indexOf(g.label) < 0`) and FAILING CLOSED at 159473 (`return false`). Renaming or splitting a group silently narrows or empties every already-authored Counter card's scope and the counter simply refuses everything, with no error.",
+  "bar": "THE LABEL FREEZE IS THE PRIMARY BAR. The 10 existing group label strings are byte-identical to HEAD (script-diffed), and grouping the 6 orphans is done by ADDING them to existing groups or by adding NEW groups — never by renaming or splitting an existing one. If any existing label must change, the piece ships a counterScope migration over Forge.customCards AND asserts: for every card carrying a counterScope, _counterScopeOk returns the SAME answer as HEAD for the same action (enumerate every card × every ONPLAY_TYPES id and diff the boolean matrix against HEAD's). REGISTRY: zero ungrouped ids (HEAD has exactly 6 — the critic prints both), no id in two groups (HEAD has 0 duplicates, so this is a CONTROL not a bar), and _counterScopeOk resolves a group for every id. FINDABILITY, with thresholds so 'size for scanning' is not prose: no optgroup holds more than 12 options (HEAD's '⚰️ Graveyard & Void' holds 19); typing 'discard' into the filter leaves only options whose label matches and clearing restores all 118; selecting an effect renders its meaning in the DOM with no modal, and the rendered text EQUALS the effect's description string from the registry (DOM-asserted, not eyeballed). SCOPE: the spell select at 146471 and the trap select get the same filter and inline explanation, with the nine classics still listed and still ahead of the groups. `node _duel_smoke.mjs` ALL PASS — it text-slices `const ONPLAY_TYPES = [` to the first line-start `];` (29-32) and asserts exact needs.join() strings per effect (55), so a reformatted literal makes it THROW, which _checkall reports as CRASH not a readable failure.",
+  "risk": "high",
+  "dep": [
+   "owner-checkpoint"
+  ],
+  "idx": true,
+  "files": [
+   "public/index.html"
+  ]
+ },
+ {
+  "id": "editor-nav-index",
+  "title": "A section index that reflects what the card actually contains",
+  "goal": "The sticky chip bar at 148758-148765 (bound 150620-150643) offers five chips — identity, kind, obtain, effects, evolve — for an editor with five sections plus four sub-drawers plus the nine ability drawers the runtime split produces at 150550. Name those drawers so an author jumps to 'On Attack' or 'Aura' directly, and show per-section how many fields the author has FILLED. Also stop emitting fx-obtain (148893) entirely: it contains only craftCostBlock, which is `''` at 146747 with a single use at 148896 — a dead section surviving only because the sweep at 150611 hides it, which will resurrect the moment anyone adds a field there. Deleting it has two consequences the old plan missed: the section ordinals are HARDCODED (`<span class=\"fx-sum-n\">1</span>` at 148768, 2 at 148869, 3 at 148894, 4 at 148901, 5 at 148923), so removal leaves the editor reading 1,2,4,5; and the chip key is string-concatenated onto 'fx-' at 150620/150627, so a stale key breaks its chip with NO console error.",
+  "bar": "`fx-obtain` appears ZERO times in the string renderCardEditor() returns (HEAD has it), and the remaining `fx-sum-n` values are contiguous 1..N. On a card with an aura and an on-kill ability, the nav lists both drawers by name and clicking each yields document.getElementById('fx-'+key).open === true AND a changed getBoundingClientRect().top. FILLED IS DEFINED, not left to the builder: a field counts as filled when its value differs from the value renderCardEditor emits for that field on an EMPTY draft (App.editingCardId='NEW') — the driver computes the empty-draft baseline itself and the badge must equal that computed count for three seeded cards. The badge next to Effects increments when an effect is set and returns to its baseline when cleared. CROSS-CARD STATE, which the old bar could not detect: App._fxOpen (133951) accumulates section ids across cards and is never cleared, so the driver must open card A, expand two sections, open card B, and assert no chip claims a section that is hidden on B. PINNED REGRESSIONS: `node .gauntlet/drive-scroll-keep.mjs` regex-tests the raw HTML for /id=\"fx-effects\" open/, /id=\"fx-kind\">/ and the ABSENCE of / open>/ (126-134); run-ai-gate's U4 block (597-612) counts exact source markers including [\"_fxOpen('fx-effects')\", 1]; and `node _cardcraft_smoke.mjs` pins the card-crafting deletion guard while requiring item crafting to survive — run it explicitly, it is what fx-obtain's emptiness comes from.",
+  "risk": "medium",
+  "dep": [
+   "effect-field-gating"
+  ],
+  "idx": true,
+  "files": [
+   "public/index.html"
+  ]
+ },
+ {
+  "id": "status-picker-info",
+  "title": "Grouped, self-explaining status pickers — all EIGHT of them",
+  "goal": "The previous plan named five status selects and MISSED the three that matter most for day-to-day authoring. `const statusList = ['','strong','weak','poison','burn','bleed','stun','slow','frozen','sleep','confusion','paralysis','dispel','stumble','assisted']` at 146473 is FOURTEEN ids hardcoded, and it feeds THREE selects: spellStatusOpts (146474 → #ed-spell-status at 146510), _pcStOpts (146501 → #ed-persist-status-id at 146558) and trapStatusOpts (146607 → #ed-trap-status at 146615). STATUS_EFFECTS (39741-39941) has 60 entries, so 46 statuses are simply unauthorable on spells and traps — the two card types where statuses actually get authored. All eight pickers are in scope: those three plus the move editor's #mv-status and #mv-status2 (152435-152442 off STATUS_ORDER at 152406-152418), the on-play primary (146781), the on-Kalon-transform one (146203) and the extras via _statOptsFor (147244). A field-derived taxonomy already exists with player-facing hints: the Book of Knowledge grouper at 248446-248488 (dot/control/debuff/buff + ✨ Other) plus statusCard's mechanical summary at 248506 ('3-6 dmg/turn', '+4 DEF', 'cannot act'). Hoist both into one shared helper shaped like buildPassiveOpts (145808) and use it everywhere.",
+  "bar": "COVERAGE, which is the whole point: every one of the 60 STATUS_EFFECTS ids appears exactly once across the optgroups of each of the EIGHT rewritten pickers — script-checked against the lifted literal, with the count printed per picker (HEAD prints 14 for the three spell/trap/persist selects; that delta is the piece). The '— None —' option is asserted separately as a value-'' option OUTSIDE the registry set, since the on-play select filters st.id !== 'none' (146782) against a registry that has no 'none' row. EXPLANATION, DOM-asserted not eyeballed: selecting `siphoned` renders text in the DOM whose content EQUALS STATUS_EFFECTS.siphoned.desc concatenated with the mechanical summary string the 248506 helper produces for it, with no modal opened (assert no .modal in the DOM after the change event). TWO BEHAVIOURS THAT MUST NOT CONVERGE: #mv-status still lists knockback and grappleHook and still translates them to move.knockback / move.pull on save (the virtual-primary-status synthesis at 152431-152433 — dropping them breaks authoring of every knockback move), while the Book of Knowledge still EXCLUDES them and its tab still counts 58 (248691-248694). The Codex's own rendering is unchanged (screenshot A/B via harness worktree). `node _duel_smoke.mjs` ALL PASS — it text-slices the STATUS_EFFECTS literal and validates applyStatus ids against it. `node _forgeids_smoke.mjs` half B ALL-IDENTICAL: widening a status list must not change any saved card.",
+  "risk": "medium",
+  "dep": [
+   "forge-save-contract-net",
+   "forge-driver-harness"
+  ],
+  "idx": true,
+  "files": [
+   "public/index.html"
+  ]
+ },
+ {
+  "id": "spell-trap-body",
+  "title": "The spell and trap bodies — the two card types that are nothing but dropdowns",
+  "goal": "A spell's and a trap's entire authored body is the type-rules block: for a spell, #ed-spell-effect + amount + target + cast range + status + subtype + fusion-Kalon picker + the whole persistent-enchantment sub-block (146537-146570: aura stat/target, dot, heal, status id/target, energy regen), and for a trap the parallel block ending at #ed-trap-status (146615). These render as one flat run of .editor-field with no sub-grouping, no gating and no explanation, and the persistent-enchantment fields show for every spell whether or not `persistent` is set. Group them, gate the persistent sub-block on the persistent toggle and the fusion-Kalon picker on subtype==='polycreation' (the same live-gating discipline as piece 4: hidden in the DOM, still .editor-field, sweep re-run on change), and carry piece 6's filter + inline explanation and piece 8's grouped status picker into both bodies.",
+  "bar": "With type='spell' and persistent OFF, zero fields of the persistent sub-block are visible and ALL of them are still in the DOM (assert both: querySelectorAll count unchanged, offsetParent-visible count zero) — the DOM half is what protects _pcPersistDur / _pcPersistDrw / the energy-regen number from num()'s literal fallbacks. Toggling persistent ON reveals exactly the sub-block's fields and nothing else. With subtype != 'polycreation' the fusion-Kalon picker is hidden and in the DOM. The visible .editor-field count for a plain damage spell drops >= 40% versus HEAD at the same forced-open state, with the piece-3 legibility floor still satisfied. NO SECTION GOES EMPTY-BUT-VISIBLE for any (type × effect × persistent × subtype) combination the driver enumerates. THE GATE: `node _forgeids_smoke.mjs` half B stays ALL-IDENTICAL over every spell and trap in Forge.customCards — a conditionally-rendered persistent block would silently rewrite persistDuration to its fallback on the next save of any spell. `node _duel_smoke.mjs` ALL PASS (it validates _CLASSIC_SPELL_FX ids at 174012/174038).",
+  "risk": "high",
+  "dep": [
+   "effect-type-picker",
+   "status-picker-info"
+  ],
+  "idx": true,
+  "files": [
+   "public/index.html"
+  ]
+ },
+ {
+  "id": "move-picker-facets",
+  "title": "Moves grouped by element, and by ability / physical / magic",
+  "goal": "The owner's 'Moves are set by element, and either they are an ability, physical, or magic' is already how the data is shaped — `element` (17 distinct values live) crossed with `kind` (attack/ability/movement) and `type` (physical/magic) — and renderMovePickerPopup (80637) already collapses the second axis in its kindChip at 80665: kind==='ability' ? '◇ ABILITY' : '⚔ '+(type||'phys'). Missing: facets and section headers. `filtered` is a flat alphabetical list of all 200 moves with the selected one hoisted (80652-80656) plus one free-text substring search (80645-80651), so 'all fire magic attacks' means typing 'fire' and eyeballing 12 tiles for a chip. Add element and attack-type facets with grouped headers, reading allMovesArray() (80588) so Forge.customMoves overrides are included. The presentation of the second axis must match whatever the owner decided at the checkpoint (decision i).",
+  "bar": "No move lost or double-listed: with no facet active, the sum of tiles across all groups equals allMovesArray().length (200 today — the critic prints it). Six declared elements have zero moves (ice, crystal, corruption, spirit, lava, gravity) and must render no empty group. Two values used by nine live moves are NOT in ELEMENTS at all — `neutral` (tailWhip, counterStance, ambushGuardShort, ambushGuardLong, grapplingHook) and `none` (dualSlice, doubleKick, twinStrike, furySwipes) — and all nine must remain reachable rather than falling out of the grouping; the driver names all nine and asserts each is in exactly one group. Selecting fire + magic shows exactly the set a node-side computation over the lifted MOVES + COSMIC_SKILL_MOVES literals says it should. The currently-selected move is still visible when the picker opens on a learnset row (the hoist at 80652). DO NOT add a display-only field to any move to make grouping easier: _duel_smoke.mjs:72 whitelists 25 fields on the 20 arena moves and fails on a 26th. The facet chips follow the checkpoint's move-model decision — if the owner chose a 3-way control, kind:'summon' and kind:'movement' must still be reachable in the picker and the driver asserts it.",
+  "risk": "medium",
+  "dep": [
+   "owner-checkpoint"
+  ],
+  "idx": true,
+  "files": [
+   "public/index.html"
+  ]
+ },
+ {
+  "id": "move-editor-type-guard",
+  "title": "Stop the move editor silently rewriting abilities into physical attacks",
+  "goal": "An active live-data corruption bug inside the owner's ability/physical/magic ask. The move save at 152868-152869 builds `const move = { id, name, kind, type, element, cost, range, desc }` and writes `type` UNCONDITIONALLY — but 78 of 86 shipped abilities have no `type`, so opening any of them and pressing Save stamps type:'physical' (the first option of #mv-type at 152478) onto an override in Forge.customMoves, and lookupMove (80577) prefers customMoves over the built-in FOR THE ENTIRE GAME. Two more of the same shape: the Kind select (152455) offers only attack/ability/summon so the three kind:'movement' moves (teleport, phaseStep, grapplingHook) are rewritten to 'attack'; and four moves carry element:'none', which has no <option> (152400 bolts on only 'neutral'), so they reset to 'fire'. Fix the save so an ability keeps no damage channel unless the author sets one, make movement and none round-trip, and express the Kind/Damage-Type relationship per the checkpoint's decision (i). While in the list, fix the dead filter at 152289-152290: it runs before the 'edited' special case and no move has kind==='edited', so '✎ Edited (n)' always shows an empty list beside a non-zero badge.",
+  "bar": "Proven by round-trip, pinned by a NEW registered smoke suite, because this rewrites catalogue data on every save. On HEAD the suite must print EXACTLY FOUR FAIL LINES naming recover, teleport, dualSlice and the edited-filter case — not merely 'fail', because a suite referencing a helper the piece introduces THROWS at lift time and _checkall reports CRASH with zero FAIL lines, which reads as 'it failed'. After: load `recover` (ability, no type) → save → the produced object has NO `type` key (HEAD produces type:'physical'); `teleport` → save → kind==='movement' (HEAD: 'attack'); `dualSlice` → save → element==='none' (HEAD: 'fire'); the ✎ Edited filter lists n rows matching its badge. THE MODEL BAR, which the old plan left as prose: the shipped Kind/Damage-Type control matches the checkpoint decision, asserted concretely — the driver enumerates every (kind × type) pair the control can express and compares it to the pair-set the decision names, including whether kind:'summon' and kind:'movement' remain expressible.",
+  "risk": "medium",
+  "dep": [
+   "owner-checkpoint"
+  ],
+  "idx": true,
+  "files": [
+   "public/index.html",
+   "_moveeditor_smoke.mjs",
+   "_checkall.mjs"
+  ]
+ },
+ {
+  "id": "move-editor-density",
+  "title": "The move editor gets the same section treatment as the card editor",
+  "goal": "Piece 3's control ('the move editor's .card-editor is still 900px') pins the second-worst screen in the Forge as a PASS CONDITION, and the owner authors moves constantly. renderMoveEditor (152387-152783) is 81 .editor-field in ONE flat .editor-grid with no fx-* sections, no nav, no gating, under the same 900px cap at 33891. Give it the same structure the card editor gets: grouped <details> sections, a section nav, the widened shell, and gating of the fields that only apply to some kinds (the status/knockback fields at 152435-152442 are meaningless on a summon; damage fields are meaningless on an ability with no channel). This is scoped by the checkpoint: if the owner says the move editor is out of scope, this piece is dropped and piece 3's 900px control stands as a deliberate decision rather than an accident.",
+  "bar": "Same measured shape as piece 3, with the same legibility floor so density is not bought with font-size. At 1600x1000 with a fixed forced-open set, the move editor's computed .card-editor width > 1300px and its .editor-grid scrollHeight drops >= 30% versus HEAD; no grid column narrower than 260px; no truncated label; no control under 28px; font-size >= HEAD. For every value of Kind, no section is visible with zero visible fields and no nav chip points at a hidden section. Gated fields stay in the DOM — and the proof is a move-editor analogue of the no-op round-trip: load every move in the catalogue plus every Forge.customMoves override, run the move-save builder (152868) with zero input, and assert the produced object is identical to the input. That harness is the move-side twin of piece 1 half B and it is what stops this piece from re-introducing the exact corruption piece 11 just fixed.",
+  "risk": "medium",
+  "dep": [
+   "move-editor-type-guard",
+   "editor-width"
+  ],
+  "idx": true,
+  "files": [
+   "public/index.html",
+   "_moveeditor_smoke.mjs"
+  ]
+ },
+ {
+  "id": "custommoves-repair",
+  "title": "Audit and repair the moves the editor has ALREADY corrupted",
+  "goal": "Piece 11 stops 152869 stamping type:'physical' onto abilities in FUTURE. It does nothing about the Forge.customMoves overrides that already carry it, and lookupMove (80577) prefers customMoves over the built-in for the entire game — so every ability the owner has opened and saved since this shipped is already a physical-channel move in live play, for every player. Fix-forward-only leaves the damage in the data. Produce an audit that diffs every Forge.customMoves override against its built-in on kind, type and element, classify each difference as INTENDED (the author changed something else too) or ARTEFACT (the override is identical to the built-in except for a field the save path writes unconditionally — type appearing where the built-in has none, kind:'attack' where the built-in has 'movement', element:'fire' where the built-in has 'none'), and repair the artefacts. Must run AFTER piece 11 — repairing before the corrupter is fixed just re-corrupts on the next save.",
+  "bar": "The audit is a printed table, not a claim: every override key with {field, builtinValue, overrideValue, classification}, and the counts per classification. Repair touches ONLY rows classified ARTEFACT, and the definition of ARTEFACT is mechanical (the override equals the built-in on every field EXCEPT ones the 152869 literal writes unconditionally) so a critic can recompute the classification independently and get the same set. After repair, re-running the audit yields zero ARTEFACT rows and the same INTENDED rows as before (an audit that also 'repairs' an intended edit has destroyed the owner's work). Before/after, `lookupMove` returns the built-in's kind/type/element for every repaired id. A dry-run mode prints the table WITHOUT writing, and the dry run is what the critic reviews before the write happens. `node _duel_smoke.mjs`, `node _skilltree_smoke.mjs` and `node _moveeditor_smoke.mjs` all pass after.",
+  "risk": "high",
+  "dep": [
+   "move-editor-type-guard",
+   "data-backup-export"
+  ],
+  "idx": true,
+  "files": [
+   "public/index.html",
+   "_moveeditor_smoke.mjs"
+  ]
+ },
+ {
+  "id": "fx-draw-discard-hand",
+  "title": "New effect (a) — Cast: draw X cards and discard X from your hand",
+  "goal": "One new ONPLAY_TYPES entry with the parsed `Icon Name (detail)` label shape (a label without the parenthesised detail truncates in _describeOnPlayGeneric at 246590), membership in an EXISTING group (the label freeze from piece 6 — add to '🃏 Cards & Hand' at 101707, do not rename it), and a branch in _applyOnPlayOneRaw (109465-112730) that draws then lets the PLAYER choose the discards. No such prompt exists: discardCards (110990) is random and hits the opponent; discardSelf (111141) is random from your own hand. The picker exists and is already used this exact way — _openDeckSearchModal('any', ids, name, 'grave', N, 'hand', filter, 0) at 111203 — guarded `owner === 'player' && !eff._autoPick` with a deterministic AI path at 111208. The reducer is SYNCHRONOUS and returns state, so it must open a QUEUED prompt and return, never await.",
+  "bar": "CORRECTED MULTIPLAYER RULE — the previous bar was inverted and would have SHIPPED A BUG. It said every hand removal must call _mpNotePrivateRemoval (205197). That primitive is explicitly and only for removals from the OPPONENT's zone: the contract at 205180-205192 says the op list is 'deliberately REMOVALS ONLY' from the victim's zone performed inside the actor's engine, and the call-site comment at 111013-111015 says 'targetSide is ALWAYS the foe here'. _mpApplyPrivateRemovals applies each op to the RECEIVER's own block, matching instanceId then falling back to op.cardId at 205228 which removes a single copy BY DEFINITION ID. Effect (a) discards from the ACTOR's OWN hand, so relaying it makes the opponent's client delete a copy of that card from THEIR hand — guaranteed on any shared definition id. THE BAR IS THEREFORE THE OPPOSITE: after a self-discard, assert `state._mpPrivateRemovals` is empty/unchanged, exactly as discardSelf (111141) already does. THE HAND-CAP POLICY IS DECIDED, not left open: drawCards at 101347 shifts a card off the deck and pushes it NOWHERE once the hand hits 8 (HAND_LIMIT 7 at 160336), and the branch clamp is 1..5 at 111043 while the editor allows 0..200. Pick ONE of draw-fewer / discard-first-then-draw / overdraw-then-force-discard, write the reason in the code comment the way this file does, and assert the chosen one: with the hand at 8, the driver reports zero cards vanishing to nowhere (deck+hand+grave total is conserved). EVIDENCE, NOT BOOLEANS: the driver dumps the actual App.ui.deckSearch object and the queue length (not `secondPromptShown`), the before/after arrays of hand instanceIds (not `handAfter` as a number), and a counting wrapper's call log for _mpNotePrivateRemoval (not `mpRelayCalled`). NEGATIVE CONTROLS THAT MUST FLIP: bypass _deckSearchEnqueue (162906) and write App.ui.deckSearch directly — the second prompt must vanish and the driver must REPORT that (the documented bug at 162893-162905); force _autoPick off on the AI side and the modal must appear. A driver whose numbers cannot be made to fail has proved nothing. `node .gauntlet/drive-hand-wipe.mjs` must still pass — it enumerates every ONPLAY_TYPES id through the real placeUnit asserting no effect empties hand and graveyard together, and this effect legitimately shrinks the hand.",
+  "risk": "high",
+  "dep": [
+   "effect-type-picker",
+   "effect-field-gating"
+  ],
+  "idx": true,
+  "files": [
+   "public/index.html"
+  ]
+ },
+ {
+  "id": "fx-draw-discard-drawn",
+  "title": "New effect (b) — discard from among the cards you just drew",
+  "goal": "Restrict the discard to the PHYSICAL instances this resolution drew. Two capabilities are missing. First, drawCards (101340) returns only the new side-state and never reports WHICH cards were drawn, so the drawn set must come from a wrapper or a before/after diff — do not change the primitive's return without auditing its ~25 call sites (101340, 102170, 109530, 110758, 111045, 111703, 112011, 112610, 115207, 117204, 118981, 119650, 120338-120365, 160466, 160931, 173272, 173338, 174075, 176368). Second, _openDeckSearchModal's cardIds filters on card DEFINITION id (`ids.has(c.id)` at 162075 and again at 162396), so a copy the player was ALREADY holding is selectable; an instance-level restriction must be threaded through the request object (162933), the grid filter (162074) and the re-open legality check (162395). Inherits piece 14's hand-cap policy: if the cap eats a drawn card, the 'those drawn cards' set is smaller than X and the picker must ask for min(X, drawnCount), not X.",
+  "bar": "THE DISCRIMINATING FIXTURE — a hand that ALREADY holds a copy of a card the effect draws. The picker offers exactly the X drawn INSTANCES and NOT the pre-held duplicate; on HEAD's plumbing it would offer both, so the critic must CONSTRUCT that hand and refuse a demo without duplicates. Picking X removes those X specific instanceIds (dumped as arrays, not counts). The multi-pick re-open loop (162394-162400) survives more than one pick — note its legality check at 162395 reads App.state.player[srcKey] HARD-CODED to player while the rest of the function honours ds.side. Hand-cap edge: with the hand near the cap, picksRequired equals the actual drawn count and no card vanishes (deck+hand+grave conserved). AI path deterministic and reproducible for multiplayer replay — run it twice from the same seed and diff the removed instanceIds. Self-side removals are NOT relayed (same corrected rule as piece 14): assert state._mpPrivateRemovals is unchanged. NEGATIVE CONTROL THAT MUST FLIP: seed the restriction with definition ids instead of instance ids and confirm preHeldDuplicateOffered becomes true. Every drawCards call site unaffected: `grep -n 'drawCards(' public/index.html` shows the same count as HEAD unless the diff explains each new one.",
+  "risk": "high",
+  "dep": [
+   "fx-draw-discard-hand"
+  ],
+  "idx": true,
+  "files": [
+   "public/index.html"
+  ]
+ },
+ {
+  "id": "fx-void-to-deck-effect",
+  "title": "An authorable 'send cards from the Void back to your deck' effect — the event (c) needs",
+  "goal": "NEW PIECE, and effect (c) is dead without it. I grepped every void-to-deck movement in the file: there is EXACTLY ONE — `if (wants('void') && Array.isArray(st.void) && st.void.length) { moved += st.void.length; deck = deck.concat(st.void); }` at 111991, inside the shuffleToDeck branch, whose zone default was changed to 'grave' at 111917 after the v121f4 hand-wipe (34-line incident comment at 111881-111915). recycleVoid sends void→graveyard, not deck. So a void→deck trigger (piece 17) can only ever fire when some OTHER card happens to be authored with shuffleZones = void/graveVoid/all — the owner's clause would ship as a trigger with no reliable in-game event. Add a first-class, gated, author-facing effect that returns N cards (or all) from a chosen side's Void to that side's deck, built on the existing shuffleToDeck plumbing rather than a second destructive branch, with an explicit zone knob and NO destructive default.",
+  "bar": "The knob is never absent-and-destructive — the lesson of 111881-111915, where a missing knob defaulted to 'sweep everything' and wiped a live hand. Assert: with the knob absent (which is how it arrives from an onPlayExtra slot, whose knob list at 151577-151602 is much shorter than the primary's), the effect moves ZERO cards and logs a no-op, never a sweep. With the knob set to N, exactly N cards move void→deck for the CHOSEN side and nothing else moves — hand, graveyard and units are byte-identical before and after (dumped as arrays). Cross-side: targeting your own void does not touch the opponent's, and vice versa; the log line distinguishes them (the `sd === owner ? 'your' : \"the enemy's\"` shape at 112001). Authorable end-to-end IN THE REAL EDITOR: the driver opens the card editor through the harness, selects the new effect, sets the knob, runs captureEditorIntoCard, and asserts the knob is written to card.onPlay GATED on the effect id — then feeds that captured card into the battle driver and it resolves. `node .gauntlet/drive-shufflezones.mjs`, `node .gauntlet/verify-shuffle-default.mjs` and `node .gauntlet/drive-hand-wipe.mjs` all pass.",
+  "risk": "high",
+  "dep": [
+   "effect-type-picker",
+   "effect-field-gating"
+  ],
+  "idx": true,
+  "files": [
+   "public/index.html"
+  ]
+ },
+ {
+  "id": "fx-zone-move-trigger",
+  "title": "New effect (c) — a generic void→deck trigger the owner can actually AUTHOR",
+  "goal": "'If this card is sent from your vanish to your deck, summon a X from your graveyard — or any other card type effect.' The previous plan listed ten sites and NOT ONE was in renderCardEditor (145733-148945) or captureEditorIntoCard (150654-152135): no new <details class=\"fx-sub\">, no entry in the nine-drawer GROUPS array at 150560-150568 (ed-ig / ed-grave / ed-ongrave / ed-aura / ed-onatk / ed-onkill / ed-field / ed-milled / ed-hand — a movement trigger belongs there as a TENTH and was absent), no v()/num() read, no _fxFilterPathFor registration. It was an engine feature the owner could never author. BOTH HALVES ARE THIS PIECE: (1) the engine hook — nothing fires on void→deck or grave→deck today, both are bulk `deck.concat(pile)` (grave→deck 111961-111962, void→deck 111991) with no per-card hook; the template is _processMilledCards (103517), the only existing per-card zone-transition hook, INCLUDING its fired-once stamp (_onGraveFired at 103543), without which a card that moves through the same zone twice or is re-read by a resync fires twice. The 'any other card type effect' half has proven plumbing: _applyInZoneTick's default arm at 102177 delegates ANY ONPLAY_TYPES id to _applyOnPlayOne with `{...card, onPlay:{...ig, type: ig.effect}, _actZone: zone}` anchored on the owner's hero. DO NOT build on TRIGGER_EVENTS (114720): _fireTriggers iterates state.units only (114866), so a card in the Void or deck can never respond — it would look right in the editor and do nothing. (2) the editor half — a tenth drawer in the GROUPS split, its fields gated per piece 4, its knobs read in captureEditorIntoCard and written GATED on the effect id.",
+  "bar": "AUTHORABLE END-TO-END, which the old bar could not check at all: the driver opens the REAL editor through the harness, adds the movement trigger with a summon-from-graveyard payload, runs captureEditorIntoCard, and feeds THAT captured card into the battle driver — no hand-built state. The tenth drawer appears by name after bindCardEditor and the other nine still appear (one extra wrapper div in #fx-ingrave .editor-grid collapses all of them into a single 'In-Grave' drawer — the bug 150550 exists to fix). FIRE-ONCE PLUS FOUR NEGATIVE CONTROLS, all in one driver: the trigger card in the Void fires EXACTLY once when the piece-16 effect moves it and its named effect resolves; running the movement twice does not fire it twice; the SAME card in the GRAVEYARD with a void-only trigger stays silent; a second card with a plain damage effect on the same trigger also resolves (proving 'any other card type effect', not a hardcoded summon); and — the control the old plan lacked — the same trigger card sitting in the OPPONENT's void, swept by the same effect, does NOT fire for the caster, because the owner said 'from YOUR vanish to YOUR deck' and shuffleToDeck demonstrably iterates both sides (`sd === owner ? 'your' : \"the enemy's\"` at 112001). SAFE WITH THE KNOB ABSENT: authored in an onPlayExtra slot (short knob list at 151577-151602) the trigger must no-op, not sweep. GUARDS: `node .gauntlet/drive-shufflezones.mjs`, `node .gauntlet/verify-shuffle-default.mjs`, `node .gauntlet/drive-hand-wipe.mjs`, `node .gauntlet/drive-zone-triggers.mjs` (which pins inGrave/inVoid tick behaviour INCLUDING negative controls — a grave-only card in the Void must stay silent, and a new movement trigger must not make any of those fire). `node _forgeids_smoke.mjs` half B ALL-IDENTICAL.",
+  "risk": "high",
+  "dep": [
+   "fx-void-to-deck-effect"
+  ],
+  "idx": true,
+  "files": [
+   "public/index.html"
+  ]
+ },
+ {
+  "id": "data-backup-export",
+  "title": "Export and restore path before anything rewrites live saves",
+  "goal": "NEW PIECE. Pieces 13, 19, 20 and 21 rewrite Forge.customMoves, Profile.decks, Profile.deckByHero and the Realm roster on a game with real money in it, and the previous plan had no export and no undo. Build a one-command export that writes Forge.customCards, Forge.customMoves, Profile.decks, Profile.deckByHero and Profile.archonDeck to a timestamped JSON file, plus a restore that reads one back, plus a diff that reports what a migration changed. Not a product feature — a tool the migrations run before they write and the critic runs to review them.",
+  "bar": "Round-trip proven, not asserted: export → mutate all five structures in memory → restore → the five structures are deeply equal to the export (printed as a deep-diff, empty). The export file for a seeded profile with 5 decks and 30 custom cards is valid JSON and contains all 5 deck ids and all 30 card ids (counted, not eyeballed). The diff tool, given the before and after exports of a deliberate one-field change, names exactly that field and nothing else. Pieces 13, 19, 20 and 21 each run the export BEFORE their first write and attach the resulting diff to their evidence — a migration piece without a before/after diff attached is not judged complete.",
+  "risk": "low",
+  "dep": [],
+  "idx": false,
+  "files": [
+   ".gauntlet/forge-export.mjs"
+  ]
+ },
+ {
+  "id": "deck-size-range",
+  "title": "Deck legality becomes 40-80 — legality AND every surface, as ONE ship unit",
+  "goal": "MERGED from the old pieces 12 and 13, because half-shipping is a production failure: ship the 40-80 UI without the legality change and buildStarterDeck's `deck.cards.length === DECK_SIZE` (82608) falls through, so the player silently fights with a generated themed deck. `const DECK_SIZE = 40` (59893, 75 occurrences) is used three incompatible ways: ~15 exact-equality legality gates, ~11 pad-to-40 loops, ~11 slice-to-40 truncations. Introduce DECK_MIN/DECK_MAX, route the PLAYER-FACING equality sites (60237, 82608, 136700, 138875, 244956, 245171, 245252, 245276, 245980, 247363, 247644) through one helper, and keep every AI producer and pad on an explicit 40. SITES THE OLD PLAN MISSED, all verified: (1) `const cap = (typeof DECK_SIZE === 'number') ? DECK_SIZE : 40;` inside _legalizeDeck at 82539 — it TRUNCATES a player's own deck to its first 40 keys in save order (not shuffled) on the hero-fallback path (82627) and as an enemy override (142535, 142540), so an 80-card deck defends Gym Defense with half of itself; (2) `const MAIN_SIZE = 40;` at 141542 with `const mainOk = mainCount === MAIN_SIZE;` at 141627 — the pre-battle lock-in is a HARD equality gate, so an 80-card deck can never lock in for a match at all; (3) the deckByHero mirror written on every save at 60320, which has no size field and is what getSavedDeckForHero gates on at 60237, and which uploads separately as the `decks:` column at 51083 (documented 400-Bad-Request payload history at 51070-51078); (4) two more getSavedDeckForHero callers at 209705-209706 and 241255; (5) the multiplayer wire — startMatchmaking({hero, deck: deckCards}) at 140688, sendFriendChallenge/accept at 140645/140668, rematch at 177501-177507, against a Colyseus client CLAUDE.md line 28 says must match server 0.16.x + schema v3 EXACTLY. UI SURFACES: the count pill (245622), Save vs Save Draft (245980, toast 246087), _dbValidBanner (235427 — it has BOTH shortfall and over-limit branches but takes a single deckMax and is called with DECK_SIZE at 245728, so passing 80 makes a legal 40-card deck read 'INVALID — 40 more cards'), the sub-count (245694), Ready badges (138875/247363/247644), home validDecks (136700), hero-dropdown markers (245252/245276), encounter-editor display (153461), add-button caps (59984, 235577, 245372). And the battle chip must stop lying: st.deckStartCount is READ at 164680 and 165182 and ASSIGNED NOWHERE, so the chip falls back to Math.max(current, 40) — set it in initGame (115960). Add the size validation that exists on NO inbound path today: local load 76403, cloud decks column 51855, forge.userDecks 52328, merge-import 80507, decodeDeckCode 60387 (which rejects only an empty list, so a pasted 500-card code imports and saves).",
+  "bar": "PRECONDITION, NOT AN OPEN QUESTION: the checkpoint's AI-deck-size decision (ii) is recorded before this starts, because AI-at-40 vs player-at-80 makes deck-out unlosable for a paying player (_drawFailed 101347, match end 120388) and copies come from paid packs. NEW REGISTERED SUITE, phrased so a CRASH cannot masquerade as a pass: on the HEAD worktree it prints EXACTLY N FAIL lines NAMING the range cases (39/40/55/80/81), not merely 'fails'. After: 40 legal, 55 legal, 39 and 81 not; buildStarterDeck returns the player's own 55-card deck rather than a generated themed deck; _legalizeDeck does NOT truncate a legal 55 or 80 (assert length preserved through 82627, 142535 and 142540); the pre-battle lock-in ACCEPTS a legal 55 (mainOk true at 141627) — on HEAD it cannot; the deckByHero mirror of a 55-card deck round-trips through getSavedDeckForHero; the AI deck in a normal battle is exactly 40 REPORTED AS A NUMBER and enemyDeckOverride still engages at 140506/140559/142533 so the VS preview and the battle agree (the regression 82736 says was fixed once); a saved deck of each size survives the local-load whitelist round-trip; a 500-card deck code is REJECTED at 60387. MULTIPLAYER: an 80-card deck actually joins a match — start matchmaking with one and assert the join succeeds and the server-side deck length matches, or the piece states the enforced cap and the UI refuses above it. UI, screenshots at 39/40/55/80/81 through the harness with a SEEDED NON-ADMIN profile (deckKeyOwnedCount is Infinity for admins at 59966): correct banner and count pill at each (on HEAD, 55 reads invalid/draft); Add disables at exactly DECK_MAX; a battle from a 65-card deck shows 60/65 on turn 1, not 40/40, and `grep -n 'deckStartCount'` shows an ASSIGNMENT. HONESTY: MAX_COPIES_PER_CARD is 3, so 80 cards needs 27 distinct OWNED cards and addToDeck (60067) hard-stops most players long before 80 — the UI must name the real limiter, asserted as specific rendered text the driver matches, not 'must be visible'. Plus `node .gauntlet/drive-hand-wipe.mjs` (204: deck === deckSize - 5), `node .gauntlet/verify-shuffle-default.mjs` (106) and `node public/warpath/_selftest.js` — the selftest hardcodes DECK_SIZE 40 in its own sandbox (249) and asserts deck.length === 40 (276), so it stays GREEN while production diverges unless updated or its independence is explained in the diff.",
+  "risk": "high",
+  "dep": [
+   "data-backup-export",
+   "owner-checkpoint"
+  ],
+  "idx": true,
+  "files": [
+   "public/index.html",
+   "_decksize_smoke.mjs",
+   "_checkall.mjs",
+   "public/warpath/_selftest.js"
+  ]
+ },
+ {
+  "id": "realm-per-deck",
+  "title": "Each deck carries its own 21-card Realm Deck — storage, migration AND battle reads, as ONE ship unit",
+  "goal": "MERGED from the old pieces 14 and 15, because the half-shipped state is a silent production outage: _realmDeckAllows (114188-114193) and getBattleArchonCards (114204-114206) read Profile.archonDeck.cards DIRECTLY, so moving the roster in a storage-only piece stops every player's Archon summons and Polycreation from working in battle — the card just does nothing, no error, no log line — and the plan's own 'bump version knobs once at the end of a run' makes exactly that shippable. STORAGE: move the roster off the global `Profile.archonDeck = { cards: [] }` (48049, whose comment calls it a 'global pool (like sideDeck)') onto the deck record and migrate every existing player's global roster onto their decks exactly once. Hoist the function-local `const ARCHON_DECK_MAX = 21` (245193); repoint the shape normaliser (245188), panel state (245195-245196), panel HTML (245439-245503) and the add/remove handlers (246151-246194). THE PERSISTENCE WHITELISTS ARE THE TRAP: saveDeckEntry builds a FRESH literal at 60307-60316 (callers pass `{...deck}` spreads, so a field that survives in memory dies at save with no error) and the local-load clause at 76402-76408 rebuilds every deck as {id,name,heroId,cards,createdAt} — it already silently drops heroName, heroIcon and coverCardId on every reload. WRITE-PATH RECONCILIATION, which the old plan never named: the Realm handlers mutate Profile.archonDeck.cards in place and call saveProfile() + render() DIRECTLY (246186-246188, 246196-246198), while main-deck edits sit in the App.deckEdit working buffer and commit later through saveDeckEntry — two writers on one record with different commit timing means a Realm edit made while the main deck is dirty is silently overwritten by the next Save Deck. MIGRATION ORDERING: Profile.decks is replaced WHOLESALE from the cloud at 52328 with no local-wins guard, ASYNCHRONOUSLY after local load, so a migration stamped only at local-load time is discarded when the un-migrated cloud copy lands; the stamp must be idempotent and re-entrant on BOTH paths. Also decide the conflict policy in writing: Profile.archonDeck restores local-wins (52444) while Profile.decks is cloud-wins, so moving the roster silently flips it and an offline roster edit can be lost to a stale cloud copy. BATTLE READS: _realmDeckAllows (114184), getBattleArchonCards (114200, zero parameters) and getBattleFusionKalons (113508, side only) must resolve the roster of the deck ACTUALLY IN PLAY. Deck identity is reachable only through bp.deckId — set on the pre-battle packet at 140569/140663/140680 from App.selectedDeckId (140455) and passed into initGame as the 5th param chosenDeckId (142478 → 115898), today consumed solely by buildStarterDeck. All ten call sites move together: five _realmDeckAllows callers (112153, 112836, 113512, 113559, 113634) and five pool consumers (113110, 113175, 114369, 158228, 158231). The AI's full-pool branch at 113510 must survive. DELETED FROM THE OLD BAR: the claim that _resetProfileForNewOwner does not clear archonDeck. It DOES — 51315-51324 is an inverted-default backstop clearing every Profile key except cloud and settings, and _accountswitch_smoke.mjs passes on HEAD. The correct note is reassuring: that backstop auto-clears any new top-level field, and a per-deck roster riding Profile.decks is cleared with decks.",
+  "bar": "LIVE SAVES ON A PAID GAME — judged by a NEW registered suite plus round-trip and battle drivers, never a screenshot. SUITE PHRASING: on the HEAD worktree it prints EXACTLY N FAIL lines NAMING the per-deck cases; a suite referencing the new field would otherwise THROW at lift and be reported as CRASH with zero FAIL lines. PERSISTENCE: add 21 Archons to deck A and 0 to deck B, saveProfile(), reload through the REAL local-load path, assert A still has 21 and B has 0 — precisely the bug 76447-76449 says already shipped once for archonDeck ('my Realm Deck resets on refresh'). MIGRATION: a player with a legacy global roster and three decks is migrated ONCE and not duplicated on a second load, AND the migration survives the async cloud hydrate — the driver runs local-load, then delivers an UN-MIGRATED cloud payload through the 52328 path, and asserts the roster is still correct after. NEW DECK: App.editingDeckId === 'NEW' (245172, no deck record yet) accepts an Archon without losing it. WRITE RACE: edit the Realm roster while the main deck is dirty, then Save Deck — the roster edit survives (on HEAD's two-writer shape it would not). BATTLE SEPARATION: with deck A (Archon X) in play X is summonable and Y is refused; with deck B (Archon Y) the reverse — the two {archonSummonable, polycreationCandidates} sets are disjoint and match the deck in play. FALLBACK, SPECIFIED not open-ended: bp.deckId is null for generated-hero matches (140242, 140680), Gym Defense (70678) and Warpath's transient deck (60268); the fallback must resolve to ONE NAMED deck (the player's currently-selected deck, or the legacy global roster) and the driver asserts WHICH — a fallback to the union of every deck's roster silently re-creates the global pool this piece exists to remove and must FAIL. COMPLETENESS: `grep -n '_realmDeckAllows\\|getBattleArchonCards\\|getBattleFusionKalons' public/index.html` shows every call site passing deck context. ECONOMY: _jbDeckNeed (93624) tallies realm cards so a player cannot sell the Archon their deck is built around (today they can, after which _realmDeckAllows fails ownership mid-battle and the deck is quietly crippled). `node _accountswitch_smoke.mjs`, `node _accountowner_smoke.mjs`, `node _ritualart_smoke.mjs` (the only Archon coverage in the repo) and `node .gauntlet/save-payload-check.mjs` all pass.",
+  "risk": "high",
+  "dep": [
+   "data-backup-export",
+   "owner-checkpoint"
+  ],
+  "idx": true,
+  "files": [
+   "public/index.html",
+   "_realmdeck_smoke.mjs",
+   "_checkall.mjs"
+  ]
+ },
+ {
+  "id": "realm-add-parity",
+  "title": "Adding Realm cards feels like adding main-deck cards (and the budget question, answered)",
+  "goal": "REFRAMED — my previous piece 16 had the premise backwards. Ownership is ALREADY fully enforced on the Realm add path: 245471-245476 computes `_aOwned = deckKeyOwnedCount('custom:'+a.id)` and `_cap = Math.min(_limit, _aOwned, MAX_COPIES_PER_CARD)`, renders '🔒 Not owned', greys the row and disables +, and the handler re-checks at 246156-246158. So 'just like how they add to their main deck' is most likely a UX-PARITY ask, and no piece covered that reading: the Realm roster is added from a 340px-max-height scrolling list (245503) while the main deck has a card grid, search, filters and right-click detail. Build the parity — same grid, same search, same detail affordance, same ownership chrome — and implement whichever budget rule the checkpoint's decision (iv) named. If the owner chose the SHARED main+side+realm budget, the real gap is that the two systems count in separate universes (the card-detail add gate sums inDeck+inSide against ownCap at 235571-235577 and never looks at the realm roster, while the realm handler counts only its own roster at 246174-246179) and Fusion Kalons are type:'unit' (isFusionKalon 113025) so they appear in getAllDeckableCards (214072) and one owned copy legally sits in a main deck AND a Realm Deck simultaneously today. If the owner chose parity-only, the budget stays as it is and that is written into the code comment.",
+  "bar": "JUDGED ON A SEEDED NON-ADMIN PROFILE, always — deckKeyOwnedCount returns Infinity for admins (59966), so the owner cannot see the gate from their own client and an admin screenshot proves nothing. PARITY, mechanically: the Realm add surface exposes the same four affordances as the main-deck surface — a card grid (not a fixed-height list), a working text search, the ownership chrome ('🔒 Not owned', greyed row, disabled +), and the detail affordance — each asserted by a DOM query, plus an A/B screenshot pair against the main-deck surface. BUDGET, only if the owner chose shared: with exactly 1 owned Fusion Kalon, putting it in the main deck disables the Realm add button WITH A STATED REASON (assert the exact rendered reason text) and vice versa; with 2 owned copies, one in each is allowed; screenshot both directions. EDGES: admin (Infinity) must not produce NaN through the Math.min at 245475 and 246177 — assert the computed cap is a number and the buttons are enabled; and deckKeyOwnedCount SUBTRACTS camp-stationed units (59972-59974), so the driver stations a worker AFTER building a deck and asserts the stated behaviour rather than a silent invalidation. LEGACY DECKS: existing decks violating a newly-tightened rule get ONE named outcome chosen in advance — grandfathered with a flag, or refused with a specific message — and the driver constructs a violating deck and asserts THAT outcome by name. 'Reported or grandfathered' is not a bar; pick one. HONESTY: _cardCopyLimit (59901) ban/limit restrictions are editor-only — _capCopies (60070) reads the global MAX_COPIES_PER_CARD, not the limit — so the gap is already unenforced at build time and this piece must not pretend otherwise; the code comment says so.",
+  "risk": "medium",
+  "dep": [
+   "realm-per-deck",
+   "owner-checkpoint"
+  ],
+  "idx": true,
+  "files": [
+   "public/index.html"
+  ]
+ },
+ {
+  "id": "ship-gate",
+  "title": "Ship the run: full gate, the unregistered drivers, the five version knobs, edge verify",
+  "goal": "NEW PIECE — nobody owned the ship. The old ordering said bump the knobs 'at the end of a run' but no piece had them in its files, no piece ran `npm run check:full`, and the four gauntlet drivers that pin this exact markup and are NOT in _checkall.mjs (drive-scroll-keep, drive-scale-per, drive-shufflezones, run-ai-gate) appeared only inside individual judge_methods, so nothing ran them together at the end. Run the full gate, run those four plus the effect drivers this run added, bump the five knobs ONCE, deploy, and verify at the edge.",
+  "bar": "`npm run check` and `npm run check:full` both clean — no suite WORSE/SHORT/CRASH/MISSING — with the new suites from pieces 1, 11, 19 and 20 registered and passing. The four unregistered drivers plus every driver this run wrote all pass in one sequential run whose full log is the evidence. The five knobs move together and consistently: window.BUILD_VERSION (39123), sw.js CACHE_VERSION (414), node-city NC_BUILD (12), effects.js?v= (261621), handset.js?v= (261622) — and _handset_smoke.mjs:126 asserts handset's ?v= EQUALS BUILD_VERSION while _campaigns_smoke.mjs:85 pins the campaigns module ?v= as an exact literal that breaks on any bump, so both suites pass after the bump or the bump is wrong. version.txt is NOT hand-edited (deploy.mjs:86 rewrites it). After deploy, a curl of the live index.html shows the new BUILD_VERSION and the new sw.js CACHE_VERSION. Piece 18's export is taken one final time post-deploy so there is a known-good snapshot of the shipped state.",
+  "risk": "medium",
+  "dep": [
+   "realm-add-parity",
+   "fx-zone-move-trigger",
+   "custommoves-repair",
+   "spell-trap-body",
+   "editor-nav-index",
+   "move-picker-facets",
+   "move-editor-density",
+   "fx-draw-discard-drawn",
+   "deck-size-range"
+  ],
+  "idx": true,
+  "files": [
+   "public/index.html",
+   "public/sw.js",
+   "public/node-city/index.html"
+  ]
+ },
+ {
+  "id": "authoring-task-gate",
+  "title": "Acceptance gate: author a real card end-to-end and measure whether it actually got faster",
+  "goal": "NEW PIECE, and the critics are right that without it the whole editor chain can be green while authoring is no faster. Nothing in the plan measured the owner's actual ask — 'neat, fits the screen, compact, easy to find' — as a task. Every other bar is a count, a ratio or a screenshot. The critic writes a card SPEC (not the builder): a named unit with two elements, a passive, an on-play effect with two knobs, a status, one learnset move and an on-kill ability. Author it from scratch at a fixed 1600x1000 through the harness, on the change and on the HEAD worktree, and measure the difference.",
+  "bar": "Four numbers, both sides, same spec, same viewport, same starting state (App.editingCardId='NEW', App._fxOpen cleared): total vertical scroll distance in px to complete the card; number of <details> sections the author had to open; number of clicks; and controls VISIBLE AT REST when the editor first opens. The change must beat HEAD on scroll distance and on sections-opened, and must not be worse on clicks. The finished card must SAVE and reopen with every authored value intact — run captureEditorIntoCard and diff against the spec field by field. The spec is authored by the critic before the run and is not shown to the builder in advance; a run against a spec the builder wrote does not count. This piece has no code of its own — it is the gate the editor chain must clear before piece 22 ships it.",
+  "risk": "low",
+  "dep": [
+   "editor-nav-index",
+   "spell-trap-body",
+   "status-picker-info"
+  ],
+  "idx": false,
+  "files": []
+ }
+]

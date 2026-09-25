@@ -1,0 +1,183 @@
+{
+ "system": "Closet",
+ "label": "Player Closet",
+ "icon": "👕",
+ "print": "Overview",
+ "nodes": [
+  {
+   "id": "measureDims",
+   "name": "measureDims",
+   "kind": "function",
+   "file": "public/src/closet/closet.studio.js",
+   "line": 230,
+   "params": [
+    "it"
+   ],
+   "async": true,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 80
+  },
+  {
+   "id": "measureAndPreview",
+   "name": "measureAndPreview",
+   "kind": "function",
+   "file": "public/src/closet/closet.studio.js",
+   "line": 235,
+   "params": [],
+   "async": true,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 212
+  },
+  {
+   "id": "measureFixtures",
+   "name": "measureFixtures",
+   "kind": "function",
+   "file": "public/src/kitchen/kitchen.render.js",
+   "line": 912,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 344
+  },
+  {
+   "id": "measureCarry",
+   "name": "measureCarry",
+   "kind": "function",
+   "file": "public/src/biolab/scene.js",
+   "line": 699,
+   "params": [
+    "char"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 476
+  },
+  {
+   "id": "dressSpot",
+   "name": "dressSpot",
+   "kind": "function",
+   "file": "public/src/foundry/world.js",
+   "line": 191,
+   "params": [
+    "rec"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 608
+  },
+  {
+   "id": "measure",
+   "name": "measure",
+   "kind": "function",
+   "file": "public/src/closet/closet.rig.js",
+   "line": 123,
+   "params": [
+    "THREE",
+    "body"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 740
+  },
+  {
+   "id": "placeItem",
+   "name": "placeItem",
+   "kind": "function",
+   "file": "public/src/closet/closet.rig.js",
+   "line": 243,
+   "params": [
+    "THREE",
+    "item",
+    "itemObj",
+    "part",
+    "cat",
+    "fit"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 872
+  },
+  {
+   "id": "dressed",
+   "name": "dressed",
+   "kind": "pure",
+   "file": "public/src/closet/closet.stage.js",
+   "line": 113,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1004
+  },
+  {
+   "id": "dress",
+   "name": "dress",
+   "kind": "function",
+   "file": "public/src/closet/closet.dress.js",
+   "line": 88,
+   "params": [
+    "THREE",
+    "body",
+    "outfit",
+    "catalog",
+    "opts"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1136
+  },
+  {
+   "id": "measureItem",
+   "name": "measureItem",
+   "kind": "function",
+   "file": "public/src/closet/closet.dress.js",
+   "line": 156,
+   "params": [
+    "THREE",
+    "url"
+   ],
+   "async": true,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 80
+  }
+ ],
+ "edges": [
+  {
+   "from": "measureDims",
+   "to": "measureItem"
+  },
+  {
+   "from": "measureAndPreview",
+   "to": "measureItem"
+  }
+ ]
+}

@@ -1,0 +1,42 @@
+{
+  "_readme": "Athena Engine project library. Every entry shows up under Library \u2192 Models \u2192 Project. Drop the .glb next to this file, add a line here, deploy. Y-up, metres, origin at the base. `anims` is optional and only a hint \u2014 the editor reads the real clip names from the file. `tags` (optional, short lower-case words) makes the entry findable in the Library search.",
+  "models": [],
+  "_sounds_readme": "Project sounds for Athena Engine (Library \u2192 Sounds \u2192 Project). URLs of files the game already ships \u2014 nothing is uploaded. Keep them under 25 MiB (Cloudflare's per-asset cap).",
+  "sounds": [
+    {
+      "id": "rain",
+      "label": "Rain (loop)",
+      "url": "/assets/Audio/Rain%20sound.mp3"
+    },
+    {
+      "id": "sunny",
+      "label": "Sunny day (loop)",
+      "url": "/assets/Audio/Sunny%20day.mp3"
+    },
+    {
+      "id": "screech",
+      "label": "Alien screech",
+      "url": "/assets/Audio/Alien%20screech.mp3"
+    },
+    {
+      "id": "death",
+      "label": "Death",
+      "url": "/assets/Audio/Death.mp3"
+    },
+    {
+      "id": "power",
+      "label": "Power magic",
+      "url": "/assets/Audio/Power%20Magic.mp3"
+    },
+    {
+      "id": "turn",
+      "label": "Start turn",
+      "url": "/assets/Audio/Start%20turn%20sound%20effect.wav"
+    },
+    {
+      "id": "camp",
+      "label": "Camp music (loop)",
+      "url": "/assets/Audio/Camp%20music.mp3"
+    }
+  ]
+}

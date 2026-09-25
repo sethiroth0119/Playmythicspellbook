@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sprite Engine — three.js / WebGPU demo</title>
+<style>
+  /* Dev harness for the battlefield sprite engine. Deliberately quiet:
+     near-black field, one phosphor accent, mono utility type — the sprites
+     are the show, the chrome just reads out engine state. */
+  :root {
+    --bg: #0b0d14;
+    --panel: #121623;
+    --line: #232a3d;
+    --ink: #c8d2e8;
+    --dim: #6b7690;
+    --accent: #7ee0a3;      /* phosphor green — backend/status readouts */
+    --warn: #e0b17e;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace; }
+  main { height: 100%; display: flex; flex-direction: column; }
+  header { display: flex; align-items: baseline; gap: 14px; padding: 12px 18px;
+    border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 15px; font-weight: 600; letter-spacing: 0.06em; margin: 0; }
+  header .backend { color: var(--accent); }
+  header .stats { color: var(--dim); margin-left: auto; }
+  #stage { flex: 1; position: relative; min-height: 0; }
+  #stage canvas { position: absolute; inset: 0; }
+  footer { display: flex; gap: 10px; padding: 10px 18px; border-top: 1px solid var(--line);
+    flex-wrap: wrap; align-items: center; }
+  button { background: var(--panel); color: var(--ink); border: 1px solid var(--line);
+    border-radius: 6px; padding: 7px 13px; font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  footer .hint { color: var(--dim); margin-left: auto; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>SPRITE ENGINE</h1>
+    <span>backend: <span class="backend" id="backend">…</span></span>
+    <span class="stats" id="stats"></span>
+  </header>
+  <div id="stage"></div>
+  <footer>
+    <button id="b-attack">attack</button>
+    <button id="b-hurt">hurt</button>
+    <button id="b-move">move (glide)</button>
+    <button id="b-death">death + remove</button>
+    <button id="b-spawn">spawn (summon)</button>
+    <button id="b-cine">⚔ combat cinematic</button>
+    <button id="b-cine-crit">⚔ crit + kill</button>
+    <button id="b-cine-miss">⚔ miss</button>
+    <span class="hint">procedural placeholder sprites — swap in your library via resolveFrames()</span>
+  </footer>
+</main>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.171.0/build/three.webgpu.js",
+  "three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.171.0/build/three.webgpu.js",
+  "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.171.0/build/three.tsl.js"
+} }
+</script>
+
+<script type="module">
+import SpriteEngine from './sprite-engine.js';
+
+/* ---------------------------------------------------------------------
+ * Procedural placeholder frames — little figures drawn per-frame to a
+ * canvas so the demo runs with no assets. In the real game this whole
+ * block is replaced by getSpriteFrames().
+ * ------------------------------------------------------------------- */
+function makeFrames(kind, anim, hue) {
+  const N = anim === 'idle' ? 8 : anim === 'death' ? 7 : 6;
+  const frames = [];
+  for (let f = 0; f < N; f++) {
+    const c = document.createElement('canvas');
+    c.width = 96; c.height = 128;
+    const x = c.getContext('2d');
+    const t = f / N;
+    const bob = anim === 'idle' ? Math.sin(t * Math.PI * 2) * 4 : 0;
+    const lunge = anim === 'attack' ? Math.sin(t * Math.PI) * 22 : 0;
+    const stagger = anim === 'hurt' ? -Math.sin(t * Math.PI) * 12 : 0;
+    const fall = anim === 'death' ? t * 55 : 0;
+    const rise = anim === 'summon' ? (1 - t) * 40 : 0;
+    x.save();
+    x.translate(48 + lunge + stagger, 118 - bob + fall + rise);
+    if (anim === 'death') { x.rotate(t * Math.PI / 2); x.globalAlpha = 1 - t * 0.55; }
+    if (anim === 'summon') x.globalAlpha = t;
+    const body = `hsl(${hue} 55% ${anim === 'hurt' ? 70 : 48}%)`;
+    const trim = `hsl(${hue} 70% 72%)`;
+    // legs
+    x.fillStyle = `hsl(${hue} 30% 26%)`;
+    x.fillRect(-14, -34, 10, 34); x.fillRect(4, -34, 10, 34);
+    // torso
+    x.fillStyle = body;
+    x.beginPath(); x.roundRect(-20, -80, 40, 50, 8); x.fill();
+    // head
+    x.fillStyle = trim;
+    x.beginPath(); x.arc(0, -92, 14, 0, Math.PI * 2); x.fill();
+    // weapon / claw
+    x.strokeStyle = trim; x.lineWidth = 5; x.lineCap = 'round';
+    x.beginPath();
+    if (kind === 'knight') { x.moveTo(20, -66); x.lineTo(38 + lunge * 0.6, -86 - lunge * 0.4); }
+    else { x.moveTo(20, -60); x.lineTo(34, -48); }
+    x.stroke();
+    x.restore();
+    frames.push(c.toDataURL('image/png'));
+  }
+  return frames;
+}
+const LIB = {};
+function makeSprite(id, kind, hue) {
+  LIB[id] = {};
+  for (const a of ['idle', 'attack', 'hurt', 'death', 'summon']) LIB[id][a] = makeFrames(kind, a, hue);
+}
+makeSprite('u_knight', 'knight', 210);
+makeSprite('u_slime',  'slime',  120);
+makeSprite('u_imp',    'slime',  350);
+makeSprite('h_hero',   'knight', 45);
+
+/* --------------------------------------------------------------------- */
+const engine = await SpriteEngine.create({
+  mount: document.getElementById('stage'),
+  mode: 'world',
+  gridW: 8, gridH: 7,
+  resolveFrames: async (spriteId, anim) => (LIB[spriteId] && LIB[spriteId][anim]) || null,
+  resolveFps: (spriteId, anim) => (anim === 'attack' ? 20 : null),
+  onBackend: (b) => { document.getElementById('backend').textContent = b; },
+});
+
+engine.sync([
+  { id: 'hero',  spriteId: 'h_hero',   x: 3, y: 5, h: 1.5, facing: 1 },
+  { id: 'k1',    spriteId: 'u_knight', x: 1, y: 4, facing: 1 },
+  { id: 'k2',    spriteId: 'u_knight', x: 5, y: 4, facing: 1 },
+  { id: 's1',    spriteId: 'u_slime',  x: 2, y: 1, facing: -1 },
+  { id: 's2',    spriteId: 'u_slime',  x: 4, y: 1, facing: -1 },
+  { id: 'imp',   spriteId: 'u_imp',    x: 6, y: 2, facing: -1, elevation: 0.35 },
+]);
+
+/* controls ------------------------------------------------------------ */
+let spawnN = 0;
+document.getElementById('b-attack').onclick = () => { engine.play('k1', 'attack'); engine.play('imp', 'attack'); };
+document.getElementById('b-hurt').onclick = () => { engine.play('s1', 'hurt'); engine.flash('s1', 0xff5252, 160); };
+document.getElementById('b-move').onclick = () => {
+  const nx = 1 + Math.floor(Math.random() * 6), ny = 3 + Math.floor(Math.random() * 3);
+  engine.moveUnit('k2', nx, ny, 420);
+};
+document.getElementById('b-death').onclick = () => {
+  const ids = [...engine.units.keys()].filter(i => i !== 'hero');
+  if (ids.length) engine.removeUnit(ids[0], { death: true });
+};
+document.getElementById('b-spawn').onclick = () => {
+  const id = 'spawn' + (++spawnN);
+  engine.upsertUnit({ id, spriteId: 'u_imp', x: Math.floor(Math.random() * 8), y: 2, facing: -1 });
+  engine.play(id, 'summon');
+};
+
+/* combat cinematic demo -------------------------------------------------- */
+import CombatCinematic from './combat-cinematic.js';
+let cineBusy = false;
+async function runCine(o) {
+  if (cineBusy) return;
+  cineBusy = true;
+  const stage = document.getElementById('stage');
+  const overlay = document.createElement('div');
+  Object.assign(overlay.style, { position: 'absolute', inset: '0', background: 'rgba(6,7,12,0.72)', zIndex: '5' });
+  stage.appendChild(overlay);
+  try {
+    await CombatCinematic.play(Object.assign({
+      mount: overlay,
+      attackerSpriteId: 'h_hero',
+      defenderSpriteId: 'u_imp',
+      resolveFrames: async (sid, anim) => (LIB[sid] && LIB[sid][anim]) || null,
+      elementColor: '#7ee0a3',
+      dmg: 7, durationMs: 2600,
+    }, o));
+  } finally { overlay.remove(); cineBusy = false; }
+}
+document.getElementById('b-cine').onclick = () => runCine({});
+document.getElementById('b-cine-crit').onclick = () => runCine({ crit: true, killed: true, dmg: 23, elementColor: '#ff7a4d' });
+document.getElementById('b-cine-miss').onclick = () => runCine({ missed: true });
+
+setInterval(() => {
+  const s = engine.stats();
+  document.getElementById('stats').textContent =
+    `${s.units} units · ${s.atlases} atlases · ~${s.approxAtlasMB} MB GPU`;
+}, 800);
+</script>
+</body>
+</html>

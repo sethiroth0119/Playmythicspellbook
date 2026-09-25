@@ -1,0 +1,149 @@
+
+0. boot
+  PASS the page booted with the diagnostics seam
+  PASS /src/plotmood mounted
+  PASS __nc.plotMood is on the seam
+  PASS __nc.tileStatus is on the seam
+   tiles at boot: 3 · /src/economy up
+
+1. seed a city with real problems in it
+   placed 18 tiles (17 by direct write) · board now 21
+   types chosen by predicate: {"home":"housing","works":"farm","shop":"gasstation","clinic":"clinic","kitchen":"foodtruck","lamp":"streetlight"}
+   wrecked 4,4 · site 5,4
+  PASS a wrecked tile and a construction site are on the board   4,4 / 5,4
+
+2. every judged tile: DOM vs __nc.plotMood — mismatch count must be 0
+   judged 10 tiles · 10 carried a card
+   faces:   {"frown":10}
+   reasons: {"damaged":1,"firm:NO_WORKERS":3,"understaffed":5,"brownout":1}
+   hard status-badge cases: 7 · card agreed on 7
+  PASS every judged tile carries a mood card   10 / 10
+  PASS MISMATCH COUNT IS 0 (reason id, printed number, face, glyph, fix, badge)   count=0
+  PASS no tile threw while its dossier was opened   count=0
+
+3. frowns with no fix sentence — count must be 0
+  PASS COUNT OF (face==frown && fix=="") IS 0   count=0
+  PASS /src/plotmood self-check is clean   judged=10 problems=0
+
+3b. the same sweep once the city is coping — happy faces must agree too
+   judged 11 tiles · 11 carried a card
+   faces:   {"frown":11}
+   reasons: {"dark":2,"firm:NO_WORKERS":7,"brownout":1,"firm:NO_FEEDSTOCK":1}
+  PASS MISMATCH COUNT IS 0 on the recovered city too   count=0
+  PASS COUNT OF (face==frown && fix=="") IS 0 on the recovered city too   count=0
+
+3c. a city with nothing wrong with it — the content face must agree too
+   {"lamp":"streetlight","tiles":41}
+   judged 11 tiles · faces: {"frown":11}
+   reasons: {"firm:NO_WORKERS":9,"brownout":1,"firm:NO_FEEDSTOCK":1}
+  PASS MISMATCH COUNT IS 0 on the contented city too   count=0
+  FAIL the sweeps between them exercised more than one face   {"frown":11}
+  FAIL a content face was printed, and it agreed with the API   happy=0
+   per-tile: [
+ {
+  "k": "4,4",
+  "type": "housing",
+  "kind": "home",
+  "base": "power",
+  "card": "firm:NO_WORKERS",
+  "num": "0%",
+  "pill": "standing"
+ },
+ {
+  "k": "5,4",
+  "type": "housing",
+  "kind": "home",
+  "base": "power",
+  "card": "firm:NO_WORKERS",
+  "num": "0%",
+  "pill": "standing"
+ },
+ {
+  "k": "6,4",
+  "type": "housing",
+  "kind": "home",
+  "base": "dark",
+  "card": "firm:NO_WORKERS",
+  "num": "0%",
+  "pill": "standing"
+ },
+ {
+  "k": "7,4",
+  "type": "housing",
+  "kind": "home",
+  "base": "power",
+  "card": "firm:NO_WORKERS",
+  "num": "0%",
+  "pill": "standing"
+ },
+ {
+  "k": "4,6",
+  "type": "farm",
+  "kind": "biz",
+  "base": "power",
+  "card": "firm:NO_WORKERS",
+  "num": "0%",
+  "pill": "operating"
+ },
+ {
+  "k": "6,6",
+  "type": "farm",
+  "kind": "biz",
+  "base": "power",
+  "card": "firm:NO_WORKERS",
+  "num": "0%",
+  "pill": "operating"
+ },
+ {
+  "k": "8,6",
+  "type": "gasstation",
+  "kind": "biz",
+  "base": "power",
+  "card": "firm:NO_WORKERS",
+  "num": "0%",
+  "pill": "operating"
+ },
+ {
+  "k": "4,8",
+  "type": "clinic",
+  "kind": "biz",
+  "base": "power",
+  "card": "brownout",
+  "num": "50%",
+  "pill": "brownout"
+ },
+ {
+  "k": "6,8",
+  "type": "foodtruck",
+  "kind": "biz",
+  "base": "power",
+  "card": "firm:NO_FEEDSTOCK",
+  "num": "0%",
+  "pill": "operating"
+ },
+ {
+  "k": "16,16",
+  "type": "housing",
+  "kind": "home",
+  "base": "road",
+  "card": "firm:NO_WORKERS",
+  "num": "0%",
+  "pill": "standing"
+ },
+ {
+  "k": "18,18",
+  "type": "gasstation",
+  "kind": "biz",
+  "base": "road",
+  "card": "firm:NO_WORKERS",
+  "num": "0%",
+  "pill": "operating"
+ }
+]
+
+5. the verdict moves when the city moves
+   {"ok":false,"why":"no home with an answerable complaint"}
+   (skipped: no home with an answerable complaint)
+
+4. the citizen mood breakdown, before this piece and after it
+exit=124

@@ -39407,7 +39407,7 @@ body:has(#pack-opener-frame) #chat-overlay {
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v121v116';
+  window.BUILD_VERSION = 'v121v118';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -138582,6 +138582,16 @@ function renderTitle() {
       { id: 'btn-just-business', icon: '<img src="assets/artwork/gameicons/Business%20icon.png" alt="Just Business" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Just Business', sub: 'Corporations · vault · operations', accent: '#c89a4a',
         badge: 'Player economy',
         onclick: () => { App.screen = 'justBusiness'; render(); } },
+      // 📖 How Nodes Pay — the player guide (/src/gridguide) that also opens from
+      //    the City Nodes header. Here so players can pull it up (and show it to
+      //    a friend) without walking to the map first. Always drawn: the module
+      //    loads async, and a tile that appears on the second render looks broken.
+      { id: 'btn-grid-guide', icon: '📖', name: 'How Nodes Pay', sub: 'Nodes, Grid Managers, Mythic Token & earning', accent: '#e0b23c',
+        badge: 'Player guide',
+        onclick: () => {
+          if (window.MythicGridGuide) window.MythicGridGuide.open();
+          else showToast('📖 The guide is still loading. Try again in a moment.', 3200);
+        } },
       // 🏛️ City Hall — survivor government: corp registry, law, licensing,
       // treasury. Opens a self-contained overlay (no screen nav).
       { id: 'btn-city-hall', icon: '<img src="assets/artwork/gameicons/SCP%20City%20Hall.png" alt="City Hall" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'City Hall', sub: 'Registry · law · licensing · treasury', accent: '#ffcf5a',
@@ -260328,6 +260338,9 @@ function renderTerritoryWars() {
                   : '');
           } catch (e) { return ''; }
         })()
+    // 📖 HOW NODES PAY — the player guide to owning a node, hiring a Grid
+    //    Manager and every way to earn (/src/gridguide). Admins edit it in place.
+    +   '<span class="sep">›</span><button class="tw-wm-back" onclick="window.MythicGridGuide ? window.MythicGridGuide.open() : showToast(\'📖 The guide is still loading. Try again in a moment.\')" title="How owning a node, hiring a Grid Manager and earning Cinder works.">📖 How Nodes Pay</button>'
     + '</nav>'
     + '<div class="tw-wm-stats">'
     +   '<div class="tw-wm-stat"><div class="k">PRNs Held</div><div class="v">' + _twOwnedCount + ' / ' + t.nodes.length + '</div></div>'
@@ -264505,6 +264518,7 @@ render();
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
        other static asset, and a missed bump ships invisibly. -->
 <script type="module" src="src/campaigns/index.js?v=v121v76nc1"></script>
+<script type="module" src="src/gridguide/index.js?v=v121v118gg3"></script>
 <!-- 🧰 RESOURCE CHAIN — the 258-entry industrial catalogue behind the city
      builder (water → agriculture → … → containment → civic). Registers
      window.MythicResourceChain: pure data, no I/O, no globals, and NOTHING in

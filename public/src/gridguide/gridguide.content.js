@@ -27,8 +27,8 @@ export const DEFAULT_DOC = {
     t1: 'Own a node.',
     t2: 'Build a city.',
     t3: 'Hire a Grid Manager.',
-    lede: 'Every node on this map can become a working city with citizens, businesses and trade routes. Build it yourself, or hire a Grid Manager to build it for you. Here is how it works and every way the game lets you earn.',
-    meta: ['Grid Managers are hired in Mayor Hall', 'Currency: 🔥 Cinder', 'Vault rate: 5,000 🔥 = $1.00'],
+    lede: 'Every node on this map can become a working city with citizens, businesses and trade routes. Build it yourself, or hire a Grid Manager to build it for you. Here is how it works, what Mythic Token does, and every way the game lets you earn.',
+    meta: ['Grid Managers are hired in Mayor Hall', 'Currency: 🔥 Cinder', 'Token: Ⓜ Mythic Token', 'Vault rate: 5,000 🔥 = $1.00'],
     photo: null,
   },
   sections: [
@@ -99,6 +99,24 @@ export const DEFAULT_DOC = {
       extras: [],
     },
     {
+      /* Ⓜ Every line here is a shipped system: referral + campaign airdrops
+         (index.html referral milestones, sql/125), node power (+100 owner /
+         +25 anyone, Planetary Rush every 500), the bank charter stake
+         (BANK_CHARTER_MT, locked not spent, behind MT_STAKING_READY), and
+         MT loan products (60% LTV, 14-day cap). The "not an investment"
+         wording follows boeShowMtDisclaimer(); keep them saying the same thing. */
+      id: 'mythic', kind: 'doors',
+      eyebrow: 'Mythic Token · Ⓜ MT', title: 'What Mythic Token is for',
+      intro: 'Mythic Token is the game\'s utility token. You hold it in the Bank of Ethos, or link a wallet on the Base network to hold it on-chain. It sits on top of the game: everything still runs on Cinder, and you never need MT to play.',
+      items: [
+        { who: 'Earn it', title: 'Airdrops', hook: 'Mythic Token is handed out for taking part.', bullets: ['Referral milestones: invite friends who join', 'Node campaigns: every gift to a relief drive earns MT airdrops', 'Link a wallet to receive airdrops on-chain'] },
+        { who: 'Power nodes', title: 'Charge the map', hook: 'Buying Mythic Token powers a node.', bullets: ['+100 node power on a node you own', '+25 node power on any other node', 'Every 500 power sets off a Planetary Rush world event for everyone'] },
+        { who: 'Open a bank', title: 'Stake a charter', hook: 'Stake Mythic Token as your bank\'s capital.', bullets: ['A Lending House charter takes a 2,000 MT stake', 'The stake is locked, not spent, and protects your depositors', 'Unstake it later or sell the charter', 'Staking opens once MT has a settled value. Until then, open a bank for 1,000,000 Cinder'] },
+        { who: 'Lend & borrow', title: 'Run a loan desk', hook: 'Banks post loan products in Cinder or Mythic Token.', bullets: ['Set your own rate, term and accepted collateral', 'Mythic Token loans are capped at 60% loan-to-value and 14-day terms', 'Every Mythic Token loan is logged for economy review'] },
+      ],
+      extras: [],
+    },
+    {
       id: 'faq', kind: 'faq',
       eyebrow: 'Questions', title: 'What players ask',
       intro: '',
@@ -121,6 +139,7 @@ export const DEFAULT_DOC = {
         'Nodes, cities and in-game purchases are part of a game. They are not investments.',
         'Cashing out requires a connected Stripe account and Stripe\'s identity check.',
         'Aza, and Cinder converted from Aza, cannot be cashed out.',
+        'Mythic Token is a utility for playing the game. It is not an investment, and nobody promises anything about its price.',
       ],
       extras: [],
     },

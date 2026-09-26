@@ -133,7 +133,7 @@ const KIND = {
       d.bullets = Array.isArray(d.bullets) ? d.bullets : [];
       const ul = h('ul');
       d.bullets.forEach((_, j) => add(ul, add(h('li'), row(ed('span', '', d.bullets, j), d.bullets, j, 'point'))));
-      const card = add(h('div', 'gg-card'), ed('div', 'who', d, 'who'), ed('h3', '', d, 'title'), ed('p', 'hook gg-pw', d, 'hook'), ul,
+      const card = add(h('div', 'gg-card'), ed('div', 'gg-who', d, 'who'), ed('h3', '', d, 'title'), ed('p', 'hook gg-pw', d, 'hook'), ul,
         adder('point', d.bullets, () => 'New point'));
       if (S.editing) add(card, add(h('div', 'gg-ctl'), btn('Remove card', 'sm dan', () => { sec.items.splice(i, 1); dirty(); paint(); })));
       add(g, card);

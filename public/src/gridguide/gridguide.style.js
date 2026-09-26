@@ -50,9 +50,9 @@ export const CSS = `
 .gg-meta{display:flex;flex-wrap:wrap;gap:8px 20px;font-family:ui-monospace,monospace;font-size:13px;color:var(--muted);align-items:center}
 .gg-meta > span{display:inline-flex;gap:6px;align-items:center}
 .gg-hphoto img{display:block;width:100%;max-height:440px;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
-.gg-doors,.gg-scripts{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px}
+.gg-doors,.gg-scripts{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:14px}
 .gg-card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:20px;display:grid;gap:10px;align-content:start}
-.gg-card .who{font-family:ui-monospace,monospace;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--grid)}
+.gg-card .gg-who{font-family:ui-monospace,monospace;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--grid)}
 .gg-card .hook{font-weight:700}
 .gg-card ul{margin:0;padding-left:18px;display:grid;gap:6px;color:var(--muted)}
 .gg-flow{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));counter-reset:ggstep}

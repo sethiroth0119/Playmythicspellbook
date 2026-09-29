@@ -197351,7 +197351,17 @@ function _campOpenBankDirectory(tab, bankId) {
   App._bdTab = tab || App._bdTab || 'directory';
   App._bdBank = bankId || App._bdBank || null;
   const T = App._bdTab;
-  if (!BankDir.at) { bankDirFetch().then(() => { const r = document.getElementById('camp-bankdir'); if (r) { r.remove(); _campOpenBankDirectory(T, App._bdBank); } }); }
+  // ⚠ Re-open only when the fetch actually changed something. Offline (no
+  // Cloud.client) and thrown fetches never set BankDir.at, so an unconditional
+  // re-open here recursed forever and froze the tab.
+  if (!BankDir.at) {
+    const errBefore = BankDir.err;
+    bankDirFetch().then(() => {
+      if (!BankDir.at && BankDir.err === errBefore) return;
+      const r = document.getElementById('camp-bankdir');
+      if (r) { r.remove(); _campOpenBankDirectory(T, App._bdBank); }
+    });
+  }
 
   const score = bankEmberScore(), tier = bankEmberTier(score);
   const tierDef = (typeof UDW_TIERS !== 'undefined' && UDW_TIERS[tier]) || { ltv: 0.4, bond: 0.25, unsecured: 0 };
@@ -197359,6 +197369,7 @@ function _campOpenBankDirectory(tab, bankId) {
 
   const dirBody = () => {
     if (BankDir.err === 'setup') return '<div style="padding:1.6rem;color:#ff9a6b;text-align:center">The bank tables are not installed yet. Run <b>player_banks.sql</b> then <b>bank_charter_pricing.sql</b>.</div>';
+    if (BankDir.err === 'offline') return '<div style="padding:1.6rem;color:#bfae87;text-align:center">Bank Row is offline.<br><span style="font-size:0.82rem">Player banks need a cloud connection. Sign in or leave offline mode to browse them.</span></div>';
     if (!BankDir.list.length) return '<div style="padding:1.6rem;color:#bfae87;text-align:center">No banks are open yet.<br><span style="font-size:0.82rem">Anyone can charter one from Just Business → Operations → Bank.</span></div>';
     return `<div style="padding:1rem 1.4rem;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:0.8rem">
       ${BankDir.list.map(b => {
